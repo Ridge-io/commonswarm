@@ -8,6 +8,7 @@ import {
   browserDeliveryIndicator,
   browserDeliveryReceiptCandidates,
   browserHumanDeliveryIndicator,
+  browserRosterSectionLines,
   type BrowserDeliveryReceipt,
   type BrowserDeliveryReceiptCacheEntry,
   type BrowserDeliveryReceiptResult,
@@ -167,6 +168,9 @@ test("broadcast uses addressed=false and can never look pending or failed", () =
 });
 
 test("broadcast summary and detail model split seen, not-seen, and untracked agents", () => {
+  /* Agents live under broadcastRoster.agents.principals, never in `receipts`:
+   * a cached bundle's parser reads any non-human `receipts` row as a delivery
+   * ledger row and would blank the indicator (20260902000002). */
   const result: BrowserDeliveryReceiptResult = {
     addressed: false,
     receipts: [
@@ -176,7 +180,6 @@ test("broadcast summary and detail model split seen, not-seen, and untracked age
         seenAt: "2026-08-28T14:55:00.000Z",
       }),
       humanReceipt({ recipientUserId: "member-unseen", displayName: "Bo" }),
-      untrackedAgent(),
     ],
     broadcastRoster: {
       members: { total: 2, seen: 1, returned: 2, limit: 50, truncated: false },
@@ -186,6 +189,7 @@ test("broadcast summary and detail model split seen, not-seen, and untracked age
         limit: 50,
         truncated: false,
         trackingState: "not_tracked",
+        principals: [untrackedAgent()],
       },
     },
   };
@@ -198,6 +202,11 @@ test("broadcast summary and detail model split seen, not-seen, and untracked age
   assert.deepEqual(roster.seenMembers.map((row) => row.displayName), ["Ari"]);
   assert.deepEqual(roster.notSeenMembers.map((row) => row.displayName), ["Bo"]);
   assert.deepEqual(roster.agents.map((row) => row.trackingState), ["not_tracked"]);
+  assert.deepEqual(
+    [roster.seenHidden, roster.notSeenHidden, roster.agentsHidden],
+    [0, 0, 0],
+    "an uncut roster hides nothing",
+  );
 
   const renderer = dashboard.slice(
     dashboard.indexOf("const appendDeliveryReceipt ="),
@@ -207,10 +216,89 @@ test("broadcast summary and detail model split seen, not-seen, and untracked age
   assert.match(renderer, /"Not-seen members"/);
   assert.match(renderer, /"Agents · Not tracked"/);
   assert.match(renderer, /broadcasts do not wake or track agents/);
+  assert.match(
+    renderer,
+    /roster\.agents\.map/,
+    "the agent section must render from the roster view, which reads principals",
+  );
   assert.equal(
     dashboard.match(/details\.className = "dashboard__message-receipt"/g)?.length,
     1,
     "broadcast detail must stay inside the one receipt indicator component",
+  );
+});
+
+/* D3 (2026-09-01 inversion review): 100 live members, 60 seen. The server's
+ * seen-first cap returns 50 seen rows and 0 not-seen rows, so a section that
+ * prints "None" whenever it has no rows tells 40 people's colleagues that
+ * everyone has seen it. The section decision lives in browserRosterSectionLines
+ * so this control exercises the dashboard's own rule, and the renderer pin
+ * proves the dashboard hands every section through it. */
+test("a cut roster section names the hidden remainder instead of None", () => {
+  const result: BrowserDeliveryReceiptResult = {
+    addressed: false,
+    receipts: Array.from({ length: 50 }, (_, index) =>
+      humanReceipt({
+        recipientUserId: `member-${index}`,
+        displayName: `Member ${index}`,
+        seenAt: "2026-08-28T14:55:00.000Z",
+      })
+    ),
+    broadcastRoster: {
+      members: { total: 100, seen: 60, returned: 50, limit: 50, truncated: true },
+      agents: {
+        total: 0,
+        returned: 0,
+        limit: 50,
+        truncated: false,
+        trackingState: "not_tracked",
+        principals: [],
+      },
+    },
+  };
+  const roster = browserBroadcastRosterView(result);
+  assert.equal(browserDeliveryIndicator(result, NOW).label, "Seen by 60 of 100");
+  assert.equal(roster.seenMembers.length, 50);
+  assert.equal(roster.notSeenMembers.length, 0);
+  assert.deepEqual([roster.seenHidden, roster.notSeenHidden, roster.agentsHidden], [10, 40, 0]);
+
+  const notSeenLines = browserRosterSectionLines(
+    roster.notSeenMembers.map((row) => row.displayName ?? row.recipientUserId),
+    roster.notSeenHidden,
+  );
+  assert.deepEqual(notSeenLines, ["40 not shown (roster cut)"]);
+  assert.ok(!notSeenLines.includes("None"), "a cut not-seen section must not read None");
+
+  const seenLines = browserRosterSectionLines(
+    roster.seenMembers.map((row) => row.displayName ?? row.recipientUserId),
+    roster.seenHidden,
+  );
+  assert.equal(seenLines.length, 51);
+  assert.equal(seenLines.at(-1), "10 more not shown (roster cut)");
+
+  // Controls: "None" still appears when the totals say a section is empty, and
+  // an uncut section renders its rows unchanged.
+  assert.deepEqual(browserRosterSectionLines([], 0), ["None"]);
+  assert.deepEqual(
+    browserRosterSectionLines(roster.agents.map((row) => row.displayName), roster.agentsHidden),
+    ["None"],
+  );
+  assert.deepEqual(browserRosterSectionLines(["Ari", "Bo"], 0), ["Ari", "Bo"]);
+
+  const renderer = dashboard.slice(
+    dashboard.indexOf("const appendDeliveryReceipt ="),
+    dashboard.indexOf("const feedScroller ="),
+  );
+  assert.match(renderer, /browserRosterSectionLines\(rows, hidden\)/);
+  assert.doesNotMatch(
+    renderer,
+    /textContent = "None"/,
+    "the dashboard must not decide None on its own; the shared rule owns it",
+  );
+  assert.equal(
+    renderer.match(/appendRosterSection\(\s*"[^"]+",[\s\S]*?roster\.(?:seenHidden|notSeenHidden|agentsHidden),\s*\)/g)?.length,
+    3,
+    "every roster section must pass its hidden remainder",
   );
 });
 

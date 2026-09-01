@@ -16,6 +16,25 @@ interface LocalEnvironment {
   DB_URL: string;
 }
 
+/* `receipts` never carries an agent tracking row: pre-roster clients read any
+ * non-human `receipts` row as a delivery ledger row (20260902000002). Agents
+ * are listed under broadcast_roster.agents.principals. */
+interface UntrackedAgentRow {
+  recipient_agent_principal_id: string;
+  display_name: string;
+  tracking_state: "not_tracked";
+  observed_at: null;
+}
+
+interface AgentRosterSection {
+  total: number;
+  returned: number;
+  limit: number;
+  truncated: boolean;
+  tracking_state: "not_tracked";
+  principals: UntrackedAgentRow[];
+}
+
 interface ReceiptResult {
   addressed: boolean;
   receipts: Array<{
@@ -23,8 +42,6 @@ interface ReceiptResult {
     recipient_user_id?: string;
     display_name?: string;
     seen_at?: string | null;
-    tracking_state?: "not_tracked";
-    observed_at?: null;
   }>;
   broadcast_roster?: {
     members: {
@@ -34,14 +51,15 @@ interface ReceiptResult {
       limit: number;
       truncated: boolean;
     };
-    agents: {
-      total: number;
-      returned: number;
-      limit: number;
-      truncated: boolean;
-      tracking_state: "not_tracked";
-    };
+    agents: AgentRosterSection;
   };
+}
+
+/** The agent section without its row list, for a counts-only deepEqual. */
+function agentCounts(section: AgentRosterSection | undefined): Omit<AgentRosterSection, "principals"> | undefined {
+  if (section === undefined) return undefined;
+  const { principals: _principals, ...counts } = section;
+  return counts;
 }
 
 const ROLLBACK = new Error("receipt fixture rollback");
@@ -236,20 +254,30 @@ test("delivery receipt authorization matrix holds on real Postgres", async () =>
         );
         assert.equal(
           broadcastRow?.result.receipts.filter((row) =>
-            row.tracking_state === "not_tracked"
+            row.recipient_agent_principal_id !== undefined
           ).length,
-          3,
+          0,
+          "a broadcast's receipts must hold member rows only",
         );
-        assert.deepEqual(broadcastRow?.result.broadcast_roster, {
-          members: { total: 1, seen: 0, returned: 1, limit: 50, truncated: false },
-          agents: {
-            total: 3,
-            returned: 3,
-            limit: 50,
-            truncated: false,
-            tracking_state: "not_tracked",
-          },
+        assert.deepEqual(broadcastRow?.result.broadcast_roster?.members, {
+          total: 1,
+          seen: 0,
+          returned: 1,
+          limit: 50,
+          truncated: false,
         });
+        assert.deepEqual(agentCounts(broadcastRow?.result.broadcast_roster?.agents), {
+          total: 3,
+          returned: 3,
+          limit: 50,
+          truncated: false,
+          tracking_state: "not_tracked",
+        });
+        const broadcastPrincipals = broadcastRow!.result.broadcast_roster!.agents.principals;
+        assert.equal(broadcastPrincipals.length, 3);
+        assert.ok(broadcastPrincipals.every((row) =>
+          row.tracking_state === "not_tracked" && row.observed_at === null
+        ));
         assert.equal(crossSenderRow?.result, null);
 
         await tx`
@@ -580,8 +608,13 @@ test("human seen upsert keeps first time and receipt reads keep the authorizatio
         const broadcastMembers = broadcastRead!.result.receipts.filter((row) =>
           row.recipient_user_id !== undefined
         );
-        const broadcastAgents = broadcastRead!.result.receipts.filter((row) =>
-          row.tracking_state === "not_tracked"
+        const broadcastAgents = broadcastRead!.result.broadcast_roster!.agents.principals;
+        assert.equal(
+          broadcastRead!.result.receipts.filter((row) =>
+            row.recipient_agent_principal_id !== undefined
+          ).length,
+          0,
+          "a broadcast's receipts must hold member rows only",
         );
         assert.deepEqual(
           broadcastMembers.map((row) => ({
@@ -600,16 +633,22 @@ test("human seen upsert keeps first time and receipt reads keep the authorizatio
           "broadcast must start from all three live memberships, not one attestation",
         );
         assert.equal(broadcastAgents.length, 3);
-        assert.ok(broadcastAgents.every((row) => row.observed_at === null));
-        assert.deepEqual(broadcastRead?.result.broadcast_roster, {
-          members: { total: 3, seen: 1, returned: 3, limit: 50, truncated: false },
-          agents: {
-            total: 3,
-            returned: 3,
-            limit: 50,
-            truncated: false,
-            tracking_state: "not_tracked",
-          },
+        assert.ok(broadcastAgents.every((row) =>
+          row.tracking_state === "not_tracked" && row.observed_at === null
+        ));
+        assert.deepEqual(broadcastRead?.result.broadcast_roster?.members, {
+          total: 3,
+          seen: 1,
+          returned: 3,
+          limit: 50,
+          truncated: false,
+        });
+        assert.deepEqual(agentCounts(broadcastRead?.result.broadcast_roster?.agents), {
+          total: 3,
+          returned: 3,
+          limit: 50,
+          truncated: false,
+          tracking_state: "not_tracked",
         });
 
         const capMemberIds = Array.from({ length: 49 }, () => randomUUID());
@@ -662,6 +701,15 @@ test("human seen upsert keeps first time and receipt reads keep the authorizatio
           row.recipient_user_id !== undefined
         );
         assert.equal(cappedMembers.length, 50);
+        /* G1: the fixture builds the discriminating case on purpose — the one seen
+         * member ("Seen recipient") sorts 51st of 52 by name, so a name-only
+         * ORDER BY would cut it while the summary still said "Seen by 1 of 52".
+         * Without this line, deleting `human.first_seen_at IS NULL` from the
+         * ORDER BY leaves the test green. */
+        assert.ok(
+          cappedMembers.some((row) => row.seen_at !== null),
+          "the seen member must survive the cap",
+        );
         assert.deepEqual(cappedBroadcastRead?.result.broadcast_roster?.members, {
           total: 52,
           seen: 1,

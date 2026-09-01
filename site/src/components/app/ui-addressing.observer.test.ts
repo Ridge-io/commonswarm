@@ -3,6 +3,7 @@ import { readFileSync } from "node:fs";
 import { dirname, join } from "node:path";
 import { fileURLToPath } from "node:url";
 import { test } from "node:test";
+import { signalIsDirectToViewer } from "../../lib/signal-feed";
 
 /*
  * Built-artifact observer for the dashboard's addressing slice. The site test script reaches
@@ -82,6 +83,53 @@ test("direct-to-viewer rows ship a distinct tint for the person only", () => {
   assert.match(
     builtAssets,
     /\.dashboard__message--direct-to-viewer\{[^}]*background:/,
+  );
+});
+
+/* S2 (2026-09-01 inversion review): the tint read
+ *   if (signalIsDirectToViewer(signal, viewerId) || signal.to === session?.user.id)
+ * and viewerId IS session.user.id whenever a session exists, so the second
+ * clause repeated the first and the function was not load-bearing — mutate it
+ * to `() => false` and the tint still fired. The regex above could not see
+ * that. Two pins close it: the tint's condition is the function call ALONE,
+ * and the function itself is person-only. The site test suite has no DOM
+ * harness (no jsdom/happy-dom), so the row is not rendered here; the
+ * behavioural half is the function the tint now depends on entirely. */
+test("the tint depends on signalIsDirectToViewer alone, and that rule is person-only", () => {
+  assert.match(
+    renderFeed,
+    /if \(signalIsDirectToViewer\(signal, viewerId\)\) \{\s*row\.classList\.add\("dashboard__message--direct-to-viewer"\);/,
+    "the tint condition must be the shared rule and nothing else",
+  );
+  assert.doesNotMatch(renderFeed, /signalIsDirectToViewer\(signal, viewerId\) \|\|/);
+  /* The retired clause is quoted, struck through, in the dead-marker comment
+   * above the tint (kept on purpose: corrections live in the artefact). Read
+   * the CODE for a second copy, not the comments. */
+  const renderFeedCode = renderFeed.replace(/\/\*[\s\S]*?\*\//g, "");
+  assert.doesNotMatch(
+    renderFeedCode,
+    /signal\.to === session\?\.user\.id/,
+    "no second copy of the direct-to-you rule may sit beside the shared one",
+  );
+  assert.equal(
+    renderFeedCode.match(/dashboard__message--direct-to-viewer/g)?.length,
+    1,
+    "the tint class must be added from exactly one place",
+  );
+
+  // Behaviour of the rule the tint now depends on: to the person, and only then.
+  assert.equal(signalIsDirectToViewer({ to: "viewer", toAgent: null }, "viewer"), true);
+  assert.equal(
+    signalIsDirectToViewer({ to: null, toAgent: "agent-the-viewer-operates" }, "viewer"),
+    false,
+    "a message to an agent the viewer operates is not direct to the viewer",
+  );
+  assert.equal(signalIsDirectToViewer({ to: "other", toAgent: null }, "viewer"), false);
+  assert.equal(signalIsDirectToViewer({ to: null, toAgent: null }, "viewer"), false);
+  assert.equal(
+    signalIsDirectToViewer({ to: "", toAgent: null }, ""),
+    false,
+    "a signed-out viewer (empty id) never matches, even an empty `to`",
   );
 });
 

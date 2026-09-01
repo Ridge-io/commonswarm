@@ -262,15 +262,19 @@ The distilled operative rules. Full doctrine, with the incidents that produced i
   unsafe in combination.
 - **Corrections go in the artifact, not in a message.** A correction in chat never reaches
   whoever pulls the repo tomorrow. Keep the superseded line, marked dead.
-- **Current model-inversion gate (operator ruling, 2026-08-02 — D-036): every SHA-changing
-  lane runs BOTH an exact review and an independent cross-family inversion on the exact
-  SHA.** The permitted pairing is one exact-review arm (Codex, Claude, or Grok) plus one
-  inversion arm from a *different* family (Google Gemini via `agy`, or Kimi K3 via Pi).
-  Both arms are still required — the two-arm rule itself is unchanged and is the part that
-  must not erode. Each arm must return substantive findings or reasoning; **an empty PASS
-  is not a review**, and no single arm of any family substitutes for the pair. If either
-  arm changes the SHA, both rerun on the replacement SHA. See D-036 for the measured
-  condition and its scope.
+- **Current model-inversion gate (operator ruling, 2026-08-02 — D-036; pairing revised by
+  operator ruling 2026-09-01): every SHA-changing lane runs BOTH an exact review and an
+  independent cross-family inversion on the exact SHA.** ~~The permitted pairing is one
+  exact-review arm (Codex, Claude, or Grok) plus one inversion arm from a *different* family
+  (Google Gemini via `agy`, or Kimi K3 via Pi).~~ **Dead (2026-09-01, operator ruling).**
+  Kimi K3 via Pi is no longer an arm — no such tab or key exists. The rule now: **two arms
+  from two DIFFERENT model families, chosen from Codex, Grok, Gemini — in that order of
+  preference. An author's family may not review its own lane's output.** A Codex-authored
+  lane, for example, takes Grok and Gemini. Both arms are still required — the two-arm rule
+  itself is unchanged and is the part that must not erode. Each arm must return substantive
+  findings or reasoning; **an empty PASS is not a review**, and no single arm of any family
+  substitutes for the pair. If either arm changes the SHA, both rerun on the replacement
+  SHA. See D-036 for the measured condition and its scope.
 
   ★ **Grok has credit again and IS a usable arm (measured 2026-08-26).** The superseded
   line — *"Grok is credit-exhausted and is NOT a usable arm"* — is **dead**. It was true
@@ -283,6 +287,14 @@ The distilled operative rules. Full doctrine, with the incidents that produced i
   by running its own mutation and watching the exit code, and it independently reproduced
   a false positive Gemini had found by reading. **An availability claim about a tool is a
   deployment fact with no expiry date on it — re-probe before repeating one.**
+
+  ★ **Gemini via `agy -p` was a dead instrument for ~4 hours (measured 2026-09-01).** Twelve
+  consecutive attempts returned the same 36-byte reply, `Error: timeout waiting for
+  response`, and no verdict. A dead instrument that produces no verdict must be detected by
+  asserting that a VERDICT line is PRESENT — a positive property of success — never by the
+  absence of an error string. A reply with no verdict is not a review; the lane still owes
+  two arms, so take the next family in the preference order. See `false-success-signals`
+  in the brain.
 
   ~~Superseded (2026-07-29 ruling, now dead): "every swarm mate runs BOTH Grok and Google
   Gemini via `agy` on the exact SHA, instead of Claude… neither Grok alone, Gemini alone,

@@ -902,6 +902,7 @@ import "../../styles/tokens.css";
     browserBroadcastRosterView,
     browserDeliveryIndicator,
     browserHumanDeliveryIndicator,
+    browserRosterSectionLines,
     browserDeliveryReceiptCandidates,
     browserDeliveryReceipts,
     browserPostingDeliveryIndicator,
@@ -3169,23 +3170,23 @@ import "../../styles/tokens.css";
       const detail = document.createElement("p");
       detail.textContent = indicator.detail;
       details.append(summary, detail);
+      /* `hidden` is the section's remainder from the server's uncapped totals.
+       * A cut section must not read "None": with 100 members and 60 seen the
+       * capped list is 50 seen and 0 not-seen, and "None" under Not-seen would
+       * be false. browserRosterSectionLines owns that decision. */
       const appendRosterSection = (
         title: string,
         rows: readonly string[],
+        hidden: number,
       ): void => {
         const section = document.createElement("section");
         section.className = "dashboard__message-receipt-section";
         const heading = document.createElement("h4");
         heading.textContent = title;
         const list = document.createElement("ul");
-        for (const text of rows) {
+        for (const text of browserRosterSectionLines(rows, hidden)) {
           const item = document.createElement("li");
           item.textContent = text;
-          list.append(item);
-        }
-        if (rows.length === 0) {
-          const item = document.createElement("li");
-          item.textContent = "None";
           list.append(item);
         }
         section.append(heading, list);
@@ -3203,18 +3204,21 @@ import "../../styles/tokens.css";
             const seen = formatTime(receipt.seenAt!);
             return `${receipt.displayName ?? people.get(receipt.recipientUserId) ?? receipt.recipientUserId} · ${seen.relative}`;
           }),
+          roster.seenHidden,
         );
         appendRosterSection(
           "Not-seen members",
           roster.notSeenMembers.map((receipt) =>
             receipt.displayName ?? people.get(receipt.recipientUserId) ?? receipt.recipientUserId
           ),
+          roster.notSeenHidden,
         );
         appendRosterSection(
           "Agents · Not tracked",
           roster.agents.map((receipt) =>
             `${receipt.displayName} · broadcasts do not wake or track agents`
           ),
+          roster.agentsHidden,
         );
         if (
           broadcastResult.broadcastRoster.members.truncated ||
@@ -3446,7 +3450,7 @@ import "../../styles/tokens.css";
       }
       const agentById = new Map(agents.map((agent) => [agent.principalId, agent]));
       const viewerId = session?.user.id ?? (sampleMode ? "sample-owner" : "");
-      const visibleSignals = filterSignals(signals, signalFilter, viewerId, agentById);
+      const visibleSignals = filterSignals(signals, signalFilter, viewerId);
       for (const button of all<HTMLButtonElement>("[data-feed-filter]")) {
         const active = button.dataset.feedFilter === signalFilter;
         button.setAttribute("aria-pressed", String(active));
@@ -3486,7 +3490,11 @@ import "../../styles/tokens.css";
         const targetAgent = signal.toAgent === null
           ? undefined
           : agentById.get(signal.toAgent);
-        if (signalIsDirectToViewer(signal, viewerId) || signal.to === session?.user.id) {
+        /* ~~`|| signal.to === session?.user.id`~~ Dead 2026-09-01: viewerId IS
+         * session.user.id whenever a session exists, so the clause repeated the
+         * call and left the function non-load-bearing for the tint. One rule,
+         * one place: signal-feed.ts decides what "direct to you" means. */
+        if (signalIsDirectToViewer(signal, viewerId)) {
           row.classList.add("dashboard__message--direct-to-viewer");
         }
         const authorName = authorAgent?.name ??

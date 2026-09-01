@@ -1,10 +1,10 @@
 import {
+  broadcastRosterHiddenCounts,
   deliveryReceiptState,
   type AgentDeliveryReceiptResult,
   type DeliveryReceipt,
   type DeliveryReceiptRow,
   type HumanDeliveryReceipt,
-  type UntrackedBroadcastAgentReceipt,
 } from "./delivery-receipts.js";
 import { relativeAge, relativeExpiry } from "./workspaces.js";
 
@@ -26,16 +26,35 @@ function humanReceipt(
   return "recipient_user_id" in receipt;
 }
 
-function untrackedAgentReceipt(
-  receipt: DeliveryReceiptRow,
-): receipt is UntrackedBroadcastAgentReceipt {
-  return "tracking_state" in receipt && receipt.tracking_state === "not_tracked";
-}
-
 function agentDeliveryReceipt(
   receipt: DeliveryReceiptRow,
 ): receipt is DeliveryReceipt {
-  return !humanReceipt(receipt) && !untrackedAgentReceipt(receipt);
+  return !humanReceipt(receipt);
+}
+
+/**
+ * The line that replaces "none" when the server cut the list. "none" is a
+ * claim about the whole roster; a cut section can only speak for what it shows.
+ */
+function rosterCutLine(hidden: number, shown: number): string | null {
+  if (hidden === 0) return null;
+  return `${hidden}${shown === 0 ? "" : " more"} not shown (roster cut).`;
+}
+
+function rosterSection(
+  title: string,
+  rows: readonly string[],
+  hidden: number,
+  emptyLine: string,
+  trailer: string | null,
+): string {
+  if (rows.length === 0 && hidden === 0) return emptyLine;
+  return [
+    `${title}:`,
+    ...rows,
+    rosterCutLine(hidden, rows.length),
+    trailer,
+  ].filter((line): line is string => line !== null).join("\n");
 }
 
 function signalReceiptCliState(
@@ -75,7 +94,6 @@ export function renderSignalReceiptReport(
 ): string {
   const humanReceipts = report.receipts.filter(humanReceipt);
   const agentReceipts = report.receipts.filter(agentDeliveryReceipt);
-  const untrackedAgents = report.receipts.filter(untrackedAgentReceipt);
   const humanSections = humanReceipts.map((receipt) =>
     receipt.seen_at === null
       ? `Not seen yet — the member's browser reports seen state when the message is viewed.`
@@ -87,34 +105,40 @@ export function renderSignalReceiptReport(
   if (!report.addressed) {
     const seenMembers = humanReceipts.filter((receipt) => receipt.seen_at !== null);
     const notSeenMembers = humanReceipts.filter((receipt) => receipt.seen_at === null);
+    const untrackedAgents = report.broadcast_roster?.agents.principals ?? [];
     const memberTotal = report.broadcast_roster?.members.total ?? humanReceipts.length;
     const seenTotal = report.broadcast_roster?.members.seen ?? seenMembers.length;
+    // Per-section remainder from the uncapped totals. With 100 members and 60
+    // seen the capped list is 50 seen and 0 not-seen; "Not-seen members: none"
+    // would be false, so the section says how many the cut hid instead.
+    const hidden = broadcastRosterHiddenCounts(report);
     const memberLabel = (receipt: HumanDeliveryReceipt): string =>
       receipt.display_name ?? receipt.recipient_user_id;
     const rosterSections = [
       `Seen by ${seenTotal} of ${memberTotal} workspace members.`,
-      seenMembers.length === 0
-        ? "Seen members: none."
-        : [
-          "Seen members:",
-          ...seenMembers.map((receipt) =>
-            `- ${memberLabel(receipt)} — ${relativeAge(receipt.seen_at!, nowMs)}.`
-          ),
-          "Seen is a browser proxy: the message row was in view while the document had focus.",
-        ].join("\n"),
-      notSeenMembers.length === 0
-        ? "Not-seen members: none."
-        : [
-          "Not-seen members:",
-          ...notSeenMembers.map((receipt) => `- ${memberLabel(receipt)}`),
-        ].join("\n"),
-      untrackedAgents.length === 0
-        ? "Agents: none in this workspace."
-        : [
-          "Agents — not tracked:",
-          ...untrackedAgents.map((receipt) => `- ${receipt.display_name}`),
-          "Broadcasts do not wake agents, and CommonSwarm does not track whether an agent saw them.",
-        ].join("\n"),
+      rosterSection(
+        "Seen members",
+        seenMembers.map((receipt) =>
+          `- ${memberLabel(receipt)} — ${relativeAge(receipt.seen_at!, nowMs)}.`
+        ),
+        hidden.seen,
+        "Seen members: none.",
+        "Seen is a browser proxy: the message row was in view while the document had focus.",
+      ),
+      rosterSection(
+        "Not-seen members",
+        notSeenMembers.map((receipt) => `- ${memberLabel(receipt)}`),
+        hidden.notSeen,
+        "Not-seen members: none.",
+        null,
+      ),
+      rosterSection(
+        "Agents — not tracked",
+        untrackedAgents.map((receipt) => `- ${receipt.display_name}`),
+        hidden.agents,
+        "Agents: none in this workspace.",
+        "Broadcasts do not wake agents, and CommonSwarm does not track whether an agent saw them.",
+      ),
       report.broadcast_roster?.members.truncated
         ? `Member roster cut: showing ${report.broadcast_roster.members.returned} of ${report.broadcast_roster.members.total} members (limit ${report.broadcast_roster.members.limit}).`
         : null,
@@ -210,13 +234,6 @@ export function signalReceiptJsonPayload(
             : { display_name: receipt.display_name }),
           state: receipt.seen_at === null ? "not_seen" : "seen",
           seen_at: receipt.seen_at,
-        }
-        : untrackedAgentReceipt(receipt)
-        ? {
-          recipient_agent_principal_id: receipt.recipient_agent_principal_id,
-          display_name: receipt.display_name,
-          state: "not_tracked",
-          observed_at: null,
         }
         : {
           recipient_agent_principal_id: receipt.recipient_agent_principal_id,

@@ -2,13 +2,16 @@ import assert from "node:assert/strict";
 import { readFile } from "node:fs/promises";
 import { test } from "node:test";
 import {
+  broadcastRosterHiddenCounts,
   deliveryReceiptState,
+  DeliveryReceiptReadError,
   parseDeliveryReceiptResult,
   readAgentDeliveryReceipts,
   type DeliveryAckOutcome,
   type DeliveryReceipt,
   type DeliveryReceiptRow,
 } from "../src/cloud/delivery-receipts.js";
+import { renderSignalReceiptReport } from "../src/cloud/receipts.js";
 import { cloudTarget } from "../src/cloud/config.js";
 
 const WORKSPACE = "11111111-1111-4111-8111-111111111111";
@@ -19,8 +22,12 @@ const ENQUEUED = "2026-08-28T12:00:00.000Z";
 const DELIVERED = "2026-08-28T12:00:01.000Z";
 const LEASED = "2026-08-28T12:10:00.000Z";
 const ACKED = "2026-08-28T12:00:02.000Z";
+/* The live definition. 20260902000001 introduced the roster and put agent
+ * tracking rows in `receipts`, which broke every installed client on the
+ * broadcast path; 20260902000002 is its forward replacement and the file the
+ * source pins below must guard. */
 const RECEIPT_MIGRATION =
-  "supabase/migrations/20260902000001_broadcast_recipient_roster.sql";
+  "supabase/migrations/20260902000002_broadcast_roster_compat.sql";
 const HUMAN_RECEIPT_MIGRATION =
   "supabase/migrations/20260901000020_signal_human_receipts.sql";
 
@@ -33,8 +40,34 @@ function broadcastRoster(overrides: Record<string, unknown> = {}): Record<string
       limit: 50,
       truncated: false,
       tracking_state: "not_tracked",
+      principals: [],
     },
     ...overrides,
+  };
+}
+
+function untrackedAgentRow(id: string, name: string): Record<string, unknown> {
+  return {
+    recipient_agent_principal_id: id,
+    display_name: name,
+    tracking_state: "not_tracked",
+    observed_at: null,
+  };
+}
+
+/* 100 live members, 60 seen: the capped list is 50 seen and 0 not-seen. The
+ * counterexample where "Not-seen members: none" is false. */
+function cutRosterWire(): Record<string, unknown> {
+  return {
+    addressed: false,
+    receipts: Array.from({ length: 50 }, (_, index) => ({
+      recipient_user_id: `${String(index).padStart(8, "0")}-0000-4000-8000-000000000000`,
+      display_name: `Member ${String(index).padStart(2, "0")}`,
+      seen_at: ACKED,
+    })),
+    broadcast_roster: broadcastRoster({
+      members: { total: 100, seen: 60, returned: 50, limit: 50, truncated: true },
+    }),
   };
 }
 
@@ -129,6 +162,7 @@ test("broadcast roster is distinguishable from an addressed pending delivery", a
         limit: 50,
         truncated: false,
         tracking_state: "not_tracked",
+        principals: [],
       },
     },
   });
@@ -165,11 +199,6 @@ test("human receipt rows preserve not-seen and focused-viewport seen timestamps"
       recipient_user_id: RECIPIENT_2,
       display_name: "Not-seen member",
       seen_at: null,
-    }, {
-      recipient_agent_principal_id: SIGNAL,
-      display_name: "Agent row",
-      tracking_state: "not_tracked",
-      observed_at: null,
     }],
     broadcast_roster: broadcastRoster({
       members: { total: 2, seen: 1, returned: 2, limit: 50, truncated: false },
@@ -179,17 +208,189 @@ test("human receipt rows preserve not-seen and focused-viewport seen timestamps"
         limit: 50,
         truncated: false,
         tracking_state: "not_tracked",
+        principals: [untrackedAgentRow(SIGNAL, "Agent row")],
       },
     }),
   });
   assert.equal(broadcastSeen.addressed, false);
-  assert.equal(broadcastSeen.receipts.length, 3);
+  assert.equal(broadcastSeen.receipts.length, 2);
   assert.equal(broadcastSeen.broadcast_roster?.members.seen, 1);
-  assert.ok(
-    broadcastSeen.receipts.some((row) =>
-      "tracking_state" in row && row.tracking_state === "not_tracked"
-    ),
+  assert.deepEqual(broadcastSeen.broadcast_roster?.agents.principals, [{
+    recipient_agent_principal_id: SIGNAL,
+    display_name: "Agent row",
+    tracking_state: "not_tracked",
+    observed_at: null,
+  }]);
+});
+
+/* D1 (2026-09-01 inversion review): the pre-roster parser — every installed
+ * cswarm and every cached bundle — reads `receipts` with two branches: a row
+ * with recipient_user_id is human; anything else is a delivery ledger row and
+ * must carry enqueued_at, acked_at, attempt_count. An agent tracking row in
+ * `receipts` therefore hard-failed the old CLI and blanked the old dashboard.
+ * The live migration keeps agents out of `receipts`; this parser refuses them
+ * there too, so the client and the server enforce the same shape rule. */
+test("broadcast receipts carry only rows the pre-roster parser accepted", async () => {
+  const parsed = parseDeliveryReceiptResult({
+    addressed: false,
+    receipts: [{
+      recipient_user_id: RECIPIENT,
+      display_name: "Seen member",
+      seen_at: ACKED,
+    }, {
+      recipient_user_id: RECIPIENT_2,
+      display_name: "Not-seen member",
+      seen_at: null,
+    }],
+    broadcast_roster: broadcastRoster({
+      members: { total: 2, seen: 1, returned: 2, limit: 50, truncated: false },
+      agents: {
+        total: 1,
+        returned: 1,
+        limit: 50,
+        truncated: false,
+        tracking_state: "not_tracked",
+        principals: [untrackedAgentRow(SIGNAL, "Quill")],
+      },
+    }),
+  });
+  // Every `receipts` row satisfies the OLD human branch: a uuid recipient_user_id
+  // and a null-or-timestamp seen_at. display_name is extra and was ignored by it.
+  assert.ok(parsed.receipts.every((row) =>
+    "recipient_user_id" in row &&
+    (row.seen_at === null || Number.isFinite(Date.parse(row.seen_at)))
+  ));
+  assert.equal(parsed.broadcast_roster?.agents.principals.length, 1);
+
+  // Mutation control: the 20260902000001 shape (an agent tracking row inside
+  // `receipts`) is refused, with the reason named.
+  assert.throws(
+    () =>
+      parseDeliveryReceiptResult({
+        addressed: false,
+        receipts: [untrackedAgentRow(SIGNAL, "Quill")],
+        broadcast_roster: broadcastRoster({
+          members: { total: 0, seen: 0, returned: 0, limit: 50, truncated: false },
+        }),
+      }),
+    (error: unknown) =>
+      error instanceof DeliveryReceiptReadError && error.code === "protocol" &&
+      /agent tracking row inside receipts/.test(error.message),
   );
+  // And a delivery ledger row on a broadcast is still refused, as before.
+  assert.throws(
+    () =>
+      parseDeliveryReceiptResult({
+        addressed: false,
+        receipts: [receipt()],
+        broadcast_roster: broadcastRoster(),
+      }),
+    (error: unknown) =>
+      error instanceof DeliveryReceiptReadError &&
+      /agent recipient for a broadcast/.test(error.message),
+  );
+
+  const migration = await readFile(RECEIPT_MIGRATION, "utf8");
+  const broadcastBranch = migration.slice(
+    migration.indexOf("IF NOT v_addressed THEN"),
+    migration.indexOf("-- Directed behavior is deliberately unchanged"),
+  );
+  assert.ok(broadcastBranch.length > 0, "the broadcast branch must be locatable");
+  assert.doesNotMatch(
+    broadcastBranch,
+    /UNION ALL/,
+    "the broadcast branch must not merge agent rows into the member `receipts` aggregate",
+  );
+  assert.match(broadcastBranch, /'receipts', v_receipts/);
+  assert.match(broadcastBranch, /'principals', v_agent_principals/);
+  assert.match(
+    migration,
+    /old client x new server on the broadcast path/,
+    "the migration must record why `receipts` is shape-frozen",
+  );
+});
+
+/* D2: the server owns the roster cap. A client that pinned `limit === 50`
+ * would turn the next server-side tuning into a client release blocker. */
+test("the client checks the roster cap's shape and leaves its value to the server", () => {
+  const parsed = parseDeliveryReceiptResult({
+    addressed: false,
+    receipts: [],
+    broadcast_roster: broadcastRoster({
+      members: { total: 0, seen: 0, returned: 0, limit: 100, truncated: false },
+      agents: {
+        total: 0,
+        returned: 0,
+        limit: 7,
+        truncated: false,
+        tracking_state: "not_tracked",
+        principals: [],
+      },
+    }),
+  });
+  assert.equal(parsed.broadcast_roster?.members.limit, 100);
+  assert.equal(parsed.broadcast_roster?.agents.limit, 7);
+
+  for (const [limit, returned, total] of [
+    [0, 0, 0],
+    [-1, 0, 0],
+    [1.5, 0, 0],
+    [49, 50, 60],
+  ] as const) {
+    assert.throws(
+      () =>
+        parseDeliveryReceiptResult({
+          addressed: false,
+          receipts: Array.from({ length: returned }, (_, index) => ({
+            recipient_user_id: `${String(index).padStart(8, "0")}-0000-4000-8000-000000000000`,
+            display_name: `Member ${index}`,
+            seen_at: null,
+          })),
+          broadcast_roster: broadcastRoster({
+            members: { total, seen: 0, returned, limit, truncated: returned < total },
+          }),
+        }),
+      (error: unknown) =>
+        error instanceof DeliveryReceiptReadError && error.code === "protocol",
+      `limit=${limit} returned=${returned} total=${total} must be refused`,
+    );
+  }
+});
+
+/* D3: with more seen members than the cap, the capped list is all seen rows.
+ * "Not-seen members: none" would then be a false claim about 40 people. */
+test("a cut roster section reports the hidden remainder instead of none", () => {
+  const parsed = parseDeliveryReceiptResult(cutRosterWire());
+  assert.deepEqual(broadcastRosterHiddenCounts(parsed), { seen: 10, notSeen: 40, agents: 0 });
+
+  const rendered = renderSignalReceiptReport({
+    ...parsed,
+    addressed: false,
+    workspaceId: WORKSPACE,
+    signalId: SIGNAL,
+  }, Date.parse(ACKED) + 60_000);
+  assert.match(rendered, /Seen by 60 of 100 workspace members\./);
+  assert.match(rendered, /Not-seen members:\n40 not shown \(roster cut\)\./);
+  assert.match(rendered, /- Member 49 — 1m ago\.\n10 more not shown \(roster cut\)\./);
+  assert.doesNotMatch(rendered, /members: none/);
+  // Agents total 0 is an honest "none"; the cut must not disturb it.
+  assert.match(rendered, /Agents: none in this workspace\./);
+
+  // Control: an uncut roster keeps the plain lines and never prints a cut note.
+  const uncut = renderSignalReceiptReport({
+    ...parseDeliveryReceiptResult({
+      addressed: false,
+      receipts: [{ recipient_user_id: RECIPIENT, display_name: "Ari", seen_at: ACKED }],
+      broadcast_roster: broadcastRoster({
+        members: { total: 1, seen: 1, returned: 1, limit: 50, truncated: false },
+      }),
+    }),
+    addressed: false,
+    workspaceId: WORKSPACE,
+    signalId: SIGNAL,
+  }, Date.parse(ACKED));
+  assert.match(uncut, /Not-seen members: none\./);
+  assert.doesNotMatch(uncut, /roster cut/);
 });
 
 test("same-workspace different sender and another-workspace caller see no receipts", () => {

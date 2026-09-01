@@ -40,6 +40,11 @@ export interface HumanDeliveryReceipt {
   seen_at: string | null;
 }
 
+/**
+ * A live agent listed on a broadcast. Never a `receipts` row: pre-roster clients
+ * parse every non-human `receipts` row as a delivery ledger row, so this shape
+ * lives only under `broadcast_roster.agents.principals` (20260902000002).
+ */
 export interface UntrackedBroadcastAgentReceipt {
   recipient_agent_principal_id: string;
   display_name: string;
@@ -50,6 +55,7 @@ export interface UntrackedBroadcastAgentReceipt {
 export interface BroadcastRosterSection {
   total: number;
   returned: number;
+  /** The server's display cap. The server owns the value; the client only checks returned <= limit. */
   limit: number;
   truncated: boolean;
 }
@@ -60,6 +66,7 @@ export interface BroadcastMemberRosterSection extends BroadcastRosterSection {
 
 export interface BroadcastAgentRosterSection extends BroadcastRosterSection {
   tracking_state: "not_tracked";
+  principals: UntrackedBroadcastAgentReceipt[];
 }
 
 export interface BroadcastRecipientRoster {
@@ -67,17 +74,22 @@ export interface BroadcastRecipientRoster {
   agents: BroadcastAgentRosterSection;
 }
 
-export type DeliveryReceiptRow =
-  | DeliveryReceipt
-  | HumanDeliveryReceipt
-  | UntrackedBroadcastAgentReceipt;
+/** `receipts` carries only the two row kinds every installed client parses. */
+export type DeliveryReceiptRow = DeliveryReceipt | HumanDeliveryReceipt;
 
 export interface DeliveryReceiptResult {
   /** Null means this credential did not author a matching signal. */
   addressed: boolean | null;
   receipts: DeliveryReceiptRow[];
-  /** Present only for broadcasts; each section is independently capped at 50. */
+  /** Present only for broadcasts; each section is independently capped by the server. */
   broadcast_roster?: BroadcastRecipientRoster;
+}
+
+/** Roster members a cut list did not show, per section, from the server's uncapped totals. */
+export interface BroadcastRosterHiddenCounts {
+  seen: number;
+  notSeen: number;
+  agents: number;
 }
 
 export interface AgentDeliveryReceiptResult extends DeliveryReceiptResult {
@@ -173,22 +185,13 @@ export function parseDeliveryReceipt(value: unknown): DeliveryReceiptRow {
       seen_at: nullableTimestamp(row.seen_at, "seen_at"),
     };
   }
-  if (row.tracking_state === "not_tracked") {
-    if (row.observed_at !== null) {
-      throw new DeliveryReceiptReadError(
-        "protocol",
-        "delivery receipt returned a tracked observation for an untracked agent",
-      );
-    }
-    return {
-      recipient_agent_principal_id: uuid(
-        row.recipient_agent_principal_id,
-        "recipient_agent_principal_id",
-      ),
-      display_name: displayName(row.display_name, "display_name"),
-      tracking_state: "not_tracked",
-      observed_at: null,
-    };
+  if (Object.hasOwn(row, "tracking_state")) {
+    // 20260902000001 put these rows here and broke every installed client;
+    // 20260902000002 moved them under broadcast_roster.agents.principals.
+    throw new DeliveryReceiptReadError(
+      "protocol",
+      "delivery receipt returned an agent tracking row inside receipts",
+    );
   }
   const ackedAt = nullableTimestamp(row.acked_at, "acked_at");
   const ackOutcome = row.ack_outcome === null
@@ -237,6 +240,31 @@ export function parseDeliveryReceipt(value: unknown): DeliveryReceiptRow {
   };
 }
 
+function parseUntrackedAgent(value: unknown): UntrackedBroadcastAgentReceipt {
+  if (!value || typeof value !== "object" || Array.isArray(value)) {
+    throw new DeliveryReceiptReadError(
+      "protocol",
+      "delivery receipt returned a malformed broadcast_roster.agents.principals row",
+    );
+  }
+  const row = value as Record<string, unknown>;
+  if (row.tracking_state !== "not_tracked" || row.observed_at !== null) {
+    throw new DeliveryReceiptReadError(
+      "protocol",
+      "delivery receipt returned a tracked observation for an untracked agent",
+    );
+  }
+  return {
+    recipient_agent_principal_id: uuid(
+      row.recipient_agent_principal_id,
+      "recipient_agent_principal_id",
+    ),
+    display_name: displayName(row.display_name, "display_name"),
+    tracking_state: "not_tracked",
+    observed_at: null,
+  };
+}
+
 function rosterSection(
   value: unknown,
   field: string,
@@ -250,9 +278,11 @@ function rosterSection(
   const row = value as Record<string, unknown>;
   const total = nonNegativeInteger(row.total, `${field}.total`);
   const returned = nonNegativeInteger(row.returned, `${field}.returned`);
+  // The server owns the cap. Pinning its value here turned a server tuning
+  // knob into a client release blocker; only its shape is checked.
   const limit = nonNegativeInteger(row.limit, `${field}.limit`);
   if (
-    typeof row.truncated !== "boolean" || limit !== 50 || returned > limit ||
+    typeof row.truncated !== "boolean" || limit < 1 || returned > limit ||
     returned > total || row.truncated !== (returned < total)
   ) {
     throw new DeliveryReceiptReadError(
@@ -276,15 +306,50 @@ function parseBroadcastRoster(value: unknown): BroadcastRecipientRoster {
   const memberRow = row.members as Record<string, unknown>;
   const agentRow = row.agents as Record<string, unknown>;
   const seen = nonNegativeInteger(memberRow.seen, "broadcast_roster.members.seen");
-  if (seen > members.total || agentRow.tracking_state !== "not_tracked") {
+  if (
+    seen > members.total || agentRow.tracking_state !== "not_tracked" ||
+    !Array.isArray(agentRow.principals)
+  ) {
     throw new DeliveryReceiptReadError(
       "protocol",
       "delivery receipt returned a malformed broadcast_roster",
     );
   }
+  const principals = agentRow.principals.map(parseUntrackedAgent);
+  if (
+    principals.length !== agents.returned ||
+    new Set(principals.map((agent) => agent.recipient_agent_principal_id)).size !==
+      principals.length
+  ) {
+    throw new DeliveryReceiptReadError(
+      "protocol",
+      "delivery receipt returned a malformed broadcast_roster.agents.principals",
+    );
+  }
   return {
     members: { ...members, seen },
-    agents: { ...agents, tracking_state: "not_tracked" },
+    agents: { ...agents, tracking_state: "not_tracked", principals },
+  };
+}
+
+/**
+ * How many of each section the capped list left out. Computed from the server's
+ * uncapped totals so a cut section can say "N not shown" instead of "none".
+ */
+export function broadcastRosterHiddenCounts(
+  result: DeliveryReceiptResult,
+): BroadcastRosterHiddenCounts {
+  const roster = result.broadcast_roster;
+  if (roster === undefined) return { seen: 0, notSeen: 0, agents: 0 };
+  const members = result.receipts.filter(
+    (row): row is HumanDeliveryReceipt => "recipient_user_id" in row,
+  );
+  const seenShown = members.filter((row) => row.seen_at !== null).length;
+  const notSeenShown = members.length - seenShown;
+  return {
+    seen: Math.max(0, roster.members.seen - seenShown),
+    notSeen: Math.max(0, roster.members.total - roster.members.seen - notSeenShown),
+    agents: Math.max(0, roster.agents.total - roster.agents.principals.length),
   };
 }
 
@@ -310,23 +375,23 @@ export function parseDeliveryReceiptResult(value: unknown): DeliveryReceiptResul
   const broadcastRoster = Object.hasOwn(body, "broadcast_roster")
     ? parseBroadcastRoster(body.broadcast_roster)
     : undefined;
-  const isUntrackedAgent = (
-    row: DeliveryReceiptRow,
-  ): row is UntrackedBroadcastAgentReceipt =>
-    "tracking_state" in row && row.tracking_state === "not_tracked";
   const humanRows = receipts.filter(
     (row): row is HumanDeliveryReceipt => "recipient_user_id" in row,
   );
-  const untrackedAgentRows = receipts.filter(isUntrackedAgent);
   if (body.addressed === false) {
+    // A broadcast's `receipts` holds member rows only; agents are listed under
+    // broadcast_roster.agents.principals. This is the same invariant the
+    // pre-roster parser enforced, and it is what keeps that parser working.
+    if (humanRows.length !== receipts.length) {
+      throw new DeliveryReceiptReadError(
+        "protocol",
+        "delivery receipt read returned an agent recipient for a broadcast",
+      );
+    }
     if (
       broadcastRoster === undefined ||
-      receipts.some((row) =>
-        "recipient_agent_principal_id" in row && !isUntrackedAgent(row)
-      ) ||
       humanRows.some((row) => row.display_name === undefined) ||
       humanRows.length !== broadcastRoster.members.returned ||
-      untrackedAgentRows.length !== broadcastRoster.agents.returned ||
       humanRows.filter((row) => row.seen_at !== null).length >
         broadcastRoster.members.seen
     ) {
@@ -335,7 +400,7 @@ export function parseDeliveryReceiptResult(value: unknown): DeliveryReceiptResul
         "delivery receipt read returned a malformed broadcast roster",
       );
     }
-  } else if (broadcastRoster !== undefined || untrackedAgentRows.length > 0) {
+  } else if (broadcastRoster !== undefined) {
     throw new DeliveryReceiptReadError(
       "protocol",
       "delivery receipt read returned a broadcast roster for an addressed signal",

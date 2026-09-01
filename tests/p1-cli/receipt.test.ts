@@ -60,6 +60,16 @@ function humanReport(row: HumanDeliveryReceipt): SignalReceiptReport {
   };
 }
 
+/* Agents are listed under broadcast_roster.agents.principals, never in
+ * `receipts` — the pre-roster parser reads any non-human `receipts` row as a
+ * delivery ledger row (20260902000002). */
+const QUILL: UntrackedBroadcastAgentReceipt = {
+  recipient_agent_principal_id: "dddddddd-dddd-4ddd-8ddd-dddddddddddd",
+  display_name: "Quill",
+  tracking_state: "not_tracked",
+  observed_at: null,
+};
+
 function broadcastRoster(): BroadcastRecipientRoster {
   return {
     members: { total: 3, seen: 1, returned: 3, limit: 50, truncated: false },
@@ -69,17 +79,12 @@ function broadcastRoster(): BroadcastRecipientRoster {
       limit: 50,
       truncated: false,
       tracking_state: "not_tracked",
+      principals: [QUILL],
     },
   };
 }
 
 function broadcastReport(): SignalReceiptReport {
-  const agent: UntrackedBroadcastAgentReceipt = {
-    recipient_agent_principal_id: "dddddddd-dddd-4ddd-8ddd-dddddddddddd",
-    display_name: "Quill",
-    tracking_state: "not_tracked",
-    observed_at: null,
-  };
   return {
     workspaceId: WORKSPACE,
     signalId: SIGNAL,
@@ -96,8 +101,32 @@ function broadcastReport(): SignalReceiptReport {
       recipient_user_id: "ffffffff-ffff-4fff-8fff-ffffffffffff",
       display_name: "Cy",
       seen_at: null,
-    }, agent],
+    }],
     broadcast_roster: broadcastRoster(),
+  };
+}
+
+/* 100 live members, 60 seen: the capped list is 50 seen rows and 0 not-seen
+ * rows, so "Not-seen members: none" would be false about 40 people. */
+function cutBroadcastWire(): Record<string, unknown> {
+  return {
+    addressed: false,
+    receipts: Array.from({ length: 50 }, (_, index) => ({
+      recipient_user_id: `${String(index).padStart(8, "0")}-0000-4000-8000-000000000000`,
+      display_name: `Member ${String(index).padStart(2, "0")}`,
+      seen_at: "2026-08-28T12:25:00.000Z",
+    })),
+    broadcast_roster: {
+      members: { total: 100, seen: 60, returned: 50, limit: 50, truncated: true },
+      agents: {
+        total: 0,
+        returned: 0,
+        limit: 50,
+        truncated: false,
+        tracking_state: "not_tracked",
+        principals: [],
+      },
+    },
   };
 }
 
@@ -135,11 +164,12 @@ function wireReport(
             truncated: false,
           },
           agents: {
-            total: receipts.filter((row) => row.tracking_state === "not_tracked").length,
-            returned: receipts.filter((row) => row.tracking_state === "not_tracked").length,
+            total: 0,
+            returned: 0,
             limit: 50,
             truncated: false,
             tracking_state: "not_tracked",
+            principals: [],
           },
         },
       }),
@@ -275,15 +305,17 @@ test("human JSON distinguishes not_seen from seen", () => {
 test("broadcast JSON carries roster counts and never calls an untracked agent not seen", () => {
   const payload = signalReceiptJsonPayload(broadcastReport(), NOW);
   const rows = payload.receipts as Array<Record<string, unknown>>;
-  assert.deepEqual(payload.broadcast_roster, broadcastRoster());
-  assert.deepEqual(rows.map((row) => row.state), [
-    "seen",
-    "not_seen",
-    "not_seen",
+  const roster = payload.broadcast_roster as BroadcastRecipientRoster;
+  assert.deepEqual(roster, broadcastRoster());
+  assert.deepEqual(rows.map((row) => row.state), ["seen", "not_seen", "not_seen"]);
+  assert.ok(
+    rows.every((row) => !("recipient_agent_principal_id" in row)),
+    "a broadcast's receipts must list members only",
+  );
+  assert.deepEqual(roster.agents.principals.map((agent) => agent.tracking_state), [
     "not_tracked",
   ]);
-  assert.equal(rows[3]?.observed_at, null);
-  assert.notEqual(rows[3]?.state, "not_seen");
+  assert.equal(roster.agents.principals[0]?.observed_at, null);
 });
 
 test("--json payload carries the machine state, outcome, recipient, and ledger fields", () => {
@@ -540,21 +572,10 @@ test("the receipt CLI renders the focused-viewport timestamp as Seen", async () 
 
 test("the receipt CLI renders the full broadcast member and untracked-agent roster", async () => {
   const report = broadcastReport();
-  const wireRows = report.receipts.map((row) => {
-    if ("recipient_user_id" in row) return row;
-    if ("tracking_state" in row) return row;
-    return { ...row };
-  }) as Array<Record<string, unknown>>;
   const result = await runCliAgainst(200, {
     addressed: false,
-    receipts: wireRows,
-    broadcast_roster: {
-      members: report.broadcast_roster!.members,
-      agents: {
-        ...report.broadcast_roster!.agents,
-        tracking_state: "not_tracked",
-      },
-    },
+    receipts: report.receipts as unknown as Array<Record<string, unknown>>,
+    broadcast_roster: report.broadcast_roster as unknown as Record<string, unknown>,
   }, false);
 
   assert.equal(result.code, 0, result.stderr);
@@ -564,6 +585,19 @@ test("the receipt CLI renders the full broadcast member and untracked-agent rost
   assert.match(result.stdout, /Not-seen members:\n- Bo\n- Cy/);
   assert.match(result.stdout, /Agents — not tracked:\n- Quill/);
   assert.match(result.stdout, /no agent was addressed and none was woken/);
+  assert.doesNotMatch(result.stdout, /roster cut/);
+});
+
+test("the receipt CLI names a cut section's hidden remainder instead of none", async () => {
+  const result = await runCliAgainst(200, cutBroadcastWire(), false);
+
+  assert.equal(result.code, 0, result.stderr);
+  assert.equal(result.stderr, "");
+  assert.match(result.stdout, /Seen by 60 of 100 workspace members/);
+  assert.match(result.stdout, /Not-seen members:\n40 not shown \(roster cut\)\./);
+  assert.match(result.stdout, /10 more not shown \(roster cut\)\./);
+  assert.doesNotMatch(result.stdout, /members: none/);
+  assert.match(result.stdout, /Member roster cut: showing 50 of 100 members \(limit 50\)/);
 });
 
 test("a missing receipt endpoint shows no fabricated state", async () => {

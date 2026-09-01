@@ -1276,6 +1276,11 @@ export interface BrowserHumanDeliveryReceipt {
   seenAt: string | null;
 }
 
+/**
+ * A live agent listed on a broadcast. Never a `receipts` row: a cached bundle's
+ * parser treats every non-human `receipts` row as a delivery ledger row, so this
+ * lives only under `broadcastRoster.agents.principals` (20260902000002).
+ */
 export interface BrowserUntrackedAgentReceipt {
   recipientAgentPrincipalId: string;
   displayName: string;
@@ -1286,19 +1291,21 @@ export interface BrowserUntrackedAgentReceipt {
 export interface BrowserRosterSection {
   total: number;
   returned: number;
+  /** The server's display cap. The server owns the value; the client checks returned <= limit. */
   limit: number;
   truncated: boolean;
 }
 
 export interface BrowserBroadcastRecipientRoster {
   members: BrowserRosterSection & { seen: number };
-  agents: BrowserRosterSection & { trackingState: "not_tracked" };
+  agents: BrowserRosterSection & {
+    trackingState: "not_tracked";
+    principals: BrowserUntrackedAgentReceipt[];
+  };
 }
 
-export type BrowserReceiptRow =
-  | BrowserDeliveryReceipt
-  | BrowserHumanDeliveryReceipt
-  | BrowserUntrackedAgentReceipt;
+/** `receipts` carries only the two row kinds every shipped bundle parses. */
+export type BrowserReceiptRow = BrowserDeliveryReceipt | BrowserHumanDeliveryReceipt;
 
 export interface BrowserDeliveryReceiptResult {
   /** Null means the caller cannot inspect a matching signal or the endpoint could not answer. */
@@ -1366,32 +1373,59 @@ const isBrowserHumanDeliveryReceipt = (
   receipt: BrowserReceiptRow,
 ): receipt is BrowserHumanDeliveryReceipt => "recipientUserId" in receipt;
 
-const isBrowserUntrackedAgentReceipt = (
-  receipt: BrowserReceiptRow,
-): receipt is BrowserUntrackedAgentReceipt =>
-  "trackingState" in receipt && receipt.trackingState === "not_tracked";
-
 const isBrowserAgentDeliveryReceipt = (
   receipt: BrowserReceiptRow,
-): receipt is BrowserDeliveryReceipt =>
-  !isBrowserHumanDeliveryReceipt(receipt) && !isBrowserUntrackedAgentReceipt(receipt);
+): receipt is BrowserDeliveryReceipt => !isBrowserHumanDeliveryReceipt(receipt);
 
 export interface BrowserBroadcastRosterView {
   seenMembers: BrowserHumanDeliveryReceipt[];
   notSeenMembers: BrowserHumanDeliveryReceipt[];
   agents: BrowserUntrackedAgentReceipt[];
+  /** Seen members the capped list left out, from the server's uncapped count. */
+  seenHidden: number;
+  /** Not-seen members the capped list left out: total - seen - shown. */
+  notSeenHidden: number;
+  /** Agents the capped list left out. */
+  agentsHidden: number;
 }
 
-/** Splits one broadcast result into the three honest detail sections. */
+/**
+ * Splits one broadcast result into the three honest detail sections, each with
+ * the count its cut hid. With 100 members and 60 seen the capped list is 50 seen
+ * and 0 not-seen; without the remainder the not-seen section would read "None".
+ */
 export function browserBroadcastRosterView(
   result: BrowserDeliveryReceiptResult,
 ): BrowserBroadcastRosterView {
   const members = result.receipts.filter(isBrowserHumanDeliveryReceipt);
+  const seenMembers = members.filter((receipt) => receipt.seenAt !== null);
+  const notSeenMembers = members.filter((receipt) => receipt.seenAt === null);
+  const agents = result.broadcastRoster?.agents.principals ?? [];
+  const roster = result.broadcastRoster;
   return {
-    seenMembers: members.filter((receipt) => receipt.seenAt !== null),
-    notSeenMembers: members.filter((receipt) => receipt.seenAt === null),
-    agents: result.receipts.filter(isBrowserUntrackedAgentReceipt),
+    seenMembers,
+    notSeenMembers,
+    agents,
+    seenHidden: roster ? Math.max(0, roster.members.seen - seenMembers.length) : 0,
+    notSeenHidden: roster
+      ? Math.max(0, roster.members.total - roster.members.seen - notSeenMembers.length)
+      : 0,
+    agentsHidden: roster ? Math.max(0, roster.agents.total - agents.length) : 0,
   };
+}
+
+/**
+ * The list items for one roster detail section. "None" is a claim about the
+ * whole roster, so it appears only when the server's totals say the section is
+ * empty; a cut section names how many it did not show.
+ */
+export function browserRosterSectionLines(
+  rows: readonly string[],
+  hidden: number,
+): string[] {
+  if (rows.length === 0 && hidden === 0) return ["None"];
+  if (hidden === 0) return [...rows];
+  return [...rows, `${hidden}${rows.length === 0 ? "" : " more"} not shown (roster cut)`];
 }
 
 /** Turns ledger facts into compact copy without claiming that a model read a message. */
@@ -1963,21 +1997,10 @@ export async function browserDeliveryReceipts(
           seenAt: seenAt as string | null,
         };
       }
-      if (row.tracking_state === "not_tracked") {
-        if (
-          typeof row.recipient_agent_principal_id !== "string" ||
-          row.recipient_agent_principal_id.length === 0 ||
-          typeof row.display_name !== "string" || row.display_name.length === 0 ||
-          row.observed_at !== null
-        ) {
-          throw new Error("Delivery receipts returned a malformed untracked agent row.");
-        }
-        return {
-          recipientAgentPrincipalId: row.recipient_agent_principal_id,
-          displayName: row.display_name,
-          trackingState: "not_tracked",
-          observedAt: null,
-        };
+      if (Object.hasOwn(row, "tracking_state")) {
+        // 20260902000001 put these rows here and blanked every cached bundle's
+        // indicator; 20260902000002 moved them under broadcast_roster.agents.
+        throw new Error("Delivery receipts returned an agent tracking row inside receipts.");
       }
       const outcome = row.ack_outcome;
       if (!(outcome === null || (typeof outcome === "string" && outcomes.has(outcome)))) {
@@ -1999,6 +2022,13 @@ export async function browserDeliveryReceipts(
     });
   let broadcastRoster: BrowserBroadcastRecipientRoster | undefined;
   if (result.addressed === false) {
+    // A broadcast's `receipts` holds member rows only; agents are listed under
+    // broadcast_roster.agents.principals. The same invariant the pre-roster
+    // bundle enforced, and what keeps that bundle's indicator alive.
+    const memberRows = receipts.filter(isBrowserHumanDeliveryReceipt);
+    if (memberRows.length !== receipts.length) {
+      throw new Error("Delivery receipts returned an agent recipient for a broadcast.");
+    }
     const rawRoster = result.broadcast_roster;
     if (!rawRoster || typeof rawRoster !== "object" || Array.isArray(rawRoster)) {
       throw new Error("Delivery receipts returned a malformed broadcast roster.");
@@ -2009,10 +2039,12 @@ export async function browserDeliveryReceipts(
         throw new Error("Delivery receipts returned a malformed broadcast roster.");
       }
       const row = value as Record<string, unknown>;
+      // The server owns the cap; only its shape is checked here. Pinning the
+      // value turned a server tuning knob into a client release blocker.
       if (
         !Number.isSafeInteger(row.total) || Number(row.total) < 0 ||
         !Number.isSafeInteger(row.returned) || Number(row.returned) < 0 ||
-        !Number.isSafeInteger(row.limit) || row.limit !== 50 ||
+        !Number.isSafeInteger(row.limit) || Number(row.limit) < 1 ||
         Number(row.returned) > Number(row.limit) ||
         Number(row.returned) > Number(row.total) ||
         typeof row.truncated !== "boolean" ||
@@ -2033,26 +2065,59 @@ export async function browserDeliveryReceipts(
     if (
       !Number.isSafeInteger(members.seen) || Number(members.seen) < 0 ||
       Number(members.seen) > members.total ||
-      agents.tracking_state !== "not_tracked"
+      agents.tracking_state !== "not_tracked" ||
+      !Array.isArray(agents.principals)
     ) {
       throw new Error("Delivery receipts returned a malformed broadcast roster.");
     }
-    const view = browserBroadcastRosterView({ addressed: false, receipts });
+    const principals: BrowserUntrackedAgentReceipt[] = agents.principals.map((value) => {
+      if (!value || typeof value !== "object" || Array.isArray(value)) {
+        throw new Error("Delivery receipts returned a malformed untracked agent row.");
+      }
+      const row = value as Record<string, unknown>;
+      if (
+        typeof row.recipient_agent_principal_id !== "string" ||
+        row.recipient_agent_principal_id.length === 0 ||
+        typeof row.display_name !== "string" || row.display_name.length === 0 ||
+        row.tracking_state !== "not_tracked" || row.observed_at !== null
+      ) {
+        throw new Error("Delivery receipts returned a malformed untracked agent row.");
+      }
+      return {
+        recipientAgentPrincipalId: row.recipient_agent_principal_id,
+        displayName: row.display_name,
+        trackingState: "not_tracked",
+        observedAt: null,
+      };
+    });
+    const seenShown = memberRows.filter((receipt) => receipt.seenAt !== null).length;
     if (
-      view.seenMembers.length > Number(members.seen) ||
-      view.seenMembers.length + view.notSeenMembers.length !== members.returned ||
-      view.agents.length !== agents.returned
+      seenShown > Number(members.seen) ||
+      memberRows.length !== members.returned ||
+      principals.length !== agents.returned ||
+      new Set(principals.map((agent) => agent.recipientAgentPrincipalId)).size !==
+        principals.length
     ) {
       throw new Error("Delivery receipts returned a malformed broadcast roster.");
     }
     broadcastRoster = {
-      members: { ...members, seen: Number(members.seen) },
-      agents: { ...agents, trackingState: "not_tracked" },
+      members: {
+        total: members.total,
+        returned: members.returned,
+        limit: members.limit,
+        truncated: members.truncated,
+        seen: Number(members.seen),
+      },
+      agents: {
+        total: agents.total,
+        returned: agents.returned,
+        limit: agents.limit,
+        truncated: agents.truncated,
+        trackingState: "not_tracked",
+        principals,
+      },
     };
-  } else if (
-    Object.hasOwn(result, "broadcast_roster") ||
-    receipts.some(isBrowserUntrackedAgentReceipt)
-  ) {
+  } else if (Object.hasOwn(result, "broadcast_roster")) {
     throw new Error("Delivery receipts returned a broadcast roster for a direct message.");
   }
   return {

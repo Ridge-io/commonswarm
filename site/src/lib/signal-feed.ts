@@ -3,7 +3,6 @@ import type { Signal } from "./commonswarm";
 export type SignalFilter = "all" | "broadcast" | "direct-to-you";
 
 type AddressedSignal = Pick<Signal, "to" | "toAgent">;
-type AgentOwner = { ownerUserId: string };
 
 /** Keep broadcast classification in one executable rule shared by counts and filters. */
 export const signalIsBroadcast = (signal: AddressedSignal): boolean =>
@@ -24,12 +23,15 @@ export const signalCounts = (signals: readonly AddressedSignal[]) => {
   return { broadcastCount, directCount: signals.length - broadcastCount };
 };
 
+/* ~~`agentById: ReadonlyMap<string, AgentOwner>`~~ Dead 2026-09-01: the fourth
+ * parameter fed the operated-agent clause retired above and was never read after
+ * it. A signature that still took it told the next reader the filter consults
+ * agent ownership. It does not; the parameter and its type are gone. */
 /** Apply the visible feed filters to signals already loaded in the browser. */
 export const filterSignals = <T extends AddressedSignal>(
   signals: readonly T[],
   filter: SignalFilter,
   viewerId: string,
-  agentById: ReadonlyMap<string, AgentOwner>,
 ): T[] => signals.filter((signal) => {
   if (filter === "broadcast") return signalIsBroadcast(signal);
   if (filter === "direct-to-you") {

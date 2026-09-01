@@ -238,7 +238,15 @@ test("loaded-signal filters and counts classify person, agent, and broadcast tar
     assert.match(dashboard, new RegExp(`data-feed-filter="${filter}"`));
   }
   assert.match(dashboard, /let signalFilter: SignalFilter = "all";/);
-  assert.match(dashboard, /filterSignals\(signals, signalFilter, viewerId, agentById\)/);
+  /* ~~filterSignals(signals, signalFilter, viewerId, agentById)~~ Dead 2026-09-01: the
+   * fourth argument was dead plumbing from the retired operated-agent clause, and this pin
+   * held it in place. The filter is person-only and takes no agent-ownership map. */
+  assert.match(dashboard, /filterSignals\(signals, signalFilter, viewerId\)/);
+  assert.doesNotMatch(
+    dashboard,
+    /filterSignals\([^)]*agentById/,
+    "the feed filter must not be handed an agent-ownership map it does not read",
+  );
   assert.match(
     dashboard,
     /for \(const button of all<HTMLButtonElement>\("\[data-feed-filter\]"\)\)[\s\S]*?signalFilter = next;[\s\S]*?renderFeed\(\);/,
@@ -262,25 +270,24 @@ test("loaded-signal filters and counts classify person, agent, and broadcast tar
     makeSignal("agent-direct", null, "viewer-agent"),
     makeSignal("other-direct", null, "other-agent"),
   ];
-  const agentById = new Map([
-    ["viewer-agent", { ownerUserId: "viewer" }],
-    ["other-agent", { ownerUserId: "other" }],
-  ]);
 
   assert.deepEqual(
-    filterSignals(signals, "all", "viewer", agentById).map((signal) => signal.id),
+    filterSignals(signals, "all", "viewer").map((signal) => signal.id),
     signals.map((signal) => signal.id),
   );
   assert.deepEqual(
-    filterSignals(signals, "broadcast", "viewer", agentById).map((signal) => signal.id),
+    filterSignals(signals, "broadcast", "viewer").map((signal) => signal.id),
     ["broadcast"],
   );
   /* ~~["person-direct", "agent-direct"]~~ Dead 2026-09-01, operator report: in a
    * solo-owner workspace the operated-agent clause made this filter show ALL
    * directed traffic. Direct to you = to the person, and a message to an agent
-   * the viewer OPERATES must be excluded — that exclusion IS the fix. */
+   * the viewer OPERATES must be excluded — that exclusion IS the fix. The
+   * ownership map fixture that used to sit here is gone with the parameter: the
+   * filter cannot consult who operates "viewer-agent", so its exclusion below
+   * cannot depend on it. */
   assert.deepEqual(
-    filterSignals(signals, "direct-to-you", "viewer", agentById).map((signal) => signal.id),
+    filterSignals(signals, "direct-to-you", "viewer").map((signal) => signal.id),
     ["person-direct"],
   );
   assert.deepEqual(signalCounts(signals), { broadcastCount: 1, directCount: 3 });
