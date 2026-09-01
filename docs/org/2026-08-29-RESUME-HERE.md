@@ -487,3 +487,29 @@ listener → `cswarm receipt` on broadcast a945274b.
   monitor asserting a VERDICT line is PRESENT.
 - L26 (hook scope + CLAUDE_CONFIG_DIR, Codex) still running. Release runbook drafted at the
   session scratchpad `release-v044.sh` (gitignored; steps are the apply order above).
+
+### 2026-09-01 ~17:40 — both arms PASS on 3295f57; releasing v0.1.44
+
+- `2689c6d` merged `lane/l26-hook-scope` (Codex, `21c667f`): hook install defaults to
+  `<project>/.claude/settings.local.json` (must be git-ignored), `--user` honours `CLAUDE_CONFIG_DIR`
+  and warns. The lane's own report never landed (its process ended while it ran its own arms);
+  `docs/evidence/2026-09-01-v044/l26-hook-scope-lane-note.md` stands in.
+- **Arms on `3295f57` (Codex-authored lanes → Grok exact + Gemini inversion): both PASS**, both
+  with observed mutations for the body-stall, budget, and two-principal controls, Grok also with a
+  real `db reset` + RPC + old-parser run. Evidence: `grok-exact-3295f57-PASS.md`,
+  `gemini-inversion-3295f57-PASS.md`. Grok's two **P3s, deliberately shipped as-is and queued**:
+  (a) read-timeout copy says "before a response"/"could not reach" even when headers arrived and the
+  BODY stalled, and the `noResponse` JSDoc says no HTTP response arrived — the retry classification
+  is right, the words are not; (b) the `--user` warning says "EVERY Claude Code session for this OS
+  user", which overclaims when `CLAUDE_CONFIG_DIR` points elsewhere. Fix both in the next client
+  lane (L29) — copy-only, but a SHA change re-runs both arms, so not folded into this release.
+- Not established by the arms: production apply (done in the release steps below); Claude Code
+  runtime load of `settings.local.json`; two agents in ONE project (last `--write` wins — one hook
+  per project by design); tilde expansion of `CLAUDE_CONFIG_DIR`.
+- **Hazard, measured:** Grok review arms spawned from the Lead's pane ran `swarm join Rivet` in the
+  local `cloud-swarm` swarm; they inherit `CMUX_SURFACE_ID`, so the pane's bare `swarm` identity
+  flipped to Rivet. Cleaned up with `swarm --swarm cloud-swarm leave` + `swarm use prompteden`.
+  Same family as CodexDesktop-as-Quill. Always pass `--swarm`; review arms should be told not to join.
+- Swarm CLI: `aeb3472` (L28: dead-PID legacy rows adopt to the live pane occupant) passed Grok +
+  Gemini; Grok P3: adoption UPDATE is autocommit, a same-pane race can exit `database is locked`
+  (fails closed; retry works). Deployed to `dist/` from the committed tree and announced.
