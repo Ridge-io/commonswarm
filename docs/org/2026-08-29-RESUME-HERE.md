@@ -692,3 +692,9 @@ watchdog, so a reboot may have happened. Then:
   Resolution is operational: Tom revokes token 24127894 and re-mints per seat, after which any session
   still posting as Wren is the stale copy. Product: L34 (stamp signals with the minting run/device
   binding, show it in inbox) would have made this decidable from the inbox alone.
+- **18:40 — merged toward v0.1.45:** `c0707a7` L29 (copy claims; gates green on the merged tree) and
+  L22 (`cswarm resume`, notify EPIPE → `notify_stdout_closed` exit 74; gates green in its worktree,
+  build + check:tests green after the merge; the socket-heavy suites run once after L23 merges — every
+  full gate run costs ~1–3k ephemeral ports on this wedged host). Lane reports in
+  `docs/evidence/2026-09-01-v044/`. L23 still running; L30/L31 launch on headroom; L32/L34/L35 specced.
+  Release 0.1.45 after L23 + Grok/Gemini arms on the merged SHA — if the mini has not rebooted first.
