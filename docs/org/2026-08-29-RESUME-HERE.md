@@ -513,3 +513,34 @@ listener → `cswarm receipt` on broadcast a945274b.
 - Swarm CLI: `aeb3472` (L28: dead-PID legacy rows adopt to the live pane occupant) passed Grok +
   Gemini; Grok P3: adoption UPDATE is autocommit, a same-pane race can exit `database is locked`
   (fails closed; retry works). Deployed to `dist/` from the committed tree and announced.
+
+### 2026-09-01 17:50 — v0.1.44 is LIVE
+
+Every step measured, in the apply order:
+1. **Production migration applied**: `supabase db push --linked` applied `20260902000001`; verified with
+   `supabase migration list --linked` — remote column filled for `20260902000001` (control `20260901000020`).
+2. **`read` edge deployed** to `ukezjcnxjvkpkeezxaew` after `build:command-core` + `check:edge` (exit 0).
+3. Release commit `6ca8980` (`release: v0.1.44`), gates on it: build 0; npm test 680/680; test:p1-cli 381/381;
+   check:tests 0; site build 8 pages; site test 234/0.
+4. **GitHub release v0.1.44**: assets `cswarm` (1676631 B) + `cswarm.sha256`, marked Latest; sha256 of the
+   asset equals the local bundle (`ea19d3ec…c94c77`). `main` pushed to `Ridge-io/commonswarm` (was 12 ahead)
+   and the tag re-pointed from `ab6e34d` (remote HEAD at create time — `gh release create` tags the REMOTE
+   default branch, not your local HEAD) to `6ca8980`.
+5. **npm `commonswarm@0.1.44`** published; `npm view` returns 0.1.44; the package bin prints the version.
+6. **Site deployed** (`rm -rf dist`, `cp -r .vercel`, `vercel deploy --prod`): `/download` mentions 0.1.44 ×3
+   and 0.1.43 ×0; `/install.sh` 200 with `/nope.sh` 404 as control; `/start` meta names api.commonswarm.com;
+   no service_role JWT; the `LiveDashboard` chunk contains the roster and brain code (count 1 each).
+7. **Installed** via `curl … install.sh | sh` → `cswarm 0.1.44`. Listener restarted on the new binary.
+   **Live probe with the NEW client**: `cswarm receipt ebb2b957…` on a broadcast renders the roster
+   ("Seen by 0 of 1 workspace members … Agents — not tracked: 10"). **Live probe with the OLD 0.1.43 client
+   against the NEW server was NOT established** — the one attempt picked a signal this agent did not author
+   (author-only rule → the expected refusal), and the client was upgraded before a second attempt.
+   The compat property rests on the committed gates (fixture + real Postgres) and Grok's C5 run.
+
+**Trap learned:** running the raw release bundle from inside this repo fails with `module is not defined
+in ES module scope` because the repo's `package.json` has `"type": "module"` and the bundle is extensionless
+CJS. Run it from a directory with no `package.json` above it (or install it), which is what users do.
+
+**Queued next (Codex lanes):** L29 — the two P3 wording fixes from Grok's review; L22 — `cswarm resume`
++ notify orphan detection; L23 — connected ≠ attended (`listen status` warns on `pendingForMainCount`,
+`main`/`split` refuse without a hook surface, `listen canary`).
