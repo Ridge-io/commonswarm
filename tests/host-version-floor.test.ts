@@ -370,9 +370,9 @@ test("Claude canary failure shapes keep the bridge response and choose only meas
     authFailure,
   );
   assert.match(authMessage, /\[claude_canary_auth_failed\]/);
-  assert.match(authMessage, /as the operator, run claude interactively/i);
-  assert.match(authMessage, /or run claude login/i);
-  assert.match(authMessage, /refresh the host's shared Claude Code OAuth session/i);
+  assert.doesNotMatch(authMessage, /\bclaude login\b/i);
+  assert.match(authMessage, /as the operator, sign in with claude auth login on this host/i);
+  assert.match(authMessage, /or start claude interactively and complete the prompt/i);
   assert.match(authMessage, /then run cswarm listen start again/i);
   assert.match(authMessage, /Every Claude-provider listener on this host shares that session/i);
   assert.doesNotMatch(authMessage, /network/i);

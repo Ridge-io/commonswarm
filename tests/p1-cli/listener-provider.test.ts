@@ -178,10 +178,11 @@ test("Claude startup failures give install and bounded diagnostic remedies", () 
     "Internal error: Failed to authenticate: OAuth session expired and could not be refreshed (failed 2 attempts)",
     "claude_canary_auth_failed",
   );
-  assert.match(canary, /run claude interactively/i);
-  assert.match(canary, /claude login/i);
+  assert.match(canary, /sign in with claude auth login on this host/i);
+  assert.match(canary, /start claude interactively and complete the prompt/i);
   assert.match(canary, /cswarm listen start again/i);
   assert.match(canary, /Every Claude-provider listener on this host shares that session/i);
+  assert.doesNotMatch(canary, /\bclaude login\b/i);
   assert.doesNotMatch(canary, /network/i);
   assert.match(canary, /permission canary ran/i);
   assert.match(canary, /no workspace signal prompt was delivered/i);

@@ -790,7 +790,7 @@ swarm doctor — setup checks
    (spawn works headless meanwhile; run from a cmux workspace for visible tabs)
 ```
 
-Exit codes: `0` all-green, `1` blocking red, `2` warnings only. **Exact failure→fix mappings (§1.f has the full table):** Node missing/old → print the nvm/fnm/brew command for the detected platform; `npm EACCES` → print the npm-prefix fix, never suggest `sudo`; no agent CLI → name all four install paths; agent CLI present but unauthenticated → name its login command (`claude login`, etc.).
+Exit codes: `0` all-green, `1` blocking red, `2` warnings only. **Exact failure→fix mappings (§1.f has the full table):** Node missing/old → print the nvm/fnm/brew command for the detected platform; `npm EACCES` → print the npm-prefix fix, never suggest `sudo`; no agent CLI → name all four install paths; agent CLI present but unauthenticated → name its login command (`claude auth login`, etc.).
 
 ### 1.c Connect your agents — the crux
 
@@ -892,7 +892,7 @@ Every blocking message follows the CLI's established refusal voice: state the fa
 | Node <22 or missing | `✗ swarm requires Node ≥22 (found v20.11.0). Fix: nvm install 22 && nvm use 22 (or: brew install node@22)` | run printed command |
 | `npm EACCES` on global install | `✗ npm cannot write to /usr/local. Fix your prefix: npm config set prefix ~/.npm-global (then add it to PATH). Do not use sudo.` | printed commands |
 | No agent CLI | `✗ no agent CLI found on PATH. Install one: brew install claude · npm i -g @openai/codex … then authenticate it with your own subscription.` | install + auth |
-| Agent CLI unauthenticated | `✗ claude is installed but not logged in. Run: claude login (your subscription stays on this machine; Swarm never sees it).` | printed command |
+| Agent CLI unauthenticated | `✗ claude is installed but not logged in. Run: claude auth login (your subscription stays on this machine; Swarm never sees it).` | printed command |
 | Invite expired | `This invite expired (invites last 7 days). Request a new one — we'll notify Priya.` [button] | one-click re-request |
 | Invite already consumed | `This invite was already used (each link works once). If that was you, run: swarm login. If not, request a new invite.` | login or re-request |
 | Repo access not provisioned | `⏳ You joined "prompteden" but don't have GitHub access to prompteden/app yet. We nudged the owner 2m ago. Run swarm doctor --watch to continue automatically when it lands.` | wait with `--watch`; not an error |
