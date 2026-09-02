@@ -344,6 +344,8 @@ export async function runArrivalWatch(options: {
   store: ArrivalCursorStore;
   readPage(request: ArrivalWatchPageRequest): Promise<AgentSignalPage>;
   emit(signal: SignalRecord): Promise<void>;
+  /** Runs after one page's lines were emitted, with only those lines. */
+  afterEmitBatch?: (signals: readonly SignalRecord[]) => Promise<void> | void;
   onRetry?: (error: Error, delayMs: number) => void;
   onRecovery?: () => void;
   sleep?: (ms: number) => Promise<void>;
@@ -389,7 +391,10 @@ export async function runArrivalWatch(options: {
       assertCursorPage(page);
       if (page.signals.some((row) =>
         row.workspace_id !== options.workspaceId ||
-        row.to_agent !== options.principalId
+        !(
+          row.to_agent === options.principalId ||
+          (row.to === null && row.to_agent === null)
+        )
       )) {
         throw new Error(
           "arrival read returned a message directed to another workspace or agent",
@@ -410,11 +415,16 @@ export async function runArrivalWatch(options: {
         continue;
       }
 
+      const emittedSignals: SignalRecord[] = [];
       for (const row of page.signals) {
         if (cancelled()) break;
         await options.emit(row);
+        emittedSignals.push(row);
         cursor = cursorOf(row);
         await options.store.write(cursor);
+      }
+      if (emittedSignals.length > 0) {
+        await options.afterEmitBatch?.(emittedSignals);
       }
       if (cancelled()) break;
 

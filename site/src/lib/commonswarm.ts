@@ -1674,10 +1674,10 @@ export function browserDeliveryIndicator(
           glyph: "◎",
           label: isNote
             ? `Observed by ${agentName} · notes do not wake an agent`
-            : "Delivered, agent working",
+            : "Seen, no answer",
           detail: isNote
             ? `${agentName} saw the note. A note does not start a model turn.`
-            : "The listener reported that the agent saw the ask. No answer has been posted yet.",
+            : "The agent's listener saw the ask and its turn ended without posting a reply.",
           terminal: true,
         };
       }
@@ -1762,7 +1762,7 @@ export function browserDeliveryIndicator(
     replied: "replied",
     observed: context.signalKind === "note"
       ? "notes observed; notes do not wake agents"
-      : "asks delivered; agents working",
+      : "asks seen with no answers",
     expired: "expired",
     failed_terminal: "failed",
   };

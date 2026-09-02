@@ -3779,6 +3779,7 @@ async function runInboxNotifyCommand(args: Arguments): Promise<void> {
   process.on("SIGTERM", stop);
   try {
     const retryNotices = createArrivalRetryNoticePolicy();
+    let renderedBearer = selected.bearer;
     const cursorStore = fileArrivalCursorStore({
       target: cloud,
       workspaceId: selected.selectedWorkspace,
@@ -3793,6 +3794,7 @@ async function runInboxNotifyCommand(args: Arguments): Promise<void> {
         const token = selected.session
           ? await selected.session.bearer()
           : selected.bearer;
+        renderedBearer = token;
         return await readAgentSignalPage(
           cloud,
           { kind: "agent", token },
@@ -3821,6 +3823,15 @@ async function runInboxNotifyCommand(args: Arguments): Promise<void> {
           args.has("json")
             ? JSON.stringify(notification)
             : formatArrivalNotification(notification),
+        );
+      },
+      afterEmitBatch: async (signals) => {
+        await reportRenderedBroadcasts(
+          cloud,
+          renderedBearer,
+          selected.selectedWorkspace,
+          renderedBroadcastIds(signals),
+          httpClient.fetch,
         );
       },
       onRetry: (_error, delayMs) => {
@@ -3942,6 +3953,7 @@ async function runInboxFollowCommand(args: Arguments): Promise<void> {
   const httpClient = new ListenerHttpClient();
   let legacyCursorWarned = false;
   let malformedRowWarnings = 0;
+  let renderedBearer = selected.kind === "agent" ? selected.bearer : null;
   const onAbortSignal = () => controller.abort();
   process.on("SIGINT", onAbortSignal);
   process.on("SIGTERM", onAbortSignal);
@@ -3971,6 +3983,7 @@ async function runInboxFollowCommand(args: Arguments): Promise<void> {
         const credential: SignalCredential = selected.session
           ? { kind: "agent", token: await selected.session.bearer() }
           : signalCredentialOf(selected);
+        if (credential.kind === "agent") renderedBearer = credential.token;
         const query = {
           ...queryBase,
           limit,
@@ -4018,6 +4031,16 @@ async function runInboxFollowCommand(args: Arguments): Promise<void> {
       },
       emit: (frame) => {
         process.stdout.write(`${formatFollowFrame(frame)}\n`);
+      },
+      afterEmitBatch: async (signals) => {
+        if (renderedBearer === null) return;
+        await reportRenderedBroadcasts(
+          cloud,
+          renderedBearer,
+          selected.selectedWorkspace,
+          renderedBroadcastIds(signals),
+          httpClient.fetch,
+        );
       },
     });
     if (stop.reason === "cancelled") {

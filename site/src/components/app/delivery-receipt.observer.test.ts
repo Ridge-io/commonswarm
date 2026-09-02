@@ -136,7 +136,7 @@ test("receipt label matrix distinguishes ask handling from note observation", ()
   assert.deepEqual(ask.map(({ label }) => label), [
     "Queued for the agent's session",
     "Answered 10 minutes ago",
-    "Delivered, agent working",
+    "Seen, no answer",
     "Expired",
     "Failed",
   ]);
@@ -147,6 +147,22 @@ test("receipt label matrix distinguishes ask handling from note observation", ()
     "Expired",
     "Failed",
   ]);
+  assert.deepEqual(ask.map(({ detail }) => detail), [
+    "Queued for the agent's interactive session; waiting for the recipient's session hook (4 in queue).",
+    "The agent completed this delivery with a reply.",
+    "The agent's listener saw the ask and its turn ended without posting a reply.",
+    "The delivery expired before the agent completed it.",
+    "Delivery stopped after its attempts were exhausted.",
+  ]);
+  assert.deepEqual(note.map(({ detail }) => detail), [
+    "Routed to CodexDesktop's interactive session but not yet shown (4 in queue). A note does not wake the agent.",
+    "The agent completed this delivery with a reply.",
+    "CodexDesktop saw the note. A note does not start a model turn.",
+    "The delivery expired before the agent completed it.",
+    "Delivery stopped after its attempts were exhausted.",
+  ]);
+  assert.deepEqual(ask.map(({ terminal }) => terminal), [false, true, true, true, true]);
+  assert.deepEqual(note.map(({ terminal }) => terminal), [false, true, true, true, true]);
   assert.equal(new Set(ask.map(({ label, detail }) => `${label}:${detail}`)).size, 5);
   assert.equal(new Set(note.map(({ label, detail }) => `${label}:${detail}`)).size, 5);
   assert.match(
@@ -156,9 +172,31 @@ test("receipt label matrix distinguishes ask handling from note observation", ()
   assert.doesNotMatch(ask[0]!.detail, /next prompt/);
   assert.equal(ask[0]!.terminal, false);
   assert.match(note[0]!.detail, /not yet shown \(4 in queue\).*does not wake the agent/);
-  assert.doesNotMatch(`${ask[2]!.label} ${ask[2]!.detail}`, /\bobserved\b/i);
+  assert.doesNotMatch(`${ask[2]!.label} ${ask[2]!.detail}`, /working|in progress/i);
   assert.match(note[2]!.detail, /saw the note/);
   assert.doesNotMatch(note[2]!.detail, /acknowledged|read/i);
+
+  const multipleObserved = (signalKind: "ask" | "note") =>
+    browserDeliveryIndicator(addressed(
+      receipt({
+        recipientAgentPrincipalId: "agent-1",
+        ackedAt: "2026-08-28T14:50:00.000Z",
+        ackOutcome: "observed",
+      }),
+      receipt({
+        recipientAgentPrincipalId: "agent-2",
+        ackedAt: "2026-08-28T14:51:00.000Z",
+        ackOutcome: "observed",
+      }),
+    ), NOW, { signalKind });
+  assert.equal(
+    multipleObserved("ask").detail,
+    "2 asks seen with no answers. Delivery is tracked for each recipient.",
+  );
+  assert.equal(
+    multipleObserved("note").detail,
+    "2 notes observed; notes do not wake agents. Delivery is tracked for each recipient.",
+  );
 });
 
 test("broadcast uses addressed=false and can never look pending or failed", () => {
