@@ -13511,6 +13511,7 @@ __export(cli_exports, {
   listenerFailureMessage: () => listenerFailureMessage,
   listenerHostLimits: () => listenerHostLimits,
   listenerPermissionMode: () => listenerPermissionMode,
+  listenerProviderInstallEvidence: () => listenerProviderInstallEvidence,
   listenerRouteConfiguration: () => listenerRouteConfiguration,
   listenerStatusJson: () => listenerStatusJson,
   renderListenerStatus: () => renderListenerStatus,
@@ -13521,7 +13522,7 @@ __export(cli_exports, {
   resolveTurnBudgetOrDefer: () => resolveTurnBudgetOrDefer
 });
 module.exports = __toCommonJS(cli_exports);
-var import_node_crypto20 = require("node:crypto");
+var import_node_crypto21 = require("node:crypto");
 var import_node_child_process9 = require("node:child_process");
 var import_node_fs7 = require("node:fs");
 var import_promises12 = require("node:fs/promises");
@@ -23848,8 +23849,7 @@ function parseStoredCurrentTarget(raw) {
     throw new Error("stored current target is malformed");
   }
   const record = value;
-  const keys = Object.keys(record).sort();
-  if (keys.length !== 3 || keys[0] !== "anonKey" || keys[1] !== "url" || keys[2] !== "version" || record.version !== 1 || typeof record.url !== "string" || typeof record.anonKey !== "string") {
+  if (record.version !== 1 || typeof record.url !== "string" || typeof record.anonKey !== "string") {
     throw new Error("stored current target is malformed");
   }
   try {
@@ -28750,9 +28750,18 @@ var SIGNAL_BODY_DISPLAY_MAX = 8e3;
 var SIGNAL_ABOUT_DISPLAY_MAX = 500;
 var SIGNAL_READ_TIMEOUT_MS = 3e4;
 var SignalReadTimeoutError = class extends Error {
-  constructor(message = "signal read timed out") {
+  constructor(message = "signal read timed out", phase = "response") {
     super(message);
+    this.phase = phase;
     this.name = "SignalReadTimeoutError";
+  }
+  phase;
+};
+var SignalHostPortsExhaustedError = class extends Error {
+  code = "EADDRNOTAVAIL";
+  constructor() {
+    super("the host could not allocate an outbound source port");
+    this.name = "SignalHostPortsExhaustedError";
   }
 };
 var SIGNAL_WAIT_MIN_SECONDS = 1;
@@ -28792,9 +28801,17 @@ var plainHttpRetryAfterMs = /* @__PURE__ */ new WeakMap();
 var plainHttpStatus = /* @__PURE__ */ new WeakMap();
 var plainHttpEnvelope = /* @__PURE__ */ new WeakMap();
 var plainTransportErrors = /* @__PURE__ */ new WeakSet();
-function plainTransportError() {
+var plainTransportFailureCodes = /* @__PURE__ */ new WeakMap();
+var plainMalformedErrors = /* @__PURE__ */ new WeakSet();
+function plainTransportError(failureCode2 = "no_response") {
   const error = new Error("signal read could not reach the cloud service");
   plainTransportErrors.add(error);
+  plainTransportFailureCodes.set(error, failureCode2);
+  return error;
+}
+function plainMalformedError(message) {
+  const error = new Error(message);
+  plainMalformedErrors.add(error);
   return error;
 }
 function checkedUuid2(value, field) {
@@ -28999,7 +29016,62 @@ function followErrorEnvelope(error) {
   return EMPTY_SERVER_ERROR_ENVELOPE;
 }
 function isTransportFollowMessage(error) {
-  return error instanceof SignalTransportError || error instanceof Error && plainTransportErrors.has(error);
+  return error instanceof SignalTransportError || error instanceof SignalHostPortsExhaustedError || error instanceof Error && plainTransportErrors.has(error);
+}
+function safeConstructorName(error) {
+  if (error === null || typeof error !== "object") return typeof error;
+  const name = error.constructor?.name;
+  if (typeof name !== "string" || name.length === 0) return "Unknown";
+  return name.replace(/[^A-Za-z0-9_$-]+/g, "_").slice(0, 96) || "Unknown";
+}
+function classifySignalReadFailure(error) {
+  if (error instanceof SignalHostPortsExhaustedError || error !== null && typeof error === "object" && error.code === "EADDRNOTAVAIL") {
+    return {
+      code: "host_ports_exhausted",
+      httpStatus: null,
+      errorConstructor: null
+    };
+  }
+  const http = followHttpDetails(error);
+  if (http !== null) {
+    return {
+      code: "http_status",
+      httpStatus: http.status,
+      errorConstructor: null
+    };
+  }
+  if (error instanceof SignalReadTimeoutError) {
+    return {
+      code: error.phase === "body" ? "body_timeout" : "no_response",
+      httpStatus: null,
+      errorConstructor: null
+    };
+  }
+  if (error instanceof Error && plainTransportErrors.has(error)) {
+    return {
+      code: plainTransportFailureCodes.get(error) ?? "no_response",
+      httpStatus: null,
+      errorConstructor: null
+    };
+  }
+  if (error instanceof SignalTransportError) {
+    return { code: "no_response", httpStatus: null, errorConstructor: null };
+  }
+  if (error instanceof SignalMalformedError || error instanceof Error && plainMalformedErrors.has(error)) {
+    return {
+      code: "malformed_response",
+      httpStatus: null,
+      errorConstructor: null
+    };
+  }
+  if (error instanceof Error && error.name === "AbortError") {
+    return { code: "aborted", httpStatus: null, errorConstructor: null };
+  }
+  return {
+    code: "unclassified",
+    httpStatus: null,
+    errorConstructor: safeConstructorName(error)
+  };
 }
 function isRestartableReadError(error) {
   if (error instanceof SignalReadTimeoutError) return true;
@@ -29051,6 +29123,7 @@ async function fetchSignalRead(fetcher, input, init, timeoutMs = SIGNAL_READ_TIM
   }
   const deadlineController = new AbortController();
   let timedOut = false;
+  let responseReceived = false;
   const signal = init.signal ? AbortSignal.any([init.signal, deadlineController.signal]) : deadlineController.signal;
   let onAbort = () => {
   };
@@ -29078,22 +29151,31 @@ async function fetchSignalRead(fetcher, input, init, timeoutMs = SIGNAL_READ_TIM
           signal
         });
       } catch (error) {
-        if (signal.aborted || timedOut || error?.name === "AbortError") {
+        if (signal.aborted || timedOut) {
           return "timeout";
+        }
+        if (error instanceof Error && error.name === "AbortError") throw error;
+        if (error !== null && typeof error === "object" && error.code === "EADDRNOTAVAIL") {
+          throw new SignalHostPortsExhaustedError();
         }
         return null;
       }
+      responseReceived = true;
       if (signal.aborted || timedOut) return "timeout";
       try {
         return { response, body: await response.json() };
-      } catch {
+      } catch (error) {
         if (signal.aborted || timedOut) return "timeout";
+        if (error instanceof Error && error.name === "AbortError") throw error;
         return { response, body: null };
       }
     })();
     const raced = await Promise.race([read, aborted]);
     if (raced === "timeout") {
-      throw new SignalReadTimeoutError();
+      throw new SignalReadTimeoutError(
+        "signal read timed out",
+        responseReceived ? "body" : "response"
+      );
     }
     return raced;
   } finally {
@@ -29122,7 +29204,9 @@ async function fetchSignalReadRetrying(fetcher, input, init, timeoutMs = SIGNAL_
 function mapReadFailure(error, waitBound) {
   if (error instanceof SignalReadTimeoutError) {
     if (waitBound) throw error;
-    throw plainTransportError();
+    throw plainTransportError(
+      error.phase === "body" ? "body_timeout" : "no_response"
+    );
   }
   throw error;
 }
@@ -29178,7 +29262,7 @@ async function humanSignals(target2, credential, query, options) {
     throwSignalHttp(response, body);
   }
   if (!Array.isArray(body)) {
-    throw new Error("signal read returned malformed JSON");
+    throw plainMalformedError("signal read returned malformed JSON");
   }
   const parsed = body.map((value) => parseSignalRecord(value));
   return sortSignals(rowsAfterCursor(parsed, query.after), ascending);
@@ -29246,7 +29330,7 @@ async function agentSignalPage(target2, credential, query, options, allowLegacyC
   const { response, body } = result;
   if (!response.ok) throwSignalHttp(response, body);
   if (!body || typeof body !== "object" || Array.isArray(body) || !Array.isArray(body.signals)) {
-    throw new Error("signal read returned malformed JSON");
+    throw plainMalformedError("signal read returned malformed JSON");
   }
   const capabilities = signalReadCapabilities(
     body.capabilities
@@ -29736,6 +29820,7 @@ function resolveRefusalToleranceMs(raw, warn = () => {
 }
 function isRetryableFollowError(error) {
   if (serverRefusedRetry(followErrorEnvelope(error))) return false;
+  if (error instanceof SignalHostPortsExhaustedError) return true;
   if (error instanceof SignalReadTimeoutError) return true;
   if (isTransportFollowMessage(error)) return true;
   const http = followHttpDetails(error);
@@ -30026,9 +30111,8 @@ function parseCursor(raw, workspaceId2, principalId) {
     throw new Error("stored arrival cursor is malformed");
   }
   const row = value;
-  const keys = Object.keys(row).sort();
   const cursor = row.cursor;
-  if (keys.join(",") !== "cursor,principal_id,version,workspace_id" || row.version !== 1 || row.workspace_id !== workspaceId2.toLowerCase() || row.principal_id !== principalId.toLowerCase() || !(cursor === null || typeof cursor === "object" && !Array.isArray(cursor) && Object.keys(cursor).sort().join(",") === "created_at,id" && typeof cursor.created_at === "string" && Number.isFinite(Date.parse(cursor.created_at)) && typeof cursor.id === "string" && UUID_RE10.test(cursor.id))) {
+  if (row.version !== 1 || row.workspace_id !== workspaceId2.toLowerCase() || row.principal_id !== principalId.toLowerCase() || !(cursor === null || typeof cursor === "object" && !Array.isArray(cursor) && typeof cursor.created_at === "string" && Number.isFinite(Date.parse(cursor.created_at)) && typeof cursor.id === "string" && UUID_RE10.test(cursor.id))) {
     throw new Error("stored arrival cursor is malformed");
   }
   if (cursor === null) return null;
@@ -30755,11 +30839,7 @@ function signalReceiptJsonPayload(report, nowMs = Date.now()) {
 var import_node_child_process3 = require("node:child_process");
 var import_node_crypto12 = require("node:crypto");
 
-// src/host/stderr-tail.ts
-var RING_CAPACITY_BYTES = 4096;
-var TAIL_MAX_CHARS = 2048;
-var STDERR_EXIT_GRACE_MS = 100;
-var STDERR_READABLE_END_GRACE_MS = STDERR_EXIT_GRACE_MS + 50;
+// src/host/credential-redaction.ts
 var EXOTIC_SEPARATORS = "\\u00a0\\u1680\\u2000-\\u200d\\u2028\\u2029\\u202a-\\u202e\\u2060\\u2066-\\u2069\\u202f\\u205f\\u3000\\ufeff";
 var SEPARATOR_CLASS_SOURCE = "\\t\\n\\x0b\\f\\r " + EXOTIC_SEPARATORS;
 var ANSI_ESCAPE_GLOBAL_RE2 = new RegExp("\\u001b\\[[0-?]*[ -\\/]*[@-~]", "g");
@@ -30771,8 +30851,17 @@ var CREDENTIAL_PREFIX_RE = new RegExp(
   `swm_(?:agt|inv|cap)_[^${SEPARATOR_CLASS_SOURCE}]*`,
   "gi"
 );
+function redactCredentialText(value) {
+  return value.replace(ANSI_ESCAPE_GLOBAL_RE2, "").replace(CONTROL_AND_SEPARATOR_STRIP_RE, "").replace(CREDENTIAL_PREFIX_RE, "[redacted-credential]");
+}
+
+// src/host/stderr-tail.ts
+var RING_CAPACITY_BYTES = 4096;
+var TAIL_MAX_CHARS = 2048;
+var STDERR_EXIT_GRACE_MS = 100;
+var STDERR_READABLE_END_GRACE_MS = STDERR_EXIT_GRACE_MS + 50;
 function sanitizeStderrTail(raw) {
-  return raw.replace(ANSI_ESCAPE_GLOBAL_RE2, "").replace(CONTROL_AND_SEPARATOR_STRIP_RE, "").replace(CREDENTIAL_PREFIX_RE, "[redacted-credential]").slice(-TAIL_MAX_CHARS).trim();
+  return redactCredentialText(raw).slice(-TAIL_MAX_CHARS).trim();
 }
 function attachStderrTailRing(stderr) {
   const chunks = [];
@@ -30984,7 +31073,7 @@ function permissionDecisionToResult(decision) {
 var SECRET_VALUE_RE = /(?:(?:api[_-]?key|token|secret|password|authorization|bearer)\s*[:=]\s*)(["']?)([^\s"'\\]{8,})\1/gi;
 var JWT_RE = /\beyJ[A-Za-z0-9_-]{10,}\.[A-Za-z0-9_-]{10,}\.[A-Za-z0-9_-]{10,}\b/g;
 function redactString(value) {
-  return value.replace(SECRET_VALUE_RE, (_m, q) => `redacted=${q}***${q}`).replace(JWT_RE, "[redacted-jwt]");
+  return redactCredentialText(value).replace(SECRET_VALUE_RE, (_m, q) => `redacted=${q}***${q}`).replace(JWT_RE, "[redacted-jwt]");
 }
 function redactUnknown(value, depth = 0) {
   if (depth > 6) return "[truncated]";
@@ -31100,12 +31189,14 @@ var AcpVersionBelowFloorError = class extends AcpVersionError {
   actual;
 };
 var AcpPermissionCanaryError = class extends AcpHostError {
-  constructor(message, reasonCode = null) {
+  constructor(message, reasonCode = null, minimumRequiredVersion = null) {
     super("permission_canary_failed", message);
     this.reasonCode = reasonCode;
+    this.minimumRequiredVersion = minimumRequiredVersion;
     this.name = "AcpPermissionCanaryError";
   }
   reasonCode;
+  minimumRequiredVersion;
 };
 var AcpPromptsBlockedError = class extends AcpHostError {
   constructor() {
@@ -32698,6 +32789,7 @@ async function openOpenCodeAcpSession(options) {
 
 // src/host/claude.ts
 var import_node_child_process4 = require("node:child_process");
+var import_node_module = require("node:module");
 var import_node_fs4 = require("node:fs");
 var import_node_path7 = require("node:path");
 var CHILD_EXIT_WAIT_MS2 = 3e3;
@@ -32808,6 +32900,51 @@ function parseClaudeVersionOutput(stdout) {
 function parseClaudeCodeVersionOutput(stdout) {
   return parseProviderVersionOutput(stdout, /\bClaude Code\b/i, false);
 }
+function semanticVersion(value) {
+  if (typeof value !== "string") return null;
+  return parseProviderVersionOutput(`${value}
+`, /\bnever-a-product-name\b/i);
+}
+function readPackageAtOrAbove(entrypoint, expectedName) {
+  let directory = (0, import_node_path7.dirname)(entrypoint);
+  for (let depth = 0; depth < 5; depth += 1) {
+    const path = (0, import_node_path7.join)(directory, "package.json");
+    try {
+      const row = JSON.parse((0, import_node_fs4.readFileSync)(path, "utf8"));
+      if (row && typeof row === "object" && !Array.isArray(row) && row.name === expectedName) {
+        return { path, row };
+      }
+    } catch {
+    }
+    const parent = (0, import_node_path7.dirname)(directory);
+    if (parent === directory) break;
+    directory = parent;
+  }
+  return null;
+}
+function measureClaudeBundleVersions(executable) {
+  const adapter = readPackageAtOrAbove(
+    executable,
+    "@agentclientprotocol/claude-agent-acp"
+  );
+  if (!adapter) return { agentSdkVersion: null, claudeCodeVersion: null };
+  try {
+    const sdkEntrypoint = (0, import_node_module.createRequire)(adapter.path).resolve(
+      "@anthropic-ai/claude-agent-sdk"
+    );
+    const sdk = readPackageAtOrAbove(
+      sdkEntrypoint,
+      "@anthropic-ai/claude-agent-sdk"
+    );
+    if (!sdk) return { agentSdkVersion: null, claudeCodeVersion: null };
+    return {
+      agentSdkVersion: semanticVersion(sdk.row.version),
+      claudeCodeVersion: semanticVersion(sdk.row.claudeCodeVersion)
+    };
+  } catch {
+    return { agentSdkVersion: null, claudeCodeVersion: null };
+  }
+}
 async function readClaudeVersionOutput(executable, options) {
   const timeoutMs = options?.timeoutMs ?? ACP_VERSION_CHECK_TIMEOUT_MS;
   const env = options?.env ?? sanitizeChildEnv(process.env);
@@ -32831,24 +32968,21 @@ async function readClaudeVersionOutput(executable, options) {
     );
   });
 }
-async function assertClaudeVersionFloor(executable, options) {
-  const minimumVersion = options?.minimumVersion ?? CLAUDE_ACP_MIN_VERSION;
-  const lastMeasuredVersion = options?.lastMeasuredVersion ?? CLAUDE_ACP_LAST_MEASURED_VERSION;
-  const stdout = await readClaudeVersionOutput(executable, options);
-  const version3 = parseClaudeVersionOutput(stdout);
-  if (!version3) {
-    throw new AcpVersionParseError(
-      `could not parse claude-agent-acp version from: ${stdout.trim().slice(0, 200)}`
-    );
-  }
-  assertProviderVersionFloor({
-    provider: "claude-agent-acp",
-    version: version3,
-    minimumVersion,
-    lastMeasuredVersion,
-    ...options?.onNewerVersion ? { onNewerVersion: options.onNewerVersion } : {}
-  });
-  return version3;
+async function inspectClaudeBridgeExecutable(executable = "claude-agent-acp", options) {
+  const resolved = resolveClaudeExecutable(
+    executable,
+    options?.pathEnv,
+    options?.platform
+  );
+  const output = await readClaudeVersionOutput(resolved, options);
+  const bundle = measureClaudeBundleVersions(resolved);
+  return {
+    executable: resolved,
+    providerVersion: parseClaudeVersionOutput(output),
+    lastMeasuredVersion: CLAUDE_ACP_LAST_MEASURED_VERSION,
+    bundledAgentSdkVersion: bundle.agentSdkVersion,
+    bundledClaudeCodeVersion: bundle.claudeCodeVersion
+  };
 }
 function buildClaudeAcpArgs() {
   return [];
@@ -32913,29 +33047,57 @@ async function openClaudeAcpSession(options) {
   let executable;
   let env = baseEnv;
   let claudeCodeExecutable;
+  let providerVersion;
+  let bundleVersions = {
+    agentSdkVersion: null,
+    claudeCodeVersion: null
+  };
+  const reportRuntime = (resolved, version3) => {
+    bundleVersions = measureClaudeBundleVersions(resolved);
+    options.onRuntimeNotice?.({
+      executable: resolved,
+      providerVersion: version3,
+      lastMeasuredVersion: CLAUDE_ACP_LAST_MEASURED_VERSION,
+      bundledAgentSdkVersion: bundleVersions.agentSdkVersion,
+      bundledClaudeCodeVersion: bundleVersions.claudeCodeVersion
+    });
+  };
+  const admitBridgeVersion = (resolved, version3) => {
+    providerVersion = version3;
+    reportRuntime(resolved, version3);
+    assertProviderVersionFloor({
+      provider: "claude-agent-acp",
+      version: version3,
+      minimumVersion: CLAUDE_ACP_MIN_VERSION,
+      lastMeasuredVersion: CLAUDE_ACP_LAST_MEASURED_VERSION,
+      ...options.onVersionNotice ? { onNewerVersion: options.onVersionNotice } : {}
+    });
+  };
   if (requestedExecutable) {
     const output = await readClaudeVersionOutput(requestedExecutable, {
       env: baseEnv
     });
     const bridgeVersion = parseClaudeVersionOutput(output);
     if (bridgeVersion) {
-      assertProviderVersionFloor({
-        provider: "claude-agent-acp",
-        version: bridgeVersion,
-        minimumVersion: CLAUDE_ACP_MIN_VERSION,
-        lastMeasuredVersion: CLAUDE_ACP_LAST_MEASURED_VERSION,
-        ...options.onVersionNotice ? { onNewerVersion: options.onVersionNotice } : {}
-      });
       executable = requestedExecutable;
+      admitBridgeVersion(executable, bridgeVersion);
     } else if (parseClaudeCodeVersionOutput(output)) {
       claudeCodeExecutable = requestedExecutable;
       executable = resolvePackagedClaudeBridge(resolvedPathEnv);
       env = buildClaudeChildEnv(parentEnv, claudeCodeExecutable);
-      await assertClaudeVersionFloor(executable, {
-        env,
-        ...options.onVersionNotice ? { onNewerVersion: options.onVersionNotice } : {}
+      const bridgeOutput = await readClaudeVersionOutput(executable, {
+        env
       });
+      const packagedVersion = parseClaudeVersionOutput(bridgeOutput);
+      if (!packagedVersion) {
+        reportRuntime(executable, null);
+        throw new AcpVersionParseError(
+          `could not parse claude-agent-acp version from: ${bridgeOutput.trim().slice(0, 200)}`
+        );
+      }
+      admitBridgeVersion(executable, packagedVersion);
     } else {
+      reportRuntime(requestedExecutable, null);
       throw new AcpVersionError(
         `could not identify Claude executable from: ${output.trim().slice(0, 200)}`
       );
@@ -32946,10 +33108,19 @@ async function openClaudeAcpSession(options) {
       resolvedPathEnv
     );
     if (!options.skipVersionCheck) {
-      await assertClaudeVersionFloor(executable, {
-        env: baseEnv,
-        ...options.onVersionNotice ? { onNewerVersion: options.onVersionNotice } : {}
+      const output = await readClaudeVersionOutput(executable, {
+        env: baseEnv
       });
+      const version3 = parseClaudeVersionOutput(output);
+      if (!version3) {
+        reportRuntime(executable, null);
+        throw new AcpVersionParseError(
+          `could not parse claude-agent-acp version from: ${output.trim().slice(0, 200)}`
+        );
+      }
+      admitBridgeVersion(executable, version3);
+    } else {
+      reportRuntime(executable, null);
     }
   }
   if (options.signal?.aborted) {
@@ -33041,7 +33212,17 @@ async function openClaudeAcpSession(options) {
       })();
       return closePromise;
     };
-    return { session, child, executable, args, env, close };
+    return {
+      session,
+      child,
+      executable,
+      args,
+      env,
+      ...providerVersion ? { providerVersion } : {},
+      ...bundleVersions.agentSdkVersion ? { bundledAgentSdkVersion: bundleVersions.agentSdkVersion } : {},
+      ...bundleVersions.claudeCodeVersion ? { bundledClaudeCodeVersion: bundleVersions.claudeCodeVersion } : {},
+      close
+    };
   } catch (error) {
     removeAbortListener();
     transport.close();
@@ -33893,6 +34074,18 @@ var V1_EFFECT_KEYS = /* @__PURE__ */ new Set([
   "updatedAt"
 ]);
 var V2_EFFECT_KEYS = /* @__PURE__ */ new Set([...V1_EFFECT_KEYS, "signalKind"]);
+var EFFECT_SENSITIVE_KEYS = /* @__PURE__ */ new Set([
+  "lease_id",
+  "leaseId",
+  "listenerBearer",
+  "bearer",
+  "token",
+  "prompt",
+  "ackCommandId",
+  "ack_command_id",
+  "claimCommandId",
+  "claim_command_id"
+]);
 function defaultListenerStateDirectory() {
   return process.env.XDG_STATE_HOME ? (0, import_node_path9.join)(process.env.XDG_STATE_HOME, "cswarm", "listeners") : (0, import_node_path9.join)((0, import_node_os6.homedir)(), ".cswarm", "listeners");
 }
@@ -33911,9 +34104,9 @@ function integer(value) {
 function nullableString2(value, max) {
   return value === null || typeof value === "string" && value.length <= max;
 }
-function rejectUnknownKeys(row, allowed) {
+function rejectSensitiveKeys(row) {
   for (const key2 of Object.keys(row)) {
-    if (!allowed.has(key2)) {
+    if (EFFECT_SENSITIVE_KEYS.has(key2)) {
       throw new Error("stored listener effect is malformed");
     }
   }
@@ -33929,17 +34122,16 @@ function parseListenerEffectRecord(raw, expectedId) {
     throw new Error("stored listener effect is malformed");
   }
   const row = value;
+  rejectSensitiveKeys(row);
   if (typeof row.version !== "number" || row.version !== 1 && row.version !== 2 || typeof row.signalId !== "string" || row.signalId.toLowerCase() !== expectedId || !UUID_RE13.test(row.signalId)) {
     throw new Error("stored listener effect is malformed");
   }
   if (row.version === 1) {
-    rejectUnknownKeys(row, V1_EFFECT_KEYS);
     if ("signalKind" in row || row.state === "observed" || row.state === "routed_main") {
       throw new Error("stored listener effect is malformed");
     }
     return upcastV1Ask(row);
   }
-  rejectUnknownKeys(row, V2_EFFECT_KEYS);
   return parseV2Record(row);
 }
 function upcastV1Ask(row) {
@@ -34392,6 +34584,7 @@ var GrokListenerModel = class {
       ...this.options.effort ? { effort: this.options.effort } : {},
       ...this.options.env ? { env: this.options.env } : {},
       ...this.options.onVersionNotice ? { onVersionNotice: this.options.onVersionNotice } : {},
+      ...this.options.events ? { events: this.options.events } : {},
       ...this.options.onWorkerStderrTail ? { onStderrTail: this.options.onWorkerStderrTail } : {},
       clientName: "cswarm-listener"
     });
@@ -34832,6 +35025,7 @@ var OpenCodeListenerModel = class {
         ...this.options.model ? { model: this.options.model } : {},
         ...this.options.env ? { env: this.options.env } : {},
         ...this.options.onVersionNotice ? { onVersionNotice: this.options.onVersionNotice } : {},
+        ...this.options.events ? { events: this.options.events } : {},
         ...this.options.allowMissingAuth === true ? { allowMissingAuth: true } : {},
         ...this.options.onWorkerStderrTail ? { onStderrTail: this.options.onWorkerStderrTail } : {},
         clientName: "cswarm-listener"
@@ -34935,6 +35129,35 @@ var import_node_crypto16 = require("node:crypto");
 var import_promises7 = require("node:fs/promises");
 var import_node_os8 = require("node:os");
 var import_node_path13 = require("node:path");
+var CLAUDE_CODE_VERSION_REQUIRED_RE = /\bClaude Code (\d+\.\d+\.\d+) does not support this model; version (\d+\.\d+\.\d+) or newer is required\b/;
+var CLAUDE_AUTH_FAILURE_RE = /\b(?:authentication failed|authentication required|not authenticated|OAuth (?:sign-in|login|token)|keychain\/OAuth|please (?:log|sign) in)\b/i;
+var CLAUDE_CANARY_TIMEOUT_RE = /^ACP request timed out: session\/prompt(?: \(failed \d+ attempts\))?$/;
+function classifyClaudeCanaryFailure(detail, typedReasonCode) {
+  const recorded = detail?.trim() ?? "";
+  const demanded = CLAUDE_CODE_VERSION_REQUIRED_RE.exec(recorded);
+  if (demanded?.[2]) {
+    return {
+      code: "claude_bridge_version_required",
+      minimumRequiredVersion: demanded[2]
+    };
+  }
+  if (typedReasonCode === "claude_canary_timeout" || typedReasonCode === "timeout" || (typedReasonCode === null || typedReasonCode === void 0) && CLAUDE_CANARY_TIMEOUT_RE.test(recorded)) {
+    return { code: "claude_canary_timeout", minimumRequiredVersion: null };
+  }
+  if (typedReasonCode === "claude_canary_auth_failed") {
+    return { code: "claude_canary_auth_failed", minimumRequiredVersion: null };
+  }
+  if (typedReasonCode === "claude_bridge_version_required") {
+    return {
+      code: "claude_bridge_version_required",
+      minimumRequiredVersion: demanded?.[2] ?? null
+    };
+  }
+  if ((typedReasonCode === "rpc_error" || typedReasonCode === null || typedReasonCode === void 0) && CLAUDE_AUTH_FAILURE_RE.test(recorded)) {
+    return { code: "claude_canary_auth_failed", minimumRequiredVersion: null };
+  }
+  return { code: "claude_canary_unknown", minimumRequiredVersion: null };
+}
 var ClaudeListenerClosedDuringOpen = class extends Error {
   constructor() {
     super("listener model closed while the Claude worker was opening");
@@ -35048,6 +35271,8 @@ var ClaudeListenerModel = class {
         ...this.options.executable ? { executable: this.options.executable } : {},
         ...this.options.env ? { env: this.options.env } : {},
         ...this.options.onVersionNotice ? { onVersionNotice: this.options.onVersionNotice } : {},
+        ...this.options.onRuntimeNotice ? { onRuntimeNotice: this.options.onRuntimeNotice } : {},
+        ...this.options.events ? { events: this.options.events } : {},
         signal: controller.signal,
         ...this.options.onWorkerStderrTail ? { onStderrTail: this.options.onWorkerStderrTail } : {},
         clientName: "cswarm-listener"
@@ -35076,6 +35301,7 @@ var ClaudeListenerModel = class {
       (0, import_node_os8.tmpdir)(),
       `cswarm-claude-permission-canary-${process.pid}-${(0, import_node_crypto16.randomUUID)()}`
     );
+    let canaryError;
     let sentinelCreated = false;
     try {
       await handle.session.enablePromptsAfterCanary({
@@ -35083,6 +35309,8 @@ var ClaudeListenerModel = class {
         probeText: `Create the file ${sentinelPath} using the Write tool with content CSWARM_CANARY_NOOP. You must use the Write tool. Do nothing else.`,
         ...this.options.onCanaryAttempt ? { onAttempt: this.options.onCanaryAttempt } : {}
       });
+    } catch (error) {
+      canaryError = error;
     } finally {
       try {
         await (0, import_promises7.lstat)(sentinelPath);
@@ -35094,9 +35322,22 @@ var ClaudeListenerModel = class {
     }
     if (sentinelCreated) {
       throw new AcpPermissionCanaryError(
-        "Claude bridge wrote the permission canary sentinel before denial"
+        "Claude bridge wrote the permission canary sentinel before denial",
+        "claude_canary_write_not_blocked"
       );
     }
+    if (canaryError instanceof AcpPermissionCanaryError) {
+      const shape = classifyClaudeCanaryFailure(
+        canaryError.message,
+        canaryError.reasonCode
+      );
+      throw new AcpPermissionCanaryError(
+        canaryError.message,
+        shape.code,
+        shape.minimumRequiredVersion
+      );
+    }
+    if (canaryError !== void 0) throw canaryError;
   }
 };
 
@@ -35222,6 +35463,7 @@ var CodexListenerModel = class {
         ...this.options.executable ? { executable: this.options.executable } : {},
         ...this.options.env ? { env: this.options.env } : {},
         ...this.options.onVersionNotice ? { onVersionNotice: this.options.onVersionNotice } : {},
+        ...this.options.events ? { events: this.options.events } : {},
         signal: controller.signal,
         ...this.options.onWorkerStderrTail ? { onStderrTail: this.options.onWorkerStderrTail } : {},
         clientName: "cswarm-listener"
@@ -35909,6 +36151,21 @@ var UUID_RE15 = /^[0-9a-f]{8}-[0-9a-f]{4}-[1-8][0-9a-f]{3}-[89ab][0-9a-f]{3}-[0-
 var MAX_QUEUE_BYTES = 1024 * 1024;
 var QUEUE_FILE = "pending-for-main.json";
 var QUEUE_LOCK = "pending-for-main";
+var QUEUE_KEYS = /* @__PURE__ */ new Set(["version", "entries", "droppedCount"]);
+var ENTRY_KEYS = /* @__PURE__ */ new Set([
+  "signalId",
+  "workspaceId",
+  "principalId",
+  "fromId",
+  "fromKind",
+  "kind",
+  "senderName",
+  "body",
+  "attachmentCount",
+  "createdAt",
+  "queuedAt",
+  "observationPending"
+]);
 var LISTENER_MAIN_QUEUE_MAX = 200;
 var LISTENER_DEFER_OVER_MIN = 1;
 var LISTENER_DEFER_OVER_MAX = 1e4;
@@ -35939,26 +36196,12 @@ function decideListenerRoute(route, threshold, bodyLength) {
 function checkedTimestamp2(value) {
   return typeof value === "string" && Number.isFinite(Date.parse(value));
 }
-function parseEntry(value) {
+function parseEntry(value, rejectUnknownKeys) {
   if (!value || typeof value !== "object" || Array.isArray(value)) {
     throw new Error("stored pending-for-main entry is malformed");
   }
   const row = value;
-  const allowed = /* @__PURE__ */ new Set([
-    "signalId",
-    "workspaceId",
-    "principalId",
-    "fromId",
-    "fromKind",
-    "kind",
-    "senderName",
-    "body",
-    "attachmentCount",
-    "createdAt",
-    "queuedAt",
-    "observationPending"
-  ]);
-  if (Object.keys(row).some((key2) => !allowed.has(key2))) {
+  if (rejectUnknownKeys && Object.keys(row).some((key2) => !ENTRY_KEYS.has(key2))) {
     throw new Error("stored pending-for-main entry is malformed");
   }
   if (typeof row.signalId !== "string" || !UUID_RE15.test(row.signalId) || typeof row.workspaceId !== "string" || !UUID_RE15.test(row.workspaceId) || typeof row.principalId !== "string" || !UUID_RE15.test(row.principalId) || typeof row.fromId !== "string" || !UUID_RE15.test(row.fromId) || row.fromKind !== "user" && row.fromKind !== "agent" || !(row.kind === void 0 || row.kind === "ask" || row.kind === "note") || !(row.senderName === null || typeof row.senderName === "string" && row.senderName.length <= 200) || typeof row.body !== "string" || row.body.length < 1 || !(row.attachmentCount === void 0 || typeof row.attachmentCount === "number" && Number.isSafeInteger(row.attachmentCount) && row.attachmentCount >= 1 && row.attachmentCount <= 8) || !checkedTimestamp2(row.createdAt) || !checkedTimestamp2(row.queuedAt) || !(row.observationPending === void 0 || row.observationPending === true)) {
@@ -35979,7 +36222,7 @@ function parseEntry(value) {
     ...row.observationPending === true ? { observationPending: true } : {}
   };
 }
-function parseFile(raw) {
+function parseFile(raw, rejectUnknownKeys = false) {
   let value;
   try {
     value = JSON.parse(raw);
@@ -35990,12 +36233,10 @@ function parseFile(raw) {
     throw new Error("stored pending-for-main queue is malformed");
   }
   const row = value;
-  if (Object.keys(row).some(
-    (key2) => key2 !== "version" && key2 !== "entries" && key2 !== "droppedCount"
-  ) || row.version !== 1 || !Array.isArray(row.entries) || row.entries.length > LISTENER_MAIN_QUEUE_MAX || !(row.droppedCount === void 0 || typeof row.droppedCount === "number" && Number.isSafeInteger(row.droppedCount) && row.droppedCount >= 0)) {
+  if (rejectUnknownKeys && Object.keys(row).some((key2) => !QUEUE_KEYS.has(key2)) || row.version !== 1 || !Array.isArray(row.entries) || row.entries.length > LISTENER_MAIN_QUEUE_MAX || !(row.droppedCount === void 0 || typeof row.droppedCount === "number" && Number.isSafeInteger(row.droppedCount) && row.droppedCount >= 0)) {
     throw new Error("stored pending-for-main queue is malformed");
   }
-  const entries = row.entries.map(parseEntry);
+  const entries = row.entries.map((entry) => parseEntry(entry, rejectUnknownKeys));
   if (new Set(entries.map((entry) => entry.signalId)).size !== entries.length) {
     throw new Error("stored pending-for-main queue repeats a signal");
   }
@@ -36016,7 +36257,7 @@ var FilePendingMainQueue = class {
     return raw === null ? { version: 1, entries: [], droppedCount: 0 } : parseFile(raw);
   }
   async writeUnlocked(file) {
-    const canonical = parseFile(JSON.stringify(file));
+    const canonical = parseFile(JSON.stringify(file), true);
     await writeSecureJsonFile(this.path, JSON.stringify(canonical));
   }
   async read() {
@@ -36030,7 +36271,7 @@ var FilePendingMainQueue = class {
     return { count: file.entries.length, droppedCount: file.droppedCount };
   }
   async enqueue(entry) {
-    const checked = parseEntry(entry);
+    const checked = parseEntry(entry, true);
     return await withFileLock(this.directory, QUEUE_LOCK, async () => {
       const file = await this.readUnlocked();
       if (file.entries.some((item) => item.signalId === checked.signalId)) {
@@ -36089,7 +36330,7 @@ function pendingMainEntry(signal, principalId, provenance, now, options = {}) {
     createdAt: signal.created_at,
     queuedAt: new Date(now).toISOString(),
     ...options.observationPending ? { observationPending: true } : {}
-  });
+  }, true);
 }
 
 // src/listener/runtime.ts
@@ -36102,6 +36343,7 @@ var LISTENER_REPLY_ONLY_MINIMUM_MS = SIGNAL_REQUEST_TIMEOUT_MS + LISTENER_ACK_ON
 var LISTENER_PROMPT_START_MINIMUM_MS = SIGNAL_READ_TIMEOUT_MS + ACP_DEFAULT_REQUEST_TIMEOUT_MS + LISTENER_REPLY_ONLY_MINIMUM_MS;
 var LISTENER_DELIVERY_RETRY_INITIAL_MS = 500;
 var LISTENER_DELIVERY_RETRY_MAX_MS = 3e4;
+var LISTENER_HOST_PORTS_PROBE_MS = 6e4;
 var UUID_RE16 = /^[0-9a-f]{8}-[0-9a-f]{4}-[1-8][0-9a-f]{3}-[89ab][0-9a-f]{3}-[0-9a-f]{12}$/i;
 var ListenerCapabilityError = class extends Error {
   code;
@@ -36536,6 +36778,8 @@ async function runListenerRuntime(options) {
   let ready = false;
   let deliveryMode = null;
   let readAttempt = 0;
+  let readEpisodeStartedAtMs = null;
+  let readEpisodeAttempts = 0;
   const onAbort = () => {
     options.model.cancel();
   };
@@ -36633,6 +36877,18 @@ async function runListenerRuntime(options) {
           }
         });
         requireCapabilities(page);
+        if (ready && readEpisodeStartedAtMs !== null) {
+          const recoveredAtMs = now();
+          options.onEvent?.({
+            type: "read_recovered",
+            attempts: readEpisodeAttempts,
+            durationMs: Math.max(0, recoveredAtMs - readEpisodeStartedAtMs),
+            startedAt: new Date(readEpisodeStartedAtMs).toISOString(),
+            ts: new Date(recoveredAtMs).toISOString()
+          });
+          readEpisodeStartedAtMs = null;
+          readEpisodeAttempts = 0;
+        }
         const nextMode = classifyDeliveryMode(page, durableConfigured);
         if (nextMode !== deliveryMode) {
           deliveryMode = nextMode;
@@ -36653,19 +36909,25 @@ async function runListenerRuntime(options) {
           stop = { reason: "credential", error: asError2(error) };
           break;
         }
-        if (isAbort2(error)) {
-          stop = { reason: "cancelled" };
-          break;
-        }
-        if (isRetryableFollowError(error)) {
+        const failure = classifySignalReadFailure(error);
+        if (isRetryableFollowError(error) || failure.code === "aborted" || failure.code === "host_ports_exhausted") {
           readAttempt += 1;
-          const delayMs = nextFollowBackoffMs(readAttempt, null, random);
+          const delayMs = failure.code === "host_ports_exhausted" ? LISTENER_HOST_PORTS_PROBE_MS : nextFollowBackoffMs(readAttempt, null, random);
           if (ready) {
+            const failedAtMs = now();
+            if (readEpisodeStartedAtMs === null) {
+              readEpisodeStartedAtMs = failedAtMs;
+              readEpisodeAttempts = 0;
+            }
+            readEpisodeAttempts += 1;
             options.onEvent?.({
               type: "read_retry",
               attempt: readAttempt,
+              episodeAttempt: readEpisodeAttempts,
+              episodeStartedAt: new Date(readEpisodeStartedAtMs).toISOString(),
+              failure,
               delayMs,
-              ts: eventTime(now)
+              ts: new Date(failedAtMs).toISOString()
             });
           }
           await sleep2(delayMs, abort);
@@ -36688,6 +36950,7 @@ async function runListenerRuntime(options) {
           type: "ready",
           workspaceId: options.workspaceId,
           principalId: options.principalId,
+          cadenceMs: pollMs,
           ts: eventTime(now)
         });
         if (options.declareModel !== void 0) {
@@ -37217,13 +37480,261 @@ async function runListenerRuntime(options) {
   return stop ?? { reason: "cancelled" };
 }
 
+// src/listener/read-health.ts
+var HOUR_MS = 60 * 6e4;
+var MINUTE_MS = 6e4;
+var HEALTH_WINDOW_MS = 24 * HOUR_MS;
+var LISTENER_READ_RETRY_HOUR_CAP = 25;
+var LISTENER_READ_RETRY_MINUTE_CAP = 61;
+var LISTENER_CLAIM_HOUR_CAP = 25;
+var LISTENER_THROUGHPUT_LAPSE_RATIO = 0.5;
+var FAILURE_CODES = /* @__PURE__ */ new Set([
+  "http_status",
+  "no_response",
+  "body_timeout",
+  "malformed_response",
+  "aborted",
+  "host_ports_exhausted",
+  "unclassified"
+]);
+function emptyListenerReadHealth() {
+  return {
+    currentEpisodeStartedAt: null,
+    currentEpisodeAttempts: 0,
+    currentReasonCode: null,
+    currentHttpStatus: null,
+    currentErrorConstructor: null,
+    retryHours: [],
+    retryMinutes: [],
+    claimCadenceMs: null,
+    claimHours: []
+  };
+}
+function bucketStart(ts, sizeMs) {
+  const time = Date.parse(ts);
+  return new Date(Math.floor(time / sizeMs) * sizeMs).toISOString();
+}
+function trimNewest(rows3, cap) {
+  return rows3.sort((left, right) => Date.parse(left.hourStart) - Date.parse(right.hourStart)).slice(-cap);
+}
+function recordRetryHour(rows3, ts, episodeStarted) {
+  const hourStart = bucketStart(ts, HOUR_MS);
+  const next = rows3.map((row) => ({ ...row }));
+  const existing = next.find((row) => row.hourStart === hourStart);
+  if (existing) {
+    existing.retries += 1;
+    if (episodeStarted) existing.episodes += 1;
+  } else {
+    next.push({
+      hourStart,
+      retries: 1,
+      episodes: episodeStarted ? 1 : 0,
+      longestEpisodeAttempts: 0,
+      longestEpisodeDurationMs: 0
+    });
+  }
+  return trimNewest(next, LISTENER_READ_RETRY_HOUR_CAP);
+}
+function recordRetryMinute(rows3, ts) {
+  const minuteStart = bucketStart(ts, MINUTE_MS);
+  const next = rows3.map((row) => ({ ...row }));
+  const existing = next.find((row) => row.minuteStart === minuteStart);
+  if (existing) {
+    existing.retries += 1;
+  } else {
+    next.push({ minuteStart, retries: 1 });
+  }
+  return next.sort(
+    (left, right) => Date.parse(left.minuteStart) - Date.parse(right.minuteStart)
+  ).slice(-LISTENER_READ_RETRY_MINUTE_CAP);
+}
+function recordListenerReadRetry(health, input) {
+  return {
+    ...health,
+    currentEpisodeStartedAt: input.episodeStartedAt,
+    currentEpisodeAttempts: input.episodeAttempt,
+    currentReasonCode: input.failure.code,
+    currentHttpStatus: input.failure.httpStatus,
+    currentErrorConstructor: input.failure.errorConstructor,
+    retryHours: recordRetryHour(
+      health.retryHours,
+      input.ts,
+      input.episodeAttempt === 1
+    ),
+    retryMinutes: recordRetryMinute(health.retryMinutes, input.ts)
+  };
+}
+function recordListenerReadRecovery(health, input) {
+  const hourStart = bucketStart(input.startedAt, HOUR_MS);
+  const retryHours = health.retryHours.map((row) => ({ ...row }));
+  const hour = retryHours.find((row) => row.hourStart === hourStart);
+  if (hour) {
+    if (input.durationMs > hour.longestEpisodeDurationMs || input.durationMs === hour.longestEpisodeDurationMs && input.attempts > hour.longestEpisodeAttempts) {
+      hour.longestEpisodeAttempts = input.attempts;
+      hour.longestEpisodeDurationMs = input.durationMs;
+    }
+  }
+  return {
+    ...health,
+    currentEpisodeStartedAt: null,
+    currentEpisodeAttempts: 0,
+    currentReasonCode: null,
+    currentHttpStatus: null,
+    currentErrorConstructor: null,
+    retryHours: trimNewest(retryHours, LISTENER_READ_RETRY_HOUR_CAP)
+  };
+}
+function recordListenerClaimCadence(health, cadenceMs) {
+  return { ...health, claimCadenceMs: cadenceMs };
+}
+function recordListenerClaim(health, ts) {
+  const hourStart = bucketStart(ts, HOUR_MS);
+  const claimHours = health.claimHours.map((row) => ({ ...row }));
+  const hour = claimHours.find((row) => row.hourStart === hourStart);
+  if (hour) hour.claims += 1;
+  else claimHours.push({ hourStart, claims: 1 });
+  return {
+    ...health,
+    claimHours: trimNewest(claimHours, LISTENER_CLAIM_HOUR_CAP)
+  };
+}
+function hasExpectedKeys(value, expected, rejectUnknownKeys) {
+  const actual = Object.keys(value);
+  const allowed = new Set(expected);
+  return expected.every((key2) => actual.includes(key2)) && (!rejectUnknownKeys || actual.every((key2) => allowed.has(key2)));
+}
+function validTimestamp(value) {
+  return typeof value === "string" && Number.isFinite(Date.parse(value));
+}
+function validCount(value) {
+  return typeof value === "number" && Number.isSafeInteger(value) && value >= 0;
+}
+function parseListenerReadHealth(value, rejectUnknownKeys = false) {
+  if (!value || typeof value !== "object" || Array.isArray(value)) return null;
+  const row = value;
+  if (!hasExpectedKeys(row, [
+    "currentEpisodeStartedAt",
+    "currentEpisodeAttempts",
+    "currentReasonCode",
+    "currentHttpStatus",
+    "currentErrorConstructor",
+    "retryHours",
+    "retryMinutes",
+    "claimCadenceMs",
+    "claimHours"
+  ], rejectUnknownKeys)) return null;
+  if (!(row.currentEpisodeStartedAt === null || validTimestamp(row.currentEpisodeStartedAt)) || !validCount(row.currentEpisodeAttempts) || !(row.currentReasonCode === null || typeof row.currentReasonCode === "string" && FAILURE_CODES.has(row.currentReasonCode)) || !(row.currentHttpStatus === null || typeof row.currentHttpStatus === "number" && Number.isSafeInteger(row.currentHttpStatus) && row.currentHttpStatus >= 100 && row.currentHttpStatus <= 599) || !(row.currentErrorConstructor === null || typeof row.currentErrorConstructor === "string" && /^[A-Za-z0-9_$-]{1,96}$/.test(row.currentErrorConstructor)) || !(row.claimCadenceMs === null || typeof row.claimCadenceMs === "number" && Number.isSafeInteger(row.claimCadenceMs) && row.claimCadenceMs >= 1) || !Array.isArray(row.retryHours) || row.retryHours.length > LISTENER_READ_RETRY_HOUR_CAP || !Array.isArray(row.retryMinutes) || row.retryMinutes.length > LISTENER_READ_RETRY_MINUTE_CAP || !Array.isArray(row.claimHours) || row.claimHours.length > LISTENER_CLAIM_HOUR_CAP) return null;
+  if (row.currentEpisodeStartedAt === null !== (row.currentEpisodeAttempts === 0) || row.currentEpisodeStartedAt === null !== (row.currentReasonCode === null) || row.currentReasonCode === "http_status" !== (row.currentHttpStatus !== null) || row.currentReasonCode === "unclassified" !== (row.currentErrorConstructor !== null)) return null;
+  for (const value2 of row.retryHours) {
+    if (!value2 || typeof value2 !== "object" || Array.isArray(value2)) return null;
+    const hour = value2;
+    if (!hasExpectedKeys(hour, [
+      "hourStart",
+      "retries",
+      "episodes",
+      "longestEpisodeAttempts",
+      "longestEpisodeDurationMs"
+    ], rejectUnknownKeys) || !validTimestamp(hour.hourStart) || !validCount(hour.retries) || !validCount(hour.episodes) || !validCount(hour.longestEpisodeAttempts) || !validCount(hour.longestEpisodeDurationMs)) return null;
+  }
+  for (const value2 of row.retryMinutes) {
+    if (!value2 || typeof value2 !== "object" || Array.isArray(value2)) return null;
+    const minute = value2;
+    if (!hasExpectedKeys(minute, ["minuteStart", "retries"], rejectUnknownKeys) || !validTimestamp(minute.minuteStart) || !validCount(minute.retries)) return null;
+  }
+  for (const value2 of row.claimHours) {
+    if (!value2 || typeof value2 !== "object" || Array.isArray(value2)) return null;
+    const hour = value2;
+    if (!hasExpectedKeys(hour, ["hourStart", "claims"], rejectUnknownKeys) || !validTimestamp(hour.hourStart) || !validCount(hour.claims)) return null;
+  }
+  return {
+    currentEpisodeStartedAt: row.currentEpisodeStartedAt,
+    currentEpisodeAttempts: row.currentEpisodeAttempts,
+    currentReasonCode: row.currentReasonCode,
+    currentHttpStatus: row.currentHttpStatus,
+    currentErrorConstructor: row.currentErrorConstructor,
+    retryHours: row.retryHours.map((hour) => ({
+      hourStart: hour.hourStart,
+      retries: hour.retries,
+      episodes: hour.episodes,
+      longestEpisodeAttempts: hour.longestEpisodeAttempts,
+      longestEpisodeDurationMs: hour.longestEpisodeDurationMs
+    })),
+    retryMinutes: row.retryMinutes.map((minute) => ({
+      minuteStart: minute.minuteStart,
+      retries: minute.retries
+    })),
+    claimCadenceMs: row.claimCadenceMs,
+    claimHours: row.claimHours.map((hour) => ({
+      hourStart: hour.hourStart,
+      claims: hour.claims
+    }))
+  };
+}
+function summarizeListenerReadHealth(health, readyAt, nowMs) {
+  const windowStart = nowMs - HEALTH_WINDOW_MS;
+  const retryHours = health.retryHours.filter(
+    (row) => Date.parse(row.hourStart) + HOUR_MS > windowStart && Date.parse(row.hourStart) <= nowMs
+  );
+  let episodesLast24h = retryHours.reduce((sum, row) => sum + row.episodes, 0);
+  let longestEpisodeAttemptsLast24h = 0;
+  let longestEpisodeDurationMsLast24h = 0;
+  for (const row of retryHours) {
+    if (row.longestEpisodeDurationMs > longestEpisodeDurationMsLast24h || row.longestEpisodeDurationMs === longestEpisodeDurationMsLast24h && row.longestEpisodeAttempts > longestEpisodeAttemptsLast24h) {
+      longestEpisodeAttemptsLast24h = row.longestEpisodeAttempts;
+      longestEpisodeDurationMsLast24h = row.longestEpisodeDurationMs;
+    }
+  }
+  const currentStartedMs = health.currentEpisodeStartedAt === null ? null : Date.parse(health.currentEpisodeStartedAt);
+  const currentEpisodeDurationMs = currentStartedMs === null ? null : Math.max(0, nowMs - currentStartedMs);
+  if (currentStartedMs !== null && currentStartedMs >= windowStart && currentEpisodeDurationMs !== null && (currentEpisodeDurationMs > longestEpisodeDurationMsLast24h || currentEpisodeDurationMs === longestEpisodeDurationMsLast24h && health.currentEpisodeAttempts > longestEpisodeAttemptsLast24h)) {
+    longestEpisodeAttemptsLast24h = health.currentEpisodeAttempts;
+    longestEpisodeDurationMsLast24h = currentEpisodeDurationMs;
+  }
+  const rollingMinuteStart = Math.floor((nowMs - HOUR_MS) / MINUTE_MS) * MINUTE_MS;
+  const retriesLastHour = health.retryMinutes.reduce((sum, row) => Date.parse(row.minuteStart) >= rollingMinuteStart && Date.parse(row.minuteStart) <= nowMs ? sum + row.retries : sum, 0);
+  const claimThroughputHours = [];
+  if (health.claimCadenceMs !== null && readyAt !== null) {
+    const readyMs = Date.parse(readyAt);
+    const firstFullHour = Math.ceil(readyMs / HOUR_MS) * HOUR_MS;
+    const currentHour = Math.floor(nowMs / HOUR_MS) * HOUR_MS;
+    const first = Math.max(firstFullHour, currentHour - HEALTH_WINDOW_MS);
+    const claimsByHour = new Map(
+      health.claimHours.map((row) => [row.hourStart, row.claims])
+    );
+    const expectedClaims = HOUR_MS / health.claimCadenceMs;
+    for (let hour = first; hour < currentHour; hour += HOUR_MS) {
+      const hourStart = new Date(hour).toISOString();
+      const claims = claimsByHour.get(hourStart) ?? 0;
+      claimThroughputHours.push({
+        hourStart,
+        claims,
+        expectedClaims,
+        ratio: claims / expectedClaims
+      });
+    }
+  }
+  const throughputLapseHours = claimThroughputHours.filter(
+    (hour) => hour.ratio < LISTENER_THROUGHPUT_LAPSE_RATIO
+  );
+  return {
+    currentEpisodeDurationMs,
+    episodesLast24h,
+    longestEpisodeAttemptsLast24h,
+    longestEpisodeDurationMsLast24h,
+    retriesLastHour,
+    retryHours,
+    claimThroughputHours,
+    throughputLapseHours
+  };
+}
+
 // src/listener/control.ts
 var import_node_net = require("node:net");
 var import_promises9 = require("node:fs/promises");
 var import_node_path16 = require("node:path");
 var UUID_RE17 = /^[0-9a-f]{8}-[0-9a-f]{4}-[1-8][0-9a-f]{3}-[89ab][0-9a-f]{3}-[0-9a-f]{12}$/i;
 var SEMVER_RE2 = /^(?:0|[1-9]\d*)\.(?:0|[1-9]\d*)\.(?:0|[1-9]\d*)(?:-(?:0|[1-9]\d*|[A-Za-z-][0-9A-Za-z-]*)(?:\.(?:0|[1-9]\d*|[A-Za-z-][0-9A-Za-z-]*))*)?(?:\+[0-9A-Za-z-]+(?:\.[0-9A-Za-z-]+)*)?$/;
-var MAX_STATUS_BYTES = 16 * 1024;
+var MAX_STATUS_BYTES = 32 * 1024;
 var MAX_CONTROL_BYTES = 8 * 1024;
 var CONTROL_TIMEOUT_MS = 2e3;
 var START_LOCK_WAIT_MS = 2e3;
@@ -37270,8 +37781,13 @@ var STATUS_ALLOWED_KEYS = /* @__PURE__ */ new Set([
   "lastSignalId",
   "lastErrorCode",
   "lastErrorDetail",
+  "lastErrorReasonCode",
+  "providerExecutable",
   "providerVersion",
   "providerLastMeasuredVersion",
+  "providerBundledAgentSdkVersion",
+  "providerBundledClaudeCodeVersion",
+  "providerMinimumRequiredVersion",
   "cswarmVersion",
   "lastWorkerStderrTail",
   "logPath",
@@ -37284,7 +37800,10 @@ var STATUS_ALLOWED_KEYS = /* @__PURE__ */ new Set([
   "routeMode",
   "deferOverChars",
   "pendingForMainCount",
-  "droppedForMainCount"
+  "droppedForMainCount",
+  "readHealth",
+  "connectionsOpened",
+  "connectionReuseRatio"
 ]);
 var STATUS_SENSITIVE_KEYS = /* @__PURE__ */ new Set([
   "leaseId",
@@ -37310,7 +37829,7 @@ var STATUS_DELIVERY_KEYS = [
   "lastClaimAt",
   "lastAckAt"
 ];
-function parseStatus(raw) {
+function parseStatus(raw, rejectUnknownKeys = false) {
   let value;
   try {
     value = JSON.parse(raw);
@@ -37325,14 +37844,15 @@ function parseStatus(raw) {
     if (STATUS_SENSITIVE_KEYS.has(key2)) {
       throw new Error("stored listener status contains a forbidden field");
     }
-    if (!STATUS_ALLOWED_KEYS.has(key2)) {
+    if (rejectUnknownKeys && !STATUS_ALLOWED_KEYS.has(key2)) {
       throw new Error("stored listener status is malformed");
     }
   }
   const nullableUuid3 = (candidate) => candidate === null || typeof candidate === "string" && UUID_RE17.test(candidate);
   const nullableCount = (candidate) => candidate === null || typeof candidate === "number" && Number.isSafeInteger(candidate) && candidate >= 0;
   const nullableTimestamp3 = (candidate) => candidate === null || typeof candidate === "string" && Number.isFinite(Date.parse(candidate));
-  if (row.version !== 1 || typeof row.instanceId !== "string" || !UUID_RE17.test(row.instanceId) || row.provider !== "grok" && row.provider !== "opencode" && row.provider !== "claude" && row.provider !== "codex" || typeof row.profileId !== "string" || typeof row.workspaceId !== "string" || !UUID_RE17.test(row.workspaceId) || typeof row.principalId !== "string" || !UUID_RE17.test(row.principalId) || !Number.isSafeInteger(row.pid) || row.pid < 1 || typeof row.state !== "string" || !["starting", "ready", "stopping", "stopped", "failed"].includes(row.state) || typeof row.startedAt !== "string" || !Number.isFinite(Date.parse(row.startedAt)) || !(row.readyAt === null || typeof row.readyAt === "string" && Number.isFinite(Date.parse(row.readyAt))) || typeof row.updatedAt !== "string" || !Number.isFinite(Date.parse(row.updatedAt)) || !(row.stoppedAt === null || typeof row.stoppedAt === "string" && Number.isFinite(Date.parse(row.stoppedAt))) || !nullableUuid3(row.lastSignalId) || !(row.lastErrorCode === null || typeof row.lastErrorCode === "string" && /^[a-z0-9_-]{1,96}$/.test(row.lastErrorCode)) || !(row.lastErrorDetail === void 0 || row.lastErrorDetail === null || typeof row.lastErrorDetail === "string" && row.lastErrorDetail.length > 0 && row.lastErrorDetail.length <= 2048 && !/swm_(?:agt|inv|cap)_/i.test(row.lastErrorDetail)) || !(row.providerVersion === void 0 || row.providerVersion === null || typeof row.providerVersion === "string" && SEMVER_RE2.test(row.providerVersion)) || !(row.providerLastMeasuredVersion === void 0 || row.providerLastMeasuredVersion === null || typeof row.providerLastMeasuredVersion === "string" && SEMVER_RE2.test(row.providerLastMeasuredVersion)) || !(row.cswarmVersion === void 0 || row.cswarmVersion === null || typeof row.cswarmVersion === "string" && SEMVER_RE2.test(row.cswarmVersion)) || (row.providerVersion === null || row.providerVersion === void 0) !== (row.providerLastMeasuredVersion === null || row.providerLastMeasuredVersion === void 0) || !(row.lastWorkerStderrTail === void 0 || row.lastWorkerStderrTail === null || typeof row.lastWorkerStderrTail === "string" && row.lastWorkerStderrTail.length > 0 && row.lastWorkerStderrTail.length <= 2048 && !/swm_(?:agt|inv|cap)_/i.test(row.lastWorkerStderrTail)) || typeof row.logPath !== "string" || !(0, import_node_path16.isAbsolute)(row.logPath) || !(row.deliveryMode === void 0 || row.deliveryMode === null || typeof row.deliveryMode === "string" && STATUS_DELIVERY_MODES.has(row.deliveryMode)) || !(row.pendingDeliveryCount === void 0 || nullableCount(row.pendingDeliveryCount)) || !(row.lastTerminalDeliveryFailureCount === void 0 || nullableCount(row.lastTerminalDeliveryFailureCount)) || !(row.lastTerminalDeliveryFailureAt === void 0 || nullableTimestamp3(row.lastTerminalDeliveryFailureAt)) || !(row.lastClaimAt === void 0 || nullableTimestamp3(row.lastClaimAt)) || !(row.lastAckAt === void 0 || nullableTimestamp3(row.lastAckAt)) || !(row.routeMode === void 0 || row.routeMode === "worker" || row.routeMode === "main" || row.routeMode === "split") || !(row.deferOverChars === void 0 || row.deferOverChars === null || typeof row.deferOverChars === "number" && Number.isSafeInteger(row.deferOverChars) && row.deferOverChars >= 1 && row.deferOverChars <= 1e4) || !(row.pendingForMainCount === void 0 || typeof row.pendingForMainCount === "number" && Number.isSafeInteger(row.pendingForMainCount) && row.pendingForMainCount >= 0) || !(row.droppedForMainCount === void 0 || typeof row.droppedForMainCount === "number" && Number.isSafeInteger(row.droppedForMainCount) && row.droppedForMainCount >= 0)) {
+  const readHealth = row.readHealth === void 0 ? void 0 : parseListenerReadHealth(row.readHealth, rejectUnknownKeys);
+  if (row.version !== 1 || typeof row.instanceId !== "string" || !UUID_RE17.test(row.instanceId) || row.provider !== "grok" && row.provider !== "opencode" && row.provider !== "claude" && row.provider !== "codex" || typeof row.profileId !== "string" || typeof row.workspaceId !== "string" || !UUID_RE17.test(row.workspaceId) || typeof row.principalId !== "string" || !UUID_RE17.test(row.principalId) || !Number.isSafeInteger(row.pid) || row.pid < 1 || typeof row.state !== "string" || !["starting", "ready", "stopping", "stopped", "failed"].includes(row.state) || typeof row.startedAt !== "string" || !Number.isFinite(Date.parse(row.startedAt)) || !(row.readyAt === null || typeof row.readyAt === "string" && Number.isFinite(Date.parse(row.readyAt))) || typeof row.updatedAt !== "string" || !Number.isFinite(Date.parse(row.updatedAt)) || !(row.stoppedAt === null || typeof row.stoppedAt === "string" && Number.isFinite(Date.parse(row.stoppedAt))) || !nullableUuid3(row.lastSignalId) || !(row.lastErrorCode === null || typeof row.lastErrorCode === "string" && /^[a-z0-9_-]{1,96}$/.test(row.lastErrorCode)) || !(row.lastErrorDetail === void 0 || row.lastErrorDetail === null || typeof row.lastErrorDetail === "string" && row.lastErrorDetail.length > 0 && row.lastErrorDetail.length <= 2048 && !/swm_(?:agt|inv|cap)_/i.test(row.lastErrorDetail)) || !(row.lastErrorReasonCode === void 0 || row.lastErrorReasonCode === null || typeof row.lastErrorReasonCode === "string" && /^[a-z0-9_-]{1,96}$/.test(row.lastErrorReasonCode)) || !(row.providerExecutable === void 0 || row.providerExecutable === null || typeof row.providerExecutable === "string" && (0, import_node_path16.isAbsolute)(row.providerExecutable)) || !(row.providerVersion === void 0 || row.providerVersion === null || typeof row.providerVersion === "string" && SEMVER_RE2.test(row.providerVersion)) || !(row.providerLastMeasuredVersion === void 0 || row.providerLastMeasuredVersion === null || typeof row.providerLastMeasuredVersion === "string" && SEMVER_RE2.test(row.providerLastMeasuredVersion)) || !(row.providerBundledAgentSdkVersion === void 0 || row.providerBundledAgentSdkVersion === null || typeof row.providerBundledAgentSdkVersion === "string" && SEMVER_RE2.test(row.providerBundledAgentSdkVersion)) || !(row.providerBundledClaudeCodeVersion === void 0 || row.providerBundledClaudeCodeVersion === null || typeof row.providerBundledClaudeCodeVersion === "string" && SEMVER_RE2.test(row.providerBundledClaudeCodeVersion)) || !(row.providerMinimumRequiredVersion === void 0 || row.providerMinimumRequiredVersion === null || typeof row.providerMinimumRequiredVersion === "string" && SEMVER_RE2.test(row.providerMinimumRequiredVersion)) || !(row.cswarmVersion === void 0 || row.cswarmVersion === null || typeof row.cswarmVersion === "string" && SEMVER_RE2.test(row.cswarmVersion)) || (row.providerVersion === null || row.providerVersion === void 0) !== (row.providerLastMeasuredVersion === null || row.providerLastMeasuredVersion === void 0) || !(row.lastWorkerStderrTail === void 0 || row.lastWorkerStderrTail === null || typeof row.lastWorkerStderrTail === "string" && row.lastWorkerStderrTail.length > 0 && row.lastWorkerStderrTail.length <= 2048 && !/swm_(?:agt|inv|cap)_/i.test(row.lastWorkerStderrTail)) || typeof row.logPath !== "string" || !(0, import_node_path16.isAbsolute)(row.logPath) || !(row.deliveryMode === void 0 || row.deliveryMode === null || typeof row.deliveryMode === "string" && STATUS_DELIVERY_MODES.has(row.deliveryMode)) || !(row.pendingDeliveryCount === void 0 || nullableCount(row.pendingDeliveryCount)) || !(row.lastTerminalDeliveryFailureCount === void 0 || nullableCount(row.lastTerminalDeliveryFailureCount)) || !(row.lastTerminalDeliveryFailureAt === void 0 || nullableTimestamp3(row.lastTerminalDeliveryFailureAt)) || !(row.lastClaimAt === void 0 || nullableTimestamp3(row.lastClaimAt)) || !(row.lastAckAt === void 0 || nullableTimestamp3(row.lastAckAt)) || !(row.routeMode === void 0 || row.routeMode === "worker" || row.routeMode === "main" || row.routeMode === "split") || !(row.deferOverChars === void 0 || row.deferOverChars === null || typeof row.deferOverChars === "number" && Number.isSafeInteger(row.deferOverChars) && row.deferOverChars >= 1 && row.deferOverChars <= 1e4) || !(row.pendingForMainCount === void 0 || typeof row.pendingForMainCount === "number" && Number.isSafeInteger(row.pendingForMainCount) && row.pendingForMainCount >= 0) || !(row.droppedForMainCount === void 0 || typeof row.droppedForMainCount === "number" && Number.isSafeInteger(row.droppedForMainCount) && row.droppedForMainCount >= 0) || readHealth === null || !(row.connectionsOpened === void 0 || typeof row.connectionsOpened === "number" && Number.isSafeInteger(row.connectionsOpened) && row.connectionsOpened >= 0) || !(row.connectionReuseRatio === void 0 || typeof row.connectionReuseRatio === "number" && Number.isFinite(row.connectionReuseRatio) && row.connectionReuseRatio >= 0)) {
     throw new Error("stored listener status is malformed");
   }
   const routeMode = row.routeMode ?? "worker";
@@ -37340,8 +37860,11 @@ function parseStatus(raw) {
   if (routeMode === "split" && deferOverChars === null || routeMode !== "split" && deferOverChars !== null) {
     throw new Error("stored listener status routing fields are malformed");
   }
+  const knownRow = Object.fromEntries(
+    Object.entries(row).filter(([key2]) => STATUS_ALLOWED_KEYS.has(key2))
+  );
   return {
-    ...row,
+    ...knownRow,
     deliveryMode: row.deliveryMode ?? null,
     pendingDeliveryCount: row.pendingDeliveryCount ?? null,
     lastTerminalDeliveryFailureCount: row.lastTerminalDeliveryFailureCount ?? null,
@@ -37356,11 +37879,15 @@ function parseStatus(raw) {
     routeMode,
     deferOverChars,
     pendingForMainCount: row.pendingForMainCount ?? 0,
-    droppedForMainCount: row.droppedForMainCount ?? 0
+    droppedForMainCount: row.droppedForMainCount ?? 0,
+    ...readHealth === void 0 ? {} : { readHealth }
   };
 }
 async function writeListenerStatus(paths, status) {
   const serialized = JSON.stringify(status);
+  if (Buffer.byteLength(serialized, "utf8") > MAX_STATUS_BYTES) {
+    throw new Error("listener status is too large");
+  }
   const parsed = JSON.parse(serialized);
   for (const key2 of STATUS_DELIVERY_KEYS) {
     if (!(key2 in parsed)) {
@@ -37370,7 +37897,7 @@ async function writeListenerStatus(paths, status) {
   if (!("lastErrorDetail" in parsed)) {
     throw new Error("listener status is missing local error detail metadata");
   }
-  parseStatus(serialized);
+  parseStatus(serialized, true);
   await writeSecureJsonFile(paths.statusPath, serialized);
 }
 async function readListenerStatus(paths) {
@@ -37395,6 +37922,12 @@ async function appendListenerEvent(paths, event) {
     "passed",
     "reason",
     "delay_ms",
+    "reason_code",
+    "http_status",
+    "error_constructor",
+    "episode_attempt",
+    "attempts",
+    "duration_ms",
     "index",
     "delivery_mode",
     "pending_delivery_count",
@@ -37432,6 +37965,29 @@ async function appendListenerEvent(paths, event) {
     }
     if ((key2 === "attempt" || key2 === "total") && !(typeof value === "number" && Number.isSafeInteger(value) && value >= 1)) {
       throw new Error("listener event attempt count is not allowed");
+    }
+    if ((key2 === "episode_attempt" || key2 === "attempts") && !(typeof value === "number" && Number.isSafeInteger(value) && value >= 1)) {
+      throw new Error("listener event episode count is not allowed");
+    }
+    if (key2 === "duration_ms" && !(typeof value === "number" && Number.isSafeInteger(value) && value >= 0)) {
+      throw new Error("listener event episode duration is not allowed");
+    }
+    if (key2 === "http_status" && !(typeof value === "number" && Number.isSafeInteger(value) && value >= 100 && value <= 599)) {
+      throw new Error("listener event HTTP status is not allowed");
+    }
+    if (key2 === "reason_code" && !(typeof value === "string" && [
+      "http_status",
+      "no_response",
+      "body_timeout",
+      "malformed_response",
+      "aborted",
+      "host_ports_exhausted",
+      "unclassified"
+    ].includes(value))) {
+      throw new Error("listener event read reason code is not allowed");
+    }
+    if (key2 === "error_constructor" && !(typeof value === "string" && /^[A-Za-z0-9_$-]{1,96}$/.test(value))) {
+      throw new Error("listener event error constructor is not allowed");
     }
     if (key2 === "passed" && typeof value !== "boolean") {
       throw new Error("listener event canary result is not allowed");
@@ -37475,6 +38031,12 @@ async function appendListenerEvent(paths, event) {
   }
   if (event.event === "listener_canary_attempt" && (typeof event.attempt !== "number" || typeof event.total !== "number" || event.attempt > event.total || typeof event.passed !== "boolean" || !(event.reason === null || typeof event.reason === "string"))) {
     throw new Error("listener canary attempt event is incomplete");
+  }
+  if (event.event === "listener_read_retry" && (typeof event.reason_code !== "string" || typeof event.episode_attempt !== "number" || event.reason_code === "http_status" !== (typeof event.http_status === "number") || event.reason_code === "unclassified" !== (typeof event.error_constructor === "string"))) {
+    throw new Error("listener read retry event is incomplete");
+  }
+  if (event.event === "listener_read_recovered" && (typeof event.attempts !== "number" || typeof event.duration_ms !== "number")) {
+    throw new Error("listener read recovery event is incomplete");
   }
   await ensureSecureStateDirectory(paths.instanceDirectory);
   const serialized = `${JSON.stringify(event)}
@@ -37760,6 +38322,28 @@ function localDiagnostic(message, maxChars) {
 function safeErrorDetail(error) {
   return localDiagnostic(error.message, 2048);
 }
+function providerStatusFields(notice) {
+  if (!notice) return {};
+  return {
+    providerExecutable: notice.executable ?? null,
+    providerVersion: notice.runningVersion,
+    providerLastMeasuredVersion: notice.runningVersion === null ? null : notice.lastMeasuredVersion,
+    providerBundledAgentSdkVersion: notice.bundledAgentSdkVersion ?? null,
+    providerBundledClaudeCodeVersion: notice.bundledClaudeCodeVersion ?? null
+  };
+}
+function providerFailureFields(error) {
+  if (!(error instanceof AcpPermissionCanaryError)) {
+    return {
+      lastErrorReasonCode: null,
+      providerMinimumRequiredVersion: null
+    };
+  }
+  return {
+    lastErrorReasonCode: error.reasonCode,
+    providerMinimumRequiredVersion: error.minimumRequiredVersion
+  };
+}
 var TAIL_SERIALIZED_BUDGET_BYTES = 3e3;
 function fitWorkerStderrTailForLog(tail) {
   let fitted = tail.trim();
@@ -37800,8 +38384,13 @@ async function runListenerSupervisor(options) {
     lastSignalId: null,
     lastErrorCode: null,
     lastErrorDetail: null,
+    lastErrorReasonCode: null,
+    providerExecutable: null,
     providerVersion: null,
     providerLastMeasuredVersion: null,
+    providerBundledAgentSdkVersion: null,
+    providerBundledClaudeCodeVersion: null,
+    providerMinimumRequiredVersion: null,
     lastWorkerStderrTail: null,
     deliveryMode: null,
     pendingDeliveryCount: null,
@@ -37813,14 +38402,27 @@ async function runListenerSupervisor(options) {
     deferOverChars: options.deferOverChars ?? null,
     pendingForMainCount: 0,
     droppedForMainCount: 0,
+    readHealth: emptyListenerReadHealth(),
+    connectionsOpened: 0,
+    connectionReuseRatio: 0,
     logPath: options.paths.logPath
   };
   let writes = Promise.resolve();
   const chain = (work) => {
     writes = writes.then(work).catch(() => void 0);
   };
+  const statusSnapshot = () => {
+    const metrics = options.getConnectionMetrics?.();
+    return {
+      ...structuredClone(status),
+      ...metrics ? {
+        connectionsOpened: metrics.connectionsOpened,
+        connectionReuseRatio: metrics.connectionReuseRatio
+      } : {}
+    };
+  };
   const persist = () => {
-    const snapshot = structuredClone(status);
+    const snapshot = statusSnapshot();
     chain(() => writeListenerStatus(options.paths, snapshot));
   };
   const log = (event) => {
@@ -37838,7 +38440,7 @@ async function runListenerSupervisor(options) {
   const prepare = options.prepare;
   const control = await startListenerControlServer({
     paths: options.paths,
-    status: () => structuredClone(status),
+    status: statusSnapshot,
     stop: () => {
       if (status.state === "stopped" || status.state === "failed") return;
       transition("stopping");
@@ -37876,9 +38478,16 @@ async function runListenerSupervisor(options) {
         readyAt: event.ts,
         lastErrorCode: null,
         lastErrorDetail: null,
+        lastErrorReasonCode: null,
         lastWorkerStderrTail: null,
-        providerVersion: versionNotice?.runningVersion ?? null,
-        providerLastMeasuredVersion: versionNotice?.lastMeasuredVersion ?? null
+        providerMinimumRequiredVersion: null,
+        ...providerStatusFields(versionNotice),
+        ...event.cadenceMs === void 0 ? {} : {
+          readHealth: recordListenerClaimCadence(
+            status.readHealth ?? emptyListenerReadHealth(),
+            event.cadenceMs
+          )
+        }
       });
       log({ ts: event.ts, event: "listener_ready" });
       return;
@@ -37920,11 +38529,51 @@ async function runListenerSupervisor(options) {
       return;
     }
     if (event.type === "read_retry") {
+      status = {
+        ...status,
+        readHealth: recordListenerReadRetry(
+          status.readHealth ?? emptyListenerReadHealth(),
+          {
+            ts: event.ts,
+            episodeStartedAt: event.episodeStartedAt,
+            episodeAttempt: event.episodeAttempt,
+            failure: event.failure
+          }
+        ),
+        updatedAt: event.ts
+      };
+      persist();
       log({
         ts: event.ts,
         event: "listener_read_retry",
         attempt: event.attempt,
+        episode_attempt: event.episodeAttempt,
+        reason_code: event.failure.code,
+        ...event.failure.httpStatus === null ? {} : { http_status: event.failure.httpStatus },
+        ...event.failure.errorConstructor === null ? {} : { error_constructor: event.failure.errorConstructor },
         delay_ms: event.delayMs
+      });
+      return;
+    }
+    if (event.type === "read_recovered") {
+      status = {
+        ...status,
+        readHealth: recordListenerReadRecovery(
+          status.readHealth ?? emptyListenerReadHealth(),
+          {
+            startedAt: event.startedAt,
+            attempts: event.attempts,
+            durationMs: event.durationMs
+          }
+        ),
+        updatedAt: event.ts
+      };
+      persist();
+      log({
+        ts: event.ts,
+        event: "listener_read_recovered",
+        attempts: event.attempts,
+        duration_ms: event.durationMs
       });
       return;
     }
@@ -37964,6 +38613,10 @@ async function runListenerSupervisor(options) {
     if (event.type === "delivery_claim") {
       status = {
         ...status,
+        readHealth: recordListenerClaim(
+          status.readHealth ?? emptyListenerReadHealth(),
+          event.ts
+        ),
         pendingDeliveryCount: event.pendingDeliveryCount,
         lastClaimAt: event.ts,
         updatedAt: event.ts
@@ -38088,9 +38741,9 @@ async function runListenerSupervisor(options) {
         readyAt: null,
         lastErrorCode: restartCode,
         lastErrorDetail: safeErrorDetail(stop.error),
+        ...providerFailureFields(stop.error),
         lastWorkerStderrTail: restartStderrTail,
-        providerVersion: null,
-        providerLastMeasuredVersion: null
+        ...providerStatusFields(options.getProviderVersionNotice?.() ?? null)
       });
       await restartSleep(delayMs, controller.signal);
       if (controller.signal.aborted) {
@@ -38104,7 +38757,9 @@ async function runListenerSupervisor(options) {
         stoppedAt,
         lastErrorCode: null,
         lastErrorDetail: null,
-        lastWorkerStderrTail: null
+        lastErrorReasonCode: null,
+        lastWorkerStderrTail: null,
+        providerMinimumRequiredVersion: null
       });
       log({ ts: stoppedAt, event: "listener_stopped" });
     } else {
@@ -38114,6 +38769,8 @@ async function runListenerSupervisor(options) {
         stoppedAt,
         lastErrorCode: code,
         lastErrorDetail: safeErrorDetail(stop.error),
+        ...providerFailureFields(stop.error),
+        ...providerStatusFields(options.getProviderVersionNotice?.() ?? null),
         lastWorkerStderrTail: failedStderrTail
       });
       log({
@@ -38138,6 +38795,10 @@ async function runListenerSupervisor(options) {
       lastErrorDetail: safeErrorDetail(
         error instanceof Error ? error : new Error(String(error))
       ),
+      ...providerFailureFields(
+        error instanceof Error ? error : new Error(String(error))
+      ),
+      ...providerStatusFields(options.getProviderVersionNotice?.() ?? null),
       lastWorkerStderrTail: failedStderrTail
     });
     log({
@@ -38150,7 +38811,7 @@ async function runListenerSupervisor(options) {
     await writes.catch(() => void 0);
     await control.close().catch(() => void 0);
   }
-  return status;
+  return statusSnapshot();
 }
 async function effectiveListenerStatus(paths) {
   try {
@@ -38383,7 +39044,7 @@ function assertPlainObject(input, allowedKeys, requiredKeys, errMessage = "deliv
     throw new Error(errMessage);
   }
 }
-function parseJournalRecord(raw, expectedWorkspaceId, expectedPrincipalId) {
+function parseJournalRecord(raw, expectedWorkspaceId, expectedPrincipalId, rejectUnknownKeys = false) {
   if (Buffer.byteLength(raw, "utf8") > MAX_JOURNAL_BYTES) {
     throw new Error("stored delivery journal is malformed");
   }
@@ -38404,7 +39065,7 @@ function parseJournalRecord(raw, expectedWorkspaceId, expectedPrincipalId) {
     throw new Error("stored delivery journal is malformed");
   }
   const ownProps = Object.getOwnPropertyNames(value);
-  if (ownProps.length !== ALLOWED_TOP_KEYS.size || !ownProps.every((p) => ALLOWED_TOP_KEYS.has(p))) {
+  if ([...ALLOWED_TOP_KEYS].some((key2) => !ownProps.includes(key2)) || rejectUnknownKeys && !ownProps.every((key2) => ALLOWED_TOP_KEYS.has(key2))) {
     throw new Error("stored delivery journal is malformed");
   }
   for (const prop of ownProps) {
@@ -38438,8 +39099,16 @@ function parseJournalRecord(raw, expectedWorkspaceId, expectedPrincipalId) {
   if (!isValidIsoTimestamp(row.updatedAt)) {
     throw new Error("stored delivery journal is malformed");
   }
+  const base = {
+    version: 1,
+    workspaceId: row.workspaceId,
+    principalId: row.principalId,
+    listenerInstanceId: row.listenerInstanceId,
+    nextClaimOrdinal: row.nextClaimOrdinal,
+    updatedAt: row.updatedAt
+  };
   if (row.active === null) {
-    return row;
+    return { ...base, active: null };
   }
   if (typeof row.active !== "object" || row.active === null || Array.isArray(row.active)) {
     throw new Error("stored delivery journal is malformed");
@@ -38452,8 +39121,10 @@ function parseJournalRecord(raw, expectedWorkspaceId, expectedPrincipalId) {
     throw new Error("stored delivery journal is malformed");
   }
   const activeProps = Object.getOwnPropertyNames(row.active);
-  const legacyWithoutFingerprint = activeProps.length === ALLOWED_ACTIVE_KEYS.size - 1 && !activeProps.includes("signalFingerprint");
-  if (!legacyWithoutFingerprint && activeProps.length !== ALLOWED_ACTIVE_KEYS.size || !activeProps.every((p) => ALLOWED_ACTIVE_KEYS.has(p))) {
+  const requiredActiveKeys = [...ALLOWED_ACTIVE_KEYS].filter(
+    (key2) => key2 !== "signalFingerprint"
+  );
+  if (requiredActiveKeys.some((key2) => !activeProps.includes(key2)) || rejectUnknownKeys && !activeProps.every((key2) => ALLOWED_ACTIVE_KEYS.has(key2))) {
     throw new Error("stored delivery journal is malformed");
   }
   for (const prop of activeProps) {
@@ -38521,7 +39192,7 @@ function parseJournalRecord(raw, expectedWorkspaceId, expectedPrincipalId) {
         throw new Error("stored delivery journal is malformed");
       }
       const ackProps = Object.getOwnPropertyNames(active.ack);
-      if (ackProps.length !== ALLOWED_ACK_KEYS.size || !ackProps.every((p) => ALLOWED_ACK_KEYS.has(p))) {
+      if ([...ALLOWED_ACK_KEYS].some((key2) => !ackProps.includes(key2)) || rejectUnknownKeys && !ackProps.every((key2) => ALLOWED_ACK_KEYS.has(key2))) {
         throw new Error("stored delivery journal is malformed");
       }
       for (const prop of ackProps) {
@@ -38530,32 +39201,52 @@ function parseJournalRecord(raw, expectedWorkspaceId, expectedPrincipalId) {
           throw new Error("stored delivery journal is malformed");
         }
       }
-      const ack = active.ack;
-      if (typeof ack.commandId !== "string" || !COMMAND_ID_RE3.test(ack.commandId)) {
+      const ack2 = active.ack;
+      if (typeof ack2.commandId !== "string" || !COMMAND_ID_RE3.test(ack2.commandId)) {
         throw new Error("stored delivery journal is malformed");
       }
       const expectedAckCmdId = ackCommandId(active.leaseId);
-      if (ack.commandId !== expectedAckCmdId) {
+      if (ack2.commandId !== expectedAckCmdId) {
         throw new Error("stored delivery journal is malformed");
       }
-      if (typeof ack.outcome !== "string" || !ALLOWED_OUTCOMES.has(ack.outcome)) {
+      if (typeof ack2.outcome !== "string" || !ALLOWED_OUTCOMES.has(ack2.outcome)) {
         throw new Error("stored delivery journal is malformed");
       }
-      if (ack.outcome === "failed_terminal") {
-        if (typeof ack.lastErrorCode !== "string" || !ALLOWED_ERROR_CODES.has(ack.lastErrorCode)) {
+      if (ack2.outcome === "failed_terminal") {
+        if (typeof ack2.lastErrorCode !== "string" || !ALLOWED_ERROR_CODES.has(ack2.lastErrorCode)) {
           throw new Error("stored delivery journal is malformed");
         }
       } else {
-        if (ack.lastErrorCode !== null) {
+        if (ack2.lastErrorCode !== null) {
           throw new Error("stored delivery journal is malformed");
         }
       }
-      if (!isValidIsoTimestamp(ack.preparedAt)) {
+      if (!isValidIsoTimestamp(ack2.preparedAt)) {
         throw new Error("stored delivery journal is malformed");
       }
     }
   }
-  return row;
+  const ack = active.ack;
+  return {
+    ...base,
+    active: {
+      phase: active.phase,
+      claimOrdinal: active.claimOrdinal,
+      claimCommandId: active.claimCommandId,
+      claimCreatedAt: active.claimCreatedAt,
+      claimLastAttemptAt: active.claimLastAttemptAt,
+      signalId: active.signalId,
+      leaseId: active.leaseId,
+      leasedUntil: active.leasedUntil,
+      ...active.signalFingerprint === void 0 ? {} : { signalFingerprint: active.signalFingerprint },
+      ack: ack === null ? null : {
+        commandId: ack.commandId,
+        outcome: ack.outcome,
+        lastErrorCode: ack.lastErrorCode,
+        preparedAt: ack.preparedAt
+      }
+    }
+  };
 }
 var FileListenerDeliveryJournal = class {
   instanceDirectory;
@@ -38619,7 +39310,8 @@ var FileListenerDeliveryJournal = class {
     parseJournalRecord(
       serialized,
       this.options.workspaceId,
-      this.options.principalId
+      this.options.principalId,
+      true
     );
     await writeSecureJsonFile(this.journalPath, serialized);
   }
@@ -38869,7 +39561,8 @@ async function openListenerDeliveryJournal(options) {
       parseJournalRecord(
         serialized2,
         workspaceIdSnapshot,
-        principalIdSnapshot
+        principalIdSnapshot,
+        true
       );
       await writeSecureJsonFile(journal.journalPath, serialized2);
       return {
@@ -38903,7 +39596,8 @@ async function openListenerDeliveryJournal(options) {
     parseJournalRecord(
       serialized,
       workspaceIdSnapshot,
-      principalIdSnapshot
+      principalIdSnapshot,
+      true
     );
     await writeSecureJsonFile(journal.journalPath, serialized);
     return {
@@ -39059,7 +39753,7 @@ function parseState(raw) {
   }
   const row = value;
   const topicVersions = row.topicVersions;
-  if (Object.keys(row).sort().join(",") !== "principalId,topicVersions,version" || row.version !== 1 || typeof row.principalId !== "string" || !UUID_RE20.test(row.principalId) || !topicVersions || typeof topicVersions !== "object" || Array.isArray(topicVersions) || Object.keys(topicVersions).length > MAX_BRAIN_DIGEST_TOPICS) {
+  if (row.version !== 1 || typeof row.principalId !== "string" || !UUID_RE20.test(row.principalId) || !topicVersions || typeof topicVersions !== "object" || Array.isArray(topicVersions) || Object.keys(topicVersions).length > MAX_BRAIN_DIGEST_TOPICS) {
     throw new Error("stored brain digest state is malformed");
   }
   for (const [topic, version3] of Object.entries(topicVersions)) {
@@ -39171,7 +39865,26 @@ function exactKeys2(row, keys) {
   const expected = new Set(keys);
   return Object.keys(row).length === expected.size && Object.keys(row).every((key2) => expected.has(key2));
 }
-function parseListenerCredential(raw) {
+function hasRequiredKeys(row, keys) {
+  return keys.every((key2) => Object.hasOwn(row, key2));
+}
+var LISTENER_CREDENTIAL_KEYS = [
+  "version",
+  "profileId",
+  "targetUrl",
+  "anonKey",
+  "workspaceId",
+  "principalId",
+  "credential",
+  "updatedAt"
+];
+var HOOK_SURFACE_KEYS = /* @__PURE__ */ new Set([
+  "version",
+  "surfacedSignalIds",
+  "reportedDroppedCount",
+  "credentialFailureReported"
+]);
+function parseListenerCredential(raw, rejectUnknownKeys = false) {
   let value;
   try {
     value = JSON.parse(raw);
@@ -39182,16 +39895,7 @@ function parseListenerCredential(raw) {
     throw new Error("stored listener hook credential is malformed");
   }
   const row = value;
-  if (!exactKeys2(row, [
-    "version",
-    "profileId",
-    "targetUrl",
-    "anonKey",
-    "workspaceId",
-    "principalId",
-    "credential",
-    "updatedAt"
-  ]) || row.version !== 1 || typeof row.profileId !== "string" || !/^[0-9a-f]{24}$/.test(row.profileId) || typeof row.targetUrl !== "string" || typeof row.anonKey !== "string" || row.anonKey.length < 1 || row.anonKey.length > 4096 || typeof row.workspaceId !== "string" || !UUID_RE21.test(row.workspaceId) || typeof row.principalId !== "string" || !UUID_RE21.test(row.principalId) || typeof row.credential !== "string" || !TOKEN_RE.test(row.credential) || typeof row.updatedAt !== "string" || !Number.isFinite(Date.parse(row.updatedAt))) {
+  if (!(rejectUnknownKeys ? exactKeys2(row, LISTENER_CREDENTIAL_KEYS) : hasRequiredKeys(row, LISTENER_CREDENTIAL_KEYS)) || row.version !== 1 || typeof row.profileId !== "string" || !/^[0-9a-f]{24}$/.test(row.profileId) || typeof row.targetUrl !== "string" || typeof row.anonKey !== "string" || row.anonKey.length < 1 || row.anonKey.length > 4096 || typeof row.workspaceId !== "string" || !UUID_RE21.test(row.workspaceId) || typeof row.principalId !== "string" || !UUID_RE21.test(row.principalId) || typeof row.credential !== "string" || !TOKEN_RE.test(row.credential) || typeof row.updatedAt !== "string" || !Number.isFinite(Date.parse(row.updatedAt))) {
     throw new Error("stored listener hook credential is malformed");
   }
   const target2 = cloudTarget(row.targetUrl, row.anonKey);
@@ -39222,7 +39926,7 @@ async function writeListenerCredentialState(instanceDirectory, input) {
     principalId: input.principalId,
     credential: input.credential,
     updatedAt: new Date(input.now ?? Date.now()).toISOString()
-  }));
+  }), true);
   await writeSecureJsonFile(
     (0, import_node_path20.join)(instanceDirectory, LISTENER_CREDENTIAL_FILE),
     JSON.stringify(record)
@@ -39238,7 +39942,7 @@ async function readListenerCredentialState(instanceDirectory) {
   );
   return raw === null ? null : parseListenerCredential(raw);
 }
-function parseSurface(raw) {
+function parseSurface(raw, rejectUnknownKeys = false) {
   let value;
   try {
     value = JSON.parse(raw);
@@ -39249,9 +39953,7 @@ function parseSurface(raw) {
     throw new Error("stored listener hook surface state is malformed");
   }
   const row = value;
-  if (Object.keys(row).some(
-    (key2) => key2 !== "version" && key2 !== "surfacedSignalIds" && key2 !== "reportedDroppedCount" && key2 !== "credentialFailureReported"
-  ) || row.version !== 1 || !Array.isArray(row.surfacedSignalIds) || row.surfacedSignalIds.length > HOOK_SURFACED_IDS_MAX || row.surfacedSignalIds.some((id) => typeof id !== "string" || !UUID_RE21.test(id)) || !(row.reportedDroppedCount === void 0 || typeof row.reportedDroppedCount === "number" && Number.isSafeInteger(row.reportedDroppedCount) && row.reportedDroppedCount >= 0) || !(row.credentialFailureReported === void 0 || typeof row.credentialFailureReported === "boolean")) {
+  if (rejectUnknownKeys && Object.keys(row).some((key2) => !HOOK_SURFACE_KEYS.has(key2)) || row.version !== 1 || !Array.isArray(row.surfacedSignalIds) || row.surfacedSignalIds.length > HOOK_SURFACED_IDS_MAX || row.surfacedSignalIds.some((id) => typeof id !== "string" || !UUID_RE21.test(id)) || !(row.reportedDroppedCount === void 0 || typeof row.reportedDroppedCount === "number" && Number.isSafeInteger(row.reportedDroppedCount) && row.reportedDroppedCount >= 0) || !(row.credentialFailureReported === void 0 || typeof row.credentialFailureReported === "boolean")) {
     throw new Error("stored listener hook surface state is malformed");
   }
   const ids = row.surfacedSignalIds.map((id) => String(id).toLowerCase());
@@ -39345,7 +40047,7 @@ var FileHookSurfaceStore = class {
           surfacedSignalIds: [...seen].slice(-HOOK_SURFACED_IDS_MAX),
           reportedDroppedCount: options.droppedCount ?? state.reportedDroppedCount,
           credentialFailureReported: options.credentialFailureReported ?? state.credentialFailureReported
-        })))
+        }), true))
       );
     }, { timeoutMs: HOOK_LOCK_TIMEOUT_MS });
   }
@@ -39368,7 +40070,7 @@ function parseGlobalState(raw) {
     throw new Error("stored hook cooldown state is malformed");
   }
   const row = value;
-  if (!exactKeys2(row, ["version", "lastCheckAt"]) || row.version !== 1 || typeof row.lastCheckAt !== "number" || !Number.isSafeInteger(row.lastCheckAt) || row.lastCheckAt < 0) {
+  if (!hasRequiredKeys(row, ["version", "lastCheckAt"]) || row.version !== 1 || typeof row.lastCheckAt !== "number" || !Number.isSafeInteger(row.lastCheckAt) || row.lastCheckAt < 0) {
     throw new Error("stored hook cooldown state is malformed");
   }
   return { version: 1, lastCheckAt: row.lastCheckAt };
@@ -39995,6 +40697,470 @@ function renderListenerAttendanceCanary(result, workspaceId2, principalId) {
   return lines.join("\n");
 }
 
+// src/listener/activity.ts
+var import_node_crypto20 = require("node:crypto");
+var ACTIVITY_FRAME_INTERVAL_MS = 750;
+var ACTIVITY_HEARTBEAT_MS = 15e3;
+var ACTIVITY_TOOL_TITLE_MAX = 160;
+var ACTIVITY_REQUEST_TIMEOUT_MS = 5e3;
+var SYSTEM_CLOCK = {
+  now: Date.now,
+  setTimer: (callback, delayMs) => setTimeout(callback, delayMs),
+  clearTimer: (timer2) => clearTimeout(timer2)
+};
+var TERMINAL_TOOL_STATUSES = /* @__PURE__ */ new Set([
+  "cancelled",
+  "completed",
+  "done",
+  "failed",
+  "rejected"
+]);
+var AgentActivityEndpointTransport = class {
+  constructor(target2, credentialSession, fetcher) {
+    this.target = target2;
+    this.credentialSession = credentialSession;
+    this.fetcher = fetcher ?? fetch;
+  }
+  target;
+  credentialSession;
+  fetcher;
+  async publish(frame) {
+    const credential = await this.credentialSession.bearer();
+    const response = await this.fetcher(
+      `${this.target.url}/functions/v1/activity`,
+      {
+        method: "POST",
+        headers: {
+          authorization: `Bearer ${credential}`,
+          apikey: this.target.anonKey,
+          "content-type": "application/json"
+        },
+        body: JSON.stringify({
+          version: frame.version,
+          workspace_id: frame.workspaceId,
+          stream_id: frame.streamId,
+          sequence: frame.sequence,
+          phase: frame.phase,
+          signal_id: frame.signalId,
+          tool_title: frame.toolTitle,
+          elapsed_ms: frame.elapsedMs
+        }),
+        signal: AbortSignal.timeout(ACTIVITY_REQUEST_TIMEOUT_MS)
+      }
+    );
+    await response.body?.cancel();
+    if (!response.ok) {
+      throw new Error(`activity publish failed (${response.status})`);
+    }
+  }
+};
+var ListenerActivityController = class {
+  constructor(options) {
+    this.options = options;
+    this.clock = options.clock ?? SYSTEM_CLOCK;
+    this.streamId = options.streamId ?? (0, import_node_crypto20.randomUUID)();
+    this.events = { update: (update) => this.onSessionUpdate(update) };
+  }
+  options;
+  events;
+  clock;
+  streamId;
+  sequence = 0;
+  phase = "idle";
+  signalId = null;
+  signalStartedAt = null;
+  runningTools = /* @__PURE__ */ new Map();
+  latestToolId = null;
+  dirty = false;
+  sending = false;
+  closed = false;
+  lastSentAt = Number.NEGATIVE_INFINITY;
+  timer = null;
+  heartbeatTimer = null;
+  /** Observe the listener state machine without changing its durable effect path. */
+  onRuntimeEvent(event) {
+    if (event.type === "ready") {
+      this.setIdle();
+    } else if (event.type === "delivery_claim" && event.signalId !== null) {
+      this.beginSignal(event.signalId);
+    } else if (event.type === "routing_decision") {
+      this.beginSignal(event.signalId);
+    } else if (event.type === "effect") {
+      this.setIdle();
+    }
+  }
+  /** Wrap one provider model so prompt and reply phases are visible. */
+  instrumentModel(model) {
+    return {
+      start: async () => await model.start(),
+      prompt: async (signal, mode3, prompt, attempt) => {
+        this.beginSignal(signal.id);
+        this.setPhase("prompting");
+        const result = await model.prompt(signal, mode3, prompt, attempt);
+        this.runningTools.clear();
+        this.latestToolId = null;
+        this.setPhase("replying");
+        return result;
+      },
+      cancel: () => model.cancel(),
+      close: async () => await model.close()
+    };
+  }
+  /** Stop pending local timers; a missing next frame becomes stale in the panel. */
+  close() {
+    this.closed = true;
+    if (this.timer !== null) this.clock.clearTimer(this.timer);
+    if (this.heartbeatTimer !== null) this.clock.clearTimer(this.heartbeatTimer);
+    this.timer = null;
+    this.heartbeatTimer = null;
+  }
+  onSessionUpdate(update) {
+    if (this.signalId === null) return;
+    if (update.kind !== "tool_call" && update.kind !== "tool_call_update") return;
+    const id = update.toolCallId;
+    if (!id) return;
+    const status = update.status?.toLowerCase();
+    if (status && TERMINAL_TOOL_STATUSES.has(status)) {
+      this.runningTools.delete(id);
+      if (this.latestToolId === id) {
+        this.latestToolId = [...this.runningTools.keys()].at(-1) ?? null;
+      }
+      this.setPhase(this.runningTools.size > 0 ? "tool-running" : "prompting");
+      return;
+    }
+    const sanitizedTitle = update.title === void 0 ? this.runningTools.get(id) : sanitizeText(update.title).slice(0, ACTIVITY_TOOL_TITLE_MAX);
+    const title = sanitizedTitle && sanitizedTitle.length > 0 ? sanitizedTitle : "Tool";
+    this.runningTools.set(id, title);
+    this.latestToolId = id;
+    this.setPhase("tool-running");
+  }
+  beginSignal(signalId) {
+    if (this.signalId === signalId) return;
+    this.signalId = signalId;
+    this.signalStartedAt = this.clock.now();
+    this.runningTools.clear();
+    this.latestToolId = null;
+    this.setPhase("claimed");
+  }
+  setIdle() {
+    this.signalId = null;
+    this.signalStartedAt = null;
+    this.runningTools.clear();
+    this.latestToolId = null;
+    this.setPhase("idle");
+  }
+  setPhase(phase) {
+    this.phase = phase;
+    if (this.heartbeatTimer !== null) {
+      this.clock.clearTimer(this.heartbeatTimer);
+      this.heartbeatTimer = null;
+    }
+    this.dirty = true;
+    this.schedule();
+  }
+  armHeartbeat() {
+    if (this.closed || this.heartbeatTimer !== null) return;
+    this.heartbeatTimer = this.clock.setTimer(() => {
+      this.heartbeatTimer = null;
+      this.dirty = true;
+      this.schedule();
+    }, ACTIVITY_HEARTBEAT_MS);
+  }
+  schedule() {
+    if (this.closed || this.timer !== null || this.sending) return;
+    const delay2 = Math.max(
+      0,
+      this.lastSentAt + ACTIVITY_FRAME_INTERVAL_MS - this.clock.now()
+    );
+    if (delay2 === 0) {
+      void this.flush();
+      return;
+    }
+    this.timer = this.clock.setTimer(() => {
+      this.timer = null;
+      void this.flush();
+    }, delay2);
+  }
+  async flush() {
+    if (this.closed || this.sending || !this.dirty) return;
+    this.dirty = false;
+    this.sending = true;
+    this.lastSentAt = this.clock.now();
+    const toolTitle = this.latestToolId === null ? null : this.runningTools.get(this.latestToolId) ?? null;
+    const frame = {
+      version: 1,
+      workspaceId: this.options.workspaceId,
+      streamId: this.streamId,
+      sequence: ++this.sequence,
+      phase: this.phase,
+      signalId: this.signalId,
+      toolTitle,
+      elapsedMs: this.signalStartedAt === null ? 0 : Math.max(0, Math.round(this.clock.now() - this.signalStartedAt))
+    };
+    try {
+      await this.options.transport.publish(frame);
+    } catch {
+    } finally {
+      this.sending = false;
+      if (this.dirty) this.schedule();
+      else this.armHeartbeat();
+    }
+  }
+};
+
+// src/listener/http-client.ts
+var import_node_http2 = require("node:http");
+var import_node_https = require("node:https");
+var import_node_zlib = require("node:zlib");
+var LISTENER_HTTP_IDLE_TIMEOUT_MS = 6e4;
+function responseHeaders(message) {
+  const headers = new Headers();
+  for (let index = 0; index < message.rawHeaders.length; index += 2) {
+    const name = message.rawHeaders[index];
+    const value = message.rawHeaders[index + 1];
+    if (name !== void 0 && value !== void 0) headers.append(name, value);
+  }
+  return headers;
+}
+function decodeResponseBody(bytes, headers) {
+  const codings = (headers.get("content-encoding") ?? "").split(",").map((coding) => coding.trim().toLowerCase()).filter((coding) => coding !== "" && coding !== "identity");
+  if (!codings.every((coding) => ["br", "deflate", "gzip", "x-gzip"].includes(coding))) {
+    return Uint8Array.from(bytes).buffer;
+  }
+  let decoded = bytes;
+  for (const coding of codings.reverse()) {
+    if (coding === "br") decoded = (0, import_node_zlib.brotliDecompressSync)(decoded);
+    else if (coding === "deflate") decoded = (0, import_node_zlib.inflateSync)(decoded);
+    else decoded = (0, import_node_zlib.gunzipSync)(decoded);
+  }
+  return Uint8Array.from(decoded).buffer;
+}
+var ListenerHttpClient = class {
+  fetch;
+  httpAgent = new import_node_http2.Agent({
+    keepAlive: true,
+    maxSockets: 1,
+    maxFreeSockets: 1,
+    scheduling: "fifo"
+  });
+  httpsAgent = new import_node_https.Agent({
+    keepAlive: true,
+    maxSockets: 1,
+    maxFreeSockets: 1,
+    scheduling: "fifo"
+  });
+  idleTimeoutMs;
+  sockets = /* @__PURE__ */ new WeakSet();
+  requestCount = 0;
+  openedCount = 0;
+  activeRequests = 0;
+  idleTimer = null;
+  closed = false;
+  constructor(options = {}) {
+    const idleTimeoutMs = options.idleTimeoutMs ?? LISTENER_HTTP_IDLE_TIMEOUT_MS;
+    if (!Number.isSafeInteger(idleTimeoutMs) || idleTimeoutMs <= 0) {
+      throw new Error("listener HTTP idle timeout must be a positive integer");
+    }
+    this.idleTimeoutMs = idleTimeoutMs;
+    this.fetch = this.request.bind(this);
+  }
+  /** Snapshot process-local counts without exposing the agents themselves. */
+  metrics() {
+    return {
+      requests: this.requestCount,
+      connectionsOpened: this.openedCount,
+      connectionReuseRatio: this.openedCount === 0 ? 0 : this.requestCount / this.openedCount
+    };
+  }
+  /** Close every idle or active socket when the listener process stops. */
+  close() {
+    if (this.closed) return;
+    this.closed = true;
+    this.clearIdleTimer();
+    this.destroyAgents();
+  }
+  clearIdleTimer() {
+    if (this.idleTimer === null) return;
+    clearTimeout(this.idleTimer);
+    this.idleTimer = null;
+  }
+  destroyAgents() {
+    this.httpAgent.destroy();
+    this.httpsAgent.destroy();
+  }
+  beginRequest() {
+    if (this.closed) throw new Error("listener HTTP client is closed");
+    this.clearIdleTimer();
+    this.requestCount += 1;
+    this.activeRequests += 1;
+  }
+  finishRequest() {
+    this.activeRequests -= 1;
+    if (this.activeRequests !== 0 || this.closed) return;
+    this.idleTimer = setTimeout(() => {
+      this.idleTimer = null;
+      if (this.activeRequests === 0 && !this.closed) this.destroyAgents();
+    }, this.idleTimeoutMs);
+    this.idleTimer.unref?.();
+  }
+  trackSocket(request) {
+    request.once("socket", (socket) => {
+      if (this.sockets.has(socket)) return;
+      this.sockets.add(socket);
+      const opened = () => {
+        this.openedCount += 1;
+      };
+      if (socket.connecting) socket.once("connect", opened);
+      else opened();
+    });
+  }
+  async request(input, init) {
+    const webRequest = new Request(input, init);
+    const body = webRequest.method === "GET" || webRequest.method === "HEAD" ? null : Buffer.from(await webRequest.arrayBuffer());
+    let url = new URL(webRequest.url);
+    let method = webRequest.method;
+    let headers = new Headers(webRequest.headers);
+    let redirected = false;
+    for (let redirects = 0; ; redirects += 1) {
+      const response = await this.sendOnce({
+        url,
+        method,
+        headers,
+        body: method === "GET" || method === "HEAD" ? null : body,
+        signal: webRequest.signal,
+        redirected
+      });
+      const location2 = response.headers.get("location");
+      if (location2 === null || ![301, 302, 303, 307, 308].includes(response.status) || webRequest.redirect === "manual") {
+        return response;
+      }
+      if (webRequest.redirect === "error" || redirects >= 20) {
+        throw new TypeError("fetch failed while following a redirect");
+      }
+      const nextUrl = new URL(location2, url);
+      if (nextUrl.protocol !== "http:" && nextUrl.protocol !== "https:") {
+        throw new TypeError("listener HTTP client accepts only http and https URLs");
+      }
+      const rewriteToGet = response.status === 303 && method !== "HEAD" || (response.status === 301 || response.status === 302) && method === "POST";
+      if (rewriteToGet) {
+        method = "GET";
+        for (const name of [
+          "content-encoding",
+          "content-language",
+          "content-length",
+          "content-location",
+          "content-type",
+          "transfer-encoding"
+        ]) {
+          headers.delete(name);
+        }
+      }
+      if (nextUrl.origin !== url.origin) {
+        for (const name of [
+          "apikey",
+          "authorization",
+          "cookie",
+          "host",
+          "proxy-authorization"
+        ]) {
+          headers.delete(name);
+        }
+      }
+      url = nextUrl;
+      redirected = true;
+    }
+  }
+  async sendOnce(options) {
+    if (options.url.protocol !== "http:" && options.url.protocol !== "https:") {
+      throw new TypeError("listener HTTP client accepts only http and https URLs");
+    }
+    const headers = Object.fromEntries(options.headers.entries());
+    if (!("accept-encoding" in headers)) headers["accept-encoding"] = "gzip, deflate";
+    if (options.body !== null && !("content-length" in headers) && !("transfer-encoding" in headers)) {
+      headers["content-length"] = String(options.body.byteLength);
+    }
+    this.beginRequest();
+    let finished = false;
+    const finish = () => {
+      if (finished) return;
+      finished = true;
+      this.finishRequest();
+    };
+    return await new Promise((resolve2, reject) => {
+      const send = options.url.protocol === "https:" ? import_node_https.request : import_node_http2.request;
+      const agent = options.url.protocol === "https:" ? this.httpsAgent : this.httpAgent;
+      let request;
+      try {
+        request = send(options.url, {
+          agent,
+          method: options.method,
+          headers,
+          signal: options.signal
+        });
+      } catch (error) {
+        finish();
+        reject(error);
+        return;
+      }
+      this.trackSocket(request);
+      request.once("error", (error) => {
+        finish();
+        reject(error);
+      });
+      request.once("response", (message) => {
+        const chunks = [];
+        let settled = false;
+        const rejectResponse = (error) => {
+          if (settled) return;
+          settled = true;
+          finish();
+          reject(error);
+        };
+        message.on("data", (chunk) => {
+          chunks.push(Buffer.isBuffer(chunk) ? chunk : Buffer.from(chunk));
+        });
+        message.once("aborted", () => {
+          rejectResponse(new TypeError("response body was aborted"));
+        });
+        message.once("error", rejectResponse);
+        message.once("end", () => {
+          if (settled) return;
+          settled = true;
+          finish();
+          const status = message.statusCode ?? 0;
+          const bytes = Buffer.concat(chunks);
+          const webHeaders = responseHeaders(message);
+          const responseBody2 = status === 204 || status === 205 || status === 304 ? null : decodeResponseBody(bytes, webHeaders);
+          try {
+            const response = new Response(responseBody2, {
+              status,
+              statusText: message.statusMessage,
+              headers: webHeaders
+            });
+            Object.defineProperties(response, {
+              redirected: { value: options.redirected },
+              url: { value: options.url.href }
+            });
+            resolve2(response);
+          } catch (error) {
+            reject(error);
+          }
+        });
+      });
+      try {
+        if (options.body !== null && options.body.byteLength > 0) {
+          request.write(options.body);
+        }
+        request.end();
+      } catch (error) {
+        request.destroy();
+        finish();
+        reject(error);
+      }
+    });
+  }
+};
+
 // src/resume.ts
 var import_node_child_process8 = require("node:child_process");
 function execFileText(file, args) {
@@ -40410,8 +41576,8 @@ var ACCEPTED_AGENT_CREDENTIAL_MESSAGES = [
   AGENT_CREDENTIAL_MESSAGE_D088
 ];
 function packageVersion() {
-  if ("0.1.45".length > 0) {
-    return "0.1.45";
+  if ("0.1.46".length > 0) {
+    return "0.1.46";
   }
   try {
     const value = JSON.parse(
@@ -41035,7 +42201,7 @@ async function runNew(args) {
   assertWorkspaceName(name);
   const cloud = await target(args);
   const human = await humanCredential(args, cloud);
-  const proposedId = (0, import_node_crypto20.randomUUID)();
+  const proposedId = (0, import_node_crypto21.randomUUID)();
   let result;
   try {
     result = await new ThinCommandClient(cloud).sendConnect({
@@ -42058,7 +43224,7 @@ function accepted(label, result) {
     );
   }
 }
-async function agentSession(cloud, workspaceId2, agent) {
+async function agentSession(cloud, workspaceId2, agent, fetcher) {
   let store2 = null;
   try {
     const candidate = await agentCredentialStore({
@@ -42084,7 +43250,8 @@ async function agentSession(cloud, workspaceId2, agent) {
       runId: agent.runId,
       expiresAt: agent.expiresAt
     },
-    store: store2
+    store: store2,
+    ...fetcher ? { fetcher } : {}
   });
 }
 async function commandWorkspaceAndCredential(args, cloud, options = {}) {
@@ -42366,8 +43533,8 @@ function prepareSignalAttachments(localPaths) {
       name,
       bytes,
       contentType,
-      fileId: (0, import_node_crypto20.randomUUID)(),
-      versionId: (0, import_node_crypto20.randomUUID)(),
+      fileId: (0, import_node_crypto21.randomUUID)(),
+      versionId: (0, import_node_crypto21.randomUUID)(),
       createCommandId: newCommandId(),
       commitCommandId: newCommandId()
     };
@@ -43052,6 +44219,7 @@ async function runInboxNotifyCommand(args) {
     );
   }
   const controller = new AbortController();
+  const httpClient = new ListenerHttpClient();
   const stop = () => controller.abort();
   process.on("SIGINT", stop);
   process.on("SIGTERM", stop);
@@ -43082,7 +44250,7 @@ async function runInboxNotifyCommand(args) {
               ...after === null ? {} : { after }
             }
           },
-          { signal: controller.signal }
+          { signal: controller.signal, fetcher: httpClient.fetch }
         );
       },
       emit: async (signal) => {
@@ -43116,6 +44284,7 @@ async function runInboxNotifyCommand(args) {
   } finally {
     process.off("SIGINT", stop);
     process.off("SIGTERM", stop);
+    httpClient.close();
   }
 }
 async function runReceipt(args) {
@@ -43188,6 +44357,7 @@ async function runInboxFollowCommand(args) {
     includeStale: args.has("include-stale")
   };
   const controller = new AbortController();
+  const httpClient = new ListenerHttpClient();
   let legacyCursorWarned = false;
   let malformedRowWarnings = 0;
   const onAbortSignal = () => controller.abort();
@@ -43219,7 +44389,7 @@ async function runInboxFollowCommand(args) {
             cloud,
             credential,
             query,
-            { signal: controller.signal },
+            { signal: controller.signal, fetcher: httpClient.fetch },
             {
               allowLegacyCursorFallback: true,
               tolerateMalformedRows: true,
@@ -43251,7 +44421,7 @@ async function runInboxFollowCommand(args) {
           cloud,
           credential,
           query,
-          { signal: controller.signal }
+          { signal: controller.signal, fetcher: httpClient.fetch }
         );
       },
       emit: (frame) => {
@@ -43269,6 +44439,7 @@ async function runInboxFollowCommand(args) {
   } finally {
     process.off("SIGINT", onAbortSignal);
     process.off("SIGTERM", onAbortSignal);
+    httpClient.close();
   }
 }
 function listenerUuid(value, flag) {
@@ -43453,16 +44624,107 @@ function listenerAttendanceState(status, evidence) {
 function listenerAttendanceRemedy(principalId) {
   return `cswarm hook install claude --principal-id ${principalId} --write, then start a fresh session. Or restart the listener with --route worker.`;
 }
+function listenerReadHealthSummary(status, nowMs) {
+  return summarizeListenerReadHealth(
+    status.readHealth ?? emptyListenerReadHealth(),
+    status.readyAt,
+    nowMs
+  );
+}
+function listenerLapseNotices(status, summary) {
+  const health = status.readHealth ?? emptyListenerReadHealth();
+  const notices = [];
+  if (health.currentReasonCode === "host_ports_exhausted") {
+    notices.push({
+      code: "listener_host_ports_exhausted",
+      message: "This host has run out of outbound ports. The listener is probing only once per minute so it does not amplify the outage.",
+      nextStep: "Find the consumer: lsof -nP -iTCP | awk '{print $1}' | sort | uniq -c | sort -rn"
+    });
+  } else if (
+    // Reuse arrival-watch.ts's 60s loud-lapse transition. The listener keeps
+    // the episode in durable status instead of the monitor's process-local machine.
+    summary.currentEpisodeDurationMs !== null && summary.currentEpisodeDurationMs >= ARRIVAL_RETRY_NOTICE_THRESHOLD_MS
+  ) {
+    notices.push({
+      code: "listener_read_retry_persisting",
+      message: `Listener reads have failed continuously for ${Math.floor(summary.currentEpisodeDurationMs / 1e3)}s. This is still in progress.`,
+      nextStep: "Check cswarm status and the CommonSwarm service. If both are healthy, restart the listener."
+    });
+  }
+  if (summary.throughputLapseHours.length > 0) {
+    const latest = summary.throughputLapseHours.at(-1);
+    notices.push({
+      code: "listener_claim_throughput_lapse",
+      message: `Claim throughput fell below 0.50 for the full hour at ${latest.hourStart}: ${latest.claims}/${Math.round(latest.expectedClaims)} expected (${latest.ratio.toFixed(3)}).`,
+      nextStep: "This host is starving the listener \u2014 check load/memory pressure (sysctl kern.memorystatus_vm_pressure_level), or move the listener."
+    });
+  }
+  return notices;
+}
+async function listenerProviderInstallEvidence(status) {
+  if (status.provider !== "claude") return null;
+  try {
+    const notice = await inspectClaudeBridgeExecutable(
+      status.providerExecutable ?? "claude-agent-acp",
+      { pathEnv: process.env.PATH, env: process.env }
+    );
+    return {
+      executable: notice.executable,
+      providerVersion: notice.providerVersion,
+      bundledAgentSdkVersion: notice.bundledAgentSdkVersion,
+      bundledClaudeCodeVersion: notice.bundledClaudeCodeVersion
+    };
+  } catch {
+    return {
+      executable: null,
+      providerVersion: null,
+      bundledAgentSdkVersion: null,
+      bundledClaudeCodeVersion: null
+    };
+  }
+}
+function versionIsBelow(left, right) {
+  if (!left || !right) return false;
+  try {
+    return compareSemVer(left, right) < 0;
+  } catch {
+    return false;
+  }
+}
+function providerRestartRequired(status, installed) {
+  if (!installed) return false;
+  return status.providerVersion !== null && status.providerVersion !== void 0 && installed.providerVersion !== null && status.providerVersion !== installed.providerVersion || status.providerBundledClaudeCodeVersion !== null && status.providerBundledClaudeCodeVersion !== void 0 && installed.bundledClaudeCodeVersion !== null && status.providerBundledClaudeCodeVersion !== installed.bundledClaudeCodeVersion;
+}
 function listenerStatusJson(status, permissionMode, evidence = {
   pendingForMainOldestAt: null,
   hookSurfaceExists: false,
   hookSurfaceAdvanced: false
-}, nowMs = Date.now()) {
+}, nowMs = Date.now(), installed = null) {
   const mode3 = permissionMode ?? status.permissionMode;
   const attendance = listenerAttendanceState(status, evidence);
   const pending = status.pendingForMainCount ?? 0;
+  const readHealth = status.readHealth ?? emptyListenerReadHealth();
+  const readSummary = listenerReadHealthSummary(status, nowMs);
+  const lapseNotices = listenerLapseNotices(status, readSummary);
   return {
     ...status,
+    providerExecutable: status.providerExecutable ?? null,
+    providerExecutableMeasured: typeof status.providerExecutable === "string",
+    providerVersion: status.providerVersion ?? null,
+    providerVersionMeasured: typeof status.providerVersion === "string",
+    providerBundledAgentSdkVersion: status.providerBundledAgentSdkVersion ?? null,
+    providerBundledClaudeCodeVersion: status.providerBundledClaudeCodeVersion ?? null,
+    providerMinimumRequiredVersion: status.providerMinimumRequiredVersion ?? null,
+    lastErrorReasonCode: status.lastErrorReasonCode ?? null,
+    providerBelowDemandedMinimum: versionIsBelow(
+      status.providerBundledClaudeCodeVersion,
+      status.providerMinimumRequiredVersion
+    ),
+    providerOnDiskExecutable: installed?.executable ?? null,
+    providerOnDiskVersion: installed?.providerVersion ?? null,
+    providerOnDiskBundledAgentSdkVersion: installed?.bundledAgentSdkVersion ?? null,
+    providerOnDiskBundledClaudeCodeVersion: installed?.bundledClaudeCodeVersion ?? null,
+    providerRestartRequired: providerRestartRequired(status, installed),
     ...attendance,
     hookSurfaceExists: evidence.hookSurfaceExists,
     hookSurfaceAdvanced: evidence.hookSurfaceAdvanced,
@@ -43470,6 +44732,22 @@ function listenerStatusJson(status, permissionMode, evidence = {
     pendingForMainOldestAgeMs: evidence.pendingForMainOldestAt === null ? null : Math.max(0, nowMs - Date.parse(evidence.pendingForMainOldestAt)),
     attendanceWarningCode: pending > 0 ? "listener_unattended_main_queue" : null,
     attendanceNextStep: pending > 0 ? listenerAttendanceRemedy(status.principalId) : null,
+    readRetryCurrentEpisodeStartedAt: readHealth.currentEpisodeStartedAt,
+    readRetryCurrentEpisodeAttempts: readHealth.currentEpisodeAttempts,
+    readRetryCurrentReasonCode: readHealth.currentReasonCode,
+    readRetryCurrentHttpStatus: readHealth.currentHttpStatus,
+    readRetryCurrentErrorConstructor: readHealth.currentErrorConstructor,
+    readRetryCurrentEpisodeDurationMs: readSummary.currentEpisodeDurationMs,
+    readRetryEpisodesLast24h: readSummary.episodesLast24h,
+    readRetryLongestEpisodeAttemptsLast24h: readSummary.longestEpisodeAttemptsLast24h,
+    readRetryLongestEpisodeDurationMsLast24h: readSummary.longestEpisodeDurationMsLast24h,
+    readRetriesLastHour: readSummary.retriesLastHour,
+    readRetryHours: readSummary.retryHours,
+    claimCadenceMs: readHealth.claimCadenceMs,
+    claimThroughputHours: readSummary.claimThroughputHours,
+    listenerLapse: lapseNotices.length > 0,
+    listenerLapseCodes: lapseNotices.map((notice) => notice.code),
+    listenerLapseNextSteps: lapseNotices.map((notice) => notice.nextStep),
     deliveryMode: status.deliveryMode ?? null,
     pendingDeliveryCount: status.pendingDeliveryCount ?? null,
     lastTerminalDeliveryFailureCount: status.lastTerminalDeliveryFailureCount ?? null,
@@ -43480,6 +44758,8 @@ function listenerStatusJson(status, permissionMode, evidence = {
     deferOverChars: status.deferOverChars ?? null,
     pendingForMainCount: status.pendingForMainCount ?? 0,
     droppedForMainCount: status.droppedForMainCount ?? 0,
+    connectionsOpened: status.connectionsOpened ?? null,
+    connectionReuseRatio: status.connectionReuseRatio ?? null,
     ...mode3 ? {
       permission_mode: mode3,
       /* "allowed once" alone overstates it: allowOnceOrDeny selects allow_once only when the
@@ -43495,26 +44775,55 @@ function renderListenerStatus(status, evidence = {
   pendingForMainOldestAt: null,
   hookSurfaceExists: false,
   hookSurfaceAdvanced: false
-}, nowMs = Date.now()) {
+}, nowMs = Date.now(), installed = null) {
   const routeMode = status.routeMode ?? "worker";
   const pendingForMainCount = status.pendingForMainCount ?? 0;
   const droppedForMainCount = status.droppedForMainCount ?? 0;
   const unattendedCount = `${pendingForMainCount} ${pendingForMainCount === 1 ? "message is" : "messages are"} unattended`;
   const attendance = listenerAttendanceState(status, evidence);
+  const readHealth = status.readHealth ?? emptyListenerReadHealth();
+  const readSummary = listenerReadHealthSummary(status, nowMs);
+  const lapseNotices = listenerLapseNotices(status, readSummary);
   const lines = [
-    pendingForMainCount > 0 ? `Listener WARNING for agent ${status.principalId}: ${unattendedCount}.` : `Listener ${status.state} for agent ${status.principalId}.`,
+    lapseNotices.length > 0 ? `Listener LAPSE for agent ${status.principalId}: ${lapseNotices.map((notice) => notice.code).join(", ")}.` : pendingForMainCount > 0 ? `Listener WARNING for agent ${status.principalId}: ${unattendedCount}.` : `Listener ${status.state} for agent ${status.principalId}.`,
     `CONNECTED: ${attendance.connected ? "yes" : "no"}. Transport state is ${status.state}.`,
     `ATTENDED: ${attendance.attendanceState === "attended" ? "yes. The session hook has surfaced messages on this host" : attendance.attendanceState === "unattended" ? "no. The main-session queue is not draining" : attendance.attendanceState === "not_required" ? "not required for the worker route" : "not yet proven on this host"}.`,
     `HANDLED: ${attendance.handledState === "handled" ? "yes. A delivery acknowledgement is recorded" : attendance.handledState === "not_handled" ? "no. Queued messages have not reached the session hook" : "not yet measured"}.`,
     `Provider: ${status.provider}; process: ${status.pid}; started: ${status.startedAt}.`,
+    `Provider executable: ${status.providerExecutable ?? "not measured"}.`,
+    `Connections opened: ${status.connectionsOpened ?? "not measured"}.`,
+    `Connection reuse ratio: ${status.connectionReuseRatio ?? "not measured"}.`,
     status.readyAt ? `Ready since: ${status.readyAt}.` : "Not ready yet.",
     status.lastSignalId ? pendingForMainCount > 0 ? `Last claimed and queued signal: ${status.lastSignalId}. It is not handled yet.` : routeMode === "worker" ? `Last handled signal: ${status.lastSignalId}.` : `Last listener signal: ${status.lastSignalId}. Local status does not prove its final observed receipt.` : "No signal has been handled yet.",
-    status.lastErrorCode ? `Last status code: ${status.lastErrorCode}.` : "No listener process error is recorded."
+    status.lastErrorCode ? `Last status code: ${status.lastErrorCode}.` : "No listener process error is recorded.",
+    readHealth.currentEpisodeStartedAt === null ? "Current read retry episode: none." : `Current read retry episode: ${readHealth.currentEpisodeAttempts} attempt${readHealth.currentEpisodeAttempts === 1 ? "" : "s"} since ${readHealth.currentEpisodeStartedAt}; reason ${readHealth.currentReasonCode}${readHealth.currentHttpStatus === null ? "" : ` (HTTP ${readHealth.currentHttpStatus})`}${readHealth.currentErrorConstructor === null ? "" : ` (${readHealth.currentErrorConstructor})`}.`,
+    `Read retry episodes in the last 24h: ${readSummary.episodesLast24h}; retries in the rolling hour: ${readSummary.retriesLastHour}.`,
+    readSummary.longestEpisodeAttemptsLast24h === 0 ? "Longest read retry episode in the last 24h: none recorded." : `Longest read retry episode in the last 24h: ${readSummary.longestEpisodeAttemptsLast24h} attempts over ${Math.floor(readSummary.longestEpisodeDurationMsLast24h / 1e3)}s.`,
+    readSummary.retryHours.length === 0 ? "Read retries by hour in the last 24h: none." : `Read retries by hour in the last 24h: ${readSummary.retryHours.map((hour) => `${hour.hourStart}=${hour.retries}`).join("; ")}.`,
+    readSummary.claimThroughputHours.length === 0 ? "Claim throughput by full hour: no complete listener hour is available yet." : `Claim throughput by full hour: ${readSummary.claimThroughputHours.map((hour) => `${hour.hourStart} ${hour.claims}/${Math.round(hour.expectedClaims)} (${hour.ratio.toFixed(3)})`).join("; ")}.`
   ];
+  for (const notice of lapseNotices) {
+    lines.push(`WARNING [${notice.code}]: ${notice.message}`);
+    lines.push(`Next: ${notice.nextStep}`);
+  }
   if (status.lastErrorDetail) {
     const [first, ...rest] = status.lastErrorDetail.split("\n");
     lines.push(`Last error detail (local only): ${first}`);
     for (const line of rest) lines.push(`  ${line}`);
+  }
+  if (status.lastErrorReasonCode) {
+    lines.push(`Last provider reason code: ${status.lastErrorReasonCode}.`);
+  }
+  if (status.provider === "claude" && status.lastErrorCode === "permission_canary_failed") {
+    lines.push(
+      `Canary diagnosis: ${listenerFailureMessage(
+        status.lastErrorCode,
+        status.provider,
+        status.lastErrorDetail,
+        status.lastErrorReasonCode,
+        status.providerMinimumRequiredVersion
+      )}.`
+    );
   }
   if (status.lastWorkerStderrTail) {
     const tailLines = status.lastWorkerStderrTail.split("\n").filter((line) => line.trim().length > 0);
@@ -43525,8 +44834,34 @@ function renderListenerStatus(status, evidence = {
   }
   if (status.providerVersion && status.providerLastMeasuredVersion) {
     lines.push(
-      status.providerVersion === status.providerLastMeasuredVersion ? `Provider version: ${status.providerVersion} (last measured: ${status.providerLastMeasuredVersion}).` : `Provider version ${status.providerVersion} is newer than the last measured version ${status.providerLastMeasuredVersion}. It is unverified but allowed because the startup permission canary passed. Next: verify this provider release with CommonSwarm and update the last-measured version.`
+      status.providerVersion === status.providerLastMeasuredVersion ? `Provider version: ${status.providerVersion} (last measured: ${status.providerLastMeasuredVersion}).` : status.state === "ready" ? `Provider version ${status.providerVersion} is newer than the last measured version ${status.providerLastMeasuredVersion}. It is unverified but allowed because the startup permission canary passed. Next: verify this provider release with CommonSwarm and update the last-measured version.` : `Provider version ${status.providerVersion} is newer than the last measured version ${status.providerLastMeasuredVersion}. It was measured before startup failed; compatibility was not established. Next: resolve the startup failure before verifying this provider release.`
     );
+  } else {
+    lines.push("Provider version: not measured.");
+  }
+  if (status.provider === "claude") {
+    lines.push(
+      `Bundled Claude Code version: ${status.providerBundledClaudeCodeVersion ?? "not measured"}.`,
+      `Bundled Claude agent SDK version: ${status.providerBundledAgentSdkVersion ?? "not measured"}.`
+    );
+    if (status.providerMinimumRequiredVersion) {
+      lines.push(
+        `Last API minimum demanded: Claude Code ${status.providerMinimumRequiredVersion}.`
+      );
+    }
+    if (versionIsBelow(
+      status.providerBundledClaudeCodeVersion,
+      status.providerMinimumRequiredVersion
+    )) {
+      lines.push(
+        `WARNING [claude_bridge_below_api_minimum]: this listener has bundled Claude Code ${status.providerBundledClaudeCodeVersion}, below the API minimum ${status.providerMinimumRequiredVersion}. Install the current bridge (npm i -g @agentclientprotocol/claude-agent-acp@latest), restart the listener, then run cswarm listen status and confirm that the bundled Claude Code version meets the API minimum ${status.providerMinimumRequiredVersion}.`
+      );
+    }
+    if (providerRestartRequired(status, installed)) {
+      lines.push(
+        `A different Claude bridge is on disk: ${installed?.providerVersion ?? "version not measured"}${installed?.bundledClaudeCodeVersion ? ` (bundled Claude Code ${installed.bundledClaudeCodeVersion})` : ""}. Restart to pick up ${installed?.providerVersion ?? "the on-disk bridge"}.`
+      );
+    }
   }
   if (status.deliveryMode === "durable_claim") {
     lines.push("Delivery mode: durable claim and acknowledgement.");
@@ -43603,7 +44938,26 @@ async function unsurfacedPendingMainStats(instanceDirectory, fallback) {
     };
   }
 }
-function listenerFailureMessage(code, provider, detail) {
+function quotedListenerFailureDetail(detail) {
+  const recorded = detail?.trim();
+  if (!recorded) return "not recorded";
+  const bounded = recorded.length > 600 ? `${recorded.slice(0, 599)}\u2026` : recorded;
+  return JSON.stringify(bounded);
+}
+function listenerProviderIdentitySummary(status) {
+  const parts = [
+    `Provider executable: ${status.providerExecutable ?? "not measured"}`,
+    `provider version: ${status.providerVersion ?? "not measured"}`
+  ];
+  if (status.provider === "claude") {
+    parts.push(
+      `bundled Claude Code: ${status.providerBundledClaudeCodeVersion ?? "not measured"}`,
+      `bundled Claude agent SDK: ${status.providerBundledAgentSdkVersion ?? "not measured"}`
+    );
+  }
+  return parts.join("; ");
+}
+function listenerFailureMessage(code, provider, detail, reasonCode, minimumRequiredVersion) {
   if (code === "version_below_floor") {
     if (provider === "codex") {
       return "the Codex listener requires codex-acp 1.1.9 or newer; update the bridge, then retry";
@@ -43663,11 +45017,25 @@ function listenerFailureMessage(code, provider, detail) {
   }
   if (code === "permission_canary_failed") {
     if (provider === "claude") {
-      return "the Claude bridge did not complete the ACP permission canary; the startup canary ran, but no workspace signal prompt was delivered. Confirm Claude Code keychain/OAuth sign-in, then retry";
+      const shape = classifyClaudeCanaryFailure(detail, reasonCode);
+      const ran = "the Claude ACP permission canary ran, but no workspace signal prompt was delivered";
+      const response = `bridge response [${shape.code}]: ${quotedListenerFailureDetail(detail)}`;
+      if (shape.code === "claude_bridge_version_required") {
+        const minimum = minimumRequiredVersion ?? shape.minimumRequiredVersion;
+        return `${ran}. ${response}. Next: install the current bridge (npm i -g @agentclientprotocol/claude-agent-acp@latest), restart the listener, then run cswarm listen status and confirm that the bundled Claude Code version meets the API minimum ${minimum ?? "reported there"}`;
+      }
+      if (shape.code === "claude_canary_timeout") {
+        return `${ran}. ${response}. Next: run claude -p and check for session-limit text, check host load, then retry`;
+      }
+      if (shape.code === "claude_canary_auth_failed") {
+        return `${ran}. ${response}. Next: confirm Claude Code keychain/OAuth sign-in, then retry`;
+      }
+      return `${ran}. ${response}. The cause was not determined. Next: inspect the quoted bridge response and local worker stderr, then retry only after the cause is known or the failure appears transient`;
     }
     if (provider === "codex") {
       const recorded = detail?.trim();
-      return recorded ? `the Codex bridge did not complete the read-only ACP permission canary; no workspace signal prompt was delivered. Recorded reason: ${JSON.stringify(recorded)}` : "the Codex bridge did not complete the read-only ACP permission canary; no workspace signal prompt was delivered. The recorded reason was unavailable. Next: run cswarm listen status, then retry";
+      const gate = "the Codex listener did not pass the read-only ACP permission safety gate; no workspace signal prompt was delivered";
+      return recorded ? `${gate}. Recorded reason: ${JSON.stringify(recorded)}` : `${gate}. The recorded reason was unavailable. Next: run cswarm listen status, then retry`;
     }
     if (provider === "grok") {
       return "the Grok bridge did not complete the ACP permission canary; no workspace signal prompt was delivered. The local cswarm listen status output includes the final error detail; read it, then retry";
@@ -43750,11 +45118,19 @@ async function runConfiguredListener(options) {
     principalId: options.principalId,
     ...options.stateDirectory ? { stateDirectory: options.stateDirectory } : {}
   });
-  const liveCredentialSession = await agentSession(
-    options.cloud,
-    options.workspaceId,
-    options.agent
-  );
+  const httpClient = new ListenerHttpClient();
+  let liveCredentialSession;
+  try {
+    liveCredentialSession = await agentSession(
+      options.cloud,
+      options.workspaceId,
+      options.agent,
+      httpClient.fetch
+    );
+  } catch (error) {
+    httpClient.close();
+    throw error;
+  }
   let storedCredential = null;
   const credentialSession = {
     bearer: async () => {
@@ -43782,7 +45158,7 @@ async function runConfiguredListener(options) {
       options.cloud,
       credential,
       options.workspaceId,
-      context
+      { ...context, fetcher: httpClient.fetch }
     );
     const provenance = listenerSenderProvenance(signal, senderDirectory);
     if (context.includeBrainDigest !== true) return provenance;
@@ -43793,7 +45169,8 @@ async function runConfiguredListener(options) {
         options.workspaceId,
         {
           ...context.signal ? { signal: context.signal } : {},
-          deadlineMs: context.deadlineMs
+          deadlineMs: context.deadlineMs,
+          fetcher: httpClient.fetch
         }
       );
       const brainDigest = await new FileBrainDigestStore(
@@ -43833,7 +45210,19 @@ async function runConfiguredListener(options) {
   let workerStderrGeneration = 0;
   let providerVersionNotice = null;
   const onVersionNotice = (notice) => {
-    providerVersionNotice = notice;
+    providerVersionNotice = {
+      runningVersion: notice.runningVersion,
+      lastMeasuredVersion: notice.lastMeasuredVersion
+    };
+  };
+  const onClaudeRuntimeNotice = (notice) => {
+    providerVersionNotice = {
+      runningVersion: notice.providerVersion,
+      lastMeasuredVersion: notice.lastMeasuredVersion,
+      executable: notice.executable,
+      bundledAgentSdkVersion: notice.bundledAgentSdkVersion,
+      bundledClaudeCodeVersion: notice.bundledClaudeCodeVersion
+    };
   };
   const newWorkerStderrTailSink = () => {
     const generation = ++workerStderrGeneration;
@@ -43843,7 +45232,7 @@ async function runConfiguredListener(options) {
       lastWorkerStderrTail = tail.length > 0 ? tail : null;
     };
   };
-  const newModel = (onCanaryAttempt) => {
+  const newModel = (onCanaryAttempt, events) => {
     providerVersionNotice = null;
     return options.provider === "opencode" ? new OpenCodeListenerModel({
       cwd: options.cwd,
@@ -43852,6 +45241,7 @@ async function runConfiguredListener(options) {
       onWorkerStderrTail: newWorkerStderrTailSink(),
       onCanaryAttempt,
       onVersionNotice,
+      events,
       ...options.model ? { model: options.model } : {},
       ...options.opencodeExecutable ? { executable: options.opencodeExecutable } : options.executable ? { executable: options.executable } : {}
     }) : options.provider === "claude" ? new ClaudeListenerModel({
@@ -43860,7 +45250,9 @@ async function runConfiguredListener(options) {
       promptTimeoutMs: resolveTurnBudgetMs,
       onWorkerStderrTail: newWorkerStderrTailSink(),
       onCanaryAttempt,
+      onRuntimeNotice: onClaudeRuntimeNotice,
       onVersionNotice,
+      events,
       ...options.claudeExecutable ? { executable: options.claudeExecutable } : options.executable ? { executable: options.executable } : {}
     }) : options.provider === "codex" ? new CodexListenerModel({
       cwd: options.cwd,
@@ -43869,6 +45261,7 @@ async function runConfiguredListener(options) {
       onWorkerStderrTail: newWorkerStderrTailSink(),
       onCanaryAttempt,
       onVersionNotice,
+      events,
       ...options.codexExecutable ? { executable: options.codexExecutable } : options.executable ? { executable: options.executable } : {}
     }) : new GrokListenerModel({
       cwd: options.cwd,
@@ -43877,6 +45270,7 @@ async function runConfiguredListener(options) {
       onWorkerStderrTail: newWorkerStderrTailSink(),
       onCanaryAttempt,
       onVersionNotice,
+      events,
       ...options.model ? { model: options.model } : {},
       ...options.effort ? { effort: options.effort } : {},
       ...options.executable ? { executable: options.executable } : {}
@@ -43907,6 +45301,7 @@ async function runConfiguredListener(options) {
       // one has run, else the configured cap.
       getTurnBudgetMs: () => lastAppliedTurnBudgetMs ?? turnBudgetMs,
       getProviderVersionNotice: () => providerVersionNotice,
+      getConnectionMetrics: () => httpClient.metrics(),
       takeWorkerStderrTail: () => {
         const tail = lastWorkerStderrTail;
         lastWorkerStderrTail = null;
@@ -43940,28 +45335,48 @@ async function runConfiguredListener(options) {
             ts: (/* @__PURE__ */ new Date()).toISOString()
           });
         };
-        return await runListenerRuntime({
-          target: options.cloud,
+        const activity = new ListenerActivityController({
           workspaceId: options.workspaceId,
-          principalId: options.principalId,
-          credentialSession,
-          store: effectStore,
-          model: newModel(onCanaryAttempt),
-          signal,
-          onEvent,
-          declareModel: listenerModelLabel(options.provider),
-          listenerInstanceId,
-          deliveryJournal: selectedJournal,
-          resolveSenderProvenance,
-          routeMode,
-          deferOverChars,
-          pendingMainQueue
+          transport: new AgentActivityEndpointTransport(
+            options.cloud,
+            credentialSession,
+            httpClient.fetch
+          )
         });
+        const instrumentedModel = activity.instrumentModel(
+          newModel(onCanaryAttempt, activity.events)
+        );
+        try {
+          return await runListenerRuntime({
+            target: options.cloud,
+            workspaceId: options.workspaceId,
+            principalId: options.principalId,
+            credentialSession,
+            store: effectStore,
+            model: instrumentedModel,
+            signal,
+            onEvent: (event) => {
+              activity.onRuntimeEvent(event);
+              onEvent(event);
+            },
+            declareModel: listenerModelLabel(options.provider),
+            listenerInstanceId,
+            deliveryJournal: selectedJournal,
+            resolveSenderProvenance,
+            routeMode,
+            deferOverChars,
+            pendingMainQueue,
+            fetcher: httpClient.fetch
+          });
+        } finally {
+          activity.close();
+        }
       }
     });
   } finally {
     process.off("SIGINT", onProcessSignal);
     process.off("SIGTERM", onProcessSignal);
+    httpClient.close();
   }
 }
 async function runListenStart(args) {
@@ -44111,18 +45526,30 @@ async function runListenStart(args) {
       if (error instanceof ListenerStartupError) {
         const failedStatus = await effectiveListenerStatus(paths).catch(() => null);
         const detail = failedStatus?.lastErrorCode === error.code ? failedStatus.lastErrorDetail : null;
-        throw new Error(listenerFailureMessage(error.code, provider, detail));
+        const reasonCode = failedStatus?.lastErrorCode === error.code ? failedStatus.lastErrorReasonCode : null;
+        const message = listenerFailureMessage(
+          error.code,
+          provider,
+          detail,
+          reasonCode,
+          failedStatus?.providerMinimumRequiredVersion
+        );
+        throw new Error(
+          failedStatus === null ? message : `${message}. ${listenerProviderIdentitySummary(failedStatus)}`
+        );
       }
       throw error;
     }
   }
   if (status.state === "failed") {
     throw new Error(
-      listenerFailureMessage(
+      `${listenerFailureMessage(
         status.lastErrorCode ?? "unknown_error",
         provider,
-        status.lastErrorDetail
-      )
+        status.lastErrorDetail,
+        status.lastErrorReasonCode,
+        status.providerMinimumRequiredVersion
+      )}. ${listenerProviderIdentitySummary(status)}`
     );
   }
   let attendanceEvidence = {
@@ -44304,11 +45731,22 @@ async function runListenStatusOrStop(args, command2) {
       hookSurfaceAdvanced: queueStats.hookSurfaceAdvanced
     };
   }
+  const installed = command2 === "status" ? await listenerProviderInstallEvidence(status) : null;
   if (args.has("json")) {
-    printJson(listenerStatusJson(status, void 0, attendanceEvidence));
+    printJson(
+      listenerStatusJson(
+        status,
+        void 0,
+        attendanceEvidence,
+        Date.now(),
+        installed
+      )
+    );
   } else {
-    process.stdout.write(`${renderListenerStatus(status, attendanceEvidence)}
-`);
+    process.stdout.write(
+      `${renderListenerStatus(status, attendanceEvidence, Date.now(), installed)}
+`
+    );
   }
 }
 async function runListenCanary(args) {
@@ -44345,16 +45783,23 @@ async function runListenCanary(args) {
     ...stateDirectory2 ? { stateDirectory: stateDirectory2 } : {}
   });
   const waitMs = parseWaitSeconds(args.optional("wait") ?? "10") * 1e3;
-  const result = await runListenerAttendanceCanary({
-    target: cloud,
-    workspaceId: workspaceId2,
-    principalId,
-    paths,
-    waitMs,
-    // Canary must remain read-only apart from its one self-note. It therefore
-    // uses the presented token and never enters the renewal/mint path.
-    credential: async () => agent.token
-  });
+  const httpClient = new ListenerHttpClient();
+  let result;
+  try {
+    result = await runListenerAttendanceCanary({
+      target: cloud,
+      workspaceId: workspaceId2,
+      principalId,
+      paths,
+      waitMs,
+      fetcher: httpClient.fetch,
+      // Canary must remain read-only apart from its one self-note. It therefore
+      // uses the presented token and never enters the renewal/mint path.
+      credential: async () => agent.token
+    });
+  } finally {
+    httpClient.close();
+  }
   if (args.has("json")) {
     printJson({
       workspaceId: workspaceId2,
@@ -44620,19 +46065,25 @@ async function runHook(args) {
       process.exit(0);
     }, 3e3);
     hardExit.unref();
-    await runListenerHookCheck({
-      ...cooldownSeconds === void 0 ? {} : { cooldownSeconds },
-      ...principalIds.length === 0 ? {} : { principalIds },
-      write: async (output) => {
-        await new Promise((resolve2, reject) => {
-          process.stdout.write(`${output}
+    const httpClient = new ListenerHttpClient();
+    try {
+      await runListenerHookCheck({
+        ...cooldownSeconds === void 0 ? {} : { cooldownSeconds },
+        ...principalIds.length === 0 ? {} : { principalIds },
+        fetcher: httpClient.fetch,
+        write: async (output) => {
+          await new Promise((resolve2, reject) => {
+            process.stdout.write(`${output}
 `, (error) => {
-            if (error) reject(error);
-            else resolve2();
+              if (error) reject(error);
+              else resolve2();
+            });
           });
-        });
-      }
-    });
+        }
+      });
+    } finally {
+      httpClient.close();
+    }
     return;
   }
   if (command2 !== "install" && command2 !== "uninstall") {
@@ -44758,8 +46209,8 @@ async function uploadNamedFile(context, name, bytes) {
     workspaceId: context.selected.selectedWorkspace,
     credential: context.selected.bearer
   };
-  const fileId = (0, import_node_crypto20.randomUUID)();
-  const versionId = (0, import_node_crypto20.randomUUID)();
+  const fileId = (0, import_node_crypto21.randomUUID)();
+  const versionId = (0, import_node_crypto21.randomUUID)();
   const createCommandId = newCommandId();
   const commitCommandId = newCommandId();
   const created = await onceRetried(
@@ -45170,7 +46621,7 @@ async function runDogfood(args) {
   const { selectedWorkspace, bearer } = await commandWorkspaceAndCredential(args, cloud);
   const client = new ThinCommandClient(cloud);
   const route = stream(args);
-  const taskId = args.optional("task-id") ?? (0, import_node_crypto20.randomUUID)();
+  const taskId = args.optional("task-id") ?? (0, import_node_crypto21.randomUUID)();
   const ttl = Number(args.optional("ttl-ms") ?? "3600000");
   if (!Number.isSafeInteger(ttl) || ttl <= 0 || ttl > 144e5) {
     throw new Error("--ttl-ms must be an integer in 1..14400000");
@@ -45543,6 +46994,7 @@ ${usage()}
   listenerFailureMessage,
   listenerHostLimits,
   listenerPermissionMode,
+  listenerProviderInstallEvidence,
   listenerRouteConfiguration,
   listenerStatusJson,
   renderListenerStatus,
