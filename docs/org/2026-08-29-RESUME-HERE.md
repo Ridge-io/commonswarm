@@ -843,3 +843,10 @@ Still running: L30 (`lane/l30-provider-version`), L32 (`lane/l32-connection-reus
 - Merged lanes' worktrees removed; branches `lane/l30-provider-version`, `lane/l31-read-retry`, `lane/l32-connection-reuse` kept until main absorbs them.
 - Still running: L35 (`lane/l35-live-agent-panel`, commit `f5304a0`, in its own arm phase) and L38 (`lane/l38-review-followups`).
 - Instrument correction: my earlier `npm run build | tail -1 && echo BUILD_OK` masked tsc failures (pipe exit status). From `55ebe15` on, every gate here reads the command's own exit code.
+
+### Addendum 2026-09-02 ~04:40Z — 0.1.46 candidate at `6670181`
+
+- `release/0.1.46` = v0.1.45 + L31 `afc01c6` + L30 `31fdb76` + L32 `e3e18bb` + L35 `f5304a0` (behavior-merged by a Codex merge lane, report `MERGE35-report.md` in the session scratchpad) + L38 `6b175b3` → **`6670181`**. build + check:tests green; pure/edge/p1-local gates and the two arms (`wt-arm-grok-046`, `wt-arm-gemini-046`) running on it.
+- Production steps 0.1.46 needs BEFORE the client: migration `20260902000003` (Realtime policy only) and `supabase functions deploy activity` (new function; `supabase/config.toml` carries `[functions.activity] verify_jwt = false`). Runbook: session scratchpad `release-046.sh`.
+- `tests/p1-local/file-artifacts-e2e.test.ts` S4-6 "a previously failed row drains on the next pass" fails on the exact rerun in two independent lanes (MERGE35 and L38) and was already "known-flaky" in the v0.1.39 notes. It is not a flake; it is a broken test or a real drain defect. Lane L39 spec'd to find out. Not attributed to any 0.1.46 lane.
+- Lane worktrees for L30/L31/L32/L35/L38 removed; their branches stay until main absorbs `release/0.1.46`.
