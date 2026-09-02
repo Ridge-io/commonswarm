@@ -138,9 +138,12 @@ test("D-088: the CLI accepts both credential-message spellings, so the site can 
    *
    * This accepts the new spelling ahead of the site emitting it. The order is the whole point: the
    * CLI has to read both before the site may write either. */
-  const cli = readFileSync(new URL("../../src/cli.ts", import.meta.url), "utf8");
-  const accepted = cli.slice(
-    cli.indexOf("ACCEPTED_AGENT_CREDENTIAL_MESSAGES: readonly string[]"),
+  const credentialInput = readFileSync(
+    new URL("../../src/cloud/agent-credential-input.ts", import.meta.url),
+    "utf8",
+  );
+  const accepted = credentialInput.slice(
+    credentialInput.indexOf("ACCEPTED_AGENT_CREDENTIAL_MESSAGES: readonly string[]"),
   ).slice(0, 400);
 
   assert.match(accepted, /AGENT_CREDENTIAL_MESSAGE,/, "the current spelling was dropped");

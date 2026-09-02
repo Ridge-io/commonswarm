@@ -70,9 +70,9 @@ export const RENEWAL_HORIZON_DEFAULT_MS = 30 * 24 * 60 * 60 * 1_000;
 export const WEB_DEVICE_LABEL = "cswarm-web";
 
 /**
- * Byte-for-byte the string src/cli.ts:126 requires. The CLI accepts a minted credential on
+ * Byte-for-byte the string src/cloud/agent-credential-input.ts requires. The CLI accepts a minted credential on
  * stdin either as a bare `swm_agt_` token or as this JSON artifact, and it validates the
- * artifact by exact key set AND by this exact message (src/cli.ts:429-454). Reproducing it
+ * artifact by exact key set AND by this exact message. Reproducing it
  * here is what lets a credential minted in a browser be piped into `--agent-token-stdin` with
  * durable command ids instead of ephemeral ones. If the CLI's constant ever changes, this one
  * has to change with it — there is no shared module between site/ and src/.
@@ -532,8 +532,8 @@ function mintedTimes(
 }
 
 /**
- * The credential in the exact JSON shape `cswarm --agent-token-stdin` validates
- * (src/cli.ts:429-454). One line, because the agent is going to pipe it, and a pretty-printed
+ * The credential in the exact JSON shape `cswarm --agent-token-stdin` validates in
+ * src/cloud/agent-credential-input.ts. One line, because the agent is going to pipe it, and a pretty-printed
  * secret is a secret that gets truncated when somebody copies half of it.
  */
 export function credentialArtifact(credential: AgentCredential): string {

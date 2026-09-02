@@ -1078,7 +1078,10 @@ test("agent credential stdin accepts a closed mint artifact and degrades loudly"
       agentArtifact(TOKEN, { extra: true }),
     );
     assert.equal(malformed.code, 1);
-    assert.match(malformed.stderr, /agent credential JSON is malformed/);
+    assert.match(malformed.stderr, /\[agent_credential_fields_invalid\]/);
+    assert.match(malformed.stderr, /has 1 unrecognized field/);
+    assert.match(malformed.stderr, /copy the minted JSON line again/);
+    assert.doesNotMatch(malformed.stderr, new RegExp(TOKEN));
     assert.doesNotMatch(malformed.stderr, /request failed before a response/);
 
     const unavailable = await runCli(base, agentArtifact(), {
