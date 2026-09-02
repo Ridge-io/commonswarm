@@ -10,16 +10,17 @@ interface PackageJson {
 
 const repoRoot = process.cwd();
 const pureCliCommand = "node --import tsx --test tests/p1-cli/**/*.test.ts";
-/* Activity authorization added a fifth stack-touching file; --test-concurrency=1 because each
+/* The browser receipt control added a sixth stack-touching file; --test-concurrency=1 because each
  * p1-local file spawns the one local functions runtime (same reason p1-server
  * carries the flag). The pin moves WITH the claim it guards: all files stay
  * reachable only through test:p1-local, never through a pure gate. */
 const localStackCommand =
-  "node --import tsx --test --test-concurrency=1 tests/p1-local/local-integration.test.ts tests/p1-local/file-artifacts-e2e.test.ts tests/p1-local/delivery-receipts-postgres.test.ts tests/p1-local/standing-grants-postgres.test.ts tests/p1-local/activity-realtime-auth.test.ts";
+  "node --import tsx --test --test-concurrency=1 tests/p1-local/local-integration.test.ts tests/p1-local/file-artifacts-e2e.test.ts tests/p1-local/delivery-receipts-postgres.test.ts tests/p1-local/human-seen-browser.test.ts tests/p1-local/standing-grants-postgres.test.ts tests/p1-local/activity-realtime-auth.test.ts";
 const localStackTests = [
   "tests/p1-local/activity-realtime-auth.test.ts",
   "tests/p1-local/delivery-receipts-postgres.test.ts",
   "tests/p1-local/file-artifacts-e2e.test.ts",
+  "tests/p1-local/human-seen-browser.test.ts",
   "tests/p1-local/local-integration.test.ts",
   "tests/p1-local/standing-grants-postgres.test.ts",
 ];
