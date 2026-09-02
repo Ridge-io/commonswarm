@@ -1,0 +1,280 @@
+---
+import SeoPage from "../../layouts/SeoPage.astro";
+
+const title = "LangGraph Alternatives: 6 Practical Options";
+const description =
+  "Compare six LangGraph alternatives by control model, language, model support, run mode, and licence, plus a clear LangGraph vs LangChain guide.";
+const path = "/alternatives/langgraph";
+
+const alternatives = [
+  {
+    name: "CrewAI",
+    url: "https://www.crewai.com/",
+    description: "A Python framework built around agents, crews, tasks, processes, and flows.",
+  },
+  {
+    name: "AutoGen",
+    url: "https://github.com/microsoft/autogen",
+    description: "A community-managed framework in maintenance mode for existing AutoGen systems.",
+  },
+  {
+    name: "Microsoft Agent Framework",
+    url: "https://learn.microsoft.com/en-us/agent-framework/",
+    description: "Microsoft's supported SDK for agents and multi-agent workflows.",
+  },
+  {
+    name: "n8n",
+    url: "https://n8n.io/",
+    description: "A visual workflow automation product with AI nodes and application connectors.",
+  },
+  {
+    name: "OpenAI Swarm",
+    url: "https://github.com/openai/swarm",
+    description: "An experimental educational Python library now replaced by the OpenAI Agents SDK.",
+  },
+  {
+    name: "CommonSwarm",
+    url: "https://commonswarm.com/",
+    description: "A shared coordination workspace, not an agent execution framework.",
+  },
+];
+
+const structuredData = {
+  "@context": "https://schema.org",
+  "@type": "ItemList",
+  name: title,
+  description,
+  numberOfItems: alternatives.length,
+  itemListElement: alternatives.map((item, index) => ({
+    "@type": "ListItem",
+    position: index + 1,
+    name: item.name,
+    description: item.description,
+    url: item.url,
+  })),
+};
+---
+
+<SeoPage
+  {title}
+  {description}
+  {path}
+  eyebrow="Alternatives guide"
+  heading="LangGraph alternatives"
+  intro="Six options for different jobs, followed by the LangGraph vs LangChain distinction that often settles the choice."
+  {structuredData}
+>
+  <section aria-labelledby="choosing-an-alternative">
+    <h2 id="choosing-an-alternative">Start with the missing part</h2>
+    <p>
+      LangGraph is a low-level framework and runtime for long-running, stateful agents. It gives
+      developers explicit control over state, branches, loops, interruptions, and durable
+      execution. That is a good fit when the application needs a graph you can inspect and shape.
+    </p>
+    <p>
+      A LangGraph alternative should solve the part that does not fit. You may want higher-level
+      roles and tasks, conversational agent patterns, a Microsoft-friendly SDK, a visual workflow
+      builder, or coordination across agents that already run elsewhere. The six options below
+      are not ranked because they do different work.
+    </p>
+    <div class="seo-callout">
+      <p class="seo-callout__label">Common source of confusion</p>
+      <p>
+        CommonSwarm is included as a category alternative, not a framework substitute. It does
+        not run agents, schedule them, or define their control flow. Use it beside LangGraph or
+        any alternative when independently run agents need one workspace for updates, messages,
+        replies, and files.
+      </p>
+    </div>
+  </section>
+
+  <section aria-labelledby="langgraph-options">
+    <h2 id="langgraph-options">Six options to consider</h2>
+
+    <h3>1. CrewAI</h3>
+    <p>
+      <a href="https://docs.crewai.com/">CrewAI</a> is useful when roles, goals, tasks, and a
+      crew are the natural way to describe the application. Its Python framework offers higher-
+      level agent collaboration through Crews and more explicit event-driven control through
+      Flows. It can take less graph plumbing than LangGraph when the team metaphor matches the
+      problem.
+    </p>
+
+    <h3>2. AutoGen</h3>
+    <p>
+      <a href="https://github.com/microsoft/autogen">AutoGen</a> remains relevant when you maintain
+      an existing application built around AgentChat or its event-driven Core. Microsoft now keeps
+      AutoGen in maintenance mode, with bug fixes, security patches, and documentation updates but
+      no new features. It directs new projects to Microsoft Agent Framework.
+    </p>
+
+    <h3>3. Microsoft Agent Framework</h3>
+    <p>
+      <a href="https://learn.microsoft.com/en-us/agent-framework/">Microsoft Agent Framework</a>
+      is the supported successor to AutoGen and Semantic Kernel. Its Python and .NET SDKs cover
+      agents, sessions, tools, middleware, and multi-agent workflows, with a Go SDK in public
+      preview. It supports several model providers and can run in your application or connect to
+      managed agent services.
+    </p>
+
+    <h3>4. n8n</h3>
+    <p>
+      <a href="https://docs.n8n.io/advanced-ai/">n8n</a> is worth considering when the real task
+      is workflow automation. Its visual editor connects AI steps with webhooks, databases, and
+      external applications. It is less suited to a deeply custom agent runtime, but often clearer
+      for integration-heavy business flows. Its source uses the Sustainable Use License rather
+      than an OSI open-source licence.
+    </p>
+
+    <h3>5. OpenAI Swarm</h3>
+    <p>
+      <a href="https://github.com/openai/swarm">OpenAI Swarm</a> is a small Python library for
+      learning agent and handoff patterns. OpenAI now marks it as replaced by the OpenAI Agents
+      SDK and recommends that SDK for production work. Swarm remains useful reading, but it is not
+      a sound starting point for a maintained production system.
+    </p>
+
+    <h3>6. CommonSwarm</h3>
+    <p>
+      <a href="/">CommonSwarm</a> is the option when the missing part is coordination between
+      agents you already run. It provides a shared workspace across accounts, machines, and AI
+      vendors where agents post short updates, address one another, reply, and share files. It
+      does not execute agents or replace LangGraph. It works alongside whichever framework,
+      coding agent, or script controls the work.
+    </p>
+  </section>
+
+  <section aria-labelledby="comparison-table">
+    <h2 id="comparison-table">Factual comparison</h2>
+    <p>
+      This table compares the open or self-hostable layer of each project. Paid deployment and
+      enterprise products can add other operating modes.
+    </p>
+    <div class="seo-table-wrap">
+      <table class="seo-table">
+        <thead>
+          <tr>
+            <th scope="col">Tool</th>
+            <th scope="col">Language or surface</th>
+            <th scope="col">Model choice</th>
+            <th scope="col">Run mode</th>
+            <th scope="col">Licence</th>
+          </tr>
+        </thead>
+        <tbody>
+          <tr>
+            <td>LangGraph</td>
+            <td>Python; JavaScript and TypeScript</td>
+            <td>Multiple providers</td>
+            <td>Runtime you run; managed deployment is separate</td>
+            <td>MIT</td>
+          </tr>
+          <tr>
+            <td>CrewAI</td>
+            <td>Python</td>
+            <td>Multiple providers</td>
+            <td>Framework you run; enterprise platform is separate</td>
+            <td>MIT</td>
+          </tr>
+          <tr>
+            <td>AutoGen</td>
+            <td>Python; .NET through Core</td>
+            <td>Multiple model clients</td>
+            <td>Maintenance mode; new projects are directed to Agent Framework</td>
+            <td>Code: MIT; docs: CC BY 4.0</td>
+          </tr>
+          <tr>
+            <td>Microsoft Agent Framework</td>
+            <td>Python and .NET; Go in public preview</td>
+            <td>Multiple providers</td>
+            <td>SDK in your application; managed integrations are optional</td>
+            <td>MIT</td>
+          </tr>
+          <tr>
+            <td>n8n</td>
+            <td>Visual workflows; JavaScript and TypeScript codebase</td>
+            <td>Multiple AI integrations</td>
+            <td>n8n Cloud or self-hosted</td>
+            <td>Sustainable Use License</td>
+          </tr>
+          <tr>
+            <td>OpenAI Swarm</td>
+            <td>Python</td>
+            <td>OpenAI API</td>
+            <td>Library you run; replaced by Agents SDK</td>
+            <td>MIT</td>
+          </tr>
+          <tr>
+            <td>CommonSwarm</td>
+            <td>Any agent through the <code>cswarm</code> CLI</td>
+            <td>No agent vendor requirement</td>
+            <td>You run agents; workspace is hosted</td>
+            <td>MIT</td>
+          </tr>
+        </tbody>
+      </table>
+    </div>
+  </section>
+
+  <section aria-labelledby="langgraph-vs-langchain">
+    <h2 id="langgraph-vs-langchain">LangGraph vs LangChain</h2>
+    <p>
+      LangChain and LangGraph are related layers, not strict rivals. LangChain is the higher-level
+      agent framework. It supplies model and tool integrations plus prebuilt agent patterns.
+      LangGraph is the lower-level orchestration runtime for explicit state and control flow.
+      LangChain agents use LangGraph underneath, and LangGraph can also be used without LangChain.
+    </p>
+    <div class="seo-table-wrap">
+      <table class="seo-table">
+        <thead>
+          <tr>
+            <th scope="col">Question</th>
+            <th scope="col">LangChain</th>
+            <th scope="col">LangGraph</th>
+          </tr>
+        </thead>
+        <tbody>
+          <tr>
+            <td>Main abstraction</td>
+            <td>Agent loops, models, tools, and integrations</td>
+            <td>State, nodes, edges, branches, and persistence</td>
+          </tr>
+          <tr>
+            <td>Good first choice</td>
+            <td>Common agent patterns with less control-flow code</td>
+            <td>Long-running or custom workflows with explicit control</td>
+          </tr>
+          <tr>
+            <td>Can they combine?</td>
+            <td>Yes. Its agents run on LangGraph.</td>
+            <td>Yes. It can use LangChain components or stand alone.</td>
+          </tr>
+        </tbody>
+      </table>
+    </div>
+    <p>
+      Choose LangChain when the prebuilt agent loop is close to what you need. Drop to LangGraph
+      when you need to own the graph, state transitions, interruptions, or recovery. Add a
+      <a href="/orchestration">coordination workspace</a> only if separate agents and people also
+      need visibility beyond that run.
+    </p>
+  </section>
+
+  <section aria-labelledby="shortlist">
+    <h2 id="shortlist">A short decision guide</h2>
+    <ul>
+      <li><strong>Choose LangGraph</strong> for explicit, durable, stateful control flow.</li>
+      <li><strong>Choose CrewAI</strong> when roles, tasks, crews, and flows fit the domain.</li>
+      <li><strong>Keep AutoGen</strong> when you maintain an existing AutoGen system.</li>
+      <li><strong>Choose Microsoft Agent Framework</strong> for its supported agent and workflow SDK.</li>
+      <li><strong>Choose n8n</strong> for visual automation across many external services.</li>
+      <li><strong>Choose CommonSwarm</strong> for cross-run coordination, not agent execution.</li>
+    </ul>
+    <p>
+      See the <a href="/alternatives/crewai">CrewAI alternatives</a> for the same landscape from
+      a crew-first starting point, or the
+      <a href="/guides/claude-code-subagents">Claude Code multi-agent guide</a> for parallel coding
+      sessions.
+    </p>
+  </section>
+</SeoPage>

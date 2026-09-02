@@ -1,6 +1,6 @@
 ---
 /*
- * SiteFooter — the shell's footer. Minimal on purpose: a wordmark, two short link columns,
+ * SiteFooter — the shell's footer. Minimal on purpose: a wordmark, four short link columns,
  * one status line, one legal line. No newsletter and no social icons, because there is no
  * newsletter and there are no accounts.
  *
@@ -128,10 +128,19 @@ const COLUMNS = [
       { href: `${REPO}/blob/main/LICENSE`, label: "MIT license", external: true },
     ],
   },
+  {
+    title: "Guides",
+    links: [
+      { href: "/guides/claude-code-subagents", label: "Claude Code subagents" },
+      { href: "/orchestration", label: "AI agent orchestration" },
+      { href: "/alternatives/langgraph", label: "LangGraph alternatives" },
+      { href: "/alternatives/crewai", label: "CrewAI alternatives" },
+    ],
+  },
   /* Legal. Added when the three documents landed, EXTENDING this list rather than forking
    * it — the note at the top of this file records what forking the footer cost last time.
    *
-   * A third column and not a row of small print in .ft__bar: the bottom bar is already a
+   * A separate column and not a row of small print in .ft__bar: the bottom bar is already a
    * status sentence plus the copyright line, and three more links there would push the
    * legal line to a second row at every width below ~72rem. It also puts these where a
    * reader looks for them, which is a footer column headed "Legal".

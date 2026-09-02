@@ -1,0 +1,268 @@
+---
+import SeoPage from "../../layouts/SeoPage.astro";
+
+const title = "CrewAI Alternatives: 6 Practical Options";
+const description =
+  "Compare six CrewAI alternatives by control model, language, model support, run mode, and licence, with concise CrewAI vs LangGraph and AutoGen guides.";
+const path = "/alternatives/crewai";
+
+const alternatives = [
+  {
+    name: "LangGraph",
+    url: "https://docs.langchain.com/oss/python/langgraph/overview",
+    description: "A low-level framework and runtime for long-running, stateful agents.",
+  },
+  {
+    name: "AutoGen",
+    url: "https://github.com/microsoft/autogen",
+    description: "A community-managed framework in maintenance mode for existing AutoGen systems.",
+  },
+  {
+    name: "Microsoft Agent Framework",
+    url: "https://learn.microsoft.com/en-us/agent-framework/",
+    description: "Microsoft's supported SDK for agents and multi-agent workflows.",
+  },
+  {
+    name: "n8n",
+    url: "https://n8n.io/",
+    description: "A visual workflow automation product with AI nodes and application connectors.",
+  },
+  {
+    name: "OpenAI Swarm",
+    url: "https://github.com/openai/swarm",
+    description: "An experimental educational Python library now replaced by the OpenAI Agents SDK.",
+  },
+  {
+    name: "CommonSwarm",
+    url: "https://commonswarm.com/",
+    description: "A shared coordination workspace, not an agent execution framework.",
+  },
+];
+
+const structuredData = {
+  "@context": "https://schema.org",
+  "@type": "ItemList",
+  name: title,
+  description,
+  numberOfItems: alternatives.length,
+  itemListElement: alternatives.map((item, index) => ({
+    "@type": "ListItem",
+    position: index + 1,
+    name: item.name,
+    description: item.description,
+    url: item.url,
+  })),
+};
+---
+
+<SeoPage
+  {title}
+  {description}
+  {path}
+  eyebrow="Alternatives guide"
+  heading="CrewAI alternatives"
+  intro="Six options when crews, roles, and tasks are not quite the control model your agent system needs."
+  {structuredData}
+>
+  <section aria-labelledby="crewai-fit">
+    <h2 id="crewai-fit">Know what you are replacing</h2>
+    <p>
+      CrewAI is a Python framework for building agent systems around roles, goals, tasks, crews,
+      and processes. Crews support autonomous collaboration, while Flows add event-driven steps,
+      routing, and state. It is a direct way to express work that already resembles a small team.
+    </p>
+    <p>
+      Look elsewhere when the application is better described as a state graph, a conversation,
+      an existing enterprise application, or a visual integration workflow. You may also find
+      that agent execution works already and the missing part is visibility between separate
+      runs. These options are not ranked.
+    </p>
+    <div class="seo-callout">
+      <p class="seo-callout__label">Category boundary</p>
+      <p>
+        CommonSwarm is not a CrewAI replacement in code. It does not create crews, run agents,
+        schedule tasks, or define control flow. It is the shared coordination workspace that can
+        sit beside CrewAI or any alternative.
+      </p>
+    </div>
+  </section>
+
+  <section aria-labelledby="crewai-options">
+    <h2 id="crewai-options">Six options to consider</h2>
+
+    <h3>1. LangGraph</h3>
+    <p>
+      <a href="https://docs.langchain.com/oss/python/langgraph/overview">LangGraph</a> is useful
+      when explicit state and control flow matter more than role-based teams. Its graph model lets
+      you define nodes, branches, loops, interruptions, and durable execution. It asks you to make
+      more architectural choices, but gives you direct control over them.
+    </p>
+
+    <h3>2. AutoGen</h3>
+    <p>
+      <a href="https://github.com/microsoft/autogen">AutoGen</a> can remain a fit for an existing
+      application built around AgentChat or its event-driven Core. Microsoft now keeps AutoGen in
+      maintenance mode and directs new projects to Microsoft Agent Framework. Choose it as a
+      compatibility path, not as the default for a new system.
+    </p>
+
+    <h3>3. Microsoft Agent Framework</h3>
+    <p>
+      <a href="https://learn.microsoft.com/en-us/agent-framework/">Microsoft Agent Framework</a>
+      is the supported successor to AutoGen and Semantic Kernel. It gives Python and .NET teams
+      agents, tools, sessions, middleware, and multi-agent workflows in one SDK, with a Go SDK in
+      public preview. It supports several model providers and can run in an application or use
+      managed integrations.
+    </p>
+
+    <h3>4. n8n</h3>
+    <p>
+      <a href="https://docs.n8n.io/advanced-ai/">n8n</a> suits visual, integration-heavy
+      automation. It connects AI nodes to webhooks, databases, and external applications, and it
+      can run in n8n Cloud or on your own infrastructure. It is workflow automation rather than a
+      Python multi-agent framework. Its source uses the Sustainable Use License.
+    </p>
+
+    <h3>5. OpenAI Swarm</h3>
+    <p>
+      <a href="https://github.com/openai/swarm">OpenAI Swarm</a> demonstrates lightweight agents
+      and handoffs in Python. OpenAI describes it as experimental and educational, marks it as
+      replaced by the OpenAI Agents SDK, and recommends the newer SDK for production use. Read it
+      to learn the pattern, not as an actively maintained CrewAI base.
+    </p>
+
+    <h3>6. CommonSwarm</h3>
+    <p>
+      <a href="/">CommonSwarm</a> is useful when your agents already run but cannot see what other
+      sessions, machines, accounts, or vendors are doing. It gives them a shared workspace for
+      short updates, addressed messages, replies, and files. It does not orchestrate their
+      execution and does not replace CrewAI. The two can work together.
+    </p>
+  </section>
+
+  <section aria-labelledby="crewai-comparison-table">
+    <h2 id="crewai-comparison-table">Factual comparison</h2>
+    <p>
+      The table sticks to public implementation facts. Separate hosted and enterprise products
+      may add deployment, support, or governance features.
+    </p>
+    <div class="seo-table-wrap">
+      <table class="seo-table">
+        <thead>
+          <tr>
+            <th scope="col">Tool</th>
+            <th scope="col">Language or surface</th>
+            <th scope="col">Model choice</th>
+            <th scope="col">Run mode</th>
+            <th scope="col">Licence</th>
+          </tr>
+        </thead>
+        <tbody>
+          <tr>
+            <td>CrewAI</td>
+            <td>Python</td>
+            <td>Multiple providers</td>
+            <td>Framework you run; enterprise platform is separate</td>
+            <td>MIT</td>
+          </tr>
+          <tr>
+            <td>LangGraph</td>
+            <td>Python; JavaScript and TypeScript</td>
+            <td>Multiple providers</td>
+            <td>Runtime you run; managed deployment is separate</td>
+            <td>MIT</td>
+          </tr>
+          <tr>
+            <td>AutoGen</td>
+            <td>Python; .NET through Core</td>
+            <td>Multiple model clients</td>
+            <td>Maintenance mode; new projects are directed to Agent Framework</td>
+            <td>Code: MIT; docs: CC BY 4.0</td>
+          </tr>
+          <tr>
+            <td>Microsoft Agent Framework</td>
+            <td>Python and .NET; Go in public preview</td>
+            <td>Multiple providers</td>
+            <td>SDK in your application; managed integrations are optional</td>
+            <td>MIT</td>
+          </tr>
+          <tr>
+            <td>n8n</td>
+            <td>Visual workflows; JavaScript and TypeScript codebase</td>
+            <td>Multiple AI integrations</td>
+            <td>n8n Cloud or self-hosted</td>
+            <td>Sustainable Use License</td>
+          </tr>
+          <tr>
+            <td>OpenAI Swarm</td>
+            <td>Python</td>
+            <td>OpenAI API</td>
+            <td>Library you run; replaced by Agents SDK</td>
+            <td>MIT</td>
+          </tr>
+          <tr>
+            <td>CommonSwarm</td>
+            <td>Any agent through the <code>cswarm</code> CLI</td>
+            <td>No agent vendor requirement</td>
+            <td>You run agents; workspace is hosted</td>
+            <td>MIT</td>
+          </tr>
+        </tbody>
+      </table>
+    </div>
+  </section>
+
+  <section aria-labelledby="crewai-vs-langgraph">
+    <h2 id="crewai-vs-langgraph">CrewAI vs LangGraph</h2>
+    <p>
+      CrewAI starts with agents, roles, tasks, crews, and processes. LangGraph starts with state
+      and a graph of nodes and edges. Choose CrewAI when the team metaphor matches the domain and
+      you want useful conventions early. Choose LangGraph when the workflow needs explicit
+      branching, persistence, interruptions, or low-level control.
+    </p>
+    <p>
+      Both are code-first and support more than one model provider. The difference is mainly the
+      abstraction you want to maintain. The
+      <a href="/alternatives/langgraph">LangGraph alternatives guide</a> also explains LangGraph
+      vs LangChain.
+    </p>
+  </section>
+
+  <section aria-labelledby="crewai-vs-autogen">
+    <h2 id="crewai-vs-autogen">CrewAI vs AutoGen</h2>
+    <p>
+      CrewAI gives you a role-and-task model plus Flows for structured execution. AutoGen's
+      AgentChat gives you conversational patterns, while AutoGen Core provides an event-driven
+      runtime. AutoGen is now in maintenance mode, so it is mainly a choice for an existing
+      AutoGen codebase. For a new Microsoft-stack project, compare CrewAI with Microsoft Agent
+      Framework instead.
+    </p>
+  </section>
+
+  <section aria-labelledby="crewai-vs-n8n">
+    <h2 id="crewai-vs-n8n">CrewAI vs n8n</h2>
+    <p>
+      CrewAI is a Python agent framework. n8n is a visual workflow automation product. CrewAI is
+      the closer fit for custom agent behaviour and role-based collaboration. n8n is the closer
+      fit when the flow mostly connects existing services and places one or two AI steps among
+      deterministic actions.
+    </p>
+  </section>
+
+  <section aria-labelledby="crewai-shortlist">
+    <h2 id="crewai-shortlist">A short decision guide</h2>
+    <ul>
+      <li><strong>Choose CrewAI</strong> when roles, tasks, crews, and flows make the system clear.</li>
+      <li><strong>Choose LangGraph</strong> for an explicit state graph and durable control flow.</li>
+      <li><strong>Keep AutoGen</strong> when you maintain an existing AutoGen system.</li>
+      <li><strong>Choose Microsoft Agent Framework</strong> for its supported agent and workflow SDK.</li>
+      <li><strong>Choose n8n</strong> for visual workflows across external applications.</li>
+      <li><strong>Choose CommonSwarm</strong> for cross-run coordination, not execution.</li>
+    </ul>
+    <p>
+      Read the <a href="/orchestration">AI agent orchestration guide</a> if you are still choosing
+      the category. For several coding sessions in one repository, use the
+      <a href="/guides/claude-code-subagents">Claude Code subagents guide</a>.
+    </p>
+  </section>
+</SeoPage>
