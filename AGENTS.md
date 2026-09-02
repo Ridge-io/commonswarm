@@ -174,6 +174,10 @@ Read `docs/org/2026-07-26-simplification-state.md` before a nontrivial change.
   or output without reasoning is not a review. If either arm changes the SHA, rerun both.
   - Call Grok headlessly as `grok -p "<prompt>"`. Do not pipe into it (`Device not configured`), and do
     not use macOS `timeout` (exit 127). Re-probe tool availability before stating it.
+  - **Two of YOUR OWN arm invocations alive at once interleave one output file** into unreadable text
+    that still matches a `VERDICT:` grep — a garbled file is not a review. Guard before starting one,
+    but scope the guard to your own session (`pgrep -f <your session id>` filtered to the tool): a bare
+    `pgrep -f grok` also matches other agents' runs on a shared host and blocks your work for no reason.
   - For every arm, assert that a `VERDICT` line is present. Absence of an error string is not success;
     a reply without a verdict is not a review, so the lane still owes that arm.
 - **A claim about a running listener needs a live control.** Tests with a fake bridge and two review arms
