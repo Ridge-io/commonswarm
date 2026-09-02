@@ -629,7 +629,7 @@ export class DeliveryCommandClient {
   ) {
     this.deadlineMs = options.deadlineMs ?? DELIVERY_REQUEST_TIMEOUT_MS;
     this.now = options.now ?? Date.now;
-    this.clearTimeoutFn = options.clearTimeout ?? clearTimeout;
+    this.clearTimeoutFn = options.clearTimeout ?? ((timer) => clearTimeout(timer));
     this.createAbortControllerFn =
       options.createAbortController ?? (() => new AbortController());
   }

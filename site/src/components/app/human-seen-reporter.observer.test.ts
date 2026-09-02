@@ -101,6 +101,35 @@ test("the reporter sends only after viewport intersection and document focus", a
   });
 });
 
+test("the reporter's default timer sends a focused intersection", async () => {
+  const sent = Promise.withResolvers<{ scope: string; ids: readonly string[] }>();
+  const reporter = new HumanSeenReporter({
+    hasFocus: () => true,
+    send: async (scope, ids) => sent.resolve({ scope, ids: [...ids] }),
+    flushMs: 20,
+  });
+
+  reporter.intersections([{
+    scope: "member:workspace",
+    signalId: "default-timer-row",
+    isIntersecting: true,
+  }]);
+
+  const deadline = Promise.withResolvers<never>();
+  const timer = setTimeout(
+    () => deadline.reject(new Error("default reporter timer did not flush")),
+    1_000,
+  );
+  try {
+    assert.deepEqual(await Promise.race([sent.promise, deadline.promise]), {
+      scope: "member:workspace",
+      ids: ["default-timer-row"],
+    });
+  } finally {
+    clearTimeout(timer);
+  }
+});
+
 test("the dashboard wires focused viewport rows to a best-effort command batch", () => {
   assert.match(dashboard, /new IntersectionObserver\(/);
   assert.match(dashboard, /document\.hasFocus\(\)/);

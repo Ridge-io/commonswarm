@@ -53,7 +53,7 @@ export class HumanSeenReporter {
     this.#send = options.send;
     this.#schedule = options.schedule ?? ((callback, delayMs) =>
       setTimeout(callback, delayMs));
-    this.#cancel = options.cancel ?? clearTimeout;
+    this.#cancel = options.cancel ?? ((timer) => clearTimeout(timer));
     this.#flushMs = options.flushMs ?? HUMAN_SEEN_FLUSH_MS;
   }
 

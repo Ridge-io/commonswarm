@@ -78,7 +78,7 @@ history was rewritten, so every SHA changed. `Ridge-io/cloud-swarm` was deleted 
 | `npm run build` | `tsc` → `dist/`; wipes `dist/` first and makes `dist/cli.js` executable after. |
 | `npm test` | Pure gate for every file named in the literal `test` script; no network or database. |
 | `npm run test:p1-cli` | Pure gate that globs `tests/p1-cli/**/*.test.ts`; no network or database. |
-| `npm run test:p1-local` | Runs the four files named in the script; needs local Supabase and an exclusive DB slot. |
+| `npm run test:p1-local` | Runs the six files named in the script; needs local Supabase and an exclusive DB slot. |
 | `npm run test:p1-server` | Globs `tests/p1-server/**/*.test.ts`; needs local Supabase and an exclusive DB slot. |
 | `npm run test:uxtest` | Runs the cross-machine UX harness. |
 | `npm run check:tests` | Typechecks `tests/` as well as `src/`. |
@@ -105,7 +105,7 @@ docs/evidence/  committed artifacts backing completion claims
 ## Reachable traps
 
 **A test file runs only when a package script names or globs it.** `npm test` is a literal list;
-`test:p1-cli` and `test:p1-server` glob their trees; `test:p1-local` names four files. A new file in
+`test:p1-cli` and `test:p1-server` glob their trees; `test:p1-local` names six files. A new file in
 `tests/support/` does not run unless the script names it. Check the gate and report it when adding a test.
 
 **Edge functions are outside `tsc`.** `tsconfig.json` includes only `src/**/*.ts`. Run
