@@ -13,6 +13,7 @@ import { allowOnceOrDeny, defaultPermissionCallback } from "../host/permission.j
 import {
   AcpChildExitError,
   AcpHostError,
+  type HostSessionEvents,
   type PermissionCallback,
   type PermissionDecision,
   type PermissionRequest,
@@ -64,6 +65,8 @@ export interface OpenCodeListenerModelOptions {
   onCanaryAttempt?: ListenerCanaryAttemptCallback;
   /** Receives one allowed newer-version notice for durable startup status. */
   onVersionNotice?: NonNullable<OpenCodeAcpOpenOptions["onVersionNotice"]>;
+  /** Structured session updates for the ephemeral live-activity frame. */
+  events?: HostSessionEvents;
 }
 
 
@@ -488,6 +491,7 @@ export class OpenCodeListenerModel implements ListenerModel {
         ...(this.options.onVersionNotice
           ? { onVersionNotice: this.options.onVersionNotice }
           : {}),
+        ...(this.options.events ? { events: this.options.events } : {}),
         ...(this.options.allowMissingAuth === true
           ? { allowMissingAuth: true }
           : {}),

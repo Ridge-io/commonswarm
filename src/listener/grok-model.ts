@@ -13,6 +13,7 @@ import {
   AcpChildExitError,
   AcpHostError,
   AcpPermissionCanaryError,
+  type HostSessionEvents,
   type PermissionCallback,
   type PermissionDecision,
   type PermissionRequest,
@@ -55,6 +56,8 @@ export interface GrokListenerModelOptions {
   onCanaryAttempt?: ListenerCanaryAttemptCallback;
   /** Receives one allowed newer-version notice for durable startup status. */
   onVersionNotice?: NonNullable<GrokAcpOpenOptions["onVersionNotice"]>;
+  /** Structured session updates for the ephemeral live-activity frame. */
+  events?: HostSessionEvents;
 }
 
 const MAX_GROK_AUTH_BYTES = 256 * 1024;
@@ -149,6 +152,7 @@ export class GrokListenerModel implements ListenerModel {
       ...(this.options.onVersionNotice
         ? { onVersionNotice: this.options.onVersionNotice }
         : {}),
+      ...(this.options.events ? { events: this.options.events } : {}),
     ...(this.options.onWorkerStderrTail
       ? { onStderrTail: this.options.onWorkerStderrTail }
       : {}),
