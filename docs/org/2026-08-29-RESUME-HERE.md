@@ -991,3 +991,10 @@ Operator report: broadcasts show "Seen by 0 of 1" forever and agents show no eng
 
 - L52 `eb80e05` fast-forwarded `release/0.1.48`. It derived the ten-cell receipt matrix from the producers (comments with citations beside both label tables): ask × observed = the session hook surfaced a queued ask, NOT terminal ("an answer may still be posted"); note × observed = handled without a model turn or surfaced; broadcast copy now names both attestation paths; the listener attests only when the prompt was not cancelled; brain commit refuses BEFORE any retirement (p1-server B1b: a refused commit retires nothing; the 3-hour pending purge already existed). Its own arms: Grok and Gemini both approve on the exact SHA.
 - Gates and both arms running on `eb80e05` (`wt-arm-grok-048c` with a no-stray-grok guard, `wt-arm-gemini-048c`). Release notes corrected to the final labels.
+
+### Addendum 2026-09-03 ~00:10Z — 0.1.48 approved; production ahead of the client
+
+- On `eb80e05`: gates green (728 ×2 / 393 / site 253 / p1-local 18 / p1-server 106); Gemini PASS (4 mutations); Grok PASS, clean file, guarded start (no stray grok). Approved.
+- main: `b3b1da2` merge of release/0.1.48, version bumped to 0.1.48 (uncommitted until the gates on main pass).
+- PRODUCTION APPLIED: migrations `20260902000004` (agent receipts) and `20260902000005` (brain window) — verified in the migration list and by table/column presence; edge `command` and `read` DEPLOYED (400/401 on empty bodies vs 404 control); an agent `signals_seen` now returns `accepted` (CSwarmDevLead attested Joist's broadcast). 0.1.47 clients keep working (additive shapes).
+- Lane branches L47b/L48/L49/L50/L51/L52 and `release/0.1.48` deleted after `git cherry` showed 0 unabsorbed; staging and arm worktrees removed.
