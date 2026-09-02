@@ -1,7 +1,7 @@
 import { randomUUID } from "node:crypto";
-import { lstat, unlink } from "node:fs/promises";
-import { tmpdir } from "node:os";
-import { join } from "node:path";
+import { chmod, lstat, mkdir, realpath, unlink } from "node:fs/promises";
+import { homedir } from "node:os";
+import { isAbsolute, join, relative, sep } from "node:path";
 import {
   openCodexAcpSession,
   type CodexAcpHandle,
@@ -49,7 +49,7 @@ export interface CodexListenerModelOptions {
   onWorkerStderrTail?: (tail: string) => void;
   /** Receives each bounded permission-canary verdict for local diagnostics. */
   onCanaryAttempt?: ListenerCanaryAttemptCallback;
-  /** Receives one allowed newer-version notice for durable startup status. */
+  /** Receives the admitted bridge version for durable startup status. */
   onVersionNotice?: NonNullable<CodexAcpOpenOptions["onVersionNotice"]>;
 }
 
@@ -58,6 +58,14 @@ class CodexListenerClosedDuringOpen extends Error {
     super("listener model closed while the Codex worker was opening");
     this.name = "CodexListenerClosedDuringOpen";
   }
+}
+
+function pathIsInsideOrEqual(ancestor: string, candidate: string): boolean {
+  const fromAncestor = relative(ancestor, candidate);
+  return fromAncestor === "" ||
+    (fromAncestor !== ".." &&
+      !fromAncestor.startsWith(`..${sep}`) &&
+      !isAbsolute(fromAncestor));
 }
 
 
@@ -229,10 +237,28 @@ export class CodexListenerModel implements ListenerModel {
   private async enablePromptsAfterCodexCanary(
     handle: CodexAcpHandle,
   ): Promise<void> {
+    const configuredHome = this.options.env?.HOME;
+    const home = configuredHome && isAbsolute(configuredHome)
+      ? configuredHome
+      : homedir();
+    const sentinelDirectory = join(home, ".cswarm", "canary");
+    await mkdir(sentinelDirectory, { recursive: true, mode: 0o700 });
+    await chmod(sentinelDirectory, 0o700);
+    const [workerCwd, canaryDirectory] = await Promise.all([
+      realpath(this.options.cwd),
+      realpath(sentinelDirectory),
+    ]);
+    if (pathIsInsideOrEqual(workerCwd, canaryDirectory)) {
+      throw new AcpPermissionCanaryError(
+        `canary_path_inside_cwd: ${canaryDirectory} is inside listener cwd ${workerCwd}. ` +
+          "Next: pass a --cwd that is not your home directory",
+      );
+    }
     const sentinelPath = join(
-      tmpdir(),
+      canaryDirectory,
       `cswarm-codex-permission-canary-${process.pid}-${randomUUID()}`,
     );
+    let canaryError: unknown;
     let sentinelCreated = false;
     try {
       await handle.session.enablePromptsAfterCanary({
@@ -244,6 +270,8 @@ export class CodexListenerModel implements ListenerModel {
           ? { onAttempt: this.options.onCanaryAttempt }
           : {}),
       });
+    } catch (error) {
+      canaryError = error;
     } finally {
       try {
         await lstat(sentinelPath);
@@ -253,10 +281,45 @@ export class CodexListenerModel implements ListenerModel {
         if ((error as NodeJS.ErrnoException).code !== "ENOENT") throw error;
       }
     }
-    if (sentinelCreated) {
+    const observation = handle.session.canaryObservation;
+    const sawPermissionRequest = observation?.sawPermissionRequest === true;
+    const bridgeVersion = handle.providerVersion ??
+      handle.session.info?.agentVersion ?? "unknown";
+    if (sentinelCreated && !sawPermissionRequest) {
       throw new AcpPermissionCanaryError(
-        "Codex bridge wrote the permission canary sentinel before denial",
+        `canary_executed_without_permission: codex-acp ${bridgeVersion} ran the shell probe ` +
+          `without a permission request and wrote ${sentinelPath}. ` +
+          `Next: replace codex-acp ${bridgeVersion} with a bridge version that asks before writing ${sentinelPath}`,
       );
     }
+    if (sentinelCreated) {
+      throw new AcpPermissionCanaryError(
+        `canary_write_not_blocked: codex-acp ${bridgeVersion} wrote ${sentinelPath} even though ` +
+          "the host rejected the canary. Next: update or reinstall the codex-acp bridge",
+      );
+    }
+    if (canaryError instanceof AcpPermissionCanaryError) {
+      if (canaryError.reasonCode === "timeout") {
+        throw new AcpPermissionCanaryError(
+          `canary_timeout: ${canaryError.message}. ` +
+            "Next: retry to run a fresh bounded permission canary",
+          "timeout",
+        );
+      }
+      if (canaryError.reasonCode !== null) {
+        throw new AcpPermissionCanaryError(
+          `canary_bridge_error: codex-acp ${bridgeVersion} returned ${canaryError.message}. ` +
+            "Next: resolve the quoted bridge error, then retry",
+          canaryError.reasonCode,
+        );
+      }
+      if (!sawPermissionRequest) {
+        throw new AcpPermissionCanaryError(
+          `canary_no_tool_call: codex-acp ${bridgeVersion} did not request permission or create ` +
+            `${sentinelPath}. Next: retry to re-sample the model's shell choice`,
+        );
+      }
+    }
+    if (canaryError !== undefined) throw canaryError;
   }
 }

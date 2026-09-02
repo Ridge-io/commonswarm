@@ -12,10 +12,14 @@ import test from "node:test";
 import {
   AcpPermissionCanaryError,
   AcpVersionBelowFloorError,
+  AcpVersionError,
   AcpVersionParseError,
+  CODEX_ACP_LAST_MEASURED_VERSION,
+  CODEX_ACP_MIN_VERSION,
   GROK_LAST_MEASURED_VERSION,
   GROK_MIN_VERSION,
   assertGrokVersionFloor,
+  assertCodexVersionFloor,
   assertProviderVersionFloor,
   compareSemVer,
   parseClaudeCodeVersionOutput,
@@ -26,7 +30,7 @@ import {
   type GrokAcpHandle,
 } from "../src/host/index.js";
 import { GrokListenerModel } from "../src/listener/grok-model.js";
-import { renderListenerStatus } from "../src/cli.js";
+import { listenerFailureMessage, renderListenerStatus } from "../src/cli.js";
 import type { ListenerStatus } from "../src/listener/control.js";
 
 test("floor boundary refuses floor-1 and accepts the floor and floor+1", () => {
@@ -96,6 +100,72 @@ test("provider parsers handle prerelease, build, product suffix, and leading ban
     parseCodexVersionOutput("node warning\n@agentclientprotocol/codex-acp 1.2.0+build.7\n"),
     "1.2.0+build.7",
   );
+  assert.equal(parseCodexVersionOutput("codex-cli 0.147.0\n"), null);
+});
+
+test("Codex CLI banner fails with executable_not_bridge while codex-acp parses", async () => {
+  const root = await mkdtemp(join(tmpdir(), "cswarm-codex-cli-shape-"));
+  const codexCli = join(root, "codex");
+  const codexAcp = join(root, "codex-acp");
+  try {
+    await writeFile(
+      codexCli,
+      `#!${process.execPath}\nprocess.stdout.write("codex-cli 0.147.0\\n");\n`,
+      { mode: 0o700 },
+    );
+    await writeFile(
+      codexAcp,
+      `#!${process.execPath}\nprocess.stdout.write("@agentclientprotocol/codex-acp 1.8.0\\n");\n`,
+      { mode: 0o700 },
+    );
+    await Promise.all([chmod(codexCli, 0o700), chmod(codexAcp, 0o700)]);
+    await assert.rejects(
+      () => assertCodexVersionFloor(codexCli),
+      (error: unknown) => {
+        assert.ok(error instanceof AcpVersionError);
+        assert.equal(error.code, "executable_not_bridge");
+        assert.match(error.message, /this is the Codex CLI/);
+        assert.match(error.message, /--codex-executable takes the codex-acp bridge/);
+        assert.match(error.message, /npm i -g @agentclientprotocol\/codex-acp/);
+        return true;
+      },
+    );
+    assert.equal(await assertCodexVersionFloor(codexAcp), "1.8.0");
+    assert.equal(CODEX_ACP_MIN_VERSION, "1.1.9");
+    assert.equal(CODEX_ACP_LAST_MEASURED_VERSION, "1.8.0");
+  } finally {
+    await rm(root, { recursive: true, force: true });
+  }
+});
+
+test("Codex canary reason shapes render their recorded next steps", () => {
+  const executed =
+    "canary_executed_without_permission: codex-acp 1.8.0 ran the shell probe without a permission request and wrote /operator/.cswarm/canary/sentinel. Next: replace codex-acp 1.8.0 with a bridge version that asks before writing /operator/.cswarm/canary/sentinel";
+  const noTool =
+    "canary_no_tool_call: codex-acp 1.8.0 did not request permission or create /operator/.cswarm/canary/sentinel. Next: retry to re-sample the model's shell choice";
+  const timeout =
+    "canary_timeout: ACP request timed out: session/prompt (failed 2 attempts). Next: retry to run a fresh bounded permission canary";
+  const details = [executed, noTool, timeout];
+  const rendered = details.map((detail) =>
+    listenerFailureMessage("permission_canary_failed", "codex", detail)
+  );
+
+  assert.equal(new Set(rendered).size, 3);
+  for (let index = 0; index < rendered.length; index += 1) {
+    assert.ok(rendered[index]!.includes(JSON.stringify(details[index]!)));
+    assert.match(rendered[index]!, /no workspace signal prompt was delivered/i);
+    assert.doesNotMatch(rendered[index]!, /sign[- ]?in/i);
+  }
+  assert.match(rendered[0]!, /codex-acp 1\.8\.0.*\.cswarm\/canary\/sentinel/);
+  assert.match(rendered[1]!, /retry to re-sample/);
+  assert.match(rendered[2]!, /ACP request timed out: session\/prompt/);
+});
+
+test("Codex CLI executable remedy names the bridge package", () => {
+  const message = listenerFailureMessage("executable_not_bridge", "codex");
+  assert.match(message, /this is the Codex CLI/);
+  assert.match(message, /--codex-executable takes the codex-acp bridge/);
+  assert.match(message, /npm i -g @agentclientprotocol\/codex-acp/);
 });
 
 test("unparseable version fails closed with a code distinct from below-floor", async () => {
@@ -153,6 +223,29 @@ test("newer version reports exactly once to the startup status path", () => {
   } as ListenerStatus);
   assert.equal(output.match(/unverified but allowed/g)?.length, 1);
   assert.match(output, /Next: verify this provider release/);
+});
+
+test("an exactly measured Codex version renders without an unverified warning", () => {
+  const output = renderListenerStatus({
+    state: "ready",
+    provider: "codex",
+    principalId: "11111111-1111-4111-8111-111111111111",
+    pid: 123,
+    startedAt: "2026-09-02T00:00:00.000Z",
+    readyAt: "2026-09-02T00:00:01.000Z",
+    lastSignalId: null,
+    lastErrorCode: null,
+    lastErrorDetail: null,
+    lastWorkerStderrTail: null,
+    providerVersion: "1.8.0",
+    providerLastMeasuredVersion: "1.8.0",
+    deliveryMode: null,
+    pendingDeliveryCount: null,
+    lastTerminalDeliveryFailureCount: null,
+    routeMode: "worker",
+  } as ListenerStatus);
+  assert.match(output, /Provider version: 1\.8\.0 \(last measured: 1\.8\.0\)/);
+  assert.doesNotMatch(output, /unverified|newer than/);
 });
 
 test("a comfortably newer version cannot bypass a failing permission canary", async () => {

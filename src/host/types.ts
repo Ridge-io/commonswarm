@@ -206,7 +206,10 @@ export class AcpVersionBelowFloorError extends AcpVersionError {
 }
 
 export class AcpPermissionCanaryError extends AcpHostError {
-  constructor(message: string) {
+  constructor(
+    message: string,
+    readonly reasonCode: string | null = null,
+  ) {
     super("permission_canary_failed", message);
     this.name = "AcpPermissionCanaryError";
   }
