@@ -800,3 +800,22 @@ client (read edge needs no redeploy: it passes `receipts` through).
 
 Not established: L23's spec item 5 (inbox failing via `api.commonswarm.com` but not the direct
 supabase.co target) — the lane was interrupted before its report; carry it as OPEN.
+
+### Addendum 2026-09-02 ~03:05Z — L36 merged; arms running; cleanup done
+
+- L36 `9d2081a` merged into `release/0.1.45` → **`0f65b83`** (build + check:tests green; pure gates
+  running). The lane's own live control: `node dist/cli.js listen start --provider codex` with an
+  isolated `--state-dir` reached `ready` on codex-acp **1.8.0** — the Codex listener starts again.
+  Grok's canary re-measured against `~/.cswarm/canary/`: permission request seen, deny honoured.
+- Arms on `0f65b83`: Grok exact (`scratchpad/wt-arm-grok`) and Gemini inversion (`scratchpad/wt-arm-gemini`),
+  prompts `scratchpad/arm-{grok,gemini}-045.prompt`, outputs `arm-*-045.out`. Release only if BOTH
+  carry a `VERDICT: PASS` line with substance.
+- Cleanup lane (Codex): `git worktree list` 46 → 10 entries; 16 stale registrations pruned, 23 clean
+  worktrees removed, 42 absorbed local branches deleted (UNABS 0 by `git cherry`). Kept dirty:
+  `.claude/worktrees/codex-seo`, `wf_3e1f1a59-216-2`, `-216-3` (diffs saved under the session scratchpad
+  `cleanup-saved/`); kept unique: `lane/l26-hook-scope` (1 commit, not on main — decide before final cleanup).
+  Report: session scratchpad `CLEANUP-report.md`.
+- L30 launched on top of `0f65b83` (`lane/l30-provider-version`), told to mirror L36's Codex design for Claude.
+- L37 (AGENTS.md 920 → 271 lines, CLAUDE.md 69 → 12) committed `f6cb23b`; awaiting its report, then my read
+  before it merges to main. Two claims it introduced were verified against the tree (`/start` is a handoff;
+  `test:p1-local` names four files).
