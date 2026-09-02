@@ -199,6 +199,7 @@ import {
   fileArrivalCursorStore,
   formatArrivalNotification,
   formatArrivalRetryNotice,
+  ARRIVAL_RETRY_NOTICE_THRESHOLD_MS,
   EXIT_NOTIFY_ORPHANED,
   NotifyStdoutClosedError,
   runArrivalWatch,
@@ -247,6 +248,9 @@ import {
   writeListenerCredentialState,
   LISTENER_DEFER_OVER_MAX,
   LISTENER_DEFER_OVER_MIN,
+  emptyListenerReadHealth,
+  summarizeListenerReadHealth,
+  type ListenerReadHealthSummary,
   type ListenerCanaryAttemptCallback,
   type ListenerPermissionMode,
   type ListenerProviderId,
@@ -4294,6 +4298,64 @@ function listenerAttendanceRemedy(principalId: string): string {
   return `cswarm hook install claude --principal-id ${principalId} --write, then start a fresh session. Or restart the listener with --route worker.`;
 }
 
+interface ListenerLapseNotice {
+  code:
+    | "listener_host_ports_exhausted"
+    | "listener_read_retry_persisting"
+    | "listener_claim_throughput_lapse";
+  message: string;
+  nextStep: string;
+}
+
+function listenerReadHealthSummary(
+  status: ListenerStatus,
+  nowMs: number,
+): ListenerReadHealthSummary {
+  return summarizeListenerReadHealth(
+    status.readHealth ?? emptyListenerReadHealth(),
+    status.readyAt,
+    nowMs,
+  );
+}
+
+function listenerLapseNotices(
+  status: ListenerStatus,
+  summary: ListenerReadHealthSummary,
+): ListenerLapseNotice[] {
+  const health = status.readHealth ?? emptyListenerReadHealth();
+  const notices: ListenerLapseNotice[] = [];
+  if (health.currentReasonCode === "host_ports_exhausted") {
+    notices.push({
+      code: "listener_host_ports_exhausted",
+      message: "This host has run out of outbound ports. The listener is probing only once per minute so it does not amplify the outage.",
+      nextStep:
+        "Find the consumer: lsof -nP -iTCP | awk '{print $1}' | sort | uniq -c | sort -rn",
+    });
+  } else if (
+    // Reuse arrival-watch.ts's 60s loud-lapse transition. The listener keeps
+    // the episode in durable status instead of the monitor's process-local machine.
+    summary.currentEpisodeDurationMs !== null &&
+    summary.currentEpisodeDurationMs >= ARRIVAL_RETRY_NOTICE_THRESHOLD_MS
+  ) {
+    notices.push({
+      code: "listener_read_retry_persisting",
+      message: `Listener reads have failed continuously for ${Math.floor(summary.currentEpisodeDurationMs / 1_000)}s. This is still in progress.`,
+      nextStep:
+        "Check cswarm status and the CommonSwarm service. If both are healthy, restart the listener.",
+    });
+  }
+  if (summary.throughputLapseHours.length > 0) {
+    const latest = summary.throughputLapseHours.at(-1)!;
+    notices.push({
+      code: "listener_claim_throughput_lapse",
+      message: `Claim throughput fell below 0.50 for the full hour at ${latest.hourStart}: ${latest.claims}/${Math.round(latest.expectedClaims)} expected (${latest.ratio.toFixed(3)}).`,
+      nextStep:
+        "This host is starving the listener — check load/memory pressure (sysctl kern.memorystatus_vm_pressure_level), or move the listener.",
+    });
+  }
+  return notices;
+}
+
 export function listenerStatusJson(
   status: ListenerStatus,
   permissionMode?: ListenerPermissionMode,
@@ -4307,6 +4369,9 @@ export function listenerStatusJson(
   const mode = permissionMode ?? status.permissionMode;
   const attendance = listenerAttendanceState(status, evidence);
   const pending = status.pendingForMainCount ?? 0;
+  const readHealth = status.readHealth ?? emptyListenerReadHealth();
+  const readSummary = listenerReadHealthSummary(status, nowMs);
+  const lapseNotices = listenerLapseNotices(status, readSummary);
   return {
     ...status,
     ...attendance,
@@ -4322,6 +4387,24 @@ export function listenerStatusJson(
     attendanceNextStep: pending > 0
       ? listenerAttendanceRemedy(status.principalId)
       : null,
+    readRetryCurrentEpisodeStartedAt: readHealth.currentEpisodeStartedAt,
+    readRetryCurrentEpisodeAttempts: readHealth.currentEpisodeAttempts,
+    readRetryCurrentReasonCode: readHealth.currentReasonCode,
+    readRetryCurrentHttpStatus: readHealth.currentHttpStatus,
+    readRetryCurrentErrorConstructor: readHealth.currentErrorConstructor,
+    readRetryCurrentEpisodeDurationMs: readSummary.currentEpisodeDurationMs,
+    readRetryEpisodesLast24h: readSummary.episodesLast24h,
+    readRetryLongestEpisodeAttemptsLast24h:
+      readSummary.longestEpisodeAttemptsLast24h,
+    readRetryLongestEpisodeDurationMsLast24h:
+      readSummary.longestEpisodeDurationMsLast24h,
+    readRetriesLastHour: readSummary.retriesLastHour,
+    readRetryHours: readSummary.retryHours,
+    claimCadenceMs: readHealth.claimCadenceMs,
+    claimThroughputHours: readSummary.claimThroughputHours,
+    listenerLapse: lapseNotices.length > 0,
+    listenerLapseCodes: lapseNotices.map((notice) => notice.code),
+    listenerLapseNextSteps: lapseNotices.map((notice) => notice.nextStep),
     deliveryMode: status.deliveryMode ?? null,
     pendingDeliveryCount: status.pendingDeliveryCount ?? null,
     lastTerminalDeliveryFailureCount:
@@ -4372,8 +4455,13 @@ export function renderListenerStatus(
     pendingForMainCount === 1 ? "message is" : "messages are"
   } unattended`;
   const attendance = listenerAttendanceState(status, evidence);
+  const readHealth = status.readHealth ?? emptyListenerReadHealth();
+  const readSummary = listenerReadHealthSummary(status, nowMs);
+  const lapseNotices = listenerLapseNotices(status, readSummary);
   const lines = [
-    pendingForMainCount > 0
+    lapseNotices.length > 0
+      ? `Listener LAPSE for agent ${status.principalId}: ${lapseNotices.map((notice) => notice.code).join(", ")}.`
+      : pendingForMainCount > 0
       ? `Listener WARNING for agent ${status.principalId}: ${unattendedCount}.`
       : `Listener ${status.state} for agent ${status.principalId}.`,
     `CONNECTED: ${attendance.connected ? "yes" : "no"}. Transport state is ${status.state}.`,
@@ -4405,7 +4493,24 @@ export function renderListenerStatus(
     status.lastErrorCode
       ? `Last status code: ${status.lastErrorCode}.`
       : "No listener process error is recorded.",
+    readHealth.currentEpisodeStartedAt === null
+      ? "Current read retry episode: none."
+      : `Current read retry episode: ${readHealth.currentEpisodeAttempts} attempt${readHealth.currentEpisodeAttempts === 1 ? "" : "s"} since ${readHealth.currentEpisodeStartedAt}; reason ${readHealth.currentReasonCode}${readHealth.currentHttpStatus === null ? "" : ` (HTTP ${readHealth.currentHttpStatus})`}${readHealth.currentErrorConstructor === null ? "" : ` (${readHealth.currentErrorConstructor})`}.`,
+    `Read retry episodes in the last 24h: ${readSummary.episodesLast24h}; retries in the rolling hour: ${readSummary.retriesLastHour}.`,
+    readSummary.longestEpisodeAttemptsLast24h === 0
+      ? "Longest read retry episode in the last 24h: none recorded."
+      : `Longest read retry episode in the last 24h: ${readSummary.longestEpisodeAttemptsLast24h} attempts over ${Math.floor(readSummary.longestEpisodeDurationMsLast24h / 1_000)}s.`,
+    readSummary.retryHours.length === 0
+      ? "Read retries by hour in the last 24h: none."
+      : `Read retries by hour in the last 24h: ${readSummary.retryHours.map((hour) => `${hour.hourStart}=${hour.retries}`).join("; ")}.`,
+    readSummary.claimThroughputHours.length === 0
+      ? "Claim throughput by full hour: no complete listener hour is available yet."
+      : `Claim throughput by full hour: ${readSummary.claimThroughputHours.map((hour) => `${hour.hourStart} ${hour.claims}/${Math.round(hour.expectedClaims)} (${hour.ratio.toFixed(3)})`).join("; ")}.`,
   ];
+  for (const notice of lapseNotices) {
+    lines.push(`WARNING [${notice.code}]: ${notice.message}`);
+    lines.push(`Next: ${notice.nextStep}`);
+  }
   if (status.lastErrorDetail) {
     const [first, ...rest] = status.lastErrorDetail.split("\n");
     lines.push(`Last error detail (local only): ${first}`);

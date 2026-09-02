@@ -2025,3 +2025,90 @@ test("a second worker's failure never inherits the first worker's tail", async (
     "worker two's failure inherited worker one's tail",
   );
 });
+
+test("read retry episodes persist, recover once, and log typed totals", async () => {
+  const root = await mkdtemp(join(tmpdir(), "cswarm-read-health-"));
+  const target = paths(root);
+  const workspaceId = randomUUID();
+  const principalId = randomUUID();
+  const startedAt = "2026-09-01T12:00:00.000Z";
+  const secondAt = "2026-09-01T12:00:30.000Z";
+  const recoveredAt = "2026-09-01T12:01:05.000Z";
+  const status = await runListenerSupervisor({
+    paths: target,
+    profileId: "profile-read-health",
+    workspaceId,
+    principalId,
+    run: async (_signal, onEvent) => {
+      onEvent({
+        type: "ready",
+        workspaceId,
+        principalId,
+        cadenceMs: 3_500,
+        ts: "2026-09-01T11:00:00.000Z",
+      });
+      onEvent({
+        type: "read_retry",
+        attempt: 1,
+        episodeAttempt: 1,
+        episodeStartedAt: startedAt,
+        failure: {
+          code: "http_status",
+          httpStatus: 503,
+          errorConstructor: null,
+        },
+        delayMs: 20_000,
+        ts: startedAt,
+      });
+      onEvent({
+        type: "read_retry",
+        attempt: 2,
+        episodeAttempt: 2,
+        episodeStartedAt: startedAt,
+        failure: {
+          code: "no_response",
+          httpStatus: null,
+          errorConstructor: null,
+        },
+        delayMs: 30_000,
+        ts: secondAt,
+      });
+      onEvent({
+        type: "read_recovered",
+        attempts: 2,
+        durationMs: 65_000,
+        startedAt,
+        ts: recoveredAt,
+      });
+      return { reason: "cancelled" };
+    },
+  });
+  assert.ok(status.readHealth);
+  assert.equal(status.readHealth.currentEpisodeStartedAt, null);
+  assert.equal(status.readHealth.currentEpisodeAttempts, 0);
+  assert.equal(status.readHealth.claimCadenceMs, 3_500);
+  assert.equal(status.readHealth.retryHours.length, 1);
+  assert.deepEqual(status.readHealth.retryHours[0], {
+    hourStart: "2026-09-01T12:00:00.000Z",
+    retries: 2,
+    episodes: 1,
+    longestEpisodeAttempts: 2,
+    longestEpisodeDurationMs: 65_000,
+  });
+
+  const events = (await readFile(target.logPath, "utf8"))
+    .trim()
+    .split("\n")
+    .map((line) => JSON.parse(line) as Record<string, unknown>);
+  const retries = events.filter((event) => event.event === "listener_read_retry");
+  assert.equal(retries.length, 2);
+  assert.equal(retries[0]!.reason_code, "http_status");
+  assert.equal(retries[0]!.http_status, 503);
+  assert.equal(retries[1]!.reason_code, "no_response");
+  const recovered = events.filter(
+    (event) => event.event === "listener_read_recovered",
+  );
+  assert.equal(recovered.length, 1, "one episode emits one recovery line");
+  assert.equal(recovered[0]!.attempts, 2);
+  assert.equal(recovered[0]!.duration_ms, 65_000);
+});

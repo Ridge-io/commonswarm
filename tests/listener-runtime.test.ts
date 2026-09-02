@@ -29,11 +29,13 @@ import type {
 import {
   SIGNAL_READ_TIMEOUT_MS,
   SignalHttpError,
+  SignalTransportError,
 } from "../src/cloud/signals.js";
 import { ACP_DEFAULT_REQUEST_TIMEOUT_MS } from "../src/host/bounds.js";
 import {
   runListenerRuntime as runListenerRuntimeActual,
   LISTENER_DELIVERY_SAFETY_MARGIN_MS,
+  LISTENER_HOST_PORTS_PROBE_MS,
   LISTENER_PROMPT_START_MINIMUM_MS,
   listenerPaths,
   runListenerSupervisor,
@@ -386,6 +388,201 @@ function page(
     ...options,
   };
 }
+
+async function observedReadRetry(
+  failure: Error,
+): Promise<{
+  retry: Extract<ListenerRuntimeEvent, { type: "read_retry" }>;
+  recovered: Extract<ListenerRuntimeEvent, { type: "read_recovered" }>;
+}> {
+  const model = new FakeModel();
+  const controller = new AbortController();
+  const events: ListenerRuntimeEvent[] = [];
+  let reads = 0;
+  let nowMs = Date.parse("2026-09-01T12:00:00.000Z");
+  const stop = await runListenerRuntime({
+    target: cloudTarget("https://cloud.example.test", "anon"),
+    workspaceId: WORKSPACE_ID,
+    principalId: PRINCIPAL_ID,
+    credentialSession: { async bearer() { return "token"; } },
+    store: new MemoryStore(),
+    model,
+    signal: controller.signal,
+    pollMs: 0,
+    now: () => nowMs,
+    random: () => 0,
+    onEvent: (event) => events.push(event),
+    sleep: async (ms) => {
+      nowMs += ms;
+    },
+    readPage: async () => {
+      reads += 1;
+      if (reads === 1) return page([]);
+      if (reads === 2) throw failure;
+      controller.abort();
+      return page([]);
+    },
+  });
+  assert.equal(stop.reason, "cancelled");
+  const retry = events.find(
+    (event): event is Extract<ListenerRuntimeEvent, { type: "read_retry" }> =>
+      event.type === "read_retry",
+  );
+  const recovered = events.find(
+    (event): event is Extract<ListenerRuntimeEvent, { type: "read_recovered" }> =>
+      event.type === "read_recovered",
+  );
+  assert.ok(retry, "the retry path was reached");
+  assert.ok(recovered, "the successful read closed the retry episode");
+  return { retry, recovered };
+}
+
+test("listener retry events classify HTTP, no-response, aborted, and host-port failures without text matching", async () => {
+  const http = await observedReadRetry(new SignalHttpError(503));
+  assert.equal(http.retry.failure.code, "http_status");
+  assert.equal(http.retry.failure.httpStatus, 503);
+
+  const noResponse = await observedReadRetry(new SignalTransportError());
+  assert.equal(noResponse.retry.failure.code, "no_response");
+  assert.equal(noResponse.retry.failure.httpStatus, null);
+
+  const aborted = new DOMException("fake read abort", "AbortError");
+  const abortEpisode = await observedReadRetry(aborted);
+  assert.equal(abortEpisode.retry.failure.code, "aborted");
+  assert.equal(abortEpisode.recovered.attempts, 1);
+  assert.equal(abortEpisode.recovered.durationMs, abortEpisode.retry.delayMs);
+
+  const noPorts = Object.assign(new Error("text does not classify this"), {
+    code: "EADDRNOTAVAIL",
+  });
+  const portEpisode = await observedReadRetry(noPorts);
+  assert.equal(portEpisode.retry.failure.code, "host_ports_exhausted");
+  assert.equal(portEpisode.retry.delayMs, LISTENER_HOST_PORTS_PROBE_MS);
+  assert.ok(portEpisode.retry.delayMs >= 60_000);
+});
+
+async function productionReadRetry(
+  failingFetch: () => Promise<Response>,
+): Promise<Extract<ListenerRuntimeEvent, { type: "read_retry" }>> {
+  const controller = new AbortController();
+  const events: ListenerRuntimeEvent[] = [];
+  let fetchCalls = 0;
+  const fetcher = (async () => {
+    fetchCalls += 1;
+    if (fetchCalls === 1) {
+      return new Response(JSON.stringify({
+        signals: [],
+        capabilities: { sender_owner_relation: 1, cursor_after: 1 },
+      }), { status: 200, headers: { "content-type": "application/json" } });
+    }
+    return await failingFetch();
+  }) as typeof fetch;
+  const stop = await runListenerRuntime({
+    target: cloudTarget("https://cloud.example.test", "anon"),
+    workspaceId: WORKSPACE_ID,
+    principalId: PRINCIPAL_ID,
+    credentialSession: { async bearer() { return "token"; } },
+    store: new MemoryStore(),
+    model: new FakeModel(),
+    signal: controller.signal,
+    fetcher,
+    pollMs: 0,
+    random: () => 0,
+    onEvent: (event) => events.push(event),
+    sleep: async (ms) => {
+      if (ms > 0) controller.abort();
+    },
+  });
+  assert.equal(stop.reason, "cancelled");
+  assert.equal(fetchCalls, 2, "the failure reached the production signal fetch");
+  const retry = events.find(
+    (event): event is Extract<ListenerRuntimeEvent, { type: "read_retry" }> =>
+      event.type === "read_retry",
+  );
+  assert.ok(retry, "the production signal failure reached the retry event");
+  return retry;
+}
+
+test("production listener reads preserve HTTP status, no response, and EADDRNOTAVAIL codes", async () => {
+  const http = await productionReadRetry(async () =>
+    new Response(JSON.stringify({ error: "unavailable" }), { status: 503 })
+  );
+  assert.equal(http.failure.code, "http_status");
+  assert.equal(http.failure.httpStatus, 503);
+
+  const noResponse = await productionReadRetry(async () => {
+    throw new TypeError("fake socket closed before a response");
+  });
+  assert.equal(noResponse.failure.code, "no_response");
+
+  const aborted = await productionReadRetry(async () => {
+    throw new DOMException("fake provider abort", "AbortError");
+  });
+  assert.equal(aborted.failure.code, "aborted");
+
+  const noPorts = await productionReadRetry(async () => {
+    throw Object.assign(new Error("different message"), { code: "EADDRNOTAVAIL" });
+  });
+  assert.equal(noPorts.failure.code, "host_ports_exhausted");
+  assert.equal(noPorts.delayMs, LISTENER_HOST_PORTS_PROBE_MS);
+});
+
+test("listener body-stall retry is classified through the production signal deadline", async (t) => {
+  t.mock.timers.enable({ apis: ["setTimeout"] });
+  const model = new FakeModel();
+  const controller = new AbortController();
+  const events: ListenerRuntimeEvent[] = [];
+  let fetchCalls = 0;
+  let bodyStarted = false;
+  const fetcher = (async () => {
+    fetchCalls += 1;
+    if (fetchCalls === 1) {
+      return new Response(JSON.stringify({
+        signals: [],
+        capabilities: { sender_owner_relation: 1, cursor_after: 1 },
+      }), { status: 200, headers: { "content-type": "application/json" } });
+    }
+    return {
+      ok: true,
+      status: 200,
+      headers: new Headers(),
+      json: async () => {
+        bodyStarted = true;
+        return await new Promise<unknown>(() => {});
+      },
+    } as Response;
+  }) as typeof fetch;
+  const pending = runListenerRuntime({
+    target: cloudTarget("https://cloud.example.test", "anon"),
+    workspaceId: WORKSPACE_ID,
+    principalId: PRINCIPAL_ID,
+    credentialSession: { async bearer() { return "token"; } },
+    store: new MemoryStore(),
+    model,
+    signal: controller.signal,
+    fetcher,
+    pollMs: 0,
+    random: () => 0,
+    onEvent: (event) => events.push(event),
+    sleep: async (ms) => {
+      if (ms > 0) controller.abort();
+    },
+  });
+  for (let turn = 0; turn < 20 && !bodyStarted; turn += 1) {
+    await Promise.resolve();
+  }
+  assert.equal(fetchCalls, 2, "the ready read and stalled read both reached fetch");
+  assert.equal(bodyStarted, true, "the stalled body consumer was reached");
+  t.mock.timers.tick(SIGNAL_READ_TIMEOUT_MS);
+  const stop = await pending;
+  assert.equal(stop.reason, "cancelled");
+  const retry = events.find(
+    (event): event is Extract<ListenerRuntimeEvent, { type: "read_retry" }> =>
+      event.type === "read_retry",
+  );
+  assert.ok(retry, "the production body deadline reached the listener retry path");
+  assert.equal(retry.failure.code, "body_timeout");
+});
 
 test("incomplete durable configuration fails before credential or provider work", async () => {
   const model = new FakeModel();

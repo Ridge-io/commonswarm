@@ -18,6 +18,13 @@ import type {
 
 import type { ListenerPermissionMode } from "./types.js";
 import type { ListenerRouteMode } from "./main-routing.js";
+import {
+  emptyListenerReadHealth,
+  recordListenerClaim,
+  recordListenerClaimCadence,
+  recordListenerReadRecovery,
+  recordListenerReadRetry,
+} from "./read-health.js";
 
 const UUID_RE =
   /^[0-9a-f]{8}-[0-9a-f]{4}-[1-8][0-9a-f]{3}-[89ab][0-9a-f]{3}-[0-9a-f]{12}$/i;
@@ -237,6 +244,7 @@ export async function runListenerSupervisor(
     deferOverChars: options.deferOverChars ?? null,
     pendingForMainCount: 0,
     droppedForMainCount: 0,
+    readHealth: emptyListenerReadHealth(),
     logPath: options.paths.logPath,
   };
   let writes = Promise.resolve();
@@ -321,6 +329,14 @@ export async function runListenerSupervisor(
         lastWorkerStderrTail: null,
         providerVersion: versionNotice?.runningVersion ?? null,
         providerLastMeasuredVersion: versionNotice?.lastMeasuredVersion ?? null,
+        ...(event.cadenceMs === undefined
+          ? {}
+          : {
+            readHealth: recordListenerClaimCadence(
+              status.readHealth ?? emptyListenerReadHealth(),
+              event.cadenceMs,
+            ),
+          }),
       });
       log({ ts: event.ts, event: "listener_ready" });
       return;
@@ -366,11 +382,55 @@ export async function runListenerSupervisor(
       return;
     }
     if (event.type === "read_retry") {
+      status = {
+        ...status,
+        readHealth: recordListenerReadRetry(
+          status.readHealth ?? emptyListenerReadHealth(),
+          {
+            ts: event.ts,
+            episodeStartedAt: event.episodeStartedAt,
+            episodeAttempt: event.episodeAttempt,
+            failure: event.failure,
+          },
+        ),
+        updatedAt: event.ts,
+      };
+      persist();
       log({
         ts: event.ts,
         event: "listener_read_retry",
         attempt: event.attempt,
+        episode_attempt: event.episodeAttempt,
+        reason_code: event.failure.code,
+        ...(event.failure.httpStatus === null
+          ? {}
+          : { http_status: event.failure.httpStatus }),
+        ...(event.failure.errorConstructor === null
+          ? {}
+          : { error_constructor: event.failure.errorConstructor }),
         delay_ms: event.delayMs,
+      });
+      return;
+    }
+    if (event.type === "read_recovered") {
+      status = {
+        ...status,
+        readHealth: recordListenerReadRecovery(
+          status.readHealth ?? emptyListenerReadHealth(),
+          {
+            startedAt: event.startedAt,
+            attempts: event.attempts,
+            durationMs: event.durationMs,
+          },
+        ),
+        updatedAt: event.ts,
+      };
+      persist();
+      log({
+        ts: event.ts,
+        event: "listener_read_recovered",
+        attempts: event.attempts,
+        duration_ms: event.durationMs,
       });
       return;
     }
@@ -412,6 +472,10 @@ export async function runListenerSupervisor(
     if (event.type === "delivery_claim") {
       status = {
         ...status,
+        readHealth: recordListenerClaim(
+          status.readHealth ?? emptyListenerReadHealth(),
+          event.ts,
+        ),
         pendingDeliveryCount: event.pendingDeliveryCount,
         lastClaimAt: event.ts,
         updatedAt: event.ts,

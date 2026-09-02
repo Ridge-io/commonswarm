@@ -40,10 +40,38 @@ export const SIGNAL_READ_TIMEOUT_MS = 30_000;
  * still surface it as an unreachable-service failure.
  */
 export class SignalReadTimeoutError extends Error {
-  constructor(message = "signal read timed out") {
+  constructor(
+    message = "signal read timed out",
+    readonly phase: "response" | "body" = "response",
+  ) {
     super(message);
     this.name = "SignalReadTimeoutError";
   }
+}
+
+/** Typed boundary error for a host that cannot allocate an outbound source port. */
+export class SignalHostPortsExhaustedError extends Error {
+  readonly code = "EADDRNOTAVAIL";
+
+  constructor() {
+    super("the host could not allocate an outbound source port");
+    this.name = "SignalHostPortsExhaustedError";
+  }
+}
+
+export type SignalReadFailureCode =
+  | "http_status"
+  | "no_response"
+  | "body_timeout"
+  | "malformed_response"
+  | "aborted"
+  | "host_ports_exhausted"
+  | "unclassified";
+
+export interface SignalReadFailureClassification {
+  code: SignalReadFailureCode;
+  httpStatus: number | null;
+  errorConstructor: string | null;
 }
 
 export type SignalCredential =
@@ -186,11 +214,25 @@ const plainHttpEnvelope = new WeakMap<Error, ServerErrorEnvelope>();
  * surviving inside the D-057 closed classification.
  */
 const plainTransportErrors = new WeakSet<Error>();
+const plainTransportFailureCodes = new WeakMap<
+  Error,
+  "no_response" | "body_timeout"
+>();
+const plainMalformedErrors = new WeakSet<Error>();
 
 /** Build the shared plain transport Error, tagged so classification is by identity. */
-function plainTransportError(): Error {
+function plainTransportError(
+  failureCode: "no_response" | "body_timeout" = "no_response",
+): Error {
   const error = new Error("signal read could not reach the cloud service");
   plainTransportErrors.add(error);
+  plainTransportFailureCodes.set(error, failureCode);
+  return error;
+}
+
+function plainMalformedError(message: string): Error {
+  const error = new Error(message);
+  plainMalformedErrors.add(error);
   return error;
 }
 
@@ -518,7 +560,75 @@ export function followErrorEnvelope(error: unknown): ServerErrorEnvelope {
  */
 function isTransportFollowMessage(error: unknown): boolean {
   return error instanceof SignalTransportError ||
+    error instanceof SignalHostPortsExhaustedError ||
     (error instanceof Error && plainTransportErrors.has(error));
+}
+
+function safeConstructorName(error: unknown): string {
+  if (error === null || typeof error !== "object") return typeof error;
+  const name = (error as { constructor?: { name?: unknown } }).constructor?.name;
+  if (typeof name !== "string" || name.length === 0) return "Unknown";
+  return name.replace(/[^A-Za-z0-9_$-]+/g, "_").slice(0, 96) || "Unknown";
+}
+
+/** Stable D-053 read-failure classification; no branch reads error message text. */
+export function classifySignalReadFailure(
+  error: unknown,
+): SignalReadFailureClassification {
+  if (
+    error instanceof SignalHostPortsExhaustedError ||
+    (error !== null && typeof error === "object" &&
+      (error as { code?: unknown }).code === "EADDRNOTAVAIL")
+  ) {
+    return {
+      code: "host_ports_exhausted",
+      httpStatus: null,
+      errorConstructor: null,
+    };
+  }
+  const http = followHttpDetails(error);
+  if (http !== null) {
+    return {
+      code: "http_status",
+      httpStatus: http.status,
+      errorConstructor: null,
+    };
+  }
+  if (error instanceof SignalReadTimeoutError) {
+    return {
+      code: error.phase === "body" ? "body_timeout" : "no_response",
+      httpStatus: null,
+      errorConstructor: null,
+    };
+  }
+  if (error instanceof Error && plainTransportErrors.has(error)) {
+    return {
+      code: plainTransportFailureCodes.get(error) ?? "no_response",
+      httpStatus: null,
+      errorConstructor: null,
+    };
+  }
+  if (error instanceof SignalTransportError) {
+    return { code: "no_response", httpStatus: null, errorConstructor: null };
+  }
+  if (
+    error instanceof SignalMalformedError ||
+    (error instanceof Error && plainMalformedErrors.has(error))
+  ) {
+    return {
+      code: "malformed_response",
+      httpStatus: null,
+      errorConstructor: null,
+    };
+  }
+  if (error instanceof Error && error.name === "AbortError") {
+    return { code: "aborted", httpStatus: null, errorConstructor: null };
+  }
+  return {
+    code: "unclassified",
+    httpStatus: null,
+    errorConstructor: safeConstructorName(error),
+  };
 }
 
 /**
@@ -632,6 +742,7 @@ async function fetchSignalRead(
   }
   const deadlineController = new AbortController();
   let timedOut = false;
+  let responseReceived = false;
   const signal = init.signal
     ? AbortSignal.any([init.signal, deadlineController.signal])
     : deadlineController.signal;
@@ -662,25 +773,37 @@ async function fetchSignalRead(
           signal,
         });
       } catch (error) {
-        if (signal.aborted || timedOut || (error as Error)?.name === "AbortError") {
+        if (signal.aborted || timedOut) {
           return "timeout";
+        }
+        if (error instanceof Error && error.name === "AbortError") throw error;
+        if (
+          error !== null && typeof error === "object" &&
+          (error as { code?: unknown }).code === "EADDRNOTAVAIL"
+        ) {
+          throw new SignalHostPortsExhaustedError();
         }
         return null;
       }
+      responseReceived = true;
       if (signal.aborted || timedOut) return "timeout";
       // D-051: failure bodies are read on the same terms as success bodies.
       // They carry request_id and the server's `retryable` instruction, and
       // returning body:null here is what discarded both.
       try {
         return { response, body: await response.json() };
-      } catch {
+      } catch (error) {
         if (signal.aborted || timedOut) return "timeout";
+        if (error instanceof Error && error.name === "AbortError") throw error;
         return { response, body: null };
       }
     })();
     const raced = await Promise.race([read, aborted]);
     if (raced === "timeout") {
-      throw new SignalReadTimeoutError();
+      throw new SignalReadTimeoutError(
+        "signal read timed out",
+        responseReceived ? "body" : "response",
+      );
     }
     return raced;
   } finally {
@@ -751,7 +874,9 @@ async function fetchSignalReadRetrying(
 function mapReadFailure(error: unknown, waitBound: boolean): never {
   if (error instanceof SignalReadTimeoutError) {
     if (waitBound) throw error;
-    throw plainTransportError();
+    throw plainTransportError(
+      error.phase === "body" ? "body_timeout" : "no_response",
+    );
   }
   throw error;
 }
@@ -815,7 +940,7 @@ async function humanSignals(
     throwSignalHttp(response, body);
   }
   if (!Array.isArray(body)) {
-    throw new Error("signal read returned malformed JSON");
+    throw plainMalformedError("signal read returned malformed JSON");
   }
   const parsed = body.map((value) => parseSignalRecord(value));
   return sortSignals(rowsAfterCursor(parsed, query.after), ascending);
@@ -915,7 +1040,7 @@ async function agentSignalPage(
     Array.isArray(body) ||
     !Array.isArray((body as Record<string, unknown>).signals)
   ) {
-    throw new Error("signal read returned malformed JSON");
+    throw plainMalformedError("signal read returned malformed JSON");
   }
   const capabilities = signalReadCapabilities(
     (body as Record<string, unknown>).capabilities,
@@ -1953,6 +2078,7 @@ export function resolveRefusalToleranceMs(
 
 export function isRetryableFollowError(error: unknown): boolean {
   if (serverRefusedRetry(followErrorEnvelope(error))) return false;
+  if (error instanceof SignalHostPortsExhaustedError) return true;
   if (error instanceof SignalReadTimeoutError) return true;
   if (isTransportFollowMessage(error)) return true;
   const http = followHttpDetails(error);

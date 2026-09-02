@@ -17,12 +17,16 @@ import {
   defaultListenerStateDirectory,
   listenerInstanceKey,
 } from "./file-store.js";
+import {
+  isListenerReadHealth,
+  type ListenerReadHealth,
+} from "./read-health.js";
 
 const UUID_RE =
   /^[0-9a-f]{8}-[0-9a-f]{4}-[1-8][0-9a-f]{3}-[89ab][0-9a-f]{3}-[0-9a-f]{12}$/i;
 const SEMVER_RE =
   /^(?:0|[1-9]\d*)\.(?:0|[1-9]\d*)\.(?:0|[1-9]\d*)(?:-(?:0|[1-9]\d*|[A-Za-z-][0-9A-Za-z-]*)(?:\.(?:0|[1-9]\d*|[A-Za-z-][0-9A-Za-z-]*))*)?(?:\+[0-9A-Za-z-]+(?:\.[0-9A-Za-z-]+)*)?$/;
-const MAX_STATUS_BYTES = 16 * 1024;
+const MAX_STATUS_BYTES = 32 * 1024;
 const MAX_CONTROL_BYTES = 8 * 1024;
 const CONTROL_TIMEOUT_MS = 2_000;
 const START_LOCK_WAIT_MS = 2_000;
@@ -85,6 +89,8 @@ export interface ListenerStatus {
   deferOverChars?: number | null;
   pendingForMainCount?: number;
   droppedForMainCount?: number;
+  /** Bounded local-only retry and claim-throughput accounting. */
+  readHealth?: ListenerReadHealth;
   logPath: string;
 }
 
@@ -165,6 +171,7 @@ const STATUS_ALLOWED_KEYS = new Set([
   "deferOverChars",
   "pendingForMainCount",
   "droppedForMainCount",
+  "readHealth",
 ]);
 // Sensitive aliases are rejected by name, not silently dropped, so a status
 // file can never smuggle a lease capability, command ID, credential, or body.
@@ -302,7 +309,8 @@ function parseStatus(raw: string): ListenerStatus {
         Number.isSafeInteger(row.pendingForMainCount) && row.pendingForMainCount >= 0)) ||
     !(row.droppedForMainCount === undefined ||
       (typeof row.droppedForMainCount === "number" &&
-        Number.isSafeInteger(row.droppedForMainCount) && row.droppedForMainCount >= 0))
+        Number.isSafeInteger(row.droppedForMainCount) && row.droppedForMainCount >= 0)) ||
+    !(row.readHealth === undefined || isListenerReadHealth(row.readHealth))
   ) {
     throw new Error("stored listener status is malformed");
   }
@@ -346,6 +354,9 @@ export async function writeListenerStatus(
   status: ListenerStatus,
 ): Promise<void> {
   const serialized = JSON.stringify(status);
+  if (Buffer.byteLength(serialized, "utf8") > MAX_STATUS_BYTES) {
+    throw new Error("listener status is too large");
+  }
   // New writes always carry all six delivery fields, even when null.
   const parsed = JSON.parse(serialized) as Record<string, unknown>;
   for (const key of STATUS_DELIVERY_KEYS) {
@@ -393,6 +404,12 @@ export async function appendListenerEvent(
     "passed",
     "reason",
     "delay_ms",
+    "reason_code",
+    "http_status",
+    "error_constructor",
+    "episode_attempt",
+    "attempts",
+    "duration_ms",
     "index",
     "delivery_mode",
     "pending_delivery_count",
@@ -433,6 +450,45 @@ export async function appendListenerEvent(
       !(typeof value === "number" && Number.isSafeInteger(value) && value >= 1)
     ) {
       throw new Error("listener event attempt count is not allowed");
+    }
+    if (
+      (key === "episode_attempt" || key === "attempts") &&
+      !(typeof value === "number" && Number.isSafeInteger(value) && value >= 1)
+    ) {
+      throw new Error("listener event episode count is not allowed");
+    }
+    if (
+      key === "duration_ms" &&
+      !(typeof value === "number" && Number.isSafeInteger(value) && value >= 0)
+    ) {
+      throw new Error("listener event episode duration is not allowed");
+    }
+    if (
+      key === "http_status" &&
+      !(typeof value === "number" && Number.isSafeInteger(value) &&
+        value >= 100 && value <= 599)
+    ) {
+      throw new Error("listener event HTTP status is not allowed");
+    }
+    if (
+      key === "reason_code" &&
+      !(typeof value === "string" && [
+        "http_status",
+        "no_response",
+        "body_timeout",
+        "malformed_response",
+        "aborted",
+        "host_ports_exhausted",
+        "unclassified",
+      ].includes(value))
+    ) {
+      throw new Error("listener event read reason code is not allowed");
+    }
+    if (
+      key === "error_constructor" &&
+      !(typeof value === "string" && /^[A-Za-z0-9_$-]{1,96}$/.test(value))
+    ) {
+      throw new Error("listener event error constructor is not allowed");
     }
     if (key === "passed" && typeof value !== "boolean") {
       throw new Error("listener event canary result is not allowed");
@@ -525,6 +581,23 @@ export async function appendListenerEvent(
       !(event.reason === null || typeof event.reason === "string"))
   ) {
     throw new Error("listener canary attempt event is incomplete");
+  }
+  if (
+    event.event === "listener_read_retry" &&
+    (typeof event.reason_code !== "string" ||
+      typeof event.episode_attempt !== "number" ||
+      (event.reason_code === "http_status") !==
+        (typeof event.http_status === "number") ||
+      (event.reason_code === "unclassified") !==
+        (typeof event.error_constructor === "string"))
+  ) {
+    throw new Error("listener read retry event is incomplete");
+  }
+  if (
+    event.event === "listener_read_recovered" &&
+    (typeof event.attempts !== "number" || typeof event.duration_ms !== "number")
+  ) {
+    throw new Error("listener read recovery event is incomplete");
   }
   await ensureSecureStateDirectory(paths.instanceDirectory);
   const serialized = `${JSON.stringify(event)}\n`;

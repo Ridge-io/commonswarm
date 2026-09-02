@@ -19,6 +19,7 @@ import {
   type DeliveryOutcome,
 } from "../cloud/delivery.js";
 import {
+  classifySignalReadFailure,
   decayFollowAttempt,
   isFollowCredentialFailure,
   isRestartableReadError,
@@ -27,6 +28,7 @@ import {
   readAgentSignalPage,
   SIGNAL_READ_TIMEOUT_MS,
   type AgentSignalPage,
+  type SignalReadFailureClassification,
   type SignalCursor,
 } from "../cloud/signals.js";
 import {
@@ -76,6 +78,8 @@ export const LISTENER_PROMPT_START_MINIMUM_MS =
   LISTENER_REPLY_ONLY_MINIMUM_MS;
 export const LISTENER_DELIVERY_RETRY_INITIAL_MS = 500;
 export const LISTENER_DELIVERY_RETRY_MAX_MS = 30_000;
+/** EADDRNOTAVAIL probes slowly so the listener does not amplify port exhaustion. */
+export const LISTENER_HOST_PORTS_PROBE_MS = 60_000;
 
 const UUID_RE =
   /^[0-9a-f]{8}-[0-9a-f]{4}-[1-8][0-9a-f]{3}-[89ab][0-9a-f]{3}-[0-9a-f]{12}$/i;
@@ -117,7 +121,13 @@ export interface ListenerRuntimeModel extends ListenerModel {
 }
 
 export type ListenerRuntimeEvent =
-  | { type: "ready"; workspaceId: string; principalId: string; ts: string }
+  | {
+    type: "ready";
+    workspaceId: string;
+    principalId: string;
+    cadenceMs?: number;
+    ts: string;
+  }
   | {
     type: "canary_attempt";
     attempt: number;
@@ -137,7 +147,17 @@ export type ListenerRuntimeEvent =
   | {
     type: "read_retry";
     attempt: number;
+    episodeAttempt: number;
+    episodeStartedAt: string;
+    failure: SignalReadFailureClassification;
     delayMs: number;
+    ts: string;
+  }
+  | {
+    type: "read_recovered";
+    attempts: number;
+    durationMs: number;
+    startedAt: string;
     ts: string;
   }
   | { type: "malformed_row"; index: number; ts: string }
@@ -864,6 +884,8 @@ export async function runListenerRuntime(
   let ready = false;
   let deliveryMode: ListenerDeliveryMode | null = null;
   let readAttempt = 0;
+  let readEpisodeStartedAtMs: number | null = null;
+  let readEpisodeAttempts = 0;
   // Cancel in-flight host turns immediately on abort — do not wait for finally.
   // A hung engine.process must see cancel while still pending, not only after it returns.
   const onAbort = () => {
@@ -976,6 +998,18 @@ export async function runListenerRuntime(
           },
         });
         requireCapabilities(page);
+        if (ready && readEpisodeStartedAtMs !== null) {
+          const recoveredAtMs = now();
+          options.onEvent?.({
+            type: "read_recovered",
+            attempts: readEpisodeAttempts,
+            durationMs: Math.max(0, recoveredAtMs - readEpisodeStartedAtMs),
+            startedAt: new Date(readEpisodeStartedAtMs).toISOString(),
+            ts: new Date(recoveredAtMs).toISOString(),
+          });
+          readEpisodeStartedAtMs = null;
+          readEpisodeAttempts = 0;
+        }
         const nextMode = classifyDeliveryMode(page, durableConfigured);
         if (nextMode !== deliveryMode) {
           deliveryMode = nextMode;
@@ -1005,19 +1039,31 @@ export async function runListenerRuntime(
           stop = { reason: "credential", error: asError(error) };
           break;
         }
-        if (isAbort(error)) {
-          stop = { reason: "cancelled" };
-          break;
-        }
-        if (isRetryableFollowError(error)) {
+        const failure = classifySignalReadFailure(error);
+        if (
+          isRetryableFollowError(error) ||
+          failure.code === "aborted" ||
+          failure.code === "host_ports_exhausted"
+        ) {
           readAttempt += 1;
-          const delayMs = nextFollowBackoffMs(readAttempt, null, random);
+          const delayMs = failure.code === "host_ports_exhausted"
+            ? LISTENER_HOST_PORTS_PROBE_MS
+            : nextFollowBackoffMs(readAttempt, null, random);
           if (ready) {
+            const failedAtMs = now();
+            if (readEpisodeStartedAtMs === null) {
+              readEpisodeStartedAtMs = failedAtMs;
+              readEpisodeAttempts = 0;
+            }
+            readEpisodeAttempts += 1;
             options.onEvent?.({
               type: "read_retry",
               attempt: readAttempt,
+              episodeAttempt: readEpisodeAttempts,
+              episodeStartedAt: new Date(readEpisodeStartedAtMs).toISOString(),
+              failure,
               delayMs,
-              ts: eventTime(now),
+              ts: new Date(failedAtMs).toISOString(),
             });
           }
           await sleep(delayMs, abort);
@@ -1041,6 +1087,7 @@ export async function runListenerRuntime(
           type: "ready",
           workspaceId: options.workspaceId,
           principalId: options.principalId,
+          cadenceMs: pollMs,
           ts: eventTime(now),
         });
         // Self-description, once per listener start, best-effort and
