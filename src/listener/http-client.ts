@@ -189,6 +189,7 @@ export class ListenerHttpClient {
       }
       if (nextUrl.origin !== url.origin) {
         for (const name of [
+          "apikey",
           "authorization",
           "cookie",
           "host",
@@ -293,10 +294,16 @@ export class ListenerHttpClient {
           }
         });
       });
-      if (options.body !== null && options.body.byteLength > 0) {
-        request.write(options.body);
+      try {
+        if (options.body !== null && options.body.byteLength > 0) {
+          request.write(options.body);
+        }
+        request.end();
+      } catch (error) {
+        request.destroy();
+        finish();
+        reject(error);
       }
-      request.end();
     });
   }
 }

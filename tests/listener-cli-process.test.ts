@@ -10,7 +10,7 @@ import {
   rm,
   writeFile,
 } from "node:fs/promises";
-import { createServer, type Server } from "node:http";
+import { createServer, type IncomingHttpHeaders, type Server } from "node:http";
 import { tmpdir } from "node:os";
 import { join, resolve } from "node:path";
 import test from "node:test";
@@ -313,6 +313,140 @@ test("listener HTTP client preserves fetch redirect semantics on one connection"
     httpClient.close();
     await closeTestServer(server);
   }
+});
+
+test("listener HTTP client rewrites redirected POST and strips cross-origin secrets", async () => {
+  let sourceConnections = 0;
+  let destinationConnections = 0;
+  let sourceMethod = "";
+  let sourceBody = "";
+  let sourceAuthorization = "";
+  let destinationMethod = "";
+  let destinationBody = "";
+  let destinationHeaders: IncomingHttpHeaders = {};
+
+  const destination = createServer(async (request, response) => {
+    destinationMethod = request.method ?? "";
+    destinationHeaders = request.headers;
+    for await (const chunk of request) destinationBody += chunk.toString();
+    response.writeHead(200, { "content-type": "text/plain" });
+    response.end("redirected");
+  });
+  destination.on("connection", () => {
+    destinationConnections += 1;
+  });
+  await new Promise<void>((resolveListen) => {
+    destination.listen(0, "127.0.0.1", resolveListen);
+  });
+  const destinationAddress = destination.address();
+  assert.ok(destinationAddress && typeof destinationAddress === "object");
+  const destinationUrl = `http://127.0.0.1:${destinationAddress.port}/target`;
+
+  const source = createServer(async (request, response) => {
+    sourceMethod = request.method ?? "";
+    sourceAuthorization = String(request.headers.authorization ?? "");
+    for await (const chunk of request) sourceBody += chunk.toString();
+    response.writeHead(301, { "location": destinationUrl });
+    response.end();
+  });
+  source.on("connection", () => {
+    sourceConnections += 1;
+  });
+  await new Promise<void>((resolveListen) => source.listen(0, "127.0.0.1", resolveListen));
+  const sourceAddress = source.address();
+  assert.ok(sourceAddress && typeof sourceAddress === "object");
+  const httpClient = new ListenerHttpClient({ idleTimeoutMs: 1_000 });
+
+  try {
+    const response = await httpClient.fetch(
+      `http://127.0.0.1:${sourceAddress.port}/command`,
+      {
+        method: "POST",
+        headers: {
+          "apikey": "public-secret",
+          "authorization": "Bearer agent-secret",
+          "content-type": "application/json",
+          "cookie": "session=private",
+        },
+        body: '{"safe":true}',
+      },
+    );
+    assert.equal(await response.text(), "redirected");
+    assert.equal(response.redirected, true);
+    assert.equal(response.url, destinationUrl);
+    assert.equal(sourceMethod, "POST");
+    assert.equal(sourceBody, '{"safe":true}');
+    assert.equal(sourceAuthorization, "Bearer agent-secret");
+    assert.equal(destinationMethod, "GET");
+    assert.equal(destinationBody, "");
+    assert.equal(destinationHeaders.apikey, undefined);
+    assert.equal(destinationHeaders.authorization, undefined);
+    assert.equal(destinationHeaders.cookie, undefined);
+    assert.equal(destinationHeaders["content-type"], undefined);
+    assert.equal(sourceConnections, 1);
+    assert.equal(destinationConnections, 1);
+    assert.deepEqual(httpClient.metrics(), {
+      requests: 2,
+      connectionsOpened: 2,
+      connectionReuseRatio: 1,
+    });
+  } finally {
+    httpClient.close();
+    await closeTestServer(source);
+    await closeTestServer(destination);
+  }
+});
+
+test("listener HTTP client rejects forbidden and excessive redirects", async () => {
+  let requests = 0;
+  let connections = 0;
+  const server = createServer(async (request, response) => {
+    for await (const _chunk of request) {
+      // Drain the request so every redirect can reuse the same connection.
+    }
+    requests += 1;
+    response.writeHead(302, { "location": "/loop" });
+    response.end();
+  });
+  server.on("connection", () => {
+    connections += 1;
+  });
+  await new Promise<void>((resolveListen) => server.listen(0, "127.0.0.1", resolveListen));
+  const address = server.address();
+  assert.ok(address && typeof address === "object");
+  const url = `http://127.0.0.1:${address.port}/loop`;
+  const httpClient = new ListenerHttpClient({ idleTimeoutMs: 1_000 });
+
+  try {
+    await assert.rejects(
+      httpClient.fetch(url, { redirect: "error" }),
+      /fetch failed while following a redirect/,
+    );
+    assert.equal(requests, 1);
+    await assert.rejects(
+      httpClient.fetch(url),
+      /fetch failed while following a redirect/,
+    );
+    assert.equal(requests, 22);
+    assert.equal(connections, 1);
+    assert.deepEqual(httpClient.metrics(), {
+      requests: 22,
+      connectionsOpened: 1,
+      connectionReuseRatio: 22,
+    });
+  } finally {
+    httpClient.close();
+    await closeTestServer(server);
+  }
+});
+
+test("closed listener HTTP client rejects new work", async () => {
+  const httpClient = new ListenerHttpClient();
+  httpClient.close();
+  await assert.rejects(
+    httpClient.fetch("http://127.0.0.1:1/"),
+    /listener HTTP client is closed/,
+  );
 });
 
 test("listener HTTP client closes an idle socket and opens one replacement", async () => {
