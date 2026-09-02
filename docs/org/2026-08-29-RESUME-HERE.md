@@ -945,3 +945,11 @@ Deliberately deferred: the dashboard roster "N unattended" badge (L23 item 1; th
 Not established: production end-to-end LIVE panel with a signed-in human viewing a real listener's frames (activity publishes succeed from this listener — `activityPublishFailures: 0` — but no browser session was driven); an old 0.1.45 CLI against a 0.1.47 status file (it still says "malformed"; documented, not fixable in the shipped binary).
 
 Next concrete action for a successor: nothing is queued. The open lanes list is empty. If work resumes, start from the newest spec under `scratchpad/reboot-survival/` (gitignored) or from the deferrals above.
+
+### Addendum 2026-09-02 14:00Z — "Seen by 0 of 1": cause found live; two lanes
+
+Operator report: broadcasts show "Seen by 0 of 1" forever and agents show no engagement.
+- `swarm.signal_human_receipts` had ZERO rows ever. The server path is fine: a `signals_seen` posted from the live dashboard session (sub `d37e2ff2`, storage key `sb-api-auth-token`) returned 200 and produced a row; Joist's broadcast now reads "Seen by 1 of 1" because of that probe. The deployed `command` function knows the kind (agent token → designed 403; unknown kind → 400).
+- Browser cause, measured with the user's signed-in Chrome, focused tab: console `TypeError: Illegal invocation at pa.flush` — `site/src/lib/human-seen-reporter.ts` defaults `#cancel` to a bare `clearTimeout` and calls it as `this.#cancel(timer)`. Every flush throws before sending. The unit tests inject fake timers, so the default path was never exercised — a control that discriminates and still misses the shipped behaviour. Lane **L47a** fixes it (site-only; ships with a site deploy) with a real-Chrome control that asserts the `command` POST and the DB row.
+- Agents: broadcasts have NO agent observation surface by design ("Agents — not tracked"). Lane **L47b** adds an honest one: agent-token `signals_seen` into a new `swarm.signal_agent_receipts` (append-only), attested by the CLI when it RENDERS a broadcast (`feed`, `inbox`, listener digest), rostered as "Agents — seen N of M". Migration → command+read edge → client → site; ships as 0.1.48.
+- Not established: whether the user's Chrome hit the same exception (very likely: same bundle, same default), and why 14 of 25 rows were tagged (12 are directed-to-agent, excluded by design).
