@@ -1,6 +1,7 @@
 import assert from "node:assert/strict";
 import { test } from "node:test";
 import {
+  AGENT_ACTIVITY_ELAPSED_MAX_MS,
   agentActivityFrameIsNewer,
   agentActivityPanelView,
   parseAgentActivityFrame,
@@ -40,25 +41,44 @@ test("fresh activity projects the phase, tool, signal, age, and elapsed time", (
   });
 });
 
-test("a frame older than 30 seconds is stale and says when it was last seen", () => {
+test("a frame older than 30 seconds is stale and stops growing elapsed time", () => {
   const parsed = parseAgentActivityFrame(frame, WORKSPACE_ID);
   assert.ok(parsed);
   const view = agentActivityPanelView(
     parsed,
     "subscribed",
-    EMITTED_MS + 31_000,
+    EMITTED_MS + 8 * 24 * 60 * 60 * 1_000,
   );
   assert.equal(view.state, "stale");
-  assert.equal(view.ageLabel, "last seen 31 s ago");
+  assert.equal(view.ageLabel, "stale");
+  assert.equal(view.elapsedLabel, "stale");
 });
 
-test("an agent with no listener frame has the requested not-instrumented copy", () => {
-  const view = agentActivityPanelView(undefined, "subscribed", EMITTED_MS);
-  assert.equal(view.state, "not-instrumented");
-  assert.equal(
-    view.emptyMessage,
-    "Not instrumented — this agent posts with the CLI and does not stream activity",
+test("missing frames state only what the dashboard measured", () => {
+  for (const listenerPresence of ["present", "unknown"]) {
+    const view = agentActivityPanelView(
+      undefined,
+      "subscribed",
+      EMITTED_MS,
+      listenerPresence,
+    );
+    assert.equal(view.state, "no-frames");
+    assert.equal(view.ageLabel, "No frames received");
+    assert.equal(view.emptyMessage, "No activity frames received");
+    assert.doesNotMatch(JSON.stringify(view), /Not instrumented/i);
+  }
+});
+
+test("not-instrumented copy requires the roster to prove there is no listener", () => {
+  const view = agentActivityPanelView(
+    undefined,
+    "subscribed",
+    EMITTED_MS,
+    "absent",
   );
+  assert.equal(view.state, "not-instrumented");
+  assert.equal(view.ageLabel, "Not instrumented");
+  assert.equal(view.emptyMessage, "Not instrumented — this agent has no listener");
 });
 
 test("frame parsing rejects another workspace and any expanded free-text shape", () => {
@@ -76,6 +96,13 @@ test("frame parsing rejects another workspace and any expanded free-text shape",
       null,
     );
   }
+  assert.equal(
+    parseAgentActivityFrame(
+      { ...frame, elapsedMs: AGENT_ACTIVITY_ELAPSED_MAX_MS + 1 },
+      WORKSPACE_ID,
+    ),
+    null,
+  );
 });
 
 test("sequence ordering rejects replay but permits a listener restart at the same instant", () => {

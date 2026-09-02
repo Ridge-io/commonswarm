@@ -3,6 +3,7 @@ import { test } from "node:test";
 import {
   ACTIVITY_FRAME_INTERVAL_MS,
   ACTIVITY_HEARTBEAT_MS,
+  AgentActivityPublishError,
   AgentActivityEndpointTransport,
   ListenerActivityController,
   type AgentActivityFrameRequest,
@@ -63,6 +64,12 @@ class RecordingTransport implements AgentActivityTransport {
 
   async publish(frame: AgentActivityFrameRequest): Promise<void> {
     this.sent.push({ at: this.clock.now(), frame: structuredClone(frame) });
+  }
+}
+
+class FailingTransport implements AgentActivityTransport {
+  async publish(): Promise<void> {
+    throw new Error("raw transport failure");
   }
 }
 
@@ -157,6 +164,28 @@ test("listener frames stay below two per second and redact laced agent tokens", 
   activity.close();
 });
 
+test("activity publish failures reach the local observer as stable codes", async () => {
+  const clock = new FakeClock();
+  const failureCodes: string[] = [];
+  const activity = new ListenerActivityController({
+    workspaceId: WORKSPACE_ID,
+    streamId: STREAM_ID,
+    transport: new FailingTransport(),
+    clock,
+    onPublishFailure: (code: string) => failureCodes.push(code),
+  });
+
+  activity.onRuntimeEvent({
+    type: "ready",
+    workspaceId: WORKSPACE_ID,
+    principalId: SIGNAL_ID,
+    ts: new Date(0).toISOString(),
+  });
+  await clock.advance(0);
+  assert.deepEqual(failureCodes, ["activity_publish_unknown"]);
+  activity.close();
+});
+
 test("activity transport keeps the credential in the header and sends the closed frame", async () => {
   const token = `swm_agt_${"b".repeat(43)}`;
   let request: Request | undefined;
@@ -197,6 +226,64 @@ test("activity transport keeps the credential in the header and sends the closed
     "version",
     "workspace_id",
   ]);
+});
+
+test("activity transport classifies every boundary failure without message matching", async () => {
+  const frame: AgentActivityFrameRequest = {
+    version: 1,
+    workspaceId: WORKSPACE_ID,
+    streamId: STREAM_ID,
+    sequence: 1,
+    phase: "idle",
+    signalId: null,
+    toolTitle: null,
+    elapsedMs: 0,
+  };
+  const rejectedWith = (code: AgentActivityPublishError["code"]) =>
+    (error: unknown): boolean =>
+      error instanceof AgentActivityPublishError && error.code === code;
+
+  await assert.rejects(
+    new AgentActivityEndpointTransport(
+      { url: "https://example.invalid", anonKey: "anon", profileId: "test" },
+      { bearer: async () => { throw new Error("credential prose may change"); } },
+      async () => { throw new Error("fetch must not run"); },
+    ).publish(frame),
+    rejectedWith("activity_credential_failed"),
+  );
+  await assert.rejects(
+    new AgentActivityEndpointTransport(
+      { url: "https://example.invalid", anonKey: "anon", profileId: "test" },
+      { bearer: async () => "token" },
+      async () => { throw new TypeError("network prose may change"); },
+    ).publish(frame),
+    rejectedWith("activity_transport_failed"),
+  );
+  await assert.rejects(
+    new AgentActivityEndpointTransport(
+      { url: "https://example.invalid", anonKey: "anon", profileId: "test" },
+      { bearer: async () => "token" },
+      async (_input, init) => {
+        const signal = init?.signal;
+        assert.ok(signal, "activity request carries AbortSignal.timeout");
+        return await new Promise<Response>((_resolve, reject) => {
+          signal.addEventListener("abort", () => reject(signal.reason), {
+            once: true,
+          });
+        });
+      },
+      5,
+    ).publish(frame),
+    rejectedWith("activity_request_timeout"),
+  );
+  await assert.rejects(
+    new AgentActivityEndpointTransport(
+      { url: "https://example.invalid", anonKey: "anon", profileId: "test" },
+      { bearer: async () => "token" },
+      async () => new Response(null, { status: 503 }),
+    ).publish(frame),
+    rejectedWith("activity_http_rejected"),
+  );
 });
 
 test("activity parser rejects fields that could carry terminal or message data", () => {

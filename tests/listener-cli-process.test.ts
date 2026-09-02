@@ -76,6 +76,24 @@ async function waitFor(
   throw new Error(`condition did not become true within ${timeoutMs}ms`);
 }
 
+async function waitForListenerStatus(
+  paths: ListenerPaths,
+  check: (status: ListenerStatus) => boolean,
+  timeoutMs = 10_000,
+): Promise<ListenerStatus> {
+  const deadline = Date.now() + timeoutMs;
+  let last: ListenerStatus | null = null;
+  while (Date.now() < deadline) {
+    last = await readListenerStatus(paths);
+    if (last !== null && check(last)) return last;
+    await new Promise((resolve) => setTimeout(resolve, 50));
+  }
+  throw new Error(
+    `listener status did not reach the required state within ${timeoutMs}ms; ` +
+      `last observed: ${JSON.stringify(last)}`,
+  );
+}
+
 function listenerProcessIsAlive(pid: number): boolean {
   try {
     process.kill(pid, 0);
@@ -639,8 +657,18 @@ process.stdin.on("data", (chunk) => {
       send({
         jsonrpc: "2.0",
         id: message.id,
-        result: { sessionId: "fake-session" },
+        result: {
+          sessionId: "fake-session",
+          modes: {
+            currentModeId: "auto",
+            availableModes: [{ id: "auto" }, { id: "default" }],
+          },
+        },
       });
+      continue;
+    }
+    if (message.method === "session/set_mode") {
+      send({ jsonrpc: "2.0", id: message.id, result: {} });
       continue;
     }
     if (message.method === "session/prompt") {
@@ -675,6 +703,62 @@ process.stdin.on("data", (chunk) => {
   }
 });
 `;
+}
+
+async function writeFakeClaudeBridge(
+  root: string,
+  versions: {
+    bridge: string;
+    agentSdk: string;
+    claudeCode: string;
+  },
+): Promise<string> {
+  const adapterRoot = join(
+    root,
+    "node_modules",
+    "@agentclientprotocol",
+    "claude-agent-acp",
+  );
+  const executable = join(adapterRoot, "dist", "index.js");
+  const sdkRoot = join(
+    root,
+    "node_modules",
+    "@anthropic-ai",
+    "claude-agent-sdk",
+  );
+  await Promise.all([
+    mkdir(join(adapterRoot, "dist"), { recursive: true }),
+    mkdir(sdkRoot, { recursive: true }),
+  ]);
+  await Promise.all([
+    writeFile(
+      join(adapterRoot, "package.json"),
+      JSON.stringify({
+        name: "@agentclientprotocol/claude-agent-acp",
+        version: versions.bridge,
+      }),
+    ),
+    writeFile(
+      join(sdkRoot, "package.json"),
+      JSON.stringify({
+        name: "@anthropic-ai/claude-agent-sdk",
+        version: versions.agentSdk,
+        claudeCodeVersion: versions.claudeCode,
+        main: "index.js",
+      }),
+    ),
+    writeFile(join(sdkRoot, "index.js"), "module.exports = {};\n"),
+    writeFile(
+      executable,
+      fakeGrokSource().replace(
+        "grok 0.2.117 (fake)",
+        `claude-agent-acp ${versions.bridge}`,
+      ),
+      { mode: 0o700 },
+    ),
+  ]);
+  await chmod(executable, 0o700);
+  return await realpath(executable);
 }
 
 test("detached CLI completes durable claim reply ACK with one startup UUID and no secret leakage", async () => {
@@ -1479,5 +1563,184 @@ test("detached CLI reports missing Grok login without starting a model", async (
       await closeTestServer(server);
     }
     await rm(root, { recursive: true, force: true });
+  }
+});
+
+test("detached Claude supervisor persists runtime evidence and status remeasures the bridge", async () => {
+  const root = await mkdtemp(join(tmpdir(), "cswarm-cli-claude-runtime-"));
+  const workerCwd = await mkdtemp(join(tmpdir(), "cswarm-cli-claude-worker-"));
+  const runningVersions = {
+    bridge: "0.73.0",
+    agentSdk: "0.3.257",
+    claudeCode: "2.1.257",
+  };
+  const installedVersions = {
+    bridge: "0.74.0",
+    agentSdk: "0.3.258",
+    claudeCode: "2.1.258",
+  };
+  const claudePath = await writeFakeClaudeBridge(root, runningVersions);
+  const workspaceId = randomUUID();
+  const principalId = randomUUID();
+  const artifact = JSON.stringify({
+    message: AGENT_MESSAGE,
+    status: "accepted",
+    principal_id: principalId,
+    token_id: randomUUID(),
+    run_id: randomUUID(),
+    agent_token: `swm_agt_${"C".repeat(43)}`,
+    expires_at: new Date(Date.now() + 60 * 60_000).toISOString(),
+  });
+  const server = createServer(async (request, response) => {
+    for await (const _chunk of request) {
+      // Drain the request before replying.
+    }
+    if (request.url === "/functions/v1/read") {
+      response.writeHead(200, { "content-type": "application/json" });
+      response.end(JSON.stringify({
+        signals: [],
+        capabilities: { sender_owner_relation: 1, cursor_after: 1 },
+      }));
+      return;
+    }
+    if (request.url === "/functions/v1/command") {
+      response.writeHead(200, { "content-type": "application/json" });
+      response.end(JSON.stringify({
+        status: "accepted",
+        ok: true,
+        event_ids: [],
+        events: [],
+      }));
+      return;
+    }
+    if (request.url === "/functions/v1/activity") {
+      response.writeHead(204);
+      response.end();
+      return;
+    }
+    response.writeHead(404);
+    response.end();
+  });
+  await new Promise<void>((resolveListen) =>
+    server.listen(0, "127.0.0.1", resolveListen)
+  );
+  const address = server.address();
+  assert.ok(address && typeof address === "object");
+  const url = `http://127.0.0.1:${address.port}`;
+  const common = [
+    "--url",
+    url,
+    "--anon-key",
+    "public-anon",
+    "--workspace-id",
+    workspaceId,
+    "--state-dir",
+    root,
+  ];
+  const paths = listenerPaths({
+    profileId: cloudTarget(url, "public-anon").profileId,
+    workspaceId,
+    principalId,
+    stateDirectory: root,
+  });
+
+  try {
+    const started = await runCli([
+      "listen",
+      "start",
+      "--provider",
+      "claude",
+      "--agent-token-stdin",
+      ...common,
+      "--cwd",
+      workerCwd,
+      "--permissions",
+      "allow",
+      "--claude-executable",
+      claudePath,
+      "--json",
+    ], { stdin: artifact });
+    assert.equal(started.code, 0, started.stderr);
+    const startJson = JSON.parse(started.stdout) as Record<string, unknown>;
+    assert.equal(startJson.state, "ready");
+    assert.equal(startJson.providerExecutable, claudePath);
+    assert.equal(startJson.providerVersion, runningVersions.bridge);
+    assert.equal(
+      startJson.providerBundledAgentSdkVersion,
+      runningVersions.agentSdk,
+    );
+    assert.equal(
+      startJson.providerBundledClaudeCodeVersion,
+      runningVersions.claudeCode,
+    );
+
+    const stored = await waitForListenerStatus(
+      paths,
+      (status) =>
+        status.state === "ready" && status.providerExecutable === claudePath,
+    );
+    assert.equal(stored.providerExecutable, claudePath);
+    assert.equal(stored.providerVersion, runningVersions.bridge);
+    assert.equal(
+      stored.providerBundledAgentSdkVersion,
+      runningVersions.agentSdk,
+    );
+    assert.equal(
+      stored.providerBundledClaudeCodeVersion,
+      runningVersions.claudeCode,
+    );
+
+    await writeFakeClaudeBridge(root, installedVersions);
+    const statusJsonResult = await runCli([
+      "listen",
+      "status",
+      ...common,
+      "--principal-id",
+      principalId,
+      "--json",
+    ]);
+    assert.equal(statusJsonResult.code, 0, statusJsonResult.stderr);
+    const statusJson = JSON.parse(statusJsonResult.stdout) as Record<string, unknown>;
+    assert.equal(statusJson.providerVersion, runningVersions.bridge);
+    assert.equal(statusJson.providerOnDiskExecutable, claudePath);
+    assert.equal(statusJson.providerOnDiskVersion, installedVersions.bridge);
+    assert.equal(
+      statusJson.providerOnDiskBundledAgentSdkVersion,
+      installedVersions.agentSdk,
+    );
+    assert.equal(
+      statusJson.providerOnDiskBundledClaudeCodeVersion,
+      installedVersions.claudeCode,
+    );
+    assert.equal(statusJson.providerRestartRequired, true);
+
+    const statusText = await runCli([
+      "listen",
+      "status",
+      ...common,
+      "--principal-id",
+      principalId,
+    ]);
+    assert.equal(statusText.code, 0, statusText.stderr);
+    assert.match(statusText.stdout, /Provider executable: .*index\.js\./);
+    assert.match(statusText.stdout, /Provider version 0\.73\.0/);
+    assert.match(statusText.stdout, /Bundled Claude Code version: 2\.1\.257/);
+    assert.match(statusText.stdout, /Bundled Claude agent SDK version: 0\.3\.257/);
+    assert.match(statusText.stdout, /Restart to pick up 0\.74\.0\./);
+  } finally {
+    try {
+      await stopAndWaitForDetachedListener([
+        "listen",
+        "stop",
+        ...common,
+        "--principal-id",
+        principalId,
+        "--json",
+      ], paths);
+    } finally {
+      await closeTestServer(server);
+    }
+    await rm(root, { recursive: true, force: true });
+    await rm(workerCwd, { recursive: true, force: true });
   }
 });

@@ -1,3 +1,4 @@
+import { createHash } from "node:crypto";
 import { createServer, createConnection, type Socket } from "node:net";
 import {
   chmod,
@@ -6,7 +7,7 @@ import {
   unlink,
 } from "node:fs/promises";
 import { tmpdir } from "node:os";
-import { isAbsolute, join } from "node:path";
+import { isAbsolute, join, resolve } from "node:path";
 import {
   ensureSecureStateDirectory,
   readSecureJsonFile,
@@ -34,6 +35,7 @@ const START_LOCK_STALE_MS = 10_000;
 
 import type { ListenerPermissionMode } from "./types.js";
 import type { ListenerRouteMode } from "./main-routing.js";
+import type { ActivityPublishErrorCode } from "./activity.js";
 
 export type ListenerStatusState =
   | "starting"
@@ -104,6 +106,10 @@ export interface ListenerStatus {
   connectionsOpened?: number;
   /** HTTP requests divided by opened TCP connections; near 1 means no reuse. */
   connectionReuseRatio?: number;
+  /** Activity frame publish failures observed by this listener process. */
+  activityPublishFailures?: number;
+  /** Stable code for the newest activity publish failure; local status only. */
+  activityLastErrorCode?: ActivityPublishErrorCode | null;
   logPath: string;
 }
 
@@ -127,21 +133,31 @@ export function listenerPaths(options: {
   workspaceId: string;
   principalId: string;
   stateDirectory?: string;
+  platform?: NodeJS.Platform;
 }): ListenerPaths {
-  const root = options.stateDirectory ?? defaultListenerStateDirectory();
+  const defaultRoot = defaultListenerStateDirectory();
+  const root = options.stateDirectory ?? defaultRoot;
   if (!isAbsolute(root)) {
     throw new Error("listener state directory must be absolute");
   }
   const key = listenerInstanceKey(options);
   const instanceDirectory = join(root, key);
   const uid = typeof process.getuid === "function" ? process.getuid() : process.pid;
+  // A custom state root must isolate the lifetime socket as well as the files.
+  const stateNamespace = resolve(root) === resolve(defaultRoot)
+    ? ""
+    : `-${createHash("sha256").update(resolve(root)).digest("hex").slice(0, 16)}`;
+  const platform = options.platform ?? process.platform;
+  const socketKey = stateNamespace.length === 0
+    ? platform === "win32" ? key : key.slice(0, 32)
+    : `${key.slice(0, 32)}${stateNamespace}`;
   // Keep the Unix socket below macOS's short sockaddr_un path limit.
-  const controlDirectory = process.platform === "win32"
+  const controlDirectory = platform === "win32"
     ? ""
     : join("/tmp", `cswarm-control-${uid}`);
-  const socketPath = process.platform === "win32"
-    ? `\\\\.\\pipe\\cswarm-${key}`
-    : join(controlDirectory, `${key.slice(0, 32)}.sock`);
+  const socketPath = platform === "win32"
+    ? `\\\\.\\pipe\\cswarm-${socketKey}`
+    : join(controlDirectory, `${socketKey}.sock`);
   return {
     key,
     instanceDirectory,
@@ -192,6 +208,15 @@ const STATUS_ALLOWED_KEYS = new Set([
   "readHealth",
   "connectionsOpened",
   "connectionReuseRatio",
+  "activityPublishFailures",
+  "activityLastErrorCode",
+]);
+const STATUS_ACTIVITY_ERROR_CODES = new Set<ActivityPublishErrorCode>([
+  "activity_credential_failed",
+  "activity_request_timeout",
+  "activity_transport_failed",
+  "activity_http_rejected",
+  "activity_publish_unknown",
 ]);
 // Sensitive aliases are rejected by name, not silently dropped, so a status
 // file can never smuggle a lease capability, command ID, credential, or body.
@@ -359,7 +384,17 @@ function parseStatus(raw: string, rejectUnknownKeys = false): ListenerStatus {
         Number.isSafeInteger(row.connectionsOpened) && row.connectionsOpened >= 0)) ||
     !(row.connectionReuseRatio === undefined ||
       (typeof row.connectionReuseRatio === "number" &&
-        Number.isFinite(row.connectionReuseRatio) && row.connectionReuseRatio >= 0))
+        Number.isFinite(row.connectionReuseRatio) && row.connectionReuseRatio >= 0)) ||
+    !(row.activityPublishFailures === undefined ||
+      (typeof row.activityPublishFailures === "number" &&
+        Number.isSafeInteger(row.activityPublishFailures) &&
+        row.activityPublishFailures >= 0)) ||
+    !(row.activityLastErrorCode === undefined ||
+      row.activityLastErrorCode === null ||
+      (typeof row.activityLastErrorCode === "string" &&
+        STATUS_ACTIVITY_ERROR_CODES.has(
+          row.activityLastErrorCode as ActivityPublishErrorCode,
+        )))
   ) {
     throw new Error("stored listener status is malformed");
   }

@@ -4521,6 +4521,8 @@ export function listenerStatusJson(
     droppedForMainCount: status.droppedForMainCount ?? 0,
     connectionsOpened: status.connectionsOpened ?? null,
     connectionReuseRatio: status.connectionReuseRatio ?? null,
+    activityPublishFailures: status.activityPublishFailures ?? null,
+    activityLastErrorCode: status.activityLastErrorCode ?? null,
     ...(mode
       ? {
         permission_mode: mode,
@@ -4590,6 +4592,13 @@ export function renderListenerStatus(
     `Provider executable: ${status.providerExecutable ?? "not measured"}.`,
     `Connections opened: ${status.connectionsOpened ?? "not measured"}.`,
     `Connection reuse ratio: ${status.connectionReuseRatio ?? "not measured"}.`,
+    ...(status.activityPublishFailures !== undefined &&
+        status.activityPublishFailures > 0
+      ? [`Activity publish failures: ${status.activityPublishFailures}.`]
+      : []),
+    ...(status.activityLastErrorCode
+      ? [`Last activity publish error code: ${status.activityLastErrorCode}.`]
+      : []),
     status.readyAt ? `Ready since: ${status.readyAt}.` : "Not ready yet.",
     status.lastSignalId
       ? pendingForMainCount > 0
@@ -5220,6 +5229,7 @@ async function runConfiguredListener(options: {
   } | null = null;
   const onVersionNotice = (notice: ProviderVersionNotice) => {
     providerVersionNotice = {
+      ...(providerVersionNotice ?? {}),
       runningVersion: notice.runningVersion,
       lastMeasuredVersion: notice.lastMeasuredVersion,
     };
@@ -5392,6 +5402,11 @@ async function runConfiguredListener(options: {
             credentialSession,
             httpClient.fetch,
           ),
+          onPublishFailure: (code) => onEvent({
+            type: "activity_publish_failure",
+            code,
+            ts: new Date().toISOString(),
+          }),
         });
         const instrumentedModel = activity.instrumentModel(
           newModel(onCanaryAttempt, activity.events),

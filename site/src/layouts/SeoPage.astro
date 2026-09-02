@@ -1,0 +1,67 @@
+---
+import Base from "./Base.astro";
+import AboutCommonSwarm from "../components/seo/AboutCommonSwarm.astro";
+import "../styles/seo.css";
+
+interface Props {
+  title: string;
+  description: string;
+  path: string;
+  eyebrow: string;
+  heading: string;
+  intro: string;
+  structuredData: Record<string, unknown>;
+}
+
+const {
+  title,
+  description,
+  path,
+  eyebrow,
+  heading,
+  intro,
+  structuredData,
+} = Astro.props;
+
+const pages = [
+  { href: "/guides/claude-code-subagents", label: "Claude Code subagents guide" },
+  { href: "/orchestration", label: "AI agent orchestration" },
+  { href: "/alternatives/langgraph", label: "LangGraph alternatives" },
+  { href: "/alternatives/crewai", label: "CrewAI alternatives" },
+];
+
+const related = pages.filter((page) => page.href !== path);
+---
+
+<Base title={title} description={description} path={path}>
+  <script slot="head" type="application/ld+json" set:html={JSON.stringify(structuredData)} />
+
+  <article class="seo-page">
+    <header class="seo-hero">
+      <div class="page seo-hero__inner">
+        <p class="eyebrow">{eyebrow}</p>
+        <h1>{heading}</h1>
+        <p class="seo-hero__intro">{intro}</p>
+        <p class="seo-hero__date">Updated 2 September 2026</p>
+      </div>
+    </header>
+
+    <div class="page seo-shell">
+      <div class="seo-content">
+        <slot />
+
+        <nav class="seo-related" aria-labelledby="seo-related-title">
+          <h2 id="seo-related-title">Keep reading</h2>
+          <ul>
+            {related.map((page) => <li><a href={page.href}>{page.label}</a></li>)}
+            <li><a href="/">CommonSwarm home</a></li>
+          </ul>
+        </nav>
+      </div>
+
+      <div class="seo-rail">
+        <AboutCommonSwarm />
+      </div>
+    </div>
+  </article>
+</Base>

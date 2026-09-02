@@ -10,6 +10,9 @@
  * management stays in the header dialog. The rail presence list shrinks to its contents and
  * scrolls inside a fixed maximum height when the roster grows. Workspace file artifacts use
  * the same rail-and-view pattern; upload remains deliberately absent in v1.
+ *
+ * Keep the older-message control above the list, where older rows appear. A control below the
+ * list makes a click look idle because the reader stays pinned to the newest row.
  */
 
 import AgentConnect from "../connect/AgentConnect.astro";
@@ -572,10 +575,6 @@ import "../../styles/tokens.css";
                   <button type="button" data-feed-filter="direct-to-you" aria-pressed="false">Direct to you</button>
                 </div>
               </div>
-              <!-- ABOVE the list, not below it. Older messages now render at the TOP, so a
-                   control that loads them belongs where they will appear. Below the list it also
-                   made clicking appear to do nothing: renderFeed saw the reader at the bottom,
-                   pinned them to the newest row, and the loaded rows landed off-screen above. -->
               <div class="dashboard__feed-more" data-feed-more hidden>
                 <button
                   class="dashboard__button dashboard__button--secondary"
@@ -1830,7 +1829,7 @@ import "../../styles/tokens.css";
           agentActivityGraceTimer = undefined;
           if (state === "subscribed") {
             /* Broadcast has no replay. Give an already-running listener one
-               15s heartbeat before claiming the agent is not instrumented. */
+               15s heartbeat before showing that no frames were received. */
             agentActivityGraceTimer = window.setTimeout(() => {
               if (
                 generation !== agentActivityGeneration ||
@@ -1874,6 +1873,7 @@ import "../../styles/tokens.css";
         frame,
         agentActivityConnection,
         Date.now(),
+        "unknown",
       );
       const section = one<HTMLElement>("[data-agent-activity]");
       const age = one<HTMLElement>("[data-agent-activity-age]");
@@ -1938,6 +1938,7 @@ import "../../styles/tokens.css";
         agentActivityFrames.get(principalId),
         agentActivityConnection,
         Date.now(),
+        "unknown",
       );
       const live = document.createElement("section");
       live.className = "dashboard__entity-live";

@@ -917,3 +917,12 @@ Lesson for the ritual: a lane whose claim is about a RUNNING listener must inclu
 - L46 `8af1fbd` fast-forwarded `release/0.1.47`. The L42 test's `npm test`-only failure was a RACE, not a leak: `listen start --json` returns the control socket's in-memory `ready` before the queued `status.json` write lands, and the test did a one-shot read (it saw `state: starting`). The lane measured the failing read's path/instance/pid and proved they differ from the live listener's — my "reads the real listener" hypothesis in the ledger above was WRONG and is retracted. Fix: bounded poll for the positive condition; `npm test` ×2 green, whole file ×3 green, mutation red.
 - Also closed: the three leftover "does not run/execute agents" sentences on the alternatives pages (site test now REJECTS the old forms); Windows default named-pipe name restored to the full key (custom `--state-dir` still namespaced); activity counters in status text; `activity_request_timeout` driven; "last seen" label capped.
 - Gates (pure ×2, cli, edge, site, db:reset + p1-local) and both arms running on `8af1fbd` in `wt-arm-grok-047b` / `wt-arm-gemini-047b`. 0.1.47 releases only on two substantive PASS verdicts.
+### Addendum 2026-09-02 — mixed local `cswarm` binaries
+
+- A 0.1.45 CLI cannot read the status file written by a 0.1.46 or newer listener. The
+  0.1.45 reader rejects fields it does not know. Readers from 0.1.46 onward tolerate fields
+  added by newer writers.
+- Check both installed copies before listener work. These versions must match:
+  `~/.local/bin/cswarm --version` and `/opt/homebrew/bin/cswarm --version`.
+- If the npm-global copy is old, run `npm i -g commonswarm@<v>` with the version from the
+  other copy. A running listener keeps its old code until it is restarted.

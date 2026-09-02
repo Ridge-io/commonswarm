@@ -14,6 +14,30 @@ export const ACTIVITY_HEARTBEAT_MS = 15_000;
 export const ACTIVITY_TOOL_TITLE_MAX = 160;
 export const ACTIVITY_REQUEST_TIMEOUT_MS = 5_000;
 
+export type ActivityPublishErrorCode =
+  | "activity_credential_failed"
+  | "activity_request_timeout"
+  | "activity_transport_failed"
+  | "activity_http_rejected"
+  | "activity_publish_unknown";
+
+/** Stable local classification for every failure produced by the HTTP boundary. */
+export class AgentActivityPublishError extends Error {
+  constructor(
+    readonly code: Exclude<ActivityPublishErrorCode, "activity_publish_unknown">,
+    cause?: unknown,
+  ) {
+    super("activity frame publish failed", { cause });
+    this.name = "AgentActivityPublishError";
+  }
+}
+
+export function activityPublishErrorCode(error: unknown): ActivityPublishErrorCode {
+  return error instanceof AgentActivityPublishError
+    ? error.code
+    : "activity_publish_unknown";
+}
+
 export type ListenerActivityPhase =
   | "claimed"
   | "prompting"
@@ -68,37 +92,56 @@ export class AgentActivityEndpointTransport implements AgentActivityTransport {
     private readonly target: CloudTarget,
     private readonly credentialSession: ListenerActivityCredentialSession,
     fetcher?: typeof fetch,
+    private readonly requestTimeoutMs = ACTIVITY_REQUEST_TIMEOUT_MS,
   ) {
     this.fetcher = fetcher ?? fetch;
   }
 
   async publish(frame: AgentActivityFrameRequest): Promise<void> {
-    const credential = await this.credentialSession.bearer();
-    const response = await this.fetcher(
-      `${this.target.url}/functions/v1/activity`,
-      {
-        method: "POST",
-        headers: {
-          authorization: `Bearer ${credential}`,
-          apikey: this.target.anonKey,
-          "content-type": "application/json",
+    let credential: string;
+    try {
+      credential = await this.credentialSession.bearer();
+    } catch (error) {
+      throw new AgentActivityPublishError("activity_credential_failed", error);
+    }
+    const timeoutSignal = AbortSignal.timeout(this.requestTimeoutMs);
+    let response: Response;
+    try {
+      response = await this.fetcher(
+        `${this.target.url}/functions/v1/activity`,
+        {
+          method: "POST",
+          headers: {
+            authorization: `Bearer ${credential}`,
+            apikey: this.target.anonKey,
+            "content-type": "application/json",
+          },
+          body: JSON.stringify({
+            version: frame.version,
+            workspace_id: frame.workspaceId,
+            stream_id: frame.streamId,
+            sequence: frame.sequence,
+            phase: frame.phase,
+            signal_id: frame.signalId,
+            tool_title: frame.toolTitle,
+            elapsed_ms: frame.elapsedMs,
+          }),
+          signal: timeoutSignal,
         },
-        body: JSON.stringify({
-          version: frame.version,
-          workspace_id: frame.workspaceId,
-          stream_id: frame.streamId,
-          sequence: frame.sequence,
-          phase: frame.phase,
-          signal_id: frame.signalId,
-          tool_title: frame.toolTitle,
-          elapsed_ms: frame.elapsedMs,
-        }),
-        signal: AbortSignal.timeout(ACTIVITY_REQUEST_TIMEOUT_MS),
-      },
-    );
-    await response.body?.cancel();
+      );
+    } catch (error) {
+      throw new AgentActivityPublishError(
+        timeoutSignal.aborted
+          ? "activity_request_timeout"
+          : "activity_transport_failed",
+        error,
+      );
+    }
+    // Body cancellation is connection cleanup after the server answered. It
+    // cannot change the publish outcome and must not create a false failure.
+    await response.body?.cancel().catch(() => undefined);
     if (!response.ok) {
-      throw new Error(`activity publish failed (${response.status})`);
+      throw new AgentActivityPublishError("activity_http_rejected");
     }
   }
 }
@@ -108,6 +151,7 @@ interface ListenerActivityControllerOptions {
   transport: AgentActivityTransport;
   streamId?: string;
   clock?: ActivityClock;
+  onPublishFailure?: (code: ActivityPublishErrorCode) => void;
 }
 
 /**
@@ -285,9 +329,11 @@ export class ListenerActivityController {
     };
     try {
       await this.options.transport.publish(frame);
-    } catch {
+    } catch (error) {
       // Realtime is a latency hint. A publish failure cannot change delivery,
-      // the durable reply, listener liveness, or the next coalesced frame.
+      // the durable reply, listener liveness, or the next coalesced frame. It
+      // still reaches local status through a stable code; no prose is parsed.
+      this.options.onPublishFailure?.(activityPublishErrorCode(error));
     } finally {
       this.sending = false;
       if (this.dirty) this.schedule();

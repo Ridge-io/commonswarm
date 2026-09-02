@@ -1,12 +1,12 @@
 import assert from "node:assert/strict";
-import { randomUUID } from "node:crypto";
+import { createHash, randomUUID } from "node:crypto";
 import {
   mkdtemp,
   readFile,
   stat,
 } from "node:fs/promises";
 import { tmpdir } from "node:os";
-import { join } from "node:path";
+import { join, resolve } from "node:path";
 import { createConnection } from "node:net";
 import test from "node:test";
 import {
@@ -361,6 +361,106 @@ test("lifetime control socket enforces one listener and supports status/stop", a
   await first.close();
 });
 
+test("custom state directories isolate control sockets for one principal", async () => {
+  const leftRoot = await mkdtemp(join(tmpdir(), "cswarm-control-left-"));
+  const rightRoot = await mkdtemp(join(tmpdir(), "cswarm-control-right-"));
+  const identity = {
+    profileId: "profile-isolated-state",
+    workspaceId: randomUUID(),
+    principalId: randomUUID(),
+  };
+  const leftPaths = listenerPaths({
+    ...identity,
+    stateDirectory: leftRoot,
+  });
+  const rightPaths = listenerPaths({
+    ...identity,
+    stateDirectory: rightRoot,
+  });
+  assert.notEqual(leftPaths.socketPath, rightPaths.socketPath);
+  assert.equal(
+    listenerPaths({ ...identity, stateDirectory: leftRoot }).socketPath,
+    leftPaths.socketPath,
+  );
+
+  let leftStops = 0;
+  let rightStops = 0;
+  const leftStatus = {
+    ...statusFor(leftPaths, "ready"),
+    ...identity,
+  };
+  const rightStatus = {
+    ...statusFor(rightPaths, "ready"),
+    ...identity,
+  };
+  const left = await startListenerControlServer({
+    paths: leftPaths,
+    status: () => leftStatus,
+    stop: () => {
+      leftStops += 1;
+    },
+  });
+  let right: Awaited<ReturnType<typeof startListenerControlServer>> | null = null;
+  try {
+    right = await startListenerControlServer({
+      paths: rightPaths,
+      status: () => rightStatus,
+      stop: () => {
+        rightStops += 1;
+      },
+    });
+    assert.deepEqual(await queryListenerControl(leftPaths, "status"), leftStatus);
+    assert.deepEqual(await queryListenerControl(rightPaths, "status"), rightStatus);
+    await queryListenerControl(leftPaths, "stop");
+    assert.equal(leftStops, 1);
+    assert.equal(rightStops, 0);
+  } finally {
+    await right?.close();
+    await left.close();
+  }
+});
+
+test("win32 keeps the legacy default pipe and namespaces custom state roots", () => {
+  const identity = {
+    profileId: "profile-win32-pipe-compatibility",
+    workspaceId: randomUUID(),
+    principalId: randomUUID(),
+  };
+  const defaultPaths = listenerPaths({ ...identity, platform: "win32" });
+  assert.equal(
+    defaultPaths.socketPath,
+    `\\\\.\\pipe\\cswarm-${defaultPaths.key}`,
+  );
+
+  const customRoot = resolve("/tmp/cswarm-custom-listener-state");
+  const customNamespace = createHash("sha256")
+    .update(customRoot)
+    .digest("hex")
+    .slice(0, 16);
+  const customPaths = listenerPaths({
+    ...identity,
+    stateDirectory: customRoot,
+    platform: "win32",
+  });
+  assert.equal(
+    customPaths.socketPath,
+    `\\\\.\\pipe\\cswarm-${customPaths.key.slice(0, 32)}-${customNamespace}`,
+  );
+
+  const uid = typeof process.getuid === "function" ? process.getuid() : process.pid;
+  for (const platform of ["darwin", "linux"] as const) {
+    const unixPaths = listenerPaths({ ...identity, platform });
+    assert.equal(
+      unixPaths.socketPath,
+      join(
+        "/tmp",
+        `cswarm-control-${uid}`,
+        `${unixPaths.key.slice(0, 32)}.sock`,
+      ),
+    );
+  }
+});
+
 test("control socket answers one bounded response to oversized input", async () => {
   const root = await mkdtemp(join(tmpdir(), "cswarm-control-test-"));
   const target = paths(root);
@@ -452,6 +552,53 @@ test("supervisor becomes ready, stops through the socket, and logs metadata only
     await stopListener(target).catch(() => undefined);
     await run.catch(() => undefined);
   }
+});
+
+test("activity publish failures persist as a local counter and stable last code", async () => {
+  const root = await mkdtemp(join(tmpdir(), "cswarm-activity-status-test-"));
+  const target = paths(root);
+  const workspaceId = randomUUID();
+  const principalId = randomUUID();
+  const final = await runListenerSupervisor({
+    paths: target,
+    profileId: "profile-activity-status",
+    workspaceId,
+    principalId,
+    run: async (_signal, onEvent) => {
+      onEvent({
+        type: "ready",
+        workspaceId,
+        principalId,
+        ts: "2026-09-02T10:00:00.000Z",
+      });
+      onEvent({
+        type: "activity_publish_failure",
+        code: "activity_transport_failed",
+        ts: "2026-09-02T10:00:01.000Z",
+      });
+      onEvent({
+        type: "activity_publish_failure",
+        code: "activity_http_rejected",
+        ts: "2026-09-02T10:00:02.000Z",
+      });
+      return { reason: "cancelled" };
+    },
+  });
+
+  assert.equal(final.activityPublishFailures, 2);
+  assert.equal(final.activityLastErrorCode, "activity_http_rejected");
+  const stored = await readListenerStatus(target);
+  assert.equal(stored?.activityPublishFailures, 2);
+  assert.equal(stored?.activityLastErrorCode, "activity_http_rejected");
+  const json = listenerStatusJson(final);
+  assert.equal(json.activityPublishFailures, 2);
+  assert.equal(json.activityLastErrorCode, "activity_http_rejected");
+  const text = renderListenerStatus(final);
+  assert.match(text, /Activity publish failures: 2\./);
+  assert.match(
+    text,
+    /Last activity publish error code: activity_http_rejected\./,
+  );
 });
 
 test("missing socket converts a live-looking status to unclean_exit", async () => {
@@ -1081,10 +1228,16 @@ test("status ignores unknown keys, renders old counters as unmeasured, and rejec
   const rendered = renderListenerStatus(forward);
   assert.match(rendered, /Connections opened: not measured\./);
   assert.match(rendered, /Connection reuse ratio: not measured\./);
+  assert.doesNotMatch(
+    rendered,
+    /Activity publish failures|Last activity publish error code/,
+  );
   assert.doesNotMatch(rendered, /mysteryField|futureMetrics/);
   const json = listenerStatusJson(forward);
   assert.equal(json.connectionsOpened, null);
   assert.equal(json.connectionReuseRatio, null);
+  assert.equal(json.activityPublishFailures, null);
+  assert.equal(json.activityLastErrorCode, null);
   assert.equal("mysteryField" in json, false);
   assert.equal("futureMetrics" in json, false);
 
@@ -1100,6 +1253,10 @@ test("status ignores unknown keys, renders old counters as unmeasured, and rejec
   // A malformed known field still fails closed.
   await writeRaw((row) => {
     row.connectionsOpened = -1;
+  });
+  await assert.rejects(readListenerStatus(target), /malformed/);
+  await writeRaw((row) => {
+    row.activityLastErrorCode = "provider prose changed";
   });
   await assert.rejects(readListenerStatus(target), /malformed/);
 
