@@ -213,6 +213,14 @@ failed whether the validator worked or not, so its negative result was not evide
 Constraint: detection must not guess. `CLAUDE_CODE_ENTRYPOINT` can be inherited by a Codex child and
 mislabel it as Claude Code. Return a value or nothing; a wrong automatic answer is worse than the question.
 
+## Writing for users
+
+The product voice is plain and calm. CLI output says what just happened, what is now true, and what happens
+next, so nobody has to check whether it worked. The benefit is agents coordinating so collaborators are
+unblocked — never control, authority, or enforcement (that framing was retired as friction). Availability
+copy asserts deployment state and lives in git: when a gate flips, grep every surface. Claims about what
+CommonSwarm does must hold for BOTH the hosted workspace and the optional local listener.
+
 ## Writing: modifiers and invented contrasts
 
 Use the shortest precise statement. Remove modifiers such as *actual, real, true, clear, honest, genuine,
