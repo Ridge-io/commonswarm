@@ -1889,8 +1889,14 @@ test("listen status names the route and the next step for waiting main asks", ()
   assert.match(rendered, /Ask route: split; bodies over 240 characters/);
   assert.match(
     rendered,
-    /2 asks waiting for this session; they surface at your next prompt, or run cswarm hook check/,
+    /WARNING \[listener_unattended_main_queue\]: 2 messages are unattended/,
   );
+  assert.match(
+    rendered,
+    new RegExp(`cswarm hook install claude --principal-id ${PRINCIPAL_ID} --write`),
+  );
+  assert.match(rendered, /then start a fresh session/);
+  assert.match(rendered, /--route worker/);
   assert.match(rendered, /Routed asks dropped from the overflow queue: 3/);
   assert.match(rendered, /signals remain in the inbox.*cswarm inbox/i);
 });
@@ -1926,7 +1932,7 @@ test("listen status calls dead-listener asks stranded and gives the restart comm
     logPath: "/tmp/events.ndjson",
   });
   assert.doesNotMatch(rendered, /surface at your next prompt/);
-  assert.match(rendered, /2 asks are stranded because this listener is not running/);
+  assert.match(rendered, /2 messages are also stranded because this listener is not running/);
   assert.match(rendered, new RegExp(
     `cswarm listen start --agent-token-stdin --workspace-id ${WORKSPACE_ID} --provider claude --route main`,
   ));
