@@ -1051,3 +1051,22 @@ Still OPEN for the operator: `claude auth login` on the mini. Until then every C
 - **But L55's replacement copy pins a false claim, and its own two arms passed.** The shared sentence says `Fields: agent_token (required), principal_id, token_id, run_id, expires_at`, implying the rest are optional; a file with ONLY a valid `agent_token` is rejected for missing `message`, `principal_id`, `run_id`, `status`, `token_id`. The control: the full minted line is accepted. Lane **L57** makes copy and parser share one constant so they cannot drift, and pins the join prompt's list to the same set.
 - This is the fourth "control discriminates but pins the wrong claim" this cycle (0.1.48 receipts ×2, 0.1.49 `claude login`, now this). The arms keep catching the ones in code paths; the ones they miss are always FIELD LISTS AND VERB NAMES inside otherwise-correct messages. Worth a doctrine line: when a message enumerates anything (fields, commands, options), the enumeration must be generated from the code that enforces it, not typed.
 - L56 (misleading `run cswarm login` for agents) still running.
+
+### Addendum 2026-09-02 ~23:15Z — v0.1.50 is LIVE
+
+Three lanes, all from CDReporter's first-day setup reports (`214fa712`).
+
+| step | fact |
+|---|---|
+| review | Grok exact PASS, Gemini inversion PASS on `b972199`. Gates: 730 ×2, p1-cli 402, check:tests, check:edge, site 254. |
+| main | `2fefb8a` merge → `01d1242` release: v0.1.50 → dist artifacts commit. Pushed. Branches = `main`; worktrees = main only; my processes = 0. |
+| GitHub / npm / site | tag `v0.1.50` on `01d1242`, latest, both assets; `commonswarm@0.1.50`; site deployed, `/download` 0.1.50 ×3 / 0.1.49 ×0. |
+| deployed proof | the join prompt's new contract lives in `/_astro/AgentConnect.astro_…H7S-QuLy.js` (200, "byte-for-byte" ×1, "Required fields" ×1, absent-control 0, referenced by `/app`). My first grep used the CLI's wording and returned 0 — a false negative from the wrong search string, not a missing feature; the positive control is what settled it. |
+| host | both binary copies 0.1.50. |
+
+Deferred to the next release (Grok P2s on the release SHA, true today, non-blocking):
+- `site/src/components/connect/agent-prompt.ts:199-201` types the field list. It has a drift test against the parser constants, which the doctrine accepts, but generating it would be better.
+- `src/cli.ts:940-944` types `--agent-token-file`/`--agent-token-stdin` instead of reading `CREDENTIAL_FLAGS` (`:463`). No drift test.
+- P3: wrong-typed and wrong-string `agent_token` share one stable code (five codes exist; the spec said "at least five", the arm wanted six).
+
+Not established: no production/database/edge change was needed or made in 0.1.50 (supabase diff since 0.1.49 empty).
