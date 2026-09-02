@@ -1266,6 +1266,8 @@ export interface BrowserDeliveryReceipt {
   attemptCount: number;
   leaseExpiryCount: number;
   lastErrorCode: string | null;
+  /** Null when the server predates queued interactive-session counts. */
+  pendingForMainCount?: number | null;
 }
 
 export interface BrowserHumanDeliveryReceipt {
@@ -1550,12 +1552,15 @@ export function browserDeliveryIndicator(
     const receipt = agentReceipts[0]!;
     if (receipt.ackedAt !== null && receipt.ackOutcome !== null) {
       if (receipt.ackOutcome === "queued") {
+        const queueCount = receipt.pendingForMainCount;
         return {
           state: "queued",
           outcome: "queued",
           glyph: "…",
           label: "Queued",
-          detail: "Queued for the agent's interactive session. The agent has not seen it yet; it will appear at the next prompt.",
+          detail: `Queued for the agent's interactive session; waiting for the recipient's session hook${
+            typeof queueCount === "number" ? ` (${queueCount} in queue)` : ""
+          }.`,
           terminal: false,
         };
       }
@@ -1664,7 +1669,9 @@ export function browserDeliveryIndicator(
   };
   const detailParts = [
     ...Array.from(outcomeCounts, ([outcome, count]) => `${count} ${outcomeLabels[outcome]}`),
-    queuedRows.length > 0 ? `${queuedRows.length} queued for the next prompt` : null,
+    queuedRows.length > 0
+      ? `${queuedRows.length} queued waiting for recipient session hooks`
+      : null,
     workingRows.length > 0 ? `${workingRows.length} working` : null,
     stuckRows.length > 0 ? `${stuckRows.length} need attention` : null,
     deliveredOnlyRows.length > 0
@@ -2006,6 +2013,14 @@ export async function browserDeliveryReceipts(
       if (!(outcome === null || (typeof outcome === "string" && outcomes.has(outcome)))) {
         throw new Error("Delivery receipts returned a malformed outcome.");
       }
+      const pendingForMainCount = row.pending_for_main_count;
+      if (!(
+        pendingForMainCount === undefined || pendingForMainCount === null ||
+        (typeof pendingForMainCount === "number" &&
+          Number.isSafeInteger(pendingForMainCount) && pendingForMainCount >= 0)
+      )) {
+        throw new Error("Delivery receipts returned a malformed main queue count.");
+      }
       return {
         recipientAgentPrincipalId: String(row.recipient_agent_principal_id ?? ""),
         enqueuedAt: String(row.enqueued_at ?? ""),
@@ -2018,6 +2033,9 @@ export async function browserDeliveryReceipts(
         lastErrorCode: row.last_error_code === null
           ? null
           : String(row.last_error_code ?? ""),
+        pendingForMainCount: pendingForMainCount === undefined
+          ? null
+          : pendingForMainCount as number | null,
       };
     });
   let broadcastRoster: BrowserBroadcastRecipientRoster | undefined;

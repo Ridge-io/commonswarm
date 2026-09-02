@@ -145,6 +145,7 @@ import {
   updateWorkspaceDefaultAfterClose,
   WorkspaceCliError,
   WorkspaceUnavailableError,
+  relativeAge,
   resolveWorkspaceMember,
   workspaceOverride,
   writeWorkspaceDefault,
@@ -241,6 +242,8 @@ import {
   listenerRestartCommand,
   readListenerCredentialState,
   runListenerHookCheck,
+  renderListenerAttendanceCanary,
+  runListenerAttendanceCanary,
   writeListenerCredentialState,
   LISTENER_DEFER_OVER_MAX,
   LISTENER_DEFER_OVER_MIN,
@@ -264,18 +267,19 @@ import {
  * usage text and requires every flag printed there to appear here.
  */
 const KNOWN_FLAGS = new Set([
-  "about", "agent-token-file", "agent-token-stdin", "all-devices", "anon-key", "attach", "branch", "capability-id",
+  "about", "agent-token-file", "agent-token-stdin", "all-devices", "allow-unattended", "anon-key", "attach", "branch", "capability-id",
   "claude-executable", "codex-executable", "confirm", "confirm-standing", "cooldown", "cwd", "defer-over", "device-id", "effort", "email",
   "epoch", "evidence", "follow", "force", "force-file-store", "foreground", "grok-executable", "head-sha",
   "help", "include-stale", "include-tombstoned", "invitation-id", "invitation-token-stdin", "json", "kind", "limit",
   "link-stdin", "local", "model", "name", "ndjson", "no-browser", "notify", "opencode-executable", "out",
-  "permissions", "principal-id", "provider", "repo", "reveal-anon-key", "route", "run-id", "since", "site", "slug",
+  "permissions", "principal-id", "provider", "repo", "reveal-anon-key", "route", "run-id", "since", "site", "slug", "state-dir",
   "renewal-horizon-days", "standing", "task-id", "to", "token-id", "ttl-ms", "turn-budget", "uid", "until", "url", "user", "version", "wait", "workspace-id", "write",
 ]);
 
 const BOOLEAN_FLAGS = new Set([
   "agent-token-stdin",
   "all-devices",
+  "allow-unattended",
   "confirm-standing",
   "force-file-store",
   "follow",
@@ -502,7 +506,8 @@ Usage:
   cswarm brain get <topic> [--version <n>] [--url <url> --anon-key <key>] [--workspace-id <uuid>] ${agentCredential} [--json]
   cswarm brain put <topic> [<markdown-path>] [--url <url> --anon-key <key>] [--workspace-id <uuid>] ${agentCredential} [--json]  # without a path, reads Markdown from stdin
   cswarm feedback "<text>" --kind bug|idea|friction [--about <ref>] [--url <url> --anon-key <key>] [--workspace-id <uuid>] ${agentCredential} [--json]
-  cswarm listen start ${requiredAgentCredential} [--url <url> --anon-key <key>] --workspace-id <uuid> --provider grok|opencode|claude|codex [--cwd <absolute-path>] [--model <model>] [--effort <level>] [--permissions deny|allow] [--grok-executable <path>] [--opencode-executable <path>] [--claude-executable <path>] [--codex-executable <path>] [--turn-budget <duration>] [--route worker|main|split] [--defer-over <chars>] [--foreground] [--json]
+  cswarm listen start ${requiredAgentCredential} [--url <url> --anon-key <key>] --workspace-id <uuid> --provider grok|opencode|claude|codex [--cwd <absolute-path>] [--model <model>] [--effort <level>] [--permissions deny|allow] [--grok-executable <path>] [--opencode-executable <path>] [--claude-executable <path>] [--codex-executable <path>] [--turn-budget <duration>] [--route worker|main|split] [--defer-over <chars>] [--allow-unattended] [--foreground] [--json]
+  cswarm listen canary ${requiredAgentCredential} [--url <url> --anon-key <key>] --workspace-id <uuid> [--state-dir <path>] [--wait <seconds>] [--json]
   cswarm listen status ${agentCredential} [--url <url> --anon-key <key>] --workspace-id <uuid> [--principal-id <uuid>] [--json]
   cswarm listen stop ${agentCredential} [--url <url> --anon-key <key>] --workspace-id <uuid> [--principal-id <uuid>] [--json]
   cswarm hook check [--principal-id <uuid> ...] [--cooldown <seconds>]
@@ -554,6 +559,8 @@ Credential selection for command/dogfood:
                             command, dogfood
                                           task protocol commands              -- either form
                             listen start  persists durable state, rotates -- needs expires_at
+                            listen canary posts one self-note and selects local state -- needs
+                                          principal_id; it does not renew the credential
                             listen status
                                           selects the listener profile -- complete JSON or
                                           an explicit --principal-id without a credential
@@ -591,10 +598,14 @@ fresh credential.
 listen start --route worker|main|split chooses where directed messages go. worker
 is the unchanged default. main queues every ask or note for the interactive session.
 split queues messages whose body is longer than --defer-over <chars>; the bound is
-1..10000 and an equal-length message stays on the worker path. Run cswarm hook check
+1..10000 and an equal-length message stays on the worker path. main and split require
+a principal-scoped Claude hook or prior hook surface. --allow-unattended accepts the
+risk explicitly. Run cswarm hook check
 --principal-id <uuid> to surface that agent's queued messages. A bare check works only
 when the state directory holds one principal. hook check has its own 3s ceiling, exits 0
 on every outcome, and skips network checks made within --cooldown seconds (default 30).
+listen canary posts one self-addressed note, waits at most --wait seconds (default 10),
+and reports accepted, claimed, queued/worker, surfaced, and observed as separate hops.
 hook install claude prints principal-scoped UserPromptSubmit JSON by default. --write changes
 <project>/.claude/settings.local.json, which applies only to Claude Code sessions started in
 that project. Inside a git repository, the local file must be ignored. --user opts in to
@@ -4230,13 +4241,87 @@ export function listenerHostLimits(
   };
 }
 
+export interface ListenerAttendanceEvidence {
+  pendingForMainOldestAt: string | null;
+  hookSurfaceExists: boolean;
+  hookSurfaceAdvanced: boolean;
+}
+
+function listenerAttendanceState(
+  status: ListenerStatus,
+  evidence: ListenerAttendanceEvidence,
+): {
+  connected: boolean;
+  attended: boolean | null;
+  attendanceState: "attended" | "unattended" | "not_required" | "unproven";
+  handled: boolean | null;
+  handledState: "handled" | "not_handled" | "not_yet_measured";
+} {
+  const routeMode = status.routeMode ?? "worker";
+  const pending = status.pendingForMainCount ?? 0;
+  const connected = status.state === "ready";
+  const attendanceState = routeMode === "worker"
+    ? "not_required"
+    : pending > 0
+    ? "unattended"
+    : evidence.hookSurfaceAdvanced
+    ? "attended"
+    : "unproven";
+  const attended = attendanceState === "attended"
+    ? true
+    : attendanceState === "unattended"
+    ? false
+    : null;
+  const handled = pending > 0
+    ? false
+    : routeMode === "worker" && status.lastAckAt !== null
+    ? true
+    : null;
+  return {
+    connected,
+    attended,
+    attendanceState,
+    handled,
+    handledState: handled === true
+      ? "handled"
+      : handled === false
+      ? "not_handled"
+      : "not_yet_measured",
+  };
+}
+
+function listenerAttendanceRemedy(principalId: string): string {
+  return `cswarm hook install claude --principal-id ${principalId} --write, then start a fresh session. Or restart the listener with --route worker.`;
+}
+
 export function listenerStatusJson(
   status: ListenerStatus,
   permissionMode?: ListenerPermissionMode,
+  evidence: ListenerAttendanceEvidence = {
+    pendingForMainOldestAt: null,
+    hookSurfaceExists: false,
+    hookSurfaceAdvanced: false,
+  },
+  nowMs: number = Date.now(),
 ): Record<string, unknown> {
   const mode = permissionMode ?? status.permissionMode;
+  const attendance = listenerAttendanceState(status, evidence);
+  const pending = status.pendingForMainCount ?? 0;
   return {
     ...status,
+    ...attendance,
+    hookSurfaceExists: evidence.hookSurfaceExists,
+    hookSurfaceAdvanced: evidence.hookSurfaceAdvanced,
+    pendingForMainOldestAt: evidence.pendingForMainOldestAt,
+    pendingForMainOldestAgeMs: evidence.pendingForMainOldestAt === null
+      ? null
+      : Math.max(0, nowMs - Date.parse(evidence.pendingForMainOldestAt)),
+    attendanceWarningCode: pending > 0
+      ? "listener_unattended_main_queue"
+      : null,
+    attendanceNextStep: pending > 0
+      ? listenerAttendanceRemedy(status.principalId)
+      : null,
     deliveryMode: status.deliveryMode ?? null,
     pendingDeliveryCount: status.pendingDeliveryCount ?? null,
     lastTerminalDeliveryFailureCount:
@@ -4271,20 +4356,55 @@ export function listenerStatusJson(
   };
 }
 
-export function renderListenerStatus(status: ListenerStatus): string {
+export function renderListenerStatus(
+  status: ListenerStatus,
+  evidence: ListenerAttendanceEvidence = {
+    pendingForMainOldestAt: null,
+    hookSurfaceExists: false,
+    hookSurfaceAdvanced: false,
+  },
+  nowMs: number = Date.now(),
+): string {
   const routeMode = status.routeMode ?? "worker";
   const pendingForMainCount = status.pendingForMainCount ?? 0;
   const droppedForMainCount = status.droppedForMainCount ?? 0;
+  const unattendedCount = `${pendingForMainCount} ${
+    pendingForMainCount === 1 ? "message is" : "messages are"
+  } unattended`;
+  const attendance = listenerAttendanceState(status, evidence);
   const lines = [
-    `Listener ${status.state} for agent ${status.principalId}.`,
+    pendingForMainCount > 0
+      ? `Listener WARNING for agent ${status.principalId}: ${unattendedCount}.`
+      : `Listener ${status.state} for agent ${status.principalId}.`,
+    `CONNECTED: ${attendance.connected ? "yes" : "no"}. Transport state is ${status.state}.`,
+    `ATTENDED: ${
+      attendance.attendanceState === "attended"
+        ? "yes. The session hook has surfaced messages on this host"
+        : attendance.attendanceState === "unattended"
+        ? "no. The main-session queue is not draining"
+        : attendance.attendanceState === "not_required"
+        ? "not required for the worker route"
+        : "not yet proven on this host"
+    }.`,
+    `HANDLED: ${
+      attendance.handledState === "handled"
+        ? "yes. A delivery acknowledgement is recorded"
+        : attendance.handledState === "not_handled"
+        ? "no. Queued messages have not reached the session hook"
+        : "not yet measured"
+    }.`,
     `Provider: ${status.provider}; process: ${status.pid}; started: ${status.startedAt}.`,
     status.readyAt ? `Ready since: ${status.readyAt}.` : "Not ready yet.",
     status.lastSignalId
-      ? `Last handled signal: ${status.lastSignalId}.`
+      ? pendingForMainCount > 0
+        ? `Last claimed and queued signal: ${status.lastSignalId}. It is not handled yet.`
+        : routeMode === "worker"
+        ? `Last handled signal: ${status.lastSignalId}.`
+        : `Last listener signal: ${status.lastSignalId}. Local status does not prove its final observed receipt.`
       : "No signal has been handled yet.",
     status.lastErrorCode
       ? `Last status code: ${status.lastErrorCode}.`
-      : "No listener error is recorded.",
+      : "No listener process error is recorded.",
   ];
   if (status.lastErrorDetail) {
     const [first, ...rest] = status.lastErrorDetail.split("\n");
@@ -4304,7 +4424,9 @@ export function renderListenerStatus(status: ListenerStatus): string {
   }
   if (status.providerVersion && status.providerLastMeasuredVersion) {
     lines.push(
-      `Provider version ${status.providerVersion} is newer than the last measured version ${status.providerLastMeasuredVersion}. It is unverified but allowed because the startup permission canary passed. Next: verify this provider release with CommonSwarm and update the last-measured version.`,
+      status.providerVersion === status.providerLastMeasuredVersion
+        ? `Provider version: ${status.providerVersion} (last measured: ${status.providerLastMeasuredVersion}).`
+        : `Provider version ${status.providerVersion} is newer than the last measured version ${status.providerLastMeasuredVersion}. It is unverified but allowed because the startup permission canary passed. Next: verify this provider release with CommonSwarm and update the last-measured version.`,
     );
   }
   if (status.deliveryMode === "durable_claim") {
@@ -4336,10 +4458,22 @@ export function renderListenerStatus(status: ListenerStatus): string {
     }
     if (pendingForMainCount > 0) {
       lines.push(
-        status.state === "stopped" || status.state === "failed"
-          ? `${pendingForMainCount} asks are stranded because this listener is not running. Restart it by piping the same agent credential into: ${listenerRestartCommand(status)}`
-          : `${pendingForMainCount} asks waiting for this session; they surface at your next prompt, or run cswarm hook check.`,
+        `WARNING [listener_unattended_main_queue]: ${unattendedCount}. The oldest was queued ${
+          evidence.pendingForMainOldestAt === null
+            ? "an unknown time"
+            : relativeAge(evidence.pendingForMainOldestAt, nowMs)
+        }${
+          evidence.pendingForMainOldestAt === null
+            ? ""
+            : ` (queued at ${evidence.pendingForMainOldestAt})`
+        }.`,
       );
+      lines.push(`Next: ${listenerAttendanceRemedy(status.principalId)}`);
+      if (status.state === "stopped" || status.state === "failed") {
+        lines.push(
+          `${pendingForMainCount} ${pendingForMainCount === 1 ? "message is" : "messages are"} also stranded because this listener is not running. Restart it by piping the same agent credential into: ${listenerRestartCommand(status)}`,
+        );
+      }
     }
   }
   if (
@@ -4370,24 +4504,48 @@ export function renderListenerStatus(status: ListenerStatus): string {
 async function unsurfacedPendingMainStats(
   instanceDirectory: string,
   fallback: { count: number; droppedCount: number },
-): Promise<{ count: number; droppedCount: number }> {
+): Promise<{
+  count: number;
+  droppedCount: number;
+  oldestAt: string | null;
+  hookSurfaceExists: boolean;
+  hookSurfaceAdvanced: boolean;
+}> {
   try {
     const queue = new FilePendingMainQueue(instanceDirectory);
     const pending = await queue.read();
     const stats = await queue.stats();
-    const staged = await new FileHookSurfaceStore(instanceDirectory).stage(
+    const surface = new FileHookSurfaceStore(instanceDirectory);
+    const staged = await surface.stage(
       pending,
       stats.droppedCount,
     );
-    return { count: staged.unseen.length, droppedCount: stats.droppedCount };
+    const hook = await surface.evidence();
+    const oldestAt = staged.unseen.reduce<string | null>((oldest, item) =>
+      oldest === null || Date.parse(item.queuedAt) < Date.parse(oldest)
+        ? item.queuedAt
+        : oldest, null);
+    return {
+      count: staged.unseen.length,
+      droppedCount: stats.droppedCount,
+      oldestAt,
+      hookSurfaceExists: hook.exists,
+      hookSurfaceAdvanced: hook.surfacedSignalIds.length > 0,
+    };
   } catch {
-    return fallback;
+    return {
+      ...fallback,
+      oldestAt: null,
+      hookSurfaceExists: false,
+      hookSurfaceAdvanced: false,
+    };
   }
 }
 
 export function listenerFailureMessage(
   code: string,
   provider?: ListenerProviderId,
+  detail?: string | null,
 ): string {
   if (code === "version_below_floor") {
     if (provider === "codex") {
@@ -4406,6 +4564,9 @@ export function listenerFailureMessage(
   }
   if (code === "version_refused") {
     return `the ${provider ?? "provider"} version check could not run, so startup stopped. Next: run the provider's --version command and fix that error, then retry`;
+  }
+  if (code === "executable_not_bridge" && provider === "codex") {
+    return "this is the Codex CLI; --codex-executable takes the codex-acp bridge (npm i -g @agentclientprotocol/codex-acp)";
   }
   if (code === "executable_missing" && provider === "claude") {
     return "claude-agent-acp is not installed; run npm install -g @agentclientprotocol/claude-agent-acp@latest (minimum 0.64.2), then retry";
@@ -4465,7 +4626,10 @@ export function listenerFailureMessage(
       return "the Claude bridge did not complete the ACP permission canary; the startup canary ran, but no workspace signal prompt was delivered. Confirm Claude Code keychain/OAuth sign-in, then retry";
     }
     if (provider === "codex") {
-      return "the Codex bridge did not complete the read-only ACP permission canary; no workspace signal prompt was delivered. Confirm ChatGPT/Codex sign-in, then retry";
+      const recorded = detail?.trim();
+      return recorded
+        ? `the Codex bridge did not complete the read-only ACP permission canary; no workspace signal prompt was delivered. Recorded reason: ${JSON.stringify(recorded)}`
+        : "the Codex bridge did not complete the read-only ACP permission canary; no workspace signal prompt was delivered. The recorded reason was unavailable. Next: run cswarm listen status, then retry";
     }
     if (provider === "grok") {
       return "the Grok bridge did not complete the ACP permission canary; no workspace signal prompt was delivered. The local cswarm listen status output includes the final error detail; read it, then retry";
@@ -4925,6 +5089,7 @@ async function runListenStart(args: Arguments): Promise<void> {
     "turn-budget",
     "route",
     "defer-over",
+    "allow-unattended",
     "foreground",
     "json",
   ], 2);
@@ -4972,7 +5137,13 @@ async function runListenStart(args: Arguments): Promise<void> {
       `a listener is already ${existing.state} for agent ${principalId}`,
     );
   }
-
+  if (
+    routing.routeMode !== "worker" &&
+    !args.has("allow-unattended") &&
+    !(await listenerHasAttendanceSurface(paths.instanceDirectory, cwd, principalId))
+  ) {
+    throw new ListenerUnattendedRefusedError(principalId);
+  }
   let status: ListenerStatus;
   if (args.has("foreground")) {
     status = await runConfiguredListener({
@@ -5083,7 +5254,11 @@ async function runListenStart(args: Arguments): Promise<void> {
       });
     } catch (error) {
       if (error instanceof ListenerStartupError) {
-        throw new Error(listenerFailureMessage(error.code, provider));
+        const failedStatus = await effectiveListenerStatus(paths).catch(() => null);
+        const detail = failedStatus?.lastErrorCode === error.code
+          ? failedStatus.lastErrorDetail
+          : null;
+        throw new Error(listenerFailureMessage(error.code, provider, detail));
       }
       throw error;
     }
@@ -5091,9 +5266,18 @@ async function runListenStart(args: Arguments): Promise<void> {
 
   if (status.state === "failed") {
     throw new Error(
-      listenerFailureMessage(status.lastErrorCode ?? "unknown_error", provider),
+      listenerFailureMessage(
+        status.lastErrorCode ?? "unknown_error",
+        provider,
+        status.lastErrorDetail,
+      ),
     );
   }
+  let attendanceEvidence: ListenerAttendanceEvidence = {
+    pendingForMainOldestAt: null,
+    hookSurfaceExists: false,
+    hookSurfaceAdvanced: false,
+  };
   if ((status.routeMode ?? "worker") !== "worker") {
     const recordedPending = status.pendingForMainCount ?? 0;
     const recordedDropped = status.droppedForMainCount ?? 0;
@@ -5106,9 +5290,14 @@ async function runListenStart(args: Arguments): Promise<void> {
       pendingForMainCount: queueStats.count,
       droppedForMainCount: queueStats.droppedCount,
     };
+    attendanceEvidence = {
+      pendingForMainOldestAt: queueStats.oldestAt,
+      hookSurfaceExists: queueStats.hookSurfaceExists,
+      hookSurfaceAdvanced: queueStats.hookSurfaceAdvanced,
+    };
   }
   if (args.has("json")) {
-    printJson(listenerStatusJson(status, permissionMode));
+    printJson(listenerStatusJson(status, permissionMode, attendanceEvidence));
     return;
   }
   const routingNote = routing.routeMode === "main"
@@ -5132,8 +5321,10 @@ async function runListenStart(args: Arguments): Promise<void> {
     `${
       args.has("foreground")
         ? "Listener stopped."
+        : (status.pendingForMainCount ?? 0) > 0
+        ? "Listener transport is connected, but queued messages are unattended."
         : "Listener is ready and will keep receiving after this command exits."
-    }\n${renderListenerStatus(status)}\n` +
+    }\n${renderListenerStatus(status, attendanceEvidence)}\n` +
       /* ~~"allowed once because you explicitly selected --permissions allow" / "denied by
        * default"~~ Dead 2026-08-11. Flipping the default inverted BOTH clauses at once: allow is
        * no longer explicitly selected and deny is no longer the default. Neither string appeared
@@ -5295,6 +5486,11 @@ async function runListenStatusOrStop(
     }
     return;
   }
+  let attendanceEvidence: ListenerAttendanceEvidence = {
+    pendingForMainOldestAt: null,
+    hookSurfaceExists: false,
+    hookSurfaceAdvanced: false,
+  };
   if ((status.routeMode ?? "worker") !== "worker") {
     const recordedPending = status.pendingForMainCount ?? 0;
     const recordedDropped = status.droppedForMainCount ?? 0;
@@ -5307,12 +5503,74 @@ async function runListenStatusOrStop(
       pendingForMainCount: queueStats.count,
       droppedForMainCount: queueStats.droppedCount,
     };
+    attendanceEvidence = {
+      pendingForMainOldestAt: queueStats.oldestAt,
+      hookSurfaceExists: queueStats.hookSurfaceExists,
+      hookSurfaceAdvanced: queueStats.hookSurfaceAdvanced,
+    };
   }
   if (args.has("json")) {
-    printJson(listenerStatusJson(status));
+    printJson(listenerStatusJson(status, undefined, attendanceEvidence));
   } else {
-    process.stdout.write(`${renderListenerStatus(status)}\n`);
+    process.stdout.write(`${renderListenerStatus(status, attendanceEvidence)}\n`);
   }
+}
+
+async function runListenCanary(args: Arguments): Promise<void> {
+  args.assertShape([
+    ...TARGET_FLAGS,
+    ...CREDENTIAL_FLAGS,
+    "workspace-id",
+    "state-dir",
+    "wait",
+    "json",
+  ], 2);
+  if (!hasAgentCredential(args)) {
+    throw new Error(
+      "listen canary requires --agent-token-file or --agent-token-stdin; credentials are never accepted on argv",
+    );
+  }
+  const cloud = await target(args);
+  const workspaceId = listenerUuid(
+    args.optional("workspace-id") ?? process.env.SWARM_CLOUD_WORKSPACE_ID,
+    "workspace-id",
+  );
+  const agent = await agentCredential(args);
+  if (agent.principalId === null) {
+    throw new Error(
+      "listen canary needs the complete JSON agent credential so it can address the agent and select its listener state",
+    );
+  }
+  const principalId = listenerUuid(agent.principalId, "principal-id");
+  const stateDirectory = listenerStateDirectory(args);
+  const paths = listenerPaths({
+    profileId: cloud.profileId,
+    workspaceId,
+    principalId,
+    ...(stateDirectory ? { stateDirectory } : {}),
+  });
+  const waitMs = parseWaitSeconds(args.optional("wait") ?? "10") * 1_000;
+  const result = await runListenerAttendanceCanary({
+    target: cloud,
+    workspaceId,
+    principalId,
+    paths,
+    waitMs,
+    // Canary must remain read-only apart from its one self-note. It therefore
+    // uses the presented token and never enters the renewal/mint path.
+    credential: async () => agent.token,
+  });
+  if (args.has("json")) {
+    printJson({
+      workspaceId,
+      principalId,
+      ...result,
+    });
+    return;
+  }
+  process.stdout.write(
+    `${renderListenerAttendanceCanary(result, workspaceId, principalId)}\n`,
+  );
 }
 
 async function runListen(args: Arguments): Promise<void> {
@@ -5325,7 +5583,11 @@ async function runListen(args: Arguments): Promise<void> {
     await runListenStatusOrStop(args, command);
     return;
   }
-  throw new UsageError("listen requires start, status, or stop");
+  if (command === "canary") {
+    await runListenCanary(args);
+    return;
+  }
+  throw new UsageError("listen requires start, status, stop, or canary");
 }
 
 const CLAUDE_HOOK_COMMAND = "cswarm hook check";
@@ -5339,6 +5601,61 @@ function isCommonSwarmClaudeHook(value: unknown): boolean {
     value === CLAUDE_HOOK_COMMAND ||
     /^cswarm hook check --principal-id [0-9a-f-]{36}$/.test(value)
   );
+}
+
+export class ListenerUnattendedRefusedError extends Error {
+  readonly code = "listen_unattended_refused";
+
+  constructor(principalId: string) {
+    super(
+      `listen_unattended_refused: --route main and --route split need an attendance surface for agent ${principalId}. ` +
+      `Next: cswarm hook install claude --principal-id ${principalId} --write, then start a fresh session. ` +
+      "Or use --route worker. Use --allow-unattended only when you accept a queue that may not wake a session.",
+    );
+    this.name = "ListenerUnattendedRefusedError";
+  }
+}
+
+function settingsHaveScopedClaudeHook(
+  settings: Record<string, unknown>,
+  principalId: string,
+): boolean {
+  if (!settings.hooks || typeof settings.hooks !== "object" || Array.isArray(settings.hooks)) {
+    return false;
+  }
+  const promptHooks = (settings.hooks as Record<string, unknown>).UserPromptSubmit;
+  if (!Array.isArray(promptHooks)) return false;
+  const expected = scopedClaudeHookCommand(principalId);
+  return promptHooks.some((group) => {
+    if (!group || typeof group !== "object" || Array.isArray(group)) return false;
+    const hooks = (group as Record<string, unknown>).hooks;
+    return Array.isArray(hooks) && hooks.some((hook) =>
+      hook !== null && typeof hook === "object" && !Array.isArray(hook) &&
+      (hook as Record<string, unknown>).type === "command" &&
+      (hook as Record<string, unknown>).command === expected
+    );
+  });
+}
+
+async function listenerHasAttendanceSurface(
+  instanceDirectory: string,
+  cwd: string,
+  principalId: string,
+): Promise<boolean> {
+  const surface = await new FileHookSurfaceStore(instanceDirectory).evidence();
+  if (surface.exists) return true;
+  const repositoryRoot = gitRepositoryRoot(cwd) ?? cwd;
+  const settingsPaths = new Set([
+    join(repositoryRoot, CLAUDE_PROJECT_SETTINGS_IGNORE_LINE),
+    join(repositoryRoot, CLAUDE_REPO_SETTINGS_IGNORE_LINE),
+    userClaudeSettingsTarget().path,
+  ]);
+  for (const path of settingsPaths) {
+    if (settingsHaveScopedClaudeHook(readClaudeSettings(path), principalId)) {
+      return true;
+    }
+  }
+  return false;
 }
 
 /** Exact project-settings fragment printed by `cswarm hook install claude`. */

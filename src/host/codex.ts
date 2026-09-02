@@ -1,9 +1,11 @@
 /**
- * Codex ACP subprocess core — measured against codex-acp 1.1.9.
+ * Codex ACP subprocess core — measured against codex-acp 1.8.0.
  *
  * Spawn shape: `codex-acp` with no arguments. The bridge speaks ACP
- * protocolVersion 1 and emits session/request_permission. It uses the
- * operator's normal HOME for ChatGPT/Codex file-backed auth state.
+ * protocolVersion 1 and emits session/request_permission. In read-only mode,
+ * writes under cwd and TMPDIR run without a request; a write under HOME asks,
+ * and host rejection ends the tool as failed with stopReason cancelled. It
+ * uses the operator's normal HOME for ChatGPT/Codex file-backed auth state.
  */
 
 import {
@@ -67,7 +69,7 @@ export type CodexAcpOpenOptions = {
   clientVersion?: string;
   /** When true, prompts are enabled without canary (tests only). */
   promptsEnabled?: boolean;
-  /** Report a newer-than-measured version after the floor admits it. */
+  /** Report the admitted bridge version for listener status and notices. */
   onVersionNotice?: (notice: ProviderVersionNotice) => void;
   /**
    * Bounded, sanitized stderr tail, delivered once when the child exits — for
@@ -82,6 +84,8 @@ export type CodexAcpHandle = {
   executable: string;
   args: string[];
   env: Record<string, string>;
+  /** Version returned by the exact executable before this child was spawned. */
+  providerVersion?: string;
   close: () => Promise<void>;
 };
 
@@ -241,6 +245,18 @@ export async function assertCodexVersionFloor(
   });
   const version = parseCodexVersionOutput(stdout);
   if (!version) {
+    const codexCliVersion = parseProviderVersionOutput(
+      stdout,
+      /\bcodex-cli\b/i,
+      false,
+    );
+    if (codexCliVersion) {
+      throw new AcpVersionError(
+        "this is the Codex CLI; --codex-executable takes the codex-acp bridge " +
+          "(npm i -g @agentclientprotocol/codex-acp)",
+        "executable_not_bridge",
+      );
+    }
     throw new AcpVersionParseError(
       `could not parse codex-acp version from: ${stdout.trim().slice(0, 200)}`,
     );
@@ -328,12 +344,13 @@ export async function openCodexAcpSession(
     typeof pathEnv === "string" ? pathEnv : undefined,
   );
   const env = buildCodexChildEnv(parentEnv);
+  let providerVersion: string | undefined;
   if (!options.skipVersionCheck) {
-    await assertCodexVersionFloor(executable, {
-      env,
-      ...(options.onVersionNotice
-        ? { onNewerVersion: options.onVersionNotice }
-        : {}),
+    providerVersion = await assertCodexVersionFloor(executable, { env });
+    options.onVersionNotice?.({
+      provider: "codex-acp",
+      runningVersion: providerVersion,
+      lastMeasuredVersion: CODEX_ACP_LAST_MEASURED_VERSION,
     });
   }
   if (options.signal?.aborted) {
@@ -431,7 +448,15 @@ export async function openCodexAcpSession(
       return closePromise;
     };
 
-    return { session, child, executable, args, env, close };
+    return {
+      session,
+      child,
+      executable,
+      args,
+      env,
+      ...(providerVersion ? { providerVersion } : {}),
+      close,
+    };
   } catch (error) {
     removeAbortListener();
     transport.close();

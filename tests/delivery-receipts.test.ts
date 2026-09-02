@@ -30,6 +30,8 @@ const ACKED = "2026-08-28T12:00:02.000Z";
  * source pins below guard the shape this single file commits. */
 const RECEIPT_MIGRATION =
   "supabase/migrations/20260902000001_broadcast_recipient_roster.sql";
+const ATTENDED_RECEIPT_MIGRATION =
+  "supabase/migrations/20260902000002_attended_receipt_queue.sql";
 const HUMAN_RECEIPT_MIGRATION =
   "supabase/migrations/20260901000020_signal_human_receipts.sql";
 
@@ -443,6 +445,53 @@ test("every ledger state stays distinct, including queued, observed, and replied
     });
     assert.equal(deliveryReceiptState(agentReceipt(parsed.receipts[0]!)), outcome);
   }
+});
+
+test("a queued receipt names the session hook and the recipient queue size", () => {
+  const parsed = parseDeliveryReceiptResult({
+    addressed: true,
+    receipts: [receipt({
+      delivered_at: DELIVERED,
+      acked_at: ACKED,
+      ack_outcome: "queued",
+      pending_for_main_count: 4,
+    })],
+  });
+  const queued = agentReceipt(parsed.receipts[0]!);
+  assert.equal(queued.pending_for_main_count, 4);
+  const rendered = renderSignalReceiptReport({
+    ...parsed,
+    addressed: true,
+    workspaceId: WORKSPACE,
+    signalId: SIGNAL,
+  }, Date.parse(ACKED) + 60_000);
+  assert.match(
+    rendered,
+    /waiting for the recipient's session hook \(4 in queue\)/,
+  );
+  assert.doesNotMatch(rendered, /not delivered|next prompt/i);
+});
+
+test("the receipt migration adds only a queued recipient's main queue count", async () => {
+  const migration = await readFile(ATTENDED_RECEIPT_MIGRATION, "utf8");
+  assert.match(
+    migration,
+    /receipt\.value ->> 'ack_outcome' = 'queued'[\s\S]*'pending_for_main_count'/,
+  );
+  assert.match(
+    migration,
+    /pending\.recipient_agent_principal_id =[\s\S]*pending\.ack_outcome = 'queued'/,
+  );
+  assert.match(
+    migration,
+    /signal_delivery_receipts_without_main_queue_count/,
+    "the wrapper must preserve the existing identity, roster, and author checks",
+  );
+  assert.match(
+    migration,
+    /REVOKE ALL ON FUNCTION[\s\S]*signal_delivery_receipts_without_main_queue_count[\s\S]*FROM PUBLIC, anon, authenticated, swarm_read/,
+    "the private predecessor must not become a second readable RPC",
+  );
 });
 
 test("agent cross-sender mutation control pins author id and workspace", async () => {

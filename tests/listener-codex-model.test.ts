@@ -1,8 +1,16 @@
 /** ★ THIS FILE IS NAMED IN `npm test`; all Codex sessions are injected fakes. */
 import assert from "node:assert/strict";
-import { lstat, mkdtemp, writeFile } from "node:fs/promises";
+import {
+  lstat,
+  mkdir,
+  mkdtemp,
+  realpath,
+  rm,
+  stat,
+  writeFile,
+} from "node:fs/promises";
 import { tmpdir } from "node:os";
-import { join } from "node:path";
+import { dirname, isAbsolute, join, relative, sep } from "node:path";
 import test from "node:test";
 import type { SignalRecord } from "../src/cloud/command-client.js";
 import type {
@@ -70,6 +78,18 @@ type Record = {
   cancelled: boolean;
 };
 
+function testEnv(cwd: string): NodeJS.ProcessEnv {
+  return { HOME: `${cwd}-home` };
+}
+
+function pathIsInsideOrEqual(ancestor: string, candidate: string): boolean {
+  const fromAncestor = relative(ancestor, candidate);
+  return fromAncestor === "" ||
+    (fromAncestor !== ".." &&
+      !fromAncestor.startsWith(`..${sep}`) &&
+      !isAbsolute(fromAncestor));
+}
+
 function fakeOpen(records: Record[]): OpenCodexSession {
   return async (options) => {
     const record: Record = { options, closed: false, cancelled: false };
@@ -119,6 +139,7 @@ test("Codex worker canary denies before explicit allow mode", async () => {
   const attempts: number[] = [];
   const adapter = new CodexListenerModel({
     cwd,
+    env: testEnv(cwd),
     permissionMode: "allow",
     onCanaryAttempt: (attempt) => attempts.push(attempt),
     open: fakeOpen(records),
@@ -130,7 +151,11 @@ test("Codex worker canary denies before explicit allow mode", async () => {
   });
   assert.match(records[0]?.canaryOptions?.probeText ?? "", /shell command/);
   assert.match(records[0]?.canaryOptions?.probeText ?? "", /cswarm-codex-permission-canary/);
-  assert.doesNotMatch(records[0]?.canaryOptions?.probeText ?? "", new RegExp(cwd));
+  const sentinelPath = records[0]?.canaryOptions?.probeText?.match(
+    /Use a shell command to create (\S+) with content/,
+  )?.[1];
+  assert.ok(sentinelPath);
+  assert.equal(pathIsInsideOrEqual(await realpath(cwd), sentinelPath), false);
   assert.equal(records[0]?.canaryOptions?.timeoutMs, 30_000);
   assert.deepEqual(attempts, [1]);
   const result = await adapter.prompt(SIGNAL, "worker", "work");
@@ -148,6 +173,7 @@ test("Codex sender relations share one worker, cwd, and permission mode", async 
   const records: Record[] = [];
   const adapter = new CodexListenerModel({
     cwd,
+    env: testEnv(cwd),
     permissionMode: "allow",
     open: fakeOpen(records),
   });
@@ -174,16 +200,82 @@ test("Codex sender relations share one worker, cwd, and permission mode", async 
 test("Codex listener cancel reaches the active host handle", async () => {
   const cwd = await mkdtemp(join(tmpdir(), "cswarm-codex-worker-"));
   const records: Record[] = [];
-  const adapter = new CodexListenerModel({ cwd, open: fakeOpen(records) });
+  const adapter = new CodexListenerModel({
+    cwd,
+    env: testEnv(cwd),
+    open: fakeOpen(records),
+  });
   await adapter.start();
   adapter.cancel();
   assert.equal(records[0]?.cancelled, true);
   await adapter.close();
 });
 
-test("Codex canary removes a sentinel written before denial and refuses startup", async () => {
+test("Codex canary records a silent sentinel write and refuses startup", async () => {
   const cwd = await mkdtemp(join(tmpdir(), "cswarm-codex-worker-"));
   let sentinelPath = "";
+  let closed = false;
+  const open: OpenCodexSession = async () => ({
+    session: {
+      async enablePromptsAfterCanary(canaryOptions?: { probeText?: string }) {
+        const match = canaryOptions?.probeText?.match(
+          /Use a shell command to create (\S+) with content/,
+        );
+        assert.ok(match?.[1]);
+        sentinelPath = match[1];
+        await writeFile(sentinelPath, "unexpected canary mutation");
+      },
+      async prompt() {
+        throw new Error("unreachable");
+      },
+      cancel() {},
+    },
+    child: {},
+    executable: "/opt/codex-acp",
+    providerVersion: "1.8.0",
+    args: [],
+    env: {},
+    async close() {
+      closed = true;
+    },
+  } as unknown as CodexAcpHandle);
+  const adapter = new CodexListenerModel({
+    cwd,
+    env: testEnv(cwd),
+    open,
+  });
+
+  await assert.rejects(
+    () => adapter.start(),
+    (error: unknown) => {
+      assert.ok(error instanceof AcpPermissionCanaryError);
+      assert.match(error.message, /^canary_executed_without_permission:/);
+      assert.match(error.message, /codex-acp 1\.8\.0/);
+      assert.ok(error.message.includes(sentinelPath));
+      assert.doesNotMatch(error.message, /sign[- ]?in/i);
+      return true;
+    },
+  );
+  assert.equal(closed, true);
+  assert.notEqual(sentinelPath, "");
+  await assert.rejects(
+    () => lstat(sentinelPath),
+    (error: unknown) => (error as NodeJS.ErrnoException).code === "ENOENT",
+  );
+});
+
+test("Codex canary uses HOME because cwd and TMPDIR writes do not ask", async () => {
+  const root = await mkdtemp(join(tmpdir(), "cswarm-codex-sandbox-"));
+  const cwd = join(root, "work");
+  const home = await mkdtemp(join(process.cwd(), ".cswarm-codex-home-"));
+  const sandboxTmp = join(root, "sandbox-tmp");
+  const systemTmp = await realpath(tmpdir());
+  await Promise.all([
+    mkdir(cwd, { recursive: true }),
+    mkdir(sandboxTmp, { recursive: true }),
+  ]);
+  let sentinelPath = "";
+  let canaryDecision: PermissionDecision | undefined;
   let closed = false;
   const open: OpenCodexSession = async (options) => ({
     session: {
@@ -193,8 +285,14 @@ test("Codex canary removes a sentinel written before denial and refuses startup"
         );
         assert.ok(match?.[1]);
         sentinelPath = match[1];
-        await writeFile(sentinelPath, "unexpected canary mutation");
-        await options.permissionCallback?.(REQUEST);
+        if (
+          pathIsInsideOrEqual(systemTmp, sentinelPath) ||
+          pathIsInsideOrEqual(cwd, sentinelPath)
+        ) {
+          await writeFile(sentinelPath, "silent sandbox write");
+          return;
+        }
+        canaryDecision = await options.permissionCallback?.(REQUEST);
       },
       async prompt() {
         throw new Error("unreachable");
@@ -203,25 +301,143 @@ test("Codex canary removes a sentinel written before denial and refuses startup"
     },
     child: {},
     executable: "/opt/codex-acp",
+    providerVersion: "1.8.0",
     args: [],
     env: {},
     async close() {
       closed = true;
     },
   } as unknown as CodexAcpHandle);
-  const adapter = new CodexListenerModel({ cwd, open });
+  const adapter = new CodexListenerModel({
+    cwd,
+    env: { HOME: home },
+    open,
+  });
 
-  await assert.rejects(
-    () => adapter.start(),
-    (error: unknown) => error instanceof AcpPermissionCanaryError,
-  );
-  assert.equal(closed, true);
-  assert.notEqual(sentinelPath, "");
-  await assert.rejects(
-    () => lstat(sentinelPath),
-    (error: unknown) => (error as NodeJS.ErrnoException).code === "ENOENT",
-  );
+  try {
+    await adapter.start();
+    assert.ok(
+      pathIsInsideOrEqual(
+        await realpath(join(home, ".cswarm", "canary")),
+        sentinelPath,
+      ),
+    );
+    assert.equal(pathIsInsideOrEqual(sandboxTmp, sentinelPath), false);
+    assert.equal(pathIsInsideOrEqual(cwd, sentinelPath), false);
+    assert.deepEqual(canaryDecision, {
+      outcome: "selected",
+      optionId: "deny",
+    });
+    const directoryMode = (await stat(dirname(sentinelPath))).mode & 0o777;
+    assert.equal(directoryMode, 0o700);
+    await adapter.close();
+    assert.equal(closed, true);
+  } finally {
+    await Promise.all([
+      rm(root, { recursive: true, force: true }),
+      rm(home, { recursive: true, force: true }),
+    ]);
+  }
 });
+
+test("Codex canary fails closed when the listener cwd contains its path", async () => {
+  const home = await mkdtemp(join(tmpdir(), "cswarm-codex-home-cwd-"));
+  let canaryCalls = 0;
+  const open: OpenCodexSession = async () => ({
+    session: {
+      async enablePromptsAfterCanary() {
+        canaryCalls += 1;
+      },
+      async prompt() {
+        throw new Error("unreachable");
+      },
+      cancel() {},
+    },
+    child: {},
+    executable: "/opt/codex-acp",
+    providerVersion: "1.8.0",
+    args: [],
+    env: {},
+    async close() {},
+  } as unknown as CodexAcpHandle);
+  const adapter = new CodexListenerModel({
+    cwd: home,
+    env: { HOME: home },
+    open,
+  });
+
+  try {
+    await assert.rejects(
+      () => adapter.start(),
+      (error: unknown) => {
+        assert.ok(error instanceof AcpPermissionCanaryError);
+        assert.match(error.message, /^canary_path_inside_cwd:/);
+        assert.match(error.message, /pass a --cwd that is not your home directory/);
+        return true;
+      },
+    );
+    assert.equal(canaryCalls, 0);
+  } finally {
+    await rm(home, { recursive: true, force: true });
+  }
+});
+
+for (const row of [
+  {
+    name: "no shell attempt",
+    thrown: new AcpPermissionCanaryError(
+      "canary incomplete: permission=false deniedTool=false (failed 2 attempts)",
+    ),
+    code: "canary_no_tool_call",
+    next: /retry to re-sample the model's shell choice/,
+  },
+  {
+    name: "bounded prompt timeout",
+    thrown: new AcpPermissionCanaryError(
+      "ACP request timed out: session/prompt (failed 2 attempts)",
+      "timeout",
+    ),
+    code: "canary_timeout",
+    next: /retry to run a fresh bounded permission canary/,
+  },
+] as const) {
+  test(`Codex canary records ${row.name} with its own next step`, async () => {
+    const cwd = await mkdtemp(join(tmpdir(), "cswarm-codex-reason-"));
+    const open: OpenCodexSession = async () => ({
+      session: {
+        async enablePromptsAfterCanary() {
+          throw row.thrown;
+        },
+        async prompt() {
+          throw new Error("unreachable");
+        },
+        cancel() {},
+      },
+      child: {},
+      executable: "/opt/codex-acp",
+      providerVersion: "1.8.0",
+      args: [],
+      env: {},
+      async close() {},
+    } as unknown as CodexAcpHandle);
+    const adapter = new CodexListenerModel({
+      cwd,
+      env: testEnv(cwd),
+      open,
+    });
+
+    await assert.rejects(
+      () => adapter.start(),
+      (error: unknown) => {
+        assert.ok(error instanceof AcpPermissionCanaryError);
+        assert.match(error.message, new RegExp(`^${row.code}:`));
+        assert.match(error.message, row.next);
+        assert.doesNotMatch(error.message, /sign[- ]?in/i);
+        return true;
+      },
+    );
+  });
+}
 
 test("Codex close waits for an opening worker and closes it before installation", async () => {
   const cwd = await mkdtemp(join(tmpdir(), "cswarm-codex-worker-"));
@@ -235,7 +451,11 @@ test("Codex close waits for an opening worker and closes it before installation"
     await openGate;
     return delegate(options);
   };
-  const adapter = new CodexListenerModel({ cwd, open });
+  const adapter = new CodexListenerModel({
+    cwd,
+    env: testEnv(cwd),
+    open,
+  });
 
   const starting = adapter.start();
   await Promise.resolve();
@@ -283,7 +503,11 @@ test("Codex close cancels and closes a canary already in flight", async () => {
       closed = true;
     },
   } as unknown as CodexAcpHandle);
-  const adapter = new CodexListenerModel({ cwd, open });
+  const adapter = new CodexListenerModel({
+    cwd,
+    env: testEnv(cwd),
+    open,
+  });
 
   const starting = adapter.start();
   await canaryEntered;
@@ -328,7 +552,11 @@ test("Codex close settles opening work before propagating teardown failure", asy
       throw new Error("verified teardown failed");
     },
   } as unknown as CodexAcpHandle);
-  const adapter = new CodexListenerModel({ cwd, open });
+  const adapter = new CodexListenerModel({
+    cwd,
+    env: testEnv(cwd),
+    open,
+  });
 
   const starting = adapter.start();
   await canaryEntered;
@@ -363,6 +591,7 @@ test("D-050: Codex close timeout is runtime-fatal before replacement opens", asy
   );
   const adapter = new CodexListenerModel({
     cwd,
+    env: testEnv(cwd),
     open: async () => {
       opens += 1;
       return {

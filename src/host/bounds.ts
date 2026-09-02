@@ -28,8 +28,8 @@ export const CLAUDE_PERMISSION_MODE_ID = "default";
 /** Oldest codex-acp version allowed to reach the runtime permission canary. */
 export const CODEX_ACP_MIN_VERSION = "1.1.9";
 /** Newest codex-acp version whose complete adapter behavior was measured. */
-export const CODEX_ACP_LAST_MEASURED_VERSION = "1.1.9";
-/** Codex 1.1.9 read-only mode emits host-owned permission requests. */
+export const CODEX_ACP_LAST_MEASURED_VERSION = "1.8.0";
+/** Codex 1.8.0 read-only mode asks for HOME writes but permits cwd/TMPDIR writes. */
 export const CODEX_PERMISSION_MODE_ID = "read-only";
 export const ACP_PROTOCOL_VERSION = 1;
 
