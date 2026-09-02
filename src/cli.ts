@@ -213,6 +213,10 @@ import {
   DeliveryReceiptReadError,
   readAgentDeliveryReceipts,
 } from "./cloud/delivery-receipts.js";
+import {
+  renderedBroadcastIds,
+  reportRenderedBroadcasts,
+} from "./cloud/agent-signal-receipts.js";
 import { resolveOpenCodeExecutable } from "./host/opencode.js";
 import {
   inspectClaudeBridgeExecutable,
@@ -3704,6 +3708,14 @@ async function runSignalRead(
         timedOut,
       }),
     );
+    if (selected.kind === "agent") {
+      await reportRenderedBroadcasts(
+        cloud,
+        selected.bearer,
+        selected.selectedWorkspace,
+        renderedBroadcastIds(rows),
+      );
+    }
     return;
   }
   const authors = await settleSignalAuthorLabels(
@@ -3726,6 +3738,14 @@ async function runSignalRead(
     includeStale: args.has("include-stale"),
     authors,
   })}\n`);
+  if (selected.kind === "agent") {
+    await reportRenderedBroadcasts(
+      cloud,
+      selected.bearer,
+      selected.selectedWorkspace,
+      renderedBroadcastIds(rows),
+    );
+  }
 }
 
 /**
@@ -5157,6 +5177,7 @@ async function runConfiguredListener(options: {
     );
     const provenance = listenerSenderProvenance(signal, senderDirectory);
     if (context.includeBrainDigest !== true) return provenance;
+    let enriched = provenance;
     try {
       const topics = await listBrainRowsAsAgent(
         options.cloud,
@@ -5172,10 +5193,39 @@ async function runConfiguredListener(options: {
         paths.instanceDirectory,
         options.principalId,
       ).consume(brainTopicSnapshots(topics));
-      return brainDigest === null ? provenance : { ...provenance, brainDigest };
-    } catch {
-      return provenance;
-    }
+      if (brainDigest !== null) enriched = { ...enriched, brainDigest };
+    } catch {}
+    try {
+      const feed = await readSignals(
+        options.cloud,
+        { kind: "agent", token: credential },
+        {
+          workspaceId: options.workspaceId,
+          inbox: false,
+          limit: 50,
+          includeStale: false,
+        },
+        {
+          ...(context.signal ? { signal: context.signal } : {}),
+          deadlineMs: context.deadlineMs,
+          fetcher: httpClient.fetch,
+        },
+      );
+      const broadcasts = feed.filter((row) =>
+        row.to === null && row.to_agent === null
+      );
+      if (broadcasts.length > 0) {
+        enriched = {
+          ...enriched,
+          feedDigest: renderSignals(broadcasts, {
+            inbox: false,
+            includeStale: false,
+          }),
+          renderedBroadcastIds: renderedBroadcastIds(broadcasts),
+        };
+      }
+    } catch {}
+    return enriched;
   };
   const effectStore = new FileListenerEffectStore({
     profileId: options.cloud.profileId,
@@ -5428,6 +5478,16 @@ async function runConfiguredListener(options: {
             listenerInstanceId,
             deliveryJournal: selectedJournal,
             resolveSenderProvenance,
+            onBroadcastsConsumed: async (signalIds) => {
+              const credential = await credentialSession.bearer();
+              await reportRenderedBroadcasts(
+                options.cloud,
+                credential,
+                options.workspaceId,
+                signalIds,
+                httpClient.fetch,
+              );
+            },
             routeMode,
             deferOverChars,
             pendingMainQueue,

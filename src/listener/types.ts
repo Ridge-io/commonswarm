@@ -146,6 +146,10 @@ export interface ListenerSenderProvenance {
   operatorName: string | null;
   /** Local changed-only context; never persisted in an effect or server payload. */
   brainDigest?: string;
+  /** Broadcast rows included in this worker prompt. */
+  feedDigest?: string;
+  /** Exact broadcast ids represented by feedDigest. */
+  renderedBroadcastIds?: string[];
 }
 
 export interface ListenerSenderProvenanceContext {

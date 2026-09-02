@@ -3391,11 +3391,19 @@ import "../../styles/tokens.css";
           roster.notSeenHidden,
         );
         appendRosterSection(
-          "Agents · Not tracked",
-          roster.agents.map((receipt) =>
-            `${receipt.displayName} · broadcasts do not wake or track agents`
+          `Seen agents · ${broadcastResult.broadcastRoster.agents.seen} of ${broadcastResult.broadcastRoster.agents.total}`,
+          roster.seenAgents.map((receipt) => {
+            const seen = formatTime(receipt.seenAt!);
+            return `${receipt.displayName} · ${seen.relative}`;
+          }),
+          roster.seenAgentsHidden,
+        );
+        appendRosterSection(
+          "Not-seen agents",
+          roster.notSeenAgents.map((receipt) =>
+            `${receipt.displayName} · not yet seen`
           ),
-          roster.agentsHidden,
+          roster.notSeenAgentsHidden,
         );
         if (
           broadcastResult.broadcastRoster.members.truncated ||

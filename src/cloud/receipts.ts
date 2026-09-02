@@ -105,9 +105,13 @@ export function renderSignalReceiptReport(
   if (!report.addressed) {
     const seenMembers = humanReceipts.filter((receipt) => receipt.seen_at !== null);
     const notSeenMembers = humanReceipts.filter((receipt) => receipt.seen_at === null);
-    const untrackedAgents = report.broadcast_roster?.agents.principals ?? [];
+    const agents = report.broadcast_roster?.agents.principals ?? [];
+    const seenAgents = agents.filter((receipt) => receipt.seen_at !== null);
+    const notSeenAgents = agents.filter((receipt) => receipt.seen_at === null);
     const memberTotal = report.broadcast_roster?.members.total ?? humanReceipts.length;
     const seenTotal = report.broadcast_roster?.members.seen ?? seenMembers.length;
+    const agentTotal = report.broadcast_roster?.agents.total ?? agents.length;
+    const agentSeenTotal = report.broadcast_roster?.agents.seen ?? seenAgents.length;
     // Per-section remainder from the uncapped totals. With 100 members and 60
     // seen the capped list is 50 seen and 0 not-seen; "Not-seen members: none"
     // would be false, so the section says how many the cut hid instead.
@@ -133,11 +137,18 @@ export function renderSignalReceiptReport(
         null,
       ),
       rosterSection(
-        "Agents — not tracked",
-        untrackedAgents.map((receipt) => `- ${receipt.display_name}`),
-        hidden.agents,
+        `Agents — seen ${agentSeenTotal} of ${agentTotal}`,
+        [
+          ...seenAgents.map((receipt) =>
+            `- ${receipt.display_name} — ${relativeAge(receipt.seen_at!, nowMs)}.`
+          ),
+          ...notSeenAgents.map((receipt) =>
+            `- ${receipt.display_name} — not yet seen`
+          ),
+        ],
+        hidden.seenAgents + hidden.notSeenAgents,
         "Agents: none in this workspace.",
-        "Broadcasts do not wake agents, and CommonSwarm does not track whether an agent saw them.",
+        "Seen means the agent's CLI rendered it; a listener that never reads the feed will not appear as seen.",
       ),
       report.broadcast_roster?.members.truncated
         ? `Member roster cut: showing ${report.broadcast_roster.members.returned} of ${report.broadcast_roster.members.total} members (limit ${report.broadcast_roster.members.limit}).`

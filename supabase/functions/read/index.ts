@@ -451,6 +451,29 @@ async function handle(
       ) {
         throw new Error("delivery receipt function returned malformed JSON");
       }
+      if (result.addressed === false) {
+        const agents = (broadcastRoster as Record<string, unknown>).agents;
+        if (!agents || typeof agents !== "object" || Array.isArray(agents)) {
+          throw new Error("delivery receipt function returned malformed JSON");
+        }
+        const agentSection = agents as Record<string, unknown>;
+        if (
+          !Number.isSafeInteger(agentSection.seen) ||
+          Number(agentSection.seen) < 0 ||
+          !Array.isArray(agentSection.principals) ||
+          agentSection.principals.some((principal) => {
+            if (!principal || typeof principal !== "object" || Array.isArray(principal)) {
+              return true;
+            }
+            const row = principal as Record<string, unknown>;
+            return typeof row.principal_id !== "string" ||
+              row.principal_id !== row.recipient_agent_principal_id ||
+              !(row.seen_at === null || typeof row.seen_at === "string");
+          })
+        ) {
+          throw new Error("delivery receipt function returned malformed JSON");
+        }
+      }
       return json(200, {
         addressed: result.addressed,
         receipts: result.receipts,

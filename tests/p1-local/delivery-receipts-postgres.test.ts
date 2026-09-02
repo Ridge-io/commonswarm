@@ -21,14 +21,17 @@ interface LocalEnvironment {
  * non-human `receipts` row as a delivery ledger row (20260902000001). Agents
  * are listed under broadcast_roster.agents.principals. */
 interface UntrackedAgentRow {
+  principal_id: string;
   recipient_agent_principal_id: string;
   display_name: string;
+  seen_at: string | null;
   tracking_state: "not_tracked";
   observed_at: null;
 }
 
 interface AgentRosterSection {
   total: number;
+  seen: number;
   returned: number;
   limit: number;
   truncated: boolean;
@@ -300,6 +303,7 @@ test("delivery receipt authorization matrix holds on real Postgres", async () =>
         });
         assert.deepEqual(agentCounts(broadcastRow?.result.broadcast_roster?.agents), {
           total: 3,
+          seen: 0,
           returned: 3,
           limit: 50,
           truncated: false,
@@ -308,7 +312,9 @@ test("delivery receipt authorization matrix holds on real Postgres", async () =>
         const broadcastPrincipals = broadcastRow!.result.broadcast_roster!.agents.principals;
         assert.equal(broadcastPrincipals.length, 3);
         assert.ok(broadcastPrincipals.every((row) =>
-          row.tracking_state === "not_tracked" && row.observed_at === null
+          row.principal_id === row.recipient_agent_principal_id &&
+          row.seen_at === null && row.tracking_state === "not_tracked" &&
+          row.observed_at === null
         ));
         assert.equal(crossSenderRow?.result, null);
 
@@ -666,7 +672,9 @@ test("human seen upsert keeps first time and receipt reads keep the authorizatio
         );
         assert.equal(broadcastAgents.length, 3);
         assert.ok(broadcastAgents.every((row) =>
-          row.tracking_state === "not_tracked" && row.observed_at === null
+          row.principal_id === row.recipient_agent_principal_id &&
+          row.seen_at === null && row.tracking_state === "not_tracked" &&
+          row.observed_at === null
         ));
         assert.deepEqual(broadcastRead?.result.broadcast_roster?.members, {
           total: 3,
@@ -677,6 +685,7 @@ test("human seen upsert keeps first time and receipt reads keep the authorizatio
         });
         assert.deepEqual(agentCounts(broadcastRead?.result.broadcast_roster?.agents), {
           total: 3,
+          seen: 0,
           returned: 3,
           limit: 50,
           truncated: false,
