@@ -50,17 +50,18 @@ export class AgentCredentialInputError extends Error {
   }
 }
 
-const REQUIRED_ARTIFACT_KEYS = [
-  "agent_token",
+export const AGENT_CREDENTIAL_REQUIRED_FIELDS = [
   "message",
-  "principal_id",
-  "run_id",
   "status",
+  "principal_id",
   "token_id",
+  "run_id",
+  "agent_token",
 ] as const;
+export const AGENT_CREDENTIAL_OPTIONAL_FIELDS = ["expires_at"] as const;
 const ALLOWED_ARTIFACT_KEYS = new Set<string>([
-  ...REQUIRED_ARTIFACT_KEYS,
-  "expires_at",
+  ...AGENT_CREDENTIAL_REQUIRED_FIELDS,
+  ...AGENT_CREDENTIAL_OPTIONAL_FIELDS,
 ]);
 
 function sourceName(source: AgentCredentialInputSource): string {
@@ -82,7 +83,7 @@ function credentialInputError(
 ): AgentCredentialInputError {
   return new AgentCredentialInputError(
     code,
-    `${sourceName(source)} ${found}. It must be the JSON line CommonSwarm minted, copied unchanged. Fields: agent_token (required), principal_id, token_id, run_id, expires_at. The complete line also has required message and status fields. ${nextStep(source)}`,
+    `${sourceName(source)} ${found}. It must be the JSON line CommonSwarm minted, copied unchanged: ${AGENT_CREDENTIAL_REQUIRED_FIELDS.join(", ")} (${AGENT_CREDENTIAL_OPTIONAL_FIELDS.join(", ")} is optional). ${nextStep(source)}`,
   );
 }
 
@@ -153,7 +154,7 @@ export function parseAgentCredentialInput(
   }
 
   const actualKeys = Object.keys(artifact);
-  const missingKeys = REQUIRED_ARTIFACT_KEYS.filter((key) =>
+  const missingKeys = AGENT_CREDENTIAL_REQUIRED_FIELDS.filter((key) =>
     !Object.hasOwn(artifact, key)
   );
   const unknownCount = actualKeys.filter((key) =>

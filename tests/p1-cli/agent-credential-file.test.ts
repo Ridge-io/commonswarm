@@ -4,6 +4,11 @@ import { mkdtemp, rm, writeFile } from "node:fs/promises";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
 import { test } from "node:test";
+import {
+  AGENT_CREDENTIAL_OPTIONAL_FIELDS,
+  AGENT_CREDENTIAL_REQUIRED_FIELDS,
+  parseAgentCredentialInput,
+} from "../../src/cloud/agent-credential-input.js";
 
 /* Reached by `npm run test:p1-cli` through its tests/p1-cli glob. */
 
@@ -23,7 +28,7 @@ function artifact(overrides: Record<string, unknown> = {}): Record<string, unkno
     token_id: TOKEN_ID,
     run_id: RUN_ID,
     agent_token: TOKEN,
-    expires_at: "2026-09-02T22:00:00.000Z",
+    expires_at: "2099-09-02T22:00:00.000Z",
     ...overrides,
   };
 }
@@ -120,15 +125,7 @@ for (const fault of faults) {
       assert.match(result.stderr, fault.found);
       assert.match(
         result.stderr,
-        /It must be the JSON line CommonSwarm minted, copied unchanged\./,
-      );
-      assert.match(
-        result.stderr,
-        /Fields: agent_token \(required\), principal_id, token_id, run_id, expires_at\./,
-      );
-      assert.match(
-        result.stderr,
-        /The complete line also has required message and status fields\./,
+        /It must be the JSON line CommonSwarm minted, copied unchanged: message, status, principal_id, token_id, run_id, agent_token \(expires_at is optional\)\./,
       );
       assert.ok(
         result.stderr.includes(
@@ -143,3 +140,61 @@ for (const fault of faults) {
     }
   });
 }
+
+test("credential contract keeps every minted required field and one optional field", () => {
+  assert.deepEqual(AGENT_CREDENTIAL_REQUIRED_FIELDS, [
+    "message",
+    "status",
+    "principal_id",
+    "token_id",
+    "run_id",
+    "agent_token",
+  ]);
+  assert.deepEqual(AGENT_CREDENTIAL_OPTIONAL_FIELDS, ["expires_at"]);
+});
+
+test("agent-token-only error copy names every field reported missing", () => {
+  assert.throws(
+    () => parseAgentCredentialInput(
+      JSON.stringify({ agent_token: TOKEN }),
+      { kind: "file", path: "/synthetic/agent.json" },
+    ),
+    (error: unknown) => {
+      assert.ok(error instanceof Error);
+      const missingClause = error.message.match(
+        /is missing required fields (?<fields>[^.]+)\. It must/,
+      );
+      const contractClause = error.message.match(
+        /copied unchanged: (?<fields>[^()]+) \(expires_at is optional\)\./,
+      );
+      assert.ok(missingClause?.groups, error.message);
+      assert.ok(contractClause?.groups, error.message);
+
+      const missingFields = [...missingClause.groups.fields.matchAll(/"([^"]+)"/g)]
+        .map((match) => match[1]);
+      const namedFields = contractClause.groups.fields.split(", ");
+      assert.deepEqual(
+        missingFields,
+        AGENT_CREDENTIAL_REQUIRED_FIELDS.filter((field) => field !== "agent_token"),
+      );
+      for (const field of missingFields) {
+        assert.ok(namedFields.includes(field), `error copy omits missing field ${field}`);
+      }
+      return true;
+    },
+  );
+});
+
+test("full synthetic minted shape passes the credential parser", () => {
+  const parsed = parseAgentCredentialInput(
+    JSON.stringify(artifact()),
+    { kind: "file", path: "/synthetic/agent.json" },
+  );
+
+  assert.equal(parsed.token, TOKEN);
+  assert.equal(parsed.principalId, PRINCIPAL);
+  assert.equal(parsed.tokenId, TOKEN_ID);
+  assert.equal(parsed.runId, RUN_ID);
+  assert.equal(parsed.expiresAt, Date.parse("2099-09-02T22:00:00.000Z"));
+  assert.equal(parsed.durable, true);
+});
