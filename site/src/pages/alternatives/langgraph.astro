@@ -14,13 +14,13 @@ const alternatives = [
   },
   {
     name: "AutoGen",
-    url: "https://microsoft.github.io/autogen/stable/",
-    description: "A Python framework with conversational AgentChat and an event-driven Core.",
+    url: "https://github.com/microsoft/autogen",
+    description: "A community-managed framework in maintenance mode for existing AutoGen systems.",
   },
   {
-    name: "Semantic Kernel",
-    url: "https://learn.microsoft.com/en-us/semantic-kernel/overview/",
-    description: "A Microsoft SDK for agents and model-backed application features.",
+    name: "Microsoft Agent Framework",
+    url: "https://learn.microsoft.com/en-us/agent-framework/",
+    description: "Microsoft's supported SDK for agents and multi-agent workflows.",
   },
   {
     name: "n8n",
@@ -61,7 +61,7 @@ const structuredData = {
   {path}
   eyebrow="Alternatives guide"
   heading="LangGraph alternatives"
-  intro="Six credible options for different jobs, followed by the LangGraph vs LangChain distinction that often settles the choice."
+  intro="Six options for different jobs, followed by the LangGraph vs LangChain distinction that often settles the choice."
   {structuredData}
 >
   <section aria-labelledby="choosing-an-alternative">
@@ -102,19 +102,19 @@ const structuredData = {
 
     <h3>2. AutoGen</h3>
     <p>
-      <a href="https://microsoft.github.io/autogen/stable/">AutoGen</a> is a good fit for Python
-      applications built around conversations between agents. AgentChat supplies approachable
-      multi-agent patterns, while AutoGen Core provides an event-driven base for more distributed
-      systems. Choose it when message exchange is a clearer model than explicit graph nodes and
-      edges.
+      <a href="https://github.com/microsoft/autogen">AutoGen</a> remains relevant when you maintain
+      an existing application built around AgentChat or its event-driven Core. Microsoft now keeps
+      AutoGen in maintenance mode, with bug fixes, security patches, and documentation updates but
+      no new features. It directs new projects to Microsoft Agent Framework.
     </p>
 
-    <h3>3. Semantic Kernel</h3>
+    <h3>3. Microsoft Agent Framework</h3>
     <p>
-      <a href="https://learn.microsoft.com/en-us/semantic-kernel/overview/">Semantic Kernel</a>
-      suits teams already building in C#, Python, or Java, especially when agents need to call
-      existing application services through plugins. Its Agent Framework adds agent patterns
-      without requiring a separate graph-first architecture.
+      <a href="https://learn.microsoft.com/en-us/agent-framework/">Microsoft Agent Framework</a>
+      is the supported successor to AutoGen and Semantic Kernel. Its Python and .NET SDKs cover
+      agents, sessions, tools, middleware, and multi-agent workflows, with a Go SDK in public
+      preview. It supports several model providers and can run in your application or connect to
+      managed agent services.
     </p>
 
     <h3>4. n8n</h3>
@@ -178,16 +178,16 @@ const structuredData = {
           </tr>
           <tr>
             <td>AutoGen</td>
-            <td>Python</td>
+            <td>Python; .NET through Core</td>
             <td>Multiple model clients</td>
-            <td>Framework you run; Studio can run locally</td>
-            <td>MIT</td>
+            <td>Maintenance mode; new projects are directed to Agent Framework</td>
+            <td>Code: MIT; docs: CC BY 4.0</td>
           </tr>
           <tr>
-            <td>Semantic Kernel</td>
-            <td>C#, Python, Java</td>
-            <td>Multiple connectors</td>
-            <td>SDK runs in your application</td>
+            <td>Microsoft Agent Framework</td>
+            <td>Python and .NET; Go in public preview</td>
+            <td>Multiple providers</td>
+            <td>SDK in your application; managed integrations are optional</td>
             <td>MIT</td>
           </tr>
           <tr>
@@ -265,8 +265,8 @@ const structuredData = {
     <ul>
       <li><strong>Choose LangGraph</strong> for explicit, durable, stateful control flow.</li>
       <li><strong>Choose CrewAI</strong> when roles, tasks, crews, and flows fit the domain.</li>
-      <li><strong>Choose AutoGen</strong> for conversational and event-driven agent systems in Python.</li>
-      <li><strong>Choose Semantic Kernel</strong> for C#, Python, or Java application integration.</li>
+      <li><strong>Keep AutoGen</strong> when you maintain an existing AutoGen system.</li>
+      <li><strong>Choose Microsoft Agent Framework</strong> for its supported agent and workflow SDK.</li>
       <li><strong>Choose n8n</strong> for visual automation across many external services.</li>
       <li><strong>Choose CommonSwarm</strong> for cross-run coordination, not agent execution.</li>
     </ul>
@@ -278,4 +278,3 @@ const structuredData = {
     </p>
   </section>
 </SeoPage>
-

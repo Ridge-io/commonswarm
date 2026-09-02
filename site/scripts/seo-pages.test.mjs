@@ -2,6 +2,7 @@ import assert from "node:assert/strict";
 import fs from "node:fs";
 import path from "node:path";
 import test from "node:test";
+import { INSTALL_CMD_PINNED } from "../src/lib/release.ts";
 
 const ROOT = path.resolve(import.meta.dirname, "..");
 
@@ -68,7 +69,12 @@ test("SEO pages emit exact metadata, canonicals, OpenGraph, and structured data"
     if (page.schema === "ItemList") {
       assert.equal(json.numberOfItems, 6);
       assert.equal(json.itemListElement.length, 6);
+    } else {
+      assert.equal(json.datePublished, "2026-09-02");
+      assert.equal(json.dateModified, "2026-09-02");
     }
+
+    assert.doesNotMatch(html, /<!--/, `${page.route} ships an HTML comment`);
   }
 });
 
@@ -84,7 +90,11 @@ test("every SEO page keeps the category boundary and links the full cluster", ()
     assert.match(article, /https:\/\/github\.com\/Ridge-io\/commonswarm/);
     assert.match(article, /<code>cswarm<\/code>/);
     assert.match(article, /joins by pasting one generated prompt/);
-    assert.match(article, /Free for 10 workspaces, no card/);
+    assert.match(article, /Open free tier/);
+    assert.doesNotMatch(
+      article,
+      /invite[- ]only|waiting list|waitlist|no web UI|Free for \d+ workspaces|no card/i,
+    );
     assert.doesNotMatch(article, /—|&mdash;|&#8212;/);
     assert.equal((article.match(/<h1/g) ?? []).length, 1);
     assert.match(html, /<nav class="ft__col" aria-label="Guides"[^>]*>/);
@@ -96,12 +106,37 @@ test("every SEO page keeps the category boundary and links the full cluster", ()
   }
 });
 
-test("the generated sitemap includes every SEO route", () => {
-  const index = fs.readFileSync(path.join(ROOT, "dist", "sitemap-index.xml"), "utf8");
-  const sitemap = fs.readFileSync(path.join(ROOT, "dist", "sitemap-0.xml"), "utf8");
+test("comparison claims reflect the supported Microsoft framework", () => {
+  for (const route of ["/alternatives/langgraph", "/alternatives/crewai"]) {
+    const article = attribute(builtHtml(route), /(<article class="seo-page">[\s\S]+<\/article>)/);
 
-  assert.match(index, /https:\/\/commonswarm\.com\/sitemap-0\.xml/);
+    assert.match(article, /Microsoft Agent Framework/);
+    assert.match(article, /keeps\s+AutoGen\s+in\s+maintenance mode/i);
+    assert.doesNotMatch(article, /Choose Semantic Kernel/);
+  }
+});
+
+test("the Claude guide derives its release pin and shows the credential-file path", () => {
+  const route = "/guides/claude-code-subagents";
+  const html = builtHtml(route);
+  const article = attribute(html, /(<article class="seo-page">[\s\S]+<\/article>)/);
+  const source = fs.readFileSync(
+    path.join(ROOT, "src", "pages", "guides", "claude-code-subagents.astro"),
+    "utf8",
+  );
+
+  assert.ok(article.includes(INSTALL_CMD_PINNED));
+  assert.match(article, /--agent-token-file/);
+  assert.doesNotMatch(article, /--agent-token-stdin/);
+  assert.match(source, /import \{ INSTALL_CMD_PINNED \} from "\.\.\/\.\.\/lib\/release\.ts"/);
+  assert.doesNotMatch(source, /\b0\.\d+\.\d+\b/);
+});
+
+test("the generated sitemap includes every SEO route", () => {
+  const sitemap = fs.readFileSync(path.join(ROOT, "dist", "sitemap.xml"), "utf8");
+
+  assert.match(sitemap, /<loc>https:\/\/commonswarm\.com\/<\/loc>/);
   for (const page of PAGES) {
-    assert.match(sitemap, new RegExp(`https://commonswarm\\.com${page.route}/`));
+    assert.match(sitemap, new RegExp(`<loc>https://commonswarm\\.com${page.route}/</loc>`));
   }
 });

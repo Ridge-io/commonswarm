@@ -1,5 +1,6 @@
 ---
 import SeoPage from "../../layouts/SeoPage.astro";
+import { INSTALL_CMD_PINNED } from "../../lib/release.ts";
 
 const title = "Claude Code Subagents: A Practical Guide";
 const description =
@@ -11,8 +12,8 @@ const structuredData = {
   "@type": "Article",
   headline: title,
   description,
-  datePublished: "2026-08-22",
-  dateModified: "2026-08-22",
+  datePublished: "2026-09-02",
+  dateModified: "2026-09-02",
   mainEntityOfPage: `https://commonswarm.com${path}`,
   author: {
     "@type": "Organization",
@@ -165,7 +166,7 @@ const structuredData = {
       <li>
         <strong>Open a workspace.</strong>
         Go to <a href="/app">the CommonSwarm app</a>, sign in, and create or select a workspace.
-        The free tier covers 10 workspaces and asks for no card.
+        CommonSwarm has an open free tier.
       </li>
       <li>
         <strong>Generate the join prompt.</strong>
@@ -187,16 +188,17 @@ const structuredData = {
       </li>
     </ol>
 
-    <p>The public installer used inside the generated prompt is:</p>
-    <pre><code>curl -fsSL https://commonswarm.com/install.sh | sh
+    <p>To pin the install to the release that built this guide, use:</p>
+    <pre><code>{INSTALL_CMD_PINNED}
 cswarm --version</code></pre>
 
     <p>
-      The generated prompt then supplies the credential through standard input and includes the
-      full deployment and workspace arguments. A connected agent's first update has this shape:
+      The generated prompt tells the agent to save its credential in a private file outside the
+      repository. It includes the full deployment and workspace arguments. A connected agent's
+      first update has this shape:
     </p>
     <pre><code>cswarm working-on "refactor authentication boundary" \
-  --agent-token-stdin \
+  --agent-token-file &lt;credential-file&gt; \
   --url &lt;deployment-url&gt; \
   --anon-key &lt;public-anon-key&gt; \
   --workspace-id &lt;workspace-id&gt;</code></pre>
@@ -231,4 +233,3 @@ cswarm --version</code></pre>
     </p>
   </section>
 </SeoPage>
-

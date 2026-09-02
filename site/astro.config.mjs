@@ -1,10 +1,29 @@
 // @ts-check
+import { writeFile } from "node:fs/promises";
 import { defineConfig } from "astro/config";
-import sitemap from "@astrojs/sitemap";
 
-// Static output on purpose. The site has no server-side behaviour — the one interactive
-// piece is a client-side illustration that makes no network calls — so a static build is
-// the fastest thing to serve and the cheapest thing to host.
+const SITE_ORIGIN = "https://commonswarm.com";
+
+/** @type {import("astro").Astro.Integration} */
+const sitemap = {
+  name: "commonswarm-sitemap",
+  hooks: {
+    "astro:build:done": async ({ pages, dir }) => {
+      const urls = pages
+        .map(({ pathname }) => new URL(pathname, SITE_ORIGIN).href)
+        .sort()
+        .map((url) => `  <url><loc>${url}</loc></url>`)
+        .join("\n");
+      const xml =
+        `<?xml version="1.0" encoding="UTF-8"?>\n` +
+        `<urlset xmlns="http://www.sitemaps.org/schemas/sitemap/0.9">\n${urls}\n</urlset>\n`;
+      await writeFile(new URL("sitemap.xml", dir), xml, "utf8");
+    },
+  },
+};
+
+// Static output on purpose. Interactive account and workspace behaviour runs in the browser
+// against the hosted API, so the site does not need an Astro server runtime.
 //
 // `site` is required for canonical URLs and the OG tags in Base.astro to resolve to
 // absolute URLs. It is the real, live domain: commonswarm.com serves this site through
@@ -29,12 +48,12 @@ export default defineConfig({
   // it is a REAL, UNRELATED SHIPPING PRODUCT (a self-hosted Docker Swarm PaaS) whose
   // /install.sh returns HTTP 200 and runs as root. The hero's copy button was handing readers
   // a command that would root-install a stranger's software. Verified live before this fix.
-  // NO DOMAIN IS DECIDED. .invalid is reserved by RFC 2606 and can never resolve, which is the
-  // point: a placeholder must not be a real host. Do NOT put coswarm.dev here -- it is a live,
-  // unrelated product whose /install.sh returns 200 and runs as root.
-  site: "https://commonswarm.com",
+  // The superseded line "NO DOMAIN IS DECIDED" is dead. commonswarm.com is the live public
+  // domain. Do NOT put coswarm.dev here -- it is a live, unrelated product whose /install.sh
+  // returns 200 and runs as root.
+  site: SITE_ORIGIN,
   output: "static",
-  integrations: [sitemap()],
+  integrations: [sitemap],
   build: {
     inlineStylesheets: "auto",
   },
