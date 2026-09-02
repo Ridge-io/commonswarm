@@ -31310,10 +31310,12 @@ var AcpHostError = class extends Error {
   }
 };
 var AcpProtocolError = class extends AcpHostError {
-  constructor(message, code = "protocol_error") {
+  constructor(message, code = "protocol_error", peerError = null) {
     super(code, message);
+    this.peerError = peerError;
     this.name = "AcpProtocolError";
   }
+  peerError;
 };
 var AcpTimeoutError = class extends AcpHostError {
   constructor(message) {
@@ -31370,14 +31372,16 @@ var AcpVersionBelowFloorError = class extends AcpVersionError {
   actual;
 };
 var AcpPermissionCanaryError = class extends AcpHostError {
-  constructor(message, reasonCode = null, minimumRequiredVersion = null) {
+  constructor(message, reasonCode = null, minimumRequiredVersion = null, peerError = null) {
     super("permission_canary_failed", message);
     this.reasonCode = reasonCode;
     this.minimumRequiredVersion = minimumRequiredVersion;
+    this.peerError = peerError;
     this.name = "AcpPermissionCanaryError";
   }
   reasonCode;
   minimumRequiredVersion;
+  peerError;
 };
 var AcpPromptsBlockedError = class extends AcpHostError {
   constructor() {
@@ -31657,7 +31661,11 @@ var AcpTransport = class extends import_node_events.EventEmitter {
     if ("error" in rec && rec.error !== void 0) {
       const errObj = rec.error;
       const message = errObj && typeof errObj.message === "string" ? errObj.message : `RPC error for ${pending.method}`;
-      pending.reject(new AcpProtocolError(message, "rpc_error"));
+      const peerError = errObj && typeof errObj.code === "number" && Number.isInteger(errObj.code) ? {
+        code: errObj.code,
+        ...Object.prototype.hasOwnProperty.call(errObj, "data") ? { data: errObj.data } : {}
+      } : null;
+      pending.reject(new AcpProtocolError(message, "rpc_error", peerError));
       return;
     }
     pending.resolve(rec.result);
@@ -31847,7 +31855,9 @@ var AcpHostSession = class _AcpHostSession {
     const detail = last?.reason ?? "permission-boundary canary failed: need host reject + correlated terminal tool status";
     throw new AcpPermissionCanaryError(
       total === 1 ? detail : `${detail} (failed ${total} attempts)`,
-      last?.reasonCode ?? null
+      last?.reasonCode ?? null,
+      null,
+      last?.peerError ?? null
     );
   }
   /** Test/helper: force-enable prompts without canary (never used by production open path). */
@@ -31893,7 +31903,8 @@ var AcpHostSession = class _AcpHostSession {
         sawPermissionRequest: this.canaryState.sawPermissionRequest,
         sawDeniedToolResult: this.canaryState.sawDeniedToolResult,
         reason: err instanceof Error ? err.message : String(err),
-        ...err instanceof AcpHostError ? { reasonCode: err.code } : {}
+        ...err instanceof AcpHostError ? { reasonCode: err.code } : {},
+        ...err instanceof AcpProtocolError && err.peerError ? { peerError: err.peerError } : {}
       };
     }
   }
@@ -35319,10 +35330,15 @@ var import_promises7 = require("node:fs/promises");
 var import_node_os8 = require("node:os");
 var import_node_path13 = require("node:path");
 var CLAUDE_CODE_VERSION_REQUIRED_RE = /\bClaude Code (\d+\.\d+\.\d+) does not support this model; version (\d+\.\d+\.\d+) or newer is required\b/;
-var CLAUDE_AUTH_FAILURE_RE = /\b(?:authentication failed|authentication required|not authenticated|OAuth (?:sign-in|login|token)|keychain\/OAuth|please (?:log|sign) in)\b/i;
+var CLAUDE_AUTH_FAILURE_RE = /\b(?:authentication failed|failed to authenticate|authentication required|not authenticated|OAuth (?:sign-in|login|token)|OAuth session (?:expired|could not be refreshed)|keychain\/OAuth|please (?:log|sign) in)\b/i;
 var CLAUDE_CANARY_TIMEOUT_RE = /^ACP request timed out: session\/prompt(?: \(failed \d+ attempts\))?$/;
-function classifyClaudeCanaryFailure(detail, typedReasonCode) {
+function classifyClaudeCanaryFailure(detail, typedReasonCode, peerError) {
   const recorded = detail?.trim() ?? "";
+  const peerData = peerError?.data;
+  const peerErrorKind = peerData && typeof peerData === "object" && !Array.isArray(peerData) ? peerData.errorKind : void 0;
+  if (typedReasonCode === "claude_canary_auth_failed" || (typedReasonCode === "rpc_error" || typedReasonCode === null || typedReasonCode === void 0) && (peerError?.code === -32e3 || peerErrorKind === "authentication_failed")) {
+    return { code: "claude_canary_auth_failed", minimumRequiredVersion: null };
+  }
   const demanded = CLAUDE_CODE_VERSION_REQUIRED_RE.exec(recorded);
   if (demanded?.[2]) {
     return {
@@ -35332,9 +35348,6 @@ function classifyClaudeCanaryFailure(detail, typedReasonCode) {
   }
   if (typedReasonCode === "claude_canary_timeout" || typedReasonCode === "timeout" || (typedReasonCode === null || typedReasonCode === void 0) && CLAUDE_CANARY_TIMEOUT_RE.test(recorded)) {
     return { code: "claude_canary_timeout", minimumRequiredVersion: null };
-  }
-  if (typedReasonCode === "claude_canary_auth_failed") {
-    return { code: "claude_canary_auth_failed", minimumRequiredVersion: null };
   }
   if (typedReasonCode === "claude_bridge_version_required") {
     return {
@@ -35518,7 +35531,8 @@ var ClaudeListenerModel = class {
     if (canaryError instanceof AcpPermissionCanaryError) {
       const shape = classifyClaudeCanaryFailure(
         canaryError.message,
-        canaryError.reasonCode
+        canaryError.reasonCode,
+        canaryError.peerError
       );
       throw new AcpPermissionCanaryError(
         canaryError.message,
@@ -41822,8 +41836,8 @@ var ACCEPTED_AGENT_CREDENTIAL_MESSAGES = [
   AGENT_CREDENTIAL_MESSAGE_D088
 ];
 function packageVersion() {
-  if ("0.1.48".length > 0) {
-    return "0.1.48";
+  if ("0.1.49".length > 0) {
+    return "0.1.49";
   }
   try {
     const value = JSON.parse(
@@ -45317,7 +45331,7 @@ function listenerFailureMessage(code, provider, detail, reasonCode, minimumRequi
         return `${ran}. ${response}. Next: run claude -p and check for session-limit text, check host load, then retry`;
       }
       if (shape.code === "claude_canary_auth_failed") {
-        return `${ran}. ${response}. Next: confirm Claude Code keychain/OAuth sign-in, then retry`;
+        return `${ran}. ${response}. Next: as the operator, sign in with claude auth login on this host (or start claude interactively and complete the prompt), then run cswarm listen start again. Every Claude-provider listener on this host shares that session`;
       }
       return `${ran}. ${response}. The cause was not determined. Next: inspect the quoted bridge response and local worker stderr, then retry only after the cause is known or the failure appears transient`;
     }
