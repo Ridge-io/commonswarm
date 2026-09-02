@@ -37,7 +37,10 @@ import type {
   CredentialRecord,
   CredentialStore,
 } from "../../src/cloud/storage.js";
-import { agentSignalPendingStore } from "../../src/cloud/storage.js";
+import {
+  agentSignalPendingStore,
+  credentialStore,
+} from "../../src/cloud/storage.js";
 
 const WORKSPACE = "aaaaaaaa-aaaa-4aaa-8aaa-aaaaaaaaaaaa";
 const USER = "11111111-1111-4111-8111-111111111111";
@@ -696,6 +699,109 @@ async function runCli(
   return { code, stdout, stderr };
 }
 
+test("mixed-auth signal failures name person and agent recovery paths", async () => {
+  const home = await mkdtemp(join(tmpdir(), "cswarm-signal-auth-copy-"));
+  const server = createServer((_request, response) => {
+    response.writeHead(400, { "content-type": "application/json" });
+    response.end(JSON.stringify({
+      code: "refresh_token_not_found",
+      msg: "Invalid Refresh Token",
+    }));
+  });
+  await new Promise<void>((resolve, reject) => {
+    server.once("error", reject);
+    server.listen(0, "127.0.0.1", resolve);
+  });
+  try {
+    const address = server.address();
+    assert.ok(address && typeof address === "object");
+    const url = `http://127.0.0.1:${address.port}`;
+    const common = [
+      "note",
+      "auth copy probe",
+      "--url",
+      url,
+      "--anon-key",
+      "anon",
+      "--workspace-id",
+      WORKSPACE,
+      "--force-file-store",
+    ];
+    const environment = {
+      HOME: home,
+      SWARM_ALLOW_INSECURE_STORE: "1",
+    };
+
+    const missing = await runCli(common, "", environment);
+    assert.equal(missing.code, 1);
+    assert.equal(missing.stdout, "");
+    assert.equal(
+      missing.stderr.trimEnd().split("\n").at(-1),
+      "cswarm: not signed in. If you are a person, run cswarm login. If you are an agent, pass --agent-token-file <path to the credential CommonSwarm minted for you> (or --agent-token-stdin).",
+    );
+
+    const status = await runCli([
+      "status",
+      "--url",
+      url,
+      "--anon-key",
+      "anon",
+      "--workspace-id",
+      WORKSPACE,
+      "--force-file-store",
+    ], "", environment);
+    assert.equal(status.code, 1);
+    assert.equal(
+      status.stderr.trimEnd().split("\n").at(-1),
+      "cswarm: not logged in; run cswarm login",
+      "a person-only command keeps the existing human-session message",
+    );
+
+    const stored = await credentialStore({
+      target: cloudTarget(url, "anon"),
+      stateDirectory: join(home, ".cswarm", "credentials.d"),
+      forceFile: true,
+      platform: "linux",
+      warn: () => undefined,
+    });
+    await stored.write({
+      version: 1,
+      refreshToken: "stale-refresh-token",
+      generation: 0,
+      deviceId: "77777777-7777-4777-8777-777777777777",
+      userId: USER,
+    });
+    const stale = await runCli(common, "", environment);
+    assert.equal(stale.code, 1);
+    assert.equal(stale.stdout, "");
+    assert.equal(
+      stale.stderr.trimEnd().split("\n").at(-1),
+      "cswarm: could not refresh your session. If you are a person, run cswarm login to sign in again. If you are an agent, pass --agent-token-file <path to the credential CommonSwarm minted for you> (or --agent-token-stdin).",
+    );
+
+    const login = await runCli(
+      ["login", "--agent-token-file", join(home, "agent.json")],
+      "",
+      environment,
+    );
+    assert.equal(login.code, 1);
+    assert.equal(login.stdout, "");
+    const loginError = login.stderr.split("\n").find((line) =>
+      line.startsWith("cswarm:")
+    );
+    assert.equal(
+      loginError,
+      "cswarm: unknown option: --agent-token-file",
+      "cswarm login remains a person-only browser sign-in",
+    );
+  } finally {
+    await new Promise<void>((resolve, reject) => {
+      server.close((error) => error ? reject(error) : resolve());
+    });
+    await rm(home, { recursive: true, force: true });
+  }
+});
+
 test("human-readable signal post states permanence and tenancy while its row owns the horizon", async () => {
   const postedSignal = signal({
     until: new Date(Date.now() + 3_600_000).toISOString(),
@@ -1078,7 +1184,10 @@ test("agent credential stdin accepts a closed mint artifact and degrades loudly"
       agentArtifact(TOKEN, { extra: true }),
     );
     assert.equal(malformed.code, 1);
-    assert.match(malformed.stderr, /agent credential JSON is malformed/);
+    assert.match(malformed.stderr, /\[agent_credential_fields_invalid\]/);
+    assert.match(malformed.stderr, /has 1 unrecognized field/);
+    assert.match(malformed.stderr, /copy the minted JSON line again/);
+    assert.doesNotMatch(malformed.stderr, new RegExp(TOKEN));
     assert.doesNotMatch(malformed.stderr, /request failed before a response/);
 
     const unavailable = await runCli(base, agentArtifact(), {

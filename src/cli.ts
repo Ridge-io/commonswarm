@@ -12,6 +12,7 @@ import {
   login,
   logout,
   logoutMessage,
+  HumanSessionError,
   refreshedCredential,
   type RefreshedCredential,
 } from "./cloud/auth.js";
@@ -87,6 +88,11 @@ import {
   agentCredentialStore,
   credentialLineageKey,
 } from "./cloud/agent-credential.js";
+import {
+  AGENT_CREDENTIAL_MESSAGE,
+  parseAgentCredentialInput,
+  type AgentCredentialInput,
+} from "./cloud/agent-credential-input.js";
 import {
   AgentCredentialSession,
   describeMintRenewal,
@@ -325,24 +331,6 @@ const BOOLEAN_FLAGS = new Set([
 
 const UUID_RE =
   /^[0-9a-f]{8}-[0-9a-f]{4}-[1-8][0-9a-f]{3}-[89ab][0-9a-f]{3}-[0-9a-f]{12}$/i;
-/* The credential artifact's `message` is validated byte-for-byte below, which makes it a PROTOCOL
- * CONSTANT rather than copy: a site minting a different spelling is unreadable by every cswarm
- * already installed. Measured against the shipped v0.1.15 binary, 2026-08-12.
- *
- * D-088. The current wording claims the credential is "bound to this task … so the agent's work
- * stays scoped". The run binding and attribution are real; the task scope is not. So the honest
- * spelling is ACCEPTED HERE FIRST, in this release, and the site keeps emitting the current one
- * until enough installs carry this build. Reversing that order trades a soft false claim for a hard
- * break. */
-const AGENT_CREDENTIAL_MESSAGE =
-  "Agent credential minted. It is bound to this task and run so the agent's work stays scoped and attributable.";
-const AGENT_CREDENTIAL_MESSAGE_D088 =
-  "Agent credential minted. It is bound to this run, so the agent's work is attributable to it.";
-const ACCEPTED_AGENT_CREDENTIAL_MESSAGES: readonly string[] = [
-  AGENT_CREDENTIAL_MESSAGE,
-  AGENT_CREDENTIAL_MESSAGE_D088,
-];
-
 // Injected by scripts/build-release.sh via esbuild --define. Absent in dev/test builds,
 // where the package.json read below is correct. A bundled release has no package.json
 // beside it, so without this a release binary reports "unknown" and support cannot ask
@@ -758,16 +746,6 @@ function stream(args: Arguments): StreamRoute {
     : { kind: "workspace" };
 }
 
-interface AgentCredentialInput {
-  token: string;
-  principalId: string | null;
-  tokenId: string | null;
-  runId: string | null;
-  /** Epoch ms, when the artifact stated one. Null for a bare or pre-renewal artifact. */
-  expiresAt: number | null;
-  durable: boolean;
-}
-
 /**
  * `expires_at` is OPTIONAL, and both halves of that matter.
  *
@@ -799,76 +777,6 @@ function agentCredentialArtifact(input: {
   };
 }
 
-function parsedAgentCredential(value: string): AgentCredentialInput {
-  if (!value.startsWith("{")) {
-    assertAgentToken(value);
-    return {
-      token: value,
-      principalId: null,
-      tokenId: null,
-      runId: null,
-      expiresAt: null,
-      durable: false,
-    };
-  }
-  const parsed = JSON.parse(value) as unknown;
-  if (!parsed || typeof parsed !== "object" || Array.isArray(parsed)) {
-    throw new Error("agent credential JSON is malformed");
-  }
-  const artifact = parsed as Record<string, unknown>;
-  // Still a closed key set, still exact — there are now two accepted shapes rather than
-  // one. `expires_at` is the only addition, and an artifact carrying anything else is as
-  // malformed as it ever was.
-  const requiredKeys = [
-    "agent_token",
-    "message",
-    "principal_id",
-    "run_id",
-    "status",
-    "token_id",
-  ];
-  const withExpiry = [...requiredKeys, "expires_at"].sort();
-  const actualKeys = Object.keys(artifact).sort();
-  const shape = actualKeys.length === requiredKeys.length
-    ? requiredKeys
-    : withExpiry;
-  if (
-    actualKeys.length !== shape.length ||
-    !actualKeys.every((key, index) => key === shape[index]) ||
-    !ACCEPTED_AGENT_CREDENTIAL_MESSAGES.includes(artifact.message as string) ||
-    artifact.status !== "accepted" ||
-    typeof artifact.principal_id !== "string" ||
-    !UUID_RE.test(artifact.principal_id) ||
-    typeof artifact.token_id !== "string" ||
-    !UUID_RE.test(artifact.token_id) ||
-    typeof artifact.run_id !== "string" ||
-    !UUID_RE.test(artifact.run_id) ||
-    typeof artifact.agent_token !== "string"
-  ) {
-    throw new Error("agent credential JSON is malformed");
-  }
-  let expiresAt: number | null = null;
-  if (artifact.expires_at !== undefined) {
-    if (typeof artifact.expires_at !== "string") {
-      throw new Error("agent credential JSON is malformed");
-    }
-    const parsedExpiry = Date.parse(artifact.expires_at);
-    if (Number.isNaN(parsedExpiry)) {
-      throw new Error("agent credential JSON is malformed");
-    }
-    expiresAt = parsedExpiry;
-  }
-  assertAgentToken(artifact.agent_token);
-  return {
-    token: artifact.agent_token,
-    principalId: artifact.principal_id.toLowerCase(),
-    tokenId: artifact.token_id.toLowerCase(),
-    runId: artifact.run_id.toLowerCase(),
-    expiresAt,
-    durable: true,
-  };
-}
-
 async function stdinCredential(): Promise<AgentCredentialInput> {
   if (process.stdin.isTTY) {
     throw new Error(
@@ -885,7 +793,7 @@ async function stdinCredential(): Promise<AgentCredentialInput> {
     }
   }
   const credential = value.trim();
-  return parsedAgentCredential(credential);
+  return parseAgentCredentialInput(credential, { kind: "stdin" });
 }
 
 type AgentTokenFileErrorCode =
@@ -936,7 +844,10 @@ async function agentCredential(
         `--agent-token-file does not exist: ${fromFile}`,
       );
     }
-    return parsedAgentCredential(value.trim());
+    return parseAgentCredentialInput(value.trim(), {
+      kind: "file",
+      path: fromFile,
+    });
   }
   if (fromStdin || options.implicitStdin === true) {
     return await stdinCredential();
@@ -1014,6 +925,25 @@ async function humanCredential(
     ...await refreshedCredential(cloud, credentials),
     store: credentials,
   };
+}
+
+/** Add both usable credential paths only on verbs that accept either kind. */
+async function dualAuthHumanCredential(
+  args: Arguments,
+  cloud: CloudTarget,
+): Promise<HumanSession> {
+  try {
+    return await humanCredential(args, cloud);
+  } catch (error) {
+    if (!(error instanceof HumanSessionError)) throw error;
+    const personPath = error.code === "human_session_missing"
+      ? "not signed in. If you are a person, run cswarm login."
+      : "could not refresh your session. If you are a person, run cswarm login to sign in again.";
+    throw new HumanSessionError(
+      error.code,
+      `${personPath} If you are an agent, pass --agent-token-file <path to the credential CommonSwarm minted for you> (or --agent-token-stdin).`,
+    );
+  }
 }
 
 function writeWorkspaceWarning(warning: WorkspaceWarning): void {
@@ -2077,7 +2007,7 @@ async function runTokenRevoke(args: Arguments): Promise<void> {
     2,
   );
   const cloud = await target(args);
-  const human = await humanCredential(args, cloud);
+  const human = await dualAuthHumanCredential(args, cloud);
   const workspace = await workspaceId(args, cloud, human);
   const tokenId = args.required("token-id");
   const response = (
@@ -2462,7 +2392,7 @@ async function commandWorkspaceAndCredential(
       session,
     };
   }
-  const human = await humanCredential(args, cloud);
+  const human = await dualAuthHumanCredential(args, cloud);
   return {
     selectedWorkspace: await workspaceId(args, cloud, human, {
       validateOverride: options.validateHumanWorkspace ?? false,
