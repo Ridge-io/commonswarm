@@ -341,7 +341,7 @@ test("Claude canary failure shapes keep the bridge response and choose only meas
   const versionRequired =
     "Internal error: API Error: 400 Claude Code 2.1.232 does not support this model; version 2.1.251 or newer is required. Run 'claude update'";
   const authFailure =
-    "Authentication failed: Claude Code OAuth token is missing";
+    "Internal error: Failed to authenticate: OAuth session expired and could not be refreshed (failed 2 attempts)";
   const timeout = "ACP request timed out: session/prompt (failed 2 attempts)";
   const unknown = "bridge returned an unfamiliar refusal without a typed cause";
 
@@ -368,10 +368,14 @@ test("Claude canary failure shapes keep the bridge response and choose only meas
     "permission_canary_failed",
     "claude",
     authFailure,
-    "claude_canary_auth_failed",
   );
   assert.match(authMessage, /\[claude_canary_auth_failed\]/);
-  assert.match(authMessage, /keychain\/OAuth sign-in/);
+  assert.match(authMessage, /as the operator, run claude interactively/i);
+  assert.match(authMessage, /or run claude login/i);
+  assert.match(authMessage, /refresh the host's shared Claude Code OAuth session/i);
+  assert.match(authMessage, /then run cswarm listen start again/i);
+  assert.match(authMessage, /Every Claude-provider listener on this host shares that session/i);
+  assert.doesNotMatch(authMessage, /network/i);
   assert.doesNotMatch(authMessage, /update the bridge/);
 
   const timeoutMessage = listenerFailureMessage(

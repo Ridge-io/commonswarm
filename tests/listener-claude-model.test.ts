@@ -46,7 +46,31 @@ test("Claude canary classifier records the API floor and uses typed timeout", ()
     { code: "claude_canary_timeout", minimumRequiredVersion: null },
   );
   assert.deepEqual(
+    classifyClaudeCanaryFailure(
+      "Internal error: Failed to authenticate: OAuth session expired and could not be refreshed (failed 2 attempts)",
+      "rpc_error",
+    ),
+    { code: "claude_canary_auth_failed", minimumRequiredVersion: null },
+  );
+  assert.deepEqual(
+    classifyClaudeCanaryFailure("presentation text changed", "rpc_error", {
+      code: -32603,
+      data: { errorKind: "authentication_failed" },
+    }),
+    { code: "claude_canary_auth_failed", minimumRequiredVersion: null },
+  );
+  assert.deepEqual(
+    classifyClaudeCanaryFailure("presentation text changed", "rpc_error", {
+      code: -32000,
+    }),
+    { code: "claude_canary_auth_failed", minimumRequiredVersion: null },
+  );
+  assert.deepEqual(
     classifyClaudeCanaryFailure("ordinary unknown bridge text", "rpc_error"),
+    { code: "claude_canary_unknown", minimumRequiredVersion: null },
+  );
+  assert.deepEqual(
+    classifyClaudeCanaryFailure("could not be refreshed", "rpc_error"),
     { code: "claude_canary_unknown", minimumRequiredVersion: null },
   );
 });
@@ -284,6 +308,45 @@ test("Claude canary removes a sentinel written before denial and refuses startup
     () => lstat(sentinelPath),
     (error: unknown) => (error as NodeJS.ErrnoException).code === "ENOENT",
   );
+});
+
+test("Claude listener maps retained ACP auth data before rethrowing the canary failure", async () => {
+  const cwd = await mkdtemp(join(tmpdir(), "cswarm-claude-worker-"));
+  let closed = false;
+  const detail = "presentation text without an auth phrase";
+  const open: OpenClaudeSession = async () => ({
+    session: {
+      async enablePromptsAfterCanary() {
+        throw new AcpPermissionCanaryError(detail, "rpc_error", null, {
+          code: -32603,
+          data: { errorKind: "authentication_failed" },
+        });
+      },
+      async prompt() {
+        throw new Error("unreachable");
+      },
+      cancel() {},
+    },
+    child: {},
+    executable: "/opt/claude-agent-acp",
+    args: [],
+    env: {},
+    async close() {
+      closed = true;
+    },
+  } as unknown as ClaudeAcpHandle);
+  const adapter = new ClaudeListenerModel({ cwd, open });
+
+  await assert.rejects(
+    () => adapter.start(),
+    (error: unknown) => {
+      assert.ok(error instanceof AcpPermissionCanaryError);
+      assert.equal(error.message, detail);
+      assert.equal(error.reasonCode, "claude_canary_auth_failed");
+      return true;
+    },
+  );
+  assert.equal(closed, true);
 });
 
 test("Claude close waits for an opening worker and closes it before installation", async () => {

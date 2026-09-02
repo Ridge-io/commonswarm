@@ -175,10 +175,14 @@ test("Claude startup failures give install and bounded diagnostic remedies", () 
   const canary = listenerFailureMessage(
     "permission_canary_failed",
     "claude",
-    "Authentication failed: Claude Code OAuth token is missing",
+    "Internal error: Failed to authenticate: OAuth session expired and could not be refreshed (failed 2 attempts)",
     "claude_canary_auth_failed",
   );
-  assert.match(canary, /keychain\/OAuth/i);
+  assert.match(canary, /run claude interactively/i);
+  assert.match(canary, /claude login/i);
+  assert.match(canary, /cswarm listen start again/i);
+  assert.match(canary, /Every Claude-provider listener on this host shares that session/i);
+  assert.doesNotMatch(canary, /network/i);
   assert.match(canary, /permission canary ran/i);
   assert.match(canary, /no workspace signal prompt was delivered/i);
   const unknownCanary = listenerFailureMessage(
