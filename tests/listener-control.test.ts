@@ -361,6 +361,65 @@ test("lifetime control socket enforces one listener and supports status/stop", a
   await first.close();
 });
 
+test("custom state directories isolate control sockets for one principal", async () => {
+  const leftRoot = await mkdtemp(join(tmpdir(), "cswarm-control-left-"));
+  const rightRoot = await mkdtemp(join(tmpdir(), "cswarm-control-right-"));
+  const identity = {
+    profileId: "profile-isolated-state",
+    workspaceId: randomUUID(),
+    principalId: randomUUID(),
+  };
+  const leftPaths = listenerPaths({
+    ...identity,
+    stateDirectory: leftRoot,
+  });
+  const rightPaths = listenerPaths({
+    ...identity,
+    stateDirectory: rightRoot,
+  });
+  assert.notEqual(leftPaths.socketPath, rightPaths.socketPath);
+  assert.equal(
+    listenerPaths({ ...identity, stateDirectory: leftRoot }).socketPath,
+    leftPaths.socketPath,
+  );
+
+  let leftStops = 0;
+  let rightStops = 0;
+  const leftStatus = {
+    ...statusFor(leftPaths, "ready"),
+    ...identity,
+  };
+  const rightStatus = {
+    ...statusFor(rightPaths, "ready"),
+    ...identity,
+  };
+  const left = await startListenerControlServer({
+    paths: leftPaths,
+    status: () => leftStatus,
+    stop: () => {
+      leftStops += 1;
+    },
+  });
+  let right: Awaited<ReturnType<typeof startListenerControlServer>> | null = null;
+  try {
+    right = await startListenerControlServer({
+      paths: rightPaths,
+      status: () => rightStatus,
+      stop: () => {
+        rightStops += 1;
+      },
+    });
+    assert.deepEqual(await queryListenerControl(leftPaths, "status"), leftStatus);
+    assert.deepEqual(await queryListenerControl(rightPaths, "status"), rightStatus);
+    await queryListenerControl(leftPaths, "stop");
+    assert.equal(leftStops, 1);
+    assert.equal(rightStops, 0);
+  } finally {
+    await right?.close();
+    await left.close();
+  }
+});
+
 test("control socket answers one bounded response to oversized input", async () => {
   const root = await mkdtemp(join(tmpdir(), "cswarm-control-test-"));
   const target = paths(root);
