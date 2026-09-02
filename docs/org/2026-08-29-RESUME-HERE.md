@@ -926,3 +926,22 @@ Lesson for the ritual: a lane whose claim is about a RUNNING listener must inclu
   `~/.local/bin/cswarm --version` and `/opt/homebrew/bin/cswarm --version`.
 - If the npm-global copy is old, run `npm i -g commonswarm@<v>` with the version from the
   other copy. A running listener keeps its old code until it is restarted.
+
+### Addendum 2026-09-02 07:30Z — v0.1.47 is LIVE; the release train is complete
+
+| step | fact |
+|---|---|
+| review | candidate 1 `6cdec9c`: Gemini PASS, Grok FAIL (P2: leftover "does not run agents" on the alternatives pages; P2: Windows default pipe name changed). Candidate 2 `8af1fbd` (L46): Grok PASS + Gemini PASS, both with observed mutations. |
+| main | `b9137bc` merge of release/0.1.47 → `9da97f0` release: v0.1.47 → `295a3c1` npm dist artifacts. Pushed. |
+| GitHub / npm / site | tag `v0.1.47` on `9da97f0`, latest, both assets; `commonswarm@0.1.47`; site deployed — `/download` 0.1.47 ×3 / 0.1.46 ×0; the four SEO routes 200 with the boundary sentence and zero old absolutes; sitemap carries 4 SEO routes; `/app` has zero HTML comments; install.sh 200 / 404 control; start meta intact; no service_role. |
+| host | both binary copies 0.1.47. Listener pid 78767 ready: **`providerExecutable` = the real bridge path, bundled Claude Code 2.1.257, `activityPublishFailures: 0`** — the claim corrected in 0.1.46's notes is now true on a live listener. `listen canary` passed every hop. Notify Monitor restarted. |
+| repo | `git worktree list` = main only; `git branch` = main only. Every lane branch absorbed (checked with `git cherry`); stale workflow diffs saved under `docs/evidence/2026-09-02-cleanup/`. |
+| production | no migration or edge change in 0.1.47 (`supabase/` diff vs 0.1.46 empty). Prod carries migrations through `20260902000003` and edge functions command/read/capability/activity. |
+
+Corrections to this ledger: the addendum at ~08:20Z that attributed the L42 test failure to "reading the real listener's state" was wrong; L46 measured the failing read (different path/instance/pid from the live listener) and found a control-socket-vs-status-file race. Lane L45 (first attempt) never produced a report; L46 superseded it. The addendum at ~05:20Z listing L41/L42/L43 as open is superseded by this one.
+
+Deliberately deferred: the dashboard roster "N unattended" badge (L23 item 1; the roster read has no receipt data — recorded by L38); the true Realtime saturation ceiling (L35 measured 10 frames/s in a short window); a live Windows named-pipe check; re-measuring codex-acp versions between 1.2 and 1.6.
+
+Not established: production end-to-end LIVE panel with a signed-in human viewing a real listener's frames (activity publishes succeed from this listener — `activityPublishFailures: 0` — but no browser session was driven); an old 0.1.45 CLI against a 0.1.47 status file (it still says "malformed"; documented, not fixable in the shipped binary).
+
+Next concrete action for a successor: nothing is queued. The open lanes list is empty. If work resumes, start from the newest spec under `scratchpad/reboot-survival/` (gitignored) or from the deferrals above.
