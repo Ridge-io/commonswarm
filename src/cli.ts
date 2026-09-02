@@ -5220,6 +5220,7 @@ async function runConfiguredListener(options: {
   } | null = null;
   const onVersionNotice = (notice: ProviderVersionNotice) => {
     providerVersionNotice = {
+      ...(providerVersionNotice ?? {}),
       runningVersion: notice.runningVersion,
       lastMeasuredVersion: notice.lastMeasuredVersion,
     };

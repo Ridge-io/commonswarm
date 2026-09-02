@@ -1,3 +1,4 @@
+import { createHash } from "node:crypto";
 import { createServer, createConnection, type Socket } from "node:net";
 import {
   chmod,
@@ -6,7 +7,7 @@ import {
   unlink,
 } from "node:fs/promises";
 import { tmpdir } from "node:os";
-import { isAbsolute, join } from "node:path";
+import { isAbsolute, join, resolve } from "node:path";
 import {
   ensureSecureStateDirectory,
   readSecureJsonFile,
@@ -128,20 +129,26 @@ export function listenerPaths(options: {
   principalId: string;
   stateDirectory?: string;
 }): ListenerPaths {
-  const root = options.stateDirectory ?? defaultListenerStateDirectory();
+  const defaultRoot = defaultListenerStateDirectory();
+  const root = options.stateDirectory ?? defaultRoot;
   if (!isAbsolute(root)) {
     throw new Error("listener state directory must be absolute");
   }
   const key = listenerInstanceKey(options);
   const instanceDirectory = join(root, key);
   const uid = typeof process.getuid === "function" ? process.getuid() : process.pid;
+  // A custom state root must isolate the lifetime socket as well as the files.
+  const stateNamespace = resolve(root) === resolve(defaultRoot)
+    ? ""
+    : `-${createHash("sha256").update(resolve(root)).digest("hex").slice(0, 16)}`;
+  const socketKey = `${key.slice(0, 32)}${stateNamespace}`;
   // Keep the Unix socket below macOS's short sockaddr_un path limit.
   const controlDirectory = process.platform === "win32"
     ? ""
     : join("/tmp", `cswarm-control-${uid}`);
   const socketPath = process.platform === "win32"
-    ? `\\\\.\\pipe\\cswarm-${key}`
-    : join(controlDirectory, `${key.slice(0, 32)}.sock`);
+    ? `\\\\.\\pipe\\cswarm-${socketKey}`
+    : join(controlDirectory, `${socketKey}.sock`);
   return {
     key,
     instanceDirectory,
