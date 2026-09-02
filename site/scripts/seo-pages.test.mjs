@@ -79,7 +79,7 @@ test("SEO pages emit exact metadata, canonicals, OpenGraph, and structured data"
 });
 
 test("every SEO page keeps the category boundary and links the full cluster", () => {
-  const boundary = "It does not run agents, schedule them, or define their control flow";
+  const boundary = "The hosted workspace runs no agents and defines no control flow";
   const routes = PAGES.map((page) => page.route);
 
   for (const page of PAGES) {
@@ -125,7 +125,7 @@ test("the Claude guide derives its release pin and shows the credential-file pat
     "utf8",
   );
 
-  assert.ok(article.includes(INSTALL_CMD_PINNED));
+  assert.ok(article.includes(INSTALL_CMD_PINNED), "install host drifted");
   assert.match(article, /--agent-token-file/);
   assert.doesNotMatch(article, /--agent-token-stdin/);
   assert.match(source, /import \{ INSTALL_CMD_PINNED \} from "\.\.\/\.\.\/lib\/release\.ts"/);
