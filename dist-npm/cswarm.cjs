@@ -163,11 +163,11 @@ function __metadata(metadataKey, metadataValue) {
 }
 function __awaiter(thisArg, _arguments, P, generator) {
   function adopt(value) {
-    return value instanceof P ? value : new P(function(resolve2) {
-      resolve2(value);
+    return value instanceof P ? value : new P(function(resolve3) {
+      resolve3(value);
     });
   }
-  return new (P || (P = Promise))(function(resolve2, reject) {
+  return new (P || (P = Promise))(function(resolve3, reject) {
     function fulfilled(value) {
       try {
         step(generator.next(value));
@@ -183,7 +183,7 @@ function __awaiter(thisArg, _arguments, P, generator) {
       }
     }
     function step(result) {
-      result.done ? resolve2(result.value) : adopt(result.value).then(fulfilled, rejected);
+      result.done ? resolve3(result.value) : adopt(result.value).then(fulfilled, rejected);
     }
     step((generator = generator.apply(thisArg, _arguments || [])).next());
   });
@@ -374,14 +374,14 @@ function __asyncValues(o) {
   }, i);
   function verb(n) {
     i[n] = o[n] && function(v) {
-      return new Promise(function(resolve2, reject) {
-        v = o[n](v), settle(resolve2, reject, v.done, v.value);
+      return new Promise(function(resolve3, reject) {
+        v = o[n](v), settle(resolve3, reject, v.done, v.value);
       });
     };
   }
-  function settle(resolve2, reject, d, v) {
+  function settle(resolve3, reject, d, v) {
     Promise.resolve(v).then(function(v2) {
-      resolve2({ value: v2, done: d });
+      resolve3({ value: v2, done: d });
     }, reject);
   }
 }
@@ -4262,15 +4262,15 @@ var require_RealtimeChannel = __commonJS({
             }
           }
         } else {
-          return new Promise((resolve2) => {
+          return new Promise((resolve3) => {
             var _a2, _b2, _c;
             const push = this.channelAdapter.push(args.type, args, opts.timeout || this.timeout);
             if (args.type === "broadcast" && !((_c = (_b2 = (_a2 = this.params) === null || _a2 === void 0 ? void 0 : _a2.config) === null || _b2 === void 0 ? void 0 : _b2.broadcast) === null || _c === void 0 ? void 0 : _c.ack)) {
-              resolve2("ok");
+              resolve3("ok");
             }
-            push.receive("ok", () => resolve2("ok"));
-            push.receive("error", () => resolve2("error"));
-            push.receive("timeout", () => resolve2("timed out"));
+            push.receive("ok", () => resolve3("ok"));
+            push.receive("error", () => resolve3("error"));
+            push.receive("timeout", () => resolve3("timed out"));
           });
         }
       }
@@ -4295,8 +4295,8 @@ var require_RealtimeChannel = __commonJS({
        * @category Realtime
        */
       async unsubscribe(timeout = this.timeout) {
-        return new Promise((resolve2) => {
-          this.channelAdapter.unsubscribe(timeout).receive("ok", () => resolve2("ok")).receive("timeout", () => resolve2("timed out")).receive("error", () => resolve2("error"));
+        return new Promise((resolve3) => {
+          this.channelAdapter.unsubscribe(timeout).receive("ok", () => resolve3("ok")).receive("timeout", () => resolve3("timed out")).receive("error", () => resolve3("error"));
         });
       }
       /**
@@ -4504,11 +4504,11 @@ var require_socketAdapter = __commonJS({
         this.socket.connect();
       }
       disconnect(callback, code, reason, timeout = 1e4) {
-        return new Promise((resolve2) => {
-          setTimeout(() => resolve2("timeout"), timeout);
+        return new Promise((resolve3) => {
+          setTimeout(() => resolve3("timeout"), timeout);
           this.socket.disconnect(() => {
             callback();
-            resolve2("ok");
+            resolve3("ok");
           }, code, reason);
         });
       }
@@ -13522,7 +13522,7 @@ __export(cli_exports, {
   resolveTurnBudgetOrDefer: () => resolveTurnBudgetOrDefer
 });
 module.exports = __toCommonJS(cli_exports);
-var import_node_crypto21 = require("node:crypto");
+var import_node_crypto22 = require("node:crypto");
 var import_node_child_process9 = require("node:child_process");
 var import_node_fs7 = require("node:fs");
 var import_promises12 = require("node:fs/promises");
@@ -13591,18 +13591,18 @@ var PostgrestError = class extends Error {
   }
 };
 function sleep(ms, signal) {
-  return new Promise((resolve2) => {
+  return new Promise((resolve3) => {
     if (signal === null || signal === void 0 ? void 0 : signal.aborted) {
-      resolve2();
+      resolve3();
       return;
     }
     const id = setTimeout(() => {
       signal === null || signal === void 0 || signal.removeEventListener("abort", onAbort);
-      resolve2();
+      resolve3();
     }, ms);
     function onAbort() {
       clearTimeout(id);
-      resolve2();
+      resolve3();
     }
     signal === null || signal === void 0 || signal.addEventListener("abort", onAbort);
   });
@@ -18040,7 +18040,7 @@ var _getRequestParams = (method, options, parameters, body) => {
   return _objectSpread22(_objectSpread22({}, params), parameters);
 };
 async function _handleRequest(fetcher, method, url, options, parameters, body, namespace) {
-  return new Promise((resolve2, reject) => {
+  return new Promise((resolve3, reject) => {
     fetcher(url, _getRequestParams(method, options, parameters, body)).then((result) => {
       if (!result.ok) throw result;
       if (options === null || options === void 0 ? void 0 : options.noResolveJson) return result;
@@ -18050,7 +18050,7 @@ async function _handleRequest(fetcher, method, url, options, parameters, body, n
         if (!contentType || !contentType.includes("application/json")) return {};
       }
       return result.json();
-    }).then((data) => resolve2(data)).catch((error) => handleError(error, reject, options, namespace));
+    }).then((data) => resolve3(data)).catch((error) => handleError(error, reject, options, namespace));
   });
 }
 function createFetchApi(namespace = "storage") {
@@ -20693,11 +20693,11 @@ var DEFAULT_TRACE_PROPAGATION_OPTIONS = {
 };
 function __awaiter2(thisArg, _arguments, P, generator) {
   function adopt(value) {
-    return value instanceof P ? value : new P(function(resolve2) {
-      resolve2(value);
+    return value instanceof P ? value : new P(function(resolve3) {
+      resolve3(value);
     });
   }
-  return new (P || (P = Promise))(function(resolve2, reject) {
+  return new (P || (P = Promise))(function(resolve3, reject) {
     function fulfilled(value) {
       try {
         step(generator.next(value));
@@ -20713,7 +20713,7 @@ function __awaiter2(thisArg, _arguments, P, generator) {
       }
     }
     function step(result) {
-      result.done ? resolve2(result.value) : adopt(result.value).then(fulfilled, rejected);
+      result.done ? resolve3(result.value) : adopt(result.value).then(fulfilled, rejected);
     }
     step((generator = generator.apply(thisArg, _arguments || [])).next());
   });
@@ -21501,14 +21501,14 @@ function validateCallbackUrl(raw, expectedOrigin, expectedState) {
   return code;
 }
 function listen(server, port) {
-  return new Promise((resolve2, reject) => {
+  return new Promise((resolve3, reject) => {
     const onError = (error) => {
       server.off("listening", onListening);
       reject(error);
     };
     const onListening = () => {
       server.off("error", onError);
-      resolve2();
+      resolve3();
     };
     server.once("error", onError);
     server.once("listening", onListening);
@@ -21517,8 +21517,8 @@ function listen(server, port) {
 }
 function closeServer(server) {
   if (!server.listening) return Promise.resolve();
-  const closed = new Promise((resolve2, reject) => {
-    server.close((error) => error ? reject(error) : resolve2());
+  const closed = new Promise((resolve3, reject) => {
+    server.close((error) => error ? reject(error) : resolve3());
   });
   server.closeAllConnections();
   return closed;
@@ -21526,8 +21526,8 @@ function closeServer(server) {
 async function callbackReceiver(expectedState) {
   let resolveCode;
   let rejectCode;
-  const result = new Promise((resolve2, reject) => {
-    resolveCode = resolve2;
+  const result = new Promise((resolve3, reject) => {
+    resolveCode = resolve3;
     rejectCode = reject;
   });
   let origin = "";
@@ -21612,23 +21612,23 @@ function authClient(target2, storage) {
 async function openExternalBrowser(url) {
   const command2 = process.platform === "darwin" ? { executable: "open", args: [url] } : process.platform === "linux" ? { executable: "xdg-open", args: [url] } : null;
   if (!command2) return false;
-  return await new Promise((resolve2) => {
+  return await new Promise((resolve3) => {
     const child = (0, import_node_child_process.spawn)(command2.executable, command2.args, {
       detached: true,
       stdio: "ignore"
     });
-    child.once("error", () => resolve2(false));
+    child.once("error", () => resolve3(false));
     child.once("spawn", () => {
       child.unref();
-      resolve2(true);
+      resolve3(true);
     });
   });
 }
 function pastedCallback(input, output, origin, state) {
   if (!input) return null;
   let resolveCode;
-  const promise = new Promise((resolve2) => {
-    resolveCode = resolve2;
+  const promise = new Promise((resolve3) => {
+    resolveCode = resolve3;
   });
   let pending = "";
   const onData = (chunk) => {
@@ -21659,14 +21659,14 @@ function pastedCallback(input, output, origin, state) {
 async function waitForCode(receiver, state, input, output, timeoutMs, pasteFallbackDelayMs) {
   const activePastes = [];
   let pasteTimer = null;
-  const paste = input ? new Promise((resolve2) => {
+  const paste = input ? new Promise((resolve3) => {
     pasteTimer = setTimeout(() => {
       output.write(
         "If the browser cannot reach the loopback callback, paste the complete callback URL here:\n"
       );
       const pasted = pastedCallback(input, output, receiver.origin, state);
       if (pasted) activePastes.push(pasted);
-      pasted?.promise.then(resolve2);
+      pasted?.promise.then(resolve3);
     }, pasteFallbackDelayMs);
   }) : null;
   let timer2 = null;
@@ -22394,8 +22394,8 @@ function signalRetryDelayMs(retry, baseMs, random) {
 async function waitForSignalRetry(delayMs, deadline, callerAbort) {
   if (delayMs === 0) return "elapsed";
   let timer2;
-  const elapsed = new Promise((resolve2) => {
-    timer2 = setTimeout(() => resolve2("elapsed"), delayMs);
+  const elapsed = new Promise((resolve3) => {
+    timer2 = setTimeout(() => resolve3("elapsed"), delayMs);
   });
   try {
     const outcome = await raceSignalDeadline(elapsed, deadline, callerAbort);
@@ -22704,12 +22704,12 @@ var ThinCommandClient = class {
     }
     const controller = new AbortController();
     let releaseDeadline;
-    const deadline = new Promise((resolve2) => {
-      releaseDeadline = resolve2;
+    const deadline = new Promise((resolve3) => {
+      releaseDeadline = resolve3;
     });
     let releaseCallerAbort;
-    const callerAbort = new Promise((resolve2) => {
-      releaseCallerAbort = resolve2;
+    const callerAbort = new Promise((resolve3) => {
+      releaseCallerAbort = resolve3;
     });
     let deadlineReached = false;
     const timer2 = setTimeout(() => {
@@ -23582,7 +23582,7 @@ async function deleteSecureJsonFile(path) {
   }
 }
 async function run(executable, args, input, detached = false) {
-  return await new Promise((resolve2, reject) => {
+  return await new Promise((resolve3, reject) => {
     const child = (0, import_node_child_process2.spawn)(executable, args, {
       stdio: ["pipe", "pipe", "pipe"],
       env: process.env,
@@ -23599,7 +23599,7 @@ async function run(executable, args, input, detached = false) {
       stderr += chunk;
     });
     child.on("error", reject);
-    child.on("close", (code) => resolve2({ code: code ?? 1, stdout, stderr }));
+    child.on("close", (code) => resolve3({ code: code ?? 1, stdout, stderr }));
     if (input !== void 0) child.stdin.end(`${input}
 `);
     else child.stdin.end();
@@ -24028,9 +24028,9 @@ var originError = /* @__PURE__ */ Symbol("OriginError");
 var CLOSE = {};
 var Query = class extends Promise {
   constructor(strings, args, handler, canceller, options = {}) {
-    let resolve2, reject;
+    let resolve3, reject;
     super((a, b2) => {
-      resolve2 = a;
+      resolve3 = a;
       reject = b2;
     });
     this.tagged = Array.isArray(strings.raw);
@@ -24041,7 +24041,7 @@ var Query = class extends Promise {
     this.options = options;
     this.state = null;
     this.statement = null;
-    this.resolve = (x) => (this.active = false, resolve2(x));
+    this.resolve = (x) => (this.active = false, resolve3(x));
     this.reject = (x) => (this.active = false, reject(x));
     this.active = false;
     this.cancelled = null;
@@ -24089,12 +24089,12 @@ var Query = class extends Promise {
           if (this.executed && !this.active)
             return { done: true };
           prev && prev();
-          const promise = new Promise((resolve2, reject) => {
+          const promise = new Promise((resolve3, reject) => {
             this.cursorFn = (value) => {
-              resolve2({ value, done: false });
+              resolve3({ value, done: false });
               return new Promise((r) => prev = r);
             };
-            this.resolve = () => (this.active = false, resolve2({ done: true }));
+            this.resolve = () => (this.active = false, resolve3({ done: true }));
             this.reject = (x) => (this.active = false, reject(x));
           });
           this.execute();
@@ -24721,12 +24721,12 @@ function Connection(options, queues = {}, { onopen = noop, onend = noop, onclose
     x.on("drain", drain);
     return x;
   }
-  async function cancel({ pid, secret }, resolve2, reject) {
+  async function cancel({ pid, secret }, resolve3, reject) {
     try {
       cancelMessage = bytes_default().i32(16).i32(80877102).i32(pid).i32(secret).end(16);
       await connect();
       socket.once("error", reject);
-      socket.once("close", resolve2);
+      socket.once("close", resolve3);
     } catch (error2) {
       reject(error2);
     }
@@ -25673,7 +25673,7 @@ function parseEvent(x) {
 // node_modules/postgres/src/large.js
 var import_stream2 = __toESM(require("stream"), 1);
 function largeObject(sql, oid, mode3 = 131072 | 262144) {
-  return new Promise(async (resolve2, reject) => {
+  return new Promise(async (resolve3, reject) => {
     await sql.begin(async (sql2) => {
       let finish;
       !oid && ([{ oid }] = await sql2`select lo_creat(-1) as oid`);
@@ -25699,7 +25699,7 @@ function largeObject(sql, oid, mode3 = 131072 | 262144) {
           ) seek
         `
       };
-      resolve2(lo);
+      resolve3(lo);
       return new Promise(async (r) => finish = r);
       async function readable({
         highWaterMark = 2048 * 8,
@@ -25873,8 +25873,8 @@ function Postgres(a, b2) {
   }
   async function reserve() {
     const queue = queue_default();
-    const c = open6.length ? open6.shift() : await new Promise((resolve2, reject) => {
-      const query = { reserve: resolve2, reject };
+    const c = open6.length ? open6.shift() : await new Promise((resolve3, reject) => {
+      const query = { reserve: resolve3, reject };
       queries.push(query);
       closed.length && connect(closed.shift(), query);
     });
@@ -25911,9 +25911,9 @@ function Postgres(a, b2) {
       let uncaughtError, result;
       name && await sql2`savepoint ${sql2(name)}`;
       try {
-        result = await new Promise((resolve2, reject) => {
+        result = await new Promise((resolve3, reject) => {
           const x = fn2(sql2);
-          Promise.resolve(Array.isArray(x) ? Promise.all(x) : x).then(resolve2, reject);
+          Promise.resolve(Array.isArray(x) ? Promise.all(x) : x).then(resolve3, reject);
         });
         if (uncaughtError)
           throw uncaughtError;
@@ -25970,8 +25970,8 @@ function Postgres(a, b2) {
     return c.execute(query) ? move(c, busy) : move(c, full);
   }
   function cancel(query) {
-    return new Promise((resolve2, reject) => {
-      query.state ? query.active ? connection_default(options).cancel(query.state, resolve2, reject) : query.cancelled = { resolve: resolve2, reject } : (queries.remove(query), query.cancelled = true, query.reject(Errors.generic("57014", "canceling statement due to user request")), resolve2());
+    return new Promise((resolve3, reject) => {
+      query.state ? query.active ? connection_default(options).cancel(query.state, resolve3, reject) : query.cancelled = { resolve: resolve3, reject } : (queries.remove(query), query.cancelled = true, query.reject(Errors.generic("57014", "canceling statement due to user request")), resolve3());
     });
   }
   async function end({ timeout = null } = {}) {
@@ -25990,11 +25990,11 @@ function Postgres(a, b2) {
   async function close() {
     await Promise.all(connections.map((c) => c.end()));
   }
-  async function destroy(resolve2) {
+  async function destroy(resolve3) {
     await Promise.all(connections.map((c) => c.terminate()));
     while (queries.length)
       queries.shift().reject(Errors.connection("CONNECTION_DESTROYED", options));
-    resolve2();
+    resolve3();
   }
   function connect(c, query) {
     move(c, connecting);
@@ -29127,8 +29127,8 @@ async function fetchSignalRead(fetcher, input, init, timeoutMs = SIGNAL_READ_TIM
   const signal = init.signal ? AbortSignal.any([init.signal, deadlineController.signal]) : deadlineController.signal;
   let onAbort = () => {
   };
-  const aborted = new Promise((resolve2) => {
-    onAbort = () => resolve2("timeout");
+  const aborted = new Promise((resolve3) => {
+    onAbort = () => resolve3("timeout");
     if (signal.aborted) {
       onAbort();
     } else {
@@ -29185,7 +29185,7 @@ async function fetchSignalRead(fetcher, input, init, timeoutMs = SIGNAL_READ_TIM
 }
 var READ_RETRY_ATTEMPTS = 2;
 var READ_RETRY_BASE_MS = 250;
-async function fetchSignalReadRetrying(fetcher, input, init, timeoutMs = SIGNAL_READ_TIMEOUT_MS, sleep2 = (ms) => new Promise((resolve2) => setTimeout(resolve2, ms))) {
+async function fetchSignalReadRetrying(fetcher, input, init, timeoutMs = SIGNAL_READ_TIMEOUT_MS, sleep2 = (ms) => new Promise((resolve3) => setTimeout(resolve3, ms))) {
   let result = await fetchSignalRead(fetcher, input, init, timeoutMs);
   for (let attempt = 1; attempt <= READ_RETRY_ATTEMPTS; attempt += 1) {
     if (result === null || result.response.ok) return result;
@@ -29507,7 +29507,7 @@ function nextWaitSleepMs(nowMs, deadlineMs, pollMs = SIGNAL_WAIT_POLL_MS) {
 }
 async function pollForSignals(options) {
   const now = options.now ?? Date.now;
-  const sleep2 = options.sleep ?? ((ms) => new Promise((resolve2) => setTimeout(resolve2, ms)));
+  const sleep2 = options.sleep ?? ((ms) => new Promise((resolve3) => setTimeout(resolve3, ms)));
   const pollMs = options.pollMs ?? SIGNAL_WAIT_POLL_MS;
   const probe = async () => {
     try {
@@ -29885,14 +29885,14 @@ async function runInboxFollow(options) {
     let timer2;
     let onAbort;
     try {
-      await new Promise((resolve2) => {
+      await new Promise((resolve3) => {
         let settled = false;
         const finish = () => {
           if (settled) return;
           settled = true;
           if (timer2 !== void 0) clearTimeout(timer2);
           if (onAbort && abort) abort.removeEventListener("abort", onAbort);
-          resolve2();
+          resolve3();
         };
         if (abort) {
           if (abort.aborted) {
@@ -30179,7 +30179,7 @@ function notifyWriteError(error) {
   return error.code === "EPIPE" ? new NotifyStdoutClosedError() : error;
 }
 async function writeArrivalMonitorLine(line, stream2 = process.stdout) {
-  await new Promise((resolve2, reject) => {
+  await new Promise((resolve3, reject) => {
     let settled = false;
     const finish = (error) => {
       if (settled) return;
@@ -30189,7 +30189,7 @@ async function writeArrivalMonitorLine(line, stream2 = process.stdout) {
         reject(notifyWriteError(error));
       } else {
         stream2.off("error", onError);
-        resolve2();
+        resolve3();
       }
     };
     const onError = (error) => finish(error);
@@ -30224,15 +30224,15 @@ async function runArrivalWatch(options) {
       await options.sleep(ms);
       return;
     }
-    await new Promise((resolve2) => {
+    await new Promise((resolve3) => {
       let timer2;
       const finish = () => {
         if (timer2 !== void 0) clearTimeout(timer2);
         options.signal?.removeEventListener("abort", finish);
-        resolve2();
+        resolve3();
       };
       if (cancelled() || ms <= 0) {
-        resolve2();
+        resolve3();
         return;
       }
       options.signal?.addEventListener("abort", finish, { once: true });
@@ -31296,12 +31296,12 @@ var AcpTransport = class extends import_node_events.EventEmitter {
       method,
       ...params !== void 0 ? { params } : {}
     };
-    return new Promise((resolve2, reject) => {
+    return new Promise((resolve3, reject) => {
       const timer2 = setTimeout(() => {
         this.pending.delete(key2);
         reject(new AcpTimeoutError(`ACP request timed out: ${method}`));
       }, timeoutMs ?? this.requestTimeoutMs);
-      this.pending.set(key2, { resolve: resolve2, reject, timer: timer2, method });
+      this.pending.set(key2, { resolve: resolve3, reject, timer: timer2, method });
       try {
         this.writeFrame(frame);
       } catch (err) {
@@ -32306,7 +32306,7 @@ async function assertOpenCodeVersionFloor(executable, options) {
   const lastMeasuredVersion = options?.lastMeasuredVersion ?? OPENCODE_LAST_MEASURED_VERSION;
   const timeoutMs = options?.timeoutMs ?? ACP_VERSION_CHECK_TIMEOUT_MS;
   const env = sanitizeChildEnv(options?.env ?? process.env);
-  const stdout = await new Promise((resolve2, reject) => {
+  const stdout = await new Promise((resolve3, reject) => {
     (0, import_node_child_process3.execFile)(
       executable,
       ["--version"],
@@ -32320,7 +32320,7 @@ async function assertOpenCodeVersionFloor(executable, options) {
           );
           return;
         }
-        resolve2(out);
+        resolve3(out);
       }
     );
   });
@@ -32505,7 +32505,7 @@ async function assertOpenCodeEffectiveConfig(options) {
 `,
       { mode: 384 }
     );
-    const stdout = await new Promise((resolve2, reject) => {
+    const stdout = await new Promise((resolve3, reject) => {
       (0, import_node_child_process3.execFile)(
         options.executable,
         ["debug", "config", "--pure"],
@@ -32525,7 +32525,7 @@ async function assertOpenCodeEffectiveConfig(options) {
             );
             return;
           }
-          resolve2(out);
+          resolve3(out);
         }
       );
     });
@@ -32644,11 +32644,11 @@ function waitForChildExit(child, timeoutMs) {
   if (child.exitCode !== null || child.signalCode !== null) {
     return Promise.resolve();
   }
-  return new Promise((resolve2) => {
-    const timer2 = setTimeout(() => resolve2(), timeoutMs);
+  return new Promise((resolve3) => {
+    const timer2 = setTimeout(() => resolve3(), timeoutMs);
     child.once("exit", () => {
       clearTimeout(timer2);
-      resolve2();
+      resolve3();
     });
   });
 }
@@ -32949,7 +32949,7 @@ async function readClaudeVersionOutput(executable, options) {
   const timeoutMs = options?.timeoutMs ?? ACP_VERSION_CHECK_TIMEOUT_MS;
   const env = options?.env ?? sanitizeChildEnv(process.env);
   const launch = buildClaudeLaunch(executable, ["--version"], options?.platform);
-  return await new Promise((resolve2, reject) => {
+  return await new Promise((resolve3, reject) => {
     (0, import_node_child_process4.execFile)(
       launch.command,
       launch.args,
@@ -32963,7 +32963,7 @@ async function readClaudeVersionOutput(executable, options) {
           );
           return;
         }
-        resolve2(out);
+        resolve3(out);
       }
     );
   });
@@ -32998,11 +32998,11 @@ function waitForChildExit2(child, timeoutMs) {
   if (child.exitCode !== null || child.signalCode !== null) {
     return Promise.resolve();
   }
-  return new Promise((resolve2) => {
-    const timer2 = setTimeout(resolve2, timeoutMs);
+  return new Promise((resolve3) => {
+    const timer2 = setTimeout(resolve3, timeoutMs);
     child.once("exit", () => {
       clearTimeout(timer2);
-      resolve2();
+      resolve3();
     });
   });
 }
@@ -33322,7 +33322,7 @@ async function assertCodexVersionFloor(executable, options) {
   const timeoutMs = options?.timeoutMs ?? ACP_VERSION_CHECK_TIMEOUT_MS;
   const env = options?.env ?? sanitizeChildEnv(process.env);
   const launch = buildCodexLaunch(executable, ["--version"], options?.platform);
-  const stdout = await new Promise((resolve2, reject) => {
+  const stdout = await new Promise((resolve3, reject) => {
     (0, import_node_child_process5.execFile)(
       launch.command,
       launch.args,
@@ -33336,7 +33336,7 @@ async function assertCodexVersionFloor(executable, options) {
           );
           return;
         }
-        resolve2(out);
+        resolve3(out);
       }
     );
   });
@@ -33376,11 +33376,11 @@ function waitForChildExit3(child, timeoutMs) {
   if (child.exitCode !== null || child.signalCode !== null) {
     return Promise.resolve();
   }
-  return new Promise((resolve2) => {
-    const timer2 = setTimeout(resolve2, timeoutMs);
+  return new Promise((resolve3) => {
+    const timer2 = setTimeout(resolve3, timeoutMs);
     child.once("exit", () => {
       clearTimeout(timer2);
-      resolve2();
+      resolve3();
     });
   });
 }
@@ -34373,7 +34373,7 @@ async function assertGrokVersionFloor(executable, options) {
   const minimumVersion = options?.minimumVersion ?? GROK_MIN_VERSION;
   const lastMeasuredVersion = options?.lastMeasuredVersion ?? GROK_LAST_MEASURED_VERSION;
   const timeoutMs = options?.timeoutMs ?? ACP_VERSION_CHECK_TIMEOUT_MS;
-  const stdout = await new Promise((resolve2, reject) => {
+  const stdout = await new Promise((resolve3, reject) => {
     (0, import_node_child_process6.execFile)(
       executable,
       ["--version"],
@@ -34387,7 +34387,7 @@ async function assertGrokVersionFloor(executable, options) {
           );
           return;
         }
-        resolve2(out);
+        resolve3(out);
       }
     );
   });
@@ -34430,11 +34430,11 @@ function waitForChildExit4(child, timeoutMs) {
   if (child.exitCode !== null || child.signalCode !== null) {
     return Promise.resolve();
   }
-  return new Promise((resolve2) => {
-    const timer2 = setTimeout(resolve2, timeoutMs);
+  return new Promise((resolve3) => {
+    const timer2 = setTimeout(resolve3, timeoutMs);
     child.once("exit", () => {
       clearTimeout(timer2);
-      resolve2();
+      resolve3();
     });
   });
 }
@@ -34845,10 +34845,10 @@ var OpenCodeListenerModel = class {
     try {
       await Promise.race([
         entry.settlePromise,
-        new Promise((resolve2) => {
+        new Promise((resolve3) => {
           entry.timer = setTimeout(() => {
             timedOut = true;
-            resolve2();
+            resolve3();
           }, this.pendingOpenWaitMs);
         })
       ]);
@@ -34956,10 +34956,10 @@ var OpenCodeListenerModel = class {
     });
     this.workerHome = home;
     let markSettled;
-    const settlePromise = new Promise((resolve2, reject) => {
+    const settlePromise = new Promise((resolve3, reject) => {
       markSettled = (err) => {
         if (err) reject(err);
-        else resolve2();
+        else resolve3();
       };
     });
     void settlePromise.catch(() => void 0);
@@ -35995,8 +35995,8 @@ var DeliveryCommandClient = class {
     const signal = deadlineController.signal;
     let onAbort = () => {
     };
-    const aborted = new Promise((resolve2) => {
-      onAbort = () => resolve2("timeout");
+    const aborted = new Promise((resolve3) => {
+      onAbort = () => resolve3("timeout");
       if (signal.aborted) {
         onAbort();
       } else {
@@ -36476,12 +36476,12 @@ function eventTime(now) {
 }
 async function defaultSleep(ms, signal) {
   if (signal?.aborted) return;
-  await new Promise((resolve2) => {
+  await new Promise((resolve3) => {
     let timer2;
     const finish = () => {
       if (timer2 !== void 0) clearTimeout(timer2);
       signal?.removeEventListener("abort", finish);
-      resolve2();
+      resolve3();
     };
     signal?.addEventListener("abort", finish, { once: true });
     timer2 = setTimeout(finish, ms);
@@ -37729,6 +37729,7 @@ function summarizeListenerReadHealth(health, readyAt, nowMs) {
 }
 
 // src/listener/control.ts
+var import_node_crypto19 = require("node:crypto");
 var import_node_net = require("node:net");
 var import_promises9 = require("node:fs/promises");
 var import_node_path16 = require("node:path");
@@ -37746,15 +37747,19 @@ var ListenerAlreadyRunningError = class extends Error {
   }
 };
 function listenerPaths(options) {
-  const root = options.stateDirectory ?? defaultListenerStateDirectory();
+  const defaultRoot = defaultListenerStateDirectory();
+  const root = options.stateDirectory ?? defaultRoot;
   if (!(0, import_node_path16.isAbsolute)(root)) {
     throw new Error("listener state directory must be absolute");
   }
   const key2 = listenerInstanceKey(options);
   const instanceDirectory = (0, import_node_path16.join)(root, key2);
   const uid2 = typeof process.getuid === "function" ? process.getuid() : process.pid;
-  const controlDirectory = process.platform === "win32" ? "" : (0, import_node_path16.join)("/tmp", `cswarm-control-${uid2}`);
-  const socketPath = process.platform === "win32" ? `\\\\.\\pipe\\cswarm-${key2}` : (0, import_node_path16.join)(controlDirectory, `${key2.slice(0, 32)}.sock`);
+  const stateNamespace = (0, import_node_path16.resolve)(root) === (0, import_node_path16.resolve)(defaultRoot) ? "" : `-${(0, import_node_crypto19.createHash)("sha256").update((0, import_node_path16.resolve)(root)).digest("hex").slice(0, 16)}`;
+  const platform = options.platform ?? process.platform;
+  const socketKey = stateNamespace.length === 0 ? platform === "win32" ? key2 : key2.slice(0, 32) : `${key2.slice(0, 32)}${stateNamespace}`;
+  const controlDirectory = platform === "win32" ? "" : (0, import_node_path16.join)("/tmp", `cswarm-control-${uid2}`);
+  const socketPath = platform === "win32" ? `\\\\.\\pipe\\cswarm-${socketKey}` : (0, import_node_path16.join)(controlDirectory, `${socketKey}.sock`);
   return {
     key: key2,
     instanceDirectory,
@@ -37803,7 +37808,16 @@ var STATUS_ALLOWED_KEYS = /* @__PURE__ */ new Set([
   "droppedForMainCount",
   "readHealth",
   "connectionsOpened",
-  "connectionReuseRatio"
+  "connectionReuseRatio",
+  "activityPublishFailures",
+  "activityLastErrorCode"
+]);
+var STATUS_ACTIVITY_ERROR_CODES = /* @__PURE__ */ new Set([
+  "activity_credential_failed",
+  "activity_request_timeout",
+  "activity_transport_failed",
+  "activity_http_rejected",
+  "activity_publish_unknown"
 ]);
 var STATUS_SENSITIVE_KEYS = /* @__PURE__ */ new Set([
   "leaseId",
@@ -37852,7 +37866,9 @@ function parseStatus(raw, rejectUnknownKeys = false) {
   const nullableCount = (candidate) => candidate === null || typeof candidate === "number" && Number.isSafeInteger(candidate) && candidate >= 0;
   const nullableTimestamp3 = (candidate) => candidate === null || typeof candidate === "string" && Number.isFinite(Date.parse(candidate));
   const readHealth = row.readHealth === void 0 ? void 0 : parseListenerReadHealth(row.readHealth, rejectUnknownKeys);
-  if (row.version !== 1 || typeof row.instanceId !== "string" || !UUID_RE17.test(row.instanceId) || row.provider !== "grok" && row.provider !== "opencode" && row.provider !== "claude" && row.provider !== "codex" || typeof row.profileId !== "string" || typeof row.workspaceId !== "string" || !UUID_RE17.test(row.workspaceId) || typeof row.principalId !== "string" || !UUID_RE17.test(row.principalId) || !Number.isSafeInteger(row.pid) || row.pid < 1 || typeof row.state !== "string" || !["starting", "ready", "stopping", "stopped", "failed"].includes(row.state) || typeof row.startedAt !== "string" || !Number.isFinite(Date.parse(row.startedAt)) || !(row.readyAt === null || typeof row.readyAt === "string" && Number.isFinite(Date.parse(row.readyAt))) || typeof row.updatedAt !== "string" || !Number.isFinite(Date.parse(row.updatedAt)) || !(row.stoppedAt === null || typeof row.stoppedAt === "string" && Number.isFinite(Date.parse(row.stoppedAt))) || !nullableUuid3(row.lastSignalId) || !(row.lastErrorCode === null || typeof row.lastErrorCode === "string" && /^[a-z0-9_-]{1,96}$/.test(row.lastErrorCode)) || !(row.lastErrorDetail === void 0 || row.lastErrorDetail === null || typeof row.lastErrorDetail === "string" && row.lastErrorDetail.length > 0 && row.lastErrorDetail.length <= 2048 && !/swm_(?:agt|inv|cap)_/i.test(row.lastErrorDetail)) || !(row.lastErrorReasonCode === void 0 || row.lastErrorReasonCode === null || typeof row.lastErrorReasonCode === "string" && /^[a-z0-9_-]{1,96}$/.test(row.lastErrorReasonCode)) || !(row.providerExecutable === void 0 || row.providerExecutable === null || typeof row.providerExecutable === "string" && (0, import_node_path16.isAbsolute)(row.providerExecutable)) || !(row.providerVersion === void 0 || row.providerVersion === null || typeof row.providerVersion === "string" && SEMVER_RE2.test(row.providerVersion)) || !(row.providerLastMeasuredVersion === void 0 || row.providerLastMeasuredVersion === null || typeof row.providerLastMeasuredVersion === "string" && SEMVER_RE2.test(row.providerLastMeasuredVersion)) || !(row.providerBundledAgentSdkVersion === void 0 || row.providerBundledAgentSdkVersion === null || typeof row.providerBundledAgentSdkVersion === "string" && SEMVER_RE2.test(row.providerBundledAgentSdkVersion)) || !(row.providerBundledClaudeCodeVersion === void 0 || row.providerBundledClaudeCodeVersion === null || typeof row.providerBundledClaudeCodeVersion === "string" && SEMVER_RE2.test(row.providerBundledClaudeCodeVersion)) || !(row.providerMinimumRequiredVersion === void 0 || row.providerMinimumRequiredVersion === null || typeof row.providerMinimumRequiredVersion === "string" && SEMVER_RE2.test(row.providerMinimumRequiredVersion)) || !(row.cswarmVersion === void 0 || row.cswarmVersion === null || typeof row.cswarmVersion === "string" && SEMVER_RE2.test(row.cswarmVersion)) || (row.providerVersion === null || row.providerVersion === void 0) !== (row.providerLastMeasuredVersion === null || row.providerLastMeasuredVersion === void 0) || !(row.lastWorkerStderrTail === void 0 || row.lastWorkerStderrTail === null || typeof row.lastWorkerStderrTail === "string" && row.lastWorkerStderrTail.length > 0 && row.lastWorkerStderrTail.length <= 2048 && !/swm_(?:agt|inv|cap)_/i.test(row.lastWorkerStderrTail)) || typeof row.logPath !== "string" || !(0, import_node_path16.isAbsolute)(row.logPath) || !(row.deliveryMode === void 0 || row.deliveryMode === null || typeof row.deliveryMode === "string" && STATUS_DELIVERY_MODES.has(row.deliveryMode)) || !(row.pendingDeliveryCount === void 0 || nullableCount(row.pendingDeliveryCount)) || !(row.lastTerminalDeliveryFailureCount === void 0 || nullableCount(row.lastTerminalDeliveryFailureCount)) || !(row.lastTerminalDeliveryFailureAt === void 0 || nullableTimestamp3(row.lastTerminalDeliveryFailureAt)) || !(row.lastClaimAt === void 0 || nullableTimestamp3(row.lastClaimAt)) || !(row.lastAckAt === void 0 || nullableTimestamp3(row.lastAckAt)) || !(row.routeMode === void 0 || row.routeMode === "worker" || row.routeMode === "main" || row.routeMode === "split") || !(row.deferOverChars === void 0 || row.deferOverChars === null || typeof row.deferOverChars === "number" && Number.isSafeInteger(row.deferOverChars) && row.deferOverChars >= 1 && row.deferOverChars <= 1e4) || !(row.pendingForMainCount === void 0 || typeof row.pendingForMainCount === "number" && Number.isSafeInteger(row.pendingForMainCount) && row.pendingForMainCount >= 0) || !(row.droppedForMainCount === void 0 || typeof row.droppedForMainCount === "number" && Number.isSafeInteger(row.droppedForMainCount) && row.droppedForMainCount >= 0) || readHealth === null || !(row.connectionsOpened === void 0 || typeof row.connectionsOpened === "number" && Number.isSafeInteger(row.connectionsOpened) && row.connectionsOpened >= 0) || !(row.connectionReuseRatio === void 0 || typeof row.connectionReuseRatio === "number" && Number.isFinite(row.connectionReuseRatio) && row.connectionReuseRatio >= 0)) {
+  if (row.version !== 1 || typeof row.instanceId !== "string" || !UUID_RE17.test(row.instanceId) || row.provider !== "grok" && row.provider !== "opencode" && row.provider !== "claude" && row.provider !== "codex" || typeof row.profileId !== "string" || typeof row.workspaceId !== "string" || !UUID_RE17.test(row.workspaceId) || typeof row.principalId !== "string" || !UUID_RE17.test(row.principalId) || !Number.isSafeInteger(row.pid) || row.pid < 1 || typeof row.state !== "string" || !["starting", "ready", "stopping", "stopped", "failed"].includes(row.state) || typeof row.startedAt !== "string" || !Number.isFinite(Date.parse(row.startedAt)) || !(row.readyAt === null || typeof row.readyAt === "string" && Number.isFinite(Date.parse(row.readyAt))) || typeof row.updatedAt !== "string" || !Number.isFinite(Date.parse(row.updatedAt)) || !(row.stoppedAt === null || typeof row.stoppedAt === "string" && Number.isFinite(Date.parse(row.stoppedAt))) || !nullableUuid3(row.lastSignalId) || !(row.lastErrorCode === null || typeof row.lastErrorCode === "string" && /^[a-z0-9_-]{1,96}$/.test(row.lastErrorCode)) || !(row.lastErrorDetail === void 0 || row.lastErrorDetail === null || typeof row.lastErrorDetail === "string" && row.lastErrorDetail.length > 0 && row.lastErrorDetail.length <= 2048 && !/swm_(?:agt|inv|cap)_/i.test(row.lastErrorDetail)) || !(row.lastErrorReasonCode === void 0 || row.lastErrorReasonCode === null || typeof row.lastErrorReasonCode === "string" && /^[a-z0-9_-]{1,96}$/.test(row.lastErrorReasonCode)) || !(row.providerExecutable === void 0 || row.providerExecutable === null || typeof row.providerExecutable === "string" && (0, import_node_path16.isAbsolute)(row.providerExecutable)) || !(row.providerVersion === void 0 || row.providerVersion === null || typeof row.providerVersion === "string" && SEMVER_RE2.test(row.providerVersion)) || !(row.providerLastMeasuredVersion === void 0 || row.providerLastMeasuredVersion === null || typeof row.providerLastMeasuredVersion === "string" && SEMVER_RE2.test(row.providerLastMeasuredVersion)) || !(row.providerBundledAgentSdkVersion === void 0 || row.providerBundledAgentSdkVersion === null || typeof row.providerBundledAgentSdkVersion === "string" && SEMVER_RE2.test(row.providerBundledAgentSdkVersion)) || !(row.providerBundledClaudeCodeVersion === void 0 || row.providerBundledClaudeCodeVersion === null || typeof row.providerBundledClaudeCodeVersion === "string" && SEMVER_RE2.test(row.providerBundledClaudeCodeVersion)) || !(row.providerMinimumRequiredVersion === void 0 || row.providerMinimumRequiredVersion === null || typeof row.providerMinimumRequiredVersion === "string" && SEMVER_RE2.test(row.providerMinimumRequiredVersion)) || !(row.cswarmVersion === void 0 || row.cswarmVersion === null || typeof row.cswarmVersion === "string" && SEMVER_RE2.test(row.cswarmVersion)) || (row.providerVersion === null || row.providerVersion === void 0) !== (row.providerLastMeasuredVersion === null || row.providerLastMeasuredVersion === void 0) || !(row.lastWorkerStderrTail === void 0 || row.lastWorkerStderrTail === null || typeof row.lastWorkerStderrTail === "string" && row.lastWorkerStderrTail.length > 0 && row.lastWorkerStderrTail.length <= 2048 && !/swm_(?:agt|inv|cap)_/i.test(row.lastWorkerStderrTail)) || typeof row.logPath !== "string" || !(0, import_node_path16.isAbsolute)(row.logPath) || !(row.deliveryMode === void 0 || row.deliveryMode === null || typeof row.deliveryMode === "string" && STATUS_DELIVERY_MODES.has(row.deliveryMode)) || !(row.pendingDeliveryCount === void 0 || nullableCount(row.pendingDeliveryCount)) || !(row.lastTerminalDeliveryFailureCount === void 0 || nullableCount(row.lastTerminalDeliveryFailureCount)) || !(row.lastTerminalDeliveryFailureAt === void 0 || nullableTimestamp3(row.lastTerminalDeliveryFailureAt)) || !(row.lastClaimAt === void 0 || nullableTimestamp3(row.lastClaimAt)) || !(row.lastAckAt === void 0 || nullableTimestamp3(row.lastAckAt)) || !(row.routeMode === void 0 || row.routeMode === "worker" || row.routeMode === "main" || row.routeMode === "split") || !(row.deferOverChars === void 0 || row.deferOverChars === null || typeof row.deferOverChars === "number" && Number.isSafeInteger(row.deferOverChars) && row.deferOverChars >= 1 && row.deferOverChars <= 1e4) || !(row.pendingForMainCount === void 0 || typeof row.pendingForMainCount === "number" && Number.isSafeInteger(row.pendingForMainCount) && row.pendingForMainCount >= 0) || !(row.droppedForMainCount === void 0 || typeof row.droppedForMainCount === "number" && Number.isSafeInteger(row.droppedForMainCount) && row.droppedForMainCount >= 0) || readHealth === null || !(row.connectionsOpened === void 0 || typeof row.connectionsOpened === "number" && Number.isSafeInteger(row.connectionsOpened) && row.connectionsOpened >= 0) || !(row.connectionReuseRatio === void 0 || typeof row.connectionReuseRatio === "number" && Number.isFinite(row.connectionReuseRatio) && row.connectionReuseRatio >= 0) || !(row.activityPublishFailures === void 0 || typeof row.activityPublishFailures === "number" && Number.isSafeInteger(row.activityPublishFailures) && row.activityPublishFailures >= 0) || !(row.activityLastErrorCode === void 0 || row.activityLastErrorCode === null || typeof row.activityLastErrorCode === "string" && STATUS_ACTIVITY_ERROR_CODES.has(
+    row.activityLastErrorCode
+  ))) {
     throw new Error("stored listener status is malformed");
   }
   const routeMode = row.routeMode ?? "worker";
@@ -38111,7 +38127,7 @@ async function startupLock(paths) {
         await (0, import_promises9.unlink)(lockPath).catch(() => void 0);
         continue;
       }
-      await new Promise((resolve2) => setTimeout(resolve2, 25));
+      await new Promise((resolve3) => setTimeout(resolve3, 25));
       continue;
     }
     try {
@@ -38185,14 +38201,14 @@ async function startListenerControlServer(options) {
     if (options.initialize) {
       await options.initialize();
     }
-    await new Promise((resolve2, reject) => {
+    await new Promise((resolve3, reject) => {
       const onError = (error) => {
         server.off("listening", onListening);
         reject(error);
       };
       const onListening = () => {
         server.off("error", onError);
-        resolve2();
+        resolve3();
       };
       server.once("error", onError);
       server.once("listening", onListening);
@@ -38203,7 +38219,7 @@ async function startListenerControlServer(options) {
     }
   } catch (error) {
     if (server.listening) {
-      await new Promise((resolve2) => server.close(() => resolve2()));
+      await new Promise((resolve3) => server.close(() => resolve3()));
       if (process.platform !== "win32") {
         await (0, import_promises9.unlink)(options.paths.socketPath).catch(() => void 0);
       }
@@ -38214,7 +38230,7 @@ async function startListenerControlServer(options) {
   }
   return {
     close: async () => {
-      await new Promise((resolve2) => server.close(() => resolve2()));
+      await new Promise((resolve3) => server.close(() => resolve3()));
       if (process.platform !== "win32") {
         await (0, import_promises9.unlink)(options.paths.socketPath).catch(() => void 0);
       }
@@ -38222,7 +38238,7 @@ async function startListenerControlServer(options) {
   };
 }
 async function queryListenerControl(paths, command2, timeoutMs = CONTROL_TIMEOUT_MS) {
-  return await new Promise((resolve2, reject) => {
+  return await new Promise((resolve3, reject) => {
     const socket = (0, import_node_net.createConnection)(paths.socketPath);
     let input = "";
     let settled = false;
@@ -38236,7 +38252,7 @@ async function queryListenerControl(paths, command2, timeoutMs = CONTROL_TIMEOUT
       clearTimeout(timer2);
       socket.destroy();
       if (error) reject(error);
-      else resolve2(status);
+      else resolve3(status);
     };
     socket.setEncoding("utf8");
     socket.once("error", (error) => finish(error));
@@ -38267,7 +38283,7 @@ async function queryListenerControl(paths, command2, timeoutMs = CONTROL_TIMEOUT
 }
 
 // src/listener/supervisor.ts
-var import_node_crypto19 = require("node:crypto");
+var import_node_crypto20 = require("node:crypto");
 var UUID_RE18 = /^[0-9a-f]{8}-[0-9a-f]{4}-[1-8][0-9a-f]{3}-[89ab][0-9a-f]{3}-[0-9a-f]{12}$/i;
 var LISTENER_RESTART_MAX_ATTEMPTS = 5;
 var LISTENER_RESTART_INITIAL_MS = 1e3;
@@ -38281,11 +38297,11 @@ function nextListenerRestartMs(attempt, policy = {}, random = Math.random) {
 }
 async function defaultRestartSleep(ms, signal) {
   if (ms <= 0 || signal.aborted) return;
-  await new Promise((resolve2) => {
+  await new Promise((resolve3) => {
     const finish = () => {
       clearTimeout(timer2);
       signal.removeEventListener("abort", finish);
-      resolve2();
+      resolve3();
     };
     const timer2 = setTimeout(finish, ms);
     signal.addEventListener("abort", finish, { once: true });
@@ -38365,7 +38381,7 @@ async function runListenerSupervisor(options) {
   const now = options.now ?? Date.now;
   const startedAt = iso2(now);
   const controller = new AbortController();
-  const proposedInstanceId = (0, import_node_crypto19.randomUUID)();
+  const proposedInstanceId = (0, import_node_crypto20.randomUUID)();
   let status = {
     version: 1,
     instanceId: proposedInstanceId,
@@ -38405,6 +38421,8 @@ async function runListenerSupervisor(options) {
     readHealth: emptyListenerReadHealth(),
     connectionsOpened: 0,
     connectionReuseRatio: 0,
+    activityPublishFailures: 0,
+    activityLastErrorCode: null,
     logPath: options.paths.logPath
   };
   let writes = Promise.resolve();
@@ -38583,6 +38601,16 @@ async function runListenerSupervisor(options) {
         event: "listener_malformed_row",
         index: event.index
       });
+      return;
+    }
+    if (event.type === "activity_publish_failure") {
+      status = {
+        ...status,
+        activityPublishFailures: (status.activityPublishFailures ?? 0) + 1,
+        activityLastErrorCode: event.code,
+        updatedAt: event.ts
+      };
+      persist();
       return;
     }
     if (event.type === "model_declared") {
@@ -38843,7 +38871,7 @@ async function waitForListenerReady(paths, options = {}) {
   const timeoutMs = options.timeoutMs ?? 12e4;
   const pollMs = options.pollMs ?? 100;
   const now = options.now ?? Date.now;
-  const sleep2 = options.sleep ?? ((ms) => new Promise((resolve2) => setTimeout(resolve2, ms)));
+  const sleep2 = options.sleep ?? ((ms) => new Promise((resolve3) => setTimeout(resolve3, ms)));
   const deadline = now() + timeoutMs;
   let last = null;
   let processExitObservedAt = null;
@@ -39715,12 +39743,12 @@ async function spawnDetachedListener(options) {
     child.kill();
     throw new Error("detached listener child has no credential pipe");
   }
-  await new Promise((resolve2, reject) => {
+  await new Promise((resolve3, reject) => {
     const onError = (error) => reject(error);
     child.once("error", onError);
     child.stdin.end(options.credentialArtifact, "utf8", () => {
       child.off("error", onError);
-      resolve2();
+      resolve3();
     });
   });
   child.unref();
@@ -40511,10 +40539,10 @@ async function runListenerHookCheck(options = {}) {
       signal: controller.signal,
       deadlineMs
     });
-    const timedOut = new Promise((resolve2) => {
+    const timedOut = new Promise((resolve3) => {
       timer2 = setTimeout(() => {
         controller.abort();
-        resolve2("");
+        resolve3("");
       }, HOOK_CHECK_TIMEOUT_MS);
     });
     return await Promise.race([checking, timedOut]);
@@ -40584,7 +40612,7 @@ async function logEvidence(path, signalId) {
 }
 async function runListenerAttendanceCanary(options) {
   const now = options.now ?? Date.now;
-  const sleep2 = options.sleep ?? ((milliseconds) => new Promise((resolve2) => setTimeout(resolve2, milliseconds)));
+  const sleep2 = options.sleep ?? ((milliseconds) => new Promise((resolve3) => setTimeout(resolve3, milliseconds)));
   const startedAt = now();
   const deadlineMs = startedAt + options.waitMs;
   const client = new ThinCommandClient(options.target, options.fetcher, {
@@ -40698,11 +40726,22 @@ function renderListenerAttendanceCanary(result, workspaceId2, principalId) {
 }
 
 // src/listener/activity.ts
-var import_node_crypto20 = require("node:crypto");
+var import_node_crypto21 = require("node:crypto");
 var ACTIVITY_FRAME_INTERVAL_MS = 750;
 var ACTIVITY_HEARTBEAT_MS = 15e3;
 var ACTIVITY_TOOL_TITLE_MAX = 160;
 var ACTIVITY_REQUEST_TIMEOUT_MS = 5e3;
+var AgentActivityPublishError = class extends Error {
+  constructor(code, cause) {
+    super("activity frame publish failed", { cause });
+    this.code = code;
+    this.name = "AgentActivityPublishError";
+  }
+  code;
+};
+function activityPublishErrorCode(error) {
+  return error instanceof AgentActivityPublishError ? error.code : "activity_publish_unknown";
+}
 var SYSTEM_CLOCK = {
   now: Date.now,
   setTimer: (callback, delayMs) => setTimeout(callback, delayMs),
@@ -40716,41 +40755,57 @@ var TERMINAL_TOOL_STATUSES = /* @__PURE__ */ new Set([
   "rejected"
 ]);
 var AgentActivityEndpointTransport = class {
-  constructor(target2, credentialSession, fetcher) {
+  constructor(target2, credentialSession, fetcher, requestTimeoutMs = ACTIVITY_REQUEST_TIMEOUT_MS) {
     this.target = target2;
     this.credentialSession = credentialSession;
+    this.requestTimeoutMs = requestTimeoutMs;
     this.fetcher = fetcher ?? fetch;
   }
   target;
   credentialSession;
+  requestTimeoutMs;
   fetcher;
   async publish(frame) {
-    const credential = await this.credentialSession.bearer();
-    const response = await this.fetcher(
-      `${this.target.url}/functions/v1/activity`,
-      {
-        method: "POST",
-        headers: {
-          authorization: `Bearer ${credential}`,
-          apikey: this.target.anonKey,
-          "content-type": "application/json"
-        },
-        body: JSON.stringify({
-          version: frame.version,
-          workspace_id: frame.workspaceId,
-          stream_id: frame.streamId,
-          sequence: frame.sequence,
-          phase: frame.phase,
-          signal_id: frame.signalId,
-          tool_title: frame.toolTitle,
-          elapsed_ms: frame.elapsedMs
-        }),
-        signal: AbortSignal.timeout(ACTIVITY_REQUEST_TIMEOUT_MS)
-      }
-    );
-    await response.body?.cancel();
+    let credential;
+    try {
+      credential = await this.credentialSession.bearer();
+    } catch (error) {
+      throw new AgentActivityPublishError("activity_credential_failed", error);
+    }
+    const timeoutSignal = AbortSignal.timeout(this.requestTimeoutMs);
+    let response;
+    try {
+      response = await this.fetcher(
+        `${this.target.url}/functions/v1/activity`,
+        {
+          method: "POST",
+          headers: {
+            authorization: `Bearer ${credential}`,
+            apikey: this.target.anonKey,
+            "content-type": "application/json"
+          },
+          body: JSON.stringify({
+            version: frame.version,
+            workspace_id: frame.workspaceId,
+            stream_id: frame.streamId,
+            sequence: frame.sequence,
+            phase: frame.phase,
+            signal_id: frame.signalId,
+            tool_title: frame.toolTitle,
+            elapsed_ms: frame.elapsedMs
+          }),
+          signal: timeoutSignal
+        }
+      );
+    } catch (error) {
+      throw new AgentActivityPublishError(
+        timeoutSignal.aborted ? "activity_request_timeout" : "activity_transport_failed",
+        error
+      );
+    }
+    await response.body?.cancel().catch(() => void 0);
     if (!response.ok) {
-      throw new Error(`activity publish failed (${response.status})`);
+      throw new AgentActivityPublishError("activity_http_rejected");
     }
   }
 };
@@ -40758,7 +40813,7 @@ var ListenerActivityController = class {
   constructor(options) {
     this.options = options;
     this.clock = options.clock ?? SYSTEM_CLOCK;
-    this.streamId = options.streamId ?? (0, import_node_crypto20.randomUUID)();
+    this.streamId = options.streamId ?? (0, import_node_crypto21.randomUUID)();
     this.events = { update: (update) => this.onSessionUpdate(update) };
   }
   options;
@@ -40899,7 +40954,8 @@ var ListenerActivityController = class {
     };
     try {
       await this.options.transport.publish(frame);
-    } catch {
+    } catch (error) {
+      this.options.onPublishFailure?.(activityPublishErrorCode(error));
     } finally {
       this.sending = false;
       if (this.dirty) this.schedule();
@@ -41086,7 +41142,7 @@ var ListenerHttpClient = class {
       finished = true;
       this.finishRequest();
     };
-    return await new Promise((resolve2, reject) => {
+    return await new Promise((resolve3, reject) => {
       const send = options.url.protocol === "https:" ? import_node_https.request : import_node_http2.request;
       const agent = options.url.protocol === "https:" ? this.httpsAgent : this.httpAgent;
       let request;
@@ -41141,7 +41197,7 @@ var ListenerHttpClient = class {
               redirected: { value: options.redirected },
               url: { value: options.url.href }
             });
-            resolve2(response);
+            resolve3(response);
           } catch (error) {
             reject(error);
           }
@@ -41164,13 +41220,13 @@ var ListenerHttpClient = class {
 // src/resume.ts
 var import_node_child_process8 = require("node:child_process");
 function execFileText(file, args) {
-  return new Promise((resolve2, reject) => {
+  return new Promise((resolve3, reject) => {
     (0, import_node_child_process8.execFile)(file, [...args], {
       encoding: "utf8",
       maxBuffer: 4 * 1024 * 1024
     }, (error, stdout) => {
       if (error) reject(error);
-      else resolve2(stdout);
+      else resolve3(stdout);
     });
   });
 }
@@ -41576,8 +41632,8 @@ var ACCEPTED_AGENT_CREDENTIAL_MESSAGES = [
   AGENT_CREDENTIAL_MESSAGE_D088
 ];
 function packageVersion() {
-  if ("0.1.46".length > 0) {
-    return "0.1.46";
+  if ("0.1.47".length > 0) {
+    return "0.1.47";
   }
   try {
     const value = JSON.parse(
@@ -42201,7 +42257,7 @@ async function runNew(args) {
   assertWorkspaceName(name);
   const cloud = await target(args);
   const human = await humanCredential(args, cloud);
-  const proposedId = (0, import_node_crypto21.randomUUID)();
+  const proposedId = (0, import_node_crypto22.randomUUID)();
   let result;
   try {
     result = await new ThinCommandClient(cloud).sendConnect({
@@ -43533,8 +43589,8 @@ function prepareSignalAttachments(localPaths) {
       name,
       bytes,
       contentType,
-      fileId: (0, import_node_crypto21.randomUUID)(),
-      versionId: (0, import_node_crypto21.randomUUID)(),
+      fileId: (0, import_node_crypto22.randomUUID)(),
+      versionId: (0, import_node_crypto22.randomUUID)(),
       createCommandId: newCommandId(),
       commitCommandId: newCommandId()
     };
@@ -44760,6 +44816,8 @@ function listenerStatusJson(status, permissionMode, evidence = {
     droppedForMainCount: status.droppedForMainCount ?? 0,
     connectionsOpened: status.connectionsOpened ?? null,
     connectionReuseRatio: status.connectionReuseRatio ?? null,
+    activityPublishFailures: status.activityPublishFailures ?? null,
+    activityLastErrorCode: status.activityLastErrorCode ?? null,
     ...mode3 ? {
       permission_mode: mode3,
       /* "allowed once" alone overstates it: allowOnceOrDeny selects allow_once only when the
@@ -44793,6 +44851,8 @@ function renderListenerStatus(status, evidence = {
     `Provider executable: ${status.providerExecutable ?? "not measured"}.`,
     `Connections opened: ${status.connectionsOpened ?? "not measured"}.`,
     `Connection reuse ratio: ${status.connectionReuseRatio ?? "not measured"}.`,
+    ...status.activityPublishFailures !== void 0 && status.activityPublishFailures > 0 ? [`Activity publish failures: ${status.activityPublishFailures}.`] : [],
+    ...status.activityLastErrorCode ? [`Last activity publish error code: ${status.activityLastErrorCode}.`] : [],
     status.readyAt ? `Ready since: ${status.readyAt}.` : "Not ready yet.",
     status.lastSignalId ? pendingForMainCount > 0 ? `Last claimed and queued signal: ${status.lastSignalId}. It is not handled yet.` : routeMode === "worker" ? `Last handled signal: ${status.lastSignalId}.` : `Last listener signal: ${status.lastSignalId}. Local status does not prove its final observed receipt.` : "No signal has been handled yet.",
     status.lastErrorCode ? `Last status code: ${status.lastErrorCode}.` : "No listener process error is recorded.",
@@ -45211,6 +45271,7 @@ async function runConfiguredListener(options) {
   let providerVersionNotice = null;
   const onVersionNotice = (notice) => {
     providerVersionNotice = {
+      ...providerVersionNotice ?? {},
       runningVersion: notice.runningVersion,
       lastMeasuredVersion: notice.lastMeasuredVersion
     };
@@ -45341,7 +45402,12 @@ async function runConfiguredListener(options) {
             options.cloud,
             credentialSession,
             httpClient.fetch
-          )
+          ),
+          onPublishFailure: (code) => onEvent({
+            type: "activity_publish_failure",
+            code,
+            ts: (/* @__PURE__ */ new Date()).toISOString()
+          })
         });
         const instrumentedModel = activity.instrumentModel(
           newModel(onCanaryAttempt, activity.events)
@@ -46072,11 +46138,11 @@ async function runHook(args) {
         ...principalIds.length === 0 ? {} : { principalIds },
         fetcher: httpClient.fetch,
         write: async (output) => {
-          await new Promise((resolve2, reject) => {
+          await new Promise((resolve3, reject) => {
             process.stdout.write(`${output}
 `, (error) => {
               if (error) reject(error);
-              else resolve2();
+              else resolve3();
             });
           });
         }
@@ -46209,8 +46275,8 @@ async function uploadNamedFile(context, name, bytes) {
     workspaceId: context.selected.selectedWorkspace,
     credential: context.selected.bearer
   };
-  const fileId = (0, import_node_crypto21.randomUUID)();
-  const versionId = (0, import_node_crypto21.randomUUID)();
+  const fileId = (0, import_node_crypto22.randomUUID)();
+  const versionId = (0, import_node_crypto22.randomUUID)();
   const createCommandId = newCommandId();
   const commitCommandId = newCommandId();
   const created = await onceRetried(
@@ -46621,7 +46687,7 @@ async function runDogfood(args) {
   const { selectedWorkspace, bearer } = await commandWorkspaceAndCredential(args, cloud);
   const client = new ThinCommandClient(cloud);
   const route = stream(args);
-  const taskId = args.optional("task-id") ?? (0, import_node_crypto21.randomUUID)();
+  const taskId = args.optional("task-id") ?? (0, import_node_crypto22.randomUUID)();
   const ttl = Number(args.optional("ttl-ms") ?? "3600000");
   if (!Number.isSafeInteger(ttl) || ttl <= 0 || ttl > 144e5) {
     throw new Error("--ttl-ms must be an integer in 1..14400000");
