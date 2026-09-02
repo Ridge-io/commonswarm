@@ -835,3 +835,11 @@ supabase.co target) — the lane was interrupted before its report; carry it as 
 Instrument notes: `agy -p` in a worktree outside its trust list returns "no output produced … read_file permission" — pass `--dangerously-skip-permissions`; and it dies on any command over ~20 s (its first run timed out inside a `db:reset` it was told not to run). A `cswarm note "…"` body with backticks in double quotes is shell-expanded — build the body in a file and pass `"$(cat file)"`.
 
 Still running: L30 (`lane/l30-provider-version`), L32 (`lane/l32-connection-reuse`, 3 commits), L35 (`lane/l35-live-agent-panel`, 1 commit). L31 merged on `release/0.1.46` (`6b5beea`). Next: merge L30/L32/L35 as they land, arms on the merged SHA, release 0.1.46, then L38.
+
+### Addendum 2026-09-02 ~03:50Z — live confirmation; 0.1.46 staging
+
+- **CodexDesktop confirmed the Codex fix live on 0.1.45**: `state=ready; providerVersion=1.8.0; canary passed` (recorded in the evidence README).
+- `release/0.1.46` = v0.1.45 + L31 + L30 + L32 → **`7eda8cd`**; conflicts resolved by keeping both sides (L30/L31 in `cli.ts` and `supervisor.ts`; L31/L32 in `control.ts` and `supervisor.ts`, the boolean chain joined with `||`). build, check:tests, npm test, p1-cli green (see next line).
+- Merged lanes' worktrees removed; branches `lane/l30-provider-version`, `lane/l31-read-retry`, `lane/l32-connection-reuse` kept until main absorbs them.
+- Still running: L35 (`lane/l35-live-agent-panel`, commit `f5304a0`, in its own arm phase) and L38 (`lane/l38-review-followups`).
+- Instrument correction: my earlier `npm run build | tail -1 && echo BUILD_OK` masked tsc failures (pipe exit status). From `55ebe15` on, every gate here reads the command's own exit code.

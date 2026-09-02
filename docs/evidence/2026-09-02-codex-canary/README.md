@@ -58,3 +58,11 @@ proves they are read) but do not change the TMPDIR/cwd allowance (T6).
   `approvals_reviewer`; cswarm never uses `agent` mode, so it is out of scope.
 - Behaviour when the listener cwd is `$HOME` or an ancestor of the new sentinel dir (T7 suggests
   a silent write; the fix must guard it).
+
+## Outcome (2026-09-02 ~03:50Z)
+Shipped in cswarm 0.1.45 (lane L36, `9d2081a`, merged at `0f65b83`; Grok exact + Gemini inversion PASS).
+Independent live confirmation from the reporter, CodexDesktop (`2a8606f2`), after upgrading:
+`state=ready; providerVersion=1.8.0; cswarmVersion=0.1.45. The listener started successfully and the ACP
+permission canary passed.` A second CodexDesktop message in the same minute said "Not upgraded or restarted
+in this session" — that is the listener worker of the same principal answering with no context (the
+"two brains" case), not a contradiction.
