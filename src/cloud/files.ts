@@ -121,6 +121,8 @@ export interface FileVersionCommitResult {
   sha256: string | null;
   sha256_note: string;
   reference: string;
+  /** Present only when a brain-topic commit rolled the live window. */
+  retired_version_n?: number;
 }
 
 export interface FileDownloadUrlResult {
@@ -132,6 +134,10 @@ export interface FileDownloadUrlResult {
   download_path: string;
   download_url_expires_in_seconds: number;
   content_warning: string;
+  /** Additive in server 0.1.48; absent during an edge-before-client rollout. */
+  version_state?: "live" | "retired";
+  live_version_count?: number | string;
+  retired_version_count?: number | string;
 }
 
 export interface FileTombstoneResult {
@@ -161,6 +167,9 @@ export interface FileListRow {
   created_at: string;
   committed_at: string | null;
   tombstoned_at: string | null;
+  /** Additive in migration 20260902000005; older servers omit both fields. */
+  live_version_count?: number | string;
+  retired_version_count?: number | string;
 }
 
 const REQUEST_TIMEOUT_MS = 30_000;
@@ -569,7 +578,7 @@ export async function listFilesAsHuman(
   url.searchParams.set("workspace_id", `eq.${workspaceId}`);
   url.searchParams.set(
     "select",
-    "file_id,name,current_version,size_bytes,content_type,sha256,created_by_kind,created_by,uploaded_by_kind,uploaded_by,created_at,committed_at,tombstoned_at",
+    "file_id,name,current_version,size_bytes,content_type,sha256,created_by_kind,created_by,uploaded_by_kind,uploaded_by,created_at,committed_at,tombstoned_at,live_version_count,retired_version_count",
   );
   url.searchParams.set("order", "name.asc");
   let response: Response;

@@ -548,7 +548,8 @@ async function handle(
         SELECT
           file_id, name, current_version, size_bytes, content_type,
           sha256, created_by_kind, created_by, uploaded_by_kind, uploaded_by,
-          created_at, committed_at, tombstoned_at
+          created_at, committed_at, tombstoned_at,
+          live_version_count, retired_version_count
         FROM swarm_read.files
         WHERE workspace_id = ${body.workspace_id}::uuid
         ORDER BY lower(name) ASC
