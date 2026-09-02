@@ -5,6 +5,7 @@ import {
 
 export const AGENT_ACTIVITY_STALE_MS = 30_000;
 export const AGENT_ACTIVITY_INSTRUMENTATION_GRACE_MS = 17_000;
+export const AGENT_ACTIVITY_ELAPSED_MAX_MS = 7 * 24 * 60 * 60 * 1_000;
 
 const UUID_RE =
   /^[0-9a-f]{8}-[0-9a-f]{4}-[1-8][0-9a-f]{3}-[89ab][0-9a-f]{3}-[0-9a-f]{12}$/i;
@@ -33,6 +34,8 @@ export type AgentActivityConnectionState =
   | "subscribed"
   | "unavailable";
 
+export type AgentListenerPresence = "present" | "absent" | "unknown";
+
 export interface AgentActivityFrame {
   version: 1;
   workspaceId: string;
@@ -47,7 +50,13 @@ export interface AgentActivityFrame {
 }
 
 export interface AgentActivityPanelView {
-  state: "fresh" | "stale" | "not-instrumented" | "connecting" | "unavailable";
+  state:
+    | "fresh"
+    | "stale"
+    | "no-frames"
+    | "not-instrumented"
+    | "connecting"
+    | "unavailable";
   ageLabel: string;
   phaseLabel: string | null;
   signalLabel: string | null;
@@ -92,6 +101,7 @@ export function parseAgentActivityFrame(
     ) ||
     !Number.isSafeInteger(record.elapsedMs) ||
     (record.elapsedMs as number) < 0 ||
+    (record.elapsedMs as number) > AGENT_ACTIVITY_ELAPSED_MAX_MS ||
     typeof record.emittedAt !== "string" ||
     !Number.isFinite(Date.parse(record.emittedAt))
   ) {
@@ -149,6 +159,7 @@ export function agentActivityPanelView(
   frame: AgentActivityFrame | undefined,
   connection: AgentActivityConnectionState,
   now: number,
+  listenerPresence: AgentListenerPresence = "unknown",
 ): AgentActivityPanelView {
   if (!frame) {
     if (connection === "connecting") {
@@ -173,15 +184,25 @@ export function agentActivityPanelView(
         emptyMessage: "Live activity is unavailable. The saved agent details are unchanged.",
       };
     }
+    if (listenerPresence === "absent") {
+      return {
+        state: "not-instrumented",
+        ageLabel: "Not instrumented",
+        phaseLabel: null,
+        signalLabel: null,
+        toolTitle: null,
+        elapsedLabel: null,
+        emptyMessage: "Not instrumented — this agent has no listener",
+      };
+    }
     return {
-      state: "not-instrumented",
-      ageLabel: "Not instrumented",
+      state: "no-frames",
+      ageLabel: "No frames received",
       phaseLabel: null,
       signalLabel: null,
       toolTitle: null,
       elapsedLabel: null,
-      emptyMessage:
-        "Not instrumented — this agent posts with the CLI and does not stream activity",
+      emptyMessage: "No activity frames received",
     };
   }
   const ageMs = Math.max(0, now - Date.parse(frame.emittedAt));
@@ -194,9 +215,16 @@ export function agentActivityPanelView(
     phaseLabel: phaseLabel(frame.phase),
     signalLabel: frame.signalId,
     toolTitle: frame.toolTitle,
-    elapsedLabel: durationLabel(
-      frame.phase === "idle" ? 0 : frame.elapsedMs + ageMs,
-    ),
+    elapsedLabel: stale
+      ? "stale"
+      : durationLabel(
+        frame.phase === "idle"
+          ? 0
+          : Math.min(
+            AGENT_ACTIVITY_ELAPSED_MAX_MS,
+            frame.elapsedMs + ageMs,
+          ),
+      ),
     emptyMessage: null,
   };
 }

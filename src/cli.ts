@@ -4521,6 +4521,8 @@ export function listenerStatusJson(
     droppedForMainCount: status.droppedForMainCount ?? 0,
     connectionsOpened: status.connectionsOpened ?? null,
     connectionReuseRatio: status.connectionReuseRatio ?? null,
+    activityPublishFailures: status.activityPublishFailures ?? null,
+    activityLastErrorCode: status.activityLastErrorCode ?? null,
     ...(mode
       ? {
         permission_mode: mode,
@@ -5393,6 +5395,11 @@ async function runConfiguredListener(options: {
             credentialSession,
             httpClient.fetch,
           ),
+          onPublishFailure: (code) => onEvent({
+            type: "activity_publish_failure",
+            code,
+            ts: new Date().toISOString(),
+          }),
         });
         const instrumentedModel = activity.instrumentModel(
           newModel(onCanaryAttempt, activity.events),

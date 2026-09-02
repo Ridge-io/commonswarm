@@ -894,3 +894,12 @@ Lesson for the ritual: a lane whose claim is about a RUNNING listener must inclu
 - `git worktree list` is now: main, `wt-l41-p3-followups`, `wt-l42-live-bridge-measurement`, `.claude/worktrees/codex-seo`. Branches: `main`, `codex-seo`, `lane/l41-*`, `lane/l42-*`.
 - `codex-seo` is STARTED, never-landed work (11 uncommitted site files: SEO page program from `docs/marketing/2026-08-22-SEO-KEYWORD-RESEARCH.md`). Lane **L43** (in that worktree) checkpoints it, rebases on main, makes every claim true, runs the site gates, commits on `codex-seo`. It then needs two arms (copy claims) and a site deploy.
 - Open lanes: L41 (Grok P3s of 0.1.46: dashboard "Not instrumented" overclaim, stale elapsed clamp, mixed-binary doc), L42 (bridge measurement on the live detached path, mandatory live control), L43 (SEO pages). Each lands on main via its own two arms; L42 + L41 ship as 0.1.47; L43 ships with a site deploy.
+### Addendum 2026-09-02 — mixed local `cswarm` binaries
+
+- A 0.1.45 CLI cannot read the status file written by a 0.1.46 or newer listener. The
+  0.1.45 reader rejects fields it does not know. Readers from 0.1.46 onward tolerate fields
+  added by newer writers.
+- Check both installed copies before listener work. These versions must match:
+  `~/.local/bin/cswarm --version` and `/opt/homebrew/bin/cswarm --version`.
+- If the npm-global copy is old, run `npm i -g commonswarm@<v>` with the version from the
+  other copy. A running listener keeps its old code until it is restarted.

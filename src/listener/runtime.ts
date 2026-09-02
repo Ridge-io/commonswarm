@@ -62,6 +62,7 @@ import type {
   ListenerSenderProvenance,
   ListenerSenderProvenanceContext,
 } from "./types.js";
+import type { ActivityPublishErrorCode } from "./activity.js";
 
 export const LISTENER_PAGE_LIMIT = 100;
 export const LISTENER_IDLE_POLL_MS = 2_000;
@@ -161,6 +162,11 @@ export type ListenerRuntimeEvent =
     ts: string;
   }
   | { type: "malformed_row"; index: number; ts: string }
+  | {
+    type: "activity_publish_failure";
+    code: ActivityPublishErrorCode;
+    ts: string;
+  }
   | {
     type: "delivery_mode";
     mode: ListenerDeliveryMode;

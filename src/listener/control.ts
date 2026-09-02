@@ -35,6 +35,7 @@ const START_LOCK_STALE_MS = 10_000;
 
 import type { ListenerPermissionMode } from "./types.js";
 import type { ListenerRouteMode } from "./main-routing.js";
+import type { ActivityPublishErrorCode } from "./activity.js";
 
 export type ListenerStatusState =
   | "starting"
@@ -105,6 +106,10 @@ export interface ListenerStatus {
   connectionsOpened?: number;
   /** HTTP requests divided by opened TCP connections; near 1 means no reuse. */
   connectionReuseRatio?: number;
+  /** Activity frame publish failures observed by this listener process. */
+  activityPublishFailures?: number;
+  /** Stable code for the newest activity publish failure; local status only. */
+  activityLastErrorCode?: ActivityPublishErrorCode | null;
   logPath: string;
 }
 
@@ -199,6 +204,15 @@ const STATUS_ALLOWED_KEYS = new Set([
   "readHealth",
   "connectionsOpened",
   "connectionReuseRatio",
+  "activityPublishFailures",
+  "activityLastErrorCode",
+]);
+const STATUS_ACTIVITY_ERROR_CODES = new Set<ActivityPublishErrorCode>([
+  "activity_credential_failed",
+  "activity_request_timeout",
+  "activity_transport_failed",
+  "activity_http_rejected",
+  "activity_publish_unknown",
 ]);
 // Sensitive aliases are rejected by name, not silently dropped, so a status
 // file can never smuggle a lease capability, command ID, credential, or body.
@@ -366,7 +380,17 @@ function parseStatus(raw: string, rejectUnknownKeys = false): ListenerStatus {
         Number.isSafeInteger(row.connectionsOpened) && row.connectionsOpened >= 0)) ||
     !(row.connectionReuseRatio === undefined ||
       (typeof row.connectionReuseRatio === "number" &&
-        Number.isFinite(row.connectionReuseRatio) && row.connectionReuseRatio >= 0))
+        Number.isFinite(row.connectionReuseRatio) && row.connectionReuseRatio >= 0)) ||
+    !(row.activityPublishFailures === undefined ||
+      (typeof row.activityPublishFailures === "number" &&
+        Number.isSafeInteger(row.activityPublishFailures) &&
+        row.activityPublishFailures >= 0)) ||
+    !(row.activityLastErrorCode === undefined ||
+      row.activityLastErrorCode === null ||
+      (typeof row.activityLastErrorCode === "string" &&
+        STATUS_ACTIVITY_ERROR_CODES.has(
+          row.activityLastErrorCode as ActivityPublishErrorCode,
+        )))
   ) {
     throw new Error("stored listener status is malformed");
   }
