@@ -184,7 +184,14 @@ test("3. Comprehensive schema, phase/null invariants, strict RFC3339 timestamps,
     };
     assert.throws(() => parseJournalRecord(JSON.stringify(equalOrdJson)));
 
-    // Unknown top-level, active, or ack keys
+    // Unknown fields from a newer writer are ignored at each stored level.
+    const extraTopKey = JSON.parse(validJson);
+    extraTopKey.futureJournalMetadata = { writer: "newer" };
+    assert.deepEqual(
+      parseJournalRecord(JSON.stringify(extraTopKey)),
+      JSON.parse(validJson),
+    );
+
     const extraActiveKey = JSON.parse(validJson);
     extraActiveKey.active = {
       phase: "claim_pending",
@@ -198,7 +205,9 @@ test("3. Comprehensive schema, phase/null invariants, strict RFC3339 timestamps,
       ack: null,
       unknownActiveField: 123,
     };
-    assert.throws(() => parseJournalRecord(JSON.stringify(extraActiveKey)));
+    const parsedExtraActive = parseJournalRecord(JSON.stringify(extraActiveKey));
+    assert.equal(parsedExtraActive.active?.phase, "claim_pending");
+    assert.equal("unknownActiveField" in parsedExtraActive.active!, false);
 
     // Unknown version
     const badVer = JSON.parse(validJson);

@@ -4519,8 +4519,8 @@ export function listenerStatusJson(
     deferOverChars: status.deferOverChars ?? null,
     pendingForMainCount: status.pendingForMainCount ?? 0,
     droppedForMainCount: status.droppedForMainCount ?? 0,
-    connectionsOpened: status.connectionsOpened ?? 0,
-    connectionReuseRatio: status.connectionReuseRatio ?? 0,
+    connectionsOpened: status.connectionsOpened ?? null,
+    connectionReuseRatio: status.connectionReuseRatio ?? null,
     ...(mode
       ? {
         permission_mode: mode,
@@ -4588,6 +4588,8 @@ export function renderListenerStatus(
     }.`,
     `Provider: ${status.provider}; process: ${status.pid}; started: ${status.startedAt}.`,
     `Provider executable: ${status.providerExecutable ?? "not measured"}.`,
+    `Connections opened: ${status.connectionsOpened ?? "not measured"}.`,
+    `Connection reuse ratio: ${status.connectionReuseRatio ?? "not measured"}.`,
     status.readyAt ? `Ready since: ${status.readyAt}.` : "Not ready yet.",
     status.lastSignalId
       ? pendingForMainCount > 0
@@ -4635,6 +4637,7 @@ export function renderListenerStatus(
         status.provider,
         status.lastErrorDetail,
         status.lastErrorReasonCode,
+        status.providerMinimumRequiredVersion,
       )}.`,
     );
   }
@@ -4677,7 +4680,7 @@ export function renderListenerStatus(
       )
     ) {
       lines.push(
-        `WARNING [claude_bridge_below_api_minimum]: this listener has bundled Claude Code ${status.providerBundledClaudeCodeVersion}, below the API minimum ${status.providerMinimumRequiredVersion}. Update the bridge: npm i -g @agentclientprotocol/claude-agent-acp@latest (bundles a newer Claude Code), then restart the listener.`,
+        `WARNING [claude_bridge_below_api_minimum]: this listener has bundled Claude Code ${status.providerBundledClaudeCodeVersion}, below the API minimum ${status.providerMinimumRequiredVersion}. Install the current bridge (npm i -g @agentclientprotocol/claude-agent-acp@latest), restart the listener, then run cswarm listen status and confirm that the bundled Claude Code version meets the API minimum ${status.providerMinimumRequiredVersion}.`,
       );
     }
     if (providerRestartRequired(status, installed)) {
@@ -4829,6 +4832,7 @@ export function listenerFailureMessage(
   provider?: ListenerProviderId,
   detail?: string | null,
   reasonCode?: string | null,
+  minimumRequiredVersion?: string | null,
 ): string {
   if (code === "version_below_floor") {
     if (provider === "codex") {
@@ -4911,7 +4915,8 @@ export function listenerFailureMessage(
         "the Claude ACP permission canary ran, but no workspace signal prompt was delivered";
       const response = `bridge response [${shape.code}]: ${quotedListenerFailureDetail(detail)}`;
       if (shape.code === "claude_bridge_version_required") {
-        return `${ran}. ${response}. Next: update the bridge: npm i -g @agentclientprotocol/claude-agent-acp@latest (bundles a newer Claude Code), then restart the listener`;
+        const minimum = minimumRequiredVersion ?? shape.minimumRequiredVersion;
+        return `${ran}. ${response}. Next: install the current bridge (npm i -g @agentclientprotocol/claude-agent-acp@latest), restart the listener, then run cswarm listen status and confirm that the bundled Claude Code version meets the API minimum ${minimum ?? "reported there"}`;
       }
       if (shape.code === "claude_canary_timeout") {
         return `${ran}. ${response}. Next: run claude -p and check for session-limit text, check host load, then retry`;
@@ -5620,6 +5625,7 @@ async function runListenStart(args: Arguments): Promise<void> {
           provider,
           detail,
           reasonCode,
+          failedStatus?.providerMinimumRequiredVersion,
         );
         throw new Error(
           failedStatus === null
@@ -5638,6 +5644,7 @@ async function runListenStart(args: Arguments): Promise<void> {
         provider,
         status.lastErrorDetail,
         status.lastErrorReasonCode,
+        status.providerMinimumRequiredVersion,
       )}. ${listenerProviderIdentitySummary(status)}`,
     );
   }

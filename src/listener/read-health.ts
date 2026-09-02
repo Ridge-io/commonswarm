@@ -223,8 +223,15 @@ export function recordListenerClaim(
   };
 }
 
-function exactKeys(value: Record<string, unknown>, expected: string[]): boolean {
-  return Object.keys(value).sort().join(",") === [...expected].sort().join(",");
+function hasExpectedKeys(
+  value: Record<string, unknown>,
+  expected: string[],
+  rejectUnknownKeys: boolean,
+): boolean {
+  const actual = Object.keys(value);
+  const allowed = new Set(expected);
+  return expected.every((key) => actual.includes(key)) &&
+    (!rejectUnknownKeys || actual.every((key) => allowed.has(key)));
 }
 
 function validTimestamp(value: unknown): value is string {
@@ -235,11 +242,14 @@ function validCount(value: unknown): value is number {
   return typeof value === "number" && Number.isSafeInteger(value) && value >= 0;
 }
 
-/** Validate the bounded nested status structure before it reaches a local state file. */
-export function isListenerReadHealth(value: unknown): value is ListenerReadHealth {
-  if (!value || typeof value !== "object" || Array.isArray(value)) return false;
+/** Validate and project the bounded nested status structure from local state. */
+export function parseListenerReadHealth(
+  value: unknown,
+  rejectUnknownKeys = false,
+): ListenerReadHealth | null {
+  if (!value || typeof value !== "object" || Array.isArray(value)) return null;
   const row = value as Record<string, unknown>;
-  if (!exactKeys(row, [
+  if (!hasExpectedKeys(row, [
     "currentEpisodeStartedAt",
     "currentEpisodeAttempts",
     "currentReasonCode",
@@ -249,7 +259,7 @@ export function isListenerReadHealth(value: unknown): value is ListenerReadHealt
     "retryMinutes",
     "claimCadenceMs",
     "claimHours",
-  ])) return false;
+  ], rejectUnknownKeys)) return null;
   if (
     !(row.currentEpisodeStartedAt === null || validTimestamp(row.currentEpisodeStartedAt)) ||
     !validCount(row.currentEpisodeAttempts) ||
@@ -272,40 +282,66 @@ export function isListenerReadHealth(value: unknown): value is ListenerReadHealt
     row.retryMinutes.length > LISTENER_READ_RETRY_MINUTE_CAP ||
     !Array.isArray(row.claimHours) ||
     row.claimHours.length > LISTENER_CLAIM_HOUR_CAP
-  ) return false;
+  ) return null;
   if (
     (row.currentEpisodeStartedAt === null) !== (row.currentEpisodeAttempts === 0) ||
     (row.currentEpisodeStartedAt === null) !== (row.currentReasonCode === null) ||
     (row.currentReasonCode === "http_status") !== (row.currentHttpStatus !== null) ||
     (row.currentReasonCode === "unclassified") !==
       (row.currentErrorConstructor !== null)
-  ) return false;
+  ) return null;
   for (const value of row.retryHours) {
-    if (!value || typeof value !== "object" || Array.isArray(value)) return false;
+    if (!value || typeof value !== "object" || Array.isArray(value)) return null;
     const hour = value as Record<string, unknown>;
-    if (!exactKeys(hour, [
+    if (!hasExpectedKeys(hour, [
       "hourStart",
       "retries",
       "episodes",
       "longestEpisodeAttempts",
       "longestEpisodeDurationMs",
-    ]) || !validTimestamp(hour.hourStart) || !validCount(hour.retries) ||
+    ], rejectUnknownKeys) || !validTimestamp(hour.hourStart) || !validCount(hour.retries) ||
       !validCount(hour.episodes) || !validCount(hour.longestEpisodeAttempts) ||
-      !validCount(hour.longestEpisodeDurationMs)) return false;
+      !validCount(hour.longestEpisodeDurationMs)) return null;
   }
   for (const value of row.retryMinutes) {
-    if (!value || typeof value !== "object" || Array.isArray(value)) return false;
+    if (!value || typeof value !== "object" || Array.isArray(value)) return null;
     const minute = value as Record<string, unknown>;
-    if (!exactKeys(minute, ["minuteStart", "retries"]) ||
-      !validTimestamp(minute.minuteStart) || !validCount(minute.retries)) return false;
+    if (!hasExpectedKeys(minute, ["minuteStart", "retries"], rejectUnknownKeys) ||
+      !validTimestamp(minute.minuteStart) || !validCount(minute.retries)) return null;
   }
   for (const value of row.claimHours) {
-    if (!value || typeof value !== "object" || Array.isArray(value)) return false;
+    if (!value || typeof value !== "object" || Array.isArray(value)) return null;
     const hour = value as Record<string, unknown>;
-    if (!exactKeys(hour, ["hourStart", "claims"]) ||
-      !validTimestamp(hour.hourStart) || !validCount(hour.claims)) return false;
+    if (!hasExpectedKeys(hour, ["hourStart", "claims"], rejectUnknownKeys) ||
+      !validTimestamp(hour.hourStart) || !validCount(hour.claims)) return null;
   }
-  return true;
+  return {
+    currentEpisodeStartedAt: row.currentEpisodeStartedAt as string | null,
+    currentEpisodeAttempts: row.currentEpisodeAttempts as number,
+    currentReasonCode: row.currentReasonCode as SignalReadFailureCode | null,
+    currentHttpStatus: row.currentHttpStatus as number | null,
+    currentErrorConstructor: row.currentErrorConstructor as string | null,
+    retryHours: (row.retryHours as Array<Record<string, unknown>>).map((hour) => ({
+      hourStart: hour.hourStart as string,
+      retries: hour.retries as number,
+      episodes: hour.episodes as number,
+      longestEpisodeAttempts: hour.longestEpisodeAttempts as number,
+      longestEpisodeDurationMs: hour.longestEpisodeDurationMs as number,
+    })),
+    retryMinutes: (row.retryMinutes as Array<Record<string, unknown>>).map((minute) => ({
+      minuteStart: minute.minuteStart as string,
+      retries: minute.retries as number,
+    })),
+    claimCadenceMs: row.claimCadenceMs as number | null,
+    claimHours: (row.claimHours as Array<Record<string, unknown>>).map((hour) => ({
+      hourStart: hour.hourStart as string,
+      claims: hour.claims as number,
+    })),
+  };
+}
+
+export function isListenerReadHealth(value: unknown): value is ListenerReadHealth {
+  return parseListenerReadHealth(value) !== null;
 }
 
 /** Derive rolling and completed-hour metrics without changing the durable file. */
