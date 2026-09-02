@@ -267,6 +267,7 @@ import {
   type ListenerStatus,
   type ListenerRouteMode,
 } from "./listener/index.js";
+import { ListenerHttpClient } from "./listener/http-client.js";
 import {
   inspectResume,
   renderResume,
@@ -2380,6 +2381,7 @@ async function agentSession(
   cloud: CloudTarget,
   workspaceId: string,
   agent: AgentCredentialInput,
+  fetcher?: typeof fetch,
 ): Promise<AgentCredentialSession> {
   let store: Awaited<ReturnType<typeof agentCredentialStore>> | null = null;
   try {
@@ -2411,6 +2413,7 @@ async function agentSession(
       expiresAt: agent.expiresAt,
     },
     store,
+    ...(fetcher ? { fetcher } : {}),
   });
 }
 
@@ -3746,6 +3749,7 @@ async function runInboxNotifyCommand(args: Arguments): Promise<void> {
   }
 
   const controller = new AbortController();
+  const httpClient = new ListenerHttpClient();
   const stop = () => controller.abort();
   process.on("SIGINT", stop);
   process.on("SIGTERM", stop);
@@ -3780,7 +3784,7 @@ async function runInboxNotifyCommand(args: Arguments): Promise<void> {
                 ...(after === null ? {} : { after }),
               }),
           },
-          { signal: controller.signal },
+          { signal: controller.signal, fetcher: httpClient.fetch },
         );
       },
       emit: async (signal) => {
@@ -3814,6 +3818,7 @@ async function runInboxNotifyCommand(args: Arguments): Promise<void> {
   } finally {
     process.off("SIGINT", stop);
     process.off("SIGTERM", stop);
+    httpClient.close();
   }
 }
 
@@ -3910,6 +3915,7 @@ async function runInboxFollowCommand(args: Arguments): Promise<void> {
   };
 
   const controller = new AbortController();
+  const httpClient = new ListenerHttpClient();
   let legacyCursorWarned = false;
   let malformedRowWarnings = 0;
   const onAbortSignal = () => controller.abort();
@@ -3951,7 +3957,7 @@ async function runInboxFollowCommand(args: Arguments): Promise<void> {
             cloud,
             credential,
             query,
-            { signal: controller.signal },
+            { signal: controller.signal, fetcher: httpClient.fetch },
             {
               allowLegacyCursorFallback: true,
               tolerateMalformedRows: true,
@@ -3983,7 +3989,7 @@ async function runInboxFollowCommand(args: Arguments): Promise<void> {
           cloud,
           credential,
           query,
-          { signal: controller.signal },
+          { signal: controller.signal, fetcher: httpClient.fetch },
         );
       },
       emit: (frame) => {
@@ -4009,6 +4015,7 @@ async function runInboxFollowCommand(args: Arguments): Promise<void> {
   } finally {
     process.off("SIGINT", onAbortSignal);
     process.off("SIGTERM", onAbortSignal);
+    httpClient.close();
   }
 }
 
@@ -4510,6 +4517,8 @@ export function listenerStatusJson(
     deferOverChars: status.deferOverChars ?? null,
     pendingForMainCount: status.pendingForMainCount ?? 0,
     droppedForMainCount: status.droppedForMainCount ?? 0,
+    connectionsOpened: status.connectionsOpened ?? 0,
+    connectionReuseRatio: status.connectionReuseRatio ?? 0,
     ...(mode
       ? {
         permission_mode: mode,
@@ -5083,11 +5092,19 @@ async function runConfiguredListener(options: {
       ? { stateDirectory: options.stateDirectory }
       : {}),
   });
-  const liveCredentialSession = await agentSession(
-    options.cloud,
-    options.workspaceId,
-    options.agent,
-  );
+  const httpClient = new ListenerHttpClient();
+  let liveCredentialSession: AgentCredentialSession;
+  try {
+    liveCredentialSession = await agentSession(
+      options.cloud,
+      options.workspaceId,
+      options.agent,
+      httpClient.fetch,
+    );
+  } catch (error) {
+    httpClient.close();
+    throw error;
+  }
   let storedCredential: string | null = null;
   const credentialSession = {
     bearer: async (): Promise<string> => {
@@ -5118,7 +5135,7 @@ async function runConfiguredListener(options: {
       options.cloud,
       credential,
       options.workspaceId,
-      context,
+      { ...context, fetcher: httpClient.fetch },
     );
     const provenance = listenerSenderProvenance(signal, senderDirectory);
     if (context.includeBrainDigest !== true) return provenance;
@@ -5130,6 +5147,7 @@ async function runConfiguredListener(options: {
         {
           ...(context.signal ? { signal: context.signal } : {}),
           deadlineMs: context.deadlineMs,
+          fetcher: httpClient.fetch,
         },
       );
       const brainDigest = await new FileBrainDigestStore(
@@ -5306,6 +5324,7 @@ async function runConfiguredListener(options: {
       // one has run, else the configured cap.
       getTurnBudgetMs: () => lastAppliedTurnBudgetMs ?? turnBudgetMs,
       getProviderVersionNotice: () => providerVersionNotice,
+      getConnectionMetrics: () => httpClient.metrics(),
       takeWorkerStderrTail: () => {
         const tail = lastWorkerStderrTail;
         lastWorkerStderrTail = null;
@@ -5365,12 +5384,14 @@ async function runConfiguredListener(options: {
           routeMode,
           deferOverChars,
           pendingMainQueue,
+          fetcher: httpClient.fetch,
         });
       },
     });
   } finally {
     process.off("SIGINT", onProcessSignal);
     process.off("SIGTERM", onProcessSignal);
+    httpClient.close();
   }
 }
 
@@ -5880,16 +5901,23 @@ async function runListenCanary(args: Arguments): Promise<void> {
     ...(stateDirectory ? { stateDirectory } : {}),
   });
   const waitMs = parseWaitSeconds(args.optional("wait") ?? "10") * 1_000;
-  const result = await runListenerAttendanceCanary({
-    target: cloud,
-    workspaceId,
-    principalId,
-    paths,
-    waitMs,
-    // Canary must remain read-only apart from its one self-note. It therefore
-    // uses the presented token and never enters the renewal/mint path.
-    credential: async () => agent.token,
-  });
+  const httpClient = new ListenerHttpClient();
+  let result: Awaited<ReturnType<typeof runListenerAttendanceCanary>>;
+  try {
+    result = await runListenerAttendanceCanary({
+      target: cloud,
+      workspaceId,
+      principalId,
+      paths,
+      waitMs,
+      fetcher: httpClient.fetch,
+      // Canary must remain read-only apart from its one self-note. It therefore
+      // uses the presented token and never enters the renewal/mint path.
+      credential: async () => agent.token,
+    });
+  } finally {
+    httpClient.close();
+  }
   if (args.has("json")) {
     printJson({
       workspaceId,
@@ -6233,18 +6261,24 @@ async function runHook(args: Arguments): Promise<void> {
       process.exit(0);
     }, 3_000);
     hardExit.unref();
-    await runListenerHookCheck({
-      ...(cooldownSeconds === undefined ? {} : { cooldownSeconds }),
-      ...(principalIds.length === 0 ? {} : { principalIds }),
-      write: async (output) => {
-        await new Promise<void>((resolve, reject) => {
-          process.stdout.write(`${output}\n`, (error) => {
-            if (error) reject(error);
-            else resolve();
+    const httpClient = new ListenerHttpClient();
+    try {
+      await runListenerHookCheck({
+        ...(cooldownSeconds === undefined ? {} : { cooldownSeconds }),
+        ...(principalIds.length === 0 ? {} : { principalIds }),
+        fetcher: httpClient.fetch,
+        write: async (output) => {
+          await new Promise<void>((resolve, reject) => {
+            process.stdout.write(`${output}\n`, (error) => {
+              if (error) reject(error);
+              else resolve();
+            });
           });
-        });
-      },
-    });
+        },
+      });
+    } finally {
+      httpClient.close();
+    }
     return;
   }
   if (command !== "install" && command !== "uninstall") {

@@ -100,6 +100,10 @@ export interface ListenerStatus {
   droppedForMainCount?: number;
   /** Bounded local-only retry and claim-throughput accounting. */
   readHealth?: ListenerReadHealth;
+  /** TCP connections opened by this listener process since start. */
+  connectionsOpened?: number;
+  /** HTTP requests divided by opened TCP connections; near 1 means no reuse. */
+  connectionReuseRatio?: number;
   logPath: string;
 }
 
@@ -186,6 +190,8 @@ const STATUS_ALLOWED_KEYS = new Set([
   "pendingForMainCount",
   "droppedForMainCount",
   "readHealth",
+  "connectionsOpened",
+  "connectionReuseRatio",
 ]);
 // Sensitive aliases are rejected by name, not silently dropped, so a status
 // file can never smuggle a lease capability, command ID, credential, or body.
@@ -344,7 +350,13 @@ function parseStatus(raw: string): ListenerStatus {
     !(row.droppedForMainCount === undefined ||
       (typeof row.droppedForMainCount === "number" &&
         Number.isSafeInteger(row.droppedForMainCount) && row.droppedForMainCount >= 0)) ||
-    !(row.readHealth === undefined || isListenerReadHealth(row.readHealth))
+    !(row.readHealth === undefined || isListenerReadHealth(row.readHealth)) ||
+    !(row.connectionsOpened === undefined ||
+      (typeof row.connectionsOpened === "number" &&
+        Number.isSafeInteger(row.connectionsOpened) && row.connectionsOpened >= 0)) ||
+    !(row.connectionReuseRatio === undefined ||
+      (typeof row.connectionReuseRatio === "number" &&
+        Number.isFinite(row.connectionReuseRatio) && row.connectionReuseRatio >= 0))
   ) {
     throw new Error("stored listener status is malformed");
   }
