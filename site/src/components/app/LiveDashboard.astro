@@ -665,6 +665,10 @@ import "../../styles/tokens.css";
                   No recipient · broadcast · no agent will be woken
                 </span>
               </div>
+              <label class="dashboard__composer-note-option" data-composer-note-option hidden>
+                <input type="checkbox" data-composer-note-toggle />
+                <span>Post a note · no agent is woken</span>
+              </label>
               <div class="dashboard__composer-box">
                 <div
                   class="dashboard__mention-picker"
@@ -928,6 +932,7 @@ import "../../styles/tokens.css";
     browserDeliveryReceipts,
     browserPostingDeliveryIndicator,
     browserSignalAddress,
+    browserSignalKind,
     parseBrowserSignalAttachments,
     prepareBrowserAttachments,
     postBrowserSignal,
@@ -952,6 +957,7 @@ import "../../styles/tokens.css";
     type BrowserDeliveryReceiptCacheEntry,
     type BrowserDeliveryReceiptResult,
     type BrowserSignalRecipient,
+    type BrowserSignalKind,
     type BrowserAttachmentUploadIntent,
     type WorkspaceFile,
   } from "../../lib/commonswarm";
@@ -1043,6 +1049,7 @@ import "../../styles/tokens.css";
   interface ComposerDraft {
     body: string;
     audienceKey: string;
+    agentNote?: boolean;
     hadAttachments?: boolean;
   }
 
@@ -1140,12 +1147,14 @@ import "../../styles/tokens.css";
     let entityActivityTimer: number | undefined;
     let composerAudience: ComposerAudience = { kind: "everyone" };
     let composerMention: EntityRef | null = null;
+    let composerPostAgentNote = false;
     let mentionPickerIndex = 0;
     let composerIntent: {
       commandId: string;
       body: string;
       audienceKey: string;
       attachmentKey: string;
+      signalKind: BrowserSignalKind;
     } | null = null;
     let composerSending = false;
     let stagedAttachments: StagedComposerAttachment[] = [];
@@ -2204,6 +2213,7 @@ import "../../styles/tokens.css";
         return {
           body: value.body.slice(0, COMPOSER_DRAFT_STORAGE_MAX),
           audienceKey: value.audienceKey,
+          ...(value.agentNote === true ? { agentNote: true } : {}),
           ...(value.hadAttachments === true ? { hadAttachments: true } : {}),
         };
       } catch {
@@ -2228,14 +2238,20 @@ import "../../styles/tokens.css";
       const body = input.value.slice(0, COMPOSER_DRAFT_STORAGE_MAX);
       const audienceKey = composerAudienceKey(composerAudience);
       const hadAttachments = stagedAttachments.length > 0 || composerAttachmentsMissingAfterReload;
+      const agentNote = composerAudience.kind === "agent" && composerPostAgentNote;
       try {
-        if (body === "" && audienceKey === "everyone" && !hadAttachments) {
+        if (body === "" && audienceKey === "everyone" && !agentNote && !hadAttachments) {
           window.localStorage.removeItem(key);
           return;
         }
         window.localStorage.setItem(
           key,
-          JSON.stringify({ body, audienceKey, ...(hadAttachments ? { hadAttachments: true } : {}) }),
+          JSON.stringify({
+            body,
+            audienceKey,
+            ...(agentNote ? { agentNote: true } : {}),
+            ...(hadAttachments ? { hadAttachments: true } : {}),
+          }),
         );
       } catch {
         // A private or full storage area must not break composing or sending.
@@ -2394,8 +2410,10 @@ import "../../styles/tokens.css";
       }
       const attach = one<HTMLButtonElement>("[data-composer-attach]");
       const picker = one<HTMLInputElement>("[data-composer-file-input]");
+      const noteToggle = one<HTMLInputElement>("[data-composer-note-toggle]");
       if (attach) attach.disabled = sending;
       if (picker) picker.disabled = sending;
+      if (noteToggle) noteToggle.disabled = sending;
       renderStagedAttachments();
       syncComposerControls();
     };
@@ -2421,6 +2439,7 @@ import "../../styles/tokens.css";
       );
       composerAudience = audienceExists ? audience : { kind: "everyone" };
       composerMention = composerAudience.kind === "everyone" ? null : { ...composerAudience };
+      composerPostAgentNote = composerAudience.kind === "agent" && draft.agentNote === true;
       composerIntent = null;
       const warning = one<HTMLElement>("[data-composer-reload-warning]");
       composerAttachmentsMissingAfterReload = draft.hadAttachments === true;
@@ -2492,15 +2511,23 @@ import "../../styles/tokens.css";
       if (!selectedExists) {
         composerAudience = { kind: "everyone" };
         composerMention = null;
+        composerPostAgentNote = false;
         renderComposerMentions();
       }
       select.value = composerAudienceKey(composerAudience);
       select.hidden = composerMention !== null;
+      const noteOption = one<HTMLElement>("[data-composer-note-option]");
+      const noteToggle = one<HTMLInputElement>("[data-composer-note-toggle]");
+      const agentNote = composerAudience.kind === "agent" && composerPostAgentNote;
+      if (noteOption) noteOption.hidden = composerAudience.kind !== "agent";
+      if (noteToggle) noteToggle.checked = agentNote;
       count.textContent = composerAudience.kind === "everyone"
         ? "No recipient · broadcast · no agent will be woken"
         : composerAudience.kind === "agent"
-        ? "One recipient · agent addressed · its listener can wake it"
-        : "One recipient · person addressed · no agent will be woken";
+        ? agentNote
+          ? `Posted for ${entityName(composerAudience)} to read; no wake`
+          : `Wakes ${entityName(composerAudience)}'s listener`
+        : `Posted for ${entityName(composerAudience)} to read; no agent will be woken`;
       restoreComposerDraft();
     };
 
@@ -2525,6 +2552,7 @@ import "../../styles/tokens.css";
         remove.addEventListener("click", () => {
           composerMention = null;
           composerAudience = { kind: "everyone" };
+          composerPostAgentNote = false;
           composerIntent = null;
           renderComposerMentions();
           renderComposerAudience();
@@ -2569,6 +2597,7 @@ import "../../styles/tokens.css";
       input.setSelectionRange(search.start, search.start);
       composerMention = mention;
       composerAudience = { ...mention };
+      composerPostAgentNote = false;
       composerIntent = null;
       renderComposerMentions();
       renderComposerAudience();
@@ -2640,6 +2669,7 @@ import "../../styles/tokens.css";
       composerDragDepth = 0;
       composerAudience = { kind: "everyone" };
       composerMention = null;
+      composerPostAgentNote = false;
       composerIntent = null;
       visualMentions.clear();
       const input = one<HTMLTextAreaElement>("[data-composer-input]");
@@ -3342,6 +3372,15 @@ import "../../styles/tokens.css";
         : signal.to !== null
         ? { kind: "person", id: signal.to }
         : { kind: "everyone" };
+      const receiptContext = {
+        signalKind: signal.kind === "note" ? "note" as const : "ask" as const,
+        ...(signal.toAgent === null
+          ? {}
+          : {
+            agentName: agents.find((agent) => agent.principalId === signal.toAgent)?.name ??
+              signal.toAgent,
+          }),
+      };
       const indicator: BrowserDeliveryIndicator = cached?.phase === "posting"
         ? browserPostingDeliveryIndicator()
         : cached?.phase === "accepted"
@@ -3352,7 +3391,7 @@ import "../../styles/tokens.css";
         ? browserDeliveryIndicator(
           cached?.result ?? { addressed: false, receipts: [] },
         )
-        : browserDeliveryIndicator(cached?.result ?? null);
+        : browserDeliveryIndicator(cached?.result ?? null, Date.now(), receiptContext);
       const details = document.createElement("details");
       details.className = "dashboard__message-receipt";
       details.dataset.receiptState = indicator.state;
@@ -5474,11 +5513,22 @@ import "../../styles/tokens.css";
           composerAudience = { kind: "agent", id: value.slice("agent:".length) };
         }
         composerMention = composerAudience.kind === "everyone" ? null : { ...composerAudience };
+        composerPostAgentNote = false;
         composerIntent = null;
         renderComposerAudience();
         renderComposerMentions();
         persistComposerDraft();
         syncComposerControls();
+      },
+    );
+    one<HTMLInputElement>("[data-composer-note-toggle]")?.addEventListener(
+      "change",
+      (event) => {
+        composerPostAgentNote = composerAudience.kind === "agent" &&
+          (event.currentTarget as HTMLInputElement).checked;
+        composerIntent = null;
+        renderComposerAudience();
+        persistComposerDraft();
       },
     );
     one<HTMLButtonElement>("[data-composer-attach]")?.addEventListener("click", () => {
@@ -5600,6 +5650,7 @@ import "../../styles/tokens.css";
         if (event.key === "Backspace" && input.value === "" && composerMention) {
           composerMention = null;
           composerAudience = { kind: "everyone" };
+          composerPostAgentNote = false;
           composerIntent = null;
           renderComposerMentions();
           renderComposerAudience();
@@ -5660,6 +5711,7 @@ import "../../styles/tokens.css";
       const version = requestVersion;
       const audience: ComposerAudience = { ...composerAudience };
       const address = browserSignalAddress(audience);
+      const signalKind = browserSignalKind(audience, composerPostAgentNote);
       const audienceKey = composerAudienceKey(audience);
       const attachmentSnapshot = [...stagedAttachments];
       const attachmentKey = attachmentSnapshot
@@ -5668,9 +5720,9 @@ import "../../styles/tokens.css";
       let intent = composerIntent;
       if (
         !intent || intent.body !== rawBody || intent.audienceKey !== audienceKey ||
-        intent.attachmentKey !== attachmentKey
+        intent.attachmentKey !== attachmentKey || intent.signalKind !== signalKind
       ) {
-        intent = { commandId: uuid(), body: rawBody, audienceKey, attachmentKey };
+        intent = { commandId: uuid(), body: rawBody, audienceKey, attachmentKey, signalKind };
         composerIntent = intent;
       }
       const mentions = composerMention ? [{ ...composerMention }] : [];
@@ -5681,7 +5733,7 @@ import "../../styles/tokens.css";
         fromKind: "user",
         to: address.toUserId,
         toAgent: address.toAgentPrincipalId,
-        kind: "note",
+        kind: signalKind,
         body: rawBody,
         attachments: attachmentSnapshot.map((attachment) => ({
           file_id: attachment.intent.fileId,
@@ -5737,7 +5789,7 @@ import "../../styles/tokens.css";
               fromKind: "user",
               to: address.toUserId,
               toAgent: address.toAgentPrincipalId,
-              kind: "note",
+              kind: signalKind,
               body: rawBody,
               attachments: optimisticSignal.attachments,
               about: null,
@@ -5750,6 +5802,7 @@ import "../../styles/tokens.css";
               workspaceId,
               rawBody,
               audience,
+              signalKind,
               attachmentRefs,
             );
         if (version !== requestVersion || workspaceId !== activeWorkspaceId) {
@@ -5766,11 +5819,13 @@ import "../../styles/tokens.css";
         visualMentions.set(signal.id, mentions);
         deliveryReceiptCache.set(signal.id, { result: null, checkedAt: 0, phase: "accepted" });
         composerIntent = null;
+        composerPostAgentNote = false;
         composerAttachmentsMissingAfterReload = false;
         for (const attachment of attachmentSnapshot) {
           if (attachment.previewUrl) URL.revokeObjectURL(attachment.previewUrl);
         }
         clearComposerDraft();
+        renderComposerAudience();
         renderFeed("latest");
         void refreshDeliveryReceipts(workspaceId, version);
         setComposerStatus("");
@@ -5784,6 +5839,7 @@ import "../../styles/tokens.css";
         renderStagedAttachments();
         composerAudience = { ...audience };
         composerMention = mentions[0] ?? null;
+        composerPostAgentNote = audience.kind === "agent" && signalKind === "note";
         renderComposerAudience();
         renderComposerMentions();
         resizeComposerInput(input);
@@ -8824,6 +8880,25 @@ import "../../styles/tokens.css";
     overflow: hidden;
     text-overflow: ellipsis;
     white-space: nowrap;
+  }
+
+  .dashboard__composer-note-option {
+    display: inline-flex;
+    grid-column: 1;
+    align-items: center;
+    justify-self: start;
+    gap: var(--s-2);
+    max-inline-size: 100%;
+    margin-inline-start: calc(var(--composer-border-width) + var(--composer-inset) + var(--s-5));
+    color: var(--text-muted);
+    font-size: var(--t-xs);
+    font-weight: var(--weight-medium);
+    letter-spacing: normal;
+    cursor: pointer;
+  }
+
+  .dashboard__composer-note-option input {
+    accent-color: var(--accent);
   }
 
   .dashboard__composer-box {

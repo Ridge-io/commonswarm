@@ -22,11 +22,15 @@ const src = readFileSync(
 );
 
 test("note: a note directed at an agent warns that it does not wake them", () => {
-  assert.match(src, /does NOT wake their agent/, "the silent failure is silent again");
+  assert.equal(
+    src.match(/Notes do not wake an agent; use cswarm ask to wake it\./g)?.length,
+    1,
+    "the human output must contain one wake warning line",
+  );
   assert.match(
     src,
-    /cswarm ask .*--to <agent>/,
-    "the warning does not name the verb that would work",
+    /noteAtAgent\s*\? "\\nNotes do not wake an agent; use cswarm ask to wake it\.\\n"/,
+    "the directed-note output no longer contains the exact wake instruction",
   );
 });
 

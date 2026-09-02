@@ -117,33 +117,48 @@ test("every ledger state has a distinct text-and-symbol indicator", () => {
   assert.doesNotMatch(indicators.map(({ detail }) => detail).join(" "), /\bread\b/i);
 });
 
-test("queued, observed, replied, expired, and failed stay distinct", () => {
+test("receipt label matrix distinguishes ask handling from note observation", () => {
   const outcomes = ["queued", "replied", "observed", "expired", "failed_terminal"] as const;
-  const indicators = outcomes.map((ackOutcome) => browserDeliveryIndicator(addressed(receipt({
-    deliveredAt: "2026-08-28T14:40:00.000Z",
-    ackedAt: "2026-08-28T14:50:00.000Z",
-    ackOutcome,
-    ...(ackOutcome === "queued" ? { pendingForMainCount: 4 } : {}),
-    attemptCount: 1,
-  })), NOW));
+  const indicators = (signalKind: "ask" | "note") => outcomes.map((ackOutcome) =>
+    browserDeliveryIndicator(addressed(receipt({
+      deliveredAt: "2026-08-28T14:40:00.000Z",
+      ackedAt: "2026-08-28T14:50:00.000Z",
+      ackOutcome,
+      ...(ackOutcome === "queued" ? { pendingForMainCount: 4 } : {}),
+      attemptCount: 1,
+    })), NOW, { signalKind, agentName: "CodexDesktop" })
+  );
+  const ask = indicators("ask");
+  const note = indicators("note");
 
-  assert.deepEqual(indicators.map(({ outcome }) => outcome), outcomes);
-  assert.deepEqual(indicators.map(({ label }) => label), [
-    "Queued",
-    "Replied",
-    "Observed",
+  assert.deepEqual(ask.map(({ outcome }) => outcome), outcomes);
+  assert.deepEqual(note.map(({ outcome }) => outcome), outcomes);
+  assert.deepEqual(ask.map(({ label }) => label), [
+    "Queued for the agent's session",
+    "Answered 10 minutes ago",
+    "Delivered, agent working",
     "Expired",
     "Failed",
   ]);
-  assert.equal(new Set(indicators.map(({ label, detail }) => `${label}:${detail}`)).size, 5);
+  assert.deepEqual(note.map(({ label }) => label), [
+    "Queued for CodexDesktop to read · no wake",
+    "Answered 10 minutes ago",
+    "Observed by CodexDesktop · notes do not wake an agent",
+    "Expired",
+    "Failed",
+  ]);
+  assert.equal(new Set(ask.map(({ label, detail }) => `${label}:${detail}`)).size, 5);
+  assert.equal(new Set(note.map(({ label, detail }) => `${label}:${detail}`)).size, 5);
   assert.match(
-    indicators[0]!.detail,
+    ask[0]!.detail,
     /waiting for the recipient's session hook \(4 in queue\)/,
   );
-  assert.doesNotMatch(indicators[0]!.detail, /next prompt/);
-  assert.equal(indicators[0]!.terminal, false);
-  assert.match(indicators[2]!.detail, /saw this delivery without replying/);
-  assert.doesNotMatch(indicators[2]!.detail, /acknowledged|read/i);
+  assert.doesNotMatch(ask[0]!.detail, /next prompt/);
+  assert.equal(ask[0]!.terminal, false);
+  assert.match(note[0]!.detail, /not yet shown \(4 in queue\).*does not wake the agent/);
+  assert.doesNotMatch(`${ask[2]!.label} ${ask[2]!.detail}`, /\bobserved\b/i);
+  assert.match(note[2]!.detail, /saw the note/);
+  assert.doesNotMatch(note[2]!.detail, /acknowledged|read/i);
 });
 
 test("broadcast uses addressed=false and can never look pending or failed", () => {
@@ -158,7 +173,7 @@ test("broadcast uses addressed=false and can never look pending or failed", () =
 
   const mapping = client.slice(
     client.indexOf("export function browserDeliveryIndicator"),
-    client.indexOf("/** Posts one browser-authored note", client.indexOf("export function browserDeliveryIndicator")),
+    client.indexOf("/** Posts one browser-authored signal", client.indexOf("export function browserDeliveryIndicator")),
   );
   assert.match(mapping, /if \(result\.addressed === false\)/);
   assert.match(mapping, /state: "no-recipient"/);

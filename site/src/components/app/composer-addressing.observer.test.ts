@@ -25,8 +25,9 @@ type ComposerMeasurement = {
   selectSync: { chipCount: number; chipText: string };
   plainEnter: { prevented: boolean; submitted: boolean };
   shiftEnter: { insertedNewline: boolean; prevented: boolean; submitted: boolean };
-  metaEnter: { recipient: string; submitted: boolean };
-  ctrlEnter: { recipient: string; submitted: boolean };
+  metaEnter: { helper: string; kind: string; recipient: string; submitted: boolean };
+  ctrlEnter: { helper: string; kind: string; recipient: string; submitted: boolean };
+  noteEnter: { helper: string; kind: string; recipient: string; submitted: boolean };
   metaMention: { chipText: string; selectedValue: string; submitted: boolean };
   ctrlMention: { chipText: string; selectedValue: string; submitted: boolean };
   zeroCandidate: { pickerHidden: boolean; submitted: boolean };
@@ -72,6 +73,7 @@ const frameScript = `<script>
     const input = doc.querySelector("[data-composer-input]");
     const select = doc.querySelector("[data-composer-audience]");
     const status = doc.querySelector("[data-composer-audience-count]");
+    const noteToggle = doc.querySelector("[data-composer-note-toggle]");
     const list = doc.querySelector("[data-feed-list]");
     const chips = () => [...doc.querySelectorAll("[data-composer-mentions] .dashboard__mention-chip")];
     const chooseMention = async (query) => {
@@ -88,9 +90,14 @@ const frameScript = `<script>
       await new Promise((resolve) => view.setTimeout(resolve, 0));
       return event.defaultPrevented;
     };
-    const sendWith = async (modifier, body) => {
+    const sendWith = async (modifier, body, postNote = false) => {
       select.value = "agent:sample-river";
       select.dispatchEvent(new view.Event("change", { bubbles: true }));
+      if (postNote) {
+        noteToggle.checked = true;
+        noteToggle.dispatchEvent(new view.Event("change", { bubbles: true }));
+      }
+      const helper = status.textContent ?? "";
       input.value = body;
       input.setSelectionRange(body.length, body.length);
       input.dispatchEvent(new view.InputEvent("input", { bubbles: true, inputType: "insertText" }));
@@ -107,6 +114,8 @@ const frameScript = `<script>
       }
       const row = list.children.length === before + 1 ? list.lastElementChild : null;
       return {
+        helper,
+        kind: row?.querySelector(".dashboard__message-kind")?.textContent?.trim() ?? "",
         recipient: row?.querySelector(".dashboard__message-target")?.textContent?.trim() ?? "",
         submitted: row?.querySelector(".dashboard__message-markdown")?.textContent === body,
       };
@@ -222,6 +231,7 @@ const frameScript = `<script>
     };
     const metaEnter = await sendWith("metaKey", "sent with command enter");
     const ctrlEnter = await sendWith("ctrlKey", "sent with control enter");
+    const noteEnter = await sendWith("metaKey", "sent as a note", true);
     const metaMention = await confirmMentionWith("metaKey", "orb");
     const ctrlMention = await confirmMentionWith("ctrlKey", "lum");
     const zeroCandidate = await sendWithStaleEmptyPicker();
@@ -235,6 +245,7 @@ const frameScript = `<script>
       shiftEnter,
       metaEnter,
       ctrlEnter,
+      noteEnter,
       metaMention,
       ctrlMention,
       zeroCandidate,
@@ -336,7 +347,7 @@ test("rendered composer uses one visible recipient and preserves multiline keybo
       chipText: "@Orbit×",
       enterPrevented: true,
       selectedValue: "agent:sample-orbit",
-      status: "One recipient · agent addressed · its listener can wake it",
+      status: "Wakes Orbit's listener",
     });
     assert.match(measured.broadcast.option, /nobody (?:is )?notified/i);
     assert.match(measured.broadcast.status, /no agent (?:is |will be )?woken/i);
@@ -355,8 +366,24 @@ test("rendered composer uses one visible recipient and preserves multiline keybo
       prevented: false,
       submitted: false,
     });
-    assert.deepEqual(measured.metaEnter, { recipient: "→ River", submitted: true });
-    assert.deepEqual(measured.ctrlEnter, { recipient: "→ River", submitted: true });
+    assert.deepEqual(measured.metaEnter, {
+      helper: "Wakes River's listener",
+      kind: "Question",
+      recipient: "→ River",
+      submitted: true,
+    });
+    assert.deepEqual(measured.ctrlEnter, {
+      helper: "Wakes River's listener",
+      kind: "Question",
+      recipient: "→ River",
+      submitted: true,
+    });
+    assert.deepEqual(measured.noteEnter, {
+      helper: "Posted for River to read; no wake",
+      kind: "Note",
+      recipient: "→ River",
+      submitted: true,
+    });
     assert.deepEqual(measured.metaMention, {
       chipText: "@Orbit×",
       selectedValue: "agent:sample-orbit",
