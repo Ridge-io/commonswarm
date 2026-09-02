@@ -1,5 +1,6 @@
 /**
- * Claude ACP subprocess core — measured against claude-agent-acp 0.64.2.
+ * Claude ACP subprocess core — measured against claude-agent-acp 0.73.0,
+ * @anthropic-ai/claude-agent-sdk 0.3.257, and bundled Claude Code 2.1.257.
  *
  * Spawn shape: `claude-agent-acp` with no arguments. The bridge speaks ACP
  * protocolVersion 1 and emits session/request_permission. It uses the
@@ -15,6 +16,7 @@ import {
   spawn,
   type ChildProcessWithoutNullStreams,
 } from "node:child_process";
+import { createRequire } from "node:module";
 import {
   accessSync,
   constants as fsConstants,
@@ -69,6 +71,8 @@ export type ClaudeAcpOpenOptions = {
   promptsEnabled?: boolean;
   /** Report a newer-than-measured version after the floor admits it. */
   onVersionNotice?: (notice: ProviderVersionNotice) => void;
+  /** Report the exact resolved bridge and package versions before the canary. */
+  onRuntimeNotice?: (notice: ClaudeBridgeRuntimeNotice) => void;
   /**
    * Bounded, sanitized stderr tail, delivered once when the child exits — for
    * the operator's LOCAL listener log only; never attach it to an error.
@@ -82,7 +86,26 @@ export type ClaudeAcpHandle = {
   executable: string;
   args: string[];
   env: Record<string, string>;
+  /** Version returned by the exact executable before this child was spawned. */
+  providerVersion?: string;
+  /** Exact installed SDK package resolved from the bridge package. */
+  bundledAgentSdkVersion?: string;
+  /** Claude Code version declared by that exact SDK package. */
+  bundledClaudeCodeVersion?: string;
   close: () => Promise<void>;
+};
+
+export type ClaudeBridgeRuntimeNotice = {
+  executable: string;
+  providerVersion: string | null;
+  lastMeasuredVersion: string;
+  bundledAgentSdkVersion: string | null;
+  bundledClaudeCodeVersion: string | null;
+};
+
+export type ClaudeBundleVersions = {
+  agentSdkVersion: string | null;
+  claudeCodeVersion: string | null;
 };
 
 const CHILD_EXIT_WAIT_MS = 3_000;
@@ -239,6 +262,65 @@ export function parseClaudeCodeVersionOutput(stdout: string): string | null {
   return parseProviderVersionOutput(stdout, /\bClaude Code\b/i, false);
 }
 
+function semanticVersion(value: unknown): string | null {
+  if (typeof value !== "string") return null;
+  return parseProviderVersionOutput(`${value}\n`, /\bnever-a-product-name\b/i);
+}
+
+function readPackageAtOrAbove(
+  entrypoint: string,
+  expectedName: string,
+): { path: string; row: Record<string, unknown> } | null {
+  let directory = dirname(entrypoint);
+  for (let depth = 0; depth < 5; depth += 1) {
+    const path = join(directory, "package.json");
+    try {
+      const row = JSON.parse(readFileSync(path, "utf8")) as unknown;
+      if (
+        row && typeof row === "object" && !Array.isArray(row) &&
+        (row as Record<string, unknown>).name === expectedName
+      ) {
+        return { path, row: row as Record<string, unknown> };
+      }
+    } catch {
+      // The resolved entrypoint can be a standalone test bridge with no package.
+    }
+    const parent = dirname(directory);
+    if (parent === directory) break;
+    directory = parent;
+  }
+  return null;
+}
+
+/** Read the SDK and bundled Claude Code versions used by this exact bridge. */
+export function measureClaudeBundleVersions(
+  executable: string,
+): ClaudeBundleVersions {
+  const adapter = readPackageAtOrAbove(
+    executable,
+    "@agentclientprotocol/claude-agent-acp",
+  );
+  if (!adapter) return { agentSdkVersion: null, claudeCodeVersion: null };
+  try {
+    // Resolve from the adapter package, not from cswarm. A hoisted or nested
+    // install must name the SDK Node would load for this bridge.
+    const sdkEntrypoint = createRequire(adapter.path).resolve(
+      "@anthropic-ai/claude-agent-sdk",
+    );
+    const sdk = readPackageAtOrAbove(
+      sdkEntrypoint,
+      "@anthropic-ai/claude-agent-sdk",
+    );
+    if (!sdk) return { agentSdkVersion: null, claudeCodeVersion: null };
+    return {
+      agentSdkVersion: semanticVersion(sdk.row.version),
+      claudeCodeVersion: semanticVersion(sdk.row.claudeCodeVersion),
+    };
+  } catch {
+    return { agentSdkVersion: null, claudeCodeVersion: null };
+  }
+}
+
 async function readClaudeVersionOutput(
   executable: string,
   options?: {
@@ -270,6 +352,31 @@ async function readClaudeVersionOutput(
       },
     );
   });
+}
+
+/** Inspect one resolved or resolvable bridge without opening an ACP session. */
+export async function inspectClaudeBridgeExecutable(
+  executable = "claude-agent-acp",
+  options?: {
+    pathEnv?: string;
+    env?: NodeJS.ProcessEnv | Record<string, string | undefined>;
+    platform?: NodeJS.Platform;
+  },
+): Promise<ClaudeBridgeRuntimeNotice> {
+  const resolved = resolveClaudeExecutable(
+    executable,
+    options?.pathEnv,
+    options?.platform,
+  );
+  const output = await readClaudeVersionOutput(resolved, options);
+  const bundle = measureClaudeBundleVersions(resolved);
+  return {
+    executable: resolved,
+    providerVersion: parseClaudeVersionOutput(output),
+    lastMeasuredVersion: CLAUDE_ACP_LAST_MEASURED_VERSION,
+    bundledAgentSdkVersion: bundle.agentSdkVersion,
+    bundledClaudeCodeVersion: bundle.claudeCodeVersion,
+  };
 }
 
 /** Run the resolved bridge with the exact environment used for its ACP process. */
@@ -391,33 +498,61 @@ export async function openClaudeAcpSession(
   let executable: string;
   let env = baseEnv;
   let claudeCodeExecutable: string | undefined;
+  let providerVersion: string | undefined;
+  let bundleVersions: ClaudeBundleVersions = {
+    agentSdkVersion: null,
+    claudeCodeVersion: null,
+  };
+  const reportRuntime = (resolved: string, version: string | null) => {
+    bundleVersions = measureClaudeBundleVersions(resolved);
+    options.onRuntimeNotice?.({
+      executable: resolved,
+      providerVersion: version,
+      lastMeasuredVersion: CLAUDE_ACP_LAST_MEASURED_VERSION,
+      bundledAgentSdkVersion: bundleVersions.agentSdkVersion,
+      bundledClaudeCodeVersion: bundleVersions.claudeCodeVersion,
+    });
+  };
+  const admitBridgeVersion = (resolved: string, version: string) => {
+    providerVersion = version;
+    reportRuntime(resolved, version);
+    // Report first: a below-floor failure still has a measured executable and
+    // version, and failed listener status must keep those facts.
+    assertProviderVersionFloor({
+      provider: "claude-agent-acp",
+      version,
+      minimumVersion: CLAUDE_ACP_MIN_VERSION,
+      lastMeasuredVersion: CLAUDE_ACP_LAST_MEASURED_VERSION,
+      ...(options.onVersionNotice
+        ? { onNewerVersion: options.onVersionNotice }
+        : {}),
+    });
+  };
   if (requestedExecutable) {
     const output = await readClaudeVersionOutput(requestedExecutable, {
       env: baseEnv,
     });
     const bridgeVersion = parseClaudeVersionOutput(output);
     if (bridgeVersion) {
-      assertProviderVersionFloor({
-        provider: "claude-agent-acp",
-        version: bridgeVersion,
-        minimumVersion: CLAUDE_ACP_MIN_VERSION,
-        lastMeasuredVersion: CLAUDE_ACP_LAST_MEASURED_VERSION,
-        ...(options.onVersionNotice
-          ? { onNewerVersion: options.onVersionNotice }
-          : {}),
-      });
       executable = requestedExecutable;
+      admitBridgeVersion(executable, bridgeVersion);
     } else if (parseClaudeCodeVersionOutput(output)) {
       claudeCodeExecutable = requestedExecutable;
       executable = resolvePackagedClaudeBridge(resolvedPathEnv);
       env = buildClaudeChildEnv(parentEnv, claudeCodeExecutable);
-      await assertClaudeVersionFloor(executable, {
+      const bridgeOutput = await readClaudeVersionOutput(executable, {
         env,
-        ...(options.onVersionNotice
-          ? { onNewerVersion: options.onVersionNotice }
-          : {}),
       });
+      const packagedVersion = parseClaudeVersionOutput(bridgeOutput);
+      if (!packagedVersion) {
+        reportRuntime(executable, null);
+        throw new AcpVersionParseError(
+          `could not parse claude-agent-acp version from: ${bridgeOutput.trim().slice(0, 200)}`,
+        );
+      }
+      admitBridgeVersion(executable, packagedVersion);
     } else {
+      reportRuntime(requestedExecutable, null);
       throw new AcpVersionError(
         `could not identify Claude executable from: ${output.trim().slice(0, 200)}`,
       );
@@ -428,12 +563,19 @@ export async function openClaudeAcpSession(
       resolvedPathEnv,
     );
     if (!options.skipVersionCheck) {
-      await assertClaudeVersionFloor(executable, {
+      const output = await readClaudeVersionOutput(executable, {
         env: baseEnv,
-        ...(options.onVersionNotice
-          ? { onNewerVersion: options.onVersionNotice }
-          : {}),
       });
+      const version = parseClaudeVersionOutput(output);
+      if (!version) {
+        reportRuntime(executable, null);
+        throw new AcpVersionParseError(
+          `could not parse claude-agent-acp version from: ${output.trim().slice(0, 200)}`,
+        );
+      }
+      admitBridgeVersion(executable, version);
+    } else {
+      reportRuntime(executable, null);
     }
   }
   if (options.signal?.aborted) {
@@ -531,7 +673,21 @@ export async function openClaudeAcpSession(
       return closePromise;
     };
 
-    return { session, child, executable, args, env, close };
+    return {
+      session,
+      child,
+      executable,
+      args,
+      env,
+      ...(providerVersion ? { providerVersion } : {}),
+      ...(bundleVersions.agentSdkVersion
+        ? { bundledAgentSdkVersion: bundleVersions.agentSdkVersion }
+        : {}),
+      ...(bundleVersions.claudeCodeVersion
+        ? { bundledClaudeCodeVersion: bundleVersions.claudeCodeVersion }
+        : {}),
+      close,
+    };
   } catch (error) {
     removeAbortListener();
     transport.close();

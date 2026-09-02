@@ -62,9 +62,18 @@ export interface ListenerStatus {
   lastErrorCode: string | null;
   /** Final local error message for diagnosis; never sent to CommonSwarm. */
   lastErrorDetail: string | null;
-  /** Set only when the running provider is newer than the last measured version. */
+  /** Stable provider-boundary reason beneath a shared outer failure code. */
+  lastErrorReasonCode?: string | null;
+  /** Absolute realpath of the provider process this supervisor opened. */
+  providerExecutable?: string | null;
+  /** Version measured from the exact provider executable before spawn. */
   providerVersion?: string | null;
   providerLastMeasuredVersion?: string | null;
+  /** Exact package versions bundled by a Claude bridge, when measurable. */
+  providerBundledAgentSdkVersion?: string | null;
+  providerBundledClaudeCodeVersion?: string | null;
+  /** Minimum Claude Code version returned by the API on a failed request. */
+  providerMinimumRequiredVersion?: string | null;
   /** The cswarm binary version reported by the running supervisor. */
   cswarmVersion?: string | null;
   /**
@@ -156,8 +165,13 @@ const STATUS_ALLOWED_KEYS = new Set([
   "lastSignalId",
   "lastErrorCode",
   "lastErrorDetail",
+  "lastErrorReasonCode",
+  "providerExecutable",
   "providerVersion",
   "providerLastMeasuredVersion",
+  "providerBundledAgentSdkVersion",
+  "providerBundledClaudeCodeVersion",
+  "providerMinimumRequiredVersion",
   "cswarmVersion",
   "lastWorkerStderrTail",
   "logPath",
@@ -265,12 +279,32 @@ function parseStatus(raw: string): ListenerStatus {
         row.lastErrorDetail.length > 0 &&
         row.lastErrorDetail.length <= 2_048 &&
         !/swm_(?:agt|inv|cap)_/i.test(row.lastErrorDetail))) ||
+    !(row.lastErrorReasonCode === undefined ||
+      row.lastErrorReasonCode === null ||
+      (typeof row.lastErrorReasonCode === "string" &&
+        /^[a-z0-9_-]{1,96}$/.test(row.lastErrorReasonCode))) ||
+    !(row.providerExecutable === undefined ||
+      row.providerExecutable === null ||
+      (typeof row.providerExecutable === "string" &&
+        isAbsolute(row.providerExecutable))) ||
     !(row.providerVersion === undefined || row.providerVersion === null ||
       (typeof row.providerVersion === "string" && SEMVER_RE.test(row.providerVersion))) ||
     !(row.providerLastMeasuredVersion === undefined ||
       row.providerLastMeasuredVersion === null ||
       (typeof row.providerLastMeasuredVersion === "string" &&
         SEMVER_RE.test(row.providerLastMeasuredVersion))) ||
+    !(row.providerBundledAgentSdkVersion === undefined ||
+      row.providerBundledAgentSdkVersion === null ||
+      (typeof row.providerBundledAgentSdkVersion === "string" &&
+        SEMVER_RE.test(row.providerBundledAgentSdkVersion))) ||
+    !(row.providerBundledClaudeCodeVersion === undefined ||
+      row.providerBundledClaudeCodeVersion === null ||
+      (typeof row.providerBundledClaudeCodeVersion === "string" &&
+        SEMVER_RE.test(row.providerBundledClaudeCodeVersion))) ||
+    !(row.providerMinimumRequiredVersion === undefined ||
+      row.providerMinimumRequiredVersion === null ||
+      (typeof row.providerMinimumRequiredVersion === "string" &&
+        SEMVER_RE.test(row.providerMinimumRequiredVersion))) ||
     !(row.cswarmVersion === undefined || row.cswarmVersion === null ||
       (typeof row.cswarmVersion === "string" && SEMVER_RE.test(row.cswarmVersion))) ||
     ((row.providerVersion === null || row.providerVersion === undefined) !==
