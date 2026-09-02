@@ -17,12 +17,16 @@ import {
   defaultListenerStateDirectory,
   listenerInstanceKey,
 } from "./file-store.js";
+import {
+  parseListenerReadHealth,
+  type ListenerReadHealth,
+} from "./read-health.js";
 
 const UUID_RE =
   /^[0-9a-f]{8}-[0-9a-f]{4}-[1-8][0-9a-f]{3}-[89ab][0-9a-f]{3}-[0-9a-f]{12}$/i;
 const SEMVER_RE =
   /^(?:0|[1-9]\d*)\.(?:0|[1-9]\d*)\.(?:0|[1-9]\d*)(?:-(?:0|[1-9]\d*|[A-Za-z-][0-9A-Za-z-]*)(?:\.(?:0|[1-9]\d*|[A-Za-z-][0-9A-Za-z-]*))*)?(?:\+[0-9A-Za-z-]+(?:\.[0-9A-Za-z-]+)*)?$/;
-const MAX_STATUS_BYTES = 16 * 1024;
+const MAX_STATUS_BYTES = 32 * 1024;
 const MAX_CONTROL_BYTES = 8 * 1024;
 const CONTROL_TIMEOUT_MS = 2_000;
 const START_LOCK_WAIT_MS = 2_000;
@@ -58,9 +62,18 @@ export interface ListenerStatus {
   lastErrorCode: string | null;
   /** Final local error message for diagnosis; never sent to CommonSwarm. */
   lastErrorDetail: string | null;
-  /** Set only when the running provider is newer than the last measured version. */
+  /** Stable provider-boundary reason beneath a shared outer failure code. */
+  lastErrorReasonCode?: string | null;
+  /** Absolute realpath of the provider process this supervisor opened. */
+  providerExecutable?: string | null;
+  /** Version measured from the exact provider executable before spawn. */
   providerVersion?: string | null;
   providerLastMeasuredVersion?: string | null;
+  /** Exact package versions bundled by a Claude bridge, when measurable. */
+  providerBundledAgentSdkVersion?: string | null;
+  providerBundledClaudeCodeVersion?: string | null;
+  /** Minimum Claude Code version returned by the API on a failed request. */
+  providerMinimumRequiredVersion?: string | null;
   /** The cswarm binary version reported by the running supervisor. */
   cswarmVersion?: string | null;
   /**
@@ -85,6 +98,12 @@ export interface ListenerStatus {
   deferOverChars?: number | null;
   pendingForMainCount?: number;
   droppedForMainCount?: number;
+  /** Bounded local-only retry and claim-throughput accounting. */
+  readHealth?: ListenerReadHealth;
+  /** TCP connections opened by this listener process since start. */
+  connectionsOpened?: number;
+  /** HTTP requests divided by opened TCP connections; near 1 means no reuse. */
+  connectionReuseRatio?: number;
   logPath: string;
 }
 
@@ -150,8 +169,13 @@ const STATUS_ALLOWED_KEYS = new Set([
   "lastSignalId",
   "lastErrorCode",
   "lastErrorDetail",
+  "lastErrorReasonCode",
+  "providerExecutable",
   "providerVersion",
   "providerLastMeasuredVersion",
+  "providerBundledAgentSdkVersion",
+  "providerBundledClaudeCodeVersion",
+  "providerMinimumRequiredVersion",
   "cswarmVersion",
   "lastWorkerStderrTail",
   "logPath",
@@ -165,6 +189,9 @@ const STATUS_ALLOWED_KEYS = new Set([
   "deferOverChars",
   "pendingForMainCount",
   "droppedForMainCount",
+  "readHealth",
+  "connectionsOpened",
+  "connectionReuseRatio",
 ]);
 // Sensitive aliases are rejected by name, not silently dropped, so a status
 // file can never smuggle a lease capability, command ID, credential, or body.
@@ -193,7 +220,7 @@ const STATUS_DELIVERY_KEYS = [
   "lastAckAt",
 ] as const;
 
-function parseStatus(raw: string): ListenerStatus {
+function parseStatus(raw: string, rejectUnknownKeys = false): ListenerStatus {
   let value: unknown;
   try {
     value = JSON.parse(raw);
@@ -208,7 +235,7 @@ function parseStatus(raw: string): ListenerStatus {
     if (STATUS_SENSITIVE_KEYS.has(key)) {
       throw new Error("stored listener status contains a forbidden field");
     }
-    if (!STATUS_ALLOWED_KEYS.has(key)) {
+    if (rejectUnknownKeys && !STATUS_ALLOWED_KEYS.has(key)) {
       throw new Error("stored listener status is malformed");
     }
   }
@@ -223,6 +250,9 @@ function parseStatus(raw: string): ListenerStatus {
   const nullableTimestamp = (candidate: unknown) =>
     candidate === null ||
     (typeof candidate === "string" && Number.isFinite(Date.parse(candidate)));
+  const readHealth = row.readHealth === undefined
+    ? undefined
+    : parseListenerReadHealth(row.readHealth, rejectUnknownKeys);
   if (
     row.version !== 1 ||
     typeof row.instanceId !== "string" ||
@@ -258,12 +288,32 @@ function parseStatus(raw: string): ListenerStatus {
         row.lastErrorDetail.length > 0 &&
         row.lastErrorDetail.length <= 2_048 &&
         !/swm_(?:agt|inv|cap)_/i.test(row.lastErrorDetail))) ||
+    !(row.lastErrorReasonCode === undefined ||
+      row.lastErrorReasonCode === null ||
+      (typeof row.lastErrorReasonCode === "string" &&
+        /^[a-z0-9_-]{1,96}$/.test(row.lastErrorReasonCode))) ||
+    !(row.providerExecutable === undefined ||
+      row.providerExecutable === null ||
+      (typeof row.providerExecutable === "string" &&
+        isAbsolute(row.providerExecutable))) ||
     !(row.providerVersion === undefined || row.providerVersion === null ||
       (typeof row.providerVersion === "string" && SEMVER_RE.test(row.providerVersion))) ||
     !(row.providerLastMeasuredVersion === undefined ||
       row.providerLastMeasuredVersion === null ||
       (typeof row.providerLastMeasuredVersion === "string" &&
         SEMVER_RE.test(row.providerLastMeasuredVersion))) ||
+    !(row.providerBundledAgentSdkVersion === undefined ||
+      row.providerBundledAgentSdkVersion === null ||
+      (typeof row.providerBundledAgentSdkVersion === "string" &&
+        SEMVER_RE.test(row.providerBundledAgentSdkVersion))) ||
+    !(row.providerBundledClaudeCodeVersion === undefined ||
+      row.providerBundledClaudeCodeVersion === null ||
+      (typeof row.providerBundledClaudeCodeVersion === "string" &&
+        SEMVER_RE.test(row.providerBundledClaudeCodeVersion))) ||
+    !(row.providerMinimumRequiredVersion === undefined ||
+      row.providerMinimumRequiredVersion === null ||
+      (typeof row.providerMinimumRequiredVersion === "string" &&
+        SEMVER_RE.test(row.providerMinimumRequiredVersion))) ||
     !(row.cswarmVersion === undefined || row.cswarmVersion === null ||
       (typeof row.cswarmVersion === "string" && SEMVER_RE.test(row.cswarmVersion))) ||
     ((row.providerVersion === null || row.providerVersion === undefined) !==
@@ -302,7 +352,14 @@ function parseStatus(raw: string): ListenerStatus {
         Number.isSafeInteger(row.pendingForMainCount) && row.pendingForMainCount >= 0)) ||
     !(row.droppedForMainCount === undefined ||
       (typeof row.droppedForMainCount === "number" &&
-        Number.isSafeInteger(row.droppedForMainCount) && row.droppedForMainCount >= 0))
+        Number.isSafeInteger(row.droppedForMainCount) && row.droppedForMainCount >= 0)) ||
+    readHealth === null ||
+    !(row.connectionsOpened === undefined ||
+      (typeof row.connectionsOpened === "number" &&
+        Number.isSafeInteger(row.connectionsOpened) && row.connectionsOpened >= 0)) ||
+    !(row.connectionReuseRatio === undefined ||
+      (typeof row.connectionReuseRatio === "number" &&
+        Number.isFinite(row.connectionReuseRatio) && row.connectionReuseRatio >= 0))
   ) {
     throw new Error("stored listener status is malformed");
   }
@@ -316,8 +373,11 @@ function parseStatus(raw: string): ListenerStatus {
   }
   // Old version-1 files predate the delivery fields: normalize the absent
   // keys to null in memory without rewriting the stored bytes.
+  const knownRow = Object.fromEntries(
+    Object.entries(row).filter(([key]) => STATUS_ALLOWED_KEYS.has(key)),
+  ) as unknown as ListenerStatus;
   return {
-    ...(row as unknown as ListenerStatus),
+    ...knownRow,
     deliveryMode: (row.deliveryMode ?? null) as ListenerStatus["deliveryMode"],
     pendingDeliveryCount: (row.pendingDeliveryCount ?? null) as number | null,
     lastTerminalDeliveryFailureCount:
@@ -338,6 +398,7 @@ function parseStatus(raw: string): ListenerStatus {
     deferOverChars,
     pendingForMainCount: (row.pendingForMainCount ?? 0) as number,
     droppedForMainCount: (row.droppedForMainCount ?? 0) as number,
+    ...(readHealth === undefined ? {} : { readHealth }),
   };
 }
 
@@ -346,6 +407,9 @@ export async function writeListenerStatus(
   status: ListenerStatus,
 ): Promise<void> {
   const serialized = JSON.stringify(status);
+  if (Buffer.byteLength(serialized, "utf8") > MAX_STATUS_BYTES) {
+    throw new Error("listener status is too large");
+  }
   // New writes always carry all six delivery fields, even when null.
   const parsed = JSON.parse(serialized) as Record<string, unknown>;
   for (const key of STATUS_DELIVERY_KEYS) {
@@ -356,7 +420,7 @@ export async function writeListenerStatus(
   if (!("lastErrorDetail" in parsed)) {
     throw new Error("listener status is missing local error detail metadata");
   }
-  parseStatus(serialized);
+  parseStatus(serialized, true);
   await writeSecureJsonFile(paths.statusPath, serialized);
 }
 
@@ -393,6 +457,12 @@ export async function appendListenerEvent(
     "passed",
     "reason",
     "delay_ms",
+    "reason_code",
+    "http_status",
+    "error_constructor",
+    "episode_attempt",
+    "attempts",
+    "duration_ms",
     "index",
     "delivery_mode",
     "pending_delivery_count",
@@ -433,6 +503,45 @@ export async function appendListenerEvent(
       !(typeof value === "number" && Number.isSafeInteger(value) && value >= 1)
     ) {
       throw new Error("listener event attempt count is not allowed");
+    }
+    if (
+      (key === "episode_attempt" || key === "attempts") &&
+      !(typeof value === "number" && Number.isSafeInteger(value) && value >= 1)
+    ) {
+      throw new Error("listener event episode count is not allowed");
+    }
+    if (
+      key === "duration_ms" &&
+      !(typeof value === "number" && Number.isSafeInteger(value) && value >= 0)
+    ) {
+      throw new Error("listener event episode duration is not allowed");
+    }
+    if (
+      key === "http_status" &&
+      !(typeof value === "number" && Number.isSafeInteger(value) &&
+        value >= 100 && value <= 599)
+    ) {
+      throw new Error("listener event HTTP status is not allowed");
+    }
+    if (
+      key === "reason_code" &&
+      !(typeof value === "string" && [
+        "http_status",
+        "no_response",
+        "body_timeout",
+        "malformed_response",
+        "aborted",
+        "host_ports_exhausted",
+        "unclassified",
+      ].includes(value))
+    ) {
+      throw new Error("listener event read reason code is not allowed");
+    }
+    if (
+      key === "error_constructor" &&
+      !(typeof value === "string" && /^[A-Za-z0-9_$-]{1,96}$/.test(value))
+    ) {
+      throw new Error("listener event error constructor is not allowed");
     }
     if (key === "passed" && typeof value !== "boolean") {
       throw new Error("listener event canary result is not allowed");
@@ -525,6 +634,23 @@ export async function appendListenerEvent(
       !(event.reason === null || typeof event.reason === "string"))
   ) {
     throw new Error("listener canary attempt event is incomplete");
+  }
+  if (
+    event.event === "listener_read_retry" &&
+    (typeof event.reason_code !== "string" ||
+      typeof event.episode_attempt !== "number" ||
+      (event.reason_code === "http_status") !==
+        (typeof event.http_status === "number") ||
+      (event.reason_code === "unclassified") !==
+        (typeof event.error_constructor === "string"))
+  ) {
+    throw new Error("listener read retry event is incomplete");
+  }
+  if (
+    event.event === "listener_read_recovered" &&
+    (typeof event.attempts !== "number" || typeof event.duration_ms !== "number")
+  ) {
+    throw new Error("listener read recovery event is incomplete");
   }
   await ensureSecureStateDirectory(paths.instanceDirectory);
   const serialized = `${JSON.stringify(event)}\n`;

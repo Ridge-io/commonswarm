@@ -4,9 +4,17 @@
  */
 import assert from "node:assert/strict";
 import test from "node:test";
-import { listenerHostLimits, listenerStatusJson } from "../src/cli.js";
+import {
+  listenerHostLimits,
+  listenerStatusJson,
+  renderListenerStatus,
+} from "../src/cli.js";
 import { OPENCODE_FORCED_PERMISSION_TOOLS } from "../src/host/bounds.js";
 import type { ListenerStatus } from "../src/listener/control.js";
+import {
+  emptyListenerReadHealth,
+  recordListenerReadRetry,
+} from "../src/listener/read-health.js";
 import { readFileSync } from "node:fs";
 import { resolve } from "node:path";
 
@@ -120,4 +128,131 @@ test("listenerStatusJson emits host_limits as a structured object, not a string"
   assert.equal(typeof limits.local_state_lifecycle, "string");
   assert.equal(typeof limits.human_copy, "string");
   assert.match(String(limits.local_state_lifecycle), /retained on shutdown failure/);
+});
+
+function readHealthStatus(readHealth: ListenerStatus["readHealth"]): ListenerStatus {
+  return {
+    version: 1,
+    instanceId: "44444444-4444-4444-8444-444444444444",
+    provider: "claude",
+    profileId: "profile-read-health",
+    workspaceId: "11111111-1111-4111-8111-111111111111",
+    principalId: "22222222-2222-4222-8222-222222222222",
+    pid: 1234,
+    state: "ready",
+    startedAt: "2026-09-01T10:00:00.000Z",
+    readyAt: "2026-09-01T10:00:00.000Z",
+    updatedAt: "2026-09-01T10:00:00.000Z",
+    stoppedAt: null,
+    lastSignalId: null,
+    lastErrorCode: null,
+    lastErrorDetail: null,
+    lastWorkerStderrTail: null,
+    deliveryMode: "durable_claim",
+    pendingDeliveryCount: 0,
+    lastTerminalDeliveryFailureCount: null,
+    lastTerminalDeliveryFailureAt: null,
+    lastClaimAt: null,
+    lastAckAt: null,
+    routeMode: "worker",
+    deferOverChars: null,
+    pendingForMainCount: 0,
+    droppedForMainCount: 0,
+    readHealth,
+    logPath: "/tmp/events.ndjson",
+  };
+}
+
+test("listen status warns at a 60s current read lapse, not below it", () => {
+  const startedAt = "2026-09-01T10:30:00.000Z";
+  const health = recordListenerReadRetry(emptyListenerReadHealth(), {
+    ts: startedAt,
+    episodeStartedAt: startedAt,
+    episodeAttempt: 1,
+    failure: {
+      code: "no_response",
+      httpStatus: null,
+      errorConstructor: null,
+    },
+  });
+  const status = readHealthStatus(health);
+  const below = renderListenerStatus(
+    status,
+    undefined,
+    Date.parse(startedAt) + 59_999,
+  );
+  assert.doesNotMatch(below, /listener_read_retry_persisting/);
+  assert.match(below, /^Listener ready /);
+
+  const thresholdMs = Date.parse(startedAt) + 60_000;
+  const warning = renderListenerStatus(status, undefined, thresholdMs);
+  assert.match(warning, /^Listener LAPSE /);
+  assert.match(warning, /WARNING \[listener_read_retry_persisting\]/);
+  assert.match(warning, /This is still in progress/);
+  assert.match(warning, /Next: Check cswarm status.*restart the listener/);
+  const json = listenerStatusJson(status, undefined, undefined, thresholdMs);
+  assert.equal(json.listenerLapse, true);
+  assert.deepEqual(json.listenerLapseCodes, ["listener_read_retry_persisting"]);
+});
+
+test("listen status raises host port exhaustion immediately and probes slowly", () => {
+  const startedAt = "2026-09-01T10:30:00.000Z";
+  const health = recordListenerReadRetry(emptyListenerReadHealth(), {
+    ts: startedAt,
+    episodeStartedAt: startedAt,
+    episodeAttempt: 1,
+    failure: {
+      code: "host_ports_exhausted",
+      httpStatus: null,
+      errorConstructor: null,
+    },
+  });
+  const rendered = renderListenerStatus(
+    readHealthStatus(health),
+    undefined,
+    Date.parse(startedAt) + 1,
+  );
+  assert.match(rendered, /^Listener LAPSE /);
+  assert.match(rendered, /WARNING \[listener_host_ports_exhausted\]/);
+  assert.match(rendered, /run out of outbound ports/);
+  assert.match(
+    rendered,
+    /lsof -nP -iTCP \| awk '\{print \$1\}' \| sort \| uniq -c \| sort -rn/,
+  );
+});
+
+test("a full-hour claim ratio below 0.50 is a host lapse; 0.50 is not", () => {
+  const lowHealth = {
+    ...emptyListenerReadHealth(),
+    claimCadenceMs: 3_600,
+    claimHours: [{
+      hourStart: "2026-09-01T10:00:00.000Z",
+      claims: 499,
+    }],
+  };
+  const atHourEnd = Date.parse("2026-09-01T11:00:00.000Z");
+  const low = renderListenerStatus(
+    readHealthStatus(lowHealth),
+    undefined,
+    atHourEnd,
+  );
+  assert.match(low, /^Listener LAPSE /);
+  assert.match(low, /499\/1000 expected \(0\.499\)/);
+  assert.match(low, /this host is starving the listener/i);
+  assert.match(low, /sysctl kern\.memorystatus_vm_pressure_level/);
+
+  const thresholdHealth = {
+    ...lowHealth,
+    claimHours: [{
+      hourStart: "2026-09-01T10:00:00.000Z",
+      claims: 500,
+    }],
+  };
+  const threshold = renderListenerStatus(
+    readHealthStatus(thresholdHealth),
+    undefined,
+    atHourEnd,
+  );
+  assert.doesNotMatch(threshold, /listener_claim_throughput_lapse/);
+  assert.match(threshold, /^Listener ready /);
 });

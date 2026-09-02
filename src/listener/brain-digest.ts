@@ -36,7 +36,6 @@ function parseState(raw: string): BrainDigestState {
   const row = value as Record<string, unknown>;
   const topicVersions = row.topicVersions;
   if (
-    Object.keys(row).sort().join(",") !== "principalId,topicVersions,version" ||
     row.version !== 1 ||
     typeof row.principalId !== "string" || !UUID_RE.test(row.principalId) ||
     !topicVersions || typeof topicVersions !== "object" ||

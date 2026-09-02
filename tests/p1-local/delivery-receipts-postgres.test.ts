@@ -789,13 +789,19 @@ test("human seen upsert keeps first time and receipt reads keep the authorizatio
   }
 });
 
-test("queued becomes observed only when the hook-style write reaches real Postgres", async () => {
+test("queued receipt count stays inside its recipient and workspace, then observation removes it", async () => {
   const sql = postgres(databaseUrl(), { max: 1 });
   const userId = randomUUID();
   const workspaceId = randomUUID();
+  const otherWorkspaceId = randomUUID();
   const deviceId = randomUUID();
   const recipient = randomUUID();
+  const sameWorkspaceOtherRecipient = randomUUID();
+  const otherWorkspaceRecipient = randomUUID();
   const signalId = randomUUID();
+  const sameRecipientSignalId = randomUUID();
+  const sameWorkspaceOtherSignalId = randomUUID();
+  const otherWorkspaceSignalId = randomUUID();
   const leaseId = randomUUID();
   const listenerInstanceId = randomUUID();
 
@@ -822,28 +828,62 @@ test("queued becomes observed only when the hook-style write reaches real Postgr
         `;
         await tx`
           INSERT INTO swarm.workspaces (workspace_id, name, created_by)
-          VALUES (${workspaceId}::uuid, 'Observed workspace', ${userId}::uuid)
+          VALUES
+            (${workspaceId}::uuid, 'Observed workspace', ${userId}::uuid),
+            (${otherWorkspaceId}::uuid, 'Other workspace', ${userId}::uuid)
         `;
         await tx`
           INSERT INTO swarm.memberships (workspace_id, user_id, role)
-          VALUES (${workspaceId}::uuid, ${userId}::uuid, 'owner')
+          VALUES
+            (${workspaceId}::uuid, ${userId}::uuid, 'owner'),
+            (${otherWorkspaceId}::uuid, ${userId}::uuid, 'owner')
         `;
         await tx`
           INSERT INTO swarm.agent_principals (
             principal_id, workspace_id, owner_user_id, name
-          ) VALUES (
-            ${recipient}::uuid, ${workspaceId}::uuid, ${userId}::uuid, 'recipient'
-          )
+          ) VALUES
+            (
+              ${recipient}::uuid, ${workspaceId}::uuid,
+              ${userId}::uuid, 'recipient'
+            ),
+            (
+              ${sameWorkspaceOtherRecipient}::uuid, ${workspaceId}::uuid,
+              ${userId}::uuid, 'same-workspace other recipient'
+            ),
+            (
+              ${otherWorkspaceRecipient}::uuid, ${otherWorkspaceId}::uuid,
+              ${userId}::uuid, 'other-workspace recipient'
+            )
         `;
         await tx`
           INSERT INTO swarm.signals (
             id, workspace_id, from_principal, from_kind,
             to_agent_principal_id, kind, body, until
-          ) VALUES (
-            ${signalId}::uuid, ${workspaceId}::uuid, ${userId}::uuid, 'user',
-            ${recipient}::uuid, 'ask', 'show this at the next prompt',
-            statement_timestamp() + interval '1 hour'
-          )
+          ) VALUES
+            (
+              ${signalId}::uuid, ${workspaceId}::uuid,
+              ${userId}::uuid, 'user', ${recipient}::uuid,
+              'ask', 'show this at the next prompt',
+              statement_timestamp() + interval '1 hour'
+            ),
+            (
+              ${sameRecipientSignalId}::uuid, ${workspaceId}::uuid,
+              ${userId}::uuid, 'user', ${recipient}::uuid,
+              'ask', 'second queued delivery for this recipient',
+              statement_timestamp() + interval '1 hour'
+            ),
+            (
+              ${sameWorkspaceOtherSignalId}::uuid, ${workspaceId}::uuid,
+              ${userId}::uuid, 'user', ${sameWorkspaceOtherRecipient}::uuid,
+              'ask', 'queued for a different recipient in this workspace',
+              statement_timestamp() + interval '1 hour'
+            ),
+            (
+              ${otherWorkspaceSignalId}::uuid, ${otherWorkspaceId}::uuid,
+              ${userId}::uuid, 'user', ${otherWorkspaceRecipient}::uuid,
+              'ask', 'queued in a different workspace',
+              statement_timestamp() + interval '1 hour'
+            )
         `;
         await tx`
           UPDATE swarm.signal_deliveries
@@ -854,20 +894,42 @@ test("queued becomes observed only when the hook-style write reaches real Postgr
             delivered_at = statement_timestamp(),
             attempt_count = 1,
             updated_at = statement_timestamp()
-          WHERE signal_id = ${signalId}::uuid
-            AND recipient_agent_principal_id = ${recipient}::uuid
+          WHERE signal_id IN (
+            ${signalId}::uuid,
+            ${sameRecipientSignalId}::uuid,
+            ${sameWorkspaceOtherSignalId}::uuid,
+            ${otherWorkspaceSignalId}::uuid
+          )
         `;
 
-        const queued = await ackAgentDelivery(tx, {
-          workspaceId,
-          recipientPrincipalId: recipient,
-          signalId,
-          leaseId,
-          listenerInstanceId,
-          outcome: "queued",
-          lastErrorCode: null,
-        });
-        assert.equal(queued.status, "accepted");
+        const deliveries = [
+          { workspaceId, recipientPrincipalId: recipient, signalId },
+          {
+            workspaceId,
+            recipientPrincipalId: recipient,
+            signalId: sameRecipientSignalId,
+          },
+          {
+            workspaceId,
+            recipientPrincipalId: sameWorkspaceOtherRecipient,
+            signalId: sameWorkspaceOtherSignalId,
+          },
+          {
+            workspaceId: otherWorkspaceId,
+            recipientPrincipalId: otherWorkspaceRecipient,
+            signalId: otherWorkspaceSignalId,
+          },
+        ];
+        for (const delivery of deliveries) {
+          const queued = await ackAgentDelivery(tx, {
+            ...delivery,
+            leaseId,
+            listenerInstanceId,
+            outcome: "queued",
+            lastErrorCode: null,
+          });
+          assert.equal(queued.status, "accepted");
+        }
         const [queuedRow] = await tx<{ ack_outcome: string; acked_at: Date }[]>`
           SELECT ack_outcome, acked_at
           FROM swarm.signal_deliveries
@@ -875,6 +937,37 @@ test("queued becomes observed only when the hook-style write reaches real Postgr
             AND recipient_agent_principal_id = ${recipient}::uuid
         `;
         assert.equal(queuedRow?.ack_outcome, "queued");
+
+        await tx`
+          SELECT set_config(
+            'request.jwt.claims',
+            ${JSON.stringify({ sub: userId, role: "authenticated" })},
+            true
+          )
+        `;
+        await tx.unsafe("SET LOCAL ROLE authenticated");
+        const [queuedReceiptRow] = await tx<{
+          result: {
+            receipts: Array<{
+              ack_outcome: string;
+              pending_for_main_count?: number;
+            }>;
+          };
+        }[]>`
+          SELECT swarm_read.signal_delivery_receipts(
+            ${workspaceId}::uuid,
+            ${signalId}::uuid,
+            NULL
+          ) AS result
+        `;
+        await tx.unsafe("RESET ROLE");
+        const queuedReceipt = queuedReceiptRow?.result.receipts[0];
+        assert.equal(queuedReceipt?.ack_outcome, "queued");
+        assert.equal(queuedReceipt?.pending_for_main_count, 2);
+        assert.equal(
+          Object.hasOwn(queuedReceipt ?? {}, "pending_for_main_count"),
+          true,
+        );
 
         await tx`SELECT pg_sleep(0.01)`;
         const observed = await ackAgentDelivery(tx, {
@@ -914,7 +1007,12 @@ test("queued becomes observed only when the hook-style write reaches real Postgr
           ) AS result
         `;
         await tx.unsafe("RESET ROLE");
-        assert.equal(receiptRow?.result.receipts[0]?.ack_outcome, "observed");
+        const observedReceipt = receiptRow?.result.receipts[0];
+        assert.equal(observedReceipt?.ack_outcome, "observed");
+        assert.equal(
+          Object.hasOwn(observedReceipt ?? {}, "pending_for_main_count"),
+          false,
+        );
 
         throw ROLLBACK;
       }),

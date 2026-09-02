@@ -209,6 +209,8 @@ export class AcpPermissionCanaryError extends AcpHostError {
   constructor(
     message: string,
     readonly reasonCode: string | null = null,
+    /** Provider version floor learned from this exact failed request, when present. */
+    readonly minimumRequiredVersion: string | null = null,
   ) {
     super("permission_canary_failed", message);
     this.name = "AcpPermissionCanaryError";

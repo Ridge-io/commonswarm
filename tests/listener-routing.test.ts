@@ -111,6 +111,14 @@ test("the pending-main queue preserves valid kinds and accepts legacy entries wi
 
     await writeFile(queue.path, JSON.stringify({
       version: 1,
+      entries: [{ ...entry(3), futureEntryMetadata: true }],
+      droppedCount: 0,
+      futureQueueMetadata: { writer: "newer" },
+    }));
+    assert.deepEqual(await queue.read(), [entry(3)]);
+
+    await writeFile(queue.path, JSON.stringify({
+      version: 1,
       entries: [{ ...entry(3), kind: "bogus" }],
       droppedCount: 0,
     }));

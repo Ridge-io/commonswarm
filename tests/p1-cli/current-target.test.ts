@@ -140,6 +140,14 @@ test("malformed, traversable, and symlinked current-target state hard-fails safe
       cloudTarget("https://safe.example.test", "safe-anon-key"),
       { stateDirectory },
     );
+    const forward = JSON.parse(await readFile(path, "utf8"));
+    forward.futureMetadata = { writer: "newer" };
+    await writeFile(path, JSON.stringify(forward), { mode: 0o600 });
+    assert.equal(
+      (await readCurrentTarget({ stateDirectory }))?.url,
+      "https://safe.example.test",
+    );
+
     await writeFile(
       path,
       `{"version":1,"url":"https://safe.example.test","anonKey":"${secret}"`,

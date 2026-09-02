@@ -5,7 +5,14 @@
  * provider session, or billable model prompt.
  */
 import assert from "node:assert/strict";
-import { chmod, mkdtemp, rm, writeFile } from "node:fs/promises";
+import {
+  chmod,
+  mkdir,
+  mkdtemp,
+  realpath,
+  rm,
+  writeFile,
+} from "node:fs/promises";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
 import test from "node:test";
@@ -22,6 +29,7 @@ import {
   assertCodexVersionFloor,
   assertProviderVersionFloor,
   compareSemVer,
+  inspectClaudeBridgeExecutable,
   parseClaudeCodeVersionOutput,
   parseClaudeVersionOutput,
   parseCodexVersionOutput,
@@ -30,7 +38,11 @@ import {
   type GrokAcpHandle,
 } from "../src/host/index.js";
 import { GrokListenerModel } from "../src/listener/grok-model.js";
-import { listenerFailureMessage, renderListenerStatus } from "../src/cli.js";
+import {
+  listenerFailureMessage,
+  listenerStatusJson,
+  renderListenerStatus,
+} from "../src/cli.js";
 import type { ListenerStatus } from "../src/listener/control.js";
 
 test("floor boundary refuses floor-1 and accepts the floor and floor+1", () => {
@@ -145,20 +157,28 @@ test("Codex canary reason shapes render their recorded next steps", () => {
     "canary_no_tool_call: codex-acp 1.8.0 did not request permission or create /operator/.cswarm/canary/sentinel. Next: retry to re-sample the model's shell choice";
   const timeout =
     "canary_timeout: ACP request timed out: session/prompt (failed 2 attempts). Next: retry to run a fresh bounded permission canary";
-  const details = [executed, noTool, timeout];
+  const pathInsideCwd =
+    "canary_path_inside_cwd: /operator/.cswarm/canary is inside listener cwd /operator. Next: pass a --cwd that is not your home directory";
+  const details = [executed, noTool, timeout, pathInsideCwd];
   const rendered = details.map((detail) =>
     listenerFailureMessage("permission_canary_failed", "codex", detail)
   );
 
-  assert.equal(new Set(rendered).size, 3);
+  assert.equal(new Set(rendered).size, details.length);
   for (let index = 0; index < rendered.length; index += 1) {
     assert.ok(rendered[index]!.includes(JSON.stringify(details[index]!)));
     assert.match(rendered[index]!, /no workspace signal prompt was delivered/i);
+    assert.match(rendered[index]!, /permission safety gate/i);
     assert.doesNotMatch(rendered[index]!, /sign[- ]?in/i);
   }
   assert.match(rendered[0]!, /codex-acp 1\.8\.0.*\.cswarm\/canary\/sentinel/);
   assert.match(rendered[1]!, /retry to re-sample/);
   assert.match(rendered[2]!, /ACP request timed out: session\/prompt/);
+  assert.match(rendered[3]!, /pass a --cwd that is not your home directory/);
+  assert.doesNotMatch(
+    rendered[3]!,
+    /bridge did not complete|canary (?:ran|was sent)/i,
+  );
 });
 
 test("Codex CLI executable remedy names the bridge package", () => {
@@ -166,6 +186,213 @@ test("Codex CLI executable remedy names the bridge package", () => {
   assert.match(message, /this is the Codex CLI/);
   assert.match(message, /--codex-executable takes the codex-acp bridge/);
   assert.match(message, /npm i -g @agentclientprotocol\/codex-acp/);
+});
+
+test("Claude status/start rendering pins the resolved bridge and exact bundled versions", async () => {
+  const root = await mkdtemp(join(tmpdir(), "cswarm-claude-runtime-version-"));
+  const adapterRoot = join(
+    root,
+    "node_modules",
+    "@agentclientprotocol",
+    "claude-agent-acp",
+  );
+  const executable = join(adapterRoot, "dist", "index.js");
+  const sdkRoot = join(
+    adapterRoot,
+    "node_modules",
+    "@anthropic-ai",
+    "claude-agent-sdk",
+  );
+  try {
+    await mkdir(join(adapterRoot, "dist"), { recursive: true });
+    await mkdir(sdkRoot, { recursive: true });
+    await writeFile(
+      executable,
+      `#!${process.execPath}\nprocess.stdout.write("0.73.0\\n");\n`,
+      { mode: 0o700 },
+    );
+    await writeFile(
+      join(adapterRoot, "package.json"),
+      JSON.stringify({
+        name: "@agentclientprotocol/claude-agent-acp",
+        version: "0.73.0",
+      }),
+    );
+    await writeFile(join(sdkRoot, "sdk.mjs"), "export {};\n");
+    await writeFile(
+      join(sdkRoot, "package.json"),
+      JSON.stringify({
+        name: "@anthropic-ai/claude-agent-sdk",
+        version: "0.3.257",
+        claudeCodeVersion: "2.1.257",
+        type: "module",
+        main: "sdk.mjs",
+      }),
+    );
+    await chmod(executable, 0o700);
+
+    const measured = await inspectClaudeBridgeExecutable(executable, {
+      pathEnv: "/unused",
+      env: { PATH: "/unused" },
+    });
+    assert.equal(measured.executable, await realpath(executable));
+    assert.equal(measured.providerVersion, "0.73.0");
+    assert.equal(measured.bundledAgentSdkVersion, "0.3.257");
+    assert.equal(measured.bundledClaudeCodeVersion, "2.1.257");
+
+    const status = {
+      state: "failed",
+      provider: "claude",
+      principalId: "11111111-1111-4111-8111-111111111111",
+      pid: 123,
+      startedAt: "2026-09-01T00:00:00.000Z",
+      readyAt: null,
+      lastSignalId: null,
+      lastErrorCode: "permission_canary_failed",
+      lastErrorDetail: "unknown bridge response",
+      lastErrorReasonCode: "claude_canary_unknown",
+      lastWorkerStderrTail: null,
+      providerExecutable: measured.executable,
+      providerVersion: measured.providerVersion,
+      providerLastMeasuredVersion: measured.lastMeasuredVersion,
+      providerBundledAgentSdkVersion: measured.bundledAgentSdkVersion,
+      providerBundledClaudeCodeVersion: measured.bundledClaudeCodeVersion,
+      providerMinimumRequiredVersion: null,
+      deliveryMode: null,
+      pendingDeliveryCount: null,
+      lastTerminalDeliveryFailureCount: null,
+      routeMode: "worker",
+    } as ListenerStatus;
+    const rendered = renderListenerStatus(status);
+    assert.ok(rendered.includes(`Provider executable: ${measured.executable}`));
+    assert.match(rendered, /Provider version 0\.73\.0/);
+    assert.match(rendered, /Bundled Claude Code version: 2\.1\.257/);
+    assert.match(rendered, /Bundled Claude agent SDK version: 0\.3\.257/);
+    assert.match(rendered, /compatibility was not established/);
+    assert.doesNotMatch(rendered, /canary passed/);
+
+    const json = listenerStatusJson(status);
+    assert.equal(json.providerExecutable, measured.executable);
+    assert.equal(json.providerExecutableMeasured, true);
+    assert.equal(json.providerVersion, "0.73.0");
+    assert.equal(json.providerVersionMeasured, true);
+    assert.equal(json.providerBundledClaudeCodeVersion, "2.1.257");
+    assert.equal(json.providerBundledAgentSdkVersion, "0.3.257");
+    assert.equal(json.connectionsOpened, null);
+    assert.equal(json.connectionReuseRatio, null);
+
+    const oldProcess = {
+      ...status,
+      providerVersion: "0.70.0",
+      providerLastMeasuredVersion: "0.64.2",
+      providerBundledAgentSdkVersion: "0.3.232",
+      providerBundledClaudeCodeVersion: "2.1.232",
+      providerMinimumRequiredVersion: "2.1.251",
+    };
+    const installed = {
+      executable: measured.executable,
+      providerVersion: measured.providerVersion,
+      bundledAgentSdkVersion: measured.bundledAgentSdkVersion,
+      bundledClaudeCodeVersion: measured.bundledClaudeCodeVersion,
+    };
+    const drift = renderListenerStatus(
+      oldProcess,
+      undefined,
+      Date.now(),
+      installed,
+    );
+    assert.match(drift, /claude_bridge_below_api_minimum/);
+    assert.match(drift, /below the API minimum 2\.1\.251/);
+    assert.match(drift, /Restart to pick up 0\.73\.0/);
+    const driftJson = listenerStatusJson(
+      oldProcess,
+      undefined,
+      undefined,
+      Date.now(),
+      installed,
+    );
+    assert.equal(driftJson.providerBelowDemandedMinimum, true);
+    assert.equal(driftJson.providerRestartRequired, true);
+    assert.equal(driftJson.providerOnDiskVersion, "0.73.0");
+
+    const notMeasured = renderListenerStatus({
+      ...status,
+      providerExecutable: null,
+      providerVersion: null,
+      providerLastMeasuredVersion: null,
+      providerBundledAgentSdkVersion: null,
+      providerBundledClaudeCodeVersion: null,
+    });
+    assert.match(notMeasured, /Provider executable: not measured/);
+    assert.match(notMeasured, /Provider version: not measured/);
+    assert.match(notMeasured, /Bundled Claude Code version: not measured/);
+    assert.match(notMeasured, /Connections opened: not measured/);
+    assert.match(notMeasured, /Connection reuse ratio: not measured/);
+    assert.equal(
+      listenerStatusJson({ ...status, providerVersion: null }).providerVersionMeasured,
+      false,
+    );
+  } finally {
+    await rm(root, { recursive: true, force: true });
+  }
+});
+
+test("Claude canary failure shapes keep the bridge response and choose only measured remedies", () => {
+  const versionRequired =
+    "Internal error: API Error: 400 Claude Code 2.1.232 does not support this model; version 2.1.251 or newer is required. Run 'claude update'";
+  const authFailure =
+    "Authentication failed: Claude Code OAuth token is missing";
+  const timeout = "ACP request timed out: session/prompt (failed 2 attempts)";
+  const unknown = "bridge returned an unfamiliar refusal without a typed cause";
+
+  const versionMessage = listenerFailureMessage(
+    "permission_canary_failed",
+    "claude",
+    versionRequired,
+    "claude_bridge_version_required",
+  );
+  assert.match(versionMessage, /\[claude_bridge_version_required\]/);
+  assert.ok(versionMessage.includes(JSON.stringify(versionRequired)));
+  assert.match(
+    versionMessage,
+    /install the current bridge \(npm i -g @agentclientprotocol\/claude-agent-acp@latest\)/i,
+  );
+  assert.match(versionMessage, /restart the listener/i);
+  assert.match(versionMessage, /cswarm listen status/i);
+  assert.match(versionMessage, /bundled Claude Code version meets the API minimum 2\.1\.251/i);
+  assert.doesNotMatch(versionMessage, /bundles a newer Claude Code/i);
+  assert.doesNotMatch(versionMessage, /confirm.*sign-in/i);
+  assert.doesNotMatch(versionMessage, /Next: run ['"]?claude update/i);
+
+  const authMessage = listenerFailureMessage(
+    "permission_canary_failed",
+    "claude",
+    authFailure,
+    "claude_canary_auth_failed",
+  );
+  assert.match(authMessage, /\[claude_canary_auth_failed\]/);
+  assert.match(authMessage, /keychain\/OAuth sign-in/);
+  assert.doesNotMatch(authMessage, /update the bridge/);
+
+  const timeoutMessage = listenerFailureMessage(
+    "permission_canary_failed",
+    "claude",
+    timeout,
+    "claude_canary_timeout",
+  );
+  assert.match(timeoutMessage, /\[claude_canary_timeout\]/);
+  assert.match(timeoutMessage, /run claude -p.*session-limit.*host load.*retry/i);
+  assert.doesNotMatch(timeoutMessage, /keychain|OAuth|update the bridge/i);
+
+  const unknownMessage = listenerFailureMessage(
+    "permission_canary_failed",
+    "claude",
+    unknown,
+  );
+  assert.match(unknownMessage, /\[claude_canary_unknown\]/);
+  assert.ok(unknownMessage.includes(JSON.stringify(unknown)));
+  assert.match(unknownMessage, /cause was not determined/i);
+  assert.doesNotMatch(unknownMessage, /keychain|OAuth|update the bridge/i);
 });
 
 test("unparseable version fails closed with a code distinct from below-floor", async () => {

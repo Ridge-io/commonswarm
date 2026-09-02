@@ -69,6 +69,10 @@ import {
   RenewalRevoked,
 } from "../src/cloud/renewal.js";
 import { ListenerCapabilityError } from "../src/listener/runtime.js";
+import {
+  listenerStatusJson,
+  renderListenerStatus,
+} from "../src/cli.js";
 
 const UUID_RE =
   /^[0-9a-f]{8}-[0-9a-f]{4}-[1-8][0-9a-f]{3}-[89ab][0-9a-f]{3}-[0-9a-f]{12}$/i;
@@ -289,6 +293,41 @@ test("Codex is a durable listener status provider", async () => {
   const status = { ...statusFor(target, "ready"), provider: "codex" as const };
   await writeListenerStatus(target, status);
   assert.deepEqual(await readListenerStatus(target), status);
+});
+
+test("failed Claude startup keeps measured runtime and demanded API floor", async () => {
+  const root = await mkdtemp(join(tmpdir(), "cswarm-control-claude-version-"));
+  const target = paths(root);
+  const error = new AcpPermissionCanaryError(
+    "Internal error: API Error: 400 Claude Code 2.1.232 does not support this model; version 2.1.251 or newer is required.",
+    "claude_bridge_version_required",
+    "2.1.251",
+  );
+  const final = await runListenerSupervisor({
+    paths: target,
+    profileId: "profile-claude-version",
+    workspaceId: randomUUID(),
+    principalId: randomUUID(),
+    provider: "claude",
+    restart: { maxAttempts: 0 },
+    getProviderVersionNotice: () => ({
+      executable:
+        "/opt/homebrew/lib/node_modules/@agentclientprotocol/claude-agent-acp/dist/index.js",
+      runningVersion: "0.70.0",
+      lastMeasuredVersion: "0.64.2",
+      bundledAgentSdkVersion: "0.3.232",
+      bundledClaudeCodeVersion: "2.1.232",
+    }),
+    run: async () => ({ reason: "fatal", error }),
+  });
+  assert.equal(final.state, "failed");
+  assert.equal(final.lastErrorCode, "permission_canary_failed");
+  assert.equal(final.lastErrorReasonCode, "claude_bridge_version_required");
+  assert.equal(final.providerVersion, "0.70.0");
+  assert.equal(final.providerBundledAgentSdkVersion, "0.3.232");
+  assert.equal(final.providerBundledClaudeCodeVersion, "2.1.232");
+  assert.equal(final.providerMinimumRequiredVersion, "2.1.251");
+  assert.deepEqual(await readListenerStatus(target), final);
 });
 
 test("lifetime control socket enforces one listener and supports status/stop", async () => {
@@ -1006,7 +1045,7 @@ test("new status with delivery metadata round-trips exactly and writes require a
   );
 });
 
-test("status rejects unknown keys, sensitive aliases, and malformed delivery values", async () => {
+test("status ignores unknown keys, renders old counters as unmeasured, and rejects malformed known keys", async () => {
   const root = await mkdtemp(join(tmpdir(), "cswarm-control-test-"));
   const target = paths(root);
   const writeRaw = async (mutate: (row: Record<string, unknown>) => void) => {
@@ -1015,9 +1054,52 @@ test("status rejects unknown keys, sensitive aliases, and malformed delivery val
     await writeSecureJsonFile(target.statusPath, JSON.stringify(row));
   };
 
-  // Unknown top-level keys fail closed rather than being returned.
+  // A newer writer can add fields without breaking this older reader. Unknown
+  // values are not returned or rendered.
   await writeRaw((row) => {
     row.mysteryField = null;
+    row.futureMetrics = { opened: 12 };
+    row.readHealth = {
+      currentEpisodeStartedAt: null,
+      currentEpisodeAttempts: 0,
+      currentReasonCode: null,
+      currentHttpStatus: null,
+      currentErrorConstructor: null,
+      retryHours: [],
+      retryMinutes: [{ minuteStart: "2026-07-30T00:00:00.000Z", retries: 1, future: true }],
+      claimCadenceMs: null,
+      claimHours: [],
+      futureHealthMetric: 12,
+    };
+  });
+  const forward = await readListenerStatus(target);
+  assert.ok(forward);
+  assert.equal("mysteryField" in forward, false);
+  assert.equal("futureMetrics" in forward, false);
+  assert.equal("futureHealthMetric" in forward.readHealth!, false);
+  assert.equal("future" in forward.readHealth!.retryMinutes[0]!, false);
+  const rendered = renderListenerStatus(forward);
+  assert.match(rendered, /Connections opened: not measured\./);
+  assert.match(rendered, /Connection reuse ratio: not measured\./);
+  assert.doesNotMatch(rendered, /mysteryField|futureMetrics/);
+  const json = listenerStatusJson(forward);
+  assert.equal(json.connectionsOpened, null);
+  assert.equal(json.connectionReuseRatio, null);
+  assert.equal("mysteryField" in json, false);
+  assert.equal("futureMetrics" in json, false);
+
+  // The write gate keeps its closed allow-list.
+  await assert.rejects(
+    writeListenerStatus(
+      target,
+      { ...statusFor(target, "ready"), mysteryField: null } as unknown as ListenerStatus,
+    ),
+    /malformed/,
+  );
+
+  // A malformed known field still fails closed.
+  await writeRaw((row) => {
+    row.connectionsOpened = -1;
   });
   await assert.rejects(readListenerStatus(target), /malformed/);
 
@@ -2024,4 +2106,91 @@ test("a second worker's failure never inherits the first worker's tail", async (
     false,
     "worker two's failure inherited worker one's tail",
   );
+});
+
+test("read retry episodes persist, recover once, and log typed totals", async () => {
+  const root = await mkdtemp(join(tmpdir(), "cswarm-read-health-"));
+  const target = paths(root);
+  const workspaceId = randomUUID();
+  const principalId = randomUUID();
+  const startedAt = "2026-09-01T12:00:00.000Z";
+  const secondAt = "2026-09-01T12:00:30.000Z";
+  const recoveredAt = "2026-09-01T12:01:05.000Z";
+  const status = await runListenerSupervisor({
+    paths: target,
+    profileId: "profile-read-health",
+    workspaceId,
+    principalId,
+    run: async (_signal, onEvent) => {
+      onEvent({
+        type: "ready",
+        workspaceId,
+        principalId,
+        cadenceMs: 3_500,
+        ts: "2026-09-01T11:00:00.000Z",
+      });
+      onEvent({
+        type: "read_retry",
+        attempt: 1,
+        episodeAttempt: 1,
+        episodeStartedAt: startedAt,
+        failure: {
+          code: "http_status",
+          httpStatus: 503,
+          errorConstructor: null,
+        },
+        delayMs: 20_000,
+        ts: startedAt,
+      });
+      onEvent({
+        type: "read_retry",
+        attempt: 2,
+        episodeAttempt: 2,
+        episodeStartedAt: startedAt,
+        failure: {
+          code: "no_response",
+          httpStatus: null,
+          errorConstructor: null,
+        },
+        delayMs: 30_000,
+        ts: secondAt,
+      });
+      onEvent({
+        type: "read_recovered",
+        attempts: 2,
+        durationMs: 65_000,
+        startedAt,
+        ts: recoveredAt,
+      });
+      return { reason: "cancelled" };
+    },
+  });
+  assert.ok(status.readHealth);
+  assert.equal(status.readHealth.currentEpisodeStartedAt, null);
+  assert.equal(status.readHealth.currentEpisodeAttempts, 0);
+  assert.equal(status.readHealth.claimCadenceMs, 3_500);
+  assert.equal(status.readHealth.retryHours.length, 1);
+  assert.deepEqual(status.readHealth.retryHours[0], {
+    hourStart: "2026-09-01T12:00:00.000Z",
+    retries: 2,
+    episodes: 1,
+    longestEpisodeAttempts: 2,
+    longestEpisodeDurationMs: 65_000,
+  });
+
+  const events = (await readFile(target.logPath, "utf8"))
+    .trim()
+    .split("\n")
+    .map((line) => JSON.parse(line) as Record<string, unknown>);
+  const retries = events.filter((event) => event.event === "listener_read_retry");
+  assert.equal(retries.length, 2);
+  assert.equal(retries[0]!.reason_code, "http_status");
+  assert.equal(retries[0]!.http_status, 503);
+  assert.equal(retries[1]!.reason_code, "no_response");
+  const recovered = events.filter(
+    (event) => event.event === "listener_read_recovered",
+  );
+  assert.equal(recovered.length, 1, "one episode emits one recovery line");
+  assert.equal(recovered[0]!.attempts, 2);
+  assert.equal(recovered[0]!.duration_ms, 65_000);
 });

@@ -136,8 +136,9 @@ test("Codex startup failures give install and bounded diagnostic remedies", () =
   assert.match(ambiguous, /API-key variables are not forwarded/i);
 
   const canary = listenerFailureMessage("permission_canary_failed", "codex");
-  assert.match(canary, /read-only ACP permission canary/i);
+  assert.match(canary, /read-only ACP permission safety gate/i);
   assert.match(canary, /no workspace signal prompt was delivered/i);
+  assert.doesNotMatch(canary, /bridge did not complete/i);
   assert.match(
     listenerFailureMessage("permission_mode_unavailable", "codex"),
     /required read-only permission mode.*update or reinstall codex-acp/i,
@@ -171,10 +172,22 @@ test("Claude startup failures give install and bounded diagnostic remedies", () 
   assert.match(unknownExit, /detached listener process exited/i);
   assert.doesNotMatch(unknownExit, /keychain|OAuth|network access/i);
 
-  const canary = listenerFailureMessage("permission_canary_failed", "claude");
+  const canary = listenerFailureMessage(
+    "permission_canary_failed",
+    "claude",
+    "Authentication failed: Claude Code OAuth token is missing",
+    "claude_canary_auth_failed",
+  );
   assert.match(canary, /keychain\/OAuth/i);
-  assert.match(canary, /startup canary ran/i);
+  assert.match(canary, /permission canary ran/i);
   assert.match(canary, /no workspace signal prompt was delivered/i);
+  const unknownCanary = listenerFailureMessage(
+    "permission_canary_failed",
+    "claude",
+    "unfamiliar bridge refusal",
+  );
+  assert.match(unknownCanary, /cause was not determined/i);
+  assert.doesNotMatch(unknownCanary, /keychain|OAuth|update the bridge/i);
   assert.match(
     listenerFailureMessage("permission_mode_unavailable", "claude"),
     /required manual permission mode.*update or reinstall claude-agent-acp/i,

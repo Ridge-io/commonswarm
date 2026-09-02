@@ -863,3 +863,12 @@ Still running: L30 (`lane/l30-provider-version`), L32 (`lane/l32-connection-reus
 - L39 (`2e36204`): the S4-6 TEST was wrong — it spent its single retry trigger 1.5 s after `docker start`, before Storage accepted deletes; the product predicate (`deleted_at IS NULL … SKIP LOCKED`) re-claimed the failed row both times (`attempt_count=2`). Fix is test-only: probe the exact Storage DELETE endpoint before the retry. 3× exact green, full p1-local 16/16.
 - L40 (`7663e0e`): every closed local-state reader (11 enumerated: status, read-health, pending-main, credential, hook surface/cooldown, brain digest, effects v1/v2, delivery journal, current-target, arrival cursor) now ignores unknown keys on READ while writers stay strict; absent counters render `null` / "not measured"; the Claude remedy no longer claims `@latest` bundles a newer Claude Code. Three observed mutations.
 - `release/0.1.46` → **`e27995a`** = v0.1.45 + L30 + L31 + L32 + L35 + L38 + L39 + L40. Gates (pure, cli, edge, db:reset, p1-local, p1-server) and both arms (`wt-arm-grok-046b`, `wt-arm-gemini-046b`) running on it. Release only if both arms carry a substantive `VERDICT: PASS`.
+### Addendum 2026-09-02 — L38 unattended roster badge deferred
+
+- **DEFERRED:** the dashboard roster badge `N unattended` from L23 is not built in L38.
+  The roster query reads `agent_principals` only. It has no receipt row or signal id, while
+  `pending_for_main_count` exists only on a queued directed signal's receipt row. Building
+  the badge therefore needs a workspace-level per-agent attendance read surface; the current
+  roster cannot render the count from data it already has.
+- L38 did not change `site/src`. The queued-message receipt beside a visible signal still
+  renders its own `pending_for_main_count`; that per-signal value is not a roster total.

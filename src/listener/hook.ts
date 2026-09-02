@@ -102,7 +102,34 @@ function exactKeys(row: Record<string, unknown>, keys: readonly string[]): boole
     Object.keys(row).every((key) => expected.has(key));
 }
 
-function parseListenerCredential(raw: string): ListenerCredentialState {
+function hasRequiredKeys(
+  row: Record<string, unknown>,
+  keys: readonly string[],
+): boolean {
+  return keys.every((key) => Object.hasOwn(row, key));
+}
+
+const LISTENER_CREDENTIAL_KEYS = [
+  "version",
+  "profileId",
+  "targetUrl",
+  "anonKey",
+  "workspaceId",
+  "principalId",
+  "credential",
+  "updatedAt",
+] as const;
+const HOOK_SURFACE_KEYS = new Set([
+  "version",
+  "surfacedSignalIds",
+  "reportedDroppedCount",
+  "credentialFailureReported",
+]);
+
+function parseListenerCredential(
+  raw: string,
+  rejectUnknownKeys = false,
+): ListenerCredentialState {
   let value: unknown;
   try {
     value = JSON.parse(raw);
@@ -114,16 +141,9 @@ function parseListenerCredential(raw: string): ListenerCredentialState {
   }
   const row = value as Record<string, unknown>;
   if (
-    !exactKeys(row, [
-      "version",
-      "profileId",
-      "targetUrl",
-      "anonKey",
-      "workspaceId",
-      "principalId",
-      "credential",
-      "updatedAt",
-    ]) ||
+    !(rejectUnknownKeys
+      ? exactKeys(row, LISTENER_CREDENTIAL_KEYS)
+      : hasRequiredKeys(row, LISTENER_CREDENTIAL_KEYS)) ||
     row.version !== 1 ||
     typeof row.profileId !== "string" || !/^[0-9a-f]{24}$/.test(row.profileId) ||
     typeof row.targetUrl !== "string" ||
@@ -174,7 +194,7 @@ export async function writeListenerCredentialState(
     principalId: input.principalId,
     credential: input.credential,
     updatedAt: new Date(input.now ?? Date.now()).toISOString(),
-  }));
+  }), true);
   await writeSecureJsonFile(
     join(instanceDirectory, LISTENER_CREDENTIAL_FILE),
     JSON.stringify(record),
@@ -195,7 +215,7 @@ export async function readListenerCredentialState(
   return raw === null ? null : parseListenerCredential(raw);
 }
 
-function parseSurface(raw: string): HookSurfaceFile {
+function parseSurface(raw: string, rejectUnknownKeys = false): HookSurfaceFile {
   let value: unknown;
   try {
     value = JSON.parse(raw);
@@ -207,10 +227,7 @@ function parseSurface(raw: string): HookSurfaceFile {
   }
   const row = value as Record<string, unknown>;
   if (
-    Object.keys(row).some((key) =>
-      key !== "version" && key !== "surfacedSignalIds" &&
-      key !== "reportedDroppedCount" && key !== "credentialFailureReported"
-    ) ||
+    (rejectUnknownKeys && Object.keys(row).some((key) => !HOOK_SURFACE_KEYS.has(key))) ||
     row.version !== 1 || !Array.isArray(row.surfacedSignalIds) ||
     row.surfacedSignalIds.length > HOOK_SURFACED_IDS_MAX ||
     row.surfacedSignalIds.some((id) => typeof id !== "string" || !UUID_RE.test(id)) ||
@@ -345,7 +362,7 @@ export class FileHookSurfaceStore {
           reportedDroppedCount: options.droppedCount ?? state.reportedDroppedCount,
           credentialFailureReported: options.credentialFailureReported ??
             state.credentialFailureReported,
-        }))),
+        }), true)),
       );
     }, { timeoutMs: HOOK_LOCK_TIMEOUT_MS });
   }
@@ -371,7 +388,7 @@ function parseGlobalState(raw: string): HookGlobalState {
   }
   const row = value as Record<string, unknown>;
   if (
-    !exactKeys(row, ["version", "lastCheckAt"]) || row.version !== 1 ||
+    !hasRequiredKeys(row, ["version", "lastCheckAt"]) || row.version !== 1 ||
     typeof row.lastCheckAt !== "number" || !Number.isSafeInteger(row.lastCheckAt) ||
     row.lastCheckAt < 0
   ) {

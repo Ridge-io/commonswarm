@@ -49,6 +49,18 @@ const V1_EFFECT_KEYS = new Set([
   "updatedAt",
 ]);
 const V2_EFFECT_KEYS = new Set([...V1_EFFECT_KEYS, "signalKind"]);
+const EFFECT_SENSITIVE_KEYS = new Set([
+  "lease_id",
+  "leaseId",
+  "listenerBearer",
+  "bearer",
+  "token",
+  "prompt",
+  "ackCommandId",
+  "ack_command_id",
+  "claimCommandId",
+  "claim_command_id",
+]);
 
 /** Default secure state root for long-lived listener metadata and effects. */
 export function defaultListenerStateDirectory(): string {
@@ -87,13 +99,10 @@ function nullableString(value: unknown, max: number): value is string | null {
     (typeof value === "string" && value.length <= max);
 }
 
-/** Fail closed on any key outside the exact set for the record version. */
-function rejectUnknownKeys(
-  row: Record<string, unknown>,
-  allowed: Set<string>,
-): void {
+/** Reject capability and prompt aliases even though readers ignore other future fields. */
+function rejectSensitiveKeys(row: Record<string, unknown>): void {
   for (const key of Object.keys(row)) {
-    if (!allowed.has(key)) {
+    if (EFFECT_SENSITIVE_KEYS.has(key)) {
       throw new Error("stored listener effect is malformed");
     }
   }
@@ -105,8 +114,8 @@ function rejectUnknownKeys(
  * is never rewritten on read, and the upcast only adds the discriminator.
  * Cross-field invariants fail closed: a note can never carry reply/post
  * effects, `observed` is terminal and note-only, and version 1 is ask-only.
- * The schema is closed: any key outside the exact version key set is rejected,
- * so lease ids, bearers, or other sensitive state can never read as an effect.
+ * Unknown future fields are ignored after sensitive aliases are rejected. The
+ * returned object is rebuilt from validated known fields.
  */
 export function parseListenerEffectRecord(
   raw: string,
@@ -122,6 +131,7 @@ export function parseListenerEffectRecord(
     throw new Error("stored listener effect is malformed");
   }
   const row = value as Record<string, unknown>;
+  rejectSensitiveKeys(row);
   if (
     typeof row.version !== "number" ||
     (row.version !== 1 && row.version !== 2) ||
@@ -132,7 +142,6 @@ export function parseListenerEffectRecord(
     throw new Error("stored listener effect is malformed");
   }
   if (row.version === 1) {
-    rejectUnknownKeys(row, V1_EFFECT_KEYS);
     // A real version-1 file never carried `signalKind`; it is ask-only, and
     // `observed` did not exist then. Reject both so a foreign/note-shaped row
     // cannot masquerade as a v1 ask.
@@ -143,7 +152,6 @@ export function parseListenerEffectRecord(
     }
     return upcastV1Ask(row);
   }
-  rejectUnknownKeys(row, V2_EFFECT_KEYS);
   return parseV2Record(row);
 }
 
@@ -266,7 +274,7 @@ function parseV2Record(row: Record<string, unknown>): ListenerEffectRecord {
     }
   }
   // Never return the raw row: rebuild from validated fields so an unknown key
-  // cannot leak into the in-memory record after the key-set gate above.
+  // cannot leak into the in-memory record.
   return {
     version: 2,
     signalId: row.signalId as string,

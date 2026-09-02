@@ -254,6 +254,7 @@ reachability by server-controlled text. Server text can only ever appear
 | `signals.ts:488-491` malformed | safe — different prefix, exact equalities |
 | `signals.ts` `isFollowCredentialFailure` | **fixed** — see below |
 | `engine.ts:238` prompt retryability | not reachable today; see gap |
+| `claude-model.ts` canary diagnosis | **bounded exception:** typed `timeout` selects timeout; ACP collapses version/auth API failures to shared `rpc_error`, so two narrow provider-boundary prose shapes assign stable local reason codes; no retry decision reads the prose |
 | `delivery-journal.ts`, `storage.ts` | safe — local storage errors |
 | `command-client.ts:974`, `host/transport.ts:311` | display only, not classification |
 
@@ -274,6 +275,25 @@ whole message. It survived only because the shape filter rejects spaces — one
 layer of defence, and the same pattern as the `/aborted/i` hole. It now returns
 on status alone when the error came off the wire; the wording check is reached
 only by locally-thrown errors that never crossed the network.
+
+### 2026-09-01 Claude canary addendum
+
+The Claude bridge's ACP error does not expose a usable typed distinction to the
+listener. `AcpTransport.handleResponse` maps both the API's model-version refusal
+and auth failure to our stable but shared `rpc_error`; it discards the peer's
+numeric code and does not retain `error.data`. The canary timeout is different:
+it reaches the model as our typed `timeout` code and is classified on that code.
+
+For the two `rpc_error` cases, `claude-model.ts` is the single provider boundary
+that reads prose. The version match is the complete, narrow API sentence
+`Claude Code X does not support this model; version Y or newer is required` and
+records Y. The auth match accepts only direct authentication/OAuth/keychain
+failure phrases. Each becomes a stable local reason code before supervisor,
+status, or CLI rendering sees it. Unknown text stays
+`claude_canary_unknown`; it cannot select an auth or update remedy. These codes
+explain an already-failed canary. They do not decide retry, cancellation,
+credentials, or any other state transition, so the D-053 control boundary stays
+closed.
 
 ## Gates
 

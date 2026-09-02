@@ -6,12 +6,14 @@ import {
   openClaudeAcpSession,
   type ClaudeAcpHandle,
   type ClaudeAcpOpenOptions,
+  type ClaudeBridgeRuntimeNotice,
 } from "../host/claude.js";
 import { ACP_CANARY_TIMEOUT_MS } from "../host/bounds.js";
 import { allowOnceOrDeny, defaultPermissionCallback } from "../host/permission.js";
 import {
   AcpChildExitError,
   AcpPermissionCanaryError,
+  type HostSessionEvents,
   type PermissionCallback,
   type PermissionDecision,
   type PermissionRequest,
@@ -51,6 +53,72 @@ export interface ClaudeListenerModelOptions {
   onCanaryAttempt?: ListenerCanaryAttemptCallback;
   /** Receives one allowed newer-version notice for durable startup status. */
   onVersionNotice?: NonNullable<ClaudeAcpOpenOptions["onVersionNotice"]>;
+  /** Receives exact bridge path and bundled package versions before canary. */
+  onRuntimeNotice?: (notice: ClaudeBridgeRuntimeNotice) => void;
+  /** Structured session updates for the ephemeral live-activity frame. */
+  events?: HostSessionEvents;
+}
+
+export type ClaudeCanaryFailureCode =
+  | "claude_bridge_version_required"
+  | "claude_canary_timeout"
+  | "claude_canary_auth_failed"
+  | "claude_canary_unknown";
+
+export type ClaudeCanaryFailureShape = {
+  code: ClaudeCanaryFailureCode;
+  minimumRequiredVersion: string | null;
+};
+
+const CLAUDE_CODE_VERSION_REQUIRED_RE =
+  /\bClaude Code (\d+\.\d+\.\d+) does not support this model; version (\d+\.\d+\.\d+) or newer is required\b/;
+const CLAUDE_AUTH_FAILURE_RE =
+  /\b(?:authentication failed|authentication required|not authenticated|OAuth (?:sign-in|login|token)|keychain\/OAuth|please (?:log|sign) in)\b/i;
+const CLAUDE_CANARY_TIMEOUT_RE =
+  /^ACP request timed out: session\/prompt(?: \(failed \d+ attempts\))?$/;
+
+/** Assign a stable local reason at the Claude provider boundary. */
+export function classifyClaudeCanaryFailure(
+  detail: string | null | undefined,
+  typedReasonCode?: string | null,
+): ClaudeCanaryFailureShape {
+  const recorded = detail?.trim() ?? "";
+  const demanded = CLAUDE_CODE_VERSION_REQUIRED_RE.exec(recorded);
+  if (demanded?.[2]) {
+    return {
+      code: "claude_bridge_version_required",
+      minimumRequiredVersion: demanded[2],
+    };
+  }
+  if (
+    typedReasonCode === "claude_canary_timeout" ||
+    typedReasonCode === "timeout" ||
+    ((typedReasonCode === null || typedReasonCode === undefined) &&
+      CLAUDE_CANARY_TIMEOUT_RE.test(recorded))
+  ) {
+    return { code: "claude_canary_timeout", minimumRequiredVersion: null };
+  }
+  if (typedReasonCode === "claude_canary_auth_failed") {
+    return { code: "claude_canary_auth_failed", minimumRequiredVersion: null };
+  }
+  if (typedReasonCode === "claude_bridge_version_required") {
+    return {
+      code: "claude_bridge_version_required",
+      minimumRequiredVersion: demanded?.[2] ?? null,
+    };
+  }
+  /* ACP gives both the API version refusal and auth failures the same local
+   * `rpc_error` code, and the transport does not retain peer error.data. These
+   * two narrow prose recognizers therefore live at the provider boundary; no
+   * retry or downstream state decision branches on the message (D-053). */
+  if (
+    (typedReasonCode === "rpc_error" || typedReasonCode === null ||
+      typedReasonCode === undefined) &&
+    CLAUDE_AUTH_FAILURE_RE.test(recorded)
+  ) {
+    return { code: "claude_canary_auth_failed", minimumRequiredVersion: null };
+  }
+  return { code: "claude_canary_unknown", minimumRequiredVersion: null };
 }
 
 class ClaudeListenerClosedDuringOpen extends Error {
@@ -59,7 +127,6 @@ class ClaudeListenerClosedDuringOpen extends Error {
     this.name = "ClaudeListenerClosedDuringOpen";
   }
 }
-
 
 /** Claude-backed listener model using one operator-home worker session. */
 export class ClaudeListenerModel implements ListenerModel {
@@ -200,10 +267,14 @@ export class ClaudeListenerModel implements ListenerModel {
         ...(this.options.onVersionNotice
           ? { onVersionNotice: this.options.onVersionNotice }
           : {}),
+        ...(this.options.onRuntimeNotice
+          ? { onRuntimeNotice: this.options.onRuntimeNotice }
+          : {}),
+        ...(this.options.events ? { events: this.options.events } : {}),
         signal: controller.signal,
-      ...(this.options.onWorkerStderrTail
-        ? { onStderrTail: this.options.onWorkerStderrTail }
-        : {}),
+        ...(this.options.onWorkerStderrTail
+          ? { onStderrTail: this.options.onWorkerStderrTail }
+          : {}),
         clientName: "cswarm-listener",
       });
       this.openingHandle = handle;
@@ -233,6 +304,7 @@ export class ClaudeListenerModel implements ListenerModel {
       tmpdir(),
       `cswarm-claude-permission-canary-${process.pid}-${randomUUID()}`,
     );
+    let canaryError: unknown;
     let sentinelCreated = false;
     try {
       await handle.session.enablePromptsAfterCanary({
@@ -244,6 +316,8 @@ export class ClaudeListenerModel implements ListenerModel {
           ? { onAttempt: this.options.onCanaryAttempt }
           : {}),
       });
+    } catch (error) {
+      canaryError = error;
     } finally {
       try {
         await lstat(sentinelPath);
@@ -256,7 +330,20 @@ export class ClaudeListenerModel implements ListenerModel {
     if (sentinelCreated) {
       throw new AcpPermissionCanaryError(
         "Claude bridge wrote the permission canary sentinel before denial",
+        "claude_canary_write_not_blocked",
       );
     }
+    if (canaryError instanceof AcpPermissionCanaryError) {
+      const shape = classifyClaudeCanaryFailure(
+        canaryError.message,
+        canaryError.reasonCode,
+      );
+      throw new AcpPermissionCanaryError(
+        canaryError.message,
+        shape.code,
+        shape.minimumRequiredVersion,
+      );
+    }
+    if (canaryError !== undefined) throw canaryError;
   }
 }

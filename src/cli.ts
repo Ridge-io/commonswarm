@@ -199,6 +199,7 @@ import {
   fileArrivalCursorStore,
   formatArrivalNotification,
   formatArrivalRetryNotice,
+  ARRIVAL_RETRY_NOTICE_THRESHOLD_MS,
   EXIT_NOTIFY_ORPHANED,
   NotifyStdoutClosedError,
   runArrivalWatch,
@@ -213,18 +214,28 @@ import {
   readAgentDeliveryReceipts,
 } from "./cloud/delivery-receipts.js";
 import { resolveOpenCodeExecutable } from "./host/opencode.js";
-import { resolveClaudeExecutable } from "./host/claude.js";
-import { resolveCodexExecutable } from "./host/codex.js";
-import type { ProviderVersionNotice } from "./host/version.js";
 import {
+  inspectClaudeBridgeExecutable,
+  resolveClaudeExecutable,
+  type ClaudeBridgeRuntimeNotice,
+} from "./host/claude.js";
+import { resolveCodexExecutable } from "./host/codex.js";
+import {
+  compareSemVer,
+  type ProviderVersionNotice,
+} from "./host/version.js";
+import {
+  classifyClaudeCanaryFailure,
   ClaudeListenerModel,
   CodexListenerModel,
+  AgentActivityEndpointTransport,
   FileBrainDigestStore,
   FileHookSurfaceStore,
   FileListenerEffectStore,
   FilePendingMainQueue,
   GrokListenerModel,
   ListenerStartupError,
+  ListenerActivityController,
   OpenCodeListenerModel,
   effectiveListenerStatus,
   listenerPaths,
@@ -247,6 +258,9 @@ import {
   writeListenerCredentialState,
   LISTENER_DEFER_OVER_MAX,
   LISTENER_DEFER_OVER_MIN,
+  emptyListenerReadHealth,
+  summarizeListenerReadHealth,
+  type ListenerReadHealthSummary,
   type ListenerCanaryAttemptCallback,
   type ListenerPermissionMode,
   type ListenerProviderId,
@@ -255,6 +269,7 @@ import {
   type ListenerStatus,
   type ListenerRouteMode,
 } from "./listener/index.js";
+import { ListenerHttpClient } from "./listener/http-client.js";
 import {
   inspectResume,
   renderResume,
@@ -2368,6 +2383,7 @@ async function agentSession(
   cloud: CloudTarget,
   workspaceId: string,
   agent: AgentCredentialInput,
+  fetcher?: typeof fetch,
 ): Promise<AgentCredentialSession> {
   let store: Awaited<ReturnType<typeof agentCredentialStore>> | null = null;
   try {
@@ -2399,6 +2415,7 @@ async function agentSession(
       expiresAt: agent.expiresAt,
     },
     store,
+    ...(fetcher ? { fetcher } : {}),
   });
 }
 
@@ -3734,6 +3751,7 @@ async function runInboxNotifyCommand(args: Arguments): Promise<void> {
   }
 
   const controller = new AbortController();
+  const httpClient = new ListenerHttpClient();
   const stop = () => controller.abort();
   process.on("SIGINT", stop);
   process.on("SIGTERM", stop);
@@ -3768,7 +3786,7 @@ async function runInboxNotifyCommand(args: Arguments): Promise<void> {
                 ...(after === null ? {} : { after }),
               }),
           },
-          { signal: controller.signal },
+          { signal: controller.signal, fetcher: httpClient.fetch },
         );
       },
       emit: async (signal) => {
@@ -3802,6 +3820,7 @@ async function runInboxNotifyCommand(args: Arguments): Promise<void> {
   } finally {
     process.off("SIGINT", stop);
     process.off("SIGTERM", stop);
+    httpClient.close();
   }
 }
 
@@ -3898,6 +3917,7 @@ async function runInboxFollowCommand(args: Arguments): Promise<void> {
   };
 
   const controller = new AbortController();
+  const httpClient = new ListenerHttpClient();
   let legacyCursorWarned = false;
   let malformedRowWarnings = 0;
   const onAbortSignal = () => controller.abort();
@@ -3939,7 +3959,7 @@ async function runInboxFollowCommand(args: Arguments): Promise<void> {
             cloud,
             credential,
             query,
-            { signal: controller.signal },
+            { signal: controller.signal, fetcher: httpClient.fetch },
             {
               allowLegacyCursorFallback: true,
               tolerateMalformedRows: true,
@@ -3971,7 +3991,7 @@ async function runInboxFollowCommand(args: Arguments): Promise<void> {
           cloud,
           credential,
           query,
-          { signal: controller.signal },
+          { signal: controller.signal, fetcher: httpClient.fetch },
         );
       },
       emit: (frame) => {
@@ -3997,6 +4017,7 @@ async function runInboxFollowCommand(args: Arguments): Promise<void> {
   } finally {
     process.off("SIGINT", onAbortSignal);
     process.off("SIGTERM", onAbortSignal);
+    httpClient.close();
   }
 }
 
@@ -4294,6 +4315,126 @@ function listenerAttendanceRemedy(principalId: string): string {
   return `cswarm hook install claude --principal-id ${principalId} --write, then start a fresh session. Or restart the listener with --route worker.`;
 }
 
+interface ListenerLapseNotice {
+  code:
+    | "listener_host_ports_exhausted"
+    | "listener_read_retry_persisting"
+    | "listener_claim_throughput_lapse";
+  message: string;
+  nextStep: string;
+}
+
+function listenerReadHealthSummary(
+  status: ListenerStatus,
+  nowMs: number,
+): ListenerReadHealthSummary {
+  return summarizeListenerReadHealth(
+    status.readHealth ?? emptyListenerReadHealth(),
+    status.readyAt,
+    nowMs,
+  );
+}
+
+function listenerLapseNotices(
+  status: ListenerStatus,
+  summary: ListenerReadHealthSummary,
+): ListenerLapseNotice[] {
+  const health = status.readHealth ?? emptyListenerReadHealth();
+  const notices: ListenerLapseNotice[] = [];
+  if (health.currentReasonCode === "host_ports_exhausted") {
+    notices.push({
+      code: "listener_host_ports_exhausted",
+      message: "This host has run out of outbound ports. The listener is probing only once per minute so it does not amplify the outage.",
+      nextStep:
+        "Find the consumer: lsof -nP -iTCP | awk '{print $1}' | sort | uniq -c | sort -rn",
+    });
+  } else if (
+    // Reuse arrival-watch.ts's 60s loud-lapse transition. The listener keeps
+    // the episode in durable status instead of the monitor's process-local machine.
+    summary.currentEpisodeDurationMs !== null &&
+    summary.currentEpisodeDurationMs >= ARRIVAL_RETRY_NOTICE_THRESHOLD_MS
+  ) {
+    notices.push({
+      code: "listener_read_retry_persisting",
+      message: `Listener reads have failed continuously for ${Math.floor(summary.currentEpisodeDurationMs / 1_000)}s. This is still in progress.`,
+      nextStep:
+        "Check cswarm status and the CommonSwarm service. If both are healthy, restart the listener.",
+    });
+  }
+  if (summary.throughputLapseHours.length > 0) {
+    const latest = summary.throughputLapseHours.at(-1)!;
+    notices.push({
+      code: "listener_claim_throughput_lapse",
+      message: `Claim throughput fell below 0.50 for the full hour at ${latest.hourStart}: ${latest.claims}/${Math.round(latest.expectedClaims)} expected (${latest.ratio.toFixed(3)}).`,
+      nextStep:
+        "This host is starving the listener — check load/memory pressure (sysctl kern.memorystatus_vm_pressure_level), or move the listener.",
+    });
+  }
+  return notices;
+}
+
+export interface ListenerProviderInstallEvidence {
+  executable: string | null;
+  providerVersion: string | null;
+  bundledAgentSdkVersion: string | null;
+  bundledClaudeCodeVersion: string | null;
+}
+
+/** Inspect the Claude bridge currently on disk without changing listener state. */
+export async function listenerProviderInstallEvidence(
+  status: ListenerStatus,
+): Promise<ListenerProviderInstallEvidence | null> {
+  if (status.provider !== "claude") return null;
+  try {
+    const notice = await inspectClaudeBridgeExecutable(
+      status.providerExecutable ?? "claude-agent-acp",
+      { pathEnv: process.env.PATH, env: process.env },
+    );
+    return {
+      executable: notice.executable,
+      providerVersion: notice.providerVersion,
+      bundledAgentSdkVersion: notice.bundledAgentSdkVersion,
+      bundledClaudeCodeVersion: notice.bundledClaudeCodeVersion,
+    };
+  } catch {
+    return {
+      executable: null,
+      providerVersion: null,
+      bundledAgentSdkVersion: null,
+      bundledClaudeCodeVersion: null,
+    };
+  }
+}
+
+function versionIsBelow(
+  left: string | null | undefined,
+  right: string | null | undefined,
+): boolean {
+  if (!left || !right) return false;
+  try {
+    return compareSemVer(left, right) < 0;
+  } catch {
+    return false;
+  }
+}
+
+function providerRestartRequired(
+  status: ListenerStatus,
+  installed: ListenerProviderInstallEvidence | null,
+): boolean {
+  if (!installed) return false;
+  return (
+    status.providerVersion !== null && status.providerVersion !== undefined &&
+    installed.providerVersion !== null &&
+    status.providerVersion !== installed.providerVersion
+  ) || (
+    status.providerBundledClaudeCodeVersion !== null &&
+    status.providerBundledClaudeCodeVersion !== undefined &&
+    installed.bundledClaudeCodeVersion !== null &&
+    status.providerBundledClaudeCodeVersion !== installed.bundledClaudeCodeVersion
+  );
+}
+
 export function listenerStatusJson(
   status: ListenerStatus,
   permissionMode?: ListenerPermissionMode,
@@ -4303,12 +4444,38 @@ export function listenerStatusJson(
     hookSurfaceAdvanced: false,
   },
   nowMs: number = Date.now(),
+  installed: ListenerProviderInstallEvidence | null = null,
 ): Record<string, unknown> {
   const mode = permissionMode ?? status.permissionMode;
   const attendance = listenerAttendanceState(status, evidence);
   const pending = status.pendingForMainCount ?? 0;
+  const readHealth = status.readHealth ?? emptyListenerReadHealth();
+  const readSummary = listenerReadHealthSummary(status, nowMs);
+  const lapseNotices = listenerLapseNotices(status, readSummary);
   return {
     ...status,
+    providerExecutable: status.providerExecutable ?? null,
+    providerExecutableMeasured: typeof status.providerExecutable === "string",
+    providerVersion: status.providerVersion ?? null,
+    providerVersionMeasured: typeof status.providerVersion === "string",
+    providerBundledAgentSdkVersion:
+      status.providerBundledAgentSdkVersion ?? null,
+    providerBundledClaudeCodeVersion:
+      status.providerBundledClaudeCodeVersion ?? null,
+    providerMinimumRequiredVersion:
+      status.providerMinimumRequiredVersion ?? null,
+    lastErrorReasonCode: status.lastErrorReasonCode ?? null,
+    providerBelowDemandedMinimum: versionIsBelow(
+      status.providerBundledClaudeCodeVersion,
+      status.providerMinimumRequiredVersion,
+    ),
+    providerOnDiskExecutable: installed?.executable ?? null,
+    providerOnDiskVersion: installed?.providerVersion ?? null,
+    providerOnDiskBundledAgentSdkVersion:
+      installed?.bundledAgentSdkVersion ?? null,
+    providerOnDiskBundledClaudeCodeVersion:
+      installed?.bundledClaudeCodeVersion ?? null,
+    providerRestartRequired: providerRestartRequired(status, installed),
     ...attendance,
     hookSurfaceExists: evidence.hookSurfaceExists,
     hookSurfaceAdvanced: evidence.hookSurfaceAdvanced,
@@ -4322,6 +4489,24 @@ export function listenerStatusJson(
     attendanceNextStep: pending > 0
       ? listenerAttendanceRemedy(status.principalId)
       : null,
+    readRetryCurrentEpisodeStartedAt: readHealth.currentEpisodeStartedAt,
+    readRetryCurrentEpisodeAttempts: readHealth.currentEpisodeAttempts,
+    readRetryCurrentReasonCode: readHealth.currentReasonCode,
+    readRetryCurrentHttpStatus: readHealth.currentHttpStatus,
+    readRetryCurrentErrorConstructor: readHealth.currentErrorConstructor,
+    readRetryCurrentEpisodeDurationMs: readSummary.currentEpisodeDurationMs,
+    readRetryEpisodesLast24h: readSummary.episodesLast24h,
+    readRetryLongestEpisodeAttemptsLast24h:
+      readSummary.longestEpisodeAttemptsLast24h,
+    readRetryLongestEpisodeDurationMsLast24h:
+      readSummary.longestEpisodeDurationMsLast24h,
+    readRetriesLastHour: readSummary.retriesLastHour,
+    readRetryHours: readSummary.retryHours,
+    claimCadenceMs: readHealth.claimCadenceMs,
+    claimThroughputHours: readSummary.claimThroughputHours,
+    listenerLapse: lapseNotices.length > 0,
+    listenerLapseCodes: lapseNotices.map((notice) => notice.code),
+    listenerLapseNextSteps: lapseNotices.map((notice) => notice.nextStep),
     deliveryMode: status.deliveryMode ?? null,
     pendingDeliveryCount: status.pendingDeliveryCount ?? null,
     lastTerminalDeliveryFailureCount:
@@ -4334,6 +4519,8 @@ export function listenerStatusJson(
     deferOverChars: status.deferOverChars ?? null,
     pendingForMainCount: status.pendingForMainCount ?? 0,
     droppedForMainCount: status.droppedForMainCount ?? 0,
+    connectionsOpened: status.connectionsOpened ?? null,
+    connectionReuseRatio: status.connectionReuseRatio ?? null,
     ...(mode
       ? {
         permission_mode: mode,
@@ -4364,6 +4551,7 @@ export function renderListenerStatus(
     hookSurfaceAdvanced: false,
   },
   nowMs: number = Date.now(),
+  installed: ListenerProviderInstallEvidence | null = null,
 ): string {
   const routeMode = status.routeMode ?? "worker";
   const pendingForMainCount = status.pendingForMainCount ?? 0;
@@ -4372,8 +4560,13 @@ export function renderListenerStatus(
     pendingForMainCount === 1 ? "message is" : "messages are"
   } unattended`;
   const attendance = listenerAttendanceState(status, evidence);
+  const readHealth = status.readHealth ?? emptyListenerReadHealth();
+  const readSummary = listenerReadHealthSummary(status, nowMs);
+  const lapseNotices = listenerLapseNotices(status, readSummary);
   const lines = [
-    pendingForMainCount > 0
+    lapseNotices.length > 0
+      ? `Listener LAPSE for agent ${status.principalId}: ${lapseNotices.map((notice) => notice.code).join(", ")}.`
+      : pendingForMainCount > 0
       ? `Listener WARNING for agent ${status.principalId}: ${unattendedCount}.`
       : `Listener ${status.state} for agent ${status.principalId}.`,
     `CONNECTED: ${attendance.connected ? "yes" : "no"}. Transport state is ${status.state}.`,
@@ -4394,6 +4587,9 @@ export function renderListenerStatus(
         : "not yet measured"
     }.`,
     `Provider: ${status.provider}; process: ${status.pid}; started: ${status.startedAt}.`,
+    `Provider executable: ${status.providerExecutable ?? "not measured"}.`,
+    `Connections opened: ${status.connectionsOpened ?? "not measured"}.`,
+    `Connection reuse ratio: ${status.connectionReuseRatio ?? "not measured"}.`,
     status.readyAt ? `Ready since: ${status.readyAt}.` : "Not ready yet.",
     status.lastSignalId
       ? pendingForMainCount > 0
@@ -4405,11 +4601,45 @@ export function renderListenerStatus(
     status.lastErrorCode
       ? `Last status code: ${status.lastErrorCode}.`
       : "No listener process error is recorded.",
+    readHealth.currentEpisodeStartedAt === null
+      ? "Current read retry episode: none."
+      : `Current read retry episode: ${readHealth.currentEpisodeAttempts} attempt${readHealth.currentEpisodeAttempts === 1 ? "" : "s"} since ${readHealth.currentEpisodeStartedAt}; reason ${readHealth.currentReasonCode}${readHealth.currentHttpStatus === null ? "" : ` (HTTP ${readHealth.currentHttpStatus})`}${readHealth.currentErrorConstructor === null ? "" : ` (${readHealth.currentErrorConstructor})`}.`,
+    `Read retry episodes in the last 24h: ${readSummary.episodesLast24h}; retries in the rolling hour: ${readSummary.retriesLastHour}.`,
+    readSummary.longestEpisodeAttemptsLast24h === 0
+      ? "Longest read retry episode in the last 24h: none recorded."
+      : `Longest read retry episode in the last 24h: ${readSummary.longestEpisodeAttemptsLast24h} attempts over ${Math.floor(readSummary.longestEpisodeDurationMsLast24h / 1_000)}s.`,
+    readSummary.retryHours.length === 0
+      ? "Read retries by hour in the last 24h: none."
+      : `Read retries by hour in the last 24h: ${readSummary.retryHours.map((hour) => `${hour.hourStart}=${hour.retries}`).join("; ")}.`,
+    readSummary.claimThroughputHours.length === 0
+      ? "Claim throughput by full hour: no complete listener hour is available yet."
+      : `Claim throughput by full hour: ${readSummary.claimThroughputHours.map((hour) => `${hour.hourStart} ${hour.claims}/${Math.round(hour.expectedClaims)} (${hour.ratio.toFixed(3)})`).join("; ")}.`,
   ];
+  for (const notice of lapseNotices) {
+    lines.push(`WARNING [${notice.code}]: ${notice.message}`);
+    lines.push(`Next: ${notice.nextStep}`);
+  }
   if (status.lastErrorDetail) {
     const [first, ...rest] = status.lastErrorDetail.split("\n");
     lines.push(`Last error detail (local only): ${first}`);
     for (const line of rest) lines.push(`  ${line}`);
+  }
+  if (status.lastErrorReasonCode) {
+    lines.push(`Last provider reason code: ${status.lastErrorReasonCode}.`);
+  }
+  if (
+    status.provider === "claude" &&
+    status.lastErrorCode === "permission_canary_failed"
+  ) {
+    lines.push(
+      `Canary diagnosis: ${listenerFailureMessage(
+        status.lastErrorCode,
+        status.provider,
+        status.lastErrorDetail,
+        status.lastErrorReasonCode,
+        status.providerMinimumRequiredVersion,
+      )}.`,
+    );
   }
   if (status.lastWorkerStderrTail) {
     // Local diagnosis for the D-090 family: the failing box's own log is the
@@ -4426,8 +4656,40 @@ export function renderListenerStatus(
     lines.push(
       status.providerVersion === status.providerLastMeasuredVersion
         ? `Provider version: ${status.providerVersion} (last measured: ${status.providerLastMeasuredVersion}).`
-        : `Provider version ${status.providerVersion} is newer than the last measured version ${status.providerLastMeasuredVersion}. It is unverified but allowed because the startup permission canary passed. Next: verify this provider release with CommonSwarm and update the last-measured version.`,
+        : status.state === "ready"
+        ? `Provider version ${status.providerVersion} is newer than the last measured version ${status.providerLastMeasuredVersion}. It is unverified but allowed because the startup permission canary passed. Next: verify this provider release with CommonSwarm and update the last-measured version.`
+        : `Provider version ${status.providerVersion} is newer than the last measured version ${status.providerLastMeasuredVersion}. It was measured before startup failed; compatibility was not established. Next: resolve the startup failure before verifying this provider release.`,
     );
+  } else {
+    lines.push("Provider version: not measured.");
+  }
+  if (status.provider === "claude") {
+    lines.push(
+      `Bundled Claude Code version: ${status.providerBundledClaudeCodeVersion ?? "not measured"}.`,
+      `Bundled Claude agent SDK version: ${status.providerBundledAgentSdkVersion ?? "not measured"}.`,
+    );
+    if (status.providerMinimumRequiredVersion) {
+      lines.push(
+        `Last API minimum demanded: Claude Code ${status.providerMinimumRequiredVersion}.`,
+      );
+    }
+    if (
+      versionIsBelow(
+        status.providerBundledClaudeCodeVersion,
+        status.providerMinimumRequiredVersion,
+      )
+    ) {
+      lines.push(
+        `WARNING [claude_bridge_below_api_minimum]: this listener has bundled Claude Code ${status.providerBundledClaudeCodeVersion}, below the API minimum ${status.providerMinimumRequiredVersion}. Install the current bridge (npm i -g @agentclientprotocol/claude-agent-acp@latest), restart the listener, then run cswarm listen status and confirm that the bundled Claude Code version meets the API minimum ${status.providerMinimumRequiredVersion}.`,
+      );
+    }
+    if (providerRestartRequired(status, installed)) {
+      lines.push(
+        `A different Claude bridge is on disk: ${installed?.providerVersion ?? "version not measured"}` +
+          `${installed?.bundledClaudeCodeVersion ? ` (bundled Claude Code ${installed.bundledClaudeCodeVersion})` : ""}. ` +
+          `Restart to pick up ${installed?.providerVersion ?? "the on-disk bridge"}.`,
+      );
+    }
   }
   if (status.deliveryMode === "durable_claim") {
     lines.push("Delivery mode: durable claim and acknowledgement.");
@@ -4542,10 +4804,35 @@ async function unsurfacedPendingMainStats(
   }
 }
 
+function quotedListenerFailureDetail(detail: string | null | undefined): string {
+  const recorded = detail?.trim();
+  if (!recorded) return "not recorded";
+  const bounded = recorded.length > 600
+    ? `${recorded.slice(0, 599)}…`
+    : recorded;
+  return JSON.stringify(bounded);
+}
+
+function listenerProviderIdentitySummary(status: ListenerStatus): string {
+  const parts = [
+    `Provider executable: ${status.providerExecutable ?? "not measured"}`,
+    `provider version: ${status.providerVersion ?? "not measured"}`,
+  ];
+  if (status.provider === "claude") {
+    parts.push(
+      `bundled Claude Code: ${status.providerBundledClaudeCodeVersion ?? "not measured"}`,
+      `bundled Claude agent SDK: ${status.providerBundledAgentSdkVersion ?? "not measured"}`,
+    );
+  }
+  return parts.join("; ");
+}
+
 export function listenerFailureMessage(
   code: string,
   provider?: ListenerProviderId,
   detail?: string | null,
+  reasonCode?: string | null,
+  minimumRequiredVersion?: string | null,
 ): string {
   if (code === "version_below_floor") {
     if (provider === "codex") {
@@ -4623,13 +4910,29 @@ export function listenerFailureMessage(
   }
   if (code === "permission_canary_failed") {
     if (provider === "claude") {
-      return "the Claude bridge did not complete the ACP permission canary; the startup canary ran, but no workspace signal prompt was delivered. Confirm Claude Code keychain/OAuth sign-in, then retry";
+      const shape = classifyClaudeCanaryFailure(detail, reasonCode);
+      const ran =
+        "the Claude ACP permission canary ran, but no workspace signal prompt was delivered";
+      const response = `bridge response [${shape.code}]: ${quotedListenerFailureDetail(detail)}`;
+      if (shape.code === "claude_bridge_version_required") {
+        const minimum = minimumRequiredVersion ?? shape.minimumRequiredVersion;
+        return `${ran}. ${response}. Next: install the current bridge (npm i -g @agentclientprotocol/claude-agent-acp@latest), restart the listener, then run cswarm listen status and confirm that the bundled Claude Code version meets the API minimum ${minimum ?? "reported there"}`;
+      }
+      if (shape.code === "claude_canary_timeout") {
+        return `${ran}. ${response}. Next: run claude -p and check for session-limit text, check host load, then retry`;
+      }
+      if (shape.code === "claude_canary_auth_failed") {
+        return `${ran}. ${response}. Next: confirm Claude Code keychain/OAuth sign-in, then retry`;
+      }
+      return `${ran}. ${response}. The cause was not determined. Next: inspect the quoted bridge response and local worker stderr, then retry only after the cause is known or the failure appears transient`;
     }
     if (provider === "codex") {
       const recorded = detail?.trim();
+      const gate =
+        "the Codex listener did not pass the read-only ACP permission safety gate; no workspace signal prompt was delivered";
       return recorded
-        ? `the Codex bridge did not complete the read-only ACP permission canary; no workspace signal prompt was delivered. Recorded reason: ${JSON.stringify(recorded)}`
-        : "the Codex bridge did not complete the read-only ACP permission canary; no workspace signal prompt was delivered. The recorded reason was unavailable. Next: run cswarm listen status, then retry";
+        ? `${gate}. Recorded reason: ${JSON.stringify(recorded)}`
+        : `${gate}. The recorded reason was unavailable. Next: run cswarm listen status, then retry`;
     }
     if (provider === "grok") {
       return "the Grok bridge did not complete the ACP permission canary; no workspace signal prompt was delivered. The local cswarm listen status output includes the final error detail; read it, then retry";
@@ -4798,11 +5101,19 @@ async function runConfiguredListener(options: {
       ? { stateDirectory: options.stateDirectory }
       : {}),
   });
-  const liveCredentialSession = await agentSession(
-    options.cloud,
-    options.workspaceId,
-    options.agent,
-  );
+  const httpClient = new ListenerHttpClient();
+  let liveCredentialSession: AgentCredentialSession;
+  try {
+    liveCredentialSession = await agentSession(
+      options.cloud,
+      options.workspaceId,
+      options.agent,
+      httpClient.fetch,
+    );
+  } catch (error) {
+    httpClient.close();
+    throw error;
+  }
   let storedCredential: string | null = null;
   const credentialSession = {
     bearer: async (): Promise<string> => {
@@ -4833,7 +5144,7 @@ async function runConfiguredListener(options: {
       options.cloud,
       credential,
       options.workspaceId,
-      context,
+      { ...context, fetcher: httpClient.fetch },
     );
     const provenance = listenerSenderProvenance(signal, senderDirectory);
     if (context.includeBrainDigest !== true) return provenance;
@@ -4845,6 +5156,7 @@ async function runConfiguredListener(options: {
         {
           ...(context.signal ? { signal: context.signal } : {}),
           deadlineMs: context.deadlineMs,
+          fetcher: httpClient.fetch,
         },
       );
       const brainDigest = await new FileBrainDigestStore(
@@ -4899,9 +5211,27 @@ async function runConfiguredListener(options: {
   // never rides an error object or a server payload (D-090 family).
   let lastWorkerStderrTail: string | null = null;
   let workerStderrGeneration = 0;
-  let providerVersionNotice: ProviderVersionNotice | null = null;
+  let providerVersionNotice: {
+    runningVersion: string | null;
+    lastMeasuredVersion: string;
+    executable?: string | null;
+    bundledAgentSdkVersion?: string | null;
+    bundledClaudeCodeVersion?: string | null;
+  } | null = null;
   const onVersionNotice = (notice: ProviderVersionNotice) => {
-    providerVersionNotice = notice;
+    providerVersionNotice = {
+      runningVersion: notice.runningVersion,
+      lastMeasuredVersion: notice.lastMeasuredVersion,
+    };
+  };
+  const onClaudeRuntimeNotice = (notice: ClaudeBridgeRuntimeNotice) => {
+    providerVersionNotice = {
+      runningVersion: notice.providerVersion,
+      lastMeasuredVersion: notice.lastMeasuredVersion,
+      executable: notice.executable,
+      bundledAgentSdkVersion: notice.bundledAgentSdkVersion,
+      bundledClaudeCodeVersion: notice.bundledClaudeCodeVersion,
+    };
   };
   /* One sink per model (= per supervisor attempt). Creating a sink clears the
    * slot and expires every older sink, so a superseded worker whose exit
@@ -4921,7 +5251,10 @@ async function runConfiguredListener(options: {
   // and a model is single-use (runListenerRuntime closes it on every exit, and
   // every adapter throws "listener model is closed" once closed). Constructing
   // one here and capturing it would make every restart fail instantly.
-  const newModel = (onCanaryAttempt: ListenerCanaryAttemptCallback) => {
+  const newModel = (
+    onCanaryAttempt: ListenerCanaryAttemptCallback,
+    events: ListenerActivityController["events"],
+  ) => {
     providerVersionNotice = null;
     return options.provider === "opencode"
     ? new OpenCodeListenerModel({
@@ -4931,6 +5264,7 @@ async function runConfiguredListener(options: {
       onWorkerStderrTail: newWorkerStderrTailSink(),
       onCanaryAttempt,
       onVersionNotice,
+      events,
       ...(options.model ? { model: options.model } : {}),
       ...(options.opencodeExecutable
         ? { executable: options.opencodeExecutable }
@@ -4945,7 +5279,9 @@ async function runConfiguredListener(options: {
       promptTimeoutMs: resolveTurnBudgetMs,
       onWorkerStderrTail: newWorkerStderrTailSink(),
       onCanaryAttempt,
+      onRuntimeNotice: onClaudeRuntimeNotice,
       onVersionNotice,
+      events,
       ...(options.claudeExecutable
         ? { executable: options.claudeExecutable }
         : options.executable
@@ -4960,6 +5296,7 @@ async function runConfiguredListener(options: {
       onWorkerStderrTail: newWorkerStderrTailSink(),
       onCanaryAttempt,
       onVersionNotice,
+      events,
       ...(options.codexExecutable
         ? { executable: options.codexExecutable }
         : options.executable
@@ -4973,6 +5310,7 @@ async function runConfiguredListener(options: {
       onWorkerStderrTail: newWorkerStderrTailSink(),
       onCanaryAttempt,
       onVersionNotice,
+      events,
       ...(options.model ? { model: options.model } : {}),
       ...(options.effort ? { effort: options.effort } : {}),
       ...(options.executable ? { executable: options.executable } : {}),
@@ -5003,6 +5341,7 @@ async function runConfiguredListener(options: {
       // one has run, else the configured cap.
       getTurnBudgetMs: () => lastAppliedTurnBudgetMs ?? turnBudgetMs,
       getProviderVersionNotice: () => providerVersionNotice,
+      getConnectionMetrics: () => httpClient.metrics(),
       takeWorkerStderrTail: () => {
         const tail = lastWorkerStderrTail;
         lastWorkerStderrTail = null;
@@ -5046,28 +5385,48 @@ async function runConfiguredListener(options: {
             ts: new Date().toISOString(),
           });
         };
-        return await runListenerRuntime({
-          target: options.cloud,
+        const activity = new ListenerActivityController({
           workspaceId: options.workspaceId,
-          principalId: options.principalId,
-          credentialSession,
-          store: effectStore,
-          model: newModel(onCanaryAttempt),
-          signal,
-          onEvent,
-          declareModel: listenerModelLabel(options.provider),
-          listenerInstanceId,
-          deliveryJournal: selectedJournal,
-          resolveSenderProvenance,
-          routeMode,
-          deferOverChars,
-          pendingMainQueue,
+          transport: new AgentActivityEndpointTransport(
+            options.cloud,
+            credentialSession,
+            httpClient.fetch,
+          ),
         });
+        const instrumentedModel = activity.instrumentModel(
+          newModel(onCanaryAttempt, activity.events),
+        );
+        try {
+          return await runListenerRuntime({
+            target: options.cloud,
+            workspaceId: options.workspaceId,
+            principalId: options.principalId,
+            credentialSession,
+            store: effectStore,
+            model: instrumentedModel,
+            signal,
+            onEvent: (event) => {
+              activity.onRuntimeEvent(event);
+              onEvent(event);
+            },
+            declareModel: listenerModelLabel(options.provider),
+            listenerInstanceId,
+            deliveryJournal: selectedJournal,
+            resolveSenderProvenance,
+            routeMode,
+            deferOverChars,
+            pendingMainQueue,
+            fetcher: httpClient.fetch,
+          });
+        } finally {
+          activity.close();
+        }
       },
     });
   } finally {
     process.off("SIGINT", onProcessSignal);
     process.off("SIGTERM", onProcessSignal);
+    httpClient.close();
   }
 }
 
@@ -5258,7 +5617,21 @@ async function runListenStart(args: Arguments): Promise<void> {
         const detail = failedStatus?.lastErrorCode === error.code
           ? failedStatus.lastErrorDetail
           : null;
-        throw new Error(listenerFailureMessage(error.code, provider, detail));
+        const reasonCode = failedStatus?.lastErrorCode === error.code
+          ? failedStatus.lastErrorReasonCode
+          : null;
+        const message = listenerFailureMessage(
+          error.code,
+          provider,
+          detail,
+          reasonCode,
+          failedStatus?.providerMinimumRequiredVersion,
+        );
+        throw new Error(
+          failedStatus === null
+            ? message
+            : `${message}. ${listenerProviderIdentitySummary(failedStatus)}`,
+        );
       }
       throw error;
     }
@@ -5266,11 +5639,13 @@ async function runListenStart(args: Arguments): Promise<void> {
 
   if (status.state === "failed") {
     throw new Error(
-      listenerFailureMessage(
+      `${listenerFailureMessage(
         status.lastErrorCode ?? "unknown_error",
         provider,
         status.lastErrorDetail,
-      ),
+        status.lastErrorReasonCode,
+        status.providerMinimumRequiredVersion,
+      )}. ${listenerProviderIdentitySummary(status)}`,
     );
   }
   let attendanceEvidence: ListenerAttendanceEvidence = {
@@ -5509,10 +5884,23 @@ async function runListenStatusOrStop(
       hookSurfaceAdvanced: queueStats.hookSurfaceAdvanced,
     };
   }
+  const installed = command === "status"
+    ? await listenerProviderInstallEvidence(status)
+    : null;
   if (args.has("json")) {
-    printJson(listenerStatusJson(status, undefined, attendanceEvidence));
+    printJson(
+      listenerStatusJson(
+        status,
+        undefined,
+        attendanceEvidence,
+        Date.now(),
+        installed,
+      ),
+    );
   } else {
-    process.stdout.write(`${renderListenerStatus(status, attendanceEvidence)}\n`);
+    process.stdout.write(
+      `${renderListenerStatus(status, attendanceEvidence, Date.now(), installed)}\n`,
+    );
   }
 }
 
@@ -5550,16 +5938,23 @@ async function runListenCanary(args: Arguments): Promise<void> {
     ...(stateDirectory ? { stateDirectory } : {}),
   });
   const waitMs = parseWaitSeconds(args.optional("wait") ?? "10") * 1_000;
-  const result = await runListenerAttendanceCanary({
-    target: cloud,
-    workspaceId,
-    principalId,
-    paths,
-    waitMs,
-    // Canary must remain read-only apart from its one self-note. It therefore
-    // uses the presented token and never enters the renewal/mint path.
-    credential: async () => agent.token,
-  });
+  const httpClient = new ListenerHttpClient();
+  let result: Awaited<ReturnType<typeof runListenerAttendanceCanary>>;
+  try {
+    result = await runListenerAttendanceCanary({
+      target: cloud,
+      workspaceId,
+      principalId,
+      paths,
+      waitMs,
+      fetcher: httpClient.fetch,
+      // Canary must remain read-only apart from its one self-note. It therefore
+      // uses the presented token and never enters the renewal/mint path.
+      credential: async () => agent.token,
+    });
+  } finally {
+    httpClient.close();
+  }
   if (args.has("json")) {
     printJson({
       workspaceId,
@@ -5903,18 +6298,24 @@ async function runHook(args: Arguments): Promise<void> {
       process.exit(0);
     }, 3_000);
     hardExit.unref();
-    await runListenerHookCheck({
-      ...(cooldownSeconds === undefined ? {} : { cooldownSeconds }),
-      ...(principalIds.length === 0 ? {} : { principalIds }),
-      write: async (output) => {
-        await new Promise<void>((resolve, reject) => {
-          process.stdout.write(`${output}\n`, (error) => {
-            if (error) reject(error);
-            else resolve();
+    const httpClient = new ListenerHttpClient();
+    try {
+      await runListenerHookCheck({
+        ...(cooldownSeconds === undefined ? {} : { cooldownSeconds }),
+        ...(principalIds.length === 0 ? {} : { principalIds }),
+        fetcher: httpClient.fetch,
+        write: async (output) => {
+          await new Promise<void>((resolve, reject) => {
+            process.stdout.write(`${output}\n`, (error) => {
+              if (error) reject(error);
+              else resolve();
+            });
           });
-        });
-      },
-    });
+        },
+      });
+    } finally {
+      httpClient.close();
+    }
     return;
   }
   if (command !== "install" && command !== "uninstall") {

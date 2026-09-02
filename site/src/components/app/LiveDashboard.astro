@@ -920,10 +920,12 @@ import "../../styles/tokens.css";
     removeWorkspaceMember,
     revokeAgentPrincipal,
     setAgentModel,
+    subscribeAgentActivity,
     uuid,
     workspaceFiles,
     type Signal,
     type AgentAccessStatus,
+    type AgentActivitySubscription,
     type PendingMemberInvite,
     type BrowserDeliveryIndicator,
     type BrowserDeliveryReceiptCacheEntry,
@@ -942,6 +944,13 @@ import "../../styles/tokens.css";
     type CloseableWorkspace,
   } from "../../lib/workspace-close-state";
   import { agentEntityView, truncateEntityId } from "../../lib/entity-panel";
+  import {
+    agentActivityFrameIsNewer,
+    agentActivityPanelView,
+    AGENT_ACTIVITY_INSTRUMENTATION_GRACE_MS,
+    type AgentActivityConnectionState,
+    type AgentActivityFrame,
+  } from "../../lib/agent-activity";
   import {
     filterSignals,
     signalCounts,
@@ -1102,6 +1111,12 @@ import "../../styles/tokens.css";
     let inviteIntent: { email: string; commandId: string } | null = null;
     let entityPanelOrigin: HTMLElement | null = null;
     let selectedEntity: EntityRef | null = null;
+    let agentActivityFrames = new Map<string, AgentActivityFrame>();
+    let agentActivityConnection: AgentActivityConnectionState = "connecting";
+    let agentActivitySubscription: AgentActivitySubscription | null = null;
+    let agentActivityGeneration = 0;
+    let agentActivityGraceTimer: number | undefined;
+    let entityActivityTimer: number | undefined;
     let composerAudience: ComposerAudience = { kind: "everyone" };
     let composerMention: EntityRef | null = null;
     let mentionPickerIndex = 0;
@@ -1769,7 +1784,115 @@ import "../../styles/tokens.css";
           }).format(date);
     };
 
+    const stopAgentActivity = (): void => {
+      agentActivityGeneration += 1;
+      window.clearTimeout(agentActivityGraceTimer);
+      agentActivityGraceTimer = undefined;
+      const active = agentActivitySubscription;
+      agentActivitySubscription = null;
+      agentActivityFrames.clear();
+      agentActivityConnection = "connecting";
+      if (active) void active.unsubscribe().catch(() => undefined);
+    };
+
+    const refreshEntityActivitySection = (): void => {
+      if (selectedEntity?.kind !== "agent") return;
+      const current = one<HTMLElement>("[data-agent-activity]");
+      if (!current) return;
+      current.replaceWith(renderAgentActivitySection(selectedEntity.id));
+    };
+
+    const startAgentActivity = (workspaceId: string, version: number): void => {
+      stopAgentActivity();
+      const generation = agentActivityGeneration;
+      void subscribeAgentActivity(
+        workspaceId,
+        (frame) => {
+          if (
+            generation !== agentActivityGeneration ||
+            version !== requestVersion ||
+            workspaceId !== activeWorkspaceId
+          ) return;
+          const current = agentActivityFrames.get(frame.principalId);
+          if (!agentActivityFrameIsNewer(current, frame)) return;
+          agentActivityFrames.set(frame.principalId, frame);
+          if (selectedEntity?.kind === "agent" && selectedEntity.id === frame.principalId) {
+            refreshEntityActivitySection();
+          }
+        },
+        (state) => {
+          if (
+            generation !== agentActivityGeneration ||
+            version !== requestVersion ||
+            workspaceId !== activeWorkspaceId
+          ) return;
+          window.clearTimeout(agentActivityGraceTimer);
+          agentActivityGraceTimer = undefined;
+          if (state === "subscribed") {
+            /* Broadcast has no replay. Give an already-running listener one
+               15s heartbeat before claiming the agent is not instrumented. */
+            agentActivityGraceTimer = window.setTimeout(() => {
+              if (
+                generation !== agentActivityGeneration ||
+                version !== requestVersion ||
+                workspaceId !== activeWorkspaceId
+              ) return;
+              agentActivityConnection = "subscribed";
+              refreshEntityActivitySection();
+            }, AGENT_ACTIVITY_INSTRUMENTATION_GRACE_MS);
+          } else {
+            agentActivityConnection = state;
+            refreshEntityActivitySection();
+          }
+        },
+      ).then((subscription) => {
+        if (
+          generation !== agentActivityGeneration ||
+          version !== requestVersion ||
+          workspaceId !== activeWorkspaceId
+        ) {
+          void subscription.unsubscribe();
+          return;
+        }
+        agentActivitySubscription = subscription;
+      }).catch(() => {
+        if (
+          generation === agentActivityGeneration &&
+          version === requestVersion &&
+          workspaceId === activeWorkspaceId
+        ) {
+          agentActivityConnection = "unavailable";
+          refreshEntityActivitySection();
+        }
+      });
+    };
+
+    const refreshEntityActivityAge = (): void => {
+      if (selectedEntity?.kind !== "agent") return;
+      const frame = agentActivityFrames.get(selectedEntity.id);
+      const view = agentActivityPanelView(
+        frame,
+        agentActivityConnection,
+        Date.now(),
+      );
+      const section = one<HTMLElement>("[data-agent-activity]");
+      const age = one<HTMLElement>("[data-agent-activity-age]");
+      const elapsed = one<HTMLElement>("[data-agent-activity-elapsed]");
+      if (section) section.dataset.activityState = view.state;
+      if (age) age.textContent = view.ageLabel;
+      if (elapsed && view.elapsedLabel) elapsed.textContent = view.elapsedLabel;
+    };
+
+    const startEntityActivityTimer = (): void => {
+      window.clearInterval(entityActivityTimer);
+      entityActivityTimer = undefined;
+      if (selectedEntity?.kind !== "agent") return;
+      entityActivityTimer = window.setInterval(refreshEntityActivityAge, 1_000);
+    };
+
     function closeEntityPanel(restoreFocus = true): void {
+      window.clearInterval(entityActivityTimer);
+      entityActivityTimer = undefined;
       const panel = one<HTMLElement>("[data-entity-panel]");
       if (!panel || panel.hidden) return;
       panel.hidden = true;
@@ -1809,6 +1932,57 @@ import "../../styles/tokens.css";
       detail.textContent = value;
       list.append(label, detail);
     };
+
+    function renderAgentActivitySection(principalId: string): HTMLElement {
+      const view = agentActivityPanelView(
+        agentActivityFrames.get(principalId),
+        agentActivityConnection,
+        Date.now(),
+      );
+      const live = document.createElement("section");
+      live.className = "dashboard__entity-live";
+      live.dataset.agentActivity = "";
+      live.dataset.activityState = view.state;
+
+      const header = document.createElement("header");
+      const titleWrap = document.createElement("div");
+      titleWrap.className = "dashboard__entity-live-title";
+      const dot = document.createElement("span");
+      dot.className = "dashboard__entity-live-dot";
+      dot.setAttribute("aria-hidden", "true");
+      const title = document.createElement("h3");
+      title.textContent = "Live";
+      const age = document.createElement("span");
+      age.dataset.agentActivityAge = "";
+      age.textContent = view.ageLabel;
+      titleWrap.append(dot, title);
+      header.append(titleWrap, age);
+      live.append(header);
+
+      if (view.emptyMessage !== null) {
+        const empty = document.createElement("p");
+        empty.className = "dashboard__entity-live-empty";
+        empty.textContent = view.emptyMessage;
+        live.append(empty);
+        return live;
+      }
+
+      const details = document.createElement("dl");
+      appendEntityField(details, "Phase", view.phaseLabel ?? "Idle");
+      const signal = view.signalLabel === null
+        ? "None"
+        : truncateEntityId(view.signalLabel);
+      appendEntityField(details, "Signal", signal);
+      appendEntityField(
+        details,
+        "Now",
+        view.toolTitle ?? (view.phaseLabel === "Idle" ? "Waiting for work" : "Between tools"),
+      );
+      appendEntityField(details, "Elapsed", view.elapsedLabel ?? "0s");
+      details.lastElementChild?.setAttribute("data-agent-activity-elapsed", "");
+      live.append(details);
+      return live;
+    }
 
     const appendEntityId = (
       list: HTMLDListElement,
@@ -1880,6 +2054,7 @@ import "../../styles/tokens.css";
           body.append(revoked);
         }
 
+        const live = renderAgentActivitySection(details.principalId);
         const info = document.createElement("section");
         info.className = "dashboard__entity-section";
         const infoTitle = document.createElement("h3");
@@ -1909,7 +2084,7 @@ import "../../styles/tokens.css";
         appendEntityField(runtimeList, "First used", details.firstUsedAt);
         appendEntityField(runtimeList, "Revoked", details.revokedAt);
         runtime.append(runtimeTitle, runtimeList);
-        body.append(info, runtime);
+        body.append(live, info, runtime);
       } else {
         const member = members.find((candidate) => candidate.userId === selectedEntity?.id);
         if (!member) {
@@ -1959,6 +2134,7 @@ import "../../styles/tokens.css";
         "dashboard__frame--entity-panel",
       );
       renderEntityPanel();
+      startEntityActivityTimer();
       window.requestAnimationFrame(() => {
         one<HTMLButtonElement>("[data-entity-panel-close]")
           ?.focus({ preventScroll: true });
@@ -3922,6 +4098,7 @@ import "../../styles/tokens.css";
 
     /** Clear every workspace-scoped value when auth identity or availability changes. */
     const resetWorkspaceSessionState = (): void => {
+      stopAgentActivity();
       closeEntityPanel(false);
       closeWorkspaceMenu();
       closeRosterDialog();
@@ -4275,6 +4452,7 @@ import "../../styles/tokens.css";
       activeWorkspaceId = selected.id;
       syncConnectWorkspace(selected);
       const version = ++requestVersion;
+      startAgentActivity(selected.id, version);
       agents = [];
       members = [];
       pendingInvites = [];
@@ -4628,6 +4806,8 @@ import "../../styles/tokens.css";
 
     const renderSample = (): void => {
       sampleMode = true;
+      stopAgentActivity();
+      agentActivityConnection = "subscribed";
       signalHasMore = false;
       signalCursor = null;
       signalCutoff = "";
@@ -7291,6 +7471,86 @@ import "../../styles/tokens.css";
     border-radius: var(--radius-sm);
     font-size: var(--t-xs);
     font-weight: var(--weight-semibold);
+  }
+
+  .dashboard__entity-live {
+    display: grid;
+    gap: var(--s-3);
+    padding: var(--s-4);
+    background: color-mix(in oklab, var(--accent-dim) 22%, var(--surface));
+    border-block-start: 1px solid var(--border);
+  }
+
+  .dashboard__entity-live > header,
+  .dashboard__entity-live-title {
+    display: flex;
+    align-items: center;
+  }
+
+  .dashboard__entity-live > header {
+    justify-content: space-between;
+    gap: var(--s-3);
+  }
+
+  .dashboard__entity-live-title {
+    gap: var(--s-2);
+  }
+
+  .dashboard__entity-live h3 {
+    margin: 0;
+    color: var(--text);
+    font-size: var(--t-2xs);
+    font-weight: var(--weight-semibold);
+    letter-spacing: var(--track-eyebrow);
+    text-transform: uppercase;
+  }
+
+  .dashboard__entity-live > header > span {
+    color: var(--text-muted);
+    font-family: var(--font-mono);
+    font-size: var(--t-2xs);
+  }
+
+  .dashboard__entity-live-dot {
+    inline-size: 0.45rem;
+    block-size: 0.45rem;
+    background: var(--text-faint);
+    border-radius: 50%;
+  }
+
+  .dashboard__entity-live[data-activity-state="fresh"] .dashboard__entity-live-dot {
+    background: var(--accent);
+    box-shadow: 0 0 0 0.2rem var(--accent-dim);
+  }
+
+  .dashboard__entity-live[data-activity-state="stale"] .dashboard__entity-live-dot {
+    background: var(--text-muted);
+  }
+
+  .dashboard__entity-live-empty {
+    margin: 0;
+    color: var(--text-muted);
+    font-size: var(--t-xs);
+    line-height: var(--lh-body);
+  }
+
+  .dashboard__entity-live dl {
+    display: grid;
+    grid-template-columns: minmax(4.5rem, auto) minmax(0, 1fr);
+    gap: var(--s-2) var(--s-3);
+    margin: 0;
+    font-size: var(--t-xs);
+  }
+
+  .dashboard__entity-live dt {
+    color: var(--text-muted);
+  }
+
+  .dashboard__entity-live dd {
+    min-inline-size: 0;
+    margin: 0;
+    color: var(--text);
+    overflow-wrap: anywhere;
   }
 
   .dashboard__entity-section {

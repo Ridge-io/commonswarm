@@ -1,4 +1,5 @@
 import { randomUUID } from "node:crypto";
+import { AcpPermissionCanaryError } from "../host/types.js";
 import {
   appendListenerEvent,
   ListenerAlreadyRunningError,
@@ -18,6 +19,13 @@ import type {
 
 import type { ListenerPermissionMode } from "./types.js";
 import type { ListenerRouteMode } from "./main-routing.js";
+import {
+  emptyListenerReadHealth,
+  recordListenerClaim,
+  recordListenerClaimCadence,
+  recordListenerReadRecovery,
+  recordListenerReadRetry,
+} from "./read-health.js";
 
 const UUID_RE =
   /^[0-9a-f]{8}-[0-9a-f]{4}-[1-8][0-9a-f]{3}-[89ab][0-9a-f]{3}-[0-9a-f]{12}$/i;
@@ -113,10 +121,13 @@ export interface ListenerSupervisorOptions {
    * "error" was undiagnosable from the failing box's own log).
    */
   takeWorkerStderrTail?: () => string | null;
-  /** Read the admitted provider version record after its canary passes. */
+  /** Read provider facts measured before the canary, including failed starts. */
   getProviderVersionNotice?: () => {
-    runningVersion: string;
+    runningVersion: string | null;
     lastMeasuredVersion: string;
+    executable?: string | null;
+    bundledAgentSdkVersion?: string | null;
+    bundledClaudeCodeVersion?: string | null;
   } | null;
   /**
    * The turn budget in ms to record on a timeout-class effect event. Returns
@@ -125,6 +136,11 @@ export interface ListenerSupervisorOptions {
    * configured cap. Returns null when no turn has run yet.
    */
   getTurnBudgetMs?: () => number | null;
+  /** Live process-owned HTTP counters merged into every status snapshot. */
+  getConnectionMetrics?: () => {
+    connectionsOpened: number;
+    connectionReuseRatio: number;
+  };
 }
 
 export class ListenerStartupError extends Error {
@@ -160,6 +176,34 @@ function localDiagnostic(message: string, maxChars: number): string | null {
 
 function safeErrorDetail(error: Error): string | null {
   return localDiagnostic(error.message, 2_048);
+}
+
+function providerStatusFields(
+  notice: ReturnType<NonNullable<ListenerSupervisorOptions["getProviderVersionNotice"]>>,
+): Partial<ListenerStatus> {
+  if (!notice) return {};
+  return {
+    providerExecutable: notice.executable ?? null,
+    providerVersion: notice.runningVersion,
+    providerLastMeasuredVersion: notice.runningVersion === null
+      ? null
+      : notice.lastMeasuredVersion,
+    providerBundledAgentSdkVersion: notice.bundledAgentSdkVersion ?? null,
+    providerBundledClaudeCodeVersion: notice.bundledClaudeCodeVersion ?? null,
+  };
+}
+
+function providerFailureFields(error: Error): Partial<ListenerStatus> {
+  if (!(error instanceof AcpPermissionCanaryError)) {
+    return {
+      lastErrorReasonCode: null,
+      providerMinimumRequiredVersion: null,
+    };
+  }
+  return {
+    lastErrorReasonCode: error.reasonCode,
+    providerMinimumRequiredVersion: error.minimumRequiredVersion,
+  };
 }
 
 /**
@@ -224,8 +268,13 @@ export async function runListenerSupervisor(
     lastSignalId: null,
     lastErrorCode: null,
     lastErrorDetail: null,
+    lastErrorReasonCode: null,
+    providerExecutable: null,
     providerVersion: null,
     providerLastMeasuredVersion: null,
+    providerBundledAgentSdkVersion: null,
+    providerBundledClaudeCodeVersion: null,
+    providerMinimumRequiredVersion: null,
     lastWorkerStderrTail: null,
     deliveryMode: null,
     pendingDeliveryCount: null,
@@ -237,6 +286,9 @@ export async function runListenerSupervisor(
     deferOverChars: options.deferOverChars ?? null,
     pendingForMainCount: 0,
     droppedForMainCount: 0,
+    readHealth: emptyListenerReadHealth(),
+    connectionsOpened: 0,
+    connectionReuseRatio: 0,
     logPath: options.paths.logPath,
   };
   let writes = Promise.resolve();
@@ -248,8 +300,20 @@ export async function runListenerSupervisor(
   const chain = (work: () => Promise<void>) => {
     writes = writes.then(work).catch(() => undefined);
   };
+  const statusSnapshot = (): ListenerStatus => {
+    const metrics = options.getConnectionMetrics?.();
+    return {
+      ...structuredClone(status),
+      ...(metrics
+        ? {
+          connectionsOpened: metrics.connectionsOpened,
+          connectionReuseRatio: metrics.connectionReuseRatio,
+        }
+        : {}),
+    };
+  };
   const persist = () => {
-    const snapshot = structuredClone(status);
+    const snapshot = statusSnapshot();
     chain(() => writeListenerStatus(options.paths, snapshot));
   };
   const log = (event: Record<string, string | number | boolean | null>) => {
@@ -271,7 +335,7 @@ export async function runListenerSupervisor(
   const prepare = options.prepare;
   const control = await startListenerControlServer({
     paths: options.paths,
-    status: () => structuredClone(status),
+    status: statusSnapshot,
     stop: () => {
       if (status.state === "stopped" || status.state === "failed") return;
       transition("stopping");
@@ -318,9 +382,18 @@ export async function runListenerSupervisor(
         readyAt: event.ts,
         lastErrorCode: null,
         lastErrorDetail: null,
+        lastErrorReasonCode: null,
         lastWorkerStderrTail: null,
-        providerVersion: versionNotice?.runningVersion ?? null,
-        providerLastMeasuredVersion: versionNotice?.lastMeasuredVersion ?? null,
+        providerMinimumRequiredVersion: null,
+        ...providerStatusFields(versionNotice),
+        ...(event.cadenceMs === undefined
+          ? {}
+          : {
+            readHealth: recordListenerClaimCadence(
+              status.readHealth ?? emptyListenerReadHealth(),
+              event.cadenceMs,
+            ),
+          }),
       });
       log({ ts: event.ts, event: "listener_ready" });
       return;
@@ -366,11 +439,55 @@ export async function runListenerSupervisor(
       return;
     }
     if (event.type === "read_retry") {
+      status = {
+        ...status,
+        readHealth: recordListenerReadRetry(
+          status.readHealth ?? emptyListenerReadHealth(),
+          {
+            ts: event.ts,
+            episodeStartedAt: event.episodeStartedAt,
+            episodeAttempt: event.episodeAttempt,
+            failure: event.failure,
+          },
+        ),
+        updatedAt: event.ts,
+      };
+      persist();
       log({
         ts: event.ts,
         event: "listener_read_retry",
         attempt: event.attempt,
+        episode_attempt: event.episodeAttempt,
+        reason_code: event.failure.code,
+        ...(event.failure.httpStatus === null
+          ? {}
+          : { http_status: event.failure.httpStatus }),
+        ...(event.failure.errorConstructor === null
+          ? {}
+          : { error_constructor: event.failure.errorConstructor }),
         delay_ms: event.delayMs,
+      });
+      return;
+    }
+    if (event.type === "read_recovered") {
+      status = {
+        ...status,
+        readHealth: recordListenerReadRecovery(
+          status.readHealth ?? emptyListenerReadHealth(),
+          {
+            startedAt: event.startedAt,
+            attempts: event.attempts,
+            durationMs: event.durationMs,
+          },
+        ),
+        updatedAt: event.ts,
+      };
+      persist();
+      log({
+        ts: event.ts,
+        event: "listener_read_recovered",
+        attempts: event.attempts,
+        duration_ms: event.durationMs,
       });
       return;
     }
@@ -412,6 +529,10 @@ export async function runListenerSupervisor(
     if (event.type === "delivery_claim") {
       status = {
         ...status,
+        readHealth: recordListenerClaim(
+          status.readHealth ?? emptyListenerReadHealth(),
+          event.ts,
+        ),
         pendingDeliveryCount: event.pendingDeliveryCount,
         lastClaimAt: event.ts,
         updatedAt: event.ts,
@@ -549,9 +670,9 @@ export async function runListenerSupervisor(
         readyAt: null,
         lastErrorCode: restartCode,
         lastErrorDetail: safeErrorDetail(stop.error),
+        ...providerFailureFields(stop.error),
         lastWorkerStderrTail: restartStderrTail,
-        providerVersion: null,
-        providerLastMeasuredVersion: null,
+        ...providerStatusFields(options.getProviderVersionNotice?.() ?? null),
       });
       await restartSleep(delayMs, controller.signal);
       if (controller.signal.aborted) {
@@ -566,7 +687,9 @@ export async function runListenerSupervisor(
         stoppedAt,
         lastErrorCode: null,
         lastErrorDetail: null,
+        lastErrorReasonCode: null,
         lastWorkerStderrTail: null,
+        providerMinimumRequiredVersion: null,
       });
       log({ ts: stoppedAt, event: "listener_stopped" });
     } else {
@@ -578,6 +701,8 @@ export async function runListenerSupervisor(
         stoppedAt,
         lastErrorCode: code,
         lastErrorDetail: safeErrorDetail(stop.error),
+        ...providerFailureFields(stop.error),
+        ...providerStatusFields(options.getProviderVersionNotice?.() ?? null),
         lastWorkerStderrTail: failedStderrTail,
       });
       // Record why it is down and why it stopped trying — a listener left down
@@ -607,6 +732,10 @@ export async function runListenerSupervisor(
       lastErrorDetail: safeErrorDetail(
         error instanceof Error ? error : new Error(String(error)),
       ),
+      ...providerFailureFields(
+        error instanceof Error ? error : new Error(String(error)),
+      ),
+      ...providerStatusFields(options.getProviderVersionNotice?.() ?? null),
       lastWorkerStderrTail: failedStderrTail,
     });
     log({
@@ -621,7 +750,7 @@ export async function runListenerSupervisor(
     await writes.catch(() => undefined);
     await control.close().catch(() => undefined);
   }
-  return status;
+  return statusSnapshot();
 }
 
 /**

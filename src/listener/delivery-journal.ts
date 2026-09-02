@@ -283,6 +283,7 @@ export function parseJournalRecord(
   raw: string,
   expectedWorkspaceId?: string,
   expectedPrincipalId?: string,
+  rejectUnknownKeys = false,
 ): ListenerDeliveryJournalRecord {
   if (Buffer.byteLength(raw, "utf8") > MAX_JOURNAL_BYTES) {
     throw new Error("stored delivery journal is malformed");
@@ -310,8 +311,8 @@ export function parseJournalRecord(
 
   const ownProps = Object.getOwnPropertyNames(value);
   if (
-    ownProps.length !== ALLOWED_TOP_KEYS.size ||
-    !ownProps.every((p) => ALLOWED_TOP_KEYS.has(p))
+    [...ALLOWED_TOP_KEYS].some((key) => !ownProps.includes(key)) ||
+    (rejectUnknownKeys && !ownProps.every((key) => ALLOWED_TOP_KEYS.has(key)))
   ) {
     throw new Error("stored delivery journal is malformed");
   }
@@ -378,8 +379,16 @@ export function parseJournalRecord(
     throw new Error("stored delivery journal is malformed");
   }
 
+  const base = {
+    version: 1 as const,
+    workspaceId: row.workspaceId as string,
+    principalId: row.principalId as string,
+    listenerInstanceId: row.listenerInstanceId as string,
+    nextClaimOrdinal: row.nextClaimOrdinal as number,
+    updatedAt: row.updatedAt as string,
+  };
   if (row.active === null) {
-    return row as unknown as ListenerDeliveryJournalRecord;
+    return { ...base, active: null };
   }
 
   if (
@@ -400,12 +409,12 @@ export function parseJournalRecord(
   }
 
   const activeProps = Object.getOwnPropertyNames(row.active);
-  const legacyWithoutFingerprint =
-    activeProps.length === ALLOWED_ACTIVE_KEYS.size - 1 &&
-    !activeProps.includes("signalFingerprint");
+  const requiredActiveKeys = [...ALLOWED_ACTIVE_KEYS].filter((key) =>
+    key !== "signalFingerprint"
+  );
   if (
-    (!legacyWithoutFingerprint && activeProps.length !== ALLOWED_ACTIVE_KEYS.size) ||
-    !activeProps.every((p) => ALLOWED_ACTIVE_KEYS.has(p))
+    requiredActiveKeys.some((key) => !activeProps.includes(key)) ||
+    (rejectUnknownKeys && !activeProps.every((key) => ALLOWED_ACTIVE_KEYS.has(key)))
   ) {
     throw new Error("stored delivery journal is malformed");
   }
@@ -533,8 +542,8 @@ export function parseJournalRecord(
 
       const ackProps = Object.getOwnPropertyNames(active.ack);
       if (
-        ackProps.length !== ALLOWED_ACK_KEYS.size ||
-        !ackProps.every((p) => ALLOWED_ACK_KEYS.has(p))
+        [...ALLOWED_ACK_KEYS].some((key) => !ackProps.includes(key)) ||
+        (rejectUnknownKeys && !ackProps.every((key) => ALLOWED_ACK_KEYS.has(key)))
       ) {
         throw new Error("stored delivery journal is malformed");
       }
@@ -586,7 +595,32 @@ export function parseJournalRecord(
     }
   }
 
-  return row as unknown as ListenerDeliveryJournalRecord;
+  const ack = active.ack as Record<string, unknown> | null;
+  return {
+    ...base,
+    active: {
+      phase: active.phase as ListenerActiveClaim["phase"],
+      claimOrdinal: active.claimOrdinal as number,
+      claimCommandId: active.claimCommandId as string,
+      claimCreatedAt: active.claimCreatedAt as string,
+      claimLastAttemptAt: active.claimLastAttemptAt as string | null,
+      signalId: active.signalId as string | null,
+      leaseId: active.leaseId as string | null,
+      leasedUntil: active.leasedUntil as string | null,
+      ...(active.signalFingerprint === undefined
+        ? {}
+        : { signalFingerprint: active.signalFingerprint as string | null }),
+      ack: ack === null
+        ? null
+        : {
+          commandId: ack.commandId as string,
+          outcome: ack.outcome as NonNullable<ListenerActiveClaim["ack"]>["outcome"],
+          lastErrorCode:
+            ack.lastErrorCode as NonNullable<ListenerActiveClaim["ack"]>["lastErrorCode"],
+          preparedAt: ack.preparedAt as string,
+        },
+    },
+  };
 }
 
 class FileListenerDeliveryJournal implements ListenerDeliveryJournal {
@@ -690,6 +724,7 @@ class FileListenerDeliveryJournal implements ListenerDeliveryJournal {
       serialized,
       this.options.workspaceId,
       this.options.principalId,
+      true,
     );
     await writeSecureJsonFile(this.journalPath, serialized);
   }
@@ -1034,6 +1069,7 @@ export async function openListenerDeliveryJournal(
         serialized,
         workspaceIdSnapshot,
         principalIdSnapshot,
+        true,
       );
       await writeSecureJsonFile(journal.journalPath, serialized);
       return {
@@ -1071,6 +1107,7 @@ export async function openListenerDeliveryJournal(
       serialized,
       workspaceIdSnapshot,
       principalIdSnapshot,
+      true,
     );
     await writeSecureJsonFile(journal.journalPath, serialized);
     return {

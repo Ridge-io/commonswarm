@@ -170,10 +170,8 @@ function parseCursor(
     throw new Error("stored arrival cursor is malformed");
   }
   const row = value as Record<string, unknown>;
-  const keys = Object.keys(row).sort();
   const cursor = row.cursor;
   if (
-    keys.join(",") !== "cursor,principal_id,version,workspace_id" ||
     row.version !== 1 ||
     row.workspace_id !== workspaceId.toLowerCase() ||
     row.principal_id !== principalId.toLowerCase() ||
@@ -182,8 +180,6 @@ function parseCursor(
       (
         typeof cursor === "object" &&
         !Array.isArray(cursor) &&
-        Object.keys(cursor as Record<string, unknown>).sort().join(",") ===
-          "created_at,id" &&
         typeof (cursor as Record<string, unknown>).created_at === "string" &&
         Number.isFinite(Date.parse((cursor as Record<string, unknown>).created_at as string)) &&
         typeof (cursor as Record<string, unknown>).id === "string" &&

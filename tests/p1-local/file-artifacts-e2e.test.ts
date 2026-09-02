@@ -202,6 +202,32 @@ async function postCommand(
   return { status: response.status, body };
 }
 
+async function probeStorageDelete(
+  path: string,
+): Promise<{ ready: boolean; state: string }> {
+  try {
+    const response = await fetch(
+      `${local.API_URL}/storage/v1/object/swarm-files`,
+      {
+        method: "DELETE",
+        headers: {
+          authorization: `Bearer ${local.SERVICE_ROLE_KEY}`,
+          apikey: local.SERVICE_ROLE_KEY,
+          "content-type": "application/json",
+        },
+        body: JSON.stringify({ prefixes: [path] }),
+        signal: AbortSignal.timeout(1_000),
+      },
+    );
+    return {
+      ready: response.ok || response.status === 404,
+      state: `HTTP ${response.status}`,
+    };
+  } catch {
+    return { ready: false, state: "request failed" };
+  }
+}
+
 function sha256hex(bytes: Uint8Array): string {
   return createHash("sha256").update(bytes).digest("hex");
 }
@@ -535,14 +561,50 @@ test("S4-6 storage outage: a failed drain stamps its attempt durably and the row
   // measured before writing this test), so the failure branch is driven the
   // honest way — by taking storage DOWN. Last test in the file on purpose:
   // it stops and restarts the storage container.
+  // Start from an empty queue. This makes attempt_count = 1 below evidence of
+  // this test's one trigger, not a detached drain left by an earlier command.
+  let pending = -1;
+  const quiesceDeadline = Date.now() + 8_000;
+  while (Date.now() < quiesceDeadline) {
+    const rows = await sql<{ n: string }[]>`
+      SELECT count(*)::text AS n FROM swarm.file_purge_queue
+      WHERE deleted_at IS NULL
+    `;
+    pending = Number(rows[0]!.n);
+    if (pending === 0) break;
+    await postCommand({ kind: "file_download_url", file_id: randomUUID() });
+    await delay(300);
+  }
+  assert.equal(pending, 0, "the outage test starts with an empty purge queue");
+  await delay(500);
+  const stable = await sql<{ n: string }[]>`
+    SELECT count(*)::text AS n FROM swarm.file_purge_queue
+    WHERE deleted_at IS NULL
+  `;
+  assert.equal(Number(stable[0]!.n), 0, "the empty queue stays quiescent");
+
   const path = `s4-outage-${randomUUID()}/victim.bin`;
   await sql`
     INSERT INTO swarm.file_purge_queue (storage_path) VALUES (${path})
   `;
-  execFileSync("docker", ["stop", "supabase_storage_cloud-swarm"], {
+  const storageContainer = "supabase_storage_cloud-swarm";
+  execFileSync("docker", ["stop", storageContainer], {
     stdio: "ignore",
   });
   try {
+    const running = execFileSync(
+      "docker",
+      ["inspect", "--format", "{{.State.Running}}", storageContainer],
+      { encoding: "utf8" },
+    ).trim();
+    assert.equal(running, "false", "the outage control stopped Storage");
+    const outageProbe = await probeStorageDelete(
+      `s4-outage-control-${randomUUID()}/absent.bin`,
+    );
+    assert.ok(
+      !outageProbe.ready,
+      `the Storage DELETE must be unavailable before the failed drain runs: ${outageProbe.state}`,
+    );
     await postCommand({ kind: "file_download_url", file_id: randomUUID() });
     const deadline = Date.now() + 8_000;
     let failed:
@@ -567,18 +629,35 @@ test("S4-6 storage outage: a failed drain stamps its attempt durably and the row
       await delay(150);
     }
     assert.ok(failed, "the failed attempt is stamped while the row stays pending");
-    assert.ok(failed!.attempt_count >= 1);
+    assert.equal(failed!.attempt_count, 1, "the outage caused one drain attempt");
     assert.ok(
       typeof failed!.last_error === "string" && failed!.last_error.length > 0,
       "the failure text is recorded durably",
     );
   } finally {
-    execFileSync("docker", ["start", "supabase_storage_cloud-swarm"], {
+    execFileSync("docker", ["start", storageContainer], {
       stdio: "ignore",
     });
   }
-  // Storage is back: the same row must be claimable again and drain clean.
-  await delay(1_500);
+  // docker start returns before object deletion accepts requests. Prove the
+  // exact DELETE endpoint is back before spending the one retry trigger.
+  const readyDeadline = Date.now() + 15_000;
+  let storageReady = false;
+  let readinessState = "no response";
+  while (Date.now() < readyDeadline) {
+    const probe = await probeStorageDelete(
+      `s4-ready-control-${randomUUID()}/absent.bin`,
+    );
+    readinessState = probe.state;
+    if (probe.ready) {
+      storageReady = true;
+      break;
+    }
+    await delay(100);
+  }
+  assert.ok(storageReady, `Storage did not recover: ${readinessState}`);
+
+  // Storage is ready: the same row must be claimable again and drain clean.
   await postCommand({ kind: "file_download_url", file_id: randomUUID() });
   const deadline = Date.now() + 8_000;
   let recovered = false;
@@ -596,5 +675,23 @@ test("S4-6 storage outage: a failed drain stamps its attempt durably and the row
     }
     await delay(150);
   }
-  assert.ok(recovered, "a previously failed row drains on the next pass");
+  if (!recovered) {
+    const diagnostic = await sql<
+      {
+        attempt_count: number;
+        claimed_at: string;
+        last_attempt_at: string | null;
+        last_error: string | null;
+        deleted_at: string | null;
+      }[]
+    >`
+      SELECT attempt_count, claimed_at, last_attempt_at, last_error, deleted_at
+      FROM swarm.file_purge_queue
+      WHERE storage_path = ${path}
+    `;
+    assert.fail(
+      `a previously failed row did not drain: row=${JSON.stringify(diagnostic[0])}\n` +
+        `drain log:\n${functionLogs.slice(-8_000)}`,
+    );
+  }
 });
