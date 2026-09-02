@@ -289,6 +289,8 @@ export async function runListenerSupervisor(
     readHealth: emptyListenerReadHealth(),
     connectionsOpened: 0,
     connectionReuseRatio: 0,
+    activityPublishFailures: 0,
+    activityLastErrorCode: null,
     logPath: options.paths.logPath,
   };
   let writes = Promise.resolve();
@@ -497,6 +499,16 @@ export async function runListenerSupervisor(
         event: "listener_malformed_row",
         index: event.index,
       });
+      return;
+    }
+    if (event.type === "activity_publish_failure") {
+      status = {
+        ...status,
+        activityPublishFailures: (status.activityPublishFailures ?? 0) + 1,
+        activityLastErrorCode: event.code,
+        updatedAt: event.ts,
+      };
+      persist();
       return;
     }
     if (event.type === "model_declared") {

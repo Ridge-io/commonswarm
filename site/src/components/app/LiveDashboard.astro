@@ -1874,6 +1874,7 @@ import "../../styles/tokens.css";
         frame,
         agentActivityConnection,
         Date.now(),
+        "unknown",
       );
       const section = one<HTMLElement>("[data-agent-activity]");
       const age = one<HTMLElement>("[data-agent-activity-age]");
@@ -1938,6 +1939,7 @@ import "../../styles/tokens.css";
         agentActivityFrames.get(principalId),
         agentActivityConnection,
         Date.now(),
+        "unknown",
       );
       const live = document.createElement("section");
       live.className = "dashboard__entity-live";

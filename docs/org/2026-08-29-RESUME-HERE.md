@@ -872,3 +872,13 @@ Still running: L30 (`lane/l30-provider-version`), L32 (`lane/l32-connection-reus
   roster cannot render the count from data it already has.
 - L38 did not change `site/src`. The queued-message receipt beside a visible signal still
   renders its own `pending_for_main_count`; that per-signal value is not a roster total.
+
+### Addendum 2026-09-02 — mixed local `cswarm` binaries
+
+- A 0.1.45 CLI cannot read the status file written by a 0.1.46 or newer listener. The
+  0.1.45 reader rejects fields it does not know. Readers from 0.1.46 onward tolerate fields
+  added by newer writers.
+- Check both installed copies before listener work. These versions must match:
+  `~/.local/bin/cswarm --version` and `/opt/homebrew/bin/cswarm --version`.
+- If the npm-global copy is old, run `npm i -g commonswarm@<v>` with the version from the
+  other copy. A running listener keeps its old code until it is restarted.

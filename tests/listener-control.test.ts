@@ -454,6 +454,47 @@ test("supervisor becomes ready, stops through the socket, and logs metadata only
   }
 });
 
+test("activity publish failures persist as a local counter and stable last code", async () => {
+  const root = await mkdtemp(join(tmpdir(), "cswarm-activity-status-test-"));
+  const target = paths(root);
+  const workspaceId = randomUUID();
+  const principalId = randomUUID();
+  const final = await runListenerSupervisor({
+    paths: target,
+    profileId: "profile-activity-status",
+    workspaceId,
+    principalId,
+    run: async (_signal, onEvent) => {
+      onEvent({
+        type: "ready",
+        workspaceId,
+        principalId,
+        ts: "2026-09-02T10:00:00.000Z",
+      });
+      onEvent({
+        type: "activity_publish_failure",
+        code: "activity_transport_failed",
+        ts: "2026-09-02T10:00:01.000Z",
+      });
+      onEvent({
+        type: "activity_publish_failure",
+        code: "activity_http_rejected",
+        ts: "2026-09-02T10:00:02.000Z",
+      });
+      return { reason: "cancelled" };
+    },
+  });
+
+  assert.equal(final.activityPublishFailures, 2);
+  assert.equal(final.activityLastErrorCode, "activity_http_rejected");
+  const stored = await readListenerStatus(target);
+  assert.equal(stored?.activityPublishFailures, 2);
+  assert.equal(stored?.activityLastErrorCode, "activity_http_rejected");
+  const json = listenerStatusJson(final);
+  assert.equal(json.activityPublishFailures, 2);
+  assert.equal(json.activityLastErrorCode, "activity_http_rejected");
+});
+
 test("missing socket converts a live-looking status to unclean_exit", async () => {
   const root = await mkdtemp(join(tmpdir(), "cswarm-control-test-"));
   const target = paths(root);
@@ -1085,6 +1126,8 @@ test("status ignores unknown keys, renders old counters as unmeasured, and rejec
   const json = listenerStatusJson(forward);
   assert.equal(json.connectionsOpened, null);
   assert.equal(json.connectionReuseRatio, null);
+  assert.equal(json.activityPublishFailures, null);
+  assert.equal(json.activityLastErrorCode, null);
   assert.equal("mysteryField" in json, false);
   assert.equal("futureMetrics" in json, false);
 
@@ -1100,6 +1143,10 @@ test("status ignores unknown keys, renders old counters as unmeasured, and rejec
   // A malformed known field still fails closed.
   await writeRaw((row) => {
     row.connectionsOpened = -1;
+  });
+  await assert.rejects(readListenerStatus(target), /malformed/);
+  await writeRaw((row) => {
+    row.activityLastErrorCode = "provider prose changed";
   });
   await assert.rejects(readListenerStatus(target), /malformed/);
 
