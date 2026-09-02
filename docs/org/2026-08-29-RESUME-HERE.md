@@ -998,3 +998,15 @@ Operator report: broadcasts show "Seen by 0 of 1" forever and agents show no eng
 - main: `b3b1da2` merge of release/0.1.48, version bumped to 0.1.48 (uncommitted until the gates on main pass).
 - PRODUCTION APPLIED: migrations `20260902000004` (agent receipts) and `20260902000005` (brain window) — verified in the migration list and by table/column presence; edge `command` and `read` DEPLOYED (400/401 on empty bodies vs 404 control); an agent `signals_seen` now returns `accepted` (CSwarmDevLead attested Joist's broadcast). 0.1.47 clients keep working (additive shapes).
 - Lane branches L47b/L48/L49/L50/L51/L52 and `release/0.1.48` deleted after `git cherry` showed 0 unabsorbed; staging and arm worktrees removed.
+
+### Addendum 2026-09-03 ~00:45Z — v0.1.48 is LIVE
+
+| step | fact |
+|---|---|
+| main | `b3b1da2` merge → `4831169` release: v0.1.48 → `4373ad9` npm dist artifacts. Pushed. Branch list = `main`; worktree list = main. |
+| production | migrations 000004 + 000005 applied; `command` + `read` deployed (done BEFORE the client); agent `signals_seen` accepted live. |
+| GitHub / npm / site | tag `v0.1.48` on `4831169`, latest, both assets; `commonswarm@0.1.48` (registry lag ~1 min); site deployed — `/download` 0.1.48 ×3 / 0.1.47 ×0; served library carries "no answer yet" and "Seen or handled"; `/app` zero HTML comments. |
+| host | installer + `npm i -g` → both copies 0.1.48 (the first `npm i -g` ran before the registry had 0.1.48 and left 0.1.47; re-run fixed it — install the npm-global copy AFTER `npm view` shows the version). Listener restarted; notify Monitor restarted. |
+| live probes | `cswarm feed --limit 3` then `cswarm receipt <own broadcast>` → "Agents — seen 1 of 11: CSwarmDevLead — under 1m ago" (L47b live); `cswarm brain ls` shows "N live · M retired" (L50 live); listen canary passed. |
+
+Open (not blocking): the composer "Post a note · no agent is woken" control is rendered by the dashboard at runtime — verify from a signed-in browser (my hidden-tab checks cannot). Grok's NOT-established on candidate 3 stands: prompt-injection properties of the feed digest in the listener prompt (it is placed above the "untrusted" line) — worth a lane.
