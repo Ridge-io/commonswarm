@@ -1,0 +1,263 @@
+diff --git a/src/cli.ts b/src/cli.ts
+index 707521e..8823ab5 100755
+--- a/src/cli.ts
++++ b/src/cli.ts
+@@ -262,7 +262,7 @@ const KNOWN_FLAGS = new Set([
+   "help", "include-stale", "include-tombstoned", "invitation-id", "invitation-token-stdin", "json", "kind", "limit",
+   "link-stdin", "local", "model", "name", "ndjson", "no-browser", "notify", "opencode-executable", "out",
+   "permissions", "principal-id", "provider", "repo", "reveal-anon-key", "route", "run-id", "since", "site", "slug",
+-  "renewal-horizon-days", "standing", "task-id", "to", "token-id", "ttl-ms", "turn-budget", "uid", "until", "url", "version", "wait", "workspace-id", "write",
++  "renewal-horizon-days", "standing", "task-id", "to", "token-id", "ttl-ms", "turn-budget", "uid", "until", "url", "user", "version", "wait", "workspace-id", "write",
+ ]);
+ 
+ const BOOLEAN_FLAGS = new Set([
+@@ -286,6 +286,7 @@ const BOOLEAN_FLAGS = new Set([
+   "reveal-anon-key",
+   "repo",
+   "standing",
++  "user",
+   "write",
+ ]);
+ 
+@@ -496,8 +497,8 @@ Usage:
+   cswarm listen status ${agentCredential} [--url <url> --anon-key <key>] --workspace-id <uuid> [--principal-id <uuid>] [--json]
+   cswarm listen stop ${agentCredential} [--url <url> --anon-key <key>] --workspace-id <uuid> [--principal-id <uuid>] [--json]
+   cswarm hook check [--principal-id <uuid> ...] [--cooldown <seconds>]
+-  cswarm hook install claude [--principal-id <uuid>] [--write [--repo]]
+-  cswarm hook uninstall claude --write [--repo]
++  cswarm hook install claude [--principal-id <uuid>] [--write [--repo | --user]]
++  cswarm hook uninstall claude --write [--repo | --user]
+   cswarm new "<workspace name>" [--url <url> --anon-key <key>] [--json]
+   cswarm new --name "<workspace name>" [--url <url> --anon-key <key>] [--json]
+   cswarm workspaces [--url <url> --anon-key <key>] [--json]
+@@ -585,9 +586,14 @@ split queues messages whose body is longer than --defer-over <chars>; the bound
+ when the state directory holds one principal. hook check has its own 3s ceiling, exits 0
+ on every outcome, and skips network checks made within --cooldown seconds (default 30).
+ hook install claude prints principal-scoped UserPromptSubmit JSON by default. --write changes
+-the user-level ~/.claude/settings.json. --repo selects the repository settings instead and is
+-refused until .claude/settings.json is ignored. Uninstall also requires --write and uses the
+-same scope selection.
++the project-local .claude/settings.local.json, which binds this agent to sessions started in
++this project only: at the repository root (the main checkout's root from a worktree), or under
++the current directory outside a repository. Inside a repository it is refused until that file
++is ignored. --repo selects the shared repository .claude/settings.json instead and is refused
++until that file is ignored. --user selects the user-level settings.json under CLAUDE_CONFIG_DIR
++(~/.claude when unset); it applies to EVERY Claude Code session of this OS user and is wrong on
++a shared host, because every other agent's session would then surface this agent's mail.
++Uninstall also requires --write and uses the same scope selection.
+ 
+ Invite, legacy token accept, principal create/revoke, human token mint/revoke, link, new, and workspace close require a
+ stored human login. Agent self-surrender of a token uses --agent-token-file or --agent-token-stdin and never takes the secret on argv. Invite-link accept signs in when needed, then accepts and
+@@ -5249,43 +5255,82 @@ export function claudeUserPromptHookSnippet(principalId: string): Record<string,
+   };
+ }
+ 
+-const CLAUDE_REPO_SETTINGS_IGNORE_LINE = ".claude/settings.json";
++/* Which file a Claude Code hook lands in decides which SESSIONS run it — and this hook's
++ * command is principal-scoped, so the file decides whose directed mail a session surfaces.
++ * From the Claude Code docs (code.claude.com/docs/en/settings, "Settings files and who they
++ * affect"; docs/en/hooks names the same three files as hook sources):
++ *
++ *   ~/.claude/settings.json       user            "You, in every project on this machine"
++ *   .claude/settings.json         shared project  "Everyone working in the folder that contains it"
++ *   .claude/settings.local.json   project local   "You, in this one project only"
++ *
++ * The default used to be the user file. Installing agent A and then agent B there left only
++ * B's command, and every session of this OS user — A's included — then surfaced B's mail: the
++ * shared-host leak 0.1.40 closed, reopened (Codex exact review, 2026-09-01). The binding has
++ * to be session-local, so the default is now the project-local file and --user is explicit
++ * and loud.
++ *
++ * Placement follows the same page ("Where Claude Code keeps the local file in a git
++ * repository"): inside a repository the local file is read at the repository root — from a
++ * linked worktree, at the MAIN checkout's root — and it stays beside .claude/settings.json in
++ * the working directory outside a repository or when the repository root is the home
++ * directory. Claude Code adds a global git exclude for the local file only when IT creates
++ * the file; one we create is ours to keep out of git, so a non-ignored path is refused with
++ * the exact .gitignore line, as --repo has always done.
++ *
++ * CLAUDE_CONFIG_DIR (docs/en/env-vars): "Override the configuration directory (default:
++ * ~/.claude). All settings, session history, and plugins are stored under this path." */
++type ClaudeHookScope = "project-local" | "repo" | "user";
++
++const CLAUDE_REPO_SETTINGS_FILE = ".claude/settings.json";
++const CLAUDE_LOCAL_SETTINGS_FILE = ".claude/settings.local.json";
++
++function claudeConfigDirectory(): string {
++  const configured = process.env.CLAUDE_CONFIG_DIR;
++  if (configured === undefined || configured.trim() === "") return join(homedir(), ".claude");
++  return isAbsolute(configured) ? configured : join(process.cwd(), configured);
++}
+ 
+ function userClaudeSettingsPath(): string {
+-  return join(homedir(), ".claude", "settings.json");
++  return join(claudeConfigDirectory(), "settings.json");
+ }
+ 
+-function gitRepositoryRoot(cwd: string): string | null {
++function gitRevParse(cwd: string, ...flags: string[]): string | null {
+   const result = spawnSync(
+     "git",
+-    ["-C", cwd, "rev-parse", "--show-toplevel"],
++    ["-C", cwd, "rev-parse", ...flags],
+     { encoding: "utf8", stdio: ["ignore", "pipe", "ignore"] },
+   );
+   if (result.error) {
+-    throw new Error("hook --repo cannot verify repository safety because git is unavailable");
++    throw new Error("hook --write cannot verify repository safety because git is unavailable");
+   }
+   if (result.status !== 0) return null;
+-  const root = result.stdout.trim();
+-  if (!isAbsolute(root)) {
+-    throw new Error("hook --repo could not resolve an absolute repository root");
++  const value = result.stdout.trim();
++  if (!isAbsolute(value)) {
++    throw new Error("hook --write could not resolve an absolute repository path");
+   }
+-  return root;
++  return value;
+ }
+ 
+-function repositoryClaudeSettingsPath(): string {
+-  const root = gitRepositoryRoot(process.cwd());
+-  const base = root ?? process.cwd();
+-  const path = join(base, ".claude", "settings.json");
+-  if (root === null) return path;
++function gitRepositoryRoot(cwd: string): string | null {
++  return gitRevParse(cwd, "--show-toplevel");
++}
+ 
++/** Refuses a settings file Git could stage; names the exact line for the root .gitignore. */
++function assertClaudeSettingsIgnored(
++  root: string,
++  base: string,
++  file: string,
++  path: string,
++): void {
+   const tracked = spawnSync(
+     "git",
+-    ["-C", root, "ls-files", "--error-unmatch", "--", CLAUDE_REPO_SETTINGS_IGNORE_LINE],
++    ["-C", base, "ls-files", "--error-unmatch", "--", file],
+     { encoding: "utf8", stdio: ["ignore", "ignore", "ignore"] },
+   );
+   const ignored = spawnSync(
+     "git",
+-    ["-C", root, "check-ignore", "--quiet", "--", CLAUDE_REPO_SETTINGS_IGNORE_LINE],
++    ["-C", base, "check-ignore", "--quiet", "--", file],
+     { encoding: "utf8", stdio: ["ignore", "ignore", "ignore"] },
+   );
+   if (
+@@ -5293,15 +5338,39 @@ function repositoryClaudeSettingsPath(): string {
+     (tracked.status !== 0 && tracked.status !== 1) ||
+     (ignored.status !== 0 && ignored.status !== 1)
+   ) {
+-    throw new Error("hook --repo could not verify whether Claude settings are ignored");
++    throw new Error("hook --write could not verify whether Claude settings are ignored");
+   }
+   if (tracked.status === 0 || ignored.status !== 0) {
++    const line = base === root ? file : `${base.slice(root.length + 1)}/${file}`;
+     throw new Error(
+-      `Refusing to write ${path}: repository Claude settings could be staged and shared with every checkout. ` +
++      `Refusing to write ${path}: it is inside a Git repository and not ignored, so it could be staged and shared with every checkout. ` +
+       (tracked.status === 0 ? "It is already tracked; remove it from Git tracking first. " : "") +
+-      `Add this exact line to ${join(root, ".gitignore")}: ${CLAUDE_REPO_SETTINGS_IGNORE_LINE}`,
++      `Add this exact line to ${join(root, ".gitignore")}: ${line}`,
+     );
+   }
++}
++
++function repositoryClaudeSettingsPath(): string {
++  const cwd = process.cwd();
++  const root = gitRepositoryRoot(cwd);
++  const path = join(root ?? cwd, CLAUDE_REPO_SETTINGS_FILE);
++  if (root !== null) assertClaudeSettingsIgnored(root, root, CLAUDE_REPO_SETTINGS_FILE, path);
++  return path;
++}
++
++function projectLocalClaudeSettingsPath(): string {
++  const cwd = process.cwd();
++  const toplevel = gitRepositoryRoot(cwd);
++  if (toplevel === null) return join(cwd, CLAUDE_LOCAL_SETTINGS_FILE);
++  // A linked worktree shares its main checkout's .git; that checkout's root is the one
++  // Claude Code reads the local file from.
++  const commonDir = gitRevParse(cwd, "--path-format=absolute", "--git-common-dir");
++  const root = commonDir !== null && basename(commonDir) === ".git"
++    ? dirname(commonDir)
++    : toplevel;
++  const base = root === homedir() ? cwd : root;
++  const path = join(base, CLAUDE_LOCAL_SETTINGS_FILE);
++  assertClaudeSettingsIgnored(root, base, CLAUDE_LOCAL_SETTINGS_FILE, path);
+   return path;
+ }
+ 
+@@ -5465,8 +5534,8 @@ async function runHook(args: Arguments): Promise<void> {
+   }
+   args.assertShape(
+     command === "install"
+-      ? ["write", "repo", "principal-id"]
+-      : ["write", "repo"],
++      ? ["write", "repo", "user", "principal-id"]
++      : ["write", "repo", "user"],
+     3,
+   );
+   if (args.positionals[2] !== "claude") {
+@@ -5475,18 +5544,30 @@ async function runHook(args: Arguments): Promise<void> {
+   if (command === "uninstall" && !args.has("write")) {
+     throw new Error("hook uninstall claude requires --write");
+   }
+-  if (args.has("repo") && !args.has("write")) {
+-    throw new Error("hook --repo requires --write");
++  if (args.has("repo") && args.has("user")) {
++    throw new Error("hook --repo and --user select different settings files; pass one of them");
++  }
++  for (const flag of ["repo", "user"]) {
++    if (args.has(flag) && !args.has("write")) {
++      throw new Error(`hook --${flag} requires --write`);
++    }
+   }
++  const scope: ClaudeHookScope = args.has("repo")
++    ? "repo"
++    : args.has("user")
++      ? "user"
++      : "project-local";
+   const principalId = command === "install" ? await hookInstallPrincipalId(args) : null;
+   const snippet = principalId === null ? null : claudeUserPromptHookSnippet(principalId);
+   if (command === "install" && !args.has("write")) {
+     process.stdout.write(`${JSON.stringify(snippet, null, 2)}\n`);
+     return;
+   }
+-  const path = args.has("repo")
+-    ? repositoryClaudeSettingsPath()
+-    : userClaudeSettingsPath();
++  const path = scope === "user"
++    ? userClaudeSettingsPath()
++    : scope === "repo"
++      ? repositoryClaudeSettingsPath()
++      : projectLocalClaudeSettingsPath();
+   const settings = readClaudeSettings(path);
+   const updated = command === "install"
+     ? installClaudeHook(settings, principalId!)
+@@ -5496,10 +5577,21 @@ async function runHook(args: Arguments): Promise<void> {
+     encoding: "utf8",
+     mode: 0o600,
+   });
++  if (command === "install" && scope === "user") {
++    // A true word in a success-shaped response gets skipped (AGENTS.md), so the scope
++    // consequence is its own line, before the success line, with the way back.
++    process.stderr.write(
++      `cswarm: WARNING: ${path} is USER-LEVEL Claude Code settings. Every Claude Code session ` +
++      "this OS user starts, in every project, now runs this agent's hook and surfaces its " +
++      "directed mail -- including sessions that belong to other agents. On a shared host that " +
++      "is a leak. Prefer the default project-local install: " +
++      `cswarm hook install claude --principal-id ${principalId!} --write\n`,
++    );
++  }
+   process.stdout.write(
+     command === "install"
+-      ? `Installed the Claude Code UserPromptSubmit hook in ${path}. It runs: ${scopedClaudeHookCommand(principalId!)}\n`
+-      : `Removed the CommonSwarm UserPromptSubmit hook from ${path}. Other settings were kept.\n`,
++      ? `Installed the Claude Code UserPromptSubmit hook in ${path} (${scope} scope). It runs: ${scopedClaudeHookCommand(principalId!)}\n`
++      : `Removed the CommonSwarm UserPromptSubmit hook from ${path} (${scope} scope). Other settings were kept.\n`,
+   );
+ }
+ 

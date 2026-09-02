@@ -156,6 +156,9 @@ Read `docs/org/2026-07-26-simplification-state.md` before a nontrivial change.
     not use macOS `timeout` (exit 127). Re-probe tool availability before stating it.
   - For every arm, assert that a `VERDICT` line is present. Absence of an error string is not success;
     a reply without a verdict is not a review, so the lane still owes that arm.
+- **A claim about a running listener needs a live control.** Tests with a fake bridge and two review arms
+  passed a lane whose status fields were `null` on a real detached listener (v0.1.46). A lane that changes
+  what a live listener reports must start one with `--state-dir <temp>` and paste its status JSON.
 - **Durable by default.** Operator- or system-read state belongs in Postgres. Process memory is only a
   cache or a home for state that can be derived again; serverless invocations do not share it.
 

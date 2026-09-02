@@ -1,0 +1,374 @@
+diff --git a/src/cloud/files.ts b/src/cloud/files.ts
+index a455fb0..3799643 100644
+--- a/src/cloud/files.ts
++++ b/src/cloud/files.ts
+@@ -163,7 +163,19 @@ export interface FileListRow {
+   tombstoned_at: string | null;
+ }
+ 
+-const REQUEST_TIMEOUT_MS = 30_000;
++/** The total a file exchange may take — headers AND body, across every attempt of a read. */
++export const REQUEST_TIMEOUT_MS = 30_000;
++
++/**
++ * One absolute deadline shared by every attempt of a read. `deadlineMs` is an
++ * instant on `now()`'s clock, never a duration: a retry that recomputes its
++ * remaining time from the same instant cannot stretch the total.
++ */
++export interface ReadDeadline {
++  signal?: AbortSignal;
++  deadlineMs?: number;
++  now?: () => number;
++}
+ 
+ interface SendOptions {
+   target: CloudTarget;
+@@ -172,6 +184,8 @@ interface SendOptions {
+   credential: string;
+   fetcher?: typeof fetch;
+   commandId?: string;
++  /** Test seam; a production command takes the full REQUEST_TIMEOUT_MS. */
++  deadline?: ReadDeadline;
+ }
+ 
+ async function sendFileCommand<T>(
+@@ -179,45 +193,48 @@ async function sendFileCommand<T>(
+   command: Record<string, unknown>,
+ ): Promise<T> {
+   const fetcher = options.fetcher ?? fetch;
+-  const controller = new AbortController();
+-  const timer = setTimeout(() => controller.abort(), REQUEST_TIMEOUT_MS);
+-  let response: Response;
++  let received: { ok: boolean; status: number; body: Record<string, unknown> | null };
+   try {
+-    response = await fetcher(commandEndpoint(options.target), {
+-      method: "POST",
+-      headers: {
+-        authorization: `Bearer ${options.credential}`,
+-        apikey: options.target.anonKey,
+-        "content-type": "application/json",
++    received = await fetchWithDeadline(
++      fetcher,
++      commandEndpoint(options.target),
++      {
++        method: "POST",
++        headers: {
++          authorization: `Bearer ${options.credential}`,
++          apikey: options.target.anonKey,
++          "content-type": "application/json",
++        },
++        body: JSON.stringify({
++          command_id: options.commandId ?? newCommandId(),
++          client_version: "0.1.0",
++          workspace_id: options.workspaceId,
++          stream: { kind: "workspace" },
++          command,
++        }),
+       },
+-      body: JSON.stringify({
+-        command_id: options.commandId ?? newCommandId(),
+-        client_version: "0.1.0",
+-        workspace_id: options.workspaceId,
+-        stream: { kind: "workspace" },
+-        command,
++      options.deadline ?? {},
++      async (response) => ({
++        ok: response.ok,
++        status: response.status,
++        body: await jsonBody(response) as Record<string, unknown> | null,
+       }),
+-      signal: controller.signal,
+-    });
++    );
+   } catch (error) {
+     if ((error as Error).name === "AbortError") {
+       throw new FileTransportError("file command timed out", true);
+     }
+-    throw new FileTransportError("file command failed before a response", true);
+-  } finally {
+-    clearTimeout(timer);
++    throw new FileTransportError("file command failed without a complete response", true);
+   }
+-  const body = await response.json().catch(() => null) as
+-    | Record<string, unknown>
+-    | null;
+-  if (!response.ok) {
++  const { ok, status, body } = received;
++  if (!ok) {
+     // File refusals carry {error, message}; auth-layer 403s are deliberately
+     // uniform and carry neither, so the fallback stays a plain sentence.
+     const code = typeof body?.error === "string" ? body.error : "http_error";
+     const message = typeof body?.message === "string"
+       ? body.message
+-      : `file command failed (HTTP ${response.status}) DEBUGBODY=${JSON.stringify(body).slice(0, 300)}`;
+-    throw new FileCommandRefused(response.status, code, message);
++      : `file command failed (HTTP ${status}) DEBUGBODY=${JSON.stringify(body).slice(0, 300)}`;
++    throw new FileCommandRefused(status, code, message);
+   }
+   if (!body || typeof body !== "object") {
+     throw new FileTransportError("file command returned a malformed response");
+@@ -334,7 +351,8 @@ export async function putObject(
+  * Safe only because the caller reuses the SAME command/file/version ids on the
+  * second attempt, and the server's command-id replay returns the first
+  * attempt's result if it actually landed (review finding 2a). A received
+- * refusal is a known outcome and is never retried here.
++ * refusal is a known outcome and is never retried here. Each attempt keeps its
++ * own REQUEST_TIMEOUT_MS; reads go through readWithBudget instead.
+  */
+ export async function onceRetried<T>(step: () => Promise<T>): Promise<T> {
+   try {
+@@ -347,23 +365,61 @@ export async function onceRetried<T>(step: () => Promise<T>): Promise<T> {
+   }
+ }
+ 
++/**
++ * ONE absolute deadline across both attempts of an idempotent read. The retry
++ * inherits whatever the first attempt left of the budget, and a first attempt
++ * that used all of it is not retried — so a read's worst case is
++ * REQUEST_TIMEOUT_MS, not double it (the exact-review arm measured onceRetried
++ * handing its retry a fresh 30s). The caller's own signal stays authoritative:
++ * a cancelled read is not retried either.
++ */
++export async function readWithBudget<T>(
++  step: (deadline: ReadDeadline) => Promise<T>,
++  options: { budgetMs?: number; now?: () => number; signal?: AbortSignal } = {},
++): Promise<T> {
++  const now = options.now ?? Date.now;
++  const budgetMs = Math.min(REQUEST_TIMEOUT_MS, options.budgetMs ?? REQUEST_TIMEOUT_MS);
++  const deadlineMs = now() + budgetMs;
++  const deadline: ReadDeadline = { deadlineMs, now, signal: options.signal };
++  try {
++    return await step(deadline);
++  } catch (error) {
++    if (
++      error instanceof FileTransportError && error.noResponse &&
++      options.signal?.aborted !== true &&
++      deadlineMs - now() > 0
++    ) {
++      return await step(deadline);
++    }
++    throw error;
++  }
++}
++
+ export async function getObject(
+   target: CloudTarget,
+   downloadPath: string,
+   fetcher: typeof fetch = fetch,
++  options: ReadDeadline = {},
+ ): Promise<Uint8Array> {
+-  let response: Response;
++  /* Outside the try: a non-relative path is the typed refusal above, not a
++   * transport flap — inside it, that refusal was swallowed into a retry. */
++  const url = absoluteStorageUrl(target, downloadPath);
++  let received: { ok: boolean; status: number; bytes: Uint8Array | null };
+   try {
+-    response = await fetchWithDeadline(fetcher, absoluteStorageUrl(target, downloadPath));
++    received = await fetchWithDeadline(fetcher, url, {}, options, async (response) => ({
++      ok: response.ok,
++      status: response.status,
++      bytes: response.ok ? new Uint8Array(await response.arrayBuffer()) : null,
++    }));
+   } catch {
+-    throw new FileTransportError("the download failed before a response", true);
++    throw new FileTransportError("the download did not complete", true);
+   }
+-  if (!response.ok) {
++  if (!received.ok || received.bytes === null) {
+     throw new FileTransportError(
+-      `the download was refused (HTTP ${response.status}); the signed URL lasts five minutes — request a fresh one with cswarm file get`,
++      `the download was refused (HTTP ${received.status}); the signed URL lasts five minutes — request a fresh one with cswarm file get`,
+     );
+   }
+-  return new Uint8Array(await response.arrayBuffer());
++  return received.bytes;
+ }
+ 
+ export class LocalFileExists extends Error {
+@@ -406,17 +462,22 @@ export function sha256Hex(bytes: Uint8Array): string {
+ 
+ /* Reads had NO deadline: a stalled connection waited on the OS default, and the
+  * 2026-09-01 retry addition would have doubled that. Every read now carries the
+- * same 30s bound the command path uses, so a flap fails fast and retries once. */
+-async function fetchWithDeadline(
++ * same 30s bound the command path uses, so a flap fails fast and retries once.
++ *
++ * The bound covers the WHOLE exchange, headers AND body. An earlier version
++ * cleared the timer the moment fetch() resolved, so a server that sent headers
++ * and then stalled held response.json()/arrayBuffer() open with no deadline at
++ * all (exact-review arm, 2026-09-01: a body stall still pending at 160ms
++ * against a 40ms deadline). `consume` now runs while the signal is armed, and
++ * is raced against the abort so the deadline holds even where a runtime does
++ * not error a stalled body stream on abort — a synthetic Response does not. */
++async function fetchWithDeadline<T>(
+   fetcher: typeof fetch,
+   input: string,
+-  init: RequestInit = {},
+-  options: {
+-    signal?: AbortSignal;
+-    deadlineMs?: number;
+-    now?: () => number;
+-  } = {},
+-): Promise<Response> {
++  init: RequestInit,
++  options: ReadDeadline,
++  consume: (response: Response) => Promise<T>,
++): Promise<T> {
+   const now = options.now ?? Date.now;
+   const remainingMs = options.deadlineMs === undefined
+     ? REQUEST_TIMEOUT_MS
+@@ -427,27 +488,51 @@ async function fetchWithDeadline(
+     ? controller.signal
+     : AbortSignal.any([options.signal, controller.signal]);
+   try {
+-    return await fetcher(input, { ...init, signal });
++    const response = await fetcher(input, { ...init, signal });
++    return await unlessAborted(consume(response), signal);
+   } finally {
+     clearTimeout(timer);
+   }
+ }
+ 
++/**
++ * Rejects with the signal's reason the moment it aborts, even if `pending` never
++ * settles on its own. Both promises stay handled: the race attaches to each, so a
++ * body that errors later (real undici does) cannot surface as an unhandled rejection.
++ */
++function unlessAborted<T>(pending: Promise<T>, signal: AbortSignal): Promise<T> {
++  let onAbort: () => void = () => {};
++  const aborted = new Promise<never>((_resolve, reject) => {
++    onAbort = () => reject(signal.reason);
++    if (signal.aborted) onAbort();
++    else signal.addEventListener("abort", onAbort, { once: true });
++  });
++  return Promise.race([pending, aborted]).finally(() => {
++    signal.removeEventListener("abort", onAbort);
++  });
++}
++
++/** The bytes are read under the caller's deadline; only the parse is forgiven. */
++async function jsonBody(response: Response): Promise<unknown> {
++  const text = await response.text();
++  try {
++    return JSON.parse(text) as unknown;
++  } catch {
++    return null;
++  }
++}
++
+ /** Agent-credential list via the read function (resource: "files"). */
+ export async function listFilesAsAgent(
+   target: CloudTarget,
+   credential: string,
+   workspaceId: string,
+   fetcher: typeof fetch = fetch,
+-  options: {
+-    signal?: AbortSignal;
+-    deadlineMs?: number;
+-    now?: () => number;
+-  } = {},
++  options: ReadDeadline = {},
+ ): Promise<FileListRow[]> {
+-  let response: Response;
++  let received: { ok: boolean; status: number; body: unknown };
+   try {
+-    response = await fetchWithDeadline(
++    received = await fetchWithDeadline(
+       fetcher,
+       readEndpoint(target),
+       {
+@@ -460,20 +545,23 @@ export async function listFilesAsAgent(
+         body: JSON.stringify({ resource: "files", workspace_id: workspaceId }),
+       },
+       options,
++      async (response) => ({
++        ok: response.ok,
++        status: response.status,
++        body: response.ok ? await jsonBody(response) : null,
++      }),
+     );
+   } catch {
+-    throw new FileTransportError("file list could not reach the cloud service", true);
++    throw new FileTransportError("file list did not arrive from the cloud service", true);
+   }
+-  if (!response.ok) {
++  if (!received.ok) {
+     throw new FileCommandRefused(
+-      response.status,
++      received.status,
+       "http_error",
+-      `file list failed (HTTP ${response.status})`,
++      `file list failed (HTTP ${received.status})`,
+     );
+   }
+-  const body = await response.json().catch(() => null) as
+-    | { files?: unknown }
+-    | null;
++  const body = received.body as { files?: unknown } | null;
+   if (!body || !Array.isArray(body.files)) {
+     throw new FileTransportError("file list returned a malformed response");
+   }
+@@ -490,6 +578,7 @@ export async function listFilesAsHuman(
+   accessToken: string,
+   workspaceId: string,
+   fetcher: typeof fetch = fetch,
++  options: ReadDeadline = {},
+ ): Promise<FileListRow[]> {
+   const url = new URL("/rest/v1/files", target.url);
+   url.searchParams.set("workspace_id", `eq.${workspaceId}`);
+@@ -498,32 +587,41 @@ export async function listFilesAsHuman(
+     "file_id,name,current_version,size_bytes,content_type,sha256,created_by_kind,created_by,uploaded_by_kind,uploaded_by,created_at,committed_at,tombstoned_at",
+   );
+   url.searchParams.set("order", "name.asc");
+-  let response: Response;
++  let received: { ok: boolean; status: number; body: unknown };
+   try {
+     /* The HUMAN list escaped the 2026-09-01 deadline fix and kept its retry —
+      * exactly the doubled worst case that commit said it was preventing, in
+      * the one path it did not check (found by the exact-review arm, which
+      * measured it still hanging at 400ms against a 150ms deadline). */
+-    response = await fetchWithDeadline(fetcher, url.toString(), {
+-      headers: {
+-        authorization: `Bearer ${accessToken}`,
+-        apikey: target.anonKey,
+-        "accept-profile": "swarm_read",
++    received = await fetchWithDeadline(
++      fetcher,
++      url.toString(),
++      {
++        headers: {
++          authorization: `Bearer ${accessToken}`,
++          apikey: target.anonKey,
++          "accept-profile": "swarm_read",
++        },
+       },
+-    });
++      options,
++      async (response) => ({
++        ok: response.ok,
++        status: response.status,
++        body: response.ok ? await jsonBody(response) : null,
++      }),
++    );
+   } catch {
+-    throw new FileTransportError("file list could not reach the cloud service", true);
++    throw new FileTransportError("file list did not arrive from the cloud service", true);
+   }
+-  if (!response.ok) {
++  if (!received.ok) {
+     throw new FileCommandRefused(
+-      response.status,
++      received.status,
+       "http_error",
+-      `file list failed (HTTP ${response.status})`,
++      `file list failed (HTTP ${received.status})`,
+     );
+   }
+-  const body = await response.json().catch(() => null);
+-  if (!Array.isArray(body)) {
++  if (!Array.isArray(received.body)) {
+     throw new FileTransportError("file list returned a malformed response");
+   }
+-  return body as FileListRow[];
++  return received.body as FileListRow[];
+ }
