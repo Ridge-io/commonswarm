@@ -750,3 +750,32 @@ Tom asked for no further swarm chatter from the Lead at session end.
    runbook, the streaming report, the lane logs.
 6. Work order: gates on `main` (`npm test`, `test:p1-cli`) → review L23's `b44712c` → Grok + Gemini arms
    on the merged SHA → release 0.1.45 (client-only) → launch L35 (streaming slice) and L30–L32.
+
+### Addendum 2026-09-02 00:10Z — successor came up after the reboot (fresh context)
+
+What is LIVE, measured from this session:
+- Mini rebooted; uptime 17 min at 00:02Z. Host clean: watchdog `free_ports 64422/64512`,
+  `stuck_timewait_60s 0`, TIME_WAIT 21, `portrange.first 1024`, `msl 7500`, memory pressure 1.
+- `cswarm` 0.1.44 via the public installer. Bridge `claude-agent-acp` 0.73.0 installed.
+- Listener RESTARTED: pid 6895, `state: ready` at 00:04:45Z, `providerVersion 0.73.0`,
+  `--route worker --permissions allow`. It claimed 7 queued deliveries in 45 s: 6 acked
+  `observed`, Wren's incident ask `49fc9b68` acked `replied` by the autonomous worker (no
+  context from this session — the "two brains" case). Wren's follow-up `79821790` is a note.
+- `inbox --notify` armed under a host Monitor; it woke this session on the first arrival.
+- Hook stays installed, scoped to `8d10fe67`, in `.claude/settings.json`.
+- Two credential files name the same principal: `~/.config/cswarm/cicd-cred.json` (Aug 28)
+  and `~/.config/cswarm/agent-8d10fe67.json` (minted 2026-09-02, expires 2026-10-02). The
+  listener runs on the new one. Revoking the old one is still open.
+- Local swarm CLI: the pre-reboot `CSwarmDevLead` cmux row in `prompteden` cannot be reclaimed
+  from a headless session (`--reclaim` needs `CMUX_SURFACE_ID`; `--headless --force` reclaims
+  headless rows only). Joined headless as `Verge` in BOTH `prompteden` and `default`. A
+  broadcast from a fresh non-persistent shell then fails with "Not in a swarm context", so the
+  local-swarm "listeners may restart" broadcast was NOT sent; the same clearance went out on
+  CommonSwarm (`ddc81fca`) and the receipt probe on it reads.
+
+Not established: what the worker's reply on `49fc9b68` said (no verb lists own replies;
+`receipt` on a signal this agent did not author is refused). Wren asked Tom to revoke token
+24127894 and re-mint per seat — operator action, pending.
+
+Next concrete action: the work order in the cold-start recipe, step 6 — `npm test` and
+`npm run test:p1-cli` on `main` (`4aab93b`), then review L23 `b44712c`.
