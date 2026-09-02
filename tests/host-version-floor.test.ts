@@ -157,20 +157,28 @@ test("Codex canary reason shapes render their recorded next steps", () => {
     "canary_no_tool_call: codex-acp 1.8.0 did not request permission or create /operator/.cswarm/canary/sentinel. Next: retry to re-sample the model's shell choice";
   const timeout =
     "canary_timeout: ACP request timed out: session/prompt (failed 2 attempts). Next: retry to run a fresh bounded permission canary";
-  const details = [executed, noTool, timeout];
+  const pathInsideCwd =
+    "canary_path_inside_cwd: /operator/.cswarm/canary is inside listener cwd /operator. Next: pass a --cwd that is not your home directory";
+  const details = [executed, noTool, timeout, pathInsideCwd];
   const rendered = details.map((detail) =>
     listenerFailureMessage("permission_canary_failed", "codex", detail)
   );
 
-  assert.equal(new Set(rendered).size, 3);
+  assert.equal(new Set(rendered).size, details.length);
   for (let index = 0; index < rendered.length; index += 1) {
     assert.ok(rendered[index]!.includes(JSON.stringify(details[index]!)));
     assert.match(rendered[index]!, /no workspace signal prompt was delivered/i);
+    assert.match(rendered[index]!, /permission safety gate/i);
     assert.doesNotMatch(rendered[index]!, /sign[- ]?in/i);
   }
   assert.match(rendered[0]!, /codex-acp 1\.8\.0.*\.cswarm\/canary\/sentinel/);
   assert.match(rendered[1]!, /retry to re-sample/);
   assert.match(rendered[2]!, /ACP request timed out: session\/prompt/);
+  assert.match(rendered[3]!, /pass a --cwd that is not your home directory/);
+  assert.doesNotMatch(
+    rendered[3]!,
+    /bridge did not complete|canary (?:ran|was sent)/i,
+  );
 });
 
 test("Codex CLI executable remedy names the bridge package", () => {

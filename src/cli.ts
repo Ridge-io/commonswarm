@@ -4912,9 +4912,11 @@ export function listenerFailureMessage(
     }
     if (provider === "codex") {
       const recorded = detail?.trim();
+      const gate =
+        "the Codex listener did not pass the read-only ACP permission safety gate; no workspace signal prompt was delivered";
       return recorded
-        ? `the Codex bridge did not complete the read-only ACP permission canary; no workspace signal prompt was delivered. Recorded reason: ${JSON.stringify(recorded)}`
-        : "the Codex bridge did not complete the read-only ACP permission canary; no workspace signal prompt was delivered. The recorded reason was unavailable. Next: run cswarm listen status, then retry";
+        ? `${gate}. Recorded reason: ${JSON.stringify(recorded)}`
+        : `${gate}. The recorded reason was unavailable. Next: run cswarm listen status, then retry`;
     }
     if (provider === "grok") {
       return "the Grok bridge did not complete the ACP permission canary; no workspace signal prompt was delivered. The local cswarm listen status output includes the final error detail; read it, then retry";
