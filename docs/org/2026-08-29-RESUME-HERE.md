@@ -819,3 +819,19 @@ supabase.co target) — the lane was interrupted before its report; carry it as 
 - L37 (AGENTS.md 920 → 271 lines, CLAUDE.md 69 → 12) committed `f6cb23b`; awaiting its report, then my read
   before it merges to main. Two claims it introduced were verified against the tree (`/start` is a handoff;
   `test:p1-local` names four files).
+
+### Addendum 2026-09-02 03:25Z — v0.1.45 is LIVE
+
+| step | fact |
+|---|---|
+| review | Grok exact + Gemini inversion on `0f65b83`, both `VERDICT: PASS` with observed mutations (outputs in the session scratchpad `arm-*-045.out`). Grok P2 + 3×P3 → lane spec `scratchpad/reboot-survival/L38-review-followups.md`. |
+| main | `9de5782` merge of release/0.1.45 → `55b4408` release: v0.1.45 → `2529ef8` npm dist artifacts. Pushed. |
+| migration | `20260902000002` APPLIED to production (`supabase migration list --linked` shows the remote column; both receipt functions present). `read` edge untouched (passes `receipts` through). |
+| GitHub | tag `v0.1.45` on `55b4408`, latest, assets `cswarm` + `cswarm.sha256`. |
+| npm | `commonswarm@0.1.45` (`npm view` confirms). |
+| site | deployed; `/download?cb=` mentions 0.1.45 ×3, 0.1.44 ×0; install.sh 200 / nope.sh 404; start meta = api.commonswarm.com; no service_role. |
+| host | installer put 0.1.45 in `~/.local/bin`; `npm i -g commonswarm@0.1.45` fixed the Homebrew copy (was 0.1.44). Listener restarted pid 48807 ready; notify Monitor restarted. |
+
+Instrument notes: `agy -p` in a worktree outside its trust list returns "no output produced … read_file permission" — pass `--dangerously-skip-permissions`; and it dies on any command over ~20 s (its first run timed out inside a `db:reset` it was told not to run). A `cswarm note "…"` body with backticks in double quotes is shell-expanded — build the body in a file and pass `"$(cat file)"`.
+
+Still running: L30 (`lane/l30-provider-version`), L32 (`lane/l32-connection-reuse`, 3 commits), L35 (`lane/l35-live-agent-panel`, 1 commit). L31 merged on `release/0.1.46` (`6b5beea`). Next: merge L30/L32/L35 as they land, arms on the merged SHA, release 0.1.46, then L38.
