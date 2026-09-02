@@ -415,6 +415,28 @@ test("v1 and v2 parsers reject forbidden extras instead of returning them", () =
   }
 });
 
+test("v1 and v2 readers ignore unknown future fields without returning them", async () => {
+  assert.deepEqual(parse(v1Row({ futureMetadata: { writer: "newer" } })), parse(v1Row()));
+  assert.deepEqual(
+    parse({ ...v2AskRow(), futureMetadata: { writer: "newer" } }),
+    v2AskRow(),
+  );
+
+  const root = await mkdtemp(join(tmpdir(), "cswarm-effect-forward-read-"));
+  const store = new FileListenerEffectStore({
+    profileId: "profile-test",
+    workspaceId: "11111111-1111-4111-8111-111111111111",
+    principalId: "22222222-2222-4222-8222-222222222222",
+    stateDirectory: root,
+  });
+  const path = join(store.instanceDirectory, "effects", `${SIGNAL_ID}.json`);
+  await writeSecureJsonFile(
+    path,
+    JSON.stringify({ ...v2AskRow(), futureMetadata: true }),
+  );
+  assert.deepEqual(await store.read(SIGNAL_ID), v2AskRow());
+});
+
 test("an on-disk file with a forbidden extra fails on read for v1 and v2", async () => {
   const root = await mkdtemp(join(tmpdir(), "cswarm-effect-forbid-read-"));
   const store = new FileListenerEffectStore({

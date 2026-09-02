@@ -69,6 +69,10 @@ import {
   RenewalRevoked,
 } from "../src/cloud/renewal.js";
 import { ListenerCapabilityError } from "../src/listener/runtime.js";
+import {
+  listenerStatusJson,
+  renderListenerStatus,
+} from "../src/cli.js";
 
 const UUID_RE =
   /^[0-9a-f]{8}-[0-9a-f]{4}-[1-8][0-9a-f]{3}-[89ab][0-9a-f]{3}-[0-9a-f]{12}$/i;
@@ -1041,7 +1045,7 @@ test("new status with delivery metadata round-trips exactly and writes require a
   );
 });
 
-test("status rejects unknown keys, sensitive aliases, and malformed delivery values", async () => {
+test("status ignores unknown keys, renders old counters as unmeasured, and rejects malformed known keys", async () => {
   const root = await mkdtemp(join(tmpdir(), "cswarm-control-test-"));
   const target = paths(root);
   const writeRaw = async (mutate: (row: Record<string, unknown>) => void) => {
@@ -1050,9 +1054,52 @@ test("status rejects unknown keys, sensitive aliases, and malformed delivery val
     await writeSecureJsonFile(target.statusPath, JSON.stringify(row));
   };
 
-  // Unknown top-level keys fail closed rather than being returned.
+  // A newer writer can add fields without breaking this older reader. Unknown
+  // values are not returned or rendered.
   await writeRaw((row) => {
     row.mysteryField = null;
+    row.futureMetrics = { opened: 12 };
+    row.readHealth = {
+      currentEpisodeStartedAt: null,
+      currentEpisodeAttempts: 0,
+      currentReasonCode: null,
+      currentHttpStatus: null,
+      currentErrorConstructor: null,
+      retryHours: [],
+      retryMinutes: [{ minuteStart: "2026-07-30T00:00:00.000Z", retries: 1, future: true }],
+      claimCadenceMs: null,
+      claimHours: [],
+      futureHealthMetric: 12,
+    };
+  });
+  const forward = await readListenerStatus(target);
+  assert.ok(forward);
+  assert.equal("mysteryField" in forward, false);
+  assert.equal("futureMetrics" in forward, false);
+  assert.equal("futureHealthMetric" in forward.readHealth!, false);
+  assert.equal("future" in forward.readHealth!.retryMinutes[0]!, false);
+  const rendered = renderListenerStatus(forward);
+  assert.match(rendered, /Connections opened: not measured\./);
+  assert.match(rendered, /Connection reuse ratio: not measured\./);
+  assert.doesNotMatch(rendered, /mysteryField|futureMetrics/);
+  const json = listenerStatusJson(forward);
+  assert.equal(json.connectionsOpened, null);
+  assert.equal(json.connectionReuseRatio, null);
+  assert.equal("mysteryField" in json, false);
+  assert.equal("futureMetrics" in json, false);
+
+  // The write gate keeps its closed allow-list.
+  await assert.rejects(
+    writeListenerStatus(
+      target,
+      { ...statusFor(target, "ready"), mysteryField: null } as unknown as ListenerStatus,
+    ),
+    /malformed/,
+  );
+
+  // A malformed known field still fails closed.
+  await writeRaw((row) => {
+    row.connectionsOpened = -1;
   });
   await assert.rejects(readListenerStatus(target), /malformed/);
 

@@ -6,7 +6,7 @@
 import assert from "node:assert/strict";
 import { spawn } from "node:child_process";
 import { createServer } from "node:http";
-import { mkdtemp, readFile, rm } from "node:fs/promises";
+import { mkdtemp, readFile, rm, writeFile } from "node:fs/promises";
 import { tmpdir } from "node:os";
 import { join, resolve } from "node:path";
 import { test } from "node:test";
@@ -83,6 +83,14 @@ test("inbox --notify flushes one readable line and never calls delivery mutation
     stateDirectory: join(xdg, "cswarm", "arrival-cursors"),
   });
   await cursorStore.write({
+    created_at: "2026-08-28T11:00:00.000Z",
+    id: OLD_SIGNAL,
+  });
+  const forwardCursor = JSON.parse(await readFile(cursorStore.location, "utf8"));
+  forwardCursor.futureMetadata = true;
+  forwardCursor.cursor.futureSequence = 12;
+  await writeFile(cursorStore.location, JSON.stringify(forwardCursor), { mode: 0o600 });
+  assert.deepEqual(await cursorStore.read(), {
     created_at: "2026-08-28T11:00:00.000Z",
     id: OLD_SIGNAL,
   });

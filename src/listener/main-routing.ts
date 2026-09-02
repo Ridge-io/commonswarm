@@ -12,6 +12,21 @@ const UUID_RE =
 const MAX_QUEUE_BYTES = 1024 * 1024;
 const QUEUE_FILE = "pending-for-main.json";
 const QUEUE_LOCK = "pending-for-main";
+const QUEUE_KEYS = new Set(["version", "entries", "droppedCount"]);
+const ENTRY_KEYS = new Set([
+  "signalId",
+  "workspaceId",
+  "principalId",
+  "fromId",
+  "fromKind",
+  "kind",
+  "senderName",
+  "body",
+  "attachmentCount",
+  "createdAt",
+  "queuedAt",
+  "observationPending",
+]);
 
 export const LISTENER_MAIN_QUEUE_MAX = 200;
 export const LISTENER_DEFER_OVER_MIN = 1;
@@ -81,26 +96,12 @@ function checkedTimestamp(value: unknown): value is string {
   return typeof value === "string" && Number.isFinite(Date.parse(value));
 }
 
-function parseEntry(value: unknown): PendingMainEntry {
+function parseEntry(value: unknown, rejectUnknownKeys: boolean): PendingMainEntry {
   if (!value || typeof value !== "object" || Array.isArray(value)) {
     throw new Error("stored pending-for-main entry is malformed");
   }
   const row = value as Record<string, unknown>;
-  const allowed = new Set([
-    "signalId",
-    "workspaceId",
-    "principalId",
-    "fromId",
-    "fromKind",
-    "kind",
-    "senderName",
-    "body",
-    "attachmentCount",
-    "createdAt",
-    "queuedAt",
-    "observationPending",
-  ]);
-  if (Object.keys(row).some((key) => !allowed.has(key))) {
+  if (rejectUnknownKeys && Object.keys(row).some((key) => !ENTRY_KEYS.has(key))) {
     throw new Error("stored pending-for-main entry is malformed");
   }
   if (
@@ -140,7 +141,7 @@ function parseEntry(value: unknown): PendingMainEntry {
   };
 }
 
-function parseFile(raw: string): PendingMainFile {
+function parseFile(raw: string, rejectUnknownKeys = false): PendingMainFile {
   let value: unknown;
   try {
     value = JSON.parse(raw);
@@ -152,9 +153,7 @@ function parseFile(raw: string): PendingMainFile {
   }
   const row = value as Record<string, unknown>;
   if (
-    Object.keys(row).some((key) =>
-      key !== "version" && key !== "entries" && key !== "droppedCount"
-    ) ||
+    (rejectUnknownKeys && Object.keys(row).some((key) => !QUEUE_KEYS.has(key))) ||
     row.version !== 1 || !Array.isArray(row.entries) ||
     row.entries.length > LISTENER_MAIN_QUEUE_MAX ||
     !(row.droppedCount === undefined ||
@@ -163,7 +162,7 @@ function parseFile(raw: string): PendingMainFile {
   ) {
     throw new Error("stored pending-for-main queue is malformed");
   }
-  const entries = row.entries.map(parseEntry);
+  const entries = row.entries.map((entry) => parseEntry(entry, rejectUnknownKeys));
   if (new Set(entries.map((entry) => entry.signalId)).size !== entries.length) {
     throw new Error("stored pending-for-main queue repeats a signal");
   }
@@ -189,7 +188,7 @@ export class FilePendingMainQueue {
   }
 
   private async writeUnlocked(file: PendingMainFile): Promise<void> {
-    const canonical = parseFile(JSON.stringify(file));
+    const canonical = parseFile(JSON.stringify(file), true);
     await writeSecureJsonFile(this.path, JSON.stringify(canonical));
   }
 
@@ -212,7 +211,7 @@ export class FilePendingMainQueue {
     droppedOldest: boolean;
     droppedCount: number;
   }> {
-    const checked = parseEntry(entry);
+    const checked = parseEntry(entry, true);
     return await withFileLock(this.directory, QUEUE_LOCK, async () => {
       const file = await this.readUnlocked();
       if (file.entries.some((item) => item.signalId === checked.signalId)) {
@@ -282,5 +281,5 @@ export function pendingMainEntry(
     createdAt: signal.created_at,
     queuedAt: new Date(now).toISOString(),
     ...(options.observationPending ? { observationPending: true } : {}),
-  });
+  }, true);
 }

@@ -18,7 +18,7 @@ import {
   listenerInstanceKey,
 } from "./file-store.js";
 import {
-  isListenerReadHealth,
+  parseListenerReadHealth,
   type ListenerReadHealth,
 } from "./read-health.js";
 
@@ -220,7 +220,7 @@ const STATUS_DELIVERY_KEYS = [
   "lastAckAt",
 ] as const;
 
-function parseStatus(raw: string): ListenerStatus {
+function parseStatus(raw: string, rejectUnknownKeys = false): ListenerStatus {
   let value: unknown;
   try {
     value = JSON.parse(raw);
@@ -235,7 +235,7 @@ function parseStatus(raw: string): ListenerStatus {
     if (STATUS_SENSITIVE_KEYS.has(key)) {
       throw new Error("stored listener status contains a forbidden field");
     }
-    if (!STATUS_ALLOWED_KEYS.has(key)) {
+    if (rejectUnknownKeys && !STATUS_ALLOWED_KEYS.has(key)) {
       throw new Error("stored listener status is malformed");
     }
   }
@@ -250,6 +250,9 @@ function parseStatus(raw: string): ListenerStatus {
   const nullableTimestamp = (candidate: unknown) =>
     candidate === null ||
     (typeof candidate === "string" && Number.isFinite(Date.parse(candidate)));
+  const readHealth = row.readHealth === undefined
+    ? undefined
+    : parseListenerReadHealth(row.readHealth, rejectUnknownKeys);
   if (
     row.version !== 1 ||
     typeof row.instanceId !== "string" ||
@@ -350,7 +353,7 @@ function parseStatus(raw: string): ListenerStatus {
     !(row.droppedForMainCount === undefined ||
       (typeof row.droppedForMainCount === "number" &&
         Number.isSafeInteger(row.droppedForMainCount) && row.droppedForMainCount >= 0)) ||
-    !(row.readHealth === undefined || isListenerReadHealth(row.readHealth)) ||
+    readHealth === null ||
     !(row.connectionsOpened === undefined ||
       (typeof row.connectionsOpened === "number" &&
         Number.isSafeInteger(row.connectionsOpened) && row.connectionsOpened >= 0)) ||
@@ -370,8 +373,11 @@ function parseStatus(raw: string): ListenerStatus {
   }
   // Old version-1 files predate the delivery fields: normalize the absent
   // keys to null in memory without rewriting the stored bytes.
+  const knownRow = Object.fromEntries(
+    Object.entries(row).filter(([key]) => STATUS_ALLOWED_KEYS.has(key)),
+  ) as unknown as ListenerStatus;
   return {
-    ...(row as unknown as ListenerStatus),
+    ...knownRow,
     deliveryMode: (row.deliveryMode ?? null) as ListenerStatus["deliveryMode"],
     pendingDeliveryCount: (row.pendingDeliveryCount ?? null) as number | null,
     lastTerminalDeliveryFailureCount:
@@ -392,6 +398,7 @@ function parseStatus(raw: string): ListenerStatus {
     deferOverChars,
     pendingForMainCount: (row.pendingForMainCount ?? 0) as number,
     droppedForMainCount: (row.droppedForMainCount ?? 0) as number,
+    ...(readHealth === undefined ? {} : { readHealth }),
   };
 }
 
@@ -413,7 +420,7 @@ export async function writeListenerStatus(
   if (!("lastErrorDetail" in parsed)) {
     throw new Error("listener status is missing local error detail metadata");
   }
-  parseStatus(serialized);
+  parseStatus(serialized, true);
   await writeSecureJsonFile(paths.statusPath, serialized);
 }
 

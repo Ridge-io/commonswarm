@@ -117,12 +117,7 @@ function parseStoredCurrentTarget(raw: string): CloudTarget {
     throw new Error("stored current target is malformed");
   }
   const record = value as Record<string, unknown>;
-  const keys = Object.keys(record).sort();
   if (
-    keys.length !== 3 ||
-    keys[0] !== "anonKey" ||
-    keys[1] !== "url" ||
-    keys[2] !== "version" ||
     record.version !== 1 ||
     typeof record.url !== "string" ||
     typeof record.anonKey !== "string"

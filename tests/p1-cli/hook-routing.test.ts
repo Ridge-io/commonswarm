@@ -17,6 +17,7 @@ import {
   FileHookSurfaceStore,
   FilePendingMainQueue,
   listenerPaths,
+  readListenerCredentialState,
   readListenerStatus,
   renderHookSignal,
   runListenerHookCheck,
@@ -192,6 +193,12 @@ test("listener and hook share one 0600 credential state and remove the retired c
     const live = join(paths.instanceDirectory, "listener-credential.json");
     assert.equal((await stat(live)).mode & 0o777, 0o600);
     await assert.rejects(readFile(retired, "utf8"), { code: "ENOENT" });
+    const forward = JSON.parse(await readFile(live, "utf8"));
+    forward.futureMetadata = { writer: "newer" };
+    await writeFile(live, JSON.stringify(forward), { mode: 0o600 });
+    const read = await readListenerCredentialState(paths.instanceDirectory);
+    assert.equal(read?.credential, TOKEN);
+    assert.equal("futureMetadata" in read!, false);
   } finally {
     await rm(root, { recursive: true, force: true });
   }
@@ -222,6 +229,10 @@ test("hook check cooldown reserves a state-file timestamp and skips the network"
     assert.equal(await invoke(), "");
     const afterFirst = calls.count;
     assert.ok(afterFirst >= 1, "a live invocation reads the inbox");
+    const cooldownPath = join(root, "hook-check.json");
+    const forwardCooldown = JSON.parse(await readFile(cooldownPath, "utf8"));
+    forwardCooldown.futureMetadata = true;
+    await writeFile(cooldownPath, JSON.stringify(forwardCooldown), { mode: 0o600 });
     await new FilePendingMainQueue(paths.instanceDirectory).enqueue(
       pending(SIGNAL_ID, "local pending ask"),
     );
@@ -293,6 +304,10 @@ test("hook brain digest is appended once, stays silent, then reports a version b
     assert.match(first, /message before digest/);
     assert.match(first, /\[CommonSwarm brain\] 1 topic;.*strategy v1/);
     assert.ok(first.indexOf("[CommonSwarm brain]") > first.indexOf("message before digest"));
+    const digestPath = join(paths.instanceDirectory, "brain-digest.json");
+    const forwardDigest = JSON.parse(await readFile(digestPath, "utf8"));
+    forwardDigest.futureMetadata = true;
+    await writeFile(digestPath, JSON.stringify(forwardDigest), { mode: 0o600 });
     assert.equal(await invoke(), "");
     version = 2;
     assert.match(await invoke(), /\[CommonSwarm brain\] 1 topic;.*strategy v2/);
@@ -451,6 +466,10 @@ test("hook high-water state surfaces one signal exactly once", async () => {
     const store = new FileHookSurfaceStore(paths.instanceDirectory);
     const item = { signalId: SIGNAL_ID };
     assert.deepEqual(await store.claimUnseen([item]), [item]);
+    const surfacePath = join(paths.instanceDirectory, "hook-surface.json");
+    const forwardSurface = JSON.parse(await readFile(surfacePath, "utf8"));
+    forwardSurface.futureMetadata = true;
+    await writeFile(surfacePath, JSON.stringify(forwardSurface), { mode: 0o600 });
     assert.deepEqual(await store.claimUnseen([item]), []);
     // MUTATION: remove the surfaced-id update in claimUnseen and this becomes [item].
     assert.deepEqual(await store.claimUnseen([item]), []);

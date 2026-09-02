@@ -278,6 +278,8 @@ test("Claude status/start rendering pins the resolved bridge and exact bundled v
     assert.equal(json.providerVersionMeasured, true);
     assert.equal(json.providerBundledClaudeCodeVersion, "2.1.257");
     assert.equal(json.providerBundledAgentSdkVersion, "0.3.257");
+    assert.equal(json.connectionsOpened, null);
+    assert.equal(json.connectionReuseRatio, null);
 
     const oldProcess = {
       ...status,
@@ -324,6 +326,8 @@ test("Claude status/start rendering pins the resolved bridge and exact bundled v
     assert.match(notMeasured, /Provider executable: not measured/);
     assert.match(notMeasured, /Provider version: not measured/);
     assert.match(notMeasured, /Bundled Claude Code version: not measured/);
+    assert.match(notMeasured, /Connections opened: not measured/);
+    assert.match(notMeasured, /Connection reuse ratio: not measured/);
     assert.equal(
       listenerStatusJson({ ...status, providerVersion: null }).providerVersionMeasured,
       false,
@@ -351,8 +355,12 @@ test("Claude canary failure shapes keep the bridge response and choose only meas
   assert.ok(versionMessage.includes(JSON.stringify(versionRequired)));
   assert.match(
     versionMessage,
-    /npm i -g @agentclientprotocol\/claude-agent-acp@latest \(bundles a newer Claude Code\)/,
+    /install the current bridge \(npm i -g @agentclientprotocol\/claude-agent-acp@latest\)/i,
   );
+  assert.match(versionMessage, /restart the listener/i);
+  assert.match(versionMessage, /cswarm listen status/i);
+  assert.match(versionMessage, /bundled Claude Code version meets the API minimum 2\.1\.251/i);
+  assert.doesNotMatch(versionMessage, /bundles a newer Claude Code/i);
   assert.doesNotMatch(versionMessage, /confirm.*sign-in/i);
   assert.doesNotMatch(versionMessage, /Next: run ['"]?claude update/i);
 
