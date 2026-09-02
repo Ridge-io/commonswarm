@@ -779,3 +779,24 @@ Not established: what the worker's reply on `49fc9b68` said (no verb lists own r
 
 Next concrete action: the work order in the cold-start recipe, step 6 — `npm test` and
 `npm run test:p1-cli` on `main` (`4aab93b`), then review L23 `b44712c`.
+
+### Addendum 2026-09-02 ~02:30Z — release train state (Tom: "run it all the way to the end")
+
+Goal set by operator: complete every specified/started lane and ship to production via Codex lanes.
+
+| lane | branch | worktree (session scratchpad `a866e6cd…`) | state |
+|---|---|---|---|
+| L23 attended | `lane/l23-attended` `b44712c` | – | MERGED into `release/0.1.45` (`3813189`, one hook.ts conflict: kept both `previewUnseen` and `evidence`). build, check:tests, npm test 686, p1-cli 390, p1-local 15, site build+test green. Migration `20260902000002` applied to LOCAL Postgres only. |
+| L36 codex canary | `lane/l36-codex-canary` | `wt-l36-codex-canary` | RUNNING (spec `scratchpad/reboot-survival/L36-codex-canary.md`; evidence `docs/evidence/2026-09-02-codex-canary/`) |
+| L31 read-retry | `lane/l31-read-retry` | `wt-l31-read-retry` | RUNNING, based on release/0.1.45 |
+| L32 connection reuse | `lane/l32-connection-reuse` | `wt-l32-connection-reuse` | RUNNING, based on release/0.1.45 |
+| L35 live agent panel | `lane/l35-live-agent-panel` | `wt-l35-live-agent-panel` | RUNNING, based on release/0.1.45; may use the CSwarmDevLead credential read-only for the Realtime ceiling measurement |
+| L30 provider version | – | – | NOT STARTED: overlaps L36 on the canary failure copy; launch on top of the L36 merge |
+
+Release plan: **0.1.45 = L23 + L36** (Grok exact + Gemini inversion on the merged SHA; arm templates
+`scratchpad/arm-{grok,gemini}-045.tmpl`; notes `scratchpad/NOTES-v045.md`), then **0.1.46 = L30 + L31 +
+L32 + L35**. Production migration push for `20260902000002` happens in the 0.1.45 step, before the
+client (read edge needs no redeploy: it passes `receipts` through).
+
+Not established: L23's spec item 5 (inbox failing via `api.commonswarm.com` but not the direct
+supabase.co target) — the lane was interrupted before its report; carry it as OPEN.
