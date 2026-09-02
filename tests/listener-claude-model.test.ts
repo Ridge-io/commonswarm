@@ -19,6 +19,7 @@ import {
   AcpPermissionCanaryError,
 } from "../src/host/types.js";
 import {
+  classifyClaudeCanaryFailure,
   ClaudeListenerModel,
   ListenerEngine,
   ListenerRenewalUnavailableError,
@@ -28,6 +29,27 @@ import type {
   ListenerEffectRecord,
   ListenerEffectStore,
 } from "../src/listener/types.js";
+
+test("Claude canary classifier records the API floor and uses typed timeout", () => {
+  assert.deepEqual(
+    classifyClaudeCanaryFailure(
+      "Internal error: API Error: 400 Claude Code 2.1.232 does not support this model; version 2.1.251 or newer is required.",
+      "rpc_error",
+    ),
+    {
+      code: "claude_bridge_version_required",
+      minimumRequiredVersion: "2.1.251",
+    },
+  );
+  assert.deepEqual(
+    classifyClaudeCanaryFailure("wording can change", "timeout"),
+    { code: "claude_canary_timeout", minimumRequiredVersion: null },
+  );
+  assert.deepEqual(
+    classifyClaudeCanaryFailure("ordinary unknown bridge text", "rpc_error"),
+    { code: "claude_canary_unknown", minimumRequiredVersion: null },
+  );
+});
 
 const REQUEST: PermissionRequest = {
   sessionId: "session",
@@ -146,6 +168,42 @@ test("Claude worker canary denies before explicit allow mode", async () => {
   });
   await adapter.close();
   assert.equal(records[0]?.closed, true);
+});
+
+test("Claude listener forwards exact bridge runtime evidence before canary", async () => {
+  const cwd = await mkdtemp(join(tmpdir(), "cswarm-claude-runtime-"));
+  const records: Record[] = [];
+  const notices: Array<{
+    executable: string;
+    providerVersion: string | null;
+    bundledAgentSdkVersion: string | null;
+    bundledClaudeCodeVersion: string | null;
+  }> = [];
+  const delegate = fakeOpen(records);
+  const adapter = new ClaudeListenerModel({
+    cwd,
+    open: async (options) => {
+      options.onRuntimeNotice?.({
+        executable: "/opt/claude-agent-acp",
+        providerVersion: "0.73.0",
+        lastMeasuredVersion: "0.64.2",
+        bundledAgentSdkVersion: "0.3.257",
+        bundledClaudeCodeVersion: "2.1.257",
+      });
+      return delegate(options);
+    },
+    onRuntimeNotice: (notice) => notices.push(notice),
+  });
+
+  await adapter.start();
+  assert.deepEqual(notices, [{
+    executable: "/opt/claude-agent-acp",
+    providerVersion: "0.73.0",
+    lastMeasuredVersion: "0.64.2",
+    bundledAgentSdkVersion: "0.3.257",
+    bundledClaudeCodeVersion: "2.1.257",
+  }]);
+  await adapter.close();
 });
 
 test("Claude sender relations share one worker, cwd, and permission mode", async () => {

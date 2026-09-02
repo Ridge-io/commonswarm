@@ -1,4 +1,5 @@
 import { randomUUID } from "node:crypto";
+import { AcpPermissionCanaryError } from "../host/types.js";
 import {
   appendListenerEvent,
   ListenerAlreadyRunningError,
@@ -113,10 +114,13 @@ export interface ListenerSupervisorOptions {
    * "error" was undiagnosable from the failing box's own log).
    */
   takeWorkerStderrTail?: () => string | null;
-  /** Read the admitted provider version record after its canary passes. */
+  /** Read provider facts measured before the canary, including failed starts. */
   getProviderVersionNotice?: () => {
-    runningVersion: string;
+    runningVersion: string | null;
     lastMeasuredVersion: string;
+    executable?: string | null;
+    bundledAgentSdkVersion?: string | null;
+    bundledClaudeCodeVersion?: string | null;
   } | null;
   /**
    * The turn budget in ms to record on a timeout-class effect event. Returns
@@ -160,6 +164,34 @@ function localDiagnostic(message: string, maxChars: number): string | null {
 
 function safeErrorDetail(error: Error): string | null {
   return localDiagnostic(error.message, 2_048);
+}
+
+function providerStatusFields(
+  notice: ReturnType<NonNullable<ListenerSupervisorOptions["getProviderVersionNotice"]>>,
+): Partial<ListenerStatus> {
+  if (!notice) return {};
+  return {
+    providerExecutable: notice.executable ?? null,
+    providerVersion: notice.runningVersion,
+    providerLastMeasuredVersion: notice.runningVersion === null
+      ? null
+      : notice.lastMeasuredVersion,
+    providerBundledAgentSdkVersion: notice.bundledAgentSdkVersion ?? null,
+    providerBundledClaudeCodeVersion: notice.bundledClaudeCodeVersion ?? null,
+  };
+}
+
+function providerFailureFields(error: Error): Partial<ListenerStatus> {
+  if (!(error instanceof AcpPermissionCanaryError)) {
+    return {
+      lastErrorReasonCode: null,
+      providerMinimumRequiredVersion: null,
+    };
+  }
+  return {
+    lastErrorReasonCode: error.reasonCode,
+    providerMinimumRequiredVersion: error.minimumRequiredVersion,
+  };
 }
 
 /**
@@ -224,8 +256,13 @@ export async function runListenerSupervisor(
     lastSignalId: null,
     lastErrorCode: null,
     lastErrorDetail: null,
+    lastErrorReasonCode: null,
+    providerExecutable: null,
     providerVersion: null,
     providerLastMeasuredVersion: null,
+    providerBundledAgentSdkVersion: null,
+    providerBundledClaudeCodeVersion: null,
+    providerMinimumRequiredVersion: null,
     lastWorkerStderrTail: null,
     deliveryMode: null,
     pendingDeliveryCount: null,
@@ -318,9 +355,10 @@ export async function runListenerSupervisor(
         readyAt: event.ts,
         lastErrorCode: null,
         lastErrorDetail: null,
+        lastErrorReasonCode: null,
         lastWorkerStderrTail: null,
-        providerVersion: versionNotice?.runningVersion ?? null,
-        providerLastMeasuredVersion: versionNotice?.lastMeasuredVersion ?? null,
+        providerMinimumRequiredVersion: null,
+        ...providerStatusFields(versionNotice),
       });
       log({ ts: event.ts, event: "listener_ready" });
       return;
@@ -549,9 +587,9 @@ export async function runListenerSupervisor(
         readyAt: null,
         lastErrorCode: restartCode,
         lastErrorDetail: safeErrorDetail(stop.error),
+        ...providerFailureFields(stop.error),
         lastWorkerStderrTail: restartStderrTail,
-        providerVersion: null,
-        providerLastMeasuredVersion: null,
+        ...providerStatusFields(options.getProviderVersionNotice?.() ?? null),
       });
       await restartSleep(delayMs, controller.signal);
       if (controller.signal.aborted) {
@@ -566,7 +604,9 @@ export async function runListenerSupervisor(
         stoppedAt,
         lastErrorCode: null,
         lastErrorDetail: null,
+        lastErrorReasonCode: null,
         lastWorkerStderrTail: null,
+        providerMinimumRequiredVersion: null,
       });
       log({ ts: stoppedAt, event: "listener_stopped" });
     } else {
@@ -578,6 +618,8 @@ export async function runListenerSupervisor(
         stoppedAt,
         lastErrorCode: code,
         lastErrorDetail: safeErrorDetail(stop.error),
+        ...providerFailureFields(stop.error),
+        ...providerStatusFields(options.getProviderVersionNotice?.() ?? null),
         lastWorkerStderrTail: failedStderrTail,
       });
       // Record why it is down and why it stopped trying — a listener left down
@@ -607,6 +649,10 @@ export async function runListenerSupervisor(
       lastErrorDetail: safeErrorDetail(
         error instanceof Error ? error : new Error(String(error)),
       ),
+      ...providerFailureFields(
+        error instanceof Error ? error : new Error(String(error)),
+      ),
+      ...providerStatusFields(options.getProviderVersionNotice?.() ?? null),
       lastWorkerStderrTail: failedStderrTail,
     });
     log({

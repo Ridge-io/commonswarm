@@ -291,6 +291,41 @@ test("Codex is a durable listener status provider", async () => {
   assert.deepEqual(await readListenerStatus(target), status);
 });
 
+test("failed Claude startup keeps measured runtime and demanded API floor", async () => {
+  const root = await mkdtemp(join(tmpdir(), "cswarm-control-claude-version-"));
+  const target = paths(root);
+  const error = new AcpPermissionCanaryError(
+    "Internal error: API Error: 400 Claude Code 2.1.232 does not support this model; version 2.1.251 or newer is required.",
+    "claude_bridge_version_required",
+    "2.1.251",
+  );
+  const final = await runListenerSupervisor({
+    paths: target,
+    profileId: "profile-claude-version",
+    workspaceId: randomUUID(),
+    principalId: randomUUID(),
+    provider: "claude",
+    restart: { maxAttempts: 0 },
+    getProviderVersionNotice: () => ({
+      executable:
+        "/opt/homebrew/lib/node_modules/@agentclientprotocol/claude-agent-acp/dist/index.js",
+      runningVersion: "0.70.0",
+      lastMeasuredVersion: "0.64.2",
+      bundledAgentSdkVersion: "0.3.232",
+      bundledClaudeCodeVersion: "2.1.232",
+    }),
+    run: async () => ({ reason: "fatal", error }),
+  });
+  assert.equal(final.state, "failed");
+  assert.equal(final.lastErrorCode, "permission_canary_failed");
+  assert.equal(final.lastErrorReasonCode, "claude_bridge_version_required");
+  assert.equal(final.providerVersion, "0.70.0");
+  assert.equal(final.providerBundledAgentSdkVersion, "0.3.232");
+  assert.equal(final.providerBundledClaudeCodeVersion, "2.1.232");
+  assert.equal(final.providerMinimumRequiredVersion, "2.1.251");
+  assert.deepEqual(await readListenerStatus(target), final);
+});
+
 test("lifetime control socket enforces one listener and supports status/stop", async () => {
   const root = await mkdtemp(join(tmpdir(), "cswarm-control-test-"));
   const target = paths(root);
