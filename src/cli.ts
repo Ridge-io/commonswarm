@@ -4424,7 +4424,9 @@ export function renderListenerStatus(
   }
   if (status.providerVersion && status.providerLastMeasuredVersion) {
     lines.push(
-      `Provider version ${status.providerVersion} is newer than the last measured version ${status.providerLastMeasuredVersion}. It is unverified but allowed because the startup permission canary passed. Next: verify this provider release with CommonSwarm and update the last-measured version.`,
+      status.providerVersion === status.providerLastMeasuredVersion
+        ? `Provider version: ${status.providerVersion} (last measured: ${status.providerLastMeasuredVersion}).`
+        : `Provider version ${status.providerVersion} is newer than the last measured version ${status.providerLastMeasuredVersion}. It is unverified but allowed because the startup permission canary passed. Next: verify this provider release with CommonSwarm and update the last-measured version.`,
     );
   }
   if (status.deliveryMode === "durable_claim") {
@@ -4543,6 +4545,7 @@ async function unsurfacedPendingMainStats(
 export function listenerFailureMessage(
   code: string,
   provider?: ListenerProviderId,
+  detail?: string | null,
 ): string {
   if (code === "version_below_floor") {
     if (provider === "codex") {
@@ -4561,6 +4564,9 @@ export function listenerFailureMessage(
   }
   if (code === "version_refused") {
     return `the ${provider ?? "provider"} version check could not run, so startup stopped. Next: run the provider's --version command and fix that error, then retry`;
+  }
+  if (code === "executable_not_bridge" && provider === "codex") {
+    return "this is the Codex CLI; --codex-executable takes the codex-acp bridge (npm i -g @agentclientprotocol/codex-acp)";
   }
   if (code === "executable_missing" && provider === "claude") {
     return "claude-agent-acp is not installed; run npm install -g @agentclientprotocol/claude-agent-acp@latest (minimum 0.64.2), then retry";
@@ -4620,7 +4626,10 @@ export function listenerFailureMessage(
       return "the Claude bridge did not complete the ACP permission canary; the startup canary ran, but no workspace signal prompt was delivered. Confirm Claude Code keychain/OAuth sign-in, then retry";
     }
     if (provider === "codex") {
-      return "the Codex bridge did not complete the read-only ACP permission canary; no workspace signal prompt was delivered. Confirm ChatGPT/Codex sign-in, then retry";
+      const recorded = detail?.trim();
+      return recorded
+        ? `the Codex bridge did not complete the read-only ACP permission canary; no workspace signal prompt was delivered. Recorded reason: ${JSON.stringify(recorded)}`
+        : "the Codex bridge did not complete the read-only ACP permission canary; no workspace signal prompt was delivered. The recorded reason was unavailable. Next: run cswarm listen status, then retry";
     }
     if (provider === "grok") {
       return "the Grok bridge did not complete the ACP permission canary; no workspace signal prompt was delivered. The local cswarm listen status output includes the final error detail; read it, then retry";
@@ -5245,7 +5254,11 @@ async function runListenStart(args: Arguments): Promise<void> {
       });
     } catch (error) {
       if (error instanceof ListenerStartupError) {
-        throw new Error(listenerFailureMessage(error.code, provider));
+        const failedStatus = await effectiveListenerStatus(paths).catch(() => null);
+        const detail = failedStatus?.lastErrorCode === error.code
+          ? failedStatus.lastErrorDetail
+          : null;
+        throw new Error(listenerFailureMessage(error.code, provider, detail));
       }
       throw error;
     }
@@ -5253,7 +5266,11 @@ async function runListenStart(args: Arguments): Promise<void> {
 
   if (status.state === "failed") {
     throw new Error(
-      listenerFailureMessage(status.lastErrorCode ?? "unknown_error", provider),
+      listenerFailureMessage(
+        status.lastErrorCode ?? "unknown_error",
+        provider,
+        status.lastErrorDetail,
+      ),
     );
   }
   let attendanceEvidence: ListenerAttendanceEvidence = {

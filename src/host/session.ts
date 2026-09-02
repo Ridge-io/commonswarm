@@ -20,6 +20,7 @@ import {
 import { sanitizeText, sanitizeUpdateDetail } from "./sanitize.js";
 import { AcpTransport } from "./transport.js";
 import {
+  AcpHostError,
   AcpPermissionCanaryError,
   AcpPromptsBlockedError,
   AcpProtocolError,
@@ -246,7 +247,11 @@ export class AcpHostSession {
   }): Promise<void> {
     if (this.promptsEnabled) return;
     const total = Math.max(1, options?.attempts ?? 2);
-    let last: { passed: boolean; reason?: string } | null = null;
+    let last: {
+      passed: boolean;
+      reason?: string;
+      reasonCode?: string;
+    } | null = null;
     for (let attempt = 1; attempt <= total; attempt += 1) {
       const result = await this.runPermissionBoundaryCanary(options);
       last = result;
@@ -260,6 +265,7 @@ export class AcpHostSession {
       "permission-boundary canary failed: need host reject + correlated terminal tool status";
     throw new AcpPermissionCanaryError(
       total === 1 ? detail : `${detail} (failed ${total} attempts)`,
+      last?.reasonCode ?? null,
     );
   }
 
@@ -302,6 +308,7 @@ export class AcpHostSession {
     sawPermissionRequest: boolean;
     sawDeniedToolResult: boolean;
     reason?: string;
+    reasonCode?: string;
     stopReason?: AcpStopReason;
   }> {
     this.canaryState = {
@@ -335,6 +342,7 @@ export class AcpHostSession {
         sawPermissionRequest: this.canaryState.sawPermissionRequest,
         sawDeniedToolResult: this.canaryState.sawDeniedToolResult,
         reason: err instanceof Error ? err.message : String(err),
+        ...(err instanceof AcpHostError ? { reasonCode: err.code } : {}),
       };
     }
   }

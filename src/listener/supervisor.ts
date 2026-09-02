@@ -113,7 +113,7 @@ export interface ListenerSupervisorOptions {
    * "error" was undiagnosable from the failing box's own log).
    */
   takeWorkerStderrTail?: () => string | null;
-  /** Read the allowed newer-version notice after the permission canary passes. */
+  /** Read the admitted provider version record after its canary passes. */
   getProviderVersionNotice?: () => {
     runningVersion: string;
     lastMeasuredVersion: string;
