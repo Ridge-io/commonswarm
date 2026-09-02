@@ -204,6 +204,21 @@ Measured instance: sign-out copy said it ended every session, and a test require
 The endpoint revoked refresh tokens but could not revoke issued access JWTs. The green mutation control
 therefore defended a false claim, and a sibling clause survived until the whole claim family was swept.
 
+## An enumeration inside a message must be generated, not typed
+
+**If a user-facing string lists things the code enforces — required fields, accepted commands, valid
+options, supported providers — that list must come from the same constant the enforcement reads.**
+A typed list is a claim with no control on it, and it drifts the moment the enforcement changes.
+
+Measured four times in one release cycle (v0.1.48-v0.1.50), each time AFTER two review arms passed:
+a receipt label that named the wrong delivery outcome, twice; a remedy naming `claude login`, a verb
+that does not exist (`claude auth login` does); and a credential error whose own field list said
+`agent_token (required)` while the parser rejected a file that had exactly that and nothing else.
+
+The arms reliably catch wrong logic. They do not catch a wrong LIST inside a correct-looking
+sentence, because reading it requires re-deriving the enforcement — which is the work the shared
+constant removes. Export the set; build the sentence from it; add a test that fails when they differ.
+
 ## Honesty is not sufficient
 
 When a command returns while work continues, state what the reader must do next. Exit 0 and a success-shaped
