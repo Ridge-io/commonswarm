@@ -850,3 +850,10 @@ Still running: L30 (`lane/l30-provider-version`), L32 (`lane/l32-connection-reus
 - Production steps 0.1.46 needs BEFORE the client: migration `20260902000003` (Realtime policy only) and `supabase functions deploy activity` (new function; `supabase/config.toml` carries `[functions.activity] verify_jwt = false`). Runbook: session scratchpad `release-046.sh`.
 - `tests/p1-local/file-artifacts-e2e.test.ts` S4-6 "a previously failed row drains on the next pass" fails on the exact rerun in two independent lanes (MERGE35 and L38) and was already "known-flaky" in the v0.1.39 notes. It is not a flake; it is a broken test or a real drain defect. Lane L39 spec'd to find out. Not attributed to any 0.1.46 lane.
 - Lane worktrees for L30/L31/L32/L35/L38 removed; their branches stay until main absorbs `release/0.1.46`.
+
+### Addendum 2026-09-02 ~05:20Z — production ahead of the 0.1.46 client; L40 in flight
+
+- APPLIED to production: migration `20260902000003` (Realtime SELECT policy "workspace members receive agent activity"; verified in `pg_policies`). DEPLOYED: edge function `activity` (POST → 401 with a 404 control on a non-function; `read` unchanged). Both are additive; 0.1.45 clients never call them.
+- Grok exact arm on `6670181`: `VERDICT: PASS`, P2: `src/listener/control.ts` rejects unknown keys, so a 0.1.45 CLI reading a 0.1.46 listener's status file says "malformed" — real on this dual-binary host. Lane **L40** (`lane/l40-status-forward-compat`) fixes the reader (tolerate unknown keys, `null`/"not measured" for absent counters, honest version remedy). The arms rerun on the post-L40 SHA. Output copied to `scratchpad/reboot-survival/arm-grok-046.out`.
+- Gemini inversion arm on `6670181` produced no verdict twice (immediate "timeout waiting for response", then died mid-report at 1.3 KB). The instrument answers a one-line probe. Rerun on the new SHA with the file-prompt form.
+- p1-local on `6670181`: 16/16 (S4-6 passed this run — intermittent, not deterministic; L39 running to find which side is wrong).
