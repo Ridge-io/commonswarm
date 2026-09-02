@@ -1332,9 +1332,12 @@ export interface BrowserHumanDeliveryReceipt {
  * parser treats every non-human `receipts` row as a delivery ledger row, so this
  * lives only under `broadcastRoster.agents.principals` (20260902000001, the folded roster migration).
  */
-export interface BrowserUntrackedAgentReceipt {
+export interface BrowserBroadcastAgentReceipt {
+  principalId: string;
   recipientAgentPrincipalId: string;
   displayName: string;
+  seenAt: string | null;
+  /** Retained on the wire for clients through 0.1.47. */
   trackingState: "not_tracked";
   observedAt: null;
 }
@@ -1350,8 +1353,9 @@ export interface BrowserRosterSection {
 export interface BrowserBroadcastRecipientRoster {
   members: BrowserRosterSection & { seen: number };
   agents: BrowserRosterSection & {
+    seen: number;
     trackingState: "not_tracked";
-    principals: BrowserUntrackedAgentReceipt[];
+    principals: BrowserBroadcastAgentReceipt[];
   };
 }
 
@@ -1431,13 +1435,14 @@ const isBrowserAgentDeliveryReceipt = (
 export interface BrowserBroadcastRosterView {
   seenMembers: BrowserHumanDeliveryReceipt[];
   notSeenMembers: BrowserHumanDeliveryReceipt[];
-  agents: BrowserUntrackedAgentReceipt[];
+  seenAgents: BrowserBroadcastAgentReceipt[];
+  notSeenAgents: BrowserBroadcastAgentReceipt[];
   /** Seen members the capped list left out, from the server's uncapped count. */
   seenHidden: number;
   /** Not-seen members the capped list left out: total - seen - shown. */
   notSeenHidden: number;
-  /** Agents the capped list left out. */
-  agentsHidden: number;
+  seenAgentsHidden: number;
+  notSeenAgentsHidden: number;
 }
 
 /**
@@ -1452,16 +1457,27 @@ export function browserBroadcastRosterView(
   const seenMembers = members.filter((receipt) => receipt.seenAt !== null);
   const notSeenMembers = members.filter((receipt) => receipt.seenAt === null);
   const agents = result.broadcastRoster?.agents.principals ?? [];
+  const seenAgents = agents.filter((receipt) => receipt.seenAt !== null);
+  const notSeenAgents = agents.filter((receipt) => receipt.seenAt === null);
   const roster = result.broadcastRoster;
   return {
     seenMembers,
     notSeenMembers,
-    agents,
+    seenAgents,
+    notSeenAgents,
     seenHidden: roster ? Math.max(0, roster.members.seen - seenMembers.length) : 0,
     notSeenHidden: roster
       ? Math.max(0, roster.members.total - roster.members.seen - notSeenMembers.length)
       : 0,
-    agentsHidden: roster ? Math.max(0, roster.agents.total - agents.length) : 0,
+    seenAgentsHidden: roster
+      ? Math.max(0, roster.agents.seen - seenAgents.length)
+      : 0,
+    notSeenAgentsHidden: roster
+      ? Math.max(
+        0,
+        roster.agents.total - roster.agents.seen - notSeenAgents.length,
+      )
+      : 0,
   };
 }
 
@@ -1499,6 +1515,7 @@ export function browserDeliveryIndicator(
   if (result.addressed === false) {
     const roster = result.broadcastRoster;
     if (roster !== undefined) {
+      const anySeen = roster.members.seen > 0 || roster.agents.seen > 0;
       const cut = [
         roster.members.truncated
           ? ` Showing ${roster.members.returned} of ${roster.members.total} members.`
@@ -1508,13 +1525,14 @@ export function browserDeliveryIndicator(
           : "",
       ].join("");
       return {
-        state: roster.members.seen > 0 ? "seen" : "no-recipient",
+        state: anySeen ? "seen" : "no-recipient",
         outcome: null,
-        glyph: roster.members.seen > 0 ? "✓✓" : "○",
-        label: `Seen by ${roster.members.seen} of ${roster.members.total}`,
+        glyph: anySeen ? "✓✓" : "○",
+        label: `Seen by ${roster.members.seen} of ${roster.members.total} members · ${roster.agents.seen} of ${roster.agents.total} agents`,
         detail:
-          `Broadcast — nobody was addressed or woken. Member seen state is a focused-viewport browser report. Broadcasts do not wake or track agents.${cut}`,
-        terminal: roster.members.seen >= roster.members.total,
+          `Broadcast — nobody was addressed or woken. Member seen state is a focused-viewport browser report. Seen means the agent's CLI rendered it; a listener that never reads the feed will not appear as seen.${cut}`,
+        terminal: roster.members.seen >= roster.members.total &&
+          roster.agents.seen >= roster.agents.total,
       };
     }
     return {
@@ -2132,34 +2150,44 @@ export async function browserDeliveryReceipts(
     if (
       !Number.isSafeInteger(members.seen) || Number(members.seen) < 0 ||
       Number(members.seen) > members.total ||
+      !Number.isSafeInteger(agents.seen) || Number(agents.seen) < 0 ||
+      Number(agents.seen) > agents.total ||
       agents.tracking_state !== "not_tracked" ||
       !Array.isArray(agents.principals)
     ) {
       throw new Error("Delivery receipts returned a malformed broadcast roster.");
     }
-    const principals: BrowserUntrackedAgentReceipt[] = agents.principals.map((value) => {
+    const principals: BrowserBroadcastAgentReceipt[] = agents.principals.map((value) => {
       if (!value || typeof value !== "object" || Array.isArray(value)) {
         throw new Error("Delivery receipts returned a malformed untracked agent row.");
       }
       const row = value as Record<string, unknown>;
       if (
+        typeof row.principal_id !== "string" || row.principal_id.length === 0 ||
         typeof row.recipient_agent_principal_id !== "string" ||
         row.recipient_agent_principal_id.length === 0 ||
+        row.principal_id !== row.recipient_agent_principal_id ||
         typeof row.display_name !== "string" || row.display_name.length === 0 ||
+        !(row.seen_at === null ||
+          (typeof row.seen_at === "string" && Number.isFinite(Date.parse(row.seen_at)))) ||
         row.tracking_state !== "not_tracked" || row.observed_at !== null
       ) {
         throw new Error("Delivery receipts returned a malformed untracked agent row.");
       }
       return {
+        principalId: row.principal_id,
         recipientAgentPrincipalId: row.recipient_agent_principal_id,
         displayName: row.display_name,
+        seenAt: row.seen_at as string | null,
         trackingState: "not_tracked",
         observedAt: null,
       };
     });
     const seenShown = memberRows.filter((receipt) => receipt.seenAt !== null).length;
+    const agentSeenShown = principals.filter((receipt) => receipt.seenAt !== null).length;
     if (
       seenShown > Number(members.seen) ||
+      agentSeenShown > Number(agents.seen) ||
       memberRows.length !== members.returned ||
       principals.length !== agents.returned ||
       new Set(principals.map((agent) => agent.recipientAgentPrincipalId)).size !==
@@ -2180,6 +2208,7 @@ export async function browserDeliveryReceipts(
         returned: agents.returned,
         limit: agents.limit,
         truncated: agents.truncated,
+        seen: Number(agents.seen),
         trackingState: "not_tracked",
         principals,
       },

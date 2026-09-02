@@ -26,10 +26,10 @@ const broadcastWithAgents = {
   broadcast_roster: {
     members: { total: 3, seen: 1, returned: 3, limit: 50, truncated: false },
     agents: {
-      total: 2, returned: 2, limit: 50, truncated: false, tracking_state: "not_tracked",
+      total: 2, seen: 1, returned: 2, limit: 50, truncated: false, tracking_state: "not_tracked",
       principals: [
-        { recipient_agent_principal_id: "aaaaaaaa-aaaa-4aaa-8aaa-aaaaaaaaaaaa", display_name: "builder", tracking_state: "not_tracked", observed_at: null },
-        { recipient_agent_principal_id: "bbbbbbbb-bbbb-4bbb-8bbb-bbbbbbbbbbbb", display_name: "reviewer", tracking_state: "not_tracked", observed_at: null },
+        { principal_id: "aaaaaaaa-aaaa-4aaa-8aaa-aaaaaaaaaaaa", recipient_agent_principal_id: "aaaaaaaa-aaaa-4aaa-8aaa-aaaaaaaaaaaa", display_name: "builder", seen_at: "2026-09-01T14:04:00.000Z", tracking_state: "not_tracked", observed_at: null },
+        { principal_id: "bbbbbbbb-bbbb-4bbb-8bbb-bbbbbbbbbbbb", recipient_agent_principal_id: "bbbbbbbb-bbbb-4bbb-8bbb-bbbbbbbbbbbb", display_name: "reviewer", seen_at: null, tracking_state: "not_tracked", observed_at: null },
       ],
     },
   },

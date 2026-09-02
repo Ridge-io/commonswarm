@@ -34,12 +34,15 @@ const ATTENDED_RECEIPT_MIGRATION =
   "supabase/migrations/20260902000002_attended_receipt_queue.sql";
 const HUMAN_RECEIPT_MIGRATION =
   "supabase/migrations/20260901000020_signal_human_receipts.sql";
+const AGENT_RECEIPT_MIGRATION =
+  "supabase/migrations/20260902000004_signal_agent_receipts.sql";
 
 function broadcastRoster(overrides: Record<string, unknown> = {}): Record<string, unknown> {
   return {
     members: { total: 0, seen: 0, returned: 0, limit: 50, truncated: false },
     agents: {
       total: 0,
+      seen: 0,
       returned: 0,
       limit: 50,
       truncated: false,
@@ -52,8 +55,10 @@ function broadcastRoster(overrides: Record<string, unknown> = {}): Record<string
 
 function untrackedAgentRow(id: string, name: string): Record<string, unknown> {
   return {
+    principal_id: id,
     recipient_agent_principal_id: id,
     display_name: name,
+    seen_at: null,
     tracking_state: "not_tracked",
     observed_at: null,
   };
@@ -162,6 +167,7 @@ test("broadcast roster is distinguishable from an addressed pending delivery", a
       members: { total: 0, seen: 0, returned: 0, limit: 50, truncated: false },
       agents: {
         total: 0,
+        seen: 0,
         returned: 0,
         limit: 50,
         truncated: false,
@@ -208,6 +214,7 @@ test("human receipt rows preserve not-seen and focused-viewport seen timestamps"
       members: { total: 2, seen: 1, returned: 2, limit: 50, truncated: false },
       agents: {
         total: 1,
+        seen: 0,
         returned: 1,
         limit: 50,
         truncated: false,
@@ -220,8 +227,10 @@ test("human receipt rows preserve not-seen and focused-viewport seen timestamps"
   assert.equal(broadcastSeen.receipts.length, 2);
   assert.equal(broadcastSeen.broadcast_roster?.members.seen, 1);
   assert.deepEqual(broadcastSeen.broadcast_roster?.agents.principals, [{
+    principal_id: SIGNAL,
     recipient_agent_principal_id: SIGNAL,
     display_name: "Agent row",
+    seen_at: null,
     tracking_state: "not_tracked",
     observed_at: null,
   }]);
@@ -250,6 +259,7 @@ test("broadcast receipts carry only rows the pre-roster parser accepted", async 
       members: { total: 2, seen: 1, returned: 2, limit: 50, truncated: false },
       agents: {
         total: 1,
+        seen: 0,
         returned: 1,
         limit: 50,
         truncated: false,
@@ -324,6 +334,7 @@ test("the client checks the roster cap's shape and leaves its value to the serve
       members: { total: 0, seen: 0, returned: 0, limit: 100, truncated: false },
       agents: {
         total: 0,
+        seen: 0,
         returned: 0,
         limit: 7,
         truncated: false,
@@ -365,7 +376,12 @@ test("the client checks the roster cap's shape and leaves its value to the serve
  * "Not-seen members: none" would then be a false claim about 40 people. */
 test("a cut roster section reports the hidden remainder instead of none", () => {
   const parsed = parseDeliveryReceiptResult(cutRosterWire());
-  assert.deepEqual(broadcastRosterHiddenCounts(parsed), { seen: 10, notSeen: 40, agents: 0 });
+  assert.deepEqual(broadcastRosterHiddenCounts(parsed), {
+    seen: 10,
+    notSeen: 40,
+    seenAgents: 0,
+    notSeenAgents: 0,
+  });
 
   const rendered = renderSignalReceiptReport({
     ...parsed,
@@ -554,7 +570,7 @@ test("migration exposes only the receipt fields and grants only read callers", a
   assert.doesNotMatch(migration, /'lease_id'|'leased_by'|'updated_at'|'last_lease_id'/);
 });
 
-test("human receipt schema and command pin first-seen, tenant FKs, and the batch cap", async () => {
+test("human and agent receipt commands pin first-seen and the batch cap", async () => {
   const migration = await readFile(HUMAN_RECEIPT_MIGRATION, "utf8");
   const command = await readFile("supabase/functions/command/human-receipts.ts", "utf8");
   const edge = await readFile("supabase/functions/command/index.ts", "utf8");
@@ -576,7 +592,8 @@ test("human receipt schema and command pin first-seen, tenant FKs, and the batch
   assert.match(command, /ON CONFLICT \(signal_id, user_id\) DO NOTHING/);
   assert.match(command, /SIGNALS_SEEN_MAX_IDS = 50/);
   assert.match(command, /signal\.to_user_id === null|signal\.to_user_id !== null/);
-  assert.match(edge, /signals_seen_requires_human_credential/);
+  assert.match(command, /ON CONFLICT \(signal_id, principal_id\) DO NOTHING/);
+  assert.match(edge, /markAgentSignalsSeen/);
   assert.match(edge, /signal_ids\.length <= SIGNALS_SEEN_MAX_IDS/);
   assert.doesNotMatch(migration, /auth\.uid\(\)/);
 });
@@ -595,6 +612,39 @@ test("broadcast roster starts from live memberships and labels agents untracked"
   assert.match(migration, /'observed_at', NULL/);
   assert.match(migration, /'broadcast_roster'/);
   assert.doesNotMatch(migration, /auth\.uid\(\)/);
+});
+
+test("agent receipt migration is append-only, tenant-bound, and wire-additive", async () => {
+  const migration = await readFile(AGENT_RECEIPT_MIGRATION, "utf8");
+  assert.match(migration, /CREATE TABLE swarm\.signal_agent_receipts/);
+  assert.match(migration, /PRIMARY KEY \(signal_id, principal_id\)/);
+  assert.match(
+    migration,
+    /FOREIGN KEY \(signal_id, workspace_id\)[\s\S]*FOREIGN KEY \(principal_id, workspace_id\)/,
+  );
+  assert.match(migration, /FORCE ROW LEVEL SECURITY/);
+  assert.match(migration, /FOR SELECT TO authenticated/);
+  assert.match(migration, /BEFORE UPDATE OR DELETE/);
+  assert.doesNotMatch(migration, /GRANT (?:UPDATE|DELETE)/);
+  assert.match(
+    migration,
+    /LEFT JOIN swarm\.signal_agent_receipts AS agent_receipt[\s\S]*agent_receipt\.workspace_id = principal\.workspace_id[\s\S]*agent_receipt\.signal_id = p_signal_id[\s\S]*agent_receipt\.principal_id = principal\.principal_id/,
+    "agent receipts must join by workspace, signal, and principal",
+  );
+  assert.ok(
+    (migration.match(/WHERE principal\.workspace_id = p_workspace_id/g)?.length ?? 0) >= 2,
+    "mutation control: both the uncapped count and capped roster are tenant-bound",
+  );
+  for (const field of [
+    "principal_id",
+    "recipient_agent_principal_id",
+    "display_name",
+    "seen_at",
+    "tracking_state",
+    "observed_at",
+  ]) {
+    assert.match(migration, new RegExp(`'${field}'`));
+  }
 });
 
 test("agent edge reaches the definer before installing human JWT claims", async () => {

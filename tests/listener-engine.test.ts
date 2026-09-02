@@ -292,6 +292,38 @@ test("durable worker prompts share the changed-only brain digest state", async (
   }
 });
 
+test("listener attests only after its model consumes the rendered feed digest", async () => {
+  const store = new MemoryStore();
+  const broadcastId = "99999999-9999-4999-8999-999999999999";
+  const order: string[] = [];
+  const engine = new ListenerEngine({
+    store,
+    now: () => Date.parse("2026-09-01T12:00:00.000Z"),
+    resolveSenderProvenance: async () => ({
+      senderName: "Avery",
+      operatorId: null,
+      operatorName: null,
+      feedDigest: "Recent broadcast signals:\n[workspace] ship the roster",
+      renderedBroadcastIds: [broadcastId],
+    }),
+    model: model(async (_signal, _mode, promptText) => {
+      assert.match(promptText, /Recent broadcast signals/);
+      assert.match(promptText, /ship the roster/);
+      order.push("consumed");
+      return { message: "done", stopReason: "end_turn" };
+    }),
+    onBroadcastsConsumed: async (ids) => {
+      order.push("attested");
+      assert.deepEqual(ids, [broadcastId]);
+    },
+    poster: poster(async () => ({ signalId: REPLY_ID })),
+  });
+  await engine.process(signal("aaaaaaaa-aaaa-4aaa-8aaa-aaaaaaaaaaa4", {
+    until: "2026-09-02T00:00:00.000Z",
+  }));
+  assert.deepEqual(order, ["consumed", "attested"]);
+});
+
 test("resolved sender and operator provenance reaches the model prompt", async () => {
   const store = new MemoryStore();
   const ask = signal("aaaaaaaa-aaaa-4aaa-8aaa-aaaaaaaaaaad", {

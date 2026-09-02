@@ -14,7 +14,7 @@ import {
   type BrowserDeliveryReceiptResult,
   type BrowserHumanDeliveryReceipt,
   type BrowserReceiptRow,
-  type BrowserUntrackedAgentReceipt,
+  type BrowserBroadcastAgentReceipt,
   type Signal,
 } from "../../lib/commonswarm.js";
 
@@ -50,11 +50,13 @@ const humanReceipt = (
   ...changes,
 });
 
-const untrackedAgent = (
-  changes: Partial<BrowserUntrackedAgentReceipt> = {},
-): BrowserUntrackedAgentReceipt => ({
+const broadcastAgent = (
+  changes: Partial<BrowserBroadcastAgentReceipt> = {},
+): BrowserBroadcastAgentReceipt => ({
+  principalId: "agent-untracked",
   recipientAgentPrincipalId: "agent-untracked",
   displayName: "Quill",
+  seenAt: "2026-08-28T14:54:00.000Z",
   trackingState: "not_tracked",
   observedAt: null,
   ...changes,
@@ -172,7 +174,7 @@ test("broadcast uses addressed=false and can never look pending or failed", () =
   );
 });
 
-test("broadcast summary and detail model split seen, not-seen, and untracked agents", () => {
+test("broadcast summary and detail model split member and agent attestations", () => {
   /* Agents live under broadcastRoster.agents.principals, never in `receipts`:
    * a cached bundle's parser reads any non-human `receipts` row as a delivery
    * ledger row and would blank the indicator (20260902000001, folded). */
@@ -190,27 +192,50 @@ test("broadcast summary and detail model split seen, not-seen, and untracked age
       members: { total: 2, seen: 1, returned: 2, limit: 50, truncated: false },
       agents: {
         total: 1,
+        seen: 1,
         returned: 1,
         limit: 50,
         truncated: false,
         trackingState: "not_tracked",
-        principals: [untrackedAgent()],
+        principals: [broadcastAgent()],
       },
     },
   };
   const indicator = browserDeliveryIndicator(result, NOW);
   const roster = browserBroadcastRosterView(result);
 
-  assert.equal(indicator.label, "Seen by 1 of 2");
+  assert.equal(indicator.label, "Seen by 1 of 2 members · 1 of 1 agents");
+  assert.equal(indicator.state, "seen");
   assert.match(indicator.detail, /nobody was addressed or woken/);
-  assert.match(indicator.detail, /do not wake or track agents/);
+  assert.match(indicator.detail, /agent's CLI rendered it/);
   assert.deepEqual(roster.seenMembers.map((row) => row.displayName), ["Ari"]);
   assert.deepEqual(roster.notSeenMembers.map((row) => row.displayName), ["Bo"]);
-  assert.deepEqual(roster.agents.map((row) => row.trackingState), ["not_tracked"]);
+  assert.deepEqual(roster.seenAgents.map((row) => row.displayName), ["Quill"]);
+  assert.deepEqual(roster.notSeenAgents, []);
   assert.deepEqual(
-    [roster.seenHidden, roster.notSeenHidden, roster.agentsHidden],
-    [0, 0, 0],
+    [
+      roster.seenHidden,
+      roster.notSeenHidden,
+      roster.seenAgentsHidden,
+      roster.notSeenAgentsHidden,
+    ],
+    [0, 0, 0, 0],
     "an uncut roster hides nothing",
+  );
+  const agentOnlyIndicator = browserDeliveryIndicator({
+    ...result,
+    receipts: result.receipts.map((row) =>
+      "recipientUserId" in row ? { ...row, seenAt: null } : row
+    ),
+    broadcastRoster: {
+      ...result.broadcastRoster!,
+      members: { ...result.broadcastRoster!.members, seen: 0 },
+    },
+  }, NOW);
+  assert.equal(
+    agentOnlyIndicator.state,
+    "seen",
+    "an agent attestation alone must make the combined indicator seen",
   );
 
   const renderer = dashboard.slice(
@@ -219,11 +244,17 @@ test("broadcast summary and detail model split seen, not-seen, and untracked age
   );
   assert.match(renderer, /"Seen members"/);
   assert.match(renderer, /"Not-seen members"/);
-  assert.match(renderer, /"Agents · Not tracked"/);
-  assert.match(renderer, /broadcasts do not wake or track agents/);
+  assert.match(renderer, /`Seen agents · \$\{broadcastResult\.broadcastRoster\.agents\.seen\}/);
+  assert.match(renderer, /"Not-seen agents"/);
+  assert.match(renderer, /not yet seen/);
+  assert.doesNotMatch(
+    renderer,
+    /listener has not read the feed/,
+    "no receipt cannot name why an agent has not attested",
+  );
   assert.match(
     renderer,
-    /roster\.agents\.map/,
+    /roster\.seenAgents\.map/,
     "the agent section must render from the roster view, which reads principals",
   );
   assert.equal(
@@ -253,6 +284,7 @@ test("a cut roster section names the hidden remainder instead of None", () => {
       members: { total: 100, seen: 60, returned: 50, limit: 50, truncated: true },
       agents: {
         total: 0,
+        seen: 0,
         returned: 0,
         limit: 50,
         truncated: false,
@@ -262,10 +294,21 @@ test("a cut roster section names the hidden remainder instead of None", () => {
     },
   };
   const roster = browserBroadcastRosterView(result);
-  assert.equal(browserDeliveryIndicator(result, NOW).label, "Seen by 60 of 100");
+  assert.equal(
+    browserDeliveryIndicator(result, NOW).label,
+    "Seen by 60 of 100 members · 0 of 0 agents",
+  );
   assert.equal(roster.seenMembers.length, 50);
   assert.equal(roster.notSeenMembers.length, 0);
-  assert.deepEqual([roster.seenHidden, roster.notSeenHidden, roster.agentsHidden], [10, 40, 0]);
+  assert.deepEqual(
+    [
+      roster.seenHidden,
+      roster.notSeenHidden,
+      roster.seenAgentsHidden,
+      roster.notSeenAgentsHidden,
+    ],
+    [10, 40, 0, 0],
+  );
 
   const notSeenLines = browserRosterSectionLines(
     roster.notSeenMembers.map((row) => row.displayName ?? row.recipientUserId),
@@ -285,7 +328,10 @@ test("a cut roster section names the hidden remainder instead of None", () => {
   // an uncut section renders its rows unchanged.
   assert.deepEqual(browserRosterSectionLines([], 0), ["None"]);
   assert.deepEqual(
-    browserRosterSectionLines(roster.agents.map((row) => row.displayName), roster.agentsHidden),
+    browserRosterSectionLines(
+      roster.notSeenAgents.map((row) => row.displayName),
+      roster.notSeenAgentsHidden,
+    ),
     ["None"],
   );
   assert.deepEqual(browserRosterSectionLines(["Ari", "Bo"], 0), ["Ari", "Bo"]);
@@ -301,8 +347,8 @@ test("a cut roster section names the hidden remainder instead of None", () => {
     "the dashboard must not decide None on its own; the shared rule owns it",
   );
   assert.equal(
-    renderer.match(/appendRosterSection\(\s*"[^"]+",[\s\S]*?roster\.(?:seenHidden|notSeenHidden|agentsHidden),\s*\)/g)?.length,
-    3,
+    renderer.match(/appendRosterSection\([\s\S]*?roster\.(?:seenHidden|notSeenHidden|seenAgentsHidden|notSeenAgentsHidden),\s*\)/g)?.length,
+    4,
     "every roster section must pass its hidden remainder",
   );
 });

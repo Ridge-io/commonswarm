@@ -43,8 +43,11 @@ definer function `swarm_read` may execute.
 is no recipient. A broadcast can therefore never have receipts.~~ **DEAD, 2026-09-01:** a
 broadcast still creates no agent delivery rows and wakes no agent, but human focused-viewport
 attestations now support an honest workspace-member roster. Migration `20260902000001` starts
-from all live memberships, left-joins those attestations, and lists live agents as `not_tracked`
-because no current surface injects broadcasts into agent context.
+from all live memberships and left-joins those attestations. Migration
+`20260902000004` adds a separate append-only agent roster receipt. `cswarm feed`
+attests only the broadcasts it rendered, and a listener attests a feed digest
+only after its model consumed the prompt. The old `not_tracked` wire keys stay
+present for clients through 0.1.47; current clients use `seen_at`.
 
 ## Lanes
 
@@ -80,5 +83,7 @@ L1, L2, L4, L5 are independent and run in parallel. L3 follows L1 and L2.
   saw it, and is not `replied` — do not collapse these states into one tick.
 - Absence of a delivery row for a broadcast must still render as *"no recipient — nobody was
   woken"*, not as a pending or failed agent state. The same detail may separately show member
-  focused-viewport receipts. Agents must say `not tracked`, never `not seen`.
+  focused-viewport receipts. An agent is not seen until its own client attests
+  the broadcast. Seen means the agent's CLI rendered it; a listener that never
+  reads the feed will not appear as seen.
 - The UI must distinguish "not yet delivered" from "delivered and the agent went quiet".
