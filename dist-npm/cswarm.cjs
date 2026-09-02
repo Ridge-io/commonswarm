@@ -21470,6 +21470,14 @@ var MemoryStorage = class {
     this.values.delete(key2);
   }
 };
+var HumanSessionError = class extends Error {
+  constructor(code, message) {
+    super(message);
+    this.code = code;
+  }
+  code;
+  name = "HumanSessionError";
+};
 function base64Url(bytes) {
   return bytes.toString("base64url");
 }
@@ -21848,7 +21856,12 @@ async function refreshedCredential(target2, store2) {
   return await store2.withLock(async () => {
     for (let attempt = 0; attempt < 2; attempt += 1) {
       const before = await store2.read();
-      if (!before) throw new Error("not logged in; run cswarm login");
+      if (!before) {
+        throw new HumanSessionError(
+          "human_session_missing",
+          "not logged in; run cswarm login"
+        );
+      }
       const memory = new MemoryStorage();
       const client = authClient(target2, memory);
       const refreshed = await client.auth.refreshSession({
@@ -21857,7 +21870,10 @@ async function refreshedCredential(target2, store2) {
       if (refreshed.error) {
         const afterFailure = await store2.read();
         if (afterFailure && afterFailure.generation !== before.generation) continue;
-        throw new Error("could not refresh your session; run cswarm login to sign in again");
+        throw new HumanSessionError(
+          "human_session_refresh_failed",
+          "could not refresh your session; run cswarm login to sign in again"
+        );
       }
       const session = requireSession(refreshed.data.session);
       const current = await store2.read();
@@ -26463,6 +26479,149 @@ async function agentCredentialStore(options) {
   };
 }
 
+// src/cloud/agent-credential-input.ts
+var UUID_RE4 = /^[0-9a-f]{8}-[0-9a-f]{4}-[1-8][0-9a-f]{3}-[89ab][0-9a-f]{3}-[0-9a-f]{12}$/i;
+var AGENT_TOKEN_RE3 = /^swm_agt_[A-Za-z0-9_-]{43}$/;
+var AGENT_CREDENTIAL_MESSAGE = "Agent credential minted. It is bound to this task and run so the agent's work stays scoped and attributable.";
+var AGENT_CREDENTIAL_MESSAGE_D088 = "Agent credential minted. It is bound to this run, so the agent's work is attributable to it.";
+var ACCEPTED_AGENT_CREDENTIAL_MESSAGES = [
+  AGENT_CREDENTIAL_MESSAGE,
+  AGENT_CREDENTIAL_MESSAGE_D088
+];
+var AgentCredentialInputError = class extends Error {
+  constructor(code, message) {
+    super(`[${code}] ${message}`);
+    this.code = code;
+  }
+  code;
+  name = "AgentCredentialInputError";
+};
+var AGENT_CREDENTIAL_REQUIRED_FIELDS = [
+  "message",
+  "status",
+  "principal_id",
+  "token_id",
+  "run_id",
+  "agent_token"
+];
+var AGENT_CREDENTIAL_OPTIONAL_FIELDS = ["expires_at"];
+var ALLOWED_ARTIFACT_KEYS = /* @__PURE__ */ new Set([
+  ...AGENT_CREDENTIAL_REQUIRED_FIELDS,
+  ...AGENT_CREDENTIAL_OPTIONAL_FIELDS
+]);
+function sourceName(source) {
+  return source.kind === "file" ? `agent credential file ${source.path}` : "agent credential input from stdin";
+}
+function nextStep(source) {
+  return source.kind === "file" ? `Next step: copy the minted JSON line again and replace ${source.path}.` : "Next step: copy the minted JSON line again and send that line to stdin.";
+}
+function credentialInputError(code, source, found) {
+  return new AgentCredentialInputError(
+    code,
+    `${sourceName(source)} ${found}. It must be the JSON line CommonSwarm minted, copied unchanged: ${AGENT_CREDENTIAL_REQUIRED_FIELDS.join(", ")} (${AGENT_CREDENTIAL_OPTIONAL_FIELDS.join(", ")} is optional). ${nextStep(source)}`
+  );
+}
+function jsonKind(value) {
+  if (value === null) return "JSON null";
+  if (Array.isArray(value)) return "a JSON array";
+  return `a JSON ${typeof value}`;
+}
+function parseAgentCredentialInput(value, source) {
+  if (AGENT_TOKEN_RE3.test(value)) {
+    return {
+      token: value,
+      principalId: null,
+      tokenId: null,
+      runId: null,
+      expiresAt: null,
+      durable: false
+    };
+  }
+  let parsed;
+  try {
+    parsed = JSON.parse(value);
+  } catch {
+    throw credentialInputError(
+      "agent_credential_invalid_json",
+      source,
+      "contains text that is not valid JSON"
+    );
+  }
+  if (parsed === null || typeof parsed !== "object" || Array.isArray(parsed)) {
+    throw credentialInputError(
+      "agent_credential_not_object",
+      source,
+      `contains ${jsonKind(parsed)} instead of a JSON object`
+    );
+  }
+  const artifact = parsed;
+  if (!Object.hasOwn(artifact, "agent_token")) {
+    throw credentialInputError(
+      "agent_credential_missing_agent_token",
+      source,
+      'is missing "agent_token"'
+    );
+  }
+  if (typeof artifact.agent_token !== "string" || !AGENT_TOKEN_RE3.test(artifact.agent_token)) {
+    const found = typeof artifact.agent_token === "string" ? 'has "agent_token" as a string that is not a swm_agt_ credential' : `has "agent_token" as ${jsonKind(artifact.agent_token)}`;
+    throw credentialInputError(
+      "agent_credential_invalid_agent_token",
+      source,
+      found
+    );
+  }
+  const actualKeys = Object.keys(artifact);
+  const missingKeys = AGENT_CREDENTIAL_REQUIRED_FIELDS.filter(
+    (key2) => !Object.hasOwn(artifact, key2)
+  );
+  const unknownCount = actualKeys.filter(
+    (key2) => !ALLOWED_ARTIFACT_KEYS.has(key2)
+  ).length;
+  const invalidKeys = [];
+  if (Object.hasOwn(artifact, "message") && !ACCEPTED_AGENT_CREDENTIAL_MESSAGES.includes(artifact.message)) {
+    invalidKeys.push("message");
+  }
+  if (Object.hasOwn(artifact, "status") && artifact.status !== "accepted") {
+    invalidKeys.push("status");
+  }
+  for (const key2 of ["principal_id", "token_id", "run_id"]) {
+    if (Object.hasOwn(artifact, key2) && (typeof artifact[key2] !== "string" || !UUID_RE4.test(artifact[key2]))) {
+      invalidKeys.push(key2);
+    }
+  }
+  if (artifact.expires_at !== void 0) {
+    if (typeof artifact.expires_at !== "string" || Number.isNaN(Date.parse(artifact.expires_at))) {
+      invalidKeys.push("expires_at");
+    }
+  }
+  if (missingKeys.length > 0 || unknownCount > 0 || invalidKeys.length > 0) {
+    const faults = [];
+    if (unknownCount > 0) {
+      faults.push(`has ${unknownCount} unrecognized ${unknownCount === 1 ? "field" : "fields"}`);
+    }
+    if (missingKeys.length > 0) {
+      faults.push(`is missing required ${missingKeys.length === 1 ? "field" : "fields"} ${missingKeys.map((key2) => `"${key2}"`).join(", ")}`);
+    }
+    if (invalidKeys.length > 0) {
+      faults.push(`has invalid ${invalidKeys.length === 1 ? "field" : "fields"} ${invalidKeys.map((key2) => `"${key2}"`).join(", ")}`);
+    }
+    throw credentialInputError(
+      "agent_credential_fields_invalid",
+      source,
+      faults.join(" and ")
+    );
+  }
+  const expiresAt = artifact.expires_at === void 0 ? null : Date.parse(artifact.expires_at);
+  return {
+    token: artifact.agent_token,
+    principalId: artifact.principal_id.toLowerCase(),
+    tokenId: artifact.token_id.toLowerCase(),
+    runId: artifact.run_id.toLowerCase(),
+    expiresAt,
+    durable: true
+  };
+}
+
 // src/cloud/renewal.ts
 var import_node_crypto9 = require("node:crypto");
 var AGENT_TOKEN_DEFAULT_TTL_MS2 = 60 * 60 * 1e3;
@@ -26485,8 +26644,8 @@ var RENEWAL_LEAD_FLOOR_MS = 5 * 6e4;
 var RENEWAL_LEAD_CEILING_MS = 15 * 6e4;
 var RENEWAL_PENDING_RECOVERY_MS = 60 * 6e4;
 var RENEW_TIMEOUT_MS = 3e4;
-var UUID_RE4 = /^[0-9a-f]{8}-[0-9a-f]{4}-[1-8][0-9a-f]{3}-[89ab][0-9a-f]{3}-[0-9a-f]{12}$/i;
-var AGENT_TOKEN_RE3 = /^swm_agt_[A-Za-z0-9_-]{43}$/;
+var UUID_RE5 = /^[0-9a-f]{8}-[0-9a-f]{4}-[1-8][0-9a-f]{3}-[89ab][0-9a-f]{3}-[0-9a-f]{12}$/i;
+var AGENT_TOKEN_RE4 = /^swm_agt_[A-Za-z0-9_-]{43}$/;
 function renewalDueAt(issuedAt, expiresAt) {
   const lifetime = Math.max(0, expiresAt - issuedAt);
   const lead = Math.min(
@@ -26644,7 +26803,7 @@ async function requestSuccessor(options) {
   } catch {
     body = {};
   }
-  const principalId = typeof body.principal_id === "string" && UUID_RE4.test(body.principal_id) ? body.principal_id.toLowerCase() : null;
+  const principalId = typeof body.principal_id === "string" && UUID_RE5.test(body.principal_id) ? body.principal_id.toLowerCase() : null;
   if (response.status === 400 || response.status === 404) {
     throw new RenewalUnsupported(
       "this deployment does not offer credential renewal yet, so a credential here still has to be re-issued by hand when it expires"
@@ -26732,7 +26891,7 @@ async function requestSuccessor(options) {
   if (!token) {
     return null;
   }
-  if (!AGENT_TOKEN_RE3.test(token)) {
+  if (!AGENT_TOKEN_RE4.test(token)) {
     throw new RenewalRefused(
       response.status,
       "malformed_successor",
@@ -26741,7 +26900,7 @@ async function requestSuccessor(options) {
   }
   const tokenId = typeof body.token_id === "string" ? body.token_id : "";
   const runId = typeof body.run_id === "string" ? body.run_id : "";
-  if (!UUID_RE4.test(tokenId) || !UUID_RE4.test(runId) || principalId === null) {
+  if (!UUID_RE5.test(tokenId) || !UUID_RE5.test(runId) || principalId === null) {
     throw new RenewalRefused(
       response.status,
       "incomplete_successor",
@@ -27250,7 +27409,7 @@ var MAX_LINK_PAYLOAD_BYTES = 8 * 1024;
 var MAX_LABEL_INPUT_LENGTH = 1024;
 var CONTROL_GLOBAL_RE = /[\u0000-\u001f\u007f-\u009f\u202a-\u202e\u2066-\u2069]/g;
 var ANSI_ESCAPE_GLOBAL_RE = /\u001b\[[0-?]*[ -/]*[@-~]/g;
-var UUID_RE5 = /^[0-9a-f]{8}-[0-9a-f]{4}-[1-8][0-9a-f]{3}-[89ab][0-9a-f]{3}-[0-9a-f]{12}$/i;
+var UUID_RE6 = /^[0-9a-f]{8}-[0-9a-f]{4}-[1-8][0-9a-f]{3}-[89ab][0-9a-f]{3}-[0-9a-f]{12}$/i;
 var STRICT_BASE64URL_RE = /^[A-Za-z0-9_-]+$/;
 var RAW_BASE64_PAYLOAD_CANDIDATE_RE = /^[A-Za-z0-9+/_=-]+$/;
 var CURRENT_INVITE_SCHEME = "cswarm://accept/";
@@ -27301,7 +27460,7 @@ function validatedPayload(value) {
     throw new Error("invite link target is malformed");
   }
   cloudTarget(value.url, value.anon_key);
-  if (typeof value.workspace_id !== "string" || !UUID_RE5.test(value.workspace_id)) {
+  if (typeof value.workspace_id !== "string" || !UUID_RE6.test(value.workspace_id)) {
     throw new Error("invite link workspace_id must be a UUID");
   }
   if (typeof value.invitation_token !== "string") {
@@ -27311,7 +27470,7 @@ function validatedPayload(value) {
   if (typeof value.workspace_name !== "string" || typeof value.inviter_display_name !== "string" || value.workspace_name.length > MAX_LABEL_INPUT_LENGTH || value.inviter_display_name.length > MAX_LABEL_INPUT_LENGTH) {
     throw new Error("invite link display labels are malformed");
   }
-  if (value.inviter_user_id !== void 0 && (typeof value.inviter_user_id !== "string" || !UUID_RE5.test(value.inviter_user_id))) {
+  if (value.inviter_user_id !== void 0 && (typeof value.inviter_user_id !== "string" || !UUID_RE6.test(value.inviter_user_id))) {
     throw new Error("invite link inviter_user_id must be a UUID");
   }
   return value;
@@ -27969,7 +28128,7 @@ function renderCapabilityRevoke(capabilityId, revokedAt) {
 }
 
 // src/cloud/renewal-grants.ts
-var UUID_RE6 = /^[0-9a-f]{8}-[0-9a-f]{4}-[1-8][0-9a-f]{3}-[89ab][0-9a-f]{3}-[0-9a-f]{12}$/i;
+var UUID_RE7 = /^[0-9a-f]{8}-[0-9a-f]{4}-[1-8][0-9a-f]{3}-[89ab][0-9a-f]{3}-[0-9a-f]{12}$/i;
 function nullableString(value, field) {
   if (value === null) return null;
   if (typeof value !== "string") {
@@ -27985,7 +28144,7 @@ function nullableTimestamp(value, field) {
   return text;
 }
 function uuid3(value, field) {
-  if (typeof value !== "string" || !UUID_RE6.test(value)) {
+  if (typeof value !== "string" || !UUID_RE7.test(value)) {
     throw new Error(`renewal grant read returned malformed ${field}`);
   }
   return value.toLowerCase();
@@ -28076,7 +28235,7 @@ function describeRenewalGrant(grant) {
 }
 
 // src/cloud/workspaces.ts
-var UUID_RE7 = /^[0-9a-f]{8}-[0-9a-f]{4}-[1-8][0-9a-f]{3}-[89ab][0-9a-f]{3}-[0-9a-f]{12}$/i;
+var UUID_RE8 = /^[0-9a-f]{8}-[0-9a-f]{4}-[1-8][0-9a-f]{3}-[89ab][0-9a-f]{3}-[0-9a-f]{12}$/i;
 var ROLES = /* @__PURE__ */ new Set(["owner", "admin", "member"]);
 var MemberSelectionError = class extends Error {
   constructor(code, message, matches = []) {
@@ -28089,7 +28248,7 @@ var MemberSelectionError = class extends Error {
   matches;
 };
 function resolveWorkspaceMember(selector, members) {
-  if (UUID_RE7.test(selector)) {
+  if (UUID_RE8.test(selector)) {
     const selected = members.find(
       (member) => member.user_id === selector.toLowerCase()
     );
@@ -28188,7 +28347,7 @@ var WorkspaceAmbiguousNameError = class extends WorkspaceCliError {
   }
 };
 function checkedUuid(value, field) {
-  if (typeof value !== "string" || !UUID_RE7.test(value)) {
+  if (typeof value !== "string" || !UUID_RE8.test(value)) {
     throw new Error(`workspace read returned a malformed ${field}`);
   }
   return value.toLowerCase();
@@ -28507,13 +28666,13 @@ async function updateWorkspaceDefaultAfterClose(store2, userId, closedWorkspaceI
 }
 function workspaceOverride(explicit, environmental) {
   if (explicit !== void 0) {
-    if (!UUID_RE7.test(explicit)) {
+    if (!UUID_RE8.test(explicit)) {
       throw new Error("--workspace-id must be a UUID");
     }
     return explicit.toLowerCase();
   }
   if (environmental) {
-    if (!UUID_RE7.test(environmental)) {
+    if (!UUID_RE8.test(environmental)) {
       throw new Error("SWARM_CLOUD_WORKSPACE_ID must be a UUID");
     }
     return environmental.toLowerCase();
@@ -28573,7 +28732,7 @@ async function selectWorkspace(selector, workspaces, store2, userId) {
 function resolveWorkspaceSelector(selector, workspaces) {
   const sorted = sortWorkspaces(workspaces);
   let selected;
-  if (UUID_RE7.test(selector)) {
+  if (UUID_RE8.test(selector)) {
     const normalized = selector.toLowerCase();
     selected = sorted.find(
       (workspace) => workspace.workspace_id === normalized
@@ -28723,7 +28882,7 @@ function describeServerError(prefix, envelope) {
 
 // src/cloud/attachments.ts
 var SIGNAL_ATTACHMENT_MAX = 8;
-var UUID_RE8 = /^[0-9a-f]{8}-[0-9a-f]{4}-[1-8][0-9a-f]{3}-[89ab][0-9a-f]{3}-[0-9a-f]{12}$/i;
+var UUID_RE9 = /^[0-9a-f]{8}-[0-9a-f]{4}-[1-8][0-9a-f]{3}-[89ab][0-9a-f]{3}-[0-9a-f]{12}$/i;
 function parseSignalAttachments(value, options = {}) {
   if (options.enabled === false || value === void 0) return [];
   if (!Array.isArray(value) || value.length > SIGNAL_ATTACHMENT_MAX) {
@@ -28736,7 +28895,7 @@ function parseSignalAttachments(value, options = {}) {
       throw new Error("signal read returned a malformed attachment");
     }
     const row = valueAtPosition;
-    if (typeof row.file_id !== "string" || !UUID_RE8.test(row.file_id) || typeof row.version_n !== "number" || !Number.isSafeInteger(row.version_n) || row.version_n < 1 || typeof row.name !== "string" || row.name.length < 1 || row.name.length > 255 || typeof row.content_type !== "string" || row.content_type.length < 1 || typeof row.size_bytes !== "number" || !Number.isSafeInteger(row.size_bytes) || row.size_bytes < 0) {
+    if (typeof row.file_id !== "string" || !UUID_RE9.test(row.file_id) || typeof row.version_n !== "number" || !Number.isSafeInteger(row.version_n) || row.version_n < 1 || typeof row.name !== "string" || row.name.length < 1 || row.name.length > 255 || typeof row.content_type !== "string" || row.content_type.length < 1 || typeof row.size_bytes !== "number" || !Number.isSafeInteger(row.size_bytes) || row.size_bytes < 0) {
       throw new Error("signal read returned malformed attachment metadata");
     }
     const fileId = row.file_id.toLowerCase();
@@ -28756,7 +28915,7 @@ function parseSignalAttachments(value, options = {}) {
   return attachments;
 }
 function attachmentRetrievalCommand(workspaceId2, attachment) {
-  if (!UUID_RE8.test(workspaceId2) || !UUID_RE8.test(attachment.file_id)) {
+  if (!UUID_RE9.test(workspaceId2) || !UUID_RE9.test(attachment.file_id)) {
     throw new Error("attachment retrieval command needs UUID identifiers");
   }
   if (!Number.isSafeInteger(attachment.version_n) || attachment.version_n < 1) {
@@ -28772,7 +28931,7 @@ function formatAttachmentSize(bytes) {
 }
 
 // src/cloud/signals.ts
-var UUID_RE9 = /^[0-9a-f]{8}-[0-9a-f]{4}-[1-8][0-9a-f]{3}-[89ab][0-9a-f]{3}-[0-9a-f]{12}$/i;
+var UUID_RE10 = /^[0-9a-f]{8}-[0-9a-f]{4}-[1-8][0-9a-f]{3}-[89ab][0-9a-f]{3}-[0-9a-f]{12}$/i;
 var SIGNAL_KINDS = /* @__PURE__ */ new Set(["working-on", "note", "ask"]);
 var SIGNAL_BODY_DISPLAY_MAX = 8e3;
 var SIGNAL_ABOUT_DISPLAY_MAX = 500;
@@ -28843,7 +29002,7 @@ function plainMalformedError(message) {
   return error;
 }
 function checkedUuid2(value, field) {
-  if (typeof value !== "string" || !UUID_RE9.test(value)) {
+  if (typeof value !== "string" || !UUID_RE10.test(value)) {
     throw new Error(`signal read returned a malformed ${field}`);
   }
   return value.toLowerCase();
@@ -29474,7 +29633,7 @@ async function readAgentSignalDirectory(target2, token, workspaceId2, fetcherOrO
 }
 function resolveSignalRecipient(selector, directory) {
   const resolved = Array.isArray(directory) ? { members: directory, agents: [] } : directory;
-  if (UUID_RE9.test(selector)) {
+  if (UUID_RE10.test(selector)) {
     const normalized = selector.toLowerCase();
     const member = resolved.members.find((row) => row.user_id === normalized);
     const agent = resolved.agents.find(
@@ -29560,10 +29719,10 @@ async function pollForSignals(options) {
   return { signals: [], timedOut: true };
 }
 function normalizedSignalQuery(query) {
-  if (!UUID_RE9.test(query.workspaceId)) {
+  if (!UUID_RE10.test(query.workspaceId)) {
     throw new Error("--workspace-id must be a UUID");
   }
-  if (query.in_reply_to !== void 0 && !UUID_RE9.test(query.in_reply_to)) {
+  if (query.in_reply_to !== void 0 && !UUID_RE10.test(query.in_reply_to)) {
     throw new Error("in_reply_to must be a signal UUID");
   }
   const after = checkedAfter(query.after);
@@ -30081,7 +30240,7 @@ async function runInboxFollow(options) {
 // src/cloud/arrival-watch.ts
 var import_node_os4 = require("node:os");
 var import_node_path4 = require("node:path");
-var UUID_RE10 = /^[0-9a-f]{8}-[0-9a-f]{4}-[1-8][0-9a-f]{3}-[89ab][0-9a-f]{3}-[0-9a-f]{12}$/i;
+var UUID_RE11 = /^[0-9a-f]{8}-[0-9a-f]{4}-[1-8][0-9a-f]{3}-[89ab][0-9a-f]{3}-[0-9a-f]{12}$/i;
 var CURSOR_MAX_BYTES = 4 * 1024;
 var ARRIVAL_SNIPPET_MAX = 180;
 var ARRIVAL_WATCH_POLL_MS = 25e3;
@@ -30149,7 +30308,7 @@ function parseCursor(raw, workspaceId2, principalId) {
   }
   const row = value;
   const cursor = row.cursor;
-  if (row.version !== 1 || row.workspace_id !== workspaceId2.toLowerCase() || row.principal_id !== principalId.toLowerCase() || !(cursor === null || typeof cursor === "object" && !Array.isArray(cursor) && typeof cursor.created_at === "string" && Number.isFinite(Date.parse(cursor.created_at)) && typeof cursor.id === "string" && UUID_RE10.test(cursor.id))) {
+  if (row.version !== 1 || row.workspace_id !== workspaceId2.toLowerCase() || row.principal_id !== principalId.toLowerCase() || !(cursor === null || typeof cursor === "object" && !Array.isArray(cursor) && typeof cursor.created_at === "string" && Number.isFinite(Date.parse(cursor.created_at)) && typeof cursor.id === "string" && UUID_RE11.test(cursor.id))) {
     throw new Error("stored arrival cursor is malformed");
   }
   if (cursor === null) return null;
@@ -30161,7 +30320,7 @@ function parseCursor(raw, workspaceId2, principalId) {
 function fileArrivalCursorStore(options) {
   const workspaceId2 = options.workspaceId.toLowerCase();
   const principalId = options.principalId.toLowerCase();
-  if (!UUID_RE10.test(workspaceId2) || !UUID_RE10.test(principalId)) {
+  if (!UUID_RE11.test(workspaceId2) || !UUID_RE11.test(principalId)) {
     throw new Error("arrival cursor identity must use workspace and principal UUIDs");
   }
   const location2 = arrivalCursorPath(
@@ -30343,7 +30502,7 @@ async function runArrivalWatch(options) {
 }
 
 // src/cloud/delivery-receipts.ts
-var UUID_RE11 = /^[0-9a-f]{8}-[0-9a-f]{4}-[1-8][0-9a-f]{3}-[89ab][0-9a-f]{3}-[0-9a-f]{12}$/i;
+var UUID_RE12 = /^[0-9a-f]{8}-[0-9a-f]{4}-[1-8][0-9a-f]{3}-[89ab][0-9a-f]{3}-[0-9a-f]{12}$/i;
 var DeliveryReceiptReadError = class extends Error {
   constructor(code, message, status = null) {
     super(message);
@@ -30362,7 +30521,7 @@ var ACK_OUTCOMES = /* @__PURE__ */ new Set([
   "failed_terminal"
 ]);
 function uuid4(value, field) {
-  if (typeof value !== "string" || !UUID_RE11.test(value)) {
+  if (typeof value !== "string" || !UUID_RE12.test(value)) {
     throw new DeliveryReceiptReadError(
       "protocol",
       `delivery receipt returned a malformed ${field}`
@@ -33739,7 +33898,7 @@ async function resolveBudgetAndPrompt(session, prompt, budget) {
 }
 
 // src/listener/engine.ts
-var UUID_RE12 = /^[0-9a-f]{8}-[0-9a-f]{4}-[1-8][0-9a-f]{3}-[89ab][0-9a-f]{3}-[0-9a-f]{12}$/i;
+var UUID_RE13 = /^[0-9a-f]{8}-[0-9a-f]{4}-[1-8][0-9a-f]{3}-[89ab][0-9a-f]{3}-[0-9a-f]{12}$/i;
 var TERMINAL_STATES = /* @__PURE__ */ new Set(["done", "expired", "failed"]);
 var REPLY_MAX_CODE_UNITS = 2e3;
 var TRUNCATION_SUFFIX = "\n[Reply truncated by CommonSwarm]";
@@ -33747,7 +33906,7 @@ var UNSAFE_CONTROLS_RE = /[\u0000-\u0008\u000b\u000c\u000e-\u001f\u007f-\u009f\u
 var LISTENER_MAX_PROMPT_ATTEMPTS = 3;
 var LISTENER_MAX_POST_ATTEMPTS = 5;
 function listenerReplyCommandId(signalId, effectOrdinal = 0) {
-  if (!UUID_RE12.test(signalId)) {
+  if (!UUID_RE13.test(signalId)) {
     throw new Error("listener signal id must be a UUID");
   }
   if (!Number.isSafeInteger(effectOrdinal) || effectOrdinal < 0) {
@@ -34240,7 +34399,7 @@ var import_node_crypto13 = require("node:crypto");
 var import_node_os6 = require("node:os");
 var import_node_path9 = require("node:path");
 var import_node_util = require("node:util");
-var UUID_RE13 = /^[0-9a-f]{8}-[0-9a-f]{4}-[1-8][0-9a-f]{3}-[89ab][0-9a-f]{3}-[0-9a-f]{12}$/i;
+var UUID_RE14 = /^[0-9a-f]{8}-[0-9a-f]{4}-[1-8][0-9a-f]{3}-[89ab][0-9a-f]{3}-[0-9a-f]{12}$/i;
 var COMMAND_ID_RE2 = /^[A-Za-z0-9_-]{8,72}$/;
 var MAX_EFFECT_BYTES = 1024 * 1024;
 var STATES = /* @__PURE__ */ new Set([
@@ -34290,7 +34449,7 @@ function defaultListenerStateDirectory() {
   return process.env.XDG_STATE_HOME ? (0, import_node_path9.join)(process.env.XDG_STATE_HOME, "cswarm", "listeners") : (0, import_node_path9.join)((0, import_node_os6.homedir)(), ".cswarm", "listeners");
 }
 function listenerInstanceKey(input) {
-  if (!UUID_RE13.test(input.workspaceId) || !UUID_RE13.test(input.principalId)) {
+  if (!UUID_RE14.test(input.workspaceId) || !UUID_RE14.test(input.principalId)) {
     throw new Error("listener workspace and principal ids must be UUIDs");
   }
   if (!input.profileId || input.profileId.includes("\0")) {
@@ -34323,7 +34482,7 @@ function parseListenerEffectRecord(raw, expectedId) {
   }
   const row = value;
   rejectSensitiveKeys(row);
-  if (typeof row.version !== "number" || row.version !== 1 && row.version !== 2 || typeof row.signalId !== "string" || row.signalId.toLowerCase() !== expectedId || !UUID_RE13.test(row.signalId)) {
+  if (typeof row.version !== "number" || row.version !== 1 && row.version !== 2 || typeof row.signalId !== "string" || row.signalId.toLowerCase() !== expectedId || !UUID_RE14.test(row.signalId)) {
     throw new Error("stored listener effect is malformed");
   }
   if (row.version === 1) {
@@ -34338,7 +34497,7 @@ function upcastV1Ask(row) {
   if (row.effectOrdinal !== 0 || typeof row.commandId !== "string" || !COMMAND_ID_RE2.test(row.commandId) || typeof row.askBody !== "string" || row.askBody.length < 1 || typeof row.askUntil !== "string" || !Number.isFinite(Date.parse(row.askUntil)) || typeof row.senderOwnerRelation !== "string" || !RELATIONS.has(row.senderOwnerRelation) || typeof row.state !== "string" || !STATES.has(row.state) || !integer(row.promptAttempts) || !integer(row.postAttempts) || !nullableString2(row.replyBody, 2e3) || typeof row.replyTruncated !== "boolean" || !nullableString2(row.replySignalId, 64) || !nullableString2(row.failureCode, 96) || typeof row.updatedAt !== "string" || !Number.isFinite(Date.parse(row.updatedAt))) {
     throw new Error("stored listener effect is malformed");
   }
-  if (row.replySignalId !== null && !UUID_RE13.test(row.replySignalId)) {
+  if (row.replySignalId !== null && !UUID_RE14.test(row.replySignalId)) {
     throw new Error("stored listener effect is malformed");
   }
   return {
@@ -34377,7 +34536,7 @@ function parseV2Record(row) {
     if (typeof row.commandId !== "string" || !COMMAND_ID_RE2.test(row.commandId) || row.state === "observed") {
       throw new Error("stored listener effect is malformed");
     }
-    if (row.replySignalId !== null && !UUID_RE13.test(row.replySignalId)) {
+    if (row.replySignalId !== null && !UUID_RE14.test(row.replySignalId)) {
       throw new Error("stored listener effect is malformed");
     }
   }
@@ -34401,7 +34560,7 @@ function parseV2Record(row) {
   };
 }
 function newObservedNoteRecord(input) {
-  if (!UUID_RE13.test(input.signalId)) {
+  if (!UUID_RE14.test(input.signalId)) {
     throw new Error("listener note signal id must be a UUID");
   }
   if (input.body.length < 1) {
@@ -34535,7 +34694,7 @@ var FileListenerEffectStore = class {
     );
   }
   checkedId(signalId) {
-    if (!UUID_RE13.test(signalId)) {
+    if (!UUID_RE14.test(signalId)) {
       throw new Error("listener signal id must be a UUID");
     }
     return signalId.toLowerCase();
@@ -35768,7 +35927,7 @@ var CodexListenerModel = class {
 var import_node_crypto18 = require("node:crypto");
 
 // src/cloud/delivery.ts
-var UUID_RE14 = /^[0-9a-f]{8}-[0-9a-f]{4}-[1-8][0-9a-f]{3}-[89ab][0-9a-f]{3}-[0-9a-f]{12}$/i;
+var UUID_RE15 = /^[0-9a-f]{8}-[0-9a-f]{4}-[1-8][0-9a-f]{3}-[89ab][0-9a-f]{3}-[0-9a-f]{12}$/i;
 var RFC3339_TIMESTAMP_RE = /^(\d{4})-(\d{2})-(\d{2})T(\d{2}):(\d{2}):(\d{2})(?:\.\d+)?(?:Z|([+-]\d{2}):(\d{2}))$/i;
 var DELIVERY_KINDS = /* @__PURE__ */ new Set(["ask", "note"]);
 var SENDER_OWNER_RELATIONS2 = /* @__PURE__ */ new Set([
@@ -35855,7 +36014,7 @@ var DeliveryProtocolError = class extends Error {
   }
 };
 function checkedUuid3(value, field) {
-  if (typeof value !== "string" || !UUID_RE14.test(value)) {
+  if (typeof value !== "string" || !UUID_RE15.test(value)) {
     throw new DeliveryProtocolError(
       `delivery response returned a malformed ${field}`
     );
@@ -35966,7 +36125,7 @@ function checkedClaimCapabilities(value) {
 }
 function checkedOptionalUuidArray(value, field) {
   if (value === void 0) return;
-  if (!Array.isArray(value) || value.some((item) => typeof item !== "string" || !UUID_RE14.test(item))) {
+  if (!Array.isArray(value) || value.some((item) => typeof item !== "string" || !UUID_RE15.test(item))) {
     throw new DeliveryProtocolError(
       `delivery response returned a malformed ${field}`
     );
@@ -36113,7 +36272,7 @@ function checkedCommandId(value) {
   return value;
 }
 function checkedUuidRequest(value, field) {
-  if (!UUID_RE14.test(value)) {
+  if (!UUID_RE15.test(value)) {
     throw new Error(`${field} must be a UUID for an agent delivery command`);
   }
 }
@@ -36350,7 +36509,7 @@ var DeliveryCommandClient = class {
 
 // src/listener/main-routing.ts
 var import_node_path15 = require("node:path");
-var UUID_RE15 = /^[0-9a-f]{8}-[0-9a-f]{4}-[1-8][0-9a-f]{3}-[89ab][0-9a-f]{3}-[0-9a-f]{12}$/i;
+var UUID_RE16 = /^[0-9a-f]{8}-[0-9a-f]{4}-[1-8][0-9a-f]{3}-[89ab][0-9a-f]{3}-[0-9a-f]{12}$/i;
 var MAX_QUEUE_BYTES = 1024 * 1024;
 var QUEUE_FILE = "pending-for-main.json";
 var QUEUE_LOCK = "pending-for-main";
@@ -36407,7 +36566,7 @@ function parseEntry(value, rejectUnknownKeys) {
   if (rejectUnknownKeys && Object.keys(row).some((key2) => !ENTRY_KEYS.has(key2))) {
     throw new Error("stored pending-for-main entry is malformed");
   }
-  if (typeof row.signalId !== "string" || !UUID_RE15.test(row.signalId) || typeof row.workspaceId !== "string" || !UUID_RE15.test(row.workspaceId) || typeof row.principalId !== "string" || !UUID_RE15.test(row.principalId) || typeof row.fromId !== "string" || !UUID_RE15.test(row.fromId) || row.fromKind !== "user" && row.fromKind !== "agent" || !(row.kind === void 0 || row.kind === "ask" || row.kind === "note") || !(row.senderName === null || typeof row.senderName === "string" && row.senderName.length <= 200) || typeof row.body !== "string" || row.body.length < 1 || !(row.attachmentCount === void 0 || typeof row.attachmentCount === "number" && Number.isSafeInteger(row.attachmentCount) && row.attachmentCount >= 1 && row.attachmentCount <= 8) || !checkedTimestamp2(row.createdAt) || !checkedTimestamp2(row.queuedAt) || !(row.observationPending === void 0 || row.observationPending === true)) {
+  if (typeof row.signalId !== "string" || !UUID_RE16.test(row.signalId) || typeof row.workspaceId !== "string" || !UUID_RE16.test(row.workspaceId) || typeof row.principalId !== "string" || !UUID_RE16.test(row.principalId) || typeof row.fromId !== "string" || !UUID_RE16.test(row.fromId) || row.fromKind !== "user" && row.fromKind !== "agent" || !(row.kind === void 0 || row.kind === "ask" || row.kind === "note") || !(row.senderName === null || typeof row.senderName === "string" && row.senderName.length <= 200) || typeof row.body !== "string" || row.body.length < 1 || !(row.attachmentCount === void 0 || typeof row.attachmentCount === "number" && Number.isSafeInteger(row.attachmentCount) && row.attachmentCount >= 1 && row.attachmentCount <= 8) || !checkedTimestamp2(row.createdAt) || !checkedTimestamp2(row.queuedAt) || !(row.observationPending === void 0 || row.observationPending === true)) {
     throw new Error("stored pending-for-main entry is malformed");
   }
   return {
@@ -36547,7 +36706,7 @@ var LISTENER_PROMPT_START_MINIMUM_MS = SIGNAL_READ_TIMEOUT_MS + ACP_DEFAULT_REQU
 var LISTENER_DELIVERY_RETRY_INITIAL_MS = 500;
 var LISTENER_DELIVERY_RETRY_MAX_MS = 3e4;
 var LISTENER_HOST_PORTS_PROBE_MS = 6e4;
-var UUID_RE16 = /^[0-9a-f]{8}-[0-9a-f]{4}-[1-8][0-9a-f]{3}-[89ab][0-9a-f]{3}-[0-9a-f]{12}$/i;
+var UUID_RE17 = /^[0-9a-f]{8}-[0-9a-f]{4}-[1-8][0-9a-f]{3}-[89ab][0-9a-f]{3}-[0-9a-f]{12}$/i;
 var ListenerCapabilityError = class extends Error {
   code;
   constructor(code, message) {
@@ -36825,7 +36984,7 @@ async function runListenerRuntime(options) {
       new Error("listener instance id and delivery journal must be configured together")
     );
   }
-  if (hasInstanceId && !UUID_RE16.test(options.listenerInstanceId)) {
+  if (hasInstanceId && !UUID_RE17.test(options.listenerInstanceId)) {
     return await closeBeforeStart(
       options.model,
       new Error("listener instance id must be a UUID")
@@ -37937,7 +38096,7 @@ var import_node_crypto19 = require("node:crypto");
 var import_node_net = require("node:net");
 var import_promises9 = require("node:fs/promises");
 var import_node_path16 = require("node:path");
-var UUID_RE17 = /^[0-9a-f]{8}-[0-9a-f]{4}-[1-8][0-9a-f]{3}-[89ab][0-9a-f]{3}-[0-9a-f]{12}$/i;
+var UUID_RE18 = /^[0-9a-f]{8}-[0-9a-f]{4}-[1-8][0-9a-f]{3}-[89ab][0-9a-f]{3}-[0-9a-f]{12}$/i;
 var SEMVER_RE2 = /^(?:0|[1-9]\d*)\.(?:0|[1-9]\d*)\.(?:0|[1-9]\d*)(?:-(?:0|[1-9]\d*|[A-Za-z-][0-9A-Za-z-]*)(?:\.(?:0|[1-9]\d*|[A-Za-z-][0-9A-Za-z-]*))*)?(?:\+[0-9A-Za-z-]+(?:\.[0-9A-Za-z-]+)*)?$/;
 var MAX_STATUS_BYTES = 32 * 1024;
 var MAX_CONTROL_BYTES = 8 * 1024;
@@ -38066,11 +38225,11 @@ function parseStatus(raw, rejectUnknownKeys = false) {
       throw new Error("stored listener status is malformed");
     }
   }
-  const nullableUuid3 = (candidate) => candidate === null || typeof candidate === "string" && UUID_RE17.test(candidate);
+  const nullableUuid3 = (candidate) => candidate === null || typeof candidate === "string" && UUID_RE18.test(candidate);
   const nullableCount = (candidate) => candidate === null || typeof candidate === "number" && Number.isSafeInteger(candidate) && candidate >= 0;
   const nullableTimestamp3 = (candidate) => candidate === null || typeof candidate === "string" && Number.isFinite(Date.parse(candidate));
   const readHealth = row.readHealth === void 0 ? void 0 : parseListenerReadHealth(row.readHealth, rejectUnknownKeys);
-  if (row.version !== 1 || typeof row.instanceId !== "string" || !UUID_RE17.test(row.instanceId) || row.provider !== "grok" && row.provider !== "opencode" && row.provider !== "claude" && row.provider !== "codex" || typeof row.profileId !== "string" || typeof row.workspaceId !== "string" || !UUID_RE17.test(row.workspaceId) || typeof row.principalId !== "string" || !UUID_RE17.test(row.principalId) || !Number.isSafeInteger(row.pid) || row.pid < 1 || typeof row.state !== "string" || !["starting", "ready", "stopping", "stopped", "failed"].includes(row.state) || typeof row.startedAt !== "string" || !Number.isFinite(Date.parse(row.startedAt)) || !(row.readyAt === null || typeof row.readyAt === "string" && Number.isFinite(Date.parse(row.readyAt))) || typeof row.updatedAt !== "string" || !Number.isFinite(Date.parse(row.updatedAt)) || !(row.stoppedAt === null || typeof row.stoppedAt === "string" && Number.isFinite(Date.parse(row.stoppedAt))) || !nullableUuid3(row.lastSignalId) || !(row.lastErrorCode === null || typeof row.lastErrorCode === "string" && /^[a-z0-9_-]{1,96}$/.test(row.lastErrorCode)) || !(row.lastErrorDetail === void 0 || row.lastErrorDetail === null || typeof row.lastErrorDetail === "string" && row.lastErrorDetail.length > 0 && row.lastErrorDetail.length <= 2048 && !/swm_(?:agt|inv|cap)_/i.test(row.lastErrorDetail)) || !(row.lastErrorReasonCode === void 0 || row.lastErrorReasonCode === null || typeof row.lastErrorReasonCode === "string" && /^[a-z0-9_-]{1,96}$/.test(row.lastErrorReasonCode)) || !(row.providerExecutable === void 0 || row.providerExecutable === null || typeof row.providerExecutable === "string" && (0, import_node_path16.isAbsolute)(row.providerExecutable)) || !(row.providerVersion === void 0 || row.providerVersion === null || typeof row.providerVersion === "string" && SEMVER_RE2.test(row.providerVersion)) || !(row.providerLastMeasuredVersion === void 0 || row.providerLastMeasuredVersion === null || typeof row.providerLastMeasuredVersion === "string" && SEMVER_RE2.test(row.providerLastMeasuredVersion)) || !(row.providerBundledAgentSdkVersion === void 0 || row.providerBundledAgentSdkVersion === null || typeof row.providerBundledAgentSdkVersion === "string" && SEMVER_RE2.test(row.providerBundledAgentSdkVersion)) || !(row.providerBundledClaudeCodeVersion === void 0 || row.providerBundledClaudeCodeVersion === null || typeof row.providerBundledClaudeCodeVersion === "string" && SEMVER_RE2.test(row.providerBundledClaudeCodeVersion)) || !(row.providerMinimumRequiredVersion === void 0 || row.providerMinimumRequiredVersion === null || typeof row.providerMinimumRequiredVersion === "string" && SEMVER_RE2.test(row.providerMinimumRequiredVersion)) || !(row.cswarmVersion === void 0 || row.cswarmVersion === null || typeof row.cswarmVersion === "string" && SEMVER_RE2.test(row.cswarmVersion)) || (row.providerVersion === null || row.providerVersion === void 0) !== (row.providerLastMeasuredVersion === null || row.providerLastMeasuredVersion === void 0) || !(row.lastWorkerStderrTail === void 0 || row.lastWorkerStderrTail === null || typeof row.lastWorkerStderrTail === "string" && row.lastWorkerStderrTail.length > 0 && row.lastWorkerStderrTail.length <= 2048 && !/swm_(?:agt|inv|cap)_/i.test(row.lastWorkerStderrTail)) || typeof row.logPath !== "string" || !(0, import_node_path16.isAbsolute)(row.logPath) || !(row.deliveryMode === void 0 || row.deliveryMode === null || typeof row.deliveryMode === "string" && STATUS_DELIVERY_MODES.has(row.deliveryMode)) || !(row.pendingDeliveryCount === void 0 || nullableCount(row.pendingDeliveryCount)) || !(row.lastTerminalDeliveryFailureCount === void 0 || nullableCount(row.lastTerminalDeliveryFailureCount)) || !(row.lastTerminalDeliveryFailureAt === void 0 || nullableTimestamp3(row.lastTerminalDeliveryFailureAt)) || !(row.lastClaimAt === void 0 || nullableTimestamp3(row.lastClaimAt)) || !(row.lastAckAt === void 0 || nullableTimestamp3(row.lastAckAt)) || !(row.routeMode === void 0 || row.routeMode === "worker" || row.routeMode === "main" || row.routeMode === "split") || !(row.deferOverChars === void 0 || row.deferOverChars === null || typeof row.deferOverChars === "number" && Number.isSafeInteger(row.deferOverChars) && row.deferOverChars >= 1 && row.deferOverChars <= 1e4) || !(row.pendingForMainCount === void 0 || typeof row.pendingForMainCount === "number" && Number.isSafeInteger(row.pendingForMainCount) && row.pendingForMainCount >= 0) || !(row.droppedForMainCount === void 0 || typeof row.droppedForMainCount === "number" && Number.isSafeInteger(row.droppedForMainCount) && row.droppedForMainCount >= 0) || readHealth === null || !(row.connectionsOpened === void 0 || typeof row.connectionsOpened === "number" && Number.isSafeInteger(row.connectionsOpened) && row.connectionsOpened >= 0) || !(row.connectionReuseRatio === void 0 || typeof row.connectionReuseRatio === "number" && Number.isFinite(row.connectionReuseRatio) && row.connectionReuseRatio >= 0) || !(row.activityPublishFailures === void 0 || typeof row.activityPublishFailures === "number" && Number.isSafeInteger(row.activityPublishFailures) && row.activityPublishFailures >= 0) || !(row.activityLastErrorCode === void 0 || row.activityLastErrorCode === null || typeof row.activityLastErrorCode === "string" && STATUS_ACTIVITY_ERROR_CODES.has(
+  if (row.version !== 1 || typeof row.instanceId !== "string" || !UUID_RE18.test(row.instanceId) || row.provider !== "grok" && row.provider !== "opencode" && row.provider !== "claude" && row.provider !== "codex" || typeof row.profileId !== "string" || typeof row.workspaceId !== "string" || !UUID_RE18.test(row.workspaceId) || typeof row.principalId !== "string" || !UUID_RE18.test(row.principalId) || !Number.isSafeInteger(row.pid) || row.pid < 1 || typeof row.state !== "string" || !["starting", "ready", "stopping", "stopped", "failed"].includes(row.state) || typeof row.startedAt !== "string" || !Number.isFinite(Date.parse(row.startedAt)) || !(row.readyAt === null || typeof row.readyAt === "string" && Number.isFinite(Date.parse(row.readyAt))) || typeof row.updatedAt !== "string" || !Number.isFinite(Date.parse(row.updatedAt)) || !(row.stoppedAt === null || typeof row.stoppedAt === "string" && Number.isFinite(Date.parse(row.stoppedAt))) || !nullableUuid3(row.lastSignalId) || !(row.lastErrorCode === null || typeof row.lastErrorCode === "string" && /^[a-z0-9_-]{1,96}$/.test(row.lastErrorCode)) || !(row.lastErrorDetail === void 0 || row.lastErrorDetail === null || typeof row.lastErrorDetail === "string" && row.lastErrorDetail.length > 0 && row.lastErrorDetail.length <= 2048 && !/swm_(?:agt|inv|cap)_/i.test(row.lastErrorDetail)) || !(row.lastErrorReasonCode === void 0 || row.lastErrorReasonCode === null || typeof row.lastErrorReasonCode === "string" && /^[a-z0-9_-]{1,96}$/.test(row.lastErrorReasonCode)) || !(row.providerExecutable === void 0 || row.providerExecutable === null || typeof row.providerExecutable === "string" && (0, import_node_path16.isAbsolute)(row.providerExecutable)) || !(row.providerVersion === void 0 || row.providerVersion === null || typeof row.providerVersion === "string" && SEMVER_RE2.test(row.providerVersion)) || !(row.providerLastMeasuredVersion === void 0 || row.providerLastMeasuredVersion === null || typeof row.providerLastMeasuredVersion === "string" && SEMVER_RE2.test(row.providerLastMeasuredVersion)) || !(row.providerBundledAgentSdkVersion === void 0 || row.providerBundledAgentSdkVersion === null || typeof row.providerBundledAgentSdkVersion === "string" && SEMVER_RE2.test(row.providerBundledAgentSdkVersion)) || !(row.providerBundledClaudeCodeVersion === void 0 || row.providerBundledClaudeCodeVersion === null || typeof row.providerBundledClaudeCodeVersion === "string" && SEMVER_RE2.test(row.providerBundledClaudeCodeVersion)) || !(row.providerMinimumRequiredVersion === void 0 || row.providerMinimumRequiredVersion === null || typeof row.providerMinimumRequiredVersion === "string" && SEMVER_RE2.test(row.providerMinimumRequiredVersion)) || !(row.cswarmVersion === void 0 || row.cswarmVersion === null || typeof row.cswarmVersion === "string" && SEMVER_RE2.test(row.cswarmVersion)) || (row.providerVersion === null || row.providerVersion === void 0) !== (row.providerLastMeasuredVersion === null || row.providerLastMeasuredVersion === void 0) || !(row.lastWorkerStderrTail === void 0 || row.lastWorkerStderrTail === null || typeof row.lastWorkerStderrTail === "string" && row.lastWorkerStderrTail.length > 0 && row.lastWorkerStderrTail.length <= 2048 && !/swm_(?:agt|inv|cap)_/i.test(row.lastWorkerStderrTail)) || typeof row.logPath !== "string" || !(0, import_node_path16.isAbsolute)(row.logPath) || !(row.deliveryMode === void 0 || row.deliveryMode === null || typeof row.deliveryMode === "string" && STATUS_DELIVERY_MODES.has(row.deliveryMode)) || !(row.pendingDeliveryCount === void 0 || nullableCount(row.pendingDeliveryCount)) || !(row.lastTerminalDeliveryFailureCount === void 0 || nullableCount(row.lastTerminalDeliveryFailureCount)) || !(row.lastTerminalDeliveryFailureAt === void 0 || nullableTimestamp3(row.lastTerminalDeliveryFailureAt)) || !(row.lastClaimAt === void 0 || nullableTimestamp3(row.lastClaimAt)) || !(row.lastAckAt === void 0 || nullableTimestamp3(row.lastAckAt)) || !(row.routeMode === void 0 || row.routeMode === "worker" || row.routeMode === "main" || row.routeMode === "split") || !(row.deferOverChars === void 0 || row.deferOverChars === null || typeof row.deferOverChars === "number" && Number.isSafeInteger(row.deferOverChars) && row.deferOverChars >= 1 && row.deferOverChars <= 1e4) || !(row.pendingForMainCount === void 0 || typeof row.pendingForMainCount === "number" && Number.isSafeInteger(row.pendingForMainCount) && row.pendingForMainCount >= 0) || !(row.droppedForMainCount === void 0 || typeof row.droppedForMainCount === "number" && Number.isSafeInteger(row.droppedForMainCount) && row.droppedForMainCount >= 0) || readHealth === null || !(row.connectionsOpened === void 0 || typeof row.connectionsOpened === "number" && Number.isSafeInteger(row.connectionsOpened) && row.connectionsOpened >= 0) || !(row.connectionReuseRatio === void 0 || typeof row.connectionReuseRatio === "number" && Number.isFinite(row.connectionReuseRatio) && row.connectionReuseRatio >= 0) || !(row.activityPublishFailures === void 0 || typeof row.activityPublishFailures === "number" && Number.isSafeInteger(row.activityPublishFailures) && row.activityPublishFailures >= 0) || !(row.activityLastErrorCode === void 0 || row.activityLastErrorCode === null || typeof row.activityLastErrorCode === "string" && STATUS_ACTIVITY_ERROR_CODES.has(
     row.activityLastErrorCode
   ))) {
     throw new Error("stored listener status is malformed");
@@ -38488,7 +38647,7 @@ async function queryListenerControl(paths, command2, timeoutMs = CONTROL_TIMEOUT
 
 // src/listener/supervisor.ts
 var import_node_crypto20 = require("node:crypto");
-var UUID_RE18 = /^[0-9a-f]{8}-[0-9a-f]{4}-[1-8][0-9a-f]{3}-[89ab][0-9a-f]{3}-[0-9a-f]{12}$/i;
+var UUID_RE19 = /^[0-9a-f]{8}-[0-9a-f]{4}-[1-8][0-9a-f]{3}-[89ab][0-9a-f]{3}-[0-9a-f]{12}$/i;
 var LISTENER_RESTART_MAX_ATTEMPTS = 5;
 var LISTENER_RESTART_INITIAL_MS = 1e3;
 var LISTENER_RESTART_MAX_MS = 6e4;
@@ -38672,7 +38831,7 @@ async function runListenerSupervisor(options) {
     // before the socket can answer, before any status/event persistence.
     initialize: prepare ? async () => {
       const selected = await prepare(proposedInstanceId);
-      if (!selected || typeof selected !== "object" || typeof selected.instanceId !== "string" || !UUID_RE18.test(selected.instanceId)) {
+      if (!selected || typeof selected !== "object" || typeof selected.instanceId !== "string" || !UUID_RE19.test(selected.instanceId)) {
         throw new Error("listener prepare returned an invalid instance id");
       }
       status = { ...status, instanceId: selected.instanceId };
@@ -39117,7 +39276,7 @@ async function waitForListenerReady(paths, options = {}) {
 // src/listener/delivery-journal.ts
 var import_node_path17 = require("node:path");
 var import_node_util2 = require("node:util");
-var UUID_RE19 = /^[0-9a-f]{8}-[0-9a-f]{4}-[1-8][0-9a-f]{3}-[89ab][0-9a-f]{3}-[0-9a-f]{12}$/;
+var UUID_RE20 = /^[0-9a-f]{8}-[0-9a-f]{4}-[1-8][0-9a-f]{3}-[89ab][0-9a-f]{3}-[0-9a-f]{12}$/;
 var COMMAND_ID_RE3 = /^[A-Za-z0-9_-]{8,72}$/;
 var SIGNAL_FINGERPRINT_RE = /^[0-9a-f]{64}$/;
 var MAX_JOURNAL_BYTES = 8192;
@@ -39212,7 +39371,7 @@ var ALLOWED_ERROR_CODES = /* @__PURE__ */ new Set([
   "credential_unavailable"
 ]);
 function claimCommandId(listenerInstanceId, claimOrdinal) {
-  if (!UUID_RE19.test(listenerInstanceId)) {
+  if (!UUID_RE20.test(listenerInstanceId)) {
     throw new Error("stored delivery journal is malformed");
   }
   if (!Number.isSafeInteger(claimOrdinal) || claimOrdinal < 0) {
@@ -39227,7 +39386,7 @@ function claimCommandId(listenerInstanceId, claimOrdinal) {
   return id;
 }
 function ackCommandId(leaseId) {
-  if (!UUID_RE19.test(leaseId)) {
+  if (!UUID_RE20.test(leaseId)) {
     throw new Error("stored delivery journal is malformed");
   }
   const cleanLease = leaseId.toLowerCase().replace(/-/g, "");
@@ -39310,19 +39469,19 @@ function parseJournalRecord(raw, expectedWorkspaceId, expectedPrincipalId, rejec
   if (row.version !== 1) {
     throw new Error("stored delivery journal is malformed");
   }
-  if (typeof row.workspaceId !== "string" || !UUID_RE19.test(row.workspaceId) || row.workspaceId !== row.workspaceId.toLowerCase()) {
+  if (typeof row.workspaceId !== "string" || !UUID_RE20.test(row.workspaceId) || row.workspaceId !== row.workspaceId.toLowerCase()) {
     throw new Error("stored delivery journal is malformed");
   }
   if (expectedWorkspaceId && row.workspaceId !== expectedWorkspaceId.toLowerCase()) {
     throw new Error("stored delivery journal is malformed");
   }
-  if (typeof row.principalId !== "string" || !UUID_RE19.test(row.principalId) || row.principalId !== row.principalId.toLowerCase()) {
+  if (typeof row.principalId !== "string" || !UUID_RE20.test(row.principalId) || row.principalId !== row.principalId.toLowerCase()) {
     throw new Error("stored delivery journal is malformed");
   }
   if (expectedPrincipalId && row.principalId !== expectedPrincipalId.toLowerCase()) {
     throw new Error("stored delivery journal is malformed");
   }
-  if (typeof row.listenerInstanceId !== "string" || !UUID_RE19.test(row.listenerInstanceId) || row.listenerInstanceId !== row.listenerInstanceId.toLowerCase()) {
+  if (typeof row.listenerInstanceId !== "string" || !UUID_RE20.test(row.listenerInstanceId) || row.listenerInstanceId !== row.listenerInstanceId.toLowerCase()) {
     throw new Error("stored delivery journal is malformed");
   }
   if (!Number.isSafeInteger(row.nextClaimOrdinal) || row.nextClaimOrdinal < 0) {
@@ -39396,10 +39555,10 @@ function parseJournalRecord(raw, expectedWorkspaceId, expectedPrincipalId, rejec
     if (active.claimLastAttemptAt === null) {
       throw new Error("stored delivery journal is malformed");
     }
-    if (typeof active.signalId !== "string" || !UUID_RE19.test(active.signalId) || active.signalId !== active.signalId.toLowerCase()) {
+    if (typeof active.signalId !== "string" || !UUID_RE20.test(active.signalId) || active.signalId !== active.signalId.toLowerCase()) {
       throw new Error("stored delivery journal is malformed");
     }
-    if (typeof active.leaseId !== "string" || !UUID_RE19.test(active.leaseId) || active.leaseId !== active.leaseId.toLowerCase()) {
+    if (typeof active.leaseId !== "string" || !UUID_RE20.test(active.leaseId) || active.leaseId !== active.leaseId.toLowerCase()) {
       throw new Error("stored delivery journal is malformed");
     }
     if (!isValidIsoTimestamp(active.leasedUntil) || Date.parse(active.leasedUntil) <= Date.parse(active.claimCreatedAt)) {
@@ -39491,7 +39650,7 @@ var FileListenerDeliveryJournal = class {
       ["profileId", "workspaceId", "principalId"],
       "delivery journal configuration rejected"
     );
-    if (typeof options.profileId !== "string" || !options.profileId || options.profileId.includes("\0") || typeof options.workspaceId !== "string" || !UUID_RE19.test(options.workspaceId) || typeof options.principalId !== "string" || !UUID_RE19.test(options.principalId)) {
+    if (typeof options.profileId !== "string" || !options.profileId || options.profileId.includes("\0") || typeof options.workspaceId !== "string" || !UUID_RE20.test(options.workspaceId) || typeof options.principalId !== "string" || !UUID_RE20.test(options.principalId)) {
       throw new Error("delivery journal configuration rejected");
     }
     if (options.stateDirectory !== void 0) {
@@ -39613,7 +39772,7 @@ var FileListenerDeliveryJournal = class {
       ["signalId", "leaseId", "leasedUntil"],
       "delivery journal mutation rejected"
     );
-    if (typeof input.signalId !== "string" || !UUID_RE19.test(input.signalId) || typeof input.leaseId !== "string" || !UUID_RE19.test(input.leaseId) || !isValidIsoTimestamp(input.leasedUntil) || input.signalFingerprint !== void 0 && (typeof input.signalFingerprint !== "string" || !SIGNAL_FINGERPRINT_RE.test(input.signalFingerprint))) {
+    if (typeof input.signalId !== "string" || !UUID_RE20.test(input.signalId) || typeof input.leaseId !== "string" || !UUID_RE20.test(input.leaseId) || !isValidIsoTimestamp(input.leasedUntil) || input.signalFingerprint !== void 0 && (typeof input.signalFingerprint !== "string" || !SIGNAL_FINGERPRINT_RE.test(input.signalFingerprint))) {
       throw new Error("delivery journal mutation rejected");
     }
     const canonicalSignalId = input.signalId.toLowerCase();
@@ -39745,7 +39904,7 @@ async function openListenerDeliveryJournal(options) {
     ["profileId", "workspaceId", "principalId", "proposedListenerInstanceId"],
     "delivery journal configuration rejected"
   );
-  if (typeof options.profileId !== "string" || !options.profileId || options.profileId.includes("\0") || typeof options.workspaceId !== "string" || !UUID_RE19.test(options.workspaceId) || typeof options.principalId !== "string" || !UUID_RE19.test(options.principalId) || typeof options.proposedListenerInstanceId !== "string" || !UUID_RE19.test(options.proposedListenerInstanceId)) {
+  if (typeof options.profileId !== "string" || !options.profileId || options.profileId.includes("\0") || typeof options.workspaceId !== "string" || !UUID_RE20.test(options.workspaceId) || typeof options.principalId !== "string" || !UUID_RE20.test(options.principalId) || typeof options.proposedListenerInstanceId !== "string" || !UUID_RE20.test(options.proposedListenerInstanceId)) {
     throw new Error("delivery journal configuration rejected");
   }
   if (options.stateDirectory !== void 0) {
@@ -39965,7 +40124,7 @@ var import_node_path20 = require("node:path");
 
 // src/listener/brain-digest.ts
 var import_node_path19 = require("node:path");
-var UUID_RE20 = /^[0-9a-f]{8}-[0-9a-f]{4}-[1-8][0-9a-f]{3}-[89ab][0-9a-f]{3}-[0-9a-f]{12}$/i;
+var UUID_RE21 = /^[0-9a-f]{8}-[0-9a-f]{4}-[1-8][0-9a-f]{3}-[89ab][0-9a-f]{3}-[0-9a-f]{12}$/i;
 var TOPIC_RE = /^[a-z0-9][a-z0-9._-]*$/;
 var BRAIN_DIGEST_FILE = "brain-digest.json";
 var BRAIN_DIGEST_LOCK = "brain-digest";
@@ -39985,7 +40144,7 @@ function parseState(raw) {
   }
   const row = value;
   const topicVersions = row.topicVersions;
-  if (row.version !== 1 || typeof row.principalId !== "string" || !UUID_RE20.test(row.principalId) || !topicVersions || typeof topicVersions !== "object" || Array.isArray(topicVersions) || Object.keys(topicVersions).length > MAX_BRAIN_DIGEST_TOPICS) {
+  if (row.version !== 1 || typeof row.principalId !== "string" || !UUID_RE21.test(row.principalId) || !topicVersions || typeof topicVersions !== "object" || Array.isArray(topicVersions) || Object.keys(topicVersions).length > MAX_BRAIN_DIGEST_TOPICS) {
     throw new Error("stored brain digest state is malformed");
   }
   for (const [topic, version3] of Object.entries(topicVersions)) {
@@ -40028,7 +40187,7 @@ function renderBrainDigest(topicCount, topics) {
 var FileBrainDigestStore = class {
   constructor(instanceDirectory, principalId) {
     this.instanceDirectory = instanceDirectory;
-    if (!(0, import_node_path19.isAbsolute)(instanceDirectory) || !UUID_RE20.test(principalId)) {
+    if (!(0, import_node_path19.isAbsolute)(instanceDirectory) || !UUID_RE21.test(principalId)) {
       throw new Error("brain digest state needs an absolute listener directory and principal UUID");
     }
     this.principalId = principalId.toLowerCase();
@@ -40075,7 +40234,7 @@ var FileBrainDigestStore = class {
 };
 
 // src/listener/hook.ts
-var UUID_RE21 = /^[0-9a-f]{8}-[0-9a-f]{4}-[1-8][0-9a-f]{3}-[89ab][0-9a-f]{3}-[0-9a-f]{12}$/i;
+var UUID_RE22 = /^[0-9a-f]{8}-[0-9a-f]{4}-[1-8][0-9a-f]{3}-[89ab][0-9a-f]{3}-[0-9a-f]{12}$/i;
 var TOKEN_RE = /^swm_agt_[A-Za-z0-9_-]{43}$/;
 var INSTANCE_KEY_RE = /^[0-9a-f]{64}$/;
 var MAX_HOOK_CREDENTIAL_BYTES = 8 * 1024;
@@ -40127,7 +40286,7 @@ function parseListenerCredential(raw, rejectUnknownKeys = false) {
     throw new Error("stored listener hook credential is malformed");
   }
   const row = value;
-  if (!(rejectUnknownKeys ? exactKeys2(row, LISTENER_CREDENTIAL_KEYS) : hasRequiredKeys(row, LISTENER_CREDENTIAL_KEYS)) || row.version !== 1 || typeof row.profileId !== "string" || !/^[0-9a-f]{24}$/.test(row.profileId) || typeof row.targetUrl !== "string" || typeof row.anonKey !== "string" || row.anonKey.length < 1 || row.anonKey.length > 4096 || typeof row.workspaceId !== "string" || !UUID_RE21.test(row.workspaceId) || typeof row.principalId !== "string" || !UUID_RE21.test(row.principalId) || typeof row.credential !== "string" || !TOKEN_RE.test(row.credential) || typeof row.updatedAt !== "string" || !Number.isFinite(Date.parse(row.updatedAt))) {
+  if (!(rejectUnknownKeys ? exactKeys2(row, LISTENER_CREDENTIAL_KEYS) : hasRequiredKeys(row, LISTENER_CREDENTIAL_KEYS)) || row.version !== 1 || typeof row.profileId !== "string" || !/^[0-9a-f]{24}$/.test(row.profileId) || typeof row.targetUrl !== "string" || typeof row.anonKey !== "string" || row.anonKey.length < 1 || row.anonKey.length > 4096 || typeof row.workspaceId !== "string" || !UUID_RE22.test(row.workspaceId) || typeof row.principalId !== "string" || !UUID_RE22.test(row.principalId) || typeof row.credential !== "string" || !TOKEN_RE.test(row.credential) || typeof row.updatedAt !== "string" || !Number.isFinite(Date.parse(row.updatedAt))) {
     throw new Error("stored listener hook credential is malformed");
   }
   const target2 = cloudTarget(row.targetUrl, row.anonKey);
@@ -40185,7 +40344,7 @@ function parseSurface(raw, rejectUnknownKeys = false) {
     throw new Error("stored listener hook surface state is malformed");
   }
   const row = value;
-  if (rejectUnknownKeys && Object.keys(row).some((key2) => !HOOK_SURFACE_KEYS.has(key2)) || row.version !== 1 || !Array.isArray(row.surfacedSignalIds) || row.surfacedSignalIds.length > HOOK_SURFACED_IDS_MAX || row.surfacedSignalIds.some((id) => typeof id !== "string" || !UUID_RE21.test(id)) || !(row.reportedDroppedCount === void 0 || typeof row.reportedDroppedCount === "number" && Number.isSafeInteger(row.reportedDroppedCount) && row.reportedDroppedCount >= 0) || !(row.credentialFailureReported === void 0 || typeof row.credentialFailureReported === "boolean")) {
+  if (rejectUnknownKeys && Object.keys(row).some((key2) => !HOOK_SURFACE_KEYS.has(key2)) || row.version !== 1 || !Array.isArray(row.surfacedSignalIds) || row.surfacedSignalIds.length > HOOK_SURFACED_IDS_MAX || row.surfacedSignalIds.some((id) => typeof id !== "string" || !UUID_RE22.test(id)) || !(row.reportedDroppedCount === void 0 || typeof row.reportedDroppedCount === "number" && Number.isSafeInteger(row.reportedDroppedCount) && row.reportedDroppedCount >= 0) || !(row.credentialFailureReported === void 0 || typeof row.credentialFailureReported === "boolean")) {
     throw new Error("stored listener hook surface state is malformed");
   }
   const ids = row.surfacedSignalIds.map((id) => String(id).toLowerCase());
@@ -40216,7 +40375,7 @@ var FileHookSurfaceStore = class {
     const unseen = [];
     for (const item of items) {
       const signalId = item.signalId.toLowerCase();
-      if (!UUID_RE21.test(signalId) || seen.has(signalId)) continue;
+      if (!UUID_RE22.test(signalId) || seen.has(signalId)) continue;
       seen.add(signalId);
       unseen.push(item);
     }
@@ -40247,7 +40406,7 @@ var FileHookSurfaceStore = class {
       const unseen = [];
       for (const item of items) {
         const signalId = item.signalId.toLowerCase();
-        if (!UUID_RE21.test(signalId) || seen.has(signalId)) continue;
+        if (!UUID_RE22.test(signalId) || seen.has(signalId)) continue;
         seen.add(signalId);
         unseen.push(item);
       }
@@ -40270,7 +40429,7 @@ var FileHookSurfaceStore = class {
       const seen = new Set(state.surfacedSignalIds);
       for (const signalId of options.signalIds ?? []) {
         const checked = signalId.toLowerCase();
-        if (UUID_RE21.test(checked)) seen.add(checked);
+        if (UUID_RE22.test(checked)) seen.add(checked);
       }
       await writeSecureJsonFile(
         this.path,
@@ -40399,7 +40558,7 @@ async function discoverContexts(stateDirectory2, principalIds, isListenerLive = 
     }
     selectedPrincipals = availablePrincipals;
   } else {
-    if (principalIds.some((principalId) => !UUID_RE21.test(principalId))) {
+    if (principalIds.some((principalId) => !UUID_RE22.test(principalId))) {
       return { contexts: [], requiresPrincipalScope: false };
     }
     selectedPrincipals = new Set(principalIds.map((principalId) => principalId.toLowerCase()));
@@ -41828,16 +41987,10 @@ var BOOLEAN_FLAGS = /* @__PURE__ */ new Set([
   "user",
   "write"
 ]);
-var UUID_RE22 = /^[0-9a-f]{8}-[0-9a-f]{4}-[1-8][0-9a-f]{3}-[89ab][0-9a-f]{3}-[0-9a-f]{12}$/i;
-var AGENT_CREDENTIAL_MESSAGE = "Agent credential minted. It is bound to this task and run so the agent's work stays scoped and attributable.";
-var AGENT_CREDENTIAL_MESSAGE_D088 = "Agent credential minted. It is bound to this run, so the agent's work is attributable to it.";
-var ACCEPTED_AGENT_CREDENTIAL_MESSAGES = [
-  AGENT_CREDENTIAL_MESSAGE,
-  AGENT_CREDENTIAL_MESSAGE_D088
-];
+var UUID_RE23 = /^[0-9a-f]{8}-[0-9a-f]{4}-[1-8][0-9a-f]{3}-[89ab][0-9a-f]{3}-[0-9a-f]{12}$/i;
 function packageVersion() {
-  if ("0.1.49".length > 0) {
-    return "0.1.49";
+  if ("0.1.50".length > 0) {
+    return "0.1.50";
   }
   try {
     const value = JSON.parse(
@@ -42182,58 +42335,6 @@ function agentCredentialArtifact(input) {
     ...input.expiresAt === void 0 || input.expiresAt === null ? {} : { expires_at: new Date(input.expiresAt).toISOString() }
   };
 }
-function parsedAgentCredential(value) {
-  if (!value.startsWith("{")) {
-    assertAgentToken(value);
-    return {
-      token: value,
-      principalId: null,
-      tokenId: null,
-      runId: null,
-      expiresAt: null,
-      durable: false
-    };
-  }
-  const parsed = JSON.parse(value);
-  if (!parsed || typeof parsed !== "object" || Array.isArray(parsed)) {
-    throw new Error("agent credential JSON is malformed");
-  }
-  const artifact = parsed;
-  const requiredKeys = [
-    "agent_token",
-    "message",
-    "principal_id",
-    "run_id",
-    "status",
-    "token_id"
-  ];
-  const withExpiry = [...requiredKeys, "expires_at"].sort();
-  const actualKeys = Object.keys(artifact).sort();
-  const shape = actualKeys.length === requiredKeys.length ? requiredKeys : withExpiry;
-  if (actualKeys.length !== shape.length || !actualKeys.every((key2, index) => key2 === shape[index]) || !ACCEPTED_AGENT_CREDENTIAL_MESSAGES.includes(artifact.message) || artifact.status !== "accepted" || typeof artifact.principal_id !== "string" || !UUID_RE22.test(artifact.principal_id) || typeof artifact.token_id !== "string" || !UUID_RE22.test(artifact.token_id) || typeof artifact.run_id !== "string" || !UUID_RE22.test(artifact.run_id) || typeof artifact.agent_token !== "string") {
-    throw new Error("agent credential JSON is malformed");
-  }
-  let expiresAt = null;
-  if (artifact.expires_at !== void 0) {
-    if (typeof artifact.expires_at !== "string") {
-      throw new Error("agent credential JSON is malformed");
-    }
-    const parsedExpiry = Date.parse(artifact.expires_at);
-    if (Number.isNaN(parsedExpiry)) {
-      throw new Error("agent credential JSON is malformed");
-    }
-    expiresAt = parsedExpiry;
-  }
-  assertAgentToken(artifact.agent_token);
-  return {
-    token: artifact.agent_token,
-    principalId: artifact.principal_id.toLowerCase(),
-    tokenId: artifact.token_id.toLowerCase(),
-    runId: artifact.run_id.toLowerCase(),
-    expiresAt,
-    durable: true
-  };
-}
 async function stdinCredential() {
   if (process.stdin.isTTY) {
     throw new Error(
@@ -42248,7 +42349,7 @@ async function stdinCredential() {
     }
   }
   const credential = value.trim();
-  return parsedAgentCredential(credential);
+  return parseAgentCredentialInput(credential, { kind: "stdin" });
 }
 var AgentTokenFileError = class extends Error {
   constructor(code, message) {
@@ -42286,7 +42387,10 @@ async function agentCredential(args, options = {}) {
         `--agent-token-file does not exist: ${fromFile}`
       );
     }
-    return parsedAgentCredential(value.trim());
+    return parseAgentCredentialInput(value.trim(), {
+      kind: "file",
+      path: fromFile
+    });
   }
   if (fromStdin || options.implicitStdin === true) {
     return await stdinCredential();
@@ -42353,6 +42457,18 @@ async function humanCredential(args, cloud) {
     ...await refreshedCredential(cloud, credentials),
     store: credentials
   };
+}
+async function dualAuthHumanCredential(args, cloud) {
+  try {
+    return await humanCredential(args, cloud);
+  } catch (error) {
+    if (!(error instanceof HumanSessionError)) throw error;
+    const personPath = error.code === "human_session_missing" ? "not signed in. If you are a person, run cswarm login." : "could not refresh your session. If you are a person, run cswarm login to sign in again.";
+    throw new HumanSessionError(
+      error.code,
+      `${personPath} If you are an agent, pass --agent-token-file <path to the credential CommonSwarm minted for you> (or --agent-token-stdin).`
+    );
+  }
 }
 function writeWorkspaceWarning(warning) {
   process.stderr.write(`cswarm: ${warning.message}
@@ -42493,7 +42609,7 @@ async function runNew(args) {
       project: {
         workspace_id: created,
         name,
-        stream_id: typeof response.stream_id === "string" && UUID_RE22.test(response.stream_id) ? response.stream_id : null
+        stream_id: typeof response.stream_id === "string" && UUID_RE23.test(response.stream_id) ? response.stream_id : null
       }
     });
     return;
@@ -43235,7 +43351,7 @@ async function runTokenRevoke(args) {
     2
   );
   const cloud = await target(args);
-  const human = await humanCredential(args, cloud);
+  const human = await dualAuthHumanCredential(args, cloud);
   const workspace = await workspaceId(args, cloud, human);
   const tokenId = args.required("token-id");
   const response = (await sendConnectWithPending(
@@ -43302,7 +43418,7 @@ async function runLinkNew(args) {
     2
   );
   const taskId = args.required("task-id");
-  if (!UUID_RE22.test(taskId)) {
+  if (!UUID_RE23.test(taskId)) {
     throw new Error("--task-id must be the work item's UUID");
   }
   const site = capabilitySiteOrigin(
@@ -43362,7 +43478,7 @@ async function runLinkRevoke(args) {
     2
   );
   const capabilityId = args.required("capability-id");
-  if (!UUID_RE22.test(capabilityId)) {
+  if (!UUID_RE23.test(capabilityId)) {
     throw new Error(
       "--capability-id must be the id printed when the link was created"
     );
@@ -43535,7 +43651,7 @@ async function commandWorkspaceAndCredential(args, cloud, options = {}) {
       session
     };
   }
-  const human = await humanCredential(args, cloud);
+  const human = await dualAuthHumanCredential(args, cloud);
   return {
     selectedWorkspace: await workspaceId(args, cloud, human, {
       validateOverride: options.validateHumanWorkspace ?? false
@@ -44037,7 +44153,7 @@ async function runReply(args) {
     "json"
   ], 3);
   const signalId = args.positionals[1];
-  if (signalId === void 0 || !UUID_RE22.test(signalId)) {
+  if (signalId === void 0 || !UUID_RE23.test(signalId)) {
     throw new Error("reply requires the signal UUID being answered");
   }
   const body = args.positionals[2];
@@ -44582,7 +44698,7 @@ async function runReceipt(args) {
     "json"
   ], 2);
   const signalId = args.positionals[1];
-  if (!UUID_RE22.test(signalId)) {
+  if (!UUID_RE23.test(signalId)) {
     throw new Error("signal-id must be a UUID");
   }
   if (!hasAgentCredential(args)) {
@@ -44742,7 +44858,7 @@ async function runInboxFollowCommand(args) {
   }
 }
 function listenerUuid(value, flag) {
-  if (!value || !UUID_RE22.test(value)) {
+  if (!value || !UUID_RE23.test(value)) {
     throw new Error(`--${flag} must be a UUID`);
   }
   return value.toLowerCase();
@@ -46405,7 +46521,7 @@ async function runHook(args) {
   if (command2 === "check") {
     args.assertShape(["cooldown", "principal-id"], 2);
     const rawPrincipalIds = args.all("principal-id");
-    if (rawPrincipalIds.some((principalId2) => !UUID_RE22.test(principalId2))) return;
+    if (rawPrincipalIds.some((principalId2) => !UUID_RE23.test(principalId2))) return;
     const principalIds = rawPrincipalIds.map((principalId2) => principalId2.toLowerCase());
     const rawCooldown = args.optional("cooldown");
     const cooldownSeconds = rawCooldown === void 0 ? void 0 : Number(rawCooldown);
@@ -46531,7 +46647,7 @@ async function fileRows(context) {
   );
 }
 async function resolveFileSelector(context, selector) {
-  if (UUID_RE22.test(selector)) return selector.toLowerCase();
+  if (UUID_RE23.test(selector)) return selector.toLowerCase();
   const rows3 = await fileRows(context);
   const match = rows3.find(
     (row) => row.name.toLowerCase() === selector.toLowerCase()
