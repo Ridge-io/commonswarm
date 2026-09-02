@@ -65,6 +65,19 @@ export interface RefreshedCredential {
   deviceId: string;
 }
 
+export type HumanSessionErrorCode =
+  | "human_session_missing"
+  | "human_session_refresh_failed";
+
+/** A stable classification for the two human-session failures a caller can recover from. */
+export class HumanSessionError extends Error {
+  readonly name = "HumanSessionError";
+
+  constructor(readonly code: HumanSessionErrorCode, message: string) {
+    super(message);
+  }
+}
+
 interface CallbackReceiver {
   redirectUrl: string;
   origin: string;
@@ -536,7 +549,12 @@ export async function refreshedCredential(
   return await store.withLock(async () => {
     for (let attempt = 0; attempt < 2; attempt += 1) {
       const before = await store.read();
-      if (!before) throw new Error("not logged in; run cswarm login");
+      if (!before) {
+        throw new HumanSessionError(
+          "human_session_missing",
+          "not logged in; run cswarm login",
+        );
+      }
       const memory = new MemoryStorage();
       const client = authClient(target, memory);
       const refreshed = await client.auth.refreshSession({
@@ -546,10 +564,12 @@ export async function refreshedCredential(
         const afterFailure = await store.read();
         if (afterFailure && afterFailure.generation !== before.generation) continue;
         // Expired, revoked, or rotated on another device all land here and all have the
-        // same remedy, so this deliberately does not classify — it tells the user what to
-        // do next instead of forwarding the provider's wording (§ error.message is
-        // presentation).
-        throw new Error("could not refresh your session; run cswarm login to sign in again");
+        // same remedy. The stable code classifies only our human-session boundary; it does
+        // not infer a provider cause from presentation text (§ error.message is presentation).
+        throw new HumanSessionError(
+          "human_session_refresh_failed",
+          "could not refresh your session; run cswarm login to sign in again",
+        );
       }
       const session = requireSession(refreshed.data.session);
       const current = await store.read();

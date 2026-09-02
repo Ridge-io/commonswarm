@@ -12,6 +12,7 @@ import {
   login,
   logout,
   logoutMessage,
+  HumanSessionError,
   refreshedCredential,
   type RefreshedCredential,
 } from "./cloud/auth.js";
@@ -924,6 +925,25 @@ async function humanCredential(
     ...await refreshedCredential(cloud, credentials),
     store: credentials,
   };
+}
+
+/** Add both usable credential paths only on verbs that accept either kind. */
+async function dualAuthHumanCredential(
+  args: Arguments,
+  cloud: CloudTarget,
+): Promise<HumanSession> {
+  try {
+    return await humanCredential(args, cloud);
+  } catch (error) {
+    if (!(error instanceof HumanSessionError)) throw error;
+    const personPath = error.code === "human_session_missing"
+      ? "not signed in. If you are a person, run cswarm login."
+      : "could not refresh your session. If you are a person, run cswarm login to sign in again.";
+    throw new HumanSessionError(
+      error.code,
+      `${personPath} If you are an agent, pass --agent-token-file <path to the credential CommonSwarm minted for you> (or --agent-token-stdin).`,
+    );
+  }
 }
 
 function writeWorkspaceWarning(warning: WorkspaceWarning): void {
@@ -1987,7 +2007,7 @@ async function runTokenRevoke(args: Arguments): Promise<void> {
     2,
   );
   const cloud = await target(args);
-  const human = await humanCredential(args, cloud);
+  const human = await dualAuthHumanCredential(args, cloud);
   const workspace = await workspaceId(args, cloud, human);
   const tokenId = args.required("token-id");
   const response = (
@@ -2372,7 +2392,7 @@ async function commandWorkspaceAndCredential(
       session,
     };
   }
-  const human = await humanCredential(args, cloud);
+  const human = await dualAuthHumanCredential(args, cloud);
   return {
     selectedWorkspace: await workspaceId(args, cloud, human, {
       validateOverride: options.validateHumanWorkspace ?? false,
