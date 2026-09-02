@@ -1021,3 +1021,9 @@ Open (not blocking): the composer "Post a note · no agent is woken" control is 
 
 - L53 `3494f5a` merged into `release/0.1.49` → `b90d8c3` (CLI only; supabase/ and site/ untouched). The bridge DOES expose a typed field (`error.data.errorKind = "authentication_failed"` under JSON-RPC -32603; ACP auth-required is -32000); CommonSwarm used to discard both. Now retained through `AcpProtocolError` → `AcpPermissionCanaryError`, read only at the Claude boundary, typed-first with a narrow prose fallback; D-051 sweep file corrected (the "no typed distinction" claim is superseded). Remedy: sign in with `claude` on the host, then `cswarm listen start`; every Claude listener on the host shares the session.
 - Gates and both arms running (`wt-arm-grok-049` guarded, `wt-arm-gemini-049`). Host OAuth is still expired (operator notified by channel and push); my listener stays down until then — the fix cannot be live-verified on this host before the operator signs in.
+
+### Addendum 2026-09-03 ~03:10Z — 0.1.49 arms PASS, one P3 was a real copy bug
+
+- Both arms PASS on `b90d8c3` (Gemini: typed-branch mutation RED; Grok: all controls, no P1/P2). Gates: 730 ×2, 393, check:edge.
+- Grok P3, verified by me on this host: the remedy says `claude login`, which is NOT a verb (`claude --help` lists `auth` and `setup-token`; the real command is `claude auth login`). A test pinned the wrong string — the same "control defends a false claim" shape as the 0.1.48 receipt labels, third occurrence this cycle. Lane **L54** fixes the copy and adds a negative assertion on the bad token; arms rerun on the new SHA.
+- Other P3s (not blocking, recorded): sibling `errorKind` values (`rate_limit`, `oauth_org_not_allowed`) still classify as unknown; the CLI passes only `(detail, reasonCode)` to the classifier, which is sufficient because the listener stores the rewritten code.
