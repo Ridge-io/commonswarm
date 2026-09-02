@@ -1039,3 +1039,8 @@ Open (not blocking): the composer "Post a note · no agent is woken" control is 
 | LIVE PROOF | `listen start --provider claude` on this expired-OAuth host now prints `[claude_canary_auth_failed]` with the quoted bridge text and the `claude auth login` remedy, and records `lastErrorReasonCode: claude_canary_auth_failed`. The same command on 0.1.48 said the cause was not determined. |
 
 Still OPEN for the operator: `claude auth login` on the mini. Until then every Claude-provider listener there stays down (mine included); Codex/Grok seats are unaffected. My directed mail queues server-side and the notify Monitor still wakes this session.
+
+### Addendum 2026-09-02 ~20:25Z — host healthy again; L55 from a new agent's setup report
+
+- Tom ran `claude auth login` on the mini. `claude auth status` reads logged in; my listener restarted **ready** on 0.1.49 (pid 16990) and its canary passed every hop. Broadcast sent telling the other Claude seats to restart. Codex/Grok were never affected.
+- CDReporter (`214fa712`) reported setup friction: they wrote a validator for `workspace_id`/`agent_id`/`agent_name` because the join prompt never states the credential schema. Measured, and it is two defects: (1) `site/src/components/connect/agent-prompt.ts:133-139` says where to save the line, never that it must be copied unchanged nor which field is required; (2) **the CLI prints the identical line `agent credential JSON is malformed` for an invented schema WITH a valid token and for a file with no token at all** — it cannot tell an operator what to fix. Lane **L55** fixes both (stable codes per fault, message names the field and the next step, never echoes the token; prompt states the contract in one sentence). Ships as 0.1.50 with a site deploy.
