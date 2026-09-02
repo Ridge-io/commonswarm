@@ -6,6 +6,7 @@ export * from "./opencode-model.js";
 export * from "./claude-model.js";
 export * from "./codex-model.js";
 export * from "./runtime.js";
+export * from "./read-health.js";
 export * from "./control.js";
 export * from "./supervisor.js";
 export * from "./delivery-journal.js";
