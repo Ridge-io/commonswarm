@@ -136,8 +136,9 @@ test("Codex startup failures give install and bounded diagnostic remedies", () =
   assert.match(ambiguous, /API-key variables are not forwarded/i);
 
   const canary = listenerFailureMessage("permission_canary_failed", "codex");
-  assert.match(canary, /read-only ACP permission canary/i);
+  assert.match(canary, /read-only ACP permission safety gate/i);
   assert.match(canary, /no workspace signal prompt was delivered/i);
+  assert.doesNotMatch(canary, /bridge did not complete/i);
   assert.match(
     listenerFailureMessage("permission_mode_unavailable", "codex"),
     /required read-only permission mode.*update or reinstall codex-acp/i,

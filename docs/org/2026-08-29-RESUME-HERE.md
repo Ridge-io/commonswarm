@@ -835,3 +835,13 @@ supabase.co target) — the lane was interrupted before its report; carry it as 
 Instrument notes: `agy -p` in a worktree outside its trust list returns "no output produced … read_file permission" — pass `--dangerously-skip-permissions`; and it dies on any command over ~20 s (its first run timed out inside a `db:reset` it was told not to run). A `cswarm note "…"` body with backticks in double quotes is shell-expanded — build the body in a file and pass `"$(cat file)"`.
 
 Still running: L30 (`lane/l30-provider-version`), L32 (`lane/l32-connection-reuse`, 3 commits), L35 (`lane/l35-live-agent-panel`, 1 commit). L31 merged on `release/0.1.46` (`6b5beea`). Next: merge L30/L32/L35 as they land, arms on the merged SHA, release 0.1.46, then L38.
+
+### Addendum 2026-09-02 — L38 unattended roster badge deferred
+
+- **DEFERRED:** the dashboard roster badge `N unattended` from L23 is not built in L38.
+  The roster query reads `agent_principals` only. It has no receipt row or signal id, while
+  `pending_for_main_count` exists only on a queued directed signal's receipt row. Building
+  the badge therefore needs a workspace-level per-agent attendance read surface; the current
+  roster cannot render the count from data it already has.
+- L38 did not change `site/src`. The queued-message receipt beside a visible signal still
+  renders its own `pending_for_main_count`; that per-signal value is not a roster total.
