@@ -3106,7 +3106,7 @@ async function runPostSignal(
       authors,
     })}\n${
       noteAtAgent
-        ? "\nThis note is in their channel, but it does NOT wake their agent — only an ask does.\nIf they need to act on it, send it again with: cswarm ask \"<text>\" --to <agent>\n"
+        ? "\nNotes do not wake an agent; use cswarm ask to wake it.\n"
         : ""
     }${
       raced.length === 0 ? "" : `\nSomeone else announced in the two minutes before you, which you could not have seen when you read the feed:\n${

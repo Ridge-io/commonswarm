@@ -1294,6 +1294,16 @@ export type BrowserSignalRecipient =
   | { kind: "person"; id: string }
   | { kind: "agent"; id: string };
 
+export type BrowserSignalKind = "ask" | "note";
+
+/** A direct agent address wakes by default; every other browser post stays a note. */
+export function browserSignalKind(
+  recipient: BrowserSignalRecipient,
+  postAgentNote = false,
+): BrowserSignalKind {
+  return recipient.kind === "agent" && !postAgentNote ? "ask" : "note";
+}
+
 /** Keeps the browser's single visible recipient and the two nullable wire fields in lockstep. */
 export function browserSignalAddress(recipient: BrowserSignalRecipient): {
   toUserId: string | null;
@@ -1393,6 +1403,13 @@ export interface BrowserDeliveryIndicator {
   terminal: boolean;
 }
 
+export interface BrowserDeliveryIndicatorContext {
+  /** Old directed-agent rows default to ask semantics when the caller omits the kind. */
+  signalKind?: BrowserSignalKind;
+  /** The workspace display name used only in a single-agent note acknowledgement. */
+  agentName?: string;
+}
+
 export const BROWSER_RECEIPT_ACTIVE_REFRESH_MS = 4_000;
 export const BROWSER_RECEIPT_UNAVAILABLE_REFRESH_MS = 30_000;
 export const BROWSER_RECEIPT_REQUESTS_PER_TICK = 8;
@@ -1483,6 +1500,7 @@ export function browserRosterSectionLines(
 export function browserDeliveryIndicator(
   result: BrowserDeliveryReceiptResult | null,
   now = Date.now(),
+  context: BrowserDeliveryIndicatorContext = {},
 ): BrowserDeliveryIndicator {
   if (result === null || result.addressed === null) {
     return {
@@ -1600,16 +1618,24 @@ export function browserDeliveryIndicator(
   if (total === 1) {
     const receipt = agentReceipts[0]!;
     if (receipt.ackedAt !== null && receipt.ackOutcome !== null) {
+      const isNote = context.signalKind === "note";
+      const agentName = context.agentName ?? receipt.recipientAgentPrincipalId;
       if (receipt.ackOutcome === "queued") {
         const queueCount = receipt.pendingForMainCount;
         return {
           state: "queued",
           outcome: "queued",
           glyph: "…",
-          label: "Queued",
-          detail: `Queued for the agent's interactive session; waiting for the recipient's session hook${
-            typeof queueCount === "number" ? ` (${queueCount} in queue)` : ""
-          }.`,
+          label: isNote
+            ? `Queued for ${agentName} to read · no wake`
+            : "Queued for the agent's session",
+          detail: isNote
+            ? `Routed to ${agentName}'s interactive session but not yet shown${
+              typeof queueCount === "number" ? ` (${queueCount} in queue)` : ""
+            }. A note does not wake the agent.`
+            : `Queued for the agent's interactive session; waiting for the recipient's session hook${
+              typeof queueCount === "number" ? ` (${queueCount} in queue)` : ""
+            }.`,
           terminal: false,
         };
       }
@@ -1618,7 +1644,7 @@ export function browserDeliveryIndicator(
           state: "done",
           outcome: "replied",
           glyph: "↩",
-          label: "Replied",
+          label: `Answered ${deliveryAge(receipt.ackedAt, now)}`,
           detail: "The agent completed this delivery with a reply.",
           terminal: true,
         };
@@ -1628,8 +1654,12 @@ export function browserDeliveryIndicator(
           state: "done",
           outcome: "observed",
           glyph: "◎",
-          label: "Observed",
-          detail: "The agent saw this delivery without replying.",
+          label: isNote
+            ? `Observed by ${agentName} · notes do not wake an agent`
+            : "Delivered, agent working",
+          detail: isNote
+            ? `${agentName} saw the note. A note does not start a model turn.`
+            : "The listener reported that the agent saw the ask. No answer has been posted yet.",
           terminal: true,
         };
       }
@@ -1712,7 +1742,9 @@ export function browserDeliveryIndicator(
   }
   const outcomeLabels: Record<Exclude<NonNullable<BrowserDeliveryReceipt["ackOutcome"]>, "queued">, string> = {
     replied: "replied",
-    observed: "observed without reply",
+    observed: context.signalKind === "note"
+      ? "notes observed; notes do not wake agents"
+      : "asks delivered; agents working",
     expired: "expired",
     failed_terminal: "failed",
   };
@@ -1829,7 +1861,9 @@ export function browserDeliveryReceiptCandidates(
       if (!cached) return true;
       const indicator = signal.to !== null && signal.toAgent === null
         ? browserHumanDeliveryIndicator(signal.to, cached.result)
-        : browserDeliveryIndicator(cached.result, now);
+        : browserDeliveryIndicator(cached.result, now, {
+          signalKind: signal.kind === "note" ? "note" : "ask",
+        });
       if (indicator.terminal) return false;
       const cadence = indicator.state === "unavailable"
         ? BROWSER_RECEIPT_UNAVAILABLE_REFRESH_MS
@@ -1885,13 +1919,14 @@ export function browserAcceptedDeliveryIndicator(
   };
 }
 
-/** Posts one browser-authored note with either broadcast or one direct addressee. */
+/** Posts one browser-authored signal with either broadcast or one direct addressee. */
 export async function postBrowserSignal(
   session: Session,
   commandId: string,
   workspaceId: string,
   bodyText: string,
   recipient: BrowserSignalRecipient,
+  signalKind: BrowserSignalKind = browserSignalKind(recipient),
   attachments: readonly BrowserSignalAttachmentRef[] = [],
 ): Promise<Signal> {
   const address = browserSignalAddress(recipient);
@@ -1900,7 +1935,7 @@ export async function postBrowserSignal(
     commandId,
     {
       kind: "post_signal",
-      signal_kind: "note",
+      signal_kind: signalKind,
       body: bodyText,
       to_user_id: address.toUserId,
       to_agent_principal_id: address.toAgentPrincipalId,
@@ -1932,7 +1967,7 @@ export async function postBrowserSignal(
     toAgent: row.to_agent === null || row.to_agent === undefined
       ? null
       : String(row.to_agent),
-    kind: String(row.kind ?? "note"),
+    kind: String(row.kind ?? signalKind),
     body: String(row.body ?? bodyText),
     attachments: parseBrowserSignalAttachments(row.attachments),
     about: row.about === null || row.about === undefined ? null : String(row.about),
