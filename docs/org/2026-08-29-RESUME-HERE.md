@@ -976,3 +976,8 @@ Operator report: broadcasts show "Seen by 0 of 1" forever and agents show no eng
 
 - On `3153a46`: all gates green (728 ×2 / 392 / site 252 / p1-local 18 / p1-server 105). Gemini inversion PASS, no findings, four mutations fired. Grok exact PASS with **P2**: the new receipt label for ask × `observed` reads "Delivered, agent working", but `observed` on a directed signal means the agent's turn ended WITHOUT a reply — the opposite claim. P3s: `inbox --notify/--follow` do not attest rendered broadcasts (under-attest, never false); two compat tests are named for 0.1.47 but load older parsers.
 - Lane **L51** (`lane/l51-048-review-fixes`, based on `3153a46`) fixes the label matrix and the follow/notify attestation. Both arms rerun on the new SHA; release only then. Grok's output copied to `scratchpad/reboot-survival/arm-grok-048.out`.
+
+### Addendum 2026-09-02 ~19:40Z — 0.1.48 candidate 2 `40d1c44`
+
+- L51 `40d1c44` fast-forwarded `release/0.1.48`: ask × observed → "Seen, no answer" (detail: the listener saw the ask and its turn ended without a reply); all ten kind × outcome cells pinned against the server meaning; `inbox --notify/--follow` now attest rendered broadcasts (batches ≤ 50, never directed rows, humans post nothing); two observed mutation firings.
+- Full gates and both arms running on `40d1c44` (`wt-arm-grok-048b`, `wt-arm-gemini-048b`). Release on two PASS verdicts, then production in the order: migrations 000004 + 000005 → `command` + `read` edge → client → site.
