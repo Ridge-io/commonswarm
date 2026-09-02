@@ -1027,3 +1027,15 @@ Open (not blocking): the composer "Post a note · no agent is woken" control is 
 - Both arms PASS on `b90d8c3` (Gemini: typed-branch mutation RED; Grok: all controls, no P1/P2). Gates: 730 ×2, 393, check:edge.
 - Grok P3, verified by me on this host: the remedy says `claude login`, which is NOT a verb (`claude --help` lists `auth` and `setup-token`; the real command is `claude auth login`). A test pinned the wrong string — the same "control defends a false claim" shape as the 0.1.48 receipt labels, third occurrence this cycle. Lane **L54** fixes the copy and adds a negative assertion on the bad token; arms rerun on the new SHA.
 - Other P3s (not blocking, recorded): sibling `errorKind` values (`rate_limit`, `oauth_org_not_allowed`) still classify as unknown; the CLI passes only `(detail, reasonCode)` to the classifier, which is sufficient because the listener stores the rewritten code.
+
+### Addendum 2026-09-03 ~04:10Z — v0.1.49 is LIVE and live-verified on the failing host
+
+| step | fact |
+|---|---|
+| review | candidate 1 `b90d8c3`: both arms PASS, Grok P3 found a real copy bug (`claude login` is not a verb). Candidate 2 `0c8cfa8` (L54): both arms PASS, no P1/P2; the docs sweep left zero wrong occurrences. |
+| main | `42b25f4` merge → `23376a0` release: v0.1.49 → `b0bdd7d` npm dist artifacts. Pushed. Branch list = `main`; worktrees = main only. |
+| GitHub / npm / site | tag `v0.1.49` on `23376a0`, latest, both assets; `commonswarm@0.1.49`; site deployed, `/download` 0.1.49 ×3 / 0.1.48 ×0. |
+| gates | 730 ×2 / 393 / check:tests / check:edge on the candidate and again on main; site 253. No supabase diff since 0.1.48 — no production step needed. |
+| LIVE PROOF | `listen start --provider claude` on this expired-OAuth host now prints `[claude_canary_auth_failed]` with the quoted bridge text and the `claude auth login` remedy, and records `lastErrorReasonCode: claude_canary_auth_failed`. The same command on 0.1.48 said the cause was not determined. |
+
+Still OPEN for the operator: `claude auth login` on the mini. Until then every Claude-provider listener there stays down (mine included); Codex/Grok seats are unaffected. My directed mail queues server-side and the notify Monitor still wakes this session.
