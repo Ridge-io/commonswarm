@@ -73,6 +73,7 @@ import {
   type SignalAttachmentRef,
 } from "./signal-attachments.ts";
 import {
+  markAgentSignalsSeen,
   markHumanSignalsSeen,
   SIGNALS_SEEN_KIND,
   SIGNALS_SEEN_MAX_IDS,
@@ -6052,7 +6053,7 @@ async function handleTransaction(
 
     const isDeliveryCommand =
       kind === CLAIM_AGENT_INBOX_KIND || kind === ACK_AGENT_DELIVERY_KIND;
-    const isHumanSeenCommand = kind === SIGNALS_SEEN_KIND;
+    const isSeenCommand = kind === SIGNALS_SEEN_KIND;
 
     if (Object.hasOwn(body, "from")) {
       await insertAudit(tx, {
@@ -6258,18 +6259,6 @@ async function handleTransaction(
       });
       return { status: 403, body: { error: "delivery_unavailable" } };
     }
-    if (isHumanSeenCommand && auth.credentialKind !== "user") {
-      await insertAudit(tx, {
-        auth,
-        commandKind: kind,
-        workspaceId: route.workspaceId,
-        streamId: route.streamId,
-        outcome: "authz",
-        reason: "signals_seen_requires_human_credential",
-        detail: ignoredIdentity,
-      });
-      return { status: 403, body: { error: "forbidden" } };
-    }
     /* ★R9.2 (file artifacts): every FILE_COMMAND_KINDS kind is agent-allowed by
      * class, exempted from the per-scope gate the way delivery commands are —
      * existing minted tokens cannot carry new scopes, and files are
@@ -6286,7 +6275,7 @@ async function handleTransaction(
       !isModelDeclare &&
       !isFeedback &&
       !isDeliveryCommand &&
-      !isHumanSeenCommand &&
+      !isSeenCommand &&
       !isFileCommand &&
       (
         (CONNECT_COMMAND_KINDS as readonly string[]).includes(
@@ -6495,14 +6484,24 @@ async function handleTransaction(
 
     if (command.kind === SIGNALS_SEEN_KIND) {
       const userId = auth.actor.user;
-      if (userId === null) {
+      const principalId = auth.agent?.principal_id ?? null;
+      if (
+        (auth.credentialKind === "user" && userId === null) ||
+        (auth.credentialKind === "agent" && principalId === null)
+      ) {
         return { status: 403, body: { error: "forbidden" } };
       }
-      const seen = await markHumanSignalsSeen(tx, {
-        workspaceId: route.workspaceId,
-        userId,
-        signalIds: command.signal_ids,
-      });
+      const seen = auth.credentialKind === "user"
+        ? await markHumanSignalsSeen(tx, {
+          workspaceId: route.workspaceId,
+          userId: userId!,
+          signalIds: command.signal_ids,
+        })
+        : await markAgentSignalsSeen(tx, {
+          workspaceId: route.workspaceId,
+          principalId: principalId!,
+          signalIds: command.signal_ids,
+        });
       if (seen.status === "forbidden") {
         await insertAudit(tx, {
           auth,
@@ -6510,7 +6509,9 @@ async function handleTransaction(
           workspaceId: route.workspaceId,
           streamId: route.streamId,
           outcome: "authz",
-          reason: "signal_not_eligible_for_human_receipt",
+          reason: auth.credentialKind === "user"
+            ? "signal_not_eligible_for_human_receipt"
+            : "signal_not_eligible_for_agent_receipt",
           detail: ignoredIdentity,
           hash,
         });

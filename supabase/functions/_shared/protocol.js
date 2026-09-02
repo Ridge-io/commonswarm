@@ -1552,9 +1552,37 @@ function decideWorkspace(state, cmd, ctx) {
     }
   }
 }
+
+// src/protocol/brain-version-window.ts
+var BRAIN_FILE_PREFIX = "brain--";
+var BRAIN_FILE_SUFFIX = ".md";
+var BRAIN_TOPIC_MAX_LENGTH = 255 - BRAIN_FILE_PREFIX.length - BRAIN_FILE_SUFFIX.length;
+var BRAIN_LIVE_VERSION_LIMIT = 20;
+var BRAIN_FILE_NAME_RE = /^brain--[a-z0-9][a-z0-9._-]*\.md$/i;
+function isBrainFileArtifactName(name) {
+  return name.length <= 255 && BRAIN_FILE_NAME_RE.test(name);
+}
+function planFileVersionWindow(name, liveCount, inFlightCount) {
+  if (!Number.isSafeInteger(liveCount) || liveCount < 0) {
+    throw new RangeError("liveCount must be a non-negative safe integer");
+  }
+  if (!Number.isSafeInteger(inFlightCount) || inFlightCount < 0) {
+    throw new RangeError("inFlightCount must be a non-negative safe integer");
+  }
+  const brainTopic = isBrainFileArtifactName(name);
+  return {
+    brainTopic,
+    createAllowed: brainTopic ? inFlightCount < BRAIN_LIVE_VERSION_LIMIT : liveCount + inFlightCount < BRAIN_LIVE_VERSION_LIMIT,
+    retireOnCommitCount: brainTopic ? Math.max(0, liveCount - BRAIN_LIVE_VERSION_LIMIT + 1) : 0
+  };
+}
 export {
   AGENT_TOKEN_DEFAULT_TTL_MS,
   AGENT_TOKEN_MAX_TTL_MS,
+  BRAIN_FILE_PREFIX,
+  BRAIN_FILE_SUFFIX,
+  BRAIN_LIVE_VERSION_LIMIT,
+  BRAIN_TOPIC_MAX_LENGTH,
   DISPOSITIONS,
   EVENT_TYPES,
   FEEDBACK_BODY_MAX,
@@ -1577,9 +1605,11 @@ export {
   decideWorkspace,
   idemKey,
   isAgentScopeDenylisted,
+  isBrainFileArtifactName,
   leaseLive,
   normalizedFeedbackBody,
   normalizedFeedbackContext,
+  planFileVersionWindow,
   reduceStream,
   reduceTask,
   reduceWorkspace,

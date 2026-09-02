@@ -22,6 +22,11 @@
  * to storage, download is a signed GET (two-phase, §7).
  */
 import type postgres from "postgres";
+import {
+  BRAIN_LIVE_VERSION_LIMIT,
+  isBrainFileArtifactName,
+  planFileVersionWindow,
+} from "../_shared/protocol.js";
 
 type Sql = postgres.TransactionSql<Record<string, unknown>>;
 
@@ -43,7 +48,7 @@ export const FILE_COMMAND_KINDS = [
 export const FILE_MAX_VERSION_BYTES = 25 * 1024 * 1024;
 export const FILE_WORKSPACE_MAX_BYTES = 1024 * 1024 * 1024;
 export const FILE_WORKSPACE_MAX_NAMES = 500;
-export const FILE_MAX_VERSIONS_PER_NAME = 20;
+export const FILE_MAX_VERSIONS_PER_NAME = BRAIN_LIVE_VERSION_LIMIT;
 export const FILE_CREATE_RATE_LIMIT_PER_HOUR = 30;
 
 export const FILE_BUCKET = "swarm-files";
@@ -372,14 +377,15 @@ export async function fileVersionCreate(
   }
   if (storedCreate !== null) return { ok: "replay", stored: storedCreate.stored };
 
-  // ★R5 byte cap: live bytes plus not-yet-expired pending DECLARED bytes —
-  // pending must count here or concurrent pendings overshoot the cap at commit.
+  // ★R5 byte cap: committed bytes (live OR retired) plus not-yet-expired
+  // pending DECLARED bytes. Retiring a brain version keeps its object, so it
+  // must not release workspace storage quota.
   const byteRows = await tx<{ total: string }[]>`
     SELECT coalesce(sum(size_bytes), 0)::text AS total
     FROM swarm.file_versions
     WHERE workspace_id = ${workspaceId}::uuid
       AND (
-        state = 'live'
+        state IN ('live', 'retired')
         OR (
           -- Same 3h window the GC claims on: URL validity plus margin.
           state = 'pending'
@@ -406,7 +412,8 @@ export async function fileVersionCreate(
       file_id: string;
       tombstoned_at: Date | null;
       current_version: number;
-      live_versions: string;
+      live_version_count: string;
+      in_flight_version_count: string;
     }[]
   >`
     SELECT
@@ -414,20 +421,21 @@ export async function fileVersionCreate(
       f.tombstoned_at,
       f.current_version,
       (
-        -- Unexpired pendings COUNT toward the version cap (review: two
-        -- concurrent pendings must not jointly pass a cap either would fill),
-        -- and the same rule is re-checked at commit. Purged never counts.
         SELECT count(*)::text FROM swarm.file_versions AS v
         WHERE v.file_id = f.file_id
           AND v.workspace_id = f.workspace_id
-          AND (
-            v.state = 'live'
-            OR (
-              v.state = 'pending'
-              AND v.created_at > statement_timestamp() - interval '3 hours'
-            )
-          )
-      ) AS live_versions
+          AND v.state = 'live'
+      ) AS live_version_count,
+      (
+        -- Only unexpired pending uploads are in flight. For normal files they
+        -- still share the fixed 20-slot cap with live versions. For brain
+        -- topics they are the only create-time cap; commit rolls the live set.
+        SELECT count(*)::text FROM swarm.file_versions AS v
+        WHERE v.file_id = f.file_id
+          AND v.workspace_id = f.workspace_id
+          AND v.state = 'pending'
+          AND v.created_at > statement_timestamp() - interval '3 hours'
+      ) AS in_flight_version_count
     FROM swarm.files AS f
     WHERE f.workspace_id = ${workspaceId}::uuid
       AND lower(f.name) = lower(${cmd.name})
@@ -445,16 +453,24 @@ export async function fileVersionCreate(
       "name held by tombstone",
     );
   }
-  // ★R5: only LIVE versions count toward the per-name cap — expired pendings
-  // and purged versions never brick a name.
-  if (
-    file !== undefined &&
-    Number(file.live_versions) >= FILE_MAX_VERSIONS_PER_NAME
-  ) {
+  const windowPlan = planFileVersionWindow(
+    cmd.name,
+    Number(file?.live_version_count ?? "0"),
+    Number(file?.in_flight_version_count ?? "0"),
+  );
+  if (!windowPlan.createAllowed) {
+    if (windowPlan.brainTopic) {
+      return refuse(
+        409,
+        "brain_version_in_flight_cap",
+        `this topic already has ${BRAIN_LIVE_VERSION_LIMIT} uncommitted uploads in flight; wait for one to commit or for a pending upload to expire, then run cswarm brain put again`,
+        "brain in-flight version cap",
+      );
+    }
     return refuse(
       409,
       "file_version_cap",
-      `this name already has ${FILE_MAX_VERSIONS_PER_NAME} live or in-flight versions; use a new name`,
+      `this file already has ${FILE_MAX_VERSIONS_PER_NAME} live or in-flight versions; no new version was started`,
       "per-name version cap",
     );
   }
@@ -654,19 +670,31 @@ export async function fileVersionCommit(
       "measured size over declaration",
     );
   }
-  // Finding 12: the cap is re-checked at commit under the version row lock, so
-  // pendings created before the cap filled cannot commit past it.
-  const liveCount = await tx<{ n: string }[]>`
-    SELECT count(*)::text AS n FROM swarm.file_versions
+  // The file lock makes retirement plus commit one serial transaction. Brain
+  // topics roll their live set here, after bytes exist; normal files retain
+  // the fixed cap. All refusal checks stay before retirement: a normal return
+  // from db.begin commits, so retirement must not precede a refusal. Ordering
+  // by version_n is the durable oldest-first rule.
+  const liveVersions = await tx<{ version_n: number }[]>`
+    SELECT version_n FROM swarm.file_versions
     WHERE file_id = ${cmd.file_id}::uuid
       AND workspace_id = ${workspaceId}::uuid
       AND state = 'live'
+    ORDER BY version_n ASC
   `;
-  if (Number(liveCount[0]?.n ?? "0") >= FILE_MAX_VERSIONS_PER_NAME) {
+  const windowPlan = planFileVersionWindow(
+    version.name,
+    liveVersions.length,
+    0,
+  );
+  const liveAfterPlannedRetirement = liveVersions.length - windowPlan.retireOnCommitCount;
+  if (liveAfterPlannedRetirement >= FILE_MAX_VERSIONS_PER_NAME) {
     return refuse(
       409,
       "file_version_cap",
-      `this name already has ${FILE_MAX_VERSIONS_PER_NAME} live versions; the commit is refused`,
+      windowPlan.brainTopic
+        ? "the oldest live topic version could not be retired; nothing was committed — run cswarm brain put again"
+        : `this name already has ${FILE_MAX_VERSIONS_PER_NAME} live versions; the commit is refused`,
       "per-name version cap at commit",
     );
   }
@@ -697,6 +725,28 @@ export async function fileVersionCommit(
       "commit predicate mismatch",
     );
   }
+  let retiredVersionNumbers: number[] = [];
+  if (windowPlan.brainTopic && windowPlan.retireOnCommitCount > 0) {
+    const retired = await tx<{ version_n: number }[]>`
+      UPDATE swarm.file_versions
+      SET state = 'retired', retired_at = statement_timestamp()
+      WHERE version_id IN (
+        SELECT version_id
+        FROM swarm.file_versions
+        WHERE file_id = ${cmd.file_id}::uuid
+          AND workspace_id = ${workspaceId}::uuid
+          AND state = 'live'
+        ORDER BY version_n ASC
+        LIMIT ${windowPlan.retireOnCommitCount}
+      )
+      RETURNING version_n
+    `;
+    if (retired.length !== windowPlan.retireOnCommitCount) {
+      // This throw rolls the pending->live update back with the retirement.
+      throw new Error("brain version retirement count changed under the file lock");
+    }
+    retiredVersionNumbers = retired.map((row) => row.version_n).sort((a, b) => a - b);
+  }
   // Finding 1: current_version follows the newest LIVE version, at commit.
   await tx`
     UPDATE swarm.files
@@ -715,6 +765,9 @@ export async function fileVersionCommit(
       sha256: cmd.sha256,
       sha256_note: "unverified client attestation",
       reference: `file:${cmd.file_id}@v${version.version_n}`,
+      ...(retiredVersionNumbers.length === 0
+        ? {}
+        : { retired_version_n: retiredVersionNumbers[0] }),
     },
   };
 }
@@ -735,16 +788,31 @@ export async function fileDownloadUrl(
       size_bytes: string;
       name: string;
       tombstoned_at: Date | null;
+      version_state: string;
+      live_version_count: string;
+      retired_version_count: string;
     }[]
   >`
     SELECT v.version_n, v.storage_path, v.content_type, v.size_bytes::text,
-           f.name, f.tombstoned_at
+           f.name, f.tombstoned_at, v.state AS version_state,
+           (
+             SELECT count(*)::text FROM swarm.file_versions AS live
+             WHERE live.file_id = f.file_id
+               AND live.workspace_id = f.workspace_id
+               AND live.state = 'live'
+           ) AS live_version_count,
+           (
+             SELECT count(*)::text FROM swarm.file_versions AS retired
+             WHERE retired.file_id = f.file_id
+               AND retired.workspace_id = f.workspace_id
+               AND retired.state = 'retired'
+           ) AS retired_version_count
     FROM swarm.files AS f
     JOIN swarm.file_versions AS v
       ON v.file_id = f.file_id AND v.workspace_id = f.workspace_id
     WHERE f.file_id = ${cmd.file_id}::uuid
       AND f.workspace_id = ${workspaceId}::uuid
-      AND v.state = 'live'
+      AND v.state IN ('live', 'retired')
       AND (
         (${cmd.version_n}::integer IS NULL AND v.version_n = f.current_version)
         OR v.version_n = ${cmd.version_n}::integer
@@ -752,7 +820,11 @@ export async function fileDownloadUrl(
     LIMIT 1
   `;
   const version = rows[0];
-  if (version === undefined) {
+  if (
+    version === undefined ||
+    (version.version_state === "retired" &&
+      (cmd.version_n === null || !isBrainFileArtifactName(version.name)))
+  ) {
     return refuse(
       404,
       "file_not_found",
@@ -778,6 +850,9 @@ export async function fileDownloadUrl(
     body: {
       file_id: cmd.file_id,
       version_n: version.version_n,
+      version_state: version.version_state,
+      live_version_count: Number(version.live_version_count),
+      retired_version_count: Number(version.retired_version_count),
       name: version.name,
       size_bytes: Number(version.size_bytes),
       content_type: version.content_type,

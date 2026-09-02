@@ -703,6 +703,114 @@ test(
   },
 );
 
+test(
+  "an agent CLI feed writes a durable broadcast receipt visible in the roster",
+  { timeout: 30_000 },
+  async () => {
+    const nonce = randomUUID();
+    const email = `agent-seen-${nonce}@example.test`;
+    const password = `T-${randomBytes(24).toString("base64url")}!`;
+    const created = await admin.auth.admin.createUser({
+      email,
+      password,
+      email_confirm: true,
+    });
+    assert.ifError(created.error);
+    assert.ok(created.data.user);
+    const workspaceId = randomUUID();
+    const seeded = await seedDogfood({
+      databaseUrl: local.DB_URL,
+      userId: created.data.user.id,
+      deviceId: randomUUID(),
+      workspaceId,
+      workspaceName: `Agent seen ${nonce.slice(0, 8)}`,
+      displayName: "Broadcast Author",
+      agentName: `reader-${nonce.slice(0, 8)}`,
+    });
+    const auth = createClient(local.API_URL, local.ANON_KEY, {
+      auth: { persistSession: false, autoRefreshToken: false },
+    });
+    const signedIn = await auth.auth.signInWithPassword({ email, password });
+    assert.ifError(signedIn.error);
+    const accessToken = signedIn.data.session?.access_token;
+    assert.ok(accessToken);
+    const posted = await new ThinCommandClient(
+      cloudTarget(local.API_URL, local.ANON_KEY),
+    ).sendSignal({
+      workspaceId,
+      credential: accessToken,
+      command: {
+        kind: "post_signal",
+        signal_kind: "note",
+        body: `broadcast receipt ${nonce}`,
+        to_user_id: null,
+        to_agent_principal_id: null,
+        in_reply_to: null,
+        about: null,
+      },
+    });
+    const signalId = posted.response.signal?.id;
+    assert.ok(signalId);
+
+    const stateRoot = await mkdtemp(join(tmpdir(), "cswarm-agent-seen-"));
+    try {
+      const feed = await runAgentCli(
+        workspaceId,
+        agentCredentialArtifact(seeded),
+        stateRoot,
+        ["feed", "--limit", "1", "--json"],
+      );
+      assert.equal(feed.code, 0, feed.stderr);
+      const payload = JSON.parse(feed.stdout) as {
+        signals: Array<{ id: string }>;
+      };
+      assert.deepEqual(payload.signals.map((row) => row.id), [signalId]);
+
+      const { data: roster, error: rosterError } = await auth
+        .schema("swarm_read")
+        .rpc("signal_delivery_receipts", {
+          p_workspace_id: workspaceId,
+          p_signal_id: signalId,
+        });
+      assert.ifError(rosterError);
+      const result = roster as {
+        broadcast_roster: {
+          agents: {
+            seen: number;
+            principals: Array<{
+              principal_id: string;
+              seen_at: string | null;
+            }>;
+          };
+        };
+      };
+      assert.equal(result.broadcast_roster.agents.seen, 1);
+      assert.deepEqual(
+        result.broadcast_roster.agents.principals.map((row) => ({
+          principalId: row.principal_id,
+          seen: row.seen_at === null ? null : "seen",
+        })),
+        [{ principalId: seeded.principalId, seen: "seen" }],
+      );
+
+      const db = postgres(local.DB_URL, { prepare: false, max: 1 });
+      try {
+        const rows = await db<{ principal_id: string }[]>`
+          SELECT principal_id
+          FROM swarm.signal_agent_receipts
+          WHERE workspace_id = ${workspaceId}::uuid
+            AND signal_id = ${signalId}::uuid
+        `;
+        assert.deepEqual(rows.map((row) => row.principal_id), [seeded.principalId]);
+      } finally {
+        await db.end({ timeout: 5 });
+      }
+    } finally {
+      await rm(stateRoot, { recursive: true, force: true });
+    }
+  },
+);
+
 test("one-command invite link accept converges after a live local double-run", async () => {
   const nonce = randomUUID();
   const ownerEmail = `p2-owner-${nonce}@example.test`;

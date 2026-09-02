@@ -17,7 +17,7 @@ import {
   type BroadcastRecipientRoster,
   type DeliveryReceipt,
   type HumanDeliveryReceipt,
-  type UntrackedBroadcastAgentReceipt,
+  type BroadcastAgentReceipt,
 } from "../../src/cloud/delivery-receipts.js";
 import { SignalReadTimeoutError } from "../../src/cloud/signals.js";
 
@@ -63,9 +63,11 @@ function humanReport(row: HumanDeliveryReceipt): SignalReceiptReport {
 /* Agents are listed under broadcast_roster.agents.principals, never in
  * `receipts` — the pre-roster parser reads any non-human `receipts` row as a
  * delivery ledger row (20260902000001, folded). */
-const QUILL: UntrackedBroadcastAgentReceipt = {
+const QUILL: BroadcastAgentReceipt = {
+  principal_id: "dddddddd-dddd-4ddd-8ddd-dddddddddddd",
   recipient_agent_principal_id: "dddddddd-dddd-4ddd-8ddd-dddddddddddd",
   display_name: "Quill",
+  seen_at: "2026-08-28T12:24:00.000Z",
   tracking_state: "not_tracked",
   observed_at: null,
 };
@@ -75,6 +77,7 @@ function broadcastRoster(): BroadcastRecipientRoster {
     members: { total: 3, seen: 1, returned: 3, limit: 50, truncated: false },
     agents: {
       total: 1,
+      seen: 1,
       returned: 1,
       limit: 50,
       truncated: false,
@@ -120,6 +123,7 @@ function cutBroadcastWire(): Record<string, unknown> {
       members: { total: 100, seen: 60, returned: 50, limit: 50, truncated: true },
       agents: {
         total: 0,
+        seen: 0,
         returned: 0,
         limit: 50,
         truncated: false,
@@ -165,6 +169,7 @@ function wireReport(
           },
           agents: {
             total: 0,
+            seen: 0,
             returned: 0,
             limit: 50,
             truncated: false,
@@ -215,7 +220,12 @@ test("an expired lease is delivered and untouched, not current work", () => {
 test("each receipt outcome keeps its exact meaning and next step", () => {
   const expected: Record<DeliveryAckOutcome, RegExp[]> = {
     replied: [/outcome replied/, /cswarm inbox/],
-    observed: [/outcome observed/, /saw the signal/, /cswarm ask/],
+    observed: [
+      /reported outcome observed/,
+      /surfaced to the agent's session or handled by its listener/,
+      /answer may still be posted/,
+      /cswarm ask/,
+    ],
     queued: [
       /Queued for agent/,
       /waiting for the recipient's session hook \(4 in queue\)/,
@@ -262,8 +272,11 @@ test("a broadcast names the no-recipient fact and never invents a failed or pend
   assert.match(rendered, /Seen by 1 of 3 workspace members/);
   assert.match(rendered, /Seen members:\n- Ari — 5m ago/);
   assert.match(rendered, /Not-seen members:\n- Bo\n- Cy/);
-  assert.match(rendered, /Agents — not tracked:\n- Quill/);
-  assert.match(rendered, /Broadcasts do not wake agents.*does not track whether an agent saw them/);
+  assert.match(rendered, /Agents — seen 1 of 1:\n- Quill/);
+  assert.match(
+    rendered,
+    /Seen means the agent's CLI rendered it, or its listener's model consumed it in a completed turn/,
+  );
   assert.match(rendered, /cswarm ask/);
   assert.doesNotMatch(rendered, /pending|failed|not yet delivered|working/i);
 });
@@ -339,7 +352,7 @@ test("--json payload carries the machine state, outcome, recipient, and ledger f
   assert.equal(payload.broadcast, false);
   assert.equal(rows.length, 1);
   assert.equal(rows[0]!.recipient_agent_principal_id, AGENT);
-  assert.equal(rows[0]!.state, "finished");
+  assert.equal(rows[0]!.state, "observed");
   assert.equal(rows[0]!.outcome, "observed");
   assert.equal(rows[0]!.attempt_count, 2);
   assert.equal(rows[0]!.lease_expiry_count, 1);
@@ -589,7 +602,7 @@ test("the receipt CLI renders the full broadcast member and untracked-agent rost
   assert.match(result.stdout, /Seen by 1 of 3 workspace members/);
   assert.match(result.stdout, /Seen members:\n- Ari/);
   assert.match(result.stdout, /Not-seen members:\n- Bo\n- Cy/);
-  assert.match(result.stdout, /Agents — not tracked:\n- Quill/);
+  assert.match(result.stdout, /Agents — seen 1 of 1:\n- Quill/);
   assert.match(result.stdout, /no agent was addressed and none was woken/);
   assert.doesNotMatch(result.stdout, /roster cut/);
 });

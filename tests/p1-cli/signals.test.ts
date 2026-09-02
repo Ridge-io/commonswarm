@@ -830,6 +830,10 @@ test("agent feed resolves only member labels and JSON skips enrichment", async (
       requests.push(parsed);
       response.statusCode = 200;
       response.setHeader("content-type", "application/json");
+      if ((parsed.command as Record<string, unknown> | undefined)?.kind === "signals_seen") {
+        response.end(JSON.stringify({ ok: true, event_ids: [] }));
+        return;
+      }
       response.end(
         parsed.resource === "members"
           ? JSON.stringify({
@@ -867,6 +871,15 @@ test("agent feed resolves only member labels and JSON skips enrichment", async (
       requests.filter((request) => request.resource === "members").length,
       1,
     );
+    assert.deepEqual(
+      requests.filter((request) =>
+        (request.command as Record<string, unknown> | undefined)?.kind === "signals_seen"
+      ).map((request) =>
+        (request.command as Record<string, unknown>).signal_ids
+      ),
+      [[memberRow.id, SIGNAL]],
+      "the agent attests exactly the broadcasts rendered in the returned page",
+    );
 
     requests.length = 0;
     const jsonOutput = await runCli([
@@ -882,8 +895,14 @@ test("agent feed resolves only member labels and JSON skips enrichment", async (
     ], TOKEN);
     assert.equal(jsonOutput.code, 0);
     assert.deepEqual(
-      requests.map((request) => request.resource),
+      requests.filter((request) => request.resource).map((request) => request.resource),
       ["signals"],
+    );
+    assert.equal(
+      requests.filter((request) =>
+        (request.command as Record<string, unknown> | undefined)?.kind === "signals_seen"
+      ).length,
+      1,
     );
     const parsedJson = JSON.parse(jsonOutput.stdout) as Record<string, unknown>;
     assert.deepEqual(Object.keys(parsedJson), [
@@ -897,6 +916,66 @@ test("agent feed resolves only member labels and JSON skips enrichment", async (
     assert.equal(jsonRows[1]?.from, AGENT);
     assert.equal(Object.hasOwn(jsonRows[0]!, "display_name"), false);
     assert.equal(Object.hasOwn(jsonRows[1]!, "display_name"), false);
+  } finally {
+    await new Promise<void>((resolve, reject) => {
+      server.close((error) => error ? reject(error) : resolve());
+    });
+  }
+});
+
+test("agent feed batches only rendered broadcasts and receipt failure never fails the read", async () => {
+  const rows = Array.from({ length: 75 }, (_, index) => signal({
+    id: `00000000-0000-4000-8000-${String(index).padStart(12, "0")}`,
+    to: null,
+    to_agent: null,
+  }));
+  rows.push(signal({
+    id: "99999999-9999-4999-8999-999999999999",
+    to_agent: AGENT,
+  }));
+  const batches: string[][] = [];
+  const server = createServer((request, response) => {
+    let body = "";
+    request.setEncoding("utf8");
+    request.on("data", (chunk: string) => body += chunk);
+    request.on("end", () => {
+      const parsed = JSON.parse(body) as Record<string, unknown>;
+      const command = parsed.command as Record<string, unknown> | undefined;
+      response.setHeader("content-type", "application/json");
+      if (command?.kind === "signals_seen") {
+        batches.push(command.signal_ids as string[]);
+        response.statusCode = 503;
+        response.end(JSON.stringify({ error: "temporarily_unavailable" }));
+        return;
+      }
+      response.statusCode = 200;
+      response.end(JSON.stringify({ signals: rows }));
+    });
+  });
+  await new Promise<void>((resolve, reject) => {
+    server.once("error", reject);
+    server.listen(0, "127.0.0.1", resolve);
+  });
+  try {
+    const address = server.address();
+    assert.ok(address && typeof address === "object");
+    const result = await runCli([
+      "feed",
+      "--url",
+      `http://127.0.0.1:${address.port}`,
+      "--anon-key",
+      "anon",
+      "--workspace-id",
+      WORKSPACE,
+      "--agent-token-stdin",
+      "--limit",
+      "76",
+      "--json",
+    ], TOKEN);
+    assert.equal(result.code, 0, result.stderr);
+    assert.equal((JSON.parse(result.stdout) as { signals: unknown[] }).signals.length, 76);
+    assert.deepEqual(batches.map((batch) => batch.length), [50, 25]);
+    assert.ok(batches.flat().every((id) => id !== "99999999-9999-4999-8999-999999999999"));
   } finally {
     await new Promise<void>((resolve, reject) => {
       server.close((error) => error ? reject(error) : resolve());

@@ -72,6 +72,45 @@ interface FileFixture {
 
 let f: FileFixture;
 
+async function createBrainAgent(label: string): Promise<{
+  principalId: string;
+  token: string;
+}> {
+  const deviceId = randomUUID();
+  const principalId = randomUUID();
+  const runId = randomUUID();
+  const token = `swm_agt_${randomBytes(32).toString("base64url")}`;
+  const tokenHash = createHash("sha256").update(token).digest();
+  await sql.begin(async (tx) => {
+    await tx`
+      INSERT INTO swarm.devices (device_id, user_id, label)
+      VALUES (${deviceId}::uuid, ${f.ua}::uuid, ${label})
+    `;
+    await tx`
+      INSERT INTO swarm.agent_principals (
+        principal_id, workspace_id, owner_user_id, name
+      ) VALUES (
+        ${principalId}::uuid, ${f.workspaceA}::uuid, ${f.ua}::uuid, ${label}
+      )
+    `;
+    await tx`
+      INSERT INTO swarm.agent_runs (run_id, principal_id, device_id)
+      VALUES (${runId}::uuid, ${principalId}::uuid, ${deviceId}::uuid)
+    `;
+    await tx`
+      INSERT INTO swarm.agent_tokens (
+        token_id, principal_id, run_id, scopes, token_hash,
+        expires_at, lineage_id
+      ) VALUES (
+        ${randomUUID()}::uuid, ${principalId}::uuid, ${runId}::uuid,
+        ${tx.json(["post_signal"])}::jsonb, ${tokenHash},
+        statement_timestamp() + interval '1 hour', ${randomUUID()}::uuid
+      )
+    `;
+  });
+  return { principalId, token };
+}
+
 async function createUser(
   label: string,
 ): Promise<{ id: string; jwt: string }> {
@@ -470,6 +509,280 @@ test("F5 current_version follows COMMIT, not create: a pending v2 never hides li
     file_id: fileId,
   }, f.workspaceA);
   assert.equal(after.body.version_n, 2, "after commit the default serves v2");
+});
+
+test("B1 21 brain puts keep one name, 20 live versions, and retired history", async () => {
+  const actor = await createBrainAgent("brain-window-writer");
+  const topicFileName = "brain--rolling-ledger.md";
+  let fileId = "";
+  const bodies: Uint8Array[] = [];
+
+  for (let versionN = 1; versionN <= 21; versionN += 1) {
+    const bytes = new TextEncoder().encode(`# Rolling ledger\n\nVersion ${versionN}.\n`);
+    bodies.push(bytes);
+    const versionId = randomUUID();
+    const create = await postCommand(actor.token, {
+      kind: "file_version_create",
+      file_id: randomUUID(),
+      version_id: versionId,
+      name: topicFileName,
+      declared_size_bytes: bytes.length,
+      content_type: "text/markdown",
+    }, f.workspaceA);
+    assert.equal(create.status, 200, `create ${versionN}: ${JSON.stringify(create.body)}`);
+    fileId ||= String(create.body.file_id);
+    assert.equal(create.body.file_id, fileId, "the topic name remains the stable pointer");
+    assert.equal(create.body.version_n, versionN);
+
+    const put = await fetch(`${local.API_URL}${String(create.body.upload_path)}`, {
+      method: "PUT",
+      headers: { "content-type": "text/markdown" },
+      body: bytes,
+    });
+    assert.ok(put.ok, `upload ${versionN} failed: ${put.status}`);
+    const commit = await postCommand(actor.token, {
+      kind: "file_version_commit",
+      file_id: fileId,
+      version_id: versionId,
+      sha256: sha256hex(bytes),
+    }, f.workspaceA);
+    assert.equal(commit.status, 200, `commit ${versionN}: ${JSON.stringify(commit.body)}`);
+    assert.equal(commit.body.version_n, versionN);
+    assert.equal(
+      commit.body.retired_version_n,
+      versionN === 21 ? 1 : undefined,
+      "only the 21st commit retires the oldest live version",
+    );
+  }
+
+  const states = await sql<
+    { state: string; n: string; first_version: number; last_version: number }[]
+  >`
+    SELECT state, count(*)::text AS n,
+           min(version_n)::integer AS first_version,
+           max(version_n)::integer AS last_version
+    FROM swarm.file_versions
+    WHERE file_id = ${fileId}::uuid
+      AND workspace_id = ${f.workspaceA}::uuid
+    GROUP BY state
+    ORDER BY state
+  `;
+  assert.deepEqual([...states], [
+    { state: "live", n: "20", first_version: 2, last_version: 21 },
+    { state: "retired", n: "1", first_version: 1, last_version: 1 },
+  ]);
+  const retiredMarker = await sql<{ retired_at: Date | null }[]>`
+    SELECT retired_at FROM swarm.file_versions
+    WHERE file_id = ${fileId}::uuid AND version_n = 1
+  `;
+  assert.ok(retiredMarker[0]?.retired_at, "retirement is marked, not deleted");
+
+  const read = await fetch(`${local.API_URL}/functions/v1/read`, {
+    method: "POST",
+    headers: {
+      authorization: `Bearer ${actor.token}`,
+      "content-type": "application/json",
+    },
+    body: JSON.stringify({ resource: "files", workspace_id: f.workspaceA }),
+  });
+  assert.equal(read.status, 200);
+  const listed = await read.json() as { files: Array<Record<string, unknown>> };
+  const topic = listed.files.find((row) => row.name === topicFileName);
+  assert.ok(topic, "the original topic name still resolves in brain ls data");
+  assert.equal(topic.current_version, 21);
+  assert.equal(topic.live_version_count, 20);
+  assert.equal(topic.retired_version_count, 1);
+
+  const retiredGrant = await postCommand(actor.token, {
+    kind: "file_download_url",
+    file_id: fileId,
+    version_n: 1,
+  }, f.workspaceA);
+  assert.equal(retiredGrant.status, 200, JSON.stringify(retiredGrant.body));
+  assert.equal(retiredGrant.body.version_state, "retired");
+  assert.equal(retiredGrant.body.live_version_count, 20);
+  assert.equal(retiredGrant.body.retired_version_count, 1);
+  const retiredGet = await fetch(
+    `${local.API_URL}${String(retiredGrant.body.download_path)}`,
+  );
+  assert.ok(retiredGet.ok);
+  assert.deepEqual(
+    new Uint8Array(await retiredGet.arrayBuffer()),
+    bodies[0],
+    "brain get --version 1 still resolves the retired object for a member agent",
+  );
+
+  const currentGrant = await postCommand(actor.token, {
+    kind: "file_download_url",
+    file_id: fileId,
+  }, f.workspaceA);
+  assert.equal(currentGrant.status, 200, JSON.stringify(currentGrant.body));
+  assert.equal(currentGrant.body.version_n, 21);
+  assert.equal(currentGrant.body.version_state, "live");
+});
+
+test("B1b a refused brain commit cannot retire a live version", async () => {
+  const actor = await createBrainAgent("brain-refusal-rollback-writer");
+  const topicFileName = "brain--refusal-rollback.md";
+  const fileId = randomUUID();
+  await sql.begin(async (tx) => {
+    await tx`
+      INSERT INTO swarm.files (
+        file_id, workspace_id, name, created_by_kind, created_by, current_version
+      ) VALUES (
+        ${fileId}::uuid, ${f.workspaceA}::uuid, ${topicFileName},
+        'agent', ${actor.principalId}::uuid, 20
+      )
+    `;
+    for (let versionN = 1; versionN <= 20; versionN += 1) {
+      await tx`
+        INSERT INTO swarm.file_versions (
+          version_id, file_id, workspace_id, version_n, state,
+          size_bytes, content_type, storage_path, uploaded_by_kind,
+          uploaded_by, committed_at
+        ) VALUES (
+          ${randomUUID()}::uuid, ${fileId}::uuid, ${f.workspaceA}::uuid,
+          ${versionN}, 'live', 1, 'text/markdown',
+          ${`${f.workspaceA}/${fileId}/${versionN}`}, 'agent',
+          ${actor.principalId}::uuid, statement_timestamp()
+        )
+      `;
+    }
+  });
+
+  const pendingVersionId = randomUUID();
+  const create = await postCommand(actor.token, {
+    kind: "file_version_create",
+    file_id: randomUUID(),
+    version_id: pendingVersionId,
+    name: topicFileName,
+    declared_size_bytes: PLAN_BYTES.length,
+    content_type: "text/markdown",
+  }, f.workspaceA);
+  assert.equal(create.status, 200, JSON.stringify(create.body));
+  assert.equal(create.body.file_id, fileId);
+  assert.equal(create.body.version_n, 21);
+  const put = await fetch(`${local.API_URL}${String(create.body.upload_path)}`, {
+    method: "PUT",
+    headers: { "content-type": "text/markdown" },
+    body: PLAN_BYTES,
+  });
+  assert.ok(put.ok, `upload failed: ${put.status}`);
+
+  const triggerName = "l52_suppress_selected_brain_commit";
+  const functionName = "l52_suppress_selected_brain_commit";
+  await sql.unsafe(`
+    CREATE OR REPLACE FUNCTION swarm.${functionName}()
+    RETURNS trigger
+    LANGUAGE plpgsql
+    AS $test$
+    BEGIN
+      IF OLD.version_id = '${pendingVersionId}'::uuid
+         AND OLD.state = 'pending'
+         AND NEW.state = 'live' THEN
+        RETURN NULL;
+      END IF;
+      RETURN NEW;
+    END;
+    $test$;
+    DROP TRIGGER IF EXISTS ${triggerName} ON swarm.file_versions;
+    CREATE TRIGGER ${triggerName}
+      BEFORE UPDATE ON swarm.file_versions
+      FOR EACH ROW
+      EXECUTE FUNCTION swarm.${functionName}();
+  `);
+  try {
+    /* This trigger makes the pending->live UPDATE return no row. In the old
+     * order the oldest live version was retired first, then the normal 409
+     * return committed that retirement. The fixed order refuses first. */
+    const refused = await postCommand(actor.token, {
+      kind: "file_version_commit",
+      file_id: fileId,
+      version_id: pendingVersionId,
+      sha256: sha256hex(PLAN_BYTES),
+    }, f.workspaceA);
+    assert.equal(refused.status, 409, JSON.stringify(refused.body));
+    assert.equal(refused.body.error, "file_commit_conflict");
+
+    const states = await sql<{ state: string; n: string }[]>`
+      SELECT state, count(*)::text AS n
+      FROM swarm.file_versions
+      WHERE file_id = ${fileId}::uuid
+      GROUP BY state
+      ORDER BY state
+    `;
+    assert.deepEqual([...states], [
+      { state: "live", n: "20" },
+      { state: "pending", n: "1" },
+    ]);
+  } finally {
+    await sql.unsafe(`
+      DROP TRIGGER IF EXISTS ${triggerName} ON swarm.file_versions;
+      DROP FUNCTION IF EXISTS swarm.${functionName}();
+    `);
+  }
+});
+
+test("B2 a brain topic refuses only when 20 uploads are still in flight", async () => {
+  const actor = await createBrainAgent("brain-in-flight-writer");
+  const topicFileName = "brain--in-flight-cap.md";
+  for (let attempt = 1; attempt <= 20; attempt += 1) {
+    const create = await postCommand(actor.token, {
+      kind: "file_version_create",
+      file_id: randomUUID(),
+      version_id: randomUUID(),
+      name: topicFileName,
+      declared_size_bytes: 1,
+      content_type: "text/markdown",
+    }, f.workspaceA);
+    assert.equal(create.status, 200, `pending create ${attempt}: ${JSON.stringify(create.body)}`);
+  }
+  const refused = await postCommand(actor.token, {
+    kind: "file_version_create",
+    file_id: randomUUID(),
+    version_id: randomUUID(),
+    name: topicFileName,
+    declared_size_bytes: 1,
+    content_type: "text/markdown",
+  }, f.workspaceA);
+  assert.equal(refused.status, 409, JSON.stringify(refused.body));
+  assert.equal(refused.body.error, "brain_version_in_flight_cap");
+  assert.match(String(refused.body.message), /20 uncommitted uploads in flight/);
+  assert.match(String(refused.body.message), /wait for one to commit|pending upload to expire/);
+  assert.match(String(refused.body.message), /brain put again/);
+
+  // The existing hourly `swarm.purge_file_artifacts()` job is the expiry path:
+  // it changes pending rows older than 3h to purged and queues their object paths.
+  await sql`
+    UPDATE swarm.file_versions AS v
+    SET created_at = statement_timestamp() - interval '4 hours'
+    FROM swarm.files AS file
+    WHERE file.workspace_id = ${f.workspaceA}::uuid
+      AND file.name = ${topicFileName}
+      AND v.file_id = file.file_id
+      AND v.workspace_id = file.workspace_id
+      AND v.state = 'pending'
+  `;
+  await sql`SELECT swarm.purge_file_artifacts()`;
+  const expiredStates = await sql<{ state: string; n: string }[]>`
+    SELECT v.state, count(*)::text AS n
+    FROM swarm.file_versions AS v
+    JOIN swarm.files AS file
+      ON file.file_id = v.file_id AND file.workspace_id = v.workspace_id
+    WHERE file.workspace_id = ${f.workspaceA}::uuid
+      AND file.name = ${topicFileName}
+    GROUP BY v.state
+  `;
+  assert.deepEqual([...expiredStates], [{ state: "purged", n: "20" }]);
+  const afterExpiry = await postCommand(actor.token, {
+    kind: "file_version_create",
+    file_id: randomUUID(),
+    version_id: randomUUID(),
+    name: topicFileName,
+    declared_size_bytes: 1,
+    content_type: "text/markdown",
+  }, f.workspaceA);
+  assert.equal(afterExpiry.status, 200, JSON.stringify(afterExpiry.body));
 });
 
 test("F6 a foreign tenant's file_id refuses uniformly — no oracle, no 500", async () => {

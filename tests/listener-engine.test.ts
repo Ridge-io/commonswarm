@@ -292,6 +292,38 @@ test("durable worker prompts share the changed-only brain digest state", async (
   }
 });
 
+test("listener attests only after its model consumes the rendered feed digest", async () => {
+  const store = new MemoryStore();
+  const broadcastId = "99999999-9999-4999-8999-999999999999";
+  const order: string[] = [];
+  const engine = new ListenerEngine({
+    store,
+    now: () => Date.parse("2026-09-01T12:00:00.000Z"),
+    resolveSenderProvenance: async () => ({
+      senderName: "Avery",
+      operatorId: null,
+      operatorName: null,
+      feedDigest: "Recent broadcast signals:\n[workspace] ship the roster",
+      renderedBroadcastIds: [broadcastId],
+    }),
+    model: model(async (_signal, _mode, promptText) => {
+      assert.match(promptText, /Recent broadcast signals/);
+      assert.match(promptText, /ship the roster/);
+      order.push("consumed");
+      return { message: "done", stopReason: "end_turn" };
+    }),
+    onBroadcastsConsumed: async (ids) => {
+      order.push("attested");
+      assert.deepEqual(ids, [broadcastId]);
+    },
+    poster: poster(async () => ({ signalId: REPLY_ID })),
+  });
+  await engine.process(signal("aaaaaaaa-aaaa-4aaa-8aaa-aaaaaaaaaaa4", {
+    until: "2026-09-02T00:00:00.000Z",
+  }));
+  assert.deepEqual(order, ["consumed", "attested"]);
+});
+
 test("resolved sender and operator provenance reaches the model prompt", async () => {
   const store = new MemoryStore();
   const ask = signal("aaaaaaaa-aaaa-4aaa-8aaa-aaaaaaaaaaad", {
@@ -778,15 +810,26 @@ test("provider cancelled after caller abort restores received; without abort it 
   const controller = new AbortController();
   const store = new MemoryStore();
   let postCalls = 0;
+  let attestCalls = 0;
   const aborted = new ListenerEngine({
     store,
     signal: controller.signal,
     now: () => Date.parse("2026-07-30T01:00:00.000Z"),
+    resolveSenderProvenance: async () => ({
+      senderName: "Avery",
+      operatorId: null,
+      operatorName: null,
+      feedDigest: "Recent broadcast signals:\n[workspace] keep this pending",
+      renderedBroadcastIds: ["99999999-9999-4999-8999-999999999998"],
+    }),
     model: {
       async prompt() {
         controller.abort();
         return { message: "", stopReason: "cancelled" as const };
       },
+    },
+    onBroadcastsConsumed: async () => {
+      attestCalls += 1;
     },
     poster: poster(async () => {
       postCalls += 1;
@@ -801,6 +844,7 @@ test("provider cancelled after caller abort restores received; without abort it 
   assert.ok(caught instanceof Error);
   assert.equal(caught.name, "AbortError");
   assert.equal(postCalls, 0);
+  assert.equal(attestCalls, 0, "a cancelled model turn must not attest its feed digest");
   const record = await store.read(ask.id);
   assert.equal(record?.state, "received");
   assert.notEqual(record?.failureCode, "model_cancelled");

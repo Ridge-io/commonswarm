@@ -4,6 +4,7 @@ import { test } from "node:test";
 import {
   BROWSER_ATTACHMENT_MAX,
   BROWSER_ATTACHMENT_MAX_BYTES,
+  browserSignalKind,
   prepareBrowserAttachments,
 } from "../../lib/commonswarm.js";
 
@@ -32,13 +33,32 @@ test("composer defaults to broadcast and keeps signal language", () => {
   assert.match(dashboard, /let composerAudience: ComposerAudience = \{ kind: "everyone" \}/);
   assert.match(dashboard, /everyone\.textContent = "Everyone · nobody is notified"/);
   assert.match(dashboard, /No recipient · broadcast · no agent will be woken/);
-  assert.match(dashboard, /One recipient · agent addressed · its listener can wake it/);
-  assert.match(dashboard, /One recipient · person addressed · no agent will be woken/);
+  assert.match(markup, /Post a note · no agent is woken/);
+  assert.match(dashboard, /`Wakes \$\{entityName\(composerAudience\)\}'s listener`/);
+  assert.match(dashboard, /`Posted for \$\{entityName\(composerAudience\)\} to read; no wake`/);
+});
+
+test("composer kind defaults by recipient and the agent-only control opts out of wake", () => {
+  assert.deepEqual([
+    browserSignalKind({ kind: "everyone" }),
+    browserSignalKind({ kind: "person", id: "person-1" }),
+    browserSignalKind({ kind: "agent", id: "agent-1" }),
+    browserSignalKind({ kind: "agent", id: "agent-1" }, true),
+  ], ["note", "note", "ask", "note"]);
+
+  const submit = between(
+    dashboard,
+    'one<HTMLFormElement>("[data-composer]")?.addEventListener("submit"',
+    'for (const button of all<HTMLButtonElement>("[data-feed-filter]")',
+  );
+  assert.match(submit, /const signalKind = browserSignalKind\(audience, composerPostAgentNote\)/);
+  assert.match(submit, /kind: signalKind/);
+  assert.match(submit, /rawBody,\s*audience,\s*signalKind,\s*attachmentRefs/);
 });
 
 test("browser-authored signals use the existing broadcast and direct target fields", () => {
   const helper = between(client, "export async function postBrowserSignal", "/**\n * Reads the shared feed");
-  assert.match(helper, /signal_kind: "note"/);
+  assert.match(helper, /signal_kind: signalKind/);
   assert.match(helper, /const address = browserSignalAddress\(recipient\)/);
   assert.match(helper, /to_user_id: address\.toUserId/);
   assert.match(helper, /to_agent_principal_id: address\.toAgentPrincipalId/);
@@ -53,7 +73,7 @@ test("browser-authored signals use the existing broadcast and direct target fiel
   assert.match(submit, /const address = browserSignalAddress\(audience\)/);
   assert.match(submit, /to: address\.toUserId/);
   assert.match(submit, /toAgent: address\.toAgentPrincipalId/);
-  assert.match(submit, /rawBody,\s*audience,\s*attachmentRefs,\s*\);/);
+  assert.match(submit, /rawBody,\s*audience,\s*signalKind,\s*attachmentRefs,\s*\);/);
   assert.match(submit, /await postBrowserSignal/);
 });
 

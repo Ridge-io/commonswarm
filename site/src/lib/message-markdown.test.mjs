@@ -11,6 +11,7 @@ import {
   sanitizeMessageHtml,
   setSanitizedMessageMarkdown,
 } from "./message-markdown.ts";
+import { HOSTILE_MARKDOWN_BLOCKS } from "./message-markdown-fixtures.ts";
 
 test("long messages use the requested 30-line collapse threshold", () => {
   assert.equal(MESSAGE_COLLAPSE_LINES, 30);
@@ -43,10 +44,7 @@ test("escape-first makes raw HTML literal, including script and event-handler pa
 });
 
 test("multiline hostile markup stays inert across paragraphs, lists, and fences", () => {
-  const rendered = renderMessageMarkdown(
-    "Before <b>raw</b>\n\n- [click](javascript:alert(1))\n" +
-      '- <img src=x onerror="alert(2)">\n\n```html\n<img src=x onerror=alert(3)>\n```',
-  );
+  const rendered = renderMessageMarkdown(HOSTILE_MARKDOWN_BLOCKS);
   assert.match(rendered, /<p>Before &lt;b&gt;raw&lt;\/b&gt;<\/p>/u);
   assert.match(rendered, /<ul><li>\[click\]\(javascript:alert\(1\)\)<\/li>/u);
   assert.match(rendered, /&lt;img src=x onerror=&quot;alert\(2\)&quot;&gt;/u);
@@ -89,6 +87,7 @@ test("a link label containing inline code restores fully, with no stray token by
 test("the sanitizer keeps only the tag allowlist and href on anchors", () => {
   assert.deepEqual(MESSAGE_MARKDOWN_TAGS, [
     "p", "br", "strong", "em", "code", "pre", "ul", "ol", "li", "blockquote", "a",
+    "h2", "h3", "h4", "h5",
   ]);
   assert.deepEqual(MESSAGE_MARKDOWN_ATTRIBUTES, { a: ["href"] });
   assert.equal(
@@ -117,6 +116,18 @@ test("images, headings, and tables stay literal in v1", () => {
   const rendered = renderMessageMarkdown("# title\n![alt](https://example.com/a.png)\n| a | b |");
   assert.equal(rendered, "<p># title<br>![alt](https://example.com/a.png)<br>| a | b |</p>");
   assert.doesNotMatch(rendered, /<h\d|<img|<table/u);
+});
+
+test("panel Markdown shifts h1-h4 to h2-h5 through the same sanitizer", () => {
+  const rendered = renderMessageMarkdown(
+    "# One\n## Two\n### Three\n#### Four\n##### Five stays literal",
+    { headingOffset: 1 },
+  );
+  assert.equal(
+    rendered,
+    "<h2>One</h2><h3>Two</h3><h4>Three</h4><h5>Four</h5>" +
+      "<p>##### Five stays literal</p>",
+  );
 });
 
 test("unclosed fences, a 10k line, and deep nesting stay bounded and do not crash", { timeout: 1_000 }, () => {

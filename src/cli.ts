@@ -66,7 +66,9 @@ import {
   brainFileName,
   brainRowsFromFiles,
   brainTopicSnapshots,
+  brainVersionCounts,
   canonicalBrainTopic,
+  parseBrainTopicSelector,
   type BrainTopicRow,
 } from "./cloud/brain.js";
 import { listBrainRowsAsAgent } from "./cloud/brain-agent.js";
@@ -213,6 +215,10 @@ import {
   DeliveryReceiptReadError,
   readAgentDeliveryReceipts,
 } from "./cloud/delivery-receipts.js";
+import {
+  renderedBroadcastIds,
+  reportRenderedBroadcasts,
+} from "./cloud/agent-signal-receipts.js";
 import { resolveOpenCodeExecutable } from "./host/opencode.js";
 import {
   inspectClaudeBridgeExecutable,
@@ -518,7 +524,7 @@ Usage:
   cswarm file rm <name|file-id> [--url <url> --anon-key <key>] [--workspace-id <uuid>] ${agentCredential} [--json]
   cswarm file restore <name|file-id> [--url <url> --anon-key <key>] [--workspace-id <uuid>] ${agentCredential} [--json]
   cswarm brain ls [--url <url> --anon-key <key>] [--workspace-id <uuid>] ${agentCredential} [--json]
-  cswarm brain get <topic> [--version <n>] [--url <url> --anon-key <key>] [--workspace-id <uuid>] ${agentCredential} [--json]
+  cswarm brain get <topic>[@<version>] [--version <n>] [--url <url> --anon-key <key>] [--workspace-id <uuid>] ${agentCredential} [--json]
   cswarm brain put <topic> [<markdown-path>] [--url <url> --anon-key <key>] [--workspace-id <uuid>] ${agentCredential} [--json]  # without a path, reads Markdown from stdin
   cswarm feedback "<text>" --kind bug|idea|friction [--about <ref>] [--url <url> --anon-key <key>] [--workspace-id <uuid>] ${agentCredential} [--json]
   cswarm listen start ${requiredAgentCredential} [--url <url> --anon-key <key>] --workspace-id <uuid> --provider grok|opencode|claude|codex [--cwd <absolute-path>] [--model <model>] [--effort <level>] [--permissions deny|allow] [--grok-executable <path>] [--opencode-executable <path>] [--claude-executable <path>] [--codex-executable <path>] [--turn-budget <duration>] [--route worker|main|split] [--defer-over <chars>] [--allow-unattended] [--foreground] [--json]
@@ -3106,7 +3112,7 @@ async function runPostSignal(
       authors,
     })}\n${
       noteAtAgent
-        ? "\nThis note is in their channel, but it does NOT wake their agent — only an ask does.\nIf they need to act on it, send it again with: cswarm ask \"<text>\" --to <agent>\n"
+        ? "\nNotes do not wake an agent; use cswarm ask to wake it.\n"
         : ""
     }${
       raced.length === 0 ? "" : `\nSomeone else announced in the two minutes before you, which you could not have seen when you read the feed:\n${
@@ -3704,6 +3710,14 @@ async function runSignalRead(
         timedOut,
       }),
     );
+    if (selected.kind === "agent") {
+      await reportRenderedBroadcasts(
+        cloud,
+        selected.bearer,
+        selected.selectedWorkspace,
+        renderedBroadcastIds(rows),
+      );
+    }
     return;
   }
   const authors = await settleSignalAuthorLabels(
@@ -3726,6 +3740,14 @@ async function runSignalRead(
     includeStale: args.has("include-stale"),
     authors,
   })}\n`);
+  if (selected.kind === "agent") {
+    await reportRenderedBroadcasts(
+      cloud,
+      selected.bearer,
+      selected.selectedWorkspace,
+      renderedBroadcastIds(rows),
+    );
+  }
 }
 
 /**
@@ -3757,6 +3779,7 @@ async function runInboxNotifyCommand(args: Arguments): Promise<void> {
   process.on("SIGTERM", stop);
   try {
     const retryNotices = createArrivalRetryNoticePolicy();
+    let renderedBearer = selected.bearer;
     const cursorStore = fileArrivalCursorStore({
       target: cloud,
       workspaceId: selected.selectedWorkspace,
@@ -3771,6 +3794,7 @@ async function runInboxNotifyCommand(args: Arguments): Promise<void> {
         const token = selected.session
           ? await selected.session.bearer()
           : selected.bearer;
+        renderedBearer = token;
         return await readAgentSignalPage(
           cloud,
           { kind: "agent", token },
@@ -3799,6 +3823,15 @@ async function runInboxNotifyCommand(args: Arguments): Promise<void> {
           args.has("json")
             ? JSON.stringify(notification)
             : formatArrivalNotification(notification),
+        );
+      },
+      afterEmitBatch: async (signals) => {
+        await reportRenderedBroadcasts(
+          cloud,
+          renderedBearer,
+          selected.selectedWorkspace,
+          renderedBroadcastIds(signals),
+          httpClient.fetch,
         );
       },
       onRetry: (_error, delayMs) => {
@@ -3920,6 +3953,7 @@ async function runInboxFollowCommand(args: Arguments): Promise<void> {
   const httpClient = new ListenerHttpClient();
   let legacyCursorWarned = false;
   let malformedRowWarnings = 0;
+  let renderedBearer = selected.kind === "agent" ? selected.bearer : null;
   const onAbortSignal = () => controller.abort();
   process.on("SIGINT", onAbortSignal);
   process.on("SIGTERM", onAbortSignal);
@@ -3949,6 +3983,7 @@ async function runInboxFollowCommand(args: Arguments): Promise<void> {
         const credential: SignalCredential = selected.session
           ? { kind: "agent", token: await selected.session.bearer() }
           : signalCredentialOf(selected);
+        if (credential.kind === "agent") renderedBearer = credential.token;
         const query = {
           ...queryBase,
           limit,
@@ -3996,6 +4031,16 @@ async function runInboxFollowCommand(args: Arguments): Promise<void> {
       },
       emit: (frame) => {
         process.stdout.write(`${formatFollowFrame(frame)}\n`);
+      },
+      afterEmitBatch: async (signals) => {
+        if (renderedBearer === null) return;
+        await reportRenderedBroadcasts(
+          cloud,
+          renderedBearer,
+          selected.selectedWorkspace,
+          renderedBroadcastIds(signals),
+          httpClient.fetch,
+        );
       },
     });
     if (stop.reason === "cancelled") {
@@ -5157,6 +5202,7 @@ async function runConfiguredListener(options: {
     );
     const provenance = listenerSenderProvenance(signal, senderDirectory);
     if (context.includeBrainDigest !== true) return provenance;
+    let enriched = provenance;
     try {
       const topics = await listBrainRowsAsAgent(
         options.cloud,
@@ -5172,10 +5218,39 @@ async function runConfiguredListener(options: {
         paths.instanceDirectory,
         options.principalId,
       ).consume(brainTopicSnapshots(topics));
-      return brainDigest === null ? provenance : { ...provenance, brainDigest };
-    } catch {
-      return provenance;
-    }
+      if (brainDigest !== null) enriched = { ...enriched, brainDigest };
+    } catch {}
+    try {
+      const feed = await readSignals(
+        options.cloud,
+        { kind: "agent", token: credential },
+        {
+          workspaceId: options.workspaceId,
+          inbox: false,
+          limit: 50,
+          includeStale: false,
+        },
+        {
+          ...(context.signal ? { signal: context.signal } : {}),
+          deadlineMs: context.deadlineMs,
+          fetcher: httpClient.fetch,
+        },
+      );
+      const broadcasts = feed.filter((row) =>
+        row.to === null && row.to_agent === null
+      );
+      if (broadcasts.length > 0) {
+        enriched = {
+          ...enriched,
+          feedDigest: renderSignals(broadcasts, {
+            inbox: false,
+            includeStale: false,
+          }),
+          renderedBroadcastIds: renderedBroadcastIds(broadcasts),
+        };
+      }
+    } catch {}
+    return enriched;
   };
   const effectStore = new FileListenerEffectStore({
     profileId: options.cloud.profileId,
@@ -5428,6 +5503,16 @@ async function runConfiguredListener(options: {
             listenerInstanceId,
             deliveryJournal: selectedJournal,
             resolveSenderProvenance,
+            onBroadcastsConsumed: async (signalIds) => {
+              const credential = await credentialSession.bearer();
+              await reportRenderedBroadcasts(
+                options.cloud,
+                credential,
+                options.workspaceId,
+                signalIds,
+                httpClient.fetch,
+              );
+            },
             routeMode,
             deferOverChars,
             pendingMainQueue,
@@ -6757,12 +6842,12 @@ async function runBrainLs(args: Arguments): Promise<void> {
   }
   process.stdout.write(`Brain topics (${topics.length}):\n`);
   for (const { topic, file } of topics) {
-    const versions = `${file.current_version} ${file.current_version === 1 ? "version" : "versions"}`;
+    const counts = brainVersionCounts(file);
     const author = file.uploaded_by
       ? `${file.uploaded_by_kind ?? file.created_by_kind} ${file.uploaded_by.slice(0, 8)}`
       : file.created_by_kind;
     process.stdout.write(
-      `- ${topic} · ${versions} · updated ${file.committed_at ?? file.created_at} · by ${author}\n`,
+      `- ${topic} · ${counts.live} live · ${counts.retired} retired · updated ${file.committed_at ?? file.created_at} · by ${author}\n`,
     );
   }
 }
@@ -6770,7 +6855,8 @@ async function runBrainLs(args: Arguments): Promise<void> {
 async function runBrainGet(args: Arguments): Promise<void> {
   const requestedTopic = args.positionals[2];
   if (!requestedTopic) throw new UsageError("cswarm brain get needs a topic");
-  const topic = canonicalBrainTopic(requestedTopic);
+  const selector = parseBrainTopicSelector(requestedTopic);
+  const topic = selector.topic;
   const context = await fileContext(args, ["version"], 3);
   const row = (await brainRows(context)).find((candidate) => candidate.topic === topic);
   if (!row) {
@@ -6778,9 +6864,12 @@ async function runBrainGet(args: Arguments): Promise<void> {
       `no brain topic named "${sanitizeDisplayLabel(topic, "that topic")}" exists; run cswarm brain ls to see the current topics`,
     );
   }
-  const versionN = args.has("version")
+  if (selector.version !== null && args.has("version")) {
+    throw new UsageError("choose either <topic>@<version> or --version, not both");
+  }
+  const versionN = selector.version ?? (args.has("version")
     ? integer(args, "version", { minimum: 1 })
-    : null;
+    : null);
   const grant = await fileDownloadUrl({
     target: context.cloud,
     workspaceId: context.selected.selectedWorkspace,
@@ -6792,11 +6881,19 @@ async function runBrainGet(args: Arguments): Promise<void> {
       {},
     ),
   );
+  const listedCounts = brainVersionCounts(row.file);
+  const liveVersionCount = Number(grant.live_version_count ?? listedCounts.live);
+  const retiredVersionCount = Number(
+    grant.retired_version_count ?? listedCounts.retired,
+  );
   if (args.has("json")) {
     process.stdout.write(`${JSON.stringify({
       topic,
       file_id: grant.file_id,
       version_n: grant.version_n,
+      version_state: grant.version_state ?? "live",
+      live_version_count: liveVersionCount,
+      retired_version_count: retiredVersionCount,
       updated_at: row.file.committed_at,
       updated_by_kind: row.file.uploaded_by_kind,
       updated_by: row.file.uploaded_by,
@@ -6804,6 +6901,9 @@ async function runBrainGet(args: Arguments): Promise<void> {
     }, null, 2)}\n`);
     return;
   }
+  process.stderr.write(
+    `Brain topic ${topic} · ${liveVersionCount} live · ${retiredVersionCount} retired · showing version ${grant.version_n} (${grant.version_state ?? "live"}).\n`,
+  );
   process.stdout.write(content.endsWith("\n") ? content : `${content}\n`);
 }
 
@@ -6838,6 +6938,13 @@ async function runBrainPut(args: Arguments): Promise<void> {
   const committed = await uploadNamedFile(context, brainFileName(topic), bytes);
   if (args.has("json")) {
     process.stdout.write(`${JSON.stringify({ topic, ...committed }, null, 2)}\n`);
+    return;
+  }
+  if (committed.retired_version_n !== undefined) {
+    process.stdout.write(
+      `Saved as version ${committed.version_n} (oldest retired: version ${committed.retired_version_n}). Brain topic ${topic} is now visible to everyone in this workspace.\n` +
+        `Read it with: cswarm brain get ${topic}\n`,
+    );
     return;
   }
   process.stdout.write(

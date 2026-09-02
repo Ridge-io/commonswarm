@@ -11,9 +11,15 @@ import {
   brainFileName,
   brainTopicFromFileName,
   canonicalBrainTopic,
+  parseBrainTopicSelector,
   type BrainTopicSnapshot,
 } from "../src/cloud/brain.js";
 import { FileBrainDigestStore } from "../src/listener/brain-digest.js";
+import {
+  BRAIN_LIVE_VERSION_LIMIT,
+  isBrainFileArtifactName,
+  planFileVersionWindow,
+} from "../src/protocol/brain-version-window.js";
 
 /* Reached by package.json's literal `npm test` list. */
 
@@ -36,6 +42,54 @@ test("brain topic validation is closed and keeps the 255-byte file-name bound", 
   for (const invalid of ["", ".hidden", "with space", "nested/topic", "topic!", `${longest}x`]) {
     assert.throws(() => brainFileName(invalid), BrainTopicError);
   }
+});
+
+test("brain history selectors accept topic@version without weakening topic validation", () => {
+  assert.deepEqual(parseBrainTopicSelector("Architecture@21"), {
+    topic: "architecture",
+    version: 21,
+  });
+  assert.deepEqual(parseBrainTopicSelector("architecture"), {
+    topic: "architecture",
+    version: null,
+  });
+  for (const invalid of ["architecture@0", "architecture@-1", "architecture@x", "@1"]) {
+    assert.throws(() => parseBrainTopicSelector(invalid), BrainTopicError);
+  }
+});
+
+test("brain version policy rolls live history and refuses only 20 in-flight uploads", () => {
+  assert.equal(isBrainFileArtifactName("brain--architecture.md"), true);
+  assert.equal(isBrainFileArtifactName("BRAIN--ARCHITECTURE.MD"), true);
+  assert.equal(isBrainFileArtifactName("brain--bad topic.md"), false);
+  assert.equal(isBrainFileArtifactName("ordinary.md"), false);
+
+  assert.deepEqual(
+    planFileVersionWindow("brain--architecture.md", 20, 0),
+    { brainTopic: true, createAllowed: true, retireOnCommitCount: 1 },
+  );
+  assert.deepEqual(
+    planFileVersionWindow("brain--architecture.md", 21, 19),
+    { brainTopic: true, createAllowed: true, retireOnCommitCount: 2 },
+  );
+  assert.deepEqual(
+    planFileVersionWindow(
+      "brain--architecture.md",
+      20,
+      BRAIN_LIVE_VERSION_LIMIT,
+    ),
+    { brainTopic: true, createAllowed: false, retireOnCommitCount: 1 },
+  );
+
+  // Normal files keep the old fixed cap: live and unexpired pending rows share it.
+  assert.deepEqual(
+    planFileVersionWindow("architecture.md", 19, 1),
+    { brainTopic: false, createAllowed: false, retireOnCommitCount: 0 },
+  );
+  assert.deepEqual(
+    planFileVersionWindow("architecture.md", 18, 1),
+    { brainTopic: false, createAllowed: true, retireOnCommitCount: 0 },
+  );
 });
 
 function topic(

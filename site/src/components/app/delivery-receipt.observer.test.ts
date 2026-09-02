@@ -14,7 +14,7 @@ import {
   type BrowserDeliveryReceiptResult,
   type BrowserHumanDeliveryReceipt,
   type BrowserReceiptRow,
-  type BrowserUntrackedAgentReceipt,
+  type BrowserBroadcastAgentReceipt,
   type Signal,
 } from "../../lib/commonswarm.js";
 
@@ -50,11 +50,13 @@ const humanReceipt = (
   ...changes,
 });
 
-const untrackedAgent = (
-  changes: Partial<BrowserUntrackedAgentReceipt> = {},
-): BrowserUntrackedAgentReceipt => ({
+const broadcastAgent = (
+  changes: Partial<BrowserBroadcastAgentReceipt> = {},
+): BrowserBroadcastAgentReceipt => ({
+  principalId: "agent-untracked",
   recipientAgentPrincipalId: "agent-untracked",
   displayName: "Quill",
+  seenAt: "2026-08-28T14:54:00.000Z",
   trackingState: "not_tracked",
   observedAt: null,
   ...changes,
@@ -115,33 +117,93 @@ test("every ledger state has a distinct text-and-symbol indicator", () => {
   assert.doesNotMatch(indicators.map(({ detail }) => detail).join(" "), /\bread\b/i);
 });
 
-test("queued, observed, replied, expired, and failed stay distinct", () => {
+test("receipt label matrix distinguishes ask handling from note observation", () => {
   const outcomes = ["queued", "replied", "observed", "expired", "failed_terminal"] as const;
-  const indicators = outcomes.map((ackOutcome) => browserDeliveryIndicator(addressed(receipt({
-    deliveredAt: "2026-08-28T14:40:00.000Z",
-    ackedAt: "2026-08-28T14:50:00.000Z",
-    ackOutcome,
-    ...(ackOutcome === "queued" ? { pendingForMainCount: 4 } : {}),
-    attemptCount: 1,
-  })), NOW));
+  const indicators = (signalKind: "ask" | "note") => outcomes.map((ackOutcome) =>
+    browserDeliveryIndicator(addressed(receipt({
+      deliveredAt: "2026-08-28T14:40:00.000Z",
+      ackedAt: "2026-08-28T14:50:00.000Z",
+      ackOutcome,
+      ...(ackOutcome === "queued" ? { pendingForMainCount: 4 } : {}),
+      attemptCount: 1,
+    })), NOW, { signalKind, agentName: "CodexDesktop" })
+  );
+  const ask = indicators("ask");
+  const note = indicators("note");
 
-  assert.deepEqual(indicators.map(({ outcome }) => outcome), outcomes);
-  assert.deepEqual(indicators.map(({ label }) => label), [
-    "Queued",
-    "Replied",
-    "Observed",
+  assert.deepEqual(ask.map(({ outcome }) => outcome), outcomes);
+  assert.deepEqual(note.map(({ outcome }) => outcome), outcomes);
+  assert.deepEqual(ask.map(({ label }) => label), [
+    "Queued for the agent's session",
+    "Answered 10 minutes ago",
+    "Seen by the agent's session · no answer yet",
     "Expired",
     "Failed",
   ]);
-  assert.equal(new Set(indicators.map(({ label, detail }) => `${label}:${detail}`)).size, 5);
+  assert.deepEqual(note.map(({ label }) => label), [
+    "Queued for CodexDesktop to read · no wake",
+    "Answered 10 minutes ago",
+    "Seen or handled for CodexDesktop · no wake",
+    "Expired",
+    "Failed",
+  ]);
+  assert.deepEqual(ask.map(({ detail }) => detail), [
+    "Queued for the agent's interactive session; waiting for the recipient's session hook (4 in queue).",
+    "The agent completed this delivery with a reply.",
+    "The agent's session hook surfaced the ask. An answer may still be posted.",
+    "The delivery expired before the agent completed it.",
+    "Delivery stopped after its attempts were exhausted.",
+  ]);
+  assert.deepEqual(note.map(({ detail }) => detail), [
+    "Routed to CodexDesktop's interactive session but not yet shown (4 in queue). A note does not wake the agent.",
+    "The agent completed this delivery with a reply.",
+    "The listener handled the note without starting a model turn, or the session hook surfaced it.",
+    "The delivery expired before the agent completed it.",
+    "Delivery stopped after its attempts were exhausted.",
+  ]);
+  assert.deepEqual(ask.map(({ terminal }) => terminal), [false, true, false, true, true]);
+  assert.deepEqual(note.map(({ terminal }) => terminal), [false, true, true, true, true]);
+  assert.deepEqual(ask.map(({ state }) => state), ["queued", "done", "seen", "done", "done"]);
+  assert.deepEqual(note.map(({ state }) => state), ["queued", "done", "done", "done", "done"]);
+  // NOTE × replied is a defensive display cell. The honest listener can emit
+  // replied only for ASK (src/listener/runtime.ts:417-418).
+  assert.equal(new Set(ask.map(({ label, detail }) => `${label}:${detail}`)).size, 5);
+  assert.equal(new Set(note.map(({ label, detail }) => `${label}:${detail}`)).size, 5);
   assert.match(
-    indicators[0]!.detail,
+    ask[0]!.detail,
     /waiting for the recipient's session hook \(4 in queue\)/,
   );
-  assert.doesNotMatch(indicators[0]!.detail, /next prompt/);
-  assert.equal(indicators[0]!.terminal, false);
-  assert.match(indicators[2]!.detail, /saw this delivery without replying/);
-  assert.doesNotMatch(indicators[2]!.detail, /acknowledged|read/i);
+  assert.doesNotMatch(ask[0]!.detail, /next prompt/);
+  assert.equal(ask[0]!.terminal, false);
+  assert.match(note[0]!.detail, /not yet shown \(4 in queue\).*does not wake the agent/);
+  assert.doesNotMatch(`${ask[2]!.label} ${ask[2]!.detail}`, /working|in progress/i);
+  assert.match(note[2]!.detail, /handled the note without starting a model turn/);
+  assert.doesNotMatch(note[2]!.detail, /acknowledged|read/i);
+
+  const multipleObserved = (signalKind: "ask" | "note") =>
+    browserDeliveryIndicator(addressed(
+      receipt({
+        recipientAgentPrincipalId: "agent-1",
+        ackedAt: "2026-08-28T14:50:00.000Z",
+        ackOutcome: "observed",
+      }),
+      receipt({
+        recipientAgentPrincipalId: "agent-2",
+        ackedAt: "2026-08-28T14:51:00.000Z",
+        ackOutcome: "observed",
+      }),
+    ), NOW, { signalKind });
+  const observedAsks = multipleObserved("ask");
+  assert.equal(
+    observedAsks.detail,
+    "2 asks surfaced; answers may still be posted. Delivery is tracked for each recipient.",
+  );
+  assert.equal(observedAsks.terminal, false);
+  assert.equal(observedAsks.label, "2 of 2 seen · 2 no answer yet");
+  assert.equal(
+    multipleObserved("note").detail,
+    "2 notes seen or handled; notes do not wake agents. Delivery is tracked for each recipient.",
+  );
 });
 
 test("broadcast uses addressed=false and can never look pending or failed", () => {
@@ -156,7 +218,7 @@ test("broadcast uses addressed=false and can never look pending or failed", () =
 
   const mapping = client.slice(
     client.indexOf("export function browserDeliveryIndicator"),
-    client.indexOf("/** Posts one browser-authored note", client.indexOf("export function browserDeliveryIndicator")),
+    client.indexOf("/** Posts one browser-authored signal", client.indexOf("export function browserDeliveryIndicator")),
   );
   assert.match(mapping, /if \(result\.addressed === false\)/);
   assert.match(mapping, /state: "no-recipient"/);
@@ -172,7 +234,7 @@ test("broadcast uses addressed=false and can never look pending or failed", () =
   );
 });
 
-test("broadcast summary and detail model split seen, not-seen, and untracked agents", () => {
+test("broadcast summary and detail model split member and agent attestations", () => {
   /* Agents live under broadcastRoster.agents.principals, never in `receipts`:
    * a cached bundle's parser reads any non-human `receipts` row as a delivery
    * ledger row and would blank the indicator (20260902000001, folded). */
@@ -190,27 +252,53 @@ test("broadcast summary and detail model split seen, not-seen, and untracked age
       members: { total: 2, seen: 1, returned: 2, limit: 50, truncated: false },
       agents: {
         total: 1,
+        seen: 1,
         returned: 1,
         limit: 50,
         truncated: false,
         trackingState: "not_tracked",
-        principals: [untrackedAgent()],
+        principals: [broadcastAgent()],
       },
     },
   };
   const indicator = browserDeliveryIndicator(result, NOW);
   const roster = browserBroadcastRosterView(result);
 
-  assert.equal(indicator.label, "Seen by 1 of 2");
+  assert.equal(indicator.label, "Seen by 1 of 2 members · 1 of 1 agents");
+  assert.equal(indicator.state, "seen");
   assert.match(indicator.detail, /nobody was addressed or woken/);
-  assert.match(indicator.detail, /do not wake or track agents/);
+  assert.match(
+    indicator.detail,
+    /agent's CLI rendered it, or its listener's model consumed it in a completed turn/,
+  );
   assert.deepEqual(roster.seenMembers.map((row) => row.displayName), ["Ari"]);
   assert.deepEqual(roster.notSeenMembers.map((row) => row.displayName), ["Bo"]);
-  assert.deepEqual(roster.agents.map((row) => row.trackingState), ["not_tracked"]);
+  assert.deepEqual(roster.seenAgents.map((row) => row.displayName), ["Quill"]);
+  assert.deepEqual(roster.notSeenAgents, []);
   assert.deepEqual(
-    [roster.seenHidden, roster.notSeenHidden, roster.agentsHidden],
-    [0, 0, 0],
+    [
+      roster.seenHidden,
+      roster.notSeenHidden,
+      roster.seenAgentsHidden,
+      roster.notSeenAgentsHidden,
+    ],
+    [0, 0, 0, 0],
     "an uncut roster hides nothing",
+  );
+  const agentOnlyIndicator = browserDeliveryIndicator({
+    ...result,
+    receipts: result.receipts.map((row) =>
+      "recipientUserId" in row ? { ...row, seenAt: null } : row
+    ),
+    broadcastRoster: {
+      ...result.broadcastRoster!,
+      members: { ...result.broadcastRoster!.members, seen: 0 },
+    },
+  }, NOW);
+  assert.equal(
+    agentOnlyIndicator.state,
+    "seen",
+    "an agent attestation alone must make the combined indicator seen",
   );
 
   const renderer = dashboard.slice(
@@ -219,11 +307,17 @@ test("broadcast summary and detail model split seen, not-seen, and untracked age
   );
   assert.match(renderer, /"Seen members"/);
   assert.match(renderer, /"Not-seen members"/);
-  assert.match(renderer, /"Agents · Not tracked"/);
-  assert.match(renderer, /broadcasts do not wake or track agents/);
+  assert.match(renderer, /`Seen agents · \$\{broadcastResult\.broadcastRoster\.agents\.seen\}/);
+  assert.match(renderer, /"Not-seen agents"/);
+  assert.match(renderer, /not yet seen/);
+  assert.doesNotMatch(
+    renderer,
+    /listener has not read the feed/,
+    "no receipt cannot name why an agent has not attested",
+  );
   assert.match(
     renderer,
-    /roster\.agents\.map/,
+    /roster\.seenAgents\.map/,
     "the agent section must render from the roster view, which reads principals",
   );
   assert.equal(
@@ -253,6 +347,7 @@ test("a cut roster section names the hidden remainder instead of None", () => {
       members: { total: 100, seen: 60, returned: 50, limit: 50, truncated: true },
       agents: {
         total: 0,
+        seen: 0,
         returned: 0,
         limit: 50,
         truncated: false,
@@ -262,10 +357,21 @@ test("a cut roster section names the hidden remainder instead of None", () => {
     },
   };
   const roster = browserBroadcastRosterView(result);
-  assert.equal(browserDeliveryIndicator(result, NOW).label, "Seen by 60 of 100");
+  assert.equal(
+    browserDeliveryIndicator(result, NOW).label,
+    "Seen by 60 of 100 members · 0 of 0 agents",
+  );
   assert.equal(roster.seenMembers.length, 50);
   assert.equal(roster.notSeenMembers.length, 0);
-  assert.deepEqual([roster.seenHidden, roster.notSeenHidden, roster.agentsHidden], [10, 40, 0]);
+  assert.deepEqual(
+    [
+      roster.seenHidden,
+      roster.notSeenHidden,
+      roster.seenAgentsHidden,
+      roster.notSeenAgentsHidden,
+    ],
+    [10, 40, 0, 0],
+  );
 
   const notSeenLines = browserRosterSectionLines(
     roster.notSeenMembers.map((row) => row.displayName ?? row.recipientUserId),
@@ -285,7 +391,10 @@ test("a cut roster section names the hidden remainder instead of None", () => {
   // an uncut section renders its rows unchanged.
   assert.deepEqual(browserRosterSectionLines([], 0), ["None"]);
   assert.deepEqual(
-    browserRosterSectionLines(roster.agents.map((row) => row.displayName), roster.agentsHidden),
+    browserRosterSectionLines(
+      roster.notSeenAgents.map((row) => row.displayName),
+      roster.notSeenAgentsHidden,
+    ),
     ["None"],
   );
   assert.deepEqual(browserRosterSectionLines(["Ari", "Bo"], 0), ["Ari", "Bo"]);
@@ -301,8 +410,8 @@ test("a cut roster section names the hidden remainder instead of None", () => {
     "the dashboard must not decide None on its own; the shared rule owns it",
   );
   assert.equal(
-    renderer.match(/appendRosterSection\(\s*"[^"]+",[\s\S]*?roster\.(?:seenHidden|notSeenHidden|agentsHidden),\s*\)/g)?.length,
-    3,
+    renderer.match(/appendRosterSection\([\s\S]*?roster\.(?:seenHidden|notSeenHidden|seenAgentsHidden|notSeenAgentsHidden),\s*\)/g)?.length,
+    4,
     "every roster section must pass its hidden remainder",
   );
 });
@@ -374,6 +483,45 @@ test("receipt candidates cap each feed tick and favor visible rows then newest r
   assert.deepEqual(
     selected.slice(2).map((row) => row.id),
     ["agent-11", "agent-10", "agent-9", "agent-8", "agent-7", "agent-6"],
+  );
+});
+
+test("receipt polling stops for immutable observed asks without calling them terminal", () => {
+  const observedAsk = signal("observed-ask", "2026-08-28T14:00:00.000Z");
+  const queuedAsk = signal("queued-ask", "2026-08-28T14:01:00.000Z");
+  const mixedAsk = signal("mixed-ask", "2026-08-28T14:02:00.000Z");
+  const observed = receipt({
+    ackedAt: "2026-08-28T14:30:00.000Z",
+    ackOutcome: "observed",
+  });
+  const queued = receipt({
+    ackedAt: "2026-08-28T14:31:00.000Z",
+    ackOutcome: "queued",
+  });
+  const cache = new Map<string, BrowserDeliveryReceiptCacheEntry>([
+    [observedAsk.id, { phase: "accepted", checkedAt: 0, result: addressed(observed) }],
+    [queuedAsk.id, { phase: "accepted", checkedAt: 0, result: addressed(queued) }],
+    [mixedAsk.id, {
+      phase: "accepted",
+      checkedAt: 0,
+      result: addressed(observed, receipt({ recipientAgentPrincipalId: "agent-2" })),
+    }],
+  ]);
+
+  assert.equal(
+    browserDeliveryIndicator(addressed(observed), NOW, { signalKind: "ask" }).terminal,
+    false,
+    "an answer may still be posted after the hook surfaces the ask",
+  );
+  assert.deepEqual(
+    browserDeliveryReceiptCandidates(
+      [observedAsk, queuedAsk, mixedAsk],
+      cache,
+      new Set(),
+      NOW,
+    ).map((row) => row.id),
+    ["mixed-ask", "queued-ask"],
+    "queued ACKs may promote and incomplete recipient sets still need another read",
   );
 });
 

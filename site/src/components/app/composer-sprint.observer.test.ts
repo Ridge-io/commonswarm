@@ -467,18 +467,28 @@ const assertComposerSprint = (value: ComposerArtifact): void => {
     "draft-scope: stream identity must be explicit");
   assert.match(
     draft,
-    /JSON\.stringify\(\{ body, audienceKey, \.\.\.\(hadAttachments/,
-    "draft-audience: body, audience, and the lost-attachment marker must persist together",
+    /JSON\.stringify\(\{\s*body,\s*audienceKey,\s*\.\.\.\(agentNote \? \{ agentNote: true \} : \{\}\),\s*\.\.\.\(hadAttachments/,
+    "draft-audience: body, audience, no-wake choice, and lost-attachment marker must persist together",
   );
   assert.match(draft, /input\.value = draft\.body;/,
     "draft-restore: reload must restore the exact body");
   assert.match(draft, /composerAudienceFromKey\(draft\.audienceKey\)/,
     "draft-restore: reload must restore the saved audience");
+  assert.match(
+    draft,
+    /composerPostAgentNote = composerAudience\.kind === "agent" && draft\.agentNote === true;/,
+    "draft-agent-note: reload must restore an explicit no-wake choice",
+  );
   assert.equal(occurrences(dashboard, "clearComposerDraft();"), 1,
     "draft-clear: only the accepted send path may clear the draft");
   assertOrder(submit, "await postBrowserSignal(", "clearComposerDraft();", "draft-clear");
   assert.doesNotMatch(failed, /clearComposerDraft\(\)/,
     "draft-clear: failed sends must retain the saved draft");
+  assert.match(
+    submit,
+    /intent\.attachmentKey !== attachmentKey \|\| intent\.signalKind !== signalKind/,
+    "retry-kind: changing ask/note mode must create a new intent",
+  );
 
   /* Latest rows append visually at the bottom because the source array reverses for display. A
    * reader already in history keeps the exact old scrollTop; only readers near the bottom follow
@@ -611,6 +621,20 @@ const mutations: Mutation[] = [
     target: "`commonswarm:composer-draft:${owner}:${activeWorkspaceId}:${COMPOSER_STREAM}`",
     replacement: "`commonswarm:composer-draft:${activeWorkspaceId}:${COMPOSER_STREAM}`",
     expectedFailure: "draft-scope",
+  },
+  {
+    name: "draft loses the explicit no-wake choice",
+    key: "dashboard",
+    target: 'composerPostAgentNote = composerAudience.kind === "agent" && draft.agentNote === true;',
+    replacement: "composerPostAgentNote = false;",
+    expectedFailure: "draft-agent-note",
+  },
+  {
+    name: "retry reuses an intent after ask/note mode changes",
+    key: "dashboard",
+    target: "intent.attachmentKey !== attachmentKey || intent.signalKind !== signalKind",
+    replacement: "intent.attachmentKey !== attachmentKey",
+    expectedFailure: "retry-kind",
   },
   {
     name: "latest append yanks an upward reader to the bottom",

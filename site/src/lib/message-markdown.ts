@@ -15,6 +15,7 @@ export const MESSAGE_COLLAPSE_LINES = 30;
 
 export const MESSAGE_MARKDOWN_TAGS = Object.freeze([
   "p", "br", "strong", "em", "code", "pre", "ul", "ol", "li", "blockquote", "a",
+  "h2", "h3", "h4", "h5",
 ] as const);
 
 export const MESSAGE_MARKDOWN_ATTRIBUTES = Object.freeze({ a: ["href"] as const });
@@ -26,6 +27,11 @@ export const HARDENED_LINK_ATTRIBUTES = Object.freeze({
 const ALLOWED_TAGS = new Set<string>(MESSAGE_MARKDOWN_TAGS);
 const TOKEN_OPEN = "\uE000";
 const TOKEN_CLOSE = "\uE001";
+
+export interface MessageMarkdownOptions {
+  /** Shift h1-h4 down one level when Markdown lives below an existing panel heading. */
+  headingOffset?: 1;
+}
 
 /** Escape untrusted input before any markdown rule can inspect or transform it. */
 export function escapeMessageHtml(value: string): string {
@@ -155,7 +161,24 @@ function listMatch(line: string): { kind: "ul" | "ol"; content: string } | null 
   return null;
 }
 
-function renderBlocks(lines: string[], depth = 0): string {
+function headingMatch(
+  line: string,
+  options: MessageMarkdownOptions,
+): { level: 2 | 3 | 4 | 5; content: string } | null {
+  if (options.headingOffset !== 1) return null;
+  const heading = /^ {0,3}(#{1,4})[ \t]+(.+?)[ \t]*#*[ \t]*$/u.exec(line);
+  if (!heading) return null;
+  return {
+    level: (heading[1]!.length + options.headingOffset) as 2 | 3 | 4 | 5,
+    content: heading[2] ?? "",
+  };
+}
+
+function renderBlocks(
+  lines: string[],
+  depth = 0,
+  options: MessageMarkdownOptions = {},
+): string {
   const blocks: string[] = [];
   let index = 0;
   while (index < lines.length) {
@@ -183,7 +206,14 @@ function renderBlocks(lines: string[], depth = 0): string {
         quote.push((lines[index] ?? "").replace(/^ {0,3}&gt; ?/u, ""));
         index += 1;
       }
-      blocks.push(`<blockquote>${renderBlocks(quote, depth + 1)}</blockquote>`);
+      blocks.push(`<blockquote>${renderBlocks(quote, depth + 1, options)}</blockquote>`);
+      continue;
+    }
+
+    const heading = headingMatch(line, options);
+    if (heading) {
+      blocks.push(`<h${heading.level}>${renderInline(heading.content)}</h${heading.level}>`);
+      index += 1;
       continue;
     }
 
@@ -205,7 +235,10 @@ function renderBlocks(lines: string[], depth = 0): string {
     while (index < lines.length) {
       const candidate = lines[index] ?? "";
       if (candidate.trim() === "") break;
-      if (paragraph.length > 0 && (isFence(candidate) || listMatch(candidate))) break;
+      if (
+        paragraph.length > 0 &&
+        (isFence(candidate) || headingMatch(candidate, options) || listMatch(candidate))
+      ) break;
       if (paragraph.length > 0 && depth < MESSAGE_MARKDOWN_LIMITS.nestingDepth && isQuote(candidate)) break;
       paragraph.push(renderInline(candidate));
       index += 1;
@@ -247,14 +280,21 @@ export function sanitizeMessageHtml(html: string): string {
   return sanitized + html.slice(cursor).replaceAll("<", "&lt;").replaceAll(">", "&gt;");
 }
 
-/** Render the audited feed subset: bound, escape, transform, then sanitize. */
-export function renderMessageMarkdown(rawText: string): string {
-  return sanitizeMessageHtml(renderBlocks(boundedLines(rawText)));
+/** Render the audited subset: bound, escape, transform, then sanitize. */
+export function renderMessageMarkdown(
+  rawText: string,
+  options: MessageMarkdownOptions = {},
+): string {
+  return sanitizeMessageHtml(renderBlocks(boundedLines(rawText), 0, options));
 }
 
 /** Put a message body in the DOM only through the renderer and its final sanitizer. */
-export function setSanitizedMessageMarkdown(element: HTMLElement, rawText: string): void {
-  element.innerHTML = renderMessageMarkdown(rawText);
+export function setSanitizedMessageMarkdown(
+  element: HTMLElement,
+  rawText: string,
+  options: MessageMarkdownOptions = {},
+): void {
+  element.innerHTML = renderMessageMarkdown(rawText, options);
   for (const link of element.querySelectorAll<HTMLAnchorElement>("a[href]")) {
     link.rel = HARDENED_LINK_ATTRIBUTES.rel;
     link.target = HARDENED_LINK_ATTRIBUTES.target;

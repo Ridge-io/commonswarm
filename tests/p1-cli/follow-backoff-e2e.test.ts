@@ -30,13 +30,14 @@ const AGENT_TOKEN = `swm_agt_${"A".repeat(43)}`;
 
 interface FollowFrameLine {
   type: string;
+  signal?: { id: string };
   attempt?: number;
   delay_ms?: number;
   reason?: string;
   server_refused?: boolean;
 }
 
-function signalRow(id: string) {
+function signalRow(id: string): Record<string, unknown> {
   return {
     id,
     workspace_id: WORKSPACE,
@@ -61,8 +62,15 @@ async function startStub(
   outcomes: readonly boolean[],
   failureBody: Record<string, unknown>,
   failureStatus = 500,
-): Promise<{ server: Server; url: string; reads: () => number }> {
+  firstRows = [signalRow("33333333-3333-4333-8333-333333333333")],
+): Promise<{
+  server: Server;
+  url: string;
+  reads: () => number;
+  seenReports: () => string[][];
+}> {
   let reads = 0;
+  const seenReports: string[][] = [];
   const server = createServer((req, res) => {
     if (req.method !== "POST") {
       res.writeHead(405).end();
@@ -73,6 +81,17 @@ async function startStub(
       raw += chunk;
     });
     req.on("end", () => {
+      const body = raw.length === 0
+        ? {}
+        : JSON.parse(raw) as Record<string, unknown>;
+      const command = body.command as Record<string, unknown> | undefined;
+      if (command?.kind === "signals_seen") {
+        seenReports.push(command.signal_ids as string[]);
+        res.writeHead(200, { "content-type": "application/json" }).end(
+          JSON.stringify({ ok: true }),
+        );
+        return;
+      }
       const index = reads;
       reads += 1;
       // The first read always succeeds so the stream reaches ready; retrying
@@ -82,7 +101,7 @@ async function startStub(
       if (ok) {
         res.writeHead(200, { "content-type": "application/json" }).end(
           JSON.stringify({
-            signals: index === 0 ? [signalRow("33333333-3333-4333-8333-333333333333")] : [],
+            signals: index === 0 ? firstRows : [],
             capabilities: { sender_owner_relation: 1, cursor_after: 1 },
           }),
         );
@@ -102,6 +121,7 @@ async function startStub(
     server,
     url: `http://127.0.0.1:${address.port}`,
     reads: () => reads,
+    seenReports: () => structuredClone(seenReports),
   };
 }
 
@@ -222,6 +242,39 @@ test("D-051: an isolated success does not wipe earned backoff, through the real 
     // Three failures climb 1,2,3; the success decays 3 -> 2; the next failure
     // resumes at 3. Under the old reset-to-zero it restarts at 1.
     assert.deepEqual(attempts, [1, 2, 3, 3]);
+  } finally {
+    await new Promise<void>((closed) => stub.server.close(() => closed()));
+  }
+});
+
+test("inbox --follow attests only rendered broadcasts in batches of at most 50", async () => {
+  const broadcasts = Array.from({ length: 75 }, (_, index) =>
+    signalRow(`00000000-0000-4000-8000-${String(index).padStart(12, "0")}`)
+  );
+  const directedId = "99999999-9999-4999-8999-999999999999";
+  const directed = {
+    ...signalRow(directedId),
+    to_agent: "bbbbbbbb-bbbb-4bbb-8bbb-bbbbbbbbbbbb",
+  };
+  const stub = await startStub(
+    [false],
+    { error: "internal_error", retryable: true },
+    500,
+    [...broadcasts, directed],
+  );
+  try {
+    const { frames, unparsed } = await followUntil(stub.url, 78);
+    assert.deepEqual(unparsed, []);
+    assert.equal(frames.filter((frame) => frame.type === "signal").length, 76);
+    assert.ok(frames.some((frame) => frame.signal?.id === directedId));
+    assert.deepEqual(
+      stub.seenReports().map((batch) => batch.length),
+      [50, 25],
+    );
+    assert.ok(
+      stub.seenReports().flat().every((signalId) => signalId !== directedId),
+      "a rendered directed row must not be attested as a broadcast",
+    );
   } finally {
     await new Promise<void>((closed) => stub.server.close(() => closed()));
   }

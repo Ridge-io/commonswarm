@@ -2198,6 +2198,8 @@ export async function runInboxFollow(options: {
     page: FollowArmRequest,
   ) => Promise<SignalRecord[] | FollowArmPage>;
   emit: (frame: FollowFrame) => void;
+  /** Runs after one page's signal frames were emitted, with only those frames. */
+  afterEmitBatch?: (signals: readonly SignalRecord[]) => Promise<void> | void;
   /**
    * Optional side-effect sleep hook for tests (e.g. advance a fake clock).
    * Production delay always uses a clearable timer so cancel cannot leave a
@@ -2330,17 +2332,26 @@ export async function runInboxFollow(options: {
       // Oldest first so a multi-row arm is deterministic for consumers.
       const ordered = sortSignals(rows, true);
 
-      let emitted = false;
+      const emittedSignals: SignalRecord[] = [];
+      let cancelledDuringEmit = false;
       for (const signal of ordered) {
-        if (cancelled()) return { reason: "cancelled" };
+        if (cancelled()) {
+          cancelledDuringEmit = true;
+          break;
+        }
         if (!seen.add(signal.id)) continue;
         options.emit({
           type: "signal",
           signal,
           ts: followTs(now()),
         });
-        emitted = true;
+        emittedSignals.push(signal);
       }
+      if (emittedSignals.length > 0) {
+        await options.afterEmitBatch?.(emittedSignals);
+      }
+      if (cancelledDuringEmit) return { reason: "cancelled" };
+      const emitted = emittedSignals.length > 0;
 
       // Full page => more backlog may exist; drain without the idle poll.
       const fullPage = canPage && rawCount >= pageLimit;

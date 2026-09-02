@@ -241,6 +241,7 @@ export interface ListenerRuntimeOptions {
     signal: SignalRecord,
     context: ListenerSenderProvenanceContext,
   ) => Promise<ListenerSenderProvenance>;
+  onBroadcastsConsumed?: (signalIds: readonly string[]) => Promise<void>;
   routeMode?: ListenerRouteMode;
   deferOverChars?: number | null;
   pendingMainQueue?: Pick<FilePendingMainQueue, "enqueue">;
@@ -793,6 +794,9 @@ export async function runListenerRuntime(
     ...(options.resolveSenderProvenance === undefined
       ? {}
       : { resolveSenderProvenance: options.resolveSenderProvenance }),
+    ...(options.onBroadcastsConsumed === undefined
+      ? {}
+      : { onBroadcastsConsumed: options.onBroadcastsConsumed }),
     isCredentialFailure: isCredentialLoss,
   });
   const routeSignalToMain = async (

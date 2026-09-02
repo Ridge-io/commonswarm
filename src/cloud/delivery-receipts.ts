@@ -47,9 +47,13 @@ export interface HumanDeliveryReceipt {
  * parse every non-human `receipts` row as a delivery ledger row, so this shape
  * lives only under `broadcast_roster.agents.principals` (20260902000001, the folded roster migration).
  */
-export interface UntrackedBroadcastAgentReceipt {
+export interface BroadcastAgentReceipt {
+  principal_id: string;
   recipient_agent_principal_id: string;
   display_name: string;
+  /** Null means this agent client has not attested rendering the broadcast. */
+  seen_at: string | null;
+  /** Retained on the wire for clients through 0.1.47. */
   tracking_state: "not_tracked";
   observed_at: null;
 }
@@ -67,8 +71,10 @@ export interface BroadcastMemberRosterSection extends BroadcastRosterSection {
 }
 
 export interface BroadcastAgentRosterSection extends BroadcastRosterSection {
+  seen: number;
+  /** Retained on the wire for clients through 0.1.47. */
   tracking_state: "not_tracked";
-  principals: UntrackedBroadcastAgentReceipt[];
+  principals: BroadcastAgentReceipt[];
 }
 
 export interface BroadcastRecipientRoster {
@@ -91,7 +97,8 @@ export interface DeliveryReceiptResult {
 export interface BroadcastRosterHiddenCounts {
   seen: number;
   notSeen: number;
-  agents: number;
+  seenAgents: number;
+  notSeenAgents: number;
 }
 
 export interface AgentDeliveryReceiptResult extends DeliveryReceiptResult {
@@ -250,7 +257,7 @@ export function parseDeliveryReceipt(value: unknown): DeliveryReceiptRow {
   };
 }
 
-function parseUntrackedAgent(value: unknown): UntrackedBroadcastAgentReceipt {
+function parseBroadcastAgent(value: unknown): BroadcastAgentReceipt {
   if (!value || typeof value !== "object" || Array.isArray(value)) {
     throw new DeliveryReceiptReadError(
       "protocol",
@@ -261,15 +268,25 @@ function parseUntrackedAgent(value: unknown): UntrackedBroadcastAgentReceipt {
   if (row.tracking_state !== "not_tracked" || row.observed_at !== null) {
     throw new DeliveryReceiptReadError(
       "protocol",
-      "delivery receipt returned a tracked observation for an untracked agent",
+      "delivery receipt returned malformed legacy agent compatibility fields",
+    );
+  }
+  const principalId = uuid(row.principal_id, "principal_id");
+  const recipientPrincipalId = uuid(
+      row.recipient_agent_principal_id,
+      "recipient_agent_principal_id",
+    );
+  if (principalId !== recipientPrincipalId) {
+    throw new DeliveryReceiptReadError(
+      "protocol",
+      "delivery receipt returned inconsistent agent principal ids",
     );
   }
   return {
-    recipient_agent_principal_id: uuid(
-      row.recipient_agent_principal_id,
-      "recipient_agent_principal_id",
-    ),
+    principal_id: principalId,
+    recipient_agent_principal_id: recipientPrincipalId,
     display_name: displayName(row.display_name, "display_name"),
+    seen_at: nullableTimestamp(row.seen_at, "seen_at"),
     tracking_state: "not_tracked",
     observed_at: null,
   };
@@ -316,8 +333,13 @@ function parseBroadcastRoster(value: unknown): BroadcastRecipientRoster {
   const memberRow = row.members as Record<string, unknown>;
   const agentRow = row.agents as Record<string, unknown>;
   const seen = nonNegativeInteger(memberRow.seen, "broadcast_roster.members.seen");
+  const agentsSeen = nonNegativeInteger(
+    agentRow.seen,
+    "broadcast_roster.agents.seen",
+  );
   if (
-    seen > members.total || agentRow.tracking_state !== "not_tracked" ||
+    seen > members.total || agentsSeen > agents.total ||
+    agentRow.tracking_state !== "not_tracked" ||
     !Array.isArray(agentRow.principals)
   ) {
     throw new DeliveryReceiptReadError(
@@ -325,9 +347,10 @@ function parseBroadcastRoster(value: unknown): BroadcastRecipientRoster {
       "delivery receipt returned a malformed broadcast_roster",
     );
   }
-  const principals = agentRow.principals.map(parseUntrackedAgent);
+  const principals = agentRow.principals.map(parseBroadcastAgent);
   if (
     principals.length !== agents.returned ||
+    principals.filter((agent) => agent.seen_at !== null).length > agentsSeen ||
     new Set(principals.map((agent) => agent.recipient_agent_principal_id)).size !==
       principals.length
   ) {
@@ -338,7 +361,12 @@ function parseBroadcastRoster(value: unknown): BroadcastRecipientRoster {
   }
   return {
     members: { ...members, seen },
-    agents: { ...agents, tracking_state: "not_tracked", principals },
+    agents: {
+      ...agents,
+      seen: agentsSeen,
+      tracking_state: "not_tracked",
+      principals,
+    },
   };
 }
 
@@ -350,16 +378,26 @@ export function broadcastRosterHiddenCounts(
   result: DeliveryReceiptResult,
 ): BroadcastRosterHiddenCounts {
   const roster = result.broadcast_roster;
-  if (roster === undefined) return { seen: 0, notSeen: 0, agents: 0 };
+  if (roster === undefined) {
+    return { seen: 0, notSeen: 0, seenAgents: 0, notSeenAgents: 0 };
+  }
   const members = result.receipts.filter(
     (row): row is HumanDeliveryReceipt => "recipient_user_id" in row,
   );
   const seenShown = members.filter((row) => row.seen_at !== null).length;
   const notSeenShown = members.length - seenShown;
+  const seenAgentsShown = roster.agents.principals.filter(
+    (row) => row.seen_at !== null,
+  ).length;
+  const notSeenAgentsShown = roster.agents.principals.length - seenAgentsShown;
   return {
     seen: Math.max(0, roster.members.seen - seenShown),
     notSeen: Math.max(0, roster.members.total - roster.members.seen - notSeenShown),
-    agents: Math.max(0, roster.agents.total - roster.agents.principals.length),
+    seenAgents: Math.max(0, roster.agents.seen - seenAgentsShown),
+    notSeenAgents: Math.max(
+      0,
+      roster.agents.total - roster.agents.seen - notSeenAgentsShown,
+    ),
   };
 }
 

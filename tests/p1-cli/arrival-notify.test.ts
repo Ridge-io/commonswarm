@@ -20,9 +20,10 @@ const PRINCIPAL = "bbbbbbbb-bbbb-4bbb-8bbb-bbbbbbbbbbbb";
 const SENDER = "cccccccc-cccc-4ccc-8ccc-cccccccccccc";
 const OLD_SIGNAL = "11111111-1111-4111-8111-111111111111";
 const NEW_SIGNAL = "22222222-2222-4222-8222-222222222222";
+const BROADCAST_SIGNAL = "55555555-5555-4555-8555-555555555555";
 const TOKEN = `swm_agt_${"A".repeat(43)}`;
 
-test("inbox --notify flushes one readable line and never calls delivery mutation paths", async () => {
+test("inbox --notify flushes readable lines and best-effort attests only the rendered broadcast", async () => {
   const root = await mkdtemp(join(tmpdir(), "cswarm-arrival-cli-"));
   const xdg = join(root, "state");
   const requests: Array<{ path: string; body: Record<string, unknown> }> = [];
@@ -42,6 +43,13 @@ test("inbox --notify flushes one readable line and never calls delivery mutation
     req.on("end", () => {
       const body = raw.length === 0 ? {} : JSON.parse(raw) as Record<string, unknown>;
       requests.push({ path: req.url ?? "", body });
+      const command = body.command as Record<string, unknown> | undefined;
+      if (req.url === "/functions/v1/command" && command?.kind === "signals_seen") {
+        res.writeHead(503, { "content-type": "application/json" }).end(
+          JSON.stringify({ error: "temporarily_unavailable" }),
+        );
+        return;
+      }
       if (req.url !== "/functions/v1/read" || body.resource !== "signals") {
         res.writeHead(500, { "content-type": "application/json" }).end(
           JSON.stringify({ error: "unexpected_mutation_path" }),
@@ -50,21 +58,38 @@ test("inbox --notify flushes one readable line and never calls delivery mutation
       }
       res.writeHead(200, { "content-type": "application/json" }).end(
         JSON.stringify({
-          signals: [{
-            id: NEW_SIGNAL,
-            workspace_id: WORKSPACE,
-            from: SENDER,
-            from_kind: "agent",
-            to: null,
-            to_agent: PRINCIPAL,
-            in_reply_to: null,
-            about: null,
-            kind: "ask",
-            body: "Please review\nthis change.",
-            until: "2030-01-01T00:00:00.000Z",
-            created_at: "2026-08-28T11:01:00.000Z",
-            sender_owner_relation: "same_owner",
-          }],
+          signals: [
+            {
+              id: NEW_SIGNAL,
+              workspace_id: WORKSPACE,
+              from: SENDER,
+              from_kind: "agent",
+              to: null,
+              to_agent: PRINCIPAL,
+              in_reply_to: null,
+              about: null,
+              kind: "ask",
+              body: "Please review\nthis change.",
+              until: "2030-01-01T00:00:00.000Z",
+              created_at: "2026-08-28T11:01:00.000Z",
+              sender_owner_relation: "same_owner",
+            },
+            {
+              id: BROADCAST_SIGNAL,
+              workspace_id: WORKSPACE,
+              from: SENDER,
+              from_kind: "agent",
+              to: null,
+              to_agent: null,
+              in_reply_to: null,
+              about: null,
+              kind: "note",
+              body: "Broadcast update.",
+              until: "2030-01-01T00:00:00.000Z",
+              created_at: "2026-08-28T11:02:00.000Z",
+              sender_owner_relation: "same_owner",
+            },
+          ],
           capabilities: { sender_owner_relation: 1, cursor_after: 1 },
         }),
       );
@@ -131,7 +156,7 @@ test("inbox --notify flushes one readable line and never calls delivery mutation
     let stderr = "";
     child.stdout.on("data", (chunk: string) => {
       stdout += chunk;
-      if (stdout.includes("\n")) {
+      if (stdout.trimEnd().split("\n").length >= 2) {
         setTimeout(() => child.kill("SIGTERM"), 100);
       }
     });
@@ -155,7 +180,7 @@ test("inbox --notify flushes one readable line and never calls delivery mutation
 
     assert.equal(code, 0, stderr);
     const lines = stdout.trimEnd().split("\n");
-    assert.equal(lines.length, 1, stdout);
+    assert.equal(lines.length, 2, stdout);
     assert.match(lines[0]!, new RegExp(SENDER));
     assert.match(lines[0]!, /Please review this change\./);
     assert.match(
@@ -164,6 +189,7 @@ test("inbox --notify flushes one readable line and never calls delivery mutation
         `cswarm reply ${NEW_SIGNAL} "<answer>" --workspace-id ${WORKSPACE}`,
       ),
     );
+    assert.match(lines[1]!, /Broadcast update\./);
     /* The monitor line can reach terminal notification history. It names the public workspace
      * route only; credentials and target configuration stay in the process that owns them. */
     assert.doesNotMatch(lines[0]!, /--agent-token-stdin|--agent-token-file/);
@@ -172,16 +198,21 @@ test("inbox --notify flushes one readable line and never calls delivery mutation
     assert.doesNotMatch(lines[0]!, new RegExp(TOKEN));
     assert.deepEqual(
       requests.map(({ path }) => path),
-      ["/functions/v1/read"],
+      ["/functions/v1/read", "/functions/v1/command"],
     );
     assert.equal(requests[0]?.body.after_created_at, "2026-08-28T11:00:00.000Z");
     assert.equal(requests[0]?.body.after_id, OLD_SIGNAL);
+    assert.deepEqual(
+      (requests[1]?.body.command as Record<string, unknown>).signal_ids,
+      [BROADCAST_SIGNAL],
+      "a directed line is rendered but only the rendered broadcast is attested",
+    );
     assert.deepEqual(receipt, receiptBefore);
 
     const stored = JSON.parse(await readFile(cursorStore.location, "utf8")) as {
       cursor: { id: string };
     };
-    assert.equal(stored.cursor.id, NEW_SIGNAL);
+    assert.equal(stored.cursor.id, BROADCAST_SIGNAL);
   } finally {
     await new Promise<void>((resolveClose) => server.close(() => resolveClose()));
     await rm(root, { recursive: true, force: true });

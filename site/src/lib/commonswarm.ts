@@ -1294,6 +1294,16 @@ export type BrowserSignalRecipient =
   | { kind: "person"; id: string }
   | { kind: "agent"; id: string };
 
+export type BrowserSignalKind = "ask" | "note";
+
+/** A direct agent address wakes by default; every other browser post stays a note. */
+export function browserSignalKind(
+  recipient: BrowserSignalRecipient,
+  postAgentNote = false,
+): BrowserSignalKind {
+  return recipient.kind === "agent" && !postAgentNote ? "ask" : "note";
+}
+
 /** Keeps the browser's single visible recipient and the two nullable wire fields in lockstep. */
 export function browserSignalAddress(recipient: BrowserSignalRecipient): {
   toUserId: string | null;
@@ -1332,9 +1342,12 @@ export interface BrowserHumanDeliveryReceipt {
  * parser treats every non-human `receipts` row as a delivery ledger row, so this
  * lives only under `broadcastRoster.agents.principals` (20260902000001, the folded roster migration).
  */
-export interface BrowserUntrackedAgentReceipt {
+export interface BrowserBroadcastAgentReceipt {
+  principalId: string;
   recipientAgentPrincipalId: string;
   displayName: string;
+  seenAt: string | null;
+  /** Retained on the wire for clients through 0.1.47. */
   trackingState: "not_tracked";
   observedAt: null;
 }
@@ -1350,8 +1363,9 @@ export interface BrowserRosterSection {
 export interface BrowserBroadcastRecipientRoster {
   members: BrowserRosterSection & { seen: number };
   agents: BrowserRosterSection & {
+    seen: number;
     trackingState: "not_tracked";
-    principals: BrowserUntrackedAgentReceipt[];
+    principals: BrowserBroadcastAgentReceipt[];
   };
 }
 
@@ -1393,6 +1407,13 @@ export interface BrowserDeliveryIndicator {
   terminal: boolean;
 }
 
+export interface BrowserDeliveryIndicatorContext {
+  /** Old directed-agent rows default to ask semantics when the caller omits the kind. */
+  signalKind?: BrowserSignalKind;
+  /** The workspace display name used only in a single-agent note acknowledgement. */
+  agentName?: string;
+}
+
 export const BROWSER_RECEIPT_ACTIVE_REFRESH_MS = 4_000;
 export const BROWSER_RECEIPT_UNAVAILABLE_REFRESH_MS = 30_000;
 export const BROWSER_RECEIPT_REQUESTS_PER_TICK = 8;
@@ -1431,13 +1452,14 @@ const isBrowserAgentDeliveryReceipt = (
 export interface BrowserBroadcastRosterView {
   seenMembers: BrowserHumanDeliveryReceipt[];
   notSeenMembers: BrowserHumanDeliveryReceipt[];
-  agents: BrowserUntrackedAgentReceipt[];
+  seenAgents: BrowserBroadcastAgentReceipt[];
+  notSeenAgents: BrowserBroadcastAgentReceipt[];
   /** Seen members the capped list left out, from the server's uncapped count. */
   seenHidden: number;
   /** Not-seen members the capped list left out: total - seen - shown. */
   notSeenHidden: number;
-  /** Agents the capped list left out. */
-  agentsHidden: number;
+  seenAgentsHidden: number;
+  notSeenAgentsHidden: number;
 }
 
 /**
@@ -1452,16 +1474,27 @@ export function browserBroadcastRosterView(
   const seenMembers = members.filter((receipt) => receipt.seenAt !== null);
   const notSeenMembers = members.filter((receipt) => receipt.seenAt === null);
   const agents = result.broadcastRoster?.agents.principals ?? [];
+  const seenAgents = agents.filter((receipt) => receipt.seenAt !== null);
+  const notSeenAgents = agents.filter((receipt) => receipt.seenAt === null);
   const roster = result.broadcastRoster;
   return {
     seenMembers,
     notSeenMembers,
-    agents,
+    seenAgents,
+    notSeenAgents,
     seenHidden: roster ? Math.max(0, roster.members.seen - seenMembers.length) : 0,
     notSeenHidden: roster
       ? Math.max(0, roster.members.total - roster.members.seen - notSeenMembers.length)
       : 0,
-    agentsHidden: roster ? Math.max(0, roster.agents.total - agents.length) : 0,
+    seenAgentsHidden: roster
+      ? Math.max(0, roster.agents.seen - seenAgents.length)
+      : 0,
+    notSeenAgentsHidden: roster
+      ? Math.max(
+        0,
+        roster.agents.total - roster.agents.seen - notSeenAgents.length,
+      )
+      : 0,
   };
 }
 
@@ -1483,6 +1516,7 @@ export function browserRosterSectionLines(
 export function browserDeliveryIndicator(
   result: BrowserDeliveryReceiptResult | null,
   now = Date.now(),
+  context: BrowserDeliveryIndicatorContext = {},
 ): BrowserDeliveryIndicator {
   if (result === null || result.addressed === null) {
     return {
@@ -1499,6 +1533,7 @@ export function browserDeliveryIndicator(
   if (result.addressed === false) {
     const roster = result.broadcastRoster;
     if (roster !== undefined) {
+      const anySeen = roster.members.seen > 0 || roster.agents.seen > 0;
       const cut = [
         roster.members.truncated
           ? ` Showing ${roster.members.returned} of ${roster.members.total} members.`
@@ -1508,13 +1543,14 @@ export function browserDeliveryIndicator(
           : "",
       ].join("");
       return {
-        state: roster.members.seen > 0 ? "seen" : "no-recipient",
+        state: anySeen ? "seen" : "no-recipient",
         outcome: null,
-        glyph: roster.members.seen > 0 ? "✓✓" : "○",
-        label: `Seen by ${roster.members.seen} of ${roster.members.total}`,
+        glyph: anySeen ? "✓✓" : "○",
+        label: `Seen by ${roster.members.seen} of ${roster.members.total} members · ${roster.agents.seen} of ${roster.agents.total} agents`,
         detail:
-          `Broadcast — nobody was addressed or woken. Member seen state is a focused-viewport browser report. Broadcasts do not wake or track agents.${cut}`,
-        terminal: roster.members.seen >= roster.members.total,
+          `Broadcast — nobody was addressed or woken. Member seen state is a focused-viewport browser report. Seen means the agent's CLI rendered it, or its listener's model consumed it in a completed turn.${cut}`,
+        terminal: roster.members.seen >= roster.members.total &&
+          roster.agents.seen >= roster.agents.total,
       };
     }
     return {
@@ -1600,16 +1636,47 @@ export function browserDeliveryIndicator(
   if (total === 1) {
     const receipt = agentReceipts[0]!;
     if (receipt.ackedAt !== null && receipt.ackOutcome !== null) {
+      const isNote = context.signalKind === "note";
+      const agentName = context.agentName ?? receipt.recipientAgentPrincipalId;
+      /*
+       * Directed ACK label matrix, derived from the producers rather than from
+       * the outcome names:
+       *
+       *                    queued            replied             observed                         expired             failed_terminal
+       * ASK                session queue     reply posted        session hook surfaced it         TTL ended           listener/server stopped
+       * NOTE               session queue     defensive only      worker consumed or hook surfaced server TTL ended    server attempt ceiling
+       *
+       * The listener selects ackable records and maps their exact outcomes at
+       * src/listener/runtime.ts:413-465; recovered and fresh deliveries prepare
+       * those ACKs at runtime.ts:1213-1224 and 1542-1555. Its queued row follows
+       * the durable queue write at runtime.ts:824-867. The engine produces ASK
+       * expiry at src/listener/engine.ts:403-409, 484-490, 594-600, and 693-699;
+       * failure at engine.ts:391-397, 415-421, 501-565, 602-616, and 701-711; and
+       * a posted reply at engine.ts:625-638. Worker NOTE observed is produced at
+       * runtime.ts:613-641 and 1449-1473; unreadable NOTE repair and ASK failure
+       * are runtime.ts:644-680.
+       * The other ASK observed producer writes hook output before promotion in
+       * src/listener/hook.ts:930-964 and sends that promotion through
+       * src/cloud/delivery.ts:778-806. Server-owned expiry and attempt exhaustion
+       * are supabase/functions/command/durable-delivery.ts:162-204. There is no
+       * honest NOTE replied producer: runtime.ts:417-418 guards replied with ASK.
+       */
       if (receipt.ackOutcome === "queued") {
         const queueCount = receipt.pendingForMainCount;
         return {
           state: "queued",
           outcome: "queued",
           glyph: "…",
-          label: "Queued",
-          detail: `Queued for the agent's interactive session; waiting for the recipient's session hook${
-            typeof queueCount === "number" ? ` (${queueCount} in queue)` : ""
-          }.`,
+          label: isNote
+            ? `Queued for ${agentName} to read · no wake`
+            : "Queued for the agent's session",
+          detail: isNote
+            ? `Routed to ${agentName}'s interactive session but not yet shown${
+              typeof queueCount === "number" ? ` (${queueCount} in queue)` : ""
+            }. A note does not wake the agent.`
+            : `Queued for the agent's interactive session; waiting for the recipient's session hook${
+              typeof queueCount === "number" ? ` (${queueCount} in queue)` : ""
+            }.`,
           terminal: false,
         };
       }
@@ -1618,19 +1685,23 @@ export function browserDeliveryIndicator(
           state: "done",
           outcome: "replied",
           glyph: "↩",
-          label: "Replied",
+          label: `Answered ${deliveryAge(receipt.ackedAt, now)}`,
           detail: "The agent completed this delivery with a reply.",
           terminal: true,
         };
       }
       if (receipt.ackOutcome === "observed") {
         return {
-          state: "done",
+          state: isNote ? "done" : "seen",
           outcome: "observed",
           glyph: "◎",
-          label: "Observed",
-          detail: "The agent saw this delivery without replying.",
-          terminal: true,
+          label: isNote
+            ? `Seen or handled for ${agentName} · no wake`
+            : "Seen by the agent's session · no answer yet",
+          detail: isNote
+            ? "The listener handled the note without starting a model turn, or the session hook surfaced it."
+            : "The agent's session hook surfaced the ask. An answer may still be posted.",
+          terminal: isNote,
         };
       }
       if (receipt.ackOutcome === "expired") {
@@ -1705,6 +1776,9 @@ export function browserDeliveryIndicator(
 
   const queuedRows = terminalRows.filter((receipt) => receipt.ackOutcome === "queued");
   const finishedRows = terminalRows.filter((receipt) => receipt.ackOutcome !== "queued");
+  const observedAskRows = context.signalKind === "note"
+    ? []
+    : finishedRows.filter((receipt) => receipt.ackOutcome === "observed");
   const outcomeCounts = new Map<Exclude<NonNullable<BrowserDeliveryReceipt["ackOutcome"]>, "queued">, number>();
   for (const receipt of finishedRows) {
     const outcome = receipt.ackOutcome as Exclude<NonNullable<BrowserDeliveryReceipt["ackOutcome"]>, "queued">;
@@ -1712,7 +1786,9 @@ export function browserDeliveryIndicator(
   }
   const outcomeLabels: Record<Exclude<NonNullable<BrowserDeliveryReceipt["ackOutcome"]>, "queued">, string> = {
     replied: "replied",
-    observed: "observed without reply",
+    observed: context.signalKind === "note"
+      ? "notes seen or handled; notes do not wake agents"
+      : "asks surfaced; answers may still be posted",
     expired: "expired",
     failed_terminal: "failed",
   };
@@ -1761,13 +1837,16 @@ export function browserDeliveryIndicator(
   }
   if (finishedRows.length === total) {
     const outcomes = new Set(finishedRows.map((receipt) => receipt.ackOutcome));
+    const waitingForAnswers = observedAskRows.length > 0;
     return {
-      state: "done",
+      state: waitingForAnswers ? "seen" : "done",
       outcome: outcomes.size === 1 ? finishedRows[0]!.ackOutcome! : "mixed",
-      glyph: "✓✓",
-      label: `${total} of ${total} done`,
+      glyph: waitingForAnswers ? "◎" : "✓✓",
+      label: waitingForAnswers
+        ? `${observedAskRows.length} of ${total} seen · ${observedAskRows.length} no answer yet`
+        : `${total} of ${total} done`,
       detail,
-      terminal: true,
+      terminal: !waitingForAnswers,
     };
   }
   if (deliveredRows.length > 0 || terminalRows.length > 0) {
@@ -1814,6 +1893,24 @@ export function browserHumanDeliveryIndicator(
   });
 }
 
+/**
+ * Agent ACKs are immutable except for queued, which the session hook may
+ * promote to observed. An observed ASK remains open to a later reply, but the
+ * receipt row itself cannot change, so polling it again cannot find that reply.
+ */
+function hasSettledAgentReceipts(
+  result: BrowserDeliveryReceiptResult | null,
+): boolean {
+  return result?.addressed === true &&
+    result.receipts.length > 0 &&
+    result.receipts.every((receipt) =>
+      isBrowserAgentDeliveryReceipt(receipt) &&
+      receipt.ackedAt !== null &&
+      receipt.ackOutcome !== null &&
+      receipt.ackOutcome !== "queued"
+    );
+}
+
 /** Bounds receipt reads while favoring visible and newly-arrived directed messages. */
 export function browserDeliveryReceiptCandidates(
   signals: readonly Signal[],
@@ -1829,8 +1926,10 @@ export function browserDeliveryReceiptCandidates(
       if (!cached) return true;
       const indicator = signal.to !== null && signal.toAgent === null
         ? browserHumanDeliveryIndicator(signal.to, cached.result)
-        : browserDeliveryIndicator(cached.result, now);
-      if (indicator.terminal) return false;
+        : browserDeliveryIndicator(cached.result, now, {
+          signalKind: signal.kind === "note" ? "note" : "ask",
+        });
+      if (indicator.terminal || hasSettledAgentReceipts(cached.result)) return false;
       const cadence = indicator.state === "unavailable"
         ? BROWSER_RECEIPT_UNAVAILABLE_REFRESH_MS
         : BROWSER_RECEIPT_ACTIVE_REFRESH_MS;
@@ -1885,13 +1984,14 @@ export function browserAcceptedDeliveryIndicator(
   };
 }
 
-/** Posts one browser-authored note with either broadcast or one direct addressee. */
+/** Posts one browser-authored signal with either broadcast or one direct addressee. */
 export async function postBrowserSignal(
   session: Session,
   commandId: string,
   workspaceId: string,
   bodyText: string,
   recipient: BrowserSignalRecipient,
+  signalKind: BrowserSignalKind = browserSignalKind(recipient),
   attachments: readonly BrowserSignalAttachmentRef[] = [],
 ): Promise<Signal> {
   const address = browserSignalAddress(recipient);
@@ -1900,7 +2000,7 @@ export async function postBrowserSignal(
     commandId,
     {
       kind: "post_signal",
-      signal_kind: "note",
+      signal_kind: signalKind,
       body: bodyText,
       to_user_id: address.toUserId,
       to_agent_principal_id: address.toAgentPrincipalId,
@@ -1932,7 +2032,7 @@ export async function postBrowserSignal(
     toAgent: row.to_agent === null || row.to_agent === undefined
       ? null
       : String(row.to_agent),
-    kind: String(row.kind ?? "note"),
+    kind: String(row.kind ?? signalKind),
     body: String(row.body ?? bodyText),
     attachments: parseBrowserSignalAttachments(row.attachments),
     about: row.about === null || row.about === undefined ? null : String(row.about),
@@ -2132,34 +2232,44 @@ export async function browserDeliveryReceipts(
     if (
       !Number.isSafeInteger(members.seen) || Number(members.seen) < 0 ||
       Number(members.seen) > members.total ||
+      !Number.isSafeInteger(agents.seen) || Number(agents.seen) < 0 ||
+      Number(agents.seen) > agents.total ||
       agents.tracking_state !== "not_tracked" ||
       !Array.isArray(agents.principals)
     ) {
       throw new Error("Delivery receipts returned a malformed broadcast roster.");
     }
-    const principals: BrowserUntrackedAgentReceipt[] = agents.principals.map((value) => {
+    const principals: BrowserBroadcastAgentReceipt[] = agents.principals.map((value) => {
       if (!value || typeof value !== "object" || Array.isArray(value)) {
         throw new Error("Delivery receipts returned a malformed untracked agent row.");
       }
       const row = value as Record<string, unknown>;
       if (
+        typeof row.principal_id !== "string" || row.principal_id.length === 0 ||
         typeof row.recipient_agent_principal_id !== "string" ||
         row.recipient_agent_principal_id.length === 0 ||
+        row.principal_id !== row.recipient_agent_principal_id ||
         typeof row.display_name !== "string" || row.display_name.length === 0 ||
+        !(row.seen_at === null ||
+          (typeof row.seen_at === "string" && Number.isFinite(Date.parse(row.seen_at)))) ||
         row.tracking_state !== "not_tracked" || row.observed_at !== null
       ) {
         throw new Error("Delivery receipts returned a malformed untracked agent row.");
       }
       return {
+        principalId: row.principal_id,
         recipientAgentPrincipalId: row.recipient_agent_principal_id,
         displayName: row.display_name,
+        seenAt: row.seen_at as string | null,
         trackingState: "not_tracked",
         observedAt: null,
       };
     });
     const seenShown = memberRows.filter((receipt) => receipt.seenAt !== null).length;
+    const agentSeenShown = principals.filter((receipt) => receipt.seenAt !== null).length;
     if (
       seenShown > Number(members.seen) ||
+      agentSeenShown > Number(agents.seen) ||
       memberRows.length !== members.returned ||
       principals.length !== agents.returned ||
       new Set(principals.map((agent) => agent.recipientAgentPrincipalId)).size !==
@@ -2180,6 +2290,7 @@ export async function browserDeliveryReceipts(
         returned: agents.returned,
         limit: agents.limit,
         truncated: agents.truncated,
+        seen: Number(agents.seen),
         trackingState: "not_tracked",
         principals,
       },
