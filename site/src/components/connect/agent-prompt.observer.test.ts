@@ -61,6 +61,11 @@ test("dashboard agent prompt is one complete, secret-safe handoff", () => {
   assert.equal(prompt.split("public-anon-observer").length - 1, 8);
   assert.doesNotMatch(prompt, /<the anon key above>/);
   assert.match(prompt, /DO NOT ECHO THIS CREDENTIAL BACK/);
+  assert.match(
+    prompt,
+    /Copy the line below byte-for-byte into that file, unchanged: it is a JSON object with required\s+`agent_token`, `message`, `status`, `principal_id`, `token_id`, and `run_id` fields; it also\s+carries `expires_at` when the mint supplies one; do not rename, reformat, or add fields\./,
+    "the prompt does not state the credential-file schema and exact-copy rule",
+  );
   assert.match(prompt, /host's file-writing channel/);
   assert.match(prompt, /stdin separately[\s\S]*credential stays out of argv/);
   /* ~~This pinned "Do not use echo, printf, or a heredoc".~~ Dead. That string is what a cold
