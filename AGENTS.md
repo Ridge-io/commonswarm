@@ -216,6 +216,18 @@ Use the shortest precise statement. Remove modifiers such as *actual, real, true
 main, key,* or *important* when they add no fact. Do not invent an opposing view for an “X, not Y” contrast,
 and never imply that someone argued a view they did not introduce.
 
+## Workspace brain and releases
+
+The CommonSwarm workspace brain (`cswarm brain ls | get <topic>`) holds live doctrine that moves faster than
+this file: `brain-how-to` (its constitution), `false-success-signals`, `shared-host`, `listener-attended`,
+`agent-restart`, `releases`. Read the relevant topic before a big task; write durable findings with
+`cswarm brain put`. Cite topics by NAME only, never by section number or item count.
+
+Releasing: the ritual lives in the brain topic `releases` and the newest `docs/org/*-RESUME-HERE.md`. The
+CLI version on `/download` is derived from the root `package.json` through `site/src/lib/release.ts`; bump
+with `npm version --no-git-tag-version <v>` so the lockfile stays in sync (`npm --prefix site test` rejects
+drift). Every SHA-changing lane needs both D-036 arms before it lands.
+
 ## ⚠️ `cloud-swarm-dev` IS PRODUCTION
 
 The Supabase project `cloud-swarm-dev` (ref `ukezjcnxjvkpkeezxaew`) is the CommonSwarm production project;
