@@ -25,6 +25,7 @@ import {
   CLAUDE_ACP_MIN_VERSION,
   AcpChildExitError,
   AcpHostError,
+  AcpPermissionCanaryError,
   AcpVersionError,
   AcpVersionBelowFloorError,
   assertClaudeVersionFloor,
@@ -56,6 +57,7 @@ registerStderrExitParityTests({
 async function writeFakeClaudeBridge(
   root: string,
   protocolVersion = 1,
+  promptError: { code: number; message: string; data?: unknown } | null = null,
 ): Promise<{ target: string; shim: string; log: string }> {
   const targetDir = join(
     root,
@@ -74,6 +76,7 @@ async function writeFakeClaudeBridge(
       `const fs = require("node:fs");\n` +
       `const { spawnSync } = require("node:child_process");\n` +
       `const log = ${JSON.stringify(log)};\n` +
+      `const promptError = ${JSON.stringify(promptError)};\n` +
       `fs.appendFileSync(log, JSON.stringify({ args: process.argv.slice(2), home: process.env.HOME ?? null, swarm: process.env.SWARM_AGENT_TOKEN ?? null, claudeCodeExecutable: process.env.CLAUDE_CODE_EXECUTABLE ?? null, pid: process.pid }) + "\\n");\n` +
       `if (process.argv[2] === "--version") { process.stdout.write("0.64.2\\n"); process.exit(0); }\n` +
       `if (process.env.CLAUDE_CODE_EXECUTABLE) spawnSync(process.env.CLAUDE_CODE_EXECUTABLE, ["--bridge-child"], { stdio: "ignore" });\n` +
@@ -87,6 +90,10 @@ async function writeFakeClaudeBridge(
       `    if (!line.trim()) continue;\n` +
       `    const message = JSON.parse(line);\n` +
       `    fs.appendFileSync(log, JSON.stringify({ method: message.method, params: message.params }) + "\\n");\n` +
+      `    if (message.method === "session/prompt" && promptError) {\n` +
+      `      process.stdout.write(JSON.stringify({ jsonrpc: "2.0", id: message.id, error: promptError }) + "\\n");\n` +
+      `      continue;\n` +
+      `    }\n` +
       `    let result;\n` +
       `    if (message.method === "initialize") result = { protocolVersion: ${protocolVersion}, agentCapabilities: {}, authMethods: [], _meta: { agentVersion: "0.64.2" } };\n` +
       `    else if (message.method === "session/new") result = { sessionId: "claude-test-session", modes: { currentModeId: "auto", availableModes: [{ id: "auto" }, { id: "default" }] } };\n` +
@@ -387,6 +394,46 @@ test("openClaudeAcpSession default probes and spawns one bridge realpath with on
       await handle.close();
     }
     assert.ok(handle.child.exitCode !== null || handle.child.signalCode !== null);
+  } finally {
+    await rm(root, { recursive: true, force: true });
+    await rm(cwd, { recursive: true, force: true });
+  }
+});
+
+test("Claude canary retains the bridge's typed authentication failure", async () => {
+  const root = await mkdtemp(join(tmpdir(), "cswarm-claude-auth-error-"));
+  const cwd = await mkdtemp(join(tmpdir(), "cswarm-claude-cwd-"));
+  const detail =
+    "Internal error: Failed to authenticate: OAuth session expired and could not be refreshed (failed 2 attempts)";
+  try {
+    const fake = await writeFakeClaudeBridge(root, 1, {
+      code: -32603,
+      message: detail,
+      data: { errorKind: "authentication_failed" },
+    });
+    const handle = await openClaudeAcpSession({
+      cwd,
+      executable: fake.shim,
+      env: { PATH: root, HOME: join(root, "operator-home") },
+      requestTimeoutMs: 2_000,
+    });
+    try {
+      await assert.rejects(
+        () => handle.session.enablePromptsAfterCanary({ attempts: 1 }),
+        (error: unknown) => {
+          assert.ok(error instanceof AcpPermissionCanaryError);
+          assert.equal(error.message, detail);
+          assert.equal(error.reasonCode, "rpc_error");
+          assert.deepEqual(error.peerError, {
+            code: -32603,
+            data: { errorKind: "authentication_failed" },
+          });
+          return true;
+        },
+      );
+    } finally {
+      await handle.close();
+    }
   } finally {
     await rm(root, { recursive: true, force: true });
     await rm(cwd, { recursive: true, force: true });

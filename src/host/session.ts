@@ -33,6 +33,7 @@ import {
   type SanitizedSessionUpdate,
   type SessionUpdateKind,
   type AcpStopReason,
+  type AcpPeerError,
 } from "./types.js";
 
 export type AcpSessionConnectOptions = HostSessionOptions & {
@@ -251,6 +252,7 @@ export class AcpHostSession {
       passed: boolean;
       reason?: string;
       reasonCode?: string;
+      peerError?: AcpPeerError;
     } | null = null;
     for (let attempt = 1; attempt <= total; attempt += 1) {
       const result = await this.runPermissionBoundaryCanary(options);
@@ -266,6 +268,8 @@ export class AcpHostSession {
     throw new AcpPermissionCanaryError(
       total === 1 ? detail : `${detail} (failed ${total} attempts)`,
       last?.reasonCode ?? null,
+      null,
+      last?.peerError ?? null,
     );
   }
 
@@ -309,6 +313,7 @@ export class AcpHostSession {
     sawDeniedToolResult: boolean;
     reason?: string;
     reasonCode?: string;
+    peerError?: AcpPeerError;
     stopReason?: AcpStopReason;
   }> {
     this.canaryState = {
@@ -343,6 +348,9 @@ export class AcpHostSession {
         sawDeniedToolResult: this.canaryState.sawDeniedToolResult,
         reason: err instanceof Error ? err.message : String(err),
         ...(err instanceof AcpHostError ? { reasonCode: err.code } : {}),
+        ...(err instanceof AcpProtocolError && err.peerError
+          ? { peerError: err.peerError }
+          : {}),
       };
     }
   }

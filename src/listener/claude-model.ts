@@ -13,6 +13,7 @@ import { allowOnceOrDeny, defaultPermissionCallback } from "../host/permission.j
 import {
   AcpChildExitError,
   AcpPermissionCanaryError,
+  type AcpPeerError,
   type HostSessionEvents,
   type PermissionCallback,
   type PermissionDecision,
@@ -73,7 +74,7 @@ export type ClaudeCanaryFailureShape = {
 const CLAUDE_CODE_VERSION_REQUIRED_RE =
   /\bClaude Code (\d+\.\d+\.\d+) does not support this model; version (\d+\.\d+\.\d+) or newer is required\b/;
 const CLAUDE_AUTH_FAILURE_RE =
-  /\b(?:authentication failed|authentication required|not authenticated|OAuth (?:sign-in|login|token)|keychain\/OAuth|please (?:log|sign) in)\b/i;
+  /\b(?:authentication failed|failed to authenticate|authentication required|not authenticated|OAuth (?:sign-in|login|token)|OAuth session (?:expired|could not be refreshed)|keychain\/OAuth|please (?:log|sign) in)\b/i;
 const CLAUDE_CANARY_TIMEOUT_RE =
   /^ACP request timed out: session\/prompt(?: \(failed \d+ attempts\))?$/;
 
@@ -81,8 +82,22 @@ const CLAUDE_CANARY_TIMEOUT_RE =
 export function classifyClaudeCanaryFailure(
   detail: string | null | undefined,
   typedReasonCode?: string | null,
+  peerError?: AcpPeerError | null,
 ): ClaudeCanaryFailureShape {
   const recorded = detail?.trim() ?? "";
+  const peerData = peerError?.data;
+  const peerErrorKind = peerData && typeof peerData === "object" &&
+      !Array.isArray(peerData)
+    ? (peerData as Record<string, unknown>).errorKind
+    : undefined;
+  if (
+    typedReasonCode === "claude_canary_auth_failed" ||
+    ((typedReasonCode === "rpc_error" || typedReasonCode === null ||
+      typedReasonCode === undefined) &&
+      (peerError?.code === -32000 || peerErrorKind === "authentication_failed"))
+  ) {
+    return { code: "claude_canary_auth_failed", minimumRequiredVersion: null };
+  }
   const demanded = CLAUDE_CODE_VERSION_REQUIRED_RE.exec(recorded);
   if (demanded?.[2]) {
     return {
@@ -98,19 +113,18 @@ export function classifyClaudeCanaryFailure(
   ) {
     return { code: "claude_canary_timeout", minimumRequiredVersion: null };
   }
-  if (typedReasonCode === "claude_canary_auth_failed") {
-    return { code: "claude_canary_auth_failed", minimumRequiredVersion: null };
-  }
   if (typedReasonCode === "claude_bridge_version_required") {
     return {
       code: "claude_bridge_version_required",
       minimumRequiredVersion: demanded?.[2] ?? null,
     };
   }
-  /* ACP gives both the API version refusal and auth failures the same local
-   * `rpc_error` code, and the transport does not retain peer error.data. These
-   * two narrow prose recognizers therefore live at the provider boundary; no
-   * retry or downstream state decision branches on the message (D-053). */
+  /* claude-agent-acp 0.73.0 supplies `error.data.errorKind` for SDK failures,
+   * and that typed field is preferred above. Older bridges or paths can omit
+   * it. The new fallbacks for the measured family are "Failed to authenticate",
+   * "OAuth session expired", and "could not be refreshed" only when attached
+   * to "OAuth session"; the existing direct auth phrases remain. No retry or
+   * state decision branches on this presentation text (D-053). */
   if (
     (typedReasonCode === "rpc_error" || typedReasonCode === null ||
       typedReasonCode === undefined) &&
@@ -337,6 +351,7 @@ export class ClaudeListenerModel implements ListenerModel {
       const shape = classifyClaudeCanaryFailure(
         canaryError.message,
         canaryError.reasonCode,
+        canaryError.peerError,
       );
       throw new AcpPermissionCanaryError(
         canaryError.message,
