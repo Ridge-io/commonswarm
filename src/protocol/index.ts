@@ -10,3 +10,4 @@ export * from './upcasters.js';
 export * from './workspace-events.js';
 export * from './workspace-reducer.js';
 export * from './workspace-commands.js';
+export * from './brain-version-window.js';

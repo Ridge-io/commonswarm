@@ -84,19 +84,28 @@ Proposed caps, all enforced server-side at version-create time:
 |---|---|---|
 | per-file (per version) | 25 MB | covers every named review target (md, docx, xlsx, pdf, images) with room; keeps a single signed upload comfortably inside one request and bounds the blast radius of a mistake |
 | per-workspace total | 1 GB | ~40× the per-file cap; a coordination store, not a drive. Free-tier arithmetic: 10 workspaces per account stays bounded |
-| per-workspace file count | 500 names, 20 versions each | keeps `file ls` a page, not a database |
+| per-workspace file count | 500 names; normal files keep 20 live or in-flight versions per name; brain topics keep a rolling 20 live versions | keeps `file ls` bounded without forcing a living brain topic to change its name |
 | upload rate | 30 version-creates per principal per hour | same family as existing signal rate limits; stops a looping agent from filling the quota in a minute |
 
 Exceeding a cap is a refusal with the number in it ("this file is 31 MB; the per-file limit
 is 25 MB"), not a bare status.
 
-★R5, amended at S2 review — **what counts toward the 20-version cap: `live` versions
-plus UNEXPIRED `pending` rows, and the cap is re-checked at commit.** Counting only live
+★R5, amended at S2 review — **for normal files, what counts toward the 20-version cap:
+`live` versions plus UNEXPIRED `pending` rows, and the cap is re-checked at commit.** Counting only live
 let concurrent pendings jointly pass a cap either would fill (grok). Expired pendings and
 `purged` rows never count — otherwise failed uploads or a tombstone-and-purge loop still
-exhaust the cap. The quota SUM for
-the 1 GB cap likewise counts `live` bytes plus not-yet-expired `pending` declared bytes
-(pending must count there, or concurrent pendings overshoot the workspace cap at commit).
+exhaust the cap.
+
+**Brain-topic exception, decided 2026-09-02:** a reserved `brain--<topic>.md` name is the
+pointer and does not change when it reaches 20 versions. A brain create is refused only
+when 20 unexpired uploads are pending. On the next commit, the oldest live version is
+changed to `retired` in the same transaction and the new version becomes live. At most 20
+versions stay live. A retired row and its object remain: members can still download an
+explicit retired brain version. Listings report live and retired counts. Normal files keep
+the fixed cap above.
+
+The 1 GB quota SUM counts `live` and `retired` bytes plus not-yet-expired `pending`
+declared bytes. Retirement never frees storage because it does not delete the object.
 
 ★R16 — **caps need a concurrency rule or they are advisory.** All three checks run inside
 the version-create transaction while holding a row lock (`SELECT … FOR UPDATE`) on the
@@ -195,6 +204,8 @@ command function (request size limits, memory, and double-handling):
 Download mirrors it in one step: `file_download_url` (command) verifies membership and
 liveness, then returns a signed URL good for 5 minutes. Issuing a download URL is a command,
 not a read, because it grants a capability and belongs in the audit trail with an actor.
+An explicit version may also resolve a `retired` reserved brain version. Default-latest
+still resolves only `files.current_version`, which is live.
 
 ★R1 — **every file command resolves its target by the compound key
 `(workspace_id, file_id)`, never by `file_id` alone.** The classic miss is
@@ -212,8 +223,8 @@ they expire naturally within 5 minutes, which the tombstone response says; at pu
 object itself is gone, so any straggler URL dies with it.
 
 List is a read: `read` gains `resource: "files"` returning name, id, current version, size,
-content type, uploader, created/tombstoned timestamps. Same shape rules as the existing
-members/signals resources.
+content type, uploader, created/tombstoned timestamps, and additive live/retired version
+counts. Same shape rules as the existing members/signals resources.
 
 Reducer involvement: file commands are **not** routed through the pure protocol reducer.
 The reducer governs the signal/authority core; files are an I/O-bound side surface with
@@ -266,7 +277,7 @@ CREATE TABLE swarm.file_versions (
   file_id        uuid NOT NULL,
   workspace_id   uuid NOT NULL,            -- denormalized for RLS and quota sums
   version_n      integer NOT NULL,
-  state          text NOT NULL,            -- 'pending' | 'live' | 'purged'
+  state          text NOT NULL,            -- 'pending' | 'live' | 'retired' | 'purged'
   size_bytes     bigint NOT NULL,          -- ★R4: measured at commit from storage metadata
   sha256         text,                     -- ★R4: UNVERIFIED client attestation, not authority
   content_type   text NOT NULL,            -- ★R8: unverified client declaration
@@ -275,6 +286,7 @@ CREATE TABLE swarm.file_versions (
   uploaded_by    uuid NOT NULL,
   created_at     timestamptz NOT NULL DEFAULT now(),
   committed_at   timestamptz,
+  retired_at     timestamptz,
   UNIQUE (file_id, version_n),
   -- ★R14: a version can never disagree with its file about the tenant. A plain FK on
   -- file_id alone lets a hand-written workspace_id diverge, and the denormalized column
@@ -342,6 +354,10 @@ no script reaches is silently not run (AGENTS.md trap; the D-025 scar).
 S1+S2 land together (a migration nothing reads is inert but a command without its tables is
 red); S3 can land behind them; S4 gates S6. Two-arm review per D-036 on every SHA-changing
 stage.
+
+The brain rolling-window production order is migration, then command and read edge
+functions, then the client. The release lead applies it; a source commit does not establish
+that the migration or functions are live.
 
 ## 12. Open questions for review
 

@@ -8,11 +8,13 @@
  */
 
 import type { FileListRow } from "./files.js";
+import {
+  BRAIN_FILE_PREFIX,
+  BRAIN_FILE_SUFFIX,
+  BRAIN_TOPIC_MAX_LENGTH,
+} from "../protocol/brain-version-window.js";
 
-export const BRAIN_FILE_PREFIX = "brain--";
-export const BRAIN_FILE_SUFFIX = ".md";
-export const BRAIN_TOPIC_MAX_LENGTH =
-  255 - BRAIN_FILE_PREFIX.length - BRAIN_FILE_SUFFIX.length;
+export { BRAIN_FILE_PREFIX, BRAIN_FILE_SUFFIX, BRAIN_TOPIC_MAX_LENGTH };
 export const BRAIN_END_OF_TASK_NUDGE =
   "Durable finding? cswarm brain put <topic> — see brain get brain-how-to";
 
@@ -21,6 +23,11 @@ const BRAIN_TOPIC_RE = /^[a-z0-9][a-z0-9._-]*$/;
 /** A topic name that cannot map to one safe, canonical file-artifact name. */
 export class BrainTopicError extends Error {
   override name = "BrainTopicError";
+}
+
+export interface BrainTopicSelector {
+  topic: string;
+  version: number | null;
 }
 
 /** Canonicalizes the CLI topic argument without silently changing punctuation. */
@@ -36,6 +43,24 @@ export function canonicalBrainTopic(value: string): string {
     );
   }
   return topic;
+}
+
+/** Accepts the compact `<topic>@<version>` history selector. */
+export function parseBrainTopicSelector(value: string): BrainTopicSelector {
+  const at = value.lastIndexOf("@");
+  if (at < 0) return { topic: canonicalBrainTopic(value), version: null };
+  const rawVersion = value.slice(at + 1);
+  if (!/^[1-9][0-9]*$/.test(rawVersion)) {
+    throw new BrainTopicError("brain topic history uses <topic>@<positive-version>");
+  }
+  const version = Number(rawVersion);
+  if (!Number.isSafeInteger(version)) {
+    throw new BrainTopicError("brain topic version is too large");
+  }
+  return {
+    topic: canonicalBrainTopic(value.slice(0, at)),
+    version,
+  };
 }
 
 /** Maps one public topic slug into the reserved file-artifact name. */
@@ -67,6 +92,24 @@ export interface BrainTopicSnapshot {
   topic: string;
   version: number;
   updatedAt: string;
+}
+
+export interface BrainVersionCounts {
+  live: number;
+  retired: number;
+}
+
+function nonNegativeCount(value: number | string | undefined): number | null {
+  const count = Number(value);
+  return Number.isSafeInteger(count) && count >= 0 ? count : null;
+}
+
+/** Keeps the 0.1.47 read wire usable during an edge-before-client rollout. */
+export function brainVersionCounts(file: FileListRow): BrainVersionCounts {
+  return {
+    live: nonNegativeCount(file.live_version_count) ?? file.current_version,
+    retired: nonNegativeCount(file.retired_version_count) ?? 0,
+  };
 }
 
 /** Keep every brain-list consumer on one reserved-name filter and ordering. */

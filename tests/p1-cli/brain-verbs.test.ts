@@ -53,6 +53,8 @@ async function startFakeCloud(): Promise<FakeCloud> {
               created_at: "2026-08-30T10:00:00.000Z",
               committed_at: "2026-08-31T10:00:00.000Z",
               tombstoned_at: null,
+              live_version_count: 2,
+              retired_version_count: 4,
             },
             {
               file_id: "cccccccc-1111-4111-8111-cccccccccccc",
@@ -119,6 +121,7 @@ async function startFakeCloud(): Promise<FakeCloud> {
             sha256: command.sha256,
             sha256_note: "unverified client attestation",
             reference: `file:${fileId}@v3`,
+            retired_version_n: 1,
           };
         } else if (kind === "file_download_url") {
           body = {
@@ -131,6 +134,9 @@ async function startFakeCloud(): Promise<FakeCloud> {
             download_path: "/storage/v1/object/sign/swarm-files/brain?token=fake",
             download_url_expires_in_seconds: 300,
             content_warning: "untrusted",
+            version_state: command.version_n === 1 ? "retired" : "live",
+            live_version_count: 2,
+            retired_version_count: 4,
           };
         } else {
           response.writeHead(400, { "content-type": "application/json" });
@@ -212,7 +218,7 @@ test("brain ls exposes only reserved topics with version and updater facts", asy
     const result = await cliAgainst(cloud, ["brain", "ls"]);
     assert.equal(result.code, 0, result.stderr);
     assert.match(result.stdout, /Brain topics \(1\):/);
-    assert.match(result.stdout, /architecture · 2 versions/);
+    assert.match(result.stdout, /architecture · 2 live · 4 retired/);
     assert.match(result.stdout, /updated 2026-08-31T10:00:00\.000Z/);
     assert.doesNotMatch(result.stdout, /ordinary-plan/);
   } finally {
@@ -223,9 +229,13 @@ test("brain ls exposes only reserved topics with version and updater facts", asy
 test("brain get resolves the reserved file and writes Markdown to stdout", async () => {
   const cloud = await startFakeCloud();
   try {
-    const result = await cliAgainst(cloud, ["brain", "get", "Architecture", "--version", "1"]);
+    const result = await cliAgainst(cloud, ["brain", "get", "Architecture@1"]);
     assert.equal(result.code, 0, result.stderr);
     assert.equal(result.stdout, EXISTING_MARKDOWN);
+    assert.match(
+      result.stderr,
+      /architecture · 2 live · 4 retired · showing version 1 \(retired\)/,
+    );
     assert.deepEqual(
       cloud.commands.map((command) => command.kind),
       ["file_download_url"],
@@ -237,7 +247,28 @@ test("brain get resolves the reserved file and writes Markdown to stdout", async
   }
 });
 
-test("brain put maps the topic and reuses create, storage PUT, and commit", async () => {
+test("brain get JSON shows the live and retired counts", async () => {
+  const cloud = await startFakeCloud();
+  try {
+    const result = await cliAgainst(cloud, [
+      "brain",
+      "get",
+      "architecture",
+      "--version",
+      "1",
+      "--json",
+    ]);
+    assert.equal(result.code, 0, result.stderr);
+    const body = JSON.parse(result.stdout) as Record<string, unknown>;
+    assert.equal(body.version_state, "retired");
+    assert.equal(body.live_version_count, 2);
+    assert.equal(body.retired_version_count, 4);
+  } finally {
+    await cloud.close();
+  }
+});
+
+test("the v0.1.47 brain-put wire accepts additive retirement fields", async () => {
   const cloud = await startFakeCloud();
   const markdown = "# Architecture\n\nThe durable decision changed.\n";
   try {
@@ -251,7 +282,10 @@ test("brain put maps the topic and reuses create, storage PUT, and commit", asyn
     assert.equal(cloud.commands[0]!.body.content_type, "text/markdown");
     assert.equal(cloud.uploads.length, 1);
     assert.equal(cloud.uploads[0]!.toString("utf8"), markdown);
-    assert.match(result.stdout, /Saved brain topic architecture as version 3/);
+    assert.match(
+      result.stdout,
+      /Saved as version 3 \(oldest retired: version 1\)/,
+    );
     assert.match(result.stdout, /cswarm brain get architecture/);
   } finally {
     await cloud.close();
