@@ -1,5 +1,6 @@
 // @ts-check
 import { defineConfig } from "astro/config";
+import sitemap from "@astrojs/sitemap";
 
 // Static output on purpose. The site has no server-side behaviour — the one interactive
 // piece is a client-side illustration that makes no network calls — so a static build is
@@ -33,6 +34,7 @@ export default defineConfig({
   // unrelated product whose /install.sh returns 200 and runs as root.
   site: "https://commonswarm.com",
   output: "static",
+  integrations: [sitemap()],
   build: {
     inlineStylesheets: "auto",
   },
