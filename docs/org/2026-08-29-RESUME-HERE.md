@@ -872,3 +872,18 @@ Still running: L30 (`lane/l30-provider-version`), L32 (`lane/l32-connection-reus
   roster cannot render the count from data it already has.
 - L38 did not change `site/src`. The queued-message receipt beside a visible signal still
   renders its own `pending_for_main_count`; that per-signal value is not a roster total.
+
+### Addendum 2026-09-02 05:30Z — v0.1.46 is LIVE, with one corrected claim
+
+| step | fact |
+|---|---|
+| review | Grok exact + Gemini inversion on `e27995a`, both `VERDICT: PASS` with observed mutations (outputs `arm-*-046b.out`, Grok's copied to `scratchpad/reboot-survival/`). Grok P3s → lane L41 (running). |
+| main | `dfed4f4` merge of release/0.1.46 → `adb61a0` release: v0.1.46 → `95900ef` npm dist artifacts. Pushed. |
+| production | migration `20260902000003` APPLIED; edge `activity` DEPLOYED (401 vs 404 control); `read`/`command` unchanged since 0.1.45 (diff empty). |
+| GitHub | tag `v0.1.46` on `adb61a0`, latest, both assets. npm `commonswarm@0.1.46`. |
+| site | deployed; `/download` 0.1.46 ×3 / 0.1.45 ×0; install.sh 200 / nope 404; start meta = api.commonswarm.com; no service_role; the dashboard chunk `commonswarm.DzpvXm0r.js` is served (200) and carries the activity copy. |
+| host | installer + `npm i -g` → both copies 0.1.46. Listener restarted pid 98074 ready; `connectionsOpened 1`, `connectionReuseRatio 26` after a minute (L32 works live); `cswarm listen canary` passed every hop (L23 works live); notify Monitor restarted. |
+
+**CORRECTION (published in the GitHub release notes and on the channel):** on the live listener `providerExecutable` and the bundled Claude Code versions are `null` / "not measured" and no runtime-notice event exists — L30's measurement is not wired on the detached path. L30's report, and both arms, verified it only against the fake bridge; the arms listed "live listener" under NOT established. Lane **L42** (`lane/l42-live-bridge-measurement`) fixes it with a mandatory isolated live control. The superseded release-note sentence ("Status names the resolved claude-agent-acp path…") is marked dead in the notes.
+
+Lesson for the ritual: a lane whose claim is about a RUNNING listener must include a live control with `--state-dir`; the L36 lane did, L30 did not, and the difference showed up only after release.
