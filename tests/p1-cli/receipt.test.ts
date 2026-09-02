@@ -220,7 +220,12 @@ test("an expired lease is delivered and untouched, not current work", () => {
 test("each receipt outcome keeps its exact meaning and next step", () => {
   const expected: Record<DeliveryAckOutcome, RegExp[]> = {
     replied: [/outcome replied/, /cswarm inbox/],
-    observed: [/outcome observed/, /saw the signal/, /cswarm ask/],
+    observed: [
+      /reported outcome observed/,
+      /surfaced to the agent's session or handled by its listener/,
+      /answer may still be posted/,
+      /cswarm ask/,
+    ],
     queued: [
       /Queued for agent/,
       /waiting for the recipient's session hook \(4 in queue\)/,
@@ -268,7 +273,10 @@ test("a broadcast names the no-recipient fact and never invents a failed or pend
   assert.match(rendered, /Seen members:\n- Ari — 5m ago/);
   assert.match(rendered, /Not-seen members:\n- Bo\n- Cy/);
   assert.match(rendered, /Agents — seen 1 of 1:\n- Quill/);
-  assert.match(rendered, /Seen means the agent's CLI rendered it/);
+  assert.match(
+    rendered,
+    /Seen means the agent's CLI rendered it, or its listener's model consumed it in a completed turn/,
+  );
   assert.match(rendered, /cswarm ask/);
   assert.doesNotMatch(rendered, /pending|failed|not yet delivered|working/i);
 });
@@ -344,7 +352,7 @@ test("--json payload carries the machine state, outcome, recipient, and ledger f
   assert.equal(payload.broadcast, false);
   assert.equal(rows.length, 1);
   assert.equal(rows[0]!.recipient_agent_principal_id, AGENT);
-  assert.equal(rows[0]!.state, "finished");
+  assert.equal(rows[0]!.state, "observed");
   assert.equal(rows[0]!.outcome, "observed");
   assert.equal(rows[0]!.attempt_count, 2);
   assert.equal(rows[0]!.lease_expiry_count, 1);

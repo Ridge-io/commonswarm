@@ -1548,7 +1548,7 @@ export function browserDeliveryIndicator(
         glyph: anySeen ? "✓✓" : "○",
         label: `Seen by ${roster.members.seen} of ${roster.members.total} members · ${roster.agents.seen} of ${roster.agents.total} agents`,
         detail:
-          `Broadcast — nobody was addressed or woken. Member seen state is a focused-viewport browser report. Seen means the agent's CLI rendered it; a listener that never reads the feed will not appear as seen.${cut}`,
+          `Broadcast — nobody was addressed or woken. Member seen state is a focused-viewport browser report. Seen means the agent's CLI rendered it, or its listener's model consumed it in a completed turn.${cut}`,
         terminal: roster.members.seen >= roster.members.total &&
           roster.agents.seen >= roster.agents.total,
       };
@@ -1638,6 +1638,29 @@ export function browserDeliveryIndicator(
     if (receipt.ackedAt !== null && receipt.ackOutcome !== null) {
       const isNote = context.signalKind === "note";
       const agentName = context.agentName ?? receipt.recipientAgentPrincipalId;
+      /*
+       * Directed ACK label matrix, derived from the producers rather than from
+       * the outcome names:
+       *
+       *                    queued            replied             observed                         expired             failed_terminal
+       * ASK                session queue     reply posted        session hook surfaced it         TTL ended           listener/server stopped
+       * NOTE               session queue     defensive only      worker consumed or hook surfaced server TTL ended    server attempt ceiling
+       *
+       * The listener selects ackable records and maps their exact outcomes at
+       * src/listener/runtime.ts:413-465; recovered and fresh deliveries prepare
+       * those ACKs at runtime.ts:1213-1224 and 1542-1555. Its queued row follows
+       * the durable queue write at runtime.ts:824-867. The engine produces ASK
+       * expiry at src/listener/engine.ts:403-409, 484-490, 594-600, and 693-699;
+       * failure at engine.ts:391-397, 415-421, 501-565, 602-616, and 701-711; and
+       * a posted reply at engine.ts:625-638. Worker NOTE observed is produced at
+       * runtime.ts:613-641 and 1449-1473; unreadable NOTE repair and ASK failure
+       * are runtime.ts:644-680.
+       * The other ASK observed producer writes hook output before promotion in
+       * src/listener/hook.ts:930-964 and sends that promotion through
+       * src/cloud/delivery.ts:778-806. Server-owned expiry and attempt exhaustion
+       * are supabase/functions/command/durable-delivery.ts:162-204. There is no
+       * honest NOTE replied producer: runtime.ts:417-418 guards replied with ASK.
+       */
       if (receipt.ackOutcome === "queued") {
         const queueCount = receipt.pendingForMainCount;
         return {
@@ -1669,16 +1692,16 @@ export function browserDeliveryIndicator(
       }
       if (receipt.ackOutcome === "observed") {
         return {
-          state: "done",
+          state: isNote ? "done" : "seen",
           outcome: "observed",
           glyph: "◎",
           label: isNote
-            ? `Observed by ${agentName} · notes do not wake an agent`
-            : "Seen, no answer",
+            ? `Seen or handled for ${agentName} · no wake`
+            : "Seen by the agent's session · no answer yet",
           detail: isNote
-            ? `${agentName} saw the note. A note does not start a model turn.`
-            : "The agent's listener saw the ask and its turn ended without posting a reply.",
-          terminal: true,
+            ? "The listener handled the note without starting a model turn, or the session hook surfaced it."
+            : "The agent's session hook surfaced the ask. An answer may still be posted.",
+          terminal: isNote,
         };
       }
       if (receipt.ackOutcome === "expired") {
@@ -1753,6 +1776,9 @@ export function browserDeliveryIndicator(
 
   const queuedRows = terminalRows.filter((receipt) => receipt.ackOutcome === "queued");
   const finishedRows = terminalRows.filter((receipt) => receipt.ackOutcome !== "queued");
+  const observedAskRows = context.signalKind === "note"
+    ? []
+    : finishedRows.filter((receipt) => receipt.ackOutcome === "observed");
   const outcomeCounts = new Map<Exclude<NonNullable<BrowserDeliveryReceipt["ackOutcome"]>, "queued">, number>();
   for (const receipt of finishedRows) {
     const outcome = receipt.ackOutcome as Exclude<NonNullable<BrowserDeliveryReceipt["ackOutcome"]>, "queued">;
@@ -1761,8 +1787,8 @@ export function browserDeliveryIndicator(
   const outcomeLabels: Record<Exclude<NonNullable<BrowserDeliveryReceipt["ackOutcome"]>, "queued">, string> = {
     replied: "replied",
     observed: context.signalKind === "note"
-      ? "notes observed; notes do not wake agents"
-      : "asks seen with no answers",
+      ? "notes seen or handled; notes do not wake agents"
+      : "asks surfaced; answers may still be posted",
     expired: "expired",
     failed_terminal: "failed",
   };
@@ -1811,13 +1837,16 @@ export function browserDeliveryIndicator(
   }
   if (finishedRows.length === total) {
     const outcomes = new Set(finishedRows.map((receipt) => receipt.ackOutcome));
+    const waitingForAnswers = observedAskRows.length > 0;
     return {
-      state: "done",
+      state: waitingForAnswers ? "seen" : "done",
       outcome: outcomes.size === 1 ? finishedRows[0]!.ackOutcome! : "mixed",
-      glyph: "✓✓",
-      label: `${total} of ${total} done`,
+      glyph: waitingForAnswers ? "◎" : "✓✓",
+      label: waitingForAnswers
+        ? `${observedAskRows.length} of ${total} seen · ${observedAskRows.length} no answer yet`
+        : `${total} of ${total} done`,
       detail,
-      terminal: true,
+      terminal: !waitingForAnswers,
     };
   }
   if (deliveredRows.length > 0 || terminalRows.length > 0) {
@@ -1864,6 +1893,24 @@ export function browserHumanDeliveryIndicator(
   });
 }
 
+/**
+ * Agent ACKs are immutable except for queued, which the session hook may
+ * promote to observed. An observed ASK remains open to a later reply, but the
+ * receipt row itself cannot change, so polling it again cannot find that reply.
+ */
+function hasSettledAgentReceipts(
+  result: BrowserDeliveryReceiptResult | null,
+): boolean {
+  return result?.addressed === true &&
+    result.receipts.length > 0 &&
+    result.receipts.every((receipt) =>
+      isBrowserAgentDeliveryReceipt(receipt) &&
+      receipt.ackedAt !== null &&
+      receipt.ackOutcome !== null &&
+      receipt.ackOutcome !== "queued"
+    );
+}
+
 /** Bounds receipt reads while favoring visible and newly-arrived directed messages. */
 export function browserDeliveryReceiptCandidates(
   signals: readonly Signal[],
@@ -1882,7 +1929,7 @@ export function browserDeliveryReceiptCandidates(
         : browserDeliveryIndicator(cached.result, now, {
           signalKind: signal.kind === "note" ? "note" : "ask",
         });
-      if (indicator.terminal) return false;
+      if (indicator.terminal || hasSettledAgentReceipts(cached.result)) return false;
       const cadence = indicator.state === "unavailable"
         ? BROWSER_RECEIPT_UNAVAILABLE_REFRESH_MS
         : BROWSER_RECEIPT_ACTIVE_REFRESH_MS;

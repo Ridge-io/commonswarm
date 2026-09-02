@@ -18,6 +18,7 @@ type SignalReceiptCliState =
   | "delivered"
   | "working"
   | "queued"
+  | "observed"
   | "finished";
 
 function humanReceipt(
@@ -66,6 +67,7 @@ function signalReceiptCliState(
   if (state === "leased") return "working";
   if (state === "delivered") return "delivered";
   if (state === "queued") return "queued";
+  if (state === "observed") return "observed";
   return "finished";
 }
 
@@ -148,7 +150,7 @@ export function renderSignalReceiptReport(
         ],
         hidden.seenAgents + hidden.notSeenAgents,
         "Agents: none in this workspace.",
-        "Seen means the agent's CLI rendered it; a listener that never reads the feed will not appear as seen.",
+        "Seen means the agent's CLI rendered it, or its listener's model consumed it in a completed turn.",
       ),
       report.broadcast_roster?.members.truncated
         ? `Member roster cut: showing ${report.broadcast_roster.members.returned} of ${report.broadcast_roster.members.total} members (limit ${report.broadcast_roster.members.limit}).`
@@ -197,18 +199,43 @@ export function renderSignalReceiptReport(
       ].join("\n");
     }
 
+    /*
+     * Directed ACK label matrix, derived from the producers rather than from
+     * the outcome names:
+     *
+     *                    queued            replied             observed                         expired             failed_terminal
+     * ASK                session queue     reply posted        session hook surfaced it         TTL ended           listener/server stopped
+     * NOTE               session queue     defensive only      worker consumed or hook surfaced server TTL ended    server attempt ceiling
+     *
+     * The listener selects ackable records and maps their exact outcomes at
+     * src/listener/runtime.ts:413-465; recovered and fresh deliveries prepare
+     * those ACKs at runtime.ts:1213-1224 and 1542-1555. Its queued row follows
+     * the durable queue write at runtime.ts:824-867. The engine produces ASK
+     * expiry at src/listener/engine.ts:403-409, 484-490, 594-600, and 693-699;
+     * failure at engine.ts:391-397, 415-421, 501-565, 602-616, and 701-711; and
+     * a posted reply at engine.ts:625-638. Worker NOTE observed is produced at
+     * runtime.ts:613-641 and 1449-1473; unreadable NOTE repair and ASK failure
+     * are runtime.ts:644-680.
+     * The other ASK observed producer writes hook output before promotion in
+     * src/listener/hook.ts:930-964 and sends that promotion through
+     * src/cloud/delivery.ts:778-806. Server-owned expiry and attempt exhaustion
+     * are supabase/functions/command/durable-delivery.ts:162-204. There is no
+     * honest NOTE replied producer: runtime.ts:417-418 guards replied with ASK.
+     */
+    if (state === "observed") {
+      return [
+        `Agent ${receipt.recipient_agent_principal_id} reported outcome observed ${relativeAge(receipt.acked_at!, nowMs)}.`,
+        "The signal was surfaced to the agent's session or handled by its listener.",
+        "If it was an ask, an answer may still be posted.",
+        `If you need an answer, send a new ask with: ${newAskCommand(report, receipt)}`,
+      ].join("\n");
+    }
+
     const finished = `Agent ${receipt.recipient_agent_principal_id} finished with outcome ${state} ${relativeAge(receipt.acked_at!, nowMs)}.`;
     if (state === "replied") {
       return [
         finished,
         `Read the reply with: cswarm inbox --workspace-id ${report.workspaceId} --include-stale`,
-      ].join("\n");
-    }
-    if (state === "observed") {
-      return [
-        finished,
-        "The agent saw the signal without sending a reply.",
-        `If you need an answer, send a new ask with: ${newAskCommand(report, receipt)}`,
       ].join("\n");
     }
     if (state === "expired") {

@@ -440,8 +440,8 @@ export class ListenerEngine {
       failureCode: null,
     });
     let prompted;
+    let provenance = listenerSenderProvenance(signal);
     try {
-      let provenance = listenerSenderProvenance(signal);
       if (this.options.resolveSenderProvenance) {
         const deadlineMs = Math.min(
           untilMs(signal),
@@ -498,14 +498,6 @@ export class ListenerEngine {
         buildListenerPrompt(signal, mode, provenance),
         record.promptAttempts,
       );
-      if (
-        provenance.renderedBroadcastIds !== undefined &&
-        provenance.renderedBroadcastIds.length > 0
-      ) {
-        await this.options.onBroadcastsConsumed?.(
-          provenance.renderedBroadcastIds,
-        ).catch(() => {});
-      }
     } catch (error) {
       if (isAbort(error)) {
         await this.write({ ...record, state: "received", failureCode: "cancelled" });
@@ -529,6 +521,18 @@ export class ListenerEngine {
       return retryable
         ? { status: "retry_pending", phase: "prompt", record }
         : { status: "failed", record };
+    }
+
+    // A cancelled prompt did not complete its model turn, even when the
+    // provider returned a normal result instead of throwing AbortError.
+    if (
+      prompted.stopReason !== "cancelled" &&
+      provenance.renderedBroadcastIds !== undefined &&
+      provenance.renderedBroadcastIds.length > 0
+    ) {
+      await this.options.onBroadcastsConsumed?.(
+        provenance.renderedBroadcastIds,
+      ).catch(() => {});
     }
 
     if (prompted.stopReason === "refusal" || prompted.stopReason === "cancelled") {

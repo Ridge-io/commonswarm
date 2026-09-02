@@ -672,7 +672,9 @@ export async function fileVersionCommit(
   }
   // The file lock makes retirement plus commit one serial transaction. Brain
   // topics roll their live set here, after bytes exist; normal files retain
-  // the fixed cap. Ordering by version_n is the durable oldest-first rule.
+  // the fixed cap. All refusal checks stay before retirement: a normal return
+  // from db.begin commits, so retirement must not precede a refusal. Ordering
+  // by version_n is the durable oldest-first rule.
   const liveVersions = await tx<{ version_n: number }[]>`
     SELECT version_n FROM swarm.file_versions
     WHERE file_id = ${cmd.file_id}::uuid
@@ -685,29 +687,8 @@ export async function fileVersionCommit(
     liveVersions.length,
     0,
   );
-  let retiredVersionNumbers: number[] = [];
-  if (windowPlan.brainTopic && windowPlan.retireOnCommitCount > 0) {
-    const retired = await tx<{ version_n: number }[]>`
-      UPDATE swarm.file_versions
-      SET state = 'retired', retired_at = statement_timestamp()
-      WHERE version_id IN (
-        SELECT version_id
-        FROM swarm.file_versions
-        WHERE file_id = ${cmd.file_id}::uuid
-          AND workspace_id = ${workspaceId}::uuid
-          AND state = 'live'
-        ORDER BY version_n ASC
-        LIMIT ${windowPlan.retireOnCommitCount}
-      )
-      RETURNING version_n
-    `;
-    if (retired.length !== windowPlan.retireOnCommitCount) {
-      throw new Error("brain version retirement count changed under the file lock");
-    }
-    retiredVersionNumbers = retired.map((row) => row.version_n).sort((a, b) => a - b);
-  }
-  const liveAfterRetirement = liveVersions.length - retiredVersionNumbers.length;
-  if (liveAfterRetirement >= FILE_MAX_VERSIONS_PER_NAME) {
+  const liveAfterPlannedRetirement = liveVersions.length - windowPlan.retireOnCommitCount;
+  if (liveAfterPlannedRetirement >= FILE_MAX_VERSIONS_PER_NAME) {
     return refuse(
       409,
       "file_version_cap",
@@ -743,6 +724,28 @@ export async function fileVersionCommit(
       "the commit predicate no longer matches this version; nothing was changed",
       "commit predicate mismatch",
     );
+  }
+  let retiredVersionNumbers: number[] = [];
+  if (windowPlan.brainTopic && windowPlan.retireOnCommitCount > 0) {
+    const retired = await tx<{ version_n: number }[]>`
+      UPDATE swarm.file_versions
+      SET state = 'retired', retired_at = statement_timestamp()
+      WHERE version_id IN (
+        SELECT version_id
+        FROM swarm.file_versions
+        WHERE file_id = ${cmd.file_id}::uuid
+          AND workspace_id = ${workspaceId}::uuid
+          AND state = 'live'
+        ORDER BY version_n ASC
+        LIMIT ${windowPlan.retireOnCommitCount}
+      )
+      RETURNING version_n
+    `;
+    if (retired.length !== windowPlan.retireOnCommitCount) {
+      // This throw rolls the pending->live update back with the retirement.
+      throw new Error("brain version retirement count changed under the file lock");
+    }
+    retiredVersionNumbers = retired.map((row) => row.version_n).sort((a, b) => a - b);
   }
   // Finding 1: current_version follows the newest LIVE version, at commit.
   await tx`

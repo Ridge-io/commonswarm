@@ -136,33 +136,37 @@ test("receipt label matrix distinguishes ask handling from note observation", ()
   assert.deepEqual(ask.map(({ label }) => label), [
     "Queued for the agent's session",
     "Answered 10 minutes ago",
-    "Seen, no answer",
+    "Seen by the agent's session · no answer yet",
     "Expired",
     "Failed",
   ]);
   assert.deepEqual(note.map(({ label }) => label), [
     "Queued for CodexDesktop to read · no wake",
     "Answered 10 minutes ago",
-    "Observed by CodexDesktop · notes do not wake an agent",
+    "Seen or handled for CodexDesktop · no wake",
     "Expired",
     "Failed",
   ]);
   assert.deepEqual(ask.map(({ detail }) => detail), [
     "Queued for the agent's interactive session; waiting for the recipient's session hook (4 in queue).",
     "The agent completed this delivery with a reply.",
-    "The agent's listener saw the ask and its turn ended without posting a reply.",
+    "The agent's session hook surfaced the ask. An answer may still be posted.",
     "The delivery expired before the agent completed it.",
     "Delivery stopped after its attempts were exhausted.",
   ]);
   assert.deepEqual(note.map(({ detail }) => detail), [
     "Routed to CodexDesktop's interactive session but not yet shown (4 in queue). A note does not wake the agent.",
     "The agent completed this delivery with a reply.",
-    "CodexDesktop saw the note. A note does not start a model turn.",
+    "The listener handled the note without starting a model turn, or the session hook surfaced it.",
     "The delivery expired before the agent completed it.",
     "Delivery stopped after its attempts were exhausted.",
   ]);
-  assert.deepEqual(ask.map(({ terminal }) => terminal), [false, true, true, true, true]);
+  assert.deepEqual(ask.map(({ terminal }) => terminal), [false, true, false, true, true]);
   assert.deepEqual(note.map(({ terminal }) => terminal), [false, true, true, true, true]);
+  assert.deepEqual(ask.map(({ state }) => state), ["queued", "done", "seen", "done", "done"]);
+  assert.deepEqual(note.map(({ state }) => state), ["queued", "done", "done", "done", "done"]);
+  // NOTE × replied is a defensive display cell. The honest listener can emit
+  // replied only for ASK (src/listener/runtime.ts:417-418).
   assert.equal(new Set(ask.map(({ label, detail }) => `${label}:${detail}`)).size, 5);
   assert.equal(new Set(note.map(({ label, detail }) => `${label}:${detail}`)).size, 5);
   assert.match(
@@ -173,7 +177,7 @@ test("receipt label matrix distinguishes ask handling from note observation", ()
   assert.equal(ask[0]!.terminal, false);
   assert.match(note[0]!.detail, /not yet shown \(4 in queue\).*does not wake the agent/);
   assert.doesNotMatch(`${ask[2]!.label} ${ask[2]!.detail}`, /working|in progress/i);
-  assert.match(note[2]!.detail, /saw the note/);
+  assert.match(note[2]!.detail, /handled the note without starting a model turn/);
   assert.doesNotMatch(note[2]!.detail, /acknowledged|read/i);
 
   const multipleObserved = (signalKind: "ask" | "note") =>
@@ -189,13 +193,16 @@ test("receipt label matrix distinguishes ask handling from note observation", ()
         ackOutcome: "observed",
       }),
     ), NOW, { signalKind });
+  const observedAsks = multipleObserved("ask");
   assert.equal(
-    multipleObserved("ask").detail,
-    "2 asks seen with no answers. Delivery is tracked for each recipient.",
+    observedAsks.detail,
+    "2 asks surfaced; answers may still be posted. Delivery is tracked for each recipient.",
   );
+  assert.equal(observedAsks.terminal, false);
+  assert.equal(observedAsks.label, "2 of 2 seen · 2 no answer yet");
   assert.equal(
     multipleObserved("note").detail,
-    "2 notes observed; notes do not wake agents. Delivery is tracked for each recipient.",
+    "2 notes seen or handled; notes do not wake agents. Delivery is tracked for each recipient.",
   );
 });
 
@@ -260,7 +267,10 @@ test("broadcast summary and detail model split member and agent attestations", (
   assert.equal(indicator.label, "Seen by 1 of 2 members · 1 of 1 agents");
   assert.equal(indicator.state, "seen");
   assert.match(indicator.detail, /nobody was addressed or woken/);
-  assert.match(indicator.detail, /agent's CLI rendered it/);
+  assert.match(
+    indicator.detail,
+    /agent's CLI rendered it, or its listener's model consumed it in a completed turn/,
+  );
   assert.deepEqual(roster.seenMembers.map((row) => row.displayName), ["Ari"]);
   assert.deepEqual(roster.notSeenMembers.map((row) => row.displayName), ["Bo"]);
   assert.deepEqual(roster.seenAgents.map((row) => row.displayName), ["Quill"]);
@@ -473,6 +483,45 @@ test("receipt candidates cap each feed tick and favor visible rows then newest r
   assert.deepEqual(
     selected.slice(2).map((row) => row.id),
     ["agent-11", "agent-10", "agent-9", "agent-8", "agent-7", "agent-6"],
+  );
+});
+
+test("receipt polling stops for immutable observed asks without calling them terminal", () => {
+  const observedAsk = signal("observed-ask", "2026-08-28T14:00:00.000Z");
+  const queuedAsk = signal("queued-ask", "2026-08-28T14:01:00.000Z");
+  const mixedAsk = signal("mixed-ask", "2026-08-28T14:02:00.000Z");
+  const observed = receipt({
+    ackedAt: "2026-08-28T14:30:00.000Z",
+    ackOutcome: "observed",
+  });
+  const queued = receipt({
+    ackedAt: "2026-08-28T14:31:00.000Z",
+    ackOutcome: "queued",
+  });
+  const cache = new Map<string, BrowserDeliveryReceiptCacheEntry>([
+    [observedAsk.id, { phase: "accepted", checkedAt: 0, result: addressed(observed) }],
+    [queuedAsk.id, { phase: "accepted", checkedAt: 0, result: addressed(queued) }],
+    [mixedAsk.id, {
+      phase: "accepted",
+      checkedAt: 0,
+      result: addressed(observed, receipt({ recipientAgentPrincipalId: "agent-2" })),
+    }],
+  ]);
+
+  assert.equal(
+    browserDeliveryIndicator(addressed(observed), NOW, { signalKind: "ask" }).terminal,
+    false,
+    "an answer may still be posted after the hook surfaces the ask",
+  );
+  assert.deepEqual(
+    browserDeliveryReceiptCandidates(
+      [observedAsk, queuedAsk, mixedAsk],
+      cache,
+      new Set(),
+      NOW,
+    ).map((row) => row.id),
+    ["mixed-ask", "queued-ask"],
+    "queued ACKs may promote and incomplete recipient sets still need another read",
   );
 });
 

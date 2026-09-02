@@ -32,7 +32,8 @@ that row to `observed` only after it writes the message to the session.
 | `delivered_at` | handed to the agent's listener (two ticks) |
 | `lease_id` / `leased_until` | the agent is working on it right now |
 | `acked_at` + `ack_outcome=queued` | routed to the interactive session; it will appear at the next prompt but has not been seen |
-| `acked_at` + other `ack_outcome` | the agent finished with it (`replied` / `observed` / `expired` / `failed_terminal`); `observed` means it was actually surfaced |
+| `acked_at` + `ack_outcome=observed` | the session hook surfaced a queued item, or the listener handled a note without a model turn; an ask may still get a reply |
+| `acked_at` + `ack_outcome=replied/expired/failed_terminal` | the delivery ended with a reply, TTL expiry, or terminal failure |
 | `attempt_count`, `lease_expiry_count`, `last_error_code` | why it is stuck |
 
 **The blocker:** `REVOKE ALL … FROM … swarm_read` (line 103) — nothing outside `swarm_command`
@@ -79,11 +80,12 @@ L1, L2, L4, L5 are independent and run in parallel. L3 follows L1 and L2.
 ## Honesty requirements
 
 - A receipt must never claim more than the ledger knows. "Delivered" means `delivered_at` is set,
-  not that a model read it. `queued` means routed but not seen. `observed` means the agent actually
-  saw it, and is not `replied` — do not collapse these states into one tick.
+  not that a model read it. `queued` means routed but not seen. `observed` means the session hook
+  surfaced it, or the listener handled a note without a model turn. For an ask, an answer may still
+  be posted. Do not collapse `observed` into `replied`.
 - Absence of a delivery row for a broadcast must still render as *"no recipient — nobody was
   woken"*, not as a pending or failed agent state. The same detail may separately show member
   focused-viewport receipts. An agent is not seen until its own client attests
-  the broadcast. Seen means the agent's CLI rendered it; a listener that never
-  reads the feed will not appear as seen.
+  the broadcast. Seen means the agent's CLI rendered it, or its listener's model
+  consumed it in a completed turn.
 - The UI must distinguish "not yet delivered" from "delivered and the agent went quiet".
