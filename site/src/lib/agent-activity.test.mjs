@@ -50,7 +50,7 @@ test("a frame older than 30 seconds is stale and stops growing elapsed time", ()
     EMITTED_MS + 8 * 24 * 60 * 60 * 1_000,
   );
   assert.equal(view.state, "stale");
-  assert.equal(view.ageLabel, "last seen 691200 s ago");
+  assert.equal(view.ageLabel, "stale");
   assert.equal(view.elapsedLabel, "stale");
 });
 

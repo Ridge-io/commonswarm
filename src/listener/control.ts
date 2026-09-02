@@ -133,6 +133,7 @@ export function listenerPaths(options: {
   workspaceId: string;
   principalId: string;
   stateDirectory?: string;
+  platform?: NodeJS.Platform;
 }): ListenerPaths {
   const defaultRoot = defaultListenerStateDirectory();
   const root = options.stateDirectory ?? defaultRoot;
@@ -146,12 +147,15 @@ export function listenerPaths(options: {
   const stateNamespace = resolve(root) === resolve(defaultRoot)
     ? ""
     : `-${createHash("sha256").update(resolve(root)).digest("hex").slice(0, 16)}`;
-  const socketKey = `${key.slice(0, 32)}${stateNamespace}`;
+  const platform = options.platform ?? process.platform;
+  const socketKey = stateNamespace.length === 0
+    ? platform === "win32" ? key : key.slice(0, 32)
+    : `${key.slice(0, 32)}${stateNamespace}`;
   // Keep the Unix socket below macOS's short sockaddr_un path limit.
-  const controlDirectory = process.platform === "win32"
+  const controlDirectory = platform === "win32"
     ? ""
     : join("/tmp", `cswarm-control-${uid}`);
-  const socketPath = process.platform === "win32"
+  const socketPath = platform === "win32"
     ? `\\\\.\\pipe\\cswarm-${socketKey}`
     : join(controlDirectory, `${socketKey}.sock`);
   return {

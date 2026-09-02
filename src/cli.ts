@@ -4592,6 +4592,13 @@ export function renderListenerStatus(
     `Provider executable: ${status.providerExecutable ?? "not measured"}.`,
     `Connections opened: ${status.connectionsOpened ?? "not measured"}.`,
     `Connection reuse ratio: ${status.connectionReuseRatio ?? "not measured"}.`,
+    ...(status.activityPublishFailures !== undefined &&
+        status.activityPublishFailures > 0
+      ? [`Activity publish failures: ${status.activityPublishFailures}.`]
+      : []),
+    ...(status.activityLastErrorCode
+      ? [`Last activity publish error code: ${status.activityLastErrorCode}.`]
+      : []),
     status.readyAt ? `Ready since: ${status.readyAt}.` : "Not ready yet.",
     status.lastSignalId
       ? pendingForMainCount > 0

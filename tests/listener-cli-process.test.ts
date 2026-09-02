@@ -76,6 +76,24 @@ async function waitFor(
   throw new Error(`condition did not become true within ${timeoutMs}ms`);
 }
 
+async function waitForListenerStatus(
+  paths: ListenerPaths,
+  check: (status: ListenerStatus) => boolean,
+  timeoutMs = 10_000,
+): Promise<ListenerStatus> {
+  const deadline = Date.now() + timeoutMs;
+  let last: ListenerStatus | null = null;
+  while (Date.now() < deadline) {
+    last = await readListenerStatus(paths);
+    if (last !== null && check(last)) return last;
+    await new Promise((resolve) => setTimeout(resolve, 50));
+  }
+  throw new Error(
+    `listener status did not reach the required state within ${timeoutMs}ms; ` +
+      `last observed: ${JSON.stringify(last)}`,
+  );
+}
+
 function listenerProcessIsAlive(pid: number): boolean {
   try {
     process.kill(pid, 0);
@@ -1656,8 +1674,11 @@ test("detached Claude supervisor persists runtime evidence and status remeasures
       runningVersions.claudeCode,
     );
 
-    const stored = await readListenerStatus(paths);
-    assert.ok(stored);
+    const stored = await waitForListenerStatus(
+      paths,
+      (status) =>
+        status.state === "ready" && status.providerExecutable === claudePath,
+    );
     assert.equal(stored.providerExecutable, claudePath);
     assert.equal(stored.providerVersion, runningVersions.bridge);
     assert.equal(

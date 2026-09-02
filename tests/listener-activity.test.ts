@@ -263,6 +263,23 @@ test("activity transport classifies every boundary failure without message match
     new AgentActivityEndpointTransport(
       { url: "https://example.invalid", anonKey: "anon", profileId: "test" },
       { bearer: async () => "token" },
+      async (_input, init) => {
+        const signal = init?.signal;
+        assert.ok(signal, "activity request carries AbortSignal.timeout");
+        return await new Promise<Response>((_resolve, reject) => {
+          signal.addEventListener("abort", () => reject(signal.reason), {
+            once: true,
+          });
+        });
+      },
+      5,
+    ).publish(frame),
+    rejectedWith("activity_request_timeout"),
+  );
+  await assert.rejects(
+    new AgentActivityEndpointTransport(
+      { url: "https://example.invalid", anonKey: "anon", profileId: "test" },
+      { bearer: async () => "token" },
       async () => new Response(null, { status: 503 }),
     ).publish(frame),
     rejectedWith("activity_http_rejected"),

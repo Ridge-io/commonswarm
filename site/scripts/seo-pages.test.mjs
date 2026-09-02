@@ -95,6 +95,11 @@ test("every SEO page keeps the category boundary and links the full cluster", ()
       article,
       /invite[- ]only|waiting list|waitlist|no web UI|Free for \d+ workspaces|no card/i,
     );
+    assert.doesNotMatch(
+      article,
+      /does not\s+run agents|does not\s+execute agents|run agents,\s*schedule/i,
+      `${page.route} uses an absolute agent-execution claim`,
+    );
     assert.doesNotMatch(article, /—|&mdash;|&#8212;/);
     assert.equal((article.match(/<h1/g) ?? []).length, 1);
     assert.match(html, /<nav class="ft__col" aria-label="Guides"[^>]*>/);

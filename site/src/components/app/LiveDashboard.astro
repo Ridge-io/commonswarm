@@ -1829,7 +1829,7 @@ import "../../styles/tokens.css";
           agentActivityGraceTimer = undefined;
           if (state === "subscribed") {
             /* Broadcast has no replay. Give an already-running listener one
-               15s heartbeat before claiming the agent is not instrumented. */
+               15s heartbeat before showing that no frames were received. */
             agentActivityGraceTimer = window.setTimeout(() => {
               if (
                 generation !== agentActivityGeneration ||

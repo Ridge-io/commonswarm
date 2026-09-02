@@ -92,6 +92,7 @@ export class AgentActivityEndpointTransport implements AgentActivityTransport {
     private readonly target: CloudTarget,
     private readonly credentialSession: ListenerActivityCredentialSession,
     fetcher?: typeof fetch,
+    private readonly requestTimeoutMs = ACTIVITY_REQUEST_TIMEOUT_MS,
   ) {
     this.fetcher = fetcher ?? fetch;
   }
@@ -103,7 +104,7 @@ export class AgentActivityEndpointTransport implements AgentActivityTransport {
     } catch (error) {
       throw new AgentActivityPublishError("activity_credential_failed", error);
     }
-    const timeoutSignal = AbortSignal.timeout(ACTIVITY_REQUEST_TIMEOUT_MS);
+    const timeoutSignal = AbortSignal.timeout(this.requestTimeoutMs);
     let response: Response;
     try {
       response = await this.fetcher(

@@ -209,9 +209,7 @@ export function agentActivityPanelView(
   const stale = ageMs > AGENT_ACTIVITY_STALE_MS;
   return {
     state: stale ? "stale" : "fresh",
-    ageLabel: stale
-      ? `last seen ${Math.floor(ageMs / 1_000)} s ago`
-      : "Live now",
+    ageLabel: stale ? "stale" : "Live now",
     phaseLabel: phaseLabel(frame.phase),
     signalLabel: frame.signalId,
     toolTitle: frame.toolTitle,
