@@ -125,6 +125,11 @@ export interface ListenerSupervisorOptions {
    * configured cap. Returns null when no turn has run yet.
    */
   getTurnBudgetMs?: () => number | null;
+  /** Live process-owned HTTP counters merged into every status snapshot. */
+  getConnectionMetrics?: () => {
+    connectionsOpened: number;
+    connectionReuseRatio: number;
+  };
 }
 
 export class ListenerStartupError extends Error {
@@ -237,6 +242,8 @@ export async function runListenerSupervisor(
     deferOverChars: options.deferOverChars ?? null,
     pendingForMainCount: 0,
     droppedForMainCount: 0,
+    connectionsOpened: 0,
+    connectionReuseRatio: 0,
     logPath: options.paths.logPath,
   };
   let writes = Promise.resolve();
@@ -248,8 +255,20 @@ export async function runListenerSupervisor(
   const chain = (work: () => Promise<void>) => {
     writes = writes.then(work).catch(() => undefined);
   };
+  const statusSnapshot = (): ListenerStatus => {
+    const metrics = options.getConnectionMetrics?.();
+    return {
+      ...structuredClone(status),
+      ...(metrics
+        ? {
+          connectionsOpened: metrics.connectionsOpened,
+          connectionReuseRatio: metrics.connectionReuseRatio,
+        }
+        : {}),
+    };
+  };
   const persist = () => {
-    const snapshot = structuredClone(status);
+    const snapshot = statusSnapshot();
     chain(() => writeListenerStatus(options.paths, snapshot));
   };
   const log = (event: Record<string, string | number | boolean | null>) => {
@@ -271,7 +290,7 @@ export async function runListenerSupervisor(
   const prepare = options.prepare;
   const control = await startListenerControlServer({
     paths: options.paths,
-    status: () => structuredClone(status),
+    status: statusSnapshot,
     stop: () => {
       if (status.state === "stopped" || status.state === "failed") return;
       transition("stopping");
@@ -621,7 +640,7 @@ export async function runListenerSupervisor(
     await writes.catch(() => undefined);
     await control.close().catch(() => undefined);
   }
-  return status;
+  return statusSnapshot();
 }
 
 /**

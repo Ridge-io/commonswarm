@@ -85,6 +85,10 @@ export interface ListenerStatus {
   deferOverChars?: number | null;
   pendingForMainCount?: number;
   droppedForMainCount?: number;
+  /** TCP connections opened by this listener process since start. */
+  connectionsOpened?: number;
+  /** HTTP requests divided by opened TCP connections; near 1 means no reuse. */
+  connectionReuseRatio?: number;
   logPath: string;
 }
 
@@ -165,6 +169,8 @@ const STATUS_ALLOWED_KEYS = new Set([
   "deferOverChars",
   "pendingForMainCount",
   "droppedForMainCount",
+  "connectionsOpened",
+  "connectionReuseRatio",
 ]);
 // Sensitive aliases are rejected by name, not silently dropped, so a status
 // file can never smuggle a lease capability, command ID, credential, or body.
@@ -302,7 +308,13 @@ function parseStatus(raw: string): ListenerStatus {
         Number.isSafeInteger(row.pendingForMainCount) && row.pendingForMainCount >= 0)) ||
     !(row.droppedForMainCount === undefined ||
       (typeof row.droppedForMainCount === "number" &&
-        Number.isSafeInteger(row.droppedForMainCount) && row.droppedForMainCount >= 0))
+        Number.isSafeInteger(row.droppedForMainCount) && row.droppedForMainCount >= 0)) ||
+    !(row.connectionsOpened === undefined ||
+      (typeof row.connectionsOpened === "number" &&
+        Number.isSafeInteger(row.connectionsOpened) && row.connectionsOpened >= 0)) ||
+    !(row.connectionReuseRatio === undefined ||
+      (typeof row.connectionReuseRatio === "number" &&
+        Number.isFinite(row.connectionReuseRatio) && row.connectionReuseRatio >= 0))
   ) {
     throw new Error("stored listener status is malformed");
   }

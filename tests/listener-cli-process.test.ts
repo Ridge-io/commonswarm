@@ -15,6 +15,8 @@ import { tmpdir } from "node:os";
 import { join, resolve } from "node:path";
 import test from "node:test";
 import { cloudTarget } from "../src/cloud/config.js";
+import { DeliveryCommandClient } from "../src/cloud/delivery.js";
+import { ListenerHttpClient } from "../src/listener/http-client.js";
 import {
   listenerPaths,
   readListenerStatus,
@@ -117,6 +119,197 @@ async function closeTestServer(server: Server): Promise<void> {
     server.closeAllConnections();
   });
 }
+
+function successfulEmptyClaimResponse(): string {
+  return JSON.stringify({
+    status: "accepted",
+    ok: true,
+    capabilities: {
+      delivery_claim: 1,
+      delivery_ack: 1,
+      sender_owner_relation: 1,
+    },
+    deliveries: [],
+    pending_delivery_count: 0,
+    terminal_delivery_failure_count: 0,
+    event_ids: [],
+    events: [],
+    min_client_version: "0.1.0",
+  });
+}
+
+async function claimEmptyInbox(
+  client: DeliveryCommandClient,
+  ids: {
+    workspaceId: string;
+    principalId: string;
+    listenerInstanceId: string;
+  },
+  index: number,
+): Promise<void> {
+  await client.claimAgentInbox({
+    workspaceId: ids.workspaceId,
+    credential: `swm_agt_${"K".repeat(43)}`,
+    commandId: `claim_${String(index).padStart(3, "0")}`,
+    listenerInstanceId: ids.listenerInstanceId,
+    expectedPrincipalId: ids.principalId,
+  });
+}
+
+test("listener HTTP client reuses one connection for twenty sequential claims", async () => {
+  let requests = 0;
+  let connections = 0;
+  const server = createServer(async (request, response) => {
+    for await (const _chunk of request) {
+      // Drain the request before replying, as the Cloud endpoint does.
+    }
+    requests += 1;
+    response.writeHead(200, { "content-type": "application/json" });
+    response.end(successfulEmptyClaimResponse());
+  });
+  server.on("connection", () => {
+    connections += 1;
+  });
+  await new Promise<void>((resolveListen) => server.listen(0, "127.0.0.1", resolveListen));
+  const address = server.address();
+  assert.ok(address && typeof address === "object");
+  const target = cloudTarget(`http://127.0.0.1:${address.port}`, "public-anon");
+  const ids = {
+    workspaceId: randomUUID(),
+    principalId: randomUUID(),
+    listenerInstanceId: randomUUID(),
+  };
+  const sharedHttpClient = new ListenerHttpClient({ idleTimeoutMs: 1_000 });
+
+  try {
+    const client = new DeliveryCommandClient(target, sharedHttpClient.fetch);
+    for (let index = 0; index < 20; index += 1) {
+      await claimEmptyInbox(client, ids, index);
+    }
+    assert.equal(requests, 20);
+    assert.equal(connections, 1);
+    assert.deepEqual(sharedHttpClient.metrics(), {
+      requests: 20,
+      connectionsOpened: 1,
+      connectionReuseRatio: 20,
+    });
+
+    // Mutation control: replacing the process client with one client per claim
+    // must reproduce the socket churn this test prevents.
+    sharedHttpClient.close();
+    const beforeMutation = connections;
+    for (let index = 0; index < 20; index += 1) {
+      const perRequestHttpClient = new ListenerHttpClient({ idleTimeoutMs: 1_000 });
+      try {
+        await claimEmptyInbox(
+          new DeliveryCommandClient(target, perRequestHttpClient.fetch),
+          ids,
+          index + 20,
+        );
+      } finally {
+        perRequestHttpClient.close();
+      }
+    }
+    assert.ok(connections - beforeMutation >= 20);
+  } finally {
+    sharedHttpClient.close();
+    await closeTestServer(server);
+  }
+});
+
+test("listener HTTP client honors Connection close without a retry storm", async () => {
+  let requests = 0;
+  let connections = 0;
+  const server = createServer(async (request, response) => {
+    for await (const _chunk of request) {
+      // Drain the request before replying, as the Cloud endpoint does.
+    }
+    requests += 1;
+    response.writeHead(200, {
+      "connection": "close",
+      "content-type": "application/json",
+    });
+    response.end(successfulEmptyClaimResponse());
+  });
+  server.on("connection", () => {
+    connections += 1;
+  });
+  await new Promise<void>((resolveListen) => server.listen(0, "127.0.0.1", resolveListen));
+  const address = server.address();
+  assert.ok(address && typeof address === "object");
+  const target = cloudTarget(`http://127.0.0.1:${address.port}`, "public-anon");
+  const ids = {
+    workspaceId: randomUUID(),
+    principalId: randomUUID(),
+    listenerInstanceId: randomUUID(),
+  };
+  const httpClient = new ListenerHttpClient({ idleTimeoutMs: 1_000 });
+
+  try {
+    const client = new DeliveryCommandClient(target, httpClient.fetch);
+    for (let index = 0; index < 5; index += 1) {
+      await claimEmptyInbox(client, ids, index);
+    }
+    assert.equal(requests, 5);
+    assert.equal(connections, 5);
+    assert.deepEqual(httpClient.metrics(), {
+      requests: 5,
+      connectionsOpened: 5,
+      connectionReuseRatio: 1,
+    });
+  } finally {
+    httpClient.close();
+    await closeTestServer(server);
+  }
+});
+
+test("listener HTTP client closes an idle socket and opens one replacement", async () => {
+  let requests = 0;
+  let connections = 0;
+  let closedConnections = 0;
+  const server = createServer(async (request, response) => {
+    for await (const _chunk of request) {
+      // Drain the request before replying, as the Cloud endpoint does.
+    }
+    requests += 1;
+    response.writeHead(200, { "content-type": "application/json" });
+    response.end(successfulEmptyClaimResponse());
+  });
+  server.on("connection", (socket) => {
+    connections += 1;
+    socket.once("close", () => {
+      closedConnections += 1;
+    });
+  });
+  await new Promise<void>((resolveListen) => server.listen(0, "127.0.0.1", resolveListen));
+  const address = server.address();
+  assert.ok(address && typeof address === "object");
+  const target = cloudTarget(`http://127.0.0.1:${address.port}`, "public-anon");
+  const ids = {
+    workspaceId: randomUUID(),
+    principalId: randomUUID(),
+    listenerInstanceId: randomUUID(),
+  };
+  const httpClient = new ListenerHttpClient({ idleTimeoutMs: 25 });
+
+  try {
+    const client = new DeliveryCommandClient(target, httpClient.fetch);
+    await claimEmptyInbox(client, ids, 0);
+    assert.equal(connections, 1);
+    await waitFor(() => closedConnections === 1, 2_000);
+    await claimEmptyInbox(client, ids, 1);
+    assert.equal(requests, 2);
+    assert.equal(connections, 2);
+    assert.deepEqual(httpClient.metrics(), {
+      requests: 2,
+      connectionsOpened: 2,
+      connectionReuseRatio: 1,
+    });
+  } finally {
+    httpClient.close();
+    await closeTestServer(server);
+  }
+});
 
 function fakeGrokSource(): string {
   return `#!/usr/bin/env node
@@ -334,6 +527,7 @@ test("detached CLI completes durable claim reply ACK with one startup UUID and n
   const leaseIds = asks.map(() => randomUUID());
   const authHeaders: string[] = [];
   let directoryReads = 0;
+  let acceptedConnections = 0;
   const server = createServer(async (request, response) => {
     let body = "";
     for await (const chunk of request) body += chunk.toString();
@@ -455,6 +649,9 @@ test("detached CLI completes durable claim reply ACK with one startup UUID and n
     response.writeHead(404);
     response.end();
   });
+  server.on("connection", () => {
+    acceptedConnections += 1;
+  });
   await new Promise<void>((resolveListen) => server.listen(0, "127.0.0.1", resolveListen));
   const address = server.address();
   assert.ok(address && typeof address === "object");
@@ -564,6 +761,10 @@ test("detached CLI completes durable claim reply ACK with one startup UUID and n
     assert.equal(statusJson.instanceId, startJson.instanceId);
     assert.equal(statusJson.deliveryMode, "durable_claim");
     assert.equal(typeof statusJson.lastAckAt, "string");
+    assert.equal(statusJson.connectionsOpened, 1);
+    assert.equal(typeof statusJson.connectionReuseRatio, "number");
+    assert.ok((statusJson.connectionReuseRatio as number) > 1);
+    assert.equal(acceptedConnections, 1);
 
     const stopped = await runCli([
       "listen",
