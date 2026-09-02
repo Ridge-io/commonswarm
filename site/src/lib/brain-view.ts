@@ -16,7 +16,10 @@ export interface BrainViewTargets {
   detail: HTMLElement;
   title: HTMLElement;
   meta: HTMLElement;
+  bodyMode: HTMLElement;
   markdown: HTMLElement;
+  raw: HTMLElement;
+  rawToggle: HTMLButtonElement;
   error: HTMLElement;
   edit: HTMLButtonElement;
   form: HTMLFormElement;
@@ -84,6 +87,15 @@ export function createBrainView(
   let activeMarkdown = "";
   let requestVersion = 0;
 
+  const setRawMode = (showRaw: boolean): void => {
+    /* Keep the full source out of the DOM until a reader asks for it. The default
+     * rendered view stays bounded even when the stored topic is large. */
+    targets.raw.textContent = showRaw ? activeMarkdown : "";
+    targets.rawToggle.setAttribute("aria-pressed", String(showRaw));
+    targets.markdown.hidden = showRaw;
+    targets.raw.hidden = !showRaw;
+  };
+
   const setError = (message = ""): void => {
     targets.error.textContent = message;
     targets.error.hidden = message.length === 0;
@@ -149,6 +161,10 @@ export function createBrainView(
     targets.title.textContent = topic.topic;
     targets.meta.textContent = "Loading topic…";
     targets.markdown.replaceChildren();
+    targets.raw.textContent = "";
+    targets.bodyMode.hidden = true;
+    targets.rawToggle.disabled = true;
+    setRawMode(false);
     targets.edit.hidden = true;
     targets.form.hidden = true;
     targets.history.open = false;
@@ -163,7 +179,9 @@ export function createBrainView(
       targets.meta.textContent =
         `${versionLabel(topic.currentVersion)} · updated ${age.relative} by ${topic.updaterName}` +
         (selectedVersion === topic.currentVersion ? "" : ` · viewing v${selectedVersion}`);
-      setSanitizedMessageMarkdown(targets.markdown, markdown);
+      setSanitizedMessageMarkdown(targets.markdown, markdown, { headingOffset: 1 });
+      targets.bodyMode.hidden = false;
+      targets.rawToggle.disabled = false;
       targets.edit.hidden = selectedVersion !== topic.currentVersion;
       renderHistory(topic);
     } catch (error) {
@@ -173,6 +191,10 @@ export function createBrainView(
       renderHistory(topic);
     }
   };
+
+  targets.rawToggle.addEventListener("click", () => {
+    setRawMode(targets.rawToggle.getAttribute("aria-pressed") !== "true");
+  });
 
   targets.edit.addEventListener("click", () => {
     targets.textarea.value = activeMarkdown;
@@ -243,6 +265,11 @@ export function createBrainView(
         activeFileId = "";
         activeVersion = 0;
         activeMarkdown = "";
+        targets.bodyMode.hidden = true;
+        targets.markdown.replaceChildren();
+        targets.raw.textContent = "";
+        targets.rawToggle.disabled = true;
+        setRawMode(false);
         targets.detail.hidden = true;
         targets.form.hidden = true;
       }

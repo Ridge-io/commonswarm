@@ -611,7 +611,29 @@ import "../../styles/tokens.css";
                   </button>
                 </header>
                 <p class="dashboard__form-error" role="alert" data-brain-error hidden></p>
-                <div class="dashboard__message-markdown dashboard__brain-markdown" data-brain-markdown></div>
+                <p class="dashboard__brain-body-mode" data-brain-body-mode hidden>
+                  <span>Rendered from markdown</span>
+                  <span aria-hidden="true"> · </span>
+                  <button
+                    class="dashboard__brain-raw-toggle"
+                    type="button"
+                    aria-controls="dashboard-brain-markdown dashboard-brain-raw"
+                    aria-pressed="false"
+                    data-brain-raw-toggle
+                    disabled
+                  >Raw</button>
+                </p>
+                <div
+                  class="dashboard__message-markdown dashboard__brain-markdown"
+                  id="dashboard-brain-markdown"
+                  data-brain-markdown
+                ></div>
+                <pre
+                  class="dashboard__brain-raw"
+                  id="dashboard-brain-raw"
+                  data-brain-raw
+                  hidden
+                ></pre>
                 <form class="dashboard__brain-form" data-brain-form hidden>
                   <label for="dashboard-brain-editor">Markdown</label>
                   <textarea id="dashboard-brain-editor" rows="16" data-brain-textarea required></textarea>
@@ -3200,7 +3222,10 @@ import "../../styles/tokens.css";
       const detail = one<HTMLElement>("[data-brain-detail]");
       const title = one<HTMLElement>("[data-brain-title]");
       const meta = one<HTMLElement>("[data-brain-meta]");
+      const bodyMode = one<HTMLElement>("[data-brain-body-mode]");
       const markdown = one<HTMLElement>("[data-brain-markdown]");
+      const raw = one<HTMLElement>("[data-brain-raw]");
+      const rawToggle = one<HTMLButtonElement>("[data-brain-raw-toggle]");
       const error = one<HTMLElement>("[data-brain-error]");
       const edit = one<HTMLButtonElement>("[data-brain-edit]");
       const form = one<HTMLFormElement>("[data-brain-form]");
@@ -3211,13 +3236,14 @@ import "../../styles/tokens.css";
       const history = one<HTMLDetailsElement>("[data-brain-history]");
       const historyList = one<HTMLUListElement>("[data-brain-history-list]");
       if (
-        !list || !empty || !detail || !title || !meta || !markdown || !error ||
+        !list || !empty || !detail || !title || !meta || !bodyMode || !markdown ||
+        !raw || !rawToggle || !error ||
         !edit || !form || !textarea || !save || !cancel || !status || !history ||
         !historyList
       ) return null;
       return {
-        list, empty, detail, title, meta, markdown, error, edit, form, textarea,
-        save, cancel, status, history, historyList,
+        list, empty, detail, title, meta, bodyMode, markdown, raw, rawToggle,
+        error, edit, form, textarea, save, cancel, status, history, historyList,
       };
     };
 
@@ -8499,6 +8525,78 @@ import "../../styles/tokens.css";
 
   .dashboard__brain-markdown {
     max-inline-size: 52rem;
+  }
+
+  .dashboard__brain-body-mode {
+    display: flex;
+    align-items: baseline;
+    max-inline-size: 52rem;
+    margin: 0 0 var(--s-3);
+    color: var(--text-muted);
+    font-size: var(--t-xs);
+  }
+
+  .dashboard__brain-raw-toggle {
+    padding: 0;
+    color: var(--accent-bright);
+    background: transparent;
+    border: 0;
+    font: inherit;
+    font-weight: var(--weight-semibold);
+    cursor: pointer;
+  }
+
+  .dashboard__brain-raw-toggle[aria-pressed="true"] {
+    color: var(--text);
+    text-decoration: underline;
+    text-underline-offset: 0.14em;
+  }
+
+  .dashboard__brain-raw-toggle:focus-visible {
+    border-radius: var(--radius-sm);
+    outline: none;
+    box-shadow: var(--focus-ring);
+  }
+
+  .dashboard__brain-markdown :where(h2, h3, h4, h5, p, ul, ol, blockquote, pre) {
+    margin: 0;
+  }
+
+  .dashboard__brain-markdown :where(h2, h3, h4, h5, p, ul, ol, blockquote, pre) +
+    :where(h2, h3, h4, h5, p, ul, ol, blockquote, pre) {
+    margin-block-start: var(--s-3);
+  }
+
+  .dashboard__brain-markdown h2 {
+    font-size: var(--t-lg);
+  }
+
+  .dashboard__brain-markdown h3 {
+    font-size: var(--t-base);
+  }
+
+  .dashboard__brain-markdown :where(h4, h5) {
+    font-size: var(--t-sm);
+  }
+
+  .dashboard__brain-markdown :where(h2, h3, h4, h5) {
+    line-height: var(--lh-tight);
+  }
+
+  .dashboard__brain-raw {
+    max-inline-size: 52rem;
+    margin: 0;
+    padding: var(--s-4);
+    overflow: auto;
+    color: var(--text);
+    background: var(--elev-1);
+    border: 1px solid var(--border);
+    border-radius: var(--radius);
+    font-family: var(--font-mono);
+    font-size: var(--t-sm);
+    line-height: var(--lh-base);
+    overflow-wrap: normal;
+    white-space: pre;
   }
 
   .dashboard__brain-form {
