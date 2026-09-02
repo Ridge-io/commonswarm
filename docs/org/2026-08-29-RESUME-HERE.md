@@ -779,3 +779,59 @@ Not established: what the worker's reply on `49fc9b68` said (no verb lists own r
 
 Next concrete action: the work order in the cold-start recipe, step 6 — `npm test` and
 `npm run test:p1-cli` on `main` (`4aab93b`), then review L23 `b44712c`.
+
+### Addendum 2026-09-02 ~02:30Z — release train state (Tom: "run it all the way to the end")
+
+Goal set by operator: complete every specified/started lane and ship to production via Codex lanes.
+
+| lane | branch | worktree (session scratchpad `a866e6cd…`) | state |
+|---|---|---|---|
+| L23 attended | `lane/l23-attended` `b44712c` | – | MERGED into `release/0.1.45` (`3813189`, one hook.ts conflict: kept both `previewUnseen` and `evidence`). build, check:tests, npm test 686, p1-cli 390, p1-local 15, site build+test green. Migration `20260902000002` applied to LOCAL Postgres only. |
+| L36 codex canary | `lane/l36-codex-canary` | `wt-l36-codex-canary` | RUNNING (spec `scratchpad/reboot-survival/L36-codex-canary.md`; evidence `docs/evidence/2026-09-02-codex-canary/`) |
+| L31 read-retry | `lane/l31-read-retry` | `wt-l31-read-retry` | RUNNING, based on release/0.1.45 |
+| L32 connection reuse | `lane/l32-connection-reuse` | `wt-l32-connection-reuse` | RUNNING, based on release/0.1.45 |
+| L35 live agent panel | `lane/l35-live-agent-panel` | `wt-l35-live-agent-panel` | RUNNING, based on release/0.1.45; may use the CSwarmDevLead credential read-only for the Realtime ceiling measurement |
+| L30 provider version | – | – | NOT STARTED: overlaps L36 on the canary failure copy; launch on top of the L36 merge |
+
+Release plan: **0.1.45 = L23 + L36** (Grok exact + Gemini inversion on the merged SHA; arm templates
+`scratchpad/arm-{grok,gemini}-045.tmpl`; notes `scratchpad/NOTES-v045.md`), then **0.1.46 = L30 + L31 +
+L32 + L35**. Production migration push for `20260902000002` happens in the 0.1.45 step, before the
+client (read edge needs no redeploy: it passes `receipts` through).
+
+Not established: L23's spec item 5 (inbox failing via `api.commonswarm.com` but not the direct
+supabase.co target) — the lane was interrupted before its report; carry it as OPEN.
+
+### Addendum 2026-09-02 ~03:05Z — L36 merged; arms running; cleanup done
+
+- L36 `9d2081a` merged into `release/0.1.45` → **`0f65b83`** (build + check:tests green; pure gates
+  running). The lane's own live control: `node dist/cli.js listen start --provider codex` with an
+  isolated `--state-dir` reached `ready` on codex-acp **1.8.0** — the Codex listener starts again.
+  Grok's canary re-measured against `~/.cswarm/canary/`: permission request seen, deny honoured.
+- Arms on `0f65b83`: Grok exact (`scratchpad/wt-arm-grok`) and Gemini inversion (`scratchpad/wt-arm-gemini`),
+  prompts `scratchpad/arm-{grok,gemini}-045.prompt`, outputs `arm-*-045.out`. Release only if BOTH
+  carry a `VERDICT: PASS` line with substance.
+- Cleanup lane (Codex): `git worktree list` 46 → 10 entries; 16 stale registrations pruned, 23 clean
+  worktrees removed, 42 absorbed local branches deleted (UNABS 0 by `git cherry`). Kept dirty:
+  `.claude/worktrees/codex-seo`, `wf_3e1f1a59-216-2`, `-216-3` (diffs saved under the session scratchpad
+  `cleanup-saved/`); kept unique: `lane/l26-hook-scope` (1 commit, not on main — decide before final cleanup).
+  Report: session scratchpad `CLEANUP-report.md`.
+- L30 launched on top of `0f65b83` (`lane/l30-provider-version`), told to mirror L36's Codex design for Claude.
+- L37 (AGENTS.md 920 → 271 lines, CLAUDE.md 69 → 12) committed `f6cb23b`; awaiting its report, then my read
+  before it merges to main. Two claims it introduced were verified against the tree (`/start` is a handoff;
+  `test:p1-local` names four files).
+
+### Addendum 2026-09-02 03:25Z — v0.1.45 is LIVE
+
+| step | fact |
+|---|---|
+| review | Grok exact + Gemini inversion on `0f65b83`, both `VERDICT: PASS` with observed mutations (outputs in the session scratchpad `arm-*-045.out`). Grok P2 + 3×P3 → lane spec `scratchpad/reboot-survival/L38-review-followups.md`. |
+| main | `9de5782` merge of release/0.1.45 → `55b4408` release: v0.1.45 → `2529ef8` npm dist artifacts. Pushed. |
+| migration | `20260902000002` APPLIED to production (`supabase migration list --linked` shows the remote column; both receipt functions present). `read` edge untouched (passes `receipts` through). |
+| GitHub | tag `v0.1.45` on `55b4408`, latest, assets `cswarm` + `cswarm.sha256`. |
+| npm | `commonswarm@0.1.45` (`npm view` confirms). |
+| site | deployed; `/download?cb=` mentions 0.1.45 ×3, 0.1.44 ×0; install.sh 200 / nope.sh 404; start meta = api.commonswarm.com; no service_role. |
+| host | installer put 0.1.45 in `~/.local/bin`; `npm i -g commonswarm@0.1.45` fixed the Homebrew copy (was 0.1.44). Listener restarted pid 48807 ready; notify Monitor restarted. |
+
+Instrument notes: `agy -p` in a worktree outside its trust list returns "no output produced … read_file permission" — pass `--dangerously-skip-permissions`; and it dies on any command over ~20 s (its first run timed out inside a `db:reset` it was told not to run). A `cswarm note "…"` body with backticks in double quotes is shell-expanded — build the body in a file and pass `"$(cat file)"`.
+
+Still running: L30 (`lane/l30-provider-version`), L32 (`lane/l32-connection-reuse`, 3 commits), L35 (`lane/l35-live-agent-panel`, 1 commit). L31 merged on `release/0.1.46` (`6b5beea`). Next: merge L30/L32/L35 as they land, arms on the merged SHA, release 0.1.46, then L38.

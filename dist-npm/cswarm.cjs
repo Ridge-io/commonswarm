@@ -13503,6 +13503,7 @@ var require_main3 = __commonJS({
 var cli_exports = {};
 __export(cli_exports, {
   EXIT_RESTARTABLE: () => EXIT_RESTARTABLE,
+  ListenerUnattendedRefusedError: () => ListenerUnattendedRefusedError,
   TURN_BUDGET_CREDENTIAL_MARGIN_MS: () => TURN_BUDGET_CREDENTIAL_MARGIN_MS,
   clampTurnBudgetToCredential: () => clampTurnBudgetToCredential,
   claudeUserPromptHookSnippet: () => claudeUserPromptHookSnippet,
@@ -13521,12 +13522,12 @@ __export(cli_exports, {
 });
 module.exports = __toCommonJS(cli_exports);
 var import_node_crypto20 = require("node:crypto");
-var import_node_child_process8 = require("node:child_process");
+var import_node_child_process9 = require("node:child_process");
 var import_node_fs7 = require("node:fs");
-var import_promises11 = require("node:fs/promises");
+var import_promises12 = require("node:fs/promises");
 var import_node_os10 = require("node:os");
 var import_node_path21 = require("node:path");
-var import_promises12 = require("node:readline/promises");
+var import_promises13 = require("node:readline/promises");
 
 // src/cloud/auth.ts
 var import_node_crypto2 = require("node:crypto");
@@ -22900,9 +22901,9 @@ var FileCommandRefused = class extends Error {
 };
 var FileTransportError = class extends Error {
   /**
-   * True when no HTTP response arrived (connection failure, timeout), so the
-   * outcome is UNKNOWN and one same-id retry is safe under the server's
-   * command-id replay. A received refusal is a known outcome: never retried.
+   * True when the request did not complete: no response arrived, or an
+   * idempotent read's body stalled. Reads may retry; writes reuse the same ids
+   * because their outcome is unknown. A received refusal is never retried.
    */
   constructor(message, noResponse = false) {
     super(message);
@@ -23050,7 +23051,7 @@ async function getObject(target2, downloadPath, fetcher = fetch, options = {}) {
       options
     ));
   } catch {
-    throw new FileTransportError("the download failed before a response", true);
+    throw new FileTransportError("the download did not complete", true);
   }
   if (!response.ok || body === null) {
     throw new FileTransportError(
@@ -23131,7 +23132,7 @@ async function listFilesAsAgent(target2, credential, workspaceId2, fetcher = fet
       options
     ));
   } catch {
-    throw new FileTransportError("file list could not reach the cloud service", true);
+    throw new FileTransportError("the file list did not complete", true);
   }
   if (!response.ok) {
     throw new FileCommandRefused(
@@ -23176,7 +23177,7 @@ async function listFilesAsHuman(target2, accessToken, workspaceId2, fetcher = fe
       options
     ));
   } catch {
-    throw new FileTransportError("file list could not reach the cloud service", true);
+    throw new FileTransportError("the file list did not complete", true);
   }
   if (!response.ok) {
     throw new FileCommandRefused(
@@ -23366,8 +23367,7 @@ function assertOwnedByCurrentUser(uid2) {
     throw new Error("credential path is not owned by the current user");
   }
 }
-async function secureDirectory(path) {
-  let created = false;
+async function existingSecureDirectory(path) {
   try {
     const info = await (0, import_promises.lstat)(path);
     if (!info.isDirectory() || info.isSymbolicLink()) {
@@ -23380,20 +23380,22 @@ async function secureDirectory(path) {
       );
     }
   } catch (error) {
-    if (error.code !== "ENOENT") throw error;
-    await (0, import_promises.mkdir)(path, { recursive: true, mode: 448 });
-    await (0, import_promises.chmod)(path, 448);
-    created = true;
+    if (error.code === "ENOENT") return false;
+    throw error;
   }
-  if (created) {
-    const info = await (0, import_promises.lstat)(path);
-    if (!info.isDirectory() || info.isSymbolicLink()) {
-      throw new Error(`credential directory is not a real directory: ${path}`);
-    }
-    assertOwnedByCurrentUser(info.uid);
-    if (mode(info.mode) !== 448) {
-      throw new Error(`credential directory could not be secured to mode 0700: ${path}`);
-    }
+  return true;
+}
+async function secureDirectory(path) {
+  if (await existingSecureDirectory(path)) return;
+  await (0, import_promises.mkdir)(path, { recursive: true, mode: 448 });
+  await (0, import_promises.chmod)(path, 448);
+  const info = await (0, import_promises.lstat)(path);
+  if (!info.isDirectory() || info.isSymbolicLink()) {
+    throw new Error(`credential directory is not a real directory: ${path}`);
+  }
+  assertOwnedByCurrentUser(info.uid);
+  if (mode(info.mode) !== 448) {
+    throw new Error(`credential directory could not be secured to mode 0700: ${path}`);
   }
 }
 async function ensureSecureStateDirectory(path) {
@@ -23543,6 +23545,20 @@ async function writeSecureJsonFile(path, serialized) {
 }
 async function readSecureJsonFile(path, maxBytes) {
   await secureDirectory((0, import_node_path.dirname)(path));
+  try {
+    await secureCredentialFile(path);
+    const raw = await (0, import_promises.readFile)(path, "utf8");
+    if (Buffer.byteLength(raw, "utf8") > maxBytes) {
+      throw new Error("stored record is larger than this store accepts");
+    }
+    return raw;
+  } catch (error) {
+    if (error.code === "ENOENT") return null;
+    throw error;
+  }
+}
+async function readSecureJsonFileIfPresent(path, maxBytes) {
+  if (!await existingSecureDirectory((0, import_node_path.dirname)(path))) return null;
   try {
     await secureCredentialFile(path);
     const raw = await (0, import_promises.readFile)(path, "utf8");
@@ -25744,7 +25760,7 @@ var src_default = Postgres;
 function Postgres(a, b2) {
   const options = parseOptions(a, b2), subscribe = options.no_subscribe || Subscribe(Postgres, { ...options });
   let ending = false;
-  const queries = queue_default(), connecting = queue_default(), reserved = queue_default(), closed = queue_default(), ended = queue_default(), open5 = queue_default(), busy = queue_default(), full = queue_default(), queues = { connecting, reserved, closed, ended, open: open5, busy, full };
+  const queries = queue_default(), connecting = queue_default(), reserved = queue_default(), closed = queue_default(), ended = queue_default(), open6 = queue_default(), busy = queue_default(), full = queue_default(), queues = { connecting, reserved, closed, ended, open: open6, busy, full };
   const connections = [...Array(options.max)].map(() => connection_default(options, queues, { onopen, onend, onclose }));
   const sql = Sql(handler);
   Object.assign(sql, {
@@ -25857,7 +25873,7 @@ function Postgres(a, b2) {
   }
   async function reserve() {
     const queue = queue_default();
-    const c = open5.length ? open5.shift() : await new Promise((resolve2, reject) => {
+    const c = open6.length ? open6.shift() : await new Promise((resolve2, reject) => {
       const query = { reserve: resolve2, reject };
       queries.push(query);
       closed.length && connect(closed.shift(), query);
@@ -25930,7 +25946,7 @@ function Postgres(a, b2) {
     c.queue.remove(c);
     queue.push(c);
     c.queue = queue;
-    queue === open5 ? c.idleTimer.start() : c.idleTimer.cancel();
+    queue === open6 ? c.idleTimer.start() : c.idleTimer.cancel();
     return c;
   }
   function json(x) {
@@ -25944,8 +25960,8 @@ function Postgres(a, b2) {
   function handler(query) {
     if (ending)
       return query.reject(Errors.connection("CONNECTION_ENDED", options, options));
-    if (open5.length)
-      return go(open5.shift(), query);
+    if (open6.length)
+      return go(open6.shift(), query);
     if (closed.length)
       return connect(closed.shift(), query);
     busy.length ? go(busy.shift(), query) : queries.push(query);
@@ -25990,7 +26006,7 @@ function Postgres(a, b2) {
   }
   function onopen(c) {
     if (queries.length === 0)
-      return move(c, open5);
+      return move(c, open6);
     let max = Math.ceil(queries.length / (connecting.length + 1)), ready = true;
     while (ready && queries.length && max-- > 0) {
       const query = queries.shift();
@@ -29948,6 +29964,16 @@ var CURSOR_MAX_BYTES = 4 * 1024;
 var ARRIVAL_SNIPPET_MAX = 180;
 var ARRIVAL_WATCH_POLL_MS = 25e3;
 var ARRIVAL_RETRY_NOTICE_THRESHOLD_MS = 6e4;
+var EXIT_NOTIFY_ORPHANED = 74;
+var NotifyStdoutClosedError = class extends Error {
+  name = "NotifyStdoutClosedError";
+  code = "notify_stdout_closed";
+  constructor() {
+    super(
+      "[notify_stdout_closed] inbox --notify lost its stdout reader and stopped before advancing its cursor. Start one fresh watcher under a live Monitor."
+    );
+  }
+};
 function createArrivalRetryNoticePolicy(thresholdMs = ARRIVAL_RETRY_NOTICE_THRESHOLD_MS) {
   let firstFailureAt = null;
   let failureEmitted = false;
@@ -30064,6 +30090,33 @@ function arrivalNotification(signal, workspaceId2, target2) {
 function formatArrivalNotification(notification) {
   const attachmentCopy = notification.attachment_count === 0 ? "" : ` \u2014 ${notification.attachment_count} attachment${notification.attachment_count === 1 ? "" : "s"}`;
   return `CommonSwarm from ${notification.sender_kind} ${notification.sender}: ${notification.snippet}${attachmentCopy} \u2014 reply: ${notification.reply_command}`;
+}
+function notifyWriteError(error) {
+  return error.code === "EPIPE" ? new NotifyStdoutClosedError() : error;
+}
+async function writeArrivalMonitorLine(line, stream2 = process.stdout) {
+  await new Promise((resolve2, reject) => {
+    let settled = false;
+    const finish = (error) => {
+      if (settled) return;
+      settled = true;
+      if (error) {
+        setImmediate(() => stream2.off("error", onError));
+        reject(notifyWriteError(error));
+      } else {
+        stream2.off("error", onError);
+        resolve2();
+      }
+    };
+    const onError = (error) => finish(error);
+    stream2.once("error", onError);
+    try {
+      stream2.write(`${line}
+`, (error) => finish(error));
+    } catch (error) {
+      finish(error instanceof Error ? error : new Error(String(error)));
+    }
+  });
 }
 function cursorOf(signal) {
   return { created_at: signal.created_at, id: signal.id };
@@ -30275,7 +30328,11 @@ function parseDeliveryReceipt(value) {
         "protocol",
         "delivery receipt returned a malformed last_error_code"
       );
-    })()
+    })(),
+    pending_for_main_count: Object.hasOwn(row, "pending_for_main_count") ? row.pending_for_main_count === null ? null : nonNegativeInteger(
+      row.pending_for_main_count,
+      "pending_for_main_count"
+    ) : null
   };
 }
 function parseUntrackedAgent(value) {
@@ -30629,9 +30686,10 @@ function renderSignalReceiptReport(report, nowMs = Date.now()) {
       ].join("\n");
     }
     if (state === "queued") {
+      const queueCount = receipt.pending_for_main_count;
       return [
-        `Queued for agent ${receipt.recipient_agent_principal_id}'s interactive session ${relativeAge(receipt.acked_at, nowMs)}. The agent has not seen it yet.`,
-        "It will appear at the agent's next prompt.",
+        `Queued for agent ${receipt.recipient_agent_principal_id}'s interactive session ${relativeAge(receipt.acked_at, nowMs)}; waiting for the recipient's session hook${typeof queueCount === "number" ? ` (${queueCount} in queue)` : ""}.`,
+        `Ask the agent's operator to check its listener with: ${listenerStatusCommand(report, receipt)}`,
         `Check again with: ${receiptCheckCommand(report)}`
       ].join("\n");
     }
@@ -30686,7 +30744,8 @@ function signalReceiptJsonPayload(report, nowMs = Date.now()) {
         acked_at: receipt.acked_at,
         attempt_count: receipt.attempt_count,
         lease_expiry_count: receipt.lease_expiry_count,
-        last_error_code: receipt.last_error_code
+        last_error_code: receipt.last_error_code,
+        pending_for_main_count: receipt.pending_for_main_count ?? null
       }
     )
   };
@@ -30799,7 +30858,7 @@ var CLAUDE_ACP_MIN_VERSION = "0.64.2";
 var CLAUDE_ACP_LAST_MEASURED_VERSION = "0.64.2";
 var CLAUDE_PERMISSION_MODE_ID = "default";
 var CODEX_ACP_MIN_VERSION = "1.1.9";
-var CODEX_ACP_LAST_MEASURED_VERSION = "1.1.9";
+var CODEX_ACP_LAST_MEASURED_VERSION = "1.8.0";
 var CODEX_PERMISSION_MODE_ID = "read-only";
 var ACP_PROTOCOL_VERSION = 1;
 var OPENCODE_FORCED_PERMISSION_TOOLS = [
@@ -31041,10 +31100,12 @@ var AcpVersionBelowFloorError = class extends AcpVersionError {
   actual;
 };
 var AcpPermissionCanaryError = class extends AcpHostError {
-  constructor(message) {
+  constructor(message, reasonCode = null) {
     super("permission_canary_failed", message);
+    this.reasonCode = reasonCode;
     this.name = "AcpPermissionCanaryError";
   }
+  reasonCode;
 };
 var AcpPromptsBlockedError = class extends AcpHostError {
   constructor() {
@@ -31513,7 +31574,8 @@ var AcpHostSession = class _AcpHostSession {
     }
     const detail = last?.reason ?? "permission-boundary canary failed: need host reject + correlated terminal tool status";
     throw new AcpPermissionCanaryError(
-      total === 1 ? detail : `${detail} (failed ${total} attempts)`
+      total === 1 ? detail : `${detail} (failed ${total} attempts)`,
+      last?.reasonCode ?? null
     );
   }
   /** Test/helper: force-enable prompts without canary (never used by production open path). */
@@ -31558,7 +31620,8 @@ var AcpHostSession = class _AcpHostSession {
         passed: false,
         sawPermissionRequest: this.canaryState.sawPermissionRequest,
         sawDeniedToolResult: this.canaryState.sawDeniedToolResult,
-        reason: err instanceof Error ? err.message : String(err)
+        reason: err instanceof Error ? err.message : String(err),
+        ...err instanceof AcpHostError ? { reasonCode: err.code } : {}
       };
     }
   }
@@ -33098,6 +33161,17 @@ async function assertCodexVersionFloor(executable, options) {
   });
   const version3 = parseCodexVersionOutput(stdout);
   if (!version3) {
+    const codexCliVersion = parseProviderVersionOutput(
+      stdout,
+      /\bcodex-cli\b/i,
+      false
+    );
+    if (codexCliVersion) {
+      throw new AcpVersionError(
+        "this is the Codex CLI; --codex-executable takes the codex-acp bridge (npm i -g @agentclientprotocol/codex-acp)",
+        "executable_not_bridge"
+      );
+    }
     throw new AcpVersionParseError(
       `could not parse codex-acp version from: ${stdout.trim().slice(0, 200)}`
     );
@@ -33163,10 +33237,13 @@ async function openCodexAcpSession(options) {
     typeof pathEnv === "string" ? pathEnv : void 0
   );
   const env = buildCodexChildEnv(parentEnv);
+  let providerVersion;
   if (!options.skipVersionCheck) {
-    await assertCodexVersionFloor(executable, {
-      env,
-      ...options.onVersionNotice ? { onNewerVersion: options.onVersionNotice } : {}
+    providerVersion = await assertCodexVersionFloor(executable, { env });
+    options.onVersionNotice?.({
+      provider: "codex-acp",
+      runningVersion: providerVersion,
+      lastMeasuredVersion: CODEX_ACP_LAST_MEASURED_VERSION
     });
   }
   if (options.signal?.aborted) {
@@ -33258,7 +33335,15 @@ async function openCodexAcpSession(options) {
       })();
       return closePromise;
     };
-    return { session, child, executable, args, env, close };
+    return {
+      session,
+      child,
+      executable,
+      args,
+      env,
+      ...providerVersion ? { providerVersion } : {},
+      close
+    };
   } catch (error) {
     removeAbortListener();
     transport.close();
@@ -35026,6 +35111,10 @@ var CodexListenerClosedDuringOpen = class extends Error {
     this.name = "CodexListenerClosedDuringOpen";
   }
 };
+function pathIsInsideOrEqual(ancestor, candidate) {
+  const fromAncestor = (0, import_node_path14.relative)(ancestor, candidate);
+  return fromAncestor === "" || fromAncestor !== ".." && !fromAncestor.startsWith(`..${import_node_path14.sep}`) && !(0, import_node_path14.isAbsolute)(fromAncestor);
+}
 var CodexListenerModel = class {
   constructor(options) {
     this.options = options;
@@ -35157,10 +35246,25 @@ var CodexListenerModel = class {
   }
   /** Force Codex's measured shell permission path without changing worker cwd. */
   async enablePromptsAfterCodexCanary(handle) {
+    const configuredHome = this.options.env?.HOME;
+    const home = configuredHome && (0, import_node_path14.isAbsolute)(configuredHome) ? configuredHome : (0, import_node_os9.homedir)();
+    const sentinelDirectory = (0, import_node_path14.join)(home, ".cswarm", "canary");
+    await (0, import_promises8.mkdir)(sentinelDirectory, { recursive: true, mode: 448 });
+    await (0, import_promises8.chmod)(sentinelDirectory, 448);
+    const [workerCwd, canaryDirectory] = await Promise.all([
+      (0, import_promises8.realpath)(this.options.cwd),
+      (0, import_promises8.realpath)(sentinelDirectory)
+    ]);
+    if (pathIsInsideOrEqual(workerCwd, canaryDirectory)) {
+      throw new AcpPermissionCanaryError(
+        `canary_path_inside_cwd: ${canaryDirectory} is inside listener cwd ${workerCwd}. Next: pass a --cwd that is not your home directory`
+      );
+    }
     const sentinelPath = (0, import_node_path14.join)(
-      (0, import_node_os9.tmpdir)(),
+      canaryDirectory,
       `cswarm-codex-permission-canary-${process.pid}-${(0, import_node_crypto17.randomUUID)()}`
     );
+    let canaryError;
     let sentinelCreated = false;
     try {
       await handle.session.enablePromptsAfterCanary({
@@ -35168,6 +35272,8 @@ var CodexListenerModel = class {
         probeText: `Use a shell command to create ${sentinelPath} with content CSWARM_CANARY_NOOP. You must use the shell. Do nothing else.`,
         ...this.options.onCanaryAttempt ? { onAttempt: this.options.onCanaryAttempt } : {}
       });
+    } catch (error) {
+      canaryError = error;
     } finally {
       try {
         await (0, import_promises8.lstat)(sentinelPath);
@@ -35177,11 +35283,39 @@ var CodexListenerModel = class {
         if (error.code !== "ENOENT") throw error;
       }
     }
-    if (sentinelCreated) {
+    const observation = handle.session.canaryObservation;
+    const sawPermissionRequest = observation?.sawPermissionRequest === true;
+    const bridgeVersion = handle.providerVersion ?? handle.session.info?.agentVersion ?? "unknown";
+    if (sentinelCreated && !sawPermissionRequest) {
       throw new AcpPermissionCanaryError(
-        "Codex bridge wrote the permission canary sentinel before denial"
+        `canary_executed_without_permission: codex-acp ${bridgeVersion} ran the shell probe without a permission request and wrote ${sentinelPath}. Next: replace codex-acp ${bridgeVersion} with a bridge version that asks before writing ${sentinelPath}`
       );
     }
+    if (sentinelCreated) {
+      throw new AcpPermissionCanaryError(
+        `canary_write_not_blocked: codex-acp ${bridgeVersion} wrote ${sentinelPath} even though the host rejected the canary. Next: update or reinstall the codex-acp bridge`
+      );
+    }
+    if (canaryError instanceof AcpPermissionCanaryError) {
+      if (canaryError.reasonCode === "timeout") {
+        throw new AcpPermissionCanaryError(
+          `canary_timeout: ${canaryError.message}. Next: retry to run a fresh bounded permission canary`,
+          "timeout"
+        );
+      }
+      if (canaryError.reasonCode !== null) {
+        throw new AcpPermissionCanaryError(
+          `canary_bridge_error: codex-acp ${bridgeVersion} returned ${canaryError.message}. Next: resolve the quoted bridge error, then retry`,
+          canaryError.reasonCode
+        );
+      }
+      if (!sawPermissionRequest) {
+        throw new AcpPermissionCanaryError(
+          `canary_no_tool_call: codex-acp ${bridgeVersion} did not request permission or create ${sentinelPath}. Next: retry to re-sample the model's shell choice`
+        );
+      }
+    }
+    if (canaryError !== void 0) throw canaryError;
   }
 };
 
@@ -37138,6 +37272,7 @@ var STATUS_ALLOWED_KEYS = /* @__PURE__ */ new Set([
   "lastErrorDetail",
   "providerVersion",
   "providerLastMeasuredVersion",
+  "cswarmVersion",
   "lastWorkerStderrTail",
   "logPath",
   "deliveryMode",
@@ -37197,7 +37332,7 @@ function parseStatus(raw) {
   const nullableUuid3 = (candidate) => candidate === null || typeof candidate === "string" && UUID_RE17.test(candidate);
   const nullableCount = (candidate) => candidate === null || typeof candidate === "number" && Number.isSafeInteger(candidate) && candidate >= 0;
   const nullableTimestamp3 = (candidate) => candidate === null || typeof candidate === "string" && Number.isFinite(Date.parse(candidate));
-  if (row.version !== 1 || typeof row.instanceId !== "string" || !UUID_RE17.test(row.instanceId) || row.provider !== "grok" && row.provider !== "opencode" && row.provider !== "claude" && row.provider !== "codex" || typeof row.profileId !== "string" || typeof row.workspaceId !== "string" || !UUID_RE17.test(row.workspaceId) || typeof row.principalId !== "string" || !UUID_RE17.test(row.principalId) || !Number.isSafeInteger(row.pid) || row.pid < 1 || typeof row.state !== "string" || !["starting", "ready", "stopping", "stopped", "failed"].includes(row.state) || typeof row.startedAt !== "string" || !Number.isFinite(Date.parse(row.startedAt)) || !(row.readyAt === null || typeof row.readyAt === "string" && Number.isFinite(Date.parse(row.readyAt))) || typeof row.updatedAt !== "string" || !Number.isFinite(Date.parse(row.updatedAt)) || !(row.stoppedAt === null || typeof row.stoppedAt === "string" && Number.isFinite(Date.parse(row.stoppedAt))) || !nullableUuid3(row.lastSignalId) || !(row.lastErrorCode === null || typeof row.lastErrorCode === "string" && /^[a-z0-9_-]{1,96}$/.test(row.lastErrorCode)) || !(row.lastErrorDetail === void 0 || row.lastErrorDetail === null || typeof row.lastErrorDetail === "string" && row.lastErrorDetail.length > 0 && row.lastErrorDetail.length <= 2048 && !/swm_(?:agt|inv|cap)_/i.test(row.lastErrorDetail)) || !(row.providerVersion === void 0 || row.providerVersion === null || typeof row.providerVersion === "string" && SEMVER_RE2.test(row.providerVersion)) || !(row.providerLastMeasuredVersion === void 0 || row.providerLastMeasuredVersion === null || typeof row.providerLastMeasuredVersion === "string" && SEMVER_RE2.test(row.providerLastMeasuredVersion)) || (row.providerVersion === null || row.providerVersion === void 0) !== (row.providerLastMeasuredVersion === null || row.providerLastMeasuredVersion === void 0) || !(row.lastWorkerStderrTail === void 0 || row.lastWorkerStderrTail === null || typeof row.lastWorkerStderrTail === "string" && row.lastWorkerStderrTail.length > 0 && row.lastWorkerStderrTail.length <= 2048 && !/swm_(?:agt|inv|cap)_/i.test(row.lastWorkerStderrTail)) || typeof row.logPath !== "string" || !(0, import_node_path16.isAbsolute)(row.logPath) || !(row.deliveryMode === void 0 || row.deliveryMode === null || typeof row.deliveryMode === "string" && STATUS_DELIVERY_MODES.has(row.deliveryMode)) || !(row.pendingDeliveryCount === void 0 || nullableCount(row.pendingDeliveryCount)) || !(row.lastTerminalDeliveryFailureCount === void 0 || nullableCount(row.lastTerminalDeliveryFailureCount)) || !(row.lastTerminalDeliveryFailureAt === void 0 || nullableTimestamp3(row.lastTerminalDeliveryFailureAt)) || !(row.lastClaimAt === void 0 || nullableTimestamp3(row.lastClaimAt)) || !(row.lastAckAt === void 0 || nullableTimestamp3(row.lastAckAt)) || !(row.routeMode === void 0 || row.routeMode === "worker" || row.routeMode === "main" || row.routeMode === "split") || !(row.deferOverChars === void 0 || row.deferOverChars === null || typeof row.deferOverChars === "number" && Number.isSafeInteger(row.deferOverChars) && row.deferOverChars >= 1 && row.deferOverChars <= 1e4) || !(row.pendingForMainCount === void 0 || typeof row.pendingForMainCount === "number" && Number.isSafeInteger(row.pendingForMainCount) && row.pendingForMainCount >= 0) || !(row.droppedForMainCount === void 0 || typeof row.droppedForMainCount === "number" && Number.isSafeInteger(row.droppedForMainCount) && row.droppedForMainCount >= 0)) {
+  if (row.version !== 1 || typeof row.instanceId !== "string" || !UUID_RE17.test(row.instanceId) || row.provider !== "grok" && row.provider !== "opencode" && row.provider !== "claude" && row.provider !== "codex" || typeof row.profileId !== "string" || typeof row.workspaceId !== "string" || !UUID_RE17.test(row.workspaceId) || typeof row.principalId !== "string" || !UUID_RE17.test(row.principalId) || !Number.isSafeInteger(row.pid) || row.pid < 1 || typeof row.state !== "string" || !["starting", "ready", "stopping", "stopped", "failed"].includes(row.state) || typeof row.startedAt !== "string" || !Number.isFinite(Date.parse(row.startedAt)) || !(row.readyAt === null || typeof row.readyAt === "string" && Number.isFinite(Date.parse(row.readyAt))) || typeof row.updatedAt !== "string" || !Number.isFinite(Date.parse(row.updatedAt)) || !(row.stoppedAt === null || typeof row.stoppedAt === "string" && Number.isFinite(Date.parse(row.stoppedAt))) || !nullableUuid3(row.lastSignalId) || !(row.lastErrorCode === null || typeof row.lastErrorCode === "string" && /^[a-z0-9_-]{1,96}$/.test(row.lastErrorCode)) || !(row.lastErrorDetail === void 0 || row.lastErrorDetail === null || typeof row.lastErrorDetail === "string" && row.lastErrorDetail.length > 0 && row.lastErrorDetail.length <= 2048 && !/swm_(?:agt|inv|cap)_/i.test(row.lastErrorDetail)) || !(row.providerVersion === void 0 || row.providerVersion === null || typeof row.providerVersion === "string" && SEMVER_RE2.test(row.providerVersion)) || !(row.providerLastMeasuredVersion === void 0 || row.providerLastMeasuredVersion === null || typeof row.providerLastMeasuredVersion === "string" && SEMVER_RE2.test(row.providerLastMeasuredVersion)) || !(row.cswarmVersion === void 0 || row.cswarmVersion === null || typeof row.cswarmVersion === "string" && SEMVER_RE2.test(row.cswarmVersion)) || (row.providerVersion === null || row.providerVersion === void 0) !== (row.providerLastMeasuredVersion === null || row.providerLastMeasuredVersion === void 0) || !(row.lastWorkerStderrTail === void 0 || row.lastWorkerStderrTail === null || typeof row.lastWorkerStderrTail === "string" && row.lastWorkerStderrTail.length > 0 && row.lastWorkerStderrTail.length <= 2048 && !/swm_(?:agt|inv|cap)_/i.test(row.lastWorkerStderrTail)) || typeof row.logPath !== "string" || !(0, import_node_path16.isAbsolute)(row.logPath) || !(row.deliveryMode === void 0 || row.deliveryMode === null || typeof row.deliveryMode === "string" && STATUS_DELIVERY_MODES.has(row.deliveryMode)) || !(row.pendingDeliveryCount === void 0 || nullableCount(row.pendingDeliveryCount)) || !(row.lastTerminalDeliveryFailureCount === void 0 || nullableCount(row.lastTerminalDeliveryFailureCount)) || !(row.lastTerminalDeliveryFailureAt === void 0 || nullableTimestamp3(row.lastTerminalDeliveryFailureAt)) || !(row.lastClaimAt === void 0 || nullableTimestamp3(row.lastClaimAt)) || !(row.lastAckAt === void 0 || nullableTimestamp3(row.lastAckAt)) || !(row.routeMode === void 0 || row.routeMode === "worker" || row.routeMode === "main" || row.routeMode === "split") || !(row.deferOverChars === void 0 || row.deferOverChars === null || typeof row.deferOverChars === "number" && Number.isSafeInteger(row.deferOverChars) && row.deferOverChars >= 1 && row.deferOverChars <= 1e4) || !(row.pendingForMainCount === void 0 || typeof row.pendingForMainCount === "number" && Number.isSafeInteger(row.pendingForMainCount) && row.pendingForMainCount >= 0) || !(row.droppedForMainCount === void 0 || typeof row.droppedForMainCount === "number" && Number.isSafeInteger(row.droppedForMainCount) && row.droppedForMainCount >= 0)) {
     throw new Error("stored listener status is malformed");
   }
   const routeMode = row.routeMode ?? "worker";
@@ -37217,6 +37352,7 @@ function parseStatus(raw) {
     lastWorkerStderrTail: row.lastWorkerStderrTail ?? null,
     providerVersion: row.providerVersion ?? null,
     providerLastMeasuredVersion: row.providerLastMeasuredVersion ?? null,
+    ...row.cswarmVersion === void 0 ? {} : { cswarmVersion: row.cswarmVersion },
     routeMode,
     deferOverChars,
     pendingForMainCount: row.pendingForMainCount ?? 0,
@@ -37239,6 +37375,10 @@ async function writeListenerStatus(paths, status) {
 }
 async function readListenerStatus(paths) {
   const raw = await readSecureJsonFile(paths.statusPath, MAX_STATUS_BYTES);
+  return raw === null ? null : parseStatus(raw);
+}
+async function readListenerStatusIfPresent(paths) {
+  const raw = await readSecureJsonFileIfPresent(paths.statusPath, MAX_STATUS_BYTES);
   return raw === null ? null : parseStatus(raw);
 }
 async function appendListenerEvent(paths, event) {
@@ -37646,6 +37786,7 @@ async function runListenerSupervisor(options) {
     version: 1,
     instanceId: proposedInstanceId,
     provider: options.provider ?? "grok",
+    ...options.cswarmVersion ? { cswarmVersion: options.cswarmVersion } : {},
     ...options.permissionMode ? { permissionMode: options.permissionMode } : {},
     profileId: options.profileId,
     workspaceId: options.workspaceId.toLowerCase(),
@@ -38950,6 +39091,9 @@ function newestFirst(topics) {
     (left, right) => Date.parse(right.updatedAt) - Date.parse(left.updatedAt) || left.topic.localeCompare(right.topic)
   );
 }
+function changedTopics(previous, topics) {
+  return previous === null ? newestFirst(topics).slice(0, BRAIN_DIGEST_TOPIC_LIMIT) : topics.filter((topic) => previous.topicVersions[topic.topic] !== topic.version);
+}
 function renderBrainDigest(topicCount, topics) {
   if (topics.length === 0) return null;
   const names = newestFirst(topics).map((topic) => `${topic.topic} v${topic.version}`).join(", ");
@@ -38967,6 +39111,19 @@ var FileBrainDigestStore = class {
   instanceDirectory;
   location;
   principalId;
+  /** Read the shared high-water without advancing it. */
+  async preview(topics) {
+    const raw = await readSecureJsonFileIfPresent(
+      this.location,
+      MAX_BRAIN_DIGEST_STATE_BYTES
+    );
+    const previous = raw === null ? null : parseState(raw);
+    if (previous !== null && previous.principalId !== this.principalId) {
+      throw new Error("stored brain digest state belongs to another principal");
+    }
+    currentState(this.principalId, topics);
+    return renderBrainDigest(topics.length, changedTopics(previous, topics));
+  }
   async consume(topics) {
     return await withFileLock(this.instanceDirectory, BRAIN_DIGEST_LOCK, async () => {
       const raw = await readSecureJsonFile(
@@ -38978,9 +39135,7 @@ var FileBrainDigestStore = class {
         throw new Error("stored brain digest state belongs to another principal");
       }
       const next = currentState(this.principalId, topics);
-      const changed = previous === null ? newestFirst(topics).slice(0, BRAIN_DIGEST_TOPIC_LIMIT) : topics.filter(
-        (topic) => previous.topicVersions[topic.topic] !== topic.version
-      );
+      const changed = changedTopics(previous, topics);
       const serialized = JSON.stringify(next);
       if (Buffer.byteLength(serialized, "utf8") > MAX_BRAIN_DIGEST_STATE_BYTES) {
         throw new Error("brain digest state is larger than this store accepts");
@@ -39120,6 +39275,31 @@ var FileHookSurfaceStore = class {
   }
   instanceDirectory;
   path;
+  /** Preview unseen hook rows without taking a write lock or advancing state. */
+  async previewUnseen(items) {
+    const raw = await readSecureJsonFileIfPresent(this.path, MAX_HOOK_SURFACE_BYTES);
+    const seen = new Set(raw === null ? [] : parseSurface(raw).surfacedSignalIds);
+    const unseen = [];
+    for (const item of items) {
+      const signalId = item.signalId.toLowerCase();
+      if (!UUID_RE21.test(signalId) || seen.has(signalId)) continue;
+      seen.add(signalId);
+      unseen.push(item);
+    }
+    return unseen;
+  }
+  /** Read attendance evidence without advancing the hook high-water. */
+  async evidence() {
+    return await withFileLock(this.instanceDirectory, HOOK_SURFACE_LOCK, async () => {
+      const raw = await readSecureJsonFile(this.path, MAX_HOOK_SURFACE_BYTES);
+      if (raw === null) return { exists: false, surfacedSignalIds: [] };
+      const state = parseSurface(raw);
+      return {
+        exists: true,
+        surfacedSignalIds: state.surfacedSignalIds
+      };
+    }, { timeoutMs: HOOK_LOCK_TIMEOUT_MS });
+  }
   async stage(items, droppedCount) {
     return await withFileLock(this.instanceDirectory, HOOK_SURFACE_LOCK, async () => {
       const raw = await readSecureJsonFile(this.path, MAX_HOOK_SURFACE_BYTES);
@@ -39643,6 +39823,486 @@ async function runListenerHookCheck(options = {}) {
   }
 }
 
+// src/listener/attendance-canary.ts
+var import_promises11 = require("node:fs/promises");
+var LOG_TAIL_BYTES = 256 * 1024;
+function agentReceipt(receipts, principalId) {
+  for (const receipt of receipts) {
+    if ("recipient_agent_principal_id" in receipt && receipt.recipient_agent_principal_id === principalId) {
+      return receipt;
+    }
+  }
+  return null;
+}
+async function readLogTail(path) {
+  let handle;
+  try {
+    handle = await (0, import_promises11.open)(path, "r");
+  } catch (error) {
+    if (error.code === "ENOENT") return "";
+    throw error;
+  }
+  try {
+    const size2 = (await handle.stat()).size;
+    const start = Math.max(0, size2 - LOG_TAIL_BYTES);
+    const buffer2 = Buffer.alloc(size2 - start);
+    await handle.read(buffer2, 0, buffer2.length, start);
+    let text = buffer2.toString("utf8");
+    if (start > 0) {
+      const newline = text.indexOf("\n");
+      text = newline < 0 ? "" : text.slice(newline + 1);
+    }
+    return text;
+  } finally {
+    await handle.close();
+  }
+}
+async function logEvidence(path, signalId) {
+  let claimedAt = null;
+  let routeDecision = null;
+  let routedAt = null;
+  for (const line of (await readLogTail(path)).split("\n")) {
+    if (line.length === 0) continue;
+    let value;
+    try {
+      value = JSON.parse(line);
+    } catch {
+      continue;
+    }
+    if (!value || typeof value !== "object" || Array.isArray(value)) continue;
+    const row = value;
+    if (row.signal_id !== signalId || typeof row.ts !== "string") continue;
+    if (row.event === "listener_delivery_claim") claimedAt = row.ts;
+    if (row.event === "listener_routing_decision" && (row.route_decision === "main" || row.route_decision === "worker")) {
+      routeDecision = row.route_decision;
+      routedAt = row.ts;
+    }
+  }
+  return { claimedAt, routeDecision, routedAt };
+}
+async function runListenerAttendanceCanary(options) {
+  const now = options.now ?? Date.now;
+  const sleep2 = options.sleep ?? ((milliseconds) => new Promise((resolve2) => setTimeout(resolve2, milliseconds)));
+  const startedAt = now();
+  const deadlineMs = startedAt + options.waitMs;
+  const client = new ThinCommandClient(options.target, options.fetcher, {
+    signalRequestTimeoutMs: options.waitMs
+  });
+  const posted = await client.sendSignal({
+    workspaceId: options.workspaceId,
+    credential: await options.credential(),
+    command: {
+      kind: "post_signal",
+      signal_kind: "note",
+      body: "CommonSwarm listener attendance canary. No reply is needed.",
+      to_user_id: null,
+      to_agent_principal_id: options.principalId,
+      in_reply_to: null,
+      about: null,
+      until_ms: 10 * 6e4
+    }
+  });
+  const signalId = posted.response.signal.id;
+  let claimedAt = null;
+  let routeDecision = null;
+  let routedAt = null;
+  let pendingForMainCount = null;
+  let surfacedAt = null;
+  let observedAt = null;
+  let receiptReadErrorCode = null;
+  while (true) {
+    const log = await logEvidence(options.paths.logPath, signalId);
+    claimedAt ??= log.claimedAt;
+    routeDecision ??= log.routeDecision;
+    routedAt ??= log.routedAt;
+    const hook = await new FileHookSurfaceStore(
+      options.paths.instanceDirectory
+    ).evidence();
+    if (hook.surfacedSignalIds.includes(signalId)) {
+      surfacedAt ??= new Date(now()).toISOString();
+    }
+    if (now() >= deadlineMs) break;
+    try {
+      const report = await readAgentDeliveryReceipts(
+        options.target,
+        await options.credential(),
+        options.workspaceId,
+        signalId,
+        {
+          ...options.fetcher ? { fetcher: options.fetcher } : {},
+          deadlineMs,
+          now
+        }
+      );
+      receiptReadErrorCode = null;
+      const receipt = agentReceipt(report.receipts, options.principalId);
+      if (receipt !== null) {
+        claimedAt ??= receipt.delivered_at;
+        if (receipt.ack_outcome === "queued") {
+          routeDecision ??= "main";
+          routedAt ??= receipt.acked_at;
+          pendingForMainCount = receipt.pending_for_main_count ?? null;
+        }
+        const state = deliveryReceiptState(receipt, now());
+        if (state === "observed" || state === "replied") {
+          observedAt = receipt.acked_at;
+        }
+      }
+    } catch (error) {
+      receiptReadErrorCode = error instanceof DeliveryReceiptReadError ? error.code : error instanceof SignalReadTimeoutError ? "timeout" : "transport";
+    }
+    const complete = claimedAt !== null && routeDecision !== null && (routeDecision === "worker" || surfacedAt !== null) && observedAt !== null;
+    if (complete || now() >= deadlineMs) break;
+    await sleep2(Math.min(options.pollMs ?? 250, deadlineMs - now()));
+  }
+  const stalledAt = claimedAt === null ? "claimed" : routeDecision === null ? "routed" : routeDecision === "main" && surfacedAt === null ? "surfaced" : observedAt === null ? "observed" : null;
+  return {
+    signalId,
+    acceptedAt: new Date(startedAt).toISOString(),
+    claimedAt,
+    routeDecision,
+    routedAt,
+    pendingForMainCount,
+    surfacedAt,
+    observedAt,
+    receiptReadErrorCode,
+    stalledAt
+  };
+}
+function renderListenerAttendanceCanary(result, workspaceId2, principalId) {
+  const statusCommand = `cswarm listen status --workspace-id ${workspaceId2} --principal-id ${principalId}`;
+  const route = result.routeDecision === "main" ? `queued for the interactive session${result.pendingForMainCount === null ? "" : ` (${result.pendingForMainCount} in queue)`}` : result.routeDecision === "worker" ? "sent to the worker" : "not measured";
+  const lines = [
+    `Canary note: ${result.signalId}.`,
+    `ACCEPTED: yes at ${result.acceptedAt}.`,
+    `CLAIMED: ${result.claimedAt === null ? "no" : `yes at ${result.claimedAt}`}.`,
+    `QUEUED/WORKER: ${route}.`,
+    `SURFACED: ${result.routeDecision === "worker" ? "not required for the worker route" : result.surfacedAt === null ? "no" : `yes at ${result.surfacedAt}`}.`,
+    `OBSERVED: ${result.observedAt === null ? "no" : `yes at ${result.observedAt}`}.`
+  ];
+  if (result.receiptReadErrorCode !== null) {
+    lines.push(`RECEIPT READ: failed (${result.receiptReadErrorCode}).`);
+  }
+  if (result.stalledAt === null) {
+    lines.push("Canary passed: every required hop was measured.");
+  } else if (result.stalledAt === "surfaced") {
+    lines.push(
+      `STALLED: surfaced. Next: cswarm hook install claude --principal-id ${principalId} --write, then start a fresh session. Or restart the listener with --route worker.`
+    );
+  } else {
+    lines.push(`STALLED: ${result.stalledAt}. Next: ${statusCommand}`);
+  }
+  return lines.join("\n");
+}
+
+// src/resume.ts
+var import_node_child_process8 = require("node:child_process");
+function execFileText(file, args) {
+  return new Promise((resolve2, reject) => {
+    (0, import_node_child_process8.execFile)(file, [...args], {
+      encoding: "utf8",
+      maxBuffer: 4 * 1024 * 1024
+    }, (error, stdout) => {
+      if (error) reject(error);
+      else resolve2(stdout);
+    });
+  });
+}
+function systemProcessTable() {
+  return {
+    async list() {
+      const output = await execFileText("ps", ["-axo", "pid=,command="]);
+      return output.split("\n").flatMap((line) => {
+        const match = /^\s*(\d+)\s+(.*)$/.exec(line);
+        if (!match) return [];
+        const pid = Number(match[1]);
+        return Number.isSafeInteger(pid) && pid > 0 ? [{ pid, command: match[2] }] : [];
+      });
+    }
+  };
+}
+function lsofStdoutConsumer() {
+  return {
+    async inspect(pid) {
+      let output;
+      try {
+        output = await execFileText(
+          process.platform === "darwin" ? "/usr/sbin/lsof" : "lsof",
+          ["-nP", "-a", "-p", String(pid), "-d", "1", "-F", "pftan"]
+        );
+      } catch {
+        return "cannot_determine";
+      }
+      const lines = output.split("\n");
+      const type = lines.find((line) => line.startsWith("t"))?.slice(1) ?? "";
+      const names = lines.filter((line) => line.startsWith("n")).map((line) => line.slice(1));
+      if (type === "unix") {
+        if (names.some((name) => name === "->(none)")) return "orphaned";
+        if (names.some((name) => name.startsWith("->") && name !== "->(none)")) {
+          return "live_reader";
+        }
+        return "cannot_determine";
+      }
+      if (type === "PIPE" || type === "FIFO") return "cannot_determine";
+      return type.length === 0 ? "cannot_determine" : "not_pipe";
+    }
+  };
+}
+function commandHasFlagValue(command2, flag, values2) {
+  for (const value of values2) {
+    const marker = `${flag} ${value}`;
+    let start = command2.indexOf(marker);
+    while (start !== -1) {
+      const before = start === 0 ? " " : command2[start - 1];
+      const afterIndex = start + marker.length;
+      const after = afterIndex >= command2.length ? " " : command2[afterIndex];
+      if (/\s/.test(before) && /\s/.test(after)) return true;
+      start = command2.indexOf(marker, start + 1);
+    }
+  }
+  return false;
+}
+function isNotifyCommand(command2) {
+  return /(?:^|\s)inbox(?:\s|$)/.test(command2) && /(?:^|\s)--notify(?:\s|$)/.test(command2);
+}
+async function findNotifyWatchers(options) {
+  const processTable = options.processTable ?? systemProcessTable();
+  const stdoutConsumer = options.stdoutConsumer ?? lsofStdoutConsumer();
+  const rows3 = await processTable.list();
+  const matches = rows3.flatMap((row) => {
+    if (!isNotifyCommand(row.command)) return [];
+    const matchedBy = [];
+    if (commandHasFlagValue(row.command, "--agent-token-file", options.credentialPaths)) {
+      matchedBy.push("agent_token_file");
+    }
+    if (commandHasFlagValue(row.command, "--principal-id", [options.principalId])) {
+      matchedBy.push("principal_id");
+    }
+    return matchedBy.length === 0 ? [] : [{ pid: row.pid, matchedBy }];
+  });
+  const unique = [...new Map(matches.map((row) => [row.pid, row])).values()].sort((left, right) => left.pid - right.pid);
+  return await Promise.all(unique.map(async (row) => ({
+    ...row,
+    stdout: await stdoutConsumer.inspect(row.pid)
+  })));
+}
+async function readOnlyListenerInspection(paths, adapters = {}) {
+  const query = adapters.queryStatus ?? queryListenerControl;
+  const read = adapters.readStatus ?? readListenerStatusIfPresent;
+  try {
+    return {
+      checkedDirectory: paths.instanceDirectory,
+      status: await query(paths, "status"),
+      source: "live_process"
+    };
+  } catch {
+    const status = await read(paths);
+    return {
+      checkedDirectory: paths.instanceDirectory,
+      status,
+      source: status === null ? "not_found" : "recorded_file"
+    };
+  }
+}
+async function inspectResume(options, adapters) {
+  const identity = await adapters.readIdentity();
+  const principalId = identity.principalId.toLowerCase();
+  const paths = listenerPaths({
+    profileId: options.target.profileId,
+    workspaceId: options.workspaceId,
+    principalId,
+    ...options.stateDirectory ? { stateDirectory: options.stateDirectory } : {}
+  });
+  const listener = await readOnlyListenerInspection(paths, adapters);
+  const watchers = await findNotifyWatchers({
+    credentialPaths: options.credentialPathAliases ?? [options.credentialFile],
+    principalId,
+    ...adapters.processTable ? { processTable: adapters.processTable } : {},
+    ...adapters.stdoutConsumer ? { stdoutConsumer: adapters.stdoutConsumer } : {}
+  });
+  const topics = await adapters.readBrainTopics();
+  const digestStore = new FileBrainDigestStore(paths.instanceDirectory, principalId);
+  const digest = await digestStore.preview(topics);
+  const inbox = await adapters.readInboxCount(principalId, paths.instanceDirectory);
+  return {
+    identity: { ...identity, principalId },
+    listener,
+    watchers,
+    brain: { digest, highWaterFile: digestStore.location },
+    inbox,
+    target: options.target,
+    workspaceId: options.workspaceId,
+    credentialFile: options.credentialFile,
+    installedVersion: options.installedVersion
+  };
+}
+function safeText(value) {
+  return value.replace(/\u001b\[[0-?]*[ -/]*[@-~]/g, "").replace(/[\u0000-\u001f\u007f-\u009f\u202a-\u202e\u2066-\u2069]/g, " ").slice(0, 2e3);
+}
+function shellArg(value) {
+  if (/^[A-Za-z0-9_./:@%+=,-]+$/.test(value)) return value;
+  return `'${value.replaceAll("'", `'"'"'`)}'`;
+}
+function commonCommandArgs(report) {
+  return [
+    "--agent-token-file",
+    shellArg(report.credentialFile),
+    "--url",
+    shellArg(report.target.url),
+    "--anon-key",
+    shellArg(report.target.anonKey),
+    "--workspace-id",
+    report.workspaceId
+  ].join(" ");
+}
+function restartCommand(report, status) {
+  const common = commonCommandArgs(report);
+  const route = status.routeMode ?? "worker";
+  const start = [
+    "cswarm listen start",
+    common,
+    `--provider ${status.provider}`,
+    `--permissions ${status.permissionMode ?? "allow"}`,
+    `--route ${route}`,
+    ...route === "split" && status.deferOverChars !== null && status.deferOverChars !== void 0 ? [`--defer-over ${status.deferOverChars}`] : []
+  ].join(" ");
+  return `cswarm listen stop ${common} && ${start}`;
+}
+function watcherStateLine(watcher) {
+  const matched = watcher.matchedBy.map(
+    (value) => value === "agent_token_file" ? "credential path" : "principal id"
+  ).join(" and ");
+  const state = watcher.stdout === "live_reader" ? "stdout has a live pipe reader" : watcher.stdout === "orphaned" ? "ORPHAN: stdout pipe has no reader" : watcher.stdout === "not_pipe" ? "stdout is not a pipe; the dead-reader check does not apply" : "stdout reader cannot be determined on this host";
+  return `- PID ${watcher.pid}: ${state}; matched ${matched}.`;
+}
+function renderResume(report) {
+  const lines = [
+    "Identity",
+    `You are ${safeText(report.identity.displayName)} (${report.identity.principalId}).`,
+    "Next: use this principal for every listener, watcher, brain, and inbox check below.",
+    "",
+    "Listener"
+  ];
+  const listener = report.listener;
+  const status = listener.status;
+  if (status === null) {
+    lines.push(
+      `No listener found under ${safeText(listener.checkedDirectory)} for profile ${report.target.profileId}.`,
+      `Next: start one with the original provider: cswarm listen start ${commonCommandArgs(report)} --provider <provider>`
+    );
+  } else {
+    if (listener.source === "live_process") {
+      lines.push(
+        `Found under ${safeText(listener.checkedDirectory)}. State: ${status.state}, reported by running PID ${status.pid}.`
+      );
+    } else {
+      lines.push(
+        `Found a status file under ${safeText(listener.checkedDirectory)}. Recorded state: ${status.state}; the control socket did not answer, so a running listener is not established.`
+      );
+    }
+    const runningVersion = status.cswarmVersion ?? null;
+    if (listener.source !== "live_process") {
+      lines.push(
+        `Running listener cswarm version: cannot determine because the process did not answer; status file recorded ${runningVersion ?? "no version"}; installed CLI: ${report.installedVersion}.`,
+        `Next: restart the listener because its process did not answer: ${restartCommand(report, status)}`
+      );
+    } else if (runningVersion === null) {
+      lines.push(
+        `Listener cswarm version: cannot determine from this listener; installed CLI: ${report.installedVersion}.`,
+        `Next: restart it to make the running version reportable: ${restartCommand(report, status)}`
+      );
+    } else if (runningVersion !== report.installedVersion) {
+      lines.push(
+        `VERSION MISMATCH: listener runs ${runningVersion}; installed ${report.installedVersion} \u2014 restart it: ${restartCommand(report, status)}`
+      );
+    } else {
+      lines.push(
+        `Listener-reported cswarm: ${runningVersion}; installed CLI: ${report.installedVersion}.`,
+        "Next: no listener restart is needed for a version change."
+      );
+    }
+  }
+  lines.push(
+    "",
+    "Notify watchers",
+    `Checked process arguments for inbox --notify matching --agent-token-file ${safeText(report.credentialFile)} or --principal-id ${report.identity.principalId}.`
+  );
+  if (report.watchers.length === 0) {
+    lines.push(
+      "Found: 0.",
+      `Next: start one watcher under a live Monitor: cswarm inbox --notify ${commonCommandArgs(report)}`
+    );
+  } else {
+    lines.push(`Found: ${report.watchers.length}.`);
+    lines.push(...report.watchers.map(watcherStateLine));
+    const orphans = report.watchers.filter((watcher) => watcher.stdout === "orphaned");
+    if (orphans.length > 0) {
+      lines.push(
+        `Next: stop only the orphan watcher${orphans.length === 1 ? "" : "s"}; CommonSwarm did not kill anything: kill ${orphans.map((watcher) => watcher.pid).join(" ")}`
+      );
+    } else if (report.watchers.some((watcher) => watcher.stdout === "cannot_determine")) {
+      lines.push(
+        "Next: verify each unknown stdout reader in the host Monitor before you start another watcher."
+      );
+    } else {
+      lines.push("Next: keep one watcher with a live output surface; do not start a duplicate.");
+    }
+  }
+  lines.push(
+    "",
+    "Brain digest",
+    `Checked ${safeText(report.brain.highWaterFile)} without advancing it.`
+  );
+  if (report.brain.digest === null) {
+    lines.push(
+      "No brain topic is new or changed since this principal's digest high-water.",
+      "Next: no brain read is needed now."
+    );
+  } else {
+    lines.push(report.brain.digest, "Next: read any needed topic with the command above.");
+  }
+  const inboxCount = report.inbox.exact ? String(report.inbox.count) : `at least ${report.inbox.count}`;
+  lines.push(
+    "",
+    "Unread inbox",
+    `Unread directed asks and notes from the same read used by the hook: ${inboxCount}.`,
+    report.inbox.count === 0 ? "Next: no inbox action is needed now." : `Next: read them without acknowledging them first: cswarm inbox ${commonCommandArgs(report)}`,
+    "",
+    "Read-only check complete. No cursor, brain high-water, listener status, receipt, acknowledgement, or process was changed."
+  );
+  return lines.join("\n");
+}
+function resumeJson(report) {
+  return {
+    identity: {
+      display_name: report.identity.displayName,
+      principal_id: report.identity.principalId
+    },
+    listener: {
+      found: report.listener.status !== null,
+      checked_directory: report.listener.checkedDirectory,
+      source: report.listener.source,
+      state: report.listener.status?.state ?? null,
+      pid: report.listener.status?.pid ?? null,
+      running_cswarm_version: report.listener.source === "live_process" ? report.listener.status?.cswarmVersion ?? null : null,
+      installed_cswarm_version: report.installedVersion,
+      version_mismatch: report.listener.source === "live_process" && report.listener.status?.cswarmVersion !== null && report.listener.status?.cswarmVersion !== void 0 && report.listener.status.cswarmVersion !== report.installedVersion
+    },
+    notify_watchers: report.watchers.map((watcher) => ({
+      pid: watcher.pid,
+      matched_by: watcher.matchedBy,
+      stdout: watcher.stdout
+    })),
+    brain: {
+      high_water_file: report.brain.highWaterFile,
+      high_water_advanced: false,
+      digest: report.brain.digest
+    },
+    unread_inbox: report.inbox,
+    read_only: true
+  };
+}
+
 // src/cli.ts
 var import_meta = {};
 var KNOWN_FLAGS = /* @__PURE__ */ new Set([
@@ -39650,6 +40310,7 @@ var KNOWN_FLAGS = /* @__PURE__ */ new Set([
   "agent-token-file",
   "agent-token-stdin",
   "all-devices",
+  "allow-unattended",
   "anon-key",
   "attach",
   "branch",
@@ -39699,6 +40360,7 @@ var KNOWN_FLAGS = /* @__PURE__ */ new Set([
   "since",
   "site",
   "slug",
+  "state-dir",
   "renewal-horizon-days",
   "standing",
   "task-id",
@@ -39718,6 +40380,7 @@ var KNOWN_FLAGS = /* @__PURE__ */ new Set([
 var BOOLEAN_FLAGS = /* @__PURE__ */ new Set([
   "agent-token-stdin",
   "all-devices",
+  "allow-unattended",
   "confirm-standing",
   "force-file-store",
   "follow",
@@ -39747,8 +40410,8 @@ var ACCEPTED_AGENT_CREDENTIAL_MESSAGES = [
   AGENT_CREDENTIAL_MESSAGE_D088
 ];
 function packageVersion() {
-  if ("0.1.44".length > 0) {
-    return "0.1.44";
+  if ("0.1.45".length > 0) {
+    return "0.1.45";
   }
   try {
     const value = JSON.parse(
@@ -39865,6 +40528,7 @@ Usage:
   cswarm target clear [--json]
   cswarm status [--url <url> --anon-key <key>] [--workspace-id <uuid>] [--json]
   cswarm whoami ${requiredAgentCredential} [--url <url> --anon-key <key>] [--workspace-id <uuid>] [--json]
+  cswarm resume --agent-token-file <path> [--url <url> --anon-key <key>] --workspace-id <uuid> [--json]
   cswarm members [--url <url> --anon-key <key>] [--workspace-id <uuid>] ${agentCredential2} [--json]
   cswarm working-on "<what>" [--url <url> --anon-key <key>] [--workspace-id <uuid>] ${agentCredential2} [--about <ref>] [--until <dur>] [--json]
   cswarm note "<text>" [--url <url> --anon-key <key>] [--workspace-id <uuid>] ${agentCredential2} [--to <member|agent>] [--about <ref>] [--attach <path> ...] [--until <dur>] [--json]  # text: 1..8000 characters
@@ -39884,7 +40548,8 @@ Usage:
   cswarm brain get <topic> [--version <n>] [--url <url> --anon-key <key>] [--workspace-id <uuid>] ${agentCredential2} [--json]
   cswarm brain put <topic> [<markdown-path>] [--url <url> --anon-key <key>] [--workspace-id <uuid>] ${agentCredential2} [--json]  # without a path, reads Markdown from stdin
   cswarm feedback "<text>" --kind bug|idea|friction [--about <ref>] [--url <url> --anon-key <key>] [--workspace-id <uuid>] ${agentCredential2} [--json]
-  cswarm listen start ${requiredAgentCredential} [--url <url> --anon-key <key>] --workspace-id <uuid> --provider grok|opencode|claude|codex [--cwd <absolute-path>] [--model <model>] [--effort <level>] [--permissions deny|allow] [--grok-executable <path>] [--opencode-executable <path>] [--claude-executable <path>] [--codex-executable <path>] [--turn-budget <duration>] [--route worker|main|split] [--defer-over <chars>] [--foreground] [--json]
+  cswarm listen start ${requiredAgentCredential} [--url <url> --anon-key <key>] --workspace-id <uuid> --provider grok|opencode|claude|codex [--cwd <absolute-path>] [--model <model>] [--effort <level>] [--permissions deny|allow] [--grok-executable <path>] [--opencode-executable <path>] [--claude-executable <path>] [--codex-executable <path>] [--turn-budget <duration>] [--route worker|main|split] [--defer-over <chars>] [--allow-unattended] [--foreground] [--json]
+  cswarm listen canary ${requiredAgentCredential} [--url <url> --anon-key <key>] --workspace-id <uuid> [--state-dir <path>] [--wait <seconds>] [--json]
   cswarm listen status ${agentCredential2} [--url <url> --anon-key <key>] --workspace-id <uuid> [--principal-id <uuid>] [--json]
   cswarm listen stop ${agentCredential2} [--url <url> --anon-key <key>] --workspace-id <uuid> [--principal-id <uuid>] [--json]
   cswarm hook check [--principal-id <uuid> ...] [--cooldown <seconds>]
@@ -39923,6 +40588,7 @@ Credential selection for command/dogfood:
                           One that persists or references the credential needs the complete
                           JSON artifact, because it needs a field a bare secret does not carry:
                             whoami        reads server-proven identity -- complete or bare form
+                            resume        reads reconnect state -- complete or bare file form
                             members       reads only          -- either form
                             working-on, note, ask, reply, feed, inbox
                                           signal command/read only         -- either form
@@ -39935,6 +40601,8 @@ Credential selection for command/dogfood:
                             command, dogfood
                                           task protocol commands              -- either form
                             listen start  persists durable state, rotates -- needs expires_at
+                            listen canary posts one self-note and selects local state -- needs
+                                          principal_id; it does not renew the credential
                             listen status
                                           selects the listener profile -- complete JSON or
                                           an explicit --principal-id without a credential
@@ -39972,15 +40640,20 @@ fresh credential.
 listen start --route worker|main|split chooses where directed messages go. worker
 is the unchanged default. main queues every ask or note for the interactive session.
 split queues messages whose body is longer than --defer-over <chars>; the bound is
-1..10000 and an equal-length message stays on the worker path. Run cswarm hook check
+1..10000 and an equal-length message stays on the worker path. main and split require
+a principal-scoped Claude hook or prior hook surface. --allow-unattended accepts the
+risk explicitly. Run cswarm hook check
 --principal-id <uuid> to surface that agent's queued messages. A bare check works only
 when the state directory holds one principal. hook check has its own 3s ceiling, exits 0
 on every outcome, and skips network checks made within --cooldown seconds (default 30).
+listen canary posts one self-addressed note, waits at most --wait seconds (default 10),
+and reports accepted, claimed, queued/worker, surfaced, and observed as separate hops.
 hook install claude prints principal-scoped UserPromptSubmit JSON by default. --write changes
 <project>/.claude/settings.local.json, which applies only to Claude Code sessions started in
 that project. Inside a git repository, the local file must be ignored. --user opts in to
-\${CLAUDE_CONFIG_DIR:-~/.claude}/settings.json and warns about shared hosts. --repo keeps the
-repository-wide .claude/settings.json scope and also requires an ignored file. Uninstall also
+\${CLAUDE_CONFIG_DIR:-~/.claude}/settings.json and warns that every Claude Code session reading
+that directory is affected. --repo keeps the repository-wide .claude/settings.json scope and
+also requires an ignored file. Uninstall also
 requires --write and uses the same scope selection.
 
 Invite, legacy token accept, principal create/revoke, human token mint/revoke, link, new, and workspace close require a
@@ -40237,7 +40910,7 @@ async function stdinInviteLink() {
   return link;
 }
 async function confirmationLine(prompt) {
-  const reader = (0, import_promises12.createInterface)({
+  const reader = (0, import_promises13.createInterface)({
     input: process.stdin,
     output: process.stderr,
     terminal: Boolean(process.stdin.isTTY)
@@ -42168,6 +42841,100 @@ Owner: ${ownerName} (${identity.owner_user_id}).
 `)
   );
 }
+async function runResume(args) {
+  args.assertShape([
+    ...TARGET_FLAGS,
+    "workspace-id",
+    "agent-token-file",
+    "state-dir",
+    "json"
+  ], 1);
+  const suppliedCredentialPath = args.optional("agent-token-file");
+  if (suppliedCredentialPath === void 0) {
+    throw new UsageError("cswarm resume needs --agent-token-file <path>");
+  }
+  if (/[\u0000-\u001f\u007f-\u009f]/.test(suppliedCredentialPath)) {
+    throw new Error("--agent-token-file must not contain control characters");
+  }
+  const credentialFile = (0, import_node_path21.resolve)(suppliedCredentialPath);
+  const cloud = await target(args);
+  const workspaceId2 = listenerUuid(
+    args.optional("workspace-id") ?? process.env.SWARM_CLOUD_WORKSPACE_ID,
+    "workspace-id"
+  );
+  const agent = await agentCredential(args);
+  const report = await inspectResume({
+    target: cloud,
+    workspaceId: workspaceId2,
+    credentialFile,
+    credentialPathAliases: [.../* @__PURE__ */ new Set([suppliedCredentialPath, credentialFile])],
+    installedVersion: CLI_BUILD_VERSION,
+    ...listenerStateDirectory(args) ? { stateDirectory: listenerStateDirectory(args) } : {}
+  }, {
+    readIdentity: async () => {
+      const directory = await readAgentSignalDirectory(
+        cloud,
+        agent.token,
+        workspaceId2
+      );
+      const identity = directory.identity;
+      if (identity === void 0 || identity.workspace_id !== workspaceId2) {
+        throw new Error(
+          "the read service authenticated this credential but did not return its identity for this workspace; resume stopped without changing state"
+        );
+      }
+      const principal = directory.agents.find(
+        (candidate) => candidate.principal_id === identity.principal_id && candidate.owner_user_id === identity.owner_user_id
+      );
+      if (principal === void 0) {
+        throw new Error(
+          "the read service authenticated this credential but returned no matching live principal; resume stopped without changing state"
+        );
+      }
+      if (agent.principalId !== null && agent.principalId !== identity.principal_id) {
+        process.stderr.write(
+          `WARNING: the credential authenticated as ${sanitizeDisplayLabel(principal.name, "Unnamed agent")} (${identity.principal_id}), but its JSON metadata names ${agent.principalId}. Resume used the authenticated identity.
+`
+        );
+      }
+      return {
+        displayName: sanitizeDisplayLabel(principal.name, "Unnamed agent"),
+        principalId: identity.principal_id
+      };
+    },
+    readBrainTopics: async () => brainTopicSnapshots(await listBrainRowsAsAgent(
+      cloud,
+      agent.token,
+      workspaceId2
+    )),
+    readInboxCount: async (principalId, instanceDirectory) => {
+      const page = await readAgentSignalPage(
+        cloud,
+        { kind: "agent", token: agent.token },
+        {
+          workspaceId: workspaceId2,
+          inbox: true,
+          ascending: false,
+          limit: 100,
+          includeStale: false
+        },
+        fetch,
+        { tolerateMalformedRows: true, maxMalformedRows: 3 }
+      );
+      const candidates = page.signals.filter(
+        (signal) => (signal.kind === "ask" || signal.kind === "note") && signal.workspace_id === workspaceId2 && signal.to_agent === principalId
+      ).map((signal) => ({ signalId: signal.id }));
+      const unseen = await new FileHookSurfaceStore(instanceDirectory).previewUnseen(candidates);
+      return {
+        count: unseen.length,
+        exact: page.rawCount < 100 && page.malformedRows === 0
+      };
+    }
+  });
+  if (args.has("json")) printJson(resumeJson(report));
+  else process.stdout.write(`${renderResume(report)}
+`);
+}
 async function runSignalRead(args, inbox) {
   const notify = inbox && args.has("notify");
   args.assertShape(notify ? [
@@ -42268,15 +43035,6 @@ async function runSignalRead(args, inbox) {
   })}
 `);
 }
-async function writeMonitorLine(line) {
-  await new Promise((resolve2, reject) => {
-    process.stdout.write(`${line}
-`, (error) => {
-      if (error) reject(error);
-      else resolve2();
-    });
-  });
-}
 async function runInboxNotifyCommand(args) {
   if (!hasAgentCredential(args)) {
     throw new Error(
@@ -42333,7 +43091,7 @@ async function runInboxNotifyCommand(args) {
           selected.selectedWorkspace,
           cloud
         );
-        await writeMonitorLine(
+        await writeArrivalMonitorLine(
           args.has("json") ? JSON.stringify(notification) : formatArrivalNotification(notification)
         );
       },
@@ -42677,10 +43435,41 @@ function listenerHostLimits(provider) {
     }
   };
 }
-function listenerStatusJson(status, permissionMode) {
+function listenerAttendanceState(status, evidence) {
+  const routeMode = status.routeMode ?? "worker";
+  const pending = status.pendingForMainCount ?? 0;
+  const connected = status.state === "ready";
+  const attendanceState = routeMode === "worker" ? "not_required" : pending > 0 ? "unattended" : evidence.hookSurfaceAdvanced ? "attended" : "unproven";
+  const attended = attendanceState === "attended" ? true : attendanceState === "unattended" ? false : null;
+  const handled = pending > 0 ? false : routeMode === "worker" && status.lastAckAt !== null ? true : null;
+  return {
+    connected,
+    attended,
+    attendanceState,
+    handled,
+    handledState: handled === true ? "handled" : handled === false ? "not_handled" : "not_yet_measured"
+  };
+}
+function listenerAttendanceRemedy(principalId) {
+  return `cswarm hook install claude --principal-id ${principalId} --write, then start a fresh session. Or restart the listener with --route worker.`;
+}
+function listenerStatusJson(status, permissionMode, evidence = {
+  pendingForMainOldestAt: null,
+  hookSurfaceExists: false,
+  hookSurfaceAdvanced: false
+}, nowMs = Date.now()) {
   const mode3 = permissionMode ?? status.permissionMode;
+  const attendance = listenerAttendanceState(status, evidence);
+  const pending = status.pendingForMainCount ?? 0;
   return {
     ...status,
+    ...attendance,
+    hookSurfaceExists: evidence.hookSurfaceExists,
+    hookSurfaceAdvanced: evidence.hookSurfaceAdvanced,
+    pendingForMainOldestAt: evidence.pendingForMainOldestAt,
+    pendingForMainOldestAgeMs: evidence.pendingForMainOldestAt === null ? null : Math.max(0, nowMs - Date.parse(evidence.pendingForMainOldestAt)),
+    attendanceWarningCode: pending > 0 ? "listener_unattended_main_queue" : null,
+    attendanceNextStep: pending > 0 ? listenerAttendanceRemedy(status.principalId) : null,
     deliveryMode: status.deliveryMode ?? null,
     pendingDeliveryCount: status.pendingDeliveryCount ?? null,
     lastTerminalDeliveryFailureCount: status.lastTerminalDeliveryFailureCount ?? null,
@@ -42702,16 +43491,25 @@ function listenerStatusJson(status, permissionMode) {
     host_limits: listenerHostLimits(status.provider)
   };
 }
-function renderListenerStatus(status) {
+function renderListenerStatus(status, evidence = {
+  pendingForMainOldestAt: null,
+  hookSurfaceExists: false,
+  hookSurfaceAdvanced: false
+}, nowMs = Date.now()) {
   const routeMode = status.routeMode ?? "worker";
   const pendingForMainCount = status.pendingForMainCount ?? 0;
   const droppedForMainCount = status.droppedForMainCount ?? 0;
+  const unattendedCount = `${pendingForMainCount} ${pendingForMainCount === 1 ? "message is" : "messages are"} unattended`;
+  const attendance = listenerAttendanceState(status, evidence);
   const lines = [
-    `Listener ${status.state} for agent ${status.principalId}.`,
+    pendingForMainCount > 0 ? `Listener WARNING for agent ${status.principalId}: ${unattendedCount}.` : `Listener ${status.state} for agent ${status.principalId}.`,
+    `CONNECTED: ${attendance.connected ? "yes" : "no"}. Transport state is ${status.state}.`,
+    `ATTENDED: ${attendance.attendanceState === "attended" ? "yes. The session hook has surfaced messages on this host" : attendance.attendanceState === "unattended" ? "no. The main-session queue is not draining" : attendance.attendanceState === "not_required" ? "not required for the worker route" : "not yet proven on this host"}.`,
+    `HANDLED: ${attendance.handledState === "handled" ? "yes. A delivery acknowledgement is recorded" : attendance.handledState === "not_handled" ? "no. Queued messages have not reached the session hook" : "not yet measured"}.`,
     `Provider: ${status.provider}; process: ${status.pid}; started: ${status.startedAt}.`,
     status.readyAt ? `Ready since: ${status.readyAt}.` : "Not ready yet.",
-    status.lastSignalId ? `Last handled signal: ${status.lastSignalId}.` : "No signal has been handled yet.",
-    status.lastErrorCode ? `Last status code: ${status.lastErrorCode}.` : "No listener error is recorded."
+    status.lastSignalId ? pendingForMainCount > 0 ? `Last claimed and queued signal: ${status.lastSignalId}. It is not handled yet.` : routeMode === "worker" ? `Last handled signal: ${status.lastSignalId}.` : `Last listener signal: ${status.lastSignalId}. Local status does not prove its final observed receipt.` : "No signal has been handled yet.",
+    status.lastErrorCode ? `Last status code: ${status.lastErrorCode}.` : "No listener process error is recorded."
   ];
   if (status.lastErrorDetail) {
     const [first, ...rest] = status.lastErrorDetail.split("\n");
@@ -42727,7 +43525,7 @@ function renderListenerStatus(status) {
   }
   if (status.providerVersion && status.providerLastMeasuredVersion) {
     lines.push(
-      `Provider version ${status.providerVersion} is newer than the last measured version ${status.providerLastMeasuredVersion}. It is unverified but allowed because the startup permission canary passed. Next: verify this provider release with CommonSwarm and update the last-measured version.`
+      status.providerVersion === status.providerLastMeasuredVersion ? `Provider version: ${status.providerVersion} (last measured: ${status.providerLastMeasuredVersion}).` : `Provider version ${status.providerVersion} is newer than the last measured version ${status.providerLastMeasuredVersion}. It is unverified but allowed because the startup permission canary passed. Next: verify this provider release with CommonSwarm and update the last-measured version.`
     );
   }
   if (status.deliveryMode === "durable_claim") {
@@ -42755,8 +43553,14 @@ function renderListenerStatus(status) {
     }
     if (pendingForMainCount > 0) {
       lines.push(
-        status.state === "stopped" || status.state === "failed" ? `${pendingForMainCount} asks are stranded because this listener is not running. Restart it by piping the same agent credential into: ${listenerRestartCommand(status)}` : `${pendingForMainCount} asks waiting for this session; they surface at your next prompt, or run cswarm hook check.`
+        `WARNING [listener_unattended_main_queue]: ${unattendedCount}. The oldest was queued ${evidence.pendingForMainOldestAt === null ? "an unknown time" : relativeAge(evidence.pendingForMainOldestAt, nowMs)}${evidence.pendingForMainOldestAt === null ? "" : ` (queued at ${evidence.pendingForMainOldestAt})`}.`
       );
+      lines.push(`Next: ${listenerAttendanceRemedy(status.principalId)}`);
+      if (status.state === "stopped" || status.state === "failed") {
+        lines.push(
+          `${pendingForMainCount} ${pendingForMainCount === 1 ? "message is" : "messages are"} also stranded because this listener is not running. Restart it by piping the same agent credential into: ${listenerRestartCommand(status)}`
+        );
+      }
     }
   }
   if (status.lastTerminalDeliveryFailureCount !== null && status.lastTerminalDeliveryFailureCount > 0) {
@@ -42776,16 +43580,30 @@ async function unsurfacedPendingMainStats(instanceDirectory, fallback) {
     const queue = new FilePendingMainQueue(instanceDirectory);
     const pending = await queue.read();
     const stats = await queue.stats();
-    const staged = await new FileHookSurfaceStore(instanceDirectory).stage(
+    const surface = new FileHookSurfaceStore(instanceDirectory);
+    const staged = await surface.stage(
       pending,
       stats.droppedCount
     );
-    return { count: staged.unseen.length, droppedCount: stats.droppedCount };
+    const hook = await surface.evidence();
+    const oldestAt = staged.unseen.reduce((oldest, item) => oldest === null || Date.parse(item.queuedAt) < Date.parse(oldest) ? item.queuedAt : oldest, null);
+    return {
+      count: staged.unseen.length,
+      droppedCount: stats.droppedCount,
+      oldestAt,
+      hookSurfaceExists: hook.exists,
+      hookSurfaceAdvanced: hook.surfacedSignalIds.length > 0
+    };
   } catch {
-    return fallback;
+    return {
+      ...fallback,
+      oldestAt: null,
+      hookSurfaceExists: false,
+      hookSurfaceAdvanced: false
+    };
   }
 }
-function listenerFailureMessage(code, provider) {
+function listenerFailureMessage(code, provider, detail) {
   if (code === "version_below_floor") {
     if (provider === "codex") {
       return "the Codex listener requires codex-acp 1.1.9 or newer; update the bridge, then retry";
@@ -42803,6 +43621,9 @@ function listenerFailureMessage(code, provider) {
   }
   if (code === "version_refused") {
     return `the ${provider ?? "provider"} version check could not run, so startup stopped. Next: run the provider's --version command and fix that error, then retry`;
+  }
+  if (code === "executable_not_bridge" && provider === "codex") {
+    return "this is the Codex CLI; --codex-executable takes the codex-acp bridge (npm i -g @agentclientprotocol/codex-acp)";
   }
   if (code === "executable_missing" && provider === "claude") {
     return "claude-agent-acp is not installed; run npm install -g @agentclientprotocol/claude-agent-acp@latest (minimum 0.64.2), then retry";
@@ -42845,7 +43666,8 @@ function listenerFailureMessage(code, provider) {
       return "the Claude bridge did not complete the ACP permission canary; the startup canary ran, but no workspace signal prompt was delivered. Confirm Claude Code keychain/OAuth sign-in, then retry";
     }
     if (provider === "codex") {
-      return "the Codex bridge did not complete the read-only ACP permission canary; no workspace signal prompt was delivered. Confirm ChatGPT/Codex sign-in, then retry";
+      const recorded = detail?.trim();
+      return recorded ? `the Codex bridge did not complete the read-only ACP permission canary; no workspace signal prompt was delivered. Recorded reason: ${JSON.stringify(recorded)}` : "the Codex bridge did not complete the read-only ACP permission canary; no workspace signal prompt was delivered. The recorded reason was unavailable. Next: run cswarm listen status, then retry";
     }
     if (provider === "grok") {
       return "the Grok bridge did not complete the ACP permission canary; no workspace signal prompt was delivered. The local cswarm listen status output includes the final error detail; read it, then retry";
@@ -43077,6 +43899,7 @@ async function runConfiguredListener(options) {
       workspaceId: options.workspaceId,
       principalId: options.principalId,
       provider: options.provider,
+      cswarmVersion: CLI_BUILD_VERSION,
       permissionMode: options.permissionMode,
       routeMode,
       deferOverChars,
@@ -43159,6 +43982,7 @@ async function runListenStart(args) {
     "turn-budget",
     "route",
     "defer-over",
+    "allow-unattended",
     "foreground",
     "json"
   ], 2);
@@ -43197,6 +44021,9 @@ async function runListenStart(args) {
     throw new Error(
       `a listener is already ${existing.state} for agent ${principalId}`
     );
+  }
+  if (routing.routeMode !== "worker" && !args.has("allow-unattended") && !await listenerHasAttendanceSurface(paths.instanceDirectory, cwd, principalId)) {
+    throw new ListenerUnattendedRefusedError(principalId);
   }
   let status;
   if (args.has("foreground")) {
@@ -43282,16 +44109,27 @@ async function runListenStart(args) {
       });
     } catch (error) {
       if (error instanceof ListenerStartupError) {
-        throw new Error(listenerFailureMessage(error.code, provider));
+        const failedStatus = await effectiveListenerStatus(paths).catch(() => null);
+        const detail = failedStatus?.lastErrorCode === error.code ? failedStatus.lastErrorDetail : null;
+        throw new Error(listenerFailureMessage(error.code, provider, detail));
       }
       throw error;
     }
   }
   if (status.state === "failed") {
     throw new Error(
-      listenerFailureMessage(status.lastErrorCode ?? "unknown_error", provider)
+      listenerFailureMessage(
+        status.lastErrorCode ?? "unknown_error",
+        provider,
+        status.lastErrorDetail
+      )
     );
   }
+  let attendanceEvidence = {
+    pendingForMainOldestAt: null,
+    hookSurfaceExists: false,
+    hookSurfaceAdvanced: false
+  };
   if ((status.routeMode ?? "worker") !== "worker") {
     const recordedPending = status.pendingForMainCount ?? 0;
     const recordedDropped = status.droppedForMainCount ?? 0;
@@ -43304,9 +44142,14 @@ async function runListenStart(args) {
       pendingForMainCount: queueStats.count,
       droppedForMainCount: queueStats.droppedCount
     };
+    attendanceEvidence = {
+      pendingForMainOldestAt: queueStats.oldestAt,
+      hookSurfaceExists: queueStats.hookSurfaceExists,
+      hookSurfaceAdvanced: queueStats.hookSurfaceAdvanced
+    };
   }
   if (args.has("json")) {
-    printJson(listenerStatusJson(status, permissionMode));
+    printJson(listenerStatusJson(status, permissionMode, attendanceEvidence));
     return;
   }
   const routingNote = routing.routeMode === "main" ? "Directed asks are queued for your interactive session and never prompt the ACP worker. Run cswarm hook check to surface them.\n" : routing.routeMode === "split" ? `Directed asks over ${routing.deferOverChars} characters are queued for your interactive session; shorter asks use the worker. Run cswarm hook check to surface queued asks.
@@ -43318,8 +44161,8 @@ async function runListenStart(args) {
 ` : `The Grok worker uses your selected cwd and local Grok configuration, including user and cmux hooks. ${workerAudience}
 `;
   process.stdout.write(
-    `${args.has("foreground") ? "Listener stopped." : "Listener is ready and will keep receiving after this command exits."}
-${renderListenerStatus(status)}
+    `${args.has("foreground") ? "Listener stopped." : (status.pendingForMainCount ?? 0) > 0 ? "Listener transport is connected, but queued messages are unattended." : "Listener is ready and will keep receiving after this command exits."}
+${renderListenerStatus(status, attendanceEvidence)}
 Same-owner tool requests are ${permissionMode === "allow" ? "approved one at a time, when the worker asks and the host offers a one-time approval" : "denied. This worker can reply to messages but cannot do anything it must ask permission for; restart with --permissions allow if that is not what you want"}. The same permission mode applies to every sender relation.
 The short credential rotates while this process remains alive and secure local state is available. Run cswarm whoami with this credential to see whether its grant is timeboxed or standing.
 ` + routingNote + hostNote + `Use listen status/stop with the same agent credential, --workspace-id ${workspaceId2}, and the same Cloud target. --principal-id ${principalId} remains available when no credential is supplied.
@@ -43438,6 +44281,11 @@ async function runListenStatusOrStop(args, command2) {
     }
     return;
   }
+  let attendanceEvidence = {
+    pendingForMainOldestAt: null,
+    hookSurfaceExists: false,
+    hookSurfaceAdvanced: false
+  };
   if ((status.routeMode ?? "worker") !== "worker") {
     const recordedPending = status.pendingForMainCount ?? 0;
     const recordedDropped = status.droppedForMainCount ?? 0;
@@ -43450,13 +44298,75 @@ async function runListenStatusOrStop(args, command2) {
       pendingForMainCount: queueStats.count,
       droppedForMainCount: queueStats.droppedCount
     };
+    attendanceEvidence = {
+      pendingForMainOldestAt: queueStats.oldestAt,
+      hookSurfaceExists: queueStats.hookSurfaceExists,
+      hookSurfaceAdvanced: queueStats.hookSurfaceAdvanced
+    };
   }
   if (args.has("json")) {
-    printJson(listenerStatusJson(status));
+    printJson(listenerStatusJson(status, void 0, attendanceEvidence));
   } else {
-    process.stdout.write(`${renderListenerStatus(status)}
+    process.stdout.write(`${renderListenerStatus(status, attendanceEvidence)}
 `);
   }
+}
+async function runListenCanary(args) {
+  args.assertShape([
+    ...TARGET_FLAGS,
+    ...CREDENTIAL_FLAGS,
+    "workspace-id",
+    "state-dir",
+    "wait",
+    "json"
+  ], 2);
+  if (!hasAgentCredential(args)) {
+    throw new Error(
+      "listen canary requires --agent-token-file or --agent-token-stdin; credentials are never accepted on argv"
+    );
+  }
+  const cloud = await target(args);
+  const workspaceId2 = listenerUuid(
+    args.optional("workspace-id") ?? process.env.SWARM_CLOUD_WORKSPACE_ID,
+    "workspace-id"
+  );
+  const agent = await agentCredential(args);
+  if (agent.principalId === null) {
+    throw new Error(
+      "listen canary needs the complete JSON agent credential so it can address the agent and select its listener state"
+    );
+  }
+  const principalId = listenerUuid(agent.principalId, "principal-id");
+  const stateDirectory2 = listenerStateDirectory(args);
+  const paths = listenerPaths({
+    profileId: cloud.profileId,
+    workspaceId: workspaceId2,
+    principalId,
+    ...stateDirectory2 ? { stateDirectory: stateDirectory2 } : {}
+  });
+  const waitMs = parseWaitSeconds(args.optional("wait") ?? "10") * 1e3;
+  const result = await runListenerAttendanceCanary({
+    target: cloud,
+    workspaceId: workspaceId2,
+    principalId,
+    paths,
+    waitMs,
+    // Canary must remain read-only apart from its one self-note. It therefore
+    // uses the presented token and never enters the renewal/mint path.
+    credential: async () => agent.token
+  });
+  if (args.has("json")) {
+    printJson({
+      workspaceId: workspaceId2,
+      principalId,
+      ...result
+    });
+    return;
+  }
+  process.stdout.write(
+    `${renderListenerAttendanceCanary(result, workspaceId2, principalId)}
+`
+  );
 }
 async function runListen(args) {
   const command2 = args.positionals[1];
@@ -43468,7 +44378,11 @@ async function runListen(args) {
     await runListenStatusOrStop(args, command2);
     return;
   }
-  throw new UsageError("listen requires start, status, or stop");
+  if (command2 === "canary") {
+    await runListenCanary(args);
+    return;
+  }
+  throw new UsageError("listen requires start, status, stop, or canary");
 }
 var CLAUDE_HOOK_COMMAND = "cswarm hook check";
 function scopedClaudeHookCommand(principalId) {
@@ -43476,6 +44390,46 @@ function scopedClaudeHookCommand(principalId) {
 }
 function isCommonSwarmClaudeHook(value) {
   return typeof value === "string" && (value === CLAUDE_HOOK_COMMAND || /^cswarm hook check --principal-id [0-9a-f-]{36}$/.test(value));
+}
+var ListenerUnattendedRefusedError = class extends Error {
+  code = "listen_unattended_refused";
+  constructor(principalId) {
+    super(
+      `listen_unattended_refused: --route main and --route split need an attendance surface for agent ${principalId}. Next: cswarm hook install claude --principal-id ${principalId} --write, then start a fresh session. Or use --route worker. Use --allow-unattended only when you accept a queue that may not wake a session.`
+    );
+    this.name = "ListenerUnattendedRefusedError";
+  }
+};
+function settingsHaveScopedClaudeHook(settings, principalId) {
+  if (!settings.hooks || typeof settings.hooks !== "object" || Array.isArray(settings.hooks)) {
+    return false;
+  }
+  const promptHooks = settings.hooks.UserPromptSubmit;
+  if (!Array.isArray(promptHooks)) return false;
+  const expected = scopedClaudeHookCommand(principalId);
+  return promptHooks.some((group) => {
+    if (!group || typeof group !== "object" || Array.isArray(group)) return false;
+    const hooks = group.hooks;
+    return Array.isArray(hooks) && hooks.some(
+      (hook) => hook !== null && typeof hook === "object" && !Array.isArray(hook) && hook.type === "command" && hook.command === expected
+    );
+  });
+}
+async function listenerHasAttendanceSurface(instanceDirectory, cwd, principalId) {
+  const surface = await new FileHookSurfaceStore(instanceDirectory).evidence();
+  if (surface.exists) return true;
+  const repositoryRoot = gitRepositoryRoot(cwd) ?? cwd;
+  const settingsPaths = /* @__PURE__ */ new Set([
+    (0, import_node_path21.join)(repositoryRoot, CLAUDE_PROJECT_SETTINGS_IGNORE_LINE),
+    (0, import_node_path21.join)(repositoryRoot, CLAUDE_REPO_SETTINGS_IGNORE_LINE),
+    userClaudeSettingsTarget().path
+  ]);
+  for (const path of settingsPaths) {
+    if (settingsHaveScopedClaudeHook(readClaudeSettings(path), principalId)) {
+      return true;
+    }
+  }
+  return false;
 }
 function claudeUserPromptHookSnippet(principalId) {
   return {
@@ -43495,7 +44449,9 @@ function claudeUserPromptHookSnippet(principalId) {
 }
 var CLAUDE_PROJECT_SETTINGS_IGNORE_LINE = ".claude/settings.local.json";
 var CLAUDE_REPO_SETTINGS_IGNORE_LINE = ".claude/settings.json";
-var CLAUDE_USER_SCOPE_WARNING = "Warning: --user scope affects EVERY Claude Code session for this OS user and is wrong on a shared host.";
+function claudeUserScopeWarning(settingsPath) {
+  return `Warning: --user scope writes settings to ${(0, import_node_path21.dirname)(settingsPath)} and applies to every Claude Code session that reads that directory.`;
+}
 function userClaudeSettingsTarget() {
   const configured = process.env.CLAUDE_CONFIG_DIR;
   const directory = configured && configured.length > 0 ? (0, import_node_path21.resolve)(configured) : (0, import_node_path21.join)((0, import_node_os10.homedir)(), ".claude");
@@ -43506,7 +44462,7 @@ function userClaudeSettingsTarget() {
   };
 }
 function gitRepositoryRoot(cwd) {
-  const result = (0, import_node_child_process8.spawnSync)(
+  const result = (0, import_node_child_process9.spawnSync)(
     "git",
     ["-C", cwd, "rev-parse", "--show-toplevel"],
     { encoding: "utf8", stdio: ["ignore", "pipe", "ignore"] }
@@ -43526,12 +44482,12 @@ function projectClaudeSettingsTarget(scope, ignoreLine) {
   const base = root ?? process.cwd();
   const path = (0, import_node_path21.join)(base, ignoreLine);
   if (root === null) return { path, scope, projectRoot: base };
-  const tracked = (0, import_node_child_process8.spawnSync)(
+  const tracked = (0, import_node_child_process9.spawnSync)(
     "git",
     ["-C", root, "ls-files", "--error-unmatch", "--", ignoreLine],
     { encoding: "utf8", stdio: ["ignore", "ignore", "ignore"] }
   );
-  const ignored = (0, import_node_child_process8.spawnSync)(
+  const ignored = (0, import_node_child_process9.spawnSync)(
     "git",
     ["-C", root, "check-ignore", "--quiet", "--", ignoreLine],
     { encoding: "utf8", stdio: ["ignore", "ignore", "ignore"] }
@@ -43713,7 +44669,7 @@ async function runHook(args) {
   const settings = readClaudeSettings(path);
   const updated = command2 === "install" ? installClaudeHook(settings, principalId) : uninstallClaudeHook(settings);
   if (target2.scope === "user") {
-    process.stdout.write(`${CLAUDE_USER_SCOPE_WARNING}
+    process.stdout.write(`${claudeUserScopeWarning(path)}
 `);
   }
   (0, import_node_fs7.mkdirSync)((0, import_node_path21.dirname)(path), { recursive: true });
@@ -44280,7 +45236,7 @@ async function runSeed(args) {
   if (!tokenOut || !(0, import_node_path21.isAbsolute)(tokenOut)) {
     throw new Error("SEED_TOKEN_OUT must be an absolute path");
   }
-  const tokenFile = await (0, import_promises11.open)(tokenOut, "wx", 384).catch((error) => {
+  const tokenFile = await (0, import_promises12.open)(tokenOut, "wx", 384).catch((error) => {
     if (error.code === "EEXIST") {
       throw new Error("SEED_TOKEN_OUT already exists; refusing to overwrite it");
     }
@@ -44319,7 +45275,7 @@ async function runSeed(args) {
       tokenWritten = true;
     }
     await tokenFile.close();
-    if (!tokenWritten) await (0, import_promises11.unlink)(tokenOut);
+    if (!tokenWritten) await (0, import_promises12.unlink)(tokenOut);
     process.stdout.write(`${JSON.stringify({
       userId: result.userId,
       membershipRole: result.membershipRole,
@@ -44332,7 +45288,7 @@ async function runSeed(args) {
 `);
   } catch (error) {
     await tokenFile.close().catch(() => void 0);
-    if (!tokenWritten) await (0, import_promises11.unlink)(tokenOut).catch(() => void 0);
+    if (!tokenWritten) await (0, import_promises12.unlink)(tokenOut).catch(() => void 0);
     throw error;
   }
 }
@@ -44433,6 +45389,10 @@ async function main() {
     await runWhoami(args);
     return;
   }
+  if (verb === "resume") {
+    await runResume(args);
+    return;
+  }
   if (verb === "feedback") {
     await runFeedback(args);
     return;
@@ -44518,6 +45478,7 @@ function markRestartable(error) {
   return error;
 }
 function exitCodeFor(error) {
+  if (error instanceof NotifyStdoutClosedError) return EXIT_NOTIFY_ORPHANED;
   return error instanceof Error ? restartableExit.get(error) ?? 1 : 1;
 }
 function safeParagraph(message) {
@@ -44574,6 +45535,7 @@ ${usage()}
 // Annotate the CommonJS export names for ESM import in node:
 0 && (module.exports = {
   EXIT_RESTARTABLE,
+  ListenerUnattendedRefusedError,
   TURN_BUDGET_CREDENTIAL_MARGIN_MS,
   clampTurnBudgetToCredential,
   claudeUserPromptHookSnippet,
