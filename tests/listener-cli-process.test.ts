@@ -14,6 +14,7 @@ import { createServer, type IncomingHttpHeaders, type Server } from "node:http";
 import { tmpdir } from "node:os";
 import { join, resolve } from "node:path";
 import test from "node:test";
+import { gzipSync } from "node:zlib";
 import { cloudTarget } from "../src/cloud/config.js";
 import { DeliveryCommandClient } from "../src/cloud/delivery.js";
 import { ListenerHttpClient } from "../src/listener/http-client.js";
@@ -449,6 +450,38 @@ test("closed listener HTTP client rejects new work", async () => {
   );
 });
 
+test("listener HTTP client keeps fetch response decoding semantics", async () => {
+  let acceptEncoding = "";
+  const compressed = gzipSync('{"decoded":true}');
+  const server = createServer(async (request, response) => {
+    acceptEncoding = String(request.headers["accept-encoding"] ?? "");
+    for await (const _chunk of request) {
+      // Drain the request before replying, as the Cloud endpoint does.
+    }
+    response.writeHead(200, {
+      "content-encoding": "gzip",
+      "content-length": compressed.byteLength,
+      "content-type": "application/json",
+    });
+    response.end(compressed);
+  });
+  await new Promise<void>((resolveListen) => server.listen(0, "127.0.0.1", resolveListen));
+  const address = server.address();
+  assert.ok(address && typeof address === "object");
+  const httpClient = new ListenerHttpClient({ idleTimeoutMs: 1_000 });
+
+  try {
+    const response = await httpClient.fetch(`http://127.0.0.1:${address.port}/compressed`);
+    assert.deepEqual(await response.json(), { decoded: true });
+    assert.equal(acceptEncoding, "gzip, deflate");
+    assert.equal(response.headers.get("content-encoding"), "gzip");
+    assert.equal(response.headers.get("content-length"), String(compressed.byteLength));
+  } finally {
+    httpClient.close();
+    await closeTestServer(server);
+  }
+});
+
 test("listener HTTP client closes an idle socket and opens one replacement", async () => {
   let requests = 0;
   let connections = 0;
@@ -484,12 +517,13 @@ test("listener HTTP client closes an idle socket and opens one replacement", asy
     assert.equal(connections, 1);
     await waitFor(() => closedConnections === 1, 2_000);
     await claimEmptyInbox(client, ids, 1);
-    assert.equal(requests, 2);
+    await claimEmptyInbox(client, ids, 2);
+    assert.equal(requests, 3);
     assert.equal(connections, 2);
     assert.deepEqual(httpClient.metrics(), {
-      requests: 2,
+      requests: 3,
       connectionsOpened: 2,
-      connectionReuseRatio: 1,
+      connectionReuseRatio: 1.5,
     });
   } finally {
     httpClient.close();

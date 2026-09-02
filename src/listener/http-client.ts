@@ -9,6 +9,11 @@ import {
   request as httpsRequest,
 } from "node:https";
 import type { Socket } from "node:net";
+import {
+  brotliDecompressSync,
+  gunzipSync,
+  inflateSync,
+} from "node:zlib";
 
 /** A stopped listener leaves no idle Cloud socket past this fixed bound. */
 export const LISTENER_HTTP_IDLE_TIMEOUT_MS = 60_000;
@@ -33,6 +38,23 @@ function responseHeaders(message: IncomingMessage): Headers {
     if (name !== undefined && value !== undefined) headers.append(name, value);
   }
   return headers;
+}
+
+function decodeResponseBody(bytes: Buffer, headers: Headers): ArrayBuffer {
+  const codings = (headers.get("content-encoding") ?? "")
+    .split(",")
+    .map((coding) => coding.trim().toLowerCase())
+    .filter((coding) => coding !== "" && coding !== "identity");
+  if (!codings.every((coding) => ["br", "deflate", "gzip", "x-gzip"].includes(coding))) {
+    return Uint8Array.from(bytes).buffer;
+  }
+  let decoded = bytes;
+  for (const coding of codings.reverse()) {
+    if (coding === "br") decoded = brotliDecompressSync(decoded);
+    else if (coding === "deflate") decoded = inflateSync(decoded);
+    else decoded = gunzipSync(decoded);
+  }
+  return Uint8Array.from(decoded).buffer;
 }
 
 /**
@@ -215,7 +237,7 @@ export class ListenerHttpClient {
       throw new TypeError("listener HTTP client accepts only http and https URLs");
     }
     const headers = Object.fromEntries(options.headers.entries());
-    if (!("accept-encoding" in headers)) headers["accept-encoding"] = "identity";
+    if (!("accept-encoding" in headers)) headers["accept-encoding"] = "gzip, deflate";
     if (
       options.body !== null &&
       !("content-length" in headers) &&
@@ -275,14 +297,15 @@ export class ListenerHttpClient {
           finish();
           const status = message.statusCode ?? 0;
           const bytes = Buffer.concat(chunks);
+          const webHeaders = responseHeaders(message);
           const responseBody = status === 204 || status === 205 || status === 304
             ? null
-            : bytes;
+            : decodeResponseBody(bytes, webHeaders);
           try {
             const response = new Response(responseBody, {
               status,
               statusText: message.statusMessage,
-              headers: responseHeaders(message),
+              headers: webHeaders,
             });
             Object.defineProperties(response, {
               redirected: { value: options.redirected },
