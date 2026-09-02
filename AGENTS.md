@@ -137,6 +137,26 @@ LIVE versus merely written; the next file, line, or command; what is deliberatel
 NOT established; and corrections to published claims, including the retired wording when readers may
 still meet it. Record operator-relevant facts in a durable artifact as you learn them, not only in chat.
 
+## Sprint hygiene: every lane leaves nothing behind
+
+Measured 2026-09-02: `git worktree list` had 46 entries and 45 local branches before a cleanup lane pruned
+them; the operator ruled that this is part of every sprint, not a chore for later. The lead runs it; a Codex
+lane does the work.
+
+1. **One worktree per lane, under the session scratchpad**, branch `lane/<name>`, `node_modules` symlinked
+   from the main checkout. Never a checkout of the shared tree. Arms get their own detached worktree each.
+2. **Merge, then delete.** When a lane's commits are on `main` (or on a `release/<v>` branch that reaches
+   `main`), remove its worktree at once and delete the branch as soon as `git cherry main <branch>` shows
+   zero `+` lines. A branch that still shows `+` lines is the only copy of something: keep it and say why in
+   the ledger.
+3. **A release ends on one branch.** Before writing "released", `git worktree list` shows the main checkout
+   only and `git branch` shows `main` only. Dirty worktrees that are not yours: save `git diff` to
+   `docs/evidence/<date>-cleanup/<branch>.patch`, then remove.
+4. **Cleanup is a lane** (`scripts/branch-audit.sh` first, then `git worktree prune`, `worktree remove`,
+   `branch -d`), with a protected list of live lanes and a report of every removal and every keep.
+5. **Kill your processes.** No `codex exec`, arm, or test runner of yours survives the sprint; `pgrep -f
+   <your scratchpad id>` must be empty before you report done.
+
 ## Verification
 
 Read `docs/org/2026-07-26-simplification-state.md` before a nontrivial change.
