@@ -254,7 +254,7 @@ reachability by server-controlled text. Server text can only ever appear
 | `signals.ts:488-491` malformed | safe — different prefix, exact equalities |
 | `signals.ts` `isFollowCredentialFailure` | **fixed** — see below |
 | `engine.ts:238` prompt retryability | not reachable today; see gap |
-| `claude-model.ts` canary diagnosis | **bounded exception:** typed `timeout` selects timeout; ACP collapses version/auth API failures to shared `rpc_error`, so two narrow provider-boundary prose shapes assign stable local reason codes; no retry decision reads the prose |
+| `claude-model.ts` canary diagnosis | **bounded exception:** typed `timeout` selects timeout; Claude auth prefers retained ACP code/data, then two narrow provider-boundary prose shapes assign stable local reason codes when the bridge omits data; no retry decision reads the prose |
 | `delivery-journal.ts`, `storage.ts` | safe — local storage errors |
 | `command-client.ts:974`, `host/transport.ts:311` | display only, not classification |
 
@@ -278,22 +278,52 @@ only by locally-thrown errors that never crossed the network.
 
 ### 2026-09-01 Claude canary addendum
 
-The Claude bridge's ACP error does not expose a usable typed distinction to the
-listener. `AcpTransport.handleResponse` maps both the API's model-version refusal
-and auth failure to our stable but shared `rpc_error`; it discards the peer's
-numeric code and does not retain `error.data`. The canary timeout is different:
-it reaches the model as our typed `timeout` code and is classified on that code.
+~~The Claude bridge's ACP error does not expose a usable typed distinction to
+the listener. `AcpTransport.handleResponse` maps both the API's model-version
+refusal and auth failure to our stable but shared `rpc_error`; it discards the
+peer's numeric code and does not retain `error.data`.~~
 
-For the two `rpc_error` cases, `claude-model.ts` is the single provider boundary
-that reads prose. The version match is the complete, narrow API sentence
-`Claude Code X does not support this model; version Y or newer is required` and
-records Y. The auth match accepts only direct authentication/OAuth/keychain
-failure phrases. Each becomes a stable local reason code before supervisor,
-status, or CLI rendering sees it. Unknown text stays
-`claude_canary_unknown`; it cannot select an auth or update remedy. These codes
-explain an already-failed canary. They do not decide retry, cancellation,
-credentials, or any other state transition, so the D-053 control boundary stays
-closed.
+**Correction, 2026-09-02:** the first sentence confused what CommonSwarm kept
+with what the bridge sent. The installed `claude-agent-acp` 0.73.0 source calls
+`RequestError.internalError({ errorKind })` for categorical Claude SDK errors.
+For the measured expired OAuth failure, the stable field is
+`error.data.errorKind = "authentication_failed"` under JSON-RPC code `-32603`.
+The same bridge uses ACP's `-32000` `authRequired` error on its direct login
+path. CommonSwarm's transport discarded both fields. It now retains the peer
+code/data through the permission canary. `claude-model.ts` consumes them at the
+Claude provider boundary and assigns `claude_canary_auth_failed` before status
+or CLI rendering.
+
+The typed field is preferred. Narrow prose fallbacks remain because a bridge
+path or older bridge can omit `data`. The additions for this measured family
+are `Failed to authenticate`, `OAuth session expired`, and `OAuth session could
+not be refreshed`; earlier direct auth phrases remain. The last new phrase is
+not matched without the `OAuth session` subject. The version match remains the
+complete API sentence `Claude Code X does not support this model; version Y or
+newer is required` and records Y. The canary timeout still reaches the model as
+CommonSwarm's typed `timeout` code.
+
+Unknown text stays `claude_canary_unknown`; it cannot select an auth or update
+remedy. These codes explain an already-failed canary. They do not decide retry,
+cancellation, credentials, or any other state transition, so the D-053 control
+boundary stays closed.
+
+#### Other-provider auth sweep, 2026-09-02
+
+This sweep asks whether an expired-login **text** has a justified stable mapping.
+“Not applicable” below means there is no measured/provider-contract prose family
+that CommonSwarm can safely recognize. It does not claim that credentials cannot
+expire.
+
+| provider | evidence | result |
+|---|---|---|
+| Grok 1.0.13 | The installed npm package is a thin launcher for a native binary. Its published README says first launch opens browser auth. CommonSwarm validates only the existence, ownership, mode, size, and JSON shape of `~/.grok/auth.json`; none proves freshness. No expired-login ACP text or typed data shape is available in the package or repo. | **NOT applicable to a prose fix:** no phrase contract exists. Adding a guessed regex would violate D-053. Expired-session classification was not established. |
+| `codex-acp` 1.8.0 | Installed bridge source classifies `unauthorized` and HTTP 401 as `auth_required`. It uses ACP `RequestError.authRequired` when auth is absent, and carries `codexErrorInfo` in `error.data` on configured-session internal errors. | **NOT applicable to a prose fix:** the bridge has typed code/data. CommonSwarm now retains it, but this lane does not assign Codex-specific `codexErrorInfo` shapes because no expired-session sample established which one is emitted. |
+| OpenCode 1.18.21 | The installed program is a native binary. CommonSwarm validates and copies OpenCode's multi-provider `auth.json`; the repository and binary expose no reviewable expired-login ACP text contract. | **NOT applicable to a prose fix:** no single safe phrase or single shared host session exists. Expired-provider classification was not established. |
+
+The sweep therefore adds no Grok, Codex, or OpenCode prose recognizer. The ACP
+peer metadata transport is provider-neutral, so a later provider boundary can
+use a measured typed field without another transport change.
 
 ## Gates
 

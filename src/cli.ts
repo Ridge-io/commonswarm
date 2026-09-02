@@ -4976,7 +4976,7 @@ export function listenerFailureMessage(
         return `${ran}. ${response}. Next: run claude -p and check for session-limit text, check host load, then retry`;
       }
       if (shape.code === "claude_canary_auth_failed") {
-        return `${ran}. ${response}. Next: confirm Claude Code keychain/OAuth sign-in, then retry`;
+        return `${ran}. ${response}. Next: as the operator, run claude interactively (or run claude login) to refresh the host's shared Claude Code OAuth session, then run cswarm listen start again. Every Claude-provider listener on this host shares that session`;
       }
       return `${ran}. ${response}. The cause was not determined. Next: inspect the quoted bridge response and local worker stderr, then retry only after the cause is known or the failure appears transient`;
     }

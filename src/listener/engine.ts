@@ -269,10 +269,11 @@ function abortError(): Error {
  * D-051 sweep: this used to fall back to
  * `/timeout|temporar|transport|child exit|connection/i` over `error.message`.
  * A provider's own refusal text reaches here verbatim — transport.ts wraps a
- * peer RPC error as `AcpProtocolError(peerMessage, "rpc_error")` — so a
- * permanent refusal worded with any of those keywords bought another model
- * prompt, duplicating provider work and cost on something that can never
- * succeed. The peer does not get a vote on our retry policy.
+ * peer RPC error as `AcpProtocolError(peerMessage, "rpc_error", peerError)` —
+ * so a permanent refusal worded with any of those keywords bought another
+ * model prompt, duplicating provider work and cost on something that can never
+ * succeed. Retained peer fields are for provider diagnosis; the peer does not
+ * get a vote on our retry policy.
  *
  * Classification is now by type, or by a code we assigned ourselves. A message
  * is for humans; it is never a branch.

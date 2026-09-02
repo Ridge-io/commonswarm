@@ -359,12 +359,25 @@ export class AcpTransport extends EventEmitter {
     clearTimeout(pending.timer);
     this.pending.delete(key);
     if ("error" in rec && rec.error !== undefined) {
-      const errObj = rec.error as { message?: unknown; code?: unknown } | null;
+      const errObj = rec.error as {
+        message?: unknown;
+        code?: unknown;
+        data?: unknown;
+      } | null;
       const message =
         errObj && typeof errObj.message === "string"
           ? errObj.message
           : `RPC error for ${pending.method}`;
-      pending.reject(new AcpProtocolError(message, "rpc_error"));
+      const peerError = errObj && typeof errObj.code === "number" &&
+          Number.isInteger(errObj.code)
+        ? {
+          code: errObj.code,
+          ...(Object.prototype.hasOwnProperty.call(errObj, "data")
+            ? { data: errObj.data }
+            : {}),
+        }
+        : null;
+      pending.reject(new AcpProtocolError(message, "rpc_error", peerError));
       return;
     }
     pending.resolve(rec.result);

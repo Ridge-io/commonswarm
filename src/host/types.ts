@@ -134,8 +134,18 @@ export class AcpHostError extends Error {
   }
 }
 
+/** Structured JSON-RPC error fields supplied by the ACP peer. */
+export type AcpPeerError = {
+  code: number;
+  data?: unknown;
+};
+
 export class AcpProtocolError extends AcpHostError {
-  constructor(message: string, code = "protocol_error") {
+  constructor(
+    message: string,
+    code = "protocol_error",
+    readonly peerError: AcpPeerError | null = null,
+  ) {
     super(code, message);
     this.name = "AcpProtocolError";
   }
@@ -211,6 +221,8 @@ export class AcpPermissionCanaryError extends AcpHostError {
     readonly reasonCode: string | null = null,
     /** Provider version floor learned from this exact failed request, when present. */
     readonly minimumRequiredVersion: string | null = null,
+    /** Peer fields retained only for provider-boundary classification. */
+    readonly peerError: AcpPeerError | null = null,
   ) {
     super("permission_canary_failed", message);
     this.name = "AcpPermissionCanaryError";
