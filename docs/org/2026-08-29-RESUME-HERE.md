@@ -894,3 +894,9 @@ Lesson for the ritual: a lane whose claim is about a RUNNING listener must inclu
 - `git worktree list` is now: main, `wt-l41-p3-followups`, `wt-l42-live-bridge-measurement`, `.claude/worktrees/codex-seo`. Branches: `main`, `codex-seo`, `lane/l41-*`, `lane/l42-*`.
 - `codex-seo` is STARTED, never-landed work (11 uncommitted site files: SEO page program from `docs/marketing/2026-08-22-SEO-KEYWORD-RESEARCH.md`). Lane **L43** (in that worktree) checkpoints it, rebases on main, makes every claim true, runs the site gates, commits on `codex-seo`. It then needs two arms (copy claims) and a site deploy.
 - Open lanes: L41 (Grok P3s of 0.1.46: dashboard "Not instrumented" overclaim, stale elapsed clamp, mixed-binary doc), L42 (bridge measurement on the live detached path, mandatory live control), L43 (SEO pages). Each lands on main via its own two arms; L42 + L41 ship as 0.1.47; L43 ships with a site deploy.
+
+### Addendum 2026-09-02 ~07:50Z — 0.1.47 candidate `6cdec9c`
+
+- `release/0.1.47` = v0.1.46 + L42 `a2a8831` (detached bridge measurement persisted; `--state-dir` socket isolation; live control passed) + L41 `430b40c` (activity publish failures in status; honest dashboard copy; stale clamp; mixed-binary docs) + `codex-seo` `4ff6e59` (four SEO pages, L43 + L44 copy fix) → **`6cdec9c`**. build + check:tests green; gates (pure, cli, edge, site, db:reset + p1-local) and both arms running. supabase/ unchanged since 0.1.46, so no production step precedes the client.
+- L43's arms on `2bb2896`: Gemini PASS; Grok PASS with P2 (over-strong "does not run agents") → L44 fixed the three sentences; both arms rerun as part of the 0.1.47 pair.
+- Worktrees now: main, `wt-release-047`, `wt-arm-grok-047`, `wt-arm-gemini-047`, `.claude/worktrees/codex-seo` (branch kept until main absorbs it). Branches: main, codex-seo, lane/l41-*, lane/l42-*, release/0.1.47.
