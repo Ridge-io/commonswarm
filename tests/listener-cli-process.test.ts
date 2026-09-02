@@ -263,6 +263,58 @@ test("listener HTTP client honors Connection close without a retry storm", async
   }
 });
 
+test("listener HTTP client preserves fetch redirect semantics on one connection", async () => {
+  let requests = 0;
+  let connections = 0;
+  const authHeaders: string[] = [];
+  const requestBodies: string[] = [];
+  const server = createServer(async (request, response) => {
+    let body = "";
+    for await (const chunk of request) body += chunk.toString();
+    requests += 1;
+    authHeaders.push(String(request.headers.authorization ?? ""));
+    requestBodies.push(body);
+    if (request.url === "/functions/v1/command") {
+      response.writeHead(307, { "location": "/redirected-command" });
+      response.end();
+      return;
+    }
+    response.writeHead(200, { "content-type": "application/json" });
+    response.end(successfulEmptyClaimResponse());
+  });
+  server.on("connection", () => {
+    connections += 1;
+  });
+  await new Promise<void>((resolveListen) => server.listen(0, "127.0.0.1", resolveListen));
+  const address = server.address();
+  assert.ok(address && typeof address === "object");
+  const target = cloudTarget(`http://127.0.0.1:${address.port}`, "public-anon");
+  const httpClient = new ListenerHttpClient({ idleTimeoutMs: 1_000 });
+
+  try {
+    await claimEmptyInbox(new DeliveryCommandClient(target, httpClient.fetch), {
+      workspaceId: randomUUID(),
+      principalId: randomUUID(),
+      listenerInstanceId: randomUUID(),
+    }, 0);
+    assert.equal(requests, 2);
+    assert.equal(connections, 1);
+    assert.deepEqual(authHeaders, [
+      `Bearer swm_agt_${"K".repeat(43)}`,
+      `Bearer swm_agt_${"K".repeat(43)}`,
+    ]);
+    assert.equal(requestBodies[1], requestBodies[0]);
+    assert.deepEqual(httpClient.metrics(), {
+      requests: 2,
+      connectionsOpened: 1,
+      connectionReuseRatio: 2,
+    });
+  } finally {
+    httpClient.close();
+    await closeTestServer(server);
+  }
+});
+
 test("listener HTTP client closes an idle socket and opens one replacement", async () => {
   let requests = 0;
   let connections = 0;

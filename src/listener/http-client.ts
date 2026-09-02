@@ -51,14 +51,12 @@ export class ListenerHttpClient {
     keepAlive: true,
     maxSockets: 1,
     maxFreeSockets: 1,
-    maxTotalSockets: 1,
     scheduling: "fifo",
   });
   private readonly httpsAgent = new HttpsAgent({
     keepAlive: true,
     maxSockets: 1,
     maxFreeSockets: 1,
-    maxTotalSockets: 1,
     scheduling: "fifo",
   });
   private readonly idleTimeoutMs: number;
@@ -142,21 +140,87 @@ export class ListenerHttpClient {
     init?: RequestInit,
   ): Promise<Response> {
     const webRequest = new Request(input, init);
-    const url = new URL(webRequest.url);
-    if (url.protocol !== "http:" && url.protocol !== "https:") {
-      throw new TypeError("listener HTTP client accepts only http and https URLs");
-    }
     const body = webRequest.method === "GET" || webRequest.method === "HEAD"
       ? null
       : Buffer.from(await webRequest.arrayBuffer());
-    const headers = Object.fromEntries(webRequest.headers.entries());
+    let url = new URL(webRequest.url);
+    let method = webRequest.method;
+    let headers = new Headers(webRequest.headers);
+    let redirected = false;
+    for (let redirects = 0; ; redirects += 1) {
+      const response = await this.sendOnce({
+        url,
+        method,
+        headers,
+        body: method === "GET" || method === "HEAD" ? null : body,
+        signal: webRequest.signal,
+        redirected,
+      });
+      const location = response.headers.get("location");
+      if (
+        location === null ||
+        ![301, 302, 303, 307, 308].includes(response.status) ||
+        webRequest.redirect === "manual"
+      ) {
+        return response;
+      }
+      if (webRequest.redirect === "error" || redirects >= 20) {
+        throw new TypeError("fetch failed while following a redirect");
+      }
+      const nextUrl = new URL(location, url);
+      if (nextUrl.protocol !== "http:" && nextUrl.protocol !== "https:") {
+        throw new TypeError("listener HTTP client accepts only http and https URLs");
+      }
+      const rewriteToGet =
+        (response.status === 303 && method !== "HEAD") ||
+        ((response.status === 301 || response.status === 302) && method === "POST");
+      if (rewriteToGet) {
+        method = "GET";
+        for (const name of [
+          "content-encoding",
+          "content-language",
+          "content-length",
+          "content-location",
+          "content-type",
+          "transfer-encoding",
+        ]) {
+          headers.delete(name);
+        }
+      }
+      if (nextUrl.origin !== url.origin) {
+        for (const name of [
+          "authorization",
+          "cookie",
+          "host",
+          "proxy-authorization",
+        ]) {
+          headers.delete(name);
+        }
+      }
+      url = nextUrl;
+      redirected = true;
+    }
+  }
+
+  private async sendOnce(options: {
+    url: URL;
+    method: string;
+    headers: Headers;
+    body: Buffer | null;
+    signal: AbortSignal;
+    redirected: boolean;
+  }): Promise<Response> {
+    if (options.url.protocol !== "http:" && options.url.protocol !== "https:") {
+      throw new TypeError("listener HTTP client accepts only http and https URLs");
+    }
+    const headers = Object.fromEntries(options.headers.entries());
     if (!("accept-encoding" in headers)) headers["accept-encoding"] = "identity";
     if (
-      body !== null &&
+      options.body !== null &&
       !("content-length" in headers) &&
       !("transfer-encoding" in headers)
     ) {
-      headers["content-length"] = String(body.byteLength);
+      headers["content-length"] = String(options.body.byteLength);
     }
 
     this.beginRequest();
@@ -168,15 +232,15 @@ export class ListenerHttpClient {
     };
 
     return await new Promise<Response>((resolve, reject) => {
-      const send = url.protocol === "https:" ? httpsRequest : httpRequest;
-      const agent = url.protocol === "https:" ? this.httpsAgent : this.httpAgent;
+      const send = options.url.protocol === "https:" ? httpsRequest : httpRequest;
+      const agent = options.url.protocol === "https:" ? this.httpsAgent : this.httpAgent;
       let request: ClientRequest;
       try {
-        request = send(url, {
+        request = send(options.url, {
           agent,
-          method: webRequest.method,
+          method: options.method,
           headers,
-          signal: webRequest.signal,
+          signal: options.signal,
         });
       } catch (error) {
         finish();
@@ -214,17 +278,24 @@ export class ListenerHttpClient {
             ? null
             : bytes;
           try {
-            resolve(new Response(responseBody, {
+            const response = new Response(responseBody, {
               status,
               statusText: message.statusMessage,
               headers: responseHeaders(message),
-            }));
+            });
+            Object.defineProperties(response, {
+              redirected: { value: options.redirected },
+              url: { value: options.url.href },
+            });
+            resolve(response);
           } catch (error) {
             reject(error);
           }
         });
       });
-      if (body !== null && body.byteLength > 0) request.write(body);
+      if (options.body !== null && options.body.byteLength > 0) {
+        request.write(options.body);
+      }
       request.end();
     });
   }
