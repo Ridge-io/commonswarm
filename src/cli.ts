@@ -228,12 +228,14 @@ import {
   classifyClaudeCanaryFailure,
   ClaudeListenerModel,
   CodexListenerModel,
+  AgentActivityEndpointTransport,
   FileBrainDigestStore,
   FileHookSurfaceStore,
   FileListenerEffectStore,
   FilePendingMainQueue,
   GrokListenerModel,
   ListenerStartupError,
+  ListenerActivityController,
   OpenCodeListenerModel,
   effectiveListenerStatus,
   listenerPaths,
@@ -5242,7 +5244,10 @@ async function runConfiguredListener(options: {
   // and a model is single-use (runListenerRuntime closes it on every exit, and
   // every adapter throws "listener model is closed" once closed). Constructing
   // one here and capturing it would make every restart fail instantly.
-  const newModel = (onCanaryAttempt: ListenerCanaryAttemptCallback) => {
+  const newModel = (
+    onCanaryAttempt: ListenerCanaryAttemptCallback,
+    events: ListenerActivityController["events"],
+  ) => {
     providerVersionNotice = null;
     return options.provider === "opencode"
     ? new OpenCodeListenerModel({
@@ -5252,6 +5257,7 @@ async function runConfiguredListener(options: {
       onWorkerStderrTail: newWorkerStderrTailSink(),
       onCanaryAttempt,
       onVersionNotice,
+      events,
       ...(options.model ? { model: options.model } : {}),
       ...(options.opencodeExecutable
         ? { executable: options.opencodeExecutable }
@@ -5267,6 +5273,8 @@ async function runConfiguredListener(options: {
       onWorkerStderrTail: newWorkerStderrTailSink(),
       onCanaryAttempt,
       onRuntimeNotice: onClaudeRuntimeNotice,
+      onVersionNotice,
+      events,
       ...(options.claudeExecutable
         ? { executable: options.claudeExecutable }
         : options.executable
@@ -5281,6 +5289,7 @@ async function runConfiguredListener(options: {
       onWorkerStderrTail: newWorkerStderrTailSink(),
       onCanaryAttempt,
       onVersionNotice,
+      events,
       ...(options.codexExecutable
         ? { executable: options.codexExecutable }
         : options.executable
@@ -5294,6 +5303,7 @@ async function runConfiguredListener(options: {
       onWorkerStderrTail: newWorkerStderrTailSink(),
       onCanaryAttempt,
       onVersionNotice,
+      events,
       ...(options.model ? { model: options.model } : {}),
       ...(options.effort ? { effort: options.effort } : {}),
       ...(options.executable ? { executable: options.executable } : {}),
@@ -5368,24 +5378,42 @@ async function runConfiguredListener(options: {
             ts: new Date().toISOString(),
           });
         };
-        return await runListenerRuntime({
-          target: options.cloud,
+        const activity = new ListenerActivityController({
           workspaceId: options.workspaceId,
-          principalId: options.principalId,
-          credentialSession,
-          store: effectStore,
-          model: newModel(onCanaryAttempt),
-          signal,
-          onEvent,
-          declareModel: listenerModelLabel(options.provider),
-          listenerInstanceId,
-          deliveryJournal: selectedJournal,
-          resolveSenderProvenance,
-          routeMode,
-          deferOverChars,
-          pendingMainQueue,
-          fetcher: httpClient.fetch,
+          transport: new AgentActivityEndpointTransport(
+            options.cloud,
+            credentialSession,
+            httpClient.fetch,
+          ),
         });
+        const instrumentedModel = activity.instrumentModel(
+          newModel(onCanaryAttempt, activity.events),
+        );
+        try {
+          return await runListenerRuntime({
+            target: options.cloud,
+            workspaceId: options.workspaceId,
+            principalId: options.principalId,
+            credentialSession,
+            store: effectStore,
+            model: instrumentedModel,
+            signal,
+            onEvent: (event) => {
+              activity.onRuntimeEvent(event);
+              onEvent(event);
+            },
+            declareModel: listenerModelLabel(options.provider),
+            listenerInstanceId,
+            deliveryJournal: selectedJournal,
+            resolveSenderProvenance,
+            routeMode,
+            deferOverChars,
+            pendingMainQueue,
+            fetcher: httpClient.fetch,
+          });
+        } finally {
+          activity.close();
+        }
       },
     });
   } finally {

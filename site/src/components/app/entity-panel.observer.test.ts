@@ -79,6 +79,25 @@ test("the right panel navigates ownership and exposes the complete agent state",
   );
 });
 
+test("the agent panel puts the private live frame above saved credential fields", () => {
+  const renderer = between("function renderEntityPanel", "function openEntityPanel");
+  assert.match(renderer, /const live = renderAgentActivitySection\(details\.principalId\)/);
+  assert.match(renderer, /body\.append\(live, info, runtime\)/);
+
+  const activity = between("function renderAgentActivitySection", "const appendEntityId");
+  for (const value of ["Live", "Phase", "Signal", "Now", "Elapsed"]) {
+    assert.ok(activity.includes(value), `live renderer is missing ${value}`);
+  }
+  assert.match(activity, /textContent = view\.emptyMessage/);
+  assert.doesNotMatch(activity, /body|stderr|terminal|rawInput|rawOutput/i);
+
+  const subscription = between("const startAgentActivity", "const refreshEntityActivityAge");
+  assert.match(subscription, /subscribeAgentActivity/);
+  assert.match(subscription, /agentActivityFrameIsNewer/);
+  assert.match(subscription, /AGENT_ACTIVITY_INSTRUMENTATION_GRACE_MS/);
+  assert.match(subscription, /workspaceId !== activeWorkspaceId/);
+});
+
 test("Escape and close restore focus to the stream control that opened the panel", () => {
   const close = between("function closeEntityPanel", "function entityControl");
   assert.match(close, /entityPanelOrigin\.focus\(\{ preventScroll: true \}\)/);

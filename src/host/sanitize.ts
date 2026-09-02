@@ -4,13 +4,15 @@
  * leak them through the host's public update surface.
  */
 
+import { redactCredentialText } from "./credential-redaction.js";
+
 const SECRET_VALUE_RE =
   /(?:(?:api[_-]?key|token|secret|password|authorization|bearer)\s*[:=]\s*)(["']?)([^\s"'\\]{8,})\1/gi;
 
 const JWT_RE = /\beyJ[A-Za-z0-9_-]{10,}\.[A-Za-z0-9_-]{10,}\.[A-Za-z0-9_-]{10,}\b/g;
 
 function redactString(value: string): string {
-  return value
+  return redactCredentialText(value)
     .replace(SECRET_VALUE_RE, (_m, q: string) => `redacted=${q}***${q}`)
     .replace(JWT_RE, "[redacted-jwt]");
 }

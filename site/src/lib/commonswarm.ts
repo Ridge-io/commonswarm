@@ -26,6 +26,12 @@
 
 import { createClient, type SupabaseClient, type Session } from "@supabase/supabase-js";
 import { HUMAN_SEEN_BATCH_MAX } from "./human-seen-reporter.js";
+import {
+  agentActivityTopic,
+  parseAgentActivityFrame,
+  type AgentActivityConnectionState,
+  type AgentActivityFrame,
+} from "./agent-activity.js";
 
 /** Must match src/cloud/config.ts:CLIENT_PROTOCOL_VERSION — the server refuses a mismatch. */
 export const CLIENT_PROTOCOL_VERSION = "0.1.0";
@@ -147,6 +153,49 @@ export async function currentSession(): Promise<Session | null> {
   }
   deadSession = false;
   return session;
+}
+
+export interface AgentActivitySubscription {
+  unsubscribe(): Promise<void>;
+}
+
+/** Subscribe one signed-in member to the private workspace activity topic. */
+export async function subscribeAgentActivity(
+  workspaceId: string,
+  onFrame: (frame: AgentActivityFrame) => void,
+  onState: (state: AgentActivityConnectionState) => void,
+): Promise<AgentActivitySubscription> {
+  const c = client();
+  if (!c) throw new NoDeployment();
+  const active = await currentSession();
+  if (!active) throw new SessionExpired();
+  await c.realtime.setAuth(active.access_token);
+  let removed = false;
+  const channel = c.channel(agentActivityTopic(workspaceId), {
+    config: {
+      private: true,
+      broadcast: { ack: false, self: false },
+    },
+  });
+  channel.on("broadcast", { event: "activity" }, (message) => {
+    const frame = parseAgentActivityFrame(message.payload, workspaceId);
+    if (frame !== null) onFrame(frame);
+  });
+  onState("connecting");
+  channel.subscribe((status) => {
+    if (removed) return;
+    if (status === "SUBSCRIBED") onState("subscribed");
+    else if (status === "CHANNEL_ERROR" || status === "TIMED_OUT") {
+      onState("unavailable");
+    }
+  });
+  return {
+    async unsubscribe(): Promise<void> {
+      if (removed) return;
+      removed = true;
+      await c.removeChannel(channel);
+    },
+  };
 }
 
 /**

@@ -15,3 +15,4 @@ export * from "./main-routing.js";
 export * from "./hook.js";
 export * from "./brain-digest.js";
 export * from "./attendance-canary.js";
+export * from "./activity.js";

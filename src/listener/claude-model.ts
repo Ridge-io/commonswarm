@@ -13,6 +13,7 @@ import { allowOnceOrDeny, defaultPermissionCallback } from "../host/permission.j
 import {
   AcpChildExitError,
   AcpPermissionCanaryError,
+  type HostSessionEvents,
   type PermissionCallback,
   type PermissionDecision,
   type PermissionRequest,
@@ -54,6 +55,8 @@ export interface ClaudeListenerModelOptions {
   onVersionNotice?: NonNullable<ClaudeAcpOpenOptions["onVersionNotice"]>;
   /** Receives exact bridge path and bundled package versions before canary. */
   onRuntimeNotice?: (notice: ClaudeBridgeRuntimeNotice) => void;
+  /** Structured session updates for the ephemeral live-activity frame. */
+  events?: HostSessionEvents;
 }
 
 export type ClaudeCanaryFailureCode =
@@ -267,6 +270,7 @@ export class ClaudeListenerModel implements ListenerModel {
         ...(this.options.onRuntimeNotice
           ? { onRuntimeNotice: this.options.onRuntimeNotice }
           : {}),
+        ...(this.options.events ? { events: this.options.events } : {}),
         signal: controller.signal,
         ...(this.options.onWorkerStderrTail
           ? { onStderrTail: this.options.onWorkerStderrTail }

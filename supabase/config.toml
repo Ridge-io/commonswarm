@@ -444,6 +444,13 @@ enabled = true
 verify_jwt = false
 entrypoint = "./functions/read/index.ts"
 
+# Listener activity uses the same opaque swm_agt_ credential as command/read.
+# The function authenticates it, derives the principal, and only then publishes.
+[functions.activity]
+enabled = true
+verify_jwt = false
+entrypoint = "./functions/activity/index.ts"
+
 # The anonymous capability-URL read (§7). verify_jwt = false because the caller
 # has no Supabase session at all: it presents a swm_cap_ bearer and nothing else.
 [functions.capability]
