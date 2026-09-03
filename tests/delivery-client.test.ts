@@ -43,6 +43,26 @@ const FUTURE = "2030-01-02T03:04:05.000Z";
 
 const target = cloudTarget("https://cloud.example.test", "anon-key");
 
+test("handled and provider-proven outcomes are accepted acknowledgement outcomes", () => {
+  const subsets = [
+    deliveryModule.DELIVERY_HANDLED_OUTCOMES,
+    deliveryModule.DELIVERY_PROVIDER_PROVEN_OUTCOMES,
+  ];
+  for (const subset of subsets) {
+    for (const outcome of subset) {
+      assert.ok(deliveryModule.DELIVERY_ACK_OUTCOMES.has(outcome));
+    }
+  }
+  assert.deepEqual(
+    [...deliveryModule.DELIVERY_HANDLED_OUTCOMES],
+    ["replied", "observed"],
+  );
+  assert.deepEqual(
+    [...deliveryModule.DELIVERY_PROVIDER_PROVEN_OUTCOMES],
+    ["replied"],
+  );
+});
+
 function signal(overrides: Partial<SignalRecord> = {}): SignalRecord {
   return {
     id: SIGNAL,

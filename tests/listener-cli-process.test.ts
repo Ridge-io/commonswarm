@@ -549,11 +549,16 @@ test("listener HTTP client closes an idle socket and opens one replacement", asy
   }
 });
 
-function fakeGrokSource(): string {
+function fakeGrokSource(
+  options: { failPrompts?: boolean } = {},
+): string {
+  const failPrompts = options.failPrompts === true ? "true" : "false";
   return `#!/usr/bin/env node
 import { appendFileSync } from "node:fs";
 import { fileURLToPath } from "node:url";
 import { dirname, join } from "node:path";
+
+const failPrompts = ${failPrompts};
 
 if (process.argv.includes("--version")) {
   process.stdout.write("grok 0.2.117 (fake)\\n");
@@ -612,6 +617,17 @@ function finishPrompt(hostId, text, optionId) {
       },
     },
   });
+  if (!canary && failPrompts) {
+    send({
+      jsonrpc: "2.0",
+      id: hostId,
+      error: {
+        code: -32000,
+        message: "provider session is unavailable",
+      },
+    });
+    return;
+  }
   if (!canary) {
     send({
       jsonrpc: "2.0",
@@ -1171,6 +1187,274 @@ test("detached CLI completes durable claim reply ACK with one startup UUID and n
         `sensitive value reached output: ${sensitive}`,
       );
     }
+  } finally {
+    try {
+      await stopAndWaitForDetachedListener([
+        "listen",
+        "stop",
+        ...common,
+        "--principal-id",
+        principalId,
+        "--json",
+      ], paths);
+    } finally {
+      await closeTestServer(server);
+    }
+    await rm(root, { recursive: true, force: true });
+    await rm(workerCwd, { recursive: true, force: true });
+  }
+});
+
+test("detached listener keeps a provider failure lapse in its status file", async () => {
+  const root = await mkdtemp(join(tmpdir(), "cswarm-cli-provider-lapse-"));
+  const workerCwd = await mkdtemp(join(tmpdir(), "cswarm-cli-provider-worker-"));
+  const grokPath = join(root, "failing-grok.mjs");
+  const providerHome = join(root, "provider-home");
+  await writeFile(grokPath, fakeGrokSource({ failPrompts: true }), {
+    mode: 0o700,
+  });
+  await chmod(grokPath, 0o700);
+  await mkdir(providerHome, { mode: 0o700 });
+  await writeFile(
+    join(providerHome, "auth.json"),
+    JSON.stringify({ access_token: "fake-local-login" }),
+    { mode: 0o600 },
+  );
+
+  const workspaceId = randomUUID();
+  const principalId = randomUUID();
+  const senderId = randomUUID();
+  const ownerId = randomUUID();
+  const token = `swm_agt_${"L".repeat(43)}`;
+  const artifact = JSON.stringify({
+    message: AGENT_MESSAGE,
+    status: "accepted",
+    principal_id: principalId,
+    token_id: randomUUID(),
+    run_id: randomUUID(),
+    agent_token: token,
+    expires_at: new Date(Date.now() + 60 * 60_000).toISOString(),
+  });
+  const asks = Array.from({ length: 3 }, (_, index) => ({
+    id: randomUUID(),
+    workspace_id: workspaceId,
+    from: senderId,
+    from_kind: "agent",
+    to: null,
+    to_agent: principalId,
+    in_reply_to: null,
+    about: null,
+    kind: "ask",
+    body: `provider failure control ${index + 1}`,
+    until: new Date(Date.now() + 10 * 60_000).toISOString(),
+    created_at: new Date(Date.now() - (3 - index) * 1_000).toISOString(),
+    sender_owner_relation: "same_owner",
+  }));
+  const leaseIds = asks.map(() => randomUUID());
+  const acknowledgedSignalIds = new Set<string>();
+  const acknowledgements: Array<Record<string, unknown>> = [];
+  const posts: Array<Record<string, unknown>> = [];
+  const server = createServer(async (request, response) => {
+    let body = "";
+    for await (const chunk of request) body += chunk.toString();
+    if (request.url === "/functions/v1/read") {
+      const parsed = JSON.parse(body) as Record<string, unknown>;
+      response.writeHead(200, { "content-type": "application/json" });
+      if (parsed.resource === "members") {
+        response.end(JSON.stringify({
+          members: [{ user_id: ownerId, display_name: "Local Operator" }],
+          agents: [{
+            principal_id: senderId,
+            name: "Local Sender",
+            owner_user_id: ownerId,
+          }],
+        }));
+        return;
+      }
+      response.end(JSON.stringify({
+        signals: [],
+        capabilities: {
+          sender_owner_relation: 1,
+          cursor_after: 1,
+          delivery_claim: 1,
+          delivery_ack: 1,
+        },
+        pending_delivery_count: asks.length - acknowledgedSignalIds.size,
+      }));
+      return;
+    }
+    if (request.url === "/functions/v1/command") {
+      const parsed = JSON.parse(body) as Record<string, unknown>;
+      const command = parsed.command as Record<string, unknown>;
+      if (command.kind === "claim_agent_inbox") {
+        const index = asks.findIndex((ask) =>
+          !acknowledgedSignalIds.has(ask.id)
+        );
+        response.writeHead(200, { "content-type": "application/json" });
+        response.end(JSON.stringify({
+          status: "accepted",
+          ok: true,
+          capabilities: {
+            delivery_claim: 1,
+            delivery_ack: 1,
+            sender_owner_relation: 1,
+          },
+          deliveries: index === -1
+            ? []
+            : [{
+              signal: asks[index],
+              lease_id: leaseIds[index],
+              leased_until: new Date(Date.now() + 10 * 60_000).toISOString(),
+              sender_owner_relation: "same_owner",
+            }],
+          pending_delivery_count: asks.length - acknowledgedSignalIds.size,
+          terminal_delivery_failure_count: 0,
+          event_ids: [],
+          events: [],
+          min_client_version: "0.1.0",
+        }));
+        return;
+      }
+      if (command.kind === "ack_agent_delivery") {
+        acknowledgements.push(parsed);
+        acknowledgedSignalIds.add(String(command.signal_id));
+        response.writeHead(200, { "content-type": "application/json" });
+        response.end(JSON.stringify({
+          status: "accepted",
+          ok: true,
+          event_ids: [],
+          events: [],
+          signal_id: command.signal_id,
+          outcome: command.outcome,
+        }));
+        return;
+      }
+      if (command.kind === "declare_agent_model") {
+        response.writeHead(200, { "content-type": "application/json" });
+        response.end(JSON.stringify({
+          status: "accepted",
+          ok: true,
+          event_ids: [],
+          events: [],
+        }));
+        return;
+      }
+      posts.push(parsed);
+      response.writeHead(200, { "content-type": "application/json" });
+      response.end(JSON.stringify({
+        status: "accepted",
+        ok: true,
+        event_ids: [],
+        events: [],
+      }));
+      return;
+    }
+    if (request.url === "/functions/v1/activity") {
+      response.writeHead(204);
+      response.end();
+      return;
+    }
+    response.writeHead(404);
+    response.end();
+  });
+  await new Promise<void>((resolveListen) =>
+    server.listen(0, "127.0.0.1", resolveListen)
+  );
+  const address = server.address();
+  assert.ok(address && typeof address === "object");
+  const url = `http://127.0.0.1:${address.port}`;
+  const common = [
+    "--url",
+    url,
+    "--anon-key",
+    "public-anon",
+    "--workspace-id",
+    workspaceId,
+    "--state-dir",
+    root,
+  ];
+  const paths = listenerPaths({
+    profileId: cloudTarget(url, "public-anon").profileId,
+    workspaceId,
+    principalId,
+    stateDirectory: root,
+  });
+
+  try {
+    const started = await runCli([
+      "listen",
+      "start",
+      "--provider",
+      "grok",
+      "--agent-token-stdin",
+      ...common,
+      "--cwd",
+      workerCwd,
+      "--permissions",
+      "allow",
+      "--grok-executable",
+      grokPath,
+      "--json",
+    ], {
+      stdin: artifact,
+      env: { GROK_HOME: providerHome },
+    });
+    assert.equal(started.code, 0, started.stderr);
+    await waitFor(() => acknowledgements.length === asks.length);
+    assert.equal(posts.length, 0);
+    assert.deepEqual(
+      acknowledgements.map((entry) => {
+        const command = entry.command as Record<string, unknown>;
+        return [command.outcome, command.last_error_code];
+      }),
+      Array.from({ length: 3 }, () => [
+        "failed_terminal",
+        "host_session_failed",
+      ]),
+    );
+
+    const statusJsonResult = await runCli([
+      "listen",
+      "status",
+      ...common,
+      "--principal-id",
+      principalId,
+      "--json",
+    ]);
+    assert.equal(statusJsonResult.code, 0, statusJsonResult.stderr);
+    const statusJson = JSON.parse(statusJsonResult.stdout) as Record<
+      string,
+      unknown
+    >;
+    assert.equal(statusJson.state, "ready");
+    assert.equal(statusJson.lastAckOutcome, "failed_terminal");
+    assert.equal(statusJson.consecutiveAckFailureCount, 3);
+    assert.equal(statusJson.handledState, "not_handled");
+    assert.equal(statusJson.listenerLapse, true);
+    assert.deepEqual(statusJson.listenerLapseCodes, [
+      "listener_delivery_failing",
+    ]);
+
+    const statusHumanResult = await runCli([
+      "listen",
+      "status",
+      ...common,
+      "--principal-id",
+      principalId,
+    ]);
+    assert.equal(statusHumanResult.code, 0, statusHumanResult.stderr);
+    assert.match(statusHumanResult.stdout, /^Listener LAPSE/);
+    assert.match(statusHumanResult.stdout, /HANDLED: no/);
+    assert.match(
+      statusHumanResult.stdout,
+      /WARNING \[listener_delivery_failing\]/,
+    );
+
+    const statusFile = await readFile(paths.statusPath, "utf8");
+    const statusOnDisk = JSON.parse(statusFile) as Record<string, unknown>;
+    assert.equal(statusOnDisk.state, "ready");
+    assert.equal(statusOnDisk.lastAckOutcome, "failed_terminal");
+    assert.equal(statusOnDisk.consecutiveAckFailureCount, 3);
   } finally {
     try {
       await stopAndWaitForDetachedListener([

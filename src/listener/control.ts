@@ -105,7 +105,7 @@ export interface ListenerStatus {
   lastAckAt: string | null;
   /** What the newest delivery acknowledgement concluded. */
   lastAckOutcome: DeliveryOutcome | null;
-  /** Terminal ack failures since the last handled ack; null before any ack. */
+  /** Terminal ack failures since the last provider-proven ack; null before any ack. */
   consecutiveAckFailureCount: number | null;
   routeMode?: ListenerRouteMode;
   deferOverChars?: number | null;

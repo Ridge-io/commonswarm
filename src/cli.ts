@@ -4272,8 +4272,8 @@ function listenerAttendanceState(
     : null;
   const lastAckOutcome = status.lastAckOutcome ?? null;
   // An acknowledgement that never reaches the service emits no delivery_ack.
-  // Its fatal/restart path is reported by CONNECTED; HANDLED describes only
-  // the newest acknowledgement the service accepted.
+  // The stored outcome therefore describes only the newest acknowledgement
+  // the service accepted; it says nothing about an acknowledgement that failed.
   const handled = pending > 0
     ? false
     : routeMode !== "worker" || lastAckOutcome === null
@@ -4361,7 +4361,7 @@ function listenerLapseNotices(
     notices.push({
       code: "listener_delivery_failing",
       message:
-        `There have been ${consecutive} terminal delivery failures since the last answered delivery. The newest acknowledgement was ${status.lastAckOutcome ?? "not recorded"} at ${status.lastAckAt ?? "an unknown time"}; status code ${status.lastErrorCode ?? "none recorded"}. Messages sent to this agent are not being answered.`,
+        `The listener recorded ${consecutive} terminal delivery failures and no later reply. The newest acknowledgement was ${status.lastAckOutcome ?? "not recorded"} at ${status.lastAckAt ?? "an unknown time"}. The most recent listener error code is ${status.lastErrorCode ?? "not recorded"}. Messages sent to this agent are not being answered.`,
       nextStep:
         `Check the provider on this host, then restart the listener: ${listenerRestartCommand(status)}`,
     });
@@ -4608,7 +4608,9 @@ export function renderListenerStatus(
           ? `Last handled signal: ${status.lastSignalId}.`
           : attendance.handledState === "not_handled"
           ? `Last failed delivery signal: ${status.lastSignalId}.`
-          : `Last acknowledged signal: ${status.lastSignalId}. Its handling outcome is not known.`
+          : status.lastAckOutcome === null
+          ? `Last listener signal: ${status.lastSignalId}. No delivery acknowledgement is recorded.`
+          : `Last acknowledged signal: ${status.lastSignalId}. Its outcome was ${status.lastAckOutcome}.`
         : `Last listener signal: ${status.lastSignalId}. Local status does not prove its final observed receipt.`
       : "No signal has been handled yet.",
     status.lastErrorCode

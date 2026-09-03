@@ -136,7 +136,8 @@ reducer must:
 - require a positive terminal-failure count and persist the latest count/timestamp;
 - persist `lastAckAt`, the ack outcome, and the signal ID on ACK; increment the
   terminal-failure run for `failed_terminal`, clear it only for an outcome in
-  `DELIVERY_HANDLED_OUTCOMES`, and leave it unchanged for `queued` or `expired`; and
+  `DELIVERY_PROVIDER_PROVEN_OUTCOMES`, and leave it unchanged for `observed`, `queued`,
+  or `expired`; and
 - translate only to B's closed snake-case fields, never lease/command IDs or content.
 
 ## Frozen constants and budgets

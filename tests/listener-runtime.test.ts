@@ -16,8 +16,10 @@ import {
   DeliveryTransportError,
   DELIVERY_REQUEST_TIMEOUT_MS,
   type DeliveryClaimResult,
+  type DeliveryOutcome,
   type DeliveryRow,
 } from "../src/cloud/delivery.js";
+import { listenerStatusJson, renderListenerStatus } from "../src/cli.js";
 import {
   RenewalReauthorisationRequired,
   RenewalRevoked,
@@ -766,6 +768,8 @@ test("delivery events reduce into the closed supervisor status fields", async ()
   const ackSnapshots: Array<{
     outcome: string | null;
     failures: number | null;
+    human: string;
+    json: Record<string, unknown>;
   }> = [];
   const status = await runListenerSupervisor({
     paths,
@@ -783,6 +787,37 @@ test("delivery events reduce into the closed supervisor status fields", async ()
         ts,
       });
       onEvent({ type: "delivery_terminal_failures", count: 1, ts });
+      const ack = async (
+        signalId: string,
+        outcome: DeliveryOutcome,
+        ackTs: string,
+      ) => {
+        onEvent({ type: "delivery_ack", signalId, outcome, ts: ackTs });
+        const snapshot = await queryListenerControl(paths, "status");
+        ackSnapshots.push({
+          outcome: snapshot.lastAckOutcome,
+          failures: snapshot.consecutiveAckFailureCount,
+          human: renderListenerStatus(snapshot),
+          json: listenerStatusJson(snapshot),
+        });
+      };
+      const incident: Array<[string, DeliveryOutcome, string]> = [
+        ["aaaaaaaa-aaaa-4aaa-8aaa-aaaaaaaaaa13", "failed_terminal", "2026-09-03T17:06:52.000Z"],
+        ["aaaaaaaa-aaaa-4aaa-8aaa-aaaaaaaaaa14", "observed", "2026-09-03T17:12:52.000Z"],
+        ["aaaaaaaa-aaaa-4aaa-8aaa-aaaaaaaaaa15", "failed_terminal", "2026-09-03T17:23:15.000Z"],
+        ["aaaaaaaa-aaaa-4aaa-8aaa-aaaaaaaaaa16", "failed_terminal", "2026-09-03T17:24:30.000Z"],
+        ["aaaaaaaa-aaaa-4aaa-8aaa-aaaaaaaaaa17", "failed_terminal", "2026-09-03T17:52:30.000Z"],
+        ["aaaaaaaa-aaaa-4aaa-8aaa-aaaaaaaaaa18", "failed_terminal", "2026-09-03T18:36:28.000Z"],
+        ["aaaaaaaa-aaaa-4aaa-8aaa-aaaaaaaaaa19", "failed_terminal", "2026-09-03T18:37:12.000Z"],
+        ["aaaaaaaa-aaaa-4aaa-8aaa-aaaaaaaaaa20", "failed_terminal", "2026-09-03T18:37:35.000Z"],
+        ["aaaaaaaa-aaaa-4aaa-8aaa-aaaaaaaaaa21", "observed", "2026-09-03T18:38:24.000Z"],
+        ["aaaaaaaa-aaaa-4aaa-8aaa-aaaaaaaaaa22", "failed_terminal", "2026-09-03T18:44:31.000Z"],
+        ["aaaaaaaa-aaaa-4aaa-8aaa-aaaaaaaaaa23", "observed", "2026-09-03T18:45:38.000Z"],
+      ];
+      for (const event of incident) await ack(...event);
+      await ack("aaaaaaaa-aaaa-4aaa-8aaa-aaaaaaaaaa24", "queued", "2026-09-03T18:46:00.000Z");
+      await ack("aaaaaaaa-aaaa-4aaa-8aaa-aaaaaaaaaa25", "expired", "2026-09-03T18:46:30.000Z");
+      await ack("aaaaaaaa-aaaa-4aaa-8aaa-aaaaaaaaaa26", "replied", "2026-09-03T18:47:00.000Z");
       onEvent({
         type: "main_queue",
         signalId: "aaaaaaaa-aaaa-4aaa-8aaa-aaaaaaaaaa13",
@@ -791,23 +826,6 @@ test("delivery events reduce into the closed supervisor status fields", async ()
         droppedCount: 7,
         ts,
       });
-      const ack = async (
-        signalId: string,
-        outcome: "failed_terminal" | "queued" | "expired" | "replied",
-      ) => {
-        onEvent({ type: "delivery_ack", signalId, outcome, ts });
-        const snapshot = await queryListenerControl(paths, "status");
-        ackSnapshots.push({
-          outcome: snapshot.lastAckOutcome,
-          failures: snapshot.consecutiveAckFailureCount,
-        });
-      };
-      await ack("aaaaaaaa-aaaa-4aaa-8aaa-aaaaaaaaaa13", "failed_terminal");
-      await ack("aaaaaaaa-aaaa-4aaa-8aaa-aaaaaaaaaa14", "queued");
-      await ack("aaaaaaaa-aaaa-4aaa-8aaa-aaaaaaaaaa15", "failed_terminal");
-      await ack("aaaaaaaa-aaaa-4aaa-8aaa-aaaaaaaaaa16", "expired");
-      await ack("aaaaaaaa-aaaa-4aaa-8aaa-aaaaaaaaaa17", "failed_terminal");
-      await ack("aaaaaaaa-aaaa-4aaa-8aaa-aaaaaaaaaa18", "replied");
       return { reason: "cancelled" };
     },
   });
@@ -816,18 +834,50 @@ test("delivery events reduce into the closed supervisor status fields", async ()
   assert.equal(status.lastTerminalDeliveryFailureCount, 1);
   assert.equal(status.lastTerminalDeliveryFailureAt, ts);
   assert.equal(status.lastClaimAt, ts);
-  assert.equal(status.lastAckAt, ts);
+  assert.equal(status.lastAckAt, "2026-09-03T18:47:00.000Z");
   assert.equal(status.lastAckOutcome, "replied");
   assert.equal(status.consecutiveAckFailureCount, 0);
-  assert.deepEqual(ackSnapshots, [
-    { outcome: "failed_terminal", failures: 1 },
-    { outcome: "queued", failures: 1 },
-    { outcome: "failed_terminal", failures: 2 },
-    { outcome: "expired", failures: 2 },
-    { outcome: "failed_terminal", failures: 3 },
-    { outcome: "replied", failures: 0 },
+  assert.deepEqual(
+    ackSnapshots.map(({ outcome, failures }) => ({ outcome, failures })),
+    [
+      { outcome: "failed_terminal", failures: 1 },
+      { outcome: "observed", failures: 1 },
+      { outcome: "failed_terminal", failures: 2 },
+      { outcome: "failed_terminal", failures: 3 },
+      { outcome: "failed_terminal", failures: 4 },
+      { outcome: "failed_terminal", failures: 5 },
+      { outcome: "failed_terminal", failures: 6 },
+      { outcome: "failed_terminal", failures: 7 },
+      { outcome: "observed", failures: 7 },
+      { outcome: "failed_terminal", failures: 8 },
+      { outcome: "observed", failures: 8 },
+      { outcome: "queued", failures: 8 },
+      { outcome: "expired", failures: 8 },
+      { outcome: "replied", failures: 0 },
+    ],
+  );
+  const belowThreshold = ackSnapshots[2]!;
+  assert.doesNotMatch(belowThreshold.human, /listener_delivery_failing/);
+  assert.equal(belowThreshold.json.listenerLapse, false);
+  const atThreshold = ackSnapshots[3]!;
+  assert.match(atThreshold.human, /Listener LAPSE/);
+  assert.match(atThreshold.human, /WARNING \[listener_delivery_failing\]/);
+  assert.deepEqual(atThreshold.json.listenerLapseCodes, [
+    "listener_delivery_failing",
   ]);
-  assert.equal(status.lastSignalId, "aaaaaaaa-aaaa-4aaa-8aaa-aaaaaaaaaa18");
+  const afterMeasuredIncident = ackSnapshots[10]!;
+  assert.match(afterMeasuredIncident.human, /^Listener LAPSE/);
+  assert.match(afterMeasuredIncident.human, /WARNING \[listener_delivery_failing\]/);
+  assert.match(afterMeasuredIncident.human, /HANDLED: yes/);
+  assert.equal(afterMeasuredIncident.json.handledState, "handled");
+  assert.equal(afterMeasuredIncident.json.listenerLapse, true);
+  assert.deepEqual(afterMeasuredIncident.json.listenerLapseCodes, [
+    "listener_delivery_failing",
+  ]);
+  const afterReply = ackSnapshots.at(-1)!;
+  assert.doesNotMatch(afterReply.human, /listener_delivery_failing/);
+  assert.equal(afterReply.json.listenerLapse, false);
+  assert.equal(status.lastSignalId, "aaaaaaaa-aaaa-4aaa-8aaa-aaaaaaaaaa13");
   assert.equal(status.pendingForMainCount, 200);
   assert.equal(status.droppedForMainCount, 7);
 });

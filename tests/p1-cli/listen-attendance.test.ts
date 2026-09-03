@@ -308,6 +308,11 @@ test("worker status shows terminal delivery failure runs and clears them after a
     assert.doesNotMatch(failedHuman.stdout, /Last handled signal:/);
     assert.match(failedHuman.stdout, /Listener LAPSE/);
     assert.match(failedHuman.stdout, /WARNING \[listener_delivery_failing\]/);
+    assert.match(
+      failedHuman.stdout,
+      /recorded 3 terminal delivery failures and no later reply/,
+    );
+    assert.doesNotMatch(failedHuman.stdout, /last answered delivery/);
 
     const failedJson = await runCliAsync(
       [...statusArgs(failedRoot), "--json"],
@@ -324,6 +329,47 @@ test("worker status shows terminal delivery failure runs and clears them after a
     assert.equal(failedParsed.consecutiveAckFailureCount, 3);
     await activeControl.close();
     activeControl = null;
+
+    for (const outcome of ["queued", "expired"] as const) {
+      const incompleteRoot = join(root, outcome);
+      const incompletePaths = paths(incompleteRoot);
+      const incompleteStatus = await statusFixture(incompletePaths, {
+        state: "ready",
+        pending: 0,
+        routeMode: "worker",
+        lastAckAt: "2026-09-01T12:00:04.500Z",
+        lastAckOutcome: outcome,
+      });
+      activeControl = await startListenerControlServer({
+        paths: incompletePaths,
+        status: () => incompleteStatus,
+        stop: () => {},
+      });
+      const incompleteHuman = await runCliAsync(statusArgs(incompleteRoot), {
+        cwd: root,
+        home,
+      });
+      assert.equal(incompleteHuman.status, 0, incompleteHuman.stderr);
+      assert.match(incompleteHuman.stdout, /HANDLED: not yet measured/);
+      assert.match(
+        incompleteHuman.stdout,
+        new RegExp(`Last acknowledged signal: .* Its outcome was ${outcome}\\.`),
+      );
+      assert.doesNotMatch(incompleteHuman.stdout, /outcome is not known/);
+      const incompleteJson = await runCliAsync(
+        [...statusArgs(incompleteRoot), "--json"],
+        { cwd: root, home },
+      );
+      assert.equal(incompleteJson.status, 0, incompleteJson.stderr);
+      const incompleteParsed = JSON.parse(incompleteJson.stdout) as Record<
+        string,
+        unknown
+      >;
+      assert.equal(incompleteParsed.lastAckOutcome, outcome);
+      assert.equal(incompleteParsed.handledState, "not_yet_measured");
+      await activeControl.close();
+      activeControl = null;
+    }
 
     const answeredRoot = join(root, "answered");
     const answeredPaths = paths(answeredRoot);
