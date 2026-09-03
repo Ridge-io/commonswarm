@@ -1325,3 +1325,54 @@ clean, `check:tests` clean, `npm test` 732/732, `test:p1-cli` 367 pass 0 fail. I
 cross-family arm before it lands. Deliberately deferred inside the lane: **the ack's own error code
 is not persisted**, so an `observed` note clears `lastErrorCode` and the notice reports
 "not recorded" instead of naming `acpprotocolerror`. That is the next change on this branch.
+
+### Lane state at hand-off: `lane/listener-delivery-visibility`, 6 commits, one arm PASS
+
+Six rounds. **Every round was passed by review and then broken by the next arm**, and the findings
+shrank monotonically, which is the only reason to believe the last one:
+
+| round | the fix | how the next review broke it |
+|---|---|---|
+| 1 | record `lastAckOutcome`, add a consecutive-failure run | the run reset on ANY handled outcome, and `observed` is handled |
+| 2 | only `replied` clears the run | fixed the COUNTER; `HANDLED: yes` was still on the 18:47 screen |
+| 3 | the run outranks the newest outcome in `handled` | `ready` cleared the run — fail-open |
+| 4 | reaching `ready` clears nothing | the restart the notice PRINTS wiped the run |
+| 5 | carry the run across a restart | carried 2 of 4 ack fields, so the screen contradicted itself |
+| 6 | carry the ack record whole; name a state that exists | PASS |
+
+Final SHA `3b245ed`, rebased onto `main`. Gates measured on it: tsc clean, `check:tests` clean,
+`npm test` 733/733, `test:p1-cli` 367 pass 0 fail (`main` measures 366/0 and hangs the same way).
+
+**It is NOT merged, and the blocker is tooling, not the code.** D-036 needs two cross-family arms and
+the author's family is excluded. I authored rounds 3-6, so Claude is out; Codex has no credits until
+2026-09-06; the Gemini CLI tier is dead; opencode returns nothing. Only Grok ran. **Do not merge on
+one arm** — this lane is the reason: on this branch a single arm passed round 2 while a second arm
+failed it correctly, and the round-2 defect was the one that mattered.
+
+#### Two failures of my own worth keeping
+
+**I gave a reviewer a misleading artifact.** I generated `git diff main..HEAD` AFTER landing a ledger
+commit on `main`, so that commit appeared in the diff as a deletion by the branch. The arm reported,
+correctly for what it was shown, that the lane deleted the incident write-up. It touches that file in
+zero commits. **A review artifact must be the branch's own changes** — `git diff $(git merge-base main
+HEAD)..HEAD`, or rebase first. A two-tip diff shows the other tip's work as your deletions.
+
+**A control of mine did not reach the path it named.** To prove the failure run survives a restart I
+asserted the carried `lastAckAt` after a fresh ack — but that ack sets the field itself, so the
+assertion passed with the carry removed. Measured by mutation, not by reading. The test now observes
+the restart before any new ack. Every assertion added in rounds 3-6 was mutation-tested: break the
+fix, watch it fail on the named line, restore.
+
+#### Deferred on the branch, in priority order
+
+1. **Persist the ack's own error code.** An `observed` note clears `lastErrorCode`, so the lapse
+   notice says "not recorded" instead of naming `acpprotocolerror`. `stop` clears it too, so the
+   printed remedy drops it regardless — that is a second, independent reason it needs its own field.
+2. **`lastAckSignalId`.** `lastSignalId` is written by `effect`, `delivery_ack` and `main_queue`, and
+   the last-signal line treats it as the ack's signal. Pre-existing; the carry keeps the window open
+   across a restart.
+3. Below the threshold, `observed` at run 1-2 still prints `HANDLED: yes`. That is the documented
+   hysteresis, not the 18:47 state.
+
+**Do not grep the `Next:` line for a state word** — it always contains "stopped" as instruction text,
+even while the state is `stopping`. Read the `CONNECTED:` line, or `--json` `.state`.
