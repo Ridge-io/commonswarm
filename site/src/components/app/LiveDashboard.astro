@@ -3844,9 +3844,11 @@ import "../../styles/tokens.css";
         }
         const markdown = document.createElement("div");
         markdown.className = "dashboard__message-markdown";
+        /* The line count only. The stylesheet multiplies it by --lh-base, so the collapse height
+         * cannot drift from the line height the way a hard-coded 1.62 here could. */
         markdown.style.setProperty(
-          "--message-collapse-height",
-          `${MESSAGE_COLLAPSE_LINES * 1.62}em`,
+          "--message-collapse-lines",
+          String(MESSAGE_COLLAPSE_LINES),
         );
         setSanitizedMessageMarkdown(markdown, signal.body);
         if (!expandedSignalIds.has(signal.id)) {
@@ -9495,11 +9497,15 @@ import "../../styles/tokens.css";
     overflow-wrap: anywhere;
   }
 
+  /* The fade told the reader "there is more" by making the last lines of a long message
+   * progressively transparent. The "Show more" button below already says that in words, and the
+   * box does not scroll, so the faded text was unreadable with no way to reach it. The clip is
+   * now hard, and it lands on a line boundary because the height is a whole number of line
+   * boxes: MESSAGE_COLLAPSE_LINES from the script sets the count, and the line height comes from
+   * the same --lh-base token the body text uses, so the two cannot drift. */
   .dashboard__message-markdown--collapsed {
-    max-block-size: var(--message-collapse-height, 48.6em);
+    max-block-size: calc(var(--message-collapse-lines, 30) * var(--lh-base) * 1em);
     overflow: hidden;
-    mask-image: linear-gradient(to bottom, black 88%, transparent);
-    -webkit-mask-image: linear-gradient(to bottom, black 88%, transparent);
   }
 
   .dashboard__message-markdown :where(p, ul, ol, blockquote, pre) {

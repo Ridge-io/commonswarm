@@ -36,3 +36,18 @@ test("long rendered bodies get one measured show-more control", () => {
   assert.match(dashboard, /toggle\.textContent = expandedAtRender \? "Show less" : "Show more"/u);
   assert.match(dashboard, /dashboard__message-markdown--collapsed/u);
 });
+
+/** A collapsed message cannot scroll, so any text the clip leaves half-visible is unreachable.
+ * The clip must be hard, and its height must come from the same line-height token the text uses. */
+test("a collapsed message clips at a line boundary and fades nothing", () => {
+  const anchor = ".dashboard__message-markdown--collapsed {";
+  const start = dashboard.indexOf(anchor);
+  assert.notEqual(start, -1, "the collapsed rule is missing");
+  const end = dashboard.indexOf("}", start);
+  assert.notEqual(end, -1, "the collapsed rule is unterminated");
+  const rule = dashboard.slice(start + anchor.length, end);
+  assert.doesNotMatch(rule, /mask-image/u);
+  assert.match(rule, /max-block-size:\s*calc\(var\(--message-collapse-lines[^)]*\) \* var\(--lh-base\) \* 1em\);/u);
+  assert.match(dashboard, /setProperty\(\s*"--message-collapse-lines",\s*String\(MESSAGE_COLLAPSE_LINES\),?\s*\)/u);
+  assert.doesNotMatch(dashboard, /message-collapse-height/u);
+});
