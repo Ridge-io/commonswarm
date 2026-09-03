@@ -3637,7 +3637,20 @@ test("a restart carries the failure run, so the printed remedy cannot erase the 
   assert.equal(first.consecutiveAckFailureCount, 3);
   assert.match(renderListenerStatus(first), /WARNING \[listener_delivery_failing\]/);
 
-  /* The restart the notice recommends, then one incoming note. */
+  /* The restart the notice recommends, observed BEFORE any new ack. A later ack
+     would set these fields itself, so asserting them after one would not reach
+     the carry at all -- measured: dropping lastAckAt from the carry left that
+     version of this test green. */
+  const restarted = await runOnce(async () => {});
+  assert.equal(restarted.consecutiveAckFailureCount, 3);
+  assert.equal(restarted.lastAckOutcome, "failed_terminal");
+  assert.equal(restarted.lastAckAt, "2026-09-03T18:12:00.000Z");
+  assert.equal(restarted.lastSignalId, "aaaaaaaa-aaaa-4aaa-8aaa-aaaaaaaaab03");
+  const restartedHuman = renderListenerStatus(restarted);
+  assert.doesNotMatch(restartedHuman, /at an unknown time/);
+  assert.doesNotMatch(restartedHuman, /No signal has been handled yet/);
+
+  /* Then one incoming note. */
   const second = await runOnce(async (onEvent) => {
     onEvent({
       type: "delivery_ack",
@@ -3651,6 +3664,21 @@ test("a restart carries the failure run, so the printed remedy cannot erase the 
   const human = renderListenerStatus(second);
   assert.doesNotMatch(human, /HANDLED: yes/);
   assert.match(human, /WARNING \[listener_delivery_failing\]/);
+  /* The ack record must carry WHOLE. Carrying the outcome without its timestamp
+     printed "the newest delivery acknowledgement was ..." above "No signal has
+     been handled yet." on one screen. */
+  assert.equal(second.lastAckAt, "2026-09-03T18:20:00.000Z");
+  assert.doesNotMatch(human, /at an unknown time/);
+  assert.doesNotMatch(human, /No signal has been handled yet/);
+  /* The remedy is three verbs and is untested elsewhere: `listen stop` returns
+     while `stopping`, and `listen start` refuses a stopping listener, so a
+     printed `stop && start` pair races. It must also not name a terminal state
+     the listener may never reach -- an unclean exit lands on `failed`. */
+  assert.match(human, /Next: Read the failure codes in /);
+  assert.match(human, /cswarm listen stop --workspace-id [0-9a-f-]+ --principal-id [0-9a-f-]+/);
+  assert.match(human, /no longer running -- state stopped or failed, not stopping/);
+  assert.match(human, /confirming with: cswarm listen status --workspace-id /);
+  assert.doesNotMatch(human, /listen stop[^\n]*&&[^\n]*listen start/);
 
   /* A real reply still clears it across the same restart boundary. */
   const third = await runOnce(async (onEvent) => {

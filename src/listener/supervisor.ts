@@ -272,7 +272,7 @@ export async function runListenerSupervisor(
     readyAt: null,
     updatedAt: startedAt,
     stoppedAt: null,
-    lastSignalId: null,
+    lastSignalId: carried?.lastSignalId ?? null,
     lastErrorCode: null,
     lastErrorDetail: null,
     lastErrorReasonCode: null,
@@ -288,7 +288,11 @@ export async function runListenerSupervisor(
     lastTerminalDeliveryFailureCount: null,
     lastTerminalDeliveryFailureAt: null,
     lastClaimAt: null,
-    lastAckAt: null,
+    /* The ack record is carried WHOLE. Carrying the outcome and the run without
+       their timestamp and signal id rendered a screen whose own sentences
+       disagreed -- "the newest delivery acknowledgement was replied" above
+       "No signal has been handled yet." */
+    lastAckAt: carried?.lastAckAt ?? null,
     lastAckOutcome: carried?.lastAckOutcome ?? null,
     consecutiveAckFailureCount: carried?.consecutiveAckFailureCount ?? null,
     routeMode: options.routeMode ?? "worker",

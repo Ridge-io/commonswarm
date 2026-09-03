@@ -4385,7 +4385,7 @@ function listenerLapseNotices(
         // `listen stop` returns while the state is still `stopping` (D-074), and
         // `listen start` refuses a listener that is stopping, so the two verbs
         // race unless the confirm step sits between them.
-        `Read the failure codes in ${status.logPath}, then stop the listener with: cswarm listen stop --workspace-id ${status.workspaceId} --principal-id ${status.principalId}. Wait for state stopped, confirming with: cswarm listen status --workspace-id ${status.workspaceId} --principal-id ${status.principalId}. Then restart it by piping the same agent credential into: ${listenerRestartCommand(status)}`,
+        `Read the failure codes in ${status.logPath}, then stop the listener with: cswarm listen stop --workspace-id ${status.workspaceId} --principal-id ${status.principalId}. Wait until it is no longer running -- state stopped or failed, not stopping -- confirming with: cswarm listen status --workspace-id ${status.workspaceId} --principal-id ${status.principalId}. Then restart it by piping the same agent credential into: ${listenerRestartCommand(status)}`,
     });
   }
   return notices;
