@@ -50,13 +50,15 @@ const status = (over: Partial<ListenerStatus>): ListenerStatus => ({
   lastErrorCode: "permission_canary_failed",
   lastErrorDetail: null,
   lastWorkerStderrTail: null,
-  /* All six delivery keys are required by writeListenerStatus, even when null. */
+  /* All STATUS_DELIVERY_KEYS entries are required, even when null. */
   deliveryMode: "cursor_fallback",
   pendingDeliveryCount: null,
   lastTerminalDeliveryFailureCount: null,
   lastTerminalDeliveryFailureAt: null,
   lastClaimAt: null,
   lastAckAt: null,
+  lastAckOutcome: null,
+  consecutiveAckFailureCount: null,
   ...over,
 });
 

@@ -22,6 +22,10 @@ import {
   parseListenerReadHealth,
   type ListenerReadHealth,
 } from "./read-health.js";
+import {
+  DELIVERY_ACK_OUTCOMES,
+  type DeliveryOutcome,
+} from "../cloud/delivery.js";
 
 const UUID_RE =
   /^[0-9a-f]{8}-[0-9a-f]{4}-[1-8][0-9a-f]{3}-[89ab][0-9a-f]{3}-[0-9a-f]{12}$/i;
@@ -45,6 +49,9 @@ export type ListenerStatusState =
   | "failed";
 
 export type ListenerProviderId = "grok" | "opencode" | "claude" | "codex";
+
+/** Consecutive terminal ack failures that make a listener hard-down. */
+export const LISTENER_DELIVERY_FAILING_THRESHOLD = 3;
 
 export interface ListenerStatus {
   version: 1;
@@ -89,13 +96,17 @@ export interface ListenerStatus {
   // in-memory producer; readListenerStatus normalizes old version-1 disk JSON
   // that omits them to null without rewriting bytes, and writeListenerStatus
   // refuses a write that omits any of them, so every new status file carries
-  // all six keys.
+  // all keys in STATUS_DELIVERY_KEYS.
   deliveryMode: "durable_claim" | "cursor_fallback" | null;
   pendingDeliveryCount: number | null;
   lastTerminalDeliveryFailureCount: number | null;
   lastTerminalDeliveryFailureAt: string | null;
   lastClaimAt: string | null;
   lastAckAt: string | null;
+  /** What the newest delivery acknowledgement concluded. */
+  lastAckOutcome: DeliveryOutcome | null;
+  /** Terminal ack failures since the last handled ack; null before any ack. */
+  consecutiveAckFailureCount: number | null;
   routeMode?: ListenerRouteMode;
   deferOverChars?: number | null;
   pendingForMainCount?: number;
@@ -201,6 +212,8 @@ const STATUS_ALLOWED_KEYS = new Set([
   "lastTerminalDeliveryFailureAt",
   "lastClaimAt",
   "lastAckAt",
+  "lastAckOutcome",
+  "consecutiveAckFailureCount",
   "routeMode",
   "deferOverChars",
   "pendingForMainCount",
@@ -236,14 +249,20 @@ const STATUS_SENSITIVE_KEYS = new Set([
   "ownerId",
   "owner_id",
 ]);
-const STATUS_DELIVERY_KEYS = [
+export const STATUS_DELIVERY_KEYS = [
   "deliveryMode",
   "pendingDeliveryCount",
   "lastTerminalDeliveryFailureCount",
   "lastTerminalDeliveryFailureAt",
   "lastClaimAt",
   "lastAckAt",
+  "lastAckOutcome",
+  "consecutiveAckFailureCount",
 ] as const;
+
+// This is the former appendListenerEvent-local set, hoisted so status and event
+// validation read the same delivery vocabulary as the command client.
+const deliveryOutcomes = DELIVERY_ACK_OUTCOMES;
 
 function parseStatus(raw: string, rejectUnknownKeys = false): ListenerStatus {
   let value: unknown;
@@ -366,6 +385,12 @@ function parseStatus(raw: string, rejectUnknownKeys = false): ListenerStatus {
       nullableTimestamp(row.lastClaimAt)) ||
     !(row.lastAckAt === undefined ||
       nullableTimestamp(row.lastAckAt)) ||
+    !(row.lastAckOutcome === undefined ||
+      row.lastAckOutcome === null ||
+      (typeof row.lastAckOutcome === "string" &&
+        deliveryOutcomes.has(row.lastAckOutcome as DeliveryOutcome))) ||
+    !(row.consecutiveAckFailureCount === undefined ||
+      nullableCount(row.consecutiveAckFailureCount)) ||
     !(row.routeMode === undefined ||
       row.routeMode === "worker" || row.routeMode === "main" || row.routeMode === "split") ||
     !(row.deferOverChars === undefined || row.deferOverChars === null ||
@@ -421,6 +446,10 @@ function parseStatus(raw: string, rejectUnknownKeys = false): ListenerStatus {
       (row.lastTerminalDeliveryFailureAt ?? null) as string | null,
     lastClaimAt: (row.lastClaimAt ?? null) as string | null,
     lastAckAt: (row.lastAckAt ?? null) as string | null,
+    lastAckOutcome:
+      (row.lastAckOutcome ?? null) as DeliveryOutcome | null,
+    consecutiveAckFailureCount:
+      (row.consecutiveAckFailureCount ?? null) as number | null,
     lastErrorDetail: (row.lastErrorDetail ?? null) as string | null,
     lastWorkerStderrTail: (row.lastWorkerStderrTail ?? null) as string | null,
     providerVersion: (row.providerVersion ?? null) as string | null,
@@ -445,7 +474,7 @@ export async function writeListenerStatus(
   if (Buffer.byteLength(serialized, "utf8") > MAX_STATUS_BYTES) {
     throw new Error("listener status is too large");
   }
-  // New writes always carry all six delivery fields, even when null.
+  // New writes always carry all STATUS_DELIVERY_KEYS fields, even when null.
   const parsed = JSON.parse(serialized) as Record<string, unknown>;
   for (const key of STATUS_DELIVERY_KEYS) {
     if (!(key in parsed)) {
@@ -520,13 +549,6 @@ export async function appendListenerEvent(
     "dropped_count",
   ]);
   const deliveryModes = new Set(["durable_claim", "cursor_fallback"]);
-  const deliveryOutcomes = new Set([
-    "replied",
-    "observed",
-    "queued",
-    "expired",
-    "failed_terminal",
-  ]);
   const routeModes = new Set(["worker", "main", "split"]);
   const routeDecisions = new Set(["worker", "main"]);
   for (const [key, value] of Object.entries(event)) {
@@ -607,7 +629,8 @@ export async function appendListenerEvent(
     if (
       key === "outcome" &&
       !(value === null ||
-        (typeof value === "string" && deliveryOutcomes.has(value)))
+        (typeof value === "string" &&
+          deliveryOutcomes.has(value as DeliveryOutcome)))
     ) {
       throw new Error("listener event outcome is not allowed");
     }

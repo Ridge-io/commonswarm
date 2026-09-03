@@ -38,6 +38,7 @@ import {
   LISTENER_HOST_PORTS_PROBE_MS,
   LISTENER_PROMPT_START_MINIMUM_MS,
   listenerPaths,
+  queryListenerControl,
   runListenerSupervisor,
   claimCommandId,
   ackCommandId,
@@ -762,6 +763,10 @@ test("delivery events reduce into the closed supervisor status fields", async ()
     stateDirectory: root,
   });
   const ts = "2026-07-30T00:00:01.000Z";
+  const ackSnapshots: Array<{
+    outcome: string | null;
+    failures: number | null;
+  }> = [];
   const status = await runListenerSupervisor({
     paths,
     profileId: "profile-test",
@@ -786,12 +791,23 @@ test("delivery events reduce into the closed supervisor status fields", async ()
         droppedCount: 7,
         ts,
       });
-      onEvent({
-        type: "delivery_ack",
-        signalId: "aaaaaaaa-aaaa-4aaa-8aaa-aaaaaaaaaa13",
-        outcome: "replied",
-        ts,
-      });
+      const ack = async (
+        signalId: string,
+        outcome: "failed_terminal" | "queued" | "expired" | "replied",
+      ) => {
+        onEvent({ type: "delivery_ack", signalId, outcome, ts });
+        const snapshot = await queryListenerControl(paths, "status");
+        ackSnapshots.push({
+          outcome: snapshot.lastAckOutcome,
+          failures: snapshot.consecutiveAckFailureCount,
+        });
+      };
+      await ack("aaaaaaaa-aaaa-4aaa-8aaa-aaaaaaaaaa13", "failed_terminal");
+      await ack("aaaaaaaa-aaaa-4aaa-8aaa-aaaaaaaaaa14", "queued");
+      await ack("aaaaaaaa-aaaa-4aaa-8aaa-aaaaaaaaaa15", "failed_terminal");
+      await ack("aaaaaaaa-aaaa-4aaa-8aaa-aaaaaaaaaa16", "expired");
+      await ack("aaaaaaaa-aaaa-4aaa-8aaa-aaaaaaaaaa17", "failed_terminal");
+      await ack("aaaaaaaa-aaaa-4aaa-8aaa-aaaaaaaaaa18", "replied");
       return { reason: "cancelled" };
     },
   });
@@ -801,7 +817,17 @@ test("delivery events reduce into the closed supervisor status fields", async ()
   assert.equal(status.lastTerminalDeliveryFailureAt, ts);
   assert.equal(status.lastClaimAt, ts);
   assert.equal(status.lastAckAt, ts);
-  assert.equal(status.lastSignalId, "aaaaaaaa-aaaa-4aaa-8aaa-aaaaaaaaaa13");
+  assert.equal(status.lastAckOutcome, "replied");
+  assert.equal(status.consecutiveAckFailureCount, 0);
+  assert.deepEqual(ackSnapshots, [
+    { outcome: "failed_terminal", failures: 1 },
+    { outcome: "queued", failures: 1 },
+    { outcome: "failed_terminal", failures: 2 },
+    { outcome: "expired", failures: 2 },
+    { outcome: "failed_terminal", failures: 3 },
+    { outcome: "replied", failures: 0 },
+  ]);
+  assert.equal(status.lastSignalId, "aaaaaaaa-aaaa-4aaa-8aaa-aaaaaaaaaa18");
   assert.equal(status.pendingForMainCount, 200);
   assert.equal(status.droppedForMainCount, 7);
 });

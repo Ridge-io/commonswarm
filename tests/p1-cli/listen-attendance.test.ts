@@ -8,6 +8,7 @@ import { dirname, join, resolve } from "node:path";
 import { fileURLToPath } from "node:url";
 import test from "node:test";
 import { cloudTarget } from "../../src/cloud/config.js";
+import type { DeliveryOutcome } from "../../src/cloud/delivery.js";
 import {
   appendListenerEvent,
   FileHookSurfaceStore,
@@ -108,6 +109,10 @@ async function statusFixture(
     state: "ready" | "stopped";
     pending: number;
     lastAckAt?: string | null;
+    lastAckOutcome?: DeliveryOutcome | null;
+    consecutiveAckFailureCount?: number | null;
+    lastErrorCode?: string | null;
+    routeMode?: "worker" | "main" | "split";
   },
 ): Promise<ListenerStatus> {
   const status: ListenerStatus = {
@@ -124,7 +129,7 @@ async function statusFixture(
     updatedAt: "2026-09-01T12:00:02.000Z",
     stoppedAt: options.state === "stopped" ? "2026-09-01T12:00:02.000Z" : null,
     lastSignalId: SIGNAL_ID,
-    lastErrorCode: null,
+    lastErrorCode: options.lastErrorCode ?? null,
     lastErrorDetail: null,
     lastWorkerStderrTail: null,
     deliveryMode: "durable_claim",
@@ -133,7 +138,10 @@ async function statusFixture(
     lastTerminalDeliveryFailureAt: null,
     lastClaimAt: "2026-09-01T12:00:02.000Z",
     lastAckAt: options.lastAckAt ?? null,
-    routeMode: "main",
+    lastAckOutcome: options.lastAckOutcome ?? null,
+    consecutiveAckFailureCount:
+      options.consecutiveAckFailureCount ?? null,
+    routeMode: options.routeMode ?? "main",
     deferOverChars: null,
     pendingForMainCount: options.pending,
     droppedForMainCount: 0,
@@ -257,6 +265,103 @@ test("listen status separates connected, attended, and handled across the fixtur
     assert.match(deadQueued.stdout, /CONNECTED: no/);
     assert.match(deadQueued.stdout, /ATTENDED: no/);
     assert.match(deadQueued.stdout, /message is also stranded because this listener is not running/);
+  } finally {
+    if (activeControl !== null) await activeControl.close();
+    await rm(root, { recursive: true, force: true });
+    await rm(home, { recursive: true, force: true });
+  }
+});
+
+test("worker status shows terminal delivery failure runs and clears them after an answer", async () => {
+  const root = await mkdtemp(join(tmpdir(), "cswarm-worker-delivery-status-"));
+  const home = await mkdtemp(join(tmpdir(), "cswarm-worker-delivery-home-"));
+  let activeControl: { close(): Promise<void> } | null = null;
+  try {
+    const failedRoot = join(root, "failed");
+    const failedPaths = paths(failedRoot);
+    const failedStatus = await statusFixture(failedPaths, {
+      state: "ready",
+      pending: 0,
+      routeMode: "worker",
+      lastAckAt: "2026-09-01T12:00:04.000Z",
+      lastAckOutcome: "failed_terminal",
+      consecutiveAckFailureCount: 3,
+      lastErrorCode: "acpprotocolerror",
+    });
+    activeControl = await startListenerControlServer({
+      paths: failedPaths,
+      status: () => failedStatus,
+      stop: () => {},
+    });
+
+    const failedHuman = await runCliAsync(statusArgs(failedRoot), {
+      cwd: root,
+      home,
+    });
+    assert.equal(failedHuman.status, 0, failedHuman.stderr);
+    assert.match(failedHuman.stdout, /HANDLED: no/);
+    assert.match(
+      failedHuman.stdout,
+      /newest delivery acknowledgement was failed_terminal \(acpprotocolerror\)/,
+    );
+    assert.match(failedHuman.stdout, /Last failed delivery signal:/);
+    assert.doesNotMatch(failedHuman.stdout, /Last handled signal:/);
+    assert.match(failedHuman.stdout, /Listener LAPSE/);
+    assert.match(failedHuman.stdout, /WARNING \[listener_delivery_failing\]/);
+
+    const failedJson = await runCliAsync(
+      [...statusArgs(failedRoot), "--json"],
+      { cwd: root, home },
+    );
+    assert.equal(failedJson.status, 0, failedJson.stderr);
+    const failedParsed = JSON.parse(failedJson.stdout) as Record<string, unknown>;
+    assert.equal(failedParsed.handledState, "not_handled");
+    assert.equal(failedParsed.listenerLapse, true);
+    assert.deepEqual(failedParsed.listenerLapseCodes, [
+      "listener_delivery_failing",
+    ]);
+    assert.equal(failedParsed.lastAckOutcome, "failed_terminal");
+    assert.equal(failedParsed.consecutiveAckFailureCount, 3);
+    await activeControl.close();
+    activeControl = null;
+
+    const answeredRoot = join(root, "answered");
+    const answeredPaths = paths(answeredRoot);
+    const answeredStatus = await statusFixture(answeredPaths, {
+      state: "ready",
+      pending: 0,
+      routeMode: "worker",
+      lastAckAt: "2026-09-01T12:00:05.000Z",
+      lastAckOutcome: "replied",
+      consecutiveAckFailureCount: 0,
+    });
+    activeControl = await startListenerControlServer({
+      paths: answeredPaths,
+      status: () => answeredStatus,
+      stop: () => {},
+    });
+
+    const answeredHuman = await runCliAsync(statusArgs(answeredRoot), {
+      cwd: root,
+      home,
+    });
+    assert.equal(answeredHuman.status, 0, answeredHuman.stderr);
+    assert.match(answeredHuman.stdout, /HANDLED: yes/);
+    assert.match(answeredHuman.stdout, /newest delivery acknowledgement was replied/);
+    assert.match(answeredHuman.stdout, /Last handled signal:/);
+    assert.doesNotMatch(answeredHuman.stdout, /listener_delivery_failing/);
+
+    const answeredJson = await runCliAsync(
+      [...statusArgs(answeredRoot), "--json"],
+      { cwd: root, home },
+    );
+    assert.equal(answeredJson.status, 0, answeredJson.stderr);
+    const answeredParsed = JSON.parse(answeredJson.stdout) as Record<string, unknown>;
+    assert.equal(answeredParsed.handledState, "handled");
+    assert.equal(answeredParsed.listenerLapse, false);
+    assert.deepEqual(answeredParsed.listenerLapseCodes, []);
+    assert.equal(answeredParsed.lastAckOutcome, "replied");
+    assert.equal(answeredParsed.consecutiveAckFailureCount, 0);
   } finally {
     if (activeControl !== null) await activeControl.close();
     await rm(root, { recursive: true, force: true });

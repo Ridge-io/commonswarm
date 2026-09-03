@@ -26,6 +26,7 @@ import {
   readListenerStatus,
   runListenerSupervisor,
   startListenerControlServer,
+  STATUS_DELIVERY_KEYS,
   stopListener,
   waitForListenerReady,
   writeListenerStatus,
@@ -113,6 +114,8 @@ function statusFor(paths: ListenerPaths, state: ListenerStatus["state"]): Listen
     lastTerminalDeliveryFailureAt: null,
     lastClaimAt: null,
     lastAckAt: null,
+    lastAckOutcome: null,
+    consecutiveAckFailureCount: null,
     routeMode: "worker",
     deferOverChars: null,
     pendingForMainCount: 0,
@@ -1108,7 +1111,7 @@ test("prepare failure rejects cleanly, releases the startup lock, and allows one
   }
 });
 
-test("old status without delivery fields reads as six nulls and is never rewritten", async () => {
+test("old status without delivery fields reads as nulls and is never rewritten", async () => {
   const root = await mkdtemp(join(tmpdir(), "cswarm-control-test-"));
   const target = paths(root);
   const ts = "2026-07-30T00:00:00.000Z";
@@ -1143,6 +1146,8 @@ test("old status without delivery fields reads as six nulls and is never rewritt
   assert.equal(read.lastTerminalDeliveryFailureAt, null);
   assert.equal(read.lastClaimAt, null);
   assert.equal(read.lastAckAt, null);
+  assert.equal(read.lastAckOutcome, null);
+  assert.equal(read.consecutiveAckFailureCount, null);
   assert.equal(read.state, "ready");
 
   // Reading never rewrites the old file.
@@ -1150,7 +1155,7 @@ test("old status without delivery fields reads as six nulls and is never rewritt
   assert.equal(afterBytes, beforeBytes);
 });
 
-test("new status with delivery metadata round-trips exactly and writes require all six fields", async () => {
+test("new status with delivery metadata round-trips exactly and writes require every field", async () => {
   const root = await mkdtemp(join(tmpdir(), "cswarm-control-test-"));
   const target = paths(root);
   const ts = "2026-07-31T12:00:00.000Z";
@@ -1162,6 +1167,8 @@ test("new status with delivery metadata round-trips exactly and writes require a
     lastTerminalDeliveryFailureAt: ts,
     lastClaimAt: ts,
     lastAckAt: ts,
+    lastAckOutcome: "failed_terminal",
+    consecutiveAckFailureCount: 3,
   };
   await writeListenerStatus(target, status);
   assert.deepEqual(await readListenerStatus(target), status);
@@ -1169,27 +1176,19 @@ test("new status with delivery metadata round-trips exactly and writes require a
     string,
     unknown
   >;
-  for (const key of [
-    "deliveryMode",
-    "pendingDeliveryCount",
-    "lastTerminalDeliveryFailureCount",
-    "lastTerminalDeliveryFailureAt",
-    "lastClaimAt",
-    "lastAckAt",
-  ]) {
+  for (const key of STATUS_DELIVERY_KEYS) {
     assert.ok(key in raw, `new status write contains ${key}`);
   }
 
-  // A write that omits any delivery field fails closed.
-  const incomplete = { ...statusFor(target, "ready") } as Record<
-    string,
-    unknown
-  >;
-  delete incomplete.lastAckAt;
-  await assert.rejects(
-    writeListenerStatus(target, incomplete as unknown as ListenerStatus),
-    /missing delivery metadata/,
-  );
+  // Each required field reaches the delivery-metadata gate when omitted.
+  for (const key of STATUS_DELIVERY_KEYS) {
+    const incomplete = { ...status } as Record<string, unknown>;
+    delete incomplete[key];
+    await assert.rejects(
+      writeListenerStatus(target, incomplete as unknown as ListenerStatus),
+      /missing delivery metadata/,
+    );
+  }
 });
 
 test("status ignores unknown keys, renders old counters as unmeasured, and rejects malformed known keys", async () => {
@@ -1287,6 +1286,11 @@ test("status ignores unknown keys, renders old counters as unmeasured, and rejec
     await assert.rejects(readListenerStatus(target), /malformed/);
   }
 
+  await writeRaw((row) => {
+    row.lastAckOutcome = "nope";
+  });
+  await assert.rejects(readListenerStatus(target), /malformed/);
+
   // Malformed counts fail closed.
   for (const bad of [-1, 1.5, "3", 2 ** 53]) {
     await writeRaw((row) => {
@@ -1295,6 +1299,10 @@ test("status ignores unknown keys, renders old counters as unmeasured, and rejec
     await assert.rejects(readListenerStatus(target), /malformed/);
     await writeRaw((row) => {
       row.lastTerminalDeliveryFailureCount = bad;
+    });
+    await assert.rejects(readListenerStatus(target), /malformed/);
+    await writeRaw((row) => {
+      row.consecutiveAckFailureCount = bad;
     });
     await assert.rejects(readListenerStatus(target), /malformed/);
   }

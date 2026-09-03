@@ -1,4 +1,5 @@
 import { randomUUID } from "node:crypto";
+import { DELIVERY_HANDLED_OUTCOMES } from "../cloud/delivery.js";
 import { AcpPermissionCanaryError } from "../host/types.js";
 import {
   appendListenerEvent,
@@ -282,6 +283,8 @@ export async function runListenerSupervisor(
     lastTerminalDeliveryFailureAt: null,
     lastClaimAt: null,
     lastAckAt: null,
+    lastAckOutcome: null,
+    consecutiveAckFailureCount: null,
     routeMode: options.routeMode ?? "worker",
     deferOverChars: options.deferOverChars ?? null,
     pendingForMainCount: 0,
@@ -578,9 +581,17 @@ export async function runListenerSupervisor(
       return;
     }
     if (event.type === "delivery_ack") {
+      const failed = event.outcome === "failed_terminal";
+      const handled = DELIVERY_HANDLED_OUTCOMES.has(event.outcome);
       status = {
         ...status,
         lastAckAt: event.ts,
+        lastAckOutcome: event.outcome,
+        consecutiveAckFailureCount: failed
+          ? (status.consecutiveAckFailureCount ?? 0) + 1
+          : handled
+          ? 0
+          : status.consecutiveAckFailureCount,
         pendingDeliveryCount: null,
         lastSignalId: event.signalId,
         updatedAt: event.ts,

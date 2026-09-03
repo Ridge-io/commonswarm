@@ -221,6 +221,7 @@ import {
   DeliveryReceiptReadError,
   readAgentDeliveryReceipts,
 } from "./cloud/delivery-receipts.js";
+import { DELIVERY_HANDLED_OUTCOMES } from "./cloud/delivery.js";
 import {
   renderedBroadcastIds,
   reportRenderedBroadcasts,
@@ -268,6 +269,7 @@ import {
   renderListenerAttendanceCanary,
   runListenerAttendanceCanary,
   writeListenerCredentialState,
+  LISTENER_DELIVERY_FAILING_THRESHOLD,
   LISTENER_DEFER_OVER_MAX,
   LISTENER_DEFER_OVER_MIN,
   emptyListenerReadHealth,
@@ -4268,10 +4270,18 @@ function listenerAttendanceState(
     : attendanceState === "unattended"
     ? false
     : null;
+  const lastAckOutcome = status.lastAckOutcome ?? null;
+  // An acknowledgement that never reaches the service emits no delivery_ack.
+  // Its fatal/restart path is reported by CONNECTED; HANDLED describes only
+  // the newest acknowledgement the service accepted.
   const handled = pending > 0
     ? false
-    : routeMode === "worker" && status.lastAckAt !== null
+    : routeMode !== "worker" || lastAckOutcome === null
+    ? null
+    : DELIVERY_HANDLED_OUTCOMES.has(lastAckOutcome)
     ? true
+    : lastAckOutcome === "failed_terminal"
+    ? false
     : null;
   return {
     connected,
@@ -4294,7 +4304,8 @@ interface ListenerLapseNotice {
   code:
     | "listener_host_ports_exhausted"
     | "listener_read_retry_persisting"
-    | "listener_claim_throughput_lapse";
+    | "listener_claim_throughput_lapse"
+    | "listener_delivery_failing";
   message: string;
   nextStep: string;
 }
@@ -4343,6 +4354,16 @@ function listenerLapseNotices(
       message: `Claim throughput fell below 0.50 for the full hour at ${latest.hourStart}: ${latest.claims}/${Math.round(latest.expectedClaims)} expected (${latest.ratio.toFixed(3)}).`,
       nextStep:
         "This host is starving the listener — check load/memory pressure (sysctl kern.memorystatus_vm_pressure_level), or move the listener.",
+    });
+  }
+  const consecutive = status.consecutiveAckFailureCount ?? 0;
+  if (consecutive >= LISTENER_DELIVERY_FAILING_THRESHOLD) {
+    notices.push({
+      code: "listener_delivery_failing",
+      message:
+        `There have been ${consecutive} terminal delivery failures since the last answered delivery. The newest acknowledgement was ${status.lastAckOutcome ?? "not recorded"} at ${status.lastAckAt ?? "an unknown time"}; status code ${status.lastErrorCode ?? "none recorded"}. Messages sent to this agent are not being answered.`,
+      nextStep:
+        `Check the provider on this host, then restart the listener: ${listenerRestartCommand(status)}`,
     });
   }
   return notices;
@@ -4490,6 +4511,8 @@ export function listenerStatusJson(
       status.lastTerminalDeliveryFailureAt ?? null,
     lastClaimAt: status.lastClaimAt ?? null,
     lastAckAt: status.lastAckAt ?? null,
+    lastAckOutcome: status.lastAckOutcome ?? null,
+    consecutiveAckFailureCount: status.consecutiveAckFailureCount ?? null,
     routeMode: status.routeMode ?? "worker",
     deferOverChars: status.deferOverChars ?? null,
     pendingForMainCount: status.pendingForMainCount ?? 0,
@@ -4558,9 +4581,11 @@ export function renderListenerStatus(
     }.`,
     `HANDLED: ${
       attendance.handledState === "handled"
-        ? "yes. A delivery acknowledgement is recorded"
+        ? `yes. The newest delivery acknowledgement was ${status.lastAckOutcome}`
         : attendance.handledState === "not_handled"
-        ? "no. Queued messages have not reached the session hook"
+        ? routeMode === "worker"
+          ? `no. The newest delivery acknowledgement was ${status.lastAckOutcome}${status.lastErrorCode ? ` (${status.lastErrorCode})` : ""}`
+          : "no. Queued messages have not reached the session hook"
         : "not yet measured"
     }.`,
     `Provider: ${status.provider}; process: ${status.pid}; started: ${status.startedAt}.`,
@@ -4579,7 +4604,11 @@ export function renderListenerStatus(
       ? pendingForMainCount > 0
         ? `Last claimed and queued signal: ${status.lastSignalId}. It is not handled yet.`
         : routeMode === "worker"
-        ? `Last handled signal: ${status.lastSignalId}.`
+        ? attendance.handledState === "handled"
+          ? `Last handled signal: ${status.lastSignalId}.`
+          : attendance.handledState === "not_handled"
+          ? `Last failed delivery signal: ${status.lastSignalId}.`
+          : `Last acknowledged signal: ${status.lastSignalId}. Its handling outcome is not known.`
         : `Last listener signal: ${status.lastSignalId}. Local status does not prove its final observed receipt.`
       : "No signal has been handled yet.",
     status.lastErrorCode
@@ -4727,7 +4756,7 @@ export function renderListenerStatus(
     status.lastTerminalDeliveryFailureCount > 0
   ) {
     lines.push(
-      `The last claim reported ${status.lastTerminalDeliveryFailureCount} terminal delivery failures; they remain recorded, and the listener will keep receiving.`,
+      `The last claim reported ${status.lastTerminalDeliveryFailureCount} ${status.lastTerminalDeliveryFailureCount === 1 ? "delivery" : "deliveries"} the service gave up on because this listener never acknowledged them. They remain recorded, and the listener will keep receiving.`,
     );
   }
   /* D-074. `stopping` and `starting` are TRANSITIONAL: the verb returns before teardown or

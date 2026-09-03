@@ -1389,6 +1389,8 @@ test("listen status distinguishes delivery modes and null zero positive counts",
     lastTerminalDeliveryFailureAt: null,
     lastClaimAt: null,
     lastAckAt: null,
+    lastAckOutcome: null,
+    consecutiveAckFailureCount: null,
     logPath: paths.logPath,
   };
   const args = [
@@ -1412,7 +1414,7 @@ test("listen status distinguishes delivery modes and null zero positive counts",
     assert.equal(unknown.code, 0, unknown.stderr);
     assert.match(unknown.stdout, /Delivery mode: durable claim and acknowledgement\./);
     assert.doesNotMatch(unknown.stdout, /Pending deliveries reported by the service:/);
-    assert.doesNotMatch(unknown.stdout, /terminal delivery failures/);
+    assert.doesNotMatch(unknown.stdout, /service gave up on/);
 
     await writeListenerStatus(paths, {
       ...base,
@@ -1422,7 +1424,7 @@ test("listen status distinguishes delivery modes and null zero positive counts",
     const zero = await runCli(args);
     assert.equal(zero.code, 0, zero.stderr);
     assert.match(zero.stdout, /Pending deliveries reported by the service: 0\./);
-    assert.doesNotMatch(zero.stdout, /terminal delivery failures/);
+    assert.doesNotMatch(zero.stdout, /service gave up on/);
 
     await writeListenerStatus(paths, {
       ...base,
@@ -1436,10 +1438,10 @@ test("listen status distinguishes delivery modes and null zero positive counts",
     assert.match(positive.stdout, /Pending deliveries reported by the service: 2\./);
     assert.match(
       positive.stdout,
-      /The last claim reported 3 terminal delivery failures; they remain recorded, and the listener will keep receiving\./,
+      /The last claim reported 3 deliveries the service gave up on because this listener never acknowledged them\. They remain recorded, and the listener will keep receiving\./,
     );
     assert.equal(
-      positive.stdout.match(/terminal delivery failures/g)?.length,
+      positive.stdout.match(/service gave up on/g)?.length,
       1,
     );
 
@@ -1455,7 +1457,7 @@ test("listen status distinguishes delivery modes and null zero positive counts",
     assert.equal(fallback.code, 0, fallback.stderr);
     assert.match(fallback.stdout, /Delivery mode: cursor fallback\./);
     assert.doesNotMatch(fallback.stdout, /Pending deliveries reported by the service:/);
-    assert.doesNotMatch(fallback.stdout, /terminal delivery failures/);
+    assert.doesNotMatch(fallback.stdout, /service gave up on/);
   } finally {
     await rm(root, { recursive: true, force: true });
   }

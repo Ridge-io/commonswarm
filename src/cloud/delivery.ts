@@ -20,12 +20,19 @@ const SENDER_OWNER_RELATIONS = new Set<SenderOwnerRelation>([
   "cross_owner",
   "unknown",
 ]);
-const DELIVERY_ACK_OUTCOMES = new Set<DeliveryOutcome>([
+/** Outcomes accepted by the delivery acknowledgement endpoint. */
+export const DELIVERY_ACK_OUTCOMES: ReadonlySet<DeliveryOutcome> = new Set([
   "replied",
   "observed",
   "queued",
   "expired",
   "failed_terminal",
+]);
+
+/** Ack outcomes that prove the listener answered the delivery. */
+export const DELIVERY_HANDLED_OUTCOMES: ReadonlySet<DeliveryOutcome> = new Set([
+  "replied",
+  "observed",
 ]);
 
 /** Per-request deadline covering fetch and the response body read. */
@@ -544,7 +551,7 @@ function assertAckRequest(request: DeliveryAckRequest): void {
   checkedUuidRequest(request.listenerInstanceId, "listenerInstanceId");
   if (!DELIVERY_ACK_OUTCOMES.has(request.outcome as DeliveryOutcome)) {
     throw new Error(
-      "a delivery outcome must be replied, observed, queued, expired, or failed_terminal",
+      `a delivery outcome must be ${[...DELIVERY_ACK_OUTCOMES].join(", ")}`,
     );
   }
   if (request.outcome === "failed_terminal") {

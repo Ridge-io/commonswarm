@@ -118,6 +118,8 @@ test("listenerStatusJson emits host_limits as a structured object, not a string"
     lastTerminalDeliveryFailureAt: null,
     lastClaimAt: null,
     lastAckAt: null,
+    lastAckOutcome: null,
+    consecutiveAckFailureCount: null,
     logPath: "/tmp/log",
   };
   const json = listenerStatusJson(status, "deny");
@@ -154,6 +156,8 @@ function readHealthStatus(readHealth: ListenerStatus["readHealth"]): ListenerSta
     lastTerminalDeliveryFailureAt: null,
     lastClaimAt: null,
     lastAckAt: null,
+    lastAckOutcome: null,
+    consecutiveAckFailureCount: null,
     routeMode: "worker",
     deferOverChars: null,
     pendingForMainCount: 0,
