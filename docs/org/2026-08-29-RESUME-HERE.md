@@ -1101,3 +1101,106 @@ Monitor was stopped at session end; the detached listener remains the durable re
 **Next session:** nothing is queued. Start from the deferrals above or from new agent reports —
 three of this session's six releases came from agents filing `cswarm feedback`, which is the highest
 yield input we have.
+
+---
+
+## Addendum — 2026-09-03 health check (all measured, one fix applied)
+
+Ran on the mini as CSwarmDevLead against production (`api.commonswarm.com`,
+project `ukezjcnxjvkpkeezxaew`, the one named `cloud-swarm-dev`).
+
+### One thing was broken, and it is fixed
+
+**Marque (`023fd46b`) had been down for ~2 days** — failed 2026-09-01T16:19:23Z, and the seat the
+operator designated for mini/host incidents therefore had no listener. Two failures in sequence,
+from its own `events.ndjson`:
+
+1. `permission_canary_failed` — "ACP request timed out: session/prompt" (16:17)
+2. `version_unparseable` — "could not parse codex-acp version from: **codex-cli 0.147.0**" (16:19)
+
+**The second is a misconfiguration, not a parser bug, and the first hypothesis was wrong.** Measured
+on this host:
+
+```
+codex-acp --version  ->  @agentclientprotocol/codex-acp 1.8.0
+codex --version      ->  codex-cli 0.147.0
+```
+
+The restart had been pointed at the **Codex CLI** instead of the **codex-acp bridge**. `src/host/codex.ts`
+already discriminates this case and throws `executable_not_bridge` with the install line; that landed in
+`9d2081a` (first tag **v0.1.45**) and is present in the installed 0.1.50 binary (grep 2 hits, control 0).
+Marque's stored `version_unparseable` is a **stale artifact of a pre-0.1.45 build**, not a live defect.
+
+Restarted it against the bridge entrypoint and verified with a live control rather than the state word:
+
+```
+listener_canary_attempt attempt=1 passed=true
+listener_ready
+listener_delivery_claim  signal_id=2a6f08a2…
+listener_effect          status=done failure_code=null
+listener_delivery_ack    outcome=replied
+```
+
+Now `ready`, provider 1.8.0, and it drained the 2 deliveries queued while it was dead.
+
+### Two alarms that were instrument error, not incidents
+
+**`capability` returning 404 is NOT an outage.** A deployed function answering its own not_found and a
+genuinely absent function are both 404, and they are distinguished only by the BODY:
+
+```
+capability         -> {"error":"not_found"}                                    <- app-level, function is ALIVE
+truly-missing-zzz  -> {"code":"NOT_FOUND","message":"Requested function was not found"}   <- platform
+```
+
+All four functions are ACTIVE (`command` v37, `read` v19, `capability` v4, `activity` v1). **A status
+code alone cannot tell you a function is deployed — compare the body against a known-absent control.**
+
+**"231 deliveries stuck over 1h" is lifetime backlog, not a live failure.** Age-bucketed:
+
+| bucket | stuck |
+|---|---|
+| last 6h | 0 |
+| 6–24h | 0 |
+| 1–7 days | 12 |
+| older than 7 days | 219 |
+
+7-day ack rate is **96.1%** (297 acked / 12 unacked). 31 of the 231 are addressed to revoked agents and
+can never ack. **An unbounded "over 1h" count reads as an incident and measures history** — age-bucket it
+or it will be re-reported as an outage every time someone runs a health check.
+
+### Also confirmed green
+
+- Release consistency, all five surfaces agree at **0.1.50**: package.json, npm `commonswarm`,
+  GitHub `v0.1.50`, `git describe`, installed CLI, and the site pin. The stray `0.1.0` on /download is
+  the **protocol** version (`cswarm 0.1.50 (protocol 0.1.0)`), confirmed, not assumed. Control `0.1.999` = 0.
+- Site: `/`, `/start`, `/app`, `/download`, `/install.sh` all 200; `/nope.sh` 404 control correct.
+- Repo hygiene held since the cleanup: on `main`, clean tree, **1 worktree**, no stray branches.
+- Host: pressure level 1, 44 GiB disk free, 12 TIME_WAIT, load ~4.1 with the fleet running.
+- Workspace CICD active: 51 notes, 11 asks, 5 working-on in 24h; roster 12.
+
+### Fleet on this host after the fix
+
+| seat | state | note |
+|---|---|---|
+| CSwarmDevLead `8d10fe67` | ready | acking within minutes |
+| Finisher `78249a33` | ready | — |
+| CDReporter `214fa712` | ready | — |
+| CodexDesktop `token` | ready | — |
+| Marque `023fd46b` | **ready** | restarted this check |
+| Gauge `166f4902` | stopped | deliberate, left alone |
+| Strategist `a9c1a7fb` | stopped | deliberate, left alone |
+
+### Noted, NOT fixed (observability gap, listener still works)
+
+`lastErrorCode: "acpprotocolerror"` is recorded on CSwarmDevLead and Finisher with
+**`lastErrorDetail: null` AND `lastErrorReasonCode: null`**. Both listeners are `ready` and acking, so
+this is not an outage — but the brain topic `claude-listener-uses-acp-bridge` says to diagnose these by
+reading `lastErrorDetail`, and on this code path that field is empty. `AcpProtocolError` carries a
+`reasonCode` and a peer message at the throw site (`src/host/transport.ts`), so the detail exists and is
+being dropped before it reaches listener state. Worth a small lane; it makes a documented diagnostic
+procedure inapplicable to the error it names.
+
+Also unexplained and worth one probe if it recurs: CSwarmDevLead shows
+`providerVersion 0.73.0` vs `providerLastMeasuredVersion 0.64.2` — the ACP bridge was upgraded under a
+running listener, which is a plausible source of the protocol error above. NOT established as the cause.
