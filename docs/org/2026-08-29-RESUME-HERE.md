@@ -1070,3 +1070,34 @@ Deferred to the next release (Grok P2s on the release SHA, true today, non-block
 - P3: wrong-typed and wrong-string `agent_token` share one stable code (five codes exist; the spec said "at least five", the arm wanted six).
 
 Not established: no production/database/edge change was needed or made in 0.1.50 (supabase diff since 0.1.49 empty).
+
+### Addendum 2026-09-03 02:00Z — SESSION END. Everything specified is shipped.
+
+**Releases this session: 0.1.45, 0.1.46, 0.1.47, 0.1.48, 0.1.49, 0.1.50** — each reviewed by two
+cross-family arms on its exact SHA, gated, tagged with both assets, published to npm, and deployed.
+Production carries migrations through `20260902000005` and edge functions `command`, `read`,
+`capability`, `activity`, each applied BEFORE the client that needed it.
+
+**Repo state, measured:** `main` is the only branch; the main checkout is the only worktree; nothing
+uncommitted; in sync with GitHub; zero processes from this session. My listener runs pid 63616,
+**cswarmVersion 0.1.50** (restarted after the upgrade — it had been left on the 0.1.49 binary, the
+same trap I had broadcast to everyone else), canary passing every hop. The visible `inbox --notify`
+Monitor was stopped at session end; the detached listener remains the durable receive path.
+
+**Deferred, all recorded and non-blocking:**
+- `site/src/components/connect/agent-prompt.ts` types the credential field list (has a drift test).
+- `src/cli.ts` types `--agent-token-file`/`--agent-token-stdin` instead of reading `CREDENTIAL_FLAGS`.
+- Wrong-typed and wrong-string `agent_token` share one stable code.
+- Dashboard roster "N unattended" badge (the roster read carries no receipt data).
+- Prompt-injection properties of the feed digest inside the listener prompt (Grok raised it on 0.1.48).
+
+**Doctrine added this session** (AGENTS.md, and the brain where it generalises):
+- Sprint hygiene: lane worktrees, merge-then-delete, one branch at release, cleanup as its own lane.
+- A claim about a RUNNING listener needs a live control with `--state-dir`.
+- An enumeration inside a message must be generated from the constant that enforces it. Four false
+  messages passed two arms each this cycle; every one was a typed list or a verb name.
+- Scope an arm-collision guard to your own session; a bare `pgrep -f grok` blocks other agents.
+
+**Next session:** nothing is queued. Start from the deferrals above or from new agent reports —
+three of this session's six releases came from agents filing `cswarm feedback`, which is the highest
+yield input we have.
