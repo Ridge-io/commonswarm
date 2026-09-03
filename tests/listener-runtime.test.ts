@@ -815,6 +815,21 @@ test("delivery events reduce into the closed supervisor status fields", async ()
         ["aaaaaaaa-aaaa-4aaa-8aaa-aaaaaaaaaa23", "observed", "2026-09-03T18:45:38.000Z"],
       ];
       for (const event of incident) await ack(...event);
+      /* Reaching `ready` again (a restartable blip, canary passed) must NOT clear
+         the run. The permission canary is its own prompt: a provider can answer
+         it and fail every real message, so `ready` is not provider proof. Without
+         this pin, restoring `consecutiveAckFailureCount: 0` on `ready` leaves
+         every other assertion in this file green. */
+      onEvent({
+        type: "ready",
+        workspaceId: WORKSPACE_ID,
+        principalId: PRINCIPAL_ID,
+        ts: "2026-09-03T18:46:00.000Z",
+      });
+      const afterReady = await queryListenerControl(paths, "status");
+      assert.equal(afterReady.consecutiveAckFailureCount, 8);
+      assert.equal(afterReady.lastAckOutcome, "observed");
+      assert.doesNotMatch(renderListenerStatus(afterReady), /HANDLED: yes/);
       await ack("aaaaaaaa-aaaa-4aaa-8aaa-aaaaaaaaaa24", "queued", "2026-09-03T18:46:00.000Z");
       await ack("aaaaaaaa-aaaa-4aaa-8aaa-aaaaaaaaaa25", "expired", "2026-09-03T18:46:30.000Z");
       await ack("aaaaaaaa-aaaa-4aaa-8aaa-aaaaaaaaaa26", "replied", "2026-09-03T18:47:00.000Z");
@@ -3577,4 +3592,76 @@ test("an already-aborted runtime caller never starts the reply fetch and stays r
   const record = await store.read(theAsk.id);
   assert.ok(record);
   assert.equal(record.state, "reply_ready", "the effect must remain resumable");
+});
+
+test("a restart carries the failure run, so the printed remedy cannot erase the alarm", async () => {
+  /* The lapse notice tells the operator to stop and start the listener. Seeding a
+     fresh run on start made following that advice delete the evidence: the next
+     `observed` note then printed `HANDLED: yes` on a provider that was still dead
+     -- the 17:12:52 state of the measured 2026-09-03 incident, reached by doing
+     exactly what the notice said. Operator-read state is durable by default. */
+  const root = await mkdtemp(join(tmpdir(), "cswarm-restart-carry-"));
+  const paths = listenerPaths({
+    profileId: `profile-${randomUUID()}`,
+    workspaceId: WORKSPACE_ID,
+    principalId: PRINCIPAL_ID,
+    stateDirectory: root,
+  });
+  const ts = "2026-09-03T18:00:00.000Z";
+  const runOnce = async (
+    body: (
+      onEvent: (event: ListenerRuntimeEvent) => void,
+    ) => Promise<void>,
+  ) =>
+    await runListenerSupervisor({
+      paths,
+      profileId: "profile-test",
+      workspaceId: WORKSPACE_ID,
+      principalId: PRINCIPAL_ID,
+      run: async (_signal, onEvent) => {
+        onEvent({ type: "ready", workspaceId: WORKSPACE_ID, principalId: PRINCIPAL_ID, ts });
+        await body(onEvent);
+        return { reason: "cancelled" };
+      },
+    });
+
+  const first = await runOnce(async (onEvent) => {
+    for (const [signalId, at] of [
+      ["aaaaaaaa-aaaa-4aaa-8aaa-aaaaaaaaab01", "2026-09-03T18:10:00.000Z"],
+      ["aaaaaaaa-aaaa-4aaa-8aaa-aaaaaaaaab02", "2026-09-03T18:11:00.000Z"],
+      ["aaaaaaaa-aaaa-4aaa-8aaa-aaaaaaaaab03", "2026-09-03T18:12:00.000Z"],
+    ] as const) {
+      onEvent({ type: "delivery_ack", signalId, outcome: "failed_terminal", ts: at });
+    }
+  });
+  assert.equal(first.consecutiveAckFailureCount, 3);
+  assert.match(renderListenerStatus(first), /WARNING \[listener_delivery_failing\]/);
+
+  /* The restart the notice recommends, then one incoming note. */
+  const second = await runOnce(async (onEvent) => {
+    onEvent({
+      type: "delivery_ack",
+      signalId: "aaaaaaaa-aaaa-4aaa-8aaa-aaaaaaaaab04",
+      outcome: "observed",
+      ts: "2026-09-03T18:20:00.000Z",
+    });
+  });
+  assert.equal(second.lastAckOutcome, "observed");
+  assert.equal(second.consecutiveAckFailureCount, 3);
+  const human = renderListenerStatus(second);
+  assert.doesNotMatch(human, /HANDLED: yes/);
+  assert.match(human, /WARNING \[listener_delivery_failing\]/);
+
+  /* A real reply still clears it across the same restart boundary. */
+  const third = await runOnce(async (onEvent) => {
+    onEvent({
+      type: "delivery_ack",
+      signalId: "aaaaaaaa-aaaa-4aaa-8aaa-aaaaaaaaab05",
+      outcome: "replied",
+      ts: "2026-09-03T18:30:00.000Z",
+    });
+  });
+  assert.equal(third.consecutiveAckFailureCount, 0);
+  assert.doesNotMatch(renderListenerStatus(third), /listener_delivery_failing/);
+  await rm(root, { recursive: true, force: true });
 });

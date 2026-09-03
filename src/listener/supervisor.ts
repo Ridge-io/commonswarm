@@ -251,6 +251,12 @@ export async function runListenerSupervisor(
   const startedAt = iso(now);
   const controller = new AbortController();
   const proposedInstanceId = randomUUID();
+  /* The failure run is operator-read state, so a restart must not delete it. The
+     lapse notice tells the operator to stop and start; seeding nulls here made
+     following that advice erase the evidence, and the next `observed` note then
+     printed `HANDLED: yes` again on a provider that was still dead. Only a
+     `replied` ack clears the run. A missing or unreadable file carries nothing. */
+  const carried = await readListenerStatus(options.paths).catch(() => null);
   let status: ListenerStatus = {
     version: 1,
     instanceId: proposedInstanceId,
@@ -283,8 +289,8 @@ export async function runListenerSupervisor(
     lastTerminalDeliveryFailureAt: null,
     lastClaimAt: null,
     lastAckAt: null,
-    lastAckOutcome: null,
-    consecutiveAckFailureCount: null,
+    lastAckOutcome: carried?.lastAckOutcome ?? null,
+    consecutiveAckFailureCount: carried?.consecutiveAckFailureCount ?? null,
     routeMode: options.routeMode ?? "worker",
     deferOverChars: options.deferOverChars ?? null,
     pendingForMainCount: 0,
@@ -386,13 +392,16 @@ export async function runListenerSupervisor(
       transition("ready", {
         readyAt: event.ts,
         // Deliberately does NOT clear consecutiveAckFailureCount. Reaching
-        // `ready` is not provider proof: the permission canary is a canary
+        // `ready` is not provider proof: the permission canary is its own
         // prompt, and a provider can answer it and fail every real one --
-        // tests/listener-cli-process.test.ts builds exactly that child
-        // (`failPrompts` trips only non-canary prompts). Clearing the run here
-        // while `lastAckOutcome` still held a stale `observed` put
-        // `HANDLED: yes` back on the incident screen after any restartable
-        // blip. Only a `replied` ack clears the run.
+        // tests/listener-cli-process.test.ts builds such a child, whose
+        // `failPrompts` trips only non-canary prompts (that test does not
+        // restart it, so it does not by itself exercise this path). Clearing
+        // the run here while `lastAckOutcome` still held a stale `observed`
+        // put `HANDLED: yes` back on the incident screen after any restartable
+        // blip. Only a `replied` ack clears the run; the pin is in
+        // tests/listener-runtime.test.ts, which fires `ready` after the
+        // measured incident and asserts the run survives it.
         lastErrorCode: null,
         lastErrorDetail: null,
         lastErrorReasonCode: null,
