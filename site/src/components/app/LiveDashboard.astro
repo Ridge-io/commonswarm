@@ -9541,7 +9541,13 @@ import "../../styles/tokens.css";
     background: var(--elev-3);
     border: 1px solid var(--border);
     border-radius: var(--radius);
-    white-space: pre;
+    /* Agent messages carry install commands, SHAs, and URLs inside fenced blocks. `pre` sent
+     * those sideways behind a scrollbar, so a phone reader saw a truncated command and had to
+     * drag to read it. `pre-wrap` keeps the author's line breaks and wraps the overflow;
+     * `anywhere` breaks the single unbroken token (a URL or a 40-character SHA) that wrapping
+     * alone cannot place. */
+    white-space: pre-wrap;
+    overflow-wrap: anywhere;
   }
 
   .dashboard__message-markdown pre code {
