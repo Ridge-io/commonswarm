@@ -1204,3 +1204,124 @@ procedure inapplicable to the error it names.
 Also unexplained and worth one probe if it recurs: CSwarmDevLead shows
 `providerVersion 0.73.0` vs `providerLastMeasuredVersion 0.64.2` — the ACP bridge was upgraded under a
 running listener, which is a plausible source of the protocol error above. NOT established as the cause.
+
+---
+
+## Addendum — 2026-09-03 evening: the listener that reported healthy while answering nothing
+
+### The incident (operator-visible, production)
+
+Claude Code on the mini became signed out some time between 02:00 and 17:06 UTC. The
+`claude-agent-acp` bridge could not start a session, so EVERY delivery to CSwarmDevLead failed:
+
+```
+listener_effect        status=failed failure_code=acpprotocolerror
+listener_delivery_ack  outcome=failed_terminal
+```
+
+The operator reported it from the web UI ("delivery of my last message to you failed"). **My health
+check an hour earlier had called this listener healthy.** It reported `state: ready` and a recent
+`lastAckAt`, and I read "acking within minutes" as working. Every one of those acks was a failure.
+`listen status` also printed `HANDLED: yes`.
+
+**Recovery needs the operator**: `claude auth login`. Nothing else fixes it. While signed out the
+listener CONSUMES messages and marks them terminally failed, so I stopped it — a stopped listener
+queues instead (Marque held 2 while dead and drained them on restart, measured the same day).
+After sign-in: restarted, canary passed, and a real ask returned `outcome: replied` with body
+`RECOVERED`. Also restarted CDReporter, which was on 0.1.49 with 11 activity publish failures.
+
+### The defect, and why four rounds were needed
+
+`delivery_ack` had `event.outcome` in hand, wrote it to the NDJSON log, and did not put it in status.
+A `failed_terminal` ack and a `replied` ack produced a **byte-identical status mutation**, and
+`handled` was derived from "an ack timestamp exists" — so every failure made the listener look MORE
+handled. Branch `lane/listener-delivery-visibility`, four commits, each round passed by review and
+then broken by the next arm:
+
+| round | what it fixed | how the next arm broke it |
+|---|---|---|
+| 7750ed8 | record `lastAckOutcome`, add a consecutive-failure run | run reset on ANY handled outcome, and `observed` is handled |
+| c8cae36 | only `replied` clears the run | the run fixed the COUNTER; `HANDLED: yes` was still on the screen |
+| bc8a36b | the run outranks the newest outcome in `handled` | `ready` cleared the run — fail-open |
+| f0b2c60 | reaching `ready` clears nothing | pending review |
+
+**The `observed` finding is the one to remember.** A note is acked `observed` with no provider
+session at all, so any counter that treats "handled" as "provider works" is cleared by an incoming
+note. This is not hypothetical — the real log interleaves three of them:
+
+```
+17:06 failed / 17:12 observed / 17:23 17:24 17:52 18:36 18:37 18:37 failed
+18:38 observed / 18:44 failed / 18:45 observed
+```
+
+The operator asked "is your listener down?" at ~18:47, two minutes after an `observed`. Round 1
+would have answered `HANDLED: yes, no lapse` at that exact moment. **A fix written for an incident
+must be replayed against that incident's real event log, not against a fixture.**
+
+### A test that PINNED the false claim
+
+`tests/listener-runtime.test.ts` asserted `/HANDLED: yes/` on the 18:47 snapshot. The lane wrote a
+green control REQUIRING the sentence the lane existed to remove; fixing the bug would have looked
+like a regression. This is AGENTS.md "Claim controls prove stability, not truth" verbatim, and it is
+the second measured instance. Every new assertion in this lane now carries a mutation control: the
+fix is removed, the test is shown to fail on the named line, and the fix is restored.
+
+### I asserted behaviour I had not measured, and an arm caught it
+
+In bc8a36b I made a passing permission canary clear the failure run, with the comment: "A restart
+that does NOT fix the provider fails the canary and never lands here." **False.** The lane's own live
+control builds a child whose `failPrompts` trips only NON-canary prompts — it answers the canary and
+fails every real message. So a restartable blip could clear the run while `lastAckOutcome` still held
+a stale `observed`, restoring `HANDLED: yes`. The rule is removed; only a `replied` ack clears.
+
+### `lastTerminalDeliveryFailureCount` cannot fire for this failure class
+
+It counts rows the SERVER poison-terminalized (`acked_at IS NULL AND attempt_count >= 10`). A
+listener that acks its own failures sets `acked_at`, so those rows never qualify. My first
+hypothesis (that it was per-claim) was wrong. It watches a different quantity and is unreachable
+here; its sentence now says what it actually counts.
+
+### Two alarms in the same day that were instrument error, not incidents
+
+- **`capability` 404 is not an outage.** A deployed function answering its own `not_found` and an
+  absent function BOTH return 404; only the body differs (`{"error":"not_found"}` vs
+  `{"code":"NOT_FOUND","message":"Requested function was not found"}`). Compare against a
+  known-absent control before calling a function down.
+- **"231 deliveries stuck over 1h" is lifetime backlog.** Age-bucketed: 0 in 24h, 12 in 1-7 days,
+  219 older than 7 days; 7-day ack rate 96.1%; 31 addressed to revoked agents. An unbounded
+  "over 1h" count reads as an incident and measures history.
+
+### Tooling state — several of these will waste a successor's time
+
+- **`test:p1-cli` never exits on this host, and it does that on `main` too.** Control run on a clean
+  `main` worktree: **366 pass, 0 fail, then it hangs before the summary**. The branch measures
+  367/0. CLAUDE.md calls this "a fast service-free signal"; it is not fast here. Count the `✔`/`✖`
+  lines; do not wait for exit.
+- **Codex credits are exhausted until 2026-09-06 21:38** (`ERROR: You've hit your usage limit`).
+  Every `codex exec` lane fails instantly with exit 0 and an empty log. The delegation model in
+  [[run-work-via-codex-lanes]] is blocked until the operator buys credits.
+- **The Gemini CLI cannot authenticate at all**: `IneligibleTierError: This client is no longer
+  supported for Gemini Code Assist for individuals`. Installing `@google/gemini-cli` does not help.
+- **opencode returns nothing on real work.** Three runs (gemini-pro twice, kimi once), 35+ minutes,
+  zero bytes. Short prompts with no tool use DO work, so the wedge is tool use / prompt size.
+- **D-036 therefore cannot be satisfied right now.** With Codex out, Gemini dead and opencode
+  unusable, only Grok is available. A Claude-authored lane can get ONE cross-family arm. This lane
+  is NOT merged for that reason.
+
+### Shell traps measured this session
+
+- **`nohup <cmd> &` inside a tool call kills the child.** Two `codex exec` lanes reported exit 0 with
+  only their own prompt echoed and zero file changes. Use the harness's own backgrounding.
+- **Backticks in a `git commit -m` message run as commands under zsh.** Two words were silently
+  replaced by empty command output in a committed message. Use `git commit -F <file>`.
+- **`timeout` does not exist on macOS.** A control that used it never ran the thing it claimed to test.
+- **A stale `~/.codex/models_cache.json`** (missing `supports_parallel_tool_calls`) makes every
+  `codex exec` die. Delete it; it regenerates.
+
+### Next
+
+`lane/listener-delivery-visibility` at `f0b2c60`, four commits, gates measured on that SHA: tsc
+clean, `check:tests` clean, `npm test` 732/732, `test:p1-cli` 367 pass 0 fail. It needs a second
+cross-family arm before it lands. Deliberately deferred inside the lane: **the ack's own error code
+is not persisted**, so an `observed` note clears `lastErrorCode` and the notice reports
+"not recorded" instead of naming `acpprotocolerror`. That is the next change on this branch.
