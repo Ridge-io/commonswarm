@@ -4380,7 +4380,9 @@ function listenerLapseNotices(
         // session, and a local post failure, and the run alone cannot tell them
         // apart — so name the check, not a diagnosis. The command needs the
         // credential on stdin, and the listener is still running here.
-        `Read the failure codes in ${status.logPath}, then stop and restart the listener, piping the same agent credential into: cswarm listen stop --agent-token-stdin --workspace-id ${status.workspaceId} && ${listenerRestartCommand(status)}`,
+        // `stop` takes --principal-id and needs no credential, so it must not
+        // read stdin: one pipe cannot feed both halves of a chained command.
+        `Read the failure codes in ${status.logPath}, then stop the listener with: cswarm listen stop --workspace-id ${status.workspaceId} --principal-id ${status.principalId}. Then restart it by piping the same agent credential into: ${listenerRestartCommand(status)}`,
     });
   }
   return notices;

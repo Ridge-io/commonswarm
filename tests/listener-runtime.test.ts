@@ -881,8 +881,15 @@ test("delivery events reduce into the closed supervisor status fields", async ()
   assert.equal(afterMeasuredIncident.json.handledState, "not_handled");
   assert.equal(afterMeasuredIncident.json.lastAckOutcome, "observed");
   assert.equal(afterMeasuredIncident.json.consecutiveAckFailureCount, 8);
-  /* An observed note must not be renamed a failed delivery either. */
+  /* An observed note must not be renamed a failed delivery, and must not be
+     called handled while the run stands. Both halves are pinned: without the
+     second, restoring `Last handled signal:` here would still pass. */
   assert.doesNotMatch(afterMeasuredIncident.human, /Last failed delivery signal/);
+  assert.doesNotMatch(afterMeasuredIncident.human, /Last handled signal/);
+  assert.match(
+    afterMeasuredIncident.human,
+    /Last acknowledged signal: [0-9a-f-]+\. Its outcome was observed\./,
+  );
   assert.equal(afterMeasuredIncident.json.listenerLapse, true);
   assert.deepEqual(afterMeasuredIncident.json.listenerLapseCodes, [
     "listener_delivery_failing",

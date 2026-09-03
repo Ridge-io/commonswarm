@@ -236,7 +236,9 @@ journal intentionally may persist it for exact ACK recovery.
 Status JSON normalizes every omitted legacy delivery field to null and adds no duplicate
 snake-case aliases. It reports the newest ack outcome and the terminal-failure run. Human output
 distinguishes durable/fallback, prints pending only when non-null, never renders unknown as zero,
-calls a signal handled only for an outcome in `DELIVERY_HANDLED_OUTCOMES`, and emits one bounded
+calls a signal handled only for an outcome in `DELIVERY_HANDLED_OUTCOMES` AND a
+terminal-failure run below `LISTENER_DELIVERY_FAILING_THRESHOLD` (observing a note starts no
+provider session, so it cannot prove the agent answers while a run stands), and emits one bounded
 last-claim failure sentence only for positive count. It must contain no sender, body, lease,
 command, bearer, prompt, or reply content.
 

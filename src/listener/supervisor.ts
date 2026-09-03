@@ -385,12 +385,14 @@ export async function runListenerSupervisor(
       const versionNotice = options.getProviderVersionNotice?.() ?? null;
       transition("ready", {
         readyAt: event.ts,
-        // The permission canary drives a real prompt through the provider, so
-        // reaching `ready` is provider proof and is the only clear other than a
-        // `replied` ack. Without it a notes-only listener that once failed would
-        // alarm forever. A restart that does NOT fix the provider fails the
-        // canary and never lands here; it goes to `failed`, which is loud.
-        consecutiveAckFailureCount: 0,
+        // Deliberately does NOT clear consecutiveAckFailureCount. Reaching
+        // `ready` is not provider proof: the permission canary is a canary
+        // prompt, and a provider can answer it and fail every real one --
+        // tests/listener-cli-process.test.ts builds exactly that child
+        // (`failPrompts` trips only non-canary prompts). Clearing the run here
+        // while `lastAckOutcome` still held a stale `observed` put
+        // `HANDLED: yes` back on the incident screen after any restartable
+        // blip. Only a `replied` ack clears the run.
         lastErrorCode: null,
         lastErrorDetail: null,
         lastErrorReasonCode: null,
