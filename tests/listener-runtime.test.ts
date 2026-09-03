@@ -868,8 +868,21 @@ test("delivery events reduce into the closed supervisor status fields", async ()
   const afterMeasuredIncident = ackSnapshots[10]!;
   assert.match(afterMeasuredIncident.human, /^Listener LAPSE/);
   assert.match(afterMeasuredIncident.human, /WARNING \[listener_delivery_failing\]/);
-  assert.match(afterMeasuredIncident.human, /HANDLED: yes/);
-  assert.equal(afterMeasuredIncident.json.handledState, "handled");
+  /* The 18:47 state of the measured 2026-09-03 incident: the newest ack is the
+     18:45:38 `observed` note. Observing a note starts no provider session, so it
+     must NOT read as handled while the terminal-failure run stands. This assertion
+     replaces one that required `HANDLED: yes` here — a green control pinning the
+     exact false claim the lane exists to remove. */
+  assert.doesNotMatch(afterMeasuredIncident.human, /HANDLED: yes/);
+  assert.match(
+    afterMeasuredIncident.human,
+    /HANDLED: no\. 8 deliveries have failed since the last reply; the newest delivery acknowledgement was observed\./,
+  );
+  assert.equal(afterMeasuredIncident.json.handledState, "not_handled");
+  assert.equal(afterMeasuredIncident.json.lastAckOutcome, "observed");
+  assert.equal(afterMeasuredIncident.json.consecutiveAckFailureCount, 8);
+  /* An observed note must not be renamed a failed delivery either. */
+  assert.doesNotMatch(afterMeasuredIncident.human, /Last failed delivery signal/);
   assert.equal(afterMeasuredIncident.json.listenerLapse, true);
   assert.deepEqual(afterMeasuredIncident.json.listenerLapseCodes, [
     "listener_delivery_failing",

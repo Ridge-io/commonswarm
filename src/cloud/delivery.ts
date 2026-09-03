@@ -574,7 +574,9 @@ function assertAckRequest(request: DeliveryAckRequest): void {
       !FAILED_TERMINAL_CODES_SET.has(request.lastErrorCode)
     ) {
       throw new Error(
-        "a failed_terminal acknowledgement requires one of provider_refused, local_effect_failed, host_session_failed, credential_unavailable",
+        `a failed_terminal acknowledgement requires one of ${
+          orList([...FAILED_TERMINAL_CODES_SET])
+        }`,
       );
     }
   } else if (request.lastErrorCode !== null) {

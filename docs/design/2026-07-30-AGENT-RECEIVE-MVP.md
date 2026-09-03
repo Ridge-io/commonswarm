@@ -53,9 +53,12 @@ cswarm listen status --workspace-id <uuid> --principal-id <uuid>
 cswarm listen stop --workspace-id <uuid> --principal-id <uuid>
 ```
 
-For worker-route health checks, read `handledState` and `listenerLapseCodes` from
-`cswarm listen status --json`. `state: "ready"` proves the listener transport is ready; it does
-not prove the provider answered the newest delivery.
+For worker-route health checks, read `handledState`, `consecutiveAckFailureCount` and
+`listenerLapseCodes` from `cswarm listen status --json`. `state: "ready"` proves only that the
+listener transport is up: it stays `ready` through a provider that answers nothing. `handledState`
+reads `not_handled` once the terminal-failure run reaches its threshold, even when the newest
+acknowledgement was an `observed` note, because observing a note starts no provider session and so
+cannot prove this agent is answering.
 
 - An exact UUID identifies one member or agent.
 - An exact name is accepted only when it identifies exactly one live member or

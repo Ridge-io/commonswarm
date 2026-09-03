@@ -310,7 +310,7 @@ test("worker status shows terminal delivery failure runs and clears them after a
     assert.match(failedHuman.stdout, /WARNING \[listener_delivery_failing\]/);
     assert.match(
       failedHuman.stdout,
-      /recorded 3 terminal delivery failures and no later reply/,
+      /recorded 3 terminal delivery failures with no reply since/,
     );
     assert.doesNotMatch(failedHuman.stdout, /last answered delivery/);
 

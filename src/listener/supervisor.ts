@@ -385,6 +385,12 @@ export async function runListenerSupervisor(
       const versionNotice = options.getProviderVersionNotice?.() ?? null;
       transition("ready", {
         readyAt: event.ts,
+        // The permission canary drives a real prompt through the provider, so
+        // reaching `ready` is provider proof and is the only clear other than a
+        // `replied` ack. Without it a notes-only listener that once failed would
+        // alarm forever. A restart that does NOT fix the provider fails the
+        // canary and never lands here; it goes to `failed`, which is loud.
+        consecutiveAckFailureCount: 0,
         lastErrorCode: null,
         lastErrorDetail: null,
         lastErrorReasonCode: null,
