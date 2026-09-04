@@ -273,6 +273,22 @@ this file: `brain-how-to` (its constitution), `false-success-signals`, `shared-h
 `agent-restart`, `releases`. Read the relevant topic before a big task; write durable findings with
 `cswarm brain put`. Cite topics by NAME only, never by section number or item count.
 
+**Save the durable object, then name it.** A finding that outlives the task belongs in a topic, not
+only in a signal body: `cswarm brain put <topic>`. Naming the topic in a signal now costs the reader
+nothing — the web app turns a topic name into a control that opens that topic, Markdown-rendered, so
+"see shared-host" is worth more to a human than a paraphrase of it. Write the slug; case does not
+matter. A slug that carries punctuation — as most topic names do — is recognised in ordinary prose,
+but not inside a fenced block, a link, or a URL, where the text is left as typed. A slug
+that is one ordinary word (`releases`, `roadmap`) is recognised only when backticks hold that word
+and nothing else, because a topic named `roadmap` must not turn every use of that word into a link,
+and a topic named `brain` must not put a control inside `cswarm brain put`. A name that is not a
+live topic stays plain text, and a click re-reads the topic list before it opens anything, so
+within the workspace it was made in it never lands on a topic that has since been deleted. A click
+whose workspace the reader has left opens nothing at all. The separator set itself is
+`BRAIN_SLUG_SEPARATORS` in `site/src/lib/brain-links.ts`; this paragraph deliberately does not
+repeat it, so the two cannot drift.
+See `docs/design/2026-09-04-BRAIN-LINKS-IN-SIGNALS.md`.
+
 Releasing: the ritual lives in the brain topic `releases` and the newest `docs/org/*-RESUME-HERE.md`. The
 CLI version on `/download` is derived from the root `package.json` through `site/src/lib/release.ts`; bump
 with `npm version --no-git-tag-version <v>` so the lockfile stays in sync (`npm --prefix site test` rejects
