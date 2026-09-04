@@ -1549,3 +1549,34 @@ with a bounded control in a second worktree. CLAUDE.md's "fast service-free sign
 a build. The chip is replaced by one that makes the suite fail fast with a message when the build
 is missing. Retired wording, for readers who meet it above: "never exits", "hangs before the
 summary", "count the ✔/✖ lines and kill it".
+
+### 2026-09-04 ~22:00 UTC — chat design adopted; one wrong kill
+
+**Adopted on `main` (merge `2a0b58e`):** `docs/design/2026-09-04-chat-platform-reconciled.md`, the
+single design for channels, DMs, threads and colour. It reconciles the two same-day drafts
+(`spec/streams-dms-threads`, kept as a branch because Appendix A points at its long form;
+`lane/chat-platform-spec`, the other session's, superseded and cited by name) and rules each conflict
+by measurement. The decisive one: `in_reply_to` means *reply privately to the author* — the validator
+admits it only on an undirected note (`command/index.ts:1588-1595`) and the server re-addresses the
+row to the referenced author (`:5804-5827`) — so threads get their own `thread_root_id`. Both D-036
+arms FAILED the first draft, correctly: §7.1 told implementers to add `channel` to the all-or-nothing
+`modernKeys` pair every shipped client fills, which would have returned 400 on every post after a
+correctly ordered deploy; the phase order recreated the view and silently dropped its own RLS clause;
+delivery receipts disclose DM recipients (pre-existing; a P3 blocker). All folded, kept as worked
+examples. Phasing approved: P1 public channels (no backfill, `channel_id` nullable, `#all-signals` a
+view) with P2 colour + click-to-filter alongside, P3 DMs, P4 threads, P5 references; no private
+channels in v1. **No lane starts until the operator answers §12:** private channels; whether an
+`@tag` is a DM or a mention (today it is a DM that reads as a mention — `@mercury look at this` is
+unreadable by everyone else); channels versus the same-day "the address is the message" direction.
+
+**A wrong kill, mine.** Hunting a stray `test:p1-cli` runner, I matched processes by "cwd is under my
+scratchpad" — and PM subagents run their lanes inside my scratchpad. I killed the brain-links PM's
+live gate run (pids 59342/60368) mid-flight, told it within a minute, and it reran. Rule, saved as a
+memory: a process is mine only if I launched it; record the pid at launch and kill by that list.
+Directory, prompt text and command name all match other actors on this host — the same lesson as the
+watcher pass and the `grok -p Read ./REVIEW.md` liveness check, a third time.
+
+**Also confirmed today:** the p1-cli suite exits on its own once `dist/` is built (33 s and 50 s in two
+worktrees); the chip is replaced with a fail-fast one. Host under load reads pressure 2 with zero
+swapouts — elevated, not swapping; the real-Chrome observer tests in the site suite go red under it
+and pass on a quiet rerun.
