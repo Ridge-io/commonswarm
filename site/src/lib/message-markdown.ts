@@ -21,6 +21,9 @@
 export const MESSAGE_MARKDOWN_LIMITS = Object.freeze({
   inputCharacters: 2_000_000,
   lines: 50_000,
+  /* How deep a quote may sit inside a quote, and a list inside a list. Past it the deeper
+   * construct joins the level above instead of opening a new one, so an indent ladder written to
+   * blow the stack produces a flat list rather than a crash. */
   nestingDepth: 4,
   /* The most table cells one render pass will build. Every other block in this subset produces
    * output roughly the size of its input; a table does not, because a single "|" character can
@@ -37,25 +40,40 @@ export const MESSAGE_MARKDOWN_LIMITS = Object.freeze({
 export const MESSAGE_COLLAPSE_LINES = 60;
 
 export const MESSAGE_MARKDOWN_TAGS = Object.freeze([
-  "p", "br", "strong", "em", "code", "pre", "ul", "ol", "li", "blockquote", "a",
+  "p", "br", "hr", "strong", "em", "del", "code", "pre", "ul", "ol", "li", "blockquote", "a",
   "h2", "h3", "h4", "h5",
   "table", "thead", "tbody", "tr", "th", "td",
 ] as const);
+
+/* Tags that carry no children and take no closing tag. The sanitizer normalises both halves from
+ * this one set, so a stray `</hr>` cannot reach the DOM as an unbalanced element. */
+const VOID_TAGS = new Set<string>(["br", "hr"]);
 
 /* The complete set of column alignments a delimiter row can ask for. The parser reads it and the
  * sanitizer checks against it, so neither can drift from the other. */
 export const MESSAGE_MARKDOWN_ALIGNMENTS = Object.freeze(["left", "center", "right"] as const);
 
-/* `align` rather than `style` or `class`: `sanitizeTag` drops every attribute on every tag but
- * `a[href]`, so alignment needs one of them widened. `style` is an arbitrary CSS sink and is not
- * on the table. `class` would put message content into the page's class namespace and would need
- * three new rules in a stylesheet this file does not own. `align` is a three-value enum the
- * sanitizer checks against MESSAGE_MARKDOWN_ALIGNMENTS, the browser maps it to `text-align`, and
- * it needs no stylesheet at all. */
+/* The one class this renderer may put on message content, and the two markers a task item shows.
+ * A task item is `<li class="md-task">` plus a ballot character, NOT an `<input type="checkbox">`:
+ * a checkbox needs `type`, `checked`, and `disabled` on a NEW interactive tag, and two of those are
+ * boolean attributes that `sanitizeTag`'s single `name="value"` reader cannot even express — so it
+ * would take a second attribute path through the sanitizer, which is the thing this file exists to
+ * avoid. One enum-checked class, on one tag we already allow, buys the same reading and lets the
+ * stylesheet drop the bullet. The value is namespaced so it cannot collide with a page class.
+ *
+ * `align` rather than `style`: `sanitizeTag` drops every attribute on every tag but the three named
+ * here. `style` is an arbitrary CSS sink and is not on the table. `align` is a three-value enum the
+ * sanitizer checks against MESSAGE_MARKDOWN_ALIGNMENTS, the browser maps it to `text-align`, and it
+ * needs no stylesheet at all. */
+export const MESSAGE_TASK_CLASS = "md-task";
+export const MESSAGE_MARKDOWN_CLASSES = Object.freeze([MESSAGE_TASK_CLASS] as const);
+export const MESSAGE_TASK_MARKERS = Object.freeze({ checked: "☑", unchecked: "☐" });
+
 export const MESSAGE_MARKDOWN_ATTRIBUTES = Object.freeze({
   a: ["href"] as const,
   th: ["align"] as const,
   td: ["align"] as const,
+  li: ["class"] as const,
 });
 export const HARDENED_LINK_ATTRIBUTES = Object.freeze({
   rel: "noopener noreferrer",
@@ -64,6 +82,7 @@ export const HARDENED_LINK_ATTRIBUTES = Object.freeze({
 
 const ALLOWED_TAGS = new Set<string>(MESSAGE_MARKDOWN_TAGS);
 const ALLOWED_ALIGNMENTS = new Set<string>(MESSAGE_MARKDOWN_ALIGNMENTS);
+const ALLOWED_CLASSES = new Set<string>(MESSAGE_MARKDOWN_CLASSES);
 const TOKEN_OPEN = "\uE000";
 const TOKEN_CLOSE = "\uE001";
 
@@ -160,6 +179,9 @@ function restoreTokens(value: string, tokens: string[]): string {
 
 function renderEmphasis(value: string): string {
   return value
+    /* Strikethrough first: `~` is not produced by escapeMessageHtml, so nothing this renderer
+     * generates can be read as a delimiter, and no other rule competes for the character. */
+    .replace(/~~([^~\n]+)~~/gu, "<del>$1</del>")
     .replace(/\*\*([^*\n]+)\*\*/gu, "<strong>$1</strong>")
     .replace(/__([^_\n]+)__/gu, "<strong>$1</strong>")
     .replace(/(^|[^*])\*([^*\n]+)\*(?!\*)/gu, "$1<em>$2</em>")
@@ -191,6 +213,29 @@ function renderInline(value: string): string {
     },
   );
 
+  /* A bare URL an agent pasted. It runs AFTER the two rules above, so a destination that already
+   * belongs to a link or an image is inside a token by now and cannot be linked a second time.
+   * Same escape, same safeMessageLink, same stash as `[label](url)` — the only difference is that
+   * the label IS the destination, so the `(url)` disclosure a labelled link carries would print
+   * the same string twice and is left off. */
+  rendered = rendered.replace(/https?:\/\/[^\s]{1,2048}/giu, (source: string) => {
+    /* Stop at the first escaped delimiter. `&quot;`, `&#39;`, `&lt;` and `&gt;` are quoting and
+     * markup the author put AROUND the URL; `&amp;` is a query separator INSIDE it, so it is the
+     * one entity that must not end the match. */
+    const stop = source.search(/&quot;|&#39;|&lt;|&gt;/u);
+    let destination = (stop < 0 ? source : source.slice(0, stop)).replace(/[.,;:!?]+$/u, "");
+    while (
+      destination.endsWith(")") &&
+      (destination.match(/\)/gu) ?? []).length > (destination.match(/\(/gu) ?? []).length
+    ) {
+      destination = destination.slice(0, -1);
+    }
+    const safe = safeMessageLink(decodeEscapedAttribute(destination));
+    if (!safe) return source;
+    const href = escapeMessageHtml(safe);
+    return stashToken(tokens, `<a href="${href}">${href}</a>`) + source.slice(destination.length);
+  });
+
   return restoreTokens(renderEmphasis(rendered), tokens);
 }
 
@@ -202,12 +247,95 @@ function isQuote(line: string): boolean {
   return /^ {0,3}&gt;(?: |$)/u.test(line);
 }
 
-function listMatch(line: string): { kind: "ul" | "ol"; content: string } | null {
-  const unordered = /^ {0,12}[-+*] +(.*)$/u.exec(line);
-  if (unordered) return { kind: "ul", content: unordered[1] ?? "" };
-  const ordered = /^ {0,12}\d{1,6}[.)] +(.*)$/u.exec(line);
-  if (ordered) return { kind: "ol", content: ordered[1] ?? "" };
+/* A thematic break: three or more of ONE marker character, optionally spaced apart, and nothing
+ * else on the line.
+ *
+ * `|` is absent from the marker class by construction, and a GFM delimiter row cannot exist without
+ * a pipe (`tableRowCells` returns null without one). That is what makes it safe for this check to
+ * run before the table rule: `|---|---|` is not a thematic break under any input. The ordering in
+ * renderBlocks — break, then heading, then list, then table — also stops `- - -` from being read as
+ * a list item, which is what it matched before. */
+const THEMATIC_BREAK = /^ {0,3}([-*_])(?:[ \t]*\1){2,}[ \t]*$/u;
+
+function isThematicBreak(line: string): boolean {
+  return THEMATIC_BREAK.test(line);
+}
+
+interface ListItem {
+  kind: "ul" | "ol";
+  content: string;
+  /** Leading whitespace in columns, a tab counted as four. Sublists are found by comparing it. */
+  indent: number;
+}
+
+function indentWidth(prefix: string): number {
+  let width = 0;
+  for (const character of prefix) width += character === "\t" ? 4 : 1;
+  return width;
+}
+
+function listMatch(line: string): ListItem | null {
+  const unordered = /^([ \t]{0,12})[-+*][ \t]+(.*)$/u.exec(line);
+  if (unordered) {
+    return { kind: "ul", content: unordered[2] ?? "", indent: indentWidth(unordered[1] ?? "") };
+  }
+  const ordered = /^([ \t]{0,12})\d{1,6}[.)][ \t]+(.*)$/u.exec(line);
+  if (ordered) {
+    return { kind: "ol", content: ordered[2] ?? "", indent: indentWidth(ordered[1] ?? "") };
+  }
   return null;
+}
+
+/** `[ ]` or `[x]` at the head of a list item, with or without text after it. */
+const TASK_ITEM = /^\[([ xX])\](?:[ \t]+(.*))?$/u;
+
+function renderListItem(item: ListItem): { attribute: string; body: string } {
+  const task = TASK_ITEM.exec(item.content);
+  if (!task) return { attribute: "", body: renderInline(item.content) };
+  const marker = (task[1] ?? " ").toLowerCase() === "x"
+    ? MESSAGE_TASK_MARKERS.checked
+    : MESSAGE_TASK_MARKERS.unchecked;
+  /* The marker is ours and the class is enum-checked; everything after the box goes through the
+   * same renderInline a paragraph uses, so a task item is not a second escaping path. */
+  const rest = task[2] ?? "";
+  return {
+    attribute: ` class="${MESSAGE_TASK_CLASS}"`,
+    body: rest === "" ? marker : `${marker} ${renderInline(rest)}`,
+  };
+}
+
+/* One list and every list indented under it. An item deeper than the list's own indent opens a
+ * sublist inside the item above it; an item shallower ends this list and returns to the caller.
+ *
+ * Every branch advances `index` — a recursive call always consumes at least the line it started on,
+ * because that line sits at the new call's own base indent — so the loop cannot spin. */
+function renderList(lines: string[], start: number, listDepth: number): { html: string; next: number } {
+  const first = listMatch(lines[start] ?? "");
+  if (!first) return { html: "", next: start };
+  const kind = first.kind;
+  const items: { attribute: string; body: string }[] = [];
+  let index = start;
+  while (index < lines.length) {
+    const item = listMatch(lines[index] ?? "");
+    if (!item || item.indent < first.indent) break;
+    const deeper =
+      item.indent > first.indent &&
+      items.length > 0 &&
+      listDepth < MESSAGE_MARKDOWN_LIMITS.nestingDepth;
+    if (deeper) {
+      const nested = renderList(lines, index, listDepth + 1);
+      items[items.length - 1]!.body += nested.html;
+      index = nested.next;
+      continue;
+    }
+    /* At this list's own indent a change of kind starts a new list. Past the nesting bound a
+     * deeper item joins this one instead, which is a flatter shape rather than a lost line. */
+    if (item.indent === first.indent && item.kind !== kind) break;
+    items.push(renderListItem(item));
+    index += 1;
+  }
+  const rendered = items.map((item) => `<li${item.attribute}>${item.body}</li>`).join("");
+  return { html: `<${kind}>${rendered}</${kind}>`, next: index };
 }
 
 function headingMatch(
@@ -347,6 +475,12 @@ function renderBlocks(
       continue;
     }
 
+    if (isThematicBreak(line)) {
+      blocks.push("<hr>");
+      index += 1;
+      continue;
+    }
+
     const heading = headingMatch(line, options);
     if (heading) {
       blocks.push(`<h${heading.level}>${renderInline(heading.content)}</h${heading.level}>`);
@@ -354,17 +488,10 @@ function renderBlocks(
       continue;
     }
 
-    const firstListItem = listMatch(line);
-    if (firstListItem) {
-      const items: string[] = [];
-      const kind = firstListItem.kind;
-      while (index < lines.length) {
-        const item = listMatch(lines[index] ?? "");
-        if (!item || item.kind !== kind) break;
-        items.push(`<li>${renderInline(item.content)}</li>`);
-        index += 1;
-      }
-      blocks.push(`<${kind}>${items.join("")}</${kind}>`);
+    if (listMatch(line)) {
+      const list = renderList(lines, index, 1);
+      blocks.push(list.html);
+      index = list.next;
       continue;
     }
 
@@ -407,7 +534,10 @@ function renderBlocks(
       if (candidate.trim() === "") break;
       if (
         paragraph.length > 0 &&
-        (isFence(candidate) || headingMatch(candidate, options) || listMatch(candidate))
+        (isFence(candidate) ||
+          isThematicBreak(candidate) ||
+          headingMatch(candidate, options) ||
+          listMatch(candidate))
       ) break;
       if (paragraph.length > 0 && depth < MESSAGE_MARKDOWN_LIMITS.nestingDepth && isQuote(candidate)) break;
       if (paragraph.length > 0 && budget.cells > 0 && tableHeaderAt(lines, index)) break;
@@ -426,8 +556,16 @@ function sanitizeTag(source: string): string {
   const name = rawName.toLowerCase();
   if (!ALLOWED_TAGS.has(name)) return "";
   const closing = /^<\//u.test(source);
-  if (closing) return name === "br" ? "" : `</${name}>`;
-  if (name === "br") return "<br>";
+  if (closing) return VOID_TAGS.has(name) ? "" : `</${name}>`;
+  if (VOID_TAGS.has(name)) return `<${name}>`;
+  if (name === "li") {
+    /* The same shape as the cell rule below: one attribute, checked against the exported set the
+     * parser writes from, and dropped entirely when it is anything else. A list item keeps the one
+     * class this renderer emits; it cannot keep a class we did not name, a style, or a handler. */
+    const className = /\sclass\s*=\s*"([^"]*)"/iu.exec(source);
+    const value = className?.[1] ?? "";
+    return ALLOWED_CLASSES.has(value) ? `<li class="${value}">` : "<li>";
+  }
   if (name === "th" || name === "td") {
     /* One attribute, checked against the same set the parser writes from, and dropped entirely
      * when it is anything else. A cell keeps its alignment; it cannot keep a style, a class, an

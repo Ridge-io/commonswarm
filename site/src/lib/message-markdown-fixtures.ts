@@ -13,6 +13,20 @@ export const PRODUCTION_TABLE_MARKDOWN =
   "| REF IDENTITY | `refs/heads/production` = " +
   "`7584524ea03162af2275c5cbfaa77df697cf68f5` |";
 
+/** Every injection vector this renderer neutralises in a paragraph.
+ *
+ * The rule each new construct is held to: render one of these as a paragraph, render it again
+ * inside the construct, strip the construct's own wrapper, and the two inner strings must be
+ * byte-identical. A construct that escapes its content itself would differ here, which is the
+ * whole point — there is one escaping path and one inline renderer, never a second. */
+export const HOSTILE_INLINE_VECTORS = Object.freeze([
+  '<script>alert(1)</script> <img src=x onerror="alert(2)">',
+  "[go](javascript:alert(3))",
+  "[phish](https://trusted.example@evil.host/)",
+  '<a href="javascript:alert(7)">link</a>',
+  "`code` and **bold**",
+] as const);
+
 /** Every injection vector this renderer already neutralises in a paragraph, moved inside table
  * cells. A cell must not be a second, weaker escaping path. */
 export const HOSTILE_TABLE_MARKDOWN =

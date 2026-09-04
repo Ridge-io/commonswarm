@@ -13,10 +13,27 @@ import {
   setSanitizedMessageMarkdown,
 } from "./message-markdown.ts";
 import {
+  MESSAGE_MARKDOWN_CLASSES,
+  MESSAGE_TASK_CLASS,
+  MESSAGE_TASK_MARKERS,
+} from "./message-markdown.ts";
+import {
+  HOSTILE_INLINE_VECTORS,
   HOSTILE_MARKDOWN_BLOCKS,
   HOSTILE_TABLE_MARKDOWN,
   PRODUCTION_TABLE_MARKDOWN,
 } from "./message-markdown-fixtures.ts";
+
+/** The inner HTML the shared inline path produces for a source, with no construct around it. */
+const asParagraph = (source) => renderMessageMarkdown(source).replace(/^<p>|<\/p>$/gu, "");
+
+/** Assert a construct is not a second escaping path: identical source, identical inner bytes. */
+function assertSharesTheParagraphPath(build, strip) {
+  for (const vector of HOSTILE_INLINE_VECTORS) {
+    const inner = renderMessageMarkdown(build(vector)).replace(strip, "");
+    assert.equal(inner, asParagraph(vector), vector);
+  }
+}
 
 test("without the offset a heading stays literal, which is why the feed passes it", () => {
   /* The two callers differ only in this option. The feed did not pass it, so an agent report
@@ -99,12 +116,12 @@ test("a link label containing inline code restores fully, with no stray token by
 
 test("the sanitizer keeps only the tag allowlist and href on anchors", () => {
   assert.deepEqual(MESSAGE_MARKDOWN_TAGS, [
-    "p", "br", "strong", "em", "code", "pre", "ul", "ol", "li", "blockquote", "a",
+    "p", "br", "hr", "strong", "em", "del", "code", "pre", "ul", "ol", "li", "blockquote", "a",
     "h2", "h3", "h4", "h5",
     "table", "thead", "tbody", "tr", "th", "td",
   ]);
   assert.deepEqual(MESSAGE_MARKDOWN_ATTRIBUTES, {
-    a: ["href"], th: ["align"], td: ["align"],
+    a: ["href"], th: ["align"], td: ["align"], li: ["class"],
   });
   assert.equal(
     sanitizeMessageHtml(
@@ -223,17 +240,10 @@ test("hostile cell content is neutralised exactly as the same text is in a parag
   }
   /* The point of the whole design: a cell is not a second escaping path. The same source text
      rendered as a paragraph and as a cell produces byte-identical inner HTML. */
-  for (const vector of [
-    '<script>alert(1)</script> <img src=x onerror="alert(2)">',
-    "[go](javascript:alert(3))",
-    "[phish](https://trusted.example@evil.host/)",
-    '<a href="javascript:alert(7)">link</a>',
-    "`code` and **bold**",
-  ]) {
-    const asParagraph = renderMessageMarkdown(vector).replace(/^<p>|<\/p>$/gu, "");
+  for (const vector of HOSTILE_INLINE_VECTORS) {
     const asCell = renderMessageMarkdown(`| h |\n|---|\n| ${vector} |`)
       .replace(/^.*<tbody><tr><td>|<\/td><\/tr><\/tbody><\/table>$/gu, "");
-    assert.equal(asCell, asParagraph, vector);
+    assert.equal(asCell, asParagraph(vector), vector);
   }
 });
 
@@ -274,6 +284,154 @@ test("panel Markdown shifts h1-h4 to h2-h5 through the same sanitizer", () => {
     rendered,
     "<h2>One</h2><h3>Two</h3><h4>Three</h4><h5>Four</h5>" +
       "<p>##### Five stays literal</p>",
+  );
+});
+
+/* ---- constructs an ordinary agent message uses that used to degrade to plain text ---- */
+
+test("~~text~~ renders as del, and del is not a second escaping path", () => {
+  assert.equal(renderMessageMarkdown("~~gone~~ stays"), "<p><del>gone</del> stays</p>");
+  /* A lone run of tildes is not a delimiter pair and stays the text the author typed. */
+  assert.equal(renderMessageMarkdown("~~~"), "<p>~~~</p>");
+  assert.equal(renderMessageMarkdown("a ~ b"), "<p>a ~ b</p>");
+  assertSharesTheParagraphPath(
+    (vector) => `~~${vector}~~`,
+    /^<p><del>|<\/del><\/p>$/gu,
+  );
+});
+
+/* The ordering hazard, pinned: `---` is the thematic break AND the table delimiter row AND the
+   marker `- - -` that the list rule used to eat. THEMATIC_BREAK excludes `|`, and a GFM delimiter
+   row cannot exist without one, so the break check can run before the table check. This test fails
+   if either half of that stops being true. */
+test("--- is a rule, and a table delimiter row is never eaten as one", () => {
+  for (const source of ["---", "***", "___", "- - -", "*  *  *", "-----"]) {
+    assert.equal(renderMessageMarkdown(source), "<hr>", source);
+  }
+  /* Two markers is not a rule, and a mixed run is not a rule. */
+  assert.equal(renderMessageMarkdown("--"), "<p>--</p>");
+  assert.equal(renderMessageMarkdown("-*-"), "<p>-*-</p>");
+  /* Positive control on the same invocation: the table still renders, so a green "no <hr>" below
+     is evidence about the delimiter row rather than about a table that never formed. */
+  const table = renderMessageMarkdown("| a | b |\n|---|---|\n| 1 | 2 |");
+  assert.match(table, /<table><thead><tr><th>a<\/th><th>b<\/th><\/tr><\/thead>/u);
+  assert.doesNotMatch(table, /<hr>/u);
+  /* And a delimiter row alone, with no header above it, is still not a rule. */
+  assert.equal(renderMessageMarkdown("|---|---|"), "<p>|---|---|</p>");
+  /* A rule is a block: it ends the paragraph above it and sits inside a quote. */
+  assert.equal(renderMessageMarkdown("text\n---\nmore"), "<p>text</p><hr><p>more</p>");
+  assert.equal(renderMessageMarkdown("> a\n>\n> ---"), "<blockquote><p>a</p><hr></blockquote>");
+});
+
+test("a task item is an enum-checked class and a ballot marker, never an input", () => {
+  assert.deepEqual(MESSAGE_MARKDOWN_CLASSES, [MESSAGE_TASK_CLASS]);
+  const rendered = renderMessageMarkdown("- [ ] open\n- [x] done\n- [X] also done\n- plain");
+  assert.equal(
+    rendered,
+    `<ul><li class="${MESSAGE_TASK_CLASS}">${MESSAGE_TASK_MARKERS.unchecked} open</li>` +
+      `<li class="${MESSAGE_TASK_CLASS}">${MESSAGE_TASK_MARKERS.checked} done</li>` +
+      `<li class="${MESSAGE_TASK_CLASS}">${MESSAGE_TASK_MARKERS.checked} also done</li>` +
+      "<li>plain</li></ul>",
+  );
+  assert.doesNotMatch(rendered, /<input|checkbox|disabled|checked=/u);
+  /* A bracketed link label at the head of an item is not a task box. */
+  assert.equal(
+    renderMessageMarkdown("- [click](javascript:alert(1))"),
+    "<ul><li>[click](javascript:alert(1))</li></ul>",
+  );
+  assertSharesTheParagraphPath(
+    (vector) => `- [ ] ${vector}`,
+    new RegExp(
+      `^<ul><li class="${MESSAGE_TASK_CLASS}">${MESSAGE_TASK_MARKERS.unchecked} |</li></ul>$`,
+      "gu",
+    ),
+  );
+});
+
+test("an indented list item nests instead of flattening, and the nesting stays bounded", () => {
+  /* Measured before this lane: "- one\n  - one a" produced one flat <ul> with both items, so a
+     two-level plan read as a single list of unrelated points. */
+  assert.equal(
+    renderMessageMarkdown("- one\n  - one a\n  - one b\n- two"),
+    "<ul><li>one<ul><li>one a</li><li>one b</li></ul></li><li>two</li></ul>",
+  );
+  /* A sublist may change kind; the outer list keeps its own. */
+  assert.equal(
+    renderMessageMarkdown("1. a\n   - b\n2. c"),
+    "<ol><li>a<ul><li>b</li></ul></li><li>c</li></ol>",
+  );
+  /* A change of kind at the SAME indent still ends the list, as it did before. */
+  assert.equal(
+    renderMessageMarkdown("- a\n1. b"),
+    "<ul><li>a</li></ul><ol><li>b</li></ol>",
+  );
+  /* An indent ladder cannot recurse past the shared bound: past it the deeper items join the
+     deepest list rather than opening another one, and nothing is lost. */
+  const ladder = Array.from({ length: 10 }, (_, level) => `${"  ".repeat(level)}- level${level}`);
+  const deep = renderMessageMarkdown(ladder.join("\n"));
+  assert.equal((deep.match(/<ul>/gu) ?? []).length, MESSAGE_MARKDOWN_LIMITS.nestingDepth);
+  for (let level = 0; level < 10; level += 1) assert.match(deep, new RegExp(`level${level}<`, "u"));
+  assertSharesTheParagraphPath(
+    (vector) => `- top\n  - ${vector}`,
+    /^<ul><li>top<ul><li>|<\/li><\/ul><\/li><\/ul>$/gu,
+  );
+});
+
+test("a bare URL becomes a link through the same guard a written link uses", () => {
+  assert.equal(
+    renderMessageMarkdown("see https://example.com/x now."),
+    '<p>see <a href="https://example.com/x">https://example.com/x</a> now.</p>',
+  );
+  /* Sentence punctuation and a wrapping bracket belong to the sentence, not the destination. */
+  assert.equal(
+    renderMessageMarkdown("(https://example.com/x)"),
+    '<p>(<a href="https://example.com/x">https://example.com/x</a>)</p>',
+  );
+  /* A query separator is inside the URL; an escaped quote is around it. */
+  assert.match(
+    renderMessageMarkdown("https://example.com/x?a=1&b=2"),
+    /<a href="https:\/\/example\.com\/x\?a=1&amp;b=2">https:\/\/example\.com\/x\?a=1&amp;b=2<\/a>/u,
+  );
+  assert.equal(
+    renderMessageMarkdown('"https://example.com/x"'),
+    '<p>&quot;<a href="https://example.com/x">https://example.com/x</a>&quot;</p>',
+  );
+  /* Underscores in a path used to become <em>. The stash now protects them. */
+  assert.equal(
+    renderMessageMarkdown("https://example.com/a_b_c_d"),
+    '<p><a href="https://example.com/a_b_c_d">https://example.com/a_b_c_d</a></p>',
+  );
+  /* No second scheme guard: everything safeMessageLink rejects stays literal text. */
+  for (const source of [
+    "javascript:alert(1)", "vbscript:msgbox(1)", "file:///etc/passwd",
+    "data:text/html,<script>alert(1)</script>", "//example.com/path",
+    "https://trusted.example@evil.host/", "https://example.com/%0Aredirect",
+  ]) {
+    assert.doesNotMatch(renderMessageMarkdown(`go ${source} now`), /<a\b|href=/u, source);
+  }
+  /* A written link is not linked twice, and an image's destination is not linked at all. */
+  const written = renderMessageMarkdown("[docs](https://example.com/x)");
+  assert.equal((written.match(/<a /gu) ?? []).length, 1);
+  assert.equal(
+    renderMessageMarkdown("![alt](https://example.com/a.png)"),
+    "<p>![alt](https://example.com/a.png)</p>",
+  );
+  /* Raw HTML around a URL stays literal. The URL inside it links, which is the same outcome as
+     writing the URL on its own — no tag, no attribute, nothing new reachable. */
+  const raw = renderMessageMarkdown('<img src="https://evil.example/t.png">');
+  assert.doesNotMatch(raw, /<img/u);
+  assert.match(raw, /&lt;img src=&quot;<a href="https:\/\/evil\.example\/t\.png">/u);
+});
+
+test("the sanitizer allows del and hr, and only the one class this renderer emits", () => {
+  assert.equal(
+    sanitizeMessageHtml(
+      '<del onclick="x">gone</del><hr onerror="x"></hr>' +
+        `<li class="${MESSAGE_TASK_CLASS}">a</li><li class="dashboard__app">b</li>` +
+        '<li class="md-task evil">c</li><li class="">d</li><li style="x">e</li>',
+    ),
+    `<del>gone</del><hr><li class="${MESSAGE_TASK_CLASS}">a</li><li>b</li>` +
+      "<li>c</li><li>d</li><li>e</li>",
   );
 });
 
