@@ -352,11 +352,21 @@ test("the web add-agent flow asks for a standing grant", async () => {
   assert.ok(mint, "mintAgentCredential is no longer where this test can read it");
   assert.match(mint[0], /kind: "mint_agent_token"/);
   assert.match(mint[0], /renewal_kind: "standing"/);
-  /* A standing grant has no horizon, so the artifact must not carry one. The
-     prompt builder prints "the CLI can rotate it until <date>" from this field,
-     and a date derived from RENEWAL_HORIZON_DEFAULT_MS would be a deadline
-     nobody measured. */
-  assert.match(mint[0], /grantKind === "standing"\s*\n?\s*\?\s*null/);
+  /* A standing grant has no horizon, so the artifact must not carry one. The prompt builder
+     prints "the CLI can rotate it until <date>" from this field, and a date this page computed
+     for itself would be a deadline nobody measured.
+
+     STRENGTHENED 2026-09-04. This asserted `grantKind === "standing" ? null`, which pinned the
+     fix for the STANDING case and left the invention in place for the other one: a timeboxed
+     grant still got `times.issuedAt + RENEWAL_HORIZON_DEFAULT_MS`, right only while the
+     server's default happened to agree. The horizon is now read off the response for BOTH
+     kinds, so what this pins is that the page owns no horizon at all. */
+  assert.match(mint[0], /horizonExpiresAt: mintedHorizon\(body\)/);
+  assert.doesNotMatch(
+    connect,
+    /export const RENEWAL_HORIZON_DEFAULT_MS/,
+    "the connect page may not own a renewal horizon again; the server names it",
+  );
 
   /* The CLI's own default is UNCHANGED and must stay that way: standing there
      still costs two flags, so a scripted `cswarm token mint` is not silently

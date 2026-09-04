@@ -184,7 +184,22 @@ export interface RenewalGrantFacts {
   /** NULL means no horizon and is valid only for a standing grant. */
   horizon_expires_at: number | null;
   revoked_at: number | null;
-  suspended_at: number | null;
+  /**
+   * Whether this grant is paused RIGHT NOW.
+   *
+   * RETIRED 2026-09-04: this was `suspended_at: number | null`, and the reducer asked whether
+   * it was non-null. `suspended_at` is never cleared — a resume is recorded forward in
+   * `resumed_at` — so that question is "was it ever paused", not "is it paused", and it
+   * answered yes for every resumed grant forever. The adapter hid the difference by remapping
+   * the column through a CASE on its way here, which made a SECOND definition of "paused" that
+   * agreed with the first only for as long as nobody touched the CASE.
+   *
+   * There is now one definition, `swarm.renewal_grants.suspension_active`
+   * (migration 20260904000001:85-89), and this field is that column, unmodified. Two readers
+   * still ask — this one and swarm.prepare_renewal_grant, which feeds
+   * `grant_preflight_code` — but they ask the same column, so neither can invent an answer.
+   */
+  suspension_active: boolean;
 }
 
 /** Transaction-time renewal facts, all read from server state (§2.3). */
@@ -1150,9 +1165,13 @@ export function decideWorkspace(
             + 'it is not revoked, and a workspace owner or admin, or the member who owns this agent, can resume it',
         );
       }
+      /* Both halves now read swarm.renewal_grants.suspension_active: the preflight code comes
+         from swarm.prepare_renewal_grant, which tests that column, and the fact below IS that
+         column. Kept as two reads on purpose — a renewal must fail closed if either the
+         preflight or the grant snapshot says paused — but no longer as two DEFINITIONS. */
       if (
         facts.grant_preflight_code === 'renewal_grant_suspended'
-        || grant.suspended_at !== null
+        || grant.suspension_active
       ) {
         return domain(
           ctx,

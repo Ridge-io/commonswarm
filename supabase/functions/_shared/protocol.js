@@ -1410,7 +1410,7 @@ function decideWorkspace(state, cmd, ctx) {
           `standing grant went ${RENEWAL_IDLE_PAUSE_DAYS} days without use and is now paused; it is not revoked, and a workspace owner or admin, or the member who owns this agent, can resume it`
         );
       }
-      if (facts.grant_preflight_code === "renewal_grant_suspended" || grant.suspended_at !== null) {
+      if (facts.grant_preflight_code === "renewal_grant_suspended" || grant.suspension_active) {
         return domain2(
           ctx,
           cmd.kind,

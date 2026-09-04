@@ -327,7 +327,8 @@ interface RenewalGrantFacts {
   successors_stranded: number;
   horizon_expires_at: number | null;
   revoked_at: number | null;
-  suspended_at: number | null;
+  /** swarm.renewal_grants.suspension_active, unmodified. See the protocol interface. */
+  suspension_active: boolean;
 }
 
 interface RenewalFacts {
@@ -3007,7 +3008,7 @@ async function loadRenewalFacts(
     successors_stranded: number | null;
     horizon_expires_at: Date | null;
     grant_revoked_at: Date | null;
-    grant_suspended_at: Date | null;
+    grant_suspension_active: boolean | null;
     grant_bound_to_token: boolean | null;
     successor_token_id: string | null;
     successor_pending: boolean | null;
@@ -3026,9 +3027,13 @@ async function loadRenewalFacts(
          — and swarm.renewal_grants.suspension_active is the ONE definition of
          "suspended right now". Reading the raw column here would keep every
          resumed grant refused as renewal_grant_suspended, which is the bug
-         20260904000001_standing_grant_resume.sql exists to remove. */
-      CASE WHEN g.suspension_active THEN g.suspended_at END
-        AS grant_suspended_at,
+         20260904000001_standing_grant_resume.sql exists to remove.
+         PASSED THROUGH, NOT REMAPPED, since 2026-09-04: this used to be
+         CASE WHEN g.suspension_active THEN g.suspended_at END, which handed the reducer a
+         timestamp it then tested for null. That turned this line into a second definition of
+         "paused" — correct only while the CASE survived, and the reducer had no way to know if
+         it did not. The reducer now reads the boolean itself. */
+      g.suspension_active AS grant_suspension_active,
       (
         g.principal_id = t.principal_id
         AND g.run_id = t.run_id
@@ -3119,7 +3124,7 @@ async function loadRenewalFacts(
       successors_stranded: Number(row.successors_stranded),
       horizon_expires_at: millis(row.horizon_expires_at),
       revoked_at: millis(row.grant_revoked_at),
-      suspended_at: millis(row.grant_suspended_at),
+      suspension_active: row.grant_suspension_active === true,
     };
   return {
     grant,
@@ -5716,7 +5721,32 @@ async function resumeRenewalGrant(
       ${userId}::uuid
     ) AS resume_outcome
   `;
-  const resumeOutcome = outcomeRows[0]?.resume_outcome ?? "renewal_resume_forbidden";
+  /* ★ NULL IS THE SUCCESS VALUE, SO IT MUST SURVIVE THE READ.
+   *
+   * This was `outcomeRows[0]?.resume_outcome ?? "renewal_resume_forbidden"`, and `??` cannot
+   * tell the success case from a missing row: NULL coalesced to the refusal string, the check
+   * below was therefore always true, and NO RESUME COULD EVER REPORT SUCCESS. The damage went
+   * further than a wrong status. `refuse` writes an audit row and RETURNS inside `db.begin`,
+   * so the UPDATE that swarm.resume_renewal_grant had already made COMMITTED while the caller
+   * was told 403; a retry then answered `renewal_grant_not_suspended`, because the resume it
+   * had denied had in fact happened.
+   *
+   * Same shape as the renewal preflight read at index.ts:3134 (`preflight[0]?.code ?? null`):
+   * preserve NULL, refuse only on a code we assign.
+   *
+   * WHY A REFUSAL BELOW STILL COMMITS, DELIBERATELY. `refuse` must commit — its whole job is
+   * to leave an audit row for a decision the caller is not told the reason for, and a rollback
+   * would erase that row along with the refusal. That is safe here only because
+   * swarm.resume_renewal_grant returns every refusal code BEFORE it writes anything
+   * (migration 20260904000001:551-606; the UPDATE at :608-612 is followed immediately by
+   * RETURN NULL). So a committed refusal never follows a mutation. The one state that would
+   * break that pairing is a missing row, which `SELECT fn(...)` cannot produce; it is treated
+   * as impossible and THROWN, which rolls the transaction back rather than guessing. */
+  const outcomeRow = outcomeRows[0];
+  if (outcomeRow === undefined) {
+    throw new Error("resume_renewal_grant returned no row");
+  }
+  const resumeOutcome = outcomeRow.resume_outcome;
   if (resumeOutcome !== null) {
     /* 403 for every refusal, INCLUDING "no such grant". Distinguishing a grant
        that does not exist from one the caller may not touch is an existence
