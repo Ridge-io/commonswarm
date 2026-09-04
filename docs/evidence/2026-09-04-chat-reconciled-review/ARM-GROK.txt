@@ -1,0 +1,141 @@
+I'll read REVIEW.md and follow it exactly.I'll read the spec and pull the cited sources in parallel so I can check every claim against the code.Citations need to be checked against `d57d480`. I'll pull that SHA and the cited files in parallel.The worked example around `addressedToCaller` looks like the first place the spec may be wrong. I'll read that path and the rest of the cited code next.The post response is the likely break: a new `channel_id` field can crash old clients. I'll check how each writer parses that reply.Two cited migration files are missing. I'll resolve those names and keep checking the rest of the citations.Reviewed `docs/design/2026-09-04-chat-platform-reconciled.md` against the code in this tree. Citations were checked at the cited paths. I did not apply a migration, query production, or run `EXPLAIN`.
+
+## DEFECTS
+
+### D1. §7.1 cites a write parser pattern that 400s every installed writer
+
+P1 says old clients keep posting. §7.1 tells the implementer to add `channel` / `thread_root_id` / `broadcast_to_channel` by copying `modernShape` at `supabase/functions/command/index.ts:1532-1541` and `:1570-1576`.
+
+That group is all-or-nothing: if either `to_agent_principal_id` or `in_reply_to` is present, **both** keys are required.
+
+Installed writers already send that pair, always:
+
+- `src/cloud/command-client.ts:983-990` — “New clients always send both target fields and `in_reply_to`”
+- `site/src/lib/commonswarm.ts:2002-2008` — browser post sends both, `in_reply_to: null`
+- `src/listener/runtime.ts:772-780` — listener reply sends both
+
+Adding `channel` to `modernKeys` makes every current body fail `exactKeys` at `:1553-1562`. Every post returns 400.
+
+The safe pattern is the next lines: `until_ms` / `attachments` as their own `Object.hasOwn` groups (`:1535-1538`). The spec points at the grouped pair and skips the adjacent optional-key pattern.
+
+This is a write outage if P1 is built as cited. It contradicts “leaves old clients working.”
+
+### D2. R2’s worked example gets the resolution order wrong
+
+`in_reply_to` **is** a private re-address. That part of R2 is right:
+
+- Validator: undirected `note` only (`command/index.ts:1588-1595`)
+- `resolveSignalWriteTarget` loads the referenced row, requires `addressedToCaller` (`:5789-5802`), then writes `{ toUserId|toAgentPrincipalId: reference.from_principal }` (`:5804-5827`)
+- Writers send null targets (`src/cli.ts:3112-3119`, `src/listener/runtime.ts:773-779`)
+- Plain success copy: “addressed to the original author” (`src/cli.ts:3159`)
+
+Draft B’s rule is write-time `in_reply_to := COALESCE(parent.in_reply_to, parent.id)`, described as “one extra lookup in a function that already loads the parent.”
+
+The live function uses one `inReplyTo` value as **lookup key and stored value** (`:5747`, `:5781`, `:5813`). Audience comes from the **loaded** parent’s `from_principal`.
+
+If COALESCE is applied to the **stored** column after that load (the reading of B’s “already loads the parent”), hop 3 is still addressed to the agent. The conversation does not die.
+
+The spec’s `A → agent → A → agent` story (200, addressed to A herself, no error) is true only if the coalesced **root id** replaces the lookup key before `addressedToCaller`. B did not specify that. For A’s own agent, `signalAgentOwnedByUser` (`:5795-5800`) would then pass on the root ask and return `{ toUserId: A }`. That is a naive-wiring risk, not what B’s text necessarily does.
+
+R2’s conclusion (do not ride public threads on `in_reply_to`) can still stand. The listener-loop death is not a measured consequence of B’s rule.
+
+---
+
+## 1. Citations
+
+Most load-bearing refs match. Wrong or off refs:
+
+| Cited | Actual | Rank |
+|---|---|---|
+| `command/index.ts:1532-1541` as the way to add a third optional write field | Those lines are the two-key group. Independent optionals are `:1535-1538`. | DEFECT (D1) |
+| R2 example: COALESCE changes the resolver’s lookup | Audience is derived from the row loaded by the client’s `in_reply_to` | DEFECT (D2) |
+| Base tree `origin/main` = `d57d480` | `d57d480` exists; `origin/main` is now `6465afa` | NIT |
+| `20260731000001:119-140` for the delivery `IF` | Function starts at `:119`; `IF` is `:126-137` | NIT |
+| `read/index.ts:609-613` for the agent disjunct | `AND (` starts at `:610`; `:609` is `workspace_id` | NIT |
+| `src/listener/runtime.ts:773-779` | Command object is `:772-780` | NIT |
+| Five unsynced kind lists (`cli.ts:2411-2412`, `signals.ts:31`, `command-client.ts:133`, `read/index.ts:19`, `command/index.ts:1542`) | Also `command/index.ts:176` and `20260724000003_signals.sql:10` | NIT (incomplete list) |
+| `mention-address.ts:1-9` for `MENTION_MAX_RECIPIENTS = 8` | Behaviour comment is `:1-3`; constant is `:30` | NIT |
+| `2026-09-03-multi-recipient-signals.md:29-30` “claims the opposite” for this feature | Those lines are about multi-recipient, not channels | NIT |
+| `signals.ts:1641` as a true description of the feed | View already admits `to_user_id = auth.uid()` (`20260901000010:125`). `cswarm feed` does not filter it off (`signals.ts:891-896`). Incoming directs already show. Only “messages you sent” is true. | NIT |
+
+Checked and **correct** (sample): `20260724000003:3-18,12,14-15,36-38`; `20260730000002:4-6,25-27,71-72`; live view `20260901000010:81-133` WHERE `:122-133` with no `from_principal`; `command/index.ts:512-517,1580-1595,5740,5804-5827,5966-5983,6567-6584`; `read/index.ts:222-234,323-326,342,485-494,600,611-612,618`; `cli.ts:2896,3112-3119,3144,3159`; `SWARM-CLOUD.md:553,909`; `P3-1-SIGNALS-BRIEF.md:323-326`; `privacy.astro:120-121,176`; `SECURITY.md:43-45`; `package.json:19` vs `AGENTS.md:112`; §11 test pins (`composer.observer.test.ts:35`, `f6-workspace-vocabulary.test.ts:12,52-57`, `signals.test.ts:870,891-897`, `slack-shape.observer.test.ts:151,153,230`); LiveDashboard `:248,1748,1750,3573-3576,4909,4921,4933,5671,5733`; draft line counts 1487 / 937; `grep signal src/protocol/` is 0.
+
+Draft B really did cite `src/cli.ts:2932` as a reply write. That line is `in_reply_to` inside `ask --wait`’s read poll. The spec’s correction is right.
+
+---
+
+## 2. Migration / RLS
+
+**`channel_id` nullable, no backfill, vs the live insert.** Safe for the current edge. Insert names columns and omits `channel_id` (`command/index.ts:5966-5983`). `ADD COLUMN uuid` with no default leaves NULL. `MATCH SIMPLE` on `(channel_id, workspace_id)` lets NULL through. I did not find a current insert trigger that would reject that NULL.
+
+**Reverse window (new edge, file 2 not applied).** Real: `column "channel_id" does not exist` on every post. Spec names it and the `schema_migrations` check (`20260902000001:58-64`). That outage is operational, not a hole in the rule, **if** the apply order is kept. Combined with D1, P1 still has a parser outage after a correct migrate-then-edge.
+
+**`CREATE OR REPLACE VIEW` twice.** Shape protection is real: PostgreSQL refuses rename / retype / drop / reorder. Adding `channel_id` at the end is enforced. The WHERE clause is **not**. Neither are expressions of existing columns (the attachments subquery can become `'[]'::jsonb` with the same type). Three files define this view; only `20260901000010` is live. Copying an older WHERE is a silent auth change. Spec’s “protect on WHERE with a before/after suite” is the right control; it is not mechanical.
+
+File 3 says “add `thread_root_id` and `broadcast_to_channel` at the end.” If someone copies the `20260901000010` body again and omits `channel_id`, replace tries to rename a column and the migration errors. Underspecified, not silent.
+
+**Clause (e) disclosure.** I did not find a third-party DM the new arms should hide.
+
+- `from_principal = auth.uid()` is the sender.
+- The owned-agent `EXISTS` shows DMs **your** agent sent. Spec intends that.
+- Agent read sets `request.jwt.claims.sub` to the **owner** (`read/index.ts:485-494`), then reads `swarm_read.signals` (`:600`) and keeps only broadcast or `to_agent = this principal` (`:611-612`). Newly admitted sent-by-owner rows have a recipient, so they fail both arms unless they were already addressed to this agent.
+- Attachments are a correlated subquery on `s.id`. View owner `swarm_admin` bypasses file RLS, but only for rows the WHERE already admits.
+- Receipts: `signal_delivery_receipts` already lets any member who knows a signal id read receipts (`20260902000001:105-110` membership gate; signal load at `:144-150` has no per-signal read check). Clause (e) does not create that. Appendix A already records it.
+
+**Indexes.** `signals_from_newest` matches clause (e) and the DM `from = me` arm. Queries with no dedicated index:
+
+- P4 new-client feed: `thread_root_id IS NULL OR broadcast_to_channel` — no index on `broadcast_to_channel`
+- DM `from_principal = me AND to_user_id = X` — `signals_from_newest` does not include `to_*`
+- Unfiled-only `channel_id IS NULL` — partial `signals_channel_newest` excludes it (spec’s `#all-signals` is unfiltered, so this query may never run)
+
+No `EXPLAIN` was run.
+
+---
+
+## 3. Would P1 leave old clients working?
+
+P1 = files 1–2, optional `channel` on `post_signal`, channel filter on reads.
+
+| Surface | Old client OK? | Why |
+|---|---|---|
+| CLI read | **YES** | Named select `src/cloud/signals.ts:891-894`; extras ignored `:315-326`. P1 does not change the view WHERE, so the row set is the same. |
+| CLI write | **NO** | D1. Live client always sends the modern pair (`command-client.ts:983-990`). Extending that group 400s `post_signal`. |
+| Browser read | **YES** | Named select `LiveDashboard.astro:1748`. |
+| Browser write | **NO** | Same parser. `commonswarm.ts:2002-2008` always sends the modern pair. |
+| Agent read | **YES** if `channel` is its own `hasOwn` group like the cursor pair (`read/index.ts:216-221`). **NO** if it is folded into `in_reply_to` modernShape (`:215`, `:230`). Current agent bodies always include `in_reply_to` (`signals.ts:983`). §1.4’s “do not invent a second one” pushes toward the failing fold. |
+| Agent write | **NO** | Same `parseCommand` as CLI write (`runtime.ts:772-780`). |
+
+Any NO is a FAIL.
+
+Schema-side posting (old **edge** vs new nullable column) is YES. Parser-side posting (old **client** vs new edge as §7.1 cites it) is NO. The spec only argued the first.
+
+---
+
+## 4. Central rulings
+
+**R2 (threads).** Meaning of `in_reply_to` is measured and right: private reply to the author, not a public thread. There is no `--in-reply-to` CLI flag. B’s `src/cli.ts:2932` citation is the wait poll, not a write. The COALESCE death-example is wrong as a necessary outcome (D2). Hop 3 is an `in_reply_to` write only if A uses `cswarm reply`; a new `cswarm ask --to` never hits B’s rule.
+
+**R3 (DMs).** Confirmed. Live `swarm_read.signals` is `20260901000010:122-133`. No `from_principal` arm. Sender cannot re-read a directed row through the view. B’s “no migration” is false. A fifth clause is required. I did not read the live catalog on `ukezjcnxjvkpkeezxaew`; this is from migration files, as the spec itself flags.
+
+**R4 (no backfill).** The case A’s default-channel backfill covered and this shape does not: every pre-migration row stays `channel_id NULL`. Named-channel reads, `?c=` permalinks, and agent `channel=` filters never see that history. It lives only in `#all-signals`. That is a product gap, not a write outage. Spec chooses it to avoid `DISABLE TRIGGER` on `signals_append_only`. Honest, and it does break history-in-channel.
+
+---
+
+## 5. Other untrue or incomplete claims
+
+- “Five un-synced copies” of the kind set is not a complete list (`command/index.ts:176`, table CHECK).
+- `origin/main = d57d480` is stale.
+- §1.3 treats `signals.ts:1641` as a true feed description; incoming directs already appear.
+- `broadcast_to_channel NOT NULL DEFAULT false` is safe for an old edge (default fills it). The same old-edge/new-column story does **not** apply to a new edge that names `channel_id` before file 2.
+
+---
+
+## 6. Length / unmeasured rulings
+
+The spec is long because it carries draft A’s private-channel brief and a claim-family sweep. That is mostly evidence, not padding.
+
+Rulings without a measurement: no `EXPLAIN` for the new indexes; no production view body; P3 feed-growth size unknown; ~157 `channel` hits were not enumerated (this tree: 147 case-insensitive hits in `LiveDashboard.astro`). Spec §13 already says so.
+
+---
+
+VERDICT: FAIL

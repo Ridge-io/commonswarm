@@ -12,8 +12,9 @@ This reconciles two drafts written the same day by sessions that did not know ab
   DRAFT; no arms were run.
 
 Where they conflicted, this document rules by measuring, names which draft the ruling came from, and
-says why the other lost. Base tree: `d57d480` (`origin/main`). Every citation below was resolved in
-that tree. `docs/design/SWARM-CLOUD.md` is canonical; on conflict it wins.
+says why the other lost. Base tree: **`d57d480`**, which was `origin/main` when this branch was cut; `origin/main` has since
+moved to `6465afa`, so resolve every citation against `d57d480` rather than against today's tip. Every
+citation below was resolved in that tree. `docs/design/SWARM-CLOUD.md` is canonical; on conflict it wins.
 
 ## 0. Rulings
 
@@ -22,7 +23,7 @@ that tree. `docs/design/SWARM-CLOUD.md` is canonical; on conflict it wins.
 | R1 | Does a channel narrow **who may read** a signal? | **No.** A channel is an immutable grouping label stamped at post time. It never appears in an authorization predicate. No `channel_members` table in v1. | **B** | A's Phase 5 private channels are not v1. `SWARM-CLOUD.md:553` forbids new object-model concepts and `:909` caps day-1 vocabulary; B→A is a reversible narrowing while A→B is a disclosure event that cannot be undone; and the operator never asked for privacy. A's predicate work is summarised in Appendix A for the day it is asked for (the long form stays on its branch) — it is correct, it is just not v1. |
 | R2 | Is a thread a view over `in_reply_to`? | **No.** A thread gets its own identity: `thread_root_id`. `in_reply_to` keeps its exact current meaning and behaviour. | **A** | B misread the column. Measured below (§1.2): `in_reply_to` means *reply privately to the author*, not *reply in public*. B's proposed `in_reply_to := COALESCE(parent.in_reply_to, parent.id)` normalisation redirects the server's audience derivation from the parent to the root, silently changing the recipient of every second-and-later reply — including the listener's own reply loop. |
 | R3 | Does a DM need a conversation object? | **No conversation table.** But B's headline claim "no migration" is **false**: DMs need a new view clause (e) and a new index. | **B** for the shape, **A** for the requirement | B's premise — "both halves are already visible to me" — is false as measured (§1.3): the live view has no `from_principal` clause, so the sender cannot re-read their own directed signal. A's conversation table is still not needed for a 1:1 DM, because a two-party DM is addressable from the counterparty ref alone (§4). Group DMs are out of v1 for an independent reason. |
-| R4 | Is `#all-signals` a row, and is `channel_id` backfilled? | **Not a row. Not backfilled.** `channel_id` is nullable forever in v1; `NULL` means *unfiled*; `#all-signals` is the unfiltered view. | **B** | A's default-channel backfill requires `DISABLE TRIGGER` on `signals_append_only` — the strongest invariant in the schema and a published promise — an `ACCESS EXCLUSIVE` lock of a duration A could not measure, a defaulting trigger, an orphan assert, and a member-roster backfill. Its own two arms found four separate defects in those five moving parts (A D1, D3, D8, D9). B's shape has none of them because it writes no row. |
+| R4 | Is `#all-signals` a row, and is `channel_id` backfilled? | **Not a row. Not backfilled.** `channel_id` is nullable forever in v1; `NULL` means *unfiled*; `#all-signals` is the unfiltered view. **Price, stated: no pre-migration signal ever appears in a named channel** (§6 P1). | **B** | A's default-channel backfill requires `DISABLE TRIGGER` on `signals_append_only` — the strongest invariant in the schema and a published promise — an `ACCESS EXCLUSIVE` lock of a duration A could not measure, a defaulting trigger, an orphan assert, and a member-roster backfill. Its own two arms found four separate defects in those five moving parts (A D1, D3, D8, D9). B's shape has none of them because it writes no row. |
 | R5 | Which slice ships first? | **Public channels** (in B's no-backfill shape). | **A** | Ranked on the four stated criteria in §6. B's S1 (colour + click-to-filter) wins only on risk, which is not one of the criteria: it creates no identity a later phase needs, and it completes the smallest of the four asks. It ships *alongside*, not first. |
 | R6 | Retention / `until` | **`until` stays `NOT NULL`. No retention change in v1.** A channel is a place, not an archive; say so in the UI. | **A** | B does not trip the `until` trap but never names it, and B's own ruling that `#all-signals` means "everything" is false as written — the feed already hides expired signals (§1.5). |
 | R7 | Vocabulary | `stream` is the event log and never appears in the UI; `channel` is the user-facing room and becomes plural. | **both agree** | — |
@@ -30,7 +31,7 @@ that tree. `docs/design/SWARM-CLOUD.md` is canonical; on conflict it wins.
 | R9 | Click conflict | The avatar/swatch filters; the name keeps opening the panel; the panel gains an explicit "Show only …". | **B** | A does not cover it. |
 | R10 | Composer chrome | You post to the channel you are reading. No picker, and **no `#` parsing of the body, ever**. | **B** | A does not cover it. B's reason holds: message bodies legitimately contain `#` (markdown headings, `#1804` issue refs), so a parser cannot discriminate. |
 | R11 | May a thread reply be an `ask`? | **Yes** — `ask` or `note`, never `working-on`. `in_reply_to`'s note-only rule is untouched. | **new** | R2 separates thread identity from `in_reply_to`, which answers B's open operator question 2 without widening any shipped validation. B had to escalate it because its thread rode on `in_reply_to`. |
-| R12 | Thread expiry | A reply may not outlive its root: `reply.until <= root.until`, enforced at post time. | **B** | A does not cover it. Both failure modes B names are real, and the append-only trigger makes the alternative (extend the root) impossible. |
+| R12 | Thread expiry | A reply may not outlive its root. The server **clamps**, it does not refuse — see §6 P4. | **B**, corrected | A does not cover it. Both failure modes B names are real, and the append-only trigger makes the alternative (extend the root) impossible. But B's rule as literally written refuses almost every reply; the clamp is this document's correction to it. |
 | R13 | Linkable / referenceable | Id-based URL grammar; a link is an address, not a grant. | **A** (grammar) + **B** (filter state in the URL) | Neither lost; A's grammar is more complete and B added that filter state must round-trip. |
 
 ## 1. Ground truth
@@ -76,7 +77,7 @@ dispatcher at `:6567-6582` turns that into a **403 `forbidden`** with audit reas
 
 - `src/cli.ts:3112-3119` — the comment is explicit: `// Audience is derived server-side from the
   referenced signal; client sends null targets.`
-- `src/listener/runtime.ts:773-779` — the listener's reply poster, identical shape.
+- `src/listener/runtime.ts:772-780` — the listener's reply poster, identical shape.
 
 Two more surfaces say it in their own words: `20260730000002:71-72` —
 `'Immutable one-hop correlation to a signal in the same workspace.'` — and `src/cli.ts:3159`, the reply
@@ -84,13 +85,24 @@ verb's success line: **`"Reply shared. It is immutable and addressed to the orig
 also **no `--in-reply-to` flag anywhere in the CLI**: `reply <signal-id>` is the only way to set the
 column, and it always sends null targets. No caller can express "reply publicly" today.
 
-**A's reading is correct and B's is wrong.** B's §4.2 rule (`in_reply_to := COALESCE(parent.in_reply_to,
-parent.id)`) is not a normalisation of a correlation column — it changes the input to the audience
-resolver at (b). Take the ordinary listener conversation `A → agent → A → agent`. Hop 3 is A answering
-the agent's note; B's rule rewrites its `in_reply_to` from that note to A's root ask, so the resolver
-loads the **root**, whose `from_principal` is **A** — and A's reply is addressed to **A herself**. The
-agent never receives it and the conversation dies, with a 200 and no error anywhere. B did not measure
-(b), so it could not see this.
+**A's reading is correct and B's is wrong** — though the first draft overstated *how*, and a review arm
+was right to refuse it. The live function uses **one** `inReplyTo` value as both lookup key and stored
+value (`:5747`, `:5781`, `:5813`), and the audience comes from the row that lookup loads. B's rule
+(`in_reply_to := COALESCE(parent.in_reply_to, parent.id)`) never says which it rewrites, and **both
+readings are wrong, differently**:
+
+- **Stored value only** (B's "already loads the parent" reads this way): addressing is unchanged, but the
+  stored `in_reply_to` names the root while the recipient is the *parent's* author — the column stops
+  meaning what its comment says, and `signals_reply_oldest`, the index B builds threads on, no longer
+  agrees with the audience.
+- **Lookup key**: `addressedToCaller` and `reference.from_principal` are computed from the root, changing
+  the recipient. In `A → agent → A → agent`, hop 3 resolves against A's root ask, `signalAgentOwnedByUser`
+  (`:5795-5800`) passes because A owns the agent, and the reply is addressed to **A herself**.
+
+**Claim only this:** B's rule is under-specified exactly where it decides addressing, and neither branch
+is safe. The earlier draft asserted the second branch as measured and called the listener loop dead; that
+was a naive-wiring risk, not a measurement, and is withdrawn. R2's conclusion does not depend on the
+branch — it is enough that a rule presented as harmless normalisation reaches the audience resolver.
 
 Two citation corrections to B: `src/cli.ts:2932` is not a reply write (it is `in_reply_to` inside the
 **read** poll of `ask --wait`; the write is `:3119`), and the reply verb prints two different success
@@ -137,7 +149,7 @@ need a fifth clause (§5) — and B's "no migration" claim does not survive.
 
 Agents read the `read` edge function, which is agent-only for signals
 (`supabase/functions/read/index.ts:323-326` — 401 for any non-agent credential unless the resource is
-`renewal_grants`). Its visibility disjunct is at `:609-613`:
+`renewal_grants`). Its visibility disjunct is at `:610-613`:
 
 ```sql
 AND (
@@ -146,23 +158,22 @@ AND (
 )
 ```
 
-Its request parser uses `exactKeys` (`:222-234`), so any new optional request key must follow the
-`modernShape` pattern already used for `in_reply_to` (`:215`, `:230`) and the cursor pair (`:216-221`,
-`:231`). Copy that shape; do not invent a second one.
+Its request parser uses `exactKeys` (`:222-234`), so a new optional request key must be its **own
+`Object.hasOwn` group** — the cursor-pair shape (`:216-221`, `:231`) — and **must NOT join the
+`in_reply_to` `modernShape` group** (`:215`, `:230`), because agent bodies always send `in_reply_to`
+(`src/cloud/signals.ts:983`). §7.1 has the measurement; it was a live defect here until an arm found it.
 
 **The non-obvious part, and neither draft stated it.** The edge does not bypass the view — it reads
 `FROM swarm_read.signals` (`:600`) as role `swarm_read` (`:342`) with `request.jwt.claims.sub` set to
-**the agent's OWNER, not the agent** (`:485-494`), then narrows in SQL at `:610-617`. This matters for
-§5: **clause (e) does not widen what any agent sees.** A row clause (e) newly admits is one the owner
-*sent*, so it has a recipient set, so it fails both arms of `:611-612` and never reaches the agent.
-
-The agent path also filters expiry itself (`:618`).
+**the agent's OWNER, not the agent** (`:485-494`), then narrows in SQL at `:610-617`. Hence §5:
+**clause (e) does not widen what any agent sees** — a row it newly admits is one the owner *sent*, so it
+has a recipient and fails both arms of `:611-612`. The agent path also filters expiry itself (`:618`).
 
 **Two enforcement points, two languages, two authors. They must move together or never.**
 
 ### 1.5 Delivery fan-out is at most one row per signal
 
-`20260731000001_signal_deliveries.sql:119-140`:
+`20260731000001_signal_deliveries.sql:126-137`:
 
 ```sql
 IF NEW.to_agent_principal_id IS NOT NULL AND NEW.kind IN ('ask', 'note') THEN
@@ -196,7 +207,7 @@ conclusion and is **inert against server data** — the schema makes NULL imposs
 locally-constructed sample and optimistic rows that set `until: null` (`LiveDashboard.astro:4909, 4921,
 4933, 5671, 5733`). **Keep `until NOT NULL`** (R6).
 
-Corollary correcting B: B's §8.3 rules `#all-signals` means "everything" and §16 defends it because
+Corollary correcting B: B's own §8.3 rules `#all-signals` means "everything" and its §16 defends it because
 changing it "would silently hide signals". It already does — `#all-signals` is *every live signal you may
 read*, and never showed expired ones. State it that way.
 
@@ -325,8 +336,11 @@ CREATE INDEX signals_channel_newest
   ON swarm.signals (workspace_id, channel_id, created_at DESC, id DESC)
   WHERE channel_id IS NOT NULL;
 
--- Recreate swarm_read.signals from its LIVE body (20260901000010:81-133), adding
--- s.channel_id AT THE END of the select list and changing NOTHING else.
+-- Recreate swarm_read.signals from the LIVE body, adding s.channel_id AT THE END
+-- of the select list and changing NOTHING else. Resolve that body with
+--   SELECT pg_get_viewdef('swarm_read.signals'::regclass, true);
+-- against the target database -- NEVER by copying a migration file. See the
+-- chaining rule below; at this point the live body is 20260901000010:81-133.
 ```
 
 > #### The migration-before-edge window, in both directions
@@ -353,11 +367,10 @@ CREATE INDEX signals_channel_newest
 > gets a PostgREST **400**, not an empty page.
 >
 > **The view recreation is protected on shape, not on meaning.** `CREATE OR REPLACE VIEW` cannot rename,
-> retype, drop or reorder an existing column, so "add `channel_id` at the end" is mechanically enforced
-> and no old client can break on column shape. The `WHERE` clause has no such protection — it can be
-> silently replaced by an older or wrong body, and **three files define this view** (§1.3). So the
-> control belongs on the `WHERE`: run the full directed-visibility suite before and after file 2 and
-> require identical results (§9).
+> retype, drop or reorder a column, so "append `channel_id`" is mechanically enforced. The `WHERE` has no
+> such protection and **three files define this view** (§1.3), so the control belongs there: run the
+> directed-visibility suite before and after and require identical results (§9). §3.3 generalises this
+> into the view-chaining rule after an arm found this document violating it.
 
 ### 3.3 File 3 — threads (ships with the thread phase, not with channels)
 
@@ -374,12 +387,29 @@ CREATE INDEX signals_thread_oldest
   ON swarm.signals (workspace_id, thread_root_id, created_at, id)
   WHERE thread_root_id IS NOT NULL;
 
--- Recreate swarm_read.signals again, adding thread_root_id and broadcast_to_channel at the end.
+-- Recreate swarm_read.signals AGAIN. Resolve the body with pg_get_viewdef against
+-- the target database, NOT from any migration file -- by now it carries BOTH
+-- channel_id (file 2) AND clause (e) (P3). Append thread_root_id and
+-- broadcast_to_channel at the end; change nothing else.
 ```
 
 `broadcast_to_channel NOT NULL DEFAULT false` is safe **because it has a default** — the old edge's
 insert omits it and gets `false`. That contrast is exactly what should have caught A's `channel_id`
 defect, and it is why it is spelled out here.
+
+> #### The view-chaining rule — this spec's own phase order reverted its RLS
+>
+> Three migrations already define `swarm_read.signals`, and this plan adds three more edits (file 2, P3's
+> clause (e), file 3). A review arm found the consequence: **file 3 as first drafted said to recreate the
+> view from `20260901000010:81-133`**, the body live when file 2 was written. By then P3 has added clause
+> (e). Recreating from the old file appends the thread columns correctly and **silently deletes clause
+> (e)** — every sender loses sight of their own DMs again, with no error and no failed column check,
+> because `CREATE OR REPLACE VIEW` protects column shape and not the `WHERE` (§3.2).
+>
+> **Rule: every view recreation resolves its starting body from the database
+> (`pg_get_viewdef('swarm_read.signals'::regclass, true)`), never from a migration file; each edit is a
+> diff against what the previous migration actually left.** *Measure the artifact, not its name.* §9
+> carries the control, with a failing arm.
 
 **Do not combine file 2 and file 3.** Each takes an `ACCESS EXCLUSIVE` lock on `swarm.signals` and
 recreates the view; combining them widens the blast radius of the riskiest step for no benefit before
@@ -414,20 +444,17 @@ DM(me, X) = signals where (from = me AND to = X) OR (from = X AND to = me)
 by `signals_one_recipient`. The rail merges both into one list of counterparties keyed on
 `(kind, id)`, the `EntityRef` shape the entity panel already uses (`LiveDashboard.astro:1056`).
 
-**Is a stable URL possible from the existing columns alone? Yes, for 1:1 — and that is what "linkable"
-needs here.**
+**Is a stable URL possible from the existing columns alone? Yes, for 1:1 — which is what "linkable" needs
+here.** The conversation URL is `?dm=user:<uuid>` / `?dm=agent:<uuid>`, naming the **counterparty**, so it
+is **viewer-relative**: each participant has a different URL for the same conversation. That is honest
+rather than defective — only those two principals resolve either form, and RLS gives a third party nothing
+whichever they are handed. A **message** permalink inside a DM is globally stable already
+(`&m=<signal_id>`, RLS-resolved), so "referenceable" needs no new object.
 
-- The conversation URL is `?dm=user:<uuid>` / `?dm=agent:<uuid>`, naming the **counterparty**. It is
-  **viewer-relative** — the same conversation has a different URL for each participant. Honest rather
-  than defective: only those two principals can resolve either form, and RLS gives a third party nothing
-  whichever they are handed.
-- A **message** permalink inside a DM is globally stable already (`&m=<signal_id>`, RLS-resolved), so
-  "referenceable" is satisfied with no new object.
-
-A conversation row would buy one thing — a single canonical URL shared by both participants — at the cost
-of a second authority that can drift from the signals it summarises. **Not worth it.** If rail rendering
-is ever measured slow, the fix is an index or a materialised view. (A loses the narrow question; A's
-group-DM reasoning is upheld below.)
+A conversation row would buy one canonical URL shared by both participants, at the cost of a second
+authority that can drift from the signals it summarises. **Not worth it**; if rail rendering is ever
+measured slow, the fix is an index or a materialised view. (A loses the narrow question; A's group-DM
+reasoning is upheld below.)
 
 **Group DMs are out of v1, and not as a scope choice.** `signals_one_recipient` allows at most one
 recipient (§1.1), so a 3-party DM's rows cannot set the recipient columns at all — they would be
@@ -487,12 +514,17 @@ CREATE INDEX signals_from_newest ON swarm.signals (workspace_id, from_principal,
 1. **The DM phase is not row-set-neutral.** Every directed signal a member ever sent becomes visible to
    them, retroactively, in `cswarm feed` and the browser feed — on old clients that have no idea DMs
    exist. They keep **working**; their feed **grows**. Release notes.
-2. **`src/cloud/signals.ts:1641` becomes false the moment it ships** — *"It omits directed messages,
-   including messages you sent"* — and must change in the same release.
+2. **`src/cloud/signals.ts:1641` is already half wrong, and clause (e) breaks the other half.** It reads
+   *"This feed shows broadcast signals only. It omits directed messages, including messages you sent."*
+   The Grok arm measured that the first half is **already false**: the view admits `to_user_id =
+   auth.uid()` (`20260901000010:125`) and `cswarm feed` does not filter it off
+   (`src/cloud/signals.ts:891-896`), so directed messages *to you* already appear. Clause (e) falsifies
+   the remaining clause, *"including messages you sent"*. Fix the whole sentence in the same release,
+   not just the half this spec breaks.
 3. **It reverses a recorded decision.** `P3-1-SIGNALS-BRIEF.md:323-326` chose sender-blindness
    deliberately. Argue with it in that file rather than silently editing it.
 
-**The agent path gets no RLS change and is not widened by clause (e).** `read/index.ts:609-613` is
+**The agent path gets no RLS change and is not widened by clause (e).** `read/index.ts:610-613` is
 untouched; it gains only the optional `channel` filter of §7.2, outside the scoping disjunct. Clause (e)
 does reach the agent path (the edge reads this same view as the agent's owner, §1.4), but every row it
 newly admits has a recipient set, so it fails both arms of `:611-612`. **Assert this, do not assume it** —
@@ -521,24 +553,31 @@ workspace**. Channel filter on both read paths. `CHANNELS` replaces `STREAMS (br
 (§8). URL grammar `?w=&c=&m=`. Copy rules (§8). Signals wire-compat test, the twin of
 `tests/receipt-wire-compat.test.ts`.
 
-**Would P1 leave old clients working? Yes, per surface:**
+**Would P1 leave old clients working?** Yes on every surface — **conditional on §7.1**, which is the
+correction a review arm forced. Two of these rows were "yes" for schema reasons while the parser could
+still have broken them.
 
-- **CLI feed/inbox** — reads `/rest/v1/signals` with a fixed select list
-  (`src/cloud/signals.ts:891-894`). A column it does not name is not returned; one it does not know is
-  ignored by contract (`:315-326`). Row set is byte-identical to today, because no RLS clause changed
-  and no row moved.
-- **Browser** — same, via `LiveDashboard.astro:1748`.
-- **Agent read edge** — `exactKeys` (`read/index.ts:222-234`) rejects unknown *request* keys, so the old
-  request shape must keep parsing. It does: `channel` follows the existing `modernShape` optional
-  pattern (`:215`, `:230`).
-- **Old client posting** — the old edge omits `channel_id`; the column is nullable with no default, so
-  the insert succeeds and the signal is unfiled. Unfiled signals appear in `#all-signals`, which is where
-  an old reader is looking. **This is the failure mode A's first draft had and this shape cannot reach.**
-- **`until`** — unchanged for every kind, never nullable.
+| Surface | OK? | Why |
+|---|---|---|
+| CLI read | **YES** | Fixed select list (`src/cloud/signals.ts:891-894`); unknown columns ignored by contract (`:315-326`). No RLS clause changed and no row moved, so the row set is byte-identical. |
+| Browser read | **YES** | Same, via `LiveDashboard.astro:1748`. |
+| Agent read | **YES, only if** `channel` is its **own** `Object.hasOwn` group like the cursor pair (`read/index.ts:216-221`). **NO** if folded into the `in_reply_to` `modernShape` group (`:215`, `:230`) — agent bodies always send `in_reply_to` (`src/cloud/signals.ts:983`), so that fold 400s every agent read. | §1.4, §7.1. |
+| CLI / browser / agent write, **schema** | **YES** | The old edge omits `channel_id`; the column is nullable with no default, so the insert succeeds and the signal is unfiled. The composite FK is `MATCH SIMPLE`, so a NULL passes it (both arms confirmed independently). Unfiled signals appear in `#all-signals`, where an old reader is looking. This is the failure mode A's first draft had and this shape cannot reach. |
+| CLI / browser / agent write, **parser** | **YES, only if** §7.1's `exactKeys` rule is followed | The schema argument above is necessary and was **not** sufficient. Every shipped client always sends the `modernKeys` pair, so extending that group 400s every post after a perfectly ordered migration. This was a live defect in this document. |
+| Post response | **YES** | A new `channel_id` on the returned signal crashes nothing: `parseSignalRecord` validates only known required fields and ignores the rest (`src/cloud/signals.ts:315-326`); the command response's `signal` is a typed field on a cast object (`command-client.ts:52`), not strictly validated; the browser has no `exactKeys` check on responses. |
+| `until` | **YES** | Unchanged for every kind, never nullable. |
 
-**The honest caveat, in the UI and not in a help page:** a channel is neither private nor an archive.
-Every workspace member reads every channel, and messages still expire on the existing schedule — `note`
-30 days, `ask` 7, `working-on` 24 hours (`command/index.ts:513-517`).
+**Two honest caveats, in the UI and not in a help page.**
+
+1. **A channel is neither private nor an archive.** Every member reads every channel, and messages still
+   expire — `note` 30 days, `ask` 7, `working-on` 24 hours (`command/index.ts:513-517`).
+2. **No pre-migration signal will ever appear in a named channel** — the price of R4, which a review arm
+   was right that the document hid. Nothing is backfilled, so every signal written before file 2 keeps
+   `channel_id NULL` permanently and named-channel reads, `?c=` permalinks and the agent `channel=` filter
+   never see that history; it lives only in `#all-signals`. This is the one thing A's backfill bought, and
+   R4 trades it for never running `DISABLE TRIGGER` on `signals_append_only`. A product gap, not an
+   outage, and it shrinks daily — but **on day one the channels are empty** and the operator must expect
+   it.
 
 ### P2 — Colour and click-to-filter (parallel with P1)
 
@@ -566,11 +605,47 @@ Clause (e) and `signals_from_newest` (§5). `DIRECT MESSAGES` rail section from 
 existing addressing columns. `?dm=` URL. **No new table, no backfill, no row moves.** The only phase that
 changes an RLS predicate — and it needs the before/after visibility-suite control of §9.
 
+> #### P3 BLOCKER: receipts disclose who received a DM
+>
+> `swarm_read.signal_delivery_receipts` is `SECURITY DEFINER` owned by `swarm_admin`, so it never goes
+> through `swarm_read.signals`. Its human branch checks two things — no agent-token digest supplied, and
+> `swarm.is_member(...)` (`20260902000001:103-109`). **No per-signal check.** The file states the intent
+> at `:68`: *"members read every receipt in their workspace."* So any member holding a signal id reads
+> that signal's recipients and their `seen_at`, including a directed signal between two other people.
+> Same for `signal_agent_receipts_live_member_select` (`20260902000004:66-70`).
+>
+> **This pre-exists; P3 does not cause it.** But P3 is what names these rows a **DM**, and a DM whose
+> recipient list any colleague can query is not what the word promises. An earlier draft filed this under
+> Appendix A as a private-channel concern — the wrong home, since private channels are out of v1 and DMs
+> are not.
+>
+> **Before P3 ships, not after:** add a per-signal arm to the function (caller is author, addressee, or
+> owner of an addressee agent), or hold the DM vocabulary until it exists. Shipping the word without the
+> fix is the claim-control failure AGENTS.md describes — a privacy claim defended by tests that never ask
+> this endpoint.
+
 ### P4 — Threads
 
 Migration file 3 (§3.3). `thread_root_id` on `post_signal`, `ask` or `note` (R11), never `working-on`.
-Reply expiry ceiling `reply.until <= root.until` (R12). Thread drawer, `N replies` affordance, `?t=` URL.
-**`in_reply_to` behaviour is untouched** (R2).
+Thread drawer, `N replies` affordance, `?t=` URL. **`in_reply_to` behaviour is untouched** (R2).
+
+**Reply expiry: the server clamps, it does not refuse.** B's rule — a reply may not outlive its root — is
+right, but taken literally it is unshippable, and this is my own defect rather than an arm's. The per-kind
+defaults are `note` 30 days, `ask` 7 days, `working-on` 24 hours (`command/index.ts:513-517`). A `note`
+reply to an `ask` root therefore defaults to a horizon past the root's for **every** reply after t=0, so a
+literal `reply.until <= root.until` would refuse almost every thread reply. So:
+
+```
+untilMs = min(requested_or_default, root.until - statement_timestamp())
+```
+
+Refuse **only** when the caller passed an explicit `until_ms` longer than the remaining window — silently
+shortening an explicit request is the dishonest branch, and it is the one case where a refusal tells the
+truth. The clamp is always satisfiable: `resolveSignalWriteTarget` already requires the reference to
+satisfy `until > statement_timestamp()` (`command/index.ts:5783`), so the remaining window is strictly
+positive and `CHECK (until > created_at)` (`20260724000003:14`) cannot be violated. But that window can be
+milliseconds, so **the composer must show the inherited ceiling and the post response must report the
+clamped value** — otherwise a user writes a considered reply into a thread that expires while they read it.
 
 **The opt-in compatibility rule.** `in_reply_to` present and `thread_root_id` absent → today's behaviour
 exactly: private, re-addressed to the author. `thread_root_id` present → thread reply, undirected, visible
@@ -598,10 +673,30 @@ No protocol-core change (§1.9). Everything below is command-edge work in
 | `channel_rename` | `channel_id`, `slug` | Slug is mutable; the URL uses the id, so links do not rot. |
 | `channel_archive` | `channel_id` | Sets `archived_at`. Hides from the rail, refuses new posts. Signals still render, permalinks still resolve. Never deletes. |
 
-`post_signal` gains three optional fields — `channel` (slug), `thread_root_id`, `broadcast_to_channel` —
-following the `modernShape` pattern at `:1532-1541` and `:1570-1576`, which is how
-`to_agent_principal_id` and `in_reply_to` were added without breaking the `exactKeys` check at
-`:1553-1562`.
+`post_signal` gains three optional fields — `channel` (slug), `thread_root_id`, `broadcast_to_channel`.
+
+> #### `exactKeys` has TWO patterns, and copying the wrong one 400s every installed writer
+>
+> A review arm found this as a live write outage in this document. An earlier draft said to add the three
+> fields "following the `modernShape` pattern at `:1532-1541`". **Wrong pattern.** `modernKeys` is an
+> **all-or-nothing pair**: `modernShape` is true if *either* `to_agent_principal_id` *or* `in_reply_to` is
+> present (`:1532-1534`), and `exactKeys` then demands **both** (`:1539-1541`, `:1571-1576`).
+>
+> Every installed writer always sends that pair, so `modernShape` is always true in production:
+> `command-client.ts:983` states it (*"New clients always send both target fields and in_reply_to"*), the
+> browser sends both (`commonswarm.ts:2005-2007`), the listener sends both (`runtime.ts:772-780`), and
+> agent **reads** always send `in_reply_to` (`src/cloud/signals.ts:983`) — so the trap is in the `read`
+> edge too (§1.4).
+>
+> Adding `channel` to `modernKeys` would require every existing body to send `channel`, and `exactKeys`
+> (`:1553-1562`) would return **400 on every post and every agent read** — after a correctly ordered
+> migrate-then-deploy, with the schema perfectly healthy. It is the P1 outage this document claims to have
+> made unreachable, reintroduced one layer up.
+>
+> **Correct pattern: the adjacent one** — `until_ms` and `attachments` at `:1535-1538`, each its own
+> `Object.hasOwn` group spread in independently (`command-client.ts:992-995` writes the same shape).
+> **Rule: every new optional field gets its own `Object.hasOwn` group. Never extend `modernKeys`, never
+> widen `modernShape`.**
 
 **The insert list must change too.** `postSignal` names its columns explicitly at `:5966-5983`. Adding a
 column to the table does not write it. `channel_id` (and later `thread_root_id`,
@@ -618,7 +713,7 @@ used.
   on top and cannot widen anything.
 - **Agent path** — `read/index.ts:579-648` gains an optional `channel` filter beside the existing
   `about` / `kind` / `in_reply_to` / `since`, in the same `(${param} IS NULL OR col = ${param})` shape.
-  The scoping disjunct at `:609-613` is **not touched**. This is the feature that answers the agent
+  The scoping disjunct at `:610-613` is **not touched**. This is the feature that answers the agent
   context-budget argument (§1.5): the agent, which knows what it needs, chooses its own filter.
 
 ### 7.3 Delivery — unchanged
@@ -639,7 +734,7 @@ calls the single room "the channel" in ~157 places. The change is a definite art
   in the app**, so this one edit ends the collision.
 - The definite-article copy must name *which* channel: `:411-412`, `:451`, `:525`, `:540`, `:564`,
   `:4381`, `:4605`.
-- **Enumerate the ~157 `channel` occurrences before the rename lands.** Neither draft did. A
+- **Enumerate the 147 case-insensitive `channel` occurrences before the rename lands.** Neither draft did. A
   grep-and-assume here is the confident-zero failure AGENTS.md warns about.
 - In engineering prose, a Supabase Realtime channel is a **"Realtime topic"**.
 - **Standing rule:** no identifier named `channel*` may be added to `src/protocol/`, `swarm.events`, or
@@ -663,18 +758,17 @@ routine in this workspace's own prose), so a parser cannot discriminate.
 | Thread | `…&c=<channel_id>&t=<thread_root_id>` |
 | Entity filter | `…&agent=<principal_id>` / `&person=<user_id>` |
 
-1. **Ids, not slugs, in the canonical link.** `channels.slug` is mutable; a link must not rot on rename.
-   `#slug` is a *typing* affordance that resolves to an id.
-2. **A link is an address, not a grant.** Resolution runs the same RLS predicate as any other read (§5),
-   so pasting a DM link into a channel gives away a UUID and nothing else. Show an honest "no access" —
-   or a 404 that hides existence, but pick one and apply it everywhere.
-3. **`about` is not overloaded for this.** It is free-text reference with its own index and meaning
+1. **Ids, not slugs, in the canonical link** — `slug` is mutable and a link must not rot on rename;
+   `#slug` is a typing affordance that resolves to an id.
+2. **A link is an address, not a grant.** Resolution runs the same RLS predicate as any read (§5), so a
+   pasted DM link gives away a UUID and nothing else. Show an honest "no access", or a 404 that hides
+   existence — pick one and apply it everywhere.
+3. **`about` is not overloaded for this** — it is free-text reference with its own index and meaning
    (`signals_about_newest`, `20260724000003:25-27`). A message reference is a URL.
 4. **Every filter state round-trips**, and a bad id shows an honest empty state — **never a silent fall
-   back to the unfiltered feed**, which would show strictly more than the link asked for.
-5. **CLI referencing reuses the same ids**: `cswarm feed --channel <slug|uuid>`, `cswarm thread <id>`.
-   Copy the existing name-or-uuid resolver for `--to` (`src/cloud/signals.ts:1238-1254`, ambiguous-name
-   and not-found errors at `:1270-1281`) rather than inventing a second one.
+   back to the unfiltered feed**, which shows strictly more than the link asked for.
+5. **CLI referencing reuses the same ids** (`cswarm feed --channel`, `cswarm thread <id>`); copy the
+   name-or-uuid resolver for `--to` (`src/cloud/signals.ts:1238-1254`, errors `:1270-1281`).
 
 **Copy rules.** A channel guarantees nothing about who reads it, so no channel surface may say or imply
 otherwise. **Forbidden:** *private*, *members of this channel*, *invite*, *join this channel*, *leave this
@@ -689,10 +783,13 @@ permanence claim unchallenged, and R6 says both are wrong.
 
 **Constants that user-facing text must be generated from**, per AGENTS.md — none may be typed twice:
 `CHANNEL_SLUG_RE` + `CHANNEL_SLUG_RULE_TEXT`, `RESERVED_CHANNEL_SLUGS` (containing `all-signals`),
-`ENTITY_COLOUR_PALETTE`, `CHANNEL_PURPOSE_MAX`, and the signal-kind set — which today has **five
+`ENTITY_COLOUR_PALETTE`, `CHANNEL_PURPOSE_MAX`, and the signal-kind set — which today has **seven
 un-synced copies**: `src/cli.ts:2411-2412`, `src/cloud/signals.ts:31`,
-`src/cloud/command-client.ts:133`, `read/index.ts:19`, `command/index.ts:1542`. That predates this spec
-and is where any new kind will land and lie. Small, self-contained, worth doing in P1.
+`src/cloud/command-client.ts:133`, `read/index.ts:19`, `command/index.ts:1542`, `command/index.ts:176`
+(`type SignalKind`), and the table CHECK itself at `20260724000003_signals.sql:10`. An earlier draft of
+this document said **five** and named the first five — a typed enumeration inside a section about typed
+enumerations, which is exactly the failure it describes; the Grok arm supplied the two it missed. This
+predates the spec and is where any new kind will land and lie. Small, self-contained, worth doing in P1.
 
 ## 9. Controls
 
@@ -707,7 +804,10 @@ and `tests/p1-server/**` are globs; a new file in `tests/support/` runs in nothi
 | Cross-tenant channel isolation | Resolve slug `mobile` while routed to workspace B where it exists only in A → rejected | Resolve `mobile` in workspace A → accepted. Proves the rejection was tenancy, not a broken resolver. |
 | `channel_id` is immutable | `UPDATE swarm.signals SET channel_id = …` refused | An `INSERT` in the same transaction succeeds, proving grants were fine and `signals_append_only` is what fired. |
 | **`in_reply_to` behaviour is unchanged by threads** | An old-shape reply (`in_reply_to` set, `thread_root_id` absent) still lands directed to the referenced signal's author | A thread reply (`thread_root_id` set, `in_reply_to` absent) lands **undirected**. Both assertions on the stored row's `to_user_id`/`to_agent_principal_id`, so a resolver that ignores one of the two fields fails one of them. |
-| **Old clients keep posting through the channel migration** | Replay the pre-deploy edge's exact insert column list against the post-migration schema; it must succeed and yield `channel_id IS NULL` | The same insert against a schema where `channel_id` was made `NOT NULL` must fail. Without the negative arm this test cannot distinguish a safe migration from a lucky one — this is the D1 regression. |
+| **Old clients keep posting through the channel migration (schema)** | Replay the pre-deploy edge's exact insert column list against the post-migration schema; it must succeed and yield `channel_id IS NULL` | The same insert against a schema where `channel_id` was made `NOT NULL` must fail. Without the negative arm this cannot distinguish a safe migration from a lucky one. |
+| **Old clients keep posting through the channel migration (parser)** | Send the exact body an installed client sends — `to_user_id`, `to_agent_principal_id`, `in_reply_to` all present, **no** `channel` — to the new `post_signal` validator; it must be accepted | Send the same body plus `channel`; also accepted. Both must pass, which is what proves `channel` is an independent `Object.hasOwn` group and not part of `modernKeys`. Run the twin against the `read` edge with an agent body that always carries `in_reply_to`. This is the arm-found outage of §7.1. |
+| **A view recreation never reverts an earlier phase's `WHERE`** | After file 3, assert clause (e) is present in `pg_get_viewdef('swarm_read.signals'::regclass, true)` **and** re-run P3's sender-visibility test | Run the same assertion after file 2, where clause (e) does not yet exist, and require it to fail. Without that arm the test passes against a view that never had clause (e) at all. |
+| **Receipts do not disclose a DM's recipients** (P3 blocker, §6 P3) | A member who is neither author nor addressee calls `swarm_read.signal_delivery_receipts` with a directed signal's id and gets nothing | The author of that signal calls it and gets the receipts. Without the positive arm the test passes on a function that refuses everyone. **This test fails today** — that is the point of listing it. |
 | Clause (e) grants sender visibility and nothing more | The sender reads back their own directed signal | Two negative arms, both required: a third member gets zero rows for it, **and** an agent reading the `read` edge gets zero rows for a signal its own owner sent to someone else (§1.4). Without the third-member arm the test passes on a view with no predicate at all; without the agent arm it cannot see a widening of the agent path. |
 | Reply may not outlive its root | A reply with `until` past the root's is refused | A reply with an earlier `until` is accepted. |
 | Reply counts do not leak | A thread with directed replies shows a count matching what the **viewer** may read | The addressee sees the higher count. |
@@ -760,100 +860,73 @@ is void**: start one with `--state-dir <temp>` and paste its status JSON.
 
 ## 11. The claim family
 
-Statements that become false or misleading. **ALREADY-FALSE** items are wrong today, independent of this
-work; fix them separately so this spec is not blamed for them.
+Statements this work makes false or misleading. **ALREADY-FALSE** items are wrong today, independent of
+this work — fix them separately so this spec is not blamed for them.
 
-### Published privacy posture
+**Published privacy posture (highest stakes).** `privacy.astro` **contradicts itself and both halves are
+ALREADY-FALSE, in opposite directions**: `:176` (*"no private area … and no per-record permission"*)
+denies a per-record permission live since 2026-07-30 (`20260901000010:122-133`) — it errs safe, so not a
+disclosure incident, but a later reader will cite it as proof no per-record scoping exists when there are
+two; `:121` (*"visible only to that person and to its sender"*) promises the sender a visibility they do
+not have (§1.3). Fix as one edit, and note P3 *changes* `:121`'s behaviour rather than describing it.
+`:120`'s stored-field list omits `in_reply_to` and would omit `channel_id`/`thread_root_id`.
+`SECURITY.md:43-45` (*"addressed to one person are the only exception"*) is **ALREADY-FALSE** — agent
+addressing is a second; it survives R1 and breaks on DMs at P3. `landing/Hero.astro:190`,
+`ConsumerStory.astro:14`, observer `consumer-copy.observer.mjs:56` carry workspace-wide claims —
+**verify liveness first**: `Hero`, `Demo`, `FeedPanel`, `Verbs`, `Start`, `Invite` are imported by no page
+(`index.astro` pulls only `ConsumerHero`/`ConsumerStory`), and fixing dead code is not fixing live copy
+(memory: "Placeholder spread across files").
 
-- **`privacy.astro` contradicts itself, and both halves are ALREADY-FALSE, in opposite directions.**
-  `:176` — *"no private area inside a workspace and no per-record permission"* — denies a per-record
-  permission that has existed since 2026-07-30 (`20260901000010:122-133`); it errs safe, so it is not a
-  disclosure incident, but a later reader will cite it as proof there is no per-record scoping when there
-  are two implementations. `:121` — *"visible only to that person and to its sender"* — promises the
-  sender a visibility they do not have (§1.3). Fix as one edit, and note P3 *changes* `:121`'s behaviour
-  rather than merely describing it. `:120`'s stored-field list omits `in_reply_to` and would omit
-  `channel_id` and `thread_root_id`.
-- `SECURITY.md:43-45` — *"Signals addressed to one person are the only exception."* **ALREADY-FALSE:**
-  agent-addressed signals are a second. Survives R1 for channels; breaks on DMs at P3.
-- `landing/Hero.astro:190`, `ConsumerStory.astro:14`, observer `consumer-copy.observer.mjs:56` —
-  workspace-wide visibility claims. **Verify liveness before editing:** `Hero`, `Demo`, `FeedPanel`,
-  `Verbs`, `Start`, `Invite` are imported by no page (`index.astro` pulls only `ConsumerHero` and
-  `ConsumerStory`). Fixing dead code is not fixing live copy — see the memory entry "Placeholder spread
-  across files".
+**CLI strings.** `src/cloud/signals.ts:1641` (**must change with clause (e)**; already half false, §5);
+`src/cli.ts:3212`, `:3216-3218` (`describeAudience`, a single scalar), `:3077-3081` (reply-refusal hint —
+uses "channel" for the workspace stream, colliding with the new noun), `:2886`, `:504-505`, `:3293`,
+`:2986`, `:3666`; `src/cloud/signals.ts:1252` and `:1281` (identical string, two sites), `:1248`. Also
+`src/cli.ts:3144` vs `:3159` — two different success sentences for one event, and only `:3159` says the
+reply is addressed to the author; pre-existing, but load-bearing once a thread reply is *not*.
 
-### CLI strings
+**Tests pinning those strings — green controls defending claims.** Revisit deliberately, never "fix until
+green". ⛔ **Two are hard blockers**: `composer.observer.test.ts:35`
+(`assert.doesNotMatch(markup, /emoji|reaction|thread/i)` — an explicit negative gate on **"thread"**, so
+P4 cannot ship without it) and `tests/p1-cli/f6-workspace-vocabulary.test.ts:12`, `:52-57` (enforces
+"workspace" as the settled noun — read before choosing terminology, §8). Then
+`signals.test.ts:870`, `:891-893`, `:894-897` (the last is a **negative** assertion that a directed signal
+must not name workspace visibility, which a DM legitimately must);
+`slack-shape.observer.test.ts:151,153,229-230` (literal `"STREAMS"` and `"# all-signals"`);
+`ui-addressing.observer.test.ts:48-62` (three states *and* the ternary's source order);
+`composer-sprint.observer.test.ts:493`; `composer-addressing.observer.test.ts:319`;
+`reply-refusal-hint.test.ts:16`.
 
-`src/cloud/signals.ts:1641` (**must change with clause (e)**); `src/cli.ts:3212` ("visible to members of
-this workspace"); `:3216-3218` (`describeAudience`, a single scalar); `:3077-3081` (the reply-refusal
-hint — uses "channel" loosely for the workspace stream, colliding with the new noun); `:2886`; `:504-505`
-(help metavariable); `:3293`; `:2986` ("will quietly expire at its horizon"); `:3666` ("Feed" as a proper
-noun); `src/cloud/signals.ts:1252` and `:1281` (identical string, two sites); `:1248`.
+**SQL comments and docs.** `20260724000003_signals.sql:1`; `20260730000002:2`, `:69-70`, `:71-72`
+("one-hop" — R2 keeps this **true**, which is the point); `20260902000001:1-4`, whose honesty argument
+assumes the **workspace roster is the correct denominator** — R1 keeps that true and any future private
+channel inverts it; `P3-1-SIGNALS-BRIEF.md:65-70,77,79`, `:173,179`, `:323-326` (the premise P3
+overturns); `2026-09-03-multi-recipient-signals.md:29-30` (**wrong today**, §1.9 — though its error is
+about the protocol core, not about channels); `2026-08-03-SLACK-SHAPE-UI.md` open questions 1 and 2, both
+answered here (§1.3 clause (c); R12); `README.md:214-216`, `:58-60`, `:38,44,53`; `AGENTS.md:112`
+(**ALREADY-FALSE, verified**: it says `check:edge` names "three entrypoints"; `package.json:19` names
+**four** — `command`, `read`, `capability`, `activity`).
 
-### Tests that pin those strings — green controls defending claims
-
-Each must be revisited deliberately, not "fixed until green". **Two are hard blockers**, marked ⛔.
-
-- ⛔ `site/src/components/app/composer.observer.test.ts:35` —
-  `assert.doesNotMatch(markup, /emoji|reaction|thread/i)`. An explicit negative gate on the word
-  **"thread"**; P4 cannot ship without revisiting it.
-- ⛔ `tests/p1-cli/f6-workspace-vocabulary.test.ts:12`, `:52-57` — enforces "workspace" as the settled
-  noun across four `src/` files. **Read it before choosing terminology** (§8).
-- `tests/p1-cli/signals.test.ts:870` (pins the workspace-wide claim), `:891-893`, and `:894-897` — the
-  last is a **negative** assertion that a directed signal must not mention workspace visibility, which a
-  DM legitimately needs to do.
-- `site/src/components/app/slack-shape.observer.test.ts:151,153,229-230` — the literal `"STREAMS"`
-  heading and `"# all-signals"` title; P1 replaces both.
-- `site/src/components/app/ui-addressing.observer.test.ts:48-62` — pins the audience vocabulary to
-  exactly three states *and* the source order of the ternary.
-- `composer-sprint.observer.test.ts:493` (`COMPOSER_STREAM`); `composer-addressing.observer.test.ts:319`;
-  `tests/p1-cli/reply-refusal-hint.test.ts:16`.
-
-### SQL comments and docs
-
-`20260724000003_signals.sql:1` ("Signals are immutable addressed intent, not stream events");
-`20260730000002:2`, `:69-70`, `:71-72` ("one-hop" — R2 keeps this **true**, which is the point);
-`20260902000001:1-4` — its honesty argument assumes the **workspace roster is the correct denominator**,
-which R1 keeps true and any future private channel would invert;
-`docs/design/P3-1-SIGNALS-BRIEF.md:65-70,77,79`, `:173,179`, `:323-326` (the premise P3 overturns);
-`docs/design/2026-09-03-multi-recipient-signals.md:29-30` (**wrong today**, §1.9);
-`docs/design/2026-08-03-SLACK-SHAPE-UI.md` open questions 1 and 2 (both answered here: §1.3 clause (c)
-confirms the owner sees signals addressed to their own agent; R12 answers reply expiry);
-`README.md:214-216`, `:58-60`, `:38,44,53`; `AGENTS.md:112` (**ALREADY-FALSE, verified:** it says
-`check:edge` *"names the current three entrypoints"*; `package.json:19` names **four** — `command`,
-`read`, `capability`, `activity`).
-
-Also `src/cli.ts:3144` vs `:3159` — the reply verb prints two different success sentences for one event,
-and only the plain one says the reply is addressed to the original author. Pre-existing; it becomes
-load-bearing once threads exist, because a thread reply is *not* addressed to the author.
-
-### Web UI copy
-
-`LiveDashboard.astro:248,257,344,2216` (the hardcoded single stream); `:240-242` (a two-bucket taxonomy);
-`:575-577` and `:5858` (the `All`/`Broadcast`/`Direct to you` filter and its typed enumeration);
-`:3634`; `:3719-3725`; `:8-12` (file header, "a rail groups streams"); `site/src/lib/mention-address.ts:2-3`;
-`site/src/lib/commonswarm.ts:1292-1295` and `:1971`; `:1551`, `:1561` ("Broadcast — nobody was addressed
-or woken" — **stays true in v1** per §7.3); `site/src/pages/app.astro:11`;
-`site/src/pages/acceptable-use.astro:124`.
+**Web UI copy.** `LiveDashboard.astro:248,257,344,2216` (the hardcoded single stream); `:240-242`;
+`:575-577` and `:5858` (the filter and its typed enumeration); `:3634`; `:3719-3725`; `:8-12`;
+`mention-address.ts:2-3`; `commonswarm.ts:1292-1295`, `:1971`, `:1551`, `:1561` ("Broadcast — nobody was
+addressed or woken", which **stays true in v1** per §7.3); `app.astro:11`; `acceptable-use.astro:124`.
 
 ## 12. Decisions the operator owes
 
-1. **Should channels ever be private?** The request says "behave and work like Slack", and Slack has
-   private channels — but it does not say so, and privacy is the expensive part. This spec rules **no**
-   for v1 and preserves the migration brief in Appendix A. B→A is a reversible narrowing; A→B is a
-   disclosure event and cannot be done at all. *Recommendation: leave it out until asked.*
+1. **Should channels ever be private?** "Behave and work like Slack" implies it; the request never says
+   it, and privacy is the expensive part. Ruled **no** for v1, with the brief in Appendix A. B→A is a
+   reversible narrowing; A→B is a disclosure event that cannot be undone. *Leave it out until asked.*
 2. **Is an `@tag` a DM or a mention?** Today it is a DM that reads as a mention: the composer posts one
-   **direct** signal per tag (`site/src/lib/mention-address.ts:1-9`, `MENTION_MAX_RECIPIENTS = 8`), and a
-   direct signal is read-scoped, so `@mercury look at this` produces a signal **nobody else can read**.
-   `docs/design/2026-08-04-COMPOSER-AND-MENTIONS.md:66-67` named this exact outcome as the thing to
-   avoid: *"Get this backwards and a mention becomes a DM that looks public."* Channels sharpen it — a
-   user reading `#mobile` who types `@mercury` will believe the message is in `#mobile`. **This needs a
-   decision before P1 ships.** *Recommendation: keep the behaviour, badge the row so the poster can see
-   what they just did, revisit with multi-recipient.*
-3. **Does the operator consider channels compatible with "THE ADDRESS IS THE MESSAGE"?** That direction is
-   dated **2026-09-04** — the same day as this request (`LiveDashboard.astro:657-660`). Channels
-   reintroduce a place-to-post concept. §8 answers it with zero chrome (you post where you are reading),
-   but the reading that a channel is *where* and an `@`-tag is *who* is this document's, not the
-   operator's.
+   **direct** signal per tag (`mention-address.ts:1-3`; `MENTION_MAX_RECIPIENTS = 8` at `:30`), and a
+   direct signal is read-scoped — so `@mercury look at this` produces a signal **nobody else can read**.
+   `2026-08-04-COMPOSER-AND-MENTIONS.md:66-67` named this exact outcome as the thing to avoid: *"Get this
+   backwards and a mention becomes a DM that looks public."* Channels sharpen it: a user reading `#mobile`
+   who types `@mercury` will believe the message is in `#mobile`. **Decide before P1 ships.** *Keep the
+   behaviour, badge the row, revisit with multi-recipient.*
+3. **Are channels compatible with "THE ADDRESS IS THE MESSAGE"?** That direction is dated **2026-09-04**,
+   the same day as this request (`LiveDashboard.astro:657-660`), and channels reintroduce a place-to-post
+   concept. §8 answers with zero chrome, but reading a channel as *where* and an `@`-tag as *who* is this
+   document's, not the operator's.
 
 ## 13. What this document does NOT establish
 
@@ -866,7 +939,7 @@ or woken" — **stays true in v1** per §7.3); `site/src/pages/app.astro:11`;
    and `signals_from_newest` come from the shape of the existing queries, not a plan, and clause (e)'s
    cost on production data is unknown.
 4. **The size of the P3 feed growth is unmeasured** (§5); it needs a `db:reset` + real data.
-5. **The ~157 `channel` occurrences in `LiveDashboard.astro` were not enumerated** (§8). Spot evidence
+5. **The 147 case-insensitive `channel` occurrences in `LiveDashboard.astro` were not enumerated** (§8). Spot evidence
    supports the singular-room reading; enumerate before the rename lands.
 6. **Realtime is unexamined**, and its supporting file is not on `origin/main` (§10 caveat).
 7. **The privacy-page contradiction (§11) was found by reading, not by fetching the live site.** Filed as
@@ -878,53 +951,101 @@ or woken" — **stays true in v1** per §7.3); `site/src/pages/app.astro:11`;
 
 ## Appendix A — the private-channel brief (NOT v1)
 
-If R1 is ever reversed, this is the work. Draft A designed it in full and its two arms found real defects
-in it; the long form stays on `spec/streams-dms-threads` (§4.1, §5, §6 there). The headline list, so
-nobody re-derives either the work or the defects:
+If R1 is ever reversed, **draft A already designed this in full and its two arms hardened it**: read
+`git show spec/streams-dms-threads:docs/design/2026-09-04-streams-dms-threads.md` (its own §4.1, §5 and
+§6 — not this document's) rather than re-deriving it. The four traps its arms found, so nobody rediscovers them the expensive way: the
+membership clause needs an undirected guard or joining a channel reads every directed signal in it; the
+addressed-to-me clauses have no roster test, which must be fixed at post time and never by widening the
+predicate; a `dm_key` needs enforced sort order, a cardinality CHECK, and a *deferred* constraint trigger;
+and `leave_channel` must refuse a DM. Add to those: four enforcement points move together
+(`command/index.ts:5684-5828`, `20260731000001:126-137`, `read/index.ts:610-613`,
+`20260901000010:122-133`), the visibility clause ships in the same file that first allows a non-public
+channel, `channel_members` must be backfilled for any channel that becomes private, membership-versus-
+history has no good answer, and multi-recipient signals must be un-deferred first.
 
-1. **Four enforcement points change together** or the layers disagree: write-time eligibility
-   (`command/index.ts:5684-5828`), the delivery trigger (`20260731000001:119-140`), the agent read
-   `WHERE` (`read/index.ts:609-613`), the human view (`20260901000010:122-133`). The last two are written
-   in different languages by different people.
-2. **The membership clause needs an undirected guard.** OR'd with the addressed-to-me clauses it lets
-   anyone who joins a channel read every **directed** signal filed in it. Guard it with
-   `s.to_user_id IS NULL AND s.to_agent_principal_id IS NULL`, state *"membership grants read on
-   undirected messages only"* in predicate, comment and docs, and require a negative test shown to fail
-   when the guard is removed.
-3. **The addressed-to-me clauses have no roster test, so private content walks out.** Fix at post time
-   (refuse a recipient outside the roster), never by widening the predicate — that breaks ordinary
-   directed messages.
-4. **Two receipt gates leak participation** and must move in the same phase:
-   `signal_agent_receipts_live_member_select` (`20260902000004:66-70`) and the human branch of
-   `swarm_read.signal_delivery_receipts` (`20260902000001:105-110`) admit any member with no per-signal
-   check.
-5. **Ship the visibility clause in the same file that first allows a non-public channel** — §1.7's window
-   is real, and before/after it is either a no-op or a disclosure.
-6. **Membership-versus-history has no good answer** (immutable signals, mutable membership). Decide it.
-7. **Backfill `channel_members` for any channel that becomes private**, or every member loses its history
-   silently at migration time.
-8. **Un-defer multi-recipient signals first** — a channel-scoped wake is a fan-out to a set.
-9. **If a DM ever becomes a channel row**, its participant key needs enforced sort order, a cardinality
-   CHECK, and a **deferred** constraint trigger (an `AFTER INSERT ON channels` trigger cannot see a
-   roster the FK requires to be written later); and `leave_channel` must refuse a DM.
+The receipts leak that used to live here has moved to §6 P3 — it is a v1 blocker, not a private-channel
+concern (M2).
 
 ## Review record
 
-Two adversarial arms per D-036, both cross-family, neither the author's family. Each was given shell
-access and asked to check every citation, find the migration/RLS case that breaks, and answer "would the
-first slice leave old clients working?".
+Two adversarial arms per D-036, both cross-family, neither the author's family (Claude). Each had shell
+access and was asked to check every citation, find the migration/RLS case that breaks, and answer "would
+the first slice leave old clients working?".
 
 | Arm | Family | Verdict | Raw output |
 |---|---|---|---|
-| 1 | Grok (`grok -p`) | *see below* | `docs/evidence/2026-09-04-chat-reconciled-review/ARM-GROK.txt` |
-| 2 | Gemini (`agy --model gemini-3.1-pro-high`) | *see below* | `docs/evidence/2026-09-04-chat-reconciled-review/ARM-GEMINI.txt` |
+| 1 | Grok (`grok -p`) | **FAIL** | `docs/evidence/2026-09-04-chat-reconciled-review/ARM-GROK.txt` |
+| 2 | Gemini (`agy --model gemini-3.1-pro-high`) | **FAIL** | `docs/evidence/2026-09-04-chat-reconciled-review/ARM-GEMINI.txt` |
 
-Prompt: `docs/evidence/2026-09-04-chat-reconciled-review/REVIEW.md`.
+Both verdicts were FAIL on the reviewed draft and both were right. The defects are kept above as worked
+examples rather than quietly removed.
 
-Draft A's own two arms (both FAIL, transcripts at `docs/evidence/2026-09-04-streams-spec-review/`) found
-D1-D9 against A's first version. Every one of those defects is either carried into this document as a
-rule (D1 → §3.2, D5 → §6 P4, D9 → §7.1) or made **unreachable** by R4 (D3, D6, D7, D8 cannot arise
-without a backfill, a `dm_key`, or a `channel_members` table). D2 and D4 are preserved in Appendix A
-because they belong to the private-channel design, not to v1. Anyone turning this spec into a migration
-owes two fresh arms on that implementation and should treat D1-D9 plus this document's §9 table as the
-regression list to probe first.
+### Accepted — Grok (G) and Gemini (M)
+
+**G1. §7.1 named a parser pattern that would 400 every installed writer.** `modernKeys` is an
+all-or-nothing pair and every shipped client always sends it, so folding `channel` into it returns 400 on
+every post — and on every agent read, because §1.4 pushed the same wrong pattern there. A P1 write outage
+one layer above the schema outage this document already guarded. Fixed in §7.1, §1.4, and two §9 controls.
+
+**G2. R2's worked example asserted an outcome that is not measured.** B's rule never says whether it
+coalesces the stored value or the lookup key; only the second reading kills the conversation. §1.2 now
+gives both branches, claims only that the rule is under-specified where it decides addressing, and
+withdraws "the listener loop dies".
+
+**G3. The R4 product gap was hidden.** No backfill means no pre-migration signal ever appears in a named
+channel. Now the second honest caveat in §6 P1, and noted in R4.
+
+**G4. Citations and one enumeration**, all re-verified before folding: delivery `IF` at `:126-137`;
+read-edge disjunct at `:610-613`; `runtime.ts:772-780`; `mention-address.ts:1-3` with the constant at
+`:30`; base SHA `d57d480` is no longer `origin/main` (now `6465afa`); 147 case-insensitive `channel` hits,
+not ~157; and the kind-set list said **five** typed copies where there are **seven** — a typed enumeration
+inside the section arguing against typed enumerations.
+
+**G5. `signals.ts:1641` is already half false** — directed messages *to* you already appear in `feed`;
+only "messages you sent" is the half clause (e) breaks. §5 now says both.
+
+**M1. This document's own phase order silently reverted its only RLS change.** File 3 said to recreate
+`swarm_read.signals` from `20260901000010:81-133`, but P3 adds clause (e) to that view first, and
+`CREATE OR REPLACE VIEW` protects column shape and not the `WHERE`. §3.3 now carries the view-chaining
+rule — resolve every starting body with `pg_get_viewdef` against the database, never from a migration
+file — with a §9 control that has a failing arm.
+
+**M2. Delivery receipts disclose who received a DM, and it was filed in the wrong place.** Verified: the
+human branch checks only `is_member`, with no per-signal test (`20260902000001:103-109`), and the file
+states that intent at `:68`. It pre-exists and P3 does not cause it — but P3 is what makes these rows a
+**DM**, so the promise breaks then, not at private channels. Moved out of Appendix A into a **P3 blocker**
+with a control that fails today.
+
+### Rejected, with the measurement
+
+Nothing was rejected outright. The arms' one apparent disagreement — Grok calling the receipt leak
+pre-existing and already recorded, Gemini calling it a live disclosure bug — is recorded as **both**: the
+code is unchanged by this work, and the product claim it contradicts is new at P3. Grok's "Appendix A
+already records it" was true of the reviewed draft, which is why the placement, not the finding, was the
+defect.
+
+### Process facts, because they bound what these verdicts are worth
+
+- **The first arm pair reviewed a moving file** — I was still compressing while they read. Both were
+  killed and rerun against a frozen file (md5 `2577df39c581e528f672adba4c506687`, commit `b2ef0d7`).
+  Aborted transcript kept as `ARM-GROK-aborted-stale-file.txt`.
+- **Gemini's first rerun reviewed the wrong document.** It resolved `./REVIEW.md` to an unrelated lane's
+  file (`docs/evidence/2026-09-04-mobile-arms/REVIEW.md`) and returned a confident `VERDICT: FAIL` about
+  `lane/mobile-fix`. A verdict-shaped reply about the wrong artifact is not a review. Kept as
+  `ARM-GEMINI-wrong-file-run.txt`; the prompt was rewritten with absolute paths and a required quote-back
+  of the target's first heading. **If an arm cannot name what it reviewed, discard the verdict.**
+- **The host was at `kern.memorystatus_vm_pressure_level = 2`** with 3867M/5120M swap used. Both wrapper
+  shells were killed (exit 144) while the arm processes survived and kept writing; waiting on the output
+  files rather than the wrappers recovered both runs.
+- **A mechanical citation resolver** written by an arm resolved **99 of 100** citations. The one miss is
+  `docs/research/2026-09-01-streaming-into-the-web-ui.md:50`, which §10 already flags as absent from
+  `origin/main` — confirming the caveat rather than finding a defect.
+
+### Not re-run after the fixes
+
+The fixes above changed this document and **no code**; this is a design-only lane that ships no
+SHA-changing product change, so D-036's re-run rule does not bite. Draft A recorded the same reasoning.
+**Anyone turning this spec into migrations owes two fresh arms on that implementation**, and should treat
+G1, M1, M2 and draft A's D1-D9 as the regression list to probe first — G1 and M1 in particular are both
+"the schema is fine and the feature is still broken" defects, which is the shape this family of change
+keeps producing.
