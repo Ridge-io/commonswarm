@@ -417,6 +417,9 @@ interface StoredResponse {
   horizon_expires_at?: string | null;
   successors_remaining?: number | null;
   revoked_at?: string;
+  /** Grant-resume replay fields. Neither is a credential. */
+  renewal_grant_id?: string;
+  resumed_at?: string;
   signal?: SignalRecord;
 }
 
@@ -538,6 +541,13 @@ const CREATE_WORKSPACE_KIND = "create_workspace";
 const RENEW_AGENT_TOKEN_KIND = "renew_agent_token";
 const MINT_CAPABILITY_KIND = "mint_capability_url";
 const REVOKE_CAPABILITY_KIND = "revoke_capability_url";
+/**
+ * The exit from an idle suspension. Not a WORKSPACE_COMMAND_KIND and not in the
+ * reducer: it changes no authority, grants nothing, and emits no event — it
+ * clears a lapse flag on a grant the caller could already revoke. Handled here,
+ * audited here, and gated by swarm.resume_renewal_grant.
+ */
+const RESUME_RENEWAL_GRANT_KIND = "resume_renewal_grant";
 
 /**
  * Tombstone kind for the ONE revocation this service performs on its own
@@ -2182,6 +2192,12 @@ function storedResponse(value: unknown): StoredResponse {
     ...(typeof response.revoked_at === "string"
       ? { revoked_at: response.revoked_at }
       : {}),
+    ...(typeof response.renewal_grant_id === "string"
+      ? { renewal_grant_id: response.renewal_grant_id }
+      : {}),
+    ...(typeof response.resumed_at === "string"
+      ? { resumed_at: response.resumed_at }
+      : {}),
     ...(typeof response.signal_id === "string"
       ? { signal_id: response.signal_id }
       : {}),
@@ -3005,7 +3021,14 @@ async function loadRenewalFacts(
       g.successors_stranded,
       g.horizon_expires_at,
       g.revoked_at AS grant_revoked_at,
-      g.suspended_at AS grant_suspended_at,
+      /* CURRENT suspension, not the last one recorded. suspended_at is never
+         cleared — a resume is written to resumed_at so the lapse stays readable
+         — and swarm.renewal_grants.suspension_active is the ONE definition of
+         "suspended right now". Reading the raw column here would keep every
+         resumed grant refused as renewal_grant_suspended, which is the bug
+         20260904000001_standing_grant_resume.sql exists to remove. */
+      CASE WHEN g.suspension_active THEN g.suspended_at END
+        AS grant_suspended_at,
       (
         g.principal_id = t.principal_id
         AND g.run_id = t.run_id
@@ -5534,6 +5557,246 @@ async function revokeCapabilityUrl(
 }
 
 /**
+ * BRING A PAUSED AGENT BACK. The one exit from an idle suspension, and the
+ * reason "standing" can honestly be the default for an agent added on the web.
+ *
+ * WHY A SUSPENSION NEEDS AN EXIT AT ALL. A standing grant pauses itself after 14
+ * days with no measured use (swarm.prepare_renewal_grant). Before this handler
+ * existed that was terminal: a laptop parked over a holiday came back to an
+ * agent that could never renew again, and the only remedy was minting a new
+ * grant on a new lineage. That was a defensible trade while standing was opt-in
+ * behind two confirmation flags. It is not defensible as the default, because
+ * the add-agent screen now tells the reader their agent's access does not
+ * expire — and the sentence has to be true.
+ *
+ * WHY IT IS NOT A REDUCER COMMAND. Resume grants nothing, widens nothing, and
+ * names no new authority: it clears a lapse flag on a grant whose whole
+ * authority was decided when it was minted. Like mintCapabilityUrl and
+ * revokeCapabilityUrl it is self-contained and emits no protocol event. What it
+ * does emit is a swarm.audit_log row, which is what "audited" means here:
+ * outcome, actor, workspace, and the grant id, on refusals as well as successes.
+ *
+ * WHY THE GATE LIVES IN SQL. swarm.resume_renewal_grant re-reads membership,
+ * role, principal ownership, revocation and current suspension under a row lock
+ * it takes itself, and returns a stable code. This function never decides
+ * eligibility from anything it read separately, so a mistake here cannot widen
+ * the gate — the worst it can do is refuse a resume that was allowed.
+ *
+ * WHAT IT CANNOT DO. It cannot touch a revoked grant. Three fences say so
+ * independently: this function's caller returns renewal_grant_revoked, the row
+ * trigger raises SWARM_RENEWAL_GRANT_RESUME_AFTER_REVOKE, and a table CHECK
+ * refuses the row shape. Revocation stays the only permanent stop.
+ */
+async function resumeRenewalGrant(
+  tx: Sql,
+  body: RequestBody,
+  auth: AuthContext,
+  route: Route,
+  ignoredIdentity: string | null,
+): Promise<HttpResult> {
+  const { workspaceId, streamId } = route;
+  const forbidden: HttpResult = { status: 403, body: { error: "forbidden" } };
+  const invalid: HttpResult = { status: 400, body: { error: "invalid_request" } };
+  const refuse = async (
+    outcome: string,
+    reason: string,
+    result: HttpResult,
+    detail?: string,
+  ): Promise<HttpResult> =>
+    await auditRefusal(tx, auth, RESUME_RENEWAL_GRANT_KIND, {
+      outcome,
+      reason,
+      detail: [ignoredIdentity, detail].filter(Boolean).join("; ") || null,
+      workspaceId,
+      streamId,
+    }, result);
+
+  /* HUMAN-INTERACTIVE ONLY, and this is the load-bearing line of the whole
+     feature. A suspension is imposed ON an agent; if an agent credential could
+     lift it, the pause would be a suggestion rather than a control, and a
+     credential harvested from a machine nobody has touched in a month would let
+     the thief restart the very grant that idleness had stopped. */
+  if (auth.credentialKind !== "user" || auth.actor.user === null) {
+    return await refuse(
+      "authz",
+      "renewal_resume_credential_kind_forbidden",
+      forbidden,
+    );
+  }
+  const userId = auth.actor.user;
+  if (!auth.identityVerified) {
+    return await refuse("authz", "renewal_resume_identity_not_verified", forbidden);
+  }
+
+  const command = record(body.command);
+  const shapeOk = exactKeys(body, [
+    "command_id",
+    "client_version",
+    "workspace_id",
+    "stream",
+    "command",
+  ]) &&
+    typeof body.command_id === "string" &&
+    typeof body.client_version === "string" &&
+    command !== null &&
+    exactKeys(command, ["kind", "renewal_grant_id"]) &&
+    typeof command.renewal_grant_id === "string" &&
+    UUID_RE.test(command.renewal_grant_id);
+  if (command === null || !shapeOk) {
+    return await refuse("validation", "renewal_resume_invalid_request", invalid);
+  }
+  const commandId = body.command_id as string;
+  const renewalGrantId = command.renewal_grant_id as string;
+
+  const configRows = await tx<{ value: unknown }[]>`
+    SELECT value FROM swarm.config WHERE key = 'min_client_version' LIMIT 1
+  `;
+  const minClientVersion = configRows[0]?.value;
+  const clientVersion = body.client_version as string;
+  if (
+    typeof minClientVersion !== "string" ||
+    compareSemver(clientVersion, minClientVersion) === null
+  ) {
+    return await refuse(
+      "validation",
+      "renewal_resume_invalid_client_version",
+      invalid,
+    );
+  }
+  if (compareSemver(clientVersion, minClientVersion)! < 0) {
+    return await refuse("validation", "renewal_resume_client_unsupported", {
+      status: 426,
+      body: { error: "upgrade_required", min_client_version: minClientVersion },
+    });
+  }
+
+  const hash = requestHash(auth.actor, command);
+  const existingRows = await tx<
+    {
+      workspace_id: string;
+      stream_id: string;
+      request_hash: string;
+      response: unknown;
+    }[]
+  >`
+    SELECT workspace_id, stream_id, request_hash, response
+    FROM swarm.idempotency_keys
+    WHERE principal_kind = ${auth.credentialKind}
+      AND principal_id = ${canonicalPrincipal(auth.actor)}
+      AND command_id = ${commandId}
+    LIMIT 1
+  `;
+  const existing = existingRows[0];
+  if (existing) {
+    const matches = existing.request_hash === hash &&
+      existing.workspace_id === workspaceId &&
+      existing.stream_id === streamId;
+    await insertAudit(tx, {
+      auth,
+      commandKind: RESUME_RENEWAL_GRANT_KIND,
+      workspaceId,
+      streamId,
+      outcome: matches ? "replayed" : "conflict",
+      reason: matches ? null : "renewal_resume_command_id_conflict",
+      detail: ignoredIdentity,
+      hash,
+    });
+    return matches
+      ? replayResult(storedResponse(existing.response), RESUME_RENEWAL_GRANT_KIND)
+      : { status: 409, body: { error: "command_id_conflict" } };
+  }
+
+  /* The whole gate, in one call, under its own row lock. The returned value is a
+     code we assign — never a message, and never classified by parsing one
+     (D-053). NULL means the resume happened. */
+  const outcomeRows = await tx<{ resume_outcome: string | null }[]>`
+    SELECT swarm.resume_renewal_grant(
+      ${workspaceId}::uuid,
+      ${renewalGrantId}::uuid,
+      ${userId}::uuid
+    ) AS resume_outcome
+  `;
+  const resumeOutcome = outcomeRows[0]?.resume_outcome ?? "renewal_resume_forbidden";
+  if (resumeOutcome !== null) {
+    /* 403 for every refusal, INCLUDING "no such grant". Distinguishing a grant
+       that does not exist from one the caller may not touch is an existence
+       oracle across tenants, the same reason revokeCapabilityUrl collapses its
+       three refusals into one. The audit row keeps the distinction for the
+       operator, who is entitled to it; the caller is not. */
+    return await refuse(
+      "authz",
+      `renewal_resume_${resumeOutcome}`,
+      forbidden,
+      `renewal_grant_id=${renewalGrantId}`,
+    );
+  }
+
+  const resumedRows = await tx<{ resumed_at: Date }[]>`
+    SELECT resumed_at
+    FROM swarm.renewal_grants
+    WHERE renewal_grant_id = ${renewalGrantId}::uuid
+      AND workspace_id = ${workspaceId}::uuid
+  `;
+  const resumedAt = resumedRows[0]?.resumed_at;
+  if (!resumedAt) {
+    throw new Error("grant resume reported success without a resumed_at stamp");
+  }
+
+  const response: StoredResponse = {
+    ok: true,
+    event_ids: [],
+    renewal_grant_id: renewalGrantId,
+    resumed_at: resumedAt.toISOString(),
+  };
+  const ledgered = await tx<{ command_id: string }[]>`
+    INSERT INTO swarm.idempotency_keys (
+      principal_kind, principal_id, command_id,
+      workspace_id, stream_id, request_hash, response
+    ) VALUES (
+      ${auth.credentialKind},
+      ${canonicalPrincipal(auth.actor)},
+      ${commandId},
+      ${workspaceId}::uuid,
+      ${streamId}::uuid,
+      ${hash},
+      ${tx.json(response as unknown as postgres.JSONValue)}::jsonb
+    )
+    ON CONFLICT (principal_kind, principal_id, command_id) DO NOTHING
+    RETURNING command_id
+  `;
+  if (ledgered.length === 0) {
+    throw new LedgerRace(
+      auth,
+      commandId,
+      RESUME_RENEWAL_GRANT_KIND,
+      workspaceId,
+      streamId,
+      hash,
+    );
+  }
+
+  await insertAudit(tx, {
+    auth,
+    commandKind: RESUME_RENEWAL_GRANT_KIND,
+    workspaceId,
+    streamId,
+    outcome: "accepted",
+    reason: null,
+    detail: [ignoredIdentity, `renewal_grant_id=${renewalGrantId}`]
+      .filter(Boolean).join("; "),
+    hash,
+  });
+  return {
+    status: 200,
+    body: {
+      status: "accepted",
+      ...response,
+      min_client_version: minClientVersion,
+    },
+  };
+}
+
+/**
  * The free-tier ceilings §9 P5 makes launch-blocking, for commands that spend a
  * shared resource: outbound invites (transactional email, hence a branded
  * phishing vector), workspace seats, and agent principals.
@@ -6130,6 +6393,16 @@ async function handleTransaction(
         detail: ignoredIdentity,
       });
       return { status: 403, body: { error: isDeliveryCommand ? "delivery_unavailable" : "forbidden" } };
+    }
+    /* Dispatched HERE — after the route and the revocation sweep, before
+       validateCommand — for two reasons. It needs route.workspaceId and
+       route.streamId, which pre-route handlers have to look up for themselves,
+       and it must inherit the archived-workspace and revoked-membership gates
+       rather than restate them. It stops before validateCommand because it is
+       not a reducer command and has no arm there; falling through would earn
+       "unknown command kind". */
+    if (kind === RESUME_RENEWAL_GRANT_KIND) {
+      return await resumeRenewalGrant(tx, body, auth, route, ignoredIdentity);
     }
     const validation = validateCommand(body.command);
     const configRows = await tx<{ value: unknown }[]>`

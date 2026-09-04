@@ -49,6 +49,9 @@ import {
   commandEndpoint,
   type CloudTarget,
 } from "./config.js";
+/* One list of standing-grant rules for the whole CLI. renewal-grants.ts imports
+   only ./config.js, so this direction introduces no cycle. */
+import { STANDING_GRANT_RULES } from "./renewal-grants.js";
 import type {
   AgentCredentialRecord,
   AgentCredentialStore,
@@ -79,8 +82,13 @@ export function describeMintRenewal(
     return "This credential does not renew itself; re-issue one by hand when it expires.\n";
   }
   if (kind === "standing") {
+    /* The rules come from STANDING_GRANT_RULES, not from a sentence typed here.
+       The retired wording said "This does not expire. Revoke is the only kill
+       switch." while the schema already paused an idle standing grant after 14
+       days with no way back — so it named neither the pause nor its remedy, and
+       claimed a kill switch that was not the only one. */
     return (
-      "Standing grant created. This does not expire. Revoke is the only kill switch. " +
+      `Standing grant created. ${STANDING_GRANT_RULES.join(" ")} ` +
       "The bearer credential still rotates before expiry while a cswarm process remains running and secure local state is available.\n"
     );
   }

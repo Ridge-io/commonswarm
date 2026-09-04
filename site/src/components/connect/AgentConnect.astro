@@ -35,6 +35,13 @@ interface Props {
   class?: string;
 }
 
+/* The standing-grant sentences are IMPORTED, never retyped here. What an added
+   agent's access does is enforced by swarm.prepare_renewal_grant and
+   swarm.resume_renewal_grant; STANDING_GRANT_COPY is assembled from the same
+   constants that mirror them, so this screen cannot drift from the rule the way
+   the retired "renews access automatically for up to 30 days" sentence did. */
+import { STANDING_GRANT_COPY } from "../../lib/standing-grants";
+
 const {
   workspaceId,
   workspaceName,
@@ -77,8 +84,7 @@ const {
       </select>
       <p class="ac__hint">
         Choose an assistant you connected before to keep its activity together. The key
-        is shown once. While cswarm keeps running, it renews access automatically for up
-        to 30 days, unless access is revoked.
+        is shown once. {STANDING_GRANT_COPY}
       </p>
     </div>
 
@@ -121,7 +127,9 @@ const {
       </select>
       <p class="ac__hint">
         How long the pasted key works before the agent must be running to renew it.
-        30 days is the maximum; pick shorter if you want the key to lapse sooner.
+        This is the key, not the access: once the agent connects, its access continues
+        under the rules above. 30 days is the maximum; pick shorter if you want the key
+        to lapse sooner.
       </p>
     </div>
 

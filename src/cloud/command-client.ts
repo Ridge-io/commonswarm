@@ -61,6 +61,9 @@ export interface CommandHttpResponse extends StoredResponse {
   horizon_expires_at?: string | null;
   successors_remaining?: number | null;
   revoked_at?: string;
+  /** Grant-resume outcome. Neither field is a credential, so both replay. */
+  renewal_grant_id?: string;
+  resumed_at?: string;
 }
 
 export interface CommandResult {
@@ -89,7 +92,16 @@ export type ConnectCommand =
     renewal_kind?: "timeboxed" | "standing";
     renewal_horizon_ms?: number;
   }
-  | { kind: "revoke_agent_token"; token_id: string };
+  | { kind: "revoke_agent_token"; token_id: string }
+  /**
+   * The one exit from an idle suspension on a standing grant. It grants nothing
+   * and names no new authority — it clears a lapse flag on a grant the caller
+   * could already revoke — so the command function handles it beside the
+   * capability commands rather than in the reducer, and it emits no event.
+   * Human-interactive credentials only: an agent may not lift a pause imposed
+   * on itself.
+   */
+  | { kind: "resume_renewal_grant"; renewal_grant_id: string };
 
 export interface ConnectCommandRequest {
   /** Omitted for accept_invitation; the capability derives tenancy server-side. */

@@ -36,6 +36,27 @@ export const RENEWAL_HORIZON_MAX_MS = 90 * 24 * 60 * 60 * 1_000;
 /** ~1 successor/hour across the default horizon, with restart headroom. */
 export const RENEWAL_MAX_SUCCESSORS_DEFAULT = 800;
 
+/**
+ * Days a STANDING grant may go unused before it pauses itself.
+ *
+ * A standing grant has no horizon, so this is the only automatic bound left on
+ * it — and it has to stay, now that standing is what a person gets by default
+ * from the web add-agent flow. Without it a forgotten agent would hold renewable
+ * authority forever with nothing measuring whether anybody still wants it.
+ *
+ * It is no longer terminal. supabase/migrations/20260904000001_standing_grant_resume.sql
+ * makes the pause recoverable by one explicit, audited action from a person who
+ * could already revoke the grant, so idleness costs a restart rather than the
+ * lineage.
+ *
+ * MIRRORS `interval '14 days'` in swarm.prepare_renewal_grant. This module is
+ * pure and cannot read SQL, so the mirror is held by
+ * tests/p1-cli/standing-grants.test.ts, which reads the migration and both
+ * copies of the constant. The refusal detail below is BUILT from this number
+ * rather than typed beside it.
+ */
+export const RENEWAL_IDLE_PAUSE_DAYS = 14;
+
 export type WorkspaceCommand =
   | { kind: 'create_workspace'; workspace_id: string; name: string }
   | { kind: 'archive_workspace' }
@@ -1115,12 +1136,18 @@ export function decideWorkspace(
       if (grant.revoked_at !== null) {
         return domain(ctx, cmd.kind, 'renewal_grant_revoked', 'renewal grant is revoked');
       }
+      /* THE DAY COUNT IS BUILT FROM THE CONSTANT, not typed into the sentence.
+         It mirrors the interval in swarm.prepare_renewal_grant, and a sentence
+         that states an enforced number has to move when the number does.
+         The remedy is named too: this refusal reaches an agent that can do
+         nothing about it, so the detail has to say who can. */
       if (facts.grant_preflight_code === 'renewal_idle_suspended') {
         return domain(
           ctx,
           cmd.kind,
           'renewal_idle_suspended',
-          'standing grant was idle for more than 14 days and is now suspended',
+          `standing grant went ${RENEWAL_IDLE_PAUSE_DAYS} days without use and is now paused; `
+            + 'it is not revoked, and a workspace owner or admin, or the member who owns this agent, can resume it',
         );
       }
       if (
@@ -1131,7 +1158,7 @@ export function decideWorkspace(
           ctx,
           cmd.kind,
           'renewal_grant_suspended',
-          'renewal grant is suspended; an owner must resume or revoke it',
+          'renewal grant is paused; it is not revoked, and an owner must resume or revoke it',
         );
       }
       if (facts.grant_preflight_code === 'renewal_device_unavailable') {

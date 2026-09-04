@@ -750,6 +750,7 @@ var AGENT_TOKEN_MAX_TTL_MS = 30 * 24 * 60 * 60 * 1e3;
 var RENEWAL_HORIZON_DEFAULT_MS = 30 * 24 * 60 * 60 * 1e3;
 var RENEWAL_HORIZON_MAX_MS = 90 * 24 * 60 * 60 * 1e3;
 var RENEWAL_MAX_SUCCESSORS_DEFAULT = 800;
+var RENEWAL_IDLE_PAUSE_DAYS = 14;
 var HUMAN_ONLY_COMMANDS = /* @__PURE__ */ new Set([
   "create_workspace",
   "archive_workspace",
@@ -1406,7 +1407,7 @@ function decideWorkspace(state, cmd, ctx) {
           ctx,
           cmd.kind,
           "renewal_idle_suspended",
-          "standing grant was idle for more than 14 days and is now suspended"
+          `standing grant went ${RENEWAL_IDLE_PAUSE_DAYS} days without use and is now paused; it is not revoked, and a workspace owner or admin, or the member who owns this agent, can resume it`
         );
       }
       if (facts.grant_preflight_code === "renewal_grant_suspended" || grant.suspended_at !== null) {
@@ -1414,7 +1415,7 @@ function decideWorkspace(state, cmd, ctx) {
           ctx,
           cmd.kind,
           "renewal_grant_suspended",
-          "renewal grant is suspended; an owner must resume or revoke it"
+          "renewal grant is paused; it is not revoked, and an owner must resume or revoke it"
         );
       }
       if (facts.grant_preflight_code === "renewal_device_unavailable") {
@@ -1591,6 +1592,7 @@ export {
   INVITATION_MAX_TTL_MS,
   RENEWAL_HORIZON_DEFAULT_MS,
   RENEWAL_HORIZON_MAX_MS,
+  RENEWAL_IDLE_PAUSE_DAYS,
   RENEWAL_MAX_SUCCESSORS_DEFAULT,
   SCHEMA_VERSION,
   StreamIntegrityError,

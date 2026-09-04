@@ -12,6 +12,7 @@ import {
   type AgentCredential,
 } from "../../lib/agent-connect";
 import { INSTALL_CMD } from "../../lib/install";
+import { STANDING_GRANT_COPY } from "../../lib/standing-grants";
 import { SIGNAL_BODY_MAX } from "../../../../supabase/functions/_shared/signal-text";
 
 export interface DashboardPromptInput {
@@ -32,6 +33,18 @@ function expiry(credential: AgentCredential): string {
 function renewal(credential: AgentCredential): string {
   if (!credential.renews) {
     return "It does not renew itself. When it expires, ask the signed-in person for another prompt.";
+  }
+  /* A standing grant is the web default, and the agent is the party that has to
+     act on the one condition attached to it: keep using it, or it pauses and a
+     person has to resume it. Saying only "the CLI can rotate it before expiry"
+     is true and leaves out the sentence that decides whether this agent is still
+     alive in three weeks. The rules come from the shared constant, never typed. */
+  if (credential.grantKind === "standing") {
+    return (
+      "While a cswarm receiver remains running and secure local state is available, the " +
+      "CLI rotates it before expiry. A stopped or idle CLI cannot renew it. " +
+      STANDING_GRANT_COPY
+    );
   }
   if (credential.horizonExpiresAt === null) {
     return (

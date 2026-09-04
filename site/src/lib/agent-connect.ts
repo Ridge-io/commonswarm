@@ -431,6 +431,13 @@ export interface AgentCredential {
   renews: boolean;
   /** When the person is next asked to authorise. Null when there is no window. */
   horizonExpiresAt: number | null;
+  /**
+   * The grant kind the server actually created, read off its response rather
+   * than assumed from what this page asked for. Null when the deployment did
+   * not say — an older command function that ignored `renewal_kind` answers
+   * that way, and callers must not print "does not expire" on a guess.
+   */
+  grantKind: "timeboxed" | "standing" | null;
 }
 
 /**
@@ -477,6 +484,26 @@ export async function mintAgentCredential(
       epoch: 0,
       device_id: deviceId,
       ttl_ms: ttlMs,
+      /* ★ THE WEB FLOW ASKS FOR A STANDING GRANT, AND SAYING SO IS THE WHOLE FIX.
+       *
+       * The command function defaults an ABSENT renewal_kind to "timeboxed"
+       * (supabase/functions/command/index.ts, prepareWorkspaceCommand), which is
+       * why every agent added through this page used to stop working after 30
+       * days: nobody chose that, it was the shape of the omission. The default a
+       * person gets when they add an agent is now that it does not expire
+       * (operator ruling 2026-09-04).
+       *
+       * IT IS SENT EXPLICITLY RATHER THAN BY FLIPPING THE SERVER DEFAULT. The
+       * server default is also what `cswarm token mint` gets when it passes no
+       * flag, and the CLI deliberately keeps standing behind --standing
+       * --confirm-standing. Changing the default in one place would have moved
+       * both, silently promoting every scripted mint in the field.
+       *
+       * DEVICE BINDING COMES WITH IT AND IS NOT OPTIONAL: for a standing mint the
+       * command function stores bound_device_id = this request's device_id, so the
+       * grant binds to the browser device registered above, and swarm.agent_runs
+       * pins that same device on the run the agent inherits. */
+      renewal_kind: "standing",
     },
     { workspace_id: workspaceId, stream: { kind: "workspace" } },
   );
@@ -495,6 +522,16 @@ export async function mintAgentCredential(
   }
   const times = mintedTimes(body);
   const renews = mintedRunId === runId && times.expiresAt !== null;
+  /* MEASURED, NOT ASSUMED. This page asked for standing; what it reports is what
+   * the mint said it created. A deployment whose command function predates
+   * renewal_kind accepts the field, ignores it, and builds a timeboxed grant —
+   * and then "does not expire" on screen would be a sentence about a request
+   * rather than about the agent. Unknown reads as null and the horizon copy
+   * below falls back to the timeboxed wording. */
+  const grantKind = body.grant_kind === "standing" ||
+      body.grant_kind === "timeboxed"
+    ? body.grant_kind
+    : null;
   return {
     principalId: identity.principalId,
     principalName: identity.name,
@@ -505,7 +542,15 @@ export async function mintAgentCredential(
     // Mint and grant are one server transaction. The returned expiry is the
     // remaining client-side condition because it is what lets the CLI schedule renewal.
     renews,
-    horizonExpiresAt: renews && times.issuedAt !== null
+    grantKind,
+    /* A standing grant HAS no horizon, so there is no date on which the person
+     * is next asked to authorise. Reporting one anyway is how the prompt came to
+     * tell agents "the CLI can rotate it until <date>" about a grant with no
+     * such date — a fabricated deadline, which agent-prompt.ts already refuses
+     * to invent for expiry and must not invent here either. */
+    horizonExpiresAt: grantKind === "standing"
+      ? null
+      : renews && times.issuedAt !== null
       ? times.issuedAt + RENEWAL_HORIZON_DEFAULT_MS
       : null,
   };

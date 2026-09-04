@@ -782,13 +782,21 @@ test("the Agents dialog carries a mobile-presented Pending access section fed by
 });
 
 test("existing-agent help distinguishes the shown-once key from the renewed connection", () => {
+  /* THE SENTENCE IS BUILT, NOT TYPED, so this pins the WIRING and leaves the
+     claim to be checked at its source. The retired assertion required the exact
+     words "renews access automatically for up to 30 days" — which read as a
+     control over the copy and was really a lock on it. The copy said 30 days
+     because the web mint sent no renewal_kind and the command function defaulted
+     to timeboxed; nobody chose that number, and this test would have defended it
+     the day the default changed. */
+  assert.match(connect, /The key\s+is shown once\. \{STANDING_GRANT_COPY\}/);
   assert.match(
     connect,
-    /The key\s+is shown once\. While cswarm keeps running, it renews access automatically for up\s+to 30 days, unless access is revoked\./,
+    /import \{ STANDING_GRANT_COPY \} from "\.\.\/\.\.\/lib\/standing-grants"/,
   );
   assert.doesNotMatch(
     connect,
-    /lasts a few hours|renews it for you/,
-    "retired copy either misstated the horizon or overpromised renewal",
+    /lasts a few hours|renews it for you|up\s+to 30 days, unless access is revoked/,
+    "retired copy misstated the horizon, overpromised renewal, or promised the 30-day expiry the standing default replaced",
   );
 });
