@@ -1,0 +1,19 @@
+Based on the review of the patch in `./DIFF.patch` against the requirements in `./REVIEW.md` and the existing `cloud-swarm` repository, here is the adversarial review:
+
+1. **The migration-before-edge window**: The migration does not change any column type, drop any column, modify any constraint, trigger, or function signature that the deployed `command` function relies on. It adds `resumed_at`, `resumed_by`, `resume_count` and a generated `suspension_active` column, but since the deployed `INSERT` statement explicitly names its columns, these safely take their default values (which satisfy the new `CHECK` constraints like `renewal_grants_resume_shape`). It updates the body of `swarm.prepare_renewal_grant` and `swarm.record_renewal_grant_use` without altering their signatures.
+2. **Single definition of `suspension_active`**: Yes. A catalog check in the migration actively enforces that all relevant Postgres functions read `suspension_active` instead of `suspended_at`. The edge function (`command/index.ts:3098`) also correctly aliases `CASE WHEN g.suspension_active THEN g.suspended_at END AS grant_suspended_at`.
+3. **The idle clock restart**: The `swarm.prepare_renewal_grant` SQL handles this correctly. It computes `idle_since` as the maximum of `last_used_at`, `created_at`, and `resumed_at` before checking the 14-day threshold. This ensures a grant paused for being 20-days idle isn't immediately re-paused on the next preflight.
+4. **Authorization on resume**:
+    - An agent credential *cannot* resume its own grant. This is guarded at the edge by `if (auth.credentialKind !== "user" || auth.actor.user === null) { return await refuse(...) }`.
+    - A plain member can only manage their own. The SQL gate in `swarm.resume_renewal_grant` matches `revoke_agent_principal` exactly: `IF actor_role NOT IN ('owner', 'admin') AND principal_owner <> p_user_id THEN RETURN 'renewal_resume_forbidden'; END IF;`
+5. **Old/New Clients**:
+    - Old clients against the new server still work because `resume_renewal_grant` is handled as a separate kind before hitting the reducer; old commands pass through seamlessly.
+    - A new CLI against an old server sending `resume_renewal_grant` will fall through to `validateCommand`, which rejects it with a `400 Bad Request` and `unknown command kind`. This is honest: the old server legitimately does not recognize the command.
+6. **The App Mint**: It sends `renewal_kind: "standing"` without sending `renewal_horizon_ms` (which is correctly omitted entirely). The UI now says: *"Access does not expire. 14 days with no use pauses it; a workspace owner, an admin, or the member who added the agent can resume it. Revoking it is the only permanent stop."* Every clause of this is demonstrably true.
+7. **Tests**:
+    - The new assertions precisely verify the regression cases (e.g., asserting `suspension_active` is `false` after a resume, and that preflight succeeds).
+    - The `goIdle(fixture, days)` helper stuffs a fixture instead of driving the real path (it disables the `renewal_grants_spend_or_revoke_only` trigger to manually backdate `last_used_at` and `suspended_at`).
+    - There is a Postgres-level control for the resume function in `tests/p1-local/standing-grants-postgres.test.ts` (Fence two), which bypasses the function gate with a direct `UPDATE` and successfully verifies the trigger raises `SWARM_RENEWAL_GRANT_RESUME_AFTER_REVOKE`.
+8. **Breakages**: Nothing is broken. The `min_client_version` is safely queried, `_shared/protocol.js` correctly matches the `workspace-commands.ts` generator, and `cswarm whoami` copy accurately reflects the new mechanics.
+
+VERDICT: PASS
