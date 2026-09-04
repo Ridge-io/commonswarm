@@ -1692,3 +1692,29 @@ How the operator-address author happened, measured by the PM: an explicit
 `git -c user.email=tom@chartingalpha.com commit` it typed, reading the session's userEmail note as
 git authorship. Not `--author`, not config, not env. Rule for every lane brief: plain `git commit`,
 no identity flags; run `scripts/check-commit-identity.sh origin/main..HEAD` before reporting a SHA.
+
+## Addendum 2026-09-04 23:5x UTC — v0.1.51 fully RELEASED; the npm blocker was a wrong claim
+
+**npm:** `commonswarm@0.1.51` published (shasum `e9733fc0…`), `npm view` reads 0.1.51, artifacts
+committed as `20dffbe` with a matching pack shasum. **Site:** deployed from `main` at `20dffbe`;
+live `/download` shows 0.1.51 (0 hits for 0.1.50), the brain-links CSS marker is live, `install.sh`
+200 with a 404 control, `commonswarm:url` = api.commonswarm.com, no service_role string. Both
+installed binaries and the npm-global copy are 0.1.51. The release worktree is removed. Brain-links
+is LIVE on commonswarm.com.
+
+**Correction to the two npm addenda above.** They say the token in `~/.npmrc` returned E401 and
+that publishing was operator-only pending 2FA. Measured today: `~/.config/cswarm-npm-token.txt`
+(granular bypass-2FA token minted 2026-08-26; `npm token list` shows it and the 08-17 one, both
+live) authenticates as `chartingalpha` and PUBLISHED. The 403 came from the `~/.npmrc` token
+created by `npm login --auth-type web` on 09-04, which can read but not publish. The publish
+recipe in the brain topic `releases` ("temp 0600 npmrc from the token file") was right all along;
+the 09-02/09-04 addenda never tried it. No password was needed and none was read.
+
+**Account facts, for the operator:** npm user `chartingalpha` (tom@chartingalpha.com), created
+2026-08-17 by a Claude Code session, **2FA off**. Its credentials file is still at
+`~/Desktop/npm-cswarm-credentials.txt` on the mini (6 lines: url, username, email, password, two
+notes) — the 08-17 ledger's "move to 1Password and delete" never happened. It was world-readable
+(`-rw-r--r--`); chmod 600 applied 09-04. Values were not read into any transcript. Recommended:
+move it to 1Password, delete the file, and enroll a security key (npm no longer offers TOTP).
+
+Not established: whether the 08-17 token still publishes (untested; the 08-26 one does).
