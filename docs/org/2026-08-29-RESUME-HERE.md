@@ -1376,3 +1376,28 @@ fix, watch it fail on the named line, restore.
 
 **Do not grep the `Next:` line for a state word** — it always contains "stopped" as instruction text,
 even while the state is `stopping`. Read the `CONNECTED:` line, or `--json` `.state`.
+
+### Correction (2026-09-04): D-036 IS satisfiable — the Gemini arm is `agy`, not `gemini`
+
+The hand-off above says "only Grok is reachable" and "D-036 cannot currently be satisfied." **Wrong.**
+The operator corrected it: Opus 5, Grok and `agy` are all available. `agy` is the Antigravity CLI
+(`~/.local/bin/agy`, v1.1.25) and serves real Gemini models headless:
+
+```
+agy --dangerously-skip-permissions --model gemini-3.1-pro-high --print-timeout 25m -p "<prompt>"
+```
+
+The `gemini` binary's tier IS dead and opencode DOES return nothing — those measurements stand —
+but neither was ever the Gemini arm on this host. The v0.1.45 and v0.1.46 brain notes already
+described `agy` with these exact flags; I read them as the `gemini` CLI and reported a tool as
+absent that was on PATH. Re-probe every arm with a one-line positive control before writing
+"unavailable"; a wrong "unavailable" costs more than the probe.
+
+Also measured: the first `agy` pass on `3b245ed` returned a prose "PASS" with no findings and no
+`VERDICT:` line. Under D-036 that is not a review — a stricter prompt that demands attempted
+refutations per check and the literal verdict line is running as this is written.
+
+**Separate blocker, operator-only:** the npm token in `~/.npmrc` now returns `E401 Unauthorized` on
+`npm whoami`. It published 0.1.50 on 2026-09-02, so it expired or was revoked since. The GitHub
+release and the site can ship without it; the npm leg cannot. Bump the version only once npm auth
+works, or `/download` and `npm i -g` will disagree on the current version.
