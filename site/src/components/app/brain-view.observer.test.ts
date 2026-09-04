@@ -74,9 +74,12 @@ test("the Raw toggle shows the stored topic text byte-for-byte", async () => {
   assert.equal(snapshot.rawText, BRAIN_BODY_MARKDOWN);
 });
 
-test("Brain rendering keeps the shared line, character, and nesting bounds", async () => {
+/* RETIRED (2026-09-04): "a 10,000-line topic is shortened for display". Nothing a workspace can
+   hold is shortened now; the bound is a guard against pathological input and its control is the
+   unit test in message-markdown.test.mjs, built from the limit itself. */
+test("Brain rendering renders a large topic whole and still bounds nesting", async () => {
   const snapshot = await snapshotPromise;
-  assert.equal(snapshot.boundedShortened, true);
+  assert.equal(snapshot.boundedShortened, false);
   assert.equal(snapshot.boundedBlockquoteCount, MESSAGE_MARKDOWN_LIMITS.nestingDepth);
   assert.ok(snapshot.boundedBreakCount < MESSAGE_MARKDOWN_LIMITS.lines);
   assert.ok(snapshot.boundedHtmlLength <= MESSAGE_MARKDOWN_LIMITS.inputCharacters * 6);

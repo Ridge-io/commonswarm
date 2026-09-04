@@ -5,13 +5,15 @@
  * extension surfaces that this feed neither needs nor wants.
  */
 
+/* These are a guard against pathological input, NOT a display trim. Operator direction
+ * 2026-09-04: nothing a workspace can legitimately hold may be shortened for display. A signal
+ * body is capped at 8,000 characters upstream and a brain topic is a whole document, so both sit
+ * far inside these numbers; the marker below can only appear for input no product path creates. */
 export const MESSAGE_MARKDOWN_LIMITS = Object.freeze({
-  inputCharacters: 20_000,
-  lines: 1_000,
+  inputCharacters: 2_000_000,
+  lines: 50_000,
   nestingDepth: 4,
 });
-
-export const MESSAGE_COLLAPSE_LINES = 30;
 
 export const MESSAGE_MARKDOWN_TAGS = Object.freeze([
   "p", "br", "strong", "em", "code", "pre", "ul", "ol", "li", "blockquote", "a",
@@ -82,6 +84,8 @@ function boundedLines(rawText: string): string[] {
   const split = characterBounded.split("\n");
   const lineBounded = split.slice(0, MESSAGE_MARKDOWN_LIMITS.lines);
   if (shortened || split.length > MESSAGE_MARKDOWN_LIMITS.lines) {
+    /* Only reachable for input no product path can store. It says what happened rather than
+     * ending mid-sentence, because a silent cut reads as the author stopping there. */
     lineBounded.push("", "[Message shortened for safe display.]");
   }
   return escapeMessageHtml(lineBounded.join("\n")).split("\n");

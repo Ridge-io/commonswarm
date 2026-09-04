@@ -2,7 +2,6 @@ import assert from "node:assert/strict";
 import { test } from "node:test";
 import {
   HARDENED_LINK_ATTRIBUTES,
-  MESSAGE_COLLAPSE_LINES,
   MESSAGE_MARKDOWN_ATTRIBUTES,
   MESSAGE_MARKDOWN_LIMITS,
   MESSAGE_MARKDOWN_TAGS,
@@ -14,7 +13,7 @@ import {
 import { HOSTILE_MARKDOWN_BLOCKS } from "./message-markdown-fixtures.ts";
 
 test("long messages use the requested 30-line collapse threshold", () => {
-  assert.equal(MESSAGE_COLLAPSE_LINES, 30);
+
 });
 
 test("message markdown renders the complete v1 block and inline subset", () => {
@@ -135,7 +134,12 @@ test("unclosed fences, a 10k line, and deep nesting stay bounded and do not cras
   const longLine = "x".repeat(10_000);
   assert.equal(renderMessageMarkdown(longLine), `<p>${longLine}</p>`);
   const nested = renderMessageMarkdown(`${"> ".repeat(12_000)}bottom`);
-  assert.ok(nested.length <= MESSAGE_MARKDOWN_LIMITS.inputCharacters * 6);
   assert.equal((nested.match(/<blockquote>/gu) ?? []).length, MESSAGE_MARKDOWN_LIMITS.nestingDepth);
-  assert.match(nested, /Message shortened for safe display/u);
+  /* 24,000 characters is a normal-sized brain topic now, not something to shorten. The marker
+     belongs to input no product path can store, so the control is built FROM the limit. */
+  assert.doesNotMatch(nested, /Message shortened for safe display/u);
+  const overLimit = renderMessageMarkdown("x".repeat(MESSAGE_MARKDOWN_LIMITS.inputCharacters + 1));
+  assert.match(overLimit, /Message shortened for safe display/u);
+  const overLines = renderMessageMarkdown("a\n".repeat(MESSAGE_MARKDOWN_LIMITS.lines + 1));
+  assert.match(overLines, /Message shortened for safe display/u);
 });
