@@ -4,6 +4,17 @@ import { test } from "node:test";
 
 const dashboard = readFileSync(new URL("./LiveDashboard.astro", import.meta.url), "utf8");
 
+/* An agent report is written in Markdown with headings. The feed passed no headingOffset, so
+ * headingMatch returned null and every "## Heading" rendered as literal text — reported from a
+ * phone as "the markdown didn't get rendered". A message sits under the channel title, so its
+ * "#" must become an h2, exactly as the Brain panel already does. */
+test("a heading in a message renders as a heading, shifted below the channel title", () => {
+  assert.match(
+    dashboard,
+    /setSanitizedMessageMarkdown\(markdown, signal\.body, \{ headingOffset: 1 \}\)/u,
+  );
+});
+
 test("feed message bodies cross the sanitizer boundary instead of writing innerHTML directly", () => {
   const start = dashboard.indexOf("const renderFeed =");
   const end = dashboard.indexOf("const syncConnectWorkspace =", start);
@@ -11,7 +22,7 @@ test("feed message bodies cross the sanitizer boundary instead of writing innerH
   assert.notEqual(end, -1, "renderFeed end anchor is missing");
   const feed = dashboard.slice(start, end);
   assert.match(dashboard, /import \{[\s\S]*setSanitizedMessageMarkdown[\s\S]*\} from "\.\.\/\.\.\/lib\/message-markdown"/u);
-  assert.match(feed, /setSanitizedMessageMarkdown\(markdown, signal\.body\)/u);
+  assert.match(feed, /setSanitizedMessageMarkdown\(markdown, signal\.body, \{ headingOffset: 1 \}\)/u);
   assert.doesNotMatch(feed, /signal\.body[\s\S]{0,100}innerHTML|innerHTML[\s\S]{0,100}signal\.body/u);
   assert.doesNotMatch(feed, /text\.append\(signal\.body\)|textContent\s*=\s*signal\.body/u);
 });

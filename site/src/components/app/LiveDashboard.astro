@@ -3772,7 +3772,11 @@ import "../../styles/tokens.css";
           "--message-collapse-lines",
           String(MESSAGE_COLLAPSE_LINES),
         );
-        setSanitizedMessageMarkdown(markdown, signal.body);
+        /* headingOffset: 1 — the same option the Brain panel passes. Without it headingMatch
+         * returns null and every "## Heading" an agent writes renders as literal text, which is
+         * how a long agent report arrived as a wall of "#" characters. A message sits under the
+         * channel title, so its "#" becomes an h2 rather than competing with the page's h1. */
+        setSanitizedMessageMarkdown(markdown, signal.body, { headingOffset: 1 });
         if (!expandedSignalIds.has(signal.id)) {
           markdown.classList.add("dashboard__message-markdown--collapsed");
         }

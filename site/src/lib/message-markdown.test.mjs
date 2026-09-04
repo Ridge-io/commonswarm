@@ -13,6 +13,14 @@ import {
 } from "./message-markdown.ts";
 import { HOSTILE_MARKDOWN_BLOCKS } from "./message-markdown-fixtures.ts";
 
+test("without the offset a heading stays literal, which is why the feed passes it", () => {
+  /* The two callers differ only in this option. The feed did not pass it, so an agent report
+     full of "## Heading" arrived as raw text on a phone. */
+  assert.equal(renderMessageMarkdown("## Two"), "<p>## Two</p>");
+  assert.equal(renderMessageMarkdown("## Two", { headingOffset: 1 }), "<h3>Two</h3>");
+  assert.equal(renderMessageMarkdown("# One", { headingOffset: 1 }), "<h2>One</h2>");
+});
+
 test("a message folds at the shared 60-line threshold", () => {
   assert.equal(MESSAGE_COLLAPSE_LINES, 60);
 });
