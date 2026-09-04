@@ -168,6 +168,10 @@ follows, and needed no change to `MESSAGE_MARKDOWN_TAGS` or the sanitizer's allo
   dead and its target is on the subject, but it was not deliberately written as a citation. This
   is the residual cost of choice (a), and it is accepted: the alternative is asking every agent
   to adopt a syntax.
+- **A dotted name links in prose, including where it reads as a number.** A dot is a slug
+  separator, so a topic named `1.5` is slug-shaped and "I upgraded to version 1.5" offers it. Ruled
+  an intended link rather than a defect: the topic exists under exactly that name, so the control
+  opens what it says. Raised by the Gemini review arm on `e65af99`.
 - **A name with a suffix stays plain.** `see brain-how-to.md` is its own run and matches nothing.
   Correct rather than clever: `brain-how-to.md` is not a topic name.
 - **A click made in a workspace the reader has left does nothing at all.** No render, no open, no
