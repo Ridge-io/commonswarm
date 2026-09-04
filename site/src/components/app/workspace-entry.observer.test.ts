@@ -147,7 +147,7 @@ test("the live dashboard offers peer agent and collaborator paths from an empty 
   );
   assert.match(
     dashboard,
-    /@media \(max-width: 52rem\)[\s\S]*\.dashboard__rail-foot\s*\{[\s\S]*grid-column:\s*2;[\s\S]*grid-row:\s*1/,
+    /@media \(max-width: 52rem\)[\s\S]*\.dashboard__rail-foot\s*\{[\s\S]*grid-column:\s*3;[\s\S]*grid-row:\s*1/,
     "the account menu must move into the mobile top bar, which is what makes one Sign out enough",
   );
   assert.doesNotMatch(

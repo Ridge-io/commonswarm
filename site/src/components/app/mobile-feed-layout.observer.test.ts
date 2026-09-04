@@ -85,6 +85,37 @@ const revertedStyles = `<style>
       min-block-size: calc(100svh - 5.5rem - 4.5rem);
     }
   }
+  @media (max-width: 52rem) {
+    /* The 2026-09-04 change put the channel head OUT of the flow and took the filter row's
+       height back with a negative margin. This is the state before it: both are rows again,
+       and the transcript starts below all three bars. */
+    .dashboard__channel {
+      position: static;
+      grid-template-rows: auto minmax(0, 1fr);
+    }
+    .dashboard__channel-head {
+      position: static;
+      min-block-size: 4.75rem;
+      justify-content: space-between;
+      flex-wrap: wrap;
+      padding: var(--s-3) var(--s-4);
+      border-block-end: 1px solid var(--border);
+      pointer-events: auto;
+    }
+    .dashboard__channel-titleblock {
+      position: static;
+      inline-size: auto;
+      block-size: auto;
+      margin: 0;
+      overflow: visible;
+      clip-path: none;
+    }
+    .dashboard__feed-toolbar {
+      margin-block-end: 0;
+      border-block-end: 1px solid var(--border);
+    }
+    .dashboard__feed { padding-block-start: 0; }
+  }
   @media (max-width: 34rem) {
     .dashboard__channel-head {
       display: flex;
@@ -93,22 +124,12 @@ const revertedStyles = `<style>
       flex-wrap: nowrap;
       gap: var(--s-3);
     }
-    .dashboard__channel-titleblock {
-      grid-column: auto;
-      grid-row: auto;
-      order: 1;
-      gap: var(--s-1);
-    }
     .dashboard__channel-description { line-height: var(--lh-xs); }
     .dashboard__channel-actions {
-      grid-column: auto;
-      grid-row: auto;
       order: 2;
       margin-inline-start: auto;
     }
     .dashboard__channel-roster {
-      grid-column: auto;
-      grid-row: auto;
       order: 3;
     }
   }
@@ -322,23 +343,54 @@ const measureAt = async (
   return JSON.parse(Buffer.from(encoded, "base64").toString("utf8")) as LayoutMeasurement;
 };
 
+/* THE OPERATOR'S RULE (2026-09-04), stated against the bars themselves rather than a magic
+ * number: on a phone the ENTIRE header is no taller than the workspace bar — the row with the
+ * workspace name and the account control. So the only thing between the top of the screen and
+ * the top of the transcript is that bar. The channel head and the filter row are painted OVER
+ * the transcript and take none of its height.
+ *
+ * The app bar's height IS the channel section's top edge, and the transcript's own box is
+ * `shell.channelBody`, so the whole rule is one comparison of two measured edges. Measured
+ * before the change at 390x844: a 73px bar, a 53px head and a 45px filter row — 171px of
+ * header on an 844px screen, and the transcript began at 126px. After it: 73px and 73px. */
+const assertPhoneHeaderRule = (measurement: LayoutMeasurement, width: number): void => {
+  const appBar = measurement.shell.channel.top;
+  /* Positive control on the same invocation: without a real app bar the comparison below is
+   * satisfied by two zeroes, so it would pass hardest when nothing rendered at all. */
+  assert.ok(
+    appBar >= 40 && appBar <= 100,
+    `${width}px density: the app bar is not a one-row bar (${appBar}px), so the rule below ` +
+      `is not measuring anything: ${JSON.stringify(measurement.shell)}`,
+  );
+  assert.ok(
+    measurement.shell.channelBody.top <= appBar + 0.5,
+    `${width}px density: ${measurement.shell.channelBody.top}px of header sits above the ` +
+      `transcript, which is taller than the ${appBar}px workspace bar`,
+  );
+  /* The head must FLOAT, not vanish: the roster pill inside it is the only door to agent
+   * management on a phone, and a zero-height head would satisfy the rule above by deleting it. */
+  assert.ok(
+    measurement.header.height > 0 && measurement.header.top >= appBar - 0.5,
+    `${width}px density: the channel head is gone rather than floating over the transcript: ` +
+      JSON.stringify(measurement.header),
+  );
+  assert.ok(
+    measurement.transcriptVisibleHeight >= 600,
+    `${width}px density: transcript is too short: ${JSON.stringify(measurement)}`,
+  );
+};
+
 const assertDensity = (measurement: LayoutMeasurement, width: number): void => {
   /* The later composer sprint added the visible TO and keyboard-hint rows. The
-   * accepted empty composer leaves 607.9px of transcript at 1440x900 and
-   * 352.3px at 390x844. These floors keep a small regression margin while the
-   * reverted-density control below still has to fail. The old 650/475px floors
-   * described the shorter pre-sprint bar. */
-  /* The 390px band moved down on 2026-09-03: the channel head was a two-row bar (113px against
-   * a 73px app bar) and is now one row (53px), which returned 60px to the transcript. The old
-   * band was 150-180 with a 340px transcript floor and a ratio floor of 2; measured after the
-   * change: header 98, transcript 540.6, ratio 5.5.
-   *
-   * headerMax is deliberately LOOSER than the measurement (125, not 115) so it does not swallow
-   * the app-bar rule below. With a tighter max, restoring the old 4.75rem floor failed the band
-   * and the app-bar assertion never ran — a control that cannot fail. */
-  const limits = width === 1440
-    ? { headerMax: 125, headerMin: 110, ratioMin: 5, transcriptMin: 600 }
-    : { headerMax: 125, headerMin: 85, ratioMin: 4, transcriptMin: 500 };
+   * accepted empty composer leaves 607.9px of transcript at 1440x900. This floor keeps a
+   * small regression margin while the reverted-density control below still has to fail. */
+  if (width !== 1440) {
+    assertPhoneHeaderRule(measurement, width);
+    return;
+  }
+  /* headerMax is deliberately LOOSER than the measurement (125, not 115) so a reverted variant
+   * still reaches the transcript and ratio floors below rather than stopping at the band. */
+  const limits = { headerMax: 125, headerMin: 110, ratioMin: 5, transcriptMin: 600 };
   assert.ok(
     measurement.combinedHeaderHeight >= limits.headerMin &&
       measurement.combinedHeaderHeight <= limits.headerMax,
@@ -352,16 +404,6 @@ const assertDensity = (measurement: LayoutMeasurement, width: number): void => {
     measurement.transcriptToHeaderRatio >= limits.ratioMin,
     `${width}px density: transcript/header ratio is too low: ${JSON.stringify(measurement)}`,
   );
-  /* The operator's rule, stated against the two bars themselves rather than a magic number:
-   * on a phone the channel head must not be taller than the app bar above it. The app bar's
-   * height IS the channel section's top edge. */
-  if (width !== 1440) {
-    assert.ok(
-      measurement.header.height <= measurement.shell.channel.top,
-      `${width}px density: the channel head (${measurement.header.height}px) is taller than ` +
-        `the app bar above it (${measurement.shell.channel.top}px)`,
-    );
-  }
 };
 
 const assertInsideViewport = (measurement: LayoutMeasurement): void => {
@@ -423,22 +465,33 @@ test("the live feed header stays compact and the narrow composer stays in view",
   }
 });
 
-/* A separate case, not another width in the loop above: below 36rem of viewport height the feed
-   toolbar is hidden, so combinedHeaderHeight (toolbar.bottom - header.top) stops describing
-   anything and the density band cannot be applied. What still holds at this size is the rule the
-   operator asked for, so that is what this pins. Found by measuring: the short-viewport block put
-   the taller padding back and made the head 61px against a 57px app bar. */
-test("the smallest phone keeps the channel head under the app bar", async () => {
+/* A separate case, not another width in the loop above: the short-viewport block at 36rem of
+   height changes the composer and the head's padding, and the smallest phone is where a floor
+   that is 8px too generous stops fitting. Found by measuring: the short-viewport block once put
+   the taller padding back and made the head 61px against a 57px app bar. The transcript floor
+   in the shared rule does not apply at 568px of screen, so this case asserts the rule's other
+   three parts and the viewport containment. */
+test("the smallest phone keeps the whole header inside the app bar row", async () => {
   const chrome = await findChrome();
   const server = await startDistServer();
   try {
     /* With the pending label, which is the widest the roster pill gets. */
     const measurement = await measureAt(chrome, server.origin, 320, 568, false, false, true);
     assert.deepEqual(measurement.viewport, { width: 320, height: 568 });
+    const appBar = measurement.shell.channel.top;
     assert.ok(
-      measurement.header.height <= measurement.shell.channel.top,
-      `320x568: the channel head (${measurement.header.height}px) is taller than the app bar ` +
-        `above it (${measurement.shell.channel.top}px)`,
+      appBar >= 40 && appBar <= 100,
+      `320x568: the app bar is not a one-row bar (${appBar}px), so the rule below is not ` +
+        `measuring anything: ${JSON.stringify(measurement.shell)}`,
+    );
+    assert.ok(
+      measurement.shell.channelBody.top <= appBar + 0.5,
+      `320x568: ${measurement.shell.channelBody.top}px of header sits above the transcript, ` +
+        `which is taller than the ${appBar}px workspace bar`,
+    );
+    assert.ok(
+      measurement.header.height > 0 && measurement.header.top >= appBar - 0.5,
+      `320x568: the channel head is gone rather than floating: ${JSON.stringify(measurement.header)}`,
     );
     assertInsideViewport(measurement);
     console.log(`mobile-feed-layout 320px ${JSON.stringify(measurement)}`);
