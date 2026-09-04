@@ -1610,3 +1610,25 @@ evidence dir and goes into the next lane that touches that file, with that lane'
 
 Evidence for this landing (arms on e433fd9 and 2d9fbba, the device-binding trace, the withdrawn
 finding with its chain, the deferral note) is committed under `docs/evidence/2026-09-04-standing-*`.
+
+## Addendum 2026-09-04 22:2x UTC — brain-links round 6 split; agy timeout cause
+
+**`lane/brain-links` d3436cb: Gemini PASS, Grok FAIL — the FAIL holds.** `openBrainTopic`
+(`LiveDashboard.astro:3361`) awaits a forced topic re-read with no `requestVersion` /
+`activeWorkspaceId` capture, while every sibling continuation in the file has one. A click on
+workspace A followed by a switch to B lets the forced read run against B, apply, and open B's
+same-named topic (`shared-host`, `releases`, `brain-how-to` exist in many workspaces). The
+"workspace switch" unit test keeps `switching` true for every read and never reaches the path;
+removing the guard cannot turn it red. Round 7 is with the PM: capture-then-compare in
+`openBrainTopic`, a test that goes red without it, and the "never lands on a deleted topic" claim
+scoped to one workspace. Fourth split today; the PASS was wrong each time, and this one was
+detailed — it described each function and never asked what happens across the `await`.
+
+**Why Gemini arms "stalled" all day:** `agy --print-timeout 25m` (the value in every lane brief)
+elapsed on a loaded host; `agy` buffers until exit, so the 0-byte file hid `Error: timeout waiting
+for response` until the process died. Use `--print-timeout 90m`; read the file after the pid is
+gone. Grok streams, so a frozen byte count there is a stall. Some of the six "Grok stalls" the PM
+logged in round 2 were the 10-minute tool cap killing a foreground arm (exit 144) — launch detached.
+
+Not established: whether round 7 lands tonight; npm 0.1.51 still waits on the operator's agent
+(`npm view commonswarm version` reads 0.1.50 at the time of this note if it does — see next addendum).
