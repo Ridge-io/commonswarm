@@ -242,10 +242,9 @@ test("a full-hour claim ratio below 0.50 is a host lapse; 0.50 is not", () => {
   );
   assert.match(low, /^Listener LAPSE /);
   assert.match(low, /499\/1000 expected \(0\.499\)/);
-  /* RETIRED (2026-09-04). The exact 0.1.50 string, kept byte for byte — em dash and all — so a
-     reader who pastes it out of a running listener finds this note:
-       "This host is starving the listener \u2014 check load/memory pressure (sysctl
-       kern.memorystatus_vm_pressure_level), or move the listener."
+  /* RETIRED (2026-09-04). The exact 0.1.50 string, on ONE unwrapped line so a reader who pastes
+     it out of a running listener matches it here:
+     "This host is starving the listener \u2014 check load/memory pressure (sysctl kern.memorystatus_vm_pressure_level), or move the listener."
      It named ONE cause with confidence. The first reader it reached measured pressure level 1,
      zero swapouts, four TIME_WAIT sockets and an empty queue before working out the answer was
      CPU contention from their own foreground work.
@@ -262,7 +261,10 @@ test("a full-hour claim ratio below 0.50 is a host lapse; 0.50 is not", () => {
   assert.doesNotMatch(low, /Bursty foreground work/);
   assert.match(low, /the reads were not FAILING/);
   assert.match(low, /does not settle whether they were SLOW/);
-  assert.match(low, /measured nothing else about this hour, and nothing at all about this host/);
+  assert.match(low, /measured nothing else about that hour, and nothing about the host/);
+  /* It must not claim the host was unmeasured full stop: the ports notice can print above it,
+     and that IS a host measurement. */
+  assert.match(low, /read any other notice above before looking further/);
   assert.match(low, /Cheapest checks first: load average \(uptime\)/);
   /* What is pending is on the warning line, as the COUNT. */
   assert.match(low, /Pending deliveries now: 0\./);

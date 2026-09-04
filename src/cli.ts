@@ -4392,7 +4392,7 @@ function listenerLapseNotices(
         `Claim throughput fell below ${LISTENER_THROUGHPUT_LAPSE_RATIO.toFixed(2)} for the full hour at ${latest.hourStart}: ${latest.claims}/${Math.round(latest.expectedClaims)} expected (${latest.ratio.toFixed(3)}).${pendingClause}`,
       nextStep: lapseRetries > 0
         ? `Reads also failed in that hour: ${lapseRetries} ${lapseRetries === 1 ? "retry" : "retries"} recorded. Read those failures first; any notice above names the code. A retry does not say where the fault was — host_ports_exhausted is a retry AND a host fault.`
-        : "No read retries were recorded in that hour, so the reads were not FAILING. That does not settle whether they were SLOW: a read that succeeds slowly records nothing here, and a claim retry sleeps in the claim loop without recording either. The listener measured nothing else about this hour, and nothing at all about this host. Cheapest checks first: load average (uptime), process count, memory pressure (sysctl kern.memorystatus_vm_pressure_level, 1 is normal), sockets (netstat -an | grep -c TIME_WAIT).",
+        : "No read retries were recorded in that hour, so the reads were not FAILING. That does not settle whether they were SLOW: a read that succeeds slowly records nothing here, and a claim retry sleeps in the claim loop without recording either. This notice measured nothing else about that hour, and nothing about the host — read any other notice above before looking further. Cheapest checks first: load average (uptime), process count, memory pressure (sysctl kern.memorystatus_vm_pressure_level, 1 is normal), sockets (netstat -an | grep -c TIME_WAIT).",
     });
   }
   const consecutive = status.consecutiveAckFailureCount ?? 0;
