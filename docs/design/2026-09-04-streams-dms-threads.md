@@ -141,9 +141,9 @@ that in v1 — see §9 and §10.
 **Humans and the browser read PostgREST directly.** They do not go through the `read` edge function.
 
 - CLI: `src/cloud/signals.ts:890` — `new URL("/rest/v1/signals", target.url)`, with
-  `"accept-profile": "swarm_read"` (`:930`) and an explicit select list at `:891-894`:
+  `"accept-profile": "swarm_read"` (`:928`) and an explicit select list at `:891-894`:
   `id,workspace_id,from,from_kind,to,to_agent,in_reply_to,about,kind,body,attachments,until,created_at`.
-- Browser: `site/src/components/app/LiveDashboard.astro:1747-1750`, schema `swarm_read`, table
+- Browser: `site/src/components/app/LiveDashboard.astro:1746-1750`, schema `swarm_read`, table
   `signals`, select list **without** `in_reply_to`. Keyset cursor on `(created_at, id)` desc,
   `SIGNAL_PAGE_SIZE = 25` (`:1194`). No recipient or stream predicate — it asks for everything in the
   workspace and filters in the browser.
@@ -208,7 +208,7 @@ The full list of gates a private channel or a DM would have to change, each cite
 | 6 | `signal_agent_receipts_live_member_select` | `20260902000004_signal_agent_receipts.sql:66-70` | `USING (swarm.is_member(workspace_id, auth.uid()))`, no per-signal check. Same leak as #5, at table level. Already reads receipts for *directed* signals the member cannot see — see §11.2. |
 | 7 | `signal_human_receipts` command policies | `20260901000020_signal_human_receipts.sql:30-67` | Insert/select gates for seen state; a channel-scoped seen rule lands here. |
 | 8 | `swarm.signal_attachments` | `20260901000010_signal_attachments.sql:33-35` | Attachments are exposed through the signals view's subquery (`:98-119`), so they inherit #1 automatically. No separate change needed — worth stating so nobody adds one. |
-| 9 | `realtime.messages` policy | `20260902000003_realtime_agent_activity.sql:4-18` | Topic is `cswarm-activity:<workspace_id>`, gated by `is_member`. A per-channel topic needs its own policy or private-channel traffic leaks over Realtime. **See the throughput warning below.** |
+| 9 | `realtime.messages` policy | `20260902000003_realtime_agent_activity.sql:4-17` | Topic is `cswarm-activity:<workspace_id>`, gated by `is_member`. A per-channel topic needs its own policy or private-channel traffic leaks over Realtime. **See the throughput warning below.** |
 
 **Realtime has a measured ceiling, and gate #9 spends it.**
 `docs/research/2026-09-01-streaming-into-the-web-ui.md:50` records "about 2 frames/second per
@@ -308,7 +308,7 @@ swarm.signals           + channel_id  (which conversation)
 `about`, `kind`, `to_user_id`, `to_agent_principal_id`, `in_reply_to`, `until`, immutability — all
 unchanged in meaning. Directed signals keep working exactly as they do today and keep their delivery
 and wake path (§1.4). This is deliberate: the delivery ledger is the part of the system with the most
-invariants (`20260731000001_signal_deliveries.sql:38-74` is 15 CHECK constraints), and this design
+invariants (`20260731000001_signal_deliveries.sql:38-74` is 13 CHECK constraints), and this design
 does not touch it until it has to.
 
 ---
@@ -341,6 +341,39 @@ you get those bugs and then add the constraint anyway.
 **The participant key spans two principal kinds.** CommonSwarm participants are users *and* agent
 principals, so the key is the sorted set of `'<kind>:<uuid>'` tokens over both — not a user-id pair.
 Stored as a generated `text[]` with a unique index; see §4.1.
+
+### 3.1 A two-party DM and a group DM are not the same row shape
+
+This is the sharpest constraint in the design and it must be stated, not discovered during
+implementation. `CONSTRAINT signals_one_recipient` allows **at most one** of `to_user_id` and
+`to_agent_principal_id` (`20260730000002_agent_signal_receive.sql:25-27`), and the delivery/wake
+trigger keys off `to_agent_principal_id` alone (`20260731000001:126`). So:
+
+- **A two-party DM keeps the recipient columns set.** `channel_id` points at the `dm` conversation
+  *and* `to_user_id`/`to_agent_principal_id` names the other party, exactly as a directed signal does
+  today. Result: delivery and wake keep working unchanged, visibility is already granted by view
+  clauses (b) and (c), and the row is byte-compatible with what every installed client expects. The
+  `channel_id` is what makes the two halves of the conversation addressable as one thing.
+- **A group DM (3+ participants) cannot set the recipient columns at all.** There is no room for a
+  second recipient. Its rows carry `channel_id` and leave `to_user_id`/`to_agent_principal_id`
+  `NULL`. Visibility therefore comes only from clause (d), and — this is the cost — **no agent in a
+  group DM is woken**, because the trigger never fires.
+
+Two consequences to accept or reject deliberately:
+
+1. **A group DM is a private channel wearing a different name.** Once the recipient columns are
+   empty, the only thing distinguishing it from a private channel is that it has no name and an
+   immutable roster. That is a real distinction and it is why the `dm` type still earns its place —
+   but it means Phase 3 and Phase 5 share a predicate, and the honest sequencing is to build
+   clause (d) once, in Phase 3, and let Phase 5 reuse it rather than invent a second path.
+2. **Group DMs are silent for agents until channel wake exists** (§10). An agent added to a group DM
+   would never be prompted. That is a bad enough surprise that **v1 should cap DMs at two
+   participants** and defer group DMs to the phase that brings channel wake. A two-party DM covers
+   the operator's stated ask — "Slack-like direct messages with agents" — completely.
+
+**Recommendation: v1 DMs are two-party only.** It keeps every DM on the existing, well-tested
+directed path, wake included, and it avoids shipping a conversation type that silently fails to
+notify the agents in it.
 
 **One existing guarantee must survive.** The live view lets a member see signals addressed to an
 agent **they own**, for oversight (`20260901000010_signal_attachments.sql:126-132`; the intent is
@@ -421,19 +454,51 @@ CREATE INDEX channel_members_live_by_principal
   WHERE removed_at IS NULL;
 ```
 
-`dm_key` is the sorted array of `'user:<uuid>'` / `'agent:<uuid>'` tokens. Computed by the command
-edge, asserted by a trigger against `channel_members` so it cannot drift from the roster it claims to
-describe.
+`dm_key` is the sorted array of `'user:<uuid>'` / `'agent:<uuid>'` tokens, computed by the command
+edge. It is the DM's identity, so its integrity is the whole design — and a review arm found three
+ways the sketch above lets it drift. All three need fixing before this reaches a migration:
+
+1. **Sorting is load-bearing and nothing enforces it.** A Postgres unique index on `text[]` is
+   order-sensitive: `{a,b}` and `{b,a}` are different keys, so an unsorted write silently creates a
+   *second* DM for the same pair — exactly the bug the type exists to prevent. Add
+   `CHECK (dm_key = (SELECT array_agg(t ORDER BY t) FROM unnest(dm_key) AS t))`, and, since a
+   duplicate participant would also change the key, `CHECK (cardinality(dm_key) = cardinality(ARRAY(SELECT DISTINCT unnest(dm_key))))`.
+2. **`(type = 'dm') = (dm_key IS NOT NULL)` admits the empty array.** `'{}'::text[]` is not NULL, so
+   it satisfies the check and the unique index allows exactly one zero-participant DM per workspace.
+   Add `CHECK (type <> 'dm' OR cardinality(dm_key) = 2)` — 2, not "≥ 2", per the two-party
+   recommendation in §3.1.
+3. **A trigger that validates `dm_key` against the roster cannot be an `AFTER INSERT ON channels`
+   trigger.** `channel_members` has a foreign key to `channels`, so the channel row must exist
+   before any member row does; at channel-insert time the roster is necessarily empty and the
+   trigger would either pass vacuously or reject every DM. Use a **deferred constraint trigger**
+   (`CREATE CONSTRAINT TRIGGER … DEFERRABLE INITIALLY DEFERRED`) that fires at commit, when both the
+   channel and its members exist. Without that, `dm_key` can name a set that is not the roster, and
+   the unique index then protects the *claimed* participants rather than the real ones — a
+   uniqueness guarantee that is worse than none, because it looks sound.
 
 Note `channel_members` is **mutable** (`removed_at`), unlike `swarm.signals`. That is intentional and
 is the reason the DM key is frozen at creation: a DM's roster is written once and never updated, so
 the unique index stays truthful.
 
-### 4.2 `swarm.signals` gains three columns
+### 4.2 `swarm.signals` gains three columns — in two different phases
+
+**`channel_id` ships in Phase 1. `thread_root_id` and `broadcast_to_channel` ship in Phase 2.** They
+are shown together because they are one coherent shape, but they must not land in one migration: a
+review arm's advice, and it is right. Phase 1's file already takes an `ACCESS EXCLUSIVE` lock on
+`swarm.signals` and is the file that must not break old writers; adding thread columns nobody reads
+yet only widens what can go wrong in it, for no benefit before the Phase 2 client exists.
+
+Note `broadcast_to_channel boolean NOT NULL DEFAULT false` is safe as `NOT NULL` precisely because it
+**has** a default — which is the contrast that should have caught D1 on `channel_id` in the first
+draft.
 
 ```sql
+-- Phase 1
 ALTER TABLE swarm.signals
-  ADD COLUMN IF NOT EXISTS channel_id uuid,
+  ADD COLUMN IF NOT EXISTS channel_id uuid;   -- NOT NULL is deferred; see §4.3
+
+-- Phase 2
+ALTER TABLE swarm.signals
   ADD COLUMN IF NOT EXISTS thread_root_id uuid,
   ADD COLUMN IF NOT EXISTS broadcast_to_channel boolean NOT NULL DEFAULT false;
 
@@ -455,27 +520,47 @@ CREATE INDEX signals_thread_oldest
   WHERE thread_root_id IS NOT NULL;
 ```
 
-**The `until` ceiling.** Replace the 30-day CHECK (`20260724000003:15`) with a rule that keeps 30 days
-for everything that has it today and allows a channel post to persist:
+**The `until` ceiling — do NOT touch it in Phase 1.**
+
+An earlier draft proposed replacing the 30-day CHECK (`20260724000003:15`) with:
 
 ```sql
-ALTER TABLE swarm.signals DROP CONSTRAINT signals_until_check;  -- resolve the real name first
-ALTER TABLE swarm.signals ADD CONSTRAINT signals_until_horizon CHECK (
+-- REJECTED. This is a 100-year ceiling on the whole table.
+CHECK (
   until <= created_at + interval '30 days'
   OR (channel_id IS NOT NULL AND until <= created_at + interval '100 years')
-);
+)
 ```
 
-`until` stays `NOT NULL` — see §1.8.1 for the measurement that forces this. The command edge picks
-the horizon: existing kinds keep `SIGNAL_DEFAULT_UNTIL_MS`
-(`supabase/functions/command/index.ts:513-517`); a channel post defaults to the long horizon.
-`SIGNAL_MAX_UNTIL_MS` at `:512` must gain the matching branch or the edge will refuse what the
-constraint allows.
+The review arm found why that is wrong, and it is worth keeping as a worked example. **After the
+§4.3 backfill every row has a `channel_id`**, and the defaulting trigger gives one to every new row
+too. So `channel_id IS NOT NULL` is true for the entire table, the second arm of the `OR` always
+holds, and the 30-day rule is silently deleted — for `working-on` and `ask` as well as for channel
+posts. The draft also contained a contradiction that should have exposed this: it said existing
+kinds keep `SIGNAL_DEFAULT_UNTIL_MS` **and** that "a channel post defaults to the long horizon",
+which after Phase 1 describes the same rows.
 
-> Resolve the actual constraint name from `pg_constraint` before writing the `DROP` — the CHECK at
-> `20260724000003:15` is unnamed in the source and Postgres generated its name.
-> `20260827000001_expand_signal_body.sql:1-6` is the precedent for this (it drops
-> `signals_body_check` by name).
+`channel_id` cannot discriminate a "channel post" once everything is in a channel. **So Phase 1
+leaves the 30-day CHECK exactly as it is**, and every signal keeps expiring as it does today.
+
+Making channel messages durable is a real requirement and it gets its own phase, with a real
+discriminator — a new `kind`, or an explicit `retention` column — never `channel_id IS NOT NULL`.
+When that phase comes:
+
+- `until` stays `NOT NULL`. §1.8.1 has the measurement: `src/cloud/signals.ts:898` sends
+  `until=gt.now`, so a NULL vanishes from every installed CLI while still showing in the browser.
+- `SIGNAL_MAX_UNTIL_MS` (`supabase/functions/command/index.ts:512`, enforced at `:1604-1608`) must
+  gain the matching branch in the same phase, or the edge refuses what the constraint allows and the
+  change is invisible.
+- Resolve the real constraint name from `pg_constraint` before any `DROP` — the CHECK at
+  `20260724000003:15` is unnamed in the source, so Postgres generated its name.
+  `20260827000001_expand_signal_body.sql:1-6` is the precedent (it drops `signals_body_check` by
+  name).
+
+**Consequence to state plainly in the UI:** in Phase 1, a channel is a place, not an archive.
+Messages still expire on the existing schedule — `note` at 30 days, `ask` at 7, `working-on` at 24
+hours (`:513-517`). A user who expects Slack's permanent history will be wrong until the retention
+phase ships.
 
 ### 4.3 Backfill — where every existing signal lands
 
@@ -500,7 +585,23 @@ FROM swarm.channels AS c
 WHERE c.workspace_id = s.workspace_id AND c.is_default AND s.channel_id IS NULL;
 ALTER TABLE swarm.signals ENABLE TRIGGER signals_append_only;
 
--- 3. assert, then make it structural
+-- 3. DEFAULT NEW ROWS SERVER-SIDE. This is load-bearing — see the note below.
+CREATE OR REPLACE FUNCTION swarm.default_signal_channel()
+RETURNS trigger LANGUAGE plpgsql SECURITY INVOKER SET search_path = pg_catalog AS $$
+BEGIN
+  IF NEW.channel_id IS NULL THEN
+    SELECT c.channel_id INTO NEW.channel_id
+    FROM swarm.channels AS c
+    WHERE c.workspace_id = NEW.workspace_id AND c.is_default;
+  END IF;
+  RETURN NEW;
+END;
+$$;
+CREATE TRIGGER signals_default_channel
+  BEFORE INSERT ON swarm.signals
+  FOR EACH ROW EXECUTE FUNCTION swarm.default_signal_channel();
+
+-- 4. assert the backfill covered everything
 DO $$
 DECLARE orphan integer;
 BEGIN
@@ -509,23 +610,72 @@ BEGIN
     RAISE EXCEPTION 'channel backfill incomplete: % signal(s) have no channel', orphan;
   END IF;
 END $$;
-
-ALTER TABLE swarm.signals ALTER COLUMN channel_id SET NOT NULL;
 ```
 
-The assert-then-tighten shape is copied from
-`20260731000001_signal_deliveries.sql:175-196`, which is the house pattern for this.
+The assert shape is copied from `20260731000001_signal_deliveries.sql:175-196`, which is the house
+pattern for the assert itself (that file does not use `DISABLE TRIGGER`).
+
+**Step 5, and the sketch is not complete without it: recreate `swarm_read.signals`.** The review arm
+noticed that no draft step exposed the new column. PostgREST reads the view, not the table, so until
+the view is recreated `channel_id` does not exist on the wire and a new client filtering
+`channel_id=eq.<uuid>` gets a **400**, not an empty page. Recreate the view from its live definition
+(`20260901000010:81-133`), adding `channel_id` **at the end of the select list** and changing nothing
+else — same `security_barrier`, same owner, same grants, same `WHERE`. Adding at the end matters:
+both installed readers name their columns explicitly (`src/cloud/signals.ts:891-894`,
+`LiveDashboard.astro:1748`), so a new trailing column is invisible to them, while reordering or
+renaming an existing one is a PostgREST 400 for every old client.
+
+> #### `channel_id` must NOT be `NOT NULL` in this migration
+>
+> An earlier draft of this section ended with
+> `ALTER TABLE swarm.signals ALTER COLUMN channel_id SET NOT NULL;`. **That is an outage**, and the
+> review arm caught it. The apply order
+> (`20260902000001_broadcast_recipient_roster.sql:58-64`) is migration **first**, edge deploy
+> **second**. Between those two steps the OLD command edge is still serving, and its insert
+> (`supabase/functions/command/index.ts:5941-6016`) names its columns explicitly and does not
+> include `channel_id`. A `NOT NULL` column with no default therefore makes **every signal post in
+> production fail** with a not-null violation, for every client, until the edge deploy lands. Reads
+> would keep working, so the symptom is "nobody can post" with a healthy-looking feed.
+>
+> The `BEFORE INSERT` trigger in step 3 is the fix, and it is what makes the old edge keep working:
+> `BEFORE` triggers run before constraint checks, so the trigger fills `channel_id` on an insert
+> that omits it. Two rules follow:
+>
+> 1. **The trigger and the backfill ship in the SAME migration file**, and the trigger is created
+>    before the file returns. A file that adds the column without the trigger commits a shape that
+>    breaks posting, and §1.8 says that shape is live until the next file commits.
+> 2. **`SET NOT NULL` is deferred to a later phase**, after the new command edge is deployed
+>    everywhere and the trigger has been proven in production. It is a tightening with no
+>    behavioural benefit; there is no reason to take the risk in Phase 1. Until then `channel_id` is
+>    nullable in the schema and non-null in practice, and every reader should still treat NULL as
+>    "the default channel" defensively.
 
 Two cautions:
 
 - **`ALTER TABLE … DISABLE TRIGGER` takes an `ACCESS EXCLUSIVE` lock** and blocks every read of
-  `swarm.signals` for the duration of the `UPDATE`. On a large table that is a visible outage. If the
-  signal count makes this unsafe, the alternative is to leave `channel_id` nullable and have the
-  read path `COALESCE` to the default channel — at the cost of a permanent join. **Measure the row
-  count on production before choosing**; this spec cannot decide it from the repo. Recorded in §12.
+  `swarm.signals` for the duration of the `UPDATE`. On a large table that is a visible outage.
+  **Measure the row count on production before choosing**; this spec cannot decide it from the repo
+  (§12). If the count makes a single statement unsafe, batch the `UPDATE` by `workspace_id` with the
+  trigger left enabled — `swarm.prevent_append_only_mutation()` blocks the write, so batching means
+  dropping and recreating the trigger around the loop, which widens the window in which a signal
+  could be edited. Prefer the single statement unless the measurement forbids it.
 - Do not "archive" workspaces out of the backfill. `swarm.is_member` already excludes archived
-  workspaces (`20260820000002:11-20`), so an archived workspace's signals are unreachable anyway, but
-  a `NOT NULL` column with no value would still fail. Backfill all of them.
+  workspaces (`20260820000002:11-20`), so an archived workspace's signals are unreachable anyway,
+  but leaving them NULL would make the "every signal has a channel" assert fail and would leave rows
+  that later readers have to special-case. Backfill all of them.
+- **The default channel is created with an empty roster, and that is a landmine for Phase 5.** This
+  sketch backfills `swarm.channels` and `swarm.signals` but never `swarm.channel_members`. That is
+  harmless while `visibility = 'workspace'`, because clause (a) does not consult the roster — which
+  is exactly why it would go unnoticed. The moment anyone flips the default channel to
+  `visibility = 'members'`, clause (a) stops matching and clause (d) finds no rows, and **every
+  member loses the entire workspace history at once**. Two defences, take both: backfill one
+  `channel_members` row per live membership for the default channel in this same file, and add
+  `CHECK (NOT is_default OR visibility = 'workspace')` so the default channel cannot be made private
+  by accident.
+- `INSERT … ON CONFLICT DO NOTHING` on `swarm.channels` uses `gen_random_uuid()`, so it can never
+  conflict on the primary key; the conflict it actually relies on is `channels_workspace_default`.
+  That is fine on a first run and correct on a re-run, but only because that partial unique index
+  exists — do not drop it thinking it is redundant with the `is_default` boolean.
 
 ### 4.4 DM conversations (Phase 3)
 
@@ -568,18 +718,72 @@ WHERE swarm.is_member(s.workspace_id, auth.uid())
         AND principal.workspace_id = s.workspace_id
         AND principal.owner_user_id = auth.uid()
     )
-    -- (d) NEW: I am in the channel, in person or through an agent I own
-    OR EXISTS (
-      SELECT 1
-      FROM swarm.channel_members AS m
-      LEFT JOIN swarm.agent_principals AS p
-        ON p.principal_id = m.agent_principal_id AND p.workspace_id = m.workspace_id
-      WHERE m.channel_id = s.channel_id
-        AND m.removed_at IS NULL
-        AND (m.user_id = auth.uid() OR p.owner_user_id = auth.uid())
+    -- (d) NEW: I am in the channel, in person or through an agent I own.
+    --     The undirected guard is LOAD-BEARING — see the note below.
+    OR (
+      s.to_user_id IS NULL AND s.to_agent_principal_id IS NULL
+      AND EXISTS (
+        SELECT 1
+        FROM swarm.channel_members AS m
+        LEFT JOIN swarm.agent_principals AS p
+          ON p.principal_id = m.agent_principal_id AND p.workspace_id = m.workspace_id
+        WHERE m.channel_id = s.channel_id
+          AND m.removed_at IS NULL
+          AND (m.user_id = auth.uid() OR p.owner_user_id = auth.uid())
+      )
     )
   );
 ```
+
+> #### Clause (d) without the undirected guard is a mass disclosure of every private message
+>
+> An earlier draft omitted `s.to_user_id IS NULL AND s.to_agent_principal_id IS NULL` from clause
+> (d). The review arm found the consequence, and it is severe.
+>
+> Phase 1 puts **every existing signal** into the workspace's default `#all-signals` channel (§4.3),
+> and the trigger keeps putting every old client's post there. Directed signals — today's private
+> messages — are among them: they get a `channel_id` like everything else, and their privacy comes
+> only from view clauses (b) and (c). An unguarded clause (d) is OR'd with those, so **anyone who
+> joins `#all-signals` reads every directed signal ever sent in the workspace**, including messages
+> between other people and messages to agents they do not own. Membership of the default channel
+> would be a workspace-wide surveillance grant, and it would arrive silently at the Phase 3
+> migration with no error and no log line.
+>
+> The guard closes it without costing anything, because a directed signal never *needs* clause (d):
+> its visibility is fully decided by (b) and (c) whatever channel it sits in. That includes the
+> two-party DMs of §3.1, which keep their recipient columns set precisely so this stays true.
+>
+> Two rules follow:
+>
+> 1. **Channel membership grants read on undirected messages only.** State it that way in the
+>    predicate, in the code comment, and in the docs, so nobody "simplifies" the guard away later.
+> 2. **The Phase 3 migration needs a negative test that reaches this path**: a member who is in the
+>    default channel and is neither sender nor recipient of a directed signal must get zero rows.
+>    Per the repo rule on negative results, the control must be shown to fail when the guard is
+>    removed — otherwise it proves nothing about the guard.
+
+> #### Clauses (b) and (c) have no roster test, and that lets private-channel content walk out
+>
+> The second review arm found this one. Clauses (b) and (c) grant read on a directed signal purely
+> from *who it is addressed to* — there is no test that the addressee is in the signal's channel,
+> and there deliberately is none today because there were no channels. So once a channel can be
+> `visibility = 'members'`, a member of `#exec-comp` who `@`-tags someone outside the roster writes a
+> row that clause (b) shows that outsider. Private-channel content leaves the roster, one message at
+> a time, and nothing in the predicate stops it.
+>
+> **Do not fix this in the predicate.** Widening (b)/(c) with a roster test would break the ordinary
+> directed message, which must keep working in the default channel and in DMs regardless of any
+> roster — and it would change today's behavior for every existing signal.
+>
+> **Fix it at post time instead.** `resolveSignalChannel` (§6) currently answers only "may this
+> principal post here". It must also answer "may this principal address *that* recipient from here":
+> in a `visibility = 'members'` channel, refuse a `to_user_id` / `to_agent_principal_id` naming a
+> principal who is not a live member of that channel. Refusing the write is the honest outcome — the
+> alternative is writing a row whose visibility contradicts the channel it sits in. The refusal
+> message should say the recipient is not in the channel and name the remedy (add them, or send a
+> DM), and it must be built from the same membership query that enforces it, per AGENTS.md:211-224.
+>
+> This lands in the same phase that first allows `visibility = 'members'`, alongside clause (a).
 
 Clause (a) is the one that changes behavior, and it is the trap: it must be added **at the same time**
 as the first non-`workspace` channel exists, not before and not after. Before, it is a no-op (every
@@ -633,19 +837,44 @@ No protocol-core change (§1.7). All of the following are command-edge work in
 |---|---|---|
 | `create_channel` | `name`, `topic?`, `visibility?` | Human-interactive credential only, like workspace creation. Rate-limit beside `MODEL_DECLARE_RATE_LIMIT_PER_HOUR` (`:510`). |
 | `archive_channel` | `channel_id` | Sets `archived_at`. Never deletes; signals are immutable. |
-| `join_channel` / `leave_channel` | `channel_id`, `principal?` | `principal` names an agent the caller owns; absent means the caller. |
+| `join_channel` / `leave_channel` | `channel_id`, `principal?` | `principal` names an agent the caller owns; absent means the caller. **Both must refuse `type = 'dm'`** — see below. |
 | `open_dm` | `participants[]` | Idempotent. Returns the existing `channel_id` for that key or creates one. |
+
+**`leave_channel` must refuse a DM, and the refusal has to be explicit.** §3 says a DM roster is
+immutable, but an earlier draft did not enforce it anywhere, and a review arm traced what happens if
+someone leaves one. `channel_members`' unique indexes (`channel_members_user`,
+`channel_members_agent`, §4.1) are on `(channel_id, user_id)` with no `removed_at` predicate, so the
+row cannot be re-inserted after a leave. A later `open_dm` then finds the same `dm_key`, returns the
+existing channel — and clause (d) of §5 no longer matches, because `removed_at IS NOT NULL`. The
+person who just "opened" the DM cannot see it, and there is no command that repairs the state. Refuse
+the leave at the edge, and add the negative test.
+
+**Join and leave are meaningful only for private channels.** While every channel is
+`visibility = 'workspace'` (Phase 1), clause (a) already shows every member every undirected message,
+so joining or leaving changes nothing a reader can see. Until Phase 5 these commands drive the
+sidebar and nothing else. Say so in the UI rather than implying membership is a permission, or the
+first person to "leave" a channel and keep seeing it will file a bug.
 
 **Changed command: `post_signal`**
 
 Adds three optional fields — `channel_id`, `thread_root_id`, `broadcast_to_channel` — following the
-existing `modernShape` pattern at `:1531-1540` and `:1570-1576`, which is how `to_agent_principal_id`
-and `in_reply_to` were added without breaking the `exactKeys` check at `:1560-1568`.
+existing `modernShape` pattern at `:1532-1541` and `:1570-1576`, which is how `to_agent_principal_id`
+and `in_reply_to` were added without breaking the `exactKeys` check at `:1553-1562`.
 
 Authorization goes in a new `resolveSignalChannel(tx, route, auth, command)` beside
-`resolveSignalWriteTarget` (`:5740`). It answers one question — *may this principal post here* — and
-returns the `channel_id` to write, or `null` for a 403. Absent `channel_id` resolves to the
-workspace's default channel, which is what makes every old client's post keep working.
+`resolveSignalWriteTarget` (`:5740`). It answers two questions — *may this principal post here*, and
+(from the §5 note) *may this principal address that recipient from here* — and returns the
+`channel_id` to write, or `null` for a 403. Absent `channel_id` resolves to the workspace's default
+channel.
+
+**And the insert list must change.** A review arm pointed out that no earlier draft said so, and an
+implementer following the spec literally would have deployed a new edge that still did not write the
+column. `postSignal` names its columns explicitly at
+`supabase/functions/command/index.ts:5966-5983`; `channel_id` has to be added to that column list, to
+the `RETURNING` clause at `:5984-5987`, and to the `SignalRecord` the function builds at
+`:6004-6018`, so the post response carries the channel the caller's message actually landed in. The `signals_default_channel`
+trigger (§4.3) is the safety net for writers that do not do this — it is not a substitute for doing
+it.
 
 **No new events.** The signal row is the record; there is no event log for signals to append to.
 
@@ -742,7 +971,7 @@ Rules, each with a reason:
    message reference is a URL. Keeping them separate avoids a second, weaker link syntax.
 5. **CLI referencing** reuses the same ids: `cswarm feed --channel <name|uuid>`,
    `cswarm thread <signal-id>`. The CLI already resolves a name-or-uuid for `--to`
-   (`src/cloud/signals.ts:1270-1281`), including the ambiguity error; copy that shape rather than
+   (the UUID path at `src/cloud/signals.ts:1238-1254`, the ambiguous-name and not-found errors at `:1270-1281`); copy that shape rather than
    inventing a second resolver.
 
 ---
@@ -754,7 +983,8 @@ each needs the identity the previous one created.
 
 ### Phase 1 — Channels, public only  ← **ship this first**
 
-Schema §4.1 + §4.2 + backfill §4.3. Every channel `visibility = 'workspace'`. Create, archive, join,
+Schema §4.1 + the Phase 1 half of §4.2 + backfill §4.3 (including the view recreation and the
+defaulting trigger). Every channel `visibility = 'workspace'`. Create, archive, join,
 leave. `channel_id` on `post_signal` (optional, defaults to the workspace default channel). Channel
 filter on both read paths. Sidebar becomes a real list. URL grammar for `?w=` and `?c=` and `&m=`
 (§8). Signals-wire compat test, the twin of `tests/receipt-wire-compat.test.ts` (§1.8).
@@ -775,9 +1005,20 @@ to. Nothing else can go first without either doing this work anyway or changing 
 - **Agent read edge** — `parseBody`'s `exactKeys` (`read/index.ts:222-234`) rejects unknown *request*
   keys, so an old client's request shape must keep parsing. It does: `channel_id` follows the
   `modernShape` optional pattern already used for `in_reply_to` (`:215`, `:230`).
-- **Old client posting** — omits `channel_id`; `resolveSignalChannel` defaults it to the workspace
-  default channel. The post succeeds and lands where an old reader will see it.
+- **Old client posting — this is the one that nearly broke.** An old client omits `channel_id`, and
+  during the window between the migration and the edge deploy the OLD command edge is still serving,
+  so its insert (`supabase/functions/command/index.ts:5941-6016`) omits it too. The **first draft of
+  this spec set `channel_id NOT NULL` in the migration, which would have failed every post in
+  production** until the edge deploy landed — reads healthy, writes dead. The review arm caught it.
+  As now written, the `signals_default_channel` `BEFORE INSERT` trigger (§4.3 step 3) fills the
+  column server-side, and `SET NOT NULL` is deferred to a later phase. So the old edge, the old CLI
+  and the old browser all keep posting successfully, and their posts land in the default channel
+  where an old reader will see them.
 - **`until`** — unchanged for every existing kind, and never nullable (§1.8.1).
+
+The order within Phase 1 therefore matters as much as the order between phases: **the column, the
+backfill and the defaulting trigger are one migration file**, and the edge deploy follows it. Any
+split that commits the column without the trigger commits an outage (§1.8).
 
 **The honest caveat, and it must be in the UI copy:** until Phase 5, **a channel is not private.**
 Every workspace member can read every channel. A user who creates `#exec-comp` expecting privacy will
@@ -792,11 +1033,26 @@ be wrong. Say so at the point of creation, not in a help page.
 means the DM phase inherits threading for free instead of needing a "threads in DMs" combination
 rule later.
 
-**Old clients:** unaffected. They never send `thread_root_id`, so they never get thread behavior. They
-will see thread *roots* in the feed and not the replies — replies are filtered out of the main column
-by `broadcast_to_channel = false`. That is a real visible difference and it is the correct one; it is
-also exactly what `docs/design/2026-09-03-multi-recipient-signals.md:15-16` describes as the current
-defect.
+**Old clients — an earlier draft got this wrong.** It claimed old clients "will see thread roots and
+not the replies, because replies are filtered out of the main column by `broadcast_to_channel = false`".
+A review arm refuted it, and the refutation is right: **that filter is a new-client query, not a view
+predicate.** The `swarm_read.signals` view in §5 does not hide thread replies from anybody, and both
+installed readers select rows with no thread condition (`src/cloud/signals.ts:891-894`,
+`LiveDashboard.astro:1748`). So an old CLI and an old browser will show every thread reply **inline in
+the flat feed**, interleaved by `created_at`.
+
+That is the honest position, and it is acceptable: nothing is hidden and nothing breaks, the feed is
+just noisier than a threaded client's. It is not correctness, it is cosmetics, and it is the ordinary
+price of a client-side feature. What it means practically is that **Phase 2's value is only visible
+after the client ships**, so do not schedule the migration far ahead of the client work.
+
+The alternative — putting the filter in the view — is worse and should be rejected explicitly: it
+would hide thread replies from *every* reader, including the new client that needs them for the
+thread panel, unless a second view or a parameterized function is added. Keep the filter in the query.
+
+(The earlier draft also cited `docs/design/2026-09-03-multi-recipient-signals.md:15-16` as describing
+this defect. It does not — those lines are about two fan-out rows producing two separate reply
+threads, which is a different problem. Citation withdrawn.)
 
 ### Phase 3 — DM conversations
 
@@ -810,8 +1066,46 @@ better with P2's threads.
 **Old clients — this is the phase that needs care.** The backfill *moves* directed signals from the
 default channel into DM conversations. A client with no channel filter reads the whole workspace and
 gets the same rows either way, because a directed signal's visibility is already decided by clauses
-(b) and (c), which do not change. **Verify this against the old-parser gate before shipping** — it is
-the claim most likely to be wrong, and §12 records that it is unverified.
+(b) and (c), which do not change.
+
+With the undirected guard now on clause (d) (§5) that much holds — a directed signal is invisible to
+channel membership, so joining a DM grants nothing extra. **But the review arms pushed on it, and it
+exposes the real problem: Phase 3 as drafted does not actually deliver DMs.**
+
+The live view has no `from_principal` clause — measured: `grep -c from_principal` over
+`20260901000010:122-133` returns **0** — so **the sender of a directed signal cannot re-read it**. The
+CLI says so plainly (`src/cloud/signals.ts:1641`: "It omits directed messages, including messages you
+sent"), and `docs/design/P3-1-SIGNALS-BRIEF.md:323-324` chose it deliberately: "A directed signal is
+not re-read by its sender through `feed` — the post response is the receipt."
+
+A conversation in which you cannot see your own half is not a conversation. So Phase 3 **must** add a
+fifth clause:
+
+```sql
+-- (e) NEW in Phase 3: I sent it
+OR s.from_principal = auth.uid()
+OR EXISTS (
+  SELECT 1 FROM swarm.agent_principals AS mine
+  WHERE mine.principal_id = s.from_principal
+    AND mine.workspace_id = s.workspace_id
+    AND mine.owner_user_id = auth.uid()
+)
+```
+
+Three consequences to accept openly rather than discover:
+
+1. **Phase 3 is therefore NOT row-set-neutral.** Clause (e) makes every directed signal a member ever
+   sent visible to them in `cswarm feed` and in the browser feed, retroactively, on old clients that
+   have no idea DMs exist. Old clients keep *working*; their feed **grows**. That belongs in the
+   release notes.
+2. **It reverses a recorded design decision.** `P3-1-SIGNALS-BRIEF.md:323-326` is the premise being
+   overturned; argue with it in that file rather than silently editing it (§11.7).
+3. **`src/cloud/signals.ts:1641` becomes false the moment clause (e) ships** and must change in the
+   same release — it is a user-facing sentence that would otherwise tell people the feed omits
+   exactly what they are looking at.
+
+**Verify with the real gate, not the argument.** Run a `db:reset` + backfill and compare row sets
+before and after, per the pattern in `tests/p1-local/delivery-receipts-postgres.test.ts`.
 
 ### Phase 4 — References
 
@@ -880,11 +1174,22 @@ this spec is not blamed for them.
   (`20260901000010:126-132`).
 - `site/src/pages/privacy.astro:176` — "**Treat a workspace as visible to everyone in it.** There is
   no private area inside a workspace and no per-record permission."
-  **ALREADY-FALSE, and it contradicts its own page.** `site/src/pages/privacy.astro:121` says "A
+  **ALREADY-FALSE, and it contradicts its own page** — `site/src/pages/privacy.astro:121` says "A
   signal addressed to one person is visible only to that person and to its sender", five paragraphs
-  earlier. The RLS settles it: `20260901000010:122-133` filters by `to_user_id = auth.uid()`, so
-  per-record permission **does** exist and `:121` is right. `:176` is wrong today and would be more
-  wrong after Phase 3. This is on a legal page.
+  earlier. Per-record permission plainly does exist: `20260901000010:122-133` filters by
+  `to_user_id = auth.uid()`.
+- `site/src/pages/privacy.astro:121` — **also ALREADY-FALSE, in the opposite direction.** An earlier
+  draft of this spec said `:121` was the correct half of the contradiction. It is not, and the review
+  arm caught it. The live predicate at `20260901000010:122-133` has **no** `from_principal` clause —
+  measured: `grep -c from_principal` over those lines returns **0**. So the sender of a directed
+  signal **cannot re-read it**; only the recipient can, plus the owner of a recipient agent. The CLI
+  states the real behavior at `src/cloud/signals.ts:1641` ("It omits directed messages, **including
+  messages you sent**"), and `docs/design/P3-1-SIGNALS-BRIEF.md:323-324` says it deliberately: "A
+  directed signal is not re-read by its sender through `feed` — the post response is the receipt."
+  So **both** sentences on the privacy page are wrong: `:176` denies a per-record permission that
+  exists, and `:121` promises the sender a visibility they do not have. Fix them as one edit, and
+  note that Phase 3 has to *change* this behavior, not merely describe it — a DM whose own half you
+  cannot see is not a conversation (§9 P3).
 - `site/src/pages/privacy.astro:120` — the enumerated list of stored signal fields omits
   `in_reply_to`, and would omit `channel_id` and `thread_root_id`.
 
@@ -969,10 +1274,10 @@ records. Each must be revisited deliberately, not "fixed until green".
   operator decision from *the same day* as this request; §12 flags the tension.
 - `site/src/lib/mention-address.ts:2-3` — "the send posts one signal per tag because the wire carries
   a single recipient per signal".
-- `site/src/lib/commonswarm.ts:1293`, `:1971` — the `{ kind: "everyone" }` recipient union.
+- `site/src/lib/commonswarm.ts:1292-1295` (the union) and `:1971` (its use) — the `{ kind: "everyone" }` recipient union.
 - `site/src/lib/commonswarm.ts:1551`, `:1561` — "Broadcast — nobody was addressed or woken."
   Stays true in v1 (§10) and becomes false the moment channel posts wake anyone.
-- `site/src/pages/app.astro:10` — page title "CommonSwarm — your shared agent feed".
+- `site/src/pages/app.astro:11` — page title "CommonSwarm — your shared agent feed".
 - `site/src/pages/acceptable-use.astro:124` — "degrades the feed for everyone in the workspace".
 - `site/src/components/landing/ConsumerStory.astro:14` — "visible to everyone who needs them".
 
@@ -1041,14 +1346,15 @@ occurrence was dead code.)
 Stated plainly, because the phasing depends on some of it.
 
 1. **Production row count of `swarm.signals`.** This decides whether the §4.3 backfill's
-   `DISABLE TRIGGER` + `UPDATE` is a blip or a visible outage, and therefore whether `channel_id` can
-   be `NOT NULL` in Phase 1 at all. Repo-only work cannot answer it. Measure against
-   `ukezjcnxjvkpkeezxaew` before writing the migration.
-2. **Whether the Phase 3 DM backfill is row-set-neutral for old clients.** §9 P3 argues it is,
-   because a directed signal's visibility is decided by view clauses (b) and (c), which do not
-   change. That is an argument, not a measurement. It needs the old-parser gate run against a real
-   `db:reset` + backfill, the way `tests/p1-local/delivery-receipts-postgres.test.ts` does for
-   receipts.
+   `DISABLE TRIGGER` + `UPDATE` holds an `ACCESS EXCLUSIVE` lock for milliseconds or for long enough
+   to be a visible read outage. Repo-only work cannot answer it. Measure against
+   `ukezjcnxjvkpkeezxaew` before writing the migration. (It no longer decides whether `channel_id`
+   can be `NOT NULL`: it cannot, in Phase 1, for the independent reason in §4.3.)
+2. ~~Whether the Phase 3 DM backfill is row-set-neutral for old clients.~~ **RESOLVED — it is not,
+   and it must not be.** Both review arms pushed here. The backfill itself is neutral, but Phase 3
+   cannot ship without clause (e) (sender visibility), and clause (e) grows every old client's feed
+   retroactively. §9 P3 now says so. What remains unmeasured is the *size* of that growth on
+   production data, which needs a `db:reset` + backfill run, not repo reading.
 3. ~~Whether the `read` edge's broadcast-roster validation matches what the migration emits.~~
    **RESOLVED — no defect.** `supabase/functions/read/index.ts:461-472` requires
    `agentSection.seen` to be a safe integer and each principal row to carry `principal_id`,
@@ -1076,6 +1382,106 @@ Stated plainly, because the phasing depends on some of it.
 
 ## 13. Review record
 
-Two adversarial arms per D-036, both cross-family, neither of them the author's.
+Two adversarial arms per D-036, both cross-family, neither of them the author's (Claude). Each was
+given shell access and asked to verify every citation, break the migration/RLS design, and answer
+"would Phase 1 as written leave old clients working?".
 
-*(Filled in below after the arms ran. See the sections that follow.)*
+| Arm | Family | Verdict on the draft | Raw output |
+|---|---|---|---|
+| 1 | Grok (`grok -p`) | **FAIL** | `ARM-GROK.txt` (uncommitted, `scratchpad/spec-streams/`) |
+| 2 | Gemini (`agy --model gemini-3.1-pro-high`) | **FAIL** | `ARM-GEMINI.txt` (same) |
+
+Both verdicts were **FAIL on the draft**, and both were right. This section records what changed.
+The spec above is the corrected version; the defects are kept in place as worked examples rather
+than quietly removed, because each one is a trap the next person can walk into.
+
+### Accepted — design defects, both arms
+
+**D1. `SET NOT NULL` on `channel_id` was a production write outage.** Found independently by both
+arms. The migration commits before the edge deploys (`20260902000001:58-64`), and the live
+`postSignal` insert names its columns and omits `channel_id`
+(`supabase/functions/command/index.ts:5966-5983`). Every post in production would have failed, with
+reads still healthy — the hardest kind of outage to attribute. Fixed in §4.3: a `BEFORE INSERT`
+trigger fills the column, and `SET NOT NULL` is deferred out of Phase 1. §9 P1 rewritten.
+
+### Accepted — design defects, Gemini
+
+**D2. Clause (d) without an undirected guard disclosed every private message.** Phase 1 puts all
+signals in `#all-signals`, including directed ones; an unguarded membership clause OR'd with (b)/(c)
+would let anyone who joins the default channel read every directed signal in the workspace. Fixed in
+§5 with `s.to_user_id IS NULL AND s.to_agent_principal_id IS NULL`, plus a required negative test.
+
+### Accepted — design defects, Grok
+
+**D3. The proposed `until` CHECK was vacuous.** `channel_id IS NOT NULL` is true for the whole table
+after the backfill, so the "keep 30 days for existing kinds" arm never applies and the 30-day rule
+disappears for every kind. §4.2 now leaves the CHECK alone in Phase 1 and defers durable retention to
+its own phase with a real discriminator.
+
+**D4. Clauses (b)/(c) have no roster test, so private-channel content leaks to non-members.** Fixed
+at post time in §5 and §6 rather than in the predicate, because widening (b)/(c) would break ordinary
+directed messages.
+
+**D5. The Phase 2 old-client claim was false.** `thread_root_id IS NULL OR broadcast_to_channel` is a
+client query, not a view predicate; old clients will see thread replies inline. §9 P2 now says so,
+and the wrong supporting citation is withdrawn.
+
+**D6. `dm_key` integrity holes** — unenforced sort order (a unique index on `text[]` is
+order-sensitive), `'{}'` admitted as a valid DM, and an `AFTER INSERT ON channels` trigger that
+cannot see a roster that the foreign key requires to be written later. Fixed in §4.1 with two CHECKs
+and a deferred constraint trigger.
+
+**D7. `leave_channel` on a DM was reachable and unrecoverable.** The member unique indexes have no
+`removed_at` predicate, so the row cannot be re-inserted and a later `open_dm` returns a conversation
+its participant cannot see. §6 now refuses it.
+
+**D8. The default channel had no `channel_members` backfill** — harmless while workspace-visible,
+and a total history blackout if it is ever made private. §4.3 backfills the roster and adds a CHECK
+that the default channel cannot be private.
+
+**D9. The sketch never recreated `swarm_read.signals`** (so `channel_id` never reaches PostgREST) and
+**never said to add `channel_id` to the insert list**. Both added, in §4.3 step 5 and §6.
+
+### Accepted — citation errors
+
+Fixed: `src/cloud/signals.ts:899→898` (self-caught before the arms), `:930→928`,
+`command/index.ts:1560-1568→1553-1562`, `:5737→5740`, `:5945→5941`, `:1531-1540→1532-1541`,
+`20260901000010:121-133→122-133`, `20260902000003:4-18→4-17` (the file has 17 lines),
+`app.astro:10→11`, `commonswarm.ts:1293→1292-1295`, `signals.ts:1270-1281→1238-1254` for the UUID
+path, `LiveDashboard.astro:1747→1746` for the schema call, "15 CHECK constraints" → **13**, and the
+withdrawn `2026-09-03-multi-recipient-signals.md:15-16` citation in §9 P2.
+
+**The most consequential correction was not a line number.** An earlier §11.1 said
+`privacy.astro:121` ("visible only to that person and to its sender") was the *correct* half of that
+page's self-contradiction. Grok refuted it: the live view has no `from_principal` clause, so the
+sender cannot see their own directed signal. Both sentences on that page are false, in opposite
+directions, and the consequence propagated into §9 P3 — Phase 3 needs a new clause (e), and is
+therefore not row-set-neutral. This is the claim-control failure AGENTS.md describes: the draft
+checked one artifact against another artifact instead of against the system.
+
+### Rejected, with the measurement
+
+**R1. Grok: "`src/cli.ts:504-505` is wrong; `:504` is `working-on` and has no `--to`."** Rejected.
+Measured on the tree at `e3df06b`:
+
+```
+503: cswarm working-on …      (no --to)
+504: cswarm note …            HAS --to
+505: cswarm ask …             HAS --to
+506: cswarm reply …
+```
+
+`:504-505` is exactly the pair of usage lines carrying `[--to <member|agent>]`. The original citation
+stands.
+
+**R2. Grok: "§12.3 (broadcast roster vs the `read` edge) is establishable, and the author could have
+read that file."** The finding is correct and the spec already says so — §12.3 was resolved
+independently before the arms reported, with the same conclusion (`20260902000004:130-133` and
+`:166-171` supply the keys the edge requires). Recorded as agreement, not as a change.
+
+### Not re-run
+
+Both arms reviewed the tree at `c252da5`. The fixes above changed the spec but **no code**, and this
+is a design-only lane that ships no SHA-changing product change, so the D-036 re-run rule for
+SHA-changing lanes does not bite. **Anyone turning this spec into a migration owes two fresh arms on
+that implementation**, and should treat D1-D9 as the regression list to probe first.
