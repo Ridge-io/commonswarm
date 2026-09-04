@@ -1536,3 +1536,16 @@ workspace signals unless it joins as a seat.
 **Practice note from the streams lane, confirmed:** passing a 65 KB spec inline as argv killed both
 arms silently (zero bytes, no verdict) under load 14. A short prompt pointing at the file on disk
 worked. Same root cause as the `resume` maxBuffer report.
+
+### Correction (2026-09-04 ~21:45 UTC): `test:p1-cli` does NOT "never exit" — it hangs only without `dist/`
+
+Several entries above say the p1-cli suite "never exits on this host, on main too (366 pass 0 fail
+then it hangs before the summary)" and a chip was filed to find "the open handle". **Wrong cause.**
+Measured: in a worktree where `npm run build` has produced `dist/cli.js`, the identical
+`npm run test:p1-cli` exits on its own in **50 s** (403 tests). Every hang I measured was in a
+fresh worktree with no `dist/` — a test spawns the built CLI and waits forever on a file that is
+not there. The standing PM found it first ("it does terminate once `dist/` exists"); I confirmed
+with a bounded control in a second worktree. CLAUDE.md's "fast service-free signal" is true after
+a build. The chip is replaced by one that makes the suite fail fast with a message when the build
+is missing. Retired wording, for readers who meet it above: "never exits", "hangs before the
+summary", "count the ✔/✖ lines and kill it".
