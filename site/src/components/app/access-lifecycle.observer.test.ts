@@ -94,7 +94,18 @@ test("Done, Back, and first use converge on a channel return", () => {
 test("browser mint uses the server's atomic renewal grant without an obsolete request", () => {
   assert.doesNotMatch(agentConnect, /kind:\s*"create_renewal_grant"/);
   assert.match(agentConnect, /const renews = mintedRunId === runId && times\.expiresAt !== null/);
-  assert.match(agentConnect, /times\.issuedAt \+ RENEWAL_HORIZON_DEFAULT_MS/);
+  /* RETIRED 2026-09-04: this asserted `times.issuedAt + RENEWAL_HORIZON_DEFAULT_MS`, the
+   * 30-day date this page computed for itself. Pinning it made the invention stable.
+   * agent-connect-mint.observer.test.ts drives the behaviour against a stubbed transport;
+   * these two pin the source so a locally owned horizon cannot come back.
+   * Scoped to the DECLARATION, not to any mention: the retired name is quoted in a dated note
+   * inside the module, and a control a comment can satisfy is not a control. */
+  assert.match(agentConnect, /horizonExpiresAt: mintedHorizon\(body\)/);
+  assert.doesNotMatch(
+    agentConnect,
+    /export const RENEWAL_HORIZON_DEFAULT_MS/,
+    "the connect page may not own a renewal horizon again; the server names it",
+  );
 });
 
 test("workspace access shows pending rows and explicit agent identity", () => {
@@ -782,13 +793,21 @@ test("the Agents dialog carries a mobile-presented Pending access section fed by
 });
 
 test("existing-agent help distinguishes the shown-once key from the renewed connection", () => {
+  /* THE SENTENCE IS BUILT, NOT TYPED, so this pins the WIRING and leaves the
+     claim to be checked at its source. The retired assertion required the exact
+     words "renews access automatically for up to 30 days" — which read as a
+     control over the copy and was really a lock on it. The copy said 30 days
+     because the web mint sent no renewal_kind and the command function defaulted
+     to timeboxed; nobody chose that number, and this test would have defended it
+     the day the default changed. */
+  assert.match(connect, /The key\s+is shown once\. \{STANDING_GRANT_COPY\}/);
   assert.match(
     connect,
-    /The key\s+is shown once\. While cswarm keeps running, it renews access automatically for up\s+to 30 days, unless access is revoked\./,
+    /import \{ STANDING_GRANT_COPY \} from "\.\.\/\.\.\/lib\/standing-grants"/,
   );
   assert.doesNotMatch(
     connect,
-    /lasts a few hours|renews it for you/,
-    "retired copy either misstated the horizon or overpromised renewal",
+    /lasts a few hours|renews it for you|up\s+to 30 days, unless access is revoked/,
+    "retired copy misstated the horizon, overpromised renewal, or promised the 30-day expiry the standing default replaced",
   );
 });

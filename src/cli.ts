@@ -165,6 +165,7 @@ import {
 import {
   describeRenewalGrant,
   readRenewalGrants,
+  STANDING_IDLE_PAUSE_DAYS,
 } from "./cloud/renewal-grants.js";
 import {
   ASK_WAIT_TIMEOUT_MESSAGE,
@@ -302,7 +303,7 @@ const KNOWN_FLAGS = new Set([
   "epoch", "evidence", "follow", "force", "force-file-store", "foreground", "grok-executable", "head-sha",
   "help", "include-stale", "include-tombstoned", "invitation-id", "invitation-token-stdin", "json", "kind", "limit",
   "link-stdin", "local", "model", "name", "ndjson", "no-browser", "notify", "opencode-executable", "out",
-  "permissions", "principal-id", "provider", "repo", "reveal-anon-key", "route", "run-id", "since", "site", "slug", "state-dir",
+  "permissions", "principal-id", "provider", "renewal-grant-id", "repo", "reveal-anon-key", "route", "run-id", "since", "site", "slug", "state-dir",
   "renewal-horizon-days", "standing", "task-id", "to", "token-id", "ttl-ms", "turn-budget", "uid", "until", "url", "user", "version", "wait", "workspace-id", "write",
 ]);
 
@@ -542,6 +543,7 @@ Usage:
   cswarm token mint [--url <url> --anon-key <key>] [--workspace-id <uuid>] --principal-id <uuid> --run-id <uuid> --task-id <uuid> --epoch <n> [--ttl-ms <ms>] [--renewal-horizon-days <1..90> | --standing --confirm-standing]
   cswarm token revoke [--url <url> --anon-key <key>] [--workspace-id <uuid>] --token-id <uuid>
   cswarm token revoke ${requiredAgentCredential} [--url <url> --anon-key <key>] --workspace-id <uuid> [--token-id <uuid>]
+  cswarm grant resume [--url <url> --anon-key <key>] [--workspace-id <uuid>] --renewal-grant-id <uuid> [--json]  # lifts an idle pause; a REVOKED grant is refused
   cswarm link new [--url <url> --anon-key <key>] [--workspace-id <uuid>] --task-id <uuid> [--ttl-ms <ms>] [--site <origin>] [--json]
   cswarm link revoke [--url <url> --anon-key <key>] [--workspace-id <uuid>] --capability-id <uuid> [--json]
   cswarm command <kind> [--url <url> --anon-key <key>] [--workspace-id <uuid>] ${agentCredential} [command fields]
@@ -1939,6 +1941,70 @@ async function runToken(args: Arguments): Promise<void> {
     token: response.agent_token,
     expiresAt,
   }));
+}
+
+/**
+ * `cswarm grant resume` — the human side of an idle pause.
+ *
+ * A standing grant pauses itself after a fortnight with no measured use. Before
+ * this verb existed that was the end of the agent: `cswarm whoami` printed
+ * SUSPENDED and told the reader to revoke the grant and mint a new credential —
+ * the permanent kill offered as the cure for the recoverable one. This is the
+ * cure.
+ *
+ * NO CONFIRMATION FLAG, unlike `token mint --standing --confirm-standing`. The
+ * confirm on minting exists because minting CREATES authority that outlives the
+ * session. Resuming creates nothing: it returns a grant to the state it was
+ * already in, under a gate that already lets this caller revoke it outright, and
+ * the agent's tokens stay as short as they ever were. A confirmation prompt here
+ * would be ceremony on the safe direction of a switch whose dangerous direction
+ * has none.
+ *
+ * IT IS NOT `--force`, EITHER. A revoked grant is refused by the server and no
+ * flag on this side changes that.
+ */
+async function runGrant(args: Arguments): Promise<void> {
+  const action = args.positionals[1];
+  args.assertShape(
+    [
+      ...TARGET_FLAGS,
+      "workspace-id",
+      "renewal-grant-id",
+      /* `--json` accepted, no effect — see the note on `runInvite`. D-064. */
+      "json",
+    ],
+    2,
+  );
+  if (action !== "resume") {
+    throw new UsageError(`unknown grant command: ${action ?? "(missing)"}`);
+  }
+  const renewalGrantId = args.required("renewal-grant-id");
+  const cloud = await target(args);
+  const human = await humanCredential(args, cloud);
+  const workspace = await workspaceId(args, cloud, human);
+  const response = acceptedConnect(
+    "grant resume",
+    await sendConnectWithPending(
+      new ThinCommandClient(cloud),
+      human,
+      workspace,
+      { kind: "resume_renewal_grant", renewal_grant_id: renewalGrantId },
+    ),
+  );
+  const resumedAt = response.resumed_at ?? null;
+  /* WHAT IS NOW TRUE, AND WHAT THE READER STILL HAS TO DO. Exit 0 here does not
+     mean the agent is working: nothing has contacted the agent, and renewal only
+     restarts when the agent itself next tries. Saying "resumed" and stopping
+     would let a reader treat this as the whole repair. */
+  process.stdout.write(
+    `Grant resumed${resumedAt === null ? "" : ` at ${resumedAt}`}.\n` +
+      "Renewal is allowed again. Nothing has reached the agent yet: it starts " +
+      "renewing when its own cswarm process next tries, so start that process " +
+      "if it is not running.\n" +
+      `The idle clock restarts now — another ${STANDING_IDLE_PAUSE_DAYS} days ` +
+      "with no use pauses it again.\n" +
+      `Confirm with: cswarm whoami --agent-token-file <path>\n`,
+  );
 }
 
 /**
@@ -7387,6 +7453,10 @@ async function main(): Promise<void> {
   }
   if (verb === "token") {
     await runToken(args);
+    return;
+  }
+  if (verb === "grant") {
+    await runGrant(args);
     return;
   }
   if (verb === "link") {

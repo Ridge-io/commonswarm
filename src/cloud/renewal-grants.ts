@@ -128,18 +128,94 @@ export async function readRenewalGrants(
   return grants.map(parseGrant);
 }
 
-/** User-facing grant state, tied to server-enforced nullability. */
+/**
+ * Days a standing grant may go unused before it pauses itself.
+ *
+ * MIRRORS `interval '14 days'` in swarm.prepare_renewal_grant, installed by
+ * supabase/migrations/20260904000001_standing_grant_resume.sql, and the same
+ * number in site/src/lib/standing-grants.ts. No module is imported by the CLI,
+ * the site, and the SQL alike, so the mirror is held by a test that reads all
+ * three files: tests/p1-cli/standing-grants.test.ts.
+ */
+export const STANDING_IDLE_PAUSE_DAYS = 14;
+
+/**
+ * Who may resume a paused grant. MIRRORS the gate in swarm.resume_renewal_grant:
+ * workspace owner or admin, or the member who owns the agent principal.
+ */
+export const STANDING_RESUME_ACTORS: readonly string[] = [
+  "a workspace owner",
+  "an admin",
+  "the member who added the agent",
+];
+
+function orList(items: readonly string[]): string {
+  if (items.length === 0) return "";
+  if (items.length === 1) return items[0];
+  return `${items.slice(0, -1).join(", ")}, or ${items[items.length - 1]}`;
+}
+
+/**
+ * The actors, as one phrase, generated once.
+ *
+ * Two surfaces name these people — the grant status line below and the LISTENER's renewal
+ * refusal in renewal.ts — and they must not drift from each other or from the gate in
+ * swarm.resume_renewal_grant. Retyping the list in the second surface is how the first sweep
+ * of this claim family missed it.
+ */
+export const STANDING_RESUME_ACTORS_SENTENCE = orList(STANDING_RESUME_ACTORS);
+
+/** Everything a standing grant does, one rule per enforced behaviour. */
+export const STANDING_GRANT_RULES: readonly string[] = [
+  "Access does not expire.",
+  `${STANDING_IDLE_PAUSE_DAYS} days with no use pauses it; ${STANDING_RESUME_ACTORS_SENTENCE} can resume it.`,
+  "Revoking it is the only permanent stop.",
+];
+
+/**
+ * What the LISTENER prints when renewal is refused because the grant is paused.
+ *
+ * SWEPT 2026-09-04, and it is the same defect describeRenewalGrant below already fixed:
+ * renewal.ts told the reader to "revoke this grant and mint a new credential" — the
+ * PERMANENT kill offered as the cure for the RECOVERABLE pause. That was the only honest
+ * advice while suspension was one-way; a resume exists now, and `cswarm whoami` had already
+ * been corrected while this surface, which is the one an operator actually meets when an
+ * agent stops, still carried the retired remedy. One claim, two surfaces, one source.
+ */
+export function standingPausedRenewalMessage(idle: boolean): string {
+  const cause = idle
+    ? `This standing grant went ${STANDING_IDLE_PAUSE_DAYS} days with no use, so CommonSwarm paused it and refused renewal.`
+    : "This renewal grant is paused, so CommonSwarm refused renewal.";
+  return `${cause} It is not revoked and this agent is not gone. Next step: ${STANDING_RESUME_ACTORS_SENTENCE} runs cswarm grant resume, then this agent continues.`;
+}
+
+/**
+ * User-facing grant state, tied to server-enforced nullability.
+ *
+ * THE SUSPENDED LINE NAMED THE WRONG REMEDY. It said "ask a workspace owner to
+ * revoke this grant and mint a new credential" — which was the only thing that
+ * worked while suspension was one-way, and which told the reader to perform the
+ * PERMANENT kill in order to recover from the RECOVERABLE one. A resume now
+ * exists, so the line names it and prints the command. Honesty is not
+ * sufficient: a state word with no next step is a state word people skip.
+ */
 export function describeRenewalGrant(grant: RenewalGrantStatus): string[] {
   const lines = grant.kind === "standing"
-    ? ["Grant: standing — does not expire; revoke is the only kill switch."]
+    ? [`Grant: standing — ${STANDING_GRANT_RULES.join(" ")}`]
     : [`Grant: timeboxed — renewal horizon ${grant.horizon_expires_at}.`];
   if (grant.suspended_at !== null) {
     lines.push(
-      `SUSPENDED since ${grant.suspended_at}. Next step: ask a workspace owner to revoke this grant and mint a new credential.`,
+      `PAUSED since ${grant.suspended_at} after ${STANDING_IDLE_PAUSE_DAYS} days with no use. ` +
+        "This is not revoked and the agent is not gone. Next step: " +
+        `${orList(STANDING_RESUME_ACTORS)} runs ` +
+        `cswarm grant resume --renewal-grant-id ${grant.renewal_grant_id}`,
     );
   }
   if (grant.revoked_at !== null) {
-    lines.push(`REVOKED since ${grant.revoked_at}. Next step: mint a new grant if this agent should continue.`);
+    lines.push(
+      `REVOKED since ${grant.revoked_at}. This is permanent and cannot be resumed. ` +
+        "Next step: mint a new grant if this agent should continue.",
+    );
   }
   return lines;
 }

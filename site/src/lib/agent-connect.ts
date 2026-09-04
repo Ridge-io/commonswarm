@@ -49,19 +49,19 @@ import { CLIENT_PROTOCOL_VERSION, NoDeployment, client, deployment, uuid } from 
 export const AGENT_TOKEN_DEFAULT_TTL_MS = 24 * 60 * 60 * 1_000;
 export const AGENT_TOKEN_MAX_TTL_MS = 30 * 24 * 60 * 60 * 1_000;
 
-/**
- * The renewal window (SWARM-CLOUD.md §2.3). This mirrors src/cloud/renewal.ts — there is no
- * shared module between site/ and src/, the same gap AGENT_CREDENTIAL_MESSAGE below lives
- * with, so if one side moves the other has to move with it.
+/* RETIRED 2026-09-04: this module used to export RENEWAL_HORIZON_DEFAULT_MS, a 30-day mirror
+ * of src/cloud/renewal.ts, and add it to the mint's issue time to produce a horizon date.
  *
- * WHY A WINDOW AND NOT A LONGER TOKEN. An agent work session now runs for days or weeks and
- * an agent token lives at most a day. The obvious fix — issue a token that lasts a
- * month — puts a month-long bearer secret on a developer's machine, which is the trade §2.3
- * exists to refuse. So the token stays short and renews itself silently, and instead of
- * asking a person every hour, CommonSwarm asks them once a month. That is the checkpoint:
- * long enough that nobody is tempted to switch it off, short enough to still mean something.
- */
-export const RENEWAL_HORIZON_DEFAULT_MS = 30 * 24 * 60 * 60 * 1_000;
+ * The rationale it carried is still true and now lives where it is enforced: a work session
+ * runs for days while a bearer lives at most a day, so the token stays short and rotates
+ * rather than becoming a month-long secret on a developer's machine (SWARM-CLOUD.md §2.3).
+ * What was false was the DATE. This page never asked the server for that horizon and the
+ * server never returned it here; the number was right only while the server's default
+ * happened to agree, and the agent's prompt printed it as "rotate it until <date>".
+ *
+ * The horizon is now read off `horizon_expires_at` in the accepted response, for BOTH grant
+ * kinds — see mintedHorizon. A standing grant returns null there
+ * (supabase/functions/command/index.ts:7803-7808), so the two facts come from one place. */
 
 /**
  * How this browser's device row is labelled, so a second visit reuses the row rather than
@@ -268,12 +268,19 @@ function assertAccepted(step: ConnectStep, outcome: CommandOutcome): Record<stri
     );
   }
   if (status === 400) {
-    // A validation refusal is decided before anything is written, so this one CAN say
-    // "nothing happened" — which the unknown-outcome case below deliberately cannot.
+    /* A validation refusal is decided before anything is written, so this one CAN say
+     * "nothing happened" — which the unknown-outcome case below deliberately cannot.
+     *
+     * NAMES BOTH DIRECTIONS OF SKEW, from 2026-09-04. It used to say only that this page may
+     * be OLDER than the deployment. The mint body now carries `renewal_kind`, and a command
+     * function that predates that field rejects the whole request on its exact-key check
+     * (supabase/functions/command/index.ts:1970-1978) — so the NEWER-page case is the one a
+     * reader is most likely to meet, on a site deploy that outran the edge deploy, and the
+     * old sentence sent them looking in the opposite direction. */
     throw new AgentConnectRefused(
       step,
-      "The deployment did not accept the request. Nothing was created. This page may be " +
-        "older than the deployment it is talking to.",
+      "The deployment did not accept the request. Nothing was created. This page and the " +
+        "deployment it is talking to may be different versions.",
     );
   }
   if (status !== 200) {
@@ -431,6 +438,13 @@ export interface AgentCredential {
   renews: boolean;
   /** When the person is next asked to authorise. Null when there is no window. */
   horizonExpiresAt: number | null;
+  /**
+   * The grant kind the server actually created, read off its response rather
+   * than assumed from what this page asked for. Null when the deployment did
+   * not say — an older command function that ignored `renewal_kind` answers
+   * that way, and callers must not print "does not expire" on a guess.
+   */
+  grantKind: "timeboxed" | "standing" | null;
 }
 
 /**
@@ -477,6 +491,26 @@ export async function mintAgentCredential(
       epoch: 0,
       device_id: deviceId,
       ttl_ms: ttlMs,
+      /* ★ THE WEB FLOW ASKS FOR A STANDING GRANT, AND SAYING SO IS THE WHOLE FIX.
+       *
+       * The command function defaults an ABSENT renewal_kind to "timeboxed"
+       * (supabase/functions/command/index.ts, prepareWorkspaceCommand), which is
+       * why every agent added through this page used to stop working after 30
+       * days: nobody chose that, it was the shape of the omission. The default a
+       * person gets when they add an agent is now that it does not expire
+       * (operator ruling 2026-09-04).
+       *
+       * IT IS SENT EXPLICITLY RATHER THAN BY FLIPPING THE SERVER DEFAULT. The
+       * server default is also what `cswarm token mint` gets when it passes no
+       * flag, and the CLI deliberately keeps standing behind --standing
+       * --confirm-standing. Changing the default in one place would have moved
+       * both, silently promoting every scripted mint in the field.
+       *
+       * DEVICE BINDING COMES WITH IT AND IS NOT OPTIONAL: for a standing mint the
+       * command function stores bound_device_id = this request's device_id, so the
+       * grant binds to the browser device registered above, and swarm.agent_runs
+       * pins that same device on the run the agent inherits. */
+      renewal_kind: "standing",
     },
     { workspace_id: workspaceId, stream: { kind: "workspace" } },
   );
@@ -495,6 +529,16 @@ export async function mintAgentCredential(
   }
   const times = mintedTimes(body);
   const renews = mintedRunId === runId && times.expiresAt !== null;
+  /* MEASURED, NOT ASSUMED. This page asked for standing; what it reports is what
+   * the mint said it created. A deployment whose command function predates
+   * renewal_kind accepts the field, ignores it, and builds a timeboxed grant —
+   * and then "does not expire" on screen would be a sentence about a request
+   * rather than about the agent. Unknown reads as null and the horizon copy
+   * below falls back to the timeboxed wording. */
+  const grantKind = body.grant_kind === "standing" ||
+      body.grant_kind === "timeboxed"
+    ? body.grant_kind
+    : null;
   return {
     principalId: identity.principalId,
     principalName: identity.name,
@@ -505,10 +549,35 @@ export async function mintAgentCredential(
     // Mint and grant are one server transaction. The returned expiry is the
     // remaining client-side condition because it is what lets the CLI schedule renewal.
     renews,
-    horizonExpiresAt: renews && times.issuedAt !== null
-      ? times.issuedAt + RENEWAL_HORIZON_DEFAULT_MS
-      : null,
+    grantKind,
+    horizonExpiresAt: mintedHorizon(body),
   };
+}
+
+/**
+ * When the person is next asked to reauthorise — MEASURED, for both grant kinds.
+ *
+ * A standing grant HAS no horizon, so there is no such date, and reporting one anyway is how
+ * the prompt came to tell agents "the CLI can rotate it until <date>" about a grant with no
+ * such date. But deriving null from the KIND only moved the invention: a timeboxed grant kept
+ * a locally computed `issuedAt + 30 days`, which is a fabricated deadline whenever the server
+ * used any other horizon. One field answers both cases, so the two can never disagree.
+ *
+ * `horizon_expires_at` is returned unconditionally on an accepted mint
+ * (supabase/functions/command/index.ts:7803-7808) — an ISO string for timeboxed, null for
+ * standing — and the idempotent replay path carries it through (index.ts:2182-2188).
+ *
+ * ABSENT READS AS UNKNOWN, NOT AS A GUESS. A deployment old enough to omit the field answers
+ * null here, and `grantKind` reads null beside it; agent-prompt.ts then uses its wording for a
+ * credential with no stated horizon, which is the honest sentence. That is the same
+ * degrade-rather-than-assume rule the grantKind read above follows, and the reason this does
+ * not throw.
+ */
+function mintedHorizon(body: Record<string, unknown>): number | null {
+  const raw = body.horizon_expires_at;
+  if (typeof raw !== "string") return null;
+  const parsed = Date.parse(raw);
+  return Number.isFinite(parsed) ? parsed : null;
 }
 
 /** Mint times come off AgentTokenMinted; the response body has no top-level times. */
