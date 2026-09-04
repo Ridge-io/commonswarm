@@ -1486,3 +1486,53 @@ from another cwd, because Node resolves the script's nearest package.json, not t
 operator's asks and the agent bug-report triage; two `resume`/`brain put` fixes and two listener
 fixes are queued as chips. Three PM lanes run in their own worktrees: `lane/standing-default`,
 `lane/brain-links`, `spec/streams-dms-threads`.
+
+### 2026-09-04 ~20:45 UTC — two lead sessions on one repo, and two collisions
+
+Found while the streams design lane was reporting: `git worktree list` on this repo shows **seven
+lanes I did not create**, all under `/private/tmp/lane-*`, all committed today between 14:36 and 15:14
+local by the same git identity, all idle (zero processes) and none merged:
+`lane/chat-platform-spec`, `lane/standing-default`, `lane/google-signin`, `lane/markdown-coverage`,
+`lane/mobile-fix`, `lane/markdown-tables`, `lane/model-tagging`. Three Claude Desktop `claude`
+processes are running on this host; the other lead is a second Desktop session, not an agent seat,
+so it did not see my `working-on` in the workspace and I did not see its lanes until I looked.
+
+**Collision 1 — standing grants by default.** Theirs: `lane/standing-default` @ e433fd9, 18 files,
+full-stack — migration `20260904000001_standing_grant_resume.sql`, `command/index.ts`, protocol core
+and its regenerated bundle, `renewal.ts`, app, p1-cli and p1-local tests. Mine (PM lane):
+`lane/standing-default-app` @ 4dc50c1, 11 files, app-only. Seven files overlap. **Ruling: adopt
+theirs, drop mine.** Their commit body shows the 2026-08-31 design specified "resume is one explicit
+owner action; never automatic" and the 09-01 migration shipped the 14-day pause without its exit —
+so the "suspension is one-way, revoke and re-add" that my spec told the copy to state was the
+shipped BUG, not the rule. Theirs adds `resume_renewal_grant()` gated like revoke and audited,
+`cswarm grant resume`, a generated `suspension_active` column as the single definition of "paused",
+and restarts the idle clock at resume. It has NO review arms and carries a migration. As of this
+note: Grok + agy arms running on e433fd9 by file-path prompt; full gates incl. `check:edge` and a
+protocol.js regeneration comparison running in a throwaway worktree. It lands only after both pass,
+migration → edge → client → site, sequenced with the next release. My PM lane is paused, not deleted,
+until the arms return.
+
+**Collision 2 — channels/DMs/threads.** Theirs: `lane/chat-platform-spec` @ 1392bd8, 937 lines,
+DRAFT, no arms. Mine: `spec/streams-dms-threads` @ 543804d, 1487 lines, two arms folded (both FAILED
+the first draft — `SET NOT NULL channel_id` was a production write outage in the migration-before-edge
+window). They agree a channel is a grouping label and never an authorization predicate. **They
+contradict on threads**: theirs reuses `in_reply_to`; mine measured that the command edge admits
+`in_reply_to` only on an undirected note and re-addresses the reply privately to the original
+author (`index.ts:5804-5827`), so reusing it for public threads changes what every installed
+`cswarm reply` does. Theirs has the better first slice (agent colour + click-to-filter, site-only).
+**Ruling: neither is authority.** One reconciliation lane (`spec/chat-platform-reconciled`) is
+producing a single document from both, measuring each conflict, with arms by file path.
+
+**Collision 3, minor.** Their `lane/mobile-fix` (20 files) and my `lane/brain-links` both edit
+`site/src/components/app/LiveDashboard.astro`. My PM was told to rebase before its arms and to keep
+its .astro edit to one hunk.
+
+**For the operator.** Two leads on one repo without a shared view of worktrees is duplicate spend and
+a merge hazard — a migration that lands twice cannot be undone. Options: one lead per repo, or a
+partition (that session owns `site/src` app polish; this seat owns protocol, listener, CLI, releases
+and any migration). A collision note is posted in the workspace; the other session cannot see
+workspace signals unless it joins as a seat.
+
+**Practice note from the streams lane, confirmed:** passing a 65 KB spec inline as argv killed both
+arms silently (zero bytes, no verdict) under load 14. A short prompt pointing at the file on disk
+worked. Same root cause as the `resume` maxBuffer report.
