@@ -1,0 +1,14 @@
+Read the file at this EXACT absolute path and carry out the task it describes:
+
+  /private/tmp/claude-501/-Users-yulanbot-Developer-Ridge-io-cloud-swarm/a866e6cd-5d6d-477f-af6a-740cd30407ed/scratchpad/spec-chat-reconciled/REVIEW.md
+
+Do NOT use any other REVIEW.md on this machine. There are several unrelated ones; only the
+absolute path above is yours. The document you are reviewing is at this exact absolute path:
+
+  /private/tmp/claude-501/-Users-yulanbot-Developer-Ridge-io-cloud-swarm/a866e6cd-5d6d-477f-af6a-740cd30407ed/scratchpad/spec-chat-reconciled/docs/design/2026-09-04-chat-platform-reconciled.md
+
+Work only inside /private/tmp/claude-501/-Users-yulanbot-Developer-Ridge-io-cloud-swarm/a866e6cd-5d6d-477f-af6a-740cd30407ed/scratchpad/spec-chat-reconciled. If either file above is missing, say so and stop.
+Before you begin, confirm you opened the right files by quoting the first heading of the review
+target, which must read: "# Chat platform — channels, DMs, threads, colour (reconciled)".
+
+Your last line must be exactly VERDICT: PASS or VERDICT: FAIL.

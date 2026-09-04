@@ -1,0 +1,21 @@
+I have completed the adversarial review of the chat platform spec. Here is the final review:
+
+# Review of Chat platform — channels, DMs, threads, colour (reconciled)
+
+## 1. The CREATE OR REPLACE VIEW trap (DEFECT)
+**Path:** `docs/design/2026-09-04-chat-platform-reconciled.md:295`
+The spec instructs Phase 4 (Threads) to recreate `swarm_read.signals` from its "LIVE body (20260901000010:81-133)" and append thread columns to the select list. However, Phase 3 just modified the view's `WHERE` clause by adding clause (e) for sender DM visibility! 
+`CREATE OR REPLACE VIEW` protects the column shape but provides zero protection for the `WHERE` clause. By executing Phase 4 using the P1/P2 live body (which lacks clause (e)), Phase 4 will silently overwrite the `WHERE` clause and completely delete the DM RLS visibility rules introduced in Phase 3. 
+
+## 2. Delivery Receipt Disclosure (DEFECT)
+**Path:** `supabase/migrations/20260902000001_broadcast_recipient_roster.sql:63`
+While clause (e) correctly scopes signal visibility in `swarm_read.signals`, the `swarm_read.signal_delivery_receipts` function (which runs as `swarm_admin` and bypasses RLS) contains a massive disclosure bug. If a human calls it, the check `v_human_user_id IS NOT NULL` evaluates to true, completely bypassing all sender/recipient authorization checks! This allows any human member of a workspace to query the delivery receipts for *any* signal in the workspace—including DMs between two other people—revealing the recipients and their `seen_at` timestamps.
+
+## 3. channel_id safely nullable (NIT)
+**Path:** `supabase/migrations/20260724000003_signals.sql:12`
+Making `channel_id` nullable without backfill is technically safe for inserts because PostgreSQL's default `MATCH SIMPLE` composite foreign key allows the constraint to pass if any column (`channel_id`) is NULL. The old command edge function will successfully insert signals with `channel_id = NULL`. 
+
+## 4. Citations Check
+All checked citations map correctly to the codebase (e.g., `SWARM-CLOUD.md:553`, `P3-1-SIGNALS-BRIEF.md:323-324`, `supabase/migrations/20260724000003_signals.sql:12`).
+
+VERDICT: FAIL

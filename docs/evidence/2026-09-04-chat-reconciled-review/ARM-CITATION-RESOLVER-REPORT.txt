@@ -1,0 +1,882 @@
+--- SWARM-CLOUD.md:553-553 (resolved to ./docs/design/SWARM-CLOUD.md) ---
+553: Object model stays minimal: **agents, tasks, messages, events** (no new concepts — LangSmith's dense taxonomy is the named anti-pattern).
+
+--- supabase/migrations/20260724000003_signals.sql:3-18 ---
+3: CREATE TABLE swarm.signals (
+4: id uuid PRIMARY KEY,
+5: workspace_id uuid NOT NULL REFERENCES swarm.workspaces (workspace_id),
+6: from_principal uuid NOT NULL,
+7: from_kind text NOT NULL CHECK (from_kind IN ('user', 'agent')),
+8: to_user_id uuid,
+9: about text CHECK (about IS NULL OR char_length(about) <= 500),
+10: kind text NOT NULL CHECK (kind IN ('working-on', 'note', 'ask')),
+11: body text NOT NULL CHECK (char_length(body) BETWEEN 1 AND 2000),
+12: until timestamptz NOT NULL,
+13: created_at timestamptz NOT NULL DEFAULT statement_timestamp(),
+14: CHECK (until > created_at),
+15: CHECK (until <= created_at + interval '30 days'),
+16: FOREIGN KEY (workspace_id, to_user_id)
+17: REFERENCES swarm.memberships (workspace_id, user_id)
+18: );
+
+--- supabase/functions/command/index.ts:512-512 ---
+512: const SIGNAL_MAX_UNTIL_MS = 30 * 24 * 60 * 60 * 1000;
+
+--- 20260723000001_p1_schema.sql:554-554 (resolved to ./supabase/migrations/20260723000001_p1_schema.sql) ---
+554: CREATE OR REPLACE FUNCTION swarm.prevent_append_only_mutation()
+
+--- 20260730000002_agent_signal_receive.sql:4-6 (resolved to ./supabase/migrations/20260730000002_agent_signal_receive.sql) ---
+4: ALTER TABLE swarm.signals
+5: ADD COLUMN IF NOT EXISTS to_agent_principal_id uuid,
+6: ADD COLUMN IF NOT EXISTS in_reply_to uuid;
+
+--- supabase/functions/command/index.ts:1588-1595 ---
+1588: (
+1589: inReplyTo === null ||
+1590: (
+1591: cmd.signal_kind === "note" &&
+1592: cmd.to_user_id === null &&
+1593: toAgentPrincipalId === null
+1594: )
+1595: ) &&
+
+--- supabase/functions/command/index.ts:5804-5827 ---
+5804: if (reference.from_kind === "user") {
+5805: return await signalUserTargetIsLive(
+5806: tx,
+5807: route,
+5808: reference.from_principal,
+5809: )
+5810: ? {
+5811: toUserId: reference.from_principal,
+5812: toAgentPrincipalId: null,
+5813: inReplyTo,
+5814: }
+5815: : null;
+5816: }
+5817: return await signalAgentTargetIsLive(
+5818: tx,
+5819: route,
+5820: reference.from_principal,
+5821: )
+5822: ? {
+5823: toUserId: null,
+5824: toAgentPrincipalId: reference.from_principal,
+5825: inReplyTo,
+5826: }
+5827: : null;
+
+--- src/cli.ts:3112-3119 ---
+3112: // Audience is derived server-side from the referenced signal; client sends null targets.
+3113: const command: PostSignalCommand = {
+3114: kind: "post_signal",
+3115: signal_kind: "note",
+3116: body: signalText(body, "body"),
+3117: to_user_id: null,
+3118: to_agent_principal_id: null,
+3119: in_reply_to: signalId.toLowerCase(),
+
+--- src/listener/runtime.ts:773-779 ---
+773: kind: "post_signal",
+774: signal_kind: "note",
+775: body,
+776: to_user_id: null,
+777: to_agent_principal_id: null,
+778: in_reply_to: signal.id,
+779: about: null,
+
+--- src/cli.ts:3159-3159 ---
+3159: `Reply shared. It is immutable and addressed to the original author.\n${
+
+--- src/cli.ts:2932-2932 ---
+2932: in_reply_to: signal.id,
+
+--- 20260901000010_signal_attachments.sql:81-133 (resolved to ./supabase/migrations/20260901000010_signal_attachments.sql) ---
+81: CREATE OR REPLACE VIEW swarm_read.signals
+82: WITH (security_barrier = true)
+83: AS
+84: SELECT
+85: s.id,
+86: s.workspace_id,
+87: s.from_principal AS "from",
+88: s.from_kind,
+89: s.to_user_id AS "to",
+90: s.about,
+91: s.kind,
+92: s.body,
+93: s.until,
+94: s.created_at,
+95: s.to_agent_principal_id AS to_agent,
+96: s.in_reply_to,
+97: COALESCE(
+98: (
+99: SELECT jsonb_agg(
+100: jsonb_build_object(
+101: 'file_id', attachment.file_id,
+102: 'version_n', attachment.version_n,
+103: 'name', file.name,
+104: 'content_type', version.content_type,
+105: 'size_bytes', version.size_bytes::double precision
+106: ) ORDER BY attachment.position
+107: )
+108: FROM swarm.signal_attachments AS attachment
+109: JOIN swarm.files AS file
+110: ON file.file_id = attachment.file_id
+111: AND file.workspace_id = attachment.workspace_id
+112: JOIN swarm.file_versions AS version
+113: ON version.file_id = attachment.file_id
+114: AND version.workspace_id = attachment.workspace_id
+115: AND version.version_n = attachment.version_n
+116: WHERE attachment.signal_id = s.id
+117: AND attachment.workspace_id = s.workspace_id
+118: ),
+119: '[]'::jsonb
+120: ) AS attachments
+121: FROM swarm.signals AS s
+122: WHERE swarm.is_member(s.workspace_id, auth.uid())
+123: AND (
+124: (s.to_user_id IS NULL AND s.to_agent_principal_id IS NULL)
+125: OR s.to_user_id = auth.uid()
+126: OR EXISTS (
+127: SELECT 1
+128: FROM swarm.agent_principals AS principal
+129: WHERE principal.principal_id = s.to_agent_principal_id
+130: AND principal.workspace_id = s.workspace_id
+131: AND principal.owner_user_id = auth.uid()
+132: )
+133: );
+
+--- src/cloud/signals.ts:1641-1641 ---
+1641: "This feed shows broadcast signals only. It omits directed messages, including messages you sent. Read messages directed to you with: cswarm inbox";
+
+--- P3-1-SIGNALS-BRIEF.md:323-324 (resolved to ./docs/design/P3-1-SIGNALS-BRIEF.md) ---
+323: - **A directed signal is not re-read by its sender through `feed`** — the post response is the
+324: receipt. This follows from the predicate and is intended.
+
+--- supabase/functions/read/index.ts:323-326 ---
+323: const agentCredential = AGENT_TOKEN_RE.test(token);
+324: if (!agentCredential && body.resource !== "renewal_grants") {
+325: return json(401, { error: "unauthenticated" });
+326: }
+
+--- 20260731000001_signal_deliveries.sql:119-140 (resolved to ./supabase/migrations/20260731000001_signal_deliveries.sql) ---
+119: CREATE OR REPLACE FUNCTION swarm.enqueue_signal_delivery()
+120: RETURNS trigger
+121: LANGUAGE plpgsql
+122: SECURITY INVOKER
+123: SET search_path = pg_catalog
+124: AS $$
+125: BEGIN
+126: IF NEW.to_agent_principal_id IS NOT NULL AND NEW.kind IN ('ask', 'note') THEN
+127: INSERT INTO swarm.signal_deliveries (
+128: signal_id,
+129: workspace_id,
+130: recipient_agent_principal_id
+131: ) VALUES (
+132: NEW.id,
+133: NEW.workspace_id,
+134: NEW.to_agent_principal_id
+135: )
+136: ON CONFLICT DO NOTHING;
+137: END IF;
+138: RETURN NEW;
+139: END;
+140: $$;
+
+--- command/index.ts:5949-5950 (resolved to ./supabase/functions/command/index.ts) ---
+5949: const untilMs = command.until_ms ??
+5950: SIGNAL_DEFAULT_UNTIL_MS[command.signal_kind];
+
+--- src/cloud/signals.ts:897-899 ---
+897: if (!query.includeStale) {
+898: url.searchParams.set("until", "gt.now");
+899: }
+
+--- read/index.ts:618-618 (resolved to ./supabase/functions/read/index.ts) ---
+618: AND (${body.include_stale} = true OR s.until > statement_timestamp())
+
+--- LiveDashboard.astro:1750-1750 (resolved to ./site/src/components/app/LiveDashboard.astro) ---
+1750: .or(`until.is.null,until.gt.${cutoff}`);
+
+--- LiveDashboard.astro:4909-4909 (resolved to ./site/src/components/app/LiveDashboard.astro) ---
+4909: until: null,
+
+--- src/cloud/signals.ts:315-326 ---
+315: * Parse one signal row.
+316: *
+317: * Forward-compatible: unknown top-level fields are ignored so a newer edge can
+318: * add columns without killing old clients. Absent optional known fields
+319: * (to_agent, in_reply_to) normalize to null so an older edge still parses.
+320: * Absent sender_owner_relation normalizes to "unknown" (fail-closed for wake).
+321: *
+322: * Fail-closed: required identity/body/kind/time fields must be well-formed;
+323: * a present optional UUID/enum that is invalid is refused rather than coerced.
+324: * Server-controlled string maxima are not structural: a newer server may
+325: * legitimately raise them, so reads preserve longer body/about values.
+326: */
+
+--- src/cloud/signals.ts:891-894 ---
+891: url.searchParams.set(
+892: "select",
+893: "id,workspace_id,from,from_kind,to,to_agent,in_reply_to,about,kind,body,attachments,until,created_at",
+894: );
+
+--- LiveDashboard.astro:1748-1748 (resolved to ./site/src/components/app/LiveDashboard.astro) ---
+1748: .select("id,from,from_kind,to,to_agent,kind,body,about,until,created_at,attachments")
+
+--- 20260902000001_broadcast_recipient_roster.sql:58-64 (resolved to ./supabase/migrations/20260902000001_broadcast_recipient_roster.sql) ---
+58: -- APPLY ORDER (all three matter): (1) `supabase db push` this file and verify
+59: -- via a schema_migrations query, not the push output; (2) DEPLOY THE `read`
+60: -- EDGE FUNCTION — the 619ff1f^ read function forwards only {addressed,
+61: -- receipts} and drops broadcast_roster, so a NEW client against an
+62: -- un-redeployed edge throws "malformed broadcast roster"; (3) only then publish
+63: -- a client that requires broadcast_roster. Old clients keep working at every
+64: -- step of that order.
+
+--- supabase/functions/command/index.ts:5966-5983 ---
+5966: INSERT INTO swarm.signals (
+5967: id, workspace_id, from_principal, from_kind,
+5968: to_user_id, to_agent_principal_id, in_reply_to,
+5969: about, kind, body, until, created_at
+5970: ) VALUES (
+5971: ${signalId}::uuid,
+5972: ${route.workspaceId}::uuid,
+5973: ${canonicalPrincipal(auth.actor)}::uuid,
+5974: ${auth.credentialKind},
+5975: ${target.toUserId}::uuid,
+5976: ${target.toAgentPrincipalId}::uuid,
+5977: ${target.inReplyTo}::uuid,
+5978: ${command.about},
+5979: ${command.signal_kind},
+5980: ${command.body},
+5981: statement_timestamp() + ${untilMs} * interval '1 millisecond',
+5982: statement_timestamp()
+5983: )
+
+--- src/cli.ts:2896-2896 ---
+2896: kind: "post_signal",
+
+--- src/cli.ts:3114-3114 ---
+3114: kind: "post_signal",
+
+--- src/listener/runtime.ts:773-773 ---
+773: kind: "post_signal",
+
+--- src/cloud/command-client.ts:136-136 ---
+136: kind: "post_signal";
+
+--- src/cloud/seed.ts:15-15 ---
+15: "post_signal",
+
+--- command/index.ts:5740-5740 (resolved to ./supabase/functions/command/index.ts) ---
+5740: async function resolveSignalWriteTarget(
+
+--- docs/design/2026-09-03-multi-recipient-signals.md:29-30 ---
+29: - `src/protocol/` — the command and the event gain a recipient set; the reducer decides what
+30: "addressed to me" means when the set has several members.
+
+--- read/index.ts:662-662 (resolved to ./supabase/functions/read/index.ts) ---
+662: * channel view failed for every signed-in member. Same policy as command. */
+
+--- 20260723000001_p1_schema.sql:257-276 (resolved to ./supabase/migrations/20260723000001_p1_schema.sql) ---
+257: -- Independent workspace and repository streams.
+258: CREATE TABLE IF NOT EXISTS swarm.streams (
+259: stream_id uuid PRIMARY KEY,
+260: workspace_id uuid NOT NULL REFERENCES swarm.workspaces (workspace_id),
+261: kind text NOT NULL CHECK (kind IN ('workspace', 'repo')),
+262: repo_mapping_id uuid REFERENCES swarm.repositories (repo_mapping_id),
+263: head_seq bigint NOT NULL DEFAULT 0,
+264: created_at timestamptz NOT NULL DEFAULT statement_timestamp()
+265: );
+266: 
+267: CREATE UNIQUE INDEX IF NOT EXISTS one_workspace_stream
+268: ON swarm.streams (workspace_id)
+269: WHERE kind = 'workspace';
+270: CREATE UNIQUE INDEX IF NOT EXISTS one_repo_stream
+271: ON swarm.streams (repo_mapping_id)
+272: WHERE kind = 'repo';
+273: 
+274: -- Required by the composite tenant-pinning foreign keys below.
+275: CREATE UNIQUE INDEX IF NOT EXISTS streams_stream_workspace
+276: ON swarm.streams (stream_id, workspace_id);
+
+--- 20260724000003_signals.sql:1-1 (resolved to ./supabase/migrations/20260724000003_signals.sql) ---
+1: -- P3-1 signal plane. Signals are immutable addressed intent, not stream events.
+
+--- LiveDashboard.astro:248-248 (resolved to ./site/src/components/app/LiveDashboard.astro) ---
+248: <h2 id="dashboard-streams-label">STREAMS <span>(broadcast)</span></h2>
+
+--- docs/design/2026-08-03-SLACK-SHAPE-UI.md:11-11 ---
+11: **So treat this document as a direction, not a specification.** What is being adopted is the *shape*:
+
+--- 20260723000001_p1_schema.sql:275-276 (resolved to ./supabase/migrations/20260723000001_p1_schema.sql) ---
+275: CREATE UNIQUE INDEX IF NOT EXISTS streams_stream_workspace
+276: ON swarm.streams (stream_id, workspace_id);
+
+--- 20260723000001_p1_schema.sql:502-551 (resolved to ./supabase/migrations/20260723000001_p1_schema.sql) ---
+502: DO $$
+503: DECLARE
+504: authority_table text;
+505: BEGIN
+506: FOREACH authority_table IN ARRAY ARRAY[
+507: 'users',
+508: 'devices',
+509: 'workspaces',
+510: 'memberships',
+511: 'invitations',
+512: 'agent_principals',
+513: 'agent_runs',
+514: 'agent_tokens',
+515: 'revocation_tombstones',
+516: 'renewal_grants',
+517: 'github_installations',
+518: 'repositories',
+519: 'streams',
+520: 'events',
+521: 'tasks',
+522: 'leases',
+523: 'grants',
+524: 'grant_consumptions',
+525: 'idempotency_keys',
+526: 'audit_log',
+527: 'security_alerts',
+528: 'rate_buckets',
+529: 'inbox_deliveries',
+530: 'config'
+531: ]
+532: LOOP
+533: IF NOT EXISTS (
+534: SELECT 1
+535: FROM pg_catalog.pg_policy AS p
+536: JOIN pg_catalog.pg_class AS c ON c.oid = p.polrelid
+537: JOIN pg_catalog.pg_namespace AS n ON n.oid = c.relnamespace
+538: WHERE p.polname = 'swarm_command_all'
+539: AND n.nspname = 'swarm'
+540: AND c.relname = authority_table
+541: ) THEN
+542: EXECUTE format(
+543: 'CREATE POLICY swarm_command_all ON swarm.%I '
+544: 'AS PERMISSIVE FOR ALL TO swarm_command '
+545: 'USING (true) WITH CHECK (true)',
+546: authority_table
+547: );
+548: END IF;
+549: END LOOP;
+550: END
+551: $$;
+
+--- command/index.ts:512-512 (resolved to ./supabase/functions/command/index.ts) ---
+512: const SIGNAL_MAX_UNTIL_MS = 30 * 24 * 60 * 60 * 1000;
+
+--- 20260827000001_expand_signal_body.sql:1-6 (resolved to ./supabase/migrations/20260827000001_expand_signal_body.sql) ---
+1: ALTER TABLE swarm.signals
+2: DROP CONSTRAINT signals_body_check;
+3: 
+4: ALTER TABLE swarm.signals
+5: ADD CONSTRAINT signals_body_check
+6: CHECK (char_length(body) BETWEEN 1 AND 8000);
+
+--- LiveDashboard.astro:1056-1056 (resolved to ./site/src/components/app/LiveDashboard.astro) ---
+1056: type EntityRef =
+
+--- command/index.ts:1580-1587 (resolved to ./supabase/functions/command/index.ts) ---
+1580: (
+1581: cmd.signal_kind !== "working-on" ||
+1582: (
+1583: cmd.to_user_id === null &&
+1584: toAgentPrincipalId === null &&
+1585: inReplyTo === null
+1586: )
+1587: ) &&
+
+--- src/cloud/signals.ts:1641-1641 ---
+1641: "This feed shows broadcast signals only. It omits directed messages, including messages you sent. Read messages directed to you with: cswarm inbox";
+
+--- P3-1-SIGNALS-BRIEF.md:323-326 (resolved to ./docs/design/P3-1-SIGNALS-BRIEF.md) ---
+323: - **A directed signal is not re-read by its sender through `feed`** — the post response is the
+324: receipt. This follows from the predicate and is intended.
+325: - **Directed `note`/`ask` are invisible to third parties' feeds by design.** "What's happening" is
+326: a workspace view, not a full social graph.
+
+--- read/index.ts:609-613 (resolved to ./supabase/functions/read/index.ts) ---
+609: WHERE s.workspace_id = ${body.workspace_id}::uuid
+610: AND (
+611: (s."to" IS NULL AND s.to_agent IS NULL)
+612: OR s.to_agent = ${agent.principal_id}::uuid
+613: )
+
+--- src/cloud/signals.ts:891-894 ---
+891: url.searchParams.set(
+892: "select",
+893: "id,workspace_id,from,from_kind,to,to_agent,in_reply_to,about,kind,body,attachments,until,created_at",
+894: );
+
+--- LiveDashboard.astro:1748-1748 (resolved to ./site/src/components/app/LiveDashboard.astro) ---
+1748: .select("id,from,from_kind,to,to_agent,kind,body,about,until,created_at,attachments")
+
+--- read/index.ts:222-234 (resolved to ./supabase/functions/read/index.ts) ---
+222: if (
+223: !exactKeys(body, [
+224: "resource",
+225: "workspace_id",
+226: "inbox",
+227: "about",
+228: "kind",
+229: "since",
+230: ...(modernShape ? ["in_reply_to"] : []),
+231: ...(cursorMode ? ["after_created_at", "after_id"] : []),
+232: "limit",
+233: "include_stale",
+234: ]) ||
+
+--- command/index.ts:513-517 (resolved to ./supabase/functions/command/index.ts) ---
+513: const SIGNAL_DEFAULT_UNTIL_MS: Record<SignalKind, number> = {
+514: "working-on": 24 * 60 * 60 * 1000,
+515: ask: 7 * 24 * 60 * 60 * 1000,
+516: note: 30 * 24 * 60 * 60 * 1000,
+517: };
+
+--- LiveDashboard.astro:1793-1802 (resolved to ./site/src/components/app/LiveDashboard.astro) ---
+1793: const markAgentAvatar = (node: HTMLElement, principalId: string): void => {
+1794: let hash = 2_166_136_261;
+1795: for (const char of principalId) {
+1796: hash ^= char.charCodeAt(0);
+1797: hash = Math.imul(hash, 16_777_619);
+1798: }
+1799: const unsigned = hash >>> 0;
+1800: node.style.setProperty("--avatar-hue", String(unsigned % 360));
+1801: node.classList.add("dashboard__avatar--tinted");
+1802: };
+
+--- site/src/lib/signal-feed.ts:31-41 ---
+31: export const filterSignals = <T extends AddressedSignal>(
+32: signals: readonly T[],
+33: filter: SignalFilter,
+34: viewerId: string,
+35: ): T[] => signals.filter((signal) => {
+36: if (filter === "broadcast") return signalIsBroadcast(signal);
+37: if (filter === "direct-to-you") {
+38: return signalIsDirectToViewer(signal, viewerId);
+39: }
+40: return true;
+41: });
+
+--- LiveDashboard.astro:3625-3625 (resolved to ./site/src/components/app/LiveDashboard.astro) ---
+3625: const visibleSignals = filterSignals(signals, signalFilter, viewerId);
+
+--- read/index.ts:579-648 (resolved to ./supabase/functions/read/index.ts) ---
+579: const rows = await tx<Record<string, unknown>[]>`
+580: SELECT
+581: s.id, s.workspace_id, s."from", s.from_kind, s."to",
+582: s.about, s.kind, s.body, s.until, s.created_at,
+583: s.to_agent, s.in_reply_to, s.attachments,
+584: CASE
+585: WHEN s.from_kind = 'user'
+586: AND author_member.user_id IS NOT NULL
+587: AND s."from" = ${agent.owner_user_id}::uuid THEN 'same_owner'
+588: WHEN s.from_kind = 'user'
+589: AND author_member.user_id IS NOT NULL THEN 'cross_owner'
+590: WHEN s.from_kind = 'agent'
+591: AND author.principal_id IS NOT NULL
+592: AND author_member.user_id IS NOT NULL
+593: AND author.owner_user_id = ${agent.owner_user_id}::uuid
+594: THEN 'same_owner'
+595: WHEN s.from_kind = 'agent'
+596: AND author.principal_id IS NOT NULL
+597: AND author_member.user_id IS NOT NULL THEN 'cross_owner'
+598: ELSE 'unknown'
+599: END AS sender_owner_relation
+600: FROM swarm_read.signals AS s
+601: LEFT JOIN swarm_read.agent_principals AS author
+602: ON s.from_kind = 'agent'
+603: AND author.workspace_id = s.workspace_id
+604: AND author.principal_id = s."from"
+605: AND author.revoked_at IS NULL
+606: LEFT JOIN swarm_read.member_profiles AS author_member
+607: ON author_member.workspace_id = s.workspace_id
+608: AND author_member.user_id = COALESCE(author.owner_user_id, CASE WHEN s.from_kind = 'user' THEN s."from" END)
+609: WHERE s.workspace_id = ${body.workspace_id}::uuid
+610: AND (
+611: (s."to" IS NULL AND s.to_agent IS NULL)
+612: OR s.to_agent = ${agent.principal_id}::uuid
+613: )
+614: AND (
+615: ${body.inbox} = false
+616: OR s.to_agent = ${agent.principal_id}::uuid
+617: )
+618: AND (${body.include_stale} = true OR s.until > statement_timestamp())
+619: AND (${body.about}::text IS NULL OR s.about = ${body.about})
+620: AND (${body.kind}::text IS NULL OR s.kind = ${body.kind})
+621: AND (
+622: ${inReplyTo}::uuid IS NULL
+623: OR s.in_reply_to = ${inReplyTo}::uuid
+624: )
+625: AND (
+626: ${body.since}::timestamptz IS NULL OR
+627: s.created_at >= ${body.since}::timestamptz
+628: )
+629: AND (
+630: -- JSON timestamps only carry millisecond precision, while Postgres
+631: -- stores microseconds. Truncate both sides so a client cursor built
+632: -- from a prior page's created_at cannot re-include that last row.
+633: ${useAfterCursor} = false
+634: OR date_trunc('milliseconds', s.created_at) >
+635: date_trunc('milliseconds', ${afterCreatedAt}::timestamptz)
+636: OR (
+637: date_trunc('milliseconds', s.created_at) =
+638: date_trunc('milliseconds', ${afterCreatedAt}::timestamptz)
+639: AND s.id > ${afterId}::uuid
+640: )
+641: )
+642: ORDER BY
+643: CASE WHEN ${orderAsc} THEN s.created_at END ASC,
+644: CASE WHEN ${orderDesc} THEN s.created_at END DESC,
+645: CASE WHEN ${orderAsc} THEN s.id END ASC,
+646: CASE WHEN ${orderDesc} THEN s.id END DESC
+647: LIMIT ${body.limit}
+648: `;
+
+--- LiveDashboard.astro:248-248 (resolved to ./site/src/components/app/LiveDashboard.astro) ---
+248: <h2 id="dashboard-streams-label">STREAMS <span>(broadcast)</span></h2>
+
+--- LiveDashboard.astro:657-660 (resolved to ./site/src/components/app/LiveDashboard.astro) ---
+657: {/* No TO row and no note checkbox (operator direction 2026-09-04). The address is
+658: the message: an @tag typed in the body is who it goes to, one signal per tag,
+659: and a body with no tag is a broadcast. That removed 47px of chrome from a bar
+660: that has to fit in 80px. */}
+
+--- src/cloud/signals.ts:1238-1254 ---
+1238: if (UUID_RE.test(selector)) {
+1239: const normalized = selector.toLowerCase();
+1240: const member = resolved.members.find((row) => row.user_id === normalized);
+1241: const agent = resolved.agents.find((row) =>
+1242: row.principal_id === normalized
+1243: );
+1244: if (member && !agent) return { kind: "user", id: member.user_id };
+1245: if (agent && !member) return { kind: "agent", id: agent.principal_id };
+1246: if (member && agent) {
+1247: throw new Error(
+1248: `signal recipient id matches both a member and an agent; use a unique id`,
+1249: );
+1250: }
+1251: throw new Error(
+1252: "signal recipient is not a live member or agent of this workspace",
+1253: );
+1254: }
+
+--- src/cli.ts:2411-2412 ---
+2411: if (!["working-on", "note", "ask"].includes(value)) {
+2412: throw new Error("--kind must be working-on, note, or ask");
+
+--- src/cloud/signals.ts:31-31 ---
+31: const SIGNAL_KINDS = new Set<SignalKind>(["working-on", "note", "ask"]);
+
+--- src/cloud/command-client.ts:133-133 ---
+133: export type SignalKind = "working-on" | "note" | "ask";
+
+--- read/index.ts:19-19 (resolved to ./supabase/functions/read/index.ts) ---
+19: const SIGNAL_KINDS = new Set(["working-on", "note", "ask"]);
+
+--- command/index.ts:1542-1542 (resolved to ./supabase/functions/command/index.ts) ---
+1542: const signalKinds: readonly SignalKind[] = ["working-on", "note", "ask"];
+
+--- site/src/components/landing/ConsumerStory.astro:38-38 ---
+38: Updates are posted once and never edited, so the workspace keeps an honest record of
+
+--- site/src/pages/privacy.astro:120-121 ---
+120: "Each signal stores: its text (1 to 8,000 characters); an optional reference to what it is about (up to 500 characters); its kind (working-on, note, or ask); who sent it and whether that was a person or an agent; optionally who it was addressed to; when it expires (at most 30 days out); and when it was created.",
+121: "Signals are visible to the other members of the workspace they were posted into. A signal addressed to one person is visible only to that person and to its sender.",
+
+--- LiveDashboard.astro:3634-3634 (resolved to ./site/src/components/app/LiveDashboard.astro) ---
+3634: ? "No broadcasts in the loaded signals."
+
+--- docs/research/2026-09-01-streaming-into-the-web-ui.md:50-50 ---
+FILE NOT FOUND
+
+--- LiveDashboard.astro:4220-4220 (resolved to ./site/src/components/app/LiveDashboard.astro) ---
+4220: armLiveFeed = (): void => {
+
+--- SECURITY.md:43-45 ---
+43: - **Every member of a workspace can read everything in it.** There is no private area
+44: inside a workspace and no per-record permission. Signals addressed to one person are
+45: the only exception, and they are filtered in the read view.
+
+--- landing/Hero.astro:190-190 (resolved to ./site/src/components/landing/Hero.astro) ---
+190: <p class="hero__caption">Everyone sees the same short updates, newest first.</p>
+
+--- ConsumerStory.astro:14-14 (resolved to ./site/src/components/landing/ConsumerStory.astro) ---
+14: Updates and decisions remain visible to everyone who needs them. Shared context saves
+
+--- consumer-copy.observer.mjs:56-56 (resolved to ./site/src/components/landing/consumer-copy.observer.mjs) ---
+56: "Updates and decisions remain visible to everyone who needs them.",
+
+--- src/cloud/signals.ts:1641-1641 ---
+1641: "This feed shows broadcast signals only. It omits directed messages, including messages you sent. Read messages directed to you with: cswarm inbox";
+
+--- src/cli.ts:3212-3212 ---
+3212: if (recipientId === null) return "visible to members of this workspace";
+
+--- src/cloud/signals.ts:1252-1252 ---
+1252: "signal recipient is not a live member or agent of this workspace",
+
+--- site/src/components/app/composer.observer.test.ts:35-35 ---
+35: assert.doesNotMatch(markup, /emoji|reaction|thread/i);
+
+--- tests/p1-cli/f6-workspace-vocabulary.test.ts:12-12 ---
+12: *   $ cswarm note "…"    -> …visible to members of this workspace.
+
+--- tests/p1-cli/signals.test.ts:870-870 ---
+870: assert.match(narration, /visible to members of this workspace/);
+
+--- site/src/components/app/slack-shape.observer.test.ts:151-151 ---
+151: "STREAMS",
+
+--- site/src/components/app/ui-addressing.observer.test.ts:48-62 ---
+48: for (const token of [
+49: "dashboard__message-identity-badge",
+50: "dashboard__message-target",
+51: "AGENT",
+52: "PERSON",
+53: "everyone",
+54: "an agent",
+55: "workspace member",
+56: ]) {
+57: assert.ok(builtAssets.includes(token), `built /app is missing ${token}`);
+58: }
+59: assert.match(
+60: renderFeed,
+61: /target\.append\("→ "\)[\s\S]*signal\.toAgent !== null && targetAgent[\s\S]*targetAgent\.name[\s\S]*signal\.to !== null && people\.has\(signal\.to\)[\s\S]*people\.get\(signal\.to\)![\s\S]*"an agent"[\s\S]*"a workspace member"[\s\S]*"everyone"/,
+62: );
+
+--- composer-sprint.observer.test.ts:493-493 (resolved to ./site/src/components/app/composer-sprint.observer.test.ts) ---
+493: assert.match(draft, /COMPOSER_STREAM = "all-signals";/,
+
+--- composer-addressing.observer.test.ts:319-319 (resolved to ./site/src/components/app/composer-addressing.observer.test.ts) ---
+319: assert.deepEqual(measured.broadcast, { added: 1, target: "→ everyone" });
+
+--- tests/p1-cli/reply-refusal-hint.test.ts:16-16 ---
+16: assert.match(String(hint), /addressed to you/);
+
+--- 20260724000003_signals.sql:1-1 (resolved to ./supabase/migrations/20260724000003_signals.sql) ---
+1: -- P3-1 signal plane. Signals are immutable addressed intent, not stream events.
+
+--- docs/design/P3-1-SIGNALS-BRIEF.md:65-70 ---
+65: ## 1. The one primitive
+66: 
+67: A **signal**: a short, immutable, addressed statement of intent, optionally about something.
+68: 
+69: ```
+70: { id, from, to?, about?, kind, body, until?, created_at }
+
+--- docs/design/2026-09-03-multi-recipient-signals.md:29-30 ---
+29: - `src/protocol/` — the command and the event gain a recipient set; the reducer decides what
+30: "addressed to me" means when the set has several members.
+
+--- README.md:214-216 ---
+214: A broadcast is visible to live project members. A directed `note` or `ask` is
+215: visible only to its recipient; `--to` accepts a full user UUID or an exact
+216: display name among live members and refuses unknown or ambiguous names. `feed`
+
+--- AGENTS.md:112-112 ---
+112: `npm run check:edge`; it names the current three entrypoints and no other gate runs it. A fourth function
+
+--- package.json:19-19 ---
+19: "check:edge": "deno check --config supabase/functions/command/deno.json supabase/functions/command/index.ts supabase/functions/read/index.ts supabase/functions/capability/index.ts supabase/functions/activity/index.ts",
+
+--- src/cli.ts:3144-3144 ---
+3144: "Reply shared. It is immutable, tenancy-scoped, and will quietly expire at its horizon.",
+
+--- LiveDashboard.astro:248-248 (resolved to ./site/src/components/app/LiveDashboard.astro) ---
+248: <h2 id="dashboard-streams-label">STREAMS <span>(broadcast)</span></h2>
+
+--- site/src/lib/mention-address.ts:2-3 ---
+2: * THE ADDRESS IS THE MESSAGE. An @tag typed in a signal body names a recipient; the send posts
+3: * one signal per tag because the wire carries a single recipient per signal.
+
+--- site/src/lib/commonswarm.ts:1292-1295 ---
+1292: export type BrowserSignalRecipient =
+1293: | { kind: "everyone" }
+1294: | { kind: "person"; id: string }
+1295: | { kind: "agent"; id: string };
+
+--- site/src/pages/app.astro:11-11 ---
+11: const title = "CommonSwarm — your shared agent feed";
+
+--- site/src/pages/acceptable-use.astro:124-124 ---
+124: "**Do not generate signal volume beyond your genuine coordination needs.** Announcing what an agent is about to work on is the product. Emitting a signal per file, per token, per log line, or on a timer is not — it is a log shipper wearing the product's clothes, and it degrades the feed for everyone in the workspace.",
+
+--- site/src/lib/mention-address.ts:1-9 ---
+1: /**
+2: * THE ADDRESS IS THE MESSAGE. An @tag typed in a signal body names a recipient; the send posts
+3: * one signal per tag because the wire carries a single recipient per signal.
+4: *
+5: * This lives outside the dashboard component so it can be tested directly. Every rule below was
+6: * written against a defect a review arm found in the first version, and each has a test:
+7: * longest-name-first, boundary characters, case folding that changes a string's LENGTH,
+8: * two roster entries sharing a name, and more tags than one send may carry.
+9: */
+
+--- docs/design/2026-08-04-COMPOSER-AND-MENTIONS.md:66-67 ---
+66: 3. **Read visibility must stay broadcast.** The mention adds delivery; it must not add a filter. Get
+67: this backwards and a mention becomes a DM that looks public.
+
+--- LiveDashboard.astro:657-660 (resolved to ./site/src/components/app/LiveDashboard.astro) ---
+657: {/* No TO row and no note checkbox (operator direction 2026-09-04). The address is
+658: the message: an @tag typed in the body is who it goes to, one signal per tag,
+659: and a body with no tag is a broadcast. That removed 47px of chrome from a bar
+660: that has to fit in 80px. */}
+
+--- command/index.ts:5684-5828 (resolved to ./supabase/functions/command/index.ts) ---
+5684: async function signalUserTargetIsLive(
+5685: tx: Sql,
+5686: route: Route,
+5687: toUserId: string | null,
+5688: ): Promise<boolean> {
+5689: if (toUserId === null) return true;
+5690: const targetRows = await tx<{ user_id: string }[]>`
+5691: SELECT user_id
+5692: FROM swarm.memberships
+5693: WHERE workspace_id = ${route.workspaceId}::uuid
+5694: AND user_id = ${toUserId}::uuid
+5695: AND revoked_at IS NULL
+5696: LIMIT 1
+5697: `;
+5698: return targetRows[0] !== undefined;
+5699: }
+5700: 
+5701: async function signalAgentTargetIsLive(
+5702: tx: Sql,
+5703: route: Route,
+5704: toAgentPrincipalId: string | null,
+5705: ): Promise<boolean> {
+5706: if (toAgentPrincipalId === null) return true;
+5707: const targetRows = await tx<{ principal_id: string }[]>`
+5708: SELECT p.principal_id
+5709: FROM swarm.agent_principals AS p
+5710: JOIN swarm.memberships AS owner
+5711: ON owner.workspace_id = p.workspace_id
+5712: AND owner.user_id = p.owner_user_id
+5713: AND owner.revoked_at IS NULL
+5714: WHERE p.workspace_id = ${route.workspaceId}::uuid
+5715: AND p.principal_id = ${toAgentPrincipalId}::uuid
+5716: AND p.revoked_at IS NULL
+5717: LIMIT 1
+5718: `;
+5719: return targetRows[0] !== undefined;
+5720: }
+5721: 
+5722: async function signalAgentOwnedByUser(
+5723: tx: Sql,
+5724: route: Route,
+5725: principalId: string | null,
+5726: ownerUserId: string,
+5727: ): Promise<boolean> {
+5728: if (principalId === null) return false;
+5729: const rows = await tx<{ principal_id: string }[]>`
+5730: SELECT principal_id
+5731: FROM swarm.agent_principals
+5732: WHERE workspace_id = ${route.workspaceId}::uuid
+5733: AND principal_id = ${principalId}::uuid
+5734: AND owner_user_id = ${ownerUserId}::uuid
+5735: LIMIT 1
+5736: `;
+5737: return rows[0] !== undefined;
+5738: }
+5739: 
+5740: async function resolveSignalWriteTarget(
+5741: tx: Sql,
+5742: route: Route,
+5743: auth: AuthContext,
+5744: command: SignalCommand,
+5745: ): Promise<SignalWriteTarget | null> {
+5746: const toAgentPrincipalId = command.to_agent_principal_id ?? null;
+5747: const inReplyTo = command.in_reply_to ?? null;
+5748: if (inReplyTo === null) {
+5749: const userLive = await signalUserTargetIsLive(
+5750: tx,
+5751: route,
+5752: command.to_user_id,
+5753: );
+5754: const agentLive = await signalAgentTargetIsLive(
+5755: tx,
+5756: route,
+5757: toAgentPrincipalId,
+5758: );
+5759: return userLive && agentLive
+5760: ? {
+5761: toUserId: command.to_user_id,
+5762: toAgentPrincipalId,
+5763: inReplyTo: null,
+5764: }
+5765: : null;
+5766: }
+5767: 
+5768: const referenceRows = await tx<{
+5769: from_principal: string;
+5770: from_kind: CredentialKind;
+5771: to_user_id: string | null;
+5772: to_agent_principal_id: string | null;
+5773: }[]>`
+5774: SELECT
+5775: from_principal,
+5776: from_kind,
+5777: to_user_id,
+5778: to_agent_principal_id
+5779: FROM swarm.signals
+5780: WHERE workspace_id = ${route.workspaceId}::uuid
+5781: AND id = ${inReplyTo}::uuid
+5782: AND kind IN ('ask', 'note')
+5783: AND until > statement_timestamp()
+5784: LIMIT 1
+5785: `;
+5786: const reference = referenceRows[0];
+5787: if (!reference) return null;
+5788: 
+5789: const callerUserId = auth.actor.user;
+5790: const addressedToCaller = auth.agent !== null
+5791: ? reference.to_agent_principal_id === auth.agent.principal_id
+5792: : callerUserId !== null &&
+5793: (
+5794: reference.to_user_id === callerUserId ||
+5795: await signalAgentOwnedByUser(
+5796: tx,
+5797: route,
+5798: reference.to_agent_principal_id,
+5799: callerUserId,
+5800: )
+5801: );
+5802: if (!addressedToCaller) return null;
+5803: 
+5804: if (reference.from_kind === "user") {
+5805: return await signalUserTargetIsLive(
+5806: tx,
+5807: route,
+5808: reference.from_principal,
+5809: )
+5810: ? {
+5811: toUserId: reference.from_principal,
+5812: toAgentPrincipalId: null,
+5813: inReplyTo,
+5814: }
+5815: : null;
+5816: }
+5817: return await signalAgentTargetIsLive(
+5818: tx,
+5819: route,
+5820: reference.from_principal,
+5821: )
+5822: ? {
+5823: toUserId: null,
+5824: toAgentPrincipalId: reference.from_principal,
+5825: inReplyTo,
+5826: }
+5827: : null;
+5828: }
+
+--- read/index.ts:609-613 (resolved to ./supabase/functions/read/index.ts) ---
+609: WHERE s.workspace_id = ${body.workspace_id}::uuid
+610: AND (
+611: (s."to" IS NULL AND s.to_agent IS NULL)
+612: OR s.to_agent = ${agent.principal_id}::uuid
+613: )
+
