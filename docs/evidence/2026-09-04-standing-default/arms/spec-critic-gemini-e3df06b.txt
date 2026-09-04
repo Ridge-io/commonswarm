@@ -1,0 +1,32 @@
+C1. UPHELD. `supabase/functions/command/index.ts:155` and `1946-1948` show the wire type already accepts `renewal_kind`, and line 1996 outputs it to the prepared command. The deployed validator fully supports `standing`.
+
+C2. UPHELD. `supabase/functions/command/index.ts:1953` requires `cmd.renewal_horizon_ms === undefined` when `renewalKind === "standing"`. If passed as `null`, validation fails and returns 400.
+
+C3. UPHELD. `site/src/lib/agent-connect.ts:364-378` and `478` explicitly register and send the browser's `device_id`. Thus, `boundDeviceId` is set, and `grantRiskBadge` in `site/src/lib/standing-grants.ts:31` will never return `"UNBOUND"` because `grant.boundDeviceId` is not null.
+
+C4. REFUTED. The grant is bound to the browser's device ID (`supabase/functions/command/index.ts:4057`). When the CLI attempts to renew, it provides its own distinct device ID (`index.ts:2843`). This mismatch causes `supabase/migrations/20260901000001_standing_grants.sql:219-225` (`swarm.prepare_renewal_grant`) to return `renewal_device_mismatch`, which is refused by `src/protocol/workspace-commands.ts:1145-1152`. The agent WILL expire.
+
+C5. UPHELD. The 14-day rule is enforced by `supabase/migrations/20260901000001_standing_grants.sql:199-208`. Line 156-158 in the `swarm.renewal_grants_spend_or_revoke_only` trigger prevents un-suspension by raising a `SWARM_RENEWAL_GRANT_UNSUSPEND` exception if `suspended_at` is updated to null.
+
+C6. UPHELD. `src/cli.ts:1858-1864` throws a `UsageError` locally if `--standing` is passed without `--confirm-standing`, but the flag is not included in the payload sent to the server.
+
+C7. REFUTED. The prompt text is FALSE. `site/src/components/connect/agent-prompt.ts:38-40` asserts "the CLI can rotate it before expiry." Because of the device mismatch bug (C4), the CLI cannot rotate it at all. Furthermore, if a token has a TTL > 14 days (up to 30 days max), a 14-day idle period will permanently suspend the grant, making it impossible to rotate before expiry.
+
+C8. REFUTED. `site/src/components/app/access-lifecycle.observer.test.ts:97` explicitly tests for the presence of the exact source code string: `assert.match(agentConnect, /times\.issuedAt \+ RENEWAL_HORIZON_DEFAULT_MS/);`. Deleting the constant breaks this test.
+
+C9. UPHELD. It fails LOUDLY with a 400. If the production server lacks `renewal_kind` in its `optionalKeys` array, `supabase/functions/command/index.ts:1344-1352` (`exactKeys`) will reject the request because `renewal_kind` is present but not in the expected keys array.
+
+C10. REFUTED. The sentence "This does not expire" (`site/src/lib/standing-grants.ts:1-2`) and the instruction to say "access does not expire" are FALSE. The credential *does* expire (default 24h). The missing TRUE fact is that the CLI must stay running (or wake up within 14 days) to automatically renew the short-lived token behind the scenes.
+
+Most serious defects:
+1. App-minted standing grants bind to the browser's device ID instead of the CLI's, causing a `renewal_device_mismatch` on first rotation and permanently breaking the grant.
+2. The UI copy conflates the infinite grant with the short-lived credential, misleading users into thinking their access token never expires and their CLI can stay offline forever.
+3. The prompt text falsely claims the CLI can rotate the token before expiry, ignoring the 14-day idle suspension rule for tokens with a TTL > 14 days.
+4. Deleting `RENEWAL_HORIZON_DEFAULT_MS` breaks `site/src/components/app/access-lifecycle.observer.test.ts`.
+
+VERDICT: FAIL
+_id`, guaranteeing that the CLI agent will fail its very first renewal with a `renewal_device_mismatch` and permanently die.
+2. The proposed form copy stating "access does not expire" is factually false both because of the device binding bug and the 14-day permanent idle suspension.
+3. `site/src/components/app/access-lifecycle.observer.test.ts` uses regex to check for the presence of `RENEWAL_HORIZON_DEFAULT_MS` and will break unhandled when the constant is removed.
+
+VERDICT: FAIL

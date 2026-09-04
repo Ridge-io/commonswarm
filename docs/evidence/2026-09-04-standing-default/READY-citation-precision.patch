@@ -1,0 +1,28 @@
+diff --git a/site/src/lib/agent-connect.ts b/site/src/lib/agent-connect.ts
+index fe67bd7..5eaf72d 100644
+--- a/site/src/lib/agent-connect.ts
++++ b/site/src/lib/agent-connect.ts
+@@ -272,11 +272,18 @@ function assertAccepted(step: ConnectStep, outcome: CommandOutcome): Record<stri
+      * "nothing happened" — which the unknown-outcome case below deliberately cannot.
+      *
+      * NAMES BOTH DIRECTIONS OF SKEW, from 2026-09-04. It used to say only that this page may
+-     * be OLDER than the deployment. The mint body now carries `renewal_kind`, and a command
+-     * function that predates that field rejects the whole request on its exact-key check
+-     * (supabase/functions/command/index.ts:1970-1978) — so the NEWER-page case is the one a
+-     * reader is most likely to meet, on a site deploy that outran the edge deploy, and the
+-     * old sentence sent them looking in the opposite direction. */
++     * be OLDER than the deployment. The mint body now carries `renewal_kind`, and the NEWER-page
++     * case is the one a reader is most likely to meet — a site deploy that outran the edge
++     * deploy — so the old sentence sent them looking in the opposite direction.
++     *
++     * WHERE THAT REFUSAL COMES FROM, PRECISELY. The gate is the mint's exact-key check
++     * (supabase/functions/command/index.ts:1970-1978). Resolve those lines against THIS tree and
++     * they ACCEPT `renewal_kind`, because `optionalKeys` admits it two lines earlier
++     * (index.ts:1940-1947, the `renewal_kind` entry at :1943). The refusal is what the same gate
++     * does on a build whose `optionalKeys` has no such entry: the key is then not in the
++     * permitted set, `exactKeys` fails, and the request is refused at index.ts:2015-2018. Cited
++     * this way round because a reader who resolves a pointer and finds code doing the opposite
++     * of the sentence stops trusting the sentence. */
+     throw new AgentConnectRefused(
+       step,
+       "The deployment did not accept the request. Nothing was created. This page and the " +
