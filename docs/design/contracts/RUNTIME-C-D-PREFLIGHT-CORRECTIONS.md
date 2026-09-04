@@ -134,7 +134,10 @@ reducer must:
 - persist mode plus exact/null pending count on `delivery_mode`;
 - persist `lastClaimAt` plus exact pending count on `delivery_claim`, without calling it handled;
 - require a positive terminal-failure count and persist the latest count/timestamp;
-- persist `lastAckAt`, set pending count to null, and update last handled signal on ACK; and
+- persist `lastAckAt`, the ack outcome, and the signal ID on ACK; increment the
+  terminal-failure run for `failed_terminal`, clear it only for an outcome in
+  `DELIVERY_PROVIDER_PROVEN_OUTCOMES`, and leave it unchanged for `observed`, `queued`,
+  or `expired`; and
 - translate only to B's closed snake-case fields, never lease/command IDs or content.
 
 ## Frozen constants and budgets
@@ -230,10 +233,14 @@ Inside `runConfiguredListener`:
 Correct the delivery comment: transport never logs or persists the lease; the secure listener
 journal intentionally may persist it for exact ACK recovery.
 
-Status JSON normalizes all six omitted legacy fields to null and adds no duplicate snake-case
-aliases. Human output distinguishes durable/fallback, prints pending only when non-null, never
-renders unknown as zero, and emits one bounded last-claim failure sentence only for positive count.
-It must contain no sender, body, lease, command, bearer, prompt, or reply content.
+Status JSON normalizes every omitted legacy delivery field to null and adds no duplicate
+snake-case aliases. It reports the newest ack outcome and the terminal-failure run. Human output
+distinguishes durable/fallback, prints pending only when non-null, never renders unknown as zero,
+calls a signal handled only for an outcome in `DELIVERY_HANDLED_OUTCOMES` AND a
+terminal-failure run below `LISTENER_DELIVERY_FAILING_THRESHOLD` (observing a note starts no
+provider session, so it cannot prove the agent answers while a run stands), and emits one bounded
+last-claim failure sentence only for positive count. It must contain no sender, body, lease,
+command, bearer, prompt, or reply content.
 
 Goal-D causal process tests prove the complete fake read-capability -> claim -> reply -> ACK flow,
 one UUID across every layer, losing concurrent startup without journal rotation, distinct mode

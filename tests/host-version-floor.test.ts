@@ -261,6 +261,8 @@ test("Claude status/start rendering pins the resolved bridge and exact bundled v
       deliveryMode: null,
       pendingDeliveryCount: null,
       lastTerminalDeliveryFailureCount: null,
+      lastAckOutcome: null,
+      consecutiveAckFailureCount: null,
       routeMode: "worker",
     } as ListenerStatus;
     const rendered = renderListenerStatus(status);
@@ -280,6 +282,7 @@ test("Claude status/start rendering pins the resolved bridge and exact bundled v
     assert.equal(json.providerBundledAgentSdkVersion, "0.3.257");
     assert.equal(json.connectionsOpened, null);
     assert.equal(json.connectionReuseRatio, null);
+    assert.equal(json.handledState, "not_yet_measured");
 
     const oldProcess = {
       ...status,
@@ -450,10 +453,13 @@ test("newer version reports exactly once to the startup status path", () => {
     deliveryMode: null,
     pendingDeliveryCount: null,
     lastTerminalDeliveryFailureCount: null,
+    lastAckOutcome: null,
+    consecutiveAckFailureCount: null,
     routeMode: "worker",
   } as ListenerStatus);
   assert.equal(output.match(/unverified but allowed/g)?.length, 1);
   assert.match(output, /Next: verify this provider release/);
+  assert.match(output, /HANDLED: not yet measured/);
 });
 
 test("an exactly measured Codex version renders without an unverified warning", () => {
@@ -473,10 +479,13 @@ test("an exactly measured Codex version renders without an unverified warning", 
     deliveryMode: null,
     pendingDeliveryCount: null,
     lastTerminalDeliveryFailureCount: null,
+    lastAckOutcome: null,
+    consecutiveAckFailureCount: null,
     routeMode: "worker",
   } as ListenerStatus);
   assert.match(output, /Provider version: 1\.8\.0 \(last measured: 1\.8\.0\)/);
   assert.doesNotMatch(output, /unverified|newer than/);
+  assert.match(output, /HANDLED: not yet measured/);
 });
 
 test("a comfortably newer version cannot bypass a failing permission canary", async () => {

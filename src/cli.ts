@@ -221,6 +221,7 @@ import {
   DeliveryReceiptReadError,
   readAgentDeliveryReceipts,
 } from "./cloud/delivery-receipts.js";
+import { DELIVERY_HANDLED_OUTCOMES } from "./cloud/delivery.js";
 import {
   renderedBroadcastIds,
   reportRenderedBroadcasts,
@@ -268,6 +269,7 @@ import {
   renderListenerAttendanceCanary,
   runListenerAttendanceCanary,
   writeListenerCredentialState,
+  LISTENER_DELIVERY_FAILING_THRESHOLD,
   LISTENER_DEFER_OVER_MAX,
   LISTENER_DEFER_OVER_MIN,
   emptyListenerReadHealth,
@@ -4268,10 +4270,27 @@ function listenerAttendanceState(
     : attendanceState === "unattended"
     ? false
     : null;
+  const lastAckOutcome = status.lastAckOutcome ?? null;
+  // An acknowledgement that never reaches the service emits no delivery_ack.
+  // The stored outcome therefore describes only the newest acknowledgement
+  // the service accepted; it says nothing about an acknowledgement that failed.
+  // A run of terminal failures outranks the newest outcome. `observed` proves a
+  // note was dealt with; it starts no provider session, so it cannot prove this
+  // agent is answering. Reading it as handled is what reported a signed-out
+  // provider healthy at 18:47 on 2026-09-03.
+  const deliveryFailing =
+    (status.consecutiveAckFailureCount ?? 0) >=
+      LISTENER_DELIVERY_FAILING_THRESHOLD;
   const handled = pending > 0
     ? false
-    : routeMode === "worker" && status.lastAckAt !== null
+    : routeMode !== "worker" || lastAckOutcome === null
+    ? null
+    : deliveryFailing
+    ? false
+    : DELIVERY_HANDLED_OUTCOMES.has(lastAckOutcome)
     ? true
+    : lastAckOutcome === "failed_terminal"
+    ? false
     : null;
   return {
     connected,
@@ -4294,7 +4313,8 @@ interface ListenerLapseNotice {
   code:
     | "listener_host_ports_exhausted"
     | "listener_read_retry_persisting"
-    | "listener_claim_throughput_lapse";
+    | "listener_claim_throughput_lapse"
+    | "listener_delivery_failing";
   message: string;
   nextStep: string;
 }
@@ -4343,6 +4363,29 @@ function listenerLapseNotices(
       message: `Claim throughput fell below 0.50 for the full hour at ${latest.hourStart}: ${latest.claims}/${Math.round(latest.expectedClaims)} expected (${latest.ratio.toFixed(3)}).`,
       nextStep:
         "This host is starving the listener — check load/memory pressure (sysctl kern.memorystatus_vm_pressure_level), or move the listener.",
+    });
+  }
+  const consecutive = status.consecutiveAckFailureCount ?? 0;
+  if (consecutive >= LISTENER_DELIVERY_FAILING_THRESHOLD) {
+    notices.push({
+      code: "listener_delivery_failing",
+      message:
+        // Do not assert "messages are not being answered": a notes-only listener
+        // acks `observed` and is fine. State only what the run records.
+        `The listener recorded ${consecutive} terminal delivery ${
+          consecutive === 1 ? "failure" : "failures"
+        } with no reply since. The newest acknowledgement was ${status.lastAckOutcome ?? "not recorded"} at ${status.lastAckAt ?? "an unknown time"}. The most recent listener error code is ${status.lastErrorCode ?? "not recorded"}.`,
+      nextStep:
+        // `failed_terminal` covers a refusing-but-healthy provider, a dead host
+        // session, and a local post failure, and the run alone cannot tell them
+        // apart — so name the check, not a diagnosis. The command needs the
+        // credential on stdin, and the listener is still running here.
+        // `stop` takes --principal-id and needs no credential, so it must not
+        // read stdin: one pipe cannot feed both halves of a chained command.
+        // `listen stop` returns while the state is still `stopping` (D-074), and
+        // `listen start` refuses a listener that is stopping, so the two verbs
+        // race unless the confirm step sits between them.
+        `Read the failure codes in ${status.logPath}, then stop the listener with: cswarm listen stop --workspace-id ${status.workspaceId} --principal-id ${status.principalId}. Wait until it is no longer running -- state stopped or failed, not stopping -- confirming with: cswarm listen status --workspace-id ${status.workspaceId} --principal-id ${status.principalId}. Then restart it by piping the same agent credential into: ${listenerRestartCommand(status)}`,
     });
   }
   return notices;
@@ -4490,6 +4533,9 @@ export function listenerStatusJson(
       status.lastTerminalDeliveryFailureAt ?? null,
     lastClaimAt: status.lastClaimAt ?? null,
     lastAckAt: status.lastAckAt ?? null,
+    lastAckOutcome: status.lastAckOutcome ?? null,
+    consecutiveAckFailureCount: status.consecutiveAckFailureCount ?? null,
+    lastAckSignalId: status.lastAckSignalId ?? null,
     routeMode: status.routeMode ?? "worker",
     deferOverChars: status.deferOverChars ?? null,
     pendingForMainCount: status.pendingForMainCount ?? 0,
@@ -4531,6 +4577,7 @@ export function renderListenerStatus(
   installed: ListenerProviderInstallEvidence | null = null,
 ): string {
   const routeMode = status.routeMode ?? "worker";
+  const deliveryFailureRun = status.consecutiveAckFailureCount ?? 0;
   const pendingForMainCount = status.pendingForMainCount ?? 0;
   const droppedForMainCount = status.droppedForMainCount ?? 0;
   const unattendedCount = `${pendingForMainCount} ${
@@ -4558,9 +4605,17 @@ export function renderListenerStatus(
     }.`,
     `HANDLED: ${
       attendance.handledState === "handled"
-        ? "yes. A delivery acknowledgement is recorded"
+        ? `yes. The newest delivery acknowledgement was ${status.lastAckOutcome}`
         : attendance.handledState === "not_handled"
-        ? "no. Queued messages have not reached the session hook"
+        ? routeMode === "worker"
+          ? deliveryFailureRun >= LISTENER_DELIVERY_FAILING_THRESHOLD
+            ? `no. ${deliveryFailureRun} ${
+              deliveryFailureRun === 1 ? "delivery has" : "deliveries have"
+            } failed since the last reply; the newest delivery acknowledgement was ${
+              status.lastAckOutcome ?? "not recorded"
+            }${status.lastErrorCode ? ` (${status.lastErrorCode})` : ""}`
+            : `no. The newest delivery acknowledgement was ${status.lastAckOutcome ?? "not recorded"}${status.lastErrorCode ? ` (${status.lastErrorCode})` : ""}`
+          : "no. Queued messages have not reached the session hook"
         : "not yet measured"
     }.`,
     `Provider: ${status.provider}; process: ${status.pid}; started: ${status.startedAt}.`,
@@ -4579,7 +4634,28 @@ export function renderListenerStatus(
       ? pendingForMainCount > 0
         ? `Last claimed and queued signal: ${status.lastSignalId}. It is not handled yet.`
         : routeMode === "worker"
-        ? `Last handled signal: ${status.lastSignalId}.`
+        // Keyed on the OUTCOME, never on handledState: an `observed` note is not
+        // a failed delivery, and during a failure run it is not evidence of
+        // handling either, so it gets the neutral sentence naming its outcome.
+        // The outcome sentences name lastAckSignalId, the signal the outcome
+        // belongs to. lastSignalId is also advanced by `effect`, so after an
+        // effect for a newer signal it would attribute the older ack to it.
+        // "No acknowledgement" is keyed on lastAckAt, not on the outcome. A status
+        // written by a listener older than this CLI carries lastAckAt with no
+        // outcome -- every fleet listener at the 0.1.51 upgrade, and any new CLI
+        // reading a running 0.1.50 listener -- and DID acknowledge something.
+        ? status.lastAckAt === null
+          ? `Last listener signal: ${status.lastSignalId}. No delivery acknowledgement is recorded.`
+          : status.lastAckOutcome === null
+          ? `Last listener signal: ${status.lastSignalId}. An acknowledgement was recorded at ${status.lastAckAt}; its outcome was not recorded.`
+          : !status.lastAckSignalId
+          ? `Last listener signal: ${status.lastSignalId}. The newest acknowledgement was ${status.lastAckOutcome}; which signal it belonged to was not recorded.`
+          : status.lastAckOutcome === "failed_terminal"
+          ? `Last failed delivery signal: ${status.lastAckSignalId}.`
+          : DELIVERY_HANDLED_OUTCOMES.has(status.lastAckOutcome) &&
+              deliveryFailureRun < LISTENER_DELIVERY_FAILING_THRESHOLD
+          ? `Last handled signal: ${status.lastAckSignalId}.`
+          : `Last acknowledged signal: ${status.lastAckSignalId}. Its outcome was ${status.lastAckOutcome}.`
         : `Last listener signal: ${status.lastSignalId}. Local status does not prove its final observed receipt.`
       : "No signal has been handled yet.",
     status.lastErrorCode
@@ -4727,7 +4803,7 @@ export function renderListenerStatus(
     status.lastTerminalDeliveryFailureCount > 0
   ) {
     lines.push(
-      `The last claim reported ${status.lastTerminalDeliveryFailureCount} terminal delivery failures; they remain recorded, and the listener will keep receiving.`,
+      `The last claim reported ${status.lastTerminalDeliveryFailureCount} ${status.lastTerminalDeliveryFailureCount === 1 ? "delivery the service gave up on because this listener never acknowledged it. It remains" : "deliveries the service gave up on because this listener never acknowledged them. They remain"} recorded, and the listener will keep receiving.`,
     );
   }
   /* D-074. `stopping` and `starting` are TRANSITIONAL: the verb returns before teardown or

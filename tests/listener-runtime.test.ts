@@ -3,6 +3,7 @@ import { createHash, randomUUID } from "node:crypto";
 import { mkdtemp, rm, writeFile } from "node:fs/promises";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
+import { writeSecureJsonFile } from "../src/cloud/storage.js";
 import test from "node:test";
 import {
   CommandHttpError,
@@ -16,8 +17,10 @@ import {
   DeliveryTransportError,
   DELIVERY_REQUEST_TIMEOUT_MS,
   type DeliveryClaimResult,
+  type DeliveryOutcome,
   type DeliveryRow,
 } from "../src/cloud/delivery.js";
+import { listenerStatusJson, renderListenerStatus } from "../src/cli.js";
 import {
   RenewalReauthorisationRequired,
   RenewalRevoked,
@@ -38,6 +41,8 @@ import {
   LISTENER_HOST_PORTS_PROBE_MS,
   LISTENER_PROMPT_START_MINIMUM_MS,
   listenerPaths,
+  readListenerStatus,
+  queryListenerControl,
   runListenerSupervisor,
   claimCommandId,
   ackCommandId,
@@ -50,6 +55,7 @@ import {
   type ListenerEffectStore,
   type ListenerPromptMode,
   type ListenerRuntimeEvent,
+  type ListenerStatus,
   type ListenerRuntimeModel,
 } from "../src/listener/index.js";
 
@@ -762,6 +768,12 @@ test("delivery events reduce into the closed supervisor status fields", async ()
     stateDirectory: root,
   });
   const ts = "2026-07-30T00:00:01.000Z";
+  const ackSnapshots: Array<{
+    outcome: string | null;
+    failures: number | null;
+    human: string;
+    json: Record<string, unknown>;
+  }> = [];
   const status = await runListenerSupervisor({
     paths,
     profileId: "profile-test",
@@ -778,18 +790,61 @@ test("delivery events reduce into the closed supervisor status fields", async ()
         ts,
       });
       onEvent({ type: "delivery_terminal_failures", count: 1, ts });
+      const ack = async (
+        signalId: string,
+        outcome: DeliveryOutcome,
+        ackTs: string,
+      ) => {
+        onEvent({ type: "delivery_ack", signalId, outcome, ts: ackTs });
+        const snapshot = await queryListenerControl(paths, "status");
+        ackSnapshots.push({
+          outcome: snapshot.lastAckOutcome,
+          failures: snapshot.consecutiveAckFailureCount,
+          human: renderListenerStatus(snapshot),
+          json: listenerStatusJson(snapshot),
+        });
+      };
+      const incident: Array<[string, DeliveryOutcome, string]> = [
+        ["aaaaaaaa-aaaa-4aaa-8aaa-aaaaaaaaaa13", "failed_terminal", "2026-09-03T17:06:52.000Z"],
+        ["aaaaaaaa-aaaa-4aaa-8aaa-aaaaaaaaaa14", "observed", "2026-09-03T17:12:52.000Z"],
+        ["aaaaaaaa-aaaa-4aaa-8aaa-aaaaaaaaaa15", "failed_terminal", "2026-09-03T17:23:15.000Z"],
+        ["aaaaaaaa-aaaa-4aaa-8aaa-aaaaaaaaaa16", "failed_terminal", "2026-09-03T17:24:30.000Z"],
+        ["aaaaaaaa-aaaa-4aaa-8aaa-aaaaaaaaaa17", "failed_terminal", "2026-09-03T17:52:30.000Z"],
+        ["aaaaaaaa-aaaa-4aaa-8aaa-aaaaaaaaaa18", "failed_terminal", "2026-09-03T18:36:28.000Z"],
+        ["aaaaaaaa-aaaa-4aaa-8aaa-aaaaaaaaaa19", "failed_terminal", "2026-09-03T18:37:12.000Z"],
+        ["aaaaaaaa-aaaa-4aaa-8aaa-aaaaaaaaaa20", "failed_terminal", "2026-09-03T18:37:35.000Z"],
+        ["aaaaaaaa-aaaa-4aaa-8aaa-aaaaaaaaaa21", "observed", "2026-09-03T18:38:24.000Z"],
+        ["aaaaaaaa-aaaa-4aaa-8aaa-aaaaaaaaaa22", "failed_terminal", "2026-09-03T18:44:31.000Z"],
+        ["aaaaaaaa-aaaa-4aaa-8aaa-aaaaaaaaaa23", "observed", "2026-09-03T18:45:38.000Z"],
+      ];
+      for (const event of incident) await ack(...event);
+      /* Reaching `ready` again (a restartable blip, canary passed) must NOT clear
+         the run. The permission canary is its own prompt: a provider can answer
+         it and fail every real message, so `ready` is not provider proof. Without
+         this pin, restoring `consecutiveAckFailureCount: 0` on `ready` leaves
+         every other assertion in this file green. */
+      onEvent({
+        type: "ready",
+        workspaceId: WORKSPACE_ID,
+        principalId: PRINCIPAL_ID,
+        ts: "2026-09-03T18:46:00.000Z",
+      });
+      const afterReady = await queryListenerControl(paths, "status");
+      assert.equal(afterReady.consecutiveAckFailureCount, 8);
+      assert.equal(afterReady.lastAckOutcome, "observed");
+      const afterReadyHuman = renderListenerStatus(afterReady);
+      assert.doesNotMatch(afterReadyHuman, /HANDLED: yes/);
+      /* A negative alone passes if the line vanishes; pin the positive too. */
+      assert.match(afterReadyHuman, /HANDLED: no\. 8 deliveries have failed since the last reply/);
+      await ack("aaaaaaaa-aaaa-4aaa-8aaa-aaaaaaaaaa24", "queued", "2026-09-03T18:46:00.000Z");
+      await ack("aaaaaaaa-aaaa-4aaa-8aaa-aaaaaaaaaa25", "expired", "2026-09-03T18:46:30.000Z");
+      await ack("aaaaaaaa-aaaa-4aaa-8aaa-aaaaaaaaaa26", "replied", "2026-09-03T18:47:00.000Z");
       onEvent({
         type: "main_queue",
         signalId: "aaaaaaaa-aaaa-4aaa-8aaa-aaaaaaaaaa13",
         pendingCount: 200,
         droppedOldest: true,
         droppedCount: 7,
-        ts,
-      });
-      onEvent({
-        type: "delivery_ack",
-        signalId: "aaaaaaaa-aaaa-4aaa-8aaa-aaaaaaaaaa13",
-        outcome: "replied",
         ts,
       });
       return { reason: "cancelled" };
@@ -800,7 +855,69 @@ test("delivery events reduce into the closed supervisor status fields", async ()
   assert.equal(status.lastTerminalDeliveryFailureCount, 1);
   assert.equal(status.lastTerminalDeliveryFailureAt, ts);
   assert.equal(status.lastClaimAt, ts);
-  assert.equal(status.lastAckAt, ts);
+  assert.equal(status.lastAckAt, "2026-09-03T18:47:00.000Z");
+  assert.equal(status.lastAckOutcome, "replied");
+  assert.equal(status.consecutiveAckFailureCount, 0);
+  assert.deepEqual(
+    ackSnapshots.map(({ outcome, failures }) => ({ outcome, failures })),
+    [
+      { outcome: "failed_terminal", failures: 1 },
+      { outcome: "observed", failures: 1 },
+      { outcome: "failed_terminal", failures: 2 },
+      { outcome: "failed_terminal", failures: 3 },
+      { outcome: "failed_terminal", failures: 4 },
+      { outcome: "failed_terminal", failures: 5 },
+      { outcome: "failed_terminal", failures: 6 },
+      { outcome: "failed_terminal", failures: 7 },
+      { outcome: "observed", failures: 7 },
+      { outcome: "failed_terminal", failures: 8 },
+      { outcome: "observed", failures: 8 },
+      { outcome: "queued", failures: 8 },
+      { outcome: "expired", failures: 8 },
+      { outcome: "replied", failures: 0 },
+    ],
+  );
+  const belowThreshold = ackSnapshots[2]!;
+  assert.doesNotMatch(belowThreshold.human, /listener_delivery_failing/);
+  assert.equal(belowThreshold.json.listenerLapse, false);
+  const atThreshold = ackSnapshots[3]!;
+  assert.match(atThreshold.human, /Listener LAPSE/);
+  assert.match(atThreshold.human, /WARNING \[listener_delivery_failing\]/);
+  assert.deepEqual(atThreshold.json.listenerLapseCodes, [
+    "listener_delivery_failing",
+  ]);
+  const afterMeasuredIncident = ackSnapshots[10]!;
+  assert.match(afterMeasuredIncident.human, /^Listener LAPSE/);
+  assert.match(afterMeasuredIncident.human, /WARNING \[listener_delivery_failing\]/);
+  /* The 18:47 state of the measured 2026-09-03 incident: the newest ack is the
+     18:45:38 `observed` note. Observing a note starts no provider session, so it
+     must NOT read as handled while the terminal-failure run stands. This assertion
+     replaces one that required `HANDLED: yes` here — a green control pinning the
+     exact false claim the lane exists to remove. */
+  assert.doesNotMatch(afterMeasuredIncident.human, /HANDLED: yes/);
+  assert.match(
+    afterMeasuredIncident.human,
+    /HANDLED: no\. 8 deliveries have failed since the last reply; the newest delivery acknowledgement was observed\./,
+  );
+  assert.equal(afterMeasuredIncident.json.handledState, "not_handled");
+  assert.equal(afterMeasuredIncident.json.lastAckOutcome, "observed");
+  assert.equal(afterMeasuredIncident.json.consecutiveAckFailureCount, 8);
+  /* An observed note must not be renamed a failed delivery, and must not be
+     called handled while the run stands. Both halves are pinned: without the
+     second, restoring `Last handled signal:` here would still pass. */
+  assert.doesNotMatch(afterMeasuredIncident.human, /Last failed delivery signal/);
+  assert.doesNotMatch(afterMeasuredIncident.human, /Last handled signal/);
+  assert.match(
+    afterMeasuredIncident.human,
+    /Last acknowledged signal: [0-9a-f-]+\. Its outcome was observed\./,
+  );
+  assert.equal(afterMeasuredIncident.json.listenerLapse, true);
+  assert.deepEqual(afterMeasuredIncident.json.listenerLapseCodes, [
+    "listener_delivery_failing",
+  ]);
+  const afterReply = ackSnapshots.at(-1)!;
+  assert.doesNotMatch(afterReply.human, /listener_delivery_failing/);
+  assert.equal(afterReply.json.listenerLapse, false);
   assert.equal(status.lastSignalId, "aaaaaaaa-aaaa-4aaa-8aaa-aaaaaaaaaa13");
   assert.equal(status.pendingForMainCount, 200);
   assert.equal(status.droppedForMainCount, 7);
@@ -3481,4 +3598,232 @@ test("an already-aborted runtime caller never starts the reply fetch and stays r
   const record = await store.read(theAsk.id);
   assert.ok(record);
   assert.equal(record.state, "reply_ready", "the effect must remain resumable");
+});
+
+test("a restart carries the failure run, so the printed remedy cannot erase the alarm", async () => {
+  /* The lapse notice tells the operator to stop and start the listener. Seeding a
+     fresh run on start made following that advice delete the evidence: the next
+     `observed` note then printed `HANDLED: yes` on a provider that was still dead
+     -- the 17:12:52 state of the measured 2026-09-03 incident, reached by doing
+     exactly what the notice said. Operator-read state is durable by default. */
+  const root = await mkdtemp(join(tmpdir(), "cswarm-restart-carry-"));
+  const paths = listenerPaths({
+    profileId: `profile-${randomUUID()}`,
+    workspaceId: WORKSPACE_ID,
+    principalId: PRINCIPAL_ID,
+    stateDirectory: root,
+  });
+  const ts = "2026-09-03T18:00:00.000Z";
+  const runOnce = async (
+    body: (
+      onEvent: (event: ListenerRuntimeEvent) => void,
+    ) => Promise<void>,
+  ) =>
+    await runListenerSupervisor({
+      paths,
+      profileId: "profile-test",
+      workspaceId: WORKSPACE_ID,
+      principalId: PRINCIPAL_ID,
+      run: async (_signal, onEvent) => {
+        onEvent({ type: "ready", workspaceId: WORKSPACE_ID, principalId: PRINCIPAL_ID, ts });
+        await body(onEvent);
+        return { reason: "cancelled" };
+      },
+    });
+
+  const first = await runOnce(async (onEvent) => {
+    for (const [signalId, at] of [
+      ["aaaaaaaa-aaaa-4aaa-8aaa-aaaaaaaaab01", "2026-09-03T18:10:00.000Z"],
+      ["aaaaaaaa-aaaa-4aaa-8aaa-aaaaaaaaab02", "2026-09-03T18:11:00.000Z"],
+      ["aaaaaaaa-aaaa-4aaa-8aaa-aaaaaaaaab03", "2026-09-03T18:12:00.000Z"],
+    ] as const) {
+      onEvent({ type: "delivery_ack", signalId, outcome: "failed_terminal", ts: at });
+    }
+  });
+  assert.equal(first.consecutiveAckFailureCount, 3);
+  assert.match(renderListenerStatus(first), /WARNING \[listener_delivery_failing\]/);
+
+  /* The restart the notice recommends, observed BEFORE any new ack. A later ack
+     would set these fields itself, so asserting them after one would not reach
+     the carry at all -- measured: dropping lastAckAt from the carry left that
+     version of this test green. */
+  const restarted = await runOnce(async () => {});
+  assert.equal(restarted.consecutiveAckFailureCount, 3);
+  assert.equal(restarted.lastAckOutcome, "failed_terminal");
+  assert.equal(restarted.lastAckAt, "2026-09-03T18:12:00.000Z");
+  assert.equal(restarted.lastSignalId, "aaaaaaaa-aaaa-4aaa-8aaa-aaaaaaaaab03");
+  const restartedHuman = renderListenerStatus(restarted);
+  assert.doesNotMatch(restartedHuman, /at an unknown time/);
+  assert.doesNotMatch(restartedHuman, /No signal has been handled yet/);
+
+  /* Then one incoming note. */
+  const second = await runOnce(async (onEvent) => {
+    onEvent({
+      type: "delivery_ack",
+      signalId: "aaaaaaaa-aaaa-4aaa-8aaa-aaaaaaaaab04",
+      outcome: "observed",
+      ts: "2026-09-03T18:20:00.000Z",
+    });
+  });
+  assert.equal(second.lastAckOutcome, "observed");
+  assert.equal(second.consecutiveAckFailureCount, 3);
+  const human = renderListenerStatus(second);
+  assert.doesNotMatch(human, /HANDLED: yes/);
+  assert.match(human, /WARNING \[listener_delivery_failing\]/);
+  /* The ack record must carry WHOLE. Carrying the outcome without its timestamp
+     printed "the newest delivery acknowledgement was ..." above "No signal has
+     been handled yet." on one screen. */
+  assert.equal(second.lastAckAt, "2026-09-03T18:20:00.000Z");
+  assert.doesNotMatch(human, /at an unknown time/);
+  assert.doesNotMatch(human, /No signal has been handled yet/);
+  /* The remedy is three verbs and is untested elsewhere: `listen stop` returns
+     while `stopping`, and `listen start` refuses a stopping listener, so a
+     printed `stop && start` pair races. It must also not name a terminal state
+     the listener may never reach -- an unclean exit lands on `failed`. */
+  assert.match(human, /Next: Read the failure codes in /);
+  assert.match(human, /cswarm listen stop --workspace-id [0-9a-f-]+ --principal-id [0-9a-f-]+/);
+  assert.match(human, /no longer running -- state stopped or failed, not stopping/);
+  assert.match(human, /confirming with: cswarm listen status --workspace-id /);
+  assert.doesNotMatch(human, /listen stop[^\n]*&&[^\n]*listen start/);
+
+  /* A real reply still clears it across the same restart boundary. */
+  const third = await runOnce(async (onEvent) => {
+    onEvent({
+      type: "delivery_ack",
+      signalId: "aaaaaaaa-aaaa-4aaa-8aaa-aaaaaaaaab05",
+      outcome: "replied",
+      ts: "2026-09-03T18:30:00.000Z",
+    });
+  });
+  assert.equal(third.consecutiveAckFailureCount, 0);
+  assert.doesNotMatch(renderListenerStatus(third), /listener_delivery_failing/);
+  await rm(root, { recursive: true, force: true });
+});
+
+test("the outcome sentence names the acknowledged signal, not a newer effect", async () => {
+  /* lastSignalId is advanced by `effect` before the ack for that signal lands, so
+     for the whole prompt window the status held an older ack's outcome beside a
+     newer signal id, and printed "Last failed delivery signal: <the newer one>".
+     Found by a Gemini arm on 3b245ed. */
+  const root = await mkdtemp(join(tmpdir(), "cswarm-ack-signal-"));
+  const paths = listenerPaths({
+    profileId: `profile-${randomUUID()}`,
+    workspaceId: WORKSPACE_ID,
+    principalId: PRINCIPAL_ID,
+    stateDirectory: root,
+  });
+  const ts = "2026-09-04T10:00:00.000Z";
+  const A = "aaaaaaaa-aaaa-4aaa-8aaa-aaaaaaaaac01";
+  const B = "aaaaaaaa-aaaa-4aaa-8aaa-aaaaaaaaac02";
+  let midWindow: ListenerStatus | undefined;
+  const status = await runListenerSupervisor({
+    paths,
+    profileId: "profile-test",
+    workspaceId: WORKSPACE_ID,
+    principalId: PRINCIPAL_ID,
+    run: async (_signal, onEvent) => {
+      onEvent({ type: "ready", workspaceId: WORKSPACE_ID, principalId: PRINCIPAL_ID, ts });
+      onEvent({ type: "delivery_ack", signalId: A, outcome: "failed_terminal", ts: "2026-09-04T10:01:00.000Z" });
+      /* B's effect runs before B's ack: the window the sentence used to lie in. */
+      onEvent({
+        type: "effect",
+        signalId: B,
+        status: "done",
+        failureCode: null,
+        ts: "2026-09-04T10:02:00.000Z",
+      });
+      midWindow = await queryListenerControl(paths, "status");
+      return { reason: "cancelled" };
+    },
+  });
+  assert.ok(midWindow);
+  assert.equal(midWindow.lastSignalId, B);
+  assert.equal(midWindow.lastAckSignalId, A);
+  assert.equal(midWindow.lastAckOutcome, "failed_terminal");
+  const human = renderListenerStatus(midWindow);
+  assert.match(human, new RegExp(`Last failed delivery signal: ${A}\\.`));
+  assert.doesNotMatch(human, new RegExp(`Last failed delivery signal: ${B}`));
+  /* A restart carries the ack's own signal id with the rest of the ack record. */
+  assert.equal(status.lastAckSignalId, A);
+  const carried = await runListenerSupervisor({
+    paths,
+    profileId: "profile-test",
+    workspaceId: WORKSPACE_ID,
+    principalId: PRINCIPAL_ID,
+    run: async () => ({ reason: "cancelled" }),
+  });
+  assert.equal(carried.lastAckSignalId, A);
+  assert.match(renderListenerStatus(carried), new RegExp(`Last failed delivery signal: ${A}\\.`));
+  await rm(root, { recursive: true, force: true });
+});
+
+test("a status written before lastAckOutcome existed is not called unacknowledged", async () => {
+  /* Every fleet listener at the 0.1.51 upgrade has lastAckAt and lastSignalId
+     from 0.1.50 and no lastAckOutcome. Restarting it carries the timestamp and
+     not the outcome, and a new CLI reading a still-running 0.1.50 listener sees
+     the same shape live. Both DID acknowledge something. Found by a Grok arm on
+     4992dd8. */
+  const root = await mkdtemp(join(tmpdir(), "cswarm-legacy-ack-"));
+  const paths = listenerPaths({
+    profileId: `profile-${randomUUID()}`,
+    workspaceId: WORKSPACE_ID,
+    principalId: PRINCIPAL_ID,
+    stateDirectory: root,
+  });
+  const ackedAt = "2026-09-02T22:00:00.000Z";
+  const signal = "aaaaaaaa-aaaa-4aaa-8aaa-aaaaaaaaad01";
+  /* A 0.1.50-shaped file: the shape the repo's own legacy-read test uses, plus
+     the six delivery keys that version wrote, and none of the new ones. */
+  const legacy = {
+    version: 1,
+    instanceId: randomUUID(),
+    provider: "claude",
+    profileId: "profile-test",
+    workspaceId: WORKSPACE_ID,
+    principalId: PRINCIPAL_ID,
+    pid: 4242,
+    state: "stopped",
+    startedAt: "2026-09-02T21:00:00.000Z",
+    readyAt: "2026-09-02T21:00:05.000Z",
+    updatedAt: ackedAt,
+    stoppedAt: "2026-09-02T23:00:00.000Z",
+    lastSignalId: signal,
+    lastErrorCode: null,
+    lastErrorDetail: null,
+    lastWorkerStderrTail: null,
+    logPath: paths.logPath,
+    deliveryMode: "durable_claim",
+    pendingDeliveryCount: null,
+    lastTerminalDeliveryFailureCount: null,
+    lastTerminalDeliveryFailureAt: null,
+    lastClaimAt: ackedAt,
+    lastAckAt: ackedAt,
+    routeMode: "worker",
+  };
+  await writeSecureJsonFile(paths.statusPath, JSON.stringify(legacy));
+
+  /* The new CLI reading the old file, no restart. */
+  const asRead = await readListenerStatus(paths);
+  assert.ok(asRead);
+  assert.equal(asRead.lastAckAt, ackedAt);
+  assert.equal(asRead.lastAckOutcome, null);
+  const readHuman = renderListenerStatus(asRead);
+  assert.doesNotMatch(readHuman, /No delivery acknowledgement is recorded/);
+  assert.match(readHuman, new RegExp(`An acknowledgement was recorded at ${ackedAt}; its outcome was not recorded\\.`));
+  assert.match(readHuman, /HANDLED: not yet measured/);
+
+  /* The restart the upgrade implies: the carry brings lastAckAt, not an outcome. */
+  const restarted = await runListenerSupervisor({
+    paths,
+    profileId: "profile-test",
+    workspaceId: WORKSPACE_ID,
+    principalId: PRINCIPAL_ID,
+    run: async () => ({ reason: "cancelled" }),
+  });
+  assert.equal(restarted.lastAckAt, ackedAt);
+  assert.equal(restarted.lastAckOutcome, null);
+  const restartedHuman = renderListenerStatus(restarted);
+  assert.doesNotMatch(restartedHuman, /No delivery acknowledgement is recorded/);
+  assert.match(restartedHuman, /its outcome was not recorded\./);
+  await rm(root, { recursive: true, force: true });
 });

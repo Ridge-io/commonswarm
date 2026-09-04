@@ -74,6 +74,8 @@ function listenerStatus(logPath: string): ListenerStatus {
     lastTerminalDeliveryFailureAt: null,
     lastClaimAt: null,
     lastAckAt: null,
+    lastAckOutcome: null,
+    consecutiveAckFailureCount: null,
     routeMode: "main",
     deferOverChars: null,
     pendingForMainCount: 0,

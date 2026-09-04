@@ -18,6 +18,7 @@ import { cloudTarget } from "../../src/cloud/config.js";
 import {
   listenerPaths,
   runListenerSupervisor,
+  STATUS_DELIVERY_KEYS,
   type ListenerRuntimeEvent,
   type ListenerStatus,
 } from "../../src/listener/index.js";
@@ -1241,7 +1242,7 @@ test("describeMintRenewal states process and local-state conditions, not uncondi
   assert.match(noExpiry, /does not renew itself/);
 });
 
-test("legacy listener status JSON normalizes exactly six delivery fields to null", () => {
+test("legacy listener status JSON normalizes all delivery fields to null", () => {
   const status = {
     version: 1,
     instanceId: randomUUID(),
@@ -1261,17 +1262,9 @@ test("legacy listener status JSON normalizes exactly six delivery fields to null
   } as unknown as ListenerStatus;
 
   const json = listenerStatusJson(status);
-  const deliveryFields = [
-    "deliveryMode",
-    "pendingDeliveryCount",
-    "lastTerminalDeliveryFailureCount",
-    "lastTerminalDeliveryFailureAt",
-    "lastClaimAt",
-    "lastAckAt",
-  ];
   assert.deepEqual(
-    Object.fromEntries(deliveryFields.map((field) => [field, json[field]])),
-    Object.fromEntries(deliveryFields.map((field) => [field, null])),
+    Object.fromEntries(STATUS_DELIVERY_KEYS.map((field) => [field, json[field]])),
+    Object.fromEntries(STATUS_DELIVERY_KEYS.map((field) => [field, null])),
   );
   assert.equal(Object.hasOwn(json, "delivery_mode"), false);
   assert.equal(Object.hasOwn(json, "pending_delivery_count"), false);

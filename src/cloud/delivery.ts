@@ -20,13 +20,34 @@ const SENDER_OWNER_RELATIONS = new Set<SenderOwnerRelation>([
   "cross_owner",
   "unknown",
 ]);
-const DELIVERY_ACK_OUTCOMES = new Set<DeliveryOutcome>([
+/** Outcomes accepted by the delivery acknowledgement endpoint. */
+export const DELIVERY_ACK_OUTCOMES: ReadonlySet<DeliveryOutcome> = new Set([
   "replied",
   "observed",
   "queued",
   "expired",
   "failed_terminal",
 ]);
+
+/** Ack outcomes that prove this delivery was dealt with. */
+export const DELIVERY_HANDLED_OUTCOMES: ReadonlySet<DeliveryOutcome> = new Set(
+  [...DELIVERY_ACK_OUTCOMES].filter((outcome) =>
+    outcome === "replied" || outcome === "observed"
+  ),
+);
+
+/** Ack outcomes that prove the provider produced a response. */
+export const DELIVERY_PROVIDER_PROVEN_OUTCOMES: ReadonlySet<DeliveryOutcome> =
+  new Set(
+    [...DELIVERY_ACK_OUTCOMES].filter((outcome) => outcome === "replied"),
+  );
+
+/** Render a set as "a, b, or c" so a generated enumeration still reads as English. */
+function orList(values: readonly string[]): string {
+  return values.length <= 1
+    ? values.join("")
+    : `${values.slice(0, -1).join(", ")}, or ${values[values.length - 1]}`;
+}
 
 /** Per-request deadline covering fetch and the response body read. */
 export const DELIVERY_REQUEST_TIMEOUT_MS = 30_000;
@@ -544,7 +565,7 @@ function assertAckRequest(request: DeliveryAckRequest): void {
   checkedUuidRequest(request.listenerInstanceId, "listenerInstanceId");
   if (!DELIVERY_ACK_OUTCOMES.has(request.outcome as DeliveryOutcome)) {
     throw new Error(
-      "a delivery outcome must be replied, observed, queued, expired, or failed_terminal",
+      `a delivery outcome must be ${orList([...DELIVERY_ACK_OUTCOMES])}`,
     );
   }
   if (request.outcome === "failed_terminal") {
@@ -553,7 +574,9 @@ function assertAckRequest(request: DeliveryAckRequest): void {
       !FAILED_TERMINAL_CODES_SET.has(request.lastErrorCode)
     ) {
       throw new Error(
-        "a failed_terminal acknowledgement requires one of provider_refused, local_effect_failed, host_session_failed, credential_unavailable",
+        `a failed_terminal acknowledgement requires one of ${
+          orList([...FAILED_TERMINAL_CODES_SET])
+        }`,
       );
     }
   } else if (request.lastErrorCode !== null) {

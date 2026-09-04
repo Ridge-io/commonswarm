@@ -113,6 +113,8 @@ test("Grok canary guidance points to the local detail rendered by listen status"
     lastTerminalDeliveryFailureAt: null,
     lastClaimAt: null,
     lastAckAt: null,
+    lastAckOutcome: null,
+    consecutiveAckFailureCount: null,
     routeMode: "worker",
     deferOverChars: null,
     pendingForMainCount: 0,

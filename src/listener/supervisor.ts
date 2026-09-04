@@ -1,4 +1,5 @@
 import { randomUUID } from "node:crypto";
+import { DELIVERY_PROVIDER_PROVEN_OUTCOMES } from "../cloud/delivery.js";
 import { AcpPermissionCanaryError } from "../host/types.js";
 import {
   appendListenerEvent,
@@ -250,6 +251,12 @@ export async function runListenerSupervisor(
   const startedAt = iso(now);
   const controller = new AbortController();
   const proposedInstanceId = randomUUID();
+  /* The failure run is operator-read state, so a restart must not delete it. The
+     lapse notice tells the operator to stop and start; seeding nulls here made
+     following that advice erase the evidence, and the next `observed` note then
+     printed `HANDLED: yes` again on a provider that was still dead. Only a
+     `replied` ack clears the run. A missing or unreadable file carries nothing. */
+  const carried = await readListenerStatus(options.paths).catch(() => null);
   let status: ListenerStatus = {
     version: 1,
     instanceId: proposedInstanceId,
@@ -265,7 +272,7 @@ export async function runListenerSupervisor(
     readyAt: null,
     updatedAt: startedAt,
     stoppedAt: null,
-    lastSignalId: null,
+    lastSignalId: carried?.lastSignalId ?? null,
     lastErrorCode: null,
     lastErrorDetail: null,
     lastErrorReasonCode: null,
@@ -281,7 +288,14 @@ export async function runListenerSupervisor(
     lastTerminalDeliveryFailureCount: null,
     lastTerminalDeliveryFailureAt: null,
     lastClaimAt: null,
-    lastAckAt: null,
+    /* The ack record is carried WHOLE. Carrying the outcome and the run without
+       their timestamp and signal id rendered a screen whose own sentences
+       disagreed -- "the newest delivery acknowledgement was replied" above
+       "No signal has been handled yet." */
+    lastAckAt: carried?.lastAckAt ?? null,
+    lastAckOutcome: carried?.lastAckOutcome ?? null,
+    consecutiveAckFailureCount: carried?.consecutiveAckFailureCount ?? null,
+    lastAckSignalId: carried?.lastAckSignalId ?? null,
     routeMode: options.routeMode ?? "worker",
     deferOverChars: options.deferOverChars ?? null,
     pendingForMainCount: 0,
@@ -382,6 +396,17 @@ export async function runListenerSupervisor(
       const versionNotice = options.getProviderVersionNotice?.() ?? null;
       transition("ready", {
         readyAt: event.ts,
+        // Deliberately does NOT clear consecutiveAckFailureCount. Reaching
+        // `ready` is not provider proof: the permission canary is its own
+        // prompt, and a provider can answer it and fail every real one --
+        // tests/listener-cli-process.test.ts builds such a child, whose
+        // `failPrompts` trips only non-canary prompts (that test does not
+        // restart it, so it does not by itself exercise this path). Clearing
+        // the run here while `lastAckOutcome` still held a stale `observed`
+        // put `HANDLED: yes` back on the incident screen after any restartable
+        // blip. Only a `replied` ack clears the run; the pin is in
+        // tests/listener-runtime.test.ts, which fires `ready` after the
+        // measured incident and asserts the run survives it.
         lastErrorCode: null,
         lastErrorDetail: null,
         lastErrorReasonCode: null,
@@ -578,9 +603,18 @@ export async function runListenerSupervisor(
       return;
     }
     if (event.type === "delivery_ack") {
+      const failed = event.outcome === "failed_terminal";
+      const providerProven = DELIVERY_PROVIDER_PROVEN_OUTCOMES.has(event.outcome);
       status = {
         ...status,
         lastAckAt: event.ts,
+        lastAckOutcome: event.outcome,
+        lastAckSignalId: event.signalId,
+        consecutiveAckFailureCount: failed
+          ? (status.consecutiveAckFailureCount ?? 0) + 1
+          : providerProven
+          ? 0
+          : status.consecutiveAckFailureCount,
         pendingDeliveryCount: null,
         lastSignalId: event.signalId,
         updatedAt: event.ts,
