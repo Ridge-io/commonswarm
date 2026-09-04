@@ -1,0 +1,22 @@
+Adversarial design review. You have shell access. Work in this directory:
+/private/tmp/claude-501/-Users-yulanbot-Developer-Ridge-io-cloud-swarm/a866e6cd-5d6d-477f-af6a-740cd30407ed/scratchpad/spec-streams
+It is a git worktree of the CommonSwarm repo (Supabase Postgres + Deno edge functions + a `cswarm`
+CLI + an Astro web app) at SHA e3df06b.
+
+FIRST: read REVIEW.md in that directory. It contains your full instructions and the spec under
+review. The spec itself is docs/design/2026-09-04-streams-dms-threads.md (read the file on disk, it
+is newer than the copy embedded in REVIEW.md — prefer the file on disk).
+
+Do the three tasks REVIEW.md sets out:
+1. Verify every file:line citation in the spec. Open the files. Report every wrong one.
+2. Find the migration or RLS case that breaks (spec sections 4 and 5).
+3. Answer explicitly: "Would Phase 1 as written leave old clients working?" YES or NO, with
+   reasoning against src/cloud/signals.ts and site/src/components/app/LiveDashboard.astro.
+
+Be harsh and specific. Do not be agreeable. Cite file:line for everything.
+
+End your output with a literal line, on its own, exactly one of:
+VERDICT: PASS
+VERDICT: FAIL
+You MUST print a VERDICT line. FAIL if any citation is materially wrong, you found a real
+data-loss or leak case, or Phase 1 would break an old client.

@@ -1,0 +1,39 @@
+I have reviewed the spec against the codebase at `e3df06b` and completed the requested tasks.
+
+### Prose Findings
+- `site/src/components/app/LiveDashboard.astro`: Lines 248, 257, 344, and 2216 correctly contain the hardcoded `#all-signals` stream logic. Line 1748 correctly uses a strict `select` list without `in_reply_to`, and line 1750 correctly uses `.or(\`until.is.null,until.gt.${cutoff}\`)`. A `grep` for `reply\|thread` returns zero hits.
+- `docs/design/2026-08-03-SLACK-SHAPE-UI.md:11` correctly notes this is a direction, not a specification.
+- `supabase/migrations/20260724000003_signals.sql`: Lines 3-18 correctly create `swarm.signals`, with `:12` containing `until timestamptz NOT NULL` and `:15` checking `until <= created_at + interval '30 days'`. Lines 36-38 correctly create the `signals_append_only` trigger. Lines 32-34 correctly show the `swarm_command_all` table policy. Lines 43-59 define the initial view.
+- `supabase/functions/command/index.ts`: Line 512 sets `SIGNAL_MAX_UNTIL_MS` and lines 513-517 contain `SIGNAL_DEFAULT_UNTIL_MS`. Validation for undirected notes is at lines 1588-1595. The `exactKeys` check begins at line 1553, not 1560, making `:1560-1568` a bad citation. Re-addressing to the original sender is correctly at lines 5804-5827 (in the disk version). The `postSignal` function handles inserts at lines 5941-6016.
+- `supabase/migrations/20260730000002_agent_signal_receive.sql`: Lines 4-6 add the `to_agent_principal_id` and `in_reply_to` columns. Lines 25-27 contain `CONSTRAINT signals_one_recipient`. Lines 71-72 contain the one-hop comment. Lines 77-108 redefine the view.
+- `site/src/lib/commonswarm.ts`: Line 2007 hardcodes `in_reply_to: null`. Lines 1248-1260 define the `Signal` interface without `in_reply_to`. Lines 1551 and 1561 correctly note the broadcast rule. Lines 1293 and 1971 define `{ kind: "everyone" }`.
+- `supabase/migrations/20260731000001_signal_deliveries.sql:119-148` correctly defines the trigger that fans out only for directed agent signals.
+- `site/src/lib/mention-address.ts`: Lines 2-3 explain that the address is the message. Line 30 defines `MENTION_MAX_RECIPIENTS = 8`.
+- `src/cloud/signals.ts`: Line 890 sets the base URL for `/rest/v1/signals`. Lines 891-894 define the explicit select list. However, line 899 is incorrect; `url.searchParams.set("until", "gt.now")` is at line 898. Line 930 is also incorrect; `"accept-profile": "swarm_read"` is at line 928. Lines 317-325 correctly document forward compatibility.
+- `supabase/functions/read/index.ts`: Lines 323-326 return 401 for non-agents. Lines 609-617 contain the visibility predicate. Lines 215, 222-234, and 230 validate `exactKeys`.
+- `supabase/migrations/20260901000010_signal_attachments.sql`: Lines 122-133 contain the authoritative `WHERE` clause for `swarm_read.signals`. Line 135 shows it is owned by `swarm_admin`. Lines 33-35 and 98-119 handle signal attachments.
+- `src/protocol/`: `grep -rni "signal" src/protocol/` correctly returns zero hits.
+- `tests/receipt-wire-compat.test.ts:19-45` and `52-58` correctly test backward compatibility of receipts.
+- `supabase/migrations/20260902000001_broadcast_recipient_roster.sql`: Lines 58-64 explicitly document the migration apply order. Lines 105-110 admit any workspace member.
+- `supabase/migrations/20260820000002_archive_revokes_access.sql:4-21` defines `swarm.is_member`.
+- `supabase/migrations/20260902000004_signal_agent_receipts.sql:66-70` defines `signal_agent_receipts_live_member_select` admitting any workspace member.
+- `supabase/migrations/20260901000020_signal_human_receipts.sql:30-67` contains the human receipt policies.
+- `supabase/migrations/20260902000003_realtime_agent_activity.sql:4-18` defines the realtime messages policy.
+- All other claimed UI copy, README, test string citations, and SQL comments matched exactly.
+
+### CITATION ERRORS
+- `src/cloud/signals.ts:899` (The `until.gt.now` parameter is actually set at line 898).
+- `src/cloud/signals.ts:930` (The `"accept-profile": "swarm_read"` header is actually defined at line 928).
+- `supabase/functions/command/index.ts:1560-1568` (The `exactKeys` check begins at line 1553, not 1560).
+
+### BREAKING CASE
+**Phase 1 Migration breaks all signal posting.**
+The apply order is: migration → deploy read/command edge → publish client. In the Phase 1 migration sketch (§4.3), step 3 executes `ALTER TABLE swarm.signals ALTER COLUMN channel_id SET NOT NULL`. Because `channel_id` is made strictly required with no `DEFAULT` value at the database level, and the new command edge is not deployed yet, the OLD command edge (`supabase/functions/command/index.ts:5941`) continues running. The old `postSignal` function attempts to `INSERT INTO swarm.signals` without supplying a `channel_id`. This immediately throws a Postgres `not-null constraint` violation, causing an outage for all signal posting until the edge is deployed.
+
+*(Secondary RLS Data Leak)*: The Phase 3 RLS predicate (clause d) creates a severe privacy leak. It grants read access for a signal to any user who is explicitly in `channel_members` for that signal's `channel_id`. Because Phase 1 defaults all old client posts (including directed DMs) into the public `#all-signals` channel, any user who explicitly joins `#all-signals` will evaluate to `TRUE` for clause (d), gaining full visibility into ALL private directed signals posted by old clients to `#all-signals`.
+
+**Would Phase 1 as written leave old clients working?**
+NO. Old clients will break at the first step (the migration) when trying to post.
+While old client **reading** works perfectly because both `src/cloud/signals.ts:891-894` and `site/src/components/app/LiveDashboard.astro:1748` use explicit `select` lists that safely ignore the new columns, **posting** breaks completely. The migration sets `channel_id` to `NOT NULL`, but during the deploy window, the old `command` edge is still handling requests. When an old client submits a post, it hits the old edge, which omits `channel_id` in its `INSERT`, crashing with a Postgres constraint violation.
+
+VERDICT: FAIL

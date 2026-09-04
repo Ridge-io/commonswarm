@@ -1,0 +1,185 @@
+I'll start by reading REVIEW.md and the on-disk spec, then verify every citation against the code.I'll join the swarm, finish the spec, then check every citation against the files on disk.HEAD is not `e3df06b`. I'll join, extract every citation, and check each one against the files.Code is at `e3df06b`; the spec is the only extra commit. I'll resolve every citation against that tree.Location checks are in. Next I’ll test whether those lines actually support the claims, and whether the migration/RLS sketch holds.I have the apply-order break and the RLS leak. Checking one INSERT path, then I'll write the verdict.Checked against the on-disk spec at `docs/design/2026-09-04-streams-dms-threads.md` and the code at `e3df06b`. HEAD is `c252da5` (spec commit only). Citations below are to `e3df06b` unless noted.
+
+---
+
+## Findings
+
+**Phase 1 as written breaks posting.** Not the parser. The insert.
+
+`postSignal` writes a fixed column list and does not name `channel_id`:
+
+```5966:5969:supabase/functions/command/index.ts
+    INSERT INTO swarm.signals (
+      id, workspace_id, from_principal, from_kind,
+      to_user_id, to_agent_principal_id, in_reply_to,
+      about, kind, body, until, created_at
+```
+
+§4.3 then does `ALTER TABLE swarm.signals ALTER COLUMN channel_id SET NOT NULL` with no `DEFAULT` and no `BEFORE INSERT` trigger. Postgres will reject every omit of that column.
+
+Apply order is the spec’s own rule (`20260902000001_broadcast_recipient_roster.sql:58-64`): migration commits, then the edge deploys. After the migration commit, the live edge is still this INSERT. Every `post_signal` fails until a new edge ships. Edge-first is also unsafe: a new INSERT that names `channel_id` dies if the column does not exist yet. There is no safe apply order for “NOT NULL, no default, no trigger.”
+
+§9’s “yes, old clients work” never looks at this INSERT. It only looks at the read parser.
+
+**Reads would survive.** That part of §9 is true.
+
+- CLI: `src/cloud/signals.ts:891-894` names columns. A new view column is not returned. `parseSignalRecord` (`:317-325`, implemented `:361-383`) ignores unknown keys. `until` is required (`checkedTimestamp` at `:250-254` and `:380`).
+- Browser: `LiveDashboard.astro:1746-1750` uses `schema("swarm_read")`, table `signals`, an explicit select with no `in_reply_to`, and `.or(\`until.is.null,until.gt.${cutoff}\`)`. Extra view columns are not requested.
+- Agent `read` `exactKeys` (`read/index.ts:222-234`) rejects unknown *request* keys. An old body without `channel_id` still matches.
+
+So: old **reads** keep working. Old **writes** die in the migration→edge window. After a new edge that fills `channel_id`, writes work again. Phase 1 as written still ships a committed shape the live edge cannot write.
+
+**§4.2 `until` CHECK does not do what it says.** After §4.3 every row has `channel_id`. Then
+
+```
+until <= created_at + 30 days
+OR (channel_id IS NOT NULL AND until <= created_at + 100 years)
+```
+
+is `until <= created_at + 100 years` for every row. The 30-day rule is dead at the table. `SIGNAL_MAX_UNTIL_MS` at `command/index.ts:512` is the only remaining ceiling, and it is not a constraint. “Keeps 30 days for everything that has it today” is false once backfill runs.
+
+**§5 clause (d) leaks directed mail.** (d) is “I am in the channel → I see every signal in it,” with no undirected test. Phase 3 adds (d). Old clients never send `channel_id`. `resolveSignalChannel` defaults them onto the workspace default channel. `cswarm ask --to alice` therefore keeps landing in public `#all-signals` as a directed row.
+
+If anyone is a live `channel_members` row on that channel, (d) shows them Alice’s private ask. The spec’s Phase 3 claim that visibility “is already decided by clauses (b) and (c), which do not change” (`§9`) is false the moment (d) exists. Auto-join to the default channel makes it workspace-wide.
+
+The predicate that does not leak: membership only widens **undirected** rows.
+
+```
+undirected AND (visibility = 'workspace' OR I am a member)
+OR to_user_id = me
+OR to an agent I own
+```
+
+Do not add “member sees every row in the channel.”
+
+**New tables have no RLS, REVOKE, or GRANT.** §4.1 is `CREATE TABLE` plus indexes. House style is owner + `ENABLE ROW LEVEL SECURITY` + `REVOKE ALL` + grant `swarm_command` only (`20260724000003_signals.sql:29-41`). An implementer who types the sketch can leave `swarm.channels` and `swarm.channel_members` selectable. `dm_key` is the participant set. §8 rule 2 refuses to put that set in a URL, then stores it on a table with no policy.
+
+**`in_reply_to` is not a thread. §7 is right.** Validation (`command/index.ts:1588-1595`) allows `in_reply_to` only on an undirected `note`. `resolveSignalWriteTarget` loads the parent (`:5768-5787`), requires the caller was addressed (`:5789-5802`), and re-addresses to the original author (`:5804-5827`). `cswarm reply` is a private answer. Reusing the column for a channel-visible thread is a privacy change, not a rename.
+
+**§1.7 protocol grep is right.** `grep -rni signal src/protocol/` is 0 hits across 10 files. Positive control: `post_signal` at `src/cli.ts:2896`, `:3114`, `src/listener/runtime.ts:773`, `src/cloud/command-client.ts:136`, `src/cloud/seed.ts:15`.
+
+**§1.4 broadcast fan-out is right.** Trigger body `20260731000001_signal_deliveries.sql:126-137` inserts only when `to_agent_principal_id IS NOT NULL AND kind IN ('ask','note')`. No later migration replaces it.
+
+**§1.6 live view is right.** Three `CREATE VIEW swarm_read.signals`. Newest is `20260901000010_signal_attachments.sql:81-133`. WHERE is `:122-133`. Owner is `:135`. `security_barrier` is `:82`, not `:135`.
+
+**privacy.astro:121 is not “right.”** Spec §11.1 says the RLS settles it and `:121` is correct. `:121` says a directed signal is visible to the addressee **and its sender**. The view (`20260901000010:122-133`) has no `from_principal = auth.uid()` branch. Sender re-read is refused. `P3-1-SIGNALS-BRIEF.md:323-324` says that refusal is intended. The spec picked the wrong sentence as the true one.
+
+**§12.2 is establishable, and it is false.** You do not need production data. Default-channel writes + clause (d) is enough. See above.
+
+**§12.1 and §12.6 stay unestablished.** Row count and live `ukezjcnxjvkpkeezxaew` schema are not in this repo.
+
+**Phase order is fine.** Channels first, threads second, DMs as the first RLS change, private channels last. Do not start with DMs: they need `channel_id`. Do not start with private channels. The thing to change in Phase 1 is the `NOT NULL` and the missing fill trigger, not the order.
+
+---
+
+## Would Phase 1 as written leave old clients working?
+
+**NO.**
+
+Walk of apply order (`20260902000001:58-64`):
+
+1. **Migration commits** (`§4.1` + `§4.2` + `§4.3` in one file, one transaction). `channel_id` is `NOT NULL`, no default. Trigger is back on. This is the shape clients see.
+2. **Live command edge still runs `command/index.ts:5966-5969`.** It does not write `channel_id`. Every post from the installed CLI, the browser, and agent listeners fails with a not-null error. No client change can save it. The failure is the server INSERT.
+3. **`read` / `command` edge deploy.** If the new edge fills `channel_id`, posts work again. Old CLI bodies omit the field; `exactKeys` can stay compatible if `channel_id` is optional like `until_ms` (`:1535-1540`).
+4. **Publish client / site.** Read path was already compatible: CLI select `signals.ts:891-894` + ignore-unknown `:317-325`; browser select `LiveDashboard.astro:1748`.
+
+§9’s “row set is byte-identical” is also false as soon as a second public channel has posts. Old clients have no channel filter (`signals.ts:890-898`, `LiveDashboard.astro:1746-1750`). They will mix `#eng` into the one feed. That does not crash the parser. It is not byte-identical.
+
+`until=gt.now` at `signals.ts:898` is real. A NULL `until` would vanish from the CLI with no error. Phase 1 does not make `until` nullable. That trap is not the Phase 1 break. The `NOT NULL` column with no default is.
+
+---
+
+## CITATION ERRORS
+
+Material:
+
+| Citation | What is there | Why it is wrong |
+|---|---|---|
+| `command/index.ts:5804-5827` | Only the return of `{ toUserId: reference.from_principal }` | Claim: “loads the referenced signal, checks the caller was addressed.” Load is `:5768-5787`. Addressed check is `:5789-5802`. Range does not support the load-bearing half of §1.3. |
+| `20260731000001_signal_deliveries.sql:38-74` “15 CHECK constraints” | 13 `CHECK`s | Count is wrong. Two FKs sit just above (`:34-37`). If those were counted, they are not CHECKs. |
+| `2026-09-03-multi-recipient-signals.md:15-16` as “the current defect” for hiding thread replies | “Two agents means two rows in the feed and two separate reply threads.” | That is multi-recipient fan-out. It is not `broadcast_to_channel = false` hiding thread replies. Wrong claim. |
+| `20260902000003_realtime_agent_activity.sql:4-18` | File has **17** lines. Policy is `:4-17`. | Line 18 does not exist. |
+| `src/cloud/signals.ts:930` for `"accept-profile": "swarm_read"` | Header is `:928`. `:930` is the `signal` spread. | Wrong line. |
+| `LiveDashboard.astro:1747-1750` “schema `swarm_read`” | `.schema("swarm_read")` is `:1746`. `:1747` is `.from("signals")`. | Schema line is not in the range. |
+| `LiveDashboard.astro:657-660` as the comment `THE ADDRESS IS THE MESSAGE (operator direction 2026-09-04)` | `:657-660` is a different comment (“No TO row… The address is the message”). Exact phrase is `:2181`. | Wrong text at that line. |
+| `privacy.astro:121` “is right” because RLS includes the sender | View has no sender branch (`20260901000010:122-133`). | Line exists. The claim about it is false. |
+
+Disclosed, still unresolved at the spec’s SHA:
+
+- `docs/research/2026-09-01-streaming-into-the-web-ui.md:50` and `:196` — file is **absent** at `e3df06b`. Spec says so. At `6e43370` both lines match. `6e43370` is **not** an ancestor of `e3df06b`.
+
+Off-by-small, claim still true:
+
+- `read/index.ts:609-617` — visibility predicate is `:610-613`; `:614-617` is the inbox clause.
+- `command/index.ts:5941-6016` — function starts `:5941`; INSERT is `:5966-5988`; return ends `:6018`.
+- `src/cli.ts:3666` — the Inbox/Feed ternary is `:3666`; the full sentence spans `:3664-3668`.
+- `20260902000001:105-110` as the live human receipts gate — that function was renamed in `20260902000002` to `signal_delivery_receipts_without_main_queue_count`. Body still has the `is_member` gate. Spec does say it was replaced.
+
+Checked and **correct** on the load-bearing claims: dashboard stream labels `:248/:257/:344/:2216`; `in_reply_to` restriction `:1588-1595`; re-address return `:5804-5827` (return only); delivery trigger `:119-148`; `until=gt.now` `:898`; view WHERE `:122-133`; protocol zero hits; `SIGNAL_MAX_UNTIL_MS` `:512`; defaults `:513-517`; `parseCommand` `:1524-1639`; `receipt-wire-compat` `:19-45` and throw `:54-58`; `package.json:16` and `:19`; `AGENTS.md:112` (three entrypoints, already false vs four in `package.json:19`).
+
+---
+
+## BREAKING CASE
+
+**Phase 1 migration commits `channel_id NOT NULL` with no default. The live INSERT at `command/index.ts:5966-5969` does not name that column. Every post fails until a new command edge is deployed.**
+
+There is no apply order that makes that shape safe. A fill trigger (or a nullable column until the edge is live) has to be in the same migration. Spec §1.8 forbids delegating compatibility to the next file, then does exactly that.
+
+Second case, for §5 (Phase 3, not Phase 1): clause (d) plus default-channel directed posts. A workspace member who joined `#all-signals` can read directed asks that old clients still write into that channel. That is a private-message leak.
+
+VERDICT: FAIL
+ “THE ADDRESS IS THE MESSAGE”: operator question. Cannot establish.
+6. Live schema vs migrations: cannot establish from the repo. Correct.
+
+---
+
+**Five-phase order.**
+
+Channels first as **identity** is right. Channels first as **this SQL** is not.
+
+A first phase that actually leaves old clients working:
+
+- `channel_id` **nullable**, no `SET NOT NULL`.
+- `BEFORE INSERT` trigger (or a column default plus a trigger) that fills the workspace default channel when the writer omits it. That is what makes the old insert at `:5966` survive.
+- Recreate `swarm_read.signals` with `security_barrier` still set, adding `channel_id` at the **end**.
+- Do **not** change the `until` check.
+- Do **not** add `thread_root_id` / `broadcast_to_channel` yet. Those are Phase 2.
+
+Then deploy the edge that writes `channel_id`. Then a **second** migration to backfill leftovers and `SET NOT NULL`, if you still want it. Two files. The “one shape per file” rule they cite is why you cannot do NOT NULL and old writers in one shot.
+
+Putting DMs (first RLS change) after a public-channel soak is right. Putting threads before DMs is fine. Do not put `SET NOT NULL` and the 100-year `until` in the same file as “old clients cannot break”.
+
+---
+
+## CITATION ERRORS
+
+Lines that do not exist, or that do not support the claim:
+
+1. `supabase/migrations/20260902000003_realtime_agent_activity.sql:4-18` — file has **17** lines. Policy is `:4-17`.
+2. `supabase/functions/command/index.ts:5737` — not `resolveSignalWriteTarget`. That function starts at `:5740`. `:5737` is `return rows[0] !== undefined;` of `signalAgentOwnedByUser`.
+3. `supabase/functions/command/index.ts:1560-1568` — claimed as the `exactKeys` check. `exactKeys` is `:1553-1562`. `:1560-1568` is the `valid &&` type checks.
+4. `site/src/pages/app.astro:10` — blank. Title `"CommonSwarm — your shared agent feed"` is `:11`.
+5. `site/src/lib/commonswarm.ts:1971` — claimed as the `{ kind: "everyone" }` union. Union is `:1292-1295`. `:1971` is `if (recipient.kind === "everyone")`.
+6. `20260731000001_signal_deliveries.sql:38-74` “is 15 CHECK constraints” — **13** `CHECK`s.
+7. `site/src/pages/privacy.astro:121` “is right” because `20260901000010:121-133` filters `to_user_id = auth.uid()` — cited view has no sender clause. `:121` (“and to its sender”) is already false. `src/cloud/signals.ts:1641` and `P3-1-SIGNALS-BRIEF.md:323-324` say the opposite.
+8. `docs/design/2026-09-03-multi-recipient-signals.md:15-16` as the current defect that old clients will not see thread replies — those lines are two fan-out rows / two reply threads, not a `broadcast_to_channel` filter.
+9. `src/cli.ts:504-505` as `[--to <member|agent>]` — that metavariable is on `:505-506`. `:504` is `working-on` and has no `--to`.
+10. `src/cloud/signals.ts:1270-1281` as the name-or-uuid resolver — UUID path is `:1238-1254`. `:1270-1281` is ambiguous-name plus not-found only.
+11. `LiveDashboard.astro:1747-1750` as including schema `swarm_read` — `.schema("swarm_read")` is `:1746`. `:1747` is `.from("signals")`.
+12. `docs/research/2026-09-01-streaming-into-the-web-ui.md:50` and `:196` — **file is absent at `e3df06b`**. The spec says so. At `6e43370` both lines support the claims (`:50` throughput sentence; `:196` “did not establish” whether per-channel / per-client / quota). Honest caveat; still does not resolve on the stated base SHA.
+
+Not errors (checked, they hold): dashboard `:248/:257/:344/:2216`; Slack-shape `:11`; signals table `:3-18` / `:12` / `:15` / `:36-38`; `SIGNAL_MAX_UNTIL_MS` `:512` and defaults `:513-517`; agent-receive `:4-6` / `:25-27` / `:71-72` / `:74-76`; command `:1580-1595` and re-address `:5768-5827`; commonswarm `:2007` / Signal interface `:1248-1260`; dashboard select `:1748` and null-`until` `:1750`; delivery trigger `:119-148`; mention cap `:30` and `:2-3`; CLI URL `:890` select `:891-894` accept-profile `:930` parser comment `:317-325` `until=gt.now` `:898`; read edge 401 `:323-326`, `exactKeys` `:222-234`, `in_reply_to` modernShape `:215/:230`, visibility SQL `:610-613`; view owner `:135`, WHERE `:122-133`; `is_member` `:4-21`; attachments policy `:33-35` and subquery `:98-119`; protocol grep 0; `commands.ts:21-28`; `package.json:16` and `:19`; apply-order `:11-20` / `:58-64`; `MODEL_DECLARE_RATE_LIMIT_PER_HOUR` `:510`; kind copies at `signals.ts:31`, `command-client.ts:133`, `read/index.ts:19`, `command/index.ts:1542`, plus the fifth at `cli.ts:2411`; receipt-wire `:19-45` / `:52-58`; expand-body `:1-6`; assert block `:175-196`; `signals_id_workspace` exists so the thread FK can work; SECURITY `:43-45`; privacy `:176` and field list `:120`; human-receipts policies `:30-60`; agent-receipts policy `:66-70`; CLI strings at `:2886/:3077-3081/:3212/:3216-3218/:3293/:2986/:3666`; tests cited in `§11.4`; landing dead cluster (index imports only `ConsumerHero` + `ConsumerStory`); `AGENTS.md:112` three-entrypoints sentence (already false vs `package.json:19`); README `:38/:44/:53/:58-60/:214-216`; P3-1 brief lines cited.
+
+---
+
+## BREAKING CASE
+
+Phase 1, one transaction, `ALTER COLUMN channel_id SET NOT NULL` with no `DEFAULT` and no `BEFORE INSERT` filler, while the live writer is `postSignal`’s explicit insert at `supabase/functions/command/index.ts:5966-5983` which does not name `channel_id`.
+
+After that commit, and until a new edge that **also** changes that insert list is deployed, every old client post fails. The spec’s own apply-order rule at `20260902000001:58-64` makes that window visible. Reads do not fail. Writes do.
+
+Same file also replaces the 30-day `until` check with a form that, after the backfill, is a 100-year ceiling on the whole table.
+
+RLS runner-up, Phase 3/5: clause (b)/(c) have no roster test, so a directed row in a private channel is visible to a non-member addressee.
+
+VERDICT: FAIL
