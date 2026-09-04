@@ -295,6 +295,7 @@ export async function runListenerSupervisor(
     lastAckAt: carried?.lastAckAt ?? null,
     lastAckOutcome: carried?.lastAckOutcome ?? null,
     consecutiveAckFailureCount: carried?.consecutiveAckFailureCount ?? null,
+    lastAckSignalId: carried?.lastAckSignalId ?? null,
     routeMode: options.routeMode ?? "worker",
     deferOverChars: options.deferOverChars ?? null,
     pendingForMainCount: 0,
@@ -608,6 +609,7 @@ export async function runListenerSupervisor(
         ...status,
         lastAckAt: event.ts,
         lastAckOutcome: event.outcome,
+        lastAckSignalId: event.signalId,
         consecutiveAckFailureCount: failed
           ? (status.consecutiveAckFailureCount ?? 0) + 1
           : providerProven

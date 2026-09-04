@@ -4535,6 +4535,7 @@ export function listenerStatusJson(
     lastAckAt: status.lastAckAt ?? null,
     lastAckOutcome: status.lastAckOutcome ?? null,
     consecutiveAckFailureCount: status.consecutiveAckFailureCount ?? null,
+    lastAckSignalId: status.lastAckSignalId ?? null,
     routeMode: status.routeMode ?? "worker",
     deferOverChars: status.deferOverChars ?? null,
     pendingForMainCount: status.pendingForMainCount ?? 0,
@@ -4636,14 +4637,19 @@ export function renderListenerStatus(
         // Keyed on the OUTCOME, never on handledState: an `observed` note is not
         // a failed delivery, and during a failure run it is not evidence of
         // handling either, so it gets the neutral sentence naming its outcome.
+        // The outcome sentences name lastAckSignalId, the signal the outcome
+        // belongs to. lastSignalId is also advanced by `effect`, so after an
+        // effect for a newer signal it would attribute the older ack to it.
         ? status.lastAckOutcome === null
           ? `Last listener signal: ${status.lastSignalId}. No delivery acknowledgement is recorded.`
+          : !status.lastAckSignalId
+          ? `Last listener signal: ${status.lastSignalId}. The newest acknowledgement was ${status.lastAckOutcome}; which signal it belonged to was not recorded.`
           : status.lastAckOutcome === "failed_terminal"
-          ? `Last failed delivery signal: ${status.lastSignalId}.`
+          ? `Last failed delivery signal: ${status.lastAckSignalId}.`
           : DELIVERY_HANDLED_OUTCOMES.has(status.lastAckOutcome) &&
               deliveryFailureRun < LISTENER_DELIVERY_FAILING_THRESHOLD
-          ? `Last handled signal: ${status.lastSignalId}.`
-          : `Last acknowledged signal: ${status.lastSignalId}. Its outcome was ${status.lastAckOutcome}.`
+          ? `Last handled signal: ${status.lastAckSignalId}.`
+          : `Last acknowledged signal: ${status.lastAckSignalId}. Its outcome was ${status.lastAckOutcome}.`
         : `Last listener signal: ${status.lastSignalId}. Local status does not prove its final observed receipt.`
       : "No signal has been handled yet.",
     status.lastErrorCode

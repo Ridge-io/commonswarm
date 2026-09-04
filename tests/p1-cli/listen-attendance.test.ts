@@ -110,6 +110,7 @@ async function statusFixture(
     pending: number;
     lastAckAt?: string | null;
     lastAckOutcome?: DeliveryOutcome | null;
+    lastAckSignalId?: string | null;
     consecutiveAckFailureCount?: number | null;
     lastErrorCode?: string | null;
     routeMode?: "worker" | "main" | "split";
@@ -139,6 +140,7 @@ async function statusFixture(
     lastClaimAt: "2026-09-01T12:00:02.000Z",
     lastAckAt: options.lastAckAt ?? null,
     lastAckOutcome: options.lastAckOutcome ?? null,
+    lastAckSignalId: options.lastAckSignalId ?? null,
     consecutiveAckFailureCount:
       options.consecutiveAckFailureCount ?? null,
     routeMode: options.routeMode ?? "main",
@@ -229,7 +231,7 @@ test("listen status separates connected, attended, and handled across the fixtur
     assert.match(readyQueued.stdout, /Listener WARNING/);
     assert.match(readyQueued.stdout, /CONNECTED: yes/);
     assert.match(readyQueued.stdout, /ATTENDED: no/);
-    assert.match(readyQueued.stdout, /HANDLED: no/);
+    assert.match(readyQueued.stdout, /HANDLED: no\./);
     assert.match(readyQueued.stdout, /WARNING \[listener_unattended_main_queue\]/);
     assert.match(readyQueued.stdout, /queued at 2026-09-01T12:00:03\.000Z/);
     assert.match(
@@ -285,6 +287,7 @@ test("worker status shows terminal delivery failure runs and clears them after a
       routeMode: "worker",
       lastAckAt: "2026-09-01T12:00:04.000Z",
       lastAckOutcome: "failed_terminal",
+      lastAckSignalId: "aaaaaaaa-aaaa-4aaa-8aaa-aaaaaaaaaaaa",
       consecutiveAckFailureCount: 3,
       lastErrorCode: "acpprotocolerror",
     });
@@ -299,7 +302,7 @@ test("worker status shows terminal delivery failure runs and clears them after a
       home,
     });
     assert.equal(failedHuman.status, 0, failedHuman.stderr);
-    assert.match(failedHuman.stdout, /HANDLED: no/);
+    assert.match(failedHuman.stdout, /HANDLED: no\./);
     assert.match(
       failedHuman.stdout,
       /newest delivery acknowledgement was failed_terminal \(acpprotocolerror\)/,
@@ -339,6 +342,7 @@ test("worker status shows terminal delivery failure runs and clears them after a
         routeMode: "worker",
         lastAckAt: "2026-09-01T12:00:04.500Z",
         lastAckOutcome: outcome,
+        lastAckSignalId: "aaaaaaaa-aaaa-4aaa-8aaa-aaaaaaaaaaaa",
       });
       activeControl = await startListenerControlServer({
         paths: incompletePaths,
@@ -379,6 +383,7 @@ test("worker status shows terminal delivery failure runs and clears them after a
       routeMode: "worker",
       lastAckAt: "2026-09-01T12:00:05.000Z",
       lastAckOutcome: "replied",
+      lastAckSignalId: "aaaaaaaa-aaaa-4aaa-8aaa-aaaaaaaaaaaa",
       consecutiveAckFailureCount: 0,
     });
     activeControl = await startListenerControlServer({

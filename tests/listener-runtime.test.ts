@@ -53,6 +53,7 @@ import {
   type ListenerEffectStore,
   type ListenerPromptMode,
   type ListenerRuntimeEvent,
+  type ListenerStatus,
   type ListenerRuntimeModel,
 } from "../src/listener/index.js";
 
@@ -829,7 +830,10 @@ test("delivery events reduce into the closed supervisor status fields", async ()
       const afterReady = await queryListenerControl(paths, "status");
       assert.equal(afterReady.consecutiveAckFailureCount, 8);
       assert.equal(afterReady.lastAckOutcome, "observed");
-      assert.doesNotMatch(renderListenerStatus(afterReady), /HANDLED: yes/);
+      const afterReadyHuman = renderListenerStatus(afterReady);
+      assert.doesNotMatch(afterReadyHuman, /HANDLED: yes/);
+      /* A negative alone passes if the line vanishes; pin the positive too. */
+      assert.match(afterReadyHuman, /HANDLED: no\. 8 deliveries have failed since the last reply/);
       await ack("aaaaaaaa-aaaa-4aaa-8aaa-aaaaaaaaaa24", "queued", "2026-09-03T18:46:00.000Z");
       await ack("aaaaaaaa-aaaa-4aaa-8aaa-aaaaaaaaaa25", "expired", "2026-09-03T18:46:30.000Z");
       await ack("aaaaaaaa-aaaa-4aaa-8aaa-aaaaaaaaaa26", "replied", "2026-09-03T18:47:00.000Z");
@@ -3691,5 +3695,62 @@ test("a restart carries the failure run, so the printed remedy cannot erase the 
   });
   assert.equal(third.consecutiveAckFailureCount, 0);
   assert.doesNotMatch(renderListenerStatus(third), /listener_delivery_failing/);
+  await rm(root, { recursive: true, force: true });
+});
+
+test("the outcome sentence names the acknowledged signal, not a newer effect", async () => {
+  /* lastSignalId is advanced by `effect` before the ack for that signal lands, so
+     for the whole prompt window the status held an older ack's outcome beside a
+     newer signal id, and printed "Last failed delivery signal: <the newer one>".
+     Found by a Gemini arm on 3b245ed. */
+  const root = await mkdtemp(join(tmpdir(), "cswarm-ack-signal-"));
+  const paths = listenerPaths({
+    profileId: `profile-${randomUUID()}`,
+    workspaceId: WORKSPACE_ID,
+    principalId: PRINCIPAL_ID,
+    stateDirectory: root,
+  });
+  const ts = "2026-09-04T10:00:00.000Z";
+  const A = "aaaaaaaa-aaaa-4aaa-8aaa-aaaaaaaaac01";
+  const B = "aaaaaaaa-aaaa-4aaa-8aaa-aaaaaaaaac02";
+  let midWindow: ListenerStatus | undefined;
+  const status = await runListenerSupervisor({
+    paths,
+    profileId: "profile-test",
+    workspaceId: WORKSPACE_ID,
+    principalId: PRINCIPAL_ID,
+    run: async (_signal, onEvent) => {
+      onEvent({ type: "ready", workspaceId: WORKSPACE_ID, principalId: PRINCIPAL_ID, ts });
+      onEvent({ type: "delivery_ack", signalId: A, outcome: "failed_terminal", ts: "2026-09-04T10:01:00.000Z" });
+      /* B's effect runs before B's ack: the window the sentence used to lie in. */
+      onEvent({
+        type: "effect",
+        signalId: B,
+        status: "done",
+        failureCode: null,
+        ts: "2026-09-04T10:02:00.000Z",
+      });
+      midWindow = await queryListenerControl(paths, "status");
+      return { reason: "cancelled" };
+    },
+  });
+  assert.ok(midWindow);
+  assert.equal(midWindow.lastSignalId, B);
+  assert.equal(midWindow.lastAckSignalId, A);
+  assert.equal(midWindow.lastAckOutcome, "failed_terminal");
+  const human = renderListenerStatus(midWindow);
+  assert.match(human, new RegExp(`Last failed delivery signal: ${A}\\.`));
+  assert.doesNotMatch(human, new RegExp(`Last failed delivery signal: ${B}`));
+  /* A restart carries the ack's own signal id with the rest of the ack record. */
+  assert.equal(status.lastAckSignalId, A);
+  const carried = await runListenerSupervisor({
+    paths,
+    profileId: "profile-test",
+    workspaceId: WORKSPACE_ID,
+    principalId: PRINCIPAL_ID,
+    run: async () => ({ reason: "cancelled" }),
+  });
+  assert.equal(carried.lastAckSignalId, A);
+  assert.match(renderListenerStatus(carried), new RegExp(`Last failed delivery signal: ${A}\\.`));
   await rm(root, { recursive: true, force: true });
 });

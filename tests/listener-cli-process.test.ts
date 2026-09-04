@@ -1444,7 +1444,7 @@ test("detached listener keeps a provider failure lapse in its status file", asyn
     ]);
     assert.equal(statusHumanResult.code, 0, statusHumanResult.stderr);
     assert.match(statusHumanResult.stdout, /^Listener LAPSE/);
-    assert.match(statusHumanResult.stdout, /HANDLED: no/);
+    assert.match(statusHumanResult.stdout, /HANDLED: no\./);
     assert.match(
       statusHumanResult.stdout,
       /WARNING \[listener_delivery_failing\]/,

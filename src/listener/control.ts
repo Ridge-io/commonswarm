@@ -107,6 +107,10 @@ export interface ListenerStatus {
   lastAckOutcome: DeliveryOutcome | null;
   /** Terminal ack failures since the last provider-proven ack; null before any ack. */
   consecutiveAckFailureCount: number | null;
+  /** The signal `lastAckOutcome` belongs to. `lastSignalId` is also written by
+      `effect` and `main_queue`, so between an effect and its ack it names a newer
+      signal than the one the outcome describes. Optional: absent in older files. */
+  lastAckSignalId?: string | null;
   routeMode?: ListenerRouteMode;
   deferOverChars?: number | null;
   pendingForMainCount?: number;
@@ -214,6 +218,7 @@ const STATUS_ALLOWED_KEYS = new Set([
   "lastAckAt",
   "lastAckOutcome",
   "consecutiveAckFailureCount",
+  "lastAckSignalId",
   "routeMode",
   "deferOverChars",
   "pendingForMainCount",
@@ -391,6 +396,8 @@ function parseStatus(raw: string, rejectUnknownKeys = false): ListenerStatus {
         deliveryOutcomes.has(row.lastAckOutcome as DeliveryOutcome))) ||
     !(row.consecutiveAckFailureCount === undefined ||
       nullableCount(row.consecutiveAckFailureCount)) ||
+    !(row.lastAckSignalId === undefined || row.lastAckSignalId === null ||
+      (typeof row.lastAckSignalId === "string" && UUID_RE.test(row.lastAckSignalId))) ||
     !(row.routeMode === undefined ||
       row.routeMode === "worker" || row.routeMode === "main" || row.routeMode === "split") ||
     !(row.deferOverChars === undefined || row.deferOverChars === null ||
@@ -450,6 +457,11 @@ function parseStatus(raw: string, rejectUnknownKeys = false): ListenerStatus {
       (row.lastAckOutcome ?? null) as DeliveryOutcome | null,
     consecutiveAckFailureCount:
       (row.consecutiveAckFailureCount ?? null) as number | null,
+    // Optional key: present only when the file carried it, so a status written
+    // without it round-trips byte-for-byte (the routeMode pattern).
+    ...(row.lastAckSignalId === undefined
+      ? {}
+      : { lastAckSignalId: (row.lastAckSignalId ?? null) as string | null }),
     lastErrorDetail: (row.lastErrorDetail ?? null) as string | null,
     lastWorkerStderrTail: (row.lastWorkerStderrTail ?? null) as string | null,
     providerVersion: (row.providerVersion ?? null) as string | null,
