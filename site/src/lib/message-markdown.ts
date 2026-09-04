@@ -22,6 +22,14 @@ export const MESSAGE_MARKDOWN_LIMITS = Object.freeze({
   inputCharacters: 2_000_000,
   lines: 50_000,
   nestingDepth: 4,
+  /* The most table cells one render pass will build. Every other block in this subset produces
+   * output roughly the size of its input; a table does not, because a single "|" character can
+   * produce a whole `<td align="center"></td>`. At the 2,000,000-character input ceiling a body of
+   * nothing but pipes would otherwise reach tens of megabytes of HTML — the failure the ceiling
+   * above exists to prevent. A table whose cells would cross this budget is not expanded at all:
+   * its lines fall through to the paragraph path and stay the literal text they are today, so the
+   * bound costs formatting and never a character of content. */
+  tableCells: 20_000,
 });
 
 /* The height at which a message folds behind "Show more". It was 30 lines, which an ordinary
@@ -31,17 +39,40 @@ export const MESSAGE_COLLAPSE_LINES = 60;
 export const MESSAGE_MARKDOWN_TAGS = Object.freeze([
   "p", "br", "strong", "em", "code", "pre", "ul", "ol", "li", "blockquote", "a",
   "h2", "h3", "h4", "h5",
+  "table", "thead", "tbody", "tr", "th", "td",
 ] as const);
 
-export const MESSAGE_MARKDOWN_ATTRIBUTES = Object.freeze({ a: ["href"] as const });
+/* The complete set of column alignments a delimiter row can ask for. The parser reads it and the
+ * sanitizer checks against it, so neither can drift from the other. */
+export const MESSAGE_MARKDOWN_ALIGNMENTS = Object.freeze(["left", "center", "right"] as const);
+
+/* `align` rather than `style` or `class`: `sanitizeTag` drops every attribute on every tag but
+ * `a[href]`, so alignment needs one of them widened. `style` is an arbitrary CSS sink and is not
+ * on the table. `class` would put message content into the page's class namespace and would need
+ * three new rules in a stylesheet this file does not own. `align` is a three-value enum the
+ * sanitizer checks against MESSAGE_MARKDOWN_ALIGNMENTS, the browser maps it to `text-align`, and
+ * it needs no stylesheet at all. */
+export const MESSAGE_MARKDOWN_ATTRIBUTES = Object.freeze({
+  a: ["href"] as const,
+  th: ["align"] as const,
+  td: ["align"] as const,
+});
 export const HARDENED_LINK_ATTRIBUTES = Object.freeze({
   rel: "noopener noreferrer",
   target: "_blank",
 });
 
 const ALLOWED_TAGS = new Set<string>(MESSAGE_MARKDOWN_TAGS);
+const ALLOWED_ALIGNMENTS = new Set<string>(MESSAGE_MARKDOWN_ALIGNMENTS);
 const TOKEN_OPEN = "\uE000";
 const TOKEN_CLOSE = "\uE001";
+
+type TableAlignment = (typeof MESSAGE_MARKDOWN_ALIGNMENTS)[number] | null;
+
+/** How much table this render pass may still build. See MESSAGE_MARKDOWN_LIMITS.tableCells. */
+interface RenderBudget {
+  cells: number;
+}
 
 export interface MessageMarkdownOptions {
   /** Shift h1-h4 down one level when Markdown lives below an existing panel heading. */
@@ -192,10 +223,96 @@ function headingMatch(
   };
 }
 
+/* GitHub-flavoured pipe tables: a header row, a delimiter row that fixes the column count and the
+ * per-column alignment, then body rows until the first line that is not a pipe row.
+ *
+ * Cell text takes the same path as every other inline run — boundedLines has already escaped it,
+ * and renderInline renders it. There is deliberately no second renderer and no second escape rule
+ * for cells, so a cell cannot be safer or less safe than the paragraph next to it. */
+const TABLE_DELIMITER_CELL = /^:?-+:?$/u;
+
+function splitTableCells(row: string): string[] {
+  const cells: string[] = [];
+  let current = "";
+  for (let index = 0; index < row.length; index += 1) {
+    const character = row[index] ?? "";
+    if (character === "\\" && row[index + 1] === "|") {
+      /* An escaped pipe is content. Without this it would split the cell and the author's text
+       * would land in the wrong column. */
+      current += "|";
+      index += 1;
+      continue;
+    }
+    if (character === "|") {
+      cells.push(current);
+      current = "";
+      continue;
+    }
+    current += character;
+  }
+  cells.push(current);
+  /* The border pipes are optional in GFM, and each one produces an empty cell that is punctuation
+   * rather than content. Drop those two only; never a cell that holds text. */
+  if (row.startsWith("|")) cells.shift();
+  if (cells.length > 1 && cells[cells.length - 1] === "" && row.endsWith("|")) cells.pop();
+  return cells;
+}
+
+function tableRowCells(line: string): string[] | null {
+  const trimmed = line.trim();
+  if (!trimmed.includes("|")) return null;
+  return splitTableCells(trimmed);
+}
+
+function tableAlignments(line: string, columns: number): TableAlignment[] | null {
+  const cells = tableRowCells(line);
+  /* GFM requires the delimiter row to name exactly as many columns as the header. That equality is
+   * what stops an ordinary sentence containing a pipe from becoming a table. */
+  if (!cells || cells.length !== columns) return null;
+  const alignments: TableAlignment[] = [];
+  for (const cell of cells) {
+    const marker = cell.trim();
+    if (!TABLE_DELIMITER_CELL.test(marker)) return null;
+    const left = marker.startsWith(":");
+    const right = marker.endsWith(":");
+    alignments.push(left && right ? "center" : right ? "right" : left ? "left" : null);
+  }
+  return alignments;
+}
+
+function tableHeaderAt(lines: string[], index: number): TableAlignment[] | null {
+  const header = tableRowCells(lines[index] ?? "");
+  if (!header || header.length === 0) return null;
+  return tableAlignments(lines[index + 1] ?? "", header.length);
+}
+
+/* Ragged rows keep every character the author wrote.
+ *
+ * A row with FEWER cells than the header is padded with empty cells to the header width, so the
+ * columns after it still line up under their headings. A row with MORE cells keeps every extra one
+ * as an extra cell past the last column the header named — that row renders wider than the rest of
+ * the table, which is visible and odd, and visible-and-odd beats silently deleting the author's
+ * text. GFM drops those extra cells; this renderer does not. */
+function renderTableRow(
+  cells: string[],
+  alignments: TableAlignment[],
+  tag: "th" | "td",
+): string {
+  const width = Math.max(cells.length, alignments.length);
+  let rendered = "";
+  for (let column = 0; column < width; column += 1) {
+    const alignment = alignments[column] ?? null;
+    const attribute = alignment === null ? "" : ` align="${alignment}"`;
+    rendered += `<${tag}${attribute}>${renderInline((cells[column] ?? "").trim())}</${tag}>`;
+  }
+  return `<tr>${rendered}</tr>`;
+}
+
 function renderBlocks(
   lines: string[],
   depth = 0,
   options: MessageMarkdownOptions = {},
+  budget: RenderBudget = { cells: MESSAGE_MARKDOWN_LIMITS.tableCells },
 ): string {
   const blocks: string[] = [];
   let index = 0;
@@ -224,7 +341,9 @@ function renderBlocks(
         quote.push((lines[index] ?? "").replace(/^ {0,3}&gt; ?/u, ""));
         index += 1;
       }
-      blocks.push(`<blockquote>${renderBlocks(quote, depth + 1, options)}</blockquote>`);
+      blocks.push(
+        `<blockquote>${renderBlocks(quote, depth + 1, options, budget)}</blockquote>`,
+      );
       continue;
     }
 
@@ -249,6 +368,39 @@ function renderBlocks(
       continue;
     }
 
+    const alignments = budget.cells > 0 ? tableHeaderAt(lines, index) : null;
+    if (alignments) {
+      /* Read the whole table before emitting any of it: the cell budget is a property of the
+       * table, and a table that cannot be afforded must fall through to the paragraph path whole
+       * rather than stop half-rendered. */
+      const header = tableRowCells(lines[index] ?? "") ?? [];
+      const rows: string[][] = [];
+      let cells = Math.max(header.length, alignments.length);
+      let cursor = index + 2;
+      while (cursor < lines.length) {
+        const row = tableRowCells(lines[cursor] ?? "");
+        if (!row) break;
+        rows.push(row);
+        cells += Math.max(row.length, alignments.length);
+        cursor += 1;
+      }
+      if (cells <= budget.cells) {
+        budget.cells -= cells;
+        const body = rows.map((row) => renderTableRow(row, alignments, "td")).join("");
+        blocks.push(
+          `<table><thead>${renderTableRow(header, alignments, "th")}</thead>` +
+            `<tbody>${body}</tbody></table>`,
+        );
+        index = cursor;
+        continue;
+      }
+      /* One table already wants more cells than the whole message may spend, so the budget is
+       * gone: this table and every later one stay literal text for the rest of the pass. Spending
+       * it here rather than re-measuring keeps the paragraph path below from having to ask a
+       * second time whether a table is affordable. */
+      budget.cells = 0;
+    }
+
     const paragraph: string[] = [];
     while (index < lines.length) {
       const candidate = lines[index] ?? "";
@@ -258,6 +410,7 @@ function renderBlocks(
         (isFence(candidate) || headingMatch(candidate, options) || listMatch(candidate))
       ) break;
       if (paragraph.length > 0 && depth < MESSAGE_MARKDOWN_LIMITS.nestingDepth && isQuote(candidate)) break;
+      if (paragraph.length > 0 && budget.cells > 0 && tableHeaderAt(lines, index)) break;
       paragraph.push(renderInline(candidate));
       index += 1;
     }
@@ -275,6 +428,14 @@ function sanitizeTag(source: string): string {
   const closing = /^<\//u.test(source);
   if (closing) return name === "br" ? "" : `</${name}>`;
   if (name === "br") return "<br>";
+  if (name === "th" || name === "td") {
+    /* One attribute, checked against the same set the parser writes from, and dropped entirely
+     * when it is anything else. A cell keeps its alignment; it cannot keep a style, a class, an
+     * event handler, or an align value we did not name. */
+    const align = /\salign\s*=\s*"([^"]*)"/iu.exec(source);
+    const value = (align?.[1] ?? "").toLowerCase();
+    return ALLOWED_ALIGNMENTS.has(value) ? `<${name} align="${value}">` : `<${name}>`;
+  }
   if (name !== "a") return `<${name}>`;
   const hrefMatch = /\shref\s*=\s*"([^"]*)"/iu.exec(source);
   if (!hrefMatch) return "";
@@ -303,7 +464,12 @@ export function renderMessageMarkdown(
   rawText: string,
   options: MessageMarkdownOptions = {},
 ): string {
-  return sanitizeMessageHtml(renderBlocks(boundedLines(rawText), 0, options));
+  /* A fresh budget per call. It is per-message state, never module state. */
+  return sanitizeMessageHtml(
+    renderBlocks(boundedLines(rawText), 0, options, {
+      cells: MESSAGE_MARKDOWN_LIMITS.tableCells,
+    }),
+  );
 }
 
 /** Put a message body in the DOM only through the renderer and its final sanitizer. */

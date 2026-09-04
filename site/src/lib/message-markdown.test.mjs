@@ -3,6 +3,7 @@ import { test } from "node:test";
 import {
   HARDENED_LINK_ATTRIBUTES,
   MESSAGE_COLLAPSE_LINES,
+  MESSAGE_MARKDOWN_ALIGNMENTS,
   MESSAGE_MARKDOWN_ATTRIBUTES,
   MESSAGE_MARKDOWN_LIMITS,
   MESSAGE_MARKDOWN_TAGS,
@@ -11,7 +12,11 @@ import {
   sanitizeMessageHtml,
   setSanitizedMessageMarkdown,
 } from "./message-markdown.ts";
-import { HOSTILE_MARKDOWN_BLOCKS } from "./message-markdown-fixtures.ts";
+import {
+  HOSTILE_MARKDOWN_BLOCKS,
+  HOSTILE_TABLE_MARKDOWN,
+  PRODUCTION_TABLE_MARKDOWN,
+} from "./message-markdown-fixtures.ts";
 
 test("without the offset a heading stays literal, which is why the feed passes it", () => {
   /* The two callers differ only in this option. The feed did not pass it, so an agent report
@@ -96,8 +101,11 @@ test("the sanitizer keeps only the tag allowlist and href on anchors", () => {
   assert.deepEqual(MESSAGE_MARKDOWN_TAGS, [
     "p", "br", "strong", "em", "code", "pre", "ul", "ol", "li", "blockquote", "a",
     "h2", "h3", "h4", "h5",
+    "table", "thead", "tbody", "tr", "th", "td",
   ]);
-  assert.deepEqual(MESSAGE_MARKDOWN_ATTRIBUTES, { a: ["href"] });
+  assert.deepEqual(MESSAGE_MARKDOWN_ATTRIBUTES, {
+    a: ["href"], th: ["align"], td: ["align"],
+  });
   assert.equal(
     sanitizeMessageHtml(
       '<p class="bad">ok <strong onclick="x">yes</strong><img/onerror=x>' +
@@ -120,10 +128,141 @@ test("the DOM setter uses sanitized HTML and fixes link rel and target", () => {
   assert.deepEqual(link, { rel: "noopener noreferrer", target: "_blank" });
 });
 
-test("images, headings, and tables stay literal in v1", () => {
+/* RETIRED (2026-09-04): "tables stay literal in v1". A pipe table now renders. What is still true,
+   and what this pins, is the guard that keeps ordinary prose out of the table path: a pipe row with
+   no delimiter row under it is not a table and stays the text the author typed. */
+test("images stay literal, and a pipe row with no delimiter row is not a table", () => {
   const rendered = renderMessageMarkdown("# title\n![alt](https://example.com/a.png)\n| a | b |");
   assert.equal(rendered, "<p># title<br>![alt](https://example.com/a.png)<br>| a | b |</p>");
   assert.doesNotMatch(rendered, /<h\d|<img|<table/u);
+  /* A delimiter row that names a different number of columns than the header is not a delimiter
+     row, so a sentence that happens to contain pipes and dashes cannot become a table. */
+  assert.doesNotMatch(renderMessageMarkdown("| a | b |\n|---|"), /<table/u);
+  assert.doesNotMatch(renderMessageMarkdown("| a | b |\n| x | y |"), /<table/u);
+  assert.doesNotMatch(renderMessageMarkdown("a - b\n- - -"), /<table/u);
+});
+
+test("the production table that rendered as raw text now renders as a table", () => {
+  /* The measured bug: an agent posted this and the reader saw "| fact | result |" and "|---|---|"
+     as literal lines. The inline code spans inside the cells must survive too. */
+  assert.equal(
+    renderMessageMarkdown(PRODUCTION_TABLE_MARKDOWN),
+    "<table><thead><tr><th>fact</th><th>result</th></tr></thead>" +
+      "<tbody><tr><td>REF IDENTITY</td><td><code>refs/heads/production</code> = " +
+      "<code>7584524ea03162af2275c5cbfaa77df697cf68f5</code></td></tr></tbody></table>",
+  );
+  assert.doesNotMatch(renderMessageMarkdown(PRODUCTION_TABLE_MARKDOWN), /\|---\||\| fact \|/u);
+});
+
+test("a delimiter row carries alignment as an align attribute, never as a style", () => {
+  assert.deepEqual(MESSAGE_MARKDOWN_ALIGNMENTS, ["left", "center", "right"]);
+  const rendered = renderMessageMarkdown(
+    "| l | r | c | plain |\n|:---|---:|:---:|---|\n| 1 | 2 | 3 | 4 |",
+  );
+  assert.equal(
+    rendered,
+    '<table><thead><tr><th align="left">l</th><th align="right">r</th>' +
+      '<th align="center">c</th><th>plain</th></tr></thead>' +
+      '<tbody><tr><td align="left">1</td><td align="right">2</td>' +
+      '<td align="center">3</td><td>4</td></tr></tbody></table>',
+  );
+  assert.doesNotMatch(rendered, /style=|class=/u);
+});
+
+/* The rule, stated where it can fail: a SHORT row is padded with empty cells to the header width;
+   a LONG row keeps every extra cell as an extra cell past the last named column. Neither shape
+   throws and neither loses a character. GFM drops the extras; this renderer does not, because a
+   silently deleted value in a table of facts is the worst outcome available. */
+test("a ragged row is padded when short and keeps its extra cells when long", () => {
+  const rendered = renderMessageMarkdown(
+    "| a | b | c |\n|---|---|---|\n| 1 |\n| 1 | 2 | 3 | keeps me |\n|  |  |  |",
+  );
+  assert.match(rendered, /<tr><td>1<\/td><td><\/td><td><\/td><\/tr>/u);
+  assert.match(
+    rendered,
+    /<tr><td>1<\/td><td>2<\/td><td>3<\/td><td>keeps me<\/td><\/tr>/u,
+  );
+  assert.match(rendered, /keeps me/u);
+  assert.equal((rendered.match(/<tr>/gu) ?? []).length, 4);
+});
+
+test("a table is a block: it ends a paragraph, sits in a quote, and ends at a blank line", () => {
+  const rendered = renderMessageMarkdown(
+    "intro line\n| a |\n|---|\n| 1 |\nafter\n\n> | q |\n> |---|\n> | v |",
+  );
+  assert.match(rendered, /^<p>intro line<\/p><table>/u);
+  assert.match(rendered, /<\/table><p>after<\/p>/u);
+  assert.match(rendered, /<blockquote><table><thead><tr><th>q<\/th>/u);
+});
+
+test("an escaped pipe stays inside its cell instead of splitting the column", () => {
+  const rendered = renderMessageMarkdown("| a | b |\n|---|---|\n| x \\| y | z |");
+  assert.match(rendered, /<tr><td>x \| y<\/td><td>z<\/td><\/tr>/u);
+});
+
+test("hostile cell content is neutralised exactly as the same text is in a paragraph", () => {
+  const rendered = renderMessageMarkdown(HOSTILE_TABLE_MARKDOWN);
+  assert.match(rendered, /<table>/u);
+  /* Every vector, inert. */
+  assert.match(rendered, /&lt;script&gt;alert\(1\)&lt;\/script&gt;/u);
+  assert.match(rendered, /&lt;b onerror=&quot;alert\(2\)&quot;&gt;x&lt;\/b&gt;/u);
+  assert.match(rendered, /\[go\]\(javascript:alert\(3\)/u);
+  assert.match(rendered, /&lt;img src=x onerror=alert\(4\)&gt;/u);
+  assert.match(rendered, /&lt;td align=&quot;center&quot; onclick=&quot;alert\(5\)&quot;&gt;/u);
+  assert.match(rendered, /&lt;\/table&gt;&lt;script&gt;alert\(6\)&lt;\/script&gt;/u);
+  assert.match(rendered, /&lt;a href=&quot;javascript:alert\(7\)&quot;&gt;/u);
+  assert.doesNotMatch(rendered, /<script|<img|<b |<a /u);
+  /* `onerror=` survives as literal text inside `&lt;b onerror=&quot;...`, which is the point — it
+     is content, not markup. So the control reads the TAGS, not the whole string: every generated
+     tag must be one this renderer emits, and no tag may carry a handler, an href, or a style. */
+  const tags = rendered.match(/<[^>]*>/gu) ?? [];
+  assert.ok(tags.length > 0, "no tags to check");
+  for (const tag of tags) {
+    assert.match(tag, /^<\/?(?:table|thead|tbody|tr|th|td|p|br|code|strong|em)(?:\s|>)/u, tag);
+    assert.doesNotMatch(tag, /\son[a-z]+\s*=|\shref\s*=|\sstyle\s*=|\sclass\s*=/iu, tag);
+  }
+  /* The point of the whole design: a cell is not a second escaping path. The same source text
+     rendered as a paragraph and as a cell produces byte-identical inner HTML. */
+  for (const vector of [
+    '<script>alert(1)</script> <img src=x onerror="alert(2)">',
+    "[go](javascript:alert(3))",
+    "[phish](https://trusted.example@evil.host/)",
+    '<a href="javascript:alert(7)">link</a>',
+    "`code` and **bold**",
+  ]) {
+    const asParagraph = renderMessageMarkdown(vector).replace(/^<p>|<\/p>$/gu, "");
+    const asCell = renderMessageMarkdown(`| h |\n|---|\n| ${vector} |`)
+      .replace(/^.*<tbody><tr><td>|<\/td><\/tr><\/tbody><\/table>$/gu, "");
+    assert.equal(asCell, asParagraph, vector);
+  }
+});
+
+test("the sanitizer keeps table tags and only the three align values", () => {
+  assert.equal(
+    sanitizeMessageHtml(
+      '<table class="x"><thead onclick="x"><tr><th align="center">a</th>' +
+        '<th align="expression(alert(1))">b</th><th align="CENTER">c</th>' +
+        '<th style="color:red">d</th><th align="center" onmouseover="x">e</th>' +
+        "</tr></thead><tbody><tr><td>1</td></tr></tbody></table>",
+    ),
+    '<table><thead><tr><th align="center">a</th><th>b</th><th align="center">c</th>' +
+      '<th>d</th><th align="center">e</th></tr></thead>' +
+      "<tbody><tr><td>1</td></tr></tbody></table>",
+  );
+  /* A tag the renderer never emits is still not allowed through. */
+  assert.equal(sanitizeMessageHtml("<caption>x</caption><colgroup><col></colgroup>"), "x");
+});
+
+test("a table cannot spend more than the shared cell budget", { timeout: 5_000 }, () => {
+  const rows = Math.ceil(MESSAGE_MARKDOWN_LIMITS.tableCells / 2);
+  const body = (count) => `| a | b |\n|---|---|\n${"| 1 | 2 |\n".repeat(count)}`;
+  /* Positive control on the same shape: one row under the budget still renders as a table. */
+  const affordable = renderMessageMarkdown(body(rows - 2));
+  assert.match(affordable, /<table>/u);
+  const overBudget = renderMessageMarkdown(body(rows + 1));
+  assert.doesNotMatch(overBudget, /<table>|<td>/u);
+  /* Bounded, and not by dropping the author's text: it is still there, literally. */
+  assert.match(overBudget, /\| 1 \| 2 \|/u);
 });
 
 test("panel Markdown shifts h1-h4 to h2-h5 through the same sanitizer", () => {
