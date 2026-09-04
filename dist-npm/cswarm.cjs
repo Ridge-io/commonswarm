@@ -26624,6 +26624,138 @@ function parseAgentCredentialInput(value, source) {
 
 // src/cloud/renewal.ts
 var import_node_crypto9 = require("node:crypto");
+
+// src/cloud/renewal-grants.ts
+var UUID_RE5 = /^[0-9a-f]{8}-[0-9a-f]{4}-[1-8][0-9a-f]{3}-[89ab][0-9a-f]{3}-[0-9a-f]{12}$/i;
+function nullableString(value, field) {
+  if (value === null) return null;
+  if (typeof value !== "string") {
+    throw new Error(`renewal grant read returned malformed ${field}`);
+  }
+  return value;
+}
+function nullableTimestamp(value, field) {
+  const text = nullableString(value, field);
+  if (text !== null && !Number.isFinite(Date.parse(text))) {
+    throw new Error(`renewal grant read returned malformed ${field}`);
+  }
+  return text;
+}
+function uuid2(value, field) {
+  if (typeof value !== "string" || !UUID_RE5.test(value)) {
+    throw new Error(`renewal grant read returned malformed ${field}`);
+  }
+  return value.toLowerCase();
+}
+function nullableUuid(value, field) {
+  return value === null ? null : uuid2(value, field);
+}
+function parseGrant(value) {
+  if (!value || typeof value !== "object" || Array.isArray(value)) {
+    throw new Error("renewal grant read returned a malformed row");
+  }
+  const row = value;
+  if (row.kind !== "timeboxed" && row.kind !== "standing") {
+    throw new Error("renewal grant read returned malformed kind");
+  }
+  const horizon = nullableTimestamp(
+    row.horizon_expires_at,
+    "horizon_expires_at"
+  );
+  if (row.kind === "standing" && horizon !== null || row.kind === "timeboxed" && horizon === null) {
+    throw new Error("renewal grant read returned an invalid kind/horizon pair");
+  }
+  return {
+    renewal_grant_id: uuid2(row.renewal_grant_id, "renewal_grant_id"),
+    principal_id: uuid2(row.principal_id, "principal_id"),
+    kind: row.kind,
+    horizon_expires_at: horizon,
+    bound_device_id: nullableUuid(row.bound_device_id, "bound_device_id"),
+    last_used_at: nullableTimestamp(row.last_used_at, "last_used_at"),
+    last_used_device_id: nullableUuid(
+      row.last_used_device_id,
+      "last_used_device_id"
+    ),
+    last_used_from: nullableString(row.last_used_from, "last_used_from"),
+    new_host_at: nullableTimestamp(row.new_host_at, "new_host_at"),
+    suspended_at: nullableTimestamp(row.suspended_at, "suspended_at"),
+    revoked_at: nullableTimestamp(row.revoked_at, "revoked_at"),
+    token_id: nullableUuid(row.token_id, "token_id"),
+    issued_at: nullableTimestamp(row.issued_at, "issued_at"),
+    token_expires_at: nullableTimestamp(
+      row.token_expires_at,
+      "token_expires_at"
+    ),
+    token_revoked_at: nullableTimestamp(
+      row.token_revoked_at,
+      "token_revoked_at"
+    )
+  };
+}
+async function readRenewalGrants(target2, credential, workspaceId2, fetcher = fetch) {
+  const response = await fetcher(readEndpoint(target2), {
+    method: "POST",
+    headers: {
+      authorization: `Bearer ${credential}`,
+      apikey: target2.anonKey,
+      "content-type": "application/json"
+    },
+    body: JSON.stringify({
+      resource: "renewal_grants",
+      workspace_id: workspaceId2
+    }),
+    signal: AbortSignal.timeout(15e3)
+  });
+  if (!response.ok) {
+    throw new Error(`renewal grant read failed (HTTP ${response.status})`);
+  }
+  const body = await response.json().catch(() => null);
+  if (!body || typeof body !== "object" || Array.isArray(body)) {
+    throw new Error("renewal grant read returned malformed JSON");
+  }
+  const grants = body.grants;
+  if (!Array.isArray(grants)) {
+    throw new Error("renewal grant read returned no grants array");
+  }
+  return grants.map(parseGrant);
+}
+var STANDING_IDLE_PAUSE_DAYS = 14;
+var STANDING_RESUME_ACTORS = [
+  "a workspace owner",
+  "an admin",
+  "the member who added the agent"
+];
+function orList(items) {
+  if (items.length === 0) return "";
+  if (items.length === 1) return items[0];
+  return `${items.slice(0, -1).join(", ")}, or ${items[items.length - 1]}`;
+}
+var STANDING_RESUME_ACTORS_SENTENCE = orList(STANDING_RESUME_ACTORS);
+var STANDING_GRANT_RULES = [
+  "Access does not expire.",
+  `${STANDING_IDLE_PAUSE_DAYS} days with no use pauses it; ${STANDING_RESUME_ACTORS_SENTENCE} can resume it.`,
+  "Revoking it is the only permanent stop."
+];
+function standingPausedRenewalMessage(idle) {
+  const cause = idle ? `This standing grant went ${STANDING_IDLE_PAUSE_DAYS} days with no use, so CommonSwarm paused it and refused renewal.` : "This renewal grant is paused, so CommonSwarm refused renewal.";
+  return `${cause} It is not revoked and this agent is not gone. Next step: ${STANDING_RESUME_ACTORS_SENTENCE} runs cswarm grant resume, then this agent continues.`;
+}
+function describeRenewalGrant(grant) {
+  const lines = grant.kind === "standing" ? [`Grant: standing \u2014 ${STANDING_GRANT_RULES.join(" ")}`] : [`Grant: timeboxed \u2014 renewal horizon ${grant.horizon_expires_at}.`];
+  if (grant.suspended_at !== null) {
+    lines.push(
+      `PAUSED since ${grant.suspended_at} after ${STANDING_IDLE_PAUSE_DAYS} days with no use. This is not revoked and the agent is not gone. Next step: ${orList(STANDING_RESUME_ACTORS)} runs cswarm grant resume --renewal-grant-id ${grant.renewal_grant_id}`
+    );
+  }
+  if (grant.revoked_at !== null) {
+    lines.push(
+      `REVOKED since ${grant.revoked_at}. This is permanent and cannot be resumed. Next step: mint a new grant if this agent should continue.`
+    );
+  }
+  return lines;
+}
+
+// src/cloud/renewal.ts
 var AGENT_TOKEN_DEFAULT_TTL_MS2 = 60 * 60 * 1e3;
 var AGENT_TOKEN_MAX_TTL_MS2 = 8 * 60 * 60 * 1e3;
 var RENEWAL_HORIZON_DEFAULT_MS2 = 30 * 24 * 60 * 60 * 1e3;
@@ -26633,7 +26765,8 @@ function describeMintRenewal(hasExpiry, horizonDays, kind = "timeboxed") {
     return "This credential does not renew itself; re-issue one by hand when it expires.\n";
   }
   if (kind === "standing") {
-    return "Standing grant created. This does not expire. Revoke is the only kill switch. The bearer credential still rotates before expiry while a cswarm process remains running and secure local state is available.\n";
+    return `Standing grant created. ${STANDING_GRANT_RULES.join(" ")} The bearer credential still rotates before expiry while a cswarm process remains running and secure local state is available.
+`;
   }
   const days = Number.isFinite(horizonDays) && horizonDays > 0 ? Math.round(horizonDays) : Math.round(RENEWAL_HORIZON_DEFAULT_MS2 / 864e5);
   return `While a cswarm process remains running and secure local state is available, this credential rotates before expiry. A person is asked to authorise it again in ${days} days. A stopped or idle CLI cannot renew it.
@@ -26644,7 +26777,7 @@ var RENEWAL_LEAD_FLOOR_MS = 5 * 6e4;
 var RENEWAL_LEAD_CEILING_MS = 15 * 6e4;
 var RENEWAL_PENDING_RECOVERY_MS = 60 * 6e4;
 var RENEW_TIMEOUT_MS = 3e4;
-var UUID_RE5 = /^[0-9a-f]{8}-[0-9a-f]{4}-[1-8][0-9a-f]{3}-[89ab][0-9a-f]{3}-[0-9a-f]{12}$/i;
+var UUID_RE6 = /^[0-9a-f]{8}-[0-9a-f]{4}-[1-8][0-9a-f]{3}-[89ab][0-9a-f]{3}-[0-9a-f]{12}$/i;
 var AGENT_TOKEN_RE4 = /^swm_agt_[A-Za-z0-9_-]{43}$/;
 function renewalDueAt(issuedAt, expiresAt) {
   const lifetime = Math.max(0, expiresAt - issuedAt);
@@ -26803,7 +26936,7 @@ async function requestSuccessor(options) {
   } catch {
     body = {};
   }
-  const principalId = typeof body.principal_id === "string" && UUID_RE5.test(body.principal_id) ? body.principal_id.toLowerCase() : null;
+  const principalId = typeof body.principal_id === "string" && UUID_RE6.test(body.principal_id) ? body.principal_id.toLowerCase() : null;
   if (response.status === 400 || response.status === 404) {
     throw new RenewalUnsupported(
       "this deployment does not offer credential renewal yet, so a credential here still has to be re-issued by hand when it expires"
@@ -26838,7 +26971,7 @@ async function requestSuccessor(options) {
     if (reason === "renewal_idle_suspended" || reason === "renewal_grant_suspended") {
       throw new RenewalSuspended(
         reason,
-        reason === "renewal_idle_suspended" ? "This standing grant was idle for more than 14 days, so CommonSwarm suspended it and refused renewal. Ask a workspace owner to revoke this grant and mint a new credential before this agent continues." : "This renewal grant is suspended, so CommonSwarm refused renewal. Ask a workspace owner to revoke this grant and mint a new credential before this agent continues."
+        standingPausedRenewalMessage(reason === "renewal_idle_suspended")
       );
     }
     if (reason === "renewal_horizon_reached") {
@@ -26900,7 +27033,7 @@ async function requestSuccessor(options) {
   }
   const tokenId = typeof body.token_id === "string" ? body.token_id : "";
   const runId = typeof body.run_id === "string" ? body.run_id : "";
-  if (!UUID_RE5.test(tokenId) || !UUID_RE5.test(runId) || principalId === null) {
+  if (!UUID_RE6.test(tokenId) || !UUID_RE6.test(runId) || principalId === null) {
     throw new RenewalRefused(
       response.status,
       "incomplete_successor",
@@ -27409,7 +27542,7 @@ var MAX_LINK_PAYLOAD_BYTES = 8 * 1024;
 var MAX_LABEL_INPUT_LENGTH = 1024;
 var CONTROL_GLOBAL_RE = /[\u0000-\u001f\u007f-\u009f\u202a-\u202e\u2066-\u2069]/g;
 var ANSI_ESCAPE_GLOBAL_RE = /\u001b\[[0-?]*[ -/]*[@-~]/g;
-var UUID_RE6 = /^[0-9a-f]{8}-[0-9a-f]{4}-[1-8][0-9a-f]{3}-[89ab][0-9a-f]{3}-[0-9a-f]{12}$/i;
+var UUID_RE7 = /^[0-9a-f]{8}-[0-9a-f]{4}-[1-8][0-9a-f]{3}-[89ab][0-9a-f]{3}-[0-9a-f]{12}$/i;
 var STRICT_BASE64URL_RE = /^[A-Za-z0-9_-]+$/;
 var RAW_BASE64_PAYLOAD_CANDIDATE_RE = /^[A-Za-z0-9+/_=-]+$/;
 var CURRENT_INVITE_SCHEME = "cswarm://accept/";
@@ -27460,7 +27593,7 @@ function validatedPayload(value) {
     throw new Error("invite link target is malformed");
   }
   cloudTarget(value.url, value.anon_key);
-  if (typeof value.workspace_id !== "string" || !UUID_RE6.test(value.workspace_id)) {
+  if (typeof value.workspace_id !== "string" || !UUID_RE7.test(value.workspace_id)) {
     throw new Error("invite link workspace_id must be a UUID");
   }
   if (typeof value.invitation_token !== "string") {
@@ -27470,7 +27603,7 @@ function validatedPayload(value) {
   if (typeof value.workspace_name !== "string" || typeof value.inviter_display_name !== "string" || value.workspace_name.length > MAX_LABEL_INPUT_LENGTH || value.inviter_display_name.length > MAX_LABEL_INPUT_LENGTH) {
     throw new Error("invite link display labels are malformed");
   }
-  if (value.inviter_user_id !== void 0 && (typeof value.inviter_user_id !== "string" || !UUID_RE6.test(value.inviter_user_id))) {
+  if (value.inviter_user_id !== void 0 && (typeof value.inviter_user_id !== "string" || !UUID_RE7.test(value.inviter_user_id))) {
     throw new Error("invite link inviter_user_id must be a UUID");
   }
   return value;
@@ -27670,7 +27803,7 @@ function acceptedResponse(result) {
   }
   return result.response;
 }
-function uuid2(value, field) {
+function uuid3(value, field) {
   if (typeof value !== "string" || !/^[0-9a-f]{8}-[0-9a-f]{4}-[1-8][0-9a-f]{3}-[89ab][0-9a-f]{3}-[0-9a-f]{12}$/i.test(value)) {
     throw new Error(`server returned a malformed ${field}`);
   }
@@ -28014,7 +28147,7 @@ function cloudAcceptOperations(target2, store2, fetcher = fetch) {
         );
         return {
           status: "accepted",
-          workspaceId: uuid2(response.workspace_id, "workspace_id")
+          workspaceId: uuid3(response.workspace_id, "workspace_id")
         };
       } catch (error) {
         if (error instanceof CommandHttpError && error.status === 403) {
@@ -28033,7 +28166,7 @@ function cloudAcceptOperations(target2, store2, fetcher = fetch) {
       if (result.response.status === "accepted") {
         return {
           status: "accepted",
-          principalId: uuid2(result.response.principal_id, "principal_id")
+          principalId: uuid3(result.response.principal_id, "principal_id")
         };
       }
       if (String(result.response.reason) === "principal_name_taken") {
@@ -28125,113 +28258,6 @@ function renderCapabilityMint(display) {
 }
 function renderCapabilityRevoke(capabilityId, revokedAt) {
   return `Capability link ${capabilityId} was revoked at ${revokedAt}. Anyone who still holds it now gets the same answer as someone holding a link that never existed. Links you have not revoked are unaffected.`;
-}
-
-// src/cloud/renewal-grants.ts
-var UUID_RE7 = /^[0-9a-f]{8}-[0-9a-f]{4}-[1-8][0-9a-f]{3}-[89ab][0-9a-f]{3}-[0-9a-f]{12}$/i;
-function nullableString(value, field) {
-  if (value === null) return null;
-  if (typeof value !== "string") {
-    throw new Error(`renewal grant read returned malformed ${field}`);
-  }
-  return value;
-}
-function nullableTimestamp(value, field) {
-  const text = nullableString(value, field);
-  if (text !== null && !Number.isFinite(Date.parse(text))) {
-    throw new Error(`renewal grant read returned malformed ${field}`);
-  }
-  return text;
-}
-function uuid3(value, field) {
-  if (typeof value !== "string" || !UUID_RE7.test(value)) {
-    throw new Error(`renewal grant read returned malformed ${field}`);
-  }
-  return value.toLowerCase();
-}
-function nullableUuid(value, field) {
-  return value === null ? null : uuid3(value, field);
-}
-function parseGrant(value) {
-  if (!value || typeof value !== "object" || Array.isArray(value)) {
-    throw new Error("renewal grant read returned a malformed row");
-  }
-  const row = value;
-  if (row.kind !== "timeboxed" && row.kind !== "standing") {
-    throw new Error("renewal grant read returned malformed kind");
-  }
-  const horizon = nullableTimestamp(
-    row.horizon_expires_at,
-    "horizon_expires_at"
-  );
-  if (row.kind === "standing" && horizon !== null || row.kind === "timeboxed" && horizon === null) {
-    throw new Error("renewal grant read returned an invalid kind/horizon pair");
-  }
-  return {
-    renewal_grant_id: uuid3(row.renewal_grant_id, "renewal_grant_id"),
-    principal_id: uuid3(row.principal_id, "principal_id"),
-    kind: row.kind,
-    horizon_expires_at: horizon,
-    bound_device_id: nullableUuid(row.bound_device_id, "bound_device_id"),
-    last_used_at: nullableTimestamp(row.last_used_at, "last_used_at"),
-    last_used_device_id: nullableUuid(
-      row.last_used_device_id,
-      "last_used_device_id"
-    ),
-    last_used_from: nullableString(row.last_used_from, "last_used_from"),
-    new_host_at: nullableTimestamp(row.new_host_at, "new_host_at"),
-    suspended_at: nullableTimestamp(row.suspended_at, "suspended_at"),
-    revoked_at: nullableTimestamp(row.revoked_at, "revoked_at"),
-    token_id: nullableUuid(row.token_id, "token_id"),
-    issued_at: nullableTimestamp(row.issued_at, "issued_at"),
-    token_expires_at: nullableTimestamp(
-      row.token_expires_at,
-      "token_expires_at"
-    ),
-    token_revoked_at: nullableTimestamp(
-      row.token_revoked_at,
-      "token_revoked_at"
-    )
-  };
-}
-async function readRenewalGrants(target2, credential, workspaceId2, fetcher = fetch) {
-  const response = await fetcher(readEndpoint(target2), {
-    method: "POST",
-    headers: {
-      authorization: `Bearer ${credential}`,
-      apikey: target2.anonKey,
-      "content-type": "application/json"
-    },
-    body: JSON.stringify({
-      resource: "renewal_grants",
-      workspace_id: workspaceId2
-    }),
-    signal: AbortSignal.timeout(15e3)
-  });
-  if (!response.ok) {
-    throw new Error(`renewal grant read failed (HTTP ${response.status})`);
-  }
-  const body = await response.json().catch(() => null);
-  if (!body || typeof body !== "object" || Array.isArray(body)) {
-    throw new Error("renewal grant read returned malformed JSON");
-  }
-  const grants = body.grants;
-  if (!Array.isArray(grants)) {
-    throw new Error("renewal grant read returned no grants array");
-  }
-  return grants.map(parseGrant);
-}
-function describeRenewalGrant(grant) {
-  const lines = grant.kind === "standing" ? ["Grant: standing \u2014 does not expire; revoke is the only kill switch."] : [`Grant: timeboxed \u2014 renewal horizon ${grant.horizon_expires_at}.`];
-  if (grant.suspended_at !== null) {
-    lines.push(
-      `SUSPENDED since ${grant.suspended_at}. Next step: ask a workspace owner to revoke this grant and mint a new credential.`
-    );
-  }
-  if (grant.revoked_at !== null) {
-    lines.push(`REVOKED since ${grant.revoked_at}. Next step: mint a new grant if this agent should continue.`);
-  }
-  return lines;
 }
 
 // src/cloud/workspaces.ts
@@ -31102,7 +31128,7 @@ var DELIVERY_HANDLED_OUTCOMES = new Set(
 var DELIVERY_PROVIDER_PROVEN_OUTCOMES = new Set(
   [...DELIVERY_ACK_OUTCOMES].filter((outcome) => outcome === "replied")
 );
-function orList(values2) {
+function orList2(values2) {
   return values2.length <= 1 ? values2.join("") : `${values2.slice(0, -1).join(", ")}, or ${values2[values2.length - 1]}`;
 }
 var DELIVERY_REQUEST_TIMEOUT_MS = 3e4;
@@ -31448,13 +31474,13 @@ function assertAckRequest(request) {
   checkedUuidRequest(request.listenerInstanceId, "listenerInstanceId");
   if (!DELIVERY_ACK_OUTCOMES.has(request.outcome)) {
     throw new Error(
-      `a delivery outcome must be ${orList([...DELIVERY_ACK_OUTCOMES])}`
+      `a delivery outcome must be ${orList2([...DELIVERY_ACK_OUTCOMES])}`
     );
   }
   if (request.outcome === "failed_terminal") {
     if (typeof request.lastErrorCode !== "string" || !FAILED_TERMINAL_CODES_SET.has(request.lastErrorCode)) {
       throw new Error(
-        `a failed_terminal acknowledgement requires one of ${orList([...FAILED_TERMINAL_CODES_SET])}`
+        `a failed_terminal acknowledgement requires one of ${orList2([...FAILED_TERMINAL_CODES_SET])}`
       );
     }
   } else if (request.lastErrorCode !== null) {
@@ -41978,6 +42004,7 @@ var KNOWN_FLAGS = /* @__PURE__ */ new Set([
   "permissions",
   "principal-id",
   "provider",
+  "renewal-grant-id",
   "repo",
   "reveal-anon-key",
   "route",
@@ -42029,8 +42056,8 @@ var BOOLEAN_FLAGS = /* @__PURE__ */ new Set([
 ]);
 var UUID_RE23 = /^[0-9a-f]{8}-[0-9a-f]{4}-[1-8][0-9a-f]{3}-[89ab][0-9a-f]{3}-[0-9a-f]{12}$/i;
 function packageVersion() {
-  if ("0.1.51".length > 0) {
-    return "0.1.51";
+  if ("0.1.52".length > 0) {
+    return "0.1.52";
   }
   try {
     const value = JSON.parse(
@@ -42191,6 +42218,7 @@ Usage:
   cswarm token mint [--url <url> --anon-key <key>] [--workspace-id <uuid>] --principal-id <uuid> --run-id <uuid> --task-id <uuid> --epoch <n> [--ttl-ms <ms>] [--renewal-horizon-days <1..90> | --standing --confirm-standing]
   cswarm token revoke [--url <url> --anon-key <key>] [--workspace-id <uuid>] --token-id <uuid>
   cswarm token revoke ${requiredAgentCredential} [--url <url> --anon-key <key>] --workspace-id <uuid> [--token-id <uuid>]
+  cswarm grant resume [--url <url> --anon-key <key>] [--workspace-id <uuid>] --renewal-grant-id <uuid> [--json]  # lifts an idle pause; a REVOKED grant is refused
   cswarm link new [--url <url> --anon-key <key>] [--workspace-id <uuid>] --task-id <uuid> [--ttl-ms <ms>] [--site <origin>] [--json]
   cswarm link revoke [--url <url> --anon-key <key>] [--workspace-id <uuid>] --capability-id <uuid> [--json]
   cswarm command <kind> [--url <url> --anon-key <key>] [--workspace-id <uuid>] ${agentCredential2} [command fields]
@@ -43332,6 +43360,43 @@ async function runToken(args) {
     token: response.agent_token,
     expiresAt
   }));
+}
+async function runGrant(args) {
+  const action = args.positionals[1];
+  args.assertShape(
+    [
+      ...TARGET_FLAGS,
+      "workspace-id",
+      "renewal-grant-id",
+      /* `--json` accepted, no effect — see the note on `runInvite`. D-064. */
+      "json"
+    ],
+    2
+  );
+  if (action !== "resume") {
+    throw new UsageError(`unknown grant command: ${action ?? "(missing)"}`);
+  }
+  const renewalGrantId = args.required("renewal-grant-id");
+  const cloud = await target(args);
+  const human = await humanCredential(args, cloud);
+  const workspace = await workspaceId(args, cloud, human);
+  const response = acceptedConnect(
+    "grant resume",
+    await sendConnectWithPending(
+      new ThinCommandClient(cloud),
+      human,
+      workspace,
+      { kind: "resume_renewal_grant", renewal_grant_id: renewalGrantId }
+    )
+  );
+  const resumedAt = response.resumed_at ?? null;
+  process.stdout.write(
+    `Grant resumed${resumedAt === null ? "" : ` at ${resumedAt}`}.
+Renewal is allowed again. Nothing has reached the agent yet: it starts renewing when its own cswarm process next tries, so start that process if it is not running.
+The idle clock restarts now \u2014 another ${STANDING_IDLE_PAUSE_DAYS} days with no use pauses it again.
+Confirm with: cswarm whoami --agent-token-file <path>
+`
+  );
 }
 async function runTokenRevoke(args) {
   if (hasAgentCredential(args)) {
@@ -47461,6 +47526,10 @@ async function main() {
   }
   if (verb === "token") {
     await runToken(args);
+    return;
+  }
+  if (verb === "grant") {
+    await runGrant(args);
     return;
   }
   if (verb === "link") {
