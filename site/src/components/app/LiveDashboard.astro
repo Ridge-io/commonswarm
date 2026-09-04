@@ -396,8 +396,12 @@ import "../../styles/tokens.css";
                   (feed views, never sample mode), so the word is always true.
                   It also answers the question the refresh button accidentally
                   raises — no, you do not have to. */}
-              <span class="dashboard__live" data-live-chip hidden>
-                <span class="dashboard__live-dot" aria-hidden="true"></span>Live
+              <span class="dashboard__live" data-live-chip hidden aria-label="Live">
+                <span class="dashboard__live-dot" aria-hidden="true"></span>
+                {/* The word is a separate element so a phone can keep the promise without
+                    paying 46px for it: below 34rem the dot stays, the word is hidden, and
+                    aria-label keeps "Live" for a screen reader. */}
+                <span class="dashboard__live-word">Live</span>
               </span>
               <span class="dashboard__update-count" data-update-count hidden>0 updates</span>
               <button
@@ -412,13 +416,11 @@ import "../../styles/tokens.css";
                   <path d="M20 6v5h-5M4 18v-5h5M6.1 9a7 7 0 0 1 11.7-2.6L20 8.5M4 15.5l2.2 2.1A7 7 0 0 0 17.9 15"></path>
                 </svg>
               </button>
-              <button
-                class="dashboard__text-button dashboard__mobile-signout"
-                type="button"
-                data-signout
-              >
-                Sign out
-              </button>
+              {/* A second Sign out used to sit here for narrow screens, because the rail footer
+                  that carried the account menu was gone at that width. That stopped being true
+                  on 2026-08-19, when the rail foot moved INTO the mobile top bar: the account
+                  trigger is at the top right on a phone and its menu still carries Sign out.
+                  The duplicate was 63px of a header row that has to fit on one line. */}
             </div>
           </header>
 
@@ -8253,16 +8255,6 @@ import "../../styles/tokens.css";
     border-radius: var(--radius-sm);
   }
 
-  .dashboard__mobile-signout {
-    display: none;
-    min-block-size: 2.75rem;
-    align-items: center;
-  }
-
-  .dashboard__mobile-signout[hidden] {
-    display: none;
-  }
-
   .dashboard__icon-button {
     min-inline-size: 2.75rem;
     min-block-size: 2.75rem;
@@ -10093,7 +10085,13 @@ import "../../styles/tokens.css";
       inline-size: auto;
     }
 
+    /* The menu opens DOWNWARD here. On desktop the trigger is the rail footer, so upward is
+     * right; at this width the same trigger sits in the TOP bar, and upward put every item —
+     * Sign out included — above y=0. Measured before this rule at 390x844, 320x568, and
+     * 700x800: the Sign out box was at a negative top in all three. */
     .dashboard__user-menu {
+      inset-block-end: auto;
+      inset-block-start: calc(100% + var(--s-2));
       inset-inline: auto 0;
     }
 
@@ -10158,10 +10156,6 @@ import "../../styles/tokens.css";
       max-block-size: 46dvh;
     }
 
-    .dashboard__mobile-signout {
-      display: inline-flex;
-    }
-
     .dashboard__mobile-view {
       display: inline-flex;
       min-block-size: 2.75rem;
@@ -10218,24 +10212,33 @@ import "../../styles/tokens.css";
       inline-size: 100%;
     }
 
-    .dashboard__rail-foot > .dashboard__wordmark {
-      grid-column: 1;
-      grid-row: 2;
-      justify-self: start;
-    }
+    /* DELETED 2026-09-03: two grid placements left over from when the theme toggle and the
+     * wordmark sat in the rail itself. Both now live inside the account popover, which is a
+     * grid, so a leftover grid-row of 3 on the theme toggle was reordering the MENU: Sign out
+     * painted first, Theme last, while DOM and focus order still started at Theme. The
+     * wordmark rule matched nothing at all — the menu brand is a child of the popover, not of
+     * .dashboard__rail-foot. This mattered here because this change makes that menu the only
+     * Sign out on a phone. */
 
-    .dashboard__theme-toggle {
-      grid-column: 1;
-      grid-row: 3;
-      justify-self: start;
-    }
-
+    /* ONE row on a phone. The old grid put the view buttons on a second row, which made this
+     * header 113px tall against a 73px app bar — measured at 390x844 — so a quarter of the
+     * screen was chrome before the first message. Name, then controls, then the roster pill,
+     * all on the line. The name truncates instead of wrapping, which is what keeps a long
+     * workspace name from pushing the roster off the row: that reachability is the reason the
+     * second row existed, and the ellipsis replaces it. */
     .dashboard__channel-head {
+      /* The 4.75rem floor was sized for a two-row header. One row of 44px tap targets does
+       * not need it, and it was the whole reason this bar stayed taller than the app bar. */
+      min-block-size: 0;
       display: grid;
-      grid-template-columns: minmax(0, 1fr) auto;
-      align-items: start;
-      gap: var(--s-2) var(--s-3);
-      padding-block: var(--s-2);
+      /* The name keeps a floor of 2rem and the roster pill 2.75rem; the pill is the column
+       * that gives way when a pending label makes it wide. At 320px those floors are an exact
+       * fit — 32 padding + 16 gaps + 32 + 188.4 + 51.6 = 320 — so a larger name floor would
+       * push the channel body past the viewport, which is how it was measured. */
+      grid-template-columns: minmax(2rem, 1fr) auto minmax(2.75rem, auto);
+      align-items: center;
+      gap: var(--s-2);
+      padding-block: var(--s-1);
     }
 
     .dashboard__channel-titleblock {
@@ -10245,12 +10248,59 @@ import "../../styles/tokens.css";
       gap: 0;
     }
 
+    .dashboard__channel-head h1 {
+      overflow: hidden;
+      overflow-wrap: normal;
+      white-space: nowrap;
+      text-overflow: ellipsis;
+      font-size: var(--t-sm);
+    }
+
+    /* The sentence under the channel name is the one thing in this header that is prose. On a
+     * phone it cost two or three lines to repeat what the feed shows. */
     .dashboard__channel-description {
-      line-height: 1.3;
+      display: none;
+    }
+
+    .dashboard__mobile-view {
+      padding-inline: var(--s-1);
+      font-size: var(--t-xs);
+    }
+
+    .dashboard__channel-actions .dashboard__icon-button {
+      inline-size: 2.25rem;
+    }
+
+    /* Dot only. The word costs 46px of a 358px row, and the channel name needs that width
+     * more than the label does; aria-label on the chip still says "Live". */
+    .dashboard__live-word {
+      display: none;
+    }
+
+    /* The pill reads "0 · 3 pending" while access is waiting. Wrapping it took the row to two
+     * lines and squeezed the channel name to nothing, which is the failure the one-row header
+     * exists to avoid. It stays on one line and gives way before the name does: the title
+     * column has a floor, and this pill is the column allowed to run out of room. */
+    .dashboard__channel-roster {
+      inline-size: 100%;
+      min-inline-size: 0;
+    }
+
+    /* No overflow clip on the button itself: it would cut the 4px focus ring. The label
+     * inside it is what truncates. */
+    .dashboard__roster-button {
+      max-inline-size: 100%;
+      min-inline-size: 0;
+    }
+
+    .dashboard__roster-count {
+      overflow: hidden;
+      white-space: nowrap;
+      text-overflow: ellipsis;
     }
 
     .dashboard__channel-roster {
-      grid-column: 2;
+      grid-column: 3;
       grid-row: 1;
       order: initial;
       margin-inline-start: 0;
@@ -10274,17 +10324,14 @@ import "../../styles/tokens.css";
     }
 
     .dashboard__channel-actions {
-      grid-column: 1 / -1;
-      grid-row: 2;
+      grid-column: 2;
+      grid-row: 1;
       order: initial;
-      inline-size: 100%;
-      flex-wrap: wrap;
+      inline-size: auto;
+      gap: var(--s-1);
+      flex-wrap: nowrap;
       margin-inline-start: 0;
       padding-block-start: 0;
-    }
-
-    .dashboard__update-count {
-      margin-inline-end: auto;
     }
 
     .dashboard__channel-empty,
@@ -10362,9 +10409,11 @@ import "../../styles/tokens.css";
       padding-block: var(--s-1);
     }
 
+    /* Same one-row header, and the short-viewport block must not put the taller padding back:
+     * at 320x568 that made the head 61px against a 57px app bar. */
     .dashboard__channel-head {
       min-block-size: 0;
-      padding-block: var(--s-2);
+      padding-block: var(--s-1);
     }
 
     .dashboard__channel-description,

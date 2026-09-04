@@ -131,16 +131,45 @@ test("the live dashboard offers peer agent and collaborator paths from an empty 
    * management dialog, and the rail must not grow with agent count. The successor
    * assertions live in header-roster.observer.test.ts, picked up by the same glob.
    */
+  /*
+   * RETIRED CLAIM (2026-09-03). These two assertions required a SECOND Sign out button in the
+   * channel header (`dashboard__mobile-signout`), on the premise that "the desktop rail footer
+   * disappears" at narrow widths. That premise stopped being true on 2026-08-19, when the rail
+   * foot moved INTO the mobile top bar: measured at 390x844, the account trigger sits at the
+   * top right and its menu still carries Sign out. The duplicate was 63px of a header row that
+   * now has to fit on one line, so it was removed. The successor assertions below pin the door
+   * that is actually there.
+   */
   assert.match(
     dashboard,
-    /<button[^>]*class="[^"]*dashboard__mobile-signout[^"]*"[^>]*data-signout[^>]*>/,
-    "the authenticated channel must retain a narrow-screen Sign out control",
+    /<button class="dashboard__text-button dashboard__user-menu-item" type="button" role="menuitem" data-signout>Sign out<\/button>/,
+    "the account menu must carry Sign out",
   );
   assert.match(
     dashboard,
-    /@media \(max-width: 52rem\)[\s\S]*\.dashboard__mobile-signout\s*\{[\s\S]*display:\s*inline-flex/,
-    "the channel Sign out control must become visible when the desktop rail footer disappears",
+    /@media \(max-width: 52rem\)[\s\S]*\.dashboard__rail-foot\s*\{[\s\S]*grid-column:\s*2;[\s\S]*grid-row:\s*1/,
+    "the account menu must move into the mobile top bar, which is what makes one Sign out enough",
   );
+  assert.doesNotMatch(
+    dashboard,
+    /dashboard__mobile-signout/,
+    "a second Sign out in the channel header is retired; the account menu is the one door",
+  );
+  /* The trigger moving to the top bar is not enough on its own: the menu opens UPWARD, which
+     is right for a rail footer and wrong for a top bar. Measured before this rule at 390x844,
+     320x568, and 700x800, the Sign out box sat at a negative top — off the screen. */
+  assert.match(
+    dashboard,
+    /@media \(max-width: 52rem\)[\s\S]*\.dashboard__user-menu\s*\{[\s\S]*inset-block-start:\s*calc\(100% \+ var\(--s-2\)\)/,
+    "the account menu must open downward once its trigger sits in the top bar",
+  );
+  /* The popover is a grid, so a stray placement on one of its items silently reorders the MENU
+     while DOM and focus order stay put — measured once, from a leftover rule that put the theme
+     toggle on row 3 and painted Sign out first. A text guard here was tried and removed: it went
+     red on a COMMENT that quoted the old rule, and stayed green for `grid-area`, for `order`,
+     and for a grouped selector. The control is a live one, in
+     mobile-feed-layout.observer.test.ts, "the account menu paints in DOM order and stays on
+     screen at phone widths"; its mutation is `order: 3` on the toggle. */
   assert.doesNotMatch(dashboard, /cswarm working-on|cswarm note|cswarm ask/);
   assert.match(dashboard, /Waiting for your agent’s first update\./);
   assert.doesNotMatch(connect, /commonswarm\.com\/start/);

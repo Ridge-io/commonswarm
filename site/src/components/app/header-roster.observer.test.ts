@@ -208,20 +208,45 @@ test("the dialog is a bottom sheet at mobile widths", () => {
   );
 });
 
-test("the narrow header pairs the stack with the title and leaves the body free to shrink", () => {
+/* RETIRED CLAIM (2026-09-03): "the actions get the row below". That layout put the view
+   buttons on a second band and made this header 113px against a 73px app bar, measured at
+   390x844 — the operator asked for a header no taller than the app bar. Everything is on ONE
+   row now, and the title truncates so a long name still cannot push the roster off. */
+test("the narrow header keeps the title, the controls, and the stack on one row", () => {
   assert.match(
     dashboard,
-    /@media \(max-width: 34rem\)[\s\S]*\.dashboard__channel-head\s*\{[\s\S]*grid-template-columns:\s*minmax\(0, 1fr\) auto/,
-    "the narrow header reserves a stable title column and one roster-control column",
+    /@media \(max-width: 34rem\)[\s\S]*\.dashboard__channel-head\s*\{[\s\S]*grid-template-columns:\s*minmax\(2rem, 1fr\) auto minmax\(2\.75rem, auto\)/,
+    "the narrow header reserves a title column, a controls column, and a roster column, each with a floor",
   );
   assert.match(
     dashboard,
-    /@media \(max-width: 34rem\)[\s\S]*\.dashboard__channel-roster\s*\{[\s\S]*grid-column:\s*2;[\s\S]*grid-row:\s*1/,
-    "the roster shares the title row instead of adding a third header band",
+    /@media \(max-width: 34rem\)[\s\S]*\.dashboard__channel-roster\s*\{[\s\S]*grid-column:\s*3;[\s\S]*grid-row:\s*1/,
+    "the roster shares the title row instead of adding a second header band",
   );
   assert.match(
     dashboard,
-    /@media \(max-width: 34rem\)[\s\S]*\.dashboard__channel-actions\s*\{[\s\S]*grid-column:\s*1 \/ -1;[\s\S]*grid-row:\s*2/,
+    /@media \(max-width: 34rem\)[\s\S]*\.dashboard__channel-actions\s*\{[\s\S]*grid-column:\s*2;[\s\S]*grid-row:\s*1/,
+    "the controls share the title row too",
+  );
+  /* The one-row header only works because the name truncates; without this it wraps and the
+     row grows back to the height the change removed. */
+  assert.match(
+    dashboard,
+    /@media \(max-width: 34rem\)[\s\S]*\.dashboard__channel-head h1\s*\{[\s\S]*text-overflow:\s*ellipsis/,
+    "the narrow title truncates instead of wrapping",
+  );
+  /* The roster pill carries "0 · 3 pending" while access is waiting. Left alone it wrapped and
+     took the bar back to two rows, so it is the column that gives way: one line, clipped to its
+     track. The floors above are what stop it taking the channel name's width entirely. */
+  assert.match(
+    dashboard,
+    /@media \(max-width: 34rem\)[\s\S]*\.dashboard__roster-count\s*\{[\s\S]*white-space:\s*nowrap;[\s\S]*text-overflow:\s*ellipsis/,
+    "the roster label stays on one line and truncates",
+  );
+  assert.match(
+    dashboard,
+    /@media \(max-width: 34rem\)[\s\S]*\.dashboard__roster-button\s*\{[\s\S]*max-inline-size:\s*100%/,
+    "the roster button cannot grow past its track",
   );
   assert.doesNotMatch(
     dashboard,

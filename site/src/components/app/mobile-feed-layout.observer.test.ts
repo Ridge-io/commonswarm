@@ -29,6 +29,11 @@ type LayoutMeasurement = {
   input: Rect;
   send: Rect;
   toolbar: Rect;
+  menu: {
+    bottom: number;
+    items: Array<{ bottom: number; label: string; top: number }>;
+    top: number;
+  };
   transcriptToHeaderRatio: number;
   transcriptVisibleHeight: number;
   viewport: { height: number; width: number };
@@ -110,7 +115,7 @@ const revertedStyles = `<style>
   }
 </style>`;
 
-const frameScript = (reverted: boolean, empty: boolean): string => `<script>
+const frameScript = (reverted: boolean, empty: boolean, pending: boolean): string => `<script>
   const frame = document.querySelector("iframe");
   const reportError = (value) => {
     document.documentElement.dataset.layoutError = btoa(String(value));
@@ -131,7 +136,11 @@ const frameScript = (reverted: boolean, empty: boolean): string => `<script>
     doc.querySelector(".dashboard__channel").classList.add("dashboard__channel--roster");
     const roster = doc.querySelector("[data-header-roster]");
     roster.hidden = false;
-    doc.querySelector("[data-header-roster-summary]").textContent = "8";
+    /* "0 · 3 pending" is the widest label this pill ever carries, and it is the state that
+       broke the one-row header: it wrapped, took the bar to two lines, and left the channel
+       name at 0px. */
+    doc.querySelector("[data-header-roster-summary]").textContent =
+      ${JSON.stringify(pending ? "0 · 3 pending" : "8")};
     const live = doc.querySelector("[data-live-chip]");
     live.hidden = false;
     const updates = doc.querySelector("[data-update-count]");
@@ -179,6 +188,24 @@ const frameScript = (reverted: boolean, empty: boolean): string => `<script>
         width: box.width,
       };
     };
+    /* The account popover is a grid. A stray placement on any item reorders what the reader
+       sees while DOM and focus order stay put, and on a phone this menu is the only Sign out.
+       Open it and report each item in DOM order, so a text grep is not the control. */
+    doc.querySelector("[data-user-menu-trigger]").click();
+    await settle();
+    const menuBox = doc.querySelector("[data-user-menu]").getBoundingClientRect();
+    const menuItems = [...doc.querySelector("[data-user-menu]").children].map((item) => ({
+      label: (item.textContent || "").trim().slice(0, 20),
+      top: item.getBoundingClientRect().top,
+      bottom: item.getBoundingClientRect().bottom,
+    }));
+    const menu = {
+      bottom: menuBox.bottom,
+      items: menuItems,
+      top: menuBox.top,
+    };
+    doc.querySelector("[data-user-menu-trigger]").click();
+    await settle();
     const header = rect(".dashboard__channel-head");
     const toolbar = rect(".dashboard__feed-toolbar");
     const composerBox = rect("[data-composer]");
@@ -190,6 +217,7 @@ const frameScript = (reverted: boolean, empty: boolean): string => `<script>
       composer: composerBox,
       header,
       input: rect(".dashboard__composer-input"),
+      menu,
       send: rect("[data-composer-send]"),
       toolbar,
       transcriptToHeaderRatio: transcriptVisibleHeight / combinedHeaderHeight,
@@ -218,13 +246,14 @@ const startDistServer = async (): Promise<{ close(): Promise<void>; origin: stri
       const height = Number.parseInt(url.searchParams.get("height") ?? "", 10);
       const reverted = url.searchParams.get("reverted") === "1";
       const empty = url.searchParams.get("empty") === "1";
+      const pending = url.searchParams.get("pending") === "1";
       if (!Number.isSafeInteger(width) || !Number.isSafeInteger(height)) {
         response.writeHead(400).end("Invalid measurement");
         return;
       }
       response.writeHead(200, { "content-type": contentTypes[".html"] });
       response.end(
-        `<!doctype html><html><body style="margin:0"><iframe title="Layout measurement viewport" src="/app" style="border:0;width:${width}px;height:${height}px"></iframe>${frameScript(reverted, empty)}</body></html>`,
+        `<!doctype html><html><body style="margin:0"><iframe title="Layout measurement viewport" src="/app" style="border:0;width:${width}px;height:${height}px"></iframe>${frameScript(reverted, empty, pending)}</body></html>`,
       );
       return;
     }
@@ -270,6 +299,7 @@ const measureAt = async (
   height: number,
   reverted: boolean,
   empty = false,
+  pending = false,
 ): Promise<LayoutMeasurement> => {
   const { stdout, stderr } = await run(chrome, [
     "--headless=new",
@@ -281,7 +311,7 @@ const measureAt = async (
     "--window-size=1600,1200",
     "--virtual-time-budget=8000",
     "--dump-dom",
-    `${origin}/__measure?width=${width}&height=${height}&reverted=${reverted ? 1 : 0}&empty=${empty ? 1 : 0}`,
+    `${origin}/__measure?width=${width}&height=${height}&reverted=${reverted ? 1 : 0}&empty=${empty ? 1 : 0}&pending=${pending ? 1 : 0}`,
   ], {
     maxBuffer: 10 * 1024 * 1024,
     timeout: 20_000,
@@ -304,9 +334,17 @@ const assertDensity = (measurement: LayoutMeasurement, width: number): void => {
    * 352.3px at 390x844. These floors keep a small regression margin while the
    * reverted-density control below still has to fail. The old 650/475px floors
    * described the shorter pre-sprint bar. */
+  /* The 390px band moved down on 2026-09-03: the channel head was a two-row bar (113px against
+   * a 73px app bar) and is now one row (53px), which returned 60px to the transcript. The old
+   * band was 150-180 with a 340px transcript floor and a ratio floor of 2; measured after the
+   * change: header 98, transcript 540.6, ratio 5.5.
+   *
+   * headerMax is deliberately LOOSER than the measurement (125, not 115) so it does not swallow
+   * the app-bar rule below. With a tighter max, restoring the old 4.75rem floor failed the band
+   * and the app-bar assertion never ran — a control that cannot fail. */
   const limits = width === 1440
     ? { headerMax: 125, headerMin: 110, ratioMin: 5, transcriptMin: 600 }
-    : { headerMax: 180, headerMin: 150, ratioMin: 2, transcriptMin: 340 };
+    : { headerMax: 125, headerMin: 85, ratioMin: 4, transcriptMin: 500 };
   assert.ok(
     measurement.combinedHeaderHeight >= limits.headerMin &&
       measurement.combinedHeaderHeight <= limits.headerMax,
@@ -320,6 +358,16 @@ const assertDensity = (measurement: LayoutMeasurement, width: number): void => {
     measurement.transcriptToHeaderRatio >= limits.ratioMin,
     `${width}px density: transcript/header ratio is too low: ${JSON.stringify(measurement)}`,
   );
+  /* The operator's rule, stated against the two bars themselves rather than a magic number:
+   * on a phone the channel head must not be taller than the app bar above it. The app bar's
+   * height IS the channel section's top edge. */
+  if (width !== 1440) {
+    assert.ok(
+      measurement.header.height <= measurement.shell.channel.top,
+      `${width}px density: the channel head (${measurement.header.height}px) is taller than ` +
+        `the app bar above it (${measurement.shell.channel.top}px)`,
+    );
+  }
 };
 
 const assertInsideViewport = (measurement: LayoutMeasurement): void => {
@@ -376,6 +424,75 @@ test("the live feed header stays compact and the narrow composer stays in view",
         );
       }
       console.log(`mobile-feed-layout ${width}px ${JSON.stringify({ current, reverted })}`);
+    }
+  } finally {
+    await server.close();
+  }
+});
+
+/* A separate case, not another width in the loop above: below 36rem of viewport height the feed
+   toolbar is hidden, so combinedHeaderHeight (toolbar.bottom - header.top) stops describing
+   anything and the density band cannot be applied. What still holds at this size is the rule the
+   operator asked for, so that is what this pins. Found by measuring: the short-viewport block put
+   the taller padding back and made the head 61px against a 57px app bar. */
+test("the smallest phone keeps the channel head under the app bar", async () => {
+  const chrome = await findChrome();
+  const server = await startDistServer();
+  try {
+    /* With the pending label, which is the widest the roster pill gets. */
+    const measurement = await measureAt(chrome, server.origin, 320, 568, false, false, true);
+    assert.deepEqual(measurement.viewport, { width: 320, height: 568 });
+    assert.ok(
+      measurement.header.height <= measurement.shell.channel.top,
+      `320x568: the channel head (${measurement.header.height}px) is taller than the app bar ` +
+        `above it (${measurement.shell.channel.top}px)`,
+    );
+    assertInsideViewport(measurement);
+    console.log(`mobile-feed-layout 320px ${JSON.stringify(measurement)}`);
+  } finally {
+    await server.close();
+  }
+});
+
+/* A live control, because a text grep is not one: `grid-area`, `order`, or a grouped selector
+   can reorder this menu without matching any pattern. What must hold is that the reader sees
+   the items in the order the DOM and the focus ring use, and that the whole menu is on screen —
+   on a phone this popover is the only Sign out there is. */
+test("the account menu paints in DOM order and stays on screen at phone widths", async () => {
+  const chrome = await findChrome();
+  const server = await startDistServer();
+  try {
+    for (const [width, height] of [[390, 844], [320, 568]]) {
+      const measurement = await measureAt(chrome, server.origin, width, height, false);
+      const { items } = measurement.menu;
+      assert.ok(items.length >= 3, `${width}px: the account menu is missing items`);
+      /* Positive control on the same invocation. A closed popover reports zeroes for every
+         rectangle, and zeroes satisfy the ordering test below — so without this the control
+         would pass hardest exactly when the menu never opened. */
+      assert.ok(
+        measurement.menu.bottom - measurement.menu.top > 0,
+        `${width}px: the account menu did not open, so nothing below was measured`,
+      );
+      for (const item of items) {
+        assert.ok(
+          item.bottom - item.top > 0,
+          `${width}px: the account menu item "${item.label}" has no box: ${JSON.stringify(items)}`,
+        );
+      }
+      for (const [index, item] of items.entries()) {
+        const previous = items[index - 1];
+        if (previous) {
+          assert.ok(
+            item.top >= previous.bottom - 0.1,
+            `${width}px: the account menu paints "${item.label}" above "${previous.label}", ` +
+              `which is not the order the DOM and the focus ring use: ${JSON.stringify(items)}`,
+          );
+        }
+      }
+      assert.ok(
+        measurement.menu.top >= -0.1 && measurement.menu.bottom <= height + 0.1,
+        `${width}px: the account menu is outside the viewport: ${JSON.stringify(measurement.menu)}`,
+      );
     }
   } finally {
     await server.close();
