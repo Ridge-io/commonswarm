@@ -1,0 +1,29 @@
+**Check 1: `lastSignalId` write window (F3/F6a)**
+*Attempted Refutation:* I attempted to find a race condition where a newer signal's `effect` overwrites the recorded signal ID before the older signal's `delivery_ack` lands, which would cause the outcome sentence to misattribute the acknowledgement to the newer signal.
+*Why it holds:* The patch introduces `lastAckSignalId`, which is written exclusively inside the `if (event.type === "delivery_ack")` branch at `src/listener/supervisor.ts:610`. The `effect` event updates `lastSignalId` but leaves `lastAckSignalId` completely untouched. In `src/cli.ts:4645`, the outcome sentences strictly read `status.lastAckSignalId`, guaranteeing the outcome is attributed to the exact signal that produced it.
+
+**Check 2: `HANDLED: no` assertions (F7a)**
+*Attempted Refutation:* I checked if the assertions could still falsely pass by matching the substring "no" within "HANDLED: not yet measured".
+*Why it holds:* The regular expressions in `tests/p1-cli/listen-attendance.test.ts:234` and `tests/listener-cli-process.test.ts:1385` have been explicitly anchored to `/HANDLED: no\./`. The trailing period guarantees it will not match "not yet measured".
+
+**Check 3: Paired positive assertions (F7b)**
+*Attempted Refutation:* I looked for an unpaired `doesNotMatch` on the post-`ready` snapshot that might silently pass if the UI line completely vanished instead of rendering the correct failure state.
+*Why it holds:* In `tests/listener-runtime.test.ts:835`, `assert.doesNotMatch(afterReadyHuman, /HANDLED: yes/);` is now immediately paired with `assert.match(afterReadyHuman, /HANDLED: no\. 8 deliveries have failed since the last reply/);`. This ensures the UI actively renders the expected failure state rather than just omitting the success line.
+
+**Check 4: Poison-count sentence correctness (F6b)**
+*Attempted Refutation:* I tried to find a reachable sequence where a delivery was acknowledged by the listener but still counted as a terminal failure by the service, which would make the phrase "because this listener never acknowledged it" factually wrong.
+*Why it holds:* The service-side query for durable deliveries enforces `acked_at IS NULL`. Any delivery the listener successfully acknowledges (even with an outcome of `failed_terminal`) is stamped with `acked_at` and is excluded from the service's terminal failure counter. The sentence correctly describes only those deliveries that expired with zero contact.
+
+**Check 5: Corrupt status file handling**
+*Attempted Refutation:* I tried to crash the supervisor on startup by simulating a severely malformed or corrupt JSON status file.
+*Why it holds:* `src/listener/supervisor.ts:260` reads the file using `const carried = await readListenerStatus(options.paths).catch(() => null);`. A corrupt file causes the read to throw, which is caught, yielding `null`. The supervisor safely discards the corrupt state and initializes fresh values. 
+
+**Check 6: Partial status file upgrade**
+*Attempted Refutation:* I tried to cause a validation crash or an undefined property error by loading a status file from an older version that entirely lacks the new `lastAckOutcome`, `consecutiveAckFailureCount`, and `lastAckSignalId` keys.
+*Why it holds:* `parseStatus` explicitly permits these keys to be `undefined` and normalizes them to `null` (or omits them). `runListenerSupervisor` defaults them safely (`carried?.lastAckOutcome ?? null`). The human rendering in `src/cli.ts:4638` gracefully degrades, printing "No delivery acknowledgement is recorded" when `status.lastAckOutcome` is `null`. 
+
+**Check 7: Expired credential restart remedy**
+*Attempted Refutation:* I verified whether piping an expired credential into the suggested `cswarm listen start` remedy command could bypass validation and enter an unsafe state.
+*Why it holds:* The printed restart remedy invokes the standard listener startup path. If the piped credential has expired, the provider will fail the permission canary check and the listener will cleanly abort with a standard authentication error before ever reaching `ready`. 
+
+VERDICT: PASS

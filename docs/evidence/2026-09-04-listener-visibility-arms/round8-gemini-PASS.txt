@@ -1,0 +1,31 @@
+Because you omitted the text of the seven checks from your prompt, I have inferred the seven critical invariants targeted by this patch and attempted to break each one.
+
+**1. Legacy status files from 0.1.50 must not crash the new CLI and must be treated as unrecorded outcomes.**
+*Attempted Refutation:* I tried to find a path where a missing `lastAckOutcome` in a 0.1.50 status file would break the `handledState` calculation or crash JSON rendering.
+*Why it holds:* `parseStatus` explicitly falls back to null for missing keys: `lastAckOutcome: (row.lastAckOutcome ?? null) as DeliveryOutcome | null`. In `listenerAttendanceState`, if `lastAckOutcome === null`, `handled` falls through to `null`, correctly rendering as `handledState: "not_yet_measured"`. In `renderListenerStatus`, `status.lastAckOutcome === null` explicitly routes to `` `Last listener signal: ${status.lastSignalId}. An acknowledgement was recorded at ${status.lastAckAt}; its outcome was not recorded.` ``.
+
+**2. Writing a status file must strictly preserve the new schema constraints.**
+*Attempted Refutation:* I tried to drop `consecutiveAckFailureCount` during a restart or an event append to see if it would silently save a malformed file.
+*Why it holds:* The `STATUS_DELIVERY_KEYS` array was expanded to include `"lastAckOutcome"` and `"consecutiveAckFailureCount"`. `writeListenerStatus` verifies `if (!(key in parsed)) { throw new Error(...) }` against this array. Because `parseStatus` always injects `null` for these keys if missing from a legacy read, a subsequent `writeListenerStatus` will serialize them as explicit `null` fields, guaranteeing the file always upgrades to the required shape.
+
+**3. The terminal-failure run must clear only when the provider proves it is answering.**
+*Attempted Refutation:* I tried to bypass the failure threshold by crashing the provider (triggering `failed_terminal`), restarting the listener (which forces a `ready` event), and processing a cheap `"observed"` note.
+*Why it holds:* In `runListenerSupervisor`, the `transition("ready", { ... })` call intentionally omits clearing `consecutiveAckFailureCount`. When the `"observed"` note arrives via `delivery_ack`, `providerProven` relies on `DELIVERY_PROVIDER_PROVEN_OUTCOMES.has(event.outcome)`, which only contains `"replied"`. Thus, the ternary `providerProven ? 0 : status.consecutiveAckFailureCount` keeps the run intact. The incident survives the restart and the note.
+
+**4. The `handledState` must reflect unreliability when the failure run hits the threshold, regardless of the most recent note.**
+*Attempted Refutation:* I tried to trick the CLI into printing `HANDLED: yes` on a dead provider by sending an `"observed"` note right after hitting `consecutiveAckFailureCount = 3`.
+*Why it holds:* In `listenerAttendanceState`, `deliveryFailing` is calculated as `(status.consecutiveAckFailureCount ?? 0) >= LISTENER_DELIVERY_FAILING_THRESHOLD`. The `handled` boolean is gated by `deliveryFailing ? false : ...`. So even if `lastAckOutcome` is `"observed"`, `deliveryFailing` forces `handled` to `false`. `renderListenerStatus` then prints `` `no. ${deliveryFailureRun} deliveries have failed since the last reply; the newest delivery acknowledgement was ${status.lastAckOutcome}` ``.
+
+**5. `main` and `split` route listeners must properly evaluate to unmeasured for worker-specific outcomes.**
+*Attempted Refutation:* I tried to feed a `"queued"` or `"expired"` outcome to a `main` route to see if it incorrectly claims it is handled or failing.
+*Why it holds:* `listenerAttendanceState` guards the worker logic with `routeMode !== "worker" || lastAckOutcome === null ? null : ...`. For `main` routes, it skips the `DELIVERY_HANDLED_OUTCOMES` check and returns `null` (`not_yet_measured`). Even if a worker manually injected `"queued"`, `DELIVERY_HANDLED_OUTCOMES` only contains `"replied"` and `"observed"`, so the ternary falls through to `null`.
+
+**6. Status text must accurately attribute the outcome to the signal it belongs to, avoiding race conditions with newer effects.**
+*Attempted Refutation:* I tried to race an old `delivery_ack` against a new `effect`. If signal A timeouts and signal B starts an effect, I wanted the status output to lie and attribute A's failure to B.
+*Why it holds:* The supervisor now tracks `lastAckSignalId: event.signalId` separately from `lastSignalId` upon receiving `delivery_ack`. `renderListenerStatus` routes through `!status.lastAckSignalId ? ...` and strictly uses `status.lastAckSignalId` when printing the outcome: `` `Last failed delivery signal: ${status.lastAckSignalId}.` ``. The string explicitly ignores the newer `lastSignalId` that was advanced by the effect.
+
+**7. JSON status output must not expose internal camelCase delivery keys as duplicate snake_case aliases.**
+*Attempted Refutation:* I checked if `listenerStatusJson` leaked fields like `consecutive_ack_failure_count` to bypass the PR's normalization contract.
+*Why it holds:* `listenerStatusJson` statically maps `consecutiveAckFailureCount: status.consecutiveAckFailureCount ?? null` without generating snake_case variants. `STATUS_DELIVERY_KEYS` is used in tests to assert that only camelCase keys exist, ensuring zero duplicated schema aliases.
+
+VERDICT: PASS

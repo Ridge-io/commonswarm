@@ -1,0 +1,32 @@
+1. Walked `listenerAttendanceState` and `renderListenerStatus` with values: `consecutiveAckFailureCount = 8`, `lastAckOutcome = "observed"`, `routeMode = "worker"`, `pending = 0`.
+- In `listenerAttendanceState`, `deliveryFailing` is `8 >= 3` (true). The nested ternary for `handled` falls through `pending > 0` (false), `routeMode !== "worker"` (false), and hits `deliveryFailing ? false : ...`, returning `false`. `handledState` becomes `"not_handled"`.
+- In `renderListenerStatus`, `handledState === "not_handled"` and `routeMode === "worker"` and `deliveryFailureRun >= 3` branches to: `no. 8 deliveries have failed since the last reply; the newest delivery acknowledgement was observed.`
+- The signal sentence evaluates `lastAckOutcome === "observed"`. It bypasses `null` and `"failed_terminal"`. The condition `DELIVERY_HANDLED_OUTCOMES.has("observed") && deliveryFailureRun < 3` evaluates to `true && false` (false). It falls through to the final branch: `Last acknowledged signal: <ID>. Its outcome was observed.`
+Every path holds for this specific state.
+
+2. 
+- MISSING: `readListenerStatus` rejects, `carried` is `null`. `runListenerSupervisor` initializes `consecutiveAckFailureCount` to `null`.
+- CORRUPT: JSON parse throws, `carried` is `null`. Initialized to `null`.
+- PARTIAL (old-version): `parseStatus` coerces missing fields to `null` (`row.consecutiveAckFailureCount ?? null`). `carried.consecutiveAckFailureCount` is `null`. Initialized to `null`.
+After ONE `observed` ack:
+In `delivery_ack`, `failed` is false and `providerProven` is false, so `consecutiveAckFailureCount` evaluates to `status.consecutiveAckFailureCount` and remains `null`. `listenerAttendanceState` evaluates `deliveryFailing` as `(null ?? 0) >= 3` (false). `handled` evaluates `DELIVERY_HANDLED_OUTCOMES.has("observed")` (true). The screen prints `HANDLED: yes. The newest delivery acknowledgement was observed`. 
+This IS a false `HANDLED: yes`. A listener in a terminal failure loop that drops its status file will falsely report healthy on the very first `observed` note.
+
+3. Reachable event order:
+- `delivery_ack` for signal A with outcome `"failed_terminal"`. `lastAckOutcome` becomes `"failed_terminal"`, `lastSignalId` becomes A.
+- `effect` for signal B. `lastSignalId` is overwritten to B. `lastAckOutcome` remains `"failed_terminal"`.
+Operator runs `cswarm listen status`. `renderListenerStatus` reads `lastAckOutcome === "failed_terminal"` and prints: `Last failed delivery signal: B.` This is a false claim because B was an effect, not a delivery failure.
+
+4. Besides a `replied` ack, the initialization block in `runListenerSupervisor` writes `consecutiveAckFailureCount` and `lastAckOutcome` to `null` when `carried` is `null` (missing/corrupt file) or when the keys are absent (partial file). No other event transition or handler in the diff touches or resets them.
+
+5. The printed remedy instructs the operator: `Then restart it by piping the same agent credential into: <listenerRestartCommand>`. Reachable failing state: if the listener has been failing for hours, the original agent credential artifact piped into `listen start` (which contains an `expires_at` lease) has expired. Piping the *same* expired credential will instantly fail authentication.
+
+6. Sentences whose claims the code does not enforce:
+- `Last failed delivery signal: ${status.lastSignalId}.` (and the `handled` / `acknowledged` equivalents). Claim not enforced: `lastSignalId` tracks the newest received signal (including `effect` and `main_queue` events), not the signal that produced `lastAckOutcome`. It falsely attributes the outcome to unrelated signals.
+- `${status.lastTerminalDeliveryFailureCount} deliveries the service gave up on because this listener never acknowledged them.` Claim not enforced: The listener actively acknowledges terminal failures by sending `outcome: "failed_terminal"` to the server. Claiming the listener "never acknowledged them" is factually false.
+
+7. 
+- `assert.match(statusHumanResult.stdout, /HANDLED: no/);` (in `listener-cli-process.test.ts`) would still pass if the text regressed to `HANDLED: not yet measured`, because the regex `/HANDLED: no/` matches the substring `"HANDLED: no"` within `"HANDLED: not yet measured"`.
+- All `assert.doesNotMatch` assertions (e.g., `assert.doesNotMatch(afterReady, /HANDLED: yes/);`, `assert.doesNotMatch(afterMeasuredIncident.human, /Last failed delivery signal/);`) would still pass if the targeted output lines were deleted or completely corrupted.
+
+VERDICT: FAIL

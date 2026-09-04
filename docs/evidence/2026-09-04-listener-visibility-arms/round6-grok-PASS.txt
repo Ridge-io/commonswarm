@@ -1,0 +1,52 @@
+I'll read the full review prompt and the complete patch first, then go through it adversarially.The prompt was cut off in the middle of the diff. I'll read the rest of the patch next.The review hinges on whether carrying `lastSignalId` with the ack record creates a false claim. I'll inspect the supervisor and status rendering next.`lastSignalId` is written in three supervisor paths. I'll read those, plus restart and stop, to see if the carry creates a false claim.Stop and start may wipe the carried run. I'll read those paths and the restart command next.I'll pull the real diff and check whether `lastSignalId` can name a different signal than the last ack.**VERDICT: PASS**
+
+F3 is gone. This diff is 18 files. None of them are a ledger under `docs/org/`.
+
+## 18:47 does not print `HANDLED: yes`
+
+Sequence: 8 `failed_terminal`, last ack `observed`, count stays 8.
+
+`handled` is false when the run is at the threshold. `observed` does not clear the run. `ready` does not clear the run. A restart copies the run.
+
+The 18:47 pin is:
+
+- `HANDLED: no. 8 deliveries have failed since the last reply; the newest delivery acknowledgement was observed.`
+- not `Last handled signal`
+- `handledState: "not_handled"`
+- lapse code `listener_delivery_failing`
+
+I do not see another path to `HANDLED: yes` on that state if the status file can be read.
+
+## Carry of `lastSignalId`
+
+On the 18:47 worker path this is not a new false claim.
+
+The last write to `lastSignalId` is the `observed` ack (the note `effect` uses the same id). After a restart the screen still says the last ack was `observed`, and it names that note. Those two lines agree, and they are true.
+
+`lastSignalId` is still a shared field. `effect`, `delivery_ack`, and `main_queue` all write it. The last-signal line treats it as the signal for `lastAckOutcome`. If the last write was an in-flight `effect`, a restart can name the wrong signal. That window existed on a live run before this change. Round 6 only keeps it after stop/start. It is not the 18:47 screen. A dedicated `lastAckSignalId` would close it. I do not fail the lane on that.
+
+The carry test now reads the restart **before** a new ack. Dropping `lastAckAt` from the carry would go red. That hole is closed.
+
+## Remedy
+
+Printed steps:
+
+1. `cswarm listen stop --workspace-id … --principal-id …`
+2. Wait until state is `stopped` or `failed`, not `stopping`, via `cswarm listen status …`
+3. Pipe the credential into `cswarm listen start --agent-token-stdin …`
+
+Not chained with `&&`. `listen start` refuses `starting` / `ready` / `stopping` and accepts `stopped` and `failed`. `stop` needs no credential, so it does not steal stdin from start.
+
+Runnable. Honest enough.
+
+The pin is a string match on that copy. It does not run the three verbs. `stop` still returning `stopping`, and `start` refusing `stopping`, are tested in other files.
+
+## Round 6 did not break the incident pin
+
+The 18:47 snapshot still forbids `HANDLED: yes`. The restart still keeps count 3 across stop/start. A later `replied` still clears the run.
+
+---
+
+Known, not a fail: the ack’s own error code is not stored. `stop` clears `lastErrorCode`. You already recorded that.
+
+Residual, not a fail: while this lapse is on, the first line is `Listener LAPSE`, not `Listener stopped`. The state word is on `CONNECTED: … Transport state is …`. The Next line always contains the word `stopped`, even while state is still `stopping`. Read the CONNECTED line, or use `--json` `.state`. Do not grep the Next line.

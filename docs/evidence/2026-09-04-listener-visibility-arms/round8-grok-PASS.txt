@@ -1,0 +1,58 @@
+I'll read the full review prompt first so I can run the seven checks against the actual patch, not the truncated excerpt.The prompt is long; I'll keep reading the rest of the patch and the seven checks.The seven checks aren’t in the truncated excerpt. I’ll pull the rest of the prompt and any prior review that names them.Found a fuller prompt with the seven checks. Reading that next.I'll inspect prior FAILs and the live status/ack paths for a reachable break.I'll read the round-8 reviews and the current code around the last-signal and restart paths.**Check 1 — 18:47 walk**
+
+I ran the log through `delivery_ack` in `runListenerSupervisor`:
+
+`failed` is `event.outcome === "failed_terminal"`. `providerProven` is `DELIVERY_PROVIDER_PROVEN_OUTCOMES.has(event.outcome)` (`replied` only). Count: +1 / unchanged / +1 / +1 / +1 / +1 / +1 / +1 / unchanged / +1 / unchanged → `consecutiveAckFailureCount === 8`, `lastAckOutcome === "observed"`.
+
+`listenerAttendanceState`: `pending` is `pendingForMainCount ?? 0` → 0. `deliveryFailing` is `(8 ?? 0) >= LISTENER_DELIVERY_FAILING_THRESHOLD`. `handled` takes `deliveryFailing ? false` before `DELIVERY_HANDLED_OUTCOMES.has("observed")`. `handledState` is `"not_handled"`.
+
+`renderListenerStatus` then prints `HANDLED: no. 8 deliveries have failed since the last reply; the newest delivery acknowledgement was observed.` plus `Last acknowledged signal: … Its outcome was observed.` plus `WARNING [listener_delivery_failing]`. The note `effect` writes `lastErrorCode: event.failureCode` with `failureCode: null`, so the parenthetical error is absent. I could not get `HANDLED: yes` or `Last handled signal` on this state.
+
+**Check 2 — missing / corrupt / partial carry, then one `observed`**
+
+`carried` is `readListenerStatus(options.paths).catch(() => null)`. Seed is `carried?.consecutiveAckFailureCount ?? null` (same for `lastAckOutcome`, `lastAckAt`, `lastSignalId`, `lastAckSignalId`). One later `observed` does not increment and does not take `providerProven ? 0`.
+
+- Missing file: `carried === null`. After one `observed`: count stays `null`, `deliveryFailing` is `(null ?? 0) >= 3` → false, `DELIVERY_HANDLED_OUTCOMES.has("observed")` → `HANDLED: yes`. That is a first start, not an erased run. `listen stop` does not delete the status file.
+- Corrupt: `parseStatus` throws, catch yields `null`, same as missing. `writeSecureJsonFile` writes `${path}.${pid}.${hex}.tmp` then `rename`. A crash before rename leaves the old file. Not a real event.
+- Partial (0.1.50 keys absent): `parseStatus` sets `lastAckOutcome` / `consecutiveAckFailureCount` to `null` via `?? null`. After restart, `HANDLED: not yet measured` and `An acknowledgement was recorded at ${lastAckAt}; its outcome was not recorded.` After one `observed`: `HANDLED: yes` again, even if the old file had `lastAckAt` from the incident. The count was never on disk, so this patch cannot carry it. Same hole as last round; not a new break.
+
+**Check 3 — `lastSignalId` vs the outcome sentence**
+
+I used `delivery_ack` for A (`failed_terminal`) then `effect` for B. Supervisor writes `lastSignalId: event.signalId` on `effect` and `main_queue`, and `lastAckSignalId: event.signalId` only on `delivery_ack`. After that pair: `lastSignalId === B`, `lastAckSignalId === A`, `lastAckOutcome === "failed_terminal"`.
+
+`renderListenerStatus` reaches `Last failed delivery signal: ${status.lastAckSignalId}` only when `lastAckOutcome === "failed_terminal"` and `lastAckSignalId` is truthy. It names A, not B. The `lastAckAt === null` / `lastAckOutcome === null` / `!status.lastAckSignalId` arms name `lastSignalId` as “Last listener signal” and do not call it the acked signal. `main_queue` with `pendingForMainCount > 0` uses `Last claimed and queued signal: ${status.lastSignalId}` and never the failed-delivery line. I could not get the outcome sentence to name B.
+
+**Check 4 — other writers of the run to 0 / null**
+
+Grep of `src/`: `consecutiveAckFailureCount` / `lastAckOutcome` are assigned only in the supervisor seed (`?? null`) and in `delivery_ack` (`failed ? (count ?? 0) + 1 : providerProven ? 0 : status.consecutiveAckFailureCount`). `DELIVERY_PROVIDER_PROVEN_OUTCOMES` is `[...DELIVERY_ACK_OUTCOMES].filter((outcome) => outcome === "replied")` — only `replied` writes 0.
+
+`ready` sets `lastErrorCode: null` and does not mention the run. `transition("starting" | "stopped" | "failed")` is `{...status, ...changes, state}` and those `changes` objects do not name the run. `observed` / `queued` / `expired` take the unchanged arm. No other handler in this diff writes 0.
+
+**Check 5 — printed remedy**
+
+Text is: `cswarm listen stop --workspace-id … --principal-id …` then wait for `stopped` or `failed`, not `stopping`, via `cswarm listen status --workspace-id … --principal-id …`, then pipe the credential into `listenerRestartCommand(status)` → `cswarm listen start --agent-token-stdin --workspace-id … --provider … --route …`.
+
+`runListenStatusOrStop` accepts `--principal-id` without a credential (`else` at the `hasAgentCredential` branch). `runListenStart` refuses only `starting` | `ready` | `stopping`; it accepts `stopped` and `failed`. There is no `stop && start` on one line. `stop` does not read stdin.
+
+I tried an expired credential: same `listen start` path as the stranded-queue sibling; it fails as auth, not as a silent ready. I tried `--state-dir`: the printed verbs omit it. Default production status lives in the default tree, so those verbs still hit the same file. Custom `--state-dir` is the same pre-existing `listenerRestartCommand` gap, not new here.
+
+**Check 6 — user-facing sentences**
+
+Checked:
+
+- Docs: `handledState` is `not_handled` for `failed_terminal` (the last ternary) and at threshold even for `observed` (`deliveryFailing ? false` first). `listener_delivery_failing` is pushed only when `consecutive >= LISTENER_DELIVERY_FAILING_THRESHOLD`. Matches.
+- `HANDLED: yes. The newest delivery acknowledgement was ${status.lastAckOutcome}` — only when `DELIVERY_HANDLED_OUTCOMES.has(lastAckOutcome)` and not `deliveryFailing`.
+- Threshold `HANDLED: no. ${n} deliveries have failed since the last reply; … was ${outcome}` — `n` is `consecutiveAckFailureCount`; `replied` is the only clear. Holds.
+- `Last failed delivery signal: ${status.lastAckSignalId}` / `Last handled signal: ${status.lastAckSignalId}` / `Last acknowledged signal: … Its outcome was ${status.lastAckOutcome}` — keyed on outcome and run, not on `handledState`. Holds.
+- Round-8 last-signal arms: `status.lastAckAt === null` → `No delivery acknowledgement is recorded.`; `status.lastAckOutcome === null` → `An acknowledgement was recorded at ${status.lastAckAt}; its outcome was not recorded.`; `!status.lastAckSignalId` → `which signal it belonged to was not recorded.` I loaded a 0.1.50-shaped file (`lastAckAt` set, no `lastAckOutcome`) through `readListenerStatus` and through `runListenerSupervisor` carry. Both take the second arm. They do not take the first. The two sentences on that screen agree (`HANDLED: not yet measured` plus the recorded-at line).
+- Lapse: `recorded ${consecutive} terminal delivery failures with no reply since` plus outcome, `lastAckAt`, `lastErrorCode`. Holds on a live run.
+- Poison line: `deliveries the service gave up on because this listener never acknowledged them` — `durable-delivery.ts` poison `UPDATE` has `AND d.acked_at IS NULL`. Listener `failed_terminal` acks set `acked_at`. Holds.
+- `orList([...DELIVERY_ACK_OUTCOMES])` and `orList([...FAILED_TERMINAL_CODES_SET])` — same sets as `assertAckRequest`. Holds.
+
+**Check 7 — tests**
+
+Would go red on regression: incident snapshot `/HANDLED: no\. 8 deliveries have failed since the last reply; the newest delivery acknowledgement was observed\./`; after-`ready` pair of `doesNotMatch(/HANDLED: yes/)` plus the positive `HANDLED: no. 8…`; `/HANDLED: no\./` (does not match `not yet measured`); `Last failed delivery signal: ${A}` vs not `B`; carry of `lastAckSignalId` after restart; `ackSnapshots` deepEqual (an `observed` clear would move `failures` to 0); process test `consecutiveAckFailureCount === 3` with `handledState === "not_handled"`; legacy file `doesNotMatch(/No delivery acknowledgement is recorded/)` plus `An acknowledgement was recorded at ${ackedAt}` on read, and the same `doesNotMatch` plus `/its outcome was not recorded\./` after restart. Keying the “no acknowledgement” arm on `lastAckOutcome === null` again would fail that test. Dropping `lastAckAt` from the carry would fail `assert.equal(restarted.lastAckAt, ackedAt)` and the restart `doesNotMatch`.
+
+Would still pass: `doesNotMatch(/last answered delivery/)` and `doesNotMatch(/outcome is not known/)` — those strings are not in `renderListenerStatus`. Dropping `lastAckSignalId` from the live status file would still pass the process test (it never reads that key); the runtime carry test would catch it. The restart half of the legacy test does not pin the timestamp inside the sentence; the read half does, and both call the same renderer.
+
+VERDICT: PASS

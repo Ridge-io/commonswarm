@@ -1401,3 +1401,36 @@ refutations per check and the literal verdict line is running as this is written
 `npm whoami`. It published 0.1.50 on 2026-09-02, so it expired or was revoked since. The GitHub
 release and the site can ship without it; the npm leg cannot. Bump the version only once npm auth
 works, or `/download` and `npm i -g` will disagree on the current version.
+
+### 2026-09-04: `lane/listener-delivery-visibility` landed — eight rounds, two arms in consensus
+
+Rounds 7 and 8 were driven by real cross-family arms once `agy` was recognised as the Gemini route:
+
+| round | SHA | Grok | Gemini (agy) | what the FAIL found |
+|---|---|---|---|---|
+| 6 | `3b245ed` | PASS | prose PASS, no verdict line → not counted; strict rerun FAIL | `lastSignalId` is written by `effect` too, so the outcome sentence named a newer signal; three `/HANDLED: no/` asserts were substrings of "not yet measured"; one negative had no paired positive |
+| 7 | `4992dd8` | FAIL | PASS | a pre-0.1.51 status (every fleet listener at upgrade) has `lastAckAt` and no outcome; the new sentence said "No delivery acknowledgement is recorded" beside a recorded `lastAckAt` |
+| 8 | `fe07930` | PASS | PASS | — |
+
+**Rejected with a citation, from the round-6 strict Gemini pass:** "the poison-count sentence is false
+because the listener acks `failed_terminal`." `supabase/functions/command/durable-delivery.ts:178`
+requires `acked_at IS NULL`; acked rows are excluded by definition. Gemini itself confirmed this on
+the next round. **Not acted on, with reasons:** a corrupt status file is not reachable through real
+events (`writeSecureJsonFile` is temp-file-and-rename); an expired credential piped into the printed
+restart fails as an honest auth error, as the pre-existing sibling remedy does.
+
+Merged as a merge commit so the SHA the arms reviewed is the SHA that landed: `ee55a13` onto
+`origin/main` `49b1203`, 0 conflicts, gates on the merged tree: tsc clean, `check:tests` clean,
+`npm test` 735/735, `test:p1-cli` 367 pass 0 fail (main: 366/0). Landed from the validation worktree,
+not the shared checkout — the shared checkout carries another agent's unpushed commit and three
+dirty files, and was not touched.
+
+**Two prompt-assembly slips worth a rule.** (1) `git diff main..HEAD` after `main` moves shows
+others' commits as the lane's deletions — done twice; the tell is a 3× prompt-size jump. Diff from
+the merge-base. (2) A `sed -n '1,20p'` header cut the seven-check text out of the round-8 prompt;
+the arm said so and inferred them. Assert the checks are present before sending.
+
+**Release state:** NOT released. The npm token in `~/.npmrc` returns `E401`; it published 0.1.50 on
+2026-09-02. The version bump is held until npm auth works so `/download` and `npm i -g` agree.
+Draft notes: `<scratchpad>/release-notes-0.1.51.md`. Deferred on the code: persist the ack's own
+error code (an `observed` note clears `lastErrorCode`, and `stop` clears it too).
