@@ -1,0 +1,148 @@
+I'll read REVIEW.md and the patch first so I can follow the instructions exactly.The patch was truncated, so I’ll pull the rest of the branch files and re-check each review item against the actual code.I'll pull the branch sources next and walk each of the eight checks against the actual code.The scratchpad isn’t the git repo, so I’ll run those commands from the cloud-swarm checkout.I’ll pull the canonicaliser, dashboard hooks, tests, and AGENTS.md so each of the eight checks is grounded in the branch.I’ll inspect the sanitizer, dashboard load/render path, and whether the branch has drifted from this patch.The branch has moved past this patch; I’ll diff the click/refresh path so I can judge the snapshot, not later fixes.diff --git a/AGENTS.md b/AGENTS.md
+
+The click path still authorizes an open from a stale snapshot, which is the failure this lane claimed to have closed.
+
+## Findings
+
+**1. Click is not authoritative (Check 5). `refreshBrainTopics` can no-op, and a deleted topic still dies inside the download.**
+
+The design doc and `AGENTS.md` both state the click re-reads first and therefore cannot fail inside the download. The code does not do that.
+
+```js
+if (sampleMode || !workspaceId || brainTopicRefreshInFlight) return;
+```
+
+`brainTopicRefreshInFlight` is a boolean, not the in-flight promise. A click that lands while the 30s cadence read is running returns immediately. `await refreshBrainTopics(true)` is a no-op. `brainLinkClickOutcome` then sees `brainTopicNames()` from the render-time `files` snapshot.
+
+That window is the normal one: `refreshLatestSignals` only runs on the feed, and every healthy tick offers `void refreshBrainTopics(false)`. The first tick always fires a read (`brainTopicsCheckedAt` starts at `0`). The user is looking at the feed — the only place these controls exist — during that fetch.
+
+If the topic was deleted after render:
+
+1. Control is still on screen (the documented 30s residual).
+2. Click overlaps the cadence read, or the forced `workspaceFiles()` throws.
+3. Outcome is `{ kind: "open" }`.
+4. `brainView.open` still has the stale row, the download runs, and the catch in `brain-view.ts` surfaces **"The topic could not be loaded."**
+
+The `catch` on the re-read makes the same hole without a race:
+
+```js
+} catch {
+  // A failed re-read keeps the last good snapshot. The click still re-validates.
+}
+```
+
+It re-validates against the snapshot the failed read did not replace. A downed files request on click is exactly when a download would also fail — and that is the path this notice was written to replace.
+
+`brainLinkClickOutcome` cannot save this. It only receives `topicsNow`. It has no signal that the read was skipped or rejected. The deleted-topic unit test always passes a list that already lacks the name, i.e. a successful re-read. The dashboard source assertion only checks that `await refreshBrainTopics(true)` appears before the call; it still matches this early-return.
+
+This is the claim family: a dead control after delete. The first SHA failed it. This SHA documents a residual of “control on screen, click says so” and then reintroduces the download failure on the click that was supposed to close it.
+
+**2. `AGENTS.md` repeats the false claim, and enumerates the separator set by hand (Check 8).**
+
+> a click re-reads the topic list before it opens anything, so it never lands on a topic that has since been deleted.
+
+That sentence is not true of this patch. The rest of the paragraph is true of the shipped CLI (`cswarm brain put <topic>` exists, stdin or path, canonical lowercasing). It does not tell agents to do something they cannot do. The overclaim is the click guarantee.
+
+Separately, “A slug carrying `-`, `_`, or `.`” restates `BRAIN_SLUG_SEPARATORS` in prose. Doctrine is that a user-facing enumeration comes from the constant that enforces it. The test file pins the constant to those three characters; nothing pins this paragraph to the constant.
+
+---
+
+## The eight checks
+
+### 1. Injection — does not hold as a defect
+
+Attempted refutation: a topic containing `<`, `"`, `javascript:`, or a `data-` attribute, or Markdown that survives sanitization and is re-parsed here.
+
+`setSanitizedMessageMarkdown` still runs first (`innerHTML = renderMessageMarkdown(...)`). This pass then walks **text nodes only**, `createElement("button")`, `textContent`, `dataset.brainLink = topic`. No HTML string, no `innerHTML`.
+
+`topic` is taken from the caller’s list. That list is `brainTopics(files)` → `brainTopicFromFileName` → `canonicalBrainTopic`, whose regex is `^[a-z0-9][a-z0-9._-]*$`. A stored name cannot carry `<`, quotes, or a scheme. `MESSAGE_MARKDOWN_TAGS` does not include `button`; a raw `<button>` in a body is escaped before markdown. Existing `<a>` is opaque.
+
+No injection surface added. This check is clean.
+
+### 2. False links — does not hold as a defect
+
+Attempted constructions:
+
+| Body | Why it stays plain |
+|---|---|
+| `roadmap` vs `commonswarm-roadmap` | Whole-run match; `roadmap` is one-word and gated |
+| `Read shared-host.` | Untrimmed run fails, trailing `[.:~?#]+` trim hits `shared-host` |
+| `https://example.com/api?topic=commonswarm-roadmap` | `RUN_RE` keeps `/?#=&%+` in one run |
+| Fenced `cswarm brain get brain-how-to` | `PRE` is opaque |
+| `[shared-host](https://example.com/shared-host)` | `A` is opaque |
+| `made-up-topic` | Validation against the live list |
+| `C:\notes\shared-host\file.txt` | `\` is inside the run |
+| Body written before the topic existed | Name is not in `topics[]` |
+
+A workspace whose file list failed to load sets `files = []`; `known.size === 0` is a single plain segment. No false button.
+
+Residual (accepted in the brief): a slug in ordinary prose (`The agent-restart path is slow`) still linkifies. That is choice (a), not a false target.
+
+### 3. Missed links / case folding — does not hold as a defect
+
+`There's a brain topic for CommonSwarm-roadmap`: `resolveRun` does `known.get(run.toLowerCase())`. The control’s visible text is `text.slice(start, end)` — `CommonSwarm-roadmap` — and `segment.topic` is the canonical slug. Pinned by `the text a reader typed keeps its case; the topic it opens is canonical`.
+
+### 4. Word gate — enforced in the parser
+
+`isLinkable` is the gate:
+
+```ts
+if (isSlugShapedTopic(topic)) return true;
+return codeSpan !== undefined && codeSpan.trim().toLowerCase() === topic;
+```
+
+A topic named `brain` or `the` linkifies only when the **entire** inline code span equals that name. `cswarm brain put` / `cswarm brain get shared-host` do not admit `brain` or `get`. Pinned in both the unit file and the observer (`commandSpanControls === ["shared-host"]`, `loneSpanControls === ["releases"]`). Not test-only.
+
+### 5. Live-list binding — **FAIL**
+
+Load order is real: `workspaceFiles` is in the same `Promise.all` as roster, `files` is assigned, then `loadSignals` → `renderFeed`. An empty/`fileLoadError` list linkifies nothing.
+
+Create-after-load and delete-after-load are the two halves a prior arm failed. This SHA adds a 30s re-read and a click-time `brainLinkClickOutcome`. The 30s residual (control still on screen) is stated. The click-time half is not actually closed — Finding 1. A deleted topic can still fail inside the download.
+
+### 6. Four LiveDashboard hunks — no double-wrap
+
+The prompt’s line numbers are off for this file; the four hunks in the patch are: import (~1001), helpers (`brainTopicNames` / `refreshBrainTopics` / `openBrainTopic`, ~3278+), the render hook after `setSanitizedMessageMarkdown` (~3859), CSS (~9556).
+
+`renderFeed` does `list.replaceChildren()` and rebuilds every row. Each row: sanitizer (replaces `innerHTML`) then `linkifyBrainTopics`. The hook therefore runs once per message per rebuild, not as an incremental pass over an already-linked tree. `BUTTON` is in `OPAQUE_ELEMENTS` as defence in depth. Cannot double-wrap.
+
+The defect in this hunk is not double-wrap; it is `refreshBrainTopics`’s in-flight boolean (Finding 1).
+
+### 7. Tests — most would fail on regression; two families are weaker than they look
+
+Counted 19 unit + 9 observer = 28, not the claimed 23. Extra tests are not a defect.
+
+Spot-check (would the named test fail if the behaviour died?):
+
+1. **Drop validation** — `NEGATIVE CONTROL: a topic that does not exist never becomes a link` fails (`made-up-topic` is slug-shaped).
+2. **Drop the word-gate** — `a one-word topic in ordinary prose stays ordinary prose` fails on `The roadmap slipped`.
+3. **Drop `?=#&` from `RUN_RE`** — `a query string or a fragment is part of the URL` fails on the curl line.
+4. **Restore a `\bbrain\b` cue** — `NEGATIVE CONTROL: the word 'brain' near a one-word name` fails on `Read brain-how-to for the releases ritual.`
+5. **Hardcoded `topics: ["shared-host"]` at the call site** — the observer now requires `topics: brainTopicNames(),`; that assertion fails. The older pair of regexes would not have.
+
+`textContent` on `preText` / `codeSpanUrlText` / `commandSpanText` would not catch a nested button (`.textContent` walks into it). Those are paired with `controlsInsidePre`, `codeSpanUrlControlCount`, and `commandSpanControls`. Weaker than the node-count gates beside them; not independently load-bearing. Accepted as a note.
+
+What is missing: no test where `refreshBrainTopics` returns without a successful read. The click-deleted test cannot see Finding 1.
+
+### 8. AGENTS.md — one false sentence; CLI claims hold
+
+`cswarm brain put <topic>` is a real subcommand (path or stdin). “Write the slug; case does not matter” matches `canonicalBrainTopic` (`trim().toLowerCase()`). Backticks for one-word names, no linkification inside `<pre>` / `<a>` / URLs, unknown names stay plain: all true of this parser.
+
+The click sentence is not. See Finding 2.
+
+---
+
+## Prior Gemini FAIL on this exact diff — re-judged
+
+Gemini claimed `isLinkable` compares a lowercased code span to a `topic` that preserves original case, so a one-word topic with uppercase could never link.
+
+That path is not reachable.
+
+`canonicalBrainTopic` is `value.trim().toLowerCase()` then `BRAIN_TOPIC_RE = /^[a-z0-9][a-z0-9._-]*$/`, which **rejects** any remaining uppercase. `brainTopicFromFileName` lowercases the file name before the slice. `brainTopics(files)` only yields those names. `brainTopicNames()` is that list. `known.set(topic.toLowerCase(), topic)` therefore stores lowercase on both sides. `isLinkable`’s `codeSpan.trim().toLowerCase() === topic` is lowercase-to-lowercase.
+
+A file created outside the CLI as `brain--Roadmap.md` still becomes `roadmap`. There is no caller of `linkifyBrainTopics` other than this dashboard hook that could pass a mixed-case `topics[]`. I will not repeat that finding.
+
+The other two Gemini points stand as notes, not defects: re-render cannot double-wrap; the `textContent` assertions are weaker than the node-count gates beside them.
+
+What remains after discarding that FAIL is Finding 1.
+
+VERDICT: FAIL

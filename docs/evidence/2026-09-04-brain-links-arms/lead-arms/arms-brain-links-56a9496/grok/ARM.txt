@@ -1,0 +1,41 @@
+I'll read the review instructions and the patch first so I can follow them exactly.The patch is long; I’ll keep reading it and the branch sources so the eight checks are against the actual code.The review repo is elsewhere; I’ll read the branch files from there and keep checking the patch against the eight items.SHA matches 56a9496. Next I’ll pull the implementation, tests, and sanitizer so the eight checks can be refuted against real code.I’ll inspect the dashboard render path, topic canonicalization, sanitizer, and CLI next — those are the places a false PASS would hide.The branch has tests the patch file didn’t include. I’ll read those extra tests and the implementation they pin.diff --git a/AGENTS.md b/AGENTS.md
+
+Adversarial review of `lane/brain-links` @ `56a9496` / this diff. Each item is an attempted refutation.
+
+### 1. Injection — does not hold as a defect
+The pass runs after `setSanitizedMessageMarkdown` and walks text nodes only. Controls are `createElement("button")` plus `textContent` / `dataset` / `title` property sets — no HTML string, no `innerHTML`. Topic strings that reach the control come from `brainTopics` → `brainTopicFromFileName` → `canonicalBrainTopic`, which is `trim().toLowerCase()` plus `^[a-z0-9][a-z0-9._-]*$`. A body cannot smuggle `<`, `"`, `javascript:`, or a `data-` attribute into this pass; Markdown is not re-parsed here. `MESSAGE_MARKDOWN_TAGS` is unchanged, and `button` is not on that allowlist (the sanitizer cannot emit one for this pass to nest into).
+
+### 2. False links — **holds**
+`RUN_RE` is `/[A-Za-z0-9._~\-/\\@:?#=&%+]+/gu`. After the earlier `?`/`=` miss, the class still omits RFC 3986 sub-delimiters `,` and `;`. The run therefore splits a URL and offers the slug after the break:
+
+- `See https://example.com/a;commonswarm-roadmap` → runs `https://example.com/a`, `commonswarm-roadmap`
+- `https://example.com/x?ids=1,2,shared-host` → runs `https://example.com/x?ids=1`, `2`, `shared-host`
+
+`commonswarm-roadmap` / `shared-host` are live slug-shaped topics, so they become buttons **inside a URL**. That is exactly the class Check 2 asked for (and the class Gemini already hit on `?`/`=`). Existing tests do not catch it: they use `/`, `?`, `=`, `&`, `#` — all already in the class. `PRE` / `<a>` / prefix-`roadmap` / sentence-final `.` / unknown names are fine; this hole is not.
+
+### 3. Missed links the operator would expect — mixed
+`There's a brain topic for CommonSwarm-roadmap` does link: `run.toLowerCase()` hits `commonswarm-roadmap`, and `segment.text` is the original slice (`Brain-How-To` is pinned). Visible text is preserved.
+
+One-word + sentence punct inside backticks does **not**: `isLinkable` is `codeSpan.trim().toLowerCase() === topic` with no trailing-punct trim, while `resolveRun` does trim the run. `` `roadmap.` `` therefore does not admit `roadmap`. The required CommonSwarm-roadmap sentence is not that case.
+
+### 4. Word gate — does not hold as a defect
+Enforced in `isLinkable`, not only in tests: slug-shaped → link; otherwise the whole `codeSpan` must equal the topic. `` `cswarm brain put` `` with live topics `brain` / `the` / `get` offers none of those words (`NEGATIVE CONTROL: a code span that merely CONTAINS…`, plus the observer `commandSpanControls` gate). A topic named `brain` or `the` is legal under `canonicalBrainTopic` and is contained.
+
+Not repeating the prior uppercase `isLinkable` FAIL: every stored name is `canonicalBrainTopic`’s lowercase regex; `brainTopics()` derives from those names; `known.set(topic.toLowerCase(), topic)` therefore stores lowercase. No reachable dashboard path puts an uppercase character into `topics[]`.
+
+### 5. Live-list binding — **holds** (second lock is not what it claims)
+Empty `files` → `known.size === 0` → no links. Deleted-after-render: click re-reads, `brainLinkClickOutcome` returns `missing`, notice names the topic and is not the old “could not be loaded” download error. Cadence is 30s on healthy feed ticks; residual of a control still on screen between delete and the next re-read is stated in the design doc.
+
+The two locks exist in code and each has a named test (`A FORCED refresh waits out a read already running, then takes its own`; `a list that could NOT be refreshed authorizes NOTHING`). The second lock is still wrong in the dashboard wiring. `createBrainTopicReader` sets `fresh = true` on **any** resolution of `read()`. The dashboard `read` is:
+
+```ts
+if (sampleMode || !activeWorkspaceId) return;
+await readBrainTopics();
+```
+
+Both the early `return` and `readBrainTopics`’s version/workspace mismatch `return` resolve without throwing and **without applying a list**. The click then receives `listIsFresh === true` and may `open` against whatever `brainTopicNames()` still holds. That is the claim the lock was added to forbid. The unit test for lock 2 passes `false` in by hand; nothing at this SHA turns a no-op `read()` red.
+
+Off-feed unsaved Files/Brain edits: `refreshLatestSignals` starts only on `feed`/`feed-empty`, and `showChannelView` clears the interval when leaving. An in-flight tick can still finish after a switch; `setTopics` only clears the editor when the open topic’s `fileId` is gone. Not the main miss.
+
+### 6. LiveDashboard hunks / double-wrap — does not hold as a defect
+The four claimed sites are present (import, helpers, hook immediately after `setSanitizedMessageMarkdown`, CSS),

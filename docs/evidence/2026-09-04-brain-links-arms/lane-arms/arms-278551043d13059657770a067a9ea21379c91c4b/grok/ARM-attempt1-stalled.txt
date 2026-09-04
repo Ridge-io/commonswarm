@@ -1,0 +1,1 @@
+I'll review this commit from the exact patch file you named, starting with the first `diff --git` line so we know it's the right one.The first `diff --git` line matches. I'll read the rest of the patch and the code it changes.I'll inspect the surrounding dashboard, brain view, and topic helpers next, focusing on refresh races and click revalidation.

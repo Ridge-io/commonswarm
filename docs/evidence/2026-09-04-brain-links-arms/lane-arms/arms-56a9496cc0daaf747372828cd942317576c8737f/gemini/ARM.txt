@@ -1,0 +1,35 @@
+diff --git a/AGENTS.md b/AGENTS.md
+
+1. **Trace `createBrainTopicReader` (Workspace switch & `sampleMode`):**
+Yes, a control can authorize opening a topic the new workspace does not hold. In `readBrainTopics`, if the workspace changes mid-await (`workspaceId !== activeWorkspaceId`), or in the `read` wrapper if `sampleMode` is true, the function returns early *without throwing*. The injected `read` promise thus resolves successfully. `createBrainTopicReader` then sets `fresh = true` without updating the `files` array. A concurrent or subsequent click evaluates `listIsFresh` as true, and uses the old workspace's `brainTopicNames()` snapshot to incorrectly authorize opening a topic that the current workspace does not hold.
+
+2. **XSS, Injection, or DOM-Clobbering:**
+No XSS or injection paths were found. `linkifyBrainTopics` safely traverses text nodes and uses `document.createElement("button")`, `textContent`, and `dataset` instead of modifying `innerHTML`. The `Map` used to store known topics mitigates prototype pollution risks that a plain object might have faced.
+
+3. **Attack the token run and gates:**
+- **Unintended link:** The token run regex `/[A-Za-z0-9._~\-/\\@:?#=&%+]+/gu` explicitly omits semicolons (`;`) and commas (`,`), which are valid sub-delimiters in URLs. A real agent writing `See https://example.com/api;topic=commonswarm-roadmap` or `Check https://example.com/page,commonswarm-roadmap` will cause the run to split at the punctuation. `commonswarm-roadmap` will subsequently match and inject a clickable button right into the middle of a plain-text URL, breaking copy-pasteability.
+- **Missed link:** A real agent writes: `The plan is in the \`roadmap.\` topic.` The `codeSpan` string is exactly `"roadmap."`. While `resolveRun` properly trims the trailing punctuation to yield a matched topic of `"roadmap"`, `isLinkable` performs a strict exact-match check (`codeSpan.trim().toLowerCase() === topic`), so `"roadmap." === "roadmap"` evaluates to false. The intended link is completely missed.
+
+4. **Does `readBrainTopics` overwriting `files` break panels?:**
+Yes. The comment explicitly states: "A background read has no business rebuilding the Files list or the Brain pane underneath a reader who is using them". However, the logic does the exact opposite:
+```typescript
+const view = app.dataset.channelView ?? "";
+if (view === "files") renderFiles();
+if (view === "brain") renderBrain();
+```
+It rebuilds the panels *only* when the reader is currently looking at them. If a user is actively typing to rename a file in the Files panel (`view === "files"`), a background read will complete, fire `renderFiles()`, and completely wipe out their active state and DOM selection.
+
+5. **Tests passing when broken:**
+Yes. In `brain-links.observer.test.ts`, both `proseRoadmapIsPlainText` and `madeUpTopicIsPlainText` validate negative controls using `controls.every((control) => control.textContent !== "<topic>")`. `Array.prototype.every` vacuously evaluates to true for an empty array. If the feature were entirely broken and failed to render any controls at all, `controls` would be empty, and these negative assertions would incorrectly pass.
+
+6. **User-facing string enumerations:**
+There are no user-facing strings in the app UI enumerating the separator list. However, the design brief (`docs/design/2026-09-04-BRAIN-LINKS-IN-SIGNALS.md`) manually enumerates the separators: `A topic carrying a slug separator — -, _, . — has a shape...`, meaning the two can drift if the constant changes.
+
+7. **Copy accuracy (Bounds vs Code):**
+- **AGENTS.md:** Promises that text inside a URL "is left exactly as typed." As demonstrated in finding #3, missing delimiters like `,` and `;` in the run regex violate this, destructively modifying URLs.
+- **Bounds (Background reads):** Promises that a read "cannot rebuild a panel underneath a reader who is using it." The implementation directly contradicts this (both in the brief's own explanation and the code), explicitly rebuilding the panel precisely when it is active (`if (view === "files") renderFiles();`).
+
+8. **Breaking feed or collapse/expand:**
+`linkifyBrainTopics` uses standard DOM `replaceChild` with a `DocumentFragment` to swap out text nodes cleanly. This does not break the collapse/expand feature, which merely applies a CSS class (`dashboard__message-markdown--collapsed`) to the parent container. However, as noted in finding #4, it disrupts the active Brain/Files panels.
+
+VERDICT: FAIL - Workspace switch bypasses authorization check, URL regex splits on valid sub-delimiters, and background reads actively rebuild panels in use.

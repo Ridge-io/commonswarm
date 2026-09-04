@@ -1,0 +1,1 @@
+I'll read `REVIEW.md` first and follow it exactly, including the patch in `DIFF.patch`.I'll inspect the branch files and related call sites so I can refute each claim instead of rubber-stamping the patch.

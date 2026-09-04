@@ -1,0 +1,1 @@
+I'll read the review instructions and the patch first, then follow them exactly.I'll quote the first `diff --git` line, then trace the patch against the review questions.The first `diff --git` line matches. Next I’ll read the rest of the patch and the live source.The arm dir only has the patch. I’ll locate the real checkout and keep reading the rest of the diff.

@@ -1,0 +1,81 @@
+I'll read `REVIEW.md` and the patch, then follow the review instructions exactly.I'll inspect the branch files and surrounding code so I can refute each claim in the review.The review workspace isn’t a git repo, so I’ll inspect the branch from the real cloud-swarm checkout.I’ll pull the sanitizer, topic list, dashboard hook, and CLI so I can try to refute each claim.I’ll inspect the dashboard render path, CLI `brain put`, and how `files` is bound at signal render.Checking one more stale-list path and whether a deleted-topic click is tested.Injection does not go through this pass: it runs after the sanitizer, walks text nodes, and builds buttons with `createElement` / `textContent`. The live-list claims in the design doc do not match the dashboard. `files` is a workspace-load snapshot, so a feed refresh does not pick up a topic an agent just created, and a click on a deleted topic does not fail the way the bound describes.
+
+## 1. Injection
+
+Attempted: topic names with `<`, `"`, `javascript:`, a `data-` attribute, and Markdown that survives sanitization.
+
+`linkifyBrainTopics` runs after `setSanitizedMessageMarkdown` (LiveDashboard 3796–3804). It walks text nodes, `createElement("button")`, and `textContent`. No HTML string, no `innerHTML`. `canonicalBrainTopic` is `[a-z0-9][a-z0-9._-]*`, so a live topic cannot carry `<`, `"`, `:`, or `/`. `title` and `data-brain-link` are DOM properties filled from that canonical name, not from the body. `<a>` is opaque; the sanitizer only allows `http(s)` hrefs.
+
+No injection path found.
+
+## 2. False links
+
+Attempted: `roadmap` vs `commonswarm-roadmap`, trailing `.`, URL path/query, fenced `<pre>`, existing `<a>`, a body written before the topic existed.
+
+Matching is whole-run, not a prefix slice. `commonswarm-roadmap` does not mint `roadmap`; `non-shared-host` and `brain-how-to-v2` stay plain. `RUN_RE` keeps `/ \ @ : ? # = & % +` in one token, so a URL/query/fragment/Windows path equals no topic. `<pre>` and `<a>` are skipped. A body written before the topic existed linkifies only if that name is in the in-memory list at render — that is choice (a), accepted in the design.
+
+Residual, also accepted: a slug-shaped English phrase (`The agent-restart path is slow`) becomes a control if that topic exists.
+
+## 3. Missed links
+
+`There's a brain topic for CommonSwarm-roadmap` is one ASCII run, `toLowerCase()` hits `commonswarm-roadmap`, and the visible slice stays `CommonSwarm-roadmap`. Same mechanism as the `Brain-How-To` unit test. Case folding works; the exact operator string is not in the fixture (the observer uses lowercase).
+
+## 4. Word gate
+
+Enforced in the parser, not only in tests: `isLinkable` is `isSlugShapedTopic(topic) || marked`, and the DOM pass sets `marked` from `CODE`.
+
+A topic named `brain` or `the` is legal (`canonicalBrainTopic` allows it). It would not link in prose. It would link inside every inline-code CLI snippet (`cswarm brain put`, `cswarm brain get brain-how-to`). That is real harm for `brain`; the gate does not reserve those words.
+
+## 5. Live-list binding — this is the defect
+
+Empty `files` is a no-op, and that path is tested. Workspace load assigns `files` before `loadSignals`, so the first feed render is not a race.
+
+`files` is then a snapshot. The only writers are workspace load, `files = []` on switch, and a Brain-panel save of an existing file. `refreshLatestSignals` / `renderFeed` never call `workspaceFiles`.
+
+The design states as a bound (docs/design 108–111, 121–123):
+
+- “A topic created by an agent while the reader sits on the feed appears on the next feed refresh.” False. The live feed tick rebuilds messages against the same `files`. Put-then-cite (`cswarm brain put new-topic` then a note naming it) stays plain for a reader already on the feed until `openWorkspace` (the Refresh control), not until a feed poll, and not until `returnToChannel`.
+- “A click after the topic is deleted opens the Brain panel, not the topic… lands on the topic list and can see the topic is gone. `brainView.open` then returns without changing the pane.” The reachable case is the opposite: `files` still holds the name, so the feed still draws a control, `open` finds the stale row, and the download fails with “The topic could not be loaded.” The “topic is gone, list only” path needs `files` already updated without a feed rebuild; nothing in LiveDashboard does that.
+
+`AGENTS.md` repeats the overclaim: “the app renders no dead link.” A control whose target has been deleted on the server is a dead control. No test covers a missing topic on click.
+
+## 6. Four LiveDashboard hunks
+
+| Claimed | What is there |
+|---|---|
+| 1001 | `import { linkifyBrainTopics }` |
+| 3273–3288 | `brainTopicNames()` from `brainTopics(files, …)` and `openBrainTopic` |
+| 3797–3804 | sanitizer, then `linkifyBrainTopics(markdown, { topics: brainTopicNames(), open: openBrainTopic })` |
+| 9491–9522 | `.dashboard__brain-link` plus hover/focus-visible ring |
+
+`renderFeed` does `list.replaceChildren()` and rebuilds every message, so the hook runs once per message per feed rebuild on a fresh sanitized tree. A second pass on the same tree would skip `BUTTON` (`OPAQUE`). No double-wrap.
+
+## 7. Tests
+
+23 tests (15 unit + 8 observer). Spot-check of five claimed mutations:
+
+| Mutation | Test that would fail |
+|---|---|
+| Drop live-list validation | `NEGATIVE CONTROL: a topic that does not exist never becomes a link` |
+| Drop the word gate | `a one-word topic in ordinary prose stays ordinary prose` |
+| Drop `?=#&%` from `RUN_RE` | query/fragment unit test + observer `codeSpanUrlControlCount === 0` |
+| Restore a nearby `brain` cue | `NEGATIVE CONTROL: the word 'brain' near a one-word name does not admit it` |
+| Canonicalize visible text | `the text a reader typed keeps its case` (`Brain-How-To`) |
+
+The curl observer test counts controls, not `textContent` — that path is load-bearing. Weaker siblings:
+
+- Fenced-block `preText` is `textContent`; a button inside `<pre>` would still stringify the same. `controlsInsidePre === 0` is the real gate.
+- `proseRoadmapIsPlainText` / `madeUpTopicIsPlainText` compare control `textContent` to the word, not `dataset.brainLink`. The first observer test’s exact `controlTopics` list covers the miss.
+- Observer comment (lines 165–166) says line 1 carries `brain` right before `roadmap`. Line 1 has `brain` before `commonswarm-roadmap`; standalone `roadmap` is line 2. Same class of fixture/comment mismatch the first SHA was failed for.
+
+No test asserts `brainView.open` on a missing topic, so the deleted-topic bound is unpinned.
+
+## 8. AGENTS.md
+
+`cswarm brain put <topic>` is a real CLI form (markdown from stdin). On a TTY it errors; `brain ls` empty copy still says `cswarm brain put <topic> <markdown-path>`. The new paragraph matches the existing nudge, not a new command agents cannot run.
+
+“A slug carrying `-`, `_`, or `.` is recognised anywhere in a sentence” is the same overclaim family as the old “in the same sentence”: not inside `<pre>`, not inside `<a>`, not inside a URL token in that sentence. The separators do match `BRAIN_SLUG_SEPARATORS`. “Write the slug; case does not matter” is true. One-word-in-backticks is true. “the app renders no dead link” is not true of a stale snapshot (item 5).
+
+The paragraph tells agents to name the topic in a signal so a human can click it — that they can do, with the one-word backtick rule. It also points at a design doc whose “bounds” are false.
+
+VERDICT: FAIL

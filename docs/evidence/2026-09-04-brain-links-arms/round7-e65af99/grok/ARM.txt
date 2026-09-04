@@ -1,0 +1,53 @@
+I'll read the review brief and the patch first, then follow the instructions exactly.The first `diff --git` line matches. Next I’ll read the rest of the patch and the code it touches.Patch identity is confirmed. I’ll read the rest of the diff and the lock/click code next.The patch is the right one. I’ll read the implementation, tests, and click/read locks next.Repo root is the parent worktree. I’ll read the implementation and tests from there.I’ll inspect the click path, shared `files` updates, and the Brain panel next.I’ll check `one()` scoping, the sanitizer allowlist, and file-list downloads next — those are the likely holes.`diff --git a/AGENTS.md b/AGENTS.md`
+
+The three locks hold for **open**. A control can still **render** for a name that is gone, until the next re-read. That bound is in the brief.
+
+**1. The three locks**
+
+`createBrainTopicReader`: a click (`force`) waits out the in-flight read, then starts its own. Joining is not enough, and this path does not join the old read. Two clicks run one after the other. An unforced tick that hits an in-flight read returns the old `fresh` flag and does not open anything.
+
+`readBrainTopics` captures `requestVersion` + `activeWorkspaceId` at start. If the workspace moves, it returns `false` and does not write `files`. `listIsFresh` then refuses `open` even when the old list still has the name.
+
+`openBrainTopic` captures the same pair **before** `await refreshBrainTopics(true)`, and passes the comparison as `contextIsCurrent`. `brainLinkClickOutcome` checks that first and returns `abandoned` with no message. The call site returns before `renderBrain()` and before `brainView.open`.
+
+Switch during `brainView.open`: the decision already ran on workspace A. `openWorkspace` shows `feed-pending`, then `renderBrain` → `setTopics` bumps the view’s own `requestVersion` and closes the pane when `fileId` does not match. The in-flight download bails. I did not see a durable open of A’s topic in B.
+
+Rejection: `read()` throw → `fresh = false` → `missing`, no open.
+
+**2. XSS**
+
+No path found. The pass runs after `setSanitizedMessageMarkdown`, on text nodes only. It uses `createElement` and `textContent`. Allowed tags have no `button`; the only attribute is `href` on `a`. Topic names are `[a-z0-9][a-z0-9._-]*`. `title` and `data-brain-link` are DOM properties from the list, not from the body.
+
+**3. Token run and gates**
+
+Unintended link, residual cost of (a): `The agent-restart path is slow if the child is still booting.` Same class: `Released v0.1.50 today.` if that topic exists.
+
+Missed intended: `See **roadmap** for the plan.` Bold is not a code span. `see brain-how-to.md` is a longer run. `` `the releases ritual` `` has extra words, so `releases` stays plain. Stated: a URL with `(` next to a slug can still split.
+
+**4. Overwriting `files`**
+
+Yes, a small cost. Cadence writes the shared `files` array and rebuilds only the feed. Files/Brain DOM can disagree with memory until the reader enters that panel. Download buttons keep the file object from the last `renderFiles`, so they still use the old `fileId`. A cadence read that started before a Brain save can finish after the save and replace `files` with the pre-save list. The editor is not closed. A later click force-reads. I did not drive this race in a browser.
+
+**5. Tests**
+
+The new workspace-switch test hard-codes `contextIsCurrent = false`. It would still pass if the dashboard passed `true`. The source-shape regex pins the capture and the comparison. That pair is the weak form the brief records. Mutations (A) and (B) match what those tests can see.
+
+The source-shape test does **not** pin `listIsFresh` as the third argument. Passing `true` there would bring back “stale list still opens” at the call site, and that observer test would still pass. The pure `listIsFresh` tests would still pass. The live code does pass `listIsFresh`.
+
+**6. Generated lists**
+
+No user-facing string re-types the separator set or the outcome kinds. Notices interpolate the topic. `AGENTS.md` names `BRAIN_SLUG_SEPARATORS`.
+
+`BrainLinkOutcome` omits `abandoned` while the function returns it (`tsc -p site/tsconfig.json` errors on that line). That type is not user-facing. Site `tsc` is also already red on unrelated `src/protocol` imports. Not a product gate.
+
+**7. Copy**
+
+Bounds match the code, including the snapshot window, abandoned clicks, and `` `roadmap.` ``.
+
+`AGENTS.md` is slightly tight: “backticks hold that word and nothing else.” The code also admits trailing punctuation inside the span. An agent who follows `AGENTS.md` still writes a form that links. “A name that is not a live topic stays plain text” is false in the snapshot window; the click sentence next to it is true.
+
+**8. Feed / collapse / Brain**
+
+Topic-list change calls `renderFeed()` (default `"history"`). `expandedSignalIds` is kept. Scroll uses the existing bottom/history rules. `focusComposerOnEntry` no-ops after first entry. Cadence does not call `setTopics`, so unsaved Brain edits stay. I did not run the suites or a live dashboard.
+
+VERDICT: PASS

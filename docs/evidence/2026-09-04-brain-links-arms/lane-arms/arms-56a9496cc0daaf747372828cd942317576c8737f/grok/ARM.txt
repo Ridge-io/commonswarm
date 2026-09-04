@@ -1,0 +1,79 @@
+I'll read the review brief and the patch first, then follow the instructions exactly.First `diff --git` line matches. I'll keep reading the rest of the patch and the source it changes.I'll inspect the real source at that commit, not just the patch, and attack the reader, click path, and token gates.The worktree is at the named SHA. Next I’ll read the live source and the previous arm notes so the review stays on this patch.I'll trace the dashboard click path, how `files` is shared, and whether a discarded read can still look fresh.The dashboard source may have moved. I'll re-read the reader and click path at this SHA.Working tree is dirty and not the review target. I'll read the files at commit `56a9496` only.Checking one more reader/apply interaction, then I'll write the verdict.`diff --git a/AGENTS.md b/AGENTS.md`
+
+Reviewed SHA `56a9496` from that patch. I did not run tests or a browser.
+
+**1. Reader: resolve is not apply**
+
+`createBrainTopicReader` sets `fresh = true` on any resolved `read()`. Only a throw sets `fresh = false`.
+
+The dashboard `read` resolves without applying here:
+
+- `sampleMode || !activeWorkspaceId` (early `return`)
+- `readBrainTopics` after `await workspaceFiles`, when `requestVersion` or `activeWorkspaceId` changed
+
+A click then runs `brainLinkClickOutcome(topic, brainTopicNames(), listIsFresh)`. `topicsNow` is the current `files` array, not “the list that read just wrote.”
+
+Workspace switch during the await:
+
+1. Forced read captures workspace A.
+2. `openWorkspace` sets B, bumps `requestVersion`, sets `files = []`.
+3. A’s fetch returns, early `return`, `fresh = true`.
+4. The click’s own follow-up read is the right shape. If that read also bails, `listIsFresh` stays true.
+
+`boot()` bumps `requestVersion` and then `await currentSession()` while `files` still holds A. That discarded read can authorize `open` against A’s names after A is no longer the active workspace.
+
+If `files` is already `[]`, the click does not open. It still shows “T is not in this workspace any more. The list here is current.” That sentence is false: the read did not establish the list.
+
+Unforced + forced: wait, then own read, works when both apply. Concurrent clicks may join a post-wait read; that read started after both clicks, so that part is fine. A throwing `workspaceFiles` correctly yields not-fresh.
+
+`sampleMode` early-return marks fresh with no fetch. `renderSample` never sets `files`, so names stay empty. No false open there; the missing copy still claims the list is current.
+
+**2. XSS**
+
+The pass runs after the sanitizer, on text nodes only, with `createElement` and `textContent`. The click uses the closure, not the DOM. Canonical topic names are `[a-z0-9._-]*`. No new HTML-string surface. `BUTTON` is inserted after allowlist sanitizer; nothing re-sanitizes the tree.
+
+**3. Token run and gates**
+
+`RUN_RE` keeps `/?#=&%+:@\` and not `;` or `,`.
+
+Concrete agent line: `The export is https://api.example.com/items;shared-host and it 404s.`
+
+The run splits at `;`. `shared-host` is slug-shaped and in the list, so a control lands inside the URL. Same class as the old `?`/`=` split. `,` does the same for a Wikipedia path.
+
+Prose `Read shared-host, then stop.` still links, because `,` sits outside the run. That case is intended.
+
+One-word gate still holds: `The roadmap slipped` stays plain; `` `cswarm brain put` `` does not link `brain`. `` `releases`. `` with the period outside the span still links. Period inside the span does not; AGENTS.md says “that word and nothing else,” so that miss matches the claim.
+
+**4. `files = next`**
+
+The assignment replaces the whole file list. The 30s cadence only starts on feed/feed-empty, so an idle Files or Brain panel is not rebuilt by the timer.
+
+A read that started on the feed can finish after the user opened Files or Brain. Then `view === "files"` calls `renderFiles()` (`replaceChildren`, focus gone). `view === "brain"` calls `renderBrain()` → `setTopics`, which bumps brain-view `requestVersion` (aborts an in-flight open) and closes the pane when `fileId` changed, including unsaved edits. The comment says a background read must not do that. The completion-time view check still does it.
+
+Brain save runs on Brain, where the feed timer is stopped. I did not establish a save/cadence overlap. A feed-started read that completes after a switch to Brain can still write `files` under that pane.
+
+**5. Tests that stay green if this is broken**
+
+Reader tests inject a `read` that always “succeeds.” None resolve without applying. Keep `fresh = true` on a discarded read and those tests still pass. Dashboard source-shape tests would not catch it either.
+
+`proseRoadmapIsPlainText` / `madeUpTopicIsPlainText` pass if zero controls exist. The sibling `controlTopics` assertion is what saves the suite.
+
+**6. Enumerations**
+
+AGENTS.md names `BRAIN_SLUG_SEPARATORS` and does not re-type the set. The drift test exists. The design brief still types `-`, `_`, `.` in the detection section; that is not a generated UI string.
+
+**7. Copy**
+
+Bounds, present tense: `loadSignals`, `renderFeed` and `refreshLatestSignals` never touch `files`. False. The feed tick calls `refreshBrainTopics(false)`, which assigns `files = next`.
+
+AGENTS.md: a click re-reads, so it never lands on a topic that has since been deleted. False when `listIsFresh` lies.
+
+Bounds also treat “rebuild only the on-screen panel” as safety. The feed-started read uses the view at completion, so it can rebuild Files or Brain after a tab change.
+
+**8. Feed / collapse**
+
+Linkify runs before the collapse class. Expand ids survive a `renderFeed()` from a topic-name change. Default `renderFeed()` uses `"history"` scroll math; a same-list rebuild with slightly taller buttons can shift scroll. Not measured in a browser.
+
+Not established: live create/delete in the dashboard; production.
+
+VERDICT: FAIL - createBrainTopicReader treats a resolved no-op read as fresh, so a click can open (or claim "the list is current") against names that read did not apply

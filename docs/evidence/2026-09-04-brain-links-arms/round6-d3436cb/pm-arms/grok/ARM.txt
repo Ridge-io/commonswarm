@@ -1,0 +1,25 @@
+I'll read the review brief and the patch first, then follow the instructions exactly.The first `diff --git` line matches. Next I’ll read the rest of the patch and the source it changes.The patch header matches. Next I’ll inspect the real source around the reader, the token run, and how `files` is shared.The worktree is on `d3436cb`. I’ll read the implementation and the dashboard paths that share `files`.`diff --git a/AGENTS.md b/AGENTS.md`
+
+Reviewed `d3436cb771c56e12a0d8b6a7f1fc56d694e95ee1` against `223ee201edc3815c39a001200812e7802884f741`. I read the patch, `brain-links.ts`, the dashboard wiring, `brain-view.ts`, and the markdown sanitizer. I ran the splitter on concrete sentences. I did not drive a live dashboard.
+
+**1. Render vs open.** A control can still **render** for a name the workspace no longer holds, until the 30s re-read. That is written as a bound. A click cannot **open** that name: `refresh(true)` waits out an in-flight read, then starts one of its own; `brainLinkClickOutcome` returns `missing` if that read did not apply, even when the stale list still contains the name. Concurrent clicks serialize. A reject sets `fresh = false`. A workspace switch mid-await returns false and does not write `files`. I did not find an open path for a name the fresh list does not hold.
+
+**2. XSS.** The pass runs after `setSanitizedMessageMarkdown`, on text nodes, with `createElement` / `textContent`. Topic names are `[a-z0-9._-]+`. No new `innerHTML`. No DOM-clobbering handle.
+
+**3. Token run.** Accepted residual: `The agent-restart path is slow` still becomes a control. Miss (safer direction): `See brain-how-to,shared-host before you start.` links neither name, because `,` stays inside the run. Stated bound: `https://example.com/a(shared-host)` still splits on `(` and offers `shared-host`.
+
+**4. `files` overwrite.** `readBrainTopics` always does `files = next` after a successful `workspaceFiles` call. That call can stay in flight for up to 30s (`BROWSER_REQUEST_TIMEOUT_MS`). Cadence is `void`’d from the feed tick and is not cancelled when the user leaves the feed.
+
+Sequence: feed tick starts a fetch; user opens Brain, saves a new version (save writes `files` and the pane); the old fetch returns and replaces `files` with the pre-save snapshot. Topic names often match, so it does not rebuild Brain. The next `activateWorkspaceView("files")` or `"brain"` rebuilds from that snapshot, so the save is gone from the list and a click can download the old version.
+
+**5. Tests.** The dashboard source test checks that `missing` sets the notice. It does not pin the `return` before `brainView.open`. Production code has the return. Unit tests pin the outcome object, not that wiring.
+
+**6. Enumerations.** The separator set is `BRAIN_SLUG_SEPARATORS`. User strings interpolate the topic; they do not re-type the gate.
+
+**7. Copy.** AGENTS.md says a one-word span is recognised only when backticks hold “that word and nothing else”; the code also admits trailing punctuation (`` `roadmap.` ``). Too strict, not a false link. The Bounds sentence that skipping a background rebuild keeps Files and Brain correct does not match the code: entry rebuilds from `files`, and `files` can go backwards past a save.
+
+**8. Feed.** `renderFeed` keeps `expandedSignalIds` and scroll. Topic bodies in the Brain pane are not linkified (feed only). Collapse height is measured after the buttons exist.
+
+Not established: a browser run of the save/clobber race; create/delete of a control on a live dashboard; production.
+
+VERDICT: FAIL - readBrainTopics can replace files with a pre-save snapshot, so a later Files/Brain entry shows the old version
