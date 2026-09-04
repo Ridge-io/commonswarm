@@ -27,9 +27,6 @@ export const BRAIN_BODY_MARKDOWN = [
   HOSTILE_MARKDOWN_BLOCKS,
 ].join("\n\n").replaceAll("\n", "\r\n") + "  ";
 
-/* A big topic, deliberately far larger than anything a reader would call long, and far INSIDE
- * the display bound. It must render whole: the bound is a guard against pathological input, not
- * a trim, and over-limit input is covered by the unit test in message-markdown.test.mjs. */
 const BOUNDED_BRAIN_MARKDOWN =
   `${"> ".repeat(12)}bottom\n` + Array.from({ length: 9_999 }, () => "line").join("\n");
 

@@ -74,9 +74,13 @@ test("the Raw toggle shows the stored topic text byte-for-byte", async () => {
   assert.equal(snapshot.rawText, BRAIN_BODY_MARKDOWN);
 });
 
-/* RETIRED (2026-09-04): "a 10,000-line topic is shortened for display". Nothing a workspace can
-   hold is shortened now; the bound is a guard against pathological input and its control is the
-   unit test in message-markdown.test.mjs, built from the limit itself. */
+/* RETIRED (2026-09-04): "a 10,000-line topic is shortened for display". The bound moved up past
+   any ordinary topic. It is NOT past everything a workspace can store — a file version may be
+   25 MB (src/cloud/files.ts) against a 2,000,000-character render bound — so a very large topic
+   is still shortened in the rendered view, and Raw is the disclosure that holds the whole stored
+   text. What is asserted: the render below, and the byte-for-byte Raw check above for an
+   ORDINARY topic. Raw for a SHORTENED topic is the same code path — Raw reads the file, not the
+   rendered HTML — but no fixture exercises it, so that half is design, not measurement. */
 test("Brain rendering renders a large topic whole and still bounds nesting", async () => {
   const snapshot = await snapshotPromise;
   assert.equal(snapshot.boundedShortened, false);

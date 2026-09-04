@@ -999,6 +999,7 @@ import "../../styles/tokens.css";
     type BrainViewTargets,
   } from "../../lib/brain-view";
   import {
+    MESSAGE_COLLAPSE_LINES,
     setSanitizedMessageMarkdown,
   } from "../../lib/message-markdown";
   import {
@@ -1159,6 +1160,7 @@ import "../../styles/tokens.css";
     let restoredComposerDraftKey = "";
     let focusedComposerWorkspaceId = "";
     const visualMentions = new Map<string, EntityRef[]>();
+    const expandedSignalIds = new Set<string>();
     const attachmentObjectUrls = new Map<string, string>();
     const deliveryReceiptCache = new Map<string, BrowserDeliveryReceiptCacheEntry>();
     let deliveryReceiptRefreshOwner = "";
@@ -3762,12 +3764,18 @@ import "../../styles/tokens.css";
           }
           body.append(mentionRow);
         }
-        /* Every message renders whole (operator direction 2026-09-04). It used to clip at 30
-         * lines behind an expander, which is a truncation, and an agent's answer is routinely
-         * longer than that — the reader had to press a button to see the part that mattered. */
         const markdown = document.createElement("div");
         markdown.className = "dashboard__message-markdown";
+        /* The line count only. The stylesheet multiplies it by --lh-base, so the collapse height
+         * cannot drift from the line height the way a hard-coded 1.62 here could. */
+        markdown.style.setProperty(
+          "--message-collapse-lines",
+          String(MESSAGE_COLLAPSE_LINES),
+        );
         setSanitizedMessageMarkdown(markdown, signal.body);
+        if (!expandedSignalIds.has(signal.id)) {
+          markdown.classList.add("dashboard__message-markdown--collapsed");
+        }
         body.append(markdown);
         renderMessageAttachments(body, signal);
         if (signal.about) {
@@ -3779,6 +3787,26 @@ import "../../styles/tokens.css";
         appendDeliveryReceipt(body, signal);
         row.append(avatar, body);
         list.append(row);
+        window.requestAnimationFrame(() => {
+          if (!markdown.isConnected) return;
+          const expandedAtRender = expandedSignalIds.has(signal.id);
+          const overflowed = markdown.scrollHeight > markdown.clientHeight + 1;
+          if (!overflowed && !expandedAtRender) return;
+          const toggle = document.createElement("button");
+          toggle.type = "button";
+          toggle.className = "dashboard__message-toggle";
+          toggle.textContent = expandedAtRender ? "Show less" : "Show more";
+          toggle.setAttribute("aria-expanded", String(expandedAtRender));
+          toggle.addEventListener("click", () => {
+            const expanded = toggle.getAttribute("aria-expanded") !== "true";
+            toggle.setAttribute("aria-expanded", String(expanded));
+            toggle.textContent = expanded ? "Show less" : "Show more";
+            markdown.classList.toggle("dashboard__message-markdown--collapsed", !expanded);
+            if (expanded) expandedSignalIds.add(signal.id);
+            else expandedSignalIds.delete(signal.id);
+          });
+          markdown.after(toggle);
+        });
       }
       previousSignalIds = new Set(signals.map((signal) => signal.id));
       feedWasEmpty = false;
@@ -4117,6 +4145,7 @@ import "../../styles/tokens.css";
       liveFeedInFlight = false;
       rosterRefreshInFlight = false;
       rosterRefreshAttemptedAt = 0;
+      expandedSignalIds.clear();
       resetComposer();
       window.clearTimeout(signalExpiryTimer);
       signalExpiryTimer = undefined;
@@ -9355,6 +9384,23 @@ import "../../styles/tokens.css";
     overflow-wrap: anywhere;
   }
 
+  /* A fold, not a fade. The old version made the last lines progressively transparent, and the
+   * operator's report is the proof of what that costs: "the fade makes the last sentence hard to
+   * read". Any gradient over text trades legibility for a hint, and the "Show more" beneath the
+   * box already gives the hint in words.
+   *
+   * The height is MESSAGE_COLLAPSE_LINES body line boxes. That is a whole number of lines for
+   * ordinary prose, and NOT a guaranteed line boundary for everything: a fenced block sets a
+   * smaller line height, and blocks carry margins between them, so a mixed message can be cut
+   * through a line. It is a hard cut either way — a cut line stays at full contrast rather than
+   * fading out, and the link underneath is what says there is more. No fallback value here: the
+   * script always sets the variable, and if it ever did not, no clip is a safer failure than a
+   * clip at a number typed in a second place. */
+  .dashboard__message-markdown--collapsed {
+    max-block-size: calc(var(--message-collapse-lines) * var(--lh-base) * 1em);
+    overflow: hidden;
+  }
+
   .dashboard__message-markdown :where(p, ul, ol, blockquote, pre) {
     margin: 0;
   }
@@ -9413,14 +9459,29 @@ import "../../styles/tokens.css";
     text-underline-offset: 0.14em;
   }
 
-  .dashboard__message-markdown a:hover {
+  .dashboard__message-markdown a:hover,
+  .dashboard__message-toggle:hover {
     color: var(--accent);
   }
 
-  .dashboard__message-markdown a:focus-visible {
+  .dashboard__message-markdown a:focus-visible,
+  .dashboard__message-toggle:focus-visible {
     border-radius: var(--radius-sm);
     outline: none;
     box-shadow: var(--focus-ring);
+  }
+
+  /* Small, as asked: a quiet link under a long message, not a button competing with it. */
+  .dashboard__message-toggle {
+    justify-self: start;
+    padding: 0;
+    color: var(--accent-bright);
+    background: transparent;
+    border: 0;
+    font: inherit;
+    font-size: var(--t-xs);
+    font-weight: var(--weight-semibold);
+    cursor: pointer;
   }
 
   .dashboard__message-attachments {

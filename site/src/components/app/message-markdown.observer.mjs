@@ -30,15 +30,37 @@ test("fenced blocks in a rendered message wrap instead of scrolling sideways", (
   assert.doesNotMatch(rule, /white-space:\s*(pre|nowrap);/u);
 });
 
-/* RETIRED (2026-09-04), both claims: "long bodies get one measured show-more control" and
- * "a collapsed message clips at a line boundary". Operator direction — nothing in the human UI
- * is truncated. A message renders whole, however long it is, so there is no clip to place and no
- * control to press. The 30-line collapse, its fade, its toggle and its expanded-id set are all
- * deleted; what replaces them is the assertion that none of it came back. */
-test("a message renders whole, with nothing left to expand", () => {
-  assert.doesNotMatch(dashboard, /MESSAGE_COLLAPSE_LINES|message-collapse-lines/u);
-  assert.doesNotMatch(dashboard, /dashboard__message-markdown--collapsed/u);
-  assert.doesNotMatch(dashboard, /dashboard__message-toggle/u);
-  assert.doesNotMatch(dashboard, /Show more|Show less/u);
-  assert.doesNotMatch(dashboard, /expandedSignalIds/u);
+test("long rendered bodies get one measured show-more control", () => {
+  assert.match(dashboard, /MESSAGE_COLLAPSE_LINES/u);
+  assert.match(dashboard, /markdown\.scrollHeight > markdown\.clientHeight \+ 1/u);
+  assert.match(dashboard, /toggle\.textContent = expandedAtRender \? "Show less" : "Show more"/u);
+  assert.match(dashboard, /dashboard__message-markdown--collapsed/u);
+});
+
+/** RETIRED (2026-09-04): "clips at a line boundary". A pixel max-block-size is a whole number of
+ * lines for ordinary prose only — a fenced block has a smaller line height and blocks carry
+ * margins, so a mixed message can be cut through a line. What IS true, and what this pins: the
+ * cut is hard, at full contrast, with no gradient of any kind over the text, and its height comes
+ * from the shared constant rather than a number typed here. A faded line is unreadable; a cut
+ * line is readable up to the cut, and the link underneath says there is more.
+ *
+ * Scope, stated so it is not read as wider than it is: this reads ONE rule, the collapsed block.
+ * A gradient reintroduced on a sibling ::after, on the parent, or as an inset box-shadow would
+ * not be seen here. It binds the shape the fade actually had. */
+test("a folded message is cut hard, never faded, at the shared height", () => {
+  const anchor = ".dashboard__message-markdown--collapsed {";
+  const start = dashboard.indexOf(anchor);
+  assert.notEqual(start, -1, "the collapsed rule is missing");
+  const end = dashboard.indexOf("}", start);
+  assert.notEqual(end, -1, "the collapsed rule is unterminated");
+  const rule = dashboard.slice(start + anchor.length, end);
+  assert.doesNotMatch(rule, /mask-image/u);
+  assert.match(rule, /max-block-size:\s*calc\(var\(--message-collapse-lines\) \* var\(--lh-base\) \* 1em\);/u);
+  assert.match(rule, /overflow:\s*hidden;/u);
+  /* The properties the fade actually used, and no second copy of the threshold: the CSS must
+   * read the variable the script sets, with no fallback number. */
+  assert.doesNotMatch(rule, /mask|gradient|opacity/u);
+  assert.doesNotMatch(rule, /--message-collapse-lines,/u);
+  assert.match(dashboard, /setProperty\(\s*"--message-collapse-lines",\s*String\(MESSAGE_COLLAPSE_LINES\),?\s*\)/u);
+  assert.doesNotMatch(dashboard, /message-collapse-height/u);
 });

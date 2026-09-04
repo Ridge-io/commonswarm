@@ -5,15 +5,28 @@
  * extension surfaces that this feed neither needs nor wants.
  */
 
-/* These are a guard against pathological input, NOT a display trim. Operator direction
- * 2026-09-04: nothing a workspace can legitimately hold may be shortened for display. A signal
- * body is capped at 8,000 characters upstream and a brain topic is a whole document, so both sit
- * far inside these numbers; the marker below can only appear for input no product path creates. */
+/* A ceiling on how much HTML this renderer will build, raised from 20,000 characters / 1,000
+ * lines — small enough for an ordinary brain topic to hit.
+ *
+ * Say what is true rather than what is comfortable: a signal body is capped at 8,000 characters
+ * upstream and can never reach these numbers, but a brain topic is a FILE, and a file version may
+ * be up to FILE_MAX_VERSION_BYTES (25 MB, src/cloud/files.ts). A topic past EITHER bound — the
+ * characters or the lines, whichever it reaches first — IS shortened in the rendered view, and
+ * the marker below says so. Rendering 25 MB of HTML would take the tab down instead.
+ *
+ * The stored text stays whole, and the Brain panel's Raw toggle reads it from the file rather
+ * than from the rendered HTML (brain-view.ts). What the observer asserts today is Raw for an
+ * ORDINARY topic, byte for byte; Raw for a SHORTENED one is the same code path but is not
+ * exercised by a fixture, so it is stated here as design, not as a measured result. */
 export const MESSAGE_MARKDOWN_LIMITS = Object.freeze({
   inputCharacters: 2_000_000,
   lines: 50_000,
   nestingDepth: 4,
 });
+
+/* The height at which a message folds behind "Show more". It was 30 lines, which an ordinary
+ * agent answer passes, so the fold was the normal case rather than the exception. */
+export const MESSAGE_COLLAPSE_LINES = 60;
 
 export const MESSAGE_MARKDOWN_TAGS = Object.freeze([
   "p", "br", "strong", "em", "code", "pre", "ul", "ol", "li", "blockquote", "a",
@@ -84,8 +97,9 @@ function boundedLines(rawText: string): string[] {
   const split = characterBounded.split("\n");
   const lineBounded = split.slice(0, MESSAGE_MARKDOWN_LIMITS.lines);
   if (shortened || split.length > MESSAGE_MARKDOWN_LIMITS.lines) {
-    /* Only reachable for input no product path can store. It says what happened rather than
-     * ending mid-sentence, because a silent cut reads as the author stopping there. */
+    /* Reachable for a brain topic past either bound — never for a signal, which is capped far
+     * below both. It says what happened rather than ending mid-sentence, because a silent cut
+     * reads as the author stopping there, and Raw still holds the whole stored text. */
     lineBounded.push("", "[Message shortened for safe display.]");
   }
   return escapeMessageHtml(lineBounded.join("\n")).split("\n");
