@@ -1718,3 +1718,44 @@ notes) — the 08-17 ledger's "move to 1Password and delete" never happened. It 
 move it to 1Password, delete the file, and enroll a security key (npm no longer offers TOTP).
 
 Not established: whether the 08-17 token still publishes (untested; the 08-26 one does).
+
+## 2026-09-04 23:5x UTC — v0.1.52 RELEASED; every Claude seat on the mini is down on host OAuth
+
+**Released.** Bump `9abc834` on `main`; GitHub `v0.1.52` Latest, tag on `9abc834`, both assets,
+sha256 `5e153433…` matches the built artifact; npm `commonswarm@0.1.52` (registry shasum `ebb290ff`
+= committed pack, `acd17ea`); site deployed from the release worktree, live `/download` shows 0.1.52
+with a cache-buster (0 hits for 0.1.51), `install.sh` 200 / `nope.sh` 404, no service_role string;
+`~/.local/bin/cswarm` via the public installer and `/opt/homebrew/bin/cswarm` via `npm i -g` both
+read 0.1.52. Gates on the bumped tree after build: tsc clean, npm test 740/740, site 322/323 (1 skip),
+p1-cli 408/408, identity guard OK. No migration or edge change (`git diff v0.1.51..9abc834 --
+supabase/` is empty). The bump commit had no D-036 arms, same as 0.1.51: a three-line version change.
+Release worktree removed. Content: `cswarm grant resume`, the paused-grant remedy, the horizon from
+the server for both grant kinds, a resume that reports success.
+
+**Listeners NOT restarted onto 0.1.52 — the host is signed out of Claude Code.** The proof restart
+of my own seat (8d10fe67) came back `failed`, `permission_canary_failed` /
+`claude_canary_auth_failed`: "OAuth session expired and could not be refreshed (failed 2 attempts)".
+Live control on the host: `claude auth status` → `loggedIn: false`; `claude -p` → the same error.
+The guard held, so the loop never touched the other five. But they were already dead for
+deliveries: the canary runs only at start, so a `ready` state on 0.1.51 hid it — my seat lost the
+operator's 23:24 ask (`8e393ba5`, "still seeing failed read receipts") as `failed_terminal`, and
+Finisher (78249a33) lost one at 22:56 (`acpprotocolerror`). I stopped the five (`2121f81d 214fa712
+a9c1a7fb 78249a33 05f7ac37`) so deliveries queue under durable_claim instead of dying; all six Claude
+seats are now `stopped`/`failed` with pending 0. The two Codex seats stay down on Codex credits.
+Answered the lost ask with a note to the operator.
+
+**Restart, once the operator has run `claude auth login` on the mini:** for each seat,
+`cswarm listen stop … --principal-id <uuid>` then `cswarm listen start --agent-token-file
+~/.config/cswarm/agent-<id>.json --url https://api.commonswarm.com --anon-key <k> --workspace-id
+292be0f9-… --provider claude --cwd <cwd> --permissions allow --claude-executable
+/opt/homebrew/lib/node_modules/@agentclientprotocol/claude-agent-acp/dist/index.js --json`, cwd
+`cloud-swarm` for 8d10fe67/2121f81d/214fa712 and `prompteden` for a9c1a7fb/78249a33/05f7ac37; prove
+one `ready 0.1.52` before the loop; `listen status` needs an explicit `--workspace-id` (the env var
+is not read for it).
+
+**Not established, and worth someone's time:** the operator signed in at ~22:32 UTC and the session
+was dead by 23:24. `claude-agent-acp` on disk became 0.74.0 (bundled Claude Code 2.1.257) at 11:19
+local today, last measured 0.64.2 — compatibility with the listener is unmeasured and the upgrade
+actor is unknown. Hypothesis, unverified: six listener bridges plus the CLI (2.1.258) share one OAuth
+credential in the keychain; if refresh tokens rotate, concurrent refreshes can invalidate each other.
+A single sign-in that dies within the hour twice in one day fits that; nothing here proves it.
