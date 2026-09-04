@@ -1434,3 +1434,55 @@ the arm said so and inferred them. Assert the checks are present before sending.
 2026-09-02. The version bump is held until npm auth works so `/download` and `npm i -g` agree.
 Draft notes: `<scratchpad>/release-notes-0.1.51.md`. Deferred on the code: persist the ack's own
 error code (an `observed` note clears `lastErrorCode`, and `stop` clears it too).
+
+---
+
+## 2026-09-04 — v0.1.51: GitHub and fleet LIVE, npm and site HELD, and an outage I caused
+
+**What is live.** Bump `2e7ea5e` on `main`. GitHub release `v0.1.51` is Latest, tag on `2e7ea5e`, both
+assets (`cswarm` 1,810,208 B; `cswarm.sha256`). Installed on the mini via the public installer —
+`~/.local/bin/cswarm` sha256 matches the release — and the global copy `/opt/homebrew/bin/cswarm`
+installed from the local tarball (`npm pack` → `npm i -g ./commonswarm-0.1.51.tgz`), so both binary
+copies read `cswarm 0.1.51` without waiting for the registry. Six listeners restarted onto 0.1.51 and
+verified `ready` by live control: 05f7ac37, 2121f81d, 214fa712, 78249a33, 8d10fe67, a9c1a7fb.
+
+**What is held, and why.** `npm publish` returned **403: "Two-factor authentication or granular access
+token with bypass 2fa enabled is required to publish packages."** `npm login --auth-type web` gave a
+session that can read but not publish. Operator-only: either `cd <dist-npm> && npm publish --otp=<code>`
+or mint a granular token with bypass-2FA and publish rights on `commonswarm` into `~/.npmrc` (that is
+what published 0.1.50). **The site deploy is held until npm lands**: the built `/download` prints
+`npm install -g commonswarm`, which would fetch 0.1.50 beside a page saying 0.1.51 — a false claim on the
+live page. Live `/download` still says 0.1.50, which is consistent with what npm serves. The
+`dist-npm` "as published" commit is also held. Release notes: `<scratchpad>/release-notes-0.1.51.md`.
+No migration or edge change in this release (`git diff --name-only v0.1.50..2e7ea5e -- supabase/` is empty).
+
+**Two codex seats are down and it is not the release.** `token` (CodexDesktop, was on 0.1.45) and
+`023fd46b` (Marque) fail the permission canary: `codex-acp 1.8.0 returned Internal error`. Codex is at
+its usage limit until 2026-09-06 21:38; the bridge cannot open a session. They come back when credits do.
+
+**The outage, mine.** The fleet restart loop ran `listen stop` on all seven listeners first, then every
+`listen start` failed with `unknown option --claude-executable /opt/…`: the flag and its path were in
+one string variable, and zsh does not word-split, so cswarm received one token. **Seven seats were
+down for about three minutes.** Deliveries queued (durable_claim) and drained on the fixed pass, so
+nothing was lost, but every seat was unreachable and this is the second time the same zsh trap bit
+this session. Rule, saved as a memory: build cswarm args as an array, and prove ONE stop→start
+before looping over the fleet.
+
+**Watchers are owner-managed; do not restart them for a release.** `cswarm inbox --notify` processes
+belong to each seat's session, which respawns and cycles them on its own: two respawned within 30 s
+of being killed, Strategist's started and stopped on its own cadence. My kill-and-relaunch pass
+created duplicates twice (and my grep matched the `/bin/zsh -c` wrapper shells, doubling the kills).
+Final state: 05f7ac37, 2121f81d, 78249a33 watchers alive on 0.1.51; a9c1a7fb's is cycled by its owner.
+Next release: restart listeners only; leave watchers to their sessions.
+
+**Gates on the bumped tree.** tsc clean, check:tests clean, npm test 735/735, site test 270/271
+(0 fail; the 4 reds on the first run were `site/dist` not built yet in a fresh worktree — build first),
+p1-cli 366/1 under load then the one red (`hook hard deadline exits 0 under four seconds`, 4.8 s)
+passed 3/3 in isolation at ~3.2 s — contention, not the diff. Artifact self-check: run the bundle from
+a directory with NO ancestor `package.json`; inside the repo tree it fails on `type: module` even
+from another cwd, because Node resolves the script's nearest package.json, not the cwd's.
+
+**Also this evening.** Brain topics `operator-requests` (v4) and `feedback-triage` (v1) hold the
+operator's asks and the agent bug-report triage; two `resume`/`brain put` fixes and two listener
+fixes are queued as chips. Three PM lanes run in their own worktrees: `lane/standing-default`,
+`lane/brain-links`, `spec/streams-dms-threads`.
