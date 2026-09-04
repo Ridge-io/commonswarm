@@ -18,8 +18,7 @@ type Rect = {
 };
 
 type RestGeometry = {
-  audience: Rect;
-  audienceTextDelta: number;
+  composer: Rect;
   bottomTextInset: number;
   lineBottom: number;
   lineHeight: number;
@@ -51,12 +50,8 @@ type PolishMeasurement = {
     statusVisible: boolean;
   };
   twoLine: {
-    audience: Rect;
-    chip: Rect | null;
-    chipCenterDelta: number | null;
-    chipText: string;
+    composer: Rect;
     input: Rect;
-    mentionHost: string;
     send: Rect;
     shell: Rect;
   };
@@ -98,21 +93,18 @@ const measurementPage = (url: URL): string | null => {
       };
       await waitFor(
         () => !doc.querySelector("[data-composer]")?.hidden &&
-          doc.querySelector("[data-composer-audience]")?.options.length >= 6,
+          doc.querySelectorAll("[data-feed-list] > li").length > 0,
         "sample composer",
       );
       await doc.fonts.ready;
       const form = doc.querySelector("[data-composer]");
-      const audience = doc.querySelector(".dashboard__composer-audience");
-      const select = doc.querySelector("[data-composer-audience]");
-      const mentions = doc.querySelector("[data-composer-mentions]");
       const shell = doc.querySelector(".dashboard__composer-input");
       const input = doc.querySelector("[data-composer-input]");
       const send = doc.querySelector("[data-composer-send]");
       const status = doc.querySelector("[data-composer-status]");
       const feedback = doc.querySelector("[data-composer-feedback]");
       const focusSink = doc.querySelector("[data-channel-name]");
-      if (!form || !audience || !select || !mentions || !shell || !input || !send || !status || !feedback || !focusSink) {
+      if (!form || !shell || !input || !send || !status || !feedback || !focusSink) {
         throw new Error("Composer fixture is incomplete");
       }
 
@@ -131,10 +123,11 @@ const measurementPage = (url: URL): string | null => {
       };
 
       if (${JSON.stringify(variant)} === "reverted") {
-        shell.insertBefore(mentions, input);
         const style = doc.createElement("style");
         style.textContent = [
-          ".dashboard__composer-audience { padding-inline: 0 !important; }",
+          /* The pre-sprint bar: a taller, looser input shell. It is the control for both the
+             alignment claims and the 80px budget below. */
+          ".dashboard__composer { padding-block: var(--s-4) !important; }",
           ".dashboard__composer-input {",
           "display: flex !important;",
           "align-items: flex-end !important;",
@@ -153,11 +146,6 @@ const measurementPage = (url: URL): string | null => {
         doc.head.append(style);
       }
 
-      const setAudience = (value) => {
-        select.hidden = false;
-        select.value = value;
-        select.dispatchEvent(new view.Event("change", { bubbles: true }));
-      };
       const setInput = (value) => {
         input.value = value;
         input.setSelectionRange(value.length, value.length);
@@ -175,7 +163,6 @@ const measurementPage = (url: URL): string | null => {
         };
       };
 
-      setAudience("everyone");
       setInput("");
       if (${JSON.stringify(variant)} === "reverted") {
         input.style.setProperty("min-block-size", "0", "important");
@@ -191,10 +178,8 @@ const measurementPage = (url: URL): string | null => {
       );
       const shellBox = shell.getBoundingClientRect();
       const inputBox = input.getBoundingClientRect();
-      const audienceBox = audience.getBoundingClientRect();
       const sendBox = send.getBoundingClientRect();
       const shellStyle = view.getComputedStyle(shell);
-      const audienceStyle = view.getComputedStyle(audience);
       const inputStyle = view.getComputedStyle(input);
       const shellBorderTop = Number.parseFloat(shellStyle.borderTopWidth);
       const shellBorderRight = Number.parseFloat(shellStyle.borderRightWidth);
@@ -211,17 +196,13 @@ const measurementPage = (url: URL): string | null => {
       const shellInnerRight = shellBox.right - shellBorderRight;
       const shellInnerBottom = shellBox.bottom - shellBorderBottom;
       const shellInnerLeft = shellBox.left + shellBorderLeft;
-      const audienceContentLeft = audienceBox.left +
-        Number.parseFloat(audienceStyle.borderLeftWidth) +
-        Number.parseFloat(audienceStyle.paddingLeft);
       const topTextInset = lineTop - shellInnerTop;
       const bottomTextInset = shellInnerBottom - lineBottom;
       const textLeft = inputBox.left + inputBorderLeft + inputPaddingLeft;
       const textLeftInset = textLeft - shellInnerLeft;
       const sendRightInset = shellInnerRight - sendBox.right;
       const rest = {
-        audience: readRect(audience),
-        audienceTextDelta: Math.abs(audienceContentLeft - textLeft),
+        composer: readRect(form),
         bottomTextInset,
         lineBottom,
         lineHeight,
@@ -273,27 +254,14 @@ const measurementPage = (url: URL): string | null => {
         "composer blur after focus check",
       );
 
-      setAudience("agent:sample-river");
-      setInput("First line\\nSecond line");
+      /* A tagged, two-line message. The tag is a word in the text now, so this measures the
+         box growing with the content rather than a chip finding a home beside it. */
+      setInput("@River First line\\nSecond line");
       input.blur();
       await settle();
-      const chip = doc.querySelector("[data-composer-mentions] .dashboard__mention-chip");
-      const chipBox = chip?.getBoundingClientRect() ?? null;
-      const twoLineAudienceBox = audience.getBoundingClientRect();
       const twoLine = {
-        audience: readRect(audience),
-        chip: chip ? readRect(chip) : null,
-        chipCenterDelta: chipBox
-          ? Math.abs((chipBox.top + chipBox.bottom) / 2 -
-            (twoLineAudienceBox.top + twoLineAudienceBox.bottom) / 2)
-          : null,
-        chipText: chip?.textContent ?? "",
+        composer: readRect(form),
         input: readRect(input),
-        mentionHost: mentions.parentElement === audience
-          ? "audience"
-          : mentions.parentElement === shell
-          ? "input-shell"
-          : mentions.parentElement?.className ?? "unknown",
         send: readRect(send),
         shell: readRect(shell),
       };
@@ -398,17 +366,18 @@ const geometryFailures = (measurement: PolishMeasurement): string[] => {
   if (measurement.rest.verticalAsymmetry > 1) {
     failures.push(`text vertical asymmetry ${measurement.rest.verticalAsymmetry.toFixed(2)}px > 1px`);
   }
-  if (measurement.rest.audienceTextDelta > 1) {
-    failures.push(`TO row offset ${measurement.rest.audienceTextDelta.toFixed(2)}px from text column`);
+  /* The operator's budget (2026-09-04): this bar is 80px at rest, on every screen. The TO row
+   * and the note checkbox were removed to make that possible, so the budget is the claim that
+   * replaces the alignment claims those controls carried. */
+  if (measurement.rest.composer.height > 80) {
+    failures.push(`composer is ${measurement.rest.composer.height.toFixed(2)}px at rest, over the 80px budget`);
   }
   if (measurement.rest.sendInsetDelta > 1) {
     failures.push(`send/text inset delta ${measurement.rest.sendInsetDelta.toFixed(2)}px > 1px`);
   }
-  if (measurement.twoLine.mentionHost !== "audience") {
-    failures.push(`mention chip is in ${measurement.twoLine.mentionHost}, not the TO row`);
-  }
-  if (measurement.twoLine.chipCenterDelta === null || measurement.twoLine.chipCenterDelta > 1) {
-    failures.push(`mention chip is not vertically centred in the TO row`);
+  /* Two lines of text may grow the box, but not past a third of a phone screen. */
+  if (measurement.twoLine.composer.height > 120) {
+    failures.push(`two-line composer is ${measurement.twoLine.composer.height.toFixed(2)}px, over 120px`);
   }
   if (measurement.success.statusText.trim() !== "") {
     failures.push(`successful send left visible status text: ${JSON.stringify(measurement.success.statusText)}`);
@@ -445,9 +414,8 @@ test("Slack-shaped composer geometry stays aligned in real Chrome", async () => 
     assert.deepEqual(currentFailures, [], `composer polish drifted:\n${currentFailures.join("\n")}`);
     assert.ok(
       revertedFailures.some((failure) => failure.includes("vertical asymmetry")) &&
-        revertedFailures.some((failure) => failure.includes("TO row offset")) &&
+        revertedFailures.some((failure) => failure.includes("over the 80px budget")) &&
         revertedFailures.some((failure) => failure.includes("send/text inset")) &&
-        revertedFailures.some((failure) => failure.includes("not the TO row")) &&
         revertedFailures.some((failure) => failure.includes("visible status text")),
       `geometry reversion control did not exercise every defect:\n${revertedFailures.join("\n")}`,
     );

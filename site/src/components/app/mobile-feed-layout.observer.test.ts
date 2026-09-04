@@ -22,7 +22,6 @@ type Rect = {
 };
 
 type LayoutMeasurement = {
-  audience: Rect;
   combinedHeaderHeight: number;
   composer: Rect;
   header: Rect;
@@ -149,10 +148,6 @@ const frameScript = (reverted: boolean, empty: boolean, pending: boolean): strin
     doc.querySelector("[data-refresh]").hidden = false;
     const composer = doc.querySelector("[data-composer]");
     composer.hidden = false;
-    const audience = doc.querySelector("[data-composer-audience]");
-    audience.replaceChildren(new Option("Everyone", "workspace"));
-    doc.querySelector("[data-composer-audience-count]").textContent =
-      "8 agents · 3 people in workspace";
     const list = doc.querySelector("[data-feed-list]");
     list.replaceChildren(...Array.from({ length: ${empty ? 0 : 40} }, (_, index) => {
       const row = doc.createElement("li");
@@ -212,7 +207,6 @@ const frameScript = (reverted: boolean, empty: boolean, pending: boolean): strin
     const combinedHeaderHeight = toolbar.bottom - header.top;
     const transcriptVisibleHeight = composerBox.top - toolbar.bottom;
     document.documentElement.dataset.layoutMeasurement = btoa(JSON.stringify({
-      audience: rect(".dashboard__composer-audience"),
       combinedHeaderHeight,
       composer: composerBox,
       header,
@@ -372,7 +366,6 @@ const assertDensity = (measurement: LayoutMeasurement, width: number): void => {
 
 const assertInsideViewport = (measurement: LayoutMeasurement): void => {
   for (const [name, rect] of Object.entries({
-    audience: measurement.audience,
     composer: measurement.composer,
     input: measurement.input,
     send: measurement.send,

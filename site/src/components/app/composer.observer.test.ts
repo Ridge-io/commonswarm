@@ -21,7 +21,11 @@ const between = (source: string, start: string, end: string): string => {
 
 test("composer defaults to broadcast and keeps signal language", () => {
   const markup = between(dashboard, '<form class="dashboard__composer"', "</form>");
-  assert.match(markup, /data-composer-audience/);
+  /* RETIRED CLAIM (2026-09-04): the composer had a TO select and a "Post a note" checkbox above
+     the text box. The address is the message now — an @tag typed in the body — so both controls
+     are gone and the bar fits in 80px. */
+  assert.doesNotMatch(markup, /data-composer-audience|data-composer-note-toggle/);
+  assert.match(dashboard, /const composerRecipientsFrom = \(body: string\)/);
   assert.match(markup, /maxlength=\{SIGNAL_BODY_MAX\}/);
   assert.match(dashboard, /import \{ SIGNAL_BODY_MAX \} from/);
   assert.doesNotMatch(markup, /maxlength="8000"/);
@@ -30,32 +34,35 @@ test("composer defaults to broadcast and keeps signal language", () => {
   assert.doesNotMatch(markup, /only .* sees|will see|private|lock/i);
   assert.doesNotMatch(markup, /emoji|reaction|thread/i);
 
-  assert.match(dashboard, /let composerAudience: ComposerAudience = \{ kind: "everyone" \}/);
-  assert.match(dashboard, /everyone\.textContent = "Everyone · nobody is notified"/);
-  assert.match(dashboard, /No recipient · broadcast · no agent will be woken/);
-  assert.match(markup, /Post a note · no agent is woken/);
-  assert.match(dashboard, /`Wakes \$\{entityName\(composerAudience\)\}'s listener`/);
-  assert.match(dashboard, /`Posted for \$\{entityName\(composerAudience\)\} to read; no wake`/);
+  /* An untagged body is still a broadcast; that default did not change, only where it is read
+     from. There is no stored address to disagree with the text. */
+  assert.match(dashboard, /tagged\.length === 0 \? \[\{ kind: "everyone" \}\] : tagged/);
+  assert.doesNotMatch(dashboard, /let composerAudience|composerPostAgentNote/);
 });
 
-test("composer kind defaults by recipient and the agent-only control opts out of wake", () => {
+/* RETIRED (2026-09-04): "the agent-only control opts out of wake". That control was the note
+   checkbox, and it is gone — an @tag on an agent IS the wake. browserSignalKind still takes the
+   opt-out flag for the CLI's sake; the app never passes it, which is what the second assertion
+   below pins. */
+test("composer kind defaults by recipient, and the app never opts out of the wake", () => {
   assert.deepEqual([
     browserSignalKind({ kind: "everyone" }),
     browserSignalKind({ kind: "person", id: "person-1" }),
     browserSignalKind({ kind: "agent", id: "agent-1" }),
-    browserSignalKind({ kind: "agent", id: "agent-1" }, true),
-  ], ["note", "note", "ask", "note"]);
+  ], ["note", "note", "ask"]);
 
   const submit = between(
     dashboard,
     'one<HTMLFormElement>("[data-composer]")?.addEventListener("submit"',
     'for (const button of all<HTMLButtonElement>("[data-feed-filter]")',
   );
-  /* The kind is decided ONCE for the whole send, from the first recipient. Every recipient of
-     one send is the same kind, because agents never mix with a person in one address. */
-  assert.match(submit, /const signalKind = browserSignalKind\(recipients\[0\]!, postAgentNote\)/);
-  assert.match(submit, /kind: signalKind/);
-  assert.match(submit, /rawBody,\s*recipient,\s*signalKind,\s*attachmentRefs/);
+  /* The kind is PER recipient now. Tags in the body can name a person and an agent in one
+     message, and the agent must be woken while the person is not — which is why the note
+     checkbox could go: an @tag on an agent IS the wake. */
+  assert.match(submit, /const recipientKinds = recipients\.map\(\(recipient\) => browserSignalKind\(recipient\)\)/);
+  assert.match(submit, /kind: recipientKinds\[index\]!/);
+  assert.match(submit, /rawBody,\s*recipient,\s*recipientKinds\[index\]!,\s*attachmentRefs/);
+  assert.doesNotMatch(dashboard, /browserSignalKind\([^)]*,\s*true\)/);
 });
 
 test("browser-authored signals use the existing broadcast and direct target fields", () => {
@@ -77,7 +84,7 @@ test("browser-authored signals use the existing broadcast and direct target fiel
   assert.match(submit, /const address = browserSignalAddress\(recipient\)/);
   assert.match(submit, /to: address\.toUserId/);
   assert.match(submit, /toAgent: address\.toAgentPrincipalId/);
-  assert.match(submit, /rawBody,\s*recipient,\s*signalKind,\s*attachmentRefs,\s*\)\);/);
+  assert.match(submit, /rawBody,\s*recipient,\s*recipientKinds\[index\]!,\s*attachmentRefs,\s*\)\);/);
   assert.match(submit, /await postBrowserSignal/);
   /* One command id per recipient, so a retry of a partly-sent message cannot repost the ones
      that already landed. A single shared id would make the second post look like a duplicate. */
@@ -153,37 +160,29 @@ test("browser attachment preflight mirrors the eight-file and 25 MB limits", () 
   assert.match(upload, /intent\.commitCommandId/);
 });
 
-test("mention picker resolves people and agents into one removable address chip", () => {
-  const picker = between(dashboard, "const mentionSearch", "const resetComposer");
+/* RETIRED CLAIM (2026-09-04): "one removable address chip". The picker used to lift the name
+   OUT of the text and park it in a chip beside the box. Chips are gone: the pick writes the name
+   into the body, where the reader can see and edit it like any other word, and the send reads the
+   address back out of that text. */
+test("the mention picker writes the name into the message body", () => {
+  /* Two slices: the pick (which writes the tag) and the list itself (which renders it). */
+  const pick = between(dashboard, "const selectMention", "const renderMentionPicker");
+  const picker = between(dashboard, "const renderMentionPicker", "const resetComposer");
   assert.match(picker, /role", "option"/);
   assert.match(picker, /aria-selected/);
   assert.match(picker, /dashboard__mention-picker-avatar/);
   assert.match(picker, /markAgentAvatar/);
   assert.match(picker, /agent · managed by/);
-  assert.match(picker, /composerMention = mention/);
-  assert.match(picker, /composerAudience = \{ \.\.\.mention \}/);
-  assert.match(picker, /input\.value = `\$\{input\.value\.slice/);
-
-  const chips = between(dashboard, "const renderComposerMentions", "const mentionSearch");
-  assert.match(chips, /dashboard__mention-chip/);
-  assert.match(chips, /entityControl/);
-  assert.match(chips, /Remove mention of/);
-  /* Every recipient gets a chip and its own × — with several agents addressed, one remove must
-     drop one name. The clearing itself moved into removeComposerRecipient. */
-  assert.match(chips, /for \(const \[index, mention\] of composerChips\(\)\.entries\(\)\)/);
-  assert.match(chips, /removeComposerRecipient\(index\)/);
-  const removal = between(dashboard, "const removeComposerRecipient", "const renderComposerMentions");
-  assert.match(removal, /composerMention = null/);
-  assert.match(removal, /composerAudience = \{ kind: "everyone" \}/);
-  /* Removing the first of several promotes the next agent instead of clearing the whole row. */
-  assert.match(removal, /composerAudience = \{ kind: "agent", id: promoted\.id \}/);
+  assert.match(pick, /const tag = `@\$\{entityName\(mention\)\} `;/);
+  assert.match(pick, /input\.value = `\$\{input\.value\.slice\(0, search\.start\)\}\$\{tag\}/);
+  assert.doesNotMatch(pick, /composerMention|dashboard__mention-chip/);
 
   const keys = between(
     dashboard,
     'one<HTMLTextAreaElement>("[data-composer-input]")?.addEventListener(\n      "keydown"',
     'one<HTMLFormElement>("[data-composer]")?.addEventListener("submit"',
   );
-  for (const key of ["Backspace", "Escape", "ArrowDown", "ArrowUp", "Enter"]) {
+  for (const key of ["Escape", "ArrowDown", "ArrowUp", "Enter"]) {
     assert.ok(keys.includes(`"${key}"`), `mention keyboard handling is missing ${key}`);
   }
 });

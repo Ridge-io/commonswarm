@@ -654,23 +654,11 @@ import "../../styles/tokens.css";
               </article>
             </section>
 
+            {/* No TO row and no note checkbox (operator direction 2026-09-04). The address is
+                the message: an @tag typed in the body is who it goes to, one signal per tag,
+                and a body with no tag is a broadcast. That removed 47px of chrome from a bar
+                that has to fit in 80px. */}
             <form class="dashboard__composer" data-composer hidden>
-              <div class="dashboard__composer-audience">
-                <label for="dashboard-composer-audience">TO</label>
-                <select
-                  id="dashboard-composer-audience"
-                  data-composer-audience
-                  aria-describedby="dashboard-composer-audience-count"
-                ></select>
-                <div class="dashboard__composer-mentions" data-composer-mentions></div>
-                <span id="dashboard-composer-audience-count" data-composer-audience-count>
-                  No recipient · broadcast · no agent will be woken
-                </span>
-              </div>
-              <label class="dashboard__composer-note-option" data-composer-note-option hidden>
-                <input type="checkbox" data-composer-note-toggle />
-                <span>Post a note · no agent is woken</span>
-              </label>
               <div class="dashboard__composer-box">
                 <div
                   class="dashboard__mention-picker"
@@ -726,8 +714,9 @@ import "../../styles/tokens.css";
                   </button>
                 </div>
               </div>
+              {/* Collapses to nothing until the body is within 500 characters of the limit.
+                  The keyboard hint that used to sit here is on the send button's title. */}
               <div class="dashboard__composer-meta">
-                <p class="dashboard__composer-hint">Enter to send · Shift+Enter for a new line</p>
                 <p class="dashboard__composer-count" data-composer-count role="status" aria-live="polite" hidden></p>
               </div>
               <p class="dashboard__composer-reload-warning" data-composer-reload-warning role="status" hidden>
@@ -1013,6 +1002,12 @@ import "../../styles/tokens.css";
     MESSAGE_COLLAPSE_LINES,
     setSanitizedMessageMarkdown,
   } from "../../lib/message-markdown";
+  import {
+    MENTION_MAX_RECIPIENTS,
+    addressFromBody,
+    isTaggable,
+    mentionTargets,
+  } from "../../lib/mention-address";
   import { SIGNAL_BODY_MAX } from "../../../../supabase/functions/_shared/signal-text";
   import { HumanSeenReporter } from "../../lib/human-seen-reporter";
 
@@ -1050,11 +1045,6 @@ import "../../styles/tokens.css";
 
   interface ComposerDraft {
     body: string;
-    audienceKey: string;
-    /** Agent principal ids addressed BESIDE audienceKey. Absent in drafts written before
-     * multi-agent addressing, which is why audienceKey keeps its single-recipient shape. */
-    extraAgentIds?: string[];
-    agentNote?: boolean;
     hadAttachments?: boolean;
   }
 
@@ -1150,19 +1140,9 @@ import "../../styles/tokens.css";
     let agentActivityGeneration = 0;
     let agentActivityGraceTimer: number | undefined;
     let entityActivityTimer: number | undefined;
-    /* composerAudience is the FIRST recipient and stays the single-recipient shape the wire uses
-     * (a signal carries one to_user_id or one to_agent_principal_id, never a list). Addressing
-     * several agents is a browser-side fan-out: one signal per agent, so each one gets its own
-     * wake and its own delivery receipt. composerExtraAgents holds the rest.
-     *
-     * Invariant, held by every writer below: composerExtraAgents is non-empty ONLY when
-     * composerAudience.kind === "agent"; every entry is an agent; entries are distinct and none
-     * of them equals composerAudience.id. A person is never mixed with agents, because the wire
-     * has no shape in which that is one message. */
-    let composerAudience: ComposerAudience = { kind: "everyone" };
-    let composerExtraAgents: EntityRef[] = [];
-    let composerMention: EntityRef | null = null;
-    let composerPostAgentNote = false;
+    /* No composer address state. The body IS the address: composerRecipients() parses the
+     * @tags out of the textarea at the moment it is asked. Keeping a second copy in a variable
+     * is what let the TO row and the text disagree. */
     let mentionPickerIndex = 0;
     let composerIntent: {
       /** One per recipient, aligned with composerRecipients() at the time the intent was made.
@@ -2197,28 +2177,33 @@ import "../../styles/tokens.css";
     const composerAudienceKey = (audience: ComposerAudience): string =>
       audience.kind === "everyone" ? "everyone" : `${audience.kind}:${audience.id}`;
 
-    /* A ceiling on one send. Each agent costs a signal, a wake, and a receipt row, so a slip of
-     * the picker should not post ten times. Workspaces are far smaller than this today. */
-    const COMPOSER_MAX_RECIPIENTS = 8;
 
-    /** Every addressee of the next send, first one first. Length 1 unless agents were added. */
-    const composerRecipients = (): ComposerAudience[] =>
-      composerAudience.kind === "agent"
-        ? [
-            composerAudience,
-            ...composerExtraAgents.map((agent) => ({ kind: "agent" as const, id: agent.id })),
-          ]
-        : [composerAudience];
+    /* THE ADDRESS IS THE MESSAGE (operator direction 2026-09-04). There is no TO control: an
+     * @tag typed in the body names a recipient, and the send posts one signal per tag because
+     * the wire carries a single recipient per signal. A body with no tag is a broadcast.
+     *
+     * Longest name first, so "@Dana Rivera" is not read as "@Dana" plus stray text. Names are
+     * matched case-insensitively and must end on a boundary, so "@Wrenley" never resolves to
+     * "@Wren". */
+    /* The parser lives in ../../lib/mention-address so it can be tested directly; this file
+     * only supplies the roster. Keeping a second copy here is how the two would drift. */
+    const composerAddressFrom = (body: string) =>
+      addressFromBody(body, mentionTargets(agents, members));
+
+    /** Recipients named by @tags in this text, in the order they appear, each one once. */
+    const composerRecipientsFrom = (body: string): ComposerAudience[] =>
+      composerAddressFrom(body).recipients.map((entity) => ({ kind: entity.kind, id: entity.id }));
+
+    /** Every addressee of the next send. Exactly one entry — broadcast — when nothing is tagged. */
+    const composerRecipients = (): ComposerAudience[] => {
+      const input = one<HTMLTextAreaElement>("[data-composer-input]");
+      const tagged = composerRecipientsFrom(input?.value ?? "");
+      return tagged.length === 0 ? [{ kind: "everyone" }] : tagged;
+    };
 
     /** Identity of the whole addressee set, so changing it invalidates a pending send intent. */
     const composerRecipientsKey = (): string =>
       composerRecipients().map(composerAudienceKey).join("+");
-
-    /** The chips, in the order they were added: the first recipient, then each extra. */
-    const composerChips = (): EntityRef[] =>
-      composerMention === null
-        ? []
-        : [composerMention, ...composerExtraAgents.map((agent) => ({ ...agent }))];
 
     const composerHasRecipient = (entity: EntityRef): boolean =>
       composerRecipients().some(
@@ -2237,34 +2222,14 @@ import "../../styles/tokens.css";
       return `commonswarm:composer-draft:${owner}:${activeWorkspaceId}:${COMPOSER_STREAM}`;
     };
 
-    const composerAudienceFromKey = (key: string): ComposerAudience | null => {
-      if (key === "everyone") return { kind: "everyone" };
-      if (key.startsWith("person:") && key.length > "person:".length) {
-        return { kind: "person", id: key.slice("person:".length) };
-      }
-      if (key.startsWith("agent:") && key.length > "agent:".length) {
-        return { kind: "agent", id: key.slice("agent:".length) };
-      }
-      return null;
-    };
-
     const readComposerDraft = (key: string): ComposerDraft | null => {
       try {
         const raw = window.localStorage.getItem(key);
         if (!raw) return null;
         const value = JSON.parse(raw) as Partial<ComposerDraft>;
-        if (typeof value.body !== "string" || typeof value.audienceKey !== "string") {
-          return null;
-        }
-        const extraAgentIds = Array.isArray(value.extraAgentIds)
-          ? value.extraAgentIds.filter((id): id is string => typeof id === "string")
-              .slice(0, COMPOSER_MAX_RECIPIENTS)
-          : [];
+        if (typeof value.body !== "string") return null;
         return {
           body: value.body.slice(0, COMPOSER_DRAFT_STORAGE_MAX),
-          audienceKey: value.audienceKey,
-          ...(extraAgentIds.length > 0 ? { extraAgentIds } : {}),
-          ...(value.agentNote === true ? { agentNote: true } : {}),
           ...(value.hadAttachments === true ? { hadAttachments: true } : {}),
         };
       } catch {
@@ -2287,12 +2252,10 @@ import "../../styles/tokens.css";
       const input = one<HTMLTextAreaElement>("[data-composer-input]");
       if (!key || !input) return;
       const body = input.value.slice(0, COMPOSER_DRAFT_STORAGE_MAX);
-      const audienceKey = composerAudienceKey(composerAudience);
       const hadAttachments = stagedAttachments.length > 0 || composerAttachmentsMissingAfterReload;
-      const agentNote = composerAudience.kind === "agent" && composerPostAgentNote;
-      const extraAgentIds = composerExtraAgents.map((agent) => agent.id);
       try {
-        if (body === "" && audienceKey === "everyone" && !agentNote && !hadAttachments) {
+        /* The address travels inside the body now, so there is nothing else to save. */
+        if (body === "" && !hadAttachments) {
           window.localStorage.removeItem(key);
           return;
         }
@@ -2300,9 +2263,6 @@ import "../../styles/tokens.css";
           key,
           JSON.stringify({
             body,
-            audienceKey,
-            ...(extraAgentIds.length > 0 ? { extraAgentIds } : {}),
-            ...(agentNote ? { agentNote: true } : {}),
             ...(hadAttachments ? { hadAttachments: true } : {}),
           }),
         );
@@ -2463,10 +2423,8 @@ import "../../styles/tokens.css";
       }
       const attach = one<HTMLButtonElement>("[data-composer-attach]");
       const picker = one<HTMLInputElement>("[data-composer-file-input]");
-      const noteToggle = one<HTMLInputElement>("[data-composer-note-toggle]");
       if (attach) attach.disabled = sending;
       if (picker) picker.disabled = sending;
-      if (noteToggle) noteToggle.disabled = sending;
       renderStagedAttachments();
       syncComposerControls();
     };
@@ -2480,37 +2438,16 @@ import "../../styles/tokens.css";
       restoredComposerDraftKey = key;
       const draft = readComposerDraft(key);
       const input = one<HTMLTextAreaElement>("[data-composer-input]");
-      const select = one<HTMLSelectElement>("[data-composer-audience]");
-      if (!draft || !input || !select) {
+      if (!draft || !input) {
         syncComposerControls();
         return;
       }
       input.value = draft.body;
-      const audience = composerAudienceFromKey(draft.audienceKey);
-      const audienceExists = audience && Array.from(select.options).some(
-        (option) => option.value === draft.audienceKey,
-      );
-      composerAudience = audienceExists ? audience : { kind: "everyone" };
-      composerMention = composerAudience.kind === "everyone" ? null : { ...composerAudience };
-      /* Only agents that still exist in this workspace come back, and only when the first
-       * recipient is itself an agent — the same invariant every other writer holds. */
-      composerExtraAgents = composerAudience.kind === "agent"
-        ? (draft.extraAgentIds ?? [])
-            .filter((id) =>
-              id !== (composerAudience as { id: string }).id &&
-              agents.some((agent) => agent.principalId === id))
-            .filter((id, index, all) => all.indexOf(id) === index)
-            .slice(0, COMPOSER_MAX_RECIPIENTS - 1)
-            .map((id) => ({ kind: "agent" as const, id }))
-        : [];
-      composerPostAgentNote = composerAudience.kind === "agent" && draft.agentNote === true;
       composerIntent = null;
       const warning = one<HTMLElement>("[data-composer-reload-warning]");
       composerAttachmentsMissingAfterReload = draft.hadAttachments === true;
       if (warning) warning.hidden = !composerAttachmentsMissingAfterReload;
       resizeComposerInput(input);
-      renderComposerAudience();
-      renderComposerMentions();
       syncComposerControls();
     };
 
@@ -2547,122 +2484,6 @@ import "../../styles/tokens.css";
       mentionPickerIndex = 0;
     };
 
-    const renderComposerAudience = (): void => {
-      const select = one<HTMLSelectElement>("[data-composer-audience]");
-      const count = one<HTMLElement>("[data-composer-audience-count]");
-      if (!select || !count) return;
-      const selectedKey = composerAudienceKey(composerAudience);
-      select.replaceChildren();
-      const everyone = document.createElement("option");
-      everyone.value = "everyone";
-      everyone.textContent = "Everyone · nobody is notified";
-      select.append(everyone);
-      for (const member of members) {
-        const option = document.createElement("option");
-        option.value = `person:${member.userId}`;
-        option.textContent = member.name;
-        select.append(option);
-      }
-      for (const agent of agents) {
-        const option = document.createElement("option");
-        option.value = `agent:${agent.principalId}`;
-        option.textContent = `${agent.name} · agent`;
-        select.append(option);
-      }
-      const selectedExists = Array.from(select.options).some(
-        (option) => option.value === selectedKey,
-      );
-      if (!selectedExists) {
-        composerAudience = { kind: "everyone" };
-        composerExtraAgents = [];
-        composerMention = null;
-        composerPostAgentNote = false;
-        renderComposerMentions();
-      }
-      /* An agent that left the workspace while it sat in the TO row must not survive as a
-       * recipient — the send would fail on a principal the server no longer accepts. */
-      const prunedExtras = composerAudience.kind === "agent"
-        ? composerExtraAgents.filter((extra) =>
-            agents.some((agent) => agent.principalId === extra.id))
-        : [];
-      if (prunedExtras.length !== composerExtraAgents.length) {
-        composerExtraAgents = prunedExtras;
-        renderComposerMentions();
-      }
-      select.value = composerAudienceKey(composerAudience);
-      select.hidden = composerMention !== null;
-      const noteOption = one<HTMLElement>("[data-composer-note-option]");
-      const noteToggle = one<HTMLInputElement>("[data-composer-note-toggle]");
-      const agentNote = composerAudience.kind === "agent" && composerPostAgentNote;
-      const agentCount = composerAudience.kind === "agent" ? composerExtraAgents.length + 1 : 0;
-      if (noteOption) noteOption.hidden = composerAudience.kind !== "agent";
-      if (noteToggle) noteToggle.checked = agentNote;
-      /* Say the number when it is more than one, and say that each agent gets its own copy.
-       * A reader who is told "wakes 2 listeners" must not be surprised by two rows in the feed. */
-      count.textContent = composerAudience.kind === "everyone"
-        ? "No recipient · broadcast · no agent will be woken"
-        : composerAudience.kind === "agent"
-        ? agentCount > 1
-          ? agentNote
-            ? `Posted for ${agentCount} agents to read; no wake · one message each`
-            : `Wakes ${agentCount} listeners · one message each`
-          : agentNote
-            ? `Posted for ${entityName(composerAudience)} to read; no wake`
-            : `Wakes ${entityName(composerAudience)}'s listener`
-        : `Posted for ${entityName(composerAudience)} to read; no agent will be woken`;
-      restoreComposerDraft();
-    };
-
-    /* Drops one recipient. Removing the FIRST one promotes the next agent rather than clearing
-     * the row, because the reader removed one name, not the whole address. */
-    const removeComposerRecipient = (index: number): void => {
-      if (index === 0) {
-        const promoted = composerExtraAgents[0];
-        if (promoted) {
-          composerAudience = { kind: "agent", id: promoted.id };
-          composerMention = { ...promoted };
-          composerExtraAgents = composerExtraAgents.slice(1);
-        } else {
-          composerAudience = { kind: "everyone" };
-          composerMention = null;
-          composerExtraAgents = [];
-          composerPostAgentNote = false;
-        }
-      } else {
-        composerExtraAgents = composerExtraAgents.filter((_, at) => at !== index - 1);
-      }
-      composerIntent = null;
-      renderComposerMentions();
-      renderComposerAudience();
-      persistComposerDraft();
-      one<HTMLTextAreaElement>("[data-composer-input]")?.focus({ preventScroll: true });
-    };
-
-    const renderComposerMentions = (): void => {
-      const wrap = one<HTMLElement>("[data-composer-mentions]");
-      if (!wrap) return;
-      wrap.replaceChildren();
-      for (const [index, mention] of composerChips().entries()) {
-        const chip = document.createElement("span");
-        chip.className = "dashboard__mention-chip";
-        chip.append(entityControl(
-          `@${entityName(mention)}`,
-          mention,
-          "dashboard__mention-entity",
-        ));
-        const remove = document.createElement("button");
-        remove.type = "button";
-        remove.className = "dashboard__mention-remove";
-        remove.textContent = "×";
-        remove.setAttribute("aria-label", `Remove mention of ${entityName(mention)}`);
-        remove.addEventListener("click", () => {
-          removeComposerRecipient(index);
-        });
-        chip.append(remove);
-        wrap.append(chip);
-      }
-    };
-
     const mentionSearch = (): { query: string; start: number } | null => {
       const input = one<HTMLTextAreaElement>("[data-composer-input]");
       if (!input) return null;
@@ -2681,51 +2502,29 @@ import "../../styles/tokens.css";
         ...agents.map((agent) => ({ kind: "agent" as const, id: agent.principalId })),
       ];
       /* Every current recipient leaves the list, not just the first — offering a name that is
-       * already addressed would produce a pick that does nothing. */
+       * already addressed would produce a pick that does nothing. A name the parser cannot
+       * resolve leaves too: writing it into the body would look addressed and reach nobody. */
       return candidates.filter((candidate) =>
         !composerHasRecipient(candidate) &&
+        isTaggable(entityName(candidate)) &&
         entityName(candidate).toLocaleLowerCase().includes(query)
       );
     };
 
+    /* The pick writes the NAME INTO THE BODY. It is a word in the message, not a chip beside
+     * it, so what the reader sees in the text is exactly who the send will reach. */
     const selectMention = (mention: EntityRef): void => {
       const input = one<HTMLTextAreaElement>("[data-composer-input]");
       const search = mentionSearch();
       if (!input || !search) return;
       const cursor = input.selectionStart ?? input.value.length;
-      input.value = `${input.value.slice(0, search.start)}${input.value.slice(cursor)}`;
-      input.setSelectionRange(search.start, search.start);
-      /* An agent named while agents are already addressed is ADDED. Anything else replaces the
-       * whole address: a person cannot share a message with agents, because one signal carries
-       * one recipient and mixing them would silently change what "reply" means. */
-      const addsAgent = mention.kind === "agent" && composerAudience.kind === "agent";
-      if (addsAgent && composerRecipients().length >= COMPOSER_MAX_RECIPIENTS) {
-        /* Refusing must not also DROP the agents already addressed, which is what falling
-         * through to the replace branch would do. */
-        closeMentionPicker();
-        input.focus({ preventScroll: true });
-        input.dispatchEvent(new Event("input"));
-        /* The reason is set AFTER that input event, not before it: the input handler clears an
-         * error status, so setting it first left the refusal silent in the same turn. */
-        setComposerStatus(
-          `${COMPOSER_MAX_RECIPIENTS} agents is the most one message can go to. ` +
-            "Remove one to add another.",
-          "error",
-        );
-        return;
-      }
-      if (addsAgent) {
-        composerExtraAgents = [...composerExtraAgents, { ...mention }];
-      } else {
-        composerMention = mention;
-        composerAudience = { ...mention };
-        composerExtraAgents = [];
-        composerPostAgentNote = false;
-      }
+      const tag = `@${entityName(mention)} `;
+      input.value = `${input.value.slice(0, search.start)}${tag}${input.value.slice(cursor)}`;
+      const caret = search.start + tag.length;
+      input.setSelectionRange(caret, caret);
       composerIntent = null;
-      renderComposerMentions();
-      renderComposerAudience();
       closeMentionPicker();
+      resizeComposerInput(input);
       persistComposerDraft();
       input.focus({ preventScroll: true });
       input.dispatchEvent(new Event("input"));
@@ -2791,10 +2590,6 @@ import "../../styles/tokens.css";
       stagedAttachments = [];
       composerAttachmentsMissingAfterReload = false;
       composerDragDepth = 0;
-      composerAudience = { kind: "everyone" };
-      composerExtraAgents = [];
-      composerMention = null;
-      composerPostAgentNote = false;
       composerIntent = null;
       visualMentions.clear();
       const input = one<HTMLTextAreaElement>("[data-composer-input]");
@@ -2810,8 +2605,6 @@ import "../../styles/tokens.css";
       setComposerDropTarget(false);
       setComposerSending(false);
       renderStagedAttachments();
-      renderComposerAudience();
-      renderComposerMentions();
       closeMentionPicker();
       syncComposerControls();
     };
@@ -2919,7 +2712,11 @@ import "../../styles/tokens.css";
       }
       renderHeaderRoster();
       renderDialogRoster();
-      renderComposerAudience();
+      /* Nothing to re-render for the address: it lives in the body text, and a roster change
+       * is read by composerRecipients() the next time the send asks. The saved draft is
+       * restored here because this is the point at which the workspace is on screen — it used
+       * to hang off the TO row's render, which no longer exists. */
+      restoreComposerDraft();
     };
 
     /*
@@ -5628,39 +5425,6 @@ import "../../styles/tokens.css";
       rosterFilter = (event.currentTarget as HTMLInputElement).value;
       renderDialogRoster();
     });
-    one<HTMLSelectElement>("[data-composer-audience]")?.addEventListener(
-      "change",
-      (event) => {
-        const value = (event.currentTarget as HTMLSelectElement).value;
-        if (value === "everyone") {
-          composerAudience = { kind: "everyone" };
-        } else if (value.startsWith("person:")) {
-          composerAudience = { kind: "person", id: value.slice("person:".length) };
-        } else if (value.startsWith("agent:")) {
-          composerAudience = { kind: "agent", id: value.slice("agent:".length) };
-        }
-        /* The TO row hides as soon as one recipient is chosen, so this is always the FIRST
-         * pick. Adding a second agent goes through the @ picker, which is why this clears. */
-        composerExtraAgents = [];
-        composerMention = composerAudience.kind === "everyone" ? null : { ...composerAudience };
-        composerPostAgentNote = false;
-        composerIntent = null;
-        renderComposerAudience();
-        renderComposerMentions();
-        persistComposerDraft();
-        syncComposerControls();
-      },
-    );
-    one<HTMLInputElement>("[data-composer-note-toggle]")?.addEventListener(
-      "change",
-      (event) => {
-        composerPostAgentNote = composerAudience.kind === "agent" &&
-          (event.currentTarget as HTMLInputElement).checked;
-        composerIntent = null;
-        renderComposerAudience();
-        persistComposerDraft();
-      },
-    );
     one<HTMLButtonElement>("[data-composer-attach]")?.addEventListener("click", () => {
       one<HTMLInputElement>("[data-composer-file-input]")?.click();
     });
@@ -5777,12 +5541,6 @@ import "../../styles/tokens.css";
         const confirmKey = event.key === "Enter" &&
           !event.isComposing &&
           (!event.shiftKey || event.metaKey || event.ctrlKey);
-        if (event.key === "Backspace" && input.value === "" && composerMention) {
-          /* Backspace deletes the LAST chip, the way it deletes the last character. With one
-           * chip that is the old behaviour: the address clears. */
-          removeComposerRecipient(composerChips().length - 1);
-          return;
-        }
         if (picker && !picker.hidden) {
           const search = mentionSearch();
           const candidates = search ? mentionCandidates(search.query) : [];
@@ -5835,12 +5593,33 @@ import "../../styles/tokens.css";
       }
       const workspaceId = activeWorkspaceId;
       const version = requestVersion;
-      /* One signal per recipient. The wire has no many-recipient shape, so addressing several
-       * agents is a loop here, and every agent gets its own row, its own wake, and its own
-       * delivery receipt. A single recipient takes exactly the path it always took. */
-      const recipients = composerRecipients();
-      const postAgentNote = composerPostAgentNote;
-      const signalKind = browserSignalKind(recipients[0]!, postAgentNote);
+      /* One signal per @tag. The wire has no many-recipient shape, so this is a loop, and
+       * every tagged agent gets its own row, its own wake, and its own delivery receipt. An
+       * untagged body is one broadcast, exactly as before.
+       *
+       * The kind is per recipient, not per send: with tags typed in the body a person and an
+       * agent CAN share one message, and the agent must still be woken while the person is
+       * not. That is why there is no note checkbox — an @tag on an agent IS the wake. */
+      /* Refuse before anything is posted when a tag cannot be honoured. Sending anyway would
+       * leave the message saying it went to a name it never reached. */
+      const address = composerAddressFrom(rawBody);
+      if (address.ambiguous.length > 0 || address.overflow.length > 0) {
+        setComposerStatus(
+          address.ambiguous.length > 0
+            ? `More than one person or agent is called ${address.ambiguous.join(" and ")}. ` +
+              "Rename one of them, or send from the CLI where you can name the id."
+            : `One message reaches ${MENTION_MAX_RECIPIENTS} tags. ` +
+              `Remove ${address.overflow.join(", ")} or send them separately.`,
+          "error",
+        );
+        input.focus();
+        return;
+      }
+      const recipients = address.recipients.length === 0
+        ? [{ kind: "everyone" } as ComposerAudience]
+        : address.recipients;
+      const recipientKinds = recipients.map((recipient) => browserSignalKind(recipient));
+      const signalKind = recipientKinds.join("+");
       const audienceKey = composerRecipientsKey();
       const attachmentSnapshot = [...stagedAttachments];
       const attachmentKey = attachmentSnapshot
@@ -5881,7 +5660,7 @@ import "../../styles/tokens.css";
           fromKind: "user",
           to: address.toUserId,
           toAgent: address.toAgentPrincipalId,
-          kind: signalKind,
+          kind: recipientKinds[index]!,
           body: rawBody,
           attachments: attachmentPreviews,
           about: null,
@@ -5906,9 +5685,8 @@ import "../../styles/tokens.css";
       syncComposerControls();
       renderFeed("latest");
       input.focus({ preventScroll: true });
-      /** Posted rows, and where the loop stopped. Both are read by the failure path. */
+      /** Posted rows. The failure path reads this to know how many of the tags got through. */
       const posted: Signal[] = [];
-      let failedAt = 0;
       try {
         const attachmentRefs = sampleMode
           ? attachmentSnapshot.map((attachment) => ({
@@ -5930,7 +5708,6 @@ import "../../styles/tokens.css";
           }
         }
         for (const [index, recipient] of recipients.entries()) {
-          failedAt = index;
           setComposerStatus(
             recipients.length > 1
               ? `Posting message ${index + 1} of ${recipients.length}…`
@@ -5945,7 +5722,7 @@ import "../../styles/tokens.css";
                 fromKind: "user",
                 to: address.toUserId,
                 toAgent: address.toAgentPrincipalId,
-                kind: signalKind,
+                kind: recipientKinds[index]!,
                 body: rawBody,
                 attachments: attachmentPreviews,
                 about: null,
@@ -5958,7 +5735,7 @@ import "../../styles/tokens.css";
                 workspaceId,
                 rawBody,
                 recipient,
-                signalKind,
+                recipientKinds[index]!,
                 attachmentRefs,
               ));
         }
@@ -5981,26 +5758,30 @@ import "../../styles/tokens.css";
           deliveryReceiptCache.set(signal.id, { result: null, checkedAt: 0, phase: "accepted" });
         }
         composerIntent = null;
-        composerPostAgentNote = false;
         composerAttachmentsMissingAfterReload = false;
         for (const attachment of attachmentSnapshot) {
           if (attachment.previewUrl) URL.revokeObjectURL(attachment.previewUrl);
         }
         clearComposerDraft();
-        renderComposerAudience();
         renderFeed("latest");
         void refreshDeliveryReceipts(workspaceId, version);
         setComposerStatus("");
       } catch (caught) {
         if (version !== requestVersion || workspaceId !== activeWorkspaceId) return;
-        /* Rows that DID post stay. The composer is refilled with the recipients that did not,
-         * so pressing send again finishes the job instead of posting to everyone twice. */
+        /* Rows that DID post stay posted. The whole message goes back in the box — tags and
+         * all — and the intent keeps EVERY command id, so pressing send again replays the ones
+         * that already landed instead of posting them twice. The command id is the server's
+         * idempotency key, which is the same property the unknown-outcome path relies on. */
         const sent = posted.length;
-        const remaining = recipients.slice(sent);
         const pendingSet = new Set(pendingIds);
+        const postedIds = new Set(posted.map((signal) => signal.id));
+        /* Drop the posted ids as well as the pending ones. The success path rewrites `signals`
+         * BEFORE it renders, so a throw in that render reaches here with those rows already in
+         * the list; prepending them again would show each one twice. */
         signals = [
           ...posted,
-          ...signals.filter((signal) => !pendingSet.has(signal.id)),
+          ...signals.filter((signal) =>
+            !pendingSet.has(signal.id) && !postedIds.has(signal.id)),
         ];
         for (const [index, pendingId] of pendingIds.entries()) {
           visualMentions.delete(pendingId);
@@ -6010,50 +5791,42 @@ import "../../styles/tokens.css";
           visualMentions.set(signal.id, mentionsFor(recipients[index]!));
           deliveryReceiptCache.set(signal.id, { result: null, checkedAt: 0, phase: "accepted" });
         }
-        /* Only when something is left to send. A throw AFTER the last post — a render fault, not
-         * a rejected command — must not put a message that already went out back in the box for
-         * the reader to send a second time. */
-        const head = remaining[0];
-        if (head) {
+        /* Only when something is still unsent. A throw AFTER the last post is a render fault,
+         * not a rejected command: putting the message back in the box and lighting Retry would
+         * invite a duplicate the reader never asked for. */
+        const unsent = sent < recipients.length;
+        if (unsent) {
           input.value = rawBody;
           stagedAttachments = attachmentSnapshot;
           renderStagedAttachments();
-          composerAudience = { ...head };
-          composerExtraAgents = head.kind === "agent"
-            ? remaining.slice(1).flatMap((recipient) =>
-                recipient.kind === "agent" ? [{ kind: "agent" as const, id: recipient.id }] : [])
-            : [];
-          composerMention = head.kind === "everyone" ? null : { kind: head.kind, id: head.id };
-          composerPostAgentNote = head.kind === "agent" && signalKind === "note";
-          renderComposerAudience();
-          renderComposerMentions();
           resizeComposerInput(input);
           persistComposerDraft();
         }
-        /* An unknown outcome must keep its command id, or a retry could post that one twice.
-         * The ids for the recipients still in the row are the tail of the original list. */
-        composerIntent = head && caught instanceof CommandOutcomeUnknown
-          ? {
-              commandIds: commandIds.slice(failedAt),
-              body: rawBody,
-              audienceKey: composerRecipientsKey(),
-              attachmentKey,
-              signalKind,
-            }
+        composerIntent = unsent
+          ? { commandIds, body: rawBody, audienceKey, attachmentKey, signalKind }
           : null;
+        if (!unsent) {
+          /* Everything posted, so this failure is a render fault and the send is FINISHED. The
+           * success path's cleanup never ran, and skipping it left the sent body in the saved
+           * draft — which the "reload" advice would then restore, with a null intent, so the
+           * next send would mint fresh command ids and post it all a second time. */
+          clearComposerDraft();
+          composerAttachmentsMissingAfterReload = false;
+          for (const attachment of attachmentSnapshot) {
+            if (attachment.previewUrl) URL.revokeObjectURL(attachment.previewUrl);
+          }
+        }
         setComposerStatus(
           sent === 0
             ? readableError(caught)
-            : head
+            : sent < recipients.length
               ? `Sent to ${sent} of ${recipients.length}. ${readableError(caught)} ` +
-                "The rest are still in the TO row; press send to try them again."
-              : `All ${sent} messages posted. ${readableError(caught)} ` +
-                "Nothing is waiting to send; reload if the feed looks wrong.",
+                "Press send again to finish it; the ones that went will not go twice."
+              : `All ${sent} went out. ${readableError(caught)} ` +
+                "Nothing is left to send; reload if the feed looks wrong.",
           "error",
         );
-        /* Retry resubmits the composer. With nothing left in it, that button would repost the
-         * messages that already landed, so it stays hidden. */
-        if (retry && head) retry.hidden = false;
+        if (retry && unsent) retry.hidden = false;
         renderFeed("latest");
       } finally {
         if (version === requestVersion && workspaceId === activeWorkspaceId) {
@@ -9015,7 +8788,6 @@ import "../../styles/tokens.css";
   .dashboard__composer {
     --composer-border-width: 1px;
     --composer-inset: var(--s-2);
-    --composer-recipient-max: min(14rem, 44vw);
     --composer-target: 2.75rem;
     --composer-text-rest: calc(var(--s-6) + var(--s-4));
 
@@ -9028,74 +8800,6 @@ import "../../styles/tokens.css";
       calc(var(--s-1) + env(safe-area-inset-bottom));
     background: var(--surface);
     border-block-start: 1px solid var(--border);
-  }
-
-  .dashboard__composer-audience {
-    grid-column: 1;
-    grid-row: 1;
-    display: flex;
-    align-items: center;
-    gap: var(--s-2);
-    min-inline-size: 0;
-    padding-inline: calc(var(--composer-border-width) + var(--composer-inset));
-    color: var(--text-muted);
-    font-size: var(--t-xs);
-  }
-
-  .dashboard__composer-audience label {
-    color: var(--text-faint);
-    font-size: var(--t-2xs);
-    font-weight: var(--weight-semibold);
-    letter-spacing: var(--track-xs);
-  }
-
-  .dashboard__composer-audience select {
-    max-inline-size: var(--composer-recipient-max);
-    padding: var(--s-1) var(--s-6) var(--s-1) var(--s-2);
-    color: var(--text);
-    background: var(--elev-2);
-    border: 1px solid var(--border);
-    border-radius: var(--radius-pill);
-    font: inherit;
-    font-weight: var(--weight-semibold);
-    cursor: pointer;
-    transition: background var(--dur-1) var(--ease-standard),
-      box-shadow var(--dur-1) var(--ease-standard);
-  }
-
-  .dashboard__composer-audience select:hover {
-    background: var(--elev-3);
-  }
-
-  .dashboard__composer-audience select:focus-visible {
-    outline: none;
-    box-shadow: var(--focus-ring);
-  }
-
-  .dashboard__composer-audience [data-composer-audience-count] {
-    min-inline-size: 0;
-    overflow: hidden;
-    text-overflow: ellipsis;
-    white-space: nowrap;
-  }
-
-  .dashboard__composer-note-option {
-    display: inline-flex;
-    grid-column: 1;
-    align-items: center;
-    justify-self: start;
-    gap: var(--s-2);
-    max-inline-size: 100%;
-    margin-inline-start: calc(var(--composer-border-width) + var(--composer-inset) + var(--s-5));
-    color: var(--text-muted);
-    font-size: var(--t-xs);
-    font-weight: var(--weight-medium);
-    letter-spacing: normal;
-    cursor: pointer;
-  }
-
-  .dashboard__composer-note-option input {
-    accent-color: var(--accent);
   }
 
   .dashboard__composer-box {
@@ -9258,14 +8962,6 @@ import "../../styles/tokens.css";
     box-shadow: none;
   }
 
-  .dashboard__composer-mentions {
-    min-inline-size: 0;
-    max-inline-size: var(--composer-recipient-max);
-    display: flex;
-    flex: 0 0 auto;
-    align-items: center;
-  }
-
   .dashboard__mention-chip {
     position: relative;
     block-size: var(--s-8);
@@ -9283,7 +8979,6 @@ import "../../styles/tokens.css";
   }
 
   .dashboard__mention-entity,
-  .dashboard__mention-remove,
   .dashboard__message-mention {
     color: inherit;
     background: transparent;
@@ -9301,21 +8996,9 @@ import "../../styles/tokens.css";
     white-space: nowrap;
   }
 
-  .dashboard__mention-remove {
-    position: absolute;
-    inset-block-start: 50%;
-    inset-inline-end: calc((var(--composer-target) - var(--s-6)) / -2);
-    min-inline-size: var(--composer-target);
-    min-block-size: var(--composer-target);
-    padding: 0;
-    color: var(--text-muted);
-    font-size: var(--t-base);
-    line-height: 1;
-    transform: translateY(-50%);
-  }
-
+  /* The composer chip and its × are gone: a tag is a word in the message now. What is left is
+   * the entity control inside a POSTED row, which still opens the profile panel. */
   .dashboard__mention-entity:focus-visible,
-  .dashboard__mention-remove:focus-visible,
   .dashboard__message-mention:focus-visible {
     outline: none;
     box-shadow: var(--focus-ring);
@@ -9439,10 +9122,17 @@ import "../../styles/tokens.css";
     gap: var(--s-3);
   }
 
+  /* Empty unless the body is near the character limit, and it must take no height while it
+   * is empty: this bar has an 80px budget. */
   .dashboard__composer-meta {
     grid-column: 1;
     grid-row: 3;
     padding-inline: calc(var(--composer-border-width) + var(--composer-inset));
+  }
+
+  .dashboard__composer-meta:empty,
+  .dashboard__composer-meta:has(> [hidden]:only-child) {
+    display: none;
   }
 
   .dashboard__composer-feedback {
@@ -9451,7 +9141,6 @@ import "../../styles/tokens.css";
     padding-inline: calc(var(--composer-border-width) + var(--composer-inset));
   }
 
-  .dashboard__composer-hint,
   .dashboard__composer-count {
     margin: 0;
     color: var(--text-faint);
@@ -10364,7 +10053,6 @@ import "../../styles/tokens.css";
       padding-block: var(--s-1);
     }
 
-    .dashboard__composer-audience,
     .dashboard__composer-box,
     .dashboard__composer-meta,
     .dashboard__composer-feedback {
@@ -10374,21 +10062,6 @@ import "../../styles/tokens.css";
 
     .dashboard__composer-input {
       padding-block: var(--s-1);
-    }
-
-    .dashboard__composer-audience {
-      flex-wrap: nowrap;
-    }
-
-    .dashboard__composer-audience select {
-      min-block-size: 2.75rem;
-    }
-
-    .dashboard__composer-audience [data-composer-audience-count] {
-      flex: 1 1 auto;
-      overflow: visible;
-      text-overflow: clip;
-      white-space: normal;
     }
 
     .dashboard__message-meta time {

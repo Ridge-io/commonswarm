@@ -163,12 +163,6 @@ const assertComposerSprint = (value: ComposerArtifact): void => {
     ".dashboard__composer-send:hover",
     "send-target",
   );
-  const removeCss = between(
-    dashboard,
-    ".dashboard__mention-remove {",
-    ".dashboard__mention-entity:focus-visible",
-    "remove-target",
-  );
   const picker = between(
     dashboard,
     "const renderMentionPicker =",
@@ -178,7 +172,7 @@ const assertComposerSprint = (value: ComposerArtifact): void => {
   const pickerClose = between(
     dashboard,
     "const closeMentionPicker =",
-    "const renderComposerAudience =",
+    "const mentionSearch =",
     "combobox-close",
   );
   const draft = between(
@@ -235,48 +229,44 @@ const assertComposerSprint = (value: ComposerArtifact): void => {
   /* A failed request restores the exact, untrimmed draft and the exact recipient snapshot. The
    * optimistic row is removed first, then the retry affordance is made visible. */
   assert.match(failed, /input\.value = rawBody;/, "failed-send-body: restore the exact body");
-  /* With several agents addressed, the rows that DID post stay posted and only the recipients
-   * that did not are restored. Restoring the whole address would repost to the ones that
-   * already have the message. */
+  /* RETIRED (2026-09-04): "restore only the recipients that did not send". There is no address
+   * to restore any more — the tags are in the body, and the body goes back whole. What keeps a
+   * retry from posting twice is the command id: every id is kept, so the sends that already
+   * landed replay idempotently instead of arriving again. */
   assert.match(
     failed,
-    /const remaining = recipients\.slice\(sent\);/,
-    "failed-send-audience: restore only the recipients that did not send",
+    /composerIntent = unsent\s*\? \{ commandIds, body: rawBody, audienceKey, attachmentKey, signalKind \}/,
+    "failed-send-audience: a retry must reuse every command id, not mint new ones",
   );
-  assert.match(
-    failed,
-    /composerAudience = \{ \.\.\.head \};/,
-    "failed-send-audience: restore the exact audience snapshot",
-  );
-  assert.match(
-    failed,
-    /composerMention = head\.kind === "everyone" \? null : \{ kind: head\.kind, id: head\.id \};/,
-    "failed-send-audience: restore the exact mention chip",
-  );
+  assert.doesNotMatch(failed, /composerAudience|composerMention|remaining/);
   assert.match(failed, /persistComposerDraft\(\);/, "failed-send-body: persist the restored draft");
   assert.match(
     failed,
-    /\? readableError\(caught\)\s*: head\s*\? `Sent to \$\{sent\} of \$\{recipients\.length\}\. \$\{readableError\(caught\)\}/,
+    /: sent < recipients\.length\s*\? `Sent to \$\{sent\} of \$\{recipients\.length\}\. \$\{readableError\(caught\)\}/,
     "failed-send-error: announce the rejection inline",
-  );
-  /* A throw AFTER the last post must not refill the composer with a message that already went
-   * out, and must not offer a Retry that would post it a second time. */
-  assert.match(
-    failed,
-    /const head = remaining\[0\];\s*if \(head\) \{/,
-    "failed-send-audience: restore nothing when every recipient already posted",
-  );
-  assert.match(
-    failed,
-    /if \(retry && head\) retry\.hidden = false;/,
-    "retry-path: no retry when the composer has nothing left to send",
   );
   /* A partly-sent fan-out must say how many went, or the reader cannot tell whether pressing
    * send again repeats a message that already arrived. */
   assert.match(
     failed,
-    /The rest are still in the TO row; press send to try them again\./,
-    "failed-send-error: say what the reader must do with the recipients that remain",
+    /Press send again to finish it; the ones that went will not go twice\./,
+    "failed-send-error: say what pressing send again will and will not repeat",
+  );
+  /* When every recipient already posted there is nothing to press send for, and saying there is
+   * would invite a duplicate the reader did not intend. */
+  assert.match(
+    failed,
+    /All \$\{sent\} went out\. \$\{readableError\(caught\)\} `\s*\+\s*"Nothing is left to send/,
+    "failed-send-error: a fully-sent failure must not ask for another send",
+  );
+  /* A finished send must also leave the saved draft empty and its preview URLs revoked. Without
+   * that, the reload the copy suggests brings the sent message back with no intent, and the next
+   * send mints fresh command ids and posts all of it again. */
+  /* And it must not offer Retry either, or the sentence and the button disagree. */
+  assert.match(
+    failed,
+    /if \(retry && unsent\) retry\.hidden = false;/,
+    "retry-path: no retry when every recipient already posted",
   );
   assert.match(failed, /retry\.hidden = false;/, "retry-path: reveal retry after rejection");
   assert.match(
@@ -484,12 +474,12 @@ const assertComposerSprint = (value: ComposerArtifact): void => {
   const composerTarget = Number(dashboard.match(/--composer-target: ([\d.]+)rem;/)?.[1]);
   const resolveTarget = (value: string | undefined): number =>
     value === "var(--composer-target)" ? composerTarget : Number(value?.replace("rem", ""));
-  const removeWidth = resolveTarget(removeCss.match(/min-inline-size: ([^;]+);/)?.[1]);
-  const removeHeight = resolveTarget(removeCss.match(/min-block-size: ([^;]+);/)?.[1]);
   assert.ok(sendWidth * 16 >= 44 && sendHeight * 16 >= 44,
     "send-target: send must be at least 44x44px");
-  assert.ok(removeWidth * 16 >= 44 && removeHeight * 16 >= 44,
-    "remove-target: mention remove must be at least 44x44px");
+  /* RETIRED (2026-09-04): the 44px mention-remove target. No JS creates that button any more —
+     a tag is a word in the message, removed by editing the text — and the CSS is deleted, so a
+     pin on its size measured nothing. */
+  assert.doesNotMatch(dashboard, /dashboard__mention-remove/);
   assert.match(markup, /data-composer-send[^>]*aria-label="Post signal"/,
     "send-name: send must have an accessible name");
 
@@ -502,25 +492,52 @@ const assertComposerSprint = (value: ComposerArtifact): void => {
   );
   assert.match(draft, /COMPOSER_STREAM = "all-signals";/,
     "draft-scope: stream identity must be explicit");
+  /* The draft is the body and one attachment marker. The address used to be saved beside it —
+   * audienceKey, extra agent ids, the no-wake choice — and all three are gone, because the
+   * address is inside the body the draft already holds. */
   assert.match(
     draft,
-    /JSON\.stringify\(\{\s*body,\s*audienceKey,\s*\.\.\.\(extraAgentIds\.length > 0 \? \{ extraAgentIds \} : \{\}\),\s*\.\.\.\(agentNote \? \{ agentNote: true \} : \{\}\),\s*\.\.\.\(hadAttachments/,
-    "draft-audience: body, audience, every extra agent, no-wake choice, and lost-attachment marker must persist together",
+    /JSON\.stringify\(\{\s*body,\s*\.\.\.\(hadAttachments \? \{ hadAttachments: true \} : \{\}\),/,
+    "draft-audience: body and the lost-attachment marker must persist together",
   );
   assert.match(draft, /input\.value = draft\.body;/,
     "draft-restore: reload must restore the exact body");
-  assert.match(draft, /composerAudienceFromKey\(draft\.audienceKey\)/,
-    "draft-restore: reload must restore the saved audience");
-  assert.match(
-    draft,
-    /composerPostAgentNote = composerAudience\.kind === "agent" && draft\.agentNote === true;/,
-    "draft-agent-note: reload must restore an explicit no-wake choice",
-  );
-  assert.equal(occurrences(dashboard, "clearComposerDraft();"), 1,
-    "draft-clear: only the accepted send path may clear the draft");
+  assert.doesNotMatch(draft, /audienceKey|extraAgentIds|agentNote/);
+  /* Two callers, and both mean the same thing: the send FINISHED. The second is the failure
+     that arrives after every recipient already posted — a render fault, not a rejection — where
+     leaving the draft would let a reload bring the sent message back. */
+  assert.equal(occurrences(dashboard, "clearComposerDraft();"), 2,
+    "draft-clear: only a finished send may clear the draft");
   assertOrder(submit, "await postBrowserSignal(", "clearComposerDraft();", "draft-clear");
-  assert.doesNotMatch(failed, /clearComposerDraft\(\)/,
-    "draft-clear: failed sends must retain the saved draft");
+  /* RETIRED (2026-09-04): "failed sends must retain the saved draft", unconditionally. It is
+     still true of a rejected send — that is the partial branch above, which persists the draft.
+     It is false of a failure that arrives after every recipient already posted: there the send
+     finished, and keeping the draft would let a reload bring the sent message back. The clear
+     is inside the !unsent branch, and only there. */
+  /* Read the !unsent BLOCK, not the whole catch: a [\s\S]* match would still pass if the clear
+     were moved out below the block, where a rejected send would reach it too. */
+  const finished = between(
+    failed,
+    "if (!unsent) {",
+    "\n        }",
+    "finished-send-cleanup",
+  );
+  assert.match(finished, /clearComposerDraft\(\);/,
+    "draft-clear: a finished send must clear the draft");
+  assert.match(finished, /composerAttachmentsMissingAfterReload = false;/,
+    "draft-clear: a finished send must clear the lost-attachment marker too");
+  assert.match(finished, /URL\.revokeObjectURL/,
+    "draft-clear: a finished send must free its preview URLs");
+  assert.doesNotMatch(
+    failed.replace(finished, ""),
+    /clearComposerDraft\(\)/,
+    "draft-clear: a rejected send must retain the saved draft",
+  );
+  assert.match(
+    failed,
+    /!pendingSet\.has\(signal\.id\) && !postedIds\.has\(signal\.id\)/,
+    "failed-send-body: a late throw must not prepend rows the success path already added",
+  );
   assert.match(
     submit,
     /intent\.attachmentKey !== attachmentKey \|\| intent\.signalKind !== signalKind/,
@@ -555,17 +572,10 @@ type Mutation = {
 
 const mutations: Mutation[] = [
   {
-    name: "failed send drops its exact audience",
+    name: "a retry mints fresh command ids and reposts what already landed",
     key: "dashboard",
-    target: "composerAudience = { ...head };",
-    replacement: 'composerAudience = { kind: "everyone" };',
-    expectedFailure: "failed-send-audience",
-  },
-  {
-    name: "failed send restores every recipient, including the ones that already posted",
-    key: "dashboard",
-    target: "const remaining = recipients.slice(sent);",
-    replacement: "const remaining = recipients.slice(0);",
+    target: "? { commandIds, body: rawBody, audienceKey, attachmentKey, signalKind }",
+    replacement: "? { commandIds: commandIds.map(() => uuid()), body: rawBody, audienceKey, attachmentKey, signalKind }",
     expectedFailure: "failed-send-audience",
   },
   {
@@ -653,25 +663,11 @@ const mutations: Mutation[] = [
     expectedFailure: "send-target",
   },
   {
-    name: "mention remove target shrinks below 44px",
-    key: "dashboard",
-    target: "min-inline-size: var(--composer-target);\n    min-block-size: var(--composer-target);",
-    replacement: "min-inline-size: 2rem;\n    min-block-size: var(--composer-target);",
-    expectedFailure: "remove-target",
-  },
-  {
     name: "draft key loses user ownership",
     key: "dashboard",
     target: "`commonswarm:composer-draft:${owner}:${activeWorkspaceId}:${COMPOSER_STREAM}`",
     replacement: "`commonswarm:composer-draft:${activeWorkspaceId}:${COMPOSER_STREAM}`",
     expectedFailure: "draft-scope",
-  },
-  {
-    name: "draft loses the explicit no-wake choice",
-    key: "dashboard",
-    target: 'composerPostAgentNote = composerAudience.kind === "agent" && draft.agentNote === true;',
-    replacement: "composerPostAgentNote = false;",
-    expectedFailure: "draft-agent-note",
   },
   {
     name: "retry reuses an intent after ask/note mode changes",

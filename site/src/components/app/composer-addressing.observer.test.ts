@@ -13,38 +13,20 @@ const siteRoot = join(import.meta.dirname, "..", "..", "..");
 const distRoot = process.env.COMMONSWARM_COMPOSER_DIST_ROOT ?? join(siteRoot, "dist");
 
 type ComposerMeasurement = {
-  broadcast: { option: string; status: string };
-  mention: {
-    chipCount: number;
-    chipText: string;
-    enterPrevented: boolean;
-    selectedValue: string;
-    status: string;
-  };
-  /** A second agent is ADDED, not swapped in: the address grows to two chips. */
-  secondAgent: {
-    chipCount: number;
-    chipTexts: string[];
-    selectedValue: string;
-    status: string;
-  };
-  /** Sending to two agents posts one signal each, so the feed gains two rows. */
+  /** The pick writes "@Name " into the body; nothing is lifted out of the text. */
+  pick: { enterPrevented: boolean; value: string };
+  /** A second pick ADDS a second tag; the first one stays where it was typed. */
+  secondPick: { value: string };
+  /** Two tags in one body post two signals, one per tag. */
   fanOut: { added: number; targets: string[] };
-  /** Removing the first chip promotes the next agent instead of clearing the address. */
-  removeFirst: {
-    chipCount: number;
-    chipTexts: string[];
-    selectedValue: string;
-    status: string;
-  };
-  selectSync: { chipCount: number; chipText: string };
+  /** No tag at all is still one broadcast row with no target. */
+  broadcast: { added: number; target: string };
   plainEnter: { prevented: boolean; submitted: boolean };
   shiftEnter: { insertedNewline: boolean; prevented: boolean; submitted: boolean };
-  metaEnter: { helper: string; kind: string; recipient: string; submitted: boolean };
-  ctrlEnter: { helper: string; kind: string; recipient: string; submitted: boolean };
-  noteEnter: { helper: string; kind: string; recipient: string; submitted: boolean };
-  metaMention: { chipText: string; selectedValue: string; submitted: boolean };
-  ctrlMention: { chipText: string; selectedValue: string; submitted: boolean };
+  metaEnter: { kind: string; recipient: string; submitted: boolean };
+  ctrlEnter: { kind: string; recipient: string; submitted: boolean };
+  metaMention: { submitted: boolean; value: string };
+  ctrlMention: { submitted: boolean; value: string };
   zeroCandidate: { pickerHidden: boolean; submitted: boolean };
 };
 
@@ -74,109 +56,77 @@ const frameScript = `<script>
         "Timed out waiting for " + label + ": " + JSON.stringify({
           appState: doc.querySelector("live-dashboard")?.dataset.state,
           composerHidden: doc.querySelector("[data-composer]")?.hidden,
-          optionCount: doc.querySelector("[data-composer-audience]")?.options.length,
+          feedRows: doc.querySelectorAll("[data-feed-list] > li").length,
           pageText: doc.body?.innerText?.slice(0, 300),
         }),
       );
     };
     await waitFor(
       () => !doc.querySelector("[data-composer]")?.hidden &&
-        doc.querySelector("[data-composer-audience]")?.options.length >= 6,
+        doc.querySelectorAll("[data-feed-list] > li").length > 0,
       "the sample composer",
     );
-    const form = doc.querySelector("[data-composer]");
     const input = doc.querySelector("[data-composer-input]");
-    const select = doc.querySelector("[data-composer-audience]");
-    const status = doc.querySelector("[data-composer-audience-count]");
-    const noteToggle = doc.querySelector("[data-composer-note-toggle]");
     const list = doc.querySelector("[data-feed-list]");
-    const chips = () => [...doc.querySelectorAll("[data-composer-mentions] .dashboard__mention-chip")];
-    const chooseMention = async (query) => {
-      input.value = "@" + query;
+    const type = (value) => {
+      input.value = value;
+      input.setSelectionRange(value.length, value.length);
+      input.dispatchEvent(new view.InputEvent("input", { bubbles: true, inputType: "insertText" }));
+    };
+    const pressEnter = (extra = {}) => {
+      const event = new view.KeyboardEvent("keydown", {
+        bubbles: true,
+        cancelable: true,
+        key: "Enter",
+        ...extra,
+      });
+      input.dispatchEvent(event);
+      return event;
+    };
+    const settle = async (predicate) => {
+      for (let attempt = 0; attempt < 60; attempt += 1) {
+        if (predicate()) return;
+        await new Promise((resolve) => view.setTimeout(resolve, 10));
+      }
+    };
+    /* Type a partial name, open the picker, confirm with Enter. The tag must land in the body. */
+    const choose = async (query, extra = {}) => {
+      const before = input.value;
+      input.value = before + "@" + query;
       input.setSelectionRange(input.value.length, input.value.length);
       input.dispatchEvent(new view.InputEvent("input", { bubbles: true, inputType: "insertText" }));
       await waitFor(() => !doc.querySelector("[data-mention-picker]")?.hidden, "mention picker");
-      const event = new view.KeyboardEvent("keydown", {
-        bubbles: true,
-        cancelable: true,
-        key: "Enter",
-      });
-      input.dispatchEvent(event);
+      const beforeRows = list.children.length;
+      const event = pressEnter(extra);
       await new Promise((resolve) => view.setTimeout(resolve, 0));
-      return event.defaultPrevented;
+      return {
+        enterPrevented: event.defaultPrevented,
+        submitted: list.children.length !== beforeRows,
+        value: input.value,
+      };
     };
-    const sendWith = async (modifier, body, postNote = false) => {
-      select.value = "agent:sample-river";
-      select.dispatchEvent(new view.Event("change", { bubbles: true }));
-      if (postNote) {
-        noteToggle.checked = true;
-        noteToggle.dispatchEvent(new view.Event("change", { bubbles: true }));
-      }
-      const helper = status.textContent ?? "";
-      input.value = body;
-      input.setSelectionRange(body.length, body.length);
-      input.dispatchEvent(new view.InputEvent("input", { bubbles: true, inputType: "insertText" }));
+    const sendWith = async (modifier, body) => {
+      type(body);
       const before = list.children.length;
-      const event = new view.KeyboardEvent("keydown", {
-        bubbles: true,
-        cancelable: true,
-        key: "Enter",
-        [modifier]: true,
-      });
-      input.dispatchEvent(event);
-      for (let attempt = 0; attempt < 20 && list.children.length === before; attempt += 1) {
-        await new Promise((resolve) => view.setTimeout(resolve, 10));
-      }
+      pressEnter({ [modifier]: true });
+      await settle(() => list.children.length > before);
       const row = list.children.length === before + 1 ? list.lastElementChild : null;
       return {
-        helper,
         kind: row?.querySelector(".dashboard__message-kind")?.textContent?.trim() ?? "",
         recipient: row?.querySelector(".dashboard__message-target")?.textContent?.trim() ?? "",
         submitted: row?.querySelector(".dashboard__message-markdown")?.textContent === body,
       };
     };
-    const confirmMentionWith = async (modifier, query) => {
-      select.value = "everyone";
-      select.dispatchEvent(new view.Event("change", { bubbles: true }));
-      input.value = "@" + query;
-      input.setSelectionRange(input.value.length, input.value.length);
-      input.dispatchEvent(new view.InputEvent("input", { bubbles: true, inputType: "insertText" }));
-      await waitFor(() => !doc.querySelector("[data-mention-picker]")?.hidden, "mention picker");
-      const before = list.children.length;
-      const event = new view.KeyboardEvent("keydown", {
-        bubbles: true,
-        cancelable: true,
-        key: "Enter",
-        [modifier]: true,
-      });
-      input.dispatchEvent(event);
-      await new Promise((resolve) => view.setTimeout(resolve, 0));
-      return {
-        chipText: chips()[0]?.textContent ?? "",
-        selectedValue: select.value,
-        submitted: list.children.length !== before,
-      };
-    };
     const sendWithStaleEmptyPicker = async () => {
-      select.value = "everyone";
-      select.dispatchEvent(new view.Event("change", { bubbles: true }));
-      input.value = "@orb";
-      input.setSelectionRange(input.value.length, input.value.length);
-      input.dispatchEvent(new view.InputEvent("input", { bubbles: true, inputType: "insertText" }));
+      type("@orb");
       await waitFor(() => !doc.querySelector("[data-mention-picker]")?.hidden, "mention picker");
       /* Keep the rendered picker open while changing the query without an input event. This
          models the stale frame the keydown branch must handle: open UI, zero live candidates. */
       input.value = "@no-such-recipient";
       input.setSelectionRange(input.value.length, input.value.length);
       const before = list.children.length;
-      const event = new view.KeyboardEvent("keydown", {
-        bubbles: true,
-        cancelable: true,
-        key: "Enter",
-        metaKey: true,
-      });
-      input.dispatchEvent(event);
-      await waitFor(() => list.children.length === before + 1, "zero-candidate submit");
+      pressEnter({ metaKey: true });
+      await settle(() => list.children.length > before);
       return {
         pickerHidden: doc.querySelector("[data-mention-picker]")?.hidden === true,
         submitted: list.lastElementChild?.querySelector(".dashboard__message-markdown")?.textContent ===
@@ -184,39 +134,18 @@ const frameScript = `<script>
       };
     };
 
-    const broadcast = {
-      option: select.selectedOptions[0]?.textContent ?? "",
-      status: status.textContent ?? "",
-    };
-    const mentionEnterPrevented = await chooseMention("orb");
-    const mention = {
-      chipCount: chips().length,
-      chipText: chips()[0]?.textContent ?? "",
-      enterPrevented: mentionEnterPrevented,
-      selectedValue: select.value,
-      status: status.textContent ?? "",
-    };
-    await chooseMention("lum");
-    const secondAgent = {
-      chipCount: chips().length,
-      chipTexts: chips().map((chip) => chip.textContent ?? ""),
-      selectedValue: select.value,
-      status: status.textContent ?? "",
-    };
-    /* Send with both agents addressed. One signal per agent is the whole feature, so the row
-       count and the two targets are the measurement that would fail if the loop posted once. */
+    type("");
+    const first = await choose("orb");
+    const pick = { enterPrevented: first.enterPrevented, value: first.value };
+    const second = await choose("lum");
+    const secondPick = { value: second.value };
+
+    /* Send with both tags in the body. One signal per tag is the whole feature, so the row count
+       and the two targets are what would fail if the send posted once. */
     const beforeFanOut = list.children.length;
-    input.value = "one question, two agents";
-    input.setSelectionRange(input.value.length, input.value.length);
-    input.dispatchEvent(new view.InputEvent("input", { bubbles: true, inputType: "insertText" }));
-    input.dispatchEvent(new view.KeyboardEvent("keydown", {
-      bubbles: true,
-      cancelable: true,
-      key: "Enter",
-    }));
-    for (let attempt = 0; attempt < 40 && list.children.length < beforeFanOut + 2; attempt += 1) {
-      await new Promise((resolve) => view.setTimeout(resolve, 10));
-    }
+    type(second.value + "ship it");
+    pressEnter();
+    await settle(() => list.children.length >= beforeFanOut + 2);
     const fanOut = {
       added: list.children.length - beforeFanOut,
       targets: [...list.children]
@@ -224,31 +153,19 @@ const frameScript = `<script>
         .map((row) => row.querySelector(".dashboard__message-target")?.textContent?.trim() ?? "")
         .sort(),
     };
-    /* Removing the FIRST of two chips must promote the second, not clear the row. */
-    chips()[0]?.querySelector(".dashboard__mention-remove")?.click();
-    await new Promise((resolve) => view.setTimeout(resolve, 0));
-    const removeFirst = {
-      chipCount: chips().length,
-      chipTexts: chips().map((chip) => chip.textContent ?? ""),
-      selectedValue: select.value,
-      status: status.textContent ?? "",
-    };
-    select.value = "person:sample-owner";
-    select.dispatchEvent(new view.Event("change", { bubbles: true }));
-    const selectSync = {
-      chipCount: chips().length,
-      chipText: chips()[0]?.textContent ?? "",
+
+    const beforeBroadcast = list.children.length;
+    type("no tags here, so this goes to the room");
+    pressEnter();
+    await settle(() => list.children.length > beforeBroadcast);
+    const broadcast = {
+      added: list.children.length - beforeBroadcast,
+      target: list.lastElementChild?.querySelector(".dashboard__message-target")?.textContent?.trim() ?? "",
     };
 
-    input.value = "sent with enter";
-    input.setSelectionRange(input.value.length, input.value.length);
+    type("sent with enter");
     const beforePlain = list.children.length;
-    const plain = new view.KeyboardEvent("keydown", {
-      bubbles: true,
-      cancelable: true,
-      key: "Enter",
-    });
-    input.dispatchEvent(plain);
+    const plain = pressEnter();
     await new Promise((resolve) => view.setTimeout(resolve, 0));
     const plainEnter = {
       prevented: plain.defaultPrevented,
@@ -256,8 +173,7 @@ const frameScript = `<script>
         list.lastElementChild?.querySelector(".dashboard__message-markdown")?.textContent === "sent with enter",
     };
 
-    input.value = "line one";
-    input.setSelectionRange(input.value.length, input.value.length);
+    type("line one");
     const beforeShift = list.children.length;
     const shift = new view.KeyboardEvent("keydown", {
       bubbles: true,
@@ -275,25 +191,25 @@ const frameScript = `<script>
       prevented: shift.defaultPrevented,
       submitted: list.children.length !== beforeShift,
     };
-    const metaEnter = await sendWith("metaKey", "sent with command enter");
-    const ctrlEnter = await sendWith("ctrlKey", "sent with control enter");
-    const noteEnter = await sendWith("metaKey", "sent as a note", true);
-    const metaMention = await confirmMentionWith("metaKey", "orb");
-    const ctrlMention = await confirmMentionWith("ctrlKey", "lum");
+    const metaEnter = await sendWith("metaKey", "@River sent with command enter");
+    const ctrlEnter = await sendWith("ctrlKey", "@River sent with control enter");
+    type("");
+    const metaMentionPick = await choose("orb", { metaKey: true });
+    const metaMention = { submitted: metaMentionPick.submitted, value: metaMentionPick.value };
+    type("");
+    const ctrlMentionPick = await choose("lum", { ctrlKey: true });
+    const ctrlMention = { submitted: ctrlMentionPick.submitted, value: ctrlMentionPick.value };
     const zeroCandidate = await sendWithStaleEmptyPicker();
 
     document.documentElement.dataset.composerMeasurement = btoa(unescape(encodeURIComponent(JSON.stringify({
-      broadcast,
-      mention,
-      secondAgent,
+      pick,
+      secondPick,
       fanOut,
-      removeFirst,
-      selectSync,
+      broadcast,
       plainEnter,
       shiftEnter,
       metaEnter,
       ctrlEnter,
-      noteEnter,
       metaMention,
       ctrlMention,
       zeroCandidate,
@@ -361,10 +277,10 @@ const startDistServer = async (): Promise<{ close(): Promise<void>; origin: stri
   };
 };
 
-/* The old claim here was "one visible recipient": a second @mention REPLACED the first. That was
-   retired when the operator asked to address two agents out of four. Several agents are now one
-   address in the row and several signals on the wire — one per agent, because a signal carries a
-   single recipient. A person still replaces the whole address. */
+/* Two claims were retired here. "One visible recipient" went when the operator asked to address
+   two agents out of four. "A person replaces the whole address" went with the TO row: tags are
+   words in the message now, so a body CAN name a person and an agent together, and each gets its
+   own signal with its own kind. */
 test("rendered composer addresses several agents and preserves multiline keyboard input", async () => {
   const chrome = await findChrome();
   const server = await startDistServer();
@@ -394,34 +310,13 @@ test("rendered composer addresses several agents and preserves multiline keyboar
     const measured = JSON.parse(
       Buffer.from(encoded, "base64").toString("utf8"),
     ) as ComposerMeasurement;
-    assert.deepEqual(measured.mention, {
-      chipCount: 1,
-      chipText: "@Orbit×",
-      enterPrevented: true,
-      selectedValue: "agent:sample-orbit",
-      status: "Wakes Orbit's listener",
-    });
-    assert.match(measured.broadcast.option, /nobody (?:is )?notified/i);
-    assert.match(measured.broadcast.status, /no agent (?:is |will be )?woken/i);
-    assert.deepEqual(measured.secondAgent, {
-      chipCount: 2,
-      chipTexts: ["@Orbit×", "@Lumen×"],
-      selectedValue: "agent:sample-orbit",
-      status: "Wakes 2 listeners · one message each",
-    });
-    assert.deepEqual(measured.fanOut, {
-      added: 2,
-      targets: ["→ Lumen", "→ Orbit"],
-    });
-    assert.deepEqual(measured.removeFirst, {
-      chipCount: 1,
-      chipTexts: ["@Lumen×"],
-      selectedValue: "agent:sample-lumen",
-      status: "Wakes Lumen's listener",
-    });
-    /* Choosing a person clears the agents: one signal cannot carry both, so mixing them would
-       make "reply" mean two different things in one row. */
-    assert.deepEqual(measured.selectSync, { chipCount: 1, chipText: "@Dana Rivera×" });
+    /* The pick is a WORD IN THE MESSAGE. Nothing is lifted out of the text into a chip. */
+    assert.deepEqual(measured.pick, { enterPrevented: true, value: "@Orbit " });
+    assert.deepEqual(measured.secondPick, { value: "@Orbit @Lumen " });
+    /* Two tags, two signals: one per tag, each with its own target. */
+    assert.deepEqual(measured.fanOut, { added: 2, targets: ["→ Lumen", "→ Orbit"] });
+    /* No tag is still one broadcast row, addressed to the room rather than to a listener. */
+    assert.deepEqual(measured.broadcast, { added: 1, target: "→ everyone" });
     assert.deepEqual(measured.plainEnter, {
       prevented: true,
       submitted: true,
@@ -432,33 +327,19 @@ test("rendered composer addresses several agents and preserves multiline keyboar
       submitted: false,
     });
     assert.deepEqual(measured.metaEnter, {
-      helper: "Wakes River's listener",
       kind: "Question",
       recipient: "→ River",
       submitted: true,
     });
     assert.deepEqual(measured.ctrlEnter, {
-      helper: "Wakes River's listener",
       kind: "Question",
       recipient: "→ River",
       submitted: true,
     });
-    assert.deepEqual(measured.noteEnter, {
-      helper: "Posted for River to read; no wake",
-      kind: "Note",
-      recipient: "→ River",
-      submitted: true,
-    });
-    assert.deepEqual(measured.metaMention, {
-      chipText: "@Orbit×",
-      selectedValue: "agent:sample-orbit",
-      submitted: false,
-    });
-    assert.deepEqual(measured.ctrlMention, {
-      chipText: "@Lumen×",
-      selectedValue: "agent:sample-lumen",
-      submitted: false,
-    });
+    /* Command/Control+Enter with the picker open still CONFIRMS the pick rather than sending,
+       so the shortcut cannot post a half-typed name. */
+    assert.deepEqual(measured.metaMention, { submitted: false, value: "@Orbit " });
+    assert.deepEqual(measured.ctrlMention, { submitted: false, value: "@Lumen " });
     assert.deepEqual(measured.zeroCandidate, { pickerHidden: true, submitted: true });
   } finally {
     await server.close();

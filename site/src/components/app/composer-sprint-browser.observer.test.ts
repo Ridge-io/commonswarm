@@ -40,9 +40,7 @@ type GeometryMeasurement = {
     sendDisabled: boolean;
   } | null;
   draft: {
-    audience: string;
     body: string;
-    chip: string;
     stored: string;
   };
   escape: {
@@ -58,15 +56,14 @@ type GeometryMeasurement = {
     middle: { height: number; scrollHeight: number };
     oneLine: { height: number; scrollHeight: number };
   };
-  targets: { remove: Rect; send: Rect };
+  tagged: string;
+  targets: { send: Rect };
   viewport: { height: number; width: number };
   whitespaceDisabled: boolean;
 };
 
 type FailureMeasurement = {
-  audience: string;
   body: string;
-  chip: string;
   error: string;
   matchingRows: number;
   retryVisible: boolean;
@@ -82,7 +79,6 @@ type DoubleMeasurement = {
 };
 
 type KeyboardMeasurement = {
-  audience: Rect;
   composer: Rect;
   input: Rect;
   inputFontSize: number;
@@ -131,14 +127,13 @@ const patchClient = (source: string, variant: Variant): string => {
     }, "sample-post-control");
   }
   if (variant === "failure-reverted") {
-    /* The emitted restore sequence after the fan-out change: body, staged attachments, the
-       staged-attachment render, then the head recipient (the first one that did NOT post) and
-       the audience rebuilt from it. Only the body assignment is reverted, so the control
-       measures text survival and nothing else. */
-    const restore = /let ([A-Za-z_$][\w$]*)=([A-Za-z_$][\w$]*)\[0\];\1&&\(([A-Za-z_$][\w$]*)\.value=([A-Za-z_$][\w$]*),([A-Za-z_$][\w$]*)=([A-Za-z_$][\w$]*),([A-Za-z_$][\w$]*)\(\),([A-Za-z_$][\w$]*)=\{\.\.\.\1\},/;
+    /* The emitted restore sequence after the address moved into the body: body, staged
+       attachments, the staged-attachment render, then the autosize. Only the body assignment is
+       reverted, so the control measures text survival — which is now also address survival,
+       because the tag is inside that text. */
+    const restore = /([A-Za-z_$][\w$]*)\.value=([A-Za-z_$][\w$]*),([A-Za-z_$][\w$]*)=([A-Za-z_$][\w$]*),([A-Za-z_$][\w$]*)\(\),([A-Za-z_$][\w$]*)\(\1\),/;
     result = replaceOne(result, restore, (...values: string[]) =>
-      `let ${values[1]}=${values[2]}[0];${values[1]}&&(${values[3]}.value=\`\`,` +
-      `${values[5]}=${values[6]},${values[7]}(),${values[8]}={...${values[1]}},`,
+      `${values[1]}.value=\`\`,${values[3]}=${values[4]},${values[5]}(),${values[6]}(${values[1]}),`,
     "text-survival-reversion");
   }
   if (variant === "double-reverted") {
@@ -189,7 +184,7 @@ const frameScript = (scenario: string): string => `<script>
       throw new Error("Timed out waiting for " + label + ": " + doc.body?.innerText?.slice(0, 400));
     };
     const ready = () => !doc.querySelector("[data-composer]")?.hidden &&
-      doc.querySelector("[data-composer-audience]")?.options.length >= 6;
+      doc.querySelectorAll("[data-feed-list] > li").length > 0;
     await waitFor(ready, "sample composer");
     const clearDrafts = () => {
       for (let index = view.localStorage.length - 1; index >= 0; index -= 1) {
@@ -215,10 +210,9 @@ const frameScript = (scenario: string): string => `<script>
 
     if (${JSON.stringify(scenario)} === "failure") {
       const input = doc.querySelector("[data-composer-input]");
-      const select = doc.querySelector("[data-composer-audience]");
-      const body = "  keep this line\\nand this exact ending  ";
-      select.value = "agent:sample-river";
-      select.dispatchEvent(new view.Event("change", { bubbles: true }));
+      /* The tag is IN the body now, so a failed send that restores the body restores the
+         address with it. */
+      const body = "@River  keep this line\\nand this exact ending  ";
       input.value = body;
       inputEvent(input);
       enter(input);
@@ -229,9 +223,7 @@ const frameScript = (scenario: string): string => `<script>
       const rows = [...doc.querySelectorAll(".dashboard__message-markdown")]
         .filter((row) => row.textContent === body);
       return {
-        audience: select.value,
         body: input.value,
-        chip: doc.querySelector("[data-composer-mentions]")?.textContent ?? "",
         error: doc.querySelector("[data-composer-status]")?.textContent ?? "",
         matchingRows: rows.length,
         retryVisible: !doc.querySelector("[data-composer-retry]")?.hidden,
@@ -274,7 +266,6 @@ const frameScript = (scenario: string): string => `<script>
       await wait(80);
       const input = doc.querySelector("[data-composer-input]");
       return {
-        audience: rect(doc.querySelector(".dashboard__composer-audience")),
         composer: rect(doc.querySelector("[data-composer]")),
         input: rect(input),
         inputFontSize: Number.parseFloat(view.getComputedStyle(input).fontSize),
@@ -285,7 +276,6 @@ const frameScript = (scenario: string): string => `<script>
     }
 
     const input = doc.querySelector("[data-composer-input]");
-    const select = doc.querySelector("[data-composer-audience]");
     const send = doc.querySelector("[data-composer-send]");
     const size = async (value) => {
       input.value = value;
@@ -352,19 +342,19 @@ const frameScript = (scenario: string): string => `<script>
       text: input.value,
     };
 
+    /* The pick writes the tag into the body; there is no chip and so no remove target. */
     input.value = "@orb";
     input.setSelectionRange(input.value.length, input.value.length);
     inputEvent(input);
-    await waitFor(() => !doc.querySelector("[data-mention-picker]")?.hidden, "mention picker for chip");
+    await waitFor(() => !doc.querySelector("[data-mention-picker]")?.hidden, "mention picker");
     enter(input);
     await wait(20);
-    const remove = doc.querySelector(".dashboard__mention-remove");
-    const targets = { remove: rect(remove), send: rect(send) };
+    const tagged = input.value;
+    const targets = { send: rect(send) };
     const inputFontSize = Number.parseFloat(view.getComputedStyle(input).fontSize);
 
-    const draftBody = "draft survives\\nwith its recipient";
-    select.value = "agent:sample-river";
-    select.dispatchEvent(new view.Event("change", { bubbles: true }));
+    /* The recipient rides inside the body, so restoring the body restores the address. */
+    const draftBody = "@River draft survives\\nwith its recipient";
     input.value = draftBody;
     inputEvent(input);
     const draftKey = Array.from({ length: view.localStorage.length }, (_, index) =>
@@ -383,14 +373,13 @@ const frameScript = (scenario: string): string => `<script>
     return {
       counter,
       draft: {
-        audience: doc.querySelector("[data-composer-audience]")?.value ?? "",
         body: doc.querySelector("[data-composer-input]")?.value ?? "",
-        chip: doc.querySelector("[data-composer-mentions]")?.textContent ?? "",
         stored,
       },
       escape,
       inputFontSize,
       paste: pasted,
+      tagged,
       sizes: { max, middle, oneLine },
       targets,
       viewport: { height: view.innerHeight, width: view.innerWidth },
@@ -516,12 +505,9 @@ const measure = async <T extends Measurement>(
 };
 
 const assertTextSurvival = (measurement: FailureMeasurement): void => {
-  assert.equal(measurement.body, "  keep this line\nand this exact ending  ",
-    "text-survival-control: failed send lost exact body bytes");
-  assert.equal(measurement.audience, "agent:sample-river",
-    "text-survival-control: failed send lost its recipient");
-  assert.equal(measurement.chip, "@River×",
-    "text-survival-control: failed send lost its recipient chip");
+  /* The tag is part of the body, so one assertion now covers the text AND the address. */
+  assert.equal(measurement.body, "@River  keep this line\nand this exact ending  ",
+    "text-survival-control: failed send lost exact body bytes, or the tag inside them");
   assert.equal(measurement.matchingRows, 0,
     "text-survival-control: rejected optimistic row remained in the transcript");
   assert.equal(measurement.retryVisible, true,
@@ -560,7 +546,6 @@ const assertKeyboardContainment = (measurement: KeyboardMeasurement): void => {
   assert.deepEqual(measurement.viewport, { height: 430, width: 390 },
     "keyboard-control: simulated visual viewport drifted");
   for (const [name, box] of Object.entries({
-    audience: measurement.audience,
     composer: measurement.composer,
     input: measurement.input,
     inputShell: measurement.inputShell,
@@ -645,16 +630,13 @@ test("real Chrome keeps composer mechanics and their four required controls", {
       "escape-control: open picker did not expose its active option");
     assert.ok(geometry.targets.send.width >= 44 && geometry.targets.send.height >= 44,
       "target-control: send target is below 44px");
-    assert.ok(geometry.targets.remove.width >= 44 && geometry.targets.remove.height >= 44,
-      "target-control: mention remove target is below 44px");
-    assert.equal(geometry.draft.body, "draft survives\nwith its recipient",
-      "draft-control: reload lost the body");
-    assert.equal(geometry.draft.audience, "agent:sample-river",
-      "draft-control: reload lost the recipient");
-    assert.equal(geometry.draft.chip, "@River×",
-      "draft-control: reload lost the recipient chip");
-    assert.match(geometry.draft.stored, /"audienceKey":"agent:sample-river"/,
-      "draft-control: stored draft did not include its recipient");
+    /* The pick lands as a word in the message. */
+    assert.equal(geometry.tagged, "@Orbit ",
+      "pick-control: choosing from the picker did not write the tag into the body");
+    assert.equal(geometry.draft.body, "@River draft survives\nwith its recipient",
+      "draft-control: reload lost the body, or the tag inside it");
+    assert.match(geometry.draft.stored, /"body":"@River draft survives/,
+      "draft-control: stored draft did not include the tagged body");
 
     console.log(`composer-sprint-browser ${JSON.stringify({
       controls: {
