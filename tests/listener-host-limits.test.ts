@@ -242,8 +242,89 @@ test("a full-hour claim ratio below 0.50 is a host lapse; 0.50 is not", () => {
   );
   assert.match(low, /^Listener LAPSE /);
   assert.match(low, /499\/1000 expected \(0\.499\)/);
-  assert.match(low, /this host is starving the listener/i);
-  assert.match(low, /sysctl kern\.memorystatus_vm_pressure_level/);
+  /* RETIRED (2026-09-04). The exact 0.1.50 string, kept byte for byte — em dash and all — so a
+     reader who pastes it out of a running listener finds this note:
+       "This host is starving the listener \u2014 check load/memory pressure (sysctl
+       kern.memorystatus_vm_pressure_level), or move the listener."
+     It named ONE cause with confidence. The first reader it reached measured pressure level 1,
+     zero swapouts, four TIME_WAIT sockets and an empty queue before working out the answer was
+     CPU contention from their own foreground work.
+
+     A first replacement was failed by a review arm for the same sin in new words, and those are
+     retired here too: "Nothing was lost" (the pending count is a snapshot now, not a statement
+     about the lapse hour), "waiting on CommonSwarm rather than on this host" and "not waiting on
+     CommonSwarm" (host_ports_exhausted is a retry AND a host fault; a slow-but-successful read
+     records nothing), "without any host fault", and "Bursty foreground work on the same host
+     produces this shape". Every one of them attributed a cause nothing had measured. */
+  assert.doesNotMatch(low, /starving the listener/i);
+  assert.doesNotMatch(low, /Nothing was lost/);
+  assert.doesNotMatch(low, /not waiting on CommonSwarm/);
+  assert.doesNotMatch(low, /Bursty foreground work/);
+  assert.match(low, /the reads were not FAILING/);
+  assert.match(low, /does not settle whether they were SLOW/);
+  assert.match(low, /measured nothing else about this hour, and nothing at all about this host/);
+  assert.match(low, /Cheapest checks first: load average \(uptime\)/);
+  /* What is pending is on the warning line, as the COUNT. */
+  assert.match(low, /Pending deliveries now: 0\./);
+
+  /* With read retries in the same hour the reading points at the reads — and it must NOT say
+     where the fault was, because a port-exhausted host produces retries too. */
+  const retryHour = (retries: number) => ({
+    hourStart: "2026-09-01T10:00:00.000Z",
+    retries,
+    episodes: 1,
+    longestEpisodeAttempts: retries,
+    longestEpisodeDurationMs: 1_000 * retries,
+  });
+  const retrying = renderListenerStatus(
+    readHealthStatus({ ...lowHealth, retryHours: [retryHour(7)] }),
+    undefined,
+    atHourEnd,
+  );
+  assert.match(retrying, /Reads also failed in that hour: 7 retries recorded\./);
+  assert.match(retrying, /A retry does not say where the fault was/);
+  assert.doesNotMatch(retrying, /rather than on this host/);
+  assert.doesNotMatch(retrying, /without any host fault/);
+
+  const oneRetry = renderListenerStatus(
+    readHealthStatus({ ...lowHealth, retryHours: [retryHour(1)] }),
+    undefined,
+    atHourEnd,
+  );
+  assert.match(oneRetry, /1 retry recorded\./);
+
+  /* Ports exhausted AND a lapse in one status: the two notices must not contradict each other.
+     This is the pairing the first replacement got wrong. */
+  const exhausted = renderListenerStatus(
+    readHealthStatus({
+      ...lowHealth,
+      currentReasonCode: "host_ports_exhausted",
+      retryHours: [retryHour(7)],
+    }),
+    undefined,
+    atHourEnd,
+  );
+  assert.match(exhausted, /run out of outbound ports/);
+  assert.match(exhausted, /A retry does not say where the fault was/);
+  assert.doesNotMatch(exhausted, /rather than on this host/);
+
+  /* Every shape the pending count can take, because each one is a different sentence. */
+  const pendingStatus = readHealthStatus(lowHealth);
+  for (const [count, expected] of [[3, /Pending deliveries now: 3\./], [1, /Pending deliveries now: 1\./]] as const) {
+    assert.match(
+      renderListenerStatus({ ...pendingStatus, pendingDeliveryCount: count }, undefined, atHourEnd),
+      expected,
+    );
+  }
+  const withUnknownPending = renderListenerStatus(
+    { ...pendingStatus, pendingDeliveryCount: null },
+    undefined,
+    atHourEnd,
+  );
+  assert.match(withUnknownPending, /No pending count was recorded\./);
+  assert.doesNotMatch(withUnknownPending, /Pending deliveries now:/);
+  /* Not "the service did not report it": an ack clears the count locally too. */
+  assert.doesNotMatch(withUnknownPending, /service did not report/);
 
   const thresholdHealth = {
     ...lowHealth,

@@ -270,6 +270,7 @@ import {
   runListenerAttendanceCanary,
   writeListenerCredentialState,
   LISTENER_DELIVERY_FAILING_THRESHOLD,
+  LISTENER_THROUGHPUT_LAPSE_RATIO,
   LISTENER_DEFER_OVER_MAX,
   LISTENER_DEFER_OVER_MIN,
   emptyListenerReadHealth,
@@ -4358,11 +4359,40 @@ function listenerLapseNotices(
   }
   if (summary.throughputLapseHours.length > 0) {
     const latest = summary.throughputLapseHours.at(-1)!;
+    /* What is pending belongs on the warning line, not several lines below it: a lapse with an
+     * empty queue reads completely differently from one with work waiting, and a reader triaging
+     * a loud warning should not have to scroll to learn which one this is.
+     *
+     * It says what it READ, not what it concludes. An earlier version said "Nothing was lost",
+     * which the count cannot support: it is a snapshot taken now, and a delivery claimed and
+     * dropped during the lapse hour is no longer pending. */
+    const pending = status.pendingDeliveryCount;
+    const pendingClause = pending === null
+      /* Do not attribute the gap: an ack clears the count locally too, so "the service did not
+       * report it" names a cause this line did not establish. */
+      ? " No pending count was recorded."
+      : ` Pending deliveries now: ${pending}.`;
+    /* Read retries recorded in the SAME hour are the only related measurement the listener owns,
+     * and it is one-directional: retries prove the reads were failing, but no retries do NOT
+     * prove the reads were fast. A read that succeeds slowly records nothing, and a claim retry
+     * sleeps in the claim loop without touching retryHours. So this names the reading and what
+     * it does and does not settle, and never attributes the lapse to CommonSwarm or to the host.
+     *
+     * The old text, verbatim from 0.1.50, asserted one cause outright:
+     *   "This host is starving the listener — check load/memory pressure
+     *   (sysctl kern.memorystatus_vm_pressure_level), or move the listener."
+     * The first reader it reached measured pressure level 1, zero swapouts, four TIME_WAIT
+     * sockets and an empty queue before working out that the answer was CPU contention from
+     * their own foreground work — which this message still cannot see, and no longer guesses. */
+    const lapseRetries = summary.retryHours
+      .find((hour) => hour.hourStart === latest.hourStart)?.retries ?? 0;
     notices.push({
       code: "listener_claim_throughput_lapse",
-      message: `Claim throughput fell below 0.50 for the full hour at ${latest.hourStart}: ${latest.claims}/${Math.round(latest.expectedClaims)} expected (${latest.ratio.toFixed(3)}).`,
-      nextStep:
-        "This host is starving the listener — check load/memory pressure (sysctl kern.memorystatus_vm_pressure_level), or move the listener.",
+      message:
+        `Claim throughput fell below ${LISTENER_THROUGHPUT_LAPSE_RATIO.toFixed(2)} for the full hour at ${latest.hourStart}: ${latest.claims}/${Math.round(latest.expectedClaims)} expected (${latest.ratio.toFixed(3)}).${pendingClause}`,
+      nextStep: lapseRetries > 0
+        ? `Reads also failed in that hour: ${lapseRetries} ${lapseRetries === 1 ? "retry" : "retries"} recorded. Read those failures first; any notice above names the code. A retry does not say where the fault was — host_ports_exhausted is a retry AND a host fault.`
+        : "No read retries were recorded in that hour, so the reads were not FAILING. That does not settle whether they were SLOW: a read that succeeds slowly records nothing here, and a claim retry sleeps in the claim loop without recording either. The listener measured nothing else about this hour, and nothing at all about this host. Cheapest checks first: load average (uptime), process count, memory pressure (sysctl kern.memorystatus_vm_pressure_level, 1 is normal), sockets (netstat -an | grep -c TIME_WAIT).",
     });
   }
   const consecutive = status.consecutiveAckFailureCount ?? 0;
