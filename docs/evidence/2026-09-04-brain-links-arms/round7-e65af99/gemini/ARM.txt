@@ -1,0 +1,39 @@
+diff --git a/AGENTS.md b/AGENTS.md
+
+1. **Trace it:**
+   A control CAN render for a deleted topic because rendering uses a snapshot of the workspace files. However, it CANNOT open a topic the workspace does not hold.
+   - **`createBrainTopicReader`'s serialization**: If a click happens while a cadence read is in flight, the forced refresh waits for it to finish and starts a NEW read. This guarantees the list is fresh *as of the click*.
+   - **`listIsFresh`**: If this forced read fails or bails, `listIsFresh` is false. `brainLinkClickOutcome` then refuses to open the topic, returning `missing` with a connection message.
+   - **`contextIsCurrent`**: The click captures `requestVersion` and `activeWorkspaceId` before the await. If the workspace switches during the read, `contextIsCurrent` becomes false. `brainLinkClickOutcome` checks this *first* and returns `abandoned`, doing nothing.
+   - **Switch during `brainView.open`**: The `contextIsCurrent` check and the `brainView?.open()` call are synchronous. No workspace switch can interleave between them.
+   
+2. **Any XSS, injection, or DOM-clobbering path?**
+   No. The linkify pass runs *after* `setSanitizedMessageMarkdown` and processes only text nodes. It creates elements using `document.createElement("button")` and `textContent`, avoiding `innerHTML` entirely. No attributes like `id` or `name` are set that could cause DOM clobbering.
+
+3. **Attack the token run and gates:**
+   - **Misses something intended**: An agent writes "I pushed to `s3://bucket/agent-restart`." The `RUN_RE` includes `/` and `:`, making the entire URI a single token. The topic `agent-restart` is missed. (This is intended by the design bound to avoid breaking URLs). Another miss: "Read `` `roadmap's` `` summary." The `codeSpan` includes `'s`, which fails the strict equality check.
+   - **Links something unintended**: An agent writes "I upgraded to version 1.5." If there happens to be a topic named `1.5` (which contains a dot, making it slug-shaped), it will linkify in ordinary prose without backticks.
+
+4. **Does `readBrainTopics` overwriting the shared `files` array still cost a reader anything?**
+   No. The background read explicitly avoids rebuilding the `Files` or `Brain` panels, which prevents focus loss or the closing of unsaved edits. It only rebuilds the feed when it is the active view.
+
+5. **Does any test assert something that would pass if the feature were broken?**
+   Yes. 
+   - **New workspace-switch test**: In `brain-links.test.mjs`, the test manually orchestrates the pure logic by passing `contextIsCurrent = false` to `brainLinkClickOutcome`. It asserts the logic works, but would still pass even if the dashboard integration completely failed to pass the correct boolean to the function.
+   - **Source-shape assertions**: In `brain-links.observer.test.ts`, the assertions rely on regex matching the literal source code strings (e.g., `/version === requestVersion.../`). If these variables were captured but logically bypassed or commented out in the actual execution, the test would still pass.
+
+6. **Any user-facing string enumerating what the code enforces without being generated from it?**
+   No. The text in `AGENTS.md` and the design brief were updated to reference the `BRAIN_SLUG_SEPARATORS` constant directly instead of manually enumerating the characters (`-`, `_`, `.`). The observer test strictly enforces that they do not drift.
+
+7. **Copy accuracy:**
+   The implementation matches the design brief and `AGENTS.md` accurately clause by clause:
+   - Case-insensitivity is handled via `toLowerCase()`.
+   - Slug-shaped names link anywhere; one-word names only inside exact code spans (`codeSpan === topic`).
+   - Links inside `PRE`, `A`, or `BUTTON` are skipped (`OPAQUE` set).
+   - Topic boundaries are preserved (URL characters are included in `RUN_RE` to prevent mid-URL linking).
+   - Re-reads and context checking (`requestVersion`, `activeWorkspaceId`) are implemented precisely as described in the brief.
+
+8. **Anything that breaks the existing feed, collapse/expand, or Brain panel?**
+   No. `linkifyBrainTopics` safely replaces text nodes with fragments without disrupting the `dashboard__message-markdown` wrapper, so collapse/expand continues to function. The Brain panel's `brainTopics` list generation remains untouched.
+
+VERDICT: PASS

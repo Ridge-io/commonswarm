@@ -1,0 +1,11 @@
+diff --git a/AGENTS.md b/AGENTS.md
+
+Findings:
+
+1. **Missed links / The word gate (Checks 3 & 4)**: There is a critical logic flaw in `isLinkable(topic, codeSpan)` for one-word topics. The function checks `codeSpan.trim().toLowerCase() === topic`. However, `topic` is the CANONICAL topic name passed from `resolveRun` (which preserves its original case from the `topics` array). If a one-word topic contains any uppercase letters in its canonical name (e.g., `Roadmap` or `Releases`), this strict equality check against a lowercased `codeSpan` will always evaluate to `false`. As a result, such topics will never be linked, even when correctly wrapped in backticks. The check must use `topic.toLowerCase()`.
+
+2. **The four LiveDashboard hunks (Check 6)**: The render hook does run on every re-render (because `refreshBrainTopics` calls `renderFeed()`, which re-renders the signals). However, it cannot double-wrap an already-linked span because `setSanitizedMessageMarkdown` overwrites the DOM tree from the raw markdown payload first. Furthermore, `<button>` is included in `OPAQUE_ELEMENTS`, meaning `linkifyBrainTopics` deliberately skips diving into existing control nodes anyway. 
+
+3. **Tests (Check 7)**: You asked to name any assertions on `textContent` where the path being tested is actually a node type (i.e., verifying a `<button>` was not inserted). The observer tests check `snapshot.preText`, `snapshot.codeSpanUrlText`, and `snapshot.commandSpanText`. Since `.textContent` ignores HTML tags and walks right into child nodes, a `<button>` incorrectly inserted into a `<pre>` or `<code>` block would yield the exact same string, meaning these specific assertions would silently pass a regression. (Note: The author's comments acknowledge this exact limitation for URLs and correctly supplements them by counting the nodes via `controlsInsidePre` and `codeSpanUrlControlCount`, but the `.textContent` assertions remain).
+
+VERDICT: FAIL

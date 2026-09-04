@@ -1,0 +1,110 @@
+I'll read REVIEW.md and the patch first, then follow the review instructions exactly.The first line of the patch is `diff --git a/AGENTS.md b/AGENTS.md`. Next I’ll pull the rest of the diff and the branch source so I can check each of the eight claims.I’ll inspect the dashboard wiring, topic canonicalization, sanitizer, and tests next — those are the places a false pass would hide.I’ve got a concrete fail: a click doesn’t pin the workspace it started on, so a switch mid-refresh can open the same topic name in the new workspace. Checking that path once more against the surrounding dashboard guards.diff --git a/AGENTS.md b/AGENTS.md
+
+The click path still has a workspace-identity hole. `readBrainTopics` bails when the workspace moves, but `openBrainTopic` never captures `requestVersion` / `activeWorkspaceId`, and a forced refresh is specified to **take its own read after the in-flight one**. That second read runs against whichever workspace is active *now*. If the new workspace holds the same slug — `brain-how-to`, `shared-host`, `releases` — `brainLinkClickOutcome` gets `listIsFresh: true` and `brainView.open` loads the **other** workspace’s topic. The unit test named for this case does not go red.
+
+### 1. Injection — holds
+Attempted refutation: a body with `<`, `"`, `javascript:`, a `data-` attribute, or markdown that the sanitizer leaves behind, then re-parsed here.
+
+The hook is after `setSanitizedMessageMarkdown`. `MESSAGE_MARKDOWN_TAGS` is `p, br, strong, em, code, pre, ul, ol, li, blockquote, a, h2–h5` — no `button`, no `data-*`. The pass walks **text nodes only**, uses `createElement` / `textContent` / `dataset`, and never `innerHTML`. The topic stored on the control is `known.get(...)`, i.e. a `canonicalBrainTopic` value (`^[a-z0-9][a-z0-9._-]*$`), not the author’s raw slice. The click handler closes over that string; editing `data-brain-link` in the DOM does not change what `open` receives.
+
+No injection surface added.
+
+### 2. False links — holds, with the stated URL bound
+Attempted constructions:
+
+| Body | Result |
+|---|---|
+| `roadmap` vs `commonswarm-roadmap` | Whole-run match; a suffix is not offered |
+| `Read shared-host.` | Trailing `.` trimmed; control is `shared-host` |
+| `https://example.com/api?topic=commonswarm-roadmap` | `?` `=` `&` `#` `;` `,` stay in `RUN_RE`; one run, no topic |
+| Fenced `brain-how-to` | `PRE` is opaque |
+| `[shared-host](https://example.com/shared-host)` | `A` is opaque; the sibling `<code>(url)</code>` the renderer appends is still one URL run |
+| Body written before the topic existed | No control until a later re-read; click then decides against the fresh list |
+
+`(` `'` `)` are **not** in `RUN_RE`. `https://example.com/(shared-host)` can still split. That bound is written in `brain-links.ts` and the brief. AGENTS.md says “not inside … a URL” with no exception — looser than the code, not a live false link on ordinary `https://…/slug` URLs.
+
+### 3. Missed links / case — holds
+`There's a brain topic for CommonSwarm-roadmap`: `'` ends a run, `CommonSwarm-roadmap`.toLowerCase() hits `commonswarm-roadmap`, visible text stays `CommonSwarm-roadmap` (`brainLinkSegments` test “the text a reader typed keeps its case”). One-word names still need a code span; that is the gate, not a miss.
+
+Do not repeat the prior Gemini case-fold claim. `canonicalBrainTopic` is `trim().toLowerCase()` plus a lowercase-only regex; `brainTopicFromFileName` always returns that. `topics[]` cannot carry uppercase. `isLinkable`’s `span === topic` is lowercase-to-lowercase.
+
+### 4. Word gate — holds, in the parser
+`isLinkable` returns true for slug-shaped names; for a bare word it requires the **entire** code span (trimmed, then trailing-punct-trimmed) to equal the topic. A topic named `brain` / `the` / `get` does not grow a control inside `` `cswarm brain put` ``. Pinned by the unit negative and by the observer’s `commandSpanControls === ["shared-host"]`.
+
+### 5. Live-list binding — **FAIL**
+Deleted-after-render, created-after-render, empty `files`, and a failed re-read are handled as claimed: 30s cadence on feed ticks, click is `refresh(true)`, `brainLinkClickOutcome` refuses `open` when `listIsFresh` is false, missing copy names the topic and does not use “could not be loaded”. `openWorkspace` still assigns `files` before `loadSignals`, so the first paint is not an empty-list race.
+
+The hole is the click after a **workspace switch**:
+
+```javascript
+const openBrainTopic = async (topic: string): Promise<void> => {
+  activateWorkspaceView("brain");
+  setBrainNotice("");
+  const listIsFresh = await refreshBrainTopics(true);
+  renderBrain();
+  const outcome = brainLinkClickOutcome(topic, brainTopicNames(), listIsFresh);
+  // ...
+  void brainView?.open(outcome.topic);
+};
+```
+
+Every other async continuation in this file drops the result when `requestVersion` / `activeWorkspaceId` moved. This one does not.
+
+`createBrainTopicReader.refresh(true)` waits out the in-flight read, then **starts another**. The wrapper is:
+
+```javascript
+if (sampleMode || !activeWorkspaceId) return false;
+return await readBrainTopics();
+```
+
+That second `readBrainTopics` captures **whichever workspace is active at the second start**. Sequence:
+
+1. Click `shared-host` on workspace A.
+2. User switches to B (`requestVersion++`, `files = []`, B’s fetch in flight).
+3. A’s read returns, version guard → `false`.
+4. Forced refresh starts its own read. `activeWorkspaceId` is B. That read **applies**, `files` becomes B’s list, `listIsFresh === true`.
+5. `openBrainTopic` still runs: `renderBrain()` on B, then `brainLinkClickOutcome("shared-host", B’s names, true)`.
+6. `brain-how-to` / `shared-host` / `releases` exist in many workspaces. Outcome is `open`. B’s topic loads. The user did not click anything in B.
+
+If B does not have the name, B is still yanked to the Brain view with a notice about A’s slug.
+
+The test that claims this shape does not encode it. `switching` stays `true` for every read, so the click’s own read also bails. The real dashboard does the opposite once B is the active id: the second read succeeds. Mutating `openBrainTopic` to omit a version guard does not turn that test red. The observer only checks that `brainLinkClickOutcome(topic, brainTopicNames(), listIsFresh)` appears, not that the continuation is dropped.
+
+`readBrainTopics` not assigning `files` on a bailed A-read is correct and insufficient. The forced “take your own read” fix for the in-flight race is what then authorizes B.
+
+### 6. LiveDashboard hunks — hold except the unguarded continuation
+The review’s old line numbers (1001, 3273–3288, 3797–3804, 9491–9522) are stale. Current shape:
+
+- Import of `brainLinkClickOutcome` / `createBrainTopicReader` / `linkifyBrainTopics`
+- Notice node + delegated list click to clear it (inside the one-time `brainView` init)
+- Helpers + `openBrainTopic`
+- In `renderFeed`, a **new** `div.dashboard__message-markdown` per row, `setSanitizedMessageMarkdown` then `linkifyBrainTopics` (once per message per rebuild, not a second pass over existing buttons)
+- `void refreshBrainTopics(false)` on a healthy feed tick (and `refreshLatestSignals` itself no-ops off `feed` / `feed-empty`)
+- CSS, including `:focus-visible { box-shadow: var(--focus-ring) }`
+
+Re-render cannot double-wrap: `renderFeed` rebuilds the markdown node from scratch; `BUTTON` is also opaque. Background `readBrainTopics` calls `renderFeed` only, not `renderFiles` / `renderBrain`. Cadence is feed-only, so an unsaved Brain textarea is not rebuilt while that panel is showing.
+
+### 7. Tests — five mutation spot-checks; the switch test misses the UI path
+40 `test()` calls (30 unit, 10 observer), not the older “23”.
+
+| Mutation | Goes red? |
+|---|---|
+| Skip validation (`known` unused) | Yes — “NEGATIVE CONTROL: a topic that does not exist” |
+| `isLinkable` always true | Yes — “a one-word topic in ordinary prose stays ordinary prose” |
+| Restore a `\bbrain\b` cue | Yes — “the word 'brain' near a one-word name does not admit it” |
+| Drop `if (!listIsFresh) return missing` | Yes — “a list that could NOT be refreshed authorizes NOTHING” |
+| Forced refresh joins in-flight instead of taking its own | Yes — “A FORCED refresh waits out a read already running, then takes its own” |
+| `openBrainTopic` has no `requestVersion` guard | **No** |
+
+`textContent` on the curl span and the fenced `pre` is paired with control counts (`codeSpanUrlControlCount`, `controlsInsidePre`). Accepted as weaker-than-the-count, not a defect.
+
+The in-flight composition test mutates an external `topics` array the reader does not own; `reads === 2` is what actually pins the second fetch.
+
+### 8. AGENTS.md — mostly true of the shipped CLI
+`cswarm brain put <topic>` is a real verb (`src/cli.ts`: topic required; markdown from a path or stdin). It does not tell agents to do something the CLI refuses. “Write the slug; case does not matter” matches the matcher. One-word-in-backticks matches `isLinkable`. “A click re-reads … so it never lands on a topic that has since been deleted” is true **inside one workspace**. It is not true across a switch: the click can land on that slug in the workspace that became active during the await.
+
+---
+
+Locks 1–2 in the reader (`wait, then own read`; `listIsFresh` must be true to `open`) are in the code and each has a test that fails without it. They do not bind the click to the workspace the control was drawn in. Residual URL `()` / `'` splits and `` `roadmap.` `` remain as documented.
+
+VERDICT: FAIL

@@ -1,0 +1,1 @@
+I'll read the review brief and follow it exactly.I'll quote the first `diff --git` line, then read the patch and the code it touches.The patch header matches. Next I’ll read the full diff and the files it changes.I'll read the core library, tests, and the dashboard wiring next.

@@ -1,0 +1,14 @@
+diff --git a/AGENTS.md b/AGENTS.md
+
+## Findings
+
+1. **Injection:** The render hook runs safely after `setSanitizedMessageMarkdown`. It operates strictly on text nodes using `createElement` and `textContent`. It does not parse HTML strings or use `innerHTML`, meaning malicious tags, `javascript:` protocols, or `data-` attributes cannot be injected through this pass.
+2. **False links:** Prevented correctly. `RUN_RE` groups URLs, query strings, and hyphenated text into single tokens so that substrings (like `roadmap` inside `https://x/a;commonswarm-roadmap`) do not match. The parser validates against the live topic list; made-up topics or topics that existed before the current list are completely ignored.
+3. **Missed links:** Lookups are case-insensitive. `known.set(topic.toLowerCase(), topic)` ensures that `CommonSwarm-roadmap` maps properly to `commonswarm-roadmap`. Text slicing guarantees the visually preserved text matches what the user typed.
+4. **The word gate:** Enforced purely in the parser (`isLinkable`). If a topic lacks slug separators, it requires the entire `codeSpan` (trimmed of punctuation) to equal the topic. A topic named `brain` inside `` `cswarm brain put` `` will correctly fail this equality check and remain plain text.
+5. **Live-list binding:** Clicks properly trigger `refreshBrainTopics(true)` which waits out any in-flight requests. `brainLinkClickOutcome` evaluates the click against the fresh list, handling deleted topics gracefully by showing a `missing` status notice. If the file list fetch fails, it denies the open request rather than relying on stale data.
+6. **LiveDashboard hunks:** Double-wrapping is impossible. The parser ignores `OPAQUE_ELEMENTS` (including `BUTTON`, `A`, and `PRE`) and only processes text nodes. The event listener on the dashboard is delegated to a surviving parent container, preventing duplicate bindings on re-renders.
+7. **Tests:** Thorough and accurate. Tests specifically check the node counts and control properties (e.g., `codeSpanUrlControlCount`, `commandSpanControls`) rather than generic `textContent`. The lock synchronization in `createBrainTopicReader` is heavily tested, ensuring concurrent reads correctly wait and resolve fresh data.
+8. **AGENTS.md paragraph:** The additions provide accurate, actionable guidance for the CLI (`cswarm brain put <topic>`). It explains the naming rules and constraints precisely as implemented, instructing agents effectively on how their citations will be parsed without claiming non-existent capabilities.
+
+VERDICT: PASS

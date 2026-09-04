@@ -1,0 +1,30 @@
+diff --git a/AGENTS.md b/AGENTS.md
+
+1. **Trace it: can a control render for, or OPEN, a topic the workspace does not hold?**
+   A control can **render** for a deleted topic because the render is based on a snapshot. However, it cannot **open** it. Concurrent clicks are safely serialized by `createBrainTopicReader`: forced reads wait out any running read, then take their own fresh read. If the workspace switches mid-read, the boolean contract correctly resolves to `false` (`workspaceId !== activeWorkspaceId`). This results in `listIsFresh = false`, prompting the `missing` outcome and a stale list message, which safely refuses the open.
+
+2. **Any XSS, injection, or DOM-clobbering path?**
+   No. The DOM pass (`linkifyBrainTopics`) securely mutates text nodes using `document.createElement("button")` and `textContent`. It never touches `innerHTML` or `insertAdjacentHTML`, and does not assign clobberable attributes like `id` or `name` to the generated elements.
+
+3. **Attack the token run and the two gates (Concrete sentences):**
+   - **Unintended link:** "I added a timeout to the `agent_restart` function." -> Because `agent_restart` is slug-shaped, this generates a link to the brain topic even though the writer meant a codebase function.
+   - **Missed link:** "Read the brain-how-to.md file." -> The token run `brain-how-to.md` trims trailing punctuation, but retains `.md`. This does not match `brain-how-to`, keeping it plain text despite the agent's intent to cite the topic. 
+
+4. **Does `readBrainTopics` overwriting the shared `files` array still cost a reader anything?**
+   No. The global `files` array is overwritten, but since it's not a reactive prop in this context, it doesn't inadvertently trigger background rebuilds of the Brain or Files panels. The reader's focus and unsaved edits are preserved. 
+
+5. **Does any test assert something that would pass if the feature were broken?**
+   Yes. In `brain-links.observer.test.ts`, the negative tests for `<pre>` (`controlsInsidePre === 0`), `<a>` (`controlsInsideAnchor === 0`), and URL sub-delimiters (`codeSpanUrlControlCount === 0`) lack a positive control guard. If `linkifyBrainTopics` completely broke and returned zero controls everywhere, these negative assertions would vacuously pass. This violates the doctrine: "A negative result must reach the path it claims to test." The author fixed this for `madeUpTopicIsPlainText` by adding `controls.length > 0`, but missed these cases.
+
+6. **Any user-facing string enumerating what the code enforces without being generated from it?**
+   No. `AGENTS.md` strictly adheres to the doctrine by explicitly referencing the constant `BRAIN_SLUG_SEPARATORS` in the source code rather than hand-typing the separator characters, guaranteeing the two cannot drift.
+
+7. **Copy accuracy (Check the design brief's "Bounds" section and the AGENTS.md paragraph clause by clause against the code):**
+   Accurate clause by clause.
+   - **AGENTS.md:** Validates case-insensitivity (`toLowerCase()`); recognizes slug punctuation in prose (`isSlugShapedTopic`); correctly leaves fenced blocks and URLs alone (`OPAQUE` set and `RUN_RE` boundary); accurately requires backticks for one-word topics (`codeSpan.trim().toLowerCase() === topic`).
+   - **Brief Bounds:** Click serialization (`listIsFresh`), fallback notices for deleted/stale topics, empty list handling (`topics.length === 0`), missing suffix handling, and background rebuild scoping (`renderFeed()`) are perfectly mapped to the code.
+
+8. **Anything that breaks the existing feed, collapse/expand, or Brain panel?**
+   No. The pass safely mutates text nodes after Markdown sanitization but before the feed applies the CSS collapse clamp, meaning it won't break the CSS line clamping. The Brain panel correctly relies on `activateWorkspaceView()` rather than background re-renders.
+
+VERDICT: FAIL - Negative tests for <pre>, <a>, and URLs pass vacuously on an empty render due to missing positive control guards.

@@ -1,0 +1,1 @@
+I'll read REVIEW.md and the patch first, then follow the review instructions exactly.The first line of the patch is `diff --git a/AGENTS.md b/AGENTS.md`. Next I’ll pull the rest of the diff and the branch source so I can check each of the eight claims.
