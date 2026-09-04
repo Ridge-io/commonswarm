@@ -3,6 +3,7 @@ import { createHash, randomUUID } from "node:crypto";
 import { mkdtemp, rm, writeFile } from "node:fs/promises";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
+import { writeSecureJsonFile } from "../src/cloud/storage.js";
 import test from "node:test";
 import {
   CommandHttpError,
@@ -40,6 +41,7 @@ import {
   LISTENER_HOST_PORTS_PROBE_MS,
   LISTENER_PROMPT_START_MINIMUM_MS,
   listenerPaths,
+  readListenerStatus,
   queryListenerControl,
   runListenerSupervisor,
   claimCommandId,
@@ -3752,5 +3754,76 @@ test("the outcome sentence names the acknowledged signal, not a newer effect", a
   });
   assert.equal(carried.lastAckSignalId, A);
   assert.match(renderListenerStatus(carried), new RegExp(`Last failed delivery signal: ${A}\\.`));
+  await rm(root, { recursive: true, force: true });
+});
+
+test("a status written before lastAckOutcome existed is not called unacknowledged", async () => {
+  /* Every fleet listener at the 0.1.51 upgrade has lastAckAt and lastSignalId
+     from 0.1.50 and no lastAckOutcome. Restarting it carries the timestamp and
+     not the outcome, and a new CLI reading a still-running 0.1.50 listener sees
+     the same shape live. Both DID acknowledge something. Found by a Grok arm on
+     4992dd8. */
+  const root = await mkdtemp(join(tmpdir(), "cswarm-legacy-ack-"));
+  const paths = listenerPaths({
+    profileId: `profile-${randomUUID()}`,
+    workspaceId: WORKSPACE_ID,
+    principalId: PRINCIPAL_ID,
+    stateDirectory: root,
+  });
+  const ackedAt = "2026-09-02T22:00:00.000Z";
+  const signal = "aaaaaaaa-aaaa-4aaa-8aaa-aaaaaaaaad01";
+  /* A 0.1.50-shaped file: the shape the repo's own legacy-read test uses, plus
+     the six delivery keys that version wrote, and none of the new ones. */
+  const legacy = {
+    version: 1,
+    instanceId: randomUUID(),
+    provider: "claude",
+    profileId: "profile-test",
+    workspaceId: WORKSPACE_ID,
+    principalId: PRINCIPAL_ID,
+    pid: 4242,
+    state: "stopped",
+    startedAt: "2026-09-02T21:00:00.000Z",
+    readyAt: "2026-09-02T21:00:05.000Z",
+    updatedAt: ackedAt,
+    stoppedAt: "2026-09-02T23:00:00.000Z",
+    lastSignalId: signal,
+    lastErrorCode: null,
+    lastErrorDetail: null,
+    lastWorkerStderrTail: null,
+    logPath: paths.logPath,
+    deliveryMode: "durable_claim",
+    pendingDeliveryCount: null,
+    lastTerminalDeliveryFailureCount: null,
+    lastTerminalDeliveryFailureAt: null,
+    lastClaimAt: ackedAt,
+    lastAckAt: ackedAt,
+    routeMode: "worker",
+  };
+  await writeSecureJsonFile(paths.statusPath, JSON.stringify(legacy));
+
+  /* The new CLI reading the old file, no restart. */
+  const asRead = await readListenerStatus(paths);
+  assert.ok(asRead);
+  assert.equal(asRead.lastAckAt, ackedAt);
+  assert.equal(asRead.lastAckOutcome, null);
+  const readHuman = renderListenerStatus(asRead);
+  assert.doesNotMatch(readHuman, /No delivery acknowledgement is recorded/);
+  assert.match(readHuman, new RegExp(`An acknowledgement was recorded at ${ackedAt}; its outcome was not recorded\\.`));
+  assert.match(readHuman, /HANDLED: not yet measured/);
+
+  /* The restart the upgrade implies: the carry brings lastAckAt, not an outcome. */
+  const restarted = await runListenerSupervisor({
+    paths,
+    profileId: "profile-test",
+    workspaceId: WORKSPACE_ID,
+    principalId: PRINCIPAL_ID,
+    run: async () => ({ reason: "cancelled" }),
+  });
+  assert.equal(restarted.lastAckAt, ackedAt);
+  assert.equal(restarted.lastAckOutcome, null);
+  const restartedHuman = renderListenerStatus(restarted);
+  assert.doesNotMatch(restartedHuman, /No delivery acknowledgement is recorded/);
+  assert.match(restartedHuman, /its outcome was not recorded\./);
   await rm(root, { recursive: true, force: true });
 });

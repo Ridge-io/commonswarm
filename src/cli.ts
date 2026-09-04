@@ -4640,8 +4640,14 @@ export function renderListenerStatus(
         // The outcome sentences name lastAckSignalId, the signal the outcome
         // belongs to. lastSignalId is also advanced by `effect`, so after an
         // effect for a newer signal it would attribute the older ack to it.
-        ? status.lastAckOutcome === null
+        // "No acknowledgement" is keyed on lastAckAt, not on the outcome. A status
+        // written by a listener older than this CLI carries lastAckAt with no
+        // outcome -- every fleet listener at the 0.1.51 upgrade, and any new CLI
+        // reading a running 0.1.50 listener -- and DID acknowledge something.
+        ? status.lastAckAt === null
           ? `Last listener signal: ${status.lastSignalId}. No delivery acknowledgement is recorded.`
+          : status.lastAckOutcome === null
+          ? `Last listener signal: ${status.lastSignalId}. An acknowledgement was recorded at ${status.lastAckAt}; its outcome was not recorded.`
           : !status.lastAckSignalId
           ? `Last listener signal: ${status.lastSignalId}. The newest acknowledgement was ${status.lastAckOutcome}; which signal it belonged to was not recorded.`
           : status.lastAckOutcome === "failed_terminal"
