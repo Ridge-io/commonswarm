@@ -357,6 +357,12 @@ const frameScript = (scenario: string): string => `<script>
     const draftBody = "@River draft survives\\nwith its recipient";
     input.value = draftBody;
     inputEvent(input);
+    /* The draft write is debounced away from the keystroke (2026-09-04, for INP), so the
+       guarantee under test is no longer "written by the time the next line runs" — it is
+       "written before the page stops running". A reload fires pagehide, so firing it here
+       measures the same promise through the path the browser uses. Without this the
+       assertions below would only prove the debounce delay, not the draft. */
+    view.dispatchEvent(new view.Event("pagehide"));
     const draftKey = Array.from({ length: view.localStorage.length }, (_, index) =>
       view.localStorage.key(index)).find((key) => key?.startsWith("commonswarm:composer-draft:"));
     const stored = draftKey ? view.localStorage.getItem(draftKey) ?? "" : "";

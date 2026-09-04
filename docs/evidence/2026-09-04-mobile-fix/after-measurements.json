@@ -1,0 +1,86 @@
+{
+  "resting": {
+    "appBarHeight": 73,
+    "channelHeadHeight": 52,
+    "channelHeadFloats": true,
+    "feedToolbarHeight": 40,
+    "inFlowHeaderHeight": 73,
+    "floatingBandBottom": 125,
+    "totalHeaderChrome": 125,
+    "readingAreaHeight": 708,
+    "composer": {
+      "top": 781,
+      "bottom": 844,
+      "height": 63,
+      "width": 390
+    },
+    "viewport": {
+      "width": 390,
+      "height": 844,
+      "visual": 844
+    },
+    "blurbVisible": false,
+    "titleblock": {
+      "top": 98.5,
+      "bottom": 99.5,
+      "height": 1,
+      "width": 1
+    }
+  },
+  "keyboardShown": {
+    "appBarHeight": 57,
+    "channelHeadHeight": 52,
+    "channelHeadFloats": true,
+    "feedToolbarHeight": 40,
+    "inFlowHeaderHeight": 57,
+    "floatingBandBottom": 109,
+    "totalHeaderChrome": 109,
+    "readingAreaHeight": 368,
+    "composer": {
+      "top": 425,
+      "bottom": 508,
+      "height": 83,
+      "width": 390
+    },
+    "viewport": {
+      "width": 390,
+      "height": 508,
+      "visual": 508
+    },
+    "blurbVisible": false,
+    "titleblock": {
+      "top": 82.5,
+      "bottom": 83.5,
+      "height": 1,
+      "width": 1
+    }
+  },
+  "keyboardDismissed": {
+    "appBarHeight": 73,
+    "channelHeadHeight": 52,
+    "channelHeadFloats": true,
+    "feedToolbarHeight": 40,
+    "inFlowHeaderHeight": 73,
+    "floatingBandBottom": 125,
+    "totalHeaderChrome": 125,
+    "readingAreaHeight": 688,
+    "composer": {
+      "top": 761,
+      "bottom": 844,
+      "height": 83,
+      "width": 390
+    },
+    "viewport": {
+      "width": 390,
+      "height": 844,
+      "visual": 844
+    },
+    "blurbVisible": false,
+    "titleblock": {
+      "top": 98.5,
+      "bottom": 99.5,
+      "height": 1,
+      "width": 1
+    }
+  }
+}

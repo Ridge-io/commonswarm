@@ -208,36 +208,47 @@ test("the dialog is a bottom sheet at mobile widths", () => {
   );
 });
 
-/* RETIRED CLAIM (2026-09-03): "the actions get the row below". That layout put the view
-   buttons on a second band and made this header 113px against a 73px app bar, measured at
-   390x844 — the operator asked for a header no taller than the app bar. Everything is on ONE
-   row now, and the title truncates so a long name still cannot push the roster off. */
-test("the narrow header keeps the title, the controls, and the stack on one row", () => {
+/* RETIRED CLAIM (2026-09-03): "the actions get the row below". RETIRED AGAIN (2026-09-04):
+   "everything is on ONE row". One row of its own was still one row too many. Measured at
+   390x844 before this change: a 73px app bar, a 53px channel head and a 45px filter row —
+   171px of header on an 844px screen. The operator's rule is that the whole mobile header is
+   no taller than the app bar, so the head takes NO height at all now: it is positioned over
+   the transcript, carrying the live dot and the roster pill, and the channel name it used to
+   show is the view switcher in the bar above. */
+test("the narrow header takes no height from the transcript", () => {
   assert.match(
     dashboard,
-    /@media \(max-width: 34rem\)[\s\S]*\.dashboard__channel-head\s*\{[\s\S]*grid-template-columns:\s*minmax\(2rem, 1fr\) auto minmax\(2\.75rem, auto\)/,
-    "the narrow header reserves a title column, a controls column, and a roster column, each with a floor",
+    /@media \(max-width: 52rem\)[\s\S]*\.dashboard__channel-head\s*\{[^}]*position:\s*absolute/,
+    "the channel head is back in the flow, where it takes a row from the reading area",
   );
+  /* The roster pill is the only door to agent management on a phone, so it must still take
+     pointer events even though its container does not. */
   assert.match(
     dashboard,
-    /@media \(max-width: 34rem\)[\s\S]*\.dashboard__channel-roster\s*\{[\s\S]*grid-column:\s*3;[\s\S]*grid-row:\s*1/,
-    "the roster shares the title row instead of adding a second header band",
+    /@media \(max-width: 52rem\)[\s\S]*\.dashboard__channel-actions,\s*\.dashboard__channel-roster\s*\{[^}]*pointer-events:\s*auto/,
+    "the floating roster and live chip must stay tappable inside a pointer-events:none head",
   );
+  /* The head is the accessible name of the channel section through aria-labelledby, so the
+     title is clipped rather than removed. `display: none` would empty that name. */
   assert.match(
     dashboard,
-    /@media \(max-width: 34rem\)[\s\S]*\.dashboard__channel-actions\s*\{[\s\S]*grid-column:\s*2;[\s\S]*grid-row:\s*1/,
-    "the controls share the title row too",
+    /@media \(max-width: 52rem\)[\s\S]*\.dashboard__channel-titleblock\s*\{[^}]*clip-path:\s*inset\(50%\)/,
+    "the hidden channel title must stay in the accessibility tree",
   );
-  /* The one-row header only works because the name truncates; without this it wraps and the
-     row grows back to the height the change removed. */
+  assert.doesNotMatch(
+    dashboard,
+    /@media \(max-width: 52rem\)[\s\S]*\.dashboard__channel-titleblock\s*\{[^}]*display:\s*none/,
+    "display:none on the titleblock empties the channel section's accessible name",
+  );
+  /* The filter row floats in the same band, by sticking to the top of the scroller and giving
+     its own height back with a negative margin. Without the margin it is a row again. */
   assert.match(
     dashboard,
-    /@media \(max-width: 34rem\)[\s\S]*\.dashboard__channel-head h1\s*\{[\s\S]*text-overflow:\s*ellipsis/,
-    "the narrow title truncates instead of wrapping",
+    /@media \(max-width: 52rem\)[\s\S]*\.dashboard__feed-toolbar\s*\{[^}]*margin-block-end:\s*-2\.5rem/,
+    "the filter row takes its height back from the transcript",
   );
-  /* The roster pill carries "0 · 3 pending" while access is waiting. Left alone it wrapped and
-     took the bar back to two rows, so it is the column that gives way: one line, clipped to its
-     track. The floors above are what stop it taking the channel name's width entirely. */
+  /* The pill carries "0 · 3 pending" while access is waiting. Left alone it wrapped, which
+     took the floating cluster to two lines over the first message. */
   assert.match(
     dashboard,
     /@media \(max-width: 34rem\)[\s\S]*\.dashboard__roster-count\s*\{[\s\S]*white-space:\s*nowrap;[\s\S]*text-overflow:\s*ellipsis/,

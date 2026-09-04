@@ -137,11 +137,19 @@ test("the home link remains reachable beside the switcher at responsive widths",
     dashboard,
     /data-user-menu-root[\s\S]*?data-user-menu[\s\S]*?class="dashboard__wordmark dashboard__user-menu-brand" href="\/"/,
   );
-  // At mobile the foot is placed in the top-bar's second column (its own box, not
-  // display:contents) so the account menu — and the home link within — stays reachable.
+  // At mobile the foot is the LAST column of the one-row top bar (its own box, not
+  // display:contents) so the account menu — and the home link within — stays reachable. It
+  // moved from column 2 to column 3 on 2026-09-04, when the view switcher took column 2.
   const responsive = between(dashboard, "@media (max-width: 52rem)", "@media (max-width: 34rem)");
   assert.match(
     responsive,
-    /\.dashboard__rail-foot\s*\{[\s\S]*?grid-column: 2;[\s\S]*?grid-row: 1;/,
+    /\.dashboard__rail-foot\s*\{[\s\S]*?grid-column: 3;[\s\S]*?grid-row: 1;/,
+  );
+  // The name inside the trigger is clipped at this width, so the menu carries it instead.
+  // Without this line the phone would have no place that says which account is signed in.
+  assert.match(
+    dashboard,
+    /class="dashboard__user-menu-account" data-rail-account/,
+    "the account menu must name the signed-in account, which the trigger no longer shows",
   );
 });

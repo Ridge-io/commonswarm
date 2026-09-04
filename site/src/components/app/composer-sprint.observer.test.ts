@@ -145,9 +145,12 @@ const assertComposerSprint = (value: ComposerArtifact): void => {
     'one<HTMLTextAreaElement>("[data-composer-input]")?.addEventListener(\n      "keydown"',
     "full-paste",
   );
+  /* The write itself moved into `applyComposerResize` when the autogrow was taken off the
+     keystroke (2026-09-04, for INP): the forced layout now happens in an animation frame after
+     the handler returns, not inside it. The slice follows the write. */
   const resize = between(
     dashboard,
-    "const resizeComposerInput =",
+    "const applyComposerResize =",
     "const setComposerStatus =",
     "autosize",
   );
@@ -183,7 +186,7 @@ const assertComposerSprint = (value: ComposerArtifact): void => {
   );
   const viewport = between(
     dashboard,
-    "const syncDashboardViewport =",
+    "let viewportSyncFrame = 0;",
     "const closeMentionPicker =",
     "viewport-containment",
   );
@@ -221,8 +224,8 @@ const assertComposerSprint = (value: ComposerArtifact): void => {
   );
   assert.match(
     value.builtCss,
-    /max-block-size:min\(40dvh,20rem\)/,
-    "built-autosize: the emitted textarea must retain its 40dvh cap",
+    /max-block-size:min\(calc\(var\(--dashboard-viewport-height,100dvh\) \* \.4\), 20rem\)/,
+    "built-autosize: the emitted textarea must cap against the MEASURED visible viewport",
   );
   assert.match(value.builtLimit, /8e3/, "built-limit: the shared bundle must emit 8,000");
 
@@ -403,8 +406,16 @@ const assertComposerSprint = (value: ComposerArtifact): void => {
     "autosize-max: autosize must follow content height");
   assert.doesNotMatch(resize, /Math\.min|144/,
     "autosize-max: JS must not bring back the old 144px ceiling");
-  assert.match(textareaCss, /max-block-size: min\(40dvh, 20rem\);/,
-    "autosize-max: CSS must cap growth at 40dvh");
+  /* Against --dashboard-viewport-height, which is measured from visualViewport, and NOT
+     against dvh: on iOS Safari the dynamic viewport is the LAYOUT viewport and does not shrink
+     when the keyboard opens, so a dvh cap lets the box grow behind the keyboard. */
+  assert.match(
+    textareaCss,
+    /max-block-size: min\(calc\(var\(--dashboard-viewport-height, 100dvh\) \* 0\.4\), 20rem\);/,
+    "autosize-max: CSS must cap growth against the measured visible viewport",
+  );
+  assert.doesNotMatch(textareaCss, /max-block-size: min\(40dvh/,
+    "autosize-max: the cap is back on dvh, which does not shrink for the keyboard");
   assert.match(textareaCss, /overflow-y: auto;/,
     "autosize-scroll: overflow must scroll inside the textarea");
   assert.doesNotMatch(dashboard, /syncComposerClearance|--composer-height/,
@@ -419,12 +430,24 @@ const assertComposerSprint = (value: ComposerArtifact): void => {
   const viewportHeightRem = 430 / 16;
   assert.ok(viewportWidthRem <= 52 && viewportHeightRem <= 36,
     "viewport-containment: 390x430 must exercise the short mobile branch");
-  assert.match(viewport, /window\.visualViewport\?\.height \?\? window\.innerHeight/,
+  /* The usable viewport is visualViewport and ONLY visualViewport. `window.innerHeight` used
+     to be the fallback; on iOS Safari it reports the layout viewport, which does not shrink
+     when the keyboard opens, so it wrote a height that was too tall at exactly the moment a
+     shorter one was needed. With no visualViewport the property stays unset and the
+     stylesheet's own 100dvh applies. */
+  assert.match(viewport, /const viewport = window\.visualViewport;/,
     "viewport-containment: measure the usable viewport");
+  assert.doesNotMatch(viewport, /window\.innerHeight/,
+    "viewport-containment: innerHeight is back, and it describes the wrong viewport");
+  assert.match(viewport, /window\.scrollTo\(0, 0\)/,
+    "viewport-containment: the layout-viewport scroll the keyboard causes is not undone");
   assert.match(viewport, /--dashboard-viewport-height/,
     "viewport-containment: publish the measured height");
-  assert.match(viewport, /visualViewport\?\.addEventListener\("resize", syncDashboardViewport\)/,
-    "viewport-containment: keyboard resize must refresh the height");
+  assert.match(
+    viewport,
+    /visualViewport\?\.addEventListener\("resize", requestDashboardViewportSync\)/,
+    "viewport-containment: keyboard resize must refresh the height",
+  );
   assert.match(
     dashboard,
     /\.dashboard__product \{[^}]*block-size: var\(--dashboard-viewport-height, 100dvh\);[^}]*overflow: hidden;/,
@@ -637,15 +660,15 @@ const mutations: Mutation[] = [
   {
     name: "autosize returns to a fixed ceiling",
     key: "dashboard",
-    target: "max-block-size: min(40dvh, 20rem);",
+    target: "max-block-size: min(calc(var(--dashboard-viewport-height, 100dvh) * 0.4), 20rem);",
     replacement: "max-block-size: 9rem;",
     expectedFailure: "autosize-max",
   },
   {
     name: "keyboard resize no longer reaches the shell",
     key: "dashboard",
-    target: 'window.visualViewport?.addEventListener("resize", syncDashboardViewport);',
-    replacement: 'window.visualViewport?.removeEventListener("resize", syncDashboardViewport);',
+    target: 'window.visualViewport?.addEventListener("resize", requestDashboardViewportSync);',
+    replacement: 'window.visualViewport?.removeEventListener("resize", requestDashboardViewportSync);',
     expectedFailure: "viewport-containment",
   },
   {
@@ -693,7 +716,7 @@ const mutations: Mutation[] = [
   {
     name: "built /app loses the viewport-relative autosize cap",
     key: "builtCss",
-    target: "max-block-size:min(40dvh,20rem)",
+    target: "max-block-size:min(calc(var(--dashboard-viewport-height,100dvh) * .4), 20rem)",
     replacement: "max-block-size:9rem",
     expectedFailure: "built-autosize",
   },
