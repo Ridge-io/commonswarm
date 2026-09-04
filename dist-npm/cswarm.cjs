@@ -44,7 +44,7 @@ var __toESM = (mod, isNodeMode, target2) => (target2 = mod != null ? __create(__
 ));
 var __toCommonJS = (mod) => __copyProps(__defProp({}, "__esModule", { value: true }), mod);
 
-// node_modules/tslib/tslib.es6.mjs
+// ../../../../../../../Users/yulanbot/Developer/Ridge.io/cloud-swarm/node_modules/tslib/tslib.es6.mjs
 var tslib_es6_exports = {};
 __export(tslib_es6_exports, {
   __addDisposableResource: () => __addDisposableResource,
@@ -483,7 +483,7 @@ function __rewriteRelativeImportExtension(path, preserveJsx) {
 }
 var extendStatics, __assign, __createBinding, __setModuleDefault, ownKeys, _SuppressedError, tslib_es6_default;
 var init_tslib_es6 = __esm({
-  "node_modules/tslib/tslib.es6.mjs"() {
+  "../../../../../../../Users/yulanbot/Developer/Ridge.io/cloud-swarm/node_modules/tslib/tslib.es6.mjs"() {
     extendStatics = function(d, b2) {
       extendStatics = Object.setPrototypeOf || { __proto__: [] } instanceof Array && function(d2, b3) {
         d2.__proto__ = b3;
@@ -569,9 +569,9 @@ var init_tslib_es6 = __esm({
   }
 });
 
-// node_modules/@supabase/functions-js/dist/main/helper.js
+// ../../../../../../../Users/yulanbot/Developer/Ridge.io/cloud-swarm/node_modules/@supabase/functions-js/dist/main/helper.js
 var require_helper = __commonJS({
-  "node_modules/@supabase/functions-js/dist/main/helper.js"(exports2) {
+  "../../../../../../../Users/yulanbot/Developer/Ridge.io/cloud-swarm/node_modules/@supabase/functions-js/dist/main/helper.js"(exports2) {
     "use strict";
     Object.defineProperty(exports2, "__esModule", { value: true });
     exports2.resolveFetch = void 0;
@@ -585,9 +585,9 @@ var require_helper = __commonJS({
   }
 });
 
-// node_modules/@supabase/functions-js/dist/main/types.js
+// ../../../../../../../Users/yulanbot/Developer/Ridge.io/cloud-swarm/node_modules/@supabase/functions-js/dist/main/types.js
 var require_types = __commonJS({
-  "node_modules/@supabase/functions-js/dist/main/types.js"(exports2) {
+  "../../../../../../../Users/yulanbot/Developer/Ridge.io/cloud-swarm/node_modules/@supabase/functions-js/dist/main/types.js"(exports2) {
     "use strict";
     Object.defineProperty(exports2, "__esModule", { value: true });
     exports2.FunctionRegion = exports2.FunctionsHttpError = exports2.FunctionsRelayError = exports2.FunctionsFetchError = exports2.FunctionsError = void 0;
@@ -645,9 +645,9 @@ var require_types = __commonJS({
   }
 });
 
-// node_modules/@supabase/functions-js/dist/main/FunctionsClient.js
+// ../../../../../../../Users/yulanbot/Developer/Ridge.io/cloud-swarm/node_modules/@supabase/functions-js/dist/main/FunctionsClient.js
 var require_FunctionsClient = __commonJS({
-  "node_modules/@supabase/functions-js/dist/main/FunctionsClient.js"(exports2) {
+  "../../../../../../../Users/yulanbot/Developer/Ridge.io/cloud-swarm/node_modules/@supabase/functions-js/dist/main/FunctionsClient.js"(exports2) {
     "use strict";
     Object.defineProperty(exports2, "__esModule", { value: true });
     exports2.FunctionsClient = void 0;
@@ -931,9 +931,9 @@ var require_FunctionsClient = __commonJS({
   }
 });
 
-// node_modules/@supabase/functions-js/dist/main/index.js
+// ../../../../../../../Users/yulanbot/Developer/Ridge.io/cloud-swarm/node_modules/@supabase/functions-js/dist/main/index.js
 var require_main = __commonJS({
-  "node_modules/@supabase/functions-js/dist/main/index.js"(exports2) {
+  "../../../../../../../Users/yulanbot/Developer/Ridge.io/cloud-swarm/node_modules/@supabase/functions-js/dist/main/index.js"(exports2) {
     "use strict";
     Object.defineProperty(exports2, "__esModule", { value: true });
     exports2.FunctionRegion = exports2.FunctionsRelayError = exports2.FunctionsHttpError = exports2.FunctionsFetchError = exports2.FunctionsError = exports2.FunctionsClient = void 0;
@@ -960,9 +960,9 @@ var require_main = __commonJS({
   }
 });
 
-// node_modules/@supabase/realtime-js/dist/main/lib/websocket-factory.js
+// ../../../../../../../Users/yulanbot/Developer/Ridge.io/cloud-swarm/node_modules/@supabase/realtime-js/dist/main/lib/websocket-factory.js
 var require_websocket_factory = __commonJS({
-  "node_modules/@supabase/realtime-js/dist/main/lib/websocket-factory.js"(exports2) {
+  "../../../../../../../Users/yulanbot/Developer/Ridge.io/cloud-swarm/node_modules/@supabase/realtime-js/dist/main/lib/websocket-factory.js"(exports2) {
     "use strict";
     Object.defineProperty(exports2, "__esModule", { value: true });
     exports2.WebSocketFactory = void 0;
@@ -1071,9 +1071,9 @@ Suggested solution: ${env.workaround}`;
   }
 });
 
-// node_modules/@supabase/realtime-js/dist/main/lib/version.js
+// ../../../../../../../Users/yulanbot/Developer/Ridge.io/cloud-swarm/node_modules/@supabase/realtime-js/dist/main/lib/version.js
 var require_version = __commonJS({
-  "node_modules/@supabase/realtime-js/dist/main/lib/version.js"(exports2) {
+  "../../../../../../../Users/yulanbot/Developer/Ridge.io/cloud-swarm/node_modules/@supabase/realtime-js/dist/main/lib/version.js"(exports2) {
     "use strict";
     Object.defineProperty(exports2, "__esModule", { value: true });
     exports2.version = void 0;
@@ -1081,9 +1081,9 @@ var require_version = __commonJS({
   }
 });
 
-// node_modules/@supabase/realtime-js/dist/main/lib/constants.js
+// ../../../../../../../Users/yulanbot/Developer/Ridge.io/cloud-swarm/node_modules/@supabase/realtime-js/dist/main/lib/constants.js
 var require_constants = __commonJS({
-  "node_modules/@supabase/realtime-js/dist/main/lib/constants.js"(exports2) {
+  "../../../../../../../Users/yulanbot/Developer/Ridge.io/cloud-swarm/node_modules/@supabase/realtime-js/dist/main/lib/constants.js"(exports2) {
     "use strict";
     Object.defineProperty(exports2, "__esModule", { value: true });
     exports2.CONNECTION_STATE = exports2.TRANSPORTS = exports2.CHANNEL_EVENTS = exports2.CHANNEL_STATES = exports2.SOCKET_STATES = exports2.MAX_PUSH_BUFFER_SIZE = exports2.WS_CLOSE_NORMAL = exports2.DEFAULT_TIMEOUT = exports2.VERSION = exports2.DEFAULT_VSN = exports2.VSN_2_0_0 = exports2.VSN_1_0_0 = exports2.DEFAULT_VERSION = void 0;
@@ -1129,9 +1129,9 @@ var require_constants = __commonJS({
   }
 });
 
-// node_modules/@supabase/realtime-js/dist/main/lib/serializer.js
+// ../../../../../../../Users/yulanbot/Developer/Ridge.io/cloud-swarm/node_modules/@supabase/realtime-js/dist/main/lib/serializer.js
 var require_serializer = __commonJS({
-  "node_modules/@supabase/realtime-js/dist/main/lib/serializer.js"(exports2) {
+  "../../../../../../../Users/yulanbot/Developer/Ridge.io/cloud-swarm/node_modules/@supabase/realtime-js/dist/main/lib/serializer.js"(exports2) {
     "use strict";
     Object.defineProperty(exports2, "__esModule", { value: true });
     var Serializer = class {
@@ -1283,9 +1283,9 @@ var require_serializer = __commonJS({
   }
 });
 
-// node_modules/@supabase/realtime-js/dist/main/lib/transformers.js
+// ../../../../../../../Users/yulanbot/Developer/Ridge.io/cloud-swarm/node_modules/@supabase/realtime-js/dist/main/lib/transformers.js
 var require_transformers = __commonJS({
-  "node_modules/@supabase/realtime-js/dist/main/lib/transformers.js"(exports2) {
+  "../../../../../../../Users/yulanbot/Developer/Ridge.io/cloud-swarm/node_modules/@supabase/realtime-js/dist/main/lib/transformers.js"(exports2) {
     "use strict";
     Object.defineProperty(exports2, "__esModule", { value: true });
     exports2.httpEndpointURL = exports2.toTimestampString = exports2.toArray = exports2.toJson = exports2.toNumber = exports2.toBoolean = exports2.convertCell = exports2.convertColumn = exports2.convertChangeData = exports2.PostgresTypes = void 0;
@@ -1462,9 +1462,9 @@ var require_transformers = __commonJS({
   }
 });
 
-// node_modules/@supabase/phoenix/priv/static/phoenix.cjs.js
+// ../../../../../../../Users/yulanbot/Developer/Ridge.io/cloud-swarm/node_modules/@supabase/phoenix/priv/static/phoenix.cjs.js
 var require_phoenix_cjs = __commonJS({
-  "node_modules/@supabase/phoenix/priv/static/phoenix.cjs.js"(exports2, module2) {
+  "../../../../../../../Users/yulanbot/Developer/Ridge.io/cloud-swarm/node_modules/@supabase/phoenix/priv/static/phoenix.cjs.js"(exports2, module2) {
     "use strict";
     var __defProp2 = Object.defineProperty;
     var __getOwnPropDesc2 = Object.getOwnPropertyDescriptor;
@@ -3314,9 +3314,9 @@ var require_phoenix_cjs = __commonJS({
   }
 });
 
-// node_modules/@supabase/realtime-js/dist/main/phoenix/presenceAdapter.js
+// ../../../../../../../Users/yulanbot/Developer/Ridge.io/cloud-swarm/node_modules/@supabase/realtime-js/dist/main/phoenix/presenceAdapter.js
 var require_presenceAdapter = __commonJS({
-  "node_modules/@supabase/realtime-js/dist/main/phoenix/presenceAdapter.js"(exports2) {
+  "../../../../../../../Users/yulanbot/Developer/Ridge.io/cloud-swarm/node_modules/@supabase/realtime-js/dist/main/phoenix/presenceAdapter.js"(exports2) {
     "use strict";
     Object.defineProperty(exports2, "__esModule", { value: true });
     var phoenix_1 = require_phoenix_cjs();
@@ -3412,9 +3412,9 @@ var require_presenceAdapter = __commonJS({
   }
 });
 
-// node_modules/@supabase/realtime-js/dist/main/RealtimePresence.js
+// ../../../../../../../Users/yulanbot/Developer/Ridge.io/cloud-swarm/node_modules/@supabase/realtime-js/dist/main/RealtimePresence.js
 var require_RealtimePresence = __commonJS({
-  "node_modules/@supabase/realtime-js/dist/main/RealtimePresence.js"(exports2) {
+  "../../../../../../../Users/yulanbot/Developer/Ridge.io/cloud-swarm/node_modules/@supabase/realtime-js/dist/main/RealtimePresence.js"(exports2) {
     "use strict";
     Object.defineProperty(exports2, "__esModule", { value: true });
     exports2.REALTIME_PRESENCE_LISTEN_EVENTS = void 0;
@@ -3456,9 +3456,9 @@ var require_RealtimePresence = __commonJS({
   }
 });
 
-// node_modules/@supabase/realtime-js/dist/main/lib/normalizeChannelError.js
+// ../../../../../../../Users/yulanbot/Developer/Ridge.io/cloud-swarm/node_modules/@supabase/realtime-js/dist/main/lib/normalizeChannelError.js
 var require_normalizeChannelError = __commonJS({
-  "node_modules/@supabase/realtime-js/dist/main/lib/normalizeChannelError.js"(exports2) {
+  "../../../../../../../Users/yulanbot/Developer/Ridge.io/cloud-swarm/node_modules/@supabase/realtime-js/dist/main/lib/normalizeChannelError.js"(exports2) {
     "use strict";
     Object.defineProperty(exports2, "__esModule", { value: true });
     exports2.normalizeChannelError = normalizeChannelError;
@@ -3482,9 +3482,9 @@ var require_normalizeChannelError = __commonJS({
   }
 });
 
-// node_modules/@supabase/realtime-js/dist/main/phoenix/channelAdapter.js
+// ../../../../../../../Users/yulanbot/Developer/Ridge.io/cloud-swarm/node_modules/@supabase/realtime-js/dist/main/phoenix/channelAdapter.js
 var require_channelAdapter = __commonJS({
-  "node_modules/@supabase/realtime-js/dist/main/phoenix/channelAdapter.js"(exports2) {
+  "../../../../../../../Users/yulanbot/Developer/Ridge.io/cloud-swarm/node_modules/@supabase/realtime-js/dist/main/phoenix/channelAdapter.js"(exports2) {
     "use strict";
     Object.defineProperty(exports2, "__esModule", { value: true });
     var constants_1 = require_constants();
@@ -3589,9 +3589,9 @@ var require_channelAdapter = __commonJS({
   }
 });
 
-// node_modules/@supabase/realtime-js/dist/main/RealtimePostgresFilterBuilder.js
+// ../../../../../../../Users/yulanbot/Developer/Ridge.io/cloud-swarm/node_modules/@supabase/realtime-js/dist/main/RealtimePostgresFilterBuilder.js
 var require_RealtimePostgresFilterBuilder = __commonJS({
-  "node_modules/@supabase/realtime-js/dist/main/RealtimePostgresFilterBuilder.js"(exports2) {
+  "../../../../../../../Users/yulanbot/Developer/Ridge.io/cloud-swarm/node_modules/@supabase/realtime-js/dist/main/RealtimePostgresFilterBuilder.js"(exports2) {
     "use strict";
     Object.defineProperty(exports2, "__esModule", { value: true });
     exports2.postgresChangesFilter = exports2.RealtimePostgresFilterBuilder = void 0;
@@ -3713,9 +3713,9 @@ var require_RealtimePostgresFilterBuilder = __commonJS({
   }
 });
 
-// node_modules/@supabase/realtime-js/dist/main/RealtimeChannel.js
+// ../../../../../../../Users/yulanbot/Developer/Ridge.io/cloud-swarm/node_modules/@supabase/realtime-js/dist/main/RealtimeChannel.js
 var require_RealtimeChannel = __commonJS({
-  "node_modules/@supabase/realtime-js/dist/main/RealtimeChannel.js"(exports2) {
+  "../../../../../../../Users/yulanbot/Developer/Ridge.io/cloud-swarm/node_modules/@supabase/realtime-js/dist/main/RealtimeChannel.js"(exports2) {
     "use strict";
     Object.defineProperty(exports2, "__esModule", { value: true });
     exports2.REALTIME_CHANNEL_STATES = exports2.REALTIME_SUBSCRIBE_STATES = exports2.REALTIME_LISTEN_TYPES = exports2.REALTIME_POSTGRES_CHANGES_LISTEN_EVENT = exports2.postgresChangesFilter = exports2.RealtimePostgresFilterBuilder = void 0;
@@ -4444,9 +4444,9 @@ var require_RealtimeChannel = __commonJS({
   }
 });
 
-// node_modules/@supabase/realtime-js/dist/main/phoenix/socketAdapter.js
+// ../../../../../../../Users/yulanbot/Developer/Ridge.io/cloud-swarm/node_modules/@supabase/realtime-js/dist/main/phoenix/socketAdapter.js
 var require_socketAdapter = __commonJS({
-  "node_modules/@supabase/realtime-js/dist/main/phoenix/socketAdapter.js"(exports2) {
+  "../../../../../../../Users/yulanbot/Developer/Ridge.io/cloud-swarm/node_modules/@supabase/realtime-js/dist/main/phoenix/socketAdapter.js"(exports2) {
     "use strict";
     Object.defineProperty(exports2, "__esModule", { value: true });
     var phoenix_1 = require_phoenix_cjs();
@@ -4562,9 +4562,9 @@ var require_socketAdapter = __commonJS({
   }
 });
 
-// node_modules/@supabase/realtime-js/dist/main/RealtimeClient.js
+// ../../../../../../../Users/yulanbot/Developer/Ridge.io/cloud-swarm/node_modules/@supabase/realtime-js/dist/main/RealtimeClient.js
 var require_RealtimeClient = __commonJS({
-  "node_modules/@supabase/realtime-js/dist/main/RealtimeClient.js"(exports2) {
+  "../../../../../../../Users/yulanbot/Developer/Ridge.io/cloud-swarm/node_modules/@supabase/realtime-js/dist/main/RealtimeClient.js"(exports2) {
     "use strict";
     Object.defineProperty(exports2, "__esModule", { value: true });
     var tslib_1 = (init_tslib_es6(), __toCommonJS(tslib_es6_exports));
@@ -5216,9 +5216,9 @@ var require_RealtimeClient = __commonJS({
   }
 });
 
-// node_modules/@supabase/realtime-js/dist/main/index.js
+// ../../../../../../../Users/yulanbot/Developer/Ridge.io/cloud-swarm/node_modules/@supabase/realtime-js/dist/main/index.js
 var require_main2 = __commonJS({
-  "node_modules/@supabase/realtime-js/dist/main/index.js"(exports2) {
+  "../../../../../../../Users/yulanbot/Developer/Ridge.io/cloud-swarm/node_modules/@supabase/realtime-js/dist/main/index.js"(exports2) {
     "use strict";
     Object.defineProperty(exports2, "__esModule", { value: true });
     exports2.WebSocketFactory = exports2.REALTIME_CHANNEL_STATES = exports2.REALTIME_SUBSCRIBE_STATES = exports2.REALTIME_PRESENCE_LISTEN_EVENTS = exports2.REALTIME_POSTGRES_CHANGES_LISTEN_EVENT = exports2.REALTIME_LISTEN_TYPES = exports2.postgresChangesFilter = exports2.RealtimePostgresFilterBuilder = exports2.RealtimeClient = exports2.RealtimeChannel = exports2.RealtimePresence = void 0;
@@ -5255,9 +5255,9 @@ var require_main2 = __commonJS({
   }
 });
 
-// node_modules/@supabase/auth-js/dist/main/lib/version.js
+// ../../../../../../../Users/yulanbot/Developer/Ridge.io/cloud-swarm/node_modules/@supabase/auth-js/dist/main/lib/version.js
 var require_version2 = __commonJS({
-  "node_modules/@supabase/auth-js/dist/main/lib/version.js"(exports2) {
+  "../../../../../../../Users/yulanbot/Developer/Ridge.io/cloud-swarm/node_modules/@supabase/auth-js/dist/main/lib/version.js"(exports2) {
     "use strict";
     Object.defineProperty(exports2, "__esModule", { value: true });
     exports2.version = void 0;
@@ -5265,9 +5265,9 @@ var require_version2 = __commonJS({
   }
 });
 
-// node_modules/@supabase/auth-js/dist/main/lib/constants.js
+// ../../../../../../../Users/yulanbot/Developer/Ridge.io/cloud-swarm/node_modules/@supabase/auth-js/dist/main/lib/constants.js
 var require_constants2 = __commonJS({
-  "node_modules/@supabase/auth-js/dist/main/lib/constants.js"(exports2) {
+  "../../../../../../../Users/yulanbot/Developer/Ridge.io/cloud-swarm/node_modules/@supabase/auth-js/dist/main/lib/constants.js"(exports2) {
     "use strict";
     Object.defineProperty(exports2, "__esModule", { value: true });
     exports2.JWKS_TTL = exports2.BASE64URL_REGEX = exports2.API_VERSIONS = exports2.API_VERSION_HEADER_NAME = exports2.NETWORK_FAILURE = exports2.DEFAULT_HEADERS = exports2.AUDIENCE = exports2.STORAGE_KEY = exports2.GOTRUE_URL = exports2.REFRESH_FAILURE_COOLDOWN_MS = exports2.EXPIRY_MARGIN_MS = exports2.AUTO_REFRESH_TICK_THRESHOLD = exports2.AUTO_REFRESH_TICK_DURATION_MS = void 0;
@@ -5297,9 +5297,9 @@ var require_constants2 = __commonJS({
   }
 });
 
-// node_modules/@supabase/auth-js/dist/main/lib/errors.js
+// ../../../../../../../Users/yulanbot/Developer/Ridge.io/cloud-swarm/node_modules/@supabase/auth-js/dist/main/lib/errors.js
 var require_errors = __commonJS({
-  "node_modules/@supabase/auth-js/dist/main/lib/errors.js"(exports2) {
+  "../../../../../../../Users/yulanbot/Developer/Ridge.io/cloud-swarm/node_modules/@supabase/auth-js/dist/main/lib/errors.js"(exports2) {
     "use strict";
     Object.defineProperty(exports2, "__esModule", { value: true });
     exports2.AuthInvalidJwtError = exports2.AuthWeakPasswordError = exports2.AuthRefreshDiscardedError = exports2.AuthRetryableFetchError = exports2.AuthPKCECodeVerifierMissingError = exports2.AuthPKCEGrantCodeExchangeError = exports2.AuthImplicitGrantRedirectError = exports2.AuthInvalidCredentialsError = exports2.AuthInvalidTokenResponseError = exports2.AuthSessionMissingError = exports2.CustomAuthError = exports2.AuthUnknownError = exports2.AuthApiError = exports2.AuthError = void 0;
@@ -5455,9 +5455,9 @@ var require_errors = __commonJS({
   }
 });
 
-// node_modules/@supabase/auth-js/dist/main/lib/base64url.js
+// ../../../../../../../Users/yulanbot/Developer/Ridge.io/cloud-swarm/node_modules/@supabase/auth-js/dist/main/lib/base64url.js
 var require_base64url = __commonJS({
-  "node_modules/@supabase/auth-js/dist/main/lib/base64url.js"(exports2) {
+  "../../../../../../../Users/yulanbot/Developer/Ridge.io/cloud-swarm/node_modules/@supabase/auth-js/dist/main/lib/base64url.js"(exports2) {
     "use strict";
     Object.defineProperty(exports2, "__esModule", { value: true });
     exports2.byteToBase64URL = byteToBase64URL;
@@ -5645,9 +5645,9 @@ var require_base64url = __commonJS({
   }
 });
 
-// node_modules/@supabase/auth-js/dist/main/lib/helpers.js
+// ../../../../../../../Users/yulanbot/Developer/Ridge.io/cloud-swarm/node_modules/@supabase/auth-js/dist/main/lib/helpers.js
 var require_helpers = __commonJS({
-  "node_modules/@supabase/auth-js/dist/main/lib/helpers.js"(exports2) {
+  "../../../../../../../Users/yulanbot/Developer/Ridge.io/cloud-swarm/node_modules/@supabase/auth-js/dist/main/lib/helpers.js"(exports2) {
     "use strict";
     Object.defineProperty(exports2, "__esModule", { value: true });
     exports2.Deferred = exports2.removeItemAsync = exports2.getItemAsync = exports2.setItemAsync = exports2.looksLikeFetchResponse = exports2.resolveFetch = exports2.supportsLocalStorage = exports2.isBrowser = void 0;
@@ -5967,9 +5967,9 @@ var require_helpers = __commonJS({
   }
 });
 
-// node_modules/@supabase/auth-js/dist/main/lib/fetch.js
+// ../../../../../../../Users/yulanbot/Developer/Ridge.io/cloud-swarm/node_modules/@supabase/auth-js/dist/main/lib/fetch.js
 var require_fetch = __commonJS({
-  "node_modules/@supabase/auth-js/dist/main/lib/fetch.js"(exports2) {
+  "../../../../../../../Users/yulanbot/Developer/Ridge.io/cloud-swarm/node_modules/@supabase/auth-js/dist/main/lib/fetch.js"(exports2) {
     "use strict";
     Object.defineProperty(exports2, "__esModule", { value: true });
     exports2.handleError = handleError2;
@@ -6151,9 +6151,9 @@ var require_fetch = __commonJS({
   }
 });
 
-// node_modules/@supabase/auth-js/dist/main/lib/types.js
+// ../../../../../../../Users/yulanbot/Developer/Ridge.io/cloud-swarm/node_modules/@supabase/auth-js/dist/main/lib/types.js
 var require_types2 = __commonJS({
-  "node_modules/@supabase/auth-js/dist/main/lib/types.js"(exports2) {
+  "../../../../../../../Users/yulanbot/Developer/Ridge.io/cloud-swarm/node_modules/@supabase/auth-js/dist/main/lib/types.js"(exports2) {
     "use strict";
     Object.defineProperty(exports2, "__esModule", { value: true });
     exports2.SIGN_OUT_SCOPES = void 0;
@@ -6161,9 +6161,9 @@ var require_types2 = __commonJS({
   }
 });
 
-// node_modules/@supabase/auth-js/dist/main/GoTrueAdminApi.js
+// ../../../../../../../Users/yulanbot/Developer/Ridge.io/cloud-swarm/node_modules/@supabase/auth-js/dist/main/GoTrueAdminApi.js
 var require_GoTrueAdminApi = __commonJS({
-  "node_modules/@supabase/auth-js/dist/main/GoTrueAdminApi.js"(exports2) {
+  "../../../../../../../Users/yulanbot/Developer/Ridge.io/cloud-swarm/node_modules/@supabase/auth-js/dist/main/GoTrueAdminApi.js"(exports2) {
     "use strict";
     Object.defineProperty(exports2, "__esModule", { value: true });
     var tslib_1 = (init_tslib_es6(), __toCommonJS(tslib_es6_exports));
@@ -7247,9 +7247,9 @@ var require_GoTrueAdminApi = __commonJS({
   }
 });
 
-// node_modules/@supabase/auth-js/dist/main/lib/local-storage.js
+// ../../../../../../../Users/yulanbot/Developer/Ridge.io/cloud-swarm/node_modules/@supabase/auth-js/dist/main/lib/local-storage.js
 var require_local_storage = __commonJS({
-  "node_modules/@supabase/auth-js/dist/main/lib/local-storage.js"(exports2) {
+  "../../../../../../../Users/yulanbot/Developer/Ridge.io/cloud-swarm/node_modules/@supabase/auth-js/dist/main/lib/local-storage.js"(exports2) {
     "use strict";
     Object.defineProperty(exports2, "__esModule", { value: true });
     exports2.memoryLocalStorageAdapter = memoryLocalStorageAdapter;
@@ -7269,9 +7269,9 @@ var require_local_storage = __commonJS({
   }
 });
 
-// node_modules/@supabase/auth-js/dist/main/lib/locks.js
+// ../../../../../../../Users/yulanbot/Developer/Ridge.io/cloud-swarm/node_modules/@supabase/auth-js/dist/main/lib/locks.js
 var require_locks = __commonJS({
-  "node_modules/@supabase/auth-js/dist/main/lib/locks.js"(exports2) {
+  "../../../../../../../Users/yulanbot/Developer/Ridge.io/cloud-swarm/node_modules/@supabase/auth-js/dist/main/lib/locks.js"(exports2) {
     "use strict";
     Object.defineProperty(exports2, "__esModule", { value: true });
     exports2.ProcessLockAcquireTimeoutError = exports2.NavigatorLockAcquireTimeoutError = exports2.LockAcquireTimeoutError = exports2.internals = void 0;
@@ -7447,9 +7447,9 @@ var require_locks = __commonJS({
   }
 });
 
-// node_modules/@supabase/auth-js/dist/main/lib/polyfills.js
+// ../../../../../../../Users/yulanbot/Developer/Ridge.io/cloud-swarm/node_modules/@supabase/auth-js/dist/main/lib/polyfills.js
 var require_polyfills = __commonJS({
-  "node_modules/@supabase/auth-js/dist/main/lib/polyfills.js"(exports2) {
+  "../../../../../../../Users/yulanbot/Developer/Ridge.io/cloud-swarm/node_modules/@supabase/auth-js/dist/main/lib/polyfills.js"(exports2) {
     "use strict";
     Object.defineProperty(exports2, "__esModule", { value: true });
     exports2.polyfillGlobalThis = polyfillGlobalThis;
@@ -7474,9 +7474,9 @@ var require_polyfills = __commonJS({
   }
 });
 
-// node_modules/@supabase/auth-js/dist/main/lib/web3/ethereum.js
+// ../../../../../../../Users/yulanbot/Developer/Ridge.io/cloud-swarm/node_modules/@supabase/auth-js/dist/main/lib/web3/ethereum.js
 var require_ethereum = __commonJS({
-  "node_modules/@supabase/auth-js/dist/main/lib/web3/ethereum.js"(exports2) {
+  "../../../../../../../Users/yulanbot/Developer/Ridge.io/cloud-swarm/node_modules/@supabase/auth-js/dist/main/lib/web3/ethereum.js"(exports2) {
     "use strict";
     Object.defineProperty(exports2, "__esModule", { value: true });
     exports2.getAddress = getAddress;
@@ -7552,9 +7552,9 @@ ${suffix}`;
   }
 });
 
-// node_modules/@supabase/auth-js/dist/main/lib/webauthn.errors.js
+// ../../../../../../../Users/yulanbot/Developer/Ridge.io/cloud-swarm/node_modules/@supabase/auth-js/dist/main/lib/webauthn.errors.js
 var require_webauthn_errors = __commonJS({
-  "node_modules/@supabase/auth-js/dist/main/lib/webauthn.errors.js"(exports2) {
+  "../../../../../../../Users/yulanbot/Developer/Ridge.io/cloud-swarm/node_modules/@supabase/auth-js/dist/main/lib/webauthn.errors.js"(exports2) {
     "use strict";
     Object.defineProperty(exports2, "__esModule", { value: true });
     exports2.WebAuthnUnknownError = exports2.WebAuthnError = void 0;
@@ -7743,9 +7743,9 @@ var require_webauthn_errors = __commonJS({
   }
 });
 
-// node_modules/@supabase/auth-js/dist/main/lib/webauthn.js
+// ../../../../../../../Users/yulanbot/Developer/Ridge.io/cloud-swarm/node_modules/@supabase/auth-js/dist/main/lib/webauthn.js
 var require_webauthn = __commonJS({
-  "node_modules/@supabase/auth-js/dist/main/lib/webauthn.js"(exports2) {
+  "../../../../../../../Users/yulanbot/Developer/Ridge.io/cloud-swarm/node_modules/@supabase/auth-js/dist/main/lib/webauthn.js"(exports2) {
     "use strict";
     Object.defineProperty(exports2, "__esModule", { value: true });
     exports2.WebAuthnApi = exports2.DEFAULT_REQUEST_OPTIONS = exports2.DEFAULT_CREATION_OPTIONS = exports2.webAuthnAbortService = exports2.WebAuthnAbortService = exports2.identifyAuthenticationError = exports2.identifyRegistrationError = exports2.isWebAuthnError = exports2.WebAuthnError = void 0;
@@ -8302,9 +8302,9 @@ var require_webauthn = __commonJS({
   }
 });
 
-// node_modules/@supabase/auth-js/dist/main/GoTrueClient.js
+// ../../../../../../../Users/yulanbot/Developer/Ridge.io/cloud-swarm/node_modules/@supabase/auth-js/dist/main/GoTrueClient.js
 var require_GoTrueClient = __commonJS({
-  "node_modules/@supabase/auth-js/dist/main/GoTrueClient.js"(exports2) {
+  "../../../../../../../Users/yulanbot/Developer/Ridge.io/cloud-swarm/node_modules/@supabase/auth-js/dist/main/GoTrueClient.js"(exports2) {
     "use strict";
     Object.defineProperty(exports2, "__esModule", { value: true });
     var tslib_1 = (init_tslib_es6(), __toCommonJS(tslib_es6_exports));
@@ -13442,9 +13442,9 @@ var require_GoTrueClient = __commonJS({
   }
 });
 
-// node_modules/@supabase/auth-js/dist/main/AuthAdminApi.js
+// ../../../../../../../Users/yulanbot/Developer/Ridge.io/cloud-swarm/node_modules/@supabase/auth-js/dist/main/AuthAdminApi.js
 var require_AuthAdminApi = __commonJS({
-  "node_modules/@supabase/auth-js/dist/main/AuthAdminApi.js"(exports2) {
+  "../../../../../../../Users/yulanbot/Developer/Ridge.io/cloud-swarm/node_modules/@supabase/auth-js/dist/main/AuthAdminApi.js"(exports2) {
     "use strict";
     Object.defineProperty(exports2, "__esModule", { value: true });
     var tslib_1 = (init_tslib_es6(), __toCommonJS(tslib_es6_exports));
@@ -13454,9 +13454,9 @@ var require_AuthAdminApi = __commonJS({
   }
 });
 
-// node_modules/@supabase/auth-js/dist/main/AuthClient.js
+// ../../../../../../../Users/yulanbot/Developer/Ridge.io/cloud-swarm/node_modules/@supabase/auth-js/dist/main/AuthClient.js
 var require_AuthClient = __commonJS({
-  "node_modules/@supabase/auth-js/dist/main/AuthClient.js"(exports2) {
+  "../../../../../../../Users/yulanbot/Developer/Ridge.io/cloud-swarm/node_modules/@supabase/auth-js/dist/main/AuthClient.js"(exports2) {
     "use strict";
     Object.defineProperty(exports2, "__esModule", { value: true });
     var tslib_1 = (init_tslib_es6(), __toCommonJS(tslib_es6_exports));
@@ -13466,9 +13466,9 @@ var require_AuthClient = __commonJS({
   }
 });
 
-// node_modules/@supabase/auth-js/dist/main/index.js
+// ../../../../../../../Users/yulanbot/Developer/Ridge.io/cloud-swarm/node_modules/@supabase/auth-js/dist/main/index.js
 var require_main3 = __commonJS({
-  "node_modules/@supabase/auth-js/dist/main/index.js"(exports2) {
+  "../../../../../../../Users/yulanbot/Developer/Ridge.io/cloud-swarm/node_modules/@supabase/auth-js/dist/main/index.js"(exports2) {
     "use strict";
     Object.defineProperty(exports2, "__esModule", { value: true });
     exports2.processLock = exports2.lockInternals = exports2.NavigatorLockAcquireTimeoutError = exports2.navigatorLock = exports2.AuthClient = exports2.AuthAdminApi = exports2.GoTrueClient = exports2.GoTrueAdminApi = void 0;
@@ -13535,7 +13535,7 @@ var import_node_crypto2 = require("node:crypto");
 var import_node_http = require("node:http");
 var import_node_child_process = require("node:child_process");
 
-// node_modules/@supabase/supabase-js/dist/index.mjs
+// ../../../../../../../Users/yulanbot/Developer/Ridge.io/cloud-swarm/node_modules/@supabase/supabase-js/dist/index.mjs
 var dist_exports = {};
 __export(dist_exports, {
   FunctionRegion: () => import_functions_js.FunctionRegion,
@@ -13550,7 +13550,7 @@ __export(dist_exports, {
 });
 var import_functions_js = __toESM(require_main(), 1);
 
-// node_modules/@supabase/postgrest-js/dist/index.mjs
+// ../../../../../../../Users/yulanbot/Developer/Ridge.io/cloud-swarm/node_modules/@supabase/postgrest-js/dist/index.mjs
 var DEFAULT_MAX_RETRIES = 3;
 var getRetryDelay = (attemptIndex) => Math.min(1e3 * 2 ** attemptIndex, 3e4);
 var RETRYABLE_STATUS_CODES = [520, 503];
@@ -17328,10 +17328,10 @@ var PostgrestClient = class PostgrestClient2 {
   }
 };
 
-// node_modules/@supabase/supabase-js/dist/index.mjs
+// ../../../../../../../Users/yulanbot/Developer/Ridge.io/cloud-swarm/node_modules/@supabase/supabase-js/dist/index.mjs
 var import_realtime_js = __toESM(require_main2(), 1);
 
-// node_modules/iceberg-js/dist/index.mjs
+// ../../../../../../../Users/yulanbot/Developer/Ridge.io/cloud-swarm/node_modules/iceberg-js/dist/index.mjs
 var IcebergError = class extends Error {
   constructor(message, opts) {
     super(message);
@@ -17864,7 +17864,7 @@ var IcebergRestCatalog = class {
   }
 };
 
-// node_modules/@supabase/storage-js/dist/index.mjs
+// ../../../../../../../Users/yulanbot/Developer/Ridge.io/cloud-swarm/node_modules/@supabase/storage-js/dist/index.mjs
 function _typeof2(o) {
   "@babel/helpers - typeof";
   return _typeof2 = "function" == typeof Symbol && "symbol" == typeof Symbol.iterator ? function(o$1) {
@@ -20656,7 +20656,7 @@ var StorageClient = class extends StorageBucketApi {
   }
 };
 
-// node_modules/@supabase/supabase-js/dist/index.mjs
+// ../../../../../../../Users/yulanbot/Developer/Ridge.io/cloud-swarm/node_modules/@supabase/supabase-js/dist/index.mjs
 var import_auth_js = __toESM(require_main3(), 1);
 __reExport(dist_exports, __toESM(require_main2(), 1));
 __reExport(dist_exports, __toESM(require_main3(), 1));
@@ -24061,11 +24061,11 @@ async function resolveCloudTarget(options) {
 // src/cloud/seed.ts
 var import_node_crypto7 = require("node:crypto");
 
-// node_modules/postgres/src/index.js
+// ../../../../../../../Users/yulanbot/Developer/Ridge.io/cloud-swarm/node_modules/postgres/src/index.js
 var import_os = __toESM(require("os"), 1);
 var import_fs = __toESM(require("fs"), 1);
 
-// node_modules/postgres/src/query.js
+// ../../../../../../../Users/yulanbot/Developer/Ridge.io/cloud-swarm/node_modules/postgres/src/query.js
 var originCache = /* @__PURE__ */ new Map();
 var originStackCache = /* @__PURE__ */ new Map();
 var originError = /* @__PURE__ */ Symbol("OriginError");
@@ -24202,7 +24202,7 @@ function cachedError(xs) {
   return originCache.get(xs);
 }
 
-// node_modules/postgres/src/errors.js
+// ../../../../../../../Users/yulanbot/Developer/Ridge.io/cloud-swarm/node_modules/postgres/src/errors.js
 var PostgresError = class extends Error {
   constructor(x) {
     super(x.message);
@@ -24252,7 +24252,7 @@ function notSupported(x) {
   return error;
 }
 
-// node_modules/postgres/src/types.js
+// ../../../../../../../Users/yulanbot/Developer/Ridge.io/cloud-swarm/node_modules/postgres/src/types.js
 var types = {
   string: {
     to: 25,
@@ -24538,14 +24538,14 @@ fromKebab.column = { to: fromKebab };
 var kebab = { ...toKebab };
 kebab.column.to = fromKebab;
 
-// node_modules/postgres/src/connection.js
+// ../../../../../../../Users/yulanbot/Developer/Ridge.io/cloud-swarm/node_modules/postgres/src/connection.js
 var import_net = __toESM(require("net"), 1);
 var import_tls = __toESM(require("tls"), 1);
 var import_crypto = __toESM(require("crypto"), 1);
 var import_stream = __toESM(require("stream"), 1);
 var import_perf_hooks = require("perf_hooks");
 
-// node_modules/postgres/src/result.js
+// ../../../../../../../Users/yulanbot/Developer/Ridge.io/cloud-swarm/node_modules/postgres/src/result.js
 var Result = class extends Array {
   constructor() {
     super();
@@ -24562,7 +24562,7 @@ var Result = class extends Array {
   }
 };
 
-// node_modules/postgres/src/queue.js
+// ../../../../../../../Users/yulanbot/Developer/Ridge.io/cloud-swarm/node_modules/postgres/src/queue.js
 var queue_default = Queue;
 function Queue(initial = []) {
   let xs = initial.slice();
@@ -24589,7 +24589,7 @@ function Queue(initial = []) {
   };
 }
 
-// node_modules/postgres/src/bytes.js
+// ../../../../../../../Users/yulanbot/Developer/Ridge.io/cloud-swarm/node_modules/postgres/src/bytes.js
 var size = 256;
 var buffer = Buffer.allocUnsafe(size);
 var messages = "BCcDdEFfHPpQSX".split("").reduce((acc, x) => {
@@ -24662,7 +24662,7 @@ function reset() {
   return b;
 }
 
-// node_modules/postgres/src/connection.js
+// ../../../../../../../Users/yulanbot/Developer/Ridge.io/cloud-swarm/node_modules/postgres/src/connection.js
 var connection_default = Connection;
 var uid = 1;
 var Sync = bytes_default().S().end();
@@ -25502,7 +25502,7 @@ function timer(fn, seconds) {
   }
 }
 
-// node_modules/postgres/src/subscribe.js
+// ../../../../../../../Users/yulanbot/Developer/Ridge.io/cloud-swarm/node_modules/postgres/src/subscribe.js
 var noop2 = () => {
 };
 function Subscribe(postgres2, options) {
@@ -25714,7 +25714,7 @@ function parseEvent(x) {
   return (command2 || "*") + (path ? ":" + (path.indexOf(".") === -1 ? "public." + path : path) : "") + (key2 ? "=" + key2 : "");
 }
 
-// node_modules/postgres/src/large.js
+// ../../../../../../../Users/yulanbot/Developer/Ridge.io/cloud-swarm/node_modules/postgres/src/large.js
 var import_stream2 = __toESM(require("stream"), 1);
 function largeObject(sql, oid, mode3 = 131072 | 262144) {
   return new Promise(async (resolve3, reject) => {
@@ -25780,7 +25780,7 @@ function largeObject(sql, oid, mode3 = 131072 | 262144) {
   });
 }
 
-// node_modules/postgres/src/index.js
+// ../../../../../../../Users/yulanbot/Developer/Ridge.io/cloud-swarm/node_modules/postgres/src/index.js
 Object.assign(Postgres, {
   PostgresError,
   toPascal,
@@ -31078,6 +31078,598 @@ function signalReceiptJsonPayload(report, nowMs = Date.now()) {
   };
 }
 
+// src/cloud/delivery.ts
+var UUID_RE13 = /^[0-9a-f]{8}-[0-9a-f]{4}-[1-8][0-9a-f]{3}-[89ab][0-9a-f]{3}-[0-9a-f]{12}$/i;
+var RFC3339_TIMESTAMP_RE = /^(\d{4})-(\d{2})-(\d{2})T(\d{2}):(\d{2}):(\d{2})(?:\.\d+)?(?:Z|([+-]\d{2}):(\d{2}))$/i;
+var DELIVERY_KINDS = /* @__PURE__ */ new Set(["ask", "note"]);
+var SENDER_OWNER_RELATIONS2 = /* @__PURE__ */ new Set([
+  "same_owner",
+  "cross_owner",
+  "unknown"
+]);
+var DELIVERY_ACK_OUTCOMES = /* @__PURE__ */ new Set([
+  "replied",
+  "observed",
+  "queued",
+  "expired",
+  "failed_terminal"
+]);
+var DELIVERY_HANDLED_OUTCOMES = new Set(
+  [...DELIVERY_ACK_OUTCOMES].filter(
+    (outcome) => outcome === "replied" || outcome === "observed"
+  )
+);
+var DELIVERY_PROVIDER_PROVEN_OUTCOMES = new Set(
+  [...DELIVERY_ACK_OUTCOMES].filter((outcome) => outcome === "replied")
+);
+function orList(values2) {
+  return values2.length <= 1 ? values2.join("") : `${values2.slice(0, -1).join(", ")}, or ${values2[values2.length - 1]}`;
+}
+var DELIVERY_REQUEST_TIMEOUT_MS = 3e4;
+var COMMAND_ID_VALIDATOR_RE = /^[A-Za-z0-9_-]{8,72}$/;
+var FAILED_TERMINAL_CODES_SET = /* @__PURE__ */ new Set([
+  "provider_refused",
+  "local_effect_failed",
+  "host_session_failed",
+  "credential_unavailable"
+]);
+var SERVER_ERROR_CODES_SET = /* @__PURE__ */ new Set([
+  "unauthenticated",
+  "fresh_auth_required",
+  "invalid_request",
+  "payload_too_large",
+  "forbidden",
+  "delivery_unavailable",
+  "delivery_ack_conflict",
+  "command_id_conflict",
+  "rate_limited",
+  "upgrade_required",
+  "temporarily_unavailable",
+  "internal_error"
+]);
+var DELIVERY_FAILED_TERMINAL_CODES = Object.freeze([
+  "provider_refused",
+  "local_effect_failed",
+  "host_session_failed",
+  "credential_unavailable"
+]);
+var DELIVERY_SERVER_ERROR_CODES = Object.freeze([
+  "unauthenticated",
+  "fresh_auth_required",
+  "invalid_request",
+  "payload_too_large",
+  "forbidden",
+  "delivery_unavailable",
+  "delivery_ack_conflict",
+  "command_id_conflict",
+  "rate_limited",
+  "upgrade_required",
+  "temporarily_unavailable",
+  "internal_error"
+]);
+var DELIVERY_UNKNOWN_ERROR_CODE = "unknown_error";
+function observationCommandId(signalId) {
+  checkedUuidRequest(signalId, "signalId");
+  return `observe_${signalId.toLowerCase().replaceAll("-", "")}`;
+}
+var DeliveryTransportError = class extends Error {
+  constructor(message) {
+    super(message);
+    this.name = "DeliveryTransportError";
+  }
+};
+var DeliveryHttpError = class extends Error {
+  constructor(status, code, message, retryAfterMs = null) {
+    super(message);
+    this.status = status;
+    this.code = code;
+    this.retryAfterMs = retryAfterMs;
+    this.name = "DeliveryHttpError";
+  }
+  status;
+  code;
+  retryAfterMs;
+};
+var DeliveryProtocolError = class extends Error {
+  constructor(message) {
+    super(message);
+    this.name = "DeliveryProtocolError";
+  }
+};
+function checkedUuid3(value, field) {
+  if (typeof value !== "string" || !UUID_RE13.test(value)) {
+    throw new DeliveryProtocolError(
+      `delivery response returned a malformed ${field}`
+    );
+  }
+  return value.toLowerCase();
+}
+function isLeapYear(year) {
+  return year % 4 === 0 && year % 100 !== 0 || year % 400 === 0;
+}
+function daysInMonth(year, month) {
+  switch (month) {
+    case 1:
+    case 3:
+    case 5:
+    case 7:
+    case 8:
+    case 10:
+    case 12:
+      return 31;
+    case 4:
+    case 6:
+    case 9:
+    case 11:
+      return 30;
+    case 2:
+      return isLeapYear(year) ? 29 : 28;
+    default:
+      return 0;
+  }
+}
+function checkedRfc3339Timestamp(value, field) {
+  if (typeof value !== "string") {
+    throw new DeliveryProtocolError(
+      `delivery response returned a malformed ${field}`
+    );
+  }
+  const match = RFC3339_TIMESTAMP_RE.exec(value);
+  if (!match) {
+    throw new DeliveryProtocolError(
+      `delivery response returned a malformed ${field}`
+    );
+  }
+  const year = parseInt(match[1], 10);
+  const month = parseInt(match[2], 10);
+  const day = parseInt(match[3], 10);
+  const hour = parseInt(match[4], 10);
+  const minute = parseInt(match[5], 10);
+  const second = parseInt(match[6], 10);
+  if (month < 1 || month > 12 || day < 1 || day > daysInMonth(year, month) || hour < 0 || hour > 23 || minute < 0 || minute > 59 || second < 0 || second > 59) {
+    throw new DeliveryProtocolError(
+      `delivery response returned a malformed ${field}`
+    );
+  }
+  if (match[7] !== void 0 && match[8] !== void 0) {
+    const offsetHour = Math.abs(parseInt(match[7], 10));
+    const offsetMin = parseInt(match[8], 10);
+    if (offsetHour > 23 || offsetMin < 0 || offsetMin > 59) {
+      throw new DeliveryProtocolError(
+        `delivery response returned a malformed ${field}`
+      );
+    }
+  }
+  if (!Number.isFinite(Date.parse(value))) {
+    throw new DeliveryProtocolError(
+      `delivery response returned a malformed ${field}`
+    );
+  }
+  return value;
+}
+function checkedLiveLease(leasedUntil, now) {
+  if (Date.parse(leasedUntil) <= now()) {
+    throw new DeliveryProtocolError(
+      "delivery claim response returned an already expired lease"
+    );
+  }
+}
+function checkedRelation(value) {
+  if (typeof value !== "string" || !SENDER_OWNER_RELATIONS2.has(value)) {
+    throw new DeliveryProtocolError(
+      "delivery response returned a malformed sender_owner_relation"
+    );
+  }
+  return value;
+}
+function checkedNonNegativeCount(value, field) {
+  if (typeof value !== "number" || !Number.isSafeInteger(value) || value < 0) {
+    throw new DeliveryProtocolError(
+      `delivery response returned a malformed ${field}`
+    );
+  }
+  return value;
+}
+function checkedClaimCapabilities(value) {
+  if (!value || typeof value !== "object" || Array.isArray(value)) {
+    throw new DeliveryProtocolError(
+      "delivery claim response is missing delivery capabilities"
+    );
+  }
+  const row = value;
+  for (const marker of ["delivery_claim", "delivery_ack", "sender_owner_relation"]) {
+    if (row[marker] !== 1) {
+      throw new DeliveryProtocolError(
+        `delivery claim response is missing the ${marker} capability`
+      );
+    }
+  }
+  return { deliveryClaim: true, deliveryAck: true, senderOwnerRelation: true };
+}
+function checkedOptionalUuidArray(value, field) {
+  if (value === void 0) return;
+  if (!Array.isArray(value) || value.some((item) => typeof item !== "string" || !UUID_RE13.test(item))) {
+    throw new DeliveryProtocolError(
+      `delivery response returned a malformed ${field}`
+    );
+  }
+}
+function checkedOptionalArray(value, field) {
+  if (value === void 0) return;
+  if (!Array.isArray(value)) {
+    throw new DeliveryProtocolError(
+      `delivery response returned a malformed ${field}`
+    );
+  }
+}
+function parseDeliveryRow(value, expected, index, now) {
+  if (!value || typeof value !== "object" || Array.isArray(value)) {
+    throw new DeliveryProtocolError(
+      "delivery claim response returned a malformed delivery row"
+    );
+  }
+  const row = value;
+  let signal;
+  try {
+    signal = parseSignalRecord(row.signal);
+  } catch {
+    throw new DeliveryProtocolError(
+      `delivery claim response returned a malformed signal at ${index}`
+    );
+  }
+  if (signal.workspace_id !== expected.workspaceId) {
+    throw new DeliveryProtocolError(
+      "delivery claim response returned a signal for another workspace"
+    );
+  }
+  if (signal.to_agent !== expected.principalId) {
+    throw new DeliveryProtocolError(
+      "delivery claim response returned a signal addressed to another agent"
+    );
+  }
+  if (!DELIVERY_KINDS.has(signal.kind)) {
+    throw new DeliveryProtocolError(
+      "delivery claim response returned a non-direct signal kind"
+    );
+  }
+  const senderOwnerRelation = checkedRelation(row.sender_owner_relation);
+  const leaseId = checkedUuid3(row.lease_id, "lease_id");
+  const leasedUntil = checkedRfc3339Timestamp(row.leased_until, "leased_until");
+  checkedLiveLease(leasedUntil, now);
+  signal.sender_owner_relation = senderOwnerRelation;
+  return { signal, leaseId, leasedUntil, senderOwnerRelation };
+}
+function parseClaimSuccess(body, expected, now) {
+  if (!body || typeof body !== "object" || Array.isArray(body)) {
+    throw new DeliveryProtocolError("delivery claim response was not an object");
+  }
+  const row = body;
+  if (row.status !== "accepted" || row.ok !== true) {
+    throw new DeliveryProtocolError(
+      "delivery claim response did not report accepted ok"
+    );
+  }
+  const capabilities = checkedClaimCapabilities(row.capabilities);
+  checkedOptionalUuidArray(row.event_ids, "event_ids");
+  checkedOptionalArray(row.events, "events");
+  if (!Array.isArray(row.deliveries)) {
+    throw new DeliveryProtocolError(
+      "delivery claim response is missing its deliveries array"
+    );
+  }
+  const deliveries = row.deliveries.map(
+    (item, index) => parseDeliveryRow(item, expected, index, now)
+  );
+  const signalIds = /* @__PURE__ */ new Set();
+  const leaseIds = /* @__PURE__ */ new Set();
+  for (const delivery of deliveries) {
+    if (signalIds.has(delivery.signal.id)) {
+      throw new DeliveryProtocolError(
+        "delivery claim response repeats a signal id"
+      );
+    }
+    signalIds.add(delivery.signal.id);
+    if (leaseIds.has(delivery.leaseId)) {
+      throw new DeliveryProtocolError(
+        "delivery claim response repeats a lease id"
+      );
+    }
+    leaseIds.add(delivery.leaseId);
+  }
+  if (deliveries.length > 1) {
+    throw new DeliveryProtocolError(
+      "delivery claim response returned more than one delivery"
+    );
+  }
+  const pendingDeliveryCount = checkedNonNegativeCount(
+    row.pending_delivery_count,
+    "pending_delivery_count"
+  );
+  const terminalDeliveryFailureCount = checkedNonNegativeCount(
+    row.terminal_delivery_failure_count,
+    "terminal_delivery_failure_count"
+  );
+  if (deliveries.length > pendingDeliveryCount) {
+    throw new DeliveryProtocolError(
+      "delivery claim response returned more deliveries than its pending count"
+    );
+  }
+  return {
+    capabilities,
+    deliveries,
+    pendingDeliveryCount,
+    terminalDeliveryFailureCount
+  };
+}
+function parseAckSuccess(body, expected) {
+  if (!body || typeof body !== "object" || Array.isArray(body)) {
+    throw new DeliveryProtocolError(
+      "delivery acknowledgement response was not an object"
+    );
+  }
+  const row = body;
+  if (row.status !== "accepted" || row.ok !== true) {
+    throw new DeliveryProtocolError(
+      "delivery acknowledgement response did not report accepted ok"
+    );
+  }
+  checkedOptionalUuidArray(row.event_ids, "event_ids");
+  checkedOptionalArray(row.events, "events");
+  if (row.signal_id !== expected.signalId) {
+    throw new DeliveryProtocolError(
+      "delivery acknowledgement response echoed a different signal id"
+    );
+  }
+  if (row.outcome !== expected.outcome) {
+    throw new DeliveryProtocolError(
+      "delivery acknowledgement response echoed a different outcome"
+    );
+  }
+}
+function checkedCommandId(value) {
+  if (typeof value !== "string" || !COMMAND_ID_VALIDATOR_RE.test(value)) {
+    throw new Error(
+      "a delivery command id must be 8..72 characters of [A-Za-z0-9_-]"
+    );
+  }
+  return value;
+}
+function checkedUuidRequest(value, field) {
+  if (!UUID_RE13.test(value)) {
+    throw new Error(`${field} must be a UUID for an agent delivery command`);
+  }
+}
+function assertAckRequest(request) {
+  checkedCommandId(request.commandId);
+  assertAgentToken(request.credential);
+  checkedUuidRequest(request.workspaceId, "workspaceId");
+  checkedUuidRequest(request.signalId, "signalId");
+  checkedUuidRequest(request.leaseId, "leaseId");
+  checkedUuidRequest(request.listenerInstanceId, "listenerInstanceId");
+  if (!DELIVERY_ACK_OUTCOMES.has(request.outcome)) {
+    throw new Error(
+      `a delivery outcome must be ${orList([...DELIVERY_ACK_OUTCOMES])}`
+    );
+  }
+  if (request.outcome === "failed_terminal") {
+    if (typeof request.lastErrorCode !== "string" || !FAILED_TERMINAL_CODES_SET.has(request.lastErrorCode)) {
+      throw new Error(
+        `a failed_terminal acknowledgement requires one of ${orList([...FAILED_TERMINAL_CODES_SET])}`
+      );
+    }
+  } else if (request.lastErrorCode !== null) {
+    throw new Error(
+      "a non-failed acknowledgement must send lastErrorCode null"
+    );
+  }
+}
+function boundedDeliveryErrorCode(body) {
+  if (!body || typeof body !== "object" || Array.isArray(body)) {
+    return DELIVERY_UNKNOWN_ERROR_CODE;
+  }
+  const error = body.error;
+  if (typeof error === "string" && SERVER_ERROR_CODES_SET.has(error)) {
+    return error;
+  }
+  return DELIVERY_UNKNOWN_ERROR_CODE;
+}
+function refusal(response, text) {
+  let code = DELIVERY_UNKNOWN_ERROR_CODE;
+  try {
+    code = boundedDeliveryErrorCode(JSON.parse(text));
+  } catch {
+  }
+  const retryAfterMs = parseRetryAfterMs(response.headers.get("retry-after"));
+  return new DeliveryHttpError(
+    response.status,
+    code,
+    `delivery command failed (HTTP ${response.status}): ${code}`,
+    retryAfterMs
+  );
+}
+function successBody(response, text, verb) {
+  try {
+    return JSON.parse(text);
+  } catch {
+    throw new DeliveryProtocolError(
+      `${verb} response was not JSON (HTTP ${response.status})`
+    );
+  }
+}
+var DeliveryCommandClient = class {
+  constructor(target2, fetcher = fetch, options = {}) {
+    this.target = target2;
+    this.fetcher = fetcher;
+    this.deadlineMs = options.deadlineMs ?? DELIVERY_REQUEST_TIMEOUT_MS;
+    this.now = options.now ?? Date.now;
+    this.clearTimeoutFn = options.clearTimeout ?? ((timer2) => clearTimeout(timer2));
+    this.createAbortControllerFn = options.createAbortController ?? (() => new AbortController());
+  }
+  target;
+  fetcher;
+  deadlineMs;
+  now;
+  clearTimeoutFn;
+  createAbortControllerFn;
+  async post(request, command2, verb) {
+    if (this.deadlineMs <= 0) {
+      throw new DeliveryTransportError(`${verb} request timed out`);
+    }
+    const deadlineController = this.createAbortControllerFn();
+    let timedOut = false;
+    const signal = deadlineController.signal;
+    let onAbort = () => {
+    };
+    const aborted = new Promise((resolve3) => {
+      onAbort = () => resolve3("timeout");
+      if (signal.aborted) {
+        onAbort();
+      } else {
+        signal.addEventListener("abort", onAbort, { once: true });
+      }
+    });
+    const timer2 = setTimeout(() => {
+      timedOut = true;
+      deadlineController.abort();
+    }, this.deadlineMs);
+    try {
+      if (signal.aborted) {
+        throw new DeliveryTransportError(`${verb} request timed out`);
+      }
+      const read = (async () => {
+        let response;
+        try {
+          response = await this.fetcher(commandEndpoint(this.target), {
+            method: "POST",
+            headers: {
+              authorization: `Bearer ${request.credential}`,
+              apikey: this.target.anonKey,
+              "content-type": "application/json"
+            },
+            body: JSON.stringify({
+              command_id: request.commandId,
+              client_version: CLIENT_PROTOCOL_VERSION,
+              workspace_id: request.workspaceId.toLowerCase(),
+              stream: { kind: "workspace" },
+              command: command2
+            }),
+            signal
+          });
+        } catch (error) {
+          if (signal.aborted || timedOut || error?.name === "AbortError") {
+            return "timeout";
+          }
+          throw new DeliveryTransportError(
+            `${verb} request failed before a response`
+          );
+        }
+        if (signal.aborted || timedOut) return "timeout";
+        let text;
+        try {
+          text = await response.text();
+        } catch {
+          if (signal.aborted || timedOut) return "timeout";
+          throw new DeliveryTransportError(
+            `${verb} response body was interrupted`
+          );
+        }
+        if (signal.aborted || timedOut) return "timeout";
+        return { response, text };
+      })();
+      const raced = await Promise.race([read, aborted]);
+      if (raced === "timeout") {
+        throw new DeliveryTransportError(`${verb} request timed out`);
+      }
+      return raced;
+    } finally {
+      this.clearTimeoutFn(timer2);
+      signal.removeEventListener("abort", onAbort);
+    }
+  }
+  /** Claim the caller's own single unacked direct-signal delivery row. */
+  async claimAgentInbox(request) {
+    checkedCommandId(request.commandId);
+    assertAgentToken(request.credential);
+    checkedUuidRequest(request.workspaceId, "workspaceId");
+    checkedUuidRequest(request.listenerInstanceId, "listenerInstanceId");
+    checkedUuidRequest(request.expectedPrincipalId, "expectedPrincipalId");
+    const { response, text } = await this.post(request, {
+      kind: "claim_agent_inbox",
+      listener_instance_id: request.listenerInstanceId.toLowerCase(),
+      limit: 1
+    }, "delivery claim");
+    if (!response.ok) throw refusal(response, text);
+    const parsed = parseClaimSuccess(
+      successBody(response, text, "delivery claim"),
+      {
+        workspaceId: request.workspaceId.toLowerCase(),
+        principalId: request.expectedPrincipalId.toLowerCase()
+      },
+      this.now
+    );
+    return {
+      httpStatus: response.status,
+      capabilities: parsed.capabilities,
+      deliveries: parsed.deliveries,
+      pendingDeliveryCount: parsed.pendingDeliveryCount,
+      terminalDeliveryFailureCount: parsed.terminalDeliveryFailureCount
+    };
+  }
+  /** Acknowledge one leased delivery with an exact terminal outcome. */
+  async ackAgentDelivery(request) {
+    assertAckRequest(request);
+    const { response, text } = await this.post(request, {
+      kind: "ack_agent_delivery",
+      signal_id: request.signalId.toLowerCase(),
+      lease_id: request.leaseId.toLowerCase(),
+      listener_instance_id: request.listenerInstanceId.toLowerCase(),
+      outcome: request.outcome,
+      last_error_code: request.lastErrorCode
+    }, "delivery acknowledgement");
+    if (!response.ok) throw refusal(response, text);
+    parseAckSuccess(
+      successBody(response, text, "delivery acknowledgement"),
+      {
+        signalId: request.signalId.toLowerCase(),
+        outcome: request.outcome
+      }
+    );
+    return {
+      httpStatus: response.status,
+      signalId: request.signalId.toLowerCase(),
+      outcome: request.outcome
+    };
+  }
+  /** Mark a queued delivery observed only after the interactive hook surfaced it. */
+  async observeQueuedAgentDelivery(request) {
+    checkedCommandId(request.commandId);
+    assertAgentToken(request.credential);
+    checkedUuidRequest(request.workspaceId, "workspaceId");
+    checkedUuidRequest(request.signalId, "signalId");
+    const { response, text } = await this.post(request, {
+      kind: "ack_agent_delivery",
+      signal_id: request.signalId.toLowerCase(),
+      lease_id: null,
+      listener_instance_id: null,
+      outcome: "observed",
+      last_error_code: null
+    }, "delivery observation");
+    if (!response.ok) throw refusal(response, text);
+    parseAckSuccess(
+      successBody(response, text, "delivery observation"),
+      {
+        signalId: request.signalId.toLowerCase(),
+        outcome: "observed"
+      }
+    );
+    return {
+      httpStatus: response.status,
+      signalId: request.signalId.toLowerCase(),
+      outcome: "observed"
+    };
+  }
+};
+
 // src/cloud/agent-signal-receipts.ts
 var AGENT_SEEN_BATCH_MAX = 50;
 var AGENT_SEEN_TIMEOUT_MS = 5e3;
@@ -33898,7 +34490,7 @@ async function resolveBudgetAndPrompt(session, prompt, budget) {
 }
 
 // src/listener/engine.ts
-var UUID_RE13 = /^[0-9a-f]{8}-[0-9a-f]{4}-[1-8][0-9a-f]{3}-[89ab][0-9a-f]{3}-[0-9a-f]{12}$/i;
+var UUID_RE14 = /^[0-9a-f]{8}-[0-9a-f]{4}-[1-8][0-9a-f]{3}-[89ab][0-9a-f]{3}-[0-9a-f]{12}$/i;
 var TERMINAL_STATES = /* @__PURE__ */ new Set(["done", "expired", "failed"]);
 var REPLY_MAX_CODE_UNITS = 2e3;
 var TRUNCATION_SUFFIX = "\n[Reply truncated by CommonSwarm]";
@@ -33906,7 +34498,7 @@ var UNSAFE_CONTROLS_RE = /[\u0000-\u0008\u000b\u000c\u000e-\u001f\u007f-\u009f\u
 var LISTENER_MAX_PROMPT_ATTEMPTS = 3;
 var LISTENER_MAX_POST_ATTEMPTS = 5;
 function listenerReplyCommandId(signalId, effectOrdinal = 0) {
-  if (!UUID_RE13.test(signalId)) {
+  if (!UUID_RE14.test(signalId)) {
     throw new Error("listener signal id must be a UUID");
   }
   if (!Number.isSafeInteger(effectOrdinal) || effectOrdinal < 0) {
@@ -34399,7 +34991,7 @@ var import_node_crypto13 = require("node:crypto");
 var import_node_os6 = require("node:os");
 var import_node_path9 = require("node:path");
 var import_node_util = require("node:util");
-var UUID_RE14 = /^[0-9a-f]{8}-[0-9a-f]{4}-[1-8][0-9a-f]{3}-[89ab][0-9a-f]{3}-[0-9a-f]{12}$/i;
+var UUID_RE15 = /^[0-9a-f]{8}-[0-9a-f]{4}-[1-8][0-9a-f]{3}-[89ab][0-9a-f]{3}-[0-9a-f]{12}$/i;
 var COMMAND_ID_RE2 = /^[A-Za-z0-9_-]{8,72}$/;
 var MAX_EFFECT_BYTES = 1024 * 1024;
 var STATES = /* @__PURE__ */ new Set([
@@ -34449,7 +35041,7 @@ function defaultListenerStateDirectory() {
   return process.env.XDG_STATE_HOME ? (0, import_node_path9.join)(process.env.XDG_STATE_HOME, "cswarm", "listeners") : (0, import_node_path9.join)((0, import_node_os6.homedir)(), ".cswarm", "listeners");
 }
 function listenerInstanceKey(input) {
-  if (!UUID_RE14.test(input.workspaceId) || !UUID_RE14.test(input.principalId)) {
+  if (!UUID_RE15.test(input.workspaceId) || !UUID_RE15.test(input.principalId)) {
     throw new Error("listener workspace and principal ids must be UUIDs");
   }
   if (!input.profileId || input.profileId.includes("\0")) {
@@ -34482,7 +35074,7 @@ function parseListenerEffectRecord(raw, expectedId) {
   }
   const row = value;
   rejectSensitiveKeys(row);
-  if (typeof row.version !== "number" || row.version !== 1 && row.version !== 2 || typeof row.signalId !== "string" || row.signalId.toLowerCase() !== expectedId || !UUID_RE14.test(row.signalId)) {
+  if (typeof row.version !== "number" || row.version !== 1 && row.version !== 2 || typeof row.signalId !== "string" || row.signalId.toLowerCase() !== expectedId || !UUID_RE15.test(row.signalId)) {
     throw new Error("stored listener effect is malformed");
   }
   if (row.version === 1) {
@@ -34497,7 +35089,7 @@ function upcastV1Ask(row) {
   if (row.effectOrdinal !== 0 || typeof row.commandId !== "string" || !COMMAND_ID_RE2.test(row.commandId) || typeof row.askBody !== "string" || row.askBody.length < 1 || typeof row.askUntil !== "string" || !Number.isFinite(Date.parse(row.askUntil)) || typeof row.senderOwnerRelation !== "string" || !RELATIONS.has(row.senderOwnerRelation) || typeof row.state !== "string" || !STATES.has(row.state) || !integer(row.promptAttempts) || !integer(row.postAttempts) || !nullableString2(row.replyBody, 2e3) || typeof row.replyTruncated !== "boolean" || !nullableString2(row.replySignalId, 64) || !nullableString2(row.failureCode, 96) || typeof row.updatedAt !== "string" || !Number.isFinite(Date.parse(row.updatedAt))) {
     throw new Error("stored listener effect is malformed");
   }
-  if (row.replySignalId !== null && !UUID_RE14.test(row.replySignalId)) {
+  if (row.replySignalId !== null && !UUID_RE15.test(row.replySignalId)) {
     throw new Error("stored listener effect is malformed");
   }
   return {
@@ -34536,7 +35128,7 @@ function parseV2Record(row) {
     if (typeof row.commandId !== "string" || !COMMAND_ID_RE2.test(row.commandId) || row.state === "observed") {
       throw new Error("stored listener effect is malformed");
     }
-    if (row.replySignalId !== null && !UUID_RE14.test(row.replySignalId)) {
+    if (row.replySignalId !== null && !UUID_RE15.test(row.replySignalId)) {
       throw new Error("stored listener effect is malformed");
     }
   }
@@ -34560,7 +35152,7 @@ function parseV2Record(row) {
   };
 }
 function newObservedNoteRecord(input) {
-  if (!UUID_RE14.test(input.signalId)) {
+  if (!UUID_RE15.test(input.signalId)) {
     throw new Error("listener note signal id must be a UUID");
   }
   if (input.body.length < 1) {
@@ -34694,7 +35286,7 @@ var FileListenerEffectStore = class {
     );
   }
   checkedId(signalId) {
-    if (!UUID_RE14.test(signalId)) {
+    if (!UUID_RE15.test(signalId)) {
       throw new Error("listener signal id must be a UUID");
     }
     return signalId.toLowerCase();
@@ -35925,587 +36517,6 @@ var CodexListenerModel = class {
 
 // src/listener/runtime.ts
 var import_node_crypto18 = require("node:crypto");
-
-// src/cloud/delivery.ts
-var UUID_RE15 = /^[0-9a-f]{8}-[0-9a-f]{4}-[1-8][0-9a-f]{3}-[89ab][0-9a-f]{3}-[0-9a-f]{12}$/i;
-var RFC3339_TIMESTAMP_RE = /^(\d{4})-(\d{2})-(\d{2})T(\d{2}):(\d{2}):(\d{2})(?:\.\d+)?(?:Z|([+-]\d{2}):(\d{2}))$/i;
-var DELIVERY_KINDS = /* @__PURE__ */ new Set(["ask", "note"]);
-var SENDER_OWNER_RELATIONS2 = /* @__PURE__ */ new Set([
-  "same_owner",
-  "cross_owner",
-  "unknown"
-]);
-var DELIVERY_ACK_OUTCOMES = /* @__PURE__ */ new Set([
-  "replied",
-  "observed",
-  "queued",
-  "expired",
-  "failed_terminal"
-]);
-var DELIVERY_REQUEST_TIMEOUT_MS = 3e4;
-var COMMAND_ID_VALIDATOR_RE = /^[A-Za-z0-9_-]{8,72}$/;
-var FAILED_TERMINAL_CODES_SET = /* @__PURE__ */ new Set([
-  "provider_refused",
-  "local_effect_failed",
-  "host_session_failed",
-  "credential_unavailable"
-]);
-var SERVER_ERROR_CODES_SET = /* @__PURE__ */ new Set([
-  "unauthenticated",
-  "fresh_auth_required",
-  "invalid_request",
-  "payload_too_large",
-  "forbidden",
-  "delivery_unavailable",
-  "delivery_ack_conflict",
-  "command_id_conflict",
-  "rate_limited",
-  "upgrade_required",
-  "temporarily_unavailable",
-  "internal_error"
-]);
-var DELIVERY_FAILED_TERMINAL_CODES = Object.freeze([
-  "provider_refused",
-  "local_effect_failed",
-  "host_session_failed",
-  "credential_unavailable"
-]);
-var DELIVERY_SERVER_ERROR_CODES = Object.freeze([
-  "unauthenticated",
-  "fresh_auth_required",
-  "invalid_request",
-  "payload_too_large",
-  "forbidden",
-  "delivery_unavailable",
-  "delivery_ack_conflict",
-  "command_id_conflict",
-  "rate_limited",
-  "upgrade_required",
-  "temporarily_unavailable",
-  "internal_error"
-]);
-var DELIVERY_UNKNOWN_ERROR_CODE = "unknown_error";
-function observationCommandId(signalId) {
-  checkedUuidRequest(signalId, "signalId");
-  return `observe_${signalId.toLowerCase().replaceAll("-", "")}`;
-}
-var DeliveryTransportError = class extends Error {
-  constructor(message) {
-    super(message);
-    this.name = "DeliveryTransportError";
-  }
-};
-var DeliveryHttpError = class extends Error {
-  constructor(status, code, message, retryAfterMs = null) {
-    super(message);
-    this.status = status;
-    this.code = code;
-    this.retryAfterMs = retryAfterMs;
-    this.name = "DeliveryHttpError";
-  }
-  status;
-  code;
-  retryAfterMs;
-};
-var DeliveryProtocolError = class extends Error {
-  constructor(message) {
-    super(message);
-    this.name = "DeliveryProtocolError";
-  }
-};
-function checkedUuid3(value, field) {
-  if (typeof value !== "string" || !UUID_RE15.test(value)) {
-    throw new DeliveryProtocolError(
-      `delivery response returned a malformed ${field}`
-    );
-  }
-  return value.toLowerCase();
-}
-function isLeapYear(year) {
-  return year % 4 === 0 && year % 100 !== 0 || year % 400 === 0;
-}
-function daysInMonth(year, month) {
-  switch (month) {
-    case 1:
-    case 3:
-    case 5:
-    case 7:
-    case 8:
-    case 10:
-    case 12:
-      return 31;
-    case 4:
-    case 6:
-    case 9:
-    case 11:
-      return 30;
-    case 2:
-      return isLeapYear(year) ? 29 : 28;
-    default:
-      return 0;
-  }
-}
-function checkedRfc3339Timestamp(value, field) {
-  if (typeof value !== "string") {
-    throw new DeliveryProtocolError(
-      `delivery response returned a malformed ${field}`
-    );
-  }
-  const match = RFC3339_TIMESTAMP_RE.exec(value);
-  if (!match) {
-    throw new DeliveryProtocolError(
-      `delivery response returned a malformed ${field}`
-    );
-  }
-  const year = parseInt(match[1], 10);
-  const month = parseInt(match[2], 10);
-  const day = parseInt(match[3], 10);
-  const hour = parseInt(match[4], 10);
-  const minute = parseInt(match[5], 10);
-  const second = parseInt(match[6], 10);
-  if (month < 1 || month > 12 || day < 1 || day > daysInMonth(year, month) || hour < 0 || hour > 23 || minute < 0 || minute > 59 || second < 0 || second > 59) {
-    throw new DeliveryProtocolError(
-      `delivery response returned a malformed ${field}`
-    );
-  }
-  if (match[7] !== void 0 && match[8] !== void 0) {
-    const offsetHour = Math.abs(parseInt(match[7], 10));
-    const offsetMin = parseInt(match[8], 10);
-    if (offsetHour > 23 || offsetMin < 0 || offsetMin > 59) {
-      throw new DeliveryProtocolError(
-        `delivery response returned a malformed ${field}`
-      );
-    }
-  }
-  if (!Number.isFinite(Date.parse(value))) {
-    throw new DeliveryProtocolError(
-      `delivery response returned a malformed ${field}`
-    );
-  }
-  return value;
-}
-function checkedLiveLease(leasedUntil, now) {
-  if (Date.parse(leasedUntil) <= now()) {
-    throw new DeliveryProtocolError(
-      "delivery claim response returned an already expired lease"
-    );
-  }
-}
-function checkedRelation(value) {
-  if (typeof value !== "string" || !SENDER_OWNER_RELATIONS2.has(value)) {
-    throw new DeliveryProtocolError(
-      "delivery response returned a malformed sender_owner_relation"
-    );
-  }
-  return value;
-}
-function checkedNonNegativeCount(value, field) {
-  if (typeof value !== "number" || !Number.isSafeInteger(value) || value < 0) {
-    throw new DeliveryProtocolError(
-      `delivery response returned a malformed ${field}`
-    );
-  }
-  return value;
-}
-function checkedClaimCapabilities(value) {
-  if (!value || typeof value !== "object" || Array.isArray(value)) {
-    throw new DeliveryProtocolError(
-      "delivery claim response is missing delivery capabilities"
-    );
-  }
-  const row = value;
-  for (const marker of ["delivery_claim", "delivery_ack", "sender_owner_relation"]) {
-    if (row[marker] !== 1) {
-      throw new DeliveryProtocolError(
-        `delivery claim response is missing the ${marker} capability`
-      );
-    }
-  }
-  return { deliveryClaim: true, deliveryAck: true, senderOwnerRelation: true };
-}
-function checkedOptionalUuidArray(value, field) {
-  if (value === void 0) return;
-  if (!Array.isArray(value) || value.some((item) => typeof item !== "string" || !UUID_RE15.test(item))) {
-    throw new DeliveryProtocolError(
-      `delivery response returned a malformed ${field}`
-    );
-  }
-}
-function checkedOptionalArray(value, field) {
-  if (value === void 0) return;
-  if (!Array.isArray(value)) {
-    throw new DeliveryProtocolError(
-      `delivery response returned a malformed ${field}`
-    );
-  }
-}
-function parseDeliveryRow(value, expected, index, now) {
-  if (!value || typeof value !== "object" || Array.isArray(value)) {
-    throw new DeliveryProtocolError(
-      "delivery claim response returned a malformed delivery row"
-    );
-  }
-  const row = value;
-  let signal;
-  try {
-    signal = parseSignalRecord(row.signal);
-  } catch {
-    throw new DeliveryProtocolError(
-      `delivery claim response returned a malformed signal at ${index}`
-    );
-  }
-  if (signal.workspace_id !== expected.workspaceId) {
-    throw new DeliveryProtocolError(
-      "delivery claim response returned a signal for another workspace"
-    );
-  }
-  if (signal.to_agent !== expected.principalId) {
-    throw new DeliveryProtocolError(
-      "delivery claim response returned a signal addressed to another agent"
-    );
-  }
-  if (!DELIVERY_KINDS.has(signal.kind)) {
-    throw new DeliveryProtocolError(
-      "delivery claim response returned a non-direct signal kind"
-    );
-  }
-  const senderOwnerRelation = checkedRelation(row.sender_owner_relation);
-  const leaseId = checkedUuid3(row.lease_id, "lease_id");
-  const leasedUntil = checkedRfc3339Timestamp(row.leased_until, "leased_until");
-  checkedLiveLease(leasedUntil, now);
-  signal.sender_owner_relation = senderOwnerRelation;
-  return { signal, leaseId, leasedUntil, senderOwnerRelation };
-}
-function parseClaimSuccess(body, expected, now) {
-  if (!body || typeof body !== "object" || Array.isArray(body)) {
-    throw new DeliveryProtocolError("delivery claim response was not an object");
-  }
-  const row = body;
-  if (row.status !== "accepted" || row.ok !== true) {
-    throw new DeliveryProtocolError(
-      "delivery claim response did not report accepted ok"
-    );
-  }
-  const capabilities = checkedClaimCapabilities(row.capabilities);
-  checkedOptionalUuidArray(row.event_ids, "event_ids");
-  checkedOptionalArray(row.events, "events");
-  if (!Array.isArray(row.deliveries)) {
-    throw new DeliveryProtocolError(
-      "delivery claim response is missing its deliveries array"
-    );
-  }
-  const deliveries = row.deliveries.map(
-    (item, index) => parseDeliveryRow(item, expected, index, now)
-  );
-  const signalIds = /* @__PURE__ */ new Set();
-  const leaseIds = /* @__PURE__ */ new Set();
-  for (const delivery of deliveries) {
-    if (signalIds.has(delivery.signal.id)) {
-      throw new DeliveryProtocolError(
-        "delivery claim response repeats a signal id"
-      );
-    }
-    signalIds.add(delivery.signal.id);
-    if (leaseIds.has(delivery.leaseId)) {
-      throw new DeliveryProtocolError(
-        "delivery claim response repeats a lease id"
-      );
-    }
-    leaseIds.add(delivery.leaseId);
-  }
-  if (deliveries.length > 1) {
-    throw new DeliveryProtocolError(
-      "delivery claim response returned more than one delivery"
-    );
-  }
-  const pendingDeliveryCount = checkedNonNegativeCount(
-    row.pending_delivery_count,
-    "pending_delivery_count"
-  );
-  const terminalDeliveryFailureCount = checkedNonNegativeCount(
-    row.terminal_delivery_failure_count,
-    "terminal_delivery_failure_count"
-  );
-  if (deliveries.length > pendingDeliveryCount) {
-    throw new DeliveryProtocolError(
-      "delivery claim response returned more deliveries than its pending count"
-    );
-  }
-  return {
-    capabilities,
-    deliveries,
-    pendingDeliveryCount,
-    terminalDeliveryFailureCount
-  };
-}
-function parseAckSuccess(body, expected) {
-  if (!body || typeof body !== "object" || Array.isArray(body)) {
-    throw new DeliveryProtocolError(
-      "delivery acknowledgement response was not an object"
-    );
-  }
-  const row = body;
-  if (row.status !== "accepted" || row.ok !== true) {
-    throw new DeliveryProtocolError(
-      "delivery acknowledgement response did not report accepted ok"
-    );
-  }
-  checkedOptionalUuidArray(row.event_ids, "event_ids");
-  checkedOptionalArray(row.events, "events");
-  if (row.signal_id !== expected.signalId) {
-    throw new DeliveryProtocolError(
-      "delivery acknowledgement response echoed a different signal id"
-    );
-  }
-  if (row.outcome !== expected.outcome) {
-    throw new DeliveryProtocolError(
-      "delivery acknowledgement response echoed a different outcome"
-    );
-  }
-}
-function checkedCommandId(value) {
-  if (typeof value !== "string" || !COMMAND_ID_VALIDATOR_RE.test(value)) {
-    throw new Error(
-      "a delivery command id must be 8..72 characters of [A-Za-z0-9_-]"
-    );
-  }
-  return value;
-}
-function checkedUuidRequest(value, field) {
-  if (!UUID_RE15.test(value)) {
-    throw new Error(`${field} must be a UUID for an agent delivery command`);
-  }
-}
-function assertAckRequest(request) {
-  checkedCommandId(request.commandId);
-  assertAgentToken(request.credential);
-  checkedUuidRequest(request.workspaceId, "workspaceId");
-  checkedUuidRequest(request.signalId, "signalId");
-  checkedUuidRequest(request.leaseId, "leaseId");
-  checkedUuidRequest(request.listenerInstanceId, "listenerInstanceId");
-  if (!DELIVERY_ACK_OUTCOMES.has(request.outcome)) {
-    throw new Error(
-      "a delivery outcome must be replied, observed, queued, expired, or failed_terminal"
-    );
-  }
-  if (request.outcome === "failed_terminal") {
-    if (typeof request.lastErrorCode !== "string" || !FAILED_TERMINAL_CODES_SET.has(request.lastErrorCode)) {
-      throw new Error(
-        "a failed_terminal acknowledgement requires one of provider_refused, local_effect_failed, host_session_failed, credential_unavailable"
-      );
-    }
-  } else if (request.lastErrorCode !== null) {
-    throw new Error(
-      "a non-failed acknowledgement must send lastErrorCode null"
-    );
-  }
-}
-function boundedDeliveryErrorCode(body) {
-  if (!body || typeof body !== "object" || Array.isArray(body)) {
-    return DELIVERY_UNKNOWN_ERROR_CODE;
-  }
-  const error = body.error;
-  if (typeof error === "string" && SERVER_ERROR_CODES_SET.has(error)) {
-    return error;
-  }
-  return DELIVERY_UNKNOWN_ERROR_CODE;
-}
-function refusal(response, text) {
-  let code = DELIVERY_UNKNOWN_ERROR_CODE;
-  try {
-    code = boundedDeliveryErrorCode(JSON.parse(text));
-  } catch {
-  }
-  const retryAfterMs = parseRetryAfterMs(response.headers.get("retry-after"));
-  return new DeliveryHttpError(
-    response.status,
-    code,
-    `delivery command failed (HTTP ${response.status}): ${code}`,
-    retryAfterMs
-  );
-}
-function successBody(response, text, verb) {
-  try {
-    return JSON.parse(text);
-  } catch {
-    throw new DeliveryProtocolError(
-      `${verb} response was not JSON (HTTP ${response.status})`
-    );
-  }
-}
-var DeliveryCommandClient = class {
-  constructor(target2, fetcher = fetch, options = {}) {
-    this.target = target2;
-    this.fetcher = fetcher;
-    this.deadlineMs = options.deadlineMs ?? DELIVERY_REQUEST_TIMEOUT_MS;
-    this.now = options.now ?? Date.now;
-    this.clearTimeoutFn = options.clearTimeout ?? ((timer2) => clearTimeout(timer2));
-    this.createAbortControllerFn = options.createAbortController ?? (() => new AbortController());
-  }
-  target;
-  fetcher;
-  deadlineMs;
-  now;
-  clearTimeoutFn;
-  createAbortControllerFn;
-  async post(request, command2, verb) {
-    if (this.deadlineMs <= 0) {
-      throw new DeliveryTransportError(`${verb} request timed out`);
-    }
-    const deadlineController = this.createAbortControllerFn();
-    let timedOut = false;
-    const signal = deadlineController.signal;
-    let onAbort = () => {
-    };
-    const aborted = new Promise((resolve3) => {
-      onAbort = () => resolve3("timeout");
-      if (signal.aborted) {
-        onAbort();
-      } else {
-        signal.addEventListener("abort", onAbort, { once: true });
-      }
-    });
-    const timer2 = setTimeout(() => {
-      timedOut = true;
-      deadlineController.abort();
-    }, this.deadlineMs);
-    try {
-      if (signal.aborted) {
-        throw new DeliveryTransportError(`${verb} request timed out`);
-      }
-      const read = (async () => {
-        let response;
-        try {
-          response = await this.fetcher(commandEndpoint(this.target), {
-            method: "POST",
-            headers: {
-              authorization: `Bearer ${request.credential}`,
-              apikey: this.target.anonKey,
-              "content-type": "application/json"
-            },
-            body: JSON.stringify({
-              command_id: request.commandId,
-              client_version: CLIENT_PROTOCOL_VERSION,
-              workspace_id: request.workspaceId.toLowerCase(),
-              stream: { kind: "workspace" },
-              command: command2
-            }),
-            signal
-          });
-        } catch (error) {
-          if (signal.aborted || timedOut || error?.name === "AbortError") {
-            return "timeout";
-          }
-          throw new DeliveryTransportError(
-            `${verb} request failed before a response`
-          );
-        }
-        if (signal.aborted || timedOut) return "timeout";
-        let text;
-        try {
-          text = await response.text();
-        } catch {
-          if (signal.aborted || timedOut) return "timeout";
-          throw new DeliveryTransportError(
-            `${verb} response body was interrupted`
-          );
-        }
-        if (signal.aborted || timedOut) return "timeout";
-        return { response, text };
-      })();
-      const raced = await Promise.race([read, aborted]);
-      if (raced === "timeout") {
-        throw new DeliveryTransportError(`${verb} request timed out`);
-      }
-      return raced;
-    } finally {
-      this.clearTimeoutFn(timer2);
-      signal.removeEventListener("abort", onAbort);
-    }
-  }
-  /** Claim the caller's own single unacked direct-signal delivery row. */
-  async claimAgentInbox(request) {
-    checkedCommandId(request.commandId);
-    assertAgentToken(request.credential);
-    checkedUuidRequest(request.workspaceId, "workspaceId");
-    checkedUuidRequest(request.listenerInstanceId, "listenerInstanceId");
-    checkedUuidRequest(request.expectedPrincipalId, "expectedPrincipalId");
-    const { response, text } = await this.post(request, {
-      kind: "claim_agent_inbox",
-      listener_instance_id: request.listenerInstanceId.toLowerCase(),
-      limit: 1
-    }, "delivery claim");
-    if (!response.ok) throw refusal(response, text);
-    const parsed = parseClaimSuccess(
-      successBody(response, text, "delivery claim"),
-      {
-        workspaceId: request.workspaceId.toLowerCase(),
-        principalId: request.expectedPrincipalId.toLowerCase()
-      },
-      this.now
-    );
-    return {
-      httpStatus: response.status,
-      capabilities: parsed.capabilities,
-      deliveries: parsed.deliveries,
-      pendingDeliveryCount: parsed.pendingDeliveryCount,
-      terminalDeliveryFailureCount: parsed.terminalDeliveryFailureCount
-    };
-  }
-  /** Acknowledge one leased delivery with an exact terminal outcome. */
-  async ackAgentDelivery(request) {
-    assertAckRequest(request);
-    const { response, text } = await this.post(request, {
-      kind: "ack_agent_delivery",
-      signal_id: request.signalId.toLowerCase(),
-      lease_id: request.leaseId.toLowerCase(),
-      listener_instance_id: request.listenerInstanceId.toLowerCase(),
-      outcome: request.outcome,
-      last_error_code: request.lastErrorCode
-    }, "delivery acknowledgement");
-    if (!response.ok) throw refusal(response, text);
-    parseAckSuccess(
-      successBody(response, text, "delivery acknowledgement"),
-      {
-        signalId: request.signalId.toLowerCase(),
-        outcome: request.outcome
-      }
-    );
-    return {
-      httpStatus: response.status,
-      signalId: request.signalId.toLowerCase(),
-      outcome: request.outcome
-    };
-  }
-  /** Mark a queued delivery observed only after the interactive hook surfaced it. */
-  async observeQueuedAgentDelivery(request) {
-    checkedCommandId(request.commandId);
-    assertAgentToken(request.credential);
-    checkedUuidRequest(request.workspaceId, "workspaceId");
-    checkedUuidRequest(request.signalId, "signalId");
-    const { response, text } = await this.post(request, {
-      kind: "ack_agent_delivery",
-      signal_id: request.signalId.toLowerCase(),
-      lease_id: null,
-      listener_instance_id: null,
-      outcome: "observed",
-      last_error_code: null
-    }, "delivery observation");
-    if (!response.ok) throw refusal(response, text);
-    parseAckSuccess(
-      successBody(response, text, "delivery observation"),
-      {
-        signalId: request.signalId.toLowerCase(),
-        outcome: "observed"
-      }
-    );
-    return {
-      httpStatus: response.status,
-      signalId: request.signalId.toLowerCase(),
-      outcome: "observed"
-    };
-  }
-};
 
 // src/listener/main-routing.ts
 var import_node_path15 = require("node:path");
@@ -38103,6 +38114,7 @@ var MAX_CONTROL_BYTES = 8 * 1024;
 var CONTROL_TIMEOUT_MS = 2e3;
 var START_LOCK_WAIT_MS = 2e3;
 var START_LOCK_STALE_MS = 1e4;
+var LISTENER_DELIVERY_FAILING_THRESHOLD = 3;
 var ListenerAlreadyRunningError = class extends Error {
   constructor() {
     super("a listener is already running for this agent principal");
@@ -38165,6 +38177,9 @@ var STATUS_ALLOWED_KEYS = /* @__PURE__ */ new Set([
   "lastTerminalDeliveryFailureAt",
   "lastClaimAt",
   "lastAckAt",
+  "lastAckOutcome",
+  "consecutiveAckFailureCount",
+  "lastAckSignalId",
   "routeMode",
   "deferOverChars",
   "pendingForMainCount",
@@ -38204,8 +38219,11 @@ var STATUS_DELIVERY_KEYS = [
   "lastTerminalDeliveryFailureCount",
   "lastTerminalDeliveryFailureAt",
   "lastClaimAt",
-  "lastAckAt"
+  "lastAckAt",
+  "lastAckOutcome",
+  "consecutiveAckFailureCount"
 ];
+var deliveryOutcomes = DELIVERY_ACK_OUTCOMES;
 function parseStatus(raw, rejectUnknownKeys = false) {
   let value;
   try {
@@ -38229,7 +38247,7 @@ function parseStatus(raw, rejectUnknownKeys = false) {
   const nullableCount = (candidate) => candidate === null || typeof candidate === "number" && Number.isSafeInteger(candidate) && candidate >= 0;
   const nullableTimestamp3 = (candidate) => candidate === null || typeof candidate === "string" && Number.isFinite(Date.parse(candidate));
   const readHealth = row.readHealth === void 0 ? void 0 : parseListenerReadHealth(row.readHealth, rejectUnknownKeys);
-  if (row.version !== 1 || typeof row.instanceId !== "string" || !UUID_RE18.test(row.instanceId) || row.provider !== "grok" && row.provider !== "opencode" && row.provider !== "claude" && row.provider !== "codex" || typeof row.profileId !== "string" || typeof row.workspaceId !== "string" || !UUID_RE18.test(row.workspaceId) || typeof row.principalId !== "string" || !UUID_RE18.test(row.principalId) || !Number.isSafeInteger(row.pid) || row.pid < 1 || typeof row.state !== "string" || !["starting", "ready", "stopping", "stopped", "failed"].includes(row.state) || typeof row.startedAt !== "string" || !Number.isFinite(Date.parse(row.startedAt)) || !(row.readyAt === null || typeof row.readyAt === "string" && Number.isFinite(Date.parse(row.readyAt))) || typeof row.updatedAt !== "string" || !Number.isFinite(Date.parse(row.updatedAt)) || !(row.stoppedAt === null || typeof row.stoppedAt === "string" && Number.isFinite(Date.parse(row.stoppedAt))) || !nullableUuid3(row.lastSignalId) || !(row.lastErrorCode === null || typeof row.lastErrorCode === "string" && /^[a-z0-9_-]{1,96}$/.test(row.lastErrorCode)) || !(row.lastErrorDetail === void 0 || row.lastErrorDetail === null || typeof row.lastErrorDetail === "string" && row.lastErrorDetail.length > 0 && row.lastErrorDetail.length <= 2048 && !/swm_(?:agt|inv|cap)_/i.test(row.lastErrorDetail)) || !(row.lastErrorReasonCode === void 0 || row.lastErrorReasonCode === null || typeof row.lastErrorReasonCode === "string" && /^[a-z0-9_-]{1,96}$/.test(row.lastErrorReasonCode)) || !(row.providerExecutable === void 0 || row.providerExecutable === null || typeof row.providerExecutable === "string" && (0, import_node_path16.isAbsolute)(row.providerExecutable)) || !(row.providerVersion === void 0 || row.providerVersion === null || typeof row.providerVersion === "string" && SEMVER_RE2.test(row.providerVersion)) || !(row.providerLastMeasuredVersion === void 0 || row.providerLastMeasuredVersion === null || typeof row.providerLastMeasuredVersion === "string" && SEMVER_RE2.test(row.providerLastMeasuredVersion)) || !(row.providerBundledAgentSdkVersion === void 0 || row.providerBundledAgentSdkVersion === null || typeof row.providerBundledAgentSdkVersion === "string" && SEMVER_RE2.test(row.providerBundledAgentSdkVersion)) || !(row.providerBundledClaudeCodeVersion === void 0 || row.providerBundledClaudeCodeVersion === null || typeof row.providerBundledClaudeCodeVersion === "string" && SEMVER_RE2.test(row.providerBundledClaudeCodeVersion)) || !(row.providerMinimumRequiredVersion === void 0 || row.providerMinimumRequiredVersion === null || typeof row.providerMinimumRequiredVersion === "string" && SEMVER_RE2.test(row.providerMinimumRequiredVersion)) || !(row.cswarmVersion === void 0 || row.cswarmVersion === null || typeof row.cswarmVersion === "string" && SEMVER_RE2.test(row.cswarmVersion)) || (row.providerVersion === null || row.providerVersion === void 0) !== (row.providerLastMeasuredVersion === null || row.providerLastMeasuredVersion === void 0) || !(row.lastWorkerStderrTail === void 0 || row.lastWorkerStderrTail === null || typeof row.lastWorkerStderrTail === "string" && row.lastWorkerStderrTail.length > 0 && row.lastWorkerStderrTail.length <= 2048 && !/swm_(?:agt|inv|cap)_/i.test(row.lastWorkerStderrTail)) || typeof row.logPath !== "string" || !(0, import_node_path16.isAbsolute)(row.logPath) || !(row.deliveryMode === void 0 || row.deliveryMode === null || typeof row.deliveryMode === "string" && STATUS_DELIVERY_MODES.has(row.deliveryMode)) || !(row.pendingDeliveryCount === void 0 || nullableCount(row.pendingDeliveryCount)) || !(row.lastTerminalDeliveryFailureCount === void 0 || nullableCount(row.lastTerminalDeliveryFailureCount)) || !(row.lastTerminalDeliveryFailureAt === void 0 || nullableTimestamp3(row.lastTerminalDeliveryFailureAt)) || !(row.lastClaimAt === void 0 || nullableTimestamp3(row.lastClaimAt)) || !(row.lastAckAt === void 0 || nullableTimestamp3(row.lastAckAt)) || !(row.routeMode === void 0 || row.routeMode === "worker" || row.routeMode === "main" || row.routeMode === "split") || !(row.deferOverChars === void 0 || row.deferOverChars === null || typeof row.deferOverChars === "number" && Number.isSafeInteger(row.deferOverChars) && row.deferOverChars >= 1 && row.deferOverChars <= 1e4) || !(row.pendingForMainCount === void 0 || typeof row.pendingForMainCount === "number" && Number.isSafeInteger(row.pendingForMainCount) && row.pendingForMainCount >= 0) || !(row.droppedForMainCount === void 0 || typeof row.droppedForMainCount === "number" && Number.isSafeInteger(row.droppedForMainCount) && row.droppedForMainCount >= 0) || readHealth === null || !(row.connectionsOpened === void 0 || typeof row.connectionsOpened === "number" && Number.isSafeInteger(row.connectionsOpened) && row.connectionsOpened >= 0) || !(row.connectionReuseRatio === void 0 || typeof row.connectionReuseRatio === "number" && Number.isFinite(row.connectionReuseRatio) && row.connectionReuseRatio >= 0) || !(row.activityPublishFailures === void 0 || typeof row.activityPublishFailures === "number" && Number.isSafeInteger(row.activityPublishFailures) && row.activityPublishFailures >= 0) || !(row.activityLastErrorCode === void 0 || row.activityLastErrorCode === null || typeof row.activityLastErrorCode === "string" && STATUS_ACTIVITY_ERROR_CODES.has(
+  if (row.version !== 1 || typeof row.instanceId !== "string" || !UUID_RE18.test(row.instanceId) || row.provider !== "grok" && row.provider !== "opencode" && row.provider !== "claude" && row.provider !== "codex" || typeof row.profileId !== "string" || typeof row.workspaceId !== "string" || !UUID_RE18.test(row.workspaceId) || typeof row.principalId !== "string" || !UUID_RE18.test(row.principalId) || !Number.isSafeInteger(row.pid) || row.pid < 1 || typeof row.state !== "string" || !["starting", "ready", "stopping", "stopped", "failed"].includes(row.state) || typeof row.startedAt !== "string" || !Number.isFinite(Date.parse(row.startedAt)) || !(row.readyAt === null || typeof row.readyAt === "string" && Number.isFinite(Date.parse(row.readyAt))) || typeof row.updatedAt !== "string" || !Number.isFinite(Date.parse(row.updatedAt)) || !(row.stoppedAt === null || typeof row.stoppedAt === "string" && Number.isFinite(Date.parse(row.stoppedAt))) || !nullableUuid3(row.lastSignalId) || !(row.lastErrorCode === null || typeof row.lastErrorCode === "string" && /^[a-z0-9_-]{1,96}$/.test(row.lastErrorCode)) || !(row.lastErrorDetail === void 0 || row.lastErrorDetail === null || typeof row.lastErrorDetail === "string" && row.lastErrorDetail.length > 0 && row.lastErrorDetail.length <= 2048 && !/swm_(?:agt|inv|cap)_/i.test(row.lastErrorDetail)) || !(row.lastErrorReasonCode === void 0 || row.lastErrorReasonCode === null || typeof row.lastErrorReasonCode === "string" && /^[a-z0-9_-]{1,96}$/.test(row.lastErrorReasonCode)) || !(row.providerExecutable === void 0 || row.providerExecutable === null || typeof row.providerExecutable === "string" && (0, import_node_path16.isAbsolute)(row.providerExecutable)) || !(row.providerVersion === void 0 || row.providerVersion === null || typeof row.providerVersion === "string" && SEMVER_RE2.test(row.providerVersion)) || !(row.providerLastMeasuredVersion === void 0 || row.providerLastMeasuredVersion === null || typeof row.providerLastMeasuredVersion === "string" && SEMVER_RE2.test(row.providerLastMeasuredVersion)) || !(row.providerBundledAgentSdkVersion === void 0 || row.providerBundledAgentSdkVersion === null || typeof row.providerBundledAgentSdkVersion === "string" && SEMVER_RE2.test(row.providerBundledAgentSdkVersion)) || !(row.providerBundledClaudeCodeVersion === void 0 || row.providerBundledClaudeCodeVersion === null || typeof row.providerBundledClaudeCodeVersion === "string" && SEMVER_RE2.test(row.providerBundledClaudeCodeVersion)) || !(row.providerMinimumRequiredVersion === void 0 || row.providerMinimumRequiredVersion === null || typeof row.providerMinimumRequiredVersion === "string" && SEMVER_RE2.test(row.providerMinimumRequiredVersion)) || !(row.cswarmVersion === void 0 || row.cswarmVersion === null || typeof row.cswarmVersion === "string" && SEMVER_RE2.test(row.cswarmVersion)) || (row.providerVersion === null || row.providerVersion === void 0) !== (row.providerLastMeasuredVersion === null || row.providerLastMeasuredVersion === void 0) || !(row.lastWorkerStderrTail === void 0 || row.lastWorkerStderrTail === null || typeof row.lastWorkerStderrTail === "string" && row.lastWorkerStderrTail.length > 0 && row.lastWorkerStderrTail.length <= 2048 && !/swm_(?:agt|inv|cap)_/i.test(row.lastWorkerStderrTail)) || typeof row.logPath !== "string" || !(0, import_node_path16.isAbsolute)(row.logPath) || !(row.deliveryMode === void 0 || row.deliveryMode === null || typeof row.deliveryMode === "string" && STATUS_DELIVERY_MODES.has(row.deliveryMode)) || !(row.pendingDeliveryCount === void 0 || nullableCount(row.pendingDeliveryCount)) || !(row.lastTerminalDeliveryFailureCount === void 0 || nullableCount(row.lastTerminalDeliveryFailureCount)) || !(row.lastTerminalDeliveryFailureAt === void 0 || nullableTimestamp3(row.lastTerminalDeliveryFailureAt)) || !(row.lastClaimAt === void 0 || nullableTimestamp3(row.lastClaimAt)) || !(row.lastAckAt === void 0 || nullableTimestamp3(row.lastAckAt)) || !(row.lastAckOutcome === void 0 || row.lastAckOutcome === null || typeof row.lastAckOutcome === "string" && deliveryOutcomes.has(row.lastAckOutcome)) || !(row.consecutiveAckFailureCount === void 0 || nullableCount(row.consecutiveAckFailureCount)) || !(row.lastAckSignalId === void 0 || row.lastAckSignalId === null || typeof row.lastAckSignalId === "string" && UUID_RE18.test(row.lastAckSignalId)) || !(row.routeMode === void 0 || row.routeMode === "worker" || row.routeMode === "main" || row.routeMode === "split") || !(row.deferOverChars === void 0 || row.deferOverChars === null || typeof row.deferOverChars === "number" && Number.isSafeInteger(row.deferOverChars) && row.deferOverChars >= 1 && row.deferOverChars <= 1e4) || !(row.pendingForMainCount === void 0 || typeof row.pendingForMainCount === "number" && Number.isSafeInteger(row.pendingForMainCount) && row.pendingForMainCount >= 0) || !(row.droppedForMainCount === void 0 || typeof row.droppedForMainCount === "number" && Number.isSafeInteger(row.droppedForMainCount) && row.droppedForMainCount >= 0) || readHealth === null || !(row.connectionsOpened === void 0 || typeof row.connectionsOpened === "number" && Number.isSafeInteger(row.connectionsOpened) && row.connectionsOpened >= 0) || !(row.connectionReuseRatio === void 0 || typeof row.connectionReuseRatio === "number" && Number.isFinite(row.connectionReuseRatio) && row.connectionReuseRatio >= 0) || !(row.activityPublishFailures === void 0 || typeof row.activityPublishFailures === "number" && Number.isSafeInteger(row.activityPublishFailures) && row.activityPublishFailures >= 0) || !(row.activityLastErrorCode === void 0 || row.activityLastErrorCode === null || typeof row.activityLastErrorCode === "string" && STATUS_ACTIVITY_ERROR_CODES.has(
     row.activityLastErrorCode
   ))) {
     throw new Error("stored listener status is malformed");
@@ -38250,6 +38268,11 @@ function parseStatus(raw, rejectUnknownKeys = false) {
     lastTerminalDeliveryFailureAt: row.lastTerminalDeliveryFailureAt ?? null,
     lastClaimAt: row.lastClaimAt ?? null,
     lastAckAt: row.lastAckAt ?? null,
+    lastAckOutcome: row.lastAckOutcome ?? null,
+    consecutiveAckFailureCount: row.consecutiveAckFailureCount ?? null,
+    // Optional key: present only when the file carried it, so a status written
+    // without it round-trips byte-for-byte (the routeMode pattern).
+    ...row.lastAckSignalId === void 0 ? {} : { lastAckSignalId: row.lastAckSignalId ?? null },
     lastErrorDetail: row.lastErrorDetail ?? null,
     lastWorkerStderrTail: row.lastWorkerStderrTail ?? null,
     providerVersion: row.providerVersion ?? null,
@@ -38329,13 +38352,6 @@ async function appendListenerEvent(paths, event) {
     "dropped_count"
   ]);
   const deliveryModes = /* @__PURE__ */ new Set(["durable_claim", "cursor_fallback"]);
-  const deliveryOutcomes = /* @__PURE__ */ new Set([
-    "replied",
-    "observed",
-    "queued",
-    "expired",
-    "failed_terminal"
-  ]);
   const routeModes = /* @__PURE__ */ new Set(["worker", "main", "split"]);
   const routeDecisions = /* @__PURE__ */ new Set(["worker", "main"]);
   for (const [key2, value] of Object.entries(event)) {
@@ -38745,6 +38761,7 @@ async function runListenerSupervisor(options) {
   const startedAt = iso2(now);
   const controller = new AbortController();
   const proposedInstanceId = (0, import_node_crypto20.randomUUID)();
+  const carried = await readListenerStatus(options.paths).catch(() => null);
   let status = {
     version: 1,
     instanceId: proposedInstanceId,
@@ -38760,7 +38777,7 @@ async function runListenerSupervisor(options) {
     readyAt: null,
     updatedAt: startedAt,
     stoppedAt: null,
-    lastSignalId: null,
+    lastSignalId: carried?.lastSignalId ?? null,
     lastErrorCode: null,
     lastErrorDetail: null,
     lastErrorReasonCode: null,
@@ -38776,7 +38793,14 @@ async function runListenerSupervisor(options) {
     lastTerminalDeliveryFailureCount: null,
     lastTerminalDeliveryFailureAt: null,
     lastClaimAt: null,
-    lastAckAt: null,
+    /* The ack record is carried WHOLE. Carrying the outcome and the run without
+       their timestamp and signal id rendered a screen whose own sentences
+       disagreed -- "the newest delivery acknowledgement was replied" above
+       "No signal has been handled yet." */
+    lastAckAt: carried?.lastAckAt ?? null,
+    lastAckOutcome: carried?.lastAckOutcome ?? null,
+    consecutiveAckFailureCount: carried?.consecutiveAckFailureCount ?? null,
+    lastAckSignalId: carried?.lastAckSignalId ?? null,
     routeMode: options.routeMode ?? "worker",
     deferOverChars: options.deferOverChars ?? null,
     pendingForMainCount: 0,
@@ -38857,6 +38881,17 @@ async function runListenerSupervisor(options) {
       const versionNotice = options.getProviderVersionNotice?.() ?? null;
       transition("ready", {
         readyAt: event.ts,
+        // Deliberately does NOT clear consecutiveAckFailureCount. Reaching
+        // `ready` is not provider proof: the permission canary is its own
+        // prompt, and a provider can answer it and fail every real one --
+        // tests/listener-cli-process.test.ts builds such a child, whose
+        // `failPrompts` trips only non-canary prompts (that test does not
+        // restart it, so it does not by itself exercise this path). Clearing
+        // the run here while `lastAckOutcome` still held a stale `observed`
+        // put `HANDLED: yes` back on the incident screen after any restartable
+        // blip. Only a `replied` ack clears the run; the pin is in
+        // tests/listener-runtime.test.ts, which fires `ready` after the
+        // measured incident and asserts the run survives it.
         lastErrorCode: null,
         lastErrorDetail: null,
         lastErrorReasonCode: null,
@@ -39041,9 +39076,14 @@ async function runListenerSupervisor(options) {
       return;
     }
     if (event.type === "delivery_ack") {
+      const failed = event.outcome === "failed_terminal";
+      const providerProven = DELIVERY_PROVIDER_PROVEN_OUTCOMES.has(event.outcome);
       status = {
         ...status,
         lastAckAt: event.ts,
+        lastAckOutcome: event.outcome,
+        lastAckSignalId: event.signalId,
+        consecutiveAckFailureCount: failed ? (status.consecutiveAckFailureCount ?? 0) + 1 : providerProven ? 0 : status.consecutiveAckFailureCount,
         pendingDeliveryCount: null,
         lastSignalId: event.signalId,
         updatedAt: event.ts
@@ -41989,8 +42029,8 @@ var BOOLEAN_FLAGS = /* @__PURE__ */ new Set([
 ]);
 var UUID_RE23 = /^[0-9a-f]{8}-[0-9a-f]{4}-[1-8][0-9a-f]{3}-[89ab][0-9a-f]{3}-[0-9a-f]{12}$/i;
 function packageVersion() {
-  if ("0.1.50".length > 0) {
-    return "0.1.50";
+  if ("0.1.51".length > 0) {
+    return "0.1.51";
   }
   try {
     const value = JSON.parse(
@@ -45027,7 +45067,9 @@ function listenerAttendanceState(status, evidence) {
   const connected = status.state === "ready";
   const attendanceState = routeMode === "worker" ? "not_required" : pending > 0 ? "unattended" : evidence.hookSurfaceAdvanced ? "attended" : "unproven";
   const attended = attendanceState === "attended" ? true : attendanceState === "unattended" ? false : null;
-  const handled = pending > 0 ? false : routeMode === "worker" && status.lastAckAt !== null ? true : null;
+  const lastAckOutcome = status.lastAckOutcome ?? null;
+  const deliveryFailing = (status.consecutiveAckFailureCount ?? 0) >= LISTENER_DELIVERY_FAILING_THRESHOLD;
+  const handled = pending > 0 ? false : routeMode !== "worker" || lastAckOutcome === null ? null : deliveryFailing ? false : DELIVERY_HANDLED_OUTCOMES.has(lastAckOutcome) ? true : lastAckOutcome === "failed_terminal" ? false : null;
   return {
     connected,
     attended,
@@ -45068,10 +45110,36 @@ function listenerLapseNotices(status, summary) {
   }
   if (summary.throughputLapseHours.length > 0) {
     const latest = summary.throughputLapseHours.at(-1);
+    const pending = status.pendingDeliveryCount;
+    const pendingClause = pending === null ? " No pending count was recorded." : ` Pending deliveries now: ${pending}.`;
+    const lapseRetries = summary.retryHours.find((hour) => hour.hourStart === latest.hourStart)?.retries ?? 0;
     notices.push({
       code: "listener_claim_throughput_lapse",
-      message: `Claim throughput fell below 0.50 for the full hour at ${latest.hourStart}: ${latest.claims}/${Math.round(latest.expectedClaims)} expected (${latest.ratio.toFixed(3)}).`,
-      nextStep: "This host is starving the listener \u2014 check load/memory pressure (sysctl kern.memorystatus_vm_pressure_level), or move the listener."
+      message: `Claim throughput fell below ${LISTENER_THROUGHPUT_LAPSE_RATIO.toFixed(2)} for the full hour at ${latest.hourStart}: ${latest.claims}/${Math.round(latest.expectedClaims)} expected (${latest.ratio.toFixed(3)}).${pendingClause}`,
+      nextStep: lapseRetries > 0 ? `Reads also failed in that hour: ${lapseRetries} ${lapseRetries === 1 ? "retry" : "retries"} recorded. Read those failures first; any notice above names the code. A retry does not say where the fault was \u2014 host_ports_exhausted is a retry AND a host fault.` : "No read retries were recorded in that hour, so the reads were not FAILING. That does not settle whether they were SLOW: a read that succeeds slowly records nothing here, and a claim retry sleeps in the claim loop without recording either. This notice measured nothing else about that hour, and nothing about the host \u2014 read any other notice above before looking further. Cheapest checks first: load average (uptime), process count, memory pressure (sysctl kern.memorystatus_vm_pressure_level, 1 is normal), sockets (netstat -an | grep -c TIME_WAIT)."
+    });
+  }
+  const consecutive = status.consecutiveAckFailureCount ?? 0;
+  if (consecutive >= LISTENER_DELIVERY_FAILING_THRESHOLD) {
+    notices.push({
+      code: "listener_delivery_failing",
+      message: (
+        // Do not assert "messages are not being answered": a notes-only listener
+        // acks `observed` and is fine. State only what the run records.
+        `The listener recorded ${consecutive} terminal delivery ${consecutive === 1 ? "failure" : "failures"} with no reply since. The newest acknowledgement was ${status.lastAckOutcome ?? "not recorded"} at ${status.lastAckAt ?? "an unknown time"}. The most recent listener error code is ${status.lastErrorCode ?? "not recorded"}.`
+      ),
+      nextStep: (
+        // `failed_terminal` covers a refusing-but-healthy provider, a dead host
+        // session, and a local post failure, and the run alone cannot tell them
+        // apart — so name the check, not a diagnosis. The command needs the
+        // credential on stdin, and the listener is still running here.
+        // `stop` takes --principal-id and needs no credential, so it must not
+        // read stdin: one pipe cannot feed both halves of a chained command.
+        // `listen stop` returns while the state is still `stopping` (D-074), and
+        // `listen start` refuses a listener that is stopping, so the two verbs
+        // race unless the confirm step sits between them.
+        `Read the failure codes in ${status.logPath}, then stop the listener with: cswarm listen stop --workspace-id ${status.workspaceId} --principal-id ${status.principalId}. Wait until it is no longer running -- state stopped or failed, not stopping -- confirming with: cswarm listen status --workspace-id ${status.workspaceId} --principal-id ${status.principalId}. Then restart it by piping the same agent credential into: ${listenerRestartCommand(status)}`
+      )
     });
   }
   return notices;
@@ -45169,6 +45237,9 @@ function listenerStatusJson(status, permissionMode, evidence = {
     lastTerminalDeliveryFailureAt: status.lastTerminalDeliveryFailureAt ?? null,
     lastClaimAt: status.lastClaimAt ?? null,
     lastAckAt: status.lastAckAt ?? null,
+    lastAckOutcome: status.lastAckOutcome ?? null,
+    consecutiveAckFailureCount: status.consecutiveAckFailureCount ?? null,
+    lastAckSignalId: status.lastAckSignalId ?? null,
     routeMode: status.routeMode ?? "worker",
     deferOverChars: status.deferOverChars ?? null,
     pendingForMainCount: status.pendingForMainCount ?? 0,
@@ -45194,6 +45265,7 @@ function renderListenerStatus(status, evidence = {
   hookSurfaceAdvanced: false
 }, nowMs = Date.now(), installed = null) {
   const routeMode = status.routeMode ?? "worker";
+  const deliveryFailureRun = status.consecutiveAckFailureCount ?? 0;
   const pendingForMainCount = status.pendingForMainCount ?? 0;
   const droppedForMainCount = status.droppedForMainCount ?? 0;
   const unattendedCount = `${pendingForMainCount} ${pendingForMainCount === 1 ? "message is" : "messages are"} unattended`;
@@ -45205,7 +45277,7 @@ function renderListenerStatus(status, evidence = {
     lapseNotices.length > 0 ? `Listener LAPSE for agent ${status.principalId}: ${lapseNotices.map((notice) => notice.code).join(", ")}.` : pendingForMainCount > 0 ? `Listener WARNING for agent ${status.principalId}: ${unattendedCount}.` : `Listener ${status.state} for agent ${status.principalId}.`,
     `CONNECTED: ${attendance.connected ? "yes" : "no"}. Transport state is ${status.state}.`,
     `ATTENDED: ${attendance.attendanceState === "attended" ? "yes. The session hook has surfaced messages on this host" : attendance.attendanceState === "unattended" ? "no. The main-session queue is not draining" : attendance.attendanceState === "not_required" ? "not required for the worker route" : "not yet proven on this host"}.`,
-    `HANDLED: ${attendance.handledState === "handled" ? "yes. A delivery acknowledgement is recorded" : attendance.handledState === "not_handled" ? "no. Queued messages have not reached the session hook" : "not yet measured"}.`,
+    `HANDLED: ${attendance.handledState === "handled" ? `yes. The newest delivery acknowledgement was ${status.lastAckOutcome}` : attendance.handledState === "not_handled" ? routeMode === "worker" ? deliveryFailureRun >= LISTENER_DELIVERY_FAILING_THRESHOLD ? `no. ${deliveryFailureRun} ${deliveryFailureRun === 1 ? "delivery has" : "deliveries have"} failed since the last reply; the newest delivery acknowledgement was ${status.lastAckOutcome ?? "not recorded"}${status.lastErrorCode ? ` (${status.lastErrorCode})` : ""}` : `no. The newest delivery acknowledgement was ${status.lastAckOutcome ?? "not recorded"}${status.lastErrorCode ? ` (${status.lastErrorCode})` : ""}` : "no. Queued messages have not reached the session hook" : "not yet measured"}.`,
     `Provider: ${status.provider}; process: ${status.pid}; started: ${status.startedAt}.`,
     `Provider executable: ${status.providerExecutable ?? "not measured"}.`,
     `Connections opened: ${status.connectionsOpened ?? "not measured"}.`,
@@ -45213,7 +45285,7 @@ function renderListenerStatus(status, evidence = {
     ...status.activityPublishFailures !== void 0 && status.activityPublishFailures > 0 ? [`Activity publish failures: ${status.activityPublishFailures}.`] : [],
     ...status.activityLastErrorCode ? [`Last activity publish error code: ${status.activityLastErrorCode}.`] : [],
     status.readyAt ? `Ready since: ${status.readyAt}.` : "Not ready yet.",
-    status.lastSignalId ? pendingForMainCount > 0 ? `Last claimed and queued signal: ${status.lastSignalId}. It is not handled yet.` : routeMode === "worker" ? `Last handled signal: ${status.lastSignalId}.` : `Last listener signal: ${status.lastSignalId}. Local status does not prove its final observed receipt.` : "No signal has been handled yet.",
+    status.lastSignalId ? pendingForMainCount > 0 ? `Last claimed and queued signal: ${status.lastSignalId}. It is not handled yet.` : routeMode === "worker" ? status.lastAckAt === null ? `Last listener signal: ${status.lastSignalId}. No delivery acknowledgement is recorded.` : status.lastAckOutcome === null ? `Last listener signal: ${status.lastSignalId}. An acknowledgement was recorded at ${status.lastAckAt}; its outcome was not recorded.` : !status.lastAckSignalId ? `Last listener signal: ${status.lastSignalId}. The newest acknowledgement was ${status.lastAckOutcome}; which signal it belonged to was not recorded.` : status.lastAckOutcome === "failed_terminal" ? `Last failed delivery signal: ${status.lastAckSignalId}.` : DELIVERY_HANDLED_OUTCOMES.has(status.lastAckOutcome) && deliveryFailureRun < LISTENER_DELIVERY_FAILING_THRESHOLD ? `Last handled signal: ${status.lastAckSignalId}.` : `Last acknowledged signal: ${status.lastAckSignalId}. Its outcome was ${status.lastAckOutcome}.` : `Last listener signal: ${status.lastSignalId}. Local status does not prove its final observed receipt.` : "No signal has been handled yet.",
     status.lastErrorCode ? `Last status code: ${status.lastErrorCode}.` : "No listener process error is recorded.",
     readHealth.currentEpisodeStartedAt === null ? "Current read retry episode: none." : `Current read retry episode: ${readHealth.currentEpisodeAttempts} attempt${readHealth.currentEpisodeAttempts === 1 ? "" : "s"} since ${readHealth.currentEpisodeStartedAt}; reason ${readHealth.currentReasonCode}${readHealth.currentHttpStatus === null ? "" : ` (HTTP ${readHealth.currentHttpStatus})`}${readHealth.currentErrorConstructor === null ? "" : ` (${readHealth.currentErrorConstructor})`}.`,
     `Read retry episodes in the last 24h: ${readSummary.episodesLast24h}; retries in the rolling hour: ${readSummary.retriesLastHour}.`,
@@ -45319,7 +45391,7 @@ function renderListenerStatus(status, evidence = {
   }
   if (status.lastTerminalDeliveryFailureCount !== null && status.lastTerminalDeliveryFailureCount > 0) {
     lines.push(
-      `The last claim reported ${status.lastTerminalDeliveryFailureCount} terminal delivery failures; they remain recorded, and the listener will keep receiving.`
+      `The last claim reported ${status.lastTerminalDeliveryFailureCount} ${status.lastTerminalDeliveryFailureCount === 1 ? "delivery the service gave up on because this listener never acknowledged it. It remains" : "deliveries the service gave up on because this listener never acknowledged them. They remain"} recorded, and the listener will keep receiving.`
     );
   }
   if (status.state === "stopping" || status.state === "starting") {
