@@ -175,7 +175,9 @@ export function brainLinkSegments(
  */
 export type BrainLinkOutcome =
   | { kind: "open"; topic: string }
-  | { kind: "missing"; topic: string; message: string };
+  | { kind: "missing"; topic: string; message: string }
+  /** The click belongs to a workspace the reader has left. Render nothing, say nothing. */
+  | { kind: "abandoned"; topic: string };
 
 /**
  * Decides a click against the CURRENT topic list, not the one the control was rendered from.

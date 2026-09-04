@@ -307,6 +307,15 @@ test("the dashboard runs the pass after the sanitizer and opens the Brain panel"
     /const listIsFresh = await refreshBrainTopics\(true\);[\s\S]{0,600}?brainLinkClickOutcome\(/u,
     "a click must re-read the topic list before it decides what to open",
   );
+  /* And it must hand that value over as the THIRD argument. Reading the list freshly and then
+     passing a constant in its place would leave every assertion above green while the decision
+     ran on a claim nothing established -- the same shape of hole as the fourth argument. Both
+     positions are pinned by ONE match so their ORDER is pinned too, not just their presence. */
+  assert.match(
+    clickBody,
+    /brainLinkClickOutcome\(\s*\n\s*topic,\s*\n\s*brainTopicNames\(\),\s*\n\s*listIsFresh,\s*\n\s*version === requestVersion && workspaceId === activeWorkspaceId,\s*\n\s*\);/u,
+    "listIsFresh must be the third argument and the context comparison the fourth",
+  );
   /*
    * CAPTURE BEFORE THE AWAIT, COMPARE AFTER -- the shape every other continuation in this file
    * uses, and the one openBrainTopic did not have. This is the WEAK form of the control and it is
