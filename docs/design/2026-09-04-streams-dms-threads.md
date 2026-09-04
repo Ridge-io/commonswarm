@@ -1388,8 +1388,8 @@ given shell access and asked to verify every citation, break the migration/RLS d
 
 | Arm | Family | Verdict on the draft | Raw output |
 |---|---|---|---|
-| 1 | Grok (`grok -p`) | **FAIL** | `ARM-GROK.txt` (uncommitted, `scratchpad/spec-streams/`) |
-| 2 | Gemini (`agy --model gemini-3.1-pro-high`) | **FAIL** | `ARM-GEMINI.txt` (same) |
+| 1 | Grok (`grok -p`) | **FAIL** | `docs/evidence/2026-09-04-streams-spec-review/ARM-GROK.txt` |
+| 2 | Gemini (`agy --model gemini-3.1-pro-high`) | **FAIL** | `docs/evidence/2026-09-04-streams-spec-review/ARM-GEMINI.txt` |
 
 Both verdicts were **FAIL on the draft**, and both were right. This section records what changed.
 The spec above is the corrected version; the defects are kept in place as worked examples rather
