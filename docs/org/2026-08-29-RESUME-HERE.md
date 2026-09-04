@@ -1679,3 +1679,16 @@ ae80338`; its arm verdicts carry over only if the diff shasum is unchanged, and 
 
 Rule added to every lane brief: commit as `yulanbot@gmail.com`, never `--author`, and run
 `scripts/check-commit-identity.sh origin/main..HEAD` before reporting a SHA.
+
+## Addendum 2026-09-04 23:2x UTC — brain-links-types LANDED (merge 93faba2)
+
+`lane/brain-links-types` tip `0666a5e` (code+tests `ac20f7b`) merged as `93faba2`. Both arms PASS;
+Grok ran both mutations itself against the real files. Gates on the merge commit after build: tsc
+clean, npm test 740/740, site 322/323 (1 skip), identity guard OK. Evidence:
+`docs/evidence/2026-09-04-brain-links-arms/round8-types/`. Worktree and branch removed; the PM is
+released. Brain-links is now complete in the repo; the site deploy is still held on npm 0.1.51.
+
+How the operator-address author happened, measured by the PM: an explicit
+`git -c user.email=tom@chartingalpha.com commit` it typed, reading the session's userEmail note as
+git authorship. Not `--author`, not config, not env. Rule for every lane brief: plain `git commit`,
+no identity flags; run `scripts/check-commit-identity.sh origin/main..HEAD` before reporting a SHA.
