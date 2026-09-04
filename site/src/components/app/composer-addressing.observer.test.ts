@@ -21,7 +21,22 @@ type ComposerMeasurement = {
     selectedValue: string;
     status: string;
   };
-  replacement: { chipCount: number; chipText: string; selectedValue: string };
+  /** A second agent is ADDED, not swapped in: the address grows to two chips. */
+  secondAgent: {
+    chipCount: number;
+    chipTexts: string[];
+    selectedValue: string;
+    status: string;
+  };
+  /** Sending to two agents posts one signal each, so the feed gains two rows. */
+  fanOut: { added: number; targets: string[] };
+  /** Removing the first chip promotes the next agent instead of clearing the address. */
+  removeFirst: {
+    chipCount: number;
+    chipTexts: string[];
+    selectedValue: string;
+    status: string;
+  };
   selectSync: { chipCount: number; chipText: string };
   plainEnter: { prevented: boolean; submitted: boolean };
   shiftEnter: { insertedNewline: boolean; prevented: boolean; submitted: boolean };
@@ -182,10 +197,41 @@ const frameScript = `<script>
       status: status.textContent ?? "",
     };
     await chooseMention("lum");
-    const replacement = {
+    const secondAgent = {
       chipCount: chips().length,
-      chipText: chips()[0]?.textContent ?? "",
+      chipTexts: chips().map((chip) => chip.textContent ?? ""),
       selectedValue: select.value,
+      status: status.textContent ?? "",
+    };
+    /* Send with both agents addressed. One signal per agent is the whole feature, so the row
+       count and the two targets are the measurement that would fail if the loop posted once. */
+    const beforeFanOut = list.children.length;
+    input.value = "one question, two agents";
+    input.setSelectionRange(input.value.length, input.value.length);
+    input.dispatchEvent(new view.InputEvent("input", { bubbles: true, inputType: "insertText" }));
+    input.dispatchEvent(new view.KeyboardEvent("keydown", {
+      bubbles: true,
+      cancelable: true,
+      key: "Enter",
+    }));
+    for (let attempt = 0; attempt < 40 && list.children.length < beforeFanOut + 2; attempt += 1) {
+      await new Promise((resolve) => view.setTimeout(resolve, 10));
+    }
+    const fanOut = {
+      added: list.children.length - beforeFanOut,
+      targets: [...list.children]
+        .slice(beforeFanOut)
+        .map((row) => row.querySelector(".dashboard__message-target")?.textContent?.trim() ?? "")
+        .sort(),
+    };
+    /* Removing the FIRST of two chips must promote the second, not clear the row. */
+    chips()[0]?.querySelector(".dashboard__mention-remove")?.click();
+    await new Promise((resolve) => view.setTimeout(resolve, 0));
+    const removeFirst = {
+      chipCount: chips().length,
+      chipTexts: chips().map((chip) => chip.textContent ?? ""),
+      selectedValue: select.value,
+      status: status.textContent ?? "",
     };
     select.value = "person:sample-owner";
     select.dispatchEvent(new view.Event("change", { bubbles: true }));
@@ -239,7 +285,9 @@ const frameScript = `<script>
     document.documentElement.dataset.composerMeasurement = btoa(unescape(encodeURIComponent(JSON.stringify({
       broadcast,
       mention,
-      replacement,
+      secondAgent,
+      fanOut,
+      removeFirst,
       selectSync,
       plainEnter,
       shiftEnter,
@@ -313,7 +361,11 @@ const startDistServer = async (): Promise<{ close(): Promise<void>; origin: stri
   };
 };
 
-test("rendered composer uses one visible recipient and preserves multiline keyboard input", async () => {
+/* The old claim here was "one visible recipient": a second @mention REPLACED the first. That was
+   retired when the operator asked to address two agents out of four. Several agents are now one
+   address in the row and several signals on the wire — one per agent, because a signal carries a
+   single recipient. A person still replaces the whole address. */
+test("rendered composer addresses several agents and preserves multiline keyboard input", async () => {
   const chrome = await findChrome();
   const server = await startDistServer();
   try {
@@ -351,11 +403,24 @@ test("rendered composer uses one visible recipient and preserves multiline keybo
     });
     assert.match(measured.broadcast.option, /nobody (?:is )?notified/i);
     assert.match(measured.broadcast.status, /no agent (?:is |will be )?woken/i);
-    assert.deepEqual(measured.replacement, {
-      chipCount: 1,
-      chipText: "@Lumen×",
-      selectedValue: "agent:sample-lumen",
+    assert.deepEqual(measured.secondAgent, {
+      chipCount: 2,
+      chipTexts: ["@Orbit×", "@Lumen×"],
+      selectedValue: "agent:sample-orbit",
+      status: "Wakes 2 listeners · one message each",
     });
+    assert.deepEqual(measured.fanOut, {
+      added: 2,
+      targets: ["→ Lumen", "→ Orbit"],
+    });
+    assert.deepEqual(measured.removeFirst, {
+      chipCount: 1,
+      chipTexts: ["@Lumen×"],
+      selectedValue: "agent:sample-lumen",
+      status: "Wakes Lumen's listener",
+    });
+    /* Choosing a person clears the agents: one signal cannot carry both, so mixing them would
+       make "reply" mean two different things in one row. */
     assert.deepEqual(measured.selectSync, { chipCount: 1, chipText: "@Dana Rivera×" });
     assert.deepEqual(measured.plainEnter, {
       prevented: true,

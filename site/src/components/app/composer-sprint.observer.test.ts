@@ -235,21 +235,48 @@ const assertComposerSprint = (value: ComposerArtifact): void => {
   /* A failed request restores the exact, untrimmed draft and the exact recipient snapshot. The
    * optimistic row is removed first, then the retry affordance is made visible. */
   assert.match(failed, /input\.value = rawBody;/, "failed-send-body: restore the exact body");
+  /* With several agents addressed, the rows that DID post stay posted and only the recipients
+   * that did not are restored. Restoring the whole address would repost to the ones that
+   * already have the message. */
   assert.match(
     failed,
-    /composerAudience = \{ \.\.\.audience \};/,
+    /const remaining = recipients\.slice\(sent\);/,
+    "failed-send-audience: restore only the recipients that did not send",
+  );
+  assert.match(
+    failed,
+    /composerAudience = \{ \.\.\.head \};/,
     "failed-send-audience: restore the exact audience snapshot",
   );
   assert.match(
     failed,
-    /composerMention = mentions\[0\] \?\? null;/,
+    /composerMention = head\.kind === "everyone" \? null : \{ kind: head\.kind, id: head\.id \};/,
     "failed-send-audience: restore the exact mention chip",
   );
   assert.match(failed, /persistComposerDraft\(\);/, "failed-send-body: persist the restored draft");
   assert.match(
     failed,
-    /setComposerStatus\(readableError\(caught\), "error"\);/,
+    /\? readableError\(caught\)\s*: head\s*\? `Sent to \$\{sent\} of \$\{recipients\.length\}\. \$\{readableError\(caught\)\}/,
     "failed-send-error: announce the rejection inline",
+  );
+  /* A throw AFTER the last post must not refill the composer with a message that already went
+   * out, and must not offer a Retry that would post it a second time. */
+  assert.match(
+    failed,
+    /const head = remaining\[0\];\s*if \(head\) \{/,
+    "failed-send-audience: restore nothing when every recipient already posted",
+  );
+  assert.match(
+    failed,
+    /if \(retry && head\) retry\.hidden = false;/,
+    "retry-path: no retry when the composer has nothing left to send",
+  );
+  /* A partly-sent fan-out must say how many went, or the reader cannot tell whether pressing
+   * send again repeats a message that already arrived. */
+  assert.match(
+    failed,
+    /The rest are still in the TO row; press send to try them again\./,
+    "failed-send-error: say what the reader must do with the recipients that remain",
   );
   assert.match(failed, /retry\.hidden = false;/, "retry-path: reveal retry after rejection");
   assert.match(
@@ -257,7 +284,14 @@ const assertComposerSprint = (value: ComposerArtifact): void => {
     /data-composer-retry[^]*?addEventListener\("click", \(\) => \{\s*one<HTMLFormElement>\("\[data-composer\]"\)\?\.requestSubmit\(\);/,
     "retry-path: retry must resubmit the restored form",
   );
-  assertOrder(failed, "signals = signals.filter", "input.value = rawBody;", "failed-send-body");
+  /* Every pending row leaves the feed before the body comes back, so a failed fan-out cannot
+   * leave a ghost row beside the restored draft. */
+  assertOrder(
+    failed,
+    "!pendingSet.has(signal.id)",
+    "input.value = rawBody;",
+    "failed-send-body",
+  );
 
   /* The in-flight flag gates a second submit before the single network seam is reached. Busy is
    * visible and announced through the same button that initiated the send. */
@@ -292,14 +326,17 @@ const assertComposerSprint = (value: ComposerArtifact): void => {
 
   /* The pending row renders before the await. Acceptance replaces that row and advances the same
    * receipt cache from posting to accepted; neither phase may claim delivery. */
-  assert.match(submit, /const pendingId = `composer-pending-\$\{intent\.commandId\}`;/,
-    "optimistic-posting: use one stable pending row id");
+  assert.match(
+    submit,
+    /const pendingIds = commandIds\.map\(\(commandId\) => `composer-pending-\$\{commandId\}`\);/,
+    "optimistic-posting: use one stable pending row id",
+  );
   assert.match(
     submit,
     /deliveryReceiptCache\.set\(pendingId, \{ result: null, checkedAt: 0, phase: "posting" \}\);/,
     "optimistic-posting: pending row must use the receipt model",
   );
-  assertOrder(submit, "signals.unshift(optimisticSignal);", "await postBrowserSignal(", "optimistic-posting");
+  assertOrder(submit, "signals.unshift(...optimisticSignals);", "await postBrowserSignal(", "optimistic-posting");
   assertOrder(submit, 'renderFeed("latest");', "await postBrowserSignal(", "optimistic-posting");
   assert.match(
     submit,
@@ -467,8 +504,8 @@ const assertComposerSprint = (value: ComposerArtifact): void => {
     "draft-scope: stream identity must be explicit");
   assert.match(
     draft,
-    /JSON\.stringify\(\{\s*body,\s*audienceKey,\s*\.\.\.\(agentNote \? \{ agentNote: true \} : \{\}\),\s*\.\.\.\(hadAttachments/,
-    "draft-audience: body, audience, no-wake choice, and lost-attachment marker must persist together",
+    /JSON\.stringify\(\{\s*body,\s*audienceKey,\s*\.\.\.\(extraAgentIds\.length > 0 \? \{ extraAgentIds \} : \{\}\),\s*\.\.\.\(agentNote \? \{ agentNote: true \} : \{\}\),\s*\.\.\.\(hadAttachments/,
+    "draft-audience: body, audience, every extra agent, no-wake choice, and lost-attachment marker must persist together",
   );
   assert.match(draft, /input\.value = draft\.body;/,
     "draft-restore: reload must restore the exact body");
@@ -504,7 +541,7 @@ const assertComposerSprint = (value: ComposerArtifact): void => {
   );
   assert.match(renderFeed, /el\.scrollTop = topBefore \+ \(el\.scrollHeight - heightBefore\);/,
     "reader-scroll: history prepend must preserve the visible row by height delta");
-  assert.match(submit, /signals\.unshift\(optimisticSignal\);[^]*?renderFeed\("latest"\);/,
+  assert.match(submit, /signals\.unshift\(\.\.\.optimisticSignals\);[^]*?renderFeed\("latest"\);/,
     "reader-scroll: optimistic append must use latest-row anchoring");
 };
 
@@ -520,8 +557,15 @@ const mutations: Mutation[] = [
   {
     name: "failed send drops its exact audience",
     key: "dashboard",
-    target: "composerAudience = { ...audience };",
+    target: "composerAudience = { ...head };",
     replacement: 'composerAudience = { kind: "everyone" };',
+    expectedFailure: "failed-send-audience",
+  },
+  {
+    name: "failed send restores every recipient, including the ones that already posted",
+    key: "dashboard",
+    target: "const remaining = recipients.slice(sent);",
+    replacement: "const remaining = recipients.slice(0);",
     expectedFailure: "failed-send-audience",
   },
   {

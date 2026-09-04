@@ -131,9 +131,14 @@ const patchClient = (source: string, variant: Variant): string => {
     }, "sample-post-control");
   }
   if (variant === "failure-reverted") {
-    const restore = /,([A-Za-z_$][\w$]*)\.value=([A-Za-z_$][\w$]*),([A-Za-z_$][\w$]*)=([A-Za-z_$][\w$]*),([A-Za-z_$][\w$]*)\(\),([A-Za-z_$][\w$]*)=\{\.\.\.([A-Za-z_$][\w$]*)\},([A-Za-z_$][\w$]*)=([A-Za-z_$][\w$]*)\[0\]\?\?null,/;
+    /* The emitted restore sequence after the fan-out change: body, staged attachments, the
+       staged-attachment render, then the head recipient (the first one that did NOT post) and
+       the audience rebuilt from it. Only the body assignment is reverted, so the control
+       measures text survival and nothing else. */
+    const restore = /let ([A-Za-z_$][\w$]*)=([A-Za-z_$][\w$]*)\[0\];\1&&\(([A-Za-z_$][\w$]*)\.value=([A-Za-z_$][\w$]*),([A-Za-z_$][\w$]*)=([A-Za-z_$][\w$]*),([A-Za-z_$][\w$]*)\(\),([A-Za-z_$][\w$]*)=\{\.\.\.\1\},/;
     result = replaceOne(result, restore, (...values: string[]) =>
-      `,${values[1]}.value=\`\`,${values[3]}=${values[4]},${values[5]}(),${values[6]}={...${values[7]}},${values[8]}=${values[9]}[0]??null,`,
+      `let ${values[1]}=${values[2]}[0];${values[1]}&&(${values[3]}.value=\`\`,` +
+      `${values[5]}=${values[6]},${values[7]}(),${values[8]}={...${values[1]}},`,
     "text-survival-reversion");
   }
   if (variant === "double-reverted") {

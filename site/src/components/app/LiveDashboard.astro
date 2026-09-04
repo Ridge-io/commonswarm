@@ -1049,6 +1049,9 @@ import "../../styles/tokens.css";
   interface ComposerDraft {
     body: string;
     audienceKey: string;
+    /** Agent principal ids addressed BESIDE audienceKey. Absent in drafts written before
+     * multi-agent addressing, which is why audienceKey keeps its single-recipient shape. */
+    extraAgentIds?: string[];
     agentNote?: boolean;
     hadAttachments?: boolean;
   }
@@ -1145,12 +1148,24 @@ import "../../styles/tokens.css";
     let agentActivityGeneration = 0;
     let agentActivityGraceTimer: number | undefined;
     let entityActivityTimer: number | undefined;
+    /* composerAudience is the FIRST recipient and stays the single-recipient shape the wire uses
+     * (a signal carries one to_user_id or one to_agent_principal_id, never a list). Addressing
+     * several agents is a browser-side fan-out: one signal per agent, so each one gets its own
+     * wake and its own delivery receipt. composerExtraAgents holds the rest.
+     *
+     * Invariant, held by every writer below: composerExtraAgents is non-empty ONLY when
+     * composerAudience.kind === "agent"; every entry is an agent; entries are distinct and none
+     * of them equals composerAudience.id. A person is never mixed with agents, because the wire
+     * has no shape in which that is one message. */
     let composerAudience: ComposerAudience = { kind: "everyone" };
+    let composerExtraAgents: EntityRef[] = [];
     let composerMention: EntityRef | null = null;
     let composerPostAgentNote = false;
     let mentionPickerIndex = 0;
     let composerIntent: {
-      commandId: string;
+      /** One per recipient, aligned with composerRecipients() at the time the intent was made.
+       * Retrying an unchanged message reuses them, so a retry cannot double-post. */
+      commandIds: string[];
       body: string;
       audienceKey: string;
       attachmentKey: string;
@@ -2180,6 +2195,35 @@ import "../../styles/tokens.css";
     const composerAudienceKey = (audience: ComposerAudience): string =>
       audience.kind === "everyone" ? "everyone" : `${audience.kind}:${audience.id}`;
 
+    /* A ceiling on one send. Each agent costs a signal, a wake, and a receipt row, so a slip of
+     * the picker should not post ten times. Workspaces are far smaller than this today. */
+    const COMPOSER_MAX_RECIPIENTS = 8;
+
+    /** Every addressee of the next send, first one first. Length 1 unless agents were added. */
+    const composerRecipients = (): ComposerAudience[] =>
+      composerAudience.kind === "agent"
+        ? [
+            composerAudience,
+            ...composerExtraAgents.map((agent) => ({ kind: "agent" as const, id: agent.id })),
+          ]
+        : [composerAudience];
+
+    /** Identity of the whole addressee set, so changing it invalidates a pending send intent. */
+    const composerRecipientsKey = (): string =>
+      composerRecipients().map(composerAudienceKey).join("+");
+
+    /** The chips, in the order they were added: the first recipient, then each extra. */
+    const composerChips = (): EntityRef[] =>
+      composerMention === null
+        ? []
+        : [composerMention, ...composerExtraAgents.map((agent) => ({ ...agent }))];
+
+    const composerHasRecipient = (entity: EntityRef): boolean =>
+      composerRecipients().some(
+        (recipient) => recipient.kind !== "everyone" && recipient.kind === entity.kind &&
+          recipient.id === entity.id,
+      );
+
     const COMPOSER_COUNTER_THRESHOLD = 500;
     const COMPOSER_DRAFT_STORAGE_MAX = SIGNAL_BODY_MAX * 2;
     const COMPOSER_STREAM = "all-signals";
@@ -2210,9 +2254,14 @@ import "../../styles/tokens.css";
         if (typeof value.body !== "string" || typeof value.audienceKey !== "string") {
           return null;
         }
+        const extraAgentIds = Array.isArray(value.extraAgentIds)
+          ? value.extraAgentIds.filter((id): id is string => typeof id === "string")
+              .slice(0, COMPOSER_MAX_RECIPIENTS)
+          : [];
         return {
           body: value.body.slice(0, COMPOSER_DRAFT_STORAGE_MAX),
           audienceKey: value.audienceKey,
+          ...(extraAgentIds.length > 0 ? { extraAgentIds } : {}),
           ...(value.agentNote === true ? { agentNote: true } : {}),
           ...(value.hadAttachments === true ? { hadAttachments: true } : {}),
         };
@@ -2239,6 +2288,7 @@ import "../../styles/tokens.css";
       const audienceKey = composerAudienceKey(composerAudience);
       const hadAttachments = stagedAttachments.length > 0 || composerAttachmentsMissingAfterReload;
       const agentNote = composerAudience.kind === "agent" && composerPostAgentNote;
+      const extraAgentIds = composerExtraAgents.map((agent) => agent.id);
       try {
         if (body === "" && audienceKey === "everyone" && !agentNote && !hadAttachments) {
           window.localStorage.removeItem(key);
@@ -2249,6 +2299,7 @@ import "../../styles/tokens.css";
           JSON.stringify({
             body,
             audienceKey,
+            ...(extraAgentIds.length > 0 ? { extraAgentIds } : {}),
             ...(agentNote ? { agentNote: true } : {}),
             ...(hadAttachments ? { hadAttachments: true } : {}),
           }),
@@ -2439,6 +2490,17 @@ import "../../styles/tokens.css";
       );
       composerAudience = audienceExists ? audience : { kind: "everyone" };
       composerMention = composerAudience.kind === "everyone" ? null : { ...composerAudience };
+      /* Only agents that still exist in this workspace come back, and only when the first
+       * recipient is itself an agent — the same invariant every other writer holds. */
+      composerExtraAgents = composerAudience.kind === "agent"
+        ? (draft.extraAgentIds ?? [])
+            .filter((id) =>
+              id !== (composerAudience as { id: string }).id &&
+              agents.some((agent) => agent.principalId === id))
+            .filter((id, index, all) => all.indexOf(id) === index)
+            .slice(0, COMPOSER_MAX_RECIPIENTS - 1)
+            .map((id) => ({ kind: "agent" as const, id }))
+        : [];
       composerPostAgentNote = composerAudience.kind === "agent" && draft.agentNote === true;
       composerIntent = null;
       const warning = one<HTMLElement>("[data-composer-reload-warning]");
@@ -2510,8 +2572,19 @@ import "../../styles/tokens.css";
       );
       if (!selectedExists) {
         composerAudience = { kind: "everyone" };
+        composerExtraAgents = [];
         composerMention = null;
         composerPostAgentNote = false;
+        renderComposerMentions();
+      }
+      /* An agent that left the workspace while it sat in the TO row must not survive as a
+       * recipient — the send would fail on a principal the server no longer accepts. */
+      const prunedExtras = composerAudience.kind === "agent"
+        ? composerExtraAgents.filter((extra) =>
+            agents.some((agent) => agent.principalId === extra.id))
+        : [];
+      if (prunedExtras.length !== composerExtraAgents.length) {
+        composerExtraAgents = prunedExtras;
         renderComposerMentions();
       }
       select.value = composerAudienceKey(composerAudience);
@@ -2519,24 +2592,55 @@ import "../../styles/tokens.css";
       const noteOption = one<HTMLElement>("[data-composer-note-option]");
       const noteToggle = one<HTMLInputElement>("[data-composer-note-toggle]");
       const agentNote = composerAudience.kind === "agent" && composerPostAgentNote;
+      const agentCount = composerAudience.kind === "agent" ? composerExtraAgents.length + 1 : 0;
       if (noteOption) noteOption.hidden = composerAudience.kind !== "agent";
       if (noteToggle) noteToggle.checked = agentNote;
+      /* Say the number when it is more than one, and say that each agent gets its own copy.
+       * A reader who is told "wakes 2 listeners" must not be surprised by two rows in the feed. */
       count.textContent = composerAudience.kind === "everyone"
         ? "No recipient · broadcast · no agent will be woken"
         : composerAudience.kind === "agent"
-        ? agentNote
-          ? `Posted for ${entityName(composerAudience)} to read; no wake`
-          : `Wakes ${entityName(composerAudience)}'s listener`
+        ? agentCount > 1
+          ? agentNote
+            ? `Posted for ${agentCount} agents to read; no wake · one message each`
+            : `Wakes ${agentCount} listeners · one message each`
+          : agentNote
+            ? `Posted for ${entityName(composerAudience)} to read; no wake`
+            : `Wakes ${entityName(composerAudience)}'s listener`
         : `Posted for ${entityName(composerAudience)} to read; no agent will be woken`;
       restoreComposerDraft();
+    };
+
+    /* Drops one recipient. Removing the FIRST one promotes the next agent rather than clearing
+     * the row, because the reader removed one name, not the whole address. */
+    const removeComposerRecipient = (index: number): void => {
+      if (index === 0) {
+        const promoted = composerExtraAgents[0];
+        if (promoted) {
+          composerAudience = { kind: "agent", id: promoted.id };
+          composerMention = { ...promoted };
+          composerExtraAgents = composerExtraAgents.slice(1);
+        } else {
+          composerAudience = { kind: "everyone" };
+          composerMention = null;
+          composerExtraAgents = [];
+          composerPostAgentNote = false;
+        }
+      } else {
+        composerExtraAgents = composerExtraAgents.filter((_, at) => at !== index - 1);
+      }
+      composerIntent = null;
+      renderComposerMentions();
+      renderComposerAudience();
+      persistComposerDraft();
+      one<HTMLTextAreaElement>("[data-composer-input]")?.focus({ preventScroll: true });
     };
 
     const renderComposerMentions = (): void => {
       const wrap = one<HTMLElement>("[data-composer-mentions]");
       if (!wrap) return;
       wrap.replaceChildren();
-      const mention = composerMention;
-      if (mention) {
+      for (const [index, mention] of composerChips().entries()) {
         const chip = document.createElement("span");
         chip.className = "dashboard__mention-chip";
         chip.append(entityControl(
@@ -2550,14 +2654,7 @@ import "../../styles/tokens.css";
         remove.textContent = "×";
         remove.setAttribute("aria-label", `Remove mention of ${entityName(mention)}`);
         remove.addEventListener("click", () => {
-          composerMention = null;
-          composerAudience = { kind: "everyone" };
-          composerPostAgentNote = false;
-          composerIntent = null;
-          renderComposerMentions();
-          renderComposerAudience();
-          persistComposerDraft();
-          one<HTMLTextAreaElement>("[data-composer-input]")?.focus({ preventScroll: true });
+          removeComposerRecipient(index);
         });
         chip.append(remove);
         wrap.append(chip);
@@ -2581,9 +2678,10 @@ import "../../styles/tokens.css";
         ...members.map((member) => ({ kind: "person" as const, id: member.userId })),
         ...agents.map((agent) => ({ kind: "agent" as const, id: agent.principalId })),
       ];
+      /* Every current recipient leaves the list, not just the first — offering a name that is
+       * already addressed would produce a pick that does nothing. */
       return candidates.filter((candidate) =>
-        (composerMention === null ||
-          `${candidate.kind}:${candidate.id}` !== `${composerMention.kind}:${composerMention.id}`) &&
+        !composerHasRecipient(candidate) &&
         entityName(candidate).toLocaleLowerCase().includes(query)
       );
     };
@@ -2595,9 +2693,33 @@ import "../../styles/tokens.css";
       const cursor = input.selectionStart ?? input.value.length;
       input.value = `${input.value.slice(0, search.start)}${input.value.slice(cursor)}`;
       input.setSelectionRange(search.start, search.start);
-      composerMention = mention;
-      composerAudience = { ...mention };
-      composerPostAgentNote = false;
+      /* An agent named while agents are already addressed is ADDED. Anything else replaces the
+       * whole address: a person cannot share a message with agents, because one signal carries
+       * one recipient and mixing them would silently change what "reply" means. */
+      const addsAgent = mention.kind === "agent" && composerAudience.kind === "agent";
+      if (addsAgent && composerRecipients().length >= COMPOSER_MAX_RECIPIENTS) {
+        /* Refusing must not also DROP the agents already addressed, which is what falling
+         * through to the replace branch would do. */
+        closeMentionPicker();
+        input.focus({ preventScroll: true });
+        input.dispatchEvent(new Event("input"));
+        /* The reason is set AFTER that input event, not before it: the input handler clears an
+         * error status, so setting it first left the refusal silent in the same turn. */
+        setComposerStatus(
+          `${COMPOSER_MAX_RECIPIENTS} agents is the most one message can go to. ` +
+            "Remove one to add another.",
+          "error",
+        );
+        return;
+      }
+      if (addsAgent) {
+        composerExtraAgents = [...composerExtraAgents, { ...mention }];
+      } else {
+        composerMention = mention;
+        composerAudience = { ...mention };
+        composerExtraAgents = [];
+        composerPostAgentNote = false;
+      }
       composerIntent = null;
       renderComposerMentions();
       renderComposerAudience();
@@ -2668,6 +2790,7 @@ import "../../styles/tokens.css";
       composerAttachmentsMissingAfterReload = false;
       composerDragDepth = 0;
       composerAudience = { kind: "everyone" };
+      composerExtraAgents = [];
       composerMention = null;
       composerPostAgentNote = false;
       composerIntent = null;
@@ -5514,6 +5637,9 @@ import "../../styles/tokens.css";
         } else if (value.startsWith("agent:")) {
           composerAudience = { kind: "agent", id: value.slice("agent:".length) };
         }
+        /* The TO row hides as soon as one recipient is chosen, so this is always the FIRST
+         * pick. Adding a second agent goes through the @ picker, which is why this clears. */
+        composerExtraAgents = [];
         composerMention = composerAudience.kind === "everyone" ? null : { ...composerAudience };
         composerPostAgentNote = false;
         composerIntent = null;
@@ -5650,13 +5776,9 @@ import "../../styles/tokens.css";
           !event.isComposing &&
           (!event.shiftKey || event.metaKey || event.ctrlKey);
         if (event.key === "Backspace" && input.value === "" && composerMention) {
-          composerMention = null;
-          composerAudience = { kind: "everyone" };
-          composerPostAgentNote = false;
-          composerIntent = null;
-          renderComposerMentions();
-          renderComposerAudience();
-          persistComposerDraft();
+          /* Backspace deletes the LAST chip, the way it deletes the last character. With one
+           * chip that is the old behaviour: the address clears. */
+          removeComposerRecipient(composerChips().length - 1);
           return;
         }
         if (picker && !picker.hidden) {
@@ -5711,10 +5833,13 @@ import "../../styles/tokens.css";
       }
       const workspaceId = activeWorkspaceId;
       const version = requestVersion;
-      const audience: ComposerAudience = { ...composerAudience };
-      const address = browserSignalAddress(audience);
-      const signalKind = browserSignalKind(audience, composerPostAgentNote);
-      const audienceKey = composerAudienceKey(audience);
+      /* One signal per recipient. The wire has no many-recipient shape, so addressing several
+       * agents is a loop here, and every agent gets its own row, its own wake, and its own
+       * delivery receipt. A single recipient takes exactly the path it always took. */
+      const recipients = composerRecipients();
+      const postAgentNote = composerPostAgentNote;
+      const signalKind = browserSignalKind(recipients[0]!, postAgentNote);
+      const audienceKey = composerRecipientsKey();
       const attachmentSnapshot = [...stagedAttachments];
       const attachmentKey = attachmentSnapshot
         .map((attachment) => attachment.intent.fileId)
@@ -5722,39 +5847,55 @@ import "../../styles/tokens.css";
       let intent = composerIntent;
       if (
         !intent || intent.body !== rawBody || intent.audienceKey !== audienceKey ||
-        intent.attachmentKey !== attachmentKey || intent.signalKind !== signalKind
+        intent.attachmentKey !== attachmentKey || intent.signalKind !== signalKind ||
+        intent.commandIds.length !== recipients.length
       ) {
-        intent = { commandId: uuid(), body: rawBody, audienceKey, attachmentKey, signalKind };
+        intent = {
+          commandIds: recipients.map(() => uuid()),
+          body: rawBody,
+          audienceKey,
+          attachmentKey,
+          signalKind,
+        };
         composerIntent = intent;
       }
-      const mentions = composerMention ? [{ ...composerMention }] : [];
-      const pendingId = `composer-pending-${intent.commandId}`;
-      const optimisticSignal: Signal = {
-        id: pendingId,
-        from: session?.user.id ?? "sample-owner",
-        fromKind: "user",
-        to: address.toUserId,
-        toAgent: address.toAgentPrincipalId,
-        kind: signalKind,
-        body: rawBody,
-        attachments: attachmentSnapshot.map((attachment) => ({
-          file_id: attachment.intent.fileId,
-          version_n: attachment.intent.created?.versionN ?? 1,
-          name: attachment.intent.name,
-          content_type: attachment.intent.contentType,
-          size_bytes: attachment.intent.file.size,
-        })),
-        about: null,
-        until: null,
-        createdAt: new Date().toISOString(),
-      };
+      const commandIds = intent.commandIds;
+      /** The chip a pending or posted row shows: its own recipient, not the whole address. */
+      const mentionsFor = (recipient: ComposerAudience): EntityRef[] =>
+        recipient.kind === "everyone" ? [] : [{ kind: recipient.kind, id: recipient.id }];
+      const attachmentPreviews = attachmentSnapshot.map((attachment) => ({
+        file_id: attachment.intent.fileId,
+        version_n: attachment.intent.created?.versionN ?? 1,
+        name: attachment.intent.name,
+        content_type: attachment.intent.contentType,
+        size_bytes: attachment.intent.file.size,
+      }));
+      const pendingIds = commandIds.map((commandId) => `composer-pending-${commandId}`);
+      const optimisticSignals: Signal[] = recipients.map((recipient, index) => {
+        const address = browserSignalAddress(recipient);
+        return {
+          id: pendingIds[index]!,
+          from: session?.user.id ?? "sample-owner",
+          fromKind: "user",
+          to: address.toUserId,
+          toAgent: address.toAgentPrincipalId,
+          kind: signalKind,
+          body: rawBody,
+          attachments: attachmentPreviews,
+          about: null,
+          until: null,
+          createdAt: new Date().toISOString(),
+        };
+      });
       const retry = one<HTMLButtonElement>("[data-composer-retry]");
       if (retry) retry.hidden = true;
       setComposerStatus("Posting…", "posting");
       setComposerSending(true);
-      visualMentions.set(pendingId, mentions);
-      deliveryReceiptCache.set(pendingId, { result: null, checkedAt: 0, phase: "posting" });
-      signals.unshift(optimisticSignal);
+      for (const [index, pendingId] of pendingIds.entries()) {
+        visualMentions.set(pendingId, mentionsFor(recipients[index]!));
+        deliveryReceiptCache.set(pendingId, { result: null, checkedAt: 0, phase: "posting" });
+      }
+      signals.unshift(...optimisticSignals);
       input.value = "";
       stagedAttachments = [];
       renderStagedAttachments();
@@ -5763,6 +5904,9 @@ import "../../styles/tokens.css";
       syncComposerControls();
       renderFeed("latest");
       input.focus({ preventScroll: true });
+      /** Posted rows, and where the loop stopped. Both are read by the failure path. */
+      const posted: Signal[] = [];
+      let failedAt = 0;
       try {
         const attachmentRefs = sampleMode
           ? attachmentSnapshot.map((attachment) => ({
@@ -5783,43 +5927,57 @@ import "../../styles/tokens.css";
             ));
           }
         }
-        setComposerStatus("Posting message…", "posting");
-        const signal: Signal = sampleMode
-          ? {
-              id: `sample-composer-${intent.commandId}`,
-              from: "sample-owner",
-              fromKind: "user",
-              to: address.toUserId,
-              toAgent: address.toAgentPrincipalId,
-              kind: signalKind,
-              body: rawBody,
-              attachments: optimisticSignal.attachments,
-              about: null,
-              until: null,
-              createdAt: new Date().toISOString(),
-            }
-          : await postBrowserSignal(
-              session!,
-              intent.commandId,
-              workspaceId,
-              rawBody,
-              audience,
-              signalKind,
-              attachmentRefs,
-            );
+        for (const [index, recipient] of recipients.entries()) {
+          failedAt = index;
+          setComposerStatus(
+            recipients.length > 1
+              ? `Posting message ${index + 1} of ${recipients.length}…`
+              : "Posting message…",
+            "posting",
+          );
+          const address = browserSignalAddress(recipient);
+          posted.push(sampleMode
+            ? {
+                id: `sample-composer-${commandIds[index]!}`,
+                from: "sample-owner",
+                fromKind: "user",
+                to: address.toUserId,
+                toAgent: address.toAgentPrincipalId,
+                kind: signalKind,
+                body: rawBody,
+                attachments: attachmentPreviews,
+                about: null,
+                until: null,
+                createdAt: new Date().toISOString(),
+              }
+            : await postBrowserSignal(
+                session!,
+                commandIds[index]!,
+                workspaceId,
+                rawBody,
+                recipient,
+                signalKind,
+                attachmentRefs,
+              ));
+        }
         if (version !== requestVersion || workspaceId !== activeWorkspaceId) {
           for (const attachment of attachmentSnapshot) {
             if (attachment.previewUrl) URL.revokeObjectURL(attachment.previewUrl);
           }
           return;
         }
-        signals = [signal, ...signals.filter(
-          (entry) => entry.id !== pendingId && entry.id !== signal.id,
+        const postedIds = new Set(posted.map((signal) => signal.id));
+        const pendingSet = new Set(pendingIds);
+        signals = [...posted, ...signals.filter(
+          (entry) => !pendingSet.has(entry.id) && !postedIds.has(entry.id),
         )];
-        visualMentions.delete(pendingId);
-        deliveryReceiptCache.delete(pendingId);
-        visualMentions.set(signal.id, mentions);
-        deliveryReceiptCache.set(signal.id, { result: null, checkedAt: 0, phase: "accepted" });
+        for (const [index, pendingId] of pendingIds.entries()) {
+          visualMentions.delete(pendingId);
+          deliveryReceiptCache.delete(pendingId);
+          const signal = posted[index]!;
+          visualMentions.set(signal.id, mentionsFor(recipients[index]!));
+          deliveryReceiptCache.set(signal.id, { result: null, checkedAt: 0, phase: "accepted" });
+        }
         composerIntent = null;
         composerPostAgentNote = false;
         composerAttachmentsMissingAfterReload = false;
@@ -5833,22 +5991,67 @@ import "../../styles/tokens.css";
         setComposerStatus("");
       } catch (caught) {
         if (version !== requestVersion || workspaceId !== activeWorkspaceId) return;
-        signals = signals.filter((signal) => signal.id !== pendingId);
-        visualMentions.delete(pendingId);
-        deliveryReceiptCache.delete(pendingId);
-        input.value = rawBody;
-        stagedAttachments = attachmentSnapshot;
-        renderStagedAttachments();
-        composerAudience = { ...audience };
-        composerMention = mentions[0] ?? null;
-        composerPostAgentNote = audience.kind === "agent" && signalKind === "note";
-        renderComposerAudience();
-        renderComposerMentions();
-        resizeComposerInput(input);
-        persistComposerDraft();
-        if (!(caught instanceof CommandOutcomeUnknown)) composerIntent = null;
-        setComposerStatus(readableError(caught), "error");
-        if (retry) retry.hidden = false;
+        /* Rows that DID post stay. The composer is refilled with the recipients that did not,
+         * so pressing send again finishes the job instead of posting to everyone twice. */
+        const sent = posted.length;
+        const remaining = recipients.slice(sent);
+        const pendingSet = new Set(pendingIds);
+        signals = [
+          ...posted,
+          ...signals.filter((signal) => !pendingSet.has(signal.id)),
+        ];
+        for (const [index, pendingId] of pendingIds.entries()) {
+          visualMentions.delete(pendingId);
+          deliveryReceiptCache.delete(pendingId);
+          const signal = posted[index];
+          if (!signal) continue;
+          visualMentions.set(signal.id, mentionsFor(recipients[index]!));
+          deliveryReceiptCache.set(signal.id, { result: null, checkedAt: 0, phase: "accepted" });
+        }
+        /* Only when something is left to send. A throw AFTER the last post — a render fault, not
+         * a rejected command — must not put a message that already went out back in the box for
+         * the reader to send a second time. */
+        const head = remaining[0];
+        if (head) {
+          input.value = rawBody;
+          stagedAttachments = attachmentSnapshot;
+          renderStagedAttachments();
+          composerAudience = { ...head };
+          composerExtraAgents = head.kind === "agent"
+            ? remaining.slice(1).flatMap((recipient) =>
+                recipient.kind === "agent" ? [{ kind: "agent" as const, id: recipient.id }] : [])
+            : [];
+          composerMention = head.kind === "everyone" ? null : { kind: head.kind, id: head.id };
+          composerPostAgentNote = head.kind === "agent" && signalKind === "note";
+          renderComposerAudience();
+          renderComposerMentions();
+          resizeComposerInput(input);
+          persistComposerDraft();
+        }
+        /* An unknown outcome must keep its command id, or a retry could post that one twice.
+         * The ids for the recipients still in the row are the tail of the original list. */
+        composerIntent = head && caught instanceof CommandOutcomeUnknown
+          ? {
+              commandIds: commandIds.slice(failedAt),
+              body: rawBody,
+              audienceKey: composerRecipientsKey(),
+              attachmentKey,
+              signalKind,
+            }
+          : null;
+        setComposerStatus(
+          sent === 0
+            ? readableError(caught)
+            : head
+              ? `Sent to ${sent} of ${recipients.length}. ${readableError(caught)} ` +
+                "The rest are still in the TO row; press send to try them again."
+              : `All ${sent} messages posted. ${readableError(caught)} ` +
+                "Nothing is waiting to send; reload if the feed looks wrong.",
+          "error",
+        );
+        /* Retry resubmits the composer. With nothing left in it, that button would repost the
+         * messages that already landed, so it stays hidden. */
+        if (retry && head) retry.hidden = false;
         renderFeed("latest");
       } finally {
         if (version === requestVersion && workspaceId === activeWorkspaceId) {

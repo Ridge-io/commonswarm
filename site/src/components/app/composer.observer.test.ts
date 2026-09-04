@@ -51,9 +51,11 @@ test("composer kind defaults by recipient and the agent-only control opts out of
     'one<HTMLFormElement>("[data-composer]")?.addEventListener("submit"',
     'for (const button of all<HTMLButtonElement>("[data-feed-filter]")',
   );
-  assert.match(submit, /const signalKind = browserSignalKind\(audience, composerPostAgentNote\)/);
+  /* The kind is decided ONCE for the whole send, from the first recipient. Every recipient of
+     one send is the same kind, because agents never mix with a person in one address. */
+  assert.match(submit, /const signalKind = browserSignalKind\(recipients\[0\]!, postAgentNote\)/);
   assert.match(submit, /kind: signalKind/);
-  assert.match(submit, /rawBody,\s*audience,\s*signalKind,\s*attachmentRefs/);
+  assert.match(submit, /rawBody,\s*recipient,\s*signalKind,\s*attachmentRefs/);
 });
 
 test("browser-authored signals use the existing broadcast and direct target fields", () => {
@@ -70,11 +72,17 @@ test("browser-authored signals use the existing broadcast and direct target fiel
     'one<HTMLFormElement>("[data-composer]")?.addEventListener("submit"',
     'for (const button of all<HTMLButtonElement>("[data-feed-filter]")',
   );
-  assert.match(submit, /const address = browserSignalAddress\(audience\)/);
+  /* Each recipient of a fan-out resolves to the same two nullable wire fields. The address is
+     computed per recipient, so a second agent cannot inherit the first one's target. */
+  assert.match(submit, /const address = browserSignalAddress\(recipient\)/);
   assert.match(submit, /to: address\.toUserId/);
   assert.match(submit, /toAgent: address\.toAgentPrincipalId/);
-  assert.match(submit, /rawBody,\s*audience,\s*signalKind,\s*attachmentRefs,\s*\);/);
+  assert.match(submit, /rawBody,\s*recipient,\s*signalKind,\s*attachmentRefs,\s*\)\);/);
   assert.match(submit, /await postBrowserSignal/);
+  /* One command id per recipient, so a retry of a partly-sent message cannot repost the ones
+     that already landed. A single shared id would make the second post look like a duplicate. */
+  assert.match(submit, /commandIds: recipients\.map\(\(\) => uuid\(\)\)/);
+  assert.match(submit, /postBrowserSignal\(\s*session!,\s*commandIds\[index\]!,/);
 });
 
 test("attachments use one picker, drop, paste, staging, and failure-restore path", () => {
@@ -160,8 +168,15 @@ test("mention picker resolves people and agents into one removable address chip"
   assert.match(chips, /dashboard__mention-chip/);
   assert.match(chips, /entityControl/);
   assert.match(chips, /Remove mention of/);
-  assert.match(chips, /composerMention = null/);
-  assert.match(chips, /composerAudience = \{ kind: "everyone" \}/);
+  /* Every recipient gets a chip and its own × — with several agents addressed, one remove must
+     drop one name. The clearing itself moved into removeComposerRecipient. */
+  assert.match(chips, /for \(const \[index, mention\] of composerChips\(\)\.entries\(\)\)/);
+  assert.match(chips, /removeComposerRecipient\(index\)/);
+  const removal = between(dashboard, "const removeComposerRecipient", "const renderComposerMentions");
+  assert.match(removal, /composerMention = null/);
+  assert.match(removal, /composerAudience = \{ kind: "everyone" \}/);
+  /* Removing the first of several promotes the next agent instead of clearing the whole row. */
+  assert.match(removal, /composerAudience = \{ kind: "agent", id: promoted\.id \}/);
 
   const keys = between(
     dashboard,
@@ -184,7 +199,9 @@ test("posted mentions keep the same visual entity control without entering the c
     'one<HTMLFormElement>("[data-composer]")?.addEventListener("submit"',
     'for (const button of all<HTMLButtonElement>("[data-feed-filter]")',
   );
-  assert.match(submit, /visualMentions\.set\(signal\.id, mentions\)/);
+  /* A posted row carries ITS OWN recipient chip. Handing every row the whole address would
+     label a message to one agent with the names of the others. */
+  assert.match(submit, /visualMentions\.set\(signal\.id, mentionsFor\(recipients\[index\]!\)\)/);
   assert.doesNotMatch(
     submit.match(/await postBrowserSignal\(([\s\S]*?)\);/)?.[1] ?? "",
     /mentions/,
