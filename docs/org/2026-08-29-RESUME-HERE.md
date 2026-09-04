@@ -1653,3 +1653,29 @@ a gate, which is how it landed; (2) the observer source-shape test does not pin 
 the third argument to `brainLinkClickOutcome`, so a call site passing `true` there would still be
 green; (3) Gemini's `1.5` case — a dot makes it slug-shaped and it links in prose; ruled an
 intended link, since the topic exists under that name. Not established: any of this in a browser.
+
+## Addendum 2026-09-04 23:1x UTC — main REWRITTEN: brain-links re-authored (SHA corrections)
+
+The two addenda above cite `0783bb1`, `1d6257b`, `c27a6af`. Those SHAs are gone from `main`. The
+lane commit `e65af99` had been authored as `tom@chartingalpha.com` by the PM subagent (that address
+is the session's userEmail and leaks into subagent context); `tests/p1-cli/commit-identity-guard.test.ts`
+reads all of `origin/main`, so p1-cli went red on main the moment it merged. The allowlist was NOT
+widened: the guard exists because "the incident address was routable", and an agent commit under a
+person's name is the thing it catches. The four commits from `e65af99` were re-authored with
+byte-identical trees, messages, dates and committer:
+
+| was | now |
+|---|---|
+| `e65af99` lane commit | `6b4f234` |
+| `0783bb1` merge | `2a7aab3` |
+| `1d6257b` evidence | `a96eb2a` |
+| `c27a6af` ledger | `ae80338` |
+
+Old tip: tag `backup/main-before-reauthor-c27a6af` (pushed). Push was `--force-with-lease`.
+Anyone with the old `main`: `git fetch && git reset --hard origin/main` (nothing of theirs is lost;
+no other commits were on top). The evidence README's round-7 row says "landed" without a SHA and
+stays correct. `lane/brain-links-types` (`70af721`, based on the old tip) is being rebased `--onto
+ae80338`; its arm verdicts carry over only if the diff shasum is unchanged, and the lane records both.
+
+Rule added to every lane brief: commit as `yulanbot@gmail.com`, never `--author`, and run
+`scripts/check-commit-identity.sh origin/main..HEAD` before reporting a SHA.
