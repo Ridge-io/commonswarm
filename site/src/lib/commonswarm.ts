@@ -25,6 +25,7 @@
  */
 
 import { createClient, type SupabaseClient, type Session } from "@supabase/supabase-js";
+import { authProvider } from "./auth-providers.js";
 import { HUMAN_SEEN_BATCH_MAX } from "./human-seen-reporter.js";
 import {
   agentActivityTopic,
@@ -199,18 +200,58 @@ export async function subscribeAgentActivity(
 }
 
 /**
+ * Start an OAuth sign-in. THE ONLY PLACE A PROVIDER STRING REACHES SUPABASE.
+ *
+ * `authProvider()` is the enforcement: an id that AUTH_PROVIDERS does not name throws
+ * UnknownAuthProvider and no request is made. The buttons and every sentence that names a
+ * provider are built from that same array, so a button can never ask for a provider this
+ * function would refuse, and a refused provider can never appear in copy. Do not add a second
+ * `signInWithOAuth` call with a literal provider — site/src/components/auth/
+ * provider-buttons.observer.test.ts fails if one appears.
+ *
  * GitHub matches the CLI (src/cloud/auth.ts sets provider=github), so the two surfaces
  * resolve the same account for the same person. See signInWithEmail below for the door that
  * does not require a developer account at all.
+ *
+ * A PROVIDER THE DEPLOYMENT HAS NOT ENABLED DOES NOT REACH THE CATCH BLOCK BELOW, AND THAT IS
+ * WHY THE FLIP ORDER IS LOAD-BEARING. `signInWithOAuth` builds the authorize URL in the
+ * browser and navigates to it; it does not ask GoTrue anything first. So a provider that is
+ * off in the Supabase dashboard produces no client error at all — the browser lands on the
+ * API host and the reader sees raw JSON. Measured 2026-09-04:
+ *
+ *   GET https://api.commonswarm.com/auth/v1/authorize?provider=google
+ *   400 {"code":400,"error_code":"validation_failed",
+ *        "msg":"Unsupported provider: provider is not enabled"}
+ *
+ * No handler here can improve that page. Enable the provider in the dashboard FIRST, then set
+ * the build flag — docs/design/2026-09-04-GOOGLE-SIGNIN.md gives the order and the reason.
  */
-export async function signInWithGitHub(redirectTo: string): Promise<void> {
+export async function signInWithProvider(
+  provider: string,
+  redirectTo: string,
+): Promise<void> {
+  const entry = authProvider(provider);
   const c = client();
   if (!c) throw new NoDeployment();
   const { error } = await c.auth.signInWithOAuth({
-    provider: "github",
+    provider: entry.id,
     options: { redirectTo },
   });
   if (error) throw new Error(error.message);
+}
+
+export async function signInWithGitHub(redirectTo: string): Promise<void> {
+  await signInWithProvider("github", redirectTo);
+}
+
+/**
+ * Google is the second OAuth door, and it is the same door as GitHub for anyone whose Google
+ * address already has a CommonSwarm account: Supabase links a second identity to the existing
+ * user when the provider returns a VERIFIED email that matches. CommonSwarm adds no linking
+ * logic of its own — see the spec for what that rule does and does not promise.
+ */
+export async function signInWithGoogle(redirectTo: string): Promise<void> {
+  await signInWithProvider("google", redirectTo);
 }
 
 /**

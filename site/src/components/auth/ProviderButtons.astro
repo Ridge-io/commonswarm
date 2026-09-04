@@ -1,0 +1,39 @@
+---
+/*
+ * The OAuth buttons, generated from site/src/lib/auth-providers.ts.
+ *
+ * WHY A COMPONENT RATHER THAN TWO <button> TAGS. Every surface that offers OAuth must offer
+ * the SAME set, because the set is a deployment fact. Hand-written buttons made the invite
+ * page and /app free to disagree with each other and with the enforcement in
+ * commonswarm.ts:signInWithProvider. Rendering from one array removes that freedom, and
+ * provider-buttons.observer.test.ts fails when the built HTML and the array disagree.
+ *
+ * ONE HANDLER, NOT ONE PER PROVIDER. The consumer binds `[data-signin-provider]` once and
+ * reads the id off the element, so adding a provider needs no script change.
+ *
+ * THE FLAG IS READ AT BUILD TIME, WHICH IS THE WHOLE COST OF THIS DESIGN. astro.config.mjs
+ * sets `output: "static"`, so the markup is fixed when the site is built. Turning Google on
+ * is: set PUBLIC_SWARM_AUTH_PROVIDERS, rebuild, deploy. A runtime flag would need the page to
+ * ask GoTrue `/auth/v1/settings` on every load, which buys a dashboard-only flip at the price
+ * of a blocking request and a new failure mode on the sign-in path. Rejected; see the spec.
+ */
+import { enabledProviders } from "../../lib/auth-providers";
+
+interface Props {
+  /** Class for each button, so a host page keeps its own visual language. */
+  buttonClass?: string;
+}
+
+const { buttonClass = "" } = Astro.props;
+
+// The literal name is deliberate: Vite only substitutes a statically-written
+// `import.meta.env.PUBLIC_*`. AUTH_PROVIDERS_ENV_VAR carries the same string for docs and
+// tests, and provider-buttons.observer.test.ts fails if the two ever differ.
+const providers = enabledProviders(import.meta.env.PUBLIC_SWARM_AUTH_PROVIDERS);
+---
+
+{providers.map((provider) => (
+  <button class={buttonClass} type="button" data-signin-provider={provider.id}>
+    {provider.label}
+  </button>
+))}
