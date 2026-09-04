@@ -1,0 +1,147 @@
+I'll start by reading `REVIEW.md` and the patch so I can follow the review instructions exactly.The patch is large, so I’ll keep reading it in chunks and pull the matching files from the repo.I’ll inspect the pre-patch tree and the key SQL/edge paths next, then try to refute each of the eight review claims.Device binding on web standing mints looks load-bearing — I’ll trace how the CLI presents `device_id` on renew versus the browser device stored at mint.The resume command cannot succeed. SQL returns NULL on success; the edge coalesces that NULL into a refusal and always 403s. The Postgres tests never exercise that handler, so they stay green.
+
+## 1. Migration-before-edge window
+
+**Attempted refutation:** the new edge reads `g.suspension_active` (`supabase/functions/command/index.ts` around the `loadRenewalFacts` CASE). Deploy that before the migration and every renewal 500s. The migration itself is the other direction.
+
+What the migration changes that the **currently deployed** `command` function touches:
+
+| Artifact | Change | Deployed edge |
+|---|---|---|
+| `swarm.renewal_grants.resumed_at/by`, `resume_count` | ADD, nullable / `NOT NULL DEFAULT 0` | INSERT lists explicit columns and omits these; defaults fill |
+| `suspension_active` | generated STORED | not selected by origin/main |
+| `swarm.prepare_renewal_grant(uuid,uuid)` | CREATE OR REPLACE, same signature | called |
+| `swarm.record_renewal_grant_use` | CREATE OR REPLACE, same signature | called |
+| `swarm.agent_tokens_successor_fence` | CREATE OR REPLACE trigger | fires on successor INSERT |
+| `swarm.renewal_grants_spend_or_revoke_only` | CREATE OR REPLACE trigger | fires on grant UPDATE (strand credit, revoke) |
+| `swarm_read.renewal_grant_roster` / `_for_token` | CREATE OR REPLACE, same signature | read function, not command |
+
+Deployed `loadRenewalFacts` still does `g.suspended_at AS grant_suspended_at`. That column remains. New CHECKs hold for existing rows (`resume_count` defaults to 0, resume fields NULL). Old UPDATEs do not touch resume columns, so the new trigger’s `SWARM_RENEWAL_RESUME_UNATTRIBUTED` branch does not fire.
+
+Until the new edge exists, nothing can call `resume_renewal_grant` (`GRANT EXECUTE … TO swarm_command` only). So `resumed_at` stays NULL and `suspension_active ≡ (suspended_at IS NOT NULL)`. Replaced `prepare_renewal_grant` is observationally equal to the old one in that window.
+
+**This check does not fail** if migration lands first. Reverse order is an outage; the migration header says so.
+
+## 2. Is `suspension_active` the single definition?
+
+**Attempted refutation:** grep every “paused?” decision.
+
+SQL readers in `20260904000001_standing_grant_resume.sql` do ask the generated column:
+
+- preflight `IF grant_row.suspension_active` (~line 273)
+- use recorder `AND NOT grant_row.suspension_active`
+- successor fence `IF grant_row.suspension_active`
+- resume gate `IF NOT grant_row.suspension_active`
+- both read functions `CASE WHEN grant_row.suspension_active THEN grant_row.suspended_at END`
+
+The command edge remaps the same way (`CASE WHEN g.suspension_active THEN g.suspended_at END AS grant_suspended_at`).
+
+**Second answer still exists in the reducer.** `src/protocol/workspace-commands.ts` (and the generated `supabase/functions/_shared/protocol.js`) still does:
+
+```
+facts.grant_preflight_code === 'renewal_grant_suspended' || grant.suspended_at !== null
+```
+
+That is a second predicate. It is only consistent because the edge stuffed the *effective* timestamp into `grant.suspended_at`. Drop the CASE and a resumed grant is refused as `renewal_grant_suspended` forever — the bug this migration exists to remove. The migration’s catalogue control greps `pg_proc` for `suspension_active` and never looks at `command/index.ts` or the reducer.
+
+Not the killing defect, but the “ONE definition” claim is overstated.
+
+## 3. Idle clock restart at resume
+
+Walk a grant with `last_used_at` 20 days ago, `resumed_at = now()`:
+
+```
+idle_since := COALESCE(last_used_at, created_at);          -- 20d ago
+IF resumed_at IS NOT NULL AND resumed_at > idle_since THEN
+  idle_since := resumed_at;                                -- now
+END IF;
+IF kind = 'standing' AND idle_since < statement_timestamp() - interval '14 days'
+```
+
+`now < now - 14 days` is false, so it does **not** re-pause. Next preflight returns NULL. Proven from SQL (`20260904000001_standing_grant_resume.sql:283-289`). The p1-local test asserts this with `last_used_at` still old.
+
+**This check holds at the SQL layer.** It does not save the edge.
+
+## 4. Authorization on resume
+
+**Agent credential:** refused at the edge, `auth.credentialKind !== "user"` (`command/index.ts` resume handler). Load-bearing: `authenticateAgent` sets `actor.user = owner_user_id`, so without that check an agent would pass the SQL owner gate as its own owner. SQL is not granted to `authenticated`/`anon`.
+
+**Non-owner workspace member:** SQL `resume_renewal_grant`:
+
+```
+IF actor_role NOT IN ('owner', 'admin') AND principal_owner <> p_user_id THEN
+  RETURN 'renewal_resume_forbidden';
+```
+
+(`20260904000001_standing_grant_resume.sql:597`)
+
+**`revoke_agent_principal`** (`src/protocol/workspace-commands.ts:835`):
+
+```
+if (!ownerOrAdmin(actorRole) && principal.owner_user_id !== user_id)
+```
+
+Same three actors (owner, admin, principal owner). Resume also re-checks live membership and `workspaces.archived_at IS NULL` inside the function; revoke relies on the reducer/edge. Architecture differs; the predicate matches.
+
+p1-local never seeds a same-workspace member who does *not* own the principal (stranger is owner of another workspace). Gate is in SQL anyway.
+
+**This check holds.** The command that should enforce it never reports success (item below).
+
+## 5. Old clients
+
+**0.1.51 CLI vs new server:** `resume_renewal_grant` is not in `COMMAND_KINDS` / `CONNECT_COMMAND_KINDS`; existing kinds are unchanged. Mint/renew/whoami still validate. Roster now returns *effective* `suspended_at`, so old `whoami` stops showing SUSPENDED after a resume — correct. A still-paused grant still prints the old “revoke and mint a new credential” line on 0.1.51. Commands work; the remedy text is stale.
+
+**New CLI vs old server:** no dispatch arm, `validateCommand` → `unknown command kind` → HTTP 400 `{ error: "invalid_request" }`. CLI `sendConnect` throws `command failed (HTTP 400): invalid_request`. It does not print “Grant resumed”. Weakly honest, not “this server is too old.”
+
+**This check is not the fail.**
+
+## 6. App mint
+
+`site/src/lib/agent-connect.ts` sends `renewal_kind: "standing"` and does **not** send `renewal_horizon_ms` in any form (no key, not null). Validator:
+
+```
+(renewalKind === "standing" && cmd.renewal_horizon_ms === undefined) || (timeboxed && integer horizon)
+```
+
+A present null is 400. The body is valid.
+
+Copy from `STANDING_GRANT_RULES`: “Access does not expire. 14 days with no use pauses it; a workspace owner, an admin, or the member who added the agent can resume it. Revoking it is the only permanent stop.” Those sentences match SQL, **if resume is reachable**. The dashboard still has no Resume button (documented). Prompt imports `STANDING_GRANT_COPY` rather than restating 30 days.
+
+`cswarm token mint` default is unchanged (`renewal_kind: standing ? "standing" : "timeboxed"` plus `--confirm-standing`).
+
+**Wire shape is correct. The copy overclaims while the command 403s.**
+
+## 7. Tests
+
+| Assertion | Would it fail on regression? | Real path? |
+|---|---|---|
+| p1-local resume/idle-clock/revocation fences | Yes, against pre-migration schema | **SQL only.** Applies the migration inside the txn. Reaches the trigger (direct `UPDATE` expects `SWARM_RENEWAL_GRANT_RESUME_AFTER_REVOKE`). Does **not** call `resumeRenewalGrant` in the edge. |
+| p1-cli `cswarm grant resume` | Envelope keys, stdout copy | **Fake HTTP server** always 200s with a stuffed `resumed_at`. Never sees SQL NULL. |
+| site observer “copy assembled from rules” | Yes if constants drift | String assembly, not the server. |
+| “web mint asks for standing” | Yes if the field is dropped | Reads source text. |
+| Cross-file idle-day regex | Yes if the SQL interval moves | Reads files. |
+
+**No p1-server test of `resume_renewal_grant`.** The success sentinel the comment describes (`NULL means the resume happened`) is exactly what the tests never feed through the handler.
+
+## 8. What broke / the killing defect
+
+`swarm.resume_renewal_grant` returns NULL on success (`20260904000001_standing_grant_resume.sql`, `RETURN NULL`). The edge:
+
+```5712:5720:supabase/functions/command/index.ts
+  const outcomeRows = await tx<{ resume_outcome: string | null }[]>`
+    SELECT swarm.resume_renewal_grant(...) AS resume_outcome
+  `;
+  const resumeOutcome = outcomeRows[0]?.resume_outcome ?? "renewal_resume_forbidden";
+  if (resumeOutcome !== null) {
+    return await refuse(..., `renewal_resume_${resumeOutcome}`, forbidden, ...);
+```
+
+`null ?? "renewal_resume_forbidden"` is `"renewal_resume_forbidden"`. After that, `resumeOutcome !== null` is **always true**. Contrast the existing preflight pattern: `preflight[0]?.code ?? null`, which preserves SQL NULL.
+
+Same `db.begin` callback: a 403 return **commits**. So the first call actually resumes the row, then 403s; the CLI throws `CommandHttpError(403)`; a retry gets `renewal_grant_not_suspended` and 403s again. No idempotency key is written. Audit says `renewal_resume_renewal_resume_forbidden`.
+
+The advertised exit (`cswarm grant resume`, the `resume_renewal_grant` command) cannot report success. Standing-as-default copy (“a workspace owner … can resume it”) is false on the only path a human has.
+
+protocol.js matches the small `src/protocol` change (`RENEWAL_IDLE_PAUSE_DAYS` + template). Not a hand-edit of unrelated bundle. D-053 is held (codes, not `error.message`). Those do not offset the handler.
+
+VERDICT: FAIL
