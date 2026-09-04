@@ -94,7 +94,18 @@ test("Done, Back, and first use converge on a channel return", () => {
 test("browser mint uses the server's atomic renewal grant without an obsolete request", () => {
   assert.doesNotMatch(agentConnect, /kind:\s*"create_renewal_grant"/);
   assert.match(agentConnect, /const renews = mintedRunId === runId && times\.expiresAt !== null/);
-  assert.match(agentConnect, /times\.issuedAt \+ RENEWAL_HORIZON_DEFAULT_MS/);
+  /* RETIRED 2026-09-04: this asserted `times.issuedAt + RENEWAL_HORIZON_DEFAULT_MS`, the
+   * 30-day date this page computed for itself. Pinning it made the invention stable.
+   * agent-connect-mint.observer.test.ts drives the behaviour against a stubbed transport;
+   * these two pin the source so a locally owned horizon cannot come back.
+   * Scoped to the DECLARATION, not to any mention: the retired name is quoted in a dated note
+   * inside the module, and a control a comment can satisfy is not a control. */
+  assert.match(agentConnect, /horizonExpiresAt: mintedHorizon\(body\)/);
+  assert.doesNotMatch(
+    agentConnect,
+    /export const RENEWAL_HORIZON_DEFAULT_MS/,
+    "the connect page may not own a renewal horizon again; the server names it",
+  );
 });
 
 test("workspace access shows pending rows and explicit agent identity", () => {
