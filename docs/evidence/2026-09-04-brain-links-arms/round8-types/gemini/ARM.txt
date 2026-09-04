@@ -1,0 +1,24 @@
+> diff --git a/docs/design/2026-09-04-BRAIN-LINKS-IN-SIGNALS.md b/docs/design/2026-09-04-BRAIN-LINKS-IN-SIGNALS.md
+
+**1. Is the narrow tsconfig honest?**
+Yes. Since `brain-links.ts` is self-contained and imports nothing, using `skipLibCheck` and `types: []` is completely appropriate. It excludes noise from other files in the project without obscuring type errors within `brain-links.ts` itself. With strict mode enabled, the narrow configuration acts as a reliable gate.
+
+**2. Does the positive control reach the path it claims?**
+Yes. It resolves `tsc` using `createRequire(import.meta.url).resolve("typescript/bin/tsc")` to ensure it targets the local workspace compiler, avoiding false passes from a misconfigured global binary. The string replacement precisely recreates the defect by explicitly stripping the `abandoned` member, throws an error if the replacement fails to match, and asserts that the resulting compilation error specifically names "abandoned".
+
+**3. Does the new third-argument pin actually discriminate?**
+Yes. By asserting the exact parameter names in the function call via a regex (`\s*listIsFresh,\s*`), it successfully prevents passing a constant like `true` in the third position. However, pinning source shape is a weak control—it establishes the presence and order of arguments in the AST but does NOT establish the runtime values of those variables or verify what the function does with them.
+
+**4. Is the `1.5` bound stated accurately?**
+Yes. The documentation accurately reflects that `1.5` matches a slug-shaped topic name because the dot acts as a valid slug separator. There are no code changes for this; it simply records an accepted behavior.
+
+**5. Any breakages?**
+No. The commit strictly updates tests, documentation, and a TypeScript type union that compiles away. It introduces no runtime logic changes, so it cannot break the feed, Brain panel, or parent lane behaviors.
+
+**6. User-facing enumerations?**
+No. The only strings present in the changes are test assertions and internal documentation, neither of which are user-facing.
+
+**7. Is the copy plain and accurate?**
+Yes. The comments accurately detail the 68 pre-existing errors in `site/tsconfig.json` as the reason for the isolated gate. Furthermore, the test comments clearly explain the mechanics of the positive control and the rationale behind the compiler resolution.
+
+VERDICT: PASS

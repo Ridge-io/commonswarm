@@ -1,0 +1,25 @@
+I'll read the review brief and the patch first, then follow those instructions exactly.I'll quote the first `diff --git` line, then review that exact patch against the brief.The patch header matches. Next I’ll read the full diff and the files it changes so I can attack each question.I'll read the source, the call site, slug rules, and how the site tests actually run.The repo is the parent worktree. I'll read the changed files from there.I’ll verify the type gate, the observer pin, slug matching for `1.5`, and the 68-error claim against the real files.I’ll check the live call site, then run the type gate and the `1.5` slug behaviour against the code.I’ll run the type gate, check the 68-error claim, and probe `1.5` matching plus the observer regex.I’ll mutate the real files, then restore them, to see whether the gate and the observer pin actually fail.The real project gate catches the missing union, and the observer pin goes red if the third argument is a constant. I’ll confirm the tree is clean, then write the review.HEAD moved during the review. I’ll check whether that new SHA still contains the same patch.`diff --git a/docs/design/2026-09-04-BRAIN-LINKS-IN-SIGNALS.md b/docs/design/2026-09-04-BRAIN-LINKS-IN-SIGNALS.md`
+
+Review of `70af721`. The patch header matches. The worktree HEAD later moved to `0666a5e` (rebase + evidence). File reads and mutations were on `70af721`. Restores left a clean tree.
+
+**1. Narrow tsconfig.** Honest for this defect. `types: []` and `skipLibCheck` do not hide a TS2322 in the source. The file has no imports, so isolation is real. I removed the `abandoned` member and ran `tsc -p tsconfig.brain-links.json`. Exit 2:
+
+`src/lib/brain-links.ts(207,35): error TS2322: Type '"abandoned"' is not assignable to type '"open" | "missing"'.`
+
+The gate does not typecheck `LiveDashboard.astro` call sites. That is the stated scope, not a cheat.
+
+**2. Positive control.** It reaches the defect, with one overclaim. The compiler is `createRequire(...).resolve("typescript/bin/tsc")` (parent `typescript`, not `npx`). The replace needle matches; `assert.notEqual` latches it. `/abandoned/` matches the TS2322 text. The test name says "the same invocation," but the control writes a duplicate tsconfig in a temp dir, so it does not prove `-p tsconfig.brain-links.json` itself. The third test only pins `files` and `strict`. The real-project mutation above closes that gap.
+
+**3. Third-argument pin.** It discriminates. Replacing `listIsFresh` with `true` in `LiveDashboard.astro` turns that observer test red (`listIsFresh must be the third argument...`). Combined with the existing `const listIsFresh = await refreshBrainTopics(true)` pin, a constant in slot 3 is caught. Source shape does not run the dashboard. It can miss a second call site, one-line formatting, or a shadowed `listIsFresh`. Function semantics stay in `brain-links.test.mjs`.
+
+**4. `1.5` bound.** Accurate. `.` is in `BRAIN_SLUG_SEPARATORS`. `isSlugShapedTopic("1.5")` is true. With topic `1.5` in the list, `I upgraded to version 1.5` yields a control on `1.5`. With no such topic, no link. The ruling (intended, because the name matches) matches the code.
+
+**5. Runtime.** No runtime change. The union member is types-only. Feed, Brain panel, and parent click behaviour are unchanged.
+
+**6. Enumerations.** No new user-facing list of what the code enforces.
+
+**7. Copy.** Mostly accurate. Site `tsc -p tsconfig.json` has 68 errors, and `brain-links.ts` is not among them. Repo-root tsc is `src/**` only. The clause "from `../src/protocol/*` and `astro.config.mjs`" is incomplete: 49 protocol, 5 `astro.config.mjs`, 14 site observer tests. The reason site tsc cannot gate (already red) still holds.
+
+Not established: full `npm test` / `npm --prefix site test` / the p1-cli allowlist (REVIEW.md already measured those). I did not drive a live dashboard.
+
+VERDICT: PASS
