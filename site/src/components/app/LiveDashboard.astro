@@ -599,6 +599,7 @@ import "../../styles/tokens.css";
 
             <section class="dashboard__brain-view" data-channel-view="brain" hidden>
               <aside class="dashboard__brain-index" aria-label="Brain topics">
+                <p class="dashboard__brain-notice" role="status" data-brain-notice hidden></p>
                 <p class="dashboard__brain-empty" data-brain-empty></p>
                 <ul class="dashboard__brain-list" data-brain-list hidden></ul>
               </aside>
@@ -998,6 +999,11 @@ import "../../styles/tokens.css";
     type BrainView,
     type BrainViewTargets,
   } from "../../lib/brain-view";
+  import {
+    brainLinkClickOutcome,
+    createBrainTopicReader,
+    linkifyBrainTopics,
+  } from "../../lib/brain-links";
   import {
     MESSAGE_COLLAPSE_LINES,
     setSanitizedMessageMarkdown,
@@ -3257,6 +3263,13 @@ import "../../styles/tokens.css";
             } satisfies BrainTopic;
           },
         });
+        /* Inside the one-time init: renderBrain runs on every render, and binding here each
+           time would stack a listener per render. The list is replaced by replaceChildren, so
+           the listener is delegated on the container that survives. */
+        one<HTMLElement>("[data-brain-list]")?.addEventListener(
+          "click",
+          () => setBrainNotice(""),
+        );
       }
       brainView.setTopics(brainTopics(files, workspaceFileUploaderName));
       const empty = one<HTMLElement>("[data-brain-empty]");
@@ -3267,6 +3280,112 @@ import "../../styles/tokens.css";
       } else {
         empty?.classList.remove("dashboard__form-error");
       }
+    };
+
+    /* The topics the Brain panel can open, from the same brainTopics() the panel itself lists. */
+    const brainTopicNames = (): string[] =>
+      brainTopics(files, () => "").map((topic) => topic.topic);
+
+    /*
+     * `files` IS A SNAPSHOT. workspaceFiles() runs only when a workspace opens; loadSignals,
+     * renderFeed and refreshLatestSignals never touch it. A review arm found what that costs the
+     * feed's brain links, and both halves were real:
+     *
+     *   - a topic created after load never linkified, because the snapshot could not grow;
+     *   - a topic DELETED after load kept its control, and the click failed inside the download
+     *     with "The topic could not be loaded" -- a dead control.
+     *
+     * Two things fix it. A bounded re-read while the reader is on the feed keeps the rendered
+     * controls close to the truth, at one request per BRAIN_TOPIC_REFRESH_MS rather than at the
+     * 2-second signal cadence. The CLICK re-reads first and is authoritative: whatever is on
+     * screen, a control can only open a topic the workspace holds at the moment it is clicked.
+     */
+    const BRAIN_TOPIC_REFRESH_MS = 30_000;
+
+    /*
+     * One read. Resolves TRUE only when it replaced `files` for the workspace that is active NOW.
+     * Every early return resolves FALSE, because "I did not read" and "the list is current" are
+     * different facts: a review arm found the first version resolving on a workspace switch and
+     * the reader calling that fresh, which authorized a click against the previous workspace.
+     */
+    const readBrainTopics = async (): Promise<boolean> => {
+      const workspaceId = activeWorkspaceId;
+      const version = requestVersion;
+      const next = await workspaceFiles(workspaceId);
+      if (version !== requestVersion || workspaceId !== activeWorkspaceId) return false;
+      const before = brainTopicNames().join("\n");
+      files = next;
+      fileLoadError = "";
+      if (brainTopicNames().join("\n") === before) return true;
+      /*
+       * ONLY the feed. The feed is what carries the links, so it has to be rebuilt here.
+       *
+       * The Files and Brain panels deliberately are NOT. An earlier revision rebuilt whichever of
+       * them was on screen, which is the opposite of what its own comment promised and is the one
+       * case that can cost a reader something: renderFileList calls replaceChildren, so a rebuild
+       * throws away focus, and brainView.setTopics can close a pane that is holding unsaved edits
+       * when that topic's file changed underneath. Both panels are rebuilt by
+       * activateWorkspaceView when a reader enters them, and openBrainTopic rebuilds Brain itself
+       * after its own read, so nothing needs a background rebuild to stay correct.
+       */
+      if (!addAgentViewOpen() && ["feed", "feed-empty"].includes(app.dataset.channelView ?? "")) {
+        renderFeed();
+      }
+      return true;
+    };
+
+    const brainTopicReader = createBrainTopicReader({
+      read: async () => {
+        /* Nothing to read against, so nothing is established: not fresh. */
+        if (sampleMode || !activeWorkspaceId) return false;
+        return await readBrainTopics();
+      },
+      staleAfterMs: BRAIN_TOPIC_REFRESH_MS,
+    });
+
+    const refreshBrainTopics = (force: boolean): Promise<boolean> =>
+      brainTopicReader.refresh(force);
+
+    const setBrainNotice = (message: string): void => {
+      const notice = one<HTMLElement>("[data-brain-notice]");
+      if (!notice) return;
+      notice.textContent = message;
+      notice.hidden = message.length === 0;
+    };
+
+    /*
+     * Show the panel first so the click feels answered, then re-read and check. Failing inside
+     * the download is what this replaces: if the topic is gone, the panel says so in the words a
+     * reader needs and leaves them on the current list.
+     */
+    const openBrainTopic = async (topic: string): Promise<void> => {
+      /* Captured BEFORE the await, compared after, exactly like every other continuation in this
+       * file. This was the one that had neither, and a review arm walked the consequence: a click
+       * in workspace A, a switch to B while the read was in flight, and the forced read then ran
+       * against B and APPLIED -- so the list was fresh, the names were B's, and B's copy of the
+       * slug opened for a click the reader never made there. */
+      const version = requestVersion;
+      const workspaceId = activeWorkspaceId;
+      activateWorkspaceView("brain");
+      setBrainNotice("");
+      const listIsFresh = await refreshBrainTopics(true);
+      const outcome = brainLinkClickOutcome(
+        topic,
+        brainTopicNames(),
+        listIsFresh,
+        version === requestVersion && workspaceId === activeWorkspaceId,
+      );
+      /* Nothing rendered, nothing opened, no notice: the workspace the reader is now on owes
+       * them nothing about a click made somewhere else. */
+      if (outcome.kind === "abandoned") return;
+      /* The read does not rebuild this panel -- background reads rebuild nothing but the feed --
+         so the list the reader is looking at is refreshed here, where it is on screen. */
+      renderBrain();
+      if (outcome.kind === "missing") {
+        setBrainNotice(outcome.message);
+        return;
+      }
+      void brainView?.open(outcome.topic);
     };
 
     const kindLabel = (kind: string): string => {
@@ -3777,6 +3896,14 @@ import "../../styles/tokens.css";
          * how a long agent report arrived as a wall of "#" characters. A message sits under the
          * channel title, so its "#" becomes an h2 rather than competing with the page's h1. */
         setSanitizedMessageMarkdown(markdown, signal.body, { headingOffset: 1 });
+        /* AFTER the sanitizer, over the sanitized tree's text nodes only. A brain topic an agent
+         * named becomes a control that opens that topic, Markdown-rendered, in the Brain panel.
+         * Running it here rather than inside the renderer keeps it out of the innerHTML path:
+         * it builds elements, never HTML strings, so it adds no injection surface. */
+        linkifyBrainTopics(markdown, {
+          topics: brainTopicNames(),
+          open: (topic) => void openBrainTopic(topic),
+        });
         if (!expandedSignalIds.has(signal.id)) {
           markdown.classList.add("dashboard__message-markdown--collapsed");
         }
@@ -3986,6 +4113,9 @@ import "../../styles/tokens.css";
         /* The dedicated access cadence owns discovery; a healthy feed tick also
            offers a catch-up, and the shared gate keeps the requests bounded. */
         void refreshPendingAccess(workspaceId, version);
+        /* Brain topics decide which names in a body are controls. This offers a re-read on
+           every healthy tick; refreshBrainTopics keeps it to one request per 30 seconds. */
+        void refreshBrainTopics(false);
       } catch {
         // A live refresh never replaces a readable channel with an error. The
         // next tick retries, and the explicit refresh control remains available.
@@ -9462,6 +9592,50 @@ import "../../styles/tokens.css";
     text-decoration: underline;
     text-underline-offset: 0.14em;
   }
+
+  /* Said when a control names a topic the workspace no longer holds. It sits above the topic
+   * list, which is where the reader has just landed, so it is legible with no topic pane open. */
+  .dashboard__brain-notice {
+    margin: 0 0 var(--s-3);
+    padding: var(--s-3);
+    color: var(--text);
+    background: var(--elev-3);
+    border: 1px solid var(--border);
+    border-radius: var(--radius);
+    font-size: var(--t-sm);
+  }
+
+  /* A named brain topic. It reads like the link it is, but it opens a panel in this app rather
+   * than leaving for a URL, so it is a button and carries no external-link affordance. The
+   * dotted underline is the one thing that tells the two apart at a glance. */
+  .dashboard__brain-link {
+    display: inline;
+    margin: 0;
+    padding: 0;
+    color: var(--accent-bright);
+    background: transparent;
+    border: 0;
+    font: inherit;
+    text-align: start;
+    text-decoration: underline dotted;
+    text-underline-offset: 0.14em;
+    cursor: pointer;
+    overflow-wrap: anywhere;
+  }
+
+  .dashboard__brain-link:hover {
+    text-decoration: underline solid;
+  }
+
+  /* The same ring every other control in this dashboard uses. A review arm noted the first
+   * version changed only the underline, which is not a focus indicator. */
+  .dashboard__brain-link:focus-visible {
+    outline: none;
+    box-shadow: var(--focus-ring);
+    border-radius: var(--radius-sm);
+    text-decoration: underline solid;
+  }
+
 
   .dashboard__message-markdown a:hover,
   .dashboard__message-toggle:hover {
