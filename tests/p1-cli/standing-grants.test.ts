@@ -18,6 +18,8 @@ import {
   STANDING_IDLE_PAUSE_DAYS,
   STANDING_RESUME_ACTORS,
   type RenewalGrantStatus,
+  STANDING_RESUME_ACTORS_SENTENCE,
+  standingPausedRenewalMessage,
 } from "../../src/cloud/renewal-grants.js";
 import { credentialStore } from "../../src/cloud/storage.js";
 import { RENEWAL_IDLE_PAUSE_DAYS } from "../../src/protocol/workspace-commands.js";
@@ -259,6 +261,37 @@ test("status wording follows the server grant shape and gives suspended next ste
     lines[1],
     /revoke this grant and mint a new credential/,
     "the paused remedy must not tell the reader to perform the permanent kill",
+  );
+
+  /* ★ THE SECOND SURFACE, SWEPT 2026-09-04. `cswarm whoami` was corrected above while
+     src/cloud/renewal.ts still told the reader to "revoke this grant and mint a new
+     credential" — and that is the message an operator actually meets, because it is what the
+     listener prints when renewal is refused. One claim, two surfaces; a sweep that stops at
+     the first one leaves the retired remedy on the louder of the two. Both now read the same
+     generated sentence, so neither can drift from swarm.resume_renewal_grant's gate. */
+  for (const idle of [true, false]) {
+    const message = standingPausedRenewalMessage(idle);
+    assert.match(message, /cswarm grant resume/);
+    assert.match(message, /It is not revoked and this agent is not gone\./);
+    assert.doesNotMatch(
+      message,
+      /revoke this grant and mint a new credential/,
+      "the listener's paused message must not name the permanent kill either",
+    );
+    assert.ok(
+      message.includes(STANDING_RESUME_ACTORS_SENTENCE),
+      "the actors come from the shared constant, never retyped",
+    );
+  }
+  assert.match(
+    standingPausedRenewalMessage(true),
+    new RegExp(`went ${STANDING_IDLE_PAUSE_DAYS} days with no use`),
+    "the idle count is generated from the constant the migration is pinned against",
+  );
+  assert.doesNotMatch(
+    standingPausedRenewalMessage(false),
+    /days with no use/,
+    "a grant paused for another reason must not claim an idle count",
   );
 
   /* Revoked keeps the opposite advice and says the word that separates the two

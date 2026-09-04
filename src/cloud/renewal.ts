@@ -51,7 +51,10 @@ import {
 } from "./config.js";
 /* One list of standing-grant rules for the whole CLI. renewal-grants.ts imports
    only ./config.js, so this direction introduces no cycle. */
-import { STANDING_GRANT_RULES } from "./renewal-grants.js";
+import {
+  STANDING_GRANT_RULES,
+  standingPausedRenewalMessage,
+} from "./renewal-grants.js";
 import type {
   AgentCredentialRecord,
   AgentCredentialStore,
@@ -522,9 +525,7 @@ export async function requestSuccessor(options: {
     ) {
       throw new RenewalSuspended(
         reason,
-        reason === "renewal_idle_suspended"
-          ? "This standing grant was idle for more than 14 days, so CommonSwarm suspended it and refused renewal. Ask a workspace owner to revoke this grant and mint a new credential before this agent continues."
-          : "This renewal grant is suspended, so CommonSwarm refused renewal. Ask a workspace owner to revoke this grant and mint a new credential before this agent continues.",
+        standingPausedRenewalMessage(reason === "renewal_idle_suspended"),
       );
     }
     if (reason === "renewal_horizon_reached") {

@@ -155,14 +155,39 @@ function orList(items: readonly string[]): string {
   return `${items.slice(0, -1).join(", ")}, or ${items[items.length - 1]}`;
 }
 
+/**
+ * The actors, as one phrase, generated once.
+ *
+ * Two surfaces name these people — the grant status line below and the LISTENER's renewal
+ * refusal in renewal.ts — and they must not drift from each other or from the gate in
+ * swarm.resume_renewal_grant. Retyping the list in the second surface is how the first sweep
+ * of this claim family missed it.
+ */
+export const STANDING_RESUME_ACTORS_SENTENCE = orList(STANDING_RESUME_ACTORS);
+
 /** Everything a standing grant does, one rule per enforced behaviour. */
 export const STANDING_GRANT_RULES: readonly string[] = [
   "Access does not expire.",
-  `${STANDING_IDLE_PAUSE_DAYS} days with no use pauses it; ${
-    orList(STANDING_RESUME_ACTORS)
-  } can resume it.`,
+  `${STANDING_IDLE_PAUSE_DAYS} days with no use pauses it; ${STANDING_RESUME_ACTORS_SENTENCE} can resume it.`,
   "Revoking it is the only permanent stop.",
 ];
+
+/**
+ * What the LISTENER prints when renewal is refused because the grant is paused.
+ *
+ * SWEPT 2026-09-04, and it is the same defect describeRenewalGrant below already fixed:
+ * renewal.ts told the reader to "revoke this grant and mint a new credential" — the
+ * PERMANENT kill offered as the cure for the RECOVERABLE pause. That was the only honest
+ * advice while suspension was one-way; a resume exists now, and `cswarm whoami` had already
+ * been corrected while this surface, which is the one an operator actually meets when an
+ * agent stops, still carried the retired remedy. One claim, two surfaces, one source.
+ */
+export function standingPausedRenewalMessage(idle: boolean): string {
+  const cause = idle
+    ? `This standing grant went ${STANDING_IDLE_PAUSE_DAYS} days with no use, so CommonSwarm paused it and refused renewal.`
+    : "This renewal grant is paused, so CommonSwarm refused renewal.";
+  return `${cause} It is not revoked and this agent is not gone. Next step: ${STANDING_RESUME_ACTORS_SENTENCE} runs cswarm grant resume, then this agent continues.`;
+}
 
 /**
  * User-facing grant state, tied to server-enforced nullability.
