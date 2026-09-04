@@ -1632,3 +1632,24 @@ logged in round 2 were the 10-minute tool cap killing a foreground arm (exit 144
 
 Not established: whether round 7 lands tonight; npm 0.1.51 still waits on the operator's agent
 (`npm view commonswarm version` reads 0.1.50 at the time of this note if it does — see next addendum).
+
+## Addendum 2026-09-04 22:5x UTC — brain-links LANDED (merge 0783bb1)
+
+`lane/brain-links` @ `e65af99` merged onto `main` as `0783bb1`; both arms PASS on the exact SHA
+(Grok 5.1 KB, Gemini 4.3 KB, quote-backs present, attempted refutations named). Gates on the merge
+commit after build: `tsc` clean, `npm test` 740/740, site 319/320 (1 skip), p1-cli 408/408 (PM).
+Evidence: `docs/evidence/2026-09-04-brain-links-arms/` (55 files: seven rounds, README table,
+the PM's 526-line ARM-EVIDENCE.md). Worktree and branch removed.
+
+What is LIVE in the repo, not yet on the site: a brain topic named in a signal body becomes a
+control that opens it in the Brain panel; a click re-reads the topic list and decides against
+that read; a click abandoned by a workspace switch renders nothing. The site deploy is still held
+behind npm 0.1.51 (the built `/download` advertises `npm install -g commonswarm`).
+
+Routed to a follow-up lane (`lane/brain-links-types`), NOT blocking: (1) `BrainLinkOutcome`
+(`site/src/lib/brain-links.ts:176`) omits `abandoned` while line 207 returns it — `tsc -p
+site/tsconfig.json` reports TS2322; site tsc is red on unrelated `src/protocol` imports and is not
+a gate, which is how it landed; (2) the observer source-shape test does not pin `listIsFresh` as
+the third argument to `brainLinkClickOutcome`, so a call site passing `true` there would still be
+green; (3) Gemini's `1.5` case — a dot makes it slug-shaped and it links in prose; ruled an
+intended link, since the topic exists under that name. Not established: any of this in a browser.
