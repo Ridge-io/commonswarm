@@ -1580,3 +1580,33 @@ watcher pass and the `grok -p Read ./REVIEW.md` liveness check, a third time.
 worktrees); the chip is replaced with a fail-fast one. Host under load reads pressure 2 with zero
 swapouts — elevated, not swapping; the real-Chrome observer tests in the site suite go red under it
 and pass on a quiet rerun.
+
+### 2026-09-04 21:40 UTC — standing grants LANDED server-side; app and CLI held on npm
+
+`lane/standing-default` (e433fd9, the other session's full-stack lane) plus
+`lane/standing-default-followup` (2d9fbba, four commits: the resume-handler fix, a single
+`suspension_active` definition through the reducer, a p1-server test that reaches the handler and
+shows the split-brain under mutation, the listener's stale "revoke and mint" remedy, and a
+citation-drift test) landed as merge `98146d5`. Both arms PASS on 2d9fbba — Grok and Gemini,
+substantive, and Grok independently confirmed the withdrawn "two clocks" finding was wrong.
+
+Order executed, each step verified before the next: `supabase db push --linked` applied exactly
+`20260904000001_standing_grant_resume.sql` (dry-run beforehand said so; remote list confirms; the
+two NOTICE lines are `DROP … IF EXISTS`); `supabase functions deploy command` from the merged tree
+at 21:40:13; push. Live control after: 0.1.51 `whoami` valid, `members` lists 9, six listeners
+`ready` on 0.1.51 with empty queues. The two codex seats stay `failed` on the Codex usage limit.
+
+**What this means right now.** The server accepts `renewal_kind: standing` and the
+`resume_renewal_grant` command. The live app still mints timeboxed 30-day, because the site deploy
+(which carries the app change) is **held on the operator's npm 2FA step** — the built `/download`
+prints `npm install -g commonswarm`, which would fetch 0.1.50 beside a page saying 0.1.51. Client
+0.1.52 (`cswarm grant resume`) is held on the same step. Until then a paused standing grant can be
+resumed only by a CLI built from `main`.
+
+Carried, comment-only: `site/src/lib/agent-connect.ts:277` cites `index.ts:1970-1978` as the gate
+that rejects `renewal_kind` on an older function; resolved today those lines accept it
+(`optionalKeys` at `:1943`). Behaviour is right, the pointer is not. A 2 KB patch is staged in the
+evidence dir and goes into the next lane that touches that file, with that lane's arms.
+
+Evidence for this landing (arms on e433fd9 and 2d9fbba, the device-binding trace, the withdrawn
+finding with its chain, the deferral note) is committed under `docs/evidence/2026-09-04-standing-*`.
