@@ -1,0 +1,16 @@
+`diff --git a/docs/evidence/2026-09-05-chat-app-threads/README.md b/docs/evidence/2026-09-05-chat-app-threads/README.md`
+
+1. **Are the corrected table cells now right?**
+Yes. I verified the table cells in `README.md` against the logs in `arms/`. For `3315846`, the leftover heading fix is now correctly attributed to `324c3a8` (which actually fixed it), and the un-reconstructable typed count has been removed. For `5791646`, the "none stands" claim is correctly attributed to `5791646`'s own README, and the table accurately clarifies that its parent `8f3a45f` claimed something narrower.
+
+2. **Is the flake note honest?**
+The flake note is honest. I checked the lane's changed files, and `slack-shape.observer.test.ts` was not modified in this lane. The discriminator used ("green alone on the same SHA") is the established standard from `AGENTS.md` to isolate contention failures on a shared host. It is properly identifying test flakiness, not explaining away a real breakage caused by this lane.
+
+3. **Everything else.**
+I cannot refute the claims. I audited the user-facing copy strings in `site/src/lib/composer-address.ts`, `site/src/lib/thread-reply.ts`, and `site/src/components/app/LiveDashboard.astro`. 
+- `composerDeliveryNote` dynamically accounts for every agent in the set being woken (e.g., "2 agents are notified.").
+- `composerPromoteLabel` properly frames promotion as moving the recipient the message "shows as addressed to", with no mention of wake control.
+- `THREAD_REPLY_TO_TEXT` accurately states that a thread reply has no recipients and "notifies nobody".
+All retired wake wording (e.g., "The one recipient the service wakes" or "Put X first, so X is notified") is correctly wrapped in `~~` strikethroughs within the source comments. No retired wake sentence stands as current in the product's own user-facing copy. I found no break for a person using the app.
+
+VERDICT: PASS
