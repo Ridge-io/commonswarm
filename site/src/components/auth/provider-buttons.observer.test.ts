@@ -18,6 +18,14 @@
  * code, so it is a deploy step instead — docs/design/2026-09-04-GOOGLE-SIGNIN.md carries the
  * curl with its positive control. What runs here is offline: the decision function against
  * recorded GoTrue bodies, and the rendering against the constant.
+ *
+ * THE SWEEP HAS A STATED BOUND, AND IT IS NOT A GAP. `SWEEP_CATCHES` below lists what the
+ * hand-written-control sweep catches, generated from the very patterns and call names the
+ * assertions use, and `SWEEP_DOES_NOT_CATCH` says what it does not. Read those two before
+ * judging this file: the question they invite is "does the sweep do what it says", not "is a
+ * regex over site/src complete". It is not, it cannot be, and four review rounds spent on
+ * widening it produced one more bypass each time. The bound is written here and in step 6 of
+ * docs/design/2026-09-04-GOOGLE-SIGNIN.md, and a control below keeps the two identical.
  */
 import assert from "node:assert/strict";
 import { readdir, readFile } from "node:fs/promises";
@@ -42,6 +50,10 @@ const ONRAMP = new URL("../invite/InviteOnramp.astro", import.meta.url);
 const BUTTONS = new URL("./ProviderButtons.astro", import.meta.url);
 const SRC = new URL("../../", import.meta.url);
 const DIST = new URL("../../../dist/", import.meta.url);
+const GOOGLE_SIGNIN_DOC = new URL(
+  "../../../../docs/design/2026-09-04-GOOGLE-SIGNIN.md",
+  import.meta.url,
+);
 
 /*
  * The sign-in buttons are generated. The SENTENCES around them, on the landing page, the
@@ -203,13 +215,72 @@ const PROVIDER_NAME_SEGMENT = `(?:[a-z0-9-]*-)?(?:${AUTH_PROVIDERS.map(
  */
 const PROVIDER_IN_ATTRIBUTE_NAME = `<[a-zA-Z][^>]*\\sdata-${PROVIDER_NAME_SEGMENT}(?=[\\s=/>])`;
 
+/** The generic `data-signin*` spelling, on any tag. */
+const DATA_SIGNIN_ATTRIBUTE = `<[a-zA-Z][^>]*\\bdata-signin`;
+
+/** The same two names, built with setAttribute rather than written into the markup. */
+const SETATTRIBUTE_PROVIDER_NAME =
+  `setAttribute\\(\\s*["'\`]data-(?:signin[a-z0-9-]*|${PROVIDER_NAME_SEGMENT})["'\`]`;
+
+/** A `data-signin*` attribute WRITTEN through the dataset API. Reading one is not writing one. */
+const DATASET_SIGNIN_WRITE =
+  `dataset(?:\\.signin[A-Za-z]*|\\s*\\[\\s*["'\`]signin[A-Za-z]*["'\`]\\s*\\])\\s*=[^=]`;
+
+/** Every branch of the source sweep's marker, in one place, so the bound below can name them. */
+const SIGNIN_MARKER_BRANCHES: readonly string[] = [
+  DATA_SIGNIN_ATTRIBUTE,
+  PROVIDER_IN_ATTRIBUTE_NAME,
+  SETATTRIBUTE_PROVIDER_NAME,
+  DATASET_SIGNIN_WRITE,
+];
+
+/** The one general call that reaches Supabase, named once because assertions and prose share it. */
+const GENERAL_PROVIDER_CALL = "signInWithProvider(";
+/** The one wrapper with a provider in its name. commonswarm.ts calls it the named debt. */
+const NAMED_PROVIDER_WRAPPER = "signInWithGitHub(";
+/** Supabase's own call. There must be exactly one site for it. */
+const OAUTH_CALL = ".signInWithOAuth(";
+
+/**
+ * WHAT THIS SUITE CATCHES, AND WHAT IT DOES NOT — generated from the values the assertions
+ * themselves use, so the sentence cannot drift from them.
+ *
+ * WHY A STATED BOUND RATHER THAN A WIDER PATTERN. Four review rounds argued about whether a
+ * regex over site/src can be complete. It cannot: every widening bought one more shape and
+ * invited the next, and `<button data-login="github">` is one member of an infinite set. The
+ * ruling is to stop widening and say what the sweep does, so a reader — and a review arm — can
+ * judge whether it does what it SAYS rather than whether it is complete. A bound that is
+ * written down is not a gap; an unwritten one is.
+ */
+const SWEEP_CATCHES: readonly string[] = [
+  `a data-signin* attribute on any tag`,
+  `a provider id (${AUTH_PROVIDERS.map((provider) => provider.id).join(" or ")}) as a ` +
+    `hyphen segment of any data-* attribute NAME, in any case`,
+  `either of those two names built with setAttribute, or a data-signin* write through dataset`,
+  `any ${OAUTH_CALL} outside lib/commonswarm.ts`,
+  `any string literal handed to ${GENERAL_PROVIDER_CALL}`,
+  `more than one call to ${NAMED_PROVIDER_WRAPPER}`,
+  `a rendered button whose label is not exactly one of: ` +
+    AUTH_PROVIDERS.map((provider) => JSON.stringify(provider.label)).join(", "),
+];
+
+/**
+ * The bound, in the one wording the design doc must carry too. Typed once here because a
+ * statement about ABSENCE cannot be generated from what is present; pinned in both places by
+ * the control below, so the doc and this file cannot drift apart.
+ */
+const SWEEP_DOES_NOT_CATCH =
+  "It does not catch a provider hidden in an attribute VALUE under an unrelated name, " +
+  "and that is a bound, not a gap this test closes.";
+
 /**
  * `data-*` attribute names that carry a provider id and are NOT sign-in controls.
  *
- * EMPTY TODAY, and that is the point: the marker above deliberately over-matches, so the first
- * benign attribute anybody adds — `data-google-analytics-id` is the arm's example — turns the
- * sweep red once. Add the exact attribute name here, with a line saying what it is for. An
- * entry is a person deciding; silence would have been the pattern deciding.
+ * EMPTY TODAY, and that is the point: the name marker deliberately over-matches — a benign
+ * `data-google-analytics-id` reads the same as a working `data-github-login`, and no pattern
+ * separates them — so the first benign attribute anybody adds turns the sweep red once. Add the
+ * exact attribute name here, with a line saying what it is for. An entry is a person deciding;
+ * silence would have been the pattern deciding.
  */
 const NON_SIGNIN_PROVIDER_ATTRIBUTES: readonly string[] = [];
 
@@ -633,40 +704,7 @@ test("CONTROL: only ProviderButtons renders a sign-in button, apart from named d
    * neither matches, because the first needs an opening tag and whitespace before the
    * attribute, and the second needs an `=`.
    */
-  const ids = AUTH_PROVIDERS.map((provider) => provider.id).join("|");
-  // The dataset API spells `data-member-reauth-github` as `memberReauthGithub`, so the same
-  // provider ids have to be matched in camelCase there. Built from the array, not typed.
-  const datasetIds = AUTH_PROVIDERS.map(
-    (provider) => provider.id.charAt(0).toUpperCase() + provider.id.slice(1),
-  ).join("|");
-  const marker = new RegExp(
-    // any tag with a data-signin* attribute, however it is spelled
-    `<[a-zA-Z][^>]*\\bdata-signin` +
-      // any tag with a data-* attribute whose NAME carries a provider: the invite page used
-      // `data-github` before this lane and /app used `data-member-reauth-github` after it, so
-      // both spellings are real routes, and the ids come from the array
-      `|${PROVIDER_IN_ATTRIBUTE_NAME}` +
-      // built rather than written, with the same segment rule and a name that ends at the quote
-      `|setAttribute\\(\\s*["'\`]data-(?:signin[a-z0-9-]*|${PROVIDER_NAME_SEGMENT})["'\`]` +
-      // through the dataset API, by the generic `signin*` name or by a provider in the property
-      `|dataset(?:\\.[A-Za-z0-9]*(?:signin|${datasetIds})[A-Za-z0-9]*` +
-      `|\\s*\\[\\s*["'\`][A-Za-z0-9]*(?:signin|${datasetIds})[A-Za-z0-9]*["'\`]\\s*\\])\\s*=[^=]` +
-      /*
-       * A provider id typed as an attribute VALUE, whatever the attribute is called:
-       * `<button data-login="github">`, and the same thing built with setAttribute. Two arms
-       * constructed exactly this and wired it with a DOM READ rather than a literal, which
-       * slipped past the name patterns above AND past the call-site literal ban.
-       *
-       * SAFE HERE, THOUGH IT WOULD NOT BE ON THE BUILT PAGE, and that is why this branch is
-       * on the source sweep only. The generated buttons carry `data-signin-provider="github"`
-       * in the built HTML, so a value pattern there would count every generated button. In
-       * SOURCE there is exactly one file that writes that markup, ProviderButtons.astro, and
-       * this sweep already skips it. Measured on this tree: zero hits outside it.
-       */
-      `|<[a-zA-Z][^>]*\\s[a-z][a-z0-9-]*=["'\`](?:${ids})["'\`]` +
-      `|setAttribute\\(\\s*["'\`][a-z][a-z0-9-]*["'\`]\\s*,\\s*["'\`](?:${ids})["'\`]`,
-    "i",
-  );
+  const marker = new RegExp(SIGNIN_MARKER_BRANCHES.join("|"), "i");
   const all = new RegExp(marker.source, "gi");
   const count = (text: string): number =>
     (withoutAllowedAttributes(text).match(all) ?? []).length;
@@ -707,6 +745,65 @@ test("CONTROL: only ProviderButtons renders a sign-in button, apart from named d
         `sweep cover the file again.`,
     );
   }
+});
+
+test("CONTROL: the sweep's stated bound is derived from its own assertions, and the doc carries it", async () => {
+  /*
+   * The list is a claim about code, so it is built FROM that code. This proves the building
+   * actually happened: every pattern SWEEP_CATCHES describes has to be a branch the marker
+   * really runs, and every call name it quotes has to be a string the assertions really use.
+   * Delete a branch and leave its line in the list, or reword a line by hand, and this fails.
+   *
+   * Then the same bound is required, word for word, in step 6 of the Google sign-in checklist,
+   * because that is where an operator reads what the failing test will and will not tell them.
+   * A bound that lives in only one of the two drifts the first time either is edited.
+   */
+  assert.equal(SIGNIN_MARKER_BRANCHES.length, 4, "the marker has four branches");
+  for (const branch of SIGNIN_MARKER_BRANCHES) {
+    assert.doesNotThrow(() => new RegExp(branch, "i"), `branch is not a usable pattern: ${branch}`);
+  }
+  // Each catch line names something real: a live branch, or a call string an assertion uses.
+  assert.ok(
+    SWEEP_CATCHES.some((line) => line.includes("data-signin*")) &&
+      SIGNIN_MARKER_BRANCHES.includes(DATA_SIGNIN_ATTRIBUTE),
+    "the list claims a data-signin* branch; the marker must actually carry it",
+  );
+  assert.ok(
+    SIGNIN_MARKER_BRANCHES.includes(PROVIDER_IN_ATTRIBUTE_NAME) &&
+      SIGNIN_MARKER_BRANCHES.includes(SETATTRIBUTE_PROVIDER_NAME) &&
+      SIGNIN_MARKER_BRANCHES.includes(DATASET_SIGNIN_WRITE),
+    "the list claims a name branch, a setAttribute branch and a dataset branch",
+  );
+  for (const id of AUTH_PROVIDERS.map((provider) => provider.id)) {
+    assert.ok(
+      SWEEP_CATCHES.some((line) => line.includes(id)),
+      `the bound must name every provider the array holds; "${id}" is missing, so it was typed`,
+    );
+  }
+  for (const provider of AUTH_PROVIDERS) {
+    assert.ok(
+      SWEEP_CATCHES.some((line) => line.includes(JSON.stringify(provider.label))),
+      `the bound must quote every label the array holds; "${provider.label}" is missing`,
+    );
+  }
+  for (const call of [OAUTH_CALL, GENERAL_PROVIDER_CALL, NAMED_PROVIDER_WRAPPER]) {
+    assert.ok(
+      SWEEP_CATCHES.some((line) => line.includes(call)),
+      `the bound must name ${call}, which the assertions below use`,
+    );
+  }
+
+  const checklist = await readFile(GOOGLE_SIGNIN_DOC, "utf8");
+  assert.ok(
+    checklist.includes("### The copy that says GitHub"),
+    "step 6 of the checklist is where this bound belongs; its heading is gone",
+  );
+  assert.ok(
+    checklist.includes(SWEEP_DOES_NOT_CATCH),
+    `docs/design/2026-09-04-GOOGLE-SIGNIN.md must carry the sweep's bound word for word:\n\n  ` +
+      `${SWEEP_DOES_NOT_CATCH}\n\nIt is what an operator reads to know what the failing test ` +
+      `will not tell them.`,
+  );
 });
 
 test("CONTROL: every OAuth call site is the named debt or an id read at runtime", async () => {

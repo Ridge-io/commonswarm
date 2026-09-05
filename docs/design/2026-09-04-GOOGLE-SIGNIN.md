@@ -475,6 +475,17 @@ to schedule. So do steps 7 and 8 in one sitting, or not yet.
     separate control and were swapped on 2026-09-05: they render `ProviderButtons`, bind one
     `[data-signin-provider]` handler, and need no copy work here.
 
+    **What the failing test will and will not tell you.** The sweep in
+    `components/auth/provider-buttons.observer.test.ts` catches: a `data-signin*` attribute on
+    any tag; a provider id (github or google) as a hyphen segment of any `data-*` attribute
+    NAME, in any case; either of those names built with `setAttribute`, or a `data-signin*`
+    write through `dataset`; any `.signInWithOAuth(` outside `lib/commonswarm.ts`; any string
+    literal handed to `signInWithProvider(`; more than one call to `signInWithGitHub(`; and a
+    rendered button whose label is not exactly one of the labels in `auth-providers.ts`.
+    It does not catch a provider hidden in an attribute VALUE under an unrelated name, and that is a bound, not a gap this test closes.
+    That list is generated in the test from the patterns and call names its own assertions use,
+    and a control there requires this file to carry the same bound word for word.
+
     There were two controls on that page, so there are two swaps, and one of them is done.
     `UNGENERATED_SIGNIN_SURFACES` in `components/auth/provider-buttons.observer.test.ts`
     counts the hand-written ones in that file and allows exactly one; a second control counts
