@@ -210,16 +210,28 @@ test("the prose that describes the slug gate names the constant instead of listi
    * characters out beside the rule, which is the enumeration-inside-a-message defect AGENTS.md
    * records, one level down. A comment is not enforced by anything, so it needs a control.
    *
-   * BOTH HALVES ARE BUILT FROM THE CONSTANT, never typed here. WHAT THIS CANNOT SEE: a list
-   * written in some other shape ("- or _ or ."), and a reordered constant, because the pattern
-   * follows the array's order. It catches the shape the defect actually had.
+   * ONLY THE SECOND HALF IS BUILT FROM THE CONSTANT. Two review arms corrected an earlier
+   * comment here that claimed both were. The first half cannot be: an identifier's own NAME is
+   * not derivable from its value, so `BRAIN_SLUG_SEPARATORS` is typed in that pattern, once,
+   * where a rename makes it fail loudly rather than silently.
+   *
+   * WHAT THIS CANNOT SEE, all named by the arms: a list in another shape ("- or _ or .", or
+   * `` `-`, `_`, `.` `` with backticks, or the array's own `["-", "_", "."]` spelling, because
+   * quotes break the run); and a reordered constant, because the pattern follows the array's
+   * order. It catches the shape the defect actually had, `(-, _, .)`, and says so rather than
+   * implying more.
+   *
+   * The header block is read whole rather than by line, so rewrapping the sentence is not a
+   * failure. An arm found the first version pinned to one wrap of one line.
    */
   const source = readFileSync(new URL("./brain-links.ts", import.meta.url), "utf8");
+  const header = source.slice(0, source.indexOf("export "));
+  assert.ok(header.length > 500, "the header comment block is where the slug rule is stated");
 
   assert.match(
-    source,
-    /carrying one of the characters in\s+\*\s+BRAIN_SLUG_SEPARATORS/,
-    "the sentence stating the slug rule must name BRAIN_SLUG_SEPARATORS, so a reader is sent " +
+    header,
+    /BRAIN_SLUG_SEPARATORS/,
+    "the prose stating the slug rule must name BRAIN_SLUG_SEPARATORS, so a reader is sent " +
       "to the one place the set lives",
   );
 
