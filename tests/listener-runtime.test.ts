@@ -4212,3 +4212,52 @@ test("a fast first failure keeps the seat and retries inside the hold budget", a
     "74ms of a 30s seat budget is not a spent budget",
   );
 });
+
+test("a stopped listener does not claim to be working on a delivery", async (t) => {
+  /* The status file outlives the process. Without clearing the held delivery on
+   * the terminal transition, `cswarm listen status` on a listener that stopped
+   * mid-turn reads "Working on delivery X, claimed 3h ago" about a process that
+   * no longer exists. */
+  const stateDirectory = await mkdtemp(join(tmpdir(), "cswarm-hold-stop-"));
+  t.after(async () => await rm(stateDirectory, { recursive: true, force: true }));
+  const paths = listenerPaths({
+    profileId: "profile-hold-stop",
+    workspaceId: WORKSPACE_ID,
+    principalId: PRINCIPAL_ID,
+    stateDirectory,
+  });
+  await runListenerSupervisor({
+    paths,
+    profileId: "profile-hold-stop",
+    workspaceId: WORKSPACE_ID,
+    principalId: PRINCIPAL_ID,
+    now: () => Date.parse("2026-07-30T00:00:00.000Z"),
+    run: async (_signal, onEvent) => {
+      onEvent({
+        type: "delivery_claim",
+        signalId: HOLD_FIRST_ID,
+        pendingDeliveryCount: 2,
+        terminalDeliveryFailureCount: 0,
+        ts: "2026-07-30T00:00:00.000Z",
+      });
+      const held = await queryListenerControl(paths, "status");
+      assert.equal(held.currentDeliverySignalId, HOLD_FIRST_ID);
+      assert.equal(held.currentDeliverySince, "2026-07-30T00:00:00.000Z");
+      return { reason: "cancelled" as const };
+    },
+  });
+
+  const stopped = await readListenerStatus(paths);
+  assert.equal(stopped?.state, "stopped");
+  assert.equal(stopped?.currentDeliverySignalId, null);
+  assert.equal(stopped?.currentDeliverySince, null);
+  // The queue is the service's, not this process's: those rows still wait.
+  assert.equal(stopped?.queueWaitingSince, "2026-07-30T00:00:00.000Z");
+  const human = renderListenerStatus(stopped!, {
+    pendingForMainOldestAt: null,
+    hookSurfaceExists: false,
+    hookSurfaceAdvanced: false,
+  }, Date.parse("2026-07-30T03:00:00.000Z"));
+  assert.ok(!human.includes("Working on delivery"), human);
+  assert.ok(human.includes("No delivery is being worked on right now."), human);
+});

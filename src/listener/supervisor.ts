@@ -344,9 +344,18 @@ export async function runListenerSupervisor(
     state: ListenerStatus["state"],
     changes: Partial<ListenerStatus> = {},
   ) => {
+    /* A process that has stopped is not working on anything. Clearing this
+       HERE, keyed on the terminal state, is what keeps a later exit path from
+       leaving the claim behind: a stopped listener whose status still named a
+       delivery in hand would read "Working on delivery X, claimed 3h ago".
+       The queue fields stay: rows waiting on the service are still waiting. */
+    const stoppedForGood = state === "stopped" || state === "failed";
     status = {
       ...status,
       ...changes,
+      ...(stoppedForGood
+        ? { currentDeliverySignalId: null, currentDeliverySince: null }
+        : {}),
       state,
       updatedAt: iso(now),
     };
@@ -859,6 +868,9 @@ export async function effectiveListenerStatus(
         updatedAt: new Date().toISOString(),
         stoppedAt: new Date().toISOString(),
         lastErrorCode: "unclean_exit",
+        // The process is gone; whatever it held, it is not working on it.
+        currentDeliverySignalId: null,
+        currentDeliverySince: null,
       };
       await writeListenerStatus(paths, failed);
       return failed;
