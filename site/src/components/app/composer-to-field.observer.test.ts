@@ -66,6 +66,8 @@ type ToMeasurement = {
   afterReloadWithDraft: { chips: string[]; value: string };
   /** A recipient removed by hand stays removed across a reload, tag still in the body. */
   removalSurvivesReload: { chips: string[]; value: string };
+  /** Emptying To: to a broadcast survives a reload too, rather than reverting to last-sent. */
+  broadcastSurvivesReload: { chips: string[]; note: string; value: string };
 };
 
 const contentTypes: Record<string, string> = {
@@ -304,6 +306,27 @@ const frameScript = `<script>
     await new Promise((resolve) => view.setTimeout(resolve, 500));
     const removalSurvivesReload = { chips: chipNames(), value: input().value };
 
+    /* AND SO DOES AN EMPTY SET. A draft with no recipients is a broadcast the reader chose,
+       not "no set was saved": storing the two the same way sent them back to whoever they
+       last messaged. The removal step above cannot reach this, because it always leaves one
+       chip behind. */
+    await clearTo();
+    type("everyone should see this");
+    await new Promise((resolve) => view.setTimeout(resolve, 500));
+    await new Promise((resolve) => {
+      frame.addEventListener("load", resolve, { once: true });
+      frame.contentWindow.location.reload();
+    });
+    doc = frame.contentDocument;
+    view = frame.contentWindow;
+    await ready();
+    await new Promise((resolve) => view.setTimeout(resolve, 500));
+    const broadcastSurvivesReload = {
+      chips: chipNames(),
+      note: noteText(),
+      value: input().value,
+    };
+
     document.documentElement.dataset.toMeasurement = btoa(unescape(encodeURIComponent(JSON.stringify({
       atRest,
       midSentence,
@@ -317,6 +340,7 @@ const frameScript = `<script>
       afterReload,
       afterReloadWithDraft,
       removalSurvivesReload,
+      broadcastSurvivesReload,
     }))));
   };
   const start = () => void runMeasurement().catch((error) => report(error?.stack ?? error));
@@ -502,6 +526,11 @@ test("the To: row is the address, and it says who is notified", async () => {
       chips: ["Orbit"],
       value: "and @Lumen should see it",
     }, "removalSurvivesReload: a recipient removed by hand stays removed across a reload");
+    assert.deepEqual(measured.broadcastSurvivesReload, {
+      chips: [],
+      note: "No agent is notified. Everyone here can read this.",
+      value: "everyone should see this",
+    }, "broadcastSurvivesReload: an emptied To: is a broadcast the reader chose, not a missing set");
   } finally {
     await server.close();
   }
@@ -581,6 +610,11 @@ test("nothing but the reader moves the address", () => {
     ["the draft restore", "const restoreComposerDraft = (): void => {", "\n    };"],
     ["the typing pause", "const scheduleComposerToPass = (): void => {", "\n    };"],
     ["the mention pick", "const selectMention = (mention: EntityRef): void => {", "\n    };"],
+    [
+      "the submit flush",
+      'one<HTMLFormElement>("[data-composer]")?.addEventListener("submit"',
+      "const workspaceId = activeWorkspaceId;",
+    ],
   ] as const) {
     const start = dashboard.indexOf(anchor);
     assert.ok(start > 0, `${where}: anchor not found`);

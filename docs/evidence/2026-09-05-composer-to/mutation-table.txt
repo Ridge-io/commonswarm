@@ -65,7 +65,9 @@ red  a removal survives a reload, because the applied record travels with the dr
   restored green  site/src/components/app/composer-to-field.observer.test.ts
 red  the chip label takes its position word from the wake index
   restored green  site/src/components/app/composer-to-field.observer.test.ts
+red  an emptied To: is stored as a broadcast the reader chose, not as a missing set
+  restored green  site/src/components/app/composer-to-field.observer.test.ts
 red  the remove control removes the recipient
   restored green  site/src/components/app/composer-addressing.observer.test.ts
 
-33 mutations, 0 problems
+34 mutations, 0 problems

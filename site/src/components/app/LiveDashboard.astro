@@ -2885,12 +2885,17 @@ import "../../styles/tokens.css";
       const body = input.value.slice(0, COMPOSER_DRAFT_STORAGE_MAX);
       const hadAttachments = stagedAttachments.length > 0 || composerAttachmentsMissingAfterReload;
       try {
-        /* The draft is the body, one attachment marker, and which of the body's tags have
-           already become chips. The To: SET is not saved here: it is remembered when a
-           message is sent (`rememberComposerTo`) and restored once per workspace, so the
-           composer opens addressed to whoever the last message went to rather than to
-           whoever a half-written draft named. What IS saved is the state of the message
-           being written, so a reload puts back exactly the chips that were on screen. */
+        /* THE DRAFT IS THE STATE OF THE MESSAGE BEING WRITTEN: the body, one attachment
+           marker, the To: set it is addressed to, and which of the body's tags produced
+           that set. The LAST SENT set is remembered separately (`rememberComposerTo`) and is
+           what the composer opens with when there is no draft.
+
+           `to` IS WRITTEN EVEN WHEN IT IS EMPTY, and that is the point. Omitting an empty
+           set is what the WIRE does, where a missing key means "the whole workspace"; here
+           a missing key means "no set was saved, keep the last-sent one", so a reader who
+           emptied To: to a broadcast came back addressed to whoever they last messaged. A
+           review arm found it. The two meanings look identical in storage, so the empty
+           case has to be written down. */
         if (body === "" && !hadAttachments) {
           window.localStorage.removeItem(key);
           return;
@@ -2900,7 +2905,7 @@ import "../../styles/tokens.css";
           JSON.stringify({
             body,
             ...(hadAttachments ? { hadAttachments: true } : {}),
-            ...(composerTo.length === 0 ? {} : { to: composerTo }),
+            to: composerTo,
             ...(composerToApplied.length === 0 ? {} : { applied: composerToApplied }),
           }),
         );

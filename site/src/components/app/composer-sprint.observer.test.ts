@@ -646,8 +646,8 @@ const assertComposerSprint = (value: ComposerArtifact): void => {
   );
   assert.match(
     draft,
-    /\.\.\.\(composerTo\.length === 0 \? \{\} : \{ to: composerTo \}\),\s*\n\s*\.\.\.\(composerToApplied\.length === 0 \? \{\} : \{ applied: composerToApplied \}\),/,
-    "draft-audience: the To: set and its applied record persist together or not at all",
+    /to: composerTo,\s*\n\s*\.\.\.\(composerToApplied\.length === 0 \? \{\} : \{ applied: composerToApplied \}\),/,
+    "draft-audience: the To: set persists whole, empty included, with its applied record",
   );
   assert.match(draft, /input\.value = draft\.body;/,
     "draft-restore: reload must restore the exact body");
