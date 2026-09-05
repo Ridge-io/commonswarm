@@ -31,6 +31,7 @@ the bars themselves:
 | filter row | 40.0px, `top` 188.1 — same band, floating |
 | transcript box (`.dashboard__channel-body`) | 655.9px |
 | composer | 63.0px, bottom edge 844.0, inside the viewport |
+| first message at rest, below the app bar's top | 125.0px, clear of the whole band (see section 7) |
 
 The header that consumes layout is exactly the app bar, to the pixel. The head and the filter row
 both begin at the app bar's bottom edge and take none of the transcript's height.

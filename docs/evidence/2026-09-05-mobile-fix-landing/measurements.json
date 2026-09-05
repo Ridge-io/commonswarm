@@ -139,7 +139,8 @@
     "a real iOS Safari keyboard. Emulation.setDeviceMetricsOverride models the SIZE change visualViewport reports; it does not reproduce Safari's accessory bar, its layout-viewport scroll, or its focus and selection behaviour on show and hide. The accessory-bar and lost-caret reports are addressed in code and are not proven fixed on the operator's phone.",
     "INP was not re-measured in this landing lane. The lane's own before/after numbers are in docs/evidence/2026-09-04-mobile-fix/README.md and were not reproduced here.",
     "the Vercel Toolbar's production figure of 314.3ms, which the lane never reproduced either.",
-    "opening a brain topic body against a live workspace, which sample mode cannot do."
+    "opening a brain topic body against a live workspace, which sample mode cannot do.",
+    "the pinch-zoom pan case for scrollTo(0, 0) on iOS: the layout viewport cannot scroll here because .dashboard__product is the measured height with overflow hidden, but a zoomed visual viewport on a real iPhone was not tested."
   ],
   "feed_more_clearance": {
     "claim": "the floating band's clearance is paid once",
@@ -153,9 +154,24 @@
       "feedListPaddingBlockStart": "0px"
     },
     "clearanceStillThereWhenTheButtonIsNot": {
-      "feedListPaddingBlockStart": "40px"
+      "feedListPaddingBlockStart": "52px"
     },
     "control": "mobile-feed-layout.observer.test.ts, 'the floating band's clearance is paid once when older updates can be loaded', with a positive control that the button is on screen and a paired variant that must keep the 40px",
     "mutationAgainstTheRealSource": "baseline 5 pass, rule restored to 2.5rem 1 fail naming 'the band's clearance is paid twice ... (40px)', restored 5 pass"
+  },
+  "phone_390x844_after_the_arm_fixes": {
+    "note": "re-measured on the final code with the transcript at scrollTop 0, which is what 'at rest' means. 01-header-390x844.png is this state.",
+    "appBarHeight": 73.0,
+    "headerTakenFromReadingArea": 73.0,
+    "firstMessageTopBelowAppBarTop": 125.0,
+    "bandBottomBelowAppBarTop": 125.0,
+    "firstMessageClearsTheWholeBand": true,
+    "feedPaddingBlockStart": "52px",
+    "brainLinkStillAControl": true,
+    "beforeTheFix": {
+      "firstMessageTopBelowAppBarTop": 113.0,
+      "feedPaddingBlockStart": "40px",
+      "overlapUnderTheRosterPill": 12.0
+    }
   }
 }
