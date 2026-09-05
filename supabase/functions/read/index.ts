@@ -609,10 +609,11 @@ async function handle(
       });
     }
     const inReplyTo = body.in_reply_to ?? null;
-    /* ⚠ This query names channel_id, thread_root_id and broadcast_to_channel.
-     * Deploy this function only after migrations 20260905000001..000003 are
-     * VERIFIED applied (swarm.schema_migrations, not the db push output).
-     * Against a database missing any of them every agent read fails. */
+    /* ⚠ This query names channel_id, thread_root_id, broadcast_to_channel and
+     * recipients. Deploy this function only after migrations 20260905000001,
+     * ..0002, ..0003 and ..0010 are VERIFIED applied (swarm.schema_migrations,
+     * not the db push output). Against a database missing any of them every
+     * agent read fails. */
     /* Resolve the slug to an id ONCE rather than correlating a subquery per
      * row, so the filter can use signals_channel_newest. The lookup runs
      * against swarm_read.channels as the agent's owner, so a slug in another
@@ -659,6 +660,30 @@ async function handle(
       : null;
     const afterId = body.cursor_mode ? (body.after_id ?? null) : null;
     const useAfterCursor = afterCreatedAt !== null && afterId !== null;
+    /* ADDRESSED TO THIS AGENT, in one place used by both arms below.
+     *
+     * Two enforcement points move together or the lane is broken: this SQL and
+     * the WHERE of swarm_read.signals. The view admits a row to the agent's
+     * OWNER (the person who can see everything addressed to an agent they own);
+     * this narrows it to the one principal that presented a token. An agent
+     * that is the SECOND recipient sees nothing until both are in place.
+     *
+     * The containment test reads the view's derived `recipients` column rather
+     * than swarm.signal_recipients directly, because swarm_read holds no
+     * privilege on that table and must not be given one: the view is the single
+     * place the visibility predicate lives. It also means a signal written
+     * before the recipients table existed matches through the same expression,
+     * since the view derives its one-entry set from the scalar column.
+     *
+     * `to_agent` alone would already match the FIRST recipient. It is kept
+     * because it is the indexed arm and because the containment test is not a
+     * substitute for it on a database where the view has not been recreated. */
+    const addressedToThisAgent = tx`(
+      s.to_agent = ${agent.principal_id}::uuid
+      OR s.recipients @> jsonb_build_array(
+        jsonb_build_object('kind', 'agent', 'id', ${agent.principal_id}::uuid)
+      )
+    )`;
     // Relation is computed solely from the authenticated receiver's owner and
     // the server-stamped author. Filter author.revoked_at so a revoked agent
     // author cannot resolve into an ownership relation and falls to unknown.
@@ -669,6 +694,7 @@ async function handle(
         s.about, s.kind, s.body, s.until, s.created_at,
         s.to_agent, s.in_reply_to, s.attachments,
         s.channel_id, s.thread_root_id, s.broadcast_to_channel,
+        s.recipients,
         CASE
           WHEN s.from_kind = 'user'
            AND author_member.user_id IS NOT NULL
@@ -697,11 +723,11 @@ async function handle(
       WHERE s.workspace_id = ${body.workspace_id}::uuid
         AND (
           (s."to" IS NULL AND s.to_agent IS NULL)
-          OR s.to_agent = ${agent.principal_id}::uuid
+          OR ${addressedToThisAgent}
         )
         AND (
           ${body.inbox} = false
-          OR s.to_agent = ${agent.principal_id}::uuid
+          OR ${addressedToThisAgent}
         )
         AND (${body.include_stale} = true OR s.until > statement_timestamp())
         AND (${body.about}::text IS NULL OR s.about = ${body.about})

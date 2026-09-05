@@ -11,6 +11,8 @@ import {
   commandFieldsMessage,
   MODEL_MAX,
   MODEL_RULE_TEXT,
+  SCALAR_RECIPIENT_FIELDS,
+  SIGNAL_RECIPIENT_MAX,
   THREAD_REPLY_KINDS,
 } from "../supabase/functions/_shared/channels.js";
 
@@ -97,13 +99,17 @@ test("a post body that adds one chat key matches too, and does not drag in its s
   assert.equal(chatSignalKeys(one).length, 1);
 });
 
-test("all three chat keys together still validate", () => {
+test("every chat key together still validates", () => {
+  /* The list is CHAT_SIGNAL_OPTIONAL_KEYS, not a typed count: this used to say
+   * "all three" and the fourth key (`to`) broke it, which is the same drift one
+   * level up from a typed enumeration inside a message. */
   const body = {
     ...installedPostBody,
     about: null,
     channel: "mobile",
     thread_root_id: null,
     broadcast_to_channel: false,
+    to: null,
   };
   assert.deepEqual(chatSignalKeys(body).sort(), [...CHAT_SIGNAL_OPTIONAL_KEYS].sort());
   assert.equal(exactKeys(body, postAllowList(body)), true);
@@ -154,17 +160,21 @@ test("neither edge folded a chat key into its modern group", () => {
     command.indexOf("const modernKeys = modernShape"),
   ).slice(0, 200);
   assert.ok(modernKeysLine.length > 0, "modernKeys must still exist to guard");
+  /* The QUOTED literal, not a bare substring. `to` is a substring of both
+   * members of the pair this guard protects, so a bare includes() reported the
+   * key as folded in when it was not there at all. */
   for (const key of CHAT_SIGNAL_OPTIONAL_KEYS) {
     assert.equal(
-      modernKeysLine.includes(key),
+      modernKeysLine.includes(`"${key}"`),
       false,
       `${key} must never appear in the command edge's modernKeys pair`,
     );
   }
-  /* Control on the slice: the fragment really does contain the pair it guards,
-   * so a passing loop above is not passing on an empty string. */
-  assert.ok(modernKeysLine.includes("to_agent_principal_id"));
-  assert.ok(modernKeysLine.includes("in_reply_to"));
+  /* Control on the slice AND on the quoting: the fragment really does contain
+   * the pair it guards, in the same quoted form the loop looks for, so a
+   * passing loop above is not passing on an empty string or a wrong pattern. */
+  assert.ok(modernKeysLine.includes('"to_agent_principal_id"'));
+  assert.ok(modernKeysLine.includes('"in_reply_to"'));
 
   assert.ok(
     read.includes('const modernShape = Object.hasOwn(body, "in_reply_to");'),
@@ -963,4 +973,180 @@ test("broadcast_to_channel without a thread is told so before the slug rule", ()
   });
   assert.ok(badBroadcastType !== null);
   assert.match(badBroadcastType, /true or false/);
+});
+
+const RECIPIENT_A = "44444444-4444-4444-8444-444444444444";
+const RECIPIENT_B = "55555555-5555-4555-8555-555555555555";
+
+test("the body every installed client sends still validates after `to` exists", () => {
+  /* The whole compatibility question for this lane, asked the same way the
+   * file asks it for the L1 keys. `to` is optional and INDEPENDENT, so a body
+   * that omits it has an unchanged key set. */
+  const installed = { ...installedPostBody, about: null };
+  assert.deepEqual(chatSignalKeys(installed), []);
+  assert.equal(
+    exactKeys(installed, postAllowList(installed)),
+    true,
+    "the installed post body validates with the chat group empty",
+  );
+  /* And a body that sends ONLY `to` gets a one-key group, never the pair. */
+  const withTo = { ...installed, to: [{ kind: "user", id: RECIPIENT_A }] };
+  assert.deepEqual(chatSignalKeys(withTo), ["to"]);
+  assert.ok(
+    CHAT_SIGNAL_OPTIONAL_KEYS.includes("to"),
+    "`to` is one of the independently optional chat keys",
+  );
+});
+
+test("`to` beside a scalar recipient is refused, and the sentence names the scalar it found", () => {
+  /* Never silently reconciled: two answers to one question is a refusal. The
+   * field name comes from SCALAR_RECIPIENT_FIELDS, so a third scalar field
+   * could not be added without appearing here. */
+  const problem = chatSignalShapeProblem({
+    signal_kind: "note",
+    to_user_id: RECIPIENT_B,
+    to_agent_principal_id: null,
+    in_reply_to: null,
+    to: [{ kind: "user", id: RECIPIENT_A }],
+  });
+  assert.ok(problem !== null);
+  assert.match(problem, /^to_user_id names a recipient and so does to\./);
+  assert.match(problem, /leave it null/);
+
+  const bothScalars = chatSignalShapeProblem({
+    signal_kind: "note",
+    to_user_id: RECIPIENT_B,
+    to_agent_principal_id: RECIPIENT_A,
+    in_reply_to: null,
+    to: [{ kind: "user", id: RECIPIENT_A }],
+  });
+  assert.ok(bothScalars !== null);
+  for (const field of SCALAR_RECIPIENT_FIELDS) {
+    assert.ok(bothScalars.includes(field), `must name ${field}`);
+  }
+  assert.match(bothScalars, /leave them null/, "the plural is generated too");
+
+  /* Control: `to` with BOTH scalars null is the shape a new client sends, and
+   * it is accepted. Without this the refusal above could be "`to` is refused". */
+  assert.equal(
+    chatSignalShapeProblem({
+      signal_kind: "note",
+      to_user_id: null,
+      to_agent_principal_id: null,
+      in_reply_to: null,
+      to: [{ kind: "user", id: RECIPIENT_A }, { kind: "agent", id: RECIPIENT_B }],
+    }),
+    null,
+  );
+});
+
+test("a thread reply cannot be addressed through `to` either", () => {
+  /* `to` is a third way to address a signal. The one rule that stops a thread
+   * reply carrying a private half has to read all three, or the new field walks
+   * straight through the check that exists to stop it. */
+  const problem = chatSignalShapeProblem({
+    signal_kind: "note",
+    to_user_id: null,
+    to_agent_principal_id: null,
+    in_reply_to: null,
+    thread_root_id: "22222222-2222-4222-8222-222222222222",
+    to: [{ kind: "user", id: RECIPIENT_A }],
+  });
+  assert.ok(problem !== null);
+  assert.match(problem, /cannot also be addressed to a recipient/);
+
+  /* Control 1: the same thread reply with NO recipients is accepted. */
+  assert.equal(
+    chatSignalShapeProblem({
+      signal_kind: "note",
+      to_user_id: null,
+      to_agent_principal_id: null,
+      in_reply_to: null,
+      thread_root_id: "22222222-2222-4222-8222-222222222222",
+    }),
+    null,
+  );
+  /* Control 2: the scalar spelling gets the SAME sentence, so the two ways of
+   * addressing are not told two different rules. */
+  const scalarSpelling = chatSignalShapeProblem({
+    signal_kind: "note",
+    to_user_id: RECIPIENT_A,
+    to_agent_principal_id: null,
+    in_reply_to: null,
+    thread_root_id: "22222222-2222-4222-8222-222222222222",
+  });
+  assert.equal(scalarSpelling, problem);
+});
+
+test("a malformed `to` is answered before the rules that read the list", () => {
+  /* Shape before meaning, the doctrine the thread_root_id case already
+   * follows. A `to` that is not a list of recipients is not yet an address, so
+   * "a thread reply takes no recipient" is a rule about an address it does not
+   * have. */
+  const problem = chatSignalShapeProblem({
+    signal_kind: "note",
+    to_user_id: null,
+    to_agent_principal_id: null,
+    in_reply_to: null,
+    thread_root_id: "22222222-2222-4222-8222-222222222222",
+    to: "everyone",
+  });
+  assert.ok(problem !== null);
+  assert.match(problem, /to is a list of recipients/);
+  assert.doesNotMatch(problem, /thread/);
+
+  /* And the cap is a rule about the list, so it also outranks the thread rule. */
+  const overCap = Array.from(
+    { length: SIGNAL_RECIPIENT_MAX + 1 },
+    (_unused, index) => ({
+      kind: "user" as const,
+      id: `4444444${index}-4444-4444-8444-444444444444`,
+    }),
+  );
+  const capped = chatSignalShapeProblem({
+    signal_kind: "note",
+    to_user_id: null,
+    to_agent_principal_id: null,
+    in_reply_to: null,
+    thread_root_id: "22222222-2222-4222-8222-222222222222",
+    to: overCap,
+  });
+  assert.ok(capped !== null);
+  assert.match(capped, new RegExp(`at most ${SIGNAL_RECIPIENT_MAX} recipients`));
+});
+
+test("the recipient rules the edge enforces outside this function are still one set", () => {
+  /* BOUND, stated rather than implied: two rules about `to` are NOT in
+   * chatSignalShapeProblem. A working-on signal and an in_reply_to reply refuse
+   * `to` in the edge's own baseValid, beside the scalar fields they already
+   * refuse, so both spellings get one sentence instead of `to` getting a better
+   * one. This reads the edge source to show the field is in both conditions;
+   * it does not re-derive what baseValid computes.
+   *
+   * The sweep is bounded by construction: it looks at the two conditions
+   * BY NAME and asserts `!addressedByList` appears in each. It cannot tell you
+   * whether some third condition should also read the list. */
+  const command = readFileSync(
+    fileURLToPath(
+      new URL("../supabase/functions/command/index.ts", import.meta.url),
+    ),
+    "utf8",
+  );
+  const workingOn = command.indexOf('cmd.signal_kind !== "working-on" ||');
+  assert.notEqual(workingOn, -1, "the working-on condition must be findable");
+  const workingOnBlock = command.slice(workingOn, workingOn + 400);
+  assert.ok(
+    workingOnBlock.includes("!addressedByList"),
+    "working-on must refuse a `to` list the way it refuses the scalar fields",
+  );
+  const reply = command.indexOf("inReplyTo === null ||");
+  assert.notEqual(reply, -1, "the in_reply_to condition must be findable");
+  const replyBlock = command.slice(reply, reply + 400);
+  assert.ok(
+    replyBlock.includes("!addressedByList"),
+    "a private reply must refuse a `to` list the way it refuses the scalar fields",
+  );
+  /* Control: the slices really are those conditions. */
+  assert.ok(workingOnBlock.includes("toAgentPrincipalId === null"));
+  assert.ok(replyBlock.includes('cmd.signal_kind === "note"'));
 });

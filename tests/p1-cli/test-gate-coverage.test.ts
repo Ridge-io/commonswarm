@@ -21,10 +21,11 @@ const pureCliCommand =
  * carries the flag). The pin moves WITH the claim it guards: all files stay
  * reachable only through test:p1-local, never through a pure gate. */
 const localStackCommand =
-  "node --import tsx --test --test-concurrency=1 tests/p1-local/local-integration.test.ts tests/p1-local/file-artifacts-e2e.test.ts tests/p1-local/delivery-receipts-postgres.test.ts tests/p1-local/human-seen-browser.test.ts tests/p1-local/standing-grants-postgres.test.ts tests/p1-local/activity-realtime-auth.test.ts tests/p1-local/chat-channels-postgres.test.ts";
+  "node --import tsx --test --test-concurrency=1 tests/p1-local/local-integration.test.ts tests/p1-local/file-artifacts-e2e.test.ts tests/p1-local/delivery-receipts-postgres.test.ts tests/p1-local/human-seen-browser.test.ts tests/p1-local/standing-grants-postgres.test.ts tests/p1-local/activity-realtime-auth.test.ts tests/p1-local/chat-channels-postgres.test.ts tests/p1-local/chat-recipients-postgres.test.ts";
 const localStackTests = [
   "tests/p1-local/activity-realtime-auth.test.ts",
   "tests/p1-local/chat-channels-postgres.test.ts",
+  "tests/p1-local/chat-recipients-postgres.test.ts",
   "tests/p1-local/delivery-receipts-postgres.test.ts",
   "tests/p1-local/file-artifacts-e2e.test.ts",
   "tests/p1-local/human-seen-browser.test.ts",

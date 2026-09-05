@@ -11,8 +11,13 @@ import {
   channelSlugProblem,
   isReservedChannelSlug,
   normalizeChannelSlug,
+  parseSignalRecipients,
   RESERVED_CHANNEL_SLUG_TEXT,
   RESERVED_CHANNEL_SLUGS,
+  SIGNAL_RECIPIENT_KINDS,
+  SIGNAL_RECIPIENT_MAX,
+  SIGNAL_RECIPIENT_RULE_TEXT,
+  signalRecipientListProblem,
   unknownChannelMessage,
 } from "../supabase/functions/_shared/channels.js";
 
@@ -168,4 +173,158 @@ test("the slug sentence and the slug regex are built from one table of character
   assert.equal(CHANNEL_SLUG_RE.test("a-"), false);
   assert.equal(CHANNEL_SLUG_RE.test("A"), false);
   assert.equal(CHANNEL_SLUG_RE.test("a_b"), false);
+});
+
+/* ---------------------------------------------------------------------------
+ * The recipient cap. Three artifacts hold this number, in three languages, and
+ * none of them can import the others: the migration's CHECK, the edge
+ * constant, and the composer's own ceiling under site/. The two below are read
+ * as TEXT for exactly that reason.
+ * ------------------------------------------------------------------------- */
+
+const recipientsMigration = readFileSync(
+  fileURLToPath(
+    new URL(
+      "../supabase/migrations/20260905000010_signal_recipients.sql",
+      import.meta.url,
+    ),
+  ),
+  "utf8",
+);
+
+const mentionAddress = readFileSync(
+  fileURLToPath(new URL("../site/src/lib/mention-address.ts", import.meta.url)),
+  "utf8",
+);
+
+test("the recipient cap is the same number in the migration, the edge and the composer", () => {
+  /* The CHECK bounds the POSITION, which is what caps the row count: positions
+   * are unique per signal, so the highest legal position is the cap minus one.
+   * Asserting the derived number rather than the constant is deliberate -- it
+   * is the number actually written in the SQL, and it moves with the cap. */
+  assert.ok(
+    recipientsMigration.includes(
+      `position BETWEEN 0 AND ${SIGNAL_RECIPIENT_MAX - 1}`,
+    ),
+    `20260905000010 must bound position at ${SIGNAL_RECIPIENT_MAX - 1}, one below the cap of ${SIGNAL_RECIPIENT_MAX}`,
+  );
+  /* Control: the file was really read and the assertion can really fail. */
+  assert.equal(
+    recipientsMigration.includes("position BETWEEN 0 AND 9999"),
+    false,
+  );
+
+  /* The composer refuses tags past its own ceiling. If it were higher than the
+   * server's, a person would compose a message the server then refuses; if it
+   * were lower, chips would be dropped for no reason the server would give.
+   * BOUND OF THIS CHECK, stated: it reads one exported constant by name from
+   * one file. It does not prove the composer has no other ceiling elsewhere. */
+  const declared = /MENTION_MAX_RECIPIENTS\s*=\s*(\d+)/.exec(mentionAddress);
+  assert.ok(declared, "site/src/lib/mention-address.ts must export MENTION_MAX_RECIPIENTS");
+  assert.equal(
+    Number(declared![1]),
+    SIGNAL_RECIPIENT_MAX,
+    "the composer's ceiling and the server's cap are one number",
+  );
+});
+
+test("the recipient rules refuse each shape they name, and the sentences are generated", () => {
+  const uuid = "22222222-2222-4222-8222-222222222222";
+  const other = "33333333-3333-4333-8333-333333333333";
+  assert.equal(signalRecipientListProblem(undefined), null, "absent is fine");
+  assert.equal(signalRecipientListProblem(null), null, "null means absent");
+  assert.equal(
+    signalRecipientListProblem([{ kind: "user", id: uuid }]),
+    null,
+    "one well-formed recipient is fine",
+  );
+
+  /* Every kind in the constant is accepted, so the list and the check cannot
+   * drift: adding a kind to SIGNAL_RECIPIENT_KINDS makes this loop cover it. */
+  for (const kind of SIGNAL_RECIPIENT_KINDS) {
+    assert.equal(signalRecipientListProblem([{ kind, id: uuid }]), null, kind);
+  }
+  /* And the sentence names all of them. */
+  for (const kind of SIGNAL_RECIPIENT_KINDS) {
+    assert.ok(
+      SIGNAL_RECIPIENT_RULE_TEXT.includes(kind),
+      `the rule text must name ${kind}`,
+    );
+  }
+  assert.ok(
+    SIGNAL_RECIPIENT_RULE_TEXT.includes(String(SIGNAL_RECIPIENT_MAX)),
+    "the rule text carries the cap it enforces",
+  );
+
+  assert.match(
+    String(signalRecipientListProblem([])),
+    /at least one recipient/,
+    "an empty list is refused as an empty list, not as a bad shape",
+  );
+  assert.match(
+    String(signalRecipientListProblem([{ kind: "nobody", id: uuid }])),
+    /kind is user or agent/,
+  );
+  assert.match(
+    String(signalRecipientListProblem([{ kind: "user", id: "nope" }])),
+    /id is a UUID/,
+  );
+  assert.match(
+    String(signalRecipientListProblem([{ kind: "user", id: uuid, extra: 1 }])),
+    /Each one is \{kind, id\}/,
+    "an extra key on an entry is refused",
+  );
+  assert.match(
+    String(signalRecipientListProblem("everyone")),
+    /to is a list of recipients/,
+  );
+  assert.match(
+    String(
+      signalRecipientListProblem([
+        { kind: "user", id: uuid },
+        { kind: "user", id: uuid.toUpperCase() },
+      ]),
+    ),
+    /same recipient twice/,
+    "the duplicate check folds case, because the database compares uuids",
+  );
+  /* Control on the duplicate rule: the SAME id under a different kind is two
+   * different recipients, so the check is about the pair and not about the id. */
+  assert.equal(
+    signalRecipientListProblem([
+      { kind: "user", id: uuid },
+      { kind: "agent", id: uuid },
+    ]),
+    null,
+  );
+
+  /* The cap, at its boundary. The generated sentence carries the number. */
+  const atCap = Array.from({ length: SIGNAL_RECIPIENT_MAX }, (_unused, i) => ({
+    kind: "user" as const,
+    id: `${String(i).repeat(8)}-2222-4222-8222-222222222222`.slice(-36),
+  }));
+  assert.equal(
+    signalRecipientListProblem(atCap),
+    null,
+    "exactly the cap is accepted",
+  );
+  const overCap = [...atCap, { kind: "agent" as const, id: other }];
+  assert.match(
+    String(signalRecipientListProblem(overCap)),
+    new RegExp(`at most ${SIGNAL_RECIPIENT_MAX} recipients`),
+  );
+});
+
+test("parseSignalRecipients lower-cases ids and refuses what the rules refuse", () => {
+  const upper = "22222222-2222-4222-8222-22222222222A";
+  assert.deepEqual(
+    parseSignalRecipients([{ kind: "agent", id: upper }]),
+    [{ kind: "agent", id: upper.toLowerCase() }],
+    "ids reach the database in the form Postgres stores",
+  );
+  assert.equal(parseSignalRecipients(undefined), null);
+  assert.equal(parseSignalRecipients(null), null);
+  assert.equal(parseSignalRecipients("nope"), null);
+  assert.equal(parseSignalRecipients([{ kind: "user", id: "nope" }]), null);
+  assert.deepEqual(parseSignalRecipients([]), []);
 });

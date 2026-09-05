@@ -22,7 +22,7 @@ citation below was resolved in that tree. `docs/design/SWARM-CLOUD.md` is canoni
 |---|---|---|---|---|
 | R1 | Does a channel narrow **who may read** a signal? | **No.** A channel is an immutable grouping label stamped at post time. It never appears in an authorization predicate. No `channel_members` table in v1. | **B** | A's Phase 5 private channels are not v1. `SWARM-CLOUD.md:553` forbids new object-model concepts and `:909` caps day-1 vocabulary; B→A is a reversible narrowing while A→B is a disclosure event that cannot be undone; and the operator never asked for privacy. A's predicate work is summarised in Appendix A for the day it is asked for (the long form stays on its branch) — it is correct, it is just not v1. |
 | R2 | Is a thread a view over `in_reply_to`? | **No.** A thread gets its own identity: `thread_root_id`. `in_reply_to` keeps its exact current meaning and behaviour. | **A** | B misread the column. Measured below (§1.2): `in_reply_to` means *reply privately to the author*, not *reply in public*. B's proposed `in_reply_to := COALESCE(parent.in_reply_to, parent.id)` normalisation redirects the server's audience derivation from the parent to the root, silently changing the recipient of every second-and-later reply — including the listener's own reply loop. |
-| R3 | Does a DM need a conversation object? | **No conversation table.** But B's headline claim "no migration" is **false**: DMs need a new view clause (e) and a new index. | **B** for the shape, **A** for the requirement | B's premise — "both halves are already visible to me" — is false as measured (§1.3): the live view has no `from_principal` clause, so the sender cannot re-read their own directed signal. A's conversation table is still not needed for a 1:1 DM, because a two-party DM is addressable from the counterparty ref alone (§4). Group DMs are out of v1 for an independent reason. |
+| R3 | Does a DM need a conversation object? | **No conversation table.** But B's headline claim "no migration" is **false**: DMs need a new view clause (e) and a new index. | **B** for the shape, **A** for the requirement | B's premise — "both halves are already visible to me" — is false as measured (§1.3): the live view has no `from_principal` clause, so the sender cannot re-read their own directed signal. A's conversation table is still not needed for a 1:1 DM, because a two-party DM is addressable from the counterparty ref alone (§4). Group DMs are out of v1 for an independent reason (a scope choice since 2026-09-05 — see §4). |
 | R4 | Is `#all-signals` a row, and is `channel_id` backfilled? | **Not a row. Not backfilled.** `channel_id` is nullable forever in v1; `NULL` means *unfiled*; `#all-signals` is the unfiltered view. **Price, stated: no pre-migration signal ever appears in a named channel** (§6 P1). | **B** | A's default-channel backfill requires `DISABLE TRIGGER` on `signals_append_only` — the strongest invariant in the schema and a published promise — an `ACCESS EXCLUSIVE` lock of a duration A could not measure, a defaulting trigger, an orphan assert, and a member-roster backfill. Its own two arms found four separate defects in those five moving parts (A D1, D3, D8, D9). B's shape has none of them because it writes no row. |
 | R5 | Which slice ships first? | **Public channels** (in B's no-backfill shape). | **A** | Ranked on the four stated criteria in §6. B's S1 (colour + click-to-filter) wins only on risk, which is not one of the criteria: it creates no identity a later phase needs, and it completes the smallest of the four asks. It ships *alongside*, not first. |
 | R6 | Retention / `until` | **`until` stays `NOT NULL`. No retention change in v1.** A channel is a place, not an archive; say so in the UI. | **A** | B does not trip the `until` trap but never names it, and B's own ruling that `#all-signals` means "everything" is false as written — the feed already hides expired signals (§1.5). |
@@ -456,11 +456,24 @@ authority that can drift from the signals it summarises. **Not worth it**; if ra
 measured slow, the fix is an index or a materialised view. (A loses the narrow question; A's group-DM
 reasoning is upheld below.)
 
-**Group DMs are out of v1, and not as a scope choice.** `signals_one_recipient` allows at most one
-recipient (§1.1), so a 3-party DM's rows cannot set the recipient columns at all — they would be
-undirected rows whose privacy came from nothing, and the delivery trigger keys off
-`to_agent_principal_id` (§1.5), so **no agent in a group DM would ever be woken**. A conversation type
-that silently fails to notify the agents in it is worse than none. Two-party covers the ask completely.
+**Group DMs are out of v1 as a SCOPE choice, and the mechanical argument below is retired.**
+
+> **was**, until 2026-09-05: *"Group DMs are out of v1, and not as a scope choice.
+> `signals_one_recipient` allows at most one recipient (§1.1), so a 3-party DM's rows cannot set the
+> recipient columns at all — they would be undirected rows whose privacy came from nothing, and the
+> delivery trigger keys off `to_agent_principal_id` (§1.5), so no agent in a group DM would ever be
+> woken. A conversation type that silently fails to notify the agents in it is worse than none.
+> Two-party covers the ask completely."*
+>
+> Every mechanical clause in that paragraph stopped being true on 2026-09-05. L2's
+> `swarm.signal_recipients` stores an ordered set of up to `SIGNAL_RECIPIENT_MAX` recipients, the view's
+> predicate admits every one of them, and a trigger on that table enqueues one delivery row per AGENT
+> recipient — so a three-party address is storable, readable by all three, and wakes the agents in it.
+> `signals_one_recipient` still exists and is still not relaxed; it now bounds the SCALAR columns only.
+>
+> **What is NOT settled: whether v1 should have group DMs.** That is a product decision and nobody has
+> made it. This document must not read as if the constraint decides it, because the constraint no longer
+> does. Routed to the coordinator with L2, not decided here.
 
 **`working-on` cannot be a DM** — the validator refuses a directed `working-on`
 (`command/index.ts:1580-1587`), so the DM view holds only `note` and `ask`. Correct; noted so nobody
@@ -828,13 +841,23 @@ is void**: start one with `--state-dir <temp>` and paste its status JSON.
 ## 10. Out of v1
 
 - **Private channels and `channel_members`.** R1. Appendix A holds the design for the day it is asked for.
-- **Group DMs.** §4 — a hard constraint (`signals_one_recipient`), not a scope choice.
+- **Group DMs.** §4 — a SCOPE choice. *(**was**, until 2026-09-05: "a hard constraint
+  (`signals_one_recipient`), not a scope choice." L2 made a three-party address storable, readable and
+  deliverable, so the constraint no longer decides this. Nobody has ruled on whether v1 should have
+  group DMs; §4 carries the full correction.)*
 - **Editing and deleting messages.** Structurally blocked by `signals_append_only`
   (`20260724000003:36-38`), and immutability is a published promise
   (`site/src/components/landing/ConsumerStory.astro:38`, `site/src/pages/privacy.astro:120-121`).
   Retiring it is a separate operator decision.
-- **Waking agents on a channel post.** Would be the first N-way fan-out in the system (§1.5), on a
-  delivery ledger sized for one row per signal. Needs its own capacity work and cap.
+- **Waking agents on a channel post.** Still out. It would wake everyone in a channel, which is an
+  unbounded N, and nothing caps it.
+
+  > **was**, until 2026-09-05: this bullet also said it *"would be the first N-way fan-out in the
+  > system"*. L2 is that first fan-out: `swarm.signal_recipients` enqueues one delivery row per agent
+  > recipient. The distinction that survives is the BOUND, not the novelty — L2's fan-out is capped at
+  > `SIGNAL_RECIPIENT_MAX` recipients that a sender named one at a time, and a channel post's is the
+  > channel's whole membership. The capacity work this bullet asks for is still owed: L2 measured
+  > correctness (one row per agent, none duplicated) and did NOT measure throughput.
 - **Waking thread participants.** Same reason, smaller N. The natural first extension after v1.
 - **Durable channel history / retention.** §3.4 — its own phase, with a real discriminator.
 - **Per-channel unread counts, badges, mute/hide.** The expensive read, not the filter. The dashboard
@@ -854,9 +877,17 @@ is void**: start one with `--state-dir <temp>` and paste its status JSON.
 
   Nothing here depends on Realtime — the feed polls (`LiveDashboard.astro:4220`, `armLiveFeed`). Measure
   the project quota before anyone adds a topic per channel.
-- **Multi-recipient signals.** Still deferred per `docs/design/2026-09-03-multi-recipient-signals.md`.
-  Channels and threads make it less pressing, because "both answers under one question" is what a thread
-  is for.
+- **Multi-recipient signals.** IN v1, built as lane L2 `chat-recipients` (migration
+  `20260905000010_signal_recipients.sql`). A side table holds the ordered recipient set;
+  `signals_one_recipient` is NOT relaxed and the scalar columns keep the FIRST recipient, so an
+  installed reader is incomplete rather than wrong. The cap is `SIGNAL_RECIPIENT_MAX = 8`.
+
+  > **was**, until 2026-09-05: *"Still deferred per `docs/design/2026-09-03-multi-recipient-signals.md`.
+  > Channels and threads make it less pressing, because 'both answers under one question' is what a
+  > thread is for."* The coordinator un-deferred it on 2026-09-05 because it blocks BOTH D2's mention
+  > chips and the operator's To: field, which the build plan records. The sentence is kept because a
+  > reader may still meet it, and because `2026-09-03-multi-recipient-signals.md` itself is still
+  > written as a deferred proposal.
 
 ## 11. The claim family
 

@@ -24,6 +24,8 @@ import {
   normalizeChannelSlug,
   SIGNAL_KINDS,
   type SignalKind,
+  parseSignalRecipients,
+  type SignalRecipient,
   unknownChannelMessage,
   uuidFieldRuleText,
 } from "../_shared/channels.ts";
@@ -208,6 +210,10 @@ interface SignalCommand {
   channel?: string;
   thread_root_id?: string | null;
   broadcast_to_channel?: boolean;
+  /* The multi-recipient address. When present it is non-empty and every entry
+   * is well formed: the validator refuses anything else, and entry 0 becomes
+   * the row's scalar to_user_id / to_agent_principal_id. */
+  to?: SignalRecipient[];
 }
 
 /** Channel authority. Self-contained like post_signal: emits no protocol event. */
@@ -252,6 +258,11 @@ interface SignalRecord {
   channel_id: string | null;
   thread_root_id: string | null;
   broadcast_to_channel: boolean;
+  /* The whole recipient set, in the order the sender named it. Derived the
+   * same way swarm_read.signals derives it: the rows when there are rows, and
+   * the scalar recipient when there are none, so a signal posted with the old
+   * scalar shape and one posted with a one-entry `to` read identically. */
+  recipients: SignalRecipient[];
 }
 
 type DeliveryCommand = ClaimAgentInboxCommand | AckAgentDeliveryCommand;
@@ -1726,6 +1737,16 @@ function validateCommand(
     const broadcastToChannel = Object.hasOwn(cmd, "broadcast_to_channel")
       ? cmd.broadcast_to_channel
       : undefined;
+    /* `to` is its OWN Object.hasOwn group, through CHAT_SIGNAL_OPTIONAL_KEYS,
+     * for the reason spelled out above: modernKeys is all-or-nothing and every
+     * installed client always sends it. */
+    const toList = Object.hasOwn(cmd, "to") ? cmd.to : undefined;
+    const recipients = parseSignalRecipients(toList);
+    /* An EMPTY list addresses nobody, so it must not make the rules below read
+     * as "addressed". It is refused by chatSignalShapeProblem with a sentence
+     * that says so; letting it fail baseValid instead would answer it with the
+     * generic reason and hide which rule broke. */
+    const addressedByList = recipients !== null && recipients.length > 0;
     const threadRoot = threadRootId === undefined
       ? null
       : threadRootId as string | null;
@@ -1755,6 +1776,7 @@ function validateCommand(
       ...(broadcastToChannel === undefined
         ? {}
         : { broadcast_to_channel: broadcastToChannel }),
+      ...(toList === undefined ? {} : { to: toList }),
     });
     const keysOk = exactKeys(cmd, [
       "kind",
@@ -1785,12 +1807,19 @@ function validateCommand(
       Number(cmd.to_user_id !== null) +
           Number(toAgentPrincipalId !== null) <=
         1 &&
+      /* `to` is a THIRD way to address a signal, so every rule that reads the
+       * scalar recipients reads it too. A working-on signal says what you are
+       * doing and is addressed to nobody; a private reply is addressed by
+       * in_reply_to and by nothing else. Both spellings are refused here, with
+       * the same sentence, rather than one of them getting a better message
+       * than the other. */
       (
         cmd.signal_kind !== "working-on" ||
         (
           cmd.to_user_id === null &&
           toAgentPrincipalId === null &&
-          inReplyTo === null
+          inReplyTo === null &&
+          !addressedByList
         )
       ) &&
       (
@@ -1798,7 +1827,8 @@ function validateCommand(
         (
           cmd.signal_kind === "note" &&
           cmd.to_user_id === null &&
-          toAgentPrincipalId === null
+          toAgentPrincipalId === null &&
+          !addressedByList
         )
       ) &&
       (
@@ -1863,6 +1893,7 @@ function validateCommand(
           ...(broadcastToChannel === undefined
             ? {}
             : { broadcast_to_channel: broadcastToChannel as boolean }),
+          ...(addressedByList ? { to: recipients! } : {}),
         },
       }
       : {
@@ -6643,6 +6674,32 @@ async function resolveSignalWriteTarget(
 ): Promise<SignalWriteTarget | null> {
   const toAgentPrincipalId = command.to_agent_principal_id ?? null;
   const inReplyTo = command.in_reply_to ?? null;
+  const recipients = command.to ?? null;
+  if (recipients !== null) {
+    /* The validator guarantees a non-empty list, no scalar recipient beside it
+     * and no in_reply_to, so this arm needs no re-derivation of those rules.
+     *
+     * EVERY recipient is checked for liveness, not just the first. A dead one
+     * anywhere in the list refuses the whole post the same way a dead scalar
+     * target does today -- the answer is a bare 403, which does not disclose
+     * WHICH recipient is not reachable, for the same tenant-honesty reason the
+     * scalar path does not. */
+    for (const recipient of recipients) {
+      const live = recipient.kind === "user"
+        ? await signalUserTargetIsLive(tx, route, recipient.id)
+        : await signalAgentTargetIsLive(tx, route, recipient.id);
+      if (!live) return null;
+    }
+    const first = recipients[0]!;
+    /* Entry 0 becomes the row's own scalar recipient. This is the whole
+     * old-reader guarantee, and swarm.signal_recipients carries a deferred
+     * constraint that refuses the commit if these two ever disagree. */
+    return {
+      toUserId: first.kind === "user" ? first.id : null,
+      toAgentPrincipalId: first.kind === "agent" ? first.id : null,
+      inReplyTo: null,
+    };
+  }
   if (inReplyTo === null) {
     const userLive = await signalUserTargetIsLive(
       tx,
@@ -6977,6 +7034,29 @@ async function postSignal(
     if (placement.untilCeiling !== null) return null;
     throw new Error("signal insert did not return a row");
   }
+  /* One row per recipient, in the order the sender named them. Position 0
+   * repeats the scalar recipient on the signal row on purpose: the table then
+   * means exactly "what the caller addressed", with no arity-dependent branch,
+   * and the delivery trigger's ON CONFLICT DO NOTHING is exercised on the
+   * single-recipient path as well as the many-recipient one.
+   *
+   * A body with no `to` writes NOTHING here, so nothing about an installed
+   * client's post changes. swarm_read.signals derives the same set from the
+   * scalar column for those rows, which is why this lane needs no backfill. */
+  for (const [position, recipient] of (command.to ?? []).entries()) {
+    await tx`
+      INSERT INTO swarm.signal_recipients (
+        signal_id, workspace_id, recipient_user_id,
+        recipient_agent_principal_id, position
+      ) VALUES (
+        ${signal.id}::uuid,
+        ${route.workspaceId}::uuid,
+        ${recipient.kind === "user" ? recipient.id : null}::uuid,
+        ${recipient.kind === "agent" ? recipient.id : null}::uuid,
+        ${position}
+      )
+    `;
+  }
   for (const [position, attachment] of attachments.entries()) {
     await tx`
       INSERT INTO swarm.signal_attachments (
@@ -7007,7 +7087,34 @@ async function postSignal(
     channel_id: signal.channel_id,
     thread_root_id: signal.thread_root_id,
     broadcast_to_channel: signal.broadcast_to_channel,
+    recipients: signalRecipientSet(command.to ?? null, signal),
   };
+}
+
+/**
+ * The recipient set a reader sees, derived the way swarm_read.signals derives
+ * it: the rows the caller named when there are any, and otherwise the row's own
+ * scalar recipient as a one-entry set. Both halves are here so a post that used
+ * the scalar shape and a post that used a one-entry `to` return the same set,
+ * and so a signal written before swarm.signal_recipients existed reads the
+ * same through either surface.
+ *
+ * The SQL copy of this rule is in 20260905000010_signal_recipients.sql. They
+ * are two expressions of one rule; tests/p1-local/chat-recipients-postgres.test.ts
+ * compares them on the same row rather than trusting that they agree.
+ */
+function signalRecipientSet(
+  named: readonly SignalRecipient[] | null,
+  signal: { to_user_id: string | null; to_agent_principal_id: string | null },
+): SignalRecipient[] {
+  if (named !== null && named.length > 0) return [...named];
+  if (signal.to_user_id !== null) {
+    return [{ kind: "user", id: signal.to_user_id }];
+  }
+  if (signal.to_agent_principal_id !== null) {
+    return [{ kind: "agent", id: signal.to_agent_principal_id }];
+  }
+  return [];
 }
 
 async function handleTransaction(

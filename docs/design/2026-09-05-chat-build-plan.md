@@ -213,3 +213,65 @@ Owed, from review round 9 (refusal ORDER only; no accept/refuse boundary moves):
 Bound: "every 400 carries its reason" holds for the validation layer. Envelope failures before
 it (missing `client_version`, a body that is not the command envelope, auth and route checks)
 still answer a bare `invalid_request`; the `read` edge returns a reason only for the channel slug.
+
+
+## L2 `chat-recipients` — what was built, and what it does not establish
+
+Branch `lane/chat-recipients`, on top of L1's merge `8adf55a`. NOT deployed by this lane: the lead
+pushes the migration to production, in order, and only then deploys `command` and `read`.
+
+**Apply order, which this lane cannot loosen.** `20260905000010_signal_recipients.sql` → verify with a
+`swarm.schema_migrations` query, not with the `db push` output → deploy `command` and `read` together.
+The read edge names `s.recipients`; against a database missing this migration EVERY agent read fails.
+
+**The shape.** `swarm.signal_recipients (signal_id, workspace_id, recipient_user_id,
+recipient_agent_principal_id, position)`, one recipient kind per row, tenant-pinned by composite FKs to
+`swarm.signals (id, workspace_id)`, `swarm.memberships (workspace_id, user_id)` and
+`swarm.agent_principals (principal_id, workspace_id)`. Immutable the same way `swarm.signal_attachments`
+is: one trigger refuses an insert whose parent signal is not from this transaction, another refuses every
+UPDATE and DELETE. Who can read an immutable signal therefore cannot change after it is written.
+
+**The old-reader guarantee is enforced, not promised.** A DEFERRED constraint trigger refuses the commit
+unless positions run 0..n-1 and position 0 is the signal row's own `to_user_id` /
+`to_agent_principal_id`. `signals_one_recipient` is untouched.
+
+**No backfill, and that is a property of the view rather than an omission.** `swarm_read.signals` gains
+one `recipients` column that reads the rows when there are rows and DERIVES a one-entry set from the
+scalar column when there are none. Every signal written before this migration therefore renders exactly
+as it would if its row existed, and a signal posted with a one-entry `to` renders identically to the same
+address sent the scalar way.
+
+**The cap** is `SIGNAL_RECIPIENT_MAX = 8` in `supabase/functions/_shared/channels.ts`, enforced twice:
+the edge validator refuses a longer list with a sentence built from the constant, and the CHECK on
+`position` bounds it at 7, which caps the row count because positions are unique per signal.
+`tests/chat-channel-constants.test.ts` fails if the migration's bound, the edge constant, or
+`MENTION_MAX_RECIPIENTS` in `site/src/lib/mention-address.ts` disagree.
+
+**Second RLS predicate change.** The migration comment states the predicate before and after. The new
+disjunct carries its own `is_member` gate, so ORing it at the top level cannot admit a row to a
+non-member; it admits exactly the people the sender addressed, in person or through an agent they own.
+The recreation splices the live `pg_get_viewdef` body in two steps (top-level FROM first, then the first
+WHERE after it) because the attachments subquery in the select list carries its own WHERE and a single
+pass finds that one. `assert_view_clauses_preserved` learns the new marker in the same file.
+
+**Wire.** `post_signal` gains optional `to`, an array of `{kind, id}`, through
+`CHAT_SIGNAL_OPTIONAL_KEYS` so it is its own `Object.hasOwn` group. `to` beside a scalar recipient is
+refused and never reconciled. `to` on a thread reply, on a `working-on`, or beside `in_reply_to` is
+refused by the same rule that already refuses the scalar spelling, with the same sentence.
+
+### What L2 did NOT establish
+
+1. **No capacity measurement.** The suite proves one delivery row per agent recipient and no duplicate
+   for the first. It does not measure what an 8-way fan-out costs on a ledger sized for one row per
+   signal, which §10 of the reconciled design still asks for.
+2. **No query plan.** `s.recipients` is a derived column, so the read edge's containment arm cannot use
+   an index; the indexed `to_agent` arm is kept beside it. Nothing was measured.
+3. **The receipts blocker is still open.** The reconciled design says
+   `swarm_read.signal_delivery_receipts` lets any member read any signal's recipient list, and that a
+   recipient SET makes it worse in kind. The per-signal receipt arm is L6's and did not land here.
+   Nothing in L2 widens that endpoint, and nothing in L2 fixes it.
+4. **Not measured against production.** Local Supabase only.
+5. **Group DMs are now a product question.** The mechanical reason they were out of v1 stopped being
+   true. §4 and §10 of the reconciled design carry the correction; the ruling is the coordinator's.
+6. **No client, no composer.** L3 and L4 still own `--to` and the mention chips; nothing a person can
+   type reaches `to` yet.
