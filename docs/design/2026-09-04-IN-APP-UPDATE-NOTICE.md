@@ -121,9 +121,28 @@ the query cannot change which bytes a path returns anyway.
   hash moved, or something under `public/`. The app has no dynamic imports today (`import(` count
   in `LiveDashboard.astro` is 0, and the built page emits no `modulepreload`), so there is no such
   chunk to miss; adding one would open this gap.
-- A change to markup OUTSIDE `<live-dashboard>` that also leaves every asset hash alone: a `<head>`
-  edit in the layout, for instance. Signal 1 covers head changes that touch a stylesheet or script,
-  which is most of them.
+- A change to markup OUTSIDE `<live-dashboard>` that also leaves every asset hash alone. The sharp
+  case is an **inline** `<style>` or `<script>` in `<head>`: it is not a `/_astro/` URL, so signal
+  1 does not see it, and it is not inside `<live-dashboard>`, so signal 2 does not either. Signal 1
+  covers head changes that move a hashed stylesheet or script, which is most of them.
+
+  **Measured, to bound how much this costs.** The built `/app` head carries **zero** inline
+  `<style>` blocks and **one** inline `<script>`: the 2,127-byte theme bootstrapper authored at
+  `site/src/pages/app.astro` with `is:inline slot="head" data-theme-bootstrap`. So the reachable
+  case today is a deploy that changes that one script and nothing else. `astro.config.mjs` sets
+  `build.inlineStylesheets: "auto"`, so a stylesheet small enough to be inlined would land here
+  too; none is, today.
+
+  **Why this is documented rather than covered.** Covering it means hashing the served head's
+  inline blocks, and the head is exactly where a third party injects. A preview or analytics
+  toolbar that carries any per-request value in the body would make the bar flap — and it would
+  flap for signed-in team members, which is the operator. Three anonymous requests to
+  `https://commonswarm.com/app` returned byte-identical bodies (39,076 bytes each; only `age` and
+  `x-vercel-id` headers varied), so nothing injects per-request into the body on the path this can
+  measure. The signed-in path was NOT measured, and that is the one the risk falls on. Given the
+  choice between missing a theme-script-only deploy and crying wolf at the operator, this stays
+  quiet. Covering it safely would mean requiring a head difference to repeat across two
+  consecutive polls before it counts.
 
 ## The notice
 
