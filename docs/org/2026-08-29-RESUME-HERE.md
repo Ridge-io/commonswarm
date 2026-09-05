@@ -2025,3 +2025,18 @@ on the claim response) is owed and routed to the schema owner.
 
 Still open: `chat-schema` round 8 at a728d8e (Gemini PASS, Grok pending; last round by ruling);
 `site-chips` round 5 at df70a0b (Gemini FAIL again after the bound ruling; being read by the lead).
+
+## Addendum 2026-09-05 05:3x UTC — chat round 8 ruling; site-chips final pair
+
+`chat-schema` round 8 (a728d8e): Gemini PASS (a real review this time, per-item reasoning);
+Grok FAIL, read by the lead: one false refusal is real — `channel_create` measures purpose length
+on the sanitized value before the trim the insert applies, so 500 x's plus a trailing space is
+refused for length while its stored form is legal — plus a model control-character case told the
+length sentence, and slug/id rule prose typed beside the regexes. Round 9 is final with exactly
+those fixes. Grok also showed Gemini's "microsecond" claim about `until === rootUntil` false: both
+sides are ISO round-trips at millisecond resolution.
+
+`site-chips`: final reviewed SHA 715fb05 was Grok PASS / Gemini FAIL; 66a9e9f fixes that FAIL
+(allowed call sites typed twice) and changes assertions, so one more arm pair runs on it. The
+lane's durable outcome: the sign-in sweep now states its bound (generated from its own patterns)
+instead of widening a regex; rounds 2–4 had argued completeness, which a source regex cannot have.
