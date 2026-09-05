@@ -1339,12 +1339,44 @@ import "../../styles/tokens.css";
      * back before the replica caught up, an id-only record had nothing left to put back. A
      * third arm found that.
      */
-    let postedSinceReset = new Map<string, Signal>();
+    let postedSinceReset = new Map<
+      string,
+      { row: Signal; workspaceId: string; at: number }
+    >();
+
+    /**
+     * How long a posted row may stand in for a page that has not caught up. The record exists
+     * to cover ONE thing — the read replica not yet carrying a row this browser just wrote —
+     * and that is a short window; the poll runs every two seconds. It is a chosen bound and
+     * not a measured one: no replication lag was measured for this lane.
+     *
+     * Without it the record had no end. A row that fell off the first page of its channel was
+     * re-prepended as the NEWEST message every time the reader came back, and the map grew for
+     * the life of the tab. Found by a review arm.
+     */
+    const POSTED_ROW_GRACE_MS = 30_000;
 
     /** Drop the rows a fetched page proves the server knows about. */
     const forgetFetchedPostedIds = (rows: readonly Signal[]): void => {
       if (postedSinceReset.size === 0) return;
       for (const row of rows) postedSinceReset.delete(row.id);
+    };
+
+    /**
+     * Drop what the record may no longer speak for: rows older than the grace, and rows from
+     * another workspace. `Signal` carries no workspace, and holding the row rather than the id
+     * is what made a cross-workspace leak visible — a message posted in workspace A was
+     * painted into workspace B's feed, which no query of B's had returned. Found by a review
+     * arm, on the fix from the round before.
+     */
+    const prunePostedRows = (): void => {
+      if (postedSinceReset.size === 0) return;
+      const cutoff = Date.now() - POSTED_ROW_GRACE_MS;
+      for (const [id, entry] of postedSinceReset) {
+        if (entry.at < cutoff || entry.workspaceId !== activeWorkspaceId) {
+          postedSinceReset.delete(id);
+        }
+      }
     };
 
     /**
@@ -4629,7 +4661,9 @@ import "../../styles/tokens.css";
            set is not cleared here at all; what keeps a row from another channel out is the
            same question the screen asks, and `signals` was emptied by the move in any case.
            Found by a review arm. */
+        prunePostedRows();
         const arrivedWhileFetching = [...postedSinceReset.values()]
+          .map((entry) => entry.row)
           .filter((row) => !fetched.has(row.id) && rowShowsOnScreen(row))
           .sort((a, b) => b.createdAt.localeCompare(a.createdAt));
         forgetFetchedPostedIds(page.rows);
@@ -4849,7 +4883,7 @@ import "../../styles/tokens.css";
       channelListFailed = false;
       activeChannelId = null;
       unknownChannelId = null;
-      postedSinceReset = new Map<string, Signal>();
+      postedSinceReset.clear();
       /* The intent carries the previous session's body and its command ids. */
       composerIntent = null;
       disarmChannelArchive();
@@ -5214,6 +5248,10 @@ import "../../styles/tokens.css";
       channelListFailed = false;
       activeChannelId = null;
       unknownChannelId = null;
+      /* Nothing this browser posted in the workspace being left may stand in for a page of
+         the one being opened. The prune's workspace test says the same thing; this is the
+         cheaper half of it, done where the workspace actually changes. */
+      postedSinceReset.clear();
       disarmChannelArchive();
       signalCursor = null;
       signalHasMore = false;
@@ -7085,7 +7123,9 @@ import "../../styles/tokens.css";
            it, and a row is removed from the list ONLY when it is about to be put back. */
         const visible = posted.filter(showsOnScreen);
         const visibleIds = new Set(visible.map((signal) => signal.id));
-        for (const row of visible) postedSinceReset.set(row.id, row);
+        for (const row of visible) {
+          postedSinceReset.set(row.id, { row, workspaceId, at: Date.now() });
+        }
         const kept = signals.filter(
           (entry) => !pendingSet.has(entry.id) && !visibleIds.has(entry.id),
         );
@@ -7125,7 +7165,9 @@ import "../../styles/tokens.css";
         /* The hops that DID land are records too. Only the success path was writing them, so
            a partial failure during a channel click lost the hop that posted when the reset
            page arrived without it. Found by a review arm. */
-        for (const row of visibleOnFailure) postedSinceReset.set(row.id, row);
+        for (const row of visibleOnFailure) {
+          postedSinceReset.set(row.id, { row, workspaceId, at: Date.now() });
+        }
         /* Drop the posted ids as well as the pending ones. The success path rewrites `signals`
          * BEFORE it renders, so a throw in that render reaches here with those rows already in
          * the list; prepending them again would show each one twice. */

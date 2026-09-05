@@ -461,19 +461,36 @@ test("a page fetched before a post landed does not drop that post", () => {
      arm found that. ~~`signals.filter((row) => postedSinceReset.has(row.id) && …)`~~. */
   assert.match(
     load,
-    /const arrivedWhileFetching = \[\.\.\.postedSinceReset\.values\(\)\]\s*\n\s*\.filter\(\(row\) => !fetched\.has\(row\.id\) && rowShowsOnScreen\(row\)\)/,
+    /prunePostedRows\(\);\s*\n\s*const arrivedWhileFetching = \[\.\.\.postedSinceReset\.values\(\)\]\s*\n\s*\.map\(\(entry\) => entry\.row\)\s*\n\s*\.filter\(\(row\) => !fetched\.has\(row\.id\) && rowShowsOnScreen\(row\)\)/,
   );
+  /* The record has a bound in TIME and in SPACE. Without the first, a row that fell off the
+     first page of its channel was re-prepended as the newest message every time the reader
+     came back, and the map grew for the life of the tab. Without the second, a message posted
+     in one workspace was painted into another workspace's feed, which no query of that
+     workspace had returned. Both arms, on the fix from the round before. */
+  assert.match(dashboard, /const POSTED_ROW_GRACE_MS = 30_000;/);
+  const prune = between(dashboard, "const prunePostedRows = (", "\n    };");
+  assert.match(prune, /const cutoff = Date\.now\(\) - POSTED_ROW_GRACE_MS;/);
+  assert.match(prune, /entry\.at < cutoff \|\| entry\.workspaceId !== activeWorkspaceId/);
+  const open = between(dashboard, "const keepShell = app.dataset.state", "if (keepShell) renderChannel");
+  assert.match(open, /postedSinceReset\.clear\(\);/, "a workspace change empties the record");
   assert.match(load, /\.sort\(\(a, b\) => b\.createdAt\.localeCompare\(a\.createdAt\)\);/,
     "the feed is newest-first, so the rows put back must be too");
   assert.match(load, /forgetFetchedPostedIds\(page\.rows\);/);
   assert.match(load, /signals = \[\.\.\.arrivedWhileFetching, \.\.\.page\.rows\];/);
   /* And the send is what records them, so only rows this browser posted are kept. */
   const applied = between(dashboard, "const visible = posted.filter(showsOnScreen);", "clearComposerDraft();");
-  assert.match(applied, /for \(const row of visible\) postedSinceReset\.set\(row\.id, row\);/);
+  assert.match(
+    applied,
+    /for \(const row of visible\) \{\s*\n\s*postedSinceReset\.set\(row\.id, \{ row, workspaceId, at: Date\.now\(\) \}\);/,
+  );
   /* The FAILURE path prepends rows too, and only the success path was recording them, so a
      partial failure during a channel click lost the hop that had landed. */
   const failedRows = between(dashboard, "const visibleOnFailure = posted.filter", "const keptOnFailure");
-  assert.match(failedRows, /for \(const row of visibleOnFailure\) postedSinceReset\.set\(row\.id, row\);/);
+  assert.match(
+    failedRows,
+    /for \(const row of visibleOnFailure\) \{\s*\n\s*postedSinceReset\.set\(row\.id, \{ row, workspaceId, at: Date\.now\(\) \}\);/,
+  );
   /* An id leaves the set as soon as a fetched page carries it, so the set cannot grow for as
      long as the reader stays in one channel. Both arms raised that. */
   assert.match(dashboard, /const forgetFetchedPostedIds = \(rows: readonly Signal\[\]\): void =>/);

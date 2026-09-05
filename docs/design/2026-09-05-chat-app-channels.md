@@ -127,8 +127,17 @@ clears, so clicking the place you were already in killed a valid Retry; and comp
 left called a `?c=` heal into a different channel a no-op. The condition asks the thing that matters
 directly — is the intent's channel the one the composer is about to name.
 
-**The record of in-flight posts holds the row, not the id.** A channel move empties `signals`, so
-coming back before the read replica caught up, an id-only record had nothing left to put back.
+**The record of in-flight posts holds the row, not the id, and it is bounded in space and time.** A
+channel move empties `signals`, so coming back before the read replica caught up an id-only record had
+nothing left to put back. Holding the row then created two problems of its own, both found by arms on
+the next SHA: a row that fell off the first page of its channel was re-prepended as the NEWEST message
+every time the reader came back and the map grew for the life of the tab, and a message posted in one
+workspace was painted into another workspace's feed, which no query of that workspace had returned.
+
+The record exists for exactly one thing — the read replica not yet carrying a row this browser just
+wrote — so it is bounded by that: `POSTED_ROW_GRACE_MS` (30 seconds, against a two-second poll) and the
+workspace the row was written in. **The grace is a chosen bound and not a measured one**: no replication
+lag was measured for this lane.
 
 **And an unfinished send does not follow the reader to another channel.** Moving channel retires the
 intent and says so, because the composer is about to promise the new channel and replaying the old
@@ -251,7 +260,7 @@ forbids.
    never reached them and the rail claimed a current channel while the head said Files. Found by a
    review arm. In the unresolved-channel state the rail marks NOTHING current, which both arms read
    and agreed is the honest mark: the reader is in the signals view and in no channel.
-9. **Eleven review rounds cost thirty-one product defects and two evidence defects**, every one found by an
+9. **Twelve review rounds cost thirty-three product defects and two evidence defects**, every one found by an
    arm and none by a gate: the read-permission claim in the copy; the composer that posted into the
    unfiltered feed from an unresolved link; a double current mark on Files and Brain; four typed
    copies of the view's name; a workspace switch that opened as "Channel not found"; a channel-list

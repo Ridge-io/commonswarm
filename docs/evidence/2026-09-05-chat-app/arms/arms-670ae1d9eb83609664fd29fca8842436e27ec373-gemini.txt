@@ -1,0 +1,14 @@
+I have completed the review of `DIFF.patch` against `REVIEW.md`. Here are my findings:
+
+```text
+diff --git a/docs/design/2026-09-05-chat-app-channels.md b/docs/design/2026-09-05-chat-app-channels.md
+
+1. **`postedSinceReset` memory leak and zombie rows on channel switch.**
+   - **File:** `site/src/components/app/LiveDashboard.astro`
+   - **Lines:** `1342-1349` (`postedSinceReset` / `forgetFetchedPostedIds`) and `4625-4636` (`arrivedWhileFetching`).
+   - **What breaks:** `postedSinceReset` is only ever cleared by `resetWorkspaceSessionState` (which runs on auth boundaries, not channel changes). It accumulates all rows posted in the session. `forgetFetchedPostedIds` only deletes a row from this Map if its ID appears in the *fetched* `page.rows`. If a user posts in Channel A, switches to Channel B, and waits until 25+ messages are posted in Channel A, their original post falls off Channel A's first page. When the user eventually switches back to Channel A, the fetch will not return that row, so `forgetFetchedPostedIds` will not delete it from `postedSinceReset`. Furthermore, because `rowShowsOnScreen(row)` correctly evaluates to true (the user is in Channel A), this old row is placed into `arrivedWhileFetching` and prepended to the top of `signals`. The Map thus grows indefinitely for every post that falls off its first page, leaking memory, and old messages render permanently as the newest message in the channel.
+   - **How you would see it:** Open `#mobile` and post a message. Switch to `#ops`. Wait for 25+ messages to be posted in `#mobile` by others. Switch back to `#mobile`. Your old message will incorrectly render at the very top of the feed as the newest message, and will never be cleared from memory as long as you stay logged in.
+   - **Refutation:** Does `selectChannel` clear the Map? No, it clears `signals`, `signalCursor`, `previousSignalIds`, etc., but leaves `postedSinceReset` alone (as documented by the round 12 fix which made it a `Map` specifically to survive the `signals` wipe). Does `arrivedWhileFetching` filter out old messages? No, it checks `!fetched.has(row.id)` (which is true, the server didn't return it) and `rowShowsOnScreen(row)` (which is true, because `row.channelId === activeChannelId`).
+
+VERDICT: FAIL
+```
