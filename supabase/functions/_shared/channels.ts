@@ -275,6 +275,16 @@ export function chatSignalShapeProblem(
  * reason went only to swarm.audit, user-facing the moment this lane put it on
  * the wire. A fourth category would have changed the check and not the sentence.
  */
+/**
+ * The feedback body bound. It was typed twice in one expression -- the check
+ * and the sentence describing it -- which was invisible while the reason went
+ * only to swarm.audit. AGENTS.md records that these bounds must also match
+ * normalizedFeedbackBody in src/protocol/workspace-commands.ts; that copy is
+ * still separate and still owed, and the protocol core is deliberately out of
+ * this lane's reach.
+ */
+export const FEEDBACK_BODY_MAX = 4_000;
+
 export const FEEDBACK_CATEGORIES = ["bug", "idea", "friction"] as const;
 export type FeedbackCategory = typeof FEEDBACK_CATEGORIES[number];
 

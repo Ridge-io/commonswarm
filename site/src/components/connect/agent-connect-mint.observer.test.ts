@@ -133,7 +133,7 @@ test("the mint never puts renewal_horizon_ms on the wire, not even as null", asy
 
 test("the mint still sends the device the standing grant will be bound to", async () => {
   await mint();
-  // index.ts:4304 binds a standing grant to this id, so an app mint can never read UNBOUND.
+  // index.ts:4305 binds a standing grant to this id, so an app mint can never read UNBOUND.
   assert.equal(sent[0]?.command.device_id, DEVICE_ID);
 });
 

@@ -84,14 +84,14 @@ const CITATIONS: Citation[] = [
   {
     citedBy: "agent-connect-mint.observer.test.ts (standing binds to the request device)",
     file: "supabase/functions/command/index.ts",
-    lines: [4304, 4304],
+    lines: [4305, 4305],
     contains: "standing ? prepared.wire.device_id : null",
   },
   // supabase/functions/command/index.ts — the resume handler's own comment
   {
     citedBy: "command/index.ts (resume handler, the pattern it copies)",
     file: "supabase/functions/command/index.ts",
-    lines: [3358, 3358],
+    lines: [3359, 3359],
     contains: "grant_preflight_code: (preflight[0]?.code ?? null)",
   },
   {
@@ -123,7 +123,7 @@ const CITATIONS: Citation[] = [
   {
     citedBy: "agent-connect.ts (the scope check post_signal needs)",
     file: "supabase/functions/command/index.ts",
-    lines: [7277, 7282],
+    lines: [7283, 7288],
     contains: "auth.agent.scopes.includes(validation.command.kind)",
   },
   /* The published-policy citations. These were NOT registered here, so when a
@@ -146,13 +146,13 @@ const CITATIONS: Citation[] = [
   {
     citedBy: "privacy.astro (the command vocabulary)",
     file: "supabase/functions/command/index.ts",
-    lines: [838, 838],
+    lines: [839, 839],
     contains: "const COMMAND_KINDS = [",
   },
   {
     citedBy: "terms.astro + acceptable-use.astro (workspace cap)",
     file: "supabase/functions/command/index.ts",
-    lines: [658, 658],
+    lines: [659, 659],
     contains: "const FREE_TIER_WORKSPACE_LIMIT",
   },
   {
@@ -164,7 +164,7 @@ const CITATIONS: Citation[] = [
   {
     citedBy: "src/cloud/files.ts (the TTL constant scar)",
     file: "supabase/functions/command/index.ts",
-    lines: [554, 554],
+    lines: [555, 555],
     contains: "const AGENT_TOKEN_MAX_TTL_MS",
   },
   // src/protocol/workspace-commands.ts — the one definition of "paused"

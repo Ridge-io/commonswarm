@@ -17,6 +17,7 @@ import {
   chatSignalKeys,
   chatSignalShapeProblem,
   commandFieldsMessage,
+  FEEDBACK_BODY_MAX,
   FEEDBACK_CATEGORIES,
   type FeedbackCategory,
   feedbackCategoryList,
@@ -1944,14 +1945,14 @@ function validateCommand(
     const trimmedBody = cmd.body.trim();
     if (
       trimmedBody.length === 0 ||
-      trimmedBody.length > 4000 ||
+      trimmedBody.length > FEEDBACK_BODY_MAX ||
       /[\u0000-\u0008\u000b\u000c\u000e-\u001f\u007f-\u009f\u202a-\u202e\u2066-\u2069]/.test(trimmedBody)
     ) {
       return {
         ok: false,
         status: 400,
         reason:
-          "feedback body must be 1..4000 characters; newlines and tabs are fine, other control characters are not",
+          `feedback body must be 1..${FEEDBACK_BODY_MAX} characters; newlines and tabs are fine, other control characters are not`,
       };
     }
     let context: Record<string, string> | null = null;
@@ -5950,7 +5951,7 @@ async function resumeRenewalGrant(
    * was told 403; a retry then answered `renewal_grant_not_suspended`, because the resume it
    * had denied had in fact happened.
    *
-   * Same shape as the renewal preflight read at index.ts:3358 (`preflight[0]?.code ?? null`):
+   * Same shape as the renewal preflight read at index.ts:3359 (`preflight[0]?.code ?? null`):
    * preserve NULL, refuse only on a code we assign.
    *
    * WHY A REFUSAL BELOW STILL COMMITS, DELIBERATELY. `refuse` must commit — its whole job is
