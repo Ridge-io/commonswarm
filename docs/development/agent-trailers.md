@@ -25,7 +25,7 @@ Agent-Model-Source: runtime-transcript
 | `Agent-Model` | the model id, **read off the runtime**. Required. |
 | `Agent-Family` | the family of the **model**, not of the tool. Required. |
 | `Agent-Tool` | the agent CLI and its version. |
-| `Agent-Model-Source` | how `Agent-Model` was obtained. The audit's honesty field. |
+| `Agent-Model-Source` | how `Agent-Model` was obtained. The audit's honesty field. Required. |
 | `Agent-Human-Edit` | `yes` when a person changed the diff an agent produced. |
 | `Reviewed-By-Model` | one D-036 review arm. May repeat; git keeps every occurrence. |
 
@@ -39,7 +39,6 @@ they ever disagree, `tests/p1-cli/agent-trailers.test.ts` fails.
 | value | what it means |
 |---|---|
 | `runtime-transcript` | read out of the agent's own live session record. A measurement. |
-| `runtime-env` | read out of a variable the runtime itself set. A measurement. |
 | `runtime-config` | read out of the runtime's session-scoped state on disk. A measurement. |
 | `runtime-ambiguous` | more than one runtime's variables were visible, so the model may belong to a **parent** session. Weaker than any other `runtime-*` value. |
 | `declared` | a person or a lead supplied it. **An assertion, not a measurement.** |
@@ -53,6 +52,15 @@ measuring what people remembered to type, which drifts in the flattering directi
 - `Agent-Model: none`, `Agent-Family: human` — no agent wrote this. A person did.
 - `Agent-Model: unknown`, `Agent-Family: unknown` — an agent wrote it, and its runtime exposed
   nothing we could trust.
+
+**The family beside `unknown` is not always `unknown`.** A runtime keeps whatever family it can
+establish without reading a model. Claude Code serves Anthropic models and nothing else, so an
+unreadable transcript still gives `Agent-Model: unknown`, `Agent-Family: anthropic`,
+`Agent-Model-Source: none` — measured, not assumed. `agy` is the opposite case and that is why it
+differs: `agy models` lists 15 ids including `claude-opus-4-6-thinking` and `gpt-oss-120b-medium`,
+so the tool being Google's says nothing about the family, and it stays `unknown`. The rule is the
+same in both places — the family describes the MODEL — and it lands differently because the two
+runtimes differ.
 
 Both pass the gate. They answer different questions, and collapsing them would lose the
 difference between "not applicable" and "not established".
@@ -73,20 +81,31 @@ variable carries a **session id**, and a session record the runtime wrote carrie
 |---|---|---|---|
 | `codex` | yes | `CODEX_THREAD_ID` → `~/.codex/sessions/**/rollout-*-<id>.jsonl`, last `turn_context` → `.payload.model` | `runtime-transcript` |
 | `grok` | yes | `GROK_SESSION_ID` → `~/.grok/sessions/*/<id>/summary.json` → `.current_model_id` | `runtime-config` |
-| `claude` | yes | `CLAUDE_CODE_SESSION_ID` → `~/.claude/projects/*/<id>.jsonl`, last main-chain `.message.model` | `runtime-transcript` |
+| `claude-code` | yes | `CLAUDE_CODE_SESSION_ID` → `~/.claude/projects/*/<id>.jsonl`, last main-chain `.message.model` | `runtime-transcript` |
 | `agy` | **no** | version only, from `ANTIGRAVITY_LS_VERSION` | `none` |
 
-Verified output on this machine, 2026-09-04:
+Measured on this machine, 2026-09-04. **Each line says what its environment was**, because that is
+the thing being measured: setting another runtime's variable on top of a live session is the nested
+case, and it now reports `runtime-ambiguous` rather than the clean source a reader might expect.
 
 ```
-$ scripts/agent-trailers.sh --detect          # inside Claude Code
-model=claude-opus-5   family=anthropic  tool=claude-code 2.1.257  source=runtime-transcript
-$ CODEX_THREAD_ID=<a real thread> scripts/agent-trailers.sh --detect
-model=gpt-5.6-sol     family=openai     tool=codex 0.147.0        source=runtime-transcript
+# a live Claude Code session, nothing else set
+$ scripts/agent-trailers.sh --detect
+model=claude-fable-5-1  family=anthropic  tool=claude-code 2.1.255  source=runtime-transcript
+
+# one runtime only: the parent's markers cleared first
+$ env -u CLAUDECODE -u CLAUDE_CODE_SESSION_ID CODEX_THREAD_ID=<a real thread> scripts/agent-trailers.sh --detect
+model=gpt-5.6-sol       family=openai     tool=codex 0.147.0        source=runtime-transcript
+$ env -u CLAUDECODE -u CLAUDE_CODE_SESSION_ID GROK_SESSION_ID=<a real session> scripts/agent-trailers.sh --detect
+model=grok-4.6          family=xai        tool=grok 1.0.13          source=runtime-config
+
+# the NESTED case: a real grok session inside a live Claude Code session, both markers present
 $ GROK_SESSION_ID=<a real session> scripts/agent-trailers.sh --detect
-model=grok-4.6        family=xai        tool=grok 1.0.13          source=runtime-config
-$ ANTIGRAVITY_AGENT=1 scripts/agent-trailers.sh --detect
-model=unknown         family=unknown    tool=agy 1.1.26           source=none
+model=grok-4.6          family=xai        tool=grok 1.0.13          source=runtime-ambiguous
+
+# agy, whose model is deliberately not read
+$ env -u CLAUDECODE -u CLAUDE_CODE_SESSION_ID ANTIGRAVITY_AGENT=1 scripts/agent-trailers.sh --detect
+model=unknown           family=unknown    tool=agy 1.1.26           source=none
 ```
 
 ### Why `agy` returns `unknown`
@@ -232,7 +251,9 @@ reach it and its tree contains the hook, so grace does not either. Measured on t
 `cf17894` and `297f1a4` are single-parent commits committed by `noreply@github.com`. Without the
 exemption the first squash merge after this lands turns `main` red for a message no agent wrote.
 The exemption keys on that committer address, which `scripts/check-commit-identity.sh` already
-allows for the same reason.
+allows for the same reason. It therefore covers every commit GitHub generated — squash merges,
+rebase merges, and edits made in the web UI — which is the intent: GitHub wrote those messages, so
+no agent can be recorded as their author.
 
 It is **narrow on purpose**: the author must not be that address as well. A squash merge keeps the
 PR author (measured on `main`: `cf17894` and `297f1a4` are committed by GitHub and authored by
@@ -300,9 +321,10 @@ sentences describing it cannot drift apart.
 
 - **Author date, not committer date.** A rebase rewrites the committer date and leaves the author
   date alone, which is the same reason the tree test is not enough by itself.
-- **Skipped commits are counted and reported separately**, never folded into the checked count:
-  `agent-trailers OK: 3 commit(s) checked in ...; 1 skipped as predating the rule (...)`. A gate that
-  silently drops commits from its own total tells a reader that work was audited when it was not.
+- **Skipped and exempt commits are counted and reported apart from the checked ones.** The gate
+  prints `N of M commit(s) checked`, then a line for each of the two reasons the rest were not.
+  Nothing read an exempt commit's trailers either, so counting one as checked tells a reader the
+  audit opened a commit it never opened.
 - **The path must name a real file and the cutoff must be in the past.** Either one broken would
   skip every commit and leave the gate green while checking nothing. The self-test carries one
   assertion for each, because its fixtures are built from those constants and so cannot notice them
@@ -355,8 +377,10 @@ It is an **accident guard**, the same scope as `scripts/check-commit-identity.sh
   indistinguishable from one read off a runtime. `Agent-Model-Source` is what lets a later reader
   weigh them differently.
 
-What it does buy: the field is never silently absent, and absence is the failure mode that
-correlates with the commits most worth auditing.
+What it does buy: no required field is ever silently absent, and absence is the failure mode that
+correlates with the commits most worth auditing. `Agent-Model-Source` is one of the required ones
+for exactly that reason — a bare `Agent-Model` with no source leaves a reader unable to tell a
+measurement from something somebody typed, which is the distinction the whole page rests on.
 
 ### The gate is mutation-tested on every run
 
