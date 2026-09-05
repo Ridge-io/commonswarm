@@ -41,57 +41,57 @@ const CITATIONS: Citation[] = [
   {
     citedBy: "site/src/lib/agent-connect.ts (mintedHorizon)",
     file: "supabase/functions/command/index.ts",
-    lines: [8713, 8718],
+    lines: [8704, 8709],
     contains: "horizon_expires_at: prepared.command.renewal_horizon_ms === null",
   },
   {
     citedBy: "site/src/lib/agent-connect.ts (mintedHorizon, replay)",
     file: "supabase/functions/command/index.ts",
-    lines: [2418, 2424],
+    lines: [2409, 2415],
     contains: "horizon_expires_at: response.horizon_expires_at as string | null",
   },
   {
     citedBy: "site/src/lib/agent-connect.ts (the 400 message)",
     file: "supabase/functions/command/index.ts",
-    lines: [2201, 2209],
+    lines: [2192, 2200],
     contains: "const valid = exactKeys(cmd, [",
   },
   // site/src/components/connect/agent-connect-mint.observer.test.ts
   {
     citedBy: "agent-connect-mint.observer.test.ts (timeboxed fallback, validator)",
     file: "supabase/functions/command/index.ts",
-    lines: [2189, 2191],
+    lines: [2180, 2182],
     contains: '? "timeboxed"',
   },
   {
     citedBy: "agent-connect-mint.observer.test.ts (timeboxed fallback, prepared)",
     file: "supabase/functions/command/index.ts",
-    lines: [3119, 3122],
+    lines: [3110, 3113],
     contains: 'renewal_kind: wire.renewal_kind ?? "timeboxed"',
   },
   {
     citedBy: "agent-connect-mint.observer.test.ts (standing needs an ABSENT horizon)",
     file: "supabase/functions/command/index.ts",
-    lines: [2195, 2196],
+    lines: [2186, 2187],
     contains: 'renewalKind === "standing" && cmd.renewal_horizon_ms === undefined',
   },
   {
     citedBy: "agent-connect-mint.observer.test.ts (the 400)",
     file: "supabase/functions/command/index.ts",
-    lines: [2249, 2252],
+    lines: [2240, 2243],
     contains: "mint_agent_token fields are malformed or out of bounds",
   },
   {
     citedBy: "agent-connect-mint.observer.test.ts (standing binds to the request device)",
     file: "supabase/functions/command/index.ts",
-    lines: [4316, 4316],
+    lines: [4307, 4307],
     contains: "standing ? prepared.wire.device_id : null",
   },
   // supabase/functions/command/index.ts — the resume handler's own comment
   {
     citedBy: "command/index.ts (resume handler, the pattern it copies)",
     file: "supabase/functions/command/index.ts",
-    lines: [3370, 3370],
+    lines: [3361, 3361],
     contains: "grant_preflight_code: (preflight[0]?.code ?? null)",
   },
   {
@@ -111,105 +111,6 @@ const CITATIONS: Citation[] = [
     file: "supabase/migrations/20260904000001_standing_grant_resume.sql",
     lines: [614, 614],
     contains: "RETURN NULL;",
-  },
-  /* The last two agent-connect pointers a review arm found walked onto
-   * unrelated code by this lane's remap. Registered so the gate owns them. */
-  {
-    citedBy: "agent-connect.ts (mint device binding)",
-    file: "supabase/functions/command/index.ts",
-    lines: [2947, 2959],
-    contains: "FROM swarm.devices",
-  },
-  {
-    citedBy: "agent-connect.ts (the scope check post_signal needs)",
-    file: "supabase/functions/command/index.ts",
-    lines: [7294, 7299],
-    contains: "auth.agent.scopes.includes(validation.command.kind)",
-  },
-  /* The published-policy citations. These were NOT registered here, so when a
-   * lane moved command/index.ts by 700 lines an automated remap walked them to
-   * unrelated code and every gate stayed green. A review arm caught it by
-   * reading. Registering them is the durable fix: the test exists for exactly
-   * this and could not see them. */
-  {
-    citedBy: "privacy.astro (what we get from GitHub)",
-    file: "supabase/functions/command/index.ts",
-    lines: [9141, 9157],
-    contains: "metadata?.full_name",
-  },
-  /* TWO entries, because the claim has two halves and an arm showed that
-   * pinning only the column list leaves the load-bearing half unguarded: the
-   * test would stay green if someone started writing a real IP. */
-  {
-    citedBy: "privacy.astro (audit names an ip column)",
-    file: "supabase/functions/command/index.ts",
-    lines: [1374, 1374],
-    contains: "outcome, reason, detail, request_hash, ip",
-  },
-  {
-    citedBy: "privacy.astro (and writes a literal NULL into it)",
-    file: "supabase/functions/command/index.ts",
-    lines: [1385, 1392],
-    contains: "      NULL",
-  },
-  {
-    citedBy: "privacy.astro (the command vocabulary)",
-    file: "supabase/functions/command/index.ts",
-    lines: [839, 839],
-    contains: "const COMMAND_KINDS = [",
-  },
-  {
-    citedBy: "terms.astro + acceptable-use.astro (workspace cap)",
-    file: "supabase/functions/command/index.ts",
-    lines: [659, 659],
-    contains: "const FREE_TIER_WORKSPACE_LIMIT",
-  },
-  /* Two caps, two entries. One entry containing only the credential cap could
-   * not see the workspace cap move, and the registered range ended one line
-   * before it. */
-  {
-    citedBy: "terms.astro + acceptable-use.astro (per-credential signal cap)",
-    file: "supabase/functions/command/index.ts",
-    lines: [565, 565],
-    contains: "const SIGNAL_CREDENTIAL_LIMIT",
-  },
-  {
-    citedBy: "terms.astro + acceptable-use.astro (per-workspace signal cap)",
-    file: "supabase/functions/command/index.ts",
-    lines: [566, 566],
-    contains: "const SIGNAL_WORKSPACE_LIMIT",
-  },
-  /* The five pointers an arm found still wrong that this lane had not touched.
-   * Registered so the gate owns them rather than the next reader. */
-  {
-    citedBy: "acceptable-use.astro + terms.astro (hourly rate window)",
-    file: "supabase/functions/command/index.ts",
-    lines: [4797, 4810],
-    contains: "date_trunc('hour', statement_timestamp())",
-  },
-  {
-    citedBy: "acceptable-use.astro (invitation TTL cap)",
-    file: "supabase/functions/command/index.ts",
-    lines: [550, 550],
-    contains: "const INVITATION_MAX_TTL_MS",
-  },
-  {
-    citedBy: "acceptable-use.astro (agent credential TTL cap)",
-    file: "supabase/functions/command/index.ts",
-    lines: [555, 555],
-    contains: "const AGENT_TOKEN_MAX_TTL_MS",
-  },
-  {
-    citedBy: "privacy.astro (identityVerified)",
-    file: "supabase/functions/command/index.ts",
-    lines: [9156, 9157],
-    contains: "email_confirmed_at",
-  },
-  {
-    citedBy: "src/cloud/files.ts (the TTL constant scar)",
-    file: "supabase/functions/command/index.ts",
-    lines: [555, 555],
-    contains: "const AGENT_TOKEN_MAX_TTL_MS",
   },
   // src/protocol/workspace-commands.ts — the one definition of "paused"
   {

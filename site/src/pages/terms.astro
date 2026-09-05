@@ -64,10 +64,10 @@
  *
  * FACTS IN THIS DOCUMENT ARE READ OUT OF THE CODE, NOT ASSUMED:
  *   10 live workspaces per verified identity -> FREE_TIER_WORKSPACE_LIMIT,
- *                                               supabase/functions/command/index.ts:659
- *   120 signals / credential / hour          -> SIGNAL_CREDENTIAL_LIMIT, :564
- *   1000 signals / workspace / hour          -> SIGNAL_WORKSPACE_LIMIT, :565
- *   hourly windows                           -> incrementRateBucket, :4797
+ *                                               supabase/functions/command/index.ts:554
+ *   120 signals / credential / hour          -> SIGNAL_CREDENTIAL_LIMIT, :297
+ *   1000 signals / workspace / hour          -> SIGNAL_WORKSPACE_LIMIT, :298
+ *   hourly windows                           -> incrementSignalBucket, :2342
  *   signal body 1-8000 chars, about <= 500,
  *     lifetime <= 30 days                    -> supabase/migrations/20260827000001_expand_signal_body.sql
  *   a signal never claims or blocks anything -> AGENTS.md, and the reducer: posting a signal

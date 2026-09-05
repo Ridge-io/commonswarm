@@ -148,6 +148,36 @@ author's family. Preference order Codex, Grok, Gemini; pick two.
 | L7 | A thread reply that changes `in_reply_to` addressing; a clamp that silently shortens an explicit request |
 | L8 | A correction sent as a message instead of landing in the artifact; retired wording deleted rather than marked |
 
+## L8 addendum — the citation and policy-copy work this lane cut
+
+**Scope ruling, 2026-09-05: this belonged to L8 `chat-copy`, not to L1.** The schema lane grew a tail of
+edits under `site/` because adding ~1000 lines to `supabase/functions/command/index.ts` moved every
+`file:line` the published pages cite. Rounds 5 and 6 kept finding defects there, in files no schema
+change should touch. It was reverted to `main` and is recorded here so it is not lost.
+
+What was found and reverted, for whoever picks up L8:
+
+1. **The citation gate pins code, not prose.** `tests/p1-cli/citation-drift.test.ts` asserts the
+   registered lines contain the quoted text. It never reads the citing file, so a comment in
+   `privacy.astro` can say `:564` while the table correctly says `:565` and the gate stays green. Both
+   arms found this independently. The durable fix is a `citedIn` field naming the citing file, so the
+   prose and the table have to agree.
+2. **Stale pointers on `main` today**, each verified by reading and then reverted: `privacy.astro` cites
+   the GitHub display-name derivation, the audit `ip` column, `COMMAND_KINDS`, and `identityVerified`;
+   `terms.astro` and `acceptable-use.astro` cite the signal rate caps, the workspace cap, the hourly
+   rate window, and the invitation and agent-token TTL caps; `agent-connect.ts` cites the mint device
+   binding and the scope gate; `src/cloud/files.ts` cites the TTL constant. All were pointing at
+   unrelated code BEFORE this lane, and this lane's line growth makes them worse.
+3. **One wrong number, in a comment and not in published copy.** `acceptable-use.astro`'s source header
+   said the agent credential TTL cap is 24 hours; `AGENT_TOKEN_MAX_TTL_MS` is 30 days. The rendered
+   sentence on the page already said "30 days at most, 24 hours by default" and is correct, so this is a
+   comment defect and not a live false claim.
+4. **`privacy.astro`'s `COMMAND_KINDS` summary** does not list `channel_create`, `channel_rename` or
+   `channel_archive`, which L1 adds. It was already a partial summary; L8 should say so or complete it.
+
+L1 keeps only the line remaps its own `command/index.ts` growth forces in the existing
+`citation-drift.test.ts` entries. It registers nothing new and edits no page.
+
 ## What this plan does not settle
 
 1. **Nothing below L1 has been measured.** The file lists for L2-L8 are read from the design and from the

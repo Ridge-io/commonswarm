@@ -84,8 +84,19 @@ const CHAT_UUID_RE =
 export const RESERVED_CHANNEL_SLUGS: readonly string[] = ["all-signals"];
 
 /** What a channel_id is, for the refusal that fires when one is malformed. */
-export const CHANNEL_ID_RULE_TEXT =
-  "channel_id is the id of a channel in this workspace, as a UUID.";
+export const CHANNEL_ID_RULE_TEXT = "channel_id must be a UUID.";
+
+/**
+ * The model bound and its sentence, together. src/protocol's normalizedModel
+ * owns the same 120 and the same "string or null" rule, but it is NOT exported
+ * from the protocol bundle, so the edge cannot call it the way it now calls the
+ * feedback normalizers. This is a DOCUMENTED hand copy, not an accident: the
+ * number lives in one place on this side and the sentence is built from it, and
+ * the day normalizedModel is exported the edge should call it and delete this.
+ */
+export const MODEL_MAX = 120;
+export const MODEL_RULE_TEXT =
+  `model is text of at most ${MODEL_MAX} characters, or null.`;
 
 /** The slug rule, in words, built from the bound the validator enforces. */
 export const CHANNEL_SLUG_RULE_TEXT =
@@ -204,6 +215,17 @@ export function chatSignalShapeProblem(
     : fields.thread_root_id;
   const broadcast = fields.broadcast_to_channel;
 
+  /* The thread rules run BEFORE the slug rule. An arm found that a body with a
+   * valid thread_root_id and a malformed channel was told the slug rule, so the
+   * caller would fix the slug and only then meet the rule that a thread reply
+   * takes no channel at all. Name the rule that makes the request impossible,
+   * not the one that is merely also broken. */
+  if (
+    threadRoot !== null && threadRoot !== undefined &&
+    channel !== undefined && channel !== null
+  ) {
+    return "A thread reply is filed in the channel its thread is in, so it does not take a channel of its own.";
+  }
   if (channel !== undefined && channel !== null) {
     const problem = channelSlugProblem(channel);
     if (problem !== null) return problem;
@@ -252,9 +274,8 @@ export function chatSignalShapeProblem(
     if (fields.in_reply_to !== null && fields.in_reply_to !== undefined) {
       return "Use thread_root_id for a reply in the thread, or in_reply_to for a private reply to the author. Not both.";
     }
-    if (channel !== undefined && channel !== null) {
-      return "A thread reply is filed in the channel its thread is in, so it does not take a channel of its own.";
-    }
+    /* The channel-on-a-thread-reply rule is checked above, before the slug
+     * rule, so there is no second test here. */
   }
 
   if (broadcast === true && (threadRoot === null || threadRoot === undefined)) {

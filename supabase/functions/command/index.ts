@@ -18,6 +18,8 @@ import {
   chatSignalShapeProblem,
   commandFieldsMessage,
   CHANNEL_ID_RULE_TEXT,
+  MODEL_MAX,
+  MODEL_RULE_TEXT,
   normalizeChannelSlug,
   SIGNAL_KINDS,
   type SignalKind,
@@ -1896,7 +1898,7 @@ function validateCommand(
         ok: false,
         status: 400,
         reason: commandFieldsMessage("declare_agent_model", ["model"], [], {
-          model: "text or null",
+          model: MODEL_RULE_TEXT,
         }),
       };
     }
@@ -1907,14 +1909,11 @@ function validateCommand(
      * vice versa (landing-round finding 1). */
     const declaredModel = cmd.model === null ? null : cmd.model.trim();
     const normalized = declaredModel === "" ? null : declaredModel;
-    if (normalized !== null && !boundedText(normalized, 120)) {
-      return {
-        ok: false,
-        status: 400,
-        reason: commandFieldsMessage("declare_agent_model", ["model"], [], {
-          model: "text or null",
-        }),
-      };
+    if (normalized !== null && !boundedText(normalized, MODEL_MAX)) {
+      /* The LENGTH rule, not the field list. An arm sent a 121-character model
+       * with exactly the right keys and was told which fields the command
+       * takes, which is the wrong rule. */
+      return { ok: false, status: 400, reason: MODEL_RULE_TEXT };
     }
     return {
       ok: true,
@@ -2013,23 +2012,15 @@ function validateCommand(
           "set_agent_model",
           ["principal_id", "model"],
           [],
-          { model: "text or null" },
+          { model: MODEL_RULE_TEXT },
         ),
       };
     }
     const setModel = cmd.model === null ? null : cmd.model.trim();
     const normalizedSet = setModel === "" ? null : setModel;
-    if (normalizedSet !== null && !boundedText(normalizedSet, 120)) {
-      return {
-        ok: false,
-        status: 400,
-        reason: commandFieldsMessage(
-          "set_agent_model",
-          ["principal_id", "model"],
-          [],
-          { model: "text or null" },
-        ),
-      };
+    if (normalizedSet !== null && !boundedText(normalizedSet, MODEL_MAX)) {
+      /* The LENGTH rule, not the field list. Same defect as declare. */
+      return { ok: false, status: 400, reason: MODEL_RULE_TEXT };
     }
     return {
       ok: true,
@@ -5962,7 +5953,7 @@ async function resumeRenewalGrant(
    * was told 403; a retry then answered `renewal_grant_not_suspended`, because the resume it
    * had denied had in fact happened.
    *
-   * Same shape as the renewal preflight read at index.ts:3370 (`preflight[0]?.code ?? null`):
+   * Same shape as the renewal preflight read at index.ts:3361 (`preflight[0]?.code ?? null`):
    * preserve NULL, refuse only on a code we assign.
    *
    * WHY A REFUSAL BELOW STILL COMMITS, DELIBERATELY. `refuse` must commit — its whole job is
