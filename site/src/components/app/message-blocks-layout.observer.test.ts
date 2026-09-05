@@ -64,6 +64,13 @@ const BLOCKS = [
   "",
   "- outer",
   "  - inner",
+  "",
+  /* A table between two paragraphs, so the gap on BOTH sides of it can be measured. */
+  "intro",
+  "| a | b |",
+  "|---|---|",
+  "| 1 | 2 |",
+  "after",
 ].join("\n");
 
 interface Measurement {
@@ -89,6 +96,8 @@ interface Measurement {
   ruleWidth: number;
   /** Strikethrough is visibly struck. */
   delLineThrough: string;
+  /** The gap between adjacent blocks, in px, for each pair a new element takes part in. */
+  blockSpacing: Record<string, number>;
 }
 
 const contentTypes: Record<string, string> = {
@@ -181,6 +190,22 @@ const fixturePage = (markdownScript: string, control: string): string => `<!doct
           ruleHeight: rule ? rule.getBoundingClientRect().height : -1,
           ruleWidth: rule ? rule.getBoundingClientRect().width : -1,
           delLineThrough: struck ? style(struck, "text-decoration-line") : "NO DEL",
+          blockSpacing: (() => {
+            /* A sibling rule has two sides, and adding an element to only one of them gives a gap
+               in one direction and none in the other. Each pair below is named by the element that
+               carries the margin, which is always the SECOND of the two. */
+            const gap = (node) => node
+              ? Number.parseFloat(style(node, "margin-block-start"))
+              : -1;
+            const table = blocksHost.querySelector("table");
+            return {
+              hrAfterParagraph: gap(blocksHost.querySelector("hr")),
+              paragraphAfterHr: gap(blocksHost.querySelector("hr + p")),
+              tableAfterParagraph: gap(table),
+              paragraphAfterTable: gap(blocksHost.querySelector("table + p")),
+              listAfterParagraph: gap(blocksHost.querySelector("ul")),
+            };
+          })(),
         };
         /* Every measured value is a number or a CSS keyword, so plain btoa is enough and the
            test does not need the deprecated escape/unescape pair to move it. */
@@ -370,6 +395,21 @@ test("a task item drops its bullet, a plain item beside it keeps one, and neithe
   /* The positive half: the rule is scoped to task items, so an ordinary item is untouched. */
   assert.notEqual(measurement.plainListStyle, "none");
   assert.equal(measurement.inputCount, 0);
+});
+
+test("every new block keeps its gap on BOTH sides, not only the side it was added to", async () => {
+  const measurement = await measurementPromise;
+  const spacing = measurement.blockSpacing;
+  /* A list is the reference: it was in the spacing rule before this lane and is untouched by it.
+   * Every pair a table or a rule takes part in has to read the same gap. A sibling selector names
+   * the pair twice, once on each side, and adding `table, hr` to only one side leaves `p + table`
+   * flush against the paragraph above while `table + p` is spaced -- which is what shipped until a
+   * review arm read the two sides against each other. */
+  const reference = spacing.listAfterParagraph ?? -1;
+  assert.ok(reference > 0, `no reference gap to compare against: ${JSON.stringify(spacing)}`);
+  for (const [pair, gap] of Object.entries(spacing)) {
+    assert.equal(gap, reference, `${pair} does not match the list gap: ${JSON.stringify(spacing)}`);
+  }
 });
 
 test("a rule is a visible line and strikethrough is struck through", async () => {

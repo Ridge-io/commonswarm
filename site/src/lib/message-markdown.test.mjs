@@ -187,7 +187,11 @@ test("images stay literal, and a pipe row with no delimiter row is not a table",
   assert.equal(rendered, "<p># title<br>![alt](https://example.com/a.png)<br>| a | b |</p>");
   assert.doesNotMatch(rendered, /<h\d|<img|<table/u);
   /* A delimiter row that names a different number of columns than the header is not a delimiter
-     row, so a sentence that happens to contain pipes and dashes cannot become a table. */
+     row. That is ONE of the guards, not the whole of it: the cells must also be nothing but
+     hyphens and optional colons. A review arm read the old wording ("...so a sentence that
+     happens to contain pipes and dashes cannot become a table") as a claim the column count
+     alone carried, which it never did. One hyphen per cell is enough, as it is in GFM, so
+     `choose x | y | z` above `|-|-|-|` IS a table. */
   assert.doesNotMatch(renderMessageMarkdown("| a | b |\n|---|"), /<table/u);
   assert.doesNotMatch(renderMessageMarkdown("| a | b |\n| x | y |"), /<table/u);
   assert.doesNotMatch(renderMessageMarkdown("a - b\n- - -"), /<table/u);

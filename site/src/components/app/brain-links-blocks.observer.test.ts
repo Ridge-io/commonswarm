@@ -40,7 +40,7 @@ const BODY = [
 
 const TOPICS = ["brain-how-to", "shared-host", "releases"];
 
-/** The ballot characters the renderer owns. Read from the module so this cannot drift from it. */
+/** What the fixture reports back out of the browser. */
 interface Snapshot {
   controlTopics: string[];
   controlWords: string[];
@@ -63,7 +63,9 @@ interface Snapshot {
   /** The code span inside a cell. The one-word gate has to still work through a table. */
   cellCodeSpanControls: string[];
   /** Rows still line up: dropping a cell tag would foster-parent its text out of the table. */
-  tableTextOutsideCells: string;
+  fosteredText: string;
+  /** The same probe on a deliberately broken table, which the parser MUST foster-parent. */
+  fosteredControlText: string;
   headerCellCount: number;
   bodyCellCount: number;
 }
@@ -92,6 +94,7 @@ const snapshotPromise = (async (): Promise<Snapshot> => {
 <html>
   <body>
     <div class="dashboard__message-markdown" data-message></div>
+    <div class="dashboard__message-markdown" data-foster-control></div>
     <script>${markdownScript}</script>
     <script>${linkScript}</script>
     <script>
@@ -108,14 +111,30 @@ const snapshotPromise = (async (): Promise<Snapshot> => {
         .find((cell) => cell.textContent.includes("prose here"));
       const cellCode = Array.from(host.querySelectorAll("td code"))
         .find((code) => code.textContent === "releases");
-      const table = host.querySelector("table");
-      /* Everything a table holds that is NOT inside a cell. The HTML parser foster-parents any
-         text it finds directly inside a table, so a dropped cell tag would show up here. */
-      const outside = table
-        ? Array.from(table.childNodes)
-            .flatMap((node) => node.nodeType === 3 ? [node.nodeValue] : [])
-            .join("")
-        : "NO TABLE";
+      /* Text the parser had to move OUT of a table. Foster parenting inserts such text as a
+         SIBLING immediately BEFORE the table, not inside it -- an earlier version of this probe
+         read the table's own child nodes, where the text never lands, so it could not have failed
+         for the reason it claimed. It is read here from the nodes before the table, and the
+         control below proves the probe can see it. */
+      const fosteredBefore = (root) => {
+        const table = root.querySelector("table");
+        if (!table) return "NO TABLE";
+        let text = "";
+        /* TEXT nodes only. An element before the table is ordinary content the author wrote;
+           loose text is not, because the renderer never emits any there. */
+        for (let node = table.previousSibling; node; node = node.previousSibling) {
+          if (node.nodeType === 3) text = node.nodeValue + text;
+        }
+        /* Anything still inside the table but outside a cell counts too. */
+        for (const node of table.childNodes) if (node.nodeType === 3) text += node.nodeValue;
+        return text;
+      };
+      /* POSITIVE CONTROL, same page and same probe: a table whose first cell tag is missing. The
+         parser must move "LEAKED" out of the table, so a probe that reads nothing here is broken
+         and its empty reading above means nothing. */
+      const fosterControl = document.querySelector("[data-foster-control]");
+      fosterControl.innerHTML =
+        "<table><thead><tr>LEAKED<th>kept</th></tr></thead></table>";
       const snapshot = {
         controlTopics: controls.map((control) => control.dataset.brainLink),
         controlWords: controls.map((control) => control.textContent),
@@ -138,7 +157,8 @@ const snapshotPromise = (async (): Promise<Snapshot> => {
           ? Array.from(cellCode.querySelectorAll("[data-brain-link]"))
               .map((control) => control.dataset.brainLink)
           : ["NO CELL CODE SPAN"],
-        tableTextOutsideCells: outside,
+        fosteredText: fosteredBefore(host),
+        fosteredControlText: fosteredBefore(fosterControl),
         headerCellCount: count("th"),
         bodyCellCount: count("td"),
       };
@@ -231,10 +251,17 @@ test("the one-word gate still works through a table cell", async () => {
 
 test("building controls inside cells leaves the table intact", async () => {
   const snapshot = await snapshotPromise;
-  /* Text directly inside <table> is text the HTML parser foster-parented because a cell tag was
-   * missing. It must be empty or whitespace: a dropped cell would move a reader's data out of its
-   * column and above the table. */
-  assert.match(snapshot.tableTextOutsideCells, /^\s*$/u);
+  /* The control first: the probe reads text the parser moved out of a table, so it has to see
+   * that text when the table really is broken. Without this the empty reading below would be
+   * evidence about nothing. */
+  assert.match(
+    snapshot.fosteredControlText,
+    /LEAKED/u,
+    "the foster-parent probe cannot see fostered text, so its negative result means nothing",
+  );
+  /* And on the real message: no cell tag was dropped, so nothing was moved out. A dropped cell
+   * would put a reader's value above the table instead of in its column. */
+  assert.match(snapshot.fosteredText, /^\s*$/u);
   assert.equal(snapshot.headerCellCount, 2);
   assert.equal(snapshot.bodyCellCount, 4);
 });
