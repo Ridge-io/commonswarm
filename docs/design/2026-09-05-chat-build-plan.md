@@ -280,8 +280,10 @@ The alternative of writing the rows and refusing to lease them was rejected: `pe
 and `oldest_pending_at` would then report a queue that grows and can never be drained, which is a false
 signal rather than a missing feature.
 
-**So, exactly: recipients 1..N READ the signal and can REPLY to it. They are not woken.** Recipient 0
-is woken from the scalar column by the unchanged trigger on `swarm.signals`. Section 4 of the migration
+**So, exactly: recipients 1..N READ the signal and can REPLY to it. They are not woken.** The wake is
+unchanged and it reads the SCALAR column, so a signal wakes the recipient at position 0 and only when
+that recipient is an agent taking `ask` or `note`. A `to` whose position 0 is a PERSON wakes nobody at
+all, even when it names agents later in the list. Naming an agent at position 1 never notifies it. Section 4 of the migration
 carries the reason; `tests/p1-local/chat-recipients-postgres.test.ts` pins both the behaviour and the
 absence of any trigger on the recipients table, and the served suite pins it through the edge.
 
@@ -316,9 +318,10 @@ refused by the same rule that already refuses the scalar spelling, with the same
    Nothing in L2 widens that endpoint, and nothing in L2 fixes it.
 4. **Not measured against production.** Local Supabase only.
 5. **Group DMs: one of the two mechanical reasons they were out of v1 stopped being true, and one did
-   not.** A three-party address is storable and readable. It notifies the FIRST agent recipient and
-   silently does not notify the rest, which is a weaker form of the objection §4 raised and still an
-   objection. §4 and §10 carry the correction, including the intermediate version
+   not.** A three-party address is storable and readable. It notifies at most the agent at position 0,
+   and nobody at all when position 0 is a person, so §4's objection -- a conversation type that
+   silently fails to notify the agents in it -- still stands for every agent but one. Nobody has ruled
+   on whether v1 should have group DMs, and no document in this repo should read as if someone had. §4 and §10 carry the correction, including the intermediate version
    that said "deliverable" and was wrong. The ruling is the coordinator's.
 
 7. **One refusal shows the generic sentence where a better one exists.** A `working-on` whose `to` also

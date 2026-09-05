@@ -226,9 +226,13 @@ export type SignalRecipientKind = typeof SIGNAL_RECIPIENT_KINDS[number];
  * channel slug bound.
  *
  * The value is 8 because that is what site/src/lib/mention-address.ts already
- * enforces on a composed message (MENTION_MAX_RECIPIENTS): each tag costs a
- * signal, a wake and a receipt row. The same test pins the two together, so the
- * composer and the server cannot disagree about how many recipients fit.
+ * enforces on a composed message (MENTION_MAX_RECIPIENTS), where each tag costs
+ * a whole signal, a wake and a receipt row -- that composer posts one directed
+ * signal per tag and has not moved to `to` yet. Naming a recipient HERE costs a
+ * row in swarm.signal_recipients and nothing else: it wakes nobody, because
+ * nothing reads that table on the way to the delivery ledger. The same test
+ * pins the two numbers together, so the composer and the server cannot disagree
+ * about how many recipients fit.
  */
 export const SIGNAL_RECIPIENT_MAX = 8;
 

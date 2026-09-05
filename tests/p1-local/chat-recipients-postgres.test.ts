@@ -445,6 +445,36 @@ test("a recipient set wakes recipient 0 and NOBODY else, which is a bound and no
         `;
         assert.equal(peopleRows[0]!.n, 0, "people are not delivery rows");
 
+        /* CONTROL 3, and the case the wake sentence is actually about. The
+         * wake reads the SCALAR column, so a set whose position 0 is a PERSON
+         * wakes NOBODY even though it names an agent at position 1. Saying
+         * "L2 wakes one of them" was false for exactly this shape, and three
+         * versions of the design note got it wrong before a review arm built
+         * this counterexample. */
+        const personThenAgent = randomUUID();
+        await insertSignal(tx, {
+          id: personThenAgent,
+          workspaceId: f.workspaceA,
+          from: f.owner,
+          toUserId: f.second,
+          toAgent: null,
+          kind: "ask",
+          body: "a person first, an agent second",
+        });
+        await addRecipients(tx, personThenAgent, f.workspaceA, [
+          { user: f.second },
+          { agent: f.agentOne },
+        ]);
+        const mixedRows = await tx<{ n: number }[]>`
+          SELECT count(*)::int AS n FROM swarm.signal_deliveries
+          WHERE signal_id = ${personThenAgent}::uuid
+        `;
+        assert.equal(
+          mixedRows[0]!.n,
+          0,
+          "an agent named after a person is not woken, so the wake count here is 0 and not 1",
+        );
+
         throw ROLLBACK;
       }),
       (error: unknown) => error === ROLLBACK,
