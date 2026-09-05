@@ -2077,3 +2077,20 @@ recorded there: envelope-layer 400s are still bare; reasons reach the caller fro
 Scratch channel `lead-scratch` exists in CICD, archived. No client release: the CLI learns
 channels in L3 (`chat-client`). The checkout is `main` only, one worktree, no foreign branches
 (backup tags `backup/*` hold every retired tip).
+
+## Addendum 2026-09-05 06:5x UTC — chat client (L3) LANDED (merge 41d0b8c); 0.1.55 cutting
+
+`lane/chat-client` 683bb50 (reviewed code SHA c26d0e4; the tip adds only evidence) merged as
+`41d0b8c`. Round 3 was a split: Grok PASS (11 sections, re-derived the round-3 fixes); Gemini
+FAIL claimed importing `src/cli.ts` under `node --test` runs `main()` and taints the exit code —
+refuted by the PM and re-measured by the lead: the new file exits 0, 21/21, no usage noise, and
+twelve test files on `main` already import that module. The true half (`main()` runs on import,
+one `argv` away from mattering) is a chip. Live control on production in the lane's evidence
+(`docs/evidence/2026-09-05-chat-client/live-control-production.txt`): create, `note --channel`
+with `channel_id` set and the no-flag control null, archive, refused post, thread reply with and
+without a channel; three scratch channels archived.
+
+Bounds the lane recorded: `channel ls` has no agent path (the `read` edge exposes no channels
+resource — an edge change for a later lane); `src/cloud/channels.ts` duplicates the edge constants
+(`rootDir: src`) with a drift test over generated cases; a plain human `feed --json` omits
+`channel_id` unless `--channel` is set, so a pre-chat deployment keeps working.
