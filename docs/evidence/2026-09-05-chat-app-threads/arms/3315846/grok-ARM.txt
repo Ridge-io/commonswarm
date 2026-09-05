@@ -1,0 +1,95 @@
+I'll read the review brief and the patch, then follow REVIEW.md exactly.The brief is round seven: withdrawal of the family claim, plus two sweep holes. I’ll read the rest of the patch and the current source next.Latest commit is the withdrawal. I’ll read that change, the sweep, and the rest of the lane in parallel.I’ll check leftover closed-class claims, the two sweep fixes, and the thread/send/wake surfaces the brief says to re-attack.Withdrawal looks mostly done. I’ll check mutate.mjs for leftover overclaims, then the send path and wake copy.The in-shell regex broke. I’ll run the sweep from a file instead.diff --git a/docs/evidence/2026-09-05-chat-app-threads/README.md b/docs/evidence/2026-09-05-chat-app-threads/README.md
+
+`3315846` withdraws the closed-family claim in the three places the commit names. The class is still open, and that is now said as a shape. I cannot refute the thread surface, the To: lock, the send path, the wire, the mobile numbers, or the wake copy a reader sees.
+
+### 1. Withdrawal
+
+Complete in the test header, the README, and the commit message.
+
+- Title at `composer-address.test.mjs:336`: listed phrases, strikethrough, six files.
+- Header at `:357-366`: named-substring control; does not close the family; `composer.observer.test.ts` is on the list and contributes zero phrases.
+- README `:287-291` and item 11 `:439-444`: same bound.
+- Commit message: same shape, handed to the lead open.
+
+One leftover heading, not a product sentence. `mutate.mjs:89` still titles the block `AND NO RETIRED WAKE SENTENCE STANDS AS CURRENT`. The next sentence walks it back to an empty set of phrases outside strikethrough. That heading is the withdrawn claim, standing as a comment. It is not on screen. I do not treat it as a break. The lead-facing bound is the listed-phrase one.
+
+I did not find a retired wake sentence standing in user-facing copy.
+
+### 2. The two fixes
+
+Both are right. Neither hides a listed standing sentence.
+
+**Strip only in its own file** (`composer-address.test.mjs:436-438`). Other files that declare `const retired = [` are scanned. A failed strip in this file would report the list itself as standing, so it fails closed.
+
+**Comment markers dropped first** (`:419-423`). I ran the wrap:
+
+- ` * the service wakes` / ` * nobody` used to normalise to `wakes * nobody` and miss.
+- After the fix it reads `the service wakes nobody`. Same for `//`.
+
+That makes more matches, not fewer. It cannot hide a listed phrase. It can join two comment lines into a listed phrase and go red. That is fail-safe.
+
+I ran the six-file sweep. Standing listed matches: none. `composer.observer.test.ts` still contributes zero listed phrases, as the header now says.
+
+### 3. The class, as a shape
+
+Said correctly, and not as one more instance:
+
+A list of remembered substrings cannot close a family. Case and space folding catch a line break and a capital. They do not catch an adjective in the middle. Each round that adds the last miss and then claims the family is the class.
+
+That is now in the test header, the README, and the commit. The class stays open for the lead.
+
+I am not listing further unlisted wordings.
+
+### 0. `syncComposerPlacement` inside `renderFeed`
+
+I cannot refute this. One call per feed paint, not per row. It writes bar text, placeholder, and `broadcast.checked = false` when the control is hidden (`LiveDashboard.astro:4922`, `:6469`). It does not write `threadReplyRoot`, the To: pair, or the intent. `threadReplyBlock` reads `channels` and `Date.now()` to choose the window sentence and whether broadcast is offered. Unknown-channel and add-agent views return before this call.
+
+### 1. Reply control vs server
+
+I cannot refute this. `threadRootBlock` asks directed, live margin, archive, then already-a-reply, in the edge's order. Archive is asked of `rootChannel = channelById(channels, signal.channelId)`, not of `rowChannel` (`:5183-5189`). A missing channel is not treated as archived. `resolveSignalWriteTarget` always writes a recipient for `in_reply_to` (`command/index.ts:6816-6838`). The directed arm covers every row that can exist.
+
+### 2. Second write path on To:
+
+I cannot refute this. `composerSendRecipients` is the set the row and the send read. `deriveComposerAddress` holds while `replying === true`. The only `composerTo =` writes are the pass commit (`:2941`) and workspace teardown after `threadReplyRoot = null` (`:3697-3701`). A reply remembers nothing (`:8334`). An `@tag` inside a reply changes nothing. Cancel runs the pass over the body that is still there. While a reply is up the row draws the empty set, so there is no promote/remove control to click.
+
+### 3. Wire body
+
+I cannot refute this. A reply is `{ threadRootId, ...(broadcastToChannel ? { broadcastToChannel: true } : {}) }` with no `channel`. `browserSignalCommand` omits null/absent optional keys. Empty recipients omit `to`. `broadcast_to_channel` is only added on the thread branch when the box is ticked, so it never goes out without `thread_root_id`. That matches `installedPost({ thread_root_id })`. Kind is `note`.
+
+### 4. Unfinished-send rule
+
+I cannot refute the two callers. A reply compares thread ids. A top-level post compares the channel on screen. Channel move does not retire a reply. Opening or cancelling a reply does. The catch rewrite keeps `placementThreadRootId` and `broadcastToChannel`.
+
+### 5. Send vs screen
+
+I cannot refute this. Submit freezes `replyRoot` and `replyBlock` before the first await. Success closes the bar only when `threadReplyRoot?.id === replyRoot.id`. Remember/clear use captured keys and run before the screen return. Catch tears down send-owned work first. Finally lowers the flag on the token.
+
+### 6. False sentence / typed list
+
+User-facing thread copy is generated from `channelLabel` / `ALL_SIGNALS_SLUG` / `THREAD_REPLY_REACH_TEXT` / `THREAD_ROOT_BLOCKS`. Archived copy matches the edge word for word (`thread-reply.ts:131-132`). Reach says it notifies nobody, which is true of an undirected reply. Wake count is `notified.length`. Promote labels do not match `/notif/i`. No em-dash in those strings. No privacy claim.
+
+### 7. Control that cannot fail
+
+The two NOT CONTROLLED notes are true for values this field can hold. Dropping `Number.isFinite(until)` does not change NaN or +Infinity. Dropping `if (signal.threadRootId === null)` on registration does not change output.
+
+The liveness sweep does what its header says. The four-arm sweep does what its header says. The rebuilt sweep's title and bound paragraph now match the loop.
+
+The first mutation is of the subject, not the checker, which is the right shape for an empty-set claim. The four mutations reach the assertions they name.
+
+### 8. Retired control weakened
+
+I cannot refute this.
+
+- `composer.observer.test.ts`: "thread" is allowed only in the reply bar. Emoji/reaction still gated.
+- Display-reversal pins now match `reverse()` once, which is the claim they name.
+- `chat-channels.observer.test.ts`: the old "never send thread fields" negative is a positive top-level vs thread-branch pair. Wire omission of thread keys for a top-level post is in `chat-threads.observer.test.ts`.
+
+### Also
+
+- `groupSignalThreads`: every input id comes back once. Orphans keep their place. Replies move under their root on purpose. I could not make it drop or duplicate a row.
+- 97px vs 73px: the README names two instruments. Sample mode with the banner subtracted is 97px. The signed-in gate is `mobile-feed-layout.observer.test.ts` at 73px. That is the difference it states.
+- "Did NOT establish" is right on prod, local Supabase, the hold, `?t=`, and copy ahead of the wake migration. Item 11 matches what the sweep measures.
+
+I could not refute the thread work, or the user-facing wake sentences, on a break for a reader of the app.
+
+VERDICT: PASS

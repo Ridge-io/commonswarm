@@ -159,6 +159,12 @@ the bar's live tick, and the send reading the root it captured.
 
 | SHA | Grok | Gemini | What it found |
 |---|---|---|---|
+| `3315846` | PASS | PASS | The withdrawal round. Grok found one leftover: `mutate.mjs`' block heading still said "AND NO RETIRED WAKE SENTENCE STANDS AS CURRENT" — the withdrawn claim standing as a comment, in the file that documents the class. Fixed in the same round, which is the seventh instance and the reason the shape rather than the instance is what goes to the lead. Neither arm could refute the thread surface, the To: lock, the send path, the wire, the mobile numbers, or the wake copy a reader sees. |
+| `94ba3e9` | FAIL | FAIL | Both, independently, on one shape: a list of remembered substrings cannot close a family. Two real holes in the sweep besides: the phrase-list strip ran over all six files, and a sentence wrapped across two comment lines matched nothing. |
+| `5eb63a5` | FAIL | PASS | Grok: the sweep was green while a retired sentence stood, in a file it named, in words its list missed by one adjective; three of eleven phrases matched nothing; both positive controls were satisfied by one file alone. |
+| `5791646` | FAIL | PASS | Grok: four more retired wake sentences standing as current in one file, after the previous commit claimed none did. |
+| `8f3a45f` | PASS | PASS | Grok: five comments still stating the retired wake rule as current, after the wake commit claimed every retired sentence was kept beside its replacement. |
+| `ffd49bb` | — | — | Not reviewed on its own; folded into the `8f3a45f` round. |
 | `74888c4` | FAIL | PASS | Grok: under a channel-list outage the send refused EVERY reply to a filed thread with "not in this workspace any more" — false twice over, and contradicting the bar, which correctly said the reply would be filed where the thread is. Plus a stale table cell, a comment still describing the retired two-state model, one still calling `already-a-reply` a WHERE arm, a `composerIntent` type missing `broadcastToChannel`, and a comment claiming the feed's resync "decides nothing" while it clears one control. Gemini: PASS, no findings. |
 | `d257f87` | PASS | FAIL | Grok: `already-a-reply` is not a WHERE arm and the server checks the archive BEFORE it, so this lane's order, its prose and a green test were all built on a false claim; and `mobile-measurements.json` carried a To: sentence older than the constant. Gemini's FAIL is verified wrong at the cited lines and is ruled in `arms-d257f87/gemini/RULING.md`. |
 

@@ -86,7 +86,10 @@ const mutations = [
     "the number in the sentence is the number of agents in the set",
     "the count in the sentence is not the number of agents in the set"],
 
-  /* AND NO RETIRED WAKE SENTENCE STANDS AS CURRENT.
+  /* AND NO LISTED RETIRED PHRASE STANDS OUTSIDE A STRIKETHROUGH, in the six files the sweep
+     names. ~~"AND NO RETIRED WAKE SENTENCE STANDS AS CURRENT"~~ was this heading, and it was
+     the withdrawn claim standing as a comment — found by a review arm on the withdrawal
+     commit itself, which is the class one more time, in the file that documents the class.
 
      THE MUTATION IS OF THE SUBJECT, NOT THE CHECKER, and that is the point. The sweep asserts
      an EMPTY SET — no retired phrase outside a strikethrough — so breaking the checker cannot
