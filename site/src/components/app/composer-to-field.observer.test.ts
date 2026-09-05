@@ -989,22 +989,21 @@ test("a failed send does not change the address under the retry", () => {
   const submit = dashboard.slice(
     dashboard.indexOf('one<HTMLFormElement>("[data-composer]")?.addEventListener("submit"'),
   );
-  const beforeThePost = submit.slice(0, submit.indexOf("await postBrowserSignal("));
-  assert.ok(beforeThePost.length > 0, "the submit path has no post seam to measure against");
   assert.doesNotMatch(
-    beforeThePost,
+    submit,
     /composerToApplied = \[\];/,
-    "the applied record is cleared before the post is known to have landed",
+    "the submit clears the applied record by hand instead of letting the pass derive it",
   );
-  /* And it IS cleared, inside the success block: after the post seam and before the catch.
-     Landmarking this on a neighbouring call was wrong — a mutation of that neighbour turned
-     this control red for a claim it does not make, which the harness read as its own. */
-  const cleared = submit.indexOf("        composerToApplied = [];");
-  assert.ok(cleared > 0, "the applied record is never cleared on success");
-  assert.ok(
-    cleared > submit.indexOf("await postBrowserSignal(") &&
-      cleared < submit.indexOf("} catch (caught) {"),
-    "the applied record is cleared outside the success block",
+  /* AND THE SETTLE IS WHAT ANSWERS FOR IT, in the `finally`, after the freeze lifts. The body
+     is empty on success and restored on failure, and the pass reads whichever one is there:
+     a record whose tag has left the body is dropped by the same rule that drops it on any
+     keystroke, and a record whose tag came back with the body is kept. Neither is a rule
+     anybody has to remember, which is the point. */
+  const settle = submit.slice(submit.indexOf("} finally {"));
+  assert.match(
+    settle,
+    /syncComposerAddress\(\);/,
+    "the send never settles the address, so the applied record is whatever the post left",
   );
 });
 

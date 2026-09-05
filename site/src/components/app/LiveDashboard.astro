@@ -3482,11 +3482,18 @@ import "../../styles/tokens.css";
          The caret, because the text it indexes is about to be replaced by another
          workspace's draft. */
       composerCaretKnown = false;
-      /* And the address, because it belongs to the workspace being left. Clearing the restore
-         key makes the next paint derive the new workspace's pair from that workspace's own
-         storage rather than carry this one's chips into a place those people may not be in.
-         `composerToLive` goes with it: until the next pass commits there is no set on screen,
-         and an empty one here must not be read as a broadcast anybody chose. */
+      /* And the address, because it belongs to the workspace being left.
+
+         THIS IS THE ONE WRITE OF THE PAIR OUTSIDE THE PASS, and it is a teardown rather than a
+         derivation: the workspace is gone, so there is nothing left to derive from — no
+         roster, no storage key, no body. The pass cannot answer that question, and asking it
+         to would mean deriving an address for a workspace nobody is in.
+
+         Clearing the restore key makes the next paint derive the new workspace's pair from
+         that workspace's own storage rather than carry this one's chips into a place those
+         people may not be in. `composerToLive` goes with it: until the next pass commits there
+         is no set on screen, and an empty one here must not be read as a broadcast anybody
+         chose. The flush above already wrote what this is about to throw away. */
       cancelComposerToPass();
       composerTo = [];
       composerToApplied = [];
@@ -7651,14 +7658,18 @@ import "../../styles/tokens.css";
            people this one went to, which is the whole point of the row: the reader stops
            losing the person they were talking to. */
         rememberComposerTo(recipients);
-        /* THE BODY IS GONE NOW, so the record of which tags had already become chips goes
-           with it, and a tag typed again after this send addresses again.
-           It is cleared HERE and not before the post, which is where it was first put and
-           what a review arm broke: a failed send restores the body, and an empty record
-           then read every tag in it as fresh. A chip the reader had removed came back, the
-           address changed under a retry, and that retry minted a second command id for a
-           message the server may already hold. */
-        composerToApplied = [];
+        /* THE BODY IS GONE, SO THE APPLIED RECORD GOES WITH IT — and this path does not write
+           that down. The settle in the `finally` derives the pair from the box that is now
+           empty, and a record whose tag has left the body is dropped by the same rule that
+           drops it on any other keystroke. Clearing it by hand here was one more writer of
+           the pair, which is the class this lane exists to remove.
+
+           It also has to be the DERIVED answer rather than an unconditional one. A FAILED send
+           puts the body back, and the record has to survive that: an empty record reads every
+           tag in the restored body as fresh, a chip the reader had removed comes back, the
+           address changes under the retry, and that retry mints a second command id for a
+           message the server may already hold. A review arm found that. The pass answers both
+           cases from the body, so neither is a rule anybody has to remember. */
         composerIntent = null;
         composerAttachmentsMissingAfterReload = false;
         for (const attachment of attachmentSnapshot) {

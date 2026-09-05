@@ -71,7 +71,7 @@ transition.
 |---|---|---|
 | 1. a workspace switch loses a draft's address | the pass holds while `rosterKnown` is false, and the body and the address are one transaction behind one restore key | `broadcastSurvivesSwitch`, `chipEditSurvivesSwitch`, `switchedWorkspaceAddress` in the browser; "a pass against an unknown roster commits nothing" in the pure driver |
 | 2. a chip edit never reaches storage, and a switch cancels the timer | the pass writes the stored pair on every commit; `resetComposer` FLUSHES before it empties the box; an address that differs from the last-sent set is a draft on its own | `chipEditSurvivesSwitch`, `emptyBodyEditSurvivesSwitch` |
-| 3. a roster prune during an in-flight send | the address is FROZEN for the whole post and settles in the submit's `finally` | "nothing moves the address while the message it addresses is on the wire" in the pure driver, plus a source claim that the dashboard feeds `sending` in |
+| 3. a roster prune during an in-flight send | the address is FROZEN for the whole post and settles in the submit's `finally`, which is also what now clears the applied record rather than a hand write in the success block | "nothing moves the address while the message it addresses is on the wire" in the pure driver, plus a source claim that the dashboard feeds `sending` in |
 | 4. a tag refused by the cap cannot be re-added | only a name that GOT IN is marked applied; the notice is derived from `refused` on every pass rather than pushed in once | `capRefused` then `capAfterRoom` in the browser; "a tag the cap refused joins the set as soon as the reader makes room" in the pure driver |
 | 5. two mutation expectations fail for a reason other than the assertion they name | the notified mark has its own claim (`notifiedMark`), and `secondTag` and `promoted` no longer read it | the two mutations now name `notifiedMark` |
 
@@ -99,6 +99,12 @@ that skipped those steps could not measure the thing a switch breaks.
   freeze DOES is driven directly through `deriveComposerAddress` in `composer-address.test.mjs`,
   which is the same function the dashboard calls; what the dashboard FEEDS it (`sending:
   composerSending`) is a source claim with a mutation on it. Neither reaches a real post.
+- **The applied record's clear after a send is not independently observable.** The submit no
+  longer clears it by hand; the settle in the `finally` derives it from the box the send
+  emptied. But ANY pass with an empty body drops a record whose tag has left, so a later
+  keystroke or chip click reaches the same state. What is controlled is the settle itself
+  (removing it turns a source claim red) and the behaviour it protects
+  (`retaggedAfterSend`). The clear as a separate step is not.
 - **The write of the remembered set is not independently controlled, and the harness says so.**
   Breaking `rememberComposerTo` changes nothing a reader sees, because `pagehide` flushes the
   live chips into the draft and the draft restores them. The READ is controlled

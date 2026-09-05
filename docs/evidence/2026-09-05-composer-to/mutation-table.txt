@@ -57,7 +57,7 @@ red  the chip label asks the same function the row asks
   restored green  site/src/lib/composer-address.test.mjs
 red  a draft's own address beats the set the last message went to
   restored green  site/src/components/app/composer-to-field.observer.test.ts
-red  the applied record is cleared when the body is gone, so a tag typed again addresses again
+red  the send settles the address once its own message is off the wire
   restored green  site/src/components/app/composer-to-field.observer.test.ts
 red  one pass owns the address, and nothing else calls it
   restored green  site/src/components/app/composer-to-field.observer.test.ts
