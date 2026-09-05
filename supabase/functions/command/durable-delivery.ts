@@ -69,6 +69,29 @@ export interface DeliveryClaimLedgerResponse {
   delivery_refs: DeliveryLedgerRef[];
   pending_delivery_count: number;
   terminal_delivery_failure_count: number;
+  /**
+   * When the OLDEST row in `pending_delivery_count` was enqueued, so a listener
+   * can say how long its queue has been waiting instead of only how long it is.
+   * The claim wire carried no enqueue times, and
+   * docs/evidence/2026-09-05-listener-head-of-line/DESIGN-BOUNDS.md records
+   * three wordings that were refused because the listener could not support
+   * them. This is the server change that bound asked for.
+   *
+   * THREE STATES, and they are not interchangeable:
+   *   a string  the oldest pending row's enqueue time, as ISO 8601
+   *   null      the server looked and nothing is pending
+   *   absent    the server did not report it
+   *
+   * `absent` is reachable on a REPLAY of a claim that was stored before this
+   * field existed. A replay of that response also carries the count observed at
+   * the time, so collapsing absent into null would pair "nothing is waiting"
+   * with a non-zero count and say something the server never said.
+   *
+   * It counts exactly the set `pending_delivery_count` counts, measured in the
+   * same statement -- which includes the row this very claim just leased,
+   * because a claim does not acknowledge anything.
+   */
+  oldest_pending_at?: string | null;
 }
 
 export interface DeliveryAckLedgerResponse {
@@ -109,6 +132,12 @@ export const DELIVERY_CAPABILITIES = {
   delivery_claim: 1,
   delivery_ack: 1,
   sender_owner_relation: 1,
+  /* Says the server REPORTS oldest_pending_at, which is what lets a reader tell
+   * "absent because this server does not send it" from "absent because this is
+   * a replay of an older stored response". Clients check the markers they
+   * require and ignore the rest, so adding one is safe for every installed
+   * listener. */
+  oldest_pending_at: 1,
 } as const;
 
 function asIso(value: Date | string): string {
@@ -300,9 +329,13 @@ export async function claimAgentInbox(
     ORDER BY s.created_at ASC, s.id ASC
   `;
 
-  // 7. Exact live-unacked count (unacked + immutable signal still live).
-  const countRows = await tx<{ pending: string | number }[]>`
-    SELECT count(*)::int AS pending
+  // 7. Exact live-unacked count (unacked + immutable signal still live), and
+  // the enqueue time of the OLDEST row in that same set. One statement, one
+  // snapshot: a separate query could count one set and time another.
+  const countRows = await tx<
+    { pending: string | number; oldest: Date | string | null }[]
+  >`
+    SELECT count(*)::int AS pending, min(d.enqueued_at) AS oldest
     FROM swarm.signal_deliveries AS d
     JOIN swarm.signals AS s
       ON s.id = d.signal_id
@@ -313,6 +346,7 @@ export async function claimAgentInbox(
       AND s.until > statement_timestamp()
   `;
   const pending = Number(countRows[0]?.pending ?? 0);
+  const oldestPending = countRows[0]?.oldest ?? null;
 
   return {
     ok: true,
@@ -325,6 +359,10 @@ export async function claimAgentInbox(
     })),
     pending_delivery_count: pending,
     terminal_delivery_failure_count: terminalDeliveryFailureCount,
+    /* min() over an empty set is NULL, which is exactly the "nothing pending"
+     * state, so no separate branch on the count is needed or wanted: branching
+     * would let the two disagree. */
+    oldest_pending_at: oldestPending === null ? null : asIso(oldestPending),
   };
 }
 
@@ -692,12 +730,29 @@ export function parseClaimLedger(value: unknown): DeliveryClaimLedgerResponse | 
     if (!Number.isSafeInteger(val) || (val as number) < 0) return null;
     terminalFailureCount = val as number;
   }
+  /* ABSENT stays absent. A stored response written before this field existed
+   * must not come back as null: null is the server saying nothing is pending,
+   * and that response carries a count from before this field existed. */
+  let oldestPending: { oldest_pending_at?: string | null } = {};
+  if (Object.hasOwn(body, "oldest_pending_at")) {
+    const val = (body as Record<string, unknown>).oldest_pending_at;
+    if (val === null) {
+      oldestPending = { oldest_pending_at: null };
+    } else if (
+      typeof val === "string" && Number.isFinite(Date.parse(val))
+    ) {
+      oldestPending = { oldest_pending_at: val };
+    } else {
+      return null;
+    }
+  }
   return {
     ok: true,
     event_ids: [],
     delivery_refs: refs,
     pending_delivery_count: body.pending_delivery_count as number,
     terminal_delivery_failure_count: terminalFailureCount,
+    ...oldestPending,
   };
 }
 

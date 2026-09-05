@@ -123,8 +123,17 @@ const CHAT_UUID_RE =
  */
 export const RESERVED_CHANNEL_SLUGS: readonly string[] = ["all-signals"];
 
+/**
+ * "<field> must be a UUID.", from one place. Three validators answer a
+ * malformed id and each had typed its own sentence; the wording is the same
+ * shape every time, so it is built once and the field name is the only input.
+ */
+export function uuidFieldRuleText(field: string): string {
+  return `${field} must be a UUID.`;
+}
+
 /** What a channel_id is, for the refusal that fires when one is malformed. */
-export const CHANNEL_ID_RULE_TEXT = "channel_id must be a UUID.";
+export const CHANNEL_ID_RULE_TEXT = uuidFieldRuleText("channel_id");
 
 /**
  * The model bound and its sentence, together. src/protocol's normalizedModel
@@ -200,6 +209,130 @@ export function unknownChannelMessage(
 }
 
 /**
+ * The kinds of thing a signal can be addressed to. Every sentence about `to`
+ * is built from this array, so a third kind changes the check and the words in
+ * one edit.
+ */
+export const SIGNAL_RECIPIENT_KINDS = ["user", "agent"] as const;
+export type SignalRecipientKind = typeof SIGNAL_RECIPIENT_KINDS[number];
+
+/**
+ * The most recipients one signal may carry, and one of the cap's TWO
+ * enforcement points. The other is the CHECK on swarm.signal_recipients.position
+ * in 20260905000010_signal_recipients.sql, which caps the row count at this
+ * number because positions are unique per signal and cannot exceed
+ * SIGNAL_RECIPIENT_MAX - 1. tests/chat-channel-constants.test.ts fails if the
+ * SQL bound and this constant drift apart, the same way it already pins the
+ * channel slug bound.
+ *
+ * The value is 8 because that is what site/src/lib/mention-address.ts already
+ * enforces on a composed message (MENTION_MAX_RECIPIENTS), where each tag costs
+ * a whole signal, a wake and a receipt row -- that composer posts one directed
+ * signal per tag and has not moved to `to` yet. Naming a recipient HERE costs a
+ * row in swarm.signal_recipients and nothing else: it wakes nobody, because
+ * nothing reads that table on the way to the delivery ledger. The same test
+ * pins the two numbers together, so the composer and the server cannot disagree
+ * about how many recipients fit.
+ */
+export const SIGNAL_RECIPIENT_MAX = 8;
+
+/**
+ * The scalar recipient fields a body may still send. `to` replaces BOTH of
+ * them, so the conflict sentence names whichever one the caller set, from this
+ * list rather than from a typed pair.
+ */
+export const SCALAR_RECIPIENT_FIELDS = [
+  "to_user_id",
+  "to_agent_principal_id",
+] as const;
+
+/**
+ * "1 recipient" / "8 recipients", so a bound and its noun cannot disagree. The
+ * plural was written out beside the number twice before this existed.
+ */
+function countNoun(count: number, singular: string): string {
+  return count === 1 ? singular : `${singular}s`;
+}
+
+/** What a `to` entry is, built from the kind list and the cap. */
+export const SIGNAL_RECIPIENT_RULE_TEXT = `to is a list of recipients. Each one is {kind, id}, kind is ${
+  classList(
+    SIGNAL_RECIPIENT_KINDS.map((kind) => ({ words: kind })),
+    "or",
+  )
+}, and id is a UUID. A signal is addressed to at most ${SIGNAL_RECIPIENT_MAX} ${
+  countNoun(SIGNAL_RECIPIENT_MAX, "recipient")
+}.`;
+
+/** One recipient, after the shape is known good. */
+export interface SignalRecipient {
+  kind: SignalRecipientKind;
+  id: string;
+}
+
+function isRecipientEntry(value: unknown): value is SignalRecipient {
+  if (value === null || typeof value !== "object" || Array.isArray(value)) {
+    return false;
+  }
+  const entry = value as Record<string, unknown>;
+  const keys = Object.keys(entry).sort();
+  return keys.length === 2 && keys[0] === "id" && keys[1] === "kind" &&
+    typeof entry.kind === "string" &&
+    (SIGNAL_RECIPIENT_KINDS as readonly string[]).includes(entry.kind) &&
+    typeof entry.id === "string" && CHAT_UUID_RE.test(entry.id);
+}
+
+/**
+ * The refusal for a malformed `to`, or null when the list is usable. Absent and
+ * explicit null both mean "no list", the same way `channel` treats them.
+ *
+ * Every sentence here is built from SIGNAL_RECIPIENT_KINDS and
+ * SIGNAL_RECIPIENT_MAX. Typing "user or agent" or "at most 8" beside a check
+ * that reads the constants is the failure AGENTS.md measured four times in one
+ * release cycle.
+ */
+export function signalRecipientListProblem(value: unknown): string | null {
+  if (value === undefined || value === null) return null;
+  if (!Array.isArray(value)) return SIGNAL_RECIPIENT_RULE_TEXT;
+  if (value.length === 0) {
+    return "to names at least one recipient. Leave it out to post to the whole workspace.";
+  }
+  if (value.length > SIGNAL_RECIPIENT_MAX) {
+    return `A signal is addressed to at most ${SIGNAL_RECIPIENT_MAX} ${
+      countNoun(SIGNAL_RECIPIENT_MAX, "recipient")
+    }. This one names ${value.length}.`;
+  }
+  for (const entry of value) {
+    if (!isRecipientEntry(entry)) return SIGNAL_RECIPIENT_RULE_TEXT;
+  }
+  const seen = new Set<string>();
+  for (const entry of value as SignalRecipient[]) {
+    const key = `${entry.kind}:${entry.id.toLowerCase()}`;
+    if (seen.has(key)) return "to names the same recipient twice.";
+    seen.add(key);
+  }
+  return null;
+}
+
+/**
+ * The list, lower-cased, after signalRecipientListProblem returned null. Null
+ * means the body carried no list. The caller never re-derives the shape: this
+ * is the one place a `to` becomes typed.
+ */
+export function parseSignalRecipients(
+  value: unknown,
+): SignalRecipient[] | null {
+  if (value === undefined || value === null) return null;
+  if (!Array.isArray(value)) return null;
+  const parsed: SignalRecipient[] = [];
+  for (const entry of value) {
+    if (!isRecipientEntry(entry)) return null;
+    parsed.push({ kind: entry.kind, id: entry.id.toLowerCase() });
+  }
+  return parsed;
+}
+
+/**
  * The optional chat keys a post_signal body may carry. Each is INDEPENDENT: a
  * body may send any subset, including none. Never merge these into a group that
  * demands its siblings.
@@ -208,6 +341,7 @@ export const CHAT_SIGNAL_OPTIONAL_KEYS: readonly string[] = [
   "channel",
   "thread_root_id",
   "broadcast_to_channel",
+  "to",
 ];
 
 /**
@@ -239,6 +373,8 @@ export interface ChatSignalFields {
   channel?: unknown;
   thread_root_id?: unknown;
   broadcast_to_channel?: unknown;
+  /** The multi-recipient list. `undefined` means the key was absent. */
+  to?: unknown;
 }
 
 /**
@@ -275,6 +411,39 @@ export function chatSignalShapeProblem(
   }
   if (broadcast !== undefined && typeof broadcast !== "boolean") {
     return "broadcast_to_channel is true or false.";
+  }
+  /* IMPOSSIBLE BEFORE MERELY WRONG, the rule the comment below states. This
+   * test used to sit at the END of this function, after the slug rule, so
+   * `broadcast_to_channel: true` with no thread_root_id and a misspelled
+   * channel was told how to spell a channel name -- advice that cannot make
+   * the request legal, because there is no thread to broadcast from. The
+   * request is impossible whatever the slug says, so say that first. It is
+   * safe here: this arm needs thread_root_id ABSENT and every rule between
+   * here and its old position needs it PRESENT, so no other refusal changes. */
+  if (broadcast === true && (threadRoot === null || threadRoot === undefined)) {
+    return "broadcast_to_channel says to send a thread reply to the channel as well, so it needs a thread_root_id.";
+  }
+  /* SHAPE BEFORE MEANING again: a `to` that is not a list of recipients is not
+   * yet an address, so every rule below that reads the list runs after this. */
+  const recipientProblem = signalRecipientListProblem(fields.to);
+  if (recipientProblem !== null) return recipientProblem;
+  const recipientCount = Array.isArray(fields.to) ? fields.to.length : 0;
+  if (recipientCount > 0) {
+    /* `to` replaces BOTH scalar fields. Sending one of them as well is two
+     * answers to the same question, and the design rules out reconciling them
+     * silently. The names come from SCALAR_RECIPIENT_FIELDS, so a third scalar
+     * field could not be added without appearing in this sentence. */
+    const bothWays = SCALAR_RECIPIENT_FIELDS.filter((field) => {
+      const value = (fields as unknown as Record<string, unknown>)[field];
+      return value !== null && value !== undefined;
+    });
+    if (bothWays.length > 0) {
+      return `${
+        classList(bothWays.map((field) => ({ words: field })))
+      } names a recipient and so does to. Put every recipient in to, and leave ${
+        bothWays.length === 1 ? "it" : "them"
+      } null.`;
+    }
   }
   /* Now that the field IS an id, the rule that makes the request impossible
    * outranks the rule that is merely also broken: a thread reply takes no
@@ -318,8 +487,11 @@ export function chatSignalShapeProblem(
      * the one place the rules live, and it must be right read on its own. */
     const toUser = fields.to_user_id ?? null;
     const toAgent = fields.to_agent_principal_id ?? null;
-    if (toUser !== null || toAgent !== null) {
-      return "A thread reply is readable by everyone who can read its thread, so it cannot also be addressed to one recipient.";
+    /* `to` is a third way to address a reply and is refused by the same rule.
+     * Leaving it out of this test would have let a thread reply carry a
+     * recipient set through the one check that exists to stop it. */
+    if (toUser !== null || toAgent !== null || recipientCount > 0) {
+      return "A thread reply is readable by everyone who can read its thread, so it cannot also be addressed to a recipient.";
     }
     if (fields.in_reply_to !== null && fields.in_reply_to !== undefined) {
       return "Use thread_root_id for a reply in the thread, or in_reply_to for a private reply to the author. Not both.";
@@ -328,9 +500,6 @@ export function chatSignalShapeProblem(
      * rule, so there is no second test here. */
   }
 
-  if (broadcast === true && (threadRoot === null || threadRoot === undefined)) {
-    return "broadcast_to_channel says to send a thread reply to the channel as well, so it needs a thread_root_id.";
-  }
   return null;
 }
 

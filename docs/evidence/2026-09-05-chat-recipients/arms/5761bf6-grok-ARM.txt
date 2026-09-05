@@ -1,0 +1,80 @@
+I'll read REVIEW.md and DIFF.patch first, then follow REVIEW.md exactly.The patch is long. I'll keep reading it, then work through the repo at that SHA.The first `diff --git` line is captured. Next I’ll finish the patch and attack the claimed behavior in the tree.SHA is `5761bf6`. I'll keep reading the rest of the patch and attack the new no-fan-out claim.A few comments still talk about fan-out. I’ll check those against the code and finish the rest of the patch.The live-listener sentence still claims a trigger writes delivery rows. I’ll verify that against the code and keep attacking the other checks.Section 4 of the migration matches the hydrate filter. One current design sentence still says the removed trigger writes delivery rows. Checking that citation range, then writing the verdict.diff --git a/docs/design/2026-09-04-chat-platform-reconciled.md b/docs/design/2026-09-04-chat-platform-reconciled.md
+
+Tree: `5761bf6e716ab9f6a772398ad35d7815f55b3b75` on `lane/chat-recipients`. Read-only. I did not run `npm test`, `test:p1-local`, or `test:p1-server`.
+
+The runtime bound holds. The fan-out correction does not. Current sentences still say a trigger on `swarm.signal_recipients` writes delivery rows.
+
+## Round 3 attack: "1..N read and reply, not woken; recipient 0 woken once"
+
+**Runtime: true.** The only `INSERT` into `swarm.signal_deliveries` in this tree is `swarm.enqueue_signal_delivery()` on `swarm.signals` (`20260731000001_signal_deliveries.sql:126-136`). Kind gate is `ask`/`note` plus a non-null `to_agent_principal_id`. There is no `enqueue_signal_recipient_delivery`. `postSignal` writes recipient rows after the signal insert, so the scalar trigger has already run. Recipient 0 is not enqueued a second time.
+
+**Section 4 of `20260905000010` is right on the two blockers.** `hydrateDeliveryRefs` filters `s.to_agent_principal_id = ${args.recipientPrincipalId}` at `durable-delivery.ts:476`. The `expired` ack uses the same filter at `:619`. `src/cloud/delivery.ts:423` is `if (signal.to_agent !== expected.principalId)`.
+
+**No other wake path from a recipient row.** Receipts read `signal_deliveries`, so recipient 1 never appears there. Realtime activity is listener presence (`20260902000003`), not signal fan-out. `git diff origin/main...HEAD -- src/` is empty, so the shipped listener still claims the ledger only.
+
+**The correction is half-done.** Round 3 asked whether removing the trigger left a comment or a doc sentence that still promises a fan-out. It did.
+
+1. **Current prose, not a "was" block**, `docs/design/2026-09-04-chat-platform-reconciled.md:845-848`:
+
+   > L2 touches `signal_deliveries` from two directions. A trigger on `swarm.signal_recipients` writes rows to it, and the claim response gained `oldest_pending_at`.
+
+   That trigger is gone. `oldest_pending_at` still reads the table, so the exemption can stay void for that reason alone. "Two directions" and "writes rows" are false on this SHA. §10 of the same file says the trigger was removed. The two sections disagree.
+
+2. **Code comment**, `command/index.ts:7094-7098`: inserting into `swarm.signal_recipients` is said to exercise "the delivery trigger's `ON CONFLICT DO NOTHING`". There is no trigger on that table.
+
+3. **Lane table**, `docs/design/2026-09-05-chat-build-plan.md:42`, still lists "one delivery row per agent recipient and no duplicate for the first" as tests L2 adds. The CORRECTED block covers the paragraph under it, not this cell.
+
+4. **Group-DM CORRECTED block is wrong.** §4 says the third clause is still true and quotes *"no agent in a group DM would ever be woken."* Recipient 0 **is** woken from the scalar column. Recipients 1..N are not. Those are different claims. The same slip is in "What L2 did NOT establish" item 5: "It does not notify the agents in it."
+
+`5b60f98` did promise fan-out; that was true of that commit. `5761bf6` walks it back. The leftover is HEAD docs and the `postSignal` comment, not the old commit message.
+
+## Checks
+
+### 1. Old clients — not refuted
+
+`to` reaches `exactKeys` only through `chatSignalKeys` → `CHAT_SIGNAL_OPTIONAL_KEYS`. `modernKeys` is still `["to_agent_principal_id", "in_reply_to"]` (`command/index.ts:1725-1727`). The installed post body in `tests/chat-signal-wire-compat.test.ts:48-55` still matches. Agent READ still uses `chatReadKeys` (only `channel`) plus the `in_reply_to` pair (`read/index.ts:229-247`). `parseSignalRecord` does not exact-key the row, so an extra `recipients` field does not break 0.1.54. The claim parser ignores `oldest_pending_at` and an extra capability marker; a required marker set to 0 still refuses.
+
+### 2. View recreation — not refuted
+
+Two-step splice is the right shape: attachments `WHERE` lives in the select list, so a single `WHERE` replace would hit it. New disjunct has its own `is_member`, so a top-level `OR` cannot admit a non-member. The new marker `recipient_user_id = auth.uid()` is vacuous on this apply (not in `p_before`); the file says so, and the end `DO` block demands `AS recipients` and that fragment. `@@SWARM_SPLIT@@` / `@@SWARM_WHERE@@` are not in the live view body. I did not apply the migration, so I did not watch `pg_get_viewdef` on a live database.
+
+### 3. First-recipient guarantee — not refuted
+
+`resolveSignalWriteTarget` copies entry 0 onto the scalar columns. `postSignal` writes positions `0..n-1` in list order. The deferred trigger refuses a mismatch and a gap. A body with no `to` writes zero recipient rows; the view falls back to the scalar. `to` plus `in_reply_to`, a thread reply, or `working-on` is refused before write. A reply is re-addressed to the author and does not copy the parent's recipient set.
+
+### 4. Two enforcement points — not refuted
+
+View: member AND (old predicate OR recipient-set EXISTS). Agent SQL: undirected OR `to_agent = me` OR `recipients @> [{kind:agent, id:me}]`. Inbox uses the same fragment. Jsonb `@>` is subset, so the extra `position` key does not block a match. Kind is in the object, so a user id that equals an agent principal id does not match. The served suite covers a second agent on `inbox: false`. There is no served `inbox: true` case; the SQL is the same fragment.
+
+### 5. Delivery fan-out — runtime holds; leftovers do not
+
+See the round 3 attack. `ON CONFLICT DO NOTHING` on the scalar trigger keys `(signal_id, recipient_agent_principal_id)`. `working-on` still does not enqueue. Expired signals still enqueue from the scalar path; that is old behaviour. Recipient rows add no extra path.
+
+### 6. Cap — not refuted
+
+`SIGNAL_RECIPIENT_MAX = 8`. CHECK is `position BETWEEN 0 AND 7`. The constants test reads the number, with a control that `BETWEEN 0 AND 75` extracts 75. Refusal text is built from the constant. `MENTION_MAX_RECIPIENTS` is pinned. A caller cannot store 9 rows through the edge; the database would refuse position 8.
+
+### 7. `oldest_pending_at` — not refuted
+
+`count(*)` and `min(d.enqueued_at)` share one `SELECT` over the unacked live set, including the row just leased. `parseClaimLedger` keeps absent / null / string apart. All three claim response sites spread the key and never default it. Adding `DELIVERY_CAPABILITIES.oldest_pending_at` is safe for installed clients that check only required markers.
+
+### 8. Claims in prose — refuted
+
+The live-listener sentence, the `postSignal` comment, the L2 tests cell, and the group-DM "third clause is still true" block are false on this SHA. Section 4 of the migration, the "what was built" appendix, and `5761bf6`'s commit message match the code. The one-entry `to` vs scalar claim now names the side-table difference; the served test asserts it. Working-on citation `:1816-1824` is the working-on arm. Citation-drift ranges I opened (`8919`, `2468`, `2251`, `2239`, `3169`, `2245`, `2299`, `4366`, `3420`) hold the strings they name.
+
+### 9. Tests — mostly hold; one sweep still cannot see a third arm
+
+The `!addressedByList` windows are disjoint; deleting the working-on copy no longer leaves the next arm's copy to satisfy the check. The test still cannot tell you a third condition should also read the list; it says that. Cap `includes("BETWEEN 0 AND 7")` is gone. `DELIVERY_CAPABILITIES.oldest_pending_at === 1` would stay green if `claimAgentInbox` stopped computing the value; the file says the measurement is in `command.test.ts`. Trigger absence is one `pg_trigger` list plus ledger-content tests, not two catalog tests.
+
+## House rules
+
+- **D-053:** this diff does not classify on `error.message`.
+- **Generated, not typed:** cap and kind lists are generated. The empty-`to` sentence is typed; it is not a list of the enforced set.
+- **Refusal order hole:** `parseSignalRecipients` does not apply the cap or the duplicate rule. `addressedByList` is true for a well-formed over-cap or duplicate list. `working-on` / `in_reply_to` then fail `baseValid`, and the caller gets "signal fields are malformed or over their limits" instead of the generated cap or duplicate sentence. Empty and malformed `to` still get the shape sentence, because they do not parse into a list. Accept/refuse does not move.
+- **Em-dashes:** new caller-facing strings I read use ASCII.
+
+## What I did not establish
+
+I did not apply `20260905000010` or run the Postgres / served suites. I did not start a live listener.
+
+VERDICT: FAIL

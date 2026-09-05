@@ -24,6 +24,11 @@ import { setTimeout as delay } from "node:timers/promises";
 import { createClient, type SupabaseClient } from "@supabase/supabase-js";
 import postgres from "postgres";
 import { awaitFunctionRunning } from "../support/edge-readiness.js";
+import {
+  MODEL_RULE_TEXT,
+  SIGNAL_RECIPIENT_MAX,
+  uuidFieldRuleText,
+} from "../../supabase/functions/_shared/channels.js";
 
 interface LocalEnvironment {
   API_URL: string;
@@ -47,6 +52,11 @@ interface ChatFixture {
   otherJwt: string;
   principal: string;
   agentToken: string;
+  /* A SECOND agent, owned by the same person, so a signal can name one agent
+   * in its scalar column and the other only in its recipient set. That pair is
+   * the only way to see the read edge's new arm on its own. */
+  principalTwo: string;
+  agentTokenTwo: string;
 }
 
 let f: ChatFixture;
@@ -92,6 +102,8 @@ async function chatFixture(): Promise<ChatFixture> {
   const device = randomUUID();
   const principal = randomUUID();
   const agentToken = `swm_agt_${randomBytes(32).toString("base64url")}`;
+  const principalTwo = randomUUID();
+  const agentTokenTwo = `swm_agt_${randomBytes(32).toString("base64url")}`;
   await sql.begin(async (tx) => {
     await tx`
       INSERT INTO swarm.users (user_id, display_name)
@@ -120,26 +132,33 @@ async function chatFixture(): Promise<ChatFixture> {
     await tx`
       INSERT INTO swarm.agent_principals (
         principal_id, workspace_id, owner_user_id, name
-      ) VALUES (
-        ${principal}::uuid, ${workspace}::uuid, ${owner.id}::uuid, 'chat-agent'
-      )
+      ) VALUES
+        (${principal}::uuid, ${workspace}::uuid, ${owner.id}::uuid, 'chat-agent'),
+        (${principalTwo}::uuid, ${workspace}::uuid, ${owner.id}::uuid, 'chat-agent-two')
     `;
-    const run = randomUUID();
-    await tx`
-      INSERT INTO swarm.agent_runs (run_id, principal_id, device_id)
-      VALUES (${run}::uuid, ${principal}::uuid, ${device}::uuid)
-    `;
-    await tx`
-      INSERT INTO swarm.agent_tokens (
-        token_id, principal_id, run_id, scopes, token_hash,
-        expires_at, lineage_id
-      ) VALUES (
-        ${randomUUID()}::uuid, ${principal}::uuid, ${run}::uuid,
-        ${tx.json(["post_signal"])}::jsonb,
-        ${createHash("sha256").update(agentToken).digest()},
-        statement_timestamp() + interval '1 hour', ${randomUUID()}::uuid
-      )
-    `;
+    for (
+      const seat of [
+        { principalId: principal, token: agentToken },
+        { principalId: principalTwo, token: agentTokenTwo },
+      ]
+    ) {
+      const run = randomUUID();
+      await tx`
+        INSERT INTO swarm.agent_runs (run_id, principal_id, device_id)
+        VALUES (${run}::uuid, ${seat.principalId}::uuid, ${device}::uuid)
+      `;
+      await tx`
+        INSERT INTO swarm.agent_tokens (
+          token_id, principal_id, run_id, scopes, token_hash,
+          expires_at, lineage_id
+        ) VALUES (
+          ${randomUUID()}::uuid, ${seat.principalId}::uuid, ${run}::uuid,
+          ${tx.json(["post_signal"])}::jsonb,
+          ${createHash("sha256").update(seat.token).digest()},
+          statement_timestamp() + interval '1 hour', ${randomUUID()}::uuid
+        )
+      `;
+    }
   });
   return {
     workspace,
@@ -149,6 +168,62 @@ async function chatFixture(): Promise<ChatFixture> {
     otherJwt: other.jwt,
     principal,
     agentToken,
+    principalTwo,
+    agentTokenTwo,
+  };
+}
+
+/**
+ * One row of swarm_read.signals AS a signed-in member. The view is gated on
+ * auth.uid(), so a plain superuser connection reads NOTHING through it and a
+ * query that forgets this returns undefined rather than an error -- which is
+ * how a first draft of these tests failed.
+ */
+async function viewRowAs<T>(
+  userId: string,
+  read: (tx: postgres.TransactionSql<Record<string, unknown>>) => Promise<T>,
+): Promise<T> {
+  return await sql.begin(async (tx) => {
+    await tx`
+      SELECT set_config(
+        'request.jwt.claims',
+        ${JSON.stringify({ sub: userId, role: "authenticated" })},
+        true
+      )
+    `;
+    await tx.unsafe("SET LOCAL ROLE authenticated");
+    const value = await read(tx);
+    await tx.unsafe("RESET ROLE");
+    return value;
+  }) as T;
+}
+
+/** The agent read path, which is the SECOND enforcement point for recipients. */
+async function readSignals(
+  bearer: string,
+  inbox = false,
+): Promise<{ status: number; body: Record<string, unknown> }> {
+  const response = await fetch(`${local.API_URL}/functions/v1/read`, {
+    method: "POST",
+    headers: {
+      authorization: `Bearer ${bearer}`,
+      "content-type": "application/json",
+    },
+    body: JSON.stringify({
+      resource: "signals",
+      workspace_id: f.workspace,
+      inbox,
+      about: null,
+      kind: null,
+      since: null,
+      in_reply_to: null,
+      limit: 100,
+      include_stale: false,
+    }),
+  });
+  return {
+    status: response.status,
+    body: await response.json() as Record<string, unknown>,
   };
 }
 
@@ -723,6 +798,62 @@ test("a refusal names the FIRST rule broken, not the chat rule that also fired",
     null,
   );
 
+  /* Right keys, WRONG TYPE. Bundled with exactKeys, `{model: 123}` was told
+   * the field list, which ends "and nothing else" and so reports an extra key
+   * the caller did not send. The first rule broken is the type. */
+  const wrongModelType = await send(f.agentToken, {
+    kind: "declare_agent_model",
+    model: 123,
+  });
+  assert.equal(wrongModelType.status, 400, JSON.stringify(wrongModelType.body));
+  assert.equal(
+    String(wrongModelType.body.message),
+    MODEL_RULE_TEXT,
+    "a wrong type is the type rule, not the field list",
+  );
+  assert.doesNotMatch(String(wrongModelType.body.message), /nothing else/);
+
+  /* Control: an ACTUAL extra key still gets the field list, so the split did
+   * not simply swap one sentence for the other. */
+  const extraModelKey = await send(f.agentToken, {
+    kind: "declare_agent_model",
+    model: null,
+    nope: 1,
+  });
+  assert.equal(extraModelKey.status, 400, JSON.stringify(extraModelKey.body));
+  assert.match(String(extraModelKey.body.message), /nothing else/);
+
+  /* set_agent_model bundled THREE rules. A malformed principal_id is the id
+   * rule, and a wrong model type is the type rule; neither is the field list. */
+  const badPrincipal = await send(f.ownerJwt, {
+    kind: "set_agent_model",
+    principal_id: "not-a-uuid",
+    model: null,
+  });
+  assert.equal(badPrincipal.status, 400, JSON.stringify(badPrincipal.body));
+  assert.equal(
+    String(badPrincipal.body.message),
+    uuidFieldRuleText("principal_id"),
+  );
+
+  const setWrongType = await send(f.ownerJwt, {
+    kind: "set_agent_model",
+    principal_id: f.principal,
+    model: 123,
+  });
+  assert.equal(setWrongType.status, 400, JSON.stringify(setWrongType.body));
+  assert.equal(String(setWrongType.body.message), MODEL_RULE_TEXT);
+
+  /* Control for BOTH set_agent_model cases: the same body with a legal
+   * principal_id and a legal model is accepted, so the two refusals above are
+   * the rules named and not a command that cannot succeed. */
+  const setOk = await send(f.ownerJwt, {
+    kind: "set_agent_model",
+    principal_id: f.principal,
+    model: "gpt-5.6-sol",
+  });
+  assert.equal(setOk.status, 200, JSON.stringify(setOk.body));
+
   /* A short model carrying a control character is a CONTROL rule, not a length
    * rule: boundedText refuses both and the length sentence was answering both. */
   const controlModel = await send(f.agentToken, {
@@ -793,4 +924,505 @@ test("the feedback categories in the refusal come from the constant the check re
     body: `generated categories ${randomUUID()}`,
   });
   assert.equal(ok.status, 200, JSON.stringify(ok.body));
+});
+
+/* ---------------------------------------------------------------------------
+ * L2: one signal, N recipients. Everything below runs against the SERVED
+ * command and read functions and real Postgres, because the claims are about
+ * what the two enforcement points do together.
+ * ------------------------------------------------------------------------- */
+
+test("a post with `to` stores the first recipient in the scalar column and the whole set beside it", async () => {
+  const posted = await send(
+    f.agentToken,
+    installedPost({
+      to: [
+        { kind: "user", id: f.otherId },
+        { kind: "agent", id: f.principalTwo },
+      ],
+    }),
+  );
+  assert.equal(posted.status, 200, JSON.stringify(posted.body));
+  const signal = signalOf(posted.body);
+  assert.equal(
+    signal.to,
+    f.otherId,
+    "recipient 0 is the scalar to_user_id, so a reader that knows only that column sees a real recipient",
+  );
+  assert.equal(signal.to_agent, null);
+  assert.deepEqual(signal.recipients, [
+    { kind: "user", id: f.otherId },
+    { kind: "agent", id: f.principalTwo },
+  ]);
+
+  const rows = await sql<{ position: number; u: string | null; a: string | null }[]>`
+    SELECT position, recipient_user_id AS u, recipient_agent_principal_id AS a
+    FROM swarm.signal_recipients
+    WHERE signal_id = ${String(signal.id)}::uuid
+    ORDER BY position
+  `;
+  assert.deepEqual(
+    rows.map((row) => [row.position, row.u, row.a]),
+    [[0, f.otherId, null], [1, null, f.principalTwo]],
+  );
+
+  /* The view derives the same set. Two expressions of one rule, compared on
+   * the same row rather than trusted to agree. */
+  const view = await viewRowAs(f.ownerId, (tx) =>
+    tx<{ recipients: unknown }[]>`
+      SELECT recipients FROM swarm_read.signals
+      WHERE id = ${String(signal.id)}::uuid
+    `);
+  assert.equal(view.length, 1, "the owner of the addressed agent reads the row");
+  assert.deepEqual(
+    view[0]!.recipients,
+    [
+      { kind: "user", id: f.otherId, position: 0 },
+      { kind: "agent", id: f.principalTwo, position: 1 },
+    ],
+    "the view carries the position; the command record carries the order",
+  );
+});
+
+test("a one-entry `to` and the scalar shape store the same signal row and the same delivery ledger", async () => {
+  const viaScalar = await send(
+    f.ownerJwt,
+    installedPost({ to_agent_principal_id: f.principal, signal_kind: "ask" }),
+  );
+  assert.equal(viaScalar.status, 200, JSON.stringify(viaScalar.body));
+  const viaList = await send(
+    f.ownerJwt,
+    installedPost({
+      signal_kind: "ask",
+      to: [{ kind: "agent", id: f.principal }],
+    }),
+  );
+  assert.equal(viaList.status, 200, JSON.stringify(viaList.body));
+
+  const scalarId = String(signalOf(viaScalar.body).id);
+  const listId = String(signalOf(viaList.body).id);
+  const columns = await sql<Record<string, unknown>[]>`
+    SELECT id, from_principal, from_kind, to_user_id, to_agent_principal_id,
+           in_reply_to, about, kind, body, channel_id, thread_root_id,
+           broadcast_to_channel, workspace_id
+    FROM swarm.signals
+    WHERE id IN (${scalarId}::uuid, ${listId}::uuid)
+    ORDER BY CASE WHEN id = ${scalarId}::uuid THEN 0 ELSE 1 END
+  `;
+  assert.equal(columns.length, 2);
+  const scalarRow = columns[0]!;
+  const listRow = columns[1]!;
+  for (const column of Object.keys(scalarRow)) {
+    /* id and body differ by construction (a fresh uuid and a fresh body per
+     * post); every OTHER stored column must be identical. until and created_at
+     * are excluded from the SELECT for the same reason. */
+    if (column === "id" || column === "body") continue;
+    assert.deepEqual(
+      listRow[column],
+      scalarRow[column],
+      `${column} must be identical between the scalar shape and a one-entry list`,
+    );
+  }
+
+  const ledger = await sql<{ signal_id: string; n: number }[]>`
+    SELECT signal_id, count(*)::int AS n
+    FROM swarm.signal_deliveries
+    WHERE signal_id IN (${scalarId}::uuid, ${listId}::uuid)
+    GROUP BY signal_id
+  `;
+  assert.equal(ledger.length, 2, "both posts wake the agent");
+  for (const row of ledger) {
+    assert.equal(row.n, 1, `${row.signal_id} must have exactly one delivery row`);
+  }
+
+  /* THE ONE THING THAT DIFFERS, named rather than left for a reader to find.
+   * The stored signal row, the delivery ledger and the rendered set match; the
+   * side table does NOT. A scalar post writes zero recipient rows and a
+   * one-entry `to` writes one, and the view's fallback is what makes the two
+   * read alike anyway. A review arm called the compat claim inaccurate for
+   * leaving this unsaid, so it is asserted here. */
+  const sideRows = await sql<{ signal_id: string; n: number }[]>`
+    SELECT signal_id, count(*)::int AS n
+    FROM swarm.signal_recipients
+    WHERE signal_id IN (${scalarId}::uuid, ${listId}::uuid)
+    GROUP BY signal_id
+  `;
+  assert.deepEqual(
+    sideRows.map((row) => [row.signal_id, row.n]),
+    [[listId, 1]],
+    "only the `to` form writes a recipient row; the scalar form writes none",
+  );
+
+  /* And the READ is identical too, which is the part an old client sees. */
+  const views = await viewRowAs(f.ownerId, (tx) =>
+    tx<{ id: string; recipients: unknown }[]>`
+      SELECT id, recipients FROM swarm_read.signals
+      WHERE id IN (${scalarId}::uuid, ${listId}::uuid)
+    `);
+  assert.equal(views.length, 2, "the owner of the addressed agent reads both rows");
+  const byId = new Map(views.map((row) => [row.id, row.recipients]));
+  assert.deepEqual(
+    byId.get(listId),
+    byId.get(scalarId),
+    "the derived set and the stored set render the same recipients",
+  );
+  assert.deepEqual(byId.get(scalarId), [
+    { kind: "agent", id: f.principal, position: 0 },
+  ]);
+});
+
+test("an agent that is only the SECOND recipient reads the signal, and one that is not addressed does not", async () => {
+  /* The two enforcement points, together. The view admits the row to the
+   * agents' OWNER; the read edge narrows it to the presenting principal. Both
+   * had to move, and an agent addressed anywhere but position 0 is the case
+   * that fails if only one of them did. */
+  const posted = await send(
+    f.ownerJwt,
+    installedPost({
+      signal_kind: "ask",
+      body: `second recipient ${randomUUID()}`,
+      to: [
+        { kind: "agent", id: f.principal },
+        { kind: "agent", id: f.principalTwo },
+      ],
+    }),
+  );
+  assert.equal(posted.status, 200, JSON.stringify(posted.body));
+  const signalId = String(signalOf(posted.body).id);
+
+  const bySecond = await readSignals(f.agentTokenTwo);
+  assert.equal(bySecond.status, 200, JSON.stringify(bySecond.body));
+  const secondIds = (bySecond.body.signals as Record<string, unknown>[])
+    .map((row) => String(row.id));
+  assert.ok(
+    secondIds.includes(signalId),
+    "the agent at position 1 must read a signal whose scalar column names the agent at position 0",
+  );
+
+  const byFirst = await readSignals(f.agentToken);
+  const firstIds = (byFirst.body.signals as Record<string, unknown>[])
+    .map((row) => String(row.id));
+  assert.ok(firstIds.includes(signalId), "and so must the agent at position 0");
+
+  /* inbox: true is a SECOND arm in the same query and had no served case. It
+   * narrows to what is addressed to this agent, so the later recipient must
+   * still be there -- an inbox that hid it would be the same defect one clause
+   * over. */
+  const inboxOnly = await readSignals(f.agentTokenTwo, true);
+  assert.equal(inboxOnly.status, 200, JSON.stringify(inboxOnly.body));
+  assert.ok(
+    (inboxOnly.body.signals as Record<string, unknown>[])
+      .some((row) => String(row.id) === signalId),
+    "the inbox filter reads the recipient set too",
+  );
+
+  /* CONTROL: the same shape addressed to ONE agent stays invisible to the
+   * other. Without this, "the second agent read it" could mean the arm admits
+   * every directed signal to every agent the owner owns. */
+  const narrow = await send(
+    f.ownerJwt,
+    installedPost({
+      signal_kind: "ask",
+      body: `first only ${randomUUID()}`,
+      to: [{ kind: "agent", id: f.principal }],
+    }),
+  );
+  assert.equal(narrow.status, 200, JSON.stringify(narrow.body));
+  const narrowId = String(signalOf(narrow.body).id);
+  const secondAgain = await readSignals(f.agentTokenTwo);
+  assert.equal(
+    (secondAgain.body.signals as Record<string, unknown>[])
+      .some((row) => String(row.id) === narrowId),
+    false,
+    "an agent that is not in the recipient set reads nothing new",
+  );
+});
+
+test("`to` beside a scalar recipient is refused, and the refusal names the field it found", async () => {
+  const refused = await send(
+    f.ownerJwt,
+    installedPost({
+      to_user_id: f.otherId,
+      to: [{ kind: "user", id: f.otherId }],
+    }),
+  );
+  assert.equal(refused.status, 400, JSON.stringify(refused.body));
+  assert.match(
+    String(refused.body.message),
+    /^to_user_id names a recipient and so does to\./,
+  );
+  /* Control: the same body with the scalar cleared is accepted, so the refusal
+   * is the conflict and not `to` itself. */
+  const ok = await send(
+    f.ownerJwt,
+    installedPost({ to: [{ kind: "user", id: f.otherId }] }),
+  );
+  assert.equal(ok.status, 200, JSON.stringify(ok.body));
+});
+
+test("the recipient cap refuses from the same constant the sentence is built from", async () => {
+  const overCap = Array.from(
+    { length: SIGNAL_RECIPIENT_MAX + 1 },
+    () => ({ kind: "user" as const, id: randomUUID() }),
+  );
+  const refused = await send(f.ownerJwt, installedPost({ to: overCap }));
+  assert.equal(refused.status, 400, JSON.stringify(refused.body));
+  assert.match(
+    String(refused.body.message),
+    new RegExp(`at most ${SIGNAL_RECIPIENT_MAX} recipients`),
+  );
+  assert.match(
+    String(refused.body.message),
+    new RegExp(`names ${SIGNAL_RECIPIENT_MAX + 1}\\.`),
+    "the count in the sentence is the list's own length, not a typed number",
+  );
+
+  /* Control: an EMPTY list is refused for being empty, not for the cap, so the
+   * two ends of the bound are told apart. */
+  const empty = await send(f.ownerJwt, installedPost({ to: [] }));
+  assert.equal(empty.status, 400, JSON.stringify(empty.body));
+  assert.match(String(empty.body.message), /at least one recipient/);
+});
+
+test("a recipient who is not reachable in this workspace refuses the whole post", async () => {
+  /* The same answer the scalar path already gives for a target that is not
+   * live: a bare 403, which does not disclose WHICH recipient is unreachable.
+   * The post is refused whole -- nothing is stored for the reachable ones. */
+  const stranger = randomUUID();
+  const refused = await send(
+    f.ownerJwt,
+    installedPost({
+      to: [{ kind: "user", id: f.otherId }, { kind: "user", id: stranger }],
+    }),
+  );
+  assert.equal(refused.status, 403, JSON.stringify(refused.body));
+  const stored = await sql<{ n: number }[]>`
+    SELECT count(*)::int AS n FROM swarm.signal_recipients
+    WHERE recipient_user_id = ${stranger}::uuid
+  `;
+  assert.equal(stored[0]!.n, 0);
+
+  /* Control: the reachable half alone is accepted, so the 403 is the stranger
+   * and not the shape of a two-entry list. */
+  const ok = await send(
+    f.ownerJwt,
+    installedPost({ to: [{ kind: "user", id: f.otherId }] }),
+  );
+  assert.equal(ok.status, 200, JSON.stringify(ok.body));
+});
+
+test("working-on and a private reply refuse a `to` list the same way they refuse the scalar fields", async () => {
+  const status = await send(
+    f.ownerJwt,
+    installedPost({
+      signal_kind: "working-on",
+      to: [{ kind: "user", id: f.otherId }],
+    }),
+  );
+  assert.equal(status.status, 400, JSON.stringify(status.body));
+  const statusScalar = await send(
+    f.ownerJwt,
+    installedPost({ signal_kind: "working-on", to_user_id: f.otherId }),
+  );
+  assert.equal(statusScalar.status, 400, JSON.stringify(statusScalar.body));
+  assert.equal(
+    String(status.body.message),
+    String(statusScalar.body.message),
+    "one rule, one sentence, whichever spelling the caller used",
+  );
+
+  /* Control: a working-on with no recipient at all is accepted. */
+  const ok = await send(f.ownerJwt, installedPost({ signal_kind: "working-on" }));
+  assert.equal(ok.status, 200, JSON.stringify(ok.body));
+
+  /* A STATED BOUND, pinned so nobody reads it as a bug later. A working-on
+   * whose `to` ALSO breaks the cap is answered with the generic reason, not the
+   * cap sentence: the edge only prefers the chat sentence when nothing else is
+   * wrong, and "working-on takes no recipients" is the other thing that is
+   * wrong. The cap sentence is reachable whenever the rest of the body is
+   * legal, which the cap test above measures. A review arm named this; the
+   * accept/refuse boundary does not move, only which sentence is shown. */
+  const overCapWorkingOn = await send(
+    f.ownerJwt,
+    installedPost({
+      signal_kind: "working-on",
+      to: Array.from(
+        { length: SIGNAL_RECIPIENT_MAX + 1 },
+        () => ({ kind: "user" as const, id: randomUUID() }),
+      ),
+    }),
+  );
+  assert.equal(overCapWorkingOn.status, 400, JSON.stringify(overCapWorkingOn.body));
+  assert.equal(
+    String(overCapWorkingOn.body.message),
+    "signal fields are malformed or over their limits",
+  );
+});
+
+test("an installed client's post is unchanged by the existence of `to`", async () => {
+  /* The wire-compat case, served. This body is byte for byte what 0.1.54
+   * sends: no `to` key at all. */
+  const posted = await send(f.ownerJwt, installedPost());
+  assert.equal(posted.status, 200, JSON.stringify(posted.body));
+  const signal = signalOf(posted.body);
+  assert.equal(signal.to, null);
+  assert.equal(signal.to_agent, null);
+  assert.deepEqual(
+    signal.recipients,
+    [],
+    "a signal addressed to nobody carries an empty set, not a null",
+  );
+  const rows = await sql<{ n: number }[]>`
+    SELECT count(*)::int AS n FROM swarm.signal_recipients
+    WHERE signal_id = ${String(signal.id)}::uuid
+  `;
+  assert.equal(rows[0]!.n, 0, "and writes nothing to the new table");
+});
+
+test("the SECOND recipient can reply privately, the way the first always could", async () => {
+  /* Found by a review arm rather than by a test. in_reply_to's authorization
+   * read the scalar columns, which carry recipient 0 only, so a signal a later
+   * recipient could READ was one they could not answer. A message you can read
+   * and cannot reply to is a trap the addressing itself creates. */
+  const posted = await send(
+    f.ownerJwt,
+    installedPost({
+      signal_kind: "ask",
+      body: `reply from the second recipient ${randomUUID()}`,
+      to: [{ kind: "user", id: f.ownerId }, { kind: "user", id: f.otherId }],
+    }),
+  );
+  assert.equal(posted.status, 200, JSON.stringify(posted.body));
+  const rootId = String(signalOf(posted.body).id);
+
+  const reply = await send(
+    f.otherJwt,
+    installedPost({ signal_kind: "note", in_reply_to: rootId }),
+  );
+  assert.equal(reply.status, 200, JSON.stringify(reply.body));
+  assert.equal(
+    signalOf(reply.body).to,
+    f.ownerId,
+    "the reply is re-addressed to the author, exactly as a scalar recipient's is",
+  );
+
+  /* CONTROL: someone who is NOT in the recipient set still cannot reply. The
+   * second arm reads the recipient set, not "any member". `other` is the only
+   * other member in this fixture, so the negative case uses a signal that names
+   * only the owner. */
+  const narrow = await send(
+    f.ownerJwt,
+    installedPost({
+      signal_kind: "ask",
+      body: `owner only ${randomUUID()}`,
+      to: [{ kind: "user", id: f.ownerId }],
+    }),
+  );
+  assert.equal(narrow.status, 200, JSON.stringify(narrow.body));
+  const refused = await send(
+    f.otherJwt,
+    installedPost({
+      signal_kind: "note",
+      in_reply_to: String(signalOf(narrow.body).id),
+    }),
+  );
+  assert.equal(
+    refused.status,
+    403,
+    `a non-recipient must not be able to reply: ${JSON.stringify(refused.body)}`,
+  );
+});
+
+test("addressing a second agent does not enqueue a delivery for it, and the reason is recorded", async () => {
+  /* THE BOUND OF THIS LANE, measured through the served edge. Recipients 1..N
+   * are readable and repliable and are NOT woken. Two things would have to
+   * move together for that to change, and neither is in this lane:
+   * hydrateDeliveryRefs filters on swarm.signals.to_agent_principal_id (the
+   * scalar column, which holds recipient 0), and src/cloud/delivery.ts:423
+   * makes an installed listener refuse a delivery whose signal.to_agent is not
+   * its own principal. Section 4 of 20260905000010 carries the full reason. */
+  const posted = await send(
+    f.ownerJwt,
+    installedPost({
+      signal_kind: "ask",
+      body: `two agents ${randomUUID()}`,
+      to: [{ kind: "agent", id: f.principal }, { kind: "agent", id: f.principalTwo }],
+    }),
+  );
+  assert.equal(posted.status, 200, JSON.stringify(posted.body));
+  const signalId = String(signalOf(posted.body).id);
+
+  const ledger = await sql<{ recipient_agent_principal_id: string }[]>`
+    SELECT recipient_agent_principal_id
+    FROM swarm.signal_deliveries
+    WHERE signal_id = ${signalId}::uuid
+  `;
+  assert.deepEqual(
+    ledger.map((row) => row.recipient_agent_principal_id),
+    [f.principal],
+    "only recipient 0 is woken, and it is woken exactly once",
+  );
+
+  /* CONTROL: the SET really does name both agents, so the ledger above is the
+   * delivery bound and not a post that lost its second recipient. */
+  const stored = await sql<{ recipient_agent_principal_id: string | null }[]>`
+    SELECT recipient_agent_principal_id
+    FROM swarm.signal_recipients
+    WHERE signal_id = ${signalId}::uuid
+    ORDER BY position
+  `;
+  assert.deepEqual(
+    stored.map((row) => row.recipient_agent_principal_id),
+    [f.principal, f.principalTwo],
+  );
+});
+
+test("a second AGENT recipient can reply, not only a second person", async () => {
+  /* The reply arm reads the recipient set for an agent caller through its
+   * presenting principal, which is a different branch from the human one. */
+  const posted = await send(
+    f.ownerJwt,
+    installedPost({
+      signal_kind: "ask",
+      body: `agent reply ${randomUUID()}`,
+      to: [{ kind: "agent", id: f.principal }, { kind: "agent", id: f.principalTwo }],
+    }),
+  );
+  assert.equal(posted.status, 200, JSON.stringify(posted.body));
+  const rootId = String(signalOf(posted.body).id);
+
+  const reply = await send(
+    f.agentTokenTwo,
+    installedPost({ signal_kind: "note", in_reply_to: rootId }),
+  );
+  assert.equal(reply.status, 200, JSON.stringify(reply.body));
+  assert.equal(
+    signalOf(reply.body).to,
+    f.ownerId,
+    "the reply is re-addressed to the human author",
+  );
+
+  /* CONTROL: an agent that is NOT in the set still cannot reply. The narrow
+   * post names only the first agent. */
+  const narrow = await send(
+    f.ownerJwt,
+    installedPost({
+      signal_kind: "ask",
+      body: `first agent only ${randomUUID()}`,
+      to: [{ kind: "agent", id: f.principal }],
+    }),
+  );
+  assert.equal(narrow.status, 200, JSON.stringify(narrow.body));
+  const refused = await send(
+    f.agentTokenTwo,
+    installedPost({
+      signal_kind: "note",
+      in_reply_to: String(signalOf(narrow.body).id),
+    }),
+  );
+  assert.equal(
+    refused.status,
+    403,
+    `an agent outside the set must not reply: ${JSON.stringify(refused.body)}`,
+  );
 });

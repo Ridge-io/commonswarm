@@ -1,0 +1,141 @@
+I'll read REVIEW.md and the patch first, then follow REVIEW.md exactly.The brief is a full independent review. I’ll quote the first `diff --git` line, then attack each check against the working tree. The patch was truncated, so I’m reading the rest of it and the code it touches.The repo is the parent worktree, not this arm folder. Next I’ll read the delivery trigger, the rest of the patch, and the files the checks name.I have the patch’s first half. Next I’ll read the delivery trigger word by word and the remaining tests and command paths the checks name.The trigger is in hand. Next I’ll read the rest of the served tests and the live command, read, and claim paths the checks name.I have the trigger and the read arm. Next I’ll check old-client keys, the view splice, first-recipient writes, and the claim-capability path.The read path and write target are in place. I’ll inspect the live view body, agent-auth for the view, and a few claim/prose edges next.The build-plan still has the old fan-out sentence. I’ll measure whether the retirement marker sits inside the 400-character window the gate uses.The build-plan still has the old fan-out sentence, and the gate’s needle doesn’t match it. I’ll open both copies and check a few remaining claim edges.Checking one remaining claim: whether the build-plan “every agent but one” line is a false statement, and whether `jsonb` uuid containment is exact.`diff --git a/docs/design/2026-09-04-chat-platform-reconciled.md b/docs/design/2026-09-04-chat-platform-reconciled.md`
+
+This is a review of SHA `327c6ad` on `lane/chat-recipients`. I did not change the tree. I did not run tests, apply the migration, or start a listener.
+
+## Round 6 job 1. The gate’s shape
+
+I can write a true sentence the gate would let through, and a reader would take it the wrong way:
+
+> An ask or note addressed to an agent still enqueues a delivery.
+
+That is true of the scalar column. A reader of a multi-recipient feature takes it as “every agent in `to`”. The gate still passes, because the required clause is present and this sentence is not in `RETIRED_WAKE_WORDINGS`.
+
+A closer one is already on a gated surface. The build plan says “It notifies at most the agent at position 0”. That is true (zero or one, and only that slot). A reader hears “the first agent in the list”. The retired needle is `notifies its first agent recipient`, which this is not.
+
+The gate is the wrong shape for a sixth paraphrase. It pins one string and five known-bad strings on three files. It does not read the trigger. The test already says that bound. That is not a hidden hole, and it is not a false statement in the docs. I would not fail the lane on it.
+
+One nearby miss: the live plan paragraph still says “enqueues one row per agent recipient”. The retired needle requires the extra word “delivery”, so the gate does not see it. `CORRECTED` sits about 920 characters earlier, outside the 400-character window. A sequential reader is still warned: the block immediately above says that sentence did not survive, and the appendix states what landed. I treat that as a kept historical plan, not a live claim.
+
+## Round 6 job 2. The clause vs `enqueue_signal_delivery()`
+
+`20260731000001_signal_deliveries.sql:126-137`:
+
+```
+IF NEW.to_agent_principal_id IS NOT NULL AND NEW.kind IN ('ask', 'note') THEN
+  INSERT INTO swarm.signal_deliveries (...)
+  ON CONFLICT DO NOTHING;
+```
+
+The clause: *wakes the recipient at position 0, and only when that recipient is an agent taking `ask` or `note`*.
+
+Word by word:
+
+- **wakes** = writes a `signal_deliveries` row. Matches the trigger. It does not mean “the listener will see it”.
+- **the recipient at position 0** = the trigger reads the scalar `to_agent_principal_id`, not `signal_recipients.position`. When recipient rows exist, the deferred constraint makes position 0 equal that scalar. When they do not, the view treats the scalar as position 0. So the clause is true of who in the addressed set is woken.
+- **and only when that recipient is an agent** = `to_agent_principal_id IS NOT NULL`. A person at position 0 leaves that column null. Nobody is woken, even if later slots name agents.
+- **taking `ask` or `note`** = `NEW.kind IN ('ask', 'note')`. The kind is on the signal, not on the agent. The English is a bit odd. The meaning matches the trigger.
+
+The cases you named:
+
+| Case | Trigger | Clause |
+|---|---|---|
+| Expired signal | No `until` check. A row is still written. | Still true of enqueue. Claim later filters live `until`. |
+| Revoked agent | No `revoked_at` check. The edge refuses a live post. | Insert-time wake is unchanged. |
+| Agent is also the author | No exclusion. A row is written. | The clause does not exclude this. |
+| Position 0 later revoked | The row already exists. | The clause is about insert, not later revoke. |
+| Kind outside ask/note | No row. `working-on` with a scalar agent does not enqueue. | Matches. |
+
+The clause is exactly true of this trigger, given the first-recipient constraint. I found no case it still gets wrong.
+
+## Check 1. Old clients
+
+`to` reaches `exactKeys` only through `chatSignalKeys` → `CHAT_SIGNAL_OPTIONAL_KEYS` → `Object.hasOwn`. `modernKeys` is still `["to_agent_principal_id", "in_reply_to"]`. The read edge does not add `to`. Agent read bodies still send `in_reply_to` as their own group.
+
+An installed 0.1.54 post (modern pair, no `to`) still matches. A body that sends only `to` gets a one-key chat group, not the pair. I could not find a shipped body this diff makes fail.
+
+## Check 2. The view recreation
+
+The splice is two steps: split at top-level `FROM (swarm.)?signals` (whitespace after `signals`, so `signal_attachments` and `signal_recipients` do not match), then the first `WHERE` in that tail. The attachments subquery’s `WHERE` sits in `head`. Wrapping the old predicate in parentheses and ORing beside it keeps a later hotfix clause.
+
+The new disjunct has its own `is_member` (`revoked_at IS NULL` and workspace not archived). A non-member cannot get in. It admits only a named user or the owner of a named agent. The author is not admitted unless named. `assert_view_clauses_preserved` is vacuous for the new marker on this run; the file says so, and a positive control checks `AS recipients`, `recipient_user_id = auth.uid()`, and exactly one `FROM signals` boundary.
+
+`@@SWARM_SPLIT@@` / `@@SWARM_WHERE@@` in live SQL would break the split. The live view has no such text. Residual, not a current defect.
+
+## Check 3. First-recipient guarantee
+
+`resolveSignalWriteTarget` sets the scalar from `recipients[0]`. `postSignal` writes that same list in order. The deferred trigger refuses commit if position 0 ≠ the scalar, or if positions are not `0..n-1`.
+
+Scalar-only posts write zero recipient rows. The trigger never fires. That is the old-client path, not a disagreement.
+
+`to` with `in_reply_to`, a thread reply, or `working-on` is refused before write. A private reply is re-addressed to the author on the scalar only. I found no path where recipient rows exist and the scalar is NULL, or where position 0 disagrees with the scalar, that can commit.
+
+## Check 4. The two enforcement points
+
+The view admits a human who is named, or who owns a named agent. The agent read path uses the owner’s `auth.uid()` on the view, then narrows with:
+
+```
+s.to_agent = this principal
+OR s.recipients @> [{kind: 'agent', id: this principal}]
+```
+
+`inbox: true` uses the same arm. A second-recipient agent can read; a sibling agent cannot. An agent cannot read mail addressed only to its owner. `in_reply_to` uses `signalNamesRecipient` with the same two cuts.
+
+`@>` is containership, so the extra `position` key does not block. Both sides build `id` from uuid, so case is the canonical lowercase text form. Kind is part of the probe, so a user id equal to a principal id does not match an agent probe. I did not run Postgres to re-measure the jsonb uuid form.
+
+## Check 5. Delivery fan-out
+
+There is no `enqueue_signal_recipient_delivery()`. No trigger on `swarm.signal_recipients` writes the ledger. The three triggers there are same-transaction, append-only, and first-is-scalar.
+
+Wake is still `enqueue_signal_delivery()` on `swarm.signals`. `ON CONFLICT DO NOTHING` hits PK `(signal_id, recipient_agent_principal_id)`. The kind gate is still ask/note. `working-on` does not enqueue. An expired ask/note still enqueues (same as before). Recipient 0 is not woken twice, because nothing writes a second row.
+
+## Check 6. The cap
+
+Two points, one number: edge `SIGNAL_RECIPIENT_MAX = 8`; SQL `position BETWEEN 0 AND 7` plus unique `(signal_id, position)`. A caller cannot store 9. The edge refuses 9 before the database. Direct SQL cannot store position 8.
+
+User-facing bound sentences are built from the constant. The empty-list and duplicate sentences are not bounds. Migration comments are not user-facing. `MENTION_MAX_RECIPIENTS` is pinned to the same number; the composer still posts one signal per tag.
+
+## Check 7. `oldest_pending_at`
+
+Same statement as the count: `count(*)` and `min(d.enqueued_at)` over unacked rows whose signal is still live. That set includes the row this claim just leased. `min()` over empty is null, so absent-vs-null is not branched on the count.
+
+`parseClaimLedger` keeps absent, null, and a parseable time apart. The three HTTP sites spread the field and never default it. `DELIVERY_CAPABILITIES.oldest_pending_at = 1` is extra. The installed parser still requires only the old three markers and ignores the rest. I did not run a live listener.
+
+## Check 8. Claims in prose
+
+The one-entry `to` claim is now qualified: signal row, delivery ledger, and rendered set match; the side table does not. The served test asserts that.
+
+Reply admission is stated per caller. Human = named, or owns a named agent. Agent = the principal it presented, narrower than the view. Undirected still has no recipient set.
+
+Group DMs: storable and readable; wake unchanged; nobody has ruled. That matches the code.
+
+`hydrateDeliveryRefs` still filters `s.to_agent_principal_id = claiming principal` (durable-delivery.ts:476). `src/cloud/delivery.ts:423` still refuses a delivery whose `signal.to_agent` is not this principal. No file under `src/` changed.
+
+Wording I would change, not a false statement: the build plan’s “still stands for every agent but one” is the old shortening. The same sentence already says “nobody at all when position 0 is a person”. The reconciled note states both branches.
+
+## Check 9. The tests
+
+Named and honest about their bounds:
+
+- The wake gate does not read the trigger. It would stay green if a new wrong summary used different words. Stated in the test.
+- `DELIVERY_CAPABILITIES.oldest_pending_at` would stay green if `claimAgentInbox` stopped computing the value. Stated; the served claim test is the measurement.
+- The installed claim parser test would stay green if the server stopped sending the field. It is the old-client half.
+
+Sweeps that used to pass on a substring were tightened: quoted `"${key}"` in `modernKeys`, digit-bounded numbers, disjoint `!addressedByList` windows. The cap extractor reads the number, with a control that `BETWEEN 0 AND 75` is 75.
+
+The Postgres cap test checks the CHECK bound, not “8 live rows stored”. The edge tests list length. That is two enforcement points, not a silent pass.
+
+## House rules
+
+- **D-053:** new code does not branch on `error.message`.
+- **Generated, not typed:** recipient kind list, cap, and scalar-conflict sentences come from the constants the check reads.
+- **Negative results** on the new refusals have a legal twin, so they reach the named rule.
+- **Refusal order:** `{model: 123}` is the model rule; broadcast-without-thread beats a bad slug and a bad `to`.
+- **No em-dashes** in the new user-facing refusal strings.
+
+## What I did not establish
+
+I did not run `npm test`, `test:p1-local`, or `test:p1-server`. I did not apply `20260905000010` to a database. I did not start a listener. I did not re-measure jsonb uuid containership in Postgres.
+
+Checks 1 to 7 hold. Check 8 has wording I would phrase differently, not a false live claim.
+
+VERDICT: PASS

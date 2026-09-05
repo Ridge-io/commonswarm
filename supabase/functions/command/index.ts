@@ -24,7 +24,10 @@ import {
   normalizeChannelSlug,
   SIGNAL_KINDS,
   type SignalKind,
+  parseSignalRecipients,
+  type SignalRecipient,
   unknownChannelMessage,
+  uuidFieldRuleText,
 } from "../_shared/channels.ts";
 import {
   commandAllowedOrigins,
@@ -207,6 +210,10 @@ interface SignalCommand {
   channel?: string;
   thread_root_id?: string | null;
   broadcast_to_channel?: boolean;
+  /* The multi-recipient address. When present it is non-empty and every entry
+   * is well formed: the validator refuses anything else, and entry 0 becomes
+   * the row's scalar to_user_id / to_agent_principal_id. */
+  to?: SignalRecipient[];
 }
 
 /** Channel authority. Self-contained like post_signal: emits no protocol event. */
@@ -251,6 +258,11 @@ interface SignalRecord {
   channel_id: string | null;
   thread_root_id: string | null;
   broadcast_to_channel: boolean;
+  /* The whole recipient set, in the order the sender named it. Derived the
+   * same way swarm_read.signals derives it: the rows when there are rows, and
+   * the scalar recipient when there are none, so a signal posted with the old
+   * scalar shape and one posted with a one-entry `to` read identically. */
+  recipients: SignalRecipient[];
 }
 
 type DeliveryCommand = ClaimAgentInboxCommand | AckAgentDeliveryCommand;
@@ -1725,6 +1737,16 @@ function validateCommand(
     const broadcastToChannel = Object.hasOwn(cmd, "broadcast_to_channel")
       ? cmd.broadcast_to_channel
       : undefined;
+    /* `to` is its OWN Object.hasOwn group, through CHAT_SIGNAL_OPTIONAL_KEYS,
+     * for the reason spelled out above: modernKeys is all-or-nothing and every
+     * installed client always sends it. */
+    const toList = Object.hasOwn(cmd, "to") ? cmd.to : undefined;
+    const recipients = parseSignalRecipients(toList);
+    /* An EMPTY list addresses nobody, so it must not make the rules below read
+     * as "addressed". It is refused by chatSignalShapeProblem with a sentence
+     * that says so; letting it fail baseValid instead would answer it with the
+     * generic reason and hide which rule broke. */
+    const addressedByList = recipients !== null && recipients.length > 0;
     const threadRoot = threadRootId === undefined
       ? null
       : threadRootId as string | null;
@@ -1754,6 +1776,7 @@ function validateCommand(
       ...(broadcastToChannel === undefined
         ? {}
         : { broadcast_to_channel: broadcastToChannel }),
+      ...(toList === undefined ? {} : { to: toList }),
     });
     const keysOk = exactKeys(cmd, [
       "kind",
@@ -1784,12 +1807,19 @@ function validateCommand(
       Number(cmd.to_user_id !== null) +
           Number(toAgentPrincipalId !== null) <=
         1 &&
+      /* `to` is a THIRD way to address a signal, so every rule that reads the
+       * scalar recipients reads it too. A working-on signal says what you are
+       * doing and is addressed to nobody; a private reply is addressed by
+       * in_reply_to and by nothing else. Both spellings are refused here, with
+       * the same sentence, rather than one of them getting a better message
+       * than the other. */
       (
         cmd.signal_kind !== "working-on" ||
         (
           cmd.to_user_id === null &&
           toAgentPrincipalId === null &&
-          inReplyTo === null
+          inReplyTo === null &&
+          !addressedByList
         )
       ) &&
       (
@@ -1797,7 +1827,8 @@ function validateCommand(
         (
           cmd.signal_kind === "note" &&
           cmd.to_user_id === null &&
-          toAgentPrincipalId === null
+          toAgentPrincipalId === null &&
+          !addressedByList
         )
       ) &&
       (
@@ -1862,6 +1893,7 @@ function validateCommand(
           ...(broadcastToChannel === undefined
             ? {}
             : { broadcast_to_channel: broadcastToChannel as boolean }),
+          ...(addressedByList ? { to: recipients! } : {}),
         },
       }
       : {
@@ -1895,10 +1927,12 @@ function validateCommand(
   // 20260730000001_workspace_access_lifecycle.sql — a hand-written duplicate
   // here has drifted before (the 8h→24h TTL constant above).
   if (cmd.kind === "declare_agent_model") {
-    if (
-      !exactKeys(cmd, ["kind", "model"]) ||
-      (cmd.model !== null && typeof cmd.model !== "string")
-    ) {
+    /* KEYS, then TYPE, in two steps. Bundled, `{model: 123}` -- exactly the
+     * right keys, wrong type -- was answered with the field-list sentence,
+     * which ends "and nothing else" and so tells the caller they sent an extra
+     * key they did not send. channel_rename already split these two; a review
+     * arm found that these did not. */
+    if (!exactKeys(cmd, ["kind", "model"])) {
       return {
         ok: false,
         status: 400,
@@ -1906,6 +1940,9 @@ function validateCommand(
           model: MODEL_RULE_TEXT,
         }),
       };
+    }
+    if (cmd.model !== null && typeof cmd.model !== "string") {
+      return { ok: false, status: 400, reason: MODEL_RULE_TEXT };
     }
     /* Normalize EXACTLY as the reducer will (trim, empty -> null) BEFORE
      * validating, so the wire and the reducer agree on every input: a raw ""
@@ -2009,12 +2046,9 @@ function validateCommand(
   // normalize-before-validate order as declare (its landing-round finding 1),
   // and the SAME bounds — the reducer's shared normalizedModel is the source.
   if (cmd.kind === "set_agent_model") {
-    if (
-      !exactKeys(cmd, ["kind", "principal_id", "model"]) ||
-      typeof cmd.principal_id !== "string" ||
-      !UUID_RE.test(cmd.principal_id) ||
-      (cmd.model !== null && typeof cmd.model !== "string")
-    ) {
+    /* Keys, then the id shape, then the model type -- the same three-step
+     * split as declare_agent_model above, for the same reason. */
+    if (!exactKeys(cmd, ["kind", "principal_id", "model"])) {
       return {
         ok: false,
         status: 400,
@@ -2025,6 +2059,16 @@ function validateCommand(
           { model: MODEL_RULE_TEXT },
         ),
       };
+    }
+    if (typeof cmd.principal_id !== "string" || !UUID_RE.test(cmd.principal_id)) {
+      return {
+        ok: false,
+        status: 400,
+        reason: uuidFieldRuleText("principal_id"),
+      };
+    }
+    if (cmd.model !== null && typeof cmd.model !== "string") {
+      return { ok: false, status: 400, reason: MODEL_RULE_TEXT };
     }
     const setModel = cmd.model === null ? null : cmd.model.trim();
     const normalizedSet = setModel === "" ? null : setModel;
@@ -6604,6 +6648,55 @@ async function signalAgentTargetIsLive(
   return targetRows[0] !== undefined;
 }
 
+/**
+ * Is this signal addressed to the caller through swarm.signal_recipients?
+ *
+ * The scalar columns hold recipient 0 only, so a check that reads them alone
+ * answers "no" for recipients 1..N. That was found by a review arm on this
+ * lane: the second recipient of a signal could READ it and could not reply to
+ * it, because in_reply_to's authorization still asked the scalar columns. A
+ * message you can read and cannot answer is the trap this closes.
+ *
+ * It grants nothing the recipient set does not already grant: exactly the
+ * people swarm_read.signals admits through the same table, narrowed to the
+ * presenting principal when an agent is calling.
+ */
+async function signalNamesRecipient(
+  tx: Sql,
+  route: Route,
+  signalId: string,
+  caller: { agentPrincipalId: string | null; userId: string | null },
+): Promise<boolean> {
+  if (caller.agentPrincipalId === null && caller.userId === null) return false;
+  const rows = await tx<{ hit: number }[]>`
+    SELECT 1 AS hit
+    FROM swarm.signal_recipients AS r
+    WHERE r.signal_id = ${signalId}::uuid
+      AND r.workspace_id = ${route.workspaceId}::uuid
+      AND (
+        (
+          ${caller.agentPrincipalId}::uuid IS NOT NULL
+          AND r.recipient_agent_principal_id = ${caller.agentPrincipalId}::uuid
+        )
+        OR (
+          ${caller.userId}::uuid IS NOT NULL
+          AND (
+            r.recipient_user_id = ${caller.userId}::uuid
+            OR EXISTS (
+              SELECT 1
+              FROM swarm.agent_principals AS owned
+              WHERE owned.principal_id = r.recipient_agent_principal_id
+                AND owned.workspace_id = r.workspace_id
+                AND owned.owner_user_id = ${caller.userId}::uuid
+            )
+          )
+        )
+      )
+    LIMIT 1
+  `;
+  return rows[0] !== undefined;
+}
+
 async function signalAgentOwnedByUser(
   tx: Sql,
   route: Route,
@@ -6630,6 +6723,32 @@ async function resolveSignalWriteTarget(
 ): Promise<SignalWriteTarget | null> {
   const toAgentPrincipalId = command.to_agent_principal_id ?? null;
   const inReplyTo = command.in_reply_to ?? null;
+  const recipients = command.to ?? null;
+  if (recipients !== null) {
+    /* The validator guarantees a non-empty list, no scalar recipient beside it
+     * and no in_reply_to, so this arm needs no re-derivation of those rules.
+     *
+     * EVERY recipient is checked for liveness, not just the first. A dead one
+     * anywhere in the list refuses the whole post the same way a dead scalar
+     * target does today -- the answer is a bare 403, which does not disclose
+     * WHICH recipient is not reachable, for the same tenant-honesty reason the
+     * scalar path does not. */
+    for (const recipient of recipients) {
+      const live = recipient.kind === "user"
+        ? await signalUserTargetIsLive(tx, route, recipient.id)
+        : await signalAgentTargetIsLive(tx, route, recipient.id);
+      if (!live) return null;
+    }
+    const first = recipients[0]!;
+    /* Entry 0 becomes the row's own scalar recipient. This is the whole
+     * old-reader guarantee, and swarm.signal_recipients carries a deferred
+     * constraint that refuses the commit if these two ever disagree. */
+    return {
+      toUserId: first.kind === "user" ? first.id : null,
+      toAgentPrincipalId: first.kind === "agent" ? first.id : null,
+      inReplyTo: null,
+    };
+  }
   if (inReplyTo === null) {
     const userLive = await signalUserTargetIsLive(
       tx,
@@ -6672,7 +6791,7 @@ async function resolveSignalWriteTarget(
   if (!reference) return null;
 
   const callerUserId = auth.actor.user;
-  const addressedToCaller = auth.agent !== null
+  const addressedByScalar = auth.agent !== null
     ? reference.to_agent_principal_id === auth.agent.principal_id
     : callerUserId !== null &&
       (
@@ -6684,6 +6803,14 @@ async function resolveSignalWriteTarget(
           callerUserId,
         )
       );
+  /* The scalar columns carry recipient 0. Recipients 1..N live only in
+   * swarm.signal_recipients, so asking the columns alone left a signal a
+   * caller can READ and cannot reply to. The second arm asks the set. */
+  const addressedToCaller = addressedByScalar ||
+    await signalNamesRecipient(tx, route, inReplyTo, {
+      agentPrincipalId: auth.agent !== null ? auth.agent.principal_id : null,
+      userId: auth.agent !== null ? null : callerUserId,
+    });
   if (!addressedToCaller) return null;
 
   if (reference.from_kind === "user") {
@@ -6964,6 +7091,34 @@ async function postSignal(
     if (placement.untilCeiling !== null) return null;
     throw new Error("signal insert did not return a row");
   }
+  /* One row per recipient, in the order the sender named them. Position 0
+   * repeats the scalar recipient on the signal row on purpose: the table then
+   * means exactly "what the caller addressed", with no arity-dependent branch.
+   *
+   * These rows WAKE NOBODY. No trigger on swarm.signal_recipients writes to
+   * swarm.signal_deliveries, and section 4 of
+   * 20260905000010_signal_recipients.sql is a page on why: the rows such a
+   * trigger writes cannot be hydrated or accepted by an installed listener.
+   * Recipient 0 is woken from the scalar column by the trigger on
+   * swarm.signals, which ran when the insert above committed its row.
+   *
+   * A body with no `to` writes NOTHING here, so nothing about an installed
+   * client's post changes. swarm_read.signals derives the same set from the
+   * scalar column for those rows, which is why this lane needs no backfill. */
+  for (const [position, recipient] of (command.to ?? []).entries()) {
+    await tx`
+      INSERT INTO swarm.signal_recipients (
+        signal_id, workspace_id, recipient_user_id,
+        recipient_agent_principal_id, position
+      ) VALUES (
+        ${signal.id}::uuid,
+        ${route.workspaceId}::uuid,
+        ${recipient.kind === "user" ? recipient.id : null}::uuid,
+        ${recipient.kind === "agent" ? recipient.id : null}::uuid,
+        ${position}
+      )
+    `;
+  }
   for (const [position, attachment] of attachments.entries()) {
     await tx`
       INSERT INTO swarm.signal_attachments (
@@ -6994,7 +7149,43 @@ async function postSignal(
     channel_id: signal.channel_id,
     thread_root_id: signal.thread_root_id,
     broadcast_to_channel: signal.broadcast_to_channel,
+    recipients: signalRecipientSet(command.to ?? null, signal),
   };
+}
+
+/**
+ * The recipient set a reader sees, derived the way swarm_read.signals derives
+ * it: the rows the caller named when there are any, and otherwise the row's own
+ * scalar recipient as a one-entry set. Both halves are here so a post that used
+ * the scalar shape and a post that used a one-entry `to` return the same set,
+ * and so a signal written before swarm.signal_recipients existed reads the
+ * same through either surface.
+ *
+ * The SQL copy of this rule is in 20260905000010_signal_recipients.sql. They
+ * are two expressions of one rule, and they do NOT render identically: the
+ * view adds a `position` to each entry and this record does not, because the
+ * order of the array already carries it.
+ *
+ * Where each half is measured, named exactly rather than approximately (a
+ * review arm found an earlier version of this comment naming the wrong file):
+ * tests/p1-local/chat-recipients-postgres.test.ts compares the SQL FALLBACK
+ * against the SQL ROWS, which is the no-backfill claim; the served test
+ * "a post with `to` stores the first recipient in the scalar column and the
+ * whole set beside it" in tests/p1-server/chat-signals.test.ts is the one that
+ * puts this function's output and the view's column side by side.
+ */
+function signalRecipientSet(
+  named: readonly SignalRecipient[] | null,
+  signal: { to_user_id: string | null; to_agent_principal_id: string | null },
+): SignalRecipient[] {
+  if (named !== null && named.length > 0) return [...named];
+  if (signal.to_user_id !== null) {
+    return [{ kind: "user", id: signal.to_user_id }];
+  }
+  if (signal.to_agent_principal_id !== null) {
+    return [{ kind: "agent", id: signal.to_agent_principal_id }];
+  }
+  return [];
 }
 
 async function handleTransaction(
@@ -7438,6 +7629,13 @@ async function handleTransaction(
               deliveries,
               pending_delivery_count: ledger.pending_delivery_count,
               terminal_delivery_failure_count: ledger.terminal_delivery_failure_count,
+              /* Spread, never defaulted -- see the same comment on the fresh
+               * claim below. This is the replay path, so it is the ONE place
+               * absent is actually reachable: a claim stored before the field
+               * existed. */
+              ...(ledger.oldest_pending_at === undefined
+                ? {}
+                : { oldest_pending_at: ledger.oldest_pending_at }),
               event_ids: [],
               events: [],
               min_client_version: minClientVersion,
@@ -8235,6 +8433,13 @@ async function handleTransaction(
           deliveries,
           pending_delivery_count: ledger.pending_delivery_count,
           terminal_delivery_failure_count: ledger.terminal_delivery_failure_count,
+          /* Spread, never defaulted: an ABSENT oldest_pending_at (a replay of a
+           * claim stored before the field existed) must stay absent rather than
+           * become null, which would say the queue is empty beside a count that
+           * says it is not. */
+          ...(ledger.oldest_pending_at === undefined
+            ? {}
+            : { oldest_pending_at: ledger.oldest_pending_at }),
           event_ids: [],
           events: [],
           min_client_version: minClientVersion,
@@ -9024,6 +9229,13 @@ async function resolveLedgerRace(error: LedgerRace): Promise<HttpResult> {
           deliveries,
           pending_delivery_count: ledger.pending_delivery_count,
           terminal_delivery_failure_count: ledger.terminal_delivery_failure_count,
+          /* Spread, never defaulted: an ABSENT oldest_pending_at (a replay of a
+           * claim stored before the field existed) must stay absent rather than
+           * become null, which would say the queue is empty beside a count that
+           * says it is not. */
+          ...(ledger.oldest_pending_at === undefined
+            ? {}
+            : { oldest_pending_at: ledger.oldest_pending_at }),
           event_ids: [],
           events: [],
           min_client_version: minClientVersion,

@@ -1,0 +1,36 @@
+```
+diff --git a/docs/design/2026-09-04-chat-platform-reconciled.md b/docs/design/2026-09-04-chat-platform-reconciled.md
+```
+
+**Check 1: Old clients.** 
+`to` reaches `exactKeys` safely. In `supabase/functions/command/index.ts`, `exactKeys` merges `chatKeys`, which is populated by calling `chatSignalKeys(cmd)` (derived from `CHAT_SIGNAL_OPTIONAL_KEYS`). Because `to` is in `CHAT_SIGNAL_OPTIONAL_KEYS`, it is explicitly included in the expected keys array only when `Object.hasOwn(cmd, "to")` is true. It never joins the `modernKeys` all-or-nothing trap. On the read edge, `chatReadKeys` correctly omits `to` entirely, ensuring no overlap.
+
+**Check 2: View recreation (The Vacuously True Trap).** 
+The migration produces a vacuously true test condition that fails to protect the view's original security clauses. `assert_view_clauses_preserved` asserts that the string `'is_member'` remains in `after_def`. However, the migration explicitly appends an `OR` disjunct at the top level containing `swarm.is_member(s.workspace_id, auth.uid())`. Because of this new addition, the string `'is_member'` will *always* be present in the new view definition. If the regex splice accidentally drops the *original* `is_member` gate (which protects undirected signals), the assertion helper will fail to catch it because the condition `position('is_member' IN after_def) > 0` is now satisfied vacuously.
+
+**Check 3: The first-recipient guarantee.** 
+There is no path where the scalar columns disagree with `swarm.signal_recipients` position 0, nor is there a state where recipient rows exist but scalar columns are null. 
+- On a standard post, `resolveSignalWriteTarget` plucks `recipients[0]` and directly populates `toUserId` or `toAgentPrincipalId`, leaving the other null. 
+- On `in_reply_to` re-addressing, `validateCommand` outright refuses the `to` list. Since `command.to` is absent, no rows are inserted into `swarm.signal_recipients`, and the scalar columns are populated with the target fetched from the reference signal. 
+- On `working-on`, `validateCommand` ensures it is strictly undirected (no list, no scalars).
+
+**Check 4: The two enforcement points.** 
+The view's `WHERE` and the read arm agree. An agent *cannot* read a signal it is not addressed on, because `addressedToThisAgent` checks `s.recipients @> jsonb_build_array(jsonb_build_object('kind', 'agent', 'id', ${agent.principal_id}::uuid))`. JSONB containment is exact (matching the JSON structure) and case-insensitive in UUID representation, so it correctly grants access to the second recipient without kind confusion. The `inbox: true` filter agrees exactly by strictly requiring `addressedToThisAgent`.
+
+**Check 5: Delivery fan-out.** 
+There is no delivery fan-out. The diff confirms `swarm.enqueue_signal_recipient_delivery()` was removed. The wake relies entirely on the untouched `enqueue_signal_delivery()` trigger on the scalar `to_agent_principal_id` column. A `working-on` signal bypasses queuing because it is never directed (scalar columns are always null).
+
+**Check 6: The cap.** 
+A caller cannot store 9 recipients. The database limits `position` to `CHECK (position BETWEEN 0 AND 7)`. Attempting to insert a 9th recipient either violates this check (if position is 8) or violates the primary key (if position is reused). Every user-facing sentence accurately reads from `SIGNAL_RECIPIENT_MAX`. 
+
+**Check 7: oldest_pending_at.** 
+The reported time comes from the exact same statement as `pending_delivery_count` (`min(d.enqueued_at)`). Absent and null are correctly handled in `parseClaimLedger`, which uses `Object.hasOwn` to propagate `null` safely without confusing it for an absent key, ensuring safe replay of older client versions.
+
+**Check 8: Claims in prose.** 
+The claim that a one-entry `to` produces the identical scalar row, delivery ledger, and rendered set is fully accurate. `swarm_read.signals` dynamically merges `swarm.signal_recipients` via `COALESCE` with a `CASE` fallback; rendering 1 recipient row yields identical JSONB to rendering the fallback of the scalar columns. The side table writes differ (1 row vs 0 rows), which the lane explicitly calls out. 
+
+**Check 9: The STILL WRONG sentence in the diff.** 
+The diff states: *"A recipient can reply to what a recipient can read... `signalNamesRecipient` adds the second arm, granting exactly what the recipient set already grants on the read path, with a control that a member who is NOT in the set still cannot reply."*
+This sentence is **false** when the caller is an agent reading a signal addressed to its owner. In `swarm_read.signals`, a user *can* read a signal addressed to an agent they own (`owned.owner_user_id = auth.uid()`), and `resolveSignalWriteTarget` grants that owner the ability to reply. However, on the agent read path (`supabase/functions/read/index.ts`), an agent *cannot* read a signal addressed to its owner (it only matches `'id', agent.principal_id`). Yet, the prose claims `signalNamesRecipient` grants *exactly* what the recipient set grants on the read path. Furthermore, undirected signals are universally readable by any member on the read path, but a member "who is NOT in the set" (because the undirected signal has no set) still gets a 403 trying to privately reply to it, meaning they *cannot* reply to what they can read.
+
+VERDICT: FAIL

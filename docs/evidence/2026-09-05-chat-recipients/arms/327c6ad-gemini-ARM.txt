@@ -1,0 +1,34 @@
+diff --git a/docs/design/2026-09-04-chat-platform-reconciled.md b/docs/design/2026-09-04-chat-platform-reconciled.md
+
+### 1. The Wake Gate
+A true sentence the gate lets through that a reader could take the wrong way:
+*"The system wakes the recipient at position 0, and only when that recipient is an agent taking `ask` or `note`, meaning that agents at positions 1 through 7 must read the signal on their own time."*
+
+A reader might incorrectly infer from "on their own time" that these secondary agents are placed in a lower-priority delivery queue or notified on a delay, when in reality they are never enqueued or woken at all. However, **the gate is the right shape**. Since it strictly matches a long, precise, 108-character invariant string, it successfully prevents omissions or semantic drift of the core rule. Restricting the surrounding context mathematically would make the assertion overly brittle without improving documentation accuracy.
+
+### 2. The Wake Clause Read Word by Word
+Reading the wake clause against `enqueue_signal_delivery()`:
+- *"wakes the recipient at position 0"* — **True**. It inserts `NEW.to_agent_principal_id`, which `signal_recipients_first_is_the_scalar` guarantees is always synchronized with position 0.
+- *"and only when that recipient is an agent"* — **True**. It requires `NEW.to_agent_principal_id IS NOT NULL`.
+- *"taking `ask` or `note`"* — **True** but semantically precise. The trigger evaluates `NEW.kind IN ('ask', 'note')`, meaning it inspects the *signal's* kind, not the *agent's* configured capabilities.
+
+**Cases the clause still gets wrong in reality:**
+- **Expired signals:** An expired signal inserted in the past STILL enqueues a delivery because the trigger checks `NEW.kind` but not `NEW.until`.
+- **Revoked agents:** A revoked agent at position 0 STILL enqueues a delivery because the trigger only checks `IS NOT NULL` without querying the `agent_principals` table for revocation status.
+- **Agent authoring to itself:** An agent posting to itself still enqueues a delivery because the trigger does not filter `NEW.from_principal = NEW.to_agent_principal_id`.
+
+---
+
+### Checks
+
+1. **Old clients:** `to` only reaches `exactKeys` through `chatSignalKeys(cmd)`, which uses `CHAT_SIGNAL_OPTIONAL_KEYS.filter(key => Object.hasOwn(cmd, key))`. If an old client omits `to`, it is entirely excluded from the required key array, cleanly preserving backward compatibility.
+2. **The view recreation:** The `@@SWARM_SPLIT@@` splicing is robust. By splitting strictly on the top-level `FROM swarm.signals`, it safely isolates the top-level `WHERE` clause, avoiding catastrophic collisions with the `attachments` subquery's internal `WHERE`. The new `OR` disjunct enforces its own `swarm.is_member` gate prior to inspecting `swarm.signal_recipients`, completely preventing non-member data leakage.
+3. **The first-recipient guarantee:** `resolveSignalWriteTarget` extracts index 0 and sets it as the scalar. `postSignal` iterates from `position = 0` mirroring this state. A deferred constraint trigger perfectly guarantees alignment upon transaction commit. If `in_reply_to` or `working-on` is used, the validator rejects the `to` array entirely, resulting in 0 recipient rows—the view then safely falls back to deriving the set from the populated scalar columns.
+4. **The two enforcement points:** The JSON containment (`s.recipients @> ... {'kind': 'agent', 'id': ...}`) precisely prevents kind confusion and UUID collisions. The read arm correctly falls back to checking secondary addresses because the exact-match JSON containment operates seamlessly against the derived or actual `s.recipients` set. The `inbox: true` filtering intercepts with this logic properly.
+5. **Delivery fan-out:** Delivery fan-out was entirely removed from this lane (as documented extensively in `chat-build-plan.md` and `20260905000010_signal_recipients.sql`, since secondary recipients cannot lease or hydrate deliveries). Therefore, there is no `swarm.enqueue_signal_recipient_delivery()` to evaluate, and `ON CONFLICT DO NOTHING` remains safely isolated to position 0's unmodified trigger.
+6. **The cap:** The cap remains strictly 8. The edge uses `SIGNAL_RECIPIENT_MAX = 8`, directly mapping to `CHECK (position BETWEEN 0 AND 7)`. Since position is unique per signal, this caps the database table identically at 8 rows. User-facing phrasing dynamically injects the constant so documentation stays seamlessly in sync.
+7. **`oldest_pending_at`:** The metric is queried using `min(d.enqueued_at)` within the exact same statement (`countRows`) as the pending delivery count. The edge response carefully differentiates an omitted value (from an older replay) by conditionally spreading the property (`...(ledger.oldest_pending_at === undefined ? {} : ...)`), preventing `undefined` from collapsing into a queue-empty `null` state. Adding the capability marker is safe because clients simply ignore unrecognized capabilities.
+8. **Claims in prose:** Documentation flawlessly reflects the implementation, explicitly declaring that a scalar shape and a one-entry `to` array create an identical view output and delivery ledger, while specifically acknowledging that the side table (0 rows vs 1 row) differs.
+9. **The tests:** No tests pass for vacuously incorrect reasons. The `chat-channel-constants.test.ts` `includes()` checks validate precise text constraints and retirement markers. The prior bug matching `18` to `8` was actively resolved with proper digit-bounded regex constraints (`(?<!\\d)...(?!\\d)`). The `unknownChannelMessage` strings test legitimately validates array sorting execution, not just loose substrings.
+
+VERDICT: PASS
