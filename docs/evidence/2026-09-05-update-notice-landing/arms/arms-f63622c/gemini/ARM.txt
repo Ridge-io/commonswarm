@@ -1,0 +1,27 @@
+`diff --git a/docs/design/2026-09-04-IN-APP-UPDATE-NOTICE.md b/docs/design/2026-09-04-IN-APP-UPDATE-NOTICE.md`
+
+1. **False positives.**
+`DIFF.patch` lines 207-211: `markup !== baselineMarkup` blindly compares the entire HTML string. If a CDN or proxy injects per-request varying bytes (such as a Cloudflare Ray ID, a timestamp, or a CSRF token) into the HTML, every poll will return a different `markup` string, causing the notice to appear falsely. Additionally (`DIFF.patch` lines 186-206), if a login redirect or SSO interstitial is itself built with Astro, it will contain its own `/_astro/` assets. `served` will not be empty, and because it differs from `runningBuild`, it will falsely trigger an update instead of ignoring the response.
+
+2. **False negatives.**
+`DIFF.patch` lines 166-170: The regex `/\/_astro\/[^"']+\.(?:js|css)$/` and selector `script[src], link[href]` only scan the initial document for JS/CSS assets. A build that only modifies a dynamically imported JS chunk (which changes its hash but isn't referenced directly in `index.html`) or a static asset like `public/data.json` will not change `index.html` or the `runningBuild` asset list. `served === runningBuild` and `markup === baselineMarkup` will both be true, completely missing the update.
+
+3. **The poll.**
+`DIFF.patch` lines 239-247: `checkForNewBuild()` does not check if a request is already in flight. If the user rapidly toggles the tab's visibility, `startUpdatePoll()` will fire multiple times, spawning concurrent `fetch` requests that will race each other. Furthermore, `stopUpdatePoll()` (`DIFF.patch` lines 234-238) clears the interval but fails to abort an in-flight `fetch`, meaning a poll can complete and show the notice after the tab has been hidden.
+
+4. **State and dismissal.**
+`DIFF.patch` lines 210 and 219: `servedBuild = served === runningBuild ? markup : served;` is flawed because `runningBuild` never updates after boot. If an initial update changes assets, it is dismissed and `dismissedBuild` becomes the asset string. If a subsequent update changes ONLY markup, its assets remain identical to the dismissed update. Since `served` still differs from `runningBuild`, `servedBuild` again takes the asset string, causing `servedBuild !== dismissedBuild` to evaluate to `false`. The new markup-only update is silently hidden.
+
+5. **Layout.**
+`DIFF.patch` lines 120 and 277-284: The `<div class="dashboard__update-notice" data-update-notice hidden>` element is assigned `.dashboard__update-notice` which has `display: flex;`. This author-level CSS rule has higher specificity than the user-agent stylesheet's `[hidden] { display: none; }`. The element will remain visually rendered and take up grid space, failing to collapse its row when hidden.
+
+6. **The test's own honesty.**
+`DIFF.patch` line 453: The test determines visibility using `shown: bar ? !bar.hidden : false`. This only checks the DOM `.hidden` property, which reflects the HTML attribute. Due to the specificity bug in section 5, the element remains visually displayed despite the attribute. The test falsely passes by asserting on the attribute rather than the computed style or bounding box. I also verified the `sec-fetch-dest` discriminator is stable, `assertProbeHappened` enforces `polls >= 2`, and `assets-first` isolates signal 1 since `markup === baselineMarkup` holds for it.
+
+7. **Scope claim.**
+`DIFF.patch` lines 33-35: I verified against the repo's `supabase/migrations/20260904000001_standing_grant_resume.sql`. The 19 columns listed in the design note match the migration perfectly, and there is no agent running version exposed. This claim is accurate.
+
+8. **Operator-visible claims.**
+`DIFF.patch` line 93 vs line 276: The design note claims the bar height is "53px at 390x844 and at 320x568" (`DIFF.patch` line 93). However, the CSS comment in the diff claims "Measured at 390x844: ... 60px after." (`DIFF.patch` line 276). The measured numbers do not match.
+
+VERDICT: FAIL

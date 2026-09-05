@@ -1,0 +1,27 @@
+`diff --git a/docs/design/2026-09-04-IN-APP-UPDATE-NOTICE.md b/docs/design/2026-09-04-IN-APP-UPDATE-NOTICE.md`
+
+1. **False positives.**
+Checked the possibility of DOM vs. string differences. `buildAssetsFrom` (`DIFF.patch:224`) uses `getAttribute("src")` and `getAttribute("href")` (`DIFF.patch:227`), which safely reads the literal attribute string (e.g. `/_astro/app.js`) rather than letting the browser resolve it to an absolute URL via the `.src` property. The `page` parsed via `DOMParser` (`DIFF.patch:288`) does not execute scripts or mutate, ensuring it perfectly matches the live `document`. No false positives found here.
+
+2. **False negatives.**
+Checked for missing deploy signals. Because signal 2 explicitly scopes to `root.querySelector("live-dashboard")?.outerHTML` (`DIFF.patch:238`), any markup changes outside of this element are ignored. Signal 1 (`DIFF.patch:226`) only targets `script[src], link[href]`. Consequently, a deploy that alters only an inline `<style>` block or an inline `<script>` (without a `src` attribute) located in the `<head>` will not change the `/_astro/` assets and will not affect the `<live-dashboard>` markup. This is a false negative not enumerated in the lane's "Not covered" list (`DIFF.patch:121`). 
+
+3. **The poll.**
+Checked the polling URL and concurrency logic. By fetching `window.location.pathname` (`DIFF.patch:272`), the code correctly drops `window.location.search`, preventing the replay of one-time auth callbacks. The in-flight guard using `pollInFlight` and `pollRequested` (`DIFF.patch:261`) safely serializes the requests without race conditions, as it executes synchronously within the single-threaded event loop. If visibility toggles during an active fetch, it reliably queues exactly one follow-up poll without looping infinitely.
+
+4. **State and dismissal.**
+Checked the dismissal sentinel and string identities. `servedBuild` unconditionally joins both halves: `${served}\n${markup}` (`DIFF.patch:301`). Since `markup` always begins with `<live-dashboard`, it can never collide with the asset paths in `served`, preventing identical builds from generating different identities. A rollback correctly un-strands the dismissal by setting `dismissedBuild = null` when `!isNewBuild` (`DIFF.patch:307`), ensuring the bar can reappear if the dismissed build ships again.
+
+5. **Layout.**
+Checked the CSS grid logic. The `.dashboard__sample-notice:not([hidden]) + .dashboard__frame` selector remains structurally valid because adding `.dashboard__update-notice` before `.dashboard__sample-notice` (`DIFF.patch:175`) does not break their adjacent sibling relationship. The grid correctly collapses the `auto` rows to 0 when the notices receive the `hidden` attribute (`display: none`), while `grid-row: 3` (`DIFF.patch:426`) ensures the frame always remains pinned. The container correctly enforces `min-inline-size: 0` (`DIFF.patch:379`) to prevent the flex children from blowing out the viewport width.
+
+6. **The test's own honesty.**
+Checked the test constraints. The `sec-fetch-dest` header (`DIFF.patch:741`) is a real, stable fetch metadata standard that strictly separates document navigations from `fetch()` calls. `assertProbeHappened` demands `polls >= 2` (`DIFF.patch:879`), proving the server actually received the poll and the quiet cases didn't pass simply due to a JS exception before the request. The `assets-first` variant returns the mutated asset payload on the very first poll (`DIFF.patch:762`), forcing `baselineMarkup` to baseline the new markup while the assets differ, strictly isolating signal 1.
+
+7. **Scope claim.**
+Checked the design note's claims against the repository schema. The migration `20260904000001_standing_grant_resume.sql` defines exactly the 19 columns claimed in the design document (`DIFF.patch:44`). A per-agent running version is genuinely absent from the `swarm_read.renewal_grant_roster` read path. The claim is honest.
+
+8. **Operator-visible claims.**
+Checked the UI text and measurements. The copy "This page is out of date." correctly reflects that the notice fires on both rollbacks and roll-forwards, avoiding the word "new" (`DIFF.patch:181`). The CSS comment measurements match the implementation: `53px` and `min-inline-size: 0` accurately represent the bounds (`DIFF.patch:374`). No overstatements or hardcoded enumerations exist where generated constants should be.
+
+VERDICT: PASS

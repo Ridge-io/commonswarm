@@ -1,0 +1,29 @@
+diff --git a/docs/design/2026-09-04-IN-APP-UPDATE-NOTICE.md b/docs/design/2026-09-04-IN-APP-UPDATE-NOTICE.md
+
+## Attack these, in order. Say what you checked and what you found.
+
+1. **False positives.**
+I checked the redirection and SSO handling. I found that because `fetch()` follows redirects transparently, an expired session will fetch the login page with a 200 OK status. If that login page is also built with Astro, it will contain `/_astro/` assets. This bypasses the `if (!served) return;` guard (`DIFF.patch` line 270). Because the login page lacks `<live-dashboard>`, `markup` will be `""`, triggering `markup !== baselineMarkup` (or `served !== runningBuild`) and falsely displaying the update notice. The design note (`DIFF.patch` line 100) incorrectly assumes all login redirects result in a body "with no hashed assets in it."
+
+2. **False negatives.**
+I checked what changes might evade both signals. I found that if a deploy only modifies an asset inside `public/` (such as `favicon.ico` or a web manifest), its filename does not change. `buildAssetsFrom` (`DIFF.patch` line 208) only collects `/_astro/` URLs, so the asset signal sees no difference, and the markup inside `<live-dashboard>` remains identical. Neither signal detects this deploy.
+
+3. **The poll.**
+I checked the URL path handling in the interval poll. I found that the poll fetches `window.location.pathname` (`DIFF.patch` line 252) but drops `window.location.search`. If the app uses SSR and renders differently based on the query string (e.g. `/app?tab=2`), fetching `/app` could instantly return a page with different assets or markup than `runningBuild` (which was captured from the initial load). This would falsely trigger the update notice on the very first poll. 
+
+4. **State and dismissal.**
+I checked how `dismissedBuild` behaves during a rollback. I found that if Build B is served and the user clicks "Not now," `dismissedBuild` is set to Build B. If the server then rolls back to Build A, `isNewBuild` evaluates to false, causing the notice to hide and returning early (`DIFF.patch` line 278). `dismissedBuild` is never cleared. If the server later rolls forward to Build B again, `isNewBuild` becomes true, but `servedBuild !== dismissedBuild` (`B !== B`) evaluates to false (`DIFF.patch` line 285). The notice stays hidden, permanently and silently ignoring the redeployment of Build B for that tab.
+
+5. **Layout.**
+I checked the grid configuration and visibility states. I found that when the notices are hidden, `display: none` successfully removes them from the grid. Because `.dashboard__frame` is explicitly pinned to `grid-row: 3` (`DIFF.patch` line 397), the unused `auto` rows (`DIFF.patch` line 327) collapse to 0 height. The frame correctly expands into the `minmax(0, 1fr)` space without pushing the composer off-screen, maintaining the layout rules.
+
+6. **The test's own honesty.**
+I checked the `sec-fetch-dest` discriminator and the `assets-first` isolation. I found that `sec-fetch-dest: empty` (`DIFF.patch` line 682) is a stable browser mechanism to separate `fetch()` from document navigation. The `assets-first` variant successfully isolates the asset signal because it is served during the very first poll (`DIFF.patch` line 697), meaning it becomes the `baselineMarkup`. When the second poll occurs, the markup matches identically (`markup === baselineMarkup`), proving the notice was triggered entirely by the asset signal. 
+
+7. **Scope claim.**
+I checked the database migration file against the design note claim. I found that `swarm_read.renewal_grant_roster` truly returns exactly the 19 columns listed in the design note (`DIFF.patch` line 40). Because the read path does not expose any CLI versions or running agent state, the note accurately concludes that a per-agent out-of-date notice cannot be built on the current schema. 
+
+8. **Operator-visible claims.**
+I checked the CSS heights, comments, and copy. I found that the CSS comment states a height of 53px at 390x844 (`DIFF.patch` line 342), which is properly enforced by the test bounding the height to `<= 56` (`DIFF.patch` line 948). The copy states "This page is out of date," correctly avoiding a recency claim. The operator-visible claims and test assertions match the implementation.
+
+VERDICT: FAIL

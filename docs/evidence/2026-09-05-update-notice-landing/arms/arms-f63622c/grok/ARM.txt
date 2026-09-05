@@ -1,0 +1,109 @@
+I'll read REVIEW.md and DIFF.patch first, then follow REVIEW.md exactly.First `diff --git` line is in. Next I’ll check the real source, CSS, tests, and the design-note claims against the repo.I'll read the live source, CSS grid, poll path, and the 19-column claim next.I'll check the 19 columns, `/app` routing, cache headers, CSS tokens, and the mobile ruling next.Grep was on the arm dir, not the lane tree. I'll search the lane worktree.diff --git a/docs/design/2026-09-04-IN-APP-UPDATE-NOTICE.md b/docs/design/2026-09-04-IN-APP-UPDATE-NOTICE.md
+
+Checked `DIFF.patch` (merge-base `b00018c` → `f63622c`) against `LiveDashboard.astro`, the observer test, `supabase/migrations/20260904000001_standing_grant_resume.sql`, `supabase/functions/read/index.ts`, `site/src/lib/commonswarm.ts`, `site/src/lib/release.ts`, live `https://commonswarm.com/app/`, and `/` plus `/start`. Did not run `npm --prefix site test` or drive Chrome.
+
+## 1. False positives
+
+`runningBuild` is a one-shot `querySelectorAll("script[src], link[href]")` on the live `document` (`DIFF.patch` 167–174). The served set is the same walk on `DOMParser` of the poll body (`DIFF.patch` 203–206). DOMParser does not run scripts. Nothing in `site/src` injects `/_astro/` tags before that snapshot, so the two sets match at boot unless something outside the page (extension, injected `link`) adds a `/_astro/*.js|css` URL. The regex is anchored at `$`, so a query string on only one side drops that URL; if every URL grew a query, `served` is empty and the poll stays quiet (`DIFF.patch` 207).
+
+Signal 2 is a raw byte compare of the whole HTML (`DIFF.patch` 211). Any per-request token in the body would raise the notice on the second poll. I fetched live `/app/` twice: bodies were byte-identical (38678 bytes), `Cache-Control: public, max-age=0, must-revalidate`. Current Vercel HTML is stable. A later edge inject would still be a false positive; that is not measured as happening now.
+
+`/` and `/start` both contain `/_astro/` URLs. The “login redirect / SSO interstitial has no hashed assets” claim (`DIFF.patch` 76–79, 186–188) is the heuristic `if (!served) return`. A followed redirect onto another page of this same Astro site would look like a new build. `/app` itself does not HTTP-redirect today (`/app` and `/app/` both 200, same body; auth is client-side). The hole is the heuristic, not the current `/app` route.
+
+A rebuild that changes only `index.html` whitespace fires signal 2. That is a different body, not a silent no-op. The note’s “rebuild with no source change produces the same bytes” (`DIFF.patch` 73–74) holds only if the toolchain is deterministic (`compressHTML: true` in `astro.config.mjs`).
+
+## 2. False negatives
+
+The named first-poll markup gap is real (`DIFF.patch` 81–83, 162–165). It is not the only gap.
+
+- Same gap if the navigation document was cached and the first `no-store` poll is the markup-only deploy: signal 1 sees the same hashes, signal 2 writes that body as `baselineMarkup` (`DIFF.patch` 208) and never asks.
+- Unhashed files with stable names: `/fonts/*.woff2`, `/favicon.svg`, `/og.png`, anything else under `site/public/`. Neither walk sees them.
+- A hashed file `/app` does not reference. Other routes’ `/_astro` names are out of scope for this notice; that matches claim 4.
+- Dynamic `import()` chunks: the importing module’s contenthash in the HTML should move. Not a separate hole.
+- Markup-only between poll N and N+1 is seen (baseline is the first successful body, not the last).
+
+## 3. The poll
+
+`fetch(window.location.pathname, { cache: "no-store", credentials: "same-origin" })` (`DIFF.patch` 193–197). No `pushState` in the dashboard; `/app` is one static page. Pathname is `/app` or `/app/`. Live, those two URLs return the same bytes. Query and hash are dropped; `/app` HTML does not vary on them. No `/app/...` sub-route.
+
+Credentials are same-origin. HTML is static, so cookies do not change the body.
+
+It can race itself. There is no in-flight lock and no `AbortSignal`. `startUpdatePoll` fires `checkForNewBuild()` immediately and also on a 5-minute interval (`DIFF.patch` 239–248). Hide/show clears the interval but does not cancel a fetch (`DIFF.patch` 244–247). Two overlapping polls can finish out of order: a slower “old” response can take `if (!isNewBuild) showUpdateNotice(false)` (`DIFF.patch` 212–214) after a newer one already showed the bar. Rapid visibility toggles stack fetches. No timeout.
+
+It does not loop: showing the bar does not change served HTML or `runningBuild`.
+
+## 4. State and dismissal
+
+This is a defect.
+
+```
+servedBuild = served === runningBuild ? markup : served;
+showUpdateNotice(servedBuild !== dismissedBuild);
+```
+
+(`DIFF.patch` 208–219, dismiss at 226–228.)
+
+`dismissedBuild` starts `null`, not `""` (`DIFF.patch` 176–178). Empty-string collision is avoided. Dismiss before the first poll stores `""`; a later real body is not `""`. Fine.
+
+Dismissal **can** hide a later, different build. Tab is on assets A. Deploy B changes hashes. Identity is the asset string B (`DIFF.patch` 210). User dismisses; `dismissedBuild = B`. Deploy C is markup-only on those same hashes. `served !== runningBuild` is still true, so identity stays `B`, not C’s markup. `servedBuild === dismissedBuild`. The bar stays down. The note says the opposite: “if a THIRD build ships, the set differs from the dismissed one and the notice returns” (`DIFF.patch` 100–102). The code comment says the same (`DIFF.patch` 216–218). Copy changes are “most of what ships” (`DIFF.patch` 66). The hybrid identity only protects the markup-then-markup case, which is the branch they thought about (`DIFF.patch` 208–209).
+
+The same build does not flip identity on current hosting (HTML is byte-stable). If the body ever gained a per-request token, the markup branch would re-ask every poll after dismiss, because identity is the whole string.
+
+Always keying dismiss on `markup` would be enough: asset URLs live in that HTML, so a hash change and a copy change both get a new identity.
+
+## 5. Layout
+
+Three rows, children pinned (`DIFF.patch` 257–261, 267, 278, 330). `.dashboard [hidden] { display: none !important }` is already in the file, so a hidden notice is not a grid item and the `auto` track collapses. Frame stays on row 3 whether the notices are shown or not.
+
+Four combinations from the stylesheet (not measured in Chrome):
+
+| update | sample | rows 1–2 | frame |
+|---|---|---|---|
+| hidden | hidden | empty auto | row 3, full 1fr |
+| shown | hidden | row 1 only | row 3, remainder |
+| hidden | shown | row 2 only | row 3, remainder |
+| shown | shown | both auto | row 3, remainder |
+
+`.dashboard__sample-notice:not([hidden]) + .dashboard__frame` still matches: the new node is **before** the sample notice (`DIFF.patch` 116–118), not between sample and frame. That selector was not rewritten.
+
+The bar is in-flow, not overlaid. 2026-09-04 made in-flow header = the 73px app bar. This bar adds one `auto` row above the frame (53px by the 4+44+4+1 padding/button/border arithmetic from `--s-1` and `min-block-size: 2.75rem`). While it is shown, layout-consuming chrome is 73+53. They capped it at one row and made it dismissible (`DIFF.patch` 102–103, 270–276). The observer does not measure `inFlowHeaderHeight` or composer position.
+
+Composer should stay in the viewport: product is `100dvh` / `--dashboard-viewport-height` with `overflow: hidden`; frame is `minmax(0,1fr)` then, on a phone, `auto minmax(0,1fr)` for rail + main; channel body is `minmax(0,1fr) auto` with composer on the auto row. That chain shrinks the transcript, not the composer. Not verified in a browser. `@media (max-width: 34rem) { .dashboard__button { inline-size: 100%; } }` matches these buttons; the actions parent is shrink-to-fit, so the percentage should compute as auto. The 320/390 button-on-screen asserts are the control, if they are run.
+
+## 6. The test’s honesty
+
+`sec-fetch-dest === "empty"` (`DIFF.patch` 347–348, 483–486) is a real Chrome split: `fetch()` is `empty`; a top-level load is `document`. This harness loads `/app/` in an iframe (`DIFF.patch` 479), so the load is `iframe`, not `document`. The check is still correct, because it only special-cases `empty`. The comment is wrong about the harness. If Chrome omitted the header, every `/app` fetch would get the built file, positives would not show, and `markup` / `assets` / `assets-first` would fail. Those cases police the discriminator.
+
+`assertProbeHappened` requires the node in the DOM and `polls >= 2` (`DIFF.patch` 590–605). Quiet cases cannot pass with the JS deleted (`polls === 0`) or the markup deleted (`present === false`). The layout case does not call it; it still requires `shown === true`, so a deleted feature fails there too.
+
+`assets-first` is a real isolation of signal 1 (`DIFF.patch` 379–382, 630–643): the variant is also the markup baseline, so `markup !== baselineMarkup` is false. The plain `assets` case is **not** isolated: first poll is the real page, second poll changes both hashes and bytes, so signal 2 alone would pass it.
+
+`gone` / `no-build` still serve real HTML on poll 1 (`DIFF.patch` 495–497). They test “a later empty probe stays quiet,” not “the first probe 404s.” Behaviour for a first-poll 404 is also quiet (`DIFF.patch` 198), but that path is not the one the test hits.
+
+No case covers dismiss, overlapping polls, both notices, or composer position. The four mutations named in the brief are not in the diff. Not established.
+
+## 7. Scope claim
+
+The “no agent running version on the read path” conclusion holds. The surrounding sentences overstate.
+
+`agentAccessStatuses()` does POST `renewal_grants` (`site/src/lib/commonswarm.ts`). That is not the only way the app learns about agents (members, feed, receipts). None of those carry a version either.
+
+The nineteen columns in `DIFF.patch` 30–35 match `RETURNS TABLE` in `supabase/migrations/20260904000001_standing_grant_resume.sql` (the latest definition; no later migration replaces it). Count is 19. None is a version. That list is typed by hand in the note, not generated from the SQL.
+
+`The members resource returns principal_id, name, owner_user_id` (`DIFF.patch` 37–38) is the **agent** select in `read/index.ts`. The same resource also returns humans as `user_id, display_name`. Understated, not a hidden version column.
+
+`cswarmVersion` is local listener status (`src/listener/control.ts`). `cswarm_version` is feedback context (`src/cli.ts`). Nothing under `supabase/` reads it back. `CLI_VERSION` in `site/src/lib/release.ts` is the shipping CLI version for `/download`, which the note correctly keeps out of this notice.
+
+A per-agent “you are behind” bar cannot be built from the current read path. That part of claim 4 is true.
+
+## 8. Operator-visible claims
+
+- Copy “A new version is ready.” (`DIFF.patch` 124) is a difference detector, not a recency detector (`DIFF.patch` 211). A rollback or a stale CDN flap still says “new.” The buttons match the code: Update is `location.reload()` (`DIFF.patch` 222–224); Not now stores `servedBuild` (`DIFF.patch` 226–228).
+- “hash changes when and only when that asset’s content changes” (`DIFF.patch` 56–57) is Vite contenthash folklore. Close enough; a rename also changes the path.
+- Measured heights do not agree. Note and commit: **53px** at 390×844 and 320×568 (`DIFF.patch` 93–94). CSS comment: **60px after** (`DIFF.patch` 273–276). Test: `height <= 64` (`DIFF.patch` 667–670). Arithmetic on the shipped CSS is 53 (`--s-1` + 44px button + `--s-1` + 1px border). The 60px sentence is stale. The test would accept 54–64, so it does not pin the 53px claim. 128px and 394.6px are described as pre-fix measurements (`DIFF.patch` 91–98, 279–282); nothing in the test replays those failures.
+- “Dismissal … against the asset set” (`DIFF.patch` 100) is false on the markup branch (`DIFF.patch` 210).
+- The nineteen-column list is a hand-typed enumeration (`DIFF.patch` 30–35). It matches today; it can drift.
+
+The dismissal identity is the ship-blocker: the lane’s own third-build sentence is false, and a dismissed hash-changing deploy swallows later copy-only deploys.
+
+VERDICT: FAIL

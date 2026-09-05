@@ -1,0 +1,138 @@
+I'll read REVIEW.md and the diff first, then follow the review instructions exactly.The first `diff --git` line is `diff --git a/docs/design/2026-09-04-IN-APP-UPDATE-NOTICE.md b/docs/design/2026-09-04-IN-APP-UPDATE-NOTICE.md`. Next I’ll check the source, tests, and the cited migration against the eight review attacks.The SHA is `48ec3bc`. I’ll inspect the live source, CSS, tests, and the migration the design note cites.Grep was scoped to this arm folder. I’ll search the lane worktree instead.The on-disk test file doesn’t match DIFF.patch. I’ll check whether the worktree moved past `48ec3bc`.The worktree is dirty. I’ll review the committed SHA only, not the uncommitted edits.`diff --git a/docs/design/2026-09-04-IN-APP-UPDATE-NOTICE.md b/docs/design/2026-09-04-IN-APP-UPDATE-NOTICE.md`
+
+Review bound to `48ec3bc` via `DIFF.patch`. Later commits on this branch are out of scope.
+
+## 1. False positives
+
+Checked: `buildAssetsFrom` / `buildMarkupFrom` at `LiveDashboard.astro:6521-6535`; same-build and injected cases in `update-notice.observer.test.ts`.
+
+Signal 2 compares served `<live-dashboard>.outerHTML` to the first successful poll, not the live DOM. App mutations (`data-state`, feed rows) cannot trip it. Bytes injected outside that element cannot trip it. The `injected` case is built to fail if those bytes land inside the element.
+
+Signal 1 reads raw `src`/`href` attributes (`getAttribute`), not resolved URLs. The regex requires `/_astro/….(js|css)` at end of the attribute, so query strings, fonts, icons, and the theme inline script do not join the set. The set is sorted. A no-op rebuild with the same names and bytes compares equal.
+
+`cache: "no-store"` plus `credentials: "same-origin"` on `fetch(window.location.pathname)` (`LiveDashboard.astro:6558-6562`). No client router changes pathname, so the poll hits the same `/app` or `/app/` the tab loaded. A redirect that still returns hashed `/_astro` assets as 200 would look like a deploy; a 404 / asset-less 200 does not (`:6563`, `:6572`).
+
+Residual, not a measured fail: signal 1 still reads the live `document`, not `<live-dashboard>`. An injected `script[src]` or `link[href]` that matched `/_astro/…js|css` would cry wolf. That URL shape is this site’s, not a typical toolbar.
+
+No same-build false positive found in the code paths the tests can reach.
+
+## 2. False negatives
+
+Checked named gaps at `docs/design/2026-09-04-IN-APP-UPDATE-NOTICE.md:93-108` against the detector.
+
+The named first-poll markup-only gap is real: `:6574` sets `baselineMarkup` from the first body that has hashed assets. Signal 2 cannot see a markup-only deploy that landed before that poll. Signal 1 still sees an asset-hash move (`assets-first`).
+
+Also real, and named: markup outside `<live-dashboard>` with unchanged hashes (skip link, theme bootstrap in `app.astro`’s head slot, `Base.astro` chrome). `/app` is `bareHeader`; that chrome is small.
+
+Also real, and named: a file `/app` does not reference. `import(` count in `LiveDashboard.astro` is 0. Built `/app` emits no `modulepreload`. Hashed `/_astro` tags live in `<head>`, not inside `<live-dashboard>`.
+
+Whitespace-only change *inside* `<live-dashboard>` is a hit. That matches “these bytes ARE the build.”
+
+Unnamed extra gap: the bar lives in `data-panel="channel"` (`LiveDashboard.astro:175-196`). Detection runs for the whole page. A signed-out or loading tab will not show the bar even if a new build is seen. Detection is not the miss; the surface is.
+
+`if (!runningBuild) return` (`:6554`) kills the feature if the live DOM has no hashed `/_astro` tags (dev Vite URLs). Production `/app` emits them.
+
+## 3. The poll
+
+Checked `LiveDashboard.astro:6553-6616`.
+
+Path: `window.location.pathname` is right for `/app` and `/app/`. Query and hash are stripped, which is what you want for an OAuth leftover on `/app`. There is no `pushState` on this page, so no `/app/…` 404 trap.
+
+The fetch does not execute the page, so it cannot loop.
+
+`pollInFlight` blocks a second fetch. `finally` clears the flag before the sync parse. Parse does not yield, so two fetches cannot settle out of order. That part of round 2 holds.
+
+Hide/show: hide stops the interval; show starts it and fires one check. If a check is already open, the show check is dropped (`:6554`). The open fetch still finishes. If that fetch already returned “same” and a deploy landed during the round trip, the next check is five minutes later (`UPDATE_POLL_MS = 5 * 60_000`). Narrow miss, not a stuck flag.
+
+No `AbortSignal`. A hung fetch leaves `pollInFlight === true` until reload. The API client has a 30s deadline; this poll does not.
+
+## 4. State and dismissal
+
+Checked `runningBuild`, `baselineMarkup`, `dismissedBuild`, `servedBuild` at `LiveDashboard.astro:6529-6596`.
+
+`runningBuild` is captured once from the live DOM. It does not move.
+
+`baselineMarkup` is set once from the first successful poll. Empty string is the “not yet” value; a successful poll’s `outerHTML` starts with `<`, so it cannot collide with that.
+
+`dismissedBuild` starts as `null`, not `""`. A probe that learned nothing returns before assignment (`:6563`, `:6566`, `:6572`), so it cannot compare equal to “nothing dismissed.”
+
+Identity is always `${served}\n${markup}` (`:6578`). Dismiss stores that (`:6594`). The round-2 bug (store whichever half differed) is gone in the code. `dismiss-then-markup` is the control for the old identity.
+
+`servedBuild` is the same string in both branches. The same build cannot re-ask forever unless served bytes flap. Rollback to the running page takes `isNewBuild === false` and hides (`:6580-6582`).
+
+`served` is URL lines; `markup` is an HTML element. A join-on-newline collision is not realistic.
+
+## 5. Layout
+
+Checked product grid at `LiveDashboard.astro:7012-7111` and the mobile block at `:10469-10483`.
+
+Three rows: `auto auto minmax(0,1fr)`. Update pinned to 1, sample to 2, frame to 3. `.dashboard [hidden] { display: none !important }` (`:6659-6661`) removes a hidden notice from the grid, so its row collapses. Mobile changes `.dashboard__frame`’s inner grid, not `.dashboard__product`’s three rows.
+
+Four shown/hidden pairs:
+
+| update | sample | row 1 | row 2 | frame |
+|---|---|---|---|---|
+| hidden | hidden | collapse | collapse | row 3, full height |
+| shown | hidden | 53px | collapse | row 3 |
+| hidden | shown | collapse | sample | row 3 |
+| shown | shown | 53px | sample | row 3 |
+
+Only the last pair is measured (`both notices at once still leave the composer in the viewport`).
+
+The bar is inserted *before* the sample notice (`:176-178`) so `.dashboard__sample-notice:not([hidden]) + .dashboard__frame` (`:7104`) still matches.
+
+`min-inline-size: 0` is on the bar (`:7042`). Text truncates; actions do not wrap (`:7054-7076`). `--s-1` is `0.25rem`, button `min-block-size` is `2.75rem`, plus 1px border → 53px at 16px rem. Height bound in the test is 56px. 44px targets come from `2.75rem`. At `max-width: 34rem`, `.dashboard__button { inline-size: 100% }` applies, but the actions flex parent is shrink-to-fit, so the percentage is cyclic and treated as auto. The 320px case would go red if a button left the shell.
+
+The bar is 53px, shorter than the 73px app bar. It is extra chrome above the rail, dismissible. It does not restore the old channel-head row. Composer stay-on-screen is measured with both notices up.
+
+## 6. Test honesty
+
+Checked `update-notice.observer.test.ts` against the detector.
+
+`sec-fetch-dest === "empty"` is the real poll discriminator (`:221-224` in the new test). The comment says navigation is `document`. This harness loads `/app/` in an iframe, so navigation is `iframe`, not `document`. The code only special-cases `empty`, so the load still gets the real file. If the header were missing, `polls` stays 0 and `assertProbeHappened` fails closed.
+
+`assertProbeHappened` requires the node in the page and `polls >= 2`. A quiet case with the script deleted is `polls === 0` and fails. That is a real control.
+
+`assets-first` is in `FROM_FIRST_POLL`. On the first successful poll, `:6574` sets `baselineMarkup = markup` *before* the compare, so signal 2 is always false on that poll. Later polls of the same variant keep that baseline. Only signal 1 can raise it. Isolation holds. Built `/app` also has no `/_astro` URLs inside `<live-dashboard>`, so rewriting hashes does not move signal 2’s string.
+
+`gone-first` / `no-build-first` serve the failure on every poll, not “first fails, then the real page.” They prove a dead probe stays quiet. They do not prove a later success is not poisoned. The code returns before baseline on `!response.ok` and `!served`, so that poison path is closed even without the extra case.
+
+`dismiss-then-markup` asserts `polls >= 3` and `shown === true`. It never asserts the bar was hidden after the click. A no-op dismiss still ends `shown === true` (bar stayed up from build 2). The case still catches “store only the asset half” *if* the click writes `dismissedBuild`. It would pass with dismiss deleted.
+
+No case passes with the whole feature deleted.
+
+## 7. Scope claim
+
+Checked claim 4 against `DIFF.patch` and the repo.
+
+A per-agent *running* `cswarm` version is not on the read path. That conclusion is true.
+
+The proof is not.
+
+`docs/design/2026-09-04-IN-APP-UPDATE-NOTICE.md:21-23` says the app’s one path is `agentAccessStatuses()` → `resource: "renewal_grants"` → `SELECT * FROM swarm_read.renewal_grant_for_token(...)`.
+
+`agentAccessStatuses` (`site/src/lib/commonswarm.ts:696-718`) sends the **human** session JWT. `supabase/functions/read/index.ts:346-358` then runs `swarm_read.renewal_grant_roster` and **returns**. It never reaches `renewal_grant_for_token` (`read/index.ts:498-506`), which is the agent-token branch.
+
+The nineteen names in the note (`:29-31`) match `RETURNS TABLE` for **both** `renewal_grant_roster` and `renewal_grant_for_token` in `supabase/migrations/20260904000001_standing_grant_resume.sql` (roster `:633-653`, for_token `:728-748`). None is a version. Re-deriving from the cited function would not change the answer **today**. If the two signatures drift, the note points at the function the app does not call.
+
+Same paragraph, `:21` vs `:35`: “exactly one path” and then “is not the only path.” Members (`principal_id, name, owner_user_id`), feed, and delivery receipts have no running version. `Agent` in the dashboard is `principalId, name, model, ownerUserId`. Activity frames have `version: 1`; that is the frame schema, not a CLI version. `cswarmVersion` / `cswarm_version` stay on disk / in feedback, as the note says.
+
+The limit is right. The enumeration they told a successor to re-derive from is the wrong function, and the path count disagrees with itself.
+
+## 8. Operator-visible claims
+
+User copy is “This page is out of date.” (`LiveDashboard.astro:185`). That is what the detector can say. Buttons: “Not now”, “Update”. Matches.
+
+Comments at `:176` and `:6499` still say “A NEWER BUILD OF THIS PAGE IS BEING SERVED.” Same recency claim round 2 removed from the bar.
+
+`docs/design/2026-09-04-IN-APP-UPDATE-NOTICE.md:78-81` says dismissal is the **whole** build, both parts. `:122-123` says “against the **asset set** that triggered it.” The code stores `${served}\n${markup}` (`LiveDashboard.astro:6575-6578, :6593-6594`). `:122-123` is the old bug, still written down. A successor who implements that sentence reintroduces round 2.
+
+Measured numbers in the note (53px, 128px, 394.6px, 44px, 73px app bar) match the CSS comments and the 56px test bound. Column list is hand-typed; the note says so.
+
+---
+
+Round 2’s code fixes hold: `<live-dashboard>` projection, combined identity, in-flight fetch, “out of date”, injected / first-fail / both-notices / tighter height / markup keyed to the element.
+
+The new design note still names the wrong read function, contradicts itself on how many agent paths exist, and describes dismissal as the asset set after the code stopped doing that.
+
+VERDICT: FAIL

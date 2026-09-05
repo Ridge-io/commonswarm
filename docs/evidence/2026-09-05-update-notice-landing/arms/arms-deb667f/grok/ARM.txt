@@ -1,0 +1,149 @@
+I'll read REVIEW.md and the patch, then follow the review instructions exactly.The first `diff --git` line is present. I'll check the repo files the brief names, then attack each review point in order.I'll read the source, the design note, the migration, and the last round's findings in parallel.I'll verify the note against the migration and `read/index.ts`, then inspect layout CSS, the custom element, and remaining claim text.The on-disk test file may not match the patch. I'll compare it to `deb667f` before treating extra variants as in-scope.`diff --git a/docs/design/2026-09-04-IN-APP-UPDATE-NOTICE.md b/docs/design/2026-09-04-IN-APP-UPDATE-NOTICE.md`
+
+Review bound to `DIFF.patch` / `deb667f`. Later commits on the worktree are out of scope.
+
+Round-3 claim fixes that hold at the cited lines: roster not `for_token`; other read paths named; dismissal stored as both parts; comments no longer open with “A NEWER BUILD…”; `pollRequested` reruns a dropped poll; the observer measurement starts once; deploy stage is explicit.
+
+---
+
+## 1. False positives
+
+Checked: `buildAssetsFrom` / `buildMarkupFrom` at `LiveDashboard.astro:6523-6537`; fetch at `:6567-6571`; quiet guard at `:6584-6585`; same-build and injected cases.
+
+Signal 2 compares fetched `<live-dashboard>.outerHTML` to the first successful poll, not the live DOM. App mutations cannot trip it. Bytes injected outside that element cannot trip it. The `injected` variant fails closed if those bytes land inside the element.
+
+Signal 1 reads raw `src`/`href` with `/\/_astro\/[^"']+\.(?:js|css)$/`. Query strings, fonts, and the theme inline script do not join the set. Built `/app/index.html` has five `/_astro` URLs, all in `<head>`, zero inside `<live-dashboard>`.
+
+`cache: "no-store"` plus `credentials: "same-origin"`. Pathname drops query and hash, which is right for an OAuth leftover on `/app`.
+
+**False positive: a 200 that is not this app.** `fetch` is called with no `redirect` option, so the default is `follow`. After a redirect, the code never reads `response.url` or `response.redirected`. The only “learned nothing” body check is `if (!served) return` (`:6585`) — a body with no hashed `/_astro` URLs.
+
+The comment at `:6555-6557` and the note at `docs/design/2026-09-04-IN-APP-UPDATE-NOTICE.md:94-97` say a login redirect, an SSO interstitial, and an error page all stay quiet. That is true only when those pages have **no** `/_astro` hashes. The rest of this site is Astro (`/`, `/start`, `/download`, …). Those pages emit `/_astro/*.js|css`. A followed redirect (or any 200) of one of them has `served !== runningBuild`, `buildMarkupFrom` returns `""`, and `isNewBuild` is true (`:6592`). The bar goes up for a page that is not the app.
+
+The quiet test does not reach this. `no-build` is a 200 with no hashes (`update-notice.observer.test.ts:68-69`). A hashed foreign page would take the `assets` path, not the quiet path.
+
+---
+
+## 2. False negatives
+
+Checked named gaps at `docs/design/2026-09-04-IN-APP-UPDATE-NOTICE.md:99-110` against the detector.
+
+The first-poll markup-only gap is real: `:6587` sets `baselineMarkup` from the first body that has hashed assets. Signal 1 still sees an asset-hash move (`assets-first`).
+
+Also real, and named: markup outside `<live-dashboard>` with unchanged hashes; a file `/app` does not reference. `import(` count in `LiveDashboard.astro` is 0. Built `/app` emits no `modulepreload`.
+
+Whitespace inside `<live-dashboard>` is a hit.
+
+Unnamed extra: the bar lives in `data-panel="channel"` (`LiveDashboard.astro:175-197`). Detection runs for the whole page. A signed-out tab will not show the bar. Detection is not the miss; the surface is.
+
+`if (!runningBuild) return` (`:6559`) kills the feature if the live DOM has no hashed `/_astro` tags (dev Vite URLs). Production `/app` emits them.
+
+---
+
+## 3. The poll
+
+Checked `LiveDashboard.astro:6558-6629`.
+
+Path: `window.location.pathname` is right for `/app` and `/app/`. Query and hash are stripped. There is no `pushState`, so no `/app/…` 404 trap. The fetch does not execute the page, so it cannot loop.
+
+`pollInFlight` blocks a second fetch. `pollRequested` reruns one after. `finally` clears the flag before the sync parse, then starts the queued call, which awaits `fetch` immediately. The first parse is sync and finishes first. Two fetches cannot settle out of order.
+
+Hide stops the interval; show starts it and fires one check. If a check is open, the show check is remembered (`:6560-6562`).
+
+No `AbortSignal`. A hung fetch leaves `pollInFlight === true` until reload. Same shape as round 2; not a new fail.
+
+Default `redirect: "follow"` is the hole in §1.
+
+---
+
+## 4. State and dismissal
+
+Checked `runningBuild`, `baselineMarkup`, `dismissedBuild`, `servedBuild` at `LiveDashboard.astro:6531-6608`.
+
+`runningBuild` is captured once. `baselineMarkup` is set once from the first body with hashes. `dismissedBuild` starts as `null`. A probe that learned nothing returns before assignment (`:6572`, `:6575`, `:6585`).
+
+Identity is always `${served}\n${markup}` (`:6591`). Dismiss stores that (`:6607`). `dismiss-then-markup` is the control for the old “store one half” bug. That bug is gone.
+
+`served` is URL lines; `markup` starts with `<live-dashboard`. A join-on-newline collision is not realistic.
+
+**Dismissal is sticky across a rollback.** `if (!isNewBuild)` only hides (`:6593-6595`). It does not clear `dismissedBuild`. Sequence:
+
+1. Tab runs A. Server deploys B. User clicks Not now. `dismissedBuild = B`.
+2. Server rolls back to A. `isNewBuild` is false. Bar hides. `dismissedBuild` is still B.
+3. Server deploys B again. `servedBuild === dismissedBuild`. `showUpdateNotice(false)` (`:6600`). The tab is out of date and stays quiet for the rest of its life.
+
+The note at `:130-134` and the comment at `:6597-6599` only promise that a *third* (different) identity asks again. They do not say a later ship of the same bytes after the tab was back in step asks again. The `dismiss-then-markup` case never rolls back, so it cannot go red on this.
+
+---
+
+## 5. Layout
+
+Checked product grid at `LiveDashboard.astro:7025-7124` and mobile at `:10482-10496`.
+
+Three rows: `auto auto minmax(0, 1fr)`. Update pinned to 1, sample to 2, frame to 3. `.dashboard [hidden] { display: none !important }` (`:6672-6674`) beats `.dashboard__update-notice { display: flex }` (`:7049-7065`). A hidden notice is not a grid item. Its row collapses.
+
+The bar is inserted *before* the sample notice (`:176-199`) so `.dashboard__sample-notice:not([hidden]) + .dashboard__frame` (`:7117`) still matches.
+
+`min-inline-size: 0` is on the bar (`:7055`). Text truncates; actions do not wrap. `--s-1` is `0.25rem`, button `min-block-size` is `2.75rem`, plus 1px border → 53px at 16px rem. Test bound is 56px. At `max-width: 34rem`, `.dashboard__button { inline-size: 100% }` (`:10844-10846`) applies to these buttons too; the actions parent is shrink-to-fit, so the percentage is cyclic and treated as auto. The 320px case would go red if a button left the shell.
+
+The bar is 53px, shorter than the 73px app bar. Extra chrome, dismissible. Composer stay-on-screen is measured with both notices up, at 390×844 only.
+
+`showPanel` only toggles `.dashboard__root > [data-panel]` (`:1270-1272`). It does not reset the notice’s `hidden`.
+
+---
+
+## 6. The test’s own honesty
+
+Checked `update-notice.observer.test.ts` at `deb667f`.
+
+`sec-fetch-dest === "empty"` is the poll discriminator (`:273-276`). The comment says navigation is `document`. This harness loads `/app/` in an iframe, so navigation is `iframe`, not `document`. The code only special-cases `empty`, so the load still gets the real file. If the header is missing, `polls` stays 0 and `assertProbeHappened` fails closed.
+
+`assertProbeHappened` requires the node and `polls >= 2`. A quiet case with the script deleted is `polls === 0` and fails.
+
+`assets-first` is in `FROM_FIRST_POLL`. On that first successful poll, `:6587` sets `baselineMarkup` before the compare, so signal 2 is false. Built `/app` has no `/_astro` URLs inside `<live-dashboard>`, so rewriting hashes does not move signal 2. Isolation holds.
+
+`gone-first` / `no-build-first` fail every poll, not “first fails, then the real page.” The code returns before baseline on `!ok` and `!served`, so that poison path is closed.
+
+`dismiss-then-markup` asserts `dismissSawBuildTwo`, `dismissTookEffect`, and `shown`. It does not roll back, so it cannot catch §4.
+
+**The quiet suite cannot fail §1.** `no-build` is `<!doctype html><title>Sign in</title>…` with no `/_astro` (`:68-69`). Claim 2 names a login redirect / SSO interstitial. Those, on this site, are Astro pages with hashes. The green quiet cases defend “no hashes,” not the claim as written.
+
+No case passes with the whole feature deleted.
+
+---
+
+## 7. Scope claim
+
+Checked claim 4 against the diff and the repo.
+
+A per-agent running `cswarm` version is not on the read path. That conclusion is true.
+
+`docs/design/2026-09-04-IN-APP-UPDATE-NOTICE.md:21-35` now says the browser sends a human session JWT and `read/index.ts` runs `swarm_read.renewal_grant_roster` and returns. That matches `site/src/lib/commonswarm.ts:696-718` (human `session.access_token`, `resource: "renewal_grants"`) and `supabase/functions/read/index.ts:346-358` (human branch) vs `:498-506` (`renewal_grant_for_token`, agent-token branch, after the human return).
+
+The nineteen names at `:34-36` match `RETURNS TABLE` for `renewal_grant_roster` in `supabase/migrations/20260904000001_standing_grant_resume.sql:633-653` (and `renewal_grant_for_token` at `:728-748`). None is a version. The note says the list is a hand-typed snapshot.
+
+Members (`read/index.ts:510-519`): `user_id, display_name` / `principal_id, name, owner_user_id`. Activity frames: `version: 1` in `site/src/lib/agent-activity.ts` is the frame schema. `cswarmVersion` in `src/listener/control.ts` is the local control file. `cswarm_version` in `src/cli.ts:7090` is feedback context. The note is right on those.
+
+---
+
+## 8. Operator-visible claims
+
+User copy is “This page is out of date.” (`LiveDashboard.astro:186`). Buttons: “Not now”, “Update”. That is what the detector can say.
+
+Comments at `:176` and `:6501` now say the page is not what the server is serving. The recency wording round 2 failed is gone from those comments.
+
+**The design note lede still makes the recency claim the bar stopped making.** `docs/design/2026-09-04-IN-APP-UPDATE-NOTICE.md:3-4`: “The app detects that a newer build of itself is being served.” `:118-119` in the same file says out of date, not new, because a rollback is this too. Line 3 describes behaviour the code does not have.
+
+Quiet-probe claim at `:94-97` overstates the guard. See §1.
+
+Measured numbers (53px, 128px, 394.6px, 44px, 73px app bar) match the CSS comments and the 56px test bound. Column list is hand-typed; the note says so.
+
+`deb667f` commit message is about the read-function claim, not the pixel numbers.
+
+---
+
+Round-3 code that holds: `<live-dashboard>` projection, combined dismissal identity, in-flight queue, “out of date” on the bar, injected / first-fail / both-notices / 56px bound / markup keyed to the element, roster function in the note.
+
+The probe still treats any hashed Astro 200 as a deploy, including a followed redirect that is not this app, and the quiet tests cannot see that. Dismissal of B survives a rollback to A and swallows B for the rest of the tab. The note’s first sentence still says “newer.”
+
+VERDICT: FAIL
