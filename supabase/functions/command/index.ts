@@ -15,6 +15,7 @@ import {
   CHANNEL_PURPOSE_MAX,
   channelSlugProblem,
   chatSignalKeys,
+  chatSignalShapeProblem,
   normalizeChannelSlug,
   unknownChannelMessage,
 } from "../_shared/channels.ts";
@@ -1772,31 +1773,20 @@ function validateCommand(
       ) &&
       (!Object.hasOwn(cmd, "attachments") ||
         parseSignalAttachmentRefs(cmd.attachments) !== null) &&
-      (
-        channel === undefined ||
-        (typeof channel === "string" && channelSlugProblem(channel) === null)
-      ) &&
       (threadRootId === undefined || nullableUuid(threadRootId)) &&
-      (
-        broadcastToChannel === undefined ||
-        typeof broadcastToChannel === "boolean"
-      ) &&
-      /* A threaded reply is a message in the open. It is never working-on
-       * (R11), it carries no recipient, and it does not also set in_reply_to —
-       * that column means "reply privately to the author" and the server
-       * re-addresses on it, so accepting both would make the audience
-       * ambiguous at the exact place addressing is decided. */
-      (
-        threadRoot === null ||
-        (
-          cmd.signal_kind !== "working-on" &&
-          cmd.to_user_id === null &&
-          toAgentPrincipalId === null &&
-          inReplyTo === null
-        )
-      ) &&
-      /* "Also send to the channel" is a property OF a threaded reply. */
-      (broadcastToChannel !== true || threadRoot !== null);
+      /* Every rule the chat fields add lives in one pure function so the edge
+       * cannot enforce half of them and so they are testable without Deno. */
+      chatSignalShapeProblem({
+        signal_kind: cmd.signal_kind,
+        to_user_id: cmd.to_user_id,
+        to_agent_principal_id: toAgentPrincipalId,
+        in_reply_to: inReplyTo,
+        ...(channel === undefined ? {} : { channel }),
+        ...(threadRootId === undefined ? {} : { thread_root_id: threadRootId }),
+        ...(broadcastToChannel === undefined
+          ? {}
+          : { broadcast_to_channel: broadcastToChannel }),
+      }) === null;
     const attachments = Object.hasOwn(cmd, "attachments")
       ? parseSignalAttachmentRefs(cmd.attachments)
       : undefined;
@@ -1819,7 +1809,7 @@ function validateCommand(
           ...(cmd.until_ms === undefined
             ? {}
             : { until_ms: cmd.until_ms as number }),
-          ...(channel === undefined
+          ...(channel === undefined || channel === null
             ? {}
             : { channel: normalizeChannelSlug(channel as string) }),
           ...(threadRootId === undefined
@@ -5921,7 +5911,7 @@ async function resumeRenewalGrant(
    * was told 403; a retry then answered `renewal_grant_not_suspended`, because the resume it
    * had denied had in fact happened.
    *
-   * Same shape as the renewal preflight read at index.ts:3139 (`preflight[0]?.code ?? null`):
+   * Same shape as the renewal preflight read at index.ts:3319 (`preflight[0]?.code ?? null`):
    * preserve NULL, refuse only on a code we assign.
    *
    * WHY A REFUSAL BELOW STILL COMMITS, DELIBERATELY. `refuse` must commit — its whole job is
@@ -6408,6 +6398,17 @@ async function resolveThreadRoot(
     FROM swarm.signals
     WHERE workspace_id = ${route.workspaceId}::uuid
       AND id = ${rootId}::uuid
+      /* A thread may root ONLY on an undirected signal, and this query is the
+       * enforcement. This function reads swarm.signals as swarm_command, which
+       * bypasses swarm_read.signals — the view that IS the read policy. Without
+       * this arm any member holding a signal id could hang a PUBLIC thread off
+       * a DIRECTED message between two other people: the reply itself is
+       * undirected and readable by everyone, so the thread would disclose that
+       * the private message exists and would attach public replies to it. A
+       * reply loop that needs a private one-hop answer already has in_reply_to,
+       * whose meaning this lane does not touch. */
+      AND to_user_id IS NULL
+      AND to_agent_principal_id IS NULL
       /* A one-second floor, not merely "still live". The reply's until is
        * clamped to the root's in SQL, and CHECK (until > created_at) would
        * fire if the root expired between this SELECT and the INSERT. The floor
@@ -6425,7 +6426,7 @@ async function resolveThreadRoot(
       status: 404,
       error: "thread_root_not_found",
       message:
-        "There is no live message with that id in this workspace. A thread cannot outlive the message it starts from, so an expired one takes no replies.",
+        "There is no live, undirected message with that id in this workspace. Threads start from messages everyone can read, and a thread cannot outlive the message it starts from. To answer a directed message privately, reply to it instead.",
       reason: "thread_root_not_found",
     };
   }

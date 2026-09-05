@@ -9,7 +9,7 @@
  *
  *   WHAT WE GET FROM GITHUB
  *     src/cloud/auth.ts:214            provider=github, PKCE, loopback callback
- *     supabase/functions/command/index.ts:1188-1206
+ *     supabase/functions/command/index.ts:1237-1255
  *                                      user id + email; display name is the first non-empty
  *                                      of GitHub full_name, name, user_name, then the local
  *                                      part of the email, then the literal "Coswarm User"
@@ -31,7 +31,7 @@
  *   THE IP CLAIM IS THE ONE WORTH RE-CHECKING BEFORE ANY EDIT.
  *     swarm.audit_log HAS an `ip inet` column (p1_schema.sql:400), and the edge function
  *     names it in the INSERT column list — then writes a literal NULL into it
- *     (supabase/functions/command/index.ts:676, :691). So the honest statement is "the
+ *     (supabase/functions/command/index.ts:713, :691). So the honest statement is "the
  *     column exists and we do not write to it", which is what the document says. If anyone
  *     ever populates it, THIS DOCUMENT IS WRONG THAT DAY. Do not restate the claim from
  *     memory; re-read insertAudit.
@@ -46,7 +46,7 @@
  *   WHAT WE DO *NOT* TOUCH, and the document says so because a reader assumes otherwise:
  *     no repository contents. swarm.github_installations and swarm.repositories exist in the
  *     schema, but no repo-mapping command is exposed — COMMAND_KINDS
- *     (supabase/functions/command/index.ts:331) is create, acquire, renew, handoff, takeover,
+ *     (supabase/functions/command/index.ts:367) is create, acquire, renew, handoff, takeover,
  *     submit, close, reopen, invite_member, accept_invitation, create_agent_principal,
  *     mint_agent_token, post_signal. Nothing reads code.
  *

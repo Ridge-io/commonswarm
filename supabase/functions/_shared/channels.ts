@@ -124,3 +124,67 @@ export function chatSignalKeys(
 export function chatReadKeys(body: Record<string, unknown>): string[] {
   return Object.hasOwn(body, "channel") ? ["channel"] : [];
 }
+
+/** The chat fields of a post_signal body, after the caller resolved presence. */
+export interface ChatSignalFields {
+  signal_kind: unknown;
+  to_user_id: unknown;
+  to_agent_principal_id: unknown;
+  in_reply_to: unknown;
+  /** `undefined` means the key was absent from the body. */
+  channel?: unknown;
+  thread_root_id?: unknown;
+  broadcast_to_channel?: unknown;
+}
+
+/**
+ * Every rule the chat fields add to post_signal, in one pure function so the
+ * rules are testable without a Deno runtime and so no caller can enforce half
+ * of them. Returns the refusal sentence, or null when the shape is usable.
+ *
+ * Type and uuid checks for the pre-existing fields stay with the caller; this
+ * function decides only what the chat fields mean together.
+ */
+export function chatSignalShapeProblem(
+  fields: ChatSignalFields,
+): string | null {
+  const channel = fields.channel;
+  const threadRoot = fields.thread_root_id === undefined
+    ? null
+    : fields.thread_root_id;
+  const broadcast = fields.broadcast_to_channel;
+
+  if (channel !== undefined && channel !== null) {
+    const problem = channelSlugProblem(channel);
+    if (problem !== null) return problem;
+  }
+  if (broadcast !== undefined && typeof broadcast !== "boolean") {
+    return "broadcast_to_channel is true or false.";
+  }
+
+  if (threadRoot !== null && threadRoot !== undefined) {
+    /* A threaded reply is a message in the open. R11: ask or note, never
+     * working-on. It carries no recipient, because a thread everyone can see
+     * cannot have a private half. And it does not also set in_reply_to: that
+     * column means "reply privately to the author" and the server re-addresses
+     * the row on it, so accepting both would make the audience ambiguous at the
+     * exact place addressing is decided. */
+    if (fields.signal_kind === "working-on") {
+      return "A working-on signal cannot be a thread reply. Reply with a note or an ask.";
+    }
+    if (fields.to_user_id !== null || fields.to_agent_principal_id !== null) {
+      return "A thread reply is readable by everyone who can read its thread, so it cannot also be addressed to one recipient.";
+    }
+    if (fields.in_reply_to !== null && fields.in_reply_to !== undefined) {
+      return "Use thread_root_id for a reply in the thread, or in_reply_to for a private reply to the author. Not both.";
+    }
+    if (channel !== undefined && channel !== null) {
+      return "A thread reply is filed in the channel its thread is in, so it does not take a channel of its own.";
+    }
+  }
+
+  if (broadcast === true && (threadRoot === null || threadRoot === undefined)) {
+    return "broadcast_to_channel says to send a thread reply to the channel as well, so it needs a thread_root_id.";
+  }
+  return null;
+}

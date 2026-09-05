@@ -6,6 +6,7 @@ import {
   CHAT_SIGNAL_OPTIONAL_KEYS,
   chatReadKeys,
   chatSignalKeys,
+  chatSignalShapeProblem,
 } from "../supabase/functions/_shared/channels.js";
 
 /**
@@ -175,3 +176,175 @@ function sampleFor(key: string): unknown {
   if (key === "broadcast_to_channel") return false;
   return null;
 }
+
+/* ------------------------------------------------------------------------- *
+ * The rules the chat fields add. These are the validator's, extracted into a
+ * pure function so they can be exercised without a Deno runtime.
+ * ------------------------------------------------------------------------- */
+
+const undirected = {
+  signal_kind: "note",
+  to_user_id: null,
+  to_agent_principal_id: null,
+  in_reply_to: null,
+};
+
+test("the chat fields add no rule to a body that carries none of them", () => {
+  assert.equal(chatSignalShapeProblem(undirected), null);
+  assert.equal(
+    chatSignalShapeProblem({ ...undirected, signal_kind: "working-on" }),
+    null,
+    "working-on is still legal when it is not a thread reply",
+  );
+  assert.equal(
+    chatSignalShapeProblem({
+      ...undirected,
+      to_user_id: "11111111-1111-4111-8111-111111111111",
+    }),
+    null,
+    "a directed note is still legal",
+  );
+});
+
+test("channel is a slug or null, and null means unfiled rather than refused", () => {
+  assert.equal(chatSignalShapeProblem({ ...undirected, channel: null }), null);
+  assert.equal(
+    chatSignalShapeProblem({ ...undirected, channel: "mobile" }),
+    null,
+  );
+  assert.notEqual(
+    chatSignalShapeProblem({ ...undirected, channel: "Not A Slug" }),
+    null,
+  );
+});
+
+test("a thread reply is open, so it is never working-on and never addressed", () => {
+  const root = "22222222-2222-4222-8222-222222222222";
+  assert.equal(
+    chatSignalShapeProblem({ ...undirected, thread_root_id: root }),
+    null,
+  );
+  assert.equal(
+    chatSignalShapeProblem({
+      ...undirected,
+      signal_kind: "ask",
+      thread_root_id: root,
+    }),
+    null,
+    "R11: an ask may be a thread reply",
+  );
+  assert.notEqual(
+    chatSignalShapeProblem({
+      ...undirected,
+      signal_kind: "working-on",
+      thread_root_id: root,
+    }),
+    null,
+  );
+  assert.notEqual(
+    chatSignalShapeProblem({
+      ...undirected,
+      to_user_id: "33333333-3333-4333-8333-333333333333",
+      thread_root_id: root,
+    }),
+    null,
+  );
+  assert.notEqual(
+    chatSignalShapeProblem({
+      ...undirected,
+      to_agent_principal_id: "44444444-4444-4444-8444-444444444444",
+      thread_root_id: root,
+    }),
+    null,
+  );
+});
+
+test("thread_root_id and in_reply_to are different mechanisms and cannot both be set", () => {
+  const root = "22222222-2222-4222-8222-222222222222";
+  /* in_reply_to alone keeps its exact meaning: this lane does not touch it. */
+  assert.equal(
+    chatSignalShapeProblem({
+      ...undirected,
+      in_reply_to: "55555555-5555-4555-8555-555555555555",
+    }),
+    null,
+  );
+  assert.notEqual(
+    chatSignalShapeProblem({
+      ...undirected,
+      in_reply_to: "55555555-5555-4555-8555-555555555555",
+      thread_root_id: root,
+    }),
+    null,
+    "both set is ambiguous exactly where addressing is decided",
+  );
+});
+
+test("a thread reply inherits its channel rather than taking one, and broadcast needs a thread", () => {
+  const root = "22222222-2222-4222-8222-222222222222";
+  assert.notEqual(
+    chatSignalShapeProblem({
+      ...undirected,
+      thread_root_id: root,
+      channel: "mobile",
+    }),
+    null,
+    "refused, not silently ignored",
+  );
+  assert.equal(
+    chatSignalShapeProblem({
+      ...undirected,
+      thread_root_id: root,
+      broadcast_to_channel: true,
+    }),
+    null,
+  );
+  assert.notEqual(
+    chatSignalShapeProblem({ ...undirected, broadcast_to_channel: true }),
+    null,
+    "broadcast_to_channel without a thread has nothing to broadcast",
+  );
+  assert.equal(
+    chatSignalShapeProblem({ ...undirected, broadcast_to_channel: false }),
+    null,
+    "false is the default an older client would have written, so it must pass",
+  );
+  assert.notEqual(
+    chatSignalShapeProblem({ ...undirected, broadcast_to_channel: "yes" }),
+    null,
+  );
+});
+
+test("the thread root lookup still refuses a directed root in SQL", () => {
+  /* This arm is a REGRESSION GUARD, not a behavioural test: the rule lives in a
+   * query the command edge runs against Postgres, and no gate in this lane can
+   * execute it. resolveThreadRoot reads swarm.signals as swarm_command, which
+   * bypasses swarm_read.signals — the view that IS the read policy — so without
+   * these two lines any member holding a signal id could hang a PUBLIC thread
+   * off a DIRECTED message between two other people. Deleting them is silent;
+   * this makes it loud. The behavioural control is owed by a p1-server test. */
+  const command = readFileSync(
+    fileURLToPath(
+      new URL("../supabase/functions/command/index.ts", import.meta.url),
+    ),
+    "utf8",
+  );
+  const start = command.indexOf("async function resolveThreadRoot");
+  assert.notEqual(start, -1, "resolveThreadRoot must still exist to guard");
+  /* Bound the slice by the next top-level declaration rather than by a byte
+   * count, so a comment added inside the function cannot push the SQL out of
+   * view and turn this guard green by accident. */
+  const end = command.indexOf("interface SignalWriteTarget", start);
+  assert.ok(end > start, "the function boundary must be findable");
+  const body = command.slice(start, end);
+  assert.ok(
+    body.includes("AND to_user_id IS NULL"),
+    "the thread root query must refuse a root addressed to a person",
+  );
+  assert.ok(
+    body.includes("AND to_agent_principal_id IS NULL"),
+    "the thread root query must refuse a root addressed to an agent",
+  );
+  /* Control: the slice really is resolveThreadRoot's body. */
+  assert.ok(body.includes("thread_root_is_a_reply"));
+});

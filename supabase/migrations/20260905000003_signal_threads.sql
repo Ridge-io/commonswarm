@@ -80,9 +80,13 @@ BEGIN
   -- contains. The match is whitespace-insensitive because the pretty-printer's
   -- indentation is a Postgres implementation detail, not a contract.
   --
+  -- The schema qualifier is OPTIONAL in the pattern: pg_get_viewdef omits it
+  -- when swarm is on the session search_path, and whether it is there is a
+  -- property of how the migration was invoked, not of the view.
+  --
   -- The attachments subquery reads FROM swarm.signal_attachments, which cannot
   -- match: the pattern requires whitespace directly after "signals".
-  IF live_def !~ '\sFROM\s+swarm\.signals\s' THEN
+  IF live_def !~ '\sFROM\s+(swarm\.)?signals\s' THEN
     RAISE EXCEPTION
       'could not locate the select-list boundary in the live swarm_read.signals body; recreate it by hand and re-run the directed-visibility suite before deploying anything';
   END IF;
@@ -93,7 +97,7 @@ BEGIN
 
   body := regexp_replace(
     live_def,
-    '(\s)(FROM\s+swarm\.signals\s)',
+    '(\s)(FROM\s+(?:swarm\.)?signals\s)',
     E',\n    s.thread_root_id,\n    s.broadcast_to_channel\\1\\2'
   );
   body := rtrim(body, E' ;\n\t');
