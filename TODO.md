@@ -259,7 +259,7 @@ production environment deploy independently; there is no CI coupling them. The 2
 switch completed in the safe order: migrations and functions, hosted configuration,
 `SWARM_SELF_SERVE=1`, then public copy. If the gate ever changes again, sweep every
 availability surface in the same change — at minimum `SiteFooter.astro`,
-`download/AfterInstall.astro`, `landing/Invite.astro`, and `install.sh` — so git does not
+`download/AfterInstall.astro`, and `install.sh` — so git does not
 keep instructing agents to publish the previous deployment state.
 
 ---

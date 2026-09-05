@@ -308,6 +308,8 @@ curl -s "$U/definitely-not-a-page" -o /dev/null -w '%{http_code}\n'  # 404 — p
 ★ **COMPLETED 2026-07-28:** ~~Then, and only then, revisit the copy that says signup is not
 open.~~ The availability-copy sweep covered `SiteFooter.astro`,
 `download/AfterInstall.astro`, `landing/Invite.astro`, and `install.sh`'s closing text.
+(`landing/Invite.astro` was deleted on 2026-09-05 as dead code; it is named here because the
+2026-07-28 sweep did cover it. Do not look for it when repeating the sweep.)
 Repeat that sweep whenever the deployment gate changes.
 
 ~~**The CLI hand-off is still broken at this point** and copy must not pretend otherwise:

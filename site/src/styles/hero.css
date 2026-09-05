@@ -1,4 +1,6 @@
-/* hero.css — styles owned by Hero.astro and AuthorityDemo.astro.
+/* hero.css — ORPHANED. It styled Hero.astro and AuthorityDemo.astro, and both are gone:
+ * AuthorityDemo with the pre-rewrite landing components (see ui.css's header), Hero.astro
+ * on 2026-09-05. Nothing imports this file, so nothing it says below reaches a reader.
  *
  * Everything here is namespaced under .hero- or .ad- so it cannot collide with the
  * shared primitives (.page, .eyebrow, .h-display, .lede, .btn, .card, .mono) that
