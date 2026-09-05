@@ -35,6 +35,11 @@ type LayoutMeasurement = {
   };
   transcriptToHeaderRatio: number;
   transcriptVisibleHeight: number;
+  feedListPaddingBlockStart: string;
+  feedMore: Rect | null;
+  feedMoreToFirstRowGap: number | null;
+  feedViewScrollTop: number;
+  firstRow: Rect | null;
   viewport: { height: number; width: number };
   shell: {
     app: Rect;
@@ -85,6 +90,37 @@ const revertedStyles = `<style>
       min-block-size: calc(100svh - 5.5rem - 4.5rem);
     }
   }
+  @media (max-width: 52rem) {
+    /* The 2026-09-04 change put the channel head OUT of the flow and took the filter row's
+       height back with a negative margin. This is the state before it: both are rows again,
+       and the transcript starts below all three bars. */
+    .dashboard__channel {
+      position: static;
+      grid-template-rows: auto minmax(0, 1fr);
+    }
+    .dashboard__channel-head {
+      position: static;
+      min-block-size: 4.75rem;
+      justify-content: space-between;
+      flex-wrap: wrap;
+      padding: var(--s-3) var(--s-4);
+      border-block-end: 1px solid var(--border);
+      pointer-events: auto;
+    }
+    .dashboard__channel-titleblock {
+      position: static;
+      inline-size: auto;
+      block-size: auto;
+      margin: 0;
+      overflow: visible;
+      clip-path: none;
+    }
+    .dashboard__feed-toolbar {
+      margin-block-end: 0;
+      border-block-end: 1px solid var(--border);
+    }
+    .dashboard__feed { padding-block-start: 0; }
+  }
   @media (max-width: 34rem) {
     .dashboard__channel-head {
       display: flex;
@@ -93,28 +129,23 @@ const revertedStyles = `<style>
       flex-wrap: nowrap;
       gap: var(--s-3);
     }
-    .dashboard__channel-titleblock {
-      grid-column: auto;
-      grid-row: auto;
-      order: 1;
-      gap: var(--s-1);
-    }
     .dashboard__channel-description { line-height: var(--lh-xs); }
     .dashboard__channel-actions {
-      grid-column: auto;
-      grid-row: auto;
       order: 2;
       margin-inline-start: auto;
     }
     .dashboard__channel-roster {
-      grid-column: auto;
-      grid-row: auto;
       order: 3;
     }
   }
 </style>`;
 
-const frameScript = (reverted: boolean, empty: boolean, pending: boolean): string => `<script>
+const frameScript = (
+  reverted: boolean,
+  empty: boolean,
+  pending: boolean,
+  more: boolean,
+): string => `<script>
   const frame = document.querySelector("iframe");
   const reportError = (value) => {
     document.documentElement.dataset.layoutError = btoa(String(value));
@@ -146,6 +177,9 @@ const frameScript = (reverted: boolean, empty: boolean, pending: boolean): strin
     updates.hidden = false;
     updates.textContent = "25+ updates";
     doc.querySelector("[data-refresh]").hidden = false;
+    /* "Load older updates" sits BETWEEN the floating band and the list, so when it is showing
+       it is the element that clears the band and the list must not clear it a second time. */
+    doc.querySelector("[data-feed-more]").hidden = ${JSON.stringify(!more)};
     const composer = doc.querySelector("[data-composer]");
     composer.hidden = false;
     const list = doc.querySelector("[data-feed-list]");
@@ -201,6 +235,8 @@ const frameScript = (reverted: boolean, empty: boolean, pending: boolean): strin
     };
     doc.querySelector("[data-user-menu-trigger]").click();
     await settle();
+    const feedMore = doc.querySelector("[data-feed-more]");
+    const firstRow = doc.querySelector("[data-feed-list] > li");
     const header = rect(".dashboard__channel-head");
     const toolbar = rect(".dashboard__feed-toolbar");
     const composerBox = rect("[data-composer]");
@@ -209,6 +245,14 @@ const frameScript = (reverted: boolean, empty: boolean, pending: boolean): strin
     document.documentElement.dataset.layoutMeasurement = btoa(JSON.stringify({
       combinedHeaderHeight,
       composer: composerBox,
+      feedListPaddingBlockStart:
+        view.getComputedStyle(doc.querySelector("[data-feed-list]")).paddingBlockStart,
+      feedMore: feedMore.hidden ? null : rect("[data-feed-more]"),
+      feedViewScrollTop: doc.querySelector(".dashboard__feed-view").scrollTop,
+      feedMoreToFirstRowGap: feedMore.hidden || !firstRow
+        ? null
+        : firstRow.getBoundingClientRect().top - feedMore.getBoundingClientRect().bottom,
+      firstRow: firstRow ? rect("[data-feed-list] > li") : null,
       header,
       input: rect(".dashboard__composer-input"),
       menu,
@@ -241,13 +285,14 @@ const startDistServer = async (): Promise<{ close(): Promise<void>; origin: stri
       const reverted = url.searchParams.get("reverted") === "1";
       const empty = url.searchParams.get("empty") === "1";
       const pending = url.searchParams.get("pending") === "1";
+      const more = url.searchParams.get("more") === "1";
       if (!Number.isSafeInteger(width) || !Number.isSafeInteger(height)) {
         response.writeHead(400).end("Invalid measurement");
         return;
       }
       response.writeHead(200, { "content-type": contentTypes[".html"] });
       response.end(
-        `<!doctype html><html><body style="margin:0"><iframe title="Layout measurement viewport" src="/app" style="border:0;width:${width}px;height:${height}px"></iframe>${frameScript(reverted, empty, pending)}</body></html>`,
+        `<!doctype html><html><body style="margin:0"><iframe title="Layout measurement viewport" src="/app" style="border:0;width:${width}px;height:${height}px"></iframe>${frameScript(reverted, empty, pending, more)}</body></html>`,
       );
       return;
     }
@@ -294,6 +339,7 @@ const measureAt = async (
   reverted: boolean,
   empty = false,
   pending = false,
+  more = false,
 ): Promise<LayoutMeasurement> => {
   const { stdout, stderr } = await run(chrome, [
     "--headless=new",
@@ -305,7 +351,7 @@ const measureAt = async (
     "--window-size=1600,1200",
     "--virtual-time-budget=8000",
     "--dump-dom",
-    `${origin}/__measure?width=${width}&height=${height}&reverted=${reverted ? 1 : 0}&empty=${empty ? 1 : 0}&pending=${pending ? 1 : 0}`,
+    `${origin}/__measure?width=${width}&height=${height}&reverted=${reverted ? 1 : 0}&empty=${empty ? 1 : 0}&pending=${pending ? 1 : 0}&more=${more ? 1 : 0}`,
   ], {
     maxBuffer: 10 * 1024 * 1024,
     timeout: 20_000,
@@ -322,23 +368,79 @@ const measureAt = async (
   return JSON.parse(Buffer.from(encoded, "base64").toString("utf8")) as LayoutMeasurement;
 };
 
+/* THE OPERATOR'S RULE (2026-09-04), stated against the bars themselves rather than a magic
+ * number: on a phone the ENTIRE header is no taller than the workspace bar — the row with the
+ * workspace name and the account control. So the only thing between the top of the screen and
+ * the top of the transcript is that bar. The channel head and the filter row are painted OVER
+ * the transcript and take none of its height.
+ *
+ * The app bar's height IS the channel section's top edge, and the transcript's own box is
+ * `shell.channelBody`, so the whole rule is one comparison of two measured edges. Measured
+ * before the change at 390x844: a 73px bar, a 53px head and a 45px filter row — 171px of
+ * header on an 844px screen, and the transcript began at 126px. After it: 73px and 73px. */
+const assertPhoneHeaderRule = (measurement: LayoutMeasurement, width: number): void => {
+  const appBar = measurement.shell.channel.top;
+  /* Positive control on the same invocation: without a real app bar the comparison below is
+   * satisfied by two zeroes, so it would pass hardest when nothing rendered at all. */
+  assert.ok(
+    appBar >= 40 && appBar <= 100,
+    `${width}px density: the app bar is not a one-row bar (${appBar}px), so the rule below ` +
+      `is not measuring anything: ${JSON.stringify(measurement.shell)}`,
+  );
+  assert.ok(
+    measurement.shell.channelBody.top <= appBar + 0.5,
+    `${width}px density: ${measurement.shell.channelBody.top}px of header sits above the ` +
+      `transcript, which is taller than the ${appBar}px workspace bar`,
+  );
+  /* The head must FLOAT, not vanish: the roster pill inside it is the only door to agent
+   * management on a phone, and a zero-height head would satisfy the rule above by deleting it. */
+  assert.ok(
+    measurement.header.height > 0 && measurement.header.top >= appBar - 0.5,
+    `${width}px density: the channel head is gone rather than floating over the transcript: ` +
+      JSON.stringify(measurement.header),
+  );
+  /* FLOATING IS NOT FREE AT REST. The transcript scrolls UNDER the band, which is the point,
+   * but the first message must start below ALL of it before anybody scrolls. The band's two
+   * parts are not the same height — the filter row is 2.5rem and the roster cluster 3.25rem —
+   * and the clearance used to be the shorter one, so 12px of the first row sat under the pill.
+   * Positive control first: this measures nothing if the feed is already scrolled or empty. */
+  assert.equal(
+    measurement.feedViewScrollTop,
+    0,
+    `${width}px density: the transcript is already scrolled, so "at rest" is not what was measured`,
+  );
+  assert.ok(
+    measurement.firstRow !== null && measurement.firstRow.height > 0,
+    `${width}px density: there is no first message, so the clearance below measures nothing`,
+  );
+  assert.ok(
+    measurement.firstRow.top >= measurement.header.bottom - 0.5,
+    `${width}px density: ${(measurement.header.bottom - measurement.firstRow.top).toFixed(1)}px ` +
+      "of the first message sits under the floating roster pill at rest: " +
+      JSON.stringify({ firstRow: measurement.firstRow, header: measurement.header }),
+  );
+  assert.ok(
+    measurement.firstRow.top >= measurement.toolbar.bottom - 0.5,
+    `${width}px density: the first message sits under the floating filter row at rest: ` +
+      JSON.stringify({ firstRow: measurement.firstRow, toolbar: measurement.toolbar }),
+  );
+  assert.ok(
+    measurement.transcriptVisibleHeight >= 600,
+    `${width}px density: transcript is too short: ${JSON.stringify(measurement)}`,
+  );
+};
+
 const assertDensity = (measurement: LayoutMeasurement, width: number): void => {
   /* The later composer sprint added the visible TO and keyboard-hint rows. The
-   * accepted empty composer leaves 607.9px of transcript at 1440x900 and
-   * 352.3px at 390x844. These floors keep a small regression margin while the
-   * reverted-density control below still has to fail. The old 650/475px floors
-   * described the shorter pre-sprint bar. */
-  /* The 390px band moved down on 2026-09-03: the channel head was a two-row bar (113px against
-   * a 73px app bar) and is now one row (53px), which returned 60px to the transcript. The old
-   * band was 150-180 with a 340px transcript floor and a ratio floor of 2; measured after the
-   * change: header 98, transcript 540.6, ratio 5.5.
-   *
-   * headerMax is deliberately LOOSER than the measurement (125, not 115) so it does not swallow
-   * the app-bar rule below. With a tighter max, restoring the old 4.75rem floor failed the band
-   * and the app-bar assertion never ran — a control that cannot fail. */
-  const limits = width === 1440
-    ? { headerMax: 125, headerMin: 110, ratioMin: 5, transcriptMin: 600 }
-    : { headerMax: 125, headerMin: 85, ratioMin: 4, transcriptMin: 500 };
+   * accepted empty composer leaves 607.9px of transcript at 1440x900. This floor keeps a
+   * small regression margin while the reverted-density control below still has to fail. */
+  if (width !== 1440) {
+    assertPhoneHeaderRule(measurement, width);
+    return;
+  }
+  /* headerMax is deliberately LOOSER than the measurement (125, not 115) so a reverted variant
+   * still reaches the transcript and ratio floors below rather than stopping at the band. */
+  const limits = { headerMax: 125, headerMin: 110, ratioMin: 5, transcriptMin: 600 };
   assert.ok(
     measurement.combinedHeaderHeight >= limits.headerMin &&
       measurement.combinedHeaderHeight <= limits.headerMax,
@@ -352,16 +454,6 @@ const assertDensity = (measurement: LayoutMeasurement, width: number): void => {
     measurement.transcriptToHeaderRatio >= limits.ratioMin,
     `${width}px density: transcript/header ratio is too low: ${JSON.stringify(measurement)}`,
   );
-  /* The operator's rule, stated against the two bars themselves rather than a magic number:
-   * on a phone the channel head must not be taller than the app bar above it. The app bar's
-   * height IS the channel section's top edge. */
-  if (width !== 1440) {
-    assert.ok(
-      measurement.header.height <= measurement.shell.channel.top,
-      `${width}px density: the channel head (${measurement.header.height}px) is taller than ` +
-        `the app bar above it (${measurement.shell.channel.top}px)`,
-    );
-  }
 };
 
 const assertInsideViewport = (measurement: LayoutMeasurement): void => {
@@ -423,22 +515,54 @@ test("the live feed header stays compact and the narrow composer stays in view",
   }
 });
 
-/* A separate case, not another width in the loop above: below 36rem of viewport height the feed
-   toolbar is hidden, so combinedHeaderHeight (toolbar.bottom - header.top) stops describing
-   anything and the density band cannot be applied. What still holds at this size is the rule the
-   operator asked for, so that is what this pins. Found by measuring: the short-viewport block put
-   the taller padding back and made the head 61px against a 57px app bar. */
-test("the smallest phone keeps the channel head under the app bar", async () => {
+/* A separate case, not another width in the loop above: the short-viewport block at 36rem of
+   height changes the composer and the head's padding, and the smallest phone is where a floor
+   that is 8px too generous stops fitting. Found by measuring: the short-viewport block once put
+   the taller padding back and made the head 61px against a 57px app bar. The transcript floor
+   in the shared rule does not apply at 568px of screen, so this case asserts the rule's other
+   three parts and the viewport containment. */
+test("the smallest phone keeps the whole header inside the app bar row", async () => {
   const chrome = await findChrome();
   const server = await startDistServer();
   try {
     /* With the pending label, which is the widest the roster pill gets. */
     const measurement = await measureAt(chrome, server.origin, 320, 568, false, false, true);
     assert.deepEqual(measurement.viewport, { width: 320, height: 568 });
+    const appBar = measurement.shell.channel.top;
     assert.ok(
-      measurement.header.height <= measurement.shell.channel.top,
-      `320x568: the channel head (${measurement.header.height}px) is taller than the app bar ` +
-        `above it (${measurement.shell.channel.top}px)`,
+      appBar >= 40 && appBar <= 100,
+      `320x568: the app bar is not a one-row bar (${appBar}px), so the rule below is not ` +
+        `measuring anything: ${JSON.stringify(measurement.shell)}`,
+    );
+    assert.ok(
+      measurement.shell.channelBody.top <= appBar + 0.5,
+      `320x568: ${measurement.shell.channelBody.top}px of header sits above the transcript, ` +
+        `which is taller than the ${appBar}px workspace bar`,
+    );
+    assert.ok(
+      measurement.header.height > 0 && measurement.header.top >= appBar - 0.5,
+      `320x568: the channel head is gone rather than floating: ${JSON.stringify(measurement.header)}`,
+    );
+    /* The at-rest clearance, re-pinned at the smallest phone and with the widest roster label,
+       which is where a band that grew a line would first stop fitting. The shared rule cannot be
+       reused whole here: its transcript floor is written for an 844px screen. */
+    assert.equal(
+      measurement.feedViewScrollTop,
+      0,
+      "320x568: the transcript is already scrolled, so \"at rest\" is not what was measured",
+    );
+    assert.ok(
+      measurement.firstRow !== null && measurement.firstRow.height > 0,
+      "320x568: there is no first message, so the clearance below measures nothing",
+    );
+    assert.ok(
+      measurement.firstRow.top >= measurement.header.bottom - 0.5 &&
+        measurement.firstRow.top >= measurement.toolbar.bottom - 0.5,
+      `320x568: the first message sits under the floating band at rest: ${JSON.stringify({
+        firstRow: measurement.firstRow,
+        header: measurement.header,
+        toolbar: measurement.toolbar,
+      })}`,
     );
     assertInsideViewport(measurement);
     console.log(`mobile-feed-layout 320px ${JSON.stringify(measurement)}`);
@@ -521,6 +645,61 @@ test("an empty feed keeps the app shell at the dynamic viewport height", async (
       assert.equal(measurement.composer.bottom, height);
       console.log(`empty-app-shell ${width}x${height} ${JSON.stringify(measurement.shell)}`);
     }
+  } finally {
+    await server.close();
+  }
+});
+
+/* The floating band costs the reading area nothing only if its clearance is paid ONCE. Two
+   pairs have to agree, and they are not the same number. The filter row's own 2.5rem height and
+   the negative margin that takes it back out of the flow must match EACH OTHER. The clearance
+   is a different quantity: the height of the whole band, which is the taller of its two floating
+   parts — the roster cluster at var(--feed-band-height), 3.25rem. "Load older updates" sits
+   BETWEEN the band and the list, so when it is showing it is the element that clears the band,
+   and the list's own clearance becomes dead screen between the button and the first message.
+   Found by measuring at 390x844 while that clearance was still 2.5rem: a 40px gap. */
+test("the floating band's clearance is paid once when older updates can be loaded", async () => {
+  const chrome = await findChrome();
+  const server = await startDistServer();
+  try {
+    const withMore = await measureAt(chrome, server.origin, 390, 844, false, false, false, true);
+    const withoutMore = await measureAt(chrome, server.origin, 390, 844, false, false, false, false);
+    /* Positive control on the same invocation: with no visible button there is nothing to pay
+       twice, so every assertion below would be satisfied by a knob that did nothing. */
+    assert.ok(
+      withMore.feedMore !== null && withMore.feedMore.height > 0,
+      `load-older is not on screen, so this case measures nothing: ${JSON.stringify(withMore.feedMore)}`,
+    );
+    assert.equal(
+      withoutMore.feedMore,
+      null,
+      "load-older is showing in the variant that must not show it",
+    );
+    /* The clearance still exists — it just belongs to whichever element is first under the band. */
+    assert.notEqual(
+      withoutMore.feedListPaddingBlockStart,
+      "0px",
+      "with no load-older button the list itself must clear the floating band",
+    );
+    assert.equal(
+      withMore.feedListPaddingBlockStart,
+      "0px",
+      "the band's clearance is paid twice: load-older already cleared it and the list clears it " +
+        `again (${withMore.feedListPaddingBlockStart})`,
+    );
+    assert.ok(
+      withMore.feedMoreToFirstRowGap !== null && withMore.feedMoreToFirstRowGap < 20,
+      `${withMore.feedMoreToFirstRowGap}px of dead screen sits between load-older and the first ` +
+        "message",
+    );
+    /* The rule the whole block exists for still holds while the button is up. */
+    assertPhoneHeaderRule(withMore, 390);
+    assertInsideViewport(withMore);
+    console.log(`feed-more-clearance ${JSON.stringify({
+      gap: withMore.feedMoreToFirstRowGap,
+      withMore: withMore.feedListPaddingBlockStart,
+      withoutMore: withoutMore.feedListPaddingBlockStart,
+    })}`);
   } finally {
     await server.close();
   }

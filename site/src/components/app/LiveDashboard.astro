@@ -231,9 +231,55 @@ import "../../styles/tokens.css";
                   <span aria-hidden="true">+</span>
                   <span>New workspace</span>
                 </button>
+                {/* The phone's door to workspace settings. The gear beside the workspace name
+                    is 55px of a bar that has to hold the name, the view switcher and the
+                    account control on one line, so below 52rem the gear goes and this item
+                    opens the same dialog. It is display:none above that width, where the gear
+                    is still there. */}
+                <button
+                  class="dashboard__workspace-create-button dashboard__workspace-settings-item"
+                  type="button"
+                  role="menuitem"
+                  data-workspace-settings-item
+                >
+                  <span aria-hidden="true">⚙</span>
+                  <span>Workspace settings</span>
+                </button>
               </div>
             </div>
           </div>
+
+          {/* The phone's view switcher. It lives in the app bar, not in the channel head,
+              because the operator's rule is that the whole mobile header is ONE row — the
+              row with the workspace name and the account control. These buttons are
+              `display: none` above 52rem, where the rail's own STREAMS and ARTIFACTS lists
+              are the navigation, so this placement costs the desktop nothing. They carry the
+              same `data-workspace-view` values the rail buttons do and the same listener
+              loop keeps `aria-current` in step. */}
+          <nav class="dashboard__rail-tabs" aria-label="Workspace views">
+            <button
+              class="dashboard__text-button dashboard__mobile-view"
+              type="button"
+              data-workspace-view="signals"
+              aria-current="page"
+            >
+              Signals
+            </button>
+            <button
+              class="dashboard__text-button dashboard__mobile-view"
+              type="button"
+              data-workspace-view="files"
+            >
+              Files
+            </button>
+            <button
+              class="dashboard__text-button dashboard__mobile-view"
+              type="button"
+              data-workspace-view="brain"
+            >
+              Brain
+            </button>
+          </nav>
 
           <section class="dashboard__workspace-context" aria-label="Workspace signal summary">
             <p class="dashboard__workspace-summary">
@@ -318,6 +364,12 @@ import "../../styles/tokens.css";
               aria-label="Account"
               hidden
             >
+              {/* Who you are signed in as. Below 52rem the trigger shows a chevron only —
+                  its name was 75px of a bar that has to carry the workspace name and the
+                  view switcher too — so this line is the phone's answer to that question.
+                  It carries `data-rail-account`, which is what every writer of the account
+                  name already selects, so the two stay in step without new wiring. */}
+              <p class="dashboard__user-menu-account" data-rail-account>Your account</p>
               <button
                 class="dashboard__theme-toggle"
                 type="button"
@@ -369,28 +421,6 @@ import "../../styles/tokens.css";
             </div>
 
             <div class="dashboard__channel-actions">
-              <button
-                class="dashboard__text-button dashboard__mobile-view"
-                type="button"
-                data-workspace-view="signals"
-                aria-current="page"
-              >
-                Signals
-              </button>
-              <button
-                class="dashboard__text-button dashboard__mobile-view"
-                type="button"
-                data-workspace-view="files"
-              >
-                Files
-              </button>
-              <button
-                class="dashboard__text-button dashboard__mobile-view"
-                type="button"
-                data-workspace-view="brain"
-              >
-                Brain
-              </button>
               {/* The one promise the header owes a first-timer: this feed moves by
                   itself. Shown exactly while the two-second poll can be armed
                   (feed views, never sample mode), so the word is always true.
@@ -2217,6 +2247,34 @@ import "../../styles/tokens.css";
           recipient.id === entity.id,
       );
 
+    /* Two idle delays on the keystroke path. 150ms is the shortest pause that reads as a stop
+     * in typing, so the mention list still appears to open as you type; 300ms is a longer one,
+     * because nothing but a reload reads the draft. */
+    const COMPOSER_MENTION_DEBOUNCE_MS = 150;
+    const COMPOSER_DRAFT_DEBOUNCE_MS = 300;
+    /* Declared here, above every function that reads them, because both are cancelled from
+     * inside the direct paths (`persistComposerDraft`, `closeMentionPicker`) that a pending
+     * timer must never be allowed to undo — a debounced write that lands after a send would
+     * put the sent text back as a draft. */
+    let composerDraftTimer = 0;
+    let mentionPickerTimer = 0;
+    /* There is nothing to put back until something has been remembered, and the starting value
+     * is not a caret anybody chose. Without this flag the first focus that did not follow a tap
+     * — tabbing into a draft the page restored — would set the caret to the START of a sentence
+     * the reader had already written, which is the defect the caret block exists to remove.
+     * Declared here, with the timers, because `restoreComposerDraft` clears it and that runs
+     * above the caret block. */
+    let composerCaretKnown = false;
+    const cancelComposerDraftTimer = (): void => {
+      if (!composerDraftTimer) return;
+      window.clearTimeout(composerDraftTimer);
+      composerDraftTimer = 0;
+    };
+    const cancelMentionPickerRender = (): void => {
+      if (!mentionPickerTimer) return;
+      window.clearTimeout(mentionPickerTimer);
+      mentionPickerTimer = 0;
+    };
     const COMPOSER_COUNTER_THRESHOLD = 500;
     const COMPOSER_DRAFT_STORAGE_MAX = SIGNAL_BODY_MAX * 2;
     const COMPOSER_STREAM = "all-signals";
@@ -2244,6 +2302,7 @@ import "../../styles/tokens.css";
     };
 
     const clearComposerDraft = (): void => {
+      cancelComposerDraftTimer();
       const key = composerDraftKey();
       if (!key) return;
       try {
@@ -2254,6 +2313,7 @@ import "../../styles/tokens.css";
     };
 
     const persistComposerDraft = (): void => {
+      cancelComposerDraftTimer();
       const key = composerDraftKey();
       const input = one<HTMLTextAreaElement>("[data-composer-input]");
       if (!key || !input) return;
@@ -2277,9 +2337,47 @@ import "../../styles/tokens.css";
       }
     };
 
-    const resizeComposerInput = (input: HTMLTextAreaElement): void => {
+    /* AUTOGROW COSTS A SYNCHRONOUS LAYOUT. Writing `auto` and then reading scrollHeight forces
+     * the browser to lay the document out again before the event handler can return, so on a
+     * phone the price of one keystroke rose with the length of the transcript behind it. The
+     * write is the same; WHEN it happens is not. Batched into an animation frame it runs after
+     * the handler, outside the interaction that the browser measures, and several keystrokes in
+     * one frame pay for one layout instead of one each. */
+    let composerResizeFrame = 0;
+    let composerResizeTimer = 0;
+    const applyComposerResize = (input: HTMLTextAreaElement): void => {
+      if (composerResizeFrame) window.cancelAnimationFrame(composerResizeFrame);
+      if (composerResizeTimer) window.clearTimeout(composerResizeTimer);
+      composerResizeFrame = 0;
+      composerResizeTimer = 0;
       input.style.blockSize = "auto";
       input.style.blockSize = `${input.scrollHeight}px`;
+    };
+    /* localStorage is synchronous, and on iOS Safari it is synchronous ACROSS PROCESSES. One
+     * write per keystroke put that cost inside the keystroke. The draft only has to survive a
+     * reload, so an idle write is as good and the send path flushes it anyway. */
+    const flushComposerDraft = (): void => {
+      persistComposerDraft();
+    };
+    const scheduleComposerDraft = (): void => {
+      cancelComposerDraftTimer();
+      composerDraftTimer = window.setTimeout(() => {
+        composerDraftTimer = 0;
+        persistComposerDraft();
+      }, COMPOSER_DRAFT_DEBOUNCE_MS);
+    };
+
+    const resizeComposerInput = (input: HTMLTextAreaElement, immediate = false): void => {
+      if (immediate) {
+        applyComposerResize(input);
+        return;
+      }
+      if (composerResizeFrame || composerResizeTimer) return;
+      composerResizeFrame = window.requestAnimationFrame(() => applyComposerResize(input));
+      /* An animation frame is not guaranteed to arrive. A hidden tab does not get one, and
+       * neither does a headless run with no compositor, so the box would keep a stale height.
+       * The timer is the floor under the frame; whichever runs first cancels the other. */
+      composerResizeTimer = window.setTimeout(() => applyComposerResize(input), 32);
     };
 
     const setComposerStatus = (
@@ -2449,6 +2547,9 @@ import "../../styles/tokens.css";
         return;
       }
       input.value = draft.body;
+      /* A caret remembered in OTHER text is not a caret in this text. The restore would put
+         it back at a position the reader never chose here. */
+      composerCaretKnown = false;
       composerIntent = null;
       const warning = one<HTMLElement>("[data-composer-reload-warning]");
       composerAttachmentsMissingAfterReload = draft.hadAttachments === true;
@@ -2469,19 +2570,105 @@ import "../../styles/tokens.css";
       });
     };
 
+    /* THE CARET SURVIVES THE KEYBOARD.
+     *
+     * Showing and hiding a software keyboard moves focus off the textarea and back, and the
+     * browser restores neither the selection nor the textarea's own scroll position. What the
+     * operator met was a composer he could not return to the end of. Two pieces:
+     *
+     *  - remember the selection whenever it changes while the field has focus, and put it back
+     *    when focus returns WITHOUT a pointer landing in the text. A tap inside the text is the
+     *    reader choosing a new caret, and restoring over it would be worse than the bug.
+     *  - after the visible viewport resizes, scroll the caret's line back into the textarea's
+     *    scrollport. At its maximum height the textarea scrolls internally, which is where the
+     *    typed line disappeared behind the keyboard furniture.
+     */
+    let composerCaret = { end: 0, start: 0 };
+    let composerPointerAt = 0;
+    const composerInputElement = (): HTMLTextAreaElement | null =>
+      one<HTMLTextAreaElement>("[data-composer-input]");
+
+    const rememberComposerCaret = (): void => {
+      const input = composerInputElement();
+      if (!input || document.activeElement !== input) return;
+      composerCaretKnown = true;
+      composerCaret = {
+        end: input.selectionEnd ?? 0,
+        start: input.selectionStart ?? 0,
+      };
+    };
+
+    const scrollComposerCaretIntoView = (): void => {
+      const input = composerInputElement();
+      if (!input || document.activeElement !== input) return;
+      const caret = input.selectionEnd ?? input.value.length;
+      /* The end of the text is the case the operator hit and the only one that can be answered
+       * exactly: scrollHeight already accounts for wrapped lines. */
+      if (caret >= input.value.length) {
+        input.scrollTop = input.scrollHeight;
+        return;
+      }
+      /* Anywhere else, count hard line breaks. This does NOT count soft wraps, so a caret in
+       * the middle of a long wrapped paragraph can land a line or two off. */
+      const style = window.getComputedStyle(input);
+      const lineHeight = Number.parseFloat(style.lineHeight) ||
+        Number.parseFloat(style.fontSize) * 1.4;
+      const caretTop = (input.value.slice(0, caret).split("\n").length - 1) * lineHeight;
+      if (caretTop + lineHeight > input.scrollTop + input.clientHeight) {
+        input.scrollTop = caretTop + lineHeight - input.clientHeight;
+      } else if (caretTop < input.scrollTop) {
+        input.scrollTop = caretTop;
+      }
+    };
+
+    const restoreComposerCaret = (): void => {
+      const input = composerInputElement();
+      if (!input || !composerCaretKnown) return;
+      const length = input.value.length;
+      input.setSelectionRange(
+        Math.min(composerCaret.start, length),
+        Math.min(composerCaret.end, length),
+      );
+      scrollComposerCaretIntoView();
+    };
+
     /* The visual viewport is the usable screen while a software keyboard is open. CSS viewport
      * units can still describe the larger layout viewport, which leaves the composer behind the
-     * keyboard on mobile Chrome. Keep one measured height on the product shell. */
+     * keyboard on mobile Chrome. Keep one measured height on the product shell.
+     *
+     * `window.innerHeight` is NOT a fallback here. On iOS Safari it reports the layout viewport,
+     * which does not change when the keyboard opens, so using it would write a height that is
+     * too tall at exactly the moment the composer needs a shorter one. When there is no
+     * visualViewport the property stays unset and the stylesheet's own `100dvh` applies, which
+     * is the browser's answer to the same question.
+     *
+     * iOS ALSO scrolls the LAYOUT viewport when a field near the bottom takes focus. That is
+     * what threw the composer to the top of the screen and then dropped it part way: the app
+     * is sized to the visible viewport, but the whole page had been pushed up underneath it.
+     * Returning the page to 0 on every visual-viewport event pins the shell to the screen. */
+    let viewportSyncFrame = 0;
     const syncDashboardViewport = (): void => {
-      const height = window.visualViewport?.height ?? window.innerHeight;
-      app.style.setProperty("--dashboard-viewport-height", `${Math.round(height)}px`);
+      viewportSyncFrame = 0;
+      if (window.scrollX !== 0 || window.scrollY !== 0) window.scrollTo(0, 0);
+      const viewport = window.visualViewport;
+      if (!viewport) return;
+      app.style.setProperty("--dashboard-viewport-height", `${Math.round(viewport.height)}px`);
+      /* The composer has just moved. Whatever was being typed goes back into view. */
+      scrollComposerCaretIntoView();
+    };
+    /* visualViewport `scroll` fires many times per keyboard animation frame. Writing a custom
+     * property invalidates layout for the whole shell, so coalesce to one write per frame. */
+    const requestDashboardViewportSync = (): void => {
+      if (viewportSyncFrame) return;
+      viewportSyncFrame = window.requestAnimationFrame(syncDashboardViewport);
     };
     syncDashboardViewport();
-    window.addEventListener("resize", syncDashboardViewport);
-    window.visualViewport?.addEventListener("resize", syncDashboardViewport);
-    window.visualViewport?.addEventListener("scroll", syncDashboardViewport);
+    window.addEventListener("resize", requestDashboardViewportSync);
+    window.visualViewport?.addEventListener("resize", requestDashboardViewportSync);
+    window.visualViewport?.addEventListener("scroll", requestDashboardViewportSync);
 
     const closeMentionPicker = (): void => {
+      cancelMentionPickerRender();
       const picker = one<HTMLElement>("[data-mention-picker]");
       if (picker) picker.hidden = true;
       const input = one<HTMLTextAreaElement>("[data-composer-input]");
@@ -2589,6 +2776,25 @@ import "../../styles/tokens.css";
       );
     };
 
+    /* The mention list is a search across every member and agent, and it rebuilt the whole
+     * popover on every keystroke — including the keystrokes that cannot change the result,
+     * which is most of them. It runs after typing pauses instead. `renderMentionPicker` itself
+     * is unchanged and is still called directly by the arrow keys, where the reader is waiting
+     * on it. */
+    const scheduleMentionPicker = (): void => {
+      cancelMentionPickerRender();
+      /* An open picker whose text no longer holds an @word must close at once, or it stays on
+       * screen offering names for a query that is gone. Closing is cheap; opening is not. */
+      if (!mentionSearch()) {
+        closeMentionPicker();
+        return;
+      }
+      mentionPickerTimer = window.setTimeout(() => {
+        mentionPickerTimer = 0;
+        renderMentionPicker();
+      }, COMPOSER_MENTION_DEBOUNCE_MS);
+    };
+
     const resetComposer = (): void => {
       for (const attachment of stagedAttachments) {
         if (attachment.previewUrl) URL.revokeObjectURL(attachment.previewUrl);
@@ -2603,6 +2809,19 @@ import "../../styles/tokens.css";
         input.value = "";
         input.style.blockSize = "auto";
       }
+      /* THIS IS NOT THE SEND PATH. The only callers are the workspace change and session
+         teardown; a send empties the box in its own handler and clears the draft on success,
+         and it deliberately keeps the caret because a FAILED send puts the body back and the
+         reader's place in it with it. What has to go here is state that belongs to the
+         workspace being left.
+         The caret, because the text it indexes is about to be replaced by another
+         workspace's draft. */
+      composerCaretKnown = false;
+      /* And the pending draft write, because a timer armed against the old workspace fires
+         afterwards reading an empty box against the NEW key, which removes the draft the
+         reader is about to be shown. `blur` covers a pointer switch because it flushes first;
+         a switch that never blurred does not. */
+      cancelComposerDraftTimer();
       setComposerStatus("");
       const retry = one<HTMLButtonElement>("[data-composer-retry]");
       if (retry) retry.hidden = true;
@@ -2617,9 +2836,14 @@ import "../../styles/tokens.css";
 
     /* The rail mirrors participants as presence/navigation only. Its shared renderer keeps
        ownership structural and names unresolved owners instead of hiding their agents. */
+    /* Two ways an item in this menu is not on offer, and the list has to know both. The
+       `hidden` attribute is one. The other is CSS: "Workspace settings" exists only below
+       52rem, where the gear leaves the app bar, and above that width it is `display: none`.
+       Filtering on `hidden` alone left it in this roving-focus list, so arrowing through the
+       desktop menu stopped on an item nobody could see. A box is the test that covers both. */
     const workspaceMenuItems = (): HTMLButtonElement[] =>
       all<HTMLButtonElement>("[data-workspace-menu] [role='menuitemradio'], [data-workspace-menu] [role='menuitem']")
-        .filter((item) => !item.hidden);
+        .filter((item) => !item.hidden && item.getClientRects().length > 0);
 
     const closeWorkspaceMenu = (restoreFocus = false): void => {
       const menu = one<HTMLElement>("[data-workspace-menu]");
@@ -5537,6 +5761,10 @@ import "../../styles/tokens.css";
       "click",
       openWorkspaceDetailsDialog,
     );
+    one<HTMLButtonElement>("[data-workspace-settings-item]")?.addEventListener("click", () => {
+      closeWorkspaceMenu();
+      openWorkspaceDetailsDialog();
+    });
     one<HTMLButtonElement>("[data-workspace-details-close]")?.addEventListener(
       "click",
       closeWorkspaceDetailsDialog,
@@ -5596,6 +5824,12 @@ import "../../styles/tokens.css";
         stageComposerFiles(Array.from(event.dataTransfer.files));
       });
     }
+    /* THE KEYSTROKE PATH. Everything here runs between the key going down and the browser being
+     * allowed to paint, so it is what INP measures. What is left in it is the typed character
+     * itself and the send button's enabled state; the autogrow layout, the draft write, and the
+     * mention search were the three expensive parts and each now happens after the keystroke.
+     * The text itself is never copied into state that redraws the transcript — the textarea
+     * holds it, and the transcript is not touched from here at all. */
     one<HTMLTextAreaElement>("[data-composer-input]")?.addEventListener(
       "input",
       (event) => {
@@ -5603,17 +5837,52 @@ import "../../styles/tokens.css";
         resizeComposerInput(input);
         mentionPickerIndex = 0;
         composerIntent = null;
+        rememberComposerCaret();
         const retry = one<HTMLButtonElement>("[data-composer-retry]");
         if (retry) retry.hidden = true;
         const statusState = one<HTMLElement>("[data-composer-status]")?.dataset.state;
         if (statusState === "error" || statusState === "idle") {
           setComposerStatus("");
         }
-        persistComposerDraft();
+        scheduleComposerDraft();
         syncComposerControls();
-        renderMentionPicker();
+        scheduleMentionPicker();
       },
     );
+    /* The caret, tracked so it can be put back after the keyboard closes and reopens. A
+     * pointer landing in the field is the reader choosing a caret; that choice wins. */
+    for (const name of ["keyup", "select", "pointerup"] as const) {
+      one<HTMLTextAreaElement>("[data-composer-input]")?.addEventListener(
+        name,
+        rememberComposerCaret,
+      );
+    }
+    one<HTMLTextAreaElement>("[data-composer-input]")?.addEventListener("pointerdown", () => {
+      composerPointerAt = Date.now();
+    });
+    /* The draft write is debounced, and a debounced write must not be lost to the page ending.
+     * These are the ways it ends — reload, close, navigation, and switching away on a phone —
+     * and each one takes the pending write now instead of after the delay. */
+    window.addEventListener("pagehide", flushComposerDraft);
+    document.addEventListener("visibilitychange", () => {
+      if (document.visibilityState === "hidden") flushComposerDraft();
+    });
+    one<HTMLTextAreaElement>("[data-composer-input]")?.addEventListener("blur", () => {
+      const input = composerInputElement();
+      if (!input) return;
+      composerCaretKnown = true;
+      composerCaret = { end: input.selectionEnd ?? 0, start: input.selectionStart ?? 0 };
+      /* A render armed by the last keystroke would otherwise land after the field was left and
+         open a list of names under a composer nobody is in. */
+      cancelMentionPickerRender();
+      flushComposerDraft();
+    });
+    one<HTMLTextAreaElement>("[data-composer-input]")?.addEventListener("focus", () => {
+      /* Focus that follows a tap in the text keeps where the tap landed. Focus with no
+       * recent pointer is the keyboard coming back, and that is the case to restore. */
+      if (Date.now() - composerPointerAt < 500) return;
+      restoreComposerCaret();
+    });
     one<HTMLTextAreaElement>("[data-composer-input]")?.addEventListener(
       "beforeinput",
       (event) => {
@@ -5671,6 +5940,20 @@ import "../../styles/tokens.css";
       "keydown",
       (event) => {
         const input = event.currentTarget as HTMLTextAreaElement;
+        /* The mention list is debounced off the keystroke, so it can still be closed when a key
+           that DECIDES on it arrives. Typing "@ri" and pressing Enter inside 150ms sent the raw
+           text instead of picking the name the list was about to offer, and the recipient rides
+           inside the body, so that is a message addressed to nobody. Flush the pending render
+           for those four keys only: they are not the typing path, so the debounce still holds
+           where it was measured. */
+        if (
+          mentionPickerTimer &&
+          (event.key === "Enter" || event.key === "Escape" ||
+            event.key === "ArrowDown" || event.key === "ArrowUp")
+        ) {
+          cancelMentionPickerRender();
+          renderMentionPicker();
+        }
         const picker = one<HTMLElement>("[data-mention-picker]");
         const confirmKey = event.key === "Enter" &&
           !event.isComposing &&
@@ -8829,6 +9112,23 @@ import "../../styles/tokens.css";
     display: none;
   }
 
+  /* The phone view switcher. Above 52rem the rail's own STREAMS and ARTIFACTS lists do this
+     job, so the whole group is absent rather than merely restyled. */
+  .dashboard__rail-tabs {
+    display: none;
+  }
+
+  /* The gear beside the workspace name is the desktop door to the same dialog. */
+  .dashboard__workspace-settings-item {
+    display: none;
+  }
+
+  /* On desktop the account trigger itself carries the name, so this line would repeat it. */
+  .dashboard__user-menu-account {
+    display: none;
+    margin: 0;
+  }
+
   .dashboard__feed {
     /* The composer already owns a separate auto-sized grid row. Reserving its height here
        counted it twice and left a 135-275px hole. Keep only the normal 12px transcript rhythm. */
@@ -9150,7 +9450,12 @@ import "../../styles/tokens.css";
     align-self: center;
     min-inline-size: 7rem;
     min-block-size: var(--composer-text-rest);
-    max-block-size: min(40dvh, 20rem);
+    /* Against the VISIBLE viewport, not a viewport unit. `dvh` describes the layout viewport,
+       which on iOS Safari does not shrink when the keyboard opens, so a cap written in dvh
+       lets the box grow into the space the keyboard is using. `--dashboard-viewport-height` is
+       measured from visualViewport; the dvh in the fallback is only for the first paint and
+       for a browser with no visualViewport at all. */
+    max-block-size: min(calc(var(--dashboard-viewport-height, 100dvh) * 0.4), 20rem);
     padding: var(--s-2) calc(var(--composer-target) + var(--s-2)) var(--s-2) 0;
     overflow-y: auto;
     resize: none;
@@ -9402,6 +9707,13 @@ import "../../styles/tokens.css";
   .dashboard__message {
     --message-row-background: transparent;
 
+    /* Layout containment, because the composer forces a synchronous layout on every autogrow
+       and a transcript is hundreds of these rows. A contained row's inside cannot affect
+       anything outside it, so that layout can reuse each row's box instead of measuring its
+       contents again. `layout` only: paint containment would clip the entity popovers a row
+       opens, and content-visibility would change the scrollHeight that renderFeed reads to
+       hold the reader's scroll position. */
+    contain: layout;
     display: grid;
     grid-template-columns: auto minmax(0, 1fr);
     gap: var(--s-3);
@@ -9918,16 +10230,48 @@ import "../../styles/tokens.css";
       margin: var(--s-3);
     }
 
+    /* THE mobile header. One row, and the only chrome above the transcript: the workspace
+       name, the view switcher, the account control. The gear is NOT among them -- it is
+       `display: none` in this same block and its dialog is reached from the workspace menu.
+       Everything the channel head used
+       to stack below it now floats over the transcript instead of taking a row of its own.
+       Measured at 390x844 before this change: 73px app bar + 53px channel head + 45px filter
+       row = 171px of header before the first message. */
     .dashboard__rail {
       display: grid;
-      grid-template-columns: auto minmax(0, 1fr);
+      /* The workspace name is the only flexible column, so it is the one that gives way when
+         the view switcher and the account control need the room. The floor keeps enough of the
+         name to tell two workspaces apart; below it the name would be an empty pill. Note that
+         1rem is not 16px on this page — measured 6rem = 82px at 390px wide. */
+      grid-template-columns: minmax(9rem, 1fr) auto auto;
       align-items: center;
-      gap: var(--s-4);
+      gap: var(--s-3);
       max-block-size: none;
       padding: var(--s-3) var(--s-4);
       overflow: visible;
       border-inline-end: 0;
       border-block-end: 1px solid var(--border);
+    }
+
+    .dashboard__rail-tabs {
+      grid-column: 2;
+      grid-row: 1;
+      min-inline-size: 0;
+      display: flex;
+      align-items: center;
+      justify-content: flex-end;
+      gap: var(--s-1);
+    }
+
+    /* The gear leaves the bar and its dialog is reached from the workspace menu instead. It
+       was 55px of a row that now also carries the view switcher, and with it there the
+       workspace name had nothing left: measured 2px of text at 390px wide. */
+    .dashboard__gear-button {
+      display: none;
+    }
+
+    .dashboard__workspace-settings-item {
+      display: flex;
     }
 
     .dashboard__rail-section {
@@ -9951,7 +10295,7 @@ import "../../styles/tokens.css";
        theme toggle, and sign-out inside its menu — stay reachable. It keeps its own box
        (not display:contents) so the popover anchors to it. */
     .dashboard__rail-foot {
-      grid-column: 2;
+      grid-column: 3;
       grid-row: 1;
       justify-self: end;
       padding: 0;
@@ -9960,6 +10304,35 @@ import "../../styles/tokens.css";
 
     .dashboard__user-trigger {
       inline-size: auto;
+    }
+
+    /* Measured at 390px: the account name is 75px of a 390px row that now also carries the
+       view switcher, and with it there the workspace name got 24px — "R…". The trigger keeps
+       its chevron, its 44px target and its "Account menu" accessible name; the name itself
+       moves into the menu the trigger opens, where nothing competes for the width. */
+    .dashboard__user-trigger-name {
+      position: absolute;
+      inline-size: 1px;
+      block-size: 1px;
+      padding: 0;
+      margin: -1px;
+      overflow: hidden;
+      clip-path: inset(50%);
+      white-space: nowrap;
+    }
+
+    .dashboard__user-menu-account {
+      display: block;
+      padding: var(--s-2) var(--s-3);
+      color: var(--text-muted);
+      font-size: var(--t-xs);
+      overflow: hidden;
+      white-space: nowrap;
+      text-overflow: ellipsis;
+    }
+
+    .dashboard__workspace-trigger-name {
+      min-inline-size: 0;
     }
 
     /* The menu opens DOWNWARD here. On desktop the trigger is the rail footer, so upward is
@@ -9981,18 +10354,68 @@ import "../../styles/tokens.css";
     .dashboard__workspace-control {
       grid-column: 1;
       grid-row: 1;
-      inline-size: min(100%, 20rem);
+      min-inline-size: 0;
+      inline-size: auto;
+      max-inline-size: 100%;
+    }
+
+    /* The channel head STOPS BEING A ROW here. It is positioned over the top of the
+       transcript, so it costs the reading area no height at all, and it carries only the two
+       things a phone still needs from it: the live dot and the roster pill that opens agent
+       management. The channel name is redundant with the view switcher in the bar above —
+       "Signals" is already marked aria-current — so the titleblock is hidden from sight and
+       kept for the accessible name of this section. */
+    .dashboard__channel {
+      position: relative;
+      grid-template-rows: minmax(0, 1fr);
+      /* ONE height for the floating band, read by every clearance that keeps the transcript
+         out from under it. The two floating parts are not the same height: the filter row is
+         2.5rem, and the roster cluster is a 2.75rem tap target inside var(--s-1) of padding,
+         which is 3.25rem. The clearance was the filter row's 2.5rem, so at rest 12px of the
+         first message sat under the roster pill — measured at 390x844: the first row began
+         113px below the top of the app bar and the pill ended at 125px. The band is as tall
+         as its tallest part, and the clearance is the band. */
+      --feed-band-height: 3.25rem;
     }
 
     .dashboard__channel-head {
-      min-block-size: 4.75rem;
-      padding: var(--s-3) var(--s-4);
+      position: absolute;
+      z-index: 4;
+      inset-block-start: 0;
+      inset-inline-end: 0;
+      min-block-size: 0;
+      justify-content: flex-end;
+      flex-wrap: nowrap;
+      gap: var(--s-2);
+      padding: var(--s-1) var(--s-4);
+      background: none;
+      border-block-end: 0;
+      pointer-events: none;
     }
 
-    /* Title and actions share the first row; the roster stack always gets the row
-       below, so Add-agent reachability never depends on the workspace name's length. */
+    /* These two float over live text, so each one carries the same translucent backdrop the
+       filter row on the other side of the band uses. Without it the roster count reads on top
+       of a message body. */
+    .dashboard__channel-actions,
+    .dashboard__channel-roster {
+      pointer-events: auto;
+      padding-inline: var(--s-2);
+      background: color-mix(in oklab, var(--surface) 94%, transparent);
+      border-radius: 999px;
+      backdrop-filter: blur(12px);
+    }
+
+    /* Hidden from sight, not from a screen reader: this h1 is the accessible name of the
+       channel section through aria-labelledby. `display: none` would leave that name empty. */
     .dashboard__channel-titleblock {
-      order: 1;
+      position: absolute;
+      inline-size: 1px;
+      block-size: 1px;
+      padding: 0;
+      margin: -1px;
+      overflow: hidden;
+      clip-path: inset(50%);
+      white-space: nowrap;
     }
 
     .dashboard__channel-actions {
@@ -10002,15 +10425,69 @@ import "../../styles/tokens.css";
 
     .dashboard__channel-roster {
       order: 3;
-      flex: 1 1 100%;
       margin-inline-start: 0;
+    }
+
+    /* The filter row floats too. Sticky keeps it at the top of the scroller; the negative
+       margin takes its height back out of the flow, so the transcript passes UNDER it
+       instead of starting below it. The list carries the same amount of top padding, which
+       is clearance at rest and scrolls away with the content. */
+    .dashboard__feed-toolbar {
+      min-block-size: 2.5rem;
+      margin-block-end: -2.5rem;
+      padding-inline: var(--s-4);
+      /* Room for the floating roster cluster on the opposite side of the same band. */
+      padding-inline-end: 8rem;
+      background: none;
+      border-block-end: 0;
+      backdrop-filter: none;
+    }
+
+    /* The filters carry the backdrop themselves rather than the full-width bar, so the band
+       is two chips over the transcript and not a painted row. They scroll sideways at 320px,
+       where three labels do not fit beside the roster pill. */
+    .dashboard__feed-filters {
+      min-inline-size: 0;
+      gap: var(--s-3);
+      padding-inline: var(--s-3);
+      overflow-x: auto;
+      background: color-mix(in oklab, var(--surface) 94%, transparent);
+      border-radius: 999px;
+      backdrop-filter: blur(12px);
+      scrollbar-width: none;
+    }
+
+    .dashboard__feed-filters::-webkit-scrollbar {
+      display: none;
+    }
+
+    .dashboard__feed-filters button {
+      min-block-size: 2.5rem;
+      white-space: nowrap;
+    }
+
+    .dashboard__feed {
+      padding-block-start: var(--feed-band-height);
+    }
+
+    .dashboard__feed-more {
+      padding-block-start: var(--feed-band-height);
+    }
+
+    /* The clearance belongs to whatever is FIRST under the floating band, and only to that.
+       "Load older updates" sits between the band and the list, so when it is showing it has
+       already cleared the band and the list's own clearance becomes a band's height of dead
+       screen between the button and the first message. Measured at 390x844 when that clearance
+       was still the filter row's 2.5rem: a 40px gap. It is --feed-band-height now. */
+    .dashboard__feed-more:not([hidden]) + .dashboard__feed {
+      padding-block-start: 0;
     }
 
     /* The same dialog, presented as a bottom sheet. */
     .dashboard__roster-dialog {
       inline-size: 100%;
       max-inline-size: 100%;
-      max-block-size: 82dvh;
+      max-block-size: calc(var(--dashboard-viewport-height, 100dvh) * 0.82);
       margin-block-start: auto;
       margin-block-end: 0;
       margin-inline: 0;
@@ -10022,7 +10499,7 @@ import "../../styles/tokens.css";
     .dashboard__workspace-details-dialog {
       inline-size: 100%;
       max-inline-size: 100%;
-      max-block-size: 82dvh;
+      max-block-size: calc(var(--dashboard-viewport-height, 100dvh) * 0.82);
       margin-block-start: auto;
       margin-block-end: 0;
       border-block-end: 0;
@@ -10030,7 +10507,7 @@ import "../../styles/tokens.css";
     }
 
     .dashboard__roster-dialog-list {
-      max-block-size: 46dvh;
+      max-block-size: calc(var(--dashboard-viewport-height, 100dvh) * 0.46);
     }
 
     .dashboard__mobile-view {
@@ -10097,46 +10574,13 @@ import "../../styles/tokens.css";
      * .dashboard__rail-foot. This mattered here because this change makes that menu the only
      * Sign out on a phone. */
 
-    /* ONE row on a phone. The old grid put the view buttons on a second row, which made this
-     * header 113px tall against a 73px app bar — measured at 390x844 — so a quarter of the
-     * screen was chrome before the first message. Name, then controls, then the roster pill,
-     * all on the line. The name truncates instead of wrapping, which is what keeps a long
-     * workspace name from pushing the roster off the row: that reachability is the reason the
-     * second row existed, and the ellipsis replaces it. */
+    /* ~~The one-row channel head~~ retired 2026-09-04. It was one row, and one row was still
+     * one row too many: 73px app bar + 53px head + 45px filter row = 171px of header on a
+     * 844px screen. The head is now positioned over the transcript by the 52rem block above
+     * and costs the reading area nothing, so there is no grid here to place anything in. What
+     * survives at this width is the pill's refusal to wrap, below. */
     .dashboard__channel-head {
-      /* The 4.75rem floor was sized for a two-row header. One row of 44px tap targets does
-       * not need it, and it was the whole reason this bar stayed taller than the app bar. */
-      min-block-size: 0;
-      display: grid;
-      /* The name keeps a floor of 2rem and the roster pill 2.75rem; the pill is the column
-       * that gives way when a pending label makes it wide. At 320px those floors are an exact
-       * fit — 32 padding + 16 gaps + 32 + 188.4 + 51.6 = 320 — so a larger name floor would
-       * push the channel body past the viewport, which is how it was measured. */
-      grid-template-columns: minmax(2rem, 1fr) auto minmax(2.75rem, auto);
-      align-items: center;
-      gap: var(--s-2);
-      padding-block: var(--s-1);
-    }
-
-    .dashboard__channel-titleblock {
-      grid-column: 1;
-      grid-row: 1;
-      order: initial;
-      gap: 0;
-    }
-
-    .dashboard__channel-head h1 {
-      overflow: hidden;
-      overflow-wrap: normal;
-      white-space: nowrap;
-      text-overflow: ellipsis;
-      font-size: var(--t-sm);
-    }
-
-    /* The sentence under the channel name is the one thing in this header that is prose. On a
-     * phone it cost two or three lines to repeat what the feed shows. */
-    .dashboard__channel-description {
-      display: none;
+      padding-inline: var(--s-4);
     }
 
     .dashboard__mobile-view {
@@ -10154,13 +10598,12 @@ import "../../styles/tokens.css";
       display: none;
     }
 
-    /* The pill reads "0 · 3 pending" while access is waiting. Wrapping it took the row to two
-     * lines and squeezed the channel name to nothing, which is the failure the one-row header
-     * exists to avoid. It stays on one line and gives way before the name does: the title
-     * column has a floor, and this pill is the column allowed to run out of room. */
+    /* The pill reads "0 · 3 pending" while access is waiting. Wrapping it took the floating
+     * cluster to two lines and pushed it over the first message. It stays on one line and
+     * truncates instead. */
     .dashboard__channel-roster {
-      inline-size: 100%;
       min-inline-size: 0;
+      max-inline-size: 9rem;
     }
 
     /* No overflow clip on the button itself: it would cut the 4px focus ring. The label
@@ -10174,13 +10617,6 @@ import "../../styles/tokens.css";
       overflow: hidden;
       white-space: nowrap;
       text-overflow: ellipsis;
-    }
-
-    .dashboard__channel-roster {
-      grid-column: 3;
-      grid-row: 1;
-      order: initial;
-      margin-inline-start: 0;
     }
 
     .dashboard__file-row {
@@ -10201,9 +10637,6 @@ import "../../styles/tokens.css";
     }
 
     .dashboard__channel-actions {
-      grid-column: 2;
-      grid-row: 1;
-      order: initial;
       inline-size: auto;
       gap: var(--s-1);
       flex-wrap: nowrap;
@@ -10270,15 +10703,17 @@ import "../../styles/tokens.css";
       padding-block: var(--s-1);
     }
 
-    /* Same one-row header, and the short-viewport block must not put the taller padding back:
-     * at 320x568 that made the head 61px against a 57px app bar. */
+    /* The head floats now, so this block must not put a height or a taller padding back:
+     * at 320x568 that once made the head 61px against a 57px app bar. */
     .dashboard__channel-head {
       min-block-size: 0;
       padding-block: var(--s-1);
     }
 
+    /* ~~`.dashboard__feed-toolbar { display: none }`~~ removed 2026-09-04. The filter row was
+     * hidden here because it took a row the short viewport could not spare. It floats over the
+     * transcript now and takes no height, so hiding it only removed a control. */
     .dashboard__channel-description,
-    .dashboard__feed-toolbar,
     .dashboard__composer-meta {
       display: none;
     }
@@ -10289,8 +10724,12 @@ import "../../styles/tokens.css";
       padding-block-end: calc(var(--s-1) + env(safe-area-inset-bottom));
     }
 
+    /* ~~`max-block-size: 2.75rem`~~ retired 2026-09-04. One line, and a second line of what
+     * you were typing was clipped out of sight — measured at 390x508: the box needed 64px and
+     * was given 44px. A short viewport is a reason to keep the composer small, not a reason to
+     * hide the sentence being written. A quarter of the visible viewport is still small. */
     .dashboard__composer textarea {
-      max-block-size: 2.75rem;
+      max-block-size: min(calc(var(--dashboard-viewport-height, 100dvh) * 0.25), 5rem);
     }
   }
 

@@ -1,0 +1,177 @@
+{
+  "what": "Landing measurements for lane/mobile-fix-land, taken in a real Chrome through browser-harness against the built site/dist. Rebased onto main after brain-links landed, so these numbers also stand as the brain-links regression check.",
+  "when": "2026-09-04 (session date), lane branch lane/mobile-fix-land",
+  "how": {
+    "server": "python3 -m http.server on a copy of site/dist",
+    "sampleMode": "every built .js had PUBLIC_SUPABASE_URL:`https://api.commonswarm.com` replaced with PUBLIC_SUPABASE_URL:`` , which is the same rewrite composer-sprint-browser.observer.test.ts uses to force renderSample()",
+    "brainSeed": "the probe build ONLY added one sample brain file (brain--mobile-header-rule.md) and named that topic in one sample signal body, so the real linkify and click paths have something to act on. Sample mode ships no files, so no brain topic exists there on main either. The source was restored byte-for-byte after each probe build; nothing of this seed is committed.",
+    "emulation": "Emulation.setDeviceMetricsOverride width 390 height 844 deviceScaleFactor 3 mobile true, plus touch emulation",
+    "note": "the page carries the sample-data banner above the app bar, which the observer tests do not because they load /app inside a 390x844 iframe. Every rule below is therefore stated against the app bar's own rect, not against absolute y."
+  },
+  "phone_390x844": {
+    "appBar": {
+      "top": 115.1,
+      "bottom": 188.1,
+      "height": 73.0
+    },
+    "channelBody_transcriptBox": {
+      "top": 188.1,
+      "bottom": 844.0,
+      "height": 655.9
+    },
+    "channelHead_floating": {
+      "top": 188.1,
+      "bottom": 240.1,
+      "height": 52.0,
+      "width": 200.0
+    },
+    "feedToolbar_floating": {
+      "top": 188.1,
+      "bottom": 228.1,
+      "height": 40.0
+    },
+    "composer": {
+      "top": 781.0,
+      "bottom": 844.0,
+      "height": 63.0
+    },
+    "headerTakenFromReadingArea": 73.0,
+    "appBarHeight": 73.0,
+    "operatorRuleHolds": true,
+    "operatorRule": "the whole mobile header is no taller than the workspace header row: channelBody.top - appBar.top (73.0) <= appBar.height (73.0)",
+    "channelHeadFloats": true,
+    "feedToolbarFloats": true,
+    "composerInsideViewport": true,
+    "railTabsInAppBar": {
+      "top": 129.1,
+      "bottom": 173.1,
+      "height": 44.0,
+      "buttons": 3
+    },
+    "gearButtonDisplay": "none",
+    "workspaceSettingsMenuItemDisplay": "flex",
+    "channelTitleblock": {
+      "position": "absolute",
+      "display": "grid",
+      "clipPath": "inset(50%)"
+    },
+    "channelAccessibleName": "# all-signals",
+    "channelAriaLabelledby": "dashboard-channel-title",
+    "messageContain": "layout",
+    "note": "the 52px head and the 40px filter row both start exactly at the app bar's bottom edge and take no height from the transcript box"
+  },
+  "keyboard_390x508": {
+    "measuredWith": "Emulation.setDeviceMetricsOverride height 508, tab foregrounded",
+    "visualViewportHeight": 508.0,
+    "dashboardViewportHeightProperty": "508px",
+    "productComputedBlockSize": "508px",
+    "composer": {
+      "top": 409.0,
+      "bottom": 508.0,
+      "height": 99.0
+    },
+    "composerInsideViewport": true,
+    "textarea": {
+      "top": 419.0,
+      "bottom": 499.0,
+      "height": 80.0
+    },
+    "textareaMaxBlockSize": "80px",
+    "textareaScrollHeight": 88,
+    "textareaClientHeight": 80,
+    "scrollY": 0,
+    "linesVisible": 3.33,
+    "beforeThisLane": "the short-viewport rule capped the textarea at 2.75rem = 44px, one line",
+    "note": "the shell tracks visualViewport, so the composer's bottom edge equals the visible viewport's bottom edge instead of sitting under the keyboard"
+  },
+  "keyboard_dismissed_390x844": {
+    "visualViewportHeight": 844,
+    "productComputedBlockSize": "844px",
+    "composerBottom": 844.0,
+    "scrollY": 0
+  },
+  "caret_guard_control": {
+    "claim": "the caret restore only puts back a caret the reader chose",
+    "probe": "on a fresh load, put text in the composer while nothing is focused (a draft the page restored), then focus with no pointer, which is a Tab or a browser restoring focus",
+    "withGuard_thisLane": {
+      "valueLength": 41,
+      "caret": 41,
+      "atStartOfOwnSentence": false
+    },
+    "withoutGuard_mutation": {
+      "valueLength": 41,
+      "caret": 0,
+      "atStartOfOwnSentence": true
+    },
+    "discriminates": true,
+    "note": "the mutation is a second dist built from the same source with only `if (!input || !composerCaretKnown) return;` weakened to `if (!input) return;`. A blur/focus cycle alone does NOT discriminate: Chrome preserves a textarea's selection across it, so that probe reads the same whether the restore runs or not, and it is not evidence."
+  },
+  "brain_links_after_rebase": {
+    "control": "<button type=\"button\" class=\"dashboard__brain-link\" data-brain-link=\"mobile-header-rule\" title=\"Open the brain topic mobile-header-rule\">mobile-header-rule</button>",
+    "rendersAsControlInAMessage": true,
+    "clickSwitchesBothViewSwitchers": "every [data-workspace-view] button, the three moved into the app bar and the three in the rail, read aria-current=page on brain after the click",
+    "brainViewOpened": true,
+    "notice": "mobile-header-rule could not be opened: the topic list could not be refreshed just now, so CommonSwarm cannot tell whether it is still here. Check your connection, then open it again.",
+    "noticeIsCorrect": "sample mode has no backend, so refreshBrainTopics(true) cannot refresh and the click correctly declines to open against a list it could not read. The control, the click path and the decision all ran.",
+    "notEstablished": "opening the topic body against a live workspace was not measured here"
+  },
+  "desktop_1440x900_unchanged": {
+    "channelHeadPosition": "static",
+    "channelHead": {
+      "top": 47.7,
+      "bottom": 123.7,
+      "height": 76.0
+    },
+    "channelBody": {
+      "top": 123.7,
+      "bottom": 900.0,
+      "height": 776.3
+    },
+    "gearButtonDisplay": "grid",
+    "railTabsDisplay": "none",
+    "workspaceSettingsMenuItemDisplay": "none",
+    "userMenuAccountLineDisplay": "none",
+    "channelDescriptionDisplay": "block",
+    "titleblockPosition": "static",
+    "brainLinkPresent": true
+  },
+  "notEstablished": [
+    "a real iOS Safari keyboard. Emulation.setDeviceMetricsOverride models the SIZE change visualViewport reports; it does not reproduce Safari's accessory bar, its layout-viewport scroll, or its focus and selection behaviour on show and hide. The accessory-bar and lost-caret reports are addressed in code and are not proven fixed on the operator's phone.",
+    "INP was not re-measured in this landing lane. The lane's own before/after numbers are in docs/evidence/2026-09-04-mobile-fix/README.md and were not reproduced here.",
+    "the Vercel Toolbar's production figure of 314.3ms, which the lane never reproduced either.",
+    "opening a brain topic body against a live workspace, which sample mode cannot do.",
+    "the pinch-zoom pan case for scrollTo(0, 0) on iOS: the layout viewport cannot scroll here because .dashboard__product is the measured height with overflow hidden, but a zoomed visual viewport on a real iPhone was not tested."
+  ],
+  "feed_more_clearance": {
+    "claim": "the floating band's clearance is paid once",
+    "found": "three elements agree on 2.5rem: the filter row's height, the negative margin that takes it out of the flow, and the top padding that clears it. 'Load older updates' sits between the band and the list, so when it shows it clears the band and the list cleared it again.",
+    "measuredBeforeTheFix": {
+      "gapBetweenLoadOlderAndFirstMessage": 40.0,
+      "feedListPaddingBlockStart": "40px"
+    },
+    "measuredAfterTheFix": {
+      "gapBetweenLoadOlderAndFirstMessage": 0,
+      "feedListPaddingBlockStart": "0px"
+    },
+    "clearanceStillThereWhenTheButtonIsNot": {
+      "feedListPaddingBlockStart": "52px"
+    },
+    "control": "mobile-feed-layout.observer.test.ts, 'the floating band's clearance is paid once when older updates can be loaded', with a positive control that the button is on screen and a paired variant that must keep the 40px",
+    "mutationAgainstTheRealSource": "baseline 5 pass, rule restored to 2.5rem 1 fail naming 'the band's clearance is paid twice ... (40px)', restored 5 pass"
+  },
+  "phone_390x844_after_the_arm_fixes": {
+    "note": "re-measured on the final code with the transcript at scrollTop 0, which is what 'at rest' means. 01-header-390x844.png is this state.",
+    "appBarHeight": 73.0,
+    "headerTakenFromReadingArea": 73.0,
+    "firstMessageTopBelowAppBarTop": 125.0,
+    "bandBottomBelowAppBarTop": 125.0,
+    "firstMessageClearsTheWholeBand": true,
+    "feedPaddingBlockStart": "52px",
+    "brainLinkStillAControl": true,
+    "beforeTheFix": {
+      "firstMessageTopBelowAppBarTop": 113.0,
+      "feedPaddingBlockStart": "40px",
+      "overlapUnderTheRosterPill": 12.0
+    }
+  }
+}

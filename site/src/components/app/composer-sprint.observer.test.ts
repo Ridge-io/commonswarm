@@ -145,9 +145,12 @@ const assertComposerSprint = (value: ComposerArtifact): void => {
     'one<HTMLTextAreaElement>("[data-composer-input]")?.addEventListener(\n      "keydown"',
     "full-paste",
   );
+  /* The write itself moved into `applyComposerResize` when the autogrow was taken off the
+     keystroke (2026-09-04, for INP): the forced layout now happens in an animation frame after
+     the handler returns, not inside it. The slice follows the write. */
   const resize = between(
     dashboard,
-    "const resizeComposerInput =",
+    "const applyComposerResize =",
     "const setComposerStatus =",
     "autosize",
   );
@@ -181,9 +184,21 @@ const assertComposerSprint = (value: ComposerArtifact): void => {
     "const focusComposerOnEntry",
     "draft-scope",
   );
+  const caret = between(
+    dashboard,
+    "let composerCaret = { end: 0, start: 0 };",
+    "let viewportSyncFrame = 0;",
+    "caret-survival",
+  );
+  const reset = between(
+    dashboard,
+    "const resetComposer =",
+    "const workspaceMenuItems =",
+    "composer-reset",
+  );
   const viewport = between(
     dashboard,
-    "const syncDashboardViewport =",
+    "let viewportSyncFrame = 0;",
     "const closeMentionPicker =",
     "viewport-containment",
   );
@@ -221,8 +236,8 @@ const assertComposerSprint = (value: ComposerArtifact): void => {
   );
   assert.match(
     value.builtCss,
-    /max-block-size:min\(40dvh,20rem\)/,
-    "built-autosize: the emitted textarea must retain its 40dvh cap",
+    /max-block-size:min\(calc\(var\(--dashboard-viewport-height,100dvh\) \* \.4\), 20rem\)/,
+    "built-autosize: the emitted textarea must cap against the MEASURED visible viewport",
   );
   assert.match(value.builtLimit, /8e3/, "built-limit: the shared bundle must emit 8,000");
 
@@ -403,8 +418,16 @@ const assertComposerSprint = (value: ComposerArtifact): void => {
     "autosize-max: autosize must follow content height");
   assert.doesNotMatch(resize, /Math\.min|144/,
     "autosize-max: JS must not bring back the old 144px ceiling");
-  assert.match(textareaCss, /max-block-size: min\(40dvh, 20rem\);/,
-    "autosize-max: CSS must cap growth at 40dvh");
+  /* Against --dashboard-viewport-height, which is measured from visualViewport, and NOT
+     against dvh: on iOS Safari the dynamic viewport is the LAYOUT viewport and does not shrink
+     when the keyboard opens, so a dvh cap lets the box grow behind the keyboard. */
+  assert.match(
+    textareaCss,
+    /max-block-size: min\(calc\(var\(--dashboard-viewport-height, 100dvh\) \* 0\.4\), 20rem\);/,
+    "autosize-max: CSS must cap growth against the measured visible viewport",
+  );
+  assert.doesNotMatch(textareaCss, /max-block-size: min\(40dvh/,
+    "autosize-max: the cap is back on dvh, which does not shrink for the keyboard");
   assert.match(textareaCss, /overflow-y: auto;/,
     "autosize-scroll: overflow must scroll inside the textarea");
   assert.doesNotMatch(dashboard, /syncComposerClearance|--composer-height/,
@@ -419,12 +442,96 @@ const assertComposerSprint = (value: ComposerArtifact): void => {
   const viewportHeightRem = 430 / 16;
   assert.ok(viewportWidthRem <= 52 && viewportHeightRem <= 36,
     "viewport-containment: 390x430 must exercise the short mobile branch");
-  assert.match(viewport, /window\.visualViewport\?\.height \?\? window\.innerHeight/,
+
+  /* THE CARET SURVIVES THE KEYBOARD. Showing and hiding a software keyboard moves focus off
+     the textarea and back, and the browser restores neither the selection nor the field's own
+     scroll position; what the operator met was a composer he could not return to the end of.
+     Three parts, and the third is what makes the other two safe: a caret nobody ever chose is
+     not a caret to put back. Without it the first focus that did not follow a tap — tabbing
+     into a draft the page restored — writes position 0 over the reader's own sentence, which
+     is the same defect in a different path. */
+  assert.match(caret, /composerCaretKnown = true;/,
+    "caret-survival: nothing records that a caret was ever remembered");
+  assert.match(caret, /if \(!input \|\| !composerCaretKnown\) return;/,
+    "caret-survival: the restore runs with a caret nobody chose, so focus arriving without a " +
+      "tap moves the reader to the start of a sentence they had already written");
+  assert.match(caret, /input\.setSelectionRange\(/,
+    "caret-survival: the remembered selection is never put back");
+  assert.match(dashboard, /if \(Date\.now\(\) - composerPointerAt < 500\) return;/,
+    "caret-survival: focus that followed a tap must keep where the tap landed");
+  /* A caret remembered in OTHER text is not a caret in this text. Both places that replace the
+     whole body have to drop it, or the restore puts the reader at a position they never chose:
+     a workspace switch that restores a different draft, and the send that empties the box. */
+  assert.match(
+    dashboard,
+    /input\.value = draft\.body;[\s\S]{0,60}composerCaretKnown = false;/,
+    "caret-survival: a restored draft keeps a caret that was remembered in different text",
+  );
+  /* resetComposer is NOT the send path — the only callers are the workspace change and
+     session teardown. A send empties the box in its own handler and keeps the caret on
+     purpose, because a FAILED send puts the body back and the reader's place in it with it. */
+  assert.match(
+    dashboard,
+    /input\.style\.blockSize = "auto";[\s\S]{0,420}composerCaretKnown = false;/,
+    "caret-survival: leaving a workspace keeps the caret it had in that workspace's text",
+  );
+  assert.equal(
+    occurrences(dashboard, "resetComposer();"),
+    2,
+    "caret-survival: resetComposer has gained a caller, so check it is not the send before " +
+      "the comments and messages here keep saying it is not",
+  );
+
+  /* EVERY DEBOUNCED TIMER DIES WHERE THE COMPOSER IS EMPTIED. This runs on a workspace change
+     as well as after a send, and a draft timer armed against the old workspace fires afterwards
+     reading an empty box against the NEW key -- which removes the draft the reader is about to
+     be shown. `blur` covers a pointer switch because it flushes first; a switch that never
+     blurred does not. The mention timer already died here through closeMentionPicker. */
+  assert.match(reset, /cancelComposerDraftTimer\(\);/,
+    "composer-reset: a debounced draft write survives the composer being emptied, so it can " +
+      "land against another workspace's key");
+  assert.match(reset, /closeMentionPicker\(\);/,
+    "composer-reset: the mention picker survives the composer being emptied");
+
+  /* A KEY THAT DECIDES ON THE PICKER MUST SEE THE PICKER. The list is debounced off the
+     keystroke, so it can still be closed when Enter arrives. Typing "@ri" and pressing Enter
+     inside 150ms sent the raw text instead of picking the name, and the recipient rides inside
+     the body. Only these four keys flush, so the debounce still holds on the typing path. */
+  assert.match(
+    dashboard,
+    /mentionPickerTimer &&\s*\(event\.key === "Enter" \|\| event\.key === "Escape" \|\|\s*event\.key === "ArrowDown" \|\| event\.key === "ArrowUp"\)/,
+    "combobox-flush: no key flushes the pending mention render, so Enter can send raw @text",
+  );
+  assert.match(
+    dashboard,
+    /cancelMentionPickerRender\(\);\s*renderMentionPicker\(\);/,
+    "combobox-flush: the pending render is cancelled without being run",
+  );
+  /* Leaving the field must also disarm it, or a render armed by the last keystroke opens a
+     list of names under a composer nobody is in. */
+  assert.match(
+    dashboard,
+    /cancelMentionPickerRender\(\);\s*flushComposerDraft\(\);/,
+    "combobox-flush: a pending mention render survives blur and opens under an empty focus",
+  );
+  /* The usable viewport is visualViewport and ONLY visualViewport. `window.innerHeight` used
+     to be the fallback; on iOS Safari it reports the layout viewport, which does not shrink
+     when the keyboard opens, so it wrote a height that was too tall at exactly the moment a
+     shorter one was needed. With no visualViewport the property stays unset and the
+     stylesheet's own 100dvh applies. */
+  assert.match(viewport, /const viewport = window\.visualViewport;/,
     "viewport-containment: measure the usable viewport");
+  assert.doesNotMatch(viewport, /window\.innerHeight/,
+    "viewport-containment: innerHeight is back, and it describes the wrong viewport");
+  assert.match(viewport, /window\.scrollTo\(0, 0\)/,
+    "viewport-containment: the layout-viewport scroll the keyboard causes is not undone");
   assert.match(viewport, /--dashboard-viewport-height/,
     "viewport-containment: publish the measured height");
-  assert.match(viewport, /visualViewport\?\.addEventListener\("resize", syncDashboardViewport\)/,
-    "viewport-containment: keyboard resize must refresh the height");
+  assert.match(
+    viewport,
+    /visualViewport\?\.addEventListener\("resize", requestDashboardViewportSync\)/,
+    "viewport-containment: keyboard resize must refresh the height",
+  );
   assert.match(
     dashboard,
     /\.dashboard__product \{[^}]*block-size: var\(--dashboard-viewport-height, 100dvh\);[^}]*overflow: hidden;/,
@@ -637,15 +744,64 @@ const mutations: Mutation[] = [
   {
     name: "autosize returns to a fixed ceiling",
     key: "dashboard",
-    target: "max-block-size: min(40dvh, 20rem);",
+    target: "max-block-size: min(calc(var(--dashboard-viewport-height, 100dvh) * 0.4), 20rem);",
     replacement: "max-block-size: 9rem;",
     expectedFailure: "autosize-max",
   },
   {
+    name: "the caret restore runs with a caret nobody chose",
+    key: "dashboard",
+    target: "if (!input || !composerCaretKnown) return;",
+    replacement: "if (!input) return;",
+    expectedFailure: "caret-survival",
+  },
+  {
+    name: "the emptied composer leaves a debounced draft write armed",
+    key: "dashboard",
+    target: 'cancelComposerDraftTimer();\n      setComposerStatus("");',
+    replacement: 'setComposerStatus("");',
+    expectedFailure: "composer-reset",
+  },
+  {
+    name: "a pending mention render survives leaving the field",
+    key: "dashboard",
+    target: "cancelMentionPickerRender();\n      flushComposerDraft();",
+    replacement: "flushComposerDraft();",
+    expectedFailure: "combobox-flush",
+  },
+  {
+    name: "Enter is judged against a mention picker that has not rendered yet",
+    key: "dashboard",
+    target: "cancelMentionPickerRender();\n          renderMentionPicker();",
+    replacement: "cancelMentionPickerRender();",
+    expectedFailure: "combobox-flush",
+  },
+  {
+    name: "a restored draft inherits a caret from different text",
+    key: "dashboard",
+    target: 'composerCaretKnown = false;\n      composerIntent = null;',
+    replacement: "composerIntent = null;",
+    expectedFailure: "caret-survival",
+  },
+  {
+    name: "leaving a workspace keeps the caret it had in that workspace's text",
+    key: "dashboard",
+    target: "workspace's draft. */\n      composerCaretKnown = false;",
+    replacement: "workspace's draft. */",
+    expectedFailure: "caret-survival",
+  },
+  {
+    name: "a tap in the text is overwritten by the remembered caret",
+    key: "dashboard",
+    target: "if (Date.now() - composerPointerAt < 500) return;",
+    replacement: "if (false) return;",
+    expectedFailure: "caret-survival",
+  },
+  {
     name: "keyboard resize no longer reaches the shell",
     key: "dashboard",
-    target: 'window.visualViewport?.addEventListener("resize", syncDashboardViewport);',
-    replacement: 'window.visualViewport?.removeEventListener("resize", syncDashboardViewport);',
+    target: 'window.visualViewport?.addEventListener("resize", requestDashboardViewportSync);',
+    replacement: 'window.visualViewport?.removeEventListener("resize", requestDashboardViewportSync);',
     expectedFailure: "viewport-containment",
   },
   {
@@ -693,7 +849,7 @@ const mutations: Mutation[] = [
   {
     name: "built /app loses the viewport-relative autosize cap",
     key: "builtCss",
-    target: "max-block-size:min(40dvh,20rem)",
+    target: "max-block-size:min(calc(var(--dashboard-viewport-height,100dvh) * .4), 20rem)",
     replacement: "max-block-size:9rem",
     expectedFailure: "built-autosize",
   },

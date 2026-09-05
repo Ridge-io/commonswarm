@@ -137,11 +137,57 @@ test("the home link remains reachable beside the switcher at responsive widths",
     dashboard,
     /data-user-menu-root[\s\S]*?data-user-menu[\s\S]*?class="dashboard__wordmark dashboard__user-menu-brand" href="\/"/,
   );
-  // At mobile the foot is placed in the top-bar's second column (its own box, not
-  // display:contents) so the account menu — and the home link within — stays reachable.
+  // At mobile the foot is the LAST column of the one-row top bar (its own box, not
+  // display:contents) so the account menu — and the home link within — stays reachable. It
+  // moved from column 2 to column 3 on 2026-09-04, when the view switcher took column 2.
   const responsive = between(dashboard, "@media (max-width: 52rem)", "@media (max-width: 34rem)");
   assert.match(
     responsive,
-    /\.dashboard__rail-foot\s*\{[\s\S]*?grid-column: 2;[\s\S]*?grid-row: 1;/,
+    /\.dashboard__rail-foot\s*\{[\s\S]*?grid-column: 3;[\s\S]*?grid-row: 1;/,
   );
+  // The name inside the trigger is clipped at this width, so the menu carries it instead.
+  // Without this line the phone would have no place that says which account is signed in.
+  assert.match(
+    dashboard,
+    /class="dashboard__user-menu-account" data-rail-account/,
+    "the account menu must name the signed-in account, which the trigger no longer shows",
+  );
+});
+
+/* The menu's roving-focus list has to know BOTH ways an item is not on offer. "Workspace
+   settings" arrived with the one-row mobile header (2026-09-04): it is the phone's door to the
+   dialog the gear opens, and above 52rem it is `display: none` because the gear is back. An
+   item hidden that way does not carry the `hidden` attribute, so filtering on `hidden` alone
+   kept it in the list and arrowing through the desktop menu stopped on nothing visible. */
+test("the workspace menu's arrow list skips items hidden by CSS, not only by attribute", () => {
+  const items = between(dashboard, "const workspaceMenuItems =", "const closeWorkspaceMenu =");
+  /* Positive control: the list must really be built from the menu's own items, or the filter
+     below is a claim about a selector that matches nothing. */
+  assert.match(
+    items,
+    /\[data-workspace-menu\] \[role='menuitemradio'\], \[data-workspace-menu\] \[role='menuitem'\]/,
+    "the arrow list is not read from the workspace menu's items",
+  );
+  assert.match(
+    items,
+    /item\.getClientRects\(\)\.length > 0/,
+    "an item that CSS hides keeps its place in the arrow list, so the desktop menu stops on " +
+      "an item nobody can see",
+  );
+  assert.match(items, /!item\.hidden/, "the hidden attribute must still remove an item");
+  /* The item this exists for, and the two rules that decide where it appears. */
+  assert.match(dashboard, /data-workspace-settings-item/);
+  assert.match(
+    dashboard,
+    /\.dashboard__workspace-settings-item \{\n\s*display: none;/,
+    "Workspace settings must be absent where the gear is present",
+  );
+  assert.match(
+    dashboard,
+    /\.dashboard__workspace-settings-item \{\n\s*display: flex;/,
+    "Workspace settings must be present where the gear is gone",
+  );
+  assert.match(appHtml, /data-workspace-settings-item/, "the built /app must ship the item");
+  assert.match(builtAssets, /getClientRects\(\)\.length\s*>\s*0/,
+    "the built /app must ship the filter, not only the source");
 });

@@ -58,8 +58,33 @@ test("transcript: the feed pane is the scroller, not the page", () => {
   );
   assert.match(
     src,
-    /visualViewport\?\.addEventListener\("resize", syncDashboardViewport\)/,
+    /visualViewport\?\.addEventListener\("resize", requestDashboardViewportSync\)/,
     "software-keyboard viewport changes no longer reach the shell",
+  );
+  /* iOS Safari also SCROLLS the layout viewport when a field near the bottom takes focus. The
+   * shell is sized to the visible viewport, so a scrolled page slides it off the screen — the
+   * composer thrown to the top of the screen and then dropped part way, which is what the
+   * operator reported on 2026-09-04. Returning the page to 0 on every visual-viewport event
+   * is what pins the shell to the screen. */
+  assert.match(
+    src,
+    /const syncDashboardViewport[\s\S]{0,400}?window\.scrollTo\(0, 0\)/,
+    "the shell no longer undoes the layout-viewport scroll the keyboard causes",
+  );
+  /* `window.innerHeight` reports the LAYOUT viewport on iOS Safari and does not change when the
+   * keyboard opens, so it must not be the fallback: it would write a height that is too tall at
+   * exactly the moment a shorter one is needed. With no visualViewport the property stays unset
+   * and the stylesheet's own 100dvh applies. */
+  assert.doesNotMatch(
+    src,
+    /const syncDashboardViewport[\s\S]{0,400}?window\.innerHeight/,
+    "window.innerHeight is back in the viewport sync, where it describes the wrong viewport",
+  );
+  /* The composer's own height cap has to be measured the same way, for the same reason. */
+  assert.match(
+    src,
+    /\.dashboard__composer textarea \{[\s\S]{0,700}?max-block-size: min\(calc\(var\(--dashboard-viewport-height/,
+    "the composer's height cap is back on a viewport unit rather than the measured height",
   );
 });
 
