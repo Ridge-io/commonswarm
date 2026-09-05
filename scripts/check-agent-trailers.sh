@@ -164,6 +164,17 @@ Then fix the commits already made:
     git commit --amend --no-edit          # the last one
     git rebase -r --exec 'git commit --amend --no-edit' <base>   # several
 
+IF THESE COMMITS ARE OLD WORK YOU JUST REBASED, do not use the two lines above. A rebase lifts a
+commit onto a base that carries the hook, so it stops qualifying for grace, but the model that
+wrote it is not recoverable from your session — an --amend now would sign it with YOUR runtime and
+put a wrong model into the audit, which is worse than an absent one. Record what is true instead:
+
+    CSWARM_AGENT_MODEL=$AGENT_TRAILER_MODEL_UNKNOWN CSWARM_AGENT_FAMILY=unknown \
+      git rebase -r --exec 'git commit --amend --no-edit' <base>
+
+...or, if you know which model wrote it, name it with CSWARM_AGENT_MODEL and it is recorded as
+'$AGENT_TRAILER_SOURCE_DECLARED' — an assertion, which is what it is.
+
 If the commit genuinely has NO agent author — a human wrote it by hand — say so explicitly
 rather than leaving the field blank:
 

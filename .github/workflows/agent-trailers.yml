@@ -118,8 +118,16 @@ jobs:
             git fetch --no-tags origin "+refs/heads/main:refs/remotes/origin/main" 2>/dev/null || true
             if git rev-parse --verify -q origin/main >/dev/null; then
               range="origin/main..HEAD"
-            else
+            elif git rev-parse --verify -q HEAD~1 >/dev/null; then
+              # Reads ONE commit, which is the least this can do without walking all of history.
               range="HEAD~1..HEAD"
+            else
+              # A repository's first commit has no HEAD~1. `HEAD~1..HEAD` would be unresolvable, and
+              # the checker exits 2 on that — correctly, it could not run — which would fail the job
+              # forever until a second commit exists. An empty range is the honest reading: there is
+              # no earlier commit to compare against, and the warning below says the check read
+              # nothing.
+              range="HEAD..HEAD"
             fi
           fi
           echo "value=$range" >> "$GITHUB_OUTPUT"

@@ -96,9 +96,16 @@ detect_claude_code() {
   # model, so the main chain is the correct filter. A subagent that commits runs this script in
   # ITS own session, where its own rows are main-chain — which is how rule 2 ("record who wrote
   # the diff, not who ran the command") holds without anyone passing a flag.
+  # PLACEHOLDER ROWS ARE NOT MODELS. Measured 2026-09-04 in a live transcript on this host: 56
+  # main-chain assistant rows carried `.message.model` = "<synthetic>", which the harness writes for
+  # turns it injects rather than a model serving. Taking the last row blindly would put `<synthetic>`
+  # into the audit as if it were a model id, on any commit made straight after one. A model id is
+  # never wrapped in angle brackets, so those rows are dropped and the last REAL one is used; if
+  # every row is a placeholder, nothing is set and the caller falls through to the unknown sentinel.
   local model version
   model="$(jq -r 'select(.type=="assistant" and .isSidechain != true and .message.model != null)
-                  | .message.model' "$transcript" 2>/dev/null | tail -1 || true)"
+                  | .message.model
+                  | select(test("^<.*>$") | not)' "$transcript" 2>/dev/null | tail -1 || true)"
   [ -n "$model" ] && [ "$model" != "null" ] && detected_model="$model" && detected_source=runtime-transcript
 
   version="$(jq -r 'select(.version != null) | .version' "$transcript" 2>/dev/null | tail -1 || true)"
