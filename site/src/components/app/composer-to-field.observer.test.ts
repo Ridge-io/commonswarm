@@ -872,15 +872,47 @@ test("one pass owns the address, and every handler goes through it", () => {
     /if \(composerSending\) return;/,
     "the stored draft is written from a box a send emptied, so a switch mid-post loses the text",
   );
-  /* And a landed post still clears its draft: the removal is a different call and is NOT
-     gated, or a send that finished under a changed workspace would leave its body behind. */
+  /* AND A LANDED POST CLEARS ITS OWN DRAFT, which takes BOTH halves. Being ungated is one:
+     the removal must run while the send's own flag is still up. Naming the key is the other,
+     and it is the half a previous round claimed it did not need. Every clear sat behind the
+     send's changed-workspace return, so a post that landed after the reader switched away
+     cleared nothing — and had it run, `composerDraftKey()` would have named the workspace now
+     on screen. The reader came back to the message they had already sent, sitting in the box
+     with a null intent, and sending it again minted a second command id. A review arm found
+     it, and found that the control here had been green against the false half. */
+  const clearBody = dashboard.slice(
+    dashboard.indexOf("const clearComposerDraft = ("),
+    dashboard.indexOf("const persistComposerDraft = ("),
+  );
   assert.doesNotMatch(
-    dashboard.slice(
-      dashboard.indexOf("const clearComposerDraft = (): void => {"),
-      dashboard.indexOf("const persistComposerDraft = (): void => {"),
-    ),
+    clearBody,
     /if \(composerSending\) return;/,
     "a landed post cannot clear its own draft while its send flag is still up",
+  );
+  /* THE SEND CAPTURES ITS OWN STORAGE, with its workspace, the way it already captures its
+     recipients, its body and its command id. */
+  const submitBlock = dashboard.slice(
+    dashboard.indexOf('one<HTMLFormElement>("[data-composer]")?.addEventListener("submit"'),
+  );
+  assert.match(
+    submitBlock.slice(0, submitBlock.indexOf("} finally {")),
+    /const sendDraftKey = composerDraftKey\(workspaceId\);\s*\n\s*const sendToKey = composerToStorageKey\(workspaceId\);/,
+    "the send addresses its storage through a live global instead of capturing it",
+  );
+  /* And it finishes that storage BEFORE the guard that protects the screen, so a landed post
+     under a changed workspace still remembers its set and removes its draft. */
+  const landed = submitBlock.slice(submitBlock.indexOf("await postBrowserSignal("));
+  const storageAt = landed.indexOf("rememberComposerTo(recipients, sendToKey);");
+  const guardAt = landed.indexOf("if (version !== requestVersion || workspaceId !== activeWorkspaceId) {");
+  assert.ok(storageAt > 0 && guardAt > 0, "the landed path has no storage or no guard to order");
+  assert.ok(
+    storageAt < guardAt,
+    "a send that outlived its workspace skips its own remember and clear",
+  );
+  assert.match(
+    landed.slice(storageAt, guardAt),
+    /clearComposerDraft\(sendDraftKey\);/,
+    "the landed post clears a draft it did not name",
   );
   /* THE RENDER DRAWS AND DECIDES NOTHING. Pruning used to live in it, which is how a paint
      the reader had not caused came to move the address. */

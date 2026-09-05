@@ -272,7 +272,21 @@ const assertComposerSprint = (value: ComposerArtifact): void => {
     "failed-send-audience: a retry is offered only where it can finish what it started",
   );
   assert.doesNotMatch(failed, /composerAudience|composerMention|remaining/);
-  assert.match(failed, /persistComposerDraft\(\);/, "failed-send-body: persist the restored draft");
+  /* THE RESTORED BODY IS WRITTEN DOWN BY THE SETTLE, not by the catch. A persist call inside
+     the catch is dead: the send flag is still up there, so the write returns at its own guard.
+     A review arm found the call AND this assertion, which had been matching a line that did
+     nothing — a control green against a claim that was false. The catch is past the
+     changed-workspace return, so the settle covers every failure it could have covered. */
+  assert.doesNotMatch(failed, /persistComposerDraft\(\);/,
+    "failed-send-body: the catch writes a draft from behind the send flag, which does nothing");
+  const settleWrite = between(
+    submit,
+    "} finally {",
+    "\n    });",
+    "failed-send-settle",
+  );
+  assert.match(settleWrite, /syncComposerAddress\(\);/,
+    "failed-send-body: nothing writes the restored draft down");
   /* RETIRED 2026-09-05 with the fan-out: "Sent to ${sent} of ${recipients.length}" and
      "All ${sent} went out". A message is ONE signal now, so there is no partial send to
      count: the command was rejected and nothing is on the server, or it landed and this
@@ -641,9 +655,11 @@ const assertComposerSprint = (value: ComposerArtifact): void => {
 
   /* Draft identity includes all three ownership axes. Storage survives reset/error and is cleared
    * by the accepted response only. */
+  /* The workspace became an ARGUMENT on 2026-09-05, defaulting to the live one, so a send can
+     bind its storage to the workspace it posted from. The three axes are unchanged. */
   assert.match(
     draft,
-    /`commonswarm:composer-draft:\$\{owner\}:\$\{activeWorkspaceId\}:\$\{COMPOSER_DRAFT_SCOPE\}`/,
+    /`commonswarm:composer-draft:\$\{owner\}:\$\{workspaceId\}:\$\{COMPOSER_DRAFT_SCOPE\}`/,
     "draft-scope: key must include user, workspace, and stream",
   );
   /* The name changed with the vocabulary on 2026-09-05; "stream" is the event log on the
@@ -678,7 +694,7 @@ const assertComposerSprint = (value: ComposerArtifact): void => {
      third is the settle in the `finally` (2026-09-05): the address pass runs there and writes
      the pair down, which would leave a draft holding the set the send just left on the row,
      so a landed post clears it once more AFTER that write. */
-  assert.equal(occurrences(dashboard, "clearComposerDraft();"), 3,
+  assert.equal(occurrences(dashboard, "clearComposerDraft(sendDraftKey);"), 3,
     "draft-clear: only a finished send may clear the draft");
   const settle = between(
     submit,
@@ -686,9 +702,15 @@ const assertComposerSprint = (value: ComposerArtifact): void => {
     "\n    });",
     "send-settle",
   );
-  assert.match(settle, /if \(posted !== null\) clearComposerDraft\(\);/,
+  assert.match(settle, /if \(posted !== null\) clearComposerDraft\(sendDraftKey\);/,
     "draft-clear: the settle clears the draft for a send that never landed");
-  assertOrder(submit, "await postBrowserSignal(", "clearComposerDraft();", "draft-clear");
+  assertOrder(submit, "await postBrowserSignal(", "clearComposerDraft(sendDraftKey);", "draft-clear");
+  /* AND EVERY CLEAR NAMES THE KEY THIS SEND CAPTURED. Reading the live one meant a post that
+     landed after the reader switched away removed whichever workspace's draft was on screen —
+     or, behind the send's own changed-workspace return, removed nothing at all and left the
+     sent body to come back as a draft. A review arm found it. */
+  assert.equal(occurrences(dashboard, "clearComposerDraft();"), 0,
+    "draft-clear: a clear reads the live workspace key instead of the one its send captured");
   /* RETIRED (2026-09-04): "failed sends must retain the saved draft", unconditionally. It is
      still true of a rejected send — that is the partial branch above, which persists the draft.
      It is false of a failure that arrives after every recipient already posted: there the send
@@ -702,7 +724,7 @@ const assertComposerSprint = (value: ComposerArtifact): void => {
     "\n        }",
     "finished-send-cleanup",
   );
-  assert.match(finished, /clearComposerDraft\(\);/,
+  assert.match(finished, /clearComposerDraft\(sendDraftKey\);/,
     "draft-clear: a finished send must clear the draft");
   assert.match(finished, /composerAttachmentsMissingAfterReload = false;/,
     "draft-clear: a finished send must clear the lost-attachment marker too");
@@ -918,8 +940,8 @@ const mutations: Mutation[] = [
   {
     name: "draft key loses user ownership",
     key: "dashboard",
-    target: "`commonswarm:composer-draft:${owner}:${activeWorkspaceId}:${COMPOSER_DRAFT_SCOPE}`",
-    replacement: "`commonswarm:composer-draft:${activeWorkspaceId}:${COMPOSER_DRAFT_SCOPE}`",
+    target: "`commonswarm:composer-draft:${owner}:${workspaceId}:${COMPOSER_DRAFT_SCOPE}`",
+    replacement: "`commonswarm:composer-draft:${workspaceId}:${COMPOSER_DRAFT_SCOPE}`",
     expectedFailure: "draft-scope",
   },
   {

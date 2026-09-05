@@ -2629,16 +2629,27 @@ import "../../styles/tokens.css";
     const composerRosterKnown = (): boolean => agents.length > 0 || members.length > 0;
 
     /** WHERE THE LAST SET IS REMEMBERED. Per signed-in reader and per workspace. */
-    const composerToStorageKey = (): string | null => {
-      if (!activeWorkspaceId) return null;
+    /* THE WORKSPACE IS AN ARGUMENT, not a global read at call time.
+     *
+     * A send captures its workspace, its version, its recipients, its body and its command id,
+     * and then addressed its STORAGE through `activeWorkspaceId` — whatever that happened to
+     * be when the write ran. Every storage call the send makes therefore sits behind a
+     * "workspace still mine?" guard, and a send that landed after the reader switched away did
+     * neither its remember nor its clear; had it tried, it would have written the new
+     * workspace's key. Two review rounds found opposite halves of that one cause. Passing the
+     * workspace in lets the send bind its storage the way it already binds everything else. */
+    const composerToStorageKey = (workspaceId = activeWorkspaceId): string | null => {
+      if (!workspaceId) return null;
       const owner = session?.user.id ?? (sampleMode ? "sample-owner" : "");
       if (!owner) return null;
-      return `commonswarm:composer-to:${owner}:${activeWorkspaceId}`;
+      return `commonswarm:composer-to:${owner}:${workspaceId}`;
     };
 
     /** Remembers the set a message actually went to, so the next message starts addressed. */
-    const rememberComposerTo = (recipients: readonly ComposerRecipient[]): void => {
-      const key = composerToStorageKey();
+    const rememberComposerTo = (
+      recipients: readonly ComposerRecipient[],
+      key = composerToStorageKey(),
+    ): void => {
       if (!key) return;
       try {
         if (recipients.length === 0) window.localStorage.removeItem(key);
@@ -2860,11 +2871,11 @@ import "../../styles/tokens.css";
        touch it. */
     const COMPOSER_DRAFT_SCOPE = "all-signals";
 
-    const composerDraftKey = (): string | null => {
-      if (!activeWorkspaceId) return null;
+    const composerDraftKey = (workspaceId = activeWorkspaceId): string | null => {
+      if (!workspaceId) return null;
       const owner = session?.user.id ?? (sampleMode ? "sample-owner" : "");
       if (!owner) return null;
-      return `commonswarm:composer-draft:${owner}:${activeWorkspaceId}:${COMPOSER_DRAFT_SCOPE}`;
+      return `commonswarm:composer-draft:${owner}:${workspaceId}:${COMPOSER_DRAFT_SCOPE}`;
     };
 
     const readComposerDraft = (key: string): ComposerDraft | null => {
@@ -2895,9 +2906,17 @@ import "../../styles/tokens.css";
       }
     };
 
-    const clearComposerDraft = (): void => {
+    /* NOT GATED ON `composerSending`, unlike the write, and it takes the key rather than
+       reading the live one. Both halves are load-bearing and neither is enough alone: a
+       landed post has to remove its own draft while its own send flag is still up, and it has
+       to name the workspace it posted from, because the reader may have switched away by the
+       time the server answered. Ungated ALONE was claimed to be enough and was not — every
+       call site sat behind the send's changed-workspace return, so a landed post under a
+       switch cleared nothing, and had it tried it would have removed the new workspace's
+       draft. A review arm found that, and found the claim control that had been defending the
+       false half of it. */
+    const clearComposerDraft = (key = composerDraftKey()): void => {
       cancelComposerDraftTimer();
-      const key = composerDraftKey();
       if (!key) return;
       try {
         window.localStorage.removeItem(key);
@@ -7476,6 +7495,11 @@ import "../../styles/tokens.css";
       syncComposerAddress();
       const workspaceId = activeWorkspaceId;
       const version = requestVersion;
+      /* THIS SEND'S OWN STORAGE, captured with its workspace. What the send writes and removes
+         belongs to the workspace it is posting from, whatever the reader is looking at by the
+         time the server answers. */
+      const sendDraftKey = composerDraftKey(workspaceId);
+      const sendToKey = composerToStorageKey(workspaceId);
       /* THE CHANNEL IS NOT A REASON TO ABANDON THE SEND, and it is not compared as a view
          identity either. Both were tried and both were wrong. ~~`channelAtSend`~~: returning
          early when the reader moved channel skipped the send's own cleanup, so the draft
@@ -7660,6 +7684,19 @@ import "../../styles/tokens.css";
               attachmentRefs,
               placement,
             );
+        /* THE SEND'S OWN STORAGE IS FINISHED FIRST, before the guard below, because it is not
+           about the screen. The guard exists so a send that outlived its workspace cannot
+           touch the surface the reader is looking at now, and that is right. It was also
+           skipping the remember and the clear, so a message that LANDED after the reader
+           switched away left its body in that workspace's draft: coming back restored the
+           sent text with a null intent, and sending it again minted a second command id for a
+           message the server already held. A review arm found it, once the previous round
+           stopped an emptied box from overwriting that draft and so uncovered it.
+
+           These two calls name the keys this send captured, so they finish this send's own
+           bookkeeping in its own workspace and touch nothing the reader can see. */
+        rememberComposerTo(recipients, sendToKey);
+        clearComposerDraft(sendDraftKey);
         if (version !== requestVersion || workspaceId !== activeWorkspaceId) {
           for (const attachment of attachmentSnapshot) {
             if (attachment.previewUrl) URL.revokeObjectURL(attachment.previewUrl);
@@ -7688,10 +7725,9 @@ import "../../styles/tokens.css";
            false: "the sample IS the whole set" only holds if the set grows with it. Found by
            a review arm. */
         if (sampleMode) sampleSignals = [posted, ...sampleSignals];
-        /* THE CHIPS STAY, and they are remembered. The next message opens addressed to the
-           people this one went to, which is the whole point of the row: the reader stops
-           losing the person they were talking to. */
-        rememberComposerTo(recipients);
+        /* THE CHIPS STAY, and they were remembered above, before the guard. The next message
+           opens addressed to the people this one went to, which is the whole point of the
+           row: the reader stops losing the person they were talking to. */
         /* THE BODY IS GONE, SO THE APPLIED RECORD GOES WITH IT — and this path does not write
            that down. The settle in the `finally` derives the pair from the box that is now
            empty, and a record whose tag has left the body is dropped by the same rule that
@@ -7709,7 +7745,6 @@ import "../../styles/tokens.css";
         for (const attachment of attachmentSnapshot) {
           if (attachment.previewUrl) URL.revokeObjectURL(attachment.previewUrl);
         }
-        clearComposerDraft();
         renderFeed("latest");
         void refreshDeliveryReceipts(workspaceId, version);
         setComposerStatus("");
@@ -7767,7 +7802,12 @@ import "../../styles/tokens.css";
           stagedAttachments = attachmentSnapshot;
           renderStagedAttachments();
           resizeComposerInput(input);
-          persistComposerDraft();
+          /* THE RESTORED BODY IS WRITTEN DOWN BY THE SETTLE, not here. A `persistComposerDraft`
+             call at this point is dead: the send flag is still up, so the write returns at its
+             own guard. The settle in the `finally` runs after the flag drops, against the same
+             restored body, and this block is already past the changed-workspace return, so
+             there is no failure it reaches that the settle does not. A review arm found the
+             dead call, and a test that matched it was defending a line that did nothing. */
         }
         composerIntent = resumable
           /* WITH THE ADDRESS. Rewriting the intent without it made every retry after a
@@ -7787,8 +7827,10 @@ import "../../styles/tokens.css";
           /* It posted, so this failure is a render fault and the send is FINISHED. The
            * success path's cleanup never ran, and skipping it left the sent body in the saved
            * draft — which the "reload" advice would then restore, with a null intent, so the
-           * next send would mint a fresh command id and post it a second time. */
-          clearComposerDraft();
+           * next send would mint a fresh command id and post it a second time. It names the
+           * key this send captured, so a failure that arrives after a workspace switch still
+           * removes the draft it wrote rather than the one now on screen. */
+          clearComposerDraft(sendDraftKey);
           composerAttachmentsMissingAfterReload = false;
           for (const attachment of attachmentSnapshot) {
             if (attachment.previewUrl) URL.revokeObjectURL(attachment.previewUrl);
@@ -7823,7 +7865,7 @@ import "../../styles/tokens.css";
              and writes it down, which would leave a draft holding the set the send just left
              on the row — a second copy of something the remembered set already says, and one
              that can disagree with it. The success path cleared the draft before this ran. */
-          if (posted !== null) clearComposerDraft();
+          if (posted !== null) clearComposerDraft(sendDraftKey);
           syncComposerControls();
           input.focus({ preventScroll: true });
         }

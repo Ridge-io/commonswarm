@@ -282,6 +282,27 @@ const mutations = [
     "      const key = composerDraftKey();",
     "the stored draft is not written from a box the send emptied",
     "the stored draft is written from a box a send emptied"],
+  /* AND THE SEND OWNS ITS STORAGE. Stopping the emptied-box write uncovered the other half of
+     the same cause: every clear sat behind the send's changed-workspace return, so a landed
+     post under a switch cleared nothing and left its own body to come back as a draft. */
+  [FIELD, DASH,
+    "        rememberComposerTo(recipients, sendToKey);\n        clearComposerDraft(sendDraftKey);\n        if (version !== requestVersion",
+    "        if (version !== requestVersion",
+    "a landed send does its own remember and clear at all",
+    "the landed path has no storage or no guard to order"],
+  /* AND IT DOES THEM BEFORE THE GUARD. Moving them after it is the defect itself: the guard
+     returns for a send that outlived its workspace, which is right for the screen and wrong
+     for the send's own bookkeeping. */
+  [FIELD, DASH,
+    "        rememberComposerTo(recipients, sendToKey);\n        clearComposerDraft(sendDraftKey);\n        if (version !== requestVersion || workspaceId !== activeWorkspaceId) {\n          for (const attachment of attachmentSnapshot) {\n            if (attachment.previewUrl) URL.revokeObjectURL(attachment.previewUrl);\n          }\n          return;\n        }",
+    "        if (version !== requestVersion || workspaceId !== activeWorkspaceId) {\n          for (const attachment of attachmentSnapshot) {\n            if (attachment.previewUrl) URL.revokeObjectURL(attachment.previewUrl);\n          }\n          return;\n        }\n        rememberComposerTo(recipients, sendToKey);\n        clearComposerDraft(sendDraftKey);",
+    "a send finishes its own storage before the guard that protects the screen",
+    "a send that outlived its workspace skips its own remember and clear"],
+  [FIELD, DASH,
+    "      const sendDraftKey = composerDraftKey(workspaceId);",
+    "      const sendDraftKey = composerDraftKey();",
+    "the send names the workspace it posted from, not the one now on screen",
+    "the send addresses its storage through a live global instead of capturing it"],
   /* (4) a tag refused by the cap cannot be re-added by making room */
   [PURE, ADDR,
     "    if (!refusedKeys.has(recipientKey(entity))) applied.add(recipientKey(entity));",

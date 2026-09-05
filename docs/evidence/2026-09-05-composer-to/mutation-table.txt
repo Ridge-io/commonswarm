@@ -89,6 +89,12 @@ red  the pass is told when the message it addresses is on the wire
   restored green  site/src/components/app/composer-to-field.observer.test.ts
 red  the stored draft is not written from a box the send emptied
   restored green  site/src/components/app/composer-to-field.observer.test.ts
+red  a landed send does its own remember and clear at all
+  restored green  site/src/components/app/composer-to-field.observer.test.ts
+red  a send finishes its own storage before the guard that protects the screen
+  restored green  site/src/components/app/composer-to-field.observer.test.ts
+red  the send names the workspace it posted from, not the one now on screen
+  restored green  site/src/components/app/composer-to-field.observer.test.ts
 red  a name the cap refused stays eligible, so making room adds it
   restored green  site/src/lib/composer-address.test.mjs
 red  making room on the row is the way back from a refusal
@@ -96,4 +102,4 @@ red  making room on the row is the way back from a refusal
 red  the mark goes on the recipient the sentence names, and on no other
   restored green  site/src/components/app/composer-to-field.observer.test.ts
 
-47 mutations, 0 problems
+50 mutations, 0 problems

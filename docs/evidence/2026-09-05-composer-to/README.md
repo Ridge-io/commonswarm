@@ -110,6 +110,32 @@ its own mutation.
 | Grok | `LiveDashboard.astro` still carried a comment saying `renderComposerTo` prunes before it draws, which this lane made false | **Correct.** The retired sentence is gone; the paragraph beneath it already stated the new rule. |
 | Grok | the `composerToLive` mutation names `afterSend` while its subject looked like `broadcastSurvivesReload` | **Not a mis-aim, now said in the harness.** The observer clears To: several times, and the first step after a `clearTo` is where a row that refilled itself from storage shows up. The named assertion is the one its failure carries. |
 
+### Round six: what the arms found, and how each was ruled
+
+| arm | finding | ruling |
+|---|---|---|
+| Grok and Gemini, independently | a message that LANDED after the reader switched workspace left its body in the old workspace's draft; coming back restored the sent text with a null intent, so sending again minted a second command id and posted it twice | **Correct, and the round-five fix uncovered it.** Stopping the emptied box from overwriting that draft removed the thing that had been accidentally covering it. |
+| Grok | the claim that `clearComposerDraft` being ungated was enough is false: every call site sat behind the send's changed-workspace return, and the key it would have used was the new workspace's. The source control defending it was green against the false half | **Correct, and it is the doctrine's own failure mode.** The claim and its control are both replaced. |
+| Grok | `persistComposerDraft()` in the catch is dead — the send flag is still up, so it returns at its own guard — and `composer-sprint.observer.test.ts` matched that dead line | **Correct.** The call is gone and the test now points at the settle, which is what actually writes the restored body. |
+| Grok | the README wrote the in-flight bullet twice and did not name the new bounds | **Correct.** Fixed here. |
+| Gemini | the round-five ruling on a draft with a body is wrong, because the reader WOULD see a returning member on the row | **Split, and ruled with Grok, who attacked the same ruling and kept it.** The tiebreak is now stated honestly below rather than resting on the word "chose". |
+
+**The cause underneath both round-five and round-six findings.** The send captures its workspace,
+its version, its recipients, its body and its command id, and then addressed its STORAGE through
+`activeWorkspaceId`, read at the moment each write ran. Every storage call therefore sat behind a
+"is this workspace still mine?" guard that is right for the screen and wrong for the send's own
+bookkeeping. Round five found text loss on that path; round six found a resurrected message on it.
+The fix is not a third point fix: `composerDraftKey` and `composerToStorageKey` take the workspace
+as an argument, the submit captures both keys beside `workspaceId`, and the landed path finishes
+its own remember and clear BEFORE the guard that protects the screen.
+
+**The tiebreak on the draft-with-a-body ruling.** Neither the silent prune nor the exclusion that
+follows it is something the reader chose; Gemini is right about that. The rule is not "the reader
+chose it" but which mistake is worse. Adding a recipient to a message already being written puts
+that message in front of somebody the writer never addressed, and that cannot be taken back once
+sent. Leaving them out is visible on the row and one click from being fixed. So the composer does
+not add, and a draft with no body — which is not a message — derives its set again on arrival.
+
 ## What is NOT established
 
 - **Nothing here reached production.** Every browser measurement runs against `site/dist` in
@@ -120,17 +146,17 @@ its own mutation.
   freeze are two separate guards for one rule, and a sample send never stays in flight long
   enough for a browser step to act inside it. Both are read out of the source with a mutation
   on each; what the pair's freeze DOES is driven through `deriveComposerAddress` directly.
-- **The in-flight freeze has no browser control.** A sample send resolves without an await, so
-  there is no window in which a browser step could change a roster underneath one. What the
-  freeze DOES is driven directly through `deriveComposerAddress` in `composer-address.test.mjs`,
-  which is the same function the dashboard calls; what the dashboard FEEDS it (`sending:
-  composerSending`) is a source claim with a mutation on it. Neither reaches a real post.
 - **The applied record's clear after a send is not independently observable.** The submit no
   longer clears it by hand; the settle in the `finally` derives it from the box the send
   emptied. But ANY pass with an empty body drops a record whose tag has left, so a later
   keystroke or chip click reaches the same state. What is controlled is the settle itself
   (removing it turns a source claim red) and the behaviour it protects
   (`retaggedAfterSend`). The clear as a separate step is not.
+- **No browser control reaches a send whose workspace changes under it.** That path carries
+  both round-five and round-six findings, and a sample send resolves without an await, so no
+  browser step can switch workspace inside one. The fix is read out of the source with three
+  mutations on it: the storage is captured, it is done at all, and it is done before the guard.
+  What a real post does under a real switch is NOT measured here.
 - **The write of the remembered set is not independently controlled, and the harness says so.**
   Breaking `rememberComposerTo` changes nothing a reader sees, because `pagehide` flushes the
   live chips into the draft and the draft restores them. The READ is controlled

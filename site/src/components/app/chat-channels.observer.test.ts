@@ -255,7 +255,11 @@ test("a sample post joins the sample set, so the local narrowing stays honest", 
      `signals`. Posting then switching channel made the post vanish, and it made the argument
      for allowing a local filter there false: "the sample IS the whole set" holds only if the
      set grows with it. Found by a review arm. */
-  const submit = between(dashboard, "const visible = showsOnScreen(posted) ? [posted] : [];", "clearComposerDraft();");
+  /* ~~`clearComposerDraft();`~~ as the end anchor, retired 2026-09-05: the send's own storage
+     moved ABOVE the guard that protects the screen, so a landed post under a changed workspace
+     still clears the draft it wrote. That put the clear BEFORE this slice's start anchor. The
+     feed render is the same boundary and is still after it. */
+  const submit = between(dashboard, "const visible = showsOnScreen(posted) ? [posted] : [];", 'renderFeed("latest");');
   assert.match(submit, /if \(sampleMode\) sampleSignals = \[posted, \.\.\.sampleSignals\];/);
 });
 
@@ -309,7 +313,7 @@ test("a post belongs to the channel it was sent from, whatever the reader does n
    * the early return is guarded on the workspace ONLY, and the channel decides one thing:
    * whether the posted rows join the list on screen.
    */
-  const applied = between(dashboard, "const attachmentRefs = sampleMode", "clearComposerDraft();");
+  const applied = between(dashboard, "const attachmentRefs = sampleMode", 'renderFeed("latest");');
   assert.doesNotMatch(
     applied.replace(/\/\*[\s\S]*?\*\//g, ""),
     /channelAtSend/,
@@ -507,7 +511,7 @@ test("a page fetched before a post landed does not drop that post", () => {
   assert.match(open, /postedSinceReset\.clear\(\);/, "a workspace change empties the record");
   assert.match(load, /forgetFetchedPostedIds\(page\.rows\);/);
   /* And the send is what records them, so only rows this browser posted are kept. */
-  const applied = between(dashboard, "const visible = showsOnScreen(posted) ? [posted] : [];", "clearComposerDraft();");
+  const applied = between(dashboard, "const visible = showsOnScreen(posted) ? [posted] : [];", 'renderFeed("latest");');
   assert.match(
     applied,
     /for \(const row of visible\) \{\s*\n\s*postedSinceReset\.set\(row\.id, \{ row, workspaceId, at: Date\.now\(\) \}\);/,
