@@ -521,3 +521,45 @@ test("thread_root_id's uuid shape is a chat rule and lives with the chat rules",
     "an explicit null still means no thread",
   );
 });
+
+test("a validation reason is safe to return because the validator cannot know anything else", () => {
+  /* This lane started returning validation.reason in the 400 body for EVERY
+   * command, not just the chat ones, because a generated sentence nobody can
+   * read is not a generated sentence. That is the widest change in the lane, so
+   * the safety argument is pinned here rather than left in a commit message.
+   *
+   * The argument is structural, not a review of 22 strings: validateCommand
+   * takes ONE parameter, the caller's own decoded body. No transaction, no auth
+   * context, no route. It runs before route resolution and before any query, so
+   * a reason it produces cannot name another tenant's data, a token, an id the
+   * caller did not supply, or the existence of a row. Give it a second
+   * parameter and this test fails, which is when the argument needs re-making. */
+  const command = readFileSync(
+    fileURLToPath(
+      new URL("../supabase/functions/command/index.ts", import.meta.url),
+    ),
+    "utf8",
+  );
+  const start = command.indexOf("function validateCommand(");
+  assert.notEqual(start, -1, "validateCommand must still exist to guard");
+  const signature = command.slice(start, command.indexOf("{", command.indexOf("reason: string }", start)));
+  assert.ok(
+    signature.includes("value: unknown,"),
+    "validateCommand takes the caller's own body",
+  );
+  for (const forbidden of ["tx:", "Sql", "auth:", "route:", "AuthContext", "Route"]) {
+    assert.equal(
+      signature.includes(forbidden),
+      false,
+      `validateCommand must not receive ${forbidden}: a reason could then carry state the caller never sent`,
+    );
+  }
+  /* Control: the slice is the signature and not an empty string. */
+  assert.ok(signature.includes("ValidatedCommand"));
+
+  /* And the body actually carries it, or the sentences stay invisible. */
+  assert.ok(
+    command.includes("message: validation.reason,"),
+    "the refusal reason must reach the caller, not only swarm.audit",
+  );
+});
