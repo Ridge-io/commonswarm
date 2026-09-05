@@ -294,10 +294,32 @@ test("a post belongs to the channel it was sent from, whatever the reader does n
     "syncComposerControls();\n      renderFeed",
   );
   assert.match(submit, /const channelAtSend = activeChannelId;/);
+  assert.match(
+    submit,
+    /const postedRowsBelongHere = \(\): boolean => channelAtSend === activeChannelId;/,
+  );
+  /*
+   * AND IT IS NOT A REASON TO ABANDON THE SEND. Returning early on a channel change left the
+   * draft uncleared, the pending rows in two caches, the status stuck on "Posting…", and — on
+   * the failure path — the body deleted with no error and no Retry, because the focus move a
+   * channel click makes blurs the emptied box and flushes the draft. Both arms found that. So
+   * the early return is guarded on the workspace ONLY, and the channel decides one thing:
+   * whether the posted rows join the list on screen.
+   */
   const applied = between(dashboard, "const attachmentRefs = sampleMode", "clearComposerDraft();");
-  assert.match(applied, /channelAtSend !== activeChannelId\s*\n?\s*\) \{/);
+  assert.doesNotMatch(
+    applied,
+    /channelAtSend !== activeChannelId/,
+    "a channel change must not skip the send's own cleanup",
+  );
+  assert.match(applied, /signals = postedRowsBelongHere\(\) \? \[\.\.\.posted, \.\.\.kept\] : kept;/);
   const failed = between(dashboard, "} catch (caught) {", "const sent = posted.length;");
-  assert.match(failed, /channelAtSend !== activeChannelId/);
+  assert.doesNotMatch(failed, /channelAtSend !== activeChannelId/);
+  const failedRows = between(dashboard, "const keptOnFailure = signals.filter", "setComposerStatus(");
+  assert.match(
+    failedRows,
+    /signals = postedRowsBelongHere\(\) \? \[\.\.\.posted, \.\.\.keptOnFailure\] : keptOnFailure;/,
+  );
 });
 
 test("the workspace open leaves the rail's current mark to the channel rule", () => {
@@ -328,13 +350,27 @@ test("only the newest channel read is applied", () => {
   assert.match(refresh, /const generation = \+\+channelReadGeneration;/);
   assert.match(refresh, /generation === channelReadGeneration &&/);
   assert.match(refresh, /if \(!current\(\)\) return;/);
-  /* The workspace open is a channel read too, so it takes the newest generation. */
-  /* `const [nextAgents, nextRoster` is NOT unique in this file — an earlier roster catch-up
-     opens with the same words, and anchoring there sliced a region that does not contain the
-     bump and produced a confident failure about code that was present. */
+  /*
+   * The workspace open is a channel read too, and it takes its generation BEFORE the fetch.
+   * Taken after, a slow open landed behind a create the reader made while it was still
+   * loading — same workspace, same requestVersion, so nothing else dropped it — and overwrote
+   * the list with the snapshot from before that channel existed; the URL then named an id the
+   * stale list did not have and the head said "Channel not found" for a channel that does.
+   * Found by a review arm.
+   *
+   * `const [nextAgents, nextRoster` is NOT a usable anchor here: an earlier roster catch-up
+   * opens with the same words, and anchoring there sliced a region that does not contain the
+   * code and produced a confident failure about code that was present.
+   */
+  const openStart = between(dashboard, "if (keepShell) renderChannel(selected, true);", "try {")
+    .replace(/\/\*[\s\S]*?\*\//g, "");
+  assert.match(openStart, /const channelGeneration = \+\+channelReadGeneration;/);
   const open = between(dashboard, "nextChannels] = await Promise.all([", "renderMembers();")
     .replace(/\/\*[\s\S]*?\*\//g, "");
-  assert.match(open, /\+\+channelReadGeneration;\s*\n\s*channels = nextChannels\.value;/);
+  assert.match(
+    open,
+    /if \(channelGeneration === channelReadGeneration\) \{\s*\n\s*channels = nextChannels\.value;/,
+  );
 });
 
 test("the channel commands send exactly the keys the command edge accepts", () => {

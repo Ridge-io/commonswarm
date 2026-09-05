@@ -5221,6 +5221,13 @@ import "../../styles/tokens.css";
       channelLoadError = "";
       if (keepShell) renderChannel(selected, true);
       else setLoading(`Opening ${selected.name}…`);
+      /* The generation is taken BEFORE the read, not after it. Taken after, a slow open could
+         land behind a create the reader made while it was still loading — same workspace,
+         same requestVersion, so nothing else dropped it — and overwrite the list with the
+         snapshot from before that channel existed. The URL then named an id the stale list
+         did not have, and the head said "Channel not found" for a channel that does. Found by
+         a review arm. */
+      const channelGeneration = ++channelReadGeneration;
       try {
         const [nextAgents, nextRoster, nextInvites, nextAccessStatuses, nextFiles, nextChannels] = await Promise.all([
           roster(selected.id),
@@ -5250,12 +5257,13 @@ import "../../styles/tokens.css";
         accessStatuses = nextAccessStatuses;
         files = nextFiles.value;
         fileLoadError = nextFiles.error;
-        /* The open is a channel read too, so it takes the newest generation: a refresh that
-           was already in flight when this workspace opened cannot land afterwards and
-           replace the list this open just read. */
-        ++channelReadGeneration;
-        channels = nextChannels.value;
-        channelListFailed = nextChannels.failed;
+        /* Only if no newer channel read has landed since this one started. A create the
+           reader made while the workspace was still opening is newer than this snapshot, and
+           it stays. */
+        if (channelGeneration === channelReadGeneration) {
+          channels = nextChannels.value;
+          channelListFailed = nextChannels.failed;
+        }
         /* The URL is read ONCE per workspace open, after the channels are known: a ?c= that
            names no channel here must show an honest empty state, and the only way to tell
            that from a channel that is merely empty is to have the list. Then it is WRITTEN,
@@ -6853,12 +6861,19 @@ import "../../styles/tokens.css";
       const workspaceId = activeWorkspaceId;
       const version = requestVersion;
       /* And the CHANNEL, captured with the send. A channel click does not bump requestVersion
-         because it is not a workspace change, so the two guards below let a row posted in one
-         channel be prepended to another channel's page: send in #mobile, switch to #ops while
-         it is in flight, and the #mobile row lands in #ops and survives the next poll, which
-         keeps any local id the page does not carry. Found by a review arm. The row still
-         posted; it belongs to the channel it was sent to, and it is read there. */
+         because it is not a workspace change, so a row posted in one channel could be
+         prepended to another channel's page: send in #mobile, switch to #ops while it is in
+         flight, and the #mobile row landed in #ops and survived the next poll, which keeps
+         any local id the fetched page does not carry.
+         IT IS NOT A REASON TO ABANDON THE SEND. Returning early on it left the draft
+         uncleared, the pending rows in two caches, the status stuck on "Posting…", and — on
+         the failure path — the body deleted with no error and no Retry, because the focus
+         move that follows a channel click blurs the emptied box and flushes the draft. Both
+         arms found that. So the channel decides ONE thing: whether the posted rows join the
+         list being displayed. Everything else runs exactly as it does when the reader stays. */
       const channelAtSend = activeChannelId;
+      /** Do these rows belong in the list on screen, or in the channel they were sent to? */
+      const postedRowsBelongHere = (): boolean => channelAtSend === activeChannelId;
       /* One signal per @tag. The wire has no many-recipient shape, so this is a loop, and
        * every tagged agent gets its own row, its own wake, and its own delivery receipt. An
        * untagged body is one broadcast, exactly as before.
@@ -7043,10 +7058,7 @@ import "../../styles/tokens.css";
                 placement,
               ));
         }
-        if (
-          version !== requestVersion || workspaceId !== activeWorkspaceId ||
-          channelAtSend !== activeChannelId
-        ) {
+        if (version !== requestVersion || workspaceId !== activeWorkspaceId) {
           for (const attachment of attachmentSnapshot) {
             if (attachment.previewUrl) URL.revokeObjectURL(attachment.previewUrl);
           }
@@ -7054,9 +7066,14 @@ import "../../styles/tokens.css";
         }
         const postedIds = new Set(posted.map((signal) => signal.id));
         const pendingSet = new Set(pendingIds);
-        signals = [...posted, ...signals.filter(
+        /* The pending rows always go, in every case: they are this send's placeholders and
+           the send is over. The POSTED rows join the list only when the list is still the
+           one they were sent to. A reader who moved to another channel sees them where they
+           belong, which is the channel they were addressed to. */
+        const kept = signals.filter(
           (entry) => !pendingSet.has(entry.id) && !postedIds.has(entry.id),
-        )];
+        );
+        signals = postedRowsBelongHere() ? [...posted, ...kept] : kept;
         for (const [index, pendingId] of pendingIds.entries()) {
           visualMentions.delete(pendingId);
           deliveryReceiptCache.delete(pendingId);
@@ -7084,10 +7101,7 @@ import "../../styles/tokens.css";
         void refreshDeliveryReceipts(workspaceId, version);
         setComposerStatus("");
       } catch (caught) {
-        if (
-          version !== requestVersion || workspaceId !== activeWorkspaceId ||
-          channelAtSend !== activeChannelId
-        ) return;
+        if (version !== requestVersion || workspaceId !== activeWorkspaceId) return;
         /* Rows that DID post stay posted. The whole message goes back in the box — tags and
          * all — and the intent keeps EVERY command id, so pressing send again replays the ones
          * that already landed instead of posting them twice. The command id is the server's
@@ -7098,11 +7112,9 @@ import "../../styles/tokens.css";
         /* Drop the posted ids as well as the pending ones. The success path rewrites `signals`
          * BEFORE it renders, so a throw in that render reaches here with those rows already in
          * the list; prepending them again would show each one twice. */
-        signals = [
-          ...posted,
-          ...signals.filter((signal) =>
-            !pendingSet.has(signal.id) && !postedIds.has(signal.id)),
-        ];
+        const keptOnFailure = signals.filter((signal) =>
+          !pendingSet.has(signal.id) && !postedIds.has(signal.id));
+        signals = postedRowsBelongHere() ? [...posted, ...keptOnFailure] : keptOnFailure;
         for (const [index, pendingId] of pendingIds.entries()) {
           visualMentions.delete(pendingId);
           deliveryReceiptCache.delete(pendingId);
