@@ -141,10 +141,17 @@ lag was measured for this lane.
 
 And the grace bounds how long a row may stand in, not WHERE it belongs. Replica lag and a page roll
 share every other bit: both are a row the page does not carry. The difference is the timestamp, and
-both timestamps are the server's — a lagging post is newer than everything on the page, a rolled-off
-row is older than the page's newest. Only the first stands in. The second is not lost: it is in
-history, where Load older fetches it. Both arms found the resurrection, one describing it as a
-20-second-old message painted above rows newer than it.
+both timestamps are the server's. The boundary is the page's **oldest** row: a stand-in belongs when
+the page is the whole history, or when it is at least as new as the last row on it. A row below that
+has rolled off, and it is not lost — it is in history, where Load older fetches it.
+
+Both halves of that took an arm. First the resurrection: a 20-second-old message painted above rows
+newer than it, whenever a place filled 25 messages while the reader was away. Then the boundary
+itself: comparing against the page's **newest** dropped a row that still belongs whenever one message
+newer than it had already replicated, which in all-signals is any other member's next post — and the
+observer control had **enshrined** that wrong comparison, which is the claim-control failure AGENTS.md
+describes, caught by an arm and not by the gate. The stand-in is merged by the query's own order
+rather than prepended, because it can be the second newest row and not the first.
 
 **And an unfinished send does not follow the reader to another channel.** Moving channel retires the
 intent and says so, because the composer is about to promise the new channel and replaying the old
@@ -271,7 +278,7 @@ forbids.
    never reached them and the rail claimed a current channel while the head said Files. Found by a
    review arm. In the unresolved-channel state the rail marks NOTHING current, which both arms read
    and agreed is the honest mark: the reader is in the signals view and in no channel.
-10. **Thirteen review rounds cost thirty-four product defects and two evidence defects**, every one found by an
+10. **Fourteen review rounds cost thirty-five product defects and two evidence defects**, every one found by an
    arm and none by a gate: the read-permission claim in the copy; the composer that posted into the
    unfiltered feed from an unresolved link; a double current mark on Files and Brain; four typed
    copies of the view's name; a workspace switch that opened as "Channel not found"; a channel-list

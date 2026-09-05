@@ -1,0 +1,13 @@
+```text
+diff --git a/docs/design/2026-09-05-chat-app-channels.md b/docs/design/2026-09-05-chat-app-channels.md
+
+1. **`createdAt >= newestFetched` drops valid stand-in rows.**
+   - **File:** `site/src/components/app/LiveDashboard.astro`
+   - **Line:** 4678 (`(newestFetched === "" || row.createdAt >= newestFetched)`)
+   - **What breaks:** The grace is meant to drop a row only when it has "rolled off the first 25". A rolled-off row is older than the *oldest* row on the page (`page.rows.at(-1)`). By checking against the *newest* row (`page.rows[0]`), the landing rule drops any standing-in row as soon as a single newer message is fetched, even if the standing-in row still legitimately belongs on the first page.
+   - **How you would see it:** Open `#all-signals` and post a message in Channel A (say, at `10:00`). Before the read replica catches up to it, another user posts a message in Channel B (at `10:01`), and the replica catches up to B. When `loadSignals` fetches the page, `page.rows[0]` is B's message (`10:01`). The pending message A (`10:00`) is NOT in `page.rows` (not replicated yet), but since `10:00 >= 10:01` is false, it is dropped from the screen entirely. It hasn't rolled off (it still belongs on the page), but it vanishes until the replica eventually returns it. 
+   - **What depends on it silently:** `site/src/components/app/chat-channels.observer.test.ts` silently depends on it. It pins this exact, flawed comparison on line 464 via a regex (`row.createdAt >= newestFetched`). Fixing the product defect will break the observer test because the test enshrined the bug.
+   - **Refutation:** Does this happen if replication is perfectly serial within a single channel? Even then, if multiple channels are aggregated (like in `all-signals`) or handled by different shards with clock drift, a newer message in another channel will set `newestFetched` to a later time, instantly hiding your older, not-yet-replicated message. The boundary for "rolled off a page of 25" must be the page's *oldest* row, not its newest.
+
+VERDICT: FAIL
+```

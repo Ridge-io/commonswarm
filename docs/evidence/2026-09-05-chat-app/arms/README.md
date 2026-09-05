@@ -17,6 +17,7 @@ the worktree's `arms-<sha>/<family>/ARM.txt`.
 | `b274485` | **PASS** | FAIL | 3 |
 | `670ae1d` | FAIL | FAIL | 2 |
 | `d98c73e` | FAIL | FAIL | 1 |
+| `085d83d` | **PASS** | FAIL | 1 |
 
 **`arms-85d7eea…-grok.txt` is not a review and its verdict was not counted.** It carries three
 VERDICT fragments and visibly interleaved sentences ("Next I'll pullI'll the channel read the

@@ -4662,23 +4662,29 @@ import "../../styles/tokens.css";
            same question the screen asks, and `signals` was emptied by the move in any case.
            Found by a review arm. */
         prunePostedRows();
-        /* AND NEWER THAN THE PAGE. The grace bounds how long a row may stand in; it does not
-           say WHERE the row belongs, and the two cases share every other bit. Replica lag is a
-           row this browser wrote that the page does not have YET, and it is newer than
-           everything on the page. A page roll is a row the replica does have, off the first
-           25, and it is older than the page's newest — resurrecting that one painted a message
-           above rows that are newer than it. Both timestamps are the server's, so the question
-           is answerable rather than guessed. Both arms found it. A rolled-off row is not lost:
-           it is in history, where Load older fetches it. */
-        const newestFetched = page.rows[0]?.createdAt ?? "";
+        /* AND WITHIN THE PAGE'S WINDOW. The grace bounds how long a row may stand in; it does
+           not say WHERE the row belongs, and the two cases share every other bit. Replica lag
+           is a row this browser wrote that the page does not carry YET. A page roll is a row
+           the replica does have, below the newest 25. The boundary between them is the page's
+           OLDEST row, not its newest: ~~`row.createdAt >= page.rows[0].createdAt`~~ dropped a
+           row that still belongs whenever one message newer than it had already replicated,
+           which in all-signals is any other member's next post. A review arm found that, on
+           the fix from the round before, and an observer control had already pinned the wrong
+           comparison. When the page is the whole history nothing has rolled off, so every
+           stand-in belongs. A rolled-off row is not lost: it is in history, where Load older
+           fetches it. */
+        const pageFloor = page.hasMore ? page.rows.at(-1)?.createdAt ?? "" : "";
         const arrivedWhileFetching = [...postedSinceReset.values()]
           .map((entry) => entry.row)
           .filter((row) =>
             !fetched.has(row.id) && rowShowsOnScreen(row) &&
-            (newestFetched === "" || row.createdAt >= newestFetched))
-          .sort((a, b) => b.createdAt.localeCompare(a.createdAt));
+            (pageFloor === "" || row.createdAt >= pageFloor));
         forgetFetchedPostedIds(page.rows);
-        signals = [...arrivedWhileFetching, ...page.rows];
+        /* Merged by time, not prepended. A stand-in is not always the newest row: it can be
+           the second newest, and putting it on top painted it above a message that is newer
+           than it. The comparator is the query's own order, `created_at DESC, id DESC`. */
+        signals = [...arrivedWhileFetching, ...page.rows].sort((a, b) =>
+          b.createdAt.localeCompare(a.createdAt) || b.id.localeCompare(a.id));
       } else {
         forgetFetchedPostedIds(page.rows);
         const known = new Set(signals.map((signal) => signal.id));

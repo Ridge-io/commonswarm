@@ -461,14 +461,28 @@ test("a page fetched before a post landed does not drop that post", () => {
      arm found that. ~~`signals.filter((row) => postedSinceReset.has(row.id) && …)`~~. */
   assert.match(
     load,
-    /prunePostedRows\(\);[\s\S]{0,900}?const arrivedWhileFetching = \[\.\.\.postedSinceReset\.values\(\)\]\s*\n\s*\.map\(\(entry\) => entry\.row\)\s*\n\s*\.filter\(\(row\) =>\s*\n\s*!fetched\.has\(row\.id\) && rowShowsOnScreen\(row\) &&\s*\n\s*\(newestFetched === "" \|\| row\.createdAt >= newestFetched\)\)/,
+    /prunePostedRows\(\);[\s\S]{0,1400}?const arrivedWhileFetching = \[\.\.\.postedSinceReset\.values\(\)\]\s*\n\s*\.map\(\(entry\) => entry\.row\)\s*\n\s*\.filter\(\(row\) =>\s*\n\s*!fetched\.has\(row\.id\) && rowShowsOnScreen\(row\) &&\s*\n\s*\(pageFloor === "" \|\| row\.createdAt >= pageFloor\)\)/,
   );
-  /* AND NEWER THAN THE PAGE. The grace bounds how long a row may stand in; it does not say
-     WHERE it belongs, and replica lag and a page roll share every other bit. A rolled-off row
-     is older than the page's newest and was being painted above rows newer than it. Both
-     timestamps are the server's, so the question is answerable rather than guessed. Both arms
-     found it; it is not lost, it is in history where Load older fetches it. */
-  assert.match(load, /const newestFetched = page\.rows\[0\]\?\.createdAt \?\? "";/);
+  /*
+   * AND WITHIN THE PAGE'S WINDOW. The grace bounds how long a row may stand in; it does not
+   * say WHERE it belongs, and replica lag and a page roll share every other bit. The boundary
+   * between them is the page's OLDEST row.
+   *
+   * ~~`const newestFetched = page.rows[0]?.createdAt`~~ retired 2026-09-05, and this control
+   * had ENSHRINED it: comparing against the page's newest dropped a row that still belongs
+   * whenever one message newer than it had already replicated, which in all-signals is any
+   * other member's next post. A review arm found the product defect and named this test as the
+   * thing that would have to change with it. That is the claim-control failure AGENTS.md
+   * describes, caught by an arm rather than by the gate.
+   */
+  assert.match(load, /const pageFloor = page\.hasMore \? page\.rows\.at\(-1\)\?\.createdAt \?\? "" : "";/);
+  /* And the stand-in is merged by time, not prepended: it can be the second newest row, and
+     putting it on top painted it above a message newer than it. The comparator is the query's
+     own order. */
+  assert.match(
+    load,
+    /signals = \[\.\.\.arrivedWhileFetching, \.\.\.page\.rows\]\.sort\(\(a, b\) =>\s*\n\s*b\.createdAt\.localeCompare\(a\.createdAt\) \|\| b\.id\.localeCompare\(a\.id\)\);/,
+  );
   /* The record has a bound in TIME and in SPACE. Without the first, a row that fell off the
      first page of its channel was re-prepended as the newest message every time the reader
      came back, and the map grew for the life of the tab. Without the second, a message posted
@@ -480,10 +494,7 @@ test("a page fetched before a post landed does not drop that post", () => {
   assert.match(prune, /entry\.at < cutoff \|\| entry\.workspaceId !== activeWorkspaceId/);
   const open = between(dashboard, "const keepShell = app.dataset.state", "if (keepShell) renderChannel");
   assert.match(open, /postedSinceReset\.clear\(\);/, "a workspace change empties the record");
-  assert.match(load, /\.sort\(\(a, b\) => b\.createdAt\.localeCompare\(a\.createdAt\)\);/,
-    "the feed is newest-first, so the rows put back must be too");
   assert.match(load, /forgetFetchedPostedIds\(page\.rows\);/);
-  assert.match(load, /signals = \[\.\.\.arrivedWhileFetching, \.\.\.page\.rows\];/);
   /* And the send is what records them, so only rows this browser posted are kept. */
   const applied = between(dashboard, "const visible = posted.filter(showsOnScreen);", "clearComposerDraft();");
   assert.match(
