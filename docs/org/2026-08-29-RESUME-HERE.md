@@ -1930,3 +1930,18 @@ is live the moment it is flipped: it arms the button for the next deploy by anyo
 established: a Google round trip (needs a registered client); account linking for an address
 that already has a GitHub account. Foreign `lane/google-signin` retired with tag
 `backup/google-signin-3117825` after a separate dirty check.
+
+## Addendum 2026-09-05 03:4x UTC — in-app update notice LANDED and LIVE (merge fc19ec4)
+
+`lane/update-notice` 55f99bc merged as `fc19ec4`; site 382/383 (1 skip) on the merge; deployed;
+`/app` carries the bar markup and copy ("This page is out of date." / Not now / Update), GitHub
+button intact, no leak. Evidence `1bc06a1`. The notice is about the app build only: a per-agent
+running version is not on the read path (the roster's 19 columns hold none), and the design note
+says so. Residuals to `lane/update-notice-followup`: inline-head-only deploys are a false negative
+not yet listed; the rollback case's intermediate hide is collected but not asserted.
+
+Score for the operator's list: #1 mobile LIVE, #3 standing LIVE (0.1.52), #4 brain links LIVE,
+#5 update notice LIVE; model tagging and Google sign-in (dark) landed; CLI chips shipped (0.1.53).
+Open: #2 composer To: field (waits on `chat-recipients`), #6 chat (schema lane round 5 at 5f07697;
+Gemini's round-4 "PASS" was 26 bare "No finding" lines and was not counted — correct ruling),
+listener head-of-line (round 3 at e5f75c9, Gemini FAIL), two follow-up lanes.
