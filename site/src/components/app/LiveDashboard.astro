@@ -6534,9 +6534,12 @@ import "../../styles/tokens.css";
     const buildMarkupFrom = (root: ParentNode): string =>
       root.querySelector("live-dashboard")?.outerHTML ?? "";
     let baselineMarkup = "";
-    /* One poll at a time. Toggling the tab can start another before the last has answered, and
-       two in flight can settle out of order and baseline the wrong page. */
+    /* One poll at a time: two in flight can settle out of order and baseline the wrong page.
+       But DROPPING the second request is wrong too — coming back to the tab while a poll is
+       still open is exactly when a reader wants an answer, and the next timer tick is five
+       minutes away. So the request is remembered and run once the open one finishes. */
     let pollInFlight = false;
+    let pollRequested = false;
     /* NOT the empty string. "nothing dismissed yet" has to be a value no served build can equal,
        or a probe that returns nothing compares equal to it and reads as already dismissed. */
     let dismissedBuild: string | null = null;
@@ -6551,7 +6554,11 @@ import "../../styles/tokens.css";
      * fetch, a non-OK status, and a body with no hashed assets in it — a login redirect, an SSO
      * interstitial, an error page — all mean the poll learned nothing, not that nothing changed. */
     const checkForNewBuild = async (): Promise<void> => {
-      if (!runningBuild || pollInFlight) return;
+      if (!runningBuild) return;
+      if (pollInFlight) {
+        pollRequested = true;
+        return;
+      }
       pollInFlight = true;
       let body = "";
       try {
@@ -6566,6 +6573,10 @@ import "../../styles/tokens.css";
         return;
       } finally {
         pollInFlight = false;
+        if (pollRequested) {
+          pollRequested = false;
+          void checkForNewBuild();
+        }
       }
       const page = new DOMParser().parseFromString(body, "text/html");
       const served = buildAssetsFrom(page);

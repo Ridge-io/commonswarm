@@ -80,8 +80,10 @@ half happened to differ. Storing one half let a dismissal silence a later build:
 asset change stored the asset set, and the next build that changed only markup carried that same
 asset set and compared equal to it.
 
-**One poll at a time.** Toggling the tab can start another before the last has answered, and two
-in flight can settle out of order and baseline the wrong page.
+**One poll at a time, and none dropped.** Two in flight can settle out of order and baseline the
+wrong page, so a second request does not start while one is open. It is not thrown away either:
+coming back to the tab while a poll is open is exactly when a reader wants an answer, and the next
+timer tick is five minutes off, so the request is remembered and run when the open one finishes.
 
 **What it does when it cannot tell.** A failed fetch, a non-OK status, or a body with no hashed
 assets in it — a login redirect, an SSO interstitial, an error page — all mean the poll learned

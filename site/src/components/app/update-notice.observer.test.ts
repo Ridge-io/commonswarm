@@ -132,6 +132,8 @@ const frameScript = `<script>
     /* Re-read the frame's document every time. Holding one reference goes stale the moment the
        app navigates or replaces it, and a stale document answers every query with null. */
     const wait = (ms) => new Promise((resolve) => setTimeout(resolve, ms));
+    let dismissSawBuildTwo = null;
+    let dismissTookEffect = null;
     const notice = () => frame.contentDocument?.querySelector("[data-update-notice]") ?? null;
     for (let attempt = 0; attempt < 160 && !notice(); attempt += 1) await wait(25);
     /* WAIT ON THE CONDITION, NOT A DURATION. A flat sleep made this case pass or fail with the
@@ -159,12 +161,32 @@ const frameScript = `<script>
     await polledAtLeast(2);
     await wait(120);
     if (new URL(location.href).searchParams.get("dismiss") === "1") {
+      const cycle = () => {
+        Object.defineProperty(doc0, "visibilityState", { value: "hidden", configurable: true });
+        doc0.dispatchEvent(new view.Event("visibilitychange"));
+        Object.defineProperty(doc0, "visibilityState", { value: "visible", configurable: true });
+        doc0.dispatchEvent(new view.Event("visibilitychange"));
+      };
+      const until = async (predicate) => {
+        for (let attempt = 0; attempt < 200; attempt += 1) {
+          if (predicate()) return true;
+          await wait(25);
+        }
+        return false;
+      };
+      const shownNow = () => { const b = notice(); return Boolean(b) && !b.hidden; };
+      /* Build two. Wait for the bar itself, not for a poll count: the bar going up is the
+         condition the dismiss below depends on. */
+      await fetch("/__stage?to=2");
+      cycle();
+      dismissSawBuildTwo = await until(shownNow);
       frame.contentDocument.querySelector("[data-update-dismiss]").click();
-      Object.defineProperty(doc0, "visibilityState", { value: "hidden", configurable: true });
-      doc0.dispatchEvent(new view.Event("visibilitychange"));
-      Object.defineProperty(doc0, "visibilityState", { value: "visible", configurable: true });
-      doc0.dispatchEvent(new view.Event("visibilitychange"));
-      await polledAtLeast(3);
+      dismissTookEffect = !shownNow();
+      /* Build three, only now. Any number of polls may land in between; they all carry build two,
+         which is the one just dismissed, so the bar stays down until this stage moves. */
+      await fetch("/__stage?to=3");
+      cycle();
+      await until(shownNow);
       await wait(120);
     }
     const polls = Number(await (await fetch("/__polls")).text());
@@ -188,6 +210,10 @@ const frameScript = `<script>
       buttons,
       viewportWidth: frame.contentWindow?.innerWidth ?? 0,
       documentLength: doc?.body?.innerHTML.length ?? 0,
+      dismissSawBuildTwo,
+      dismissTookEffect,
+      stageNow: await (await fetch("/__stage")).text(),
+      servedStages: await (await fetch("/__served")).text(),
       sampleNoticeShown: (() => {
         const s = doc?.querySelector("[data-sample-notice]");
         return s ? !s.hidden : false;
@@ -196,7 +222,15 @@ const frameScript = `<script>
       frameHeight: doc?.querySelector(".dashboard__frame")?.getBoundingClientRect().height ?? 0,
     });
   };
-  const start = () => void runMeasurement().catch((error) => report({ error: String(error) }));
+  /* ONCE. Both arms of this can fire — the load event and an already-complete frame — and this
+     measurement is not idempotent: it CLICKS. Running it twice dismissed the second build as well
+     as the first and read as the product failing to re-ask. */
+  let started = false;
+  const start = () => {
+    if (started) return;
+    started = true;
+    void runMeasurement().catch((error) => report({ error: String(error) }));
+  };
   frame.addEventListener("load", start, { once: true });
   if (frame.contentDocument?.readyState === "complete") start();
 </script>`;
@@ -205,10 +239,27 @@ const startServer = async (
   variant: Variant,
 ): Promise<{ close(): Promise<void>; origin: string }> => {
   let polls = 0;
+  /* THE DEPLOY IS DRIVEN, NOT COUNTED. The page polls on a timer AND whenever a hidden tab comes
+     back, so the number of polls between two points is not something a test controls. Counting
+     them made the dismissal case dismiss whichever build happened to have landed, which is a
+     property of the harness and not of the product. The page advances this stage explicitly. */
+  let stage = 0;
+  const servedStages: number[] = [];
   const server = createServer((request, response) => {
     const url = new URL(request.url ?? "/", "http://127.0.0.1");
     if (url.pathname === "/__polls") {
       response.writeHead(200, { "content-type": "text/plain" }).end(String(polls));
+      return;
+    }
+    if (url.pathname === "/__stage") {
+      /* Reading must not write. Without the guard, the probe that reports the stage SET it. */
+      const to = url.searchParams.get("to");
+      if (to !== null) stage = Number(to);
+      response.writeHead(200, { "content-type": "text/plain" }).end(String(stage));
+      return;
+    }
+    if (url.pathname === "/__served") {
+      response.writeHead(200, { "content-type": "text/plain" }).end(servedStages.join(","));
       return;
     }
     if (url.pathname === "/__measure") {
@@ -230,12 +281,15 @@ const startServer = async (
          FIRST page this tab saw, so a variant served from the very first poll would become the
          baseline and a markup-only build could never be seen. Modelling the deploy in the right
          order is what makes that signal reachable at all. */
-      const { body, status } = polls === 1 && !FROM_FIRST_POLL.has(variant)
+      if (variant === "dismiss-then-markup") servedStages.push(stage);
+      const { body, status } = variant === "dismiss-then-markup"
+        ? stage >= 3
+          ? { body: dismissThenMarkupBody(), status: 200 }
+          : stage === 2
+          ? pollBody("assets")
+          : { body: appHtml(), status: 200 }
+        : polls === 1 && !FROM_FIRST_POLL.has(variant)
         ? { body: appHtml(), status: 200 }
-        : variant === "dismiss-then-markup" && polls >= 3
-        ? { body: dismissThenMarkupBody(), status: 200 }
-        : variant === "dismiss-then-markup"
-        ? pollBody("assets")
         : pollBody(variant);
       response.writeHead(status, { "content-type": contentTypes[".html"] }).end(body);
       return;
@@ -295,6 +349,10 @@ type Measurement = {
   height: number;
   polls: number;
   composerBottom: number;
+  dismissSawBuildTwo: boolean | null;
+  dismissTookEffect: boolean | null;
+  stageNow: string;
+  servedStages: string;
   display: string;
   frameHeight: number;
   sampleNoticeShown: boolean;
@@ -379,9 +437,17 @@ test("bytes injected around an unchanged build raise no notice", async () => {
    the whole build rather than whichever half happened to differ. */
 test("dismissing one build does not hide the next one", async () => {
   const value = await measure(await findChrome(), "dismiss-then-markup", 390, 844, true);
-  assert.ok(
-    value.polls >= 3,
-    `the third build was never served (${value.polls} polls), so this measures nothing`,
+  /* Positive controls in order: the second build really raised the bar, and the dismiss really
+     put it down. Without both, "shown" at the end could be the second build never dismissed. */
+  assert.equal(
+    value.dismissSawBuildTwo,
+    true,
+    `the second build never raised the bar, so there was nothing to dismiss: ${JSON.stringify(value)}`,
+  );
+  assert.equal(
+    value.dismissTookEffect,
+    true,
+    `Not now did not put the bar down, so the case below is not about dismissal: ${JSON.stringify(value)}`,
   );
   assert.equal(
     value.shown,
