@@ -1910,3 +1910,23 @@ unknown and unrecoverable; the committed tip is safe under tag `backup/model-tag
 The other three foreign removals tonight (`mobile-fix`, `standing-default`, and the two markdown
 worktrees) were clean, measured before removal. Rule re-learned: measure dirty state in its own
 step, save the patch, then remove.
+
+## Addendum 2026-09-05 03:3x UTC — Google sign-in LANDED and deployed (merge 85e8655), dark by design
+
+`lane/google-signin-land` 6ed6306 (the other session's 3117825 plus nine review rounds; the
+lane's core design changed: the build-time env flag that could publish a Google button the
+backend would answer with raw JSON is gone, and the button list now comes from GoTrue's public
+`/auth/v1/settings` at build time) merged as `85e8655`; gates on the merge: tsc clean, npm test
+773/773, site 371/372 (1 skip), identity OK. Evidence `d33962a` (nine rounds). Site deployed from
+that build; the settings fetch returned `github` and `email` only, so the provider buttons on
+`/invite` render GitHub alone (measured live), `/app`'s own GitHub button is unchanged, `/start`
+is the handoff page with no buttons, no service_role string. My first live probe grepped `/app`
+and `/start` for the new attribute and read 0 — the component renders on `/invite`; recorded so
+the next reader does not call that an outage.
+
+**Operator checklist to enable Google** lives in `docs/design/2026-09-04-GOOGLE-SIGNIN.md`
+(steps 1–9; the copy rewrite in step 6 must precede the Supabase toggle in step 7, and the toggle
+is live the moment it is flipped: it arms the button for the next deploy by anyone). Not
+established: a Google round trip (needs a registered client); account linking for an address
+that already has a GitHub account. Foreign `lane/google-signin` retired with tag
+`backup/google-signin-3117825` after a separate dirty check.
