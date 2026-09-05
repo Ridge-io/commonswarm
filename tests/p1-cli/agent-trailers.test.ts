@@ -18,7 +18,9 @@
  */
 import assert from "node:assert/strict";
 import { execFileSync } from "node:child_process";
-import { existsSync, readFileSync } from "node:fs";
+import { existsSync, mkdirSync, mkdtempSync, readFileSync, rmSync, writeFileSync } from "node:fs";
+import { tmpdir } from "node:os";
+import { join } from "node:path";
 import { resolve } from "node:path";
 import { test } from "node:test";
 
@@ -149,6 +151,79 @@ test("claude-code is probed last so a nested lane is not mislabelled", () => {
   assert.equal(runtimeIds[runtimeIds.length - 1], "claude-code");
 });
 
+/** A throwaway HOME holding one codex rollout, so detect_codex reads a real session record. */
+function codexHome(threadId: string, model: string): string {
+  const home = mkdtempSync(join(tmpdir(), "agent-trailers-home-"));
+  const dir = resolve(home, ".codex/sessions/2026/09/04");
+  mkdirSync(dir, { recursive: true });
+  writeFileSync(
+    resolve(dir, `rollout-2026-09-04T00-00-00-${threadId}.jsonl`),
+    [
+      JSON.stringify({ type: "session_meta", payload: { cli_version: "0.147.0", model_provider: "openai" } }),
+      JSON.stringify({ type: "turn_context", payload: { model } }),
+    ].join("\n") + "\n",
+  );
+  return home;
+}
+
+/** Every runtime marker cleared, so a case sets only the ones it means to. */
+const noRuntime = {
+  CLAUDECODE: "",
+  CLAUDE_CODE_SESSION_ID: "",
+  CODEX_THREAD_ID: "",
+  GROK_SESSION_ID: "",
+  ANTIGRAVITY_AGENT: "",
+};
+
+test("one runtime marker reads the model as a clean measurement", () => {
+  const home = codexHome("thread-solo", "gpt-5.6-sol");
+  try {
+    const detected = run(emitter, ["--detect"], { ...noRuntime, HOME: home, CODEX_THREAD_ID: "thread-solo" });
+    assert.match(detected, /^model=gpt-5\.6-sol$/m);
+    assert.match(detected, /^source=runtime-transcript$/m);
+  } finally {
+    rmSync(home, { recursive: true, force: true });
+  }
+});
+
+test("a second runtime marker downgrades the source to runtime-ambiguous", () => {
+  /* Inheritance is symmetric. A codex parent leaves CODEX_THREAD_ID in a grok child exactly as a
+   * Claude Code parent leaves CLAUDE_* in a codex child, and the probe order can only ever be
+   * right for one nesting direction. When two runtimes are visible the environment cannot say
+   * which is innermost, so the model may belong to a PARENT session. The order still picks — it is
+   * right for the nesting this repo runs — but the trailer must stop calling the answer a clean
+   * measurement, or a reader weighs a parent's model as if it were the author's.
+   *
+   * The pair is what makes this discriminating: the same rollout, the same model, and only the
+   * presence of a second marker changes the source. */
+  const home = codexHome("thread-nested", "gpt-5.6-sol");
+  try {
+    const detected = run(emitter, ["--detect"], {
+      ...noRuntime,
+      HOME: home,
+      CODEX_THREAD_ID: "thread-nested",
+      CLAUDECODE: "1",
+    });
+    assert.match(detected, /^model=gpt-5\.6-sol$/m, "the ordered pick changed, not just the source");
+    assert.match(detected, /^source=runtime-ambiguous$/m);
+    assert.ok(sources.includes("runtime-ambiguous"), "runtime-ambiguous is not in the vocabulary");
+  } finally {
+    rmSync(home, { recursive: true, force: true });
+  }
+});
+
+test("every runtime in the vocabulary names the variable that marks it", () => {
+  /* The ambiguity count is only as complete as this third field. A runtime added without its
+   * marker would be invisible to the count, and a nested lane using it would be signed as a clean
+   * measurement of the wrong session. */
+  const entries = vocabArray("AGENT_TRAILER_RUNTIMES");
+  for (const entry of entries) {
+    const fields = entry.split("|");
+    assert.equal(fields.length, 3, `${entry} does not have id|detector|marker`);
+    assert.match(fields[2]!, /^[A-Z][A-Z0-9_]*$/, `${entry} has no environment-variable marker`);
+  }
+});
+
 test("the checker's self-test passes and reports its assertion count", () => {
   /* An exit code cannot certify that a test run happened: deleting the suite body would make
    * --self-test exit 0 having asserted nothing. CI parses this same count for that reason. */
@@ -208,6 +283,22 @@ test("the doc records the no-backfill rule and the escape hatch", () => {
   assert.match(doc, /must not be backfilled/i);
   assert.match(doc, /CSWARM_AGENT_MODEL=none/);
   assert.match(doc, /CSWARM_HUMAN_EDIT=1/);
+});
+
+test("the doc's tables name every family and every source in the vocabulary", () => {
+  /* The doc says outright: "The accepted values live in scripts/lib/agent-trailer-vocab.sh and
+   * nowhere else ... this table is documentation and the arrays are the definition. If they ever
+   * disagree, tests/p1-cli/agent-trailers.test.ts fails." That sentence was a claim with nothing
+   * behind it until this test existed. A doc table cannot be generated from a bash array — each row
+   * carries prose only a person can write — so the control is coverage: adding a family or a source
+   * to the vocabulary and not to the doc fails here. */
+  const doc = readFileSync(resolve(repoRoot, "docs/development/agent-trailers.md"), "utf8");
+  for (const family of families) {
+    assert.ok(new RegExp(`\\b${family}\\b`).test(doc), `family ${family} is not documented`);
+  }
+  for (const source of sources) {
+    assert.ok(doc.includes(source), `model source ${source} is not documented`);
+  }
 });
 
 test("the doc records the grace rule and does not overstate what the gate blocks", () => {
