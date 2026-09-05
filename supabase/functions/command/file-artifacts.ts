@@ -696,8 +696,8 @@ export async function fileVersionCommit(
    * file row is locked FOR UPDATE above and current_version moves only here,
    * so of two writers that both created against version n, the first to reach
    * this point commits and the second is refused. Refused before the storage
-   * read, so a loser does no further work; its pending row is left for the
-   * sweeper that already claims expired uploads. */
+   * read, so a loser does no further work; what happens to its row and its
+   * bytes is in the refusal branch below. */
   if (version.if_version !== null) {
     const liveVersion = Number(version.current_version);
     if (!fileVersionPreconditionSatisfied(version.if_version, liveVersion)) {
