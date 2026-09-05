@@ -36,6 +36,7 @@ import {
 } from "../../lib/auth-providers.js";
 
 const INVITE_HTML = new URL("../../../dist/invite/index.html", import.meta.url);
+const APP_HTML = new URL("../../../dist/app/index.html", import.meta.url);
 const COMMONSWARM = new URL("../../lib/commonswarm.ts", import.meta.url);
 const ONRAMP = new URL("../invite/InviteOnramp.astro", import.meta.url);
 const BUTTONS = new URL("./ProviderButtons.astro", import.meta.url);
@@ -163,6 +164,19 @@ function renderedProviderIds(html: string): string[] {
     .map((match) => match[1] as string)
     .sort();
 }
+
+/**
+ * A tag carrying a data-* attribute whose NAME holds a provider id — `data-signin-github`,
+ * `data-member-reauth-github`, `data-github`. Built from AUTH_PROVIDERS, so it cannot drift
+ * from the array, and used against the SOURCE sweep and the BUILT pages alike.
+ *
+ * `data-signin-provider="github"` deliberately does not match. There the provider is a VALUE
+ * the component wrote from the array; here the provider is typed into an attribute name,
+ * which is the hand-written control this suite is about.
+ */
+const PROVIDER_IN_ATTRIBUTE_NAME = `<[a-zA-Z][^>]*\\bdata-[a-z-]*(?:${AUTH_PROVIDERS.map(
+  (provider) => provider.id,
+).join("|")})\\b`;
 
 /** File types that can carry markup or DOM code, and are therefore scanned. */
 const SCANNED_EXTENSIONS = ["astro", "mjs", "ts"];
@@ -550,8 +564,17 @@ test("CONTROL: only ProviderButtons renders a sign-in button, apart from named d
    *
    *   <button data-signin-github>   any TAG, not just <button> — /app writes the attribute
    *                                 bare with no value, and an <a> would work as well
+   *   <button data-member-reauth-github>   the provider name anywhere in a data-* attribute
    *   setAttribute("data-signin…    built rather than written
    *   el.dataset.signinProvider =   the same thing through the dataset API
+   *
+   * THE THIRD LINE IS WHY THIS WAS WIDENED. `data-member-reauth-github` was live on /app and
+   * this sweep read zero: the old pattern wanted the provider name IMMEDIATELY after `data-`,
+   * so a name with anything in front of it was invisible. That is a control returning a
+   * confident zero — the shape AGENTS.md says to enumerate rather than pattern-match. The
+   * attribute is now matched wherever the provider name sits inside the data-* name, and
+   * `data-signin-provider="github"` still does not match, because `=` and `"` are outside the
+   * attribute-name run.
    *
    * Reading one is not writing one: querySelector("[data-signin-provider]") and
    * `button.dataset.signinProvider ?? ""` are how the invite page binds its handler, and
@@ -561,11 +584,12 @@ test("CONTROL: only ProviderButtons renders a sign-in button, apart from named d
   const marker = new RegExp(
     // any tag with a data-signin* attribute, however it is spelled
     `<[a-zA-Z][^>]*\\bdata-signin` +
-      // any tag with a data-<provider> attribute: the invite page used `data-github` before
-      // this lane, so that spelling is a real route and the ids come from the array
-      `|<[a-zA-Z][^>]*\\bdata-(?:${ids})\\b` +
+      // any tag with a data-* attribute whose NAME carries a provider: the invite page used
+      // `data-github` before this lane and /app used `data-member-reauth-github` after it, so
+      // both spellings are real routes, and the ids come from the array
+      `|${PROVIDER_IN_ATTRIBUTE_NAME}` +
       // built rather than written
-      `|setAttribute\\(\\s*["'\`]data-(?:signin|${ids})` +
+      `|setAttribute\\(\\s*["'\`]data-(?:[a-z-]*)?(?:signin|${ids})` +
       `|dataset(?:\\.signin[A-Za-z]*|\\s*\\[\\s*["'\`]signin[A-Za-z]*["'\`]\\s*\\])\\s*=[^=]`,
   );
   const all = new RegExp(marker.source, "g");
@@ -605,6 +629,85 @@ test("CONTROL: only ProviderButtons renders a sign-in button, apart from named d
       `${known} is allowed ${allowed} hand-written sign-in control(s) and has ${count(source)}. ` +
         `Fewer means the debt is partly paid: lower the number, or delete the entry and let the ` +
         `sweep cover the file again.`,
+    );
+  }
+});
+
+test("CONTROL: /app's built page hand-writes exactly one provider control, and it is the signed-out one", async () => {
+  /*
+   * THE SOURCE SWEEP ABOVE IS NOT ENOUGH ON ITS OWN, which is the whole lesson of this file:
+   * a template proves nothing about the artifact a reader receives. This reads the BUILT /app
+   * page, where the re-authentication buttons ProviderButtons generates and the one button
+   * /app still writes by hand sit side by side, and counts them apart.
+   *
+   * The measured defect: /app carried `data-member-reauth-github` with a hand-typed
+   * "Sign in again with GitHub" label. It was a second door on a page whose exception said
+   * ONE, and the sweep read zero, because the provider name sat at the end of the attribute
+   * rather than straight after `data-`. The block now renders ProviderButtons, so the label
+   * and the set both come from AUTH_PROVIDERS. Write a third by hand and this goes red.
+   */
+  let app: string;
+  try {
+    app = await readFile(APP_HTML, "utf8");
+  } catch {
+    assert.fail(
+      `dist/app/index.html is missing. Run \`npm run build\` in site/ before this suite; ` +
+        `this control reads BUILT output, not the template.`,
+    );
+  }
+
+  /*
+   * POSITIVE CONTROL. Every assertion below is a count, and a count over a page that failed
+   * to render the block would be a confident zero. So first: the re-authentication block is
+   * on the page, and it holds the email control that has never been generated.
+   */
+  assert.match(
+    app,
+    /<div[^>]*\bdata-member-reauth\b[^>]*>/,
+    "the built /app page has no re-authentication block, so the counts below measure nothing",
+  );
+  assert.match(app, /<button[^>]*\bdata-member-reauth-email\b/);
+
+  const handWritten = app.match(new RegExp(PROVIDER_IN_ATTRIBUTE_NAME, "g")) ?? [];
+  assert.equal(
+    handWritten.length,
+    1,
+    `The built /app page names a provider inside ${handWritten.length} attribute name(s): ` +
+      `${handWritten.join(" | ")}. Exactly one is allowed — the signed-out ` +
+      `[data-signin-github] button, which UNGENERATED_SIGNIN_SURFACES names as debt. Every ` +
+      `other sign-in control on that page must come from ProviderButtons.`,
+  );
+  assert.match(
+    handWritten[0] as string,
+    /\bdata-signin-github\b/,
+    `The one hand-written provider control on /app must be the signed-out button. It is ` +
+      `now: ${handWritten[0]}`,
+  );
+
+  /*
+   * And the generated ones agree with the array, character for character, on THIS page —
+   * the invite page's own label control cannot speak for /app.
+   */
+  const rendered = renderedProviderIds(app);
+  assert.deepEqual(
+    rendered,
+    renderedProviderIds(await inviteHtml()),
+    "/app and /invite must offer the same doors: both read the same deployment",
+  );
+  assert.ok(
+    rendered.length > 0,
+    "the built /app page renders no generated provider button, so its labels are unchecked",
+  );
+  for (const id of rendered) {
+    const provider = authProvider(id);
+    assert.match(
+      app,
+      new RegExp(
+        `<button[^>]*data-signin-provider="${provider.id}"[^>]*>\\s*` +
+          `${provider.label.replace(/[.*+?^${}()|[\]\\]/g, "\\$&")}\\s*</button>`,
+      ),
+      `/app's ${provider.id} re-authentication button must read exactly "${provider.label}" ` +
+        `— the label in auth-providers.ts.`,
     );
   }
 });

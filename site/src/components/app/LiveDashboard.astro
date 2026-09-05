@@ -16,6 +16,7 @@
  */
 
 import AgentConnect from "../connect/AgentConnect.astro";
+import ProviderButtons from "../auth/ProviderButtons.astro";
 import SampleNotice from "./SampleNotice.astro";
 import { SIGNAL_BODY_MAX } from "../../../../supabase/functions/_shared/signal-text";
 import "../../styles/tokens.css";
@@ -902,10 +903,17 @@ import "../../styles/tokens.css";
         <h3 class="dashboard__roster-dialog-pending-title" id="dashboard-roster-members-title">People</h3>
         <ul class="dashboard__agent-list" data-member-list></ul>
         <p class="dashboard__form-error" data-member-error role="alert" hidden></p>
+        {/* The OAuth control here is GENERATED, not written. It used to be one hand-typed
+            "Sign in again with GitHub" button carrying `data-member-reauth-github`, which the
+            provider sweep in components/auth/provider-buttons.observer.test.ts could not see:
+            its marker looks for `data-signin*` and for `data-<provider>`, and neither spelling
+            matches an attribute with the provider name buried at the end. So the one place that
+            names a provider is auth-providers.ts, and the set follows the deployment — turning
+            Google on in the Supabase dashboard gives this block a Google button with no change
+            here. The word "again" is not lost: the sentence above these buttons is
+            FreshLoginRequired's "Sign in again, then press Remove once more." */}
         <div data-member-reauth hidden>
-          <button class="dashboard__rail-add" type="button" data-member-reauth-github>
-            Sign in again with GitHub
-          </button>
+          <ProviderButtons buttonClass="dashboard__rail-add" />
           <button class="dashboard__rail-add" type="button" data-member-reauth-email>
             Email a fresh sign-in link
           </button>
@@ -987,6 +995,7 @@ import "../../styles/tokens.css";
     revokeWorkspaceInvitation,
     signInWithEmail,
     signInWithGitHub,
+    signInWithProvider,
     signOut,
     removeWorkspaceMember,
     revokeAgentPrincipal,
@@ -5412,13 +5421,23 @@ import "../../styles/tokens.css";
       }
     });
 
-    one<HTMLButtonElement>("[data-member-reauth-github]")?.addEventListener(
-      "click",
-      async (event) => {
-        const button = event.currentTarget as HTMLButtonElement;
+    /*
+     * ONE handler for every provider ProviderButtons rendered here, and it names none of
+     * them: the id is read off the element the component wrote. A second provider therefore
+     * needs no change on this page. signInWithProvider runs the id through authProvider(),
+     * so an id AUTH_PROVIDERS does not name never reaches Supabase.
+     */
+    for (const button of all<HTMLButtonElement>(
+      "[data-member-reauth] [data-signin-provider]",
+    )) {
+      button.addEventListener("click", async () => {
+        const providerId = button.dataset.signinProvider ?? "";
         button.disabled = true;
         try {
-          await signInWithGitHub(new URL("/app", window.location.origin).href);
+          await signInWithProvider(
+            providerId,
+            new URL("/app", window.location.origin).href,
+          );
         } catch (error) {
           const target = one<HTMLElement>("[data-member-error]");
           if (target) {
@@ -5427,8 +5446,8 @@ import "../../styles/tokens.css";
           }
           button.disabled = false;
         }
-      },
-    );
+      });
+    }
     one<HTMLButtonElement>("[data-member-reauth-email]")?.addEventListener(
       "click",
       async (event) => {
