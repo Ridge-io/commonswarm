@@ -476,21 +476,31 @@ to schedule. So do steps 7 and 8 in one sitting, or not yet.
     `[data-signin-provider]` handler, and need no copy work here.
 
     **What the failing test will and will not tell you.** The sweep in
-    `components/auth/provider-buttons.observer.test.ts` catches: a `data-signin*` attribute on
-    any tag; a provider id (github or google) as a hyphen segment of any `data-*` attribute
-    NAME, in any case; either of those names built with `setAttribute`, or a `data-signin*`
-    write through `dataset`; any `.signInWithOAuth(` outside `lib/commonswarm.ts`; any string
-    literal handed to `signInWithProvider(`; more than one call to `signInWithGitHub(`; and a
-    rendered button whose label is not exactly one of the labels in `auth-providers.ts`.
+    `components/auth/provider-buttons.observer.test.ts` catches:
+
+    - a data-signin* attribute on any tag
+    - a provider id (github or google) as a hyphen segment of any data-* attribute NAME, in any case
+    - either of those two names built with setAttribute
+    - a data-signin* write through dataset
+    - any .signInWithOAuth( outside lib/commonswarm.ts
+    - any string literal handed to signInWithProvider(
+    - more than one call to signInWithGitHub(
+    - a rendered button whose label is not exactly one of: "Sign in with GitHub", "Sign in with Google"
+
     It does not catch a provider hidden in an attribute VALUE under an unrelated name, and that is a bound, not a gap this test closes.
-    That list is generated in the test from the patterns and call names its own assertions use,
-    and a control there requires this file to carry the same bound word for word.
+
+    Every line above is generated in the test from the patterns and call names its own
+    assertions run, and a control there requires this file to carry each one word for word.
+    A branch that catches the value shape was written during review and reverted: it caught one
+    more spelling and invited the next, which is what the bound settles.
 
     There were two controls on that page, so there are two swaps, and one of them is done.
     `UNGENERATED_SIGNIN_SURFACES` in `components/auth/provider-buttons.observer.test.ts`
     counts the hand-written ones in that file and allows exactly one; a second control counts
     them again on the BUILT `/app` page; a third counts the OAuth call sites, which is what a
-    button that hides the provider in an attribute value would still have to pass.
+    button that types a provider into `signInWithProvider` would have to pass. A button that
+    hides the provider in an attribute value and reads it back at runtime passes all three;
+    that is the stated bound above.
 
 ### Supabase dashboard
 

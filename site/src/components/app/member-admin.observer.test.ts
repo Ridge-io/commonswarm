@@ -33,8 +33,9 @@ test("member admin stays a thin, confirmed, role-aware command API consumer", as
   assert.doesNotMatch(
     source,
     /<[a-zA-Z][^>]*\bdata-member-reauth-github\b/,
-    "the re-authentication OAuth button must not name a provider in its attribute: that " +
-      "spelling is invisible to the provider sweep",
+    "the re-authentication OAuth button must not name a provider in its attribute. That " +
+      "spelling WAS invisible to the provider sweep, which is how it shipped; the sweep sees " +
+      "it now, and this keeps the control generated rather than merely counted.",
   );
   assert.match(source, /\[data-member-reauth-email\][\s\S]*?signInWithEmail\(/);
   assert.match(source, /press Remove again/);

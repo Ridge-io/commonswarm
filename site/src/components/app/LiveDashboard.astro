@@ -905,9 +905,10 @@ import "../../styles/tokens.css";
         <p class="dashboard__form-error" data-member-error role="alert" hidden></p>
         {/* The OAuth control here is GENERATED, not written. It used to be one hand-typed
             "Sign in again with GitHub" button carrying `data-member-reauth-github`, which the
-            provider sweep in components/auth/provider-buttons.observer.test.ts could not see:
-            its marker looks for `data-signin*` and for `data-<provider>`, and neither spelling
-            matches an attribute with the provider name buried at the end. So the one place that
+            provider sweep in components/auth/provider-buttons.observer.test.ts could not see
+            AT THE TIME: its marker then looked for `data-signin*` and for `data-<provider>`, and
+            neither spelling matched a name ending in the provider. That marker was widened in
+            the same lane and does see it now. So the one place that
             names a provider is auth-providers.ts, and the set follows the deployment — turning
             Google on in the Supabase dashboard gives this block a Google button with no change
             here. The word "again" is not lost: the sentence above these buttons is

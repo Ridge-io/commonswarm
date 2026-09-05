@@ -226,13 +226,53 @@ const SETATTRIBUTE_PROVIDER_NAME =
 const DATASET_SIGNIN_WRITE =
   `dataset(?:\\.signin[A-Za-z]*|\\s*\\[\\s*["'\`]signin[A-Za-z]*["'\`]\\s*\\])\\s*=[^=]`;
 
-/** Every branch of the source sweep's marker, in one place, so the bound below can name them. */
-const SIGNIN_MARKER_BRANCHES: readonly string[] = [
-  DATA_SIGNIN_ATTRIBUTE,
-  PROVIDER_IN_ATTRIBUTE_NAME,
-  SETATTRIBUTE_PROVIDER_NAME,
-  DATASET_SIGNIN_WRITE,
+/**
+ * Every branch of the source sweep's marker, each carrying the sentence that claims it and a
+ * PROBE that only a working branch matches.
+ *
+ * THE THREE TRAVEL TOGETHER ON PURPOSE. A review arm found the first version of the control
+ * below asserting that this array contained the constants it had just been built from — a
+ * tautology that would have stayed green with every claim deleted. Pairing the pattern with
+ * its claim makes drift between them impossible rather than merely checked, and the probe is
+ * the half that is not a tautology: it is run against the marker the sweep actually uses.
+ */
+const SIGNIN_MARKER: readonly { pattern: string; claim: string; probe: string }[] = [
+  {
+    pattern: DATA_SIGNIN_ATTRIBUTE,
+    claim: `a data-signin* attribute on any tag`,
+    probe: `<button data-signin-provider="${AUTH_PROVIDERS[0]?.id}">`,
+  },
+  {
+    pattern: PROVIDER_IN_ATTRIBUTE_NAME,
+    claim:
+      `a provider id (${AUTH_PROVIDERS.map((provider) => provider.id).join(" or ")}) as a ` +
+      `hyphen segment of any data-* attribute NAME, in any case`,
+    probe: `<button data-member-reauth-${AUTH_PROVIDERS[0]?.id}>`,
+  },
+  {
+    pattern: SETATTRIBUTE_PROVIDER_NAME,
+    claim: `either of those two names built with setAttribute`,
+    probe: `el.setAttribute("data-signin-${AUTH_PROVIDERS[0]?.id}", "")`,
+  },
+  {
+    pattern: DATASET_SIGNIN_WRITE,
+    claim: `a data-signin* write through dataset`,
+    probe: `el.dataset.signinProvider = id;`,
+  },
 ];
+
+/** The branches on their own, in the order the marker joins them. */
+const SIGNIN_MARKER_BRANCHES: readonly string[] = SIGNIN_MARKER.map((entry) => entry.pattern);
+
+/** The one marker the sweep runs. Built here so the control below can measure the real thing. */
+function signinMarker(flags = "i"): RegExp {
+  return new RegExp(SIGNIN_MARKER_BRANCHES.join("|"), flags);
+}
+
+/** Regex-escape a literal so a call name in a constant can build the assertion that finds it. */
+function literalPattern(text: string): string {
+  return text.replace(/[.*+?^${}()|[\]\\]/g, "\\$&");
+}
 
 /** The one general call that reaches Supabase, named once because assertions and prose share it. */
 const GENERAL_PROVIDER_CALL = "signInWithProvider(";
@@ -240,6 +280,29 @@ const GENERAL_PROVIDER_CALL = "signInWithProvider(";
 const NAMED_PROVIDER_WRAPPER = "signInWithGitHub(";
 /** Supabase's own call. There must be exactly one site for it. */
 const OAUTH_CALL = ".signInWithOAuth(";
+
+/*
+ * The assertions that FIND those three calls, built from the three constants above.
+ *
+ * A review arm found the previous version quoting the constants in the stated bound while the
+ * assertions carried the same names hand-written in their own regexes. That is the drift this
+ * whole file exists to stop, one level down: rename the constant and the sentence follows while
+ * the enforcement stays where it was. Every pattern below is generated from the same string.
+ */
+/** Every `.signInWithOAuth(` in a file. */
+const oauthCalls = (): RegExp => new RegExp(literalPattern(OAUTH_CALL), "g");
+/** `signInWithProvider("github"` — a provider typed straight into the call. */
+const providerCallWithLiteral = (): RegExp =>
+  new RegExp(`${literalPattern(GENERAL_PROVIDER_CALL)}\\s*(["'\`])([^"'\`]*)\\1`, "g");
+/** `signInWithProvider(name` — a named value, whose declaration is checked separately. */
+const providerCallWithName = (): RegExp =>
+  new RegExp(
+    `(?<!function\\s)${literalPattern(GENERAL_PROVIDER_CALL)}\\s*([A-Za-z_$][\\w$]*)\\s*(?![:\\w$])`,
+    "g",
+  );
+/** `signInWithGitHub(` at a call site, never at its own definition. */
+const namedWrapperCalls = (): RegExp =>
+  new RegExp(`(?<!function\\s)${literalPattern(NAMED_PROVIDER_WRAPPER)}`, "g");
 
 /**
  * WHAT THIS SUITE CATCHES, AND WHAT IT DOES NOT — generated from the values the assertions
@@ -253,10 +316,7 @@ const OAUTH_CALL = ".signInWithOAuth(";
  * written down is not a gap; an unwritten one is.
  */
 const SWEEP_CATCHES: readonly string[] = [
-  `a data-signin* attribute on any tag`,
-  `a provider id (${AUTH_PROVIDERS.map((provider) => provider.id).join(" or ")}) as a ` +
-    `hyphen segment of any data-* attribute NAME, in any case`,
-  `either of those two names built with setAttribute, or a data-signin* write through dataset`,
+  ...SIGNIN_MARKER.map((entry) => entry.claim),
   `any ${OAUTH_CALL} outside lib/commonswarm.ts`,
   `any string literal handed to ${GENERAL_PROVIDER_CALL}`,
   `more than one call to ${NAMED_PROVIDER_WRAPPER}`,
@@ -485,7 +545,7 @@ test("CONTROL: signInWithOAuth is called once and never with a literal provider"
   // exactly the second enforcement this is here to forbid, and reading one file would miss it.
   const everywhere: string[] = [];
   for (const file of await sourceFiles(SRC)) {
-    const found = ((await readFile(file, "utf8")).match(/\.signInWithOAuth\(/g) ?? []).length;
+    const found = ((await readFile(file, "utf8")).match(oauthCalls()) ?? []).length;
     if (found > 0) everywhere.push(`${file.pathname} (${found})`);
   }
   assert.deepEqual(
@@ -496,11 +556,11 @@ test("CONTROL: signInWithOAuth is called once and never with a literal provider"
   );
 
   const source = await readFile(COMMONSWARM, "utf8");
-  const calls = source.match(/\.signInWithOAuth\(/g) ?? [];
+  const calls = source.match(oauthCalls()) ?? [];
   assert.equal(calls.length, 1, "one call site, called once");
   assert.doesNotMatch(
     source,
-    /signInWithOAuth\(\{[\s\S]{0,80}?provider:\s*["'`]/,
+    new RegExp(`${literalPattern(OAUTH_CALL)}\\{[\\s\\S]{0,80}?provider:\\s*["'\`]`),
     "The provider passed to Supabase must come from authProvider(), not from a string " +
       "literal. A literal is the drift this module exists to prevent.",
   );
@@ -520,8 +580,9 @@ test("CONTROL: signInWithOAuth is called once and never with a literal provider"
   for (const file of await sourceFiles(SRC)) {
     const text = await readFile(file, "utf8");
     // A literal handed straight to the function.
-    for (const call of text.matchAll(/signInWithProvider\(\s*["'`]([^"'`]*)["'`]/g)) {
-      if (!known.has(call[1] as string)) wrong.push(`${file.pathname}: "${call[1]}"`);
+    for (const call of text.matchAll(providerCallWithLiteral())) {
+      // group 1 is the quote character, group 2 the provider written inside it
+      if (!known.has(call[2] as string)) wrong.push(`${file.pathname}: "${call[2]}"`);
     }
     /*
      * A named value handed to the function, whatever its type annotation says. The annotation
@@ -537,7 +598,7 @@ test("CONTROL: signInWithOAuth is called once and never with a literal provider"
      */
     // `function signInWithProvider(provider: string` is the definition, not a call site.
     for (const call of text.matchAll(
-      /(?<!function\s)signInWithProvider\(\s*([A-Za-z_$][\w$]*)\s*(?![:\w$])/g,
+      providerCallWithName(),
     )) {
       const name = call[1] as string;
       const declared = new RegExp(
@@ -681,8 +742,6 @@ test("CONTROL: only ProviderButtons renders a sign-in button, apart from named d
    *   <button data-member-reauth-github>   a provider as a SEGMENT of a data-* name
    *   setAttribute("data-signin…    built rather than written
    *   el.dataset.signinProvider =   the same thing through the dataset API
-   *   el.dataset.memberReauthGithub = the same thing with the provider in the property name
-   *   <button data-login="github">  the provider typed as an attribute VALUE, any attribute
    *
    * THE SECOND LINE IS WHY THIS WAS WIDENED. `data-member-reauth-github` was live on /app and
    * this sweep read zero: the old pattern wanted the provider id IMMEDIATELY after `data-`,
@@ -758,21 +817,49 @@ test("CONTROL: the sweep's stated bound is derived from its own assertions, and 
    * because that is where an operator reads what the failing test will and will not tell them.
    * A bound that lives in only one of the two drifts the first time either is edited.
    */
-  assert.equal(SIGNIN_MARKER_BRANCHES.length, 4, "the marker has four branches");
-  for (const branch of SIGNIN_MARKER_BRANCHES) {
-    assert.doesNotThrow(() => new RegExp(branch, "i"), `branch is not a usable pattern: ${branch}`);
+  /*
+   * NOT "the array holds the constants it was built from". That was the first version, and an
+   * arm called it what it was: a tautology that stays green with every claim deleted. What is
+   * measured now is BEHAVIOUR. Each branch carries a probe; the branch must match its own
+   * probe, and so must the marker the sweep actually runs. Delete a branch and its probe stops
+   * matching the marker; delete a claim and it leaves SWEEP_CATCHES with it, because the claim
+   * and the pattern are one record.
+   */
+  assert.equal(SIGNIN_MARKER.length, 4, "the marker has four branches");
+  const marker = signinMarker();
+  for (const entry of SIGNIN_MARKER) {
+    assert.match(
+      entry.probe,
+      new RegExp(entry.pattern, "i"),
+      `this branch does not match its own probe, so the claim "${entry.claim}" is not true ` +
+        `of it: ${entry.pattern}`,
+    );
+    assert.match(
+      entry.probe,
+      marker,
+      `the sweep's marker does not match ${JSON.stringify(entry.probe)}, so the branch ` +
+        `claiming "${entry.claim}" is not in the pattern the sweep runs`,
+    );
+    assert.ok(
+      SWEEP_CATCHES.includes(entry.claim),
+      `every branch's claim must reach the stated bound; "${entry.claim}" did not`,
+    );
+    /*
+     * A claim has to SAY something. Emptying one was the way through this control that stayed
+     * green in mutation testing: the record still travelled with its pattern, SWEEP_CATCHES
+     * still held the string, and `checklist.includes("")` is true of every file ever written.
+     */
+    assert.ok(
+      entry.claim.trim().length >= 20,
+      `a branch's claim is empty or a stub, so the bound says nothing about the pattern it ` +
+        `travels with: ${JSON.stringify(entry.claim)} for ${entry.pattern}`,
+    );
   }
-  // Each catch line names something real: a live branch, or a call string an assertion uses.
-  assert.ok(
-    SWEEP_CATCHES.some((line) => line.includes("data-signin*")) &&
-      SIGNIN_MARKER_BRANCHES.includes(DATA_SIGNIN_ATTRIBUTE),
-    "the list claims a data-signin* branch; the marker must actually carry it",
-  );
-  assert.ok(
-    SIGNIN_MARKER_BRANCHES.includes(PROVIDER_IN_ATTRIBUTE_NAME) &&
-      SIGNIN_MARKER_BRANCHES.includes(SETATTRIBUTE_PROVIDER_NAME) &&
-      SIGNIN_MARKER_BRANCHES.includes(DATASET_SIGNIN_WRITE),
-    "the list claims a name branch, a setAttribute branch and a dataset branch",
+  assert.equal(
+    SWEEP_CATCHES.length,
+    SIGNIN_MARKER.length + 4,
+    `the stated bound must be the four branch claims plus the three call claims and the label ` +
+      `claim, and nothing typed beside them`,
   );
   for (const id of AUTH_PROVIDERS.map((provider) => provider.id)) {
     assert.ok(
@@ -804,6 +891,21 @@ test("CONTROL: the sweep's stated bound is derived from its own assertions, and 
       `${SWEEP_DOES_NOT_CATCH}\n\nIt is what an operator reads to know what the failing test ` +
       `will not tell them.`,
   );
+  /*
+   * EVERY CATCH LINE, not only the bound sentence. An arm found the checklist carrying a typed
+   * paraphrase of this list beside the one pinned sentence — "one of the labels in
+   * auth-providers.ts" where the list says the labels themselves — so the half a reader is most
+   * likely to act on was the half with no control on it.
+   */
+  const missing = SWEEP_CATCHES.filter((line) => !checklist.includes(line));
+  assert.deepEqual(
+    missing,
+    [],
+    `docs/design/2026-09-04-GOOGLE-SIGNIN.md must carry every line of the sweep's stated bound ` +
+      `word for word. These are generated here and are not in that file:\n  ${missing.join(
+        "\n  ",
+      )}\n\nParaphrasing one is how the operator's copy and the test's behaviour drift.`,
+  );
 });
 
 test("CONTROL: every OAuth call site is the named debt or an id read at runtime", async () => {
@@ -833,18 +935,17 @@ test("CONTROL: every OAuth call site is the named debt or an id read at runtime"
    * GitHub-only button goes red here "whatever it calls itself and however it spells its
    * attributes". Two arms showed that is wider than the assertions: a button that hides the
    * provider in an attribute VALUE and is wired with a DOM READ rather than a literal passes
-   * both of them. That door is closed one level up instead, by the value branch of the sweep's
-   * marker, which reads the markup. What these two add is the wiring: a typed provider handed
-   * to signInWithProvider from anywhere, and a second use of the named GitHub wrapper.
-   *
-   * What no control in this file reaches: a provider id that is a literal nowhere — assembled
-   * at runtime, or fetched. That is not a hand-written button in any shape anybody has written.
+   * both of them. A markup branch that caught it was written and then REVERTED: it bought one
+   * shape and invited the next, which is the argument SWEEP_DOES_NOT_CATCH settles. So that
+   * door is the stated bound, not something these two close. What these two DO add is the
+   * wiring, and only where a provider is typed: a string literal handed to
+   * signInWithProvider from anywhere, and a second use of the named GitHub wrapper.
    */
   const literalCallers: string[] = [];
   for (const file of await sourceFiles(SRC)) {
     const found = [
       ...(await readFile(file, "utf8")).matchAll(
-        /signInWithProvider\(\s*(["'`])([^"'`]*)\1/g,
+        providerCallWithLiteral(),
       ),
     ];
     for (const match of found) {
@@ -865,8 +966,7 @@ test("CONTROL: every OAuth call site is the named debt or an id read at runtime"
   const callers: string[] = [];
   for (const file of await sourceFiles(SRC)) {
     // `export async function signInWithGitHub(` is the definition, not a call site.
-    const calls = ((await readFile(file, "utf8")).match(/(?<!function\s)signInWithGitHub\(/g) ?? [])
-      .length;
+    const calls = ((await readFile(file, "utf8")).match(namedWrapperCalls()) ?? []).length;
     if (calls > 0) {
       callers.push(`${file.pathname.slice(file.pathname.indexOf("/src/") + 5)} (${calls})`);
     }
