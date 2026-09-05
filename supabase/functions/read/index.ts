@@ -347,7 +347,26 @@ async function handle(
   setPhase("parse");
   const parsed = await request.json().catch(() => null);
   const body = parseBody(parsed);
-  if (body === null) return json(400, { error: "invalid_request" });
+  if (body === null) {
+    /* parseBody returns a bare null, so its refusals carry no sentence. That is
+     * this function's shape and not something this lane rewrites -- but the ONE
+     * refusal this lane adds is a bad channel slug, and a generated rule nobody
+     * can read is not a generated rule. Rebuild that one sentence here rather
+     * than leave the caller a bare invalid_request. Everything else keeps the
+     * existing shape; the remaining reasons are still owed a channel. */
+    const raw = typeof parsed === "object" && parsed !== null &&
+        !Array.isArray(parsed)
+      ? parsed as Record<string, unknown>
+      : null;
+    const slugProblem = raw !== null && Object.hasOwn(raw, "channel") &&
+        raw.channel !== null
+      ? channelSlugProblem(raw.channel)
+      : null;
+    return json(400, {
+      error: "invalid_request",
+      ...(slugProblem === null ? {} : { message: slugProblem }),
+    });
+  }
   const agentCredential = AGENT_TOKEN_RE.test(token);
   if (!agentCredential && body.resource !== "renewal_grants") {
     return json(401, { error: "unauthenticated" });

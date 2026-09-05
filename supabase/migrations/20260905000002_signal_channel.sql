@@ -110,64 +110,43 @@ SELECT set_config(
   false
 );
 
--- Body below is 20260901000010_signal_attachments.sql:81-133 with s.channel_id
--- appended at the END of the select list and NOTHING else changed. The
--- assertion after it is what proves that claim against this database rather
--- than against my reading of a file.
-CREATE OR REPLACE VIEW swarm_read.signals
-WITH (security_barrier = true)
-AS
-  SELECT
-    s.id,
-    s.workspace_id,
-    s.from_principal AS "from",
-    s.from_kind,
-    s.to_user_id AS "to",
-    s.about,
-    s.kind,
-    s.body,
-    s.until,
-    s.created_at,
-    s.to_agent_principal_id AS to_agent,
-    s.in_reply_to,
-    COALESCE(
-      (
-        SELECT jsonb_agg(
-          jsonb_build_object(
-            'file_id', attachment.file_id,
-            'version_n', attachment.version_n,
-            'name', file.name,
-            'content_type', version.content_type,
-            'size_bytes', version.size_bytes::double precision
-          ) ORDER BY attachment.position
-        )
-        FROM swarm.signal_attachments AS attachment
-        JOIN swarm.files AS file
-          ON file.file_id = attachment.file_id
-         AND file.workspace_id = attachment.workspace_id
-        JOIN swarm.file_versions AS version
-          ON version.file_id = attachment.file_id
-         AND version.workspace_id = attachment.workspace_id
-         AND version.version_n = attachment.version_n
-        WHERE attachment.signal_id = s.id
-          AND attachment.workspace_id = s.workspace_id
-      ),
-      '[]'::jsonb
-    ) AS attachments,
-    s.channel_id
-  FROM swarm.signals AS s
-  WHERE swarm.is_member(s.workspace_id, auth.uid())
-    AND (
-      (s.to_user_id IS NULL AND s.to_agent_principal_id IS NULL)
-      OR s.to_user_id = auth.uid()
-      OR EXISTS (
-        SELECT 1
-        FROM swarm.agent_principals AS principal
-        WHERE principal.principal_id = s.to_agent_principal_id
-          AND principal.workspace_id = s.workspace_id
-          AND principal.owner_user_id = auth.uid()
-      )
-    );
+-- Resolve the starting body from THIS DATABASE, never from a migration file.
+-- An earlier version of this file pasted 20260901000010:81-133 and appended the
+-- column. That matches the live body today, but it is the practice the design
+-- rules out (§3.3) and a review arm was right to name it: a hotfix that added an
+-- unmarked clause between that file and this one would be deleted here, and the
+-- assertion below would not catch it because it only knows the markers it lists.
+-- Splicing means the WHERE travels through untouched whatever it contains.
+DO $$
+DECLARE
+  live_def text;
+  body text;
+BEGIN
+  live_def := current_setting('swarm.signals_view_before');
+
+  IF live_def !~ '\sFROM\s+(swarm\.)?signals\s' THEN
+    RAISE EXCEPTION
+      'could not locate the select-list boundary in the live swarm_read.signals body; recreate it by hand and re-run the directed-visibility suite before deploying anything';
+  END IF;
+  IF position('channel_id' IN live_def) > 0 THEN
+    RAISE EXCEPTION
+      'swarm_read.signals already carries channel_id; this migration has already been applied to this database';
+  END IF;
+
+  -- The schema qualifier is optional in the pattern: pg_get_viewdef omits it
+  -- when swarm is on the session search_path, which is a property of how the
+  -- migration was invoked and not of the view. swarm.signal_attachments cannot
+  -- match -- after "signal" comes "_", not "s".
+  body := regexp_replace(
+    live_def,
+    '(\s)(FROM\s+(?:swarm\.)?signals\s)',
+    E',\n    s.channel_id\\1\\2'
+  );
+  body := rtrim(body, E' ;\n\t');
+
+  EXECUTE 'CREATE OR REPLACE VIEW swarm_read.signals WITH (security_barrier = true) AS ' || body;
+END;
+$$;
 
 ALTER VIEW swarm_read.signals OWNER TO swarm_admin;
 GRANT SELECT ON swarm_read.signals TO authenticated, swarm_read;
@@ -178,3 +157,16 @@ SELECT swarm.assert_view_clauses_preserved(
   current_setting('swarm.signals_view_before')
 );
 SELECT set_config('swarm.signals_view_before', '', false);
+
+-- Positive control on the recreation itself: the column must now be projected.
+-- The assertion above only proves nothing was LOST, so a no-op splice would
+-- pass it. File 3 carries the same pair for its two columns.
+DO $$
+DECLARE
+  after_def text := pg_get_viewdef('swarm_read.signals'::regclass, true);
+BEGIN
+  IF position('channel_id' IN after_def) = 0 THEN
+    RAISE EXCEPTION 'swarm_read.signals recreation did not add channel_id';
+  END IF;
+END;
+$$;

@@ -37,6 +37,15 @@
 export const SIGNAL_KINDS = ["working-on", "note", "ask"] as const;
 export type SignalKind = typeof SIGNAL_KINDS[number];
 
+/**
+ * "a" or "an" for a word, so a generated list does not read "a ask". The list
+ * was generated and the article was typed, which is the same drift one level
+ * down: add a kind starting with a vowel and the sentence goes wrong on its own.
+ */
+export function indefiniteArticle(word: string): string {
+  return /^[aeiou]/i.test(word) ? "an" : "a";
+}
+
 /** Kinds a thread reply may take. R11: a thread reply is never working-on. */
 export const THREAD_REPLY_KINDS: readonly SignalKind[] = SIGNAL_KINDS.filter(
   (kind) => kind !== "working-on",
@@ -54,9 +63,18 @@ export const CHANNEL_PURPOSE_MAX = 500;
  */
 export const CHANNEL_SLUG_RE = /^[a-z0-9]([a-z0-9-]*[a-z0-9])?$/;
 
-/** Same shape as the edges' UUID_RE. Local so this module imports no edge. */
+/**
+ * The edges' UUID_RE, character for character: version [1-8] and variant
+ * [89ab], not any 8-4-4-4-12 hex. Local so this module imports no edge file --
+ * it is typechecked by BOTH deno and tsc, and a relative import satisfies only
+ * one of them.
+ *
+ * An earlier version accepted the nil uuid here while the edge's own check
+ * refused it, so the caller got the generic "malformed" reason and never the
+ * chat sentence. tests/chat-signal-wire-compat.test.ts pins the two together.
+ */
 const CHAT_UUID_RE =
-  /^[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}$/i;
+  /^[0-9a-f]{8}-[0-9a-f]{4}-[1-8][0-9a-f]{3}-[89ab][0-9a-f]{3}-[0-9a-f]{12}$/i;
 
 /**
  * Names a channel may not take. `all-signals` is the unfiltered view, not a
@@ -209,10 +227,13 @@ export function chatSignalShapeProblem(
        * ask" in the text was a typed enumeration inside a correct-looking
        * sentence, which is the exact shape AGENTS.md says the arms do not
        * catch. A fourth kind now changes both at once. */
-      return `A ${
-        String(fields.signal_kind)
-      } signal cannot be a thread reply. Reply with ${
-        THREAD_REPLY_KINDS.map((kind) => `a ${kind}`).join(" or ")
+      const refused = String(fields.signal_kind);
+      return `${
+        indefiniteArticle(refused) === "an" ? "An" : "A"
+      } ${refused} signal cannot be a thread reply. Reply with ${
+        THREAD_REPLY_KINDS
+          .map((kind) => `${indefiniteArticle(kind)} ${kind}`)
+          .join(" or ")
       }.`;
     }
     /* An ABSENT key and an explicit null mean the same thing here. The command

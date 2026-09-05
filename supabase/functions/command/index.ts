@@ -1797,7 +1797,10 @@ function validateCommand(
       ) &&
       (!Object.hasOwn(cmd, "attachments") ||
         parseSignalAttachmentRefs(cmd.attachments) !== null) &&
-      (threadRootId === undefined || nullableUuid(threadRootId)) &&
+      /* thread_root_id's uuid shape is checked INSIDE chatSignalShapeProblem,
+       * not here. Keeping a copy on the edge meant a bad uuid was refused with
+       * the generic reason before the chat sentence could run, which is exactly
+       * the split that function exists to prevent. */
       chatShapeProblem === null;
     const attachments = Object.hasOwn(cmd, "attachments")
       ? parseSignalAttachmentRefs(cmd.attachments)
@@ -6425,14 +6428,19 @@ async function resolveThreadRoot(
     remaining_ms: number;
     channel_id: string | null;
     thread_root_id: string | null;
+    channel_archived_at: Date | null;
   }[]>`
-    SELECT id, until,
-           EXTRACT(EPOCH FROM (until - statement_timestamp())) * 1000
+    SELECT s.id, s.until,
+           EXTRACT(EPOCH FROM (s.until - statement_timestamp())) * 1000
              AS remaining_ms,
-           channel_id, thread_root_id
-    FROM swarm.signals
-    WHERE workspace_id = ${route.workspaceId}::uuid
-      AND id = ${rootId}::uuid
+           s.channel_id, s.thread_root_id,
+           channel.archived_at AS channel_archived_at
+    FROM swarm.signals AS s
+    LEFT JOIN swarm.channels AS channel
+      ON channel.channel_id = s.channel_id
+     AND channel.workspace_id = s.workspace_id
+    WHERE s.workspace_id = ${route.workspaceId}::uuid
+      AND s.id = ${rootId}::uuid
       /* A thread may root ONLY on an undirected signal, and this query is the
        * enforcement. This function reads swarm.signals as swarm_command, which
        * bypasses swarm_read.signals — the view that IS the read policy. Without
@@ -6442,19 +6450,19 @@ async function resolveThreadRoot(
        * the private message exists and would attach public replies to it. A
        * reply loop that needs a private one-hop answer already has in_reply_to,
        * whose meaning this lane does not touch. */
-      AND to_user_id IS NULL
-      AND to_agent_principal_id IS NULL
+      AND s.to_user_id IS NULL
+      AND s.to_agent_principal_id IS NULL
       /* Belt and braces. Every in_reply_to row is stored DIRECTED --
        * resolveSignalWriteTarget re-addresses it to the referenced signal's
        * author -- so the two arms above already exclude one. Asserting it here
        * makes the property local to this query instead of a conclusion about
        * another function that a later edit could quietly falsify. */
-      AND in_reply_to IS NULL
+      AND s.in_reply_to IS NULL
       /* A one-second floor, not merely "still live". The reply's until is
        * clamped to the root's in SQL, and CHECK (until > created_at) would
        * fire if the root expired between this SELECT and the INSERT. The floor
        * turns an unexplainable 500 into an honest refusal. */
-      AND until > statement_timestamp() + interval '1 second'
+      AND s.until > statement_timestamp() + interval '1 second'
     LIMIT 1
   `;
   const root = rows[0];
@@ -6470,6 +6478,26 @@ async function resolveThreadRoot(
       message:
         "There is no live, undirected message with that id in this workspace. Threads start from messages everyone can read, and a thread cannot outlive the message it starts from. To answer a directed message privately, reply to it instead.",
       reason: "thread_root_not_found",
+    };
+  }
+  /* A reply INHERITS its root's channel, so the archive check that
+   * resolveSignalChannel does for an explicit slug never runs for a thread
+   * reply -- a review arm found the sequence: create, post, archive, then reply
+   * with thread_root_id alone. The reply landed in the archived channel while
+   * the copy said it takes no new messages. Archive has to be checked wherever
+   * a channel is STAMPED, not only where a slug is resolved. */
+  if (root.channel_archived_at !== null) {
+    return {
+      ok: false,
+      threadRootId: null,
+      rootUntil: null,
+      rootRemainingMs: null,
+      rootChannelId: null,
+      status: 409,
+      error: "channel_archived",
+      message:
+        "That thread is in an archived channel, so it takes no new replies. Its history still reads and its links still resolve.",
+      reason: "channel_archived",
     };
   }
   if (root.thread_root_id !== null) {
@@ -6811,6 +6839,42 @@ async function postSignal(
     thread_root_id: string | null;
     broadcast_to_channel: boolean;
   }[]>`
+    WITH candidate AS (
+      /* The value that will actually be stored, computed ONCE so the WHERE
+       * below can test the same number the row would carry.
+       *
+       * An explicit horizon is stored exactly as named. A defaulted one is
+       * clamped to the ceiling with LEAST, which tells no lie because the
+       * caller expressed no opinion.
+       *
+       * GREATEST is the floor that keeps the row legal. resolveThreadRoot
+       * requires the root to be live with a one-second margin, but a client
+       * round trip separates that SELECT from this INSERT and
+       * statement_timestamp() advances with each statement. If a stall eats the
+       * whole margin, the clamped value would land at or before created_at and
+       * CHECK (until > created_at) would fire, turning a thread reply into a
+       * 500 where a refusal belongs.
+       *
+       * The floor RAISES the value, so on its own it can push a defaulted reply
+       * PAST its root -- a review arm found exactly that, on the one path the
+       * old WHERE could not refuse. The WHERE now tests this computed value for
+       * both branches, so the floor can never produce a stored row that
+       * outlives its root: it is refused instead. statement_timestamp() is
+       * stable within a statement, so the CTE and the WHERE agree. */
+      SELECT GREATEST(
+        CASE WHEN ${placement.untilExplicit}
+          THEN statement_timestamp() + ${untilMs} * interval '1 millisecond'
+          ELSE LEAST(
+            statement_timestamp() + ${untilMs} * interval '1 millisecond',
+            COALESCE(
+              ${placement.untilCeiling}::timestamptz,
+              statement_timestamp() + ${untilMs} * interval '1 millisecond'
+            )
+          )
+        END,
+        statement_timestamp() + interval '1 millisecond'
+      ) AS until_value
+    )
     INSERT INTO swarm.signals (
       id, workspace_id, from_principal, from_kind,
       to_user_id, to_agent_principal_id, in_reply_to,
@@ -6834,43 +6898,15 @@ async function postSignal(
       ${command.about},
       ${command.signal_kind},
       ${command.body},
-      /* An explicit horizon is stored exactly as asked; the WHERE below is what
-       * refuses it when it no longer fits, in this same statement. A default is
-       * clamped to the ceiling with LEAST.
-       *
-       * GREATEST is the floor that keeps the row legal. resolveThreadRoot
-       * requires the root to be live with a one-second margin, but a client
-       * round trip separates that SELECT from this INSERT and
-       * statement_timestamp() advances with each statement. If a stall eats the
-       * whole margin the clamp would land at or before created_at and
-       * CHECK (until > created_at) would fire, turning a thread reply into a
-       * 500 where a refusal belongs. The floor keeps the row legal; the reply
-       * then outlives its root by under a millisecond. A reader CAN see that
-       * millisecond -- swarm_read.signals has no until filter and every caller
-       * applies its own -- so this is a bounded, visible imprecision, not the
-       * invisible one an earlier version of this comment claimed. */
-      GREATEST(
-        CASE WHEN ${placement.untilExplicit}
-          THEN statement_timestamp() + ${untilMs} * interval '1 millisecond'
-          ELSE LEAST(
-            statement_timestamp() + ${untilMs} * interval '1 millisecond',
-            COALESCE(
-              ${placement.untilCeiling}::timestamptz,
-              statement_timestamp() + ${untilMs} * interval '1 millisecond'
-            )
-          )
-        END,
-        statement_timestamp() + interval '1 millisecond'
-      ),
+      candidate.until_value,
       statement_timestamp(),
       ${placement.channelId}::uuid,
       ${placement.threadRootId}::uuid,
       ${placement.broadcastToChannel}
+    FROM candidate
     WHERE
-      ${placement.untilExplicit} = false
-      OR ${placement.untilCeiling}::timestamptz IS NULL
-      OR statement_timestamp() + ${untilMs} * interval '1 millisecond'
-         <= ${placement.untilCeiling}::timestamptz
+      ${placement.untilCeiling}::timestamptz IS NULL
+      OR candidate.until_value <= ${placement.untilCeiling}::timestamptz
     RETURNING
       id, workspace_id, from_principal, from_kind,
       to_user_id, to_agent_principal_id, in_reply_to,
@@ -6882,11 +6918,14 @@ async function postSignal(
    * insert could return nothing is impossible here: there is no ON CONFLICT and
    * no other WHERE arm. */
   if (!signal) {
-    return placement.untilExplicit && placement.untilCeiling !== null
-      ? null
-      : (() => {
-        throw new Error("signal insert did not return a row");
-      })();
+    /* Zero rows is the atomic refusal above, not a failure. It is reachable on
+     * BOTH the explicit and the defaulted path: the floor can raise a defaulted
+     * value past the ceiling when a stall eats the root's margin, and refusing
+     * is better than storing a reply that outlives its thread. Every other
+     * reason an insert could return nothing is impossible here: no ON CONFLICT,
+     * and no WHERE arm but the ceiling. */
+    if (placement.untilCeiling !== null) return null;
+    throw new Error("signal insert did not return a row");
   }
   for (const [position, attachment] of attachments.entries()) {
     await tx`
