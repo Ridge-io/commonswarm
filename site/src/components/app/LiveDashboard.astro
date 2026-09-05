@@ -2908,6 +2908,21 @@ import "../../styles/tokens.css";
 
     const persistComposerDraft = (): void => {
       cancelComposerDraftTimer();
+      /* THE STORED DRAFT IS FROZEN FOR THE WHOLE POST, exactly as the pair is.
+       *
+       * A send empties the box before it awaits, so while `composerSending` is true the
+       * textarea holds "" and that is NOT the reader's state — it is the send's. Writing it
+       * down destroyed the draft that still held their text: a workspace switch mid-post
+       * flushes, read the emptied box, and either overwrote the good draft with an empty body
+       * or removed it outright. The post then finished under a changed workspace, took its
+       * early return, and never put `rawBody` back. The reader came back to nothing.
+       *
+       * A review arm found it. It is the same rule the pass already follows and the same
+       * reason: a handler must not read a moment another handler is in the middle of. The
+       * settle in the submit's `finally` runs after the flag drops and writes the real state
+       * then; `clearComposerDraft` is a removal rather than a write and is not gated here,
+       * because a landed post must clear its draft whatever else is in flight. */
+      if (composerSending) return;
       const key = composerDraftKey();
       const input = one<HTMLTextAreaElement>("[data-composer-input]");
       if (!key || !input) return;
@@ -2934,7 +2949,16 @@ import "../../styles/tokens.css";
            from the last-sent set". Arrival PRUNES that set, so a set nobody touched differs
            from it too; writing that down made a silent prune permanent, and a member who left
            and came back stayed out of To: for good. A composer sitting at its normal starting
-           point stores nothing, and the key does not grow for every workspace anybody opens. */
+           point stores nothing, and the key does not grow for every workspace anybody opens.
+
+           IT GATES WHETHER THE DRAFT IS KEPT, NOT WHAT ITS `to` HOLDS, and that asymmetry is
+           deliberate. A draft WITH a body is a message in progress and owns its address: if a
+           member the roster had lost rejoins while that message is being written, they must
+           NOT reappear in its To:, because a recipient the reader never chose is the hidden
+           recipient this row exists to rule out. A draft with no body is not a message, so
+           there is nothing to own an address and the set is derived again on arrival. A review
+           arm read the first case as the prune outliving its cause; it is the same set for a
+           different reason, and adding the returning member back would be the worse failure. */
         const addressChosen = composerToLive &&
           composerAddressIsChosen(
             composerTo,
@@ -3671,11 +3695,6 @@ import "../../styles/tokens.css";
       }
       renderHeaderRoster();
       renderDialogRoster();
-      /* THE ADDRESS IS RE-RENDERED HERE, and this is not decoration. A roster change can
-       * revoke an agent that a chip names, and a chip the send cannot honour is exactly the
-       * hidden recipient the To: field exists to rule out. renderComposerTo prunes before it
-       * draws. The saved draft is restored at the same point, because this is where the
-       * workspace reaches the screen. */
       /* ONE CALL, AND ORDER STOPPED BEING LOAD-BEARING. There used to be three steps here in
          an order that had to be right: the remembered set, then the draft, then a tag pass.
          Every arrangement of them was wrong in some transition, because they were three

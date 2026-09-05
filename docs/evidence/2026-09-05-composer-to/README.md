@@ -101,12 +101,25 @@ which is the invariant this lane exists to hold, in its other direction.
 what a FRESH derivation would build, which is the remembered set pruned. It has its own test and
 its own mutation.
 
+### Round five: what the arms found, and how each was ruled
+
+| arm | finding | ruling |
+|---|---|---|
+| Gemini | a workspace switch DURING a send flushed the draft from a box the send had already emptied, overwriting or deleting the draft that still held the reader's text; the post then took its changed-workspace early return without putting the body back | **Correct, and a regression this lane introduced with the switch flush.** The stored draft is now frozen for the whole post, exactly as the pair is, by the same rule and for the same reason: a handler must not read a moment another handler is in the middle of. `clearComposerDraft` is a removal, not a write, and stays ungated so a landed post always clears its own draft. |
+| Grok | a draft WITH a body records the pruned To: set, so a member who leaves and returns while that message is being written stays out of its To: | **Correct mechanism, ruled the other way.** A draft with a body is a message in progress and owns its address. Putting a returning member back into a message the reader is already writing would add a recipient they never chose, which is the hidden recipient this row exists to rule out. A draft with NO body is not a message, so its set is derived again on arrival, which is what `composerAddressIsChosen` gates. The asymmetry is deliberate and is now said out loud at the call site. |
+| Grok | `LiveDashboard.astro` still carried a comment saying `renderComposerTo` prunes before it draws, which this lane made false | **Correct.** The retired sentence is gone; the paragraph beneath it already stated the new rule. |
+| Grok | the `composerToLive` mutation names `afterSend` while its subject looked like `broadcastSurvivesReload` | **Not a mis-aim, now said in the harness.** The observer clears To: several times, and the first step after a `clearTo` is where a row that refilled itself from storage shows up. The named assertion is the one its failure carries. |
+
 ## What is NOT established
 
 - **Nothing here reached production.** Every browser measurement runs against `site/dist` in
   sample mode, where a send is a local row and no `post_signal` is issued. The wire claim is
   about the body this client BUILDS, read from the exported builder; the served edge answers
   for that shape in `tests/p1-server/chat-signals.test.ts`, which this lane did not run.
+- **Neither in-flight freeze has a browser control.** The pair's freeze and the stored draft's
+  freeze are two separate guards for one rule, and a sample send never stays in flight long
+  enough for a browser step to act inside it. Both are read out of the source with a mutation
+  on each; what the pair's freeze DOES is driven through `deriveComposerAddress` directly.
 - **The in-flight freeze has no browser control.** A sample send resolves without an await, so
   there is no window in which a browser step could change a roster underneath one. What the
   freeze DOES is driven directly through `deriveComposerAddress` in `composer-address.test.mjs`,

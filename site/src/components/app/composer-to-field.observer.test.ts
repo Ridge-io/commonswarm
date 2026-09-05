@@ -845,13 +845,42 @@ test("one pass owns the address, and every handler goes through it", () => {
     "the pass assigns whether or not it committed",
   );
   /* AND IT IS TOLD WHEN THE MESSAGE IT ADDRESSES IS ON THE WIRE. A SOURCE claim, and it says
-     why: a sample send has no in-flight window for a browser step to change a roster inside,
-     so what the freeze DOES is driven directly in src/lib/composer-address.test.mjs and what
-     the dashboard feeds it is read here. */
+     why: a sample send has no in-flight window for a browser step to act inside, so what the
+     freeze DOES is driven directly in src/lib/composer-address.test.mjs and what the dashboard
+     feeds it is read here. */
   assert.match(
     pass,
     /sending: composerSending,/,
     "the pass is not told when a send is in flight, so a prune can move the address under it",
+  );
+  /* AND THE STORED DRAFT IS FROZEN FOR THE SAME REASON, which is not the same code. A send
+     empties the box before it awaits, so while that flag is up the textarea is the send's
+     state and not the reader's. Writing it down destroyed the draft that still held their
+     text: a workspace switch mid-post flushed, read the emptied box, and either overwrote the
+     good draft with an empty body or removed it, and the post then took its changed-workspace
+     early return without putting the body back. A review arm found it.
+
+     SAME BOUND as the freeze above: no browser control, because a sample send never stays in
+     flight. The guard is read out of the source and it is the FIRST thing the write does, so
+     nothing between the flag and the write can read the emptied box. */
+  const persist = dashboard.slice(
+    dashboard.indexOf("const persistComposerDraft = (): void => {"),
+  );
+  const persistHead = persist.slice(0, persist.indexOf("const key = composerDraftKey();"));
+  assert.match(
+    persistHead,
+    /if \(composerSending\) return;/,
+    "the stored draft is written from a box a send emptied, so a switch mid-post loses the text",
+  );
+  /* And a landed post still clears its draft: the removal is a different call and is NOT
+     gated, or a send that finished under a changed workspace would leave its body behind. */
+  assert.doesNotMatch(
+    dashboard.slice(
+      dashboard.indexOf("const clearComposerDraft = (): void => {"),
+      dashboard.indexOf("const persistComposerDraft = (): void => {"),
+    ),
+    /if \(composerSending\) return;/,
+    "a landed post cannot clear its own draft while its send flag is still up",
   );
   /* THE RENDER DRAWS AND DECIDES NOTHING. Pruning used to live in it, which is how a paint
      the reader had not caused came to move the address. */

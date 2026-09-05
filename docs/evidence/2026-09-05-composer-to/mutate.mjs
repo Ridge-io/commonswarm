@@ -243,6 +243,10 @@ const mutations = [
   [FIELD, DASH,
     "      composerToLive = true;",
     "      composerToLive = composerTo.length > 0;",
+    /* CAUGHT AT `afterSend`, not at `broadcastSurvivesReload`, and that is not a mis-aim: the
+       observer clears To: several times, and the FIRST step after a clearTo is where a row
+       that refilled itself from storage shows up. A review arm read the entry as aimed at the
+       later reload claim; the assertion named here is the one its failure actually carries. */
     "an emptied To: stays empty rather than filling from what was stored",
     "afterSend: one signal, addressed to the chips", true],
   /* (2) a chip edit never reaches storage on its own, and a switch does not flush.
@@ -271,6 +275,13 @@ const mutations = [
     "        sending: false,",
     "the pass is told when the message it addresses is on the wire",
     "the pass is not told when a send is in flight"],
+  /* AND THE STORED DRAFT IS FROZEN TOO. Same bound as the freeze above: a sample send never
+     stays in flight, so the guard is read out of the source rather than driven in a browser. */
+  [FIELD, DASH,
+    "      if (composerSending) return;\n      const key = composerDraftKey();",
+    "      const key = composerDraftKey();",
+    "the stored draft is not written from a box the send emptied",
+    "the stored draft is written from a box a send emptied"],
   /* (4) a tag refused by the cap cannot be re-added by making room */
   [PURE, ADDR,
     "    if (!refusedKeys.has(recipientKey(entity))) applied.add(recipientKey(entity));",

@@ -1,0 +1,33 @@
+`diff --git a/docs/design/2026-09-04-chat-platform-reconciled.md b/docs/design/2026-09-04-chat-platform-reconciled.md`
+
+## 1. A SEVENTH INSTANCE OF THE SAME CLASS
+Yes, there is a seventh instance. A send whose workspace changes under it separates the pair and the body, leading to permanent text loss.
+
+During a send, `input.value` is emptied, but `composerTo` is frozen. If the workspace is switched while the post is in-flight, `resetComposer` runs for the old workspace. It calls `persistComposerDraft()`, which reads the temporarily empty `input.value` and the frozen `composerTo`. If the reader had edited the To: set (`addressChosen` is true), this writes a draft with `body=""` and the chosen To: set. 
+
+When the send fails, the catch block's early return (`if (version !== requestVersion || workspaceId !== activeWorkspaceId) return;`) skips putting `rawBody` back into the box. When the reader returns to the old workspace, the draft is restored with the empty body and the chosen To: set. What is on screen is a residue of the send process (the empty body) rather than a choice, and the text the user typed is permanently lost. 
+
+This is the **same class** of defect: DOM state temporarily mutated by one handler (send) is read as a choice by another (`persistComposerDraft` via `resetComposer`). `resetComposer`'s claim to be a teardown is false; by calling `persistComposerDraft`, it acts as a derivation reading a transient state. A point fix (e.g., restoring `rawBody` on a switch) would not close the family, because the fundamental problem of deriving state from temporary mutations remains.
+
+## 2. THE FREEZE
+The applied record derivation works correctly now. `syncComposerAddress` reads the body, and on a failed send (where the workspace didn't switch), the body is restored before `syncComposerAddress` is called in the `finally` block. A stale record does not re-address a removed chip because `mergeMentionRecipients` requires the tag to be present in the body to keep it in `applied`. This correctly answers both outcomes.
+
+## 3. THE EMPTY SET, AND THE CHOSEN SET
+`composerAddressIsChosen` correctly identifies a promotion (by comparing keys, where order matters) and correctly ignores arrival pruning (because it compares against the pruned remembered set). However, as found in check 1, an empty text body on screen *can* be a residue if the draft was saved during an in-flight send that later failed or succeeded during a workspace switch.
+
+## 4. THE CAP
+The refusal notice is derived correctly on every pass. `mergeMentionRecipients` does not write a refused name to `applied`. On the next pass, the name is in `fresh` again, and is refused again (if the set is full), returning it in `refused` without repeating or flickering the notice. If the reader makes room, the name is successfully added and marked `applied`. No refusal is permanent.
+
+## 5. THE STORED DRAFT'S NEW REACH
+Yes, it leaves a draft nothing clears. When a send succeeds and the workspace changed under it, the success block early-returns, skipping `clearComposerDraft()`. The `finally` block also skips it. The draft (with an empty body but the sent To: set) remains in storage. It does not resurrect a sent message because `resetComposer` nulled `composerIntent`, but it incorrectly restores the To: set as a draft on the next visit.
+
+## 6. THE CONTROLS
+The new entries in `mutate.mjs` successfully name the assertions (e.g. `notifiedMark`) rather than test titles. The README's "What is NOT established" accurately discloses the bounds, including the fact that the in-flight freeze lacks a browser control and that the applied clear is not independently observable.
+
+## 7. THE SAMPLE WORKSPACE
+`openSampleWorkspace` now correctly mirrors `openWorkspace`. It calls `resetComposer()`, sets the new `activeWorkspaceId`, and fetches the roster on a `setTimeout`. This introduces the necessary frame gap where the roster is unknown, ensuring the browser controls measure the transitions they claim to test.
+
+## 8. GENERATED VERSUS TYPED, AND RETIRED CLAIMS
+The chip position is now correctly generated via `positionWord(NOTIFIED_POSITION)` in `composerPromoteLabel` instead of the typed string "first". `supabase/functions/_shared/channels.ts` was corrected to preserve the retired wording rather than assert it as current. The retired assertions (like the 80px bar) are properly marked with inline strikeouts or notes.
+
+VERDICT: FAIL
