@@ -1,0 +1,39 @@
+diff --git a/tests/p1-cli/chat-cli.test.ts b/tests/p1-cli/chat-cli.test.ts
+
+Bound to 6966294 (pair a62400b + 6966294). Test file at HEAD matches 6966294. Mutated, ran `node --import tsx --test --test-name-pattern 'the chat keys the client can send' tests/p1-cli/chat-cli.test.ts`, restored; `git diff --quiet` after.
+
+1. Claim vs both directions. Could I break the two named mutations? No.
+
+Baseline green. Extra pin `["to","nope"]` → red (`actual: ['to']`, `expected: ['nope','to']`). Emptied pin `[]` → red (`actual: ['to']`, `expected: []`). Edge adding a key the sample does not emit also moves `notSent` and reds. Client sending a key the edge does not accept reds only when that key is in the sample (`unknownToEdge`). Unconditional `...({ to: [] })` in `sendSignal` reds (`notSent` becomes `[]` vs pin `["to"]diff --git a/tests/p1-cli/chat-cli.test.ts b/tests/p1-cli/chat-cli.test.ts
+
+Bound to 6966294 (pair a62400b + 6966294). Test file at HEAD matches 6966294. Mutated, ran `node --import tsx --test --test-name-pattern 'the chat keys the client can send' tests/p1-cli/chat-cli.test.ts`, restored; `git diff --quiet` after.
+
+1. Claim vs both directions. Could I break the two named mutations? No.
+
+Baseline green. Extra pin `["to","nope"]` → red (`actual: ['to']`, `expected: ['nope','to']`). Emptied pin `[]` → red (`actual: ['to']`, `expected: []`). Edge adding a key the sample does not emit also moves `notSent` and reds. Client sending a key the edge does not accept reds only when that key is in the sample (`unknownToEdge`). Unconditional `...({ to: [] })` in `sendSignal` reds (`notSent` becomes `[]` vs pin `["to"]`).
+
+The comment at tests/p1-cli/chat-cli.test.ts:289-292 is stronger than those mutations: "When the client learns one, remove it here or the test below goes red." That is false for an optional spread. I added
+
+```
+...((request.command as { to?: unknown }).to === undefined ? {} : { to: ... })
+```
+
+in `sendSignal` and left the everything object alone: green. Same spread plus `to` on the everything payload: red (`actual: []`, `expected: ['to']`). So "client learned `to`" is gated only if someone also updates the typed sample. `sendSignal` rebuilds and drops unnamed fields (command-client.ts:1240-1255); the test never asks for `to`, so "does not send yet" is "we did not set it", not "the client cannot emit it".
+
+Drift the test does not catch: teach `sendSignal` an optional chat key (the L2 `to` list, or a new `foo` the edge does not accept) and do not add that key to the everything object. Pin and subset stay green. Presence-only: a type change on an already-emitted key is invisible here.
+
+2. Three restored lines vs 41d0b8c. Could I find a leftover clobber? No.
+
+a62400b turned every `const captured: Captured[] = [];` into `= ["to"];` (lines 232, 360, 394 in that tree). 6966294 restored all three. Byte-identical to 41d0b8c (same hashes: 2-space lines `6a93582ae9c6`, 4-space loop line `c09aab6dae44`). `git diff 41d0b8c 6966294 -- tests/p1-cli/chat-cli.test.ts` is only the intended subset/pin hunk; no other collateral in the file. DIFF.patch is that net.
+
+3. Pin location. I would not generate it from src/cloud/channels.ts.
+
+That module is the slug/purpose copy. It does not export `CHAT_SIGNAL_OPTIONAL_KEYS` and does not know what `sendSignal` spreads. A client-side list there would be another typed array the rebuild can drift from — the failure the comment already names. Auto-subtracting `edgeKeys - emitted` would make the pin tautological. The pin belongs in the test as the named lag.
+
+What I would change: put `to` on the everything payload (type-widened; sendSignal currently drops it). Then "not sent yet" means asked-and-dropped, and adding the spread without removing the pin goes red. Leave the pin hardcoded.
+
+4. Anything else.
+
+`notSent`'s `deepEqual` has no message; `unknownToEdge` does. The everything object is a typed list of the three keys `samples` already names; `emitted ∪ pin` reconstructs the edge list, with the emitted side measured from one sample rather than from `sendSignal`'s field list. CLI `--to` is the scalar recipient; the pin's `to` is the L2 list — the comment's parenthetical is enough. Did not rerun the full 472.
+
+VERDICT: PASS

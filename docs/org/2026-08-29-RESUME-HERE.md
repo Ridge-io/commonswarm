@@ -2137,3 +2137,10 @@ I pushed it with 4 reds, then restored the lines in `6966294` (472/472). Both co
 (scratchpad `arms-posthoc-6966294`), verdicts to be recorded here. Rule: a gate chain aborts on
 any red; an edit's restore uses the same unique anchor as its mutation, never a generic pattern;
 rerun the FILE and compare to the baseline count before commit.
+
+**Post-hoc arms on a62400b+6966294 (the drift-gate repair): PASS/PASS.** Both confirmed the three
+restored lines are byte-identical to 41d0b8c and the net diff is only the subset/pin hunk; both
+agree the pin belongs in the test (generating it would be tautological); both note the `notSent`
+assertion lacks a failure message (a nit, not fixed). Grok's suggestion for a later lane: put `to`
+on the "everything" payload so "not sent yet" means asked-and-dropped. Evidence
+`docs/evidence/2026-09-05-chat-client/arms-posthoc-6966294/`.

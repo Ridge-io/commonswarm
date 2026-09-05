@@ -1,0 +1,16 @@
+`diff --git a/tests/p1-cli/chat-cli.test.ts b/tests/p1-cli/chat-cli.test.ts`
+
+1. **Is the new claim honest and does the test discriminate in both directions?**
+Yes, the claim is mathematically honest and ensures that `edgeKeys` is the exact disjoint union of `emitted` and the pin. It discriminates in both directions: adding an extra key to the pin causes a mismatch against `notSent` (red), and emptying the pin while `"to"` remains un-emitted also causes a mismatch (red).
+**Drift NOT caught:** The test strictly inspects key *presence* via `Object.keys()`. If the edge changes the expected *data type* for an existing key (e.g., changing `"to"` from a `string` to an `Array<string>`), this test will stay green despite the semantic drift. Furthermore, if the CLI implements a new option but the developer forgets to update the test's `postedCommand` arguments to trigger it, the key will incorrectly end up in `notSent`. If the developer blindly adds the key to the pin to make the test pass, the test stays green while falsely claiming the client "does not send it yet".
+
+2. **Are the three restored lines byte-identical to 41d0b8c? Any other collateral in the file?**
+Yes, the three clobbered lines were fully restored to `const captured: Captured[] = [];`, which is byte-identical to their state in `41d0b8c`. There is absolutely no other collateral in the file; the only remaining delta between `41d0b8c` and `6966294` is the intentional test logic change and the new constant.
+
+3. **Does the pin belong in the test, or should it be generated from src/cloud/channels.ts? Say what you would change, if anything.**
+The pin absolutely belongs in the test. If it were dynamically generated from `src/cloud/channels.ts` (e.g., by automatically subtracting `emitted` from `edgeKeys`), the test would tautologically pass every time the edge introduced a new feature. The hardcoded pin acts as an "acknowledgement required" barrier, purposefully breaking the build to force the client team to notice and document unhandled edge drift. I would not change its hardcoded nature or location.
+
+4. **Anything else wrong in the diff.**
+The second assertion (`assert.deepEqual(notSent, [...EDGE_CHAT_KEYS_NOT_SENT_YET].sort());`) is missing a custom failure message. Since this is the exact assertion designed to fail when the edge adds a new key, it should include a helpful diagnostic string like `"The edge accepts new optional chat keys not yet supported by the client. Add them to EDGE_CHAT_KEYS_NOT_SENT_YET."`
+
+VERDICT: PASS
