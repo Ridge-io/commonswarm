@@ -37,10 +37,12 @@ import ProviderButtons from "../auth/ProviderButtons.astro";
       <input id="invite-email" type="email" autocomplete="email" required placeholder="you@example.com" />
       <button class="invite-onramp__button" type="submit">Email me a sign-in link</button>
     </form>
-    <div class="invite-onramp__divider" aria-hidden="true"><span>or</span></div>
-    <div class="invite-onramp__providers">
-      <ProviderButtons buttonClass="invite-onramp__button invite-onramp__button--quiet" />
-    </div>
+    <ProviderButtons
+      buttonClass="invite-onramp__button invite-onramp__button--quiet"
+      listClass="invite-onramp__providers"
+    >
+      <div slot="before" class="invite-onramp__divider" aria-hidden="true"><span>or</span></div>
+    </ProviderButtons>
     <p class="invite-onramp__status" data-auth-status role="status" aria-live="polite"></p>
     <p class="invite-onramp__error" data-auth-error role="alert" hidden></p>
   </section>
@@ -99,7 +101,6 @@ import ProviderButtons from "../auth/ProviderButtons.astro";
     CommandOutcomeUnknown,
     EmailAddressRejected,
     EmailRateLimited,
-    NoDeployment,
     acceptWorkspaceInvitation,
     currentSession,
     deployment,
@@ -319,7 +320,13 @@ import ProviderButtons from "../auth/ProviderButtons.astro";
         button.setAttribute("aria-busy", "true");
         try {
           await signInWithProvider(id, redirect.href);
-        } catch (caught) {
+        } catch {
+          /*
+           * No NoDeployment branch here, and it is not an oversight. Two things make that
+           * state unreachable from this button: the buttons exist only when the BUILD read an
+           * enabled provider off a deployment, and `boot()` above shows the "unusable" panel
+           * and never reveals this view when `deployment()` is null at runtime.
+           */
           const error = one<HTMLElement>("[data-auth-error]");
           if (error) {
             let name = "That";
@@ -328,9 +335,7 @@ import ProviderButtons from "../auth/ProviderButtons.astro";
             } catch {
               name = "That";
             }
-            error.textContent = caught instanceof NoDeployment
-              ? "Open this link on commonswarm.com."
-              : `${name} sign-in could not start. Try the email option.`;
+            error.textContent = `${name} sign-in could not start. Try the email option.`;
             error.hidden = false;
           }
           button.disabled = false;

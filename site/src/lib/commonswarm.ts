@@ -25,7 +25,7 @@
  */
 
 import { createClient, type SupabaseClient, type Session } from "@supabase/supabase-js";
-import { authProvider } from "./auth-providers.js";
+import { authProvider, type AuthProviderId } from "./auth-providers.js";
 import { HUMAN_SEEN_BATCH_MAX } from "./human-seen-reporter.js";
 import {
   agentActivityTopic,
@@ -223,8 +223,10 @@ export async function subscribeAgentActivity(
  *   400 {"code":400,"error_code":"validation_failed",
  *        "msg":"Unsupported provider: provider is not enabled"}
  *
- * No handler here can improve that page. Enable the provider in the dashboard FIRST, then set
- * the build flag — docs/design/2026-09-04-GOOGLE-SIGNIN.md gives the order and the reason.
+ * No handler here can improve that page, which is why nothing chooses the buttons but the
+ * deployment itself: ProviderButtons.astro reads GoTrue's /auth/v1/settings at build time, so
+ * a provider that is off cannot get a button. Enable it in the dashboard, then rebuild and
+ * deploy — docs/design/2026-09-04-GOOGLE-SIGNIN.md gives the order and the reason.
  */
 export async function signInWithProvider(
   provider: string,
@@ -240,18 +242,18 @@ export async function signInWithProvider(
   if (error) throw new Error(error.message);
 }
 
-export async function signInWithGitHub(redirectTo: string): Promise<void> {
-  await signInWithProvider("github", redirectTo);
-}
-
-/**
- * Google is the second OAuth door, and it is the same door as GitHub for anyone whose Google
- * address already has a CommonSwarm account: Supabase links a second identity to the existing
- * user when the provider returns a VERIFIED email that matches. CommonSwarm adds no linking
- * logic of its own — see the spec for what that rule does and does not promise.
+/*
+ * The one remaining named provider, and it is typed rather than written.
+ *
+ * `AuthProviderId` is the union AUTH_PROVIDERS declares, so removing GitHub from that array
+ * makes this line a tsc error instead of a button that throws under a reader's finger. The
+ * wrapper exists because /app (LiveDashboard.astro) calls it and belongs to another lane;
+ * when that page renders ProviderButtons, this goes with it.
  */
-export async function signInWithGoogle(redirectTo: string): Promise<void> {
-  await signInWithProvider("google", redirectTo);
+const GITHUB: AuthProviderId = "github";
+
+export async function signInWithGitHub(redirectTo: string): Promise<void> {
+  await signInWithProvider(GITHUB, redirectTo);
 }
 
 /**

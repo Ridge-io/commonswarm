@@ -11,29 +11,51 @@
  * ONE HANDLER, NOT ONE PER PROVIDER. The consumer binds `[data-signin-provider]` once and
  * reads the id off the element, so adding a provider needs no script change.
  *
- * THE FLAG IS READ AT BUILD TIME, WHICH IS THE WHOLE COST OF THIS DESIGN. astro.config.mjs
- * sets `output: "static"`, so the markup is fixed when the site is built. Turning Google on
- * is: set PUBLIC_SWARM_AUTH_PROVIDERS, rebuild, deploy. A runtime flag would need the page to
- * ask GoTrue `/auth/v1/settings` on every load, which buys a dashboard-only flip at the price
- * of a blocking request and a new failure mode on the sign-in path. Rejected; see the spec.
+ * THE SET COMES FROM THE DEPLOYMENT, NOT FROM A FLAG. `astro.config.mjs` sets
+ * `output: "static"`, so this frontmatter runs once, at build, in Node. It asks the very
+ * GoTrue the buttons will point at which providers are enabled, and renders those. Turning
+ * Google on is one dashboard toggle plus a rebuild and deploy; there is no second switch to
+ * forget, and no build can publish a button for a provider that is off — that button would
+ * navigate the reader to raw JSON, which no catch block can improve.
+ *
+ * NO BACKEND CONFIGURED MEANS NO BUTTONS, HALF A BACKEND MEANS NO BUILD. astro.config.mjs
+ * states that a build with neither PUBLIC_SUPABASE_ variable set must succeed: it is the honest
+ * "not pointed at a backend" build, and it offers no door. One variable set and the other empty
+ * is a typo rather than a state, so it fails. See enabledProvidersForBuild.
+ *
+ * ZERO PROVIDERS MUST TAKE THE PAGE FURNITURE WITH IT. A host page puts a divider, a heading,
+ * or an "or" above these buttons. Leaving that behind when there are no buttons is a page that
+ * promises a choice it does not offer, and it is reachable in production: an operator who
+ * turns every OAuth provider off in the dashboard gets it on the next build. So the host
+ * passes that furniture in the `before` slot and the wrapper class in `listClass`, and this
+ * component renders BOTH or NEITHER.
  */
-import { enabledProviders } from "../../lib/auth-providers";
+import { enabledProvidersForBuild, type AuthProvider } from "../../lib/auth-providers";
 
 interface Props {
   /** Class for each button, so a host page keeps its own visual language. */
   buttonClass?: string;
+  /** Class for the element that wraps the buttons. Omitted, the wrapper carries no class. */
+  listClass?: string;
 }
 
-const { buttonClass = "" } = Astro.props;
+const { buttonClass = "", listClass = "" } = Astro.props;
 
-// The literal name is deliberate: Vite only substitutes a statically-written
-// `import.meta.env.PUBLIC_*`. AUTH_PROVIDERS_ENV_VAR carries the same string for docs and
-// tests, and provider-buttons.observer.test.ts fails if the two ever differ.
-const providers = enabledProviders(import.meta.env.PUBLIC_SWARM_AUTH_PROVIDERS);
+const providers: readonly AuthProvider[] = await enabledProvidersForBuild({
+  url: import.meta.env.PUBLIC_SUPABASE_URL,
+  anonKey: import.meta.env.PUBLIC_SUPABASE_ANON_KEY,
+});
 ---
 
-{providers.map((provider) => (
-  <button class={buttonClass} type="button" data-signin-provider={provider.id}>
-    {provider.label}
-  </button>
-))}
+{providers.length > 0 && (
+  <Fragment>
+    <slot name="before" />
+    <div class={listClass || undefined}>
+      {providers.map((provider) => (
+        <button class={buttonClass} type="button" data-signin-provider={provider.id}>
+          {provider.label}
+        </button>
+      ))}
+    </div>
+  </Fragment>
+)}
