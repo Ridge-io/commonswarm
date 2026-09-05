@@ -125,10 +125,24 @@ jobs:
           echo "value=$range" >> "$GITHUB_OUTPUT"
           echo "checking range: $range"
 
+      # A GREEN CHECK THAT AUDITED NOTHING IS NOT A PASS A READER SHOULD MISREAD. The checker exits
+      # 0 on an empty range, which is correct — there was nothing to check — but in the checks UI it
+      # is indistinguishable from a range that was checked and was clean. So say it out loud as an
+      # annotation. This is where the force-push-to-default-branch ceiling above becomes visible
+      # instead of silent.
       - name: Check agent trailers
         env:
           RANGE: ${{ steps.range.outputs.value }}
-        run: ./scripts/check-agent-trailers.sh --range "$RANGE"
+        run: |
+          set -euo pipefail
+          out=$(./scripts/check-agent-trailers.sh --range "$RANGE" 2>&1) || {
+            printf '%s\n' "$out"; exit 1
+          }
+          printf '%s\n' "$out"
+          case "$out" in
+            *"nothing to check"*)
+              echo "::warning title=Agent trailers audited nothing::the range [$RANGE] was empty, so this check is green without having read any commit" ;;
+          esac
 
       # Informational only, and deliberately after the gate. Never fails the run: a summary that
       # can fail is a second gate nobody reviewed.

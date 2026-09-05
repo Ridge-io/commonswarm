@@ -234,6 +234,12 @@ exemption the first squash merge after this lands turns `main` red for a message
 The exemption keys on that committer address, which `scripts/check-commit-identity.sh` already
 allows for the same reason.
 
+It is **narrow on purpose**: the author must not be that address as well. A squash merge keeps the
+PR author (measured on `main`: `cf17894` and `297f1a4` are committed by GitHub and authored by
+`tom@ridge.io`), while somebody running `git config user.email noreply@github.com` to slip past the
+gate would set both. That closes the one-line evasion without touching the case the exemption exists
+for.
+
 ---
 
 ## No backfill
@@ -252,40 +258,58 @@ If you need to know who wrote something older, say "not established" and stop.
 
 Two things keep the gate off old work, and both are needed.
 
-The workflow resolves only the commits a push or PR **adds**, so it never walks all of history.
+The workflow resolves only the commits a push or PR **adds**, so it never walks all of history. It
+resolves that range from `github.event.before` or the PR base, and falls back to `origin/main..HEAD`
+and then to `HEAD~1..HEAD` when neither is reachable — a force-push to the default branch lands on
+the first fallback and yields an EMPTY range, and the last fallback reads only one commit. The job
+prints a warning annotation when the range it checked was empty, because a green check that audited
+nothing looks the same as one that audited everything.
 That alone is not enough: a `pull_request` event checks `base.sha..HEAD`, which contains every
 commit a branch already had before this landed. Enumerated 2026-09-04 on this checkout, eleven
 branches carried twenty non-merge commits with no `Agent-Model` between them. Every one would have
 failed the first time it was pushed or opened as a PR, for work written before the rule existed.
 
-So the checker also skips by what the commit itself contains:
+So the checker also skips, and it asks **two** questions:
 
-> **A commit whose own tree does not contain `scripts/hooks/prepare-commit-msg` is not required to
-> carry trailers.** Every commit that does contain it is.
+> **A commit must carry trailers only when BOTH are true: `scripts/hooks/prepare-commit-msg` is in
+> its own tree, and it was authored at or after `AGENT_TRAILER_GRACE_BEFORE`.** Fail either and it
+> is skipped.
 
-**A date was tried first and does not work.** Six of those twenty commits were authored *after* the
-hour this feature was written, by five lanes that were running at that moment off an older `main`.
-Their checkouts had no hook and could not have had one, so a cutoff timestamp failed work for a rule
-that did not exist where it was written. Moving the date forward does not fix it either: a cutoff in
-the future skips every commit and leaves the gate green while checking nothing. The commit's own
-tree answers the question exactly, with no clock and nothing to maintain. Once this is on `main`,
-every commit built on it carries the hook and is checked; there is no cutoff to update and no window
-in which the rule is wrong.
+**Neither question is enough on its own, and both failures were measured rather than argued.**
 
-The path is a constant, `AGENT_TRAILER_HOOK_PATH` in `scripts/lib/agent-trailer-vocab.sh`. The gate
-reads it, `--help` prints it, the failure message names it, and `npm run hooks:install` installs
-into the same directory, so the enforcement and the sentences describing it cannot drift apart.
+*The tree alone loses to a rebase.* A rebase replays an old commit onto a new base, so the commit's
+tree picks up the hook from that base, while `git rebase` never runs `prepare-commit-msg`. The old
+work ends up untagged **and** on the checked side. Measured 2026-09-04 in a fixture repo: a commit
+with no hook in its tree had one after `git rebase` onto a base that carried it, still with no
+trailers. That would force exactly the backfill this page forbids, on every old lane that rebases in
+order to merge — which is all of them.
 
+*The date alone loses to concurrent lanes.* Six of those twenty commits were authored **after** the
+hour this feature was written, by five lanes running at that moment off an older `main`. Their
+checkouts had no hook and could not have had one. Moving the date forward does not help either: a
+cutoff in the future skips every commit and leaves the gate green while checking nothing, so the
+self-test asserts the cutoff is in the past.
+
+Together they cover each other, and neither needs maintaining: the date never moves, and the tree
+answers for anything built before this landed.
+
+Both live in `scripts/lib/agent-trailer-vocab.sh` as `AGENT_TRAILER_HOOK_PATH` and
+`AGENT_TRAILER_GRACE_BEFORE`. The gate reads them, `--help` prints them, the failure message names
+them, and `npm run hooks:install` installs into the same directory, so the enforcement and the
+sentences describing it cannot drift apart.
+
+- **Author date, not committer date.** A rebase rewrites the committer date and leaves the author
+  date alone, which is the same reason the tree test is not enough by itself.
 - **Skipped commits are counted and reported separately**, never folded into the checked count:
-  `agent-trailers OK: 3 commit(s) checked in ...; 1 skipped as having no ... in their own tree`. A
-  gate that silently drops commits from its own total tells a reader that work was audited when it
-  was not.
-- **The path must name a real file.** A constant pointing at nothing would skip every commit and
-  leave the gate green while checking nothing. The self-test carries one assertion whose only job is
-  to fail on that, because the fixtures are built from the constant and therefore cannot notice it.
-- **Scope.** Deleting the hook would grant a commit grace. That is the same accident-guard scope as
-  the rest of this — it catches a checkout that never had the hook, not somebody who means to evade
-  it — and unlike a back-dated commit, deleting the hook is a visible line in the diff.
+  `agent-trailers OK: 3 commit(s) checked in ...; 1 skipped as predating the rule (...)`. A gate that
+  silently drops commits from its own total tells a reader that work was audited when it was not.
+- **The path must name a real file and the cutoff must be in the past.** Either one broken would
+  skip every commit and leave the gate green while checking nothing. The self-test carries one
+  assertion for each, because its fixtures are built from those constants and so cannot notice them
+  going wrong.
+- **Scope.** Deleting the hook, or back-dating a commit, would grant it grace. That is the same
+  accident-guard scope as the rest of this: it catches a checkout that never had the hook, not
+  somebody who means to evade it.
 
 ---
 
