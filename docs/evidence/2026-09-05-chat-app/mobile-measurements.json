@@ -1,0 +1,390 @@
+{
+ "_what": "Built /app in sample mode (site/.env moved aside), served from site/dist over python http.server, measured in Chrome through browser-harness. Sample mode is the only way to reach a rendered feed without a signed-in production session.",
+ "_ruling": "2026-09-04: the standing in-flow header is the 73px app bar. Everything the channel head used to stack below it floats over the transcript instead of taking a row.",
+ "_longest_legal_slug": "The label is set to 32 'a' characters, which is CHANNEL_SLUG_MAX in supabase/functions/_shared/channels.ts. The DOM text is written directly for the probe; app state is untouched.",
+ "390x844": {
+  "viewport": {
+   "width": 390,
+   "height": 844
+  },
+  "appBar": {
+   "top": 115.1,
+   "bottom": 188.1,
+   "left": 0,
+   "right": 390,
+   "width": 390,
+   "height": 73,
+   "display": "grid",
+   "position": "static"
+  },
+  "railChannelListHeight": 0,
+  "channelHeadFloating": {
+   "top": 188.1,
+   "bottom": 240.1,
+   "left": 190,
+   "right": 390,
+   "width": 200,
+   "height": 52,
+   "display": "flex",
+   "position": "absolute"
+  },
+  "feedToolbar": {
+   "top": 188.1,
+   "bottom": 228.1,
+   "left": 0,
+   "right": 390,
+   "width": 390,
+   "height": 40,
+   "display": "flex",
+   "position": "sticky"
+  },
+  "channelSwitch": {
+   "top": 188.1,
+   "bottom": 228.1,
+   "left": 16,
+   "right": 107.3,
+   "width": 91.3,
+   "height": 40,
+   "display": "flex",
+   "position": "static"
+  },
+  "channelSwitchLabel": "#all-signals",
+  "filterRow": {
+   "clientWidth": 147,
+   "scrollWidth": 194,
+   "overflowX": "auto"
+  },
+  "allFilterFullyOnScreen": true,
+  "firstMessageTop": 240.1,
+  "composer": {
+   "top": 761,
+   "bottom": 824,
+   "left": 0,
+   "right": 390,
+   "width": 390,
+   "height": 63,
+   "display": "grid",
+   "position": "static"
+  },
+  "composerReplyBarHidden": true,
+  "threadToggle": {
+   "top": 463.8,
+   "bottom": 491.2,
+   "left": 16,
+   "right": 68.6,
+   "width": 52.6,
+   "height": 27.4,
+   "display": "block",
+   "position": "static"
+  },
+  "documentHorizontalOverflow": false
+ },
+ "390x844-longest-legal-slug-32-chars": {
+  "viewport": {
+   "width": 390,
+   "height": 844
+  },
+  "appBar": {
+   "top": 115.1,
+   "bottom": 188.1,
+   "left": 0,
+   "right": 390,
+   "width": 390,
+   "height": 73,
+   "display": "grid",
+   "position": "static"
+  },
+  "railChannelListHeight": 0,
+  "channelHeadFloating": {
+   "top": 188.1,
+   "bottom": 240.1,
+   "left": 190,
+   "right": 390,
+   "width": 200,
+   "height": 52,
+   "display": "flex",
+   "position": "absolute"
+  },
+  "feedToolbar": {
+   "top": 188.1,
+   "bottom": 228.1,
+   "left": 0,
+   "right": 390,
+   "width": 390,
+   "height": 40,
+   "display": "flex",
+   "position": "sticky"
+  },
+  "channelSwitch": {
+   "top": 188.1,
+   "bottom": 228.1,
+   "left": 16,
+   "right": 144,
+   "width": 128,
+   "height": 40,
+   "display": "flex",
+   "position": "static"
+  },
+  "channelSwitchLabel": "#aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa",
+  "filterRow": {
+   "clientWidth": 110,
+   "scrollWidth": 194,
+   "overflowX": "auto"
+  },
+  "allFilterFullyOnScreen": true,
+  "firstMessageTop": 240.1,
+  "composer": {
+   "top": 781,
+   "bottom": 844,
+   "left": 0,
+   "right": 390,
+   "width": 390,
+   "height": 63,
+   "display": "grid",
+   "position": "static"
+  },
+  "composerReplyBarHidden": true,
+  "threadToggle": {
+   "top": 463.8,
+   "bottom": 491.2,
+   "left": 16,
+   "right": 68.6,
+   "width": 52.6,
+   "height": 27.4,
+   "display": "block",
+   "position": "static"
+  },
+  "documentHorizontalOverflow": false
+ },
+ "320x568": {
+  "viewport": {
+   "width": 320,
+   "height": 568
+  },
+  "appBar": {
+   "top": 120.8,
+   "bottom": 177.8,
+   "left": 0,
+   "right": 320,
+   "width": 320,
+   "height": 57,
+   "display": "grid",
+   "position": "static"
+  },
+  "railChannelListHeight": 0,
+  "channelHeadFloating": {
+   "top": 177.8,
+   "bottom": 229.8,
+   "left": 120,
+   "right": 320,
+   "width": 200,
+   "height": 52,
+   "display": "flex",
+   "position": "absolute"
+  },
+  "feedToolbar": {
+   "top": 177.8,
+   "bottom": 217.8,
+   "left": 0,
+   "right": 320,
+   "width": 320,
+   "height": 40,
+   "display": "flex",
+   "position": "sticky"
+  },
+  "channelSwitch": {
+   "top": 177.8,
+   "bottom": 217.8,
+   "left": 16,
+   "right": 107.3,
+   "width": 91.3,
+   "height": 40,
+   "display": "flex",
+   "position": "static"
+  },
+  "channelSwitchLabel": "#all-signals",
+  "filterRow": {
+   "clientWidth": 77,
+   "scrollWidth": 194,
+   "overflowX": "auto"
+  },
+  "allFilterFullyOnScreen": true,
+  "firstMessageTop": 229.8,
+  "composer": {
+   "top": 781,
+   "bottom": 844,
+   "left": 0,
+   "right": 320,
+   "width": 320,
+   "height": 63,
+   "display": "grid",
+   "position": "static"
+  },
+  "composerReplyBarHidden": true,
+  "threadToggle": {
+   "top": 453.5,
+   "bottom": 480.9,
+   "left": 16,
+   "right": 68.6,
+   "width": 52.6,
+   "height": 27.4,
+   "display": "block",
+   "position": "static"
+  },
+  "documentHorizontalOverflow": false
+ },
+ "320x568-longest-legal-slug-32-chars": {
+  "viewport": {
+   "width": 320,
+   "height": 568
+  },
+  "appBar": {
+   "top": 120.8,
+   "bottom": 177.8,
+   "left": 0,
+   "right": 320,
+   "width": 320,
+   "height": 57,
+   "display": "grid",
+   "position": "static"
+  },
+  "railChannelListHeight": 0,
+  "channelHeadFloating": {
+   "top": 177.8,
+   "bottom": 229.8,
+   "left": 120,
+   "right": 320,
+   "width": 200,
+   "height": 52,
+   "display": "flex",
+   "position": "absolute"
+  },
+  "feedToolbar": {
+   "top": 177.8,
+   "bottom": 217.8,
+   "left": 0,
+   "right": 320,
+   "width": 320,
+   "height": 40,
+   "display": "flex",
+   "position": "sticky"
+  },
+  "channelSwitch": {
+   "top": 177.8,
+   "bottom": 217.8,
+   "left": 16,
+   "right": 144,
+   "width": 128,
+   "height": 40,
+   "display": "flex",
+   "position": "static"
+  },
+  "channelSwitchLabel": "#aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa",
+  "filterRow": {
+   "clientWidth": 40,
+   "scrollWidth": 194,
+   "overflowX": "auto"
+  },
+  "allFilterFullyOnScreen": true,
+  "firstMessageTop": 229.8,
+  "composer": {
+   "top": 505,
+   "bottom": 568,
+   "left": 0,
+   "right": 320,
+   "width": 320,
+   "height": 63,
+   "display": "grid",
+   "position": "static"
+  },
+  "composerReplyBarHidden": true,
+  "threadToggle": {
+   "top": 453.5,
+   "bottom": 480.9,
+   "left": 16,
+   "right": 68.6,
+   "width": 52.6,
+   "height": 27.4,
+   "display": "block",
+   "position": "static"
+  },
+  "documentHorizontalOverflow": false
+ },
+ "1440x900-desktop": {
+  "viewport": {
+   "width": 1440,
+   "height": 900
+  },
+  "appBar": {
+   "top": 47.7,
+   "bottom": 568,
+   "left": 0,
+   "right": 296,
+   "width": 296,
+   "height": 520.3,
+   "display": "flex",
+   "position": "static"
+  },
+  "railChannelListHeight": 36,
+  "channelHeadFloating": {
+   "top": 47.7,
+   "bottom": 123.7,
+   "left": 296,
+   "right": 1440,
+   "width": 1144,
+   "height": 76,
+   "display": "flex",
+   "position": "static"
+  },
+  "feedToolbar": {
+   "top": 123.7,
+   "bottom": 168.7,
+   "left": 296,
+   "right": 1440,
+   "width": 1144,
+   "height": 45,
+   "display": "flex",
+   "position": "sticky"
+  },
+  "channelSwitch": {
+   "top": 0,
+   "bottom": 0,
+   "left": 0,
+   "right": 0,
+   "width": 0,
+   "height": 0,
+   "display": "none",
+   "position": "static"
+  },
+  "channelSwitchLabel": "#all-signals",
+  "filterRow": {
+   "clientWidth": 186,
+   "scrollWidth": 186,
+   "overflowX": "visible"
+  },
+  "allFilterFullyOnScreen": true,
+  "firstMessageTop": 168.7,
+  "composer": {
+   "top": 493,
+   "bottom": 568,
+   "left": 296,
+   "right": 1440,
+   "width": 1144,
+   "height": 75,
+   "display": "grid",
+   "position": "static"
+  },
+  "composerReplyBarHidden": true,
+  "threadToggle": {
+   "top": 314.2,
+   "bottom": 341.6,
+   "left": 340,
+   "right": 392.6,
+   "width": 52.6,
+   "height": 27.4,
+   "display": "block",
+   "position": "static"
+  },
+  "documentHorizontalOverflow": false
+ }
+}

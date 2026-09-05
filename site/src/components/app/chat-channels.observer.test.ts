@@ -1,0 +1,367 @@
+import assert from "node:assert/strict";
+import { readFileSync } from "node:fs";
+import { dirname, join } from "node:path";
+import { fileURLToPath } from "node:url";
+import { test } from "node:test";
+import {
+  CHANNEL_SLUG_MAX,
+  RESERVED_CHANNEL_SLUGS,
+} from "../../../../supabase/functions/_shared/channels.js";
+
+/*
+ * The channel surfaces of the workspace app: the rail, the phone's control, the feed's
+ * narrowing, the composer's stamp, and the thread. Source assertions pin the behaviour;
+ * the built /app artifact proves Astro ships it.
+ *
+ * The claims this file defends, stated so a reader can check them against the system rather
+ * than against another artifact that repeats them:
+ *   1. A channel is an ADDRESS. all-signals shows every message, filed and unfiled.
+ *   2. The narrowing is the QUERY's, so a channel shows the newest messages IN it.
+ *   3. The composer posts where you are reading, with no added chrome and no body parsing.
+ *   4. A refusal shows the server's sentence and is never read for meaning.
+ *   5. A ?c= that names no readable channel never falls back to the unfiltered feed.
+ */
+const componentDir = dirname(fileURLToPath(import.meta.url));
+const siteRoot = join(componentDir, "..", "..", "..");
+const repoRoot = join(siteRoot, "..");
+const dashboard = readFileSync(join(componentDir, "LiveDashboard.astro"), "utf8");
+const client = readFileSync(join(siteRoot, "src", "lib", "commonswarm.ts"), "utf8");
+const commandEdge = readFileSync(
+  join(repoRoot, "supabase", "functions", "command", "index.ts"),
+  "utf8",
+);
+const serverSuite = readFileSync(
+  join(repoRoot, "tests", "p1-server", "chat-signals.test.ts"),
+  "utf8",
+);
+const appHtml = readFileSync(join(siteRoot, "dist", "app", "index.html"), "utf8");
+
+const between = (source: string, start: string, end: string): string => {
+  const startAt = source.indexOf(start);
+  assert.notEqual(startAt, -1, `missing start anchor: ${start}`);
+  const endAt = source.indexOf(end, startAt + start.length);
+  assert.notEqual(endAt, -1, `missing end anchor: ${end}`);
+  return source.slice(startAt, endAt);
+};
+
+/** The key set the command edge's own `exactKeys` check accepts, read from the edge. */
+const edgeKeys = (kind: string): { required: string[]; optional: string[] } => {
+  const block = between(commandEdge, `if (cmd.kind === "${kind}") {`, "return {");
+  const list = (name: string): string[] => {
+    const match = block.match(new RegExp(`const ${name} = \\[([^\\]]*)\\]`));
+    return match === null
+      ? []
+      : match[1]!.split(",").map((entry) => entry.trim().replace(/^"|"$/g, "")).filter(Boolean);
+  };
+  return { required: list("required"), optional: list("optional") };
+};
+
+/**
+ * The keys a literal command object in our source actually sends: `key: value` pairs and
+ * ES shorthand alike, the latter both as `{ slug }` and as the last entry of a longer
+ * object. Missing the shorthand form made this read a command as short one field and gave
+ * a confident failure about a key that was there.
+ */
+const sentKeys = (source: string): string[] => {
+  /* Comments first. This repo keeps the reason beside the code, and prose inside an object
+     literal reads as `word:` to any regex — which is how a comment's own words arrived here
+     as command fields. */
+  const body = source.replace(/\/\*[\s\S]*?\*\//g, "").replace(/\/\/[^\n]*/g, "");
+  const keys = new Set<string>();
+  for (const match of body.matchAll(/(?:^|[{,\s])([a-z_][a-z0-9_]*)\s*:/gi)) keys.add(match[1]!);
+  for (const match of body.matchAll(/[{,]\s*([a-z_][a-z0-9_]*)\s*[,}]/gi)) keys.add(match[1]!);
+  return [...keys].sort();
+};
+
+test("the rail names channels, and `stream` is gone from the app's vocabulary", () => {
+  const rail = between(dashboard, '<aside class="dashboard__rail"', '<section class="dashboard__channel"');
+  assert.match(rail, /<h2 id="dashboard-channels-label">CHANNELS<\/h2>/);
+  /* ~~STREAMS (broadcast)~~ retired 2026-09-05. `stream` is the event log on the wire and in
+     SWARM-CLOUD.md 2.1; this heading was the only place the app showed that word.
+     The negative runs on the BUILT markup, because the source keeps the retired wording in
+     the comment that records the change and a source sweep would fail on our own doctrine. */
+  const builtRail = between(appHtml, 'class="dashboard__rail"', 'class="dashboard__channel"');
+  assert.doesNotMatch(builtRail, /STREAMS/);
+  assert.doesNotMatch(builtRail, /\bstream\b/i);
+  /* all-signals sits above the list because it is not one of them: it is the whole feed. */
+  assert.match(rail, /data-channel-place=""[\s\S]*?aria-current="page"/);
+  assert.match(rail, /<span>all-signals<\/span>/);
+  assert.match(rail, /data-channel-list/);
+  assert.match(rail, /data-channel-new[\s\S]*?aria-label="New channel"/);
+  assert.ok(appHtml.includes("CHANNELS"), "the built /app page must ship the rail heading");
+  assert.ok(appHtml.includes("data-channel-list"), "the built /app page must ship the list");
+});
+
+test("the phone reaches channels without a second standing header row", () => {
+  /* The 2026-09-04 ruling: the 73px app bar is the only standing header. The rail's channel
+     list is hidden on a phone with the rest of the rail, so the control that replaces it
+     rides in the feed toolbar, which floats over the transcript on a negative margin equal
+     to its own height. Its own height must not exceed that band. */
+  assert.match(dashboard, /class="dashboard__channel-switch"[\s\S]*?data-channel-switch/);
+  assert.match(dashboard, /\.dashboard__channel-switch \{\s*display: none;\s*\}/);
+  const mobile = between(
+    dashboard,
+    "@media (max-width: 52rem) {\n    .dashboard__product {",
+    "@media (max-width: 34rem)",
+  );
+  const rule = between(mobile, ".dashboard__channel-switch {", "}");
+  assert.match(rule, /display: inline-flex;/);
+  assert.match(rule, /min-block-size: 2\.5rem;/, "the control may not be taller than the band");
+  const toolbar = between(mobile, ".dashboard__feed-toolbar {", "}");
+  assert.match(toolbar, /min-block-size: 2\.5rem;/);
+  assert.match(toolbar, /margin-block-end: -2\.5rem;/, "the band still takes its height back");
+  assert.ok(appHtml.includes("data-channel-switch"), "the built page ships the phone control");
+});
+
+test("the channel narrowing is the query's, not the rendered list's", () => {
+  const page = between(dashboard, "const signalPage = async (", "const initials =");
+  assert.match(page, /channelId: string \| null,/);
+  assert.match(page, /if \(channelId !== null\) query = query\.eq\("channel_id", channelId\);/);
+  /* Both readers carry the channel with the request and check it again when it lands, the
+     same way they check the workspace. Without that, a page fetched for one channel can be
+     applied under another channel's name. */
+  for (const anchor of ["const loadSignals = async (", "const refreshLatestSignals = async ("]) {
+    const reader = between(dashboard, anchor, "};");
+    assert.match(reader, /const channelId = activeChannelId;/, anchor);
+    assert.match(reader, /channelId !== activeChannelId/, anchor);
+  }
+  /* And nothing filters channels in the browser: a client-side channel filter would say
+     "this channel" and mean "among the loaded page", which is the defect the shipped
+     All / Broadcast / Direct-to-you filter already has and must not spread. */
+  assert.doesNotMatch(dashboard, /filterSignalsByChannel/);
+  const feedLib = readFileSync(join(siteRoot, "src", "lib", "signal-feed.ts"), "utf8");
+  assert.doesNotMatch(feedLib, /export const filterSignalsByChannel/);
+});
+
+test("all-signals shows every message and names the channel each one is in", () => {
+  const feed = between(dashboard, "const buildMessageRow = (", "previousSignalIds = new Set(");
+  /* The default is the whole feed: nothing narrows unless a channel is chosen, so a filed
+     message is visible from all-signals and is not hidden behind its channel. */
+  assert.match(dashboard, /let activeChannelId: string \| null = null;/);
+  assert.match(
+    feed,
+    /const rowChannel = activeChannelId === null && signal\.channelId !== null/,
+  );
+  assert.match(feed, /class = "dashboard__message-channel"|className = "dashboard__message-channel"/);
+  assert.match(feed, /selectChannel\(rowChannel\.channelId\)/);
+});
+
+test("the composer stamps the channel being read and gains no chrome for it", () => {
+  const composer = between(dashboard, '<form class="dashboard__composer"', "</form>");
+  /* R10 and the 2026-09-04 operator direction: no dropdown, no TO row, no second bar. */
+  assert.doesNotMatch(composer, /<select/);
+  assert.doesNotMatch(composer, /data-composer-channel-select|data-composer-audience/);
+  /* And no `#` parsing of the body, ever: bodies contain `#` legitimately (a Markdown
+     heading, an issue reference), so a parser cannot tell an address from prose. */
+  assert.doesNotMatch(dashboard, /rawBody[^\n]*match\([^\n]*#/);
+  const placement = between(dashboard, "const replyRoot = threadReplyRoot;", "const placementChannelId");
+  assert.match(placement, /const postChannel = replyRoot === null \? activeChannel\(\) : null;/);
+  assert.match(placement, /postChannel === null \? \{\} : \{ channel: postChannel\.slug \}/);
+  /* A reply's channel is the SERVER's to decide, from the root. The client sending both is
+     refused by the validator rather than reconciled, so the client sends neither. */
+  assert.match(placement, /\{ threadRootId: replyRoot\.id, broadcastToChannel: replyBroadcast \}/);
+  const sync = between(dashboard, "const syncComposerPlacement = (", "const renderChannelHead");
+  assert.match(sync, /input\.placeholder = `Message \$\{channelLabel\(channel\.slug\)\}`;/);
+  assert.match(sync, /input\.setAttribute\("aria-label", `Message in \$\{channelLabel\(channel\.slug\)\}`\)/);
+});
+
+test("a thread reply is offered only where the server would accept one", () => {
+  const feed = between(dashboard, "const buildMessageRow = (", "previousSignalIds = new Set(");
+  assert.match(
+    feed,
+    /const canReply = !sampleMode && session !== null && !isReply &&\s*signal\.threadRootId === null && signalIsBroadcast\(signal\)/,
+  );
+  /* The same three rules the edge applies to a thread reply, in chatSignalShapeProblem:
+     it is not directed, it is not itself already inside a thread, and it is not working-on.
+     The kind is the browser's own (a broadcast post is a note), so only the first two are
+     the client's to gate. */
+  const edgeRules = readFileSync(
+    join(repoRoot, "supabase", "functions", "_shared", "channels.ts"),
+    "utf8",
+  );
+  assert.match(edgeRules, /it cannot also be addressed to one recipient/);
+  /* A tag in a reply body would make it directed, so the composer refuses instead of
+     silently posting a message that means the opposite of what the writer sees. */
+  const submit = between(
+    dashboard,
+    'one<HTMLFormElement>("[data-composer]")?.addEventListener("submit"',
+    "const recipients = address.recipients.length === 0",
+  );
+  assert.match(submit, /threadReplyRoot !== null && address\.recipients\.length > 0/);
+  /* The source splits the sentence over two string literals, so the join is undone before
+     the sentence is read. Asserting the halves separately would let them drift apart. */
+  const joined = submit.replace(/" \+\s*\n\s*"/g, "");
+  assert.match(joined, /it cannot also be sent to one person\. Remove the tag/);
+});
+
+test("replies render collapsed under their root and expand in place", () => {
+  const feed = between(dashboard, "for (const group of groupSignalThreads(", "previousSignalIds = new Set(");
+  assert.match(feed, /threadReplyCountLabel\(group\.replies\.length\)/);
+  assert.match(feed, /toggle\.setAttribute\("aria-expanded", String\(expanded\)\)/);
+  assert.match(feed, /toggle\.setAttribute\("aria-controls", replies\.id\)/);
+  /* Expanding is a hidden toggle on a list that is already built, not a re-render: the
+     reader's scroll position and every open "Show more" survive it. */
+  assert.match(feed, /replies\.hidden = !next;/);
+  assert.doesNotMatch(feed, /renderFeed\(\)/);
+  assert.match(feed, /expandedThreadIds\.add\(group\.root\.id\)/);
+});
+
+test("a ?c= that names no readable channel never shows the unfiltered feed", () => {
+  const apply = between(dashboard, "const applyChannelFromUrl = (", "const cancelThreadReply");
+  assert.match(apply, /unknownChannelId = found === null \? requested : null;/);
+  /* renderFeed stops before it renders a row. The loaded rows ARE the whole workspace's,
+     because a channel that cannot be resolved cannot narrow the query, so the honest state
+     is the only thing standing between the reader and a feed under the wrong name. */
+  const render = between(dashboard, 'const renderFeed = (change: "history"', "const now = Date.now();");
+  assert.match(render, /if \(unknownChannelId !== null\) \{\s*renderUnknownChannel\(\);\s*return;\s*\}/);
+  const unknown = between(dashboard, "const renderUnknownChannel = (", "const renderFeed =");
+  assert.match(unknown, /is not in this workspace, or one you cannot read/);
+  assert.match(unknown, /selectChannel\(null\)/);
+  /* The bad id STAYS in the address bar. Dropping it would turn the link into the
+     unfiltered feed on the next reload, which is the same failure one step later. */
+  const url = between(dashboard, "const syncChannelUrl = (", "const applyChannelFromUrl");
+  assert.match(url, /const channelId = unknownChannelId \?\? activeChannelId;/);
+});
+
+test("the URL round-trips the workspace and the channel by id", () => {
+  const url = between(dashboard, "const syncChannelUrl = (", "const applyChannelFromUrl");
+  assert.match(url, /url\.searchParams\.set\("w", activeWorkspaceId\)/);
+  assert.match(url, /url\.searchParams\.set\("c", channelId\)/);
+  assert.match(url, /window\.history\.replaceState/);
+  /* The id, not the name, so a rename does not rot a link. */
+  const rename = between(dashboard, "const submitChannelRename = async (", "const submitChannelArchive");
+  assert.match(rename, /The id does not change/);
+  /* ?w= is a convenience and never an authorization: it is honoured only when it names a
+     workspace already in this reader's own memberships. */
+  const boot = between(dashboard, "const requestedWorkspaceId =", "await openWorkspace(bootWorkspace.id);");
+  assert.match(boot, /workspaces\.find\(\(workspace\) => workspace\.id === requestedWorkspaceId\) \?\?/);
+});
+
+test("the channel commands send exactly the keys the command edge accepts", () => {
+  /*
+   * Generated from the edge's own `required` / `optional` arrays — the arrays its
+   * `exactKeys` check reads — so adding a field to the edge fails this test rather than
+   * leaving the browser sending a body the edge refuses.
+   */
+  const bodies: Record<string, string> = {
+    channel_create: between(client, "export async function createChannel", "export async function renameChannel"),
+    channel_rename: between(client, "export async function renameChannel", "export async function archiveChannel"),
+    channel_archive: between(client, "export async function archiveChannel", "/** Reads receipts"),
+  };
+  for (const [kind, body] of Object.entries(bodies)) {
+    const command = between(body, `kind: "${kind}"`, '"CommonSwarm did not');
+    const { required, optional } = edgeKeys(kind);
+    assert.ok(required.length > 0, `${kind}: the edge's required list must resolve`);
+    const sent = sentKeys(command);
+    for (const key of required) {
+      assert.ok(sent.includes(key), `${kind} must send ${key}; it sends ${sent.join(", ")}`);
+    }
+    /* The other half of exactKeys: the edge refuses ANY key it did not list, so a key the
+       browser sends that is on neither list is a 400 waiting to happen. */
+    for (const key of sent) {
+      if (key === "kind") continue;
+      assert.ok(
+        required.includes(key) || optional.includes(key),
+        `${kind} sends ${key}, which the edge does not accept`,
+      );
+    }
+    for (const key of optional) {
+      /* An optional key is sent only when it has a value. Sending it as null would make the
+         browser's body a different shape from an installed client's for no reason. */
+      assert.match(
+        command,
+        new RegExp(`\\.\\.\\.\\([^)]*\\?\\s*\\{\\}\\s*:\\s*\\{ ${key} \\}\\)`),
+        `${kind}: ${key} must be sent only when it has a value`,
+      );
+    }
+  }
+  /* Byte-exact against the suite that runs these bodies against a real edge. */
+  assert.ok(serverSuite.includes('kind: "channel_create"'), "server suite anchor");
+  assert.ok(serverSuite.includes('{ kind: "channel_create", slug }'), "server suite create body");
+  assert.ok(serverSuite.includes('kind: "channel_archive"'), "server suite archive body");
+  assert.ok(serverSuite.includes("channel_archive takes channel_id"), "server suite field message");
+});
+
+test("post_signal's chat keys each travel in their own group", () => {
+  /*
+   * The whole compatibility argument of the schema lane, on this side of the wire:
+   * `modernKeys` is an all-or-nothing pair every installed client sends, so folding a new
+   * optional key into it returns 400 on every post. Each chat key is spread on its own test
+   * here, and a body that sends none is byte-identical to the one this app sent before.
+   */
+  const helper = between(client, "export async function postBrowserSignal", "/** Best-effort command write");
+  for (const [field, wire] of [
+    ["channel", "channel"],
+    ["threadRootId", "thread_root_id"],
+    ["broadcastToChannel", "broadcast_to_channel"],
+  ]) {
+    assert.match(
+      helper,
+      new RegExp(
+        `\\.\\.\\.\\(placement\\.${field} === undefined[\\s\\S]{0,120}?\\?\\s*\\{\\}\\s*:\\s*\\{ ${wire}:`,
+      ),
+      field,
+    );
+  }
+  assert.match(helper, /placement: BrowserSignalPlacement = \{\}/);
+  /* The unchanged four keys are still unconditional, so an empty placement produces the
+     body an installed client sends. */
+  for (const key of ["to_user_id:", "to_agent_principal_id:", "in_reply_to: null", "about: null"]) {
+    assert.ok(helper.includes(key), key);
+  }
+});
+
+test("channel refusals show the server's sentence and the app reads no message", () => {
+  const command = between(client, "async function channelCommand(", "export async function createChannel");
+  assert.match(command, /throw new Error\(channelRefusalMessage\(status, body, fallback\)\)/);
+  /* D-053: a message is presentation. Nothing here may branch on one. */
+  assert.doesNotMatch(command, /body\.message\s*[=!]==?\s*"/);
+  assert.doesNotMatch(command, /message\.(includes|match|startsWith|indexOf)/);
+  assert.doesNotMatch(client, /channelRefusalMessage[^;]*\.includes\(/);
+  const dialog = between(dashboard, "const submitChannelCreate = async (", "const submitChannelRename");
+  assert.match(dialog, /setChannelDialogError\(readableError\(error\)\)/);
+});
+
+test("archiving is a second press, because nothing un-archives it", () => {
+  const archive = between(dashboard, "const submitChannelArchive = async (", "for (const button of all<HTMLButtonElement>(\"[data-channel-place]\")");
+  assert.match(archive, /if \(channelArchiveArmed !== channel\.channelId\)/);
+  assert.match(archive, /Press again to confirm/);
+  assert.match(archive, /Its messages still read/);
+  /* The named bound: the reserved slug list is the edge's, and the archived channel's
+     messages stay readable in the view this sentence names. */
+  assert.ok(RESERVED_CHANNEL_SLUGS.includes("all-signals"));
+  assert.ok(CHANNEL_SLUG_MAX > 0);
+});
+
+test("no channel copy in the dashboard implies privacy, and none uses an em-dash", () => {
+  /*
+   * BOUND, stated: this sweep reads the channel-facing string literals this lane added —
+   * the ones reachable from the six data hooks listed below — and not every string in the
+   * dashboard. It cannot prove the file is free of a privacy claim; it proves these
+   * surfaces make none. The list is the same one the assertions iterate.
+   */
+  const surfaces = [
+    "const renderChannelHead = (",
+    "const renderUnknownChannel = (",
+    "const renderChannelDialog = (",
+    "const syncComposerPlacement = (",
+    "const submitChannelArchive = async (",
+    "const selectChannel = (",
+  ];
+  for (const anchor of surfaces) {
+    const block = between(dashboard, anchor, "\n    };");
+    const strings = [...block.matchAll(/"([^"\\]{12,})"/g)].map((match) => match[1]!);
+    for (const value of strings) {
+      /* ~~`/only .* sees|private|secret|encrypted/i`~~ widened 2026-09-05: it required the
+         plural verb, so "only members can see it" — the sentence a mutation actually wrote —
+         went straight through. The claim is about who can read a channel, so the pattern is
+         about that, not about one conjugation. */
+      assert.doesNotMatch(
+        value,
+        /\bprivate\b|\bsecret\b|\bencrypted\b|\bonly\b[^.]{0,40}\b(see|sees|read|reads)\b|no one else/i,
+        `${anchor}: ${value}`,
+      );
+      assert.doesNotMatch(value, /—/, `${anchor}: em-dash in ${value}`);
+    }
+  }
+});

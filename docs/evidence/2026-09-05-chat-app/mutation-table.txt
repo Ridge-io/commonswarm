@@ -1,0 +1,28 @@
+PASS  ::  the unfiltered view's name is one the edge refuses  ::  ✖ the unfiltered view's name is one the edge refuses for a real channel (2.043ms) | ✖ the app refuses a name for exactly
+PASS  ::  every rule sentence the app shows is the edge's own  ::  ✖ every rule sentence the app shows is the edge's own, not a copy (0.344ms) | ✖ every rule sentence the app shows is the
+PASS  ::  the app refuses a name for exactly the reasons the edge does  ::  ✖ the app refuses a name for exactly the reasons the edge does (0.453583ms) | ✖ the app refuses a name for exactly the r
+PASS  ::  a refusal shows the server's sentence  ::  ✖ a refusal shows the server's sentence and is never read for meaning (0.589917ms) | ✖ a refusal shows the server's sent
+PASS  ::  the rail lists live channels in one order  ::  ✖ the rail lists live channels in one order and hides the archived (6.524875ms) | ✖ the rail lists live channels in one 
+PASS  ::  the two facts the design puts in the UI  ::  ✖ the two facts the design puts in the UI say what they mean (0.40275ms) | ✖ the two facts the design puts in the UI say
+PASS  ::  the module imports its rules and does not restate them  ::  ✖ every rule sentence the app shows is the edge's own, not a copy (0.360917ms) | ✖ the module imports its rules and does
+PASS  ::  a reply whose root is not loaded keeps its own place  ::  ✖ a reply whose root is not loaded keeps its own place in the transcript (0.625417ms) | ✖ every input row appears exactl
+PASS  ::  replies collapse under the message their thread starts from  ::  ✖ replies collapse under the message their thread starts from (3.412917ms) | ✖ replies collapse under the message their 
+PASS  ::  the input order is the output order, in either direction  ::  ✖ replies collapse under the message their thread starts from (1.300208ms) | ✖ the input order is the output order, in e
+PASS  ::  every input row appears exactly once in the output  ::  ✖ a reply whose root is not loaded keeps its own place in the transcript (0.615083ms) | ✖ every input row appears exactl
+PASS  ::  the reply count reads as a count  ::  ✖ the reply count reads as a count and not as a template (0.630833ms) | ✖ the reply count reads as a count and not as a 
+PASS  ::  the rail names channels  ::  ✖ the rail names channels, and `stream` is gone from the app's vocabulary (1.791375ms) | ✖ the rail names channels, and 
+PASS  ::  the phone reaches channels without a second standing header row  ::  ✖ the phone reaches channels without a second standing header row (1.645708ms) | ✖ the phone reaches channels without a 
+PASS  ::  the channel narrowing is the query's  ::  ✖ the channel narrowing is the query's, not the rendered list's (2.776375ms) | ✖ the channel narrowing is the query's, n
+PASS  ::  all-signals shows every message and names the channel  ::  ✖ all-signals shows every message and names the channel each one is in (2.874ms) | ✖ all-signals shows every message and
+PASS  ::  the composer stamps the channel being read  ::  ✖ the composer stamps the channel being read and gains no chrome for it (1.438208ms) | ✖ the composer stamps the channel
+PASS  ::  a thread reply is offered only where the server would accept one  ::  ✖ a thread reply is offered only where the server would accept one (1.566791ms) | ✖ a thread reply is offered only where
+PASS  ::  replies render collapsed under their root and expand in place  ::  ✖ replies render collapsed under their root and expand in place (1.108833ms) | ✖ replies render collapsed under their ro
+PASS  ::  a ?c= that names no readable channel never shows the unfiltered feed  ::  ✖ a ?c= that names no readable channel never shows the unfiltered feed (1.153083ms) | ✖ a ?c= that names no readable cha
+PASS  ::  the URL round-trips the workspace and the channel by id  ::  ✖ the URL round-trips the workspace and the channel by id (1.293875ms) | ✖ the URL round-trips the workspace and the cha
+PASS  ::  the channel commands send exactly the keys  ::  ✖ the channel commands send exactly the keys the command edge accepts (1.408541ms) | ✖ the channel commands send exactly
+PASS  ::  post_signal's chat keys each travel in their own group  ::  ✖ post_signal's chat keys each travel in their own group (1.036417ms) | ✖ post_signal's chat keys each travel in their o
+PASS  ::  channel refusals show the server's sentence  ::  ✖ channel refusals show the server's sentence and the app reads no message (1.080625ms) | ✖ channel refusals show the se
+PASS  ::  archiving is a second press  ::  ✖ archiving is a second press, because nothing un-archives it (1.11725ms) | ✖ archiving is a second press, because nothi
+PASS  ::  no channel copy in the dashboard implies privacy  ::  ✖ no channel copy in the dashboard implies privacy, and none uses an em-dash (1.242583ms) | ✖ no channel copy in the das
+
+26 mutations, 0 not discriminating

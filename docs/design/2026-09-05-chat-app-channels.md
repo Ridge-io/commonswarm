@@ -1,0 +1,164 @@
+# Channels in the workspace app (lane L4, `chat-app-channels`)
+
+The browser half of the chat platform. `docs/design/2026-09-04-chat-platform-reconciled.md` is the
+design and rules on every question it answers; `docs/design/SWARM-CLOUD.md` is canonical over both.
+This file records what this lane built, what it measured, and what it did not establish.
+
+Schema and edge are lane L1, landed and live in production on 2026-09-05 (merge `8adf55a`). This lane
+changes `site/` only. No wire change: the browser reads `swarm_read.channels` and `swarm_read.signals`
+directly and sends the three channel commands the command edge already accepts.
+
+## What a channel is, as the app says it
+
+A channel is the **address** of a message, not a scope on who reads it (design D3). Every member of the
+workspace reads every channel. Filing a message in one changes nothing about which agent is woken:
+`swarm.signal_deliveries` and `swarm.enqueue_signal_delivery()` are untouched by the whole chat plan.
+
+`all-signals` is not a channel. It is the whole feed, filed and unfiled together, which is why the
+command edge reserves that slug (`RESERVED_CHANNEL_SLUGS`). `site/src/lib/channels.test.mjs` asserts
+that reservation rather than assuming it: if the edge stopped reserving the name, a member could create
+a channel that shadows the one place unfiled messages are readable.
+
+Two facts the design requires in the UI rather than in a help page, and where they are:
+
+| Fact | Where the reader meets it |
+|---|---|
+| Every member reads every channel | `CHANNEL_REACH_TEXT`, at the top of the channel dialog and as a channel's description when it has no purpose |
+| Nothing written before a channel existed can be in it | `CHANNEL_EMPTY_TEXT`, in the empty state of a channel |
+| Archiving hides and refuses, and deletes nothing | `CHANNEL_ARCHIVED_TEXT`, as an archived channel's description, and the archive control's own hint |
+
+## The narrowing is the query's
+
+`signalPage` takes a `channelId` and applies `channel_id=eq.<uuid>` on the read. Both readers
+(`loadSignals`, `refreshLatestSignals`) capture the channel with the request and check it again when
+the page lands, the same way they already check the workspace.
+
+This is the one thing the design is explicit about not copying. The shipped
+`All / Broadcast / Direct to you` filter runs in the browser over the loaded page, so it says "your
+direct signals" and means "among the last 25 loaded". A channel filter of that shape would say
+"the messages in #mobile" and mean "the ones that happened to be loaded". `filterSignalsByChannel` was
+written, then deleted; `site/src/lib/signal-feed.ts` records why in its place.
+
+The view's `WHERE` remains the authorization. A client-issued equality on top of it cannot widen
+anything, which is what makes a client-chosen narrowing structurally safe.
+
+**Sample mode is the one exception and it is bounded.** `/app` served without a deployment renders a
+made-up feed with no server behind it, so clearing the rows and asking for a page replaces the sample
+with "This saved page is not connected to CommonSwarm" — measured, before the branch that prevents it.
+Sample mode narrows its own fixed four-row array. The dishonesty a client-side filter usually carries
+is absent there because the sample IS the whole set.
+
+## The composer posts where you are reading
+
+R10, and the 2026-09-04 operator direction that deleted the TO row from an 80px bar. There is **no
+channel dropdown**. The task brief for this lane asked for "a channel selector when a channel is
+active"; the reconciled design at §8 forbids exactly that ("Zero chrome ... the same reasoning deletes a
+channel dropdown"), so the lane followed the design and this paragraph is the record of the difference.
+
+What the reader gets instead is the destination inside the box they are typing into: the placeholder
+and the accessible name become `Message #mobile` when a channel is active, and stay
+`What are you about to do?` in all-signals, where the post is unfiled. That costs zero pixels.
+
+There is **no `#` parsing of the body, ever**. Bodies contain `#` legitimately: a Markdown heading
+renders in a message, and `#1804`-style references are routine in this workspace's own prose. A parser
+could not tell an address from prose.
+
+## Threads
+
+A reply control appears on a message only where the server would accept a thread reply to it: not in
+sample mode, not on a reply, not on a message that is already in a thread, and not on a directed
+message. `chatSignalShapeProblem` refuses a directed root, and offering a control the server refuses is
+a lie in a button.
+
+Replies render **collapsed under their root**, with `N replies` from `threadReplyCountLabel`, and expand
+in place by toggling `hidden` on a list that is already built. It is not a re-render: the reader's
+scroll position and every open "Show more" survive it.
+
+`groupSignalThreads` keeps the input order and returns a reply whose root is not in the loaded page as a
+row of its own. An expired or not-yet-paged root must never take a visible message off the screen.
+
+A reply is undirected. A tag typed into a reply body is refused before anything is posted, with the
+reason, rather than silently posting a directed message that means the opposite of what the writer sees.
+`broadcast_to_channel` is a checkbox on the reply bar, which is the only place the edge allows it: the
+validator refuses `broadcast_to_channel` without a `thread_root_id`.
+
+The reply bar shows the ceiling the server clamps to. A reply cannot outlive the message its thread
+starts from, and that remaining window can be short.
+
+## The URL
+
+`?w=<workspace_id>` and `?c=<channel_id>`, by id and not by name, so a rename does not rot a link.
+`?w=` is honoured only when it names a workspace already in this reader's own memberships: the address
+bar is a convenience, never an authorization.
+
+A `?c=` that names no channel this reader can see becomes an **honest empty state**, never the
+unfiltered feed. The loaded rows in that case ARE the whole workspace's, because a channel that cannot
+be resolved cannot narrow the query, so `renderFeed` stops before it renders a row and offers
+`Open #all-signals`. The bad id **stays** in the address bar: dropping it would turn the link into the
+unfiltered feed on the next reload, which is the same failure one step later.
+
+`?m=` (a message permalink) and `?t=` (a thread permalink) are **not** in this lane. §8.1 lists them and
+they are owed.
+
+## Mobile: the 73px app bar is still the only standing header
+
+Measured in Chrome at 390x844 and 320x568, saved to
+`docs/evidence/2026-09-05-chat-app/mobile-measurements.json` with screenshots beside it.
+
+The rail's channel list is hidden on a phone with the rest of the rail, exactly as the STREAMS list was.
+The control that replaces it rides in the feed toolbar, which floats over the transcript on a negative
+margin equal to its own height, so it costs the reading area no height at all.
+
+| Measurement | 390x844 | 320x568 |
+|---|---|---|
+| App bar height | 73px | 57px (the ≤34rem rules, unchanged by this lane) |
+| Rail channel list height | 0 (hidden) | 0 (hidden) |
+| Channel control height | 40px, the band's own 2.5rem | 40px |
+| First message top | 240.1 (band bottom, exactly) | 229.8 |
+| Document horizontal overflow | none | none |
+
+**A defect the measurement found, and the fix.** A slug may be 32 characters — `CHANNEL_SLUG_MAX`, the
+edge's own bound. Uncapped, the control rendered 249px of it and the filter row beside it fell to **24px
+of visible width at both widths**. The control is now capped at `8rem` with an ellipsis on its label:
+128px at the longest legal name, leaving the filters 110px at 390 and 40px at 320, both scrollable, with
+the first filter fully on screen in every case.
+
+**A cost, stated.** The filter row now scrolls sideways at 390px, where all three labels used to fit.
+That row already scrolled at 320px. The alternative was a second header row, which the 2026-09-04 ruling
+forbids.
+
+## What this lane did NOT establish
+
+1. **Nothing was measured against production.** Every live control here ran against `site/dist` built in
+   sample mode and served locally. The signed-in paths — the channel read from `swarm_read.channels`,
+   the three commands against the real edge, the server-side `channel_id` narrowing, and the `?w=` /
+   `?c=` round trip, which sample mode deliberately skips — are covered by tests and by reading, not by
+   a request that left this machine.
+2. **No thread reply has been posted from the browser.** The reply control is gated on a session, which
+   sample mode does not have. Its wire body is asserted byte-exact against the shapes
+   `tests/p1-server/chat-signals.test.ts` sends, and that suite needs a local Supabase this lane did not
+   take.
+3. **The `?m=` message permalink and `?t=` thread permalink are not built.**
+4. **Colour is lane L5** and shares these files. Nothing here changes `markAgentAvatar`.
+5. **The To: field with multiple recipients is not built** and waits on `chat-recipients` (L2).
+6. **No capacity or query-plan work.** `channel_id=eq.` rides the partial index L1 added; no plan was
+   read.
+7. **The source sweeps in the observer test state their own bounds** in the test headers. A regex over
+   source cannot be complete, and neither of them claims to be.
+
+## Files
+
+```
+site/src/lib/channels.ts                    new: types, generated copy, refusal handling
+site/src/lib/channels.test.mjs              new
+site/src/lib/signal-feed.ts                 thread grouping; the deleted channel filter and why
+site/src/lib/signal-feed-threads.test.mjs   new
+site/src/lib/commonswarm.ts                 channel read, three commands, placement on post
+site/src/components/app/LiveDashboard.astro rail, dialog, feed, composer, threads, URL, mobile
+site/src/components/app/chat-channels.observer.test.ts  new
+```
+
+Five existing observer tests moved with the code they observe; each keeps the retired wording beside
+the reason. `composer-sprint-browser.observer.test.ts` carried an emitted-source anchor that ended at
+`createdAt` and silently rewrote an unrelated span once the sample row grew two fields; it now ends at
+the first brace after `createdAt`, whatever precedes it.

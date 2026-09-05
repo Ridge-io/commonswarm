@@ -659,7 +659,10 @@ const assertComposerSprint = (value: ComposerArtifact): void => {
    * the new row. */
   assertOrder(renderFeed, "const wasAtBottom = atBottom();", "list.replaceChildren();",
     "reader-scroll");
-  assert.match(renderFeed, /for \(const signal of \[\.\.\.visibleSignals\]\.reverse\(\)\)/,
+  /* ~~`for (const signal of [...visibleSignals].reverse())`~~ retired 2026-09-05: the
+     reversed array is grouped into threads before it is rendered. The reversal itself, which
+     is what puts the newest row last, is unchanged. */
+  assert.match(renderFeed, /groupSignalThreads\(\[\.\.\.visibleSignals\]\.reverse\(\)\)/,
     "reader-scroll: newest source row must render last");
   assert.match(
     renderFeed,

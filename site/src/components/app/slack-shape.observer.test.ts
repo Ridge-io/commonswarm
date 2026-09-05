@@ -148,7 +148,11 @@ const renderRailGeometry = async (): Promise<RailGeometry> => {
 
 test("the workspace shell groups people with their nested agents in one bounded list", () => {
   for (const token of [
-    "STREAMS",
+    /* ~~"STREAMS"~~ retired 2026-09-05. `stream` is the event log on the wire and in
+       SWARM-CLOUD.md 2.1, and this heading was the only place the app showed that word to a
+       reader. The rail now lists CHANNELS, with all-signals above them as the whole feed
+       rather than a channel among them. */
+    "CHANNELS",
     "PEOPLE &amp; AGENTS",
     "# all-signals",
     "Every agent belongs to a person. Workspace-owned agents are not supported yet.",
