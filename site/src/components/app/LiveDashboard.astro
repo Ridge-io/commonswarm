@@ -1323,6 +1323,14 @@ import "../../styles/tokens.css";
     /** The whole made-up feed in sample mode, which has no server to page back to. */
     let sampleSignals: Signal[] = [];
     /**
+     * Ids this browser posted since the last full page request went out. A channel click
+     * starts a fresh page and does not cancel a send: the page was requested before the post
+     * committed, so it cannot carry it, and replacing the list wholesale dropped a row that
+     * the new screen should show. Measured as a message that appeared, vanished, and came
+     * back on the next poll. Found by a review arm.
+     */
+    let postedSinceReset = new Set<string>();
+    /**
      * One generation per channel READ, because a channel command does not bump requestVersion
      * (it is not a workspace change). Archive and Create are different buttons and each only
      * disables its own, so two refreshes can be in flight at once; without this the older
@@ -4575,6 +4583,9 @@ import "../../styles/tokens.css";
       if (reset) {
         signalCursor = null;
         signalCutoff = new Date().toISOString();
+        /* Cleared as the request goes out, so only rows posted while THIS page was in flight
+           are kept when it lands. */
+        postedSinceReset = new Set<string>();
       }
       /* The channel is captured with the request and checked again when it lands, the same
          way the workspace is. Without it a page fetched for #mobile could be applied after
@@ -4587,7 +4598,11 @@ import "../../styles/tokens.css";
         channelId !== activeChannelId
       ) return;
       if (reset) {
-        signals = page.rows;
+        const fetched = new Set(page.rows.map((row) => row.id));
+        const arrivedWhileFetching = signals.filter(
+          (row) => postedSinceReset.has(row.id) && !fetched.has(row.id),
+        );
+        signals = [...arrivedWhileFetching, ...page.rows];
       } else {
         const known = new Set(signals.map((signal) => signal.id));
         const additions = page.rows.filter((signal) => !known.has(signal.id));
@@ -4801,6 +4816,7 @@ import "../../styles/tokens.css";
       channelListFailed = false;
       activeChannelId = null;
       unknownChannelId = null;
+      postedSinceReset = new Set<string>();
       /* The intent carries the previous session's body and its command ids. */
       composerIntent = null;
       disarmChannelArchive();
@@ -7010,6 +7026,7 @@ import "../../styles/tokens.css";
            it, and a row is removed from the list ONLY when it is about to be put back. */
         const visible = posted.filter(showsOnScreen);
         const visibleIds = new Set(visible.map((signal) => signal.id));
+        for (const id of visibleIds) postedSinceReset.add(id);
         const kept = signals.filter(
           (entry) => !pendingSet.has(entry.id) && !visibleIds.has(entry.id),
         );
@@ -7064,6 +7081,17 @@ import "../../styles/tokens.css";
          * not a rejected command: putting the message back in the box and lighting Retry would
          * invite a duplicate the reader never asked for. */
         const unsent = sent < recipients.length;
+        /* AND THE ADDRESS MUST STILL BE THIS ONE. selectChannel retires an unfinished send
+           when the reader moves, because the composer is about to promise the new channel.
+           The catch then wrote the intent back with the OLD placement, undoing that: Retry
+           reused the old command ids and the old address, and the row landed in a channel the
+           reader had left, filtered off their screen. Both arms found it. */
+        const addressStillActive =
+          placementChannelId === (activeChannel()?.channelId ?? null);
+        const addressLabel = channelLabel(
+          channelById(channels, placementChannelId)?.slug ?? ALL_SIGNALS_SLUG,
+        );
+        const resumable = unsent && addressStillActive;
         if (unsent) {
           input.value = rawBody;
           stagedAttachments = attachmentSnapshot;
@@ -7071,11 +7099,11 @@ import "../../styles/tokens.css";
           resizeComposerInput(input);
           persistComposerDraft();
         }
-        composerIntent = unsent
+        composerIntent = resumable
           /* WITH THE ADDRESS. Rewriting the intent without it made every retry after a partial
-             failure post UNFILED, and a failed thread reply retry a new top-level note: the
-             replay reads `intent.placement`, and `postBrowserSignal` defaults a missing one to
-             `{}`. No channel switch was needed to reach it. Both arms found it. */
+             failure post UNFILED: the replay reads `intent.placement`, and `postBrowserSignal`
+             defaults a missing one to `{}`. No channel switch was needed to reach it. Both
+             arms found it. */
           ? {
             commandIds,
             body: rawBody,
@@ -7098,16 +7126,22 @@ import "../../styles/tokens.css";
           }
         }
         setComposerStatus(
-          sent === 0
+          sent === 0 && addressStillActive
             ? readableError(caught)
-            : sent < recipients.length
+            : resumable
               ? `Sent to ${sent} of ${recipients.length}. ${readableError(caught)} ` +
                 "Press send again to finish it; the ones that went will not go twice."
+              : unsent
+              /* The reader has moved. Nothing here can finish a message addressed elsewhere,
+                 so Retry is not offered and the sentence says where it was going. */
+              ? `${readableError(caught)} That message was addressed to ${addressLabel}, and ` +
+                `${sent === 0 ? "none of it" : `${sent} of ${recipients.length}`} was sent. ` +
+                "Sending from here posts it here, as a new message."
               : `All ${sent} went out. ${readableError(caught)} ` +
                 "Nothing is left to send; reload if the feed looks wrong.",
           "error",
         );
-        if (retry && unsent) retry.hidden = false;
+        if (retry && resumable) retry.hidden = false;
         renderFeed("latest");
       } finally {
         if (version === requestVersion && workspaceId === activeWorkspaceId) {

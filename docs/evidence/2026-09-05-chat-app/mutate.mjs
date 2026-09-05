@@ -126,6 +126,17 @@ const mutations = [
   [OBS, DASH, "      if (unknownChannelId !== null && channelById(channels, unknownChannelId) !== null) {\n        selectChannel(unknownChannelId);\n        return;\n      }\n",
     "",
     "a later channel read gives an unresolved link one more chance"],
+
+  // ── round seven: the controls added after the thread cut
+  [OBS, DASH, "        const resumable = unsent && addressStillActive;", "        const resumable = unsent;",
+    "an unfinished send is not resumed into a channel"],
+  [OBS, DASH, "        if (retry && resumable) retry.hidden = false;", "        if (retry && unsent) retry.hidden = false;",
+    "an unfinished send is not resumed into a channel"],
+  [OBS, DASH, "        const arrivedWhileFetching = signals.filter(\n          (row) => postedSinceReset.has(row.id) && !fetched.has(row.id),\n        );\n        signals = [...arrivedWhileFetching, ...page.rows];",
+    "        signals = page.rows;",
+    "a page fetched before a post landed does not drop that post"],
+  [OBS, DASH, "        for (const id of visibleIds) postedSinceReset.add(id);\n", "",
+    "a page fetched before a post landed does not drop that post"],
 ];
 
 const testFor = (file) => file;

@@ -250,18 +250,30 @@ const assertComposerSprint = (value: ComposerArtifact): void => {
    * landed replay idempotently instead of arriving again. */
   /* The rewritten intent gained `placement` / `placementChannelId` on 2026-09-05: without
      them a retry after a partial failure posted UNFILED, because the replay reads
-     `intent.placement` and a missing one defaults to `{}`. The property here is unchanged —
-     every command id is kept — and the address is now kept beside them. */
+     `intent.placement` and a missing one defaults to `{}`. It is written back only when the
+     send is still `resumable` — unsent AND still addressed to the channel on screen — because
+     a channel change retires it and the catch was putting it back. The property here is
+     unchanged: when there IS a retry, every command id is kept. */
   assert.match(
     failed,
-    /composerIntent = unsent[\s\S]{0,400}?commandIds,\s*\n\s*body: rawBody,\s*\n\s*audienceKey,\s*\n\s*attachmentKey,\s*\n\s*signalKind,\s*\n\s*placement,\s*\n\s*placementChannelId,/,
+    /composerIntent = resumable[\s\S]{0,400}?commandIds,\s*\n\s*body: rawBody,\s*\n\s*audienceKey,\s*\n\s*attachmentKey,\s*\n\s*signalKind,\s*\n\s*placement,\s*\n\s*placementChannelId,/,
     "failed-send-audience: a retry must reuse every command id, not mint new ones",
+  );
+  assert.match(
+    failed,
+    /const resumable = unsent && addressStillActive;/,
+    "failed-send-audience: a retry is offered only where it can finish what it started",
   );
   assert.doesNotMatch(failed, /composerAudience|composerMention|remaining/);
   assert.match(failed, /persistComposerDraft\(\);/, "failed-send-body: persist the restored draft");
+  /* ~~`: sent < recipients.length ?`~~ 2026-09-05: the partial-send sentence is now gated on
+     `resumable`, which is that same condition AND the send still being addressed to the
+     channel on screen. The reader who moved gets a different, true sentence instead of one
+     inviting them to press send again into a channel that cannot finish it. The property
+     here is unchanged: the rejection is announced inline with the counts. */
   assert.match(
     failed,
-    /: sent < recipients\.length\s*\? `Sent to \$\{sent\} of \$\{recipients\.length\}\. \$\{readableError\(caught\)\}/,
+    /\? `Sent to \$\{sent\} of \$\{recipients\.length\}\. \$\{readableError\(caught\)\}/,
     "failed-send-error: announce the rejection inline",
   );
   /* A partly-sent fan-out must say how many went, or the reader cannot tell whether pressing
@@ -281,10 +293,13 @@ const assertComposerSprint = (value: ComposerArtifact): void => {
   /* A finished send must also leave the saved draft empty and its preview URLs revoked. Without
    * that, the reload the copy suggests brings the sent message back with no intent, and the next
    * send mints fresh command ids and posts all of it again. */
-  /* And it must not offer Retry either, or the sentence and the button disagree. */
+  /* And it must not offer Retry either, or the sentence and the button disagree.
+     ~~`retry && unsent`~~ 2026-09-05: `resumable` is `unsent` AND the send still addressed to
+     the channel on screen. Retry cannot finish a message addressed to a channel the reader
+     has left, so it is not offered there and the sentence says where the message was going. */
   assert.match(
     failed,
-    /if \(retry && unsent\) retry\.hidden = false;/,
+    /if \(retry && resumable\) retry\.hidden = false;/,
     "retry-path: no retry when every recipient already posted",
   );
   assert.match(failed, /retry\.hidden = false;/, "retry-path: reveal retry after rejection");

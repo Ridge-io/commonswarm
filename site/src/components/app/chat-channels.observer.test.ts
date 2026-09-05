@@ -388,6 +388,42 @@ test("a later channel read gives an unresolved link one more chance", () => {
   );
 });
 
+test("an unfinished send is not resumed into a channel it was not addressed to", () => {
+  /* selectChannel retires the intent when the reader moves, because the composer is about to
+     promise the new channel. The failure path then wrote it back with the OLD placement,
+     undoing that: Retry reused the old command ids and the old address, and the row landed in
+     a channel the reader had left, filtered off their screen by showsOnScreen. Both arms
+     found it. */
+  const failed = between(dashboard, "const unsent = sent < recipients.length;", "renderFeed(\"latest\");");
+  assert.match(
+    failed,
+    /const addressStillActive =\s*\n\s*placementChannelId === \(activeChannel\(\)\?\.channelId \?\? null\);/,
+  );
+  assert.match(failed, /const resumable = unsent && addressStillActive;/);
+  assert.match(failed, /composerIntent = resumable/);
+  assert.match(failed, /if \(retry && resumable\) retry\.hidden = false;/);
+  /* And the sentence says where it was going, rather than inviting a send that cannot finish. */
+  assert.match(failed, /That message was addressed to \$\{addressLabel\}/);
+});
+
+test("a page fetched before a post landed does not drop that post", () => {
+  /* A channel click starts a fresh page and does not cancel a send in flight. That page was
+     requested before the post committed, so it cannot carry it, and replacing the list
+     wholesale dropped a row the new screen should show: a message posted in a channel and
+     read from all-signals appeared, vanished, and came back on the next poll. Found by a
+     review arm. */
+  const load = between(dashboard, "const loadSignals = async (", "const refreshLatestSignals");
+  assert.match(load, /postedSinceReset = new Set<string>\(\);/, "cleared as the request goes out");
+  assert.match(
+    load,
+    /const arrivedWhileFetching = signals\.filter\(\s*\n\s*\(row\) => postedSinceReset\.has\(row\.id\) && !fetched\.has\(row\.id\),/,
+  );
+  assert.match(load, /signals = \[\.\.\.arrivedWhileFetching, \.\.\.page\.rows\];/);
+  /* And the send is what records them, so only rows this browser posted are kept. */
+  const applied = between(dashboard, "const visible = posted.filter(showsOnScreen);", "clearComposerDraft();");
+  assert.match(applied, /for \(const id of visibleIds\) postedSinceReset\.add\(id\);/);
+});
+
 test("the channel commands send exactly the keys the command edge accepts", () => {
   /*
    * Generated from the edge's own `required` / `optional` arrays — the arrays its

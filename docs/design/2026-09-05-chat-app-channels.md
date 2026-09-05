@@ -116,6 +116,18 @@ its own defect: the replay reads `intent.placement`, and `postBrowserSignal` def
 intent and says so, because the composer is about to promise the new channel and replaying the old
 address would contradict the box being typed in. The hops that already landed stay where they landed.
 
+That retirement then had to survive the failure that caused it: the catch block wrote the intent back
+with the old placement, so Retry reused the old ids and the old address and the row landed in a channel
+the reader had left, filtered off their screen. `resumable` is `unsent` AND still addressed to the
+channel on screen; Retry is offered only when it can finish what it started, and the sentence otherwise
+says where the message was going.
+
+**A page fetched before a post landed does not drop that post.** A channel click starts a fresh page and
+does not cancel a send. That page was requested before the post committed, so it cannot carry it, and
+replacing the list wholesale dropped a row the new screen should show: posted in a channel, read from
+all-signals, the message appeared, vanished, and came back on the next poll. `postedSinceReset` is
+cleared as the request goes out and holds the ids this browser posted while it was in flight.
+
 **A `?c=` belongs to the workspace its `?w=` names, and the URL is written on every open.** The first
 version wrote it only when a channel was clicked, so switching workspace from the menu carried the
 previous workspace's channel id into the new one, where it is not: the reader who chose workspace B was
@@ -212,7 +224,7 @@ forbids.
    never reached them and the rail claimed a current channel while the head said Files. Found by a
    review arm. In the unresolved-channel state the rail marks NOTHING current, which both arms read
    and agreed is the honest mark: the reader is in the signals view and in no channel.
-9. **Five review rounds cost seventeen product defects and two evidence defects**, every one found by an
+9. **Seven review rounds cost twenty-one product defects and two evidence defects**, every one found by an
    arm and none by a gate: the read-permission claim in the copy; the composer that posted into the
    unfiltered feed from an unresolved link; a double current mark on Files and Brain; four typed
    copies of the view's name; a workspace switch that opened as "Channel not found"; a channel-list
@@ -231,19 +243,29 @@ forbids.
    an empty list with no second chance. **Five of the seventeen were introduced by an earlier round's
    fix**, which is the argument for running both arms again on every new SHA rather than only on the
    first, and for preferring a rule the system already applies over a new comparison invented to
-   answer one report.
+   answer one report. Rounds six and seven added: a retry that posted unfiled because the failure
+   path rewrote the intent without its address; that same rewrite undoing the retirement a channel
+   change had just made; a `?c=` heal that resolved the id without moving the screen; a rename from
+   Files that wrote the channel's name over a Files body; a failed channel read that rendered half its
+   own sentence; and a reset page dropping a row that was posted while it was in flight. Two arm
+   findings were checked and **not** acted on, both from the same arm and both wrong: "the failure
+   path never calls renderFeed" (it is the last statement of that catch block) and "the session reset
+   does not close the channel dialog" (it is the thirteenth line of that function).
 
 ## Files
 
 ```
 site/src/lib/channels.ts                    new: types, generated copy, refusal handling
 site/src/lib/channels.test.mjs              new
-site/src/lib/signal-feed.ts                 thread grouping; the deleted channel filter and why
-site/src/lib/signal-feed-threads.test.mjs   new
+site/src/lib/signal-feed.ts                 the deleted channel filter and why; the cut thread helpers
 site/src/lib/commonswarm.ts                 channel read, three commands, placement on post
-site/src/components/app/LiveDashboard.astro rail, dialog, feed, composer, threads, URL, mobile
+site/src/components/app/LiveDashboard.astro rail, dialog, feed, composer, URL, mobile
 site/src/components/app/chat-channels.observer.test.ts  new
 ```
+
+`site/src/lib/signal-feed-threads.test.mjs` was written and is **deleted** with the surface it
+covered; it moves to `lane/chat-app-threads` with `groupSignalThreads` and
+`threadReplyCountLabel`.
 
 `COMPOSER_STREAM` is now `COMPOSER_DRAFT_SCOPE`: `stream` is the wire's word for the event log and
 this lane retired it from the app. Its VALUE is frozen at `"all-signals"` and is the one place that
