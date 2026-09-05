@@ -461,6 +461,14 @@ test("a defaulted reply horizon is clamped to the thread; a named one is refused
     rootUntil,
     "a defaulted reply is clamped TO the root, not merely under it: an arm noted that <= would also accept an over-clamp to one millisecond",
   );
+  /* PRECISION, stated because a review arm claimed the wrong thing and I
+   * repeated it. This equality is at MILLISECOND resolution, not microsecond.
+   * placement.untilCeiling is rootUntil.toISOString() -- a JS Date, already
+   * truncated to ms -- so the SQL LEAST compares against a millisecond value
+   * and both sides of this assertion are Date.parse of an ISO string. The
+   * assertion is exact and not flaky at that resolution, but it cannot see a
+   * sub-millisecond under-clamp, and the truncation goes UNDER the root, so a
+   * reply still cannot outlive it. */
   /* Control: without the clamp this would be ~30 days out, so a horizon inside
    * the root's window is the clamp working and not a coincidence. Measured
    * against the row's OWN created_at rather than this process's clock, which
@@ -676,6 +684,53 @@ test("a refusal names the FIRST rule broken, not the chat rule that also fired",
   });
   assert.equal(badPurposeLength.status, 400, JSON.stringify(badPurposeLength.body));
   assert.match(String(badPurposeLength.body.message), /at most 500 characters/);
+
+  /* The bound must measure the string that is STORED. An arm found the check
+   * running on the sanitized value while the insert stored the sanitized AND
+   * trimmed one, so this body was refused for length even though the row it
+   * would write is exactly 500 characters. The old 501-x case above stays
+   * over-length after trimming, so it could not see this. */
+  const trailingSpace = await send(f.ownerJwt, {
+    kind: "channel_create",
+    slug: `purpose-trim-${randomBytes(4).toString("hex")}`,
+    purpose: `${"x".repeat(500)} `,
+  });
+  assert.equal(
+    trailingSpace.status,
+    200,
+    `a purpose that is 500 characters once stored must be accepted: ${JSON.stringify(trailingSpace.body)}`,
+  );
+  assert.equal(
+    (trailingSpace.body.channel as Record<string, unknown>).purpose,
+    "x".repeat(500),
+    "and it is stored trimmed",
+  );
+
+  /* The other half of the same defect: an all-whitespace purpose stores NULL,
+   * so refusing it for length names a rule its stored form cannot break. */
+  const blankPurpose = await send(f.ownerJwt, {
+    kind: "channel_create",
+    slug: `purpose-blank-${randomBytes(4).toString("hex")}`,
+    purpose: " ".repeat(501),
+  });
+  assert.equal(
+    blankPurpose.status,
+    200,
+    `an all-whitespace purpose stores null and must not be refused for length: ${JSON.stringify(blankPurpose.body)}`,
+  );
+  assert.equal(
+    (blankPurpose.body.channel as Record<string, unknown>).purpose,
+    null,
+  );
+
+  /* A short model carrying a control character is a CONTROL rule, not a length
+   * rule: boundedText refuses both and the length sentence was answering both. */
+  const controlModel = await send(f.agentToken, {
+    kind: "declare_agent_model",
+    model: "gpt\u0007x",
+  });
+  assert.equal(controlModel.status, 400, JSON.stringify(controlModel.body));
+  assert.match(String(controlModel.body.message), /control characters/);
 
   /* Control: with a VALID kind, the same thread_root_id plus a recipient does
    * get the chat sentence, so the generic answer above is the ordering and not

@@ -5,6 +5,7 @@ import test from "node:test";
 import {
   CHANNEL_PURPOSE_MAX,
   CHANNEL_SLUG_MAX,
+  CHANNEL_SLUG_CLASSES,
   CHANNEL_SLUG_RE,
   CHANNEL_SLUG_RULE_TEXT,
   channelSlugProblem,
@@ -126,4 +127,45 @@ test("the unknown-channel message lists the channels that exist, and says so whe
 test("normalizeChannelSlug is what the unique index compares", () => {
   assert.equal(normalizeChannelSlug("  Mobile "), "mobile");
   assert.equal(normalizeChannelSlug("MOBILE"), "mobile");
+});
+
+test("the slug sentence and the slug regex are built from one table of character classes", () => {
+  /* An arm found the BOUND interpolated while the character class beside it was
+   * typed prose: change the regex and the sentence stays behind. Both are now
+   * generated from CHANNEL_SLUG_CLASSES, and this pins that they agree. */
+  const edge = CHANNEL_SLUG_CLASSES.edge.map((c) => c.fragment).join("");
+  const inner = edge + CHANNEL_SLUG_CLASSES.inner.map((c) => c.fragment).join("");
+  assert.equal(
+    CHANNEL_SLUG_RE.source,
+    `^[${edge}]([${inner}]*[${edge}])?$`,
+    "the regex must be the table's alphabet",
+  );
+
+  /* Every class the regex allows is named in the sentence... */
+  for (const entry of [...CHANNEL_SLUG_CLASSES.edge, ...CHANNEL_SLUG_CLASSES.inner]) {
+    assert.ok(
+      CHANNEL_SLUG_RULE_TEXT.includes(entry.words),
+      `the rule text must name ${entry.words}`,
+    );
+  }
+  /* ...and nothing else is: a word class the table does not carry must be
+   * absent, or the sentence promises an alphabet the regex refuses. */
+  for (const absent of ["uppercase", "underscore", "spaces", "dots", "slashes"]) {
+    assert.equal(
+      CHANNEL_SLUG_RULE_TEXT.includes(absent),
+      false,
+      `the rule text must not name ${absent}, which the regex refuses`,
+    );
+  }
+
+  /* Behavioural control on the same table: one character from each class is
+   * accepted where the class allows it, and the inner-only class is refused at
+   * the edges. This is what makes the two assertions above about the alphabet
+   * and not about two strings that merely match. */
+  assert.equal(CHANNEL_SLUG_RE.test("a0"), true);
+  assert.equal(CHANNEL_SLUG_RE.test("a-0"), true);
+  assert.equal(CHANNEL_SLUG_RE.test("-a"), false);
+  assert.equal(CHANNEL_SLUG_RE.test("a-"), false);
+  assert.equal(CHANNEL_SLUG_RE.test("A"), false);
+  assert.equal(CHANNEL_SLUG_RE.test("a_b"), false);
 });

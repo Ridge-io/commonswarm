@@ -61,7 +61,47 @@ export const CHANNEL_PURPOSE_MAX = 500;
  * Lowercase letters, digits and hyphens; first and last character alphanumeric.
  * The identical pattern is the CHECK on swarm.channels.slug.
  */
-export const CHANNEL_SLUG_RE = /^[a-z0-9]([a-z0-9-]*[a-z0-9])?$/;
+/**
+ * The character classes the slug pattern allows, as {regex fragment, words}.
+ * BOTH the regex and the sentence are built from this table, so a class cannot
+ * be added to one and left out of the other. An arm pointed out that the bound
+ * was interpolated while the class list beside it was typed prose.
+ *
+ * `edge` is the class allowed at the first and last character; `inner` adds the
+ * classes allowed only in between.
+ */
+export const CHANNEL_SLUG_CLASSES = {
+  edge: [
+    { fragment: "a-z", words: "lowercase letters", one: "a letter" },
+    { fragment: "0-9", words: "digits", one: "a digit" },
+  ],
+  inner: [{ fragment: "-", words: "hyphens" }],
+} as const;
+
+function classList(
+  entries: readonly { words: string; one?: string }[],
+  conjunction: "and" | "or" = "and",
+  singular = false,
+): string {
+  const words = entries.map((entry) =>
+    singular ? (entry.one ?? entry.words) : entry.words
+  );
+  return words.length === 1
+    ? words[0]!
+    : `${words.slice(0, -1).join(", ")} ${conjunction} ${
+      words[words.length - 1]!
+    }`;
+}
+
+const SLUG_EDGE = CHANNEL_SLUG_CLASSES.edge.map((c) => c.fragment).join("");
+const SLUG_INNER = SLUG_EDGE +
+  CHANNEL_SLUG_CLASSES.inner.map((c) => c.fragment).join("");
+
+function channelSlugPattern(): RegExp {
+  return new RegExp(`^[${SLUG_EDGE}]([${SLUG_INNER}]*[${SLUG_EDGE}])?$`);
+}
+
+export const CHANNEL_SLUG_RE = channelSlugPattern();
 
 /**
  * The edges' UUID_RE, character for character: version [1-8] and variant
@@ -95,12 +135,17 @@ export const CHANNEL_ID_RULE_TEXT = "channel_id must be a UUID.";
  * the day normalizedModel is exported the edge should call it and delete this.
  */
 export const MODEL_MAX = 120;
+export const MODEL_CONTROL_RULE_TEXT =
+  "model must not contain control characters.";
 export const MODEL_RULE_TEXT =
   `model is text of at most ${MODEL_MAX} characters, or null.`;
 
 /** The slug rule, in words, built from the bound the validator enforces. */
-export const CHANNEL_SLUG_RULE_TEXT =
-  `A channel name uses lowercase letters, digits and hyphens, starts and ends with a letter or a digit, and is 1 to ${CHANNEL_SLUG_MAX} characters.`;
+export const CHANNEL_SLUG_RULE_TEXT = `A channel name uses ${
+  classList([...CHANNEL_SLUG_CLASSES.edge, ...CHANNEL_SLUG_CLASSES.inner])
+}, starts and ends with ${
+  classList(CHANNEL_SLUG_CLASSES.edge, "or", true)
+}, and is 1 to ${CHANNEL_SLUG_MAX} characters.`;
 
 /** The reserved list, in words, built from the list the validator enforces. */
 export const RESERVED_CHANNEL_SLUG_TEXT = `Reserved names: ${
@@ -226,7 +271,7 @@ export function chatSignalShapeProblem(
     threadRoot !== undefined && threadRoot !== null &&
     !(typeof threadRoot === "string" && CHAT_UUID_RE.test(threadRoot))
   ) {
-    return "thread_root_id is the id of the message the thread starts from.";
+    return "thread_root_id is the id of the message the thread starts from, as a UUID.";
   }
   if (broadcast !== undefined && typeof broadcast !== "boolean") {
     return "broadcast_to_channel is true or false.";

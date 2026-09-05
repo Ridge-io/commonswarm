@@ -18,6 +18,7 @@ import {
   chatSignalShapeProblem,
   commandFieldsMessage,
   CHANNEL_ID_RULE_TEXT,
+  MODEL_CONTROL_RULE_TEXT,
   MODEL_MAX,
   MODEL_RULE_TEXT,
   normalizeChannelSlug,
@@ -1609,23 +1610,25 @@ function validateCommand(
       };
     }
     const rawPurpose = Object.hasOwn(cmd, "purpose") ? cmd.purpose : null;
-    if (
-      rawPurpose !== null && rawPurpose !== undefined &&
-      (typeof rawPurpose !== "string" ||
-        sanitizeSignalText(rawPurpose).length > CHANNEL_PURPOSE_MAX)
-    ) {
-      return {
-        ok: false,
-        status: 400,
-        reason:
-          typeof rawPurpose !== "string"
-            ? "A channel purpose is text."
-            : `A channel purpose is at most ${CHANNEL_PURPOSE_MAX} characters.`,
-      };
+    if (rawPurpose !== null && rawPurpose !== undefined && typeof rawPurpose !== "string") {
+      return { ok: false, status: 400, reason: "A channel purpose is text." };
     }
+    /* MEASURE THE STRING THAT IS STORED. The bound used to run on the sanitized
+     * value and the insert stored the sanitized-and-TRIMMED value, so
+     * "x".repeat(500) + " " was refused for length while the row it would have
+     * written is 500 characters and satisfies the CHECK. The caller was told a
+     * rule the persisted value does not break. declare_agent_model already
+     * trims before its bound for this exact reason. */
     const purpose = typeof rawPurpose === "string"
       ? sanitizeSignalText(rawPurpose).trim() || null
       : null;
+    if (purpose !== null && purpose.length > CHANNEL_PURPOSE_MAX) {
+      return {
+        ok: false,
+        status: 400,
+        reason: `A channel purpose is at most ${CHANNEL_PURPOSE_MAX} characters.`,
+      };
+    }
     return {
       ok: true,
       command: {
@@ -1911,6 +1914,11 @@ function validateCommand(
      * vice versa (landing-round finding 1). */
     const declaredModel = cmd.model === null ? null : cmd.model.trim();
     const normalized = declaredModel === "" ? null : declaredModel;
+    /* boundedText also refuses control characters, so answering it with the
+     * LENGTH sentence names the wrong rule for a short model carrying one. */
+    if (normalized !== null && CONTROL_RE.test(normalized)) {
+      return { ok: false, status: 400, reason: MODEL_CONTROL_RULE_TEXT };
+    }
     if (normalized !== null && !boundedText(normalized, MODEL_MAX)) {
       /* The LENGTH rule, not the field list. An arm sent a 121-character model
        * with exactly the right keys and was told which fields the command
@@ -2020,6 +2028,11 @@ function validateCommand(
     }
     const setModel = cmd.model === null ? null : cmd.model.trim();
     const normalizedSet = setModel === "" ? null : setModel;
+    /* boundedText also refuses control characters, so answering it with the
+     * LENGTH sentence names the wrong rule for a short model carrying one. */
+    if (normalizedSet !== null && CONTROL_RE.test(normalizedSet)) {
+      return { ok: false, status: 400, reason: MODEL_CONTROL_RULE_TEXT };
+    }
     if (normalizedSet !== null && !boundedText(normalizedSet, MODEL_MAX)) {
       /* The LENGTH rule, not the field list. Same defect as declare. */
       return { ok: false, status: 400, reason: MODEL_RULE_TEXT };
@@ -5955,7 +5968,7 @@ async function resumeRenewalGrant(
    * was told 403; a retry then answered `renewal_grant_not_suspended`, because the resume it
    * had denied had in fact happened.
    *
-   * Same shape as the renewal preflight read at index.ts:3363 (`preflight[0]?.code ?? null`):
+   * Same shape as the renewal preflight read at index.ts:3376 (`preflight[0]?.code ?? null`):
    * preserve NULL, refuse only on a code we assign.
    *
    * WHY A REFUSAL BELOW STILL COMMITS, DELIBERATELY. `refuse` must commit — its whole job is
