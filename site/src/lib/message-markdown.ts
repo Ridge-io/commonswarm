@@ -403,7 +403,10 @@ function tableRowCells(line: string): string[] | null {
 function tableAlignments(line: string, columns: number): TableAlignment[] | null {
   const cells = tableRowCells(line);
   /* GFM requires the delimiter row to name exactly as many columns as the header. That equality is
-   * what stops an ordinary sentence containing a pipe from becoming a table. */
+   * ONE of the guards, and the loop below is the other: every cell must be hyphens with optional
+   * colons and nothing else. Neither alone keeps prose out of the table path, and the earlier
+   * wording here credited the column count with the whole job. One hyphen per cell is enough, as
+   * it is in GFM, so a line of prose with pipes above `|-|-|-|` IS a table. */
   if (!cells || cells.length !== columns) return null;
   const alignments: TableAlignment[] = [];
   for (const cell of cells) {

@@ -114,7 +114,7 @@ test("a link label containing inline code restores fully, with no stray token by
   assert.doesNotMatch(rendered, /[\uE000\uE001]/u);
 });
 
-test("the sanitizer keeps only the tag allowlist and href on anchors", () => {
+test("the tag allowlist and the per-tag attribute sets are the ones this renderer emits", () => {
   assert.deepEqual(MESSAGE_MARKDOWN_TAGS, [
     "p", "br", "hr", "strong", "em", "del", "code", "pre", "ul", "ol", "li", "blockquote", "a",
     "h2", "h3", "h4", "h5",
