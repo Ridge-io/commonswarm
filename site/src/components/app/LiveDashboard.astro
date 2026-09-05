@@ -2735,9 +2735,15 @@ import "../../styles/tokens.css";
       });
       composerToApplied = merged.applied;
       const notices: string[] = [];
-      if (merged.refused.length > 0) {
-        notices.push(composerToFullNotice(merged.refused, composerRecipientName));
-      }
+      /* BOTH WAYS A TAG CAN BE OVER THE CAP. `address.overflow` is the parser giving up after
+       * its ceiling, with bare names it never resolved; `merged.refused` is the To: set
+       * having no room for one it did resolve. Reading only the second dropped a name out of
+       * the message with nothing said about it. */
+      const overCap = [
+        ...merged.refused.map(composerRecipientName),
+        ...address.overflow,
+      ];
+      if (overCap.length > 0) notices.push(composerToFullNotice(overCap));
       if (address.ambiguous.length > 0) {
         notices.push(composerAmbiguousNotice(address.ambiguous));
       }

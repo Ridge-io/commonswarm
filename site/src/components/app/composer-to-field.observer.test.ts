@@ -487,6 +487,27 @@ test("an empty roster is not read as a workspace with nobody in it", () => {
   );
 });
 
+test("a tag the parser gave up on is named, not dropped out of the message", () => {
+  /* A SOURCE CLAIM, and it says why. A tag can be over the cap in two places: the To: set
+     refusing an entity it has no room for, and `addressFromBody` stopping after
+     MENTION_MAX_RECIPIENTS and handing back bare names it never resolved. Reading only the
+     first dropped a name out of the message with nothing said about it.
+
+     BOUND: the sample roster has five taggable names and the cap is eight, so no browser
+     step in this file can reach the parser's overflow. This reads the source instead, and
+     the sentence itself is measured in composer-address.test.mjs. */
+  const dashboard = readFileSync(
+    new URL("./LiveDashboard.astro", import.meta.url),
+    "utf8",
+  );
+  assert.match(
+    dashboard,
+    /const overCap = \[\s*\n\s*\.\.\.merged\.refused\.map\(composerRecipientName\),\s*\n\s*\.\.\.address\.overflow,\s*\n\s*\];/,
+    "both ways a tag can be over the cap must reach the notice",
+  );
+  assert.match(dashboard, /if \(overCap\.length > 0\) notices\.push\(composerToFullNotice\(overCap\)\);/);
+});
+
 test("the note is generated from the cap and the wake position, not typed beside them", () => {
   const source = readFileSync(
     new URL("../../lib/composer-address.ts", import.meta.url),

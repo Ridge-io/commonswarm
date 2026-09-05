@@ -41,7 +41,11 @@ red  an empty roster is not read as a workspace with nobody in it
   restored green  site/src/components/app/composer-to-field.observer.test.ts
 red  the chips are not pruned against a roster that is not known yet
   restored green  site/src/components/app/composer-to-field.observer.test.ts
+red  the over-cap notice names who did not fit
+  restored green  site/src/lib/composer-address.test.mjs
+red  a tag the parser gave up on is named, not dropped out of the message
+  restored green  site/src/components/app/composer-to-field.observer.test.ts
 red  the remove control removes the recipient
   restored green  site/src/components/app/composer-addressing.observer.test.ts
 
-21 mutations, 0 problems
+23 mutations, 0 problems

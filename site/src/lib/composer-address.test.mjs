@@ -123,8 +123,16 @@ test("adding keeps order, adds nobody twice, and names what the cap refused", ()
   assert.equal(change.recipients.length, COMPOSER_TO_MAX);
   assert.deepEqual(change.refused, [dana]);
   assert.equal(
-    composerToFullNotice(change.refused, nameOf),
+    composerToFullNotice(change.refused.map(nameOf)),
     `To: holds ${COMPOSER_TO_MAX} recipients, so Dana is not in it. Remove one to make room.`,
+  );
+  /* The same sentence serves the parser's overflow, which hands back bare names it never
+   * resolved. Both places have to be said or a name in the message reaches nobody in
+   * silence. */
+  assert.equal(
+    composerToFullNotice(["Ada", "Kenji Ito"]),
+    `To: holds ${COMPOSER_TO_MAX} recipients, so Ada and Kenji Ito are not in it. ` +
+      "Remove one to make room.",
   );
 });
 

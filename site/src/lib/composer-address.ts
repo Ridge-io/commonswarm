@@ -230,14 +230,19 @@ export const composerDeliveryNote = (
 /** What the chip row says when the set is empty. Broadcast is named, never implied by silence. */
 export const BROADCAST_CHIP_LABEL = "Everyone here";
 
-/** The refusal when a name cannot join the set, built from the cap. */
-export const composerToFullNotice = (
-  refused: readonly ComposerRecipient[],
-  nameOf: (entity: ComposerRecipient) => string,
-): string =>
+/**
+ * The notice when a name cannot join the set, built from the cap.
+ *
+ * It takes NAMES rather than recipients because a tag can be over the cap in two places and
+ * both have to be said. `addComposerRecipients` refuses an entity the set has no room for;
+ * `addressFromBody` stops resolving after MENTION_MAX_RECIPIENTS and hands back the rest as
+ * bare names, having never turned them into entities. Reading only the first left the second
+ * dropping a name out of the message with nothing said about it.
+ */
+export const composerToFullNotice = (names: readonly string[]): string =>
   `To: holds ${COMPOSER_TO_MAX} ${countNoun(COMPOSER_TO_MAX, "recipient")}, so ${
-    joinNames(refused.map(nameOf))
-  } ${refused.length === 1 ? "is" : "are"} not in it. Remove one to make room.`;
+    joinNames(names)
+  } ${names.length === 1 ? "is" : "are"} not in it. Remove one to make room.`;
 
 /** The notice for a tag that names two roster entries and so cannot become a chip. */
 export const composerAmbiguousNotice = (names: readonly string[]): string =>
