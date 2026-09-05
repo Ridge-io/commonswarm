@@ -13519,7 +13519,8 @@ __export(cli_exports, {
   replyRefusalHint: () => replyRefusalHint,
   resolveDetachedClaudeExecutable: () => resolveDetachedClaudeExecutable,
   resolveDetachedCodexExecutable: () => resolveDetachedCodexExecutable,
-  resolveTurnBudgetOrDefer: () => resolveTurnBudgetOrDefer
+  resolveTurnBudgetOrDefer: () => resolveTurnBudgetOrDefer,
+  usage: () => usage
 });
 module.exports = __toCommonJS(cli_exports);
 var import_node_crypto22 = require("node:crypto");
@@ -34518,6 +34519,25 @@ async function resolveBudgetAndPrompt(session, prompt, budget) {
   const timeoutMs = typeof budget === "number" ? budget : await budget();
   return await session.prompt(prompt, { timeoutMs });
 }
+var LISTENER_DELIVERY_MAX_LEASE_MS = 9e5;
+var LISTENER_DELIVERY_HOLD_RELEASE_REASONS = [
+  "hold_budget",
+  "lease_budget"
+];
+var LISTENER_DELIVERY_HOLD_RELEASE_CLAUSES = {
+  hold_budget: "it used the turn budget for one delivery",
+  lease_budget: "what was left of its lease could not cover the next step"
+};
+var LISTENER_DELIVERY_HOLD_RELEASE_REMEDIES = {
+  hold_budget: `a larger --turn-budget gives one delivery more of the seat. Past the ${LISTENER_DELIVERY_MAX_LEASE_MS / 6e4} minutes the service leases a delivery for it stops helping, because the turn then outlives its lease and the reply can no longer be acknowledged. The bound is read when the listener starts, so stop this listener and start it again to change it`,
+  /* NOT a cap: nothing clamps the turn budget to the lease, and leaseSpent
+     refuses to START a phase rather than interrupting one, so a 60m budget
+     really does hold the worker for 60m. The sentence says raising past the
+     lease stops helping, and why, which is what the code supports. An earlier
+     version read "up to the 15 minutes the service leases it for", which a
+     review arm read as a cap the code does not enforce. */
+  lease_budget: "nothing needs raising: the row comes back under a new lease of full length, so the next attempt starts with the room this one ran out of. If it keeps being handed back, the service stops retrying it in the end, so look at the delivery rather than at the bound"
+};
 
 // src/listener/engine.ts
 var UUID_RE14 = /^[0-9a-f]{8}-[0-9a-f]{4}-[1-8][0-9a-f]{3}-[89ab][0-9a-f]{3}-[0-9a-f]{12}$/i;
@@ -36739,11 +36759,11 @@ function pendingMainEntry(signal, principalId, provenance, now, options = {}) {
 // src/listener/runtime.ts
 var LISTENER_PAGE_LIMIT = 100;
 var LISTENER_IDLE_POLL_MS = 2e3;
-var LISTENER_DELIVERY_MAX_LEASE_MS = 9e5;
 var LISTENER_DELIVERY_SAFETY_MARGIN_MS = 3e4;
 var LISTENER_ACK_ONLY_MINIMUM_MS = DELIVERY_REQUEST_TIMEOUT_MS + LISTENER_DELIVERY_SAFETY_MARGIN_MS;
 var LISTENER_REPLY_ONLY_MINIMUM_MS = SIGNAL_REQUEST_TIMEOUT_MS + LISTENER_ACK_ONLY_MINIMUM_MS;
 var LISTENER_PROMPT_START_MINIMUM_MS = SIGNAL_READ_TIMEOUT_MS + ACP_DEFAULT_REQUEST_TIMEOUT_MS + LISTENER_REPLY_ONLY_MINIMUM_MS;
+var LISTENER_DELIVERY_HOLD_BUDGET_MS = LISTENER_PROMPT_TIMEOUT_MS;
 var LISTENER_DELIVERY_RETRY_INITIAL_MS = 500;
 var LISTENER_DELIVERY_RETRY_MAX_MS = 3e4;
 var LISTENER_HOST_PORTS_PROBE_MS = 6e4;
@@ -37016,6 +37036,7 @@ async function runListenerRuntime(options) {
   const pollMs = options.pollMs ?? LISTENER_IDLE_POLL_MS;
   const routeMode = options.routeMode ?? "worker";
   const deferOverChars = options.deferOverChars ?? null;
+  const deliveryHoldBudgetMs = options.deliveryHoldBudgetMs ?? LISTENER_DELIVERY_HOLD_BUDGET_MS;
   const abort = options.signal;
   const hasInstanceId = options.listenerInstanceId !== void 0;
   const hasJournal = options.deliveryJournal !== void 0;
@@ -37035,6 +37056,12 @@ async function runListenerRuntime(options) {
     return await closeBeforeStart(
       options.model,
       new Error("an injected delivery client requires durable delivery configuration")
+    );
+  }
+  if (!Number.isSafeInteger(deliveryHoldBudgetMs) || deliveryHoldBudgetMs <= 0) {
+    return await closeBeforeStart(
+      options.model,
+      new Error("listener delivery hold budget must be a positive number of milliseconds")
     );
   }
   try {
@@ -37630,6 +37657,8 @@ async function runListenerRuntime(options) {
           stop = { reason: "cancelled" };
           break;
         }
+        const claimedAtMs = Date.parse(active.claimCreatedAt);
+        const holdStartedAtMs = Number.isFinite(claimedAtMs) ? Math.min(claimedAtMs, now()) : now();
         const signal = authoritativeSignal(claimed);
         let terminal = null;
         try {
@@ -37696,22 +37725,18 @@ async function runListenerRuntime(options) {
                 throw new Error("stored listener effect does not match the authoritative delivery");
               }
               const requiredBudget = effectPhaseBudget(before);
-              if (leasedUntilMs <= now() + requiredBudget) {
-                await sleep2(
-                  Math.max(
-                    0,
-                    leasedUntilMs + LISTENER_DELIVERY_SAFETY_MARGIN_MS - now()
-                  ),
-                  abort
-                );
-                if (abort?.aborted) {
-                  stop = { reason: "cancelled" };
-                  break;
-                }
-                if (now() >= leasedUntilMs + LISTENER_DELIVERY_SAFETY_MARGIN_MS) {
-                  await journal.clearActive(eventTime(now));
-                  after = null;
-                }
+              const holdSpent = processAttempt > 0 && now() - holdStartedAtMs >= deliveryHoldBudgetMs;
+              const leaseSpent = leasedUntilMs <= now() + requiredBudget;
+              if (holdSpent || leaseSpent) {
+                await journal.clearActive(eventTime(now));
+                after = null;
+                options.onEvent?.({
+                  type: "delivery_hold_released",
+                  signalId: signal.id,
+                  reason: holdSpent ? "hold_budget" : "lease_budget",
+                  heldMs: Math.max(0, now() - holdStartedAtMs),
+                  ts: eventTime(now)
+                });
                 break;
               }
               const processed = await engine.process(signal);
@@ -38210,6 +38235,10 @@ var STATUS_ALLOWED_KEYS = /* @__PURE__ */ new Set([
   "lastAckOutcome",
   "consecutiveAckFailureCount",
   "lastAckSignalId",
+  "currentDeliverySignalId",
+  "currentDeliverySince",
+  "heldBackDeliveries",
+  "pendingDeliveryCountAt",
   "routeMode",
   "deferOverChars",
   "pendingForMainCount",
@@ -38254,6 +38283,30 @@ var STATUS_DELIVERY_KEYS = [
   "consecutiveAckFailureCount"
 ];
 var deliveryOutcomes = DELIVERY_ACK_OUTCOMES;
+var LISTENER_HELD_BACK_MAX = 16;
+function parseHeldBackDeliveries(value) {
+  if (!Array.isArray(value) || value.length > LISTENER_HELD_BACK_MAX) return null;
+  const parsed = [];
+  for (const item of value) {
+    if (!item || typeof item !== "object" || Array.isArray(item)) return null;
+    const entry = item;
+    for (const key2 of Object.keys(entry)) {
+      if (key2 !== "signalId" && key2 !== "at" && key2 !== "reason") return null;
+    }
+    if (typeof entry.signalId !== "string" || !UUID_RE18.test(entry.signalId) || typeof entry.at !== "string" || !Number.isFinite(Date.parse(entry.at)) || typeof entry.reason !== "string" || !LISTENER_DELIVERY_HOLD_RELEASE_REASONS.includes(
+      entry.reason
+    )) {
+      return null;
+    }
+    if (parsed.some((seen) => seen.signalId === entry.signalId)) return null;
+    parsed.push({
+      signalId: entry.signalId,
+      at: entry.at,
+      reason: entry.reason
+    });
+  }
+  return parsed;
+}
 function parseStatus(raw, rejectUnknownKeys = false) {
   let value;
   try {
@@ -38277,7 +38330,8 @@ function parseStatus(raw, rejectUnknownKeys = false) {
   const nullableCount = (candidate) => candidate === null || typeof candidate === "number" && Number.isSafeInteger(candidate) && candidate >= 0;
   const nullableTimestamp3 = (candidate) => candidate === null || typeof candidate === "string" && Number.isFinite(Date.parse(candidate));
   const readHealth = row.readHealth === void 0 ? void 0 : parseListenerReadHealth(row.readHealth, rejectUnknownKeys);
-  if (row.version !== 1 || typeof row.instanceId !== "string" || !UUID_RE18.test(row.instanceId) || row.provider !== "grok" && row.provider !== "opencode" && row.provider !== "claude" && row.provider !== "codex" || typeof row.profileId !== "string" || typeof row.workspaceId !== "string" || !UUID_RE18.test(row.workspaceId) || typeof row.principalId !== "string" || !UUID_RE18.test(row.principalId) || !Number.isSafeInteger(row.pid) || row.pid < 1 || typeof row.state !== "string" || !["starting", "ready", "stopping", "stopped", "failed"].includes(row.state) || typeof row.startedAt !== "string" || !Number.isFinite(Date.parse(row.startedAt)) || !(row.readyAt === null || typeof row.readyAt === "string" && Number.isFinite(Date.parse(row.readyAt))) || typeof row.updatedAt !== "string" || !Number.isFinite(Date.parse(row.updatedAt)) || !(row.stoppedAt === null || typeof row.stoppedAt === "string" && Number.isFinite(Date.parse(row.stoppedAt))) || !nullableUuid3(row.lastSignalId) || !(row.lastErrorCode === null || typeof row.lastErrorCode === "string" && /^[a-z0-9_-]{1,96}$/.test(row.lastErrorCode)) || !(row.lastErrorDetail === void 0 || row.lastErrorDetail === null || typeof row.lastErrorDetail === "string" && row.lastErrorDetail.length > 0 && row.lastErrorDetail.length <= 2048 && !/swm_(?:agt|inv|cap)_/i.test(row.lastErrorDetail)) || !(row.lastErrorReasonCode === void 0 || row.lastErrorReasonCode === null || typeof row.lastErrorReasonCode === "string" && /^[a-z0-9_-]{1,96}$/.test(row.lastErrorReasonCode)) || !(row.providerExecutable === void 0 || row.providerExecutable === null || typeof row.providerExecutable === "string" && (0, import_node_path16.isAbsolute)(row.providerExecutable)) || !(row.providerVersion === void 0 || row.providerVersion === null || typeof row.providerVersion === "string" && SEMVER_RE2.test(row.providerVersion)) || !(row.providerLastMeasuredVersion === void 0 || row.providerLastMeasuredVersion === null || typeof row.providerLastMeasuredVersion === "string" && SEMVER_RE2.test(row.providerLastMeasuredVersion)) || !(row.providerBundledAgentSdkVersion === void 0 || row.providerBundledAgentSdkVersion === null || typeof row.providerBundledAgentSdkVersion === "string" && SEMVER_RE2.test(row.providerBundledAgentSdkVersion)) || !(row.providerBundledClaudeCodeVersion === void 0 || row.providerBundledClaudeCodeVersion === null || typeof row.providerBundledClaudeCodeVersion === "string" && SEMVER_RE2.test(row.providerBundledClaudeCodeVersion)) || !(row.providerMinimumRequiredVersion === void 0 || row.providerMinimumRequiredVersion === null || typeof row.providerMinimumRequiredVersion === "string" && SEMVER_RE2.test(row.providerMinimumRequiredVersion)) || !(row.cswarmVersion === void 0 || row.cswarmVersion === null || typeof row.cswarmVersion === "string" && SEMVER_RE2.test(row.cswarmVersion)) || (row.providerVersion === null || row.providerVersion === void 0) !== (row.providerLastMeasuredVersion === null || row.providerLastMeasuredVersion === void 0) || !(row.lastWorkerStderrTail === void 0 || row.lastWorkerStderrTail === null || typeof row.lastWorkerStderrTail === "string" && row.lastWorkerStderrTail.length > 0 && row.lastWorkerStderrTail.length <= 2048 && !/swm_(?:agt|inv|cap)_/i.test(row.lastWorkerStderrTail)) || typeof row.logPath !== "string" || !(0, import_node_path16.isAbsolute)(row.logPath) || !(row.deliveryMode === void 0 || row.deliveryMode === null || typeof row.deliveryMode === "string" && STATUS_DELIVERY_MODES.has(row.deliveryMode)) || !(row.pendingDeliveryCount === void 0 || nullableCount(row.pendingDeliveryCount)) || !(row.lastTerminalDeliveryFailureCount === void 0 || nullableCount(row.lastTerminalDeliveryFailureCount)) || !(row.lastTerminalDeliveryFailureAt === void 0 || nullableTimestamp3(row.lastTerminalDeliveryFailureAt)) || !(row.lastClaimAt === void 0 || nullableTimestamp3(row.lastClaimAt)) || !(row.lastAckAt === void 0 || nullableTimestamp3(row.lastAckAt)) || !(row.lastAckOutcome === void 0 || row.lastAckOutcome === null || typeof row.lastAckOutcome === "string" && deliveryOutcomes.has(row.lastAckOutcome)) || !(row.consecutiveAckFailureCount === void 0 || nullableCount(row.consecutiveAckFailureCount)) || !(row.lastAckSignalId === void 0 || row.lastAckSignalId === null || typeof row.lastAckSignalId === "string" && UUID_RE18.test(row.lastAckSignalId)) || !(row.routeMode === void 0 || row.routeMode === "worker" || row.routeMode === "main" || row.routeMode === "split") || !(row.deferOverChars === void 0 || row.deferOverChars === null || typeof row.deferOverChars === "number" && Number.isSafeInteger(row.deferOverChars) && row.deferOverChars >= 1 && row.deferOverChars <= 1e4) || !(row.pendingForMainCount === void 0 || typeof row.pendingForMainCount === "number" && Number.isSafeInteger(row.pendingForMainCount) && row.pendingForMainCount >= 0) || !(row.droppedForMainCount === void 0 || typeof row.droppedForMainCount === "number" && Number.isSafeInteger(row.droppedForMainCount) && row.droppedForMainCount >= 0) || readHealth === null || !(row.connectionsOpened === void 0 || typeof row.connectionsOpened === "number" && Number.isSafeInteger(row.connectionsOpened) && row.connectionsOpened >= 0) || !(row.connectionReuseRatio === void 0 || typeof row.connectionReuseRatio === "number" && Number.isFinite(row.connectionReuseRatio) && row.connectionReuseRatio >= 0) || !(row.activityPublishFailures === void 0 || typeof row.activityPublishFailures === "number" && Number.isSafeInteger(row.activityPublishFailures) && row.activityPublishFailures >= 0) || !(row.activityLastErrorCode === void 0 || row.activityLastErrorCode === null || typeof row.activityLastErrorCode === "string" && STATUS_ACTIVITY_ERROR_CODES.has(
+  const heldBackDeliveries = row.heldBackDeliveries === void 0 ? void 0 : parseHeldBackDeliveries(row.heldBackDeliveries);
+  if (row.version !== 1 || typeof row.instanceId !== "string" || !UUID_RE18.test(row.instanceId) || row.provider !== "grok" && row.provider !== "opencode" && row.provider !== "claude" && row.provider !== "codex" || typeof row.profileId !== "string" || typeof row.workspaceId !== "string" || !UUID_RE18.test(row.workspaceId) || typeof row.principalId !== "string" || !UUID_RE18.test(row.principalId) || !Number.isSafeInteger(row.pid) || row.pid < 1 || typeof row.state !== "string" || !["starting", "ready", "stopping", "stopped", "failed"].includes(row.state) || typeof row.startedAt !== "string" || !Number.isFinite(Date.parse(row.startedAt)) || !(row.readyAt === null || typeof row.readyAt === "string" && Number.isFinite(Date.parse(row.readyAt))) || typeof row.updatedAt !== "string" || !Number.isFinite(Date.parse(row.updatedAt)) || !(row.stoppedAt === null || typeof row.stoppedAt === "string" && Number.isFinite(Date.parse(row.stoppedAt))) || !nullableUuid3(row.lastSignalId) || !(row.lastErrorCode === null || typeof row.lastErrorCode === "string" && /^[a-z0-9_-]{1,96}$/.test(row.lastErrorCode)) || !(row.lastErrorDetail === void 0 || row.lastErrorDetail === null || typeof row.lastErrorDetail === "string" && row.lastErrorDetail.length > 0 && row.lastErrorDetail.length <= 2048 && !/swm_(?:agt|inv|cap)_/i.test(row.lastErrorDetail)) || !(row.lastErrorReasonCode === void 0 || row.lastErrorReasonCode === null || typeof row.lastErrorReasonCode === "string" && /^[a-z0-9_-]{1,96}$/.test(row.lastErrorReasonCode)) || !(row.providerExecutable === void 0 || row.providerExecutable === null || typeof row.providerExecutable === "string" && (0, import_node_path16.isAbsolute)(row.providerExecutable)) || !(row.providerVersion === void 0 || row.providerVersion === null || typeof row.providerVersion === "string" && SEMVER_RE2.test(row.providerVersion)) || !(row.providerLastMeasuredVersion === void 0 || row.providerLastMeasuredVersion === null || typeof row.providerLastMeasuredVersion === "string" && SEMVER_RE2.test(row.providerLastMeasuredVersion)) || !(row.providerBundledAgentSdkVersion === void 0 || row.providerBundledAgentSdkVersion === null || typeof row.providerBundledAgentSdkVersion === "string" && SEMVER_RE2.test(row.providerBundledAgentSdkVersion)) || !(row.providerBundledClaudeCodeVersion === void 0 || row.providerBundledClaudeCodeVersion === null || typeof row.providerBundledClaudeCodeVersion === "string" && SEMVER_RE2.test(row.providerBundledClaudeCodeVersion)) || !(row.providerMinimumRequiredVersion === void 0 || row.providerMinimumRequiredVersion === null || typeof row.providerMinimumRequiredVersion === "string" && SEMVER_RE2.test(row.providerMinimumRequiredVersion)) || !(row.cswarmVersion === void 0 || row.cswarmVersion === null || typeof row.cswarmVersion === "string" && SEMVER_RE2.test(row.cswarmVersion)) || (row.providerVersion === null || row.providerVersion === void 0) !== (row.providerLastMeasuredVersion === null || row.providerLastMeasuredVersion === void 0) || !(row.lastWorkerStderrTail === void 0 || row.lastWorkerStderrTail === null || typeof row.lastWorkerStderrTail === "string" && row.lastWorkerStderrTail.length > 0 && row.lastWorkerStderrTail.length <= 2048 && !/swm_(?:agt|inv|cap)_/i.test(row.lastWorkerStderrTail)) || typeof row.logPath !== "string" || !(0, import_node_path16.isAbsolute)(row.logPath) || !(row.deliveryMode === void 0 || row.deliveryMode === null || typeof row.deliveryMode === "string" && STATUS_DELIVERY_MODES.has(row.deliveryMode)) || !(row.pendingDeliveryCount === void 0 || nullableCount(row.pendingDeliveryCount)) || !(row.lastTerminalDeliveryFailureCount === void 0 || nullableCount(row.lastTerminalDeliveryFailureCount)) || !(row.lastTerminalDeliveryFailureAt === void 0 || nullableTimestamp3(row.lastTerminalDeliveryFailureAt)) || !(row.lastClaimAt === void 0 || nullableTimestamp3(row.lastClaimAt)) || !(row.lastAckAt === void 0 || nullableTimestamp3(row.lastAckAt)) || !(row.lastAckOutcome === void 0 || row.lastAckOutcome === null || typeof row.lastAckOutcome === "string" && deliveryOutcomes.has(row.lastAckOutcome)) || !(row.consecutiveAckFailureCount === void 0 || nullableCount(row.consecutiveAckFailureCount)) || !(row.lastAckSignalId === void 0 || row.lastAckSignalId === null || typeof row.lastAckSignalId === "string" && UUID_RE18.test(row.lastAckSignalId)) || !(row.currentDeliverySignalId === void 0 || row.currentDeliverySignalId === null || typeof row.currentDeliverySignalId === "string" && UUID_RE18.test(row.currentDeliverySignalId)) || !(row.currentDeliverySince === void 0 || nullableTimestamp3(row.currentDeliverySince)) || heldBackDeliveries === null || !(row.pendingDeliveryCountAt === void 0 || nullableTimestamp3(row.pendingDeliveryCountAt)) || !(row.routeMode === void 0 || row.routeMode === "worker" || row.routeMode === "main" || row.routeMode === "split") || !(row.deferOverChars === void 0 || row.deferOverChars === null || typeof row.deferOverChars === "number" && Number.isSafeInteger(row.deferOverChars) && row.deferOverChars >= 1 && row.deferOverChars <= 1e4) || !(row.pendingForMainCount === void 0 || typeof row.pendingForMainCount === "number" && Number.isSafeInteger(row.pendingForMainCount) && row.pendingForMainCount >= 0) || !(row.droppedForMainCount === void 0 || typeof row.droppedForMainCount === "number" && Number.isSafeInteger(row.droppedForMainCount) && row.droppedForMainCount >= 0) || readHealth === null || !(row.connectionsOpened === void 0 || typeof row.connectionsOpened === "number" && Number.isSafeInteger(row.connectionsOpened) && row.connectionsOpened >= 0) || !(row.connectionReuseRatio === void 0 || typeof row.connectionReuseRatio === "number" && Number.isFinite(row.connectionReuseRatio) && row.connectionReuseRatio >= 0) || !(row.activityPublishFailures === void 0 || typeof row.activityPublishFailures === "number" && Number.isSafeInteger(row.activityPublishFailures) && row.activityPublishFailures >= 0) || !(row.activityLastErrorCode === void 0 || row.activityLastErrorCode === null || typeof row.activityLastErrorCode === "string" && STATUS_ACTIVITY_ERROR_CODES.has(
     row.activityLastErrorCode
   ))) {
     throw new Error("stored listener status is malformed");
@@ -38303,6 +38357,16 @@ function parseStatus(raw, rejectUnknownKeys = false) {
     // Optional key: present only when the file carried it, so a status written
     // without it round-trips byte-for-byte (the routeMode pattern).
     ...row.lastAckSignalId === void 0 ? {} : { lastAckSignalId: row.lastAckSignalId ?? null },
+    ...row.currentDeliverySignalId === void 0 ? {} : {
+      currentDeliverySignalId: row.currentDeliverySignalId ?? null
+    },
+    ...row.currentDeliverySince === void 0 ? {} : {
+      currentDeliverySince: row.currentDeliverySince ?? null
+    },
+    ...heldBackDeliveries === void 0 ? {} : { heldBackDeliveries },
+    ...row.pendingDeliveryCountAt === void 0 ? {} : {
+      pendingDeliveryCountAt: row.pendingDeliveryCountAt ?? null
+    },
     lastErrorDetail: row.lastErrorDetail ?? null,
     lastWorkerStderrTail: row.lastWorkerStderrTail ?? null,
     providerVersion: row.providerVersion ?? null,
@@ -38379,7 +38443,10 @@ async function appendListenerEvent(paths, event) {
     "defer_over_chars",
     "body_length",
     "pending_main_count",
-    "dropped_count"
+    "dropped_count",
+    // How long one delivery held the worker seat, and why it gave it back.
+    "held_ms",
+    "release_reason"
   ]);
   const deliveryModes = /* @__PURE__ */ new Set(["durable_claim", "cursor_fallback"]);
   const routeModes = /* @__PURE__ */ new Set(["worker", "main", "split"]);
@@ -38440,6 +38507,14 @@ async function appendListenerEvent(paths, event) {
     }
     if ((key2 === "body_length" || key2 === "pending_main_count" || key2 === "dropped_count") && !(typeof value === "number" && Number.isSafeInteger(value) && value >= 0)) {
       throw new Error("listener event main-route count is not allowed");
+    }
+    if (key2 === "held_ms" && !(typeof value === "number" && Number.isSafeInteger(value) && value >= 0)) {
+      throw new Error("listener event hold duration is not allowed");
+    }
+    if (key2 === "release_reason" && !(typeof value === "string" && LISTENER_DELIVERY_HOLD_RELEASE_REASONS.includes(
+      value
+    ))) {
+      throw new Error("listener event hold release reason is not allowed");
     }
     if (key2 === "worker_stderr_tail" && !(typeof value === "string" && value.length > 0 && value.length <= 2048)) {
       throw new Error("listener event stderr tail is not allowed");
@@ -38820,6 +38895,7 @@ async function runListenerSupervisor(options) {
     lastWorkerStderrTail: null,
     deliveryMode: null,
     pendingDeliveryCount: null,
+    pendingDeliveryCountAt: null,
     lastTerminalDeliveryFailureCount: null,
     lastTerminalDeliveryFailureAt: null,
     lastClaimAt: null,
@@ -38831,6 +38907,11 @@ async function runListenerSupervisor(options) {
     lastAckOutcome: carried?.lastAckOutcome ?? null,
     consecutiveAckFailureCount: carried?.consecutiveAckFailureCount ?? null,
     lastAckSignalId: carried?.lastAckSignalId ?? null,
+    /* Never carried across a restart: a seat this process does not hold cannot
+       be reported as held, and the queue age restarts with the observations. */
+    currentDeliverySignalId: null,
+    currentDeliverySince: null,
+    heldBackDeliveries: [],
     routeMode: options.routeMode ?? "worker",
     deferOverChars: options.deferOverChars ?? null,
     pendingForMainCount: 0,
@@ -38864,9 +38945,15 @@ async function runListenerSupervisor(options) {
     chain(() => appendListenerEvent(options.paths, event));
   };
   const transition = (state, changes = {}) => {
+    const notWatching = state === "starting" || state === "stopped" || state === "failed";
     status = {
       ...status,
       ...changes,
+      ...notWatching ? {
+        currentDeliverySignalId: null,
+        currentDeliverySince: null,
+        heldBackDeliveries: []
+      } : {},
       state,
       updatedAt: iso2(now)
     };
@@ -39055,6 +39142,7 @@ async function runListenerSupervisor(options) {
         ...status,
         deliveryMode: event.mode,
         pendingDeliveryCount: event.pendingDeliveryCount,
+        pendingDeliveryCountAt: event.pendingDeliveryCount === null ? null : event.ts,
         updatedAt: event.ts
       };
       persist();
@@ -39067,6 +39155,7 @@ async function runListenerSupervisor(options) {
       return;
     }
     if (event.type === "delivery_claim") {
+      const heldBack = (status.heldBackDeliveries ?? []).filter((entry) => entry.signalId !== event.signalId);
       status = {
         ...status,
         readHealth: recordListenerClaim(
@@ -39074,6 +39163,10 @@ async function runListenerSupervisor(options) {
           event.ts
         ),
         pendingDeliveryCount: event.pendingDeliveryCount,
+        pendingDeliveryCountAt: event.ts,
+        currentDeliverySignalId: event.signalId,
+        currentDeliverySince: event.signalId === null ? null : event.ts,
+        heldBackDeliveries: heldBack,
         lastClaimAt: event.ts,
         updatedAt: event.ts
       };
@@ -39105,6 +39198,36 @@ async function runListenerSupervisor(options) {
       });
       return;
     }
+    if (event.type === "delivery_hold_released") {
+      status = {
+        ...status,
+        currentDeliverySignalId: null,
+        currentDeliverySince: null,
+        /* Held back, NOT waiting to be claimed: the row keeps its live lease,
+           so the service cannot hand it to anyone until that lease expires.
+           Both review arms on 33cd24b measured the earlier wording counting it
+           among deliveries "waiting to be claimed". Newest first, deduplicated
+           on the id (a row can be released, redelivered and released again),
+           and bounded. */
+        heldBackDeliveries: [
+          { signalId: event.signalId, at: event.ts, reason: event.reason },
+          ...(status.heldBackDeliveries ?? []).filter(
+            (entry) => entry.signalId !== event.signalId
+          )
+        ].slice(0, LISTENER_HELD_BACK_MAX),
+        lastSignalId: event.signalId,
+        updatedAt: event.ts
+      };
+      persist();
+      log({
+        ts: event.ts,
+        event: "listener_delivery_hold_released",
+        signal_id: event.signalId,
+        release_reason: event.reason,
+        held_ms: Math.max(0, Math.trunc(event.heldMs))
+      });
+      return;
+    }
     if (event.type === "delivery_ack") {
       const failed = event.outcome === "failed_terminal";
       const providerProven = DELIVERY_PROVIDER_PROVEN_OUTCOMES.has(event.outcome);
@@ -39115,6 +39238,13 @@ async function runListenerSupervisor(options) {
         lastAckSignalId: event.signalId,
         consecutiveAckFailureCount: failed ? (status.consecutiveAckFailureCount ?? 0) + 1 : providerProven ? 0 : status.consecutiveAckFailureCount,
         pendingDeliveryCount: null,
+        pendingDeliveryCountAt: null,
+        currentDeliverySignalId: null,
+        currentDeliverySince: null,
+        // An acknowledged row is answered and gone; drop just that one.
+        heldBackDeliveries: (status.heldBackDeliveries ?? []).filter(
+          (entry) => entry.signalId !== event.signalId
+        ),
         lastSignalId: event.signalId,
         updatedAt: event.ts
       };
@@ -39285,7 +39415,14 @@ async function effectiveListenerStatus(paths) {
         state: "failed",
         updatedAt: (/* @__PURE__ */ new Date()).toISOString(),
         stoppedAt: (/* @__PURE__ */ new Date()).toISOString(),
-        lastErrorCode: "unclean_exit"
+        lastErrorCode: "unclean_exit",
+        /* The process is gone: it holds nothing and observes nothing, so every
+           field whose sentence is rendered in the present tense against read
+           time is cleared. pendingDeliveryCount stays, because its line already
+           says it is what the service reported. */
+        currentDeliverySignalId: null,
+        currentDeliverySince: null,
+        heldBackDeliveries: []
       };
       await writeListenerStatus(paths, failed);
       return failed;
@@ -42142,8 +42279,8 @@ var BOOLEAN_FLAGS = /* @__PURE__ */ new Set([
 ]);
 var UUID_RE23 = /^[0-9a-f]{8}-[0-9a-f]{4}-[1-8][0-9a-f]{3}-[89ab][0-9a-f]{3}-[0-9a-f]{12}$/i;
 function packageVersion() {
-  if ("0.1.53".length > 0) {
-    return "0.1.53";
+  if ("0.1.54".length > 0) {
+    return "0.1.54";
   }
   try {
     const value = JSON.parse(
@@ -42368,7 +42505,10 @@ due \u2014 a turn never outlives its credential. Right after a rotation the full
 budget is available up to the token TTL minus 60s (about 59m on the default 1h
 TTL); a turn that lands just before a rotation can be clamped to the ~5m
 renewal lead, and if it times out there, durable delivery retries it on the
-fresh credential.
+fresh credential. The same budget also bounds how long ONE delivery may hold the
+worker seat across its retries: when it is spent the listener hands the seat
+back and claims the next delivery. After the lease ends the service either
+delivers the released one again or terminates it.
 
 listen start --route worker|main|split chooses where directed messages go. worker
 is the unchanged default. main queues every ask or note for the interactive session.
@@ -45391,6 +45531,12 @@ function listenerStatusJson(status, permissionMode, evidence = {
     lastAckOutcome: status.lastAckOutcome ?? null,
     consecutiveAckFailureCount: status.consecutiveAckFailureCount ?? null,
     lastAckSignalId: status.lastAckSignalId ?? null,
+    currentDeliverySignalId: status.currentDeliverySignalId ?? null,
+    currentDeliverySince: status.currentDeliverySince ?? null,
+    currentDeliveryElapsedMs: status.currentDeliverySince ? Math.max(0, nowMs - Date.parse(status.currentDeliverySince)) : null,
+    pendingDeliveryCountAt: status.pendingDeliveryCountAt ?? null,
+    heldBackDeliveries: status.heldBackDeliveries ?? [],
+    heldBackDeliveryCount: (status.heldBackDeliveries ?? []).length,
     routeMode: status.routeMode ?? "worker",
     deferOverChars: status.deferOverChars ?? null,
     pendingForMainCount: status.pendingForMainCount ?? 0,
@@ -45513,8 +45659,26 @@ function renderListenerStatus(status, evidence = {
     lines.push("Delivery mode has not been reported yet.");
   }
   if (status.pendingDeliveryCount !== null) {
+    const observedAt = status.pendingDeliveryCountAt ?? null;
     lines.push(
-      `Pending deliveries reported by the service: ${status.pendingDeliveryCount}.`
+      `Pending deliveries reported by the service: ${status.pendingDeliveryCount}.` + (observedAt === null ? " When the service reported it was not recorded." : ` The service reported that ${relativeAge(observedAt, nowMs)}.`)
+    );
+  }
+  const currentDeliveryId = status.currentDeliverySignalId ?? null;
+  const currentDeliverySince = status.currentDeliverySince ?? null;
+  if (currentDeliveryId !== null && currentDeliverySince !== null) {
+    lines.push(
+      `Working on delivery ${currentDeliveryId}, claimed ${relativeAge(currentDeliverySince, nowMs)}.`
+    );
+  } else {
+    lines.push("No delivery is being worked on right now.");
+  }
+  const heldBack = status.heldBackDeliveries ?? [];
+  const newestHeldBack = heldBack[0];
+  if (newestHeldBack !== void 0) {
+    const others = heldBack.length - 1;
+    lines.push(
+      `Delivery ${newestHeldBack.signalId} was handed back ${relativeAge(newestHeldBack.at, nowMs)} because ${LISTENER_DELIVERY_HOLD_RELEASE_CLAUSES[newestHeldBack.reason]}.` + (others > 0 ? ` This listener is still tracking ${others} other handed-back ${others === 1 ? "delivery" : "deliveries"}.` : "") + ` This listener has not answered it. After the lease ends the service either delivers it again or terminates it. If this repeats, ${LISTENER_DELIVERY_HOLD_RELEASE_REMEDIES[newestHeldBack.reason]}.`
     );
   }
   lines.push(
@@ -46055,6 +46219,9 @@ async function runConfiguredListener(options) {
             },
             routeMode,
             deferOverChars,
+            /* One delivery may hold the seat for one turn budget, not for the
+               whole 15-minute lease. Same lever, so the two cannot drift. */
+            deliveryHoldBudgetMs: turnBudgetMs,
             pendingMainQueue,
             fetcher: httpClient.fetch
           });
@@ -47734,5 +47901,6 @@ ${usage()}
   replyRefusalHint,
   resolveDetachedClaudeExecutable,
   resolveDetachedCodexExecutable,
-  resolveTurnBudgetOrDefer
+  resolveTurnBudgetOrDefer,
+  usage
 });
