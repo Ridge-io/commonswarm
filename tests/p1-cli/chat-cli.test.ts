@@ -46,7 +46,10 @@ import {
   type ChannelCommand,
   type PostSignalCommand,
 } from "../../src/cloud/command-client.js";
-import { parseSignalRecord } from "../../src/cloud/signals.js";
+import {
+  parseSignalRecord,
+  signalAddressesAgent,
+} from "../../src/cloud/signals.js";
 import {
   CHANNEL_SUBCOMMAND_NAMES,
   threadReplyMessage,
@@ -811,28 +814,176 @@ test("cswarm channel names its subcommands, and inbox --follow refuses --channel
   assert.ok(!both.output.includes(client.CHANNEL_SLUG_RULE_TEXT), both.output);
 });
 
-test("cswarm channel ls says why an agent credential cannot list channels", () => {
+test("cswarm channel ls reaches the credential for an agent instead of refusing it", () => {
+  /* RETIRED 2026-09-05. This test used to assert two constants:
+   *   CHANNEL_LIST_NEEDS_HUMAN_MESSAGE  ("Listing channels needs a signed-in
+   *     person: this deployment's read service has no channel list for an agent
+   *     credential ...")
+   *   CHANNEL_SELECTOR_NEEDS_ID_MESSAGE ("Turning a channel name into a channel
+   *     id needs a signed-in person ...")
+   * Both are gone, and so is the branch that raised them. The `read` edge
+   * answers a `channels` resource for an agent credential.
+   *
+   * The old test also could not have caught the change: it asserted the
+   * constants' TEXT and never the CLI's behaviour, and said so in its own
+   * comment. This one asserts the behaviour: the verb reaches the credential
+   * and then the network, and no sentence about signing in is printed. */
   const { output } = run(["channel", "ls", ...offlineTarget]);
-  /* It reaches the credential first, which is correct: the list is refused for
-   * the credential KIND, and the kind is not known until the credential is
-   * read. The sentence itself is gated as a constant here rather than by a live
-   * agent token, so what is NOT established is that a readable agent token
-   * produces it. */
   assert.match(output, REACHED_CREDENTIAL);
-  assert.match(
-    client.CHANNEL_LIST_NEEDS_HUMAN_MESSAGE,
-    /signed in with cswarm login/,
+  assert.doesNotMatch(output, /signed in with cswarm login/);
+  assert.doesNotMatch(output, /needs a signed-in person/);
+  assert.equal(
+    Object.hasOwn(client, "CHANNEL_LIST_NEEDS_HUMAN_MESSAGE"),
+    false,
+    "the retired constant must not come back without its cause coming back",
   );
-  assert.match(client.CHANNEL_SELECTOR_NEEDS_ID_MESSAGE, /channel id/);
-  /* It must not enumerate what the read service DOES answer. That list lives in
-   * a Deno module this package cannot import, so a copy of it here would be a
-   * typed enumeration with nothing holding it true. */
-  for (const resource of ["members", "files", "delivery receipts", "renewal grants"]) {
-    assert.ok(
-      !client.CHANNEL_LIST_NEEDS_HUMAN_MESSAGE.includes(resource),
-      `the sentence enumerates the read service's resources: ${resource}`,
+  assert.equal(
+    Object.hasOwn(client, "CHANNEL_SELECTOR_NEEDS_ID_MESSAGE"),
+    false,
+  );
+  /* CONTROL: the same offline invocation for a verb that never had an agent
+   * refusal reaches the same place, so REACHED_CREDENTIAL is measuring the
+   * credential step and not a channels-specific message. */
+  const files = run(["file", "ls", ...offlineTarget]);
+  assert.match(files.output, REACHED_CREDENTIAL);
+});
+
+test("rename and archive take a channel NAME on an agent credential", () => {
+  /* Both verbs resolve a name through channelRows, which used to raise
+   * CHANNEL_SELECTOR_NEEDS_ID_MESSAGE before reading anything when the
+   * credential was an agent. They now reach the credential and then the
+   * network, which is what a person's run already did.
+   *
+   * WHAT THIS DOES NOT ESTABLISH: that a readable agent token against a
+   * DEPLOYED read service returns the list and the rename lands. The read edge
+   * arm is measured in tests/p1-server/chat-signals.test.ts; nothing here has a
+   * live deployment, and production cannot be probed until the lead deploys. */
+  for (const argv of [
+    ["channel", "rename", "deploys", "releases", ...offlineTarget],
+    ["channel", "archive", "deploys", ...offlineTarget],
+  ]) {
+    const { output } = run(argv);
+    assert.match(output, REACHED_CREDENTIAL, argv.join(" "));
+    assert.doesNotMatch(output, /needs a signed-in person/, argv.join(" "));
+    assert.doesNotMatch(output, /Pass the channel id instead/, argv.join(" "));
+  }
+
+  /* CONTROL: a selector that cannot be a channel name is still refused BEFORE
+   * the credential, so the runs above reached the credential because the name
+   * was usable and not because every input now gets that far. */
+  const bad = run(["channel", "archive", "Not A Name", ...offlineTarget]);
+  assert.doesNotMatch(bad.output, REACHED_CREDENTIAL);
+});
+
+test("the agent channel list sends the exact body the read edge parses, and nothing more", async () => {
+  /* BYTE-EXACT against the resource's own parse arm. The read function takes
+   * this resource through `exactKeys(["resource", "workspace_id"])`, so one
+   * extra key is a 400 rather than a widened request. This pins the serialized
+   * bytes, not a deep-equal, because key ORDER is what a byte comparison adds
+   * over shape. */
+  const sent: Array<{ url: string; init: RequestInit | undefined }> = [];
+  const fetcher: typeof fetch = async (input, init) => {
+    sent.push({ url: String(input), init });
+    return new Response(JSON.stringify({ channels: [] }), {
+      status: 200,
+      headers: { "content-type": "application/json" },
+    });
+  };
+  const rows = await client.listChannelsAsAgent(
+    target,
+    "swm_agt_token",
+    "22222222-2222-4222-8222-222222222222",
+    fetcher,
+  );
+  assert.deepEqual(rows, []);
+  assert.equal(sent.length, 1);
+  assert.equal(sent[0]!.url, `${target.url}/functions/v1/read`);
+  assert.equal(sent[0]!.init?.method, "POST");
+  assert.equal(
+    String(sent[0]!.init?.body),
+    '{"resource":"channels","workspace_id":"22222222-2222-4222-8222-222222222222"}',
+  );
+  const headers = sent[0]!.init?.headers as Record<string, string>;
+  assert.equal(headers.authorization, "Bearer swm_agt_token");
+  assert.equal(headers.apikey, target.anonKey);
+  assert.equal(headers["content-type"], "application/json");
+  /* The read function is not PostgREST: an accept-profile header here would be
+   * a copy of the human path that means nothing on this one. */
+  assert.equal(Object.hasOwn(headers, "accept-profile"), false);
+});
+
+test("the agent channel list refuses a shape it does not understand, and says nothing changed", async () => {
+  const cases: Array<[string, Response]> = [
+    [
+      "an envelope with no channels array",
+      new Response(JSON.stringify({ files: [] }), { status: 200 }),
+    ],
+    [
+      "a body that is not JSON",
+      new Response("not json", { status: 200 }),
+    ],
+    [
+      "an array where the envelope belongs",
+      new Response(JSON.stringify([]), { status: 200 }),
+    ],
+  ];
+  for (const [label, response] of cases) {
+    await assert.rejects(
+      () =>
+        client.listChannelsAsAgent(
+          target,
+          "swm_agt_token",
+          "22222222-2222-4222-8222-222222222222",
+          async () => response.clone(),
+        ),
+      /shape this version does not understand/,
+      label,
     );
   }
+
+  /* A read service without the arm answers 400. That is the deploy coupling
+   * this lane creates, and the sentence it produces is about the refusal rather
+   * than about signing in. */
+  await assert.rejects(
+    () =>
+      client.listChannelsAsAgent(
+        target,
+        "swm_agt_token",
+        "22222222-2222-4222-8222-222222222222",
+        async () =>
+          new Response(JSON.stringify({ error: "invalid_request" }), {
+            status: 400,
+          }),
+      ),
+    /refused \(HTTP 400\). Nothing changed/,
+  );
+
+  /* POSITIVE CONTROL on the same call shape: a well-formed envelope is
+   * accepted and its rows come back, so the refusals above are about the
+   * bodies and not about the helper always throwing. */
+  const ok = await client.listChannelsAsAgent(
+    target,
+    "swm_agt_token",
+    "22222222-2222-4222-8222-222222222222",
+    async () =>
+      new Response(
+        JSON.stringify({
+          channels: [{
+            channel_id: "33333333-3333-4333-8333-333333333333",
+            workspace_id: "22222222-2222-4222-8222-222222222222",
+            slug: "deploys",
+            purpose: null,
+            created_by_principal: "44444444-4444-4444-8444-444444444444",
+            created_by_kind: "user",
+            created_at: "2026-09-05T00:00:00.000Z",
+            archived_at: null,
+          }],
+        }),
+        { status: 200 },
+      ),
+  );
+  assert.equal(ok.length, 1);
+  assert.equal(ok[0]!.slug, "deploys");
 });
 
 test("a flag this subcommand does not take is named before the channel name is judged", () => {
@@ -874,4 +1025,146 @@ test("the usage text advertises every channel surface this build has", () => {
   }
   assert.ok(output.includes(`at most ${client.CHANNEL_PURPOSE_MAX} characters`));
   assert.match(output, /--thread \[--broadcast-to-channel\]/);
+});
+
+const RECIPIENT_ROW: Record<string, unknown> = {
+  id: "11111111-1111-4111-8111-111111111111",
+  workspace_id: "22222222-2222-4222-8222-222222222222",
+  from: "33333333-3333-4333-8333-333333333333",
+  from_kind: "user",
+  to: null,
+  to_agent: "44444444-4444-4444-8444-444444444444",
+  in_reply_to: null,
+  about: null,
+  kind: "ask",
+  body: "both of you",
+  until: "2030-01-01T00:00:00.000Z",
+  created_at: "2026-09-05T00:00:00.000Z",
+};
+const FIRST_AGENT = "44444444-4444-4444-8444-444444444444";
+const SECOND_AGENT = "55555555-5555-4555-8555-555555555555";
+
+test("the recipient list is read when the server sends it, and stays ABSENT when it does not", () => {
+  /* Absent is not the empty list here, and the difference is sharper than it is
+   * for channel_id: an EMPTY list is a real answer that means the sender
+   * addressed nobody, so flattening absence into it would say a directed signal
+   * is a broadcast. A capable edge always sends the field for an
+   * agent-authenticated read, including a one-entry list for the scalar shape;
+   * the human REST read does not name the column. */
+  const unasked = parseSignalRecord(RECIPIENT_ROW);
+  assert.equal(Object.hasOwn(unasked, "recipients"), false);
+
+  const asked = parseSignalRecord({
+    ...RECIPIENT_ROW,
+    recipients: [
+      { kind: "agent", id: FIRST_AGENT, position: 0 },
+      { kind: "agent", id: SECOND_AGENT, position: 1 },
+    ],
+  });
+  assert.deepEqual(asked.recipients, [
+    { kind: "agent", id: FIRST_AGENT, position: 0 },
+    { kind: "agent", id: SECOND_AGENT, position: 1 },
+  ]);
+
+  /* An empty list parses as an empty list. It is what the view returns for an
+   * undirected signal, and it must not be confused with absence. */
+  const broadcast = parseSignalRecord({ ...RECIPIENT_ROW, recipients: [] });
+  assert.deepEqual(broadcast.recipients, []);
+  assert.equal(Object.hasOwn(broadcast, "recipients"), true);
+});
+
+test("a recipient list this reader cannot understand is malformed, never guessed at", () => {
+  const rejected: Array<[string, unknown]> = [
+    ["not an array", { kind: "agent", id: FIRST_AGENT, position: 0 }],
+    ["an entry that is not an object", ["agent"]],
+    ["a kind outside the set", [{ kind: "channel", id: FIRST_AGENT, position: 0 }]],
+    ["an id that is not a uuid", [{ kind: "agent", id: "first", position: 0 }]],
+    ["a fractional position", [{ kind: "agent", id: FIRST_AGENT, position: 0.5 }]],
+    ["a negative position", [{ kind: "agent", id: FIRST_AGENT, position: -1 }]],
+    ["a missing key", [{ kind: "agent", id: FIRST_AGENT }]],
+    [
+      "an extra key",
+      [{ kind: "agent", id: FIRST_AGENT, position: 0, name: "builder" }],
+    ],
+    [
+      "a repeated position",
+      [
+        { kind: "agent", id: FIRST_AGENT, position: 0 },
+        { kind: "agent", id: SECOND_AGENT, position: 0 },
+      ],
+    ],
+    [
+      "a repeated id",
+      [
+        { kind: "agent", id: FIRST_AGENT, position: 0 },
+        { kind: "agent", id: FIRST_AGENT, position: 1 },
+      ],
+    ],
+  ];
+  for (const [label, recipients] of rejected) {
+    assert.throws(
+      () => parseSignalRecord({ ...RECIPIENT_ROW, recipients }),
+      /malformed recipients list|repeated recipient|malformed recipients\[\]\.id/,
+      label,
+    );
+  }
+
+  /* POSITIVE CONTROL on the same call shape: a list that differs from the
+   * refused ones only in being well formed is accepted, so the refusals above
+   * are about the shape and not about the field existing. It also shows the
+   * check does NOT require contiguity or ordering, which the database owns. */
+  const sparse = parseSignalRecord({
+    ...RECIPIENT_ROW,
+    recipients: [
+      { kind: "agent", id: SECOND_AGENT, position: 3 },
+      { kind: "user", id: FIRST_AGENT, position: 1 },
+    ],
+  });
+  assert.equal(sparse.recipients?.length, 2);
+});
+
+test("a signal addresses this agent at any position, and nobody else's", () => {
+  /* The one question three call sites ask -- src/cloud/arrival-watch.ts, which
+   * THREW on a miss, src/listener/hook.ts, which dropped the row, and the
+   * resume inbox count in src/cli.ts. They must ask it the same way or the
+   * count and the listing disagree about one page. */
+  const at0 = parseSignalRecord({
+    ...RECIPIENT_ROW,
+    recipients: [
+      { kind: "agent", id: FIRST_AGENT, position: 0 },
+      { kind: "agent", id: SECOND_AGENT, position: 1 },
+    ],
+  });
+  assert.equal(signalAddressesAgent(at0, FIRST_AGENT), true);
+  assert.equal(signalAddressesAgent(at0, SECOND_AGENT), true);
+  assert.equal(
+    signalAddressesAgent(at0, "66666666-6666-4666-8666-666666666666"),
+    false,
+  );
+
+  /* A PERSON at position 0 and this agent second. The scalar column holds no
+   * agent at all here, so the old scalar question answered no for a signal the
+   * service wakes this agent for. */
+  const personFirst = parseSignalRecord({
+    ...RECIPIENT_ROW,
+    to: "77777777-7777-4777-8777-777777777777",
+    to_agent: null,
+    recipients: [
+      { kind: "user", id: "77777777-7777-4777-8777-777777777777", position: 0 },
+      { kind: "agent", id: SECOND_AGENT, position: 1 },
+    ],
+  });
+  assert.equal(signalAddressesAgent(personFirst, SECOND_AGENT), true);
+  /* A USER id that happens to equal the principal being asked about is not an
+   * agent match: the kind is part of the question. */
+  assert.equal(
+    signalAddressesAgent(personFirst, "77777777-7777-4777-8777-777777777777"),
+    false,
+  );
+
+  /* ABSENT falls back to the scalar column, which is everything an edge that
+   * never reported a set knows. It must not answer false for position 0. */
+  const unreported = parseSignalRecord(RECIPIENT_ROW);
+  assert.equal(signalAddressesAgent(unreported, FIRST_AGENT), true);
+  assert.equal(signalAddressesAgent(unreported, SECOND_AGENT), false);
 });

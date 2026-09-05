@@ -23,6 +23,7 @@
  */
 import {
   CLIENT_PROTOCOL_VERSION,
+  readEndpoint,
   type CloudTarget,
 } from "./config.js";
 
@@ -186,57 +187,105 @@ export const CHANNEL_COLUMNS = [
 ] as const;
 
 /**
- * Listing channels needs a signed-in person, and this says so rather than
- * failing at the transport.
+ * RETIRED 2026-09-05. Two constants stood here and both are gone, because both
+ * became false the moment the `read` edge learned a `channels` resource. They
+ * are preserved verbatim: a reader can still meet them in an installed 0.1.55
+ * build, which prints them, and in `docs/evidence/2026-09-05-chat-client/`.
  *
- * RETIRED 2026-09-05, and kept because the SENTENCE BELOW still ships it:
- * "the `read` edge function answers `signals`, `members`, `files`,
- * `delivery_receipts` and `renewal_grants`, and no channels resource
- * (`supabase/functions/read/index.ts`), so an agent credential has no route to
- * the list."
+ *   CHANNEL_LIST_NEEDS_HUMAN_MESSAGE:
+ *     "Listing channels needs a signed-in person: this deployment's read
+ *      service has no channel list for an agent credential. Run cswarm channel
+ *      ls from a session signed in with cswarm login, or name the channel you
+ *      want by name wherever a command takes one."
  *
- * The read edge now answers `channels` for an agent credential. Two of the
- * three clauses in that paragraph were also wrong when written:
- * `swarm_read.channels` is granted to the `swarm_read` role as well as to
- * `authenticated`, and the read function installs the agent owner's claims
- * before it queries membership-gated views, so `auth.uid()` was never the
- * obstacle. The obstacle was that `parseBody` had no channels arm.
+ *   CHANNEL_SELECTOR_NEEDS_ID_MESSAGE:
+ *     "Turning a channel name into a channel id needs a signed-in person,
+ *      because this deployment's read service does not list channels for an
+ *      agent credential. Pass the channel id instead. cswarm channel create
+ *      prints it, and cswarm channel ls shows it from a session signed in with
+ *      cswarm login."
  *
- * THIS FILE IS NOT WIRED TO IT. `channelRows` in src/cli.ts still refuses an
- * agent credential and still raises the message below, so the CLI behaviour is
- * unchanged by that edge arm. The message becomes FALSE the moment the `read`
- * function is deployed, so replacing it and adding an agent transport is the
- * next lane, and it has to land in the same release the edge deploys in.
+ * Their measured cause was accurate when written and is no longer true:
+ * `parseBody` in `supabase/functions/read/index.ts` had no channels arm. It has
+ * one, `listChannelsAsAgent` below reads it, and `channelRows` in src/cli.ts no
+ * longer branches on the credential kind, so an agent lists channels and turns
+ * a name into an id exactly as a person does.
  *
- * The sentence deliberately does NOT list the resources the read service does
- * answer. That list is enforced in a Deno module this file cannot import
- * (`tsconfig.json` pins `rootDir: "src"`), so writing it out would be a typed
- * enumeration with nothing holding it true, and it tells the reader nothing
- * they can act on.
+ * ⚠ THE COUPLING THIS CREATES. A client carrying these removals talks to a read
+ * service that may not have the arm yet. Against such a deployment
+ * `listChannelsAsAgent` gets HTTP 400 and says the list was refused, which is a
+ * worse sentence than the two above but is not a wrong one. Ship the `read`
+ * deploy first, or in the same release.
  */
-export const CHANNEL_LIST_NEEDS_HUMAN_MESSAGE =
-  "Listing channels needs a signed-in person: this deployment's read service has no channel list for an agent credential. Run cswarm channel ls from a session signed in with cswarm login, or name the channel you want by name wherever a command takes one.";
 
 /**
- * What a caller is told when they named a channel by SLUG for a command that
- * takes an id, on a credential that cannot read the list. Same measured cause
- * as CHANNEL_LIST_NEEDS_HUMAN_MESSAGE, different remedy: here the caller
- * already knows which channel they mean, so the answer is where to get its id.
- */
-export const CHANNEL_SELECTOR_NEEDS_ID_MESSAGE =
-  "Turning a channel name into a channel id needs a signed-in person, because this deployment's read service does not list channels for an agent credential. Pass the channel id instead. cswarm channel create prints it, and cswarm channel ls shows it from a session signed in with cswarm login.";
-
-/**
- * A selector that is neither a channel id nor a usable channel name.
+ * The channel list for an agent credential: the `read` edge function, the same
+ * transport `cswarm file ls` and `cswarm brain ls` take for an agent.
  *
- * It answers with the rule that was actually broken. A review arm found the
- * first version substituting the SHAPE rule for every miss, so
- * `cswarm channel archive all-signals` was told a name uses lowercase letters,
- * digits and hyphens and is 1 to 32 characters — which `all-signals` already
- * is. The rule it broke is that the name is reserved, and that is what it says
- * now. The shape sentence is reserved for a selector that could not be a name
- * at all, where the caller may well have meant an id and needs both rules.
+ * The human path above uses PostgREST because the read function accepts agent
+ * credentials only. Both end at the same `swarm_read.channels` view and ask for
+ * the same columns, so the two credentials render the same list.
+ *
+ * ORDER: the edge sorts by `lower(slug)`, PostgREST by `slug`. `renderChannelList`
+ * does not re-sort, so a workspace mixing cases can list in a different order
+ * for the two credentials. That is a difference nobody has asked to remove and
+ * it is not a correctness claim either path makes.
  */
+export async function listChannelsAsAgent(
+  target: CloudTarget,
+  credential: string,
+  workspaceId: string,
+  fetcher: typeof fetch = fetch,
+  timeoutMs = 30_000,
+): Promise<ChannelRow[]> {
+  const controller = new AbortController();
+  const timer = setTimeout(() => controller.abort(), timeoutMs);
+  let response: Response;
+  try {
+    response = await fetcher(readEndpoint(target), {
+      method: "POST",
+      headers: {
+        authorization: `Bearer ${credential}`,
+        apikey: target.anonKey,
+        "content-type": "application/json",
+      },
+      /* EXACTLY these two keys, in this order. The read function parses this
+       * resource with `exactKeys(["resource", "workspace_id"])`, so one extra
+       * key is a 400 and not a widened request.
+       * tests/p1-cli/chat-cli.test.ts pins the serialized body. */
+      body: JSON.stringify({ resource: "channels", workspace_id: workspaceId }),
+      signal: controller.signal,
+    });
+  } catch {
+    throw new ChannelListError(
+      0,
+      "The channel list did not complete. Nothing changed. Run the same command again.",
+      true,
+    );
+  } finally {
+    clearTimeout(timer);
+  }
+  if (!response.ok) {
+    throw new ChannelListError(
+      response.status,
+      `The channel list was refused (HTTP ${response.status}). Nothing changed.`,
+    );
+  }
+  let body: { channels?: unknown } | null = null;
+  try {
+    body = await response.json() as { channels?: unknown };
+  } catch {
+    body = null;
+  }
+  if (!body || !Array.isArray(body.channels)) {
+    throw new ChannelListError(
+      response.status,
+      "The channel list came back in a shape this version does not understand.",
+    );
+  }
+  return body.channels as ChannelRow[];
+}
+
 export function channelSelectorProblem(selector: string): string | null {
   const problem = channelNameProblem(selector);
   if (problem === "ok") return null;

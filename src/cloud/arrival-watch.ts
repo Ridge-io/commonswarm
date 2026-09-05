@@ -6,6 +6,7 @@ import {
   followHttpDetails,
   isRetryableFollowError,
   nextFollowBackoffMs,
+  signalAddressesAgent,
   SIGNAL_FOLLOW_PAGE_LIMIT,
   type AgentSignalPage,
   type SignalCursor,
@@ -389,10 +390,21 @@ export async function runArrivalWatch(options: {
         limit: baseline ? 1 : SIGNAL_FOLLOW_PAGE_LIMIT,
       });
       assertCursorPage(page);
+      /* THE RECIPIENT SET, not the scalar column.
+       *
+       * RETIRED 2026-09-05: this refused any row whose `to_agent` was not this
+       * principal. From L2 (merge 060ff67) the read edge returns a signal to
+       * EVERY agent the sender named, and the scalar column holds only the
+       * first, so a signal naming this agent at position 1 made a correct read
+       * throw here. That was reachable in production before this lane; waking
+       * every recipient is what makes it routine.
+       *
+       * The undirected arm is unchanged: `to` and `to_agent` both null is the
+       * broadcast question and a multi-recipient signal answers it "no". */
       if (page.signals.some((row) =>
         row.workspace_id !== options.workspaceId ||
         !(
-          row.to_agent === options.principalId ||
+          signalAddressesAgent(row, options.principalId) ||
           (row.to === null && row.to_agent === null)
         )
       )) {

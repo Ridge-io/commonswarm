@@ -310,3 +310,108 @@ test("emitting a notification does not acknowledge, dequeue, or mutate delivery 
   assert.equal(readCalls, 1);
   assert.deepEqual(receipt, before);
 });
+
+test("a message naming this agent at position 1 is emitted, and one naming other agents still stops the watch", async () => {
+  /* THE THROW THIS CLOSES, and it was live before this lane. L2 (merge 060ff67)
+   * made the read edge return a signal to EVERY agent the sender named, while
+   * `to_agent` still holds only the first. The guard here asked the scalar
+   * question and THREW on a correct page, taking `cswarm inbox --notify` down
+   * for a message the sender had addressed to this agent.
+   *
+   * The guard is not softened. It now asks whether the recipient set names this
+   * principal, which is the question it always meant. */
+  const otherAgent = "dddddddd-dddd-4ddd-8ddd-dddddddddddd";
+  const secondSeat: SignalRecord = {
+    ...row(
+      "66666666-6666-4666-8666-666666666666",
+      "both of you",
+      "2026-08-28T10:05:00.000Z",
+    ),
+    to_agent: otherAgent,
+    recipients: [
+      { kind: "agent", id: otherAgent, position: 0 },
+      { kind: "agent", id: AGENT, position: 1 },
+    ],
+  };
+  const abort = new AbortController();
+  const emitted: string[] = [];
+  await runArrivalWatch({
+    workspaceId: WORKSPACE,
+    principalId: AGENT,
+    store: memoryStore({
+      created_at: "2026-08-28T10:04:00.000Z",
+      id: "55555555-5555-4555-8555-555555555555",
+    }).store,
+    signal: abort.signal,
+    sleep: async () => {},
+    readPage: async () => page([secondSeat]),
+    emit: async (signal) => {
+      emitted.push(signal.id);
+      abort.abort();
+    },
+  });
+  assert.deepEqual(emitted, [secondSeat.id]);
+
+  /* CONTROL: the SAME field, the same page shape, and the only difference is
+   * that the set does not name this principal. The watch must still refuse it,
+   * or the guard has been deleted rather than corrected. */
+  const notMine: SignalRecord = {
+    ...secondSeat,
+    id: "77777777-7777-4777-8777-777777777777",
+    recipients: [
+      { kind: "agent", id: otherAgent, position: 0 },
+      { kind: "agent", id: "eeeeeeee-eeee-4eee-8eee-eeeeeeeeeeee", position: 1 },
+    ],
+  };
+  const refusedAbort = new AbortController();
+  let refusedEmits = 0;
+  const refused = await runArrivalWatch({
+    workspaceId: WORKSPACE,
+    principalId: AGENT,
+    store: memoryStore({
+      created_at: "2026-08-28T10:04:00.000Z",
+      id: "55555555-5555-4555-8555-555555555555",
+    }).store,
+    signal: refusedAbort.signal,
+    sleep: async () => {},
+    readPage: async () => page([notMine]),
+    emit: async () => {
+      refusedEmits += 1;
+      refusedAbort.abort();
+    },
+  });
+  assert.equal(refused.reason, "error");
+  assert.match(
+    refused.error?.message ?? "",
+    /directed to another workspace or agent/,
+  );
+  assert.equal(refusedEmits, 0, "and nothing was handed to the session");
+
+  /* CONTROL: a page with NO recipients field at all still passes on the scalar
+   * column, so an edge that never reports a set keeps working. */
+  const scalarAbort = new AbortController();
+  const scalarEmitted: string[] = [];
+  await runArrivalWatch({
+    workspaceId: WORKSPACE,
+    principalId: AGENT,
+    store: memoryStore({
+      created_at: "2026-08-28T10:04:00.000Z",
+      id: "55555555-5555-4555-8555-555555555555",
+    }).store,
+    signal: scalarAbort.signal,
+    sleep: async () => {},
+    readPage: async () =>
+      page([
+        row(
+          "88888888-8888-4888-8888-888888888888",
+          "old edge, scalar only",
+          "2026-08-28T10:06:00.000Z",
+        ),
+      ]),
+    emit: async (signal) => {
+      scalarEmitted.push(signal.id);
+      scalarAbort.abort();
+    },
+  });
+  assert.equal(scalarEmitted.length, 1);
+});

@@ -7,6 +7,7 @@ import {
   type PostSignalCommand,
   type SenderOwnerRelation,
   type SignalKind,
+  type SignalRecipientRef,
   type SignalRecord,
 } from "./command-client.js";
 import {
@@ -344,6 +345,101 @@ const SENDER_OWNER_RELATIONS = new Set<SenderOwnerRelation>([
  * Server-controlled string maxima are not structural: a newer server may
  * legitimately raise them, so reads preserve longer body/about values.
  */
+/** The two recipient kinds a signal's list may hold, in one place. */
+const SIGNAL_RECIPIENT_KINDS = new Set<SignalRecipientRef["kind"]>([
+  "user",
+  "agent",
+]);
+
+/**
+ * Parse a signal's recipient list.
+ *
+ * ABSENT STAYS ABSENT, the rule channel_id already carries here: an edge that
+ * predates multi-recipient signals never sends the field, and the human REST
+ * read does not name the column. Turning that into `[]` would say "addressed to
+ * nobody" about a signal that is addressed to several people, which is the
+ * false-statement failure this file already refuses for channel_id.
+ *
+ * What it refuses, and why each one rather than a looser shape:
+ *   not an array          the field is a list or it is malformed
+ *   an entry that is not
+ *     exactly kind/id/position
+ *                         an unknown key means a shape this reader does not
+ *                         understand, and guessing at it would be a claim
+ *   a kind outside the set, a non-UUID id, a fractional or negative position
+ *   a repeated position or a repeated id
+ *                         the database makes both unique per signal, so a
+ *                         duplicate is a corrupted row and not a new shape
+ *
+ * It deliberately does NOT require positions to be contiguous or sorted. The
+ * database enforces contiguity and the view orders by position; re-deriving
+ * either here would refuse a valid row for a rule this reader does not own.
+ */
+function parseSignalRecipients(
+  value: unknown,
+): { recipients?: SignalRecipientRef[] } {
+  if (value === undefined) return {};
+  if (!Array.isArray(value)) {
+    throw new Error("signal read returned a malformed recipients list");
+  }
+  const recipients: SignalRecipientRef[] = [];
+  const seenPositions = new Set<number>();
+  const seenIds = new Set<string>();
+  for (const entry of value) {
+    if (!entry || typeof entry !== "object" || Array.isArray(entry)) {
+      throw new Error("signal read returned a malformed recipients list");
+    }
+    const row = entry as Record<string, unknown>;
+    const keys = Object.keys(row).sort();
+    if (
+      keys.length !== 3 || keys[0] !== "id" || keys[1] !== "kind" ||
+      keys[2] !== "position" ||
+      typeof row.kind !== "string" ||
+      !SIGNAL_RECIPIENT_KINDS.has(row.kind as SignalRecipientRef["kind"]) ||
+      typeof row.position !== "number" ||
+      !Number.isSafeInteger(row.position) ||
+      row.position < 0
+    ) {
+      throw new Error("signal read returned a malformed recipients list");
+    }
+    const id = checkedUuid(row.id, "recipients[].id");
+    if (seenPositions.has(row.position) || seenIds.has(id)) {
+      throw new Error("signal read returned a repeated recipient");
+    }
+    seenPositions.add(row.position);
+    seenIds.add(id);
+    recipients.push({
+      kind: row.kind as SignalRecipientRef["kind"],
+      id,
+      position: row.position,
+    });
+  }
+  return { recipients };
+}
+
+/**
+ * Whether this signal names this agent principal ANYWHERE in its recipient set.
+ *
+ * `to_agent` alone answers only for position 0. Every agent in the set is woken
+ * (20260905000020_wake_all_recipients), so a reader that asks the scalar
+ * question drops rows the service has already handed the model, and one that
+ * REFUSES on the scalar question throws on a signal the sender addressed to it.
+ *
+ * When `recipients` is absent this falls back to the scalar column, which is
+ * the honest answer for an edge that never reported a set: the scalar column is
+ * everything that reader knows.
+ */
+export function signalAddressesAgent(
+  signal: Pick<SignalRecord, "to_agent" | "recipients">,
+  principalId: string,
+): boolean {
+  if (signal.to_agent === principalId) return true;
+  return (signal.recipients ?? []).some(
+    (recipient) =>
+      recipient.kind === "agent" && recipient.id === principalId,
+  );
+}
+
 export function parseSignalRecord(
   value: unknown,
   options: { attachmentsEnabled?: boolean } = {},
@@ -426,6 +522,10 @@ export function parseSignalRecord(
         "broadcast_to_channel",
       ),
     }),
+    /* Same absent-is-not-null rule as channel_id above, and for a stronger
+     * reason: an empty list is a real answer here (the signal is addressed to
+     * nobody), so absence cannot be flattened into it. */
+    ...parseSignalRecipients(row.recipients),
   };
 }
 

@@ -401,6 +401,31 @@ Of the three bounds L2 recorded on the wake clause, two are closed in the shared
 Still open, and named rather than fixed: revocation or expiry AFTER the row is enqueued leaves an
 unreachable pending row, because the predicate runs once at insert.
 
+### Bounds on the L2 recipient set, as of this lane
+
+Open, named rather than fixed. Each one is a thing a reader will otherwise assume is closed.
+
+1. **Revocation or expiry AFTER the row is enqueued.** `swarm.agent_delivery_is_wakeable` runs once,
+   inside the insert. An agent revoked a minute later still owns an unclaimable row that
+   `claimAgentInbox` step 1 refuses to take and no step terminalizes, so it counts in
+   `pending_delivery_count` for ever. The durable fix is a claim-time sweep for revoked recipients.
+2. **An agent still wakes ITSELF, including in a group it belongs to.** A clause refusing that was
+   written and removed: `runListenerAttendanceCanary` posts a self-note and `cswarm listen canary`
+   needs the wake. With the fan-out an agent that posts to a group containing itself is woken on
+   every turn. Closing it needs a rule that can tell the canary apart from a group reply, and this
+   lane does not have one.
+3. **A hydrated delivery can carry BOTH `to` and `to_agent`.** With a person at position 0 and an
+   agent at position 1, `to` is the person and `to_agent` is the claiming agent. That pair was
+   impossible before, because the old filter required the scalar agent column and
+   `signals_one_recipient` then forced `to` null. Measured once against the served edge; no
+   committed test asserts it. Nothing in `src/` treats the two as exclusive: the three places that
+   read both ask `to === null && to_agent === null`, which is the broadcast question.
+4. **`describeAudience` in `src/cli.ts` names only position 0.** It reads the send response's scalar
+   columns, so `cswarm ask --to a --to b` prints one recipient. Incomplete, not wrong, and it is the
+   send path rather than the delivery path.
+5. **The human half of a delivery receipt names only the scalar `to_user_id`.** A PERSON at position
+   1 has no receipt row. People are not woken, so this lane makes no claim about it.
+
 What this lane does NOT change, and what the lead must sequence:
 
 1. **Apply order is migration, then `command`, then `read`, then a client release.** The migration
@@ -409,6 +434,15 @@ What this lane does NOT change, and what the lead must sequence:
 2. **The site's To: field copy becomes false on deploy.** `site/src/components/app/` states that a
    person in front means the service wakes nobody, and `composer-to-field.observer.test.ts` asserts
    it. That is another lane's file and it was not touched here.
-3. **`CHANNEL_LIST_NEEDS_HUMAN_MESSAGE` becomes false when `read` deploys.** The `read` edge now
-   answers a `channels` resource for an agent credential; `channelRows` in `src/cli.ts` still refuses
-   one. Wiring the CLI has to land in the same release.
+3. **The CLI is now wired to the agent `channels` resource, which makes the DEPLOY ORDER binding.**
+   `CHANNEL_LIST_NEEDS_HUMAN_MESSAGE` and `CHANNEL_SELECTOR_NEEDS_ID_MESSAGE` are retired, their
+   wording kept in `src/cloud/channels.ts`, and `channelRows` no longer branches on the credential
+   kind. A client carrying this against a read service without the arm gets HTTP 400 and says the
+   list was refused. Deploy `read` before or with the client release.
+
+4. **The feed-side scalar re-check is fixed here, and it was a live defect.**
+   `src/cloud/arrival-watch.ts` returned `{reason: "error"}` and `src/listener/hook.ts` dropped a row
+   for a signal naming this agent at position 1, both reachable from L2 (merge 060ff67) with no part
+   of this lane deployed. `parseSignalRecord` now reads `recipients` when the server sends it,
+   absent stays absent, and `signalAddressesAgent` is the one question all three sites ask. The
+   human REST read still does not name the column, so a person's feed rows carry no set.

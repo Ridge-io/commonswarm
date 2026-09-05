@@ -13,6 +13,7 @@ import {
   followHttpDetails,
   readAgentSignalDirectory,
   readAgentSignalPage,
+  signalAddressesAgent,
   type SignalDirectory,
 } from "../cloud/signals.js";
 import {
@@ -694,10 +695,18 @@ async function inboxItems(
     readOptions,
     { tolerateMalformedRows: true, maxMalformedRows: 3 },
   );
+  /* THE RECIPIENT SET, not the scalar column.
+   *
+   * RETIRED 2026-09-05: this read `signal.to_agent === stored.principalId`. The
+   * read edge has returned a signal to every agent the sender named since L2
+   * (merge 060ff67) and the scalar column holds only the first, so a signal
+   * naming this agent at position 1 was fetched and then dropped here. The
+   * service now wakes that agent, so the session hook would have shown nothing
+   * for a message the model was already answering. */
   const directed = page.signals.filter((signal) =>
     (signal.kind === "ask" || signal.kind === "note") &&
     signal.workspace_id === stored.workspaceId &&
-    signal.to_agent === stored.principalId
+    signalAddressesAgent(signal, stored.principalId)
   );
   if (directed.length === 0) return [];
   let directory: SignalDirectory | null = null;
