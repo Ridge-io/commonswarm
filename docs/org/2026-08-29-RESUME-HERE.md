@@ -2094,3 +2094,23 @@ Bounds the lane recorded: `channel ls` has no agent path (the `read` edge expose
 resource — an edge change for a later lane); `src/cloud/channels.ts` duplicates the edge constants
 (`rootDir: src`) with a drift test over generated cases; a plain human `feed --json` omits
 `channel_id` unless `--channel` is set, so a pre-chat deployment keeps working.
+
+## 2026-09-05 07:5x UTC — v0.1.55 RELEASED (channels and threads in the CLI); a tag mis-point, fixed
+
+Bump `36f0aad` on `main` (rebased onto the ledger commit that landed between the build and the
+push; docs-only delta, artifacts valid); GitHub `v0.1.55` Latest with both assets (sha256
+`2b89e27a…` = built); npm `commonswarm@0.1.55` (registry shasum `75da0597` = committed pack,
+`67ab276`); site deployed (`/download` 0.1.55, 0 hits for 0.1.54); installer and `npm i -g` both
+0.1.55 with `channel` in the help; six Claude listeners restarted proof-first onto 0.1.55.
+
+**What went wrong, and the repair:** the release chain used `a && b` steps under `set -e`, so
+when `git rebase` refused (the build had modified the tracked `dist-npm/` files) and the push was
+rejected as non-fast-forward, the chain still ran `gh release create`, which tagged the REMOTE head
+(`ebd3092`, package.json 0.1.54) — the trap the brain topic `releases` already records — and
+published npm. Repair: stash the build output, rebase, push, `git tag -f v0.1.55 36f0aad`,
+`push -f refs/tags/v0.1.55`, verified by `ls-remote`; the assets were always the 0.1.55 build.
+Rule: every step of a release chain must abort the chain (no `&&`-guarded steps before
+`gh release create`), and `git stash` the tracked build output before any rebase.
+
+Chips withdrawn as shipped: head-of-line, brain-links comment, dead landing files, reauth sweep.
+Open chips: flaky write-retry deadline test; `main()` runs on import of `src/cli.ts`.
