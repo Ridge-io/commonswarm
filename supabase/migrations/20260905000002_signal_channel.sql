@@ -76,6 +76,12 @@ DECLARE
     -- Not in the live view yet: the DM phase adds it. Listed now on purpose,
     -- because the phase that ADDS a clause is never the phase that drops it --
     -- the marker has to be here before the recreation that could lose it.
+    --
+    -- A review arm read this as a vacuous assertion. It is vacuous only while
+    -- the clause does not exist, which is exactly when there is nothing to
+    -- drop. The moment the DM phase adds it, p_before carries it on every LATER
+    -- recreation and the guard fires. Listing it early is what makes that true
+    -- without the DM phase having to remember to edit this array.
     'from_principal = auth.uid()'
   ];
 BEGIN

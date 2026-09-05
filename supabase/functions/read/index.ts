@@ -16,13 +16,14 @@ import {
   channelSlugProblem,
   chatReadKeys,
   normalizeChannelSlug,
+  SIGNAL_KINDS as SIGNAL_KIND_LIST,
   unknownChannelMessage,
 } from "../_shared/channels.ts";
 
 const AGENT_TOKEN_RE = /^swm_agt_[A-Za-z0-9_-]{43}$/;
 const UUID_RE =
   /^[0-9a-f]{8}-[0-9a-f]{4}-[1-8][0-9a-f]{3}-[89ab][0-9a-f]{3}-[0-9a-f]{12}$/i;
-const SIGNAL_KINDS = new Set(["working-on", "note", "ask"]);
+const SIGNAL_KINDS = new Set<string>(SIGNAL_KIND_LIST);
 /* MUST match FILE_CONTENT_WARNING in supabase/functions/command/file-artifacts.ts.
  * Not imported: this function's runtime has no import map for the command
  * function's bare "postgres" type specifier — a cross-function import boots

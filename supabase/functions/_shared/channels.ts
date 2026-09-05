@@ -20,6 +20,28 @@
  * decision and are enforced here only.
  */
 
+/**
+ * The signal kinds, once for the edge. AGENTS.md records SEVEN un-synced copies
+ * of this set across the edge, the clients and the table CHECK; this collapses
+ * the three EDGE copies (command's array, command's type, read's Set) into one.
+ * The client copies in src/ and the CHECK in 20260724000003_signals.sql:10 are
+ * still separate and still owed by a later lane.
+ *
+ * It lives HERE rather than in signal-text.ts because this module is imported
+ * by Node tests as well as by Deno: a relative "./signal-text.ts" import breaks
+ * `npm run check:tests`, and a ".js" one breaks `npm run check:edge`. One file
+ * with no relative imports satisfies both typecheckers.
+ *
+ * Any user-facing sentence naming these kinds must be BUILT from this array.
+ */
+export const SIGNAL_KINDS = ["working-on", "note", "ask"] as const;
+export type SignalKind = typeof SIGNAL_KINDS[number];
+
+/** Kinds a thread reply may take. R11: a thread reply is never working-on. */
+export const THREAD_REPLY_KINDS: readonly SignalKind[] = SIGNAL_KINDS.filter(
+  (kind) => kind !== "working-on",
+);
+
 /** Longest channel slug. The database CHECK carries the same bound. */
 export const CHANNEL_SLUG_MAX = 32;
 
@@ -31,6 +53,10 @@ export const CHANNEL_PURPOSE_MAX = 500;
  * The identical pattern is the CHECK on swarm.channels.slug.
  */
 export const CHANNEL_SLUG_RE = /^[a-z0-9]([a-z0-9-]*[a-z0-9])?$/;
+
+/** Same shape as the edges' UUID_RE. Local so this module imports no edge. */
+const CHAT_UUID_RE =
+  /^[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}$/i;
 
 /**
  * Names a channel may not take. `all-signals` is the unfiltered view, not a
@@ -142,8 +168,10 @@ export interface ChatSignalFields {
  * rules are testable without a Deno runtime and so no caller can enforce half
  * of them. Returns the refusal sentence, or null when the shape is usable.
  *
- * Type and uuid checks for the pre-existing fields stay with the caller; this
- * function decides only what the chat fields mean together.
+ * Type and uuid checks for the PRE-EXISTING fields stay with the caller. The
+ * chat fields' own checks belong here, including thread_root_id's uuid shape:
+ * a review arm pointed out that leaving one chat rule on the edge is exactly
+ * the split this function exists to prevent.
  */
 export function chatSignalShapeProblem(
   fields: ChatSignalFields,
@@ -161,6 +189,12 @@ export function chatSignalShapeProblem(
   if (broadcast !== undefined && typeof broadcast !== "boolean") {
     return "broadcast_to_channel is true or false.";
   }
+  if (
+    threadRoot !== undefined && threadRoot !== null &&
+    !(typeof threadRoot === "string" && CHAT_UUID_RE.test(threadRoot))
+  ) {
+    return "thread_root_id is the id of the message the thread starts from.";
+  }
 
   if (threadRoot !== null && threadRoot !== undefined) {
     /* A threaded reply is a message in the open. R11: ask or note, never
@@ -169,8 +203,17 @@ export function chatSignalShapeProblem(
      * column means "reply privately to the author" and the server re-addresses
      * the row on it, so accepting both would make the audience ambiguous at the
      * exact place addressing is decided. */
-    if (fields.signal_kind === "working-on") {
-      return "A working-on signal cannot be a thread reply. Reply with a note or an ask.";
+    if (!THREAD_REPLY_KINDS.includes(fields.signal_kind as never)) {
+      /* Both halves come from THREAD_REPLY_KINDS: the CHECK and the sentence
+       * that describes it. Testing `=== "working-on"` while naming "note or an
+       * ask" in the text was a typed enumeration inside a correct-looking
+       * sentence, which is the exact shape AGENTS.md says the arms do not
+       * catch. A fourth kind now changes both at once. */
+      return `A ${
+        String(fields.signal_kind)
+      } signal cannot be a thread reply. Reply with ${
+        THREAD_REPLY_KINDS.map((kind) => `a ${kind}`).join(" or ")
+      }.`;
     }
     /* An ABSENT key and an explicit null mean the same thing here. The command
      * edge's exactKeys short-circuits before this function ever sees an absent

@@ -289,20 +289,26 @@ test("a channel is tenant-pinned: another workspace's channel_id cannot be stamp
         `;
         assert.equal(own?.channel_id, f.channelMobile);
 
+        /* Savepointed even though ROLLBACK is next: an arm pointed out that
+         * this only worked by ordering, and ordering is not a control. */
         await assert.rejects(
-          insertSignal(tx, {
-            id: randomUUID(),
-            workspaceId: f.workspaceA,
-            from: f.owner,
-            toUserId: null,
-            toAgent: null,
-            kind: "note",
-            body: "cross tenant",
-            channelId: f.channelMobileB,
-          }),
+          tx.savepoint((sp) =>
+            insertSignal(sp, {
+              id: randomUUID(),
+              workspaceId: f.workspaceA,
+              from: f.owner,
+              toUserId: null,
+              toAgent: null,
+              kind: "note",
+              body: "cross tenant",
+              channelId: f.channelMobileB,
+            })
+          ),
           /signals_channel_workspace/,
           "the composite foreign key must refuse a channel from another workspace",
         );
+        const [stillUsable] = await tx<{ ok: number }[]>`SELECT 1 AS ok`;
+        assert.equal(stillUsable?.ok, 1, "the savepoint contained the failure");
         throw ROLLBACK;
       }),
       (error: unknown) => error === ROLLBACK,

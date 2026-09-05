@@ -41,57 +41,57 @@ const CITATIONS: Citation[] = [
   {
     citedBy: "site/src/lib/agent-connect.ts (mintedHorizon)",
     file: "supabase/functions/command/index.ts",
-    lines: [8547, 8552],
+    lines: [8631, 8636],
     contains: "horizon_expires_at: prepared.command.renewal_horizon_ms === null",
   },
   {
     citedBy: "site/src/lib/agent-connect.ts (mintedHorizon, replay)",
     file: "supabase/functions/command/index.ts",
-    lines: [2373, 2379],
+    lines: [2379, 2385],
     contains: "horizon_expires_at: response.horizon_expires_at as string | null",
   },
   {
     citedBy: "site/src/lib/agent-connect.ts (the 400 message)",
     file: "supabase/functions/command/index.ts",
-    lines: [2161, 2169],
+    lines: [2167, 2175],
     contains: "const valid = exactKeys(cmd, [",
   },
   // site/src/components/connect/agent-connect-mint.observer.test.ts
   {
     citedBy: "agent-connect-mint.observer.test.ts (timeboxed fallback, validator)",
     file: "supabase/functions/command/index.ts",
-    lines: [2148, 2150],
+    lines: [2154, 2156],
     contains: '? "timeboxed"',
   },
   {
     citedBy: "agent-connect-mint.observer.test.ts (timeboxed fallback, prepared)",
     file: "supabase/functions/command/index.ts",
-    lines: [3079, 3082],
+    lines: [3085, 3088],
     contains: 'renewal_kind: wire.renewal_kind ?? "timeboxed"',
   },
   {
     citedBy: "agent-connect-mint.observer.test.ts (standing needs an ABSENT horizon)",
     file: "supabase/functions/command/index.ts",
-    lines: [2154, 2155],
+    lines: [2160, 2161],
     contains: 'renewalKind === "standing" && cmd.renewal_horizon_ms === undefined',
   },
   {
     citedBy: "agent-connect-mint.observer.test.ts (the 400)",
     file: "supabase/functions/command/index.ts",
-    lines: [2206, 2209],
+    lines: [2212, 2215],
     contains: "mint_agent_token fields are malformed or out of bounds",
   },
   {
     citedBy: "agent-connect-mint.observer.test.ts (standing binds to the request device)",
     file: "supabase/functions/command/index.ts",
-    lines: [4276, 4276],
+    lines: [4282, 4282],
     contains: "standing ? prepared.wire.device_id : null",
   },
   // supabase/functions/command/index.ts — the resume handler's own comment
   {
     citedBy: "command/index.ts (resume handler, the pattern it copies)",
     file: "supabase/functions/command/index.ts",
-    lines: [3330, 3330],
+    lines: [3336, 3336],
     contains: "grant_preflight_code: (preflight[0]?.code ?? null)",
   },
   {

@@ -18,6 +18,8 @@ import {
   commandFieldsMessage,
   chatSignalShapeProblem,
   normalizeChannelSlug,
+  SIGNAL_KINDS,
+  type SignalKind,
   unknownChannelMessage,
 } from "../_shared/channels.ts";
 import {
@@ -182,7 +184,6 @@ type ConnectCommand =
   // is exactly the escalation the fence exists to stop.
   | { kind: "renew_agent_token" };
 
-type SignalKind = "working-on" | "note" | "ask";
 
 interface SignalCommand {
   kind: "post_signal";
@@ -1708,7 +1709,7 @@ function validateCommand(
     const threadRoot = threadRootId === undefined
       ? null
       : threadRootId as string | null;
-    const signalKinds: readonly SignalKind[] = ["working-on", "note", "ask"];
+    const signalKinds: readonly SignalKind[] = SIGNAL_KINDS;
     const sanitizedBody = typeof cmd.body === "string"
       ? sanitizeSignalText(cmd.body)
       : "";
@@ -1735,7 +1736,7 @@ function validateCommand(
         ? {}
         : { broadcast_to_channel: broadcastToChannel }),
     });
-    const valid = exactKeys(cmd, [
+    const keysOk = exactKeys(cmd, [
       "kind",
       "signal_kind",
       "body",
@@ -1745,7 +1746,8 @@ function validateCommand(
       ...attachmentKeys,
       ...optionalKeys,
       ...chatKeys,
-    ]) &&
+    ]);
+    const valid = keysOk &&
       typeof cmd.signal_kind === "string" &&
       signalKinds.includes(cmd.signal_kind as SignalKind) &&
       typeof cmd.body === "string" &&
@@ -1837,8 +1839,12 @@ function validateCommand(
       : {
         ok: false,
         status: 400,
-        reason: chatShapeProblem ??
-          "signal fields are malformed or over their limits",
+        /* The chat sentence only when the KEY SET was acceptable. A body that
+         * also carries an unknown key broke a more basic rule first, and
+         * naming the chat rule would send the caller to fix the wrong thing. */
+        reason: keysOk && chatShapeProblem !== null
+          ? chatShapeProblem
+          : "signal fields are malformed or over their limits",
       };
   }
 
@@ -5922,7 +5928,7 @@ async function resumeRenewalGrant(
    * was told 403; a retry then answered `renewal_grant_not_suspended`, because the resume it
    * had denied had in fact happened.
    *
-   * Same shape as the renewal preflight read at index.ts:3510 (`preflight[0]?.code ?? null`):
+   * Same shape as the renewal preflight read at index.ts:3336 (`preflight[0]?.code ?? null`):
    * preserve NULL, refuse only on a code we assign.
    *
    * WHY A REFUSAL BELOW STILL COMMITS, DELIBERATELY. `refuse` must commit — its whole job is
@@ -6759,11 +6765,22 @@ interface SignalPlacement {
   broadcastToChannel: boolean;
   untilMs: number;
   /**
-   * A thread reply may not outlive its root. The ceiling is applied in SQL with
-   * LEAST against the same statement_timestamp() the row is created at, so the
-   * clamp cannot be defeated by clock skew between this process and Postgres.
+   * A thread reply may not outlive its root. Applied in SQL against the same
+   * statement_timestamp() the row is created at, so no clock but Postgres's
+   * decides it.
    */
   untilCeiling: string | null;
+  /**
+   * Did the CALLER name this horizon, or is it a per-kind default?
+   *
+   * The two cases get different treatment, and the difference is the whole
+   * honesty rule. A DEFAULT may be clamped down to the ceiling silently: the
+   * caller expressed no opinion, so shortening it tells no lie. An EXPLICIT
+   * horizon may never be silently shortened -- it is either stored exactly as
+   * asked or REFUSED, and the refusal is decided in the same statement as the
+   * insert so no time can pass between the check and the write.
+   */
+  untilExplicit: boolean;
 }
 
 async function postSignal(
@@ -6774,7 +6791,7 @@ async function postSignal(
   target: SignalWriteTarget,
   attachments: readonly SignalAttachment[],
   placement: SignalPlacement,
-): Promise<SignalRecord> {
+): Promise<SignalRecord | null> {
   const untilMs = placement.untilMs;
   const signalId = crypto.randomUUID();
   const rows = await tx<{
@@ -6799,7 +6816,14 @@ async function postSignal(
       to_user_id, to_agent_principal_id, in_reply_to,
       about, kind, body, until, created_at,
       channel_id, thread_root_id, broadcast_to_channel
-    ) VALUES (
+    )
+    /* SELECT ... WHERE, not VALUES, so the fits-in-the-thread test and the
+     * write are ONE statement. A pre-check in the handler cannot give this
+     * guarantee: statement_timestamp() advances between statements, so a
+     * horizon that fit when it was checked can stop fitting before the insert,
+     * and the caller would be silently shortened instead of refused. Zero rows
+     * back is the refusal, and the handler turns it into a 409. */
+    SELECT
       ${signalId}::uuid,
       ${route.workspaceId}::uuid,
       ${canonicalPrincipal(auth.actor)}::uuid,
@@ -6810,31 +6834,43 @@ async function postSignal(
       ${command.about},
       ${command.signal_kind},
       ${command.body},
-      /* GREATEST is the floor that keeps the row legal. resolveThreadRoot
-       * requires the root to be live with a one-second margin, but several
-       * statements run between that SELECT and this INSERT (attachments, the
-       * rate bucket), and statement_timestamp() advances with each one. If more
-       * than a second of wall clock passes inside the transaction -- reachable
-       * under contention -- the clamp would land at or before created_at and
+      /* An explicit horizon is stored exactly as asked; the WHERE below is what
+       * refuses it when it no longer fits, in this same statement. A default is
+       * clamped to the ceiling with LEAST.
+       *
+       * GREATEST is the floor that keeps the row legal. resolveThreadRoot
+       * requires the root to be live with a one-second margin, but a client
+       * round trip separates that SELECT from this INSERT and
+       * statement_timestamp() advances with each statement. If a stall eats the
+       * whole margin the clamp would land at or before created_at and
        * CHECK (until > created_at) would fire, turning a thread reply into a
-       * 500 where a refusal belongs. With the floor, the reply outlives its
-       * root by under a millisecond in that case, and the root is already
-       * expired by then, so no reader can see either one. */
+       * 500 where a refusal belongs. The floor keeps the row legal; the reply
+       * then outlives its root by under a millisecond. A reader CAN see that
+       * millisecond -- swarm_read.signals has no until filter and every caller
+       * applies its own -- so this is a bounded, visible imprecision, not the
+       * invisible one an earlier version of this comment claimed. */
       GREATEST(
-        LEAST(
-          statement_timestamp() + ${untilMs} * interval '1 millisecond',
-          COALESCE(
-            ${placement.untilCeiling}::timestamptz,
-            statement_timestamp() + ${untilMs} * interval '1 millisecond'
+        CASE WHEN ${placement.untilExplicit}
+          THEN statement_timestamp() + ${untilMs} * interval '1 millisecond'
+          ELSE LEAST(
+            statement_timestamp() + ${untilMs} * interval '1 millisecond',
+            COALESCE(
+              ${placement.untilCeiling}::timestamptz,
+              statement_timestamp() + ${untilMs} * interval '1 millisecond'
+            )
           )
-        ),
+        END,
         statement_timestamp() + interval '1 millisecond'
       ),
       statement_timestamp(),
       ${placement.channelId}::uuid,
       ${placement.threadRootId}::uuid,
       ${placement.broadcastToChannel}
-    )
+    WHERE
+      ${placement.untilExplicit} = false
+      OR ${placement.untilCeiling}::timestamptz IS NULL
+      OR statement_timestamp() + ${untilMs} * interval '1 millisecond'
+         <= ${placement.untilCeiling}::timestamptz
     RETURNING
       id, workspace_id, from_principal, from_kind,
       to_user_id, to_agent_principal_id, in_reply_to,
@@ -6842,7 +6878,16 @@ async function postSignal(
       channel_id, thread_root_id, broadcast_to_channel
   `;
   const signal = rows[0];
-  if (!signal) throw new Error("signal insert did not return a row");
+  /* Zero rows is the atomic refusal above, not a failure. Every other reason an
+   * insert could return nothing is impossible here: there is no ON CONFLICT and
+   * no other WHERE arm. */
+  if (!signal) {
+    return placement.untilExplicit && placement.untilCeiling !== null
+      ? null
+      : (() => {
+        throw new Error("signal insert did not return a row");
+      })();
+  }
   for (const [position, attachment] of attachments.entries()) {
     await tx`
       INSERT INTO swarm.signal_attachments (
@@ -7017,12 +7062,26 @@ async function handleTransaction(
         reason: validation.reason,
         detail: ignoredIdentity,
       });
+      /* The reason reaches the CALLER, not only the audit table.
+       *
+       * It used to go to insertAudit alone, so a 400 was a bare
+       * `{"error":"invalid_request"}` and every sentence this edge builds --
+       * the slug rule, the reserved names, the field lists, the thread rules --
+       * was written for an operator reading Postgres rather than for the person
+       * who got the refusal. Generating those sentences from the constants is
+       * worth nothing while the caller cannot see them.
+       *
+       * Additive and safe for installed clients: they ignore unknown top-level
+       * fields by contract (src/cloud/signals.ts:315-326), and the error code
+       * they branch on is unchanged. Nothing secret is added -- the strings are
+       * validator-authored and already stored in swarm.audit. */
       return {
         status: validation.status,
         body: {
           error: validation.status === 413
             ? "payload_too_large"
             : "invalid_request",
+          message: validation.reason,
         },
       };
     }
@@ -7656,12 +7715,12 @@ async function handleTransaction(
         rootUntil !== null && rootRemainingMs !== null &&
         command.until_ms !== undefined
       ) {
-        /* Both sides of this comparison come from Postgres. Using Date.now()
-         * here made the refusal depend on the skew between two clocks: a Deno
-         * process running behind would let an over-long horizon through, and
-         * the SQL clamp would then quietly shorten it. The response still
-         * carries the STORED until, so a caller whose horizon was clamped by
-         * the statements elapsing inside this transaction can see it. */
+        /* An EARLY, friendly refusal. Both sides come from Postgres, so no
+         * clock skew decides it -- but it is measured one statement before the
+         * insert, so it cannot be the guarantee. The guarantee is the WHERE in
+         * postSignal, which tests the same thing in the writing statement. This
+         * check exists to give the caller the root's expiry in the message
+         * rather than a bare conflict. */
         if (command.until_ms > rootRemainingMs) {
           await insertAudit(tx, {
             auth,
@@ -7705,8 +7764,33 @@ async function handleTransaction(
           broadcastToChannel: command.broadcast_to_channel ?? false,
           untilMs: requestedUntilMs,
           untilCeiling: rootUntil === null ? null : rootUntil.toISOString(),
+          untilExplicit: command.until_ms !== undefined,
         },
       );
+      if (signal === null) {
+        /* The atomic arm fired: the horizon fit when it was checked and no
+         * longer fit when the row was written. Refusing is the honest answer;
+         * storing a shorter horizon than the caller named is the branch this
+         * design rules out. */
+        await insertAudit(tx, {
+          auth,
+          commandKind: kind,
+          workspaceId: route.workspaceId,
+          streamId: route.streamId,
+          outcome: "domain",
+          reason: "thread_reply_until_exceeds_root",
+          hash,
+        });
+        return {
+          status: 409,
+          body: {
+            error: "thread_reply_until_exceeds_root",
+            message:
+              `A reply cannot outlive the message its thread starts from, and that thread ended while this reply was being written. Post it again for a fresh horizon.`,
+            ...(rootUntil === null ? {} : { root_until: rootUntil.toISOString() }),
+          },
+        };
+      }
       const signalResponse: StoredResponse = {
         ok: true,
         event_ids: [],

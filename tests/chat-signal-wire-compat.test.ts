@@ -8,6 +8,7 @@ import {
   chatSignalKeys,
   chatSignalShapeProblem,
   commandFieldsMessage,
+  THREAD_REPLY_KINDS,
 } from "../supabase/functions/_shared/channels.js";
 
 /**
@@ -404,9 +405,9 @@ test("the chat keys reach exactKeys ONLY through their own group", () => {
     ),
     "utf8",
   );
-  const start = command.indexOf("const valid = exactKeys(cmd, [\n      \"kind\",\n      \"signal_kind\"");
+  const start = command.indexOf("const keysOk = exactKeys(cmd, [\n      \"kind\",\n      \"signal_kind\"");
   assert.notEqual(start, -1, "the post_signal exactKeys array must be findable");
-  const array = command.slice(start, command.indexOf("]) &&", start));
+  const array = command.slice(start, command.indexOf("]);", start));
   assert.ok(array.includes("...chatKeys"), "chat keys arrive as a spread group");
   for (const key of CHAT_SIGNAL_OPTIONAL_KEYS) {
     assert.equal(
@@ -430,8 +431,15 @@ test("a broken chat shape is refused with the sentence that says which rule brok
     "utf8",
   );
   assert.ok(
-    command.includes("reason: chatShapeProblem ??"),
+    command.includes("? chatShapeProblem"),
     "the chat refusal sentence must reach the caller",
+  );
+  /* And ONLY when the key set was acceptable: a body that also carries an
+   * unknown key broke a more basic rule first, and naming the chat rule would
+   * send the caller to fix the wrong thing. */
+  assert.ok(
+    command.includes("keysOk && chatShapeProblem !== null"),
+    "the chat sentence is used only when exactKeys passed",
   );
   const sentence = chatSignalShapeProblem({
     signal_kind: "note",
@@ -442,4 +450,74 @@ test("a broken chat shape is refused with the sentence that says which rule brok
   });
   assert.ok(sentence !== null && sentence.includes("thread_root_id"));
   assert.ok(sentence !== null && sentence.includes("in_reply_to"));
+});
+
+
+test("the thread-reply kinds sentence is generated from the kind set", () => {
+  /* A review arm found this typed: the check was `=== "working-on"` while the
+   * sentence named "a note or an ask" in prose. A fourth kind would have been
+   * accepted as a thread reply while the sentence still named two. */
+  const sentence = chatSignalShapeProblem({
+    signal_kind: "working-on",
+    to_user_id: null,
+    to_agent_principal_id: null,
+    in_reply_to: null,
+    thread_root_id: "22222222-2222-4222-8222-222222222222",
+  });
+  assert.ok(sentence !== null);
+  for (const kind of THREAD_REPLY_KINDS) {
+    assert.ok(sentence.includes(kind), `the sentence must name ${kind}`);
+  }
+  assert.ok(sentence.includes("working-on"), "and the kind that was refused");
+  /* Control: the refused kind is not itself offered as a remedy. */
+  assert.equal(THREAD_REPLY_KINDS.includes("working-on" as never), false);
+  /* Both edges read ONE kind set now, so a fourth kind cannot land in three
+   * places and lie in a fourth. */
+  const command = readFileSync(
+    fileURLToPath(
+      new URL("../supabase/functions/command/index.ts", import.meta.url),
+    ),
+    "utf8",
+  );
+  const read = readFileSync(
+    fileURLToPath(
+      new URL("../supabase/functions/read/index.ts", import.meta.url),
+    ),
+    "utf8",
+  );
+  assert.equal(
+    command.includes('["working-on", "note", "ask"]'),
+    false,
+    "the command edge must not keep its own copy of the kind set",
+  );
+  assert.equal(
+    read.includes('new Set(["working-on", "note", "ask"])'),
+    false,
+    "the read edge must not keep its own copy of the kind set",
+  );
+  assert.ok(command.includes("SIGNAL_KINDS") && read.includes("SIGNAL_KIND"));
+});
+
+test("thread_root_id's uuid shape is a chat rule and lives with the chat rules", () => {
+  assert.notEqual(
+    chatSignalShapeProblem({
+      signal_kind: "note",
+      to_user_id: null,
+      to_agent_principal_id: null,
+      in_reply_to: null,
+      thread_root_id: "not-a-uuid",
+    }),
+    null,
+  );
+  assert.equal(
+    chatSignalShapeProblem({
+      signal_kind: "note",
+      to_user_id: null,
+      to_agent_principal_id: null,
+      in_reply_to: null,
+      thread_root_id: null,
+    }),
+    null,
+    "an explicit null still means no thread",
+  );
 });
