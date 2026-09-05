@@ -388,6 +388,50 @@ test("the doc marks exactly the required trailer keys as required", () => {
   );
 });
 
+/** A throwaway HOME holding one Claude Code transcript with the given main-chain model rows. */
+function claudeHome(session: string, models: string[]): string {
+  const home = mkdtempSync(join(tmpdir(), "agent-trailers-cc-"));
+  const dir = resolve(home, ".claude/projects/anywhere");
+  mkdirSync(dir, { recursive: true });
+  writeFileSync(
+    resolve(dir, `${session}.jsonl`),
+    models.map((model) => JSON.stringify({ type: "assistant", message: { model } })).join("\n") + "\n",
+  );
+  return home;
+}
+
+test("a placeholder row in the transcript is never read as a model", () => {
+  /* Measured 2026-09-04 in a live transcript on this host: 56 MAIN-CHAIN assistant rows carried
+   * `.message.model` = "<synthetic>", written for turns the harness injects rather than a model
+   * serving one. Taking the last row blindly puts that string into the audit as if it were a model
+   * id, on any commit made straight after such a turn — a value that looks measured and names no
+   * model. The pair below is the control: the real model behind a trailing placeholder is still
+   * found, and a transcript of nothing but placeholders establishes no model at all rather than
+   * inventing one. */
+  const home = claudeHome("sess", ["claude-opus-5", "<synthetic>"]);
+  try {
+    const detected = run(emitter, ["--detect"], {
+      ...noRuntime, HOME: home, CLAUDECODE: "1", CLAUDE_CODE_SESSION_ID: "sess",
+    });
+    assert.match(detected, /^model=claude-opus-5$/m, "a placeholder row was read as the model");
+    assert.match(detected, /^source=runtime-transcript$/m);
+  } finally {
+    rmSync(home, { recursive: true, force: true });
+  }
+
+  const onlyPlaceholders = claudeHome("sess", ["<synthetic>"]);
+  try {
+    const detected = run(emitter, ["--detect"], {
+      ...noRuntime, HOME: onlyPlaceholders, CLAUDECODE: "1", CLAUDE_CODE_SESSION_ID: "sess",
+    });
+    const unknown = /^AGENT_TRAILER_MODEL_UNKNOWN=(\S+)$/m.exec(vocabSource)![1]!;
+    assert.match(detected, new RegExp(`^model=${unknown}$`, "m"), "a placeholder became the model");
+    assert.match(detected, /^source=none$/m, "a placeholder was recorded as a measurement");
+  } finally {
+    rmSync(onlyPlaceholders, { recursive: true, force: true });
+  }
+});
+
 test("a runtime that cannot read its model still records the family it can establish", () => {
   /* Claude Code serves Anthropic models and nothing else, so an unreadable transcript leaves the
    * family known and only the model unknown. That is a measurement, not the "family from the tool"
@@ -425,4 +469,9 @@ test("the doc records the grace rule and does not overstate what the gate blocks
   assert.match(doc, /date alone loses to concurrent lanes/i, "the doc does not explain what the date test alone loses to");
   assert.match(doc, /author date, not committer date/i);
   assert.match(doc, /no branch protection/i, "the doc does not say the check blocks no merge today");
+  /* Two more claims that must not quietly get stronger than the code. The rebase case is the hole
+   * the conjunction cannot cover, and the moment somebody reaches for a plausible model; the
+   * exemption cannot be closed from inside a repository at all. Both were written as solved once. */
+  assert.match(doc, /does not close the evasion/i, "the doc overstates what the exemption stops");
+  assert.match(doc, /rebased after the cutoff/i, "the doc does not name the case grace cannot cover");
 });

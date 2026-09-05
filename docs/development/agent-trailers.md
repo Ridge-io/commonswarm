@@ -257,9 +257,16 @@ no agent can be recorded as their author.
 
 It is **narrow on purpose**: the author must not be that address as well. A squash merge keeps the
 PR author (measured on `main`: `cf17894` and `297f1a4` are committed by GitHub and authored by
-`tom@ridge.io`), while somebody running `git config user.email noreply@github.com` to slip past the
-gate would set both. That closes the one-line evasion without touching the case the exemption exists
-for.
+`tom@ridge.io`), while somebody running `git config user.email noreply@github.com` would set both
+and stay caught.
+
+**It does not close the evasion, and claiming that would be the defect this page keeps warning
+about.** `GIT_COMMITTER_EMAIL=noreply@github.com git commit ...` sets only the committer and slips
+through. Nothing in a repository can stop that: the only proof a commit came from GitHub is its
+web-flow signature, which a runner cannot verify without the key. What the author test buys is that
+the exemption cannot be turned on by a config somebody set once and forgot — it takes a deliberate
+per-commit override. That is the accident-guard scope stated everywhere else here, and
+`scripts/check-commit-identity.sh` has the same property with the same address.
 
 ---
 
@@ -332,6 +339,21 @@ sentences describing it cannot drift apart.
 - **Scope.** Deleting the hook, or back-dating a commit, would grant it grace. That is the same
   accident-guard scope as the rest of this: it catches a checkout that never had the hook, not
   somebody who means to evade it.
+- **The one case the conjunction does not cover: old work rebased after the cutoff.** A lane that
+  branched before the hook existed, committed after the cutoff, and then rebases onto `main` ends up
+  with the hook in its tree and an author date past the cutoff, so it is checked. There is no way
+  left to tell it apart from work written with the hook — the original commits are gone. **Do not
+  `--amend` those in your own session**: your runtime would sign for a model that did not write
+  them, which is the wrong answer the sentinels exist to prevent. Tag them with the `unknown`
+  sentinel, or declare the model if you know it:
+
+  ```sh
+  CSWARM_AGENT_MODEL=unknown CSWARM_AGENT_FAMILY=unknown \
+    git rebase -r --exec 'git commit --amend --no-edit' <base>
+  ```
+
+  The gate's failure message says the same thing, because this is the moment somebody reaches for a
+  plausible guess.
 
 ---
 
