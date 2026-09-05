@@ -1045,11 +1045,21 @@ it without the mention.
 > badge the row, revisit with multi-recipient."* The recommendation to keep the behaviour was **not**
 > adopted; D2 reverses it.
 
-⛔ **D2 is not shippable as written until one of two things happens, and the constraint is measured, not
+> **CORRECTED 2026-09-05, `lane/composer-to-field`.** Both halves of the block below are now false,
+> and option **(b)** is what happened. Multi-recipient signals shipped: `swarm.signal_recipients`
+> holds the set, `SIGNAL_RECIPIENT_MAX` caps it at 8 in the command edge and in the CHECK on
+> `position`, and the composer posts **one** signal carrying the wire's `to` list. The scalar columns
+> travel null and the edge writes recipient 0 into them itself. The "present workaround" sentence
+> describes the 2026-09-04 composer, which fanned a message out into one signal per tag; that
+> behaviour is retired. A reader who meets the paragraph below should read it as the state of the
+> world before multi-recipient signals landed, not as a live blocker. Only recipient 0 is WOKEN,
+> which is a separate bound and is stated on the To: row itself.
+
+⛔ ~~**D2 is not shippable as written until one of two things happens, and the constraint is measured, not
 guessed.** `signals_one_recipient` (`20260730000002_agent_signal_receive.sql:25-27`) allows **at most
 one** recipient per signal, so a To: set of two or more principals has nowhere to be stored. The
 composer's present workaround — one directed signal per tag — is precisely what D2 forbids, because each
-of those signals is read-scoped to its single recipient. So the composer lane must either:
+of those signals is read-scoped to its single recipient.~~ So the composer lane must either:
 
 - **(a)** address a single mention as the message's one recipient and refuse the second mention with a
   message that says the limit and why, or

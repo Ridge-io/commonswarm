@@ -136,6 +136,52 @@ that message in front of somebody the writer never addressed, and that cannot be
 sent. Leaving them out is visible on the row and one click from being fixed. So the composer does
 not add, and a draft with no body — which is not a message — derives its set again on arrival.
 
+### Round seven: PASS / FAIL, and the lane stopped here
+
+`d96de1d` is the code SHA both arms read. Gemini: **PASS** — "no seventh instance", and it endorsed
+the draft-with-a-body tiebreak. Grok: **FAIL**, on one finding, verified here at its cited lines.
+
+**THE OPEN DEFECT, NOT FIXED, AND IT IS PRE-EXISTING.** A same-workspace `openWorkspace` during a
+send wedges the composer for the rest of the session.
+
+- `openWorkspace` calls `resetComposer()` only `if (changesWorkspace)`, and always does
+  `const version = ++requestVersion`.
+- The submit's `finally` lifts the send flag only when `version === requestVersion &&
+  workspaceId === activeWorkspaceId`.
+- `setComposerSending(false)` has exactly two call sites: that guarded `finally`, and
+  `resetComposer` — which a same-workspace reopen skips.
+- Six callers reopen the same workspace: the refresh button, retry-workspace, remove-member,
+  edit-model, revoke, and remove-agent.
+
+So pressing Refresh while a message is posting bumps the generation, skips the lift, and leaves
+`composerSending` true forever. The box stays read-only, the send button stays disabled, chip
+clicks return, and a failed send never puts the body back.
+
+**It is not a regression of this lane.** The merge-base has the same two `setComposerSending(false)`
+call sites, the same guarded `finally`, and the same `if (changesWorkspace) resetComposer()`. What
+this lane changes is the BLAST RADIUS: `deriveComposerAddress` holds while `sending`, so a stuck
+flag now also freezes the To: row — no prune, no tag, no chip edit — where before the row kept
+working around a stuck box.
+
+**The shape, named rather than patched.** Six rounds, one family, and round six named its cause
+exactly: **work the SEND owns sits behind a guard that asks whether the SCREEN is still the
+send's.** Those are two different questions. Round six moved the send's STORAGE out from behind
+that guard. Its FREEZE is still behind it, and the freeze is bound to `requestVersion`, which any
+same-workspace reopen bumps. The general fix is not a third point fix: every send-owned cleanup —
+lifting the flag, restoring the body on failure, settling the address — belongs outside the screen
+guard, keyed to the send's own identity, exactly as its storage now is. The screen guard should
+protect only what the reader can see.
+
+That fix is a change to the send's failure and teardown paths, which is wider than this lane's
+brief, and the PM rule is to stop rather than make a fourth fix in the same family. It is written
+down here instead.
+
+**Also from Grok, and fixed in the docs-only commit that carries this note:**
+`docs/design/2026-09-04-chat-platform-reconciled.md` still asserted "D2 is not shippable as
+written" and called one directed signal per tag "the composer's present workaround". Both were
+made false by this lane, and option (b) in that same block is what happened. Corrected in place
+with the retired wording preserved.
+
 ## What is NOT established
 
 - **Nothing here reached production.** Every browser measurement runs against `site/dist` in
@@ -157,6 +203,9 @@ not add, and a draft with no body — which is not a message — derives its set
   browser step can switch workspace inside one. The fix is read out of the source with three
   mutations on it: the storage is captured, it is done at all, and it is done before the guard.
   What a real post does under a real switch is NOT measured here.
+- **A same-workspace `openWorkspace` during a send is not covered at all.** No browser control
+  reaches it, no mutation names it, and it is the open defect above. Sample mode cannot reach it
+  twice over: a sample send has no await, and `openSampleWorkspace` returns early on the same id.
 - **The write of the remembered set is not independently controlled, and the harness says so.**
   Breaking `rememberComposerTo` changes nothing a reader sees, because `pagehide` flushes the
   live chips into the draft and the draft restores them. The READ is controlled
