@@ -1840,3 +1840,31 @@ that cannot tell `</li>` from `<br>`) go to `lane/markdown-followup`.
 Postgres tests have never run: the DB slot is handed to it for one run before landing; chat holds.
 Chat round 2 (d3bda9e) came back FAIL/FAIL; the PM verifies each finding at the cited lines.
 Seventh lane spawned at pressure 1: `lane/listener-head-of-line`.
+
+## 2026-09-05 02:3x UTC — CLI chips LANDED (e092942), v0.1.53 RELEASED, fleet on 0.1.53
+
+**Apply order held:** `supabase db push --linked` applied `20260904000002_file_version_precondition`
+(remote history confirms; dry run named exactly that file) → `functions deploy command` → merge
+`e092942` pushed → bump `83b9004`, GitHub `v0.1.53` Latest on that SHA with both assets (sha256
+`069a8170…` = built), npm `commonswarm@0.1.53` (registry shasum `68bb8e78` = committed pack,
+`48bf1b4`), site deployed (`/download` 0.1.53 with a cache-buster, 0 hits for 0.1.52), installer and
+`npm i -g` both 0.1.53, six Claude listeners restarted proof-first, all `ready 0.1.53`. Live control
+with the new CLI on a scratch topic `lead-scratch`: no flag saves (positive control); `--if-version
+999` refused, exit 1, names the live version; `--if-version <live>` saves; stale again refused; the
+OLD 0.1.52 client with no flag still saves against the new server.
+
+Lane record: five arm rounds; rounds 1–3 FAIL each caught a real defect (CAS at create only; a
+refusal sentence that said "nothing was uploaded" after bytes were uploaded, with a test pinning it;
+the fix for the slot leak created a storage leak by putting the row beyond the sweeper — fixed by
+queueing the path in the same transaction). Postgres: p1-server 115/115 incl. two-writer
+interleavings; p1-local 19/19. Not established by the lane: the migration through `migration up`
+locally (blocked by chat's `20260905*` on the shared DB; applied by direct SQL there, and now proven
+through the real push in production).
+
+**Spec tension, ruled:** `--if-version <n>` is an integer where SWARM-CLOUD §2.9 specifies an opaque
+ETag and three-way merge. Ruling in the spec itself (`fe98deb`, amendment under the optimistic-
+concurrency bullet): opt-in interim, never worse than the unconditional default; ETag stays the
+target and the integer form retires when it lands.
+
+Chips closed by this landing: p1-cli fail-fast, resume streaming, brain put version check. The
+listener head-of-line chip is `lane/listener-head-of-line`, in flight.
