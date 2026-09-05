@@ -333,6 +333,80 @@ test("an ambiguous tag is reported rather than guessed at", () => {
   assert.match(composerAmbiguousNotice(["Dana", "Ada"]), /"Dana" and "Ada" name more than one/);
 });
 
+test("no retired wake sentence stands as current, anywhere the wake copy lives", () => {
+  /* THE CLAIM THIS MAKES CHECKABLE. `lane/wake-all-recipients`' copy commit said every retired
+     sentence was kept beside its replacement, and a review arm found five that were not; the
+     commit that fixed those five then claimed "no retired claim stands as current", and the
+     next arm found four more in one file. A general claim asserted twice and wrong twice is a
+     claim with no control on it, so here is the control.
+
+     BOUND, STATED. It reads the FIVE files this lane's wake copy lives in — named below,
+     because a source sweep has no complete set to run over — and requires every occurrence of
+     each retired phrase to sit inside a `~~ ~~` span, which is how this repo marks superseded
+     wording. It cannot see a retired claim written in words no phrase here matches, and it
+     cannot see one in a file not on this list. What it does catch is the exact failure that
+     happened twice: a sentence from the old rule left standing beside its own replacement.
+
+     The phrase list and the file list are both iterated by the assertions, so adding either
+     changes what runs rather than only what a comment says. */
+  const files = [
+    "./composer-address.ts",
+    "../components/app/composer-to-field.observer.test.ts",
+    "../components/app/composer.observer.test.ts",
+    "../components/app/composer-addressing.observer.test.ts",
+    "../components/app/LiveDashboard.astro",
+  ];
+  const retired = [
+    "wakes nobody",
+    "wake nobody",
+    "nobody is woken",
+    "woken, however many",
+    "one control over who is woken",
+    "one recipient the service wakes",
+    "first recipient is notified",
+    "No agent is notified while",
+    "EXACTLY ONE CHIP IS MARKED",
+    "is the one the service wakes",
+    "way a reader can change who is woken",
+  ];
+  let scanned = 0;
+  for (const file of files) {
+    const source = readFileSync(new URL(file, import.meta.url), "utf8");
+    scanned += source.length;
+    /* Character spans, not line matching: a strikethrough in this repo routinely wraps across
+       several lines, and comparing a line against a concatenation of spans reported a struck
+       sentence as standing. */
+    const struck = [];
+    for (const match of source.matchAll(/~~[\s\S]*?~~/g)) {
+      struck.push([match.index, match.index + match[0].length]);
+    }
+    const inside = (at) => struck.some(([from, to]) => at >= from && at < to);
+    for (const phrase of retired) {
+      let at = source.indexOf(phrase);
+      while (at !== -1) {
+        assert.ok(
+          inside(at),
+          `${file}: "${phrase}" stands as current at offset ${at}: ` +
+            JSON.stringify(source.slice(Math.max(0, at - 90), at + 90)),
+        );
+        at = source.indexOf(phrase, at + 1);
+      }
+    }
+  }
+  /* POSITIVE CONTROL on the read itself: five files that resolved to nothing would satisfy
+     every assertion above, so the sweep has to have seen something. */
+  assert.ok(scanned > 200_000, `the sweep read only ${scanned} characters`);
+  /* AND ON THE PHRASE LIST: at least one retired phrase must actually be present somewhere,
+     struck, or the list is matching nothing at all and would pass over any file. */
+  const all = files
+    .map((file) => readFileSync(new URL(file, import.meta.url), "utf8"))
+    .join("");
+  assert.ok(
+    retired.some((phrase) => all.includes(phrase)),
+    "no retired phrase appears anywhere, so this sweep is not reading the wake copy",
+  );
+});
+
 test("the module states the wake bound, and names the predicate that now enforces it", () => {
   /* A CLAIM CONTROL, not a style check. The reason the wake is what it is lives in the
      database, and a later reader who cannot find that reason will treat it as a preference.

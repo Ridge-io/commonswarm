@@ -134,7 +134,7 @@ went to nobody.
 
 ## The mutation table
 
-57 mutations, 0 problems. Two things carry NO mutation, and the harness says so in place rather
+58 mutations, 0 problems. Two things carry NO mutation, and the harness says so in place rather
 than carrying an entry that passes:
 
 - `Number.isFinite(until)` in `threadRootBlock`. Removing it changes nothing: every comparison
@@ -249,12 +249,29 @@ found the two lanes applied out of order, not a bad citation.
 Eight mutations cover it, and four of them were re-aimed after the first run reported a correct
 catch under the wrong name.
 
-**A review arm then found five comments still stating the retired rule as though it were
-current** — in `promoteComposerRecipient`, in two type comments and one step comment of
-`composer-to-field.observer.test.ts`, in `composer.observer.test.ts`, and in the CSS for the
-notified mark. None is on screen, so it was not a break for a reader; it did make this lane's
-own commit message false where it said every retired sentence was kept beside its replacement.
-All five now carry the retired wording in strikethrough beside what replaced it.
+**Two arms in a row found retired wake wording still standing as current, and the second one
+is the more useful.** Round three named five comments; the commit that fixed those five then
+claimed "no retired claim stands as current", and round four found FOUR MORE in one file —
+including a comment saying nobody is woken sitting directly above the assertion that Orbit is.
+Neither is on screen, so neither was a break for a reader. Both made a claim of this lane's own
+false.
+
+**A general claim asserted twice and wrong twice is a claim with no control on it**, so it has
+one now. `composer-address.test.mjs` sweeps the five files this lane's wake copy lives in and
+requires every occurrence of ten retired phrases to sit inside a `~~ ~~` span. Its bound is in
+its header: it cannot see a retired claim written in words no phrase matches, or one in a file
+not on the list, and both lists are iterated by the assertions so adding to either changes what
+runs. It has two positive controls — the sweep must have read something, and at least one
+retired phrase must be present — because five paths that resolved to nothing would satisfy every
+assertion in it.
+
+**Its mutation is of the SUBJECT, not the checker**, and that is the shape an empty-set
+assertion needs. The sweep claims no retired phrase stands outside a strikethrough; breaking the
+checker cannot fail that, because there is nothing for a broken checker to miss. The entry puts
+one retired sentence back as current — exactly the way both arms found nine of them — and
+requires the sweep to name it and its offset. The first version of that entry swapped one path
+in the file list for a duplicate of another, which changed nothing the assertions could see and
+was reported `NOT CAUGHT`.
 
 **And the CLIENT half of that lane is not on this branch either.** `src/listener/hook.ts` still
 filters a delivery on `signal.to_agent === stored.principalId`, which is the check the wake lane
@@ -380,7 +397,10 @@ open, and it is zero at rest, which is what the phone budget in
    `20260905000020_wake_all_recipients.sql` nor the `src/` half of that lane is on this branch.
    Nothing here measures the new wake against a database or a listener; what is measured is that
    the SENTENCES follow one rule, that the rule and the chip marks agree, and that no retired
-   claim stands as current. The behaviour is `lane/wake-all-recipients`' to establish, and it
+   phrase ON A NAMED LIST stands outside a strikethrough IN FIVE NAMED FILES. That is narrower
+   than "no retired claim stands as current", which is what this file said before round four
+   found four counterexamples to it, and it is narrower on purpose: it is what a sweep can
+   establish. The behaviour is `lane/wake-all-recipients`' to establish, and it
    reported PASS/PASS.
 12. **Sample mode now allows a reply**, which the cut version did not (`!sampleMode` was part of
    its `canReply`). That is deliberate — every browser control here needs the whole send path,

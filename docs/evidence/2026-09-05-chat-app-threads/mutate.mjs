@@ -86,6 +86,19 @@ const mutations = [
     "the number in the sentence is the number of agents in the set",
     "the count in the sentence is not the number of agents in the set"],
 
+  /* AND NO RETIRED WAKE SENTENCE STANDS AS CURRENT.
+
+     THE MUTATION IS OF THE SUBJECT, NOT THE CHECKER, and that is the point. The sweep asserts
+     an EMPTY SET — no retired phrase outside a strikethrough — so breaking the checker cannot
+     fail it: there is nothing for a broken checker to miss. Breaking the SUBJECT can. This puts
+     one retired sentence back as current, exactly the way two review arms found nine of them,
+     and requires the sweep to name it. */
+  [PURE_ADDR, ADDR,
+    ' * ~~"which is the only way a reader can change who is woken"~~ retired 2026-09-05: the wake',
+    " * which is the only way a reader can change who is woken. As of 2026-09-05 the wake",
+    "a retired wake sentence put back as current is caught",
+    "stands as current at offset"],
+
   // ── who may start a thread ────────────────────────────────────────────────────────────
   [PURE_REPLY, REPLY,
     '  if (signal.to !== null || signal.toAgent !== null) return "directed";',

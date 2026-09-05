@@ -279,7 +279,8 @@ const frameScript = `<script>
     };
     const markAfterSecondTag = readMark();
 
-    /* A PERSON IN FRONT wakes nobody, whatever follows. Kenji Ito is a MEMBER in the sample
+    /* A PERSON IN FRONT NO LONGER SILENCES THE AGENT BEHIND: ~~"A PERSON IN FRONT wakes
+       nobody, whatever follows."~~ retired 2026-09-05. Kenji Ito is a MEMBER in the sample
        roster; River, Orbit and Lumen are all agents, so a person has to be named by name. */
     await clearTo();
     type("@Kenji Ito and @Orbit, please look");
@@ -848,11 +849,14 @@ test("the To: row is the address, and it says who is notified", async () => {
       note: "2 agents are notified.",
     }, "secondTag: a second tag adds rather than replacing");
 
-    /* EXACTLY ONE CHIP IS MARKED, and it is the one the sentence names. The mark is the only
-       thing on the row that says who the service wakes, so a chip and the sentence under it
-       cannot be allowed to disagree. Read twice, because promoting is the one control the
-       reader has over the mark. */
-    /* EVERY AGENT CHIP IS MARKED, and the sentence under them says the same number.
+    /* ~~"EXACTLY ONE CHIP IS MARKED, and it is the one the sentence names."~~ and ~~"Read
+       twice, because promoting is the one control the reader has over the mark."~~ Both
+       retired 2026-09-05. What still holds, and is the reason this is read at all: the mark is
+       the only thing on the row that says who the service wakes, so a chip and the sentence
+       under it cannot be allowed to disagree. It is still read twice, for the OPPOSITE reason —
+       order is what the reader can change, and the mark must not follow it.
+
+       EVERY AGENT CHIP IS MARKED, and the sentence under them says the same number.
        ~~`{ marked: 1, markedName: "Orbit", noteNames: "Orbit" }`~~ described the row where one
        chip could carry the mark. Read twice, before and after a promotion, because order is
        the one thing the reader can change and the mark must not follow it any more. */
@@ -881,8 +885,10 @@ test("the To: row is the address, and it says who is notified", async () => {
       );
     }
 
-    /* THE BOUND, ON SCREEN. A person in front means nobody is woken, however many agents
-       follow, and the row says that plainly with the one remedy that exists. */
+    /* THE BOUND, ON SCREEN. Every agent is woken wherever it sits, so a person in front is
+       simply a person in front. ~~"A person in front means nobody is woken, however many
+       agents follow, and the row says that plainly with the one remedy that exists."~~
+       Retired 2026-09-05, with the remedy it named. */
     assert.deepEqual(measured.personFirst, {
       chips: ["Kenji Ito", "Orbit"],
       /* ~~"No agent is notified. 2 recipients can read this and reply. Only the first
@@ -894,8 +900,10 @@ test("the To: row is the address, and it says who is notified", async () => {
          meant NO chip carried the mark, however many agents followed. Orbit is woken now and
          its chip says so, from behind a person. */
       notifiedChip: "Orbit",
-      /* THE CHIP AND THE SENTENCE AGREE. Promoting a person wakes nobody, so the person's
-         own control says that rather than promising a wake the trigger cannot give. */
+      /* THE CHIP AND THE SENTENCE ANSWER DIFFERENT QUESTIONS NOW, which is why they cannot
+         disagree: the sentence owns the wake and no chip mentions it. ~~"Promoting a person
+         wakes nobody, so the person's own control says that rather than promising a wake the
+         trigger cannot give."~~ Retired 2026-09-05. */
       /* ~~"Put Kenji Ito first. No agent is notified while a person is first"~~ and
          ~~"Put Orbit first, so Orbit is notified"~~. Both retired: promoting decides nothing
          about the wake now, so both chips say the one thing promoting still does. */
