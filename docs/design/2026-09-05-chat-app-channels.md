@@ -93,6 +93,13 @@ starts from, and that remaining window can be short.
 `?w=` is honoured only when it names a workspace already in this reader's own memberships: the address
 bar is a convenience, never an authorization.
 
+**A post belongs to the channel it was sent from.** A channel click does not bump `requestVersion`,
+because it is not a workspace change, so the composer's success and failure paths were guarded on the
+workspace alone: send in one channel, switch while it is in flight, and the row was prepended to the
+other channel's page and survived the next poll, which keeps any local id the fetched page does not
+carry. The channel is captured with the send now. The message still posts; it belongs to the channel
+it was sent to and is read there.
+
 **A `?c=` belongs to the workspace its `?w=` names, and the URL is written on every open.** The first
 version wrote it only when a channel was clicked, so switching workspace from the menu carried the
 previous workspace's channel id into the new one, where it is not: the reader who chose workspace B was
@@ -187,13 +194,16 @@ forbids.
    never reached them and the rail claimed a current channel while the head said Files. Found by a
    review arm. In the unresolved-channel state the rail marks NOTHING current, which both arms read
    and agreed is the honest mark: the reader is in the signals view and in no channel.
-9. **The two review rounds cost seven product defects and two evidence defects**, every one of them
-   found by an arm rather than by a gate: the read-permission claim in the copy, the composer that
-   posted into the unfiltered feed, the double current mark, four typed copies of the view's name, a
-   workspace switch that opened as "Channel not found", a channel-list flag that never followed the
-   second read, sample posts vanishing on a channel switch, a measurement file reporting one
-   viewport's rects under another's heading, and a shell inventory that had started inventorying a
-   comment. The gates were green for all of them.
+9. **Three review rounds cost ten product defects and two evidence defects**, every one found by an
+   arm and none by a gate: the read-permission claim in the copy; the composer that posted into the
+   unfiltered feed from an unresolved link; a double current mark on Files and Brain; four typed
+   copies of the view's name; a workspace switch that opened as "Channel not found"; a channel-list
+   flag that never followed the second read; sample posts vanishing on a channel switch; a post from
+   one channel prepended to another channel's page when the reader switched while it was in flight;
+   `renderChannel` re-marking all-signals current after the rule that had just cleared it; two
+   channel reads racing with no generation between them; a measurement file reporting one viewport's
+   rects under another's heading; and a shell inventory that had started inventorying a comment. The
+   gates were green for every one.
 
 ## Files
 

@@ -1340,6 +1340,14 @@ import "../../styles/tokens.css";
     let expandedThreadIds = new Set<string>();
     /** The whole made-up feed in sample mode, which has no server to page back to. */
     let sampleSignals: Signal[] = [];
+    /**
+     * One generation per channel READ, because a channel command does not bump requestVersion
+     * (it is not a workspace change). Archive and Create are different buttons and each only
+     * disables its own, so two refreshes can be in flight at once; without this the older
+     * answer wins whenever it lands second, dropping a channel that was just created or
+     * flagging a healthy list as failed. Raised by a review arm.
+     */
+    let channelReadGeneration = 0;
     let activeWorkspaceId = "";
     let requestVersion = 0;
     let sampleMode = false;
@@ -5071,12 +5079,19 @@ import "../../styles/tokens.css";
 
     const renderChannel = (workspace: Workspace, pending = false): void => {
       const id = one<HTMLElement>("[data-channel-id]");
-      renderChannelRail();
-      renderChannelHead();
+      /* ORDER IS LOAD-BEARING. The all-signals button is both a view control and a place
+         control, so the signals-view loop below marks it current; running it AFTER the rail
+         means syncChannelCurrent has the last word, the way it already does in
+         activateWorkspaceView. The other order marked all-signals current on every workspace
+         open, including opens that resolved to a channel and opens whose ?c= resolved to
+         nothing — two current places, or one that says you are reading the whole feed while
+         the feed is not being shown. Found by a review arm. */
       for (const button of all<HTMLButtonElement>("[data-workspace-view]")) {
         if (button.dataset.workspaceView === "signals") button.setAttribute("aria-current", "page");
         else button.removeAttribute("aria-current");
       }
+      renderChannelRail();
+      renderChannelHead();
       for (const target of all<HTMLElement>("[data-sidebar-workspace-name]")) {
         target.textContent = workspace.name;
       }
@@ -5235,6 +5250,10 @@ import "../../styles/tokens.css";
         accessStatuses = nextAccessStatuses;
         files = nextFiles.value;
         fileLoadError = nextFiles.error;
+        /* The open is a channel read too, so it takes the newest generation: a refresh that
+           was already in flight when this workspace opened cannot land afterwards and
+           replace the list this open just read. */
+        ++channelReadGeneration;
         channels = nextChannels.value;
         channelListFailed = nextChannels.failed;
         /* The URL is read ONCE per workspace open, after the channels are known: a ?c= that
@@ -5808,6 +5827,10 @@ import "../../styles/tokens.css";
      * than patched.
      */
     const refreshChannels = async (workspaceId: string, version: number): Promise<void> => {
+      const generation = ++channelReadGeneration;
+      const current = (): boolean =>
+        generation === channelReadGeneration && version === requestVersion &&
+        workspaceId === activeWorkspaceId;
       let next: WorkspaceChannel[];
       try {
         next = await workspaceChannels(workspaceId);
@@ -5816,13 +5839,13 @@ import "../../styles/tokens.css";
            workspace open and never again, so a first read that failed kept saying so after a
            later one succeeded, and a later one that failed left the copy claiming the id is
            simply not here. Found by a review arm. */
-        if (version === requestVersion && workspaceId === activeWorkspaceId) {
+        if (current()) {
           channelListFailed = true;
           renderChannelHead();
         }
         throw error;
       }
-      if (version !== requestVersion || workspaceId !== activeWorkspaceId) return;
+      if (!current()) return;
       channels = next;
       channelListFailed = false;
       /* A channel that was archived while it was open stops being the active one: the rail
@@ -6829,6 +6852,13 @@ import "../../styles/tokens.css";
       }
       const workspaceId = activeWorkspaceId;
       const version = requestVersion;
+      /* And the CHANNEL, captured with the send. A channel click does not bump requestVersion
+         because it is not a workspace change, so the two guards below let a row posted in one
+         channel be prepended to another channel's page: send in #mobile, switch to #ops while
+         it is in flight, and the #mobile row lands in #ops and survives the next poll, which
+         keeps any local id the page does not carry. Found by a review arm. The row still
+         posted; it belongs to the channel it was sent to, and it is read there. */
+      const channelAtSend = activeChannelId;
       /* One signal per @tag. The wire has no many-recipient shape, so this is a loop, and
        * every tagged agent gets its own row, its own wake, and its own delivery receipt. An
        * untagged body is one broadcast, exactly as before.
@@ -7013,7 +7043,10 @@ import "../../styles/tokens.css";
                 placement,
               ));
         }
-        if (version !== requestVersion || workspaceId !== activeWorkspaceId) {
+        if (
+          version !== requestVersion || workspaceId !== activeWorkspaceId ||
+          channelAtSend !== activeChannelId
+        ) {
           for (const attachment of attachmentSnapshot) {
             if (attachment.previewUrl) URL.revokeObjectURL(attachment.previewUrl);
           }
@@ -7051,7 +7084,10 @@ import "../../styles/tokens.css";
         void refreshDeliveryReceipts(workspaceId, version);
         setComposerStatus("");
       } catch (caught) {
-        if (version !== requestVersion || workspaceId !== activeWorkspaceId) return;
+        if (
+          version !== requestVersion || workspaceId !== activeWorkspaceId ||
+          channelAtSend !== activeChannelId
+        ) return;
         /* Rows that DID post stay posted. The whole message goes back in the box — tags and
          * all — and the intent keeps EVERY command id, so pressing send again replays the ones
          * that already landed instead of posting them twice. The command id is the server's

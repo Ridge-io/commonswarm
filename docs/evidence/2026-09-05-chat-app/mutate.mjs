@@ -123,6 +123,16 @@ const mutations = [
   [CHT, CH, '"Every member of this workspace reads every channel, and messages in a channel expire the same way they do anywhere else. A channel is the address of a message, not who gets woken.";',
     '"Every member of this workspace reads every channel. A channel is the address of a message, not who gets woken.";',
     "the three facts the design puts in the UI"],
+
+  // ── round four: the three controls added after the third SHA failed both arms
+  [OBS, DASH, "      const channelAtSend = activeChannelId;\n", "",
+    "a post belongs to the channel it was sent from"],
+  [OBS, DASH, "      for (const button of all<HTMLButtonElement>(\"[data-workspace-view]\")) {\n        if (button.dataset.workspaceView === \"signals\") button.setAttribute(\"aria-current\", \"page\");\n        else button.removeAttribute(\"aria-current\");\n      }\n      renderChannelRail();\n      renderChannelHead();\n",
+    "      renderChannelRail();\n      renderChannelHead();\n      for (const button of all<HTMLButtonElement>(\"[data-workspace-view]\")) {\n        if (button.dataset.workspaceView === \"signals\") button.setAttribute(\"aria-current\", \"page\");\n        else button.removeAttribute(\"aria-current\");\n      }\n",
+    "the workspace open leaves the rail's current mark"],
+  [OBS, DASH, "      const generation = ++channelReadGeneration;\n      const current = (): boolean =>\n        generation === channelReadGeneration && version === requestVersion &&\n        workspaceId === activeWorkspaceId;",
+    "      const current = (): boolean =>\n        version === requestVersion && workspaceId === activeWorkspaceId;",
+    "only the newest channel read is applied"],
 ];
 
 const testFor = (file) => file;

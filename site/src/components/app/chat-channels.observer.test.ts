@@ -280,6 +280,63 @@ test("a sample post joins the sample set, so the local narrowing stays honest", 
   assert.match(submit, /if \(sampleMode\) sampleSignals = \[\.\.\.posted, \.\.\.sampleSignals\];/);
 });
 
+test("a post belongs to the channel it was sent from, whatever the reader does next", () => {
+  /*
+   * A channel click does not bump requestVersion, because it is not a workspace change. So
+   * the composer's success and failure paths, guarded on version and workspace alone, would
+   * prepend a row posted in one channel onto another channel's page — and the poll keeps any
+   * local id the fetched page does not carry, so the stray row was durable. Found by a review
+   * arm. The row still posts; it belongs to the channel it was sent to and is read there.
+   */
+  const submit = between(
+    dashboard,
+    'one<HTMLFormElement>("[data-composer]")?.addEventListener("submit"',
+    "syncComposerControls();\n      renderFeed",
+  );
+  assert.match(submit, /const channelAtSend = activeChannelId;/);
+  const applied = between(dashboard, "const attachmentRefs = sampleMode", "clearComposerDraft();");
+  assert.match(applied, /channelAtSend !== activeChannelId\s*\n?\s*\) \{/);
+  const failed = between(dashboard, "} catch (caught) {", "const sent = posted.length;");
+  assert.match(failed, /channelAtSend !== activeChannelId/);
+});
+
+test("the workspace open leaves the rail's current mark to the channel rule", () => {
+  /*
+   * The all-signals button is BOTH a view control and a place control, so the signals-view
+   * loop marks it current. Running that loop after the rail marked all-signals current on
+   * every workspace open, including opens that resolved to a channel (two current places) and
+   * opens whose ?c= resolved to nothing (a mark saying you are reading the whole feed while
+   * the feed is not shown). Found by a review arm. Order is the fix, and order is what this
+   * pins: syncChannelCurrent, reached through renderChannelRail and renderChannelHead, runs
+   * last.
+   */
+  const render = between(dashboard, "const renderChannel = (workspace: Workspace", "renderWorkspaceList(workspace);");
+  const loopAt = render.indexOf('for (const button of all<HTMLButtonElement>("[data-workspace-view]"))');
+  const railAt = render.indexOf("renderChannelRail();");
+  const headAt = render.indexOf("renderChannelHead();");
+  assert.ok(loopAt >= 0 && railAt >= 0 && headAt >= 0, "all three steps must be present");
+  assert.ok(loopAt < railAt, "the signals-view loop must run BEFORE the rail");
+  assert.ok(railAt < headAt, "the head, which owns syncChannelCurrent, runs last");
+});
+
+test("only the newest channel read is applied", () => {
+  /* A channel command does not bump requestVersion. Archive and Create are different buttons
+     and each disables only its own, so two reads can be in flight at once and the older answer
+     wins whenever it lands second, dropping a channel that was just created or flagging a
+     healthy list as failed. Raised by a review arm. */
+  const refresh = between(dashboard, "const refreshChannels = async (", "\n    };");
+  assert.match(refresh, /const generation = \+\+channelReadGeneration;/);
+  assert.match(refresh, /generation === channelReadGeneration &&/);
+  assert.match(refresh, /if \(!current\(\)\) return;/);
+  /* The workspace open is a channel read too, so it takes the newest generation. */
+  /* `const [nextAgents, nextRoster` is NOT unique in this file — an earlier roster catch-up
+     opens with the same words, and anchoring there sliced a region that does not contain the
+     bump and produced a confident failure about code that was present. */
+  const open = between(dashboard, "nextChannels] = await Promise.all([", "renderMembers();")
+    .replace(/\/\*[\s\S]*?\*\//g, "");
+  assert.match(open, /\+\+channelReadGeneration;\s*\n\s*channels = nextChannels\.value;/);
+});
+
 test("the channel commands send exactly the keys the command edge accepts", () => {
   /*
    * Generated from the edge's own `required` / `optional` arrays — the arrays its
