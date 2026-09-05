@@ -1,0 +1,41 @@
+BASELINE green  site/src/lib/composer-address.test.mjs
+BASELINE green  site/src/components/app/composer-to-field.observer.test.ts
+BASELINE green  site/src/components/app/composer-addressing.observer.test.ts
+red  the wake follows the position the scalar column is filled from
+  restored green  site/src/lib/composer-address.test.mjs
+red  a person at the front wakes nobody, however many agents follow
+  restored green  site/src/lib/composer-address.test.mjs
+red  the note never claims more than one recipient is woken
+  restored green  site/src/lib/composer-address.test.mjs
+red  the composer's cap is the server's cap
+  restored green  site/src/lib/composer-address.test.mjs
+red  a name past the cap is named rather than dropped in silence
+  restored green  site/src/lib/composer-address.test.mjs
+red  nobody joins the set twice
+  restored green  site/src/lib/composer-address.test.mjs
+red  a removed chip does not come back while its tag is still in the body
+  restored green  site/src/lib/composer-address.test.mjs
+red  promoting edits the set; it never addresses somebody new
+  restored green  site/src/lib/composer-address.test.mjs
+red  the scalar pair travels null, because the edge refuses a body that also sets one
+  restored green  site/src/components/app/composer-to-field.observer.test.ts
+red  the To: set reaches the wire at all
+  restored green  site/src/components/app/composer-to-field.observer.test.ts
+red  the kind follows recipient 0, so a person in front does not wake the agent behind them
+  restored green  site/src/components/app/composer-to-field.observer.test.ts
+red  the sentence about the front of the list is built from the index the code reads
+  restored green  site/src/components/app/composer-to-field.observer.test.ts
+red  the send reads the chips and nothing else
+  restored green  site/src/components/app/composer-to-field.observer.test.ts
+red  the next message opens addressed to the last message's recipients
+  restored green  site/src/components/app/composer-to-field.observer.test.ts
+red  the chip and the sentence agree about who is woken
+  restored green  site/src/components/app/composer-to-field.observer.test.ts
+red  a broadcast is named rather than shown as an empty row
+  restored green  site/src/components/app/composer-to-field.observer.test.ts
+red  a tag typed just before Enter is still a recipient
+  restored green  site/src/components/app/composer-to-field.observer.test.ts
+red  the remove control removes the recipient
+  restored green  site/src/components/app/composer-addressing.observer.test.ts
+
+18 mutations, 0 problems
