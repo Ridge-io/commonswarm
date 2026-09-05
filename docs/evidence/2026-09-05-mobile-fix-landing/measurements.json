@@ -9,11 +9,32 @@
     "note": "the page carries the sample-data banner above the app bar, which the observer tests do not because they load /app inside a 390x844 iframe. Every rule below is therefore stated against the app bar's own rect, not against absolute y."
   },
   "phone_390x844": {
-    "appBar": { "top": 115.1, "bottom": 188.1, "height": 73.0 },
-    "channelBody_transcriptBox": { "top": 188.1, "bottom": 844.0, "height": 655.9 },
-    "channelHead_floating": { "top": 188.1, "bottom": 240.1, "height": 52.0, "width": 200.0 },
-    "feedToolbar_floating": { "top": 188.1, "bottom": 228.1, "height": 40.0 },
-    "composer": { "top": 781.0, "bottom": 844.0, "height": 63.0 },
+    "appBar": {
+      "top": 115.1,
+      "bottom": 188.1,
+      "height": 73.0
+    },
+    "channelBody_transcriptBox": {
+      "top": 188.1,
+      "bottom": 844.0,
+      "height": 655.9
+    },
+    "channelHead_floating": {
+      "top": 188.1,
+      "bottom": 240.1,
+      "height": 52.0,
+      "width": 200.0
+    },
+    "feedToolbar_floating": {
+      "top": 188.1,
+      "bottom": 228.1,
+      "height": 40.0
+    },
+    "composer": {
+      "top": 781.0,
+      "bottom": 844.0,
+      "height": 63.0
+    },
     "headerTakenFromReadingArea": 73.0,
     "appBarHeight": 73.0,
     "operatorRuleHolds": true,
@@ -21,10 +42,19 @@
     "channelHeadFloats": true,
     "feedToolbarFloats": true,
     "composerInsideViewport": true,
-    "railTabsInAppBar": { "top": 129.1, "bottom": 173.1, "height": 44.0, "buttons": 3 },
+    "railTabsInAppBar": {
+      "top": 129.1,
+      "bottom": 173.1,
+      "height": 44.0,
+      "buttons": 3
+    },
     "gearButtonDisplay": "none",
     "workspaceSettingsMenuItemDisplay": "flex",
-    "channelTitleblock": { "position": "absolute", "display": "grid", "clipPath": "inset(50%)" },
+    "channelTitleblock": {
+      "position": "absolute",
+      "display": "grid",
+      "clipPath": "inset(50%)"
+    },
     "channelAccessibleName": "# all-signals",
     "channelAriaLabelledby": "dashboard-channel-title",
     "messageContain": "layout",
@@ -35,9 +65,17 @@
     "visualViewportHeight": 508.0,
     "dashboardViewportHeightProperty": "508px",
     "productComputedBlockSize": "508px",
-    "composer": { "top": 409.0, "bottom": 508.0, "height": 99.0 },
+    "composer": {
+      "top": 409.0,
+      "bottom": 508.0,
+      "height": 99.0
+    },
     "composerInsideViewport": true,
-    "textarea": { "top": 419.0, "bottom": 499.0, "height": 80.0 },
+    "textarea": {
+      "top": 419.0,
+      "bottom": 499.0,
+      "height": 80.0
+    },
     "textareaMaxBlockSize": "80px",
     "textareaScrollHeight": 88,
     "textareaClientHeight": 80,
@@ -55,8 +93,16 @@
   "caret_guard_control": {
     "claim": "the caret restore only puts back a caret the reader chose",
     "probe": "on a fresh load, put text in the composer while nothing is focused (a draft the page restored), then focus with no pointer, which is a Tab or a browser restoring focus",
-    "withGuard_thisLane": { "valueLength": 41, "caret": 41, "atStartOfOwnSentence": false },
-    "withoutGuard_mutation": { "valueLength": 41, "caret": 0, "atStartOfOwnSentence": true },
+    "withGuard_thisLane": {
+      "valueLength": 41,
+      "caret": 41,
+      "atStartOfOwnSentence": false
+    },
+    "withoutGuard_mutation": {
+      "valueLength": 41,
+      "caret": 0,
+      "atStartOfOwnSentence": true
+    },
     "discriminates": true,
     "note": "the mutation is a second dist built from the same source with only `if (!input || !composerCaretKnown) return;` weakened to `if (!input) return;`. A blur/focus cycle alone does NOT discriminate: Chrome preserves a textarea's selection across it, so that probe reads the same whether the restore runs or not, and it is not evidence."
   },
@@ -71,8 +117,16 @@
   },
   "desktop_1440x900_unchanged": {
     "channelHeadPosition": "static",
-    "channelHead": { "top": 47.7, "bottom": 123.7, "height": 76.0 },
-    "channelBody": { "top": 123.7, "bottom": 900.0, "height": 776.3 },
+    "channelHead": {
+      "top": 47.7,
+      "bottom": 123.7,
+      "height": 76.0
+    },
+    "channelBody": {
+      "top": 123.7,
+      "bottom": 900.0,
+      "height": 776.3
+    },
     "gearButtonDisplay": "grid",
     "railTabsDisplay": "none",
     "workspaceSettingsMenuItemDisplay": "none",
@@ -86,5 +140,22 @@
     "INP was not re-measured in this landing lane. The lane's own before/after numbers are in docs/evidence/2026-09-04-mobile-fix/README.md and were not reproduced here.",
     "the Vercel Toolbar's production figure of 314.3ms, which the lane never reproduced either.",
     "opening a brain topic body against a live workspace, which sample mode cannot do."
-  ]
+  ],
+  "feed_more_clearance": {
+    "claim": "the floating band's clearance is paid once",
+    "found": "three elements agree on 2.5rem: the filter row's height, the negative margin that takes it out of the flow, and the top padding that clears it. 'Load older updates' sits between the band and the list, so when it shows it clears the band and the list cleared it again.",
+    "measuredBeforeTheFix": {
+      "gapBetweenLoadOlderAndFirstMessage": 40.0,
+      "feedListPaddingBlockStart": "40px"
+    },
+    "measuredAfterTheFix": {
+      "gapBetweenLoadOlderAndFirstMessage": 0,
+      "feedListPaddingBlockStart": "0px"
+    },
+    "clearanceStillThereWhenTheButtonIsNot": {
+      "feedListPaddingBlockStart": "40px"
+    },
+    "control": "mobile-feed-layout.observer.test.ts, 'the floating band's clearance is paid once when older updates can be loaded', with a positive control that the button is on screen and a paired variant that must keep the 40px",
+    "mutationAgainstTheRealSource": "baseline 5 pass, rule restored to 2.5rem 1 fail naming 'the band's clearance is paid twice ... (40px)', restored 5 pass"
+  }
 }

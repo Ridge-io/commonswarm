@@ -35,6 +35,9 @@ type LayoutMeasurement = {
   };
   transcriptToHeaderRatio: number;
   transcriptVisibleHeight: number;
+  feedListPaddingBlockStart: string;
+  feedMore: Rect | null;
+  feedMoreToFirstRowGap: number | null;
   viewport: { height: number; width: number };
   shell: {
     app: Rect;
@@ -135,7 +138,12 @@ const revertedStyles = `<style>
   }
 </style>`;
 
-const frameScript = (reverted: boolean, empty: boolean, pending: boolean): string => `<script>
+const frameScript = (
+  reverted: boolean,
+  empty: boolean,
+  pending: boolean,
+  more: boolean,
+): string => `<script>
   const frame = document.querySelector("iframe");
   const reportError = (value) => {
     document.documentElement.dataset.layoutError = btoa(String(value));
@@ -167,6 +175,9 @@ const frameScript = (reverted: boolean, empty: boolean, pending: boolean): strin
     updates.hidden = false;
     updates.textContent = "25+ updates";
     doc.querySelector("[data-refresh]").hidden = false;
+    /* "Load older updates" sits BETWEEN the floating band and the list, so when it is showing
+       it is the element that clears the band and the list must not clear it a second time. */
+    doc.querySelector("[data-feed-more]").hidden = ${JSON.stringify(!more)};
     const composer = doc.querySelector("[data-composer]");
     composer.hidden = false;
     const list = doc.querySelector("[data-feed-list]");
@@ -222,6 +233,8 @@ const frameScript = (reverted: boolean, empty: boolean, pending: boolean): strin
     };
     doc.querySelector("[data-user-menu-trigger]").click();
     await settle();
+    const feedMore = doc.querySelector("[data-feed-more]");
+    const firstRow = doc.querySelector("[data-feed-list] > li");
     const header = rect(".dashboard__channel-head");
     const toolbar = rect(".dashboard__feed-toolbar");
     const composerBox = rect("[data-composer]");
@@ -230,6 +243,12 @@ const frameScript = (reverted: boolean, empty: boolean, pending: boolean): strin
     document.documentElement.dataset.layoutMeasurement = btoa(JSON.stringify({
       combinedHeaderHeight,
       composer: composerBox,
+      feedListPaddingBlockStart:
+        view.getComputedStyle(doc.querySelector("[data-feed-list]")).paddingBlockStart,
+      feedMore: feedMore.hidden ? null : rect("[data-feed-more]"),
+      feedMoreToFirstRowGap: feedMore.hidden || !firstRow
+        ? null
+        : firstRow.getBoundingClientRect().top - feedMore.getBoundingClientRect().bottom,
       header,
       input: rect(".dashboard__composer-input"),
       menu,
@@ -262,13 +281,14 @@ const startDistServer = async (): Promise<{ close(): Promise<void>; origin: stri
       const reverted = url.searchParams.get("reverted") === "1";
       const empty = url.searchParams.get("empty") === "1";
       const pending = url.searchParams.get("pending") === "1";
+      const more = url.searchParams.get("more") === "1";
       if (!Number.isSafeInteger(width) || !Number.isSafeInteger(height)) {
         response.writeHead(400).end("Invalid measurement");
         return;
       }
       response.writeHead(200, { "content-type": contentTypes[".html"] });
       response.end(
-        `<!doctype html><html><body style="margin:0"><iframe title="Layout measurement viewport" src="/app" style="border:0;width:${width}px;height:${height}px"></iframe>${frameScript(reverted, empty, pending)}</body></html>`,
+        `<!doctype html><html><body style="margin:0"><iframe title="Layout measurement viewport" src="/app" style="border:0;width:${width}px;height:${height}px"></iframe>${frameScript(reverted, empty, pending, more)}</body></html>`,
       );
       return;
     }
@@ -315,6 +335,7 @@ const measureAt = async (
   reverted: boolean,
   empty = false,
   pending = false,
+  more = false,
 ): Promise<LayoutMeasurement> => {
   const { stdout, stderr } = await run(chrome, [
     "--headless=new",
@@ -326,7 +347,7 @@ const measureAt = async (
     "--window-size=1600,1200",
     "--virtual-time-budget=8000",
     "--dump-dom",
-    `${origin}/__measure?width=${width}&height=${height}&reverted=${reverted ? 1 : 0}&empty=${empty ? 1 : 0}&pending=${pending ? 1 : 0}`,
+    `${origin}/__measure?width=${width}&height=${height}&reverted=${reverted ? 1 : 0}&empty=${empty ? 1 : 0}&pending=${pending ? 1 : 0}&more=${more ? 1 : 0}`,
   ], {
     maxBuffer: 10 * 1024 * 1024,
     timeout: 20_000,
@@ -574,6 +595,59 @@ test("an empty feed keeps the app shell at the dynamic viewport height", async (
       assert.equal(measurement.composer.bottom, height);
       console.log(`empty-app-shell ${width}x${height} ${JSON.stringify(measurement.shell)}`);
     }
+  } finally {
+    await server.close();
+  }
+});
+
+/* The floating band costs the reading area nothing only if its clearance is paid ONCE. Three
+   elements agree on 2.5rem: the filter row's height, the negative margin that takes that height
+   back out of the flow, and the top padding that keeps the first thing under the band clear of
+   it. "Load older updates" sits BETWEEN the band and the list, so when it is showing it is the
+   element that clears the band — and the list's own clearance becomes dead screen between the
+   button and the first message. Found by measuring at 390x844: a 40px gap. */
+test("the floating band's clearance is paid once when older updates can be loaded", async () => {
+  const chrome = await findChrome();
+  const server = await startDistServer();
+  try {
+    const withMore = await measureAt(chrome, server.origin, 390, 844, false, false, false, true);
+    const withoutMore = await measureAt(chrome, server.origin, 390, 844, false, false, false, false);
+    /* Positive control on the same invocation: with no visible button there is nothing to pay
+       twice, so every assertion below would be satisfied by a knob that did nothing. */
+    assert.ok(
+      withMore.feedMore !== null && withMore.feedMore.height > 0,
+      `load-older is not on screen, so this case measures nothing: ${JSON.stringify(withMore.feedMore)}`,
+    );
+    assert.equal(
+      withoutMore.feedMore,
+      null,
+      "load-older is showing in the variant that must not show it",
+    );
+    /* The clearance still exists — it just belongs to whichever element is first under the band. */
+    assert.notEqual(
+      withoutMore.feedListPaddingBlockStart,
+      "0px",
+      "with no load-older button the list itself must clear the floating band",
+    );
+    assert.equal(
+      withMore.feedListPaddingBlockStart,
+      "0px",
+      "the band's clearance is paid twice: load-older already cleared it and the list clears it " +
+        `again (${withMore.feedListPaddingBlockStart})`,
+    );
+    assert.ok(
+      withMore.feedMoreToFirstRowGap !== null && withMore.feedMoreToFirstRowGap < 20,
+      `${withMore.feedMoreToFirstRowGap}px of dead screen sits between load-older and the first ` +
+        "message",
+    );
+    /* The rule the whole block exists for still holds while the button is up. */
+    assertPhoneHeaderRule(withMore, 390);
+    assertInsideViewport(withMore);
+    console.log(`feed-more-clearance ${JSON.stringify({
+      gap: withMore.feedMoreToFirstRowGap,
+      withMore: withMore.feedListPaddingBlockStart,
+      withoutMore: withoutMore.feedListPaddingBlockStart,
+    })}`);
   } finally {
     await server.close();
   }

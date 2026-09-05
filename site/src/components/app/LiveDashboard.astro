@@ -10424,6 +10424,14 @@ import "../../styles/tokens.css";
       padding-block-start: 2.5rem;
     }
 
+    /* The clearance belongs to whatever is FIRST under the floating band, and only to that.
+       "Load older updates" sits between the band and the list, so when it is showing it has
+       already cleared the band and the list's own clearance becomes 2.5rem of dead screen
+       between the button and the first message. Measured at 390x844: a 40px gap. */
+    .dashboard__feed-more:not([hidden]) + .dashboard__feed {
+      padding-block-start: 0;
+    }
+
     /* The same dialog, presented as a bottom sheet. */
     .dashboard__roster-dialog {
       inline-size: 100%;

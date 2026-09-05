@@ -131,3 +131,23 @@ the budget is not the mechanism and the debounce this lane added is not the caus
 is what is left. It is recorded as a flake seen once, not as a green.
 
 `npm run check:edge` was not run: nothing under `supabase/` changed.
+
+## 6. A second defect found reviewing the lane
+
+The floating band costs the reading area nothing only if its clearance is paid ONCE. Three things
+agree on `2.5rem`: the filter row's height, the negative margin that takes that height back out of
+the flow, and the top padding that keeps the first thing under the band clear of it. "Load older
+updates" sits BETWEEN the band and the list, so when it shows it is the element that clears the
+band, and the list's own clearance became dead screen.
+
+| | measured at 390x844 |
+|---|---|
+| gap between "Load older updates" and the first message, before | 40px |
+| gap after `.dashboard__feed-more:not([hidden]) + .dashboard__feed { padding-block-start: 0 }` | 0px |
+| list clearance when the button is NOT showing | still 40px |
+
+Control: `mobile-feed-layout.observer.test.ts`, "the floating band's clearance is paid once when
+older updates can be loaded". It measures both variants in one case, with a positive control that
+the button is really on screen, and it re-runs the operator's header rule while the button is up.
+Mutation against the real source file: baseline 5 pass, the rule put back to `2.5rem` 1 fail naming
+"the band's clearance is paid twice ... (40px)", restored 5 pass.
