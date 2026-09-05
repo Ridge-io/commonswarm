@@ -215,11 +215,25 @@ export function chatSignalShapeProblem(
     : fields.thread_root_id;
   const broadcast = fields.broadcast_to_channel;
 
-  /* The thread rules run BEFORE the slug rule. An arm found that a body with a
-   * valid thread_root_id and a malformed channel was told the slug rule, so the
-   * caller would fix the slug and only then meet the rule that a thread reply
-   * takes no channel at all. Name the rule that makes the request impossible,
-   * not the one that is merely also broken. */
+  /* SHAPE BEFORE MEANING. A field that is not a valid id is not yet a thread
+   * reply, so its shape is the first rule broken. Moving the thread rules ahead
+   * of the SLUG rule (an earlier arm finding) put them ahead of this check too,
+   * and a body with a malformed thread_root_id AND a channel was told a thread
+   * reply takes no channel -- a rule about a thread it was not yet making. The
+   * uuid test therefore runs first, the way the edge runs baseValid before any
+   * chat sentence. */
+  if (
+    threadRoot !== undefined && threadRoot !== null &&
+    !(typeof threadRoot === "string" && CHAT_UUID_RE.test(threadRoot))
+  ) {
+    return "thread_root_id is the id of the message the thread starts from.";
+  }
+  if (broadcast !== undefined && typeof broadcast !== "boolean") {
+    return "broadcast_to_channel is true or false.";
+  }
+  /* Now that the field IS an id, the rule that makes the request impossible
+   * outranks the rule that is merely also broken: a thread reply takes no
+   * channel at all, so say that rather than the slug's spelling. */
   if (
     threadRoot !== null && threadRoot !== undefined &&
     channel !== undefined && channel !== null
@@ -229,15 +243,6 @@ export function chatSignalShapeProblem(
   if (channel !== undefined && channel !== null) {
     const problem = channelSlugProblem(channel);
     if (problem !== null) return problem;
-  }
-  if (broadcast !== undefined && typeof broadcast !== "boolean") {
-    return "broadcast_to_channel is true or false.";
-  }
-  if (
-    threadRoot !== undefined && threadRoot !== null &&
-    !(typeof threadRoot === "string" && CHAT_UUID_RE.test(threadRoot))
-  ) {
-    return "thread_root_id is the id of the message the thread starts from.";
   }
 
   if (threadRoot !== null && threadRoot !== undefined) {

@@ -456,9 +456,10 @@ test("a defaulted reply horizon is clamped to the thread; a named one is refused
   );
   assert.equal(defaulted.status, 200, JSON.stringify(defaulted.body));
   const defaultedUntil = Date.parse(String(signalOf(defaulted.body).until));
-  assert.ok(
-    defaultedUntil <= rootUntil,
-    `a clamped reply must not outlive its root: ${defaultedUntil} > ${rootUntil}`,
+  assert.equal(
+    defaultedUntil,
+    rootUntil,
+    "a defaulted reply is clamped TO the root, not merely under it: an arm noted that <= would also accept an over-clamp to one millisecond",
   );
   /* Control: without the clamp this would be ~30 days out, so a horizon inside
    * the root's window is the clamp working and not a coincidence. Measured
@@ -635,6 +636,46 @@ test("a refusal names the FIRST rule broken, not the chat rule that also fired",
     "signal fields are malformed or over their limits",
     "an invalid kind is not a thread-reply problem",
   );
+
+  /* The shape rule outranks the thread rules it is not yet subject to. An arm
+   * showed this test would have stayed green while a malformed thread_root_id
+   * was answered with a rule about channels. */
+  const badId = await send(
+    f.ownerJwt,
+    installedPost({ thread_root_id: "not-a-uuid", channel: "mobile" }),
+  );
+  assert.equal(badId.status, 400, JSON.stringify(badId.body));
+  assert.match(String(badId.body.message), /thread_root_id is the id/);
+
+  /* The NIL uuid is well-formed hex but fails the version/variant test the
+   * edges use, so it is the same "not an id" case by a different route. */
+  const nilId = await send(
+    f.ownerJwt,
+    installedPost({
+      thread_root_id: "00000000-0000-0000-0000-000000000000",
+      channel: "mobile",
+    }),
+  );
+  assert.equal(nilId.status, 400, JSON.stringify(nilId.body));
+  assert.match(String(nilId.body.message), /thread_root_id is the id/);
+
+  /* And the purpose rules are split the same way: a non-string purpose is a
+   * TYPE problem, not a length problem. */
+  const badPurposeType = await send(f.ownerJwt, {
+    kind: "channel_create",
+    slug: `purpose-type-${randomBytes(4).toString("hex")}`,
+    purpose: 123,
+  });
+  assert.equal(badPurposeType.status, 400, JSON.stringify(badPurposeType.body));
+  assert.equal(String(badPurposeType.body.message), "A channel purpose is text.");
+
+  const badPurposeLength = await send(f.ownerJwt, {
+    kind: "channel_create",
+    slug: `purpose-len-${randomBytes(4).toString("hex")}`,
+    purpose: "x".repeat(501),
+  });
+  assert.equal(badPurposeLength.status, 400, JSON.stringify(badPurposeLength.body));
+  assert.match(String(badPurposeLength.body.message), /at most 500 characters/);
 
   /* Control: with a VALID kind, the same thread_root_id plus a recipient does
    * get the chat sentence, so the generic answer above is the ordering and not

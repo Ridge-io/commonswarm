@@ -72,7 +72,7 @@ const CITATIONS: Citation[] = [
   {
     citedBy: "agent-connect-mint.observer.test.ts (standing needs an ABSENT horizon)",
     file: "supabase/functions/command/index.ts",
-    lines: [2186, 2187],
+    lines: [2188, 2189],
     contains: 'renewalKind === "standing" && cmd.renewal_horizon_ms === undefined',
   },
   {
@@ -84,14 +84,14 @@ const CITATIONS: Citation[] = [
   {
     citedBy: "agent-connect-mint.observer.test.ts (standing binds to the request device)",
     file: "supabase/functions/command/index.ts",
-    lines: [4307, 4307],
+    lines: [4309, 4309],
     contains: "standing ? prepared.wire.device_id : null",
   },
   // supabase/functions/command/index.ts — the resume handler's own comment
   {
     citedBy: "command/index.ts (resume handler, the pattern it copies)",
     file: "supabase/functions/command/index.ts",
-    lines: [3361, 3361],
+    lines: [3363, 3363],
     contains: "grant_preflight_code: (preflight[0]?.code ?? null)",
   },
   {

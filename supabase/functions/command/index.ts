@@ -1618,7 +1618,9 @@ function validateCommand(
         ok: false,
         status: 400,
         reason:
-          `A channel purpose is text of at most ${CHANNEL_PURPOSE_MAX} characters.`,
+          typeof rawPurpose !== "string"
+            ? "A channel purpose is text."
+            : `A channel purpose is at most ${CHANNEL_PURPOSE_MAX} characters.`,
       };
     }
     const purpose = typeof rawPurpose === "string"
@@ -5953,7 +5955,7 @@ async function resumeRenewalGrant(
    * was told 403; a retry then answered `renewal_grant_not_suspended`, because the resume it
    * had denied had in fact happened.
    *
-   * Same shape as the renewal preflight read at index.ts:3361 (`preflight[0]?.code ?? null`):
+   * Same shape as the renewal preflight read at index.ts:3363 (`preflight[0]?.code ?? null`):
    * preserve NULL, refuse only on a code we assign.
    *
    * WHY A REFUSAL BELOW STILL COMMITS, DELIBERATELY. `refuse` must commit — its whole job is

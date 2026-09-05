@@ -845,3 +845,49 @@ test("the model length rule has its own sentence, built from its own bound", () 
     );
   }
 });
+
+test("a malformed thread_root_id is the FIRST rule, ahead of the thread rules it is not yet subject to", () => {
+  /* An arm found my own previous fix had created this: moving the thread rules
+   * ahead of the SLUG rule put them ahead of the uuid check too, so a body with
+   * a malformed id AND a channel was told that a thread reply takes no channel
+   * -- a rule about a thread it was not yet making. A field that is not an id
+   * is not yet a thread reply. */
+  const base = {
+    signal_kind: "note",
+    to_user_id: null,
+    to_agent_principal_id: null,
+    in_reply_to: null,
+  };
+  const withChannel = chatSignalShapeProblem({
+    ...base,
+    thread_root_id: "not-a-uuid",
+    channel: "mobile",
+  });
+  assert.ok(withChannel !== null);
+  assert.match(withChannel, /thread_root_id is the id/);
+
+  const withBadChannel = chatSignalShapeProblem({
+    ...base,
+    thread_root_id: "not-a-uuid",
+    channel: "Not A Slug",
+  });
+  assert.match(withBadChannel!, /thread_root_id is the id/);
+
+  const withWorkingOn = chatSignalShapeProblem({
+    ...base,
+    signal_kind: "working-on",
+    thread_root_id: "not-a-uuid",
+  });
+  assert.match(withWorkingOn!, /thread_root_id is the id/);
+
+  /* Controls: once the id IS valid, each of those later rules is reached. */
+  const good = "22222222-2222-4222-8222-222222222222";
+  assert.match(
+    chatSignalShapeProblem({ ...base, thread_root_id: good, channel: "mobile" })!,
+    /does not take a channel of its own/,
+  );
+  assert.match(
+    chatSignalShapeProblem({ ...base, signal_kind: "working-on", thread_root_id: good })!,
+    /cannot be a thread reply/,
+  );
+});
