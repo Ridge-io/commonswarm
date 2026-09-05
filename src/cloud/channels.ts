@@ -222,14 +222,17 @@ export const CHANNEL_COLUMNS = [
  * The channel list for an agent credential: the `read` edge function, the same
  * transport `cswarm file ls` and `cswarm brain ls` take for an agent.
  *
- * The human path above uses PostgREST because the read function accepts agent
- * credentials only. Both end at the same `swarm_read.channels` view and ask for
- * the same columns, so the two credentials render the same list.
+ * `listChannelsAsHuman` BELOW uses PostgREST, because the read function accepts
+ * agent credentials only. Both end at the same `swarm_read.channels` view and
+ * ask for the same columns, so the two credentials render the same list.
  *
- * ORDER: the edge sorts by `lower(slug)`, PostgREST by `slug`. `renderChannelList`
- * does not re-sort, so a workspace mixing cases can list in a different order
- * for the two credentials. That is a difference nobody has asked to remove and
- * it is not a correctness claim either path makes.
+ * ORDER, and the reason the two sorts agree rather than nearly agree: the edge
+ * sorts by `lower(slug)` and PostgREST by `slug`. Those differ only where a
+ * slug carries an uppercase letter, and `20260905000001_channels.sql` CHECKs
+ * `slug ~ '^[a-z0-9]([a-z0-9-]*[a-z0-9])?$'`, so no stored slug can. A review
+ * arm refuted an earlier version of this paragraph, which claimed a workspace
+ * "mixing cases" could list in a different order for the two credentials: that
+ * workspace cannot exist.
  */
 export async function listChannelsAsAgent(
   target: CloudTarget,
@@ -240,50 +243,66 @@ export async function listChannelsAsAgent(
 ): Promise<ChannelRow[]> {
   const controller = new AbortController();
   const timer = setTimeout(() => controller.abort(), timeoutMs);
-  let response: Response;
+  // Same body-covering deadline as the human read above, and the same reason.
   try {
-    response = await fetcher(readEndpoint(target), {
-      method: "POST",
-      headers: {
-        authorization: `Bearer ${credential}`,
-        apikey: target.anonKey,
-        "content-type": "application/json",
-      },
-      /* EXACTLY these two keys, in this order. The read function parses this
-       * resource with `exactKeys(["resource", "workspace_id"])`, so one extra
-       * key is a 400 and not a widened request.
-       * tests/p1-cli/chat-cli.test.ts pins the serialized body. */
-      body: JSON.stringify({ resource: "channels", workspace_id: workspaceId }),
-      signal: controller.signal,
-    });
-  } catch {
-    throw new ChannelListError(
-      0,
-      "The channel list did not complete. Nothing changed. Run the same command again.",
-      true,
-    );
+    let response: Response;
+    try {
+      response = await fetcher(readEndpoint(target), {
+        method: "POST",
+        headers: {
+          authorization: `Bearer ${credential}`,
+          apikey: target.anonKey,
+          "content-type": "application/json",
+        },
+        /* EXACTLY these two keys and no others. The read function parses this
+         * resource with `exactKeys(["resource", "workspace_id"])`, which
+         * compares the SORTED key sets: an extra or a missing key is a 400, and
+         * the ORDER below is not something the server enforces. It is pinned
+         * byte for byte by tests/p1-cli/chat-cli.test.ts anyway, because a
+         * renamed or added key is the failure worth catching and a byte
+         * comparison catches it without another shape assertion. */
+        body: JSON.stringify({ resource: "channels", workspace_id: workspaceId }),
+        signal: controller.signal,
+      });
+    } catch {
+      throw new ChannelListError(
+        0,
+        "The channel list did not complete. Nothing changed. Run the same command again.",
+        true,
+      );
+    }
+    if (!response.ok) {
+      throw new ChannelListError(
+        response.status,
+        `The channel list was refused (HTTP ${response.status}). Nothing changed.`,
+      );
+    }
+    let raw: string;
+    try {
+      raw = await response.text();
+    } catch {
+      throw new ChannelListError(
+        0,
+        "The channel list did not complete. Nothing changed. Run the same command again.",
+        true,
+      );
+    }
+    let body: { channels?: unknown } | null = null;
+    try {
+      body = JSON.parse(raw) as { channels?: unknown };
+    } catch {
+      body = null;
+    }
+    if (!body || !Array.isArray(body.channels)) {
+      throw new ChannelListError(
+        response.status,
+        "The channel list came back in a shape this version does not understand.",
+      );
+    }
+    return body.channels as ChannelRow[];
   } finally {
     clearTimeout(timer);
   }
-  if (!response.ok) {
-    throw new ChannelListError(
-      response.status,
-      `The channel list was refused (HTTP ${response.status}). Nothing changed.`,
-    );
-  }
-  let body: { channels?: unknown } | null = null;
-  try {
-    body = await response.json() as { channels?: unknown };
-  } catch {
-    body = null;
-  }
-  if (!body || !Array.isArray(body.channels)) {
-    throw new ChannelListError(
-      response.status,
-      "The channel list came back in a shape this version does not understand.",
-    );
-  }
-  return body.channels as ChannelRow[];
 }
 
 export function channelSelectorProblem(selector: string): string | null {
@@ -323,44 +342,64 @@ export async function listChannelsAsHuman(
   url.searchParams.set("order", "slug.asc");
   const controller = new AbortController();
   const timer = setTimeout(() => controller.abort(), timeoutMs);
-  let response: Response;
+  /* THE DEADLINE COVERS THE BODY, not only the headers. D-034 is the rule and a
+   * review arm found this function breaking it: clearTimeout used to run in the
+   * fetch's own finally, so a server that sent headers and then stalled the
+   * stream left `cswarm channel ls` waiting for ever, with no abort and no
+   * retry. The timer is cleared once, after the bytes are in hand. */
   try {
-    response = await fetcher(url.toString(), {
-      headers: {
-        authorization: `Bearer ${accessToken}`,
-        apikey: target.anonKey,
-        "accept-profile": "swarm_read",
-      },
-      signal: controller.signal,
-    });
-  } catch {
-    throw new ChannelListError(
-      0,
-      "The channel list did not complete. Nothing changed. Run the same command again.",
-      true,
-    );
+    let response: Response;
+    try {
+      response = await fetcher(url.toString(), {
+        headers: {
+          authorization: `Bearer ${accessToken}`,
+          apikey: target.anonKey,
+          "accept-profile": "swarm_read",
+        },
+        signal: controller.signal,
+      });
+    } catch {
+      throw new ChannelListError(
+        0,
+        "The channel list did not complete. Nothing changed. Run the same command again.",
+        true,
+      );
+    }
+    if (!response.ok) {
+      throw new ChannelListError(
+        response.status,
+        `The channel list was refused (HTTP ${response.status}). Nothing changed.`,
+      );
+    }
+    /* A body that never settles is the request not completing, so it takes the
+     * retryable sentence rather than the "shape this version does not
+     * understand" one, which would blame the server for our own timeout. */
+    let raw: string;
+    try {
+      raw = await response.text();
+    } catch {
+      throw new ChannelListError(
+        0,
+        "The channel list did not complete. Nothing changed. Run the same command again.",
+        true,
+      );
+    }
+    let body: unknown = null;
+    try {
+      body = JSON.parse(raw);
+    } catch {
+      body = null;
+    }
+    if (!Array.isArray(body)) {
+      throw new ChannelListError(
+        response.status,
+        "The channel list came back in a shape this version does not understand.",
+      );
+    }
+    return body as ChannelRow[];
   } finally {
     clearTimeout(timer);
   }
-  if (!response.ok) {
-    throw new ChannelListError(
-      response.status,
-      `The channel list was refused (HTTP ${response.status}). Nothing changed.`,
-    );
-  }
-  let body: unknown = null;
-  try {
-    body = await response.json();
-  } catch {
-    body = null;
-  }
-  if (!Array.isArray(body)) {
-    throw new ChannelListError(
-      response.status,
-      "The channel list came back in a shape this version does not understand.",
-    );
-  }
-  return body as ChannelRow[];
 }
 
 /**

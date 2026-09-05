@@ -576,6 +576,10 @@ async function handle(
     if (body.resource === "channels") {
       /* Same eight columns and the same slug order the human REST read takes,
        * so `cswarm channel ls` renders identically whichever credential ran it.
+       * `lower(slug)` here and `slug` there agree for every row that can exist:
+       * 20260905000001_channels.sql CHECKs the slug against
+       * '^[a-z0-9]([a-z0-9-]*[a-z0-9])?$', so no stored slug has an uppercase
+       * letter for the two collations to disagree about.
        * Archived channels are included: swarm_read.channels carries
        * archived_at and the caller decides, exactly as the REST read does.
        *

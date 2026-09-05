@@ -977,9 +977,20 @@ test("the agent channel list sends the exact body the read edge parses, and noth
   assert.equal(sent.length, 1);
   assert.equal(sent[0]!.url, `${target.url}/functions/v1/read`);
   assert.equal(sent[0]!.init?.method, "POST");
+  /* Byte-exact, which is stronger than the server requires and deliberately so.
+   * `exactKeys` in the read function compares SORTED key sets, so it does not
+   * care about the order below; what it does refuse is an extra or a missing
+   * key. Pinning the bytes catches a renamed or added key without a second
+   * shape assertion, and it is this client's own contract rather than the
+   * server's rule. */
   assert.equal(
     String(sent[0]!.init?.body),
     '{"resource":"channels","workspace_id":"22222222-2222-4222-8222-222222222222"}',
+  );
+  assert.deepEqual(
+    Object.keys(JSON.parse(String(sent[0]!.init?.body))).sort(),
+    ["resource", "workspace_id"],
+    "the sorted key set is what the read function actually compares",
   );
   const headers = sent[0]!.init?.headers as Record<string, string>;
   assert.equal(headers.authorization, "Bearer swm_agt_token");
@@ -988,6 +999,78 @@ test("the agent channel list sends the exact body the read edge parses, and noth
   /* The read function is not PostgREST: an accept-profile header here would be
    * a copy of the human path that means nothing on this one. */
   assert.equal(Object.hasOwn(headers, "accept-profile"), false);
+});
+
+test("a body that never settles is the request not completing, not a bad shape", async () => {
+  /* D-034 in this file: the deadline covers the BODY, not only the headers. A
+   * review arm found both channel readers clearing their timer as soon as the
+   * headers arrived, so a server that stalled the stream hung the command for
+   * ever with no abort and no retry.
+   *
+   * The sentence matters as much as the timeout. A stalled body must take the
+   * retryable "did not complete" wording, because "a shape this version does
+   * not understand" would blame the server for our own deadline, and
+   * `channelRows` retries only on the retryable one. */
+  /* A response whose HEADERS have arrived and whose BODY never does. It is
+   * built by hand rather than from a ReadableStream, because what has to be
+   * measured is that the helper's own AbortSignal reaches the body read, and a
+   * hand-built body makes that the only thing under test. */
+  const stalledResponse = {
+    ok: true,
+    status: 200,
+    text: (signal: AbortSignal | null | undefined) =>
+      new Promise<string>((_resolve, reject) => {
+        if (signal == null) return;
+        signal.addEventListener(
+          "abort",
+          () => reject(new Error("body aborted")),
+          { once: true },
+        );
+      }),
+  };
+  const started = Date.now();
+  await assert.rejects(
+    () =>
+      client.listChannelsAsAgent(
+        target,
+        "swm_agt_token",
+        "22222222-2222-4222-8222-222222222222",
+        (async (_input: unknown, init: RequestInit | undefined) => ({
+          ok: stalledResponse.ok,
+          status: stalledResponse.status,
+          text: () => stalledResponse.text(init?.signal),
+        })) as unknown as typeof fetch,
+        60,
+      ),
+    (error: unknown) => {
+      assert.ok(error instanceof client.ChannelListError);
+      assert.equal(
+        error.noResponse,
+        true,
+        "a stalled body is retryable, so channelRows tries again",
+      );
+      assert.match(error.message, /did not complete/);
+      assert.doesNotMatch(error.message, /shape this version does not understand/);
+      return true;
+    },
+  );
+  assert.ok(
+    Date.now() - started < 5_000,
+    "the deadline fired instead of waiting for a body that never arrives",
+  );
+
+  /* CONTROL: the same helper with the same short deadline returns normally when
+   * the body DOES settle, so the rejection above is the stall and not the
+   * timeout firing on every call. */
+  const ok = await client.listChannelsAsAgent(
+    target,
+    "swm_agt_token",
+    "22222222-2222-4222-8222-222222222222",
+    async () =>
+      new Response(JSON.stringify({ channels: [] }), { status: 200 }),
+    60,
+  );
+  assert.deepEqual(ok, []);
 });
 
 test("the agent channel list refuses a shape it does not understand, and says nothing changed", async () => {

@@ -7459,7 +7459,14 @@ async function channelRows(context: FileCliContext): Promise<ChannelRow[]> {
     /* One repeat, and only when no response arrived. The read is idempotent and
      * the commonest failure on this path is a dropped connection, which is what
      * `fileRows` repeats for as well. A refusal is never repeated: it would
-     * arrive at the same refusal. */
+     * arrive at the same refusal.
+     *
+     * UNLIKE `fileRows`, the two attempts do NOT share one budget: each carries
+     * its own 30s deadline, so a wedged network can hold this call for 60s. A
+     * review arm named the difference. It stays because the alternative is
+     * threading a deadline through both channel readers for a case nobody has
+     * hit, and because the deadline now covers the body, which is the failure
+     * that actually hung this command. */
     if (error instanceof ChannelListError && error.noResponse) return await read();
     throw error;
   }
