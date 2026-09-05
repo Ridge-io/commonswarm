@@ -132,16 +132,16 @@ const mutations = [
     "an unfinished send is not resumed into a channel"],
   [OBS, DASH, "        if (retry && resumable) retry.hidden = false;", "        if (retry && unsent) retry.hidden = false;",
     "an unfinished send is not resumed into a channel"],
-  [OBS, DASH, "        const arrivedWhileFetching = signals.filter(\n          (row) => postedSinceReset.has(row.id) && !fetched.has(row.id) && rowShowsOnScreen(row),\n        );\n        forgetFetchedPostedIds(page.rows);\n        signals = [...arrivedWhileFetching, ...page.rows];",
+  [OBS, DASH, "        const arrivedWhileFetching = [...postedSinceReset.values()]\n          .filter((row) => !fetched.has(row.id) && rowShowsOnScreen(row))\n          .sort((a, b) => b.createdAt.localeCompare(a.createdAt));\n        forgetFetchedPostedIds(page.rows);\n        signals = [...arrivedWhileFetching, ...page.rows];",
     "        signals = page.rows;",
     "a page fetched before a post landed does not drop that post"],
-  [OBS, DASH, "        for (const id of visibleIds) postedSinceReset.add(id);\n", "",
+  [OBS, DASH, "        for (const row of visible) postedSinceReset.set(row.id, row);\n", "",
     "a page fetched before a post landed does not drop that post"],
 
   // ── round nine: the controls added after the eighth SHA failed both arms
   [OBS, DASH, "      if (addressMoved && composerIntent !== null) {", "      if (composerIntent !== null) {",
     "an unfinished send is not resumed into a channel"],
-  [OBS, DASH, "        for (const id of visibleFailureIds) postedSinceReset.add(id);\n", "",
+  [OBS, DASH, "        for (const row of visibleOnFailure) postedSinceReset.set(row.id, row);\n", "",
     "a page fetched before a post landed does not drop that post"],
   [OBS, DASH, "        forgetFetchedPostedIds(page.rows);\n        const known = new Set(page.rows.map((signal) => signal.id));",
     "        const known = new Set(page.rows.map((signal) => signal.id));",
@@ -150,10 +150,17 @@ const mutations = [
   // ── round eleven: the controls added after the tenth SHA failed both arms
   [OBS, DASH, "        : { channel: placementChannel.slug };", "        : { channel: activeChannel()?.slug ?? \"\" };",
     "the composer stamps the channel being read"],
-  [OBS, DASH, "      const addressMoved = next !== previousPlace;", "      const addressMoved = next !== activeChannelId;",
+  [OBS, DASH, "      const addressMoved = composerIntent !== null &&\n        composerIntent.placementChannelId !== next;",
+    "      const addressMoved = next !== activeChannelId;",
     "an unfinished send is not resumed into a channel"],
-  [OBS, DASH, "!fetched.has(row.id) && rowShowsOnScreen(row),", "!fetched.has(row.id),",
+  [OBS, DASH, ".filter((row) => !fetched.has(row.id) && rowShowsOnScreen(row))",
+    ".filter((row) => !fetched.has(row.id))",
     "a page fetched before a post landed does not drop that post"],
+
+  // ── round twelve: the controls added after the eleventh SHA
+  [OBS, DASH, "        (placementChannel === null || placementChannel.archivedAt !== null);",
+    "        placementChannel === null;",
+    "the composer stamps the channel being read"],
 ];
 
 const testFor = (file) => file;

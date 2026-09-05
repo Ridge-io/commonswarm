@@ -1330,14 +1330,18 @@ import "../../styles/tokens.css";
      * the new screen should show. Measured as a message that appeared, vanished, and came
      * back on the next poll. Found by a review arm.
      *
-     * An id leaves the set as soon as a fetched page carries it: the set exists to answer
+     * A row leaves the map as soon as a fetched page carries it: the map exists to answer
      * "did the server not know about this yet", and once the server hands it back the answer
      * is no. Without that it grew for as long as the reader stayed in one channel, which a
      * second arm found.
+     *
+     * It holds the ROW and not only the id, because a channel move empties `signals`: coming
+     * back before the replica caught up, an id-only record had nothing left to put back. A
+     * third arm found that.
      */
-    let postedSinceReset = new Set<string>();
+    let postedSinceReset = new Map<string, Signal>();
 
-    /** Drop the ids a fetched page proves the server knows about. */
+    /** Drop the rows a fetched page proves the server knows about. */
     const forgetFetchedPostedIds = (rows: readonly Signal[]): void => {
       if (postedSinceReset.size === 0) return;
       for (const row of rows) postedSinceReset.delete(row.id);
@@ -4625,9 +4629,9 @@ import "../../styles/tokens.css";
            set is not cleared here at all; what keeps a row from another channel out is the
            same question the screen asks, and `signals` was emptied by the move in any case.
            Found by a review arm. */
-        const arrivedWhileFetching = signals.filter(
-          (row) => postedSinceReset.has(row.id) && !fetched.has(row.id) && rowShowsOnScreen(row),
-        );
+        const arrivedWhileFetching = [...postedSinceReset.values()]
+          .filter((row) => !fetched.has(row.id) && rowShowsOnScreen(row))
+          .sort((a, b) => b.createdAt.localeCompare(a.createdAt));
         forgetFetchedPostedIds(page.rows);
         signals = [...arrivedWhileFetching, ...page.rows];
       } else {
@@ -4845,7 +4849,7 @@ import "../../styles/tokens.css";
       channelListFailed = false;
       activeChannelId = null;
       unknownChannelId = null;
-      postedSinceReset = new Set<string>();
+      postedSinceReset = new Map<string, Signal>();
       /* The intent carries the previous session's body and its command ids. */
       composerIntent = null;
       disarmChannelArchive();
@@ -5681,13 +5685,6 @@ import "../../styles/tokens.css";
         ? null
         : channelById(channels, channelId)?.channelId ?? null;
       if (channelId !== null && next === null) return;
-      /* The place the reader is leaving. An unresolved `?c=` is a place too, and comparing
-         only `activeChannelId` (which is null throughout that state) called the `?c=` heal a
-         move and called "Open all-signals" from the unresolved feed a no-op. Both are the
-         wrong way round. Found by a review arm; harmless today because the composer is hidden
-         while unresolved, so no intent can exist there — written correctly rather than left
-         to depend on that. */
-      const previousPlace = unknownChannelId ?? activeChannelId;
       const changed = next !== activeChannelId || unknownChannelId !== null;
       /* `changed` is also true when only the unresolved state clears. The RETIREMENT below
          needs the narrower question — did the address actually move — because clicking the
@@ -5695,7 +5692,14 @@ import "../../styles/tokens.css";
          replaced the send error with a sentence about a move that did not happen, and left
          Enter minting fresh command ids that reposted every hop that had already landed.
          Found by a review arm; introduced by the fix two rounds earlier. */
-      const addressMoved = next !== previousPlace;
+      /* AN UNFINISHED SEND SURVIVES ONLY WHILE THE COMPOSER STILL PROMISES ITS ADDRESS. Two
+         narrower questions were tried and both were wrong: `changed` also fires when the
+         unresolved state merely clears, so clicking the place you were already in killed a
+         valid Retry; and comparing the place being left called a `?c=` heal into a DIFFERENT
+         channel a no-op, leaving a retry pointed somewhere the box no longer names. This asks
+         the thing that matters directly. Both were found by review arms. */
+      const addressMoved = composerIntent !== null &&
+        composerIntent.placementChannelId !== next;
       activeChannelId = next;
       unknownChannelId = null;
       disarmChannelArchive();
@@ -6940,12 +6944,18 @@ import "../../styles/tokens.css";
       const placementChannel = placementChannelId === null
         ? null
         : channelById(channels, placementChannelId);
-      if (placementChannelId !== null && placementChannel === null) {
-        /* The channel this message was addressed to is not in the list any more: archived, or
-           removed while the send sat unfinished. Posting it unfiled would put it somewhere the
-           writer never chose, and guessing another channel would be worse. */
+      /* ARCHIVED IS NOT AVAILABLE. `channelById` finds an archived channel on purpose — a
+         permalink into one still has to resolve and its messages still render — so a check
+         that only asked whether the row exists let a retry keep sending into a channel the
+         server refuses, with Retry still lit, forever. The comment here claimed it covered
+         "archived, or removed" and it did not. Found by a review arm. */
+      const placementUnavailable = placementChannelId !== null &&
+        (placementChannel === null || placementChannel.archivedAt !== null);
+      if (placementUnavailable) {
         setComposerStatus(
-          "The channel this message was addressed to is not in this workspace any more. Send it from the channel you want it in.",
+          placementChannel === null
+            ? "The channel this message was addressed to is not in this workspace any more. Send it from the channel you want it in."
+            : `${channelLabel(placementChannel.slug)} is archived and does not accept new messages. Send this from the channel you want it in.`,
           "error",
         );
         composerIntent = null;
@@ -7075,7 +7085,7 @@ import "../../styles/tokens.css";
            it, and a row is removed from the list ONLY when it is about to be put back. */
         const visible = posted.filter(showsOnScreen);
         const visibleIds = new Set(visible.map((signal) => signal.id));
-        for (const id of visibleIds) postedSinceReset.add(id);
+        for (const row of visible) postedSinceReset.set(row.id, row);
         const kept = signals.filter(
           (entry) => !pendingSet.has(entry.id) && !visibleIds.has(entry.id),
         );
@@ -7115,7 +7125,7 @@ import "../../styles/tokens.css";
         /* The hops that DID land are records too. Only the success path was writing them, so
            a partial failure during a channel click lost the hop that posted when the reset
            page arrived without it. Found by a review arm. */
-        for (const id of visibleFailureIds) postedSinceReset.add(id);
+        for (const row of visibleOnFailure) postedSinceReset.set(row.id, row);
         /* Drop the posted ids as well as the pending ones. The success path rewrites `signals`
          * BEFORE it renders, so a throw in that render reaches here with those rows already in
          * the list; prepending them again would show each one twice. */

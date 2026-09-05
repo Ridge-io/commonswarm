@@ -1,0 +1,24 @@
+diff --git a/docs/design/2026-09-05-chat-app-channels.md b/docs/design/2026-09-05-chat-app-channels.md
+
+1. **`channelById` bypasses the client refusal for archived channels**
+   - **File**: `site/src/components/app/LiveDashboard.astro`
+   - **Line**: 6942 (`: channelById(channels, placementChannelId);`)
+   - **What breaks**: A retry addressed to a channel that was archived while the send sat unfinished bypasses the client's own refusal block, leaving the stale intent active and the Retry button visible endlessly.
+   - **How you see it**: Start a send in `#ops` and have it fail. Archive `#ops`. Press Retry. The comment at line 6944 claims the client will clear the intent and refuse the send if the channel is "archived, or removed", but `channelById` does NOT filter archived channels (`channels.ts:75`). `placementChannel` resolves successfully, the client sends the slug to the server, and the server refuses it. The catch block then evaluates `addressStillActive` to `true` (because `activeChannel()` also uses `channelById`), keeping the intent and Retry button active.
+   - **Refutation**: Could the catch block clear it anyway? No, `resumable` evaluates to `true` because `activeChannel()` still finds the archived channel. The user is stuck in a loop of server refusals with a visible Retry button.
+
+2. **`previousPlace` hides the address move during a `?c=` heal**
+   - **File**: `site/src/components/app/LiveDashboard.astro`
+   - **Line**: 5690 (`const previousPlace = unknownChannelId ?? activeChannelId;`)
+   - **What breaks**: Resolving a valid channel from the "Channel not found" state fails to retire an unfinished send from the previous channel.
+   - **How you see it**: Start a send in `#ops` that fails, leaving a retry intent. Click a link for `?c=new-channel` which hasn't loaded yet. The head says "Channel not found" and sets `unknownChannelId = "new-channel"`. When the channel list loads and finds the ID, `refreshChannels` heals the URL by calling `selectChannel("new-channel")`. Here, `next` and `previousPlace` both equal `"new-channel"`, so `addressMoved` evaluates to `false`. The intent for `#ops` is NOT retired. The composer unhides and says "Message #new-channel", but the Retry button is still visible and clicking it posts to `#ops`.
+   - **Refutation**: Could the intent be cleared before the heal? No, `applyChannelFromUrl` only sets `unknownChannelId` and hides the composer; it does not clear `composerIntent` since memory is preserved.
+
+3. **`selectChannel` destroys local row data needed by the reset page merge**
+   - **File**: `site/src/components/app/LiveDashboard.astro`
+   - **Line**: 4628 (`const arrivedWhileFetching = signals.filter(`)
+   - **What breaks**: Rows posted locally are dropped from the screen if the reader switches channels before the server read replica catches up.
+   - **How you see it**: Post a message in `#ops`. It goes into `signals` and `postedSinceReset`. Immediately switch to `#all-signals`. `selectChannel` clears `signals` to `[]` (line 5736). Switch back to `#ops`. The reset page fetch lands and tries to merge local rows using `signals.filter(...)` to find `arrivedWhileFetching`. But because `signals` was cleared, the local row data is gone. The post vanishes from the `#ops` feed until the next poll fetches it.
+   - **Refutation**: Could the fetched page have it? Only if the database replica has caught up. If it hasn't, the row is genuinely lost from the UI because its local data was destroyed, even though its ID survives in `postedSinceReset`.
+
+VERDICT: FAIL

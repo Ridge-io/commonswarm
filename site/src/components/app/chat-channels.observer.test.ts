@@ -166,6 +166,11 @@ test("the composer stamps the channel being read and gains no chrome for it", ()
   assert.match(resolve, /channelById\(channels, placementChannelId\)/);
   assert.match(resolve, /const placement: BrowserSignalPlacement = placementChannel === null\s*\n\s*\? \{\}\s*\n\s*: \{ channel: placementChannel\.slug \};/);
   assert.match(resolve, /is not in this workspace any more/);
+  /* An archived channel RESOLVES on purpose — a permalink into one must still work — so a
+     check that only asked whether the row exists let a retry keep sending into a channel the
+     server refuses, with Retry still lit, forever. A review arm found it. */
+  assert.match(resolve, /placementChannel\.archivedAt !== null/);
+  assert.match(resolve, /is archived and does not accept new messages/);
   assert.doesNotMatch(dashboard, /placement: freshPlacement/);
   /* THREADS ARE NOT THIS LANE (cut 2026-09-05 to `lane/chat-app-threads`). The browser never
      sends `thread_root_id` or `broadcast_to_channel`; a reply written from the CLI still
@@ -427,11 +432,16 @@ test("an unfinished send is not resumed into a channel it was not addressed to",
      reposted every hop that had already landed. Found by a review arm, on a fix from two
      rounds earlier. */
   const select = between(dashboard, "const selectChannel = (", "const setChannelDialogError");
-  /* Measured from the PLACE the reader is leaving. An unresolved `?c=` is a place too, and
-     comparing only activeChannelId called the heal a move and "Open all-signals" from the
-     unresolved feed a no-op. A review arm found both. */
-  assert.match(select, /const previousPlace = unknownChannelId \?\? activeChannelId;/);
-  assert.match(select, /const addressMoved = next !== previousPlace;/);
+  /* An unfinished send survives only while the composer still promises ITS address. Two
+     narrower questions were tried and both were wrong: `changed` also fires when the
+     unresolved state merely clears, so clicking the place you were already in killed a valid
+     Retry; and comparing the place being left called a `?c=` heal into a different channel a
+     no-op, leaving a retry pointed somewhere the box no longer names. Review arms found both.
+     ~~`next !== activeChannelId`~~, ~~`next !== previousPlace`~~. */
+  assert.match(
+    select,
+    /const addressMoved = composerIntent !== null &&\s*\n\s*composerIntent\.placementChannelId !== next;/,
+  );
   assert.match(select, /if \(addressMoved && composerIntent !== null\) \{/);
 });
 
@@ -446,19 +456,24 @@ test("a page fetched before a post landed does not drop that post", () => {
      yet visible to the read replica, which is the case this set exists for. A review arm found
      it. What keeps another channel's row out is the same question the screen asks. */
   assert.doesNotMatch(load, /postedSinceReset = new Set<string>\(\);/);
+  /* The record holds the ROW, not only the id: a channel move empties `signals`, so coming
+     back before the replica caught up an id-only record had nothing left to put back. A review
+     arm found that. ~~`signals.filter((row) => postedSinceReset.has(row.id) && …)`~~. */
   assert.match(
     load,
-    /const arrivedWhileFetching = signals\.filter\(\s*\n\s*\(row\) => postedSinceReset\.has\(row\.id\) && !fetched\.has\(row\.id\) && rowShowsOnScreen\(row\),/,
+    /const arrivedWhileFetching = \[\.\.\.postedSinceReset\.values\(\)\]\s*\n\s*\.filter\(\(row\) => !fetched\.has\(row\.id\) && rowShowsOnScreen\(row\)\)/,
   );
+  assert.match(load, /\.sort\(\(a, b\) => b\.createdAt\.localeCompare\(a\.createdAt\)\);/,
+    "the feed is newest-first, so the rows put back must be too");
   assert.match(load, /forgetFetchedPostedIds\(page\.rows\);/);
   assert.match(load, /signals = \[\.\.\.arrivedWhileFetching, \.\.\.page\.rows\];/);
   /* And the send is what records them, so only rows this browser posted are kept. */
   const applied = between(dashboard, "const visible = posted.filter(showsOnScreen);", "clearComposerDraft();");
-  assert.match(applied, /for \(const id of visibleIds\) postedSinceReset\.add\(id\);/);
+  assert.match(applied, /for \(const row of visible\) postedSinceReset\.set\(row\.id, row\);/);
   /* The FAILURE path prepends rows too, and only the success path was recording them, so a
      partial failure during a channel click lost the hop that had landed. */
   const failedRows = between(dashboard, "const visibleOnFailure = posted.filter", "const keptOnFailure");
-  assert.match(failedRows, /for \(const id of visibleFailureIds\) postedSinceReset\.add\(id\);/);
+  assert.match(failedRows, /for \(const row of visibleOnFailure\) postedSinceReset\.set\(row\.id, row\);/);
   /* An id leaves the set as soon as a fetched page carries it, so the set cannot grow for as
      long as the reader stays in one channel. Both arms raised that. */
   assert.match(dashboard, /const forgetFetchedPostedIds = \(rows: readonly Signal\[\]\): void =>/);

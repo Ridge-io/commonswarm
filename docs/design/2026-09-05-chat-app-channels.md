@@ -116,8 +116,19 @@ unfiled with no channel switch involved.
 It is the id and never the slug. `post_signal` takes a slug and the edge resolves it against the live
 row, so a rename between a failed send and its Retry made the replay name a channel that no longer
 exists — or, if another member had taken the freed name, someone else's. The slug is resolved from the
-id at the moment of sending, and a send whose channel has left the list is refused with a sentence
-rather than posted unfiled.
+id at the moment of sending, and a send whose channel is gone **or archived** is refused with a
+sentence rather than posted unfiled. Archived matters on its own: `channelById` finds an archived
+channel deliberately, because a permalink into one still has to resolve, so a check that only asked
+whether the row exists left a Retry sending into a channel the server refuses, lit, forever.
+
+**An unfinished send survives only while the composer still promises its address.** Two narrower
+questions were tried and both were wrong: `changed` also fires when the unresolved state merely
+clears, so clicking the place you were already in killed a valid Retry; and comparing the place being
+left called a `?c=` heal into a different channel a no-op. The condition asks the thing that matters
+directly — is the intent's channel the one the composer is about to name.
+
+**The record of in-flight posts holds the row, not the id.** A channel move empties `signals`, so
+coming back before the read replica caught up, an id-only record had nothing left to put back.
 
 **And an unfinished send does not follow the reader to another channel.** Moving channel retires the
 intent and says so, because the composer is about to promise the new channel and replaying the old
@@ -240,7 +251,7 @@ forbids.
    never reached them and the rail claimed a current channel while the head said Files. Found by a
    review arm. In the unresolved-channel state the rail marks NOTHING current, which both arms read
    and agreed is the honest mark: the reader is in the signals view and in no channel.
-9. **Ten review rounds cost twenty-eight product defects and two evidence defects**, every one found by an
+9. **Eleven review rounds cost thirty-one product defects and two evidence defects**, every one found by an
    arm and none by a gate: the read-permission claim in the copy; the composer that posted into the
    unfiltered feed from an unresolved link; a double current mark on Files and Brain; four typed
    copies of the view's name; a workspace switch that opened as "Channel not found"; a channel-list

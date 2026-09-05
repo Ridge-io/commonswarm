@@ -14,6 +14,7 @@ the worktree's `arms-<sha>/<family>/ARM.txt`.
 | `c1774d7` | FAIL | FAIL | 2 |
 | `8a00a75` | FAIL | FAIL | 4 |
 | `820ddcd` | FAIL | FAIL | 3 |
+| `b274485` | **PASS** | FAIL | 3 |
 
 **`arms-85d7eea…-grok.txt` is not a review and its verdict was not counted.** It carries three
 VERDICT fragments and visibly interleaved sentences ("Next I'll pullI'll the channel read the
@@ -32,3 +33,7 @@ real and both arms raised it.
 On `8a00a75` a third arm finding was verified as **pre-existing on `main`** and routed rather
 than fixed: the composer's early return on a workspace change skips `clearComposerDraft()`. It is
 byte-identical at `d9fa25b:6202`.
+
+`b274485` is the first split. The ruling followed PM-RULES: the FAIL was verified at the cited
+lines, two of its three findings were reproduced against the source, and the third fix was a
+strict improvement on the mechanism it named. All three were fixed rather than argued away.
