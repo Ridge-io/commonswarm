@@ -1901,3 +1901,12 @@ What is live in the repo: trailers on every new commit made through the hook; th
 `agent-trailers.yml` on the self-hosted fallback; commits before 2026-09-05 and GitHub squash
 merges skipped and counted apart. Not live: branch protection — the workflow blocks nothing until
 someone turns it on for `main` (operator decision; the check is informational until then).
+
+**Correction, my error (03:1x UTC):** the foreign worktree `/private/tmp/lane-tagging-f`
+(`lane/model-tagging`) had 3 tracked-dirty entries when I removed it with `--force`. AGENTS.md
+"Sprint hygiene" says to save `git diff` to `docs/evidence/<date>-cleanup/<branch>.patch` first;
+I read the count in the same command that removed it, so nothing was saved. Their content is
+unknown and unrecoverable; the committed tip is safe under tag `backup/model-tagging-60b60dd`.
+The other three foreign removals tonight (`mobile-fix`, `standing-default`, and the two markdown
+worktrees) were clean, measured before removal. Rule re-learned: measure dirty state in its own
+step, save the patch, then remove.
