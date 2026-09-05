@@ -1774,3 +1774,22 @@ npm account login (username, password, email, publish token, notes) is now a 1Pa
 OpenClaw vault, written by script from the Desktop file and the token file without any value entering
 a transcript; the Desktop file was moved to the Trash. 1Password access on the mini is the hermes
 service account (`~/.hermes/secrets/op-sa-token`).
+
+## 2026-09-05 00:5x UTC — operator: "drive all of those to completion and launch"
+
+Rulings taken from that instruction, recorded here so the lanes can cite them:
+- **One lead per repo (option A).** CSwarmDevLead reviews and lands the other Desktop session's
+  idle branches: `lane/mobile-fix` (#1 priority), `lane/markdown-tables`, `lane/markdown-coverage`,
+  `lane/google-signin`, `lane/model-tagging`. Their author is not consulted; the branches are
+  rebased onto `main`, gated, and given both arms before merge.
+- **Chat §12 defaults, adopted:** no private channels in v1; `@name` in a body is a mention (it
+  adds the person to the To: set, it does not create a DM); a channel is the address of a signal,
+  not a scope on delivery. If the operator reverses any of these, the reversal goes in the design
+  doc with the retired wording kept.
+- **Order for site-touching work** (they share `LiveDashboard.astro`): mobile-fix → markdown-tables
+  → markdown-coverage → google-signin → composer To: field → in-app update notice → chat lanes.
+  CLI/listener/CI work runs in parallel: the four chips (p1-cli fail-fast, brain put version
+  check, resume streaming, listener head-of-line) and model-tagging.
+- Every landing that changes the app is followed by a site deploy; CLI changes ship as 0.1.53+.
+  PM lanes are Opus subagents under `PM-RULES.md` in the session scratchpad; Codex is out of credits
+  until 2026-09-06 21:38.
