@@ -1563,6 +1563,17 @@ var BRAIN_FILE_NAME_RE = /^brain--[a-z0-9][a-z0-9._-]*\.md$/i;
 function isBrainFileArtifactName(name) {
   return name.length <= 255 && BRAIN_FILE_NAME_RE.test(name);
 }
+var FILE_VERSION_PRECONDITION_FAILED = "file_version_precondition_failed";
+function isFileVersionPrecondition(value) {
+  return typeof value === "number" && Number.isSafeInteger(value) && value >= 0;
+}
+function fileVersionPreconditionSatisfied(requiredVersion, liveVersion) {
+  return requiredVersion === liveVersion;
+}
+function fileVersionPreconditionMessage(requiredVersion, liveVersion) {
+  const current = liveVersion === 0 ? "this name has no live version yet" : `this file is at version ${liveVersion}`;
+  return `${current}; the request required version ${requiredVersion}, so the new version was not saved`;
+}
 function planFileVersionWindow(name, liveCount, inFlightCount) {
   if (!Number.isSafeInteger(liveCount) || liveCount < 0) {
     throw new RangeError("liveCount must be a non-negative safe integer");
@@ -1589,6 +1600,7 @@ export {
   FEEDBACK_BODY_MAX,
   FEEDBACK_CATEGORIES,
   FEEDBACK_CONTEXT_MAX_BYTES,
+  FILE_VERSION_PRECONDITION_FAILED,
   INVITATION_MAX_TTL_MS,
   RENEWAL_HORIZON_DEFAULT_MS,
   RENEWAL_HORIZON_MAX_MS,
@@ -1605,9 +1617,12 @@ export {
   canonicalPrincipal,
   decide,
   decideWorkspace,
+  fileVersionPreconditionMessage,
+  fileVersionPreconditionSatisfied,
   idemKey,
   isAgentScopeDenylisted,
   isBrainFileArtifactName,
+  isFileVersionPrecondition,
   leaseLive,
   normalizedFeedbackBody,
   normalizedFeedbackContext,

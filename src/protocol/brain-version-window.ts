@@ -26,6 +26,55 @@ export interface FileVersionWindowPlan {
 }
 
 /**
+ * Optional compare-and-set on a file's newest LIVE version.
+ *
+ * A write without it stays last-write-wins, which is what silently replaced a
+ * brain topic composed from a stale copy on 2026-09-04. This is deliberately
+ * narrower than the optimistic-concurrency primitive in SWARM-CLOUD.md §2.9:
+ * that specifies an opaque ETag and a three-way merge, and states the revision
+ * token must NOT be a client-guessable integer. A version integer is guessable,
+ * so this does not defend the ABA case (read v3, write content that ignores v3,
+ * present 3). It refuses the accidental clobber that was measured, and it can
+ * never be worse than the unconditional write it replaces. Read §2.9 before
+ * treating this as that primitive.
+ */
+export const FILE_VERSION_PRECONDITION_FAILED = "file_version_precondition_failed";
+
+/** The value carried on the wire, and the same bound the CLI enforces. */
+export function isFileVersionPrecondition(value: unknown): value is number {
+  return typeof value === "number" && Number.isSafeInteger(value) && value >= 0;
+}
+
+/**
+ * Zero means "no live version yet", which is what a file with only pending
+ * uploads and a name that has never been committed both report.
+ */
+export function fileVersionPreconditionSatisfied(
+  requiredVersion: number,
+  liveVersion: number,
+): boolean {
+  return requiredVersion === liveVersion;
+}
+
+/**
+ * One sentence, built once, so the server and the CLI cannot drift apart.
+ *
+ * The outcome clause is phase-neutral on purpose. This refusal is raised at
+ * create AND at commit, and by commit the client has already PUT the bytes, so
+ * a sentence saying nothing was uploaded would be false exactly where the
+ * check does its real work.
+ */
+export function fileVersionPreconditionMessage(
+  requiredVersion: number,
+  liveVersion: number,
+): string {
+  const current = liveVersion === 0
+    ? "this name has no live version yet"
+    : `this file is at version ${liveVersion}`;
+  return `${current}; the request required version ${requiredVersion}, so the new version was not saved`;
+}
+
+/**
  * Reduces the locked database counts into the next version-window action.
  * A brain create is blocked only by 20 unexpired pending uploads. At commit,
  * retire enough of the oldest live versions to leave room for this version.

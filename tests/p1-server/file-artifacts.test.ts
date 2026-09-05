@@ -1225,3 +1225,378 @@ test("F4 purge claims once and restore refuses a claimed file (★R6)", async ()
   }, f.workspaceA);
   assert.equal(reuse.status, 200, JSON.stringify(reuse.body));
 });
+
+/* B2: the optional compare-and-set on file_version_create.
+ *
+ * Measured 2026-09-04: two agents read-modify-wrote one brain topic and the
+ * later write, composed from a copy read before the newer version, silently
+ * replaced it. `if_version` refuses exactly that. The default is unchanged, so
+ * every test above sends no precondition and still passes.
+ *
+ * NOT RUN in the lane that wrote it: tests/p1-server needs local Supabase and
+ * the exclusive DB slot, which another lane held. Typechecked only. */
+
+test("B2 if_version refuses a create against a superseded live version", async () => {
+  const actor = await createBrainAgent("brain-cas-writer");
+  const topicFileName = "brain--compare-and-set.md";
+  const first = new TextEncoder().encode("# CAS\n\nVersion 1.\n");
+
+  /* v1: no live version yet, so if_version 0 is the correct precondition and
+   * must be ACCEPTED. This is the discriminating half: a check that refused
+   * everything would also refuse here. */
+  const createV1 = await postCommand(actor.token, {
+    kind: "file_version_create",
+    file_id: randomUUID(),
+    version_id: randomUUID(),
+    name: topicFileName,
+    declared_size_bytes: first.length,
+    content_type: "text/markdown",
+    if_version: 0,
+  }, f.workspaceA);
+  assert.equal(createV1.status, 200, JSON.stringify(createV1.body));
+  const fileId = String(createV1.body.file_id);
+  const versionV1 = String(createV1.body.version_id);
+  const putV1 = await fetch(`${local.API_URL}${String(createV1.body.upload_path)}`, {
+    method: "PUT",
+    headers: { "content-type": "text/markdown" },
+    body: first,
+  });
+  assert.ok(putV1.ok);
+  const commitV1 = await postCommand(actor.token, {
+    kind: "file_version_commit",
+    file_id: fileId,
+    version_id: versionV1,
+    sha256: sha256hex(first),
+  }, f.workspaceA);
+  assert.equal(commitV1.status, 200, JSON.stringify(commitV1.body));
+  assert.equal(commitV1.body.version_n, 1);
+
+  /* The live version is now 1, so the stale writer still holding 0 is refused
+   * BEFORE any row is written. */
+  const stale = await postCommand(actor.token, {
+    kind: "file_version_create",
+    file_id: randomUUID(),
+    version_id: randomUUID(),
+    name: topicFileName,
+    declared_size_bytes: 32,
+    content_type: "text/markdown",
+    if_version: 0,
+  }, f.workspaceA);
+  assert.equal(stale.status, 409, JSON.stringify(stale.body));
+  assert.equal(stale.body.error, "file_version_precondition_failed");
+  assert.match(String(stale.body.message), /at version 1/);
+  assert.match(String(stale.body.message), /required version 0/);
+
+  /* No pending row was created, so the refusal cost no version number and no
+   * quota. A refusal that had already inserted would show a v2 here. */
+  const rows = await sql<{ n: string }[]>`
+    SELECT count(*)::text AS n FROM swarm.file_versions
+    WHERE file_id = ${fileId}::uuid
+  `;
+  assert.equal(rows[0]?.n, "1", "the refused create must leave no version row");
+
+  /* Re-reading and presenting the current version succeeds, which is the
+   * remedy the CLI prints. */
+  const fresh = await postCommand(actor.token, {
+    kind: "file_version_create",
+    file_id: randomUUID(),
+    version_id: randomUUID(),
+    name: topicFileName,
+    declared_size_bytes: 32,
+    content_type: "text/markdown",
+    if_version: 1,
+  }, f.workspaceA);
+  assert.equal(fresh.status, 200, JSON.stringify(fresh.body));
+  assert.equal(fresh.body.version_n, 2);
+});
+
+test("B2b a create with no if_version stays last-write-wins", async () => {
+  /* CONTROL for the compatibility claim: an older client sends no such key,
+   * and the exact-key-set validator must still accept the request. */
+  const actor = await createBrainAgent("brain-cas-default");
+  const topicFileName = "brain--cas-default.md";
+
+  const create = await postCommand(actor.token, {
+    kind: "file_version_create",
+    file_id: randomUUID(),
+    version_id: randomUUID(),
+    name: topicFileName,
+    declared_size_bytes: 16,
+    content_type: "text/markdown",
+  }, f.workspaceA);
+
+  assert.equal(create.status, 200, JSON.stringify(create.body));
+  assert.equal(create.body.version_n, 1);
+});
+
+test("B2c a malformed if_version is refused as a bad request, not a conflict", async () => {
+  const actor = await createBrainAgent("brain-cas-malformed");
+
+  /* null is NOT here: an explicit null means "no precondition", the same way
+   * commit accepts a null sha256. Only a value that cannot be a version is a
+   * bad request. */
+  for (const bad of [-1, 1.5, "2", true]) {
+    const create = await postCommand(actor.token, {
+      kind: "file_version_create",
+      file_id: randomUUID(),
+      version_id: randomUUID(),
+      name: "brain--cas-malformed.md",
+      declared_size_bytes: 16,
+      content_type: "text/markdown",
+      if_version: bad,
+    }, f.workspaceA);
+
+    /* 400, never 409: a client that cannot express the precondition has not
+     * lost a race, and must not be told to re-read and retry. */
+    assert.equal(create.status, 400, `if_version ${JSON.stringify(bad)}: ${JSON.stringify(create.body)}`);
+  }
+});
+
+test("B2d two writers derived from the same version: exactly one commit lands", async () => {
+  /* The case the flag exists for, and the one a create-time check alone does
+   * NOT stop. brain put is two phases; the create lock ends with its own
+   * transaction and current_version moves only at commit. So both writers
+   * create successfully against version 1, and the precondition has to be
+   * re-checked at commit under the file lock.
+   *
+   * NOT RUN: tests/p1-server needs local Supabase and the exclusive DB slot,
+   * held by another lane. Typechecked only. */
+  const actor = await createBrainAgent("brain-cas-race");
+  const topicFileName = "brain--cas-race.md";
+
+  const seed = new TextEncoder().encode("# Race\n\nVersion 1.\n");
+  const createSeed = await postCommand(actor.token, {
+    kind: "file_version_create",
+    file_id: randomUUID(),
+    version_id: randomUUID(),
+    name: topicFileName,
+    declared_size_bytes: seed.length,
+    content_type: "text/markdown",
+  }, f.workspaceA);
+  assert.equal(createSeed.status, 200, JSON.stringify(createSeed.body));
+  const fileId = String(createSeed.body.file_id);
+  await fetch(`${local.API_URL}${String(createSeed.body.upload_path)}`, {
+    method: "PUT",
+    headers: { "content-type": "text/markdown" },
+    body: seed,
+  });
+  const commitSeed = await postCommand(actor.token, {
+    kind: "file_version_commit",
+    file_id: fileId,
+    version_id: String(createSeed.body.version_id),
+    sha256: sha256hex(seed),
+  }, f.workspaceA);
+  assert.equal(commitSeed.status, 200, JSON.stringify(commitSeed.body));
+  assert.equal(commitSeed.body.version_n, 1);
+
+  // Both writers read version 1 and both create against it. Both creates are
+  // expected to succeed: at create time neither has changed current_version.
+  const writers = await Promise.all([2, 3].map(async (label) => {
+    const bytes = new TextEncoder().encode(`# Race\n\nWriter ${label}.\n`);
+    const create = await postCommand(actor.token, {
+      kind: "file_version_create",
+      file_id: randomUUID(),
+      version_id: randomUUID(),
+      name: topicFileName,
+      declared_size_bytes: bytes.length,
+      content_type: "text/markdown",
+      if_version: 1,
+    }, f.workspaceA);
+    assert.equal(create.status, 200, `writer ${label} create: ${JSON.stringify(create.body)}`);
+    const put = await fetch(`${local.API_URL}${String(create.body.upload_path)}`, {
+      method: "PUT",
+      headers: { "content-type": "text/markdown" },
+      body: bytes,
+    });
+    assert.ok(put.ok);
+    return { bytes, versionId: String(create.body.version_id) };
+  }));
+
+  const commits = await Promise.all(writers.map((writer) =>
+    postCommand(actor.token, {
+      kind: "file_version_commit",
+      file_id: fileId,
+      version_id: writer.versionId,
+      sha256: sha256hex(writer.bytes),
+    }, f.workspaceA)
+  ));
+
+  const accepted = commits.filter((commit) => commit.status === 200);
+  const refused = commits.filter((commit) => commit.status === 409);
+  assert.equal(accepted.length, 1, `exactly one commit must land: ${JSON.stringify(commits.map((c) => c.body))}`);
+  assert.equal(refused.length, 1);
+  assert.equal(refused[0]!.body.error, "file_version_precondition_failed");
+  assert.match(String(refused[0]!.body.message), /required version 1/);
+
+  /* The loser left no live version. Which of the two pending versions wins is
+   * not determined here - both were created before either committed - so the
+   * assertion is on the SHAPE: the seed plus exactly one winner, and the
+   * winner is the version the accepted commit reported. */
+  const live = await sql<{ version_n: number }[]>`
+    SELECT version_n FROM swarm.file_versions
+    WHERE file_id = ${fileId}::uuid AND state = 'live'
+    ORDER BY version_n ASC
+  `;
+  const winnerVersion = Number(accepted[0]!.body.version_n);
+  assert.deepEqual(live.map((row) => row.version_n), [1, winnerVersion]);
+  assert.ok(
+    winnerVersion === 2 || winnerVersion === 3,
+    `the winner must be one of the two created versions, got ${winnerVersion}`,
+  );
+
+  /* current_version must equal the winner, or a later --if-version derived
+   * from a read would compare against a number no reader was ever shown. */
+  const head = await sql<{ current_version: number }[]>`
+    SELECT current_version FROM swarm.files WHERE file_id = ${fileId}::uuid
+  `;
+  assert.equal(Number(head[0]?.current_version), winnerVersion);
+  /* The refusal must name the version that actually won, not a fixed guess. */
+  assert.match(
+    String(refused[0]!.body.message),
+    new RegExp(`at version ${winnerVersion}\\b`),
+  );
+
+  /* The loser is never silently committed AND never left pending: a pending
+   * row holds an in-flight slot and its declared bytes for the full 3-hour
+   * window, so twenty lost races on one hot topic would reach the 20-upload
+   * in-flight cap and block the topic for everyone. */
+  const leftovers = await sql<{ state: string; n: string }[]>`
+    SELECT state, count(*)::text AS n FROM swarm.file_versions
+    WHERE file_id = ${fileId}::uuid AND state IN ('pending', 'purged')
+    GROUP BY state
+  `;
+  const byState = new Map(leftovers.map((row) => [row.state, row.n]));
+  assert.equal(byState.get("pending"), undefined, "the loser must not stay in flight");
+  assert.equal(byState.get("purged"), "1", "the loser's slot must be released");
+
+  /* Releasing the slot is only half of it. Marking the row purged takes it out
+   * of the sweeper's reach, so the refusal must queue the path itself or the
+   * bytes are never reclaimed. Asserting the row state alone would stay green
+   * with that leak present, which is why this reads the queue. */
+  const loserPath = await sql<{ storage_path: string }[]>`
+    SELECT storage_path FROM swarm.file_versions
+    WHERE file_id = ${fileId}::uuid AND state = 'purged'
+  `;
+  assert.equal(loserPath.length, 1);
+  const queued = await sql<{ storage_path: string }[]>`
+    SELECT storage_path FROM swarm.file_purge_queue
+    WHERE storage_path = ${loserPath[0]!.storage_path}
+  `;
+  assert.equal(queued.length, 1, "the loser's object must be queued for deletion");
+
+  /* Losing repeatedly must not exhaust the in-flight cap: a fresh conditional
+   * write against the current version still succeeds afterwards. */
+  const afterLoss = await postCommand(actor.token, {
+    kind: "file_version_create",
+    file_id: randomUUID(),
+    version_id: randomUUID(),
+    name: topicFileName,
+    declared_size_bytes: 16,
+    content_type: "text/markdown",
+    if_version: winnerVersion,
+  }, f.workspaceA);
+  assert.equal(afterLoss.status, 200, JSON.stringify(afterLoss.body));
+});
+
+test("B2e the precondition is re-checked at commit, not only at create", async () => {
+  /* Minimal form of B2d with the interleaving made explicit and serial, so a
+   * failure here names the mechanism rather than a race.
+   *
+   * NOT RUN: needs local Supabase and the exclusive DB slot. */
+  const actor = await createBrainAgent("brain-cas-recheck");
+  const topicFileName = "brain--cas-recheck.md";
+  const first = new TextEncoder().encode("# Recheck\n\nVersion 1.\n");
+
+  const createA = await postCommand(actor.token, {
+    kind: "file_version_create",
+    file_id: randomUUID(),
+    version_id: randomUUID(),
+    name: topicFileName,
+    declared_size_bytes: first.length,
+    content_type: "text/markdown",
+  }, f.workspaceA);
+  const fileId = String(createA.body.file_id);
+  await fetch(`${local.API_URL}${String(createA.body.upload_path)}`, {
+    method: "PUT",
+    headers: { "content-type": "text/markdown" },
+    body: first,
+  });
+  await postCommand(actor.token, {
+    kind: "file_version_commit",
+    file_id: fileId,
+    version_id: String(createA.body.version_id),
+    sha256: sha256hex(first),
+  }, f.workspaceA);
+
+  // Stale writer creates against version 1 and PASSES the create-time check.
+  const stale = new TextEncoder().encode("# Recheck\n\nStale writer.\n");
+  const staleCreate = await postCommand(actor.token, {
+    kind: "file_version_create",
+    file_id: randomUUID(),
+    version_id: randomUUID(),
+    name: topicFileName,
+    declared_size_bytes: stale.length,
+    content_type: "text/markdown",
+    if_version: 1,
+  }, f.workspaceA);
+  assert.equal(staleCreate.status, 200, "the create-time check cannot yet know");
+  await fetch(`${local.API_URL}${String(staleCreate.body.upload_path)}`, {
+    method: "PUT",
+    headers: { "content-type": "text/markdown" },
+    body: stale,
+  });
+
+  // A different writer commits version 2 in between.
+  const winner = new TextEncoder().encode("# Recheck\n\nWinner.\n");
+  const winnerCreate = await postCommand(actor.token, {
+    kind: "file_version_create",
+    file_id: randomUUID(),
+    version_id: randomUUID(),
+    name: topicFileName,
+    declared_size_bytes: winner.length,
+    content_type: "text/markdown",
+  }, f.workspaceA);
+  await fetch(`${local.API_URL}${String(winnerCreate.body.upload_path)}`, {
+    method: "PUT",
+    headers: { "content-type": "text/markdown" },
+    body: winner,
+  });
+  const winnerCommit = await postCommand(actor.token, {
+    kind: "file_version_commit",
+    file_id: fileId,
+    version_id: String(winnerCreate.body.version_id),
+    sha256: sha256hex(winner),
+  }, f.workspaceA);
+  assert.equal(winnerCommit.status, 200, JSON.stringify(winnerCommit.body));
+
+  // Now the stale writer commits. current_version is 2; it required 1.
+  const staleCommit = await postCommand(actor.token, {
+    kind: "file_version_commit",
+    file_id: fileId,
+    version_id: String(staleCreate.body.version_id),
+    sha256: sha256hex(stale),
+  }, f.workspaceA);
+
+  assert.equal(staleCommit.status, 409, JSON.stringify(staleCommit.body));
+  assert.equal(staleCommit.body.error, "file_version_precondition_failed");
+
+  /* The refused row must be released AND its bytes queued, exactly as in B2d.
+   * Without this the test passes while the version sits in flight or its
+   * object leaks. */
+  const staleRow = await sql<{ state: string; storage_path: string }[]>`
+    SELECT state, storage_path FROM swarm.file_versions
+    WHERE version_id = ${String(staleCreate.body.version_id)}::uuid
+  `;
+  assert.equal(staleRow[0]?.state, "purged");
+  const staleQueued = await sql<{ storage_path: string }[]>`
+    SELECT storage_path FROM swarm.file_purge_queue
+    WHERE storage_path = ${staleRow[0]!.storage_path}
+  `;
+  assert.equal(staleQueued.length, 1);
+
+  /* The stale writer took version 2, so the winner is version 3 and that is
+   * what current_version reads when the stale commit is judged. */
+  assert.equal(Number(winnerCommit.body.version_n), 3);
+  assert.match(String(staleCommit.body.message), /at version 3/);
+  assert.match(String(staleCommit.body.message), /required version 1/);
+});

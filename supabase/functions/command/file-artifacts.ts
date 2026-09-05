@@ -24,7 +24,11 @@
 import type postgres from "postgres";
 import {
   BRAIN_LIVE_VERSION_LIMIT,
+  FILE_VERSION_PRECONDITION_FAILED,
+  fileVersionPreconditionMessage,
+  fileVersionPreconditionSatisfied,
   isBrainFileArtifactName,
+  isFileVersionPrecondition,
   planFileVersionWindow,
 } from "../_shared/protocol.js";
 
@@ -75,6 +79,8 @@ export interface FileVersionCreateCommand {
   name: string;
   declared_size_bytes: number;
   content_type: string;
+  /** Optional compare-and-set on the newest live version; null means none. */
+  if_version: number | null;
 }
 
 export interface FileVersionCommitCommand {
@@ -134,6 +140,9 @@ export function validateFileCommand(
   | { ok: true; command: FileCommand }
   | { ok: false; status: number; reason: string } {
   if (cmd.kind === FILE_VERSION_CREATE_KIND) {
+    /* Optional key, like sha256 on commit: an older client omits it entirely
+     * and exactKeys must still accept that request. */
+    const ifVersion = Object.hasOwn(cmd, "if_version") ? cmd.if_version : null;
     const valid = exactKeys(cmd, [
       "kind",
       "file_id",
@@ -141,6 +150,7 @@ export function validateFileCommand(
       "name",
       "declared_size_bytes",
       "content_type",
+      ...(Object.hasOwn(cmd, "if_version") ? ["if_version"] : []),
     ]) &&
       typeof cmd.file_id === "string" && UUID_RE.test(cmd.file_id) &&
       typeof cmd.version_id === "string" && UUID_RE.test(cmd.version_id) &&
@@ -149,7 +159,8 @@ export function validateFileCommand(
       Number.isInteger(cmd.declared_size_bytes) &&
       cmd.declared_size_bytes >= 1 &&
       typeof cmd.content_type === "string" &&
-      cmd.content_type.length <= 255;
+      cmd.content_type.length <= 255 &&
+      (ifVersion === null || isFileVersionPrecondition(ifVersion));
     if (!valid) {
       return {
         ok: false,
@@ -166,6 +177,7 @@ export function validateFileCommand(
         name: cmd.name as string,
         declared_size_bytes: cmd.declared_size_bytes as number,
         content_type: (cmd.content_type as string).toLowerCase(),
+        if_version: ifVersion as number | null,
       },
     };
   }
@@ -453,6 +465,24 @@ export async function fileVersionCreate(
       "name held by tombstone",
     );
   }
+  /* Compare-and-set, under the file row lock taken above. current_version
+   * names the newest LIVE version and moves only at commit, so it is the
+   * number the writer actually read; max(version_n) would fail against another
+   * agent's in-flight pending upload, which is not a conflict with any content.
+   * Refused BEFORE any row is written, so a losing writer uploads no bytes.
+   * This refusal is state-dependent and, like every file refusal, is not
+   * ledgered: the same command id retried after a re-read must re-evaluate. */
+  if (cmd.if_version !== null) {
+    const liveVersion = Number(file?.current_version ?? 0);
+    if (!fileVersionPreconditionSatisfied(cmd.if_version, liveVersion)) {
+      return refuse(
+        409,
+        FILE_VERSION_PRECONDITION_FAILED,
+        fileVersionPreconditionMessage(cmd.if_version, liveVersion),
+        "version precondition failed",
+      );
+    }
+  }
   const windowPlan = planFileVersionWindow(
     cmd.name,
     Number(file?.live_version_count ?? "0"),
@@ -544,14 +574,20 @@ export async function fileVersionCreate(
       )
     `;
   }
+  /* The precondition rides on the pending row. The lock taken above is
+   * released with this transaction, and current_version does not move until
+   * commit, so the create-time check alone cannot decide a race between two
+   * writers who both read the same version. Commit re-checks this value. */
   await tx`
     INSERT INTO swarm.file_versions (
       version_id, file_id, workspace_id, version_n, state,
-      size_bytes, content_type, storage_path, uploaded_by_kind, uploaded_by
+      size_bytes, content_type, storage_path, uploaded_by_kind, uploaded_by,
+      if_version
     ) VALUES (
       ${cmd.version_id}::uuid, ${fileId}::uuid, ${workspaceId}::uuid,
       ${versionN}, 'pending', ${cmd.declared_size_bytes}, ${cmd.content_type},
-      ${storagePath}, ${actor.kind}, ${actor.id}::uuid
+      ${storagePath}, ${actor.kind}, ${actor.id}::uuid,
+      ${cmd.if_version}
     )
   `;
 
@@ -617,11 +653,14 @@ export async function fileVersionCommit(
       uploaded_by: string;
       uploaded_by_kind: string;
       name: string;
+      if_version: number | null;
+      current_version: number;
     }[]
   >`
     SELECT
       v.version_id, v.version_n, v.state, v.size_bytes::text,
-      v.storage_path, v.uploaded_by, v.uploaded_by_kind, f.name
+      v.storage_path, v.uploaded_by, v.uploaded_by_kind, f.name,
+      v.if_version, f.current_version
     FROM swarm.file_versions AS v
     JOIN swarm.files AS f
       ON f.file_id = v.file_id AND f.workspace_id = v.workspace_id
@@ -652,6 +691,57 @@ export async function fileVersionCommit(
       "only the principal that created this pending version may commit it",
       "non-creator commit",
     );
+  }
+  /* The compare-and-set decided. This is the check that actually holds: the
+   * file row is locked FOR UPDATE above and current_version moves only here,
+   * so of two writers that both created against version n, the first to reach
+   * this point commits and the second is refused. Refused before the storage
+   * read, so a loser does no further work; what happens to its row and its
+   * bytes is in the refusal branch below. */
+  if (version.if_version !== null) {
+    const liveVersion = Number(version.current_version);
+    if (!fileVersionPreconditionSatisfied(version.if_version, liveVersion)) {
+      /* Retire the losing slot AND queue its bytes, in the same transaction.
+       * A normal return from db.begin commits, so both statements land with
+       * the refusal.
+       *
+       * Left pending, the row would hold an in-flight slot and its DECLARED
+       * bytes against the quota for the full 3-hour window: twenty lost races
+       * on one hot topic would reach the 20-upload in-flight cap and block
+       * that topic for everyone, a worse failure than the clobber this check
+       * prevents. 'purged' is the existing state for a version that will never
+       * exist; neither the in-flight cap nor the byte cap counts it, and
+       * download already refuses it.
+       *
+       * But marking it purged takes it OUT of the sweeper's reach:
+       * swarm.purge_file_artifacts() claims a path only from pending rows over
+       * 3 hours old, from a tombstoned file, or from a bucket object with no
+       * version row at all. This row is none of those, so nothing would ever
+       * reclaim its object. The sweeper does not have that problem because it
+       * sets 'purged' and queues the path in one statement; this must do the
+       * same, or the fix for the slot leak buys a permanent storage leak.
+       * drainFilePurgeQueue runs after every file command, including this
+       * refusal, and tolerates a path whose object was never PUT. */
+      await tx`
+        UPDATE swarm.file_versions
+        SET state = 'purged'
+        WHERE version_id = ${cmd.version_id}::uuid
+          AND file_id = ${cmd.file_id}::uuid
+          AND workspace_id = ${workspaceId}::uuid
+          AND state = 'pending'
+      `;
+      await tx`
+        INSERT INTO swarm.file_purge_queue (storage_path)
+        VALUES (${version.storage_path})
+        ON CONFLICT (storage_path) DO NOTHING
+      `;
+      return refuse(
+        409,
+        FILE_VERSION_PRECONDITION_FAILED,
+        fileVersionPreconditionMessage(version.if_version, liveVersion),
+        "version precondition failed at commit",
+      );
+    }
   }
   const measured = await storage.objectSize(version.storage_path);
   if (measured === null) {

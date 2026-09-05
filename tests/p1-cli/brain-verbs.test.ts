@@ -5,6 +5,10 @@ import { createServer, type Server } from "node:http";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
 import { after, test } from "node:test";
+import {
+  FILE_VERSION_PRECONDITION_FAILED,
+  fileVersionPreconditionMessage,
+} from "../../src/protocol/index.js";
 
 /* Reached by `npm run test:p1-cli` through its tests/p1-cli glob. */
 
@@ -25,7 +29,16 @@ interface FakeCloud {
   close(): Promise<void>;
 }
 
-async function startFakeCloud(): Promise<FakeCloud> {
+async function startFakeCloud(
+  options: { liveVersion?: number; liveVersionAtCommit?: number } = {},
+): Promise<FakeCloud> {
+  /* The newest LIVE version this fake workspace holds, which is what the real
+   * server compares an if_version against. `liveVersionAtCommit` models the
+   * case the flag exists for: the topic moved AFTER this writer's create was
+   * accepted, so only the commit-time re-check can refuse it. */
+  const liveVersion = options.liveVersion ?? 2;
+  const liveVersionAtCommit = options.liveVersionAtCommit ?? liveVersion;
+  const preconditions = new Map<string, number>();
   const commands: RecordedCommand[] = [];
   const uploads: Buffer[] = [];
   const names = new Map<string, string>([[BRAIN_FILE_ID, "brain--architecture.md"]]);
@@ -95,6 +108,23 @@ async function startFakeCloud(): Promise<FakeCloud> {
         commands.push({ kind, body: command });
         let body: Record<string, unknown>;
         if (kind === "file_version_create") {
+          if (
+            command.if_version !== undefined &&
+            command.if_version !== liveVersion
+          ) {
+            response.writeHead(409, { "content-type": "application/json" });
+            response.end(JSON.stringify({
+              error: FILE_VERSION_PRECONDITION_FAILED,
+              message: fileVersionPreconditionMessage(
+                Number(command.if_version),
+                liveVersion,
+              ),
+            }));
+            return;
+          }
+          if (command.if_version !== undefined) {
+            preconditions.set(String(command.version_id), Number(command.if_version));
+          }
           const requestedId = String(command.file_id);
           const name = String(command.name);
           const fileId = name === "brain--architecture.md" ? BRAIN_FILE_ID : requestedId;
@@ -110,6 +140,15 @@ async function startFakeCloud(): Promise<FakeCloud> {
             upload_expires_in_seconds: 7200,
           };
         } else if (kind === "file_version_commit") {
+          const required = preconditions.get(String(command.version_id));
+          if (required !== undefined && required !== liveVersionAtCommit) {
+            response.writeHead(409, { "content-type": "application/json" });
+            response.end(JSON.stringify({
+              error: FILE_VERSION_PRECONDITION_FAILED,
+              message: fileVersionPreconditionMessage(required, liveVersionAtCommit),
+            }));
+            return;
+          }
           const fileId = String(command.file_id);
           body = {
             status: "accepted",
@@ -309,5 +348,132 @@ test("the usage block names all three brain verbs", async () => {
   assert.equal(code, 0, output);
   for (const verb of ["brain ls", "brain get", "brain put"]) {
     assert.match(output, new RegExp(`cswarm ${verb}`));
+  }
+});
+
+/* --if-version: an optional compare-and-set on brain put.
+ *
+ * Measured 2026-09-04: two agents read-modify-wrote the same topic and v4,
+ * composed from a copy read before v3, silently replaced it. The same topic had
+ * already lost an operator hold that way once. Writes stay last-write-wins by
+ * default, so nothing that does not ask for the check changes. */
+
+test("brain put --if-version refuses a stale write, uploads nothing, and says what to do", async () => {
+  const cloud = await startFakeCloud({ liveVersion: 3 });
+  try {
+    const result = await cliAgainst(
+      cloud,
+      ["brain", "put", "Architecture", "--if-version", "2"],
+      "# Architecture\n\nComposed from version 2.\n",
+    );
+
+    assert.equal(result.code, 1);
+    /* The live version must be in the refusal: without it the reader cannot
+     * tell a stale read from a typo in the flag. */
+    assert.match(result.stderr, /at version 3/);
+    assert.match(result.stderr, /required version 2/);
+    assert.match(result.stderr, /cswarm brain get architecture/);
+    /* Refused before the upload, so a losing writer spends no bytes and no
+     * version number is burned. */
+    assert.deepEqual(cloud.commands.map((command) => command.kind), [
+      "file_version_create",
+    ]);
+    assert.equal(cloud.uploads.length, 0);
+  } finally {
+    await cloud.close();
+  }
+});
+
+test("brain put --if-version saves when the live version still matches", async () => {
+  /* CONTROL. A flag that always refused would satisfy the test above and make
+   * the compare-and-set useless. */
+  const cloud = await startFakeCloud({ liveVersion: 2 });
+  const markdown = "# Architecture\n\nComposed from version 2.\n";
+  try {
+    const result = await cliAgainst(
+      cloud,
+      ["brain", "put", "Architecture", "--if-version", "2"],
+      markdown,
+    );
+
+    assert.equal(result.code, 0, result.stderr);
+    assert.equal(cloud.commands[0]!.body.if_version, 2);
+    assert.equal(cloud.uploads.length, 1);
+    assert.equal(cloud.uploads[0]!.toString("utf8"), markdown);
+  } finally {
+    await cloud.close();
+  }
+});
+
+test("brain put without the flag sends no precondition and stays last-write-wins", async () => {
+  /* The server validates an EXACT key set, so an unconditional write must not
+   * carry the key at all. This is the compatibility claim: an older server and
+   * this client still agree on the create payload. */
+  const cloud = await startFakeCloud({ liveVersion: 3 });
+  try {
+    const result = await cliAgainst(
+      cloud,
+      ["brain", "put", "Architecture"],
+      "# Architecture\n\nNo precondition asked for.\n",
+    );
+
+    assert.equal(result.code, 0, result.stderr);
+    assert.equal(
+      Object.hasOwn(cloud.commands[0]!.body, "if_version"),
+      false,
+      "an unconditional brain put must not send if_version",
+    );
+    assert.equal(cloud.uploads.length, 1);
+  } finally {
+    await cloud.close();
+  }
+});
+
+test("--if-version refuses a value that is not a whole version number", async () => {
+  const cloud = await startFakeCloud();
+  try {
+    const result = await cliAgainst(
+      cloud,
+      ["brain", "put", "Architecture", "--if-version", "two"],
+      "# Architecture\n\nBad flag value.\n",
+    );
+
+    assert.equal(result.code, 1);
+    assert.match(result.stderr, /--if-version must be an integer/);
+    /* Rejected in the CLI, so a malformed precondition never reaches the
+     * server and never looks like a conflict. */
+    assert.deepEqual(cloud.commands, []);
+    assert.equal(cloud.uploads.length, 0);
+  } finally {
+    await cloud.close();
+  }
+});
+
+test("a precondition refused at COMMIT reaches the reader the same way", async () => {
+  /* The create-time check cannot decide this: brain put is two phases, and
+   * the live version moved after this writer's create was accepted. The CLI
+   * must handle the refusal from either phase, because the commit-time one is
+   * the check that actually holds. */
+  const cloud = await startFakeCloud({ liveVersion: 2, liveVersionAtCommit: 3 });
+  try {
+    const result = await cliAgainst(
+      cloud,
+      ["brain", "put", "Architecture", "--if-version", "2"],
+      "# Architecture\n\nComposed from version 2.\n",
+    );
+
+    assert.equal(result.code, 1);
+    assert.match(result.stderr, /at version 3/);
+    assert.match(result.stderr, /required version 2/);
+    assert.match(result.stderr, /cswarm brain get architecture/);
+    /* The create was accepted and the bytes were uploaded, which is exactly
+     * why the commit-time check is the one that matters. */
+    assert.deepEqual(cloud.commands.map((command) => command.kind), [
+      "file_version_create",
+      "file_version_commit",
+    ]);
+    assert.equal(cloud.uploads.length, 1);
+  } finally {
+    await cloud.close();
   }
 });

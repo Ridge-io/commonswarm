@@ -1,4 +1,4 @@
-import { execFile } from "node:child_process";
+import { execFile, spawn } from "node:child_process";
 import type { BrainTopicSnapshot } from "./cloud/brain.js";
 import type { CloudTarget } from "./cloud/config.js";
 import {
@@ -22,6 +22,37 @@ export interface ProcessRow {
 
 export interface ProcessTableAdapter {
   list(): Promise<readonly ProcessRow[]>;
+}
+
+export interface ProcessTableCommand {
+  readonly file: string;
+  readonly args: readonly string[];
+}
+
+/**
+ * A process's whole argv appears in this output, so the table has no useful
+ * size bound: one agent that passes an 80 KB prompt as a command-line argument
+ * contributes an 80 KB row. It is therefore read as a stream and never through
+ * a fixed stdout buffer.
+ */
+export const DEFAULT_PROCESS_TABLE_COMMAND: ProcessTableCommand = {
+  file: "ps",
+  args: ["-axo", "pid=,command="],
+};
+
+/** Typed so callers classify by class, never by the text of a message. */
+export class ProcessTableError extends Error {
+  readonly code = "process_table_unavailable";
+
+  constructor(
+    readonly command: ProcessTableCommand,
+    readonly detail: string,
+  ) {
+    super(
+      `could not read the host process table with ${command.file}: ${detail}`,
+    );
+    this.name = "ProcessTableError";
+  }
 }
 
 export type StdoutConsumerState =
@@ -106,18 +137,102 @@ function execFileText(
   });
 }
 
-/** Host process inventory without a shell, so command text is never executed. */
-export function systemProcessTable(): ProcessTableAdapter {
+function parseProcessRow(line: string): ProcessRow | null {
+  const match = /^\s*(\d+)\s+(.*)$/.exec(line);
+  if (!match) return null;
+  const pid = Number(match[1]);
+  if (!Number.isSafeInteger(pid) || pid <= 0) return null;
+  return { pid, command: match[2]! };
+}
+
+/** Enough of a failing command's own output to report it, and no more. */
+const PROCESS_TABLE_STDERR_MAX_CHARS = 2_000;
+
+/**
+ * Host process inventory without a shell, so command text is never executed.
+ *
+ * Read line by line as the child writes, so no fixed buffer can overflow. Pass
+ * `retain` to drop rows the caller cannot use before they are held in memory:
+ * the table is unbounded, but the rows worth keeping are few.
+ */
+export function systemProcessTable(
+  options: {
+    command?: ProcessTableCommand;
+    retain?: (command: string) => boolean;
+  } = {},
+): ProcessTableAdapter {
+  const command = options.command ?? DEFAULT_PROCESS_TABLE_COMMAND;
+  const retain = options.retain ?? ((): boolean => true);
   return {
-    async list() {
-      const output = await execFileText("ps", ["-axo", "pid=,command="]);
-      return output.split("\n").flatMap((line): ProcessRow[] => {
-        const match = /^\s*(\d+)\s+(.*)$/.exec(line);
-        if (!match) return [];
-        const pid = Number(match[1]);
-        return Number.isSafeInteger(pid) && pid > 0
-          ? [{ pid, command: match[2]! }]
-          : [];
+    list() {
+      return new Promise<readonly ProcessRow[]>((resolve, reject) => {
+        const child = spawn(command.file, [...command.args], {
+          stdio: ["ignore", "pipe", "pipe"],
+        });
+        const rows: ProcessRow[] = [];
+        let pending = "";
+        let stderr = "";
+        let settled = false;
+        const fail = (detail: string): void => {
+          if (settled) return;
+          settled = true;
+          child.stdout.destroy();
+          reject(new ProcessTableError(command, detail));
+        };
+        /* `retain` is caller-supplied. A throw inside a stream handler is an
+         * uncaught exception that leaves this promise pending forever, which
+         * is the failure mode the whole change exists to remove, so it is
+         * turned into a rejection. The reason is a fixed word, never the
+         * thrown message (D-053). */
+        const take = (line: string): boolean => {
+          const row = parseProcessRow(line);
+          if (row === null) return true;
+          try {
+            if (retain(row.command)) rows.push(row);
+          } catch {
+            fail("its row filter threw");
+            return false;
+          }
+          return true;
+        };
+        child.stdout.setEncoding("utf8");
+        child.stdout.on("data", (chunk: string) => {
+          if (settled) return;
+          const lines = (pending + chunk).split("\n");
+          pending = lines.pop() ?? "";
+          for (const line of lines) {
+            if (!take(line)) return;
+          }
+        });
+        child.stderr.setEncoding("utf8");
+        child.stderr.on("data", (chunk: string) => {
+          /* A hard cap: a chunk is truncated to what is left, so a child that
+           * writes megabytes to stderr cannot be buffered in full. */
+          const room = PROCESS_TABLE_STDERR_MAX_CHARS - stderr.length;
+          if (room > 0) stderr += chunk.slice(0, room);
+        });
+        /* Without these a stream error is an unhandled 'error' event, which
+         * crashes the process instead of failing this read. */
+        child.stdout.on("error", () => fail("its output stream failed"));
+        child.stderr.on("error", () => fail("its error stream failed"));
+        child.on("error", (error) => fail(error.name));
+        child.on("close", (code, signal) => {
+          if (settled) return;
+          if (pending.length > 0 && !take(pending)) return;
+          if (signal !== null) {
+            fail(`it was stopped by ${signal}`);
+            return;
+          }
+          if (code !== 0) {
+            const trailer = stderr.trim().length > 0
+              ? `: ${stderr.trim().slice(0, PROCESS_TABLE_STDERR_MAX_CHARS)}`
+              : "";
+            fail(`it exited ${code}${trailer}`);
+            return;
+          }
+          settled = true;
+          resolve(rows);
+        });
       });
     },
   };
@@ -181,9 +296,15 @@ export async function findNotifyWatchers(options: {
   credentialPaths: readonly string[];
   principalId: string;
   processTable?: ProcessTableAdapter;
+  processTableCommand?: ProcessTableCommand;
   stdoutConsumer?: StdoutConsumerAdapter;
 }): Promise<NotifyWatcher[]> {
-  const processTable = options.processTable ?? systemProcessTable();
+  const processTable = options.processTable ?? systemProcessTable({
+    retain: isNotifyCommand,
+    ...(options.processTableCommand
+      ? { command: options.processTableCommand }
+      : {}),
+  });
   const stdoutConsumer = options.stdoutConsumer ?? lsofStdoutConsumer();
   const rows = await processTable.list();
   const matches = rows.flatMap((row): Array<Omit<NotifyWatcher, "stdout">> => {
