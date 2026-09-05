@@ -46,7 +46,10 @@ function remedy() {
  * passes here, so the claim is only about a missing or empty build. */
 function absent(output) {
   try {
-    return statSync(resolve(root, output)).size === 0;
+    const stat = statSync(resolve(root, output));
+    /* A DIRECTORY at this path reports a non-zero size and would otherwise
+     * pass, and spawning it fails the same way a missing file does. */
+    return !stat.isFile() || stat.size === 0;
   } catch {
     return true;
   }

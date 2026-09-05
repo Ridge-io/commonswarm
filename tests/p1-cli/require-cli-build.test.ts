@@ -167,3 +167,19 @@ test("a zero-byte build output is treated as missing", async () => {
     await rm(root, { recursive: true, force: true });
   }
 });
+
+test("a directory at the build output path is treated as missing", async () => {
+  /* A directory reports a non-zero size, so a size-only check passes it and
+   * the gate then hangs spawning something that is not a program. */
+  const root = await fakeRoot({ withDist: false });
+
+  try {
+    await mkdir(resolve(root, "dist", "cli.js"), { recursive: true });
+    const run = runGuard(root);
+
+    assert.equal(run.status, 1);
+    assert.match(run.stderr, /missing: dist\/cli\.js/);
+  } finally {
+    await rm(root, { recursive: true, force: true });
+  }
+});

@@ -701,16 +701,27 @@ export async function fileVersionCommit(
   if (version.if_version !== null) {
     const liveVersion = Number(version.current_version);
     if (!fileVersionPreconditionSatisfied(version.if_version, liveVersion)) {
-      /* Retire the losing slot in the same transaction. A normal return from
-       * db.begin commits, so this UPDATE lands with the refusal. Left pending,
-       * the row would hold an in-flight slot and its DECLARED bytes against
-       * the quota for the full 3-hour window: twenty lost races on one hot
-       * topic would reach the 20-upload in-flight cap and block the topic for
-       * everyone, which is a worse failure than the clobber this check
+      /* Retire the losing slot AND queue its bytes, in the same transaction.
+       * A normal return from db.begin commits, so both statements land with
+       * the refusal.
+       *
+       * Left pending, the row would hold an in-flight slot and its DECLARED
+       * bytes against the quota for the full 3-hour window: twenty lost races
+       * on one hot topic would reach the 20-upload in-flight cap and block
+       * that topic for everyone, a worse failure than the clobber this check
        * prevents. 'purged' is the existing state for a version that will never
-       * exist; it is counted by neither the in-flight cap nor the byte cap,
-       * and download already refuses it. The uploaded object is left exactly
-       * as an expired pending upload's object is. */
+       * exist; neither the in-flight cap nor the byte cap counts it, and
+       * download already refuses it.
+       *
+       * But marking it purged takes it OUT of the sweeper's reach:
+       * swarm.purge_file_artifacts() claims a path only from pending rows over
+       * 3 hours old, from a tombstoned file, or from a bucket object with no
+       * version row at all. This row is none of those, so nothing would ever
+       * reclaim its object. The sweeper does not have that problem because it
+       * sets 'purged' and queues the path in one statement; this must do the
+       * same, or the fix for the slot leak buys a permanent storage leak.
+       * drainFilePurgeQueue runs after every file command, including this
+       * refusal, and tolerates a path whose object was never PUT. */
       await tx`
         UPDATE swarm.file_versions
         SET state = 'purged'
@@ -718,6 +729,11 @@ export async function fileVersionCommit(
           AND file_id = ${cmd.file_id}::uuid
           AND workspace_id = ${workspaceId}::uuid
           AND state = 'pending'
+      `;
+      await tx`
+        INSERT INTO swarm.file_purge_queue (storage_path)
+        VALUES (${version.storage_path})
+        ON CONFLICT (storage_path) DO NOTHING
       `;
       return refuse(
         409,

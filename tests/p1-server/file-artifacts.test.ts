@@ -1469,6 +1469,21 @@ test("B2d two writers derived from the same version: exactly one commit lands", 
   assert.equal(byState.get("pending"), undefined, "the loser must not stay in flight");
   assert.equal(byState.get("purged"), "1", "the loser's slot must be released");
 
+  /* Releasing the slot is only half of it. Marking the row purged takes it out
+   * of the sweeper's reach, so the refusal must queue the path itself or the
+   * bytes are never reclaimed. Asserting the row state alone would stay green
+   * with that leak present, which is why this reads the queue. */
+  const loserPath = await sql<{ storage_path: string }[]>`
+    SELECT storage_path FROM swarm.file_versions
+    WHERE file_id = ${fileId}::uuid AND state = 'purged'
+  `;
+  assert.equal(loserPath.length, 1);
+  const queued = await sql<{ storage_path: string }[]>`
+    SELECT storage_path FROM swarm.file_purge_queue
+    WHERE storage_path = ${loserPath[0]!.storage_path}
+  `;
+  assert.equal(queued.length, 1, "the loser's object must be queued for deletion");
+
   /* Losing repeatedly must not exhaust the in-flight cap: a fresh conditional
    * write against the current version still succeeds afterwards. */
   const afterLoss = await postCommand(actor.token, {
@@ -1564,6 +1579,21 @@ test("B2e the precondition is re-checked at commit, not only at create", async (
 
   assert.equal(staleCommit.status, 409, JSON.stringify(staleCommit.body));
   assert.equal(staleCommit.body.error, "file_version_precondition_failed");
+
+  /* The refused row must be released AND its bytes queued, exactly as in B2d.
+   * Without this the test passes while the version sits in flight or its
+   * object leaks. */
+  const staleRow = await sql<{ state: string; storage_path: string }[]>`
+    SELECT state, storage_path FROM swarm.file_versions
+    WHERE version_id = ${String(staleCreate.body.version_id)}::uuid
+  `;
+  assert.equal(staleRow[0]?.state, "purged");
+  const staleQueued = await sql<{ storage_path: string }[]>`
+    SELECT storage_path FROM swarm.file_purge_queue
+    WHERE storage_path = ${staleRow[0]!.storage_path}
+  `;
+  assert.equal(staleQueued.length, 1);
+
   /* The stale writer took version 2, so the winner is version 3 and that is
    * what current_version reads when the stale commit is judged. */
   assert.equal(Number(winnerCommit.body.version_n), 3);
