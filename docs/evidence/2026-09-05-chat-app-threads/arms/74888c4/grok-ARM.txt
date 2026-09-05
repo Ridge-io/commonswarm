@@ -1,0 +1,101 @@
+I'll read `REVIEW.md` and `DIFF.patch` first, then follow the review instructions exactly.The patch is long. I’ll keep reading it and the files the brief names so I can attack each claim.The arm folder only has the brief. I’ll locate the checkout and keep reading the rest of the patch.I'll read the server rules, the wire builder, and the send path next — those are the places a false claim would show up.Next I’ll read the dashboard helpers that this round added, then the send path.The new helpers look like the place a fix-round bug would hide. I’ll read the send, the tests, and the rest of the patch together.I have enough to judge the new helpers against the server and the bar. Checking one last bound on the send refusal.diff --git a/docs/evidence/2026-09-05-chat-app-threads/README.md b/docs/evidence/2026-09-05-chat-app-threads/README.md
+
+The new three-state place and the send do not agree. That is a break for a reader whose channel list failed to load.
+
+### Finding: unknown place vs send
+
+`ThreadReplyPlace` was added so a thread in a real channel is not named `#all-signals` when `swarm_read.channels` soft-fails to `[]`. The bar now says the list did not load, and that the reply is filed where the thread is:
+
+```211:212:site/src/lib/thread-reply.ts
+  place.kind === "unknown"
+    ? `Replying to ${author}. The channel list did not load, so this page cannot name the channel this thread is in. The reply is filed where the thread is.`
+```
+
+That sentence is the one on screen while they type (`LiveDashboard.astro:6405`). The send never uses it.
+
+A reply’s placement channel is the captured root id (`7996:7998`). The wire then names only `thread_root_id` (`8097:8101`). The edge stamps the root’s channel itself. The client does not need the channel list to post.
+
+The send still runs the top-level “channel missing from this page” guard first:
+
+```8052:8063:site/src/components/app/LiveDashboard.astro
+      const placementUnavailable = placementChannelId !== null &&
+        (placementChannel === null || placementChannel.archivedAt !== null);
+      if (placementUnavailable) {
+        ...
+            ? placementChannel === null
+              ? "The channel this thread is in is not in this workspace any more, so the thread takes no new replies."
+```
+
+The comment on `threadReplyPlaceOf` (`6357:6362`) still describes the old two-state model and says this refusal is “the server’s own rule.” Channel delete is “impossible” in that same comment. The only way `placementChannel === null` with a non-null root `channelId` is the designed soft-fail (`6037:6042`). The server would accept the reply if the channel is live. Both clauses of the send sentence are false.
+
+`threadReplyBlock` (`6382:6390`) does not see this case: a missing row is not archived, so the block is `null`. The bar shows no block. Enter then shows a different sentence and clears the intent (`8070:8073`). That contradicts the new claim at `6374:6380` that one classifier answers for the bar and the send.
+
+The reply control is still offered. A missing channel is not treated as archived, on purpose, because “the server is the guard” (`5155:5159`). So: the button is on, the bar says the reply will file, Enter refuses with a false “gone from the workspace” line. The person who meets a channel outage cannot reply to any filed thread, including a live one.
+
+### 0. `syncComposerPlacement()` inside `renderFeed`
+
+The call itself (`4901`) is one pass per feed paint, not per row. It does not write the pair, the intent, or `threadReplyRoot`. `threadReplyBlock` reading `channels` and `Date.now()` is how the window line stays live.
+
+It does write one bit of state: `if (broadcast && !mayBroadcast) broadcast.checked = false` (`6435`). The comment at `4896:4901` says this “writes text and decides nothing.” Clearing the box is a decision. For an expired or archived root the send would refuse the whole reply anyway, so I could not make that write send the wrong flag.
+
+The new work around that call is the split above: the tick can paint the unknown sentence, and the send still uses a second classifier.
+
+### 1. Reply control vs server
+
+I could not refute the control on a loaded list. `threadRootBlock` (`thread-reply.ts:84:106`) asks directed, live margin, archive, then already-a-reply, in the edge’s order. The feed asks archive of `rootChannel = channelById(channels, signal.channelId)` (`5165:5166`), not of `rowChannel` (`5087:5089`). Reusing `rowChannel` would have offered Reply inside an archived channel.
+
+`in_reply_to`: `resolveSignalWriteTarget` (`command/index.ts:6816:6839`) always writes a recipient. No product path stores an undirected `in_reply_to` row. The extra SQL `AND s.in_reply_to IS NULL` is belt and braces. The directed arm covers every row that can exist.
+
+The reverse of “button on, server would refuse” is this outage case: button on, server would accept, client send refuses. That is the finding above, not a bad archive lookup.
+
+### 2. Second write path on To:
+
+I could not refute this. `composerSendRecipients` is the set the row and the send read. `deriveComposerAddress` holds while `replying === true` (`composer-address.ts:448`). Assignments to `composerTo` / `composerToApplied` are the pass or workspace teardown, which clears the reply first. `rememberComposerTo` is skipped when `placementThreadRootId !== null` (`8266`). Cancel runs the pass over the body that is still there.
+
+### 3. Wire body
+
+I could not refute this. A reply is `{ threadRootId, ...(broadcastToChannel ? { broadcastToChannel: true } : {}) }` with no `channel:`. `browserSignalCommand` omits null/absent optional keys (`commonswarm.ts:2105:2113`). Empty recipients omit `to`. `broadcast_to_channel` is only added on the thread branch when the box is ticked, so it never goes out without `thread_root_id`. That matches `installedPost({ thread_root_id })`.
+
+### 4. Unfinished-send rule
+
+I could not refute the two callers. A reply compares thread ids; a top-level post compares the channel on screen. `selectChannel` and the catch both ask `composerAddressStillPromised` (`6469:6474`). Channel move does not retire a reply. Opening or cancelling a reply does. The catch rewrite keeps `placementThreadRootId` and `broadcastToChannel` (`8421:8434`).
+
+The `composerIntent` type at `1588:1617` still does not declare `broadcastToChannel`. The object at runtime has it. I could not make Retry drop the thread from that gap.
+
+### 5. Send vs screen
+
+I could not refute this. Submit freezes `replyRoot` before the first await (`7985`). Success closes the bar only when `threadReplyRoot?.id === replyRoot.id` (`8237:8238`). Remember/clear use captured keys and run before the screen return. Catch tears down send-owned work first. Finally lowers the flag on the token.
+
+### 6. False sentence / typed list
+
+Refuted: the unknown-place send sentence at `8063` is false. See the finding.
+
+The rest of the bar copy is generated from `channelLabel` / `ALL_SIGNALS_SLUG` / `THREAD_REPLY_REACH_TEXT`. Reach says it notifies nobody, which matches no delivery row. Archived copy matches the edge word for word (`thread-reply.ts:131:132` and `command/index.ts:6580`). `THREAD_ROOT_BLOCKS` is the enum the classifier and the sentence table share.
+
+Leftover prose, not a reader-facing string: `LiveDashboard.astro:5148:5153` still says `already-a-reply` is a WHERE arm. That wording was retired in `thread-reply.ts` and the README this round.
+
+### 7. Control that cannot fail
+
+The two NOT CONTROLLED notes are true. Dropping `Number.isFinite(until)` does not change NaN/Infinity. Dropping `if (signal.threadRootId === null)` on registration does not change output, because pass two only looks up ids in `rootIds`.
+
+The liveness sweep does what its own header says: one `interval '<n> second'` clause in the edge file, count first. The four-arm sweep does what its header says: four exact strings inside `resolveThreadRoot`, each once. I did not treat “is the sweep complete?” as the question.
+
+No control reaches the unknown-place send path. Sample mode has a channel list, so the browser observer cannot see it.
+
+### 8. Retired control weakened
+
+I could not refute this.
+
+- `composer.observer.test.ts`: “thread” is allowed only in the reply bar; emoji/reaction still gated. Claim is still “do not name a feature that is not there.”
+- Display-reversal pins now match `reverse()` once, which is the claim they name.
+- `chat-channels.observer.test.ts`: the old “never send thread fields” negative is replaced by a positive top-level vs thread-branch pair. The top-level channel stamp is still there. Wire omission of thread keys for a top-level post is in `chat-threads.observer.test.ts`.
+
+### Also
+
+- `groupSignalThreads`: every input id comes back once. Orphans keep their place. Replies move under their root on purpose. I could not make it drop or duplicate a row.
+- 97px vs 73px: the README names two instruments. Sample mode with the banner subtracted is 97px; the signed-in gate is `mobile-feed-layout.observer.test.ts` at 73px. That is honest.
+- `docs/evidence/2026-09-05-chat-app-threads/README.md:236` says the composer with the reply bar open is 252.63px at 320x568. `mobile-measurements.json` for that viewport is 265.88px. The table cell is wrong. It is not the reader-facing break.
+
+The unknown-place work was this round’s point. The bar no longer lies about `#all-signals`. Enter still does, and it blocks a reply the edge would take.
+
+VERDICT: FAIL

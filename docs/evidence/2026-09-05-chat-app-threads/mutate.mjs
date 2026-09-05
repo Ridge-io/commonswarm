@@ -277,10 +277,29 @@ const mutations = [
     "      /* Captured BEFORE the list is rebuilt",
     "the reply bar's window line is rewritten on every feed tick",
     "the reply bar must be resynced by the feed, so its window line cannot go stale"],
+  /* ── ROUND THREE: THE FAIL, AND THE FIX'S OWN CONTROLS ───────────────────────────────── */
+  [THREADS, DASH,
+    "        (placementThreadRootId !== null\n          ? placementChannel !== null && placementChannel.archivedAt !== null\n          : placementChannel === null || placementChannel.archivedAt !== null);",
+    "        (placementChannel === null || placementChannel.archivedAt !== null);",
+    "a channel this page cannot SEE does not stop a reply, which sends no slug",
+    "a reply must be stopped by an archived channel only, never by one this page cannot see"],
+  [THREADS, DASH,
+    "      broadcastToChannel: boolean;\n    } | null = null;",
+    "    } | null = null;",
+    "the intent's type declares every field the send writes into it",
+    "the intent's type and the fields the mint writes are not the same set"],
+  /* ONE READ OF ONE MOMENT: the block is captured once and both readers use that value. A RACE
+     is not testable in a browser step, so the control is a source claim and the mutation puts
+     the second `Date.now()` back exactly where it was. */
+  [THREADS, DASH,
+    "        const block = replyBlock;",
+    "        const block = threadReplyBlock(replyRoot);",
+    "the send freezes the block instead of asking Date.now() twice",
+    "the send asks Date.now() about the same moment twice"],
   /* AND THE SEND READS THE ROOT IT CAPTURED, never the live global. */
   [THREADS, DASH,
-    "        threadReplyMayBroadcast(threadReplyPlaceOf(replyRoot), threadReplyBlock(replyRoot)) &&",
-    "        threadReplyMayBroadcast(threadReplyPlaceOf(threadReplyRoot), threadReplyBlock(threadReplyRoot)) &&",
+    "        threadReplyMayBroadcast(threadReplyPlaceOf(replyRoot), replyBlock) &&",
+    "        threadReplyMayBroadcast(threadReplyPlaceOf(threadReplyRoot), replyBlock) &&",
     "the broadcast flag is read off the root this send captured",
     "the send reads threadReplyRoot somewhere new"],
   [THREADS, DASH,

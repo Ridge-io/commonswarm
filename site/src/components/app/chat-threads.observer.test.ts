@@ -275,6 +275,17 @@ test("the send never re-reads the reply from a global after its first await", ()
      the shape of defect this file's siblings found six times. */
   const reads = [...submit.matchAll(/threadReplyRoot/g)];
   assert.equal(reads.length, 2, "the send reads threadReplyRoot somewhere new");
+  /* AND THE BLOCK IS ASKED ONCE. `threadReplyBlock` reads `Date.now()`, and it was called twice
+     a few lines apart: across the server's one-second liveness boundary the two answers can
+     differ, and one direction is silent — the first says blocked so the ticked broadcast is
+     dropped, the second says live so the reply posts without it. A RACE is not testable in a
+     browser step, so this is a source claim and says so; the value is frozen with everything
+     else the send captures. */
+  assert.equal(
+    submit.split("threadReplyBlock(").length - 1,
+    1,
+    "the send asks Date.now() about the same moment twice",
+  );
   assert.match(submit, /^const replyRoot = threadReplyRoot;/);
   assert.match(
     submit,
@@ -934,6 +945,58 @@ test("replies collapse under their root, and a reply carries no recipient", asyn
   } finally {
     await server.close();
   }
+});
+
+test("a channel this page cannot see does not stop a reply, because a reply sends no slug", () => {
+  /* THE ROUND-TWO FAIL, and the control that pins its fix. The channel read soft-fails to `[]`
+     on purpose, so a channel outage cannot take the feed down. Under that outage every filed
+     thread had a placement channel that resolved to nothing, and the send refused every reply
+     with "not in this workspace any more" — false twice over: the channel is there, and the
+     edge would have taken the reply, because the wire carries `thread_root_id` and the server
+     stamps the root's own channel. The bar meanwhile said the reply would be filed where the
+     thread is, which was the truth. Enter contradicted the box. */
+  const submit = between(dashboard, "const placementChannelId = intent.placementChannelId;", "const rowMentions");
+  assert.match(
+    submit,
+    /const placementUnavailable = placementChannelId !== null &&\s*\n\s*\(placementThreadRootId !== null\s*\n\s*\? placementChannel !== null && placementChannel\.archivedAt !== null\s*\n\s*: placementChannel === null \|\| placementChannel\.archivedAt !== null\);/,
+    "a reply must be stopped by an archived channel only, never by one this page cannot see",
+  );
+  /* AND THE FALSE SENTENCE IS GONE, not merely unreachable. There is no longer a case that
+     produces it, so leaving it in the file would be a sentence waiting for a caller. */
+  assert.doesNotMatch(
+    dashboard,
+    /is not in this workspace any more, so the thread takes no new replies/,
+    "the retired reply sentence is still in the file",
+  );
+  /* AND A TOP-LEVEL POST STILL IS STOPPED BY A CHANNEL IT CANNOT RESOLVE, because it has to
+     send a SLUG. Without this the fix above would read as "the check was deleted". */
+  assert.match(
+    submit,
+    /"The channel this message was addressed to is not in this workspace any more\. Send it from the channel you want it in\."/,
+  );
+});
+
+test("the intent's type declares every field the send writes into it", () => {
+  /* `.astro` script blocks are outside `tsc`, so a field the object carries and the type does
+     not is invisible to every gate. A review arm found `broadcastToChannel` in exactly that
+     state. Read as a SET: the fields the type declares and the fields the mint writes must be
+     the same, so a seventh field cannot be added to one alone. */
+  const declared = between(dashboard, "let composerIntent: {", "} | null = null;");
+  const mint = between(dashboard, "        intent = {\n          commandId: uuid(),", "        composerIntent = intent;");
+  const names = (source: string): string[] => [
+    ...source.replace(/\/\*[\s\S]*?\*\//g, "").matchAll(/^\s{6,10}([a-zA-Z]+)\s*[:,]/gm),
+  ].map((match) => match[1]!).sort();
+  const declaredNames = names(declared);
+  /* POSITIVE CONTROL on the read: a slice that matched nothing would make the comparison two
+     empty arrays and this test would pass hardest when it saw least. */
+  assert.ok(declaredNames.length >= 7, `read only ${declaredNames.length} declared fields`);
+  assert.deepEqual(
+    names(mint),
+    declaredNames,
+    "the intent's type and the fields the mint writes are not the same set",
+  );
+  assert.ok(declaredNames.includes("broadcastToChannel"));
+  assert.ok(declaredNames.includes("placementThreadRootId"));
 });
 
 test("every block sentence a reply can meet is reachable from the composer", () => {

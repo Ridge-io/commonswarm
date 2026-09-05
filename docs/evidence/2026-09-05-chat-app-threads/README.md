@@ -134,7 +134,7 @@ went to nobody.
 
 ## The mutation table
 
-46 mutations, 0 problems. Two things carry NO mutation, and the harness says so in place rather
+49 mutations, 0 problems. Two things carry NO mutation, and the harness says so in place rather
 than carrying an entry that passes:
 
 - `Number.isFinite(until)` in `threadRootBlock`. Removing it changes nothing: every comparison
@@ -159,6 +159,7 @@ the bar's live tick, and the send reading the root it captured.
 
 | SHA | Grok | Gemini | What it found |
 |---|---|---|---|
+| `74888c4` | FAIL | PASS | Grok: under a channel-list outage the send refused EVERY reply to a filed thread with "not in this workspace any more" — false twice over, and contradicting the bar, which correctly said the reply would be filed where the thread is. Plus a stale table cell, a comment still describing the retired two-state model, one still calling `already-a-reply` a WHERE arm, a `composerIntent` type missing `broadcastToChannel`, and a comment claiming the feed's resync "decides nothing" while it clears one control. Gemini: PASS, no findings. |
 | `d257f87` | PASS | FAIL | Grok: `already-a-reply` is not a WHERE arm and the server checks the archive BEFORE it, so this lane's order, its prose and a green test were all built on a false claim; and `mobile-measurements.json` carried a To: sentence older than the constant. Gemini's FAIL is verified wrong at the cited lines and is ruled in `arms-d257f87/gemini/RULING.md`. |
 
 **The Gemini finding, and why it is not acted on.** It said the `finally` block lowers
@@ -170,10 +171,25 @@ workspace, so the old send finds a token that is no longer its own. The line is 
 lane's diff: it landed with `lane/composer-to-field` and carries its own mutation entry there.
 
 **Six more came from reading the lane's own code against the doctrine**, and they are the
-reason this round changed behaviour rather than only prose: the false `#all-signals` sentence for
+reason that round changed behaviour rather than only prose: the false `#all-signals` sentence for
 an unresolvable channel, the frozen window line, the past-tense countdown on an expired root, the
 broadcast control offered on an archived thread, a live-global read inside the send, and the
 README under-claiming the app bar it could measure.
+
+**The round-two FAIL is the sharpest finding of the lane, and it was introduced by the round-one
+fix.** Round one taught the BAR that a channel this page cannot see is its own state. It did not
+teach the SEND, which went on applying the top-level rule — resolve the channel or refuse — to a
+message that sends no channel at all. So the bar said one thing and Enter said another, and under
+a channel outage nobody could reply to any filed thread. A reply is stopped by an ARCHIVED
+channel only, which is knowable only when the row is loaded; everything else about its thread is
+the server's to refuse, in the server's own words. That is five of the channels lane's seventeen
+all over again: the next defect lives in the last fix.
+
+**And one of this round's own, found before the arms:** `threadReplyBlock` was called twice in
+the submit, each reading `Date.now()`. Across the server's one-second liveness boundary the two
+reads can disagree, and one direction is silent — the first says blocked so the broadcast is
+dropped, the second says live so the reply posts without the option the reader ticked. It is
+captured once now, with everything else the send freezes.
 
 ## One rule for "is this send still addressed here"
 
@@ -230,14 +246,14 @@ bar is INSIDE the composer, so it adds no band above the transcript.
 | Transcript starts at the bar | yes | yes |
 | Reply bar is inside the composer element | yes | yes |
 | Composer at rest, threads collapsed | 99.38px | 128.81px |
-| Composer with the reply bar open | 236.44px | 252.63px |
+| Composer with the reply bar open | 236.44px | 265.88px |
 | Reply bar's own height | 108.88px | 108.88px |
 | Reply bar, To: row, send button inside the viewport | yes | yes |
 | Expanded replies inside the viewport | yes | yes |
 | Document scrolls sideways | no | no |
 
 **A cost, stated.** The composer more than doubles in height while a reply is being written —
-99px to 236px at 390x844, 129px to 253px at 320x568 — because the bar carries three lines: the
+99px to 236px at 390x844, 129px to 266px at 320x568 — because the bar carries three lines: the
 target, the broadcast control, and Cancel. That is the reading area a reply costs while it is
 open, and it is zero at rest, which is what the phone budget in
 `composer-polish.observer.test.ts` is measured against.

@@ -80,6 +80,12 @@ red  the bar names the channel the thread is actually in
   restored green  site/src/components/app/chat-threads.observer.test.ts
 red  the reply bar's window line is rewritten on every feed tick
   restored green  site/src/components/app/chat-threads.observer.test.ts
+red  a channel this page cannot SEE does not stop a reply, which sends no slug
+  restored green  site/src/components/app/chat-threads.observer.test.ts
+red  the intent's type declares every field the send writes into it
+  restored green  site/src/components/app/chat-threads.observer.test.ts
+red  the send freezes the block instead of asking Date.now() twice
+  restored green  site/src/components/app/chat-threads.observer.test.ts
 red  the broadcast flag is read off the root this send captured
   restored green  site/src/components/app/chat-threads.observer.test.ts
 red  the bar is present only while a reply is in progress
@@ -97,4 +103,4 @@ red  the close names THIS send's own reply, so it cannot close one opened after 
 red  the send does not reach for the reply again after its first await
   restored green  site/src/components/app/chat-threads.observer.test.ts
 
-46 mutations, 0 problems
+49 mutations, 0 problems

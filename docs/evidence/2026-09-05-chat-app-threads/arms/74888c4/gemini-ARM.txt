@@ -1,0 +1,21 @@
+diff --git a/docs/evidence/2026-09-05-chat-app-threads/README.md b/docs/evidence/2026-09-05-chat-app-threads/README.md
+
+0. `syncComposerPlacement()` (`site/src/components/app/LiveDashboard.astro:2418-2448`) safely updates only DOM texts and properties. It operates strictly within the active workspace and introduces no unintended application state writes. `threadReplyBlock` only drives sentence generation and broadcast control availability. I cannot refute the claim.
+
+1. `threadRootBlock` (`site/src/lib/thread-reply.ts:4999`) matches the server rules correctly, and `threadReplyPlace` accurately tracks the right channel based on `root.channelId` in all views. No false options are offered. I cannot refute the claim.
+
+2. The `To:` lock relies entirely on `deriveComposerAddress` (`site/src/components/app/LiveDashboard.astro:2905`) holding state while a reply is occurring. No secondary write path modifies `composerTo` or `composerToApplied` while the bar is open. I cannot refute the claim.
+
+3. The body in `browserSignalCommand` (`site/src/lib/commonswarm.ts`) behaves exactly as expected, and `broadcast_to_channel` is correctly guarded to only be passed alongside `thread_root_id`. I cannot refute the claim.
+
+4. `composerAddressStillPromised` (`site/src/components/app/LiveDashboard.astro:2491`) accurately discriminates between top-level and thread intent via `placementThreadRootId`. It is correct for both the channel switch and the unfinished send retry path. I cannot refute the claim.
+
+5. Send state effectively captures frozen `replyRoot` references and respects token ownership (`composerSendToken === sendToken`). No send-owned action is skipped or erroneously executed when switching contexts. I cannot refute the claim.
+
+6. Text and sentences are generated strictly from the exported constants (`site/src/lib/thread-reply.ts:4970`). The channel-archived message perfectly aligns with the edge's refusal, and there are no false claims made. I cannot refute the claim.
+
+7. The controls accurately describe their bounds and correctly pass/fail only within their stated capabilities. `Number.isFinite(until)` successfully acts as a clean intent guard. I cannot refute the claim.
+
+8. The observer test modifications shift to asserting the positive (top-level vs. thread) while safely carrying over the strict negative boundaries. I cannot refute the claim.
+
+VERDICT: PASS

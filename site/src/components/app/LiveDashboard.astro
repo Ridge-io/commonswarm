@@ -1614,6 +1614,15 @@ import "../../styles/tokens.css";
        * that decides whether an unfinished send may still be replayed.
        */
       placementThreadRootId: string | null;
+      /**
+       * AND WHETHER THE REPLY ALSO GOES TO ITS CHANNEL. Part of the message's identity, because
+       * the command id is the server's idempotency key: a reader who ticks the box after a
+       * failure and presses Retry must send a DIFFERENT command, not replay the one the server
+       * already holds. The object carried it from the start and this declaration did not; a
+       * review arm found the gap. `.astro` script blocks are outside `tsc`, so nothing else
+       * would have.
+       */
+      broadcastToChannel: boolean;
     } | null = null;
     let composerSending = false;
     /* WHOSE FLAG IT IS. One submit raises `composerSending`, and only that submit or a
@@ -4896,8 +4905,14 @@ import "../../styles/tokens.css";
       /* THE REPLY BAR TICKS WITH THE FEED. Its window line is a relative time and a live
          eligibility, and both go stale the moment they are written: the design requires the
          ceiling on screen precisely because it can be milliseconds, so a line written once when
-         the bar opened would be the failure the requirement exists to prevent. This writes text
-         and decides nothing — the reply, the pair and the intent are all somebody else's. */
+         the bar opened would be the failure the requirement exists to prevent.
+
+         WHAT IT MAY TOUCH, stated exactly. It writes the bar's text and the placeholder, and it
+         clears ONE control: a ticked broadcast box whose control is no longer offered.
+         ~~"writes text and decides nothing"~~ was wrong about that box, and a review arm said
+         so. Clearing it is the honest write — the control is gone from the screen, so the state
+         behind it must go too, or the send would carry a flag the reader can no longer see. It
+         touches nothing else: not the reply, not the To: pair, not the intent. */
       syncComposerPlacement();
       /* Captured BEFORE the list is rebuilt: once replaceChildren has run, the old scroll
        * geometry is gone and neither question can be answered. */
@@ -5146,11 +5161,13 @@ import "../../styles/tokens.css";
         }
         appendDeliveryReceipt(body, signal);
         /* THE REPLY CONTROL, offered only where the server would accept the thread.
-           `threadRootBlock` is every arm of `resolveThreadRoot`'s own WHERE clause plus the
-           archive check that follows it: directed, already a reply, expiring inside the
-           server's one-second margin, or in an archived channel. Offering a control the
-           server refuses is a lie in a button, and the pre-cut version of this row asked only
-           two of the four.
+           `threadRootBlock` is every rule `resolveThreadRoot` applies, in its order: directed
+           or expiring inside the server's one-second margin (both 404), then an archived
+           channel (409), then already a reply (400). ~~"every arm of the WHERE clause plus the
+           archive check that follows it"~~ was this comment's claim and a review arm found it
+           wrong — `already-a-reply` is not a WHERE arm and the archive is checked before it.
+           Offering a control the server refuses is a lie in a button, and the pre-cut version
+           of this row asked only two of the four.
 
            `channelById` finds an ARCHIVED channel on purpose — a permalink into one still has
            to resolve — so the archived state is read here rather than inferred from the
@@ -6360,6 +6377,17 @@ import "../../styles/tokens.css";
      * reader can no longer see in the list — deleted is impossible, but a failed channel read
      * leaves the list empty — also resolves to `null` here, and the SEND is what refuses in
      * that case, with the server's own rule. A label is a label; the guard is the guard.
+     */
+    /**
+     * WHERE A REPLY IN PROGRESS WILL BE FILED, in the three states it can be in.
+     *
+     * ~~"A channel the reader can no longer see in the list — deleted is impossible, but a
+     * failed channel read leaves the list empty — also resolves to `null` here, and the SEND is
+     * what refuses in that case, with the server's own rule."~~ Retired: that was the two-state
+     * model, and both halves of it were wrong. A row this page cannot see is its own state
+     * (`unknown`), not the unfiled one; and the send's refusal for it was neither the server's
+     * rule nor true, because a reply names only its thread and the edge stamps the root's
+     * channel itself. A review arm found the second half.
      */
     const threadReplyPlaceOf = (root: ThreadReplyRoot | null): ThreadReplyPlace =>
       root === null
@@ -8001,8 +8029,15 @@ import "../../styles/tokens.css";
          is offered: `threadReplyMayBroadcast` is false for an unfiled thread, and a stale
          checked box from an earlier thread cannot leak through, because `syncComposerPlacement`
          clears it whenever the control is hidden. */
+      /* ONE READ OF ONE MOMENT. `threadReplyBlock` asks `Date.now()`, and this value was read
+         here and again at the refusal a few lines down. Across the server's one-second liveness
+         boundary the two reads can disagree, and one direction is silent: the first says
+         blocked so the broadcast is dropped, the second says live so the reply posts — without
+         the option the reader ticked. It is captured once, with everything else this send
+         freezes. */
+      const replyBlock = replyRoot === null ? null : threadReplyBlock(replyRoot);
       const freshBroadcastToChannel = replyRoot !== null &&
-        threadReplyMayBroadcast(threadReplyPlaceOf(replyRoot), threadReplyBlock(replyRoot)) &&
+        threadReplyMayBroadcast(threadReplyPlaceOf(replyRoot), replyBlock) &&
         (one<HTMLInputElement>("[data-composer-reply-broadcast]")?.checked ?? false);
       const signalKind = browserSignalKind(recipients);
       const audienceKey = composerRecipientsKey();
@@ -8048,20 +8083,44 @@ import "../../styles/tokens.css";
          permalink into one still has to resolve and its messages still render — so a check
          that only asked whether the row exists let a retry keep sending into a channel the
          server refuses, with Retry still lit, forever. The comment here claimed it covered
-         "archived, or removed" and it did not. Found by a review arm. */
+         "archived, or removed" and it did not. Found by a review arm.
+
+         AND A MISSING ROW IS NOT A MISSING CHANNEL FOR A REPLY. ~~`placementChannelId !== null
+         && (placementChannel === null || archived)`~~ applied that whole test to both kinds of
+         message, and a review arm found what it costs. A TOP-LEVEL post has to resolve its
+         channel to a SLUG to send, so a row this page cannot see really does stop it. A REPLY
+         sends no slug at all — the wire carries `thread_root_id` and the edge stamps the
+         root's own channel — so the client never needs the channel list to post one.
+
+         The list SOFT-FAILS to `[]` on purpose, so a channel outage cannot take the feed down.
+         Under that outage every filed thread had a `placementChannelId` that resolved to
+         nothing, and the send refused every reply with "not in this workspace any more" — a
+         sentence that is false twice over: the channel is there, and the server would have
+         taken the reply. The bar meanwhile said the reply would be filed where the thread is,
+         which was the truth. Enter contradicted the box.
+
+         So a reply is stopped by ARCHIVE ONLY, which is knowable only when the row IS loaded.
+         Everything else about a reply's thread is the server's to refuse, and it refuses with
+         its own sentence. */
       const placementUnavailable = placementChannelId !== null &&
-        (placementChannel === null || placementChannel.archivedAt !== null);
+        (placementThreadRootId !== null
+          ? placementChannel !== null && placementChannel.archivedAt !== null
+          : placementChannel === null || placementChannel.archivedAt !== null);
       if (placementUnavailable) {
         /* A REPLY GETS THE THREAD'S SENTENCE, not the channel's. "Send it from the channel you
            want it in" is the remedy for a top-level post and is impossible advice for a reply:
            a reply is filed where its thread is and the writer cannot move it. The archived
            wording is `threadRootBlockText("channel-archived")`, which is the server's own
-           refusal for this case, so the two cannot drift. */
+           refusal for this case, so the two cannot drift.
+
+           ~~"The channel this thread is in is not in this workspace any more, so the thread
+           takes no new replies."~~ is gone with the arm above: it was the only sentence the
+           unloaded-list case could produce, and there is no longer a case that produces it. A
+           reply reaching this point has a LOADED, ARCHIVED channel, and there is one sentence
+           for that. */
         setComposerStatus(
           placementThreadRootId !== null
-            ? placementChannel === null
-              ? "The channel this thread is in is not in this workspace any more, so the thread takes no new replies."
-              : threadRootBlockText("channel-archived")
+            ? threadRootBlockText("channel-archived")
             : placementChannel === null
               ? "The channel this message was addressed to is not in this workspace any more. Send it from the channel you want it in."
               : `${channelLabel(placementChannel.slug)} is archived and does not accept new messages. Send this from the channel you want it in.`,
@@ -8080,7 +8139,7 @@ import "../../styles/tokens.css";
          immutable, so only the two time-varying arms can have changed, and passing a row that
          satisfies the other two keeps one function answering rather than two. */
       if (replyRoot !== null) {
-        const block = threadReplyBlock(replyRoot);
+        const block = replyBlock;
         if (block !== null) {
           setComposerStatus(threadRootBlockText(block), "error");
           composerIntent = null;
