@@ -1,0 +1,177 @@
+Mutation results, lane chat-client.
+
+Every test in tests/p1-cli/chat-cli.test.ts has one mutation below that turns it
+red. Baseline before each: 19 tests, 19 pass, 0 fail. Each mutation was applied,
+the build rerun where the test spawns dist/cli.js, the file rerun, and the source
+restored; the suite is green again after the last one.
+
+Two first attempts are kept rather than deleted, because each was a probe that
+could not reach what it claimed to test.
+
+The first M19 attempt is kept rather than deleted: it used --not-a-real-flag,
+which dies in the argument parser before any subcommand runs, so it could not
+reach the ordering it claimed to test and was NOT RED. The second attempt uses
+--kind, a flag the parser knows and the subcommand does not take.
+
+M1 client CHANNEL_SLUG_MAX 32 -> 31
+    target: every shared channel constant
+    -> RED (7 failing)
+
+M2 client drops the reserved-slug check
+    target: channelSlugProblem answers identically
+    -> RED (3 failing)
+
+M3 the slug rule sentence stops naming the bound
+    target: the slug rule sentence names the bound
+    -> RED (9 failing)
+
+M4 sendSignal always sends channel, as null
+    target: byte-identical to the installed body
+    -> RED (5 failing)
+
+M5 the thread_root_id spread drags broadcast_to_channel in with it
+    target: each chat option adds its own key
+    -> RED (3 failing)
+
+M6 the edge loses one optional chat key
+    target: the chat keys the client can send are exactly
+    -> RED (3 failing)
+
+M7 sendChannel omits the stream route
+    target: a channel command carries the envelope
+    -> RED (3 failing)
+
+M8 channelCommandError ignores the server's own sentence
+    target: a refusal shows the server's own sentence
+    -> RED (3 failing)
+
+M9 renderChannelList shows archived channels either way
+    target: the channel list hides archived channels
+    -> RED (3 failing)
+
+M10 unknownChannelMessage offers archived channels too
+    target: an unknown channel name is answered with the names
+    -> RED (3 failing)
+
+M11 findChannelBySlug compares raw text
+    target: a channel is found by name whatever its case
+    -> RED (3 failing)
+
+M12 --channel is accepted without checking it
+    target: refused with the rule, before the credential
+    -> RED (3 failing)
+
+M13 no name is reserved any more
+    target: a reserved channel name is refused by name
+    -> NOT RED; failing=['✖ every shared channel constant is identical in the client and the edge (1.727291ms)', '✖ channelSlugProblem answers identically in the client and the edge (0.229666ms)', '✖ failing tests:', '✖ every shared channel constant is identical in the client and the edge (1.727291ms)', '✖ channelSlugProblem answers identically in the client and the edge (0.229666ms)']
+
+M14 --broadcast-to-channel no longer needs --thread
+    target: --broadcast-to-channel without --thread is refused
+    -> RED (3 failing)
+
+M15 inbox --follow silently ignores --channel
+    target: cswarm channel names its subcommands
+    -> RED (3 failing)
+
+M16 the channel-ls refusal stops naming the remedy
+    target: cswarm channel ls says why an agent credential
+    -> RED (3 failing)
+
+M17 the help text drops the channel rename line
+    target: the usage text advertises every channel surface
+    -> RED (3 failing)
+
+M18 parseSignalRecord normalizes an absent chat column to null
+  target: an unread chat column stays ABSENT
+  -> RED; failing=['✖ an unread chat column stays ABSENT, and a read one is carried (1.284958ms)']
+
+M18b a present broadcast_to_channel is coerced instead of checked
+  target: an unread chat column stays ABSENT
+  -> RED; failing=['✖ an unread chat column stays ABSENT, and a read one is carried (1.181166ms)']
+
+M19 channel create judges the name before it checks the flags
+  target: a flag that does not exist is named before
+  -> NOT RED; failing=[]
+
+M20 renderChannelList drops the purpose
+  target: the channel list hides archived channels
+  -> RED; failing=['✖ the channel list hides archived channels but says they are there (1.447917ms)']
+
+M19 (SECOND ATTEMPT) channel create judges the name before it checks the flags
+  target: a flag this subcommand does not take is named before
+  -> RED; failing=['✖ a flag this subcommand does not take is named before the channel name is judged (63.281875ms)']
+
+M21 (FIRST ATTEMPT, SUPERSEDED) the channel refusal types its subcommand list and misses one
+  target: cswarm channel names its subcommands
+  -> NOT RED; failing=[]
+
+M22 the ls refusal enumerates the read service's resources again
+  target: cswarm channel ls says why an agent credential
+  -> RED; failing=['✖ cswarm channel ls says why an agent credential cannot list channels (64.558458ms)']
+
+M21 (SECOND ATTEMPT) the channel refusal types its subcommand list and misses one
+  target: cswarm channel names its subcommands
+  -> RED; failing=['✖ cswarm channel names its subcommands, and inbox --follow refuses --channel (123.283917ms)']
+
+
+The first M21 attempt was NOT RED because a UsageError prints the whole usage
+block after its sentence, and the usage block names every subcommand -- so the
+assertion matched the help text rather than the refusal. The second attempt
+asserts against the refusal LINE only.
+
+=====================================================================
+ROUND 2. Both arms returned VERDICT: FAIL on SHA 47c034d. Five findings
+were verified at the cited lines and fixed; one was pre-existing on main
+and one did not exist. The mutations below cover the round-2 fixes.
+=====================================================================
+
+M23 the reply sentence is taken from the flag again (round 2 finding G4)
+  target: the reply sentence comes from the row
+  -> RED; failing=['✖ the reply sentence comes from the row, not from the flag (1.151666ms)']
+
+M24 channel archive resolves its selector after the credential (round 2 finding G1)
+  target: refused with the rule, before the credential
+  -> RED; failing=['✖ a name that cannot be a channel name is refused with the rule, before the credential (500.872375ms)', '✖ a selector that is neither a name nor an id names both rules (62.68225ms)']
+
+M25 a bad selector is told the name rule alone (round 2 finding G1b)
+  target: a selector that is neither a name nor an id
+  -> RED; failing=['✖ a selector that is neither a name nor an id names both rules (66.311083ms)']
+
+M26 the follow+channel combination is refused after the name (round 2 finding G3)
+  target: cswarm channel names its subcommands
+  -> NOT RED; failing=[]
+
+M27 the reserved-name loop is allowed to run with no subject (arms' shared finding)
+  target: a reserved channel name is refused by name
+  -> NOT RED; failing=[]
+
+M28 the subcommand check goes one way only (round 2, grok refutation 2)
+  target: cswarm channel names its subcommands
+  -> RED; failing=['✖ cswarm channel ls says why an agent credential cannot list channels (63.37125ms)', '✖ cswarm channel names its subcommands, and inbox --follow refuses --channel (127.533375ms)']
+
+M26 (SECOND ATTEMPT) the follow+channel combination is refused after the name (round 2 finding G3)
+  target: cswarm channel names its subcommands
+  -> RED; failing=['✖ cswarm channel names its subcommands, and inbox --follow refuses --channel (284.646958ms)']
+
+M27 (SECOND ATTEMPT) nothing is reserved, in BOTH modules, so the drift test stays green
+  target: a reserved channel name is refused by name
+  -> RED; failing=['✖ a reserved channel name is refused by name, and a usable one gets past the rule (1.683958ms)']
+
+
+=====================================================================
+ROUND 3. Both arms returned VERDICT: FAIL on SHA 5ad4bd8, one finding
+each. Both were verified and fixed; the mutations below cover them.
+=====================================================================
+
+M29 a reserved selector is told the shape rule again (round 3 finding G1)
+  target: a selector that is neither a name nor an id
+  -> RED; failing=['✖ a selector that is neither a name nor an id names both rules (234.344541ms)']
+
+M30 a dispatch entry exists with no help line (round 3, gemini's parse concern)
+  target: cswarm channel names its subcommands
+  -> RED; failing=['✖ cswarm channel names its subcommands, and inbox --follow refuses --channel (138.271917ms)']
+
+M31 sendSignal stops emitting one chat key (strengthened chat-keys test)
+  target: the chat keys the client can send are exactly
+  -> RED; failing=['✖ each chat option adds its own key and drags in no sibling (1.7145ms)', '✖ the chat keys the client can send are exactly the ones the edge accepts (0.438833ms)']
+

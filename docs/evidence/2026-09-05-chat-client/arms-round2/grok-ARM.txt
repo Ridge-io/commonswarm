@@ -1,0 +1,51 @@
+I'll read REVIEW.md and DIFF.patch first, then follow REVIEW.md exactly.The first `diff --git` line is in. Next I’ll finish the patch and the unchanged wire files so I can attack each claim in order.The patch is still truncated. I’ll finish it and read the live edge files so I can compare the client wire to the real validators.Patch is complete. Next I’ll read the command rebuild, read-edge resources, and the error-classification paths.diff --git a/docs/evidence/2026-09-05-chat-client/arms-round1/FINDINGS-DISPOSITION.md b/docs/evidence/2026-09-05-chat-client/arms-round1/FINDINGS-DISPOSITION.md
+
+## Findings
+
+**1. `channelSelectorProblem` names the shape rule for a reserved selector, which is the wrong remedy.**
+
+`src/cloud/channels.ts:192-196`:
+
+```
+export function channelSelectorProblem(selector: string): string | null {
+  return channelSlugProblem(selector) === null
+    ? null
+    : `That is neither a channel name nor a channel id. ${CHANNEL_SLUG_RULE_TEXT} ${CHANNEL_ID_RULE_TEXT}`;
+}
+```
+
+`src/cli.ts:7471-7475` calls that for every non-UUID selector before `fileContext`, so `cswarm channel archive all-signals` and `cswarm channel rename all-signals mobile` never reach a lookup.
+
+`channelSlugProblem("all-signals")` is not a shape miss. It returns `all-signals is reserved. Reserved names: all-signals.` (`src/cloud/channels.ts:144-147`). `channelSelectorProblem` throws that answer away and interpolates `CHANNEL_SLUG_RULE_TEXT` instead.
+
+`all-signals` already satisfies that shape rule: lowercase letters, digits, hyphens, starts and ends on a letter, length 11. The caller is told to fix a rule they did not break. `cswarm channel create all-signals` still prints the reserved sentence. Rename/archive do not.
+
+The comment at `src/cloud/channels.ts:188-190` says the reader is told the two rules that were tried and neither of the wrong ones. Three rules ran (id, shape, reserved). The reserved sentence is the one that fired. It is not in the output.
+
+The reserved spawn at `tests/p1-cli/chat-cli.test.ts:676-678` only runs `channel create`. Archive/rename reserved selectors are untested, so this stays green.
+
+This is the same wrong-remedy class as round 1's mistyped id, inside the function that was meant to fix it.
+
+## Refutations that did not stick
+
+**1. `exactKeys` / `sendSignal` rebuild.** A plain `cswarm note "hi"` rebuilds to `kind`, `signal_kind`, `body`, `to_user_id`, `to_agent_principal_id`, `in_reply_to`, `about`. Chat keys spread only when `!== undefined`. `JSON.stringify` therefore does not emit `channel`, `thread_root_id`, or `broadcast_to_channel`, and does not emit them as `null`. That key set matches `installedPost()` in `tests/p1-server/chat-signals.test.ts`. `broadcast_to_channel: false` would go on the wire (`false !== undefined`); the CLI never sets it.
+
+**2. Typed enumerations.** Slug rule, reserved list, purpose bound, id rule, and `cswarm channel takes …` are built from the constants / `CHANNEL_SUBCOMMANDS`. The drift test compares the named shared constants and `channelSlugProblem` over generated `slugCases`, and it says it does not prove the two modules export the same set of names. That bound is true. Usage/help still types the four subcommand lines; the spawn test now compares the two sets, so a dispatch entry with no help line fails. The "chat keys the client can send" test still pins `CHAT_SIGNAL_OPTIONAL_KEYS` to a typed array rather than to keys `sendSignal` emits; the byte-identical and per-option tests still catch an unconditional extra key.
+
+**3. D-053.** `unknownChannelReadMessage` branches on HTTP 404 and envelope `error === "channel_not_found"`, not on prose. `parseServerErrorEnvelope` drops `message` on purpose, so the agent 404 cannot replay the edge's generated channel list. The client sentence is still a next step (create, or drop `--channel`). `channelCommandError` renders `message` when present and otherwise branches on status. Not a classifier bug.
+
+**4. Thread replies.** `--thread` sends `thread_root_id` and `in_reply_to: null`, which is what `chatSignalShapeProblem` requires (both set is refused). Reply does not take `--channel` or `--to`. `--broadcast-to-channel` without `--thread` is refused locally. A 403 addressee hint is suppressed under `--thread`; thread-root failures are 404/409/400 with a server `message`, which `sendSignal` already renders. The suppressed hint is not the right explanation for those.
+
+`threadReplyMessage` has three states. A filed root with the flag: "sent to the thread's channel as well". An unfiled root (`channel_id === null`): "in no channel". Absent: "unknown". Live control 22 matches the first two. For `--thread`, `--json` and text both print `replyMessage`. For plain `reply`, JSON still uses the older tenancy-scoped sentence; that split predates this lane.
+
+**5. Read paths.** `humanSignals` adds the three chat columns only when `query.channelId` is set. `agentSignalPage` puts `channel` in its own key. A read with no channel is unchanged. `normalizedSignalQuery` spreads `...query`, so `channel` / `channelId` pass through. Nothing in `src/` reads `record.channel_id` and treats `undefined` as a value. The `SignalRecord` comment now states the absent/null distinction `parseSignalRecord` makes.
+
+**6. `channel ls` for an agent.** `parseBody` in `supabase/functions/read/index.ts` answers `renewal_grants`, `members`, `files`, `delivery_receipts`, `signals`. There is no channels resource. The claim is true. `swarm_read.channels` is `GRANT SELECT` to `authenticated` with `auth.uid()`. Not listing those names in `CHANNEL_LIST_NEEDS_HUMAN_MESSAGE` is the right call (that list lives in Deno; a typed copy would drift). The sentence still says what to do: `cswarm login`, or name the channel by slug on commands that take one.
+
+**7. Refusal ordering, except finding 1.** `create`: shape, slug, purpose bound, then `fileContext`. `rename` / `archive`: shape, then `channelSelectorKind` (pure), then `fileContext`. `inbox --follow --channel` is refused before `channelOption`. `inbox --notify` uses its own `assertShape` without `channel` and returns before `channelOption`; `--channel` is an unknown option there, same as before this lane. Follow/ndjson still return before the name rule. No purely local slug miss on create/post/read is paid for with a credential, except the reserved selector in finding 1, which is local but names the wrong rule.
+
+**8. Other tests.** The `--not-a-real-flag` miss is documented; the `--kind` retry reaches `assertShape`. The unknown-subcommand assertion uses the refusal line, not the usage block, and compares both sets. The reserved-name subject guard fails when the list is empty; that is the right behaviour for that test (delete it if nothing is reserved). M27 second attempt empties both modules so drift stays green and the guard is what turns it red. The subcommand parse assumes comma separation matching `join(", ")` plus `, or `; a malformed "and" sentence would fail, not pass. Missing "or" would still parse. That is a typed assumption about the English, but the probe still reaches dispatch versus help.
+
+**9. Round-1 rejections.** The em-dash at `src/cli.ts:628` is a context line (`deployment's operators — agents are encouraged…`), not a `+` line. Not this lane. `grep` of `channel_archived` under `src/` is empty; Gemini's dead-code catch does not exist. New user-facing channel strings have no em-dash.
+
+VERDICT: FAIL
