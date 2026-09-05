@@ -15,8 +15,10 @@
  *      caller re-reads. brainLinkClickOutcome below is where that is caught: the click is
  *      decided against a FRESH read, so a control can never open a topic that is gone.
  *
- *   2. GATE THE WORD-LIKE NAMES. A topic carrying a slug separator (-, _, .) has a shape ordinary
- *      prose does not produce, so it links wherever it is written. A topic that is one bare word
+ *   2. GATE THE WORD-LIKE NAMES. A topic carrying one of the characters in
+ *      BRAIN_SLUG_SEPARATORS has a shape ordinary prose does not produce, so it links wherever
+ *      it is written. Read that constant for the set; this sentence does not repeat it, because
+ *      a repeated list is a claim with no control on it. A topic that is one bare word
  *      -- "roadmap", "releases" -- cannot be told apart from the same word used normally, so it
  *      links ONLY when an inline code span is EXACTLY that name, because that is the only way a
  *      writer can say "this is a name" about a word. Without this gate, one topic named "roadmap"

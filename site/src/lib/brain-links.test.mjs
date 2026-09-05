@@ -1,4 +1,5 @@
 import assert from "node:assert/strict";
+import { readFileSync } from "node:fs";
 import { test } from "node:test";
 import {
   brainLinkClickOutcome,
@@ -200,6 +201,38 @@ test("the slug gate reads the same separator set the module exports", () => {
   }
   assert.equal(isSlugShapedTopic("roadmap"), false);
   assert.equal(isSlugShapedTopic("releases"), false);
+});
+
+test("the prose that describes the slug gate names the constant instead of listing it", () => {
+  /*
+   * BRAIN_SLUG_SEPARATORS is exported so that "the gate below and every sentence that describes
+   * the gate read the same set" — its own words. The header comment did not: it typed the three
+   * characters out beside the rule, which is the enumeration-inside-a-message defect AGENTS.md
+   * records, one level down. A comment is not enforced by anything, so it needs a control.
+   *
+   * BOTH HALVES ARE BUILT FROM THE CONSTANT, never typed here. WHAT THIS CANNOT SEE: a list
+   * written in some other shape ("- or _ or ."), and a reordered constant, because the pattern
+   * follows the array's order. It catches the shape the defect actually had.
+   */
+  const source = readFileSync(new URL("./brain-links.ts", import.meta.url), "utf8");
+
+  assert.match(
+    source,
+    /carrying one of the characters in\s+\*\s+BRAIN_SLUG_SEPARATORS/,
+    "the sentence stating the slug rule must name BRAIN_SLUG_SEPARATORS, so a reader is sent " +
+      "to the one place the set lives",
+  );
+
+  const typedList = new RegExp(
+    BRAIN_SLUG_SEPARATORS.map((character) => `\\${character}`).join("\\s*,\\s*"),
+  );
+  assert.doesNotMatch(
+    source,
+    typedList,
+    `brain-links.ts writes the separator set out as a list (${typedList}). Name ` +
+      `BRAIN_SLUG_SEPARATORS instead: a second copy of the set drifts the day the first one ` +
+      `changes, and nothing would fail.`,
+  );
 });
 
 test("the control names it uses stay the ones the dashboard styles and queries", () => {
