@@ -296,6 +296,11 @@ export async function runListenerSupervisor(
     lastAckOutcome: carried?.lastAckOutcome ?? null,
     consecutiveAckFailureCount: carried?.consecutiveAckFailureCount ?? null,
     lastAckSignalId: carried?.lastAckSignalId ?? null,
+    /* Never carried across a restart: a seat this process does not hold cannot
+       be reported as held, and the queue age restarts with the observations. */
+    currentDeliverySignalId: null,
+    currentDeliverySince: null,
+    queueWaitingSince: null,
     routeMode: options.routeMode ?? "worker",
     deferOverChars: options.deferOverChars ?? null,
     pendingForMainCount: 0,
@@ -564,6 +569,13 @@ export async function runListenerSupervisor(
       return;
     }
     if (event.type === "delivery_claim") {
+      /* The server counts every unacked live delivery for this agent, the one
+         just claimed included, so what is WAITING is one fewer while a seat is
+         held. */
+      const waiting = Math.max(
+        0,
+        event.pendingDeliveryCount - (event.signalId === null ? 0 : 1),
+      );
       status = {
         ...status,
         readHealth: recordListenerClaim(
@@ -571,6 +583,11 @@ export async function runListenerSupervisor(
           event.ts,
         ),
         pendingDeliveryCount: event.pendingDeliveryCount,
+        currentDeliverySignalId: event.signalId,
+        currentDeliverySince: event.signalId === null ? null : event.ts,
+        queueWaitingSince: waiting === 0
+          ? null
+          : status.queueWaitingSince ?? event.ts,
         lastClaimAt: event.ts,
         updatedAt: event.ts,
       };
@@ -602,6 +619,24 @@ export async function runListenerSupervisor(
       });
       return;
     }
+    if (event.type === "delivery_hold_released") {
+      status = {
+        ...status,
+        currentDeliverySignalId: null,
+        currentDeliverySince: null,
+        lastSignalId: event.signalId,
+        updatedAt: event.ts,
+      };
+      persist();
+      log({
+        ts: event.ts,
+        event: "listener_delivery_hold_released",
+        signal_id: event.signalId,
+        release_reason: event.reason,
+        held_ms: Math.max(0, Math.trunc(event.heldMs)),
+      });
+      return;
+    }
     if (event.type === "delivery_ack") {
       const failed = event.outcome === "failed_terminal";
       const providerProven = DELIVERY_PROVIDER_PROVEN_OUTCOMES.has(event.outcome);
@@ -616,6 +651,8 @@ export async function runListenerSupervisor(
           ? 0
           : status.consecutiveAckFailureCount,
         pendingDeliveryCount: null,
+        currentDeliverySignalId: null,
+        currentDeliverySince: null,
         lastSignalId: event.signalId,
         updatedAt: event.ts,
       };

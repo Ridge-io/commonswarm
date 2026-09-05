@@ -124,6 +124,22 @@ export async function resolveBudgetAndPrompt<T>(
   return await session.prompt(prompt, { timeoutMs });
 }
 
+/**
+ * Why a delivery gave the worker seat back before it reached a terminal effect.
+ * `hold_budget`: the per-delivery seat bound is spent. `lease_budget`: what is
+ * left of the server lease no longer covers the next phase.
+ *
+ * Exported as the set so the status validator, the listener log and any message
+ * that names these read the same constant instead of a typed copy.
+ */
+export const LISTENER_DELIVERY_HOLD_RELEASE_REASONS = [
+  "hold_budget",
+  "lease_budget",
+] as const;
+
+export type ListenerDeliveryHoldReleaseReason =
+  typeof LISTENER_DELIVERY_HOLD_RELEASE_REASONS[number];
+
 export type ListenerPermissionMode = "deny" | "allow";
 
 export type ListenerPromptMode = "worker";

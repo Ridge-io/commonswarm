@@ -37,6 +37,7 @@ const CONTROL_TIMEOUT_MS = 2_000;
 const START_LOCK_WAIT_MS = 2_000;
 const START_LOCK_STALE_MS = 10_000;
 
+import { LISTENER_DELIVERY_HOLD_RELEASE_REASONS } from "./types.js";
 import type { ListenerPermissionMode } from "./types.js";
 import type { ListenerRouteMode } from "./main-routing.js";
 import type { ActivityPublishErrorCode } from "./activity.js";
@@ -111,6 +112,25 @@ export interface ListenerStatus {
       `effect` and `main_queue`, so between an effect and its ack it names a newer
       signal than the one the outcome describes. Optional: absent in older files. */
   lastAckSignalId?: string | null;
+  /**
+   * The delivery holding the worker seat right now, and when this listener took
+   * its lease. Both null between deliveries. Elapsed time is derived at read
+   * time from `currentDeliverySince`, never stored: a status file is written on
+   * events, so a stored elapsed number would be stale the moment it landed.
+   * Optional keys: a file written without them round-trips byte for byte.
+   */
+  currentDeliverySignalId?: string | null;
+  currentDeliverySince?: string | null;
+  /**
+   * When this listener first saw deliveries waiting BEHIND the one it holds,
+   * in the current unbroken run of such observations. Cleared as soon as a
+   * claim reports nothing waiting.
+   *
+   * The oldest waiting delivery has waited AT LEAST this long. It is not that
+   * delivery's enqueue time: the claim wire carries a pending count and the
+   * claimed row, never the other rows' timestamps.
+   */
+  queueWaitingSince?: string | null;
   routeMode?: ListenerRouteMode;
   deferOverChars?: number | null;
   pendingForMainCount?: number;
@@ -219,6 +239,9 @@ const STATUS_ALLOWED_KEYS = new Set([
   "lastAckOutcome",
   "consecutiveAckFailureCount",
   "lastAckSignalId",
+  "currentDeliverySignalId",
+  "currentDeliverySince",
+  "queueWaitingSince",
   "routeMode",
   "deferOverChars",
   "pendingForMainCount",
@@ -398,6 +421,14 @@ function parseStatus(raw: string, rejectUnknownKeys = false): ListenerStatus {
       nullableCount(row.consecutiveAckFailureCount)) ||
     !(row.lastAckSignalId === undefined || row.lastAckSignalId === null ||
       (typeof row.lastAckSignalId === "string" && UUID_RE.test(row.lastAckSignalId))) ||
+    !(row.currentDeliverySignalId === undefined ||
+      row.currentDeliverySignalId === null ||
+      (typeof row.currentDeliverySignalId === "string" &&
+        UUID_RE.test(row.currentDeliverySignalId))) ||
+    !(row.currentDeliverySince === undefined ||
+      nullableTimestamp(row.currentDeliverySince)) ||
+    !(row.queueWaitingSince === undefined ||
+      nullableTimestamp(row.queueWaitingSince)) ||
     !(row.routeMode === undefined ||
       row.routeMode === "worker" || row.routeMode === "main" || row.routeMode === "split") ||
     !(row.deferOverChars === undefined || row.deferOverChars === null ||
@@ -462,6 +493,16 @@ function parseStatus(raw: string, rejectUnknownKeys = false): ListenerStatus {
     ...(row.lastAckSignalId === undefined
       ? {}
       : { lastAckSignalId: (row.lastAckSignalId ?? null) as string | null }),
+    ...(row.currentDeliverySignalId === undefined ? {} : {
+      currentDeliverySignalId:
+        (row.currentDeliverySignalId ?? null) as string | null,
+    }),
+    ...(row.currentDeliverySince === undefined ? {} : {
+      currentDeliverySince: (row.currentDeliverySince ?? null) as string | null,
+    }),
+    ...(row.queueWaitingSince === undefined ? {} : {
+      queueWaitingSince: (row.queueWaitingSince ?? null) as string | null,
+    }),
     lastErrorDetail: (row.lastErrorDetail ?? null) as string | null,
     lastWorkerStderrTail: (row.lastWorkerStderrTail ?? null) as string | null,
     providerVersion: (row.providerVersion ?? null) as string | null,
@@ -559,6 +600,9 @@ export async function appendListenerEvent(
     "body_length",
     "pending_main_count",
     "dropped_count",
+    // How long one delivery held the worker seat, and why it gave it back.
+    "held_ms",
+    "release_reason",
   ]);
   const deliveryModes = new Set(["durable_claim", "cursor_fallback"]);
   const routeModes = new Set(["worker", "main", "split"]);
@@ -671,6 +715,21 @@ export async function appendListenerEvent(
       !(typeof value === "number" && Number.isSafeInteger(value) && value >= 0)
     ) {
       throw new Error("listener event main-route count is not allowed");
+    }
+    if (
+      key === "held_ms" &&
+      !(typeof value === "number" && Number.isSafeInteger(value) && value >= 0)
+    ) {
+      throw new Error("listener event hold duration is not allowed");
+    }
+    if (
+      key === "release_reason" &&
+      !(typeof value === "string" &&
+        (LISTENER_DELIVERY_HOLD_RELEASE_REASONS as readonly string[]).includes(
+          value,
+        ))
+    ) {
+      throw new Error("listener event hold release reason is not allowed");
     }
     if (
       key === "worker_stderr_tail" &&

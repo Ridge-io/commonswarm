@@ -608,7 +608,9 @@ due — a turn never outlives its credential. Right after a rotation the full
 budget is available up to the token TTL minus 60s (about 59m on the default 1h
 TTL); a turn that lands just before a rotation can be clamped to the ~5m
 renewal lead, and if it times out there, durable delivery retries it on the
-fresh credential.
+fresh credential. The same budget also bounds how long ONE delivery may hold the
+worker seat across its retries: when it is spent the listener hands the seat
+back and claims the next delivery, and the service redelivers the released one.
 
 listen start --route worker|main|split chooses where directed messages go. worker
 is the unchanged default. main queues every ask or note for the interactive session.
@@ -4633,6 +4635,15 @@ export function listenerStatusJson(
     lastAckOutcome: status.lastAckOutcome ?? null,
     consecutiveAckFailureCount: status.consecutiveAckFailureCount ?? null,
     lastAckSignalId: status.lastAckSignalId ?? null,
+    currentDeliverySignalId: status.currentDeliverySignalId ?? null,
+    currentDeliverySince: status.currentDeliverySince ?? null,
+    currentDeliveryElapsedMs: status.currentDeliverySince
+      ? Math.max(0, nowMs - Date.parse(status.currentDeliverySince))
+      : null,
+    queueWaitingSince: status.queueWaitingSince ?? null,
+    queueWaitingForMsAtLeast: status.queueWaitingSince
+      ? Math.max(0, nowMs - Date.parse(status.queueWaitingSince))
+      : null,
     routeMode: status.routeMode ?? "worker",
     deferOverChars: status.deferOverChars ?? null,
     pendingForMainCount: status.pendingForMainCount ?? 0,
@@ -4858,6 +4869,41 @@ export function renderListenerStatus(
   if (status.pendingDeliveryCount !== null) {
     lines.push(
       `Pending deliveries reported by the service: ${status.pendingDeliveryCount}.`,
+    );
+  }
+  const currentDeliveryId = status.currentDeliverySignalId ?? null;
+  const currentDeliverySince = status.currentDeliverySince ?? null;
+  if (currentDeliveryId !== null && currentDeliverySince !== null) {
+    lines.push(
+      `Working on delivery ${currentDeliveryId}, claimed ${
+        relativeAge(currentDeliverySince, nowMs)
+      }.`,
+    );
+  } else {
+    lines.push("No delivery is being worked on right now.");
+  }
+  const waitingBehind = status.pendingDeliveryCount === null
+    ? null
+    : Math.max(
+      0,
+      status.pendingDeliveryCount - (currentDeliveryId === null ? 0 : 1),
+    );
+  const queueWaitingSince = status.queueWaitingSince ?? null;
+  if (queueWaitingSince !== null) {
+    /* "behind it" only when there IS an "it": with no delivery in hand the same
+       rows are waiting to be claimed, not waiting behind anything.
+       "at least": the claim wire carries a pending count and the claimed row,
+       never the enqueue times of the rows behind it, so this is when THIS
+       listener first saw the queue non-empty, not the oldest row's age. */
+    const label = currentDeliveryId === null
+      ? "Deliveries waiting to be claimed"
+      : "Deliveries waiting behind it";
+    lines.push(
+      `${
+        waitingBehind === null ? label : `${label}: ${waitingBehind}`
+      }. The queue has not been empty since ${
+        relativeAge(queueWaitingSince, nowMs)
+      }, so the oldest has waited at least that long.`,
     );
   }
   lines.push(
@@ -5618,6 +5664,9 @@ async function runConfiguredListener(options: {
             },
             routeMode,
             deferOverChars,
+            /* One delivery may hold the seat for one turn budget, not for the
+               whole 15-minute lease. Same lever, so the two cannot drift. */
+            deliveryHoldBudgetMs: turnBudgetMs,
             pendingMainQueue,
             fetcher: httpClient.fetch,
           });

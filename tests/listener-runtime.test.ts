@@ -16,6 +16,7 @@ import {
   DeliveryProtocolError,
   DeliveryTransportError,
   DELIVERY_REQUEST_TIMEOUT_MS,
+  DELIVERY_ACK_OUTCOMES,
   type DeliveryClaimResult,
   type DeliveryOutcome,
   type DeliveryRow,
@@ -35,6 +36,7 @@ import {
   SignalTransportError,
 } from "../src/cloud/signals.js";
 import { ACP_DEFAULT_REQUEST_TIMEOUT_MS } from "../src/host/bounds.js";
+import { AcpHostError } from "../src/host/types.js";
 import {
   runListenerRuntime as runListenerRuntimeActual,
   LISTENER_DELIVERY_SAFETY_MARGIN_MS,
@@ -3826,4 +3828,387 @@ test("a status written before lastAckOutcome existed is not called unacknowledge
   assert.doesNotMatch(restartedHuman, /No delivery acknowledgement is recorded/);
   assert.match(restartedHuman, /its outcome was not recorded\./);
   await rm(root, { recursive: true, force: true });
+});
+
+/* Head-of-line blocking, measured 2026-09-04 on the lead's own seat: one
+ * open-ended ask used the whole 10-minute turn budget and every later delivery
+ * to that seat waited behind it. Two of the five asks in that hour were
+ * byte-identical re-sends 1 to 6 minutes apart, because nothing showed the
+ * sender that the seat was busy. These three tests pin the bound, the fields
+ * that make the queue visible, and the receipt the release must not destroy. */
+
+const HOLD_FIRST_ID = "aaaaaaaa-aaaa-4aaa-8aaa-aaaaaaaaab01";
+const HOLD_SECOND_ID = "aaaaaaaa-aaaa-4aaa-8aaa-aaaaaaaaab02";
+
+/** A worker that consumes the whole seat budget on one signal and yields nothing. */
+class SeatHoggingModel implements ListenerRuntimeModel {
+  starts = 0;
+  closes = 0;
+  cancels = 0;
+  readonly prompts: string[] = [];
+  constructor(
+    private readonly hogSignalId: string,
+    private readonly burn: () => void,
+  ) {}
+  async start() {
+    this.starts += 1;
+  }
+  async prompt(signal: SignalRecord, _mode: ListenerPromptMode) {
+    this.prompts.push(signal.id);
+    if (signal.id === this.hogSignalId) {
+      this.burn();
+      // What a wedged ACP child produces: a transient timeout, so the ask stays
+      // retryable and the pre-bound loop would keep the seat for the lease.
+      throw new AcpHostError("timeout", "worker turn timed out");
+    }
+    return {
+      message: `reply-${signal.id.slice(-4)}`,
+      stopReason: "end_turn" as const,
+    };
+  }
+  cancel() {
+    this.cancels += 1;
+  }
+  async close() {
+    this.closes += 1;
+  }
+}
+
+test("a delivery that spends its hold budget hands the seat to the next delivery", async () => {
+  const first = ask(HOLD_FIRST_ID, "2026-07-30T00:00:01.000Z");
+  const second = ask(HOLD_SECOND_ID, "2026-07-30T00:00:02.000Z");
+  const holdBudgetMs = 600_000;
+  const start = Date.parse("2026-07-30T00:00:00.000Z");
+  let clock = start;
+  const journal = new MemoryDeliveryJournal();
+  const controller = new AbortController();
+  const events: ListenerRuntimeEvent[] = [];
+  const model = new SeatHoggingModel(first.id, () => {
+    clock += holdBudgetMs;
+  });
+  let claims = 0;
+  let acked: Array<{ signalId: string; outcome: DeliveryOutcome }> = [];
+  const stop = await runListenerRuntime({
+    target: cloudTarget("https://cloud.example.test", "anon"),
+    workspaceId: WORKSPACE_ID,
+    principalId: PRINCIPAL_ID,
+    listenerInstanceId: journal.record.listenerInstanceId,
+    deliveryJournal: journal,
+    deliveryHoldBudgetMs: holdBudgetMs,
+    deliveryClient: {
+      async claimAgentInbox() {
+        claims += 1;
+        // The lease outlasts the hold budget on purpose: without the bound the
+        // seat stays on the first delivery for the whole 15-minute lease.
+        const row: DeliveryRow = claims === 1
+          ? {
+            signal: first,
+            leaseId: "55555555-5555-4555-8555-555555555b01",
+            leasedUntil: "2026-07-30T00:15:00.000Z",
+            senderOwnerRelation: "same_owner",
+          }
+          : {
+            signal: second,
+            leaseId: "55555555-5555-4555-8555-555555555b02",
+            leasedUntil: "2026-07-30T00:25:00.000Z",
+            senderOwnerRelation: "same_owner",
+          };
+        return claimResult([row], claims === 1 ? 2 : 1);
+      },
+      async ackAgentDelivery(request) {
+        acked.push({ signalId: request.signalId, outcome: request.outcome });
+        controller.abort();
+        return {
+          httpStatus: 200,
+          signalId: request.signalId,
+          outcome: request.outcome,
+        };
+      },
+    },
+    credentialSession: { async bearer() { return "token"; } },
+    store: new MemoryStore(),
+    model,
+    poster: {
+      async post() {
+        return { signalId: "66666666-6666-4666-8666-666666666b02" };
+      },
+    },
+    signal: controller.signal,
+    now: () => clock,
+    sleep: async () => undefined,
+    readPage: async () => durablePage([], 2),
+    onEvent: (event) => events.push(event),
+  });
+
+  assert.equal(
+    stop.reason,
+    "cancelled",
+    stop.reason === "fatal" ? `stopped fatally: ${stop.error.message}` : "",
+  );
+  // The bound, stated as the reader reads it: the second delivery reached the
+  // worker, and it did so without waiting out the first delivery's lease.
+  assert.deepEqual(model.prompts, [first.id, second.id]);
+  const released = events.filter(
+    (event): event is Extract<
+      ListenerRuntimeEvent,
+      { type: "delivery_hold_released" }
+    > => event.type === "delivery_hold_released",
+  );
+  assert.equal(released.length, 1);
+  assert.equal(released[0]!.signalId, first.id);
+  assert.equal(released[0]!.reason, "hold_budget");
+  assert.equal(released[0]!.heldMs, holdBudgetMs);
+  assert.ok(
+    clock < Date.parse("2026-07-30T00:15:00.000Z"),
+    "the seat moved on before the first delivery's lease expired",
+  );
+  // The released delivery keeps its lease and its receipt: only the second one
+  // is acknowledged, so its sender still reads a delivery in progress.
+  assert.deepEqual(acked, [{ signalId: second.id, outcome: "replied" }]);
+});
+
+test("the released delivery is not acknowledged with any outcome", async () => {
+  // Generated from the wire vocabulary, so a new outcome cannot slip past this
+  // by being absent from a typed list.
+  const outcomes = [...DELIVERY_ACK_OUTCOMES];
+  assert.ok(outcomes.includes("observed"));
+  const first = ask(HOLD_FIRST_ID, "2026-07-30T00:00:01.000Z");
+  const holdBudgetMs = 300_000;
+  let clock = Date.parse("2026-07-30T00:00:00.000Z");
+  const journal = new MemoryDeliveryJournal();
+  const controller = new AbortController();
+  const events: ListenerRuntimeEvent[] = [];
+  const model = new SeatHoggingModel(first.id, () => {
+    clock += holdBudgetMs;
+  });
+  const ackOutcomes: string[] = [];
+  let claims = 0;
+  await runListenerRuntime({
+    target: cloudTarget("https://cloud.example.test", "anon"),
+    workspaceId: WORKSPACE_ID,
+    principalId: PRINCIPAL_ID,
+    listenerInstanceId: journal.record.listenerInstanceId,
+    deliveryJournal: journal,
+    deliveryHoldBudgetMs: holdBudgetMs,
+    deliveryClient: {
+      async claimAgentInbox() {
+        claims += 1;
+        if (claims > 1) {
+          controller.abort();
+          return claimResult([], 1);
+        }
+        return claimResult([{
+          signal: first,
+          leaseId: "55555555-5555-4555-8555-555555555b03",
+          leasedUntil: "2026-07-30T00:15:00.000Z",
+          senderOwnerRelation: "same_owner",
+        }], 1);
+      },
+      async ackAgentDelivery(request) {
+        ackOutcomes.push(request.outcome);
+        return {
+          httpStatus: 200,
+          signalId: request.signalId,
+          outcome: request.outcome,
+        };
+      },
+    },
+    credentialSession: { async bearer() { return "token"; } },
+    store: new MemoryStore(),
+    model,
+    poster: { async post() { throw new Error("no reply is ready"); } },
+    signal: controller.signal,
+    now: () => clock,
+    sleep: async () => undefined,
+    readPage: async () => durablePage([], 1),
+    onEvent: (event) => events.push(event),
+  });
+
+  assert.deepEqual(ackOutcomes, []);
+  assert.equal(journal.record.active, null);
+  assert.equal(
+    events.filter((event) => event.type === "delivery_hold_released").length,
+    1,
+  );
+});
+
+test("listen status shows the delivery in hand and how long the queue has waited", () => {
+  const claimedAt = "2026-07-30T00:00:00.000Z";
+  const nowMs = Date.parse("2026-07-30T00:04:00.000Z");
+  const status = {
+    version: 1,
+    instanceId: "44444444-4444-4444-8444-444444444444",
+    pid: 4242,
+    profileId: "profile-hold",
+    workspaceId: WORKSPACE_ID,
+    principalId: PRINCIPAL_ID,
+    provider: "claude",
+    state: "ready",
+    startedAt: claimedAt,
+    readyAt: claimedAt,
+    updatedAt: claimedAt,
+    stoppedAt: null,
+    lastSignalId: null,
+    lastErrorCode: null,
+    lastErrorDetail: null,
+    lastErrorReasonCode: null,
+    providerExecutable: null,
+    providerVersion: null,
+    providerLastMeasuredVersion: null,
+    providerBundledAgentSdkVersion: null,
+    providerBundledClaudeCodeVersion: null,
+    providerMinimumRequiredVersion: null,
+    lastWorkerStderrTail: null,
+    deliveryMode: "durable_claim",
+    pendingDeliveryCount: 3,
+    lastTerminalDeliveryFailureCount: null,
+    lastTerminalDeliveryFailureAt: null,
+    lastClaimAt: claimedAt,
+    lastAckAt: null,
+    lastAckOutcome: null,
+    consecutiveAckFailureCount: null,
+    currentDeliverySignalId: HOLD_FIRST_ID,
+    currentDeliverySince: claimedAt,
+    queueWaitingSince: claimedAt,
+    routeMode: "worker",
+    deferOverChars: null,
+    pendingForMainCount: 0,
+    droppedForMainCount: 0,
+    logPath: "/tmp/cswarm-hold/listener.log",
+  } as unknown as ListenerStatus;
+
+  const evidence = {
+    pendingForMainOldestAt: null,
+    hookSurfaceExists: false,
+    hookSurfaceAdvanced: false,
+  };
+  const json = listenerStatusJson(status, undefined, evidence, nowMs);
+  assert.equal(json.currentDeliverySignalId, HOLD_FIRST_ID);
+  assert.equal(json.currentDeliverySince, claimedAt);
+  assert.equal(json.currentDeliveryElapsedMs, 240_000);
+  assert.equal(json.queueWaitingSince, claimedAt);
+  assert.equal(json.queueWaitingForMsAtLeast, 240_000);
+
+  const human = renderListenerStatus(status, evidence, nowMs);
+  assert.ok(
+    human.includes(`Working on delivery ${HOLD_FIRST_ID}, claimed 4m ago.`),
+    human,
+  );
+  // 3 pending counts the delivery in hand, so 2 are waiting behind it.
+  assert.ok(human.includes("Deliveries waiting behind it: 2."), human);
+  assert.ok(human.includes("has not been empty since 4m ago"), human);
+
+  const idle = renderListenerStatus({
+    ...status,
+    pendingDeliveryCount: 0,
+    currentDeliverySignalId: null,
+    currentDeliverySince: null,
+    queueWaitingSince: null,
+  }, evidence, nowMs);
+  assert.ok(idle.includes("No delivery is being worked on right now."), idle);
+  assert.ok(!idle.includes("Deliveries waiting behind it"), idle);
+
+  // Nothing in hand and rows still pending: they wait to be claimed, and there
+  // is no "it" for them to be behind. Measured against a live listener whose
+  // fake service stopped handing rows back (live-control-output.txt).
+  const unclaimed = renderListenerStatus({
+    ...status,
+    pendingDeliveryCount: 2,
+    currentDeliverySignalId: null,
+    currentDeliverySince: null,
+  }, evidence, nowMs);
+  assert.ok(
+    unclaimed.includes("Deliveries waiting to be claimed: 2."),
+    unclaimed,
+  );
+  assert.ok(!unclaimed.includes("waiting behind it"), unclaimed);
+});
+
+test("a fast first failure keeps the seat and retries inside the hold budget", async () => {
+  /* Measured on a live listener started with --turn-budget 30s: a projected
+   * bound (now + one phase minimum against the deadline) released the seat
+   * after 74ms, because one phase minimum is about four minutes and never fits
+   * inside a 30s budget. The delivery lost its retry budget without using any
+   * of its seat time. The bound is elapsed hold, so this retries. */
+  const first = ask(HOLD_FIRST_ID, "2026-07-30T00:00:01.000Z");
+  const holdBudgetMs = 30_000;
+  let clock = Date.parse("2026-07-30T00:00:00.000Z");
+  const journal = new MemoryDeliveryJournal();
+  const controller = new AbortController();
+  const events: ListenerRuntimeEvent[] = [];
+  const prompts: string[] = [];
+  let failures = 0;
+  const model: ListenerRuntimeModel = {
+    async start() {},
+    async prompt(signal: SignalRecord) {
+      prompts.push(signal.id);
+      failures += 1;
+      if (failures === 1) {
+        // A worker child that dies in milliseconds: retryable, and nowhere near
+        // the seat budget.
+        clock += 74;
+        throw new AcpHostError("child_exit", "worker child exited");
+      }
+      return {
+        message: `reply-${signal.id.slice(-4)}`,
+        stopReason: "end_turn" as const,
+      };
+    },
+    cancel() {},
+    async close() {},
+  };
+  const acked: string[] = [];
+  const stop = await runListenerRuntime({
+    target: cloudTarget("https://cloud.example.test", "anon"),
+    workspaceId: WORKSPACE_ID,
+    principalId: PRINCIPAL_ID,
+    listenerInstanceId: journal.record.listenerInstanceId,
+    deliveryJournal: journal,
+    deliveryHoldBudgetMs: holdBudgetMs,
+    deliveryClient: {
+      async claimAgentInbox() {
+        return claimResult([{
+          signal: first,
+          leaseId: "55555555-5555-4555-8555-555555555b04",
+          leasedUntil: "2026-07-30T00:15:00.000Z",
+          senderOwnerRelation: "same_owner",
+        }], 1);
+      },
+      async ackAgentDelivery(request) {
+        acked.push(request.outcome);
+        controller.abort();
+        return {
+          httpStatus: 200,
+          signalId: request.signalId,
+          outcome: request.outcome,
+        };
+      },
+    },
+    credentialSession: { async bearer() { return "token"; } },
+    store: new MemoryStore(),
+    model,
+    poster: {
+      async post() {
+        return { signalId: "66666666-6666-4666-8666-666666666b04" };
+      },
+    },
+    signal: controller.signal,
+    now: () => clock,
+    sleep: async () => undefined,
+    readPage: async () => durablePage([], 1),
+    onEvent: (event) => events.push(event),
+  });
+
+  assert.equal(
+    stop.reason,
+    "cancelled",
+    stop.reason === "fatal" ? `stopped fatally: ${stop.error.message}` : "",
+  );
+  assert.deepEqual(prompts, [first.id, first.id]);
+  assert.deepEqual(acked, ["replied"]);
+  assert.equal(
+    events.filter((event) => event.type === "delivery_hold_released").length,
+    0,
+    "74ms of a 30s seat budget is not a spent budget",
+  );
 });
