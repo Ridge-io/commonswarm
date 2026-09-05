@@ -11,7 +11,9 @@
  * links, and the assertions read geometry out of a real layout.
  *
  * There are TWO controls, because the fix has two halves and either one alone does nothing. Each is
- * an iframe of the SAME fixture at the same width with one half reverted:
+ * a SEPARATE load of the same fixture at the same width with one half reverted -- a separate load
+ * rather than an iframe on the measured page, because reading a frame's geometry across the frame
+ * boundary reported a stale 320px under a loaded host and turned a real control into a flake:
  *
  *   `table`: the scroll rule reverted. The table must then widen its own document.
  *   `wrap`:  the cell `overflow-wrap` reverted to the `anywhere` the message body sets. The table
@@ -77,12 +79,6 @@ interface Measurement {
   /** The whole document at 320px. This is the claim "the page does not widen". */
   documentScrollWidth: number;
   innerWidth: number;
-  /** Each control frame's OWN measurements, keyed by the half it reverted. */
-  controls: Record<string, {
-    documentScrollWidth: number;
-    containerOverflows: boolean;
-    tableScrolls: boolean;
-  }>;
   /** A task item drops its bullet; a plain item in the same list keeps one. */
   taskListStyle: string;
   plainListStyle: string;
@@ -135,7 +131,7 @@ const REVERTED_CSS: Record<string, string> = {
   .dashboard__message-markdown :is(th, td) { overflow-wrap: anywhere; }`,
 };
 
-const fixturePage = (markdownScript: string, control: string, origin: string): string => `<!doctype html>
+const fixturePage = (markdownScript: string, control: string): string => `<!doctype html>
 <html>
   <head>
     <meta name="viewport" content="width=device-width, initial-scale=1">
@@ -150,43 +146,20 @@ const fixturePage = (markdownScript: string, control: string, origin: string): s
   </head>
   <body>
     <div class="harness"><div class="dashboard__message-markdown" data-table></div></div>
-    ${control ? "" : `<div class="harness"><div class="dashboard__message-markdown" data-blocks></div></div>
-    ${Object.keys(REVERTED_CSS).map((name) => `<iframe title="reverted ${name} control" data-control="${name}"
-      src="${origin}/__fixture?control=${name}" width="${VIEWPORT_WIDTH}" height="${VIEWPORT_HEIGHT}"></iframe>`).join("\n    ")}`}
+    <div class="harness"><div class="dashboard__message-markdown" data-blocks></div></div>
     <script>${markdownScript}</script>
     <script>
       const tableHost = document.querySelector("[data-table]");
       MessageMarkdown.setSanitizedMessageMarkdown(tableHost, ${JSON.stringify(WIDE_TABLE)}, { headingOffset: 1 });
       const blocksHost = document.querySelector("[data-blocks]");
-      if (blocksHost) {
-        MessageMarkdown.setSanitizedMessageMarkdown(blocksHost, ${JSON.stringify(BLOCKS)}, { headingOffset: 1 });
-      }
+      MessageMarkdown.setSanitizedMessageMarkdown(blocksHost, ${JSON.stringify(BLOCKS)}, { headingOffset: 1 });
       const publish = () => {
         const table = tableHost.querySelector("table");
         const style = (node, property) => getComputedStyle(node).getPropertyValue(property);
-        const controls = {};
-        for (const frame of document.querySelectorAll("[data-control]")) {
-          const frameDocument = frame.contentDocument;
-          const container = frameDocument ? frameDocument.querySelector("[data-table]") : null;
-          const controlTable = container ? container.querySelector("table") : null;
-          controls[frame.dataset.control] = {
-            documentScrollWidth: frameDocument
-              ? frameDocument.documentElement.scrollWidth
-              : -1,
-            containerOverflows: container
-              ? container.scrollWidth > container.clientWidth
-              : false,
-            tableScrolls: controlTable
-              ? controlTable.scrollWidth > controlTable.clientWidth
-              : false,
-          };
-        }
-        const rule = blocksHost ? blocksHost.querySelector("hr") : null;
-        const task = blocksHost ? blocksHost.querySelector("li.md-task") : null;
-        const plain = blocksHost
-          ? Array.from(blocksHost.querySelectorAll("li")).find((li) => !li.className)
-          : null;
-        const struck = blocksHost ? blocksHost.querySelector("del") : null;
+        const rule = blocksHost.querySelector("hr");
+        const task = blocksHost.querySelector("li.md-task");
+        const plain = Array.from(blocksHost.querySelectorAll("li")).find((li) => !li.className);
+        const struck = blocksHost.querySelector("del");
         const measurement = {
           container: { clientWidth: tableHost.clientWidth, scrollWidth: tableHost.scrollWidth },
           table: table
@@ -202,7 +175,6 @@ const fixturePage = (markdownScript: string, control: string, origin: string): s
             : [],
           documentScrollWidth: document.documentElement.scrollWidth,
           innerWidth: window.innerWidth,
-          controls,
           taskListStyle: task ? style(task, "list-style-type") : "NO TASK ITEM",
           plainListStyle: plain ? style(plain, "list-style-type") : "NO PLAIN ITEM",
           inputCount: document.querySelectorAll("input").length,
@@ -214,21 +186,15 @@ const fixturePage = (markdownScript: string, control: string, origin: string): s
            test does not need the deprecated escape/unescape pair to move it. */
         document.documentElement.dataset.blocksMeasurement = btoa(JSON.stringify(measurement));
       };
-      const frames = Array.from(document.querySelectorAll("[data-control]"));
-      if (frames.length === 0) publish();
-      else {
-        let pending = frames.length;
-        const ready = () => { if (--pending === 0) publish(); };
-        for (const frame of frames) {
-          if (frame.contentDocument && frame.contentDocument.readyState === "complete") ready();
-          else frame.addEventListener("load", ready, { once: true });
-        }
-      }
+      /* Every stylesheet is a blocking <link> in the head, so styles are applied by the time this
+         inline script runs. There is no frame to wait for. */
+      publish();
     </script>
   </body>
 </html>`;
 
-const measure = async (): Promise<Measurement> => {
+/** Loads the fixture once per variant: "" is the shipped stylesheet, the others revert one half. */
+const measureAll = async (): Promise<Record<string, Measurement>> => {
   const bundle = await build({
     absWorkingDir: siteRoot,
     bundle: true,
@@ -241,12 +207,11 @@ const measure = async (): Promise<Measurement> => {
   const markdownScript = bundle.outputFiles[0]?.text;
   assert.ok(markdownScript, "the message renderer must bundle for its browser fixture");
 
-  let origin = "";
   const server = createServer((request, response) => {
     const url = new URL(request.url ?? "/", "http://127.0.0.1");
     if (url.pathname === "/__fixture") {
       response.writeHead(200, { "content-type": contentTypes[".html"] });
-      response.end(fixturePage(markdownScript, url.searchParams.get("control") ?? "", origin));
+      response.end(fixturePage(markdownScript, url.searchParams.get("control") ?? ""));
       return;
     }
     const filePath = normalize(join(distRoot, url.pathname.replace(/^\/+/u, "")));
@@ -272,29 +237,37 @@ const measure = async (): Promise<Measurement> => {
   });
   const address = server.address();
   assert.ok(address && typeof address !== "string", "the block-layout server must bind a port");
-  origin = `http://127.0.0.1:${address.port}`;
+  const origin = `http://127.0.0.1:${address.port}`;
 
   try {
     const chrome = await findChrome();
-    const { stdout, stderr } = await run(chrome, [
-      "--headless=new",
-      "--disable-gpu",
-      "--no-sandbox",
-      "--single-process",
-      "--no-zygote",
-      "--run-all-compositor-stages-before-draw",
-      `--window-size=${VIEWPORT_WIDTH},${VIEWPORT_HEIGHT}`,
-      "--virtual-time-budget=8000",
-      "--dump-dom",
-      `${origin}/__fixture`,
-    ], { maxBuffer: 20 * 1024 * 1024, timeout: 30_000, killSignal: "SIGKILL" });
-    const encoded = stdout.match(/data-blocks-measurement="([^"]+)"/u)?.[1];
-    assert.ok(
-      encoded,
-      `Chrome returned no block measurement\nstderr: ${stderr.slice(-1_000)}\n` +
-        `DOM: ${stdout.slice(-2_000)}`,
-    );
-    return JSON.parse(Buffer.from(encoded, "base64").toString("utf8")) as Measurement;
+    const measured: Record<string, Measurement> = {};
+    /* Sequential, not parallel: the host runs many agents and three small Chrome loads in a row
+     * cost less than three at once, and nothing here depends on them overlapping. */
+    for (const variant of ["", ...Object.keys(REVERTED_CSS)]) {
+      const { stdout, stderr } = await run(chrome, [
+        "--headless=new",
+        "--disable-gpu",
+        "--no-sandbox",
+        "--single-process",
+        "--no-zygote",
+        "--run-all-compositor-stages-before-draw",
+        `--window-size=${VIEWPORT_WIDTH},${VIEWPORT_HEIGHT}`,
+        "--virtual-time-budget=8000",
+        "--dump-dom",
+        `${origin}/__fixture?control=${variant}`,
+      ], { maxBuffer: 20 * 1024 * 1024, timeout: 30_000, killSignal: "SIGKILL" });
+      const encoded = stdout.match(/data-blocks-measurement="([^"]+)"/u)?.[1];
+      assert.ok(
+        encoded,
+        `Chrome returned no block measurement for variant "${variant}"\n` +
+          `stderr: ${stderr.slice(-1_000)}\nDOM: ${stdout.slice(-2_000)}`,
+      );
+      measured[variant] = JSON.parse(
+        Buffer.from(encoded, "base64").toString("utf8"),
+      ) as Measurement;
+    }
+    return measured;
   } finally {
     await new Promise<void>((resolve, reject) => {
       server.close((error) => error ? reject(error) : resolve());
@@ -302,7 +275,20 @@ const measure = async (): Promise<Measurement> => {
   }
 };
 
-const measurementPromise = measure();
+const measuredPromise = measureAll();
+const measurementPromise = measuredPromise.then((measured) => {
+  const shipped = measured[""];
+  assert.ok(shipped, "the shipped-stylesheet variant must be measured");
+  return shipped;
+});
+
+/** One control variant, by the half of the fix it reverted. */
+const controlOf = async (variant: string): Promise<Measurement> => {
+  const measured = await measuredPromise;
+  const control = measured[variant];
+  assert.ok(control, `the "${variant}" control variant was not measured`);
+  return control;
+};
 
 test("a table wider than the phone scrolls inside itself and does not widen the page", async () => {
   const measurement = await measurementPromise;
@@ -330,32 +316,29 @@ test("a table wider than the phone scrolls inside itself and does not widen the 
 });
 
 test("CONTROL: with the scroll rule reverted the same table widens its document", async () => {
-  const measurement = await measurementPromise;
   /* Reached through the shipped stylesheet with ONE half overridden, so a green test above is
    * evidence about that half rather than about a table that happened to fit. */
-  const control = measurement.controls.table;
-  assert.ok(control, `no table control was measured: ${JSON.stringify(measurement)}`);
+  const control = await controlOf("table");
   assert.ok(
     control.documentScrollWidth > VIEWPORT_WIDTH,
-    `the control did not widen its document (${control.documentScrollWidth}px), so the passing ` +
-      "case above is not attributable to the scroll rule",
+    `the control did not widen its document (${JSON.stringify(control)}), so the passing case ` +
+      "above is not attributable to the scroll rule",
   );
-  assert.equal(control.containerOverflows, true);
-  assert.equal(control.tableScrolls, false);
+  assert.ok(control.container.scrollWidth > control.container.clientWidth);
+  assert.equal(control.table.scrollWidth, control.table.clientWidth);
 });
 
 test("CONTROL: with the cell wrap rule reverted the table squeezes instead of scrolling", async () => {
-  const measurement = await measurementPromise;
   /* The state before this lane. `overflow-wrap: anywhere` is inherited from the message body, a
    * cell can then shrink to almost nothing, and the table always fits: no overflow, no scroll,
    * and a column of SHAs three characters wide. The scroll rule alone cannot produce the passing
    * case above, which is what this control establishes. */
-  const control = measurement.controls.wrap;
-  assert.ok(control, `no wrap control was measured: ${JSON.stringify(measurement)}`);
+  const control = await controlOf("wrap");
   assert.equal(
-    control.tableScrolls,
-    false,
-    "with `anywhere` restored the table still scrolled, so the cell rule is not what makes it",
+    control.table.scrollWidth,
+    control.table.clientWidth,
+    `with \`anywhere\` restored the table still scrolled, so the cell rule is not what makes it: ` +
+      JSON.stringify(control),
   );
   assert.ok(control.documentScrollWidth <= VIEWPORT_WIDTH);
 });
