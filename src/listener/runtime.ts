@@ -53,7 +53,11 @@ import {
   type ListenerRouteDecision,
   type ListenerRouteMode,
 } from "./main-routing.js";
-import { LISTENER_PROMPT_TIMEOUT_MS } from "./types.js";
+import {
+  LISTENER_DELIVERY_MAX_LEASE_MS,
+  LISTENER_PROMPT_TIMEOUT_MS,
+} from "./types.js";
+export { LISTENER_DELIVERY_MAX_LEASE_MS };
 import type { ListenerDeliveryHoldReleaseReason } from "./types.js";
 import type {
   ListenerEffectRecord,
@@ -69,7 +73,6 @@ import type { ActivityPublishErrorCode } from "./activity.js";
 export const LISTENER_PAGE_LIMIT = 100;
 export const LISTENER_IDLE_POLL_MS = 2_000;
 /** Server-fixed maximum delivery lease (§ frozen runtime budgets). */
-export const LISTENER_DELIVERY_MAX_LEASE_MS = 900_000;
 export const LISTENER_DELIVERY_SAFETY_MARGIN_MS = 30_000;
 export const LISTENER_ACK_ONLY_MINIMUM_MS =
   DELIVERY_REQUEST_TIMEOUT_MS + LISTENER_DELIVERY_SAFETY_MARGIN_MS;
@@ -1461,10 +1464,26 @@ export async function runListenerRuntime(
           stop = { reason: "cancelled" };
           break;
         }
-        /* The seat is held from here. A lease recovered across a restart starts
-           its hold now: the original claim time is not in the journal, and a
-           bound that cannot be measured is not a bound. */
-        const holdStartedAtMs = now();
+        /* The hold clock starts when this delivery was CLAIMED, which the
+           journal records as claimCreatedAt and keeps through recordLease. A
+           lease recovered across a restart therefore keeps its original clock
+           rather than getting a fresh budget.
+
+           An earlier comment here, and the design note beside it, said the
+           original claim time was not in the journal. That was false, and a
+           review arm found it: reserveClaim writes claimCreatedAt and the
+           leased phase cannot parse without it. Reading it is what makes the
+           bound hold across a restart.
+
+           Slightly conservative on purpose: claimCreatedAt precedes the lease
+           grant by one claim round trip, so the measured hold is never shorter
+           than the real one. A recovered lease still gets one engine.process
+           before the bound can fire, because processAttempt is 0 again; that is
+           the anti-starvation rule below, not an unmeasured clock. */
+        const claimedAtMs = Date.parse(active.claimCreatedAt);
+        const holdStartedAtMs = Number.isFinite(claimedAtMs)
+          ? Math.min(claimedAtMs, now())
+          : now();
         const signal = authoritativeSignal(claimed);
         let terminal: ListenerEffectRecord | null = null;
         try {

@@ -1,18 +1,18 @@
 === listen start ===
 {
   "version": 1,
-  "instanceId": "22cc6957-8bc3-4e8c-be81-2acba5813078",
+  "instanceId": "47ec0aa0-a476-4d6e-84f0-44255f6725a9",
   "provider": "grok",
   "cswarmVersion": "0.1.52",
   "permissionMode": "allow",
-  "profileId": "18ecf458e4a86587894c4f03",
-  "workspaceId": "48ff02cd-3dfd-43bb-ba35-01f179220ad4",
-  "principalId": "2552bbb9-1dff-4263-a45a-695cab3d2187",
-  "pid": 70517,
+  "profileId": "519044a23cf2033768197d10",
+  "workspaceId": "5869b24f-cb60-4e66-a692-e93f833357f0",
+  "principalId": "ba231cb4-1792-474f-afb5-aa8355a4637c",
+  "pid": 26854,
   "state": "ready",
-  "startedAt": "2026-09-05T03:48:19.167Z",
-  "readyAt": "2026-09-05T03:48:19.408Z",
-  "updatedAt": "2026-09-05T03:48:19.410Z",
+  "startedAt": "2026-09-05T04:07:23.759Z",
+  "readyAt": "2026-09-05T04:07:24.068Z",
+  "updatedAt": "2026-09-05T04:07:24.070Z",
   "stoppedAt": null,
   "lastSignalId": null,
   "lastErrorCode": null,
@@ -27,7 +27,7 @@
   "lastWorkerStderrTail": null,
   "deliveryMode": "durable_claim",
   "pendingDeliveryCount": 2,
-  "pendingDeliveryCountAt": "2026-09-05T03:48:19.197Z",
+  "pendingDeliveryCountAt": "2026-09-05T04:07:23.789Z",
   "lastTerminalDeliveryFailureCount": null,
   "lastTerminalDeliveryFailureAt": null,
   "lastClaimAt": null,
@@ -54,10 +54,10 @@
     "claimHours": []
   },
   "connectionsOpened": 1,
-  "connectionReuseRatio": 3,
+  "connectionReuseRatio": 4,
   "activityPublishFailures": 1,
   "activityLastErrorCode": "activity_http_rejected",
-  "logPath": "/var/folders/bb/7n7qfbls651d80fs4r9wdyk40000gn/T/cswarm-hol-756ZZe/e3787fe009778ff815ac343f40f76be60fae7fce3d2c9159af1e7e1849a0fcf8/events.ndjson",
+  "logPath": "/var/folders/bb/7n7qfbls651d80fs4r9wdyk40000gn/T/cswarm-hol-rmellK/5e8de097ee9a2a49d8afde73282ef0a202471a3ba91d8cd50119f7601bf798bb/events.ndjson",
   "providerExecutableMeasured": false,
   "providerVersionMeasured": false,
   "providerBelowDemandedMinimum": false,
@@ -112,42 +112,42 @@
 // Each entry is TWO consecutive `cswarm listen status` invocations, the JSON fields then the human lines, so a delivery claimed between them can appear in one and not the other. The listener is real and detached; the service and the ACP provider are local fakes.
 [
   {
-    "atMs": 68,
+    "atMs": 73,
     "inHand": "ask-1",
-    "currentDeliveryElapsedMs": 48,
+    "currentDeliveryElapsedMs": 77,
     "pendingDeliveryCount": 2,
     "heldBack": [],
     "lastAck": "none",
     "lastAckOutcome": null,
     "human": [
       "Pending deliveries reported by the service: 2. The service reported that under 1m ago.",
-      "Working on delivery 4c0bc587-8f6c-4c54-b363-a3580a1121db, claimed under 1m ago."
+      "Working on delivery eea22c83-568c-46d5-890a-332de43d2e9c, claimed under 1m ago."
     ]
   },
   {
-    "atMs": 30423,
-    "inHand": "ask-2",
-    "currentDeliveryElapsedMs": 42,
-    "pendingDeliveryCount": 2,
+    "atMs": 30633,
+    "inHand": "none",
+    "currentDeliveryElapsedMs": null,
+    "pendingDeliveryCount": 1,
     "heldBack": [
       "ask-1 (hold_budget)"
     ],
-    "lastAck": "none",
-    "lastAckOutcome": null,
+    "lastAck": "ask-2",
+    "lastAckOutcome": "replied",
     "human": [
       "Pending deliveries reported by the service: 1. The service reported that under 1m ago.",
       "No delivery is being worked on right now.",
-      "Delivery 4c0bc587-8f6c-4c54-b363-a3580a1121db was handed back under 1m ago because it used the turn budget for one delivery. This listener has not answered it. After the lease ends the service either delivers it again or terminates it. If this repeats, a larger --turn-budget gives one delivery more of the seat, and the bound is read when the listener starts, so stop this listener and start it again to change it."
+      "Delivery eea22c83-568c-46d5-890a-332de43d2e9c was handed back under 1m ago because it used the turn budget for one delivery. This listener has not answered it. After the lease ends the service either delivers it again or terminates it. If this repeats, a larger --turn-budget gives one delivery more of the seat, up to the 15 minutes the service leases it for; the bound is read when the listener starts, so stop this listener and start it again to change it."
     ]
   }
 ]
 
 === hold releases recorded in the listener log ===
-{"ts":"2026-09-05T03:48:49.773Z","event":"listener_delivery_hold_released","signal_id":"4c0bc587-8f6c-4c54-b363-a3580a1121db","release_reason":"hold_budget","held_ms":30331}
+{"ts":"2026-09-05T04:07:54.569Z","event":"listener_delivery_hold_released","signal_id":"eea22c83-568c-46d5-890a-332de43d2e9c","release_reason":"hold_budget","held_ms":30500}
 
 === first ask id ===
-4c0bc587-8f6c-4c54-b363-a3580a1121db
+eea22c83-568c-46d5-890a-332de43d2e9c
 === second ask id ===
-a49ccc0a-2f96-42c5-8c74-8f8881eb5943
+6cf3bb6c-623d-4a6c-94d9-a13c478e0211
 === acked signal ids ===
-a49ccc0a-2f96-42c5-8c74-8f8881eb5943
+6cf3bb6c-623d-4a6c-94d9-a13c478e0211

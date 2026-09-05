@@ -320,10 +320,14 @@ export interface ListenerHeldBackDelivery {
 }
 
 /**
- * Bound on the stored set. A seat hands one delivery back at a time and a lease
- * runs 15 minutes, so this is far above any real run; it exists so a listener
- * that somehow releases without ever reclaiming cannot grow its own 0600 status
- * file without limit (the D-051 bounded-by-construction habit).
+ * Bound on the stored set, and reachable rather than theoretical: at the 30s
+ * minimum turn budget sixteen hand-backs take eight minutes, which fits inside
+ * one lease when a backlog is waiting. The rendered sentence counts what this
+ * listener still tracks, so it stays true at the cap; an earlier version
+ * described the cap as "far above any real run", which a review arm measured as
+ * false. The cap exists so a listener that releases without ever reclaiming
+ * cannot grow its own 0600 status file without limit (D-051, bounded by
+ * construction).
  */
 export const LISTENER_HELD_BACK_MAX = 16;
 

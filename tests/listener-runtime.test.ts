@@ -4708,3 +4708,107 @@ test("the redelivery claim reads the same in help as in status", () => {
   );
   assert.ok(!help.includes("the service redelivers the released one"), help);
 });
+
+test("a lease recovered across a restart keeps its original hold clock", async () => {
+  /* The journal records claimCreatedAt in reserveClaim and keeps it through
+   * recordLease, so the hold clock survives a restart. An earlier version
+   * started it at now(), on the written claim that the original time "is not in
+   * the journal" -- false, and a review arm found it. With a fresh clock a
+   * delivery that had already spent its budget got the whole budget again on
+   * every restart, which is how a seat bound stops being a bound.
+   *
+   * Anti-starvation still applies: the recovered lease gets ONE engine.process
+   * because processAttempt is 0 again. The bound bites on the attempt after it,
+   * with no further budget. */
+  const first = ask(HOLD_FIRST_ID, "2026-07-30T00:00:01.000Z");
+  const second = ask(HOLD_SECOND_ID, "2026-07-30T00:00:02.000Z");
+  const holdBudgetMs = 600_000;
+  // The claim happened 20 minutes before this process starts: the budget was
+  // already spent by the listener that died.
+  let clock = Date.parse("2026-07-30T00:20:00.000Z");
+  const active = leasedActive({
+    signalId: first.id,
+    signal: first,
+    leasedUntil: "2026-07-30T00:35:00.000Z",
+  });
+  const journal = new MemoryDeliveryJournal(active);
+  const controller = new AbortController();
+  const events: ListenerRuntimeEvent[] = [];
+  const model = new SeatHoggingModel(first.id, () => {
+    clock += 1_000;
+  });
+  let claims = 0;
+  const acked: string[] = [];
+  const stop = await runListenerRuntime({
+    target: cloudTarget("https://cloud.example.test", "anon"),
+    workspaceId: WORKSPACE_ID,
+    principalId: PRINCIPAL_ID,
+    listenerInstanceId: journal.record.listenerInstanceId,
+    deliveryJournal: journal,
+    deliveryHoldBudgetMs: holdBudgetMs,
+    deliveryClient: {
+      async claimAgentInbox() {
+        claims += 1;
+        return claims === 1
+          ? claimResult([{
+            signal: first,
+            leaseId: active.leaseId!,
+            leasedUntil: active.leasedUntil!,
+            senderOwnerRelation: "same_owner",
+          }], 2)
+          : claimResult([{
+            signal: second,
+            leaseId: "55555555-5555-4555-8555-555555555c02",
+            // Within the server maximum lease of the clock at this moment.
+            leasedUntil: "2026-07-30T00:34:00.000Z",
+            senderOwnerRelation: "same_owner",
+          }], 1);
+      },
+      async ackAgentDelivery(request) {
+        acked.push(request.signalId);
+        controller.abort();
+        return {
+          httpStatus: 200,
+          signalId: request.signalId,
+          outcome: request.outcome,
+        };
+      },
+    },
+    credentialSession: { async bearer() { return "token"; } },
+    store: new MemoryStore(),
+    model,
+    poster: {
+      async post() {
+        return { signalId: "66666666-6666-4666-8666-666666666c02" };
+      },
+    },
+    signal: controller.signal,
+    now: () => clock,
+    sleep: async () => undefined,
+    readPage: async () => durablePage([], 2),
+    onEvent: (event) => events.push(event),
+  });
+
+  assert.equal(
+    stop.reason,
+    "cancelled",
+    stop.reason === "fatal" ? `stopped fatally: ${stop.error.message}` : "",
+  );
+  const released = events.filter((event): event is Extract<
+    ListenerRuntimeEvent,
+    { type: "delivery_hold_released" }
+  > => event.type === "delivery_hold_released");
+  assert.equal(released.length, 1);
+  assert.equal(released[0]!.signalId, first.id);
+  assert.equal(released[0]!.reason, "hold_budget");
+  /* The measured hold spans the ORIGINAL claim, not this process's start: over
+     20 minutes against a 10 minute budget. A fresh clock would report about a
+     second here, and the release would not have happened at all. */
+  assert.ok(
+    released[0]!.heldMs >= 20 * 60_000,
+    `hold measured from this process only: ${released[0]!.heldMs}`,
+  );
+  // One attempt on the recovered lease, then the seat moves on.
+  assert.deepEqual(model.prompts, [first.id, second.id]);
+  assert.deepEqual(acked, [second.id]);
+});

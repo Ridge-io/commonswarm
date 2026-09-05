@@ -125,6 +125,12 @@ export async function resolveBudgetAndPrompt<T>(
 }
 
 /**
+ * Server-fixed maximum delivery lease. Lives here so the copy that names it and
+ * the runtime that enforces against it read the same number.
+ */
+export const LISTENER_DELIVERY_MAX_LEASE_MS = 900_000;
+
+/**
  * Why a delivery gave the worker seat back before it reached a terminal effect.
  * `hold_budget`: the per-delivery seat bound is spent. `lease_budget`: what is
  * left of the server lease no longer covers the next phase.
@@ -179,12 +185,15 @@ export const LISTENER_DELIVERY_HOLD_RELEASE_REMEDIES: Readonly<
   Record<ListenerDeliveryHoldReleaseReason, string>
 > = {
   hold_budget:
-    "a larger --turn-budget gives one delivery more of the seat, and the bound" +
-    " is read when the listener starts, so stop this listener and start it" +
-    " again to change it",
+    "a larger --turn-budget gives one delivery more of the seat, up to the " +
+    `${LISTENER_DELIVERY_MAX_LEASE_MS / 60_000} minutes the service leases it ` +
+    "for; the bound is read when the listener starts, so stop this listener " +
+    "and start it again to change it",
   lease_budget:
-    "nothing needs changing: the row comes back under a new lease with its full" +
-    " length, so the next attempt starts with the room this one ran out of",
+    "nothing needs raising: the row comes back under a new lease of full" +
+    " length, so the next attempt starts with the room this one ran out of." +
+    " If it keeps being handed back, the service stops retrying it in the end," +
+    " so look at the delivery rather than at the bound",
 };
 
 export type ListenerPermissionMode = "deny" | "allow";

@@ -4936,8 +4936,8 @@ export function renderListenerStatus(
          "For what the service did with it since: cswarm receipt <id>
           --workspace-id <ws>" -- not runnable as printed (receipt requires an
           agent credential) and refused even with one, because the receipt read
-          is author-only and this listener is the RECIPIENT. The remedy now
-          names a command the reader can actually run. */
+          is author-only and this listener is the RECIPIENT. The remedies now
+          name no command at all. */
     lines.push(
       `Delivery ${newestHeldBack.signalId} was handed back ${
         relativeAge(newestHeldBack.at, nowMs)

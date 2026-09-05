@@ -33,12 +33,34 @@ signal `until > statement_timestamp()`, while step 2 unleases only once
 a live lease is still leased, still unacked, and absent from the count. The count
 also includes rows that were never held back.
 
-## The hold clock restarts on a lease recovered across a restart
+## A recovered lease gets one more attempt, and one turn can outlive its lease
 
-`holdStartedAtMs` is taken when the lease is in hand. A lease recovered after a
-restart therefore gets a fresh budget: the delivery journal does not store the
-original claim time, and a bound that cannot be measured is not a bound. The
-server lease still caps the hold at 15 minutes.
+CORRECTED. This section previously said the hold clock restarts on a recovered
+lease because "the delivery journal does not store the original claim time, and
+a bound that cannot be measured is not a bound", and that "the server lease
+still caps the hold at 15 minutes". Both sentences were false, and a review arm
+found them. They are kept here because a reader may have met them.
+
+The journal DOES store the claim time: `reserveClaim` writes `claimCreatedAt`
+and the `leased` phase cannot parse without it. The runtime now measures the
+hold from that value, so a lease recovered across a restart keeps its original
+clock instead of getting a fresh budget.
+
+What remains, stated accurately:
+
+- A recovered lease still gets ONE `engine.process` before the bound can fire,
+  because `processAttempt` starts at 0 again. That is the anti-starvation rule:
+  every lease gets one attempt, so a budget shorter than one phase cannot
+  starve a delivery.
+- The lease does NOT cap an in-flight turn. `leaseSpent` refuses to START a
+  phase when what is left of the lease is under the phase minimum; it does not
+  interrupt a turn already running. The prompt timeout is `--turn-budget`, which
+  can be set as high as 60m against a 15m lease, so one turn can outlive its
+  lease. The honest bound on one delivery's hold is therefore the attempts
+  already started plus one turn budget, not the lease.
+- That is also why the `hold_budget` remedy names the lease as the ceiling worth
+  raising toward: past it, the turn outlives the lease the reply has to be
+  acknowledged under.
 
 ## The listener cannot know the age of the oldest waiting delivery
 
