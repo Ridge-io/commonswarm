@@ -2226,3 +2226,14 @@ order when it goes: migration `20260905000020` → `command` → `read` in one w
 → site. Bounds the lane recorded: revocation/expiry after enqueue leaves an unreachable pending
 row; an agent still wakes itself inside a group; a hydrated delivery can carry both `to` (a
 person at position 0) and `to_agent`. The local Supabase slot holds the branch's migrations.
+
+## Addendum 2026-09-05 22:0x UTC — CHAT APP THREADS LANDED (merge 6b9fe81), site deploy HELD
+
+`lane/chat-app-threads` 0e6ead8 (reviewed 43558f4; tip is evidence only) merged as `6b9fe81`;
+site 488/489 (1 skip) on the merge. NOT deployed: its To: row copy now says every agent in the
+set is notified, which is true only once `lane/wake-all-recipients` (migration
+`20260905000020`, `command`, `read`) is in production. Deploy order: migration → command → read
+→ client 0.1.56 → this site build. Nine review rounds; a substring copy sweep was withdrawn as a
+closure claim and kept as a bound over six named files (same ruling as the sign-in sweep). The
+last operator item (#6, threads in the app) is on `main`; the checkout is `main` plus the wake
+lane's worktree.
