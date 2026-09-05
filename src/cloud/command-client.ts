@@ -12,6 +12,10 @@ import {
   commandEndpoint,
   type CloudTarget,
 } from "./config.js";
+import {
+  CHANNEL_UNSUPPORTED_MESSAGE,
+  type ChannelRow,
+} from "./channels.js";
 
 const AGENT_TOKEN_RE = /^swm_agt_[A-Za-z0-9_-]{43}$/;
 export const INVITATION_TOKEN_RE = /^swm_inv_[A-Za-z0-9_-]{43}$/;
@@ -64,6 +68,8 @@ export interface CommandHttpResponse extends StoredResponse {
   /** Grant-resume outcome. Neither field is a credential, so both replay. */
   renewal_grant_id?: string;
   resumed_at?: string;
+  /** The channel a channel_create/rename/archive settled on. */
+  channel?: ChannelRow;
 }
 
 export interface CommandResult {
@@ -138,6 +144,119 @@ export interface CapabilityCommandResult {
   response: CommandHttpResponse;
 }
 
+/**
+ * Channel authority. A channel is the ADDRESS of a signal, not a scope on who
+ * may read it, so none of these commands grants or withdraws anything; they
+ * name a room, rename it, or close it to new messages.
+ *
+ * `channel_rename` and `channel_archive` take the channel's id rather than its
+ * slug, because the slug is the thing being changed and an id cannot go stale
+ * between reading the list and sending the command.
+ */
+export type ChannelCommand =
+  | { kind: "channel_create"; slug: string; purpose?: string }
+  | { kind: "channel_rename"; channel_id: string; slug: string }
+  | { kind: "channel_archive"; channel_id: string };
+
+export interface ChannelCommandRequest {
+  workspaceId: string;
+  command: ChannelCommand;
+  credential: string;
+  commandId?: string;
+}
+
+export interface ChannelCommandResult {
+  httpStatus: number;
+  response: CommandHttpResponse;
+  channel: ChannelRow;
+}
+
+/**
+ * A refused channel command.
+ *
+ * D-053: callers branch on `status` and on `code`, which is the server's own
+ * stable `error` string. Nothing branches on `message` — the message is
+ * rendered and never read, which is exactly what lets the edge improve its
+ * wording without changing what the CLI does.
+ */
+export class ChannelCommandError extends Error {
+  constructor(
+    readonly status: number,
+    readonly code: string,
+    message: string,
+  ) {
+    super(message);
+    this.name = "ChannelCommandError";
+  }
+}
+
+/**
+ * Turn a refused channel command into the sentence the person who typed it
+ * reads.
+ *
+ * The command edge answers every VALIDATION refusal with a `message` it
+ * generated from the constants its validator reads — the slug rule, the
+ * reserved names, the field list, the archived-channel reason. Rendering that
+ * verbatim is the whole point: it is the one copy of those rules, and a second
+ * copy here would be the drift this codebase keeps measuring.
+ *
+ * A refusal with NO message did not reach that validator. On a deployment that
+ * predates channels the envelope layer answers a bare `invalid_request` for a
+ * command kind it does not know, which is the reachable cause and the one the
+ * fallback names.
+ */
+export function channelCommandError(
+  status: number,
+  body: unknown,
+): ChannelCommandError {
+  const record = body && typeof body === "object" && !Array.isArray(body)
+    ? body as Record<string, unknown>
+    : {};
+  const code = typeof record.error === "string" ? record.error : "unknown";
+  const served = typeof record.message === "string" && record.message.length > 0
+    ? record.message.slice(0, 600)
+    : null;
+  if (served !== null) return new ChannelCommandError(status, code, served);
+  if (status === 426) {
+    const minimum = typeof record.min_client_version === "string"
+      ? record.min_client_version
+      : null;
+    return new ChannelCommandError(
+      status,
+      "upgrade_required",
+      `This copy of cswarm is older than the deployment accepts${
+        minimum === null ? "" : ` (minimum ${minimum})`
+      }. Update cswarm, then run the same command again. Nothing changed.`,
+    );
+  }
+  if (status === 403) {
+    return new ChannelCommandError(
+      status,
+      code === "unknown" ? "forbidden" : code,
+      "This credential may not do that in this workspace. Nothing changed.",
+    );
+  }
+  if (status === 401) {
+    return new ChannelCommandError(
+      status,
+      code === "unknown" ? "unauthenticated" : code,
+      "Your sign-in is no longer valid for this deployment. Run cswarm login, then run the same command again. Nothing changed.",
+    );
+  }
+  if (status === 400) {
+    return new ChannelCommandError(
+      status,
+      code === "unknown" ? "invalid_request" : code,
+      CHANNEL_UNSUPPORTED_MESSAGE,
+    );
+  }
+  return new ChannelCommandError(
+    status,
+    code,
+    `CommonSwarm could not tell whether the change was made (HTTP ${status}). Run cswarm channel ls to see the current channels before trying again.`,
+  );
+}
+
 /** Bounds the server's own TTL window locally, so a typo fails before a credential exists. */
 export const CAPABILITY_MIN_TTL_MS = 60_000;
 export const CAPABILITY_MAX_TTL_MS = 7 * 24 * 60 * 60 * 1000;
@@ -158,6 +277,22 @@ export interface PostSignalCommand {
   /** Ordered, immutable references to committed workspace file versions. */
   attachments?: Array<{ file_id: string; version_n: number }>;
   until_ms?: number;
+  /**
+   * The three chat fields, each INDEPENDENTLY optional. A body may carry any
+   * subset, including none, and every installed client carries none.
+   *
+   * They must never be sent as an explicit `undefined` or as a null placeholder
+   * the way `to_user_id` is: the command edge groups each of them by
+   * `Object.hasOwn` (`chatSignalKeys` in supabase/functions/_shared/channels.ts)
+   * and its `exactKeys` check refuses a key it was not expecting. `sendSignal`
+   * below therefore spreads each one only when the caller set it.
+   */
+  /** Slug of the channel to file the signal in. */
+  channel?: string;
+  /** Id of the undirected signal a thread reply is rooted on. */
+  thread_root_id?: string;
+  /** Send a thread reply to the thread's channel as well. Needs thread_root_id. */
+  broadcast_to_channel?: boolean;
 }
 
 /** Server-stamped same-owner vs cross-owner relation for host wake policy. */
@@ -183,6 +318,19 @@ export interface SignalRecord {
    * edges and human REST rows; clients normalize absence to "unknown".
    */
   sender_owner_relation?: SenderOwnerRelation;
+  /**
+   * Where the signal is filed. `null` means the server said it is in no
+   * channel. ABSENT means nobody asked: an edge that predates channels never
+   * returns it, and the human REST read names the column only when a channel
+   * filter is set. `parseSignalRecord` keeps that difference rather than
+   * flattening absence to null, because a null this client invented would be a
+   * false statement about a signal that IS in a channel.
+   */
+  channel_id?: string | null;
+  /** The signal this one replies to inside a thread, null when it is not a thread reply. Absent on the same terms as channel_id. */
+  thread_root_id?: string | null;
+  /** True when a thread reply was also sent to its channel. Absent on the same terms as channel_id. */
+  broadcast_to_channel?: boolean;
 }
 
 /**
@@ -990,6 +1138,88 @@ export class ThinCommandClient {
     return { httpStatus: response.status, response: body };
   }
 
+  /**
+   * Create, rename, or archive a channel.
+   *
+   * Deliberately not folded into `sendConnect`. That path throws a bare
+   * `CommandHttpError(403)` and, on any other refusal, reads only the `error`
+   * code — so every generated sentence the chat validator returns would be
+   * thrown away at the one moment the caller needs it. This method reads the
+   * body once and hands it to `channelCommandError`.
+   */
+  async sendChannel(
+    request: ChannelCommandRequest,
+  ): Promise<ChannelCommandResult> {
+    if (!request.workspaceId) {
+      throw new Error("workspaceId is required for a channel command");
+    }
+    const commandId = request.commandId ?? newCommandId();
+    const controller = new AbortController();
+    const timer = setTimeout(() => controller.abort(), 30_000);
+    let response: Response;
+    try {
+      response = await this.fetcher(commandEndpoint(this.target), {
+        method: "POST",
+        headers: {
+          authorization: `Bearer ${request.credential}`,
+          apikey: this.target.anonKey,
+          "content-type": "application/json",
+        },
+        body: JSON.stringify({
+          command_id: commandId,
+          client_version: CLIENT_PROTOCOL_VERSION,
+          workspace_id: request.workspaceId,
+          stream: { kind: "workspace" },
+          command: request.command,
+        }),
+        signal: controller.signal,
+      });
+    } catch (error) {
+      if ((error as Error).name === "AbortError") {
+        throw new CommandTransportError("channel request timed out");
+      }
+      throw new CommandTransportError(
+        "channel request failed before a response",
+      );
+    } finally {
+      clearTimeout(timer);
+    }
+    let raw: unknown = null;
+    try {
+      raw = await parsedJson(response);
+    } catch (error) {
+      if (response.ok || error instanceof CommandTransportError) throw error;
+    }
+    if (!response.ok) throw channelCommandError(response.status, raw);
+    const body = responseBody(raw);
+    if (body.min_client_version !== undefined) {
+      const order = compareVersion(
+        CLIENT_PROTOCOL_VERSION,
+        body.min_client_version,
+      );
+      if (order === null) {
+        throw new Error("server returned a malformed min_client_version");
+      }
+      if (order < 0) {
+        throw new Error(
+          `client upgrade required (minimum ${body.min_client_version})`,
+        );
+      }
+    }
+    const channel = (raw && typeof raw === "object" && !Array.isArray(raw)
+      ? (raw as Record<string, unknown>).channel
+      : null) as ChannelRow | null | undefined;
+    if (
+      channel === null || channel === undefined ||
+      typeof channel.channel_id !== "string" || typeof channel.slug !== "string"
+    ) {
+      throw new Error(
+        "the deployment accepted the change without saying which channel it applies to",
+      );
+    }
+    return { httpStatus: response.status, response: body, channel };
+  }
+
   async sendSignal(request: PostSignalRequest): Promise<PostSignalResult> {
     const commandId = request.commandId ?? newCommandId();
     // New clients always send both target fields and in_reply_to (null when absent).
@@ -1007,6 +1237,22 @@ export class ThinCommandClient {
       ...(request.command.until_ms === undefined
         ? {}
         : { until_ms: request.command.until_ms }),
+      /* One spread per chat key, never a shared group. The edge reads each with
+       * its own Object.hasOwn and refuses any key it did not expect, so sending
+       * `channel: undefined` here would still put the key on the wire through
+       * JSON.stringify's own omission rules only by accident — and sending a
+       * null placeholder, the way to_user_id is sent, would make every post
+       * demand a channel. This rebuild is also the reason the fields have to be
+       * listed here at all: it drops anything it does not name. */
+      ...(request.command.channel === undefined
+        ? {}
+        : { channel: request.command.channel }),
+      ...(request.command.thread_root_id === undefined
+        ? {}
+        : { thread_root_id: request.command.thread_root_id }),
+      ...(request.command.broadcast_to_channel === undefined
+        ? {}
+        : { broadcast_to_channel: request.command.broadcast_to_channel }),
     };
     const callerSignal = request.signal;
     if (callerSignal?.aborted) {

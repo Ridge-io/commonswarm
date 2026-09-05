@@ -91,6 +91,19 @@ export interface SignalQuery {
   kind?: SignalKind;
   /** Filter replies correlated to this signal id. */
   in_reply_to?: string;
+  /**
+   * Filter to one channel, for an AGENT read. The `read` edge takes the slug
+   * and resolves it against `swarm_read.channels` itself, so the agent path
+   * never needs the id. It travels in its own key on the request body, never
+   * folded into the group agent bodies always send.
+   */
+  channel?: string;
+  /**
+   * Filter to one channel, for a HUMAN read. PostgREST has no slug lookup on
+   * `swarm_read.signals`, so the caller resolves the slug against
+   * `swarm_read.channels` first and passes the id it found.
+   */
+  channelId?: string;
   since?: string;
   /**
    * Strict keyset lower bound: return rows after this (created_at, id).
@@ -247,6 +260,13 @@ function checkedNullableUuid(value: unknown, field: string): string | null {
   return value === null ? null : checkedUuid(value, field);
 }
 
+function checkedBoolean(value: unknown, field: string): boolean {
+  if (typeof value !== "boolean") {
+    throw new Error(`signal read returned a malformed ${field}`);
+  }
+  return value;
+}
+
 function checkedTimestamp(value: unknown, field: string): string {
   if (typeof value !== "string" || !Number.isFinite(Date.parse(value))) {
     throw new Error(`signal read returned a malformed ${field}`);
@@ -380,6 +400,32 @@ export function parseSignalRecord(
     until: checkedTimestamp(row.until, "until"),
     created_at: checkedTimestamp(row.created_at, "created_at"),
     sender_owner_relation: senderOwnerRelation,
+    /* ABSENT AND NULL ARE DIFFERENT HERE, and the difference is a claim.
+     *
+     * `null` means the server said this signal is in no channel. Absent means
+     * this reader never asked: the human REST path names the chat columns only
+     * when a channel filter is set, and an edge that predates channels never
+     * returns them. Normalizing absence to null, the way `to_agent` above does,
+     * would put `"channel_id": null` in `cswarm feed --json` for a signal that
+     * IS filed in a channel — a false statement, not a missing one. So an
+     * absent key stays absent, and a present one is checked. */
+    ...(row.channel_id === undefined
+      ? {}
+      : { channel_id: checkedNullableUuid(row.channel_id, "channel_id") }),
+    ...(row.thread_root_id === undefined
+      ? {}
+      : {
+        thread_root_id: checkedNullableUuid(
+          row.thread_root_id,
+          "thread_root_id",
+        ),
+      }),
+    ...(row.broadcast_to_channel === undefined ? {} : {
+      broadcast_to_channel: checkedBoolean(
+        row.broadcast_to_channel,
+        "broadcast_to_channel",
+      ),
+    }),
   };
 }
 
@@ -888,11 +934,26 @@ async function humanSignals(
   options: ReturnType<typeof normalizeReadOptions>,
 ): Promise<SignalRecord[]> {
   const url = new URL("/rest/v1/signals", target.url);
+  /* The chat columns are asked for ONLY when a channel filter was asked for.
+   * They exist on `swarm_read.signals` from migration 20260905000003 onward,
+   * and PostgREST answers 400 for a column a view does not have — so naming
+   * them unconditionally would break plain `cswarm feed` against a deployment
+   * that has not applied the chat migrations, in exchange for a field nobody
+   * asked to see. A caller who asks to filter by channel is asking for the
+   * feature, and a 400 there is the honest answer. */
   url.searchParams.set(
     "select",
-    "id,workspace_id,from,from_kind,to,to_agent,in_reply_to,about,kind,body,attachments,until,created_at",
+    [
+      "id,workspace_id,from,from_kind,to,to_agent,in_reply_to,about,kind,body,attachments,until,created_at",
+      ...(query.channelId === undefined
+        ? []
+        : ["channel_id", "thread_root_id", "broadcast_to_channel"]),
+    ].join(","),
   );
   url.searchParams.set("workspace_id", `eq.${query.workspaceId}`);
+  if (query.channelId !== undefined) {
+    url.searchParams.set("channel_id", `eq.${query.channelId}`);
+  }
   if (query.inbox) url.searchParams.set("to", `eq.${credential.userId}`);
   if (!query.includeStale) {
     url.searchParams.set("until", "gt.now");
@@ -981,6 +1042,11 @@ async function agentSignalPage(
           about: query.about ?? null,
           kind: query.kind ?? null,
           in_reply_to: query.in_reply_to ?? null,
+          /* Its OWN key, present only when asked for. The read edge groups it
+           * with `chatReadKeys` and refuses a key it did not expect, and every
+           * agent body already carries `in_reply_to`, so folding `channel` in
+           * beside it would 400 every agent read that omits a channel. */
+          ...(query.channel === undefined ? {} : { channel: query.channel }),
           since: query.since ?? null,
           ...(includeCursor
             ? {

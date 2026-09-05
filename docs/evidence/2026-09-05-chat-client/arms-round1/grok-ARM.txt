@@ -1,0 +1,65 @@
+I'll read REVIEW.md and DIFF.patch first, then follow REVIEW.md exactly.The first `diff --git` line is in. Next I’ll finish the patch and the unchanged wire files so I can attack each claim in order.The patch is still truncated. I’ll finish it and read the live edge files so I can compare the client wire to the real validators.Patch is complete. Next I’ll read the command rebuild, read-edge resources, and the error-classification paths.I have the main ordering bug. I’ll confirm line numbers in the new files and one more success-copy path before I write the verdict.diff --git a/docs/evidence/2026-09-05-chat-client/live-control-production.txt b/docs/evidence/2026-09-05-chat-client/live-control-production.txt
+
+## Findings
+
+**1. `channel archive` / `channel rename` pay for a credential before a name that cannot be a slug is refused.**
+
+`src/cli.ts:7456-7459` says the name is judged before the target and the credential, so a name that cannot be a channel name costs nothing. `src/cli.ts:7476-7489` does that for `create`.
+
+`src/cli.ts:7533-7536` only checks the *new* name before `fileContext`. The selector is resolved later.
+
+`src/cli.ts:7558-7560` (`archive`):
+
+```
+args.assertShape([...CHANNEL_FLAGS], 3);
+const context = await fileContext(args, [], 3);
+const channelId = await resolveChannelSelector(context, selector);
+```
+
+`src/cli.ts:7428-7430` is where a non-UUID selector finally hits `channelSlugProblem`.
+
+`fileContext` (`src/cli.ts:6865-6868`) always runs `commandWorkspaceAndCredential` with `validateHumanWorkspace: true`. For a human that is a workspace check on the network. For an agent it reads the token and opens `AgentCredentialSession` (renewal) before the slug rule runs.
+
+So `cswarm channel archive "Not A Slug"` with `--agent-token-file /nonexistent/nope.json` is told the credential is unreadable, not the slug rule. A signed-in person with a bad selector pays for workspace validation first. A mistyped UUID (fails `UUID_RE`, 36 chars, over `CHANNEL_SLUG_MAX`) is then told the slug rule, which is the wrong remedy for an id.
+
+Check 7 asked for this order in each subcommand. Archive does not have it. Rename has it only for the new name.
+
+**2. The spawn test that claims to gate finding 1 never reaches those paths.**
+
+`tests/p1-cli/chat-cli.test.ts:27-30` and `:561-568` claim every unusable name is refused before the credential. The cases are `channel create`, `channel rename mobile <bad-new-name>`, `note --channel`, `feed --channel`.
+
+There is no `channel archive <bad-name>` and no `channel rename <bad-selector> mobile`. Those probes would match `REACHED_CREDENTIAL` today. The suite can stay green while finding 1 is true.
+
+**3. `inbox --follow --channel` with a bad slug is told to fix the name.**
+
+`src/cli.ts:3766` runs `channelOption` (throws the slug rule) before `src/cli.ts:3777-3781` refuses the combination.
+
+`create` already treats this as the wrong order: an unknown flag beats a bad name, because fixing the name leaves a command that still fails (`src/cli.ts:7456-7458`). Same here: fixing `Not A Slug` still leaves `--follow --channel`, which is refused. The follow test (`tests/p1-cli/chat-cli.test.ts`) uses the good slug `mobile`, so it never sees this.
+
+**4. `--broadcast-to-channel` success copy is taken from the flag, not from the row.**
+
+`src/cli.ts:3323-3326` prints "sent to the thread's channel as well" whenever the flag is set.
+
+The edge files a thread reply in the root's channel (`command/index.ts` `placementChannelId = threadResolution.rootChannelId`). An unfiled root keeps `channel_id` null and still stores `broadcast_to_channel: true`. The CLI does not read `result.response.signal.channel_id`. The sentence is false for that body.
+
+## Refutations that did not stick
+
+**1. `exactKeys` / `sendSignal` rebuild.** A plain `cswarm note "hi"` rebuilds to `kind`, `signal_kind`, `body`, `to_user_id`, `to_agent_principal_id`, `in_reply_to`, `about`. Chat keys are spread only when `!== undefined`. `JSON.stringify` therefore does not emit `channel`, `thread_root_id`, or `broadcast_to_channel`, and does not emit them as `null`. That key set matches `installedPost()` in `tests/p1-server/chat-signals.test.ts`. `broadcast_to_channel: false` would go on the wire (`false !== undefined`); the CLI never sets it.
+
+**2. Typed enumerations.** Slug rule, reserved list, purpose bound, and `cswarm channel takes …` are built from the constants / `CHANNEL_SUBCOMMANDS`. The drift test compares the named shared constants and `channelSlugProblem` over generated `slugCases`, and it says it does not prove the two modules export the same set of names. That bound is true. Usage/help still types the four subcommand lines; the spawn test only checks advertised ⊆ refusal, so a fifth dispatch entry with no help line would still pass. I did not treat that as a blocker because the *refusal* list is generated.
+
+**3. D-053.** `unknownChannelReadMessage` branches on HTTP 404 and envelope `error === "channel_not_found"`, not on prose. `channelCommandError` renders `message` when present and otherwise branches on status. `parseServerErrorEnvelope` drops `message` on purpose, so the agent 404 cannot replay the edge's generated channel list. The client sentence is still a next step (create, or drop `--channel`). Not a classifier bug.
+
+**4. Thread replies.** `--thread` sends `thread_root_id` and `in_reply_to: null`, which is what `chatSignalShapeProblem` requires (both set is refused). Reply does not take `--channel` or `--to`. `--broadcast-to-channel` without `--thread` is refused locally. A 403 addressee hint is suppressed under `--thread`; thread-root failures are 404/409/400 with a server `message`, which `sendSignal` already renders. The suppressed hint is not the right explanation for those.
+
+**5. Read paths.** `humanSignals` adds the three chat columns only when `query.channelId` is set. `agentSignalPage` puts `channel` in its own key. A read with no channel is unchanged. `normalizedSignalQuery` spreads `...query`, so `channel` / `channelId` pass through. Nothing in `src/` reads `record.channel_id` and treats `undefined` as a value. (`SignalRecord`'s comment at `src/cloud/command-client.ts:321-325` says readers normalize absence to null; `parseSignalRecord` does the opposite. Wrong comment, not a runtime break.)
+
+**6. `channel ls` for an agent.** `parseBody` in `supabase/functions/read/index.ts` answers `renewal_grants`, `members`, `files`, `delivery_receipts`, `signals`. There is no channels resource. The claim is true. Not listing those names in `CHANNEL_LIST_NEEDS_HUMAN_MESSAGE` is the right call (that list lives in Deno; a typed copy would drift). The sentence still says what to do: `cswarm login`, or name the channel by slug.
+
+**7. `create` order** is shape, slug, purpose bound, then `fileContext`. That matches the edge (`keysOk` then slug then purpose). Purpose is measured after `trim`, which matches the stored-length rule even if the edge also runs `sanitizeSignalText`.
+
+**8. Other tests.** The `--not-a-real-flag` miss is documented; the `--kind` retry reaches `assertShape`. The unknown-subcommand assertion uses the refusal line, not the usage block. M13 emptying `RESERVED_CHANNEL_SLUGS` makes that spawn loop vacuous; they recorded it. The "chat keys" test compares the edge list to a typed array rather than to keys `sendSignal` emits; the byte-identical and per-option tests still catch an unconditional extra key.
+
+**9. Em-dashes.** New user-facing channel strings have none. Feed lines with `—` come from existing `renderSignals`.
+
+VERDICT: FAIL

@@ -1,0 +1,8 @@
+M13a channel create stops checking the name it was given
+  build=0
+  failing: ['✖ a name that cannot be a channel name is refused with the rule, before the credential (76.051ms)', '✖ a reserved channel name is refused by name, and a usable one gets past the rule (62.477542ms)']
+
+M13b channel create refuses every name
+  build=0
+  failing: ['✖ a reserved channel name is refused by name, and a usable one gets past the rule (123.492167ms)']
+

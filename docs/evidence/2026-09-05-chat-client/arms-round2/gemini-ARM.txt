@@ -1,0 +1,16 @@
+diff --git a/docs/evidence/2026-09-05-chat-client/arms-round1/FINDINGS-DISPOSITION.md b/docs/evidence/2026-09-05-chat-client/arms-round1/FINDINGS-DISPOSITION.md
+
+## Findings
+
+1. `tests/p1-cli/chat-cli.test.ts:2829-2833`
+The parse of the subcommand list refusal sentence is a typed assumption about English punctuation. The test parses the string by splitting on `/,\s*/` and replacing `^or\s+`. This relies on the strict presence of an Oxford comma. If the sentence generator legitimately dropped the Oxford comma for a list (e.g. `create, ls, rename or archive`), the regex would fail to remove "or " from the final element (as it wouldn't be split at the start of the string), causing the test to falsely fail. Conversely, it could erroneously pass on a malformed sentence with an extra comma like `create, ls, or, archive`, as the `or` would be silently filtered out by `.filter((word) => word.length > 0)`.
+
+## Refutations
+
+- **channelSelectorKind / channelSelectorProblem:** Refuted. `channelSelectorKind` accurately categorizes the selector before `fileContext` is called in both `runChannelRename` and `runChannelArchive`. A purely local refusal (such as an invalid slug) fails upfront without a network call or credential read, and `channelSelectorProblem` prints both rules correctly.
+- **threadReplyMessage states:** Refuted. The three states (filed, unfiled, absent) are correctly handled. If a thread root is unfiled (where `channel_id` is null but the flag was true), it accurately states that the thread is in no channel and does not promise a broadcast. The `--json` branch also uses the exact same `replyMessage` string.
+- **runSignalRead ordering:** Refuted. `channelOption(args)` is run safely *after* early returns. Since `runInboxNotifyCommand(args)` returns early, `inbox --notify` doesn't reach the channel lookup and is not broken. The combination of `--follow` and `--channel` correctly refuses before `channelOption`. Valid uses like `inbox --wait --channel` parse correctly.
+- **Reserved-name subject guard:** Refuted. The guard `assert.ok(client.RESERVED_CHANNEL_SLUGS.length > 0)` purposefully throws if the list is emptied. This is exactly the right behavior: if the reserved list is removed by a legitimate product change, the test *should* fail to force the developer to remove a test that would otherwise vacuously pass with no subject.
+- **Rejected round 1 findings:** Refuted. Both rejections in `FINDINGS-DISPOSITION.md` are correct. The em-dash is on an unchanged context line (already in `main`), and the `channel_archived` dead code finding is factually incorrect as no such catch block exists in `runChannelArchive`.
+
+VERDICT: FAIL

@@ -1,0 +1,195 @@
+### 1. cswarm channel create lead-scratch-2 --purpose ...
+Channel lead-scratch-2 created. Everyone in this workspace can read it and post to it; a channel is where a message is filed, not who may see it.
+Post to it with cswarm note "<text>" --channel lead-scratch-2
+Read it with cswarm feed --channel lead-scratch-2
+Its id, which rename and archive take: 28c07365-845f-4223-90a8-07b229dc01da
+EXIT=0
+### 2. cswarm note --channel lead-scratch-2 --json
+{
+  "status": "accepted",
+  "message": "Signal shared. It is immutable, tenancy-scoped, and will quietly expire at its horizon.",
+  "signal": {
+    "id": "3ea8b675-99f2-459d-848f-5b59852537b4",
+    "workspace_id": "292be0f9-ca5d-43ed-a6f7-31354fe7fe56",
+    "from": "8d10fe67-a672-4690-a3d3-8d8fb180665a",
+    "from_kind": "agent",
+    "to": null,
+    "to_agent": null,
+    "in_reply_to": null,
+    "about": null,
+    "kind": "note",
+    "body": "chat-client lane live control: this note is filed in lead-scratch-2",
+    "attachments": [],
+    "until": "2026-10-05T06:20:46.706Z",
+    "created_at": "2026-09-05T06:20:46.706Z",
+    "channel_id": "28c07365-845f-4223-90a8-07b229dc01da",
+    "thread_root_id": null,
+    "broadcast_to_channel": false
+  },
+  "retried": false,
+  "attempts": 1
+}
+EXIT=0
+
+### 3. CONTROL: the same note with NO --channel is unfiled
+    "id": "5afed03a-60c7-4291-a143-78448900512b",
+    "channel_id": null,
+    "thread_root_id": null,
+
+### 4. cswarm feed --channel lead-scratch-2
+Feed, filed in lead-scratch-2:
+Recent broadcast signals:
+- [note] agent CSwarmDevLead (8d10fe67-a672-4690-a3d3-8d8fb180665a) — under 1m ago — expires in 30d: "chat-client lane live control: this note is filed in lead-scratch-2"
+This feed shows broadcast signals only. It omits directed messages, including messages you sent. Read messages directed to you with: cswarm inbox
+EXIT=0
+
+### 5. CONTROL: an unknown channel is refused with the channels that exist
+cswarm: signal read failed (HTTP 404): channel_not_found
+EXIT=0
+### 5b. an unknown channel, in words
+cswarm: There is no channel named lead-scratch-absent in this workspace. Nothing was read. Create it with cswarm channel create lead-scratch-absent, or drop --channel to read everything.
+EXIT=1
+
+### 6. cswarm reply --thread --broadcast-to-channel on the channel note
+{
+  "status": "accepted",
+  "message": "Reply shared in the thread and sent to the thread's channel as well. It is immutable and readable by everyone who can read the thread.",
+  "signal": {
+    "id": "af95b35c-0f58-4a74-889e-53be72258f13",
+    "workspace_id": "292be0f9-ca5d-43ed-a6f7-31354fe7fe56",
+    "from": "8d10fe67-a672-4690-a3d3-8d8fb180665a",
+    "from_kind": "agent",
+    "to": null,
+    "to_agent": null,
+    "in_reply_to": null,
+    "about": null,
+    "kind": "note",
+    "body": "chat-client lane live control: thread reply, also sent to the channel",
+    "attachments": [],
+    "until": "2026-10-05T06:20:46.706Z",
+    "created_at": "2026-09-05T06:22:02.654Z",
+    "channel_id": "28c07365-845f-4223-90a8-07b229dc01da",
+    "thread_root_id": "3ea8b675-99f2-459d-848f-5b59852537b4",
+    "broadcast_to_channel": true
+  },
+  "retried": false,
+  "attempts": 1
+}
+EXIT=0
+
+### 7. CONTROL: --thread on a DIRECTED signal is refused with the server's reason
+(second identical thread reply, expected 200)
+
+### 8. cswarm channel ls with an agent credential
+cswarm: Listing channels needs a signed-in person. This deployment's read service answers signals, members, files, delivery receipts and renewal grants for an agent credential, and channels are not one of them. Run cswarm channel ls from a session signed in with cswarm login, or name the channel you want by slug.
+EXIT=1
+### 9. rename BY SLUG with an agent credential
+cswarm: Turning a channel name into a channel id needs a signed-in person, because this deployment's read service does not list channels for an agent credential. Pass the channel id instead. cswarm channel create prints it, and cswarm channel ls shows it from a session signed in with cswarm login.
+EXIT=1
+
+### 10. rename BY ID
+Channel renamed to lead-scratch-2x. Every message already filed in it is unchanged and its id has not moved.
+Post to it with cswarm note "<text>" --channel lead-scratch-2x
+Its id: 28c07365-845f-4223-90a8-07b229dc01da
+EXIT=0
+
+### 11. rename back
+Channel renamed to lead-scratch-2. Every message already filed in it is unchanged and its id has not moved.
+Post to it with cswarm note "<text>" --channel lead-scratch-2
+Its id: 28c07365-845f-4223-90a8-07b229dc01da
+EXIT=0
+
+### 12. CONTROL: creating the same name again is refused with the server's sentence
+cswarm: This workspace already has a channel named lead-scratch-2. Post to it instead.
+EXIT=1
+
+### 13. archive BY SLUG with an agent credential
+cswarm: Turning a channel name into a channel id needs a signed-in person, because this deployment's read service does not list channels for an agent credential. Pass the channel id instead. cswarm channel create prints it, and cswarm channel ls shows it from a session signed in with cswarm login.
+EXIT=1
+
+### 14. archive BY ID
+Channel lead-scratch-2 is archived. It keeps its messages and its links, and it takes no new ones. Archiving it again changes nothing.
+See it with cswarm channel ls --include-archived
+Read what is in it with cswarm feed --channel lead-scratch-2
+EXIT=0
+
+### 15. posting into the archived channel
+cswarm: lead-scratch-2 is archived, so it takes no new messages. Its history still reads and its links still resolve.
+EXIT=1
+
+### 16. CONTROL: the history is still readable
+Feed, filed in lead-scratch-2:
+Recent broadcast signals:
+- [note] agent CSwarmDevLead (8d10fe67-a672-4690-a3d3-8d8fb180665a) — under 1m ago — expires in 30d: "x"
+- [note] agent CSwarmDevLead (8d10fe67-a672-4690-a3d3-8d8fb180665a) — under 1m ago — expires in 30d: "chat-client lane live control: thread reply, also sent to the channel"
+- [note] agent CSwarmDevLead (8d10fe67-a672-4690-a3d3-8d8fb180665a) — 2m ago — expires in 30d: "chat-client lane live control: this note is filed in lead-scratch-2"
+This feed shows broadcast signals only. It omits directed messages, including messages you sent. Read messages directed to you with: cswarm inbox
+EXIT=0
+### 17. RE-RUN after the absent-vs-null fix: agent feed --channel --json still carries channel_id
+      "id": "09f1a862-f2d0-4b3b-a1a1-72a439ca37fd",
+      "channel_id": "28c07365-845f-4223-90a8-07b229dc01da",
+      "thread_root_id": "3ea8b675-99f2-459d-848f-5b59852537b4",
+      "broadcast_to_channel": true
+EXIT=0
+
+### 18. a plain agent feed still reads, and its rows carry the columns because the read edge always returns them
+1
+
+### 19. archive is still refused by slug, and the archived channel still refuses a post
+cswarm: lead-scratch-2 is archived, so it takes no new messages. Its history still reads and its links still resolve.
+EXIT=1
+
+### 20. The route cswarm channel ls uses exists in production, with a negative control
+Unauthenticated PostgREST probes against https://api.commonswarm.com, accept-profile swarm_read:
+  swarm_read.channels           -> http=401 {"code":"42501", "message":"permission denied for schema swarm_read"}
+  swarm_read.signals (control)  -> http=401 {"code":"42501", "message":"permission denied for schema swarm_read"}
+  swarm_read.not_a_relation_zzz -> http=404 {"code":"PGRST205", "message":"Could not find the table ..."}
+A relation that exists but is forbidden answers 401; one that does not exist answers 404. channels
+answers the same way as signals, which the CLI already reads, so the relation is exposed.
+NOT ESTABLISHED: that an authenticated member's token returns rows from it. There is no human
+session on this host (cswarm workspaces: "could not refresh your session"), so cswarm channel ls
+and the human feed --channel path were not run against production.
+
+### 21. FINAL re-run on the reviewed build: create a second scratch, post, read, archive
+Channel lead-scratch-2-final created. Everyone in this workspace can read it and post to it; a channel is where a message is filed, not who may see it.
+Post to it with cswarm note "<text>" --channel lead-scratch-2-final
+Read it with cswarm feed --channel lead-scratch-2-final
+Its id, which rename and archive take: 9f9cbbff-42da-44b9-b4bf-34bbc8e32e0f
+    "id": "749761b6-3143-4f91-9bb1-8ce061dbf8a2",
+    "channel_id": "9f9cbbff-42da-44b9-b4bf-34bbc8e32e0f",
+Feed, filed in lead-scratch-2-final:
+Recent broadcast signals:
+- [note] agent CSwarmDevLead (8d10fe67-a672-4690-a3d3-8d8fb180665a) — under 1m ago — expires in 30d: "chat-client lane: final live control"
+This feed shows broadcast signals only. It omits directed messages, including messages you sent. Read messages directed to you with: cswarm inbox
+cswarm: Listing channels needs a signed-in person: this deployment's read service has no channel list for an agent credential. Run cswarm channel ls from a session signed in with cswarm login, or name the channel you want by name wherever a command takes one.
+channel ls EXIT=1
+Channel lead-scratch-2-final is archived. It keeps its messages and its links, and it takes no new ones. Archiving it again changes nothing.
+See it with cswarm channel ls --include-archived
+Read what is in it with cswarm feed --channel lead-scratch-2-final
+archive EXIT=0
+
+### 22. ROUND 2 live control: the unfiled-root case a review arm found
+-- an UNFILED root, then a thread reply with --broadcast-to-channel
+root id: 9bb0967c-b1b4-44e5-b60a-c58fddf7a85e
+Reply shared in the thread. It is immutable and readable by everyone who can read the thread. Its thread is in no channel, so --broadcast-to-channel had nothing to send it to.
+Recent broadcast signals:
+
+-- CONTROL: the same reply on a root that IS in a channel
+Its id, which rename and archive take: 0267122d-2139-4dca-a085-8b941807979c
+Reply shared in the thread and sent to the thread's channel as well. It is immutable and readable by everyone who can read the thread.
+Recent broadcast signals:
+
+### 23. a selector that is neither a name nor an id, and a mistyped id
+cswarm: That is neither a channel name nor a channel id. A channel name uses lowercase letters, digits and hyphens, starts and ends with a letter or a digit, and is 1 to 32 characters. channel_id must be a UUID.
+cswarm: That is neither a channel name nor a channel id. A channel name uses lowercase letters, digits and hyphens, starts and ends with a letter or a digit, and is 1 to 32 characters. channel_id must be a UUID.
+
+-- tidy: archive the round 2 scratch channel
+Channel lead-scratch-2-round2 is archived. It keeps its messages and its links, and it takes no new ones. Archiving it again changes nothing.
+
+### 24. ROUND 3 live control: a reserved selector names the rule it broke
+cswarm: all-signals is reserved. Reserved names: all-signals.
+cswarm: all-signals is reserved. Reserved names: all-signals.
+-- CONTROL: create still says the same thing about the same name
+cswarm: all-signals is reserved. Reserved names: all-signals.
+-- CONTROL: a selector that is the wrong SHAPE still gets both rules
+cswarm: That is neither a channel name nor a channel id. A channel name uses lowercase letters, digits and hyphens, starts and ends with a letter or a digit, and is 1 to 32 characters. channel_id must be a UUID.

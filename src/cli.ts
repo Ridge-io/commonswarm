@@ -31,12 +31,27 @@ import {
   ThinCommandClient,
   type CommandResult,
   type ConnectCommandResult,
+  type ChannelCommand,
   type PostSignalCommand,
   type PostSignalResult,
   type SignalKind,
   type SignalRecord,
   type StreamRoute,
 } from "./cloud/command-client.js";
+import {
+  CHANNEL_LIST_NEEDS_HUMAN_MESSAGE,
+  ChannelListError,
+  channelSelectorProblem,
+  CHANNEL_PURPOSE_MAX,
+  CHANNEL_SELECTOR_NEEDS_ID_MESSAGE,
+  channelSlugProblem,
+  findChannelBySlug,
+  listChannelsAsHuman,
+  normalizeChannelSlug,
+  renderChannelList,
+  unknownChannelMessage,
+  type ChannelRow,
+} from "./cloud/channels.js";
 import {
   CLIENT_PROTOCOL_VERSION,
   cloudTarget,
@@ -198,6 +213,8 @@ import {
   type SignalCredential,
   type SignalDirectory,
   type ResolvedSignalRecipient,
+  followErrorEnvelope,
+  followHttpDetails,
 } from "./cloud/signals.js";
 import {
   SIGNAL_ATTACHMENT_MAX,
@@ -304,9 +321,11 @@ const KNOWN_FLAGS = new Set([
   "about", "agent-token-file", "agent-token-stdin", "all-devices", "allow-unattended", "anon-key", "attach", "branch", "capability-id",
   "claude-executable", "codex-executable", "confirm", "confirm-standing", "cooldown", "cwd", "defer-over", "device-id", "effort", "email",
   "epoch", "evidence", "follow", "force", "force-file-store", "foreground", "grok-executable", "head-sha",
-  "help", "if-version", "include-stale", "include-tombstoned", "invitation-id", "invitation-token-stdin", "json", "kind", "limit",
+  "broadcast-to-channel", "channel",
+  "help", "if-version", "include-archived", "include-stale", "include-tombstoned", "invitation-id", "invitation-token-stdin", "json", "kind", "limit",
   "link-stdin", "local", "model", "name", "ndjson", "no-browser", "notify", "opencode-executable", "out",
-  "permissions", "principal-id", "provider", "renewal-grant-id", "repo", "reveal-anon-key", "route", "run-id", "since", "site", "slug", "state-dir",
+  "permissions", "principal-id", "provider", "purpose", "renewal-grant-id", "repo", "reveal-anon-key", "route", "run-id", "since", "site", "slug", "state-dir",
+  "thread",
   "renewal-horizon-days", "standing", "task-id", "to", "token-id", "ttl-ms", "turn-budget", "uid", "until", "url", "user", "version", "wait", "workspace-id", "write",
 ]);
 
@@ -314,12 +333,14 @@ const BOOLEAN_FLAGS = new Set([
   "agent-token-stdin",
   "all-devices",
   "allow-unattended",
+  "broadcast-to-channel",
   "confirm-standing",
   "force-file-store",
   "follow",
   "force",
   "foreground",
   "help",
+  "include-archived",
   "include-stale",
   "include-tombstoned",
   "invitation-token-stdin",
@@ -332,6 +353,7 @@ const BOOLEAN_FLAGS = new Set([
   "reveal-anon-key",
   "repo",
   "standing",
+  "thread",
   "user",
   "write",
 ]);
@@ -507,15 +529,19 @@ Usage:
   cswarm whoami ${requiredAgentCredential} [--url <url> --anon-key <key>] [--workspace-id <uuid>] [--json]
   cswarm resume --agent-token-file <path> [--url <url> --anon-key <key>] --workspace-id <uuid> [--json]
   cswarm members [--url <url> --anon-key <key>] [--workspace-id <uuid>] ${agentCredential} [--json]
-  cswarm working-on "<what>" [--url <url> --anon-key <key>] [--workspace-id <uuid>] ${agentCredential} [--about <ref>] [--until <dur>] [--json]
-  cswarm note "<text>" [--url <url> --anon-key <key>] [--workspace-id <uuid>] ${agentCredential} [--to <member|agent>] [--about <ref>] [--attach <path> ...] [--until <dur>] [--json]  # text: 1..8000 characters
-  cswarm ask "<text>" [--url <url> --anon-key <key>] [--workspace-id <uuid>] ${agentCredential} [--to <member|agent>] [--about <ref>] [--attach <path> ...] [--until <dur>] [--wait <seconds>] [--json]  # text: 1..8000 characters
-  cswarm reply <signal-id> "<text>" [--url <url> --anon-key <key>] [--workspace-id <uuid>] ${agentCredential} [--attach <path> ...] [--until <dur>] [--json]
+  cswarm working-on "<what>" [--url <url> --anon-key <key>] [--workspace-id <uuid>] ${agentCredential} [--about <ref>] [--channel <name>] [--until <dur>] [--json]
+  cswarm note "<text>" [--url <url> --anon-key <key>] [--workspace-id <uuid>] ${agentCredential} [--to <member|agent>] [--about <ref>] [--channel <name>] [--attach <path> ...] [--until <dur>] [--json]  # text: 1..8000 characters
+  cswarm ask "<text>" [--url <url> --anon-key <key>] [--workspace-id <uuid>] ${agentCredential} [--to <member|agent>] [--about <ref>] [--channel <name>] [--attach <path> ...] [--until <dur>] [--wait <seconds>] [--json]  # text: 1..8000 characters
+  cswarm reply <signal-id> "<text>" [--url <url> --anon-key <key>] [--workspace-id <uuid>] ${agentCredential} [--thread [--broadcast-to-channel]] [--attach <path> ...] [--until <dur>] [--json]
   cswarm receipt <signal-id> ${requiredAgentCredential} [--url <url> --anon-key <key>] --workspace-id <uuid> [--json]
-  cswarm feed [--url <url> --anon-key <key>] [--workspace-id <uuid>] ${agentCredential} [--about <ref>] [--kind <kind>] [--since <timestamp>] [--limit <n>] [--include-stale] [--json]
-  cswarm inbox [--url <url> --anon-key <key>] [--workspace-id <uuid>] ${agentCredential} [--kind <kind>] [--about <ref>] [--since <timestamp>] [--limit <n>] [--include-stale] [--wait <seconds>] [--json]
+  cswarm feed [--url <url> --anon-key <key>] [--workspace-id <uuid>] ${agentCredential} [--about <ref>] [--kind <kind>] [--channel <name>] [--since <timestamp>] [--limit <n>] [--include-stale] [--json]
+  cswarm inbox [--url <url> --anon-key <key>] [--workspace-id <uuid>] ${agentCredential} [--kind <kind>] [--about <ref>] [--channel <name>] [--since <timestamp>] [--limit <n>] [--include-stale] [--wait <seconds>] [--json]
   cswarm inbox --notify ${requiredAgentCredential} [--url <url> --anon-key <key>] --workspace-id <uuid> [--json]
   cswarm inbox --follow --ndjson [--url <url> --anon-key <key>] [--workspace-id <uuid>] ${agentCredential} [--kind <kind>] [--about <ref>] [--since <timestamp>] [--limit <n>] [--include-stale]
+  cswarm channel create <name> [--purpose <text>] [--url <url> --anon-key <key>] [--workspace-id <uuid>] ${agentCredential} [--json]  # purpose: at most ${CHANNEL_PURPOSE_MAX} characters
+  cswarm channel ls [--include-archived] [--url <url> --anon-key <key>] [--workspace-id <uuid>] [--json]
+  cswarm channel rename <name|channel-id> <new-name> [--url <url> --anon-key <key>] [--workspace-id <uuid>] ${agentCredential} [--json]
+  cswarm channel archive <name|channel-id> [--url <url> --anon-key <key>] [--workspace-id <uuid>] ${agentCredential} [--json]
   cswarm file put <local-path> [--name <name>] [--url <url> --anon-key <key>] [--workspace-id <uuid>] ${agentCredential} [--json]
   cswarm file ls [--include-tombstoned] [--url <url> --anon-key <key>] [--workspace-id <uuid>] ${agentCredential} [--json]
   cswarm file get <name|file-id> [--version <n>] [--out <local-path>] [--force] [--url <url> --anon-key <key>] [--workspace-id <uuid>] ${agentCredential} [--json]
@@ -572,6 +598,11 @@ Credential selection for command/dogfood:
                                           signal command/read only         -- either form
                             receipt       reads only          -- either form
                             inbox --notify persists a per-agent cursor -- needs principal_id
+                            channel create, channel rename, channel archive
+                                          command only, nothing persisted     -- either form
+                            channel ls    reads swarm_read.channels over REST -- signed-in
+                                          person only; the read service has no channels
+                                          resource for an agent credential
                             file put, file ls, file get, file rm, file restore,
                             brain ls, brain get, brain put
                                           read and command, nothing persisted -- either form
@@ -596,6 +627,14 @@ Credential selection for command/dogfood:
 
 Found a bug or missing feature in cswarm itself? cswarm feedback sends it to the
 deployment's operators — agents are encouraged to report friction they hit.
+
+A channel is where a message is FILED, not who may read it. Everyone in the
+workspace reads every channel, and --channel changes nothing about who sees a
+signal. Archiving a channel keeps its history and its permalinks and refuses new
+messages. cswarm reply --thread answers in the open, in the thread of the signal
+you name, so it takes no recipient; add --broadcast-to-channel to send that reply
+to the thread's channel as well. Plain cswarm reply is unchanged and still
+answers the original author privately.
 
 Signals (intention sharing) accept the same credential selection. Agent mode
 never opens a browser or infers a human's saved workspace. Durations use a whole
@@ -2489,6 +2528,42 @@ function signalKind(value: string): SignalKind {
   return value as SignalKind;
 }
 
+/**
+ * `--channel`, checked here with the SAME sentence the command edge would have
+ * returned, so a typo costs no round trip and a caller is never told a rule the
+ * server does not apply. `src/cloud/channels.ts` explains why the rule is a
+ * copy and what keeps the two byte-identical.
+ */
+function channelOption(args: Arguments): string | undefined {
+  const value = args.optional("channel");
+  if (value === undefined) return undefined;
+  const problem = channelSlugProblem(value);
+  if (problem !== null) throw new Error(problem);
+  return normalizeChannelSlug(value);
+}
+
+/**
+ * A read refused because the named channel is not in this workspace, said in
+ * words rather than as a code.
+ *
+ * The AGENT read path sends the slug and the `read` edge resolves it, so this
+ * is the one refusal the CLI cannot pre-empt with a local lookup — an agent
+ * credential has no route to the channel list. It classifies on the typed HTTP
+ * status and on the server's own stable error CODE, never on its prose (D-053);
+ * the code is a slug the envelope parser already validates, and the sentence is
+ * ours. Returns null for anything else, so the original error is rethrown
+ * unchanged.
+ */
+function unknownChannelReadMessage(
+  error: unknown,
+  slug: string,
+): string | null {
+  const details = followHttpDetails(error);
+  if (details === null || details.status !== 404) return null;
+  if (followErrorEnvelope(error).error !== "channel_not_found") return null;
+  return `There is no channel named ${slug} in this workspace. Nothing was read. Create it with cswarm channel create ${slug}, or drop --channel to read everything.`;
+}
+
 function signalDuration(value: string | undefined): number | undefined {
   if (value === undefined) return undefined;
   const match = /^([1-9]\d*)(m|h|d)$/.exec(value);
@@ -2920,11 +2995,16 @@ async function runPostSignal(
     ...CREDENTIAL_FLAGS,
     ...(allowTo ? ["to"] : []),
     "about",
+    "channel",
     "until",
     ...(allowWait ? ["wait"] : []),
     ...(allowTo ? ["attach"] : []),
     "json",
   ], 2);
+  /* Checked before the target, the credential, or any upload: a name that
+   * cannot be a channel name costs nothing to refuse here, and the sentence is
+   * the one the server would have sent. */
+  const channel = channelOption(args);
   const preparedAttachments = allowTo
     ? prepareSignalAttachments(args.all("attach"))
     : [];
@@ -2979,6 +3059,7 @@ async function runPostSignal(
     ...(untilMs === undefined
       ? {}
       : { until_ms: untilMs }),
+    ...(channel === undefined ? {} : { channel }),
   };
   let result: PostSignalResult;
   try {
@@ -3156,15 +3237,60 @@ export function replyRefusalHint(error: unknown): string | null {
     "credential may be revoked or expired, or it may not be a member of this workspace.";
 }
 
+/**
+ * What a reply actually did, read from the row the server returned.
+ *
+ * A review arm found this sentence taken from the FLAG: `--broadcast-to-channel`
+ * printed "sent to the thread's channel as well" whether or not there was a
+ * channel to send it to. A thread reply is filed in its ROOT's channel
+ * (`command/index.ts`: the placement channel is the root's), and a root that is
+ * unfiled leaves `channel_id` null while `broadcast_to_channel` is still stored
+ * as true. So the flag says what was asked and only the row says what happened.
+ *
+ * Three states, not two. `channel_id` ABSENT means this response predates
+ * channels and nothing is known, so nothing is claimed either way.
+ *
+ * Exported because it is a claim a person reads.
+ */
+export function threadReplyMessage(
+  signal: Pick<SignalRecord, "channel_id">,
+  options: { inThread: boolean; broadcastToChannel: boolean },
+): string {
+  if (!options.inThread) {
+    return "Reply shared. It is immutable and addressed to the original author.";
+  }
+  const inThread =
+    "Reply shared in the thread. It is immutable and readable by everyone who can read the thread.";
+  if (!options.broadcastToChannel) return inThread;
+  if (signal.channel_id === undefined) {
+    return `${inThread} This deployment did not say which channel the thread is in, so whether it also reached a channel is unknown.`;
+  }
+  return signal.channel_id === null
+    ? `${inThread} Its thread is in no channel, so --broadcast-to-channel had nothing to send it to.`
+    : "Reply shared in the thread and sent to the thread's channel as well. It is immutable and readable by everyone who can read the thread.";
+}
+
 async function runReply(args: Arguments): Promise<void> {
   args.assertShape([
     ...TARGET_FLAGS,
     "workspace-id",
     ...CREDENTIAL_FLAGS,
     "attach",
+    "broadcast-to-channel",
+    "thread",
     "until",
     "json",
   ], 3);
+  const inThread = args.has("thread");
+  const broadcastToChannel = args.has("broadcast-to-channel");
+  if (broadcastToChannel && !inThread) {
+    /* The edge refuses this pairing too, with its own generated sentence. It is
+     * refused here as well because nothing has been sent yet and the reader can
+     * fix it in place. */
+    throw new UsageError(
+      "--broadcast-to-channel sends a thread reply to its channel as well, so it needs --thread",
+    );
+  }
   const signalId = args.positionals[1];
   if (signalId === undefined || !UUID_RE.test(signalId)) {
     throw new Error("reply requires the signal UUID being answered");
@@ -3184,17 +3310,29 @@ async function runReply(args: Arguments): Promise<void> {
     credential,
     preparedAttachments,
   );
-  // Audience is derived server-side from the referenced signal; client sends null targets.
+  /* Two different replies, one verb.
+   *
+   * Without --thread this is unchanged: `in_reply_to` means "answer the author
+   * privately", the server re-addresses the row from the signal being answered,
+   * and the client sends null targets.
+   *
+   * With --thread it is a message in the open, rooted on the signal named. The
+   * two keys are mutually exclusive on the wire — the edge refuses a body that
+   * carries both, because the audience would be ambiguous at the exact point
+   * addressing is decided — so `in_reply_to` goes to null here. A thread reply
+   * also carries no recipient, which the null targets already satisfy. */
   const command: PostSignalCommand = {
     kind: "post_signal",
     signal_kind: "note",
     body: signalText(body, "body"),
     to_user_id: null,
     to_agent_principal_id: null,
-    in_reply_to: signalId.toLowerCase(),
+    in_reply_to: inThread ? null : signalId.toLowerCase(),
     about: null,
     ...(attachments.length === 0 ? {} : { attachments }),
     ...(untilMs === undefined ? {} : { until_ms: untilMs }),
+    ...(inThread ? { thread_root_id: signalId.toLowerCase() } : {}),
+    ...(broadcastToChannel ? { broadcast_to_channel: true } : {}),
   };
   let result;
   try {
@@ -3207,16 +3345,25 @@ async function runReply(args: Arguments): Promise<void> {
      * that ask to someone else, so you are not its addressee. Classify on the typed HTTP
      * status, never the message (D-053); the bare "HTTP 403 forbidden" gave the reader
      * nowhere to go (Fastio feedback 2026-08-19). */
-    const hint = replyRefusalHint(error);
+    /* The 403 hint below is about `in_reply_to` addressing: a private reply is
+     * accepted only from the addressee of the signal it answers. A thread reply
+     * is not addressed to anyone, so that explanation would name a cause that
+     * does not apply to it. */
+    const hint = inThread ? null : replyRefusalHint(error);
     if (hint !== null) throw new Error(hint);
     throw error;
   }
   const signal = result.response.signal!;
+  const replyMessage = threadReplyMessage(signal, {
+    inThread,
+    broadcastToChannel,
+  });
   if (args.has("json")) {
     printJson({
       status: result.response.status,
-      message:
-        "Reply shared. It is immutable, tenancy-scoped, and will quietly expire at its horizon.",
+      message: inThread
+        ? replyMessage
+        : "Reply shared. It is immutable, tenancy-scoped, and will quietly expire at its horizon.",
       signal,
       retried: result.retried,
       attempts: result.attempts,
@@ -3231,7 +3378,7 @@ async function runReply(args: Arguments): Promise<void> {
     ),
   );
   process.stdout.write(
-    `Reply shared. It is immutable and addressed to the original author.\n${
+    `${replyMessage}\n${
       renderSignals([signal], {
         inbox: false,
         includeStale: true,
@@ -3638,6 +3785,7 @@ async function runSignalRead(
       "workspace-id",
       ...CREDENTIAL_FLAGS,
       "about",
+      "channel",
       "kind",
       ...(inbox ? ["wait", "follow", "ndjson", "notify"] : []),
       "since",
@@ -3655,6 +3803,12 @@ async function runSignalRead(
     if (!args.has("ndjson")) {
       throw new Error("inbox --follow requires --ndjson");
     }
+    if (args.has("channel")) {
+      /* Refused rather than ignored. The follow loop pages a backlog with its
+       * own query and cursor, and accepting a filter it does not apply would
+       * hand a caller a stream that silently contains everything. */
+      throw new Error("inbox --follow cannot be combined with --channel");
+    }
     if (args.optional("wait") !== undefined) {
       throw new Error("inbox --follow cannot be combined with --wait");
     }
@@ -3668,6 +3822,13 @@ async function runSignalRead(
     throw new Error("inbox --ndjson requires --follow");
   }
 
+  /* AFTER the combination checks, BEFORE the target and the credential. An arm
+   * found this the other way round: `inbox --follow --channel "Not A Slug"` was
+   * told to fix the name, and fixing it left a combination that is still
+   * refused. Same rule as `channel create`, where an unrecognised flag beats an
+   * unusable name. */
+  const channelSlug = channelOption(args);
+
   const waitSeconds = inbox && args.optional("wait") !== undefined
     ? parseWaitSeconds(args.required("wait"))
     : undefined;
@@ -3676,9 +3837,29 @@ async function runSignalRead(
     validateHumanWorkspace: true,
   });
   const credential = signalCredentialOf(selected);
+  /* Two paths, two shapes. The `read` edge resolves a slug itself, so an agent
+   * sends the slug. PostgREST has no slug lookup on swarm_read.signals, so a
+   * signed-in person resolves it against swarm_read.channels first and filters
+   * on the id. Resolving locally is also what lets an unknown name be answered
+   * with the names that DO exist, generated from the rows just read. */
+  let channelId: string | undefined;
+  if (channelSlug !== undefined && selected.kind === "human") {
+    const rows = await listChannelsAsHuman(
+      cloud,
+      selected.human!.accessToken,
+      selected.selectedWorkspace,
+    );
+    const match = findChannelBySlug(rows, channelSlug);
+    if (match === null) throw new Error(unknownChannelMessage(channelSlug, rows));
+    channelId = match.channel_id;
+  }
   const queryBase = {
     workspaceId: selected.selectedWorkspace,
     inbox,
+    ...(channelSlug === undefined || selected.kind !== "agent"
+      ? {}
+      : { channel: channelSlug }),
+    ...(channelId === undefined ? {} : { channelId }),
     ...(args.optional("about") === undefined
       ? {}
       : { about: signalText(args.required("about"), "about") }),
@@ -3697,18 +3878,26 @@ async function runSignalRead(
   let rows;
   let timedOut = false;
   let waited = false;
-  if (waitSeconds === undefined) {
-    rows = await readSignals(cloud, credential, queryBase);
-  } else {
-    waited = true;
-    const deadlineMs = waitDeadlineMs(waitSeconds);
-    const waitResult = await pollForSignals({
-      deadlineMs,
-      read: () =>
-        readSignals(cloud, credential, queryBase, { deadlineMs }),
-    });
-    rows = waitResult.signals;
-    timedOut = waitResult.timedOut;
+  try {
+    if (waitSeconds === undefined) {
+      rows = await readSignals(cloud, credential, queryBase);
+    } else {
+      waited = true;
+      const deadlineMs = waitDeadlineMs(waitSeconds);
+      const waitResult = await pollForSignals({
+        deadlineMs,
+        read: () =>
+          readSignals(cloud, credential, queryBase, { deadlineMs }),
+      });
+      rows = waitResult.signals;
+      timedOut = waitResult.timedOut;
+    }
+  } catch (error) {
+    const named = channelSlug === undefined
+      ? null
+      : unknownChannelReadMessage(error, channelSlug);
+    if (named !== null) throw new Error(named);
+    throw error;
   }
 
   if (args.has("json")) {
@@ -3742,6 +3931,13 @@ async function runSignalRead(
       }: Nothing arrived before the wait ended.\n`,
     );
     return;
+  }
+  if (channelSlug !== undefined) {
+    /* Say what was narrowed. Without this an empty channel and an empty
+     * workspace print the same thing. */
+    process.stdout.write(
+      `${inbox ? "Inbox" : "Feed"}, filed in ${channelSlug}:\n`,
+    );
   }
   process.stdout.write(`${renderSignals(rows, {
     inbox,
@@ -7231,6 +7427,252 @@ async function runFeedback(args: Arguments): Promise<void> {
   );
 }
 
+/**
+ * Channels, as the CLI works them.
+ *
+ * `create` takes the name because that is what a person has. `rename` and
+ * `archive` take the channel's ID on the wire, so this resolves a name to an id
+ * first — and says plainly when it cannot, rather than guessing.
+ */
+async function channelRows(context: FileCliContext): Promise<ChannelRow[]> {
+  if (context.selected.kind === "agent") {
+    throw new Error(CHANNEL_LIST_NEEDS_HUMAN_MESSAGE);
+  }
+  const read = async (): Promise<ChannelRow[]> =>
+    await listChannelsAsHuman(
+      context.cloud,
+      context.selected.human!.accessToken,
+      context.selected.selectedWorkspace,
+    );
+  try {
+    return await read();
+  } catch (error) {
+    /* One repeat, and only when no response arrived. The read is idempotent and
+     * the commonest failure on this path is a dropped connection, which is what
+     * `fileRows` repeats for as well. A refusal is never repeated: it would
+     * arrive at the same refusal. */
+    if (error instanceof ChannelListError && error.noResponse) return await read();
+    throw error;
+  }
+}
+
+/**
+ * A selector is a channel id when it parses as one; anything else is a name.
+ *
+ * Classifying it is PURE and runs before the credential, so a selector that is
+ * neither costs nothing. A review arm found the previous version resolving it
+ * after `fileContext`, which reads the credential and validates the workspace:
+ * `cswarm channel archive "Not A Slug"` was told its credential was unreadable
+ * rather than that its selector cannot be a channel. It also found that a
+ * mistyped id — 36 characters, so over the slug bound — was told the slug rule
+ * alone, which is the wrong remedy for someone who meant an id. Both rules are
+ * named now, and neither is typed.
+ */
+function channelSelectorKind(selector: string): "id" | "name" {
+  if (UUID_RE.test(selector)) return "id";
+  const problem = channelSelectorProblem(selector);
+  if (problem !== null) throw new Error(problem);
+  return "name";
+}
+
+/** Turn an already-classified selector into a channel id. */
+async function resolveChannelSelector(
+  context: FileCliContext,
+  selector: string,
+  kind: "id" | "name",
+): Promise<string> {
+  if (kind === "id") return selector.toLowerCase();
+  if (context.selected.kind === "agent") {
+    throw new Error(CHANNEL_SELECTOR_NEEDS_ID_MESSAGE);
+  }
+  const rows = await channelRows(context);
+  const match = findChannelBySlug(rows, selector);
+  if (match === null) throw new Error(unknownChannelMessage(selector, rows));
+  return match.channel_id;
+}
+
+async function sendChannelCommand(
+  context: FileCliContext,
+  command: ChannelCommand,
+): Promise<ChannelRow> {
+  const client = new ThinCommandClient(context.cloud);
+  const result = await client.sendChannel({
+    workspaceId: context.selected.selectedWorkspace,
+    command,
+    credential: context.selected.bearer,
+  });
+  return result.channel;
+}
+
+/**
+ * Shape, then content, then the network.
+ *
+ * `assertShape` runs before the name is judged, so a caller who typed both an
+ * unknown flag and an unusable name is told about the flag rather than sent to
+ * fix the name in a command that would still be rejected. The name is then
+ * judged before the target and the credential are resolved, so a name that
+ * cannot be a channel name costs nothing. The command edge orders its own
+ * refusals the same way (field list first, slug rule second, in
+ * `channel_rename`).
+ */
+const CHANNEL_FLAGS = [
+  ...TARGET_FLAGS,
+  "workspace-id",
+  ...CREDENTIAL_FLAGS,
+  "json",
+] as const;
+
+async function runChannelCreate(args: Arguments): Promise<void> {
+  const name = args.positionals[2];
+  if (name === undefined) {
+    throw new UsageError("cswarm channel create needs a channel name");
+  }
+  args.assertShape([...CHANNEL_FLAGS, "purpose"], 3);
+  const problem = channelSlugProblem(name);
+  if (problem !== null) throw new Error(problem);
+  const purposeInput = args.optional("purpose");
+  /* The bound is measured on what the caller typed. The server trims before it
+   * measures and stores the trimmed string, so a value that is only over the
+   * bound because of surrounding blanks is not refused here either. */
+  const purpose = purposeInput === undefined ? undefined : purposeInput.trim();
+  if (purpose !== undefined && purpose.length > CHANNEL_PURPOSE_MAX) {
+    throw new Error(
+      `A channel purpose is at most ${CHANNEL_PURPOSE_MAX} characters.`,
+    );
+  }
+  const context = await fileContext(args, ["purpose"], 3);
+  const channel = await sendChannelCommand(context, {
+    kind: "channel_create",
+    slug: normalizeChannelSlug(name),
+    ...(purpose === undefined || purpose.length === 0 ? {} : { purpose }),
+  });
+  if (args.has("json")) {
+    printJson({ workspace_id: channel.workspace_id, channel });
+    return;
+  }
+  process.stdout.write(
+    `Channel ${channel.slug} created. Everyone in this workspace can read it and post to it; a channel is where a message is filed, not who may see it.\n` +
+      `Post to it with cswarm note "<text>" --channel ${channel.slug}\n` +
+      `Read it with cswarm feed --channel ${channel.slug}\n` +
+      `Its id, which rename and archive take: ${channel.channel_id}\n`,
+  );
+}
+
+async function runChannelLs(args: Arguments): Promise<void> {
+  args.assertShape([...CHANNEL_FLAGS, "include-archived"], 2);
+  const context = await fileContext(args, ["include-archived"], 2);
+  const rows = await channelRows(context);
+  const includeArchived = args.has("include-archived");
+  if (args.has("json")) {
+    printJson({
+      workspace_id: context.selected.selectedWorkspace,
+      channels: includeArchived
+        ? rows
+        : rows.filter((row) => row.archived_at === null),
+    });
+    return;
+  }
+  process.stdout.write(renderChannelList(rows, { includeArchived }));
+}
+
+async function runChannelRename(args: Arguments): Promise<void> {
+  const selector = args.positionals[2];
+  const nextName = args.positionals[3];
+  if (selector === undefined || nextName === undefined) {
+    throw new UsageError(
+      "cswarm channel rename needs the channel and its new name",
+    );
+  }
+  args.assertShape([...CHANNEL_FLAGS], 4);
+  const selectorKind = channelSelectorKind(selector);
+  const problem = channelSlugProblem(nextName);
+  if (problem !== null) throw new Error(problem);
+  const context = await fileContext(args, [], 4);
+  const channelId = await resolveChannelSelector(context, selector, selectorKind);
+  const channel = await sendChannelCommand(context, {
+    kind: "channel_rename",
+    channel_id: channelId,
+    slug: normalizeChannelSlug(nextName),
+  });
+  if (args.has("json")) {
+    printJson({ workspace_id: channel.workspace_id, channel });
+    return;
+  }
+  process.stdout.write(
+    `Channel renamed to ${channel.slug}. Every message already filed in it is unchanged and its id has not moved.\n` +
+      `Post to it with cswarm note "<text>" --channel ${channel.slug}\n` +
+      `Its id: ${channel.channel_id}\n`,
+  );
+}
+
+async function runChannelArchive(args: Arguments): Promise<void> {
+  const selector = args.positionals[2];
+  if (selector === undefined) {
+    throw new UsageError("cswarm channel archive needs the channel");
+  }
+  args.assertShape([...CHANNEL_FLAGS], 3);
+  const selectorKind = channelSelectorKind(selector);
+  const context = await fileContext(args, [], 3);
+  const channelId = await resolveChannelSelector(context, selector, selectorKind);
+  const channel = await sendChannelCommand(context, {
+    kind: "channel_archive",
+    channel_id: channelId,
+  });
+  if (args.has("json")) {
+    printJson({ workspace_id: channel.workspace_id, channel });
+    return;
+  }
+  process.stdout.write(
+    `Channel ${channel.slug} is archived. It keeps its messages and its links, and it takes no new ones. Archiving it again changes nothing.\n` +
+      `See it with cswarm channel ls --include-archived\n` +
+      `Read what is in it with cswarm feed --channel ${channel.slug}\n`,
+  );
+}
+
+/**
+ * The subcommands, once. Dispatch reads this table and so does the sentence a
+ * caller sees when they name something else, so a fifth subcommand cannot be
+ * added to one and left out of the other. `runFile` and `runBrain` still type
+ * their lists; this one does not, and they are the next ones to fix.
+ */
+const CHANNEL_SUBCOMMANDS: Record<
+  string,
+  (args: Arguments) => Promise<void>
+> = {
+  create: runChannelCreate,
+  ls: runChannelLs,
+  rename: runChannelRename,
+  archive: runChannelArchive,
+};
+
+/**
+ * The subcommand names, for the gate that compares dispatch with help.
+ *
+ * Exported so the test reads the SET rather than parsing the refusal sentence
+ * for it. A review arm pointed out that parsing that sentence is a typed
+ * assumption about English punctuation: it would fail on a legitimate rewording
+ * and it is not the thing under test.
+ */
+export const CHANNEL_SUBCOMMAND_NAMES: readonly string[] = Object.keys(
+  CHANNEL_SUBCOMMANDS,
+);
+
+async function runChannel(args: Arguments): Promise<void> {
+  const action = args.positionals[1];
+  const chosen = action === undefined
+    ? undefined
+    : CHANNEL_SUBCOMMANDS[action];
+  if (chosen === undefined) {
+    const names = Object.keys(CHANNEL_SUBCOMMANDS);
+    throw new UsageError(
+      `cswarm channel takes ${names.slice(0, -1).join(", ")}, or ${
+        names[names.length - 1]
+      }`,
+    );
+  }
+  return await chosen(args);
+}
+
 async function runFile(args: Arguments): Promise<void> {
   const action = args.positionals[1];
   if (action === "put") return await runFilePut(args);
@@ -7525,6 +7967,10 @@ async function main(): Promise<void> {
   }
   if (verb === "feedback") {
     await runFeedback(args);
+    return;
+  }
+  if (verb === "channel") {
+    await runChannel(args);
     return;
   }
   if (verb === "file") {
