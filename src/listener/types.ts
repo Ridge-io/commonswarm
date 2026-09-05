@@ -156,6 +156,27 @@ export const LISTENER_DELIVERY_HOLD_RELEASE_CLAUSES: Readonly<
   lease_budget: "what was left of its lease could not cover the next step",
 };
 
+/**
+ * What actually helps, per reason. A Record for the same reason as the clauses:
+ * one shared remedy was measured wrong for half the vocabulary.
+ *
+ * `--turn-budget` is the lever in both directions, but it points OPPOSITE ways.
+ * Raising it gives one delivery more seat time, which is what a `hold_budget`
+ * release wants. A `lease_budget` release is the other end: the server lease is
+ * a fixed 15 minutes and is not an operator flag, and the phase minimum the
+ * check projects against is built from fixed transport constants, not from the
+ * turn budget, so RAISING the budget only lets one turn eat more of the lease
+ * and makes the next check fail sooner.
+ */
+export const LISTENER_DELIVERY_HOLD_RELEASE_REMEDIES: Readonly<
+  Record<ListenerDeliveryHoldReleaseReason, string>
+> = {
+  hold_budget: "a larger --turn-budget gives one delivery more of the seat",
+  lease_budget:
+    "the lease length is fixed by the service, so a smaller --turn-budget is" +
+    " what leaves enough of it for the steps after the turn",
+};
+
 export type ListenerPermissionMode = "deny" | "allow";
 
 export type ListenerPromptMode = "worker";

@@ -278,6 +278,7 @@ import {
   emptyListenerReadHealth,
   summarizeListenerReadHealth,
   LISTENER_DELIVERY_HOLD_RELEASE_CLAUSES,
+  LISTENER_DELIVERY_HOLD_RELEASE_REMEDIES,
   type ListenerReadHealthSummary,
   type ListenerCanaryAttemptCallback,
   type ListenerPermissionMode,
@@ -488,7 +489,10 @@ const TASK_FLAGS = [
  */
 class UsageError extends Error {}
 
-function usage(): string {
+/** Exported so a claim made in help can be swept alongside the same claim in
+ * status output; a correction that reaches one surface and not the other is the
+ * failure this repo keeps measuring. */
+export function usage(): string {
   const agentCredential = "[--agent-token-file <path> | --agent-token-stdin]";
   const requiredAgentCredential = "(--agent-token-file <path> | --agent-token-stdin)";
   return `cswarm ${CLI_BUILD_VERSION} (protocol ${CLIENT_PROTOCOL_VERSION})
@@ -611,7 +615,8 @@ TTL); a turn that lands just before a rotation can be clamped to the ~5m
 renewal lead, and if it times out there, durable delivery retries it on the
 fresh credential. The same budget also bounds how long ONE delivery may hold the
 worker seat across its retries: when it is spent the listener hands the seat
-back and claims the next delivery, and the service redelivers the released one.
+back and claims the next delivery. After the lease ends the service either
+delivers the released one again or terminates it.
 
 listen start --route worker|main|split chooses where directed messages go. worker
 is the unchanged default. main queues every ask or note for the interactive session.
@@ -4909,7 +4914,21 @@ export function renderListenerStatus(
     const others = heldBack.length - 1;
     /* Past tense about this listener, plus a statement of mechanism that names
        both outcomes, so no clause asserts the row's current server state.
-       Retired final clauses, both refuted by review arms:
+       The remedy comes from the same reason-keyed Record as the clause, because
+       the two reasons need OPPOSITE advice, and it names no command: the line
+       renders only while the listener is ready or stopping, and `listen start`
+       refuses in exactly those states, so any start command printed here would
+       be refused by the process that printed it.
+       Retired final clauses, all refuted by review arms:
+         "If this repeats, raise the bound: cswarm listen start --turn-budget
+          <duration>" -- unrunnable as printed (start needs a credential, a
+          workspace and a provider, and <duration> is a placeholder), refused in
+          the states where this line renders, and the wrong direction for a
+          lease_budget release.
+         "N other deliveries were handed back earlier and have not come back to
+          this listener" -- a claim about every hand-back, which the capped set
+          stops being able to make at LISTENER_HELD_BACK_MAX; the count now
+          describes what this listener still tracks, which is true at the cap.
          "It was not answered and not acknowledged, so it stays with the
           service, which decides when it comes back" -- false as soon as the
           row's own until elapses and the next claim expire-acknowledges it.
@@ -4925,15 +4944,15 @@ export function renderListenerStatus(
         LISTENER_DELIVERY_HOLD_RELEASE_CLAUSES[newestHeldBack.reason]
       }.` +
         (others > 0
-          ? ` ${others} other ${
-            others === 1 ? "delivery was" : "deliveries were"
-          } handed back earlier and ${
-            others === 1 ? "has" : "have"
-          } not come back to this listener.`
+          ? ` This listener is still tracking ${others} other handed-back ${
+            others === 1 ? "delivery" : "deliveries"
+          }.`
           : "") +
         " This listener has not answered it. After the lease ends the service" +
-        " either delivers it again or terminates it. If this repeats, raise the" +
-        " bound: cswarm listen start --turn-budget <duration>",
+        ` either delivers it again or terminates it. If this repeats, ${
+          LISTENER_DELIVERY_HOLD_RELEASE_REMEDIES[newestHeldBack.reason]
+        }; the bound is read when the listener starts, so stop this listener` +
+        " and start it again to change it.",
     );
   }
   lines.push(

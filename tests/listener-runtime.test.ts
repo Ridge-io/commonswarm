@@ -21,7 +21,7 @@ import {
   type DeliveryOutcome,
   type DeliveryRow,
 } from "../src/cloud/delivery.js";
-import { listenerStatusJson, renderListenerStatus } from "../src/cli.js";
+import { listenerStatusJson, renderListenerStatus, usage } from "../src/cli.js";
 import {
   RenewalReauthorisationRequired,
   RenewalRevoked,
@@ -53,6 +53,7 @@ import {
   newObservedNoteRecord,
   LISTENER_DELIVERY_HOLD_RELEASE_REASONS,
   LISTENER_DELIVERY_HOLD_RELEASE_CLAUSES,
+  LISTENER_DELIVERY_HOLD_RELEASE_REMEDIES,
   type ListenerActiveClaim,
   type ListenerDeliveryJournalRecord,
   type ListenerEffectRecord,
@@ -4150,22 +4151,46 @@ test("listen status shows the delivery in hand and how long the queue has waited
     assert.ok(!heldBack.includes("comes back"), heldBack);
     assert.ok(
       heldBack.includes(
-        "This listener has not answered it. After the lease ends the service either delivers it again or terminates it. If this repeats, raise the bound: cswarm listen start --turn-budget <duration>",
+        "This listener has not answered it. After the lease ends the service either delivers it again or terminates it. If this repeats, " +
+          `${LISTENER_DELIVERY_HOLD_RELEASE_REMEDIES[reason]}; the bound is read when the listener starts, so stop this listener and start it again to change it.`,
       ),
       heldBack,
     );
+    /* No command is printed. The line renders only while the listener is ready
+       or stopping, and `listen start` refuses in exactly those states, so a
+       start command here would be refused by the process that printed it. */
+    assert.ok(!heldBack.includes("cswarm listen start"), heldBack);
     /* The retired remedy named `cswarm receipt <id>`: not runnable as printed,
        because that verb requires an agent credential, and refused even with
        one, because the receipt read is author-only and this listener is the
        recipient. A remedy that names a command the reader cannot run is the
        same defect class as a typed enumeration inside a correct sentence. */
     assert.ok(!heldBack.includes("cswarm receipt"), heldBack);
-    assert.ok(!heldBack.includes("handed back earlier"), heldBack);
+    assert.ok(!heldBack.includes("still tracking"), heldBack);
   }
-  assert.equal(
-    new Set(Object.values(LISTENER_DELIVERY_HOLD_RELEASE_CLAUSES)).size,
-    LISTENER_DELIVERY_HOLD_RELEASE_REASONS.length,
-    "each reason needs its own clause, or the sentence stops discriminating",
+  for (
+    const generated of [
+      LISTENER_DELIVERY_HOLD_RELEASE_CLAUSES,
+      LISTENER_DELIVERY_HOLD_RELEASE_REMEDIES,
+    ]
+  ) {
+    assert.equal(
+      new Set(Object.values(generated)).size,
+      LISTENER_DELIVERY_HOLD_RELEASE_REASONS.length,
+      "each reason needs its own wording, or the sentence stops discriminating",
+    );
+  }
+  /* The two remedies point OPPOSITE ways on the same flag. One shared remedy
+     was measured wrong for lease_budget: the lease is fixed by the service and
+     the phase minimum is built from transport constants, so raising the turn
+     budget only lets one turn eat more of the lease. */
+  assert.ok(
+    LISTENER_DELIVERY_HOLD_RELEASE_REMEDIES.hold_budget.includes("larger"),
+    LISTENER_DELIVERY_HOLD_RELEASE_REMEDIES.hold_budget,
+  );
+  assert.ok(
+    LISTENER_DELIVERY_HOLD_RELEASE_REMEDIES.lease_budget.includes("smaller"),
+    LISTENER_DELIVERY_HOLD_RELEASE_REMEDIES.lease_budget,
   );
 
   // More than one can be held back at once, so the extras are counted.
@@ -4181,9 +4206,25 @@ test("listen status shows the delivery in hand and how long the queue has waited
   }, evidence, nowMs);
   assert.ok(
     twoHeldBack.includes(
-      "1 other delivery was handed back earlier and has not come back to this listener.",
+      "This listener is still tracking 1 other handed-back delivery.",
     ),
     twoHeldBack,
+  );
+  /* At the cap the count still describes the set, so it stays true. The retired
+     wording claimed every hand-back, which a capped set cannot know. */
+  const atCap = renderListenerStatus({
+    ...status,
+    currentDeliverySignalId: null,
+    currentDeliverySince: null,
+    heldBackDeliveries: Array.from({ length: 16 }, (_unused, index) => ({
+      signalId: `aaaaaaaa-aaaa-4aaa-8aaa-${String(index).padStart(12, "b")}`,
+      at: claimedAt,
+      reason: "hold_budget" as const,
+    })),
+  }, evidence, nowMs);
+  assert.ok(
+    atCap.includes("This listener is still tracking 15 other handed-back deliveries."),
+    atCap,
   );
 
   const idle = renderListenerStatus({
@@ -4468,7 +4509,7 @@ test("the supervisor tracks a handed-back delivery until it comes back", async (
   );
   assert.ok(
     seen[3]!.heldBackLine?.includes(
-      "1 other delivery was handed back earlier and has not come back to this listener.",
+      "This listener is still tracking 1 other handed-back delivery.",
     ),
     seen[3]!.heldBackLine,
   );
@@ -4618,4 +4659,21 @@ test("a pending count from the delivery-mode event is dated too", async (t) => {
     ),
     human,
   );
+});
+
+test("the redelivery claim reads the same in help as in status", () => {
+  /* Claim-family sweep. The status line was corrected to name both outcomes
+   * after review arms showed "redelivers" is false when the signal's own TTL
+   * elapsed under a live lease: the next claim expire-acknowledges it instead.
+   * The help text carried the same retired claim and was not swept, which an
+   * arm found on e5f75c9. */
+  const help = usage();
+  assert.ok(help.includes("--turn-budget"), "the flag is still documented");
+  assert.ok(
+    help.includes(
+      "After the lease ends the service either\ndelivers the released one again or terminates it.",
+    ),
+    help,
+  );
+  assert.ok(!help.includes("the service redelivers the released one"), help);
 });
