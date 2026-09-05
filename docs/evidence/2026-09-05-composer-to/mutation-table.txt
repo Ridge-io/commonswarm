@@ -35,8 +35,6 @@ red  a broadcast is named rather than shown as an empty row
   restored green  site/src/components/app/composer-to-field.observer.test.ts
 red  a tag typed just before Enter is still a recipient
   restored green  site/src/components/app/composer-to-field.observer.test.ts
-red  a send forgets which tags it had already lifted into chips
-  restored green  site/src/components/app/composer-to-field.observer.test.ts
 red  an empty roster is not read as a workspace with nobody in it
   restored green  site/src/components/app/composer-to-field.observer.test.ts
 red  the chips are not pruned against a roster that is not known yet
@@ -49,7 +47,15 @@ red  the pruned count and its noun are built together
   restored green  site/src/lib/composer-address.test.mjs
 red  a recipient the roster lost is removed without a word about it
   restored green  site/src/components/app/composer-to-field.observer.test.ts
+red  a chip's own control never promises a wake a person cannot get
+  restored green  site/src/components/app/composer-to-field.observer.test.ts
+red  the chip label asks the same function the row asks
+  restored green  site/src/lib/composer-address.test.mjs
+red  a saved draft's tags are on the row after a reload, not lifted in at send time
+  restored green  site/src/components/app/composer-to-field.observer.test.ts
+red  the applied record is cleared when the body is gone, so a tag typed again addresses again
+  restored green  site/src/components/app/composer-to-field.observer.test.ts
 red  the remove control removes the recipient
   restored green  site/src/components/app/composer-addressing.observer.test.ts
 
-25 mutations, 0 problems
+28 mutations, 0 problems

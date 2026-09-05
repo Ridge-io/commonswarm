@@ -789,6 +789,13 @@ row from an 80px bar, and the same reasoning deletes a channel dropdown. **No `#
 ever:** bodies legitimately contain `#` (markdown headings render in messages; `#1804`-style refs are
 routine in this workspace's own prose), so a parser cannot discriminate.
 
+> **CORRECTED 2026-09-05, `lane/composer-to-field`.** The TO-row half of that direction was reversed by
+> the operator the next day: the composer carries a persistent To: row of chips again, and the 80px
+> budget it bought is spent (the measured resting height is pinned in
+> `composer-polish.observer.test.ts`). The CHANNEL half stands unchanged — no dropdown, no `#` parsing,
+> the post is stamped with the channel being read — and the To: row never names a channel. The cited
+> line numbers were already stale when this paragraph was written.
+
 ### 8.1 Linkable and referenceable
 
 | Thing | URL |

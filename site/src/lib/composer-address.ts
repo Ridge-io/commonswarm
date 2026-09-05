@@ -245,6 +245,27 @@ export const composerToFullNotice = (names: readonly string[]): string =>
   } ${names.length === 1 ? "is" : "are"} not in it. Remove one to make room.`;
 
 /**
+ * What a chip's own control does, said from the rule the wake follows rather than typed
+ * beside it. Promoting a PERSON does not notify them: it puts a user id in the scalar
+ * column, leaves the agent column null, and wakes nobody. A chip that promised otherwise
+ * contradicted the sentence underneath it, which is the failure a review arm found.
+ */
+export const composerPromoteLabel = (
+  entity: ComposerRecipient,
+  current: readonly ComposerRecipient[],
+  nameOf: (candidate: ComposerRecipient) => string,
+): string => {
+  const name = nameOf(entity);
+  const already = notifiedRecipient(current);
+  if (already !== null && sameRecipient(already, entity)) return `${name} is notified`;
+  /* Ask the same function the row asks, about the set this click would make. */
+  const afterPromotion = notifiedRecipient(promoteComposerRecipient(current, entity));
+  return afterPromotion !== null && sameRecipient(afterPromotion, entity)
+    ? `Put ${name} first, so ${name} is notified`
+    : `Put ${name} first. No agent is notified while a person is first`;
+};
+
+/**
  * The notice when the roster took somebody out of the set. Their name cannot be part of it:
  * once the roster no longer holds them there is nothing left to read a name from, so this is
  * built from the COUNT. Saying nothing was the alternative, and a chip that disappears while

@@ -345,6 +345,12 @@ const measure = async (
  * The composer's height ceilings, measured on this build rather than chosen. Both are just
  * above what the current bar actually is and well below the reverted control, so the pair
  * still discriminates: see the comments at each use.
+ *
+ * BOUND, stated because a review arm asked for it: this file opens 1440x900 and 390x844 and
+ * no other viewport. The old comment said the budget held "on every screen" and never
+ * measured the smallest one. At 320x568 the composer rests at 128.81px, ABOVE the number
+ * below, which is recorded with its screenshot in
+ * docs/evidence/2026-09-05-composer-to/mobile-measurements.json rather than gated here.
  */
 const COMPOSER_REST_BUDGET_PX = 108;
 const COMPOSER_TWO_LINE_BUDGET_PX = 130;
@@ -439,6 +445,11 @@ test("Slack-shaped composer geometry stays aligned in real Chrome", async () => 
       revertedFailures.some((failure) => failure.includes("vertical asymmetry")) &&
         revertedFailures.some((failure) =>
           failure.includes(`over the ${COMPOSER_REST_BUDGET_PX}px budget`)
+        ) &&
+        /* The two-line ceiling needs its own reverted failure or the number is a record of
+           the current build rather than a gate. A review arm found it unasserted. */
+        revertedFailures.some((failure) =>
+          failure.includes(`over ${COMPOSER_TWO_LINE_BUDGET_PX}px`)
         ) &&
         revertedFailures.some((failure) => failure.includes("send/text inset")) &&
         revertedFailures.some((failure) => failure.includes("visible status text")),

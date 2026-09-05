@@ -1249,6 +1249,7 @@ import "../../styles/tokens.css";
     addComposerRecipients,
     composerAmbiguousNotice,
     composerDeliveryNote,
+    composerPromoteLabel,
     composerPrunedNotice,
     composerToFullNotice,
     mergeMentionRecipients,
@@ -2646,6 +2647,10 @@ import "../../styles/tokens.css";
           if (candidate.kind !== "agent" && candidate.kind !== "person") continue;
           parsed.push({ kind: candidate.kind, id: candidate.id });
         }
+        /* PRUNED WITHOUT A WORD, and only here. People leave a workspace between messages;
+           saying so on arrival would greet every reader with a notice about a set they have
+           not looked at yet. A prune that happens while the composer is OPEN is reported,
+           because a chip cannot vanish from under somebody who is writing to that person. */
         composerTo = addComposerRecipients(
           [],
           pruneComposerRecipients(parsed, composerRecipientKnown),
@@ -2697,10 +2702,10 @@ import "../../styles/tokens.css";
         promote.className = "dashboard__composer-chip-name";
         promote.dataset.composerToPromote = recipientKey(entity);
         promote.textContent = name;
-        /* The only control over WHO IS WOKEN, so it says what it does rather than "promote". */
-        promote.title = notified !== null && recipientKey(notified) === recipientKey(entity)
-          ? `${name} is notified`
-          : `Put ${name} first, so ${name} is notified`;
+        /* The only control over WHO IS WOKEN, so it says what it does, from the same rule the
+           sentence under the chips reads. Typing "so ${name} is notified" here was false for
+           a person: promoting one wakes nobody, and the note directly below already said so. */
+        promote.title = composerPromoteLabel(entity, composerTo, composerRecipientName);
         promote.setAttribute("aria-label", promote.title);
         if (notified !== null && recipientKey(notified) === recipientKey(entity)) {
           chip.dataset.composerToNotified = "";
@@ -3521,8 +3526,14 @@ import "../../styles/tokens.css";
        * hidden recipient the To: field exists to rule out. renderComposerTo prunes before it
        * draws. The saved draft is restored at the same point, because this is where the
        * workspace reaches the screen. */
-      restoreComposerDraft();
+      /* ORDER IS LOAD-BEARING. The remembered set goes in first, the draft body second, and
+         the draft's own tags join the set third. Restoring the draft first and the set
+         second overwrote the tags the reader had typed: they stayed visible in the box and
+         were absent from the delivery set until the send flushed them in, which posted to a
+         name the row had never shown. Both arms found it. */
       restoreComposerToOnEntry();
+      restoreComposerDraft();
+      applyComposerMentions();
       renderComposerTo();
     };
 
@@ -7349,10 +7360,6 @@ import "../../styles/tokens.css";
       deliveryReceiptCache.set(pendingId, { result: null, checkedAt: 0, phase: "posting" });
       signals.unshift(optimisticSignal);
       input.value = "";
-      /* The body that held the tags is gone, so the record of which tags had already become
-         chips goes with it. Keeping it would stop a tag typed again after this send from
-         addressing anybody it had addressed before. */
-      composerToApplied = [];
       stagedAttachments = [];
       renderStagedAttachments();
       input.style.blockSize = "auto";
@@ -7442,6 +7449,14 @@ import "../../styles/tokens.css";
            people this one went to, which is the whole point of the row: the reader stops
            losing the person they were talking to. */
         rememberComposerTo(recipients);
+        /* THE BODY IS GONE NOW, so the record of which tags had already become chips goes
+           with it, and a tag typed again after this send addresses again.
+           It is cleared HERE and not before the post, which is where it was first put and
+           what a review arm broke: a failed send restores the body, and an empty record
+           then read every tag in it as fresh. A chip the reader had removed came back, the
+           address changed under a retry, and that retry minted a second command id for a
+           message the server may already hold. */
+        composerToApplied = [];
         composerIntent = null;
         composerAttachmentsMissingAfterReload = false;
         for (const attachment of attachmentSnapshot) {

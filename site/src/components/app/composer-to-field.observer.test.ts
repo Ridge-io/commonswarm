@@ -43,7 +43,13 @@ type ToMeasurement = {
   /** A second tag ADDS. The first recipient stays, and stays first. */
   secondTag: { chips: string[]; note: string; notifiedChip: string };
   /** A person in front means the service wakes nobody, and the row says so with a remedy. */
-  personFirst: { chips: string[]; note: string; notifiedChip: string };
+  personFirst: {
+    chips: string[];
+    note: string;
+    notifiedChip: string;
+    /** What each chip's own control promises. A person's must not promise a wake. */
+    promoteTitles: string[];
+  };
   /** Choosing a name puts it first, which is the only control over who is woken. */
   promoted: { chips: string[]; note: string; notifiedChip: string };
   /** Removing a chip removes the recipient, and the still-typed tag does not put it back. */
@@ -56,6 +62,8 @@ type ToMeasurement = {
   afterSend: { chips: string[]; rowTarget: string; rowsAdded: number };
   /** A reload opens addressed to the recipients of the last message that was sent. */
   afterReload: { chips: string[]; note: string };
+  /** A saved draft's own tags are on the row after a reload, before anything is sent. */
+  afterReloadWithDraft: { chips: string[]; value: string };
 };
 
 const contentTypes: Record<string, string> = {
@@ -110,9 +118,20 @@ const frameScript = `<script>
       field.dispatchEvent(new view.InputEvent("input", { bubbles: true, inputType: "insertText" }));
     };
     /* The chip pass is debounced off the keystroke path, so every step that types a tag has
-       to wait for the row rather than read it in the same tick. */
+       to wait for the row rather than read it in the same tick.
+
+       settleChips THROWS and is for structural steps only, where a wrong count means the
+       harness itself is broken. Claim steps use settle instead: a step that aborts the
+       whole measurement makes two different defects arrive at the same timeout, and the
+       mutation harness then cannot tell them apart. */
     const settleChips = async (count, label) => {
       await waitFor(() => chipNames().length === count, label);
+    };
+    const settle = async (count) => {
+      for (let attempt = 0; attempt < 60; attempt += 1) {
+        if (chipNames().length === count) return;
+        await new Promise((resolve) => view.setTimeout(resolve, 25));
+      }
     };
     const send = async (body) => {
       const before = list().children.length;
@@ -171,7 +190,13 @@ const frameScript = `<script>
     await clearTo();
     type("@Kenji Ito and @Orbit, please look");
     await settleChips(2, "a person-first set");
-    const personFirst = { chips: chipNames(), note: noteText(), notifiedChip: notifiedChip() };
+    const personFirst = {
+      chips: chipNames(),
+      note: noteText(),
+      notifiedChip: notifiedChip(),
+      promoteTitles: [...doc.querySelectorAll("[data-composer-to-promote]")]
+        .map((button) => button.getAttribute("title") ?? ""),
+    };
 
     /* CHOOSING A NAME PUTS IT FIRST. The remedy the row names is one click. */
     [...doc.querySelectorAll("[data-composer-to-promote]")]
@@ -213,16 +238,18 @@ const frameScript = `<script>
        gone, so the same name typed again after the send has to address again. Removing the
        chip here WITHOUT emptying the box is the point: emptying it would clear that record
        on its own and the step would pass whether the send cleared it or not. */
-    doc.querySelector("[data-composer-to-remove]").click();
-    await settleChips(0, "the chip removed after the send");
+    /* Defensive: a defect that leaves no chip here must fail its OWN assertion, not throw a
+       TypeError that takes the whole measurement with it. */
+    doc.querySelector("[data-composer-to-remove]")?.click();
+    await settle(0);
     type("@Lumen hello again");
-    await settleChips(1, "Lumen addressed again by the same tag");
+    await settle(1);
     const retaggedAfterSend = { chips: chipNames() };
 
     /* THE SET SURVIVES A SEND, and the row's target is recipient 0. */
     await clearTo();
     type("as @Orbit said, ship it");
-    await settleChips(1, "Orbit back in To: for the send");
+    await settle(1);
     const sent = await send("shipping this");
     const afterSend = { chips: chipNames(), rowTarget: sent.rowTarget, rowsAdded: sent.rowsAdded };
 
@@ -234,8 +261,28 @@ const frameScript = `<script>
     doc = frame.contentDocument;
     view = frame.contentWindow;
     await ready();
-    await waitFor(() => chipNames().length === 1, "the remembered To: set");
+    /* SETTLE, do not wait for a count. Waiting for one aborts the whole measurement, so two
+       different defects would arrive at the same timeout and the mutation harness could not
+       tell them apart. Record what is there and let each assertion answer for itself. */
+    await new Promise((resolve) => view.setTimeout(resolve, 400));
     const afterReload = { chips: chipNames(), note: noteText() };
+
+    /* A DRAFT'S OWN TAGS ARE ON THE ROW AFTER A RELOAD, not lifted in at send time. The
+       remembered set goes in first, the draft body second, and the draft's tags join the set
+       third; restoring the draft before the set overwrote them, and the send then posted to
+       a name the row had never shown. */
+    type("and @Lumen should see it");
+    await settle(2);
+    await new Promise((resolve) => view.setTimeout(resolve, 500));
+    await new Promise((resolve) => {
+      frame.addEventListener("load", resolve, { once: true });
+      frame.contentWindow.location.reload();
+    });
+    doc = frame.contentDocument;
+    view = frame.contentWindow;
+    await ready();
+    await new Promise((resolve) => view.setTimeout(resolve, 400));
+    const afterReloadWithDraft = { chips: chipNames(), value: input().value };
 
     document.documentElement.dataset.toMeasurement = btoa(unescape(encodeURIComponent(JSON.stringify({
       atRest,
@@ -248,6 +295,7 @@ const frameScript = `<script>
       removed,
       afterSend,
       afterReload,
+      afterReloadWithDraft,
     }))));
   };
   const start = () => void runMeasurement().catch((error) => report(error?.stack ?? error));
@@ -353,14 +401,14 @@ test("the To: row is the address, and it says who is notified", async () => {
       broadcastChip: "Everyone here",
       note: "No agent is notified. Everyone here can read this.",
       oneLine: true,
-    });
+    }, "atRest: the row at rest is a named broadcast on one line");
 
     /* AN @TAG MID-SENTENCE ADDS A CHIP and leaves the sentence exactly as typed. */
     assert.deepEqual(measured.midSentence, {
       value: "as @Orbit said, ship it",
       chips: ["Orbit"],
       note: "Orbit is notified.",
-    });
+    }, "midSentence: a tag mid-sentence adds a chip and leaves the sentence alone");
 
     /* A SECOND TAG ADDS (ruling D2): it does not replace the set and does not open a DM.
        Orbit is still first, so Orbit is still the one the service wakes. */
@@ -368,7 +416,7 @@ test("the To: row is the address, and it says who is notified", async () => {
       chips: ["Orbit", "River"],
       note: "Orbit is notified. River can read this and reply.",
       notifiedChip: "Orbit",
-    });
+    }, "secondTag: a second tag adds rather than replacing");
 
     /* THE BOUND, ON SCREEN. A person in front means nobody is woken, however many agents
        follow, and the row says that plainly with the one remedy that exists. */
@@ -377,12 +425,18 @@ test("the To: row is the address, and it says who is notified", async () => {
       note: "No agent is notified. 2 recipients can read this and reply. " +
         "Only the first recipient is notified. Choose a name to put it first.",
       notifiedChip: "",
-    });
+      /* THE CHIP AND THE SENTENCE AGREE. Promoting a person wakes nobody, so the person's
+         own control says that rather than promising a wake the trigger cannot give. */
+      promoteTitles: [
+        "Put Kenji Ito first. No agent is notified while a person is first",
+        "Put Orbit first, so Orbit is notified",
+      ],
+    }, "personFirst: a person in front wakes nobody, and every chip says what it does");
     assert.deepEqual(measured.promoted, {
       chips: ["Orbit", "Kenji Ito"],
       note: "Orbit is notified. Kenji Ito can read this and reply.",
       notifiedChip: "Orbit",
-    });
+    }, "promoted: choosing a name puts it first");
 
     /* REMOVING A CHIP REMOVES THE RECIPIENT and the tag left in the prose does not undo it.
        Without that the reader could not unaddress anybody they had mentioned. */
@@ -390,26 +444,39 @@ test("the To: row is the address, and it says who is notified", async () => {
       chips: ["Orbit"],
       valueStillHasTag: true,
       afterKeystroke: ["Orbit"],
-    });
-
-    assert.deepEqual(measured.taggedThenSentAtOnce, {
-      chips: ["Lumen"],
-      rowTarget: "→ Lumen",
-    });
-
-    assert.deepEqual(measured.retaggedAfterSend, { chips: ["Lumen"] });
+    }, "removed: a removed chip stays removed while its tag stays in the body");
 
     /* ONE SIGNAL, and the chips stay: the next message opens addressed to this one's
-       recipients, which is what stops the reader losing who they were talking to. */
+       recipients, which is what stops the reader losing who they were talking to.
+
+       ASSERTED FIRST of the three send claims, and that order is load-bearing for the
+       mutation harness rather than for the reader: a send that stopped reading the chips
+       breaks only this one, while the two below break for several different reasons. Put
+       the narrow claim first and each defect fails on its own message. */
     assert.deepEqual(measured.afterSend, {
       chips: ["Orbit"],
       rowTarget: "→ Orbit",
       rowsAdded: 1,
-    });
+    }, "afterSend: one signal, addressed to the chips, and the chips stay");
+
+    assert.deepEqual(measured.taggedThenSentAtOnce, {
+      chips: ["Lumen"],
+      rowTarget: "→ Lumen",
+    }, "taggedThenSentAtOnce: a tag typed just before Enter is still a recipient");
+
+    assert.deepEqual(
+      measured.retaggedAfterSend,
+      { chips: ["Lumen"] },
+      "retaggedAfterSend: the same tag typed again after a send addresses again",
+    );
     assert.deepEqual(measured.afterReload, {
       chips: ["Orbit"],
       note: "Orbit is notified.",
-    });
+    }, "afterReload: a reload opens addressed to the last message's recipients");
+    assert.deepEqual(measured.afterReloadWithDraft, {
+      chips: ["Orbit", "Lumen"],
+      value: "and @Lumen should see it",
+    }, "afterReloadWithDraft: a saved draft's own tags are on the row after a reload");
   } finally {
     await server.close();
   }
@@ -437,6 +504,7 @@ test("the posted body carries the To: set and leaves both scalar fields null", (
         { kind: "user", id: "22222222-2222-4222-8222-222222222222" },
       ],
     },
+    "directed body: `to` carries the set and both scalar fields stay null",
   );
 
   /* AN EMPTY SET SENDS NO `to` KEY AT ALL. This is byte for byte the body every installed
@@ -449,11 +517,15 @@ test("the posted body carries the To: set and leaves both scalar fields null", (
     to_agent_principal_id: null,
     in_reply_to: null,
     about: null,
-  });
+  }, "broadcast body: an empty set sends no `to` key at all");
 
   /* THE KIND FOLLOWS RECIPIENT 0, because the delivery trigger does. A person in front makes
      this a note, so no agent behind them is woken and the row already said so. */
-  assert.equal(browserSignalCommand("x", [river, orbit], browserSignalKind([river, orbit])).signal_kind, "note");
+  assert.equal(
+    browserSignalCommand("x", [river, orbit], browserSignalKind([river, orbit])).signal_kind,
+    "note",
+    "signal_kind: a person in front makes this a note, so the agent behind is not woken",
+  );
   assert.equal(notifiedRecipient([river, orbit]), null);
 });
 
@@ -491,6 +563,43 @@ test("an empty roster is not read as a workspace with nobody in it", () => {
     dashboard,
     /composerToNotice = composerPrunedNotice\(composerTo\.length - pruned\.length\);/,
     "a recipient the roster lost is removed without a word about it",
+  );
+});
+
+test("a failed send does not change the address under the retry", () => {
+  /* A SOURCE-ORDER CLAIM, and it says why. Sample mode's send cannot fail, so no browser
+     step in this file can reach the catch; the failure model itself is measured in
+     composer-sprint.observer.test.ts.
+
+     The record of which tags had already become chips must follow the BODY. Clearing it
+     before the post looked right and was not: a failed send puts the body back, an empty
+     record reads every tag in it as fresh, and a chip the reader had removed comes back.
+     The address then differs from the one the message was sent to, which changes
+     `audienceKey`, which mints a SECOND command id for a message the server may already
+     hold. Both arms found it. */
+  const dashboard = readFileSync(
+    new URL("./LiveDashboard.astro", import.meta.url),
+    "utf8",
+  );
+  const submit = dashboard.slice(
+    dashboard.indexOf('one<HTMLFormElement>("[data-composer]")?.addEventListener("submit"'),
+  );
+  const beforeThePost = submit.slice(0, submit.indexOf("await postBrowserSignal("));
+  assert.ok(beforeThePost.length > 0, "the submit path has no post seam to measure against");
+  assert.doesNotMatch(
+    beforeThePost,
+    /composerToApplied = \[\];/,
+    "the applied record is cleared before the post is known to have landed",
+  );
+  /* And it IS cleared, inside the success block: after the post seam and before the catch.
+     Landmarking this on a neighbouring call was wrong — a mutation of that neighbour turned
+     this control red for a claim it does not make, which the harness read as its own. */
+  const cleared = submit.indexOf("        composerToApplied = [];");
+  assert.ok(cleared > 0, "the applied record is never cleared on success");
+  assert.ok(
+    cleared > submit.indexOf("await postBrowserSignal(") &&
+      cleared < submit.indexOf("} catch (caught) {"),
+    "the applied record is cleared outside the success block",
   );
 });
 

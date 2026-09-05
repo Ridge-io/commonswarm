@@ -16,6 +16,7 @@ import {
   addComposerRecipients,
   composerAmbiguousNotice,
   composerDeliveryNote,
+  composerPromoteLabel,
   composerPrunedNotice,
   composerToFullNotice,
   mergeMentionRecipients,
@@ -135,6 +136,42 @@ test("adding keeps order, adds nobody twice, and names what the cap refused", ()
     `To: holds ${COMPOSER_TO_MAX} recipients, so Ada and Kenji Ito are not in it. ` +
       "Remove one to make room.",
   );
+});
+
+test("a chip's own control never promises a wake a person cannot get", () => {
+  /* Promoting a person puts a user id in the scalar column and leaves the agent column
+   * null, so nobody is woken. The chip used to say "so Dana is notified" while the sentence
+   * directly under it said "No agent is notified". A review arm found the pair. */
+  assert.equal(
+    composerPromoteLabel(wren, [wren, dana], nameOf),
+    "Wren is notified",
+    "chip label: the notified agent's own chip says so",
+  );
+  assert.equal(
+    composerPromoteLabel(wren, [dana, wren], nameOf),
+    "Put Wren first, so Wren is notified",
+    "chip label: promoting an agent notifies it",
+  );
+  assert.equal(
+    composerPromoteLabel(dana, [wren, dana], nameOf),
+    "Put Dana first. No agent is notified while a person is first",
+    "chip label: promoting a person must not promise a wake",
+  );
+  /* And the label agrees with the note it sits above, for every set. */
+  for (const set of [[wren, dana], [dana, wren], [dana, ada], [wren, orbit]]) {
+    for (const entity of set) {
+      const label = composerPromoteLabel(entity, set, nameOf);
+      const wouldNotify = notifiedRecipient(promoteComposerRecipient(set, entity));
+      /* Does the label name THIS recipient as the notified one? A bare
+       * `includes("is notified")` was wrong: the person label carries the clause
+       * "No agent is notified", which contains that substring and passed. */
+      assert.equal(
+        label.includes(`${nameOf(entity)} is notified`),
+        wouldNotify !== null && recipientKey(wouldNotify) === recipientKey(entity),
+        `${label} disagrees with what promoting ${nameOf(entity)} does`,
+      );
+    }
+  }
 });
 
 test("a recipient the roster lost is reported, and the count carries its own noun", () => {

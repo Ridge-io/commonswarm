@@ -1,0 +1,145 @@
+I'll read REVIEW.md and DIFF.patch first, then follow REVIEW.md exactly.The patch is large. I’ll keep reading it and the files the brief names so I can attack each claim.I'll keep reading the rest of the patch and the files each check names.I’ll keep going through the remaining patch and the source the checks name.I need the send/catch path, the wire edge, and the wake trigger next. Those are where the claims can actually break.The edge, listener wake, restore/send paths, and leftover retired wording are the next places to attack.Checking one more send-vs-restore interaction, then I’ll write the review.`diff --git a/docs/design/2026-09-04-chat-platform-reconciled.md b/docs/design/2026-09-04-chat-platform-reconciled.md`
+
+The To: row is real, the one-signal `to` body is the right shape, and several of the four pre-SHA defects are actually closed. The delivery guarantee still fails. The chips the reader can see are not the set the send will post, and the row tells a lie about who gets woken.
+
+## 1. Hidden recipient
+
+The send does not read only the chips the reader saw.
+
+Submit always runs `applyComposerMentions()` before it snapshots `composerTo`. That flush is the right fix for a tag typed in the last 150ms. It is also a second address, read from the body.
+
+`composerToApplied` is what makes “remove the chip, leave the tag” hold. It is not saved. It is zeroed in three places that put the body back:
+
+- `restoreComposerTo()` (reload / workspace re-entry)
+- `resetComposer()` on workspace switch
+- send start, before the post, so a failed send restores `rawBody` onto an empty applied set
+
+`restoreComposerDraft()` writes the body and does not dispatch `input`, so it never runs the mention pass. `renderRoster` then paints last-sent chips on top of that body.
+
+Sequence the observer never runs:
+
+1. Last send was to Orbit. `rememberComposerTo([Orbit])`.
+2. Draft body is `hey @River look`. River was removed from To:, or never painted after restore.
+3. Reload. To: shows Orbit. Body still names River.
+4. Send. The flush adds River. The post is `[Orbit, River]`.
+
+The reader pressed send while the row showed Orbit. River is delivered anyway.
+
+The same flush after a failed send puts a removed chip back and, if `audienceKey` changes, mints a new `commandId` (see 5).
+
+Debounce itself is cancelled on workspace switch. Sample send still goes through `composerRecipients()`. Those paths are fine. Restore + flush is not.
+
+## 2. The wire body
+
+`browserSignalCommand` builds a body the **current** edge in this tree will take:
+
+- scalars always `null`
+- `to` omitted on broadcast (empty list is refused: “Leave it out…”)
+- `person` mapped to wire `user`
+- cap imported from `SIGNAL_RECIPIENT_MAX`
+- `signal_kind` is `ask` only when `notifiedRecipient` is an agent
+
+That matches `signalRecipientListProblem`, the `to` vs scalar conflict in `chatSignalShapeProblem`, `chatSignalKeys`, and `resolveSignalWriteTarget` (entry 0 copied into the scalar columns). `tests/p1-server/chat-signals.test.ts` covers that shape. This lane did not run those tests; it says so.
+
+Bodies this client can build that a server will refuse:
+
+- **Older edge** with no `to` in `CHAT_SIGNAL_OPTIONAL_KEYS`: every directed post is an extra-key 400. Broadcast still looks like every old client.
+- **Dead recipient** still in the local roster: whole post 403, nothing stored. Not a shape bug.
+- This client does not send `to: []`, mixed scalar+`to`, or `kind: "person"` on the wire.
+
+## 3. The wake claim
+
+`swarm.enqueue_signal_delivery` still fires only when `NEW.to_agent_principal_id IS NOT NULL AND NEW.kind IN ('ask','note')`. The edge fills that column from recipient 0. The listener then keeps rows with `signal.to_agent === stored.principalId`. Copy that says “only recipient 0, and only if it is an agent” matches **enqueue** and the **listener**.
+
+The chip control does not.
+
+```2701:2704:site/src/components/app/LiveDashboard.astro
+        promote.title = notified !== null && recipientKey(notified) === recipientKey(entity)
+          ? `${name} is notified`
+          : `Put ${name} first, so ${name} is notified`;
+```
+
+For a person, that sentence is false. Putting Kenji Ito first writes a user into `to_user_id`, leaves `to_agent_principal_id` null, and wakes nobody. The delivery note already knows that (`No agent is notified… Choose a name to put it first`). The chip the reader clicks says the opposite.
+
+Kind the client sends: `ask` when an agent is at 0, else `note`. The trigger would also wake a `note` with `to_agent` set; this client does not build that pair.
+
+Hosted inbox is wider than wake: `tests/p1-server/chat-signals.test.ts` requires the agent at position 1 to see the row with `inbox: true`. That is read, not enqueue. The note’s “can read this and reply” is true; “is notified” on a person chip is not.
+
+## 4. The mention merge
+
+`mergeMentionRecipients` is correct in one session: a tag adds, a removed key stays out while it remains in `applied`, a refused tag is remembered so the cap notice does not fire every keystroke.
+
+That memory dies with the body restore in (1). After reload, workspace switch, or failed send, the same tag is “fresh” and is added with no new keystroke.
+
+Ambiguous names are not stored in `applied`. They stay in the notice only while `notice === composerToNotice`; that part does not chatter.
+
+A cap refusal is named once, then cleared on the next pause because `fresh` is empty and `notice` becomes `""`. The name is not silent on first refuse. It is gone on the next debounce while `@Dana` is still in the box.
+
+## 5. The one-signal rewrite
+
+Success: one pending id, one post, pending swapped for the posted row, `rememberComposerTo`, draft cleared. Catch: `landed === (posted !== null)`; Retry only when nothing landed and the channel is still this one; a throw after the post does not put the body back. That is the right one-signal failure model.
+
+Broken case, same applied hole:
+
+1. Chip for River removed, `@River` still in the body. Send posts `[Orbit]`, `commandId` A.
+2. `composerToApplied = []` runs **before** the await.
+3. Network error; server actually accepted A (`posted` stays `null`).
+4. Body restored. Retry runs the mention pass, River joins, `audienceKey` changes, **new** `commandId` B.
+5. Two signals. A is Orbit. B is Orbit+River.
+
+That is a double-post the idempotency key cannot collapse, and it relights Retry after A has landed.
+
+I did not find a ghost pending row on the happy failure path: `pendingId` is dropped in both success and catch. Workspace change during post returns without that cleanup, but `resetComposer` already ran on the switch.
+
+## 6. Generated versus typed
+
+`composerDeliveryNote` / `composerToFullNotice` / `composerPrunedNotice` do take `COMPOSER_TO_MAX` and `positionWord(NOTIFIED_POSITION)`.
+
+Typed beside that:
+
+- Chip title/aria: `"Put ${name} first, so ${name} is notified"` — wake position and wake kind, not from `positionWord` or `notifiedRecipient`.
+- `POSITION_WORDS` is eight literals. A test fails if `COMPOSER_TO_MAX` grows past that list; the list is still typed.
+- `composer-to-field.observer.test.ts` pins `COMPOSER_TO_MAX === 8` so comments do not drift. That is a pin, not a user sentence.
+- The observer expected string `Only the first recipient is notified` is the generated word for position 0. Fine if the constant stays 0.
+
+The source sweep states its bound: one file. It does not read `LiveDashboard.astro`, where the false chip sentence lives.
+
+## 7. Retired claims
+
+Recorded as retired, on purpose: LiveDashboard comments, `mention-address.ts`, `composer.observer.test.ts`, `composer-polish.observer.test.ts`, `composer-sprint.observer.test.ts`, the ANSWERED notes in `2026-09-04-chat-platform-reconciled.md`.
+
+Still asserted as **current**:
+
+- `supabase/functions/_shared/channels.ts` on `SIGNAL_RECIPIENT_MAX`: “that composer posts one directed signal per tag and has not moved to `to` yet.” That is the retired fan-out, sitting on the enforcing constant.
+- `docs/design/2026-09-05-chat-app-channels.md`: “the 2026-09-04 operator direction that deleted the TO row from an 80px bar.”
+- Same file, §8 of `2026-09-04-chat-platform-reconciled.md` (line 786–788): “deleted the TO row from an 80px bar” with no ANSWERED mark. The lane patched the questions in §12 and left the design body on the old rule.
+
+Line numbers in that ANSWERED note (`LiveDashboard.astro:657-660`) are already stale.
+
+## 8. Fifth instance of “state that must follow the body”
+
+Looked. Found one.
+
+The four named defects were: prune vs unloaded roster; send emptied the box without emptying `composerToApplied`; parser `overflow` ignored; prune with no notice.
+
+Fifth: `composerToApplied` must follow the body, and it does not when the body is restored. Send now clears it (fix for defect 2) **before** the post is known, then puts the body back on failure without putting `applied` back. `restoreComposerDraft` puts the body back the same way. Same shape as defect 2, one step later.
+
+Restore prune is also silent (`restoreComposerTo` drops departed ids with no `composerPrunedNotice`). The code says that is on purpose for arrival. Claim 3 said a prune is reported rather than silent, with no exception.
+
+## 9. The controls
+
+`mutate.mjs` has **25** entries. `mutation-table.txt` says `25 mutations, 0 problems`. `docs/evidence/2026-09-05-composer-to/README.md` says **21** entries, twice. Typed count, wrong, in the evidence pack this check named.
+
+Several FIELD mutations expect the string `"the To: row is the address"`, which is the **test title**. Any failure of that file matches. The harness cannot tell a wrong reason from the named one.
+
+`composer-to-field.observer.test.ts` afterReload never restores a draft that still contains a tag. `retaggedAfterSend` only covers applied-clear after a **successful** send. The restore/failure path in (1) and (5) cannot go red.
+
+Source-reading claims do state their bounds (one file, sample roster cannot hit overflow). Honest about that.
+
+Height budgets: rest 108px still has a reverted control that must fail it. Two-line 130px can fail **current**, but reverted is **not** required to exceed 130. The comment says reverted two-line is 147/150; that is not asserted. At 320×568 the measured rest is 128.81px, over 108. Polish never opens that viewport. The README discloses 320 separately.
+
+---
+
+The one-signal wire and the live mention-merge in a single session hold. The user-visible guarantee does not: restore and failed send can post a name that was not on the row, and a person chip claims a wake the trigger cannot do.
+
+VERDICT: FAIL
