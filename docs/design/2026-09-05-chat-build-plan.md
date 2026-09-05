@@ -347,3 +347,26 @@ refused by the same rule that already refuses the scalar spelling, with the same
    hydrated delivery before they write any code.
 6. **No client, no composer.** L3 and L4 still own `--to` and the mention chips; nothing a person can
    type reaches `to` yet.
+
+## L2 landed 2026-09-05 (merge 060ff67) — rulings and bounds
+
+Migration `20260905000010_signal_recipients` applied to production; `command` and `read` deployed
+together (the read view names `s.recipients`). Live control on production: a note with a two-agent
+`to` list is accepted with the first recipient in the scalar column and the set in `recipients`;
+nine recipients are refused with the cap named; the 0.1.55 client's plain note still posts.
+
+Rulings (lead, 2026-09-05), recorded here because the lane routed them rather than deciding:
+- **Group DMs in v1: no.** A multi-recipient signal is a directed note with N readers; it is not a
+  conversation surface. Consistent with D1 (no private channels). Revisit with L6 receipts.
+- **`to_agent` on a hydrated delivery means the recipient at position 0**, the one that is woken.
+  Waking recipients 1..N needs the hydration filter and the installed listener's own-principal
+  refusal (`src/cloud/delivery.ts:423`) to change together, client and edge in apply order; that
+  is its own lane, not started.
+
+Bounds the review named on the wake clause, pre-existing in `enqueue_signal_delivery()`: an
+expired signal still enqueues (the trigger checks `kind`, not `until`); a revoked agent at
+position 0 still enqueues; an agent addressing itself still enqueues. Recorded, not fixed here.
+
+Wording residual Grok named on the passing SHA: this plan's original L2 paragraph says the lane
+"enqueues one row per agent recipient"; it does not. The L2 row above is the retired wording,
+kept; this section is the record.
