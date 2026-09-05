@@ -99,9 +99,9 @@ import {
   canonicalPrincipal,
   decideWorkspace,
   DISPOSITIONS,
-  FEEDBACK_BODY_MAX,
   FEEDBACK_CATEGORIES,
-  FEEDBACK_CONTEXT_MAX_BYTES,
+  normalizedFeedbackBody,
+  normalizedFeedbackContext,
   reduceTask,
   reduceWorkspace,
   RENEWAL_HORIZON_DEFAULT_MS,
@@ -1952,41 +1952,38 @@ function validateCommand(
         }),
       };
     }
-    const trimmedBody = cmd.body.trim();
-    if (
-      trimmedBody.length === 0 ||
-      trimmedBody.length > FEEDBACK_BODY_MAX ||
-      /[\u0000-\u0008\u000b\u000c\u000e-\u001f\u007f-\u009f\u202a-\u202e\u2066-\u2069]/.test(trimmedBody)
-    ) {
-      return {
-        ok: false,
-        status: 400,
-        reason:
-          `feedback body must be 1..${FEEDBACK_BODY_MAX} characters; newlines and tabs are fine, other control characters are not`,
-      };
+    /* The REDUCER's own normalizer, not a copy of it. This block used to
+     * re-implement the trim, the bound and the control-character class, and the
+     * comment above this validator already warned that hand-written duplicates
+     * here have drifted before. Importing the constant was not enough: the
+     * regex was still written out twice, byte for byte. Calling the function
+     * makes the wire and the reducer the same decision by construction, and its
+     * messages name which of the three rules broke instead of one sentence for
+     * all of them. */
+    /* The result types are declared here because deno infers this bundle from
+     * the generated JavaScript rather than the .d.ts, so the discriminated
+     * union does not narrow on `ok`. The shapes are the ones
+     * src/protocol/workspace-commands.ts returns. */
+    const normalizedBody = normalizedFeedbackBody(cmd.body) as
+      | { ok: true; body: string }
+      | { ok: false; message: string };
+    if (!normalizedBody.ok) {
+      return { ok: false, status: 400, reason: normalizedBody.message };
     }
-    let context: Record<string, string> | null = null;
-    if ("context" in cmd && cmd.context !== null && cmd.context !== undefined) {
-      if (typeof cmd.context !== "object" || Array.isArray(cmd.context)) {
-        return { ok: false, status: 400, reason: "feedback context must be a flat object of strings" };
-      }
-      const entries = Object.entries(cmd.context as Record<string, unknown>);
-      for (const [key, entry] of entries) {
-        if (
-          typeof entry !== "string" || key.length === 0 || key.length > 64 ||
-          entry.length > 512 || /[\u0000-\u001f\u007f-\u009f]/.test(key + entry)
-        ) {
-          return { ok: false, status: 400, reason: "feedback context must be a flat object of bounded strings" };
-        }
-      }
-      if (entries.length > 0) {
-        const flat = Object.fromEntries(entries) as Record<string, string>;
-        if (new TextEncoder().encode(JSON.stringify(flat)).length > FEEDBACK_CONTEXT_MAX_BYTES) {
-          return { ok: false, status: 400, reason: `feedback context must serialize to at most ${FEEDBACK_CONTEXT_MAX_BYTES} bytes` };
-        }
-        context = flat;
-      }
+    const trimmedBody = normalizedBody.body;
+    /* Same again. The duplicate also folded control characters into the
+     * "bounded strings" message, so a caller whose context was the right SIZE
+     * but carried a control character was told the wrong rule. The reducer's
+     * normalizer keeps those separate. */
+    const normalizedContext = normalizedFeedbackContext(
+      "context" in cmd ? cmd.context : null,
+    ) as
+      | { ok: true; context: Record<string, string> | null }
+      | { ok: false; message: string };
+    if (!normalizedContext.ok) {
+      return { ok: false, status: 400, reason: normalizedContext.message };
     }
+    const context = normalizedContext.context;
     return {
       ok: true,
       command: {
@@ -5965,7 +5962,7 @@ async function resumeRenewalGrant(
    * was told 403; a retry then answered `renewal_grant_not_suspended`, because the resume it
    * had denied had in fact happened.
    *
-   * Same shape as the renewal preflight read at index.ts:3373 (`preflight[0]?.code ?? null`):
+   * Same shape as the renewal preflight read at index.ts:3370 (`preflight[0]?.code ?? null`):
    * preserve NULL, refuse only on a code we assign.
    *
    * WHY A REFUSAL BELOW STILL COMMITS, DELIBERATELY. `refuse` must commit — its whole job is

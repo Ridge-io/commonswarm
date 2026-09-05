@@ -41,57 +41,57 @@ const CITATIONS: Citation[] = [
   {
     citedBy: "site/src/lib/agent-connect.ts (mintedHorizon)",
     file: "supabase/functions/command/index.ts",
-    lines: [8716, 8721],
+    lines: [8713, 8718],
     contains: "horizon_expires_at: prepared.command.renewal_horizon_ms === null",
   },
   {
     citedBy: "site/src/lib/agent-connect.ts (mintedHorizon, replay)",
     file: "supabase/functions/command/index.ts",
-    lines: [2421, 2427],
+    lines: [2418, 2424],
     contains: "horizon_expires_at: response.horizon_expires_at as string | null",
   },
   {
     citedBy: "site/src/lib/agent-connect.ts (the 400 message)",
     file: "supabase/functions/command/index.ts",
-    lines: [2204, 2212],
+    lines: [2201, 2209],
     contains: "const valid = exactKeys(cmd, [",
   },
   // site/src/components/connect/agent-connect-mint.observer.test.ts
   {
     citedBy: "agent-connect-mint.observer.test.ts (timeboxed fallback, validator)",
     file: "supabase/functions/command/index.ts",
-    lines: [2192, 2194],
+    lines: [2189, 2191],
     contains: '? "timeboxed"',
   },
   {
     citedBy: "agent-connect-mint.observer.test.ts (timeboxed fallback, prepared)",
     file: "supabase/functions/command/index.ts",
-    lines: [3122, 3125],
+    lines: [3119, 3122],
     contains: 'renewal_kind: wire.renewal_kind ?? "timeboxed"',
   },
   {
     citedBy: "agent-connect-mint.observer.test.ts (standing needs an ABSENT horizon)",
     file: "supabase/functions/command/index.ts",
-    lines: [2198, 2199],
+    lines: [2195, 2196],
     contains: 'renewalKind === "standing" && cmd.renewal_horizon_ms === undefined',
   },
   {
     citedBy: "agent-connect-mint.observer.test.ts (the 400)",
     file: "supabase/functions/command/index.ts",
-    lines: [2252, 2255],
+    lines: [2249, 2252],
     contains: "mint_agent_token fields are malformed or out of bounds",
   },
   {
     citedBy: "agent-connect-mint.observer.test.ts (standing binds to the request device)",
     file: "supabase/functions/command/index.ts",
-    lines: [4319, 4319],
+    lines: [4316, 4316],
     contains: "standing ? prepared.wire.device_id : null",
   },
   // supabase/functions/command/index.ts — the resume handler's own comment
   {
     citedBy: "command/index.ts (resume handler, the pattern it copies)",
     file: "supabase/functions/command/index.ts",
-    lines: [3373, 3373],
+    lines: [3370, 3370],
     contains: "grant_preflight_code: (preflight[0]?.code ?? null)",
   },
   {
@@ -117,13 +117,13 @@ const CITATIONS: Citation[] = [
   {
     citedBy: "agent-connect.ts (mint device binding)",
     file: "supabase/functions/command/index.ts",
-    lines: [2950, 2962],
+    lines: [2947, 2959],
     contains: "FROM swarm.devices",
   },
   {
     citedBy: "agent-connect.ts (the scope check post_signal needs)",
     file: "supabase/functions/command/index.ts",
-    lines: [7297, 7302],
+    lines: [7294, 7299],
     contains: "auth.agent.scopes.includes(validation.command.kind)",
   },
   /* The published-policy citations. These were NOT registered here, so when a
@@ -134,7 +134,7 @@ const CITATIONS: Citation[] = [
   {
     citedBy: "privacy.astro (what we get from GitHub)",
     file: "supabase/functions/command/index.ts",
-    lines: [9144, 9160],
+    lines: [9141, 9157],
     contains: "metadata?.full_name",
   },
   /* TWO entries, because the claim has two halves and an arm showed that
@@ -202,7 +202,7 @@ const CITATIONS: Citation[] = [
   {
     citedBy: "privacy.astro (identityVerified)",
     file: "supabase/functions/command/index.ts",
-    lines: [9158, 9159],
+    lines: [9156, 9157],
     contains: "email_confirmed_at",
   },
   {

@@ -651,38 +651,51 @@ test("commandFieldsMessage decorates without forking the list, and says extra ke
   assert.equal(decorated.includes("body ("), false);
 });
 
-test("the feedback bounds come from the protocol core, not from a copy in this lane", () => {
+test("the feedback rules come from the protocol core, not from a copy in this lane", () => {
   /* I introduced a THIRD copy of these constants in _shared/channels.ts while
-   * fixing a duplication. src/protocol/workspace-commands.ts already owned them
-   * and the generated bundle already exported them, which is what the edge now
-   * reads. */
+   * fixing a duplication. Importing the constants was still not enough: the
+   * edge re-implemented the trim, the bounds AND both control-character regexes
+   * byte for byte, and the validator's own comment already warned that
+   * hand-written duplicates here have drifted before. The edge now calls the
+   * reducer's normalizers, so the wire and the reducer are one decision. */
   const channels = readFileSync(
     fileURLToPath(
       new URL("../supabase/functions/_shared/channels.ts", import.meta.url),
     ),
     "utf8",
   );
-  for (const name of ["FEEDBACK_BODY_MAX", "FEEDBACK_CATEGORIES", "FEEDBACK_CONTEXT_MAX_BYTES"]) {
+  for (
+    const name of [
+      "FEEDBACK_BODY_MAX",
+      "FEEDBACK_CATEGORIES",
+      "FEEDBACK_CONTEXT_MAX_BYTES",
+    ]
+  ) {
     assert.equal(
       channels.includes(`export const ${name}`),
       false,
       `${name} belongs to src/protocol, not to this lane's shared module`,
     );
   }
+
   const command = readFileSync(
     fileURLToPath(
       new URL("../supabase/functions/command/index.ts", import.meta.url),
     ),
     "utf8",
   );
-  /* The import block ENDS at the protocol.js specifier; find its opening brace
-   * by walking back from there, not forward from a name inside it. */
   const protocolEnd = command.indexOf('from "../_shared/protocol.js"');
   const protocolImport = command.slice(
     command.lastIndexOf("import {", protocolEnd),
     protocolEnd,
   );
-  for (const name of ["FEEDBACK_BODY_MAX", "FEEDBACK_CATEGORIES", "FEEDBACK_CONTEXT_MAX_BYTES"]) {
+  for (
+    const name of [
+      "FEEDBACK_CATEGORIES",
+      "normalizedFeedbackBody",
+      "normalizedFeedbackContext",
+    ]
+  ) {
     assert.ok(
       protocolImport.includes(name),
       `${name} must be read from the protocol bundle`,
@@ -690,6 +703,31 @@ test("the feedback bounds come from the protocol core, not from a copy in this l
   }
   /* Control: the slice really is that import block. */
   assert.ok(protocolImport.includes("canonicalPrincipal"));
+
+  /* And the enforcement is GONE from the edge, not merely shadowed. Each of
+   * these was written out here identically to src/protocol. */
+  const protocolSource = readFileSync(
+    fileURLToPath(
+      new URL("../src/protocol/workspace-commands.ts", import.meta.url),
+    ),
+    "utf8",
+  );
+  const bodyClass =
+    "\\u0000-\\u0008\\u000b\\u000c\\u000e-\\u001f\\u007f-\\u009f\\u202a-\\u202e\\u2066-\\u2069";
+  assert.ok(
+    protocolSource.includes(bodyClass),
+    "control: the protocol still owns the feedback body character class",
+  );
+  assert.equal(
+    command.includes(bodyClass),
+    false,
+    "the edge must not carry its own copy of the feedback body character class",
+  );
+  assert.equal(
+    command.includes("key.length > 64"),
+    false,
+    "the edge must not carry its own copy of the context key bound",
+  );
 });
 
 test("a malformed channel_id is told so, not told its fields are wrong", () => {
