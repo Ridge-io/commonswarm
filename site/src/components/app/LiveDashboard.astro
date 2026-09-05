@@ -10429,9 +10429,11 @@ import "../../styles/tokens.css";
     }
 
     /* The filter row floats too. Sticky keeps it at the top of the scroller; the negative
-       margin takes its height back out of the flow, so the transcript passes UNDER it
-       instead of starting below it. The list carries the same amount of top padding, which
-       is clearance at rest and scrolls away with the content. */
+       margin takes ITS OWN height back out of the flow, so the transcript passes UNDER it
+       instead of starting below it. That pair is 2.5rem and must match each other. The list's
+       top padding is NOT the same amount: it clears the whole band, whose height is the taller
+       of the two floating parts, so it is var(--feed-band-height). It is clearance at rest and
+       scrolls away with the content. */
     .dashboard__feed-toolbar {
       min-block-size: 2.5rem;
       margin-block-end: -2.5rem;

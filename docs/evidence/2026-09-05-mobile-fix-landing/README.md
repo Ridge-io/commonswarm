@@ -251,3 +251,32 @@ Left as residuals, named rather than fixed:
 - Pinch-zoom panning on a real iPhone against `scrollTo(0, 0)` is still not established.
 - The `caret-survival` and `combobox-flush` controls are source-shape. The caret behaviour itself
   is measured in a browser in section 3, against two builds.
+
+## 9. Round 3: the claim family was not swept, and one finding refuted by measurement
+
+`93cf3ba`: Grok FAIL, Gemini FAIL. Both were checked at the lines they cite.
+
+**Grok's finding holds, and it is the same defect as round 2's.** `93cf3ba` exists because a
+comment, an assertion message and a mutation name said "the send" about `resetComposer`, which a
+send never calls. Round 3 fixed those three and left TWO SIBLING COMMENTS in the same test body
+saying it again: "a workspace switch that restores a different draft, and the send that empties
+the box", and "This runs on a workspace change as well as after a send". A third, in the CSS, said
+the list "carries the same amount of top padding" as the filter row's negative margin, which
+stopped being true when the clearance became `--feed-band-height`. All three are corrected. This is
+the rule about enumerating every surface in a claim family working exactly as written: fixing the
+clause the assertion sits under is not the same as sweeping the family.
+
+**Gemini's finding is refuted by measurement.** It says the toolbar's `min-block-size: 2.5rem` and
+`margin-block-end: -2.5rem` "CAN disagree" if a larger font size makes the row taller, leaving
+height in the flow. Both are in `rem`, so a larger root font-size scales them together. Measured at
+390x844 through `Page.setFontSizes`, with the transcript at rest:
+
+| browser minimum font | filter button | toolbar height | negative margin | header taken from the reading area | app bar | first message | band bottom |
+|---|---|---|---|---|---|---|---|
+| default | 12px | 40px | -40px | 73px | 73px | 125px | 125px |
+| 24px | 18px | 60px | -60px | 85px | 85px | 163px | 163px |
+| 32px | 24px | 80px | -80px | 113px | 113px | 217px | 217px |
+
+The pair tracks exactly at every size, the operator's rule still holds to the pixel (header taken
+from the reading area equals the app bar), and the first message still starts exactly at the band's
+bottom. The numbers move, so the probe reached the thing it claims to test.
