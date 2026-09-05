@@ -1,7 +1,11 @@
 # In-app update notice
 
-App-backlog item 5. The app detects that a newer build of itself is being served and offers one
-control that reloads onto it.
+App-backlog item 5. The app detects that what the server is serving for its own URL is not what
+this tab is running, and offers one control that reloads onto it.
+
+**Not "newer".** Nothing here can order two builds in time, and it does not need to: a rollback is
+also "not what you are running", and reloading is the right answer to it. The bar says "This page
+is out of date" for that reason, and this document should not quietly say something stronger.
 
 ## What it is about, and what it is NOT about
 
@@ -51,7 +55,7 @@ version DOES exist:
 to report its version to the server on a durable write and a read-path column to carry it back.
 That is a server change with a migration, not an app change, and it is out of this lane.
 
-## How a new build is detected
+## How a different build is detected
 
 Two signals. Neither covers a build on its own, and the second one exists because the first was
 measured and found short.
