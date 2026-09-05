@@ -1547,6 +1547,17 @@ import "../../styles/tokens.css";
       placementChannelId: string | null;
     } | null = null;
     let composerSending = false;
+    /* WHOSE FLAG IT IS. One submit raises `composerSending`, and only that submit or a
+     * teardown that took the composer away from it may lower it again. `requestVersion`
+     * cannot answer that question: it is the SCREEN's generation, and six controls reopen
+     * the CURRENT workspace — Refresh, retry-workspace, remove-member, edit-model, revoke,
+     * remove-agent — each bumping the generation without running `resetComposer`. While the
+     * lift sat behind that guard, pressing Refresh mid-post left the flag up for the rest of
+     * the session: a read-only box, dead chips, a frozen To: row, and a failed send that
+     * never put the body back. A review arm found it. The token is the send's own identity,
+     * the way `sendDraftKey` and `sendToKey` already are.
+     */
+    let composerSendToken = 0;
     let stagedAttachments: StagedComposerAttachment[] = [];
     let composerAttachmentsMissingAfterReload = false;
     let composerDragDepth = 0;
@@ -3566,6 +3577,12 @@ import "../../styles/tokens.css";
       const warning = one<HTMLElement>("[data-composer-reload-warning]");
       if (warning) warning.hidden = true;
       setComposerDropTarget(false);
+      /* THE FLAG COMES DOWN AND ITS OWNER IS RETIRED WITH IT. A send still on the wire raised
+         this flag; the composer it raised it on is being torn down, so that send no longer
+         owns the box and must not lower a flag a LATER send raises in the new workspace.
+         Bumping the token here is what says so, and it is the same statement the send's own
+         settle reads. */
+      composerSendToken += 1;
       setComposerSending(false);
       renderStagedAttachments();
       closeMentionPicker();
@@ -3638,17 +3655,27 @@ import "../../styles/tokens.css";
      * commit the new workspace's pair.
      */
     const openSampleWorkspace = (workspace: Workspace): void => {
-      if (activeWorkspaceId === workspace.id) return;
-      resetComposer();
+      /* A REOPEN IS NOT A SWITCH, and that difference is the whole reason this branch exists.
+         `openWorkspace` runs `resetComposer` only when the workspace CHANGES, and then
+         advances the generation whatever happened. So the composer has to survive a
+         generation bump with nothing torn down: Refresh, retry-workspace and four roster
+         edits all reopen the workspace already on screen. A sample open that returned here
+         on the same id could not reach that moment, and the defect hiding in it wedged the
+         composer for the rest of the session. */
+      const reopen = activeWorkspaceId === workspace.id;
+      if (!reopen) resetComposer();
+      requestVersion += 1;
       activeWorkspaceId = workspace.id;
       agents = [];
       members = [];
       people = new Map();
       signals = [];
-      sampleSignals = [];
+      if (!reopen) sampleSignals = [];
       channels = [];
       activeChannelId = null;
-      renderChannel(workspace);
+      /* A reopen keeps the shell and shows the pending view, exactly as `openWorkspace` does
+         when it is already in a channel; a switch paints the new workspace outright. */
+      renderChannel(workspace, reopen);
       /* A TIMER, NOT A FRAME. A real roster arrives on a network callback, which is a task;
          hanging it off a frame callback would also make the gap depend on whether anything is
          being painted, and a headless run with no compositor need not produce a frame at all. */
@@ -3657,8 +3684,12 @@ import "../../styles/tokens.css";
         const at = Date.now();
         applySampleRoster(workspace.id);
         channels = sampleChannelsFor(workspace.id, at);
-        signals = sampleSignalsFor(workspace.id, at);
-        sampleSignals = [...signals];
+        /* A REOPEN RE-READS WHAT THE WORKSPACE HOLDS; a switch builds it. The sample has no
+           server, so the rows this session posted stand in for what a refetch returns: a
+           refresh that rebuilt from the fixture would model a server that forgot the message
+           the reader just sent. */
+        signals = reopen ? [...sampleSignals] : sampleSignalsFor(workspace.id, at);
+        if (!reopen) sampleSignals = [...signals];
         renderChannel(workspace);
       }, 0);
     };
@@ -7461,6 +7492,36 @@ import "../../styles/tokens.css";
         }
       },
     );
+    /**
+     * A WINDOW THE SAMPLE SEND DOES NOT OTHERWISE HAVE, and a way to fail inside it.
+     *
+     * The composer's hardest rules are all about what happens WHILE a message is on the wire:
+     * the address is frozen, the stored draft is frozen, the box is read-only, and the send's
+     * own teardown has to finish whatever the reader does to the screen meanwhile. A sample
+     * send resolves with no await at all, so no browser step could act inside that moment and
+     * every one of those rules was read out of the source instead of driven. Six review
+     * rounds found six defects in that unmeasured window.
+     *
+     * BOUND, and it is narrow: sample mode is entered only when there is no Supabase client
+     * at all — `boot` calls `renderSample()` when `client()` is null — so nothing reachable
+     * from here touches a real workspace, a real post, or a real reader's message. Both hooks
+     * are read from the document element, so a control sets them the way a reader's own
+     * devtools could, and neither exists on any path that talks to a server.
+     */
+    const sampleSendWindow = async (): Promise<void> => {
+      const root = document.documentElement;
+      /* BOTH ARE READ WHEN THE SEND STARTS, not when it resolves. A control that opens a
+         window and then changes the hooks for the NEXT send would otherwise change the
+         outcome of the one already on the wire, which is the opposite of what a window is
+         for. */
+      const fails = root.dataset.sampleSendFail !== undefined;
+      const delay = Number.parseInt(root.dataset.sampleSendDelay ?? "", 10);
+      if (Number.isFinite(delay) && delay > 0) {
+        await new Promise((resolve) => window.setTimeout(resolve, delay));
+      }
+      if (fails) throw new Error("The sample workspace was asked to fail this send.");
+    };
+
     one<HTMLFormElement>("[data-composer]")?.addEventListener("submit", async (event) => {
       event.preventDefault();
       const input = one<HTMLTextAreaElement>("[data-composer-input]");
@@ -7622,6 +7683,10 @@ import "../../styles/tokens.css";
       const retry = one<HTMLButtonElement>("[data-composer-retry]");
       if (retry) retry.hidden = true;
       setComposerStatus("Posting…", "posting");
+      /* THIS SEND NOW OWNS THE FLAG, and its own settle is the only thing that may lower it.
+         See `composerSendToken` where it is declared for what went wrong when the screen's
+         generation was asked that question instead. */
+      const sendToken = ++composerSendToken;
       setComposerSending(true);
       visualMentions.set(pendingId, rowMentions);
       deliveryReceiptCache.set(pendingId, { result: null, checkedAt: 0, phase: "posting" });
@@ -7657,6 +7722,7 @@ import "../../styles/tokens.css";
           }
         }
         setComposerStatus("Posting message…", "posting");
+        if (sampleMode) await sampleSendWindow();
         posted = sampleMode
           ? {
               id: `sample-composer-${commandId}`,
@@ -7695,6 +7761,25 @@ import "../../styles/tokens.css";
 
            These two calls name the keys this send captured, so they finish this send's own
            bookkeeping in its own workspace and touch nothing the reader can see. */
+        /* AND THE INTENT THIS SEND MINTED IS SPENT, which is the same kind of fact: the
+           server holds this command id, so nothing may replay it. It sat below the guard, so
+           a generation bump left a landed message's intent standing. The test names the id
+           rather than clearing whatever is there, because the intent is the composer's and a
+           later one would not be this send's to retire. */
+        if (composerIntent?.commandId === commandId) composerIntent = null;
+        /* THE SAMPLE STORE IS THE SAMPLE'S SERVER, and a landed post reaches it whatever the
+           reader did to the screen. It sat below the guard, so a post that landed during a
+           REFRESH never joined the store and the reopen repainted without it: the sample lost
+           a message the reader had sent, which no server does. It is still bound to this
+           send's workspace, because a sample switch empties and rebuilds that store and a row
+           must not land in somebody else's sample feed.
+
+           Sample mode's channel narrowing rebuilds the feed from this store, so it also has
+           to grow with the session: "the sample IS the whole set" only holds if it does.
+           Found by a review arm. */
+        if (sampleMode && workspaceId === activeWorkspaceId) {
+          sampleSignals = [posted, ...sampleSignals];
+        }
         rememberComposerTo(recipients, sendToKey);
         clearComposerDraft(sendDraftKey);
         if (version !== requestVersion || workspaceId !== activeWorkspaceId) {
@@ -7719,12 +7804,6 @@ import "../../styles/tokens.css";
         deliveryReceiptCache.delete(pendingId);
         visualMentions.set(posted.id, rowMentions);
         deliveryReceiptCache.set(posted.id, { result: null, checkedAt: 0, phase: "accepted" });
-        /* Sample mode's channel narrowing rebuilds the feed from the snapshot taken at boot,
-           and a sample post only ever reached `signals`. Posting then switching channel made
-           the post disappear, and it also made the honesty argument for that local filter
-           false: "the sample IS the whole set" only holds if the set grows with it. Found by
-           a review arm. */
-        if (sampleMode) sampleSignals = [posted, ...sampleSignals];
         /* THE CHIPS STAY, and they were remembered above, before the guard. The next message
            opens addressed to the people this one went to, which is the whole point of the
            row: the reader stops losing the person they were talking to. */
@@ -7739,8 +7818,10 @@ import "../../styles/tokens.css";
            tag in the restored body as fresh, a chip the reader had removed comes back, the
            address changes under the retry, and that retry mints a second command id for a
            message the server may already hold. A review arm found that. The pass answers both
-           cases from the body, so neither is a rule anybody has to remember. */
-        composerIntent = null;
+           cases from the body, so neither is a rule anybody has to remember.
+
+           THE INTENT WAS RETIRED ABOVE, before the guard, with the rest of what this send
+           owns. */
         composerAttachmentsMissingAfterReload = false;
         for (const attachment of attachmentSnapshot) {
           if (attachment.previewUrl) URL.revokeObjectURL(attachment.previewUrl);
@@ -7749,7 +7830,45 @@ import "../../styles/tokens.css";
         void refreshDeliveryReceipts(workspaceId, version);
         setComposerStatus("");
       } catch (caught) {
-        if (version !== requestVersion || workspaceId !== activeWorkspaceId) return;
+        /* THE SEND'S OWN TEARDOWN COMES FIRST, before any question about the screen. This
+           block used to open with `if (version !== requestVersion || workspaceId !==
+           activeWorkspaceId) return;`, which threw the send's own work away along with the
+           screen's: a landed draft stayed saved, the object URLs leaked, and an unsent
+           message was gone with no error and nothing written down. It is the same guard round
+           six moved the send's storage out from behind, and it is wrong here for the same
+           reason — it asks whether the SCREEN is still the send's, and a spent command id, a
+           released preview and an unsent body are the SEND's. */
+        const landed = posted !== null;
+        if (landed) {
+          /* It posted, so this failure is a render fault and the send is FINISHED. Skipping
+             this left the sent body in the saved draft, which the "reload" advice would then
+             restore with a null intent, so the next send minted a fresh command id and posted
+             it a second time. It names the key this send captured, so a failure arriving
+             after a workspace switch removes the draft it wrote rather than the one on
+             screen. */
+          clearComposerDraft(sendDraftKey);
+          if (composerIntent?.commandId === commandId) composerIntent = null;
+        }
+        /* THE BOX ON SCREEN IS STILL THE ONE THIS SEND RAISED ITS FLAG ON: the token says
+           nobody tore the composer down, and the workspace says the reader has not moved. The
+           two facts are kept in different places, so both are asked rather than one inferred
+           from the other. `requestVersion` is deliberately NOT among them: a reopen of the
+           current workspace bumps it and leaves this composer exactly where it was. */
+        const boxIsStillThisSends =
+          composerSendToken === sendToken && workspaceId === activeWorkspaceId;
+        if (!boxIsStillThisSends) {
+          /* THE READER IS SOMEWHERE ELSE, so nothing may be written into the box in front of
+             them, and NOTHING NEEDS TO BE. An unsent message is already saved: the stored
+             draft is frozen for the whole post, so the workspace switch that tore this
+             composer down flushed nothing over it and the body and the To: set the pass wrote
+             before the send are still under this send's own key. Writing them again here
+             would be a second writer of the draft, which is the class this lane removes. The
+             previews are this send's to release, and the early return used to leak them. */
+          for (const attachment of attachmentSnapshot) {
+            if (attachment.previewUrl) URL.revokeObjectURL(attachment.previewUrl);
+          }
+          return;
+        }
         /* ONE POST, so there is no partial send to describe any more. Either the command
          * was rejected and nothing is on the server, or it landed and this throw came from
          * the render after it. The message goes back in the box in the first case only, and
@@ -7761,7 +7880,6 @@ import "../../styles/tokens.css";
          * bookkeeping under them. A reader may still meet those sentences in an older
          * screenshot; they described a message split across several signals, which no
          * longer happens. */
-        const landed = posted !== null;
         const visibleOnFailure = posted !== null && showsOnScreen(posted) ? [posted] : [];
         const visibleFailureIds = new Set(visibleOnFailure.map((signal) => signal.id));
         /* A row that DID land is a record too. Only the success path was writing them, so a
@@ -7824,13 +7942,10 @@ import "../../styles/tokens.css";
           }
           : null;
         if (landed) {
-          /* It posted, so this failure is a render fault and the send is FINISHED. The
-           * success path's cleanup never ran, and skipping it left the sent body in the saved
-           * draft — which the "reload" advice would then restore, with a null intent, so the
-           * next send would mint a fresh command id and post it a second time. It names the
-           * key this send captured, so a failure that arrives after a workspace switch still
-           * removes the draft it wrote rather than the one now on screen. */
-          clearComposerDraft(sendDraftKey);
+          /* The draft this send wrote and the command id it minted were finished at the top
+             of this block, where they belong. What is left here is the screen: the attachment
+             marker the composer shows, and the previews it is holding open. The UNSENT path
+             does not revoke them, because it just put those same previews back in the box. */
           composerAttachmentsMissingAfterReload = false;
           for (const attachment of attachmentSnapshot) {
             if (attachment.previewUrl) URL.revokeObjectURL(attachment.previewUrl);
@@ -7851,8 +7966,27 @@ import "../../styles/tokens.css";
         if (retry && resumable) retry.hidden = false;
         renderFeed("latest");
       } finally {
-        if (version === requestVersion && workspaceId === activeWorkspaceId) {
-          setComposerSending(false);
+        /* THE RULE THIS WHOLE SUBMIT FOLLOWS, in one sentence: work the SEND owns is keyed to
+           the SEND's own identity — its token, its workspace, its captured storage keys — and
+           the screen guard decides only what is RENDERED. Six rounds of this lane found six
+           defects of one shape, and round six named the cause: send-owned work sitting behind
+           a guard that asks whether the screen is still the send's. Those are two different
+           questions. The storage moved out then; the flag, the failure restore and the settle
+           move out here.
+
+           THE FLAG IS THE SEND'S, so nothing about the screen may keep it up. Only the token
+           is asked: a reopen of the current workspace bumps `requestVersion` and leaves this
+           composer standing, and while the lift sat behind that generation, pressing Refresh
+           mid-post left the box read-only, the chips dead and the To: row frozen for the rest
+           of the session. A review arm found it; it was pre-existing and this row widened it,
+           because the derived pass holds while the flag is up. */
+        if (composerSendToken === sendToken) setComposerSending(false);
+        /* AND WHAT IS RENDERED IS THE SCREEN'S. Same two facts the catch asks, for the same
+           reason: the token says nobody tore the composer down, the workspace says the reader
+           has not moved. */
+        const composerIsStillThisSends =
+          composerSendToken === sendToken && workspaceId === activeWorkspaceId;
+        if (composerIsStillThisSends) {
           /* THE ADDRESS SETTLES HERE, and only here, because it was FROZEN for the whole
              post. The send captured its recipients before the first await; a prune that moved
              the chips while it was on the wire would have left the row showing one set and
@@ -7861,11 +7995,14 @@ import "../../styles/tokens.css";
              recipient the roster lost during the post is taken off the row now, with the
              sentence that says so, against a set nothing is being sent to any more. */
           syncComposerAddress();
-          /* AND A SENT MESSAGE IS NOT ONE BEING WRITTEN. The settle above derives the pair
-             and writes it down, which would leave a draft holding the set the send just left
-             on the row — a second copy of something the remembered set already says, and one
-             that can disagree with it. The success path cleared the draft before this ran. */
-          if (posted !== null) clearComposerDraft(sendDraftKey);
+        }
+        /* AND A SENT MESSAGE IS NOT ONE BEING WRITTEN. The settle above derives the pair and
+           writes it down, which would leave a draft holding the set the send just left on the
+           row — a second copy of something the remembered set already says, and one that can
+           disagree with it. It names this send's own key, so it runs whatever screen the
+           reader ended up on; the success path cleared the same draft before this. */
+        if (posted !== null) clearComposerDraft(sendDraftKey);
+        if (composerIsStillThisSends) {
           syncComposerControls();
           input.focus({ preventScroll: true });
         }
@@ -8140,7 +8277,18 @@ import "../../styles/tokens.css";
       runBoot();
     });
     one<HTMLButtonElement>("[data-refresh]")?.addEventListener("click", () => {
-      if (activeWorkspaceId) void openWorkspace(activeWorkspaceId);
+      if (!activeWorkspaceId) return;
+      /* THE SAMPLE REFRESH REOPENS THE SAMPLE WORKSPACE, rather than asking a server that is
+         not there. The control is hidden in sample mode because there is nothing to fetch,
+         but the handler is the one the visible button reaches in a real workspace, and both
+         now take the same step the defect lives in: advance the generation and leave the
+         composer standing. */
+      const current = workspaces.find((workspace) => workspace.id === activeWorkspaceId);
+      if (sampleMode && current) {
+        openSampleWorkspace(current);
+        return;
+      }
+      void openWorkspace(activeWorkspaceId);
     });
     /* AUTO-LOAD OLDER ON SCROLL-UP. Deliberately drives the SAME button rather than calling
      * loadSignals directly: the button already owns the disabled state, the inline error, the
