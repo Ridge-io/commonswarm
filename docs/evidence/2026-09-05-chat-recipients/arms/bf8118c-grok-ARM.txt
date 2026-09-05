@@ -1,0 +1,117 @@
+I'll read REVIEW.md and the patch first, then follow REVIEW.md exactly.The patch is large. I'll keep reading it and the matching source so I can attack each check.I'll split the remaining patch and the high-risk source into parallel reads so I can attack each check.The rest of the patch and the high-risk files are next — I'll attack the authorization, view splice, and delivery paths in parallel.I'll keep going through the remaining tests and the delivery/view source.The view predicate and reply authorization need a close look, especially revoked agents.diff --git a/docs/design/2026-09-04-chat-platform-reconciled.md b/docs/design/2026-09-04-chat-platform-reconciled.md
+
+I read the patch and the tree at this SHA. I did not run tests, apply the migration, or start a listener.
+
+## Round 2 — `signalNamesRecipient`
+
+This arm does not grant more than the read path.
+
+- The view admits a member who is named as a user, or who owns a named agent. `signalNamesRecipient` uses the same two tests, on `swarm.signal_recipients`, pinned to `route.workspaceId`.
+- An agent call sets `userId` to null. The agent cannot use its owner's user row, and cannot use a sibling agent. It matches only its own principal. That is the same cut the read edge makes with `addressedToThisAgent`.
+- A member who only owns some other agent does not match.
+- A cross-workspace id fails earlier: the parent load is `workspace_id = route.workspaceId` and `kind IN ('ask','note')` and live `until`. No row, 403.
+- Control in the served test: a member who is not in the set still gets 403 on `in_reply_to`.
+
+This is the reply twin of the read path. It is not the delivery twin. That is the fail below.
+
+## 1. Old clients
+
+`to` does not sit in `modernKeys`. `modernKeys` is still `to_agent_principal_id` + `in_reply_to`. `to` is in `CHAT_SIGNAL_OPTIONAL_KEYS` and enters `exactKeys` only through `chatSignalKeys` / `Object.hasOwn`. A 0.1.54 post with no `to` has an empty chat group.
+
+The read edge still takes `in_reply_to` as its modern group. `chatReadKeys` only adds `channel`. A post-only `to` does not open a read group.
+
+The browser post still sends the scalar pair and `in_reply_to: null`. It does not send `to`.
+
+Installed parsers ignore extra response keys (`recipients`, `oldest_pending_at`, a fourth capability marker). `checkedClaimCapabilities` requires the three old markers to be `1` and ignores the rest. That half is safe.
+
+## 2. View recreation
+
+The splice is two-step: tag the top-level `FROM swarm.signals ` first, then the first `WHERE` in the tail. The attachments `WHERE` stays in the head. Inner `WHERE` in the old predicate stays inside the wrapped predicate. Fail-closed if the `FROM` is missing, not unique, or `signal_recipients` is already in the live body.
+
+The new disjunct has its own `is_member` gate. An OR at the top cannot admit a non-member. It admits the people the sender named, in person or through an agent they own. That is the same rule as the old scalar agent arm (also no `revoked_at` filter). A bystander is not admitted. The author is not admitted unless they are in the set. The postgres suite measures that.
+
+`assert_view_clauses_preserved` is vacuous for the new marker on this run (`p_before` does not contain it). The DO block after the recreation is the positive control: it requires `AS recipients`, `recipient_user_id = auth.uid()`, and exactly one `FROM swarm.signals` boundary.
+
+I did not apply the migration, so I did not see the live `pg_get_viewdef` body.
+
+## 3. First-recipient guarantee
+
+The deferred trigger checks contiguous `0..n-1` and that position 0 equals the scalar columns. Signals and recipient rows are append-only, so a later scalar edit is not a path. No `to` means no recipient rows; scalars stand alone. That is the old path.
+
+`in_reply_to` and thread replies and `working-on` cannot carry `to`. A private reply writes no recipient rows and re-addresses the author on the scalar columns.
+
+`resolveSignalWriteTarget` copies entry 0 onto the scalar columns. `postSignal` writes the list in order. I found no edge path that stores recipient rows with a null or disagreeing scalar. Direct SQL that disagrees fails at commit.
+
+## 4. Two enforcement points
+
+The view admits the owner of any named agent. The read edge then requires `to_agent = this principal` or `recipients @> [{kind:'agent', id: this principal}]`. A second agent can read. An agent that is not in the set cannot. `inbox: true` uses the same fragment.
+
+`@>` is object-containment on array elements, so extra `position` on the view object does not block a match. Kind is in the object, so a user id that equals an agent principal id does not match. Ids come from uuid values; Postgres emits lowercase.
+
+I did not run a SQL containment probe.
+
+## 5. Delivery fan-out — this is the fail
+
+`ON CONFLICT DO NOTHING` hits `PRIMARY KEY (signal_id, recipient_agent_principal_id)`. Kind gate is `ask`/`note`, same as `enqueue_signal_delivery()`. `working-on` does not enqueue. Neither trigger checks `until`; that is not new.
+
+The postgres suite proves one ledger row per agent, and no duplicate for position 0. That is only the INSERT.
+
+`claimAgentInbox` will lease a row for a second agent (the select is on `signal_deliveries`, not on the scalar). Then `hydrateDeliveryRefs` does:
+
+```
+AND s.to_agent_principal_id = ${args.recipientPrincipalId}::uuid
+```
+
+Position 0 is the scalar. For agent 2 this returns no row, so hydrate returns null. The handler writes `delivery_hydration_integrity`, returns 403 `delivery_unavailable`, and **commits** (`db.begin` commits a normal return). The lease and `attempt_count` stick. Ten failed claims terminalize the row as `delivery_attempts_exhausted`.
+
+Ack `expired` uses the same scalar filter at `durable-delivery.ts:619`.
+
+`src/` did not change. The installed (and this SHA's) client still does `signal.to_agent !== expected.principalId` → protocol error. Even a hydrate fix that returns the real row would break 0.1.54 unless the wire forges `to_agent` (that would make an old reader wrong) or the client changes (that is a flag day).
+
+So a second agent can **read** the signal and cannot **claim** it. Fan-out is not “incomplete.” It inserts rows the claim path cannot hydrate.
+
+This is the same class as the round-1 `in_reply_to` bug. That one was fixed. This twin was not. No test claims as a second agent.
+
+## 6. Cap
+
+Edge: `SIGNAL_RECIPIENT_MAX = 8`. Database: `position BETWEEN 0 AND 7`, unique per signal. A 9th entry is refused on the edge. Position 8 is refused by CHECK. Sentences for kinds and the cap are built from the constants. The constants test now reads the SQL bound as a number, with a control on `BETWEEN 0 AND 75`. `MENTION_MAX_RECIPIENTS` is pinned by name.
+
+## 7. `oldest_pending_at`
+
+`count(*)` and `min(d.enqueued_at)` are one statement, same `WHERE` as `pending_delivery_count`. Empty set → SQL NULL → JSON null. `parseClaimLedger` keeps absent, null, and a string apart. All three response sites spread; they do not default. A new capability marker does not break the installed parser.
+
+A second-agent unhydratable row still counts as pending, so this field can report age for a queue the listener cannot drain. That is a consequence of check 5.
+
+## 8. Claims in prose
+
+True as written:
+
+- Refusal-order splits for `declare_agent_model` / `set_agent_model` and `broadcast_to_channel` without a thread.
+- One-entry `to` vs scalar: same `swarm.signals` columns (id/body/until/created_at aside), same delivery **count**, same rendered `recipients`. The side table is the named difference. The command record omits `position`; the view includes it. That is named in code, and the served test compares them.
+
+False:
+
+- “Wakes the agents in it” / “one delivery row per AGENT recipient” as a working wake. The row is written. Claim/hydrate/ack-expired and the client `to_agent` check do not complete the wake for anyone but recipient 0.
+- Group DMs are storable and readable. They are not deliverable to a later agent through the listener.
+
+Line pointer `command/index.ts:1816-1824` matches the `working-on` check. The live-listener exemption is correctly voided; they state they did not run a live listener.
+
+## 9. Tests
+
+The served second-recipient **read** test has a control (a one-entry list stays invisible to the other agent). The reply test covers a second **user**, not a second **agent**. Nothing would go red if hydrate kept the scalar filter.
+
+The `!addressedByList` source sweep uses a 400-character slice. The `working-on` window also contains the `in_reply_to` condition, so removing the working-on arm alone would stay green. The served working-on test is the real control.
+
+The quoted `modernKeys` sweep and the numeric cap extractor are real. The capabilities constant test states it would stay green if the claim query stopped computing the time.
+
+## House rules
+
+- **D-053:** new code does not classify on `error.message`.
+- **Generated, not typed:** kind list and cap sentences come from the constants. Empty-list copy is a single sentence, not a list.
+- **Negative path:** over-cap, empty `to`, extra model key, non-recipient reply, and the `BETWEEN 0 AND 75` extractor control all reach the rule they name.
+- **Refusal order:** broadcast-without-thread before a bad `to` is written down and tested.
+- **Em-dashes:** new user-facing refusals I read use ASCII. Design docs still use em-dashes; those are not CLI/UI copy.
+
+**Not established:** live `pg_get_viewdef` after apply; a real claim as agent 2; a live listener; `npm test` / `test:p1-server` on this machine.
+
+VERDICT: FAIL

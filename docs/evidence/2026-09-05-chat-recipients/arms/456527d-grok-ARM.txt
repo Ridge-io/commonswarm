@@ -1,0 +1,124 @@
+I'll read REVIEW.md and DIFF.patch first, then follow REVIEW.md exactly.The patch is long. I'll keep reading it and check the repo at the SHA REVIEW.md names.I'll finish the patch, then check the wake, read, and reply paths against the code.The brief says one wake/read/reply sentence is still wrong. I'll check those claims against the enqueue trigger, the view, and the write-target code.I'll pull the remaining patch, the delivery trigger, and the previous arm notes in parallel.I need to check thread-root rules and whether a later recipient can really reply the way the docs say.I have the still-wrong clause. Next I’ll check a few remaining test and cap details, then write the verdict.diff --git a/docs/design/2026-09-04-chat-platform-reconciled.md b/docs/design/2026-09-04-chat-platform-reconciled.md
+
+SHA `456527d`. Tree not modified. I did not run `npm test`, `test:p1-local`, or `test:p1-server`.
+
+The code for recipients, the view splice, old clients, the cap, and `oldest_pending_at` holds. Round 5 asked to treat a wake/read/reply correction as still wrong and read it against `enqueue_signal_delivery()`, the view predicate, and `resolveSignalWriteTarget`. That is what fails.
+
+The long wake paragraph in §4 is true. The next sentence is not.
+
+---
+
+### Check 1 — Old clients
+
+`to` reaches `exactKeys` only through `chatSignalKeys` → `CHAT_SIGNAL_OPTIONAL_KEYS` (`channels.ts:340-356`, `command/index.ts:1732-1743, 1781-1790`). `modernKeys` is still only `to_agent_principal_id` / `in_reply_to` (`command/index.ts:1725-1727`). The 200-character source sweep looks for `"to"`, not the substring `to` (`tests/chat-signal-wire-compat.test.ts:163-177`).
+
+Read allow-list: `chatReadKeys` still only adds `channel` (`channels.ts:362-364`, `read/index.ts:229-250`). Agent bodies that always send `in_reply_to` are unchanged.
+
+`parseSignalRecord` does not exact-key the row (`src/cloud/signals.ts:327-384`). Extra `recipients` on a post/read row does not break 0.1.54. Installed claim parser checks only `delivery_claim` / `delivery_ack` / `sender_owner_relation` (`src/cloud/delivery.ts:365-372`).
+
+`git diff v0.1.54..HEAD -- src/` is empty. No installed 0.1.54 post or agent-read body found that this diff makes fail.
+
+### Check 2 — View recreation
+
+Two-step splice is real: attachments `WHERE` sits in the select-list subquery; split at top-level `FROM (swarm.)?signals ` first, then first `WHERE` in the tail (`20260905000010_signal_recipients.sql:351-412`). `regexp_replace` without `g` replaces one match. The replacement string starts with a comma inside `$q$`. `pg_get_viewdef` for this view is `FROM swarm.signals s WHERE …` (`20260905000003:79`).
+
+New disjunct is ORed at the top and has its own `is_member` (`sql:413-432`). A non-member fails both arms. Marker `'recipient_user_id = auth.uid()'` is only in the WHERE (the aggregate never compares to `auth.uid()`), so `assert_view_clauses_preserved` is not vacuous after this file. This run still needs the positive control at `sql:448-465`; that control is present (column, arm, exactly one `FROM swarm.signals` boundary).
+
+Could not make the splice drop a live clause, or admit a non-recipient who is not already admitted.
+
+### Check 3 — First-recipient guarantee
+
+Deferred constraint compares position 0 to the scalar columns and requires positions `0..n-1` (`sql:158-213`). `resolveSignalWriteTarget` writes entry 0 onto the scalar columns (`command/index.ts:6726-6750`). `postSignal` then writes every named recipient, position 0 included (`command/index.ts:7108-7120`). A body with no `to` writes zero recipient rows; the view derives the set (`sql:372-377`).
+
+`to` beside a scalar, on a thread reply, on `working-on`, or beside `in_reply_to` is refused before insert. `in_reply_to` re-addressing does not write recipient rows (`command.to ?? []`); the reply is re-addressed to the author. Direct SQL with a mismatched position 0 is refused (postgres test at `chat-recipients-postgres.test.ts:705-751`). Scalar NULL with a position-0 row cannot commit: CHECK forces one kind on the row, which is `IS DISTINCT FROM` NULL.
+
+No path found where rows exist and position 0 disagrees with the scalar columns.
+
+### Check 4 — Two enforcement points
+
+View admits the owner of any addressed agent; the read edge narrows to the presenting principal (`read/index.ts:663-686, 723-731`). Same `addressedToThisAgent` fragment is used for the unfiltered arm and for `inbox: true`. Served case for a second agent, including `inbox: true` (`chat-signals.test.ts`). Control: a one-entry `to` stays invisible to the other agent.
+
+Containment is `@>` of `{kind:'agent', id:<uuid>}` against objects that also have `position`. JSONB object containment allows extra keys, so that matches. Kind is in the probe, so a user id equal to a principal id does not match. Ids are uuid-typed on both sides; parse lower-cases before insert. Fallback from the scalar column means a pre-migration directed signal still matches.
+
+Could not make a non-addressed agent read, or a second agent fail to read, on either filter.
+
+### Check 5 — Delivery fan-out (original claim)
+
+`swarm.enqueue_signal_recipient_delivery()` does not exist. Triggers on `swarm.signal_recipients` are only `same_transaction`, `append_only`, and `first_is_the_scalar` (`chat-recipients-postgres.test.ts:487-506`). Wake is still `enqueue_signal_delivery()` on `swarm.signals`, gated on `to_agent_principal_id IS NOT NULL AND kind IN ('ask','note')` (`20260731000001:126-137`). `ON CONFLICT DO NOTHING` keys that table's PK `(signal_id, recipient_agent_principal_id)`. `working-on` does not enqueue. An expired ask/note to an agent still enqueues; that is old behaviour.
+
+That is the intended bound, not a missed fan-out.
+
+### Check 6 — Cap
+
+Two points, one number: `SIGNAL_RECIPIENT_MAX = 8` (`channels.ts:237`); CHECK `position BETWEEN 0 AND 7` (`sql:59`). PK on `(signal_id, position)` plus that CHECK caps the row count at 8. Edge refuses `length > MAX` with a sentence built from the constant (`channels.ts:296-299`). Test reads the CHECK as a number, not a substring (`chat-channel-constants.test.ts`), and pins `MENTION_MAX_RECIPIENTS` the same way.
+
+Could not store 9 rows. Could not get the edge to accept a list the CHECK refuses, or the reverse, through `post_signal`. User-facing lists/bounds for `to` are generated from `SIGNAL_RECIPIENT_KINDS` / `SIGNAL_RECIPIENT_MAX` / `SCALAR_RECIPIENT_FIELDS`.
+
+### Check 7 — `oldest_pending_at`
+
+Same SELECT as the count: `count(*)::int AS pending, min(d.enqueued_at) AS oldest` over unacked live rows for that principal (`durable-delivery.ts:338-347`). `min()` over empty is SQL NULL → JS null, no extra branch on the count (`:365`).
+
+`parseClaimLedger` keeps absent absent (`:736-748`). Fresh claim always sets the key. Replay / race / fresh HTTP paths spread, never default (`command/index.ts:7629-7638, 8433-8442, 9229-9238`). Installed client ignores the extra marker (`tests/delivery-client.test.ts:1202-1228`).
+
+Could not confuse absent with null on those paths. Adding the marker does not break the installed claim parser.
+
+### Check 8 — Claims in prose — **FAIL**
+
+The useful find: a replacement that is still wrong. Oracle is `enqueue_signal_delivery()` (`20260731000001:126`):
+
+```
+IF NEW.to_agent_principal_id IS NOT NULL AND NEW.kind IN ('ask', 'note') THEN
+  INSERT INTO swarm.signal_deliveries ...
+```
+
+It does not read `swarm.signal_recipients`. Position 0 is woken only when the scalar column names an agent and the kind is `ask` or `note`. The `[person, agent]` case in `chat-recipients-postgres.test.ts:2988-3016` measures zero delivery rows.
+
+**1. Live, in the paragraph labelled “the wording that survives review”** — `docs/design/2026-09-04-chat-platform-reconciled.md:486-487`:
+
+> The original clause is therefore right about every agent except one
+
+The long form just above is true: person at position 0 wakes nobody; agent at position 0 wakes that agent. “Except one” does not follow. When position 0 is a person, the original clause (“no agent in a group DM would ever be woken”) is right about **every** agent. There is no exception.
+
+True statement: the original clause is right about every agent that is not position 0. It is wrong about the agent at position 0, and only when that recipient is an agent taking `ask` or `note`.
+
+This is the same slip as “wakes ONE of them” and “notifies its first agent recipient”: a summary that assumes position 0 is an agent.
+
+**2. Same slip, tests column** — `docs/design/2026-09-05-chat-build-plan.md:42`:
+
+> the delivery bound (recipient 0 woken once, nobody else, and no trigger on the recipients table)
+
+“Woken once” is false for `[person, agent]`. The bound is: at most recipient 0, and only when that recipient is an agent taking `ask` or `note`; nobody else; no trigger on the recipients table.
+
+**Read/reply sentences that did hold** against the view predicate and `resolveSignalWriteTarget`:
+
+- View new disjunct has its own `is_member` and admits a user recipient or the owner of an agent recipient. A three-user address is readable by all three through the view. Agents read through the read edge, not as `auth.uid()`.
+- `signalNamesRecipient` plus `addressedByScalar` lets a later recipient `in_reply_to`. The reply is re-addressed to the author and does not copy the set. Served tests cover a second person and a second agent. A non-recipient still gets 403.
+- One-entry `to` vs scalar: same `swarm.signals` row, same delivery ledger, same rendered view set; side table differs (0 rows vs 1). Named and asserted.
+- Group-DM ruling: R3, §4 lead, §4 body, and §10 now all say nobody has ruled.
+- `src/` is unchanged vs v0.1.54. `command/index.ts:1816-1824` is the working-on check. `src/cloud/delivery.ts:423` is still `signal.to_agent !== expected.principalId`.
+
+### Check 9 — Tests
+
+Digit-boundary gates for the cap, slug bound, and `MODEL_MAX` have a control that `1${N}` does not match. The old `includes("BETWEEN 0 AND 7")` shape is gone.
+
+`!addressedByList` windows are disjoint (`chat-signal-wire-compat.test.ts`). Trigger-name test would miss fan-out written in `postSignal`; the ledger-count tests cover that, including the `[person, agent]` zero.
+
+Named vacuities that are honest: `DELIVERY_CAPABILITIES.oldest_pending_at === 1` does not prove the claim query; the served test in `command.test.ts` does. The test named “wakes recipient 0 and NOBODY else” still asserts 0 for person-then-agent, so the title is loose and the body is not.
+
+No test found that would stay green if the behaviour it claims to guard were removed, except the ones that say so.
+
+### House rules
+
+- **D-053:** new code does not branch on `error.message`.
+- **Generated, not typed:** `to` refusals are built from the constants the checks read.
+- **Refusal order:** broadcast-without-thread moved above the slug rule; malformed `to` is after that on purpose. Accept/refuse boundary for `working-on`+cap does not move.
+- **No em-dash in user-facing new strings.** One em-dash in a code comment (`channels.ts:349`).
+- **Negative path:** over-cap, empty `to`, duplicate, both-spellings, non-recipient reply, and inbox second-recipient cases reach the rule they name.
+
+### What I did not establish
+
+I did not apply `20260905000010` to a live database. I did not run the Postgres or served suites. I did not start a listener.
+
+Replace “except one” / “woken once” with the scalar-trigger rule the long form already states.
+
+VERDICT: FAIL

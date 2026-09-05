@@ -1,0 +1,114 @@
+I'll read REVIEW.md and DIFF.patch first, then follow REVIEW.md exactly.The brief is a nine-check attack review. I’ll read the rest of the patch and the live source next, then try to refute each check.The tree is SHA `07ffc67`. Next I’ll pull the rest of the patch and the files each check names.I’ll read the remaining patch and the live source those checks depend on.I’ll inspect delivery enqueue, the live view, capability checks, and a few claim surfaces that look easy to refute.The post response now includes `recipients`. I’ll check whether installed clients reject that extra field.diff --git a/docs/design/2026-09-04-chat-platform-reconciled.md b/docs/design/2026-09-04-chat-platform-reconciled.md
+
+Independent review of SHA `07ffc67` on `lane/chat-recipients`. I read `DIFF.patch` and the matching source. I did not run `npm test`, `test:p1-local`, `test:p1-server`, or a live listener.
+
+## 1. Old clients — not refuted
+
+`to` reaches `exactKeys` only through `chatSignalKeys` → `...chatKeys`. `modernKeys` is still the pair `to_agent_principal_id` / `in_reply_to`.
+
+Installed post body (modern pair, no `to`) keeps the same key set. Agent read bodies still send `in_reply_to`; `chatReadKeys` still adds only `channel`. `parseSignalRecord` and `parseClaimSuccess` ignore extra keys, so `recipients` on a row and `oldest_pending_at` on a claim do not break 0.1.54.
+
+Response `recipients: []` on a post with no `to` is also extra and ignored.
+
+## 2. View recreation — not refuted
+
+Two-step splice: split on top-level `FROM swarm.signals`, then the first `WHERE` in that tail. Attachments and the new recipients subquery sit in the select list (`FROM swarm.signal_attachments` / `signal_recipients`), so they do not steal the split.
+
+Wrap is `(old predicate) OR (new disjunct)`. Live WHERE is `is_member AND (undirected OR to_user OR owns_agent)`. That becomes `is_member AND (old audience OR new audience)`.
+
+New disjunct has its own `is_member`. A non-member cannot pass. `EXISTS` names `auth.uid()` as a user recipient or as owner of a named agent. Author and bystander stay out unless they are in the set.
+
+`assert_view_clauses_preserved` is vacuous for the new marker on this run (`p_before` does not have it). The positive control after recreation requires `AS recipients` and `recipient_user_id = auth.uid()`. Widening is not that helper’s job; the before/after visibility tests are.
+
+`@@SWARM_SPLIT@@` / `@@SWARM_WHERE@@` are not in the live view text. A later top-level `AND` restriction would not apply to the new disjunct after a wrap; that is a future splice hazard, not a defect in this body.
+
+## 3. First-recipient guarantee — not refuted
+
+`resolveSignalWriteTarget`: `to` present → every entry checked live, entry 0 becomes the scalar, `inReplyTo` null.
+
+`postSignal` writes one side-table row per `command.to` entry, positions from `.entries()`. No `to` writes no rows.
+
+Deferred trigger: positions `0..n-1`, position 0 `IS NOT DISTINCT FROM` the scalar pair. Scalar-only posts never fire it (that is the no-backfill path). Append-only blocks a later scalar change.
+
+`in_reply_to`: validator refuses `to` beside it (`!addressedByList`). Re-address still uses the parent author as the one scalar. No side-table rows. Thread reply and `working-on` refuse `to` the same way they refuse the scalar fields.
+
+Gap, not a guarantee break: `addressedToCaller` still reads only the parent’s scalar columns. A second recipient can read the parent and still get 403 on `in_reply_to`. The lane does not claim otherwise.
+
+No path I found stores recipient rows with a mismatched or null scalar and commits.
+
+## 4. Two enforcement points — not refuted
+
+View admits the owner of any named agent (or a named user). Read SQL then keeps `s.to_agent = this principal OR recipients @> [{kind:agent, id:this}]`. Both inbox and unfiltered arms use that same fragment.
+
+`@>` allows extra keys, so `position` on the view object does not block a match. Kind is in the probe, so a user id equal to an agent principal id does not match as `kind: agent`. Ids are uuid-typed on both sides (canonical lowercase).
+
+First recipient still hits the indexed `to_agent` arm. Second recipient needs containment. The served test posts two agents and reads as the second token; the control is a one-entry list that the other agent must not see.
+
+I did not run that test. `inbox: true` is the same SQL fragment, not a separate served case.
+
+## 5. Delivery fan-out — not refuted
+
+PK is `(signal_id, recipient_agent_principal_id)`. `ON CONFLICT DO NOTHING` with no target ignores a unique hit on that key. Scalar trigger already inserted position 0; the new trigger inserts again and stores once.
+
+Kind gate is `ask`/`note`, same as `enqueue_signal_delivery`. User rows return before insert. `working-on` enqueues nothing (Postgres case). Neither trigger checks `until` (same as today).
+
+## 6. Cap — not refuted
+
+`SIGNAL_RECIPIENT_MAX = 8`. CHECK is `position BETWEEN 0 AND 7`. Unique `(signal_id, position)` plus contiguous `0..n-1` means at most 8 rows. Edge refuses `length > 8` from the same constant. Edge writes `0..n-1`, so it cannot accept a list the CHECK refuses.
+
+User-facing lists/bounds: `SIGNAL_RECIPIENT_RULE_TEXT`, over-cap sentence, kind list, scalar-conflict sentence, `uuidFieldRuleText` — all built from the constants the check reads. Empty-list and duplicate sentences do not enumerate.
+
+The CHECK writes `7` in SQL; `tests/chat-channel-constants.test.ts` interpolates `MAX - 1`. Composer pin is `MENTION_MAX_RECIPIENTS` by name in one file (the test states that bound).
+
+## 7. `oldest_pending_at` — not refuted
+
+Same statement: `count(*)::int AS pending, min(d.enqueued_at) AS oldest` over unacked + live. Empty set → SQL NULL → JSON `null`, no branch on the count.
+
+`parseClaimLedger`: missing key stays missing; present null stays null; bad value fails the whole parse. Three HTTP sites spread the field and never default it.
+
+`checkedClaimCapabilities` requires the three old markers `=== 1` and ignores extra keys. Adding `oldest_pending_at: 1` does not break 0.1.54. Extra claim field is ignored.
+
+`Date.parse` on replay is looser than ISO 8601. Fresh claims go through `asIso`. Stored ledgers from this server are ISO. Low risk.
+
+No live listener was started. Client still does not read the field, so `cswarm listen status` must be unchanged. I did not measure that.
+
+## 8. Claims in prose — not refuted, with leftovers
+
+Commit `5b60f98`: one-entry `to` vs scalar — same signal columns (id/body/until/created_at excluded), same delivery count, same view `recipients`. Side table has a row only for `to`; that is named. Two enqueue triggers, one stored row; named. Command record has no `position`, view does; the served test names that.
+
+`signals_one_recipient` is not dropped. Cap 8, first recipient on the scalar columns, apply-order coupling — match the code.
+
+§4/§10 corrections match: group DMs are a product question; L2 is the first capped fan-out; multi-recipient is in v1.
+
+Leftovers, not a refute:
+
+- `command/index.ts:1580-1587` in the reconciled doc now points at `signals_seen`, not `working-on` (that check moved to ~1817). The behaviour claim is still true.
+- §7 still says delivery is untouched and a live listener check is not owed. L2 writes `signal_deliveries`. §10 already says L2 is the first fan-out.
+- `signalRecipientSet` comment says the p1-local file compares the TS set to SQL. That file compares SQL fallback to SQL rows. Both have `position`. TS does not.
+
+## 9. Tests — some would stay green
+
+Would stay green if the behaviour they name were removed:
+
+- `the claim ledger says it reports the queue age` — only `DELIVERY_CAPABILITIES.oldest_pending_at === 1`. The served claim test is the one that checks `min(enqueued_at)`.
+- `!addressedByList` source sweep — does not run `baseValid`. The served `working-on` / `in_reply_to` cases do.
+- Cap test `assert.ok(true)` after one insert at position `MAX-1` — the insert throw is the real check; that assert is not.
+
+Fixed substring trap: quoted `"to"` plus a quoted-pair control. A second test reads the `exactKeys` array and forbids a bare `"${key}"`.
+
+`/kind is user or agent/` types today’s `classList` output. Adding a kind would fail that regex (useful) but it is still a typed list in a test.
+
+Visibility, fan-out, first-is-scalar, derivation equality, second-agent read, installed post, cap sentence — those tests have positive controls and would go red if the rule died. I did not run them.
+
+## House rules
+
+- **D-053:** no new `error.message` classifier.
+- **Generated lists:** refusal enumerations come from the constants.
+- **Refusal order:** `{model: 123}` gets `MODEL_RULE_TEXT`; broadcast-without-thread beats a bad slug. Accept/refuse set is the same. New combo: broadcast-without-thread now beats a malformed `to` (shape-before-meaning would reverse that pair).
+- **Em-dashes:** none in new user-facing refusal strings.
+
+## Not established
+
+Postgres, served edge, and a live listener. Logic and tests as written hold. I did not execute them.
+
+VERDICT: PASS

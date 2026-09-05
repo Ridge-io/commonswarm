@@ -1,0 +1,35 @@
+`diff --git a/docs/design/2026-09-04-chat-platform-reconciled.md b/docs/design/2026-09-04-chat-platform-reconciled.md`
+
+**1. Old clients.** 
+`to` does not break old clients. It reaches `exactKeys` only through `chatKeys` (via `chatSignalKeys()`), which safely checks `Object.hasOwn(cmd, "to")` before appending it to the array of expected keys. Thus, old bodies that omit `to` will not have it added to the `exactKeys` expected list and will pass the shape check.
+
+**2. The view recreation.** 
+The splice can corrupt a clause and the assertion is vacuously true.
+- The `regexp_replace(tail, '\sWHERE\s', ' WHERE @@SWARM_WHERE@@ ')` does not use the `'g'` flag, replacing only the *first* `WHERE` in `tail`. If the top-level `FROM` has a `JOIN` containing a subquery with its own `WHERE`, the splice incorrectly targets the inner clause.
+- `assert_view_clauses_preserved` is vacuously satisfied. `pg_get_viewdef` formats the view columns with table aliases (e.g., `s.workspace_id`), but the test marker is literally `'is_member(workspace_id, auth.uid())'`. The `position(marker IN p_before) > 0` condition fails and completely skips the assertion even if the clause is missing.
+- The new disjunct correctly restricts access to the explicit recipients or agents owned by them using its own `is_member` gate.
+
+**3. The first-recipient guarantee.** 
+It fails on `in_reply_to`. When `in_reply_to` is passed, `validateCommand` requires `to` to be absent. `resolveSignalWriteTarget` successfully resolves the parent's sender into the scalar `toUserId` or `toAgentPrincipalId`. However, `postSignal` iterates over `command.to` (which is absent), inserting ZERO rows into `swarm.signal_recipients`. Because no rows are inserted, the constraint trigger `assert_signal_recipients_consistent` (`AFTER INSERT ON swarm.signal_recipients`) NEVER fires. The resulting signal has populated scalar recipient columns but an empty recipient rows table, disagreeing with position 0.
+
+**4. The two enforcement points.** 
+They agree. `addressedToThisAgent` uses a jsonb containment test (`@>`). The test is exact and correctly handles case because `jsonb_build_object` coerces UUIDs to lowercase strings natively. It avoids kind confusion because `{kind: 'agent'}` cannot match `{kind: 'user'}`. An agent can read an undirected signal (`s."to" IS NULL AND s.to_agent IS NULL`). For directed signals where the agent is the second recipient, `addressedToThisAgent` evaluates to true, correctly satisfying the `inbox: true` filter.
+
+**5. Delivery fan-out.** 
+It de-duplicates correctly. Both the scalar trigger and the recipient trigger insert into `swarm.signal_deliveries` using the same `(signal_id, recipient_agent_principal_id)` values, matching the primary key. `ON CONFLICT DO NOTHING` safely drops the duplicate. The kind gate (`v_kind IN ('ask', 'note')`) perfectly matches the scalar trigger. Neither trigger filters on `s.until > statement_timestamp()`, meaning expired signals *do* enqueue (just as they did prior to this diff). `working-on` is blocked by the kind gate.
+
+**6. The cap.** 
+It safely bounds the input and prevents inconsistencies. The database caps it at 8 recipients using `position BETWEEN 0 AND 7` (positions are unique per signal). The edge correctly refuses arrays longer than 8. The user-facing error message dynamically computes the bounds and plural using `countNoun(SIGNAL_RECIPIENT_MAX, "recipient")`, so it will never contradict the enforcement logic.
+
+**7. oldest_pending_at.** 
+It is correct. The reported time `min(d.enqueued_at)` is retrieved from the exact same statement and set counting `pending_delivery_count`. `parseClaimLedger` correctly retains "absent" vs "null" by explicitly checking `Object.hasOwn(body, "oldest_pending_at")`, safely preserving older replays. Adding a new capability marker does not break installed clients as they safely ignore unknown keys.
+
+**8. Claims in prose.** 
+The claim "a one-entry `to` produces the same stored signal row, the same delivery ledger and the same rendered set as the scalar shape" is mechanically inaccurate. While those specific outputs match, the scalar shape writes 0 rows to `swarm.signal_recipients`, whereas the one-entry `to` writes 1 row. The underlying database states differ, which the lane fails to name.
+
+**9. The tests.** 
+The test asserting the SQL constraint matches the cap is flawed: 
+`assert.ok(recipientsMigration.includes('position BETWEEN 0 AND 7'))`
+This is a substring match. If the migration was maliciously or accidentally changed to `position BETWEEN 0 AND 75`, the `.includes()` check would still evaluate to true. The test would stay green despite the cap enforcement being broken.
+
+VERDICT: FAIL
