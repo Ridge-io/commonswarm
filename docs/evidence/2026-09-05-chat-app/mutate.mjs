@@ -125,16 +125,6 @@ const mutations = [
     "the three facts the design puts in the UI"],
 
   // ── round four: the three controls added after the third SHA failed both arms
-  [OBS, DASH, "      const channelAtSend = activeChannelId;\n", "",
-    "a post belongs to the channel it was sent from"],
-  // The channel must decide WHERE the rows land and nothing else: dropping the whole landing
-  // is what left the draft uncleared and the failure silent.
-  [OBS, DASH, "        signals = postedRowsBelongHere() ? [...posted, ...kept] : kept;",
-    "        signals = [...posted, ...kept];",
-    "a post belongs to the channel it was sent from"],
-  [OBS, DASH, "        if (version !== requestVersion || workspaceId !== activeWorkspaceId) {\n          for (const attachment of attachmentSnapshot) {",
-    "        if (\n          version !== requestVersion || workspaceId !== activeWorkspaceId ||\n          channelAtSend !== activeChannelId\n        ) {\n          for (const attachment of attachmentSnapshot) {",
-    "a post belongs to the channel it was sent from"],
   [OBS, DASH, "      for (const button of all<HTMLButtonElement>(\"[data-workspace-view]\")) {\n        if (button.dataset.workspaceView === \"signals\") button.setAttribute(\"aria-current\", \"page\");\n        else button.removeAttribute(\"aria-current\");\n      }\n      renderChannelRail();\n      renderChannelHead();\n",
     "      renderChannelRail();\n      renderChannelHead();\n      for (const button of all<HTMLButtonElement>(\"[data-workspace-view]\")) {\n        if (button.dataset.workspaceView === \"signals\") button.setAttribute(\"aria-current\", \"page\");\n        else button.removeAttribute(\"aria-current\");\n      }\n",
     "the workspace open leaves the rail's current mark"],
@@ -147,6 +137,18 @@ const mutations = [
   [OBS, DASH, "        if (channelGeneration === channelReadGeneration) {\n          channels = nextChannels.value;\n          channelListFailed = nextChannels.failed;\n        }",
     "        channels = nextChannels.value;\n        channelListFailed = nextChannels.failed;",
     "only the newest channel read is applied"],
+
+  // ── round six: the controls added after the fifth SHA failed both arms
+  [OBS, DASH, "        const visible = posted.filter(showsOnScreen);", "        const visible = posted;",
+    "a post belongs to the channel it was sent from"],
+  [OBS, DASH, "      const placement = intent.placement;", "      const placement = freshPlacement;",
+    "a post belongs to the channel it was sent from"],
+  [OBS, DASH, "      closeChannelDialog();\n      one<SecretHoldingAgentConnect>(\"agent-connect\")?.clearPrompt(false);",
+    "      one<SecretHoldingAgentConnect>(\"agent-connect\")?.clearPrompt(false);",
+    "an auth change closes the channel dialog"],
+  [OBS, DASH, "      if (unknownChannelId !== null) {\n        applyChannelFromUrl(workspaceId);\n        syncChannelUrl();\n      }\n",
+    "",
+    "a later channel read gives an unresolved link one more chance"],
 ];
 
 const testFor = (file) => file;

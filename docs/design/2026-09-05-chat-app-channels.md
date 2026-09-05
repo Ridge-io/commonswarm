@@ -99,13 +99,23 @@ workspace alone: send in one channel, switch while it is in flight, and the row 
 other channel's page and survived the next poll, which keeps any local id the fetched page does not
 carry. The channel is captured with the send now.
 
-**And the channel decides one thing only: where the rows land.** The first fix returned early on a
-channel change, which was worse than the defect it answered: it skipped the send's own cleanup, so the
-draft stayed saved, the pending rows stayed in two caches, the status stayed on "Posting…", and on the
-failure path the body was deleted with no error and no Retry, because the focus move that follows a
-channel click blurs the emptied box and flushes the draft. Both arms found it. The early return is
-guarded on the workspace alone again; the channel chooses whether the posted rows join the list on
-screen, and everything else runs exactly as it does when the reader stays.
+**And the channel decides one thing only: where the rows land.** Two attempts at that were wrong before
+this one, and both arms found both. Returning early on a channel change skipped the send's own cleanup,
+so the draft stayed saved, the pending rows stayed in two caches, the status stayed on "Posting…", and
+on the failure path the body was deleted with no error and no Retry, because the focus move that
+follows a channel click blurs the emptied box and flushes the draft. Comparing the view the send began
+in with the view it ended in then dropped a row posted in a channel and read from all-signals, where it
+does belong, and stripped rows out of a page that had already fetched them, so a row appeared, vanished
+and came back on the next poll.
+
+The rule is the one the list on screen already applies, asked of the row: `showsOnScreen(row)` is true
+when there is no channel narrowing or when the row's own `channel_id` — the server's, not the client's
+guess — matches it. A row is removed from the list only when it is about to be put back.
+
+**A retry replays the address the message was sent to.** `composerIntent` carries the placement beside
+the command ids, so a partial send in one channel, a switch, and a Retry finishes in the channel the
+message was addressed to rather than the one the reader is looking at, and a failed thread reply keeps
+its thread even though the switch cleared the composer's reply state.
 
 **A `?c=` belongs to the workspace its `?w=` names, and the URL is written on every open.** The first
 version wrote it only when a channel was clicked, so switching workspace from the menu carried the
@@ -201,7 +211,7 @@ forbids.
    never reached them and the rail claimed a current channel while the head said Files. Found by a
    review arm. In the unresolved-channel state the rail marks NOTHING current, which both arms read
    and agreed is the honest mark: the reader is in the signals view and in no channel.
-9. **Four review rounds cost twelve product defects and two evidence defects**, every one found by an
+9. **Five review rounds cost seventeen product defects and two evidence defects**, every one found by an
    arm and none by a gate: the read-permission claim in the copy; the composer that posted into the
    unfiltered feed from an unresolved link; a double current mark on Files and Brain; four typed
    copies of the view's name; a workspace switch that opened as "Channel not found"; a channel-list
@@ -213,8 +223,14 @@ forbids.
    generation after the fetch, so a slow open could overwrite a channel the reader had just created
    and then call it "Channel not found"; a measurement file reporting one viewport's rects under
    another's heading; and a shell inventory that had started inventorying a comment. The gates were
-   green for every one. Two of the twelve were introduced by an earlier round's fix, which is the
-   argument for running both arms again on every new SHA rather than only on the first.
+   green for every one. Two more rounds then found a retry that filed the rest of a partial send in
+   the channel the reader had moved to, a landing rule that dropped rows the screen should show and
+   stripped rows the page already had, an auth change that left the channel dialog open over the
+   signed-out surface with the previous workspace's channel names on it, and a `?c=` resolved against
+   an empty list with no second chance. **Five of the seventeen were introduced by an earlier round's
+   fix**, which is the argument for running both arms again on every new SHA rather than only on the
+   first, and for preferring a rule the system already applies over a new comparison invented to
+   answer one report.
 
 ## Files
 

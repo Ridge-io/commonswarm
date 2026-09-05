@@ -276,7 +276,7 @@ test("a sample post joins the sample set, so the local narrowing stays honest", 
      `signals`. Posting then switching channel made the post vanish, and it made the argument
      for allowing a local filter there false: "the sample IS the whole set" holds only if the
      set grows with it. Found by a review arm. */
-  const submit = between(dashboard, "const postedIds = new Set(posted.map", "clearComposerDraft();");
+  const submit = between(dashboard, "const visible = posted.filter(showsOnScreen);", "clearComposerDraft();");
   assert.match(submit, /if \(sampleMode\) sampleSignals = \[\.\.\.posted, \.\.\.sampleSignals\];/);
 });
 
@@ -293,11 +293,29 @@ test("a post belongs to the channel it was sent from, whatever the reader does n
     'one<HTMLFormElement>("[data-composer]")?.addEventListener("submit"',
     "syncComposerControls();\n      renderFeed",
   );
-  assert.match(submit, /const channelAtSend = activeChannelId;/);
+  /* ~~`const channelAtSend = activeChannelId;`~~ retired 2026-09-05: two rounds of arms showed
+     that neither aborting the send on a channel change nor comparing the view the send began
+     in with the view it ended in was the right question. The row carries the channel the
+     server gave it, so the row answers the question the list on screen asks. */
+  const submitCode = submit.replace(/\/\*[\s\S]*?\*\//g, "").replace(/\/\/[^\n]*/g, "");
+  assert.doesNotMatch(submitCode, /channelAtSend/);
+  /* ~~`postedRowsBelongHere = () => channelAtSend === activeChannelId`~~ retired 2026-09-05.
+     Comparing view identities was wrong in both directions: a post made in a channel and then
+     read from all-signals belongs on screen and was dropped, and the row was also stripped
+     out of a page that had already fetched it, so it appeared, vanished, and returned on the
+     next poll. The question is the one the query on screen asks, and the SERVER stamped the
+     row's channel, so the row answers it. A review arm found both directions. */
   assert.match(
     submit,
-    /const postedRowsBelongHere = \(\): boolean => channelAtSend === activeChannelId;/,
+    /const showsOnScreen = \(row: Signal\): boolean =>\s*\n\s*unknownChannelId === null &&\s*\n\s*\(activeChannelId === null \|\| row\.channelId === activeChannelId\);/,
   );
+  /* And a retry replays the address the message was sent to, not the channel the reader is
+     looking at when they press it: a partial send, a switch, and a Retry filed the rest in
+     the OTHER channel, and a failed thread reply lost its thread because the switch cleared
+     it. Both arms found it. */
+  assert.match(submit, /placement: freshPlacement,/);
+  assert.match(submit, /const placement = intent\.placement;/);
+  assert.match(submit, /const placementChannelId = intent\.placementChannelId;/);
   /*
    * AND IT IS NOT A REASON TO ABANDON THE SEND. Returning early on a channel change left the
    * draft uncleared, the pending rows in two caches, the status stuck on "Posting…", and — on
@@ -308,18 +326,20 @@ test("a post belongs to the channel it was sent from, whatever the reader does n
    */
   const applied = between(dashboard, "const attachmentRefs = sampleMode", "clearComposerDraft();");
   assert.doesNotMatch(
-    applied,
-    /channelAtSend !== activeChannelId/,
+    applied.replace(/\/\*[\s\S]*?\*\//g, ""),
+    /channelAtSend/,
     "a channel change must not skip the send's own cleanup",
   );
-  assert.match(applied, /signals = postedRowsBelongHere\(\) \? \[\.\.\.posted, \.\.\.kept\] : kept;/);
+  /* A row is removed from the list ONLY when it is about to be put back: the id set filtered
+     out and the id set prepended are the same one, on both paths. */
+  assert.match(applied, /const visible = posted\.filter\(showsOnScreen\);/);
+  assert.match(applied, /!pendingSet\.has\(entry\.id\) && !visibleIds\.has\(entry\.id\)/);
+  assert.match(applied, /signals = \[\.\.\.visible, \.\.\.kept\];/);
   const failed = between(dashboard, "} catch (caught) {", "const sent = posted.length;");
-  assert.doesNotMatch(failed, /channelAtSend !== activeChannelId/);
+  assert.doesNotMatch(failed.replace(/\/\*[\s\S]*?\*\//g, ""), /channelAtSend/);
   const failedRows = between(dashboard, "const keptOnFailure = signals.filter", "setComposerStatus(");
-  assert.match(
-    failedRows,
-    /signals = postedRowsBelongHere\(\) \? \[\.\.\.posted, \.\.\.keptOnFailure\] : keptOnFailure;/,
-  );
+  assert.match(failedRows, /!visibleFailureIds\.has\(signal\.id\)/);
+  assert.match(failedRows, /signals = \[\.\.\.visibleOnFailure, \.\.\.keptOnFailure\];/);
 });
 
 test("the workspace open leaves the rail's current mark to the channel rule", () => {
@@ -370,6 +390,38 @@ test("only the newest channel read is applied", () => {
   assert.match(
     open,
     /if \(channelGeneration === channelReadGeneration\) \{\s*\n\s*channels = nextChannels\.value;/,
+  );
+});
+
+test("an auth change closes the channel dialog and drops the channel state", () => {
+  /* The channel dialog is the third modal this app opens with showModal, and it lives outside
+     every panel so a panel switch cannot display:none it out from under an open session —
+     which is exactly why signing out has to close it. The other two are closed there already.
+     Found by a review arm. */
+  const reset = between(dashboard, "const resetWorkspaceSessionState = (", "\n    };");
+  assert.match(reset, /closeChannelDialog\(\);/);
+  for (const cleared of [
+    "channels = \\[\\];",
+    "channelListFailed = false;",
+    "activeChannelId = null;",
+    "unknownChannelId = null;",
+    "threadReplyRoot = null;",
+    "disarmChannelArchive\\(\\);",
+    "renderChannelRail\\(\\);",
+  ]) {
+    assert.match(reset, new RegExp(cleared), cleared);
+  }
+});
+
+test("a later channel read gives an unresolved link one more chance", () => {
+  /* The open resolves the URL against the list it read, and that read can be dropped for a
+     newer one that has not landed yet, leaving a real id resolved against an empty list. It
+     can also simply be a channel someone else made after this reader's list was read. Found
+     by a review arm. */
+  const refresh = between(dashboard, "const refreshChannels = async (", "\n    };");
+  assert.match(
+    refresh,
+    /if \(unknownChannelId !== null\) \{\s*\n\s*applyChannelFromUrl\(workspaceId\);\s*\n\s*syncChannelUrl\(\);/,
   );
 });
 

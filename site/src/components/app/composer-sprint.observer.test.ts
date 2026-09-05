@@ -646,10 +646,26 @@ const assertComposerSprint = (value: ComposerArtifact): void => {
     /clearComposerDraft\(\)/,
     "draft-clear: a rejected send must retain the saved draft",
   );
+  /* ~~`!postedIds.has(signal.id)`~~ 2026-09-05: the id set the failure path removes is now
+     the set it is about to put back, which is the posted rows the list ON SCREEN would show.
+     Removing every posted id was wrong once channels existed: a row the success path had
+     already added, or a page had already fetched, was deleted from a list it was not going
+     to be re-added to. The property this line defends — a late throw must not show a row
+     twice — is unchanged, and it is the same id set on both sides of the operation. */
   assert.match(
     failed,
-    /!pendingSet\.has\(signal\.id\) && !postedIds\.has\(signal\.id\)/,
+    /!pendingSet\.has\(signal\.id\) && !visibleFailureIds\.has\(signal\.id\)/,
     "failed-send-body: a late throw must not prepend rows the success path already added",
+  );
+  assert.match(
+    failed,
+    /const visibleOnFailure = posted\.filter\(showsOnScreen\);/,
+    "failed-send-body: the rows put back are the ones the list on screen would show",
+  );
+  assert.match(
+    failed,
+    /signals = \[\.\.\.visibleOnFailure, \.\.\.keptOnFailure\];/,
+    "failed-send-body: and they are the same set that was removed",
   );
   assert.match(
     submit,

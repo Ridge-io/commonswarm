@@ -1411,6 +1411,13 @@ import "../../styles/tokens.css";
       audienceKey: string;
       attachmentKey: string;
       signalKind: BrowserSignalKind;
+      /** WHERE it was addressed, kept with the ids. A retry replays the address it was sent
+       * to, not the channel the reader happens to be looking at when they press it: a partial
+       * send in one channel, a switch, and a Retry filed the rest in the OTHER channel, and a
+       * failed thread reply lost its thread because the switch cleared it. Both arms. */
+      placement: BrowserSignalPlacement;
+      /** The channel id an optimistic row should show, matching that placement. */
+      placementChannelId: string | null;
     } | null = null;
     let composerSending = false;
     let stagedAttachments: StagedComposerAttachment[] = [];
@@ -4839,6 +4846,13 @@ import "../../styles/tokens.css";
       closeWorkspaceMenu();
       closeRosterDialog();
       closeWorkspaceDetailsDialog();
+      /* The channel dialog is the third modal this app opens with showModal, and it lives
+         outside every panel for the same reason the other two do: a panel switch must not
+         display:none it out from under an open session. That is exactly why it has to be
+         closed HERE. Auth change is a privacy boundary, and a modal left open over the
+         signed-out surface would keep the previous workspace's channel names and purposes on
+         screen. Found by a review arm. */
+      closeChannelDialog();
       one<SecretHoldingAgentConnect>("agent-connect")?.clearPrompt(false);
       connectFocusObserver?.disconnect();
       connectFocusObserver = null;
@@ -4855,6 +4869,17 @@ import "../../styles/tokens.css";
       renderedPendingAccessKey = "";
       people = new Map();
       signals = [];
+      sampleSignals = [];
+      /* Channel state belongs to the workspace being left, and the rail is re-rendered so the
+         slugs are out of the DOM as well as out of memory. */
+      channels = [];
+      channelListFailed = false;
+      activeChannelId = null;
+      unknownChannelId = null;
+      threadReplyRoot = null;
+      expandedThreadIds = new Set<string>();
+      disarmChannelArchive();
+      renderChannelRail();
       deliveryReceiptCache.clear();
       deliveryReceiptRefreshOwner = "";
       humanSeenReporter.resetVisible();
@@ -5856,6 +5881,15 @@ import "../../styles/tokens.css";
       if (!current()) return;
       channels = next;
       channelListFailed = false;
+      /* A `?c=` that could not be resolved earlier gets one more chance against this list.
+         The workspace open resolves the URL against the list it read, and that read can be
+         dropped in favour of a newer one that has not landed yet, leaving a real id resolved
+         against an empty list. It can also simply be a channel someone else created after
+         this reader's list was read. Found by a review arm. */
+      if (unknownChannelId !== null) {
+        applyChannelFromUrl(workspaceId);
+        syncChannelUrl();
+      }
       /* A channel that was archived while it was open stops being the active one: the rail
          no longer lists it and posting to it is refused. Its messages stay readable in
          all-signals, which is where the reader is sent. */
@@ -6860,20 +6894,28 @@ import "../../styles/tokens.css";
       }
       const workspaceId = activeWorkspaceId;
       const version = requestVersion;
-      /* And the CHANNEL, captured with the send. A channel click does not bump requestVersion
-         because it is not a workspace change, so a row posted in one channel could be
-         prepended to another channel's page: send in #mobile, switch to #ops while it is in
-         flight, and the #mobile row landed in #ops and survived the next poll, which keeps
-         any local id the fetched page does not carry.
-         IT IS NOT A REASON TO ABANDON THE SEND. Returning early on it left the draft
-         uncleared, the pending rows in two caches, the status stuck on "Posting…", and — on
-         the failure path — the body deleted with no error and no Retry, because the focus
-         move that follows a channel click blurs the emptied box and flushes the draft. Both
-         arms found that. So the channel decides ONE thing: whether the posted rows join the
-         list being displayed. Everything else runs exactly as it does when the reader stays. */
-      const channelAtSend = activeChannelId;
-      /** Do these rows belong in the list on screen, or in the channel they were sent to? */
-      const postedRowsBelongHere = (): boolean => channelAtSend === activeChannelId;
+      /* THE CHANNEL IS NOT A REASON TO ABANDON THE SEND, and it is not compared as a view
+         identity either. Both were tried and both were wrong. ~~`channelAtSend`~~: returning
+         early when the reader moved channel skipped the send's own cleanup, so the draft
+         stayed saved, the pending rows stayed in two caches, the status stayed on "Posting…",
+         and on the failure path the body was deleted with no error and no Retry, because the
+         focus move a channel click makes blurs the emptied box and flushes the draft.
+         ~~`channelAtSend === activeChannelId`~~: comparing the view the send began in with the
+         view it ended in dropped a row posted in a channel and read from all-signals, where it
+         does belong, and stripped rows out of a page that had already fetched them. The
+         question a landing row has to answer is the one the list on screen asks, and the
+         server stamped the row's channel, so the row answers it. Both arms found both. */
+      /**
+       * Would the list on screen show this row? The SERVER stamped its channel, so this asks
+       * the same question the query on screen asks rather than comparing view identities.
+       * Comparing identities was wrong in two directions: a post made in a channel and then
+       * read from all-signals belongs on screen and was dropped, and the row was also stripped
+       * out of a page that had already fetched it, so it appeared, vanished, and came back on
+       * the next poll. A review arm found both.
+       */
+      const showsOnScreen = (row: Signal): boolean =>
+        unknownChannelId === null &&
+        (activeChannelId === null || row.channelId === activeChannelId);
       /* One signal per @tag. The wire has no many-recipient shape, so this is a loop, and
        * every tagged agent gets its own row, its own wake, and its own delivery receipt. An
        * untagged body is one broadcast, exactly as before.
@@ -6922,10 +6964,10 @@ import "../../styles/tokens.css";
       const replyBroadcast = replyRoot !== null &&
         (one<HTMLInputElement>("[data-composer-reply-broadcast]")?.checked ?? false);
       const postChannel = replyRoot === null ? activeChannel() : null;
-      const placement = replyRoot === null
+      const freshPlacement = replyRoot === null
         ? (postChannel === null ? {} : { channel: postChannel.slug })
         : { threadRootId: replyRoot.id, broadcastToChannel: replyBroadcast };
-      const placementChannelId = replyRoot === null
+      const freshPlacementChannelId = replyRoot === null
         ? postChannel?.channelId ?? null
         : signals.find((entry) => entry.id === replyRoot.id)?.channelId ?? null;
       const recipientKinds = recipients.map((recipient) => browserSignalKind(recipient));
@@ -6947,10 +6989,17 @@ import "../../styles/tokens.css";
           audienceKey,
           attachmentKey,
           signalKind,
+          placement: freshPlacement,
+          placementChannelId: freshPlacementChannelId,
         };
         composerIntent = intent;
       }
       const commandIds = intent.commandIds;
+      /* A REPLAY KEEPS ITS OWN ADDRESS. The command ids are the server's idempotency keys, so
+       * the hops that already landed must be replayed at the same address; and the hops that
+       * did not are part of the same message, which was addressed once. */
+      const placement = intent.placement;
+      const placementChannelId = intent.placementChannelId;
       /** The chip a pending or posted row shows: its own recipient, not the whole address. */
       const mentionsFor = (recipient: ComposerAudience): EntityRef[] =>
         recipient.kind === "everyone" ? [] : [{ kind: recipient.kind, id: recipient.id }];
@@ -7064,16 +7113,16 @@ import "../../styles/tokens.css";
           }
           return;
         }
-        const postedIds = new Set(posted.map((signal) => signal.id));
         const pendingSet = new Set(pendingIds);
         /* The pending rows always go, in every case: they are this send's placeholders and
-           the send is over. The POSTED rows join the list only when the list is still the
-           one they were sent to. A reader who moved to another channel sees them where they
-           belong, which is the channel they were addressed to. */
+           the send is over. A posted row joins the list when the list on screen would show
+           it, and a row is removed from the list ONLY when it is about to be put back. */
+        const visible = posted.filter(showsOnScreen);
+        const visibleIds = new Set(visible.map((signal) => signal.id));
         const kept = signals.filter(
-          (entry) => !pendingSet.has(entry.id) && !postedIds.has(entry.id),
+          (entry) => !pendingSet.has(entry.id) && !visibleIds.has(entry.id),
         );
-        signals = postedRowsBelongHere() ? [...posted, ...kept] : kept;
+        signals = [...visible, ...kept];
         for (const [index, pendingId] of pendingIds.entries()) {
           visualMentions.delete(pendingId);
           deliveryReceiptCache.delete(pendingId);
@@ -7108,13 +7157,14 @@ import "../../styles/tokens.css";
          * idempotency key, which is the same property the unknown-outcome path relies on. */
         const sent = posted.length;
         const pendingSet = new Set(pendingIds);
-        const postedIds = new Set(posted.map((signal) => signal.id));
+        const visibleOnFailure = posted.filter(showsOnScreen);
+        const visibleFailureIds = new Set(visibleOnFailure.map((signal) => signal.id));
         /* Drop the posted ids as well as the pending ones. The success path rewrites `signals`
          * BEFORE it renders, so a throw in that render reaches here with those rows already in
          * the list; prepending them again would show each one twice. */
         const keptOnFailure = signals.filter((signal) =>
-          !pendingSet.has(signal.id) && !postedIds.has(signal.id));
-        signals = postedRowsBelongHere() ? [...posted, ...keptOnFailure] : keptOnFailure;
+          !pendingSet.has(signal.id) && !visibleFailureIds.has(signal.id));
+        signals = [...visibleOnFailure, ...keptOnFailure];
         for (const [index, pendingId] of pendingIds.entries()) {
           visualMentions.delete(pendingId);
           deliveryReceiptCache.delete(pendingId);
