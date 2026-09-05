@@ -6564,6 +6564,10 @@ import "../../styles/tokens.css";
       pollInFlight = true;
       let body = "";
       try {
+        /* PATHNAME ONLY, deliberately. This URL receives auth callbacks — the client runs with
+           `detectSessionInUrl`, and /start hands old callbacks here with their query intact — so
+           replaying the query would re-send a one-time code to the server. The site is static
+           output, so the query cannot change which bytes this path returns anyway. */
         const response = await fetch(window.location.pathname, {
           cache: "no-store",
           credentials: "same-origin",
@@ -6584,6 +6588,11 @@ import "../../styles/tokens.css";
       const served = buildAssetsFrom(page);
       if (!served) return;
       const markup = buildMarkupFrom(page);
+      /* IS THIS EVEN OUR PAGE? `fetch` follows redirects, so a sign-in wall or an SSO gate can
+         answer 200 with a page of its own — and if that page is also built with Astro it carries
+         /_astro/ URLs and clears the check above. No <live-dashboard> means the probe did not
+         reach the app, which is not news about a deploy. */
+      if (!markup) return;
       if (!baselineMarkup) baselineMarkup = markup;
       /* BOTH parts, always. Branching on which one differs made a dismissal hide later builds:
        * dismissing an asset change stored the asset set, and the next build that changed only
@@ -6591,6 +6600,10 @@ import "../../styles/tokens.css";
       servedBuild = `${served}\n${markup}`;
       const isNewBuild = served !== runningBuild || markup !== baselineMarkup;
       if (!isNewBuild) {
+        /* Back in step, so nothing stands dismissed. Without this a rollback stranded the
+           dismissal: dismiss B, the server rolls back to A, and when B ships again it still
+           equals the remembered value and is silently swallowed for the life of the tab. */
+        dismissedBuild = null;
         showUpdateNotice(false);
         return;
       }

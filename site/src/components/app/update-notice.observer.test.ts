@@ -45,7 +45,9 @@ type Variant =
   | "injected"
   | "dismiss-then-markup"
   | "gone-first"
-  | "no-build-first";
+  | "no-build-first"
+  | "other-astro-page"
+  | "rollback";
 
 /* Served from the FIRST poll, so it becomes the markup baseline and only the asset comparison
    can see it. Without this the asset signal has no case of its own: every other variant differs
@@ -96,6 +98,27 @@ const pollBody = (variant: Variant): { body: string; status: number } => {
       assetsOf(rewritten),
       assetsOf(html),
       "markup variant moved an asset hash, so it no longer isolates a markup-only build",
+    );
+    return { body: rewritten, status: 200 };
+  }
+  if (variant === "other-astro-page") {
+    /* A sign-in wall that is ALSO an Astro page: 200 OK, its own /_astro/ URLs, and no
+       <live-dashboard>. fetch follows redirects, so this is what an SSO gate can return for
+       /app. The asset check alone would read it as a deploy. */
+    const rewritten = html
+      .replace(/<live-dashboard[\s\S]*<\/live-dashboard>/, "<p>Sign in to continue.</p>")
+      .replace(
+        /(\/_astro\/[^"']+?\.)([A-Za-z0-9_-]{8})(\.(?:js|css))/g,
+        (_all: string, head: string, _hash: string, tail: string) => `${head}YYYYYYYY${tail}`,
+      );
+    assert.ok(
+      !rewritten.includes("<live-dashboard"),
+      "other-astro-page still carries live-dashboard, so it is not a foreign page",
+    );
+    assert.ok(
+      /\/_astro\/[^"']+\.(?:js|css)/.test(rewritten),
+      "other-astro-page carries no hashed assets, so the earlier guard would catch it and this " +
+        "case would not reach the one it is for",
     );
     return { body: rewritten, status: 200 };
   }
@@ -186,6 +209,13 @@ const frameScript = `<script>
          which is the one just dismissed, so the bar stays down until this stage moves. */
       await fetch("/__stage?to=3");
       cycle();
+      /* The rollback case takes one more step: stage 3 is the build this tab is running, so the
+         bar goes DOWN there, and stage 4 ships the dismissed build again. */
+      if (new URL(location.href).searchParams.get("rollback") === "1") {
+        await until(() => !shownNow());
+        await fetch("/__stage?to=4");
+        cycle();
+      }
       await until(shownNow);
       await wait(120);
     }
@@ -281,8 +311,14 @@ const startServer = async (
          FIRST page this tab saw, so a variant served from the very first poll would become the
          baseline and a markup-only build could never be seen. Modelling the deploy in the right
          order is what makes that signal reachable at all. */
-      if (variant === "dismiss-then-markup") servedStages.push(stage);
-      const { body, status } = variant === "dismiss-then-markup"
+      if (variant === "dismiss-then-markup" || variant === "rollback") servedStages.push(stage);
+      const { body, status } = variant === "rollback"
+        /* Stage 2 is a different build, stage 3 is the build this tab is RUNNING (the rollback),
+           and stage 4 is that different build again. */
+        ? stage === 2 || stage >= 4
+          ? pollBody("assets")
+          : { body: appHtml(), status: 200 }
+        : variant === "dismiss-then-markup"
         ? stage >= 3
           ? { body: dismissThenMarkupBody(), status: 200 }
           : stage === 2
@@ -381,7 +417,8 @@ const measure = async (
       "--window-size=1600,1200",
       "--virtual-time-budget=20000",
       "--dump-dom",
-      `${server.origin}/__measure?width=${width}&height=${height}&dismiss=${dismiss ? 1 : 0}`,
+      `${server.origin}/__measure?width=${width}&height=${height}&dismiss=${dismiss ? 1 : 0}` +
+        `&rollback=${variant === "rollback" ? 1 : 0}`,
     ], { killSignal: "SIGKILL", maxBuffer: 12 * 1024 * 1024, timeout: 40_000 });
     const encoded = stdout.match(/data-update-measurement="([^"]+)"/)?.[1];
     assert.ok(encoded, `${variant}: Chrome returned no measurement.\nDOM: ${stdout.slice(-1_500)}`);
@@ -485,6 +522,40 @@ test("a build deployed before the tab loaded is detected by the asset comparison
     true,
     "the served assets differ from the ones this page is running, which no baseline is needed " +
       `to see: ${JSON.stringify(value)}`,
+  );
+});
+
+/* A page that is not ours, answered 200 with its own hashed assets. The asset comparison alone
+   would call that a deploy; requiring OUR element is what makes the probe honest. */
+test("a sign-in page built the same way raises no notice", async () => {
+  const value = await measure(await findChrome(), "other-astro-page");
+  assertProbeHappened(value, "other-astro-page");
+  assert.equal(
+    value.shown,
+    false,
+    `a page with no live-dashboard in it is not a deploy: ${JSON.stringify(value)}`,
+  );
+  assert.equal(value.display, "none", "the bar is marked hidden but still painted");
+});
+
+/* A rollback must not strand the dismissal. Dismiss build two; the server rolls back to the build
+   this tab is running, which puts the tab back in step; then build two ships again and must ask. */
+test("a rollback does not silence the build that follows it", async () => {
+  const value = await measure(await findChrome(), "rollback", 390, 844, true);
+  assert.equal(
+    value.dismissSawBuildTwo,
+    true,
+    `the second build never raised the bar: ${JSON.stringify(value)}`,
+  );
+  assert.equal(
+    value.dismissTookEffect,
+    true,
+    `Not now did not put the bar down: ${JSON.stringify(value)}`,
+  );
+  assert.equal(
+    value.shown,
+    true,
+    `the build after a rollback must ask again: ${JSON.stringify(value)}`,
   );
 });
 

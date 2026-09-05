@@ -91,10 +91,22 @@ wrong page, so a second request does not start while one is open. It is not thro
 coming back to the tab while a poll is open is exactly when a reader wants an answer, and the next
 timer tick is five minutes off, so the request is remembered and run when the open one finishes.
 
-**What it does when it cannot tell.** A failed fetch, a non-OK status, or a body with no hashed
-assets in it — a login redirect, an SSO interstitial, an error page — all mean the poll learned
-nothing. It does nothing and waits for the next one. Silence is the only honest output of a probe
-that did not reach what it measures.
+**What it does when it cannot tell.** A failed fetch, a non-OK status, a body with no hashed assets
+in it, and — the case that needs saying — **a page that answers 200 but is not ours**. `fetch`
+follows redirects, so a sign-in wall or an SSO gate can return its own page; if that page is also
+built with Astro it carries `/_astro/` URLs and clears the asset check. The test is our own
+element: no `<live-dashboard>` means the probe did not reach the app, whatever else came back. All
+of these do nothing and wait for the next poll. Silence is the only honest output of a probe that
+did not reach what it measures.
+
+**Being back in step clears the dismissal.** Otherwise a rollback strands it: dismiss build B, the
+server rolls back to the build this tab is running, and when B ships again it still equals the
+remembered value and is swallowed for the life of the tab.
+
+**The poll asks for the PATH only, never the query.** This URL receives auth callbacks — the client
+runs with `detectSessionInUrl`, and `/start` hands older callbacks here with their query intact —
+so replaying the query would re-send a one-time code to the server. The site is static output, so
+the query cannot change which bytes a path returns anyway.
 
 **Not covered, and named so nobody has to rediscover it.**
 
