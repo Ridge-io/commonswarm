@@ -166,17 +166,31 @@ function renderedProviderIds(html: string): string[] {
 }
 
 /**
- * A tag carrying a data-* attribute whose NAME holds a provider id — `data-signin-github`,
+ * A tag carrying a data-* attribute whose NAME ENDS in a provider id — `data-signin-github`,
  * `data-member-reauth-github`, `data-github`. Built from AUTH_PROVIDERS, so it cannot drift
  * from the array, and used against the SOURCE sweep and the BUILT pages alike.
+ *
+ * THE PROVIDER MUST BE THE LAST SEGMENT, and a review arm is why. A pattern that took the
+ * provider anywhere inside the name also matched `data-google-analytics-id`, a benign
+ * attribute nobody has written yet: a control that goes red for a reason it does not claim is
+ * the defect this suite exists to prevent, one level up. `(?![a-z-])` ends the name.
+ *
+ * MATCHED CASE-INSENSITIVELY, and the same arm is why. HTML attribute names are
+ * case-insensitive, so `data-GitHub` in a template renders a working control; a case-sensitive
+ * sweep would read zero of it, which is the direction that costs something.
  *
  * `data-signin-provider="github"` deliberately does not match. There the provider is a VALUE
  * the component wrote from the array; here the provider is typed into an attribute name,
  * which is the hand-written control this suite is about.
+ *
+ * WHAT IT CANNOT SEE: a provider hidden in an attribute VALUE, `<button data-login="github">`.
+ * No pattern over attribute names can, and widening to values would match the generated
+ * buttons themselves. The control for that case is on the ENFORCEMENT instead — see the
+ * signInWithGitHub call-site count below, which any such button would have to go through.
  */
-const PROVIDER_IN_ATTRIBUTE_NAME = `<[a-zA-Z][^>]*\\bdata-[a-z-]*(?:${AUTH_PROVIDERS.map(
+const PROVIDER_IN_ATTRIBUTE_NAME = `<[a-zA-Z][^>]*\\bdata-(?:[a-z-]*-)?(?:${AUTH_PROVIDERS.map(
   (provider) => provider.id,
-).join("|")})\\b`;
+).join("|")})(?![a-z-])`;
 
 /** File types that can carry markup or DOM code, and are therefore scanned. */
 const SCANNED_EXTENSIONS = ["astro", "mjs", "ts"];
@@ -564,17 +578,18 @@ test("CONTROL: only ProviderButtons renders a sign-in button, apart from named d
    *
    *   <button data-signin-github>   any TAG, not just <button> — /app writes the attribute
    *                                 bare with no value, and an <a> would work as well
-   *   <button data-member-reauth-github>   the provider name anywhere in a data-* attribute
+   *   <button data-member-reauth-github>   a data-* attribute NAME ending in a provider
    *   setAttribute("data-signin…    built rather than written
    *   el.dataset.signinProvider =   the same thing through the dataset API
    *
-   * THE THIRD LINE IS WHY THIS WAS WIDENED. `data-member-reauth-github` was live on /app and
-   * this sweep read zero: the old pattern wanted the provider name IMMEDIATELY after `data-`,
+   * THE SECOND LINE IS WHY THIS WAS WIDENED. `data-member-reauth-github` was live on /app and
+   * this sweep read zero: the old pattern wanted the provider id IMMEDIATELY after `data-`,
    * so a name with anything in front of it was invisible. That is a control returning a
-   * confident zero — the shape AGENTS.md says to enumerate rather than pattern-match. The
-   * attribute is now matched wherever the provider name sits inside the data-* name, and
-   * `data-signin-provider="github"` still does not match, because `=` and `"` are outside the
-   * attribute-name run.
+   * confident zero — the shape AGENTS.md says to enumerate rather than pattern-match.
+   * PROVIDER_IN_ATTRIBUTE_NAME above carries the widened form, what it deliberately does not
+   * match, and what no attribute pattern can reach.
+   *
+   * The whole marker is case-insensitive, because HTML attribute names are.
    *
    * Reading one is not writing one: querySelector("[data-signin-provider]") and
    * `button.dataset.signinProvider ?? ""` are how the invite page binds its handler, and
@@ -591,8 +606,9 @@ test("CONTROL: only ProviderButtons renders a sign-in button, apart from named d
       // built rather than written
       `|setAttribute\\(\\s*["'\`]data-(?:[a-z-]*)?(?:signin|${ids})` +
       `|dataset(?:\\.signin[A-Za-z]*|\\s*\\[\\s*["'\`]signin[A-Za-z]*["'\`]\\s*\\])\\s*=[^=]`,
+    "i",
   );
-  const all = new RegExp(marker.source, "g");
+  const all = new RegExp(marker.source, "gi");
   const count = (text: string): number => (text.match(all) ?? []).length;
 
   const offenders: string[] = [];
@@ -631,6 +647,45 @@ test("CONTROL: only ProviderButtons renders a sign-in button, apart from named d
         `sweep cover the file again.`,
     );
   }
+});
+
+test("CONTROL: signInWithGitHub is called from exactly one place, and it is the named debt", async () => {
+  /*
+   * THE ATTRIBUTE SWEEPS CANNOT CLOSE THIS ON THEIR OWN, and a review arm proved it:
+   * `<button data-login="github">` hides the provider in a VALUE, so no pattern over attribute
+   * NAMES matches it, and widening to values would match the generated buttons instead. So the
+   * control moves to the ENFORCEMENT, where the shapes are countable.
+   *
+   * Every OAuth door reaches Supabase through exactly two doors of our own:
+   *
+   *   signInWithProvider(<id>)  the general one. The literal and named-value scans in the
+   *                             "signInWithOAuth is called once" control above already refuse
+   *                             an id AUTH_PROVIDERS does not name.
+   *   signInWithGitHub()        the one wrapper with a provider in its NAME. commonswarm.ts
+   *                             calls it "the one remaining named provider", left for /app's
+   *                             signed-out button.
+   *
+   * A hand-written control spelled any way at all still has to call one of them. Counting the
+   * named wrapper's call sites is therefore a bound the attribute patterns cannot give: a
+   * second GitHub-only button anywhere under site/src goes red here, whatever it calls itself.
+   */
+  const callers: string[] = [];
+  for (const file of await sourceFiles(SRC)) {
+    // `export async function signInWithGitHub(` is the definition, not a call site.
+    const calls = ((await readFile(file, "utf8")).match(/(?<!function\s)signInWithGitHub\(/g) ?? [])
+      .length;
+    if (calls > 0) {
+      callers.push(`${file.pathname.slice(file.pathname.indexOf("/src/") + 5)} (${calls})`);
+    }
+  }
+  assert.deepEqual(
+    callers,
+    ["components/app/LiveDashboard.astro (1)"],
+    `signInWithGitHub is called from: ${callers.join(", ")}. Exactly one call site is allowed ` +
+      `— /app's signed-out button, the debt UNGENERATED_SIGNIN_SURFACES already names. A ` +
+      `second one is a second GitHub-only door, and it would offer GitHub on a deployment ` +
+      `that has Google on. Render ProviderButtons and call signInWithProvider instead.`,
+  );
 });
 
 test("CONTROL: /app's built page hand-writes exactly one provider control, and it is the signed-out one", async () => {
