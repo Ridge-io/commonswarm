@@ -151,3 +151,11 @@ top edge is no lower than the app bar's bottom edge — with a positive control 
 a real one-row bar, and a control that the channel head still FLOATS rather than having been
 deleted. Its reverted-styles variant was rewritten to put both bars back in the flow, and it still
 has to fail.
+
+## Correction, added when the lane was landed
+
+The gate line above ("271 tests, 270 pass, 0 fail, 1 skipped") was true of this lane on its own
+base. It is NOT the gate result for the landed code: `main` gained brain-links after it, and the
+site suite is 323 tests, 322 pass, 1 skip on the rebased tree. The landing gates, the browser
+measurements taken after the rebase, and one defect found reviewing this lane are in
+`docs/evidence/2026-09-05-mobile-fix-landing/`.
