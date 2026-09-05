@@ -1,0 +1,97 @@
+I'll read REVIEW.md and the patch first, then follow the review instructions exactly.The patch was cut off. I’ll read the rest and the files the brief names.The rest of the patch and the live source files still need reading so I can check every claim.I'll scan the rest of the commonswarm change and hunt for any provider list that can drift.The `/app` page still hard-codes GitHub. I’ll check that surface, the tests, and the live settings next.ProviderButtons on disk does not match the patch. I’ll pin the review to SHA `5fefacc` and diff the two.I have the live API answers and the SHA contents. Checking one last copy path, then I’ll write the review.diff --git a/docs/design/2026-09-04-GOOGLE-SIGNIN.md b/docs/design/2026-09-04-GOOGLE-SIGNIN.md
+
+Review of DIFF.patch at `5fefacc7b33d7ca63cb87f558c70a85d395c9f4e`. Live probes below used `https://api.commonswarm.com` and the published anon key from `commonswarm:anon-key`.
+
+## Findings
+
+1. **`/app` still types the provider list. The design doc then tells a human that `/app` has Google.**  
+   - `site/src/components/app/LiveDashboard.astro:79` — literal `Sign in with GitHub` on `data-signin-github`.  
+   - Same file `:853–854` — `Sign in again with GitHub` on `data-member-reauth-github`.  
+   - Same file `:1300–1301` — rate-limit copy `Use GitHub, or try email again in a little while.`  
+   - Same file `:5154–5160` and `:5168–5174` — both handlers call `signInWithGitHub`.  
+   - `site/src/lib/commonswarm.ts:245–246` — `signInWithGitHub` still passes the literal `"github"`.  
+   - `docs/design/2026-09-04-GOOGLE-SIGNIN.md:47` — happy path is “On `/app` or `/invite`, presses **Sign in with Google**.”  
+   - Same file `:241–243` — admits LiveDashboard was not edited, so `/app` is GitHub only.  
+   - Checklist step 7 (`:387–403`) greps only `dist/invite/index.html` and `https://commonswarm.com/invite`.  
+
+   What breaks: the lane’s load-bearing claim is that OAuth buttons come from one list, and that a build cannot publish a door GoTrue has off. `/app` does not read `AUTH_PROVIDERS` or `/auth/v1/settings`. After checklist steps 6–7, `/invite` can show Google and `/app` cannot. A visitor who rate-limits email on `/app` is still told to “Use GitHub”. That is the typed-enumeration failure AGENTS.md recorded four times. The deferral does not make the happy-path sentence true.  
+   **Blocks landing** until the design doc and checklist stop claiming `/app`, or `/app` actually renders `ProviderButtons`.
+
+2. **Privacy and terms still say sign-in is GitHub only. The operator checklist never updates them.**  
+   - `site/src/pages/privacy.astro:100` — “Sign-in is GitHub OAuth.”  
+   - Same file `:106` — display name taken from GitHub full name / name / username.  
+   - Same file `:110` — “We do not receive or store your GitHub … avatar.” Google’s default scopes include profile picture.  
+   - Same file `:178–181` — “Three, and only three, are in the path”, then GitHub as the only sign-in processor.  
+   - `site/src/pages/terms.astro:216–217` — “including GitHub for sign-in”.  
+   - Checklist (`docs/design/2026-09-04-GOOGLE-SIGNIN.md:266–418`) has no legal step.  
+
+   What breaks: steps 6–7 of the runbook turn Google on in production while the live legal pages still enumerate one identity provider and three processors. That is a user-facing list that does not come from `AUTH_PROVIDERS`.  
+   **Blocks landing** the runbook as written. Do not run steps 6–7 until those sentences are generated or rewritten.
+
+3. **The “no other source hand-writes a sign-in button” control cannot see the hand-written buttons that exist.**  
+   `site/src/components/auth/provider-buttons.observer.test.ts:211–225` (at this SHA). The regex is `data-signin-provider\s*=\s*["']`. LiveDashboard uses `data-signin-github` and a typed label, so the control is green while finding 1 is true. The walk only takes `.astro|.ts|.mjs` under `site/src/` and skips `*.test.ts` / `*.observer.*`. A `.js` injection, a `set:html` button, or `data-signin-provider={expr}` (no quoted literal) also misses.  
+   **Does not block landing** by itself. It is decoration relative to the claim in the test name. A negative that cannot fail when the named bug is present is not evidence.
+
+4. **Invite furniture still says “or” when there are zero OAuth buttons.**  
+   `site/src/components/invite/InviteOnramp.astro:40–45` at this SHA: the divider is outside `ProviderButtons`. `ProviderButtons.astro` always maps `providers`, including `[]`. Reachable when neither `PUBLIC_SUPABASE_*` var is set, when only one of them is set (see 5), or when GoTrue returns a valid `external` map with both `github` and `google` not exactly `true`. The page then shows the email form, an “or”, and no door. Rate-limit copy correctly falls back to “Try again later.” (`InviteOnramp.astro:293–296`). No em-dash in the new visitor strings.  
+   **Does not block** a production-pointed build while GitHub stays enabled. It is a real copy bug on the no-backend path the lane itself defines.
+
+5. **“No backend configured” is implemented as “not both env vars truthy”, not “neither is set”.**  
+   `site/src/components/auth/ProviderButtons.astro:35–38`: `url && anonKey ? fetchEnabledProviders(...) : []`. One var set and one missing succeeds with no buttons, same as a fully unconfigured build. `astro.config.mjs` still only documents the neither-set case and never mentions `AuthSettingsUnreadable` or a network requirement. A typo in `site/.env` therefore looks like the honest empty build instead of a failed settings read.  
+   **Does not block landing.** Fail-loud still holds when both vars are set and the GET is not a GoTrue settings body.
+
+6. **`providersFromSettings` fails loud on a bad shape, and fails quiet on a good shape with no enabled OAuth flag.**  
+   `site/src/lib/auth-providers.ts:110–123`: missing key, `"true"`, `1`, `null` are all “off”, not unreadable. `{ external: {} }` builds. That matches the comment, and the tests pin it (`provider-buttons.observer.test.ts:243–247`). It is not the table row “settings read fails → build fails”. A 200 HTML page, a 401, a non-object, an `external` array, and a thrown `TypeError` do fail the build. I could not make `flags.google === false` render a Google button through this function.  
+   `fetchEnabledProviders` (`:139–165`): classifies timeout by `caught.name === "TimeoutError"`, not `error.message`. HTTP status by `response.status`. JSON failure by `response.json()` throwing. No branch on `error.message`. `AbortSignal.timeout` is real in Node 22; tests never fire it, never assert `init.signal`, and never assert the `Authorization` header. Default `fetch` follows redirects: a 302 to an HTML 200 fails JSON parse (loud); a 302 to a JSON object with `external` would be treated as settings. No body-size cap (live body was 610 bytes).  
+   **Does not block landing.** Timeout/redirect gaps are missing controls, not a shown false render.
+
+7. **Observer suite: several controls can pass for the wrong reason.**  
+   - Invite HTML only (`INVITE_HTML`). `/app` is unmeasured.  
+   - “Rendered id ∈ `AUTH_PROVIDERS`” plus `length > 0` does not re-read live GoTrue. A dist built against another answer, or a stale dist, still passes if it has at least one known id. The file says that on purpose.  
+   - “Dark name appears nowhere on the page” scans `invite/index.html` only. The built chunk `site/dist/_astro/commonswarm.*.js` still contains `Google` because `AUTH_PROVIDERS` is in the client graph. HTML on a GitHub-only build had `data-signin-provider="github"` once and `google` count 0.  
+   - “`signInWithOAuth` never with a literal” allows `signInWithGitHub("github")` (`commonswarm.ts:246`).  
+   - `LIVE_SETTINGS` is trimmed, not byte-for-byte the live body. Shape matches what I read (`github: true`, `google: false`, booleans, `email: true` under `external`).  
+   - `listSentence` / `providerChoices` tests are real.  
+   - `AUTH_PROVIDERS` ids pinned to `["github","google"]` is a second list, but it is a control on the constant, not visitor copy.  
+   **Does not block landing.** Item 3 is the one that is actually decoration.
+
+8. **Operator checklist vs live Google/Supabase.**  
+   Verified true:  
+   - `GET /auth/v1/settings` with anon key: `github: true`, `google: false` (boolean), 26 keys under `external` (the doc says 25 at line 42).  
+   - No anon key: HTTP 401 (the build fetch sends `apikey` and `Authorization`, so it would fail loud).  
+   - `GET /auth/v1/authorize?provider=google` → `400 {"msg":"Unsupported provider: provider is not enabled"}`.  
+   - GitHub 302 `redirect_uri=https://api.commonswarm.com/auth/v1/callback`. Same callback from `https://ukezjcnxjvkpkeezxaew.supabase.co`. Do not add the `supabase.co` URI.  
+   - Live `/invite` has zero `data-signin-provider="google"` and zero case-insensitive `google`. Live `/app` still has `Sign in with GitHub`. `commonswarm:url` is still `https://api.commonswarm.com`.  
+   - Take-down order (toggle off, then rebuild) is the right warning: a leftover button would show raw JSON.  
+   - Steps 1–6 change nothing on the already-deployed pages. After step 6 a crafted `/auth/v1/authorize?provider=google` URL would start working; the doc already says the toggle is live the moment it is saved.  
+   - Scopes listed are the non-sensitive Google trio GoTrue uses. Publishing External with only those should not start a sensitive-scope verification review.  
+   - `commonswarm.com` as an authorized domain covers `api.commonswarm.com` and `www`.  
+
+   Wrong or missing:  
+   - Line 47 vs lines 241–243 (finding 1). Line 149 still says “with the flag off/on” after the flag was retired.  
+   - Privacy/terms (finding 2).  
+   - No Search Console / authorized-domain verification step. Adding `commonswarm.com` can stop there.  
+   - `https://www.commonswarm.com` is HTTP 200 of the same app (no redirect to apex). JS origins list only `https://commonswarm.com`. For this redirect flow Google does not use JS origins; `redirect_to` from www is the same shape GitHub already uses, so no new Supabase allow-list entry. Still a hole if anyone later adds One Tap.  
+   - No wait for Google client propagation.  
+   - No note that `site/.env` is loaded by Vite and a shell `PUBLIC_SUPABASE_*` wins over the file. Both buttons and `commonswarm.ts` read the same `import.meta.env`, so they stay aligned; a CI env pointing at another project would bake that project’s flags.  
+
+   **Blocks landing** the runbook as the way to turn Google on, for the `/app` claim and the legal-copy omission. The callback URI and the dark live page are fine.
+
+9. **Production / security.**  
+   Diff writes no Supabase project, introduces no service-role key under `site/`, and does not change `commonswarm:url`. New use of the anon key: Node `GET ${PUBLIC_SUPABASE_URL}/auth/v1/settings` at build, with `apikey` and `Bearer`. The anon key is already public in the page meta. `AuthSettingsUnreadable` prints a curl template, not the key. No new secret.  
+   **Does not block.**
+
+## Claims I tried to refute and could not
+
+- Invite buttons and invite rate-limit prose at this SHA are generated from `AUTH_PROVIDERS` / the rendered `[data-signin-provider]` nodes, not a second typed list. `signInWithProvider` is the only `signInWithOAuth` call and passes `entry.id` after `authProvider()`.  
+- `PUBLIC_SWARM_AUTH_PROVIDERS` is not read. ProviderButtons has no provider-id literal.  
+- A GoTrue `google: false` (or `"true"` / `1` / `null` / missing) cannot produce a Google button through `providersFromSettings`.  
+- With both `PUBLIC_SUPABASE_*` set, a non-200, non-JSON, or non-`external`-object answer fails the build via `AuthSettingsUnreadable`, and that error says what to do next. With both unset, the build does not fetch and renders no OAuth button.  
+- Failure classification on the settings path is by class / HTTP status / JSON parse / `TimeoutError` name, not `error.message`.  
+- Google is off on the live project today. Nothing in this diff writes that project. Visitor-facing invite HTML can stay GitHub-only.  
+- New invite visitor strings have no em-dash. `NoDeployment` copy on the OAuth catch is “Open this link on commonswarm.com.”  
+- `signInWithProvider`’s `throw new Error(error.message)` is still presentation wrapping (pre-existing shape). InviteOnramp does not branch on that message; it branches on `NoDeployment`.
+
+Not established: a real Google login, automatic email linking, the unverified-email path, the dashboard redirect allow-list contents, or Search Console verification of `commonswarm.com`.
+
+VERDICT: FAIL

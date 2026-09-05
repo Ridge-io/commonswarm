@@ -1,0 +1,31 @@
+```markdown
+diff --git a/docs/design/2026-09-04-GOOGLE-SIGNIN.md b/docs/design/2026-09-04-GOOGLE-SIGNIN.md
+```
+
+### Findings
+
+**1. Minor coverage gap in the source sweep control**
+- **File & Line:** `site/src/components/auth/provider-buttons.observer.test.ts`, line 826 (`allSourceExtensions`) and line 1195 (`sourceFiles(SRC)`).
+- **What breaks:** The "no other source hand-writes a sign-in button" sweep misses two edge-case injection routes. First, `allSourceExtensions` skips files entirely if they have no extension (`if (dot > 0)`), meaning an extensionless script would not trigger an "unscanned extension" failure and would not be checked. Second, the sweep only runs on `site/src/` (`SRC`), ignoring static HTML files that could be placed directly in `site/public/`.
+- **Blocks landing:** No. The control safely guards the actual templates and runtime modules where a developer is likely to introduce an ungenerated button.
+
+**2. Snapshot tripwire uses a typed enumeration**
+- **File & Line:** `site/src/components/auth/provider-buttons.observer.test.ts`, line 1510.
+- **What breaks:** The test contains a hardcoded array `["github", "google"]` which is technically a typed enumeration. However, this is explicitly identified as a "SNAPSHOT TRIPWIRE" that forces an intentional code update when a new provider is added. It enforces the source of truth rather than drifting from it.
+- **Blocks landing:** No. 
+
+**3. Em-dash in documented legal copy**
+- **File & Line:** `docs/design/2026-09-04-GOOGLE-SIGNIN.md`, lines 445-446.
+- **What breaks:** The checklist directs the operator to note the string `"GitHub, Inc. — sign-in."` in `privacy.astro`. This string contains an em-dash, which technically brushes against the project doctrine ("No em-dashes in user-facing strings").
+- **Blocks landing:** No. The doc explicitly acknowledges this text as legal processor copy rather than product voice, and the newly generated code strictly avoids em-dashes.
+
+### Claims I tried to refute and could not:
+
+- **Single-sourced provider list:** Could not refute. The dynamic sentences in `InviteOnramp.astro` derive their provider list directly from the rendered `data-signin-provider` buttons. There is no typed list outside of the `AUTH_PROVIDERS` constant and the deliberate test tripwire.
+- **Build-time settings dictating output:** Could not refute. There is no cache bypassing the network read, and there is no build flag that can force a button to render if GoTrue says it is disabled.
+- **Parsing logic and error classification (`auth-providers.ts`):** Could not refute. The parsing strictly isolates plain objects, correctly rejecting arrays, nulls, missing keys, and non-boolean strings like `"true"`. The `AbortSignal.timeout` failure is classified correctly by `error.name === "TimeoutError"` (D-053 compliance), not by parsing a message.
+- **Failure behaviour:** Could not refute. The logic correctly differentiates between no backend (succeeds, no buttons) and a half-configured/unreachable backend (fails the build). 
+- **User-facing copy in `InviteOnramp.astro`:** Could not refute. The dynamic `choices` variable handles 0, 1, and 2+ providers with impeccable grammar (e.g., maintaining the correct comma separation for the rate limit message). The `NoDeployment` error branch is correctly reasoned in the comments as unreachable.
+- **Operator checklist:** Could not refute. The redirect URI (`api.commonswarm.com/auth/v1/callback`), scopes, JavaScript origin, and Google Cloud Publishing statuses are strictly correct for the Supabase GoTrue flow.
+
+VERDICT: PASS

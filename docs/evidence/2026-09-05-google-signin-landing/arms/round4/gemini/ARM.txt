@@ -1,0 +1,38 @@
+`diff --git a/docs/design/2026-09-04-GOOGLE-SIGNIN.md b/docs/design/2026-09-04-GOOGLE-SIGNIN.md`
+
+### Findings
+
+**1. Typed Enumeration in Code**
+- **File & Line**: `site/src/lib/commonswarm.ts`, Line 1708
+- **What breaks**: The function `signInWithGitHub` explicitly names the provider in a string literal (`await signInWithProvider("github", redirectTo);`). The documentation in `auth-providers.ts` explicitly claims "Nothing else may name a provider in a string literal." This hardcoded function is a typed enumeration that will drift if GitHub is ever removed from `AUTH_PROVIDERS`.
+- **Blocks landing**: Yes.
+
+**2. Control Fails for Wrong Reason**
+- **File & Line**: `site/src/components/auth/provider-buttons.observer.test.ts`, Lines 811-814
+- **What breaks**: The control `"a provider this build does not render is absent from every page's copy"` uses `copyOf(html)` to strip tags and tests the remaining raw text. If a provider's name is used in a non-sign-in context (e.g., a site footer stating "View our source code on GitHub"), disabling that provider will fail the build because its name still appears in the page text. 
+- **Blocks landing**: Yes.
+
+**3. Incomplete Scan for Hand-Written Buttons**
+- **File & Line**: `site/src/components/auth/provider-buttons.observer.test.ts`, Line 1014
+- **What breaks**: The regex `/<button[^>]*\bdata-signin|setAttribute\(\s*["'`]data-signin/` misses multiple injection routes. It fails to catch anchor tags (`<a data-signin-provider>`), framework components (`<Button>`), and the DOM dataset API (`element.dataset.signinProvider = "..."`).
+- **Blocks landing**: Yes.
+
+**4. Decoration Control**
+- **File & Line**: `site/src/components/auth/provider-buttons.observer.test.ts`, Lines 865-872
+- **What breaks**: The control `"the enforcement accepts every rendered id and refuses anything else"` is pure decoration. It parses IDs from buttons that were mechanically mapped from `AUTH_PROVIDERS` inside `ProviderButtons.astro`, and asserts that `authProvider(id)` can find them in `AUTH_PROVIDERS`. This effectively just tests that `Array.find` works on the array the items were generated from.
+- **Blocks landing**: No.
+
+**5. Omission of Enabled Providers**
+- **File & Line**: `site/src/lib/auth-providers.ts`, Line 1547
+- **What breaks**: `providersFromSettings` iterates via `AUTH_PROVIDERS.filter((provider) => flags[provider.id] === true)`. If the deployment reports an OAuth provider not in `AUTH_PROVIDERS` as `true` (e.g., Apple or GitLab), it is omitted. This refutes the claim in the design document that "The code renders whichever OAuth providers the deployment reports as enabled" (it actually only renders the subset it is hardcoded to recognize).
+- **Blocks landing**: No (the behavior is safe, but the documentation claim is false).
+
+### Claims I tried to refute and could not
+
+- **Check 3 (Parsing and Error Classification)**: I could not refute the robustness of `providersFromSettings` or `fetchEnabledProviders`. They correctly reject invalid configurations (arrays, nulls, missing keys, HTML proxies, lack of `external` block). Crucially, no branch logic is decided on an error message; `AuthSettingsUnreadable` classifies solely on status codes or error type (`caught.name === "TimeoutError"`).
+- **Check 4 (Failure Behavior)**: I could not refute the claims around build behavior. The build reliably fails loudly if the variables are set but the backend is unreachable or invalid, and succeeds cleanly (publishing zero buttons) when `PUBLIC_SUPABASE_URL` and `PUBLIC_SUPABASE_ANON_KEY` are safely omitted.
+- **Check 6 (User-Facing Copy)**: I could not refute the correctness of the dynamic sentences in `InviteOnramp.astro`. The fallback and rate-limit copy read cleanly whether 0, 1, or 2 providers are rendered, and there are no em-dashes introduced into user-facing text.
+- **Check 7 (Checklist Claims)**: The prompt asked to verify the claim "steps 1-6 change nothing a visitor sees". I could not refute this claim *because the document never makes it*. The checklist explicitly warns that step 6 is a live production change the moment it is saved, safely limiting the "changes nothing" claim to steps 1-5.
+- **Check 8 (Production and Security)**: I could not refute the safety of the changes. The anon key is strictly used for unauthenticated reads, no service-role keys are introduced, and no writes are made to the Supabase project.
+
+VERDICT: FAIL

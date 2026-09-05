@@ -1,0 +1,34 @@
+`diff --git a/docs/design/2026-09-04-GOOGLE-SIGNIN.md b/docs/design/2026-09-04-GOOGLE-SIGNIN.md`
+
+### Findings
+
+1. **Typed Enumeration** (Blocks landing)
+   - **File/Line:** `site/src/lib/auth-providers.ts` (patch line 1376) and `site/src/lib/commonswarm.ts` (patch line 1834)
+   - **What breaks:** The interface explicitly types `readonly id: "github" | "google";` and `commonswarm.ts` hardcodes `const GITHUB: AuthProviderId = "github";`. These are typed enumerations that violate the project doctrine ("An enumeration inside a user-facing message must be GENERATED, not typed"). Adding a new provider to `AUTH_PROVIDERS` will cause this type to silently drift. The id type should be derived directly from the array (e.g., `typeof AUTH_PROVIDERS[number]["id"]`).
+
+2. **Dangerous Checklist Order** (Blocks landing)
+   - **File/Line:** `docs/design/2026-09-04-GOOGLE-SIGNIN.md` (patch lines 429-436)
+   - **What breaks:** Step 6b (rewriting legal privacy copy to disclose the new data processor) is placed *after* Step 6 (enabling the provider in the production database). Because Step 6 instantly arms the Google button for the next deploy, anyone deploying the site could accidentally publish the new button before the legal terms are updated. The checklist itself acknowledges this is the slowest item and should be done before Step 6, yet physically places it after.
+
+3. **Offline Local Dev Broken** (Does not block landing)
+   - **File/Line:** `site/src/components/auth/ProviderButtons.astro` (patch line 571)
+   - **What breaks:** The claim that a configured but unreachable backend safely fails the build ignores local development (`astro dev`). Since Astro processes component frontmatter on every request in dev, an offline developer with `.env` configured will have their page crash entirely instead of degrading to a "no backend" state, breaking UI work. 
+
+4. **Unreachable State in Copy** (Does not block landing)
+   - **File/Line:** `site/src/components/invite/InviteOnramp.astro` (patch line 1308)
+   - **What breaks:** The `caught instanceof NoDeployment` error branch inside the OAuth button click handler is dead code. If there is no deployment configured, the build succeeds with zero buttons rendered. Consequently, the click handler is never attached to any elements and the `NoDeployment` state can never be reached by a user clicking a provider button.
+
+5. **Fragile Copy Control** (Does not block landing)
+   - **File/Line:** `site/src/components/auth/provider-buttons.observer.test.ts` (patch lines 851-853)
+   - **What breaks:** The copy sweep explicitly strips `<button>` tags (`/<button[^>]*data-signin-provider=[\s\S]*?<\/button>/g`) to ignore generated button labels. If a developer legitimately updates `ProviderButtons.astro` to render an `<a>` tag instead, the test will fail for the wrong reason by falsely flagging the generated element's label as handwritten copy.
+
+6. **Incomplete Injection Scan** (Does not block landing)
+   - **File/Line:** `site/src/components/auth/provider-buttons.observer.test.ts` (patch line 1067)
+   - **What breaks:** The regex `dataset\.signin[A-Za-z]*\s*=[^=]` misses bracket notation DOM injections entirely (e.g., `dataset['signinProvider'] = ...`), leaving a gap in the handwritten button scan.
+
+### Claims I tried to refute and could not:
+- I tried to attack the parsing logic in `providersFromSettings` and `fetchEnabledProviders` (arrays, nulls, missing keys, `"true"` strings, HTML error pages). I could not refute its robustness; it safely handles unexpected shapes by failing loudly rather than guessing. I also verified it does not branch on error message text for its control flow (it uses `caught.name`).
+- I tried to refute the claim that "steps 1-6 change nothing a visitor sees" and could not; enabling the provider in GoTrue only arms it for the build, but visitors do not see the button until an actual site deployment occurs.
+- I tried to find writes to the Supabase project or new service-role secrets and could not; the implementation is strictly read-only and safely uses the anon key.
+
+VERDICT: FAIL

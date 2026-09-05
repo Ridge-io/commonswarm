@@ -1,0 +1,30 @@
+diff --git a/docs/design/2026-09-04-GOOGLE-SIGNIN.md b/docs/design/2026-09-04-GOOGLE-SIGNIN.md
+
+1. **Test `fetchEnabledProviders really aborts a host that never answers` is a decoration control.**
+   - File: `site/src/components/auth/provider-buttons.observer.test.ts`, line 1243
+   - What breaks: The `hangs` mock fetch explicitly implements the abort logic by listening to the `signal` and rejecting. The control therefore tests its own mock's behavior, not whether the native `fetch` correctly respects `AbortSignal.timeout`. If the runtime `fetch` ignored the signal, this test would still falsely pass.
+   - Blocks landing: Yes, this is a false positive test for a critical failure mechanism.
+
+2. **Test `signInWithOAuth is called once and never with a literal provider` can pass while the code is broken.**
+   - File: `site/src/components/auth/provider-buttons.observer.test.ts`, line 984
+   - What breaks: The regex that checks named variables (`if (declared && !known.has(...))`) silently ignores cases where `declared` is null. If a provider variable is imported from another file, passed as a parameter, or defined with `let`, the regex won't find the declaration in the same file and will silently skip it without throwing an error, passing the control for the wrong reason.
+   - Blocks landing: Yes, the gate fails to enforce what it claims.
+
+3. **The operator checklist order guarantees a test suite failure.**
+   - File: `docs/design/2026-09-04-GOOGLE-SIGNIN.md`, lines 414 and 459
+   - What breaks: Step 6 instructs the operator to rewrite user-facing copy to include Google *before* enabling the provider in Supabase (Step 7). However, the control `sign-in copy names the providers this build renders` requires the copy to exactly match the providers rendered in the build. Because Google is not yet enabled in Supabase, a local build will not render the Google button, causing `npm test` to fail locally because the copy mentions a provider that was not rendered.
+   - Blocks landing: Yes, following the checklist verbatim breaks the build.
+
+4. **The generated button removal regex misses self-closing tags.**
+   - File: `site/src/components/auth/provider-buttons.observer.test.ts`, line 884
+   - What breaks: The regex `/<([a-z]+)[^>]*data-signin-provider=[\s\S]*?<\/\1>/g` expects a closing tag. If a self-closing element like `<input type="button" data-signin-provider="github" />` were used, the tag would not be removed, causing the sweep to read its attributes and flag it as handwritten user-facing copy.
+   - Blocks landing: No, Astro outputs `<button>` with a closing tag right now, but this is a brittle regex.
+
+**Claims I tried to refute and could not:**
+- **Single-sourced provider list**: `AUTH_PROVIDERS` is indeed the single source of truth; no other typed lists or enumerations of providers were found anywhere in the codebase.
+- **The build-time read deciding the output**: `ProviderButtons.astro` correctly reads from the GoTrue settings at build time and no arbitrary flags override it.
+- **`fetchEnabledProviders` classifying errors correctly**: It strictly uses `error.name === "TimeoutError"` and HTTP status codes, never relying on message prose for classification.
+- **Failure behavior**: The build correctly fails loudly on a missing or partially invalid backend configuration rather than silently rendering an incomplete page.
+- **User-facing copy correctness**: The rate limit and per-provider failure sentences build correctly even for zero or one provider, and no em-dashes were found in user-facing strings.
+
+VERDICT: FAIL

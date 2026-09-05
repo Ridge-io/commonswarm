@@ -1,0 +1,16 @@
+diff --git a/docs/design/2026-09-04-GOOGLE-SIGNIN.md b/docs/design/2026-09-04-GOOGLE-SIGNIN.md
+
+1. `site/src/components/auth/provider-buttons.observer.test.ts` lines 1454-1455 (Check 1): Typed enumeration. The test explicitly uses `["GitHub"]` and `["GitHub", "Google"]` for `listSentence`, directly contradicting the comment immediately below it (line 1456) that claims "Deliberately not provider names... using real providers here reads like an enumeration". Blocks landing.
+2. `site/src/components/auth/provider-buttons.observer.test.ts` lines 1206, 1212, 1217, 1221, 1227, 1277, 1388 (Check 1): Typed enumeration. The tests for `providersFromSettings` and `fetchEnabledProviders` assert exact arrays of provider IDs (e.g., `["github", "google"]`). If a new provider like `gitlab` is added to `AUTH_PROVIDERS`, these tests will drift and fail. Blocks landing.
+3. `site/src/components/auth/provider-buttons.observer.test.ts` line 1473 (Check 1 & 5): Typed enumeration and decoration control. The test `AUTH_PROVIDERS ids are unique and are the strings GoTrue takes verbatim` asserts `assert.deepEqual(ids, ["github", "google"]);`. This is decoration because it doesn't dynamically prove what GoTrue accepts; it is merely a tautology checking that the constant matches a snapshot of what the developer typed today. Blocks landing.
+4. `site/src/components/auth/provider-buttons.observer.test.ts` line 1169 (Check 5): Incomplete scan for hand-written buttons. The regex `/<[a-zA-Z][^>]*\bdata-signin|.../` only matches `data-signin-*` attributes. It misses the `data-<provider>` injection route (e.g., `<button data-github>`), which is exactly the pattern that `/app` used prior to this patch. A developer can still hand-write a button this way and bypass the control. Blocks landing.
+
+I tried to refute the following claims and could not:
+- Claim that the build fails loudly when the backend is unreachable (Check 4). It correctly throws `AuthSettingsUnreadable` and fails the Astro build without breaking unacknowledged workflows.
+- Claim that `providersFromSettings` parses safely (Check 3). It strictly checks types (arrays, nulls, non-booleans) and does not fall back to guessing, nor does it branch on error message text.
+- Claim that zero providers takes page furniture with it (Check 5). The template correctly wraps the `before` slot in the condition `providers.length > 0`.
+- Claim that the user-facing copy handles all states (Check 6). The generated strings for rate limits and errors are correct for 0, 1, or 2 providers, with no em-dashes.
+- Claim that steps 1-6 in the operator checklist change nothing a visitor sees (Check 7). They only prepare the Google side; the Supabase toggle in step 7 is what actually enables it.
+- Claim that no writes are made to Supabase and no new credentials are leaked (Check 8).
+
+VERDICT: FAIL

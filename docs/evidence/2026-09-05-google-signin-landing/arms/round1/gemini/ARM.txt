@@ -1,0 +1,32 @@
+`diff --git a/docs/design/2026-09-04-GOOGLE-SIGNIN.md b/docs/design/2026-09-04-GOOGLE-SIGNIN.md`
+
+1. **Typed Enumeration and Driftable Lists (Check 1):** 
+   - In `site/src/lib/auth-providers.ts` (line 1012 of the diff), there is a typed enumeration: `readonly id: "github" | "google";`. 
+   - In `site/src/components/auth/provider-buttons.observer.test.ts`, lines 705, 711, 716, and 823 hardcode the arrays `["github"]` and `["github", "google"]`, and `LIVE_SETTINGS` (line 526) explicitly enumerates the providers.
+   - In `docs/design/2026-09-04-GOOGLE-SIGNIN.md`, line 42 explicitly enumerates the providers (`github: true, google: false, email: true`).
+   These violate the doctrine that enumerations must be single-sourced and generated. **Blocks landing.**
+
+2. **Hardcoded Provider (Check 1):** In `site/src/lib/commonswarm.ts` (line 1226 of the diff), the function `signInWithGitHub` hardcodes the string `"github"`. While the provider array was consolidated, this function acts as a typed enumeration that wasn't generalized and will drift if `"github"` is ever removed or altered. **Blocks landing.**
+
+3. **Build Silent Failure (Check 2 & 4):** In `site/src/components/auth/ProviderButtons.astro` (line 462 of the diff), the condition `url && anonKey` evaluates to falsy if only *one* of the environment variables is set (e.g. URL is configured but the key is missing). Instead of failing loudly as claimed, it silently succeeds and renders zero buttons. **Blocks landing.**
+
+4. **Incorrect Claim on Rendered Set (Check 2):** The lane claims the build "renders providers whose flag is exactly `true`". In reality, `providersFromSettings` in `site/src/lib/auth-providers.ts` (line 1099) filters GoTrue's response against `AUTH_PROVIDERS`. GoTrue reports `email: true`, but it is omitted because it is not in the array. This refutes the claim. **Does not block landing.**
+
+5. **Branching on Error Message (Check 3):** In `site/src/components/auth/provider-buttons.observer.test.ts` (line 757), the test branches on the error message: `/HTTP 401/.test(error.message)`. Furthermore, `AuthSettingsUnreadable` (line 1127) absorbs the HTTP status code into a string rather than a structured property, violating doctrine D-053 and forcing consumers to parse strings. **Blocks landing.**
+
+6. **Breaking Legitimate Builds (Check 4):** Failing the static frontend build when the backend is unreachable breaks CI pipelines or offline preview deployments that do not have network access to the production or staging Supabase instance during the build step. **Blocks landing.**
+
+7. **Incomplete File Scan (Check 5):** In `site/src/components/auth/provider-buttons.observer.test.ts` (line 560), the scan for handwritten buttons only checks `\.(astro|ts|mjs)$`. It completely misses other common web injection routes like `.html`, `.js`, `.jsx`, `.svelte`, and `.vue`. **Blocks landing.**
+
+8. **Decoration Control (Check 5):** In `site/src/components/auth/provider-buttons.observer.test.ts` (line 814), the test claiming to verify that "ids are the strings GoTrue takes verbatim" is pure decoration. It makes no network call and simply asserts `assert.deepEqual(ids, ["github", "google"])` (line 823) against the hardcoded array. **Blocks landing.**
+
+9. **Incorrect Fallback Copy (Check 6):** In `site/src/components/invite/InviteOnramp.astro` (line 946), the per-provider error fallback states: `Try the email option.` This string is hardcoded and will be shown to users even if the email option is disabled or unreachable. **Blocks landing.**
+
+10. **Operator Checklist Claim (Check 7):** The claim that "steps 1-6 change nothing a visitor sees" is slightly inaccurate. Enabling the provider in the Supabase production dashboard (Step 6) means a visitor who manually hits the API authorization endpoint directly will start seeing the OAuth flow instead of an error, before the frontend is even rebuilt. **Does not block landing.**
+
+**Claims I tried to refute and could not:**
+- I could not refute that `providersFromSettings` parsing handles edge cases correctly; it properly shuts the door on arrays, null, missing keys, and unexpected bodies.
+- I could not refute that the invite page retains the redirect URLs properly and that the token safely survives the round trip.
+- I could not refute that no writes to the Supabase project are made by this patch, and no service-role keys or secrets were introduced under `site/`. The anon key is used in a new way (build-time fetch), but safely.
+
+VERDICT: FAIL
