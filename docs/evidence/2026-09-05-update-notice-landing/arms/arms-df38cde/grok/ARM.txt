@@ -1,0 +1,143 @@
+I'll read REVIEW.md and the patch first, then follow the review instructions exactly.The brief is a read-only review. I’ll quote the first `diff --git` line, then read the live source around the version check, the test, and the design note.I have the design note and the grep hits. Next I’ll read the poll function, the dismiss handler, and the test harness in full.diff --git a/docs/design/2026-09-04-IN-APP-UPDATE-NOTICE.md b/docs/design/2026-09-04-IN-APP-UPDATE-NOTICE.md
+
+Read-only review of SHA df38cde. I did not run tests, mutations, or builds. Mutation 11/1 numbers are the lane’s claim; I checked whether the code would behave that way.
+
+## 1. Does the version check cover the destructive path?
+
+`checkForNewBuild` is `LiveDashboard.astro` 6563–6632. Writes that outlive the call:
+
+| Write | Where | Stale poll can reach it? |
+|---|---|---|
+| `pollInFlight = true` | 6569, before fetch | Yes, on purpose |
+| `pollRequested = true` | 6566, other call while in flight | Yes |
+| `pollInFlight = false` and maybe a queued poll | `finally` 6587–6593 | Yes, **before** the version check |
+| `baselineMarkup` | 6611 | No. After `if (version !== noticeActionVersion) return` at 6601 |
+| `servedBuild` | 6615 | No |
+| `dismissedBuild = null` | 6624 | No. This is the destructive write |
+| `showUpdateNotice` | 6625 and 6631 | No |
+
+Early returns inside `try`/`catch` (`!response.ok`, failed fetch) never get to 6601. `return` inside `try` still runs `finally`, then leaves the function. That is fine: there is no body to apply.
+
+The destructive path is only the `!isNewBuild` reset at 6617–6626. The version check sits in front of it. A Not-now click at 6637–6643 does `noticeActionVersion += 1` in the same turn as `dismissedBuild = servedBuild`, so a poll that captured `version` at 6571 cannot apply that reset after the click.
+
+**`finally` before the version check is right, not a hole.** `pollInFlight` has to go false when the fetch ends, even if the body is dropped. If it stayed true, polling would stop for the life of the tab.
+
+I tried to make a race out of the queued poll that `finally` starts at 6591: `void checkForNewBuild()` runs until `await fetch` (6578), then yields. The stale call then hits 6601 on the same turn and returns. The queued poll cannot apply before that drop. If the click already happened, the queued poll captures the new version at 6571 and is not stale.
+
+`requestVersion` at 3400/3408 is the same shape: capture, await, compare, maybe return. Separate counter is right; bumping `requestVersion` on Not now would cancel workspace reads.
+
+## 2. Can the fix strand a dismissal or wedge the bar?
+
+If a stale poll is dropped and `pollRequested` was true, `finally` already started a new poll about the server as it is after the click.
+
+If `pollRequested` was false, the next driver is:
+
+- `setInterval` at 6656, five minutes (`UPDATE_POLL_MS` 6647)
+- `visibilitychange` → `startUpdatePoll` at 6659–6661, which also calls `checkForNewBuild` at 6657
+
+Nothing is wedged: `pollInFlight` is already false.
+
+Sequences I tried to construct:
+
+**Rollback missed for ever.** Dismiss B. An in-flight poll that saw rollback to A is dropped. Next poll: if the server is still A, 6617–6625 clears the dismissal. If the server is B again, the bar stays down. That is the click the reader just made (dismiss B, B is what is served). The rollback rule only needs a poll that **starts after** the click. The design sentence at the note’s line 105–106 matches the code.
+
+**Dismissal never cleared.** Cleared only by a non-stale `!isNewBuild` poll, or by reload (memory dies). A later in-step poll still clears it.
+
+**Baseline never set.** `baselineMarkup` is set on the first successful poll. The dismiss button is not on screen until a later poll has already found a new build (6631). A first poll cannot be stale.
+
+**Poll never runs again.** Only a hung fetch leaves `pollInFlight` true, and that was already true before this lane. `finally` still runs when the hung fetch ends or errors.
+
+Dropping a stale “build C” answer can delay a third-build notice until the next poll (up to five minutes, or until the tab is hidden and shown). The wholesale drop is the same as `requestVersion`. Applying only the “new build” half would still have to skip the reset; falling through would show the bar for the running build. So the whole-answer drop is the safe form. Not a strand.
+
+## 3. Is the new test a control or a demo?
+
+`update-notice.observer.test.ts` 713–758, script 216–258, harness 347–440.
+
+Would it pass if the poll were never held? No. `/__held` is `"1"` only when `heldResponse` is set (367–369, 430–439). `untilFetched("/__held", "1")` would return false, and 735–739 would fail.
+
+Positive controls:
+
+- **`startedInStep`** (210, 715–720): bar hidden after two polls of the running build. If the notice node is missing, this is also true — but then `dismissSawBuildTwo` cannot become true (`shownNow` needs the node and `!hidden`).
+- **`dismissSawBuildTwo`** (215, 721–725): bar went up after `/__stage?to=2`. For `stale-poll`, stage 2 is `pollBody("assets")` (415–420). Not a generic “something showed.”
+- **`dismissTookEffect`** (248, 726–730): `showUpdateNotice(false)` always runs on click (6642). This can be true even if `dismissedBuild = servedBuild` is deleted. It does **not** prove memory. The final `shown === false` (751–756) is the memory check, with stage 4 serving the dismissed build again.
+- **`staleHeldBeforeClick`** (246): a poll is in the hold slot before the click. Parent fetches to `/__held` cannot fill that slot; only `sec-fetch-dest: empty` to `/app` can (404–439).
+- **`staleLandedAfterClick`** (249, 371–380): the server called `held.end`. That is not the same as the page applying the body. `spin(60)` (251) is the wait for apply. I did not re-run the mutation; if the body never reached `checkForNewBuild`, deleting the version check would not turn this case red. The hold writes headers plus the first byte (437–438) so `fetch` can resolve and park on `response.text()`, which is the path the comment at 347–351 names.
+- **`servedStages` ends with `"3,4"`** (746–750): pushed at request time (412–414), not at apply time. Combined with the hold after `/__stage?to=3`, the held request is the stage-3 “running build” body (418–420). That is the reset branch.
+
+The case can go red if `dismissedBuild = servedBuild` is removed: click still hides the bar, the stale poll is dropped, `dismissedBuild` stays `null`, stage 4 does `showUpdateNotice(servedBuild !== null)` → bar up → `shown === false` fails. The older dismiss tests expect `shown === true` for a *later* build, so they would stay green. That is enough to be the memory control, not only an ordering demo.
+
+## 4. Is the case flaky?
+
+Polls this sequence issues, if each cycle starts with `pollInFlight === false`:
+
+1. Boot `startUpdatePoll` — stage 0, running build
+2. First visibility cycle — stage 0
+3. Cycle after stage 2 — assets, bar up
+4. Cycle after `/__hold` — **held**, stage 3, running build
+5. Cycle after stage 4 — assets again
+
+`pollRequested` is used only when a cycle hits an in-flight poll (6565–6567). After `until(shownNow)` for build two, poll 3 has already applied (`finally` runs before the show). Hold is armed after that, so poll 4 is the held one.
+
+Wrong-interleaving I checked:
+
+- Extra poll at stage 3 **before** the click would apply “back in step”, set `servedBuild` to the running build, and the click would remember the wrong build. Stage 4 would then raise the bar (false red). That needs a poll between `shownNow` and hold. That gap is two parent fetches (`/__stage?to=3`, `/__hold`) and is not a timer.
+- Extra poll **after** stage 4 makes `servedStages` end in `4,4` or `3,4,4`, and `endsWith("3,4")` fails (false red). After polls go up they only `spin(60)` parent `/__polls` fetches, which do not increment `polls`.
+- `shown === false` can pass if the stage-4 **apply** has not run yet, because the click already hid the bar. `servedStages` / `polls` only prove the request was received. `spin(60)` after the count bump is the apply wait. Same shape as `wait(120)` in the other dismiss cases, with fetches instead of `setTimeout`.
+
+Virtual time: Chromium `--virtual-time-budget` pauses virtual time while a load is pending. A held `fetch` parked on `response.text()` is such a load. `setTimeout` in `wait` / `until` would not fire until release. That reading is right.
+
+Applied where it is needed: after `/__hold`, the branch uses only `fetch` loops (`spin`, `untilFetched`, the polls-count loop at 255–257). No `setTimeout` until report. Before the hold, `until(shownNow)` still uses `wait(25)`; the held fetch has not started. After release, `setTimeout` would work again; they keep using `spin`, which is stricter, not a gap.
+
+Residual flake: `endsWith("3,4")` is brittle to a trailing extra poll; a stage-4 apply that is slower than `spin(60)` could hide a broken version check (false green). I did not measure either on this machine.
+
+## 5. Does the harness change break the other eleven cases?
+
+`/__hold`, `/__held`, `/__release` (362–380) are only fetched from the `ordering=1` script (230–249). Other `measure` URLs set `ordering=0` (539–541).
+
+`holdNextPoll` starts false (352). The hold branch (430–439) does not run unless a case arms it. Unheld polls still do `writeHead(...).end(body)` (441), same as before.
+
+Each `measure` builds its own server (527). Hold state cannot leak across cases.
+
+`close` (486–492) now `destroy()`s a held response and calls `closeAllConnections()`. For the other eleven, `heldResponse` is null; `destroy` is a no-op. `closeAllConnections` runs after Chrome has already exited (`execFile` returned). Node 22 has that API. It unblocks `server.close` if a socket were still open; it does not change what a live case is served.
+
+`stale-poll` was added to the `servedStages` and rollback-style body switch (412–420). Those arms are keyed on `variant`. `rollback` and `dismiss-then-markup` keep their old bodies.
+
+## 6. Do the comments and the design note state what is true?
+
+Checked `docs/design/2026-09-04-IN-APP-UPDATE-NOTICE.md` 88–130 against the code.
+
+- “A poll answers about the server as it was when its request was sent” — body is chosen at request time (431–433), including the hold path. True.
+- “Not now bumps it, and an answer from before the bump is dropped whole: not the baseline, not the dismissal, not the reset” — 6637–6642 and 6601–6631. Also skips the `servedBuild` write (6615). That omitted write is skipped too, so the sentence is not a lie; it is not a full list of writes.
+- “the reset below may clear a dismissal only from a poll that started after the reader's last action” — capture at 6571 (start), bump only on Not now (6640), check at 6601. “Last action” in code is only Not now. Update does not bump (see 7). True for the action that exists.
+- “Nothing is lost… the next poll asks about the server as it is after the click” — next poll is queued, interval, or visibility, not always immediate. Eventual, not immediate. Matches the poll section at 125–130.
+- “same shape as `requestVersion`… kept as its own counter” — true (3400–3408 vs 6571/6601/6640).
+- New case is the control for dismissal memory — structure holds (section 3). I did not re-run the two mutations.
+- “other eleven green” — twelve `test()` calls, one new. The quiet-probe test is one test with four variants inside.
+- Retired “NOT PROVEN…” block is under `*Was, until 2026-09-05:*` (117–123). Kept on purpose.
+- “This orders polls against each other only…” (129–130) — `pollInFlight` / `pollRequested` vs `noticeActionVersion`. True.
+
+Code comments at 6549–6552, 6594–6600, and 6618–6623 match the same facts.
+
+## 7. Should the Update button bump the counter too?
+
+Update is 6634–6636: `window.location.reload()` only.
+
+Reload drops the page. `noticeActionVersion`, `dismissedBuild`, and the in-flight poll die with it. The browser aborts the fetch on navigate. Bumping a counter that is about to be destroyed does nothing.
+
+A poll that finished in the gap before unload could paint one frame. The next document is the served build. Leaving Update unbumped is not a defect.
+
+If Update ever stops reloading (confirm dialog, delayed navigate), then it would need the bump. That is not this code.
+
+## 8. Anything else in the diff that is wrong?
+
+Nits, not defects:
+
+- Else-branch in the frame script (259–285) is valid but less indented than the `if`.
+- `releasedAt` counts releases so the test can require `"1"` rather than a boolean. Used.
+- Variable comment says “the reader's last action”; only Not now increments. The increment comment (6638–6639) is the precise one.
+
+No dead code, no lying type (`heldResponse` is a `ServerResponse | null`), no comment that describes code that is not there.
+
+I tried to fail this on: `finally` vs version check, stranded rollback, test passing without a hold, virtual-time `setTimeout` during the hold, harness leak into the other eleven, Update forgetting to bump. None of those hold as a product defect on this SHA.
+
+VERDICT: PASS

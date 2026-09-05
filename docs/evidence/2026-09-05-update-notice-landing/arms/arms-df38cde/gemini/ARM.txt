@@ -1,0 +1,51 @@
+`diff --git a/docs/design/2026-09-04-IN-APP-UPDATE-NOTICE.md b/docs/design/2026-09-04-IN-APP-UPDATE-NOTICE.md`
+
+**1. Does the version check actually cover the destructive path?**
+Yes. I read `site/src/components/app/LiveDashboard.astro` around `checkForNewBuild`. The writes to state that outlive the function are:
+- `pollInFlight` and `pollRequested`: Reset in a `finally` block before the version check.
+- `baselineMarkup`: Set via `if (!baselineMarkup) baselineMarkup = markup;` after the check.
+- `servedBuild`: Set via `servedBuild = ...` after the check.
+- `dismissedBuild`: Set to `null` on the `!isNewBuild` branch after the check.
+- DOM through `showUpdateNotice`: Called after the check.
+
+A stale poll returns at `if (version !== noticeActionVersion) return;` and therefore drops its payload, unable to reach `baselineMarkup`, `servedBuild`, `dismissedBuild`, or the DOM.
+Skipping these writes does not wedge the feature. A stale poll is discarded because its information is outdated relative to the user's action; the next scheduled or queued poll will measure the server post-click and update `baselineMarkup` or `dismissedBuild` accurately.
+Resetting `pollInFlight` and `pollRequested` in `finally` BEFORE the version check is exactly right, not a hole. If they were reset after, a dropped poll would leave `pollInFlight = true` forever, permanently wedging all future polls. Releasing the lock ensures the feature continues to poll.
+
+**2. Can the fix strand a dismissal or wedge the bar?**
+No. If a stale poll is dropped, the polling mechanism itself restores the behavior. 
+If a genuine rollback occurs, but the poll measuring it was in flight before the user clicked "Not now", that poll is correctly dropped because its answer predates the dismissal. The dismissal isn't cleared yet. However, this does not strand the dismissal permanently. The next timer tick (5 minutes via `updatePollTimer`), a tab visibility change (`visibilitychange`), or an immediate queued poll (if `pollRequested` was true) will fire a new poll. This new poll, having a captured version equal to `noticeActionVersion`, will see the rollback (`!isNewBuild`) and correctly clear `dismissedBuild = null`. No event is missed permanently, only delayed to the next valid measurement.
+
+**3. Is the new test a control or a demo?**
+It is a genuine control. I read `site/src/components/app/update-notice.observer.test.ts`.
+- `startedInStep`: Asserts `!shownNow()` initially. It could be true if the bar was completely broken and never showed, but `dismissSawBuildTwo` immediately asserts the bar does go up for build 2, proving it works.
+- `dismissTookEffect`: Asserts the bar hides after the click.
+- `staleHeldBeforeClick`: Asserts `/__held` returned `"1"`. This strictly verifies the test harness server successfully captured and held the poll open.
+- `staleLandedAfterClick`: Asserts `/__release` returned `"1"`. This strictly verifies the server released the body.
+- `servedStages`: Asserts the sequence of responses ends in `"3,4"`.
+
+The case reaches the exact code path it claims to test. If the poll were never held open by the server, the poll for stage 3 would complete and clear the dismissal *before* the click. The click would then occur while the bar was already down (acting on no target), and the final stage 4 would incorrectly raise the bar again, failing the final `shown === false` assertion. The harness hold is strictly required to reproduce the out-of-order execution that exposes the defect.
+
+**4. Is the case flaky?**
+No, the interleaving is deterministic.
+The test relies on no other poll being in flight when `/__hold` is armed. This is guaranteed because `until(shownNow)` waits for the bar to show for build 2, which only happens once the prior poll completes its `finally` block and updates the DOM. The `cycle()` command immediately following `/__hold` triggers exactly one poll (since `pollInFlight` was false), which is reliably intercepted by the server. 
+The reasoning about Chrome's `--virtual-time-budget` is correct: virtual time pauses while a network fetch is pending. Since the harness holds the poll open indefinitely, any `setTimeout` would hang forever. The test deliberately avoids `wait(...)` and correctly spins microtasks using `untilFetched` and `spin` (which execute immediate `fetch` requests) everywhere within the held-poll sequence to allow execution to proceed.
+
+**5. Does the harness change break the other eleven cases?**
+No. The `holdNextPoll`, `heldRest`, and `heldResponse` variables are initialized inside the `createServer` callback of `startServer`. Since each case calls `measure()` which spins up a brand new server instance, there is no shared state leaking between cases.
+The `server.closeAllConnections()` call in the teardown guarantees that the idle, held keep-alive socket is destroyed, preventing `server.close()` from hanging. 
+The existing variants never request `/__hold`, so they never trigger the hold logic and are served their usual responses without modification.
+
+**6. Do the comments and the design note state what is true?**
+Yes. I checked `docs/design/2026-09-04-IN-APP-UPDATE-NOTICE.md`.
+- "the reset may clear a dismissal only from a poll that started after the reader's last action" perfectly matches the `version !== noticeActionVersion` check that drops the whole poll payload, including the reset branch.
+- The note claims `update-notice.observer.test.ts` goes red if `dismissedBuild = servedBuild` is deleted. This is true: if the dismissal isn't saved, the stage 4 deployment (which differs from stage 3) will raise the bar at the end of the test, failing the final `shown === false` assertion. The test strictly controls dismissal memory.
+In `LiveDashboard.astro`, the comment "the `finally` above has already started one if a poll was queued" correctly describes the `if (pollRequested) void checkForNewBuild();` block executing when `pollRequested` is true.
+
+**7. Should the Update button bump the counter too?**
+No, leaving it unbumped is not a defect. The Update button handler executes `window.location.reload();`. This immediately initiates page teardown. Any in-memory state that a stale poll might theoretically mutate (`dismissedBuild`, `baselineMarkup`) is about to be destroyed by the browser anyway. The next page load starts fresh, making it irrelevant whether a late-arriving poll payload was processed during the fraction of a second before the unload.
+
+**8. Anything else in the diff that is wrong.**
+No dead code, misleading types, or false comments were found. The test assertions process the string `servedStages` using `.endsWith("3,4")` correctly. The harness modifications handle their internal sockets and states safely.
+
+VERDICT: PASS
