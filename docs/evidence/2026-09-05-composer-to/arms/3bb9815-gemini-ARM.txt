@@ -1,0 +1,22 @@
+`diff --git a/docs/design/2026-09-04-chat-platform-reconciled.md b/docs/design/2026-09-04-chat-platform-reconciled.md`
+
+1. **A NINTH INSTANCE OF THE SAME CLASS.** There is no ninth instance. The split is exact and the line is correctly drawn:
+   - **SEND-owned writes** (`composerIntent`, `sampleSignals`, the preview URL revokes, `rememberComposerTo`, `clearComposerDraft(sendDraftKey)`) are NOT gated on `requestVersion`. The status sentence and the send flag are correctly gated on `composerSendToken === sendToken`, which is the SEND's identity. 
+   - **SCREEN-owned writes** (the feed list, `postedSinceReset`, the row caches, the box restore on failure, focus) are properly gated either on `version === requestVersion` or on the box identity (`composerSendToken === sendToken && workspaceId === activeWorkspaceId`), so they do not write to a screen the reader has moved away from.
+   - `openWorkspace` unconditionally bumps `requestVersion` and wipes screen state (`signals = []`, etc.), but leaves the composer untouched on a same-workspace reopen because `resetComposer()` is skipped. No send-owned write is held hostage by `requestVersion`.
+
+2. **THE TOKEN.** The two bumps (`++composerSendToken` at submit, and `composerSendToken += 1` in `resetComposer`) are exactly enough. If the reader switches workspaces mid-send, `resetComposer` bumps the token. The finishing send's `composerSendToken === sendToken` check will fail, so it will neither lower the flag of the new workspace's composer nor clear its status. If a second send occurs in the new workspace, it increments the token again, fully protecting its own teardown.
+
+3. **THE CATCH'S NEW ORDER.** Nothing is released twice. The early return (`if (!boxIsStillThisSends)`) revokes the previews and returns immediately. If the box is still the send's, it bypasses the early return and revokes the previews at the end of the block *only if* `landed` is true. An unsent failure bypasses the early return and does NOT reach the second revoke because `landed` is false—keeping its previews on screen just as it keeps its restored text. No screen writes (status error, body restore, retry unhide) occur when the box is not the send's.
+
+4. **THE SETTLE.** `clearComposerDraft(sendDraftKey)` runs unconditionally for a landed post, but because it explicitly uses `sendDraftKey`, it targets the workspace where the send *started*. It will not delete the draft the reader is writing in a new workspace. Furthermore, if a switch occurred, the `composerIsStillThisSends` guard skips `syncComposerAddress()`, so the settle does not write a draft for the clear to delete. 
+
+5. **THE SAMPLE HOOKS.** `sampleSendWindow()` is only awaited `if (sampleMode)`, and sample mode is exclusively entered when the Supabase client is null. It cannot touch a real post or server path. Reading the delay and fail dataset hooks at the *start* of the window is correct: a control that alters the hooks mid-flight should affect the *next* send, not change the outcome of the one already on the wire.
+
+6. **THE SAMPLE REOPEN.** `openSampleWorkspace` perfectly models the real `openWorkspace`. It tests `activeWorkspaceId === workspace.id`, skips `resetComposer()` on a reopen, bumps `requestVersion`, and clears screen arrays. By applying the sample roster on a `setTimeout`, it correctly leaves the frame gap that allows a switch's teardown to flush the draft before the new workspace loads.
+
+7. **THE CONTROLS.** `sawFlagUp` is the positive control that proves the step executed exactly while the composer was locked and the message was on the wire. The assertions are precise and discriminate correctly against the specific failures they name, ensuring a window that closes too fast fails the control instead of silently passing.
+
+8. **RETIRED CLAIMS AND THE README.** The README correctly reflects the changes: the stored draft's freeze now has its own browser control (`unsentBodySurvivesSwitch`), and a same-workspace reopen during a send is now actively measured by the new in-flight steps. The documentation correctly identifies what was fixed.
+
+VERDICT: PASS

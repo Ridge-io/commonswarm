@@ -1221,9 +1221,15 @@ test("one pass owns the address, and every handler goes through it", () => {
     "the pass assigns whether or not it committed",
   );
   /* AND IT IS TOLD WHEN THE MESSAGE IT ADDRESSES IS ON THE WIRE. A SOURCE claim, and it says
-     why: a sample send has no in-flight window for a browser step to act inside, so what the
-     freeze DOES is driven directly in src/lib/composer-address.test.mjs and what the dashboard
-     feeds it is read here. */
+     why: what this freeze protects is a PRUNE arriving mid-post, and no sample transition loses
+     a recipient, so removing it changes nothing a browser step can see. What the freeze DOES is
+     driven directly in src/lib/composer-address.test.mjs and what the dashboard feeds it is
+     read here.
+
+     RETIRED reason (2026-09-05, round eight): "a sample send has no in-flight window for a
+     browser step to act inside". It has one now — `sampleSendWindow`, driven by the in-flight
+     steps in the browser test above. That is why the stored draft's freeze below no longer
+     shares this bound. A review arm found this sentence still standing. */
   assert.match(
     pass,
     /sending: composerSending,/,
@@ -1236,9 +1242,14 @@ test("one pass owns the address, and every handler goes through it", () => {
      good draft with an empty body or removed it, and the post then took its changed-workspace
      early return without putting the body back. A review arm found it.
 
-     SAME BOUND as the freeze above: no browser control, because a sample send never stays in
-     flight. The guard is read out of the source and it is the FIRST thing the write does, so
-     nothing between the flag and the write can read the emptied box. */
+     THIS ONE NOW HAS A BROWSER CONTROL: `unsentBodySurvivesSwitch` in the test above switches
+     workspace inside a real in-flight window and comes back to the message, and a mutation
+     removes this guard to turn it red. The guard is still read out of the source here because
+     it must be the FIRST thing the write does, so nothing between the flag and the write can
+     read the emptied box.
+
+     RETIRED wording: "SAME BOUND as the freeze above: no browser control, because a sample send
+     never stays in flight." A review arm found it after round eight made it false. */
   const persist = dashboard.slice(
     dashboard.indexOf("const persistComposerDraft = (): void => {"),
   );

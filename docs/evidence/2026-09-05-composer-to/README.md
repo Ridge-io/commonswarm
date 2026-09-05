@@ -261,6 +261,40 @@ send, which is `returnedBeforeItFailed`.
 (`unsentBodySurvivesSwitch`, driven by a mutation that removes the guard), and a send under a
 same-workspace reopen is now measured rather than named.
 
+### Round eight: PASS / PASS, and what the arms still found
+
+`3bb9815` is the code SHA both arms read. **Grok: PASS. Gemini: PASS.** Asked the direct question
+the previous round asked — does this SHA close the family, and if not, name the ONE cause — both
+said it closes.
+
+Grok enumerated every write in the submit after its first await and reported that no send-owned
+write is still gated on `requestVersion`, and it kept the ruling on the line: the feed list,
+`postedSinceReset` and the row caches stay behind the screen guard because a reopen rebuilds the
+list from the server. It also confirmed that the two token bumps are enough, and that each named
+mutation can fail only for the reason it names.
+
+What it found anyway, all of it WORDING that this round made false and left standing:
+
+| where | the sentence |
+|---|---|
+| this README's NOT-established list | "No browser control reaches a send whose workspace changes under it", and "a sample send resolves without an await" |
+| the same list | "A same-workspace `openWorkspace` during a send is not covered at all ... `openSampleWorkspace` returns early on the same id" |
+| `composer-to-field.observer.test.ts` | "a sample send has no in-flight window for a browser step to act inside", and the stored draft's "SAME BOUND ... no browser control, because a sample send never stays in flight" |
+
+All four are corrected in place above and at those call sites, with the retired wording preserved.
+The correction is a wording-only commit on top of the SHA the arms read, which is the same shape
+round seven used.
+
+Two things Grok looked at and did NOT use as a fail, recorded so a later reader does not
+re-derive them:
+
+- `visualMentions` and `deliveryReceiptCache` still drop only on the screen path, which this
+  README already says.
+- In REAL mode only, the two "Uploading file N of M" / "Posting message…" status writes run after
+  an upload await with no token or workspace test, so a switch mid-upload can paint that sentence
+  on a composer `resetComposer` already took. Pre-existing, unmeasured, and outside the sample
+  window: nothing in this lane can reach it, because a sample send never uploads.
+
 ## What is NOT established
 
 - **Nothing here reached production.** Every browser measurement runs against `site/dist` in
@@ -307,14 +341,27 @@ same-workspace reopen is now measured rather than named.
   keystroke or chip click reaches the same state. What is controlled is the settle itself
   (removing it turns a source claim red) and the behaviour it protects
   (`retaggedAfterSend`). The clear as a separate step is not.
-- **No browser control reaches a send whose workspace changes under it.** That path carries
-  both round-five and round-six findings, and a sample send resolves without an await, so no
-  browser step can switch workspace inside one. The fix is read out of the source with three
-  mutations on it: the storage is captured, it is done at all, and it is done before the guard.
-  What a real post does under a real switch is NOT measured here.
-- **A same-workspace `openWorkspace` during a send is not covered at all.** No browser control
-  reaches it, no mutation names it, and it is the open defect above. Sample mode cannot reach it
-  twice over: a sample send has no await, and `openSampleWorkspace` returns early on the same id.
+- **A workspace switch during a send is measured for the COMPOSER, not for the post.**
+  `switchedUnderFailedSend` and `unsentBodySurvivesSwitch` drive a real switch inside a real
+  in-flight window, so the box the reader moves to, the draft left behind and the flag are all
+  measured. What a real `post_signal` does under a real switch is still NOT measured: the sample
+  send fabricates its row locally. The storage half stays read out of the source with three
+  mutations on it — the storage is captured, it is done at all, and it is done before the guard.
+
+  RETIRED wording, which a reader may still meet: "No browser control reaches a send whose
+  workspace changes under it ... a sample send resolves without an await, so no browser step can
+  switch workspace inside one." A review arm found this sentence still standing after round
+  eight made it false.
+- **A same-workspace reopen during a send is now covered, and this bullet said the opposite.**
+  RETIRED wording: "A same-workspace `openWorkspace` during a send is not covered at all. No
+  browser control reaches it, no mutation names it, and it is the open defect above. Sample mode
+  cannot reach it twice over: a sample send has no await, and `openSampleWorkspace` returns early
+  on the same id." `refreshMidSend` and `failedUnderRefresh` reach it, four mutations name it,
+  and `openSampleWorkspace` reopens rather than returning. A review arm found this too.
+
+  What the reopen control does NOT establish: a real refetch. The sample has no server, so its
+  own store stands in for one, and the sample Refresh button is hidden because there is nothing
+  to fetch — the control drives the handler the visible button reaches in a real workspace.
 - **The write of the remembered set is not independently controlled, and the harness says so.**
   Breaking `rememberComposerTo` changes nothing a reader sees, because `pagehide` flushes the
   live chips into the draft and the draft restores them. The READ is controlled

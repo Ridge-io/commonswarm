@@ -1,0 +1,103 @@
+I'll read REVIEW.md first, then the two patches, and follow the review instructions exactly.REVIEW.md is a read-only attack on this SHA. I'll read the round patch first, then the whole-lane diff and the prior findings.The SHA is `3bb9815`. Next I’ll read the rest of this round’s patch and the live submit, catch, and token paths.Grep was pointed at the arm scratchpad. I'll search the lane checkout and keep reading the rest of the round patch.I have the round patch. Next I’ll enumerate the submit path after the first await and check the token, catch, and sample hooks against the live source.The catch and token look better. Next I’ll read restore, persist, sample mode, and the leftover NOT-established claims — those are the likely holes.I have the round patch and the live submit path. Next I’ll check two leftover claim sites and whether any send-owned write is still behind `requestVersion`.`diff --git a/docs/evidence/2026-09-05-composer-to/README.md b/docs/evidence/2026-09-05-composer-to/README.md`
+
+This SHA closes the family. The remaining cause from round seven was send-owned teardown keyed to `requestVersion`. The send now keys that work to `composerSendToken` and to the storage keys it captured. I did not find a ninth instance of send-owned work still gated on the screen's generation.
+
+## 1. A ninth instance of the same class
+
+**Submit, after the first await.** In sample mode that await is `sampleSendWindow` (`LiveDashboard.astro:7725`). In a real post it is the first `uploadBrowserAttachment` (`7717`) or `postBrowserSignal` (`7743`).
+
+| write | owner | guard now |
+|---|---|---|
+| retire `composerIntent` if `commandId` matches (`7769`) | send | none |
+| `setComposerStatus("")` (`7777`) | send (the sentence it put up) | `composerSendToken === sendToken` |
+| `sampleSignals = [posted, …]` (`7788`) | send (sample store) | `sampleMode && workspaceId === activeWorkspaceId` — not `requestVersion` |
+| `rememberComposerTo(recipients, sendToKey)` (`7791`) | send | none (captured key) |
+| `clearComposerDraft(sendDraftKey)` (`7792`) | send | none (captured key) |
+| revoke previews on the early return (`7794–7797`) | send | runs when the screen guard trips |
+| `postedSinceReset`, `signals`, `visualMentions`, `deliveryReceiptCache` (`7805–7814`) | screen | `version !== requestVersion \|\| workspaceId !== activeWorkspaceId` |
+| `composerAttachmentsMissingAfterReload`, revoke, `renderFeed`, `refreshDeliveryReceipts` (`7833–7838`) | screen (revoke is send-owned, and it also runs on the early return) | same screen guard |
+| catch: `clearComposerDraft` + retire intent (`7849–7857`) | send | `landed` only |
+| catch: restore body, error, Retry, feed (`7890–7974`) | screen | `composerSendToken === sendToken && workspaceId === activeWorkspaceId` |
+| catch early-return revoke (`7874–7876`) | send | runs when that box-guard fails |
+| finally: `setComposerSending(false)` (`7999`) | send | token only |
+| finally: `syncComposerAddress`, controls, focus (`8005–8024`) | screen | token and workspace |
+| finally: `clearComposerDraft(sendDraftKey)` (`8020`) | send | `posted !== null`, captured key |
+
+No send-owned write is still gated on `requestVersion`. The screen guard at `7793` still uses it, and that is the ruling: feed list, `postedSinceReset`, row caches. A reopen rebuilds the list from the server (sample: from `sampleSignals`). Putting this client's row in `signals` as well would be a second source for the same refetch. I keep that ruling.
+
+`sampleSignals` is still bound to the live workspace, not to a captured store. There is only one array. A switch empties it and rebuilds from the fixture (`3673`, `3691–3692`), so a write after a switch would land in the other workspace's feed. That is a sample-store shape, not `requestVersion` as send identity. The refresh path is the one that was losing the row, and the workspace still matches there.
+
+**Screen writes with no guard, after an await.** Real mode only: `setComposerStatus("Uploading…")` and `setComposerStatus("Posting message…")` at `7713–7724` run after upload awaits with no token or workspace test. A switch mid-upload can paint that sentence on a composer `resetComposer` already took. Sample mode cannot reach it: `7724` is before `sampleSendWindow`. Pre-existing, unmeasured. Not the over-gating this round closed.
+
+**`resetComposer` (`3520`).** Teardown of the screen's composer. Flushes first, then empties the pair, then `composerSendToken += 1` and `setComposerSending(false)` (`3585–3586`). No `requestVersion` test. The bump is the send-identity statement.
+
+**`openWorkspace` (`5709`).** `resetComposer` only on `changesWorkspace` (`5746–5747`). Always `++requestVersion` (`5770`). That pair is what wedged the flag. It is now safe because the lift no longer asks the generation.
+
+## 2. The token
+
+Bumped in exactly two places: `const sendToken = ++composerSendToken` at submit (`7689`) and `composerSendToken += 1` in `resetComposer` (`3585`). That is enough.
+
+- Refresh / retry / roster reopen: no `resetComposer`, token unchanged, the in-flight send still owns the flag and may lower it.
+- Switch or sign-out: `resetComposer` runs (`5747`, `5463`). Token moves. The in-flight send cannot lower a later send's flag and cannot write its body into the new box.
+- Return with no second send: token moved twice. Failure does not restore. `returnedBeforeItFailed` is the control that can tell this from a later send invalidating the earlier one on its own.
+- Two submits on the same composer: `composerSending` blocks the second (`7532`) until the first finally runs.
+
+I did not find a sequence where the wrong send lowers a flag, or where a send that still owns its composer fails to lower one. Wraparound is not a practical case.
+
+## 3. The catch's new order
+
+Send work first (`7848–7857`), then the box-guard (`7864–7878`), then screen work. Previews: unsent + box still this send's keeps them (they go back in the box). Unsent + box not this send's revokes from `attachmentSnapshot` (`7874`). Landed revokes below the guard, or on the success-path early return. `resetComposer` does not double-revoke during a send: submit already set `stagedAttachments = []` (`7695`). A render throw after the success-path revoke can revoke again; `URL.revokeObjectURL` on an already-revoked URL is a no-op.
+
+Screen writes in the catch sit behind `boxIsStillThisSends`. A switch does not put `rawBody` or the error into the box the reader moved to.
+
+## 4. The settle
+
+`syncComposerAddress()` only when token and workspace still match (`8003–8014`). `persistComposerDraft` inside it uses the live key. The live key equals `sendDraftKey` on that path.
+
+`clearComposerDraft(sendDraftKey)` runs for any landed post, after that settle (`8020`). It names the captured key, so it cannot remove a draft the reader is writing in another workspace. On a landed same-workspace finish it removes the draft the settle just wrote, which is the rule: a sent message is not one being written. On a failed send `posted` is null, so the restored body stays.
+
+## 5. The sample hooks
+
+`sampleSendWindow` is called only under `if (sampleMode)` (`7725`). `sampleMode` is set true only in `renderSample` (`6683`), and `boot` takes that path only when `client()` is null (`6785–6787`). A session that has a client sets `sampleMode = false` (`6790`) and never enters the window. The dataset is read only in `sampleSendWindow` (`7517–7518`).
+
+Reading both hooks at the start of the window is right. The switch-then-second-send step deletes `sampleSendFail` and changes the delay for the next send (`618–620` in the observer). A read at the end would make that change fail the send already on the wire.
+
+## 6. The sample reopen
+
+`openSampleWorkspace` now does the two facts `openWorkspace` does for a same-id open: skip `resetComposer`, bump `requestVersion` (`3665–3667`). Switch still tears the composer down and rebuilds `sampleSignals` from the fixture. Existing switch claims (`broadcastSurvivesSwitch` and the rest) still call a different id, so they still take that path.
+
+It does not model everything. Real `openWorkspace` always clears `postedSinceReset` and `deliveryReceiptCache` (`5796`, `5782`). The sample reopen does not. Those are the caches the README left on the screen path. Sample Refresh is hidden (`5679`, `6778`) and the handler is the one the visible button reaches in a real workspace (`8295–8307`). Close enough for the generation-bump controls. Not a claim that a real refetch was driven.
+
+Clicking the already-selected sample workspace now reopens instead of returning. No existing switch test does that.
+
+## 7. The controls
+
+`sawFlagUp` is enough for the window. `setComposerSending(true)` is synchronous before the first sample await (`7689–7725`). `requestSubmit` returns with the box already read-only. Removing `await sampleSendWindow()` makes the whole try/finally finish in that turn, so `sawFlagUp` is false and the mutation names that assertion.
+
+Each named mutation can fail for the reason it names:
+
+- Restoring the old `requestVersion` lift leaves the flag up under Refresh. If the sample reopen did not bump the generation, that entry would report NOT CAUGHT. That is the proof the bump is reached.
+- Restoring the old catch guard skips the restore under Refresh. `restoreComposerOnEntry` does not paper over it: `restoredComposerKey` is already this workspace (`3232`), so the restore is a no-op and the box stays empty.
+- Deleting the status clear leaves "Posting message…" standing; `resetComposer` is not on the reopen path.
+- Unconditional `setComposerSending(false)` lowers the studio send when the field-lab failure arrives. The 3500 ms read sits between the 3000 ms fail and the 5000 ms hold.
+- Dropping the token bump in `resetComposer` lets the returned failure overwrite the new line.
+- Dropping the `sampleSignals` write makes the second Refresh miss the row. The first Refresh can copy the store before the post lands; the assertion is on a later Refresh, which is the refetch the store exists for.
+- Dropping the persist-while-sending guard lets the switch flush the emptied box.
+
+`unsentBodySurvivesSwitch` and `resentOnce` have no `sawFlagUp` of their own. They follow `switchedUnderFailedSend`, which does. That is a continuation, not a vacuous step.
+
+## 8. Retired claims and the README
+
+The two items that left the NOT-established list are true in the code. `unsentBodySurvivesSwitch` is a browser control on the stored-draft freeze, and a mutation removes that guard. `refreshMidSend` / `failedUnderRefresh` measure a same-workspace reopen.
+
+Sentences this SHA made false, still asserted as current:
+
+- README "What is NOT established" still says no browser control reaches a send whose workspace changes under it, and that a sample send resolves without an await (`README.md:310–314`).
+- The next bullet still says a same-workspace `openWorkspace` during a send is not covered at all, and that `openSampleWorkspace` returns early on the same id (`315–317`). Both are now false. The pair-freeze bullet was marked RETIRED. These two were not.
+- `composer-to-field.observer.test.ts:1223–1240` still says a sample send has no in-flight window, and that the stored-draft freeze has no browser control for that reason. The pair freeze still has no browser control; the reason is now the sample roster, which the README got right and this comment did not.
+
+Those are leftover claims in the artifact. They are not a ninth instance of the send/screen guard. Round-eight prose already contradicts them.
+
+Looked at and not used as the fail: `visualMentions` / `deliveryReceiptCache` still drop only on the screen path, as the README now says. Real-mode upload status after an await is still ungated, and nothing here measures it.
+
+VERDICT: PASS
