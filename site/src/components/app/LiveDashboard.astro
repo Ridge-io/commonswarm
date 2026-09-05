@@ -2759,13 +2759,20 @@ import "../../styles/tokens.css";
     const syncComposerAddress = (edit?: readonly ComposerRecipient[]): boolean => {
       const input = one<HTMLTextAreaElement>("[data-composer-input]");
       const rosterKnown = composerRosterKnown();
-      const draftKey = composerDraftKey();
-      const stored = draftKey === null ? null : readComposerDraft(draftKey);
       const live: ComposerAddressPair | null = edit !== undefined
         ? { to: [...edit], applied: composerToApplied }
         : composerToLive
         ? { to: composerTo, applied: composerToApplied }
         : null;
+      /* THE STORED DRAFT IS READ ONLY WHEN IT CAN BE USED, which is a cold entry with no pair
+       * on screen yet. With a live pair the pass never looks at it, and reading it anyway put
+       * a synchronous localStorage read plus a JSON parse inside every chip click — and on
+       * iOS Safari that read is synchronous ACROSS PROCESSES, which is the cost the composer
+       * already moved off the keystroke path once. */
+      const draftKey = composerDraftKey();
+      const stored = live !== null || draftKey === null
+        ? null
+        : readComposerDraft(draftKey);
       /* THE TAGS ARE READ ONCE, here, and the two things the parser reports that are not
        * recipients travel with them to the sentence builder. */
       const parsed = rosterKnown && input !== null
@@ -2794,9 +2801,13 @@ import "../../styles/tokens.css";
       composerToPruned = state.announcedPrune;
       composerToLive = true;
       composerToNotice = composerAddressNotice(state, parsed, composerRecipientName);
-      /* AND THE SAME CALL WRITES IT DOWN. A chip edit used to reach storage only on the next
-       * keystroke or at `pagehide`, so a workspace switch — which cancels the draft timer —
-       * lost an edit that had changed nothing else. */
+      /* AND THE SAME CALL WRITES IT DOWN, so an edit cannot be on screen and absent from
+       * storage. A chip edit used to reach storage only on the next keystroke or at
+       * `pagehide`, and a workspace switch cancelled the pending write without flushing, so an
+       * edit that changed nothing else was lost. The switch now flushes too: the two are
+       * separate routes to the same write, which is why the control in
+       * docs/evidence/2026-09-05-composer-to/mutate.mjs breaks the WRITE rather than either
+       * route, and why the README says so rather than claiming each is load-bearing alone. */
       persistComposerDraft();
       renderComposerTo();
       syncComposerControls();
