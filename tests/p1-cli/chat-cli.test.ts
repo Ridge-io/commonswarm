@@ -229,7 +229,7 @@ const signalResponse = {
 async function postedCommand(
   command: PostSignalCommand,
 ): Promise<Record<string, unknown>> {
-  const captured: Captured[] = ["to"];
+  const captured: Captured[] = [];
   const sent = new ThinCommandClient(
     target,
     capturingFetch(captured, signalResponse),
@@ -357,7 +357,7 @@ const channelResponse = {
 
 test("a channel command carries the envelope and the exact fields the edge names", async () => {
   for (const [command, keys] of channelCommandCases) {
-    const captured: Captured[] = ["to"];
+    const captured: Captured[] = [];
     const sent = new ThinCommandClient(
       target,
       capturingFetch(captured, channelResponse),
@@ -391,7 +391,7 @@ test("a refusal shows the server's own sentence, and a bare one names the versio
     error: "invalid_request",
     message: "A channel purpose is at most 500 characters.",
   };
-  const captured: Captured[] = ["to"];
+  const captured: Captured[] = [];
   const withMessage = new ThinCommandClient(
     target,
     capturingFetch(captured, served, 400),
