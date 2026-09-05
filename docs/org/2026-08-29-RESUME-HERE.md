@@ -2040,3 +2040,17 @@ sides are ISO round-trips at millisecond resolution.
 (allowed call sites typed twice) and changes assertions, so one more arm pair runs on it. The
 lane's durable outcome: the sign-in sweep now states its bound (generated from its own patterns)
 instead of widening a regex; rounds 2–4 had argued completeness, which a source regex cannot have.
+
+## Addendum 2026-09-05 05:5x UTC — site chips LANDED and LIVE (merge 03960bc)
+
+`lane/site-chips` 66a9e9f merged as `03960bc`; site 387/387 on the merge; deployed; `/app` shows
+one generated GitHub button and no `data-member-reauth-github` attribute (measured live).
+`Hero.astro` and `Invite.astro` deleted (imported by nothing; wrote nothing into dist). The
+brain-links comment names `BRAIN_SLUG_SEPARATORS`. Evidence: `513867e` (14 ARM.txt) and `d46071e`
+(the 14 briefs and the lane's round ledger, patches and pid files dropped). Seven arm rounds;
+rounds 2–4 argued whether a source-sweep regex can be complete; the durable answer is a stated,
+generated bound. My error on this lane: I removed its worktree while its final gates ran (Node
+`uv_cwd ENOENT`, 73 spurious reds); the last valid run before that was clean.
+
+Routed: the chat design doc still cites the deleted `landing/Hero.astro:190` (:874); the chat lane
+retargets it in its final wording pass or I fold it comment-only after its merge.
