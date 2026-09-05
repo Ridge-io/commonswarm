@@ -224,10 +224,25 @@ detect_agy() {
 run_detectors() {
   local entry detector
   for entry in "${AGENT_TRAILER_RUNTIMES[@]}"; do
-    detector="${entry##*|}"
+    detector="$(agent_trailer_runtime_detector "$entry")"
     if "$detector"; then return 0; fi
   done
   return 1
+}
+
+# How many runtimes claim to be here. Inheritance is symmetric — a codex parent leaves
+# CODEX_THREAD_ID in a grok child exactly as a Claude Code parent leaves CLAUDE_* — so a count
+# above one means the environment CANNOT say which runtime is innermost. The probe order still
+# decides, because it is right for the nesting this repo runs, but the answer stops calling itself
+# a clean measurement. Reading the count is the only way to know the difference; the order alone
+# cannot tell a nested lane from a plain one.
+count_runtime_markers() {
+  local entry marker n=0
+  for entry in "${AGENT_TRAILER_RUNTIMES[@]}"; do
+    marker="$(agent_trailer_runtime_marker "$entry")"
+    [ -n "${!marker:-}" ] && n=$((n + 1))
+  done
+  printf '%s' "$n"
 }
 
 # Explicit declaration beats detection, and is recorded as `declared` so the audit can tell an
@@ -248,6 +263,18 @@ resolve() {
   fi
 
   run_detectors || true
+
+  # Downgrade the honesty field when more than one runtime was visible. The model above may belong
+  # to a PARENT session, and a reader weighing the audit needs to be told that rather than left to
+  # assume a clean read. Only a runtime-* source is downgraded: `none` is already the weakest value
+  # and `declared` was never a measurement.
+  case "$detected_source" in
+    runtime-*)
+      if [ "$(count_runtime_markers)" -gt 1 ]; then
+        detected_source=runtime-ambiguous
+      fi
+      ;;
+  esac
 
   if [ -z "$detected_model" ]; then
     detected_model="$AGENT_TRAILER_MODEL_UNKNOWN"

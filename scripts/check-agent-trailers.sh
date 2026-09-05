@@ -61,6 +61,16 @@ check_commit() {
     return 0
   fi
 
+  # A SQUASH MERGE is not a merge commit. GitHub writes a SINGLE-PARENT commit on the default
+  # branch whose message it generated from the PR, so the exemption above does not cover it, and
+  # its tree does contain the hook so grace does not either. Measured on this repo's main:
+  # cf17894 and 297f1a4 are single-parent commits committed by this address. Without this, the
+  # first squash merge after this lands turns main red for a message no agent wrote — the same
+  # fail-forever-on-main class scripts/check-commit-identity.sh warns about.
+  if [ "$(git show -s --format='%ce' "$sha")" = "$AGENT_TRAILER_GITHUB_COMMITTER" ]; then
+    return 0
+  fi
+
   local key value
   for key in "${AGENT_TRAILER_REQUIRED_KEYS[@]}"; do
     value="$(trailer_value "$sha" "$key")"
@@ -432,6 +442,24 @@ Agent-Model-Source: declared" side.txt
   status=0
   ( cd "$tmp" && "$checker" --range "HEAD^..HEAD" ) >/dev/null 2>&1 || status=$?
   assert_status 0 "$status" "a merge commit is exempt from the trailer requirement"
+
+  # 14b. A SQUASH MERGE is single-parent, so assertion 14 says nothing about it. GitHub wrote the
+  #      message, and the commit's tree carries the hook, so neither the merge exemption nor grace
+  #      applies. The fixture asserts it really has one parent, or this would pass for the wrong
+  #      reason on a fixture that accidentally built a merge.
+  ( cd "$tmp" && git checkout --quiet main
+    GIT_COMMITTER_NAME='GitHub' GIT_COMMITTER_EMAIL="$AGENT_TRAILER_GITHUB_COMMITTER" \
+      git -c user.name=Fixture -c user.email=fixture@cloud-swarm.local \
+      commit --quiet --no-verify --allow-empty -m "Squashed PR (#12)"
+  ) >/dev/null 2>&1
+  assert_equal 1 "$( cd "$tmp" && git show -s --format='%p' HEAD | wc -w | tr -d ' ' )" \
+    "the squash fixture really has one parent"
+  assert_equal "$AGENT_TRAILER_GITHUB_COMMITTER" \
+    "$( cd "$tmp" && git show -s --format='%ce' HEAD )" \
+    "the squash fixture really is committed by GitHub"
+  status=0
+  ( cd "$tmp" && "$checker" --range "HEAD~1..HEAD" ) >/dev/null 2>&1 || status=$?
+  assert_status 0 "$status" "a squash merge GitHub committed is exempt"
 
   # 15. THE GRACE PAIR. A commit whose own tree has no hook predates the rule and is accepted with
   #     no trailers; the same untagged commit WITH the hook in its tree is rejected. Neither means

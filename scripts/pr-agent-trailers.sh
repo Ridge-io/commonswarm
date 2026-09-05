@@ -75,8 +75,13 @@ printf '\n'
 # The honesty line. `declared` means somebody asserted the model; `runtime-*` means it was read off
 # the runtime. A reader weighing this audit needs to know which, and burying it would defeat the
 # purpose of recording the source at all.
-measured="$(rows | awk -F'\t' '$4 ~ /^runtime-/ { n++ } END { print n + 0 }')"
+#
+# `runtime-ambiguous` is deliberately NOT counted as measured. It means more than one runtime's
+# variables were visible, so the model may belong to a parent session; folding it into the measured
+# count would inflate exactly the number a reader trusts most.
+measured="$(rows | awk -F'\t' '$4 ~ /^runtime-/ && $4 != "runtime-ambiguous" { n++ } END { print n + 0 }')"
+ambiguous="$(rows | awk -F'\t' '$4 == "runtime-ambiguous" { n++ } END { print n + 0 }')"
 declared="$(rows | awk -F'\t' '$4 == "declared" { n++ } END { print n + 0 }')"
 unread="$(rows | awk -F'\t' '$4 == "none" || $4 == "" { n++ } END { print n + 0 }')"
-printf '%s of %s commit(s) had the model read from the runtime; %s declared by hand; %s not established.\n' \
-  "$measured" "$total" "$declared" "$unread"
+printf '%s of %s commit(s) had the model read from the runtime; %s read from a runtime that could not be told apart from a parent session; %s declared by hand; %s not established.\n' \
+  "$measured" "$total" "$ambiguous" "$declared" "$unread"

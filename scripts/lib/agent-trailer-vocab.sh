@@ -61,11 +61,15 @@ AGENT_TRAILER_FAMILIES=(
 #   runtime-env         read out of an environment variable the runtime itself set
 #   runtime-config      read out of the runtime's on-disk selected-model config
 #   declared            a human or a lead supplied it via CSWARM_AGENT_* (an assertion, not a read)
+#   runtime-ambiguous   MORE THAN ONE runtime's variables were visible, so the environment could
+#                       not say which one is innermost. The probe order picked the model below and
+#                       it may belong to a PARENT session. Weaker than any other runtime-* value.
 #   none                nothing readable; the model is the `unknown` sentinel
 AGENT_TRAILER_SOURCES=(
   runtime-transcript
   runtime-env
   runtime-config
+  runtime-ambiguous
   declared
   none
 )
@@ -94,11 +98,24 @@ AGENT_TRAILER_MODEL_UNKNOWN=unknown
 # under "Onboarding": CLAUDE_CODE_ENTRYPOINT can be inherited by a Codex child and mislabel it.
 # The nested runtimes are probed first because their own variables are only present when they are
 # the innermost runtime.
+#
+# THE ORDER IS A PARTIAL FIX AND THE THIRD FIELD IS WHY. Inheritance is SYMMETRIC: a codex session
+# that shells out to grok leaves CODEX_THREAD_ID in the child exactly as Claude Code leaves
+# CLAUDE_*, and codex is probed first, so that child would be signed as codex. Measured 2026-09-04
+# from inside a Claude Code session: `CODEX_THREAD_ID=fake scripts/agent-trailers.sh --detect`
+# reported `tool=codex`, discarding the Claude Code model it could otherwise read. Ordering can
+# only ever be right for one nesting direction.
+#
+# So each entry also names the ENVIRONMENT VARIABLE that marks its runtime, and the emitter counts
+# how many are set. One marker is a clean read. Two or more means the environment cannot say which
+# runtime is innermost; the order still picks, because it is right for the nesting this repo
+# actually runs (a Claude Code lead spawning codex, grok or agy lanes), but the trailer then says
+# `runtime-ambiguous` instead of claiming a clean measurement.
 AGENT_TRAILER_RUNTIMES=(
-  'codex|detect_codex'
-  'grok|detect_grok'
-  'agy|detect_agy'
-  'claude-code|detect_claude_code'
+  'codex|detect_codex|CODEX_THREAD_ID'
+  'grok|detect_grok|GROK_SESSION_ID'
+  'agy|detect_agy|ANTIGRAVITY_AGENT'
+  'claude-code|detect_claude_code|CLAUDECODE'
 )
 
 # ---------------------------------------------------------------------------
@@ -115,12 +132,23 @@ agent_trailer_join() {
   printf '%s' "$out"
 }
 
-# The runtime ids only, without their families or detector names.
+# The runtime ids only, without their detector names or marker variables.
 agent_trailer_runtime_ids() {
   local entry
   for entry in "${AGENT_TRAILER_RUNTIMES[@]}"; do
     printf '%s\n' "${entry%%|*}"
   done
+}
+
+# Field 2 of each entry: the detector function name.
+agent_trailer_runtime_detector() {
+  local rest="${1#*|}"
+  printf '%s' "${rest%%|*}"
+}
+
+# Field 3 of each entry: the environment variable that marks that runtime.
+agent_trailer_runtime_marker() {
+  printf '%s' "${1##*|}"
 }
 
 # True when $1 is an element of the array named by $2.
@@ -169,5 +197,13 @@ agent_trailer_contains() {
 # script in package.json, and the doc. tests/p1-cli/agent-trailers.test.ts fails when they differ,
 # and the self-test fails when the path names no file, which is what would silently turn every
 # commit into a skipped one.
+# Commits GitHub itself wrote. A SQUASH MERGE produces a SINGLE-PARENT commit on the default branch
+# whose message GitHub generated from the PR, so the merge exemption does not cover it and its tree
+# does contain the hook. Measured on this repo's main: cf17894 and 297f1a4 are single-parent commits
+# committed by this address. Without this exemption the first squash merge after this lands turns
+# main red for a message no agent wrote. scripts/check-commit-identity.sh allows the same address
+# for the same reason; keep the two in step by hand, they are separate guards.
+AGENT_TRAILER_GITHUB_COMMITTER=noreply@github.com
+
 AGENT_TRAILER_HOOK_DIR=scripts/hooks
 AGENT_TRAILER_HOOK_PATH="${AGENT_TRAILER_HOOK_DIR}/prepare-commit-msg"
