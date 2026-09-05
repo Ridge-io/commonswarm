@@ -336,7 +336,7 @@ test("owning an addressed agent is enough to read the signal, and owning a diffe
   }
 });
 
-test("a recipient set wakes recipient 0 and NOBODY else, which is a bound and not an oversight", async () => {
+test("a recipient set wakes at most the agent at position 0, which is a bound and not an oversight", async () => {
   const sql = postgres(databaseUrl(), { max: 1 });
   const f = newFixture();
   const twoAgents = randomUUID();

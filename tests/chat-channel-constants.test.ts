@@ -367,3 +367,121 @@ test("parseSignalRecipients lower-cases ids and refuses what the rules refuse", 
   assert.equal(parseSignalRecipients([{ kind: "user", id: "nope" }]), null);
   assert.deepEqual(parseSignalRecipients([]), []);
 });
+
+/* ---------------------------------------------------------------------------
+ * THE WAKE CLAIM, as a family rather than as three separate sentences.
+ *
+ * Five successive summaries of one rule were written on 2026-09-05 and every
+ * one of them was wrong, each caught by a review arm after the previous one was
+ * "fixed": a fan-out that wakes every agent recipient; "no agent would ever be
+ * woken" called false; "notifies its first agent recipient"; "wakes ONE of
+ * them"; "right about every agent except one". They failed the same way -- each
+ * shortening assumed position 0 is an agent, and a set whose position 0 is a
+ * PERSON wakes nobody at all.
+ *
+ * So the rule is one string, repeated verbatim, and this gate holds the family
+ * together. BOUND, stated: it checks the three surfaces listed below for one
+ * clause and for the retired wordings it knows about. It cannot tell you a
+ * sixth wrong summary has been written in different words, and it does not read
+ * the trigger -- tests/p1-local/chat-recipients-postgres.test.ts measures the
+ * behaviour, including the [person, agent] case that reads zero.
+ * ------------------------------------------------------------------------- */
+
+const WAKE_CLAUSE =
+  "wakes the recipient at position 0, and only when that recipient is an agent taking `ask` or `note`";
+
+/** Wordings retired on 2026-09-05. Each was false whenever position 0 is a person. */
+const RETIRED_WAKE_WORDINGS = [
+  "one delivery row per agent recipient",
+  "notifies its first agent recipient",
+  "wakes ONE of them",
+  "right about every agent except one",
+  "recipient 0 woken once, nobody else",
+];
+
+/** Every file that summarises the wake. Adding one means adding it here. */
+const WAKE_SURFACES = [
+  "../docs/design/2026-09-04-chat-platform-reconciled.md",
+  "../docs/design/2026-09-05-chat-build-plan.md",
+  "../supabase/migrations/20260905000010_signal_recipients.sql",
+];
+
+/**
+ * Prose wraps, and it wraps differently in Markdown, in a blockquote and in a
+ * SQL comment. Flatten line breaks and their leading `--`, `>` or `*` markers
+ * to single spaces so one clause can be pinned across all three, instead of
+ * three near-copies that are free to drift.
+ */
+function flattenProse(text: string): string {
+  return text.replace(/\n\s*(?:--|>|\*)?\s*/g, " ").replace(/\s+/g, " ");
+}
+
+/**
+ * A retired wording may still be QUOTED -- a reader who met one has to be told
+ * it is retired -- but only where a retirement marker says so. Each occurrence
+ * must have one of these within the preceding window.
+ */
+const RETIREMENT_MARKERS = ["**was**", "CORRECTED", "The retired versions:"];
+const RETIREMENT_WINDOW = 400;
+
+test("every surface that summarises the wake uses one clause, and every retired wording is marked retired", () => {
+  const read = (relative: string) =>
+    flattenProse(
+      readFileSync(fileURLToPath(new URL(relative, import.meta.url)), "utf8"),
+    );
+
+  for (const surface of WAKE_SURFACES) {
+    const text = read(surface);
+    assert.ok(
+      text.includes(WAKE_CLAUSE),
+      `${surface} must carry the wake clause verbatim: ${WAKE_CLAUSE}`,
+    );
+  }
+
+  /* EVERY occurrence, not the first: a second copy of a retired wording
+   * somewhere unmarked is exactly the drift this gate exists to catch. */
+  for (const surface of WAKE_SURFACES) {
+    const text = read(surface);
+    for (const retired of RETIRED_WAKE_WORDINGS) {
+      let at = text.indexOf(retired);
+      while (at !== -1) {
+        const window = text.slice(Math.max(0, at - RETIREMENT_WINDOW), at);
+        assert.ok(
+          RETIREMENT_MARKERS.some((marker) => window.includes(marker)),
+          `${surface} carries ${JSON.stringify(retired)} with no retirement marker in the ${RETIREMENT_WINDOW} characters before it, so a reader meets it as a live claim`,
+        );
+        at = text.indexOf(retired, at + retired.length);
+      }
+    }
+  }
+
+  const reconciled = read(WAKE_SURFACES[0]!);
+  /* CONTROL 1: the flattener really does join wrapped prose, so the clause
+   * assertions above are not passing on text that happens to fit one line. */
+  assert.equal(
+    flattenProse("wakes the recipient\n  -- at position 0"),
+    "wakes the recipient at position 0",
+  );
+  /* CONTROL 2: the retired list is really there and really quotes them, so the
+   * loop above is not passing because every needle is missing. */
+  assert.ok(
+    reconciled.includes(RETIREMENT_MARKERS[2]!),
+    "the retired-versions list must be findable",
+  );
+  assert.ok(
+    RETIRED_WAKE_WORDINGS.filter((retired) => reconciled.includes(retired))
+        .length >= 3,
+    "the retired list must actually quote the retired wordings",
+  );
+  /* CONTROL 3: the marker test can fail. The same needle with no marker before
+   * it is reported, which is what the loop asserts about the real files. */
+  const unmarked = `a stray sentence saying ${RETIRED_WAKE_WORDINGS[2]} here`;
+  assert.equal(
+    RETIREMENT_MARKERS.some((marker) =>
+      unmarked.slice(0, unmarked.indexOf(RETIRED_WAKE_WORDINGS[2]!)).includes(
+        marker,
+      )
+    ),
+    false,
+  );
+});

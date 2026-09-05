@@ -472,21 +472,31 @@ half-retired.**
 > three. `signals_one_recipient` still exists and is still not relaxed; it now bounds the SCALAR
 > columns only.
 >
-> The THIRD clause is **nearly** true, and THREE earlier versions of this note got it wrong in three
-> different ways. It read *"no agent in a group DM would ever be woken."* Exactly, and this is the
-> wording that survives review:
+> The THIRD clause is **nearly** true, and FOUR earlier versions of this note got it wrong in four
+> different ways. It read *"no agent in a group DM would ever be woken."*
 >
 > **The wake is unchanged.** `swarm.enqueue_signal_delivery()` fires on INSERT into `swarm.signals` and
-> reads the SCALAR column, so a signal wakes the recipient at position 0, and only when that recipient
-> is an agent and the kind is `ask` or `note`. Nothing reads `swarm.signal_recipients` on the way to
-> the delivery ledger. So a three-party address whose position 0 is a PERSON wakes nobody at all, even
-> when it names agents at positions 1 and 2; and one whose position 0 is an agent wakes exactly that
-> agent. Naming an agent later in the list never notifies it.
+> reads the SCALAR column, so it wakes the recipient at position 0, and only when that recipient is an
+> agent taking `ask` or `note`. Nothing reads `swarm.signal_recipients` on the way to the delivery
+> ledger. So a three-party address whose position 0 is a PERSON wakes nobody at all, even when it names
+> agents at positions 1 and 2; and one whose position 0 is an agent taking `ask` or `note` wakes
+> exactly that agent. Naming an agent later in the list never notifies it.
 >
-> The original clause is therefore right about every agent except one, and the conversation-type
-> objection it supports still stands. The three retired versions: the first said L2 wakes every agent
-> in the set; the second said the clause was false; the third said a three-party conversation
-> "notifies its first agent recipient", which is false whenever the first agent is not position 0.
+> Against that rule, the original clause is right about every agent that is not the recipient at
+> position 0, and wrong only about that one, and only when that recipient is an agent taking `ask` or
+> `note`. The conversation-type objection it supports still stands.
+>
+> **THE SENTENCE ABOVE IS THE ONLY SUMMARY OF THE WAKE ANY DOCUMENT MAY USE.** Every shorter one
+> written on 2026-09-05 was wrong, because every shortening assumed position 0 is an agent. The clause
+> "wakes the recipient at position 0, and only when that recipient is an agent taking `ask` or `note`"
+> is the string every surface repeats, and `tests/chat-channel-constants.test.ts` fails if a surface
+> drops it or if a retired wording appears outside the list below.
+>
+> The retired versions: *"a trigger on swarm.signal_recipients enqueues one delivery row per agent
+> recipient"*; *"no agent in a group DM would ever be woken" is false*; *"a three-party conversation
+> notifies its first agent recipient"*; *"L2 addresses N recipients and wakes ONE of them"*; *"the
+> original clause is right about every agent except one"*; *"recipient 0 woken once, nobody else"*.
+> Each is false whenever position 0 is a person, or was false the day it was written.
 >
 > **What is NOT settled: whether v1 should have group DMs.** That is a product decision and nobody has
 > made it. This document must not read as if the constraint decides it, because the constraint no longer
@@ -888,8 +898,8 @@ did NOT establish: a running listener against the new edge. The edge is not depl
   Retiring it is a separate operator decision.
 - **Waking agents on a channel post.** Still out, and it would still be the first N-way fan-out in the
   system. L2 addresses N recipients and wakes nobody it did not already wake: the trigger reads the
-  scalar column, so a signal wakes position 0 and only when position 0 is an agent taking `ask` or
-  `note`.
+  scalar column, so it wakes the recipient at position 0, and only when that recipient is an agent
+  taking `ask` or `note`.
 
   > **CORRECTED twice on 2026-09-05, and the middle version was wrong.** For part of that day this
   > bullet said *"L2 is that first fan-out: `swarm.signal_recipients` enqueues one delivery row per

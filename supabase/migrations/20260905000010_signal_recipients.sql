@@ -242,9 +242,19 @@ CREATE CONSTRAINT TRIGGER signal_recipients_first_is_the_scalar
 -- missing feature.
 --
 -- SO, EXACTLY: recipients 1..N can READ a signal and can REPLY to it. They are
--- not woken. Recipient 0 is woken by swarm.enqueue_signal_delivery() from the
--- scalar column, unchanged. tests/p1-local/chat-recipients-postgres.test.ts and
--- tests/p1-server/chat-signals.test.ts both measure that, so the day someone
+-- not woken. swarm.enqueue_signal_delivery() reads the scalar column, so it
+-- wakes the recipient at position 0, and only when that recipient is an agent
+-- taking `ask` or `note`. A set whose position 0 is a PERSON wakes nobody at
+-- all, even when it names agents later in the list.
+--
+-- That last clause is the whole reason this comment is long. Five shorter
+-- summaries of this rule were written on 2026-09-05 and every one of them was
+-- wrong, because every shortening assumed position 0 is an agent. The design
+-- documents repeat the clause above verbatim and
+-- tests/chat-channel-constants.test.ts fails if a surface drops it.
+--
+-- tests/p1-local/chat-recipients-postgres.test.ts and
+-- tests/p1-server/chat-signals.test.ts both measure this, so the day someone
 -- adds the fan-out they are told what else has to move.
 
 -- ---------------------------------------------------------------------------

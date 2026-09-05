@@ -39,7 +39,7 @@ except where the "Parallel" column says otherwise.
 | Lane | Owns (no other lane edits these) | Wire change | Old-client rule | Tests it adds | Parallel |
 |---|---|---|---|---|---|
 | **L1 `chat-schema`** | `supabase/migrations/20260905000001_channels.sql`, `…0002_signal_channel.sql`, `…0003_signal_threads.sql`; `supabase/functions/_shared/channels.ts`; `supabase/functions/command/index.ts`; `supabase/functions/read/index.ts`; `tests/chat-channel-constants.test.ts`; `tests/chat-signal-wire-compat.test.ts`; `tests/p1-local/chat-channels-postgres.test.ts` | `channel_create` / `channel_rename` / `channel_archive`; `post_signal` gains optional `channel`, `thread_root_id`, `broadcast_to_channel`; `read` gains optional `channel`; the signal record gains `channel_id`, `thread_root_id`, `broadcast_to_channel` | Additive nullable column, no backfill, no `SET NOT NULL`. Every new optional key is its **own** `Object.hasOwn` group; `modernKeys` is not widened | constants + generated messages; wire-compat twin of `tests/receipt-wire-compat.test.ts`; Postgres suite (channels, immutability, tenancy, delivery-neutrality) | — |
-| **L2 `chat-recipients`** | `supabase/migrations/20260905000010_signal_recipients.sql`; then `_shared/channels.ts`, `command/index.ts`, `read/index.ts` again | `post_signal` gains optional `to`, an array of `{kind, id}`, in its **own** `Object.hasOwn` group; the record and the view gain a `recipients` set | `to_user_id`/`to_agent_principal_id` STAY and hold the FIRST recipient, so an old reader sees a true recipient rather than none. `signals_one_recipient` is not relaxed | N-recipient visibility; first-recipient fallback; the delivery bound (recipient 0 woken once, nobody else, and no trigger on the recipients table); the cap and its generated message; wire-compat twin. *(**was**: "one delivery row per agent recipient and no duplicate for the first" — that fan-out was built, refused review, and was removed; see the L2 appendix.)* | **no** — same files as L1 |
+| **L2 `chat-recipients`** | `supabase/migrations/20260905000010_signal_recipients.sql`; then `_shared/channels.ts`, `command/index.ts`, `read/index.ts` again | `post_signal` gains optional `to`, an array of `{kind, id}`, in its **own** `Object.hasOwn` group; the record and the view gain a `recipients` set | `to_user_id`/`to_agent_principal_id` STAY and hold the FIRST recipient, so an old reader sees a true recipient rather than none. `signals_one_recipient` is not relaxed | N-recipient visibility; first-recipient fallback; the delivery bound (it wakes the recipient at position 0, and only when that recipient is an agent taking `ask` or `note`; nobody else; and no trigger on the recipients table); the cap and its generated message; wire-compat twin. *(**was**: "one delivery row per agent recipient and no duplicate for the first" — that fan-out was built, refused review, and was removed; see the L2 appendix.)* | **no** — same files as L1 |
 | **L3 `chat-client`** | `src/cloud/channels.ts` (new), `src/cloud/signals.ts`, `src/cloud/command-client.ts`, `src/cli.ts`, `tests/p1-cli/chat-cli.test.ts` | sends `channel` and `to` on post; `--channel` on feed; `cswarm channel ls\|new\|rename\|archive` | Client is newer than the edge only after L1 and L2 deploy. Publish the npm client **after** the edge deploy, never before | CLI parse + copy tests; slug resolver reuse of the `--to` name-or-uuid resolver | with L4 |
 | **L4 `chat-app-channels`** | `site/src/pages/app/*`, `site/src/lib/*`, `site/tests/*` for channels | none (browser reads the view directly) | Browser names its columns explicitly; L1's view append is safe. A new client against an **un-recreated** view is a PostgREST 400, so deploy order is migration → edge → site | rail, composer stamping, `?w=&c=&m=` round-trip, forbidden-copy scan, D2 mention chips | with L3 |
 | **L5 `chat-colour`** | the same site files as L4 | none | site only | colour determinism, contrast, colour-is-not-the-only-signal | **no** — same files as L4, lands after it |
@@ -254,11 +254,21 @@ view's fallback is exactly what makes the two read alike anyway. A review arm ca
 inaccurate for leaving this unsaid; the served test now asserts the difference as well as the three
 identities.
 
-**A recipient can reply to what a recipient can read.** `in_reply_to`'s authorization read the scalar
+**A recipient can reply to a signal that names them.** `in_reply_to`'s authorization read the scalar
 columns, which carry recipient 0 only, so a later recipient could read a signal and got a 403 trying to
-answer it. Found by a review arm on this lane. `signalNamesRecipient` adds the second arm, granting
-exactly what the recipient set already grants on the read path, with a control that a member who is NOT
-in the set still cannot reply.
+answer it. Found by a review arm on this lane. `signalNamesRecipient` adds the second arm, and what it
+admits is stated per caller rather than as one sentence about "the read path", because the two read
+paths are not the same cut:
+
+- **A human caller** is admitted when the set names them in person, or when it names an agent they own.
+  Those are the same two cases `swarm_read.signals` admits through that table.
+- **An agent caller** is admitted only when the set names the principal it presented. That is the same
+  cut `read/index.ts` makes, and it is NARROWER than the view: an agent cannot read, and cannot reply
+  to, a signal addressed to its owner.
+
+It widens nothing else. An UNDIRECTED signal has no recipient set, so nobody is a recipient of one and
+`in_reply_to` on it is refused for every caller, exactly as before this lane. A member who is not in
+the set still cannot reply, and that is the control on both the human and the agent branch.
 
 **NO DELIVERY FAN-OUT, and this is the lane's biggest correction.** The L2 paragraph above and the
 lane's own commit message `5b60f98` both said delivery fans out one row per agent recipient, with the
@@ -281,8 +291,8 @@ and `oldest_pending_at` would then report a queue that grows and can never be dr
 signal rather than a missing feature.
 
 **So, exactly: recipients 1..N READ the signal and can REPLY to it. They are not woken.** The wake is
-unchanged and it reads the SCALAR column, so a signal wakes the recipient at position 0 and only when
-that recipient is an agent taking `ask` or `note`. A `to` whose position 0 is a PERSON wakes nobody at
+unchanged and it reads the SCALAR column, so it wakes the recipient at position 0, and only when that
+recipient is an agent taking `ask` or `note`. A `to` whose position 0 is a PERSON wakes nobody at
 all, even when it names agents later in the list. Naming an agent at position 1 never notifies it. Section 4 of the migration
 carries the reason; `tests/p1-local/chat-recipients-postgres.test.ts` pins both the behaviour and the
 absence of any trigger on the recipients table, and the served suite pins it through the edge.
@@ -319,7 +329,8 @@ refused by the same rule that already refuses the scalar spelling, with the same
 4. **Not measured against production.** Local Supabase only.
 5. **Group DMs: one of the two mechanical reasons they were out of v1 stopped being true, and one did
    not.** A three-party address is storable and readable. It notifies at most the agent at position 0,
-   and nobody at all when position 0 is a person, so §4's objection -- a conversation type that
+   -- it wakes the recipient at position 0, and only when that recipient is an agent taking `ask` or
+   `note` -- and nobody at all when position 0 is a person, so §4's objection -- a conversation type that
    silently fails to notify the agents in it -- still stands for every agent but one. Nobody has ruled
    on whether v1 should have group DMs, and no document in this repo should read as if someone had. §4 and §10 carry the correction, including the intermediate version
    that said "deliverable" and was wrong. The ruling is the coordinator's.
