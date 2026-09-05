@@ -2173,3 +2173,20 @@ feature exists to end. A fresh PM continues on the same branch: one derived pass
 transition-driven controls for the five items, the invariant that an empty set is only a
 broadcast the reader chose on this screen. The `channels.ts:228-234` comment that says the
 composer has not moved to `to` goes with it. `chat-app-threads` still queues behind.
+
+## Addendum 2026-09-05 16:3x UTC — To: field: rounds 5–7, still held; the last family named
+
+The rewrite PM closed the five open items plus a sixth (a set pruned by ARRIVAL was stored as if
+chosen, making a prune permanent when a member rejoined) and made the send own its storage keys.
+Rounds 5 and 6 each found a real regression of the previous fix (a switch mid-send wiped the
+draft; a landed post after a switch double-posted on return) and fixed the cause under both.
+Round 7 at d96de1d: Gemini PASS; Grok FAIL on a VERIFIED, PRE-EXISTING wedge the lane widens — a
+same-workspace `openWorkspace` (six callers incl. Refresh) mid-send bumps `requestVersion`
+without `resetComposer`, the submit's guarded `finally` never lifts the send flag, and with this
+lane the To: row freezes too. The PM stopped at the rule and named the cause: send-owned cleanup
+(flag, failure restore, address settle) sits behind a guard that asks whether the SCREEN is still
+the send's. Ruling: hold; a third PM closes that family on the same branch (cleanup keyed to the
+send's identity; a sample-mode hook so a control can reach an in-flight send). Ruling kept from
+round 5, with the corrected reason: a draft with a body keeps its own To: set — adding a recipient
+to a message being written cannot be taken back once sent; leaving one out is visible and one
+click from fixed. Evidence: seven arm pairs under `docs/evidence/2026-09-05-composer-to/arms/`.
