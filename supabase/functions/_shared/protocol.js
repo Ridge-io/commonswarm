@@ -1572,7 +1572,7 @@ function fileVersionPreconditionSatisfied(requiredVersion, liveVersion) {
 }
 function fileVersionPreconditionMessage(requiredVersion, liveVersion) {
   const current = liveVersion === 0 ? "this name has no live version yet" : `this file is at version ${liveVersion}`;
-  return `${current}; the request required version ${requiredVersion}, so nothing was uploaded`;
+  return `${current}; the request required version ${requiredVersion}, so the new version was not saved`;
 }
 function planFileVersionWindow(name, liveCount, inFlightCount) {
   if (!Number.isSafeInteger(liveCount) || liveCount < 0) {

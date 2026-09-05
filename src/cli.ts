@@ -7058,7 +7058,7 @@ async function runBrainPut(args: Arguments): Promise<void> {
       error.code === FILE_VERSION_PRECONDITION_FAILED
     ) {
       throw new Error(
-        `not saved: ${error.message}. Someone saved a new version after you read this topic. ` +
+        `${error.message}. Someone saved a new version after you read this topic. ` +
           `Re-read it, apply your change to that copy, then put it again: cswarm brain get ${topic}`,
       );
     }

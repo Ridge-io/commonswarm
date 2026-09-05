@@ -1456,12 +1456,31 @@ test("B2d two writers derived from the same version: exactly one commit lands", 
     new RegExp(`at version ${winnerVersion}\\b`),
   );
 
-  // The loser's pending row is left for the sweeper, never silently committed.
-  const stranded = await sql<{ n: string }[]>`
-    SELECT count(*)::text AS n FROM swarm.file_versions
-    WHERE file_id = ${fileId}::uuid AND state = 'pending'
+  /* The loser is never silently committed AND never left pending: a pending
+   * row holds an in-flight slot and its declared bytes for the full 3-hour
+   * window, so twenty lost races on one hot topic would reach the 20-upload
+   * in-flight cap and block the topic for everyone. */
+  const leftovers = await sql<{ state: string; n: string }[]>`
+    SELECT state, count(*)::text AS n FROM swarm.file_versions
+    WHERE file_id = ${fileId}::uuid AND state IN ('pending', 'purged')
+    GROUP BY state
   `;
-  assert.equal(stranded[0]?.n, "1");
+  const byState = new Map(leftovers.map((row) => [row.state, row.n]));
+  assert.equal(byState.get("pending"), undefined, "the loser must not stay in flight");
+  assert.equal(byState.get("purged"), "1", "the loser's slot must be released");
+
+  /* Losing repeatedly must not exhaust the in-flight cap: a fresh conditional
+   * write against the current version still succeeds afterwards. */
+  const afterLoss = await postCommand(actor.token, {
+    kind: "file_version_create",
+    file_id: randomUUID(),
+    version_id: randomUUID(),
+    name: topicFileName,
+    declared_size_bytes: 16,
+    content_type: "text/markdown",
+    if_version: winnerVersion,
+  }, f.workspaceA);
+  assert.equal(afterLoss.status, 200, JSON.stringify(afterLoss.body));
 });
 
 test("B2e the precondition is re-checked at commit, not only at create", async () => {

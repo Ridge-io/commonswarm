@@ -39,7 +39,11 @@ function runGuard(root: string): Run {
 }
 
 async function fakeRoot(
-  options: { withDist: boolean; withBuildScript?: boolean },
+  options: {
+    withDist: boolean;
+    withBuildScript?: boolean;
+    emptyDist?: boolean;
+  },
 ): Promise<string> {
   const root = await mkdtemp(resolve(tmpdir(), "cswarm-build-guard-"));
   const scripts = options.withBuildScript === false
@@ -52,7 +56,11 @@ async function fakeRoot(
   );
   if (options.withDist) {
     await mkdir(resolve(root, "dist"), { recursive: true });
-    await writeFile(resolve(root, "dist", "cli.js"), "#!/usr/bin/env node\n", "utf8");
+    await writeFile(
+      resolve(root, "dist", "cli.js"),
+      options.emptyDist === true ? "" : "#!/usr/bin/env node\n",
+      "utf8",
+    );
   }
   return root;
 }
@@ -143,4 +151,19 @@ test("the CLI gate runs the guard before any test, and this repo satisfies it", 
   );
   /* This suite is running, so the build it guards must be present. */
   assert.equal(runGuard(repoRoot).status, 0);
+});
+
+test("a zero-byte build output is treated as missing", async () => {
+  /* What an interrupted build leaves behind. The file exists, so an
+   * existence-only guard passes it and the gate hangs exactly as before. */
+  const root = await fakeRoot({ withDist: true, emptyDist: true });
+
+  try {
+    const run = runGuard(root);
+
+    assert.equal(run.status, 1);
+    assert.match(run.stderr, /missing: dist\/cli\.js/);
+  } finally {
+    await rm(root, { recursive: true, force: true });
+  }
 });

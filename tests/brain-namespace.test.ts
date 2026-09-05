@@ -171,7 +171,12 @@ test("the version precondition compares against the live version and says both n
   const stale = fileVersionPreconditionMessage(2, 3);
   assert.match(stale, /version 3/);
   assert.match(stale, /required version 2/);
-  assert.match(stale, /nothing was uploaded/);
+  /* Phase-neutral on purpose. This refusal is also raised at COMMIT, by which
+   * point the bytes HAVE been uploaded, so a sentence claiming otherwise would
+   * be false exactly where the check does its real work. A test that pinned
+   * the old phrase would have locked that false claim in. */
+  assert.match(stale, /the new version was not saved/);
+  assert.doesNotMatch(stale, /nothing was uploaded/);
   /* A first write must not be told it is "at version 0", which reads as a
    * version that exists. */
   assert.match(fileVersionPreconditionMessage(1, 0), /no live version yet/);

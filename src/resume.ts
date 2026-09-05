@@ -206,7 +206,10 @@ export function systemProcessTable(
         });
         child.stderr.setEncoding("utf8");
         child.stderr.on("data", (chunk: string) => {
-          if (stderr.length < PROCESS_TABLE_STDERR_MAX_CHARS) stderr += chunk;
+          /* A hard cap: a chunk is truncated to what is left, so a child that
+           * writes megabytes to stderr cannot be buffered in full. */
+          const room = PROCESS_TABLE_STDERR_MAX_CHARS - stderr.length;
+          if (room > 0) stderr += chunk.slice(0, room);
         });
         /* Without these a stream error is an unhandled 'error' event, which
          * crashes the process instead of failing this read. */

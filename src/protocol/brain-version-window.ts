@@ -56,7 +56,14 @@ export function fileVersionPreconditionSatisfied(
   return requiredVersion === liveVersion;
 }
 
-/** One sentence, built once, so the server and the CLI cannot drift apart. */
+/**
+ * One sentence, built once, so the server and the CLI cannot drift apart.
+ *
+ * The outcome clause is phase-neutral on purpose. This refusal is raised at
+ * create AND at commit, and by commit the client has already PUT the bytes, so
+ * a sentence saying nothing was uploaded would be false exactly where the
+ * check does its real work.
+ */
 export function fileVersionPreconditionMessage(
   requiredVersion: number,
   liveVersion: number,
@@ -64,7 +71,7 @@ export function fileVersionPreconditionMessage(
   const current = liveVersion === 0
     ? "this name has no live version yet"
     : `this file is at version ${liveVersion}`;
-  return `${current}; the request required version ${requiredVersion}, so nothing was uploaded`;
+  return `${current}; the request required version ${requiredVersion}, so the new version was not saved`;
 }
 
 /**

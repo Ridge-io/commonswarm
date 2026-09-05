@@ -701,6 +701,24 @@ export async function fileVersionCommit(
   if (version.if_version !== null) {
     const liveVersion = Number(version.current_version);
     if (!fileVersionPreconditionSatisfied(version.if_version, liveVersion)) {
+      /* Retire the losing slot in the same transaction. A normal return from
+       * db.begin commits, so this UPDATE lands with the refusal. Left pending,
+       * the row would hold an in-flight slot and its DECLARED bytes against
+       * the quota for the full 3-hour window: twenty lost races on one hot
+       * topic would reach the 20-upload in-flight cap and block the topic for
+       * everyone, which is a worse failure than the clobber this check
+       * prevents. 'purged' is the existing state for a version that will never
+       * exist; it is counted by neither the in-flight cap nor the byte cap,
+       * and download already refuses it. The uploaded object is left exactly
+       * as an expired pending upload's object is. */
+      await tx`
+        UPDATE swarm.file_versions
+        SET state = 'purged'
+        WHERE version_id = ${cmd.version_id}::uuid
+          AND file_id = ${cmd.file_id}::uuid
+          AND workspace_id = ${workspaceId}::uuid
+          AND state = 'pending'
+      `;
       return refuse(
         409,
         FILE_VERSION_PRECONDITION_FAILED,

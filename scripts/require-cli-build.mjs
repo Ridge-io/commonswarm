@@ -11,7 +11,7 @@
  *
  * Usage: node scripts/require-cli-build.mjs [repo-root]
  */
-import { existsSync, readFileSync } from "node:fs";
+import { readFileSync, statSync } from "node:fs";
 import { dirname, resolve } from "node:path";
 import { fileURLToPath } from "node:url";
 
@@ -40,9 +40,19 @@ function remedy() {
     : `Next: build the CLI. This checkout has no "${BUILD_SCRIPT}" script, so ${root}/package.json is not the one this gate expects.`;
 }
 
-const missing = REQUIRED_BUILD_OUTPUTS.filter(
-  (output) => !existsSync(resolve(root, output)),
-);
+/* Present AND non-empty. A zero-byte dist/cli.js is what an interrupted build
+ * leaves, and it hangs the gate the same way a missing one does. This does not
+ * make the gate un-hangable: a file that exists and crashes on start still
+ * passes here, so the claim is only about a missing or empty build. */
+function absent(output) {
+  try {
+    return statSync(resolve(root, output)).size === 0;
+  } catch {
+    return true;
+  }
+}
+
+const missing = REQUIRED_BUILD_OUTPUTS.filter(absent);
 
 if (missing.length > 0) {
   const count = missing.length === 1 ? "1 build output is" : `${missing.length} build outputs are`;
