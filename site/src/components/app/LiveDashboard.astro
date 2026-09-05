@@ -19,6 +19,10 @@ import AgentConnect from "../connect/AgentConnect.astro";
 import ProviderButtons from "../auth/ProviderButtons.astro";
 import SampleNotice from "./SampleNotice.astro";
 import { SIGNAL_BODY_MAX } from "../../../../supabase/functions/_shared/signal-text";
+/* The name of the unfiltered view, in the markup as well as in the script. It was typed in
+   three places and generated in the script, so the static "# all-signals" even carried a
+   space the rendered one does not. Both review arms called it. */
+import { ALL_SIGNALS_SLUG, channelLabel } from "../../lib/channels";
 import "../../styles/tokens.css";
 ---
 
@@ -313,19 +317,40 @@ import "../../styles/tokens.css";
             </p>
           </section>
 
-          <nav class="dashboard__rail-section dashboard__rail-section--places" aria-labelledby="dashboard-streams-label">
+          {/* ~~STREAMS (broadcast)~~ retired 2026-09-05. "stream" is the event log on the
+              wire and in SWARM-CLOUD.md 2.1, and this was the only place the app showed that
+              word to a reader. A channel is the ADDRESS of a message, never a scope on who
+              may read it: every member reads every channel, and all-signals is the whole
+              feed rather than a channel among them, which is why the edge reserves its
+              name. */}
+          <nav class="dashboard__rail-section dashboard__rail-section--places" aria-labelledby="dashboard-channels-label">
             <div class="dashboard__rail-label-row">
-              <h2 id="dashboard-streams-label">STREAMS <span>(broadcast)</span></h2>
+              <h2 id="dashboard-channels-label">CHANNELS</h2>
+              <button
+                class="dashboard__icon-button dashboard__rail-section-add"
+                type="button"
+                data-channel-new
+                aria-label="New channel"
+                title="New channel"
+              >
+                <svg viewBox="0 0 24 24" width="14" height="14" aria-hidden="true">
+                  <path d="M12 5v14M5 12h14"></path>
+                </svg>
+              </button>
             </div>
             <button
               class="dashboard__sidebar-place"
               type="button"
               data-workspace-view="signals"
+              data-channel-place=""
               aria-current="page"
             >
               <span class="dashboard__sidebar-place-mark" aria-hidden="true">#</span>
-              <span>all-signals</span>
+              <span>{ALL_SIGNALS_SLUG}</span>
             </button>
+            {/* Live channels, rendered from swarm_read.channels. Archived ones are read but
+                not listed: their messages and their permalinks still resolve. */}
+            <div data-channel-list></div>
           </nav>
 
           <nav class="dashboard__rail-section dashboard__rail-section--places" aria-labelledby="dashboard-files-label">
@@ -417,7 +442,7 @@ import "../../styles/tokens.css";
         <section class="dashboard__channel" aria-labelledby="dashboard-channel-title">
           <header class="dashboard__channel-head">
             <div class="dashboard__channel-titleblock">
-              <h1 id="dashboard-channel-title" data-channel-name tabindex="-1"># all-signals</h1>
+              <h1 id="dashboard-channel-title" data-channel-name tabindex="-1">{channelLabel(ALL_SIGNALS_SLUG)}</h1>
               <p class="dashboard__channel-description" data-channel-description>
                 Intent posted by every agent in this workspace. Immutable, and never a claim.
               </p>
@@ -600,7 +625,7 @@ import "../../styles/tokens.css";
               <span class="dashboard__feed-zero" aria-hidden="true">0</span>
               <div>
                 <h2 data-feed-empty-title>Waiting for your agent’s first update.</h2>
-                <p>
+                <p data-feed-empty-detail>
                   As soon as an agent starts something, asks a question, or leaves a note, it
                   lands here. Nothing for you to do meanwhile.
                 </p>
@@ -625,6 +650,21 @@ import "../../styles/tokens.css";
 
             <section class="dashboard__feed-view" data-channel-view="feed" hidden>
               <div class="dashboard__feed-toolbar">
+                {/* The phone's channel control. Above 52rem the rail lists the channels and
+                    this is `display: none`, the same split the view switcher uses. It rides
+                    in the toolbar band, which floats over the transcript on a phone, so it
+                    costs the reading area no height: the 2026-09-04 ruling leaves the 73px
+                    app bar as the only standing header. */}
+                <button
+                  class="dashboard__channel-switch"
+                  type="button"
+                  data-channel-switch
+                  aria-haspopup="dialog"
+                  aria-expanded="false"
+                  aria-controls="dashboard-channel-dialog"
+                >
+                  <span data-channel-switch-label>{channelLabel(ALL_SIGNALS_SLUG)}</span>
+                </button>
                 <div class="dashboard__feed-filters" role="group" aria-label="Filter signals">
                   <button type="button" data-feed-filter="all" aria-pressed="true">All</button>
                   <button type="button" data-feed-filter="broadcast" aria-pressed="false">Broadcast</button>
@@ -840,6 +880,83 @@ import "../../styles/tokens.css";
     <div class="dashboard__workspace-details-dialog-body" data-workspace-details-content></div>
   </dialog>
 
+  {/* Channels: switch, create, rename, archive. A native <dialog> for the same reasons the
+      roster is one — Escape, modal focus containment, focus restore — and it lives outside
+      every panel so a view switch cannot display:none it out from under an open session.
+      On a phone this is the ONLY channel surface: the rail's list is hidden there, so the
+      toolbar chip opens this. Refusals show the server's own sentence. */}
+  <dialog
+    class="dashboard__channel-dialog"
+    id="dashboard-channel-dialog"
+    data-channel-dialog
+    aria-labelledby="dashboard-channel-dialog-title"
+  >
+    <div class="dashboard__channel-dialog-head">
+      <h2 id="dashboard-channel-dialog-title">Channels</h2>
+      <button
+        class="dashboard__icon-button"
+        type="button"
+        data-channel-dialog-close
+        aria-label="Close channels"
+        title="Close channels"
+      >
+        <svg viewBox="0 0 24 24" width="18" height="18" aria-hidden="true">
+          <path d="M6 6l12 12M18 6L6 18"></path>
+        </svg>
+      </button>
+    </div>
+    <p class="dashboard__channel-dialog-reach" data-channel-reach></p>
+    <p class="dashboard__form-error" role="alert" data-channel-dialog-error hidden></p>
+    <p class="dashboard__channel-dialog-status" role="status" aria-live="polite" data-channel-dialog-status></p>
+    <div class="dashboard__channel-dialog-list" data-channel-dialog-list></div>
+    <form class="dashboard__channel-form" data-channel-create-form>
+      <h3>New channel</h3>
+      <label for="dashboard-channel-new-slug">Name</label>
+      <input
+        id="dashboard-channel-new-slug"
+        type="text"
+        data-channel-new-slug
+        autocomplete="off"
+        spellcheck="false"
+        required
+      />
+      <p class="dashboard__channel-hint" data-channel-name-hint></p>
+      <label for="dashboard-channel-new-purpose">Purpose</label>
+      <input
+        id="dashboard-channel-new-purpose"
+        type="text"
+        data-channel-new-purpose
+        autocomplete="off"
+      />
+      <p class="dashboard__channel-hint" data-channel-purpose-hint></p>
+      <button class="dashboard__button dashboard__button--primary" type="submit" data-channel-create-submit>
+        Create channel
+      </button>
+    </form>
+    <form class="dashboard__channel-form" data-channel-manage-form hidden>
+      <h3 data-channel-manage-title>Manage</h3>
+      <label for="dashboard-channel-rename-slug">Name</label>
+      <input
+        id="dashboard-channel-rename-slug"
+        type="text"
+        data-channel-rename-slug
+        autocomplete="off"
+        spellcheck="false"
+        required
+      />
+      <p class="dashboard__channel-hint" data-channel-rename-hint></p>
+      <div class="dashboard__channel-form-actions">
+        <button class="dashboard__button dashboard__button--primary" type="submit" data-channel-rename-submit>
+          Rename
+        </button>
+        <button class="dashboard__button dashboard__button--secondary" type="button" data-channel-archive>
+          Archive
+        </button>
+      </div>
+      <p class="dashboard__channel-hint" data-channel-archive-hint></p>
+    </form>
+  </dialog>
+
   {/* The agent management dialog. A native <dialog>: Escape, modal focus containment,
       and focus restore to the stack button are the platform's, not ours. It lives outside
       every panel so a panel switch can never display:none it out from under an open
@@ -1003,8 +1120,16 @@ import "../../styles/tokens.css";
     setAgentModel,
     subscribeAgentActivity,
     uuid,
+    browserSignalFromRow,
+    BROWSER_SIGNAL_COLUMNS,
     workspaceFiles,
+    workspaceChannels,
+    createChannel,
+    renameChannel,
+    archiveChannel,
+    type BrowserSignalPlacement,
     type Signal,
+    type WorkspaceChannel,
     type AgentAccessStatus,
     type AgentActivitySubscription,
     type PendingMemberInvite,
@@ -1039,6 +1164,23 @@ import "../../styles/tokens.css";
     signalIsDirectToViewer,
     type SignalFilter,
   } from "../../lib/signal-feed";
+  import {
+    ALL_SIGNALS_SLUG,
+    CHANNEL_ARCHIVED_TEXT,
+    CHANNEL_EMPTY_TEXT,
+    CHANNEL_REACH_TEXT,
+    channelById,
+    channelLabel,
+    channelNameHint,
+    channelPurposeHint,
+    channelPurposeInputMax,
+    channelSlugInputMax,
+    channelSubmitProblem,
+    channelSubmitSlug,
+    liveChannels,
+    unknownChannelHeadText,
+    unknownChannelText,
+  } from "../../lib/channels";
   import {
     pendingAccessRows,
     shouldPollPendingAccess,
@@ -1158,6 +1300,101 @@ import "../../styles/tokens.css";
     let fileLoadError = "";
     let brainView: BrainView | null = null;
     let signalFilter: SignalFilter = "all";
+    /* Channels the viewer can see, archived ones included: an archived channel still has to
+       resolve for a permalink and still names the messages already in it. The rail lists the
+       live ones only. */
+    let channels: WorkspaceChannel[] = [];
+    /** The channel the feed is narrowed to. `null` is all-signals, the whole feed. */
+    let activeChannelId: string | null = null;
+    /** A ?c= that resolves to no channel here. Held so the empty state can say so. */
+    let unknownChannelId: string | null = null;
+    /**
+     * Which of the three workspace views is on screen. The channel head and the rail's current
+     * mark belong to the signals view: a rename done from Files ran renderChannelHead and put
+     * the channel's name over a Files body, with both Files and that channel marked current.
+     * Found by a review arm.
+     */
+    let activeWorkspaceView: "signals" | "files" | "brain" = "signals";
+    /**
+     * The channel read soft-fails to an empty list so a channel outage cannot take the feed
+     * down with it. That makes an empty list ambiguous — no channels, or none READ — and a
+     * `?c=` cannot be told apart from a bad id without this. The copy says which it is.
+     */
+    let channelListFailed = false;
+    /** The whole made-up feed in sample mode, which has no server to page back to. */
+    let sampleSignals: Signal[] = [];
+    /**
+     * Ids this browser posted since the last full page request went out. A channel click
+     * starts a fresh page and does not cancel a send: the page was requested before the post
+     * committed, so it cannot carry it, and replacing the list wholesale dropped a row that
+     * the new screen should show. Measured as a message that appeared, vanished, and came
+     * back on the next poll. Found by a review arm.
+     *
+     * A row leaves the map as soon as a fetched page carries it: the map exists to answer
+     * "did the server not know about this yet", and once the server hands it back the answer
+     * is no. Without that it grew for as long as the reader stayed in one channel, which a
+     * second arm found.
+     *
+     * It holds the ROW and not only the id, because a channel move empties `signals`: coming
+     * back before the replica caught up, an id-only record had nothing left to put back. A
+     * third arm found that.
+     */
+    let postedSinceReset = new Map<
+      string,
+      { row: Signal; workspaceId: string; at: number }
+    >();
+
+    /**
+     * How long a posted row may stand in for a page that has not caught up. The record exists
+     * to cover ONE thing — the read replica not yet carrying a row this browser just wrote —
+     * and that is a short window; the poll runs every two seconds. It is a chosen bound and
+     * not a measured one: no replication lag was measured for this lane.
+     *
+     * Without it the record had no end. A row that fell off the first page of its channel was
+     * re-prepended as the NEWEST message every time the reader came back, and the map grew for
+     * the life of the tab. Found by a review arm.
+     */
+    const POSTED_ROW_GRACE_MS = 30_000;
+
+    /** Drop the rows a fetched page proves the server knows about. */
+    const forgetFetchedPostedIds = (rows: readonly Signal[]): void => {
+      if (postedSinceReset.size === 0) return;
+      for (const row of rows) postedSinceReset.delete(row.id);
+    };
+
+    /**
+     * Drop what the record may no longer speak for: rows older than the grace, and rows from
+     * another workspace. `Signal` carries no workspace, and holding the row rather than the id
+     * is what made a cross-workspace leak visible — a message posted in workspace A was
+     * painted into workspace B's feed, which no query of B's had returned. Found by a review
+     * arm, on the fix from the round before.
+     */
+    const prunePostedRows = (): void => {
+      if (postedSinceReset.size === 0) return;
+      const cutoff = Date.now() - POSTED_ROW_GRACE_MS;
+      for (const [id, entry] of postedSinceReset) {
+        if (entry.at < cutoff || entry.workspaceId !== activeWorkspaceId) {
+          postedSinceReset.delete(id);
+        }
+      }
+    };
+
+    /**
+     * Would the list on screen show this row? The SERVER stamped its channel, so this asks the
+     * same question the query on screen asks. The composer's landing rule and the reset page's
+     * merge are the same question and must not be two answers.
+     */
+    const rowShowsOnScreen = (row: Signal): boolean =>
+      unknownChannelId === null &&
+      (activeChannelId === null || row.channelId === activeChannelId);
+    /**
+     * One generation per channel READ, because a channel command does not bump requestVersion
+     * (it is not a workspace change). Archive and Create are different buttons and each only
+     * disables its own, so two refreshes can be in flight at once; without this the older
+     * answer wins whenever it lands second, dropping a channel that was just created or
+     * flagging a healthy list as failed. Raised by a review arm.
+     */
+    let channelReadGeneration = 0;
     let activeWorkspaceId = "";
     let requestVersion = 0;
     let sampleMode = false;
@@ -1221,6 +1458,16 @@ import "../../styles/tokens.css";
       audienceKey: string;
       attachmentKey: string;
       signalKind: BrowserSignalKind;
+      /**
+       * WHERE it was addressed, as an ID and never as a slug. A retry replays the address the
+       * message was sent to rather than the channel the reader is looking at when they press
+       * it. It is the id because `post_signal` takes a SLUG and the edge resolves that slug
+       * against the live row: a rename between a failed send and its Retry made the replay
+       * name a channel that no longer exists, or — if another member had taken the freed name
+       * — someone else's. Found by a review arm. The slug is resolved from this id at the
+       * moment of sending.
+       */
+      placementChannelId: string | null;
     } | null = null;
     let composerSending = false;
     let stagedAttachments: StagedComposerAttachment[] = [];
@@ -1326,7 +1573,14 @@ import "../../styles/tokens.css";
         section.hidden = section.dataset.channelView !== name;
       }
       const composer = one<HTMLFormElement>("[data-composer]");
-      if (composer) composer.hidden = name !== "feed" && name !== "feed-empty";
+      /* An unresolved ?c= is a feed view with nothing in it, and the composer was reachable
+         there. A post from it went to the UNFILTERED feed while the head said Channel not
+         found, and renderFeed then threw the pending row away, so the writer saw nothing.
+         Found by a review arm. There is no channel to post to, so there is no composer. */
+      if (composer) {
+        composer.hidden = unknownChannelId !== null ||
+          (name !== "feed" && name !== "feed-empty");
+      }
       if (composer?.hidden) {
         closeMentionPicker();
       }
@@ -1804,19 +2058,30 @@ import "../../styles/tokens.css";
       syncPendingPoll();
     };
 
+    /*
+     * THE CHANNEL NARROWING IS THE QUERY'S, not the rendered list's. The shipped
+     * All / Broadcast / Direct-to-you filter runs in the browser over the loaded page, so
+     * it says "your direct signals" and means "among the last 25 loaded". A channel must not
+     * copy that: a reader who opens #mobile and sees four messages has to be seeing the four
+     * newest messages in #mobile, not the ones that happened to be in the page already.
+     * Narrowing here also cannot widen anything — the view's WHERE is the authorization and
+     * a client-issued equality is applied on top of it.
+     */
     const signalPage = async (
       workspaceId: string,
       cursor: SignalCursor | null,
       cutoff: string,
+      channelId: string | null,
     ): Promise<{ rows: Signal[]; hasMore: boolean }> => {
       const api = client();
       if (!api) throw new NoDeployment();
       let query = api
         .schema("swarm_read")
         .from("signals")
-        .select("id,from,from_kind,to,to_agent,kind,body,about,until,created_at,attachments")
+        .select(BROWSER_SIGNAL_COLUMNS)
         .eq("workspace_id", workspaceId)
         .or(`until.is.null,until.gt.${cutoff}`);
+      if (channelId !== null) query = query.eq("channel_id", channelId);
       if (cursor) {
         query = query.or(
           `created_at.lt.${cursor.createdAt},and(created_at.eq.${cursor.createdAt},id.lt.${cursor.id})`,
@@ -1830,21 +2095,9 @@ import "../../styles/tokens.css";
       const page = data ?? [];
       return {
         hasMore: page.length === SIGNAL_FETCH_SIZE,
-        rows: page.slice(0, SIGNAL_PAGE_SIZE).map((row) => ({
-          id: String(row.id),
-          from: String(row.from ?? ""),
-          fromKind: String(row.from_kind ?? ""),
-          to: row.to === null || row.to === undefined ? null : String(row.to),
-          toAgent: row.to_agent === null || row.to_agent === undefined
-            ? null
-            : String(row.to_agent),
-          kind: String(row.kind ?? ""),
-          body: String(row.body ?? ""),
-          attachments: parseBrowserSignalAttachments(row.attachments),
-          about: row.about === null || row.about === undefined ? null : String(row.about),
-          until: row.until === null || row.until === undefined ? null : String(row.until),
-          createdAt: String(row.created_at ?? ""),
-        })),
+        rows: page.slice(0, SIGNAL_PAGE_SIZE).map((row) =>
+          browserSignalFromRow(row as unknown as Record<string, unknown>)
+        ),
       };
     };
 
@@ -2310,13 +2563,20 @@ import "../../styles/tokens.css";
     };
     const COMPOSER_COUNTER_THRESHOLD = 500;
     const COMPOSER_DRAFT_STORAGE_MAX = SIGNAL_BODY_MAX * 2;
-    const COMPOSER_STREAM = "all-signals";
+    /* A STORAGE KEY SEGMENT, and the one place "all-signals" is deliberately typed rather
+       than built from ALL_SIGNALS_SLUG. It names the drafts already saved in readers'
+       browsers, so it must not move when the view's name does: following the constant would
+       orphan every saved draft the day that constant changed, which is the opposite of what
+       generating it is for. The old name carried "stream", the wire's word for the event
+       log, which this lane retired from the app; the VALUE is frozen and the rename does not
+       touch it. */
+    const COMPOSER_DRAFT_SCOPE = "all-signals";
 
     const composerDraftKey = (): string | null => {
       if (!activeWorkspaceId) return null;
       const owner = session?.user.id ?? (sampleMode ? "sample-owner" : "");
       if (!owner) return null;
-      return `commonswarm:composer-draft:${owner}:${activeWorkspaceId}:${COMPOSER_STREAM}`;
+      return `commonswarm:composer-draft:${owner}:${activeWorkspaceId}:${COMPOSER_DRAFT_SCOPE}`;
     };
 
     const readComposerDraft = (key: string): ComposerDraft | null => {
@@ -3942,10 +4202,45 @@ import "../../styles/tokens.css";
       body.append(list);
     };
 
+    /**
+     * A `?c=` that names no channel this reader can see. The loaded rows are the WHOLE
+     * workspace's, because a channel that cannot be resolved cannot narrow the query, so
+     * rendering them under that channel's name is the exact failure this state exists to
+     * prevent: the reader would believe they were looking at the channel.
+     *
+     * It lives outside renderFeed so renderFeed's own reader-scroll order — measure, then
+     * replaceChildren — is not interrupted by a branch that empties the list first.
+     */
+    const renderUnknownChannel = (): void => {
+      const count = one<HTMLElement>("[data-update-count]");
+      const more = one<HTMLElement>("[data-feed-more]");
+      if (count) count.hidden = true;
+      if (more) more.hidden = true;
+      const list = one<HTMLOListElement>("[data-feed-list]");
+      if (list) {
+        list.replaceChildren();
+        const row = document.createElement("li");
+        row.className = "dashboard__filter-empty";
+        row.textContent = unknownChannelText(channelListFailed);
+        const open = document.createElement("button");
+        open.type = "button";
+        open.className = "dashboard__text-button";
+        open.textContent = `Open ${channelLabel(ALL_SIGNALS_SLUG)}`;
+        open.addEventListener("click", () => selectChannel(null));
+        row.append(" ", open);
+        list.append(row);
+      }
+      showChannelView("feed");
+    };
+
     const renderFeed = (change: "history" | "latest" = "history"): void => {
       window.clearTimeout(signalExpiryTimer);
       signalExpiryTimer = undefined;
       if (addAgentViewOpen()) return;
+      if (unknownChannelId !== null) {
+        renderUnknownChannel();
+        return;
+      }
       const now = Date.now();
       signals = signals.filter(
         (signal) => signal.until === null || new Date(signal.until).getTime() > now,
@@ -3985,10 +4280,22 @@ import "../../styles/tokens.css";
         humanSeenReporter.resetVisible();
         humanSeenObserver?.disconnect();
         const emptyTitle = one<HTMLElement>("[data-feed-empty-title]");
+        const emptyDetail = one<HTMLElement>("[data-feed-empty-detail]");
+        const channel = activeChannel();
         if (emptyTitle) {
-          emptyTitle.textContent = agents.length === 1
+          emptyTitle.textContent = channel !== null
+            ? `Nothing in ${channelLabel(channel.slug)} yet.`
+            : agents.length === 1
             ? `Waiting for ${agents[0]!.name}’s first update.`
             : "Waiting for your agents’ first updates.";
+        }
+        if (emptyDetail) {
+          /* A channel is empty on the day it is made and can never be filled from the
+             past: a signal row is immutable, so nothing written before the channel
+             existed moves into it. Say that here, where the reader meets it. */
+          emptyDetail.textContent = channel !== null
+            ? CHANNEL_EMPTY_TEXT
+            : "As soon as an agent starts something, asks a question, or leaves a note, it lands here. Nothing for you to do meanwhile.";
         }
         previousSignalIds.clear();
         feedWasEmpty = true;
@@ -4019,7 +4326,7 @@ import "../../styles/tokens.css";
        * `created_at.lt`; flipping the query to ascending would fetch the OLDEST 25 on first paint
        * and break every "load older" page after it. So the array stays newest-first for
        * pagination and is reversed once, for display. */
-      for (const signal of [...visibleSignals].reverse()) {
+      const buildMessageRow = (signal: Signal): HTMLLIElement => {
         const row = document.createElement("li");
         row.className = "dashboard__message";
         row.dataset.signalId = signal.id;
@@ -4125,7 +4432,25 @@ import "../../styles/tokens.css";
         time.dateTime = signal.createdAt;
         time.title = formatted.absolute;
         time.textContent = formatted.relative;
-        meta.append(author, identityBadge, target, operator, badge, time);
+        /* The channel the message is IN, named on the row. all-signals shows every
+           message, filed and unfiled together, so without this a reader cannot tell one
+           from the other. Inside a channel every row is in that channel and the name would
+           be repeated on every line, so it is not shown there. An unfiled message shows
+           nothing rather than a word for "no channel": it is the ordinary case. */
+        const rowChannel = activeChannelId === null && signal.channelId !== null
+          ? channelById(channels, signal.channelId)
+          : null;
+        if (rowChannel !== null) {
+          const place = document.createElement("button");
+          place.type = "button";
+          place.className = "dashboard__message-channel";
+          place.textContent = channelLabel(rowChannel.slug);
+          place.title = `Open ${channelLabel(rowChannel.slug)}`;
+          place.addEventListener("click", () => selectChannel(rowChannel.channelId));
+          meta.append(author, identityBadge, target, operator, badge, place, time);
+        } else {
+          meta.append(author, identityBadge, target, operator, badge, time);
+        }
         body.append(meta);
         const mentions = visualMentions.get(signal.id) ?? [];
         if (mentions.length > 0) {
@@ -4174,7 +4499,6 @@ import "../../styles/tokens.css";
         }
         appendDeliveryReceipt(body, signal);
         row.append(avatar, body);
-        list.append(row);
         window.requestAnimationFrame(() => {
           if (!markdown.isConnected) return;
           const expandedAtRender = expandedSignalIds.has(signal.id);
@@ -4195,6 +4519,17 @@ import "../../styles/tokens.css";
           });
           markdown.after(toggle);
         });
+        return row;
+      };
+
+      /* THREADS ARE NOT THIS LANE. A reply carries `thread_root_id`, and until the thread
+         surface ships it renders inline in the flat feed, interleaved by time, which is the
+         behaviour the design already states for a client that does not know about threads:
+         the feed is noisier and nothing is hidden. Cut to `lane/chat-app-threads` on
+         2026-09-05 by the coordinator, with the collapsed replies, the reply control, the
+         composer's reply bar and `broadcast_to_channel`. */
+      for (const signal of [...visibleSignals].reverse()) {
+        list.append(buildMessageRow(signal));
       }
       previousSignalIds = new Set(signals.map((signal) => signal.id));
       feedWasEmpty = false;
@@ -4309,11 +4644,56 @@ import "../../styles/tokens.css";
         signalCursor = null;
         signalCutoff = new Date().toISOString();
       }
-      const page = await signalPage(workspaceId, cursor, signalCutoff);
-      if (version !== requestVersion || workspaceId !== activeWorkspaceId) return;
+      /* The channel is captured with the request and checked again when it lands, the same
+         way the workspace is. Without it a page fetched for #mobile could be applied after
+         the reader moved to all-signals, and the feed would silently be a channel's rows
+         under the whole feed's name. */
+      const channelId = activeChannelId;
+      const page = await signalPage(workspaceId, cursor, signalCutoff, channelId);
+      if (
+        version !== requestVersion || workspaceId !== activeWorkspaceId ||
+        channelId !== activeChannelId
+      ) return;
       if (reset) {
-        signals = page.rows;
+        const fetched = new Set(page.rows.map((row) => row.id));
+        /* ~~cleared as the request went out~~: that dropped a row posted BEFORE the request
+           and not yet visible to the read replica, which is the case this set exists for. The
+           set is not cleared here at all; what keeps a row from another channel out is the
+           same question the screen asks, and `signals` was emptied by the move in any case.
+           Found by a review arm. */
+        prunePostedRows();
+        /* AND WITHIN THE PAGE'S WINDOW. The grace bounds how long a row may stand in; it does
+           not say WHERE the row belongs, and the two cases share every other bit. Replica lag
+           is a row this browser wrote that the page does not carry YET. A page roll is a row
+           the replica does have, below the newest 25. The boundary between them is the page's
+           OLDEST row, not its newest: ~~`row.createdAt >= page.rows[0].createdAt`~~ dropped a
+           row that still belongs whenever one message newer than it had already replicated,
+           which in all-signals is any other member's next post. A review arm found that, on
+           the fix from the round before, and an observer control had already pinned the wrong
+           comparison. When the page is the whole history nothing has rolled off, so every
+           stand-in belongs. A rolled-off row is not lost: it is in history, where Load older
+           fetches it. */
+        /* The floor is the WHOLE key the query orders by, `created_at DESC, id DESC`, and not
+           the timestamp alone: a row sharing the floor row's timestamp with a smaller id sorts
+           BELOW it and has rolled off, and `createdAt >= floor` kept it, so the page held
+           twenty-six rows against a bound of twenty-five. A review arm found it. */
+        const pageFloor = page.hasMore ? page.rows.at(-1) ?? null : null;
+        const onThisPage = (row: Signal): boolean =>
+          pageFloor === null ||
+          row.createdAt > pageFloor.createdAt ||
+          (row.createdAt === pageFloor.createdAt && row.id >= pageFloor.id);
+        const arrivedWhileFetching = [...postedSinceReset.values()]
+          .map((entry) => entry.row)
+          .filter((row) =>
+            !fetched.has(row.id) && rowShowsOnScreen(row) && onThisPage(row));
+        forgetFetchedPostedIds(page.rows);
+        /* Merged by time, not prepended. A stand-in is not always the newest row: it can be
+           the second newest, and putting it on top painted it above a message that is newer
+           than it. The comparator is the query's own order, `created_at DESC, id DESC`. */
+        signals = [...arrivedWhileFetching, ...page.rows].sort((a, b) =>
+          b.createdAt.localeCompare(a.createdAt) || b.id.localeCompare(a.id));
       } else {
+        forgetFetchedPostedIds(page.rows);
         const known = new Set(signals.map((signal) => signal.id));
         const additions = page.rows.filter((signal) => !known.has(signal.id));
         signals = [...signals, ...additions];
@@ -4337,8 +4717,12 @@ import "../../styles/tokens.css";
       ) return;
       liveFeedInFlight = true;
       try {
-        const page = await signalPage(workspaceId, null, new Date().toISOString());
-        if (version !== requestVersion || workspaceId !== activeWorkspaceId) return;
+        const channelId = activeChannelId;
+        const page = await signalPage(workspaceId, null, new Date().toISOString(), channelId);
+        if (
+          version !== requestVersion || workspaceId !== activeWorkspaceId ||
+          channelId !== activeChannelId
+        ) return;
         /* A signal from a principal the roster does not know is how a join first shows
            up here: queue it for one bounded catch-up. Settled principals (confirmed
            revoked/historical by a previous successful fetch) never re-queue, so their
@@ -4356,6 +4740,7 @@ import "../../styles/tokens.css";
         if (unknownAgentCandidates.size > 0) {
           void refreshRosterForUnknownAgents(workspaceId, version);
         }
+        forgetFetchedPostedIds(page.rows);
         const known = new Set(page.rows.map((signal) => signal.id));
         const next = [...page.rows, ...signals.filter((signal) => !known.has(signal.id))];
         const changed =
@@ -4492,6 +4877,13 @@ import "../../styles/tokens.css";
       closeWorkspaceMenu();
       closeRosterDialog();
       closeWorkspaceDetailsDialog();
+      /* The channel dialog is the third modal this app opens with showModal, and it lives
+         outside every panel for the same reason the other two do: a panel switch must not
+         display:none it out from under an open session. That is exactly why it has to be
+         closed HERE. Auth change is a privacy boundary, and a modal left open over the
+         signed-out surface would keep the previous workspace's channel names and purposes on
+         screen. Found by a review arm. */
+      closeChannelDialog();
       one<SecretHoldingAgentConnect>("agent-connect")?.clearPrompt(false);
       connectFocusObserver?.disconnect();
       connectFocusObserver = null;
@@ -4508,6 +4900,19 @@ import "../../styles/tokens.css";
       renderedPendingAccessKey = "";
       people = new Map();
       signals = [];
+      sampleSignals = [];
+      /* Channel state belongs to the workspace being left, and the rail is re-rendered so the
+         slugs are out of the DOM as well as out of memory. */
+      channels = [];
+      channelListFailed = false;
+      activeChannelId = null;
+      unknownChannelId = null;
+      postedSinceReset.clear();
+      /* The intent carries the previous session's body and its command ids. */
+      composerIntent = null;
+      disarmChannelArchive();
+      renderChannelRail();
+      renderChannelHead();
       deliveryReceiptCache.clear();
       deliveryReceiptRefreshOwner = "";
       humanSeenReporter.resetVisible();
@@ -4731,18 +5136,22 @@ import "../../styles/tokens.css";
     };
 
     const renderChannel = (workspace: Workspace, pending = false): void => {
-      const name = one<HTMLElement>("[data-channel-name]");
-      const description = one<HTMLElement>("[data-channel-description]");
       const id = one<HTMLElement>("[data-channel-id]");
-      if (name) name.textContent = "# all-signals";
-      if (description) {
-        description.textContent =
-          "Intent posted by every agent in this workspace. Immutable, and never a claim.";
-      }
+      /* This IS the signals view: the loop below marks it current. */
+      activeWorkspaceView = "signals";
+      /* ORDER IS LOAD-BEARING. The all-signals button is both a view control and a place
+         control, so the signals-view loop below marks it current; running it AFTER the rail
+         means syncChannelCurrent has the last word, the way it already does in
+         activateWorkspaceView. The other order marked all-signals current on every workspace
+         open, including opens that resolved to a channel and opens whose ?c= resolved to
+         nothing — two current places, or one that says you are reading the whole feed while
+         the feed is not being shown. Found by a review arm. */
       for (const button of all<HTMLButtonElement>("[data-workspace-view]")) {
         if (button.dataset.workspaceView === "signals") button.setAttribute("aria-current", "page");
         else button.removeAttribute("aria-current");
       }
+      renderChannelRail();
+      renderChannelHead();
       for (const target of all<HTMLElement>("[data-sidebar-workspace-name]")) {
         target.textContent = workspace.name;
       }
@@ -4857,14 +5266,32 @@ import "../../styles/tokens.css";
       files = [];
       fileLoadError = "";
       signalFilter = "all";
+      /* A channel belongs to one workspace, so nothing about the old one survives the
+         switch: not the list, not the narrowing, not a reply in progress. */
+      channels = [];
+      channelListFailed = false;
+      activeChannelId = null;
+      unknownChannelId = null;
+      /* Nothing this browser posted in the workspace being left may stand in for a page of
+         the one being opened. The prune's workspace test says the same thing; this is the
+         cheaper half of it, done where the workspace actually changes. */
+      postedSinceReset.clear();
+      disarmChannelArchive();
       signalCursor = null;
       signalHasMore = false;
       signalCutoff = "";
       channelLoadError = "";
       if (keepShell) renderChannel(selected, true);
       else setLoading(`Opening ${selected.name}…`);
+      /* The generation is taken BEFORE the read, not after it. Taken after, a slow open could
+         land behind a create the reader made while it was still loading — same workspace,
+         same requestVersion, so nothing else dropped it — and overwrite the list with the
+         snapshot from before that channel existed. The URL then named an id the stale list
+         did not have, and the head said "Channel not found" for a channel that does. Found by
+         a review arm. */
+      const channelGeneration = ++channelReadGeneration;
       try {
-        const [nextAgents, nextRoster, nextInvites, nextAccessStatuses, nextFiles] = await Promise.all([
+        const [nextAgents, nextRoster, nextInvites, nextAccessStatuses, nextFiles, nextChannels] = await Promise.all([
           roster(selected.id),
           memberRoster(selected.id),
           pendingMemberInvites(selected.id),
@@ -4876,6 +5303,13 @@ import "../../styles/tokens.css";
               error: `${readableError(error)} The signal feed is still available.`,
             }),
           ),
+          /* Soft-fails like the file list does. A workspace whose channel list did not load
+             still reads all-signals, which holds every message either way, so this must not
+             take the feed down with it. */
+          workspaceChannels(selected.id).then(
+            (value) => ({ value, failed: false }),
+            () => ({ value: [] as WorkspaceChannel[], failed: true }),
+          ),
         ]);
         if (version !== requestVersion) return;
         agents = nextAgents;
@@ -4885,6 +5319,20 @@ import "../../styles/tokens.css";
         accessStatuses = nextAccessStatuses;
         files = nextFiles.value;
         fileLoadError = nextFiles.error;
+        /* Only if no newer channel read has landed since this one started. A create the
+           reader made while the workspace was still opening is newer than this snapshot, and
+           it stays. */
+        if (channelGeneration === channelReadGeneration) {
+          channels = nextChannels.value;
+          channelListFailed = nextChannels.failed;
+        }
+        /* The URL is read ONCE per workspace open, after the channels are known: a ?c= that
+           names no channel here must show an honest empty state, and the only way to tell
+           that from a channel that is merely empty is to have the list. Then it is WRITTEN,
+           so the address bar is the address of what is being read after every open and not
+           only after a channel click. */
+        applyChannelFromUrl(selected.id);
+        syncChannelUrl();
         if (
           freshInviteWorkspaceId === selected.id &&
           shouldRetireFreshInvite(freshInviteId, nextInvites)
@@ -5079,11 +5527,21 @@ import "../../styles/tokens.css";
 
     const activateWorkspaceView = (view: "signals" | "files" | "brain"): void => {
       if (keepConnectCredentialVisible()) return;
+      activeWorkspaceView = view;
       const name = one<HTMLElement>("[data-channel-name]");
       const description = one<HTMLElement>("[data-channel-description]");
       for (const button of all<HTMLButtonElement>("[data-workspace-view]")) {
         if (button.dataset.workspaceView === view) button.setAttribute("aria-current", "page");
         else button.removeAttribute("aria-current");
+      }
+      /* Files and Brain are not a channel, so no channel is current while one is open. The
+         channel buttons deliberately carry no data-workspace-view (that attribute marks every
+         signals-view button at once), so this loop is what clears them; without it the rail
+         claimed a current channel while the head said Files. Found by a review arm. */
+      if (view !== "signals") {
+        for (const button of all<HTMLButtonElement>("[data-channel-place]")) {
+          button.removeAttribute("aria-current");
+        }
       }
       if (view === "files") {
         if (name) name.textContent = "Files";
@@ -5109,16 +5567,392 @@ import "../../styles/tokens.css";
         renderBrain();
         showChannelView("brain");
       } else {
-        if (name) name.textContent = "# all-signals";
-        if (description) {
-          description.textContent =
-            "Intent posted by every agent in this workspace. Immutable, and never a claim.";
-        }
+        renderChannelHead();
         const refresh = one<HTMLButtonElement>("[data-refresh]");
         if (refresh) refresh.hidden = sampleMode || agents.length === 0;
         returnToChannel();
       }
       window.requestAnimationFrame(() => name?.focus({ preventScroll: true }));
+    };
+
+
+    /* ── Channels ─────────────────────────────────────────────────────────────────────
+     * A channel is the ADDRESS of a message, not a scope on who reads it. Every member of
+     * this workspace reads every channel, and filing a message in one changes nothing
+     * about which agent is woken. `all-signals` is not a channel at all: it is the whole
+     * feed, filed and unfiled together, which is why the command edge refuses that name
+     * for a real channel.
+     *
+     * Nothing written before a channel existed can move into it. A signal row is
+     * immutable, so a message posted before this feature keeps no channel forever and
+     * reads in all-signals only. The empty state says that rather than letting a reader
+     * conclude the channel is broken.
+     */
+    const activeChannel = (): WorkspaceChannel | null =>
+      channelById(channels, activeChannelId);
+
+    /** The name in the head, the phone's chip, and the composer, from one place. */
+    const activeChannelName = (): string =>
+      channelLabel(activeChannel()?.slug ?? ALL_SIGNALS_SLUG);
+
+    /**
+     * Which place the rail marks as current. An unresolved `?c=` marks NOTHING: the reader is
+     * in the signals view but in no channel, and marking all-signals would say they are
+     * reading the whole feed when the feed is not being shown. Both review arms read this
+     * state and agreed the empty mark is the honest one, so it is written down rather than
+     * left to fall out of the condition.
+     */
+    const syncChannelCurrent = (): void => {
+      for (const button of all<HTMLButtonElement>("[data-channel-place]")) {
+        const place = button.dataset.channelPlace ?? "";
+        const id = place === "" ? null : place;
+        if (
+          activeWorkspaceView === "signals" && id === activeChannelId &&
+          unknownChannelId === null
+        ) {
+          button.setAttribute("aria-current", "page");
+        } else button.removeAttribute("aria-current");
+      }
+    };
+
+    /**
+     * The composer posts to the channel you are reading (design R10) and gains no chrome
+     * for it: no dropdown, no To row, and no `#` parsing of the body — bodies legitimately
+     * contain `#`, so a parser could not tell a heading from an address. What the reader
+     * gets instead is the destination in the box they are typing into.
+     */
+    const syncComposerPlacement = (): void => {
+      const input = one<HTMLTextAreaElement>("[data-composer-input]");
+      const channel = activeChannel();
+      if (!input) return;
+      if (channel === null) {
+        input.placeholder = "What are you about to do?";
+        input.setAttribute("aria-label", "Signal");
+        return;
+      }
+      input.placeholder = `Message ${channelLabel(channel.slug)}`;
+      input.setAttribute("aria-label", `Message in ${channelLabel(channel.slug)}`);
+    };
+
+    const renderChannelHead = (): void => {
+      /* Files and Brain own the head while they are on screen. Writing the channel's name
+         over one of them was reachable from a rename, which re-renders the head without
+         going through the view switch. */
+      if (activeWorkspaceView !== "signals") {
+        syncChannelCurrent();
+        return;
+      }
+      const name = one<HTMLElement>("[data-channel-name]");
+      const description = one<HTMLElement>("[data-channel-description]");
+      const switchLabel = one<HTMLElement>("[data-channel-switch-label]");
+      const channel = activeChannel();
+      if (unknownChannelId !== null) {
+        if (name) name.textContent = "Channel not found";
+        if (description) description.textContent = unknownChannelHeadText(channelListFailed);
+        if (switchLabel) switchLabel.textContent = "Channel not found";
+      } else if (channel === null) {
+        if (name) name.textContent = channelLabel(ALL_SIGNALS_SLUG);
+        if (description) {
+          description.textContent =
+            "Intent posted by every agent in this workspace. Immutable, and never a claim.";
+        }
+        if (switchLabel) switchLabel.textContent = channelLabel(ALL_SIGNALS_SLUG);
+      } else {
+        if (name) name.textContent = channelLabel(channel.slug);
+        if (description) {
+          description.textContent = channel.archivedAt !== null
+            ? CHANNEL_ARCHIVED_TEXT
+            : channel.purpose ?? CHANNEL_REACH_TEXT;
+        }
+        if (switchLabel) switchLabel.textContent = channelLabel(channel.slug);
+      }
+      syncChannelCurrent();
+      syncComposerPlacement();
+    };
+
+    const renderChannelRail = (): void => {
+      const add = one<HTMLButtonElement>("[data-channel-new]");
+      if (add) add.hidden = sampleMode;
+      const list = one<HTMLElement>("[data-channel-list]");
+      if (!list) return;
+      list.replaceChildren();
+      for (const channel of liveChannels(channels)) {
+        const button = document.createElement("button");
+        button.type = "button";
+        button.className = "dashboard__sidebar-place";
+        /* NOT data-workspace-view: activateWorkspaceView marks every signals-view button
+           aria-current, which would mark every channel current at once. These buttons
+           switch the view through selectChannel instead, and syncChannelCurrent owns
+           which one is marked. */
+        button.dataset.channelPlace = channel.channelId;
+        const mark = document.createElement("span");
+        mark.className = "dashboard__sidebar-place-mark";
+        mark.setAttribute("aria-hidden", "true");
+        mark.textContent = "#";
+        const label = document.createElement("span");
+        label.textContent = channel.slug;
+        button.append(mark, label);
+        if (channel.purpose !== null) button.title = channel.purpose;
+        button.addEventListener("click", () => selectChannel(channel.channelId));
+        list.append(button);
+      }
+      syncChannelCurrent();
+    };
+
+    /** The URL is the address of what you are reading: `?w=` the workspace, `?c=` the channel. */
+    const syncChannelUrl = (): void => {
+      if (sampleMode) return;
+      const url = new URL(window.location.href);
+      if (activeWorkspaceId === "") url.searchParams.delete("w");
+      else url.searchParams.set("w", activeWorkspaceId);
+      /* An unreadable ?c= is KEPT in the address bar. Dropping it would turn a bad link
+         into the unfiltered feed on the next reload, which is the failure this state
+         exists to prevent: the reader would think they were looking at the channel. */
+      const channelId = unknownChannelId ?? activeChannelId;
+      if (channelId === null) url.searchParams.delete("c");
+      else url.searchParams.set("c", channelId);
+      window.history.replaceState(null, "", `${url.pathname}${url.search}${url.hash}`);
+    };
+
+    /**
+     * Read `?c=` once per workspace open, AFTER the channel list is known. A channel id that
+     * names nothing here becomes an honest empty state; it never falls back to the unfiltered
+     * feed under the channel's name.
+     *
+     * A `?c=` BELONGS TO THE WORKSPACE ITS `?w=` NAMES. Without that rule, switching workspace
+     * from the menu carried the previous workspace's channel id into the new one, which is not
+     * in it, so the reader who picked workspace B was shown "Channel not found" instead of B's
+     * feed, and a reload took them back to A. Found by a review arm. A link the reader
+     * FOLLOWED still resolves: its own `?w=` is the workspace being opened.
+     */
+    const applyChannelFromUrl = (workspaceId: string): void => {
+      const params = new URL(window.location.href).searchParams;
+      const requested = params.get("c");
+      const forWorkspace = params.get("w");
+      if (
+        requested === null || requested === "" ||
+        (forWorkspace !== null && forWorkspace !== workspaceId)
+      ) {
+        activeChannelId = null;
+        unknownChannelId = null;
+        return;
+      }
+      const found = channelById(channels, requested);
+      activeChannelId = found === null ? null : found.channelId;
+      unknownChannelId = found === null ? requested : null;
+    };
+
+    const selectChannel = (channelId: string | null): void => {
+      const next = channelId === null
+        ? null
+        : channelById(channels, channelId)?.channelId ?? null;
+      if (channelId !== null && next === null) return;
+      const changed = next !== activeChannelId || unknownChannelId !== null;
+      /* `changed` is also true when only the unresolved state clears. The RETIREMENT below
+         needs the narrower question — did the address actually move — because clicking the
+         place you are already in is not a move, and retiring there killed a valid Retry,
+         replaced the send error with a sentence about a move that did not happen, and left
+         Enter minting fresh command ids that reposted every hop that had already landed.
+         Found by a review arm; introduced by the fix two rounds earlier. */
+      /* AN UNFINISHED SEND SURVIVES ONLY WHILE THE COMPOSER STILL PROMISES ITS ADDRESS. Two
+         narrower questions were tried and both were wrong: `changed` also fires when the
+         unresolved state merely clears, so clicking the place you were already in killed a
+         valid Retry; and comparing the place being left called a `?c=` heal into a DIFFERENT
+         channel a no-op, leaving a retry pointed somewhere the box no longer names. This asks
+         the thing that matters directly. Both were found by review arms. */
+      const addressMoved = composerIntent !== null &&
+        composerIntent.placementChannelId !== next;
+      activeChannelId = next;
+      unknownChannelId = null;
+      disarmChannelArchive();
+      /* An unfinished send is addressed to the channel it was started in, and the composer is
+         about to promise this one. Replaying the old address from a box that says
+         "Message #ops" is the contradiction; the intent is retired here instead, so a send
+         from this channel is a new message that goes where the box says. The hops that
+         already landed stay where they landed. */
+      if (addressMoved && composerIntent !== null) {
+        composerIntent = null;
+        const retryControl = one<HTMLButtonElement>("[data-composer-retry]");
+        if (retryControl) retryControl.hidden = true;
+        setComposerStatus(
+          "The unfinished message belongs to the channel it was written in. Sending from here posts it here, as a new message.",
+          "error",
+        );
+      }
+      /* SAMPLE MODE NARROWS LOCALLY, and it is the one place that may. There is no server
+         behind this page, so clearing the rows and asking for a page would replace the
+         made-up feed with "not connected to CommonSwarm" — measured, before this branch
+         existed. The dishonesty a client-side filter usually carries is absent here: the
+         sample IS the whole set, so "the messages in this channel" is exactly true of it. */
+      if (sampleMode) {
+        signals = sampleSignals.filter(
+          (signal) => activeChannelId === null || signal.channelId === activeChannelId,
+        );
+        syncChannelUrl();
+        renderChannelRail();
+        closeChannelDialog();
+        renderChannelHead();
+        renderFeed();
+        return;
+      }
+      if (changed) {
+        /* The narrowing is the QUERY's, so the loaded page belongs to the channel it was
+           fetched for and none of it survives a move. Keeping rows here would show the
+           previous channel's messages under this channel's name until the fetch landed. */
+        signals = [];
+        signalCursor = null;
+        signalHasMore = false;
+        signalCutoff = "";
+        channelLoadError = "";
+        previousSignalIds.clear();
+        feedWasEmpty = false;
+        deliveryReceiptCache.clear();
+        deliveryReceiptRefreshOwner = "";
+      }
+      syncChannelUrl();
+      renderChannelRail();
+      closeChannelDialog();
+      /* returnToChannel, reached through here, is what loads the new page: it sees an
+         empty signal list and fetches one under the channel now in state. */
+      activateWorkspaceView("signals");
+    };
+
+    const setChannelDialogError = (message: string): void => {
+      const target = one<HTMLElement>("[data-channel-dialog-error]");
+      if (!target) return;
+      target.textContent = message;
+      target.hidden = message === "";
+    };
+
+    const setChannelDialogStatus = (message: string): void => {
+      const target = one<HTMLElement>("[data-channel-dialog-status]");
+      if (target) target.textContent = message;
+    };
+
+    const renderChannelDialog = (): void => {
+      const reach = one<HTMLElement>("[data-channel-reach]");
+      if (reach) reach.textContent = CHANNEL_REACH_TEXT;
+      for (const hint of all<HTMLElement>("[data-channel-name-hint], [data-channel-rename-hint]")) {
+        hint.textContent = channelNameHint();
+      }
+      const purposeHint = one<HTMLElement>("[data-channel-purpose-hint]");
+      if (purposeHint) purposeHint.textContent = channelPurposeHint();
+      const archiveHint = one<HTMLElement>("[data-channel-archive-hint]");
+      if (archiveHint) {
+        archiveHint.textContent =
+          "Archiving hides a channel from this list and refuses new messages. Nothing is deleted, and its messages still read.";
+      }
+      for (const input of all<HTMLInputElement>("[data-channel-new-slug], [data-channel-rename-slug]")) {
+        input.maxLength = channelSlugInputMax();
+      }
+      const purposeInput = one<HTMLInputElement>("[data-channel-new-purpose]");
+      if (purposeInput) purposeInput.maxLength = channelPurposeInputMax();
+      const list = one<HTMLElement>("[data-channel-dialog-list]");
+      if (list) {
+        list.replaceChildren();
+        const places: { id: string | null; slug: string }[] = [
+          { id: null, slug: ALL_SIGNALS_SLUG },
+          ...liveChannels(channels).map((channel) => ({
+            id: channel.channelId as string | null,
+            slug: channel.slug,
+          })),
+        ];
+        for (const place of places) {
+          const button = document.createElement("button");
+          button.type = "button";
+          button.className = "dashboard__sidebar-place";
+          button.dataset.channelPlace = place.id ?? "";
+          button.textContent = channelLabel(place.slug);
+          if (place.id === activeChannelId && unknownChannelId === null) {
+            button.setAttribute("aria-current", "page");
+          }
+          button.addEventListener("click", () => selectChannel(place.id));
+          list.append(button);
+        }
+      }
+      const manage = one<HTMLFormElement>("[data-channel-manage-form]");
+      const channel = activeChannel();
+      const manageable = channel !== null && channel.archivedAt === null && !sampleMode;
+      if (manage) manage.hidden = !manageable;
+      if (manageable) {
+        const title = one<HTMLElement>("[data-channel-manage-title]");
+        if (title) title.textContent = `Manage ${channelLabel(channel!.slug)}`;
+        const rename = one<HTMLInputElement>("[data-channel-rename-slug]");
+        if (rename) rename.value = channel!.slug;
+      }
+      const create = one<HTMLFormElement>("[data-channel-create-form]");
+      if (create) create.hidden = sampleMode;
+    };
+
+    const openChannelDialog = (): void => {
+      const dialog = one<HTMLDialogElement>("[data-channel-dialog]");
+      if (!dialog || dialog.open) return;
+      setChannelDialogError("");
+      setChannelDialogStatus("");
+      renderChannelDialog();
+      dialog.showModal();
+      one<HTMLButtonElement>("[data-channel-switch]")?.setAttribute("aria-expanded", "true");
+    };
+
+    const closeChannelDialog = (): void => {
+      const dialog = one<HTMLDialogElement>("[data-channel-dialog]");
+      if (dialog?.open) dialog.close();
+    };
+
+    /**
+     * Re-reads the channel list after a change and keeps the rail, the head and the dialog
+     * on the same set. The command response carries the row it wrote, but another member
+     * can have created a channel since this list was read, so the list is re-read rather
+     * than patched.
+     */
+    const refreshChannels = async (workspaceId: string, version: number): Promise<void> => {
+      const generation = ++channelReadGeneration;
+      const current = (): boolean =>
+        generation === channelReadGeneration && version === requestVersion &&
+        workspaceId === activeWorkspaceId;
+      let next: WorkspaceChannel[];
+      try {
+        next = await workspaceChannels(workspaceId);
+      } catch (error) {
+        /* The flag has to follow the LATEST read, in both directions. It was set once at
+           workspace open and never again, so a first read that failed kept saying so after a
+           later one succeeded, and a later one that failed left the copy claiming the id is
+           simply not here. Found by a review arm. */
+        if (current()) {
+          channelListFailed = true;
+          renderChannelHead();
+          /* The feed carries the other half of that sentence. Rendering only the head left
+             the head saying the list did not load while the feed still said the id is simply
+             not here. Found by a review arm. */
+          if (unknownChannelId !== null) renderFeed();
+        }
+        throw error;
+      }
+      if (!current()) return;
+      channels = next;
+      channelListFailed = false;
+      /* A `?c=` that could not be resolved earlier gets one more chance against this list.
+         The workspace open resolves the URL against the list it read, and that read can be
+         dropped in favour of a newer one that has not landed yet, leaving a real id resolved
+         against an empty list. It can also simply be a channel someone else created after
+         this reader's list was read. Found by a review arm.
+         It goes through selectChannel, not through applyChannelFromUrl: the head, the rail,
+         the URL and the FEED have to move together. Resolving the id in place left the reader
+         inside the channel with "Channel not found" still on the screen. */
+      if (unknownChannelId !== null && channelById(channels, unknownChannelId) !== null) {
+        selectChannel(unknownChannelId);
+        return;
+      }
+      /* A channel that was archived while it was open stops being the active one: the rail
+         no longer lists it and posting to it is refused. Its messages stay readable in
+         all-signals, which is where the reader is sent. */
+      if (activeChannelId !== null && activeChannel()?.archivedAt !== null) {
+        selectChannel(null);
+        return;
+      }
+      renderChannelRail();
+      renderChannelHead();
+      renderChannelDialog();
     };
 
     const closeConnect = (): void => {
@@ -5283,6 +6117,21 @@ import "../../styles/tokens.css";
           grantRevokedAt: null,
         },
       ];
+      /* Sample mode gets ONE channel, because a message filed in a channel is the shape a
+         first-time reader cannot otherwise see. The data is made up, and the notice above the
+         feed says so. */
+      channels = [
+        {
+          channelId: "sample-channel-mobile",
+          workspaceId: workspaces[0]?.id ?? "",
+          slug: "mobile",
+          purpose: "Narrow-screen work.",
+          createdByPrincipal: "sample-owner",
+          createdByKind: "user",
+          createdAt: new Date(now - 90 * 60_000).toISOString(),
+          archivedAt: null,
+        },
+      ];
       signals = [
         {
           id: "sample-1",
@@ -5295,6 +6144,9 @@ import "../../styles/tokens.css";
           about: "site/src/components/app",
           until: null,
           createdAt: new Date(now - 4 * 60_000).toISOString(),
+          channelId: null,
+          threadRootId: null,
+          broadcastToChannel: false,
         },
         {
           id: "sample-2",
@@ -5307,6 +6159,9 @@ import "../../styles/tokens.css";
           about: "/app",
           until: null,
           createdAt: new Date(now - 18 * 60_000).toISOString(),
+          channelId: "sample-channel-mobile",
+          threadRootId: null,
+          broadcastToChannel: false,
         },
         {
           id: "sample-3",
@@ -5319,8 +6174,12 @@ import "../../styles/tokens.css";
           about: "responsive QA",
           until: null,
           createdAt: new Date(now - 44 * 60_000).toISOString(),
+          channelId: null,
+          threadRootId: null,
+          broadcastToChannel: false,
         },
       ];
+      sampleSignals = [...signals];
       activeWorkspaceId = workspaces[0]?.id ?? "";
       const notice = one<HTMLElement>("[data-sample-notice]");
       const chip = one<HTMLElement>("[data-sample-chip]");
@@ -5369,7 +6228,14 @@ import "../../styles/tokens.css";
         if (pending && workspaces.some((workspace) => workspace.id === pending.workspaceId)) {
           clearCreateIntent(session.user.id);
         }
-        await openWorkspace(workspaces[0]!.id);
+        /* ?w= names the workspace to open. It is honoured only when it is in this
+           reader's own memberships, so a stale or foreign id opens the default one rather
+           than an error: the address bar is a convenience, never an authorization. */
+        const requestedWorkspaceId = new URL(window.location.href).searchParams.get("w");
+        const bootWorkspace =
+          workspaces.find((workspace) => workspace.id === requestedWorkspaceId) ??
+            workspaces[0]!;
+        await openWorkspace(bootWorkspace.id);
       } catch (error) {
         if (version !== requestVersion) return;
         if (error instanceof SessionExpired) {
@@ -6051,8 +6917,33 @@ import "../../styles/tokens.css";
         input?.focus();
         return;
       }
+      if (unknownChannelId !== null) {
+        /* The hidden composer is the affordance; this is the rule. A submit can still arrive
+           from a keyboard shortcut or a stale form, and an unresolved channel has no
+           destination: posting would file the message in the unfiltered feed under a name
+           the reader was told does not exist. */
+        setComposerStatus(
+          "This link does not name a channel in this workspace, so there is nowhere to post. " +
+            `Open ${channelLabel(ALL_SIGNALS_SLUG)} first.`,
+          "error",
+        );
+        return;
+      }
       const workspaceId = activeWorkspaceId;
       const version = requestVersion;
+      /* THE CHANNEL IS NOT A REASON TO ABANDON THE SEND, and it is not compared as a view
+         identity either. Both were tried and both were wrong. ~~`channelAtSend`~~: returning
+         early when the reader moved channel skipped the send's own cleanup, so the draft
+         stayed saved, the pending rows stayed in two caches, the status stayed on "Posting…",
+         and on the failure path the body was deleted with no error and no Retry, because the
+         focus move a channel click makes blurs the emptied box and flushes the draft.
+         ~~`channelAtSend === activeChannelId`~~: comparing the view the send began in with the
+         view it ended in dropped a row posted in a channel and read from all-signals, where it
+         does belong, and stripped rows out of a page that had already fetched them. The
+         question a landing row has to answer is the one the list on screen asks, and the
+         server stamped the row's channel, so the row answers it. Both arms found both. */
+      /* One rule, one place: `rowShowsOnScreen` is what the reset page's merge asks too. */
+      const showsOnScreen = rowShowsOnScreen;
       /* One signal per @tag. The wire has no many-recipient shape, so this is a loop, and
        * every tagged agent gets its own row, its own wake, and its own delivery receipt. An
        * untagged body is one broadcast, exactly as before.
@@ -6078,6 +6969,12 @@ import "../../styles/tokens.css";
       const recipients = address.recipients.length === 0
         ? [{ kind: "everyone" } as ComposerAudience]
         : address.recipients;
+      /* WHERE THIS LANDS. A top-level post is stamped with the channel being read and
+         nothing else — no dropdown, and no `#` parsing of the body, because bodies contain
+         `#` legitimately and a parser could not tell a heading from an address. A reply
+         inherits its root's channel from the SERVER: the client may not file a reply
+         somewhere its thread is not, and the edge refuses a body that names both. */
+      const freshPlacementChannelId = activeChannel()?.channelId ?? null;
       const recipientKinds = recipients.map((recipient) => browserSignalKind(recipient));
       const signalKind = recipientKinds.join("+");
       const audienceKey = composerRecipientsKey();
@@ -6097,10 +6994,40 @@ import "../../styles/tokens.css";
           audienceKey,
           attachmentKey,
           signalKind,
+          placementChannelId: freshPlacementChannelId,
         };
         composerIntent = intent;
       }
       const commandIds = intent.commandIds;
+      /* A REPLAY KEEPS ITS OWN ADDRESS. The command ids are the server's idempotency keys, so
+       * the hops that already landed must be replayed at the same address; and the hops that
+       * did not are part of the same message, which was addressed once. */
+      const placementChannelId = intent.placementChannelId;
+      const placementChannel = placementChannelId === null
+        ? null
+        : channelById(channels, placementChannelId);
+      /* ARCHIVED IS NOT AVAILABLE. `channelById` finds an archived channel on purpose — a
+         permalink into one still has to resolve and its messages still render — so a check
+         that only asked whether the row exists let a retry keep sending into a channel the
+         server refuses, with Retry still lit, forever. The comment here claimed it covered
+         "archived, or removed" and it did not. Found by a review arm. */
+      const placementUnavailable = placementChannelId !== null &&
+        (placementChannel === null || placementChannel.archivedAt !== null);
+      if (placementUnavailable) {
+        setComposerStatus(
+          placementChannel === null
+            ? "The channel this message was addressed to is not in this workspace any more. Send it from the channel you want it in."
+            : `${channelLabel(placementChannel.slug)} is archived and does not accept new messages. Send this from the channel you want it in.`,
+          "error",
+        );
+        composerIntent = null;
+        const staleRetry = one<HTMLButtonElement>("[data-composer-retry]");
+        if (staleRetry) staleRetry.hidden = true;
+        return;
+      }
+      const placement: BrowserSignalPlacement = placementChannel === null
+        ? {}
+        : { channel: placementChannel.slug };
       /** The chip a pending or posted row shows: its own recipient, not the whole address. */
       const mentionsFor = (recipient: ComposerAudience): EntityRef[] =>
         recipient.kind === "everyone" ? [] : [{ kind: recipient.kind, id: recipient.id }];
@@ -6126,6 +7053,11 @@ import "../../styles/tokens.css";
           about: null,
           until: null,
           createdAt: new Date().toISOString(),
+          /* The pending row is shown where the posted row will land, so the reader is not
+             watching their message sit in one place and then move to another. */
+          channelId: placementChannelId,
+          threadRootId: null,
+          broadcastToChannel: false,
         };
       });
       const retry = one<HTMLButtonElement>("[data-composer-retry]");
@@ -6188,6 +7120,9 @@ import "../../styles/tokens.css";
                 about: null,
                 until: null,
                 createdAt: new Date().toISOString(),
+                channelId: placementChannelId,
+                threadRootId: null,
+                broadcastToChannel: false,
               }
             : await postBrowserSignal(
                 session!,
@@ -6197,6 +7132,7 @@ import "../../styles/tokens.css";
                 recipient,
                 recipientKinds[index]!,
                 attachmentRefs,
+                placement,
               ));
         }
         if (version !== requestVersion || workspaceId !== activeWorkspaceId) {
@@ -6205,11 +7141,19 @@ import "../../styles/tokens.css";
           }
           return;
         }
-        const postedIds = new Set(posted.map((signal) => signal.id));
         const pendingSet = new Set(pendingIds);
-        signals = [...posted, ...signals.filter(
-          (entry) => !pendingSet.has(entry.id) && !postedIds.has(entry.id),
-        )];
+        /* The pending rows always go, in every case: they are this send's placeholders and
+           the send is over. A posted row joins the list when the list on screen would show
+           it, and a row is removed from the list ONLY when it is about to be put back. */
+        const visible = posted.filter(showsOnScreen);
+        const visibleIds = new Set(visible.map((signal) => signal.id));
+        for (const row of visible) {
+          postedSinceReset.set(row.id, { row, workspaceId, at: Date.now() });
+        }
+        const kept = signals.filter(
+          (entry) => !pendingSet.has(entry.id) && !visibleIds.has(entry.id),
+        );
+        signals = [...visible, ...kept];
         for (const [index, pendingId] of pendingIds.entries()) {
           visualMentions.delete(pendingId);
           deliveryReceiptCache.delete(pendingId);
@@ -6217,6 +7161,12 @@ import "../../styles/tokens.css";
           visualMentions.set(signal.id, mentionsFor(recipients[index]!));
           deliveryReceiptCache.set(signal.id, { result: null, checkedAt: 0, phase: "accepted" });
         }
+        /* Sample mode's channel narrowing rebuilds the feed from the snapshot taken at boot,
+           and a sample post only ever reached `signals`. Posting then switching channel made
+           the post disappear, and it also made the honesty argument for that local filter
+           false: "the sample IS the whole set" only holds if the set grows with it. Found by
+           a review arm. */
+        if (sampleMode) sampleSignals = [...posted, ...sampleSignals];
         composerIntent = null;
         composerAttachmentsMissingAfterReload = false;
         for (const attachment of attachmentSnapshot) {
@@ -6234,15 +7184,20 @@ import "../../styles/tokens.css";
          * idempotency key, which is the same property the unknown-outcome path relies on. */
         const sent = posted.length;
         const pendingSet = new Set(pendingIds);
-        const postedIds = new Set(posted.map((signal) => signal.id));
+        const visibleOnFailure = posted.filter(showsOnScreen);
+        const visibleFailureIds = new Set(visibleOnFailure.map((signal) => signal.id));
+        /* The hops that DID land are records too. Only the success path was writing them, so
+           a partial failure during a channel click lost the hop that posted when the reset
+           page arrived without it. Found by a review arm. */
+        for (const row of visibleOnFailure) {
+          postedSinceReset.set(row.id, { row, workspaceId, at: Date.now() });
+        }
         /* Drop the posted ids as well as the pending ones. The success path rewrites `signals`
          * BEFORE it renders, so a throw in that render reaches here with those rows already in
          * the list; prepending them again would show each one twice. */
-        signals = [
-          ...posted,
-          ...signals.filter((signal) =>
-            !pendingSet.has(signal.id) && !postedIds.has(signal.id)),
-        ];
+        const keptOnFailure = signals.filter((signal) =>
+          !pendingSet.has(signal.id) && !visibleFailureIds.has(signal.id));
+        signals = [...visibleOnFailure, ...keptOnFailure];
         for (const [index, pendingId] of pendingIds.entries()) {
           visualMentions.delete(pendingId);
           deliveryReceiptCache.delete(pendingId);
@@ -6255,6 +7210,17 @@ import "../../styles/tokens.css";
          * not a rejected command: putting the message back in the box and lighting Retry would
          * invite a duplicate the reader never asked for. */
         const unsent = sent < recipients.length;
+        /* AND THE ADDRESS MUST STILL BE THIS ONE. selectChannel retires an unfinished send
+           when the reader moves, because the composer is about to promise the new channel.
+           The catch then wrote the intent back with the OLD placement, undoing that: Retry
+           reused the old command ids and the old address, and the row landed in a channel the
+           reader had left, filtered off their screen. Both arms found it. */
+        const addressStillActive =
+          placementChannelId === (activeChannel()?.channelId ?? null);
+        const addressLabel = channelLabel(
+          channelById(channels, placementChannelId)?.slug ?? ALL_SIGNALS_SLUG,
+        );
+        const resumable = unsent && addressStillActive;
         if (unsent) {
           input.value = rawBody;
           stagedAttachments = attachmentSnapshot;
@@ -6262,8 +7228,19 @@ import "../../styles/tokens.css";
           resizeComposerInput(input);
           persistComposerDraft();
         }
-        composerIntent = unsent
-          ? { commandIds, body: rawBody, audienceKey, attachmentKey, signalKind }
+        composerIntent = resumable
+          /* WITH THE ADDRESS. Rewriting the intent without it made every retry after a partial
+             failure post UNFILED: the replay reads `intent.placement`, and `postBrowserSignal`
+             defaults a missing one to `{}`. No channel switch was needed to reach it. Both
+             arms found it. */
+          ? {
+            commandIds,
+            body: rawBody,
+            audienceKey,
+            attachmentKey,
+            signalKind,
+            placementChannelId,
+          }
           : null;
         if (!unsent) {
           /* Everything posted, so this failure is a render fault and the send is FINISHED. The
@@ -6277,16 +7254,22 @@ import "../../styles/tokens.css";
           }
         }
         setComposerStatus(
-          sent === 0
+          sent === 0 && addressStillActive
             ? readableError(caught)
-            : sent < recipients.length
+            : resumable
               ? `Sent to ${sent} of ${recipients.length}. ${readableError(caught)} ` +
                 "Press send again to finish it; the ones that went will not go twice."
+              : unsent
+              /* The reader has moved. Nothing here can finish a message addressed elsewhere,
+                 so Retry is not offered and the sentence says where it was going. */
+              ? `${readableError(caught)} That message was addressed to ${addressLabel}, and ` +
+                `${sent === 0 ? "none of it" : `${sent} of ${recipients.length}`} was sent. ` +
+                "Sending from here posts it here, as a new message."
               : `All ${sent} went out. ${readableError(caught)} ` +
                 "Nothing is left to send; reload if the feed looks wrong.",
           "error",
         );
-        if (retry && unsent) retry.hidden = false;
+        if (retry && resumable) retry.hidden = false;
         renderFeed("latest");
       } finally {
         if (version === requestVersion && workspaceId === activeWorkspaceId) {
@@ -6308,6 +7291,177 @@ import "../../styles/tokens.css";
         }
       });
     }
+    /* ── Channel controls ────────────────────────────────────────────────────────────
+     * Every refusal here shows the SERVER's own sentence. The rules that refuse a name —
+     * its spelling, its length, the reserved list, a name already taken — are the command
+     * edge's, and a second copy in the browser would be a rule nothing enforces. What the
+     * browser checks first is the one thing it can know without asking: the same
+     * channelSlugProblem the edge runs, imported from the edge's own module.
+     */
+    let channelArchiveArmed = "";
+
+    const disarmChannelArchive = (): void => {
+      channelArchiveArmed = "";
+      const button = one<HTMLButtonElement>("[data-channel-archive]");
+      if (button) button.textContent = "Archive";
+    };
+
+    const submitChannelCreate = async (): Promise<void> => {
+      const input = one<HTMLInputElement>("[data-channel-new-slug]");
+      const purposeInput = one<HTMLInputElement>("[data-channel-new-purpose]");
+      const submit = one<HTMLButtonElement>("[data-channel-create-submit]");
+      if (!input || !session || sampleMode || activeWorkspaceId === "") return;
+      const slug = channelSubmitSlug(input.value);
+      const problem = channelSubmitProblem(slug);
+      setChannelDialogError("");
+      if (problem !== null) {
+        setChannelDialogError(problem);
+        input.focus();
+        return;
+      }
+      const workspaceId = activeWorkspaceId;
+      const version = requestVersion;
+      const purpose = purposeInput === null ? null : purposeInput.value.trim() || null;
+      if (submit) submit.disabled = true;
+      setChannelDialogStatus(`Creating ${channelLabel(slug)}…`);
+      try {
+        const created = await createChannel(session, uuid(), workspaceId, slug, purpose);
+        if (version !== requestVersion || workspaceId !== activeWorkspaceId) return;
+        input.value = "";
+        if (purposeInput) purposeInput.value = "";
+        setChannelDialogStatus(`${channelLabel(created.slug)} is ready.`);
+        await refreshChannels(workspaceId, version);
+        if (version !== requestVersion || workspaceId !== activeWorkspaceId) return;
+        selectChannel(created.channelId);
+      } catch (error) {
+        if (version !== requestVersion || workspaceId !== activeWorkspaceId) return;
+        setChannelDialogStatus("");
+        setChannelDialogError(readableError(error));
+      } finally {
+        if (submit) submit.disabled = false;
+      }
+    };
+
+    const submitChannelRename = async (): Promise<void> => {
+      const channel = activeChannel();
+      const input = one<HTMLInputElement>("[data-channel-rename-slug]");
+      const submit = one<HTMLButtonElement>("[data-channel-rename-submit]");
+      if (!input || !channel || !session || sampleMode || activeWorkspaceId === "") return;
+      const slug = channelSubmitSlug(input.value);
+      const problem = channelSubmitProblem(slug);
+      setChannelDialogError("");
+      if (problem !== null) {
+        setChannelDialogError(problem);
+        input.focus();
+        return;
+      }
+      const workspaceId = activeWorkspaceId;
+      const version = requestVersion;
+      if (submit) submit.disabled = true;
+      setChannelDialogStatus(`Renaming ${channelLabel(channel.slug)}…`);
+      try {
+        const renamed = await renameChannel(
+          session,
+          uuid(),
+          workspaceId,
+          channel.channelId,
+          slug,
+        );
+        if (version !== requestVersion || workspaceId !== activeWorkspaceId) return;
+        /* The id does not change, so every link into this channel still resolves. That is
+           why the URL carries the id and not the name. */
+        setChannelDialogStatus(`This channel is now ${channelLabel(renamed.slug)}.`);
+        await refreshChannels(workspaceId, version);
+      } catch (error) {
+        if (version !== requestVersion || workspaceId !== activeWorkspaceId) return;
+        setChannelDialogStatus("");
+        setChannelDialogError(readableError(error));
+      } finally {
+        if (submit) submit.disabled = false;
+      }
+    };
+
+    const submitChannelArchive = async (): Promise<void> => {
+      const channel = activeChannel();
+      const button = one<HTMLButtonElement>("[data-channel-archive]");
+      if (!channel || !session || sampleMode || activeWorkspaceId === "") return;
+      setChannelDialogError("");
+      /* Two presses, because there is no command that un-archives. The second press is the
+         one that acts, and the button says what it is about to do to whom. */
+      if (channelArchiveArmed !== channel.channelId) {
+        channelArchiveArmed = channel.channelId;
+        if (button) {
+          button.textContent =
+            `Archive ${channelLabel(channel.slug)} for everyone. Press again to confirm.`;
+        }
+        return;
+      }
+      const workspaceId = activeWorkspaceId;
+      const version = requestVersion;
+      if (button) button.disabled = true;
+      setChannelDialogStatus(`Archiving ${channelLabel(channel.slug)}…`);
+      try {
+        await archiveChannel(session, uuid(), workspaceId, channel.channelId);
+        if (version !== requestVersion || workspaceId !== activeWorkspaceId) return;
+        setChannelDialogStatus(
+          `${channelLabel(channel.slug)} is archived. Its messages still read in ${
+            channelLabel(ALL_SIGNALS_SLUG)
+          }.`,
+        );
+        disarmChannelArchive();
+        await refreshChannels(workspaceId, version);
+      } catch (error) {
+        if (version !== requestVersion || workspaceId !== activeWorkspaceId) return;
+        setChannelDialogStatus("");
+        setChannelDialogError(readableError(error));
+      } finally {
+        if (button) button.disabled = false;
+      }
+    };
+
+    for (const button of all<HTMLButtonElement>("[data-channel-place]")) {
+      button.addEventListener("click", () => selectChannel(null));
+    }
+    one<HTMLButtonElement>("[data-channel-new]")?.addEventListener("click", () => {
+      openChannelDialog();
+      window.requestAnimationFrame(() => {
+        one<HTMLInputElement>("[data-channel-new-slug]")?.focus({ preventScroll: true });
+      });
+    });
+    one<HTMLButtonElement>("[data-channel-switch]")?.addEventListener(
+      "click",
+      openChannelDialog,
+    );
+    one<HTMLButtonElement>("[data-channel-dialog-close]")?.addEventListener(
+      "click",
+      closeChannelDialog,
+    );
+    {
+      const dialog = one<HTMLDialogElement>("[data-channel-dialog]");
+      dialog?.addEventListener("click", (event) => {
+        if (event.target === dialog) dialog.close();
+      });
+      dialog?.addEventListener("close", () => {
+        disarmChannelArchive();
+        one<HTMLButtonElement>("[data-channel-switch]")
+          ?.setAttribute("aria-expanded", "false");
+      });
+    }
+    one<HTMLFormElement>("[data-channel-create-form]")?.addEventListener("submit", (event) => {
+      event.preventDefault();
+      void submitChannelCreate();
+    });
+    one<HTMLFormElement>("[data-channel-manage-form]")?.addEventListener("submit", (event) => {
+      event.preventDefault();
+      void submitChannelRename();
+    });
+    one<HTMLButtonElement>("[data-channel-archive]")?.addEventListener("click", () => {
+      void submitChannelArchive();
+    });
+    one<HTMLInputElement>("[data-channel-rename-slug]")?.addEventListener(
+      "input",
+      disarmChannelArchive,
+    );
     for (const button of all<HTMLButtonElement>("[data-feed-filter]")) {
       button.addEventListener("click", () => {
         const next = button.dataset.feedFilter;
@@ -8695,6 +9849,125 @@ import "../../styles/tokens.css";
     border-radius: var(--radius-sm);
   }
 
+  /* ── Channels ───────────────────────────────────────────────────────────────────── */
+
+  /* The + beside the CHANNELS heading. It is the icon button the head already uses, at the
+     size the label row can carry, rather than the full-width dashed rail-add control. */
+  .dashboard__rail-section-add {
+    inline-size: 1.75rem;
+    min-block-size: 1.75rem;
+    padding: 0;
+  }
+
+  /* The phone's channel control. `display: none` here and shown only at ≤52rem, exactly the
+     split the view switcher uses: above that width the rail lists the channels. */
+  .dashboard__channel-switch {
+    display: none;
+  }
+
+  /* The channel a message is in, on the message. Shown only in all-signals, where filed and
+     unfiled messages sit together. It is a real control: it opens that channel. */
+  .dashboard__message-channel {
+    padding: 0;
+    color: var(--text-muted);
+    background: transparent;
+    border: 0;
+    font: inherit;
+    font-size: var(--t-xs);
+    cursor: pointer;
+  }
+
+  .dashboard__message-channel:hover,
+  .dashboard__message-channel:focus-visible {
+    color: var(--text);
+    text-decoration: underline;
+    text-underline-offset: 0.3em;
+  }
+
+  .dashboard__channel-dialog {
+    inline-size: min(30rem, calc(100vw - var(--s-6)));
+    max-block-size: min(42rem, calc(100dvh - var(--s-6)));
+    overflow: auto;
+    padding: var(--s-5);
+    color: var(--text);
+    background: var(--surface);
+    border: 1px solid var(--border);
+    border-radius: var(--radius-lg);
+  }
+
+  .dashboard__channel-dialog::backdrop {
+    background: rgb(0 0 0 / 45%);
+  }
+
+  .dashboard__channel-dialog-head {
+    display: flex;
+    align-items: center;
+    justify-content: space-between;
+    gap: var(--s-3);
+  }
+
+  .dashboard__channel-dialog-head h2 {
+    margin: 0;
+    font-size: var(--t-md);
+  }
+
+  .dashboard__channel-dialog-reach,
+  .dashboard__channel-hint {
+    margin: 0;
+    color: var(--text-muted);
+    font-size: var(--t-xs);
+  }
+
+  .dashboard__channel-dialog-status {
+    margin: 0;
+    color: var(--text-muted);
+    font-size: var(--t-xs);
+  }
+
+  .dashboard__channel-dialog-status:empty {
+    display: none;
+  }
+
+  .dashboard__channel-dialog-list {
+    display: grid;
+    gap: var(--s-1);
+    margin-block: var(--s-4);
+  }
+
+  .dashboard__channel-form {
+    display: grid;
+    gap: var(--s-2);
+    margin-block-start: var(--s-5);
+    padding-block-start: var(--s-4);
+    border-block-start: 1px solid var(--border);
+  }
+
+  .dashboard__channel-form h3 {
+    margin: 0;
+    font-size: var(--t-sm);
+  }
+
+  .dashboard__channel-form label {
+    color: var(--text-muted);
+    font-size: var(--t-xs);
+  }
+
+  .dashboard__channel-form input[type="text"] {
+    min-block-size: 2.75rem;
+    padding: var(--s-2) var(--s-3);
+    color: var(--text);
+    background: var(--surface-raised);
+    border: 1px solid var(--border-strong);
+    border-radius: var(--radius);
+    font: inherit;
+  }
+
+  .dashboard__channel-form-actions {
+    display: flex;
+    flex-wrap: wrap;
+    gap: var(--s-3);
+  }
+
   @media (max-width: 52rem) {
     .dashboard__roster-dialog-pending {
       display: grid;
@@ -10867,6 +12140,51 @@ import "../../styles/tokens.css";
       min-block-size: 2.75rem;
       align-items: center;
       padding-inline: var(--s-2);
+    }
+
+    /* The channel control appears exactly where the rail's channel list disappears. It
+       rides in the toolbar band, which floats over the transcript on a negative margin
+       equal to its own height, so it adds NO height to the header: the 73px app bar
+       remains the only standing header (2026-09-04 ruling). Its own height is the band's
+       2.5rem, so it cannot make the band taller either. */
+    .dashboard__channel-switch {
+      display: inline-flex;
+      align-items: center;
+      min-block-size: 2.5rem;
+      /* MEASURED 2026-09-05 at 390x844 and 320x568. A slug may be 32 characters, which is
+         the edge's own CHANNEL_SLUG_MAX, and an uncapped chip rendered 249px of it: the
+         filter row beside it fell to 24px of visible width at BOTH widths. The cap plus the
+         ellipsis on the label is what keeps the band usable at the longest legal name. It
+         costs the filters some room, and they scroll sideways for it, which is the shape
+         that row already had at 320px. */
+      max-inline-size: 8rem;
+      margin-inline-end: var(--s-2);
+      padding-inline: var(--s-3);
+      color: var(--text);
+      background: color-mix(in oklab, var(--surface) 94%, transparent);
+      border: 1px solid var(--border);
+      border-radius: 999px;
+      font: inherit;
+      font-size: var(--t-xs);
+      white-space: nowrap;
+      cursor: pointer;
+      backdrop-filter: blur(12px);
+    }
+
+    .dashboard__channel-switch [data-channel-switch-label] {
+      overflow: hidden;
+      text-overflow: ellipsis;
+      white-space: nowrap;
+    }
+
+    /* A bottom sheet, the same shape the roster dialog takes at this width. */
+    .dashboard__channel-dialog {
+      inline-size: 100%;
+      max-inline-size: none;
+      max-block-size: 85dvh;
+      margin: auto auto 0;
+      border-end-end-radius: 0;
+      border-end-start-radius: 0;
     }
 
     .dashboard__mobile-view[aria-current="page"] {

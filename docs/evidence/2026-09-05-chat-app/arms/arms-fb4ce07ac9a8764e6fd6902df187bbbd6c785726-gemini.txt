@@ -1,0 +1,47 @@
+1. **Copy that implies privacy.**
+- **Finding:** `site/src/components/app/LiveDashboard.astro`, lines 4138 (in `renderUnknownChannel`) and 5528 (in `renderChannelHead`).
+- **What breaks:** Both locations include the string `"This link names a channel that is not in this workspace, or one you cannot read..."`. The phrase "one you cannot read" directly contradicts the design rule that every workspace member reads every channel, by suggesting to the reader that there are restricted channels they are not authorized to see.
+- **How you would see it:** Navigating to a URL with a `?c=` channel ID that does not exist in the workspace displays this message.
+- **Why the sweep test missed it:** The regex in `chat-channels.observer.test.ts` checks for explicit substrings like `private`, `secret`, `encrypted`, or variations of `only...see/read`, but does not match "cannot read".
+- **Refutation check:** Could "one you cannot read" refer to a channel in a different workspace? The preceding clause "not in this workspace" already covers that scenario. Therefore, "or one you cannot read" distinctly implies unreadable channels within the current workspace.
+
+2. **A filter that replaces the predicate.**
+- I checked `signalPage`: It correctly narrows the server-side query by appending `.eq("channel_id", channelId)` without replacing the core workspace authorization predicate.
+- I checked `loadSignals` and `refreshLatestSignals`: Both capture `activeChannelId` and reject the response if the channel changed during the fetch, preventing cross-channel page application.
+- I checked `selectChannel`: Sample mode filters locally over `sampleSignals`, which is honest because `sampleSignals` represents the entire set rather than a partial fetched page.
+- **Finding:** Holds true.
+
+3. **The URL falling back to the unfiltered feed on a bad id.**
+- I traced `applyChannelFromUrl`, which sets `unknownChannelId`. When `renderFeed` is called, it correctly checks `unknownChannelId !== null`, immediately delegating to `renderUnknownChannel` and returning before any rows can be rendered. 
+- Pathways like `activateWorkspaceView` or `returnToChannel` route through `renderFeed`, which maintains the guard.
+- `?w=` is used securely in `bootWorkspace` as a convenience to select from already-loaded memberships, not as an authorization bypass.
+- **Finding:** Holds true.
+
+4. **A thread reply that the server would refuse, or one that changes addressing.**
+- I checked `syncComposerPlacement` and the submit handler. If `threadReplyRoot !== null`, `placement` explicitly uses `threadRootId` and `broadcastToChannel`, never `channel`. `in_reply_to` is also hardcoded to `null`.
+- A reply containing a recipient tag (`address.recipients.length > 0`) is correctly caught and refused in the browser before reaching the edge.
+- I checked `groupSignalThreads`: Rows are partitioned exactly once based on an unchanging `isOwnRow()` check against a `rootIds` set. No rows are dropped or duplicated.
+- **Finding:** Holds true.
+
+5. **A typed enumeration inside a message.**
+- **Finding:** `site/src/components/app/LiveDashboard.astro`, lines 345, 441, 662, and 5528.
+- **What breaks:** The reserved slug `"all-signals"` is hardcoded as a string literal in the UI (e.g., `<span data-channel-switch-label># all-signals</span>`, `<h1... ># all-signals</h1>`, `<span>all-signals</span>`, and `...open all-signals to read every message.`) instead of being built from the enforcing constant `ALL_SIGNALS_SLUG`.
+- **How you would see it:** If the edge updated its reserved slug constant to `general`, the browser UI would continue to display `all-signals` in the rail, mobile switch, head title, and unknown channel message.
+- **Refutation check:** Is it possible these are translated or uniquely purposed strings? No, they directly correspond to the reserved channel name and should be dynamically built using `ALL_SIGNALS_SLUG` and `channelLabel()`.
+
+6. **`Object.hasOwn` grouping on the wire.**
+- I checked `postBrowserSignal` in `site/src/lib/commonswarm.ts`. The three optional keys (`channel`, `thread_root_id`, `broadcast_to_channel`) are safely spread into their own individual object groups. An empty placement correctly omits all three, producing a body byte-identical to the unchanged version.
+- **Finding:** Holds true.
+
+7. **The tests as claim controls.**
+- `composer.observer.test.ts`: The `thread` gate was legitimately removed because threads actually shipped in this lane. The assertion now tests the exact markup of the control.
+- `ui-addressing.observer.test.ts`: The transitive asset walk strengthens the control, catching instances where Rollup's chunking moves constants into shared dependencies that a shallow read misses.
+- `composer-sprint-browser.observer.test.ts`: The emitted-source anchor was correctly fixed to match the first brace after `createdAt`, fixing a brittle regex that ate unrelated code when the sample object grew.
+- **Finding:** Holds true.
+
+8. **Mobile.**
+- I checked the CSS for `.dashboard__feed-toolbar` and `.dashboard__channel`. The feed toolbar floats over the transcript with `margin-block-end: -2.5rem`, costing the reading area zero layout height. The transcript uses `padding-block-start: var(--feed-band-height)` to clear the floating items, but since this padding is inside the scrollable `.dashboard__feed-view` container, it scrolls away with the content and leaves the full viewport height intact. 
+- The measurement methodology against the built `site/dist` locally via Chrome is sound.
+- **Finding:** Holds true.
+
+VERDICT: FAIL

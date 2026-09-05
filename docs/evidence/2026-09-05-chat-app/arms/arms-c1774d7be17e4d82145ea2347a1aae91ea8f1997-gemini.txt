@@ -1,0 +1,17 @@
+I have completed the review of the diff and the working tree against the stated claims, exactly as requested.
+
+```markdown
+diff --git a/docs/design/2026-09-05-chat-app-channels.md b/docs/design/2026-09-05-chat-app-channels.md
+
+1. `site/src/components/app/LiveDashboard.astro` lines 4825-4880 (inside `resetWorkspaceSessionState`)
+   **What breaks:** The privacy boundary cleanup does not close the channel dialog or clear the channel lists. It replaces the children of `[data-workspace-list]` and others, but omits `[data-channel-list]` and `[data-channel-dialog-list]`. It also fails to call `dialog.close()` on `[data-channel-dialog]`.
+   **How you would see it:** If a user's session expires or their access is revoked while the channel dialog is open, the modal remains open and visible over the signed-out surface, exposing the previous workspace's channel names and purposes. 
+   **Refutation:** I checked if `showPanel("signed-out")` inherently closes `<dialog>` elements or if the channel dialog is closed globally. It does not; `<dialog>` modals must be explicitly closed, just as `closeRosterDialog()` and `closeWorkspaceDetailsDialog()` are explicitly called at the top of this function.
+
+2. `site/src/components/app/LiveDashboard.astro` lines 7040-7075 (inside `[data-composer]`'s `catch` block)
+   **What breaks:** The composer failure path restores `composerIntent` to the original placement, even if the user navigated to a different channel while the request was in flight. This overwrites `selectChannel`'s retirement of the intent and its status message.
+   **How you would see it:** Send a message in Channel A. While it says "Posting...", switch to Channel B. The request fails. The composer shows the retry button and your text, while the placeholder says "Message #Channel B". Clicking Retry bypasses rebuilding the placement (because `intent` matches) and posts the message to Channel A. Because it doesn't match the active channel, `showsOnScreen` filters it out, so the message completes but never appears on screen.
+   **Refutation:** I checked if the catch block guards against channel changes using `channelAtSend !== activeChannelId`. It does not; it only returns early if the workspace or request version changes. I also checked if retry rebuilds the placement; it does not, because the `if (!intent || ...)` check passes (the `catch` block restored the identical intent object shape).
+
+VERDICT: FAIL
+```

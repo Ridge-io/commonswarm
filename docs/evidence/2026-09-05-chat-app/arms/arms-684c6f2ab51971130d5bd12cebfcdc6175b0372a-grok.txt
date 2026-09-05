@@ -1,0 +1,123 @@
+I'll read REVIEW.md and DIFF.patch first, then follow REVIEW.md exactly.REVIEW.md is a full attack brief. I’ll quote the first `diff --git` line, then walk the working tree and the round-fifteen stand-in change.SHA matches. Next I’ll read the stand-in merge, `hasMore`, and the observer pin — that’s this round’s one defect.The floor and merge are in. Next I’ll walk `hasMore`, the id tie-break, the send path, and the rest of the claim family.I have the round-fifteen change and the claim surfaces. Writing the review.`diff --git a/docs/design/2026-09-05-chat-app-channels.md b/docs/design/2026-09-05-chat-app-channels.md`
+
+SHA `684c6f2ab51971130d5bd12cebfcdc6175b0372a`. I read DIFF.patch, `LiveDashboard.astro` (send, `selectChannel`, `loadSignals`, `refreshLatestSignals`, `openWorkspace`, `refreshChannels`, CSS), `channels.ts`, `commonswarm.ts`, `signal-feed.ts`, the observer tests, `mutate.mjs`, `mutation-table.txt`, `mobile-measurements.json`, design §6–§8.1, and the 085d83d Gemini FAIL that this SHA answers.
+
+`renderFeed("latest")` is the last statement of the composer catch (`LiveDashboard.astro:7266`). `closeChannelDialog()` is inside `resetWorkspaceSessionState` (`:4879`). The composer’s early return on a workspace change skipping `clearComposerDraft()` is on `origin/main` at `d9fa25b:6202`. `refreshLatestSignals` building `[...page.rows, ...signals.filter(not on page)]` is on `origin/main` at `d9fa25b:4360`. I am not repeating those.
+
+---
+
+## Round fifteen walk
+
+The 085d83d merge asked `createdAt >= page.rows[0].createdAt`. Gemini failed it: one newer replica row dropped a lagging post that still belonged on the first page. This SHA changes three things in the same reset branch (`:4676–4687`):
+
+```
+pageFloor = page.hasMore ? page.rows.at(-1)?.createdAt ?? "" : ""
+keep if !fetched.has(id) && rowShowsOnScreen(row) &&
+        (pageFloor === "" || row.createdAt >= pageFloor)
+signals = [...arrivedWhileFetching, ...page.rows].sort(
+  createdAt DESC, id DESC)
+```
+
+`signalPage` (`:2090–2098`) is `.order("created_at", { ascending: false }).order("id", { ascending: false }).limit(SIGNAL_FETCH_SIZE)` with `SIGNAL_FETCH_SIZE = 26` and `rows = slice(0, 25)`. `hasMore` is `raw.length === 26`. Confirmed, not assumed. `page.rows[0]` is newest; `page.rows.at(-1)` is the oldest of the displayed 25.
+
+**Is `page.hasMore` the right test for “the page is the whole history”?** Yes. `hasMore === false` means the replica returned fewer than 26 rows, so nothing has rolled off the first page. The floor is then `""` and every pruned, on-screen, not-fetched stand-in is kept. That includes: an empty channel; a channel with 1–25 messages; and the lag case where the replica has 25 and is missing this browser’s post (25 ≠ 26, so `hasMore` is false). Showing 25 replica rows plus the stand-in is the whole history the replica knows, plus the write it has not caught. `hasMore === true` means a 26th row exists; the displayed 25 is a window; the floor is the oldest of those 25.
+
+Using `page.rows.length === 25` instead would be wrong: a complete history of exactly 25 would look like a window and drop a lagging post older than the 25th, even though there is no page 2.
+
+**Is `>=` right at the floor, given the query’s tie-break on id?** For the lag this record exists for, yes. A just-posted row is newer than the 25th the replica already has, so `createdAt > pageFloor` and it is kept. `>=` (not `>`) is the equal-timestamp lag case at the floor: a concurrent post missing from the replica still stands in.
+
+The query’s full order is `(created_at DESC, id DESC)`. The filter does not ask `id`. A rolled-off row with `createdAt === pageFloor` and `id <` the 25th row’s id would be kept and sorted to the 26th slot. I tried to make that a finding. To see it you need a full first page, a stand-in that shares the 25th row’s millisecond, and a smaller id, all inside the 30s grace. Replica lag of a just-posted row sits near `page.rows[0]`, not at the 25th. Page roll of that same row is almost always `createdAt < pageFloor` and is dropped. The remaining hole over-includes one same-millisecond row at the bottom of the page; it does not drop a lagging post and it does not resurrect one as newest. Load older’s `known` set then skips it. I am not failing the SHA on it. The observer pins `>= pageFloor` without id (`chat-channels.observer.test.ts:464–478`); that is the same enshrinement shape as `newestFetched`, pointed at a comparison that does not drop the row the last FAIL named.
+
+**Can a stand-in be shown twice?** Reset replaces `signals` wholesale; it does not concat with the composer’s prepended copy. `!fetched.has(row.id)` keeps the Map half off `page.rows`. Load older uses `known` from current `signals`. The poll concat is the routed `d9fa25b:4360` path.
+
+**Ordered wrongly against a row with the same timestamp?** The merge comparator is the query’s own order, including `id DESC`. 085d83d sorted only the stand-in list by `createdAt` and then prepended the block, which is correct only while the filter is “newer than the newest”. Once the floor is the oldest, a second-newest stand-in would have sat above `page.rows[0]`. The combined sort is the fix that makes the new floor safe. Command `created_at` is `toISOString()` (`…Z`); PostgREST may emit `+00:00` with extra fractional digits. Those strings invert only inside the same millisecond. I am not failing the SHA on that; it is the same string-compare bound the previous floor already had.
+
+Mutation table: 52 PASS, 0 not discriminating, including `pageFloor` mutated back to `page.rows[0]`, the floor filter reduced to `true`, and the merge sort removed.
+
+The 085d83d Gemini FAIL is closed. A lagging post that is newer than the oldest displayed row stands in. A rolled-off row older than that floor does not. An empty page, and a complete history of ≤25, keep every stand-in.
+
+---
+
+## Attack sections with no product break
+
+**1. Thread surface.** No reply control, no reply bar, no To: field (`data-composer-reply` / `composer-reply` / `To:` are absent from the dashboard). CSS has no `composer-reply` rules. Sample and optimistic rows set `threadRootId: null` and `broadcastToChannel: false`. This composer’s placement is `{ channel }` or `{}`; `postBrowserSignal` only spreads thread keys when the placement object has them (`commonswarm.ts:2085–2090`). `groupSignalThreads` is a comment in `signal-feed.ts`. Observer: `doesNotMatch(/threadRootId: (?!null)/)` and the restored `/emoji|reaction|thread/i` gate. Measurement `threadSurfacesPresent: 0`. Cut holds.
+
+**2. Privacy copy.** Swept `CHANNEL_REACH_TEXT` (expiry half of §6 is there), `CHANNEL_EMPTY_TEXT`, `CHANNEL_ARCHIVED_TEXT`, `unknownChannelText` / `unknownChannelHeadText`, archive hint, archive confirm, unresolved submit, retirement sentence, archived-send sentence (`:7010–7014`). No string says a channel is private, restricted, or unreadable.
+
+Sweep bounds, named: `chat-channels.observer.test.ts` reads eight script surfaces plus dialog markup plus the unknown-channel composer refusal, comments stripped, `checked >= 20`. It cannot see: a member-typed `purpose`; `renderFeed` empty titles; `site/src/lib/channels.ts` except the unresolved-copy test; the archived-send refusal (after `const recipients`); the catch sentences at `:7249–7262`. Those last two do not name a permission. The sweep comment still says “the composer’s reply bar”; the bar is gone and is not in the surface list.
+
+**3. Filter vs predicate / `showsOnScreen`.** `signalPage` (`:2070–2101`) is `workspace_id` then optional `channel_id=eq`. That cannot widen the view. Both readers capture `activeChannelId` and drop on mismatch. `filterSignalsByChannel` is absent. Sample mode is the one local filter, and the sample set grows with a post.
+
+| Path | Row deleted? | Reader told something true? |
+|---|---|---|
+| Stay in the channel | pending swapped for posted | yes |
+| Switch to another named channel | pending dropped; posted not prepended (`showsOnScreen` false) | status clears; hops that landed stay where they landed |
+| Switch to all-signals | posted kept (`row.channelId` matches the unfiltered query) | yes |
+| Unresolved `?c=` | `renderFeed` paints no row; composer hidden | yes |
+| Sample mode | snapshot filter; set grows on post | yes |
+| Failure, still here | landed hops stay; Retry lit | server sentence, or `Sent to N of M` |
+| Failure, moved | landed hops filtered off this screen; Retry hidden | names `addressLabel` |
+
+A row is stripped from `signals` only when its id is in the set about to be prepended (`visibleIds` / `visibleFailureIds`). The reset merge is the same `rowShowsOnScreen` plus the new oldest-row floor.
+
+**4. `composerIntent` / `resumable` / `addressMoved`.** `addressMoved = composerIntent !== null && composerIntent.placementChannelId !== next`. `resumable = unsent && addressStillActive`. Failure writes the intent only when resumable, with `placementChannelId`. Retry is shown only when resumable. Slug is resolved at send time from the id. Gone or archived → local sentence, intent nulled, Retry hidden.
+
+| Path | Retires? |
+|---|---|
+| Rail / dialog click, other place | yes |
+| Same place again (`changed` can still be true if unknown clears) | no |
+| `?c=` heal into a different channel | yes |
+| `?c=` heal into the same channel | no |
+| `Open #all-signals` from unknown | yes if the send had a channel |
+| Create | yes |
+| Archive of current | yes (`next` is null) |
+| `applyChannelFromUrl` on workspace open | does not go through `selectChannel`; a real workspace change already called `resetComposer()` (`:5222`) |
+
+Stay / move channel / move to all-signals / send from all-signals / workspace change / session expiry: intent, Retry, and the sentence match. A retry cannot double-post while `composerSending` is true (`:6905`). An unchanged body reuses command ids. Typing remints (`:6979`). A send whose channel has left the list, or is archived, is refused before the wire. Archived permalink: `channelById` still finds it (`channels.ts:69–75`); send asks `archivedAt`.
+
+**5. URL.** `syncChannelUrl` writes `?w=` and `?c=` on every `selectChannel` and on every `openWorkspace` after `applyChannelFromUrl`. A `?c=` whose `?w=` names another workspace is ignored. A missing id sets `unknownChannelId` and stays in the bar. Composer is hidden (`:1581`) and submit returns (`:6913–6923`). Keyboard and Retry both `requestSubmit()`. Boot `?w=` is a membership lookup. Heal goes through `selectChannel`. No path where the painted feed is the unfiltered query under a bad id. Bar and screen: `syncChannelCurrent` last; unknown marks no place.
+
+**6. `activeWorkspaceView` / current mark.** Channel buttons have no `data-workspace-view`. `activateWorkspaceView` for files/brain clears `[data-channel-place]` (`:5534–5537`). `renderChannelHead` returns without writing the channel name when the view is not signals (`:5634–5636`). `renderChannel` runs the signals-view loop, then rail, then head, so `syncChannelCurrent` last. Unresolved: no place is current. All-signals, a live channel, Files, and Brain each have one visible current place. The hidden-on-desktop mobile `data-workspace-view="signals"` tab can also be `aria-current` at the same time; it is `display:none` above 52rem. The phone channel chip is not an `aria-current` place.
+
+**7. `channelReadGeneration` / `channelListFailed`.** `refreshChannels` takes generation before the fetch, applies only if it still matches. Failure sets `channelListFailed = true` and re-renders the head **and** the feed when unknown is set. Success sets the flag false. Open takes generation before `Promise.all` and writes channels only if it still matches. A later list heals unknown through `selectChannel`. Archive of the current channel calls `selectChannel(null)`.
+
+**8. Tests as claim controls.**
+
+| Test | Property vs main (`d9fa25b`) |
+|---|---|
+| `composer.observer.test.ts` | `/emoji\|reaction\|thread/i` still there (restored after the cut; the assertion was already on main, a comment records the restore). Placement argument added. Not weakened. |
+| `transcript-shape.observer.mjs` | No diff vs `d9fa25b`. Same `[...visibleSignals].reverse()`. |
+| `composer-sprint.observer.test.ts` | Restored reversal. Retry pins moved from `unsent` to `resumable`; the property is still “every command id is kept.” |
+| `slack-shape.observer.test.ts` | Pins `<span>{ALL_SIGNALS_SLUG}</span>`, not the retired `# all-signals` comment. |
+| `workspace-switcher.observer.test.ts` | Landmark `CHANNELS`; still workspace control before the first rail list. |
+| `ui-addressing.observer.test.ts` | Transitive asset walk + `BROWSER_SIGNAL_COLUMNS`; stronger. |
+| `composer-sprint-browser.observer.test.ts` | Anchor `[^{}]*\}` after `createdAt`; stronger. |
+| `chat-channels.observer.test.ts` | Pins the Map merge, both `.set` paths, `forgetFetchedPostedIds` on the poll, prune, `openWorkspace` `clear()`, `pageFloor` from `hasMore ? at(-1) : ""`, `createdAt >= pageFloor`, and the combined `createdAt`/`id` sort. The retired `newestFetched` comparison is kept beside it. `site/package.json` globs `**/*.observer.test.ts`. Mutation table: 52 PASS, 0 not discriminating. |
+
+**9. Mobile.** At `max-width: 52rem`, channel switch is `inline-flex`, `min-block-size: 2.5rem`, `max-inline-size: 8rem`. Toolbar `min-block-size: 2.5rem; margin-block-end: -2.5rem`. Head `position: absolute`; titleblock clipped for the accessible name. List padding `--feed-band-height: 3.25rem`. Rail places `display:none` → list height 0. The ≤34rem block does not restack a head (`:12369–12374`).
+
+JSON: 390 app bar 73px (`115.1+73=188.1`); 320 app bar 57px (`120.8+57=177.8`). First message top = floating head bottom (clearance 0). Longest legal slug 128px = 8rem; filters 110 / 40; `allFilterFullyOnScreen` true. Composer bottoms match the viewport. App bar `top` 115.1 / 120.8 is the sample notice, not channel chrome. `threadSurfacesPresent: 0`. Method (reload, four-way settle, `scrollTop` 0, in-viewport rects) matches the numbers it prints. Desktop `appBar` is the rail (296×852.3), not a 73px bar; the 73px ruling is phone-only. Desktop `firstMessageClearsFloatingBand` is 45 because that head is in-flow.
+
+**10. Typed lists.** Slug / reserved / purpose bounds come from `_shared/channels.ts` and are interpolated. `ALL_SIGNALS_SLUG` is asserted to be in `RESERVED_CHANNEL_SLUGS`. `COMPOSER_DRAFT_SCOPE = "all-signals"` is the storage key. Channel command bodies are generated from the edge’s `required` / `optional` arrays.
+
+**11. D-053.** `channelRefusalMessage` returns `body.message` as text and branches only on missing/blank + status. `channelCommand` does not parse the sentence. Dashboard create/rename/archive show `readableError`. `readableError` still regex-matches `error.message` for network words (`:1633–1637`); that helper pre-exists on main. Today’s channel sentences do not match it.
+
+**12. Composer posts where you are reading.** No dropdown, no `#` parsing of the body. Placeholder / aria-label from `syncComposerPlacement`.
+
+**13. Claims 1–7.** A channel is an address (`CHANNEL_REACH_TEXT`). `all-signals` is the unfiltered query (`activeChannelId === null`, no `channel_id=eq`). Narrowing is the query’s. Refusals show the server sentence. Bad `?c=` is an honest empty state and does not name a read permission. 73px app bar is still the only standing header on a phone. Bounds and lists are generated from the constants that enforce them.
+
+---
+
+## Also checked
+
+Archive arm is the channel id; `selectChannel`, workspace open, dialog `close`, and rename `input` disarm. Composer hidden + submit guard on unknown. No third `postBrowserSignal` caller in the dashboard.
+
+Same-workspace `openWorkspace` still `clear()`s the Map (Refresh / Try again). That drops a stand-in on a **new** fetch after the post committed, which is ordinary replica lag, not the “page requested before commit” race. Prune uses `entry.at` (client `Date.now()`), not `row.createdAt`; 30s vs a 2s poll is still the chosen bound, and the design note says no lag was measured. Nothing else reads `POSTED_ROW_GRACE_MS`. The design note’s older paragraph still says the Map “is cleared as the request goes out”; the code does not. That sentence is stale prose, not a path in the app.
+
+Recording only `visible` rows (`:7141–7144`) leaves a replica-lag gap if a send **finishes** after a move to a channel that does not show the row, then the reader comes back. The Map’s contract is “a fetch that started before this post committed.” A return click after success starts a fetch **after** the post committed. Not a finding.
+
+**Not established:** I did not run the app, `npm test`, or a live edge. I did not hit production.
+
+The newest-row comparison Gemini failed on 085d83d is gone. `hasMore` is the right whole-history test. The merge is the query’s order. A lagging post that still belongs on the first page stands in.
+
+VERDICT: PASS

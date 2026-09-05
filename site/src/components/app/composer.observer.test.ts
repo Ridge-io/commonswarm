@@ -32,6 +32,10 @@ test("composer defaults to broadcast and keeps signal language", () => {
   assert.match(markup, /placeholder="What are you about to do\?"/);
   assert.doesNotMatch(markup, /Message #general|Message #all-signals/i);
   assert.doesNotMatch(markup, /only .* sees|will see|private|lock/i);
+  /* This gate was retired for "thread" on 2026-09-05 when a thread reply bar shipped in the
+     composer, and RESTORED the same day when the coordinator cut the thread surface to
+     `lane/chat-app-threads`. Nothing in the composer may name a feature that is not there,
+     and none of the three is. */
   assert.doesNotMatch(markup, /emoji|reaction|thread/i);
 
   /* An untagged body is still a broadcast; that default did not change, only where it is read
@@ -61,7 +65,10 @@ test("composer kind defaults by recipient, and the app never opts out of the wak
      checkbox could go: an @tag on an agent IS the wake. */
   assert.match(submit, /const recipientKinds = recipients\.map\(\(recipient\) => browserSignalKind\(recipient\)\)/);
   assert.match(submit, /kind: recipientKinds\[index\]!/);
-  assert.match(submit, /rawBody,\s*recipient,\s*recipientKinds\[index\]!,\s*attachmentRefs/);
+  assert.match(
+    submit,
+    /rawBody,\s*recipient,\s*recipientKinds\[index\]!,\s*attachmentRefs,\s*placement,/,
+  );
   assert.doesNotMatch(dashboard, /browserSignalKind\([^)]*,\s*true\)/);
 });
 
@@ -84,7 +91,12 @@ test("browser-authored signals use the existing broadcast and direct target fiel
   assert.match(submit, /const address = browserSignalAddress\(recipient\)/);
   assert.match(submit, /to: address\.toUserId/);
   assert.match(submit, /toAgent: address\.toAgentPrincipalId/);
-  assert.match(submit, /rawBody,\s*recipient,\s*recipientKinds\[index\]!,\s*attachmentRefs,\s*\)\);/);
+  /* ~~`attachmentRefs,\s*\)\);`~~ retired 2026-09-05: `placement` is the last argument now,
+     and it is where the post says which channel it lands in. */
+  assert.match(
+    submit,
+    /rawBody,\s*recipient,\s*recipientKinds\[index\]!,\s*attachmentRefs,\s*placement,\s*\)\);/,
+  );
   assert.match(submit, /await postBrowserSignal/);
   /* One command id per recipient, so a retry of a partly-sent message cannot repost the ones
      that already landed. A single shared id would make the second post look like a duplicate. */

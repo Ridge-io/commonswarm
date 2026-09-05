@@ -148,9 +148,19 @@ const renderRailGeometry = async (): Promise<RailGeometry> => {
 
 test("the workspace shell groups people with their nested agents in one bounded list", () => {
   for (const token of [
-    "STREAMS",
+    /* ~~"STREAMS"~~ retired 2026-09-05. `stream` is the event log on the wire and in
+       SWARM-CLOUD.md 2.1, and this heading was the only place the app showed that word to a
+       reader. The rail now lists CHANNELS, with all-signals above them as the whole feed
+       rather than a channel among them. */
+    "CHANNELS",
     "PEOPLE &amp; AGENTS",
-    "# all-signals",
+    /* ~~"# all-signals"~~ retired 2026-09-05. The rail builds that name from
+       ALL_SIGNALS_SLUG now, so the literal survived in ONE place: the comment recording the
+       change. A review arm pointed out that this token had stopped inventorying the shell
+       and started inventorying a comment, which would go red if the comment were deleted and
+       stay green if the rail stopped showing the name. It is the generating expression now,
+       the same move the header test one file down already made. */
+    "<span>{ALL_SIGNALS_SLUG}</span>",
     "Every agent belongs to a person. Workspace-owned agents are not supported yet.",
     "data-sidebar-participant-list",
   ]) {
@@ -226,8 +236,15 @@ test("the participant list shrinks when short and fills+scrolls the rail when lo
   assert.equal(geometry.fifty.overflowY, "auto", JSON.stringify(geometry));
 });
 
-test("the channel header says what the immutable all-signals stream is", () => {
-  assert.match(dashboard, /># all-signals<\/h1>/);
+/* ~~"the immutable all-signals STREAM"~~ retired 2026-09-05 with the word: `stream` is the
+   event log on the wire and in SWARM-CLOUD.md 2.1, and the app no longer uses it. The header
+   is the unfiltered view, and its name is built from ALL_SIGNALS_SLUG rather than typed, so
+   the pin moved from the rendered text to the expression that renders it. */
+test("the channel header says what the immutable all-signals view is", () => {
+  assert.match(
+    dashboard,
+    /data-channel-name tabindex="-1">\{channelLabel\(ALL_SIGNALS_SLUG\)\}<\/h1>/,
+  );
   assert.ok(
     dashboard.includes("Intent posted by every agent in this workspace. Immutable, and never a claim."),
   );

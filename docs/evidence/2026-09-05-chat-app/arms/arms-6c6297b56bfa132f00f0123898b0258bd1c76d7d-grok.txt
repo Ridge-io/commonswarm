@@ -1,0 +1,132 @@
+I'll read REVIEW.md and DIFF.patch first, then follow REVIEW.md exactly.The first `diff --git` line is in. Next I’ll read the rest of the patch and the working-tree files the brief names.SHA matches. I’ll keep reading the rest of the patch and the source files the brief names.I’ll keep going through the remaining patch and the files that actually enforce the claims.The grok folder is not the repo. I’ll search the real checkout and keep reading the remaining source.I’ll split the remaining attack points across parallel reads: composer paths, URL/workspace opens, privacy copy, and CSS vs measurements.I’ll read the composer, workspace-open, and CSS sections next — those are the places the last three rounds actually broke.The send-drop path looks leaky. I’ll confirm draft/status handling and the other remaining attack points.Checking one more interaction: channel-switch focus/blur vs. the send-drop path.`diff --git a/docs/design/2026-09-05-chat-app-channels.md b/docs/design/2026-09-05-chat-app-channels.md`
+
+SHA `6c6297b56bfa132f00f0123898b0258bd1c76d7d`. I read the patch and the tree.
+
+---
+
+**1. `channelAtSend` drop: capture is right, landing is not.**  
+`site/src/components/app/LiveDashboard.astro` 6861, 6980, 7046–7053, 7087–7090, 7151–7156.
+
+The send stores `activeChannelId` before any `await`. The post still goes to that channel. That part holds.
+
+Then the input is emptied (6980) **before** the `await`. On drop, success only revokes object URLs and returns. Failure returns with no revoke. Neither path:
+
+- clears the draft
+- restores the body
+- clears `composerIntent`
+- sets status to success or error
+
+`finally` still runs `setComposerSending(false)` when only the channel changed (version and workspace are the same).
+
+**Success + switch:** the box is empty. Status stays `Posting…`. Typing does not clear it (`6673–6676` only clear `error` / `idle`). The reader is not told the message landed in the other channel.
+
+**Failure + switch:** `selectChannel` → `activateWorkspaceView` focuses the title (`5504`), which blurs the composer (`6700–6708`) and flushes an empty box (`2560–2562`). That **deletes** the draft. The catch never puts the body back. No error. No Retry. The text is gone.
+
+**How to see it:** in `#mobile`, send (a file makes the window easy). Click `#ops` while it is in flight. On success: empty box, `Posting…`, send enabled. On failure: empty box, no error, draft gone after reload.
+
+**Refute:** I asked if `pagehide` / blur would save a success from a duplicate. For success, blur of an empty box also clears the draft, so reload does not re-post. That is luck, not a landing. The failure path still loses the message. The new test only pins the `!==` checks, not cleanup. Same class they already named at 7128–7133 for a throw after the last post.
+
+---
+
+**2. Workspace open can apply an older channel list over a newer one.**  
+`LiveDashboard.astro` 5211–5214, 5253–5265, 5829–5833, 7205–7212.
+
+`refreshChannels` takes a generation **before** the fetch and drops a stale result. The open’s own read does not. It waits, then `++channelReadGeneration` and writes `nextChannels` if `requestVersion` still matches.
+
+Same workspace, same version:
+
+1. Switch workspace. `channels = []`. `Promise.all` is in flight. The rail stays up (`keepShell`).
+2. Click `+`, create a channel. `refreshChannels` lands, rail shows it, `selectChannel` writes `?c=`.
+3. The open’s slower `workspaceChannels` returns the snapshot from **before** the create. Open bumps generation and overwrites `channels`.
+4. `applyChannelFromUrl` cannot find that id in the old list, so it sets `unknownChannelId`. Head: “Channel not found” for a channel that exists.
+
+**How to see it:** already in the app, switch workspace, create a channel before “Opening…” finishes (slow network helps). You get a brief ready state, then Channel not found. The id stays in the URL.
+
+**Refute:** an old-workspace refresh is already dropped by `version` / `workspaceId`. This hole is a **newer** same-workspace read. `openWorkspace` does not close the channel dialog, so Create is live during the load. The test pins `++channelReadGeneration` next to the write, which is the overwrite, not a start-of-read guard.
+
+---
+
+**3. Privacy copy.**  
+Swept `CHANNEL_REACH_TEXT`, `CHANNEL_EMPTY_TEXT`, `CHANNEL_ARCHIVED_TEXT`, `unknownChannelText` / `unknownChannelHeadText`, dialog archive hint, composer reply bar, unresolved submit, archive confirm (`Archive … for everyone`). No string says a channel is private, restricted, or unreadable.
+
+The dashboard sweep reads 8 script surfaces + reply markup + dialog markup + composer refusals, comments stripped, `checked >= 20`. It cannot see a member-typed `purpose` (named) or `site/src/lib/channels.ts` (the unresolved test covers that file). Invite copy `Creating a private link…` is not a channel surface.
+
+Holds.
+
+---
+
+**4. Filter vs predicate.**  
+`signalPage` 2037: `.eq("workspace_id", …)` then optional `.eq("channel_id", …)`. That cannot widen the view. `loadSignals` / `refreshLatestSignals` store `channelId` with the request and drop on mismatch.
+
+Sample mode filters `sampleSignals` locally. The sample **is** the whole set; posts prepend to `sampleSignals` (7072) before a later switch. JS is single-threaded, so a sample post cannot interleave a switch. Held.
+
+A poll while `unknownChannelId` is set uses `activeChannelId === null` and may fetch the unfiltered page into `signals`. `renderFeed` 4187–4189 still calls `renderUnknownChannel` first, so those rows are not shown. `selectChannel(null)` then clears `signals` because `unknownChannelId !== null`. Held.
+
+---
+
+**5. Bad `?c=` and `?w=`.**  
+`applyChannelFromUrl` 5669–5683: other-workspace `?w=` is ignored; missing id sets `unknownChannelId`. `renderFeed` does not paint rows. Composer is hidden (`1524`) and submit returns (`6841–6851`). Keyboard / Retry both `requestSubmit` that same handler. No third post path.
+
+Boot `?w=` is a membership lookup, not a grant (`6152–6159`). Menu, create, close-and-fall-through, retry, refresh all `openWorkspace` → apply then `syncChannelUrl` with no `await` between. A followed `?w=A&c=C` still applies when that workspace is the one being opened.
+
+Held, except finding 2 can still turn a **just-created** id into the unknown state.
+
+---
+
+**6. Thread replies.**  
+Reply placement is `{ threadRootId, broadcastToChannel }` with no `channel`. Top-level is `{ channel: slug }` or `{}`. `postBrowserSignal` always sends `in_reply_to: null` and never a recipient on a thread (composer refuses tags, 6889). `canReply` matches the edge: not sample, not a reply, no `threadRootId`, broadcast only. Kind is `note` (everyone) or `ask` (agent); `working-on` is not sent.
+
+`groupSignalThreads`: orphans stay as own rows; order kept; each id once (`signal-feed-threads.test.mjs`). Held.
+
+---
+
+**7. Typed lists.**  
+Slug / reserved / purpose bounds come from `_shared/channels.ts`. `channelNameHint` concatenates the edge sentences. `ALL_SIGNALS_SLUG` is interpolated in markup and unknown copy. `COMPOSER_DRAFT_SCOPE = "all-signals"` is the storage key for old drafts; the argument is right. Astro already imports `_shared` the same way (`SIGNAL_BODY_MAX`). Held.
+
+---
+
+**8. `Object.hasOwn` groups.**  
+`postBrowserSignal` 2082–2090: `channel`, `thread_root_id`, `broadcast_to_channel` each have their own spread. Default `placement = {}`. Empty placement omits all three. `to_user_id`, `to_agent_principal_id`, `in_reply_to: null`, `about: null` stay unconditional. Byte-identical to the old body. Held.
+
+---
+
+**9. Tests as claim controls.**  
+`composer.observer.test.ts`: `/thread/` removed from the negative gate because threads ship; `/emoji|reaction/` stays; reply attrs are listed from markup; bar is `hidden` at rest. Retarget, not a weaken.
+
+`ui-addressing.observer.test.ts`: transitive walk + `assetGraph.length > assetPaths.length`. Column list moved to `BROWSER_SIGNAL_COLUMNS`; built assets must still contain the names. Stronger.
+
+`composer-sprint-browser.observer.test.ts`: tail is `[^{}]*\}` after `createdAt`, so extra fields cannot swallow the next ternary. Stronger.
+
+Moved tests: `slack-shape` pins `<span>{ALL_SIGNALS_SLUG}</span>` (the rail, not a comment). `workspace-switcher` still requires the workspace control first. `transcript-shape` / `composer-sprint` still require `[...visibleSignals].reverse()`. Held.
+
+Mutation table: 38 PASS, 0 not discriminating. The two new holes above are not in it.
+
+---
+
+**10. Mobile.**  
+Channel switch lives in `.dashboard__feed-toolbar`. At `max-width: 52rem` the toolbar is `min-block-size: 2.5rem` and `margin-block-end: -2.5rem`. Switch is `min-block-size: 2.5rem`, `max-inline-size: 8rem`. No second standing row. `--feed-band-height: 3.25rem` is the old roster cluster.
+
+`mobile-measurements.json`: 390 app bar 73px, 320 app bar 57px; `firstMessageClearsFloatingBand` 0; longest slug 128px; filters 110 / 40px; `allFilterFullyOnScreen` true. 390: head bottom 240.1 = first message top. 320: 229.8 = 229.8. Composer bottoms match the viewport. Method (reload, four-way settle, `scrollTop` 0, in-viewport) matches the prior miss. App bar `top` 115.1 is the sample notice, not extra channel chrome.
+
+Held.
+
+---
+
+**11. Rail vs head; archive arm.**  
+`renderChannel` runs the signals-view loop, then rail, then head. `syncChannelCurrent` last. Files / Brain clear `[data-channel-place]`. Unresolved: no place is current (documented). Archive arm is the channel id; `selectChannel`, `openWorkspace`, dialog `close`, and rename `input` disarm. Held.
+
+---
+
+**12. Round 2–3 leftovers.**  
+Unknown copy has no “cannot read”. `channelListFailed` follows both outcomes of `refreshChannels`. `CHANNEL_REACH_TEXT` has the expiry half of §6. `ALL_SIGNALS_SLUG` in frontmatter is safe. Sample posts join `sampleSignals`.
+
+Held, except findings 1 and 2.
+
+---
+
+**13. “What this lane did NOT establish.”**  
+Production not hit, no live thread post, no `?m=` / `?t=`, colour deferred, To: deferred, no query plan, sweep bounds named. That list is honest. It does not name the drop landing or the open/generation overwrite.
+
+---
+
+VERDICT: FAIL

@@ -116,7 +116,13 @@ const replaceOne = (
 const patchClient = (source: string, variant: Variant): string => {
   let result = source;
   if (["failure", "failure-reverted", "slow", "double-reverted"].includes(variant)) {
-    const sample = /([A-Za-z_$][\w$]*)\?(\{id:`sample-composer-\$\{[^}]+\}`,[\s\S]*?createdAt:new Date\(\)\.toISOString\(\)\}):await /;
+    /* ~~`createdAt:new Date().toISOString()\}`~~ retired 2026-09-05: the sample row carries
+       its channel and thread fields after createdAt now, so an anchor that demanded the
+       closing brace IMMEDIATELY after createdAt no longer ended at this literal. It did not
+       fail loudly either — the lazy `[\s\S]*?` ran on to the next matching brace and
+       rewrote a span covering unrelated code, and the patched page hung at boot. The tail
+       now ends at the first brace after createdAt, whatever fields precede it. */
+    const sample = /([A-Za-z_$][\w$]*)\?(\{id:`sample-composer-\$\{[^}]+\}`,[\s\S]*?createdAt:new Date\(\)\.toISOString\(\)[^{}]*\}):await /;
     result = replaceOne(result, sample, (...values: string[]) => {
       const owner = values[1]!;
       const signal = values[2]!;

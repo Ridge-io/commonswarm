@@ -32,9 +32,12 @@ const between = (source: string, start: string, end: string): string => {
 test("the built rail starts with exactly one current-workspace control", () => {
   const rail = between(appHtml, '<aside class="dashboard__rail"', '<section class="dashboard__channel"');
   const control = rail.indexOf("data-workspace-menu-root");
-  const streams = rail.indexOf("dashboard-streams-label");
+  /* ~~dashboard-streams-label~~ renamed 2026-09-05 with the heading it labels: the rail's
+     first list is CHANNELS now, not STREAMS. What this test measures is unchanged — the
+     workspace control comes before the first rail list. */
+  const places = rail.indexOf("dashboard-channels-label");
 
-  assert.ok(control >= 0 && control < streams, "the workspace control must be first in the rail");
+  assert.ok(control >= 0 && control < places, "the workspace control must be first in the rail");
   assert.equal((rail.match(/data-workspace-menu-trigger/g) ?? []).length, 1);
   assert.match(rail, /data-sidebar-workspace-name>Workspace</);
   assert.doesNotMatch(rail, /dashboard__workspace-switcher/);

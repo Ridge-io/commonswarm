@@ -1,0 +1,30 @@
+I have reviewed the DIFF and the working tree, testing all the claims laid out in the brief, especially focusing on the page floor boundary changes in Round 16.
+
+```text
+diff --git a/docs/design/2026-09-05-chat-app-channels.md b/docs/design/2026-09-05-chat-app-channels.md
+
+1. **Anything of the thread surface still present:** I checked the diff and the file tree. The composer reply bar, collapsed replies, and the thread-specific wire keys (`thread_root_id`, `broadcast_to_channel`) are not sent by the browser. The observer controls `composer-sprint.observer.test.ts` and `transcript-shape.observer.mjs` confirm the reversal logic was restored. The cut holds completely.
+
+2. **Copy that implies privacy:** I swept `CHANNEL_REACH_TEXT`, `CHANNEL_ARCHIVED_TEXT`, and `unknownChannelText`. The text correctly says "Every member of this workspace reads every channel". The honest empty state does not mention restricted read permissions. The privacy claim holds.
+
+3. **A filter that replaces the predicate:** I checked `signalPage` and `loadSignals`. The client equality `channelId !== null ? query.eq("channel_id", channelId) : query` adds to the view's WHERE clause rather than replacing it. Sample mode is properly bounded to its sample array, which now correctly includes new posts so they don't vanish. The narrowing holds.
+
+4. **`composerIntent`:** I traced the success, partial failure, and move paths. A channel change correctly nulls the intent (`addressMoved` correctly checks `composerIntent.placementChannelId !== next`), preventing replay of a stale address. Retries reuse the old command IDs and `placementChannelId`, meaning partial failures don't drop their audience or double-post. The claim holds.
+
+5. **The URL:** I walked the `?c=` handling. Workspace switch correctly clears the URL channel if it isn't in the new workspace, avoiding the "Channel not found" bug from previous rounds. A bad `?c=` sets `unknownChannelId` which skips the feed render and hides the composer (`composer.hidden = unknownChannelId !== null`), showing only the honest empty state. The claim holds.
+
+6. **`activeWorkspaceView`:** I checked `syncChannelCurrent()` and the rail rendering. Files/brain clear the channel mark, and an unresolved channel also correctly clears all channel marks, because the reader is in the signals view but no channel. The claim holds.
+
+7. **`channelReadGeneration` and `channelListFailed`:** The generation ID follows both the successful fetch and the failed fetch, avoiding races where a slow channel read clobbers a newly created channel. The claim holds.
+
+8. **The tests as claim controls:** The moved and restored observer controls maintain their strictness. The anchor matching in `composer-sprint-browser.observer.test.ts` was fixed to grab the end of the row accurately (`[^{}]*\}`), meaning the test cannot be silently bypassed. The claim holds.
+
+9. **Mobile:** The measurements and CSS show the channel control rides inside the floating feed toolbar with a negative margin matching its height, keeping clearance at 0. The app bar maintains the 73px bound. The claim holds.
+
+10. **The Composer's Landing Rule (Round 16):** I attacked the new page floor comparison: `row.createdAt > pageFloor.createdAt || (row.createdAt === pageFloor.createdAt && row.id >= pageFloor.id)`. 
+- **Query Order:** `commonswarm.ts` enforces exactly `.order("created_at", { ascending: false }).order("id", { ascending: false })`.
+- **Tie Breaker (`>=`):** `pageFloor` is the last item on the page. In `id DESC` order, a lexicographically larger UUID string sorts *before* a smaller UUID string. Therefore, `row.id >= pageFloor.id` correctly identifies a row that should appear *before or at* the floor. If a stand-in row comes after the floor (smaller ID), it belongs on the next page, and dropping it from the screen is the correct behavior.
+- **Stand-in Duplication/Ordering:** `arrivedWhileFetching` uses `!fetched.has(row.id)`, meaning a stand-in row that the replica has caught up with is never duplicated. For ordering, `b.id.localeCompare(a.id)` precisely matches the numeric `id DESC` Postgres sort because UUIDs are fixed-length hexadecimal strings where the string order always matches the byte value order. The logic holds perfectly.
+
+VERDICT: PASS
+```

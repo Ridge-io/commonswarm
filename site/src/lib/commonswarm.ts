@@ -33,6 +33,12 @@ import {
   type AgentActivityConnectionState,
   type AgentActivityFrame,
 } from "./agent-activity.js";
+import {
+  channelRefusalMessage,
+  type WorkspaceChannel,
+} from "./channels.js";
+
+export type { WorkspaceChannel };
 
 /** Must match src/cloud/config.ts:CLIENT_PROTOCOL_VERSION — the server refuses a mismatch. */
 export const CLIENT_PROTOCOL_VERSION = "0.1.0";
@@ -1300,6 +1306,12 @@ export interface Signal {
   about: string | null;
   until: string | null;
   createdAt: string;
+  /** The channel this message is filed in. `null` is unfiled: it reads in all-signals only. */
+  channelId: string | null;
+  /** The message this reply's thread starts from, or `null` for a message of its own. */
+  threadRootId: string | null;
+  /** A thread reply the author also sent to the channel. Always false on a root. */
+  broadcastToChannel: boolean;
 }
 
 /** Optional and additive: legacy rows become empty, and newer metadata fields are ignored. */
@@ -2027,6 +2039,22 @@ export function browserAcceptedDeliveryIndicator(
   };
 }
 
+/**
+ * Where a post is filed. Every key is INDEPENDENT and every one is optional:
+ * the command edge groups each of them on its own `Object.hasOwn` test
+ * (`_shared/channels.ts` CHAT_SIGNAL_OPTIONAL_KEYS), so a body that sends none
+ * — which is what this browser sent until this lane — validates exactly as it
+ * did before. Never send a key here as `null` to mean "no": send nothing.
+ */
+export interface BrowserSignalPlacement {
+  /** Channel slug. Omitted or null means unfiled, which reads in all-signals. */
+  channel?: string | null;
+  /** The message a thread reply belongs to. A reply inherits its root's channel. */
+  threadRootId?: string | null;
+  /** Send a thread reply to the channel as well. Only valid with a thread root. */
+  broadcastToChannel?: boolean;
+}
+
 /** Posts one browser-authored signal with either broadcast or one direct addressee. */
 export async function postBrowserSignal(
   session: Session,
@@ -2036,6 +2064,7 @@ export async function postBrowserSignal(
   recipient: BrowserSignalRecipient,
   signalKind: BrowserSignalKind = browserSignalKind(recipient),
   attachments: readonly BrowserSignalAttachmentRef[] = [],
+  placement: BrowserSignalPlacement = {},
 ): Promise<Signal> {
   const address = browserSignalAddress(recipient);
   const { status, body } = await postCommand(
@@ -2050,6 +2079,15 @@ export async function postBrowserSignal(
       in_reply_to: null,
       about: null,
       ...(attachments.length === 0 ? {} : { attachments }),
+      ...(placement.channel === undefined || placement.channel === null
+        ? {}
+        : { channel: placement.channel }),
+      ...(placement.threadRootId === undefined || placement.threadRootId === null
+        ? {}
+        : { thread_root_id: placement.threadRootId }),
+      ...(placement.broadcastToChannel === undefined
+        ? {}
+        : { broadcast_to_channel: placement.broadcastToChannel }),
     },
     { workspace_id: workspaceId, stream: { kind: "workspace" } },
     "CommonSwarm lost the signal result. Refresh the feed before posting it again.",
@@ -2068,18 +2106,13 @@ export async function postBrowserSignal(
     );
   }
   return {
-    id: row.id,
-    from: String(row.from ?? ""),
+    ...browserSignalFromRow(row),
+    /* The response row is the server's, so these fall back to what was
+     * asked for only when the field is missing entirely. An old edge that does
+     * not return them leaves the row readable rather than blank. */
     fromKind: String(row.from_kind ?? "user"),
-    to: row.to === null || row.to === undefined ? null : String(row.to),
-    toAgent: row.to_agent === null || row.to_agent === undefined
-      ? null
-      : String(row.to_agent),
     kind: String(row.kind ?? signalKind),
     body: String(row.body ?? bodyText),
-    attachments: parseBrowserSignalAttachments(row.attachments),
-    about: row.about === null || row.about === undefined ? null : String(row.about),
-    until: row.until === null || row.until === undefined ? null : String(row.until),
     createdAt: String(row.created_at ?? new Date().toISOString()),
   };
 }
@@ -2113,6 +2146,45 @@ export async function reportBrowserSignalsSeen(
  * error, which is the no-enumeration posture the rest of the product keeps: a stranger
  * cannot learn whether a workspace id exists by watching this call fail differently.
  */
+/**
+ * The columns the browser names when it reads a signal. Named explicitly, never
+ * `*`: the read view is recreated by migrations that APPEND columns, and a
+ * fixed select list is what makes an append safe for an installed browser.
+ * One list, so the paged reader and this one cannot drift apart.
+ */
+export const BROWSER_SIGNAL_COLUMNS =
+  "id,from,from_kind,to,to_agent,kind,body,about,until,created_at,attachments," +
+  "channel_id,thread_root_id,broadcast_to_channel";
+
+/**
+ * One row of `swarm_read.signals` as the browser holds it. Both readers call
+ * this, so a column added to the select list is mapped in one place.
+ *
+ * `broadcast_to_channel` is read with `=== true` rather than coerced: a row
+ * written before the column existed reads back null, and null is not a
+ * broadcast.
+ */
+export function browserSignalFromRow(row: Record<string, unknown>): Signal {
+  const text = (value: unknown): string | null =>
+    value === null || value === undefined ? null : String(value);
+  return {
+    id: String(row.id),
+    from: String(row.from ?? ""),
+    fromKind: String(row.from_kind ?? ""),
+    to: text(row.to),
+    toAgent: text(row.to_agent),
+    kind: String(row.kind ?? ""),
+    body: String(row.body ?? ""),
+    attachments: parseBrowserSignalAttachments(row.attachments),
+    about: text(row.about),
+    until: text(row.until),
+    createdAt: String(row.created_at ?? ""),
+    channelId: text(row.channel_id),
+    threadRootId: text(row.thread_root_id),
+    broadcastToChannel: row.broadcast_to_channel === true,
+  };
+}
+
 export async function feed(workspaceId: string, limit = 50): Promise<Signal[]> {
   const c = client();
   if (!c) throw new NoDeployment();
@@ -2122,26 +2194,147 @@ export async function feed(workspaceId: string, limit = 50): Promise<Signal[]> {
       c
         .schema("swarm_read")
         .from("signals")
-        .select("id,from,from_kind,to,to_agent,kind,body,about,until,created_at,attachments")
+        .select(BROWSER_SIGNAL_COLUMNS)
         .eq("workspace_id", workspaceId)
         .order("created_at", { ascending: false })
         .limit(limit)
         .abortSignal(signal),
   );
   if (error) throw new Error(error.message);
-  return (data ?? []).map((row) => ({
-    id: String(row.id),
-    from: String(row.from ?? ""),
-    fromKind: String(row.from_kind ?? ""),
-    to: row.to === null || row.to === undefined ? null : String(row.to),
-    toAgent: row.to_agent === null || row.to_agent === undefined ? null : String(row.to_agent),
-    kind: String(row.kind ?? ""),
-    body: String(row.body ?? ""),
-    attachments: parseBrowserSignalAttachments(row.attachments),
-    about: row.about === null || row.about === undefined ? null : String(row.about),
-    until: row.until === null || row.until === undefined ? null : String(row.until),
+  return (data ?? []).map((row) => browserSignalFromRow(row as unknown as Record<string, unknown>));
+}
+
+/**
+ * Every channel this member can see, archived ones included. The rail hides the
+ * archived; a permalink into one still has to resolve, so they are read and not
+ * filtered away at the source.
+ *
+ * The read edge exposes no channel list, so the browser reads `swarm_read.channels`
+ * directly, the same way it reads the signal feed. Membership is the view's only
+ * predicate, so a non-member gets an empty set rather than an error.
+ */
+export async function workspaceChannels(
+  workspaceId: string,
+): Promise<WorkspaceChannel[]> {
+  const c = client();
+  if (!c) throw new NoDeployment();
+  const { data, error } = await readWithDeadline(
+    "workspace channels",
+    (signal) =>
+      c
+        .schema("swarm_read")
+        .from("channels")
+        .select(
+          "channel_id,workspace_id,slug,purpose,created_by_principal,created_by_kind,created_at,archived_at",
+        )
+        .eq("workspace_id", workspaceId)
+        .order("slug", { ascending: true })
+        .abortSignal(signal),
+  );
+  if (error) throw new Error(error.message);
+  return (data ?? []).map((row) => browserChannelFromRow(row as unknown as Record<string, unknown>));
+}
+
+function browserChannelFromRow(row: Record<string, unknown>): WorkspaceChannel {
+  return {
+    channelId: String(row.channel_id),
+    workspaceId: String(row.workspace_id),
+    slug: String(row.slug ?? ""),
+    purpose: row.purpose === null || row.purpose === undefined
+      ? null
+      : String(row.purpose),
+    createdByPrincipal: String(row.created_by_principal ?? ""),
+    createdByKind: String(row.created_by_kind ?? ""),
     createdAt: String(row.created_at ?? ""),
-  }));
+    archivedAt: row.archived_at === null || row.archived_at === undefined
+      ? null
+      : String(row.archived_at),
+  };
+}
+
+/**
+ * One accepted channel command, unwrapped. The refusal path shows the SERVER's
+ * own sentence whenever it sent one and never reads it: the reason a channel
+ * name is refused lives in the validator, and a browser that reworded it would
+ * be a second, drifting copy of a rule it does not enforce.
+ */
+async function channelCommand(
+  session: Session,
+  commandId: string,
+  workspaceId: string,
+  command: Record<string, unknown>,
+  fallback: string,
+): Promise<WorkspaceChannel> {
+  const { status, body } = await postCommand(
+    session,
+    commandId,
+    command,
+    { workspace_id: workspaceId, stream: { kind: "workspace" } },
+  );
+  if (status !== 200 || body.status !== "accepted") {
+    throw new Error(channelRefusalMessage(status, body, fallback));
+  }
+  const row = body.channel as Record<string, unknown> | undefined;
+  if (!row || typeof row.channel_id !== "string") {
+    throw new CommandOutcomeUnknown(
+      "CommonSwarm accepted the change without returning the channel. Reload to see what it did.",
+    );
+  }
+  return browserChannelFromRow(row);
+}
+
+export async function createChannel(
+  session: Session,
+  commandId: string,
+  workspaceId: string,
+  slug: string,
+  purpose: string | null = null,
+): Promise<WorkspaceChannel> {
+  return channelCommand(
+    session,
+    commandId,
+    workspaceId,
+    {
+      kind: "channel_create",
+      slug,
+      /* `purpose` is optional and its own key group on the edge: an empty box
+       * sends no key at all rather than a null the validator would have to
+       * decide about. */
+      ...(purpose === null || purpose === "" ? {} : { purpose }),
+    },
+    "CommonSwarm did not create the channel",
+  );
+}
+
+export async function renameChannel(
+  session: Session,
+  commandId: string,
+  workspaceId: string,
+  channelId: string,
+  slug: string,
+): Promise<WorkspaceChannel> {
+  return channelCommand(
+    session,
+    commandId,
+    workspaceId,
+    { kind: "channel_rename", channel_id: channelId, slug },
+    "CommonSwarm did not rename the channel",
+  );
+}
+
+export async function archiveChannel(
+  session: Session,
+  commandId: string,
+  workspaceId: string,
+  channelId: string,
+): Promise<WorkspaceChannel> {
+  return channelCommand(
+    session,
+    commandId,
+    workspaceId,
+    { kind: "channel_archive", channel_id: channelId },
+    "CommonSwarm did not archive the channel",
+  );
 }
 
 /** Reads receipts for any signal visible to the signed-in workspace member. */

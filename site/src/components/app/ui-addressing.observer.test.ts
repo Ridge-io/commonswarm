@@ -20,9 +20,37 @@ const assetPaths = Array.from(
   (match) => match[1]!,
 );
 assert.ok(assetPaths.length > 0, "the built /app page must link emitted JS and CSS assets");
-const builtAssets = assetPaths
-  .map((assetPath) => readFileSync(join(siteRoot, "dist", assetPath), "utf8"))
-  .join("\n");
+/*
+ * The page's assets AND the modules those import, walked transitively.
+ *
+ * ~~the linked assets only~~ retired 2026-09-05, and it was a real bound rather than a
+ * style point: the read view's column list moved into one exported constant, Rollup put
+ * that constant in a shared chunk, and the shallow read stopped seeing a string the page
+ * still loads. A shallow reader can therefore report a confident absence for anything that
+ * is code-split. Walking the graph is what makes "the built page ships this" measurable.
+ */
+const readAsset = (assetPath: string): string =>
+  readFileSync(join(siteRoot, "dist", assetPath), "utf8");
+const collectAssets = (entries: readonly string[]): string[] => {
+  const seen = new Set<string>();
+  const queue = [...entries];
+  while (queue.length > 0) {
+    const assetPath = queue.shift()!;
+    if (seen.has(assetPath)) continue;
+    seen.add(assetPath);
+    if (!assetPath.endsWith(".js")) continue;
+    for (const match of readAsset(assetPath).matchAll(/["'](\.\/[^"']+\.js)["']/g)) {
+      queue.push(join("_astro", match[1]!.slice(2)));
+    }
+  }
+  return [...seen];
+};
+const assetGraph = collectAssets(assetPaths);
+assert.ok(
+  assetGraph.length > assetPaths.length,
+  "the /app entry must import at least one further chunk, or this walk measures nothing",
+);
+const builtAssets = assetGraph.map(readAsset).join("\n");
 
 const renderFeedStart = dashboardSource.indexOf("const renderFeed =");
 const renderFeedEnd = dashboardSource.indexOf("const syncConnectWorkspace =", renderFeedStart);
@@ -32,15 +60,25 @@ const renderFeed = dashboardSource.slice(renderFeedStart, renderFeedEnd);
 
 test("built dashboard carries to_agent from the read query into Signal.toAgent", () => {
   assert.match(clientSource, /toAgent: string \| null/);
+  /* ~~a literal `.select("id,from,...,attachments")` in both the source and the built
+     asset~~ retired 2026-09-05. The column list is one exported constant now, because the
+     paged reader in the dashboard and the `feed` helper here read the same view and a
+     second copy of the list drifts the day a column is added. What must still hold is that
+     the list names its columns EXPLICITLY — never `*` — because the read view is recreated
+     by migrations that append, and a fixed list is what makes an append safe for an
+     installed browser. So the assertion moved from the call site to the constant. */
   assert.match(
     clientSource,
-    /\.select\("id,from,from_kind,to,to_agent,kind,body,about,until,created_at,attachments"\)/,
+    /export const BROWSER_SIGNAL_COLUMNS =\n\s*"id,from,from_kind,to,to_agent,kind,body,about,until,created_at,attachments," \+\n\s*"channel_id,thread_root_id,broadcast_to_channel";/,
   );
-  assert.match(clientSource, /toAgent: row\.to_agent === null \|\| row\.to_agent === undefined/);
+  assert.match(clientSource, /\.select\(BROWSER_SIGNAL_COLUMNS\)/);
+  assert.doesNotMatch(clientSource, /\.select\("\*"\)/);
+  assert.match(clientSource, /toAgent: text\(row\.to_agent\)/);
   assert.match(
     builtAssets,
-    /select\([`'"]id,from,from_kind,to,to_agent,kind,body,about,until,created_at,attachments[`'"]\)/,
+    /id,from,from_kind,to,to_agent,kind,body,about,until,created_at,attachments/,
   );
+  assert.match(builtAssets, /channel_id,thread_root_id,broadcast_to_channel/);
   assert.match(builtAssets, /toAgent:[^,}]*to_agent/);
 });
 

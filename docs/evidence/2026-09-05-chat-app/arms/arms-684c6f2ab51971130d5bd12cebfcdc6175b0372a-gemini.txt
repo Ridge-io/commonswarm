@@ -1,0 +1,17 @@
+diff --git a/docs/design/2026-09-05-chat-app-channels.md b/docs/design/2026-09-05-chat-app-channels.md
+
+1. **`row.createdAt >= pageFloor` drops the ID tie-break.**
+   - **File**: `site/src/components/app/LiveDashboard.astro`
+   - **Line**: 4681
+   - **What breaks**: The server query explicitly orders by `created_at DESC, id DESC`. A stand-in row that has the exact same `createdAt` as the page's oldest row (`pageFloor`) but a lexically smaller `id` is mathematically older than the 25th row. It has therefore rolled off the first page and belongs on the second. But `row.createdAt >= pageFloor` evaluates to true, so it is incorrectly kept on the first page. It is then ordered at the very bottom (26th position) by the local sort, which correctly respects the ID tie-break, resulting in a page that breaks its own limit.
+   - **How you would see it**: Post a message from the browser. The server assigns it the exact same timestamp as the 25th row of a channel, but a smaller ID. When `loadSignals` fetches the first page, the page does not contain this row (since it is the 26th row). However, `row.createdAt >= pageFloor` retains it. The feed displays 26 messages instead of the bound of 25.
+   - **Refutation**: The chance of an exact timestamp collision is small. Even if it happens, keeping a rolled-off row on screen for one extra poll cycle before the grace expires is a transient cosmetic issue. The local sort (`b.id.localeCompare(a.id)`) guarantees it won't be ordered wrongly against a row with the same timestamp.
+
+2. **File staging during a failed send nulls the intent without hiding Retry.**
+   - **File**: `site/src/components/app/LiveDashboard.astro`
+   - **Line**: 2749
+   - **What breaks**: Any keystroke via the `input` event listener sets `composerIntent = null` and explicitly hides the Retry button to prevent a modified message from being treated as a retry. However, `stageComposerFiles` (called on file drop or image paste) sets `composerIntent = null` but does NOT hide the Retry button. Clicking the still-visible Retry button submits with a null intent, which mints new `commandIds` and re-sends the message to all recipients.
+   - **How you would see it**: Send a message to two tags that partially fails. The Retry button appears, promising "the ones that went will not go twice." Drag and drop an image into the composer (or paste one, bypassing the `input` event). The status updates to "1 files attached" and the Retry button remains visible. Click Retry. The message (now with an attachment) is sent to both recipients with new command IDs, meaning the first recipient receives the message twice.
+   - **Refutation**: Adding a file overwrites the status text, removing the "will not go twice" promise from the screen. Since the user changed the message by adding a file, it is conceptually a new message, and sending it to everyone with the file could be the intended behavior. The flaw is that the button clicked is labeled "Retry" rather than "Send".
+
+VERDICT: FAIL

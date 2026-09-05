@@ -248,16 +248,34 @@ const assertComposerSprint = (value: ComposerArtifact): void => {
    * to restore any more — the tags are in the body, and the body goes back whole. What keeps a
    * retry from posting twice is the command id: every id is kept, so the sends that already
    * landed replay idempotently instead of arriving again. */
+  /* The rewritten intent gained `placement` / `placementChannelId` on 2026-09-05: without
+     them a retry after a partial failure posted UNFILED, because the replay reads
+     the address and a missing one defaults to `{}`. The address is the channel ID, resolved to
+     a slug at send time, because a frozen slug made a Retry after a rename name the wrong
+     channel. It is written back only when the
+     send is still `resumable` — unsent AND still addressed to the channel on screen — because
+     a channel change retires it and the catch was putting it back. The property here is
+     unchanged: when there IS a retry, every command id is kept. */
   assert.match(
     failed,
-    /composerIntent = unsent\s*\? \{ commandIds, body: rawBody, audienceKey, attachmentKey, signalKind \}/,
+    /composerIntent = resumable[\s\S]{0,400}?commandIds,\s*\n\s*body: rawBody,\s*\n\s*audienceKey,\s*\n\s*attachmentKey,\s*\n\s*signalKind,\s*\n\s*placementChannelId,/,
     "failed-send-audience: a retry must reuse every command id, not mint new ones",
+  );
+  assert.match(
+    failed,
+    /const resumable = unsent && addressStillActive;/,
+    "failed-send-audience: a retry is offered only where it can finish what it started",
   );
   assert.doesNotMatch(failed, /composerAudience|composerMention|remaining/);
   assert.match(failed, /persistComposerDraft\(\);/, "failed-send-body: persist the restored draft");
+  /* ~~`: sent < recipients.length ?`~~ 2026-09-05: the partial-send sentence is now gated on
+     `resumable`, which is that same condition AND the send still being addressed to the
+     channel on screen. The reader who moved gets a different, true sentence instead of one
+     inviting them to press send again into a channel that cannot finish it. The property
+     here is unchanged: the rejection is announced inline with the counts. */
   assert.match(
     failed,
-    /: sent < recipients\.length\s*\? `Sent to \$\{sent\} of \$\{recipients\.length\}\. \$\{readableError\(caught\)\}/,
+    /\? `Sent to \$\{sent\} of \$\{recipients\.length\}\. \$\{readableError\(caught\)\}/,
     "failed-send-error: announce the rejection inline",
   );
   /* A partly-sent fan-out must say how many went, or the reader cannot tell whether pressing
@@ -277,10 +295,13 @@ const assertComposerSprint = (value: ComposerArtifact): void => {
   /* A finished send must also leave the saved draft empty and its preview URLs revoked. Without
    * that, the reload the copy suggests brings the sent message back with no intent, and the next
    * send mints fresh command ids and posts all of it again. */
-  /* And it must not offer Retry either, or the sentence and the button disagree. */
+  /* And it must not offer Retry either, or the sentence and the button disagree.
+     ~~`retry && unsent`~~ 2026-09-05: `resumable` is `unsent` AND the send still addressed to
+     the channel on screen. Retry cannot finish a message addressed to a channel the reader
+     has left, so it is not offered there and the sentence says where the message was going. */
   assert.match(
     failed,
-    /if \(retry && unsent\) retry\.hidden = false;/,
+    /if \(retry && resumable\) retry\.hidden = false;/,
     "retry-path: no retry when every recipient already posted",
   );
   assert.match(failed, /retry\.hidden = false;/, "retry-path: reveal retry after rejection");
@@ -597,10 +618,13 @@ const assertComposerSprint = (value: ComposerArtifact): void => {
    * by the accepted response only. */
   assert.match(
     draft,
-    /`commonswarm:composer-draft:\$\{owner\}:\$\{activeWorkspaceId\}:\$\{COMPOSER_STREAM\}`/,
+    /`commonswarm:composer-draft:\$\{owner\}:\$\{activeWorkspaceId\}:\$\{COMPOSER_DRAFT_SCOPE\}`/,
     "draft-scope: key must include user, workspace, and stream",
   );
-  assert.match(draft, /COMPOSER_STREAM = "all-signals";/,
+  /* The name changed with the vocabulary on 2026-09-05; "stream" is the event log on the
+     wire and this lane retired that word from the app. The VALUE is frozen because it names
+     drafts already saved in readers' browsers. */
+  assert.match(draft, /COMPOSER_DRAFT_SCOPE = "all-signals";/,
     "draft-scope: stream identity must be explicit");
   /* The draft is the body and one attachment marker. The address used to be saved beside it —
    * audienceKey, extra agent ids, the no-wake choice — and all three are gone, because the
@@ -643,10 +667,26 @@ const assertComposerSprint = (value: ComposerArtifact): void => {
     /clearComposerDraft\(\)/,
     "draft-clear: a rejected send must retain the saved draft",
   );
+  /* ~~`!postedIds.has(signal.id)`~~ 2026-09-05: the id set the failure path removes is now
+     the set it is about to put back, which is the posted rows the list ON SCREEN would show.
+     Removing every posted id was wrong once channels existed: a row the success path had
+     already added, or a page had already fetched, was deleted from a list it was not going
+     to be re-added to. The property this line defends — a late throw must not show a row
+     twice — is unchanged, and it is the same id set on both sides of the operation. */
   assert.match(
     failed,
-    /!pendingSet\.has\(signal\.id\) && !postedIds\.has\(signal\.id\)/,
+    /!pendingSet\.has\(signal\.id\) && !visibleFailureIds\.has\(signal\.id\)/,
     "failed-send-body: a late throw must not prepend rows the success path already added",
+  );
+  assert.match(
+    failed,
+    /const visibleOnFailure = posted\.filter\(showsOnScreen\);/,
+    "failed-send-body: the rows put back are the ones the list on screen would show",
+  );
+  assert.match(
+    failed,
+    /signals = \[\.\.\.visibleOnFailure, \.\.\.keptOnFailure\];/,
+    "failed-send-body: and they are the same set that was removed",
   );
   assert.match(
     submit,
@@ -684,8 +724,8 @@ const mutations: Mutation[] = [
   {
     name: "a retry mints fresh command ids and reposts what already landed",
     key: "dashboard",
-    target: "? { commandIds, body: rawBody, audienceKey, attachmentKey, signalKind }",
-    replacement: "? { commandIds: commandIds.map(() => uuid()), body: rawBody, audienceKey, attachmentKey, signalKind }",
+    target: "            commandIds,\n            body: rawBody,",
+    replacement: "            commandIds: commandIds.map(() => uuid()),\n            body: rawBody,",
     expectedFailure: "failed-send-audience",
   },
   {
@@ -824,8 +864,8 @@ const mutations: Mutation[] = [
   {
     name: "draft key loses user ownership",
     key: "dashboard",
-    target: "`commonswarm:composer-draft:${owner}:${activeWorkspaceId}:${COMPOSER_STREAM}`",
-    replacement: "`commonswarm:composer-draft:${activeWorkspaceId}:${COMPOSER_STREAM}`",
+    target: "`commonswarm:composer-draft:${owner}:${activeWorkspaceId}:${COMPOSER_DRAFT_SCOPE}`",
+    replacement: "`commonswarm:composer-draft:${activeWorkspaceId}:${COMPOSER_DRAFT_SCOPE}`",
     expectedFailure: "draft-scope",
   },
   {

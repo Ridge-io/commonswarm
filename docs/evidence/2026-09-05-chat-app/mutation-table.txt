@@ -1,0 +1,54 @@
+PASS  ::  the unfiltered view's name is one the edge refuses  ::  ✖ the unfiltered view's name is one the edge refuses for a real channel (0.407375ms) | ✖ the app refuses a name for exac
+PASS  ::  every rule sentence the app shows is the edge's own  ::  ✖ every rule sentence the app shows is the edge's own, not a copy (0.33175ms) | ✖ every rule sentence the app shows is t
+PASS  ::  the app refuses a name for exactly the reasons the edge does  ::  ✖ the app refuses a name for exactly the reasons the edge does (0.470958ms) | ✖ the app refuses a name for exactly the r
+PASS  ::  a refusal shows the server's sentence  ::  ✖ a refusal shows the server's sentence and is never read for meaning (0.464167ms) | ✖ a refusal shows the server's sent
+PASS  ::  the rail lists live channels in one order  ::  ✖ the rail lists live channels in one order and hides the archived (6.009958ms) | ✖ the rail lists live channels in one 
+PASS  ::  the three facts the design puts in the UI  ::  ✖ the three facts the design puts in the UI say what they mean (0.350416ms) | ✖ the three facts the design puts in the U
+PASS  ::  the module imports its rules and does not restate them  ::  ✖ every rule sentence the app shows is the edge's own, not a copy (0.356375ms) | ✖ the module imports its rules and does
+PASS  ::  the rail names channels  ::  ✖ the rail names channels, and `stream` is gone from the app's vocabulary (4.385834ms) | ✖ the rail names channels, and 
+PASS  ::  the phone reaches channels without a second standing header row  ::  ✖ the phone reaches channels without a second standing header row (1.86175ms) | ✖ the phone reaches channels without a s
+PASS  ::  the channel narrowing is the query's  ::  ✖ the channel narrowing is the query's, not the rendered list's (1.248042ms) | ✖ the channel narrowing is the query's, n
+PASS  ::  all-signals shows every message and names the channel  ::  ✖ all-signals shows every message and names the channel each one is in (1.69475ms) | ✖ all-signals shows every message a
+PASS  ::  the composer stamps the channel being read  ::  ✖ the composer stamps the channel being read and gains no chrome for it (2.00925ms) | ✖ the composer stamps the channel 
+PASS  ::  a ?c= that names no readable channel never shows the unfiltered feed  ::  ✖ a ?c= that names no readable channel never shows the unfiltered feed (1.225666ms) | ✖ a ?c= that names no readable cha
+PASS  ::  the URL round-trips the workspace and the channel by id  ::  ✖ the URL round-trips the workspace and the channel by id (1.29975ms) | ✖ the URL round-trips the workspace and the chan
+PASS  ::  the channel commands send exactly the keys  ::  ✖ the channel commands send exactly the keys the command edge accepts (1.300959ms) | ✖ the channel commands send exactly
+PASS  ::  post_signal's chat keys each travel in their own group  ::  ✖ post_signal's chat keys each travel in their own group (1.088875ms) | ✖ post_signal's chat keys each travel in their o
+PASS  ::  channel refusals show the server's sentence  ::  ✖ channel refusals show the server's sentence and the app reads no message (1.112459ms) | ✖ channel refusals show the se
+PASS  ::  archiving is a second press  ::  ✖ archiving is a second press, because nothing un-archives it (1.504916ms) | ✖ archiving is a second press, because noth
+PASS  ::  no channel copy in the dashboard implies privacy  ::  ✖ no channel copy in the dashboard implies privacy, and none uses an em-dash (1.763542ms) | ✖ no channel copy in the das
+PASS  ::  the unresolved-channel copy names no permission  ::  ✖ the unresolved-channel copy names no permission the product does not have (1.057ms) | ✖ the unresolved-channel copy na
+PASS  ::  an unresolved channel has no composer  ::  ✖ an unresolved channel has no composer, and a submit into one is refused (1.1005ms) | ✖ an unresolved channel has no co
+PASS  ::  no view but the feed leaves a channel marked current  ::  ✖ no view but the feed leaves a channel marked current in the rail (1.533875ms) | ✖ no view but the feed leaves a channe
+PASS  ::  the name of the unfiltered view is typed in exactly one place  ::  ✖ the rail names channels, and `stream` is gone from the app's vocabulary (1.855416ms) | ✖ the name of the unfiltered vi
+PASS  ::  the URL is written on every workspace open  ::  ✖ the URL is written on every workspace open, and a ?c= belongs to its own ?w= (1.047875ms) | ✖ the URL is written on ev
+PASS  ::  the URL is written on every workspace open  ::  ✖ the URL is written on every workspace open, and a ?c= belongs to its own ?w= (1.083167ms) | ✖ the URL is written on ev
+PASS  ::  the channel list flag follows the latest read  ::  ✖ the channel list flag follows the latest read, in both directions (1.241375ms) | ✖ the channel list flag follows the l
+PASS  ::  a sample post joins the sample set  ::  ✖ a sample post joins the sample set, so the local narrowing stays honest (1.498208ms) | ✖ a sample post joins the sampl
+PASS  ::  the three facts the design puts in the UI  ::  ✖ the three facts the design puts in the UI say what they mean (0.348625ms) | ✖ the three facts the design puts in the U
+PASS  ::  the workspace open leaves the rail's current mark  ::  ✖ the workspace open leaves the rail's current mark to the channel rule (1.101083ms) | ✖ the workspace open leaves the r
+PASS  ::  only the newest channel read is applied  ::  ✖ only the newest channel read is applied (1.237125ms) | ✖ only the newest channel read is applied (1.237125ms)
+PASS  ::  only the newest channel read is applied  ::  ✖ only the newest channel read is applied (1.208125ms) | ✖ only the newest channel read is applied (1.208125ms)
+PASS  ::  only the newest channel read is applied  ::  ✖ only the newest channel read is applied (1.30975ms) | ✖ only the newest channel read is applied (1.30975ms)
+PASS  ::  a post belongs to the channel it was sent from  ::  ✖ a sample post joins the sample set, so the local narrowing stays honest (1.089958ms) | ✖ a post belongs to the channel
+PASS  ::  a post belongs to the channel it was sent from  ::  ✖ the composer stamps the channel being read and gains no chrome for it (1.345584ms) | ✖ a post belongs to the channel i
+PASS  ::  an auth change closes the channel dialog  ::  ✖ an auth change closes the channel dialog and drops the channel state (1.329125ms) | ✖ an auth change closes the channe
+PASS  ::  a later channel read gives an unresolved link one more chance  ::  ✖ a later channel read gives an unresolved link one more chance (1.293625ms) | ✖ a later channel read gives an unresolve
+PASS  ::  an unfinished send is not resumed into a channel  ::  ✖ an unfinished send is not resumed into a channel it was not addressed to (1.325375ms) | ✖ an unfinished send is not re
+PASS  ::  an unfinished send is not resumed into a channel  ::  ✖ an unfinished send is not resumed into a channel it was not addressed to (1.290334ms) | ✖ an unfinished send is not re
+PASS  ::  a page fetched before a post landed does not drop that post  ::  ✖ a page fetched before a post landed does not drop that post (1.465ms) | ✖ a page fetched before a post landed does not
+PASS  ::  a page fetched before a post landed does not drop that post  ::  ✖ a page fetched before a post landed does not drop that post (1.510458ms) | ✖ a page fetched before a post landed does 
+PASS  ::  a page fetched before a post landed does not drop that post  ::  ✖ a page fetched before a post landed does not drop that post (1.586042ms) | ✖ a page fetched before a post landed does 
+PASS  ::  an unfinished send is not resumed into a channel  ::  ✖ an unfinished send is not resumed into a channel it was not addressed to (1.436291ms) | ✖ an unfinished send is not re
+PASS  ::  a page fetched before a post landed does not drop that post  ::  ✖ a page fetched before a post landed does not drop that post (1.641125ms) | ✖ a page fetched before a post landed does 
+PASS  ::  a page fetched before a post landed does not drop that post  ::  ✖ a page fetched before a post landed does not drop that post (1.803458ms) | ✖ a page fetched before a post landed does 
+PASS  ::  the composer stamps the channel being read  ::  ✖ the composer stamps the channel being read and gains no chrome for it (1.549292ms) | ✖ the composer stamps the channel
+PASS  ::  an unfinished send is not resumed into a channel  ::  ✖ an unfinished send is not resumed into a channel it was not addressed to (1.521042ms) | ✖ an unfinished send is not re
+PASS  ::  a page fetched before a post landed does not drop that post  ::  ✖ a page fetched before a post landed does not drop that post (1.492084ms) | ✖ a page fetched before a post landed does 
+PASS  ::  a page fetched before a post landed does not drop that post  ::  ✖ a page fetched before a post landed does not drop that post (1.537375ms) | ✖ a page fetched before a post landed does 
+PASS  ::  a page fetched before a post landed does not drop that post  ::  ✖ a page fetched before a post landed does not drop that post (1.386208ms) | ✖ a page fetched before a post landed does 
+PASS  ::  a page fetched before a post landed does not drop that post  ::  ✖ a page fetched before a post landed does not drop that post (1.552667ms) | ✖ a page fetched before a post landed does 
+PASS  ::  a page fetched before a post landed does not drop that post  ::  ✖ a page fetched before a post landed does not drop that post (1.391666ms) | ✖ a page fetched before a post landed does 
+PASS  ::  the composer stamps the channel being read  ::  ✖ the composer stamps the channel being read and gains no chrome for it (1.56125ms) | ✖ the composer stamps the channel 
+
+52 mutations, 0 not discriminating

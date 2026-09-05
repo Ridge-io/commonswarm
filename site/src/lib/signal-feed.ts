@@ -39,3 +39,23 @@ export const filterSignals = <T extends AddressedSignal>(
   }
   return true;
 });
+
+/* Thread grouping is NOT in this lane. `groupSignalThreads` and `threadReplyCountLabel`
+ * were written here and are cut to `lane/chat-app-threads` with the surface that used them:
+ * until it ships, a reply renders inline in the flat feed, interleaved by time, which is what
+ * the design already states for a client that does not know about threads.
+ */
+
+/* There is deliberately NO client-side channel filter here. The shipped
+ * All / Broadcast / Direct-to-you filter above runs over the loaded page, so it
+ * says "your direct signals" and means "among the last 25 loaded". A channel
+ * must not copy that: the narrowing is `channel_id=eq.<uuid>` on the query
+ * (`LiveDashboard.astro` signalPage), so a reader who opens a channel is
+ * reading the newest messages IN it and pages backwards through it. The view's
+ * WHERE remains the authorization; a client-issued equality on top of it
+ * cannot widen anything.
+ *
+ * A thread reply is stamped with its root's channel by the server
+ * (`command/index.ts:7827`), so a reply needs no resolution through its root to
+ * land in the same narrowing as the message it answers.
+ */
