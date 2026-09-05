@@ -86,7 +86,18 @@ build. Nothing new has to be kept in step, so nothing can drift.
 and the same bytes, so both comparisons are equal and no notice appears.
 
 **Dismissal is remembered against the WHOLE build**, both parts joined, never against whichever
-half happened to differ. Storing one half let a dismissal silence a later build: dismissing an
+half happened to differ.
+
+**NOT PROVEN: that dismissal is remembered at all.** Both review arms found the same hole
+independently. Every case in `update-notice.observer.test.ts` still passes if
+`dismissedBuild = servedBuild` is deleted from the Not-now handler: the click calls
+`showUpdateNotice(false)` either way, so the bar goes down, and the case moves straight on to the
+next staged build. Nothing looks in between. Closing it means polling the SAME build again after
+the click and asserting the bar stayed down. That was attempted and did not behave as expected —
+the bar came back up with `dismissedBuild` reading `null`, and the most likely reading of the
+instrumented log is that a `!isNewBuild` response still in flight from before the click landed
+after it and cleared the dismissal through the reset above. If that is right it is a real ordering
+defect and not only a test gap, so it needs measuring rather than patching. Storing one half let a dismissal silence a later build: dismissing an
 asset change stored the asset set, and the next build that changed only markup carried that same
 asset set and compared equal to it.
 
@@ -121,9 +132,38 @@ the query cannot change which bytes a path returns anyway.
   hash moved, or something under `public/`. The app has no dynamic imports today (`import(` count
   in `LiveDashboard.astro` is 0, and the built page emits no `modulepreload`), so there is no such
   chunk to miss; adding one would open this gap.
-- A change to markup OUTSIDE `<live-dashboard>` that also leaves every asset hash alone: a `<head>`
-  edit in the layout, for instance. Signal 1 covers head changes that touch a stylesheet or script,
-  which is most of them.
+- A change to markup OUTSIDE `<live-dashboard>` that also leaves every asset hash alone. The sharp
+  case is an **inline** `<style>` or `<script>` in `<head>`: it is not a `/_astro/` URL, so signal
+  1 does not see it, and it is not inside `<live-dashboard>`, so signal 2 does not either. Signal 1
+  covers head changes that move a hashed stylesheet or script, which is most of them.
+
+  **Measured, to bound how much this costs.** The built `/app` head carries **zero** inline
+  `<style>` blocks and **one** inline `<script>`: the 2,127-byte theme bootstrapper authored at
+  `site/src/pages/app.astro` with `is:inline slot="head" data-theme-bootstrap`. So the reachable
+  case today is a deploy that changes that one script and nothing else. `astro.config.mjs` sets
+  `build.inlineStylesheets: "auto"`, so a stylesheet small enough to be inlined would land here
+  too; none is, today.
+
+  **Why this is documented rather than covered.** Covering it broadly means hashing every inline
+  block in the served `<head>`, and the head is one of the places a third party injects. A preview
+  or analytics tag that carries a per-request value **in the head** would then make the bar flap,
+  and it would flap for signed-in team members, which is the operator. Three anonymous requests to
+  `https://commonswarm.com/app` returned byte-identical bodies (39,076 bytes each; only the
+  `x-vercel-id` header varied), so nothing injects per-request on the path this can measure. The
+  signed-in path was NOT measured, and that is the one the risk falls on.
+
+  **The narrower option, named so the next reader does not have to find it.** The one reachable
+  case today is a block we author and mark: `[data-theme-bootstrap]`. Hashing only blocks carrying
+  our own marker would cover it with no exposure to third-party injection at all. It would not
+  cover an auto-inlined stylesheet, because Astro generates those and they carry no marker of
+  ours — so it closes today's case, not the category. Doing it properly means one shared constant
+  read by both the template that writes the marker and the detector that looks for it, so the set
+  is generated rather than typed. That is the shape a follow-up should take; broad head hashing,
+  or requiring a head difference to repeat across two consecutive polls, are the alternatives.
+
+  (An injected toolbar in the **body** is a different case and is already handled: signal 2 reads
+  `<live-dashboard>` only, which is why `bytes injected around an unchanged build raise no notice`
+  passes.)
 
 ## The notice
 

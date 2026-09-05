@@ -157,6 +157,8 @@ const frameScript = `<script>
     const wait = (ms) => new Promise((resolve) => setTimeout(resolve, ms));
     let dismissSawBuildTwo = null;
     let dismissTookEffect = null;
+    let rollbackWentBackInStep = null;
+    let startedInStep = null;
     const notice = () => frame.contentDocument?.querySelector("[data-update-notice]") ?? null;
     for (let attempt = 0; attempt < 160 && !notice(); attempt += 1) await wait(25);
     /* WAIT ON THE CONDITION, NOT A DURATION. A flat sleep made this case pass or fail with the
@@ -198,6 +200,11 @@ const frameScript = `<script>
         return false;
       };
       const shownNow = () => { const b = notice(); return Boolean(b) && !b.hidden; };
+      /* THE PRECONDITION THIS WHOLE CASE RESTS ON: the tab starts UP TO DATE. Two polls of the
+         real page have already landed. If the bar is up before any deploy is staged, then every
+         "the bar is up" below is answered by that, not by the build the step meant to ship — the
+         dismiss captures the wrong build and the case passes for the wrong reason. */
+      startedInStep = !shownNow();
       /* Build two. Wait for the bar itself, not for a poll count: the bar going up is the
          condition the dismiss below depends on. */
       await fetch("/__stage?to=2");
@@ -210,9 +217,19 @@ const frameScript = `<script>
       await fetch("/__stage?to=3");
       cycle();
       /* The rollback case takes one more step: stage 3 is the build this tab is running, so the
-         bar goes DOWN there, and stage 4 ships the dismissed build again. */
+         bar goes DOWN there, and stage 4 ships the dismissed build again. The intermediate hide
+         is RECORDED, not discarded: it is the half of this case that proves the tab went back in
+         step, and without asserting it the case passes whether or not that ever happened. */
       if (new URL(location.href).searchParams.get("rollback") === "1") {
-        await until(() => !shownNow());
+        /* WAIT FOR THE ROLLBACK POLL TO LAND FIRST. The bar is already down here — the dismiss
+           just put it down — so asking "is it hidden?" straight away is answered by the
+           dismissal, not by the rollback, and it reads true no matter what the code does. Let
+           the server serve stage 3, then look. */
+        const before = Number(await (await fetch("/__polls")).text());
+        cycle();
+        await polledAtLeast(before + 1);
+        await wait(200);
+        rollbackWentBackInStep = !shownNow();
         await fetch("/__stage?to=4");
         cycle();
       }
@@ -242,6 +259,8 @@ const frameScript = `<script>
       documentLength: doc?.body?.innerHTML.length ?? 0,
       dismissSawBuildTwo,
       dismissTookEffect,
+      rollbackWentBackInStep,
+      startedInStep,
       stageNow: await (await fetch("/__stage")).text(),
       servedStages: await (await fetch("/__served")).text(),
       sampleNoticeShown: (() => {
@@ -387,6 +406,8 @@ type Measurement = {
   composerBottom: number;
   dismissSawBuildTwo: boolean | null;
   dismissTookEffect: boolean | null;
+  rollbackWentBackInStep: boolean | null;
+  startedInStep: boolean | null;
   stageNow: string;
   servedStages: string;
   display: string;
@@ -474,8 +495,15 @@ test("bytes injected around an unchanged build raise no notice", async () => {
    the whole build rather than whichever half happened to differ. */
 test("dismissing one build does not hide the next one", async () => {
   const value = await measure(await findChrome(), "dismiss-then-markup", 390, 844, true);
-  /* Positive controls in order: the second build really raised the bar, and the dismiss really
-     put it down. Without both, "shown" at the end could be the second build never dismissed. */
+  /* Positive controls in order: the tab started up to date, the second build really raised the
+     bar, and the dismiss really put it down. Without all three, "shown" at the end could be a bar
+     that was already up before any deploy was staged. */
+  assert.equal(
+    value.startedInStep,
+    true,
+    `the bar was already up before any deploy was staged, so nothing below is about the build it ` +
+      `meant to ship: ${JSON.stringify(value)}`,
+  );
   assert.equal(
     value.dismissSawBuildTwo,
     true,
@@ -543,6 +571,12 @@ test("a sign-in page built the same way raises no notice", async () => {
 test("a rollback does not silence the build that follows it", async () => {
   const value = await measure(await findChrome(), "rollback", 390, 844, true);
   assert.equal(
+    value.startedInStep,
+    true,
+    "the bar was already up before the rollback case staged anything, so its dismiss captured " +
+      `the wrong build: ${JSON.stringify(value)}`,
+  );
+  assert.equal(
     value.dismissSawBuildTwo,
     true,
     `the second build never raised the bar: ${JSON.stringify(value)}`,
@@ -551,6 +585,16 @@ test("a rollback does not silence the build that follows it", async () => {
     value.dismissTookEffect,
     true,
     `Not now did not put the bar down: ${JSON.stringify(value)}`,
+  );
+  /* THE ROLLBACK ITSELF. Serving the build this tab is running must put the bar down again, which
+     is what "back in step" means and the only moment the dismissal is allowed to be cleared.
+     Without this assertion the case passes even if that branch is deleted, because the bar simply
+     stays up from build two and the final check below cannot tell the difference. */
+  assert.equal(
+    value.rollbackWentBackInStep,
+    true,
+    "serving the build this tab runs did not put the bar down, so the tab never went back in " +
+      `step and what follows is not a rollback: ${JSON.stringify(value)}`,
   );
   assert.equal(
     value.shown,
