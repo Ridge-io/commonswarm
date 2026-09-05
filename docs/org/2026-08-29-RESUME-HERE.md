@@ -2158,3 +2158,18 @@ Not established: anything against production (sample-mode `site/dist` only); `?m
 
 Next lane spawned: `lane/composer-to-field` (operator #2), sole owner of `LiveDashboard.astro`;
 `chat-app-threads` queues behind it. The checkout is `main` only again.
+
+## Addendum 2026-09-05 12:0x UTC — composer To: field: HELD at FAIL/FAIL, rewrite lane spawned
+
+`lane/composer-to-field` reached d567a69 (tip 25ed2fb, evidence only) with the feature built —
+chips on one footer line, a mention adds a chip, one signal carrying the wire's `to` list with
+both scalars null, wake-bound copy generated from the constants, 34 discriminating mutations —
+and FOUR arm rounds that each found the same class: the To: set and its tag record are hand-
+synchronised across separate handlers (draft restore, workspace switch, roster paint, chip edit,
+send). The PM stopped at the rule and offered to merge with a follow-up. Ruling: HOLD. Open item 1
+(a workspace switch prunes a draft's address to empty, then a later paint overwrites it) combined
+with "an emptied To: is stored as a chosen broadcast" is the accidental-broadcast class this
+feature exists to end. A fresh PM continues on the same branch: one derived pass for the pair,
+transition-driven controls for the five items, the invariant that an empty set is only a
+broadcast the reader chose on this screen. The `channels.ts:228-234` comment that says the
+composer has not moved to `to` goes with it. `chat-app-threads` still queues behind.
