@@ -2260,7 +2260,7 @@ export async function feed(workspaceId: string, limit = 50): Promise<Signal[]> {
  * archived; a permalink into one still has to resolve, so they are read and not
  * filtered away at the source.
  *
- * The read edge exposes no channel list, so the browser reads `swarm_read.channels`
+ * The read edge's channel list takes an agent credential only, so the browser reads `swarm_read.channels`
  * directly, the same way it reads the signal feed. Membership is the view's only
  * predicate, so a non-member gets an empty set rather than an error.
  */
