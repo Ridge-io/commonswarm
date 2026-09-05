@@ -74,6 +74,12 @@ CLI or browser that knows only the scalar columns shows a real recipient rather 
 whole compatibility argument — an old reader is *incomplete*, never *wrong* — and it is what makes this
 landable without a client flag day.
 
+> **CORRECTED 2026-09-05 after the lane was built.** The "Delivery fans out" sentence below did not
+> survive review: the rows such a trigger writes cannot be delivered, so the trigger was removed and
+> **three** things move together, not four. The paragraph is kept as written because it is the plan the
+> lane was given. The section "L2 `chat-recipients` — what was built" at the end of this file carries
+> what actually landed and why.
+
 Four things move together or the lane is broken. **The view** gains a `recipients` aggregate appended at
 the end of the select list, and its `WHERE` gains a disjunct for "I am in the recipient set, in person or
 through an agent I own". **The agent read path** (`read/index.ts`) gains the matching arm in SQL — two
@@ -254,6 +260,31 @@ answer it. Found by a review arm on this lane. `signalNamesRecipient` adds the s
 exactly what the recipient set already grants on the read path, with a control that a member who is NOT
 in the set still cannot reply.
 
+**NO DELIVERY FAN-OUT, and this is the lane's biggest correction.** The L2 paragraph above and the
+lane's own commit message `5b60f98` both said delivery fans out one row per agent recipient, with the
+`ON CONFLICT DO NOTHING` that keeps recipient 0 from being woken twice. That trigger was written, it
+worked, and a review arm showed the rows it wrote **cannot be delivered**:
+
+1. `hydrateDeliveryRefs` in `supabase/functions/command/durable-delivery.ts` filters on
+   `s.to_agent_principal_id = <the claiming principal>`. That column holds recipient 0, so a row for
+   recipient 1 leases, fails to hydrate, answers 403 `delivery_unavailable` and **commits** -- the
+   lease and `attempt_count` stick, and ten claims terminalize the row as
+   `delivery_attempts_exhausted` with a security alert. The `expired` acknowledgement has the same
+   filter.
+2. `src/cloud/delivery.ts:423` -- an installed listener refuses any delivery whose `signal.to_agent`
+   is not its own principal. So no server-side fix alone can hand the row over. It needs a client
+   release (L3), or a wire on which `to_agent` means "this delivery's recipient" rather than "the
+   signal's scalar recipient", which is a ruling nobody has made.
+
+The alternative of writing the rows and refusing to lease them was rejected: `pending_delivery_count`
+and `oldest_pending_at` would then report a queue that grows and can never be drained, which is a false
+signal rather than a missing feature.
+
+**So, exactly: recipients 1..N READ the signal and can REPLY to it. They are not woken.** Recipient 0
+is woken from the scalar column by the unchanged trigger on `swarm.signals`. Section 4 of the migration
+carries the reason; `tests/p1-local/chat-recipients-postgres.test.ts` pins both the behaviour and the
+absence of any trigger on the recipients table, and the served suite pins it through the edge.
+
 **The cap** is `SIGNAL_RECIPIENT_MAX = 8` in `supabase/functions/_shared/channels.ts`, enforced twice:
 the edge validator refuses a longer list with a sentence built from the constant, and the CHECK on
 `position` bounds it at 7, which caps the row count because positions are unique per signal.
@@ -274,9 +305,9 @@ refused by the same rule that already refuses the scalar spelling, with the same
 
 ### What L2 did NOT establish
 
-1. **No capacity measurement.** The suite proves one delivery row per agent recipient and no duplicate
-   for the first. It does not measure what an 8-way fan-out costs on a ledger sized for one row per
-   signal, which §10 of the reconciled design still asks for.
+1. **No capacity measurement, and no fan-out to measure.** The delivery ledger still gets one row per
+   signal, so the capacity question §10 of the reconciled design asks about is untouched and unanswered.
+   It becomes live the day recipients 1..N are woken.
 2. **No query plan.** `s.recipients` is a derived column, so the read edge's containment arm cannot use
    an index; the indexed `to_agent` arm is kept beside it. Nothing was measured.
 3. **The receipts blocker is still open.** The reconciled design says
@@ -284,7 +315,13 @@ refused by the same rule that already refuses the scalar spelling, with the same
    recipient SET makes it worse in kind. The per-signal receipt arm is L6's and did not land here.
    Nothing in L2 widens that endpoint, and nothing in L2 fixes it.
 4. **Not measured against production.** Local Supabase only.
-5. **Group DMs are now a product question.** The mechanical reason they were out of v1 stopped being
-   true. §4 and §10 of the reconciled design carry the correction; the ruling is the coordinator's.
+5. **Group DMs: one of the two mechanical reasons they were out of v1 stopped being true, and one did
+   not.** A three-party address is storable and readable. It does not notify the agents in it, which is
+   exactly the objection §4 raised. §4 and §10 carry the correction, including the intermediate version
+   that said "deliverable" and was wrong. The ruling is the coordinator's.
+
+7. **Waking a later recipient is BLOCKED, not deferred by choice.** The two changes it needs are named
+   above and neither is in this lane. Whoever picks it up owes a decision on what `to_agent` means on a
+   hydrated delivery before they write any code.
 6. **No client, no composer.** L3 and L4 still own `--to` and the mention chips; nothing a person can
    type reaches `to` yet.

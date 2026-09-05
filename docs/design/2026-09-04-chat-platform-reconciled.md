@@ -465,11 +465,17 @@ reasoning is upheld below.)
 > woken. A conversation type that silently fails to notify the agents in it is worse than none.
 > Two-party covers the ask completely."*
 >
-> Every mechanical clause in that paragraph stopped being true on 2026-09-05. L2's
-> `swarm.signal_recipients` stores an ordered set of up to `SIGNAL_RECIPIENT_MAX` recipients, the view's
-> predicate admits every one of them, and a trigger on that table enqueues one delivery row per AGENT
-> recipient — so a three-party address is storable, readable by all three, and wakes the agents in it.
-> `signals_one_recipient` still exists and is still not relaxed; it now bounds the SCALAR columns only.
+> Two of the three mechanical clauses in that paragraph stopped being true on 2026-09-05. L2's
+> `swarm.signal_recipients` stores an ordered set of up to `SIGNAL_RECIPIENT_MAX` recipients and the
+> view's predicate admits every one of them, so a three-party address is storable and readable by all
+> three. `signals_one_recipient` still exists and is still not relaxed; it now bounds the SCALAR
+> columns only.
+>
+> The THIRD clause is still true, and a middle version of this correction recorded it as false:
+> *"no agent in a group DM would ever be woken."* Recipients 1..N are read-visible and are NOT woken,
+> for the reason in section 4 of `20260905000010_signal_recipients.sql`. The original paragraph's
+> conclusion -- that a conversation type which silently fails to notify the agents in it is worse than
+> none -- is therefore still live, and is the strongest argument against group DMs today.
 >
 > **What is NOT settled: whether v1 should have group DMs.** That is a product decision and nobody has
 > made it. This document must not read as if the constraint decides it, because the constraint no longer
@@ -855,23 +861,35 @@ did NOT establish: a running listener against the new edge. The edge is not depl
 ## 10. Out of v1
 
 - **Private channels and `channel_members`.** R1. Appendix A holds the design for the day it is asked for.
-- **Group DMs.** §4 — a SCOPE choice. *(**was**, until 2026-09-05: "a hard constraint
-  (`signals_one_recipient`), not a scope choice." L2 made a three-party address storable, readable and
-  deliverable, so the constraint no longer decides this. Nobody has ruled on whether v1 should have
-  group DMs; §4 carries the full correction.)*
+- **Group DMs.** §4. *(**was**, until 2026-09-05: "a hard constraint (`signals_one_recipient`), not a
+  scope choice." L2 made a three-party address storable and readable, so that constraint no longer
+  decides it. It is NOT deliverable to a later agent recipient, so the notification argument in §4
+  still stands. Nobody has ruled; §4 carries the full correction, including a middle version of this
+  note that said "deliverable" and was wrong.)*
 - **Editing and deleting messages.** Structurally blocked by `signals_append_only`
   (`20260724000003:36-38`), and immutability is a published promise
   (`site/src/components/landing/ConsumerStory.astro:38`, `site/src/pages/privacy.astro:120-121`).
   Retiring it is a separate operator decision.
-- **Waking agents on a channel post.** Still out. It would wake everyone in a channel, which is an
-  unbounded N, and nothing caps it.
+- **Waking agents on a channel post.** Still out, and it would still be the first N-way fan-out in the
+  system. L2 addresses N recipients and wakes ONE of them.
 
-  > **was**, until 2026-09-05: this bullet also said it *"would be the first N-way fan-out in the
-  > system"*. L2 is that first fan-out: `swarm.signal_recipients` enqueues one delivery row per agent
-  > recipient. The distinction that survives is the BOUND, not the novelty — L2's fan-out is capped at
-  > `SIGNAL_RECIPIENT_MAX` recipients that a sender named one at a time, and a channel post's is the
-  > channel's whole membership. The capacity work this bullet asks for is still owed: L2 measured
-  > correctness (one row per agent, none duplicated) and did NOT measure throughput.
+  > **CORRECTED twice on 2026-09-05, and the middle version was wrong.** For part of that day this
+  > bullet said *"L2 is that first fan-out: `swarm.signal_recipients` enqueues one delivery row per
+  > agent recipient."* L2 did carry that trigger, and a review arm showed the rows it wrote could not
+  > be delivered: `hydrateDeliveryRefs` filters on `swarm.signals.to_agent_principal_id`, which holds
+  > recipient 0, so a row for recipient 1 leases, fails to hydrate, answers 403 and commits, burning
+  > an attempt each time until the row terminalizes; and `src/cloud/delivery.ts:423` makes an installed
+  > listener refuse a delivery whose `signal.to_agent` is not its own principal. The trigger was
+  > removed. Section 4 of `20260905000010_signal_recipients.sql` carries the whole reason, and two
+  > tests pin the absence so the next author meets it.
+
+- **Waking recipients 1..N of a multi-recipient signal.** New, and out of v1 for a measured reason
+  rather than a scope choice. Two things have to move together: the claim path taught the recipient
+  set, and a client that accepts a delivery whose signal's scalar `to_agent` is another recipient. The
+  second is a wire-semantics ruling nobody has made -- `to_agent` on a hydrated delivery would have to
+  mean "this delivery's recipient" rather than "the signal's scalar recipient". Until then a later
+  recipient reads the message and replies to it in their own time.
+
 - **Waking thread participants.** Same reason, smaller N. The natural first extension after v1.
 - **Durable channel history / retention.** §3.4 — its own phase, with a real discriminator.
 - **Per-channel unread counts, badges, mute/hide.** The expensive read, not the filter. The dashboard

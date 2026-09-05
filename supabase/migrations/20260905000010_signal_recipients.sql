@@ -213,56 +213,39 @@ CREATE CONSTRAINT TRIGGER signal_recipients_first_is_the_scalar
   FOR EACH ROW EXECUTE FUNCTION swarm.assert_signal_recipients_consistent();
 
 -- ---------------------------------------------------------------------------
--- 4. Delivery fan-out: one row per AGENT recipient, and the first not twice
+-- 4. NO DELIVERY FAN-OUT. Why there is no trigger here.
 -- ---------------------------------------------------------------------------
--- swarm.enqueue_signal_delivery() already enqueued the scalar recipient when the
--- signal row was inserted. This trigger enqueues every recipient row, and the
--- primary key on swarm.signal_deliveries (signal_id, recipient_agent_principal_id)
--- turns the repeat for position 0 into a no-op through ON CONFLICT DO NOTHING.
--- That de-duplication is READ FROM 20260731000001:126-137 and is the first thing
--- the Postgres suite for this lane establishes by running it, because the build
--- plan recorded that it had been argued and never measured.
-CREATE FUNCTION swarm.enqueue_signal_recipient_delivery()
-RETURNS trigger
-LANGUAGE plpgsql
-SECURITY INVOKER
-SET search_path = pg_catalog
-AS $$
-DECLARE
-  v_kind text;
-BEGIN
-  IF NEW.recipient_agent_principal_id IS NULL THEN
-    RETURN NEW;
-  END IF;
-  -- The same kind gate the scalar trigger applies. A working-on signal takes no
-  -- recipients at all, and only ask/note are delivered.
-  SELECT s.kind INTO v_kind
-  FROM swarm.signals AS s
-  WHERE s.id = NEW.signal_id
-    AND s.workspace_id = NEW.workspace_id;
-  IF v_kind IN ('ask', 'note') THEN
-    INSERT INTO swarm.signal_deliveries (
-      signal_id,
-      workspace_id,
-      recipient_agent_principal_id
-    ) VALUES (
-      NEW.signal_id,
-      NEW.workspace_id,
-      NEW.recipient_agent_principal_id
-    )
-    ON CONFLICT DO NOTHING;
-  END IF;
-  RETURN NEW;
-END;
-$$;
-
-ALTER FUNCTION swarm.enqueue_signal_recipient_delivery() OWNER TO swarm_admin;
-REVOKE ALL ON FUNCTION swarm.enqueue_signal_recipient_delivery() FROM PUBLIC;
-
-CREATE TRIGGER signal_recipients_enqueue_delivery
-  AFTER INSERT ON swarm.signal_recipients
-  FOR EACH ROW
-  EXECUTE FUNCTION swarm.enqueue_signal_recipient_delivery();
+-- An earlier version of this file carried a trigger on swarm.signal_recipients
+-- that enqueued one swarm.signal_deliveries row per AGENT recipient, with the
+-- ON CONFLICT DO NOTHING that keeps recipient 0 from being woken twice. A
+-- review arm showed that those rows CANNOT BE DELIVERED, and that writing them
+-- is worse than not waking the agent at all. Both halves are measured, and both
+-- are outside this migration:
+--
+--   1. supabase/functions/command/durable-delivery.ts, hydrateDeliveryRefs:
+--      its WHERE carries `s.to_agent_principal_id = <the claiming principal>`.
+--      The scalar column holds recipient 0, so a row for recipient 1 leases,
+--      fails to hydrate, and the handler answers 403 delivery_unavailable and
+--      COMMITS -- so the lease and attempt_count stick. Ten claims terminalize
+--      the row as delivery_attempts_exhausted and raise a security alert. The
+--      same scalar filter gates the `expired` acknowledgement.
+--   2. src/cloud/delivery.ts:423 -- the INSTALLED listener refuses any delivery
+--      whose signal.to_agent is not its own principal. So even a server that
+--      hydrated correctly could not hand the row to a shipped client. Making it
+--      deliverable needs either a client release (lane L3) or a wire whose
+--      to_agent means "this delivery's recipient" rather than "the signal's
+--      scalar recipient" -- a semantic change nobody has ruled on.
+--
+-- The alternative of writing the rows and refusing to lease them was rejected:
+-- pending_delivery_count and oldest_pending_at would then report a queue that
+-- grows and can never be drained, which is a false signal rather than a
+-- missing feature.
+--
+-- SO, EXACTLY: recipients 1..N can READ a signal and can REPLY to it. They are
+-- not woken. Recipient 0 is woken by swarm.enqueue_signal_delivery() from the
+-- scalar column, unchanged. tests/p1-local/chat-recipients-postgres.test.ts and
+-- tests/p1-server/chat-signals.test.ts both measure that, so the day someone
+-- adds the fan-out they are told what else has to move.
 
 -- ---------------------------------------------------------------------------
 -- 5. The clause guard learns this lane's marker BEFORE the recreation runs

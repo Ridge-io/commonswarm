@@ -1296,3 +1296,97 @@ test("the SECOND recipient can reply privately, the way the first always could",
     `a non-recipient must not be able to reply: ${JSON.stringify(refused.body)}`,
   );
 });
+
+test("addressing a second agent does not enqueue a delivery for it, and the reason is recorded", async () => {
+  /* THE BOUND OF THIS LANE, measured through the served edge. Recipients 1..N
+   * are readable and repliable and are NOT woken. Two things would have to
+   * move together for that to change, and neither is in this lane:
+   * hydrateDeliveryRefs filters on swarm.signals.to_agent_principal_id (the
+   * scalar column, which holds recipient 0), and src/cloud/delivery.ts:423
+   * makes an installed listener refuse a delivery whose signal.to_agent is not
+   * its own principal. Section 4 of 20260905000010 carries the full reason. */
+  const posted = await send(
+    f.ownerJwt,
+    installedPost({
+      signal_kind: "ask",
+      body: `two agents ${randomUUID()}`,
+      to: [{ kind: "agent", id: f.principal }, { kind: "agent", id: f.principalTwo }],
+    }),
+  );
+  assert.equal(posted.status, 200, JSON.stringify(posted.body));
+  const signalId = String(signalOf(posted.body).id);
+
+  const ledger = await sql<{ recipient_agent_principal_id: string }[]>`
+    SELECT recipient_agent_principal_id
+    FROM swarm.signal_deliveries
+    WHERE signal_id = ${signalId}::uuid
+  `;
+  assert.deepEqual(
+    ledger.map((row) => row.recipient_agent_principal_id),
+    [f.principal],
+    "only recipient 0 is woken, and it is woken exactly once",
+  );
+
+  /* CONTROL: the SET really does name both agents, so the ledger above is the
+   * delivery bound and not a post that lost its second recipient. */
+  const stored = await sql<{ recipient_agent_principal_id: string | null }[]>`
+    SELECT recipient_agent_principal_id
+    FROM swarm.signal_recipients
+    WHERE signal_id = ${signalId}::uuid
+    ORDER BY position
+  `;
+  assert.deepEqual(
+    stored.map((row) => row.recipient_agent_principal_id),
+    [f.principal, f.principalTwo],
+  );
+});
+
+test("a second AGENT recipient can reply, not only a second person", async () => {
+  /* The reply arm reads the recipient set for an agent caller through its
+   * presenting principal, which is a different branch from the human one. */
+  const posted = await send(
+    f.ownerJwt,
+    installedPost({
+      signal_kind: "ask",
+      body: `agent reply ${randomUUID()}`,
+      to: [{ kind: "agent", id: f.principal }, { kind: "agent", id: f.principalTwo }],
+    }),
+  );
+  assert.equal(posted.status, 200, JSON.stringify(posted.body));
+  const rootId = String(signalOf(posted.body).id);
+
+  const reply = await send(
+    f.agentTokenTwo,
+    installedPost({ signal_kind: "note", in_reply_to: rootId }),
+  );
+  assert.equal(reply.status, 200, JSON.stringify(reply.body));
+  assert.equal(
+    signalOf(reply.body).to,
+    f.ownerId,
+    "the reply is re-addressed to the human author",
+  );
+
+  /* CONTROL: an agent that is NOT in the set still cannot reply. The narrow
+   * post names only the first agent. */
+  const narrow = await send(
+    f.ownerJwt,
+    installedPost({
+      signal_kind: "ask",
+      body: `first agent only ${randomUUID()}`,
+      to: [{ kind: "agent", id: f.principal }],
+    }),
+  );
+  assert.equal(narrow.status, 200, JSON.stringify(narrow.body));
+  const refused = await send(
+    f.agentTokenTwo,
+    installedPost({
+      signal_kind: "note",
+      in_reply_to: String(signalOf(narrow.body).id),
+    }),
+  );
+  assert.equal(
+    refused.status,
+    403,
+    `an agent outside the set must not reply: ${JSON.stringify(refused.body)}`,
+  );
+});

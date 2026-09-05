@@ -1134,14 +1134,24 @@ test("the recipient rules the edge enforces outside this function are still one 
   );
   const workingOn = command.indexOf('cmd.signal_kind !== "working-on" ||');
   assert.notEqual(workingOn, -1, "the working-on condition must be findable");
-  const workingOnBlock = command.slice(workingOn, workingOn + 400);
+  const reply = command.indexOf("inReplyTo === null ||", workingOn);
+  assert.notEqual(reply, -1, "the in_reply_to condition must be findable");
+  assert.ok(reply > workingOn, "the two conditions must be in source order");
+  /* The windows are DISJOINT: the working-on one ends where the in_reply_to
+   * one begins. A fixed-width slice overlapped them, so deleting
+   * !addressedByList from the working-on arm alone left the assertion passing
+   * on the NEXT arm's copy. A review arm found that. */
+  const workingOnBlock = command.slice(workingOn, reply);
+  const replyBlock = command.slice(reply, reply + 400);
+  assert.equal(
+    workingOnBlock.includes("inReplyTo === null ||"),
+    false,
+    "the working-on window must not reach into the in_reply_to condition",
+  );
   assert.ok(
     workingOnBlock.includes("!addressedByList"),
     "working-on must refuse a `to` list the way it refuses the scalar fields",
   );
-  const reply = command.indexOf("inReplyTo === null ||");
-  assert.notEqual(reply, -1, "the in_reply_to condition must be findable");
-  const replyBlock = command.slice(reply, reply + 400);
   assert.ok(
     replyBlock.includes("!addressedByList"),
     "a private reply must refuse a `to` list the way it refuses the scalar fields",

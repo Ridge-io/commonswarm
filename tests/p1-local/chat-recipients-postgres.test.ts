@@ -336,7 +336,7 @@ test("owning an addressed agent is enough to read the signal, and owning a diffe
   }
 });
 
-test("every agent recipient gets exactly one delivery row, and the first is not woken twice", async () => {
+test("a recipient set wakes recipient 0 and NOBODY else, which is a bound and not an oversight", async () => {
   const sql = postgres(databaseUrl(), { max: 1 });
   const f = newFixture();
   const twoAgents = randomUUID();
@@ -348,12 +348,18 @@ test("every agent recipient gets exactly one delivery row, and the first is not 
       sql.begin(async (tx) => {
         await seed(tx, f);
 
-        /* The measurement the build plan asked for. The signal insert already
-         * enqueued agentOne from the scalar column; the recipient rows enqueue
-         * agentOne AGAIN and agentTwo for the first time. If ON CONFLICT DO
-         * NOTHING did not de-duplicate on (signal_id,
-         * recipient_agent_principal_id), this insert would raise rather than
-         * quietly produce one row. */
+        /* WHY THIS IS THE EXPECTED RESULT, so the next reader does not "fix" it.
+         * An earlier version of the migration fanned out one delivery row per
+         * AGENT recipient. A review arm showed those rows cannot be delivered:
+         * hydrateDeliveryRefs filters on swarm.signals.to_agent_principal_id,
+         * which holds recipient 0, so a row for recipient 1 leases, fails to
+         * hydrate, answers 403 and COMMITS -- burning an attempt each time
+         * until the row terminalizes. And src/cloud/delivery.ts:423 makes an
+         * installed listener refuse any delivery whose signal.to_agent is not
+         * its own principal, so no server fix alone can hand it over.
+         *
+         * The bound: recipients 1..N READ the signal and can REPLY to it. They
+         * are not woken. Change this test only together with those two. */
         await insertSignal(tx, {
           id: twoAgents,
           workspaceId: f.workspaceA,
@@ -374,14 +380,14 @@ test("every agent recipient gets exactly one delivery row, and the first is not 
           WHERE signal_id = ${twoAgents}::uuid
           ORDER BY recipient_agent_principal_id
         `;
-        assert.equal(rows.length, 2, "one row per agent recipient, no more");
         assert.deepEqual(
-          new Set(rows.map((row) => row.recipient_agent_principal_id)),
-          new Set([f.agentOne, f.agentTwo]),
+          rows.map((row) => row.recipient_agent_principal_id),
+          [f.agentOne],
+          "recipient 0 is woken from the scalar column and the recipient rows wake nobody",
         );
 
         /* CONTROL 1: a one-entry list produces exactly what the scalar shape
-         * produces today. This is the wire claim, measured on the ledger. */
+         * produces today, which is the wire claim measured on the ledger. */
         await insertSignal(tx, {
           id: scalarOnly,
           workspaceId: f.workspaceA,
@@ -418,8 +424,8 @@ test("every agent recipient gets exactly one delivery row, and the first is not 
           "a one-entry list writes the same delivery ledger as the scalar shape",
         );
 
-        /* CONTROL 2: a PERSON recipient wakes nobody. Without this the counts
-         * above could be explained by "every recipient row enqueues". */
+        /* CONTROL 2: a PERSON recipient wakes nobody either, so the count above
+         * is not "one row per recipient of any kind". */
         await insertSignal(tx, {
           id: userRecipients,
           workspaceId: f.workspaceA,
@@ -448,6 +454,44 @@ test("every agent recipient gets exactly one delivery row, and the first is not 
   }
 });
 
+test("no trigger on swarm.signal_recipients writes to the delivery ledger", async () => {
+  /* The structural half of the bound above. The behaviour test would also pass
+   * if a fan-out trigger existed and happened to be disabled; this one names
+   * the tables and would fail the moment a trigger is added, which is exactly
+   * when someone needs to read the reason. */
+  const sql = postgres(databaseUrl(), { max: 1 });
+  try {
+    const triggers = await sql<{ tgname: string }[]>`
+      SELECT tgname
+      FROM pg_trigger
+      WHERE tgrelid = 'swarm.signal_recipients'::regclass
+        AND NOT tgisinternal
+      ORDER BY tgname
+    `;
+    assert.deepEqual(
+      triggers.map((row) => row.tgname),
+      [
+        "signal_recipients_append_only",
+        "signal_recipients_first_is_the_scalar",
+        "signal_recipients_same_transaction",
+      ],
+      "adding a trigger here means reading section 4 of 20260905000010 first",
+    );
+    /* Control: the query really can see a trigger on a table that has one, so
+     * the list above is what the database holds and not an empty result. */
+    const onSignals = await sql<{ tgname: string }[]>`
+      SELECT tgname FROM pg_trigger
+      WHERE tgrelid = 'swarm.signals'::regclass AND NOT tgisinternal
+    `;
+    assert.ok(
+      onSignals.some((row) => row.tgname === "signals_enqueue_delivery"),
+      "the scalar recipient IS still woken, by the trigger on swarm.signals",
+    );
+  } finally {
+    await sql.end({ timeout: 5 });
+  }
+});
+
 test("a working-on signal never enqueues a delivery, whichever way an agent is named", async () => {
   const sql = postgres(databaseUrl(), { max: 1 });
   const f = newFixture();
@@ -458,9 +502,10 @@ test("a working-on signal never enqueues a delivery, whichever way an agent is n
         await seed(tx, f);
         /* The database is not the place that refuses working-on + a recipient
          * (the edge validator is), so the ROW is legal here. What must hold is
-         * that the fan-out trigger applies the same kind gate the scalar
-         * trigger applies, or a kind that is never delivered would start being
-         * delivered through the new path. */
+         * that adding recipient rows opens no path to the delivery ledger for a
+         * kind that is never delivered. With no trigger on the recipients table
+         * that is true by construction; the test stays because it is the case
+         * that would break first if one were added. */
         await insertSignal(tx, {
           id: statusSignal,
           workspaceId: f.workspaceA,
