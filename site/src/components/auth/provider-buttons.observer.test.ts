@@ -611,6 +611,7 @@ test("CONTROL: only ProviderButtons renders a sign-in button, apart from named d
    *   setAttribute("data-signin…    built rather than written
    *   el.dataset.signinProvider =   the same thing through the dataset API
    *   el.dataset.memberReauthGithub = the same thing with the provider in the property name
+   *   <button data-login="github">  the provider typed as an attribute VALUE, any attribute
    *
    * THE SECOND LINE IS WHY THIS WAS WIDENED. `data-member-reauth-github` was live on /app and
    * this sweep read zero: the old pattern wanted the provider id IMMEDIATELY after `data-`,
@@ -649,7 +650,21 @@ test("CONTROL: only ProviderButtons renders a sign-in button, apart from named d
       `|setAttribute\\(\\s*["'\`]data-(?:signin[a-z0-9-]*|${PROVIDER_NAME_SEGMENT})["'\`]` +
       // through the dataset API, by the generic `signin*` name or by a provider in the property
       `|dataset(?:\\.[A-Za-z0-9]*(?:signin|${datasetIds})[A-Za-z0-9]*` +
-      `|\\s*\\[\\s*["'\`][A-Za-z0-9]*(?:signin|${datasetIds})[A-Za-z0-9]*["'\`]\\s*\\])\\s*=[^=]`,
+      `|\\s*\\[\\s*["'\`][A-Za-z0-9]*(?:signin|${datasetIds})[A-Za-z0-9]*["'\`]\\s*\\])\\s*=[^=]` +
+      /*
+       * A provider id typed as an attribute VALUE, whatever the attribute is called:
+       * `<button data-login="github">`, and the same thing built with setAttribute. Two arms
+       * constructed exactly this and wired it with a DOM READ rather than a literal, which
+       * slipped past the name patterns above AND past the call-site literal ban.
+       *
+       * SAFE HERE, THOUGH IT WOULD NOT BE ON THE BUILT PAGE, and that is why this branch is
+       * on the source sweep only. The generated buttons carry `data-signin-provider="github"`
+       * in the built HTML, so a value pattern there would count every generated button. In
+       * SOURCE there is exactly one file that writes that markup, ProviderButtons.astro, and
+       * this sweep already skips it. Measured on this tree: zero hits outside it.
+       */
+      `|<[a-zA-Z][^>]*\\s[a-z][a-z0-9-]*=["'\`](?:${ids})["'\`]` +
+      `|setAttribute\\(\\s*["'\`][a-z][a-z0-9-]*["'\`]\\s*,\\s*["'\`](?:${ids})["'\`]`,
     "i",
   );
   const all = new RegExp(marker.source, "gi");
@@ -717,9 +732,16 @@ test("CONTROL: every OAuth call site is the named debt or an id read at runtime"
    *                             calls it "the one remaining named provider", left for /app's
    *                             signed-out button. Exactly one call site.
    *
-   * Together those two are a bound the attribute patterns cannot give: a second GitHub-only
-   * button anywhere under site/src goes red here, whatever it calls itself and however it
-   * spells its attributes.
+   * WHAT THESE TWO BOUND, EXACTLY. An earlier version of this comment said a second
+   * GitHub-only button goes red here "whatever it calls itself and however it spells its
+   * attributes". Two arms showed that is wider than the assertions: a button that hides the
+   * provider in an attribute VALUE and is wired with a DOM READ rather than a literal passes
+   * both of them. That door is closed one level up instead, by the value branch of the sweep's
+   * marker, which reads the markup. What these two add is the wiring: a typed provider handed
+   * to signInWithProvider from anywhere, and a second use of the named GitHub wrapper.
+   *
+   * What no control in this file reaches: a provider id that is a literal nowhere — assembled
+   * at runtime, or fetched. That is not a hand-written button in any shape anybody has written.
    */
   const literalCallers: string[] = [];
   for (const file of await sourceFiles(SRC)) {
