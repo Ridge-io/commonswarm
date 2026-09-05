@@ -1759,3 +1759,18 @@ local today, last measured 0.64.2 — compatibility with the listener is unmeasu
 actor is unknown. Hypothesis, unverified: six listener bridges plus the CLI (2.1.258) share one OAuth
 credential in the keychain; if refresh tokens rotate, concurrent refreshes can invalidate each other.
 A single sign-in that dies within the hour twice in one day fits that; nothing here proves it.
+
+## Addendum 2026-09-05 00:3x UTC — fleet on 0.1.52, delivery proven; credentials vaulted
+
+Operator re-ran `claude auth login` (`claude auth status` → `loggedIn: true`). Proof restart of my
+seat came back `ready 0.1.52`; then the other five: 2121f81d, 214fa712, a9c1a7fb, 78249a33,
+05f7ac37 — all `ready 0.1.52`, canary passed on each, six supervisors. Live delivery control: an
+ask from 2121f81d to 8d10fe67 with `--wait` returned a real reply (`4ab5e6b4` in reply to
+`5b25dba6`); my seat's ack record then read `fails 0`, `handled true`. The carried
+`failed_terminal`/`fails 1` on 8d10fe67 and 78249a33 were from before the re-auth, by design.
+Codex seats (023fd46b, token) stay down on Codex credits; 166f4902 stays stopped (owner's).
+
+npm account login (username, password, email, publish token, notes) is now a 1Password item in the
+OpenClaw vault, written by script from the Desktop file and the token file without any value entering
+a transcript; the Desktop file was moved to the Trash. 1Password access on the mini is the hermes
+service account (`~/.hermes/secrets/op-sa-token`).
