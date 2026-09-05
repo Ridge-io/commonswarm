@@ -258,9 +258,29 @@ test("a sample post joins the sample set, so the local narrowing stays honest", 
   /* ~~`clearComposerDraft();`~~ as the end anchor, retired 2026-09-05: the send's own storage
      moved ABOVE the guard that protects the screen, so a landed post under a changed workspace
      still clears the draft it wrote. That put the clear BEFORE this slice's start anchor. The
-     feed render is the same boundary and is still after it. */
-  const submit = between(dashboard, "const visible = showsOnScreen(posted) ? [posted] : [];", 'renderFeed("latest");');
-  assert.match(submit, /if \(sampleMode\) sampleSignals = \[posted, \.\.\.sampleSignals\];/);
+     feed render is the same boundary and is still after it.
+
+     ~~`const visible = showsOnScreen(posted)`~~ as the START anchor, retired 2026-09-05 in the
+     same lane's last round: the store write moved above the screen guard too, and for the same
+     reason. It is the sample's SERVER, not the sample's screen — a post that landed during a
+     REFRESH never joined it, so the reopen repainted without a message the reader had sent,
+     which no server does. It is still bound to the send's own workspace, because a sample
+     switch empties and rebuilds that store and a row must not land in another workspace's
+     feed. The slice now runs from the post to the same render. */
+  const submit = between(dashboard, "await postBrowserSignal(", 'renderFeed("latest");');
+  assert.match(
+    submit,
+    /if \(sampleMode && workspaceId === activeWorkspaceId\) \{\s*\n\s*sampleSignals = \[posted, \.\.\.sampleSignals\];\s*\n\s*\}/,
+    "a sample post must join the sample store, in its own workspace, whatever the screen did",
+  );
+  /* AND BEFORE THE SCREEN GUARD, which is the half a refresh reaches. */
+  const guardAt = submit.indexOf("if (version !== requestVersion || workspaceId !== activeWorkspaceId) {");
+  const storeAt = submit.indexOf("sampleSignals = [posted, ...sampleSignals];");
+  assert.ok(storeAt > 0 && guardAt > 0, "the landed path has no store write or no guard to order");
+  assert.ok(
+    storeAt < guardAt,
+    "a post that landed under a reopen or a switch never reaches the sample store",
+  );
 });
 
 test("a post belongs to the channel it was sent from, whatever the reader does next", () => {

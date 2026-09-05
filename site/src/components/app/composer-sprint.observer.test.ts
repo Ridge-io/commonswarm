@@ -716,24 +716,59 @@ const assertComposerSprint = (value: ComposerArtifact): void => {
      It is false of a failure that arrives after every recipient already posted: there the send
      finished, and keeping the draft would let a reload bring the sent message back. The clear
      is inside the !unsent branch, and only there. */
-  /* Read the !unsent BLOCK, not the whole catch: a [\s\S]* match would still pass if the clear
-     were moved out below the block, where a rejected send would reach it too. */
-  const finished = between(
+  /* Read the !unsent BLOCKS, not the whole catch: a [\s\S]* match would still pass if the
+     clear were moved out below them, where a rejected send would reach it too.
+
+     THERE ARE TWO OF THEM NOW, and the split is the rule this file's newest claim is about
+     (2026-09-05). Work the SEND owns — removing the draft it wrote, retiring the command id
+     it minted — runs at the TOP of the catch, before anything asks about the screen, because
+     a reopen of the current workspace bumps the generation and a switch changes the
+     workspace, and neither makes a landed message unlanded. Work the SCREEN owns — the
+     attachment marker the composer shows, the previews it is holding open — stays below the
+     guard, with the box it is about. */
+  const finishedBySend = between(
     failed,
     "if (landed) {",
     "\n        }",
     "finished-send-cleanup",
   );
-  assert.match(finished, /clearComposerDraft\(sendDraftKey\);/,
+  assert.match(finishedBySend, /clearComposerDraft\(sendDraftKey\);/,
     "draft-clear: a finished send must clear the draft");
-  assert.match(finished, /composerAttachmentsMissingAfterReload = false;/,
+  assert.match(
+    finishedBySend,
+    /if \(composerIntent\?\.commandId === commandId\) composerIntent = null;/,
+    "draft-clear: a finished send must retire the command id it minted",
+  );
+  const belowGuard = failed.slice(failed.indexOf("if (!boxIsStillThisSends) {"));
+  const finishedOnScreen = between(
+    belowGuard,
+    "if (landed) {",
+    "\n        }",
+    "finished-send-screen-cleanup",
+  );
+  assert.match(finishedOnScreen, /composerAttachmentsMissingAfterReload = false;/,
     "draft-clear: a finished send must clear the lost-attachment marker too");
-  assert.match(finished, /URL\.revokeObjectURL/,
+  assert.match(finishedOnScreen, /URL\.revokeObjectURL/,
     "draft-clear: a finished send must free its preview URLs");
   assert.doesNotMatch(
-    failed.replace(finished, ""),
+    failed.replace(finishedBySend, "").replace(finishedOnScreen, ""),
     /clearComposerDraft\(\)/,
     "draft-clear: a rejected send must retain the saved draft",
+  );
+  /* AND THE SEND'S OWN TEARDOWN IS NOT BEHIND THE SCREEN GUARD. The catch used to open with
+     the generation test, which threw the send's work away with the screen's: a landed draft
+     stayed saved, the previews leaked, and a failed send under a same-workspace REOPEN never
+     put the body back — the box stayed empty and read-only for the rest of the session. */
+  assertOrder(
+    failed,
+    "clearComposerDraft(sendDraftKey);",
+    "if (!boxIsStillThisSends) {",
+    "send-owned-before-screen-guard",
+  );
+  assert.doesNotMatch(
+    failed.slice(0, failed.indexOf("if (!boxIsStillThisSends) {")),
+    /version !== requestVersion/,
+    "send-owned-before-screen-guard: the catch still opens on the screen's generation",
   );
   /* ~~`!postedIds.has(signal.id)`~~ 2026-09-05: the id set the failure path removes is now
      the set it is about to put back, which is the posted rows the list ON SCREEN would show.

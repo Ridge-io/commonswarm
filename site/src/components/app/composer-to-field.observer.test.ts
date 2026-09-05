@@ -86,6 +86,47 @@ type ToMeasurement = {
   capAfterRoom: { chips: string[]; note: string };
   /** A chip removed with NOTHING TYPED survives a switch: an address is a draft on its own. */
   emptyBodyEditSurvivesSwitch: { chips: string[]; value: string };
+  /* ── AN IN-FLIGHT SEND ─────────────────────────────────────────────────────────────── */
+  /** Refresh reopens the workspace on screen MID-SEND, and the composer comes back usable. */
+  refreshMidSend: {
+    /** THE POSITIVE CONTROL: the box really was read-only when the step pressed Refresh. */
+    sawFlagUp: boolean;
+    readOnly: boolean;
+    busy: string | null;
+    sendState: string;
+    chips: string[];
+    chipsAfterRemove: string[];
+    chipsAfterTag: string[];
+    postedRows: number;
+  };
+  /** A send that FAILS under one puts the body back rather than leaving an empty frozen box. */
+  failedUnderRefresh: {
+    sawFlagUp: boolean;
+    readOnly: boolean;
+    value: string;
+    chips: string[];
+    retryHidden: boolean;
+    statusNamesTheFailure: boolean;
+  };
+  /** A workspace SWITCH under a failing send writes nothing into the box it lands on. */
+  switchedUnderFailedSend: {
+    sawFlagUp: boolean;
+    readOnly: boolean;
+    value: string;
+    chips: string[];
+    /** And the earlier send does not lower the flag of the send that composer is running. */
+    ownSendStillHeld: boolean;
+  };
+  /** And the unsent message is still in the workspace it was written in, with its address. */
+  unsentBodySurvivesSwitch: { value: string; chips: string[] };
+  /** Sending it again posts it once. */
+  resentOnce: { rows: number; value: string };
+  /** A send whose composer was torn down does not write its body over what is in it now. */
+  returnedBeforeItFailed: {
+    sawFlagUp: boolean;
+    restoredBeforeTyping: string;
+    value: string;
+  };
 };
 
 const contentTypes: Record<string, string> = {
@@ -446,6 +487,182 @@ const frameScript = `<script>
     await switchTo("sample-field-lab", "Field lab");
     const emptyBodyEditSurvivesSwitch = { chips: chipNames(), value: input().value };
 
+    /* ── AN IN-FLIGHT SEND, AND WHAT THE SCREEN MAY DO UNDER IT ───────────────────────
+       Sample mode resolves a send with no await at all, so until now nothing in this file
+       could act while a message was on the wire: both in-flight freezes were read out of the
+       source, and the send's own teardown was never driven under a screen that moved.
+       data-sample-send-delay gives the sample send a window and data-sample-send-fail
+       makes it fail inside one. Both are sample-only.
+
+       sawFlagUp IS THE POSITIVE CONTROL in every step below. It records that the box really
+       was read-only at the moment the step acted, so a window that stopped opening fails on
+       its own assertion instead of making the step vacuous. */
+    /* THE IN-FLIGHT STEPS CLEAR WITHOUT THROWING. clearTo ends in settleChips, which aborts
+       the whole measurement when the row will not empty — and a composer left frozen by a
+       stuck send flag is exactly that state, so the defect these steps exist to catch would
+       arrive as "no measurement" rather than on its own assertion. A review round measured
+       that: the first mutation here reported RED, WRONG REASON for it. */
+    const clearToSoft = async () => {
+      type("");
+      await new Promise((resolve) => view.setTimeout(resolve, 350));
+      for (let guard = 0; guard < 12; guard += 1) {
+        const remove = doc.querySelector("[data-composer-to-remove]");
+        if (!remove) break;
+        remove.click();
+      }
+      await settle(0);
+    };
+    const settleFor = async (predicate) => {
+      for (let attempt = 0; attempt < 400; attempt += 1) {
+        if (predicate()) return true;
+        await new Promise((resolve) => view.setTimeout(resolve, 25));
+      }
+      return false;
+    };
+    const rowsCarrying = (needle) =>
+      [...list().children].filter((row) => (row.textContent ?? "").includes(needle)).length;
+    const pressRefresh = () => doc.querySelector("[data-refresh]").click();
+    doc.documentElement.dataset.sampleSendDelay = "1500";
+
+    /* REFRESH REOPENS THE WORKSPACE ALREADY ON SCREEN. It advances the generation and runs no
+       teardown, so the composer is left standing with a send flag on it. While the lift asked
+       about that generation, the flag never came down again: a read-only box, dead chips and
+       a frozen To: row for the rest of the session. */
+    await clearToSoft();
+    type("@Alto refreshing under this one");
+    await settle(1);
+    doc.querySelector("[data-composer]").requestSubmit();
+    const sawFlagUpOnRefresh = await settleFor(() => input().readOnly);
+    pressRefresh();
+    await settleFor(() => !input().readOnly);
+    await new Promise((resolve) => view.setTimeout(resolve, 500));
+    const refreshedChips = chipNames();
+    const refreshedReadOnly = input().readOnly;
+    const refreshedBusy = input().getAttribute("aria-busy");
+    const refreshedSendState = doc.querySelector("[data-composer-send]").dataset.state ?? "";
+    /* THE CHIPS ANSWER A CLICK: a chip click returns early while the flag is up. */
+    doc.querySelector("[data-composer-to-remove]")?.click();
+    await settle(0);
+    const refreshedChipsAfterRemove = chipNames();
+    /* AND THE ROW IS NOT FROZEN: the derived pass holds while the flag is up, so a stuck flag
+       stops every later tag, prune and edit from ever committing. */
+    type("@Basalt is still addressable");
+    await settle(1);
+    const refreshedChipsAfterTag = chipNames();
+    /* AND THE MESSAGE WAS POSTED ONCE. The landed row reaches the sample store whatever the
+       screen did, so the next reopen paints it: one row, not none and not two. */
+    pressRefresh();
+    await settleFor(() => !doc.querySelector("[data-composer]").hidden);
+    await new Promise((resolve) => view.setTimeout(resolve, 300));
+    const refreshMidSend = {
+      sawFlagUp: sawFlagUpOnRefresh,
+      readOnly: refreshedReadOnly,
+      busy: refreshedBusy,
+      sendState: refreshedSendState,
+      chips: refreshedChips,
+      chipsAfterRemove: refreshedChipsAfterRemove,
+      chipsAfterTag: refreshedChipsAfterTag,
+      postedRows: rowsCarrying("refreshing under this one"),
+    };
+
+    /* AND A SEND THAT FAILS UNDER A REFRESH PUTS THE BODY BACK. The restore sat below the
+       generation test at the top of the catch, so a reopen threw it away with the screen
+       work: an empty read-only box, no error, and no Retry. */
+    await clearToSoft();
+    doc.documentElement.dataset.sampleSendFail = "";
+    type("@Cinder this one fails under a refresh");
+    await settle(1);
+    doc.querySelector("[data-composer]").requestSubmit();
+    const sawFlagUpOnFailure = await settleFor(() => input().readOnly);
+    pressRefresh();
+    await settleFor(() => !input().readOnly);
+    await new Promise((resolve) => view.setTimeout(resolve, 500));
+    const failedUnderRefresh = {
+      sawFlagUp: sawFlagUpOnFailure,
+      readOnly: input().readOnly,
+      value: input().value,
+      chips: chipNames(),
+      retryHidden: doc.querySelector("[data-composer-retry]").hidden,
+      statusNamesTheFailure: (doc.querySelector("[data-composer-status]")?.textContent ?? "")
+        .includes("asked to fail this send"),
+    };
+    delete doc.documentElement.dataset.sampleSendFail;
+
+    /* AND A WORKSPACE SWITCH UNDER A FAILING SEND WRITES NOTHING INTO THE BOX IT LANDS ON.
+       That composer is not the send's. The message stays in the workspace it was written in,
+       because the stored draft is frozen for the whole post — which is the freeze this file
+       could only read out of the source until the window above existed. */
+    await clearToSoft();
+    doc.documentElement.dataset.sampleSendFail = "";
+    doc.documentElement.dataset.sampleSendDelay = "3000";
+    type("@Delta written in the field lab");
+    await settle(1);
+    doc.querySelector("[data-composer]").requestSubmit();
+    const sawFlagUpOnSwitch = await settleFor(() => input().readOnly);
+    await switchTo("sample-design-studio", "Design studio");
+    /* The switch is faster than the window, so the send is still on the wire and the box in
+       front of the reader is a different workspace's. */
+    const studioUnderTheFailingSend = {
+      readOnly: input().readOnly,
+      value: input().value,
+      chips: chipNames(),
+    };
+    /* A SECOND SEND, IN THE WORKSPACE THE READER MOVED TO, while the first is still going.
+       The first raised its flag on a composer that has since been torn down and rebuilt, so
+       when it finishes it must not lower THIS send's flag. The first window closes at about
+       3s and this one at about 5s, and the read below sits between them. */
+    delete doc.documentElement.dataset.sampleSendFail;
+    doc.documentElement.dataset.sampleSendDelay = "5000";
+    type("a message the studio is posting");
+    doc.querySelector("[data-composer]").requestSubmit();
+    await new Promise((resolve) => view.setTimeout(resolve, 3_500));
+    const switchedUnderFailedSend = {
+      sawFlagUp: sawFlagUpOnSwitch,
+      ...studioUnderTheFailingSend,
+      ownSendStillHeld: input().readOnly,
+    };
+    /* Let the studio's own send finish before moving on. */
+    await settleFor(() => !input().readOnly);
+    delete doc.documentElement.dataset.sampleSendDelay;
+    await new Promise((resolve) => view.setTimeout(resolve, 300));
+    await switchTo("sample-field-lab", "Field lab");
+    const unsentBodySurvivesSwitch = { value: input().value, chips: chipNames() };
+    /* AND SENDING IT AGAIN POSTS IT ONCE, which is the double-post this family produced twice:
+       a message that came back as a draft and was sent a second time under a fresh command id. */
+    const rowsBeforeResend = list().children.length;
+    doc.querySelector("[data-composer]").requestSubmit();
+    await settleFor(() => list().children.length > rowsBeforeResend);
+    await new Promise((resolve) => view.setTimeout(resolve, 200));
+    const resentOnce = {
+      rows: rowsCarrying("written in the field lab"),
+      value: input().value,
+    };
+
+    /* AND A SEND WHOSE COMPOSER WAS TORN DOWN DOES NOT COME BACK FOR IT. The reader can leave
+       a workspace and return to it before the send finishes. The composer they return to was
+       rebuilt from storage and may already have new text in it, and a failure from before
+       must not write its old body over that. The teardown says so by retiring the send's
+       token: coming back to the same workspace does not give a torn-down send its box back. */
+    doc.documentElement.dataset.sampleSendFail = "";
+    doc.documentElement.dataset.sampleSendDelay = "6000";
+    type("@Ember one more from the field lab");
+    await settle(1);
+    doc.querySelector("[data-composer]").requestSubmit();
+    const sawFlagUpOnReturn = await settleFor(() => input().readOnly);
+    await switchTo("sample-design-studio", "Design studio");
+    await switchTo("sample-field-lab", "Field lab");
+    /* The draft is back, and the reader writes something else over it. */
+    const restoredBeforeTyping = input().value;
+    type("a new line typed after coming back");
+    await new Promise((resolve) => view.setTimeout(resolve, 6_500));
+    const returnedBeforeItFailed = {
+      sawFlagUp: sawFlagUpOnReturn,
+      restoredBeforeTyping,
+      value: input().value,
+    };
+    delete doc.documentElement.dataset.sampleSendFail;
+    delete doc.documentElement.dataset.sampleSendDelay;
+
     document.documentElement.dataset.toMeasurement = btoa(unescape(encodeURIComponent(JSON.stringify({
       atRest,
       midSentence,
@@ -467,6 +684,12 @@ const frameScript = `<script>
       capRefused,
       capAfterRoom,
       emptyBodyEditSurvivesSwitch,
+      refreshMidSend,
+      failedUnderRefresh,
+      switchedUnderFailedSend,
+      unsentBodySurvivesSwitch,
+      resentOnce,
+      returnedBeforeItFailed,
     }))));
   };
   const start = () => void runMeasurement().catch((error) => report(error?.stack ?? error));
@@ -549,10 +772,13 @@ test("the To: row is the address, and it says who is notified", async () => {
       "--no-sandbox",
       "--single-process",
       "--no-zygote",
-      "--virtual-time-budget=60000",
+      /* RAISED FROM 60000 for the in-flight steps: four sends hold windows open, the waits
+         around them are virtual-clock time too, and a MUTATED build leaves a frozen composer
+         in which every settleFor below runs to its own ceiling instead of returning early. */
+      "--virtual-time-budget=240000",
       "--dump-dom",
       `${server.origin}/__measure`,
-    ], { maxBuffer: 10 * 1024 * 1024, timeout: 60_000, killSignal: "SIGKILL" });
+    ], { maxBuffer: 10 * 1024 * 1024, timeout: 180_000, killSignal: "SIGKILL" });
     const encoded = stdout.match(/data-to-measurement="([^"]+)"/)?.[1];
     const encodedError = stdout.match(/data-to-error="([^"]+)"/)?.[1];
     assert.ok(
@@ -721,6 +947,125 @@ test("the To: row is the address, and it says who is notified", async () => {
       chips: ["Cinder", "Delta", "Ember", "Flint", "Glint", "Harrow", "Inlet"],
       value: "",
     }, "emptyBodyEditSurvivesSwitch: an address edited with nothing typed was not written down");
+
+    /* ── THE IN-FLIGHT SEND ────────────────────────────────────────────────────────────
+       REFRESH REOPENS THE WORKSPACE ON SCREEN. It advances the generation and tears nothing
+       down, and the send's teardown used to ask that generation whether it still owned the
+       composer. It did not, so the flag stayed up: the box stayed read-only, the send button
+       stayed disabled, chip clicks returned at their own guard, and the derived pass held
+       for the rest of the session. A review arm found it on the round before this one. */
+    /* EACH CLAIM ANSWERS FOR ITSELF. One deepEqual over the whole payload would put four
+       different defects on one message, which is what the mutation harness cannot tell apart. */
+    assert.equal(
+      measured.refreshMidSend.sawFlagUp,
+      true,
+      "refreshMidSend: the step did not act inside the send's window, so nothing below it is " +
+        "about an in-flight send",
+    );
+    assert.deepEqual({
+      readOnly: measured.refreshMidSend.readOnly,
+      busy: measured.refreshMidSend.busy,
+      sendState: measured.refreshMidSend.sendState,
+    }, {
+      readOnly: false,
+      busy: null,
+      sendState: "ready",
+    }, "refreshMidSend: a refresh during a post left the send flag up");
+    assert.deepEqual({
+      chips: measured.refreshMidSend.chips,
+      chipsAfterRemove: measured.refreshMidSend.chipsAfterRemove,
+      chipsAfterTag: measured.refreshMidSend.chipsAfterTag,
+    }, {
+      chips: ["Alto"],
+      chipsAfterRemove: [],
+      chipsAfterTag: ["Basalt"],
+    }, "refreshMidSend: a refresh during a post left the To: row frozen");
+    assert.equal(
+      measured.refreshMidSend.postedRows,
+      1,
+      "refreshMidSend: the message posted during a refresh is missing from the feed, or twice in it",
+    );
+
+    /* AND A FAILURE UNDER THE SAME REFRESH PUTS THE MESSAGE BACK. The restore, the error and
+       the Retry all sat below the generation test at the top of the catch. */
+    assert.equal(
+      measured.failedUnderRefresh.sawFlagUp,
+      true,
+      "failedUnderRefresh: the failing step did not act inside the send's window",
+    );
+    assert.deepEqual({
+      readOnly: measured.failedUnderRefresh.readOnly,
+      value: measured.failedUnderRefresh.value,
+      chips: measured.failedUnderRefresh.chips,
+      retryHidden: measured.failedUnderRefresh.retryHidden,
+      statusNamesTheFailure: measured.failedUnderRefresh.statusNamesTheFailure,
+    }, {
+      readOnly: false,
+      value: "@Cinder this one fails under a refresh",
+      chips: ["Cinder"],
+      retryHidden: false,
+      statusNamesTheFailure: true,
+    }, "failedUnderRefresh: a send that failed during a refresh lost the message and said nothing");
+
+    /* A WORKSPACE SWITCH UNDER A FAILING SEND IS THE OTHER HALF: that composer belongs to
+       another workspace, so the failure writes nothing into it. The studio shows its own
+       draft, exactly as it did before the send that failed elsewhere. */
+    assert.equal(
+      measured.switchedUnderFailedSend.sawFlagUp,
+      true,
+      "switchedUnderFailedSend: the switching step did not act inside the send's window",
+    );
+    assert.deepEqual({
+      readOnly: measured.switchedUnderFailedSend.readOnly,
+      value: measured.switchedUnderFailedSend.value,
+      chips: measured.switchedUnderFailedSend.chips,
+    }, {
+      readOnly: false,
+      value: "@Orbit and @River will handle it",
+      chips: ["Orbit"],
+    }, "switchedUnderFailedSend: a failure wrote into the box the reader had moved to");
+    /* AND A SEND THAT LOST ITS COMPOSER DOES NOT LOWER THE NEXT SEND'S FLAG. The studio's own
+       message is on the wire while the field lab's failure arrives; a flag lowered by the
+       wrong send would make the box writable and the chips editable under a live post. */
+    assert.equal(
+      measured.switchedUnderFailedSend.ownSendStillHeld,
+      true,
+      "switchedUnderFailedSend: a send from another workspace lowered this composer's flag",
+    );
+
+    /* AND THE UNSENT MESSAGE IS WHERE IT WAS WRITTEN, with the address it was addressed to.
+       The stored draft is frozen for the whole post, so the switch's flush did not read the
+       box the send had emptied and write that over it. This is the first browser control on
+       that freeze; it was a source claim until the window above existed. */
+    assert.deepEqual(measured.unsentBodySurvivesSwitch, {
+      value: "@Delta written in the field lab",
+      chips: ["Delta"],
+    }, "unsentBodySurvivesSwitch: a message unsent under a workspace switch was lost");
+
+    /* AND SENDING IT AGAIN POSTS IT ONCE. Nothing landed, so this send is the only one. */
+    assert.deepEqual(measured.resentOnce, {
+      rows: 1,
+      value: "",
+    }, "resentOnce: the restored message posted more than once");
+
+    /* AND A SEND THAT LOST ITS COMPOSER DOES NOT COME BACK FOR IT when the reader returns to
+       the workspace it was sent from. The box has newer text in it by then; the failure's
+       restore would overwrite live work with a body the reader had already moved past. */
+    assert.equal(
+      measured.returnedBeforeItFailed.sawFlagUp,
+      true,
+      "returnedBeforeItFailed: the returning step did not act inside the send's window",
+    );
+    assert.equal(
+      measured.returnedBeforeItFailed.restoredBeforeTyping,
+      "@Ember one more from the field lab",
+      "returnedBeforeItFailed: coming back mid-post did not restore the message being sent",
+    );
+    assert.equal(
+      measured.returnedBeforeItFailed.value,
+      "a new line typed after coming back",
+      "returnedBeforeItFailed: a torn-down send wrote its old body over what the reader typed",
+    );
   } finally {
     await server.close();
   }
