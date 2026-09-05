@@ -64,6 +64,8 @@ type ToMeasurement = {
   afterReload: { chips: string[]; note: string };
   /** A saved draft's own tags are on the row after a reload, before anything is sent. */
   afterReloadWithDraft: { chips: string[]; value: string };
+  /** A recipient removed by hand stays removed across a reload, tag still in the body. */
+  removalSurvivesReload: { chips: string[]; value: string };
 };
 
 const contentTypes: Record<string, string> = {
@@ -284,6 +286,24 @@ const frameScript = `<script>
     await new Promise((resolve) => view.setTimeout(resolve, 400));
     const afterReloadWithDraft = { chips: chipNames(), value: input().value };
 
+    /* AND A REMOVAL SURVIVES ONE TOO. The reader takes Lumen out of To: and leaves "@Lumen"
+       in the sentence. The record of which tags have already been lifted travels with the
+       draft, so the reload does not read that tag as fresh and address Lumen again. */
+    [...doc.querySelectorAll("[data-composer-to-remove]")]
+      .find((button) => button.getAttribute("aria-label") === "Remove Lumen from To:")
+      ?.click();
+    await settle(1);
+    await new Promise((resolve) => view.setTimeout(resolve, 500));
+    await new Promise((resolve) => {
+      frame.addEventListener("load", resolve, { once: true });
+      frame.contentWindow.location.reload();
+    });
+    doc = frame.contentDocument;
+    view = frame.contentWindow;
+    await ready();
+    await new Promise((resolve) => view.setTimeout(resolve, 500));
+    const removalSurvivesReload = { chips: chipNames(), value: input().value };
+
     document.documentElement.dataset.toMeasurement = btoa(unescape(encodeURIComponent(JSON.stringify({
       atRest,
       midSentence,
@@ -296,6 +316,7 @@ const frameScript = `<script>
       afterSend,
       afterReload,
       afterReloadWithDraft,
+      removalSurvivesReload,
     }))));
   };
   const start = () => void runMeasurement().catch((error) => report(error?.stack ?? error));
@@ -477,6 +498,10 @@ test("the To: row is the address, and it says who is notified", async () => {
       chips: ["Orbit", "Lumen"],
       value: "and @Lumen should see it",
     }, "afterReloadWithDraft: a saved draft's own tags are on the row after a reload");
+    assert.deepEqual(measured.removalSurvivesReload, {
+      chips: ["Orbit"],
+      value: "and @Lumen should see it",
+    }, "removalSurvivesReload: a recipient removed by hand stays removed across a reload");
   } finally {
     await server.close();
   }
@@ -529,6 +554,58 @@ test("the posted body carries the To: set and leaves both scalar fields null", (
   assert.equal(notifiedRecipient([river, orbit]), null);
 });
 
+test("nothing but the reader moves the address", () => {
+  /* A SOURCE CLAIM, and it says why. The tag pass rewrites both the To: set and the record
+     of which tags produced it, so it may run only where the reader acted: a keystroke, a
+     pick from the mention list, a draft restore, and the flush the submit does before it
+     reads the set.
+
+     It was called from `renderRoster` for one round. A roster paint then re-parsed whatever
+     was in the box — including the empty box a send leaves behind while it waits for the
+     server — which wiped the applied record and let a recipient the reader had removed come
+     back under the retry, at a new command id. A review arm found it.
+
+     BOUND: this counts call sites in one file. It does not prove no other module moves the
+     set, and nothing else imports these functions. */
+  const dashboard = readFileSync(
+    new URL("./LiveDashboard.astro", import.meta.url),
+    "utf8",
+  );
+  const callSites = dashboard.split("applyComposerMentions()").length - 1;
+  assert.equal(
+    callSites,
+    4,
+    "the tag pass is called from somewhere new; every call site must be an action of the reader",
+  );
+  for (const [where, anchor, close] of [
+    ["the draft restore", "const restoreComposerDraft = (): void => {", "\n    };"],
+    ["the typing pause", "const scheduleComposerToPass = (): void => {", "\n    };"],
+    ["the mention pick", "const selectMention = (mention: EntityRef): void => {", "\n    };"],
+  ] as const) {
+    const start = dashboard.indexOf(anchor);
+    assert.ok(start > 0, `${where}: anchor not found`);
+    const block = dashboard.slice(start, dashboard.indexOf(close, start));
+    assert.match(block, /applyComposerMentions\(\)/, `${where} must run the tag pass`);
+  }
+  const roster = dashboard.slice(
+    dashboard.indexOf("const renderRoster = (): void => {"),
+  );
+  assert.doesNotMatch(
+    roster.slice(0, roster.indexOf("\n    };")),
+    /applyComposerMentions\(\)/,
+    "a roster paint moves the address",
+  );
+  /* And the address is not editable while its own message is on the wire. */
+  const chipClicks = dashboard.slice(
+    dashboard.indexOf('one<HTMLElement>("[data-composer-to-chips]")?.addEventListener'),
+  );
+  assert.match(
+    chipClicks.slice(0, 1_600),
+    /if \(composerSending\) return;/,
+    "a chip can be edited while the message it addresses is being posted",
+  );
+});
+
 test("an empty roster is not read as a workspace with nobody in it", () => {
   /* A SOURCE CLAIM, and it says so. renderWorkspace runs before the roster request settles,
      so `agents` and `members` are briefly empty for a workspace that has both. Pruning the
@@ -546,6 +623,7 @@ test("an empty roster is not read as a workspace with nobody in it", () => {
   assert.match(
     dashboard,
     /const composerRosterKnown = \(\): boolean => agents\.length > 0 \|\| members\.length > 0;/,
+    "empty-roster guard: the predicate that separates 'not fetched yet' from 'nobody here'",
   );
   assert.match(
     dashboard,
@@ -640,7 +718,12 @@ test("the note is generated from the cap and the wake position, not typed beside
       ["cap", /COMPOSER_TO_MAX = SIGNAL_RECIPIENT_MAX/],
       ["wake position", /NOTIFIED_POSITION = SCALAR_POSITION/],
       ["cap sentence", /\$\{COMPOSER_TO_MAX\}/],
-      ["wake sentence", /positionWord\(NOTIFIED_POSITION\)/],
+      /* The note's own clause, not merely the call anywhere in the file: the chip label
+         below also calls positionWord, so a bare call pattern stopped discriminating. */
+      ["wake sentence", /\$\{positionWord\(NOTIFIED_POSITION\)\} recipient is notified/],
+      /* The chip's own control names the same position. Typing "first" there while the note
+         generated it was half of a round-one finding that the first fix did not cover. */
+      ["chip label position", /const front = positionWord\(NOTIFIED_POSITION\);/],
     ] as const;
   for (const [name, pattern] of generated) {
     assert.match(source, pattern, `${name} is not built from the constant`);

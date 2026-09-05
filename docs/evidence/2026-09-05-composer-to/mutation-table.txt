@@ -55,7 +55,17 @@ red  a saved draft's tags are on the row after a reload, not lifted in at send t
   restored green  site/src/components/app/composer-to-field.observer.test.ts
 red  the applied record is cleared when the body is gone, so a tag typed again addresses again
   restored green  site/src/components/app/composer-to-field.observer.test.ts
+red  a roster paint does not move the address
+  restored green  site/src/components/app/composer-to-field.observer.test.ts
+red  the address is not editable while its own message is on the wire
+  restored green  site/src/components/app/composer-to-field.observer.test.ts
+red  a draft carries the set it was being written to
+  restored green  site/src/components/app/composer-to-field.observer.test.ts
+red  a removal survives a reload, because the applied record travels with the draft
+  restored green  site/src/components/app/composer-to-field.observer.test.ts
+red  the chip label takes its position word from the wake index
+  restored green  site/src/components/app/composer-to-field.observer.test.ts
 red  the remove control removes the recipient
   restored green  site/src/components/app/composer-addressing.observer.test.ts
 
-28 mutations, 0 problems
+33 mutations, 0 problems

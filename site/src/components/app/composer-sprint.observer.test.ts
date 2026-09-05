@@ -631,13 +631,23 @@ const assertComposerSprint = (value: ComposerArtifact): void => {
      drafts already saved in readers' browsers. */
   assert.match(draft, /COMPOSER_DRAFT_SCOPE = "all-signals";/,
     "draft-scope: stream identity must be explicit");
-  /* The draft is the body and one attachment marker. The address used to be saved beside it —
-   * audienceKey, extra agent ids, the no-wake choice — and all three are gone, because the
-   * address is inside the body the draft already holds. */
+  /* The draft is the state of the message being written: the body, one attachment marker,
+   * the To: set it is addressed to, and which of the body's tags produced that set.
+   *
+   * RETIRED (2026-09-04): "the address used to be saved beside it — audienceKey, extra agent
+   * ids, the no-wake choice — and all three are gone, because the address is inside the body
+   * the draft already holds." The address is beside the body again, and it is not those
+   * three things: a recipient LIST, and the record that keeps a removed recipient removed.
+   * Saving one without the other was measured wrong in both directions on 2026-09-05. */
   assert.match(
     draft,
     /JSON\.stringify\(\{\s*body,\s*\.\.\.\(hadAttachments \? \{ hadAttachments: true \} : \{\}\),/,
     "draft-audience: body and the lost-attachment marker must persist together",
+  );
+  assert.match(
+    draft,
+    /\.\.\.\(composerTo\.length === 0 \? \{\} : \{ to: composerTo \}\),\s*\n\s*\.\.\.\(composerToApplied\.length === 0 \? \{\} : \{ applied: composerToApplied \}\),/,
+    "draft-audience: the To: set and its applied record persist together or not at all",
   );
   assert.match(draft, /input\.value = draft\.body;/,
     "draft-restore: reload must restore the exact body");

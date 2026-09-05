@@ -260,9 +260,13 @@ export const composerPromoteLabel = (
   if (already !== null && sameRecipient(already, entity)) return `${name} is notified`;
   /* Ask the same function the row asks, about the set this click would make. */
   const afterPromotion = notifiedRecipient(promoteComposerRecipient(current, entity));
+  /* The position word comes from the same index the wake does, like the note under the
+   * chips. Typing "first" here while the note generated it was the half of the round-one
+   * finding that the kind fix did not cover. */
+  const front = positionWord(NOTIFIED_POSITION);
   return afterPromotion !== null && sameRecipient(afterPromotion, entity)
-    ? `Put ${name} first, so ${name} is notified`
-    : `Put ${name} first. No agent is notified while a person is first`;
+    ? `Put ${name} ${front}, so ${name} is notified`
+    : `Put ${name} ${front}. No agent is notified while a person is ${front}`;
 };
 
 /**

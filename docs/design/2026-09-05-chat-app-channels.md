@@ -58,7 +58,8 @@ made that argument false. Found by a review arm; the set grows with the post now
 > is the CHANNEL half: the composer posts where you are reading and gains no chrome for it. The
 > To: row addresses people and agents and never names a channel.
 
-R10, and the 2026-09-04 operator direction that deleted the TO row from an 80px bar. There is **no
+R10, and the 2026-09-04 operator direction that deleted the TO row from an 80px bar (~~the TO half of
+that direction was reversed on 2026-09-05; see the note above~~). There is **no
 channel dropdown**. The task brief for this lane asked for "a channel selector when a channel is
 active"; the reconciled design at §8 forbids exactly that ("Zero chrome ... the same reasoning deletes a
 channel dropdown"), so the lane followed the design and this paragraph is the record of the difference.

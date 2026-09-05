@@ -1,0 +1,146 @@
+I'll read REVIEW.md and DIFF.patch first, then follow REVIEW.md exactly.The patch is large. I’ll keep reading it and the files the brief names so I can attack each claim.I'll keep reading the rest of the patch and the files each check names.I’ll keep going through the remaining patch and the source the checks name.I need the send/catch path, the wire edge, and the wake trigger next. Those are where the claims can actually break.`diff --git a/docs/design/2026-09-04-chat-platform-reconciled.md b/docs/design/2026-09-04-chat-platform-reconciled.md`
+
+SHA `1d786fa`. Round-one holes in restore order, applied-clear-before-post, and the person-chip wake lie are closed. The delivery guarantee still fails while a send is in flight, and two controls this SHA claimed to fix still cannot tell a wrong reason from the named one.
+
+## 1. Hidden recipient
+
+The send snapshots `composerTo` after a flush, then keeps editing that set.
+
+Submit captures `recipients` from `composerRecipients()` (`LiveDashboard.astro:2579`, `7277`). Chip clicks do not look at `composerSending` (`7577–7596`). Attachment remove does (`2970–2972`). Input is `readOnly` for the same window (`3054–3056`).
+
+Sequence:
+
+1. To: shows Orbit, River. Send starts. Snapshot is `[Orbit, River]`.
+2. Box is emptied (`7362`). Status is Posting.
+3. Reader clicks × on River. Row now shows Orbit. Intent is nulled.
+4. The in-flight body still has River.
+
+The reader pressed send on one set, then watched a different set. The post still carries River. Success remembers the snapshot (`7451`), not the chips. Reload opens with River back.
+
+The opposite lie is still there too: promote during the post, and the wake mark on screen is not the scalar the server will write.
+
+Debounce flush at submit is the right fix for a tag typed in the last 150ms. Sample send still goes through `composerRecipients()`. Those paths are fine. Chip edits during the post are not.
+
+## 2. The wire body
+
+There is no `postSignalFieldProblem`. The served check is `chatSignalShapeProblem` plus `signalRecipientListProblem` and `chatSignalKeys`.
+
+`browserSignalCommand` (`commonswarm.ts:2088–2114`) builds a body the edge in this tree will take:
+
+- both scalars `null`
+- `to` omitted on broadcast (`to: []` is refused: “Leave it out…”)
+- `person` mapped to wire `user`
+- cap imported from `SIGNAL_RECIPIENT_MAX`
+- `signal_kind` is `ask` only when `notifiedRecipient` is an agent
+
+That matches `signalRecipientListProblem`, the `to` vs scalar conflict, `CHAT_SIGNAL_OPTIONAL_KEYS`, and `resolveSignalWriteTarget` copying entry 0 into the scalar columns (`command/index.ts:6742–6750`). `tests/p1-server/chat-signals.test.ts` covers that shape. This lane did not run those tests; the evidence README says so.
+
+Bodies this builder can make that a server will refuse:
+
+- **Older edge** with no `to` in `CHAT_SIGNAL_OPTIONAL_KEYS`: every directed post is an extra-key 400. Broadcast still looks like every old client.
+- **`to` plus `thread_root_id`**: refused (“cannot also be addressed to a recipient”). The composer does not send `thread_root_id`; the exported builder will.
+- **Dead recipient** still in the local roster: whole post 403, nothing stored. Not a shape bug.
+
+This client does not send `to: []`, mixed scalar+`to`, or `kind: "person"` on the wire.
+
+## 3. The wake claim
+
+`swarm.enqueue_signal_delivery` still fires only when `NEW.to_agent_principal_id IS NOT NULL AND NEW.kind IN ('ask','note')` (`20260731000001_signal_deliveries.sql:126`). The edge fills that column from recipient 0. The listener then keeps rows with `signal.to_agent === stored.principalId` (`src/listener/hook.ts:700`). Copy that says “only recipient 0, and only if it is an agent” matches enqueue and the listener.
+
+Kind the client sends: `ask` when an agent is at 0, else `note`. The trigger would also wake a `note` with `to_agent` set; this client does not build that pair.
+
+Hosted inbox is wider than wake: `chat-signals.test.ts` requires the agent at position 1 to see the row with `inbox: true`. That is read, not enqueue. “can read this and reply” is true for the hosted workspace. The local listener still filters on the scalar column, so an agent at position 1 is not in its directed inbox. The row does not claim that agent is notified.
+
+The person-chip lie from round one is gone. `composerPromoteLabel` asks `notifiedRecipient` about the set after promote (`composer-address.ts:259–265`).
+
+## 4. The mention merge
+
+`mergeMentionRecipients` is correct in one quiet session: a tag adds, a removed key stays out while it remains in `applied`, a refused tag is remembered so the cap notice does not fire every keystroke.
+
+That memory dies when the body is empty. `applyComposerMentions` writes `composerToApplied = merged.applied` **before** the no-op return (`2741–2769`). `mergeMentionRecipients` drops every applied key whose tag is not in the body (`composer-address.ts:312`).
+
+Send empties the box **before** the await (`7362`) and does not clear `applied` until success (`7459`). `renderRoster` runs `applyComposerMentions` on every roster paint (`3534–3536`). Pending-access poll, unknown-agent refresh, and `commonswarm:agent-prompt-ready` all call `renderRoster` while a real post can still be in flight (`5118`, `5362`, `7912`).
+
+Sequence:
+
+1. Chip for River removed. `@River` still in the body. `applied` holds River.
+2. Send posts `[Orbit]`. Box emptied. `applied` still holds River.
+3. A roster refresh runs the mention pass on the empty box. `applied` becomes `[]`.
+4. Network error. Body comes back. River is “fresh”. Flush on retry adds River. `audienceKey` changes. New `commandId`.
+
+Same silent re-add as round one, through a different door.
+
+A cap refusal is named once, then cleared on the next pause because `fresh` is empty and `notice` becomes `""`. Parser `overflow` stays in the notice because `address.overflow` is recomputed every pass. Ambiguous names stay too. Cap-refused tags do not.
+
+## 5. The one-signal rewrite
+
+Happy path: one pending id, one post, pending swapped for the posted row, `rememberComposerTo`, draft cleared. Catch: `landed === (posted !== null)`; Retry only when nothing landed and the channel is still this one; a throw after the post does not put the body back. That is the right one-signal failure model.
+
+Broken cases:
+
+- Chip edit during the post (1) nulls `composerIntent` (`7589`). If the client then treats the post as failed, retry mints a second id. If the server already accepted the first, that is a double-post the idempotency key cannot collapse.
+- The same applied wipe in (4) changes the address under retry. Same double-post.
+- Workspace change while the post is in flight: success hits `version !== requestVersion` and returns (`7420–7424`) without `clearComposerDraft`, without `rememberComposerTo`, without `postedSinceReset`. `resetComposer` already nulled the intent (`3375`). Come back, restore the sent draft, send again with a new id.
+
+Catch-landed does clear the draft (`7539–7544`). The success early-return does not. That is the same “landed, draft still there” hole they closed on the catch path and left on the success path.
+
+I did not find a ghost pending row on the happy failure path: `pendingId` is dropped in both success and catch.
+
+## 6. Generated versus typed
+
+`composerDeliveryNote` / `composerToFullNotice` / `composerPrunedNotice` take `COMPOSER_TO_MAX` and `positionWord(NOTIFIED_POSITION)`.
+
+Still typed beside that:
+
+- Chip copy still says `"Put ${name} first"` / `"while a person is first"` (`composer-address.ts:263–265`). The wake index is `NOTIFIED_POSITION`. The note under the chips uses `positionWord`. The chip does not. Round one named this; the kind half was fixed; the word `first` was not.
+- `POSITION_WORDS` is eight literals. A test fails if `COMPOSER_TO_MAX` grows past that list; the list is still typed.
+- `composer-to-field.observer.test.ts` pins `COMPOSER_TO_MAX === 8` so comments do not drift. That is a pin, not a user sentence.
+
+The source sweep states its bound: one file. It does not read the chip strings.
+
+## 7. Retired claims
+
+Recorded as retired, on purpose: LiveDashboard comments, `mention-address.ts`, `composer.observer.test.ts`, `composer-polish.observer.test.ts`, `composer-sprint.observer.test.ts`, the ANSWERED notes in `2026-09-04-chat-platform-reconciled.md`.
+
+Still asserted as **current**:
+
+- `supabase/functions/_shared/channels.ts:228–232` on `SIGNAL_RECIPIENT_MAX`: “that composer posts one directed signal per tag and has not moved to `to` yet.” Both round-one arms named this. It is still on the enforcing constant.
+- `docs/design/2026-09-05-chat-app-channels.md:61`: after a CORRECTED block, the next sentence still reads “the 2026-09-04 operator direction that deleted the TO row from an 80px bar” as if that were the live rule.
+- Same shape in `2026-09-04-chat-platform-reconciled.md` §8 (`786–788`): the old “deleted the TO row from an 80px bar” sentence is still the body; the CORRECTED note sits under it. Line numbers in that note (`LiveDashboard.astro:657-660`) are already called stale.
+
+`Sent to ${total}` in `commonswarm.ts:1945` is a delivery-receipt label, not the retired fan-out “Sent to N of M”. Different claim.
+
+## 8. State that must follow the body
+
+Attack the three round-two fixes first.
+
+**Fix 1 — `composerToApplied` cleared on success, not before the post.** Complete for a failed send that sees no other mention pass. Incomplete once `renderRoster` runs during the empty-box window (4). The fix itself creates that window: applied is still live, the body is already gone, and every roster paint now re-parses the body.
+
+**Fix 2 — remembered set, then draft, then tags.** Complete for the named restore wipe. `restoreComposerToOnEntry` → `restoreComposerDraft` → `applyComposerMentions` (`3534–3536`). I did not find a remaining path where a saved draft’s tags stay off the row until send. Applied is still not persisted, so a removed chip whose tag is in the draft comes back on reload. The row then shows the tag, so it is not a hidden recipient.
+
+**Fix 3 — chip label from `notifiedRecipient`.** Complete for the person-wake lie. A person who is already first still gets “Put N first…”, which is clumsy, not a false wake.
+
+**Fifth instance.** Looked. Found one, and it is new in this SHA: `applyComposerMentions` on every `renderRoster`, assigned into `composerToApplied` even when the set did not change, while send has already emptied the box. Same shape as “send emptied the box without emptying applied”, one step later, inverted: the empty box empties applied while the post is still unknown.
+
+Chip edits during the post are the same shape on the set itself: the row no longer follows the body that is on the wire.
+
+## 9. The controls
+
+`mutate.mjs` says the expected text is “AN ASSERTION, NEVER A TEST TITLE” (`11–14`). Two entries still match a test title, which every failure of that test prints:
+
+- Last entry expected `"rendered composer addresses several agents"` (`mutate.mjs:186`). The only test in that file is `"rendered composer addresses several agents and preserves multiline keyboard input"`. Any failure of that file matches. The harness cannot tell a broken remove control from a broken pick, send, or keyboard step.
+- Empty-roster mutation expected `"an empty roster is not read as a workspace with nobody in it"`, which is that test’s title. Four assertions share it. The mutation breaks the first, which has no message of its own.
+
+Other FIELD expected strings are assertion-message prefixes (`afterSend:`, `personFirst:`, `directed body:`). Those can discriminate.
+
+Source-reading claims state their bounds (one file; sample roster cannot hit overflow; empty-roster guard is a source claim). Honest about that.
+
+Height budgets: rest 108px and two-line 130px both require a reverted failure (`composer-polish.observer.test.ts`). Those can fail. At 320×568 the measured rest is 128.81px, over 108. Polish never opens that viewport. The README discloses 320 separately.
+
+`mutation-table.txt` says `28 mutations, 0 problems`. The README no longer types a second count. I did not re-run the harness.
+
+---
+
+The one-signal wire and the live mention-merge in a single quiet session hold. The user-visible guarantee does not: while a send is in flight the chips can disagree with the body, and a roster paint can forget which tags were already applied, so a retry can post a name that was not on the row.
+
+VERDICT: FAIL

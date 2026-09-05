@@ -1298,6 +1298,19 @@ import "../../styles/tokens.css";
   interface ComposerDraft {
     body: string;
     hadAttachments?: boolean;
+    /**
+     * The To: set this body was being written to, and which of its tags have already been
+     * lifted into chips. THE PAIR TRAVELS TOGETHER or neither does: the applied record on
+     * its own suppresses a tag whose chip was not saved, and the set on its own lets a
+     * removed recipient come back on the next keystroke. A review arm found the second
+     * shape, and the first appeared while fixing it.
+     *
+     * This is the state of a message being written. The LAST SENT set is remembered
+     * separately (`rememberComposerTo`) and is what the composer opens with when there is
+     * no draft.
+     */
+    to?: { kind: "agent" | "person"; id: string }[];
+    applied?: string[];
   }
 
   interface StagedComposerAttachment {
@@ -2834,6 +2847,19 @@ import "../../styles/tokens.css";
         return {
           body: value.body.slice(0, COMPOSER_DRAFT_STORAGE_MAX),
           ...(value.hadAttachments === true ? { hadAttachments: true } : {}),
+          ...(Array.isArray(value.to)
+            ? {
+              to: value.to.filter((entry): entry is ComposerRecipient =>
+                entry !== null && typeof entry === "object" &&
+                typeof (entry as ComposerRecipient).id === "string" &&
+                ((entry as ComposerRecipient).kind === "agent" ||
+                  (entry as ComposerRecipient).kind === "person")
+              ),
+            }
+            : {}),
+          ...(Array.isArray(value.applied)
+            ? { applied: value.applied.filter((key) => typeof key === "string") }
+            : {}),
         };
       } catch {
         return null;
@@ -2859,10 +2885,12 @@ import "../../styles/tokens.css";
       const body = input.value.slice(0, COMPOSER_DRAFT_STORAGE_MAX);
       const hadAttachments = stagedAttachments.length > 0 || composerAttachmentsMissingAfterReload;
       try {
-        /* The draft is the body and one attachment marker. The To: set is NOT saved here:
-           it is remembered when a message is sent (`rememberComposerTo`) and restored once
-           per workspace, so the composer opens addressed to whoever the last message went
-           to rather than to whoever a half-written draft named. */
+        /* The draft is the body, one attachment marker, and which of the body's tags have
+           already become chips. The To: SET is not saved here: it is remembered when a
+           message is sent (`rememberComposerTo`) and restored once per workspace, so the
+           composer opens addressed to whoever the last message went to rather than to
+           whoever a half-written draft named. What IS saved is the state of the message
+           being written, so a reload puts back exactly the chips that were on screen. */
         if (body === "" && !hadAttachments) {
           window.localStorage.removeItem(key);
           return;
@@ -2872,6 +2900,8 @@ import "../../styles/tokens.css";
           JSON.stringify({
             body,
             ...(hadAttachments ? { hadAttachments: true } : {}),
+            ...(composerTo.length === 0 ? {} : { to: composerTo }),
+            ...(composerToApplied.length === 0 ? {} : { applied: composerToApplied }),
           }),
         );
       } catch {
@@ -3090,13 +3120,28 @@ import "../../styles/tokens.css";
       }
       input.value = draft.body;
       /* A caret remembered in OTHER text is not a caret in this text. The restore would put
-         it back at a position the reader never chose here. */
+         it back at a position the reader never chose here. Kept ADJACENT to the assignment
+         above: composer-sprint.observer.test.ts reads the two together in one window, and
+         it is right to, because they are one operation. */
       composerCaretKnown = false;
       composerIntent = null;
+      /* AND THE ADDRESS THAT BELONGS TO THAT BODY, both halves of it. A draft that carries
+         a set replaces the last-sent one restored a moment ago: it is what was on screen.
+         The applied record comes with it, so a tag whose chip the reader removed is not read
+         as fresh and addressed again. Restoring one without the other was measured wrong in
+         both directions. Pruned, because a draft can outlive a member. */
+      if (draft.to !== undefined) {
+        composerTo = pruneComposerRecipients(draft.to, composerRecipientKnown);
+      }
+      composerToApplied = draft.applied ?? [];
       const warning = one<HTMLElement>("[data-composer-reload-warning]");
       composerAttachmentsMissingAfterReload = draft.hadAttachments === true;
       if (warning) warning.hidden = !composerAttachmentsMissingAfterReload;
       resizeComposerInput(input);
+      /* ONCE, HERE, because a draft is a body the reader wrote and its tags are theirs. This
+         runs inside the guard above, so it happens on an actual restore and never on a
+         later paint. */
+      applyComposerMentions();
       syncComposerControls();
     };
 
@@ -3526,14 +3571,21 @@ import "../../styles/tokens.css";
        * hidden recipient the To: field exists to rule out. renderComposerTo prunes before it
        * draws. The saved draft is restored at the same point, because this is where the
        * workspace reaches the screen. */
-      /* ORDER IS LOAD-BEARING. The remembered set goes in first, the draft body second, and
-         the draft's own tags join the set third. Restoring the draft first and the set
-         second overwrote the tags the reader had typed: they stayed visible in the box and
-         were absent from the delivery set until the send flushed them in, which posted to a
-         name the row had never shown. Both arms found it. */
+      /* ORDER IS LOAD-BEARING. The remembered set goes in first and the draft second, which
+         replaces it with the state of the message being written. Restoring the draft first
+         and the set second overwrote the tags the reader had typed: they stayed visible in
+         the box and were absent from the delivery set until the send flushed them in, which
+         posted to a name the row had never shown. Both arms found it.
+
+         A RENDER MUST NOT MOVE THE ADDRESS. The tag pass used to be called here as a third
+         step, so every roster paint re-parsed the box — including the empty box a send
+         leaves behind while it waits for the server, which wiped the record of which tags
+         were already applied and let a removed recipient come back under the retry. That is
+         the same defect the second fix created while closing the first, and this is its
+         cause rather than another instance of it: the pass now runs only where the reader
+         acted, which is a keystroke, a pick, a draft restore, and the submit flush. */
       restoreComposerToOnEntry();
       restoreComposerDraft();
-      applyComposerMentions();
       renderComposerTo();
     };
 
@@ -7582,6 +7634,10 @@ import "../../styles/tokens.css";
         ?.dataset.composerToPromote;
       const key = removeKey ?? promoteKey;
       if (key === undefined) return;
+      /* NOT WHILE THE MESSAGE IS ON THE WIRE. The box is already read-only during a send;
+         the address has to be too. Editing it mid-flight retires the send intent, so a post
+         the server had accepted could be retried under a new command id. */
+      if (composerSending) return;
       const entity = composerTo.find((candidate) => recipientKey(candidate) === key);
       if (!entity) return;
       /* The address changed, so a send intent minted against the old one is retired: a

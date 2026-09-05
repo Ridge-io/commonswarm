@@ -372,7 +372,7 @@ test("rendered composer addresses several agents and preserves multiline keyboar
     assert.deepEqual(measured.cleared, {
       chips: [],
       note: "No agent is notified. Everyone here can read this.",
-    });
+    }, "cleared: emptying To: through the chips leaves a named broadcast");
     /* No recipient is still one broadcast row, addressed to the room rather than to a listener. */
     assert.deepEqual(measured.broadcast, { added: 1, target: "→ everyone" });
     assert.deepEqual(measured.plainEnter, {

@@ -785,7 +785,8 @@ calls the single room "the channel" in ~157 places. The change is a definite art
 **Composer: you post to the channel you are reading** (R10). In `#mobile` the post is stamped `#mobile`;
 in `#all-signals` it is unfiled. Zero chrome — the 2026-09-04 operator direction
 (`LiveDashboard.astro:657-660`, duplicated at `:2181-2183`; **both copies move together**) deleted the TO
-row from an 80px bar, and the same reasoning deletes a channel dropdown. **No `#` parsing of the body,
+row from an 80px bar ~~(reversed 2026-09-05; see the note below)~~, and the same reasoning deletes a
+channel dropdown. **No `#` parsing of the body,
 ever:** bodies legitimately contain `#` (markdown headings render in messages; `#1804`-style refs are
 routine in this workspace's own prose), so a parser cannot discriminate.
 
