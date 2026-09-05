@@ -184,15 +184,29 @@ export const THREAD_REPLY_REACH_TEXT =
   "Everyone who can read the thread can read this reply. It notifies nobody.";
 
 /**
+ * WHAT THE To: ROW SHOWS AS THE ADDRESS OF A REPLY.
+ *
+ * The row is not hidden and it does not go blank: an empty address row reads as a bug, and the
+ * broadcast label is wrong here because it names the WORKSPACE while a reply's reach is the
+ * thread. So the address is named, the way a broadcast is named, and the sentence under it says
+ * what that means.
+ *
+ * It matters that this is a LABEL for an empty set and not a recipient. The row draws
+ * `composerSendRecipients` in every state — a mutation proved that an early return for the
+ * reply case made "the row draws what the send posts" true by accident, because two separate
+ * rules both happened to produce nothing — so if that derivation ever stopped returning an
+ * empty set, chips would appear here and the browser control would see them.
+ */
+export const THREAD_REPLY_CHIP_LABEL = "This thread";
+
+/**
  * What the To: row says while a reply is being written.
  *
- * The row is not hidden and it is not left showing the chips of a message that is no longer
- * the one being written. It says the reply has no recipients, which is the fact, and it is
- * the same row in the same place so the reader does not have to learn a second one.
+ * It says the reply has no recipients, which is the fact, and it is the same row in the same
+ * place so the reader does not have to learn a second one.
  */
 export const THREAD_REPLY_TO_TEXT =
-  "A thread reply carries no recipients, so To: is not part of this message. " +
-  THREAD_REPLY_REACH_TEXT;
+  "A thread reply has no recipients. " + THREAD_REPLY_REACH_TEXT;
 
 /**
  * The ceiling the server clamps to, when there is one.

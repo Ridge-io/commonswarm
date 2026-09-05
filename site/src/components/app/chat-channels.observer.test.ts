@@ -173,6 +173,7 @@ test("the composer stamps the channel being read and gains no chrome for it", ()
   assert.match(
     placement,
     /const freshPlacementChannelId = replyRoot === null\s*\n\s*\? activeChannel\(\)\?\.channelId \?\? null\s*\n\s*: replyRoot\.channelId;/,
+    "a reply is filed where its thread is, and a top-level post where the reader is",
   );
   const resolve = between(dashboard, "const placementChannelId = intent.placementChannelId;", "const rowMentions");
   assert.match(resolve, /channelById\(channels, placementChannelId\)/);
@@ -203,7 +204,11 @@ test("the composer stamps the channel being read and gains no chrome for it", ()
     /channel:/,
     "a thread reply must never carry a channel of its own",
   );
-  assert.match(threadBranch, /\.\.\.\(broadcastToChannel \? \{ broadcastToChannel: true \} : \{\}\)/);
+  assert.match(
+    threadBranch,
+    /\.\.\.\(broadcastToChannel \? \{ broadcastToChannel: true \} : \{\}\)/,
+    "the thread branch must send broadcast_to_channel only when it is asked for",
+  );
   assert.match(resolve, /is not in this workspace any more/);
   /* An archived channel RESOLVES on purpose — a permalink into one must still work — so a
      check that only asked whether the row exists let a retry keep sending into a channel the
@@ -505,7 +510,11 @@ test("an unfinished send is not resumed into a channel it was not addressed to",
      alike — the channels lane invented a second comparison for the second caller and both arms
      found the contradiction, so the rule is asserted in one place and both callers are pinned
      to it. */
-  assert.match(failed, /const addressStillActive = composerAddressStillPromised\(intent\);/);
+  assert.match(
+    failed,
+    /const addressStillActive = composerAddressStillPromised\(intent\);/,
+    "one function must decide whether an unfinished send may still be replayed",
+  );
   const promised = between(
     dashboard,
     "const composerAddressStillPromised = (",
@@ -524,7 +533,11 @@ test("an unfinished send is not resumed into a channel it was not addressed to",
   /* AND selectChannel ASKS THE SAME FUNCTION. A channel move must not retire an unfinished
      reply, because the box still promises that thread whatever channel is being read. */
   const channelMove = between(dashboard, "const selectChannel = (channelId", "if (sampleMode) {");
-  assert.match(channelMove, /retireComposerIntentOnAddressMove\(\);/);
+  assert.match(
+    channelMove,
+    /retireComposerIntentOnAddressMove\(\);/,
+    "a channel move must retire an unfinished send addressed to the channel it left",
+  );
   assert.doesNotMatch(
     channelMove,
     /composerIntent\.placementChannelId !== next/,
@@ -556,7 +569,11 @@ test("an unfinished send is not resumed into a channel it was not addressed to",
      ONE function answers it now, for this caller and for the failure path alike, and its two
      arms are pinned where that path is tested. Here the claim is that this caller asks it
      rather than writing a fourth comparison of its own. */
-  assert.match(select, /retireComposerIntentOnAddressMove\(\);/);
+  assert.match(
+    select,
+    /retireComposerIntentOnAddressMove\(\);/,
+    "a channel move must retire an unfinished send addressed to the channel it left",
+  );
   assert.doesNotMatch(select, /const addressMoved = /);
   assert.doesNotMatch(select, /composerIntent\.placementChannelId !== next/);
 });

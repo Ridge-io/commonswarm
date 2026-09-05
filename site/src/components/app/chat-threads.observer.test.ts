@@ -32,7 +32,9 @@ import { promisify } from "node:util";
 import { test } from "node:test";
 import { findChrome } from "./participant-rail.fixture.js";
 import { browserSignalCommand, browserSignalKind } from "../../lib/commonswarm.js";
+import { BROADCAST_CHIP_LABEL } from "../../lib/composer-address.js";
 import {
+  THREAD_REPLY_CHIP_LABEL,
   THREAD_REPLY_TO_TEXT,
   THREAD_ROOT_BLOCKS,
   threadReplyBroadcastLabel,
@@ -198,7 +200,11 @@ test("the reply control asks the classifier, and asks it about the ROW's channel
      feed is narrowed to a channel, because a row's place is only worth printing in all-signals;
      reusing it read every row inside a channel as unarchived and offered the control on threads
      the server refuses. The compiler caught the name collision; this keeps them apart. */
-  assert.match(rowBuilder, /const rootChannel = channelById\(channels, signal\.channelId\);/);
+  assert.match(
+    rowBuilder,
+    /const rootChannel = channelById\(channels, signal\.channelId\);/,
+    "the archive question must be asked of the row's own channel, in every view",
+  );
   assert.match(
     rowBuilder,
     /const rowChannel = activeChannelId === null && signal\.channelId !== null/,
@@ -207,7 +213,24 @@ test("the reply control asks the classifier, and asks it about the ROW's channel
   /* AND THE ROOT'S CHANNEL IS CAPTURED, not read again at send time from a live global. */
   assert.match(rowBuilder, /channelId: signal\.channelId,\s*\n\s*until: signal\.until,/);
   /* AND NOT WHILE A MESSAGE IS ON THE WIRE, the same rule the chips follow. */
-  assert.match(rowBuilder, /if \(composerSending\) return;/);
+  assert.match(
+    rowBuilder,
+    /if \(composerSending\) return;/,
+    "a reply must not be opened while a message is on the wire",
+  );
+  /* AND A TICKED BOX CANNOT RIDE FROM ONE THREAD INTO A THREAD WITH NO CHANNEL. The control is
+     hidden there, so a box left checked would send broadcast_to_channel with nothing to send
+     it to — which is the CLI defect one step earlier. */
+  const placementSync = between(
+    dashboard,
+    "const syncComposerPlacement = (): void => {",
+    "\n    };",
+  );
+  assert.match(
+    placementSync,
+    /if \(broadcast && !mayBroadcast\) broadcast\.checked = false;/,
+    "a broadcast box ticked for one thread must be cleared for a thread with no channel",
+  );
 });
 
 test("the send never re-reads the reply from a global after its first await", () => {
@@ -222,8 +245,11 @@ test("the send never re-reads the reply from a global after its first await", ()
   const reads = [...submit.matchAll(/threadReplyRoot/g)];
   assert.equal(reads.length, 2, "the send reads threadReplyRoot somewhere new");
   assert.match(submit, /^const replyRoot = threadReplyRoot;/);
-  assert.match(submit, /if \(replyRoot !== null && threadReplyRoot\?\.id === replyRoot\.id\) \{/);
-  assert.match(submit, /setThreadReplyRoot\(null\);/);
+  assert.match(
+    submit,
+    /if \(replyRoot !== null && threadReplyRoot\?\.id === replyRoot\.id\) \{\s*\n\s*setThreadReplyRoot\(null\);/,
+    "a landed reply must finish the reply it was for, and name it",
+  );
 });
 
 test("a reply does not overwrite the set the last message went to", () => {
@@ -234,6 +260,7 @@ test("a reply does not overwrite the set the last message went to", () => {
   assert.match(
     submit,
     /if \(placementThreadRootId === null\) rememberComposerTo\(recipients, sendToKey\);/,
+    "a reply must not wipe the set the last real message went to",
   );
 });
 
@@ -243,15 +270,46 @@ test("the To: row draws the set the send posts, and is locked while a reply is w
     "const renderComposerTo = (): void => {",
     "\n    };",
   );
-  assert.match(render, /const shown = composerRecipients\(\);/);
+  assert.match(
+    render,
+    /const shown = composerRecipients\(\);/,
+    "the row must draw the set the send posts, not the pair it holds",
+  );
   assert.match(render, /row\.toggleAttribute\("data-composer-to-locked", replying\);/);
   assert.match(render, /note\.textContent = THREAD_REPLY_TO_TEXT;/);
   /* THE LOCK IS THE HOLD, not a second write path. Nothing in the row assigns the pair. */
   assert.doesNotMatch(render, /composerTo = |composerToApplied = |rememberComposerTo\(/);
-  /* AND THE CHIP EDIT SURFACE IS UNREACHABLE, because there are no chips to click: the render
-     returns before it builds any. */
-  const beforeChips = render.slice(0, render.indexOf("for (const entity of shown)"));
-  assert.match(beforeChips, /if \(replying\) \{[\s\S]*?return;\s*\n\s*\}/);
+  /* AND THE PASS IS TOLD, which is where the hold happens. A SOURCE claim, and this file says
+     why rather than implying a browser control exists: the hold's observable effects are on
+     STORAGE and on a roster prune arriving mid-reply, and the browser steps below reach
+     neither. After a cancel the chips are the same either way, because the pass simply runs
+     later over the same body. The composer-to lane's own file pins the guard's exact line. */
+  const pass = between(
+    dashboard,
+    "const syncComposerAddress = (edit?: readonly ComposerRecipient[]): boolean => {",
+    "\n    };",
+  );
+  assert.match(
+    pass,
+    /replying: composerIsReplying\(\),/,
+    "the pass must be told when the box is writing a reply",
+  );
+  /* AND THE CHIP LOOP RUNS IN EVERY STATE. ~~an early `if (replying) { … return; }` before the
+     chips~~ was the first version, and a mutation proved it made the claim above true by
+     accident: with the row drawing a hardcoded empty state, breaking `composerSendRecipients`
+     changed the WIRE and left the row identical. The loop is unconditional now — a recipient
+     that reached a reply would be a chip on the row — and the only reply-specific things are
+     the empty set's LABEL and the sentence under it. */
+  assert.doesNotMatch(
+    render.slice(0, render.indexOf("for (const entity of shown)")),
+    /if \(replying\) \{[\s\S]*?return;/,
+    "the row must not return before it draws the set the send posts",
+  );
+  assert.match(
+    render,
+    /chip\.textContent = replying \? THREAD_REPLY_CHIP_LABEL : BROADCAST_CHIP_LABEL;/,
+    "an empty address is named, and a reply's name is not the workspace's",
+  );
 });
 
 test("the app ships the reply bar, its window line and its broadcast control", () => {
@@ -288,9 +346,9 @@ type ThreadMeasurement = {
   /** Opening a reply names the root and its channel, and locks To:. */
   replyBar: {
     hidden: boolean;
+    broadcastChip: string;
     target: string;
     windowLine: string;
-    broadcastHidden: boolean;
     placeholder: string;
     toNote: string;
     toChips: string[];
@@ -381,6 +439,14 @@ const frameScript = `<script>
     const settle = async (ms) => {
       await new Promise((resolve) => view.setTimeout(resolve, ms));
     };
+    /* A bounded wait that RETURNS rather than throws, for steps whose outcome is a claim. */
+    const settleUntil = async (predicate, budgetMs) => {
+      for (let waited = 0; waited < budgetMs; waited += 25) {
+        if (predicate()) return true;
+        await settle(25);
+      }
+      return false;
+    };
     /* THE THREAD'S OWN LIST, read by the ROOT id rather than by position: a group that lost a
        row would otherwise shift every index and several unrelated steps would go red together,
        which is the mis-aimed-control failure a review arm found in the sibling harness. */
@@ -443,15 +509,22 @@ const frameScript = `<script>
     const toRow = doc.querySelector("[data-composer-to]");
     const replyBar = {
       hidden: bar().hidden,
+      /* THE ADDRESS THE ROW NAMES. Read here and not only as a count of chips: the reply's
+         address is an empty set with a LABEL, and a label that said "Everyone here" would name
+         the workspace while the reach is the thread. */
+      broadcastChip:
+        doc.querySelector("[data-composer-to-broadcast]")?.textContent ?? "",
       target: barTarget(),
       windowLine: doc.querySelector("[data-composer-reply-window]")?.textContent ?? "",
-      broadcastHidden: doc.querySelector("[data-composer-reply-broadcast-row]").hidden,
       placeholder: placeholder(),
       toNote: noteText(),
       toChips: chipNames(),
       toLocked: toRow.getAttribute("aria-disabled") === "true",
     };
-    const replyUnfiled = { broadcastHidden: replyBar.broadcastHidden, target: replyBar.target };
+    const replyUnfiled = {
+      broadcastHidden: doc.querySelector("[data-composer-reply-broadcast-row]").hidden,
+      target: replyBar.target,
+    };
 
     /* AN @TAG INSIDE A REPLY CHANGES NOTHING. The pass holds, so the pair underneath is
        untouched and the row still shows no recipients. */
@@ -461,7 +534,11 @@ const frameScript = `<script>
 
     /* CANCELLING GIVES THE CHIPS BACK. They were never written away, which is the point. */
     doc.querySelector("[data-composer-reply-cancel]").click();
-    await waitFor(() => bar().hidden === true, "the reply bar closing");
+    /* SETTLE, DO NOT WAIT FOR A STATE. A throwing wait here aborts the whole measurement, so a
+       bar that never closes and a bar that closes wrongly would arrive at the same timeout and
+       the mutation harness could not tell them apart. Record what is there and let the
+       assertion answer for it. */
+    await settleUntil(() => bar().hidden === true, 600);
     await settle(400);
     const cancelled = {
       hidden: bar().hidden,
@@ -484,7 +561,9 @@ const frameScript = `<script>
     const rootsBefore = topLevelIds().length;
     type("checked on a phone, it holds");
     doc.querySelector("[data-composer]").requestSubmit();
-    await waitFor(() => bar().hidden === true, "the reply bar coming down after the send");
+    /* SETTLE, for the same reason as the cancel above: sentReply.barHidden is its own claim
+       and must be able to be false rather than to abort. */
+    await settleUntil(() => bar().hidden === true, 900);
     await settle(120);
     if (toggleFor("sample-2").getAttribute("aria-expanded") !== "true") {
       toggleFor("sample-2").click();
@@ -691,18 +770,32 @@ test("replies collapse under their root, and a reply carries no recipient", asyn
     }, "collapsedAgain: it closes them again");
 
     /* THE BAR NAMES THE ROOT AND ITS CHANNEL, and locks To: with the reply's own sentence. */
+    /* `broadcastHidden` is deliberately NOT here. It is `replyUnfiled`'s claim, and carrying it
+       in both made one mutation of the broadcast row turn two steps red at once, neither of
+       them naming what broke — the mis-aimed-control failure a review arm found in the sibling
+       harness. Each claim answers for itself. */
     assert.deepEqual(measured.replyBar, {
       hidden: false,
+      broadcastChip: THREAD_REPLY_CHIP_LABEL,
       target: threadReplyTargetText("Orbit", null),
       /* The sample rows do not expire, so there is no ceiling to state and the line collapses
          rather than saying "never". */
       windowLine: "",
-      broadcastHidden: true,
       placeholder: "Reply in this thread",
       toNote: THREAD_REPLY_TO_TEXT,
       toChips: [],
       toLocked: true,
     }, "replyBar: the bar names the root and the channel, and To: is locked and empty");
+    /* AND THAT COMPARISON IS NOT A TAUTOLOGY. The assertion above reads the same constant the
+       render does, so moving the constant moves both and the step stays green — the harness
+       found exactly that. This asks a question the constant cannot answer for itself: the chip
+       on a reply must not carry the BROADCAST label, which lives in another module and names
+       the workspace rather than the thread. */
+    assert.notEqual(
+      measured.replyBar.broadcastChip,
+      BROADCAST_CHIP_LABEL,
+      "a reply's address must not be named with the broadcast label",
+    );
 
     /* AN @TAG INSIDE A REPLY IS A NAME IN THE TEXT AND NOTHING ELSE. */
     assert.deepEqual(measured.taggedInsideReply, {

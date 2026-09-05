@@ -1,0 +1,556 @@
+{
+  "measuredAt": "2026-09-05T17:14:43.431Z",
+  "origin": "site/dist, sample mode",
+  "viewports": {
+    "390x844": {
+      "screenshot": "mobile-390x844.png",
+      "replyScreenshot": "mobile-reply-390x844.png",
+      "measurement": {
+        "ready": true,
+        "viewport": {
+          "width": 390,
+          "height": 844
+        },
+        "devicePixelRatio": 1,
+        "collapsed": {
+          "label": "threads-collapsed",
+          "chips": [],
+          "note": "No agent is notified. Everyone here can read this.",
+          "toRow": {
+            "top": 807.63,
+            "bottom": 840,
+            "left": 16,
+            "right": 374,
+            "height": 32.38,
+            "width": 358
+          },
+          "composer": {
+            "top": 744.63,
+            "bottom": 844,
+            "left": 0,
+            "right": 390,
+            "height": 99.38,
+            "width": 390
+          },
+          "input": {
+            "top": 749.63,
+            "bottom": 803.63,
+            "left": 16,
+            "right": 374,
+            "height": 54,
+            "width": 358
+          },
+          "send": {
+            "top": 754.63,
+            "bottom": 798.63,
+            "left": 321,
+            "right": 365,
+            "height": 44,
+            "width": 44
+          },
+          "appBar": {
+            "top": 188.06,
+            "bottom": 228.06,
+            "left": 16,
+            "right": 107.34,
+            "height": 40,
+            "width": 91.34
+          },
+          "firstFeedRow": {
+            "top": -100.94,
+            "bottom": 176.55,
+            "left": 0,
+            "right": 390,
+            "height": 277.48,
+            "width": 390
+          },
+          "replyBar": {
+            "top": 0,
+            "bottom": 0,
+            "left": 0,
+            "right": 0,
+            "height": 0,
+            "width": 0
+          },
+          "thread": {
+            "top": 481.47,
+            "bottom": 508.91,
+            "left": 0,
+            "right": 390,
+            "height": 27.44,
+            "width": 390
+          }
+        },
+        "replying": {
+          "label": "reply-open",
+          "chips": [],
+          "note": "A thread reply carries no recipients, so To: is not part of this message. Everyone who can read the thread can read this reply. It notifies nobody.",
+          "toRow": {
+            "top": 791.44,
+            "bottom": 840,
+            "left": 16,
+            "right": 374,
+            "height": 48.56,
+            "width": 358
+          },
+          "composer": {
+            "top": 607.56,
+            "bottom": 844,
+            "left": 0,
+            "right": 390,
+            "height": 236.44,
+            "width": 390
+          },
+          "input": {
+            "top": 733.44,
+            "bottom": 787.44,
+            "left": 16,
+            "right": 374,
+            "height": 54,
+            "width": 358
+          },
+          "send": {
+            "top": 738.44,
+            "bottom": 782.44,
+            "left": 321,
+            "right": 365,
+            "height": 44,
+            "width": 44
+          },
+          "appBar": {
+            "top": 188.06,
+            "bottom": 228.06,
+            "left": 16,
+            "right": 107.34,
+            "height": 40,
+            "width": 91.34
+          },
+          "firstFeedRow": {
+            "top": -306.94,
+            "bottom": -29.45,
+            "left": 0,
+            "right": 390,
+            "height": 277.48,
+            "width": 390
+          },
+          "replyBar": {
+            "top": 612.56,
+            "bottom": 721.44,
+            "left": 16,
+            "right": 374,
+            "height": 108.88,
+            "width": 358
+          },
+          "thread": {
+            "top": 275.47,
+            "bottom": 509.45,
+            "left": 0,
+            "right": 390,
+            "height": 233.98,
+            "width": 390
+          }
+        },
+        "expanded": {
+          "label": "thread-expanded",
+          "chips": [],
+          "note": "A thread reply carries no recipients, so To: is not part of this message. Everyone who can read the thread can read this reply. It notifies nobody.",
+          "toRow": {
+            "top": 791.44,
+            "bottom": 840,
+            "left": 16,
+            "right": 374,
+            "height": 48.56,
+            "width": 358
+          },
+          "composer": {
+            "top": 607.56,
+            "bottom": 844,
+            "left": 0,
+            "right": 390,
+            "height": 236.44,
+            "width": 390
+          },
+          "input": {
+            "top": 733.44,
+            "bottom": 787.44,
+            "left": 16,
+            "right": 374,
+            "height": 54,
+            "width": 358
+          },
+          "send": {
+            "top": 738.44,
+            "bottom": 782.44,
+            "left": 321,
+            "right": 365,
+            "height": 44,
+            "width": 44
+          },
+          "appBar": {
+            "top": 188.06,
+            "bottom": 228.06,
+            "left": 16,
+            "right": 107.34,
+            "height": 40,
+            "width": 91.34
+          },
+          "firstFeedRow": {
+            "top": -306.94,
+            "bottom": -29.45,
+            "left": 0,
+            "right": 390,
+            "height": 277.48,
+            "width": 390
+          },
+          "replyBar": {
+            "top": 612.56,
+            "bottom": 721.44,
+            "left": 16,
+            "right": 374,
+            "height": 108.88,
+            "width": 358
+          },
+          "thread": {
+            "top": 275.47,
+            "bottom": 509.45,
+            "left": 0,
+            "right": 390,
+            "height": 233.98,
+            "width": 390
+          }
+        },
+        "replyBar": {
+          "target": "Replying to River in #mobile.",
+          "broadcastLabel": "Also post this reply in #mobile",
+          "broadcastHidden": false,
+          "box": {
+            "top": 612.56,
+            "bottom": 721.44,
+            "left": 16,
+            "right": 374,
+            "height": 108.88,
+            "width": 358
+          },
+          "toNote": "A thread reply carries no recipients, so To: is not part of this message. Everyone who can read the thread can read this reply. It notifies nobody.",
+          "toLocked": true
+        },
+        "threadRows": {
+          "toggles": [
+            "1 reply",
+            "1 reply"
+          ],
+          "expandedThreadBox": {
+            "top": 275.47,
+            "bottom": 509.45,
+            "left": 0,
+            "right": 390,
+            "height": 233.98,
+            "width": 390
+          },
+          "expandedRepliesBox": {
+            "top": 310.91,
+            "bottom": 509.45,
+            "left": 16,
+            "right": 390,
+            "height": 198.55,
+            "width": 374
+          },
+          "expandedRepliesVisible": true,
+          "collapsedRepliesVisible": false
+        },
+        "appBarRule": {
+          "sampleNoticeHeight": 91.06,
+          "appBarHeight": 97,
+          "appBarHeightWithSampleBanner": 188.06,
+          "transcriptTop": 188.06,
+          "transcriptStartsAtTheBar": true,
+          "barIsARealBar": true,
+          "replyBarInsideComposer": true
+        },
+        "insideViewport": {
+          "composer": true,
+          "send": true,
+          "toRow": true,
+          "replyBar": true,
+          "threadReplies": true
+        },
+        "documentScrollsSideways": false
+      }
+    },
+    "320x568": {
+      "screenshot": "mobile-320x568.png",
+      "replyScreenshot": "mobile-reply-320x568.png",
+      "measurement": {
+        "ready": true,
+        "viewport": {
+          "width": 320,
+          "height": 568
+        },
+        "devicePixelRatio": 1,
+        "collapsed": {
+          "label": "threads-collapsed",
+          "chips": [],
+          "note": "No agent is notified. Everyone here can read this.",
+          "toRow": {
+            "top": 502.19,
+            "bottom": 564,
+            "left": 16,
+            "right": 304,
+            "height": 61.81,
+            "width": 288
+          },
+          "composer": {
+            "top": 439.19,
+            "bottom": 568,
+            "left": 0,
+            "right": 320,
+            "height": 128.81,
+            "width": 320
+          },
+          "input": {
+            "top": 444.19,
+            "bottom": 498.19,
+            "left": 16,
+            "right": 304,
+            "height": 54,
+            "width": 288
+          },
+          "send": {
+            "top": 449.19,
+            "bottom": 493.19,
+            "left": 251,
+            "right": 295,
+            "height": 44,
+            "width": 44
+          },
+          "appBar": {
+            "top": 177.75,
+            "bottom": 217.75,
+            "left": 16,
+            "right": 107.34,
+            "height": 40,
+            "width": 91.34
+          },
+          "firstFeedRow": {
+            "top": -407.25,
+            "bottom": -129.77,
+            "left": 0,
+            "right": 320,
+            "height": 277.48,
+            "width": 320
+          },
+          "replyBar": {
+            "top": 0,
+            "bottom": 0,
+            "left": 0,
+            "right": 0,
+            "height": 0,
+            "width": 0
+          },
+          "thread": {
+            "top": 175.16,
+            "bottom": 202.59,
+            "left": 0,
+            "right": 320,
+            "height": 27.44,
+            "width": 320
+          }
+        },
+        "replying": {
+          "label": "reply-open",
+          "chips": [],
+          "note": "A thread reply carries no recipients, so To: is not part of this message. Everyone who can read the thread can read this reply. It notifies nobody.",
+          "toRow": {
+            "top": 499.25,
+            "bottom": 564,
+            "left": 16,
+            "right": 304,
+            "height": 64.75,
+            "width": 288
+          },
+          "composer": {
+            "top": 315.38,
+            "bottom": 568,
+            "left": 0,
+            "right": 320,
+            "height": 252.63,
+            "width": 320
+          },
+          "input": {
+            "top": 441.25,
+            "bottom": 495.25,
+            "left": 16,
+            "right": 304,
+            "height": 54,
+            "width": 288
+          },
+          "send": {
+            "top": 446.25,
+            "bottom": 490.25,
+            "left": 251,
+            "right": 295,
+            "height": 44,
+            "width": 44
+          },
+          "appBar": {
+            "top": 177.75,
+            "bottom": 217.75,
+            "left": 16,
+            "right": 107.34,
+            "height": 40,
+            "width": 91.34
+          },
+          "firstFeedRow": {
+            "top": -639.25,
+            "bottom": -361.77,
+            "left": 0,
+            "right": 320,
+            "height": 277.48,
+            "width": 320
+          },
+          "replyBar": {
+            "top": 320.38,
+            "bottom": 429.25,
+            "left": 16,
+            "right": 304,
+            "height": 108.88,
+            "width": 288
+          },
+          "thread": {
+            "top": -56.84,
+            "bottom": 203.05,
+            "left": 0,
+            "right": 320,
+            "height": 259.89,
+            "width": 320
+          }
+        },
+        "expanded": {
+          "label": "thread-expanded",
+          "chips": [],
+          "note": "A thread reply carries no recipients, so To: is not part of this message. Everyone who can read the thread can read this reply. It notifies nobody.",
+          "toRow": {
+            "top": 499.25,
+            "bottom": 564,
+            "left": 16,
+            "right": 304,
+            "height": 64.75,
+            "width": 288
+          },
+          "composer": {
+            "top": 315.38,
+            "bottom": 568,
+            "left": 0,
+            "right": 320,
+            "height": 252.63,
+            "width": 320
+          },
+          "input": {
+            "top": 441.25,
+            "bottom": 495.25,
+            "left": 16,
+            "right": 304,
+            "height": 54,
+            "width": 288
+          },
+          "send": {
+            "top": 446.25,
+            "bottom": 490.25,
+            "left": 251,
+            "right": 295,
+            "height": 44,
+            "width": 44
+          },
+          "appBar": {
+            "top": 177.75,
+            "bottom": 217.75,
+            "left": 16,
+            "right": 107.34,
+            "height": 40,
+            "width": 91.34
+          },
+          "firstFeedRow": {
+            "top": -639.25,
+            "bottom": -361.77,
+            "left": 0,
+            "right": 320,
+            "height": 277.48,
+            "width": 320
+          },
+          "replyBar": {
+            "top": 320.38,
+            "bottom": 429.25,
+            "left": 16,
+            "right": 304,
+            "height": 108.88,
+            "width": 288
+          },
+          "thread": {
+            "top": -56.84,
+            "bottom": 203.05,
+            "left": 0,
+            "right": 320,
+            "height": 259.89,
+            "width": 320
+          }
+        },
+        "replyBar": {
+          "target": "Replying to River in #mobile.",
+          "broadcastLabel": "Also post this reply in #mobile",
+          "broadcastHidden": false,
+          "box": {
+            "top": 320.38,
+            "bottom": 429.25,
+            "left": 16,
+            "right": 304,
+            "height": 108.88,
+            "width": 288
+          },
+          "toNote": "A thread reply carries no recipients, so To: is not part of this message. Everyone who can read the thread can read this reply. It notifies nobody.",
+          "toLocked": true
+        },
+        "threadRows": {
+          "toggles": [
+            "1 reply",
+            "1 reply"
+          ],
+          "expandedThreadBox": {
+            "top": -56.84,
+            "bottom": 203.05,
+            "left": 0,
+            "right": 320,
+            "height": 259.89,
+            "width": 320
+          },
+          "expandedRepliesBox": {
+            "top": -21.41,
+            "bottom": 203.05,
+            "left": 16,
+            "right": 320,
+            "height": 224.45,
+            "width": 304
+          },
+          "expandedRepliesVisible": true,
+          "collapsedRepliesVisible": false
+        },
+        "appBarRule": {
+          "sampleNoticeHeight": 112.75,
+          "appBarHeight": 65,
+          "appBarHeightWithSampleBanner": 177.75,
+          "transcriptTop": 177.75,
+          "transcriptStartsAtTheBar": true,
+          "barIsARealBar": true,
+          "replyBarInsideComposer": true
+        },
+        "insideViewport": {
+          "composer": true,
+          "send": true,
+          "toRow": true,
+          "replyBar": true,
+          "threadReplies": true
+        },
+        "documentScrollsSideways": false
+      }
+    }
+  }
+}

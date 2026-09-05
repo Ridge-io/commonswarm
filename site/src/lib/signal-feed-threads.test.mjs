@@ -58,6 +58,24 @@ test("a reply whose root is not loaded keeps its own place in the transcript", (
   assert.deepEqual(groups[1].replies, []);
 });
 
+test("a reply is never registered as a root, so a reply of a reply keeps its own place", () => {
+  /* The server refuses a thread rooted on a reply (`thread_root_is_a_reply`), so this row
+     cannot come from our own edge — but this function is pure and has to be right read on its
+     own, and an old or foreign writer is not this function's problem to trust. Registering
+     replies as roots would nest a row under a row that is itself nested, which the renderer
+     draws one level deep and would therefore silently drop. */
+  const groups = groupSignalThreads([
+    row("root"),
+    row("reply", "root"),
+    row("reply-of-reply", "reply"),
+  ]);
+  assert.deepEqual(
+    groups.map((group) => [group.root.id, group.replies.map((reply) => reply.id)]),
+    [["root", ["reply"]], ["reply-of-reply", []]],
+    "a reply was registered as a root",
+  );
+});
+
 test("every input row appears exactly once in the output", () => {
   const input = [
     row("a"),

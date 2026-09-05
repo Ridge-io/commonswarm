@@ -23,6 +23,7 @@ import { SIGNAL_BODY_MAX } from "../../../../supabase/functions/_shared/signal-t
    three places and generated in the script, so the static "# all-signals" even carried a
    space the rendered one does not. Both review arms called it. */
 import { ALL_SIGNALS_SLUG, channelLabel } from "../../lib/channels";
+import { THREAD_REPLY_CANCEL_LABEL } from "../../lib/thread-reply";
 import "../../styles/tokens.css";
 ---
 
@@ -781,7 +782,7 @@ import "../../styles/tokens.css";
                   <span data-composer-reply-broadcast-label></span>
                 </label>
                 <button class="dashboard__text-button" type="button" data-composer-reply-cancel>
-                  Cancel reply
+                  {THREAD_REPLY_CANCEL_LABEL}
                 </button>
               </div>
               <div class="dashboard__composer-box">
@@ -1216,7 +1217,7 @@ import "../../styles/tokens.css";
   } from "../../lib/signal-feed";
   import {
     canStartThread,
-    THREAD_REPLY_CANCEL_LABEL,
+    THREAD_REPLY_CHIP_LABEL,
     THREAD_REPLY_CONTROL_LABEL,
     THREAD_REPLY_TO_TEXT,
     threadReplyBroadcastLabel,
@@ -2796,21 +2797,22 @@ import "../../styles/tokens.css";
         else row.removeAttribute("aria-disabled");
         row.toggleAttribute("data-composer-to-locked", replying);
       }
-      if (replying) {
-        /* NO CHIPS AND NO BROADCAST CHIP. "Everyone here" is the label for a message with an
-           empty To: set that a reader chose; a reply has no To: set at all, and saying
-           "Everyone here" would name the workspace when the reach is the thread. */
-        note.textContent = THREAD_REPLY_TO_TEXT;
-        return;
-      }
       const notified = notifiedRecipient(shown);
       if (shown.length === 0) {
-        /* BROADCAST IS SHOWN, never implied by an empty row. */
+        /* THE ADDRESS IS SHOWN, never implied by an empty row. Which name it takes follows the
+           mode, because the two are different addresses: a broadcast reaches the workspace, a
+           reply reaches the thread. "Everyone here" on a reply would name the wrong set.
+
+           THIS BRANCH IS NOT SKIPPED FOR A REPLY, and that is the point. An earlier version
+           returned here before it built anything, so "the row draws what the send posts" held
+           only because two separate rules both produced nothing; a mutation of
+           `composerSendRecipients` changed the wire and left the row identical. The row draws
+           `shown` in every state now, so a recipient that reached a reply would appear here. */
         const chip = document.createElement("span");
         chip.className = "dashboard__composer-chip dashboard__composer-chip--everyone";
         chip.dataset.composerToBroadcast = "";
         chip.setAttribute("role", "listitem");
-        chip.textContent = BROADCAST_CHIP_LABEL;
+        chip.textContent = replying ? THREAD_REPLY_CHIP_LABEL : BROADCAST_CHIP_LABEL;
         chips.append(chip);
       }
       for (const entity of shown) {
@@ -2842,6 +2844,14 @@ import "../../styles/tokens.css";
         remove.textContent = "\u00d7";
         chip.append(promote, remove);
         chips.append(chip);
+      }
+      /* AND THE SENTENCE FOLLOWS THE SAME MODE. A reply's reach is not the delivery note's
+         subject: that note is about which recipient is woken, and a reply has none. The notice
+         about names the pass could not honour is not shown either, because the pass HELD and
+         made no such decision about this message. */
+      if (replying) {
+        note.textContent = THREAD_REPLY_TO_TEXT;
+        return;
       }
       const sentence = composerDeliveryNote(shown, composerRecipientName);
       note.textContent = composerToNotice === ""

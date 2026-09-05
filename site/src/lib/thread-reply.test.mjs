@@ -1,7 +1,9 @@
 import assert from "node:assert/strict";
 import { test } from "node:test";
+import { BROADCAST_CHIP_LABEL } from "./composer-address.js";
 import {
   canStartThread,
+  THREAD_REPLY_CHIP_LABEL,
   THREAD_REPLY_REACH_TEXT,
   THREAD_REPLY_TO_TEXT,
   THREAD_ROOT_BLOCKS,
@@ -116,7 +118,11 @@ test("every block the classifier can return has a sentence, and the set is the e
     threadRootBlock(live({ until: new Date(NOW).toISOString() }), NOW, false),
     threadRootBlock(live(), NOW, true),
   ]);
-  assert.deepEqual([...reached].sort(), [...THREAD_ROOT_BLOCKS].sort());
+  assert.deepEqual(
+    [...reached].sort(),
+    [...THREAD_ROOT_BLOCKS].sort(),
+    "the enumeration is not the set the classifier can return",
+  );
   for (const block of THREAD_ROOT_BLOCKS) {
     const text = threadRootBlockText(block);
     assert.equal(typeof text, "string");
@@ -165,10 +171,15 @@ test("the reach sentence claims no wake, which is what an undirected signal gets
 });
 
 test("the To: row's own sentence says a reply carries no recipients, and contains the reach", () => {
-  assert.match(THREAD_REPLY_TO_TEXT, /carries no recipients/);
+  assert.match(THREAD_REPLY_TO_TEXT, /has no recipients/);
   /* BUILT FROM THE REACH SENTENCE rather than repeating it, so the two cannot disagree about
-     what a reply reaches. */
-  assert.ok(THREAD_REPLY_TO_TEXT.includes(THREAD_REPLY_REACH_TEXT));
+     what a reply reaches. The mutation that reaches this is one that DROPS the reach clause:
+     inlining the same words changes nothing, because the two are byte-identical the moment it
+     is done, and a mutation that cannot fail is not a control. */
+  assert.ok(
+    THREAD_REPLY_TO_TEXT.includes(THREAD_REPLY_REACH_TEXT),
+    "the To: sentence no longer carries the reach sentence",
+  );
 });
 
 test("the window line is shown only when the thread has a ceiling", () => {
@@ -190,6 +201,17 @@ test("broadcast is offered only for a thread that is in a channel", () => {
     threadReplyBroadcastLabel("mobile"),
     "Also post this reply in #mobile",
   );
+});
+
+test("a reply's address is named on the row, and it is not the broadcast label", () => {
+  /* An empty To: row is never left blank: an unnamed address reads as a bug. But the broadcast
+     label names the WORKSPACE, and a reply's reach is the thread, so the two cannot share a
+     name. This is a LABEL for an empty set and not a recipient: the row draws
+     `composerSendRecipients` in every state, so a recipient that reached a reply would show up
+     as a chip beside it rather than be hidden by an early return. */
+  assert.equal(THREAD_REPLY_CHIP_LABEL, "This thread");
+  assert.notEqual(THREAD_REPLY_CHIP_LABEL, BROADCAST_CHIP_LABEL);
+  assert.doesNotMatch(THREAD_REPLY_CHIP_LABEL, /everyone|here|workspace/i);
 });
 
 test("the reply count reads as a count and not as a template", () => {

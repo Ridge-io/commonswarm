@@ -77,6 +77,7 @@ test("composer defaults to broadcast and keeps signal language", () => {
   assert.match(
     dashboard,
     /const composerRecipients = \(\): ComposerRecipient\[\] =>\s*\n\s*composerSendRecipients\(composerTo, composerIsReplying\(\)\);/,
+    "one expression must answer for both the row and the send",
   );
   /* AND THE ROW DRAWS THAT CALL, not the variable underneath it. */
   const toRender = dashboard.slice(
