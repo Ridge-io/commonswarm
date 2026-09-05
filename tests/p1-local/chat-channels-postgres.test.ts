@@ -331,16 +331,8 @@ test("channel_id is immutable, and the append-only trigger is what refuses the m
           body: "filed once",
           channelId: null,
         });
-        await assert.rejects(
-          tx`
-            UPDATE swarm.signals SET channel_id = ${f.channelMobile}::uuid
-            WHERE id = ${filed}::uuid
-          `,
-          /append|immutable/i,
-          "a signal cannot be moved into a channel after the fact",
-        );
         /* Control: an INSERT in the same transaction succeeds, so the refusal
-         * above was the append-only trigger and not a missing grant. */
+         * below is the append-only trigger and not a missing grant. */
         await insertSignal(tx, {
           id: proofOfGrants,
           workspaceId: f.workspaceA,
@@ -351,6 +343,27 @@ test("channel_id is immutable, and the append-only trigger is what refuses the m
           body: "inserts still work",
           channelId: f.channelMobile,
         });
+        /* A failed statement ABORTS a Postgres transaction, so an expected
+         * failure has to run inside a savepoint or every assertion after it
+         * fails for the wrong reason. The first version of this file did not,
+         * and both of its negative arms reported a defect that was not there. */
+        await assert.rejects(
+          tx.savepoint((sp) =>
+            sp`
+              UPDATE swarm.signals SET channel_id = ${f.channelMobile}::uuid
+              WHERE id = ${filed}::uuid
+            `
+          ),
+          /append/i,
+          "a signal cannot be moved into a channel after the fact",
+        );
+        /* The transaction is still usable, which is what proves the savepoint
+         * contained the failure rather than the test getting lucky. */
+        const [alive] = await tx<{ n: string }[]>`
+          SELECT count(*)::text AS n FROM swarm.signals
+          WHERE id = ${proofOfGrants}::uuid
+        `;
+        assert.equal(alive?.n, "1");
         throw ROLLBACK;
       }),
       (error: unknown) => error === ROLLBACK,
@@ -393,27 +406,46 @@ test("the edge that predates this migration still writes a legal row", async () 
           "the NOT NULL column has a default, so the old insert is still legal",
         );
 
-        /* The NEGATIVE arm, and the reason this test is worth having. Without
-         * it, a passing insert cannot tell a safe migration from a lucky one:
-         * make channel_id NOT NULL inside this rolled-back transaction and the
-         * same insert must fail. That failure is the production write outage
-         * this migration is shaped to make unreachable. */
-        await tx.unsafe(
-          "ALTER TABLE swarm.signals ALTER COLUMN channel_id SET NOT NULL",
-        );
+        /* NEGATIVE ARM 1, and the reason this test is worth having: a passing
+         * insert cannot tell a safe migration from a lucky one. Against a
+         * faithful copy of the column shape with channel_id NOT NULL, the same
+         * insert must fail. That failure is the production write outage this
+         * migration is shaped to make unreachable. */
         await assert.rejects(
-          tx`
-            INSERT INTO swarm.signals (
-              id, workspace_id, from_principal, from_kind,
-              to_user_id, to_agent_principal_id, in_reply_to,
-              about, kind, body, until, created_at
-            ) VALUES (
-              ${randomUUID()}::uuid, ${f.workspaceA}::uuid, ${f.owner}::uuid,
-              'user', NULL, NULL, NULL, NULL, 'note', 'would fail in production',
-              statement_timestamp() + interval '1 day', statement_timestamp()
-            )
-          `,
+          tx.savepoint(async (sp) => {
+            await sp.unsafe(
+              "CREATE TEMP TABLE old_edge_probe (LIKE swarm.signals INCLUDING DEFAULTS) ON COMMIT DROP",
+            );
+            await sp.unsafe(
+              "ALTER TABLE old_edge_probe ALTER COLUMN channel_id SET NOT NULL",
+            );
+            await sp`
+              INSERT INTO old_edge_probe (
+                id, workspace_id, from_principal, from_kind,
+                to_user_id, to_agent_principal_id, in_reply_to,
+                about, kind, body, until, created_at
+              ) VALUES (
+                ${randomUUID()}::uuid, ${f.workspaceA}::uuid, ${f.owner}::uuid,
+                'user', NULL, NULL, NULL, NULL, 'note',
+                'would fail in production',
+                statement_timestamp() + interval '1 day', statement_timestamp()
+              )
+            `;
+          }),
           /null value in column "channel_id"/,
+        );
+
+        /* NEGATIVE ARM 2: the tightening is not merely unwise, it is REFUSED
+         * against live data, because unfiled rows exist and always will. This
+         * is the arm that makes "channel_id is nullable for the life of v1" a
+         * measured property of this database rather than a promise in a comment. */
+        await assert.rejects(
+          tx.savepoint((sp) =>
+            sp.unsafe(
+              "ALTER TABLE swarm.signals ALTER COLUMN channel_id SET NOT NULL",
+            )
+          ),
+          /contains null values/,
         );
         throw ROLLBACK;
       }),

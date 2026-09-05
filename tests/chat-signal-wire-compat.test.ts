@@ -7,6 +7,7 @@ import {
   chatReadKeys,
   chatSignalKeys,
   chatSignalShapeProblem,
+  commandFieldsMessage,
 } from "../supabase/functions/_shared/channels.js";
 
 /**
@@ -347,4 +348,98 @@ test("the thread root lookup still refuses a directed root in SQL", () => {
   );
   /* Control: the slice really is resolveThreadRoot's body. */
   assert.ok(body.includes("thread_root_is_a_reply"));
+});
+
+
+test("the channel commands' field lists are generated, not typed", () => {
+  /* A review arm found three refusal sentences that TYPED the fields exactKeys
+   * enforces, inside a validator whose own comment claimed every sentence was
+   * generated. This pins the generator and the enforcement to one array each. */
+  const command = readFileSync(
+    fileURLToPath(
+      new URL("../supabase/functions/command/index.ts", import.meta.url),
+    ),
+    "utf8",
+  );
+  for (
+    const [kind, required, optional] of [
+      ["channel_create", ["slug"], ["purpose"]],
+      ["channel_rename", ["channel_id", "slug"], []],
+      ["channel_archive", ["channel_id"], []],
+    ] as Array<[string, string[], string[]]>
+  ) {
+    const start = command.indexOf(`if (cmd.kind === "${kind}")`);
+    assert.notEqual(start, -1, `${kind} must still be validated`);
+    const body = command.slice(start, start + 1200);
+    assert.ok(
+      body.includes(`commandFieldsMessage("${kind}", required`),
+      `${kind} must build its refusal sentence from the array exactKeys reads`,
+    );
+    assert.ok(
+      body.includes(`const required = ${JSON.stringify(required).replace(/","/g, '", "')};`),
+      `${kind} must declare exactly ${required.join(", ")}`,
+    );
+    /* And the sentence itself names every enforced field. */
+    const message = commandFieldsMessage(kind, required, optional);
+    for (const field of [...required, ...optional]) {
+      assert.ok(message.includes(field), `${kind} sentence must name ${field}`);
+    }
+    assert.ok(message.startsWith(`${kind} takes `));
+  }
+  /* Control: the generator can produce a sentence that is missing a field, so
+   * the assertions above are about content and not about a truthy string. */
+  assert.equal(
+    commandFieldsMessage("channel_rename", ["channel_id"]).includes("slug"),
+    false,
+  );
+});
+
+test("the chat keys reach exactKeys ONLY through their own group", () => {
+  /* The modernKeys grep alone would miss a chat key added as a bare literal
+   * later in the same exactKeys array, which would demand it from every body.
+   * This reads the array itself. */
+  const command = readFileSync(
+    fileURLToPath(
+      new URL("../supabase/functions/command/index.ts", import.meta.url),
+    ),
+    "utf8",
+  );
+  const start = command.indexOf("const valid = exactKeys(cmd, [\n      \"kind\",\n      \"signal_kind\"");
+  assert.notEqual(start, -1, "the post_signal exactKeys array must be findable");
+  const array = command.slice(start, command.indexOf("]) &&", start));
+  assert.ok(array.includes("...chatKeys"), "chat keys arrive as a spread group");
+  for (const key of CHAT_SIGNAL_OPTIONAL_KEYS) {
+    assert.equal(
+      array.includes(`"${key}"`),
+      false,
+      `${key} must never be a bare literal in the post_signal exactKeys array`,
+    );
+  }
+  /* Control: the slice really is that array. */
+  assert.ok(array.includes('"signal_kind"') && array.includes("...modernKeys"));
+});
+
+test("a broken chat shape is refused with the sentence that says which rule broke", () => {
+  /* The edge used to test the shape function for null and then return the
+   * generic "signal fields are malformed" reason, so a caller never learned
+   * which of five rules they had broken. */
+  const command = readFileSync(
+    fileURLToPath(
+      new URL("../supabase/functions/command/index.ts", import.meta.url),
+    ),
+    "utf8",
+  );
+  assert.ok(
+    command.includes("reason: chatShapeProblem ??"),
+    "the chat refusal sentence must reach the caller",
+  );
+  const sentence = chatSignalShapeProblem({
+    signal_kind: "note",
+    to_user_id: null,
+    to_agent_principal_id: null,
+    in_reply_to: "55555555-5555-4555-8555-555555555555",
+    thread_root_id: "22222222-2222-4222-8222-222222222222",
+  });
+  assert.ok(sentence !== null && sentence.includes("thread_root_id"));
+  assert.ok(sentence !== null && sentence.includes("in_reply_to"));
 });

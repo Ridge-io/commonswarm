@@ -15,6 +15,7 @@ import {
   CHANNEL_PURPOSE_MAX,
   channelSlugProblem,
   chatSignalKeys,
+  commandFieldsMessage,
   chatSignalShapeProblem,
   normalizeChannelSlug,
   unknownChannelMessage,
@@ -1586,8 +1587,10 @@ function validateCommand(
    * a changed bound or a new reserved name cannot leave a stale sentence
    * telling a caller a rule that is not enforced. */
   if (cmd.kind === "channel_create") {
-    const keysOk = exactKeys(cmd, ["kind", "slug"]) ||
-      exactKeys(cmd, ["kind", "slug", "purpose"]);
+    const required = ["slug"];
+    const optional = ["purpose"];
+    const keysOk = exactKeys(cmd, ["kind", ...required]) ||
+      exactKeys(cmd, ["kind", ...required, ...optional]);
     const slugProblem = channelSlugProblem(cmd.slug);
     if (!keysOk || slugProblem !== null) {
       return {
@@ -1595,7 +1598,7 @@ function validateCommand(
         status: 400,
         reason: keysOk
           ? slugProblem!
-          : "channel_create takes slug and an optional purpose",
+          : commandFieldsMessage("channel_create", required, optional),
       };
     }
     const rawPurpose = Object.hasOwn(cmd, "purpose") ? cmd.purpose : null;
@@ -1625,9 +1628,10 @@ function validateCommand(
   }
 
   if (cmd.kind === "channel_rename") {
+    const required = ["channel_id", "slug"];
     const slugProblem = channelSlugProblem(cmd.slug);
     if (
-      !exactKeys(cmd, ["kind", "channel_id", "slug"]) ||
+      !exactKeys(cmd, ["kind", ...required]) ||
       typeof cmd.channel_id !== "string" ||
       !UUID_RE.test(cmd.channel_id) ||
       slugProblem !== null
@@ -1635,7 +1639,8 @@ function validateCommand(
       return {
         ok: false,
         status: 400,
-        reason: slugProblem ?? "channel_rename takes channel_id and slug",
+        reason: slugProblem ??
+          commandFieldsMessage("channel_rename", required),
       };
     }
     return {
@@ -1649,15 +1654,16 @@ function validateCommand(
   }
 
   if (cmd.kind === "channel_archive") {
+    const required = ["channel_id"];
     if (
-      !exactKeys(cmd, ["kind", "channel_id"]) ||
+      !exactKeys(cmd, ["kind", ...required]) ||
       typeof cmd.channel_id !== "string" ||
       !UUID_RE.test(cmd.channel_id)
     ) {
       return {
         ok: false,
         status: 400,
-        reason: "channel_archive takes channel_id",
+        reason: commandFieldsMessage("channel_archive", required),
       };
     }
     return {
@@ -1713,6 +1719,22 @@ function validateCommand(
       ? cmd.to_agent_principal_id
       : null;
     const inReplyTo = modernShape ? cmd.in_reply_to : null;
+    /* Every rule the chat fields add lives in one pure function so the edge
+     * cannot enforce half of them and so they are testable without Deno. Its
+     * SENTENCE is what the caller gets back: routing it into the generic
+     * "signal fields are malformed" reason would throw away the one part of
+     * the refusal that says which rule was broken and why. */
+    const chatShapeProblem = chatSignalShapeProblem({
+      signal_kind: cmd.signal_kind,
+      to_user_id: cmd.to_user_id,
+      to_agent_principal_id: toAgentPrincipalId,
+      in_reply_to: inReplyTo,
+      ...(channel === undefined ? {} : { channel }),
+      ...(threadRootId === undefined ? {} : { thread_root_id: threadRootId }),
+      ...(broadcastToChannel === undefined
+        ? {}
+        : { broadcast_to_channel: broadcastToChannel }),
+    });
     const valid = exactKeys(cmd, [
       "kind",
       "signal_kind",
@@ -1774,19 +1796,7 @@ function validateCommand(
       (!Object.hasOwn(cmd, "attachments") ||
         parseSignalAttachmentRefs(cmd.attachments) !== null) &&
       (threadRootId === undefined || nullableUuid(threadRootId)) &&
-      /* Every rule the chat fields add lives in one pure function so the edge
-       * cannot enforce half of them and so they are testable without Deno. */
-      chatSignalShapeProblem({
-        signal_kind: cmd.signal_kind,
-        to_user_id: cmd.to_user_id,
-        to_agent_principal_id: toAgentPrincipalId,
-        in_reply_to: inReplyTo,
-        ...(channel === undefined ? {} : { channel }),
-        ...(threadRootId === undefined ? {} : { thread_root_id: threadRootId }),
-        ...(broadcastToChannel === undefined
-          ? {}
-          : { broadcast_to_channel: broadcastToChannel }),
-      }) === null;
+      chatShapeProblem === null;
     const attachments = Object.hasOwn(cmd, "attachments")
       ? parseSignalAttachmentRefs(cmd.attachments)
       : undefined;
@@ -1827,7 +1837,8 @@ function validateCommand(
       : {
         ok: false,
         status: 400,
-        reason: "signal fields are malformed or over their limits",
+        reason: chatShapeProblem ??
+          "signal fields are malformed or over their limits",
       };
   }
 
@@ -5911,7 +5922,7 @@ async function resumeRenewalGrant(
    * was told 403; a retry then answered `renewal_grant_not_suspended`, because the resume it
    * had denied had in fact happened.
    *
-   * Same shape as the renewal preflight read at index.ts:3319 (`preflight[0]?.code ?? null`):
+   * Same shape as the renewal preflight read at index.ts:3510 (`preflight[0]?.code ?? null`):
    * preserve NULL, refuse only on a code we assign.
    *
    * WHY A REFUSAL BELOW STILL COMMITS, DELIBERATELY. `refuse` must commit — its whole job is
@@ -6365,6 +6376,14 @@ interface ThreadRootResolution {
   ok: boolean;
   threadRootId: string | null;
   rootUntil: Date | null;
+  /**
+   * The window left on the root, measured by POSTGRES against the same
+   * statement_timestamp() the clamp uses. Never recomputed from Date.now():
+   * Deno and Postgres do not share a clock, and a skewed comparison lets an
+   * explicit horizon pass the refusal and then be silently shortened by the
+   * clamp, which is the one branch this design calls dishonest.
+   */
+  rootRemainingMs: number | null;
   rootChannelId: string | null;
   status?: number;
   error?: string;
@@ -6386,15 +6405,25 @@ async function resolveThreadRoot(
 ): Promise<ThreadRootResolution> {
   const rootId = command.thread_root_id ?? null;
   if (rootId === null) {
-    return { ok: true, threadRootId: null, rootUntil: null, rootChannelId: null };
+    return {
+      ok: true,
+      threadRootId: null,
+      rootUntil: null,
+      rootRemainingMs: null,
+      rootChannelId: null,
+    };
   }
   const rows = await tx<{
     id: string;
     until: Date;
+    remaining_ms: number;
     channel_id: string | null;
     thread_root_id: string | null;
   }[]>`
-    SELECT id, until, channel_id, thread_root_id
+    SELECT id, until,
+           EXTRACT(EPOCH FROM (until - statement_timestamp())) * 1000
+             AS remaining_ms,
+           channel_id, thread_root_id
     FROM swarm.signals
     WHERE workspace_id = ${route.workspaceId}::uuid
       AND id = ${rootId}::uuid
@@ -6409,6 +6438,12 @@ async function resolveThreadRoot(
        * whose meaning this lane does not touch. */
       AND to_user_id IS NULL
       AND to_agent_principal_id IS NULL
+      /* Belt and braces. Every in_reply_to row is stored DIRECTED --
+       * resolveSignalWriteTarget re-addresses it to the referenced signal's
+       * author -- so the two arms above already exclude one. Asserting it here
+       * makes the property local to this query instead of a conclusion about
+       * another function that a later edit could quietly falsify. */
+      AND in_reply_to IS NULL
       /* A one-second floor, not merely "still live". The reply's until is
        * clamped to the root's in SQL, and CHECK (until > created_at) would
        * fire if the root expired between this SELECT and the INSERT. The floor
@@ -6422,6 +6457,7 @@ async function resolveThreadRoot(
       ok: false,
       threadRootId: null,
       rootUntil: null,
+      rootRemainingMs: null,
       rootChannelId: null,
       status: 404,
       error: "thread_root_not_found",
@@ -6435,6 +6471,7 @@ async function resolveThreadRoot(
       ok: false,
       threadRootId: null,
       rootUntil: null,
+      rootRemainingMs: null,
       rootChannelId: null,
       status: 400,
       error: "thread_root_is_a_reply",
@@ -6447,6 +6484,7 @@ async function resolveThreadRoot(
     ok: true,
     threadRootId: root.id,
     rootUntil: root.until,
+    rootRemainingMs: Number(root.remaining_ms),
     rootChannelId: root.channel_id,
   };
 }
@@ -6772,12 +6810,25 @@ async function postSignal(
       ${command.about},
       ${command.signal_kind},
       ${command.body},
-      LEAST(
-        statement_timestamp() + ${untilMs} * interval '1 millisecond',
-        COALESCE(
-          ${placement.untilCeiling}::timestamptz,
-          statement_timestamp() + ${untilMs} * interval '1 millisecond'
-        )
+      /* GREATEST is the floor that keeps the row legal. resolveThreadRoot
+       * requires the root to be live with a one-second margin, but several
+       * statements run between that SELECT and this INSERT (attachments, the
+       * rate bucket), and statement_timestamp() advances with each one. If more
+       * than a second of wall clock passes inside the transaction -- reachable
+       * under contention -- the clamp would land at or before created_at and
+       * CHECK (until > created_at) would fire, turning a thread reply into a
+       * 500 where a refusal belongs. With the floor, the reply outlives its
+       * root by under a millisecond in that case, and the root is already
+       * expired by then, so no reader can see either one. */
+      GREATEST(
+        LEAST(
+          statement_timestamp() + ${untilMs} * interval '1 millisecond',
+          COALESCE(
+            ${placement.untilCeiling}::timestamptz,
+            statement_timestamp() + ${untilMs} * interval '1 millisecond'
+          )
+        ),
+        statement_timestamp() + interval '1 millisecond'
       ),
       statement_timestamp(),
       ${placement.channelId}::uuid,
@@ -7600,9 +7651,18 @@ async function handleTransaction(
       const requestedUntilMs = command.until_ms ??
         SIGNAL_DEFAULT_UNTIL_MS[command.signal_kind];
       const rootUntil = threadResolution.rootUntil;
-      if (rootUntil !== null && command.until_ms !== undefined) {
-        const remainingMs = rootUntil.getTime() - Date.now();
-        if (command.until_ms > remainingMs) {
+      const rootRemainingMs = threadResolution.rootRemainingMs;
+      if (
+        rootUntil !== null && rootRemainingMs !== null &&
+        command.until_ms !== undefined
+      ) {
+        /* Both sides of this comparison come from Postgres. Using Date.now()
+         * here made the refusal depend on the skew between two clocks: a Deno
+         * process running behind would let an over-long horizon through, and
+         * the SQL clamp would then quietly shorten it. The response still
+         * carries the STORED until, so a caller whose horizon was clamped by
+         * the statements elapsing inside this transaction can see it. */
+        if (command.until_ms > rootRemainingMs) {
           await insertAudit(tx, {
             auth,
             commandKind: kind,
@@ -7625,9 +7685,10 @@ async function handleTransaction(
       }
       /* A threaded reply inherits its root's channel. The client does not get
        * to file a reply somewhere its thread is not, and a reply whose root is
-       * unfiled stays unfiled. An explicit channel on a thread reply is
-       * ignored rather than refused, because the inherited value is the only
-       * one that can be right. */
+       * unfiled stays unfiled. An explicit channel alongside thread_root_id is
+       * REFUSED by the validator (chatSignalShapeProblem), not silently
+       * ignored here, so this line only ever chooses between an inherited
+       * value and a top-level post's own channel. */
       const placementChannelId = threadResolution.threadRootId !== null
         ? threadResolution.rootChannelId
         : channelResolution.channelId;

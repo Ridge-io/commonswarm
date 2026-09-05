@@ -73,6 +73,9 @@ DECLARE
     'to_user_id = auth.uid()',
     'to_agent_principal_id IS NULL',
     'owner_user_id = auth.uid()',
+    -- Not in the live view yet: the DM phase adds it. Listed now on purpose,
+    -- because the phase that ADDS a clause is never the phase that drops it --
+    -- the marker has to be here before the recreation that could lose it.
     'from_principal = auth.uid()'
   ];
 BEGIN

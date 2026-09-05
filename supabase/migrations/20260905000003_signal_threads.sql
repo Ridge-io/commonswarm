@@ -28,12 +28,14 @@ ALTER TABLE swarm.signals
   ADD COLUMN broadcast_to_channel boolean NOT NULL DEFAULT false;
 
 -- The composite FK below needs a unique constraint on exactly (id,
--- workspace_id). id alone is the primary key, which does not satisfy a
--- two-column reference, so the index is a requirement of the FK and not a
--- performance choice. It is a full index build under the lock this file already
--- takes; on a signal table sized for 30-day retention that is bounded, but it
--- is a real cost and is named here rather than discovered during the push.
-CREATE UNIQUE INDEX signals_id_workspace ON swarm.signals (id, workspace_id);
+-- workspace_id); the primary key on id alone does not satisfy a two-column
+-- reference. This index ALREADY EXISTS -- 20260730000002_agent_signal_receive.sql:8
+-- created it, and 20260901000010:6 and 20260901000020:5 both re-declare it with
+-- IF NOT EXISTS. This file did not, and a local `supabase migration up` refused
+-- it with 42P07 before any of this reached a review arm. Keep the house idiom:
+-- state the requirement, tolerate the row already being there.
+CREATE UNIQUE INDEX IF NOT EXISTS signals_id_workspace
+  ON swarm.signals (id, workspace_id);
 
 ALTER TABLE swarm.signals
   ADD CONSTRAINT signals_thread_root_workspace

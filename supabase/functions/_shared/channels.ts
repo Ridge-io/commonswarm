@@ -172,7 +172,13 @@ export function chatSignalShapeProblem(
     if (fields.signal_kind === "working-on") {
       return "A working-on signal cannot be a thread reply. Reply with a note or an ask.";
     }
-    if (fields.to_user_id !== null || fields.to_agent_principal_id !== null) {
+    /* An ABSENT key and an explicit null mean the same thing here. The command
+     * edge's exactKeys short-circuits before this function ever sees an absent
+     * modern key, so this is not reachable there today -- but this function is
+     * the one place the rules live, and it must be right read on its own. */
+    const toUser = fields.to_user_id ?? null;
+    const toAgent = fields.to_agent_principal_id ?? null;
+    if (toUser !== null || toAgent !== null) {
       return "A thread reply is readable by everyone who can read its thread, so it cannot also be addressed to one recipient.";
     }
     if (fields.in_reply_to !== null && fields.in_reply_to !== undefined) {
@@ -187,4 +193,31 @@ export function chatSignalShapeProblem(
     return "broadcast_to_channel says to send a thread reply to the channel as well, so it needs a thread_root_id.";
   }
   return null;
+}
+
+/**
+ * The "this command takes these fields" sentence, BUILT from the same arrays
+ * the `exactKeys` check reads. Typing that list is the failure AGENTS.md
+ * measured four times in one release cycle: the sentence and the enforcement
+ * drift the moment one of them changes, and the arms do not catch it because
+ * reading it means re-deriving the enforcement.
+ *
+ * `kind` is the command name; `required` and `optional` are the exact key
+ * arrays, minus the literal "kind" every command carries.
+ */
+export function commandFieldsMessage(
+  kind: string,
+  required: readonly string[],
+  optional: readonly string[] = [],
+): string {
+  const list = (names: readonly string[]): string =>
+    names.length === 1
+      ? names[0]!
+      : `${names.slice(0, -1).join(", ")} and ${names[names.length - 1]!}`;
+  const head = required.length === 0
+    ? `${kind} takes no fields`
+    : `${kind} takes ${list(required)}`;
+  return optional.length === 0
+    ? `${head}.`
+    : `${head}, and optionally ${list(optional)}.`;
 }
