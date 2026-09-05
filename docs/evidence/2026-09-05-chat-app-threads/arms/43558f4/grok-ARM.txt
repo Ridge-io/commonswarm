@@ -1,0 +1,46 @@
+I'll read REVIEW.md and the patch first, then follow the review instructions exactly.The patch is large. I’ll keep reading it and check the two new documentation commits next.I'll inspect the two new docs commits and keep reading the rest of the patch.I'll check the table against the arm files, then re-read the heading and the rest of the lane.I'll verify Gemini's round-six findings, then re-read the heading, the sweep, and the live thread/send/wake code.I'll re-check the send path, the To: lock, and user-facing copy, and I'll check the flake note against those two files.I have enough to judge the two new commits and the rest of the lane. Checking one SHA-binding clause, then I’ll write the verdict.`diff --git a/docs/evidence/2026-09-05-chat-app-threads/README.md b/docs/evidence/2026-09-05-chat-app-threads/README.md`
+
+The two new commits are documentation. The corrected table cells now match the arm files and the commits that made each claim. The flake note names the right discriminator and the right files. I cannot refute the thread surface, the To: lock, the send path, the wire, the mobile numbers, or the wake copy a reader sees. I did not find a retired wake sentence standing in user-facing copy.
+
+### 1. The corrected table cells
+
+They are right now.
+
+**`3315846` leftover heading.** At that SHA, `mutate.mjs` still titles the block `AND NO RETIRED WAKE SENTENCE STANDS AS CURRENT`. At `324c3a8` the heading is `AND NO LISTED RETIRED PHRASE STANDS OUTSIDE A STRIKETHROUGH`, with the old words in strikethrough. The new `3315846` cell (`README.md:163`) says the leftover is fixed in `324c3a8`, the next commit, not in this one. Grok PASS / Gemini PASS match `arms/3315846/`. The typed count (`the seventh instance`) is gone.
+
+**`5791646` “none stands” claim.** Grok’s FAIL at that SHA quoted item 11 of *that* README: “no retired claim stands as current”, split across two lines. `8f3a45f` does not say that. Its commit message says “Every retired sentence is kept beside its replacement”. The new `5791646` cell (`README.md:166`) binds the empty-set claim to `5791646`’s own README, and the narrower preservation claim to `8f3a45f`. Grok FAIL / Gemini PASS match `arms/5791646/`. The same file already says this in prose at `README.md:260-261`.
+
+**The new `324c3a8` row** (`README.md:162`) matches the arm files: Grok FAIL, Gemini PASS. The three things Grok named are the two SHA bindings and the typed count. “Both cells corrected below; the count is gone rather than replaced” is true of the rows under it.
+
+The other verdict columns still match the ARM files: `94ba3e9` FAIL/FAIL, `5eb63a5` FAIL/PASS, `8f3a45f` PASS/PASS, `ffd49bb` not reviewed alone, `74888c4` FAIL/PASS, `d257f87` PASS/FAIL. Gemini’s `94ba3e9` ARM independently named the two sweep holes the `94ba3e9` cell lists.
+
+### 2. The flake note
+
+Honest. Not an excuse for a failure in this lane.
+
+`README.md:403-415` says the full `npm --prefix site test` went red twice on files this lane does not touch, and both were green when re-run **alone on the same SHA**.
+
+- `site/src/components/app/message-blocks-layout.observer.test.ts` has **seven** `test(` calls, imports `findChrome`, and already records a loaded-host flake in its own header (stale 320px across a frame). It is not in `git diff 89ac83bc..43558f4 --name-only`.
+- `slack-shape.observer.test.ts` has `test("participant navigation uses human presence and agent model identity"` at line 398. That step calls `renderParticipantRailFixture`, which “Bundles and runs the live rail renderer in a browser document” (`participant-rail.fixture.ts:66-70`). Also not in this lane’s files.
+
+Both drive headless Chrome on a shared host. That is the discriminator AGENTS.md names. I did not see the original red logs; I established that the named files exist, use Chrome, and are outside this lane.
+
+### 3. Everything else
+
+I cannot refute the product. No retired sentence stands in user-facing copy.
+
+- **0.** `syncComposerPlacement` is one call per feed paint (`LiveDashboard.astro:4922`). It writes bar text, placeholder, and `broadcast.checked = false` when the control is hidden (`:6469`). It does not write the To: pair, the intent, or `threadReplyRoot`. Unknown-channel and add-agent views return before this call. `threadReplyBlock` reads `channels` and `Date.now()` to choose the window sentence and whether broadcast is offered.
+- **1.** `threadRootBlock` asks directed, live margin, archive, then already-a-reply, in the edge’s order. Archive is asked of `rootChannel`, not `rowChannel` (`:5188-5189`). A missing channel is not treated as archived. `resolveSignalWriteTarget` always writes a recipient for `in_reply_to`. The directed arm covers every row that can exist.
+- **2.** `composerSendRecipients` is the set the row and the send read. `deriveComposerAddress` holds while `replying === true` (`composer-address.ts:480`). The only `composerTo =` writes are the pass commit (`LiveDashboard.astro:2941`) and workspace teardown after `threadReplyRoot = null` (`:3697-3701`). A reply remembers nothing (`:8334`). An `@tag` inside a reply changes nothing.
+- **3.** A reply is `{ threadRootId, ...(broadcastToChannel ? { broadcastToChannel: true } : {}) }` with no `channel`. `browserSignalCommand` omits null/absent optional keys for `to`, `channel`, `thread_root_id`, and `broadcast_to_channel`. `broadcast_to_channel` is only added on the thread branch when the box is ticked, so it never goes out without `thread_root_id`.
+- **4.** A reply compares thread ids. A top-level post compares the channel on screen. Channel move does not retire a reply. Opening or cancelling a reply does. The catch rewrite keeps `placementThreadRootId` and `broadcastToChannel`.
+- **5.** Submit freezes `replyRoot` and `replyBlock` before the first await. Success closes the bar only when `threadReplyRoot?.id === replyRoot.id`. Remember/clear use captured keys. Finally lowers the flag on the send’s own token.
+- **6.** Bar copy is generated from `channelLabel` / `ALL_SIGNALS_SLUG` / `THREAD_REPLY_REACH_TEXT` / `THREAD_ROOT_BLOCKS`. Archived copy matches the edge word for word (`thread-reply.ts:131-132`, `command/index.ts:6580`). Wake count is `notified.length`. Promote labels do not match `/notif/i`. `browserSignalKind` still returns `ask` when recipient 0 is an agent (`commonswarm.ts:1387`); the README records that as a wire change not done here. Kind no longer speaks to the wake. No em-dash in those user-facing strings.
+- **7.** The two NOT CONTROLLED notes in `mutate.mjs:164-169` and `:251-257` are true for values this field can hold. The liveness sweep and the four-arm sweep do what their headers say. The rebuilt sweep’s title matches the loop: named substrings, six files, not a closed family.
+- **8.** I cannot refute that the four observer edits keep the same claim.
+
+`groupSignalThreads`: every input id comes back once. Orphans keep their place. 97px vs 73px: two instruments, as the README states. “Did NOT establish” is right on prod, local Supabase, the hold, `?t=`, and copy ahead of the wake migration. Item 11 matches what the sweep measures.
+
+I did not run the site suite or the mutation harness this round.
+
+VERDICT: PASS

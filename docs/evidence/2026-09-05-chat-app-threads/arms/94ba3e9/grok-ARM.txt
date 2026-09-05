@@ -1,0 +1,120 @@
+I'll read REVIEW.md and the patch first, then follow REVIEW.md exactly.The patch is large. I'll keep reading it and go after the rebuilt sweep first.HEAD is `94ba3e9`. Next I’ll read that commit’s sweep rebuild and the rest of the lane.I’ll read the rebuilt sweep, its mutations, and the two sentences this commit says it fixed.I’ll attack the sweep as a control: list the phrases, find leftover wording, and check whether the mutations hit the assertions they name.I’ll map each listed phrase to the files it hits, then hunt for standing retired wording the sweep would miss.Phrase hits are all struck. Next I’ll read the comments the list never matches, and check whether mutation 2 actually hits a file with no strikethrough.I’ll re-check the thread helpers and send path, then decide whether the family-matching claim is still open.I have enough. The rebuilt sweep is honest in its title, but the family-matching claim is still false. Checking one bound on the dead-phrase header quotes, then writing the verdict.diff --git a/docs/evidence/2026-09-05-chat-app-threads/README.md b/docs/evidence/2026-09-05-chat-app-threads/README.md
+
+The class is still open. This commit fixed the two sentences the last arm named, and it made the **test title** match the loop. It then asserted that the hole those sentences fell through is closed. That assertion is the class.
+
+The shape: a list of remembered substrings cannot close a family. Each round adds the last miss, then says the family cannot slip. The next standing sentence is the wording that is not a listed substring. Case/space folding is not family matching.
+
+What breaks is a later agent reading the control, not a person using the app.
+
+### Finding: the sweep can still be green while a retired sentence stands
+
+`composer-address.test.mjs:346-347` says the three things that let it pass while a sentence stood are closed. `README.md:270-271` says the first of those:
+
+> Matching is case- and space-insensitive over a normalised copy, so a sentence in the family of a listed phrase cannot slip past on an adjective or a line break.
+
+Normalisation lowercases and collapses whitespace (`composer-address.test.mjs:403`). That catches a line break and a change of case. It does not catch an adjective in the middle of a phrase, and it does not catch a blend of two listed phrases.
+
+The round-five miss was `the only recipient it wakes` against a listed `one recipient the service wakes`. They listed both exact strings (`:390-391`). Construct, in a named file, with no strikethrough:
+
+- `the only recipient the service wakes` — mix of the two listed forms. Matches neither.
+- `the sole recipient it wakes` — one adjective off the phrase they just added. Matches nothing on the list.
+
+I ran the same loop the test runs over the six files. Every listed hit today sits inside `~~ ~~`. Those two constructions would not. The sweep would stay green. That is the round-five failure with a different adjective.
+
+The **title** (`:336`) and the **bound paragraph** (`:360-364`) and **item 11** (`README.md:415-416`) are honest: listed phrases, six files, cannot see words no listed phrase covers. Point 1 is not. It claims the family hole is closed. The bound they stated correctly is the one that says it is not.
+
+`composer.observer.test.ts` is on the file list and contributes **zero** listed phrases. A retired sentence can stand there in any wording that is not on the list, and the per-file size check (`:414`) still passes.
+
+### Dead-phrase check: a phrase can be “live” while catching nothing that matters
+
+Every listed phrase must match somewhere (`:441-446`). A match inside strikethrough counts. The sweep file is on the list, and its header quotes the misses inside `~~ ~~` (`:343-344`, `:350-351`). Those quotes are outside `const retired = […]`, so they are scanned.
+
+So a phrase that exists only as a struck example in this header satisfies the dead-phrase check and never has to appear in the wake copy. Striking the header quotes (the false-positive fix) is what feeds that. Today `only recipient it wakes` also hits `composer-addressing.observer.test.ts`, but if that path were pointed at a sibling on the list, the header alone would keep the phrase live. Pointing `composer-addressing.observer.test.ts` at `./does-not-exist-anywhere.ts` is red (`ENOENT`). Pointing it at `composer.observer.test.ts` (15k, no listed phrases) would not be.
+
+### The two false-positive fixes
+
+**Broad phrase.** `notifiedRecipients` is headed `EVERY RECIPIENT THE SERVICE WAKES` (`composer-address.ts:137`). A phrase `recipient the service wakes` fires on that correct sentence. They narrowed to `one recipient the service wakes` and `only recipient it wakes`. That stops the false hit. It also lets `any recipient the service wakes` stand. Narrowing hides a real one in the same family they claim cannot slip.
+
+**Header quotes.** Striking them does not hide a standing occurrence elsewhere. Each hit is checked. It does let those quotes satisfy the dead-phrase check, as above.
+
+### Four mutations
+
+1. **Subject, not checker** (`mutate.mjs:96-100`). Unstrikes `way a reader can change who is woken` in `composer-address.ts`. Expected `stands as current at offset`. Right shape for an empty-set claim. Reaches the assertion it names.
+2. **Family miss, no strikethrough** (`:103-107`). Puts `the only recipient it wakes` back in `composer-addressing.observer.test.ts`. Same expected text. Reaches it. Proves that one listed phrase is live in that file. Does not prove the family claim in point 1.
+3. **Dead phrase** (`:110-114`). Adds a string that matches nothing. Expected `these phrases match nothing, so listing them changes nothing`. Reaches the dead-phrase assertion.
+4. **Wrong path** (`:116-120`). Expected `ENOENT`. That is a throw from `readFileSync`, not the `source.length > 2_000` assertion. It proves a missing path cannot hide behind a total. It does not prove a wrong existing file cannot.
+
+Mutation 1 is the right shape. 2–4 each reach the text they name. None of them is a family-of-phrase subject mutation, which is the hole they claimed to close.
+
+### The two sentences this commit struck
+
+I could not make them false in the other direction.
+
+- `composer-addressing.observer.test.ts:363-366`: recipient 0 is still the column the server fills and the arrow. The wake claim is in `~~ ~~`. The assertion is still the arrow and the chips.
+- `composer-address.test.mjs:663-670`: promoting still changes set order. The boolean was always about the set. The wake claim is in `~~ ~~`.
+
+### Wake copy, user-facing
+
+I enumerated `composerDeliveryNote` and `composerPromoteLabel` for sets of size 0..`COMPOSER_TO_MAX`. The wake clause is built from `notifiedRecipients`. The count is `notified.length`. I could not find a set that claims a wake the new rule would not do, or misses one it would.
+
+The migration is not on this branch. The citation test (`composer-address.test.mjs:449-476`) does not assert the file exists. Item 11 is honest about that.
+
+`browserSignalKind` still returns `ask` when recipient 0 is an agent. For `[person, agent]` the badge says Note and the To: row says the agent is notified. Note does not claim a non-wake. The reason is recorded.
+
+Promote still writes index 0. The feed still prints that name after `→ `. `SCALAR_POSITION` stayed. `NOTIFIED_POSITION` is gone, kept as strikethrough.
+
+One current comment is still wrong next to code that does the other thing: `composer-address.ts:29-30` says the note names one or two agents and counts above that. The function names one and counts two or more (`:260-264`). Tests pin the count. Not user-facing. Round four already named it.
+
+### 0. `syncComposerPlacement()` inside `renderFeed`
+
+I cannot refute this. One pass per feed paint, not per row. It does not write the To: pair, the intent, or `threadReplyRoot`. The one state write is `broadcast.checked = false` when the control is hidden. `threadReplyBlock` reading `channels` and `Date.now()` chooses the window sentence and whether the broadcast control is offered.
+
+### 1. Reply control vs server
+
+I cannot refute this. `threadRootBlock` asks directed, live margin, archive, then already-a-reply, in the edge's order. Archive is asked of the root's channel. A missing channel is not treated as archived. `resolveSignalWriteTarget` always writes a recipient for `in_reply_to`. The directed arm covers every row that can exist.
+
+### 2. Second write path on To:
+
+I cannot refute this. `composerSendRecipients` is the set the row and the send read. `deriveComposerAddress` holds while `replying === true`. A reply remembers nothing.
+
+### 3. Wire body
+
+I cannot refute this. A reply is `{ threadRootId, ...(broadcastToChannel ? { broadcastToChannel: true } : {}) }` with no `channel`. `browserSignalCommand` omits null/absent optional keys. `broadcast_to_channel` is only added on the thread branch when the box is ticked, so it never goes out without `thread_root_id`.
+
+### 4. Unfinished-send rule
+
+I cannot refute the two callers. A reply compares thread ids. A top-level post compares the channel on screen. Channel move does not retire a reply. Opening or cancelling a reply does.
+
+### 5. Send vs screen
+
+I cannot refute this. Submit freezes `replyRoot` and `replyBlock` before the first await. Success closes the bar only when `threadReplyRoot?.id === replyRoot.id`. Remember/clear use captured keys.
+
+### 6. False sentence / typed list (user-facing)
+
+User-facing thread copy is generated from `channelLabel` / `ALL_SIGNALS_SLUG` / `THREAD_REPLY_REACH_TEXT` / `THREAD_ROOT_BLOCKS`. Archived copy matches the edge word for word. Reach says it notifies nobody. No em-dash. No privacy claim. The leftover in the finding is not on screen.
+
+### 7. Control that cannot fail
+
+The two NOT CONTROLLED notes are true for values this field can hold. Dropping `Number.isFinite(until)` does not change NaN or +Infinity. Dropping `if (signal.threadRootId === null)` on registration does not change output.
+
+The liveness sweep does what its header says: one `interval '<n> second'` clause in the edge file, count first. The four-arm sweep does what its header says: four exact strings inside `resolveThreadRoot`, each once.
+
+The rebuilt sweep's **title** does what its loop does. Point 1 of its header, and the README sentence that repeats it, do not. See the finding.
+
+### 8. Retired control weakened
+
+I cannot refute this.
+
+- `composer.observer.test.ts`: "thread" is allowed only in the reply bar.
+- Display-reversal pins now match `reverse()` once.
+- `chat-channels.observer.test.ts`: the old "never send thread fields" negative is a positive top-level vs thread-branch pair. Wire omission of thread keys for a top-level post is in `chat-threads.observer.test.ts`.
+
+### Also
+
+- `groupSignalThreads`: every input id comes back once. Orphans keep their place. Replies move under their root on purpose. I could not make it drop or duplicate a row.
+- 97px vs 73px: the README names two instruments. Sample mode with the banner subtracted is 97px. The signed-in gate is `mobile-feed-layout.observer.test.ts` at 73px. That is honest.
+- The "did NOT establish" list is right on prod, local Supabase, the hold, `?t=`, and copy ahead of the wake migration. Item 11 is the right width for what the sweep measures. README point 1 is not.
+
+I could not refute the thread work, or the user-facing wake sentences, on a break for a reader of the app.
+
+VERDICT: FAIL

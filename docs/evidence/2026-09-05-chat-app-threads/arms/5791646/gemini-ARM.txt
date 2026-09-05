@@ -1,0 +1,29 @@
+diff --git a/docs/evidence/2026-09-05-chat-app-threads/README.md b/docs/evidence/2026-09-05-chat-app-threads/README.md
+
+### New Commit (`5791646`)
+I checked the five places where the retired wake rule was updated. 
+1. **False claims in the other direction:** No. The new comments accurately reflect that the "wake" now applies to any agent recipient, regardless of their position, rather than being restricted to recipient 0. 
+2. **Retired sentences deleted:** No. The previous language (e.g., `~~"because the wake does. Only recipient 0 is..."~~` and `~~"Orbit is still first, so Orbit is still the one the service wakes."~~`) is retained everywhere using strikethrough exactly beside the new descriptions.
+3. **Contradictions with code:** No. The code beside the comments behaves identically (e.g. kind still follows recipient 0) but the comments now correctly decouple this from the wake behavior.
+
+### Eight Things to Attack
+
+0. **The fix round introduced something:** `syncComposerPlacement()` safely operates within a single render cycle, updating DOM checkboxes and strings without writing application state (like `threadReplyRoot`). It strictly checks `channelById` and `Date.now()`, adding negligible cost, and only acts on the current active workspace. I cannot refute this claim.
+
+1. **The reply control lies:** `threadRootBlock` checks `directed`, `live`, `archive`, and `already-a-reply` exactly mimicking the server's sequence. The client verifies the `archive` state against `rootChannel`, preventing a cross-channel mismatch, and correctly models `in_reply_to` as always directed. I cannot refute this claim.
+
+2. **The `To:` lock has a second write path:** The recipient list strictly derives from `composerSendRecipients`. The derivation explicitly holds while `replying === true`. No secondary path modifies `composerTo` or `composerToApplied` while the bar is open. Cancelling safely restores the pre-reply set. I cannot refute this claim.
+
+3. **The wire body is wrong:** `browserSignalCommand` properly omits empty/null keys. `broadcast_to_channel` is safely gated behind the presence of `thread_root_id` and the checkbox toggle. The constructed request perfectly aligns with `installedPost({ thread_root_id })`. I cannot refute this claim.
+
+4. **The unfinished-send rule is wrong for one of its two callers:** `composerAddressStillPromised` correctly branches on whether an intent is a thread reply (checking `placementThreadRootId`) or a top-level message (checking `placementChannelId`). This correctly serves both `selectChannel` and the catch-retry paths. I cannot refute this claim.
+
+5. **Send vs screen guards:** The send correctly snapshots `replyRoot` and its tokens up front. The `finally` block is securely guarded by `if (composerSendToken === sendToken)`. A workspace transition increments this token beforehand, preventing cross-workspace state contamination. I cannot refute this claim.
+
+6. **A sentence is false, or a list inside one is typed rather than generated:** All UI string combinations are dynamically built. `THREAD_ROOT_BLOCKS` produces the exact edge rejection text for archived channels. The "wake" text correctly counts agent lengths (`${notified.length} agents are notified`) without relying on hardcoded numbers. I cannot refute this claim.
+
+7. **A control cannot fail, or fails for a reason other than the one it names:** `Number.isFinite(until)` correctly handles bounds without affecting `NaN`/`Infinity` comparisons. Removing the `threadRootId === null` loop guard changes no output since unlisted IDs are safely skipped. The regex sweeps assert exactly what their headers claim. I cannot refute this claim.
+
+8. **A retired control was weakened rather than moved:** The observer shifts in `composer.observer.test.ts` and `chat-channels.observer.test.ts` successfully maintain their strict negative assertions by explicitly splitting top-level versus thread rules. No guarantees were diminished. I cannot refute this claim.
+
+VERDICT: PASS

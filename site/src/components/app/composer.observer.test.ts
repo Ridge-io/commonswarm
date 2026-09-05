@@ -40,16 +40,56 @@ test("composer defaults to broadcast and keeps signal language", () => {
   assert.match(markup, /placeholder="What are you about to do\?"/);
   assert.doesNotMatch(markup, /Message #general|Message #all-signals/i);
   assert.doesNotMatch(markup, /only .* sees|will see|private|lock/i);
-  /* This gate was retired for "thread" on 2026-09-05 when a thread reply bar shipped in the
-     composer, and RESTORED the same day when the coordinator cut the thread surface to
-     `lane/chat-app-threads`. Nothing in the composer may name a feature that is not there,
-     and none of the three is. */
-  assert.doesNotMatch(markup, /emoji|reaction|thread/i);
+  /* ~~`assert.doesNotMatch(markup, /emoji|reaction|thread/i)`~~ This gate was retired for
+     "thread" on 2026-09-05 when a thread reply bar shipped in the composer, RESTORED the same
+     day when the coordinator cut the thread surface to `lane/chat-app-threads`, and retired
+     for "thread" again when that lane landed it. A reader may still meet the three-word form
+     in an older screenshot of this file.
+
+     THE CLAIM IS UNCHANGED: nothing in the composer may name a feature that is not there.
+     Emoji and reactions are still not there, so they are still gated. Threads ARE there — the
+     reply bar, its window line and its broadcast control — so the gate would now be asserting
+     the absence of shipped behaviour, which is the claim-control failure in reverse. */
+  assert.doesNotMatch(markup, /emoji|reaction/i);
+  /* AND THE WORD IS ONLY THERE FOR THE THING THAT SHIPPED. The reply bar is the one surface
+     allowed to say it, so a stray "thread" anywhere else in the composer still fails. */
+  /* COMMENTS STRIPPED FIRST. This repo keeps the reason beside the code, so the paragraph
+     explaining the reply bar legitimately contains the word — the same trap
+     transcript-shape.observer.mjs documents, where a control matched its own commentary. */
+  const composerBody = markup.replace(/\{\/\*[\s\S]*?\*\/\}/g, "");
+  const replyBarStart = composerBody.indexOf('<div class="dashboard__composer-reply"');
+  assert.ok(replyBarStart > 0, "the reply bar is not in the composer");
+  const replyBarEnd = composerBody.indexOf('<div class="dashboard__composer-box">');
+  assert.ok(replyBarEnd > replyBarStart, "the reply bar must sit above the box");
+  const outsideReplyBar = composerBody.slice(0, replyBarStart) +
+    composerBody.slice(replyBarEnd);
+  assert.doesNotMatch(outsideReplyBar, /thread/i);
+  assert.match(markup, /data-composer-reply-cancel/, "the reply bar must be the surface that named it");
 
   /* An EMPTY To: set is still a broadcast, and it is named rather than shown as nothing.
      There is one address variable now and the row is redrawn from it on every change, so the
-     chips cannot disagree with what the send reads. */
-  assert.match(dashboard, /const composerRecipients = \(\): ComposerRecipient\[\] => composerTo;/);
+     chips cannot disagree with what the send reads.
+
+     ~~`() => composerTo`~~ Retired 2026-09-05: a thread reply carries no recipient, so the
+     set the send posts is a DERIVATION over `composerTo` rather than `composerTo` itself, and
+     the To: row draws the same call. The point of the pin is that ONE expression answers for
+     both, and it still does. */
+  assert.match(
+    dashboard,
+    /const composerRecipients = \(\): ComposerRecipient\[\] =>\s*\n\s*composerSendRecipients\(composerTo, composerIsReplying\(\)\);/,
+    "one expression must answer for both the row and the send",
+  );
+  /* AND THE ROW DRAWS THAT CALL, not the variable underneath it. */
+  const toRender = dashboard.slice(
+    dashboard.indexOf("const renderComposerTo = (): void => {"),
+    dashboard.indexOf("\n    };", dashboard.indexOf("const renderComposerTo = (): void => {")),
+  );
+  assert.match(toRender, /const shown = composerRecipients\(\);/);
+  assert.doesNotMatch(
+    toRender,
+    /for \(const entity of composerTo\)/,
+    "the row must draw the set the send posts, not the pair it holds",
+  );
   assert.match(dashboard, /BROADCAST_CHIP_LABEL/);
   assert.doesNotMatch(dashboard, /composerPostAgentNote/);
 });
@@ -59,8 +99,13 @@ test("composer defaults to broadcast and keeps signal language", () => {
    opt-out flag for the CLI's sake; the app never passes it, which is what the second assertion
    below pins. */
 test("composer kind defaults by recipient, and the app never opts out of the wake", () => {
-  /* THE KIND FOLLOWS RECIPIENT 0, because the wake does. An agent behind a person in the To:
-     set does not make this an ask, and the To: row says as much in words. */
+  /* THE KIND FOLLOWS RECIPIENT 0. ~~"because the wake does. An agent behind a person in the
+     To: set does not make this an ask, and the To: row says as much in words."~~ Retired
+     2026-09-05: that agent IS woken now and the row says so, while the kind stays `note`. The
+     two no longer answer the same question — both `ask` and `note` are delivered — so the kind
+     labels the message and says nothing about the wake. The BEHAVIOUR below is unchanged on
+     purpose; moving it is a wire change, recorded in
+     docs/evidence/2026-09-05-chat-app-threads/README.md. */
   assert.deepEqual([
     browserSignalKind([]),
     browserSignalKind([{ kind: "person", id: "person-1" }]),

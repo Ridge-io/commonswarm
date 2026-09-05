@@ -1,0 +1,17 @@
+`diff --git a/docs/evidence/2026-09-05-chat-app-threads/README.md b/docs/evidence/2026-09-05-chat-app-threads/README.md`
+
+1. **Is the withdrawal complete?** 
+Yes. The README explicitly withdraws the claim, plainly stating "So the claim is withdrawn rather than narrowed again, and the class goes to the lead open." It now accurately describes the sweep as exactly what it is: a "NAMED-SUBSTRING control over six named files" and explicitly states it "does not close the family". The commit does not attempt to claim that exact substring matching provides total coverage of the family.
+
+2. **Are the two fixes right, and does either introduce something?** 
+Yes, both fixes are correct and safe:
+- The strip logic `raw.replace(/const retired = \[[\\s\\S]*?\\n {2}\\];/, "const retired = [];")` is now explicitly gated behind `file === "./composer-address.test.mjs"`. This correctly stops the sweep from blindly wiping `const retired = [` arrays in other product files without introducing new parsing vulnerabilities.
+- The normaliser's comment-stripping regex `replace(/^[ \t]*(?:\/\/+|\*+|#+)[ \t]?/gm, " ")` successfully drops line-starting comment markers before space condensation occurs. This correctly bridges sentences wrapped across multiline comments (like `//` or `*`) to match the expected substrings, without stripping out structural text mid-line.
+
+3. **Is the class correctly described for the lead, as a shape rather than as a list of instances?** 
+Yes. The README now correctly describes the structural limitation of the shape itself rather than chasing individual instances: "A list of remembered substrings cannot close a family. Normalising case and whitespace catches a line break and a capital. It does not catch an adjective in the middle... Case/space folding is not family matching." This is exactly the shape description the lead needs to rule on.
+
+4. **Everything else in the lane.** 
+The thread surface, the To: lock, the send path, the wire bodies, the mobile numbers, and the wake copy are solid. Six rounds of arms have meticulously verified `syncComposerPlacement`, `threadReplyBlock`, `threadReplyPlaceOf`, and the `THREAD_ROOT_BLOCKS` ordering. The current `threadRootBlock` correctly asks the edge's sequence, the recipient list derivation strictly holds while `replying === true`, and no retired rule wording is left standing as current in the user-facing copy.
+
+VERDICT: PASS

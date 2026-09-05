@@ -1,0 +1,31 @@
+```
+diff --git a/docs/evidence/2026-09-05-chat-app-threads/README.md b/docs/evidence/2026-09-05-chat-app-threads/README.md
+```
+
+### Analysis of the New Commit (`5eb63a5`)
+
+- **Does the sweep do what its header says, and is its bound the real one?** Yes. `composer-address.test.mjs` explicitly bounds itself to 5 named files and 11 retired phrases, requiring them to sit within `~~` markers. It does exactly what the header describes.
+- **Is the mutation reaching the assertion? Is there a way the sweep passes while a retired sentence stands?** Yes, the mutation successfully un-strikes one comment in `composer-address.ts`, which is immediately caught with the exact expected error (`stands as current at offset`). Because of the explicit boundaries of the sweep, it *will* pass if a retired sentence exists in a file not on the list or uses a phrase not on the list—this perfectly matches its stated scope.
+- **Can the positive controls be satisfied by reading the wrong thing?** The first control (`scanned > 200_000`) could be fooled by large wrong files, but the second (`retired.some((phrase) => all.includes(phrase))`) guarantees that at least one of the exact retired phrases is physically present in the read text. You cannot satisfy both by reading completely unrelated files.
+- **Are the newly struck comments false in the other direction?** No, their replacements correctly and safely assert the new state of the system (e.g., that an agent behind a person is indeed woken, and that promoting only dictates what the message "shows as addressed to", rather than promising a wake). The README's narrowed claim (that no retired phrase *on the named list* stands as current *in the named files*) matches the sweep exactly.
+
+### Analysis of the Second Subject (Wake Rule)
+
+- **A sentence that is now false / computed vs typed counts:** `composerDeliveryNote` generates sentences using the actual set lengths (e.g., `` `${notified.length} agents are notified.` ``) through `notifiedRecipients()`. It does not rely on typed counts. No sentence claims a wake that won't happen. 
+- **The migration on another branch:** Both the README and the citation control in `composer-address.test.mjs` explicitly and honestly state that `20260905000020_wake_all_recipients.sql` is not on this branch, preventing confusion. 
+- **`browserSignalKind`:** The decision to not change this is defensible. Because `swarm.agent_delivery_is_wakeable` delivers both `ask` and `note`, the kind no longer contradicts the wake logic. Keeping it unchanged correctly avoids a wire regression.
+- **`SCALAR_POSITION` surviving:** It survived because it still accurately controls the `to_user_id` / `to_agent_principal_id` scalar target. The chip promote control's copy correctly shifted from promising a wake to promising "shows as addressed to X".
+- **Retired Wording:** As enforced by the sweep, all retired terminology on the list is preserved in strikethrough next to its replacement, ensuring it's not quietly deleted or left standing as current.
+
+### Analysis of the Thread Work
+
+- **The reply control lies:** Cannot refute the code. `threadRootBlock` evaluates the exact rules from the server in the correct order (directed → live margin → archive → already-a-reply). The archive check operates on `rootChannel = channelById(channels, signal.channelId)`, ensuring the channel the thread actually belongs to is interrogated regardless of the reader's current view. `in_reply_to` rows are covered because they are stored directed.
+- **The `To:` lock has a second write path:** Cannot refute. The lock operates entirely as a derivation via `composerSendRecipients`. It holds while `replying` is true, and does not empty or overwrite the `composerTo` state, cleanly preventing mid-reply edits from breaking the underlying array.
+- **The wire body is wrong:** Cannot refute. `browserSignalCommand` properly leaves out `channel` on replies and safely gates `broadcast_to_channel` behind both the checkbox truth value and the presence of `thread_root_id`. 
+- **The unfinished-send rule:** Cannot refute. `composerAddressStillPromised` discriminates flawlessly. By evaluating `intent.placementThreadRootId !== null || threadReplyRoot !== null`, it correctly compares thread roots for replies and channel slugs for top-level posts, supporting both the channel switch and the submit `catch` seamlessly.
+- **Screen Guard vs Send state:** Cannot refute. The submit captures all its needed intent fields (`replyRoot`, `sendDraftKey`, `placementThreadRootId`, etc.) synchronously. Background failures accurately fall back on `composerAddressStillPromised` to ensure no UI manipulation occurs if the screen intent has drifted.
+- **False sentences / Typed lists:** Cannot refute. The reply bar generates strings off live slugs (`channelLabel`), dynamically evaluates the bounds of unfiled/unknown threads, and truthfully warns when an archived thread stops. 
+- **Un-failing controls:** `Number.isFinite(until)` in `threadRootBlock` and `signal.threadRootId === null` in `groupSignalThreads` are correctly identified as mathematically redundant but intentionally left as structural/intent documentation. 
+- **Weakened retired controls:** The modified observers (`composer.observer.test.ts`, `transcript-shape.observer.mjs`, etc.) strictly adapt to the new mechanics (e.g. allowing the word "thread" solely within the reply bar boundary, tracking display reversal directly on the `.reverse()` call rather than a specific loop layout) without diminishing their assertions. 
+
+VERDICT: PASS

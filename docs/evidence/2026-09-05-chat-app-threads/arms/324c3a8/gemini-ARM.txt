@@ -1,0 +1,11 @@
+`diff --git a/docs/evidence/2026-09-05-chat-app-threads/README.md b/docs/evidence/2026-09-05-chat-app-threads/README.md`
+
+**1. Is the new heading honest, and does the review-round table describe each round accurately?**
+Yes, the new heading is completely honest. In `mutate.mjs`, it has been changed from claiming an empty set for the whole family to strictly stating what the sweep does: `AND NO LISTED RETIRED PHRASE STANDS OUTSIDE A STRIKETHROUGH, in the six files the sweep names`. The comment directly below it further explains that the original broader claim was withdrawn. 
+
+The review-round table in the evidence README is also remarkably accurate and honest. It comprehensively documents each round of review, including all the failures (both by Gemini and Grok), the lane's own claims that were proven wrong, the holes in the retired-wording sweep, and explicitly states why the sweep class remains an open shape rather than a closed one.
+
+**2. Everything else.**
+The remaining functionality—the thread surface, the To: lock, the send path, the wire bodies, the mobile numbers, and the wake copy—is solid. The To: row securely locks during a reply without a secondary write path, the reply wire bodies match the server constraints perfectly, and the mobile measurements accurately reflect the layout. With seven previous rounds of rigorous scrutiny on these components, they remain sound and unbroken by this documentation update.
+
+VERDICT: PASS
