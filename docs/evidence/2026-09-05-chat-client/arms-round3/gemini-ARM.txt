@@ -1,0 +1,17 @@
+```markdown
+### Findings
+
+1. `tests/p1-cli/chat-cli.test.ts` (Importing `CHANNEL_SUBCOMMAND_NAMES`) and `src/cli.ts:8099` (Unconditional `main()` execution)
+**Reason:** In `src/cli.ts`, `main().catch(...)` executes unconditionally at module evaluation time without any guard (like checking if it's the main module). Exporting `CHANNEL_SUBCOMMAND_NAMES` from `src/cli.ts` and importing it in `tests/p1-cli/chat-cli.test.ts` triggers this execution during the test runner's initialization. Since the test runner's `process.argv[2]` will not match any valid CLI command (it will be the path to the test file), `main()` falls through to throwing a `UsageError`. The `.catch()` block handles this by printing `cswarm: unknown command ...` to `stderr` and setting `process.exitCode = 1`. This silently taints the test runner process, causing the test suite to always exit with code 1 (failure) even if all assertions pass.
+
+### Refutations
+
+- **channelSelectorKind / channelSelectorProblem:** Refuted. `channelSelectorKind` accurately checks `UUID_RE.test(selector)` before ever calling `channelSelectorProblem`. The purely local refusals accurately happen before `fileContext` (no network calls are paid for), and `channelSelectorProblem` now correctly handles the `reserved` case by naming the rule it broke.
+- **channelNameProblem / channelSlugProblem drift:** Refuted. `channelSlugProblem` successfully derives from `channelNameProblem` and remains functionally identical to the edge's version. For example, for padded strings or reserved names, both the edge and the new client implementation trim the value via `normalizeChannelSlug` before injecting it into the text, producing the exact same string output.
+- **threadReplyMessage states:** Refuted. All three states are correctly handled and match the edge logic. When `channel_id === null` (unfiled root) and `--broadcast-to-channel` is passed, it accurately reports that "Its thread is in no channel, so --broadcast-to-channel had nothing to send it to." The `--json` branch also uses the exact same `replyMessage` output.
+- **runSignalRead ordering:** Refuted. The early returns for `notify` and `follow` correctly precede the `channelOption(args)` call. Because `inbox --notify` returns early before the channel evaluation, it is completely unaffected by the move and won't break for not accepting `--channel`.
+- **Reserved-name subject guard:** Refuted. The `assert.ok(client.RESERVED_CHANNEL_SLUGS.length > 0)` purposefully failing when the list is emptied is the correct behavior. It prevents a test loop from passing vacuously and alerts developers to remove an obsolete test when a legitimate product change removes all reserved slugs.
+- **Subcommand parse typed assumption:** Refuted (partially). While using `.split(" ")[2]!` on the help output is technically a typed assumption about the spacing in the usage text, it is much safer than parsing English prose rules (which were failing previously).
+
+VERDICT: FAIL
+```
