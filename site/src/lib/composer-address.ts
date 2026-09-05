@@ -11,13 +11,24 @@
  *
  * - the cap is `SIGNAL_RECIPIENT_MAX`, the number the command edge refuses above and the number
  *   the CHECK on `swarm.signal_recipients.position` refuses above;
- * - the wake is `NOTIFIED_POSITION`, because `swarm.enqueue_signal_delivery`
- *   (20260731000001_signal_deliveries.sql:127) enqueues a delivery only for
- *   `swarm.signals.to_agent_principal_id`, and the command edge writes recipient 0 into that
- *   column. Recipients after it are readable and repliable and are NOT woken.
+ * - the wake is EVERY AGENT IN THE SET, because
+ *   `swarm.agent_delivery_is_wakeable` (20260905000020_wake_all_recipients.sql) sits behind
+ *   both enqueue paths and a trigger on `swarm.signal_recipients` gives every agent recipient
+ *   its own delivery row, at any position. People are never woken: the predicate joins
+ *   `swarm.agent_principals`, so a user id cannot satisfy it.
  *
- * That second bound is why `composerDeliveryNote` never says "everyone is notified". It says
- * which one recipient is, and it says so from the same index `notifiedRecipient` reads.
+ * > **CORRECTED 2026-09-05, `lane/wake-all-recipients`.** The retired rule, kept because a
+ * > reader may still meet it in `20260905000010_signal_recipients.sql` section 4 and in older
+ * > screenshots of this row: ~~"the wake is `NOTIFIED_POSITION`, because
+ * > `swarm.enqueue_signal_delivery` enqueues a delivery only for
+ * > `swarm.signals.to_agent_principal_id`, and the command edge writes recipient 0 into that
+ * > column. Recipients after it are readable and repliable and are NOT woken."~~ A set whose
+ * > position 0 was a person woke nobody at all under that rule, even when it named agents
+ * > later in the list. It now wakes those agents. `NOTIFIED_POSITION` is gone with it.
+ *
+ * That bound is why `composerDeliveryNote` counts rather than guessing. It names the agents
+ * when there are one or two of them and counts them above that, and it says so from the same
+ * function the mark on each chip reads.
  */
 import { SIGNAL_RECIPIENT_MAX } from "../../../supabase/functions/_shared/channels.js";
 
@@ -72,12 +83,11 @@ export const scalarRecipient = (
   recipients: readonly ComposerRecipient[],
 ): ComposerRecipient | null => recipients[SCALAR_POSITION] ?? null;
 
-/**
- * The position whose recipient is woken. This is a fact about the database, not a preference:
- * `swarm.enqueue_signal_delivery` fires on the scalar column alone, so the wake can only ever
- * follow the position that column is filled from.
- */
-export const NOTIFIED_POSITION = SCALAR_POSITION;
+/* ~~`export const NOTIFIED_POSITION = SCALAR_POSITION;`~~ Retired 2026-09-05: the wake no
+ * longer follows a position at all. `SCALAR_POSITION` stays, because the scalar column is
+ * still real and still filled from recipient 0 — it is what an old reader shows as the target
+ * and what the feed row's "→ X" prints. What it is NOT any more is the wake. Anything that
+ * wants the wake asks `notifiedRecipients`. */
 
 /**
  * The word for a position, so a sentence about the front of the list and the index the code
@@ -124,15 +134,26 @@ export const toWireRecipients = (
   recipients.map((entity) => ({ kind: WIRE_KIND[entity.kind], id: entity.id }));
 
 /**
- * The one recipient the service wakes, or null when the service wakes nobody. A person at the
- * front wakes nobody at all, because the column the trigger reads holds an agent principal.
+ * EVERY RECIPIENT THE SERVICE WAKES, in the order they sit in the set.
+ *
+ * One rule, asked by the sentence under the chips, by the mark on each chip, and by the label
+ * on each chip's own control. It is the browser's half of
+ * `swarm.agent_delivery_is_wakeable`: an AGENT recipient is woken at any position, and a
+ * person is never woken, because that predicate joins `swarm.agent_principals` and a user id
+ * cannot satisfy it.
+ *
+ * WHAT THIS DOES NOT MODEL, and does not need to. The predicate also refuses a revoked agent,
+ * a signal already past its horizon, and an agent waking itself. None is reachable from this
+ * row: the composer prunes a revoked agent out of the set before it can be a chip, the edge
+ * always writes `until` in the future, and the sender here is a signed-in person rather than
+ * an agent. A fourth clause that IS reachable would have to appear here.
+ *
+ * ~~`notifiedRecipient`~~ returned recipient 0 when it was an agent and null otherwise. It is
+ * gone: a reader may still meet a row that said "No agent is notified" while naming two.
  */
-export const notifiedRecipient = (
+export const notifiedRecipients = (
   recipients: readonly ComposerRecipient[],
-): ComposerRecipient | null => {
-  const front = recipients[NOTIFIED_POSITION];
-  return front !== undefined && front.kind === "agent" ? front : null;
-};
+): ComposerRecipient[] => recipients.filter((entity) => entity.kind === "agent");
 
 /** The scalar pair the server will write, so the optimistic row shows what the row will be. */
 export const scalarRecipientFields = (
@@ -218,18 +239,33 @@ const joinNames = (names: readonly string[]): string =>
  * whole set, and every clause is built from the set and the constants above.
  *
  * Clause 1 is always the wake, so the reader reads the same fact in the same place whatever
- * the set holds. Clause 2 is reach. Clause 3 is a remedy, and only when there is something to
- * remedy: with no agent in the set there is no name that could be put first.
+ * the set holds. Clause 2 is who else can read.
+ *
+ * ~~Clause 3, a remedy: "Only the first recipient is notified. Choose a name to put it
+ * first."~~ Retired 2026-09-05 with the position rule it described. There is nothing left to
+ * remedy: an agent in the set is woken wherever it sits, so no order the reader could choose
+ * would wake anybody new.
+ *
+ * THE COUNT IS COMPUTED FROM THE CHIPS, never typed. One agent is named; two or more are
+ * counted, the way the reach clause already counted, because eight names in a sentence under a
+ * row of eight chips is the row read twice.
  */
 export const composerDeliveryNote = (
   recipients: readonly ComposerRecipient[],
   nameOf: (entity: ComposerRecipient) => string,
 ): string => {
-  const notified = notifiedRecipient(recipients);
+  const notified = notifiedRecipients(recipients);
   const clauses: string[] = [
-    notified === null ? "No agent is notified." : `${nameOf(notified)} is notified.`,
+    notified.length === 0
+      ? "No agent is notified."
+      : notified.length === 1
+      ? `${nameOf(notified[0]!)} is notified.`
+      : `${notified.length} agents are notified.`,
   ];
-  const readers = notified === null ? recipients : recipients.slice(1);
+  /* WHO ELSE CAN READ IT. The woken recipients are already named or counted above, so this
+   * clause is about the rest — which, with people never woken, is exactly the people. Counting
+   * the whole set here would say "Orbit is notified. Orbit can read this and reply." */
+  const readers = recipients.filter((entity) => entity.kind !== "agent");
   if (recipients.length === 0) {
     clauses.push("Everyone here can read this.");
   } else if (readers.length === 1) {
@@ -237,12 +273,6 @@ export const composerDeliveryNote = (
   } else if (readers.length > 1) {
     clauses.push(
       `${readers.length} ${countNoun(readers.length, "recipient")} can read this and reply.`,
-    );
-  }
-  if (notified === null && recipients.some((entity) => entity.kind === "agent")) {
-    clauses.push(
-      `Only the ${positionWord(NOTIFIED_POSITION)} recipient is notified. ` +
-        "Choose a name to put it first.",
     );
   }
   return clauses.join(" ");
@@ -266,10 +296,17 @@ export const composerToFullNotice = (names: readonly string[]): string =>
   } ${names.length === 1 ? "is" : "are"} not in it. Remove one to make room.`;
 
 /**
- * What a chip's own control does, said from the rule the wake follows rather than typed
- * beside it. Promoting a PERSON does not notify them: it puts a user id in the scalar
- * column, leaves the agent column null, and wakes nobody. A chip that promised otherwise
- * contradicted the sentence underneath it, which is the failure a review arm found.
+ * What a chip's own control does, said from what it now does rather than from what it used to.
+ *
+ * ~~"Put X first, so X is notified"~~ and ~~"Put X first. No agent is notified while a person
+ * is first"~~ are both retired 2026-09-05: promoting decides NOTHING about the wake any more,
+ * because every agent in the set is woken wherever it sits. A reader may still meet those two
+ * sentences in an older screenshot of this row.
+ *
+ * What promoting still does is real and worth a control: recipient 0 is the id the command
+ * edge copies into `swarm.signals.to_user_id` / `to_agent_principal_id`, which is the target a
+ * reader who knows only those columns sees, and the name the feed row prints after its arrow.
+ * So the label says that, and it says it from `SCALAR_POSITION` rather than typing "first".
  */
 export const composerPromoteLabel = (
   entity: ComposerRecipient,
@@ -277,17 +314,11 @@ export const composerPromoteLabel = (
   nameOf: (candidate: ComposerRecipient) => string,
 ): string => {
   const name = nameOf(entity);
-  const already = notifiedRecipient(current);
-  if (already !== null && sameRecipient(already, entity)) return `${name} is notified`;
-  /* Ask the same function the row asks, about the set this click would make. */
-  const afterPromotion = notifiedRecipient(promoteComposerRecipient(current, entity));
-  /* The position word comes from the same index the wake does, like the note under the
-   * chips. Typing "first" here while the note generated it was the half of the round-one
-   * finding that the kind fix did not cover. */
-  const front = positionWord(NOTIFIED_POSITION);
-  return afterPromotion !== null && sameRecipient(afterPromotion, entity)
-    ? `Put ${name} ${front}, so ${name} is notified`
-    : `Put ${name} ${front}. No agent is notified while a person is ${front}`;
+  const front = positionWord(SCALAR_POSITION);
+  const already = scalarRecipient(current);
+  return already !== null && sameRecipient(already, entity)
+    ? `This message shows as addressed to ${name}`
+    : `Put ${name} ${front}, so the message shows as addressed to ${name}`;
 };
 
 /**

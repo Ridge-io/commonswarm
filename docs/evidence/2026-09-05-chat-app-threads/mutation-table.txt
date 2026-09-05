@@ -1,9 +1,26 @@
+BASELINE green  site/src/lib/composer-address.test.mjs
+BASELINE green  site/src/components/app/composer-to-field.observer.test.ts
 BASELINE green  site/src/lib/thread-reply.test.mjs
 BASELINE green  site/src/lib/signal-feed-threads.test.mjs
 BASELINE green  site/src/components/app/chat-threads.observer.test.ts
 BASELINE green  site/src/components/app/chat-channels.observer.test.ts
-BASELINE green  site/src/components/app/composer-to-field.observer.test.ts
 BASELINE green  site/src/components/app/composer.observer.test.ts
+red  every agent is woken, not only the one at the front
+  restored green  site/src/lib/composer-address.test.mjs
+red  a person is never woken, whatever position they take
+  restored green  site/src/lib/composer-address.test.mjs
+red  the count of woken agents is computed from the chips rather than typed
+  restored green  site/src/lib/composer-address.test.mjs
+red  an agent named as notified is not counted again as a reader
+  restored green  site/src/lib/composer-address.test.mjs
+red  no chip label answers the wake question the note under the chips owns
+  restored green  site/src/lib/composer-address.test.mjs
+red  the chip label takes its position word from the constant, not from prose
+  restored green  site/src/components/app/composer-to-field.observer.test.ts
+red  every woken agent's chip carries the mark, not only the first
+  restored green  site/src/components/app/composer-to-field.observer.test.ts
+red  the number in the sentence is the number of agents in the set
+  restored green  site/src/lib/composer-address.test.mjs
 red  a message directed at an AGENT cannot root a public thread either
   restored green  site/src/lib/thread-reply.test.mjs
 red  a reply cannot be the root of a second thread
@@ -103,4 +120,4 @@ red  the close names THIS send's own reply, so it cannot close one opened after 
 red  the send does not reach for the reply again after its first await
   restored green  site/src/components/app/chat-threads.observer.test.ts
 
-49 mutations, 0 problems
+57 mutations, 0 problems

@@ -27,7 +27,7 @@
 import { createClient, type SupabaseClient, type Session } from "@supabase/supabase-js";
 import { authProvider, type AuthProviderId } from "./auth-providers.js";
 import {
-  notifiedRecipient,
+  scalarRecipient,
   scalarRecipientFields,
   toWireRecipients,
   type ComposerRecipient,
@@ -1365,15 +1365,26 @@ export type BrowserSignalKind = "ask" | "note";
 export type BrowserSignalAudience = readonly ComposerRecipient[];
 
 /**
- * The kind of the ONE signal a To: set posts. The wake follows the first recipient, so the
- * kind does too: `notifiedRecipient` is the same rule the delivery trigger enforces, read
- * here rather than restated.
+ * The kind of the ONE signal a To: set posts: `ask` when recipient 0 is an agent, `note`
+ * otherwise.
+ *
+ * ~~"The wake follows the first recipient, so the kind does too."~~ Retired 2026-09-05 by
+ * `lane/wake-all-recipients`, and the BEHAVIOUR here is deliberately unchanged while the
+ * sentence goes. `swarm.agent_delivery_is_wakeable` delivers BOTH `ask` and `note`, so the
+ * kind no longer decides who is woken and cannot contradict the To: row whatever it picks.
+ * What it still does is label the message, and recipient 0 is still the recipient the row's
+ * arrow names.
+ *
+ * Changing the rule to "ask when the set holds any agent" would be defensible and is a WIRE
+ * change, not copy: it would move the kind on a body every installed client and every test
+ * compares byte for byte. It is owed, and it is recorded in
+ * docs/evidence/2026-09-05-chat-app-threads/README.md rather than done here.
  */
 export function browserSignalKind(
   recipients: BrowserSignalAudience,
   postAgentNote = false,
 ): BrowserSignalKind {
-  return notifiedRecipient(recipients) !== null && !postAgentNote ? "ask" : "note";
+  return scalarRecipient(recipients)?.kind === "agent" && !postAgentNote ? "ask" : "note";
 }
 
 /**

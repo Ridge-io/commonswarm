@@ -35,9 +35,57 @@ const THREADS = "site/src/components/app/chat-threads.observer.test.ts";
 const CHANNELS = "site/src/components/app/chat-channels.observer.test.ts";
 const COMPOSER = "site/src/components/app/composer.observer.test.ts";
 const FIELD = "site/src/components/app/composer-to-field.observer.test.ts";
+const PURE_ADDR = "site/src/lib/composer-address.test.mjs";
 
 /** [test file, source file, target, replacement, what the control defends, expected text] */
 const mutations = [
+  /* ── THE WAKE RULE (lane/wake-all-recipients' copy, this branch's commit) ──────────────
+     Every AGENT recipient is woken at any position, and a person is never woken. The retired
+     rule woke recipient 0 only, and only when it was an agent. */
+  [PURE_ADDR, ADDR,
+    '): ComposerRecipient[] => recipients.filter((entity) => entity.kind === "agent");',
+    "): ComposerRecipient[] => recipients.slice(0, 1);",
+    "every agent is woken, not only the one at the front",
+    "every agent in the set is woken, at any position, and no person ever is"],
+  [PURE_ADDR, ADDR,
+    '): ComposerRecipient[] => recipients.filter((entity) => entity.kind === "agent");',
+    "): ComposerRecipient[] => [...recipients];",
+    "a person is never woken, whatever position they take",
+    "the woken set is not every agent in the set, and only the agents"],
+  [PURE_ADDR, ADDR,
+    "      : `${notified.length} agents are notified.`,",
+    '      : "Several agents are notified.",',
+    "the count of woken agents is computed from the chips rather than typed",
+    "the note names who is notified and who only reads"],
+  [PURE_ADDR, ADDR,
+    "  const readers = recipients.filter((entity) => entity.kind !== \"agent\");",
+    "  const readers = [...recipients];",
+    "an agent named as notified is not counted again as a reader",
+    "the note names who is notified and who only reads"],
+  [PURE_ADDR, ADDR,
+    "    ? `This message shows as addressed to ${name}`\n    : `Put ${name} ${front}, so the message shows as addressed to ${name}`;",
+    "    ? `${name} is notified`\n    : `Put ${name} ${front}, so ${name} is notified`;",
+    "no chip label answers the wake question the note under the chips owns",
+    "chip label: the chip already at the front says so"],
+  /* A SOURCE claim, because the two strings are identical the moment the constant is
+     inlined: "first" IS positionWord(0). Only the sweep that reads the module can see it. */
+  [FIELD, ADDR,
+    "  const front = positionWord(SCALAR_POSITION);",
+    '  const front = "first";',
+    "the chip label takes its position word from the constant, not from prose",
+    "chip label position is not built from the constant"],
+  [FIELD, DASH,
+    "      const notified = notifiedRecipients(shown);",
+    "      const notified = notifiedRecipients(shown).slice(0, 1);",
+    "every woken agent's chip carries the mark, not only the first",
+    "notifiedMark: the chips carrying the notified mark and the sentence under them disagree",
+    true],
+  [PURE_ADDR, ADDR,
+    "      : `${notified.length} agents are notified.`,",
+    "      : `${notified.length + 1} agents are notified.`,",
+    "the number in the sentence is the number of agents in the set",
+    "the count in the sentence is not the number of agents in the set"],
+
   // ── who may start a thread ────────────────────────────────────────────────────────────
   [PURE_REPLY, REPLY,
     '  if (signal.to !== null || signal.toAgent !== null) return "directed";',

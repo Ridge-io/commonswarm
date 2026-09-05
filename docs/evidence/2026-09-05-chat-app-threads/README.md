@@ -134,7 +134,7 @@ went to nobody.
 
 ## The mutation table
 
-49 mutations, 0 problems. Two things carry NO mutation, and the harness says so in place rather
+57 mutations, 0 problems. Two things carry NO mutation, and the harness says so in place rather
 than carrying an entry that passes:
 
 - `Number.isFinite(until)` in `threadRootBlock`. Removing it changes nothing: every comparison
@@ -190,6 +190,64 @@ the submit, each reading `Date.now()`. Across the server's one-second liveness b
 reads can disagree, and one direction is silent — the first says blocked so the broadcast is
 dropped, the second says live so the reply posts without the option the reader ticked. It is
 captured once now, with everything else the send freezes.
+
+## The wake rule, changed on the coordinator's instruction
+
+`lane/wake-all-recipients` (PASS/PASS, deploying with the next release) makes every AGENT
+recipient of a multi-recipient signal woken, at any position, and a person at position 0 no
+longer means nobody is woken. This branch carries the SITE half of that as its own commit, so
+the copy describes the behaviour that is deployed by the time the site is.
+
+**The retired rule, kept because readers will still meet it** in
+`20260905000010_signal_recipients.sql` section 4 and in older screenshots of this row:
+
+> ~~recipients 1..N can READ a signal and can REPLY to it. They are not woken.
+> `swarm.enqueue_signal_delivery()` reads the scalar column, so it wakes the recipient at
+> position 0, and only when that recipient is an agent taking `ask` or `note`. A set whose
+> position 0 is a PERSON wakes nobody at all, even when it names agents later in the list.~~
+
+**What the row says now**, all of it generated:
+
+| set | sentence |
+|---|---|
+| empty | `No agent is notified. Everyone here can read this.` |
+| one person | `No agent is notified. Dana can read this and reply.` |
+| one agent | `Wren is notified.` |
+| a person then an agent | `Wren is notified. Dana can read this and reply.` |
+| two agents | `2 agents are notified.` |
+| a person then two agents | `2 agents are notified. Dana can read this and reply.` |
+
+`NOTIFIED_POSITION` is gone. `notifiedRecipients` is the one rule, asked by the sentence, by the
+mark on each chip, and by the sweep that checks the two agree; the COUNT comes from that
+function's result rather than from a number typed in a sentence, and the reach clause counts the
+people rather than the whole set, because an agent named as notified must not be counted again
+as somebody who only reads.
+
+**`SCALAR_POSITION` stays, because the scalar column is still real** — the edge still fills
+`swarm.signals.to_agent_principal_id` from recipient 0, an old reader still shows that as the
+target, and the feed row still prints it after its arrow. So the chip's promote control still
+does something, and its label now says that thing: ~~"Put Wren first, so Wren is notified"~~ and
+~~"Put Dana first. No agent is notified while a person is first"~~ become
+`Put Wren first, so the message shows as addressed to Wren`. A test asserts that NO chip label
+matches `/notif/i` for any set, because the row answers the wake question in one place.
+
+**`browserSignalKind` is deliberately unchanged, and that is owed.** It still returns `ask` when
+recipient 0 is an agent. It CANNOT contradict the row any more, because
+`swarm.agent_delivery_is_wakeable` delivers both `ask` and `note`, so the kind no longer says
+anything about the wake — but "ask when the set holds any agent" would be the tidier rule, and
+it is a WIRE change rather than copy: it moves a body that every installed client and several
+byte-exact tests compare literally. Recorded here rather than done in a copy commit.
+
+**What this cannot check from this branch.** `20260905000020_wake_all_recipients.sql` is that
+other lane's and is not in `supabase/migrations/` here, which ends at
+`20260905000010_signal_recipients.sql`. So the control on the module's citation is a CITATION
+control: it asserts the module explains the wake with `agent_delivery_is_wakeable` rather than
+with the trigger the retired rule read, and that the retired trigger's name survives only inside
+the strikethrough. It cannot assert the predicate exists. A reader who finds no such file has
+found the two lanes applied out of order, not a bad citation.
+
+Eight mutations cover it, and four of them were re-aimed after the first run reported a correct
+catch under the wrong name.
 
 ## One rule for "is this send still addressed here"
 

@@ -1294,7 +1294,7 @@ import "../../styles/tokens.css";
     composerPromoteLabel,
     composerSendRecipients,
     deriveComposerAddress,
-    notifiedRecipient,
+    notifiedRecipients,
     promoteComposerRecipient,
     recipientKey,
     removeComposerRecipient,
@@ -2808,7 +2808,11 @@ import "../../styles/tokens.css";
         else row.removeAttribute("aria-disabled");
         row.toggleAttribute("data-composer-to-locked", replying);
       }
-      const notified = notifiedRecipient(shown);
+      /* EVERY AGENT IN THE SET CARRIES THE MARK, because every one of them is woken. One
+         rule, asked here and by the sentence below, so a chip and that sentence cannot
+         disagree about who the service wakes. */
+      const notified = notifiedRecipients(shown);
+      const notifiedKeys = new Set(notified.map(recipientKey));
       if (shown.length === 0) {
         /* THE ADDRESS IS SHOWN, never implied by an empty row. Which name it takes follows the
            mode, because the two are different addresses: a broadcast reaches the workspace, a
@@ -2838,12 +2842,14 @@ import "../../styles/tokens.css";
         promote.className = "dashboard__composer-chip-name";
         promote.dataset.composerToPromote = recipientKey(entity);
         promote.textContent = name;
-        /* The only control over WHO IS WOKEN, so it says what it does, from the same rule the
-           sentence under the chips reads. Typing "so ${name} is notified" here was false for
-           a person: promoting one wakes nobody, and the note directly below already said so. */
+        /* ~~"The only control over WHO IS WOKEN"~~ Retired 2026-09-05: promoting decides
+           nothing about the wake, because every agent in the set is woken wherever it sits.
+           What it still decides is the SCALAR column — the target an old reader sees and the
+           name the feed row prints after its arrow — and the label says that. The wake is the
+           note's to state, in one place, and no chip answers it. */
         promote.title = composerPromoteLabel(entity, shown, composerRecipientName);
         promote.setAttribute("aria-label", promote.title);
-        if (notified !== null && recipientKey(notified) === recipientKey(entity)) {
+        if (notifiedKeys.has(recipientKey(entity))) {
           chip.dataset.composerToNotified = "";
         }
         const remove = document.createElement("button");
@@ -7995,9 +8001,12 @@ import "../../styles/tokens.css";
        * are that list: nothing else is read here, so nothing can be addressed that the reader
        * cannot see.
        *
-       * The kind follows the FIRST recipient because the wake does. Only recipient 0 is
+       * The kind follows the FIRST recipient. ~~"because the wake does. Only recipient 0 is
        * enqueued for delivery (swarm.enqueue_signal_delivery reads one column), and the To:
-       * row says so in words, so there is no note checkbox and no hidden second wake.
+       * row says so in words"~~ is retired 2026-09-05: every AGENT recipient is woken now, at
+       * any position, and both `ask` and `note` are delivered, so the kind says nothing about
+       * the wake either way. There is still no note checkbox and no hidden second wake — the
+       * To: row states the whole of it, and the kind is a label on the message.
        *
        * The old refusal for ambiguous and overflowed tags is gone with the fan-out: an @tag
        * that cannot become a chip is reported ON the To: row while the reader types, and the
@@ -8579,8 +8588,9 @@ import "../../styles/tokens.css";
       setThreadReplyRoot(null);
       one<HTMLTextAreaElement>("[data-composer-input]")?.focus({ preventScroll: true });
     });
-    /* THE WHOLE EDIT SURFACE OF THE ADDRESS: remove a name, or put one first so it is the
-       one that gets woken. Delegated, because the chips are rebuilt on every change. */
+    /* THE WHOLE EDIT SURFACE OF THE ADDRESS: remove a name, or put one first so the message
+       shows as addressed to it. ~~"so it is the one that gets woken"~~ retired 2026-09-05 with
+       the position rule. Delegated, because the chips are rebuilt on every change. */
     one<HTMLElement>("[data-composer-to-chips]")?.addEventListener("click", (event) => {
       const target = event.target as HTMLElement | null;
       const removeKey = target?.closest<HTMLElement>("[data-composer-to-remove]")
@@ -12443,7 +12453,7 @@ import "../../styles/tokens.css";
    * pinned in composer-polish.observer.test.ts rather than assumed here.
    *
    * The chips scroll rather than wrap, so a full set of eight cannot push the text box off a
-   * phone. The note is allowed to wrap: truncating it would hide which recipient is woken,
+   * phone. The note is allowed to wrap: truncating it would hide which recipients are woken,
    * which is the one thing this row exists to say. */
   .dashboard__composer-to {
     grid-column: 1;

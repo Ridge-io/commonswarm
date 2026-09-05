@@ -12,7 +12,7 @@ import { SIGNAL_RECIPIENT_MAX } from "../../../supabase/functions/_shared/channe
 import {
   BROADCAST_CHIP_LABEL,
   COMPOSER_TO_MAX,
-  NOTIFIED_POSITION,
+  notifiedRecipients,
   addComposerRecipients,
   composerAddressIsChosen,
   composerAddressNotice,
@@ -23,7 +23,6 @@ import {
   composerToFullNotice,
   deriveComposerAddress,
   mergeMentionRecipients,
-  notifiedRecipient,
   positionWord,
   promoteComposerRecipient,
   pruneComposerRecipients,
@@ -34,6 +33,9 @@ import {
 
 const wren = { kind: "agent", id: "agent-wren" };
 const orbit = { kind: "agent", id: "agent-orbit" };
+/* A THIRD AGENT, added 2026-09-05: the wake sentence counts agents above two, and two
+   fixtures could not tell "the count is the set's" from "the count is 2". */
+const lumen = { kind: "agent", id: "agent-lumen" };
 const dana = { kind: "person", id: "person-dana" };
 const ada = { kind: "person", id: "person-ada" };
 
@@ -69,14 +71,33 @@ test("the wire list says user where the browser says person, and a broadcast sen
   assert.deepEqual(Object.keys(toWireRecipients([wren])[0]), ["kind", "id"]);
 });
 
-test("only the recipient at the notified position is woken, and only when it is an agent", () => {
-  assert.equal(notifiedRecipient([]), null);
-  assert.deepEqual(notifiedRecipient([wren, dana]), wren);
-  /* THE BOUND. A person in front means the service wakes nobody, however many agents follow.
-   * swarm.enqueue_signal_delivery reads one column and the edge fills it from this position. */
-  assert.equal(notifiedRecipient([dana, wren]), null);
-  assert.equal(notifiedRecipient([dana]), null);
-  assert.equal(NOTIFIED_POSITION, 0);
+test("every agent in the set is woken, at any position, and no person ever is", () => {
+  /* CORRECTED 2026-09-05 by `lane/wake-all-recipients`. The retired rule, and the retired test
+     that pinned it, because a reader may still meet both:
+
+       ~~"only the recipient at the notified position is woken, and only when it is an agent"~~
+       ~~assert.equal(notifiedRecipient([dana, wren]), null)~~
+       ~~"THE BOUND. A person in front means the service wakes nobody, however many agents
+         follow."~~
+
+     `swarm.agent_delivery_is_wakeable` now sits behind both enqueue paths and a trigger on
+     `swarm.signal_recipients` gives every agent recipient its own delivery row. A set whose
+     position 0 is a person wakes the agents named after that person. */
+  const woke = "the woken set is not every agent in the set, and only the agents";
+  assert.deepEqual(notifiedRecipients([]), [], woke);
+  assert.deepEqual(notifiedRecipients([wren, dana]), [wren], woke);
+  /* THE CASE THE OLD RULE GOT WRONG: a person in front no longer silences the agents behind. */
+  assert.deepEqual(notifiedRecipients([dana, wren]), [wren], woke);
+  assert.deepEqual(notifiedRecipients([dana]), [], woke);
+  /* AND EVERY AGENT, not just one of them, in the order they sit in the set. */
+  assert.deepEqual(notifiedRecipients([dana, wren, ada, orbit]), [wren, orbit], woke);
+  /* A PERSON IS NEVER WOKEN, whatever position they take. The predicate joins
+     swarm.agent_principals, so a user id cannot satisfy it. */
+  for (const set of [[dana], [dana, ada], [wren, dana], [dana, wren]]) {
+    for (const woken of notifiedRecipients(set)) {
+      assert.equal(woken.kind, "agent", `a person was reported as woken in ${JSON.stringify(set)}`);
+    }
+  }
 });
 
 test("the note names who is notified and who only reads, and never says everyone is", () => {
@@ -89,6 +110,11 @@ test("the note names who is notified and who only reads, and never says everyone
     composerDeliveryNote([wren, dana], nameOf),
     "Wren is notified. Dana can read this and reply.",
   );
+  /* THE CASE THE OLD RULE GOT WRONG, and the reason this sentence had to change:
+     ~~"Wren is notified. 2 recipients can read this and reply."~~ counted the woken agent among
+     the readers, and ~~"No agent is notified. 2 recipients can read this and reply. Only the
+     first recipient is notified. Choose a name to put it first."~~ said nobody was woken while
+     naming an agent. Both are retired with the position rule. */
   assert.equal(
     composerDeliveryNote([wren, dana, ada], nameOf),
     "Wren is notified. 2 recipients can read this and reply.",
@@ -97,18 +123,45 @@ test("the note names who is notified and who only reads, and never says everyone
     composerDeliveryNote([dana], nameOf),
     "No agent is notified. Dana can read this and reply.",
   );
-  /* The remedy clause appears only when there is an agent to put first. */
+  /* A PERSON IN FRONT no longer silences the agent behind. */
   assert.equal(
     composerDeliveryNote([dana, wren], nameOf),
-    "No agent is notified. 2 recipients can read this and reply. " +
-      "Only the first recipient is notified. Choose a name to put it first.",
+    "Wren is notified. Dana can read this and reply.",
   );
-  for (const set of [[], [wren], [wren, dana], [dana, wren], [dana, ada]]) {
+  /* AND THE COUNT IS COMPUTED FROM THE CHIPS. Two or more agents are counted rather than
+     listed, the way the reach clause already counted. */
+  assert.equal(
+    composerDeliveryNote([wren, orbit], nameOf),
+    "2 agents are notified.",
+    "the count in the sentence is not the number of agents in the set",
+  );
+  assert.equal(
+    composerDeliveryNote([dana, wren, orbit], nameOf),
+    "2 agents are notified. Dana can read this and reply.",
+  );
+  /* THE COUNT IS THE SET'S, not a constant: three agents say three. */
+  assert.match(
+    composerDeliveryNote([wren, orbit, lumen, dana], nameOf),
+    /^3 agents are notified\./,
+  );
+  /* IT NEVER CLAIMS A PERSON IS WOKEN. ~~/are notified/~~ was in this sweep and had to leave
+     it: "2 agents are notified" is now the true sentence for a set with two agents. What is
+     still forbidden is a claim about EVERYONE or about a recipient rather than an agent. */
+  for (const set of [[], [wren], [wren, dana], [dana, wren], [dana, ada], [wren, orbit]]) {
     assert.doesNotMatch(
       composerDeliveryNote(set, nameOf),
-      /everyone is notified|all .* notified|are notified/i,
-      `the note claims more than one recipient is woken: ${JSON.stringify(set)}`,
+      /everyone is notified|all .* notified|recipients are notified/i,
+      `the note claims somebody is woken who is not an agent: ${JSON.stringify(set)}`,
     );
+  }
+  /* AND THE NUMBER IT NAMES IS THE NUMBER OF AGENTS, checked against the function the mark on
+     each chip reads rather than against a list typed here. */
+  for (const set of [[], [wren], [dana], [wren, dana], [dana, wren], [wren, orbit], [dana, wren, orbit]]) {
+    const woken = notifiedRecipients(set);
+    const note = composerDeliveryNote(set, nameOf);
+    if (woken.length === 0) assert.match(note, /^No agent is notified\./, note);
+    else if (woken.length === 1) assert.match(note, new RegExp(`^${nameOf(woken[0])} is notified\\.`), note);
+    else assert.match(note, new RegExp(`^${woken.length} agents are notified\\.`), note);
   }
 });
 
@@ -141,38 +194,48 @@ test("adding keeps order, adds nobody twice, and names what the cap refused", ()
   );
 });
 
-test("a chip's own control never promises a wake a person cannot get", () => {
-  /* Promoting a person puts a user id in the scalar column and leaves the agent column
-   * null, so nobody is woken. The chip used to say "so Dana is notified" while the sentence
-   * directly under it said "No agent is notified". A review arm found the pair. */
+test("a chip's own control promises what promoting now does, which is not a wake", () => {
+  /* CORRECTED 2026-09-05 by `lane/wake-all-recipients`. Promoting decides NOTHING about the
+     wake any more: every agent in the set is woken wherever it sits. The three retired labels,
+     kept because a reader may still meet them in an older screenshot of this row:
+
+       ~~"Wren is notified"~~
+       ~~"Put Wren first, so Wren is notified"~~
+       ~~"Put Dana first. No agent is notified while a person is first"~~
+
+     What promoting still does is fill the SCALAR column, which is the target a reader who knows
+     only that column sees and the name the feed row prints after its arrow. */
   assert.equal(
     composerPromoteLabel(wren, [wren, dana], nameOf),
-    "Wren is notified",
-    "chip label: the notified agent's own chip says so",
+    "This message shows as addressed to Wren",
+    "chip label: the chip already at the front says so",
   );
   assert.equal(
     composerPromoteLabel(wren, [dana, wren], nameOf),
-    "Put Wren first, so Wren is notified",
-    "chip label: promoting an agent notifies it",
+    "Put Wren first, so the message shows as addressed to Wren",
+    "chip label: promoting moves the shown address",
   );
+  /* A PERSON GETS THE SAME LABEL, because promoting one does the same thing. The asymmetry the
+     old label carried existed only because the wake followed the front. */
   assert.equal(
     composerPromoteLabel(dana, [wren, dana], nameOf),
-    "Put Dana first. No agent is notified while a person is first",
-    "chip label: promoting a person must not promise a wake",
+    "Put Dana first, so the message shows as addressed to Dana",
+    "chip label: promoting a person moves the shown address like any other",
   );
-  /* And the label agrees with the note it sits above, for every set. */
-  for (const set of [[wren, dana], [dana, wren], [dana, ada], [wren, orbit]]) {
+  /* AND NO LABEL PROMISES A WAKE, for any set. This is the claim the whole control family
+     turns on: the row says who is woken in ONE place, and a chip must not answer it too. */
+  for (const set of [[wren, dana], [dana, wren], [dana, ada], [wren, orbit], [wren]]) {
     for (const entity of set) {
       const label = composerPromoteLabel(entity, set, nameOf);
-      const wouldNotify = notifiedRecipient(promoteComposerRecipient(set, entity));
-      /* Does the label name THIS recipient as the notified one? A bare
-       * `includes("is notified")` was wrong: the person label carries the clause
-       * "No agent is notified", which contains that substring and passed. */
-      assert.equal(
-        label.includes(`${nameOf(entity)} is notified`),
-        wouldNotify !== null && recipientKey(wouldNotify) === recipientKey(entity),
-        `${label} disagrees with what promoting ${nameOf(entity)} does`,
+      assert.doesNotMatch(
+        label,
+        /notif/i,
+        `${label} answers a question the note under the chips owns`,
       );
+      /* And it agrees with what promoting actually does: the promoted name is the one the
+         scalar column would hold. */
+      const front = promoteComposerRecipient(set, entity)[0];
+      assert.equal(recipientKey(front), recipientKey(entity));
     }
   }
 });
@@ -270,13 +333,34 @@ test("an ambiguous tag is reported rather than guessed at", () => {
   assert.match(composerAmbiguousNotice(["Dana", "Ada"]), /"Dana" and "Ada" name more than one/);
 });
 
-test("the module states the wake bound where the constant is declared", () => {
-  /* A CLAIM CONTROL, not a style check. The reason NOTIFIED_POSITION is 0 lives in the
-   * database, and a later reader who cannot find that reason will treat the index as a
-   * preference and change it. Name the trigger beside the constant or this fails. */
+test("the module states the wake bound, and names the predicate that now enforces it", () => {
+  /* A CLAIM CONTROL, not a style check. The reason the wake is what it is lives in the
+     database, and a later reader who cannot find that reason will treat it as a preference.
+
+     ~~`assert.match(source, /enqueue_signal_delivery/)`~~ and ~~`/to_agent_principal_id/`~~
+     were the old pair, and they named the trigger and the column the RETIRED rule read. The
+     rule now lives in `swarm.agent_delivery_is_wakeable`, so that is what has to be named. */
   const source = readFileSync(new URL("./composer-address.ts", import.meta.url), "utf8");
-  assert.match(source, /enqueue_signal_delivery/);
-  assert.match(source, /to_agent_principal_id/);
+  assert.match(source, /agent_delivery_is_wakeable/);
+  assert.match(source, /20260905000020_wake_all_recipients\.sql/);
+  /* WHAT THIS CANNOT CHECK, said rather than implied. The migration it names is `lane/
+     wake-all-recipients`' and is NOT on this branch — `supabase/migrations/` here ends at
+     `20260905000010_signal_recipients.sql`. So this is a citation control and not a
+     cross-file one: it asserts the module names the predicate rather than the retired trigger,
+     and it cannot assert the predicate exists. It will become checkable when that lane merges,
+     and a reader who finds no such file has found the two lanes out of order, not a bad
+     citation. */
+  /* AND THE RETIRED TRIGGER IS NAMED ONLY INSIDE THE RETIRED WORDING. It has to stay — a
+     reader may still meet the old rule in `20260905000010_signal_recipients.sql` — but it must
+     not be explaining the CURRENT one. Asserted as: the name appears exactly once, and that
+     once is between the strikethrough markers this repo retires wording with. */
+  const strikethroughs = [...source.matchAll(/~~[\s\S]*?~~/g)].map((match) => match[0]).join("");
+  assert.equal(source.split("enqueue_signal_delivery").length - 1, 1);
+  assert.equal(
+    strikethroughs.split("enqueue_signal_delivery").length - 1,
+    1,
+    "the module explains the current wake with the trigger the retired rule read",
+  );
 });
 
 /* ────────────────────────────────────────────────────────────────────────────────────────

@@ -23,7 +23,7 @@ import {
   COMPOSER_TO_MAX,
   composerDeliveryNote,
   composerToFullNotice,
-  notifiedRecipient,
+  notifiedRecipients,
 } from "../../lib/composer-address.js";
 
 const run = promisify(execFile);
@@ -43,10 +43,10 @@ type ToMeasurement = {
   midSentence: { value: string; chips: string[]; note: string };
   /** A second tag ADDS. The first recipient stays, and stays first. */
   secondTag: { chips: string[]; note: string };
-  /** WHICH CHIP CARRIES THE NOTIFIED MARK, read without the mark's own selector. */
+  /** WHICH CHIPS CARRY THE NOTIFIED MARK, read without the mark's own selector. */
   notifiedMark: {
-    afterSecondTag: { marked: number; markedName: string; noteNames: string };
-    afterPromotion: { marked: number; markedName: string; noteNames: string };
+    afterSecondTag: { markedNames: string[]; note: string };
+    afterPromotion: { markedNames: string[]; note: string };
   };
   /** A person in front means the service wakes nobody, and the row says so with a remedy. */
   personFirst: {
@@ -264,10 +264,13 @@ const frameScript = `<script>
       const marked = [...doc.querySelectorAll("[data-composer-to-chip]")]
         .filter((chip) => chip.dataset.composerToNotified !== undefined);
       return {
-        marked: marked.length,
-        markedName: marked[0]?.querySelector("[data-composer-to-promote]")?.textContent ?? "",
-        /* The sentence's own subject, so the two are compared rather than assumed equal. */
-        noteNames: noteText().split(" is notified.")[0] ?? "",
+        /* EVERY MARKED CHIP, by name. ~~marked: marked.length plus markedName of the
+           first~~ described a row where exactly one chip could carry the mark. Every agent
+           carries it now, so the claim is about the SET of marked names. */
+        markedNames: marked
+          .map((chip) => chip.querySelector("[data-composer-to-promote]")?.textContent ?? ""),
+        /* The sentence itself, so the two are compared rather than assumed equal. */
+        note: noteText(),
       };
     };
     const markAfterSecondTag = readMark();
@@ -832,34 +835,73 @@ test("the To: row is the address, and it says who is notified", async () => {
 
     /* A SECOND TAG ADDS (ruling D2): it does not replace the set and does not open a DM.
        Orbit is still first, so Orbit is still the one the service wakes. */
+    /* ~~"Orbit is notified. River can read this and reply."~~ Retired 2026-09-05: River is an
+       agent in the sample roster, and both agents are woken now, so the sentence counts them
+       and neither is described as a reader who is not notified. */
     assert.deepEqual(measured.secondTag, {
       chips: ["Orbit", "River"],
-      note: "Orbit is notified. River can read this and reply.",
+      note: "2 agents are notified.",
     }, "secondTag: a second tag adds rather than replacing");
 
     /* EXACTLY ONE CHIP IS MARKED, and it is the one the sentence names. The mark is the only
        thing on the row that says who the service wakes, so a chip and the sentence under it
        cannot be allowed to disagree. Read twice, because promoting is the one control the
        reader has over the mark. */
+    /* EVERY AGENT CHIP IS MARKED, and the sentence under them says the same number.
+       ~~`{ marked: 1, markedName: "Orbit", noteNames: "Orbit" }`~~ described the row where one
+       chip could carry the mark. Read twice, before and after a promotion, because order is
+       the one thing the reader can change and the mark must not follow it any more. */
     assert.deepEqual(measured.notifiedMark, {
-      afterSecondTag: { marked: 1, markedName: "Orbit", noteNames: "Orbit" },
-      afterPromotion: { marked: 1, markedName: "Orbit", noteNames: "Orbit" },
-    }, "notifiedMark: the chip carrying the notified mark and the sentence under it disagree");
+      afterSecondTag: { markedNames: ["Orbit", "River"], note: "2 agents are notified." },
+      /* The promotion step runs on a DIFFERENT set — Kenji Ito, a person, and Orbit — so one
+         chip is marked there. That is the point of reading the mark twice: order changed and
+         the marked set did not. Under the retired rule this step was the one that proved a
+         person in front silenced nobody's mark; it now proves the mark ignores order. */
+      afterPromotion: {
+        markedNames: ["Orbit"],
+        note: "Orbit is notified. Kenji Ito can read this and reply.",
+      },
+    }, "notifiedMark: the chips carrying the notified mark and the sentence under them disagree");
+    /* AND THE MARK IS THE SENTENCE'S OWN SUBJECT, compared rather than assumed: the count in
+       the sentence is the number of marked chips. */
+    for (const step of [measured.notifiedMark.afterSecondTag, measured.notifiedMark.afterPromotion]) {
+      assert.match(
+        step.note,
+        step.markedNames.length === 0
+          ? /^No agent is notified\./
+          : step.markedNames.length === 1
+          ? new RegExp(`^${step.markedNames[0]} is notified\\.`)
+          : new RegExp(`^${step.markedNames.length} agents are notified\\.`),
+        `the mark and the sentence disagree: ${JSON.stringify(step)}`,
+      );
+    }
 
     /* THE BOUND, ON SCREEN. A person in front means nobody is woken, however many agents
        follow, and the row says that plainly with the one remedy that exists. */
     assert.deepEqual(measured.personFirst, {
       chips: ["Kenji Ito", "Orbit"],
-      note: "No agent is notified. 2 recipients can read this and reply. " +
-        "Only the first recipient is notified. Choose a name to put it first.",
-      notifiedChip: "",
+      /* ~~"No agent is notified. 2 recipients can read this and reply. Only the first
+         recipient is notified. Choose a name to put it first."~~ Retired 2026-09-05: a person
+         in front no longer silences the agent behind, so the sentence names Orbit and the
+         remedy clause is gone with the rule it described. */
+      note: "Orbit is notified. Kenji Ito can read this and reply.",
+      /* ~~`notifiedChip: ""`~~ Retired 2026-09-05: under the old rule a person at the front
+         meant NO chip carried the mark, however many agents followed. Orbit is woken now and
+         its chip says so, from behind a person. */
+      notifiedChip: "Orbit",
       /* THE CHIP AND THE SENTENCE AGREE. Promoting a person wakes nobody, so the person's
          own control says that rather than promising a wake the trigger cannot give. */
+      /* ~~"Put Kenji Ito first. No agent is notified while a person is first"~~ and
+         ~~"Put Orbit first, so Orbit is notified"~~. Both retired: promoting decides nothing
+         about the wake now, so both chips say the one thing promoting still does. */
       promoteTitles: [
-        "Put Kenji Ito first. No agent is notified while a person is first",
-        "Put Orbit first, so Orbit is notified",
+        /* Kenji Ito is already at the front here, so that chip states the fact rather than
+           offering the move. ~~"Put Kenji Ito first. No agent is notified while a person is
+           first"~~ was its old label, and it was about a wake this control no longer decides. */
+        "This message shows as addressed to Kenji Ito",
+        "Put Orbit first, so the message shows as addressed to Orbit",
       ],
-    }, "personFirst: a person in front wakes nobody, and every chip says what it does");
+    }, "personFirst: an agent behind a person is woken, and every chip says what it does");
     assert.deepEqual(measured.promoted, {
       chips: ["Orbit", "Kenji Ito"],
       note: "Orbit is notified. Kenji Ito can read this and reply.",
@@ -1139,14 +1181,22 @@ test("the posted body carries the To: set and leaves both scalar fields null", (
     about: null,
   }, "broadcast body: an empty set sends no `to` key at all");
 
-  /* THE KIND FOLLOWS RECIPIENT 0, because the delivery trigger does. A person in front makes
-     this a note, so no agent behind them is woken and the row already said so. */
+  /* THE KIND FOLLOWS RECIPIENT 0. ~~"because the delivery trigger does. A person in front
+     makes this a note, so no agent behind them is woken and the row already said so."~~ is
+     retired 2026-09-05: the wake no longer follows a position, and BOTH `ask` and `note` are
+     delivered, so the kind cannot contradict the row whatever it picks. The BEHAVIOUR is
+     unchanged on purpose — moving it would move a body every installed client compares byte
+     for byte — and the pair of assertions below is what says the two facts are now separate. */
   assert.equal(
     browserSignalCommand("x", [river, orbit], browserSignalKind([river, orbit])).signal_kind,
     "note",
-    "signal_kind: a person in front makes this a note, so the agent behind is not woken",
+    "signal_kind: recipient 0 still decides the kind",
   );
-  assert.equal(notifiedRecipient([river, orbit]), null);
+  assert.deepEqual(
+    notifiedRecipients([river, orbit]),
+    [orbit],
+    "and the agent behind the person IS woken, which the kind no longer says anything about",
+  );
 });
 
 test("one pass owns the address, and every handler goes through it", () => {
@@ -1530,30 +1580,48 @@ test("the note is generated from the cap and the wake position, not typed beside
      The list it iterates and the assertions below come from the same array. */
     const generated = [
       ["cap", /COMPOSER_TO_MAX = SIGNAL_RECIPIENT_MAX/],
-      ["wake position", /NOTIFIED_POSITION = SCALAR_POSITION/],
+      /* ~~["wake position", /NOTIFIED_POSITION = SCALAR_POSITION/]~~ and
+         ~~["wake sentence", /\$\{positionWord\(NOTIFIED_POSITION\)\} recipient is notified/]~~
+         and ~~["chip label position", /const front = positionWord\(NOTIFIED_POSITION\);/]~~.
+         All three named a constant that is gone: the wake follows no position now. What
+         replaces them is the wake sentence being built from the same function the chip mark
+         reads, and the COUNT in it coming from that function's result rather than a number. */
+      ["wake set", /const notified = notifiedRecipients\(recipients\);/],
+      ["wake count", /\$\{notified\.length\} agents are notified\./],
+      ["chip label position", /const front = positionWord\(SCALAR_POSITION\);/],
       ["cap sentence", /\$\{COMPOSER_TO_MAX\}/],
-      /* The note's own clause, not merely the call anywhere in the file: the chip label
-         below also calls positionWord, so a bare call pattern stopped discriminating. */
-      ["wake sentence", /\$\{positionWord\(NOTIFIED_POSITION\)\} recipient is notified/],
-      /* The chip's own control names the same position. Typing "first" there while the note
-         generated it was half of a round-one finding that the first fix did not cover. */
-      ["chip label position", /const front = positionWord\(NOTIFIED_POSITION\);/],
     ] as const;
   for (const [name, pattern] of generated) {
     assert.match(source, pattern, `${name} is not built from the constant`);
   }
   assert.equal(COMPOSER_TO_MAX, 8, "the cap moved; the numbers in this file's comments have not");
-  /* And the sentence never claims the whole set is woken, for any set the cap allows. */
+  /* AND THE SENTENCE NAMES THE AGENTS AND ONLY THE AGENTS, for every set the cap allows.
+     ~~`/are notified|everyone is notified|all recipients/`~~ was this sweep and it had to
+     change: "2 agents are notified" is now the true sentence for a set with two agents. The
+     forbidden claims are about EVERYONE, about the whole set, or about recipients rather than
+     agents — and the number the sentence gives is checked against the function the chip mark
+     reads, so it cannot be a number typed here either. */
   const nameOf = (entity: { kind: string; id: string }) => entity.id;
   for (let size = 0; size <= COMPOSER_TO_MAX; size += 1) {
     const set = Array.from({ length: size }, (_unused, index) => ({
       kind: index % 2 === 0 ? "agent" as const : "person" as const,
       id: `r${index}`,
     }));
+    const note = composerDeliveryNote(set, nameOf);
     assert.doesNotMatch(
-      composerDeliveryNote(set, nameOf),
-      /are notified|everyone is notified|all recipients/i,
-      `a set of ${size} is told more than one of them is woken`,
+      note,
+      /everyone is notified|all recipients|recipients are notified/i,
+      `a set of ${size} is told somebody is woken who is not an agent: ${note}`,
+    );
+    const woken = notifiedRecipients(set);
+    assert.match(
+      note,
+      woken.length === 0
+        ? /^No agent is notified\./
+        : woken.length === 1
+        ? new RegExp(`^${nameOf(woken[0]!)} is notified\\.`)
+        : new RegExp(`^${woken.length} agents are notified\\.`),
+      `a set of ${size} names the wrong number of woken agents: ${note}`,
     );
   }
 });
