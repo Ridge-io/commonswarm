@@ -41,13 +41,13 @@ const CITATIONS: Citation[] = [
   {
     citedBy: "site/src/lib/agent-connect.ts (mintedHorizon)",
     file: "supabase/functions/command/index.ts",
-    lines: [8631, 8636],
+    lines: [8671, 8676],
     contains: "horizon_expires_at: prepared.command.renewal_horizon_ms === null",
   },
   {
     citedBy: "site/src/lib/agent-connect.ts (mintedHorizon, replay)",
     file: "supabase/functions/command/index.ts",
-    lines: [2379, 2385],
+    lines: [2387, 2393],
     contains: "horizon_expires_at: response.horizon_expires_at as string | null",
   },
   {
@@ -60,7 +60,7 @@ const CITATIONS: Citation[] = [
   {
     citedBy: "agent-connect-mint.observer.test.ts (timeboxed fallback, validator)",
     file: "supabase/functions/command/index.ts",
-    lines: [2154, 2156],
+    lines: [2158, 2160],
     contains: '? "timeboxed"',
   },
   {
@@ -72,26 +72,26 @@ const CITATIONS: Citation[] = [
   {
     citedBy: "agent-connect-mint.observer.test.ts (standing needs an ABSENT horizon)",
     file: "supabase/functions/command/index.ts",
-    lines: [2160, 2161],
+    lines: [2164, 2165],
     contains: 'renewalKind === "standing" && cmd.renewal_horizon_ms === undefined',
   },
   {
     citedBy: "agent-connect-mint.observer.test.ts (the 400)",
     file: "supabase/functions/command/index.ts",
-    lines: [2212, 2215],
+    lines: [2218, 2221],
     contains: "mint_agent_token fields are malformed or out of bounds",
   },
   {
     citedBy: "agent-connect-mint.observer.test.ts (standing binds to the request device)",
     file: "supabase/functions/command/index.ts",
-    lines: [4282, 4282],
+    lines: [4285, 4285],
     contains: "standing ? prepared.wire.device_id : null",
   },
   // supabase/functions/command/index.ts — the resume handler's own comment
   {
     citedBy: "command/index.ts (resume handler, the pattern it copies)",
     file: "supabase/functions/command/index.ts",
-    lines: [3336, 3336],
+    lines: [3339, 3339],
     contains: "grant_preflight_code: (preflight[0]?.code ?? null)",
   },
   {
@@ -111,6 +111,47 @@ const CITATIONS: Citation[] = [
     file: "supabase/migrations/20260904000001_standing_grant_resume.sql",
     lines: [614, 614],
     contains: "RETURN NULL;",
+  },
+  /* The published-policy citations. These were NOT registered here, so when a
+   * lane moved command/index.ts by 700 lines an automated remap walked them to
+   * unrelated code and every gate stayed green. A review arm caught it by
+   * reading. Registering them is the durable fix: the test exists for exactly
+   * this and could not see them. */
+  {
+    citedBy: "privacy.astro (what we get from GitHub)",
+    file: "supabase/functions/command/index.ts",
+    lines: [9096, 9112],
+    contains: "metadata?.full_name",
+  },
+  {
+    citedBy: "privacy.astro (audit ip is never written)",
+    file: "supabase/functions/command/index.ts",
+    lines: [1370, 1385],
+    contains: "outcome, reason, detail, request_hash, ip",
+  },
+  {
+    citedBy: "privacy.astro (the command vocabulary)",
+    file: "supabase/functions/command/index.ts",
+    lines: [835, 835],
+    contains: "const COMMAND_KINDS = [",
+  },
+  {
+    citedBy: "terms.astro + acceptable-use.astro (workspace cap)",
+    file: "supabase/functions/command/index.ts",
+    lines: [655, 655],
+    contains: "const FREE_TIER_WORKSPACE_LIMIT",
+  },
+  {
+    citedBy: "terms.astro + acceptable-use.astro (signal rate caps)",
+    file: "supabase/functions/command/index.ts",
+    lines: [561, 562],
+    contains: "const SIGNAL_CREDENTIAL_LIMIT",
+  },
+  {
+    citedBy: "src/cloud/files.ts (the TTL constant scar)",
+    file: "supabase/functions/command/index.ts",
+    lines: [551, 551],
+    contains: "const AGENT_TOKEN_MAX_TTL_MS",
   },
   // src/protocol/workspace-commands.ts — the one definition of "paused"
   {

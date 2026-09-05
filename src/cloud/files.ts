@@ -17,7 +17,7 @@ import { newCommandId } from "./command-client.js";
 /* MUST match supabase/functions/command/file-artifacts.ts:43 (FILE_MAX_VERSION_BYTES).
  * Duplicated so `file put` can refuse a 26 MB file before uploading 26 MB; the server
  * remains the authority. Same drift family as the TTL constant scar at command
- * index.ts:424 — if the server cap moves, move this with it. */
+ * index.ts:551 — if the server cap moves, move this with it. */
 export const FILE_MAX_VERSION_BYTES = 25 * 1024 * 1024;
 
 /* MUST match FILE_CONTENT_WARNING in supabase/functions/command/file-artifacts.ts:53.

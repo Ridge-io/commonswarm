@@ -461,22 +461,45 @@ test("a defaulted reply horizon is clamped to the thread; a named one is refused
     `a clamped reply must not outlive its root: ${defaultedUntil} > ${rootUntil}`,
   );
   /* Control: without the clamp this would be ~30 days out, so a horizon inside
-   * the root's window is the clamp working and not a coincidence. */
+   * the root's window is the clamp working and not a coincidence. Measured
+   * against the row's OWN created_at rather than this process's clock, which
+   * Postgres does not share. */
+  const defaultedCreated = Date.parse(String(signalOf(defaulted.body).created_at));
   assert.ok(
-    defaultedUntil > Date.now(),
+    defaultedUntil > defaultedCreated,
     "and it must still be live",
   );
+  assert.ok(
+    defaultedUntil - defaultedCreated < 30 * 24 * 60 * 60_000,
+    "a 30-day default reaching the row unclamped is the failure this catches",
+  );
 
-  /* NAMED and too long: refused, not shortened. */
+  /* NAMED and too long: REFUSED. This is the arm that catches a silent
+   * shorten, and it is the only one that can: an implementation that clamped
+   * instead of refusing would answer 200 here with a trimmed horizon. An arm
+   * pointed out that the in-window case below cannot make that distinction,
+   * because LEAST is a no-op on a value already inside the ceiling. */
   const tooLong = await send(
     f.ownerJwt,
     installedPost({ thread_root_id: rootId, until_ms: 10 * 60_000 }),
   );
   assert.equal(tooLong.status, 409, JSON.stringify(tooLong.body));
   assert.equal(tooLong.body.error, "thread_reply_until_exceeds_root");
+  assert.equal(tooLong.body.signal, undefined, "and nothing was stored");
 
-  /* NAMED and comfortably inside: stored EXACTLY as asked, never trimmed to
-   * the ceiling. This is the arm that catches a silent shorten. */
+  /* Just barely over: the band a clamp would silently absorb and a refusal
+   * cannot. 90s root, so 95s is over by 5s and still nowhere near the 30-day
+   * ceiling that would trip an unrelated bound. */
+  const barelyOver = await send(
+    f.ownerJwt,
+    installedPost({ thread_root_id: rootId, until_ms: 95_000 }),
+  );
+  assert.equal(barelyOver.status, 409, JSON.stringify(barelyOver.body));
+
+  /* NAMED and comfortably inside: stored EXACTLY as asked. This does NOT by
+   * itself discriminate "store exact" from "clamp to ceiling" -- both store
+   * 30s -- so it is here to catch an implementation that mangles an accepted
+   * horizon, and the refusals above carry the no-silent-shorten claim. */
   const fits = await send(
     f.ownerJwt,
     installedPost({ thread_root_id: rootId, until_ms: 30_000 }),
@@ -484,11 +507,7 @@ test("a defaulted reply horizon is clamped to the thread; a named one is refused
   assert.equal(fits.status, 200, JSON.stringify(fits.body));
   const fitsUntil = Date.parse(String(signalOf(fits.body).until));
   const created = Date.parse(String(signalOf(fits.body).created_at));
-  assert.equal(
-    fitsUntil - created,
-    30_000,
-    "an explicit horizon is stored exactly as named, not clamped to the ceiling",
-  );
+  assert.equal(fitsUntil - created, 30_000, "stored exactly as named");
 });
 
 test("a channel post wakes nobody, and a directed note to an agent still does", async () => {
@@ -525,4 +544,73 @@ test("a bad channel name is refused with the rule, and the field list names the 
     String(missing.body.message ?? bad.body.error),
     /channel_archive takes channel_id/,
   );
+});
+
+
+test("an archived channel takes no thread replies either", async () => {
+  /* A review arm found this reachable. resolveSignalChannel only checks
+   * archived_at when a SLUG is sent, and a thread reply sends none: it inherits
+   * its root's channel. Placement stamped that channel unchecked, so a reply
+   * landed in a channel whose own copy says it takes no new messages. */
+  const slug = `thread-archive-${randomBytes(4).toString("hex")}`;
+  const created = await send(f.ownerJwt, { kind: "channel_create", slug });
+  const channel = created.body.channel as Record<string, unknown>;
+
+  const root = await send(f.ownerJwt, installedPost({ channel: slug }));
+  assert.equal(root.status, 200, JSON.stringify(root.body));
+  const rootId = String(signalOf(root.body).id);
+
+  /* Control: a thread reply is accepted while the channel is live, so the
+   * refusal after archiving is the archive and not a broken thread path. */
+  const beforeArchive = await send(
+    f.ownerJwt,
+    installedPost({ thread_root_id: rootId }),
+  );
+  assert.equal(beforeArchive.status, 200, JSON.stringify(beforeArchive.body));
+  assert.equal(signalOf(beforeArchive.body).channel_id, channel.channel_id);
+
+  const archived = await send(f.ownerJwt, {
+    kind: "channel_archive",
+    channel_id: channel.channel_id,
+  });
+  assert.equal(archived.status, 200, JSON.stringify(archived.body));
+
+  const afterArchive = await send(
+    f.ownerJwt,
+    installedPost({ thread_root_id: rootId }),
+  );
+  assert.equal(afterArchive.status, 409, JSON.stringify(afterArchive.body));
+  assert.equal(afterArchive.body.error, "channel_archived");
+
+  /* And a top-level post to an UNFILED root's thread is unaffected, so the
+   * check keys on the channel and not on threads in general. */
+  const unfiledRoot = await send(f.ownerJwt, installedPost());
+  const unfiledReply = await send(
+    f.ownerJwt,
+    installedPost({ thread_root_id: String(signalOf(unfiledRoot.body).id) }),
+  );
+  assert.equal(unfiledReply.status, 200, JSON.stringify(unfiledReply.body));
+});
+
+test("a refusal names the rule that was broken, with the right article", async () => {
+  const root = await send(f.ownerJwt, installedPost());
+  const rootId = String(signalOf(root.body).id);
+  const workingOn = await send(
+    f.ownerJwt,
+    installedPost({ signal_kind: "working-on", thread_root_id: rootId }),
+  );
+  assert.equal(workingOn.status, 400, JSON.stringify(workingOn.body));
+  const message = String(workingOn.body.message);
+  assert.match(message, /working-on/);
+  assert.match(message, /a note or an ask/, "the article is generated, not typed");
+  assert.doesNotMatch(message, /a ask/, "the defect a review arm found");
+
+  /* A malformed thread_root_id must get the CHAT sentence, not the generic
+   * one: the edge used to keep its own uuid check that fired first. */
+  const badUuid = await send(
+    f.ownerJwt,
+    installedPost({ thread_root_id: "00000000-0000-0000-0000-000000000000" }),
+  );
+  assert.equal(badUuid.status, 400, JSON.stringify(badUuid.body));
+  assert.match(String(badUuid.body.message), /thread_root_id/);
 });

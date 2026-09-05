@@ -1262,7 +1262,15 @@ test("pre-principal failures never write audit rows while authenticated validati
       },
     );
     assert.equal(response.status, 400);
-    assert.deepEqual(await response.json(), { error: "invalid_request" });
+    /* The 400 body gained a `message` carrying the validator's own reason
+     * (chat-schema lane): a generated refusal sentence nobody can read is not a
+     * generated sentence. This test's claim is about AUDIT ROWS, not the wire
+     * shape, so the assertion is tightened rather than loosened -- the code is
+     * still exactly invalid_request and the reason must be a non-empty string. */
+    const validationBody = await response.json() as Record<string, unknown>;
+    assert.equal(validationBody.error, "invalid_request");
+    assert.equal(typeof validationBody.message, "string");
+    assert.ok((validationBody.message as string).length > 0);
 
     const authenticatedAudits = await sql<{
       audit_id: string;
@@ -3972,7 +3980,12 @@ test("connect loop invites, accepts, creates a principal, and mints a narrow tok
       ttl_ms: 7 * 24 * 60 * 60 * 1000 + 1,
     });
     assert.equal(excessiveTtl.status, 400);
-    assert.deepEqual(excessiveTtl.body, { error: "invalid_request" });
+    /* The 400 body gained a `message` carrying the validator's own reason
+     * (chat-schema lane). The claim here is that an over-long TTL is refused,
+     * not that the body carries nothing else, so this is tightened rather than
+     * loosened. */
+    assert.equal(excessiveTtl.body.error, "invalid_request");
+    assert.equal(typeof excessiveTtl.body.message, "string");
 
     const inviteIdempotencyKey = commandId("connectinvite");
     const invited = await issueConnect(
@@ -4672,9 +4685,13 @@ test("§2.3 renewal issues an equal-scoped successor and accepts no caller-selec
         body,
       );
       assert.equal(refused.status, 400, JSON.stringify(body));
-      assert.deepEqual(
-        refused.body,
-        { error: "invalid_request" },
+      /* The claim is that renewal accepts NO caller-selected target. The body
+       * now also names the rule that refused it, which strengthens the refusal
+       * rather than weakening it: a wrong-rule refusal would fail here. */
+      assert.equal(refused.body.error, "invalid_request", JSON.stringify(body));
+      assert.equal(
+        refused.body.message,
+        "renew_agent_token accepts no caller-selected fields",
         JSON.stringify(body),
       );
     }

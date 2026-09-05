@@ -340,12 +340,27 @@ test("the thread root lookup still refuses a directed root in SQL", () => {
   assert.ok(end > start, "the function boundary must be findable");
   const body = command.slice(start, end);
   assert.ok(
-    body.includes("AND to_user_id IS NULL"),
+    body.includes("AND s.to_user_id IS NULL"),
     "the thread root query must refuse a root addressed to a person",
   );
   assert.ok(
-    body.includes("AND to_agent_principal_id IS NULL"),
+    body.includes("AND s.to_agent_principal_id IS NULL"),
     "the thread root query must refuse a root addressed to an agent",
+  );
+  assert.ok(
+    body.includes("AND s.in_reply_to IS NULL"),
+    "and one that is itself a private reply",
+  );
+  /* The archive arm. A thread reply INHERITS its root's channel and sends no
+   * slug, so resolveSignalChannel's archive check never runs for it; without
+   * this join a reply lands in a channel whose copy says it takes none. */
+  assert.ok(
+    body.includes("LEFT JOIN swarm.channels"),
+    "the thread root query must know whether its channel is archived",
+  );
+  assert.ok(
+    body.includes("channel_archived_at"),
+    "and must carry that state back to the caller",
   );
   /* Control: the slice really is resolveThreadRoot's body. */
   assert.ok(body.includes("thread_root_is_a_reply"));
