@@ -137,6 +137,15 @@ const mutations = [
     "a page fetched before a post landed does not drop that post"],
   [OBS, DASH, "        for (const id of visibleIds) postedSinceReset.add(id);\n", "",
     "a page fetched before a post landed does not drop that post"],
+
+  // ── round nine: the controls added after the eighth SHA failed both arms
+  [OBS, DASH, "      if (addressMoved && composerIntent !== null) {", "      if (composerIntent !== null) {",
+    "an unfinished send is not resumed into a channel"],
+  [OBS, DASH, "        for (const id of visibleFailureIds) postedSinceReset.add(id);\n", "",
+    "a page fetched before a post landed does not drop that post"],
+  [OBS, DASH, "        forgetFetchedPostedIds(page.rows);\n        const known = new Set(page.rows.map((signal) => signal.id));",
+    "        const known = new Set(page.rows.map((signal) => signal.id));",
+    "a page fetched before a post landed does not drop that post"],
 ];
 
 const testFor = (file) => file;

@@ -404,6 +404,15 @@ test("an unfinished send is not resumed into a channel it was not addressed to",
   assert.match(failed, /if \(retry && resumable\) retry\.hidden = false;/);
   /* And the sentence says where it was going, rather than inviting a send that cannot finish. */
   assert.match(failed, /That message was addressed to \$\{addressLabel\}/);
+  /* And the retirement fires only on an actual MOVE. `changed` is also true when the
+     unresolved state merely clears, so gating on it retired a valid retry whenever the reader
+     clicked the place they were already in: Retry vanished, the send error was replaced with a
+     sentence about a move that did not happen, and Enter minted fresh command ids that
+     reposted every hop that had already landed. Found by a review arm, on a fix from two
+     rounds earlier. */
+  const select = between(dashboard, "const selectChannel = (", "const setChannelDialogError");
+  assert.match(select, /const addressMoved = next !== activeChannelId;/);
+  assert.match(select, /if \(addressMoved && composerIntent !== null\) \{/);
 });
 
 test("a page fetched before a post landed does not drop that post", () => {
@@ -422,6 +431,15 @@ test("a page fetched before a post landed does not drop that post", () => {
   /* And the send is what records them, so only rows this browser posted are kept. */
   const applied = between(dashboard, "const visible = posted.filter(showsOnScreen);", "clearComposerDraft();");
   assert.match(applied, /for \(const id of visibleIds\) postedSinceReset\.add\(id\);/);
+  /* The FAILURE path prepends rows too, and only the success path was recording them, so a
+     partial failure during a channel click lost the hop that had landed. */
+  const failedRows = between(dashboard, "const visibleOnFailure = posted.filter", "const keptOnFailure");
+  assert.match(failedRows, /for \(const id of visibleFailureIds\) postedSinceReset\.add\(id\);/);
+  /* An id leaves the set as soon as a fetched page carries it, so the set cannot grow for as
+     long as the reader stays in one channel. Both arms raised that. */
+  assert.match(dashboard, /const forgetFetchedPostedIds = \(rows: readonly Signal\[\]\): void =>/);
+  const poll = between(dashboard, "const refreshLatestSignals = async (", "\n    };");
+  assert.match(poll, /forgetFetchedPostedIds\(page\.rows\);/);
 });
 
 test("the channel commands send exactly the keys the command edge accepts", () => {

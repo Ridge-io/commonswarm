@@ -126,7 +126,16 @@ says where the message was going.
 does not cancel a send. That page was requested before the post committed, so it cannot carry it, and
 replacing the list wholesale dropped a row the new screen should show: posted in a channel, read from
 all-signals, the message appeared, vanished, and came back on the next poll. `postedSinceReset` is
-cleared as the request goes out and holds the ids this browser posted while it was in flight.
+cleared as the request goes out and holds the ids this browser posted while it was in flight. Both the
+success and the failure path record what they prepend — only the success path did at first, so a
+partial failure during a channel click lost the hop that HAD landed — and an id leaves the set as soon
+as a fetched page carries it, so it cannot grow for as long as a reader stays in one channel.
+
+**Only an actual move retires an unfinished send.** The first version gated the retirement on `changed`,
+which is also true when the unresolved state merely clears, so clicking the place you were already in
+killed a valid Retry, replaced the send error with a sentence about a move that did not happen, and
+left Enter minting fresh command ids that reposted every hop that had already landed. That is one of
+six defects in this lane created by an earlier round's fix.
 
 **A `?c=` belongs to the workspace its `?w=` names, and the URL is written on every open.** The first
 version wrote it only when a channel was clicked, so switching workspace from the menu carried the
@@ -224,7 +233,7 @@ forbids.
    never reached them and the rail claimed a current channel while the head said Files. Found by a
    review arm. In the unresolved-channel state the rail marks NOTHING current, which both arms read
    and agreed is the honest mark: the reader is in the signals view and in no channel.
-9. **Seven review rounds cost twenty-one product defects and two evidence defects**, every one found by an
+9. **Eight review rounds cost twenty-five product defects and two evidence defects**, every one found by an
    arm and none by a gate: the read-permission claim in the copy; the composer that posted into the
    unfiltered feed from an unresolved link; a double current mark on Files and Brain; four typed
    copies of the view's name; a workspace switch that opened as "Channel not found"; a channel-list
@@ -250,7 +259,12 @@ forbids.
    own sentence; and a reset page dropping a row that was posted while it was in flight. Two arm
    findings were checked and **not** acted on, both from the same arm and both wrong: "the failure
    path never calls renderFeed" (it is the last statement of that catch block) and "the session reset
-   does not close the channel dialog" (it is the thirteenth line of that function).
+   does not close the channel dialog" (it is the thirteenth line of that function). A third was
+   verified as **pre-existing on `main`** and routed rather than fixed: the composer's early return on
+   a workspace change skips `clearComposerDraft()`, so a message that lands after the reader switches
+   workspace is restored into the composer on the way back. It is byte-identical at
+   `d9fa25b:6202`, it has nothing to do with channels, and it sits in the exact region that produced
+   six of this lane's defects. It is owed to a follow-up.
 
 ## Files
 

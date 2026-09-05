@@ -1,0 +1,15 @@
+diff --git a/docs/design/2026-09-05-chat-app-channels.md b/docs/design/2026-09-05-chat-app-channels.md
+
+1. **Workspace change during success skips draft cleanup.**
+   **File:** `site/src/components/app/LiveDashboard.astro`, lines 7017-7022
+   **What breaks:** A message that finishes sending successfully after a workspace switch remains saved in the old workspace's draft.
+   **How you see it:** Send a message, and while it is in flight, switch to another workspace. The send succeeds, but the early return on workspace mismatch (`if (version !== requestVersion || workspaceId !== activeWorkspaceId)`) skips `clearComposerDraft()`. When you switch back to the original workspace, your fully sent message is restored into the composer.
+   **Refutation:** I tried to refute this by checking if `openWorkspace` clears the draft, but it only clears the live `input.value`, leaving the saved localStorage draft intact until explicitly cleared.
+
+2. **`postedSinceReset` grows without bound.**
+   **File:** `site/src/components/app/LiveDashboard.astro`, lines 7029 and 4588
+   **What breaks:** A memory leak of message IDs in the browser session.
+   **How you see it:** Stay in a single channel and send multiple messages over time. Each successful post's ID is added to `postedSinceReset` (`postedSinceReset.add(id)`). The set is only cleared when `refreshLatestSignals` is called with `reset = true` (e.g., channel or workspace switches), but normal background polling (`reset = false`) never clears it. Thus, the set grows indefinitely as long as the reader remains in the channel.
+   **Refutation:** I tried to refute this by seeing if the ids are removed once they appear in `page.rows`, but `refreshLatestSignals` does not read or clear the set on a normal poll.
+
+VERDICT: FAIL

@@ -1328,8 +1328,19 @@ import "../../styles/tokens.css";
      * committed, so it cannot carry it, and replacing the list wholesale dropped a row that
      * the new screen should show. Measured as a message that appeared, vanished, and came
      * back on the next poll. Found by a review arm.
+     *
+     * An id leaves the set as soon as a fetched page carries it: the set exists to answer
+     * "did the server not know about this yet", and once the server hands it back the answer
+     * is no. Without that it grew for as long as the reader stayed in one channel, which a
+     * second arm found.
      */
     let postedSinceReset = new Set<string>();
+
+    /** Drop the ids a fetched page proves the server knows about. */
+    const forgetFetchedPostedIds = (rows: readonly Signal[]): void => {
+      if (postedSinceReset.size === 0) return;
+      for (const row of rows) postedSinceReset.delete(row.id);
+    };
     /**
      * One generation per channel READ, because a channel command does not bump requestVersion
      * (it is not a workspace change). Archive and Create are different buttons and each only
@@ -4604,6 +4615,7 @@ import "../../styles/tokens.css";
         );
         signals = [...arrivedWhileFetching, ...page.rows];
       } else {
+        forgetFetchedPostedIds(page.rows);
         const known = new Set(signals.map((signal) => signal.id));
         const additions = page.rows.filter((signal) => !known.has(signal.id));
         signals = [...signals, ...additions];
@@ -4650,6 +4662,7 @@ import "../../styles/tokens.css";
         if (unknownAgentCandidates.size > 0) {
           void refreshRosterForUnknownAgents(workspaceId, version);
         }
+        forgetFetchedPostedIds(page.rows);
         const known = new Set(page.rows.map((signal) => signal.id));
         const next = [...page.rows, ...signals.filter((signal) => !known.has(signal.id))];
         const changed =
@@ -5653,6 +5666,13 @@ import "../../styles/tokens.css";
         : channelById(channels, channelId)?.channelId ?? null;
       if (channelId !== null && next === null) return;
       const changed = next !== activeChannelId || unknownChannelId !== null;
+      /* `changed` is also true when only the unresolved state clears. The RETIREMENT below
+         needs the narrower question — did the address actually move — because clicking the
+         place you are already in is not a move, and retiring there killed a valid Retry,
+         replaced the send error with a sentence about a move that did not happen, and left
+         Enter minting fresh command ids that reposted every hop that had already landed.
+         Found by a review arm; introduced by the fix two rounds earlier. */
+      const addressMoved = next !== activeChannelId;
       activeChannelId = next;
       unknownChannelId = null;
       disarmChannelArchive();
@@ -5661,7 +5681,7 @@ import "../../styles/tokens.css";
          "Message #ops" is the contradiction; the intent is retired here instead, so a send
          from this channel is a new message that goes where the box says. The hops that
          already landed stay where they landed. */
-      if (composerIntent !== null) {
+      if (addressMoved && composerIntent !== null) {
         composerIntent = null;
         const retryControl = one<HTMLButtonElement>("[data-composer-retry]");
         if (retryControl) retryControl.hidden = true;
@@ -7063,6 +7083,10 @@ import "../../styles/tokens.css";
         const pendingSet = new Set(pendingIds);
         const visibleOnFailure = posted.filter(showsOnScreen);
         const visibleFailureIds = new Set(visibleOnFailure.map((signal) => signal.id));
+        /* The hops that DID land are records too. Only the success path was writing them, so
+           a partial failure during a channel click lost the hop that posted when the reset
+           page arrived without it. Found by a review arm. */
+        for (const id of visibleFailureIds) postedSinceReset.add(id);
         /* Drop the posted ids as well as the pending ones. The success path rewrites `signals`
          * BEFORE it renders, so a throw in that render reaches here with those rows already in
          * the list; prepending them again would show each one twice. */
