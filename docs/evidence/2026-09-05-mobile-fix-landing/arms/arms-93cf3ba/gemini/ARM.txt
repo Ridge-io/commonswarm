@@ -1,0 +1,42 @@
+diff --git a/docs/evidence/2026-09-04-mobile-fix/README.md b/docs/evidence/2026-09-04-mobile-fix/README.md
+
+### 1. The header rule
+I checked whether the channel head and filter row are out of flow. The head uses `position: absolute` (line 1528 of `DIFF.patch`, `site/src/components/app/LiveDashboard.astro`), and the filter row neutralizes its flow height using `margin-block-end: -2.5rem` against a `min-block-size: 2.5rem` (lines 1584-1585). 
+**Finding:** These values CAN disagree. If a larger font size causes the `.dashboard__feed-toolbar` to exceed `2.5rem` in height, the fixed `-2.5rem` margin will not neutralize the excess. The remaining height stays in the flow, pushing `.dashboard__feed` down and creating a gap between the floating band and the first message.
+At 320px wide, the `max-inline-size: 9rem` on `.dashboard__channel-roster` (line 1728) prevents wrapping, and `.dashboard__feed-filters` scrolls horizontally, so layout holds. In the `36rem` block, the head padding correctly shrinks to `var(--s-1)` (line 1766).
+
+### 2. Reachability that was moved
+I enumerated the moved controls:
+- **Gear**: Replaced by `.dashboard__workspace-settings-item` (`role="menuitem"`, lines 872-879).
+- **Account name**: Moved to `.dashboard__user-menu-account` (line 928).
+- **View switcher**: Moved to `.dashboard__rail-tabs` in the app bar (lines 891-914).
+- **Channel title**: Remains for `aria-labelledby` but visually hidden with `clip-path: inset(50%)` (line 1566).
+Each replacement is reachable, has an accessible name, and the `52rem` breakpoint is mutually exclusive so neither both are hidden nor both shown. Inside the `pointer-events: none` head, `.dashboard__channel-actions` and `.dashboard__channel-roster` restore `pointer-events: auto` (line 1547). Nothing is unclickable.
+
+### 3. `contain: layout` on `.dashboard__message`
+I searched for elements relying on escaping the `.dashboard__message` row (line 1394). As Section 7 states, there are no absolutely, fixed, or sticky positioned descendants inside the row. The floating header band (filter row `sticky`, z-index 2; head `absolute`, z-index 4) correctly paints over the rows (z-index auto). I found no contradictions to Section 7's answer.
+
+### 4. The debounces
+I traced `persistComposerDraft`, `clearComposerDraft`, `closeMentionPicker`, and `resetComposer`. 
+- `persistComposerDraft`, `clearComposerDraft`, `scheduleComposerDraft`, and `resetComposer` correctly call `cancelComposerDraftTimer()`.
+- `closeMentionPicker` and `scheduleMentionPicker` correctly call `cancelMentionPickerRender()`.
+- The `blur`, `pagehide`, and `visibilitychange` flushes all synchronously call `flushComposerDraft()` (which cancels). `blur` also calls `cancelMentionPickerRender()` (line 1313). 
+- The 4 deciding keys (Enter, Escape, ArrowDown, ArrowUp) call `cancelMentionPickerRender()` before rendering (line 1340).
+I found no paths missing a cancel or losing a draft.
+
+### 5. The viewport sync
+I reviewed `syncDashboardViewport` (line 1154). It calls `window.scrollTo(0, 0)` if scroll is non-zero, neutralizing iOS layout-viewport scrolls. It returns early without `visualViewport`. It is throttled by `requestAnimationFrame` with no timer floor. The removal of `window.innerHeight` leaves the CSS `100dvh` fallback, resolving the iOS layout viewport issue. The accepted residual of a stale height in a hidden tab stands. 
+
+### 6. The caret block
+I examined `rememberComposerCaret`, `scrollComposerCaretIntoView`, and `restoreComposerCaret`. The 500ms window on `composerPointerAt` (line 1319) protects tap-selected carets from keyboard focus events. `composerCaretKnown` is properly cleared in `restoreComposerDraft` (line 1068) and `resetComposer` (line 1221). The soft-wrap limitation in `scrollComposerCaretIntoView`'s line arithmetic is documented and accepted as a residual.
+
+### 7. The new clearance rule and its harness
+The CSS rule `.dashboard__feed-more:not([hidden]) + .dashboard__feed` (line 1630) removes the double padding. This relies on the elements being adjacent siblings; if a script were to wrap them or inject a node between them, this selector would fail. However, in the current DOM structure it is correct. The test harness toggles `hidden` (line 2221) and checks `feedListPaddingBlockStart` (line 2438), verifying the single clearance. 
+
+### 8. The tests
+I checked the observer files. `assertDensity` now delegates to `assertPhoneHeaderRule` below 1440px (line 2368). The new rule enforces the operator's clearance and floating constraints. The `caret-survival` assertions are source-shape controls that assert on the JavaScript strings (line 1892), acting as structural checks rather than behavioral tests, which is consistent with the established pattern. The `revertedStyles` control forces the head and filter row back into the flow (line 2151) and correctly fails when expected.
+
+### 9. Operator-visible claims
+I verified the updated claims. The comments and test strings for `resetComposer` were updated to remove references to the send path and explicitly state "THIS IS NOT THE SEND PATH" (line 1214). The 171px -> 73px measurement was corrected in `README.md` to distinguish `inFlowHeaderHeight` and `totalHeaderChrome` (line 181). The clearance comments now correctly specify 2.5rem for the filter row and `--feed-band-height` (3.25rem) for the gap.
+
+VERDICT: FAIL
