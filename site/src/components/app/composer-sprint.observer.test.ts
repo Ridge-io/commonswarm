@@ -802,8 +802,19 @@ const assertComposerSprint = (value: ComposerArtifact): void => {
    * the new row. */
   assertOrder(renderFeed, "const wasAtBottom = atBottom();", "list.replaceChildren();",
     "reader-scroll");
-  assert.match(renderFeed, /for \(const signal of \[\.\.\.visibleSignals\]\.reverse\(\)\)/,
+  /* ~~`for (const signal of [...visibleSignals].reverse())`~~ was the loop until
+   * `lane/chat-app-threads` (2026-09-05) collapsed replies under their root. The CLAIM here is
+   * about the REVERSAL and not about the loop's shape: the array stays newest-first for the
+   * cursor and is reversed exactly once, at the render, so the newest source row renders last.
+   * Pinning the whole statement made an unrelated grouping change look like a scroll
+   * regression, so the assertion now names the thing it is about. */
+  assert.match(renderFeed, /\[\.\.\.visibleSignals\]\.reverse\(\)/,
     "reader-scroll: newest source row must render last");
+  assert.equal(
+    renderFeed.split("[...visibleSignals].reverse()").length - 1,
+    1,
+    "reader-scroll: the display reversal happens exactly once",
+  );
   assert.match(
     renderFeed,
     /if \(wasAtBottom\) \{\s*scrollToNewest\(\);\s*\} else \{[^]*?change === "latest"[^]*?el\.scrollTop = topBefore;/,

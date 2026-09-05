@@ -46,6 +46,27 @@ export const COMPOSER_TO_MAX = SIGNAL_RECIPIENT_MAX;
  */
 export const SCALAR_POSITION = 0;
 
+/**
+ * THE ADDRESS ONE SEND ACTUALLY CARRIES, asked in one place by the row that draws it and by
+ * the submit that posts it.
+ *
+ * A thread reply carries NO recipient. That is the server's rule and not a preference:
+ * `chatSignalShapeProblem` refuses a body that sets `thread_root_id` and any recipient
+ * ("A thread reply is readable by everyone who can read its thread, so it cannot also be
+ * addressed to a recipient"), because a reply is undirected and a thread hung off a directed
+ * message would disclose it.
+ *
+ * IT IS A DERIVATION AND NEVER A WRITE. The To: pair belongs to the top-level message being
+ * composed; a reply does not empty it, overwrite it or store an empty one over it. The pass
+ * HOLDS while a reply is in progress, exactly as it holds during a send, so cancelling a
+ * reply gives the reader back the chips they had. Emptying the set instead would be a second
+ * writer of the pair, which is the class `deriveComposerAddress` exists to remove.
+ */
+export const composerSendRecipients = (
+  to: readonly ComposerRecipient[],
+  threadReply: boolean,
+): ComposerRecipient[] => (threadReply ? [] : [...to]);
+
 /** The recipient whose id the server writes into the scalar column, or null for a broadcast. */
 export const scalarRecipient = (
   recipients: readonly ComposerRecipient[],
@@ -371,6 +392,17 @@ export interface ComposerAddressInput {
   rosterKnown: boolean;
   /** True while this composer's own message is being posted. Nothing commits until it ends. */
   sending: boolean;
+  /**
+   * True while the composer is writing a THREAD REPLY. Nothing commits until it ends.
+   *
+   * A reply carries no recipient, so the To: pair is not the address of the message in the
+   * box; it is the address of the top-level message the reader was writing before, and it
+   * has to come back untouched when the reply is cancelled or sent. Holding is how that is
+   * done without a second writer: an @tag typed inside a reply changes nothing, and nothing
+   * is stored. What the ROW shows meanwhile is `composerSendRecipients`, which is also what
+   * the submit reads, so the row and the wire cannot disagree.
+   */
+  replying?: boolean;
   /** Is this name still in the workspace. Read only when `rosterKnown`. */
   known: (entity: ComposerRecipient) => boolean;
   /** The pair on screen, or null when no pass has committed one for this workspace yet. */
@@ -408,10 +440,12 @@ export const deriveComposerAddress = (
     announcedPrune: input.announcedPrune ?? 0,
     committed: false,
   };
-  /* HOLD, do not guess. Both of these are states where the pair on screen is already right
-   * and the inputs are not: an unknown roster would prune every chip, and a send in flight
-   * has captured recipients this pass cannot reach. */
-  if (!input.rosterKnown || input.sending) return held;
+  /* HOLD, do not guess. All three are states where the pair on screen is already right and
+   * the inputs are not: an unknown roster would prune every chip, a send in flight has
+   * captured recipients this pass cannot reach, and a thread reply is not addressed by this
+   * pair at all — deriving one for it would let an @tag inside a reply edit the address of
+   * the message the reader goes back to when they cancel. */
+  if (!input.rosterKnown || input.sending || input.replying === true) return held;
   /* WHICH SET IS THE BASE. The live pair wins because it is what the reader is looking at.
    * With no live pair this is a cold entry: the draft's set is the message being written and
    * beats the last-sent set, which is only the starting point when no draft recorded one. */

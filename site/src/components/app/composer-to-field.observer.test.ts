@@ -1188,16 +1188,37 @@ test("one pass owns the address, and every handler goes through it", () => {
     const block = dashboard.slice(start, dashboard.indexOf(close, start));
     assert.match(block, /syncComposerAddress\(/, `${where} must go through the one pass`);
   }
-  /* AND NOBODY ELSE CALLS IT. The count is the writers above plus ONE: the send's own settle,
-     which runs in the submit's `finally` after the freeze lifts and is inside the submit
-     block already counted, so it adds a call rather than a writer. Any further call is a
-     second writer of the pair, which is the shape every round of this lane found.
+  /* AND NOBODY ELSE CALLS IT. The count is the writers above plus TWO:
+
+       1. the send's own settle, which runs in the submit's `finally` after the freeze lifts
+          and is inside the submit block already counted, so it adds a call rather than a
+          writer;
+       2. `setThreadReplyRoot`, added by `lane/chat-app-threads` (2026-09-05). Opening or
+          closing a reply changes what the To: row shows, and the pass HOLDS while a reply is
+          in progress, so the row has to be re-derived when that hold starts and ends. It is
+          one WRITER for both directions — the reply control and the cancel button both go
+          through it — which is why it adds one call and not two.
+
+     ~~`writers.length + 1`~~ was the count while the thread surface was cut. Any further call
+     is a second writer of the pair, which is the shape every round of this lane found.
 
      The count excludes the definition, which reads `syncComposerAddress = (`. */
   assert.equal(
     dashboard.split("syncComposerAddress(").length - 1,
-    writers.length + 1,
+    writers.length + 2,
     "the pass is called from somewhere new, or a handler stopped calling it",
+  );
+  /* AND THE REPLY'S CALL IS THE ONE NAMED ABOVE, not some other new caller that happens to
+     bring the count back. Without this the count alone would accept a swap. */
+  const replyWriter = dashboard.slice(
+    dashboard.indexOf("const setThreadReplyRoot = ("),
+    dashboard.indexOf("\n    };", dashboard.indexOf("const setThreadReplyRoot = (")),
+  );
+  assert.match(replyWriter, /syncComposerAddress\(\);/, "the reply writer must run the pass");
+  assert.doesNotMatch(
+    replyWriter,
+    /composerTo = |composerToApplied = |rememberComposerTo\(/,
+    "opening or closing a reply must not write the pair itself",
   );
   const passStart = dashboard.indexOf("const syncComposerAddress = (");
   assert.ok(passStart > 0, "the pass is not in this file");
@@ -1375,10 +1396,14 @@ test("the body and the address are restored as one transaction", () => {
     new URL("../../lib/composer-address.ts", import.meta.url),
     "utf8",
   );
+  /* ~~`if (!input.rosterKnown || input.sending) return held;`~~ gained a third reason on
+     2026-09-05 (`lane/chat-app-threads`): a thread reply is not addressed by this pair at all,
+     so deriving one against a reply's body would let an @tag inside a reply edit the address
+     of the message the reader goes back to when they cancel. */
   assert.match(
     source,
-    /if \(!input\.rosterKnown \|\| input\.sending\) return held;/,
-    "the pass commits against an unknown roster or a message already on the wire",
+    /if \(!input\.rosterKnown \|\| input\.sending \|\| input\.replying === true\) return held;/,
+    "the pass commits against an unknown roster, a message already on the wire, or a reply",
   );
 });
 

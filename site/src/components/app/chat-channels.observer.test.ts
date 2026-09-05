@@ -164,10 +164,46 @@ test("the composer stamps the channel being read and gains no chrome for it", ()
      arm found it. The slug is resolved from the id at the moment of sending, and a send whose
      channel has left the list is refused rather than posted unfiled. */
   const placement = between(dashboard, "const freshPlacementChannelId =", "const attachmentSnapshot");
-  assert.match(placement, /const freshPlacementChannelId = activeChannel\(\)\?\.channelId \?\? null;/);
+  /* ~~`const freshPlacementChannelId = activeChannel()?.channelId ?? null;`~~ that exact line
+     was the whole rule until `lane/chat-app-threads` (2026-09-05). A TOP-LEVEL post is still
+     stamped with the channel being read and nothing else, which is what the first arm below
+     asserts; a THREAD REPLY is filed where its thread is, by the server, so its placement
+     channel is its root's and the channel on screen is not consulted. The pair of assertions
+     is what keeps the top-level claim from being weakened into "some channel". */
+  assert.match(
+    placement,
+    /const freshPlacementChannelId = replyRoot === null\s*\n\s*\? activeChannel\(\)\?\.channelId \?\? null\s*\n\s*: replyRoot\.channelId;/,
+  );
   const resolve = between(dashboard, "const placementChannelId = intent.placementChannelId;", "const rowMentions");
   assert.match(resolve, /channelById\(channels, placementChannelId\)/);
-  assert.match(resolve, /const placement: BrowserSignalPlacement = placementChannel === null\s*\n\s*\? \{\}\s*\n\s*: \{ channel: placementChannel\.slug \};/);
+  /* ~~`placementChannel === null ? {} : { channel: placementChannel.slug }`~~ was the whole
+     placement. A reply names its THREAD and never a channel — the edge refuses a body that
+     carries both — so the channel arms now sit behind the thread arm, unchanged. */
+  assert.match(
+    resolve,
+    /: placementChannel === null\s*\n\s*\? \{\}\s*\n\s*: \{ channel: placementChannel\.slug \};/,
+  );
+  assert.match(
+    resolve,
+    /const placement: BrowserSignalPlacement = placementThreadRootId !== null\s*\n\s*\? \{\s*\n\s*threadRootId: placementThreadRootId,/,
+  );
+  /* AND THE THREAD BRANCH CARRIES NO CHANNEL. Scoped to that branch: the ternary's OTHER arms
+     are exactly where `channel:` belongs, so a search over the whole expression would fail on
+     the correct code — which it did, the first time this was written. */
+  const threadBranch = between(
+    resolve,
+    /* THE ANCHOR NAMES THE STATEMENT, not the condition. `placementThreadRootId !== null`
+       appears first in the REFUSAL above this, so the loose anchor sliced the wrong region and
+       gave a confident failure about a correct placement. */
+    "const placement: BrowserSignalPlacement = placementThreadRootId !== null",
+    ": placementChannel === null",
+  );
+  assert.doesNotMatch(
+    threadBranch,
+    /channel:/,
+    "a thread reply must never carry a channel of its own",
+  );
+  assert.match(threadBranch, /\.\.\.\(broadcastToChannel \? \{ broadcastToChannel: true \} : \{\}\)/);
   assert.match(resolve, /is not in this workspace any more/);
   /* An archived channel RESOLVES on purpose — a permalink into one must still work — so a
      check that only asked whether the row exists let a retry keep sending into a channel the
@@ -175,15 +211,32 @@ test("the composer stamps the channel being read and gains no chrome for it", ()
   assert.match(resolve, /placementChannel\.archivedAt !== null/);
   assert.match(resolve, /is archived and does not accept new messages/);
   assert.doesNotMatch(dashboard, /placement: freshPlacement/);
-  /* THREADS ARE NOT THIS LANE (cut 2026-09-05 to `lane/chat-app-threads`). The browser never
-     sends `thread_root_id` or `broadcast_to_channel`; a reply written from the CLI still
-     renders, inline in the flat feed, which is what the design states for a client that does
-     not know about threads. */
-  assert.doesNotMatch(dashboard, /threadRootId: (?!null)[a-zA-Z]/);
-  assert.doesNotMatch(dashboard, /broadcastToChannel: (?!false)[a-zA-Z]/);
-  const sync = between(dashboard, "const syncComposerPlacement = (", "const renderChannelHead");
+  /* ~~`assert.doesNotMatch(dashboard, /threadRootId: (?!null)[a-zA-Z]/)`~~ and
+     ~~`/broadcastToChannel: (?!false)[a-zA-Z]/`~~. Both were the negative this file asserted
+     while the thread surface was cut (2026-09-05): the browser sent neither field, and a reply
+     written from the CLI rendered inline in the flat feed, which is what the design still
+     states for a client that does not know about threads.
+
+     `lane/chat-app-threads` landed the surface the same day, so the browser now sends both,
+     and the CHANNEL claim this test is about has to be stated positively instead: a
+     TOP-LEVEL post carries no thread and no broadcast. That is asserted at the optimistic row
+     and at the placement, which are the two places the pair reaches the wire. */
+  const optimistic = between(dashboard, "const optimisticSignal: Signal = {", "};");
+  assert.match(optimistic, /threadRootId: placementThreadRootId,/);
+  assert.match(optimistic, /broadcastToChannel,/);
+  assert.doesNotMatch(
+    optimistic,
+    /channelId: activeChannelId/,
+    "the pending row must be shown where the posted row will land",
+  );
+  const sync = between(dashboard, "const syncComposerPlacement = (", "const composerAddressStillPromised");
   assert.match(sync, /input\.placeholder = `Message \$\{channelLabel\(channel\.slug\)\}`;/);
   assert.match(sync, /input\.setAttribute\("aria-label", `Message in \$\{channelLabel\(channel\.slug\)\}`\)/);
+  /* AND THE CHANNEL PLACEHOLDER IS THE TOP-LEVEL ONE. While a reply is being written the box
+     names the thread instead, and it returns to the channel when the reply closes — the two
+     are one function so they cannot disagree about which the composer is promising. */
+  assert.match(sync, /if \(threadReplyRoot !== null\) \{/);
+  assert.match(sync, /input\.placeholder = "Reply in this thread";/);
 });
 
 test("a ?c= that names no readable channel never shows the unfiltered feed", () => {
@@ -443,9 +496,39 @@ test("an unfinished send is not resumed into a channel it was not addressed to",
      a channel the reader had left, filtered off their screen by showsOnScreen. Both arms
      found it. */
   const failed = between(dashboard, "const unsent = !landed;", "renderFeed(\"latest\");");
+  /* ~~`const addressStillActive = placementChannelId === (activeChannel()?.channelId ?? null);`~~
+     Retired 2026-09-05 by `lane/chat-app-threads`. That comparison is right for a top-level
+     post and wrong for a REPLY, whose address is its thread: a reply to a message in #mobile is
+     written from all-signals as readily as from #mobile, and the comparison would have called
+     every such reply "addressed somewhere else" and refused a valid Retry. The question moved
+     into `composerAddressStillPromised`, which is ONE function asked here and by selectChannel
+     alike — the channels lane invented a second comparison for the second caller and both arms
+     found the contradiction, so the rule is asserted in one place and both callers are pinned
+     to it. */
+  assert.match(failed, /const addressStillActive = composerAddressStillPromised\(intent\);/);
+  const promised = between(
+    dashboard,
+    "const composerAddressStillPromised = (",
+    "The sentence that retires an unfinished send",
+  );
   assert.match(
-    failed,
-    /const addressStillActive =\s*\n\s*placementChannelId === \(activeChannel\(\)\?\.channelId \?\? null\);/,
+    promised,
+    /intent\.placementChannelId === \(activeChannel\(\)\?\.channelId \?\? null\)/,
+    "a top-level message is still addressed to the channel on screen",
+  );
+  assert.match(
+    promised,
+    /intent\.placementThreadRootId === \(threadReplyRoot\?\.id \?\? null\)/,
+    "and a reply is addressed to its thread",
+  );
+  /* AND selectChannel ASKS THE SAME FUNCTION. A channel move must not retire an unfinished
+     reply, because the box still promises that thread whatever channel is being read. */
+  const channelMove = between(dashboard, "const selectChannel = (channelId", "if (sampleMode) {");
+  assert.match(channelMove, /retireComposerIntentOnAddressMove\(\);/);
+  assert.doesNotMatch(
+    channelMove,
+    /composerIntent\.placementChannelId !== next/,
+    "the retirement comparison must not be written inline a second time",
   );
   assert.match(failed, /const resumable = unsent && addressStillActive;/);
   assert.match(failed, /composerIntent = resumable/);
@@ -459,17 +542,23 @@ test("an unfinished send is not resumed into a channel it was not addressed to",
      reposted every hop that had already landed. Found by a review arm, on a fix from two
      rounds earlier. */
   const select = between(dashboard, "const selectChannel = (", "const setChannelDialogError");
-  /* An unfinished send survives only while the composer still promises ITS address. Two
-     narrower questions were tried and both were wrong: `changed` also fires when the
+  /* An unfinished send survives only while the composer still promises ITS address. Three
+     narrower questions were tried and all three were wrong: `changed` also fires when the
      unresolved state merely clears, so clicking the place you were already in killed a valid
-     Retry; and comparing the place being left called a `?c=` heal into a different channel a
-     no-op, leaving a retry pointed somewhere the box no longer names. Review arms found both.
-     ~~`next !== activeChannelId`~~, ~~`next !== previousPlace`~~. */
-  assert.match(
-    select,
-    /const addressMoved = composerIntent !== null &&\s*\n\s*composerIntent\.placementChannelId !== next;/,
-  );
-  assert.match(select, /if \(addressMoved && composerIntent !== null\) \{/);
+     Retry; comparing the place being left called a `?c=` heal into a different channel a
+     no-op, leaving a retry pointed somewhere the box no longer names; and the channel
+     comparison ALONE killed the Retry of every thread reply read from anywhere but its own
+     channel, because a reply is addressed to its thread. Review arms found the first two.
+     ~~`next !== activeChannelId`~~, ~~`next !== previousPlace`~~,
+     ~~`composerIntent.placementChannelId !== next`~~ (retired 2026-09-05,
+     `lane/chat-app-threads`).
+
+     ONE function answers it now, for this caller and for the failure path alike, and its two
+     arms are pinned where that path is tested. Here the claim is that this caller asks it
+     rather than writing a fourth comparison of its own. */
+  assert.match(select, /retireComposerIntentOnAddressMove\(\);/);
+  assert.doesNotMatch(select, /const addressMoved = /);
+  assert.doesNotMatch(select, /composerIntent\.placementChannelId !== next/);
 });
 
 test("a page fetched before a post landed does not drop that post", () => {

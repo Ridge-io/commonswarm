@@ -21,10 +21,19 @@ const raw = readFileSync(
 const src = raw.replace(/\/\*[\s\S]*?\*\//g, "").replace(/<!--[\s\S]*?-->/g, "");
 
 test("transcript: rows render OLDEST-first so the newest sits at the bottom", () => {
+  /* ~~`for (const signal of [...visibleSignals].reverse())`~~ was the loop until
+     `lane/chat-app-threads` (2026-09-05) collapsed replies under their root. This test is
+     about the REVERSAL, so it asserts the reversal: the loop's shape is another file's
+     subject, and pinning it here reported a grouping change as an ordering regression. */
   assert.match(
     src,
-    /for \(const signal of \[\.\.\.visibleSignals\]\.reverse\(\)\)/,
+    /\[\.\.\.visibleSignals\]\.reverse\(\)/,
     "the display reversal is gone — newest would render at the top again",
+  );
+  assert.equal(
+    src.split("[...visibleSignals].reverse()").length - 1,
+    1,
+    "the display reversal must happen exactly once",
   );
 });
 
