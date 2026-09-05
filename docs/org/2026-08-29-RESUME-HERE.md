@@ -1825,3 +1825,18 @@ at 390x844). Arms: r1 FAIL/FAIL, r2 Grok FAIL, r3 PASS/PASS with four residuals 
 same PM's next lane (`lane/update-notice`, item 5). The composer To: field (#2) waits on the
 `chat-recipients` schema lane. Not established: pinch-zoom behaviour on a real iPhone (both arms
 said so); the harness measured a headless 390x844 viewport.
+
+## Addendum 2026-09-05 02:1x UTC — markdown LANDED and LIVE (merge 9fa9d00); CLI lane PASS/PASS
+
+`lane/markdown-land` 4a10396 (tables + coverage, two review rounds) merged as `9fa9d00`; gates on
+the merge: tsc clean, npm test 740/740, site 352/353 (1 skip), identity OK. Site deployed; the
+`dashboard__message-markdown table` scroll rule is live in the stylesheet `/app` references
+(checked with a cache-buster; my first probe read the SEO stylesheet by mistake and said 0).
+Evidence `docs/evidence/2026-09-05-markdown-landing/` (`37afc31`; note `.git/info/exclude` has
+`arms-*`, so evidence needs `git add -f`). Grok's three low findings (two false comments, one test
+that cannot tell `</li>` from `<br>`) go to `lane/markdown-followup`.
+
+`lane/cli-chips` reached PASS/PASS on ea230ed (round 4); round 5 (0207715) is a comment fix. Its
+Postgres tests have never run: the DB slot is handed to it for one run before landing; chat holds.
+Chat round 2 (d3bda9e) came back FAIL/FAIL; the PM verifies each finding at the cited lines.
+Seventh lane spawned at pressure 1: `lane/listener-head-of-line`.
