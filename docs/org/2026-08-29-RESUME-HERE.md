@@ -2237,3 +2237,21 @@ set is notified, which is true only once `lane/wake-all-recipients` (migration
 closure claim and kept as a bound over six named files (same ruling as the sign-in sweep). The
 last operator item (#6, threads in the app) is on `main`; the checkout is `main` plus the wake
 lane's worktree.
+
+## 2026-09-05 20:1x UTC — WAKE ALL RECIPIENTS LANDED and LIVE in production (merge c635830)
+
+Apply order held: dry run named exactly `20260905000020_wake_all_recipients` → pushed (history
+confirms) → `command` and `read` deployed in one window at 20:08 UTC → gates on the merge (build,
+tsc, check:edge, npm test, p1-cli, identity over 20 fields) → live control on production: the NEW
+client's `channel ls` on an agent credential listed (every channel archived, as expected); an ask
+from CDReporter addressed `[Strategist, CSwarmDevLead]` was acked `replied` by BOTH seats —
+position 1 is my own seat on the installed 0.1.55 listener, which is the compat claim measured
+live → `main` pushed. Six review rounds across two passes; Grok caught a self-addressed refusal
+that would have stalled the attendance canary; a mutation, not an arm, caught CLI probes that
+stopped at the credential step before the branch they claimed to test. Evidence:
+`docs/evidence/2026-09-05-wake-all-recipients/` (18 arm files, 21 mutation blocks). The site comment
+at `commonswarm.ts` that said the read edge exposes no channel list is corrected on `main`.
+Bounds recorded in the build plan: post-enqueue revocation/expiry leaves an unreachable pending
+row; an agent wakes itself inside a group; a hydrated delivery can carry both `to` and `to_agent`;
+`channelRows`'s two attempts do not share one budget. Next: client 0.1.56, then the held site
+build (threads + the new To: copy). The checkout is `main` plus the release worktree.
