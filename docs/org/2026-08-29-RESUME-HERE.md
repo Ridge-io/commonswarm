@@ -1966,3 +1966,21 @@ not proven; the PM's attempt to pin it showed the bar returning with `dismissedB
 consistent with a `!isNewBuild` poll still in flight at the click landing after it and clearing
 the dismissal through the rollback reset. Next lane: measure the in-flight ordering first, then
 fix by ignoring poll results that started before the click (a request version), then the control.
+
+## Addendum 2026-09-05 04:2x UTC — chat lane scope cut; lane states
+
+The site suite that showed 1 failure on merge 6b2497a at host load ~20 passed 382/382 at load 7;
+the failure was never named and is not attributed.
+
+**Chat schema lane, ruling before round 7:** its diff had grown into `site/src/pages/{privacy,
+terms,acceptable-use}.astro`, `site/src/lib/agent-connect.ts` and its observer test, and
+`package.json` — L8 chat-copy and citation work — and rounds 5–6 kept finding defects there. Cut:
+every change under `site/` reverts to main and moves to a follow-up brief in the build plan; kept:
+the three migrations, `_shared/channels.ts`, command/read edges, the protocol bundle, the p1 suites,
+the build plan, the reconciled design edits, `message` on 400s, and the feedback normalizer call.
+Round 7 is the last round on this lane: a copy-only failure is fixed and taken under the
+comment-only rule; a behaviour failure comes back to the lead first.
+
+Other lanes: `listener-head-of-line` round 4 at 8e211d7, Gemini PASS, Grok FAIL (PM verifying);
+`site-chips` round 2 at cff55f7 FAIL/FAIL; `update-notice-ordering` started (measure the in-flight
+poll vs the click, then the request-version fix). Host: pressure 1, load ~2.
