@@ -2593,6 +2593,14 @@ import "../../styles/tokens.css";
         ? agents.some((agent) => agent.principalId === entity.id)
         : members.some((member) => member.userId === entity.id);
 
+    /**
+     * AN EMPTY ROSTER MEANS "NOT FETCHED YET", NOT "NOBODY IS HERE". renderWorkspace runs
+     * before the roster request settles, so pruning against an empty one would drop every
+     * chip; and because the restore runs once per workspace, nothing would put them back.
+     * A real workspace always has at least the member reading it.
+     */
+    const composerRosterKnown = (): boolean => agents.length > 0 || members.length > 0;
+
     /** WHERE THE LAST SET IS REMEMBERED. Per signed-in reader and per workspace. */
     const composerToStorageKey = (): string | null => {
       if (!activeWorkspaceId) return null;
@@ -2653,8 +2661,10 @@ import "../../styles/tokens.css";
       const chips = one<HTMLElement>("[data-composer-to-chips]");
       const note = one<HTMLElement>("[data-composer-to-note]");
       if (!chips || !note) return;
-      const pruned = pruneComposerRecipients(composerTo, composerRecipientKnown);
-      if (pruned.length !== composerTo.length) composerTo = pruned;
+      if (composerRosterKnown()) {
+        const pruned = pruneComposerRecipients(composerTo, composerRecipientKnown);
+        if (pruned.length !== composerTo.length) composerTo = pruned;
+      }
       chips.replaceChildren();
       const notified = notifiedRecipient(composerTo);
       if (composerTo.length === 0) {
@@ -3076,7 +3086,7 @@ import "../../styles/tokens.css";
      */
     const restoreComposerToOnEntry = (): void => {
       const key = composerToStorageKey();
-      if (!key || restoredComposerToKey === key) return;
+      if (!key || restoredComposerToKey === key || !composerRosterKnown()) return;
       restoredComposerToKey = key;
       restoreComposerTo();
     };
@@ -7324,6 +7334,10 @@ import "../../styles/tokens.css";
       deliveryReceiptCache.set(pendingId, { result: null, checkedAt: 0, phase: "posting" });
       signals.unshift(optimisticSignal);
       input.value = "";
+      /* The body that held the tags is gone, so the record of which tags had already become
+         chips goes with it. Keeping it would stop a tag typed again after this send from
+         addressing anybody it had addressed before. */
+      composerToApplied = [];
       stagedAttachments = [];
       renderStagedAttachments();
       input.style.blockSize = "auto";

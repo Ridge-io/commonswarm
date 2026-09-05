@@ -35,7 +35,13 @@ red  a broadcast is named rather than shown as an empty row
   restored green  site/src/components/app/composer-to-field.observer.test.ts
 red  a tag typed just before Enter is still a recipient
   restored green  site/src/components/app/composer-to-field.observer.test.ts
+red  a send forgets which tags it had already lifted into chips
+  restored green  site/src/components/app/composer-to-field.observer.test.ts
+red  an empty roster is not read as a workspace with nobody in it
+  restored green  site/src/components/app/composer-to-field.observer.test.ts
+red  the chips are not pruned against a roster that is not known yet
+  restored green  site/src/components/app/composer-to-field.observer.test.ts
 red  the remove control removes the recipient
   restored green  site/src/components/app/composer-addressing.observer.test.ts
 
-18 mutations, 0 problems
+21 mutations, 0 problems

@@ -50,6 +50,8 @@ type ToMeasurement = {
   removed: { chips: string[]; valueStillHasTag: boolean; afterKeystroke: string[] };
   /** A tag typed and sent in the same breath is still a recipient. */
   taggedThenSentAtOnce: { chips: string[]; rowTarget: string };
+  /** The same name, removed after that send and typed again, addresses again. */
+  retaggedAfterSend: { chips: string[] };
   /** The set survives a send and is what the next message opens addressed to. */
   afterSend: { chips: string[]; rowTarget: string; rowsAdded: number };
   /** A reload opens addressed to the recipients of the last message that was sent. */
@@ -207,6 +209,16 @@ const frameScript = `<script>
         ?.textContent?.trim() ?? "",
     };
 
+    /* AND THE SEND FORGETS WHICH TAGS IT HAD ALREADY LIFTED. The body that held them is
+       gone, so the same name typed again after the send has to address again. Removing the
+       chip here WITHOUT emptying the box is the point: emptying it would clear that record
+       on its own and the step would pass whether the send cleared it or not. */
+    doc.querySelector("[data-composer-to-remove]").click();
+    await settleChips(0, "the chip removed after the send");
+    type("@Lumen hello again");
+    await settleChips(1, "Lumen addressed again by the same tag");
+    const retaggedAfterSend = { chips: chipNames() };
+
     /* THE SET SURVIVES A SEND, and the row's target is recipient 0. */
     await clearTo();
     type("as @Orbit said, ship it");
@@ -229,6 +241,7 @@ const frameScript = `<script>
       atRest,
       midSentence,
       taggedThenSentAtOnce,
+      retaggedAfterSend,
       secondTag,
       personFirst,
       promoted,
@@ -384,6 +397,8 @@ test("the To: row is the address, and it says who is notified", async () => {
       rowTarget: "→ Lumen",
     });
 
+    assert.deepEqual(measured.retaggedAfterSend, { chips: ["Lumen"] });
+
     /* ONE SIGNAL, and the chips stay: the next message opens addressed to this one's
        recipients, which is what stops the reader losing who they were talking to. */
     assert.deepEqual(measured.afterSend, {
@@ -440,6 +455,36 @@ test("the posted body carries the To: set and leaves both scalar fields null", (
      this a note, so no agent behind them is woken and the row already said so. */
   assert.equal(browserSignalCommand("x", [river, orbit], browserSignalKind([river, orbit])).signal_kind, "note");
   assert.equal(notifiedRecipient([river, orbit]), null);
+});
+
+test("an empty roster is not read as a workspace with nobody in it", () => {
+  /* A SOURCE CLAIM, and it says so. renderWorkspace runs before the roster request settles,
+     so `agents` and `members` are briefly empty for a workspace that has both. Pruning the
+     chips against that empty roster would drop every one of them, and the restore runs once
+     per workspace, so nothing would put them back. The browser observer above cannot reach
+     this: sample mode has its roster before the first render.
+
+     BOUND: this reads the guard and its two call sites out of one file. It does not prove
+     the roster is empty at any particular moment; it proves the two places that would act
+     on an empty one refuse to. */
+  const dashboard = readFileSync(
+    new URL("./LiveDashboard.astro", import.meta.url),
+    "utf8",
+  );
+  assert.match(
+    dashboard,
+    /const composerRosterKnown = \(\): boolean => agents\.length > 0 \|\| members\.length > 0;/,
+  );
+  assert.match(
+    dashboard,
+    /restoredComposerToKey === key \|\| !composerRosterKnown\(\)\) return;/,
+    "the remembered set is restored against a roster that is not known yet",
+  );
+  assert.match(
+    dashboard,
+    /if \(composerRosterKnown\(\)\) \{\s*\n\s*const pruned = pruneComposerRecipients\(composerTo, composerRecipientKnown\);/,
+    "the chips are pruned against a roster that is not known yet",
+  );
 });
 
 test("the note is generated from the cap and the wake position, not typed beside them", () => {

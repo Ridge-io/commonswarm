@@ -1077,10 +1077,19 @@ a broadcast does today.
    backwards and a mention becomes a DM that looks public."* Channels sharpen it: a user reading `#mobile`
    who types `@mercury` will believe the message is in `#mobile`. **Decide before P1 ships.** *Keep the
    behaviour, badge the row, revisit with multi-recipient.*
+
+   > **ANSWERED 2026-09-05, `lane/composer-to-field`.** A mention is a mention. The composer holds a
+   > visible To: set and an `@tag` ADDS to it; the whole set goes out as ONE signal carrying the wire's
+   > `to` list, so `@mercury look at this` is no longer a message nobody else can read. The paragraph
+   > above describes the behaviour that was replaced, and is kept because a reader may still meet it.
 3. **Are channels compatible with "THE ADDRESS IS THE MESSAGE"?** That direction is dated **2026-09-04**,
    the same day as this request (`LiveDashboard.astro:657-660`), and channels reintroduce a place-to-post
    concept. §8 answers with zero chrome, but reading a channel as *where* and an `@`-tag as *who* is this
    document's, not the operator's.
+
+   > **ANSWERED 2026-09-05, `lane/composer-to-field`.** "THE ADDRESS IS THE MESSAGE" was retired that
+   > day by the operator, who asked for the To: chips back. The channel is still *where* and the To: set
+   > is *who*, and both are now visible in the composer rather than inferred from the body.
 
 ## 13. What this document does NOT establish
 
