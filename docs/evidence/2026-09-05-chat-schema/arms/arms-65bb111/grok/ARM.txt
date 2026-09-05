@@ -1,0 +1,133 @@
+diff --git a/docs/design/2026-09-04-chat-platform-reconciled.md b/docs/design/2026-09-04-chat-platform-reconciled.md
+
+Bound to `65bb111df1c6df3a7085453975235cc649243964` (`lane/chat-schema`, `fix(chat): round 8 — purpose measured on the stored string, model control rule, slug prose pinned`). I read DIFF.patch, the live in-scope files, and ran `chatSignalShapeProblem` / `sanitizeSignalText` / `CHANNEL_SLUG_RE.source` in-process. I did not re-run the Postgres suites.
+
+1. **exactKeys.** Holds. `chatSignalKeys` (`channels.ts:218-222`) and `chatReadKeys` (`:228-230`) add a key only when `Object.hasOwn` already saw it. Spread at `command/index.ts:1758-1768` and `read/index.ts:239-247`. `modernKeys` is still the pair `to_agent_principal_id` + `indiff --git a/docs/design/2026-09-04-chat-platform-reconciled.md b/docs/design/2026-09-04-chat-platform-reconciled.md
+
+Bound to `65bb111df1c6df3a7085453975235cc649243964`. I read the patch and the live files. I ran `chatSignalShapeProblem` / `sanitizeSignalText` / `CHANNEL_SLUG_RE.source` in-process. I did not re-run the Postgres suites.
+
+1. **exactKeys.** Holds. `chatSignalKeys` and `chatReadKeys` only add a key that `Object.hasOwn` already saw. `modernKeys` is still the pair. An installed post with no chat keys gets `chatKeys = []`. An agent read that always sends `in_reply_to` and never `channel` gets `channelKeys = []`. I could not construct a body that validated before this change and 400s after.
+
+2. **The two view splices.** Holds. Both files snapshot `pg_get_viewdef` and `regexp_replace` the first `(\s)(FROM\s+(?:swarm\.)?signals\s)` with no `g` flag. The live body has one such FROM; `signal_attachments` cannot match. The WHERE text is not rewritten. `assert_view_clauses_preserved` is vacuous for `from_principal = auth.uid()` until that fragment exists in `p_before`. A missing clause cannot be dropped. It still cannot catch a widened predicate; this lane does not change predicates.
+
+3. **`channel_id` reachable as NOT NULL, defaulted, or backfilled.** Holds. `ADD COLUMN channel_id uuid` with no DEFAULT and no backfill. `broadcast_to_channel boolean NOT NULL DEFAULT false` is the documented contrast. The old-edge INSERT that omits the column is tested, including a `SET NOT NULL` probe.
+
+4. **The clamp.** Holds. The CTE computes one `until_value` and the WHERE tests that same value on both branches. A stored row cannot outlive the JS ceiling. A defaulted reply against a live root is `LEAST(default, ceiling)`, so it is not refused. `GREATEST(..., now + 1ms)` keeps `CHECK (until > created_at)`. The 30-day CHECK still holds. The stall path that eats the 1s margin can 409 a defaulted reply rather than write past the root. `untilCeiling` is `rootUntil.toISOString()`; truncation goes under the Postgres microsecond root.
+
+5. **Refusal ordering, final pass.** Defect in `chatSignalShapeProblem`. The function's own comment (`channels.ts:279-281`) says the rule that makes the request impossible outranks the slug's spelling. That reorder was applied to “thread + channel”. It was not applied to “`broadcast_to_channel: true` with no thread”, which still runs after the slug rule.
+
+Exact body:
+
+```json
+{
+  "kind": "post_signal",
+  "signal_kind": "note",
+  "body": "hi",
+  "to_user_id": null,
+  "about": null,
+  "to_agent_principal_id": null,
+  "in_reply_to": null,
+  "broadcast_to_channel": true,
+  "channel": "Not A Slug"
+}
+```
+
+I ran `chatSignalShapeProblem` on that shape. It returns the slug sentence. The same body with `channel: "mobile"` returns “broadcast_to_channel … needs a thread_root_id.” Fixing the slug does not make the request succeed. `baseValid` passes, so this sentence is what the caller gets.
+
+The first-rule test covers thread+bad-slug and does not cover broadcast+bad-slug.
+
+`channel_create` / `channel_rename` / `channel_archive` keys → uuid → slug → purpose type → purpose length (on the stored string) hold, including `purpose: 123`, `"x".repeat(501)`, `"x".repeat(500)+" "`, and `" ".repeat(501)`.
+
+6. **Generated enumerations.** `CHANNEL_SLUG_RULE_TEXT` is now built from `CHANNEL_SLUG_CLASSES`. Reserved list, `THREAD_REPLY_KINDS`, `commandFieldsMessage`, `unknownChannelMessage`, purpose length, `MODEL_RULE_TEXT` (bound interpolated): generated. Still typed, not a set: `CHANNEL_ID_RULE_TEXT`, the thread_root_id uuid sentence, “true or false”, “A channel purpose is text.”, `MODEL_CONTROL_RULE_TEXT`.
+
+`MODEL_RULE_TEXT` as a documented hand copy of 120: I agree on the *number* while `normalizedModel` stays unexported. I disagree that the *order* matches the reducer: `normalizedModel` does length then control; this lane now does control then length. That is the order this brief asked for.
+
+6b. **Feedback normalizer.** Reject set is the same. Observable change is the sentences (empty / over-length / controls split; context controls no longer folded into “bounded strings”). No other accept/reject change.
+
+7. **Thread roots.** Holds, and not an oracle for private ids. Directed, private-reply, expired, and cross-workspace share `404 thread_root_not_found`. Archived-channel is `409` after a hit; archive is public. A reply used as a root is `400`; thread replies are undirected, so that id is already public.
+
+8. **Delivery.** Holds. The trigger still fires only when `to_agent_principal_id IS NOT NULL AND kind IN ('ask','note')`. A channel post is undirected → no row. A thread reply cannot carry a recipient → no row. `broadcast_to_channel` does not set a recipient. A directed note to an agent with a channel still creates one row.
+
+9. **The tests.** I did not re-run the 26+130 Postgres tests.
+
+Cannot fail / weak: the directed-root SQL grep; the “thread ended” grep; the feedback-categories test only asserts the three names appear (a typed list still passes). Can fail: exactKeys unknown-key control; old-edge INSERT vs `SET NOT NULL`; delivery 0/1 pair; purpose trim; uuid-first; `until === rootUntil` on the 90s-root fixture.
+
+10. **Refusal order, exhaustively.**
+
+`chatSignalShapeProblem`, in order: (1) thread_root_id uuid shape; (2) broadcast type; (3) valid thread + channel → “does not take a channel”; (4) channel slug; (5) thread kind; (6) thread + recipient; (7) thread + `in_reply_to`; (8) `broadcast === true` without a root.
+
+Shape before meaning holds for `{thread_root_id:"not-a-uuid", channel:"mobile"}`. Thread+bad-slug is told “does not take a channel”.
+
+Miss: step 4 before step 8. Body in point 5.
+
+Secondary: `{signal_kind:"working-on", thread_root_id:<uuid>, channel:"mobile"}` is told “does not take a channel” before “cannot be a thread reply”. After the caller removes `channel`, the kind rule still fires.
+
+`post_signal`: `from` first, then chat sentence only when `baseValid`. `{signal_kind:"nope", thread_root_id:<uuid>}` stays generic.
+
+`channel_create`: keys → slug → purpose type → purpose length on the stored string. Holds.
+
+`channel_rename`: keys → uuid → slug. Holds.
+
+`channel_archive`: keys → uuid. Holds.
+
+11. **The two strengthened tests.** Uuid-first cannot pass if meaning runs first. It does not cover the broadcast+slug body, so it can stay green with that miss in place.
+
+`until === rootUntil` is not flaky at one millisecond. The fixture is a 90-second root and a 30-day note default, so the clamp must bite. Both sides are `Date.parse` of an ISO string. A legitimate defaulted *ask* reply to a long-lived note root would store `now+7d` and would not equal `root.until`; that is a different fixture, not this test going flaky.
+
+12. **The purpose bound.** For the three named paths, the measured string is the stored string. Only controls → `null`. `"x".repeat(500)+" "` → 500 `x`s, accept. Empty after sanitize → `null`.
+
+The boundary still disagrees with `char_length(purpose) <= 500` in one direction: `"😀".repeat(251)` is JS length 502 (refuse) and `char_length` 251 (CHECK would accept). The other direction cannot happen. Same idiom as `about`. Not the trim bug. The named paths hold.
+
+13. **The model rules in order.** Type, control, length. Holds on both `declare_agent_model` and `set_agent_model`. `model: 1` is the field list. `"gpt\u0007x"` is control characters. `"x".repeat(121)` is `MODEL_RULE_TEXT`. A 121-character model that also carries a control is told control, not length.
+
+14. **The generated slug alphabet.** `CHANNEL_SLUG_RE.source` is `^[a-z0-9]([a-z0-9-]*[a-z0-9])?$`. Identical to the SQL literal. Anchored. The slug is `test` input, not interpolated, so a metacharacter in a slug cannot break the regex. Hyphen sits at the end of the class.
+
+Sentences: one class “lowercase letters”; two “lowercase letters and digits”; three “lowercase letters, digits and hyphens”; starts-and-ends “a letter or a digit”. Those are the combinations the current table builds, and they read. Inner `{ words: "hyphens" }` has no `one`; singular over a three-class list would say “a letter, a digit or hyphens”. Production never does that. Landmine if hyphen moves to `edge`; not a live sentence bug.
+
+15. **Anything the three fixes broke.** Purpose trim, model control-before-length, and the slug table do not share a string. I did not find a regression they introduced. The broadcast+slug order predates them and was not touched.
+
+VERDICT: FAIL
+f its own”; (4) non-null `channel` slug → `channelSlugProblem`; (5) thread + kind not in `THREAD_REPLY_KINDS` → generated kind sentence; (6) thread + recipient → no recipient; (7) thread + `in_reply_to` → “Not both”; (8) `broadcast === true` without a root → needs `thread_root_id`.
+
+Shape before meaning holds for `{thread_root_id:"not-a-uuid", channel:"mobile"}` (uuid, not channel). `{thread_root_id:<uuid>, channel:"Not A Slug"}` is told “does not take a channel”, not the slug — that reorder holds.
+
+Miss: step 4 before step 8. Body in point 5. `{channel:"Not A Slug", broadcast_to_channel:true}` is told the slug rule; the request is impossible even with a valid slug.
+
+Secondary, among meaning rules: `{signal_kind:"working-on", thread_root_id:<uuid>, channel:"mobile"}` is told “does not take a channel” (`channels.ts:282-287`) before “cannot be a thread reply” (`:300-313`). I ran it. After the caller removes `channel`, the kind rule still fires. Weaker than the broadcast miss — both are meaning rules about a valid id — but it is the same “also-broken” shape.
+
+`post_signal` validator: `from` first (pre-existing). Then `valid = baseValid && chatShapeProblem === null`; the chat sentence is used only when `baseValid` (`command/index.ts:1829-1872`). `{signal_kind:"nope", thread_root_id:<uuid>}` stays generic. Runtime after that: write-target → attachments → channel 404/409 → thread 404/409/400 → early explicit-until 409 → atomic WHERE 409. A thread reply cannot also send a slug, so channel and thread runtime paths do not compete.
+
+`channel_create`: keys → slug → purpose type → purpose length on `sanitizeSignalText(raw).trim() || null`. Keys-before-slug holds. Type-before-length holds for `purpose: 123`. Length-after-trim holds for the two bodies in point 12.
+
+`channel_rename`: keys → uuid → slug. `{channel_id:"not-a-uuid", slug:"Not A Slug"}` is told `CHANNEL_ID_RULE_TEXT`. Holds.
+
+`channel_archive`: keys → uuid. Holds.
+
+11. **The two strengthened tests.** The uuid-first test (`chat-signal-wire-compat.test.ts:849-892` and `chat-signals.test.ts:648-668`) cannot pass if meaning runs first: `{thread_root_id:"not-a-uuid", channel:"mobile"}` would match “does not take a channel” and miss `/thread_root_id is the id/`. The nil-uuid arm is the same shape by another route. It does not cover the broadcast+slug body in point 5, so it can stay green with that miss in place.
+
+`until === rootUntil` (`chat-signals.test.ts:443-520`): not flaky at one millisecond. The fixture is a 90-second root and a note (30-day default), so the clamp must bite and the stored value is the JS view of the root. Both sides are `Date.parse` of `Date.toISOString()`. `untilCeiling` is that ISO string. A legitimate defaulted *ask* reply to a long-lived note root would store `now+7d` and would *not* equal `root.until`; that is a different fixture, not this test going flaky. This assertion would go red if the 30-day default were stored, or if the clamp overshot by ≥1ms (the old `<=` miss). It cannot see a sub-ms under-clamp from the ISO round-trip.
+
+12. **The purpose bound.** For the three named paths, the measured string is the stored string.
+
+- Only control characters (`\u0001\u0002`, `\n\t\u0007`): sanitize strips / trim empties → `null`. Accept. CHECK allows NULL.
+- Exactly 500 after trimming (`"x".repeat(500)+" "`): stored 500 `x`s, accept. I ran the sanitizer.
+- Empty after sanitize: `null`, accept.
+
+The accept/refuse boundary still disagrees with `char_length(purpose) <= 500` in one direction: JS `.length` is UTF-16 code units, `char_length` is characters. `"😀".repeat(251)` is JS length 502 → 400 “at most 500 characters”; `char_length` is 251 and the CHECK would accept. The other direction cannot happen (JS length ≤ 500 implies `char_length` ≤ 500). Same idiom as `about`. Not the trim bug. The named paths hold.
+
+13. **The model rules in order.** Type, control, length. Holds on both `declare_agent_model` and `set_agent_model` (`command/index.ts:1897-1927`, `:2011-2037`). `model: 1` fails `typeof !== "string"` with the field-list sentence. `"gpt\u0007x"` (short, control) matches `/control characters/` (`chat-signals.test.ts:726-733`). `"x".repeat(121)` hits `MODEL_RULE_TEXT`. A 121-character model that also carries a control is told the control sentence, not the length sentence. That is the order this brief asked for. I could not find a body that is told a rule other than the first of those three.
+
+14. **The generated slug alphabet.** `CHANNEL_SLUG_RE.source` is `^[a-z0-9]([a-z0-9-]*[a-z0-9])?$`. Identical to the SQL literal in `20260905000001_channels.sql:21`. Anchored with `^` `$`. The slug is `RegExp#test` input, not interpolated into the pattern, so a metacharacter in a slug (`.`, `(`, `*`) cannot break the regex; I ran `foo.bar` / `a(b)` / `team-1` → false, false, true. Hyphen sits at the end of the class (`a-z0-9-`), so it is not a range.
+
+Sentences, from the same `classList` the module uses:
+
+- one class: “lowercase letters”
+- two: “lowercase letters and digits”
+- three: “lowercase letters, digits and hyphens”
+- starts-and-ends, two, singular, `or`: “a letter or a digit”
+
+Those are the combinations the current table actually builds, and they read. Inner `{ fragment: "-", words: "hyphens" }` has no `one`. Singular over a three-class list would say “a letter, a digit or hyphens”. Production never does that (`one: true` is only applied to `edge`). Landmine if hyphen moves to `edge`; not a live sentence bug.
+
+15. **Anything the three fixes broke.** Read as a set: `channels.ts` (slug table + `MODEL_CONTROL_RULE_TEXT`), `command/index.ts` (purpose trim, control-before-length), `tests/chat-channel-constants.test.ts`, `tests/p1-server/chat-signals.test.ts`. (a) and (b) do not share a string. (c) does not change a validator bound. Purpose type-before-length still holds. The SQL slug pin still matches the generated source. I did not find a regression introduced by the three fixes. The broadcast+slug order predates them and was not touched.
+
+VERDICT: FAIL

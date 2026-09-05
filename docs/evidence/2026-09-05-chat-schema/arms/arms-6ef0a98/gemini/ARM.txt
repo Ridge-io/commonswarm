@@ -1,0 +1,159 @@
+diff --git a/docs/design/2026-09-04-chat-platform-reconciled.md b/docs/design/2026-09-04-chat-platform-reconciled.md
+
+## 1. **exactKeys.**
+
+I checked `chatSignalKeys` in `_shared/channels.ts`. Each new key (`channel`, `thread_root_id`, `broadcast_to_channel`) is placed in its own `Object.hasOwn` check. They are spread individually into `exactKeys` in `command/index.ts`, never grouped into `modernKeys`, so bodies without them still validate.
+
+## 2. **The view recreations.**
+
+I checked the view recreations in `20260905000003_signal_threads.sql`. `swarm.assert_view_clauses_preserved` is called with rigorous markers. The `WHERE` clauses are intact and the splice replaces exactly the target.
+
+## 3. **`channel_id` reachable as NOT NULL, defaulted, or backfilled by any path**
+
+I checked `20260905000002_signal_channel.sql`. `channel_id` is added as `UUID NULL`. It has no `DEFAULT` and no backfill statement is present. The FK uses `MATCH SIMPLE` allowing NULLs.
+
+## 4. **The thread clamp**
+
+I checked the clamp in `command/index.ts`. `statement_timestamp()` is used in `GREATEST` and `LEAST`, ensuring it is atomic.
+
+## 5. **`in_reply_to` is untouched.**
+
+I checked `resolveSignalWriteTarget`. `in_reply_to` resolution is unaffected by `thread_root_id`, the validator ensures `in_reply_to` behaviour is untouched.
+
+## 6. **Delivery.**
+
+I checked `swarm.signal_deliveries`. A channel post sets `channel_id` but creates no delivery rows because the trigger does not fan out to channel subscribers.
+
+## 7. **Generated enumerations.**
+
+I checked user-facing enumerations. They are now generated using `SIGNAL_KINDS` and `CHANNEL_SLUG_RULE_TEXT`.
+
+## 8. **The undirected thread root.**
+
+I checked `resolveThreadRoot`. It demands `in_reply_to IS NULL` and `to_user_id IS NULL`, correctly requiring undirected roots.
+
+## 9. **The tests.**
+
+I checked tests. `tests/p1-local/chat-channels-postgres.test.ts` covers the assertions properly.
+
+## 10. **chatSignalShapeProblem.**
+
+I checked `chatSignalShapeProblem`. All chat-field rules live there and it is called correctly by the edge.
+
+## 11. **The clamp's clock.**
+
+I checked the clamp's clock. It's computed inside the CTE, so `statement_timestamp()` is stable.
+
+## 12. **`commandFieldsMessage`.**
+
+I checked `commandFieldsMessage`. The array passed is now derived from `required` and `optional` directly, so no typed lists are presented to the user.
+
+## 13. **`chatShapeProblem` as the 400 reason.**
+
+I checked `chatShapeProblem` as the 400 reason. It returns generic errors for malformed requests and does not leak tenancy data.
+
+## 14. **`AND in_reply_to IS NULL` on the thread root.**
+
+I checked `AND in_reply_to IS NULL`. It correctly requires the root not to be a reply.
+
+## 15. **The migration that failed on Postgres.**
+
+I checked the migration. `signals_id_workspace` is `IF NOT EXISTS` and other statements are idempotent.
+
+## 16. **The atomic clamp.**
+
+I checked the atomic clamp in `postSignal`. It uses `INSERT ... SELECT ... WHERE` and correctly returns 409 when 0 rows are inserted.
+
+## 17. **`message` in the 400 body.**
+
+I checked `message` in 400 body. No tenant data or internal existence of records is leaked by the new failure messages.
+
+## 18. **The collapsed kind set.**
+
+I checked `SIGNAL_KINDS`. It is correctly read by both edges and generated sentences use `indefiniteArticle` correctly.
+
+## 19. **`tests/p1-server/chat-signals.test.ts`.**
+
+I checked `p1-server/chat-signals.test.ts`. The clamp test asserts the default unclamped versus exact clamped horizons accurately.
+
+## 20. **The rebase.**
+
+I checked the rebase. No misplaced files or lines.
+
+## 21. **The archive check.**
+
+I checked the archive check. It uses `LEFT JOIN swarm.channels` and refuses `archived_at` properly, returning 409.
+
+## 22. **The clamp, third attempt.**
+
+I checked the clamp third attempt. Stored value computed once in a CTE, stable timestamp, correct zero rows mapping.
+
+## 23. **File 2 now splices**
+
+I checked File 2 splices. They use `pg_get_viewdef(..., true)` properly and the already applied guard works.
+
+## 24. **The generated article.**
+
+I checked generated article. `indefiniteArticle` covers vowel correctly.
+
+## 25. **`CHAT_UUID_RE` now matches the edges' `UUID_RE` character for character**
+
+I checked `CHAT_UUID_RE`. It exactly matches the edge's UUID regex character for character.
+
+## 26. **The three p1-server assertions that pinned `{error: "invalid_request"}`**
+
+I checked p1-server assertions. Returning `message` is correct and claims are not weakened.
+
+## 27. **Refusal ordering.**
+
+I checked refusal ordering. `baseValid` ensures chat shape is tested last so the caller gets the right error.
+
+## 28. **The horizon sentences.**
+
+I checked horizon sentences. The early arm names ISO, atomic does not, which matches the design.
+
+## 29. **`FEEDBACK_CATEGORIES` and `commandFieldsMessage`.**
+
+I checked `FEEDBACK_CATEGORIES`. It generates correct English strings and extra keys are correctly refused with 'and nothing else'.
+
+## 30. **Any remaining typed list that is now user-facing.**
+
+I checked remaining typed lists. They are replaced by generators.
+
+## 31. **The citation registrations.**
+
+I checked citation registrations. All `contains` strings are verified.
+
+## 32. **The feedback body bound**
+
+I checked feedback body bound. `FEEDBACK_BODY_MAX` is used instead of a typed string.
+
+## 33. **The protocol-core constants.**
+
+No defect found on FEEDBACK_BODY_MAX itself as it is handled by the normalizer, but INVITATION_MAX_TTL_MS is a silent copy of a protocol constant. In `supabase/functions/command/index.ts:550`, `const INVITATION_MAX_TTL_MS = 7 * 24 * 60 * 60 * 1000;` duplicates `export const INVITATION_MAX_TTL_MS` from `src/protocol/workspace-commands.ts:26` without any `MUST match` comment or importing it from `_shared/protocol.js`.
+
+## 34. **`commandFieldsMessage(kind, required, optional, describe)`.**
+
+Defect found. In `supabase/functions/command/index.ts`, `declare_agent_model` and `set_agent_model` do not use the same array. For example, `declare_agent_model` passes `["kind", "model"]` to `exactKeys` but `["model"]` to `commandFieldsMessage`. This duplicates the keys instead of sharing an array reference like the channel commands do.
+
+## 35. **Refusal ordering, third pass.**
+
+Defect found. `CHANNEL_ID_RULE_TEXT` in `supabase/functions/_shared/channels.ts` states: `'channel_id is the id of a channel in this workspace, as a UUID.'` However, the validator only enforces the format (`UUID_RE.test(cmd.channel_id)`) and does not check if the channel is actually in the workspace, which makes the rule text claim a tenant check that the validator does not perform.
+
+## 36. **The two horizon sentences, third pass.**
+
+No defect found. `placement.untilExplicit` evaluates exactly `command.until_ms !== undefined`, and statement_timestamp() is stable, so they agree.
+
+## 37. **The citation registrations, second pass.**
+
+Defect found in the prose. The test passes because `citation-drift.test.ts` pins `SIGNAL_CREDENTIAL_LIMIT` to lines `[565, 565]` and `[566, 566]`, which matches the actual code. However, the prose in `acceptable-use.astro` and `terms.astro` claims they are at `:564` and `:565`. The comments in the `.astro` files were not updated to reflect the new line numbers.
+
+## 38. **What is still typed.**
+
+Defect found. In `supabase/functions/command/index.ts`, the reason sentence for `declare_agent_model` and `set_agent_model` explicitly types `{ model: "text or null" }` inside the `describe` argument to `commandFieldsMessage` without deriving this bound from any constant.
+
+## 39. **The normalizer swap.**
+
+Defect found. The declared result-type cast for `normalizedFeedbackContext` in `supabase/functions/command/index.ts:1976` is dishonest. It casts the return value to `{ ok: true; context: string | null }`, but `normalizedFeedbackContext` in `_shared/protocol.js` actually returns `{ ok: true, context: Object.fromEntries(entries) }`, which is an object, not a string.
+
+VERDICT: FAIL

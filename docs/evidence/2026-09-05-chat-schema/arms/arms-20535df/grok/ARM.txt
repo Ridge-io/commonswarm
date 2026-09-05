@@ -1,0 +1,126 @@
+I'll read the review brief and the diff, then follow REVIEW.md exactly.The patch is truncated. I'll read the rest of it and the source files the review tells me to attack.The patch is still incomplete. I'll keep reading it and the files the eight attack points name.Grep ran in the arm folder, not the repo. I'll search the lane checkout and keep reading the files the review names.I'll compare the live view body, the write-target resolver, and the clamp/clock path next.The live command validator doesn’t match the patch. I’ll check the SHA and the functions the patch never showed.HEAD is `20535df`, but the tree has extra uncommitted edits. I’ll review the committed SHA via `git show`, not the dirty files.I have a ship-blocker: file 3 recreates an index that already exists, so the migration cannot apply. Writing the review against committed `20535df`.diff --git a/docs/design/2026-09-04-chat-platform-reconciled.md b/docs/design/2026-09-04-chat-platform-reconciled.md
+
+Review is of committed `20535df` / DIFF.patch, not the dirty worktree.
+
+## 1. exactKeys
+
+**no finding.** I could not build an old body that 400s after this change.
+
+`chatSignalKeys` (`channels.ts:114-117`) returns only keys that `Object.hasOwn`. A body with none of `channel` / `thread_root_id` / `broadcast_to_channel` gets `[]`, so the `exactKeys` list is the pre-chat list (`command/index.ts:1686-1693`).
+
+Same on read: `chatReadKeys` (`channels.ts:124-125`) returns `[]` unless `channel` is present. Agent bodies that always send `in_reply_to` and never `channel` still match (`read/index.ts:228-246`).
+
+Concrete old post that still matches:
+
+```json
+{"kind":"post_signal","signal_kind":"note","body":"shipping the parser fix","to_user_id":null,"about":null,"to_agent_principal_id":null,"in_reply_to":null}
+```
+
+`modernKeys` is still only `to_agent_principal_id` + `in_reply_to`. Chat keys are not folded into it.
+
+## 2. The view recreations
+
+**Finding — file 3 cannot apply.** Reachable. This is the break.
+
+`20260905000003_signal_threads.sql:36`:
+
+```sql
+CREATE UNIQUE INDEX signals_id_workspace ON swarm.signals (id, workspace_id);
+```
+
+No `IF NOT EXISTS`. That name already exists:
+
+- `20260730000002_agent_signal_receive.sql:8`
+- `20260901000010_signal_attachments.sql:6`
+- `20260901000020_signal_human_receipts.sql:5`
+
+Postgres: `ERROR: relation "signals_id_workspace" already exists`. One file is one transaction, so the whole of file 3 rolls back. `thread_root_id`, `broadcast_to_channel`, the thread FK, and the second view rewrite never land.
+
+The splice at `:94-101` is dead code until that index line is fixed. Deploying the new read/command edge after a failed file 3 names `thread_root_id` / `broadcast_to_channel` against a table that does not have them. Every post and every agent read fails.
+
+**Finding — file 2 rewrites WHERE from a file copy, not from live SQL.** Reachable if the live view is not exactly `20260901000010`.
+
+Design says resolve the body with `pg_get_viewdef`, never from a migration file. File 2 snapshots the live body (`20260905000002_signal_channel.sql:97-101`) then `CREATE OR REPLACE VIEW` with a handwritten copy of `20260901000010` plus `s.channel_id` (`:108-161`). Today those WHERE arms match, so nothing drops *now*. A hotfix or a clause not in the marker list would be deleted and the assertion would still pass.
+
+**`assert_view_clauses_preserved` can pass with no work.** `:81` only fires when the marker is in `p_before`. `'from_principal = auth.uid()'` (`:76`) is not in the live view, so that arm is skipped. A dropped clause that is not one of the five strings is invisible. The function says it cannot catch a widened clause (`:69-70`). That part is true.
+
+Markers are WHERE-only on the current body. `to_agent_principal_id IS NULL` is the broadcast arm, not the SELECT list (`s.to_agent_principal_id AS to_agent`). No false positive there today.
+
+**regexp / `rtrim`:** not reached, because the index create fails first. If that were fixed: the pattern `\sFROM\s+swarm\.signals\s` (`000003:86,96`) does not match `FROM swarm.signal_attachments` (`signals` then `_`). First-match `regexp_replace` is enough if there is one outer `FROM swarm.signals`. `rtrim(body, E' ;\n\t')` (`:99`) only strips trailing `;` / space; it does not eat `)`. Fail-closed if `search_path` omits the `swarm.` qualifier (`:86` raises). Not a silent WHERE drop.
+
+## 3. `channel_id` as NOT NULL / default / backfill
+
+**no finding** on `channel_id` itself.
+
+`ADD COLUMN channel_id uuid` (`000002:19`) — nullable, no default, no backfill, no defaulting trigger. Partial index `WHERE channel_id IS NOT NULL` (`:29`) does not force a value. No other trigger on `swarm.signals` writes the column (append-only on UPDATE/DELETE; enqueue on INSERT looks at `to_agent_principal_id` only).
+
+MATCH SIMPLE is the default; NULL `channel_id` with non-NULL `workspace_id` does not consult `swarm.channels` (`:21-26`). Composite FK `(channel_id, workspace_id)` rejects a channel from another workspace.
+
+`broadcast_to_channel boolean NOT NULL DEFAULT false` is file 3, and file 3 does not apply (see 2). That default is the one the old insert needs; it is not a `channel_id` default.
+
+## 4. Thread clamp
+
+**Could not make a reply outlive its root** if file 3 and the insert path both existed. SQL `LEAST(statement_timestamp() + Nms, ceiling)` (`command/index.ts:6775-6781`) caps `until` at the root. `CHECK (until <= created_at + interval '30 days')` still holds: `until_ms` is capped at `SIGNAL_MAX_UNTIL_MS` and `LEAST` only shortens.
+
+**Finding — explicit-`until_ms` refusal uses the wrong clock.** Reachable at the remaining-window boundary.
+
+Design P4: remaining window is `root.until - statement_timestamp()`. Code:
+
+```7603:7604:supabase/functions/command/index.ts
+        const remainingMs = rootUntil.getTime() - Date.now();
+        if (command.until_ms > remainingMs) {
+```
+
+`Date.now()` is the isolate. The insert uses `statement_timestamp()`. If the process clock is behind Postgres, or any time passes between this check and the INSERT, an explicit `until_ms` that passed the JS test is shortened by `LEAST` instead of 409. That is the dishonest branch the comment at `:7594-7596` says it refused.
+
+`CHECK (until > created_at)`: file 3's 1 second floor on the root SELECT is stronger than design's `until > statement_timestamp()`. Still theoretical if the INSERT statement starts more than 1s after that SELECT in the same transaction (two different `statement_timestamp()` values). Not the main break.
+
+## 5. `in_reply_to` is untouched
+
+**no finding.** I could not make `thread_root_id` change `resolveSignalWriteTarget`.
+
+That function reads `command.in_reply_to` / `to_user_id` / `to_agent_principal_id` only (`:6516-6603`). It does not read `thread_root_id`.
+
+Validator when `threadRoot !== null` requires `inReplyTo === null` and null recipients (`:1790-1795`). Both fields set → `valid` is false → 400 `"signal fields are malformed or over their limits"`. Old shape (`in_reply_to` set, `thread_root_id` absent) still takes the re-address path.
+
+## 6. Delivery
+
+**no finding** on the trigger. `enqueue_signal_delivery` still fires only when `NEW.to_agent_principal_id IS NOT NULL AND NEW.kind IN ('ask', 'note')` (`20260731000001_signal_deliveries.sql:126-137`). `postSignal` inserts into `swarm.signals` and attachments; it does not insert delivery rows. A channel/thread post with null agent recipient creates no delivery that would not have been created before. A directed `note`/`ask` to an agent still does.
+
+File 3 never applying does not change this trigger.
+
+## 7. Generated enumerations
+
+**Finding.** Claim 3 is false. Reachable: these strings are what a 400 returns.
+
+Typed field lists, not built from the `exactKeys` arrays:
+
+- `channel_create takes slug and an optional purpose` (`command/index.ts:1597`) vs `["kind","slug"]` / `["kind","slug","purpose"]` (`:1589-1590`)
+- `channel_rename takes channel_id and slug` (`:1637`) vs `["kind","channel_id","slug"]` (`:1630`)
+- `channel_archive takes channel_id` (`:1659`) vs `["kind","channel_id"]` (`:1653`)
+
+`CHANNEL_SLUG_RULE_TEXT` interpolates `CHANNEL_SLUG_MAX` only. The character class is typed; `CHANNEL_SLUG_RE` is what the validator runs. Reserved names and the unknown-channel live-slug list *are* generated.
+
+## 8. The tests
+
+**File 3 cannot apply, so `tests/p1-local/chat-channels-postgres.test.ts` cannot run green on a migrated local DB.** It was not executed. Read as source:
+
+Would it run if file 3 applied? Same fixture shape as `standing-grants-postgres.test.ts` (`auth.users` insert, `sql.begin` + rollback). Yes, on an exclusive local slot after a successful `db reset`. Named in `test:p1-local`. Gate wiring is real.
+
+Would it pass if the feature were absent? No — inserts name `channel_id` / `thread_root_id` / `broadcast_to_channel`; the view scan requires those names.
+
+Assertions that are doing work: broadcast vs directed pair (`:2406-2432`); delivery 0 with directed-agent 1 (`:2465-2487`); cross-tenant FK (`:2513-2526`); UPDATE refused with INSERT control (`:2555-2574`); old column list plus `SET NOT NULL` negative (`:2593-2638`). Those controls can fail.
+
+Gaps:
+
+- Delivery test SQL-inserts. It would not see an extra enqueue inside `postSignal`. Today there is none.
+- View test greps the live body. It does not mutate a clause and require `assert_view_clauses_preserved` to raise. It does not include `from_principal = auth.uid()`. It does not require file 3's splice against real `pg_get_viewdef` output. It would not have caught `CREATE UNIQUE INDEX signals_id_workspace`.
+- `tests/chat-signal-wire-compat.test.ts` reimplements `exactKeys` / `postAllowList` (`:50`). It does not call `validateCommand`. A required extra key outside the 200-character `modernKeys` slice keeps this file green while old clients 400. Source scan of `modernKeys` is real; it is not the full allow-list.
+
+`tests/chat-channel-constants.test.ts` locks SQL CHECK to `CHANNEL_SLUG_RE.source` with a negative substring control. It would pass if file 2/3 were missing. That is the right scope for a constants test.
+
+---
+
+File 3 does not apply. Threads do not land. Claim 1 is false. Claim 3 is false on the new command 400s.
+
+VERDICT: FAIL

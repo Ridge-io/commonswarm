@@ -1,0 +1,125 @@
+I'll read REVIEW.md and DIFF.patch first, then follow REVIEW.md exactly.The patch is long. I'll keep reading it and the source files the review says to attack.The rest of the patch and the source files are next. I'll go through each attack point in REVIEW.md.I'll keep going through the rest of the patch and the load-bearing source: validator, clamp, view splice, and delivery.Grep was looking in the wrong tree. I'll search the lane repo and keep reading the command and read edges.I'll read the validator, write-target resolver, delivery trigger, and the live view body next.Agent scopes and a few other load-bearing paths still need a close look.I have the main suspects. Next I’ll pin exact line numbers for the clock check, the SET NOT NULL test, and the typed field lists.I have enough to write the review. One more check on the SET NOT NULL test and the live `resolveThreadRoot` query, so the line quotes stay exact.The repo source is newer than DIFF.patch. I’ll re-read the live tests and validator so the review hits the SHA, not the stale patch.The SET NOT NULL test is fixed in the tree. The clock check is still the break. I’ll write the review against SHA `80da71b`.diff --git a/docs/design/2026-09-04-chat-platform-reconciled.md b/docs/design/2026-09-04-chat-platform-reconciled.md
+
+Review of tree `80da71b24e08036f964edb72873e03f9b69a486a`. I read `DIFF.patch` and the files it names. I did not run Postgres, `pg_get_viewdef`, or `npm test`.
+
+## 1. exactKeys
+
+**no finding.** I could not make a body that validated before this change fail after it.
+
+Installed post (no chat keys):
+
+```json
+{"kind":"post_signal","signal_kind":"note","body":"shipping the parser fix","to_user_id":null,"about":null,"to_agent_principal_id":null,"in_reply_to":null}
+```
+
+`chatSignalKeys` at `supabase/functions/_shared/channels.ts:114-118` returns `[]`. `modernKeys` stays `["to_agent_principal_id","in_reply_to"]` (`command/index.ts:1687-1689`). The allow list does not grow.
+
+Installed agent read (has `in_reply_to`, no `channel`): `chatReadKeys` at `channels.ts:124-126` returns `[]`. `modernShape` stays `in_reply_to` alone (`read/index.ts:228-246`).
+
+`chatSignalShapeProblem` on a body with no chat fields returns `null` (`channels.ts:148-195`). Old `working-on` and directed notes still pass.
+
+## 2. View recreations
+
+**no finding** that this apply drops, widens, or reorders a `WHERE` arm. I did not run `pg_get_viewdef`.
+
+File 2 copies `20260901000010` and appends `s.channel_id` (`20260905000002_signal_channel.sql:104-161`). That `WHERE` matches the live body.
+
+File 3 splices with `regexp_replace` of `(\s)(FROM\s+(?:swarm\.)?signals\s)` (`20260905000003_signal_threads.sql:100-105`). `FROM swarm.signal_attachments` does not match: after `signals` comes `_`, not space. First match is the outer `FROM`. No `g` flag, so only that match is replaced. Pretty-print `FROM swarm.signals s` and `FROM swarm.signals AS s` both match. The `!~` check at `:91-94` fails closed if the boundary is missing. `rtrim(body, E' ;\n\t')` at `:105` only strips the trailing `;` from `pg_get_viewdef`. It does not eat `)`.
+
+`assert_view_clauses_preserved` (`000002:80-86`) fails only when a marker is in `p_before` and gone after. `from_principal = auth.uid()` (`:76`) is not in the live view, so that marker is vacuous today. The other four markers are in `WHERE` only, not in the select list (`s.to_agent_principal_id AS to_agent` does not contain `to_agent_principal_id IS NULL`). A dropped `is_member` / `to_user_id = auth.uid()` / `to_agent_principal_id IS NULL` / `owner_user_id = auth.uid()` arm would raise. A widened `OR` would not. The file says that (`:69-70`).
+
+## 3. `channel_id` NOT NULL / default / backfill
+
+**no finding.**
+
+`ALTER TABLE swarm.signals ADD COLUMN channel_id uuid` (`000002:19`) — nullable, no `DEFAULT`, no `SET NOT NULL`. Default FK match is `MATCH SIMPLE` (`:21-26`): `NULL` `channel_id` does not touch `swarm.channels`. `(channel_id, workspace_id)` pins the tenant. The partial index `WHERE channel_id IS NOT NULL` (`:28-30`) does not force the column. No new defaulting trigger. `broadcast_to_channel boolean NOT NULL DEFAULT false` (`000003:26-28`) is a different column; omitting it stays legal.
+
+## 4. Thread clamp
+
+**Finding. The explicit-`until_ms` refusal uses the wrong clock. Silent shorten is reachable.**
+
+The design remaining window is `root.until - statement_timestamp()` (`docs/design/2026-09-04-chat-platform-reconciled.md:638-643`). The handler uses the JS wall clock:
+
+```7622:7624:supabase/functions/command/index.ts
+      if (rootUntil !== null && command.until_ms !== undefined) {
+        const remainingMs = rootUntil.getTime() - Date.now();
+        if (command.until_ms > remainingMs) {
+```
+
+The insert then clamps with Postgres time (`command/index.ts:6775-6780`):
+
+`LEAST(statement_timestamp() + untilMs * interval '1 millisecond', COALESCE(untilCeiling::timestamptz, …))`
+
+`untilCeiling` is `rootUntil.toISOString()` (`:7646`).
+
+Concrete case: Postgres time `T`. JS clock 2s behind. Root `until` is `T+5s`. JS `remainingMs` is 7000. Caller sends `until_ms: 6000`. `6000 > 7000` is false, so no 409. SQL `LEAST(T+6s, T+5s)` stores `T+5s`. The caller asked for 6s and got 5s. That is the dishonest branch named at `:7613-7616` and in the design at `:642-643`. Deno and Postgres do not share a clock. The remaining window can be milliseconds (`design:647`). Tens of milliseconds of skew is enough.
+
+SQL `LEAST` still stops a reply from outliving the root. `CHECK (until <= created_at + interval '30 days')` still holds: `until_ms` is capped at 30 days (`command/index.ts:553,1768-1771`) and the ceiling is an existing `until`.
+
+`CHECK (until > created_at)`: `resolveThreadRoot` requires `until > statement_timestamp() + interval '1 second'` (`:6422`). The gap from that `SELECT` to the `INSERT` is JS only. A 1s stall plus a root just above the floor is a theoretical 500. I do not treat that as reached.
+
+## 5. `in_reply_to` untouched
+
+**no finding.**
+
+`resolveSignalWriteTarget` (`:6516-6604`) does not read `thread_root_id`. Recipients still come from `in_reply_to` or from `to_user_id` / `to_agent_principal_id`. `chatSignalShapeProblem` refuses a non-null `in_reply_to` together with a non-null `thread_root_id` (`channels.ts:184-186`). That runs inside `valid` (`command/index.ts:1779-1789`) before `handleTransaction`. A body with both set never reaches the resolver. `in_reply_to: null` with `thread_root_id` set is allowed and stores `in_reply_to` null.
+
+## 6. Delivery
+
+**no finding.**
+
+`swarm.enqueue_signal_delivery` (`20260731000001_signal_deliveries.sql:126-137`) still fires only when `NEW.to_agent_principal_id IS NOT NULL AND NEW.kind IN ('ask', 'note')`. The new `INSERT` (`command/index.ts:6759-6786`) still writes `target.toUserId` / `target.toAgentPrincipalId`. A thread reply cannot carry a recipient (`channels.ts:179-182`). A channel broadcast has `to_agent` null. No new enqueue path. A directed note to an agent that also has `channel_id` still creates one delivery row, as before.
+
+## 7. Generated enumerations
+
+**Finding. Three new 400 reasons list the fields `exactKeys` enforces, and the lists are typed.**
+
+```1596:1598:supabase/functions/command/index.ts
+        reason: keysOk
+          ? slugProblem!
+          : "channel_create takes slug and an optional purpose",
+```
+
+```1638:1638:supabase/functions/command/index.ts
+        reason: slugProblem ?? "channel_rename takes channel_id and slug",
+```
+
+```1660:1660:supabase/functions/command/index.ts
+        reason: "channel_archive takes channel_id",
+```
+
+Enforcement is the `exactKeys` arrays at `:1589-1590`, `:1630`, `:1653`. The sentences do not come from those arrays. The comment at `:1584-1587` says every refusal sentence is built from the validator constants. That is true for slug/purpose bounds (`:1611`, `channelSlugProblem`). It is false for these field lists.
+
+Slug rule text, reserved names, purpose max, and `unknownChannelMessage` are generated. Those are fine.
+
+## 8. Undirected thread root
+
+**no finding.**
+
+`resolveThreadRoot` reads `swarm.signals` as `swarm_command` (`:6397-6423`). It requires `to_user_id IS NULL`, `to_agent_principal_id IS NULL`, and `in_reply_to IS NULL`, plus workspace and a 1s live floor. A directed id, a missing id, an expired id, and a foreign-workspace id all return the same 404 `thread_root_not_found` (`:6122-6133` in the patch; live `:6422` then the miss path). That does not disclose a directed row. Every undirected live row in the workspace is already readable by every member. No other write path sets `thread_root_id` except `postSignal` from this resolver.
+
+## 9. Tests
+
+I did not run them. Read as source:
+
+`tests/chat-channel-constants.test.ts` can fail: it reads the SQL file and checks the regex and bounds. The `this-is-not-the-pattern` arm is a real negative. It would not pass if the feature were absent (import would fail).
+
+`tests/chat-signal-wire-compat.test.ts` does not call `validateCommand`. It copies `exactKeys` and greps the `modernKeys` assignment (`:148-157`). Folding a chat key into `modernKeys` would fail that grep. Adding `"channel"` as a literal later in the `exactKeys` array would not. The helper tests would still pass. That is a gap, not a green-on-broken control for the measured `modernKeys` trap.
+
+`tests/p1-local/chat-channels-postgres.test.ts` would run under `test:p1-local` if local Supabase is up. The `auth.users` seed matches `standing-grants-postgres.test.ts`. The old-edge probe uses a `TEMP TABLE` `LIKE … INCLUDING DEFAULTS` then `SET NOT NULL` (`:414-436`), so it does not trip over live NULL rows. Arm 2 (`:442-449`) expects `/contains null values/` on the real table after inserting a NULL `channel_id`. That can fail. The delivery test hits the trigger, not `postSignal`; `postSignal` does not insert into `signal_deliveries`, so that is enough. The view scan (`:517-551`) omits `from_principal = auth.uid()`, which the live view does not have. `channel_members` absent is a weak negative.
+
+## 10. chatSignalShapeProblem
+
+**Finding. The edge throws away the refusal sentence. The handler still describes a second rule that the function forbids.**
+
+The function returns a specific sentence (`channels.ts:143-144,172-189`). The edge only tests `=== null` (`command/index.ts:1779-1789`) and then returns `"signal fields are malformed or over their limits"` (`:1828-1830`). A caller never sees “Not both.” or “does not take a channel of its own.”
+
+The handler still says an explicit channel on a thread reply is ignored (`:7626-7630`). The function refuses that pair (`channels.ts:187-189`), so the ignore path is dead. `nullableUuid(threadRootId)` (`:1776`) stays on the caller, which the function’s header allows (`:145-146`).
+
+Pre-existing `working-on` / `in_reply_to` checks in `valid` (`:1744-1758`) overlap the function. They do not contradict it.
+
+---
+
+I did not run the new suites or `pg_get_viewdef` against a live database.
+
+VERDICT: FAIL

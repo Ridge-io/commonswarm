@@ -1,0 +1,14 @@
+diff --git a/docs/design/2026-09-04-chat-platform-reconciled.md b/docs/design/2026-09-04-chat-platform-reconciled.md
+
+1. **exactKeys:** no finding. Adding `channel` to a POST or READ body validates correctly. Adding `thread_root_id` to a POST body that contains `in_reply_to` or `to_agent_principal_id` 400s due to `chatShapeProblem`, but that body would have 400ed before the change anyway because `thread_root_id` was not in `exactKeys`. I could not construct a body that 400s after this change and did not before.
+2. **The view recreations:** `swarm.assert_view_clauses_preserved` passes vacuously for `'from_principal = auth.uid()'` in `supabase/migrations/20260905000002_signal_channel.sql:102` because it checks `IF position(marker IN p_before) > 0 AND position(marker IN after_def) = 0 THEN`. Since this marker is not in the live view yet (as noted in the comment), `position` returns 0 and the loop skips the assertion entirely. Thus, if it's dropped later, the assertion will not catch it during recreation.
+3. **`channel_id` reachable:** `channel_id` is safe. The composite FK in `supabase/migrations/20260905000002_signal_channel.sql:24` uses `MATCH SIMPLE` by default, which accepts NULL `channel_id`. `signals_channel_workspace` includes `workspace_id`, preventing cross-workspace stamping.
+4. **The thread clamp:** no finding. `until` checks are strictly enforced.
+5. **`in_reply_to` is untouched:** no finding. `resolveThreadRoot` correctly prevents a reply from attaching to a directed signal.
+6. **Delivery:** no finding.
+7. **Generated enumerations:** no finding.
+8. **The undirected thread root:** no finding. `resolveThreadRoot` correctly checks `to_user_id IS NULL` and `to_agent_principal_id IS NULL`.
+9. **The tests:** no finding.
+10. **chatSignalShapeProblem:** The rule `(threadRootId === undefined || nullableUuid(threadRootId))` is enforced separately in `validateCommand` (`supabase/functions/command/index.ts:1798`) instead of inside `chatSignalShapeProblem` (`supabase/functions/_shared/channels.ts`) where the rest of the chat field rules live.
+
+VERDICT: FAIL

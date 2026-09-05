@@ -1,0 +1,15 @@
+diff --git a/docs/design/2026-09-04-chat-platform-reconciled.md b/docs/design/2026-09-04-chat-platform-reconciled.md
+
+12. **The purpose bound.**
+I checked `supabase/functions/command/index.ts:838-847`. The logic holds. The string measured is exactly the string stored, because `purpose` is computed first (trimming the sanitized input and coalescing to `null` if empty), then measured against `CHANNEL_PURPOSE_MAX`, and then directly inserted. Thus, the accept/refuse boundary perfectly aligns with the database `CHECK (purpose IS NULL OR char_length(purpose) <= 500)` on every path, and they cannot disagree in either direction.
+
+13. **The model rules in order.**
+Concrete defect found in `supabase/functions/command/index.ts` around line 1898 (in `declare_agent_model`) and line 2018 (in `set_agent_model`). While the rules do break in order (type -> control characters -> length), a body can STILL be told a rule that is not the first one broken. The type check (`typeof cmd.model !== "string"`) is bundled into the same `if (!keysOk || ...)` block that returns `commandFieldsMessage(...)`. If a caller sends exactly the correct keys but breaks the TYPE rule (e.g., `model: 123`), they are refused with the generated sentence ending in `"...and nothing else."`. This tells the caller they sent an extra key (`exactKeys` violation), which is NOT the first rule broken (the type rule). This is exactly the defect that `channel_rename` avoids by splitting the `keysOk` check from the type check.
+
+14. **The generated slug alphabet.**
+I checked `supabase/functions/_shared/channels.ts:73-104`. It holds. `channelSlugPattern()` generates `new RegExp("^[a-z0-9]([a-z0-9-]*[a-z0-9])?$")`, which is byte-for-byte identical to the literal it replaced. It is properly anchored (`^` and `$`). It is safe against a slug containing a regex metacharacter because the slug is merely tested against the pattern, not evaluated as one. Furthermore, the hyphen `-` is safely positioned at the end of the character class `[a-z0-9-]`, avoiding unintentional range operators. The generated sentence reads correctly for one, two, and three classes, as `classList` handles the comma separation and the singular `"or"` logic properly.
+
+15. **Anything the three fixes broke.**
+I checked the set of changes across `supabase/functions/command/index.ts`, `supabase/functions/_shared/channels.ts`, and the test files. The fixes themselves did not break the surrounding validations, but fix (b) for the model control rule simply inherited and exposed the pre-existing defect described in point 13 (bundling the type check and `exactKeys` violation). The new behavioral tests cover the new rules effectively without introducing tautologies.
+
+VERDICT: FAIL

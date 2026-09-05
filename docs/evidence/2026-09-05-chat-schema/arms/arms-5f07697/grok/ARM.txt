@@ -1,0 +1,368 @@
+I'll read REVIEW.md and the patch first, then follow the review instructions exactly.The patch is large. I’ll keep reading it and the files the review names so I can attack each point with real code.I'll pull the rest of the patch, the migrations, and the tests so I can attack the round-5 fixes with real line numbers.I’ll read the remaining source, tests, and the last arm so I can check the round-5 fixes instead of repeating old findings.Round 5 is the typed-list and refusal-order work. I’ll enumerate every validator reason and check those citations against the live lines.Checking one more refusal-order case on `channel_create`, then I’ll write the review.diff --git a/docs/design/2026-09-04-chat-platform-reconciled.md b/docs/design/2026-09-04-chat-platform-reconciled.md
+
+Review of this DIFF against the live files. I did not run Postgres, `pg_get_viewdef`, or the test gates.
+
+## 1. exactKeys
+
+**no finding.** I could not build a body that 400s after this change and did not before.
+
+`chatSignalKeys` returns only keys `Object.hasOwn` already sees (`supabase/functions/_shared/channels.ts:158-162`). An installed post with no chat keys gets `[]`, so the allow list does not grow. `modernKeys` stays `["to_agent_principal_id","in_reply_to"]` (`command/index.ts:1699-1701`). Spread is `...chatKeys` (`:1753`), not a bare `"channel"`.
+
+Installed agent read with `in_reply_to` and no `channel`: `chatReadKeys` returns `[]` (`channels.ts:168-170`). Read `modernShape` is still `in_reply_to` alone (`read/index.ts:229-247`).
+
+## 2. The view recreations
+
+**no finding** that this apply drops, widens, or reorders a `WHERE` arm. I did not run `pg_get_viewdef`.
+
+File 2 splices from the live body (`20260905000002_signal_channel.sql:140-144`). Pattern `(\s)(FROM\s+(?:swarm\.)?signals\s)` does not match `FROM swarm.signal_attachments`: after `signal` comes `_`, not `s`. No `g` flag, so only the first match is replaced. The `!~` guard (`:127-130`) fails closed. `rtrim(body, E' ;\n\t')` (`:145`) only strips the trailing `;` from `pg_get_viewdef`.
+
+`assert_view_clauses_preserved` (`000002:89-94`) fails only when a marker is in `p_before` and gone after. `from_principal = auth.uid()` (`:85`) is still vacuous today. The other four markers sit in `WHERE` only (`s.to_agent_principal_id AS to_agent` does not contain `to_agent_principal_id IS NULL`). A dropped listed arm would raise. A widened `OR` would not.
+
+File 2 then asserts `channel_id` is present (`:168-170`), so a no-op splice cannot commit. See **23**.
+
+## 3. `channel_id` NOT NULL / default / backfill
+
+**no finding.**
+
+`ALTER TABLE swarm.signals ADD COLUMN channel_id uuid` (`000002:19`) — nullable, no `DEFAULT`, no `SET NOT NULL`. Default FK match is `MATCH SIMPLE` (`:21-26`): a NULL `channel_id` does not touch `swarm.channels`. `(channel_id, workspace_id)` pins the tenant. Partial index `WHERE channel_id IS NOT NULL` (`:28-30`) does not force the column. No defaulting trigger. `broadcast_to_channel boolean NOT NULL DEFAULT false` (`000003:26-28`) is a different column; omitting it stays legal.
+
+## 4. Thread clamp (legacy framing)
+
+See **11**, **16**, **22**, **28**. `CHECK (until > created_at)` is held by `GREATEST(..., statement_timestamp() + interval '1 millisecond')` (`command/index.ts:6884-6896`). `until_ms` minimum is 1 (`:1797-1801`). `CHECK (until <= created_at + interval '30 days')` holds: `until_ms` is capped at `SIGNAL_MAX_UNTIL_MS` (`:559`) and `LEAST` only shortens.
+
+## 5. `in_reply_to` is untouched
+
+**no finding.**
+
+`resolveSignalWriteTarget` (`command/index.ts:6608-6678`) does not read `thread_root_id`. Recipients still come from `in_reply_to` or from `to_user_id` / `to_agent_principal_id`. `chatSignalShapeProblem` refuses a non-null `in_reply_to` together with a non-null `thread_root_id` (`channels.ts:248-250`). That runs inside `valid` (`command/index.ts:1815`) before `handleTransaction`. A body with both set never reaches the resolver.
+
+## 6. Delivery
+
+**no finding.**
+
+`swarm.enqueue_signal_delivery` (`20260731000001_signal_deliveries.sql:126-137`) still fires only when `NEW.to_agent_principal_id IS NOT NULL AND NEW.kind IN ('ask', 'note')`. The new INSERT still writes `target.toUserId` / `target.toAgentPrincipalId`. A thread reply cannot carry a recipient (`channels.ts:243-247`). A channel broadcast has `to_agent` null. No new enqueue path. A directed note to an agent that also has `channel_id` still creates one delivery row.
+
+## 7. Generated enumerations
+
+See **24**, **29**, **30**, **32**. Channel field lists, slug max, reserved names, purpose max, thread-kind sentence, and `FEEDBACK_CATEGORIES` / `FEEDBACK_BODY_MAX` are generated. Remaining typed lists that now reach the caller are **30** and **32**.
+
+Read-edge bad slug now rebuilds `channelSlugProblem` into `message` (`read/index.ts:350-368`). That fix holds for a slug-only failure. A body that also fails another parse rule still names the slug — **27**.
+
+## 8. Undirected thread root
+
+**no finding** on disclosure.
+
+`resolveThreadRoot` reads `swarm.signals` as `swarm_command` (`command/index.ts:6453-6486`). It requires `to_user_id IS NULL`, `to_agent_principal_id IS NULL`, and `in_reply_to IS NULL`, plus workspace and a 1s live floor. A directed id, a missing id, an expired id, and a foreign-workspace id all return the same 404 `thread_root_not_found` (`:6489-6501`). Archive is **21**.
+
+## 9. Tests
+
+I did not run them. Read as source.
+
+`tests/chat-channel-constants.test.ts` can fail: it reads the SQL file and checks the regex and bounds. The `this-is-not-the-pattern` arm is a real negative.
+
+`tests/chat-signal-wire-compat.test.ts` does not call `validateCommand`. It copies `exactKeys` and greps `modernKeys` and `...chatKeys`. Folding a chat key into `modernKeys`, or adding `"channel"` as a bare literal, would fail those greps. The helper tests would still pass if `validateCommand` diverged from the copy. The comment at `channels.ts:74-75` says this file pins `CHAT_UUID_RE` to `UUID_RE`. It does not: there is no `UUID_RE` assertion in it. See **25**.
+
+`tests/p1-local/chat-channels-postgres.test.ts` is named in `package.json` `test:p1-local`. Same `auth.users` insert shape as `standing-grants-postgres.test.ts`. It would run under that gate with a local DB slot. Not executed. Discriminating arms: broadcast-vs-directed pair, delivery 0 with directed-agent 1, cross-tenant FK in a savepoint, append-only UPDATE in a savepoint, old-edge INSERT omitting `channel_id`, `SET NOT NULL` expecting `contains null values`. The view scan cannot fail a widened `WHERE`. Cross-tenant thread insert (`:498-513`) is still not in a savepoint; no later SQL in that test, so it still works.
+
+`tests/p1-server/chat-signals.test.ts` is under **19**.
+
+## 10. chatSignalShapeProblem
+
+**no finding** on a split uuid check. The edge copy of `nullableUuid(threadRootId)` is gone. The function is called for every `post_signal` (`command/index.ts:1733-1743,1815`). Channel existence, archive, and the clamp are not shape rules.
+
+Wrong-rule priority is **27**.
+
+## 11. The clamp's clock
+
+No JS `Date.now()` in the decision. `remaining_ms` comes from Postgres (`command/index.ts:6454-6455`). Explicit `until` is `statement_timestamp() + untilMs` with no `LEAST` (`:6885-6886`). Remaining issues are **22** and **28**.
+
+## 12. `commandFieldsMessage`
+
+Channel commands: **no finding.** Each declares one `required` / `optional` pair and passes that pair to both `exactKeys` and `commandFieldsMessage` (`command/index.ts:1595-1606,1636-1649,1663-1672`). Grammar: 1 required → `channel_archive takes channel_id.`; 2 required → `channel_rename takes channel_id and slug.`; 1 required + 1 optional → `channel_create takes slug, and optionally purpose.`
+
+**Finding. `submit_feedback`, `declare_agent_model`, and `set_agent_model` still type the field list twice.**
+
+`submit_feedback` builds `required` for the sentence (`:1925-1928`) and a *different* literal list for `exactKeys` (`:1930-1931`). The sentence array cannot be spread into `exactKeys` because it decorates the key as `` `category (${feedbackCategoryList()})` ``. Adding a field to one list does not change the other.
+
+`declare_agent_model` / `set_agent_model` pass `["model (text or null)"]` / `["principal_id", "model (text or null)"]` into the generator (`:1891,2005-2008`) while `exactKeys` reads `["kind", "model"]` / `["kind", "principal_id", "model"]` (`:1885,1997`). The parenthetical is not a key. See **29**.
+
+## 13. `chatShapeProblem` as the 400 reason
+
+**no finding** on existence leak. The function does not query.
+
+`post_signal` is now gated on `baseValid` (`command/index.ts:1856-1858`). A body with `signal_kind: "nope"` and a `thread_root_id` gets the generic malformed reason, not the thread-kind sentence. That fix holds. Remaining wrong-rule bodies are **27**.
+
+## 14. `AND in_reply_to IS NULL` on the thread root
+
+**no finding.**
+
+`resolveSignalWriteTarget` re-addresses every stored `in_reply_to` row to the referenced author (`command/index.ts:6672-6678`). Those rows have a recipient, so `to_user_id IS NULL AND to_agent_principal_id IS NULL` already excludes them. A legal top-level undirected message has `in_reply_to` null and still matches.
+
+## 15. Migration idempotency
+
+**no finding** on first apply.
+
+`CREATE UNIQUE INDEX IF NOT EXISTS signals_id_workspace` (`000003:37-38`) is the object that already exists. Everything else in the three files is a new name or `CREATE OR REPLACE`. `ADD CONSTRAINT` without `IF NOT EXISTS` is safe because those constraint names are new. Re-running an already-recorded file is not what `migration up` does.
+
+## 16. The atomic clamp (round 3 framing)
+
+The old `WHERE untilExplicit = false OR ...` hole is gone. `WHERE` now tests `candidate.until_value` for both branches (`command/index.ts:6927-6929`). Zero rows with a ceiling maps to 409 (`:6947`). `RETURNING` on `INSERT … SELECT … WHERE` is empty when `WHERE` is false; `rows[0]` is undefined. The explicit CASE stores `now+untilMs` with no `LEAST`; the defaulted CASE uses `LEAST`. `GREATEST` cannot store a row past the root: `until_value > ceiling` is refused. The sentence on that 409 is **28**.
+
+## 17. `message` in the 400 body
+
+**no finding** on a leak of another tenant's data, a token, an id the caller did not supply, or the existence of a row.
+
+`validateCommand` takes the decoded command body only (`:1468-1470`). No `tx`, no auth, no route. It runs before `resolveRoute`. Reasons interpolate caller-supplied kind/slug/bounds, not database values. `unknownChannelMessage` listing live slugs is after `resolveRoute`, as a member. Typed field lists are **30**.
+
+Installed clients ignore unknown top-level fields (`src/cloud/signals.ts:315-326`). The `error` code is unchanged. The blast is real; it is not a leak.
+
+## 18. Collapsed kind set
+
+**no finding** on behaviour.
+
+`SIGNAL_KINDS = ["working-on", "note", "ask"]` (`channels.ts:37`). Read is `new Set<string>(SIGNAL_KIND_LIST)` (`read/index.ts:26`) vs the old `new Set(["working-on", "note", "ask"])`. Same three strings. `has` / `includes` do not change.
+
+The generated sentence is **24**.
+
+## 19. `tests/p1-server/chat-signals.test.ts`
+
+Read as source. Would run under `test:p1-server` (glob). I did not execute it.
+
+The clamp test does discriminate the two branches it names. A defaulted note is 30 days. Against a 90s root, `defaultedUntil <= rootUntil` fails if the clamp is absent. `until_ms: 10*60_000` and `until_ms: 95_000` expect 409; without the refusal they are 200. `fitsUntil - created === 30_000` with 30s inside a 90s window does **not** distinguish "store exact" from `LEAST(requested, ceiling)`: both store 30s. The 95s arm is the one that catches a silent shorten. It cannot fail **28**: 30s vs ~90s remaining is 60s of slack, outside the inter-statement band.
+
+Directed-root hijack would 200 if the SQL arms were deleted. Same message as a missing id. That control can fail.
+
+Archive-then-reply would 200 if the JOIN were deleted. The unfiled-root control can fail.
+
+`/a note or an ask/` and `doesNotMatch(/a ask/)` can fail.
+
+The new "first rule broken" test (`signal_kind: "nope"` + `thread_root_id` expects the generic reason) can fail if `baseValid` is dropped.
+
+## 20. The rebase
+
+No extra `20260905` migration from another lane. File order `000001` → `000002` → `000003` sits after `20260904000002`. Nothing in the runtime DIFF belongs to another lane.
+
+**Finding. Citations this DIFF remapped are in 31. Citations it did not remap still point at the wrong lines.**
+
+| Cite this DIFF leaves in place | Claims | What is at that line | Real site |
+|---|---|---|---|
+| `acceptable-use.astro:31` `index.ts:3347` | `incrementRateBucket` / `date_trunc('hour')` | `grant_preflight_code` (`:3359`) | `incrementRateBucket` at `:4783` (`date_trunc` at `:4792`) |
+| `acceptable-use.astro:34` `index.ts:333` | `INVITATION_MAX_TTL_MS` | `type ConnectCommand` region | `:550` |
+| `acceptable-use.astro:35` `index.ts:334` | `AGENT_TOKEN_MAX_TTL_MS`, "<= 24 hours" | same | `:555`, and the constant is **30 days**, not 24 hours |
+| `terms.astro:70` `index.ts:2342` | `incrementSignalBucket` | `stateFromRow` (`:2341`) | the function is now `incrementRateBucket` at `:4783` |
+| `privacy.astro:16` `index.ts:3205` | `identityVerified` from `email_confirmed_at` | `loadRenewalFacts` (`:3207`) | `:9140-9141` |
+
+A reader who follows any of those pointers reads unrelated code. The new registrations do not cover them.
+
+## 21. The archive check
+
+**no finding** on the sequential path. I could not land a reply in an archived channel without a race.
+
+`resolveThreadRoot` LEFT JOINs `swarm.channels` (`command/index.ts:6459-6461`) and refuses on `channel_archived_at !== null` (`:6509-6521`). A root with `channel_id` NULL does not match the JOIN, so `channel_archived_at` is NULL and the root still resolves. The 404-vs-409 split does not leak a directed row: directed roots are filtered in SQL and still get `thread_root_not_found`. 409 only fires after a live undirected row in this workspace was found; that row is already readable by every member.
+
+Theoretical: READ COMMITTED TOCTOU. `resolveThreadRoot` sees not-archived; another transaction archives; `postSignal` does not re-check `archived_at`. Same-transaction sequential create → post → archive → reply is covered by the p1-server test.
+
+## 22. The clamp, third attempt
+
+A stored row cannot outlive its root: `until_value > ceiling` is refused (`command/index.ts:6927-6929`). `statement_timestamp()` is stable inside one statement, so the CTE and the WHERE agree. Handler mapping is correct now that the ceiling, not explicitness, is the condition: defaulted GREATEST-past-ceiling also 409s (`:6941-6947`).
+
+The early check is `command.until_ms > rootRemainingMs` (`:7783`), using `remaining_ms` from the previous `SELECT`. The INSERT `WHERE` uses `statement_timestamp()` of the INSERT. Those are different statements. An explicit `until_ms` in `(remaining_at_insert, remaining_at_select]` skips the early arm and 409s on the atomic arm. Width is one SQL round-trip. The sentence on that 409 is **28**.
+
+## 23. File 2 now splices from `pg_get_viewdef`
+
+**no finding** that the second splice mis-handles what the first produced. I did not run `pg_get_viewdef`.
+
+After file 2 the live body has `s.channel_id` immediately before `FROM (swarm.)?signals`. File 3's same pattern matches that same boundary and inserts the two thread columns after `channel_id`. `CREATE OR REPLACE VIEW` may add columns only at the end; that is the order produced.
+
+File 2's "already applied" guard is `position('channel_id' IN live_def) > 0` (`000002:131-134`). File 3 requires `channel_id` to be present (`000003:95-98`). `channel_id` does not appear in the live select list or WHERE before file 2. A second apply of file 2 fails first on `ADD COLUMN`, not on the guard. Session GUC `swarm.signals_view_before` is cleared at the end of file 2 (`:159`) and set again in file 3.
+
+## 24. The generated article
+
+**no finding** for the current kind set.
+
+`indefiniteArticle` (`channels.ts:45-47`) + `THREAD_REPLY_KINDS` (`:50-52`) currently yield `A working-on signal cannot be a thread reply. Reply with a note or an ask.` 1 kind would be `Reply with a note.` 3+ would be `a x or a y or a z` (no commas). No kind currently starts with a vowel except `ask`, which gets `an`. Other new sentences: **29**, **30**, **32**.
+
+## 25. `CHAT_UUID_RE` vs `UUID_RE`
+
+**no finding** on a uuid that one accepts and the other refuses. The three regexes are the same characters:
+
+```
+/^[0-9a-f]{8}-[0-9a-f]{4}-[1-8][0-9a-f]{3}-[89ab][0-9a-f]{3}-[0-9a-f]{12}$/i
+```
+
+(`channels.ts:76-77`, `command/index.ts:576-577`, `read/index.ts:24-25`). Nil uuid `00000000-0000-0000-0000-000000000000` is refused by both (version nibble `0`). The edge no longer has a duplicate `nullableUuid` check on `thread_root_id`. The comment that `tests/chat-signal-wire-compat.test.ts` pins the two together is still false; that is a missing control, not a current accept/refuse split.
+
+## 26. The three p1-server `{error: "invalid_request"}` pins
+
+**no finding** that those three were a deliberate no-detail claim.
+
+1. `tests/p1-server/command.test.ts:1265-1273` — claim is about audit rows after authenticated validation. Still requires `error === "invalid_request"` and a non-empty `message`.
+2. `:3983-3988` — claim is that an over-long invite TTL is refused. Still 400 `invalid_request`.
+3. `:4691-4696` — claim is that renewal accepts no caller-selected target. Now pins the exact sentence. Stronger, not weaker.
+
+Returning `message` is the right call for these three.
+
+---
+
+## 27. Refusal ordering
+
+`post_signal`: **no finding.** `baseValid` now includes kind, body, recipients, `about`, `until_ms`, and attachments (`command/index.ts:1755-1809`). Concrete body `{signal_kind:"nope", thread_root_id:<uuid>, …modern pair}` has `keysOk` true and `chatShapeProblem` non-null, but `baseValid` is false, so the caller gets `"signal fields are malformed or over their limits"` (`:1856-1858`), not the thread-kind sentence. That is the round-4 fix and it holds.
+
+`channel_create`: **no finding** on extra-key vs slug. `keysOk` false wins (`:1600-1607`), so `{kind:"channel_create", slug:"Not A Slug", extra:1}` names the field list, not the slug rule.
+
+**Finding. `channel_rename` and `channel_archive` name the field list when the fields are present and the UUID is wrong.**
+
+`channel_archive` (`:1662-1673`):
+
+```json
+{"kind":"channel_archive","channel_id":"not-a-uuid"}
+```
+
+`exactKeys` passes. `UUID_RE` fails. Reason: `channel_archive takes channel_id.` The caller sent `channel_id`. The broken rule is UUID shape.
+
+`channel_rename` (`:1640-1649`):
+
+```json
+{"kind":"channel_rename","channel_id":"not-a-uuid","slug":"mobile"}
+```
+
+`shapeOk` is false because of the UUID. Reason: `channel_rename takes channel_id and slug.` Same lie.
+
+`channel_rename`'s comment (`:1637-1639`) only ordered extra-key vs slug. Invalid UUID was folded into "shape" and reuses the field-list sentence.
+
+Related, not in the three commands: the read edge rebuilds the slug sentence whenever `parseBody` is null and `channel` is present (`read/index.ts:361-368`). A body with `channel:"Not A Slug"` *and* `kind:"nope"` (or an extra key) is told the slug rule. `post_signal`'s `baseValid` gate was not copied there.
+
+## 28. The horizon sentences
+
+Early arm (`command/index.ts:7797-7799`):
+
+> A reply cannot outlive the message its thread starts from. That thread ends at ${rootUntil.toISOString()}. Ask for a shorter horizon, or leave it out and it is set for you.
+
+This fires only when `command.until_ms > rootRemainingMs` (`:7783`) after a root that still has `until > now+1s` (`:6485`). The ISO is the root's `until`. **"ends at" is true. The thread has not ended.** "Leave it out" clamps. **no finding** on this arm. Naming the ISO is right: the comment at `:7777-7782` says this arm exists to put the expiry in the message.
+
+Atomic arm (`:7854-7855`):
+
+> A reply cannot outlive the message its thread starts from, and the horizon you asked for no longer fits the time that thread has left. Ask for a shorter one, or leave it out and it is set for you.
+
+Same error code. No ISO in the sentence; `root_until` is a sibling field (`:7856`). For an explicit horizon that fit at SELECT and not at INSERT, "the horizon you asked for no longer fits" is true. Naming none in the sentence is weaker than the early arm but the field is there.
+
+**Finding. The atomic sentence is false for a defaulted reply.**
+
+The handler comment states the 409 is reachable on **both** paths (`:6941-6944`): `GREATEST` can raise a defaulted value past the ceiling when a stall eats the 1s floor. `untilExplicit` is `command.until_ms !== undefined` (`:7826`). A defaulted note does not set `until_ms`. Zero rows still return null (`:6947`) and the caller still gets `:7854-7855`.
+
+On that path:
+
+- "the horizon you asked for" is false. They asked for none.
+- "leave it out and it is set for you" is what they already did.
+
+Reachable if the two statements are more than ~1s apart. Theoretical under a healthy event loop. The authors documented the path and then wrote a sentence that only fits the explicit branch.
+
+The comment at `:7851-7853` also claims the sentence says "here is what the thread runs to". The sentence does not. The ISO is only in `root_until`.
+
+## 29. `FEEDBACK_CATEGORIES` and `commandFieldsMessage`
+
+Feedback sentence (`command/index.ts:1925-1942` + `channels.ts:296-310`):
+
+`submit_feedback takes feedback_id, category (bug|idea|friction) and body, and optionally context.`
+
+Accurate English. `bug|idea|friction` comes from `feedbackCategoryList()` (`channels.ts:292-294`). **Context is still named as optional.** 3-item grammar is `a, b and c` (no Oxford comma). Fine.
+
+**Finding. The model-command sentences dropped "and nothing else" and no longer say extra keys are refused.**
+
+Old: `declare_agent_model takes model (text or null) and nothing else`.
+New (`:1891`): `declare_agent_model takes model (text or null).`
+
+Old: `set_agent_model takes principal_id and model (text or null) and nothing else`.
+New (`:2005-2008`): `set_agent_model takes principal_id and model (text or null).`
+
+`exactKeys` still refuses extra keys (`:1885,1997`). "Takes X" names a requirement, not an exclusive set. A body `{kind:"declare_agent_model", model:"x", extra:1}` is told a sentence that looks like a type error on `model`. The exclusivity the old wording carried is gone. `renew_agent_token accepts no caller-selected fields` (`:1872`) still says it; these two do not.
+
+The same sentence is reused when `boundedText(normalized, 120)` fails (`:1901-1906,2013-2020`). That path is a length bound, not a field list. Pre-existing shape, now generated from the wrong array.
+
+## 30. Remaining typed lists that are now user-facing
+
+Every `validateCommand` `reason` now reaches the 400 `message`. Enumerated:
+
+| Reason | Lists something enforced? | Generated? |
+|---|---|---|
+| `invalid command shape` / `unknown command kind` | no | — |
+| `claim_agent_inbox fields are malformed` | no (bound `DELIVERY_CLAIM_MAX_LIMIT` unstated) | — |
+| `ack_agent_delivery fields are malformed` | no (`DELIVERY_ACK_OUTCOMES` unstated) | — |
+| `signals_seen accepts 1..${SIGNALS_SEEN_MAX_IDS} signal ids` | the bound | yes |
+| channel field lists / slug rule / reserved / purpose max | fields, charset+max, names, max | fields/max/names yes; **slug charset typed** in `CHANNEL_SLUG_RULE_TEXT` (`channels.ts:87-88`) vs `CHANNEL_SLUG_RE` |
+| chat sentences | kinds, both-fields, etc. | yes (`THREAD_REPLY_KINDS`, `indefiniteArticle`) |
+| `signal fields are malformed or over their limits` | no (`SIGNAL_BODY_MAX`, `about <= 500`, `SIGNAL_MAX_UNTIL_MS` unstated) | — |
+| `client-supplied from is forbidden` | no | — |
+| `renew_agent_token accepts no caller-selected fields` | empty set | typed, accurate |
+| `declare_agent_model` / `set_agent_model` field lists | fields + `(text or null)` | **typed twice, see 12/29** |
+| `submit_feedback` field list | fields + categories + optional context | categories yes; **field names duplicated vs exactKeys** |
+| `feedback body must be 1..${FEEDBACK_BODY_MAX} characters; newlines and tabs are fine, other control characters are not` | bound + allowed class | bound yes; **character class typed** against the regex at `:1949` |
+| `feedback context must be a flat object of strings` | no | — |
+| `feedback context must be a flat object of bounded strings` | "bounded" | **64 / 512 typed in the check (`:1966-1967`), absent from the sentence** |
+| `feedback context must serialize to at most 2048 bytes` | the bound | **typed — 32** |
+| `revoke_*` / `archive_workspace` / `remove_member` / `invite fields are malformed` / `invitation token is malformed` / `principal name is malformed` / `mint_agent_token fields are malformed or out of bounds` / `task_id must be a UUID` / `command fields are malformed or out of bounds` / `event payload too large` | no (`INVITATION_MAX_TTL_MS`, `AGENT_TOKEN_MAX_TTL_MS`, `MAX_TTL_MS`, `DISPOSITIONS`, `MAX_EVENT_PAYLOAD_BYTES` unstated) | — |
+| file-command `… fields are malformed` | no | — |
+
+Highest-value leftovers: the 2048 sentence (**32**), the model "nothing else" drop (**29**), `submit_feedback`'s split arrays (**12**), slug charset in `CHANNEL_SLUG_RULE_TEXT`.
+
+## 31. The citation registrations
+
+The DIFF adds eight entries, not six. Two agent-connect pointers plus six published-policy ones. I read each range.
+
+| citedBy | range | `contains` in range? | Range is the thing the prose claims? |
+|---|---|---|---|
+| mint device binding | `2933-2945` | yes, `FROM swarm.devices` at `:2936` | yes — `mintBindingsValid`'s device query |
+| scope check `post_signal` needs | `7283-7288` | yes, `:7283` | yes — the `scopes.includes` gate |
+| privacy GitHub | `9125-9141` | yes, `metadata?.full_name` at `:9126` | yes — display-name fallback |
+| privacy audit ip | `1370-1385` | yes, column list at `:1375` | **no** |
+| privacy COMMAND_KINDS | `839` | yes | the declaration, yes; the citing **list of kinds is stale** (this lane added `channel_*` and the comment still names the pre-channel set) |
+| workspace cap | `659` | yes | yes — `FREE_TIER_WORKSPACE_LIMIT = 10` |
+| signal rate caps | `564-565` | `SIGNAL_CREDENTIAL_LIMIT` at `:565` | **no** |
+| files.ts TTL | `555` | yes | yes — `AGENT_TOKEN_MAX_TTL_MS` |
+
+**Finding. Two registrations pin the wrong slice.**
+
+1. **Audit ip.** `privacy.astro:34` cites `index.ts:1373, :1388` for "names `ip` in the INSERT column list — then writes a literal NULL". Live:
+
+```1373:1389:supabase/functions/command/index.ts
+      credential_kind, credential_id, device_id,
+      command_kind, workspace_id, stream_id,
+      outcome, reason, detail, request_hash, ip
+    ) VALUES (
+      ...
+      ${audit.hash ?? null},
+      NULL
+```
+
+`ip` in the column list is `:1375`, not `:1373`. The literal `NULL` is `:1389`, **outside** the registered `[1370, 1385]`. The test `contains` is the column list, so it stays green if someone starts writing the IP. The load-bearing half of the claim is unpinned. The comment's own numbers are both wrong.
+
+2. **Rate caps.** `terms.astro:68-69` and `acceptable-use.astro:29-30` cite `SIGNAL_CREDENTIAL_LIMIT` at `:564` and `SIGNAL_WORKSPACE_LIMIT` at `:565`. Live:
+
+```564:566:supabase/functions/command/index.ts
+};
+const SIGNAL_CREDENTIAL_LIMIT = 120;
+const SIGNAL_WORKSPACE_LIMIT = 1000;
+```
+
+`:564` is `};` closing `SIGNAL_DEFAULT_UNTIL_MS`. Credential cap is `:565`. Workspace cap is `:566`, **outside** `[564, 565]`. The test `contains` only `const SIGNAL_CREDENTIAL_LIMIT`, so it cannot see the workspace cap move. A reader following `:564` / `:565` as written reads the previous constant's closer, then the credential cap labelled as the workspace cap.
+
+A registration that pins the wrong line is worse than none. Leftovers this DIFF never registered are **20**.
+
+## 32. Other typed bounds in wire-visible reasons
+
+The body bound is now `FEEDBACK_BODY_MAX`. The sibling bound was not moved with it.
+
+**Finding.** `src/protocol/workspace-commands.ts:518` already has `FEEDBACK_CONTEXT_MAX_BYTES = 2_048` and builds the sentence from it (`:568-569`). The edge still types the number twice in one expression:
+
+```1974:1975:supabase/functions/command/index.ts
+        if (new TextEncoder().encode(JSON.stringify(flat)).length > 2048) {
+          return { ok: false, status: 400, reason: "feedback context must serialize to at most 2048 bytes" };
+```
+
+This is the same shape as the body bound this round pulled into a constant: check and sentence share a literal, user-facing the moment `validation.reason` went on the wire. A change to `FEEDBACK_CONTEXT_MAX_BYTES` updates the reducer and not this 400.
+
+Same family, weaker: `key.length > 64` and `entry.length > 512` (`:1966-1967`) with sentence `"bounded strings"` (numbers unstated); `cmd.about.length <= 500` (`:1793`) with the generic malformed reason (500 unstated); `CHANNEL_SLUG_RULE_TEXT` types the character class next to a generated max (`channels.ts:87-88`).
+
+I did not run the new suites or `pg_get_viewdef` against a live database.
+
+VERDICT: FAIL

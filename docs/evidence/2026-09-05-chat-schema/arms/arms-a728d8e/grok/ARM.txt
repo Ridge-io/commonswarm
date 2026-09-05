@@ -1,0 +1,71 @@
+I'll read REVIEW.md and DIFF.patch first, then follow REVIEW.md exactly.The first `diff --git` line is present. Next I’ll read the rest of the patch and the files the review targets.I'll keep reading the rest of the patch and the source files the attack list names.The stalled ARM is empty. I’ll keep reading the rest of the patch, then attack each REVIEW.md point against the source.I’ll read the rest of the tests and the live command/read paths, then walk every refusal in order.I’ll inspect the live view body, the feedback normalizers, post_signal validation, and the default-until constants.I’ll confirm the purpose-length check against trim, and check the SHA this review is bound to.The purpose-length check is applied before trim. I’ll confirm that path in the validator, then write the review.diff --git a/docs/design/2026-09-04-chat-platform-reconciled.md b/docs/design/2026-09-04-chat-platform-reconciled.md
+
+Bound to `a728d8e2272c2d3ff0dcb9f2178afd1cd794fb36` (`lane/chat-schema`). I read the patch, the live files, and the design. I did not re-run the Postgres suites.
+
+1. **exactKeys.** Holds. `chatSignalKeys` / `chatReadKeys` only add a key that `Object.hasOwn` already saw (`channels.ts:173-185`, spread at `command/index.ts:1755-1765` and `read/index.ts:239-247`). An installed post `{kind, signal_kind, body, to_user_id, about, to_agent_principal_id, in_reply_to}` gets `chatKeys = []`, so the allow-list is the pre-change list. An agent read that always sends `in_reply_to` and never `channel` gets `channelKeys = []`. Folding `channel` into `modernKeys` would 400 those bodies; that did not happen. I could not construct a body that validated before this change and 400s after.
+
+2. **The two view splices.** Holds. Both files snapshot `pg_get_viewdef` and `regexp_replace` the first `(\s)(FROM\s+(?:swarm\.)?signals\s)` (`20260905000002_signal_channel.sql:140-145`, `0003:99-103`). The live body from `20260901000010_signal_attachments.sql:81-133` has one such FROM (the attachments subquery is `signal_attachments`). No `'g'` flag, so only that match is rewritten; the WHERE text is not touched, so it cannot drop, widen, or reorder a WHERE arm. `assert_view_clauses_preserved` (`0002:55-95`) is vacuous for `from_principal = auth.uid()` until that fragment exists in `p_before`. That does not matter here: a missing clause cannot be dropped, and once L6 adds it, later recreations carry it in the snapshot. It still cannot catch a widened predicate; this lane does not change predicates.
+
+3. **`channel_id` reachable as NOT NULL, defaulted, or backfilled.** Holds. `0002:19` is `ADD COLUMN channel_id uuid` with no DEFAULT and no backfill. The old-edge INSERT that omits the column is tested (`chat-channels-postgres.test.ts` “the edge that predates this migration”). `broadcast_to_channel boolean NOT NULL DEFAULT false` (`0003:26-27`) is the documented contrast, not `channel_id`. Placement inserts `null` when no slug is sent (`command/index.ts:1336`, `6890`).
+
+4. **The clamp.** Holds for the three questions. The CTE computes one `until_value` and the WHERE tests that same value on both branches (`command/index.ts:6888-6933`). A stored row cannot outlive the JS ceiling: `until_value <= untilCeiling`. A defaulted reply with remaining > 1s becomes `LEAST(default, ceiling)`, which is `<= ceiling`, so it is not refused. `GREATEST(..., now + 1ms)` keeps `CHECK (until > created_at)`. `CHECK (until <= created_at + interval '30 days')` still holds: the note default is exactly 30 days and a clamp only shortens. The stall path that eats the 1s margin can refuse a defaulted reply rather than write past the root; that is the intended 409, not a 500. Caveat: `untilCeiling` is `rootUntil.toISOString()` (`command/index.ts:7827`), a millisecond Date, not the Postgres microsecond `timestamptz`. Truncation goes *under* the root, so a row still cannot outlive it.
+
+5. **Refusal ordering, final pass.** Defect on `channel_create`. Purpose length is measured on `sanitizeSignalText(rawPurpose)` *before* the trim the insert uses (`command/index.ts:1612-1628`). Same file already trims `declare_agent_model` before the bound (`:1907-1918`) for this class of miss.
+
+Exact body:
+
+```json
+{ "kind": "channel_create", "slug": "okslug", "purpose": "<500 x's plus one trailing space>" }
+```
+
+That is `"x".repeat(500) + " "` (also `"\n"` or `"\t"`). I ran the sanitizer: sanitized length 501 → 400 `"A channel purpose is at most 500 characters."` Stored form after the same `sanitize + trim` is 500 `x`s, which the CHECK `char_length(purpose) <= 500` accepts. `{ "purpose": " ".repeat(501) }` is worse: stored form is `null` (omit purpose), still 400 for length.
+
+The caller is told a length rule the persisted value does not break. The new type-vs-length split (`purpose: 123` vs `"x".repeat(501)`) does not cover this.
+
+6. **Generated enumerations.** Named sentences that describe a set or bound without deriving it:
+
+- `CHANNEL_SLUG_RULE_TEXT` (`channels.ts:102-103`): `CHANNEL_SLUG_MAX` is interpolated; the character class (“lowercase letters, digits and hyphens…”) is typed prose for `CHANNEL_SLUG_RE`. A regex change would leave the sentence behind. The SQL pattern is pinned (`chat-channel-constants.test.ts`); the English is not.
+- `CHANNEL_ID_RULE_TEXT` (`channels.ts:87`): typed “must be a UUID”, not built from `UUID_RE`.
+- `"thread_root_id is the id of the message the thread starts from."` (`channels.ts:229`): a malformed id is not told it must be a UUID.
+- `"broadcast_to_channel is true or false."` / `"A channel purpose is text."`: typed, acceptable for a type.
+- Purpose length sentence is generated from `CHANNEL_PURPOSE_MAX`, but applied to the wrong string (point 5).
+- Thread-kind, reserved slugs, `commandFieldsMessage`, `unknownChannelMessage`, `THREAD_REPLY_KINDS` map: generated.
+
+`MODEL_RULE_TEXT` as a documented hand copy of 120: I agree it is the right *number* while `normalizedModel` stays unexported. I disagree that stopping there is enough in this lane. This same lane exported `normalizedFeedbackBody` / `normalizedFeedbackContext`. `boundedText` also runs `CONTROL_RE` (`command/index.ts:1426-1434`, `:583-584`). A 10-character model with a control character now gets `MODEL_RULE_TEXT` (“at most 120 characters”), which is the length rule, not the control-character rule. Out of the point-10 function list; still a sentence this lane put on the wire.
+
+6b. **Feedback normalizer.** Reject set is the same (trim, 1..4000, same body class, same context key/value bounds, same 2048-byte serialize, empty object → null). Observable change is the *sentences*: control characters in context are no longer folded into “bounded strings”; body empty / over-length / controls are three messages instead of one. That is what the call was for. No other accept/reject change.
+
+7. **Thread roots.** Holds, and not an oracle for private ids. `resolveThreadRoot` reads `swarm.signals` as `swarm_command` (`command/index.ts:1410-1451`), workspace-scoped, with `to_user_id IS NULL AND to_agent_principal_id IS NULL AND in_reply_to IS NULL AND until > now + 1s`. Directed, private-reply, expired, and cross-workspace all miss the SELECT and share `404 thread_root_not_found` with the same sentence (`:1454-1466`). Archived-channel is `409` after a hit (`:1474-1487`); archive is public. A reply used as a root is `400 thread_root_is_a_reply` (`:1488-1500`); thread replies are undirected, so that id is already public.
+
+8. **Delivery.** Holds. `enqueue_signal_delivery` still fires only when `NEW.to_agent_principal_id IS NOT NULL AND kind IN ('ask','note')` (`20260731000001_signal_deliveries.sql:126-137`). These migrations do not touch that trigger. A channel post is undirected → no row. A thread reply cannot carry a recipient (`channels.ts:274-278`) → no row. `broadcast_to_channel` does not set a recipient. A directed note to an agent *with* a channel still creates one row (positive control in both Postgres suites).
+
+9. **The tests.** I did not re-run the 26+130 Postgres tests; I only read them.
+
+Cannot fail / weak:
+
+- Purpose length in `chat-signals.test.ts:672-678` uses `"x".repeat(501)`. That is over-length even after trim, so it stays green with the point-5 bug in place.
+- `the thread root lookup still refuses a directed root in SQL` is a source grep; the behavioural control is the p1-server directed-root test, which *can* fail.
+- `neither horizon refusal claims the thread ended` is a grep for that phrase; a new synonym would pass.
+- Several wire-compat tests are greps; they have negative controls, but they do not execute SQL.
+
+Can fail: wire-compat `exactKeys` copy with an unknown-key control; old-edge INSERT vs `SET NOT NULL` probe; delivery 0/1 pair; defaulted `until === rootUntil` against a 90s root and a 30-day note default.
+
+10. **Refusal order, exhaustively.**
+
+`chatSignalShapeProblem` (`channels.ts:209-289`), in order: (1) `thread_root_id` present and not a `CHAT_UUID_RE` string → uuid sentence; (2) `broadcast_to_channel` present and not boolean → “true or false”; (3) valid thread root and non-null `channel` → “does not take a channel of its own”; (4) non-null `channel` slug → `channelSlugProblem`; (5) thread + kind not in `THREAD_REPLY_KINDS` → generated kind sentence; (6) thread + recipient → no recipient; (7) thread + `in_reply_to` → “Not both”; (8) `broadcast === true` without a root → needs `thread_root_id`. Shape before meaning holds for `{thread_root_id:"not-a-uuid", channel:"mobile"}` (uuid, not channel). `{channel:"Not A Slug", broadcast_to_channel:true}` hits the slug rule before “needs a thread”; that is shape before meaning, not a miss.
+
+`post_signal` validator: `from` first (pre-existing). Then `valid = baseValid && chatShapeProblem === null`; the chat sentence is used only when `baseValid` (`command/index.ts:1826-1869`). `{signal_kind:"nope", thread_root_id:<uuid>}` stays generic. Runtime after that: write-target → attachments → channel 404/409 → thread 404/409/400 → early explicit-until 409 → atomic WHERE 409. A thread reply cannot also send a slug, so channel and thread runtime paths do not compete.
+
+`channel_create`: keys → slug → purpose type → purpose length. Keys-before-slug holds. Type-before-length holds for `purpose: 123`. Length-before-trim does **not** hold: body in point 5.
+
+`channel_rename`: keys → uuid → slug. `{channel_id:"not-a-uuid", slug:"Not A Slug"}` is told `CHANNEL_ID_RULE_TEXT`, not the slug rule. Holds.
+
+`channel_archive`: keys → uuid. Holds.
+
+11. **The two strengthened tests.** The uuid-first test (`chat-signal-wire-compat.test.ts:3523-3567` and `chat-signals.test.ts:643-660`) cannot pass if meaning runs first: `{thread_root_id:"not-a-uuid", channel:"mobile"}` would match “does not take a channel” and miss `/thread_root_id is the id/`. The nil-uuid arm is the same shape by another route.
+
+`until === rootUntil` (`chat-signals.test.ts:468-494`): not flaky at one millisecond. Both sides are `Date.parse` of `Date.toISOString()`. `untilCeiling` is that ISO string, so a defaulted 30-day note against a 90s root is clamped to the JS view of the root and matches. A legitimate defaulted reply does not differ by 1ms at this granularity. It would go red if the 30-day default were stored, or if the clamp overshot by ≥1ms (the old `<=` miss). It cannot see a sub-ms under-clamp from the ISO round-trip. Gemini’s claim that `LEAST` preserves microseconds is false.
+
+The purpose-type body in that same test does not protect the trim miss in point 5.
+
+VERDICT: FAIL

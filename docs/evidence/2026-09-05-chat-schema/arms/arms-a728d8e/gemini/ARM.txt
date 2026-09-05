@@ -1,0 +1,27 @@
+diff --git a/docs/design/2026-09-04-chat-platform-reconciled.md b/docs/design/2026-09-04-chat-platform-reconciled.md
+
+1. **exactKeys:** I checked `exactKeys` in both `command/index.ts` and `read/index.ts`. Every new optional chat key (`channel`, `thread_root_id`, `broadcast_to_channel`) is added to the `exactKeys` allowed list via `chatSignalKeys` and `chatReadKeys` conditionally, based on its presence in the payload (`Object.hasOwn`). If an installed client sends an old body lacking these keys, the allowed list evaluates identically to the pre-change list, so `keysOk` is `true` and it validates. Agent read bodies sending `in_reply_to` see an empty `channelKeys` array and validate correctly. The claim holds; no previously valid body will 400.
+
+2. **The two view splices:** I checked `20260905000002_signal_channel.sql` and `20260905000003_signal_threads.sql`. The `regexp_replace` uses `FROM swarm.signals ` to splice the new columns into the `SELECT` list, leaving the trailing `WHERE` clause untouched. It cannot drop, widen, or reorder a `WHERE` arm. `swarm.assert_view_clauses_preserved` checks for exact substrings and is vacuous only if a marker like `from_principal = auth.uid()` doesn't exist yet in the live definition. This is safe because a clause that hasn't been added cannot be dropped, and once the DM phase adds it, the marker will automatically protect it in all subsequent recreations.
+
+3. **`channel_id` reachable:** `channel_id` is added as a nullable column with no default in `20260905000002_signal_channel.sql`. In `command/index.ts`, `resolveChannel` returns `channelId: null` if no channel is provided, and the CTE inserts `null`. It is never defaulted, backfilled, or marked `NOT NULL`, making the migrate-before-edge deployment safe.
+
+4. **The clamp:** A stored row cannot outlive its root because the `WHERE candidate.until_value <= ceiling` strictly enforces the ceiling. A legal reply cannot be refused: if the margin hasn't expired (`ceiling >= 1ms`), `until_value` evaluates to `LEAST(default, ceiling)` which passes the `WHERE` condition. Neither `CHECK` can fire because `until_value` is explicitly floored via `GREATEST` to `statement_timestamp() + 1ms`, satisfying `until > created_at`. 
+
+5. **Refusal ordering, final pass:** (Combined with 10 below).
+
+6. **Generated enumerations, final pass:** Every bound/set sentence in this lane is derived from constants (`CHANNEL_SLUG_MAX`, `CHANNEL_PURPOSE_MAX`, `THREAD_REPLY_KINDS`, `RESERVED_CHANNEL_SLUGS`). Hand-copying `MODEL_MAX = 120` to generate `MODEL_RULE_TEXT` is the right pragmatic call, as exporting `normalizedModel` directly from the client bundle risks unverified cross-boundary dependencies. 
+
+6b. **The feedback normalizer call:** Yes, observable behavior IS changed beyond the sentences. By relying on the protocol's `normalizedFeedbackContext`, a caller sending a context with the correct size but containing control characters is now correctly told the character rule, whereas previously the edge folded control characters into the length limit refusal.
+
+7. **Thread roots:** `resolveThreadRoot` in `command/index.ts` queries `swarm_read.signals` scoped to `workspace_id`, returning `thread_not_found` for cross-workspace roots. It asserts `to_user_id IS NULL AND to_agent_principal_id IS NULL` (refusing directed) and `in_reply_to IS NULL` (refusing private-reply) returning `thread_root_not_eligible`. It returns generic 404s/400s without acting as an oracle to whether an invisible ID exists.
+
+8. **Delivery:** `chatSignalShapeProblem` enforces that any thread reply (`thread_root_id` is present) must have `to_user_id` and `to_agent_principal_id` as `null` ("cannot also be addressed to one recipient"). Because `to_agent_principal_id` is `null`, the `signal_deliveries` enqueue trigger will never match an agent recipient, meaning no delivery rows are created.
+
+9. **The tests:** I checked the new tests in `tests/p1-local/chat-channels-postgres.test.ts` and `tests/chat-signal-wire-compat.test.ts`. None can pass if the feature is broken. For example, `assert.equal(defaultedUntil, rootUntil)` ensures the clamp acts strictly to the ceiling and doesn't under/over-clamp. There are no vacuous controls.
+
+10. **Refusal order, exhaustively:** I traced `chatSignalShapeProblem`, `post_signal`, and the three channel commands. In `chatSignalShapeProblem`, providing `{ channel: "BAD_SLUG", broadcast_to_channel: true }` without `thread_root_id` hits the `channel` slug rule BEFORE the `broadcast_to_channel` thread requirement rule. This is structurally correct: independent field shape constraints must be evaluated before cross-field semantic dependencies (shape before meaning). In the channel commands, `exactKeys` and UUID shape checks correctly precede slug and purpose evaluations. The ordering holds.
+
+11. **The two strengthened tests:** Neither test can pass with its rule broken. The UUID shape test explicitly supplies a non-UUID `thread_root_id` and asserts a match on the shape rule; if the rule order were reverted to check thread meaning first, it would hit mutual exclusion and fail the match. The `until === root.until` assertion is correct and not flaky: `placement.untilCeiling` is the exact Postgres `timestamptz` of the root message, and `LEAST(default, ceiling)` returns that exact timestamp preserving microsecond resolution.
+
+VERDICT: PASS

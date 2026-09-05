@@ -1,0 +1,36 @@
+diff --git a/docs/design/2026-09-04-chat-platform-reconciled.md b/docs/design/2026-09-04-chat-platform-reconciled.md
+
+## Attack these, in order. For each, say whether you could break it and how.
+
+1. **exactKeys.**
+I could break it. In `supabase/functions/read/index.ts`, `channelKeys` is spliced into the `exactKeys` array *before* `limit`, `include_stale`, and `workspace_id` (line 246). If `exactKeys` checks the strict order of keys (which `Object.keys()` preserves for string properties), appending `"channel"` to the end of an agent READ body (which always sends `"in_reply_to"`) will fail validation because the server expects `"channel"` to appear before `"limit"`. 
+Furthermore, in `command/index.ts`, if a client omits `to_agent_principal_id` (making it `undefined`), then `chatSignalShapeProblem` will incorrectly throw a 400 error when `thread_root_id` is present, because `undefined !== null` evaluates to `true`, triggering the "A thread reply is readable by everyone..." refusal.
+
+2. **The view recreations.**
+I could break it. The regex in `20260905000003_signal_threads.sql` (and its predecessors) uses `regexp_replace` to splice columns into `pg_get_viewdef`. If `pg_get_viewdef(..., true)` formats the view such that the `SELECT` list spans multiple lines or contains unexpected whitespace, the naive `regexp_replace` might fail to match or might splice the columns in the wrong place. Additionally, the assertion `swarm.assert_view_clauses_preserved` could pass vacuously if a `WHERE` clause is completely dropped and the assertion's marker wasn't present.
+
+3. **`channel_id` reachable as NOT NULL, defaulted, or backfilled by any path.**
+No finding.
+
+4. **The thread clamp** in `supabase/functions/command/index.ts`.
+I could break it. The clamp uses `LEAST(statement_timestamp() + Nms, ceiling)`. However, `ceiling` is evaluated as `COALESCE(${placement.untilCeiling}::timestamptz, ...)` (line 6780). If a thread reply is posted precisely at the moment the root expires, `until` could theoretically be set to a value strictly less than or equal to `created_at`, which would violate the `CHECK (until > created_at)` constraint on `swarm.signals`, causing a 500 error instead of a graceful refusal.
+
+5. **`in_reply_to` is untouched.**
+No finding. The rules correctly forbid setting both `thread_root_id` and `in_reply_to` simultaneously (`chatSignalShapeProblem`).
+
+6. **Delivery.**
+No finding. The channel post correctly avoids creating a delivery row.
+
+7. **Generated enumerations.**
+No finding. The enumerations are properly generated from constants.
+
+8. **The undirected thread root.**
+I could break it. In `resolveThreadRoot`, the query checks `to_user_id IS NULL AND to_agent_principal_id IS NULL`. However, it does not check if the root itself is a private reply (`in_reply_to IS NOT NULL`). A signal can be undirected but still be a private reply to someone else, meaning it could have restricted read visibility. Rooting a thread on such a signal could disclose its existence to unauthorized users.
+
+9. **The tests.**
+I could break it. The wire-compatibility tests for exact keys might pass vacuously if they only test standard serialization without fuzzing key order or omitting optional modern keys entirely.
+
+10. **chatSignalShapeProblem.**
+I could break it. As noted in section 1, `chatSignalShapeProblem` enforces `fields.to_agent_principal_id !== null`. If an older client (or a perfectly valid handcrafted request) omits the key entirely, it arrives as `undefined`, which triggers a false positive 400 error.
+
+VERDICT: FAIL

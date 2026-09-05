@@ -1,0 +1,19 @@
+diff --git a/docs/design/2026-09-04-chat-platform-reconciled.md b/docs/design/2026-09-04-chat-platform-reconciled.md
+
+27. **Refusal ordering.** Yes, I could break this. In `supabase/functions/command/index.ts`, `channel_rename` (lines 1640-1650) and `channel_archive` (lines 1664-1673) both bundle the `UUID_RE.test(cmd.channel_id)` check into their `shapeOk` and `exactKeys` conditions. If a caller provides exactly the correct keys but `channel_id` is a malformed UUID (e.g. `{"kind": "channel_archive", "channel_id": "not-a-uuid"}`), the condition fails. The code then returns `commandFieldsMessage`, which tells the caller they sent the wrong fields ("channel_archive takes channel_id."), rather than telling them the `channel_id` is malformed.
+
+28. **The horizon sentences.** Yes, the atomic arm's sentence is false for a defaulted horizon. The early arm fires only when the caller names an explicit horizon (`command.until_ms !== undefined`), so its sentence is true. However, the atomic arm (`index.ts:7843-7858`) handles the `signal === null` refusal, which as noted on lines 6941-6945, is reachable on BOTH the explicit and the defaulted paths because the floor can raise a defaulted value past the ceiling. When a defaulted reply hits this arm, it tells the caller "the horizon you asked for no longer fits" and tells them to "leave it out" — which is exactly what they did.
+
+29. **`FEEDBACK_CATEGORIES` and `commandFieldsMessage`.** The feedback sentence reads `"submit_feedback takes feedback_id, category (bug|idea|friction) and body, and optionally context."`, which is accurate English and correctly names `context` as optional. However, `commandFieldsMessage` (`_shared/channels.ts:296-311`) was changed to omit the "and nothing else" phrasing entirely. For the model commands, it now returns sentences like `"declare_agent_model takes model (text or null)."`, which no longer conveys that extra keys are refused.
+
+30. **Any remaining typed list that is now user-facing.** I enumerated the strings returned by `validateCommand` in `index.ts`. The ones that list something the code enforces but is typed rather than derived are:
+- `commandFieldsMessage("declare_agent_model", ["model (text or null)"])` (index.ts:1891, :1905)
+- `commandFieldsMessage("set_agent_model", ["principal_id", "model (text or null)"])` (index.ts:2007, :2019)
+In both of these, `"model (text or null)"` is a typed string describing the accepted values, rather than deriving it.
+(The ~22 static strings include "invalid command shape", "unknown command kind", "[...] fields are malformed", "client-supplied from is forbidden", "renew_agent_token accepts no caller-selected fields", "task_id must be a UUID", "event payload too large", "feedback context must be a flat object of bounded strings", etc.)
+
+31. **The citation registrations.** Yes, there is a bad registration. In `tests/p1-cli/citation-drift.test.ts`, the citation for `privacy.astro (audit ip is never written)` registers `lines: [1370, 1385]`. This range stops at the `outcome` field and completely misses line `1390`, which is the `NULL` value written to the `ip` column that actually proves the prose's claim. Additionally, the prose in `privacy.astro` cites lines 1373 and 1388, but the actual lines are 1374 and 1390.
+
+32. **The feedback body bound.** You missed the feedback context size bound. In `index.ts:1975`, the refusal reads `"feedback context must serialize to at most 2048 bytes"`. The limit of 2048 is typed directly in the string rather than derived from a constant.
+
+VERDICT: FAIL
