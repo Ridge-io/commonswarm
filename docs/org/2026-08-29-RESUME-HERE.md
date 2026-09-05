@@ -1813,3 +1813,15 @@ plus a `chat-recipients` lane to add: `signals_one_recipient` allows one recipie
 both the `@name`-joins-To ruling and the composer To: field (#2). Landing order: cli-chips before
 chat-schema (migration names). Host at memory pressure 2 with swap flat; the listener head-of-line
 lane is held until two lanes land.
+
+## Addendum 2026-09-05 02:0x UTC — mobile fix (#1) LANDED and LIVE (merge 7dbfbae)
+
+`lane/mobile-fix-land` 190abdb (the other session's 6cbda50 rebased over brain-links, plus two
+review rounds of fixes) merged as `7dbfbae`; gates on the merge: tsc clean, npm test 740/740, site
+324/325 (1 skip), identity OK over 18 fields. Site deployed; the `feed-band-height` CSS marker is
+live on commonswarm.com with a cache-buster. Evidence in the branch under
+`docs/evidence/2026-09-05-mobile-fix-landing/` (measurements: header chrome 171px → 73px in flow
+at 390x844). Arms: r1 FAIL/FAIL, r2 Grok FAIL, r3 PASS/PASS with four residuals routed into the
+same PM's next lane (`lane/update-notice`, item 5). The composer To: field (#2) waits on the
+`chat-recipients` schema lane. Not established: pinch-zoom behaviour on a real iPhone (both arms
+said so); the harness measured a headless 390x844 viewport.
