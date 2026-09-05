@@ -188,3 +188,36 @@ test("the real ps returns this test process", async () => {
 
   assert.ok(rows.some((row) => row.pid === process.pid), "own pid is missing");
 });
+
+test("a throwing row filter rejects instead of hanging forever", async () => {
+  /* The whole point of this change is that reading the process table cannot
+   * leave `resume` stuck. A throw inside the stdout handler would be an
+   * uncaught exception with the promise still pending, which is the same
+   * symptom by another route. */
+  const fixture = await fakeProcessTable([
+    "11 node /opt/cswarm/dist/cli.js inbox --notify",
+    "12 /usr/sbin/cupsd -l",
+  ]);
+
+  try {
+    const settled = await Promise.race([
+      systemProcessTable({
+        command: fixture.command,
+        retain: () => {
+          throw new Error("prompt text that must never be classified on");
+        },
+      }).list().then(() => "resolved", (reason: unknown) => reason),
+      new Promise((resolveLate) => setTimeout(() => resolveLate("HUNG"), 5_000)),
+    ]);
+
+    assert.notEqual(settled, "HUNG", "the read never settled");
+    assert.ok(settled instanceof ProcessTableError);
+    assert.equal(settled.code, "process_table_unavailable");
+    /* D-053: the reason is ours. The thrown message is not copied into it,
+     * so nothing downstream can come to depend on that prose. */
+    assert.equal(settled.detail, "its row filter threw");
+    assert.doesNotMatch(settled.detail, /prompt text/);
+  } finally {
+    await fixture.cleanup();
+  }
+});

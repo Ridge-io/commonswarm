@@ -574,14 +574,20 @@ export async function fileVersionCreate(
       )
     `;
   }
+  /* The precondition rides on the pending row. The lock taken above is
+   * released with this transaction, and current_version does not move until
+   * commit, so the create-time check alone cannot decide a race between two
+   * writers who both read the same version. Commit re-checks this value. */
   await tx`
     INSERT INTO swarm.file_versions (
       version_id, file_id, workspace_id, version_n, state,
-      size_bytes, content_type, storage_path, uploaded_by_kind, uploaded_by
+      size_bytes, content_type, storage_path, uploaded_by_kind, uploaded_by,
+      if_version
     ) VALUES (
       ${cmd.version_id}::uuid, ${fileId}::uuid, ${workspaceId}::uuid,
       ${versionN}, 'pending', ${cmd.declared_size_bytes}, ${cmd.content_type},
-      ${storagePath}, ${actor.kind}, ${actor.id}::uuid
+      ${storagePath}, ${actor.kind}, ${actor.id}::uuid,
+      ${cmd.if_version}
     )
   `;
 
@@ -647,11 +653,14 @@ export async function fileVersionCommit(
       uploaded_by: string;
       uploaded_by_kind: string;
       name: string;
+      if_version: number | null;
+      current_version: number;
     }[]
   >`
     SELECT
       v.version_id, v.version_n, v.state, v.size_bytes::text,
-      v.storage_path, v.uploaded_by, v.uploaded_by_kind, f.name
+      v.storage_path, v.uploaded_by, v.uploaded_by_kind, f.name,
+      v.if_version, f.current_version
     FROM swarm.file_versions AS v
     JOIN swarm.files AS f
       ON f.file_id = v.file_id AND f.workspace_id = v.workspace_id
@@ -682,6 +691,23 @@ export async function fileVersionCommit(
       "only the principal that created this pending version may commit it",
       "non-creator commit",
     );
+  }
+  /* The compare-and-set decided. This is the check that actually holds: the
+   * file row is locked FOR UPDATE above and current_version moves only here,
+   * so of two writers that both created against version n, the first to reach
+   * this point commits and the second is refused. Refused before the storage
+   * read, so a loser does no further work; its pending row is left for the
+   * sweeper that already claims expired uploads. */
+  if (version.if_version !== null) {
+    const liveVersion = Number(version.current_version);
+    if (!fileVersionPreconditionSatisfied(version.if_version, liveVersion)) {
+      return refuse(
+        409,
+        FILE_VERSION_PRECONDITION_FAILED,
+        fileVersionPreconditionMessage(version.if_version, liveVersion),
+        "version precondition failed at commit",
+      );
+    }
   }
   const measured = await storage.objectSize(version.storage_path);
   if (measured === null) {

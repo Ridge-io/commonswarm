@@ -30,11 +30,15 @@ interface FakeCloud {
 }
 
 async function startFakeCloud(
-  options: { liveVersion?: number } = {},
+  options: { liveVersion?: number; liveVersionAtCommit?: number } = {},
 ): Promise<FakeCloud> {
   /* The newest LIVE version this fake workspace holds, which is what the real
-   * server compares an if_version against. */
+   * server compares an if_version against. `liveVersionAtCommit` models the
+   * case the flag exists for: the topic moved AFTER this writer's create was
+   * accepted, so only the commit-time re-check can refuse it. */
   const liveVersion = options.liveVersion ?? 2;
+  const liveVersionAtCommit = options.liveVersionAtCommit ?? liveVersion;
+  const preconditions = new Map<string, number>();
   const commands: RecordedCommand[] = [];
   const uploads: Buffer[] = [];
   const names = new Map<string, string>([[BRAIN_FILE_ID, "brain--architecture.md"]]);
@@ -118,6 +122,9 @@ async function startFakeCloud(
             }));
             return;
           }
+          if (command.if_version !== undefined) {
+            preconditions.set(String(command.version_id), Number(command.if_version));
+          }
           const requestedId = String(command.file_id);
           const name = String(command.name);
           const fileId = name === "brain--architecture.md" ? BRAIN_FILE_ID : requestedId;
@@ -133,6 +140,15 @@ async function startFakeCloud(
             upload_expires_in_seconds: 7200,
           };
         } else if (kind === "file_version_commit") {
+          const required = preconditions.get(String(command.version_id));
+          if (required !== undefined && required !== liveVersionAtCommit) {
+            response.writeHead(409, { "content-type": "application/json" });
+            response.end(JSON.stringify({
+              error: FILE_VERSION_PRECONDITION_FAILED,
+              message: fileVersionPreconditionMessage(required, liveVersionAtCommit),
+            }));
+            return;
+          }
           const fileId = String(command.file_id);
           body = {
             status: "accepted",
@@ -428,6 +444,35 @@ test("--if-version refuses a value that is not a whole version number", async ()
      * server and never looks like a conflict. */
     assert.deepEqual(cloud.commands, []);
     assert.equal(cloud.uploads.length, 0);
+  } finally {
+    await cloud.close();
+  }
+});
+
+test("a precondition refused at COMMIT reaches the reader the same way", async () => {
+  /* The create-time check cannot decide this: brain put is two phases, and
+   * the live version moved after this writer's create was accepted. The CLI
+   * must handle the refusal from either phase, because the commit-time one is
+   * the check that actually holds. */
+  const cloud = await startFakeCloud({ liveVersion: 2, liveVersionAtCommit: 3 });
+  try {
+    const result = await cliAgainst(
+      cloud,
+      ["brain", "put", "Architecture", "--if-version", "2"],
+      "# Architecture\n\nComposed from version 2.\n",
+    );
+
+    assert.equal(result.code, 1);
+    assert.match(result.stderr, /at version 3/);
+    assert.match(result.stderr, /required version 2/);
+    assert.match(result.stderr, /cswarm brain get architecture/);
+    /* The create was accepted and the bytes were uploaded, which is exactly
+     * why the commit-time check is the one that matters. */
+    assert.deepEqual(cloud.commands.map((command) => command.kind), [
+      "file_version_create",
+      "file_version_commit",
+    ]);
+    assert.equal(cloud.uploads.length, 1);
   } finally {
     await cloud.close();
   }

@@ -179,24 +179,43 @@ export function systemProcessTable(
           child.stdout.destroy();
           reject(new ProcessTableError(command, detail));
         };
-        const take = (line: string): void => {
+        /* `retain` is caller-supplied. A throw inside a stream handler is an
+         * uncaught exception that leaves this promise pending forever, which
+         * is the failure mode the whole change exists to remove, so it is
+         * turned into a rejection. The reason is a fixed word, never the
+         * thrown message (D-053). */
+        const take = (line: string): boolean => {
           const row = parseProcessRow(line);
-          if (row !== null && retain(row.command)) rows.push(row);
+          if (row === null) return true;
+          try {
+            if (retain(row.command)) rows.push(row);
+          } catch {
+            fail("its row filter threw");
+            return false;
+          }
+          return true;
         };
         child.stdout.setEncoding("utf8");
         child.stdout.on("data", (chunk: string) => {
+          if (settled) return;
           const lines = (pending + chunk).split("\n");
           pending = lines.pop() ?? "";
-          for (const line of lines) take(line);
+          for (const line of lines) {
+            if (!take(line)) return;
+          }
         });
         child.stderr.setEncoding("utf8");
         child.stderr.on("data", (chunk: string) => {
           if (stderr.length < PROCESS_TABLE_STDERR_MAX_CHARS) stderr += chunk;
         });
+        /* Without these a stream error is an unhandled 'error' event, which
+         * crashes the process instead of failing this read. */
+        child.stdout.on("error", () => fail("its output stream failed"));
+        child.stderr.on("error", () => fail("its error stream failed"));
         child.on("error", (error) => fail(error.name));
         child.on("close", (code, signal) => {
           if (settled) return;
-          if (pending.length > 0) take(pending);
+          if (pending.length > 0 && !take(pending)) return;
           if (signal !== null) {
             fail(`it was stopped by ${signal}`);
             return;
