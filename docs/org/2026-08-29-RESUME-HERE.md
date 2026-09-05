@@ -2144,3 +2144,17 @@ agree the pin belongs in the test (generating it would be tautological); both no
 assertion lacks a failure message (a nit, not fixed). Grok's suggestion for a later lane: put `to`
 on the "everything" payload so "not sent yet" means asked-and-dropped. Evidence
 `docs/evidence/2026-09-05-chat-client/arms-posthoc-6966294/`.
+
+## 2026-09-05 09:3x UTC — CHAT APP CHANNELS (L4) LANDED and LIVE (merge 8b1944b)
+
+`lane/chat-app-channels` 9e1694d (reviewed b92c525; the tip adds the final arm pair) merged as
+`8b1944b`; site 420/421 (1 skip) on the merge; deployed; `/app` carries the channel rail and the
+channel switch (measured live). Seventeen review rounds; ten of the 36 defects were created by an
+earlier round's fix, which is why every SHA got both arms again; the round-6 Grok file was two
+runs interleaved and was not counted. Threads (reply control, collapsed replies, the reply bar,
+`broadcast_to_channel`) were CUT by ruling to `lane/chat-app-threads`, not started. Three composer
+paths byte-identical on `main` were routed, not fixed (`d9fa25b:6202`, `:4360`, `:2468/:2489`).
+Not established: anything against production (sample-mode `site/dist` only); `?m=`/`?t=`.
+
+Next lane spawned: `lane/composer-to-field` (operator #2), sole owner of `LiveDashboard.astro`;
+`chat-app-threads` queues behind it. The checkout is `main` only again.
