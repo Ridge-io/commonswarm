@@ -1,0 +1,130 @@
+I'll read REVIEW.md and the patch first, then follow the review instructions exactly.The patch is long. I’ll keep reading the rest of it and the source it changes so I can attack each review item.The patch is still going. I’ll read the rest of it and pull the matching source so the findings can cite real lines.The grok folder is just the arm. I’ll find the real checkout at SHA `2d901d3` and read the files the patch changes.Repo is at `2d901d3`. I’ll pull the header CSS, composer timers, and the moved controls next.I have the header CSS and timers. Next I’ll trace send/reset/workspace-switch and anything that can escape a message row.`diff --git a/docs/evidence/2026-09-04-mobile-fix/README.md b/docs/evidence/2026-09-04-mobile-fix/README.md`
+
+## 1. The header rule
+
+Below `52rem`, `.dashboard__channel` is `grid-template-rows: minmax(0, 1fr)` and `.dashboard__channel-head` is `position: absolute` (`DIFF.patch` 1296–1308). The transcript box is `.dashboard__channel-body`; it starts at the app bar’s bottom edge. That matches the landing measurement (`channelBody.top − appBar.top = 73`).
+
+The filter row is taken out of flow with three values that must stay equal (`DIFF.patch` 1357–1408):
+
+- `.dashboard__feed-toolbar { min-block-size: 2.5rem; margin-block-end: -2.5rem; }`
+- `.dashboard__feed { padding-block-start: 2.5rem; }`
+- `.dashboard__feed-more { padding-block-start: 2.5rem; }` plus the sibling reset
+
+They cannot drift with font size: all three are `rem`. Wrap is the way they disagree. The 52rem block sets `white-space: nowrap` on the filter buttons and `overflow-x: auto` on `.dashboard__feed-filters` (`DIFF.patch` 1375–1392), so a long label scrolls sideways instead of adding a second line. The 36rem block no longer sets `.dashboard__feed-toolbar { display: none }` (`DIFF.patch` 1546–1552); the same 2.5rem rules still apply there and at 320px.
+
+What is not locked: the floating head is ~52px and the clearance is 40px. The first message box starts under the roster cluster on the right. That is the float-over-transcript design (toolbar `padding-inline-end: 8rem` keeps the filter chips clear). `assertPhoneHeaderRule` does not measure the band’s own height, so a taller band would still pass the operator rule.
+
+## 2. Reachability that was moved
+
+**View switcher.** Base: `.dashboard__rail-tabs { display: none }` and `.dashboard__mobile-view { display: none }` (`DIFF.patch` 1137–1141). Below 52rem: tabs `display: flex`, buttons `inline-flex`, rail STREAMS/ARTIFACTS `display: none`. No width where both the phone tabs and the rail places are `display: none`. Pointer and keyboard: real buttons. Accessible name: each button’s text, plus `aria-label="Workspace views"` on the nav (`DIFF.patch` 750).
+
+**Gear → “Workspace settings”.** Below 52rem the gear is `display: none` and the new menuitem is `display: flex` (`DIFF.patch` 1223–1231). Above 52rem the item is `display: none` and the gear stays `display: grid`. No band where both are `display: none`. Pointer path on a phone works (click listener at `DIFF.patch` 1061–1064). Accessible name is the span text “Workspace settings”, same as the gear’s `aria-label`.
+
+The keyboard path on desktop does not.
+
+`workspaceMenuItems()` keeps every `[role='menuitem']` with no `hidden` attribute. The new item is hidden only with CSS (`DIFF.patch` 1143–1146). It is the last item in the menu (`DIFF.patch` 730–737). ArrowUp on the workspace trigger opens the menu on the last item. On a desktop width that last item is not rendered, so `focus()` does not move. ArrowDown from “New workspace” hits the same ghost slot (one arrow that does nothing). The gear is still the desktop door; this item should not be in that list.
+
+**Account name.** Below 52rem the trigger name is clipped, not `display: none` (`DIFF.patch` 1248–1262); the menu line is `display: block` (`DIFF.patch` 1264–1272). Above 52rem the menu line is `display: none` (`DIFF.patch` 1148–1152) and the trigger still shows the name. The line is a `<p>`, not a menuitem; the trigger remains the keyboard target (`aria-label="Account menu"`). `data-rail-account` is on both, so writers stay in step.
+
+**Channel title.** Clipped with `clip-path: inset(50%)`, not `display: none` (`DIFF.patch` 1331–1345). `aria-labelledby` still points at the `h1`. The head is `pointer-events: none` with `pointer-events: auto` only on `.dashboard__channel-actions` and `.dashboard__channel-roster` (`DIFF.patch` 1316–1328). Children of the head: titleblock, roster, actions. Titleblock is meant to be unclickable. Refresh and the live chip live in actions. Roster is the agent-management door. Nothing else in the head is left without pointer events.
+
+## 3. `contain: layout` on `.dashboard__message`
+
+Set at `DIFF.patch` 1173–1181. It makes each row a containing block for absolute/fixed descendants and a stacking context.
+
+Checked inside a row: author/target `entityControl` buttons, mention chips, brain-link buttons (`display: inline`, no positioning), collapsed markdown (`overflow: hidden` on the markdown node, not a popover), receipt `<details>`, attachment list. The entity panel is a sibling of the channel inside `.dashboard__frame`, `position: fixed` at mobile — not a descendant of the row, so layout containment does not trap it. The mention picker is on the composer (`position: absolute`), not in a message. Focus rings are `box-shadow`.
+
+Floating band: `.dashboard__channel-head` is `z-index: 4` outside the list; `.dashboard__feed-toolbar` is `position: sticky; z-index: 2` as a sibling of the `ol`, not inside a contained row. Message stacking contexts cannot paint over that band.
+
+The comment that paint containment would clip “entity popovers a row opens” does not match the current DOM: there is no popover descendant of `.dashboard__message`. Harmless for `contain: layout`.
+
+## 4. The debounces
+
+Cancel sites the patch added: `persistComposerDraft` and `clearComposerDraft` call `cancelComposerDraftTimer` (`DIFF.patch` 851–860); `closeMentionPicker` calls `cancelMentionPickerRender` (`DIFF.patch` 1027–1028). The comment at `DIFF.patch` 829–832 names those two paths and not `resetComposer`.
+
+**The missing cancel is `resetComposer` (`DIFF.patch` 1054).** It calls `closeMentionPicker()` (mention timer dies) and never `cancelComposerDraftTimer()`. It also never writes the current body before it clears the textarea.
+
+`persistComposerDraft` reads `input.value` at fire time, keyed by `composerDraftKey()` (`activeWorkspaceId` now). Callers of `resetComposer`: session teardown (id already `""`, so a late persist is a no-op) and `openWorkspace` when the workspace changes.
+
+Sequence if a draft timer is still pending:
+
+1. Timer armed on workspace A.
+2. `resetComposer()` clears the textarea; timer still live.
+3. `activeWorkspaceId` becomes B.
+4. Timer fires: empty body, key B → `localStorage.removeItem(B)` if restore has not run; or it writes B’s restored text if restore already ran. A’s unflushed text is gone.
+
+A pointer click on the workspace menu blurs the textarea first, and blur flushes (`DIFF.patch` 1117–1122), so the common tap path is saved. Enter-to-send also does not need this: send clears the field, then `clearComposerDraft()` on success. The hole is `resetComposer` itself, including any `openWorkspace` that does not come from a blur.
+
+`scheduleMentionPicker` closes at once when there is no `@word` (`DIFF.patch` 1041–1046). Arrow keys still call `renderMentionPicker` directly. Enter within 150ms of the last key can submit while the picker is still closed; that race is larger than before, when the picker opened on the same keystroke.
+
+Blur / `pagehide` / `visibilitychange` → hidden all call `flushComposerDraft` → `persistComposerDraft`, which cancels the timer and writes the live value. They do not write a stale closed-over body. They can write empty if they run after send has already cleared the field and before `clearComposerDraft`; success still clears.
+
+## 5. The viewport sync
+
+`syncDashboardViewport` (`DIFF.patch` 1001–1008): `scrollTo(0, 0)` only when `window.scrollX/Y` are not already 0, then return if `visualViewport` is missing, else write `--dashboard-viewport-height` and `scrollComposerCaretIntoView()`. Coalesced with `requestAnimationFrame` and no timer floor (`DIFF.patch` 1014–1017).
+
+Loop: `scrollTo` is skipped at (0, 0), so a `scroll` event cannot keep scheduling work through that write. Not a loop.
+
+Pinch-zoom: `visualViewport` `scroll` is how a zoomed visual viewport moves. `window.scrollTo(0, 0)` resets the layout viewport, not `visualViewport.offsetTop/Left`. If iOS also shifts `window.scroll` during a pinch, that pan is undone. Not established on a phone.
+
+Stale height: a hidden tab may delay rAF; browsers usually run the queued frame on return. Unlike autogrow, there is no 32ms floor. A dropped rAF would leave `viewportSyncFrame` non-zero and every later `requestDashboardViewportSync` would return early. Not shown to happen.
+
+No `visualViewport`: the custom property is left unset and `100dvh` applies, as the comment says (`DIFF.patch` 990–994). That is a first-paint / old-engine fallback, not a wrong `innerHeight` write during the keyboard.
+
+## 6. The caret block
+
+`composerCaretKnown` (`DIFF.patch` 932–937, 975–977) does stop the `{0,0}` restore on first focus. The 500ms pointer window (`DIFF.patch` 1124–1128) is only armed from `pointerdown` on the textarea (`DIFF.patch` 1107–1109). A tap in the field keeps the tap caret. A tap that focuses the field later than 500ms would restore over the tap; not shown.
+
+**The flag is never cleared.** `resetComposer` (`DIFF.patch` 1054) does not touch it. `restoreComposerDraft` is unchanged. Send leaves it true and clamps to 0 on an empty field (harmless).
+
+Workspace switch on a width above 52rem:
+
+1. Blur on A stores A’s caret and sets `composerCaretKnown = true` (`DIFF.patch` 1118–1121).
+2. `resetComposer` clears the textarea; the flag stays true.
+3. `restoreComposerDraft` puts B’s body in the field.
+4. `focusComposerOnEntry` skips only `max-width: 52rem`, then `focus({ preventScroll: true })` with no pointer.
+5. `restoreComposerCaret` writes `min(A’s index, B’s length)` into B’s draft.
+
+That is the same class of bug `f357cb3` fixed, on a different path. On a phone the auto-focus does not run; a tap skips restore. Tabbing into the composer after a switch still hits it.
+
+`scrollComposerCaretIntoView` (`DIFF.patch` 951–972): end-of-text uses `scrollHeight` (the operator case). Mid-text counts hard `\n` only; the comment admits soft wraps can land a line off. Visible if the caret is in a long wrapped paragraph at max textarea height.
+
+## 7. The new clearance rule and its harness
+
+HTML order is toolbar, then `.dashboard__feed-more`, then `ol.dashboard__feed`. Adjacent siblings, no wrapper. Show/hide is `more.hidden = !signalHasMore` (the `hidden` attribute). `:not([hidden])` is the right test; a bare sibling combinator would also match the default-hidden node and zero padding when the button is off.
+
+No CSS `display: none` on `.dashboard__feed-more` except the UA `[hidden]` rule. The 36rem block does not override the sibling rule; 320px is inside `max-width: 52rem`. The rule reaches both.
+
+Harness (`DIFF.patch` 2091–2132): `more=1` sets `hidden = false`. Positive control: `feedMore !== null && height > 0`. The off variant must be `null`. Padding must be `"0px"` with the button and not `"0px"` without it. Gap `< 20`. If the knob did nothing, the first assert fails (the node starts `hidden` in markup). If the CSS rule is missing, padding stays `40px` and the gap assert fails. A 19px leftover gap would still pass; the padding assert is the tight control. The new case is only measured at 390×844, not at 320 or 36rem height.
+
+## 8. The tests
+
+Seven observer files.
+
+**`mobile-feed-layout.observer.test.ts`.** `assertDensity` returns early for every non-1440 width (`DIFF.patch` 2016–2020). Lost on a phone: `combinedHeaderHeight` band 85–125 and `ratioMin: 4`. `assertPhoneHeaderRule` does not replace those: it does not measure the floating band’s height, only that `channelBody.top` is at the app bar, the head still has height, and transcript ≥ 600 (390×844 only). `revertedStyles` puts the head and toolbar back in flow (`DIFF.patch` 1823–1854). `assertPhoneHeaderRule` then fails on `channelBody.top`; `assert.throws(..., /density/)` still has to fail. That control is kept.
+
+**`composer-sprint.observer.test.ts`.** `caret-survival` is a source-shape slice from `let composerCaret` to `let viewportSyncFrame` plus the 500ms line on the full file (`DIFF.patch` 1662–1670). The two mutations (`DIFF.patch` 1704–1716) fail those strings. They do not fail if `resetComposer` / `restoreComposerDraft` leave a caret that belongs to another workspace. They can pass while that restore is wrong.
+
+**`composer-sprint-browser.observer.test.ts`.** Draft claim moved to `pagehide` (`DIFF.patch` 1574–1580). That is the new promise, not a weaker one.
+
+**`header-roster.observer.test.ts`.** Claim moved from a 34rem one-row grid to 52rem `position: absolute` plus clipped title and negative margin. Not weakened; the old claim is retired in comments.
+
+**`transcript-shape.observer.mjs`.** Listener name, `scrollTo(0,0)`, no `innerHeight`, measured textarea cap. Keeps the keyboard-viewport claim.
+
+**`workspace-entry.observer.test.ts` / `workspace-switcher.observer.test.ts`.** Rail foot column 2 → 3. Account line presence asserted. Neither asserts that the settings menuitem is out of `workspaceMenuItems()` above 52rem.
+
+## 9. Operator-visible claims
+
+“Workspace settings” is a single label, not a typed enumeration of a code-enforced set. Filter labels and view names are unchanged.
+
+CSS comment at `DIFF.patch` 1189–1191 still says the mobile header is “workspace name and its gear”. The gear is `display: none` in that same block.
+
+`docs/evidence/2026-09-04-mobile-fix/README.md` defines `inFlowHeaderHeight` as the header taken out of the reading area (`DIFF.patch` 24–26) and tables it as 171px → 73px (`DIFF.patch` 36). The JSON it ships has `"inFlowHeaderHeight": 126` before (`DIFF.patch` 297) and 73 after. 171 is `totalHeaderChrome` / first-message top, not that field. The 2026-09-05 landing numbers (73.0px = `channelBody.top − appBar.top`) match the code. The 2026-09-04 README does not match its own JSON.
+
+Landing README “three lines” vs textarea cap 80px / `scrollHeight` 88 is consistent with `measurements.json`. Keyboard-not-established disclaimers match the code.
+
+---
+
+Two defects that refute the reachability and caret claims: the settings menuitem stays in the desktop workspace-menu keyboard list while `display: none`, and `composerCaretKnown` is not cleared on workspace switch so desktop `focusComposerOnEntry` restores the previous workspace’s caret into the new draft. `resetComposer` is the debounce cancel that is missing.
+
+VERDICT: FAIL

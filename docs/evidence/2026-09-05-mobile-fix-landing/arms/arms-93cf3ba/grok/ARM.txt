@@ -1,0 +1,1 @@
+I'll read REVIEW.md and the patch first, then follow REVIEW.md exactly.The first `diff --git` line is quoted. Next I’ll read the rest of the patch and the round-3 changes.The patch is long. I’ll keep reading the rest of it and the source files the brief names.I’ll keep going through the rest of the patch and the files the brief says to attack hardest.
