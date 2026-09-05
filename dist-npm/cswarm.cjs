@@ -13502,6 +13502,7 @@ var require_main3 = __commonJS({
 // src/cli.ts
 var cli_exports = {};
 __export(cli_exports, {
+  CHANNEL_SUBCOMMAND_NAMES: () => CHANNEL_SUBCOMMAND_NAMES,
   EXIT_RESTARTABLE: () => EXIT_RESTARTABLE,
   ListenerUnattendedRefusedError: () => ListenerUnattendedRefusedError,
   TURN_BUDGET_CREDENTIAL_MARGIN_MS: () => TURN_BUDGET_CREDENTIAL_MARGIN_MS,
@@ -13520,6 +13521,7 @@ __export(cli_exports, {
   resolveDetachedClaudeExecutable: () => resolveDetachedClaudeExecutable,
   resolveDetachedCodexExecutable: () => resolveDetachedCodexExecutable,
   resolveTurnBudgetOrDefer: () => resolveTurnBudgetOrDefer,
+  threadReplyMessage: () => threadReplyMessage,
   usage: () => usage
 });
 module.exports = __toCommonJS(cli_exports);
@@ -22142,11 +22144,217 @@ async function logout(target2, store2, scope = "local", options = {}) {
 
 // src/cloud/command-client.ts
 var import_node_crypto3 = require("node:crypto");
+
+// src/cloud/channels.ts
+var CHANNEL_SLUG_MAX = 32;
+var CHANNEL_PURPOSE_MAX = 500;
+var CHANNEL_SLUG_CLASSES = {
+  edge: [
+    { fragment: "a-z", words: "lowercase letters", one: "a letter" },
+    { fragment: "0-9", words: "digits", one: "a digit" }
+  ],
+  inner: [{ fragment: "-", words: "hyphens" }]
+};
+function classList(entries, conjunction = "and", singular = false) {
+  const words = entries.map(
+    (entry) => singular ? entry.one ?? entry.words : entry.words
+  );
+  return words.length === 1 ? words[0] : `${words.slice(0, -1).join(", ")} ${conjunction} ${words[words.length - 1]}`;
+}
+var SLUG_EDGE = CHANNEL_SLUG_CLASSES.edge.map((c) => c.fragment).join("");
+var SLUG_INNER = SLUG_EDGE + CHANNEL_SLUG_CLASSES.inner.map((c) => c.fragment).join("");
+var CHANNEL_SLUG_RE = new RegExp(
+  `^[${SLUG_EDGE}]([${SLUG_INNER}]*[${SLUG_EDGE}])?$`
+);
+var RESERVED_CHANNEL_SLUGS = ["all-signals"];
+var CHANNEL_SLUG_RULE_TEXT = `A channel name uses ${classList([...CHANNEL_SLUG_CLASSES.edge, ...CHANNEL_SLUG_CLASSES.inner])}, starts and ends with ${classList(CHANNEL_SLUG_CLASSES.edge, "or", true)}, and is 1 to ${CHANNEL_SLUG_MAX} characters.`;
+var CHANNEL_ID_RULE_TEXT = "channel_id must be a UUID.";
+var RESERVED_CHANNEL_SLUG_TEXT = `Reserved names: ${RESERVED_CHANNEL_SLUGS.join(", ")}.`;
+function normalizeChannelSlug(value) {
+  return value.trim().toLowerCase();
+}
+function isReservedChannelSlug(value) {
+  return RESERVED_CHANNEL_SLUGS.includes(normalizeChannelSlug(value));
+}
+function channelNameProblem(value) {
+  if (typeof value !== "string") return "not-text";
+  const slug = normalizeChannelSlug(value);
+  if (slug.length < 1 || slug.length > CHANNEL_SLUG_MAX) return "shape";
+  if (!CHANNEL_SLUG_RE.test(slug)) return "shape";
+  if (isReservedChannelSlug(slug)) return "reserved";
+  return "ok";
+}
+function channelSlugProblem(value) {
+  switch (channelNameProblem(value)) {
+    case "ok":
+      return null;
+    case "not-text":
+      return `A channel name must be text. ${CHANNEL_SLUG_RULE_TEXT}`;
+    case "shape":
+      return CHANNEL_SLUG_RULE_TEXT;
+    case "reserved":
+      return `${normalizeChannelSlug(value)} is reserved. ${RESERVED_CHANNEL_SLUG_TEXT}`;
+  }
+}
+var CHANNEL_COLUMNS = [
+  "channel_id",
+  "workspace_id",
+  "slug",
+  "purpose",
+  "created_by_principal",
+  "created_by_kind",
+  "created_at",
+  "archived_at"
+];
+var CHANNEL_LIST_NEEDS_HUMAN_MESSAGE = "Listing channels needs a signed-in person: this deployment's read service has no channel list for an agent credential. Run cswarm channel ls from a session signed in with cswarm login, or name the channel you want by name wherever a command takes one.";
+var CHANNEL_SELECTOR_NEEDS_ID_MESSAGE = "Turning a channel name into a channel id needs a signed-in person, because this deployment's read service does not list channels for an agent credential. Pass the channel id instead. cswarm channel create prints it, and cswarm channel ls shows it from a session signed in with cswarm login.";
+function channelSelectorProblem(selector) {
+  const problem = channelNameProblem(selector);
+  if (problem === "ok") return null;
+  if (problem === "reserved") return channelSlugProblem(selector);
+  return `That is neither a channel name nor a channel id. ${CHANNEL_SLUG_RULE_TEXT} ${CHANNEL_ID_RULE_TEXT}`;
+}
+var ChannelListError = class extends Error {
+  constructor(status, message, noResponse = false) {
+    super(message);
+    this.status = status;
+    this.noResponse = noResponse;
+    this.name = "ChannelListError";
+  }
+  status;
+  noResponse;
+};
+async function listChannelsAsHuman(target2, accessToken, workspaceId2, fetcher = fetch, timeoutMs = 3e4) {
+  const url = new URL("/rest/v1/channels", target2.url);
+  url.searchParams.set("workspace_id", `eq.${workspaceId2}`);
+  url.searchParams.set("select", CHANNEL_COLUMNS.join(","));
+  url.searchParams.set("order", "slug.asc");
+  const controller = new AbortController();
+  const timer2 = setTimeout(() => controller.abort(), timeoutMs);
+  let response;
+  try {
+    response = await fetcher(url.toString(), {
+      headers: {
+        authorization: `Bearer ${accessToken}`,
+        apikey: target2.anonKey,
+        "accept-profile": "swarm_read"
+      },
+      signal: controller.signal
+    });
+  } catch {
+    throw new ChannelListError(
+      0,
+      "The channel list did not complete. Nothing changed. Run the same command again.",
+      true
+    );
+  } finally {
+    clearTimeout(timer2);
+  }
+  if (!response.ok) {
+    throw new ChannelListError(
+      response.status,
+      `The channel list was refused (HTTP ${response.status}). Nothing changed.`
+    );
+  }
+  let body = null;
+  try {
+    body = await response.json();
+  } catch {
+    body = null;
+  }
+  if (!Array.isArray(body)) {
+    throw new ChannelListError(
+      response.status,
+      "The channel list came back in a shape this version does not understand."
+    );
+  }
+  return body;
+}
+function findChannelBySlug(rows3, slug) {
+  const wanted = normalizeChannelSlug(slug);
+  return rows3.find((row) => normalizeChannelSlug(row.slug) === wanted) ?? null;
+}
+function unknownChannelMessage(slug, rows3) {
+  const live = rows3.filter((row) => row.archived_at === null).map((row) => row.slug).sort();
+  return live.length === 0 ? `There is no channel named ${normalizeChannelSlug(slug)} in this workspace, and no channel has been created yet. Create it with cswarm channel create ${normalizeChannelSlug(slug)}.` : `There is no channel named ${normalizeChannelSlug(slug)} in this workspace. Channels here: ${live.join(", ")}.`;
+}
+function renderChannelList(rows3, options) {
+  const live = rows3.filter((row) => row.archived_at === null);
+  const archived = rows3.filter((row) => row.archived_at !== null);
+  const shown = options.includeArchived ? [...live, ...archived] : live;
+  if (shown.length === 0) {
+    return live.length === 0 && archived.length > 0 ? "Every channel in this workspace is archived. See them with cswarm channel ls --include-archived.\n" : "No channels in this workspace yet. Create one with cswarm channel create <name>.\n";
+  }
+  const lines = shown.map((row) => {
+    const marker = row.archived_at === null ? "" : "  [archived; it keeps its history and takes no new messages]";
+    const purpose = row.purpose === null ? "" : `: ${row.purpose}`;
+    return `- ${row.slug}${purpose}${marker}`;
+  });
+  const head2 = `Channels in this workspace (${shown.length}):`;
+  const tail = options.includeArchived || archived.length === 0 ? "" : `
+${archived.length} archived channel${archived.length === 1 ? "" : "s"} not shown. See them with cswarm channel ls --include-archived.`;
+  return `${head2}
+${lines.join("\n")}${tail}
+`;
+}
+var CHANNEL_UNSUPPORTED_MESSAGE = `This deployment refused the request and did not say why. Channels need a deployment whose command service knows them; this cswarm speaks protocol ${CLIENT_PROTOCOL_VERSION}. Nothing was created or changed. Ask whoever runs this deployment to update it, or drop the channel options and post as before.`;
+
+// src/cloud/command-client.ts
 var AGENT_TOKEN_RE = /^swm_agt_[A-Za-z0-9_-]{43}$/;
 var INVITATION_TOKEN_RE = /^swm_inv_[A-Za-z0-9_-]{43}$/;
 var CAPABILITY_TOKEN_RE = /^swm_cap_[A-Za-z0-9_-]{43}$/;
 var CONTROL_RE = /[\u0000-\u001f\u007f-\u009f\u202a-\u202e\u2066-\u2069]/;
 var WORKSPACE_NAME_MAX_LENGTH = 80;
+var ChannelCommandError = class extends Error {
+  constructor(status, code, message) {
+    super(message);
+    this.status = status;
+    this.code = code;
+    this.name = "ChannelCommandError";
+  }
+  status;
+  code;
+};
+function channelCommandError(status, body) {
+  const record = body && typeof body === "object" && !Array.isArray(body) ? body : {};
+  const code = typeof record.error === "string" ? record.error : "unknown";
+  const served = typeof record.message === "string" && record.message.length > 0 ? record.message.slice(0, 600) : null;
+  if (served !== null) return new ChannelCommandError(status, code, served);
+  if (status === 426) {
+    const minimum = typeof record.min_client_version === "string" ? record.min_client_version : null;
+    return new ChannelCommandError(
+      status,
+      "upgrade_required",
+      `This copy of cswarm is older than the deployment accepts${minimum === null ? "" : ` (minimum ${minimum})`}. Update cswarm, then run the same command again. Nothing changed.`
+    );
+  }
+  if (status === 403) {
+    return new ChannelCommandError(
+      status,
+      code === "unknown" ? "forbidden" : code,
+      "This credential may not do that in this workspace. Nothing changed."
+    );
+  }
+  if (status === 401) {
+    return new ChannelCommandError(
+      status,
+      code === "unknown" ? "unauthenticated" : code,
+      "Your sign-in is no longer valid for this deployment. Run cswarm login, then run the same command again. Nothing changed."
+    );
+  }
+  if (status === 400) {
+    return new ChannelCommandError(
+      status,
+      code === "unknown" ? "invalid_request" : code,
+      CHANNEL_UNSUPPORTED_MESSAGE
+    );
+  }
+  return new ChannelCommandError(
+    status,
+    code,
+    `CommonSwarm could not tell whether the change was made (HTTP ${status}). Run cswarm channel ls to see the current channels before trying again.`
+  );
+}
 var CAPABILITY_MIN_TTL_MS = 6e4;
 var CAPABILITY_MAX_TTL_MS = 7 * 24 * 60 * 60 * 1e3;
 var SIGNAL_REQUEST_TIMEOUT_MS = 3e4;
@@ -22706,6 +22914,80 @@ var ThinCommandClient = class {
     }
     return { httpStatus: response.status, response: body };
   }
+  /**
+   * Create, rename, or archive a channel.
+   *
+   * Deliberately not folded into `sendConnect`. That path throws a bare
+   * `CommandHttpError(403)` and, on any other refusal, reads only the `error`
+   * code — so every generated sentence the chat validator returns would be
+   * thrown away at the one moment the caller needs it. This method reads the
+   * body once and hands it to `channelCommandError`.
+   */
+  async sendChannel(request) {
+    if (!request.workspaceId) {
+      throw new Error("workspaceId is required for a channel command");
+    }
+    const commandId = request.commandId ?? newCommandId();
+    const controller = new AbortController();
+    const timer2 = setTimeout(() => controller.abort(), 3e4);
+    let response;
+    try {
+      response = await this.fetcher(commandEndpoint(this.target), {
+        method: "POST",
+        headers: {
+          authorization: `Bearer ${request.credential}`,
+          apikey: this.target.anonKey,
+          "content-type": "application/json"
+        },
+        body: JSON.stringify({
+          command_id: commandId,
+          client_version: CLIENT_PROTOCOL_VERSION,
+          workspace_id: request.workspaceId,
+          stream: { kind: "workspace" },
+          command: request.command
+        }),
+        signal: controller.signal
+      });
+    } catch (error) {
+      if (error.name === "AbortError") {
+        throw new CommandTransportError("channel request timed out");
+      }
+      throw new CommandTransportError(
+        "channel request failed before a response"
+      );
+    } finally {
+      clearTimeout(timer2);
+    }
+    let raw = null;
+    try {
+      raw = await parsedJson(response);
+    } catch (error) {
+      if (response.ok || error instanceof CommandTransportError) throw error;
+    }
+    if (!response.ok) throw channelCommandError(response.status, raw);
+    const body = responseBody(raw);
+    if (body.min_client_version !== void 0) {
+      const order = compareVersion(
+        CLIENT_PROTOCOL_VERSION,
+        body.min_client_version
+      );
+      if (order === null) {
+        throw new Error("server returned a malformed min_client_version");
+      }
+      if (order < 0) {
+        throw new Error(
+          `client upgrade required (minimum ${body.min_client_version})`
+        );
+      }
+    }
+    const channel = raw && typeof raw === "object" && !Array.isArray(raw) ? raw.channel : null;
+    if (channel === null || channel === void 0 || typeof channel.channel_id !== "string" || typeof channel.slug !== "string") {
+      throw new Error(
+        "the deployment accepted the change without saying which channel it applies to"
+      );
+    }
+    return { httpStatus: response.status, response: body, channel };
+  }
   async sendSignal(request) {
     const commandId = request.commandId ?? newCommandId();
     const command2 = {
@@ -22717,7 +22999,17 @@ var ThinCommandClient = class {
       in_reply_to: request.command.in_reply_to,
       about: request.command.about,
       ...request.command.attachments === void 0 ? {} : { attachments: request.command.attachments },
-      ...request.command.until_ms === void 0 ? {} : { until_ms: request.command.until_ms }
+      ...request.command.until_ms === void 0 ? {} : { until_ms: request.command.until_ms },
+      /* One spread per chat key, never a shared group. The edge reads each with
+       * its own Object.hasOwn and refuses any key it did not expect, so sending
+       * `channel: undefined` here would still put the key on the wire through
+       * JSON.stringify's own omission rules only by accident — and sending a
+       * null placeholder, the way to_user_id is sent, would make every post
+       * demand a channel. This rebuild is also the reason the fields have to be
+       * listed here at all: it drops anything it does not name. */
+      ...request.command.channel === void 0 ? {} : { channel: request.command.channel },
+      ...request.command.thread_root_id === void 0 ? {} : { thread_root_id: request.command.thread_root_id },
+      ...request.command.broadcast_to_channel === void 0 ? {} : { broadcast_to_channel: request.command.broadcast_to_channel }
     };
     const callerSignal = request.signal;
     if (callerSignal?.aborted) {
@@ -29041,6 +29333,12 @@ function checkedUuid2(value, field) {
 function checkedNullableUuid(value, field) {
   return value === null ? null : checkedUuid2(value, field);
 }
+function checkedBoolean(value, field) {
+  if (typeof value !== "boolean") {
+    throw new Error(`signal read returned a malformed ${field}`);
+  }
+  return value;
+}
 function checkedTimestamp(value, field) {
   if (typeof value !== "string" || !Number.isFinite(Date.parse(value))) {
     throw new Error(`signal read returned a malformed ${field}`);
@@ -29120,7 +29418,29 @@ function parseSignalRecord(value, options = {}) {
     }),
     until: checkedTimestamp(row.until, "until"),
     created_at: checkedTimestamp(row.created_at, "created_at"),
-    sender_owner_relation: senderOwnerRelation
+    sender_owner_relation: senderOwnerRelation,
+    /* ABSENT AND NULL ARE DIFFERENT HERE, and the difference is a claim.
+     *
+     * `null` means the server said this signal is in no channel. Absent means
+     * this reader never asked: the human REST path names the chat columns only
+     * when a channel filter is set, and an edge that predates channels never
+     * returns them. Normalizing absence to null, the way `to_agent` above does,
+     * would put `"channel_id": null` in `cswarm feed --json` for a signal that
+     * IS filed in a channel — a false statement, not a missing one. So an
+     * absent key stays absent, and a present one is checked. */
+    ...row.channel_id === void 0 ? {} : { channel_id: checkedNullableUuid(row.channel_id, "channel_id") },
+    ...row.thread_root_id === void 0 ? {} : {
+      thread_root_id: checkedNullableUuid(
+        row.thread_root_id,
+        "thread_root_id"
+      )
+    },
+    ...row.broadcast_to_channel === void 0 ? {} : {
+      broadcast_to_channel: checkedBoolean(
+        row.broadcast_to_channel,
+        "broadcast_to_channel"
+      )
+    }
   };
 }
 function cursorFromUnknown(value) {
@@ -29432,9 +29752,15 @@ async function humanSignals(target2, credential, query, options) {
   const url = new URL("/rest/v1/signals", target2.url);
   url.searchParams.set(
     "select",
-    "id,workspace_id,from,from_kind,to,to_agent,in_reply_to,about,kind,body,attachments,until,created_at"
+    [
+      "id,workspace_id,from,from_kind,to,to_agent,in_reply_to,about,kind,body,attachments,until,created_at",
+      ...query.channelId === void 0 ? [] : ["channel_id", "thread_root_id", "broadcast_to_channel"]
+    ].join(",")
   );
   url.searchParams.set("workspace_id", `eq.${query.workspaceId}`);
+  if (query.channelId !== void 0) {
+    url.searchParams.set("channel_id", `eq.${query.channelId}`);
+  }
   if (query.inbox) url.searchParams.set("to", `eq.${credential.userId}`);
   if (!query.includeStale) {
     url.searchParams.set("until", "gt.now");
@@ -29507,6 +29833,11 @@ async function agentSignalPage(target2, credential, query, options, allowLegacyC
           about: query.about ?? null,
           kind: query.kind ?? null,
           in_reply_to: query.in_reply_to ?? null,
+          /* Its OWN key, present only when asked for. The read edge groups it
+           * with `chatReadKeys` and refuses a key it did not expect, and every
+           * agent body already carries `in_reply_to`, so folding `channel` in
+           * beside it would 400 every agent read that omits a channel. */
+          ...query.channel === void 0 ? {} : { channel: query.channel },
           since: query.since ?? null,
           ...includeCursor ? {
             after_created_at: query.after?.created_at ?? null,
@@ -42206,8 +42537,11 @@ var KNOWN_FLAGS = /* @__PURE__ */ new Set([
   "foreground",
   "grok-executable",
   "head-sha",
+  "broadcast-to-channel",
+  "channel",
   "help",
   "if-version",
+  "include-archived",
   "include-stale",
   "include-tombstoned",
   "invitation-id",
@@ -42227,6 +42561,7 @@ var KNOWN_FLAGS = /* @__PURE__ */ new Set([
   "permissions",
   "principal-id",
   "provider",
+  "purpose",
   "renewal-grant-id",
   "repo",
   "reveal-anon-key",
@@ -42236,6 +42571,7 @@ var KNOWN_FLAGS = /* @__PURE__ */ new Set([
   "site",
   "slug",
   "state-dir",
+  "thread",
   "renewal-horizon-days",
   "standing",
   "task-id",
@@ -42256,12 +42592,14 @@ var BOOLEAN_FLAGS = /* @__PURE__ */ new Set([
   "agent-token-stdin",
   "all-devices",
   "allow-unattended",
+  "broadcast-to-channel",
   "confirm-standing",
   "force-file-store",
   "follow",
   "force",
   "foreground",
   "help",
+  "include-archived",
   "include-stale",
   "include-tombstoned",
   "invitation-token-stdin",
@@ -42274,13 +42612,14 @@ var BOOLEAN_FLAGS = /* @__PURE__ */ new Set([
   "reveal-anon-key",
   "repo",
   "standing",
+  "thread",
   "user",
   "write"
 ]);
 var UUID_RE23 = /^[0-9a-f]{8}-[0-9a-f]{4}-[1-8][0-9a-f]{3}-[89ab][0-9a-f]{3}-[0-9a-f]{12}$/i;
 function packageVersion() {
-  if ("0.1.54".length > 0) {
-    return "0.1.54";
+  if ("0.1.55".length > 0) {
+    return "0.1.55";
   }
   try {
     const value = JSON.parse(
@@ -42399,15 +42738,19 @@ Usage:
   cswarm whoami ${requiredAgentCredential} [--url <url> --anon-key <key>] [--workspace-id <uuid>] [--json]
   cswarm resume --agent-token-file <path> [--url <url> --anon-key <key>] --workspace-id <uuid> [--json]
   cswarm members [--url <url> --anon-key <key>] [--workspace-id <uuid>] ${agentCredential2} [--json]
-  cswarm working-on "<what>" [--url <url> --anon-key <key>] [--workspace-id <uuid>] ${agentCredential2} [--about <ref>] [--until <dur>] [--json]
-  cswarm note "<text>" [--url <url> --anon-key <key>] [--workspace-id <uuid>] ${agentCredential2} [--to <member|agent>] [--about <ref>] [--attach <path> ...] [--until <dur>] [--json]  # text: 1..8000 characters
-  cswarm ask "<text>" [--url <url> --anon-key <key>] [--workspace-id <uuid>] ${agentCredential2} [--to <member|agent>] [--about <ref>] [--attach <path> ...] [--until <dur>] [--wait <seconds>] [--json]  # text: 1..8000 characters
-  cswarm reply <signal-id> "<text>" [--url <url> --anon-key <key>] [--workspace-id <uuid>] ${agentCredential2} [--attach <path> ...] [--until <dur>] [--json]
+  cswarm working-on "<what>" [--url <url> --anon-key <key>] [--workspace-id <uuid>] ${agentCredential2} [--about <ref>] [--channel <name>] [--until <dur>] [--json]
+  cswarm note "<text>" [--url <url> --anon-key <key>] [--workspace-id <uuid>] ${agentCredential2} [--to <member|agent>] [--about <ref>] [--channel <name>] [--attach <path> ...] [--until <dur>] [--json]  # text: 1..8000 characters
+  cswarm ask "<text>" [--url <url> --anon-key <key>] [--workspace-id <uuid>] ${agentCredential2} [--to <member|agent>] [--about <ref>] [--channel <name>] [--attach <path> ...] [--until <dur>] [--wait <seconds>] [--json]  # text: 1..8000 characters
+  cswarm reply <signal-id> "<text>" [--url <url> --anon-key <key>] [--workspace-id <uuid>] ${agentCredential2} [--thread [--broadcast-to-channel]] [--attach <path> ...] [--until <dur>] [--json]
   cswarm receipt <signal-id> ${requiredAgentCredential} [--url <url> --anon-key <key>] --workspace-id <uuid> [--json]
-  cswarm feed [--url <url> --anon-key <key>] [--workspace-id <uuid>] ${agentCredential2} [--about <ref>] [--kind <kind>] [--since <timestamp>] [--limit <n>] [--include-stale] [--json]
-  cswarm inbox [--url <url> --anon-key <key>] [--workspace-id <uuid>] ${agentCredential2} [--kind <kind>] [--about <ref>] [--since <timestamp>] [--limit <n>] [--include-stale] [--wait <seconds>] [--json]
+  cswarm feed [--url <url> --anon-key <key>] [--workspace-id <uuid>] ${agentCredential2} [--about <ref>] [--kind <kind>] [--channel <name>] [--since <timestamp>] [--limit <n>] [--include-stale] [--json]
+  cswarm inbox [--url <url> --anon-key <key>] [--workspace-id <uuid>] ${agentCredential2} [--kind <kind>] [--about <ref>] [--channel <name>] [--since <timestamp>] [--limit <n>] [--include-stale] [--wait <seconds>] [--json]
   cswarm inbox --notify ${requiredAgentCredential} [--url <url> --anon-key <key>] --workspace-id <uuid> [--json]
   cswarm inbox --follow --ndjson [--url <url> --anon-key <key>] [--workspace-id <uuid>] ${agentCredential2} [--kind <kind>] [--about <ref>] [--since <timestamp>] [--limit <n>] [--include-stale]
+  cswarm channel create <name> [--purpose <text>] [--url <url> --anon-key <key>] [--workspace-id <uuid>] ${agentCredential2} [--json]  # purpose: at most ${CHANNEL_PURPOSE_MAX} characters
+  cswarm channel ls [--include-archived] [--url <url> --anon-key <key>] [--workspace-id <uuid>] [--json]
+  cswarm channel rename <name|channel-id> <new-name> [--url <url> --anon-key <key>] [--workspace-id <uuid>] ${agentCredential2} [--json]
+  cswarm channel archive <name|channel-id> [--url <url> --anon-key <key>] [--workspace-id <uuid>] ${agentCredential2} [--json]
   cswarm file put <local-path> [--name <name>] [--url <url> --anon-key <key>] [--workspace-id <uuid>] ${agentCredential2} [--json]
   cswarm file ls [--include-tombstoned] [--url <url> --anon-key <key>] [--workspace-id <uuid>] ${agentCredential2} [--json]
   cswarm file get <name|file-id> [--version <n>] [--out <local-path>] [--force] [--url <url> --anon-key <key>] [--workspace-id <uuid>] ${agentCredential2} [--json]
@@ -42464,6 +42807,11 @@ Credential selection for command/dogfood:
                                           signal command/read only         -- either form
                             receipt       reads only          -- either form
                             inbox --notify persists a per-agent cursor -- needs principal_id
+                            channel create, channel rename, channel archive
+                                          command only, nothing persisted     -- either form
+                            channel ls    reads swarm_read.channels over REST -- signed-in
+                                          person only; the read service has no channels
+                                          resource for an agent credential
                             file put, file ls, file get, file rm, file restore,
                             brain ls, brain get, brain put
                                           read and command, nothing persisted -- either form
@@ -42488,6 +42836,14 @@ Credential selection for command/dogfood:
 
 Found a bug or missing feature in cswarm itself? cswarm feedback sends it to the
 deployment's operators \u2014 agents are encouraged to report friction they hit.
+
+A channel is where a message is FILED, not who may read it. Everyone in the
+workspace reads every channel, and --channel changes nothing about who sees a
+signal. Archiving a channel keeps its history and its permalinks and refuses new
+messages. cswarm reply --thread answers in the open, in the thread of the signal
+you name, so it takes no recipient; add --broadcast-to-channel to send that reply
+to the thread's channel as well. Plain cswarm reply is unchanged and still
+answers the original author privately.
 
 Signals (intention sharing) accept the same credential selection. Agent mode
 never opens a browser or infers a human's saved workspace. Durations use a whole
@@ -43999,6 +44355,19 @@ function signalKind(value) {
   }
   return value;
 }
+function channelOption(args) {
+  const value = args.optional("channel");
+  if (value === void 0) return void 0;
+  const problem = channelSlugProblem(value);
+  if (problem !== null) throw new Error(problem);
+  return normalizeChannelSlug(value);
+}
+function unknownChannelReadMessage(error, slug) {
+  const details = followHttpDetails(error);
+  if (details === null || details.status !== 404) return null;
+  if (followErrorEnvelope(error).error !== "channel_not_found") return null;
+  return `There is no channel named ${slug} in this workspace. Nothing was read. Create it with cswarm channel create ${slug}, or drop --channel to read everything.`;
+}
 function signalDuration(value) {
   if (value === void 0) return void 0;
   const match = /^([1-9]\d*)(m|h|d)$/.exec(value);
@@ -44300,11 +44669,13 @@ async function runPostSignal(args, kind) {
     ...CREDENTIAL_FLAGS,
     ...allowTo ? ["to"] : [],
     "about",
+    "channel",
     "until",
     ...allowWait ? ["wait"] : [],
     ...allowTo ? ["attach"] : [],
     "json"
   ], 2);
+  const channel = channelOption(args);
   const preparedAttachments = allowTo ? prepareSignalAttachments(args.all("attach")) : [];
   const waitSeconds = allowWait && args.optional("wait") !== void 0 ? parseWaitSeconds(args.required("wait")) : void 0;
   const cloud = await target(args);
@@ -44349,7 +44720,8 @@ async function runPostSignal(args, kind) {
     ...postSignalTargets(recipient),
     about: args.optional("about") === void 0 ? null : signalText(args.required("about"), "about"),
     ...attachments.length === 0 ? {} : { attachments },
-    ...untilMs2 === void 0 ? {} : { until_ms: untilMs2 }
+    ...untilMs2 === void 0 ? {} : { until_ms: untilMs2 },
+    ...channel === void 0 ? {} : { channel }
   };
   let result;
   try {
@@ -44474,15 +44846,35 @@ function replyRefusalHint(error) {
   if (!(error instanceof CommandHttpError) || error.status !== 403) return null;
   return "reply was refused (403). The most common cause is that the signal was not addressed to you \u2014 you cannot reply to your own ask; reply to the other party's signal, reach someone directly with cswarm ask --to <agent>, or post a channel-visible cswarm note. If you did receive that signal, the refusal is an authorization one instead: the credential may be revoked or expired, or it may not be a member of this workspace.";
 }
+function threadReplyMessage(signal, options) {
+  if (!options.inThread) {
+    return "Reply shared. It is immutable and addressed to the original author.";
+  }
+  const inThread = "Reply shared in the thread. It is immutable and readable by everyone who can read the thread.";
+  if (!options.broadcastToChannel) return inThread;
+  if (signal.channel_id === void 0) {
+    return `${inThread} This deployment did not say which channel the thread is in, so whether it also reached a channel is unknown.`;
+  }
+  return signal.channel_id === null ? `${inThread} Its thread is in no channel, so --broadcast-to-channel had nothing to send it to.` : "Reply shared in the thread and sent to the thread's channel as well. It is immutable and readable by everyone who can read the thread.";
+}
 async function runReply(args) {
   args.assertShape([
     ...TARGET_FLAGS,
     "workspace-id",
     ...CREDENTIAL_FLAGS,
     "attach",
+    "broadcast-to-channel",
+    "thread",
     "until",
     "json"
   ], 3);
+  const inThread = args.has("thread");
+  const broadcastToChannel = args.has("broadcast-to-channel");
+  if (broadcastToChannel && !inThread) {
+    throw new UsageError(
+      "--broadcast-to-channel sends a thread reply to its channel as well, so it needs --thread"
+    );
+  }
   const signalId = args.positionals[1];
   if (signalId === void 0 || !UUID_RE23.test(signalId)) {
     throw new Error("reply requires the signal UUID being answered");
@@ -44508,24 +44900,30 @@ async function runReply(args) {
     body: signalText(body, "body"),
     to_user_id: null,
     to_agent_principal_id: null,
-    in_reply_to: signalId.toLowerCase(),
+    in_reply_to: inThread ? null : signalId.toLowerCase(),
     about: null,
     ...attachments.length === 0 ? {} : { attachments },
-    ...untilMs2 === void 0 ? {} : { until_ms: untilMs2 }
+    ...untilMs2 === void 0 ? {} : { until_ms: untilMs2 },
+    ...inThread ? { thread_root_id: signalId.toLowerCase() } : {},
+    ...broadcastToChannel ? { broadcast_to_channel: true } : {}
   };
   let result;
   try {
     result = await postSignalCommand(cloud, credential, command2);
   } catch (error) {
-    const hint = replyRefusalHint(error);
+    const hint = inThread ? null : replyRefusalHint(error);
     if (hint !== null) throw new Error(hint);
     throw error;
   }
   const signal = result.response.signal;
+  const replyMessage = threadReplyMessage(signal, {
+    inThread,
+    broadcastToChannel
+  });
   if (args.has("json")) {
     printJson({
       status: result.response.status,
-      message: "Reply shared. It is immutable, tenancy-scoped, and will quietly expire at its horizon.",
+      message: inThread ? replyMessage : "Reply shared. It is immutable, tenancy-scoped, and will quietly expire at its horizon.",
       signal,
       retried: result.retried,
       attempts: result.attempts
@@ -44540,7 +44938,7 @@ async function runReply(args) {
     )
   );
   process.stdout.write(
-    `Reply shared. It is immutable and addressed to the original author.
+    `${replyMessage}
 ${renderSignals([signal], {
       inbox: false,
       includeStale: true,
@@ -44822,6 +45220,7 @@ async function runSignalRead(args, inbox) {
     "workspace-id",
     ...CREDENTIAL_FLAGS,
     "about",
+    "channel",
     "kind",
     ...inbox ? ["wait", "follow", "ndjson", "notify"] : [],
     "since",
@@ -44837,6 +45236,9 @@ async function runSignalRead(args, inbox) {
     if (!args.has("ndjson")) {
       throw new Error("inbox --follow requires --ndjson");
     }
+    if (args.has("channel")) {
+      throw new Error("inbox --follow cannot be combined with --channel");
+    }
     if (args.optional("wait") !== void 0) {
       throw new Error("inbox --follow cannot be combined with --wait");
     }
@@ -44849,15 +45251,29 @@ async function runSignalRead(args, inbox) {
   if (inbox && args.has("ndjson")) {
     throw new Error("inbox --ndjson requires --follow");
   }
+  const channelSlug = channelOption(args);
   const waitSeconds = inbox && args.optional("wait") !== void 0 ? parseWaitSeconds(args.required("wait")) : void 0;
   const cloud = await target(args);
   const selected = await commandWorkspaceAndCredential(args, cloud, {
     validateHumanWorkspace: true
   });
   const credential = signalCredentialOf(selected);
+  let channelId;
+  if (channelSlug !== void 0 && selected.kind === "human") {
+    const rows4 = await listChannelsAsHuman(
+      cloud,
+      selected.human.accessToken,
+      selected.selectedWorkspace
+    );
+    const match = findChannelBySlug(rows4, channelSlug);
+    if (match === null) throw new Error(unknownChannelMessage(channelSlug, rows4));
+    channelId = match.channel_id;
+  }
   const queryBase = {
     workspaceId: selected.selectedWorkspace,
     inbox,
+    ...channelSlug === void 0 || selected.kind !== "agent" ? {} : { channel: channelSlug },
+    ...channelId === void 0 ? {} : { channelId },
     ...args.optional("about") === void 0 ? {} : { about: signalText(args.required("about"), "about") },
     ...args.optional("kind") === void 0 ? {} : { kind: signalKind(args.required("kind")) },
     ...args.optional("since") === void 0 ? {} : { since: args.required("since") },
@@ -44867,17 +45283,23 @@ async function runSignalRead(args, inbox) {
   let rows3;
   let timedOut = false;
   let waited = false;
-  if (waitSeconds === void 0) {
-    rows3 = await readSignals(cloud, credential, queryBase);
-  } else {
-    waited = true;
-    const deadlineMs = waitDeadlineMs(waitSeconds);
-    const waitResult = await pollForSignals({
-      deadlineMs,
-      read: () => readSignals(cloud, credential, queryBase, { deadlineMs })
-    });
-    rows3 = waitResult.signals;
-    timedOut = waitResult.timedOut;
+  try {
+    if (waitSeconds === void 0) {
+      rows3 = await readSignals(cloud, credential, queryBase);
+    } else {
+      waited = true;
+      const deadlineMs = waitDeadlineMs(waitSeconds);
+      const waitResult = await pollForSignals({
+        deadlineMs,
+        read: () => readSignals(cloud, credential, queryBase, { deadlineMs })
+      });
+      rows3 = waitResult.signals;
+      timedOut = waitResult.timedOut;
+    }
+  } catch (error) {
+    const named = channelSlug === void 0 ? null : unknownChannelReadMessage(error, channelSlug);
+    if (named !== null) throw new Error(named);
+    throw error;
   }
   if (args.has("json")) {
     printJson(
@@ -44909,6 +45331,12 @@ async function runSignalRead(args, inbox) {
 `
     );
     return;
+  }
+  if (channelSlug !== void 0) {
+    process.stdout.write(
+      `${inbox ? "Inbox" : "Feed"}, filed in ${channelSlug}:
+`
+    );
   }
   process.stdout.write(`${renderSignals(rows3, {
     inbox,
@@ -47468,6 +47896,174 @@ async function runFeedback(args) {
     "Feedback recorded for the operators of this deployment. It is stored durably with your workspace and identity attached, and it is read when they review feedback - there is no reply channel, so nothing further will happen in this session.\n"
   );
 }
+async function channelRows(context) {
+  if (context.selected.kind === "agent") {
+    throw new Error(CHANNEL_LIST_NEEDS_HUMAN_MESSAGE);
+  }
+  const read = async () => await listChannelsAsHuman(
+    context.cloud,
+    context.selected.human.accessToken,
+    context.selected.selectedWorkspace
+  );
+  try {
+    return await read();
+  } catch (error) {
+    if (error instanceof ChannelListError && error.noResponse) return await read();
+    throw error;
+  }
+}
+function channelSelectorKind(selector) {
+  if (UUID_RE23.test(selector)) return "id";
+  const problem = channelSelectorProblem(selector);
+  if (problem !== null) throw new Error(problem);
+  return "name";
+}
+async function resolveChannelSelector(context, selector, kind) {
+  if (kind === "id") return selector.toLowerCase();
+  if (context.selected.kind === "agent") {
+    throw new Error(CHANNEL_SELECTOR_NEEDS_ID_MESSAGE);
+  }
+  const rows3 = await channelRows(context);
+  const match = findChannelBySlug(rows3, selector);
+  if (match === null) throw new Error(unknownChannelMessage(selector, rows3));
+  return match.channel_id;
+}
+async function sendChannelCommand(context, command2) {
+  const client = new ThinCommandClient(context.cloud);
+  const result = await client.sendChannel({
+    workspaceId: context.selected.selectedWorkspace,
+    command: command2,
+    credential: context.selected.bearer
+  });
+  return result.channel;
+}
+var CHANNEL_FLAGS = [
+  ...TARGET_FLAGS,
+  "workspace-id",
+  ...CREDENTIAL_FLAGS,
+  "json"
+];
+async function runChannelCreate(args) {
+  const name = args.positionals[2];
+  if (name === void 0) {
+    throw new UsageError("cswarm channel create needs a channel name");
+  }
+  args.assertShape([...CHANNEL_FLAGS, "purpose"], 3);
+  const problem = channelSlugProblem(name);
+  if (problem !== null) throw new Error(problem);
+  const purposeInput = args.optional("purpose");
+  const purpose = purposeInput === void 0 ? void 0 : purposeInput.trim();
+  if (purpose !== void 0 && purpose.length > CHANNEL_PURPOSE_MAX) {
+    throw new Error(
+      `A channel purpose is at most ${CHANNEL_PURPOSE_MAX} characters.`
+    );
+  }
+  const context = await fileContext(args, ["purpose"], 3);
+  const channel = await sendChannelCommand(context, {
+    kind: "channel_create",
+    slug: normalizeChannelSlug(name),
+    ...purpose === void 0 || purpose.length === 0 ? {} : { purpose }
+  });
+  if (args.has("json")) {
+    printJson({ workspace_id: channel.workspace_id, channel });
+    return;
+  }
+  process.stdout.write(
+    `Channel ${channel.slug} created. Everyone in this workspace can read it and post to it; a channel is where a message is filed, not who may see it.
+Post to it with cswarm note "<text>" --channel ${channel.slug}
+Read it with cswarm feed --channel ${channel.slug}
+Its id, which rename and archive take: ${channel.channel_id}
+`
+  );
+}
+async function runChannelLs(args) {
+  args.assertShape([...CHANNEL_FLAGS, "include-archived"], 2);
+  const context = await fileContext(args, ["include-archived"], 2);
+  const rows3 = await channelRows(context);
+  const includeArchived = args.has("include-archived");
+  if (args.has("json")) {
+    printJson({
+      workspace_id: context.selected.selectedWorkspace,
+      channels: includeArchived ? rows3 : rows3.filter((row) => row.archived_at === null)
+    });
+    return;
+  }
+  process.stdout.write(renderChannelList(rows3, { includeArchived }));
+}
+async function runChannelRename(args) {
+  const selector = args.positionals[2];
+  const nextName = args.positionals[3];
+  if (selector === void 0 || nextName === void 0) {
+    throw new UsageError(
+      "cswarm channel rename needs the channel and its new name"
+    );
+  }
+  args.assertShape([...CHANNEL_FLAGS], 4);
+  const selectorKind = channelSelectorKind(selector);
+  const problem = channelSlugProblem(nextName);
+  if (problem !== null) throw new Error(problem);
+  const context = await fileContext(args, [], 4);
+  const channelId = await resolveChannelSelector(context, selector, selectorKind);
+  const channel = await sendChannelCommand(context, {
+    kind: "channel_rename",
+    channel_id: channelId,
+    slug: normalizeChannelSlug(nextName)
+  });
+  if (args.has("json")) {
+    printJson({ workspace_id: channel.workspace_id, channel });
+    return;
+  }
+  process.stdout.write(
+    `Channel renamed to ${channel.slug}. Every message already filed in it is unchanged and its id has not moved.
+Post to it with cswarm note "<text>" --channel ${channel.slug}
+Its id: ${channel.channel_id}
+`
+  );
+}
+async function runChannelArchive(args) {
+  const selector = args.positionals[2];
+  if (selector === void 0) {
+    throw new UsageError("cswarm channel archive needs the channel");
+  }
+  args.assertShape([...CHANNEL_FLAGS], 3);
+  const selectorKind = channelSelectorKind(selector);
+  const context = await fileContext(args, [], 3);
+  const channelId = await resolveChannelSelector(context, selector, selectorKind);
+  const channel = await sendChannelCommand(context, {
+    kind: "channel_archive",
+    channel_id: channelId
+  });
+  if (args.has("json")) {
+    printJson({ workspace_id: channel.workspace_id, channel });
+    return;
+  }
+  process.stdout.write(
+    `Channel ${channel.slug} is archived. It keeps its messages and its links, and it takes no new ones. Archiving it again changes nothing.
+See it with cswarm channel ls --include-archived
+Read what is in it with cswarm feed --channel ${channel.slug}
+`
+  );
+}
+var CHANNEL_SUBCOMMANDS = {
+  create: runChannelCreate,
+  ls: runChannelLs,
+  rename: runChannelRename,
+  archive: runChannelArchive
+};
+var CHANNEL_SUBCOMMAND_NAMES = Object.keys(
+  CHANNEL_SUBCOMMANDS
+);
+async function runChannel(args) {
+  const action = args.positionals[1];
+  const chosen = action === void 0 ? void 0 : CHANNEL_SUBCOMMANDS[action];
+  if (chosen === void 0) {
+    const names = Object.keys(CHANNEL_SUBCOMMANDS);
+    throw new UsageError(
+      `cswarm channel takes ${names.slice(0, -1).join(", ")}, or ${names[names.length - 1]}`
+    );
+  }
+  return await chosen(args);
+}
 async function runFile(args) {
   const action = args.positionals[1];
   if (action === "put") return await runFilePut(args);
@@ -47743,6 +48339,10 @@ async function main() {
     await runFeedback(args);
     return;
   }
+  if (verb === "channel") {
+    await runChannel(args);
+    return;
+  }
   if (verb === "file") {
     await runFile(args);
     return;
@@ -47884,6 +48484,7 @@ ${usage()}
 });
 // Annotate the CommonJS export names for ESM import in node:
 0 && (module.exports = {
+  CHANNEL_SUBCOMMAND_NAMES,
   EXIT_RESTARTABLE,
   ListenerUnattendedRefusedError,
   TURN_BUDGET_CREDENTIAL_MARGIN_MS,
@@ -47902,5 +48503,6 @@ ${usage()}
   resolveDetachedClaudeExecutable,
   resolveDetachedCodexExecutable,
   resolveTurnBudgetOrDefer,
+  threadReplyMessage,
   usage
 });
