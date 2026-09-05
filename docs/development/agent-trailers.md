@@ -34,6 +34,19 @@ printed by the scripts — required keys, families, sources, supported runtimes 
 those arrays at print time, so this table is documentation and the arrays are the definition. If
 they ever disagree, `tests/p1-cli/agent-trailers.test.ts` fails.
 
+### Model families
+
+`Agent-Family` describes the **model**, not the tool that ran it.
+
+| value | what it means |
+|---|---|
+| `anthropic` | an Anthropic model |
+| `openai` | an OpenAI model |
+| `xai` | an xAI model |
+| `google` | a Google model |
+| `human` | no model wrote this; a person did |
+| `unknown` | an agent wrote it and the family could not be established |
+
 ### `Agent-Model-Source` is the field to read first
 
 | value | what it means |

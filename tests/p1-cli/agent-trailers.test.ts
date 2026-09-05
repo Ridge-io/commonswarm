@@ -343,6 +343,18 @@ test("the doc does not pin the self-test's assertion count", () => {
   assert.equal(pinned, null, `the doc pins an assertion count: ${pinned?.[0]}`);
 });
 
+/** The backticked first column of the first markdown table under a heading. */
+function docTable(doc: string, heading: string): string[] {
+  const start = doc.indexOf(heading);
+  assert.notEqual(start, -1, `the doc has no section "${heading}"`);
+  const rest = doc.slice(start + heading.length);
+  const end = rest.search(/^#{2,3} /m);
+  const section = end === -1 ? rest : rest.slice(0, end);
+  const rows = [...section.matchAll(/^\|\s*`([^`]+)`\s*\|/gm)].map((m) => m[1]!);
+  assert.ok(rows.length > 0, `no table rows under "${heading}"`);
+  return rows;
+}
+
 test("the doc's tables name every family and every source in the vocabulary", () => {
   /* The doc says outright: "The accepted values live in scripts/lib/agent-trailer-vocab.sh and
    * nowhere else ... this table is documentation and the arrays are the definition. If they ever
@@ -354,9 +366,21 @@ test("the doc's tables name every family and every source in the vocabulary", ()
   for (const family of families) {
     assert.ok(new RegExp(`\\b${family}\\b`).test(doc), `family ${family} is not documented`);
   }
-  for (const source of sources) {
-    assert.ok(doc.includes(source), `model source ${source} is not documented`);
-  }
+  /* READ THE TABLES, DO NOT ASK WHETHER THE WORD APPEARS. Measured: every source string also
+   * occurs in the prose on this page — `none` nine times, because the model sentinel uses the same
+   * word — so a file-wide substring check stays green when a row is deleted or a stale row is added
+   * back. That is the same defect the runtime table had, left in place after the runtime table was
+   * fixed. */
+  assert.deepEqual(
+    docTable(doc, "### Model families").sort(),
+    [...families].sort(),
+    "the doc's family table and AGENT_TRAILER_FAMILIES name different families",
+  );
+  assert.deepEqual(
+    docTable(doc, "### `Agent-Model-Source` is the field to read first").sort(),
+    [...sources].sort(),
+    "the doc's model-source table and AGENT_TRAILER_SOURCES name different sources",
+  );
   /* Runtime ids were left out of this control once and the doc's table drifted to `claude` while
    * the vocabulary said `claude-code` — a live disagreement the page claimed this test would catch.
    *
