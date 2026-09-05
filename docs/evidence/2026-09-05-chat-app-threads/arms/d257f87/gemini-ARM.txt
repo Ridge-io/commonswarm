@@ -1,0 +1,17 @@
+I have reviewed the patch and prepared the formal verdict based on the rules in `REVIEW.md`.
+
+```markdown
+diff --git a/docs/evidence/2026-09-05-chat-app-threads/README.md b/docs/evidence/2026-09-05-chat-app-threads/README.md
+
+Findings:
+1. The reply control lies: Cannot be refuted. `canStartThread` handles `null` expiries correctly, and the UI reads the `rootChannel` for the archive check.
+2. The To: lock has a second write path: Cannot be refuted. The `deriveComposerAddress` pass accurately holds while `replying` is true, and there are no unguarded writes to `composerTo`.
+3. The wire body is wrong: Cannot be refuted. `broadcastToChannel` is never sent without a `thread_root_id` (enforced by the `placementThreadRootId !== null` condition).
+4. The unfinished-send rule is wrong for one of its two callers: Cannot be refuted. `composerAddressStillPromised` is evaluated correctly for both callers, and the UI disables changing the thread reply root mid-post.
+5. Something the send owns sits behind a screen guard: A break was found in `site/src/components/app/LiveDashboard.astro` in the `finally` block of the submit handler. The block sets `composerSending = false` unconditionally. Because it is placed in `finally`, it runs even if the screen guard (`if (workspaceId !== activeWorkspaceId) return;`) fired. This means that if a user submits a message in Workspace A, immediately switches to Workspace B, and starts composing a new message, the background completion of Workspace A's send will unconditionally clear the `composerSending` lock for Workspace B's composer, breaking the send state and screen locks for the user in the new workspace.
+6. The window line's number is never derived: Cannot be refuted. `threadReplyWindowText` correctly receives the derived relative time string from `formatTime(threadReplyRoot.until).relative`.
+7. A permalink shape is not built: Cannot be refuted. The query parameter `?m=` is indeed missing and not built or parsed.
+8. The server's margin is shadowed: Cannot be refuted. The lane did write a shadow constant `THREAD_ROOT_LIVE_MARGIN_MS` (set to `1_000`), although it does include an observer test to synchronize it with the server's literal SQL interval.
+
+VERDICT: FAIL
+```

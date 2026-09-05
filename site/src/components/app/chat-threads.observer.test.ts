@@ -152,13 +152,16 @@ test("a top-level post still sends no thread fields at all", () => {
   assert.equal(Object.hasOwn(command, "broadcast_to_channel"), false);
 });
 
-test("the four rules the reply control follows are the four arms the edge enforces", () => {
-  /* THE SET, ENUMERATED RATHER THAN PATTERN-MATCHED. `resolveThreadRoot`'s WHERE has three
-     arms and the archive check that follows it is the fourth; the browser's classifier returns
-     one member of THREAD_ROOT_BLOCKS for each. This is a source read of the edge, and its
-     bound is stated: it looks for four exact clauses inside `resolveThreadRoot` alone. It
-     cannot see a rule moved elsewhere or written differently, and a rewrite of that kind makes
-     one of these counts zero and this test red, which is the outcome that matters. */
+test("the four rules the reply control follows are the four the edge enforces, in its order", () => {
+  /* THE SET, ENUMERATED RATHER THAN PATTERN-MATCHED. ~~"the WHERE has three arms and the
+     archive is the fourth"~~ was this comment's claim and a review arm found it wrong:
+     `already-a-reply` is not a WHERE arm at all. The edge's real sequence is WHERE (directed,
+     `in_reply_to`, live) -> 404, then archive -> 409, then already-a-reply -> 400.
+
+     This is a source read of the edge, and its bound is stated: it looks for four exact clauses
+     inside `resolveThreadRoot` alone, each exactly once. It cannot see a rule moved elsewhere or
+     written differently, and a rewrite of that kind makes one of these counts zero and this test
+     red, which is the outcome that matters. */
   const resolve = between(commandEdge, "async function resolveThreadRoot(", "\n}\n");
   const clauses: Record<string, string> = {
     directed: "AND s.to_user_id IS NULL",
@@ -166,6 +169,20 @@ test("the four rules the reply control follows are the four arms the edge enforc
     expiring: "AND s.until > statement_timestamp() + interval '1 second'",
     "channel-archived": "if (root.channel_archived_at !== null)",
   };
+  /* AND THE BROWSER ASKS THEM IN THE EDGE'S ORDER, so a reader meets the rule the server would
+     have named. Read as POSITIONS IN THE EDGE'S OWN TEXT, not as a list typed here: the archive
+     check must appear before the already-a-reply check in `resolveThreadRoot`, and
+     THREAD_ROOT_BLOCKS must order them the same way. */
+  assert.ok(
+    resolve.indexOf(clauses["channel-archived"]!) <
+      resolve.indexOf(clauses["already-a-reply"]!),
+    "the edge no longer checks the archive before the already-a-reply rule",
+  );
+  assert.ok(
+    THREAD_ROOT_BLOCKS.indexOf("channel-archived") <
+      THREAD_ROOT_BLOCKS.indexOf("already-a-reply"),
+    "the browser asks the two 4xx rules in the opposite order to the edge",
+  );
   assert.deepEqual(
     Object.keys(clauses).sort(),
     [...THREAD_ROOT_BLOCKS].sort(),
@@ -212,6 +229,20 @@ test("the reply control asks the classifier, and asks it about the ROW's channel
   );
   /* AND THE ROOT'S CHANNEL IS CAPTURED, not read again at send time from a live global. */
   assert.match(rowBuilder, /channelId: signal\.channelId,\s*\n\s*until: signal\.until,/);
+  /* AND THE BAR IS RESYNCED BY THE FEED, so its window line cannot go stale. The design
+     requires the ceiling on screen because it can be milliseconds; a line written once when the
+     bar opened is the failure that requirement exists to prevent, and it is also what leaves a
+     stopped thread counting down to a moment that has passed. */
+  const feed = between(
+    dashboard,
+    'const renderFeed = (change: "history" | "latest" = "history"): void => {',
+    "const wasAtBottom = atBottom();",
+  );
+  assert.match(
+    feed,
+    /syncComposerPlacement\(\);/,
+    "the reply bar must be resynced by the feed, so its window line cannot go stale",
+  );
   /* AND NOT WHILE A MESSAGE IS ON THE WIRE, the same rule the chips follow. */
   assert.match(
     rowBuilder,
@@ -777,7 +808,7 @@ test("replies collapse under their root, and a reply carries no recipient", asyn
     assert.deepEqual(measured.replyBar, {
       hidden: false,
       broadcastChip: THREAD_REPLY_CHIP_LABEL,
-      target: threadReplyTargetText("Orbit", null),
+      target: threadReplyTargetText("Orbit", { kind: "unfiled" }),
       /* The sample rows do not expire, so there is no ceiling to state and the line collapses
          rather than saying "never". */
       windowLine: "",
@@ -828,12 +859,12 @@ test("replies collapse under their root, and a reply carries no recipient", asyn
     /* BROADCAST IS OFFERED ONLY WHERE THERE IS A CHANNEL TO BROADCAST TO. */
     assert.deepEqual(measured.replyUnfiled, {
       broadcastHidden: true,
-      target: threadReplyTargetText("Orbit", null),
+      target: threadReplyTargetText("Orbit", { kind: "unfiled" }),
     }, "replyUnfiled: an unfiled thread has nowhere to broadcast, so there is no control");
     assert.deepEqual(measured.replyInChannel, {
       broadcastHidden: false,
       broadcastLabel: threadReplyBroadcastLabel("mobile"),
-      target: threadReplyTargetText("River", "mobile"),
+      target: threadReplyTargetText("River", { kind: "channel", slug: "mobile" }),
     }, "replyInChannel: the control names the channel it would send to");
 
     /* THE SEND. One reply under its root, no new top-level row, and the composer goes back to

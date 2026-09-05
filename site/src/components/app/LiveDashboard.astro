@@ -1225,8 +1225,10 @@ import "../../styles/tokens.css";
     threadReplyMayBroadcast,
     threadReplyTargetText,
     threadReplyWindowText,
+    threadReplyPlace,
     threadRootBlock,
     threadRootBlockText,
+    type ThreadReplyPlace,
     type ThreadReplyRoot,
   } from "../../lib/thread-reply";
   import {
@@ -4891,6 +4893,12 @@ import "../../styles/tokens.css";
           Math.min(Math.max(nextExpiry - now + 25, 25), 2_147_483_647),
         );
       }
+      /* THE REPLY BAR TICKS WITH THE FEED. Its window line is a relative time and a live
+         eligibility, and both go stale the moment they are written: the design requires the
+         ceiling on screen precisely because it can be milliseconds, so a line written once when
+         the bar opened would be the failure the requirement exists to prevent. This writes text
+         and decides nothing — the reply, the pair and the intent are all somebody else's. */
+      syncComposerPlacement();
       /* Captured BEFORE the list is rebuilt: once replaceChildren has run, the old scroll
        * geometry is gone and neither question can be answered. */
       const wasAtBottom = atBottom();
@@ -6353,10 +6361,33 @@ import "../../styles/tokens.css";
      * leaves the list empty — also resolves to `null` here, and the SEND is what refuses in
      * that case, with the server's own rule. A label is a label; the guard is the guard.
      */
-    const threadReplyChannelSlug = (): string | null =>
-      threadReplyRoot === null || threadReplyRoot.channelId === null
+    const threadReplyPlaceOf = (root: ThreadReplyRoot | null): ThreadReplyPlace =>
+      root === null
+        ? { kind: "unfiled" }
+        : threadReplyPlace(
+          root.channelId,
+          root.channelId === null
+            ? null
+            : channelById(channels, root.channelId)?.slug ?? null,
+        );
+
+    /**
+     * WHAT STOPS THIS REPLY, right now, or null. The captured root carries the two things that
+     * can change while a reply is being written — its horizon, and whether its channel has been
+     * archived — and the other two arms were settled when the control was drawn and cannot
+     * change, because a stored signal is immutable. One classifier answers for the bar and for
+     * the send, so the sentence a reader reads while typing is the sentence they get if they
+     * press Enter.
+     */
+    const threadReplyBlock = (root: ThreadReplyRoot | null) =>
+      root === null
         ? null
-        : channelById(channels, threadReplyRoot.channelId)?.slug ?? null;
+        : threadRootBlock(
+          { to: null, toAgent: null, threadRootId: null, until: root.until },
+          Date.now(),
+          root.channelId !== null &&
+            channelById(channels, root.channelId)?.archivedAt != null,
+        );
 
     const syncComposerPlacement = (): void => {
       const input = one<HTMLTextAreaElement>("[data-composer-input]");
@@ -6368,19 +6399,24 @@ import "../../styles/tokens.css";
       const broadcast = one<HTMLInputElement>("[data-composer-reply-broadcast]");
       if (bar) bar.hidden = threadReplyRoot === null;
       if (threadReplyRoot !== null) {
-        const slug = threadReplyChannelSlug();
+        const place = threadReplyPlaceOf(threadReplyRoot);
+        const block = threadReplyBlock(threadReplyRoot);
         if (targetText) {
-          targetText.textContent = threadReplyTargetText(threadReplyRoot.author, slug);
+          targetText.textContent = threadReplyTargetText(threadReplyRoot.author, place);
         }
         if (windowText) {
-          /* THE CEILING, when there is one. §6 P4 requires it on screen: the remaining window
-             can be milliseconds, and a considered reply must not be written into a thread that
-             expires while it is being read. A root with no expiry produces no sentence, so the
-             line collapses rather than saying "never". */
+          /* THE CEILING, when there is one, and the BLOCK when the thread has stopped taking
+             replies. §6 P4 requires the ceiling on screen: the remaining window can be
+             milliseconds, and a considered reply must not be written into a thread that expires
+             while it is being read. That is also why this line is rewritten on every feed tick
+             rather than once when the bar opens — a frozen "in 2 minutes" is the exact failure
+             the requirement exists to prevent. A root with no expiry produces no sentence, so
+             the line collapses rather than saying "never". */
           windowText.textContent = threadReplyWindowText(
             threadReplyRoot.until === null
               ? null
               : formatTime(threadReplyRoot.until).relative,
+            block,
           );
         }
         /* AND THE BROADCAST CONTROL ONLY WHERE IT CAN DO SOMETHING. An unfiled thread has no
@@ -6389,10 +6425,12 @@ import "../../styles/tokens.css";
            claiming a send that never occurred and a review arm found it; this is one step
            earlier, where the control is simply not there. Its own state is cleared with it,
            so a box ticked for one thread cannot ride along into the next. */
-        const mayBroadcast = threadReplyMayBroadcast(slug);
+        const mayBroadcast = threadReplyMayBroadcast(place, block);
         if (broadcastRow) broadcastRow.hidden = !mayBroadcast;
         if (broadcastLabel) {
-          broadcastLabel.textContent = mayBroadcast ? threadReplyBroadcastLabel(slug!) : "";
+          broadcastLabel.textContent = mayBroadcast && place.kind === "channel"
+            ? threadReplyBroadcastLabel(place.slug)
+            : "";
         }
         if (broadcast && !mayBroadcast) broadcast.checked = false;
         if (input) {
@@ -7964,7 +8002,7 @@ import "../../styles/tokens.css";
          checked box from an earlier thread cannot leak through, because `syncComposerPlacement`
          clears it whenever the control is hidden. */
       const freshBroadcastToChannel = replyRoot !== null &&
-        threadReplyMayBroadcast(threadReplyChannelSlug()) &&
+        threadReplyMayBroadcast(threadReplyPlaceOf(replyRoot), threadReplyBlock(replyRoot)) &&
         (one<HTMLInputElement>("[data-composer-reply-broadcast]")?.checked ?? false);
       const signalKind = browserSignalKind(recipients);
       const audienceKey = composerRecipientsKey();
@@ -8042,11 +8080,7 @@ import "../../styles/tokens.css";
          immutable, so only the two time-varying arms can have changed, and passing a row that
          satisfies the other two keeps one function answering rather than two. */
       if (replyRoot !== null) {
-        const block = threadRootBlock(
-          { to: null, toAgent: null, threadRootId: null, until: replyRoot.until },
-          Date.now(),
-          false,
-        );
+        const block = threadReplyBlock(replyRoot);
         if (block !== null) {
           setComposerStatus(threadRootBlockText(block), "error");
           composerIntent = null;

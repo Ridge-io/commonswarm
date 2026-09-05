@@ -14,11 +14,21 @@ red  the browser's margin IS the edge's interval, read back out of its SQL
   restored green  site/src/lib/signal-feed-threads.test.mjs
 red  an archived channel closes its threads
   restored green  site/src/lib/thread-reply.test.mjs
-red  the rules are asked in the server's order, so a refusal names the rule the server would name
+red  the archive outranks already-a-reply, the way the edge's 409 outranks its 400
   restored green  site/src/lib/thread-reply.test.mjs
+red  the enumeration's order is compared against the edge's own text, not a typed list
+  restored green  site/src/components/app/chat-threads.observer.test.ts
 red  an unfiled thread is named from the constant the whole app names that view by
   restored green  site/src/lib/thread-reply.test.mjs
+red  an unresolvable channel is its own state, never the unfiled one
+  restored green  site/src/lib/thread-reply.test.mjs
+red  the unknown place names no channel rather than guessing all-signals
+  restored green  site/src/lib/thread-reply.test.mjs
+red  a stopped thread says so in the bar rather than counting down to a past moment
+  restored green  site/src/lib/thread-reply.test.mjs
 red  broadcast is offered only for a thread that has a channel to broadcast to
+  restored green  site/src/lib/thread-reply.test.mjs
+red  broadcast is not offered on a reply the server is going to refuse whole
   restored green  site/src/lib/thread-reply.test.mjs
 red  the broadcast control names the channel it would send to
   restored green  site/src/lib/thread-reply.test.mjs
@@ -68,6 +78,10 @@ red  a box ticked for one thread cannot ride along into a thread that has no cha
   restored green  site/src/components/app/chat-threads.observer.test.ts
 red  the bar names the channel the thread is actually in
   restored green  site/src/components/app/chat-threads.observer.test.ts
+red  the reply bar's window line is rewritten on every feed tick
+  restored green  site/src/components/app/chat-threads.observer.test.ts
+red  the broadcast flag is read off the root this send captured
+  restored green  site/src/components/app/chat-threads.observer.test.ts
 red  the bar is present only while a reply is in progress
   restored green  site/src/components/app/chat-threads.observer.test.ts
 red  a reply is filed where its thread is, not where the reader is looking
@@ -83,4 +97,4 @@ red  the close names THIS send's own reply, so it cannot close one opened after 
 red  the send does not reach for the reply again after its first await
   restored green  site/src/components/app/chat-threads.observer.test.ts
 
-39 mutations, 0 problems
+46 mutations, 0 problems

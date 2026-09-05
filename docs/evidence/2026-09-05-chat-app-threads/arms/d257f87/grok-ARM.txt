@@ -1,0 +1,58 @@
+I'll read REVIEW.md and DIFF.patch first, then follow REVIEW.md exactly.The patch is long. I’ll keep reading it and the files the brief names so I can attack each claim.Next I’ll finish the rest of the patch and read the source files the eight attacks name.The arm folder only has the brief. I’ll locate the checkout and keep reading the rest of the patch.The checkout is the parent worktree. I’ll read the source the eight attacks need, plus the rest of the patch.I’ll read the server rules, the wire builder, and the send path next — those are the places a false claim would show up.diff --git a/docs/evidence/2026-09-05-chat-app-threads/README.md b/docs/evidence/2026-09-05-chat-app-threads/README.md
+
+I tried to break each of the eight claims. I could not. Notes below are the attacks, not extra defects.
+
+### 1. Reply control lies
+I could not refute this.
+
+`threadRootBlock` (`site/src/lib/thread-reply.ts:84-94`) checks directed, already-a-reply, the 1s live margin, then archive. The feed asks that of `rootChannel = channelById(channels, signal.channelId)` (`LiveDashboard.astro:5157-5158`), not of `rowChannel` (`5079-5081`), which is null inside a channel. Reusing `rowChannel` would have offered Reply on an archived thread while you were inside that channel.
+
+`in_reply_to`: `resolveSignalWriteTarget` (`command/index.ts:6816-6839`) always writes a recipient for an `in_reply_to` row. No product write path leaves one undirected. The extra SQL `AND s.in_reply_to IS NULL` is belt-and-braces. The browser’s directed test covers every row that can exist.
+
+The README calls already-a-reply a WHERE arm. It is not. Server order is: WHERE (directed, `in_reply_to`, live) → 409 archive → 400 already-a-reply. The button still stays off on a reply. No reader is offered a control the server would accept, or the reverse.
+
+### 2. Second write path on To:
+I could not refute this.
+
+`composerSendRecipients` is the only set the row and the send read. `deriveComposerAddress` holds while `replying === true` (`composer-address.ts:448`). Assignments to `composerTo` / `composerToApplied` are the pass (`LiveDashboard.astro:2924-2925`) or workspace teardown (`3683-3684`), which clears the reply first. Chip clicks have no buttons to hit while the empty “This thread” chip is up; if they did, the pass would still hold. `rememberComposerTo` is skipped when `placementThreadRootId !== null` (`8232`). Cancel runs the pass over the body you still have, so the old chips come back.
+
+### 3. Wire body
+I could not refute this.
+
+A reply is `{ threadRootId, ...(broadcastToChannel ? { broadcastToChannel: true } : {}) }` with no `channel:` (`8063-8067`). `browserSignalCommand` omits null/absent optional keys (`commonswarm.ts:2105-2113`). Empty recipients omit `to`. Top-level still sends no thread keys. `broadcast_to_channel` is only added when the thread branch is taken and the box is ticked, so it never goes out without `thread_root_id`. That matches `installedPost({ thread_root_id })`.
+
+### 4. Unfinished-send rule
+I could not refute this.
+
+`composerAddressStillPromised` (`6411-6416`): a reply compares thread ids; a top-level post compares the channel on screen. Both `selectChannel` and the catch ask that one function. Sequences I tried (reply from all-signals, channel move during a reply, cancel after a failed reply, open a reply over a failed top-level) retire Retry only when the box is no longer promising that address. The catch rewrite keeps `placementThreadRootId` and `broadcastToChannel`, so Retry is not a new top-level note.
+
+### 5. Send vs screen
+I could not refute this.
+
+Submit freezes `replyRoot` before the first await (`7947`). Success closes the bar only when `threadReplyRoot?.id === replyRoot.id` (`8203-8204`), so a workspace switch (bar already cleared) is a no-op. Remember/clear use captured keys and run before the screen return. Catch tears down send-owned work first; it will not write the box if the token or workspace is no longer this send’s. Finally lowers the flag on the token, then settles the address only if the box is still this send’s.
+
+### 6. False sentence / typed list
+I could not refute this.
+
+Bar copy is built in `thread-reply.ts` from `channelLabel` / `ALL_SIGNALS_SLUG` / `THREAD_REPLY_REACH_TEXT`. Reach says it notifies nobody, which matches no delivery row on either surface. Archived copy is the edge’s sentence, word for word (`thread-reply.ts:120-121` and `command/index.ts:6580`). `THREAD_ROOT_BLOCKS` is the enum the classifier and the sentence table share. No em-dash, no privacy claim.
+
+### 7. Control that cannot fail
+The two NOT CONTROLLED notes are true. Dropping `Number.isFinite(until)` does not change NaN/Infinity. Dropping `if (signal.threadRootId === null)` on registration does not change output, because pass two only looks up ids in `rootIds`.
+
+The liveness sweep does what its own header says: one `interval '<n> second'` clause in the edge file, count first. The four-arm sweep does what its header says: four exact strings inside `resolveThreadRoot`, each once. I did not treat “is the sweep complete?” as the question.
+
+### 8. Retired control weakened
+I could not refute this.
+
+- `composer.observer.test.ts`: “thread” is allowed only in the reply bar; emoji/reaction still gated. Claim is still “do not name a feature that is not there.”
+- Display-reversal pins now match `reverse()` once, which is the claim they name; grouping order is pinned elsewhere.
+- `chat-channels.observer.test.ts`: the old “never send thread fields” negative is replaced by a positive top-level vs thread-branch pair. The top-level channel stamp is still there.
+
+### Also
+- `groupSignalThreads`: every input id comes back once. Orphans keep their place. Replies move under their root on purpose. I could not make it drop or duplicate a row.
+- 97px vs 73px: the README says those are different instruments and this lane did not reproduce 73px. The gate it names is still `mobile-feed-layout.observer.test.ts`. That is honest, not a cover.
+- `mobile-measurements.json` still has an older To: sentence (`carries no recipients, so To: is not part of this message`) than `THREAD_REPLY_TO_TEXT` (`has no recipients.`). Layout numbers come from that snapshot. The live observer pins the constant. The “did NOT establish” list is otherwise in line with what was measured (no prod post, no local Supabase, hold not seen in the browser, no `?t=`).
+
+I could not refute the lane on a break for a reader.
+
+VERDICT: PASS

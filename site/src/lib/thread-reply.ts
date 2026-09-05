@@ -32,19 +32,31 @@ import { ALL_SIGNALS_SLUG, channelLabel } from "./channels.js";
 export const THREAD_ROOT_LIVE_MARGIN_MS = 1_000;
 
 /**
- * Why a message cannot be the root of a thread. Every arm of `resolveThreadRoot`'s WHERE
- * clause, plus the archive check that follows it, and nothing else.
+ * Why a message cannot be the root of a thread. Every rule `resolveThreadRoot` applies, and
+ * nothing else.
+ *
+ * THE ORDER IS THE SERVER'S, AND IT IS NOT WHAT AN EARLIER VERSION OF THIS FILE SAID. A review
+ * arm found the claim wrong: `already-a-reply` is NOT one of the WHERE arms. The server's
+ * sequence, read off `resolveThreadRoot`, is
+ *
+ *   WHERE: directed, `in_reply_to` present, not live with a one-second margin  → 404
+ *   then:  the root's channel is archived                                      → 409
+ *   then:  the root is itself a thread reply                                   → 400
+ *
+ * so a reply in an archived channel is told the channel is archived, not that it is a reply.
+ * ~~"every arm of the WHERE clause, plus the archive check that follows it"~~ was the retired
+ * wording, and the order below and the test that pins it were both built on it.
  *
  * The array is the enumeration; the classifier below returns one of its members and
- * `threadRootBlockText` answers for every one of them. A fifth rule on the server has to
- * appear here, in the classifier and in the sentence table at once, which is the shape
- * AGENTS.md asks for and the shape a typed list does not have.
+ * `threadRootBlockText` answers for every one of them. A fourth server rule has to appear here,
+ * in the classifier and in the sentence table at once, which is the shape AGENTS.md asks for
+ * and the shape a typed list does not have.
  */
 export const THREAD_ROOT_BLOCKS = [
   "directed",
-  "already-a-reply",
   "expiring",
   "channel-archived",
+  "already-a-reply",
 ] as const;
 
 export type ThreadRootBlock = typeof THREAD_ROOT_BLOCKS[number];
@@ -60,11 +72,10 @@ export interface ThreadRootRow {
 /**
  * What stops a thread starting here, or `null` when nothing does.
  *
- * ORDER MATTERS AND FOLLOWS THE SERVER'S. `resolveThreadRoot` answers 404
- * `thread_root_not_found` for the three WHERE arms together — directed, already a reply, and
- * not live — deliberately, so the refusal is not an oracle for which ids exist. It then
- * checks the archive separately, with its own 409. The order below is that order, so the
- * sentence a reader meets names the rule the server would have named.
+ * ORDER MATTERS AND FOLLOWS THE SERVER'S, as set out above. The two 404 arms come first, in
+ * either order between themselves — the server folds them into one refusal deliberately, so it
+ * is not an oracle for which ids exist — then the 409 archive, then the 400 already-a-reply.
+ * A reader who meets a block therefore meets the rule the server would have named.
  *
  * `channelArchived` is an argument rather than a field because the row does not carry it:
  * the browser learns it from `swarm_read.channels`, which is a different read. Passing it in
@@ -82,7 +93,6 @@ export const threadRootBlock = (
    * and directed there. The server asserts all three anyway, which is where the property is
    * enforced; this is the affordance that follows it. */
   if (signal.to !== null || signal.toAgent !== null) return "directed";
-  if (signal.threadRootId !== null) return "already-a-reply";
   if (signal.until !== null) {
     const until = new Date(signal.until).getTime();
     /* A row whose `until` does not parse is left alone rather than called expired: the feed
@@ -91,6 +101,7 @@ export const threadRootBlock = (
     if (Number.isFinite(until) && until <= now + THREAD_ROOT_LIVE_MARGIN_MS) return "expiring";
   }
   if (channelArchived) return "channel-archived";
+  if (signal.threadRootId !== null) return "already-a-reply";
   return null;
 };
 
@@ -104,11 +115,11 @@ export const canStartThread = (
 /**
  * What the composer says when a reply cannot be sent after all.
  *
- * Every one of these is reachable WITHOUT a server round trip, because the reply bar is
- * opened against a row and sent later: the root can expire while the reply is being written,
- * and its channel can be archived by somebody else in the same window. The sentence names
- * the rule and says what is still possible, so the reader is not left guessing which of the
- * four applies.
+ * Two of these are reachable WITHOUT a server round trip, because the reply bar is opened
+ * against a row and sent later: the root can expire while the reply is being written, and its
+ * channel can be archived by somebody else in the same window. Those two are shown in the bar
+ * itself, in place of the countdown, and all four are shown by the send when it refuses. The
+ * sentence names the rule and says what is still possible.
  */
 const THREAD_ROOT_BLOCK_TEXT: Readonly<Record<ThreadRootBlock, string>> = {
   directed:
@@ -148,17 +159,39 @@ export interface ThreadReplyRoot {
 }
 
 /**
- * WHERE THE REPLY GOES, named the way the rest of the app names a place.
+ * WHERE THE REPLY GOES. THREE STATES, NOT TWO.
  *
  * A thread reply is filed in its ROOT's channel by the server — the client may not file it
- * anywhere else, and the edge refuses a body that names a channel alongside a thread root.
- * So the bar states the channel rather than offering one, and it takes the SLUG from the
- * live channel list so a rename between opening a reply and sending it is reflected instead
- * of frozen. An unfiled thread is named `#all-signals`, from the same constant the head and
- * the rail use.
+ * anywhere else, and the edge refuses a body that names a channel alongside a thread root. So
+ * the bar states the place rather than offering one, and it takes the SLUG from the live
+ * channel list so a rename between opening a reply and sending it is reflected instead of
+ * frozen.
+ *
+ * The third state is why this is a type and not a nullable slug. The channel read SOFT-FAILS
+ * to an empty list, by design, so a channel outage cannot take the feed down — and a thread in
+ * a real channel then has a `channelId` the page cannot resolve to a name. Collapsing that into
+ * the unfiled case made the bar say "in #all-signals" about a reply that lands in a channel,
+ * which is a false statement about where the reader's message goes.
  */
-export const threadReplyPlaceLabel = (slug: string | null): string =>
-  channelLabel(slug ?? ALL_SIGNALS_SLUG);
+export type ThreadReplyPlace =
+  | { kind: "unfiled" }
+  | { kind: "channel"; slug: string }
+  | { kind: "unknown" };
+
+/** The three states, decided in one place from the two things the caller can know. */
+export const threadReplyPlace = (
+  channelId: string | null,
+  slug: string | null,
+): ThreadReplyPlace =>
+  channelId === null
+    ? { kind: "unfiled" }
+    : slug === null
+    ? { kind: "unknown" }
+    : { kind: "channel", slug };
+
+/** How a place is written where it can be written. An unfiled thread is the whole feed. */
+export const threadReplyPlaceLabel = (place: ThreadReplyPlace): string =>
+  place.kind === "channel" ? channelLabel(place.slug) : channelLabel(ALL_SIGNALS_SLUG);
 
 /**
  * The bar's first sentence: who is being answered, and where the reply lands.
@@ -166,11 +199,18 @@ export const threadReplyPlaceLabel = (slug: string | null): string =>
  * The task this lane was given asks the bar to name the root and the channel it is in, and
  * both are in one sentence rather than two lines, because they are one fact: this reply
  * belongs to that message, which lives there.
+ *
+ * The UNKNOWN case names no place, because naming one would be a guess about the reader's own
+ * message. It says why instead, and it says what is still true: the reply goes where the
+ * thread is, whatever this page can see.
  */
 export const threadReplyTargetText = (
   author: string,
-  slug: string | null,
-): string => `Replying to ${author} in ${threadReplyPlaceLabel(slug)}.`;
+  place: ThreadReplyPlace,
+): string =>
+  place.kind === "unknown"
+    ? `Replying to ${author}. The channel list did not load, so this page cannot name the channel this thread is in. The reply is filed where the thread is.`
+    : `Replying to ${author} in ${threadReplyPlaceLabel(place)}.`;
 
 /**
  * The bar's second sentence: the reach, stated rather than implied.
@@ -217,8 +257,19 @@ export const THREAD_REPLY_TO_TEXT =
  * already has one formatter and a second one here would be the drift this file exists to
  * avoid — and a root with no expiry produces no sentence rather than an empty one.
  */
-export const threadReplyWindowText = (relativeUntil: string | null): string =>
-  relativeUntil === null
+export const threadReplyWindowText = (
+  relativeUntil: string | null,
+  block: ThreadRootBlock | null = null,
+): string =>
+  /* A BLOCK OUTRANKS A COUNTDOWN, and the same classifier answers both. The bar is opened
+   * against a row and held while a reply is written, so the root can expire and its channel can
+   * be archived in that window. Left as a countdown, an expired root printed "This thread ends
+   * 2 minutes ago, and a reply cannot outlive it" — a sentence that is wrong in its tense and
+   * silent about the thing that matters. The send refuses either way; this is the line the
+   * reader is looking at while they type. */
+  block !== null
+    ? threadRootBlockText(block)
+    : relativeUntil === null
     ? ""
     : `This thread ends ${relativeUntil}, and a reply cannot outlive it.`;
 
@@ -232,13 +283,19 @@ export const threadReplyWindowText = (relativeUntil: string | null): string =>
  * with no channel in the row (`threadReplyMessage`, `src/cli.ts`) — and the browser answers
  * it one step earlier, by not offering a control that cannot do anything.
  */
-export const threadReplyMayBroadcast = (slug: string | null): boolean => slug !== null;
+export const threadReplyMayBroadcast = (
+  place: ThreadReplyPlace,
+  block: ThreadRootBlock | null = null,
+): boolean => block === null && place.kind === "channel";
 
 /**
  * The label on that control, which names the channel it would send to.
  *
  * It takes the slug rather than a boolean so the label cannot be rendered for a thread that
  * has nowhere to broadcast: there is no wording for that case, because the control is absent.
+ * `threadReplyMayBroadcast` also refuses while a BLOCK stands, because the whole reply is
+ * refused then: offering to send it to a channel as well would be a second promise on top of
+ * one the server will not keep.
  */
 export const threadReplyBroadcastLabel = (slug: string): string =>
   `Also post this reply in ${channelLabel(slug)}`;

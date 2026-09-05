@@ -11,6 +11,7 @@ import {
   threadReplyBroadcastLabel,
   threadReplyCountLabel,
   threadReplyMayBroadcast,
+  threadReplyPlace,
   threadReplyPlaceLabel,
   threadReplyTargetText,
   threadReplyWindowText,
@@ -98,14 +99,28 @@ test("an unreadable expiry leaves the row alone rather than calling it expired",
   assert.equal(threadRootBlock(live({ until: "not a date" }), NOW, false), null);
 });
 
-test("an archived channel closes its threads, and it is asked last", () => {
+test("the rules are asked in the server's order, which is not the order this file first used", () => {
+  /* CORRECTED after a review arm read `resolveThreadRoot` and found the claim wrong.
+     ~~"every arm of the WHERE clause, plus the archive check that follows it"~~ put
+     `already-a-reply` in the WHERE and ahead of the archive. It is neither. The server's
+     sequence is:
+
+       WHERE  directed, `in_reply_to` present, not live with a one-second margin  -> 404
+       then   the root's channel is archived                                      -> 409
+       then   the root is itself a thread reply                                   -> 400
+
+     so a REPLY IN AN ARCHIVED CHANNEL is told the channel is archived. The old order told it
+     that it was a reply, and the old test asserted exactly that — a green control pinning a
+     false claim, which is the failure AGENTS.md names. */
   assert.equal(threadRootBlock(live(), NOW, true), "channel-archived");
-  /* ORDER FOLLOWS THE SERVER'S. `resolveThreadRoot` answers 404 for the three WHERE arms and
-     only then checks the archive with its own 409, so a directed message in an archived
-     channel is told it is directed. Asking the archive first would name the wrong rule and
-     send the reader to fix the wrong thing. */
+  assert.equal(threadRootBlock(live({ threadRootId: "r" }), NOW, true), "channel-archived");
+  /* And the two 404 arms still outrank both, in either order between themselves: the server
+     folds them into one refusal so it is not an oracle for which ids exist. */
   assert.equal(threadRootBlock(live({ to: "user-1" }), NOW, true), "directed");
-  assert.equal(threadRootBlock(live({ threadRootId: "r" }), NOW, true), "already-a-reply");
+  assert.equal(
+    threadRootBlock(live({ until: new Date(NOW).toISOString(), threadRootId: "r" }), NOW, true),
+    "expiring",
+  );
 });
 
 test("every block the classifier can return has a sentence, and the set is the enumeration", () => {
@@ -144,20 +159,40 @@ test("the archived sentence is the server's own refusal, word for word", () => {
   );
 });
 
-test("the bar names the root and the channel it is in, and an unfiled thread is all-signals", () => {
+test("a thread's place has three states, and the unknown one is not the unfiled one", () => {
+  /* THE THIRD STATE IS THE POINT. The channel read soft-fails to an empty list, by design, so a
+     channel outage cannot take the feed down — and a thread in a real channel then has a
+     channelId this page cannot name. Collapsing that into the unfiled case made the bar say
+     "in #all-signals" about a reply that lands in a channel, which is a false statement about
+     where the reader's own message goes. */
+  assert.deepEqual(threadReplyPlace(null, null), { kind: "unfiled" });
+  assert.deepEqual(threadReplyPlace("chan-1", "mobile"), { kind: "channel", slug: "mobile" });
+  assert.deepEqual(threadReplyPlace("chan-1", null), { kind: "unknown" });
+  /* A slug without a channel id cannot occur and is read as unfiled rather than invented. */
+  assert.deepEqual(threadReplyPlace(null, "mobile"), { kind: "unfiled" });
+});
+
+test("the bar names the root and the channel it is in, and never guesses a place", () => {
   assert.equal(
-    threadReplyTargetText("Orbit", "mobile"),
+    threadReplyTargetText("Orbit", { kind: "channel", slug: "mobile" }),
     "Replying to Orbit in #mobile.",
   );
   /* THE UNFILED CASE IS NAMED, not left blank: "in nothing" would read as a bug, and the app
      already has one name for the whole feed. It comes from ALL_SIGNALS_SLUG, so a rename of
      that view moves this sentence with it. */
   assert.equal(
-    threadReplyTargetText("Orbit", null),
+    threadReplyTargetText("Orbit", { kind: "unfiled" }),
     `Replying to Orbit in #${ALL_SIGNALS_SLUG}.`,
   );
-  assert.equal(threadReplyPlaceLabel(null), `#${ALL_SIGNALS_SLUG}`);
-  assert.equal(threadReplyPlaceLabel("mobile"), "#mobile");
+  /* AND THE UNKNOWN CASE NAMES NO PLACE AT ALL. It must not borrow the unfiled sentence. */
+  const unknown = threadReplyTargetText("Orbit", { kind: "unknown" });
+  assert.doesNotMatch(unknown, new RegExp(`#${ALL_SIGNALS_SLUG}`));
+  assert.doesNotMatch(unknown, /#/);
+  assert.match(unknown, /channel list did not load/);
+  assert.match(unknown, /filed where the thread is/);
+  assert.notEqual(unknown, threadReplyTargetText("Orbit", { kind: "unfiled" }));
+  assert.equal(threadReplyPlaceLabel({ kind: "unfiled" }), `#${ALL_SIGNALS_SLUG}`);
+  assert.equal(threadReplyPlaceLabel({ kind: "channel", slug: "mobile" }), "#mobile");
 });
 
 test("the reach sentence claims no wake, which is what an undirected signal gets", () => {
@@ -190,13 +225,49 @@ test("the window line is shown only when the thread has a ceiling", () => {
   );
 });
 
+test("a block outranks the countdown, so an expired root does not print a past tense", () => {
+  /* The bar is opened against a row and held while a reply is written, so the root can expire
+     and its channel can be archived in that window. Left as a countdown, an expired root
+     printed "This thread ends 2 minutes ago, and a reply cannot outlive it" — wrong in its
+     tense and silent about the thing that matters. */
+  assert.equal(
+    threadReplyWindowText("2 minutes ago", "expiring"),
+    threadRootBlockText("expiring"),
+  );
+  assert.equal(
+    threadReplyWindowText(null, "channel-archived"),
+    threadRootBlockText("channel-archived"),
+  );
+  /* CONTROL: with no block the countdown is still what is shown, so the branch above is the
+     block and not a line that stopped working. */
+  assert.equal(
+    threadReplyWindowText("in 2 minutes", null),
+    "This thread ends in 2 minutes, and a reply cannot outlive it.",
+  );
+});
+
 test("broadcast is offered only for a thread that is in a channel", () => {
   /* `broadcast_to_channel` says "send this reply to the channel as well". An unfiled thread
      has no channel to send it to: the edge stores the flag as true and leaves `channel_id`
      null, so the request is accepted and does nothing. The CLI shipped a sentence claiming
      that send; the browser does not offer the control. */
-  assert.equal(threadReplyMayBroadcast("mobile"), true);
-  assert.equal(threadReplyMayBroadcast(null), false);
+  assert.equal(threadReplyMayBroadcast({ kind: "channel", slug: "mobile" }), true);
+  assert.equal(threadReplyMayBroadcast({ kind: "unfiled" }), false);
+  /* AND NOT WHERE THE PAGE CANNOT NAME THE CHANNEL. The label has to say which channel it would
+     send to, and there is no honest wording for "some channel". */
+  assert.equal(threadReplyMayBroadcast({ kind: "unknown" }), false);
+  /* AND NOT WHILE THE WHOLE REPLY IS REFUSED. Offering to send it to a channel as well would be
+     a second promise on top of one the server will not keep. `channel-archived` is the case
+     that reaches this: channelById finds an archived channel on purpose, so the slug resolves
+     and the place IS a channel. */
+  assert.equal(
+    threadReplyMayBroadcast({ kind: "channel", slug: "mobile" }, "channel-archived"),
+    false,
+  );
+  assert.equal(
+    threadReplyMayBroadcast({ kind: "channel", slug: "mobile" }, "expiring"),
+    false,
+  );
   assert.equal(
     threadReplyBroadcastLabel("mobile"),
     "Also post this reply in #mobile",

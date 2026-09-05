@@ -24,17 +24,30 @@ Schema and edge are lane L1, landed and live in production on 2026-09-05. This l
 ## What the browser does now
 
 **A reply control on a root the server would accept.** `threadRootBlock` in
-`site/src/lib/thread-reply.ts` is every arm of `resolveThreadRoot`'s own WHERE clause plus the
-archive check that follows it: directed, already a reply, inside the server's one-second
-liveness margin, or in an archived channel. The version cut in `c1774d7` asked two of the four
+`site/src/lib/thread-reply.ts` is every rule `resolveThreadRoot` applies: directed, inside the
+server's one-second liveness margin, in an archived channel, or already a reply. The version
+cut in `c1774d7` asked two of the four
 (`!isReply && signal.threadRootId === null && signalIsBroadcast(signal)`), so it offered the
 control on a root that had expired and on a root in an archived channel — a button the server
 answers 404 and 409 to.
 
-The order of the four follows the server's, and that is not decoration: `resolveThreadRoot`
-answers 404 for the three WHERE arms together, deliberately, so the refusal is not an oracle
-for which ids exist, and checks the archive separately with its own 409. Asking the archive
-first would name the wrong rule and send the reader to fix the wrong thing.
+**The order was wrong in this lane's first SHA, and a review arm found it.**
+~~"every arm of `resolveThreadRoot`'s own WHERE clause plus the archive check that follows
+it"~~ put `already-a-reply` in the WHERE and ahead of the archive. It is neither. The server's
+real sequence, read off the function:
+
+```
+WHERE  directed, in_reply_to present, not live with a one-second margin   -> 404
+then   the root's channel is archived                                     -> 409
+then   the root is itself a thread reply                                  -> 400
+```
+
+So a reply in an archived channel is told the channel is archived, and the browser now says the
+same. The old order told it that it was a reply, and a green test asserted exactly that — a
+control pinning a false claim, which is the failure AGENTS.md names. The order is asserted now
+against the EDGE'S OWN TEXT (the archive check must appear before the already-a-reply check in
+`resolveThreadRoot`, and `THREAD_ROOT_BLOCKS` must order them the same way) rather than against
+a list typed in a test.
 
 **`in_reply_to` needs no field on the browser's `Signal`.** Every `in_reply_to` row is stored
 DIRECTED — `resolveSignalWriteTarget` re-addresses it to the referenced signal's author — so
@@ -50,6 +63,26 @@ visible message off the screen with it.
 channel list every time it syncs, so a rename between opening a reply and sending it is
 reflected rather than frozen. Only the id is held. That is the rule the channels lane arrived
 at after a review arm found a frozen slug making a Retry name a channel that no longer existed.
+
+**A thread's place has THREE states, not two.** The channel read soft-fails to an empty list, by
+design, so a channel outage cannot take the feed down — and a thread in a real channel then has
+a `channelId` this page cannot resolve to a name. Collapsing that into the unfiled case made the
+bar say "Replying to X in #all-signals" about a reply that lands in a channel, which is a false
+statement about where the reader's own message goes. `ThreadReplyPlace` separates them, the
+unknown case names no place and says why, and `threadReplyMayBroadcast` refuses it, because the
+broadcast label has to say which channel it would send to and there is no honest wording for
+"some channel".
+
+**The bar's second line is rewritten on every feed tick, and a BLOCK outranks the countdown.**
+§6 P4 requires the ceiling on screen precisely because the remaining window can be
+milliseconds; a line written once when the bar opened is the failure that requirement exists to
+prevent. And the bar is opened against a row and held while a reply is written, so the root can
+expire and its channel can be archived in that window: left as a countdown, an expired root
+printed "This thread ends 2 minutes ago, and a reply cannot outlive it" — wrong in its tense and
+silent about the thing that matters. The same classifier answers the bar and the send, so the
+sentence a reader reads while typing is the sentence they get if they press Enter, and an
+archived thread stops offering to broadcast rather than promising a second send on top of one
+the server will not keep.
 
 **`broadcast_to_channel` is offered only where the design allows it** — a root that is in a
 channel. An unfiled thread has nowhere to send a reply: the edge stores the flag as true and
@@ -101,7 +134,7 @@ went to nobody.
 
 ## The mutation table
 
-39 mutations, 0 problems. Two things carry NO mutation, and the harness says so in place rather
+46 mutations, 0 problems. Two things carry NO mutation, and the harness says so in place rather
 than carrying an entry that passes:
 
 - `Number.isFinite(until)` in `threadRootBlock`. Removing it changes nothing: every comparison
@@ -117,6 +150,30 @@ its entry: a mutation that could not fail because it made two strings identical;
 assertion that read the same constant the render did, so moving the constant moved both; a
 mutation that broke two claims at once and reported a wrong reason for a correct catch; and a
 throwing wait that turned "the bar did not close" into "the measurement aborted".
+
+The review round then added seven more, for the rule order the arm corrected, the three places a
+thread can be in, the block outranking the countdown, the broadcast control on a refused reply,
+the bar's live tick, and the send reading the root it captured.
+
+## The review rounds
+
+| SHA | Grok | Gemini | What it found |
+|---|---|---|---|
+| `d257f87` | PASS | FAIL | Grok: `already-a-reply` is not a WHERE arm and the server checks the archive BEFORE it, so this lane's order, its prose and a green test were all built on a false claim; and `mobile-measurements.json` carried a To: sentence older than the constant. Gemini's FAIL is verified wrong at the cited lines and is ruled in `arms-d257f87/gemini/RULING.md`. |
+
+**The Gemini finding, and why it is not acted on.** It said the `finally` block lowers
+`composerSending` unconditionally, so a send from workspace A would clear the lock for a
+composer in workspace B. The line reads
+`if (composerSendToken === sendToken) setComposerSending(false);` — guarded on the send's own
+token — and `resetComposer` bumps that token and lowers the flag itself on the way out of a
+workspace, so the old send finds a token that is no longer its own. The line is also not in this
+lane's diff: it landed with `lane/composer-to-field` and carries its own mutation entry there.
+
+**Six more came from reading the lane's own code against the doctrine**, and they are the
+reason this round changed behaviour rather than only prose: the false `#all-signals` sentence for
+an unresolvable channel, the frozen window line, the past-tense countdown on an expired root, the
+broadcast control offered on an archived thread, a live-global read inside the send, and the
+README under-claiming the app bar it could measure.
 
 ## One rule for "is this send still addressed here"
 
@@ -154,9 +211,22 @@ Measured in Chrome at 390x844 and 320x568 against `site/dist` in sample mode, in
 sized to the phone — headless Chrome on macOS refuses a window narrower than 500px, so
 `--window-size=390,844` reports a 500px viewport and would measure a layout no phone has.
 
-| Measurement | 390x844 | 320x568 |
+**The signed-in app bar is 73px at 390x844 and 57px at 320x568**, and this lane measured it
+rather than deferring to another document. Those are `shell.channel.top` from
+`mobile-feed-layout.observer.test.ts`, with `shell.channelBody.top` equal to it at both widths,
+in this lane's own green run of `npm --prefix site test`. That test is the gate on the rule —
+the app bar's height IS the channel section's top edge, and the transcript must start at or
+above it — and it runs on a signed-in layout, which is the layout the rule is about.
+
+The table below is SAMPLE MODE, where a banner the signed-in app does not have sits in flow
+above everything. It is reported with the banner subtracted so the arithmetic is visible, and
+the residue (97px and 65px rather than 73px and 57px) is sample mode's own chrome, not a header
+this lane added. What the table establishes is the thing this lane could have broken: the reply
+bar is INSIDE the composer, so it adds no band above the transcript.
+
+| Measurement (sample mode) | 390x844 | 320x568 |
 |---|---|---|
-| App bar height (channel section's top, less the sample banner) | 97px | 65px |
+| Channel section's top, less the sample banner | 97px | 65px |
 | Transcript starts at the bar | yes | yes |
 | Reply bar is inside the composer element | yes | yes |
 | Composer at rest, threads collapsed | 99.38px | 128.81px |
@@ -165,17 +235,6 @@ sized to the phone — headless Chrome on macOS refuses a window narrower than 5
 | Reply bar, To: row, send button inside the viewport | yes | yes |
 | Expanded replies inside the viewport | yes | yes |
 | Document scrolls sideways | no | no |
-
-**The 73px app bar is still the only in-flow header, and the gate on that is not this file.**
-`mobile-feed-layout.observer.test.ts` measures the rule directly — the app bar's height IS the
-channel section's top edge, and the transcript's own box must start at or above it — on a
-signed-in layout with no sample banner, at both viewports, and it is green. The numbers above
-are sample mode's, where a banner the signed-in app does not have sits in flow above
-everything; it is reported and subtracted rather than hidden, so the arithmetic is visible.
-**The 73px figure itself is the channels lane's measurement, on that other instrument. This
-lane did not reproduce it and does not claim it.** What this lane establishes is the thing it
-could have broken: the reply bar is INSIDE the composer, so it adds no band above the
-transcript, and nothing this lane added sits in flow above the reading area.
 
 **A cost, stated.** The composer more than doubles in height while a reply is being written —
 99px to 236px at 390x844, 129px to 253px at 320x568 — because the bar carries three lines: the
@@ -194,32 +253,42 @@ open, and it is zero at rest, which is what the phone budget in
    bodies `tests/p1-server/chat-signals.test.ts` sends, read out of that file rather than
    retyped, with a positive control on the read. That suite is where a served edge answers for
    the shape, and it needs a local Supabase this lane did not take.
-3. **The hold's effect is not measured in the browser.** `deriveComposerAddress` holding while
+3. **A channel move does not close an open reply bar, and that is deliberate.** A reply is
+   addressed to its thread, not to the view, so the box goes on promising that thread whatever
+   channel the reader moves to — which is the same reason `composerAddressStillPromised` does
+   not retire a reply's unfinished send on a channel move. The root may not be on the new
+   channel's page; the reply still lands in the thread. Not measured in the browser.
+4. **The reply control can survive its root by up to one poll.** The feed's expiry timer fires
+   at the root's `until`, not at `until` minus the server's one-second margin, so in that last
+   second the control can still be on screen until the next 2-second poll re-renders. Nothing
+   wrong is posted: the send asks the same classifier and refuses with the server's own
+   sentence, and the bar now shows that sentence too.
+5. **The hold's effect is not measured in the browser.** `deriveComposerAddress` holding while
    `replying` is true is defended by source claims in two files and by the mutation table. Its
    observable effects are on STORAGE and on a roster prune arriving mid-reply, and no browser
    step here reaches either: after a cancel the chips are the same with the hold and without it,
    because the pass simply runs later over the same body. What the hold buys is that nothing is
    written while a reply is being composed, and that a paint cannot move the pair under a reader
    who is looking at a reply's sentence instead of at their chips.
-4. **The reply horizon's clamp is not shown to the reader as a number.** The bar states the
+6. **The reply horizon's clamp is not shown to the reader as a number.** The bar states the
    ceiling in words ("This thread ends in 2 minutes, and a reply cannot outlive it") when the
    root has one. The design also asks that **the post response report the clamped value**; the
    browser does not surface it, and the sample rows do not expire, so the window line was
    measured only in its empty form. Owed.
-5. **`?t=` (a thread permalink) is not built**, and neither is `?m=`. §8.1 lists both and they
+7. **`?t=` (a thread permalink) is not built**, and neither is `?m=`. §8.1 lists both and they
    are still owed, as the channels lane recorded.
-6. **The one server number the browser mirrors rather than imports is the liveness margin.** It
+8. **The one server number the browser mirrors rather than imports is the liveness margin.** It
    is a SQL interval literal inside a tagged template, so there is no constant to import.
    `signal-feed-threads.test.mjs` reads it back out of the edge and asserts the count of that
    clause before its value. The sweep's bound is stated in the test: it sees one exact clause
    shape inside `resolveThreadRoot` and nothing else, and a rewrite of that clause makes the
    count zero and the test red rather than quiet.
-7. **The four-arm comparison is a source read of the edge**, bounded the same way: four exact
+9. **The four-arm comparison is a source read of the edge**, bounded the same way: four exact
    clause strings inside `resolveThreadRoot` alone, each required to appear exactly once. It
    cannot see a rule moved elsewhere or written differently.
-8. **No capacity or query-plan work.** A thread reply rides the same `channel_id` narrowing
+10. **No capacity or query-plan work.** A thread reply rides the same `channel_id` narrowing
    channels added; no plan was read.
-9. **Sample mode now allows a reply**, which the cut version did not (`!sampleMode` was part of
+11. **Sample mode now allows a reply**, which the cut version did not (`!sampleMode` was part of
    its `canReply`). That is deliberate — every browser control here needs the whole send path,
    and the composer To: lane had already made a sample send real — but it means the sample feed
    grows a row that no server holds, exactly as a sample post already did.
