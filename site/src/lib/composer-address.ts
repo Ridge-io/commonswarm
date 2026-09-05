@@ -205,9 +205,10 @@ export const removeComposerRecipient = (
   current.filter((candidate) => !sameRecipient(candidate, entity));
 
 /**
- * Moves one recipient to the front, which is the only way a reader can change who is woken.
- * A name that is not in the set leaves the set alone: promoting is an edit of what is there,
- * never a way to add.
+ * Moves one recipient to the front, which is what the message shows as addressed to.
+ * ~~"which is the only way a reader can change who is woken"~~ retired 2026-09-05: the wake
+ * follows no position now. A name that is not in the set leaves the set alone: promoting is an
+ * edit of what is there, never a way to add.
  */
 export const promoteComposerRecipient = (
   current: readonly ComposerRecipient[],

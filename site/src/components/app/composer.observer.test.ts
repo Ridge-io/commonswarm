@@ -99,8 +99,13 @@ test("composer defaults to broadcast and keeps signal language", () => {
    opt-out flag for the CLI's sake; the app never passes it, which is what the second assertion
    below pins. */
 test("composer kind defaults by recipient, and the app never opts out of the wake", () => {
-  /* THE KIND FOLLOWS RECIPIENT 0, because the wake does. An agent behind a person in the To:
-     set does not make this an ask, and the To: row says as much in words. */
+  /* THE KIND FOLLOWS RECIPIENT 0. ~~"because the wake does. An agent behind a person in the
+     To: set does not make this an ask, and the To: row says as much in words."~~ Retired
+     2026-09-05: that agent IS woken now and the row says so, while the kind stays `note`. The
+     two no longer answer the same question — both `ask` and `note` are delivered — so the kind
+     labels the message and says nothing about the wake. The BEHAVIOUR below is unchanged on
+     purpose; moving it is a wire change, recorded in
+     docs/evidence/2026-09-05-chat-app-threads/README.md. */
   assert.deepEqual([
     browserSignalKind([]),
     browserSignalKind([{ kind: "person", id: "person-1" }]),

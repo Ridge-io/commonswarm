@@ -1,0 +1,18 @@
+diff --git a/docs/evidence/2026-09-05-chat-app-threads/README.md b/docs/evidence/2026-09-05-chat-app-threads/README.md
+
+### A sentence that is now false, or one whose list is typed
+Neither `composerDeliveryNote` nor `composerPromoteLabel` produces a false claim or typed list. `composerDeliveryNote` uses `notifiedRecipients(recipients)` to correctly count the woken agents (e.g., `${notified.length} agents are notified.`) instead of hardcoding a number. The list of readers is derived from filtering out agents. None claim a wake that will not happen, and all agents are properly woken.
+
+### The migration this copy describes is NOT on this branch
+The README honestly and explicitly states that `20260905000020_wake_all_recipients.sql` is not on this branch, and explains that a reader who finds no such file has simply found the two lanes applied out of order. `composer-address.test.mjs` similarly notes this as a "citation control", stating explicitly that it cannot assert the predicate exists since the migration is not on this branch.
+
+### `browserSignalKind` was deliberately NOT changed
+This is defensible and correctly recorded in `browserSignalKind`'s documentation block and the README. The `kind` no longer controls who is woken because `swarm.agent_delivery_is_wakeable` delivers both `ask` and `note`. Thus, the kind and the To: row cannot disagree in a way that matters regarding wakes, though `ask` vs `note` still labels the message type. 
+
+### `SCALAR_POSITION` survived
+The chip's promote control accurately claims to move which recipient the message "shows as addressed to". `scalarRecipient` checks `SCALAR_POSITION` (0), which `browserSignalCommand` writes to `to_user_id` or `to_agent_principal_id`, matching what the feed row prints after the arrow. The wording was successfully shifted to reflect this visual promotion rather than a functional wake change.
+
+### Retired wording
+Retired wording was not simply deleted, nor is it standing as though it were current. Instead, it is preserved in strikethrough format right beside the replacements. For example, `~~Clause 3, a remedy: "Only the first recipient is notified. Choose a name to put it first."~~ Retired 2026-09-05` and `~~"Put X first, so X is notified"~~` exist in comments so readers can still recognize the transition without being misled.
+
+VERDICT: PASS

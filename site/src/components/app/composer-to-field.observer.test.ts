@@ -48,15 +48,19 @@ type ToMeasurement = {
     afterSecondTag: { markedNames: string[]; note: string };
     afterPromotion: { markedNames: string[]; note: string };
   };
-  /** A person in front means the service wakes nobody, and the row says so with a remedy. */
+  /** An agent behind a person IS woken, and every chip says what its own control does.
+      ~~"A person in front means the service wakes nobody, and the row says so with a remedy."~~
+      Retired 2026-09-05: there is no remedy, because there is nothing left to remedy. */
   personFirst: {
     chips: string[];
     note: string;
     notifiedChip: string;
-    /** What each chip's own control promises. A person's must not promise a wake. */
+    /** What each chip's own control promises. ~~"A person's must not promise a wake."~~ NONE
+        of them may promise a wake now: the row answers that in one place. */
     promoteTitles: string[];
   };
-  /** Choosing a name puts it first, which is the only control over who is woken. */
+  /** Choosing a name puts it first, which is what the message shows as addressed to.
+      ~~"which is the only control over who is woken"~~ retired 2026-09-05. */
   promoted: { chips: string[]; note: string };
   /** Removing a chip removes the recipient, and the still-typed tag does not put it back. */
   removed: { chips: string[]; valueStillHasTag: boolean; afterKeystroke: string[] };
@@ -834,7 +838,8 @@ test("the To: row is the address, and it says who is notified", async () => {
     }, "midSentence: a tag mid-sentence adds a chip and leaves the sentence alone");
 
     /* A SECOND TAG ADDS (ruling D2): it does not replace the set and does not open a DM.
-       Orbit is still first, so Orbit is still the one the service wakes. */
+       ~~"Orbit is still first, so Orbit is still the one the service wakes."~~ Retired
+       2026-09-05: River is an agent too, so BOTH are woken and order decides neither. */
     /* ~~"Orbit is notified. River can read this and reply."~~ Retired 2026-09-05: River is an
        agent in the sample roster, and both agents are woken now, so the sentence counts them
        and neither is described as a reader who is not notified. */

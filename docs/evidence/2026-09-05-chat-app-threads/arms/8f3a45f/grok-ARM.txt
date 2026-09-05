@@ -1,0 +1,81 @@
+I'll read REVIEW.md and DIFF.patch first, then follow REVIEW.md exactly.The patch is long. I’ll keep reading it and the files the brief names so I can attack each claim.The arm folder only has the brief. I’ll locate the checkout and keep reading the rest of the patch.I’ll read the server rules, the wake copy, and the rest of the patch next — those are the places a false claim would show up.The wake copy is the new subject. I’ll read its tests, the dashboard send path, and the rest of the patch together.The wake copy and the send path are the new work. I’ll read those next, then the rest of the patch.Kind vs the To: row is the next place a false sentence would show. I’ll trace receipts and remaining tests.I have enough to judge the wake copy and the thread send path. Checking one last bound on kind vs the To: row, then writing the review.diff --git a/docs/evidence/2026-09-05-chat-app-threads/README.md b/docs/evidence/2026-09-05-chat-app-threads/README.md
+
+I tried to break the wake copy and each of the eight claims. I could not make a break for a reader. Notes below are the attacks.
+
+### The wake copy (`8f3a45f`)
+
+**Sentences.** I enumerated every string `composerDeliveryNote` and `composerPromoteLabel` can produce for a set of size 0..`COMPOSER_TO_MAX` (8). The wake clause is built from `notifiedRecipients` (`composer-address.ts:257-263`): nobody, one named agent, or `${notified.length} agents`. The reach clause counts people only (`:268`), so an agent already named as notified is not counted again as a reader. The count is not typed. Promote labels (`:311-322`) never contain `/notif/i`; they are built from `positionWord(SCALAR_POSITION)`. I could not find a set that claims a wake the new rule would not do, or misses one it would.
+
+**Migration not on this branch.** `supabase/migrations/` here ends at `20260905000010_signal_recipients.sql`. The test at `composer-address.test.mjs:336-364` is a citation control: it asserts `agent_delivery_is_wakeable` and the filename, and that `enqueue_signal_delivery` appears once, inside strikethrough. It does not assert the file exists. The README says the same. Honest.
+
+**`browserSignalKind` unchanged.** Still `ask` when recipient 0 is an agent (`commonswarm.ts:1383-1388`). Kind is visible on the feed as "Question" / "Note" (`LiveDashboard.astro:5096-5097`). For `[person, agent]` the To: row says the agent is notified and the badge says "Note". "Note" does not claim a non-wake. The reason is recorded: both kinds are delivered, and moving the kind is a wire change. I could not make that disagreement matter in front of a reader.
+
+**Promote vs the arrow.** `composerPromoteLabel` says the message "shows as addressed to" the front name. Trace: promote writes index 0 → `toWireRecipients` keeps that order → the edge fills the scalar from recipient 0 → the feed prints `signal.to` / `signal.toAgent` after `→ ` (`LiveDashboard.astro:5056-5076`) → the optimistic row uses `browserSignalAddress` / `scalarRecipientFields`. That claim is true. `SCALAR_POSITION` stayed; `NOTIFIED_POSITION` is gone, kept as strikethrough (`composer-address.ts:86-90`).
+
+**Retired wording still standing as current, not reader-facing.** The wake commit said every retired sentence was kept beside its replacement. These still state the old rule as if it were current:
+
+- `composer-address.ts:208`: `promoteComposerRecipient` still says promoting is "the only way a reader can change who is woken".
+- `composer-to-field.observer.test.ts:51` and `:59`: `personFirst` / `promoted` type comments still describe a remedy and "the only control over who is woken".
+- Same file `:837`: "Orbit is still the one the service wakes" sits above the assertion that both agents are notified.
+- `composer.observer.test.ts:102-103`: "the kind follows recipient 0, because the wake does" and "the To: row says as much in words". The To: row no longer says that.
+- `LiveDashboard.astro:12506`: CSS for the mark still says "The one recipient the service wakes".
+
+None of those strings is on screen. The user-facing sentences were updated. I could not turn this into a break for a reader.
+
+This branch's listener still filters `signal.to_agent === stored.principalId` (`src/listener/hook.ts:700`). The copy is ahead of that too. The README already says the other lane is not here.
+
+### 0. `syncComposerPlacement()` inside `renderFeed`
+
+I could not refute this. The call (`LiveDashboard.astro:4925`) is one pass per feed paint, not per row. It does not write the To: pair, the intent, or `threadReplyRoot`. `threadReplyBlock` reading `channels` and `Date.now()` chooses the window sentence and whether the broadcast control is offered. The one state write is `broadcast.checked = false` when the control is hidden (`:4916-4919`), which the comment now names. At 25 rows the cost is one `channelById` and one `Date.now()`, not a loop over the page. A workspace switch clears the reply first (`:3697`), so a paint in another workspace finds no bar.
+
+### 1. Reply control vs server
+
+I could not refute this. `threadRootBlock` (`thread-reply.ts:84-106`) asks directed, live margin, archive, then already-a-reply, in the edge's order (`command/index.ts:6534-6596`). The feed asks archive of `rootChannel = channelById(channels, signal.channelId)` (`LiveDashboard.astro:5166-5167`), not of `rowChannel`. A missing channel is not treated as archived.
+
+`in_reply_to`: `resolveSignalWriteTarget` always writes a recipient (`command/index.ts:6536-6540`). No product path stores an undirected `in_reply_to` row. The directed arm covers every row that can exist.
+
+The reverse (button on, send would refuse a live filed thread under a channel-list outage) was round two. The send now stops a reply on archive only (`LiveDashboard.astro:8114-8117`).
+
+### 2. Second write path on To:
+
+I could not refute this. `composerSendRecipients` is the set the row and the send read. `deriveComposerAddress` holds while `replying === true` (`composer-address.ts:479`). Assignments to `composerTo` / `composerToApplied` are the pass or workspace teardown, which clears the reply first. `rememberComposerTo` is skipped when `placementThreadRootId !== null`. Cancel runs the pass over the body that is still there. An `@tag` inside a reply changes nothing.
+
+### 3. Wire body
+
+I could not refute this. A reply is `{ threadRootId, ...(broadcastToChannel ? { broadcastToChannel: true } : {}) }` with no `channel:`. `browserSignalCommand` omits null/absent optional keys (`commonswarm.ts:2116-2124`). Empty recipients omit `to`. `broadcast_to_channel` is only added on the thread branch when the box is ticked, so it never goes out without `thread_root_id`. That matches `installedPost({ thread_root_id })`.
+
+### 4. Unfinished-send rule
+
+I could not refute the two callers. A reply compares thread ids; a top-level post compares the channel on screen (`LiveDashboard.astro:6505-6508`). `selectChannel` and the catch both ask `composerAddressStillPromised`. Channel move does not retire a reply. Opening or cancelling a reply does. The catch rewrite keeps `placementThreadRootId` and `broadcastToChannel`.
+
+### 5. Send vs screen
+
+I could not refute this. Submit freezes `replyRoot` and `replyBlock` before the first await. Success closes the bar only when `threadReplyRoot?.id === replyRoot.id`. Remember/clear use captured keys and run before the screen return. Catch tears down send-owned work first; it will not write the box if the token or workspace is no longer this send's. Finally lowers the flag on the token.
+
+### 6. False sentence / typed list
+
+User-facing thread copy is generated from `channelLabel` / `ALL_SIGNALS_SLUG` / `THREAD_REPLY_REACH_TEXT` / `THREAD_ROOT_BLOCKS`. Archived copy matches the edge word for word (`thread-reply.ts:131-132` and `command/index.ts:6580`). Reach says it notifies nobody, which matches no delivery row on an undirected reply. No em-dash, no privacy claim. Wake sentences: see above.
+
+### 7. Control that cannot fail
+
+The two NOT CONTROLLED notes are true. Dropping `Number.isFinite(until)` does not change NaN/Infinity. Dropping `if (signal.threadRootId === null)` on registration does not change output, because pass two only looks up ids in `rootIds`.
+
+The liveness sweep does what its header says: one `interval '<n> second'` clause in the edge file, count first (`signal-feed-threads.test.mjs:142-170`). The four-arm sweep does what its header says: four exact strings inside `resolveThreadRoot`, each once (`chat-threads.observer.test.ts:155-200`). I did not treat "is the sweep complete?" as the question.
+
+### 8. Retired control weakened
+
+I could not refute this.
+
+- `composer.observer.test.ts`: "thread" is allowed only in the reply bar; emoji/reaction still gated. Claim is still "do not name a feature that is not there."
+- Display-reversal pins now match `reverse()` once, which is the claim they name.
+- `chat-channels.observer.test.ts`: the old "never send thread fields" negative is replaced by a positive top-level vs thread-branch pair. The top-level channel stamp is still there. Wire omission of thread keys for a top-level post is in `chat-threads.observer.test.ts`.
+
+### Also
+
+- `groupSignalThreads`: every input id comes back once. Orphans keep their place. Replies move under their root on purpose. I could not make it drop or duplicate a row.
+- 97px vs 73px: the README names two instruments. Sample mode with the banner subtracted is 97px; the signed-in gate is `mobile-feed-layout.observer.test.ts` at 73px. That is honest.
+- The "did NOT establish" list matches what was measured (no prod post, no local Supabase, hold not seen in the browser, no `?t=`, copy ahead of the wake migration). The leftover current-worded comments above are not on that list; they are not a measurement claim.
+
+I could not refute the lane on a break for a reader.
+
+VERDICT: PASS

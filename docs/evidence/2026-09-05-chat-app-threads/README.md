@@ -249,6 +249,20 @@ found the two lanes applied out of order, not a bad citation.
 Eight mutations cover it, and four of them were re-aimed after the first run reported a correct
 catch under the wrong name.
 
+**A review arm then found five comments still stating the retired rule as though it were
+current** — in `promoteComposerRecipient`, in two type comments and one step comment of
+`composer-to-field.observer.test.ts`, in `composer.observer.test.ts`, and in the CSS for the
+notified mark. None is on screen, so it was not a break for a reader; it did make this lane's
+own commit message false where it said every retired sentence was kept beside its replacement.
+All five now carry the retired wording in strikethrough beside what replaced it.
+
+**And the CLIENT half of that lane is not on this branch either.** `src/listener/hook.ts` still
+filters a delivery on `signal.to_agent === stored.principalId`, which is the check the wake lane
+widens in `hydrateDeliveryRefs` so an installed listener takes a position-1 row. That is `src/`,
+which this lane does not own. The site copy is therefore ahead of BOTH the migration and the
+listener in this repository, and it is correct only once that lane deploys — which is the order
+the coordinator specified.
+
 ## One rule for "is this send still addressed here"
 
 The channels lane wrote two comparisons for that question and both arms found the contradiction
@@ -362,7 +376,13 @@ open, and it is zero at rest, which is what the phone budget in
    cannot see a rule moved elsewhere or written differently.
 10. **No capacity or query-plan work.** A thread reply rides the same `channel_id` narrowing
    channels added; no plan was read.
-11. **Sample mode now allows a reply**, which the cut version did not (`!sampleMode` was part of
+11. **The wake copy is ahead of the code in this repository.** Neither
+   `20260905000020_wake_all_recipients.sql` nor the `src/` half of that lane is on this branch.
+   Nothing here measures the new wake against a database or a listener; what is measured is that
+   the SENTENCES follow one rule, that the rule and the chip marks agree, and that no retired
+   claim stands as current. The behaviour is `lane/wake-all-recipients`' to establish, and it
+   reported PASS/PASS.
+12. **Sample mode now allows a reply**, which the cut version did not (`!sampleMode` was part of
    its `canReply`). That is deliberate — every browser control here needs the whole send path,
    and the composer To: lane had already made a sample send real — but it means the sample feed
    grows a row that no server holds, exactly as a sample post already did.
