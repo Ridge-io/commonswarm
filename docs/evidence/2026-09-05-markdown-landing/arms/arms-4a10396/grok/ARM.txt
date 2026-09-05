@@ -1,0 +1,67 @@
+I'll read REVIEW.md and DIFF.patch first, then follow REVIEW.md exactly.The patch was truncated; I’ll read the rest and inspect the working tree next.I’ll read the renderer, sanitizer, CSS, and brain-link code next so I can attack each claim.Grep was scoped to the arm dir; I’ll search the lane tree for CSS, sanitizer edges, and tests.I’ll measure the renderer from `/tmp` and check whether the built CSS and specificity claims actually hold.I’ll run renderer probes from `/tmp` so I can measure sanitizer, tables, and bounds without writing to the lane tree.`diff --git a/site/src/components/app/LiveDashboard.astro b/site/src/components/app/LiveDashboard.astro`
+
+Read DIFF.patch and the tree at `lane-markdown-land`. Did not edit, commit, or build that tree. Ran `message-markdown.test.mjs` (29 pass) and renderer/sanitizer probes from `/tmp`. Did not run the Chrome layout or brain-link observers (they start Chrome; I checked the built CSS and the selectors instead).
+
+### Refutations that did not work
+
+**1. Sanitizer allowlist.** `sanitizeTag` rebuilds `li` / `th` / `td` from the enum. Extra attributes do not survive. Measured:
+
+- `<li class="md-task" onclick="alert(1)" style="x">` → `<li class="md-task">`
+- `<td align="center" onclick="alert(1)" class="x">` → `<td align="center">`
+- `align="expression(alert(1))"` and `align="center&quot; onclick=&quot;alert(1)"` drop the attribute
+- `align="LEFT"` keeps `align="left"`
+- single-quoted `class='md-task'` and unquoted `align=center` drop the attribute and keep the tag
+- `class` on `td` / `align` on `li` drop
+- markdown `| <script>… |` and `| <td align="center" onclick="alert(5)">… |` stay entities
+
+The `a` branch still round-trips `decodeEscapedAttribute` then `escapeMessageHtml`. A decoded `"` in an href is rejected (whitespace / `safeMessageLink`) or re-escaped. No markdown input produced a tag or an `align`/`class` value outside the exported sets.
+
+**2. Foster parenting.** On the render path every `table` / `thead` / `tbody` / `tr` / `th` / `td` open tag is well-formed and in `ALLOWED_TAGS`. `sanitizeTag` always returns that open tag (with or without `align`). User text is escaped first, so it cannot emit those tags. Direct `sanitizeMessageHtml('<table><tr><tdd>x</tdd></tr></table>')` can leave `x` inside `<tr>` (that text would foster), but `setSanitizedMessageMarkdown` only assigns `renderMessageMarkdown` output. I could not construct markdown that drops a cell/row/section open tag and keeps its text. Header-only tables emit `<tbody></tbody>`, which the parser does not foster.
+
+**3. Cells are not a second escaping path.** `renderTableRow` / `renderListItem` call the same `renderInline`. Hostile vectors are byte-identical in a cell and in a paragraph. `\|` inserts a raw `|` into already-escaped text; `|` is not markup. `\*` and `\_` in a cell stay literal. The code-span `\|` difference is the documented GFM exception.
+
+A pipe inside a markdown URL in a *body* row splits the row (`| [l](https://example.com/a|b) | x |` → three `<td>`s, then autolink on `https://example.com/a`). Ugly, not a second escape path: each `<a>` is complete inside its `<td>`.
+
+**4. Task items are not checkboxes.** `TASK_ITEM` is `$`-anchored on `[ ]` / `[x]` / `[X]`. Measured: `- [x](https://example.com)` is a link, not a task; `- [x]nospace` stays literal; `- [click](javascript:…)` stays a list item; `- [×]` / Cyrillic `х` do not match. Class is only `MESSAGE_TASK_CLASS`. Ballot characters are not in `RUN_RE`, so they cannot sit in a brain-link label. Nested `- [ ] outer\n  - [ ] inner` keeps each marker in the item’s own text. No `<input>`.
+
+**5. Brain-link boundary.** A `button` inside `th` / `td` / `li` is valid HTML5 flow content. `linkifyBrainTopics` uses `createElement` after `innerHTML`, so the parser does not move those buttons. `PRE` / `A` / `BUTTON` stay opaque. `[shared-host](url)` in a cell stays an `a`. `` `releases` `` in a cell still linkifies; prose `releases` does not. Nested `li` is a normal holder. Marker text stays in the leading text node (`☐ shared-host` → `☐ ` + button).
+
+**6. Termination and bounds.** `renderList` always consumes the line it starts on. Depth cap 4: a 1-space 10-step ladder emits four `<ul>` and keeps `L0`…`L9` as list items (L4–L9 join the deepest list). Table cells are counted before any emit. Measured: 2 header + 9998 body rows (19998 cells) emits a table in 39 ms; one more body row emits no `<table>` / `<td>` and keeps `| 1 | 2 |` as text (13 ms). A 20000-column header emits 20000 `<th>`; 20001 columns does not emit a table (3 ms). `splitTableCells` is linear in row length. 5000 pipe-rows that are not delimiters stay a `<p>` (8 ms).
+
+**7. Block-ordering.** `|---|---|` is not an `<hr>` (`|` is not in `[-*_]`). `- - -` is an `<hr>`, not a list. `text\n---\nmore` is paragraph / rule / paragraph. `p\n| a |\n|---|\n| 1 |` interrupts the paragraph. Bare `---` under `| a |` is a rule, not a one-column delimiter (needs a pipe). `| a |\n---|` (pipe on the delimiter) is a table. `choose x | y | z` above `|-|-|-|` **is** a table.
+
+**8. Tests and CSS.** Styles are `is:global`, so `innerHTML` tables match. Built `app.C1SUGTFt.css` contains `display:block;overflow-x:auto` on `.dashboard__message-markdown table,.dashboard__brain-markdown table` and `overflow-wrap:normal` on the cell rule. `/app` links Base.css then app.css. Both revert controls beat the shipped rules: `table` is the same `(0,1,1)` selector later in the fixture; `wrap` uses `:is(th,td)` at `(0,1,1)` against shipped `:where(th,td)` at `(0,1,0)`. Align assertions cannot be satisfied by UA defaults: header column 1 must be `/right$/` (UA `th` is center); body column 0 must be `/center$/` (UA `td` is start). Author `text-align` on a cell does outrank the `align` presentational hint. The layout fixture only mounts `.dashboard__message-markdown`; the table/cell rules are one declaration for both classes, so I could not make the two surfaces diverge without editing that selector.
+
+**9. Claims in prose.** `MESSAGE_MARKDOWN_ATTRIBUTES` is still not read by `sanitizeTag`; the per-tag sanitizer probe pins enforcement. `MESSAGE_MARKDOWN_ALIGNMENTS` / `MESSAGE_MARKDOWN_CLASSES` are the sets both parser and sanitizer use. Two leftover sentences, below.
+
+### Findings
+
+1. **Low — the new CSS specificity comment is false in two clauses.** `site/src/components/app/LiveDashboard.astro` lines 9600–9605.
+
+   The comment says `:where(.a, .b) table` ties the bare `table` rule in `global.css` and “let stylesheet ORDER decide the winner”, and that `SeoPage.css` carries a `table` rule with `inline-size: 100%` and `min-inline-size: 44rem` that “would take the scroll behaviour apart if it were ever loaded here.”
+
+   Measured:
+   - `site/src/styles/global.css:203` is `table { border-collapse: collapse; border-spacing: 0; }`. It does not set `display`, `overflow-x`, `inline-size`, or `max-inline-size`. Equal specificity only decides a property both rules set. A tie with this rule cannot turn off the scroll rule.
+   - `site/src/styles/seo.css:191` is `.seo-table`, not `table`. Built `SeoPage.CgLd2bSp.css` matches that. Even if that sheet were linked on `/app`, it would not match a markdown `<table>`.
+   - `/app` does link Base.css before app.css. That clause is true and does not save the two above.
+
+   The shipped selectors (class + type, `(0,1,1)`) are the right shape. The reasoning that says why they had to be is not. A later edit that went back to `:where(.a, .b) table` because “global.css does not compete for overflow” would still scroll today and would still lose to a future author `table { overflow-x: visible }` at `(0,0,1)`.
+
+2. **Low — the indent-ladder test comment is false for its own input, and `levelN<` cannot tell.** `site/src/lib/message-markdown.test.mjs` lines 428–433.
+
+   The comment: “past it the deeper items join the deepest list rather than opening another one, and nothing is lost.” The fixture is `"  ".repeat(level) + "- level" + level` for `level` 0..9.
+
+   Measured that source:
+
+   ```
+   <ul>…<li>level3</li><li>level4</li><li>level5</li><li>level6</li></ul>…
+   <p>              - level7<br>                - level8<br>                  - level9</p>
+   ```
+
+   `listMatch` only accepts `{0,12}` leading whitespace (`message-markdown.ts:278`). Level 7 is 14 spaces, so it is not a list item. It does not join the deepest list. The assertion `level${level}<` matches both `level7</li>` and `level7<br>`, so it passes either way.
+
+   A 1-space ladder of the same length *does* join L4–L9 into the deepest `<ul>` (measured). The nestingDepth cap holds. This test’s own 2-space ladder does not pin the sentence it states.
+
+Neither finding breaks the three claims (allowlist, brain-link boundary, phone-width scroll).
+
+VERDICT: PASS

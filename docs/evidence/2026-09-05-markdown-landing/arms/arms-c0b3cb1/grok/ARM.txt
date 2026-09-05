@@ -1,0 +1,57 @@
+`diff --git a/site/src/components/app/LiveDashboard.astro b/site/src/components/app/LiveDashboard.astro`
+
+Ran the renderer and sanitizer from `/tmp` against `site/src/lib/message-markdown.ts` at `c0b3cb1`. Did not edit, build, or run a test that writes into the lane tree. Did not drive the Chrome layout fixture; CSS claims were checked against source, built `app.qQaC9A88.css`, and selector specificity.
+
+### Refutations that did not work
+
+**1. Sanitizer allowlist.** `sanitizeTag` rebuilds `li` / `th` / `td` from an enum check; extra attributes never survive. Measured:
+
+- `<li class="md-task" onclick="alert(1)" style="x">` → `<li class="md-task">`
+- `<td align="center" onclick="alert(1)" class="x">` → `<td align="center">`
+- `align="expression(alert(1))"` and `align="center&quo`diff --git a/site/src/components/app/LiveDashboard.astro b/site/src/components/app/LiveDashboard.astro`
+
+Ran the renderer and sanitizer from `/tmp` against `site/src/lib/message-markdown.ts` at `c0b3cb1`. Did not edit, build, or run a test that writes into the lane tree. Did not drive the Chrome layout fixture; CSS claims were checked against source, built `app.qQaC9A88.css`, and selector specificity.
+
+### Refutations that did not work
+
+**1. Sanitizer allowlist.** `sanitizeTag` rebuilds `li` / `th` / `td` from an enum check; extra attributes never survive. Measured:
+
+- `<li class="md-task" onclick="alert(1)" style="x">` → `<li class="md-task">`
+- `<td align="center" onclick="alert(1)" class="x">` → `<td align="center">`
+- `align="expression(alert(1))"` and `align="center&quot; onclick=&quot;alert(1)"` drop the attribute
+- `align="LEFT"` keeps `align="left"`
+- single-quoted `class='md-task'` and unquoted `align=center` drop the attribute and keep the tag
+- `class` on `td` / `align` on `li` drop
+- renderer path: `| <script>… |` and `| [x](javascript:alert(1)) |` stay entities / literal text
+
+The `a` branch still round-trips through `decodeEscapedAttribute` then `escapeMessageHtml`. A decoded `"` in an href is rejected by `safeMessageLink`'s whitespace check or re-escaped so it cannot break the attribute. No markdown input produced a tag or an `align`/`class` value outside the exported sets.
+
+**2. Foster parenting.** On the render path, every `table` / `thead` / `tbody` / `tr` / `th` / `td` open tag is well-formed and in `ALLOWED_TAGS`; `sanitizeTag` always returns that open tag (with or without `align`). User text is escaped before any rule, so it cannot emit those tags. Direct `sanitizeMessageHtml('<table><tr><tdd>x</tdd></tr></table>')` can leave `x` inside `<tr>` (that text would foster), but `setSanitizedMessageMarkdown` only assigns `renderMessageMarkdown` output. I could not construct markdown that drops a cell/row/section open tag and keeps its text.
+
+Header-only tables emit `<tbody></tbody>`, which the parser does not foster. The observer probe now reads previous-sibling text and has a positive `LEAKED` control.
+
+**3. Cells are not a second escaping path.** `renderTableRow` / `renderListItem` call the same `renderInline`. Hostile vectors are byte-identical in a cell and in a paragraph. `\|` inserts a raw `|` into already-escaped text; `|` is not markup, and `<` is already `&lt;`. `\*` and `\_` in a cell stay literal. The code-span `\|` difference is the documented GFM exception, pinned in both directions.
+
+Unescaped `|` inside a markdown URL in a *body* row splits the row (`| [l](https://example.com/a|b) | x |` → three cells, then autolink on `https://example.com/a`). Ugly, not a second escape path: the `<a>` is complete inside the first `<td>`.
+
+**4. Task items are not checkboxes.** `TASK_ITEM` is `$`-anchored on `[ ]` / `[x]` / `[X]`. Measured: `- [x](https://example.com)` is a link, not a task; `- [x]nospace` stays literal; `- [click](javascript:…)` stays a list item; `- [×]` / Cyrillic `х` do not match; `<input type=checkbox>` is escaped. Class is only `MESSAGE_TASK_CLASS`. Ballot characters are not in `RUN_RE`, so they cannot sit in a brain-link label. No `<input>`.
+
+**5. Brain-link boundary.** A `button` inside `th` / `td` / `li` is valid HTML5 flow content. `linkifyBrainTopics` uses `createElement` after `innerHTML`, so the parser does not move those buttons. `PRE` / `A` / `BUTTON` stay opaque. `[shared-host](url)` in a cell stays an `a`. `` `releases` `` in a cell still linkifies; prose `releases` does not. Nested `li` is a normal holder. Marker text stays in the leading text node (`☐ read `).
+
+**6. Termination and bounds.** `renderList` always consumes the line it starts on (that line is the nested call’s base indent). Depth cap 4: ten indent steps still emit four `<ul>` and keep `level0`…`level9`. Table cells are counted before any emit. Measured: 2 header + 9999 body rows (20000 cells) emits a table (`th=2`, `td=19998`); one more body row emits no `<table>` / `<td>` and keeps `| 1 | 2 |` as text. `splitTableCells` is linear in row length.
+
+**7. Block-ordering.** `|---|---|` is not an `<hr>` (`|` is not in `[-*_]`). `- - -` is an `<hr>`, not a list. `text\n---\nmore` is paragraph / rule / paragraph. `p\n| a |\n|---|\n| 1 |` interrupts the paragraph. Bare `---` under `| a |` is a rule, not a one-column delimiter (needs a pipe). `| a |\n---|` (pipe on the delimiter) is a table.
+
+**8. Tests and CSS.** Styles are `is:global`, so `innerHTML` tables match. Built CSS contains `display:block;overflow-x:auto` and `overflow-wrap:normal` on cells. Both revert controls use a class selector (specificity `(0,1,1)`) against `:where(...)` shipped rules (`(0,0,1)`), so they actually override. Align assertions cannot be satisfied by UA defaults: header column 1 must be `/right$/` (UA `th` is center); body column 0 must be `/center$/` (UA `td` is start). Author `text-align` on a cell does outrank the `align` presentational hint. Wrap control would be `-1 === -1` if no `<table>` existed; the shipped variant already requires `scrollWidth > clientWidth` on the same markdown, so that hole is not reachable here.
+
+**9. Claims in prose.** Two leftover sentences, below. `MESSAGE_MARKDOWN_ATTRIBUTES` is still not read by `sanitizeTag`; the new per-tag sanitizer probe pins enforcement. `MESSAGE_MARKDOWN_ALIGNMENTS` / `MESSAGE_MARKDOWN_CLASSES` are the sets both parser and sanitizer use.
+
+### Findings
+
+1. **Low — stale test name.** `site/src/lib/message-markdown.test.mjs:117`. The title is still `the sanitizer keeps only the tag allowlist and href on anchors`. This SHA’s body also pins `th`/`td` `align` and `li` `class`. The word “only” is now false. The later test at line 144 drives the sanitizer tag-by-tag, so the hole is the name, not the gate.
+
+2. **Low — `tableAlignments` repeats the retired column-count claim.** `site/src/lib/message-markdown.ts:405-406`. New comment: “That equality is what stops an ordinary sentence containing a pipe from becoming a table.” This SHA’s own test says that is only one guard, and that `choose x | y | z` above `|-|-|-|` **is** a table. Measured: that input emits `<table>`. Behaviour is fine; the new comment is the old wording they just retired in the test.
+
+Neither finding breaks the three claims (allowlist, brain-link boundary, phone-width scroll).
+
+VERDICT: PASS

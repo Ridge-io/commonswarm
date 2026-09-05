@@ -1,0 +1,36 @@
+I'll read REVIEW.md and the patch, then follow REVIEW.md exactly.The patch was cut off. I’ll read the rest of it and the renderer, sanitizer, and tests next.I’ll read the sanitizer, renderer, brain-link pass, and CSS next, and try attacks without writing to the tree.I’ll run the renderer from `/tmp` so I can try the attacks without writing to the working tree.`diff --git a/site/src/components/app/LiveDashboard.astro b/site/src/components/app/LiveDashboard.astro`
+
+1. **Medium — feed spacing selector is one-sided.** `site/src/components/app/LiveDashboard.astro` 9542–9544. The zero-margin list gained `table, hr`, and the *left* side of the sibling rule did too. The *right* side is still `:where(p, ul, ol, blockquote, pre)`. Brain was updated on both sides (8728–8730). Feed messages use only `dashboard__message-markdown` (3887). Brain uses both classes (630). Sequence: `intro\n| a |\n|---|\n| 1 |` → `<p>intro</p><table>…`. `p + table` gets no `margin-block-start` on the feed. `table + p` does. Same for `p + hr`. Brain still spaces both. The later comment (9596–9598) is about the shared table/hr/del/task rules, which are shared. This sibling rule is not.
+
+2. **Low — delimiter cells accept one hyphen.** `site/src/lib/message-markdown.ts` 360 (`TABLE_DELIMITER_CELL = /^:?-+:?$/`). GFM wants three hyphens. Measured:
+
+```
+choose x | y | z
+|-|-|-|
+```
+
+→ a 3-column table. The test comment at `site/src/lib/message-markdown.test.mjs` 189–191 says a column-count mismatch means “a sentence that happens to contain pipes and dashes cannot become a table.” Column count is one guard, not that guarantee. `| a | b |\n|---|` correctly stays text. `| a | b |\n|-|-|` becomes a table.
+
+3. **Low — foster-parent check looks at the wrong node.** `site/src/components/app/brain-links-blocks.observer.test.ts` 221–227 and 232–237. `tableTextOutsideCells` joins *direct text children of `table`*. HTML foster-parenting puts that text *next to* the table, as a sibling of it. A dropped `<th>` would still pass this regex. `headerCellCount` / `bodyCellCount` would still fail, so the claim is not naked. The comment that this string is where fostered text shows up is false.
+
+### Refutations that did not work
+
+**1. Sanitizer allowlist.** Unquoted `align=center` and single-quoted `align='center'` drop the attribute and keep `<td>`. `class` on `td` drops; `align` on `li` drops; `onclick` / `style` drop. `sanitizeMessageHtml('<td align="CENTER">')` keeps `align="center"`. `align="left; color:red"` drops. Hostile `</td></table><script>` in a cell is entities. Autolink `https://example.com/x" onclick="alert(1)` in a cell stops at `&quot;`. `https://trusted.example@evil.host/` stays text. The per-tag probe matches `MESSAGE_MARKDOWN_ATTRIBUTES`. No tag or attribute outside the set reaches the `innerHTML` string on the render path.
+
+**2. Foster parenting.** `sanitizeTag` always keeps a well-formed `table` / `thead` / `tbody` / `tr` / `th` / `td` open tag (`message-markdown.ts` 565–584). User input is escaped first (`boundedLines`), so it cannot emit tags. `sanitizeMessageHtml('<table><tr><tdd>x</td></tr></table>')` *can* yield `<table><tr>x</td></tr></table>` (text would foster). Production never calls `sanitizeMessageHtml` except on renderer output (`grep` only hits the renderer and tests). I could not construct markdown that drops a cell open tag and keeps its text.
+
+**3. Cells as a second escaping path.** Same `renderInline` as paragraphs. Hostile vectors are byte-identical inside a cell. `\|` is the one documented difference; `\*` and `\_` are not. `\|` inserts a raw `|` into already-escaped text; `|` is not markup, and `<` is already `&lt;`, so it cannot open a tag.
+
+**4. Task items.** `- [x](https://example.com)` is a link, not a task: `TASK_ITEM` is `$`-anchored, so `](` does not match. `- [x]shared-host` stays literal. `- [click](javascript:…)` stays a list item. Class is the enum `md-task` only. Ballot characters are not in `RUN_RE`, so they cannot sit inside a brain-link label. No `<input>`.
+
+**5. Brain-link boundary.** `th` / `td` may hold a `button`. `linkifyBrainTopics` uses `createElement` after `innerHTML`, so the parser does not move those buttons. `PRE` / `A` / `BUTTON` stay opaque. A cell link `[shared-host](https://example.com/s)` stays an `a`. `` `releases` `` in a cell still linkifies; prose `releases` does not. Nested `li` is a normal holder.
+
+**6. Termination and bounds.** `renderList` always consumes the line it starts on (that line is the nested list’s base indent). Depth cap 4. Table cells are counted before any emit; over budget sets `budget.cells = 0`, so that table and later ones stay literal (measured: first table gone, `| c | d |` still in the text, no `<th>c</th>`). A 2M-pipe row is linear in `splitTableCells` and then fails the budget.
+
+**7. Block ordering.** `|---|---|` is not an `<hr>` (pipe is not in the marker class). `- - -` is an `<hr>`, not a list, which is the intent. `--- | ---` *does* parse as a delimiter (GFM allows a pipe-only interior). `| :--- onclick=alert(1) | --- |` is not a delimiter. `text\n---\nmore` is paragraph / rule / paragraph.
+
+**8. Tests and CSS.** The `table` control reverts `display` / `overflow-x`; the `wrap` control sets `overflow-wrap: anywhere` at higher specificity than the `:where()` cell rule, so each half can fail on its own. Align checks use the right-aligned header and the centred/right body cells, so UA defaults cannot satisfy them. I did not run the Chrome layout observer (it needs `dist/` and writes temp files). I did not measure live geometry.
+
+**9. Prose lists.** `MESSAGE_MARKDOWN_ATTRIBUTES` is not read by `sanitizeTag`; the new per-tag sanitizer test drives enforcement. Task class / markers in tests come from the exported constants. Finding 2 is the false “so” in the delimiter comment.
+
+VERDICT: PASS

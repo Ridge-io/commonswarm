@@ -1,0 +1,18 @@
+`diff --git a/site/src/components/app/LiveDashboard.astro b/site/src/components/app/LiveDashboard.astro`
+
+## Findings
+
+1. `site/src/lib/message-markdown.test.mjs`, line 1112: The comment `"no tag may carry a handler, an href, or a style."` is a typed list in prose that is false/incomplete. It omits `class`, which is explicitly checked and forbidden by the enforcement regex `|\sclass\s*=/iu` immediately following it on line 1117. Severity: Low (Prose/Documentation mismatch).
+
+## Refutations Attempted
+
+* **1. Sanitizer allowlist:** Attempted to inject single-quoted, unquoted, or widened attributes (e.g., `<li class="md-task evil">`). Could not make it work because `sanitizeTag` drops the matched attribute unless it perfectly passes the double-quoted regex (e.g., `/\sclass\s*=\s*"([^"]*)"/iu`) and the strict `ALLOWED_CLASSES` lookup. Furthermore, the round-tripping through `escapeMessageHtml` neutralizes embedded quotes that might otherwise break out of the `href` attribute.
+* **2. Foster parenting:** Attempted to construct an input that causes the sanitizer to return `""` for an open table tag (`<td>`, `<tr>`), which would foster-parent the inner text. Could not make it work because the `sanitizeTag` function receives its input from the strictly formatted output of `renderBlocks`. It never encounters malformed generated tags like `< td>`, so tags in `ALLOWED_TAGS` are perfectly preserved and never dropped.
+* **3. Cells are not a second escaping path:** Attempted to exploit the backslash conversion of `\|` to `|` inside `splitTableCells`. Could not make it work because the replacement happens before `renderInline`. The resulting raw `|` has no semantic escaping meaning to the markdown engine and is harmlessly processed as literal text.
+* **4. Task items are not checkboxes:** Attempted to trick `brain-links.ts` into swallowing the ballot marker by naming a topic after it. Could not make it work because valid brain-topic slugs are restricted to URL-safe alphanumeric characters, dashes, and underscores; they will never encompass the `☑` or `☐` characters to inadvertently create a clickable checkbox label. 
+* **5. Brain-link boundary:** Attempted to link a topic name inside an already opaque tag nested within a table cell. Could not make it work because the DOM walk safely respects the opacity of `A`, `PRE`, and `BUTTON` tags, and the addition of `TH`/`TD` holders doesn't disrupt this overarching boundary. 
+* **6. Termination and bounds:** Attempted to trigger infinite recursion or quadratic table generation with heavily indented lists and massive block inputs. Could not make it work because `renderList` cleanly terminates at `nestingDepth`, and `renderBlocks` degrades tables gracefully to standard paragraphs the moment `cells > budget.cells`.
+* **7. Block-ordering hazards:** Attempted to trick the parser into treating a table delimiter `|---|---|` as a thematic break, or `- - -` as a list. Could not make it work because `THEMATIC_BREAK` rigidly excludes the `|` character, and `isThematicBreak` is executed safely before `listMatch`.
+* **8. The tests and the CSS:** Attempted to verify if the layout assertion pinning `text-align` was vacuous. Could not make it work because if a general CSS `text-align` rule were active, it would correctly override the presentational `align` HTML attribute. The `message-blocks-layout.observer.test.ts` measures the *computed* browser style, so its strict `/center$/u` assertions would accurately fail if overridden.
+
+VERDICT: PASS

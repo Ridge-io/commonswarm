@@ -1,0 +1,80 @@
+I'll read REVIEW.md and DIFF.patch first, then follow REVIEW.md exactly.The patch is long. I’ll keep reading it and the matching source files in the working tree.The rest of the patch and the renderer, sanitizer, and brain-link code are next.I’ll inspect the CSS around tables, the rest of the tests, and a few attack cases in isolation.I’ll run a few renderer and sanitizer cases from `/tmp` so nothing writes into the lane tree.`diff --git a/site/src/components/app/LiveDashboard.astro b/site/src/components/app/LiveDashboard.astro`
+
+Read-only review of `0408cbb`. Renderer, sanitizer, brain-link pass, CSS, and tests. Attack inputs run through `renderMessageMarkdown` / `sanitizeMessageHtml` from `/tmp`. Did not run Chrome geometry tests and did not write to the lane tree.
+
+## Findings
+
+### 1. Medium — spaced `---` after an open `ul` is still a list item
+
+`site/src/lib/message-markdown.ts:256-257` says the `renderBlocks` order (break, then heading, then list, then table) stops `- - -` from being read as a list item. That check lives only at the `renderBlocks` entry (`478-481`). `renderList` (`312-335`) never calls `isThematicBreak`. `listMatch` accepts `- - -` and `* * *` as `ul` items because both start with `[-+*]` plus whitespace. `*` and `-` share `kind: "ul"`, so a marker change does not end the list.
+
+Concrete inputs (measured):
+
+| source | output |
+|---|---|
+| `- item\n- - -` | `<ul><li>item</li><li>- -</li></ul>` |
+| `* item\n* * *` | `<ul><li>item</li><li><em> </em></li></ul>` |
+| `* item\n- - -` | `<ul><li>item</li><li>- -</li></ul>` |
+
+Controls on the same path that still work: `- item\n---` → `<ul><li>item</li></ul><hr>` (no space after the marker, `listMatch` fails). `1. item\n- - -` → `<ol>…</ol><hr>` (ol→ul kind change). `text\n- - -` → `<p>text</p><hr>`. `> a\n> - - -` → hr inside the quote (`renderBlocks` again).
+
+The pin at `site/src/lib/message-markdown.test.mjs:341-357` only feeds standalone lines. It cannot fail for the list-continuation case.
+
+### 2. Low — feed sibling gap omits `table` and `hr` as the following sibling
+
+`site/src/components/app/LiveDashboard.astro:9542-9544`:
+
+```css
+.dashboard__message-markdown :where(p, ul, ol, blockquote, pre, table, hr) +
+    :where(p, ul, ol, blockquote, pre)
+```
+
+Brain at `8728-8729` puts `table, hr` on both sides of `+`. The feed adds them only on the left, while `9538-9540` and `9641-9643` set `margin: 0` on `table` and `hr` (so the UA `hr` margin is gone too).
+
+Sequence: a paragraph then a table or rule in the feed (`hello\n\n| a |\n|---|\n| 1 |`, or `hello\n---`). `p + table` and `p + hr` get no `margin-block-start`. `table + p` still does. The Brain panel has both classes, so it does not show the miss. The comment at `9596-9598` said a rule written for only one surface is a difference a reader would meet.
+
+### 3. Low — budget comment is false for leftover budget
+
+`site/src/lib/message-markdown.ts:532-536` says the table wants more cells than the whole message may spend, then sets `budget.cells = 0`. That is true only when the table itself is larger than 20_000. When table 1 uses 19_990 and table 2 wants 20, table 2 is over the remainder, the budget is zeroed, and a later 4-cell table also stays literal.
+
+Measured: table 1 (9_994 body rows) renders; table 2 (10 body rows) renders alone; combined output has one `<table>` and the second table’s `| 3 | 4 |` stays text. The 20_000 cap still holds. The bound is stricter than the comment.
+
+### 4. Low — hostile-table tag list is typed, not taken from the allowlist
+
+`site/src/lib/message-markdown.test.mjs:272`:
+
+```js
+/^<\/?(?:table|thead|tbody|tr|th|td|p|br|code|strong|em)(?:\s|>)/u
+```
+
+That list is not `MESSAGE_MARKDOWN_TAGS`. It drops `del`, `a`, `hr`, `ul`, `ol`, `li`, `blockquote`, `pre`, headings. A cell with `~~x~~` would fail this test even though `<del>` is allowed. The byte-identical `HOSTILE_INLINE_VECTORS` loop is the real control; this regex is a second, drifting claim.
+
+## Refutations that did not work
+
+**1. Sanitizer allowlist.** Renderer output did not put a tag or attribute outside `MESSAGE_MARKDOWN_TAGS` / the `sanitizeTag` branches. `align` keeps only `left|center|right` (case folded). `class` keeps only exact `md-task` (`md-task evil`, `dashboard__app`, empty, unquoted, single-quoted all drop). `th`/`td`/`li` rebuild the tag, so extra `on*` / `style` / `id` die. Unquoted `align=center` drops the attribute. Direct `sanitizeMessageHtml('<td align="center"><img src=x onerror=alert(1)></td>')` → `<td align="center"></td>`.
+
+`a` round-trip: `https://example.com/x"onclick="alert(1)` and `https://example.com/x<script>` stop at `&quot;` / `&lt;`, then `safeMessageLink` + `escapeMessageHtml`. `javascript:https://example.com` leaves the `javascript:` as text and links the `https` tail; it is not a `javascript:` href.
+
+The attribute-map test at `message-markdown.test.mjs:145-168` does drive `sanitizeTag` per allowed tag. `MESSAGE_MARKDOWN_ATTRIBUTES` is still a claim `sanitizeTag` does not read; that test is what ties them.
+
+**2. Foster parenting.** Could not get the renderer to drop a `td`/`th`/`tr`/`tbody`/`thead` open tag. Those tags are always well-formed and on the allowlist. Direct sanitizer input can: `sanitizeMessageHtml('<table><tr><unknown>FOSTER</unknown><td>keep</td></tr></table>')` → `<table><tr>FOSTER<td>keep</td></tr></table>`. That path is not `innerHTML` of renderer output (input is escaped first). The observer check at `brain-links-blocks.observer.test.ts:114-127` reads text children of `table`; foster-parented text usually lands as a previous sibling. Cell counts (`th===2`, `td===4`) would still catch a dropped cell on this fixture.
+
+**3. Cells / task items as a second escape path.** `renderTableRow` and `renderListItem` call `renderInline`. Hostile tags in cells stay entities. `\|` inserts a raw `|` into already-escaped text; measured `| x \| y | z |` → `<td>x | y</td><td>z</td>`, not a tag. `</table><script>` in a cell stays text. They already pin `\|` inside a code span as the one deliberate GFM exception (`message-markdown.test.mjs:260-274`). `.trim()` on cells is a whitespace difference, not an escape difference (`  **x**  ` keeps spaces in a paragraph, not in a cell).
+
+**4. Task items as checkboxes.** No `<input>`. Class is the constant, sanitizer exact-match. `TASK_ITEM` needs `$`, so `- [x](https://example.com)` is a link, not a task; `- [x]hello` stays text. `- [ ] shared-host` → `☐ shared-host` as one text node; `RUN_RE` does not eat `☐`, so a later brain-link split leaves the ballot outside the button. Observer fixture pins that for `- [ ] read shared-host`.
+
+**5. Brain-link boundary.** `th`/`td`/`li` may hold a button. `A`/`PRE`/`BUTTON` stay opaque. One-word `releases` in a cell code span links; the same word as cell prose does not (fixture). Nested `li` is reached. Could not put a control inside `a`, `pre`, or another control through a table, task item, or sublist.
+
+**6. Termination and bounds.** `renderList` always advances (nested call consumes the deeper line). Depth cap 4; extra indent joins the deepest list. Table cells are counted before any emit; over-budget falls through to literal text. Could not emit past `tableCells`. Worst case is conservative leftover-budget (finding 3), not an overrun. Quote recursion shares the same budget object.
+
+**7. Other block-order.** `|---|---|` is never an `<hr>` (`|` is not in the marker class). A delimiter with the wrong column count is not a table. `- - -` as a paragraph interruption is an `<hr>`. Table after a list interrupts the list (`- item` then a pipe table). Setext-looking `---` after a pipe row is an `<hr>`, not a delimiter (`| a |\n---\n| 1 |` → paragraph, hr, paragraph).
+
+**8. Layout tests / `text-align`.** Did not run Chrome. On the page: no `text-align` on the cell rule (`9630-9635`). Presentational `align` loses to any author `text-align` on the cell; the observer pins the right-aligned header and the centered/right body so a UA default cannot satisfy them (`message-blocks-layout.observer.test.ts:724-743`). That assertion can fail. The two controls revert one half each; a missing table would fail the shipped `scrollWidth > clientWidth` check. Wrap control does not assert `clientWidth > 0`; not reachable unless the wrap variant uniquely drops the table. Parent `.dashboard__message-markdown { overflow-wrap: anywhere }` is real (`9518`). Dist CSS already contains `md-task`.
+
+**9. Other prose.** Retired “tables stay literal” wording is marked. Production table fixture is kept. `\|` difference is named and pinned.
+
+## Not established
+
+Chrome geometry at 320px (claim 3: the table scrolls inside itself). Dist CSS contains the new rules; the observer design can fail; I did not measure a live layout.
+
+VERDICT: FAIL

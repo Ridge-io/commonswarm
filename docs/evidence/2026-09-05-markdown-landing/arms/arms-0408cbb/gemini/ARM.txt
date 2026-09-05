@@ -1,0 +1,21 @@
+diff --git a/site/src/components/app/LiveDashboard.astro b/site/src/components/app/LiveDashboard.astro
+
+1. **Finding 1 (Check 3 & 9):**
+   - **File and Line:** `site/src/lib/message-markdown.ts`, `splitTableCells`, at `if (character === "\\" && row[index + 1] === "|")` (around diff line 1440).
+   - **Concrete input:** `| \`code \| string\` |` (a code span containing an escaped pipe, inside a table cell).
+   - **Description:** I attempted to prove that cells are not a second escaping path (Check 3) and that the claim in `HOSTILE_INLINE_VECTORS` ("the two inner strings must be byte-identical") holds for all inputs. However, because `splitTableCells` unconditionally consumes `\|` and drops the backslash *before* `renderInline` processes the code span, the backslash is permanently lost. Inside a paragraph, `` `code \| string` `` renders as `<p><code>code \| string</code></p>`. Inside a table cell, it is altered and renders as `<td><code>code | string</code></td>`. The constructs behave differently, and the inner strings are not byte-identical, failing the stated claim. 
+   - **Severity:** Low (content mutation/data loss within code spans; no security boundary crossed).
+
+2. **Finding 2 (Check 6 & 9):**
+   - **File and Line:** `site/src/lib/message-markdown.ts`, `renderBlocks`, at the block-level `if (isQuote(line))` check (around diff line 1520).
+   - **Concrete input:** A single line with 10,000 `>` characters (e.g., `> > > > ...`).
+   - **Description:** I checked if `MESSAGE_MARKDOWN_LIMITS.nestingDepth` correctly bounds blockquote recursion to prevent crashes, as claimed by the comment and Check 6. While nested lists enforce this bound correctly via `listDepth`, the block-level quote check `if (isQuote(line))` lacks the `depth < MESSAGE_MARKDOWN_LIMITS.nestingDepth` condition entirely (it only exists below on the paragraph-interruption check). Thus, `renderBlocks` will recursively call itself `O(N)` times for an input with `N` `>` characters, bypassing the intended bound and causing a stack overflow crash for deeply nested inputs. This violates both the termination check and the prose claim.
+   - **Severity:** High (Denial of Service via Stack Overflow).
+
+**Refutations attempted and could not make work:**
+- **Check 2 (Foster parenting):** I attempted to construct an input where the sanitizer drops a `td`/`th`/`tr` tag while keeping its text, forcing the HTML parser to foster-parent the text out of the table. However, `sanitizeTag` safely retains all structural table tags (`ALLOWED_TAGS.has(name)` is true) and returns the base `<${name}>` if an invalid alignment attribute is provided. Since it never returns an empty string for these elements, tags are never dropped, and text remains safely in the cells.
+- **Check 4 (Task items):** I tried to create a task item without a space (e.g., `- [x]foo`) to swallow the marker into the text node and place it inside a brain-link `<button>`. But `TASK_ITEM` strictly requires `(?:[ \t]+(.*))?`, ensuring a space always separates the marker from the text. The marker remains outside the button.
+- **Check 5 (Brain-link boundary):** I checked if `linkifyBrainTopics` could mutate opaque elements due to the newly added table constructs. However, `linkifyBrainTopics` walks the DOM and inherently skips `A`, `BUTTON`, and `PRE`. The new `th` and `td` containers do not interfere with this DOM walk, and the code-span logic remains unaffected.
+- **Check 7 (Block-ordering hazards):** I tried to make `|---|---|` parse as a thematic break (`<hr>`). But `isThematicBreak` strictly uses `[-*_]`, which does not match `|`. I also tried to make `- - -` parse as a list item, but `isThematicBreak` correctly runs first and consumes it as an `<hr>`.
+
+VERDICT: FAIL
