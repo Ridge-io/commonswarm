@@ -244,6 +244,17 @@ export const composerToFullNotice = (names: readonly string[]): string =>
     joinNames(names)
   } ${names.length === 1 ? "is" : "are"} not in it. Remove one to make room.`;
 
+/**
+ * The notice when the roster took somebody out of the set. Their name cannot be part of it:
+ * once the roster no longer holds them there is nothing left to read a name from, so this is
+ * built from the COUNT. Saying nothing was the alternative, and a chip that disappears while
+ * the reader is writing to it is the one thing this row exists to prevent.
+ */
+export const composerPrunedNotice = (count: number): string =>
+  `${count} ${countNoun(count, "recipient")} left this workspace, so ${
+    count === 1 ? "it is" : "they are"
+  } no longer in To:.`;
+
 /** The notice for a tag that names two roster entries and so cannot become a chip. */
 export const composerAmbiguousNotice = (names: readonly string[]): string =>
   `${joinNames(names.map((name) => `"${name}"`))} ${

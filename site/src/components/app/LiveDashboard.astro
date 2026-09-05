@@ -1249,6 +1249,7 @@ import "../../styles/tokens.css";
     addComposerRecipients,
     composerAmbiguousNotice,
     composerDeliveryNote,
+    composerPrunedNotice,
     composerToFullNotice,
     mergeMentionRecipients,
     notifiedRecipient,
@@ -2663,7 +2664,15 @@ import "../../styles/tokens.css";
       if (!chips || !note) return;
       if (composerRosterKnown()) {
         const pruned = pruneComposerRecipients(composerTo, composerRecipientKnown);
-        if (pruned.length !== composerTo.length) composerTo = pruned;
+        if (pruned.length !== composerTo.length) {
+          /* SAY IT. A chip that vanishes while the reader is writing to that person is the
+             one thing this row exists to prevent, and the name cannot be part of the
+             sentence: the roster no longer holds them, so there is nothing to read a name
+             from. The set restored on entry is pruned before its first render, so this fires
+             for a revocation that happened while the composer was open, not on arrival. */
+          composerToNotice = composerPrunedNotice(composerTo.length - pruned.length);
+          composerTo = pruned;
+        }
       }
       chips.replaceChildren();
       const notified = notifiedRecipient(composerTo);

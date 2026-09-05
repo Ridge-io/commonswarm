@@ -45,7 +45,11 @@ red  the over-cap notice names who did not fit
   restored green  site/src/lib/composer-address.test.mjs
 red  a tag the parser gave up on is named, not dropped out of the message
   restored green  site/src/components/app/composer-to-field.observer.test.ts
+red  the pruned count and its noun are built together
+  restored green  site/src/lib/composer-address.test.mjs
+red  a recipient the roster lost is removed without a word about it
+  restored green  site/src/components/app/composer-to-field.observer.test.ts
 red  the remove control removes the recipient
   restored green  site/src/components/app/composer-addressing.observer.test.ts
 
-23 mutations, 0 problems
+25 mutations, 0 problems

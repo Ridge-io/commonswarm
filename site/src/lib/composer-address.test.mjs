@@ -16,6 +16,7 @@ import {
   addComposerRecipients,
   composerAmbiguousNotice,
   composerDeliveryNote,
+  composerPrunedNotice,
   composerToFullNotice,
   mergeMentionRecipients,
   notifiedRecipient,
@@ -133,6 +134,19 @@ test("adding keeps order, adds nobody twice, and names what the cap refused", ()
     composerToFullNotice(["Ada", "Kenji Ito"]),
     `To: holds ${COMPOSER_TO_MAX} recipients, so Ada and Kenji Ito are not in it. ` +
       "Remove one to make room.",
+  );
+});
+
+test("a recipient the roster lost is reported, and the count carries its own noun", () => {
+  /* The name cannot be in this sentence: the roster no longer holds them. The count is what
+   * is left, so the count and its noun are built together. */
+  assert.equal(
+    composerPrunedNotice(1),
+    "1 recipient left this workspace, so it is no longer in To:.",
+  );
+  assert.equal(
+    composerPrunedNotice(2),
+    "2 recipients left this workspace, so they are no longer in To:.",
   );
 });
 

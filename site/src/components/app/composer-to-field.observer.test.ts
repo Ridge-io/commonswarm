@@ -485,6 +485,13 @@ test("an empty roster is not read as a workspace with nobody in it", () => {
     /if \(composerRosterKnown\(\)\) \{\s*\n\s*const pruned = pruneComposerRecipients\(composerTo, composerRecipientKnown\);/,
     "the chips are pruned against a roster that is not known yet",
   );
+  /* And when it does prune, it says so. A chip that vanishes while the reader is writing to
+     that person is the one thing the row exists to prevent. */
+  assert.match(
+    dashboard,
+    /composerToNotice = composerPrunedNotice\(composerTo\.length - pruned\.length\);/,
+    "a recipient the roster lost is removed without a word about it",
+  );
 });
 
 test("a tag the parser gave up on is named, not dropped out of the message", () => {
