@@ -1,0 +1,134 @@
+diff --git a/docs/design/2026-09-04-chat-platform-reconciled.md b/docs/design/2026-09-04-chat-platform-reconciled.md
+index a86006e..4469675 100644
+--- a/docs/design/2026-09-04-chat-platform-reconciled.md
++++ b/docs/design/2026-09-04-chat-platform-reconciled.md
+@@ -871,11 +871,17 @@ two; `:121` (*"visible only to that person and to its sender"*) promises the sen
+ not have (§1.3). Fix as one edit, and note P3 *changes* `:121`'s behaviour rather than describing it.
+ `:120`'s stored-field list omits `in_reply_to` and would omit `channel_id`/`thread_root_id`.
+ `SECURITY.md:43-45` (*"addressed to one person are the only exception"*) is **ALREADY-FALSE** — agent
+-addressing is a second; it survives R1 and breaks on DMs at P3. `landing/Hero.astro:190`,
+-`ConsumerStory.astro:14`, observer `consumer-copy.observer.mjs:56` carry workspace-wide claims —
+-**verify liveness first**: `Hero`, `Demo`, `FeedPanel`, `Verbs`, `Start`, `Invite` are imported by no page
+-(`index.astro` pulls only `ConsumerHero`/`ConsumerStory`), and fixing dead code is not fixing live copy
+-(memory: "Placeholder spread across files").
++addressing is a second; it survives R1 and breaks on DMs at P3. `ConsumerStory.astro:14` and observer
++`consumer-copy.observer.mjs:56` carry workspace-wide claims — **verify liveness first**: `Demo`,
++`FeedPanel`, `Verbs` and `Start` are imported by no page (`index.astro` pulls only
++`ConsumerHero`/`ConsumerStory`), and fixing dead code is not fixing live copy (memory: "Placeholder
++spread across files").
++
++> **was**, until 2026-09-05: this list also named `landing/Hero.astro:190`, and the liveness list also
++> named `Hero` and `Invite`. `03960bc` DELETED both files, for exactly the reason given above — they
++> were imported by nothing and wrote nothing into `dist`. The pointer is retired rather than retargeted,
++> because there is nothing left to point at. It is kept here because a reader who met the earlier
++> wording needs to know it resolved to real copy once, and that the copy was removed rather than fixed.
+ 
+ **CLI strings.** `src/cloud/signals.ts:1641` (**must change with clause (e)**; already half false, §5);
+ `src/cli.ts:3212`, `:3216-3218` (`describeAudience`, a single scalar), `:3077-3081` (reply-refusal hint —
+diff --git a/supabase/functions/command/index.ts b/supabase/functions/command/index.ts
+index b4e6360..3767d0c 100644
+--- a/supabase/functions/command/index.ts
++++ b/supabase/functions/command/index.ts
+@@ -1895,10 +1895,11 @@ function validateCommand(
+   // 20260730000001_workspace_access_lifecycle.sql — a hand-written duplicate
+   // here has drifted before (the 8h→24h TTL constant above).
+   if (cmd.kind === "declare_agent_model") {
+-    if (
+-      !exactKeys(cmd, ["kind", "model"]) ||
+-      (cmd.model !== null && typeof cmd.model !== "string")
+-    ) {
++    /* Keys, then TYPE. Bundling them answered `{model: 123}` -- exactly the
++     * right keys, wrong type -- with the field list ending "and nothing else",
++     * which tells the caller they sent an extra key. channel_rename already
++     * splits these; an arm found these two did not. */
++    if (!exactKeys(cmd, ["kind", "model"])) {
+       return {
+         ok: false,
+         status: 400,
+@@ -1907,6 +1908,9 @@ function validateCommand(
+         }),
+       };
+     }
++    if (cmd.model !== null && typeof cmd.model !== "string") {
++      return { ok: false, status: 400, reason: MODEL_RULE_TEXT };
++    }
+     /* Normalize EXACTLY as the reducer will (trim, empty -> null) BEFORE
+      * validating, so the wire and the reducer agree on every input: a raw ""
+      * is a clear, not a refusal, and a padded value is measured trimmed —
+@@ -2009,12 +2013,9 @@ function validateCommand(
+   // normalize-before-validate order as declare (its landing-round finding 1),
+   // and the SAME bounds — the reducer's shared normalizedModel is the source.
+   if (cmd.kind === "set_agent_model") {
+-    if (
+-      !exactKeys(cmd, ["kind", "principal_id", "model"]) ||
+-      typeof cmd.principal_id !== "string" ||
+-      !UUID_RE.test(cmd.principal_id) ||
+-      (cmd.model !== null && typeof cmd.model !== "string")
+-    ) {
++    /* Keys, then the id shape, then the model type. Same split as
++     * channel_rename, and for the same reason. */
++    if (!exactKeys(cmd, ["kind", "principal_id", "model"])) {
+       return {
+         ok: false,
+         status: 400,
+@@ -2026,6 +2027,16 @@ function validateCommand(
+         ),
+       };
+     }
++    if (typeof cmd.principal_id !== "string" || !UUID_RE.test(cmd.principal_id)) {
++      return {
++        ok: false,
++        status: 400,
++        reason: "principal_id must be a UUID.",
++      };
++    }
++    if (cmd.model !== null && typeof cmd.model !== "string") {
++      return { ok: false, status: 400, reason: MODEL_RULE_TEXT };
++    }
+     const setModel = cmd.model === null ? null : cmd.model.trim();
+     const normalizedSet = setModel === "" ? null : setModel;
+     /* boundedText also refuses control characters, so answering it with the
+diff --git a/tests/p1-server/chat-signals.test.ts b/tests/p1-server/chat-signals.test.ts
+index e338443..7706dfd 100644
+--- a/tests/p1-server/chat-signals.test.ts
++++ b/tests/p1-server/chat-signals.test.ts
+@@ -24,6 +24,7 @@ import { setTimeout as delay } from "node:timers/promises";
+ import { createClient, type SupabaseClient } from "@supabase/supabase-js";
+ import postgres from "postgres";
+ import { awaitFunctionRunning } from "../support/edge-readiness.js";
++import { MODEL_RULE_TEXT as MODEL_RULE_TEXT_EXPECTED } from "../../supabase/functions/_shared/channels.js";
+ 
+ interface LocalEnvironment {
+   API_URL: string;
+@@ -723,6 +724,31 @@ test("a refusal names the FIRST rule broken, not the chat rule that also fired",
+     null,
+   );
+ 
++  /* Right keys, WRONG TYPE. An arm found this answered with the field list
++   * ending "and nothing else", which tells the caller they sent an extra key
++   * when the first broken rule is the type. channel_rename already split these. */
++  const wrongType = await send(f.agentToken, {
++    kind: "declare_agent_model",
++    model: 123,
++  });
++  assert.equal(wrongType.status, 400, JSON.stringify(wrongType.body));
++  assert.equal(
++    String(wrongType.body.message),
++    MODEL_RULE_TEXT_EXPECTED,
++    "a wrong type is the type rule, not the field list",
++  );
++  assert.doesNotMatch(String(wrongType.body.message), /nothing else/);
++
++  /* Control: an actual extra key still gets the field list, so the split did
++   * not simply replace one sentence with the other. */
++  const extraKey = await send(f.agentToken, {
++    kind: "declare_agent_model",
++    model: null,
++    nope: 1,
++  });
++  assert.equal(extraKey.status, 400, JSON.stringify(extraKey.body));
++  assert.match(String(extraKey.body.message), /nothing else/);
++
+   /* A short model carrying a control character is a CONTROL rule, not a length
+    * rule: boundedText refuses both and the length sentence was answering both. */
+   const controlModel = await send(f.agentToken, {

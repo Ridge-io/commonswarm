@@ -871,11 +871,15 @@ two; `:121` (*"visible only to that person and to its sender"*) promises the sen
 not have (§1.3). Fix as one edit, and note P3 *changes* `:121`'s behaviour rather than describing it.
 `:120`'s stored-field list omits `in_reply_to` and would omit `channel_id`/`thread_root_id`.
 `SECURITY.md:43-45` (*"addressed to one person are the only exception"*) is **ALREADY-FALSE** — agent
-addressing is a second; it survives R1 and breaks on DMs at P3. `landing/Hero.astro:190`,
-`ConsumerStory.astro:14`, observer `consumer-copy.observer.mjs:56` carry workspace-wide claims —
-**verify liveness first**: `Hero`, `Demo`, `FeedPanel`, `Verbs`, `Start`, `Invite` are imported by no page
-(`index.astro` pulls only `ConsumerHero`/`ConsumerStory`), and fixing dead code is not fixing live copy
-(memory: "Placeholder spread across files").
+addressing is a second; it survives R1 and breaks on DMs at P3. `ConsumerStory.astro:14` and observer
+`consumer-copy.observer.mjs:56` carry workspace-wide claims — **verify liveness first**: `Demo`,
+`FeedPanel`, `Verbs` and `Start` are imported by no page (`index.astro` pulls only
+`ConsumerHero`/`ConsumerStory`), and fixing dead code is not fixing live copy (memory: "Placeholder
+spread across files").
+
+> **was**, until 2026-09-05: this list also named `landing/Hero.astro:190`, and the liveness list also
+> named `Hero` and `Invite`. `03960bc` deleted both files for the reason given above; the pointer is
+> retired rather than retargeted because there is nothing left to point at.
 
 **CLI strings.** `src/cloud/signals.ts:1641` (**must change with clause (e)**; already half false, §5);
 `src/cli.ts:3212`, `:3216-3218` (`describeAudience`, a single scalar), `:3077-3081` (reply-refusal hint —

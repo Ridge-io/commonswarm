@@ -192,3 +192,24 @@ L1 keeps only the line remaps its own `command/index.ts` growth forces in the ex
    N-way fan-out to a delivery ledger sized for one row per signal, and its capacity was not measured.
 5. **The deploy order is stated, not rehearsed.** Migration → verify via `schema_migrations` → edge →
    client → site, per `20260902000001:58-64`. *Pushed is not landed and landed is not applied.*
+
+
+## L1 landed 2026-09-05 (merge 8adf55a) — owed residuals and bounds
+
+Three migrations applied to production (`20260905000001..3`), `command` v40 and `read` v20
+deployed, live control on production: bad slug → 400 with its reason; `channel_create` → 200;
+`post_signal` with `channel` → `channel_id` set; `channel_archive` → 200; post into the archived
+channel → 409 `channel_archived` with its reason; the 0.1.54 client still posts and its accepted
+signal carries `channel_id`, `thread_root_id`, `broadcast_to_channel`.
+
+Owed, from review round 9 (refusal ORDER only; no accept/refuse boundary moves):
+- `declare_agent_model` / `set_agent_model`: the type check is bundled with `exactKeys`, so
+  `model: 123` is told the field-list sentence. A started fix is saved as
+  `docs/evidence/2026-09-05-chat-schema/post-65bb111-residuals-uncommitted.patch` (unreviewed).
+- `chatSignalShapeProblem`: `broadcast_to_channel` + a bad slug is told the slug rule before the
+  rule that makes the request impossible; the comment at `channels.ts:279-281` promises the other
+  order.
+
+Bound: "every 400 carries its reason" holds for the validation layer. Envelope failures before
+it (missing `client_version`, a body that is not the command envelope, auth and route checks)
+still answer a bare `invalid_request`; the `read` edge returns a reason only for the channel slug.
