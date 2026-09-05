@@ -7095,12 +7095,18 @@ async function postSignal(
    * repeats the scalar recipient on the signal row on purpose: the table then
    * means exactly "what the caller addressed", with no arity-dependent branch.
    *
-   * These rows WAKE NOBODY. No trigger on swarm.signal_recipients writes to
-   * swarm.signal_deliveries, and section 4 of
-   * 20260905000010_signal_recipients.sql is a page on why: the rows such a
-   * trigger writes cannot be hydrated or accepted by an installed listener.
-   * Recipient 0 is woken from the scalar column by the trigger on
-   * swarm.signals, which ran when the insert above committed its row.
+   * RETIRED 2026-09-05, kept because section 4 of
+   * 20260905000010_signal_recipients.sql still carries it: "These rows WAKE
+   * NOBODY. No trigger on swarm.signal_recipients writes to
+   * swarm.signal_deliveries ... Recipient 0 is woken from the scalar column by
+   * the trigger on swarm.signals."
+   *
+   * 20260905000020_wake_all_recipients.sql puts a trigger on this table.  Each
+   * row below wakes its AGENT recipient, at any position, with an ON CONFLICT
+   * that keeps recipient 0 from being woken twice by the trigger on
+   * swarm.signals. hydrateDeliveryRefs authorizes against this set and answers
+   * each delivery row with that row's own recipient, which is what an installed
+   * listener checks against its own principal.
    *
    * A body with no `to` writes NOTHING here, so nothing about an installed
    * client's post changes. swarm_read.signals derives the same set from the

@@ -1288,3 +1288,49 @@ test("a persistently-unrenewable ask defers across transient failures, then goes
   assert.equal(persisted?.state, "failed");
   assert.equal(persisted?.failureCode, "renewal_unavailable");
 });
+
+test("a multi-recipient delivery says so in the prompt, and a single one says nothing", () => {
+  /* The product consequence of waking every recipient: three agents get the
+   * same body. An agent that is not told answers as though it were asked
+   * privately, and so do the other two. The numbers come from the delivery
+   * wire, so nothing in the sentence is typed. */
+  const ask = signal("aaaaaaaa-aaaa-4aaa-8aaa-aaaaaaaaaab1");
+  const shared = buildListenerPrompt(ask, "worker", undefined, {
+    recipientPosition: 1,
+    recipientCount: 3,
+  });
+  assert.match(shared, /addressed this to 3 recipients/);
+  assert.match(shared, /you are recipient 2 of 3/);
+  assert.match(shared, /does not tell you who the others are/);
+
+  /* The sentence must not appear when there is one recipient. A prompt that
+   * said "1 of 1" on every private ask would train the reader to skip it. */
+  const alone = buildListenerPrompt(ask, "worker", undefined, {
+    recipientPosition: 0,
+    recipientCount: 1,
+  });
+  assert.doesNotMatch(alone, /recipient 1 of 1/);
+  assert.doesNotMatch(alone, /addressed this to/);
+
+  /* ABSENT SAYS NOTHING. A server that reported no set gets no sentence, not a
+   * defaulted one, because it can deliver a signal that names several people
+   * while waking only the first. */
+  const unreported = buildListenerPrompt(ask, "worker");
+  assert.doesNotMatch(unreported, /addressed this to/);
+
+  /* CONTROL on the same three calls: every one of them is a real prompt with
+   * the parts that always appear, so the two silences above are the recipient
+   * clause missing and not the builder failing. */
+  for (const text of [shared, alone, unreported]) {
+    assert.match(text, /You received one direct CommonSwarm ask\./);
+    assert.match(text, /untrusted user data/);
+  }
+
+  /* The last slot of the set renders as the last slot, so the +1 is applied
+   * once rather than to the count as well. */
+  const last = buildListenerPrompt(ask, "worker", undefined, {
+    recipientPosition: 2,
+    recipientCount: 3,
+  });
+  assert.match(last, /you are recipient 3 of 3/);
+});

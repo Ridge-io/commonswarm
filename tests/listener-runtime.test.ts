@@ -1131,6 +1131,8 @@ test("a claimed lease is persisted before any effect work begins", async () => {
     leaseId: "55555555-5555-4555-8555-555555555555",
     leasedUntil: "2026-07-30T00:15:00.000Z",
     senderOwnerRelation: "cross_owner",
+    recipientPosition: null,
+    recipientCount: null,
   };
   const originalRecordLease = journal.recordLease.bind(journal);
   journal.recordLease = async (input) => {
@@ -1264,6 +1266,8 @@ test("D-041a: a corrupt recovered effect cannot block stale leased recovery", as
           leaseId: "55555555-5555-4555-8555-555555555041",
           leasedUntil: "2026-07-30T00:17:00.000Z",
           senderOwnerRelation: "same_owner",
+          recipientPosition: null,
+          recipientCount: null,
         }], 1);
       },
       async ackAgentDelivery(request) {
@@ -1341,6 +1345,8 @@ test("D-041a enumeration: a requeued corrupt ask fails safely without a second r
           leaseId: "55555555-5555-4555-8555-555555555043",
           leasedUntil: "2026-07-30T00:17:00.000Z",
           senderOwnerRelation: "same_owner",
+          recipientPosition: null,
+          recipientCount: null,
         }], 1);
       },
       async ackAgentDelivery(request) {
@@ -1418,6 +1424,8 @@ test("D-041 enumeration: a fresh claim repairs corruption without process-local 
           leaseId: "55555555-5555-4555-8555-555555555044",
           leasedUntil: "2026-07-30T00:17:00.000Z",
           senderOwnerRelation: "same_owner",
+          recipientPosition: null,
+          recipientCount: null,
         }], 1);
       },
       async ackAgentDelivery(request) {
@@ -1752,6 +1760,8 @@ test("C-1 composition: an expired leased claim with a resumable effect re-claims
           leaseId: "55555555-5555-4555-8555-5555555555d4",
           leasedUntil: "2026-07-30T00:15:00.000Z",
           senderOwnerRelation: "same_owner",
+          recipientPosition: null,
+          recipientCount: null,
         }], 1);
       },
       async ackAgentDelivery(request) {
@@ -1834,6 +1844,8 @@ test("C-1 composition: a live leased claim with a resumable effect replays immed
           leaseId: active.leaseId!,
           leasedUntil: active.leasedUntil!,
           senderOwnerRelation: "same_owner",
+          recipientPosition: null,
+          recipientCount: null,
         }], 1);
       },
       async ackAgentDelivery(request) {
@@ -1956,6 +1968,8 @@ test("MAJOR-3: failureCode error ACKs local_effect_failed and the runtime surviv
           leaseId: "55555555-5555-4555-8555-5555555555d3",
           leasedUntil: "2026-07-30T00:15:00.000Z",
           senderOwnerRelation: "same_owner",
+          recipientPosition: null,
+          recipientCount: null,
         }], 1);
       },
       async ackAgentDelivery(request) {
@@ -1995,6 +2009,8 @@ test("route=worker observes a durable note before prepareAck and network ACK", a
     leaseId: "55555555-5555-4555-8555-555555555556",
     leasedUntil: "2026-07-30T00:15:00.000Z",
     senderOwnerRelation: "cross_owner",
+    recipientPosition: null,
+    recipientCount: null,
   };
   let ackOutcome: string | null = null;
   const stop = await runListenerRuntime({
@@ -2055,6 +2071,8 @@ test("route=worker replies to a durable ask after persisting prepareAck", async 
     leaseId: "55555555-5555-4555-8555-555555555557",
     leasedUntil: "2026-07-30T00:15:00.000Z",
     senderOwnerRelation: "same_owner",
+    recipientPosition: null,
+    recipientCount: null,
   };
   let outcome: string | null = null;
   const stop = await runListenerRuntime({
@@ -2120,6 +2138,8 @@ test("route=main queues and acknowledges a durable ask without prompting the wor
           leaseId: "55555555-5555-4555-8555-555555555592",
           leasedUntil: "2026-07-30T00:15:00.000Z",
           senderOwnerRelation: "same_owner",
+          recipientPosition: null,
+          recipientCount: null,
         }], 1);
       },
       async ackAgentDelivery(request) {
@@ -2196,6 +2216,8 @@ test("route=main queues a durable note before the hook observes it", async () =>
           leaseId: "55555555-5555-4555-8555-5555555555c1",
           leasedUntil: "2026-07-30T00:15:00.000Z",
           senderOwnerRelation: "same_owner",
+          recipientPosition: null,
+          recipientCount: null,
         }], 1);
       },
       async ackAgentDelivery(request) {
@@ -2264,6 +2286,8 @@ test("route=split queues an over-threshold note instead of claiming observation"
           leaseId: "55555555-5555-4555-8555-5555555555c2",
           leasedUntil: "2026-07-30T00:15:00.000Z",
           senderOwnerRelation: "same_owner",
+          recipientPosition: null,
+          recipientCount: null,
         }], 1);
       },
       async ackAgentDelivery(request) {
@@ -2315,6 +2339,8 @@ test("route=split keeps an under-threshold note on the observed worker path", as
           leaseId: "55555555-5555-4555-8555-5555555555c4",
           leasedUntil: "2026-07-30T00:15:00.000Z",
           senderOwnerRelation: "same_owner",
+          recipientPosition: null,
+          recipientCount: null,
         }], 1);
       },
       async ackAgentDelivery(request) {
@@ -2364,6 +2390,8 @@ test("routed-main kill-between ordering: a pending persist failure leaves the le
           leaseId: "55555555-5555-4555-8555-555555555593",
           leasedUntil: "2026-07-30T00:15:00.000Z",
           senderOwnerRelation: "same_owner",
+          recipientPosition: null,
+          recipientCount: null,
         }], 1);
       },
       async ackAgentDelivery() {
@@ -2434,6 +2462,8 @@ test("an authoritative claimed signal mismatch fails before engine write or ACK"
           leaseId: "55555555-5555-4555-8555-555555555558",
           leasedUntil: "2026-07-30T00:15:00.000Z",
           senderOwnerRelation: "cross_owner",
+          recipientPosition: null,
+          recipientCount: null,
         }], 1);
       },
       async ackAgentDelivery() {
@@ -2842,6 +2872,8 @@ test("a lease beyond the fixed server maximum fails before effect work", async (
           leaseId: "55555555-5555-4555-8555-555555555559",
           leasedUntil: "2026-07-30T00:15:00.001Z",
           senderOwnerRelation: "same_owner",
+          recipientPosition: null,
+          recipientCount: null,
         }], 1);
       },
       async ackAgentDelivery() { throw new Error("ACK must not run"); },
@@ -2906,6 +2938,8 @@ test("MAJOR-4: a mid-run expired lease 403 clears stale state without credential
           leaseId: "55555555-5555-4555-8555-555555555560",
           leasedUntil: "2026-07-30T00:15:00.000Z",
           senderOwnerRelation: "same_owner",
+          recipientPosition: null,
+          recipientCount: null,
         }], 1);
       },
       async ackAgentDelivery(request) {
@@ -3910,12 +3944,16 @@ test("a delivery that spends its hold budget hands the seat to the next delivery
             leaseId: "55555555-5555-4555-8555-555555555b01",
             leasedUntil: "2026-07-30T00:15:00.000Z",
             senderOwnerRelation: "same_owner",
+            recipientPosition: null,
+            recipientCount: null,
           }
           : {
             signal: second,
             leaseId: "55555555-5555-4555-8555-555555555b02",
             leasedUntil: "2026-07-30T00:25:00.000Z",
             senderOwnerRelation: "same_owner",
+            recipientPosition: null,
+            recipientCount: null,
           };
         return claimResult([row], claims === 1 ? 2 : 1);
       },
@@ -4006,6 +4044,8 @@ test("the released delivery is not acknowledged with any outcome", async () => {
           leaseId: "55555555-5555-4555-8555-555555555b03",
           leasedUntil: "2026-07-30T00:15:00.000Z",
           senderOwnerRelation: "same_owner",
+          recipientPosition: null,
+          recipientCount: null,
         }], 1);
       },
       async ackAgentDelivery(request) {
@@ -4332,6 +4372,8 @@ test("a fast first failure keeps the seat and retries inside the hold budget", a
           leaseId: "55555555-5555-4555-8555-555555555b04",
           leasedUntil: "2026-07-30T00:15:00.000Z",
           senderOwnerRelation: "same_owner",
+          recipientPosition: null,
+          recipientCount: null,
         }], 1);
       },
       async ackAgentDelivery(request) {
@@ -4771,6 +4813,8 @@ test("a lease recovered across a restart keeps its original hold clock", async (
             leaseId: active.leaseId!,
             leasedUntil: active.leasedUntil!,
             senderOwnerRelation: "same_owner",
+            recipientPosition: null,
+            recipientCount: null,
           }], 2)
           : claimResult([{
             signal: second,
@@ -4778,6 +4822,8 @@ test("a lease recovered across a restart keeps its original hold clock", async (
             // Within the server maximum lease of the clock at this moment.
             leasedUntil: "2026-07-30T00:34:00.000Z",
             senderOwnerRelation: "same_owner",
+            recipientPosition: null,
+            recipientCount: null,
           }], 1);
       },
       async ackAgentDelivery(request) {
@@ -4827,4 +4873,91 @@ test("a lease recovered across a restart keeps its original hold clock", async (
   // One attempt on the recovered lease, then the seat moves on.
   assert.deepEqual(model.prompts, [first.id, second.id]);
   assert.deepEqual(acked, [second.id]);
+});
+
+test("a service that fans out reaches the prompt with this listener's own slot", async () => {
+  /* THE LANE'S CLIENT CLAIM, end to end through the runtime rather than
+   * through buildListenerPrompt alone. The fake service hands back two rows in
+   * turn: one this listener holds at position 1 of a three-recipient set, and
+   * one where the server reported no set at all. Both are addressed to this
+   * listener's own principal, which is what the edge now answers for a
+   * delivery row at any position. */
+  const shared = ask(
+    "aaaaaaaa-aaaa-4aaa-8aaa-aaaaaaaaaf01",
+    "2026-07-30T00:00:01.000Z",
+  );
+  const private_ = ask(
+    "aaaaaaaa-aaaa-4aaa-8aaa-aaaaaaaaaf02",
+    "2026-07-30T00:00:02.000Z",
+  );
+  const journal = new MemoryDeliveryJournal(null);
+  const controller = new AbortController();
+  const model = new FakeModel();
+  let claims = 0;
+  let acks = 0;
+  const stop = await runListenerRuntime({
+    target: cloudTarget("https://cloud.example.test", "anon"),
+    workspaceId: WORKSPACE_ID,
+    principalId: PRINCIPAL_ID,
+    listenerInstanceId: journal.record.listenerInstanceId,
+    deliveryJournal: journal,
+    deliveryClient: {
+      async claimAgentInbox() {
+        claims += 1;
+        if (claims === 1) {
+          return claimResult([{
+            signal: shared,
+            leaseId: "55555555-5555-4555-8555-555555555f01",
+            leasedUntil: "2026-07-30T00:15:00.000Z",
+            senderOwnerRelation: "same_owner",
+            recipientPosition: 1,
+            recipientCount: 3,
+          }], 2);
+        }
+        return claimResult([{
+          signal: private_,
+          leaseId: "55555555-5555-4555-8555-555555555f02",
+          leasedUntil: "2026-07-30T00:15:00.000Z",
+          senderOwnerRelation: "same_owner",
+          recipientPosition: null,
+          recipientCount: null,
+        }], 1);
+      },
+      async ackAgentDelivery(request) {
+        acks += 1;
+        if (acks === 2) controller.abort();
+        return { httpStatus: 200, signalId: request.signalId, outcome: request.outcome };
+      },
+    },
+    credentialSession: { async bearer() { return "token"; } },
+    store: new MemoryStore(),
+    model,
+    signal: controller.signal,
+    now: () => Date.parse("2026-07-30T00:02:31.000Z"),
+    sleep: async () => undefined,
+    readPage: async () => durablePage([], 1),
+    poster: {
+      async post() {
+        return { signalId: "bbbbbbbb-bbbb-4bbb-8bbb-bbbbbbbbbf01" };
+      },
+    },
+  });
+  assert.equal(
+    stop.reason,
+    "cancelled",
+    stop.reason === "fatal" ? `stopped fatally: ${stop.error.message}` : "",
+  );
+  assert.equal(acks, 2);
+  assert.equal(model.prompts.length, 2);
+  const first = model.prompts.find((entry) => entry.id === shared.id);
+  const second = model.prompts.find((entry) => entry.id === private_.id);
+  assert.ok(first, "the shared ask must have reached the model");
+  assert.ok(second, "the unreported ask must have reached the model");
+  assert.match(first.prompt, /you are recipient 2 of 3/);
+  /* CONTROL: the SAME runtime, the same model and the same claim loop produce a
+   * prompt with no recipient clause when the service reported no set. So the
+   * clause above comes from the delivery wire and not from the prompt builder
+   * adding it to everything. */
+  assert.doesNotMatch(second.prompt, /you are recipient/);
+  assert.doesNotMatch(second.prompt, /addressed this to/);
 });

@@ -180,13 +180,24 @@ export const CHANNEL_COLUMNS = [
  * Listing channels needs a signed-in person, and this says so rather than
  * failing at the transport.
  *
- * MEASURED, not assumed: the `read` edge function answers `signals`, `members`,
- * `files`, `delivery_receipts` and `renewal_grants`, and no channels resource
+ * RETIRED 2026-09-05, and kept because the SENTENCE BELOW still ships it:
+ * "the `read` edge function answers `signals`, `members`, `files`,
+ * `delivery_receipts` and `renewal_grants`, and no channels resource
  * (`supabase/functions/read/index.ts`), so an agent credential has no route to
- * the list. `swarm_read.channels` is granted to `authenticated` and gated on
- * `auth.uid()`, which an agent token does not carry. An agent can still create
- * a channel, post into one by name, and read one by name; only the enumeration
- * is out of reach.
+ * the list."
+ *
+ * The read edge now answers `channels` for an agent credential. Two of the
+ * three clauses in that paragraph were also wrong when written:
+ * `swarm_read.channels` is granted to the `swarm_read` role as well as to
+ * `authenticated`, and the read function installs the agent owner's claims
+ * before it queries membership-gated views, so `auth.uid()` was never the
+ * obstacle. The obstacle was that `parseBody` had no channels arm.
+ *
+ * THIS FILE IS NOT WIRED TO IT. `channelRows` in src/cli.ts still refuses an
+ * agent credential and still raises the message below, so the CLI behaviour is
+ * unchanged by that edge arm. The message becomes FALSE the moment the `read`
+ * function is deployed, so replacing it and adding an agent transport is the
+ * next lane, and it has to land in the same release the edge deploys in.
  *
  * The sentence deliberately does NOT list the resources the read service does
  * answer. That list is enforced in a Deno module this file cannot import

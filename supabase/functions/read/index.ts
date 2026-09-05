@@ -104,6 +104,39 @@ interface RenewalGrantReadRequest {
 }
 
 /**
+ * The channel list for an agent credential.
+ *
+ * An agent could already create a channel, post into one by name and read one
+ * by name; only the enumeration was out of reach, because this function had no
+ * channels arm. It is the smallest possible addition: the same tenancy every
+ * other resource here takes, and `swarm_read.channels` is already granted to
+ * the `swarm_read` role and already gated on `swarm.is_member(workspace_id,
+ * auth.uid())`, with the agent owner's claims installed before the query runs.
+ * So the widening is the parse arm and the query, and no new visibility.
+ */
+interface ChannelReadRequest {
+  resource: "channels";
+  workspace_id: string;
+}
+
+/**
+ * The channel columns, in the order the human REST read asks for them, so both
+ * paths hand a caller the same eight fields in the same order. ChannelRow in
+ * src/cloud/channels.ts is the client-side shape and
+ * tests/chat-signal-wire-compat.test.ts fails when the two lists drift.
+ */
+const CHANNEL_COLUMNS = [
+  "channel_id",
+  "workspace_id",
+  "slug",
+  "purpose",
+  "created_by_principal",
+  "created_by_kind",
+  "created_at",
+  "archived_at",
+] as const;
+
+/**
  * Explicit read-contract capability markers for agent-authenticated signals.
  * delivery_claim/ack advertise that the command edge supports the durable path;
  * cursor_after remains so old clients keep the ascending-cursor fallback.
@@ -176,9 +209,20 @@ function exactKeys(
 function parseBody(
   value: unknown,
 ): SignalReadRequest | MemberReadRequest | FileReadRequest | ReceiptReadRequest |
-  RenewalGrantReadRequest | null {
+  RenewalGrantReadRequest | ChannelReadRequest | null {
   if (!value || typeof value !== "object" || Array.isArray(value)) return null;
   const body = value as Record<string, unknown>;
+  if (
+    body.resource === "channels" &&
+    exactKeys(body, ["resource", "workspace_id"]) &&
+    typeof body.workspace_id === "string" &&
+    UUID_RE.test(body.workspace_id)
+  ) {
+    return {
+      resource: "channels",
+      workspace_id: body.workspace_id.toLowerCase(),
+    };
+  }
   if (
     body.resource === "renewal_grants" &&
     exactKeys(body, ["resource", "workspace_id"]) &&
@@ -449,6 +493,9 @@ async function handle(
       if (body.resource === "renewal_grants") {
         return json(200, { grants: [] });
       }
+      if (body.resource === "channels") {
+        return json(200, { channels: [] });
+      }
       return json(200, {
         signals: [],
         capabilities: SIGNAL_CAPABILITIES,
@@ -542,6 +589,27 @@ async function handle(
     // Stay as swarm_read for membership-gated views. The definer already
     // stamped first-use; this path never elevates to swarm_command.
     await tx.unsafe("SET LOCAL search_path = swarm_read, auth, pg_catalog");
+    if (body.resource === "channels") {
+      /* Same eight columns and the same slug order the human REST read takes,
+       * so `cswarm channel ls` renders identically whichever credential ran it.
+       * Archived channels are included: swarm_read.channels carries
+       * archived_at and the caller decides, exactly as the REST read does.
+       *
+       * TENANCY. This runs after the agent owner's claims are installed above,
+       * so the view's own `swarm.is_member(workspace_id, auth.uid())` is the
+       * gate, and body.workspace_id was already required to equal
+       * agent.principal_workspace_id or the empty envelope was returned. Two
+       * walls, the same two every other resource here stands behind. */
+      const channels = await tx<Record<string, unknown>[]>`
+        SELECT
+          channel_id, workspace_id, slug, purpose,
+          created_by_principal, created_by_kind, created_at, archived_at
+        FROM swarm_read.channels
+        WHERE workspace_id = ${body.workspace_id}::uuid
+        ORDER BY lower(slug) ASC
+      `;
+      return json(200, { channels });
+    }
     if (body.resource === "renewal_grants") {
       const grants = await tx<Record<string, unknown>[]>`
         SELECT *

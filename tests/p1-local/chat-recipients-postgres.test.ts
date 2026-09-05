@@ -24,7 +24,11 @@ import { execFileSync } from "node:child_process";
 import { randomUUID } from "node:crypto";
 import { test } from "node:test";
 import postgres from "postgres";
-import { SIGNAL_RECIPIENT_MAX } from "../../supabase/functions/_shared/channels.js";
+import {
+  SIGNAL_KINDS,
+  SIGNAL_RECIPIENT_MAX,
+} from "../../supabase/functions/_shared/channels.js";
+import { DELIVERY_KINDS } from "../../src/cloud/delivery.js";
 
 interface LocalEnvironment {
   DB_URL: string;
@@ -130,6 +134,17 @@ async function insertSignal(
     toAgent: string | null;
     kind: string;
     body: string;
+    /** Defaults to a person, because that is what almost every case wants. */
+    fromKind?: "user" | "agent";
+    /** Hours from now until the signal dies. Negative makes it already dead. */
+    untilHours?: number;
+    /**
+     * Hours from now for created_at. Negative backdates the row, which is the
+     * ONLY way to reach an already-expired signal: signals_check enforces
+     * until > created_at, so a row written with created_at = now cannot be
+     * dead on arrival.
+     */
+    createdAtHours?: number;
   },
 ): Promise<void> {
   await tx`
@@ -139,13 +154,28 @@ async function insertSignal(
       about, kind, body, until, created_at,
       channel_id, thread_root_id, broadcast_to_channel
     ) VALUES (
-      ${row.id}::uuid, ${row.workspaceId}::uuid, ${row.from}::uuid, 'user',
+      ${row.id}::uuid, ${row.workspaceId}::uuid, ${row.from}::uuid,
+      ${row.fromKind ?? "user"},
       ${row.toUserId}::uuid, ${row.toAgent}::uuid, NULL,
       NULL, ${row.kind}, ${row.body},
-      statement_timestamp() + interval '1 day', statement_timestamp(),
+      statement_timestamp()
+        + (${row.untilHours ?? 24} * interval '1 hour'),
+      statement_timestamp()
+        + (${row.createdAtHours ?? 0} * interval '1 hour'),
       NULL, NULL, false
     )
   `;
+}
+
+/** Which agents this signal woke, in a stable order. */
+async function wokenAgents(tx: Tx, signalId: string): Promise<string[]> {
+  const rows = await tx<{ recipient_agent_principal_id: string }[]>`
+    SELECT recipient_agent_principal_id
+    FROM swarm.signal_deliveries
+    WHERE signal_id = ${signalId}::uuid
+    ORDER BY recipient_agent_principal_id
+  `;
+  return rows.map((row) => row.recipient_agent_principal_id);
 }
 
 type Recipient = { user: string } | { agent: string };
@@ -336,30 +366,29 @@ test("owning an addressed agent is enough to read the signal, and owning a diffe
   }
 });
 
-test("a recipient set wakes at most the agent at position 0, which is a bound and not an oversight", async () => {
+test("every agent recipient is woken, whatever position it sits at", async () => {
+  /* WHAT THIS FILE SAID BEFORE 20260905000020, kept because a reader may still
+   * meet it in section 4 of 20260905000010:
+   *
+   *   "The bound: recipients 1..N READ the signal and can REPLY to it. They
+   *    are not woken. Change this test only together with those two."
+   *
+   * The two were changed. hydrateDeliveryRefs authorizes against the recipient
+   * SET and answers each delivery row with THAT ROW'S recipient as `to_agent`,
+   * so the installed listener's own-principal check says yes at any position.
+   * Every agent in the set now gets a delivery row. */
   const sql = postgres(databaseUrl(), { max: 1 });
   const f = newFixture();
   const twoAgents = randomUUID();
   const scalarOnly = randomUUID();
   const oneEntryList = randomUUID();
   const userRecipients = randomUUID();
+  const personThenAgent = randomUUID();
   try {
     await assert.rejects(
       sql.begin(async (tx) => {
         await seed(tx, f);
 
-        /* WHY THIS IS THE EXPECTED RESULT, so the next reader does not "fix" it.
-         * An earlier version of the migration fanned out one delivery row per
-         * AGENT recipient. A review arm showed those rows cannot be delivered:
-         * hydrateDeliveryRefs filters on swarm.signals.to_agent_principal_id,
-         * which holds recipient 0, so a row for recipient 1 leases, fails to
-         * hydrate, answers 403 and COMMITS -- burning an attempt each time
-         * until the row terminalizes. And src/cloud/delivery.ts:423 makes an
-         * installed listener refuse any delivery whose signal.to_agent is not
-         * its own principal, so no server fix alone can hand it over.
-         *
-         * The bound: recipients 1..N READ the signal and can REPLY to it. They
-         * are not woken. Change this test only together with those two. */
         await insertSignal(tx, {
           id: twoAgents,
           workspaceId: f.workspaceA,
@@ -373,21 +402,25 @@ test("a recipient set wakes at most the agent at position 0, which is a bound an
           { agent: f.agentOne },
           { agent: f.agentTwo },
         ]);
-
-        const rows = await tx<{ recipient_agent_principal_id: string }[]>`
-          SELECT recipient_agent_principal_id
-          FROM swarm.signal_deliveries
-          WHERE signal_id = ${twoAgents}::uuid
-          ORDER BY recipient_agent_principal_id
-        `;
         assert.deepEqual(
-          rows.map((row) => row.recipient_agent_principal_id),
-          [f.agentOne],
-          "recipient 0 is woken from the scalar column and the recipient rows wake nobody",
+          await wokenAgents(tx, twoAgents),
+          [f.agentOne, f.agentTwo].sort(),
+          "both agent recipients are woken",
         );
 
-        /* CONTROL 1: a one-entry list produces exactly what the scalar shape
-         * produces today, which is the wire claim measured on the ledger. */
+        /* The ON CONFLICT is what keeps position 0 from being woken twice: the
+         * trigger on swarm.signals writes it from the scalar column and the
+         * trigger on swarm.signal_recipients then meets it again. This counts
+         * ROWS, so a second insert would show as 3 and not as a duplicate the
+         * primary key silently swallowed. */
+        const rowCount = await tx<{ n: number }[]>`
+          SELECT count(*)::int AS n FROM swarm.signal_deliveries
+          WHERE signal_id = ${twoAgents}::uuid
+        `;
+        assert.equal(rowCount[0]!.n, 2, "two recipients, two rows, not three");
+
+        /* CONTROL 1: a one-entry list still produces exactly what the scalar
+         * shape produces, so the fan-out did not change the common case. */
         await insertSignal(tx, {
           id: scalarOnly,
           workspaceId: f.workspaceA,
@@ -409,23 +442,15 @@ test("a recipient set wakes at most the agent at position 0, which is a bound an
         await addRecipients(tx, oneEntryList, f.workspaceA, [
           { agent: f.agentOne },
         ]);
-        const scalarRows = await tx<{ n: number }[]>`
-          SELECT count(*)::int AS n FROM swarm.signal_deliveries
-          WHERE signal_id = ${scalarOnly}::uuid
-        `;
-        const listRows = await tx<{ n: number }[]>`
-          SELECT count(*)::int AS n FROM swarm.signal_deliveries
-          WHERE signal_id = ${oneEntryList}::uuid
-        `;
-        assert.equal(scalarRows[0]!.n, 1);
-        assert.equal(
-          listRows[0]!.n,
-          scalarRows[0]!.n,
+        assert.deepEqual(
+          await wokenAgents(tx, oneEntryList),
+          await wokenAgents(tx, scalarOnly),
           "a one-entry list writes the same delivery ledger as the scalar shape",
         );
+        assert.deepEqual(await wokenAgents(tx, scalarOnly), [f.agentOne]);
 
-        /* CONTROL 2: a PERSON recipient wakes nobody either, so the count above
-         * is not "one row per recipient of any kind". */
+        /* CONTROL 2: people are still not delivery rows. The fan-out is over
+         * AGENT recipients, so a set of two people wakes nobody. */
         await insertSignal(tx, {
           id: userRecipients,
           workspaceId: f.workspaceA,
@@ -439,19 +464,16 @@ test("a recipient set wakes at most the agent at position 0, which is a bound an
           { user: f.second },
           { user: f.third },
         ]);
-        const peopleRows = await tx<{ n: number }[]>`
-          SELECT count(*)::int AS n FROM swarm.signal_deliveries
-          WHERE signal_id = ${userRecipients}::uuid
-        `;
-        assert.equal(peopleRows[0]!.n, 0, "people are not delivery rows");
+        assert.deepEqual(
+          await wokenAgents(tx, userRecipients),
+          [],
+          "people are not delivery rows",
+        );
 
-        /* CONTROL 3, and the case the wake sentence is actually about. The
-         * wake reads the SCALAR column, so a set whose position 0 is a PERSON
-         * wakes NOBODY even though it names an agent at position 1. Saying
-         * "L2 wakes one of them" was false for exactly this shape, and three
-         * versions of the design note got it wrong before a review arm built
-         * this counterexample. */
-        const personThenAgent = randomUUID();
+        /* THE RETIRED CLAUSE, now measured the other way round. This exact
+         * shape -- a PERSON at position 0 and an AGENT after it -- woke NOBODY
+         * before 20260905000020, because the only enqueue path read the scalar
+         * column. It wakes the agent now. */
         await insertSignal(tx, {
           id: personThenAgent,
           workspaceId: f.workspaceA,
@@ -465,14 +487,10 @@ test("a recipient set wakes at most the agent at position 0, which is a bound an
           { user: f.second },
           { agent: f.agentOne },
         ]);
-        const mixedRows = await tx<{ n: number }[]>`
-          SELECT count(*)::int AS n FROM swarm.signal_deliveries
-          WHERE signal_id = ${personThenAgent}::uuid
-        `;
-        assert.equal(
-          mixedRows[0]!.n,
-          0,
-          "an agent named after a person is not woken, so the wake count here is 0 and not 1",
+        assert.deepEqual(
+          await wokenAgents(tx, personThenAgent),
+          [f.agentOne],
+          "an agent named after a person is woken; the scalar column is no longer the only path",
         );
 
         throw ROLLBACK;
@@ -484,11 +502,245 @@ test("a recipient set wakes at most the agent at position 0, which is a bound an
   }
 });
 
-test("no trigger on swarm.signal_recipients writes to the delivery ledger", async () => {
-  /* The structural half of the bound above. The behaviour test would also pass
-   * if a fan-out trigger existed and happened to be disabled; this one names
-   * the tables and would fail the moment a trigger is added, which is exactly
-   * when someone needs to read the reason. */
+test("the fan-out cannot outrun the recipient cap, because the cap is the position CHECK", async () => {
+  /* There is no counting trigger on the delivery ledger and none is needed.
+   * position is half the primary key of swarm.signal_recipients and is CHECKed
+   * BETWEEN 0 AND 7, so a signal holds at most SIGNAL_RECIPIENT_MAX recipient
+   * rows and therefore writes at most that many delivery rows. This measures
+   * the bound rather than reading it. */
+  const sql = postgres(databaseUrl(), { max: 1 });
+  const f = newFixture();
+  const full = randomUUID();
+  try {
+    await assert.rejects(
+      sql.begin(async (tx) => {
+        await seed(tx, f);
+        const agents: string[] = [];
+        for (let index = 0; index < SIGNAL_RECIPIENT_MAX; index += 1) {
+          const principal = randomUUID();
+          await tx`
+            INSERT INTO swarm.agent_principals (
+              principal_id, workspace_id, owner_user_id, name
+            ) VALUES (
+              ${principal}::uuid, ${f.workspaceA}::uuid, ${f.owner}::uuid,
+              ${`capped ${index}`}
+            )
+          `;
+          agents.push(principal);
+        }
+        await insertSignal(tx, {
+          id: full,
+          workspaceId: f.workspaceA,
+          from: f.owner,
+          toUserId: null,
+          toAgent: agents[0]!,
+          kind: "ask",
+          body: "a full set",
+        });
+        await addRecipients(
+          tx,
+          full,
+          f.workspaceA,
+          agents.map((agent) => ({ agent })),
+        );
+        assert.deepEqual(
+          await wokenAgents(tx, full),
+          [...agents].sort(),
+          "a full set wakes every agent in it, exactly once each",
+        );
+        assert.equal(
+          (await wokenAgents(tx, full)).length,
+          SIGNAL_RECIPIENT_MAX,
+          "the delivery row count equals the cap the edge sentence is built from",
+        );
+        throw ROLLBACK;
+      }),
+      (error: unknown) => error === ROLLBACK,
+    );
+  } finally {
+    await sql.end({ timeout: 5 });
+  }
+});
+
+test("the wakeable kinds are exactly the kinds the delivery client accepts", async () => {
+  /* The trigger's kind list is SQL and the client's is TypeScript. Rather than
+   * grep one against the other, this inserts one signal per SIGNAL_KIND and
+   * reports which ones woke an agent, then compares that measured set with
+   * DELIVERY_KINDS -- the same set src/cloud/delivery.ts refuses a claimed
+   * signal against. A kind added to one side and not the other fails here. */
+  const sql = postgres(databaseUrl(), { max: 1 });
+  const f = newFixture();
+  try {
+    await assert.rejects(
+      sql.begin(async (tx) => {
+        await seed(tx, f);
+        const woke: string[] = [];
+        for (const kind of SIGNAL_KINDS) {
+          const id = randomUUID();
+          await insertSignal(tx, {
+            id,
+            workspaceId: f.workspaceA,
+            from: f.owner,
+            toUserId: null,
+            toAgent: f.agentOne,
+            kind,
+            body: `kind ${kind}`,
+          });
+          await addRecipients(tx, id, f.workspaceA, [
+            { agent: f.agentOne },
+            { agent: f.agentTwo },
+          ]);
+          if ((await wokenAgents(tx, id)).length > 0) woke.push(kind);
+        }
+        assert.deepEqual(
+          woke.sort(),
+          [...DELIVERY_KINDS].sort(),
+          "the database and the delivery client agree on which kinds are delivered",
+        );
+        /* CONTROL: the loop really did cover a kind that is NOT delivered, so
+         * the equality above is not two empty sets or two full ones. */
+        assert.ok(
+          SIGNAL_KINDS.some((kind) => !DELIVERY_KINDS.has(kind)),
+          "the kind list must contain an undelivered kind or this test proves nothing",
+        );
+        throw ROLLBACK;
+      }),
+      (error: unknown) => error === ROLLBACK,
+    );
+  } finally {
+    await sql.end({ timeout: 5 });
+  }
+});
+
+test("a dead signal, a revoked agent and an agent talking to itself write no delivery row", async () => {
+  /* The three blind spots 20260905000010 recorded and did not fix. Each one is
+   * paired with a positive control that differs in exactly the one field, so a
+   * zero here is the clause refusing and not the fixture failing to insert. */
+  const sql = postgres(databaseUrl(), { max: 1 });
+  const f = newFixture();
+  try {
+    await assert.rejects(
+      sql.begin(async (tx) => {
+        await seed(tx, f);
+
+        /* EXPIRED. The trigger used to check kind and not until.
+         *
+         * ITS REACH, stated because the migration comment would otherwise
+         * overclaim: signals_check enforces until > created_at, so a signal
+         * written with created_at = now is never dead on arrival, and the edge
+         * always writes created_at = now. Both rows here are BACKDATED, which
+         * is what makes the dead one insertable at all. So the clause is a
+         * second wall on a shape the edge cannot produce, not a fix for a live
+         * defect -- and it is the wall that keeps a direct writer from filling
+         * a queue with rows claimAgentInbox would only acknowledge as expired. */
+        const dead = randomUUID();
+        const live = randomUUID();
+        for (const [id, untilHours] of [[dead, -1], [live, 1]] as const) {
+          await insertSignal(tx, {
+            id,
+            workspaceId: f.workspaceA,
+            from: f.owner,
+            toUserId: null,
+            toAgent: f.agentOne,
+            kind: "ask",
+            body: "ttl",
+            untilHours,
+            createdAtHours: -2,
+          });
+          await addRecipients(tx, id, f.workspaceA, [
+            { agent: f.agentOne },
+            { agent: f.agentTwo },
+          ]);
+        }
+        assert.deepEqual(await wokenAgents(tx, dead), [], "a dead signal wakes nobody");
+        assert.equal(
+          (await wokenAgents(tx, live)).length,
+          2,
+          "control: the same backdated shape, one hour from expiry, wakes both agents",
+        );
+
+        // REVOKED. The row used to be written and could never be claimed,
+        // because claimAgentInbox step 1 returns null for a revoked principal.
+        const revoked = randomUUID();
+        await tx`
+          UPDATE swarm.agent_principals
+          SET revoked_at = statement_timestamp()
+          WHERE principal_id = ${f.agentTwo}::uuid
+        `;
+        await insertSignal(tx, {
+          id: revoked,
+          workspaceId: f.workspaceA,
+          from: f.owner,
+          toUserId: null,
+          toAgent: f.agentOne,
+          kind: "ask",
+          body: "one of these is gone",
+        });
+        await addRecipients(tx, revoked, f.workspaceA, [
+          { agent: f.agentOne },
+          { agent: f.agentTwo },
+        ]);
+        assert.deepEqual(
+          await wokenAgents(tx, revoked),
+          [f.agentOne],
+          "the live agent is woken and the revoked one is not",
+        );
+
+        // SELF. An agent that names itself in its own signal.
+        const selfSent = randomUUID();
+        await insertSignal(tx, {
+          id: selfSent,
+          workspaceId: f.workspaceA,
+          from: f.agentOne,
+          fromKind: "agent",
+          toUserId: null,
+          toAgent: f.agentOne,
+          kind: "ask",
+          body: "talking to myself",
+        });
+        await addRecipients(tx, selfSent, f.workspaceA, [
+          { agent: f.agentOne },
+        ]);
+        assert.deepEqual(
+          await wokenAgents(tx, selfSent),
+          [],
+          "an agent does not wake itself",
+        );
+
+        const fromOther = randomUUID();
+        await insertSignal(tx, {
+          id: fromOther,
+          workspaceId: f.workspaceA,
+          from: f.agentOfSecond,
+          fromKind: "agent",
+          toUserId: null,
+          toAgent: f.agentOne,
+          kind: "ask",
+          body: "a different agent asking",
+        });
+        await addRecipients(tx, fromOther, f.workspaceA, [
+          { agent: f.agentOne },
+        ]);
+        assert.deepEqual(
+          await wokenAgents(tx, fromOther),
+          [f.agentOne],
+          "control: the same agent sender wakes a DIFFERENT agent",
+        );
+
+        throw ROLLBACK;
+      }),
+      (error: unknown) => error === ROLLBACK,
+    );
+  } finally {
+    await sql.end({ timeout: 5 });
+  }
+});
+
+test("the delivery ledger is written by two triggers and by nothing else", async () => {
+  /* The structural half. It replaces a test that asserted there is NO trigger
+   * on swarm.signal_recipients; that assertion was the old bound and its
+   * reason is in the header of 20260905000020. Naming the triggers means the
+   * next person to add or remove one is sent to that file. */
   const sql = postgres(databaseUrl(), { max: 1 });
   try {
     const triggers = await sql<{ tgname: string }[]>`
@@ -502,20 +754,36 @@ test("no trigger on swarm.signal_recipients writes to the delivery ledger", asyn
       triggers.map((row) => row.tgname),
       [
         "signal_recipients_append_only",
+        "signal_recipients_enqueue_delivery",
         "signal_recipients_first_is_the_scalar",
         "signal_recipients_same_transaction",
       ],
-      "adding a trigger here means reading section 4 of 20260905000010 first",
+      "changing this list means reading 20260905000020 first",
     );
-    /* Control: the query really can see a trigger on a table that has one, so
-     * the list above is what the database holds and not an empty result. */
     const onSignals = await sql<{ tgname: string }[]>`
       SELECT tgname FROM pg_trigger
       WHERE tgrelid = 'swarm.signals'::regclass AND NOT tgisinternal
     `;
     assert.ok(
       onSignals.some((row) => row.tgname === "signals_enqueue_delivery"),
-      "the scalar recipient IS still woken, by the trigger on swarm.signals",
+      "the scalar recipient is still woken by the trigger on swarm.signals",
+    );
+
+    /* Both triggers ask ONE function whether an agent is woken, so the scalar
+     * path and the fan-out cannot answer differently. A second predicate is
+     * the failure this names. */
+    const callers = await sql<{ proname: string }[]>`
+      SELECT p.proname
+      FROM pg_proc AS p
+      JOIN pg_namespace AS n ON n.oid = p.pronamespace
+      WHERE n.nspname = 'swarm'
+        AND p.prosrc LIKE '%agent_delivery_is_wakeable%'
+      ORDER BY p.proname
+    `;
+    assert.deepEqual(
+      callers.map((row) => row.proname),
+      ["enqueue_recipient_delivery", "enqueue_signal_delivery"],
+      "exactly the two enqueue triggers read the shared predicate",
     );
   } finally {
     await sql.end({ timeout: 5 });

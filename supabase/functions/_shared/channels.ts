@@ -234,12 +234,18 @@ export type SignalRecipientKind = typeof SIGNAL_RECIPIENT_KINDS[number];
  * -- that composer posts one directed signal per tag and has not moved to `to`
  * yet." That was true of the 2026-09-04 composer, which fanned a message out
  * into one signal per tag. It is preserved here because the reasoning it
- * supported is not: a recipient no longer costs a signal or a wake. Naming a
- * recipient costs a row in swarm.signal_recipients and nothing else, and only
- * the recipient at position 0 is woken, because swarm.enqueue_signal_delivery
- * fires on swarm.signals.to_agent_principal_id and this edge writes recipient 0
- * into that column. The same test pins the two numbers together, so the composer
- * and the server cannot disagree about how many recipients fit.
+ * supported is not: a recipient no longer costs a signal. Naming a recipient
+ * costs a row in swarm.signal_recipients. The same test pins the two numbers
+ * together, so the composer and the server cannot disagree about how many
+ * recipients fit.
+ *
+ * ALSO RETIRED, 2026-09-05, from the paragraph above: "only the recipient at
+ * position 0 is woken, because swarm.enqueue_signal_delivery fires on
+ * swarm.signals.to_agent_principal_id and this edge writes recipient 0 into
+ * that column." 20260905000020_wake_all_recipients.sql wakes EVERY agent
+ * recipient at any position, so naming an agent recipient does cost a wake
+ * again -- one per agent, and never more than SIGNAL_RECIPIENT_MAX of them,
+ * because the position CHECK caps the recipient rows.
  */
 export const SIGNAL_RECIPIENT_MAX = 8;
 

@@ -370,3 +370,43 @@ position 0 still enqueues; an agent addressing itself still enqueues. Recorded, 
 Wording residual Grok named on the passing SHA: this plan's original L2 paragraph says the lane
 "enqueues one row per agent recipient"; it does not. The L2 row above is the retired wording,
 kept; this section is the record.
+
+## Waking every recipient, 2026-09-05 (lane/wake-all-recipients) — written, NOT deployed
+
+Migration `20260905000020_wake_all_recipients` plus the `command` and `read` edges. Nothing in this
+section is live: it is on a lane branch and the lead applies it.
+
+Corrections to the L2 section above, which a reader may still meet:
+
+- **RETIRED: "`to_agent` on a hydrated delivery means the recipient at position 0."** It is now the
+  recipient the DELIVERY ROW is for, at any position. The scalar column never reaches this wire. A
+  feed read of the same signal still reports the scalar column, so the two surfaces answer different
+  questions with different values, and `src/cloud/delivery.ts` says so at its own-principal check.
+- **RETIRED: "A set whose position 0 is a PERSON wakes nobody at all, even when it names agents
+  later in the list."** That shape wakes every agent named after the person.
+- **RETIRED: "Waking recipients 1..N ... is its own lane, not started."** It is this lane.
+
+Of the three bounds L2 recorded on the wake clause, all three are closed in the shared predicate
+`swarm.agent_delivery_is_wakeable`, and one of them is a real behaviour change:
+
+- an expired signal no longer enqueues. Reach: `signals_check` (`until > created_at`) means the edge
+  cannot produce this shape at all, so it is a second wall on a backdated direct insert.
+- a revoked agent no longer enqueues. Its row was unclaimable and uncounted-down for ever.
+- an agent no longer wakes ITSELF. Nothing in the command edge refuses a self-addressed post, so
+  this changes what an agent that names itself gets: before, a delivery, a model turn, and a reply
+  addressed back to itself.
+
+Still open, and named rather than fixed: revocation or expiry AFTER the row is enqueued leaves an
+unreachable pending row, because the predicate runs once at insert.
+
+What this lane does NOT change, and what the lead must sequence:
+
+1. **Apply order is migration, then `command`, then `read`, then a client release.** The migration
+   alone writes rows the deployed `command` cannot hydrate; each claim would burn one of ten attempts
+   and terminalize the row with a security alert.
+2. **The site's To: field copy becomes false on deploy.** `site/src/components/app/` states that a
+   person in front means the service wakes nobody, and `composer-to-field.observer.test.ts` asserts
+   it. That is another lane's file and it was not touched here.
+3. **`CHANNEL_LIST_NEEDS_HUMAN_MESSAGE` becomes false when `read` deploys.** The `read` edge now
+   answers a `channels` resource for an agent credential; `channelRows` in `src/cli.ts` still refuses
+   one. Wiring the CLI has to land in the same release.

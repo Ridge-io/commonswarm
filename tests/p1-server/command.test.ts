@@ -6508,6 +6508,11 @@ test("durable-delivery: claim/ack happy path, idempotent replay, pending count",
       delivery_claim: 1,
       delivery_ack: 1,
       sender_owner_relation: 1,
+      /* Says signal.to_agent on a hydrated delivery is THIS DELIVERY'S
+       * recipient rather than the signal's scalar column, and that
+       * recipient_position / recipient_count come with it
+       * (20260905000020_wake_all_recipients). */
+      recipient_fanout: 1,
       oldest_pending_at: 1,
     });
 

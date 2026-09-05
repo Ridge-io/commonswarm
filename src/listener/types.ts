@@ -231,6 +231,24 @@ export interface ListenerSenderProvenance {
   renderedBroadcastIds?: string[];
 }
 
+/**
+ * What the delivery said about the recipient set this signal was sent to.
+ *
+ * It exists so the worker prompt can tell an agent it is one of several people
+ * asked. Only the durable claim path can supply it: the wire carries the count
+ * and this listener's own slot, and nothing else. A signal reached any other
+ * way passes no context at all, which is why every field here is required and
+ * the whole object is optional at the call site. An absent object means the
+ * prompt says nothing about the set, which is the honest reading of an edge
+ * that never reported one.
+ */
+export interface ListenerDeliveryContext {
+  /** This listener's slot in the set, counting from 0. */
+  recipientPosition: number;
+  /** How many recipients the sender named. Always at least 1. */
+  recipientCount: number;
+}
+
 export interface ListenerSenderProvenanceContext {
   signal?: AbortSignal;
   deadlineMs: number;

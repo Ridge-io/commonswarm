@@ -126,12 +126,33 @@ export interface HydratedDelivery {
   lease_id: string;
   leased_until: string;
   sender_owner_relation: SenderOwnerRelation;
+  /**
+   * Where this delivery's own recipient sits in the signal's recipient set,
+   * counting from 0, and how many recipients the set holds.
+   *
+   * `signal.to_agent` is the recipient THIS delivery is for, not the signal's
+   * scalar column, so a listener at position 1 sees itself and can tell it is
+   * one of several. Without these two numbers it could not: the wire carries
+   * one recipient and never the set.
+   *
+   * A signal with no swarm.signal_recipients rows is the scalar shape, which
+   * is one recipient at position 0, so it reports `0` and `1` rather than
+   * nothing. `recipient_position` is always less than `recipient_count`.
+   */
+  recipient_position: number;
+  recipient_count: number;
 }
 
 export const DELIVERY_CAPABILITIES = {
   delivery_claim: 1,
   delivery_ack: 1,
   sender_owner_relation: 1,
+  /* Says `signal.to_agent` on a hydrated delivery is THIS DELIVERY'S recipient
+   * rather than the signal's scalar `to_agent_principal_id`, and that
+   * recipient_position / recipient_count are reported beside it. The two
+   * meanings agree for every signal that has one recipient, which is why an
+   * installed listener that never checks this marker keeps working. */
+  recipient_fanout: 1,
   /* Says the server REPORTS oldest_pending_at, which is what lets a reader tell
    * "absent because this server does not send it" from "absent because this is
    * a replay of an older stored response". Clients check the markers they
@@ -367,9 +388,25 @@ export async function claimAgentInbox(
 }
 
 /**
- * Hydrate body-free claim refs from immutable signals after exact-recipient auth.
+ * Hydrate body-free claim refs from immutable signals after recipient-set auth.
  * Missing or mismatched rows are integrity failures (caller maps to
  * delivery_unavailable without enumerating).
+ *
+ * THE AUTHORIZATION IS THE RECIPIENT SET, not the scalar column. Until
+ * 20260905000020 the WHERE read `s.to_agent_principal_id = <the claimer>`, so a
+ * delivery row written for a recipient at position 1 could never hydrate: it
+ * leased, answered 403 and committed, burning one of ten attempts. It now also
+ * accepts a claimer named in swarm.signal_recipients, which is the same set the
+ * read view's own predicate uses, so nothing is readable here that is not
+ * readable there.
+ *
+ * AND `to_agent` IS THE DELIVERY'S OWN RECIPIENT. Every row handed back belongs
+ * to `args.recipientPrincipalId` -- the claim selected on that column and the
+ * WHERE above re-checks the sender addressed them -- so reporting it is
+ * reporting who this delivery is for. The scalar column would report recipient
+ * 0, which for a position-1 row is somebody else, and every installed listener
+ * refuses a delivery whose `to_agent` is not its own principal. This is what
+ * lets a 0.1.55 listener take a position-1 delivery with no client release.
  */
 export async function hydrateDeliveryRefs(
   tx: Sql,
@@ -403,6 +440,8 @@ export async function hydrateDeliveryRefs(
     until: Date;
     created_at: Date;
     sender_owner_relation: SenderOwnerRelation;
+    recipient_position: number;
+    recipient_count: number;
   }[]>`
     SELECT
       s.id,
@@ -441,6 +480,29 @@ export async function hydrateDeliveryRefs(
       ) AS attachments,
       s.until,
       s.created_at,
+      /* This claimer's own slot. A signal with no recipient rows is the scalar
+       * shape: one recipient, at position 0. The UNIQUE (signal_id,
+       * recipient_agent_principal_id) on swarm.signal_recipients is what makes
+       * the first subquery single-valued. */
+      COALESCE(
+        (
+          SELECT slot.position
+          FROM swarm.signal_recipients AS slot
+          WHERE slot.signal_id = s.id
+            AND slot.workspace_id = s.workspace_id
+            AND slot.recipient_agent_principal_id = ${args.recipientPrincipalId}::uuid
+        ),
+        0
+      )::int AS recipient_position,
+      GREATEST(
+        (
+          SELECT count(*)::int
+          FROM swarm.signal_recipients AS member
+          WHERE member.signal_id = s.id
+            AND member.workspace_id = s.workspace_id
+        ),
+        1
+      )::int AS recipient_count,
       CASE
         WHEN s.from_kind = 'user'
          AND author_member.user_id IS NOT NULL
@@ -473,8 +535,17 @@ export async function hydrateDeliveryRefs(
      AND author_member.user_id = COALESCE(author.owner_user_id, CASE WHEN s.from_kind = 'user' THEN s.from_principal END)
      AND author_member.revoked_at IS NULL
     WHERE s.workspace_id = ${args.workspaceId}::uuid
-      AND s.to_agent_principal_id = ${args.recipientPrincipalId}::uuid
       AND s.id = ANY (${signalIds}::uuid[])
+      AND (
+        s.to_agent_principal_id = ${args.recipientPrincipalId}::uuid
+        OR EXISTS (
+          SELECT 1
+          FROM swarm.signal_recipients AS addressed
+          WHERE addressed.signal_id = s.id
+            AND addressed.workspace_id = s.workspace_id
+            AND addressed.recipient_agent_principal_id = ${args.recipientPrincipalId}::uuid
+        )
+      )
   `;
   const byId = new Map(rows.map((row) => [row.id, row]));
   const hydrated: HydratedDelivery[] = [];
@@ -488,7 +559,10 @@ export async function hydrateDeliveryRefs(
         from: signal.from_principal,
         from_kind: signal.from_kind,
         to: signal.to_user_id,
-        to_agent: signal.to_agent_principal_id,
+        /* THIS DELIVERY'S recipient, not the signal's scalar column. See the
+         * function comment: the row was selected on this principal and the
+         * WHERE re-checked that the sender addressed them. */
+        to_agent: args.recipientPrincipalId,
         in_reply_to: signal.in_reply_to,
         about: signal.about,
         kind: signal.kind,
@@ -500,6 +574,8 @@ export async function hydrateDeliveryRefs(
       lease_id: ref.lease_id,
       leased_until: ref.leased_until,
       sender_owner_relation: ref.sender_owner_relation,
+      recipient_position: signal.recipient_position,
+      recipient_count: signal.recipient_count,
     });
   }
   return hydrated;
@@ -610,13 +686,27 @@ export async function ackAgentDelivery(
   }
 
   // expired is accepted only when the immutable signal TTL has elapsed.
+  /* Recipient-set auth, the same widening hydrateDeliveryRefs takes and for the
+   * same reason: on the scalar column alone a recipient at position 1 could
+   * lease a row, watch its signal die, and never be allowed to say so. Its
+   * `expired` ack answered unavailable, the row stayed unacked, and the next
+   * claim burned another attempt. */
   if (args.outcome === "expired") {
     const ttl = await tx<{ live: boolean }[]>`
       SELECT s.until > statement_timestamp() AS live
       FROM swarm.signals AS s
       WHERE s.workspace_id = ${args.workspaceId}::uuid
         AND s.id = ${args.signalId}::uuid
-        AND s.to_agent_principal_id = ${args.recipientPrincipalId}::uuid
+        AND (
+          s.to_agent_principal_id = ${args.recipientPrincipalId}::uuid
+          OR EXISTS (
+            SELECT 1
+            FROM swarm.signal_recipients AS addressed
+            WHERE addressed.signal_id = s.id
+              AND addressed.workspace_id = s.workspace_id
+              AND addressed.recipient_agent_principal_id = ${args.recipientPrincipalId}::uuid
+          )
+        )
       LIMIT 1
     `;
     if (!ttl[0]) return { status: "unavailable" };

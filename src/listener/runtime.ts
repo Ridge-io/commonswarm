@@ -58,7 +58,10 @@ import {
   LISTENER_PROMPT_TIMEOUT_MS,
 } from "./types.js";
 export { LISTENER_DELIVERY_MAX_LEASE_MS };
-import type { ListenerDeliveryHoldReleaseReason } from "./types.js";
+import type {
+  ListenerDeliveryContext,
+  ListenerDeliveryHoldReleaseReason,
+} from "./types.js";
 import type {
   ListenerEffectRecord,
   ListenerEffectStore,
@@ -453,6 +456,22 @@ function exactRecoveredLease(
   return active.signalId === delivery.signal.id.toLowerCase() &&
     active.leaseId === delivery.leaseId.toLowerCase() &&
     active.leasedUntil === delivery.leasedUntil;
+}
+
+/**
+ * The recipient set this delivery belongs to, or nothing when the server did
+ * not report one. Absent stays absent all the way to the prompt: an edge from
+ * before the fan-out wakes only recipient 0 but still delivers signals that
+ * name several people, so a defaulted "1 of 1" would be a claim, not a default.
+ */
+function deliveryContext(delivery: DeliveryRow): ListenerDeliveryContext | undefined {
+  if (delivery.recipientPosition === null || delivery.recipientCount === null) {
+    return undefined;
+  }
+  return {
+    recipientPosition: delivery.recipientPosition,
+    recipientCount: delivery.recipientCount,
+  };
 }
 
 function authoritativeSignal(delivery: DeliveryRow): SignalRecord {
@@ -1591,7 +1610,10 @@ export async function runListenerRuntime(
                 });
                 break;
               }
-              const processed = await engine.process(signal);
+              const processed = await engine.process(
+                signal,
+                deliveryContext(claimed),
+              );
               const effect = "record" in processed ? processed.record : null;
               options.onEvent?.({
                 type: "effect",
