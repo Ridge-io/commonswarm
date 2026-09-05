@@ -1793,3 +1793,23 @@ Rulings taken from that instruction, recorded here so the lanes can cite them:
 - Every landing that changes the app is followed by a site deploy; CLI changes ship as 0.1.53+.
   PM lanes are Opus subagents under `PM-RULES.md` in the session scratchpad; Codex is out of credits
   until 2026-09-06 21:38.
+
+## Addendum 2026-09-05 01:3x UTC — six PM lanes in flight (state at this minute)
+
+Worktrees under the session scratchpad (`lane-<name>`), branches `lane/<name>`, rules in the
+scratchpad `PM-RULES.md`. Lead merges; nothing below is on `main` yet.
+
+| lane | tip | round | arms |
+|---|---|---|---|
+| `mobile-fix-land` (#1) | `339aced` | 2 | r1 FAIL/FAIL verified; r2 Grok FAIL, Gemini pending |
+| `markdown-land` (tables + coverage) | `8e608a8` | 2 | r1 FAIL/FAIL; r2 Gemini PASS, Grok pending |
+| `google-signin-land` | `dc7eb51` | 1 | pending |
+| `model-tagging-land` | `fed3fda` | 4 | r3 FAIL/FAIL; r4 Gemini FAIL, Grok pending |
+| `cli-chips` | `581c0d8` | 2 | r1 FAIL/FAIL (CAS at create only — verified; fixed at commit under the lock, migration `20260904000002`); r2 pending |
+| `chat-schema` | `80da71b` | 1 | Gemini FAIL: four findings refuted by measurement, one real (thread clamp can hit CHECK → 500); Grok pending; fix round holds for it. DB slot opened to this lane. |
+
+Also on that lane: `docs/design/2026-09-05-chat-build-plan.md` (`cacfc07`), seven lanes L1–L7,
+plus a `chat-recipients` lane to add: `signals_one_recipient` allows one recipient, which blocks
+both the `@name`-joins-To ruling and the composer To: field (#2). Landing order: cli-chips before
+chat-schema (migration names). Host at memory pressure 2 with swap flat; the listener head-of-line
+lane is held until two lanes land.
