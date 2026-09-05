@@ -13530,6 +13530,188 @@ var import_node_os10 = require("node:os");
 var import_node_path21 = require("node:path");
 var import_promises13 = require("node:readline/promises");
 
+// src/protocol/events.ts
+var SCHEMA_VERSION = 1;
+var EVENT_TYPES = [
+  "TaskCreated",
+  "LeaseAcquired",
+  "LeaseRenewed",
+  "LeaseHandedOff",
+  "LeaseTakenOver",
+  "TaskSubmitted",
+  "TaskClosed",
+  "TaskReopened",
+  "CommandRejected"
+];
+
+// src/protocol/reducer.ts
+function req(payload, keys, type, seq) {
+  if (!payload || typeof payload !== "object") throw new StreamIntegrityError(`event "${type}" at seq ${seq} has a non-object payload`);
+  for (const k of keys) {
+    if (payload[k] === void 0) {
+      throw new StreamIntegrityError(`event "${type}" at seq ${seq} is missing payload field "${String(k)}"`);
+    }
+  }
+  return payload;
+}
+var UnknownEventTypeError = class extends Error {
+  constructor(type, seq) {
+    super(`unknown authoritative event type "${type}" at seq ${seq}; halting`);
+    this.type = type;
+    this.seq = seq;
+    this.name = "UnknownEventTypeError";
+  }
+  type;
+  seq;
+};
+var StreamIntegrityError = class extends Error {
+  constructor(message) {
+    super(message);
+    this.name = "StreamIntegrityError";
+  }
+};
+function reduceTask(prev, env) {
+  if (!EVENT_TYPES.includes(env.type)) {
+    throw new UnknownEventTypeError(env.type, env.seq);
+  }
+  if (env.schema_version !== SCHEMA_VERSION) {
+    throw new StreamIntegrityError(`event "${env.type}" at seq ${env.seq} is schema v${env.schema_version}, expected v${SCHEMA_VERSION} (upcast before reduce)`);
+  }
+  if (env.type === "CommandRejected") {
+    if (!prev) throw new StreamIntegrityError(`CommandRejected before task exists (seq ${env.seq})`);
+    req(env.payload, ["task_id", "command", "reason", "detail"], env.type, env.seq);
+    return prev;
+  }
+  if (env.type === "TaskCreated") {
+    if (prev) throw new StreamIntegrityError(`TaskCreated for an already-existing task (seq ${env.seq})`);
+    const p = req(env.payload, ["task_id", "slug"], env.type, env.seq);
+    return {
+      task_id: p.task_id,
+      slug: p.slug,
+      lifecycle: "open",
+      version: 1,
+      epoch: 0,
+      owner: null,
+      lease_expiry: null,
+      submission: null,
+      closed_disposition: null
+    };
+  }
+  if (!prev) throw new StreamIntegrityError(`event "${env.type}" before TaskCreated (seq ${env.seq})`);
+  const s = prev;
+  function assertEpochIncrease(ep) {
+    if (typeof ep !== "number" || ep <= s.epoch) {
+      throw new StreamIntegrityError(`${env.type} at seq ${env.seq} has non-increasing epoch ${ep} (current ${s.epoch})`);
+    }
+  }
+  const leaseLifecycle = s.submission ? "awaiting_review" : "active";
+  switch (env.type) {
+    case "LeaseAcquired": {
+      const p = req(env.payload, ["task_id", "epoch", "owner", "lease_expiry"], env.type, env.seq);
+      assertEpochIncrease(p.epoch);
+      return { ...s, lifecycle: leaseLifecycle, epoch: p.epoch, owner: p.owner, lease_expiry: p.lease_expiry };
+    }
+    case "LeaseRenewed": {
+      const p = req(env.payload, ["task_id", "epoch", "lease_expiry"], env.type, env.seq);
+      if (p.epoch !== s.epoch) throw new StreamIntegrityError(`LeaseRenewed at seq ${env.seq} epoch ${p.epoch} != current ${s.epoch}`);
+      return { ...s, lease_expiry: p.lease_expiry };
+    }
+    case "LeaseHandedOff": {
+      const p = req(env.payload, ["task_id", "epoch", "from_owner", "to_owner", "lease_expiry"], env.type, env.seq);
+      assertEpochIncrease(p.epoch);
+      return { ...s, lifecycle: leaseLifecycle, epoch: p.epoch, owner: p.to_owner, lease_expiry: p.lease_expiry };
+    }
+    case "LeaseTakenOver": {
+      const p = req(env.payload, ["task_id", "epoch", "owner", "lease_expiry", "grant_id"], env.type, env.seq);
+      assertEpochIncrease(p.epoch);
+      return { ...s, lifecycle: leaseLifecycle, epoch: p.epoch, owner: p.owner, lease_expiry: p.lease_expiry };
+    }
+    case "TaskSubmitted": {
+      const p = req(env.payload, ["task_id", "epoch", "branch", "head_sha", "evidence_set"], env.type, env.seq);
+      return {
+        ...s,
+        lifecycle: "awaiting_review",
+        submission: { epoch: p.epoch, branch: p.branch, head_sha: p.head_sha, evidence_set: [...p.evidence_set] }
+      };
+    }
+    case "TaskClosed": {
+      const p = req(env.payload, ["task_id", "epoch", "disposition", "grant_id"], env.type, env.seq);
+      return { ...s, lifecycle: "done", closed_disposition: p.disposition };
+    }
+    case "TaskReopened": {
+      const p = req(env.payload, ["task_id", "version"], env.type, env.seq);
+      if (p.version <= s.version) throw new StreamIntegrityError(`TaskReopened at seq ${env.seq} version ${p.version} not > current ${s.version}`);
+      return { ...s, lifecycle: "reopened", version: p.version, submission: null, owner: null, lease_expiry: null };
+    }
+    default: {
+      throw new UnknownEventTypeError(env.type, env.seq);
+    }
+  }
+}
+
+// src/protocol/idempotency.ts
+function canonicalJson(value) {
+  return JSON.stringify(sortValue(value));
+}
+function sortValue(v) {
+  if (Array.isArray(v)) return v.map(sortValue);
+  if (v && typeof v === "object") {
+    const out = {};
+    for (const k of Object.keys(v).sort()) {
+      out[k] = sortValue(v[k]);
+    }
+    return out;
+  }
+  return v;
+}
+
+// src/protocol/upcasters.ts
+var registry = /* @__PURE__ */ new Map();
+function key(type, fromVersion) {
+  return `${type}:${fromVersion}`;
+}
+function registerUpcaster(type, fromVersion, fn) {
+  registry.set(key(type, fromVersion), fn);
+}
+var UpcastError = class extends Error {
+  constructor(message) {
+    super(message);
+    this.name = "UpcastError";
+  }
+};
+function upcastPayload(type, fromVersion, payload) {
+  let v = fromVersion;
+  let p = payload;
+  if (v > SCHEMA_VERSION) {
+    throw new UpcastError(`event "${type}" is schema v${v}, newer than supported v${SCHEMA_VERSION}; halting`);
+  }
+  while (v < SCHEMA_VERSION) {
+    const fn = registry.get(key(type, v));
+    if (!fn) throw new UpcastError(`no upcaster for "${type}" v${v}\u2192v${v + 1}`);
+    p = fn(p);
+    v += 1;
+  }
+  return { payload: p, schema_version: SCHEMA_VERSION };
+}
+function upcastEnvelope(raw) {
+  const { payload, schema_version } = upcastPayload(raw.type, raw.schema_version, raw.payload);
+  return { ...raw, payload, schema_version };
+}
+registerUpcaster("TaskCreated", 0, (p) => ({ task_id: p.id, slug: p.name }));
+
+// src/protocol/workspace-commands.ts
+var INVITATION_MAX_TTL_MS = 7 * 24 * 60 * 60 * 1e3;
+var AGENT_TOKEN_DEFAULT_TTL_MS = 60 * 60 * 1e3;
+var AGENT_TOKEN_MAX_TTL_MS = 30 * 24 * 60 * 60 * 1e3;
+var RENEWAL_HORIZON_DEFAULT_MS = 30 * 24 * 60 * 60 * 1e3;
+var RENEWAL_HORIZON_MAX_MS = 90 * 24 * 60 * 60 * 1e3;
+
+// src/protocol/brain-version-window.ts
+var BRAIN_FILE_PREFIX = "brain--";
+var BRAIN_FILE_SUFFIX = ".md";
+var BRAIN_TOPIC_MAX_LENGTH = 255 - BRAIN_FILE_PREFIX.length - BRAIN_FILE_SUFFIX.length;
+var FILE_VERSION_PRECONDITION_FAILED = "file_version_precondition_failed";
+
 // src/cloud/auth.ts
 var import_node_crypto2 = require("node:crypto");
 var import_node_http = require("node:http");
@@ -21959,189 +22141,6 @@ async function logout(target2, store2, scope = "local", options = {}) {
 
 // src/cloud/command-client.ts
 var import_node_crypto3 = require("node:crypto");
-
-// src/protocol/events.ts
-var SCHEMA_VERSION = 1;
-var EVENT_TYPES = [
-  "TaskCreated",
-  "LeaseAcquired",
-  "LeaseRenewed",
-  "LeaseHandedOff",
-  "LeaseTakenOver",
-  "TaskSubmitted",
-  "TaskClosed",
-  "TaskReopened",
-  "CommandRejected"
-];
-
-// src/protocol/reducer.ts
-function req(payload, keys, type, seq) {
-  if (!payload || typeof payload !== "object") throw new StreamIntegrityError(`event "${type}" at seq ${seq} has a non-object payload`);
-  for (const k of keys) {
-    if (payload[k] === void 0) {
-      throw new StreamIntegrityError(`event "${type}" at seq ${seq} is missing payload field "${String(k)}"`);
-    }
-  }
-  return payload;
-}
-var UnknownEventTypeError = class extends Error {
-  constructor(type, seq) {
-    super(`unknown authoritative event type "${type}" at seq ${seq}; halting`);
-    this.type = type;
-    this.seq = seq;
-    this.name = "UnknownEventTypeError";
-  }
-  type;
-  seq;
-};
-var StreamIntegrityError = class extends Error {
-  constructor(message) {
-    super(message);
-    this.name = "StreamIntegrityError";
-  }
-};
-function reduceTask(prev, env) {
-  if (!EVENT_TYPES.includes(env.type)) {
-    throw new UnknownEventTypeError(env.type, env.seq);
-  }
-  if (env.schema_version !== SCHEMA_VERSION) {
-    throw new StreamIntegrityError(`event "${env.type}" at seq ${env.seq} is schema v${env.schema_version}, expected v${SCHEMA_VERSION} (upcast before reduce)`);
-  }
-  if (env.type === "CommandRejected") {
-    if (!prev) throw new StreamIntegrityError(`CommandRejected before task exists (seq ${env.seq})`);
-    req(env.payload, ["task_id", "command", "reason", "detail"], env.type, env.seq);
-    return prev;
-  }
-  if (env.type === "TaskCreated") {
-    if (prev) throw new StreamIntegrityError(`TaskCreated for an already-existing task (seq ${env.seq})`);
-    const p = req(env.payload, ["task_id", "slug"], env.type, env.seq);
-    return {
-      task_id: p.task_id,
-      slug: p.slug,
-      lifecycle: "open",
-      version: 1,
-      epoch: 0,
-      owner: null,
-      lease_expiry: null,
-      submission: null,
-      closed_disposition: null
-    };
-  }
-  if (!prev) throw new StreamIntegrityError(`event "${env.type}" before TaskCreated (seq ${env.seq})`);
-  const s = prev;
-  function assertEpochIncrease(ep) {
-    if (typeof ep !== "number" || ep <= s.epoch) {
-      throw new StreamIntegrityError(`${env.type} at seq ${env.seq} has non-increasing epoch ${ep} (current ${s.epoch})`);
-    }
-  }
-  const leaseLifecycle = s.submission ? "awaiting_review" : "active";
-  switch (env.type) {
-    case "LeaseAcquired": {
-      const p = req(env.payload, ["task_id", "epoch", "owner", "lease_expiry"], env.type, env.seq);
-      assertEpochIncrease(p.epoch);
-      return { ...s, lifecycle: leaseLifecycle, epoch: p.epoch, owner: p.owner, lease_expiry: p.lease_expiry };
-    }
-    case "LeaseRenewed": {
-      const p = req(env.payload, ["task_id", "epoch", "lease_expiry"], env.type, env.seq);
-      if (p.epoch !== s.epoch) throw new StreamIntegrityError(`LeaseRenewed at seq ${env.seq} epoch ${p.epoch} != current ${s.epoch}`);
-      return { ...s, lease_expiry: p.lease_expiry };
-    }
-    case "LeaseHandedOff": {
-      const p = req(env.payload, ["task_id", "epoch", "from_owner", "to_owner", "lease_expiry"], env.type, env.seq);
-      assertEpochIncrease(p.epoch);
-      return { ...s, lifecycle: leaseLifecycle, epoch: p.epoch, owner: p.to_owner, lease_expiry: p.lease_expiry };
-    }
-    case "LeaseTakenOver": {
-      const p = req(env.payload, ["task_id", "epoch", "owner", "lease_expiry", "grant_id"], env.type, env.seq);
-      assertEpochIncrease(p.epoch);
-      return { ...s, lifecycle: leaseLifecycle, epoch: p.epoch, owner: p.owner, lease_expiry: p.lease_expiry };
-    }
-    case "TaskSubmitted": {
-      const p = req(env.payload, ["task_id", "epoch", "branch", "head_sha", "evidence_set"], env.type, env.seq);
-      return {
-        ...s,
-        lifecycle: "awaiting_review",
-        submission: { epoch: p.epoch, branch: p.branch, head_sha: p.head_sha, evidence_set: [...p.evidence_set] }
-      };
-    }
-    case "TaskClosed": {
-      const p = req(env.payload, ["task_id", "epoch", "disposition", "grant_id"], env.type, env.seq);
-      return { ...s, lifecycle: "done", closed_disposition: p.disposition };
-    }
-    case "TaskReopened": {
-      const p = req(env.payload, ["task_id", "version"], env.type, env.seq);
-      if (p.version <= s.version) throw new StreamIntegrityError(`TaskReopened at seq ${env.seq} version ${p.version} not > current ${s.version}`);
-      return { ...s, lifecycle: "reopened", version: p.version, submission: null, owner: null, lease_expiry: null };
-    }
-    default: {
-      throw new UnknownEventTypeError(env.type, env.seq);
-    }
-  }
-}
-
-// src/protocol/idempotency.ts
-function canonicalJson(value) {
-  return JSON.stringify(sortValue(value));
-}
-function sortValue(v) {
-  if (Array.isArray(v)) return v.map(sortValue);
-  if (v && typeof v === "object") {
-    const out = {};
-    for (const k of Object.keys(v).sort()) {
-      out[k] = sortValue(v[k]);
-    }
-    return out;
-  }
-  return v;
-}
-
-// src/protocol/upcasters.ts
-var registry = /* @__PURE__ */ new Map();
-function key(type, fromVersion) {
-  return `${type}:${fromVersion}`;
-}
-function registerUpcaster(type, fromVersion, fn) {
-  registry.set(key(type, fromVersion), fn);
-}
-var UpcastError = class extends Error {
-  constructor(message) {
-    super(message);
-    this.name = "UpcastError";
-  }
-};
-function upcastPayload(type, fromVersion, payload) {
-  let v = fromVersion;
-  let p = payload;
-  if (v > SCHEMA_VERSION) {
-    throw new UpcastError(`event "${type}" is schema v${v}, newer than supported v${SCHEMA_VERSION}; halting`);
-  }
-  while (v < SCHEMA_VERSION) {
-    const fn = registry.get(key(type, v));
-    if (!fn) throw new UpcastError(`no upcaster for "${type}" v${v}\u2192v${v + 1}`);
-    p = fn(p);
-    v += 1;
-  }
-  return { payload: p, schema_version: SCHEMA_VERSION };
-}
-function upcastEnvelope(raw) {
-  const { payload, schema_version } = upcastPayload(raw.type, raw.schema_version, raw.payload);
-  return { ...raw, payload, schema_version };
-}
-registerUpcaster("TaskCreated", 0, (p) => ({ task_id: p.id, slug: p.name }));
-
-// src/protocol/workspace-commands.ts
-var INVITATION_MAX_TTL_MS = 7 * 24 * 60 * 60 * 1e3;
-var AGENT_TOKEN_DEFAULT_TTL_MS = 60 * 60 * 1e3;
-var AGENT_TOKEN_MAX_TTL_MS = 30 * 24 * 60 * 60 * 1e3;
-var RENEWAL_HORIZON_DEFAULT_MS = 30 * 24 * 60 * 60 * 1e3;
-var RENEWAL_HORIZON_MAX_MS = 90 * 24 * 60 * 60 * 1e3;
-
-// src/protocol/brain-version-window.ts
-var BRAIN_FILE_PREFIX = "brain--";
-var BRAIN_FILE_SUFFIX = ".md";
-var BRAIN_TOPIC_MAX_LENGTH = 255 - BRAIN_FILE_PREFIX.length - BRAIN_FILE_SUFFIX.length;
-
-// src/cloud/command-client.ts
 var AGENT_TOKEN_RE = /^swm_agt_[A-Za-z0-9_-]{43}$/;
 var INVITATION_TOKEN_RE = /^swm_inv_[A-Za-z0-9_-]{43}$/;
 var CAPABILITY_TOKEN_RE = /^swm_cap_[A-Za-z0-9_-]{43}$/;
@@ -22978,13 +22977,18 @@ async function sendFileCommand(options, command2) {
   return body;
 }
 function fileVersionCreate(options, input) {
+  const ifVersion = input.ifVersion ?? null;
   return sendFileCommand(options, {
     kind: "file_version_create",
     file_id: input.fileId,
     version_id: input.versionId,
     name: input.name,
     declared_size_bytes: input.declaredSizeBytes,
-    content_type: input.contentType
+    content_type: input.contentType,
+    /* The server validates an exact key set, so the key is sent only when a
+     * precondition was asked for. An unconditional write is byte-identical to
+     * what every earlier client sent. */
+    ...ifVersion === null ? {} : { if_version: ifVersion }
   });
 }
 function fileVersionCommit(options, input) {
@@ -41648,6 +41652,23 @@ var ListenerHttpClient = class {
 
 // src/resume.ts
 var import_node_child_process8 = require("node:child_process");
+var DEFAULT_PROCESS_TABLE_COMMAND = {
+  file: "ps",
+  args: ["-axo", "pid=,command="]
+};
+var ProcessTableError = class extends Error {
+  constructor(command2, detail) {
+    super(
+      `could not read the host process table with ${command2.file}: ${detail}`
+    );
+    this.command = command2;
+    this.detail = detail;
+    this.name = "ProcessTableError";
+  }
+  command;
+  detail;
+  code = "process_table_unavailable";
+};
 function execFileText(file, args) {
   return new Promise((resolve3, reject) => {
     (0, import_node_child_process8.execFile)(file, [...args], {
@@ -41659,15 +41680,76 @@ function execFileText(file, args) {
     });
   });
 }
-function systemProcessTable() {
+function parseProcessRow(line) {
+  const match = /^\s*(\d+)\s+(.*)$/.exec(line);
+  if (!match) return null;
+  const pid = Number(match[1]);
+  if (!Number.isSafeInteger(pid) || pid <= 0) return null;
+  return { pid, command: match[2] };
+}
+var PROCESS_TABLE_STDERR_MAX_CHARS = 2e3;
+function systemProcessTable(options = {}) {
+  const command2 = options.command ?? DEFAULT_PROCESS_TABLE_COMMAND;
+  const retain = options.retain ?? (() => true);
   return {
-    async list() {
-      const output = await execFileText("ps", ["-axo", "pid=,command="]);
-      return output.split("\n").flatMap((line) => {
-        const match = /^\s*(\d+)\s+(.*)$/.exec(line);
-        if (!match) return [];
-        const pid = Number(match[1]);
-        return Number.isSafeInteger(pid) && pid > 0 ? [{ pid, command: match[2] }] : [];
+    list() {
+      return new Promise((resolve3, reject) => {
+        const child = (0, import_node_child_process8.spawn)(command2.file, [...command2.args], {
+          stdio: ["ignore", "pipe", "pipe"]
+        });
+        const rows3 = [];
+        let pending = "";
+        let stderr = "";
+        let settled = false;
+        const fail = (detail) => {
+          if (settled) return;
+          settled = true;
+          child.stdout.destroy();
+          reject(new ProcessTableError(command2, detail));
+        };
+        const take = (line) => {
+          const row = parseProcessRow(line);
+          if (row === null) return true;
+          try {
+            if (retain(row.command)) rows3.push(row);
+          } catch {
+            fail("its row filter threw");
+            return false;
+          }
+          return true;
+        };
+        child.stdout.setEncoding("utf8");
+        child.stdout.on("data", (chunk) => {
+          if (settled) return;
+          const lines = (pending + chunk).split("\n");
+          pending = lines.pop() ?? "";
+          for (const line of lines) {
+            if (!take(line)) return;
+          }
+        });
+        child.stderr.setEncoding("utf8");
+        child.stderr.on("data", (chunk) => {
+          const room = PROCESS_TABLE_STDERR_MAX_CHARS - stderr.length;
+          if (room > 0) stderr += chunk.slice(0, room);
+        });
+        child.stdout.on("error", () => fail("its output stream failed"));
+        child.stderr.on("error", () => fail("its error stream failed"));
+        child.on("error", (error) => fail(error.name));
+        child.on("close", (code, signal) => {
+          if (settled) return;
+          if (pending.length > 0 && !take(pending)) return;
+          if (signal !== null) {
+            fail(`it was stopped by ${signal}`);
+            return;
+          }
+          if (code !== 0) {
+            const trailer = stderr.trim().length > 0 ? `: ${stderr.trim().slice(0, PROCESS_TABLE_STDERR_MAX_CHARS)}` : "";
+            fail(`it exited ${code}${trailer}`);
+            return;
+          }
+          settled = true;
+          resolve3(rows3);
+        });
       });
     }
   };
@@ -41717,7 +41799,10 @@ function isNotifyCommand(command2) {
   return /(?:^|\s)inbox(?:\s|$)/.test(command2) && /(?:^|\s)--notify(?:\s|$)/.test(command2);
 }
 async function findNotifyWatchers(options) {
-  const processTable = options.processTable ?? systemProcessTable();
+  const processTable = options.processTable ?? systemProcessTable({
+    retain: isNotifyCommand,
+    ...options.processTableCommand ? { command: options.processTableCommand } : {}
+  });
   const stdoutConsumer = options.stdoutConsumer ?? lsofStdoutConsumer();
   const rows3 = await processTable.list();
   const matches = rows3.flatMap((row) => {
@@ -41985,6 +42070,7 @@ var KNOWN_FLAGS = /* @__PURE__ */ new Set([
   "grok-executable",
   "head-sha",
   "help",
+  "if-version",
   "include-stale",
   "include-tombstoned",
   "invitation-id",
@@ -42056,8 +42142,8 @@ var BOOLEAN_FLAGS = /* @__PURE__ */ new Set([
 ]);
 var UUID_RE23 = /^[0-9a-f]{8}-[0-9a-f]{4}-[1-8][0-9a-f]{3}-[89ab][0-9a-f]{3}-[0-9a-f]{12}$/i;
 function packageVersion() {
-  if ("0.1.52".length > 0) {
-    return "0.1.52";
+  if ("0.1.53".length > 0) {
+    return "0.1.53";
   }
   try {
     const value = JSON.parse(
@@ -42192,7 +42278,7 @@ Usage:
   cswarm file restore <name|file-id> [--url <url> --anon-key <key>] [--workspace-id <uuid>] ${agentCredential2} [--json]
   cswarm brain ls [--url <url> --anon-key <key>] [--workspace-id <uuid>] ${agentCredential2} [--json]
   cswarm brain get <topic>[@<version>] [--version <n>] [--url <url> --anon-key <key>] [--workspace-id <uuid>] ${agentCredential2} [--json]
-  cswarm brain put <topic> [<markdown-path>] [--url <url> --anon-key <key>] [--workspace-id <uuid>] ${agentCredential2} [--json]  # without a path, reads Markdown from stdin
+  cswarm brain put <topic> [<markdown-path>] [--url <url> --anon-key <key>] [--workspace-id <uuid>] ${agentCredential2} [--if-version <n>] [--json]  # without a path, reads Markdown from stdin; --if-version refuses the write unless the live version is still <n>
   cswarm feedback "<text>" --kind bug|idea|friction [--about <ref>] [--url <url> --anon-key <key>] [--workspace-id <uuid>] ${agentCredential2} [--json]
   cswarm listen start ${requiredAgentCredential} [--url <url> --anon-key <key>] --workspace-id <uuid> --provider grok|opencode|claude|codex [--cwd <absolute-path>] [--model <model>] [--effort <level>] [--permissions deny|allow] [--grok-executable <path>] [--opencode-executable <path>] [--claude-executable <path>] [--codex-executable <path>] [--turn-budget <duration>] [--route worker|main|split] [--defer-over <chars>] [--allow-unattended] [--foreground] [--json]
   cswarm listen canary ${requiredAgentCredential} [--url <url> --anon-key <key>] --workspace-id <uuid> [--state-dir <path>] [--wait <seconds>] [--json]
@@ -46796,7 +46882,7 @@ async function resolveFileSelector(context, selector) {
   }
   return match.file_id;
 }
-async function uploadNamedFile(context, name, bytes) {
+async function uploadNamedFile(context, name, bytes, options = {}) {
   if (bytes.byteLength > FILE_MAX_VERSION_BYTES) {
     throw new Error(
       `this file is ${formatFileSize(bytes.byteLength)}; the per-file limit is ${formatFileSize(FILE_MAX_VERSION_BYTES)}, so the upload was not started`
@@ -46823,7 +46909,8 @@ async function uploadNamedFile(context, name, bytes) {
       versionId,
       name,
       declaredSizeBytes: bytes.byteLength,
-      contentType
+      contentType,
+      ...options.ifVersion === void 0 ? {} : { ifVersion: options.ifVersion }
     })
   );
   await onceRetried(
@@ -47117,7 +47204,8 @@ async function runBrainPut(args) {
       "cswarm brain put cannot read both the credential and Markdown from stdin; use --agent-token-file or pass a Markdown path"
     );
   }
-  const context = await fileContext(args, [], args.positionals.length);
+  const context = await fileContext(args, ["if-version"], args.positionals.length);
+  const ifVersion = args.optional("if-version") === void 0 ? void 0 : integer2(args, "if-version", { minimum: 0 });
   let bytes;
   if (localPath) {
     try {
@@ -47132,7 +47220,19 @@ async function runBrainPut(args) {
     bytes = await readBrainMarkdownFromStdin();
   }
   decodeBrainMarkdown(bytes);
-  const committed = await uploadNamedFile(context, brainFileName(topic), bytes);
+  const committed = await uploadNamedFile(
+    context,
+    brainFileName(topic),
+    bytes,
+    ifVersion === void 0 ? {} : { ifVersion }
+  ).catch((error) => {
+    if (error instanceof FileCommandRefused && error.code === FILE_VERSION_PRECONDITION_FAILED) {
+      throw new Error(
+        `${error.message}. Someone saved a new version after you read this topic. Re-read it, apply your change to that copy, then put it again: cswarm brain get ${topic}`
+      );
+    }
+    throw error;
+  });
   if (args.has("json")) {
     process.stdout.write(`${JSON.stringify({ topic, ...committed }, null, 2)}
 `);
