@@ -229,7 +229,7 @@ const signalResponse = {
 async function postedCommand(
   command: PostSignalCommand,
 ): Promise<Record<string, unknown>> {
-  const captured: Captured[] = [];
+  const captured: Captured[] = ["to"];
   const sent = new ThinCommandClient(
     target,
     capturingFetch(captured, signalResponse),
@@ -286,12 +286,19 @@ test("each chat option adds its own key and drags in no sibling", async () => {
   }
 });
 
-test("the chat keys the client can send are exactly the ones the edge accepts", async () => {
+/* Optional chat keys the edge accepts that THIS client does not send yet. When the
+ * client learns one, remove it here or the test below goes red: drift is visible in
+ * both directions. `to` (a recipient list, lane L2) landed on the edge on 2026-09-05
+ * before the CLI had a verb for it. */
+const EDGE_CHAT_KEYS_NOT_SENT_YET: readonly string[] = ["to"];
+
+test("the chat keys the client can send are a subset of the edge's, and the rest are named", async () => {
   /* Generated on BOTH sides: the edge's own list of optional chat keys, and the
    * keys `sendSignal` actually emits when every option is set, measured by
    * diffing against the installed body. An earlier version compared the edge's
    * list with a typed array, which a review arm pointed out is not a claim
-   * about the client at all. */
+   * about the client at all; a later one asserted equality, which went red the
+   * moment the edge learned a key the client had no verb for. */
   const everything = await postedCommand({
     ...baseCommand,
     channel: "mobile",
@@ -301,7 +308,11 @@ test("the chat keys the client can send are exactly the ones the edge accepts", 
   const emitted = Object.keys(everything).filter(
     (name) => !Object.hasOwn(installedPostBody, name),
   ).sort();
-  assert.deepEqual(emitted, [...edge.CHAT_SIGNAL_OPTIONAL_KEYS].sort());
+  const edgeKeys = [...edge.CHAT_SIGNAL_OPTIONAL_KEYS].sort();
+  const unknownToEdge = emitted.filter((key) => !edgeKeys.includes(key));
+  assert.deepEqual(unknownToEdge, [], "the client sent a chat key the edge does not accept");
+  const notSent = edgeKeys.filter((key) => !emitted.includes(key));
+  assert.deepEqual(notSent, [...EDGE_CHAT_KEYS_NOT_SENT_YET].sort());
   assert.ok(emitted.length > 0, "no chat key reached the wire");
 });
 
@@ -346,7 +357,7 @@ const channelResponse = {
 
 test("a channel command carries the envelope and the exact fields the edge names", async () => {
   for (const [command, keys] of channelCommandCases) {
-    const captured: Captured[] = [];
+    const captured: Captured[] = ["to"];
     const sent = new ThinCommandClient(
       target,
       capturingFetch(captured, channelResponse),
@@ -380,7 +391,7 @@ test("a refusal shows the server's own sentence, and a bare one names the versio
     error: "invalid_request",
     message: "A channel purpose is at most 500 characters.",
   };
-  const captured: Captured[] = [];
+  const captured: Captured[] = ["to"];
   const withMessage = new ThinCommandClient(
     target,
     capturingFetch(captured, served, 400),
