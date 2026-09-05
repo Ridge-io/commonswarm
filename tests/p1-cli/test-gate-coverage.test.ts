@@ -15,14 +15,16 @@ const repoRoot = process.cwd();
  * because the precondition is part of the command rather than an npm hook. */
 const pureCliCommand =
   "node scripts/require-cli-build.mjs && node --import tsx --test tests/p1-cli/**/*.test.ts";
-/* The browser receipt control added a sixth stack-touching file; --test-concurrency=1 because each
+/* The chat-channel migration control added a seventh stack-touching file;
+ * --test-concurrency=1 because each
  * p1-local file spawns the one local functions runtime (same reason p1-server
  * carries the flag). The pin moves WITH the claim it guards: all files stay
  * reachable only through test:p1-local, never through a pure gate. */
 const localStackCommand =
-  "node --import tsx --test --test-concurrency=1 tests/p1-local/local-integration.test.ts tests/p1-local/file-artifacts-e2e.test.ts tests/p1-local/delivery-receipts-postgres.test.ts tests/p1-local/human-seen-browser.test.ts tests/p1-local/standing-grants-postgres.test.ts tests/p1-local/activity-realtime-auth.test.ts";
+  "node --import tsx --test --test-concurrency=1 tests/p1-local/local-integration.test.ts tests/p1-local/file-artifacts-e2e.test.ts tests/p1-local/delivery-receipts-postgres.test.ts tests/p1-local/human-seen-browser.test.ts tests/p1-local/standing-grants-postgres.test.ts tests/p1-local/activity-realtime-auth.test.ts tests/p1-local/chat-channels-postgres.test.ts";
 const localStackTests = [
   "tests/p1-local/activity-realtime-auth.test.ts",
+  "tests/p1-local/chat-channels-postgres.test.ts",
   "tests/p1-local/delivery-receipts-postgres.test.ts",
   "tests/p1-local/file-artifacts-e2e.test.ts",
   "tests/p1-local/human-seen-browser.test.ts",

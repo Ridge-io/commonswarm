@@ -12,11 +12,18 @@ import {
   publicReadErrorBody,
   type ReadHandlerPhase,
 } from "./diagnostics.ts";
+import {
+  channelSlugProblem,
+  chatReadKeys,
+  normalizeChannelSlug,
+  SIGNAL_KINDS as SIGNAL_KIND_LIST,
+  unknownChannelMessage,
+} from "../_shared/channels.ts";
 
 const AGENT_TOKEN_RE = /^swm_agt_[A-Za-z0-9_-]{43}$/;
 const UUID_RE =
   /^[0-9a-f]{8}-[0-9a-f]{4}-[1-8][0-9a-f]{3}-[89ab][0-9a-f]{3}-[0-9a-f]{12}$/i;
-const SIGNAL_KINDS = new Set(["working-on", "note", "ask"]);
+const SIGNAL_KINDS = new Set<string>(SIGNAL_KIND_LIST);
 /* MUST match FILE_CONTENT_WARNING in supabase/functions/command/file-artifacts.ts.
  * Not imported: this function's runtime has no import map for the command
  * function's bare "postgres" type specifier — a cross-function import boots
@@ -56,6 +63,13 @@ interface SignalReadRequest {
   kind: string | null;
   since: string | null;
   in_reply_to?: string | null;
+  /**
+   * Filter to one channel, by slug. Its OWN Object.hasOwn group: agent bodies
+   * always carry in_reply_to, so joining that group would reject every agent
+   * read with a 400. It narrows an already-authorized row set and can widen
+   * nothing — the view's WHERE is the policy whatever the client asks for.
+   */
+  channel?: string;
   /**
    * Cursor keys are either both absent (legacy shape/order) or both present.
    * When present: both null pages the full live inbox oldest-first; both valid
@@ -213,6 +227,8 @@ function parseBody(
     };
   }
   const modernShape = Object.hasOwn(body, "in_reply_to");
+  const channelKeys = chatReadKeys(body);
+  const hasChannel = channelKeys.length > 0;
   const hasAfterCreatedAt = Object.hasOwn(body, "after_created_at");
   const hasAfterId = Object.hasOwn(body, "after_id");
   // Cursor keys travel as a pair: both present or both absent. A half-cursor
@@ -228,6 +244,7 @@ function parseBody(
       "kind",
       "since",
       ...(modernShape ? ["in_reply_to"] : []),
+      ...channelKeys,
       ...(cursorMode ? ["after_created_at", "after_id"] : []),
       "limit",
       "include_stale",
@@ -257,7 +274,11 @@ function parseBody(
     !Number.isSafeInteger(body.limit) ||
     (body.limit as number) < 1 ||
     (body.limit as number) > 100 ||
-    typeof body.include_stale !== "boolean"
+    typeof body.include_stale !== "boolean" ||
+    (hasChannel &&
+      !(body.channel === null ||
+        (typeof body.channel === "string" &&
+          channelSlugProblem(body.channel) === null)))
   ) {
     return null;
   }
@@ -273,6 +294,13 @@ function parseBody(
         in_reply_to: typeof body.in_reply_to === "string"
           ? body.in_reply_to.toLowerCase()
           : null,
+      }
+      : {}),
+    ...(hasChannel
+      ? {
+        channel: typeof body.channel === "string"
+          ? normalizeChannelSlug(body.channel)
+          : undefined,
       }
       : {}),
     ...(cursorMode
@@ -319,7 +347,26 @@ async function handle(
   setPhase("parse");
   const parsed = await request.json().catch(() => null);
   const body = parseBody(parsed);
-  if (body === null) return json(400, { error: "invalid_request" });
+  if (body === null) {
+    /* parseBody returns a bare null, so its refusals carry no sentence. That is
+     * this function's shape and not something this lane rewrites -- but the ONE
+     * refusal this lane adds is a bad channel slug, and a generated rule nobody
+     * can read is not a generated rule. Rebuild that one sentence here rather
+     * than leave the caller a bare invalid_request. Everything else keeps the
+     * existing shape; the remaining reasons are still owed a channel. */
+    const raw = typeof parsed === "object" && parsed !== null &&
+        !Array.isArray(parsed)
+      ? parsed as Record<string, unknown>
+      : null;
+    const slugProblem = raw !== null && Object.hasOwn(raw, "channel") &&
+        raw.channel !== null
+      ? channelSlugProblem(raw.channel)
+      : null;
+    return json(400, {
+      error: "invalid_request",
+      ...(slugProblem === null ? {} : { message: slugProblem }),
+    });
+  }
   const agentCredential = AGENT_TOKEN_RE.test(token);
   if (!agentCredential && body.resource !== "renewal_grants") {
     return json(401, { error: "unauthenticated" });
@@ -562,6 +609,46 @@ async function handle(
       });
     }
     const inReplyTo = body.in_reply_to ?? null;
+    /* ⚠ This query names channel_id, thread_root_id and broadcast_to_channel.
+     * Deploy this function only after migrations 20260905000001..000003 are
+     * VERIFIED applied (swarm.schema_migrations, not the db push output).
+     * Against a database missing any of them every agent read fails. */
+    /* Resolve the slug to an id ONCE rather than correlating a subquery per
+     * row, so the filter can use signals_channel_newest. The lookup runs
+     * against swarm_read.channels as the agent's owner, so a slug in another
+     * workspace resolves to nothing here for the same reason it resolves to
+     * nothing on the write side. An unknown slug is an honest refusal, never a
+     * silent fall back to the unfiltered feed: falling back would return
+     * strictly MORE than the caller asked for. */
+    const channelSlug = body.channel ?? null;
+    let channelId: string | null = null;
+    if (channelSlug !== null) {
+      const channelRows = await tx<{ channel_id: string }[]>`
+        SELECT channel_id
+        FROM swarm_read.channels
+        WHERE workspace_id = ${body.workspace_id}::uuid
+          AND lower(slug) = ${channelSlug}
+        LIMIT 1
+      `;
+      if (channelRows[0] === undefined) {
+        const liveRows = await tx<{ slug: string }[]>`
+          SELECT slug
+          FROM swarm_read.channels
+          WHERE workspace_id = ${body.workspace_id}::uuid
+            AND archived_at IS NULL
+          ORDER BY slug
+          LIMIT 200
+        `;
+        return json(404, {
+          error: "channel_not_found",
+          message: unknownChannelMessage(
+            channelSlug,
+            liveRows.map((row) => row.slug),
+          ),
+        });
+      }
+      channelId = channelRows[0].channel_id;
+    }
     // Cursor mode always pages oldest-first. Legacy requests keep the
     // historical newest-first feed (and ASC only for in_reply_to filters).
     const orderAsc = body.cursor_mode || inReplyTo !== null;
@@ -581,6 +668,7 @@ async function handle(
         s.id, s.workspace_id, s."from", s.from_kind, s."to",
         s.about, s.kind, s.body, s.until, s.created_at,
         s.to_agent, s.in_reply_to, s.attachments,
+        s.channel_id, s.thread_root_id, s.broadcast_to_channel,
         CASE
           WHEN s.from_kind = 'user'
            AND author_member.user_id IS NOT NULL
@@ -621,6 +709,10 @@ async function handle(
         AND (
           ${inReplyTo}::uuid IS NULL
           OR s.in_reply_to = ${inReplyTo}::uuid
+        )
+        AND (
+          ${channelId}::uuid IS NULL
+          OR s.channel_id = ${channelId}::uuid
         )
         AND (
           ${body.since}::timestamptz IS NULL OR

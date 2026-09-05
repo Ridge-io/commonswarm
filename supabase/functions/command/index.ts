@@ -12,6 +12,21 @@ import {
   SIGNAL_UNSAFE_GLOBAL_RE,
 } from "../_shared/signal-text.ts";
 import {
+  CHANNEL_PURPOSE_MAX,
+  channelSlugProblem,
+  chatSignalKeys,
+  chatSignalShapeProblem,
+  commandFieldsMessage,
+  CHANNEL_ID_RULE_TEXT,
+  MODEL_CONTROL_RULE_TEXT,
+  MODEL_MAX,
+  MODEL_RULE_TEXT,
+  normalizeChannelSlug,
+  SIGNAL_KINDS,
+  type SignalKind,
+  unknownChannelMessage,
+} from "../_shared/channels.ts";
+import {
   commandAllowedOrigins,
   commandPreflight,
   withCommandCors,
@@ -87,6 +102,9 @@ import {
   canonicalPrincipal,
   decideWorkspace,
   DISPOSITIONS,
+  FEEDBACK_CATEGORIES,
+  normalizedFeedbackBody,
+  normalizedFeedbackContext,
   reduceTask,
   reduceWorkspace,
   RENEWAL_HORIZON_DEFAULT_MS,
@@ -173,7 +191,6 @@ type ConnectCommand =
   // is exactly the escalation the fence exists to stop.
   | { kind: "renew_agent_token" };
 
-type SignalKind = "working-on" | "note" | "ask";
 
 interface SignalCommand {
   kind: "post_signal";
@@ -185,6 +202,28 @@ interface SignalCommand {
   about: string | null;
   attachments?: SignalAttachmentRef[];
   until_ms?: number;
+  /* Chat fields. Each is INDEPENDENTLY optional — see chatSignalKeys. A body
+   * that carries none of them is what every installed client sends. */
+  channel?: string;
+  thread_root_id?: string | null;
+  broadcast_to_channel?: boolean;
+}
+
+/** Channel authority. Self-contained like post_signal: emits no protocol event. */
+type ChannelCommand =
+  | { kind: "channel_create"; slug: string; purpose: string | null }
+  | { kind: "channel_rename"; channel_id: string; slug: string }
+  | { kind: "channel_archive"; channel_id: string };
+
+interface ChannelRecord {
+  channel_id: string;
+  workspace_id: string;
+  slug: string;
+  purpose: string | null;
+  created_by_principal: string;
+  created_by_kind: CredentialKind;
+  created_at: string;
+  archived_at: string | null;
 }
 
 interface SignalAttachment extends SignalAttachmentRef {
@@ -207,6 +246,11 @@ interface SignalRecord {
   attachments: SignalAttachment[];
   until: string;
   created_at: string;
+  /* Added by the chat migrations. Old clients ignore unknown top-level fields
+   * by contract (src/cloud/signals.ts:315-326), so returning them is safe. */
+  channel_id: string | null;
+  thread_root_id: string | null;
+  broadcast_to_channel: boolean;
 }
 
 type DeliveryCommand = ClaimAgentInboxCommand | AckAgentDeliveryCommand;
@@ -215,6 +259,7 @@ type ValidatedCommand =
   | Command
   | ConnectCommand
   | SignalCommand
+  | ChannelCommand
   | SignalsSeenCommand
   | DeliveryCommand
   | FileCommand;
@@ -422,6 +467,7 @@ interface StoredResponse {
   renewal_grant_id?: string;
   resumed_at?: string;
   signal?: SignalRecord;
+  channel?: ChannelRecord;
 }
 
 interface EventEnvelope {
@@ -782,6 +828,17 @@ const DISPOSABLE_EMAIL_DOMAINS = [
   "trashmail.com",
   "yopmail.com",
 ] as const;
+/* Channel authority. Deliberately NOT in WORKSPACE_COMMAND_KINDS: like
+ * post_signal these are self-contained, emit no protocol event, and travel the
+ * ordinary resolveRoute path rather than forcing stream.kind === "workspace".
+ * Deliberately NOT in the agent denylist either — a channel grants nothing, so
+ * gating it behind a human would force a person into the loop to make a label. */
+const CHANNEL_COMMAND_KINDS = [
+  "channel_create",
+  "channel_rename",
+  "channel_archive",
+] as const;
+
 const COMMAND_KINDS = [
   "create",
   "acquire",
@@ -805,6 +862,7 @@ const COMMAND_KINDS = [
   "declare_agent_model",
   "submit_feedback",
   "post_signal",
+  ...CHANNEL_COMMAND_KINDS,
   SIGNALS_SEEN_KIND,
   CLAIM_AGENT_INBOX_KIND,
   ACK_AGENT_DELIVERY_KIND,
@@ -1532,6 +1590,111 @@ function validateCommand(
       };
   }
 
+  /* Channel authority. Every refusal sentence below is BUILT from the same
+   * constants the validator reads (supabase/functions/_shared/channels.ts), so
+   * a changed bound or a new reserved name cannot leave a stale sentence
+   * telling a caller a rule that is not enforced. */
+  if (cmd.kind === "channel_create") {
+    const required = ["slug"];
+    const optional = ["purpose"];
+    const keysOk = exactKeys(cmd, ["kind", ...required]) ||
+      exactKeys(cmd, ["kind", ...required, ...optional]);
+    const slugProblem = channelSlugProblem(cmd.slug);
+    if (!keysOk || slugProblem !== null) {
+      return {
+        ok: false,
+        status: 400,
+        reason: keysOk
+          ? slugProblem!
+          : commandFieldsMessage("channel_create", required, optional),
+      };
+    }
+    const rawPurpose = Object.hasOwn(cmd, "purpose") ? cmd.purpose : null;
+    if (rawPurpose !== null && rawPurpose !== undefined && typeof rawPurpose !== "string") {
+      return { ok: false, status: 400, reason: "A channel purpose is text." };
+    }
+    /* MEASURE THE STRING THAT IS STORED. The bound used to run on the sanitized
+     * value and the insert stored the sanitized-and-TRIMMED value, so
+     * "x".repeat(500) + " " was refused for length while the row it would have
+     * written is 500 characters and satisfies the CHECK. The caller was told a
+     * rule the persisted value does not break. declare_agent_model already
+     * trims before its bound for this exact reason. */
+    const purpose = typeof rawPurpose === "string"
+      ? sanitizeSignalText(rawPurpose).trim() || null
+      : null;
+    if (purpose !== null && purpose.length > CHANNEL_PURPOSE_MAX) {
+      return {
+        ok: false,
+        status: 400,
+        reason: `A channel purpose is at most ${CHANNEL_PURPOSE_MAX} characters.`,
+      };
+    }
+    return {
+      ok: true,
+      command: {
+        kind: "channel_create",
+        slug: normalizeChannelSlug(cmd.slug as string),
+        purpose,
+      },
+    };
+  }
+
+  if (cmd.kind === "channel_rename") {
+    const required = ["channel_id", "slug"];
+    /* Field list first, slug rule second: a body with an extra key AND a bad
+     * slug broke the shape before it broke the naming rule, and naming the
+     * slug rule would send the caller to fix the wrong thing. */
+    /* Three rules, three sentences, in the order they break. Bundling the uuid
+     * test into the key test told a caller who sent exactly the right keys with
+     * a malformed id that their FIELDS were wrong. Both arms found it. */
+    const keysOk = exactKeys(cmd, ["kind", ...required]);
+    const idOk = typeof cmd.channel_id === "string" &&
+      UUID_RE.test(cmd.channel_id);
+    const slugProblem = channelSlugProblem(cmd.slug);
+    if (!keysOk || !idOk || slugProblem !== null) {
+      return {
+        ok: false,
+        status: 400,
+        reason: !keysOk
+          ? commandFieldsMessage("channel_rename", required)
+          : !idOk
+          ? CHANNEL_ID_RULE_TEXT
+          : slugProblem!,
+      };
+    }
+    return {
+      ok: true,
+      command: {
+        kind: "channel_rename",
+        channel_id: (cmd.channel_id as string).toLowerCase(),
+        slug: normalizeChannelSlug(cmd.slug as string),
+      },
+    };
+  }
+
+  if (cmd.kind === "channel_archive") {
+    const required = ["channel_id"];
+    const keysOk = exactKeys(cmd, ["kind", ...required]);
+    const idOk = typeof cmd.channel_id === "string" &&
+      UUID_RE.test(cmd.channel_id);
+    if (!keysOk || !idOk) {
+      return {
+        ok: false,
+        status: 400,
+        reason: keysOk
+          ? CHANNEL_ID_RULE_TEXT
+          : commandFieldsMessage("channel_archive", required),
+      };
+    }
+    return {
+      ok: true,
+      command: {
+        kind: "channel_archive",
+        channel_id: (cmd.channel_id as string).toLowerCase(),
+      },
+    };
+  }
+
   if (cmd.kind === "post_signal") {
     if (Object.hasOwn(cmd, "from")) {
       return {
@@ -1550,7 +1713,22 @@ function validateCommand(
     const modernKeys = modernShape
       ? ["to_agent_principal_id", "in_reply_to"]
       : [];
-    const signalKinds: readonly SignalKind[] = ["working-on", "note", "ask"];
+    /* Each chat key is its OWN Object.hasOwn group, the until_ms/attachments
+     * pattern. NEVER fold one into modernKeys: that pair is all-or-nothing and
+     * every installed client always sends it, so widening it would 400 every
+     * post after a perfectly ordered migration. */
+    const chatKeys = chatSignalKeys(cmd);
+    const channel = Object.hasOwn(cmd, "channel") ? cmd.channel : undefined;
+    const threadRootId = Object.hasOwn(cmd, "thread_root_id")
+      ? cmd.thread_root_id
+      : undefined;
+    const broadcastToChannel = Object.hasOwn(cmd, "broadcast_to_channel")
+      ? cmd.broadcast_to_channel
+      : undefined;
+    const threadRoot = threadRootId === undefined
+      ? null
+      : threadRootId as string | null;
+    const signalKinds: readonly SignalKind[] = SIGNAL_KINDS;
     const sanitizedBody = typeof cmd.body === "string"
       ? sanitizeSignalText(cmd.body)
       : "";
@@ -1561,7 +1739,23 @@ function validateCommand(
       ? cmd.to_agent_principal_id
       : null;
     const inReplyTo = modernShape ? cmd.in_reply_to : null;
-    const valid = exactKeys(cmd, [
+    /* Every rule the chat fields add lives in one pure function so the edge
+     * cannot enforce half of them and so they are testable without Deno. Its
+     * SENTENCE is what the caller gets back: routing it into the generic
+     * "signal fields are malformed" reason would throw away the one part of
+     * the refusal that says which rule was broken and why. */
+    const chatShapeProblem = chatSignalShapeProblem({
+      signal_kind: cmd.signal_kind,
+      to_user_id: cmd.to_user_id,
+      to_agent_principal_id: toAgentPrincipalId,
+      in_reply_to: inReplyTo,
+      ...(channel === undefined ? {} : { channel }),
+      ...(threadRootId === undefined ? {} : { thread_root_id: threadRootId }),
+      ...(broadcastToChannel === undefined
+        ? {}
+        : { broadcast_to_channel: broadcastToChannel }),
+    });
+    const keysOk = exactKeys(cmd, [
       "kind",
       "signal_kind",
       "body",
@@ -1570,7 +1764,9 @@ function validateCommand(
       ...modernKeys,
       ...attachmentKeys,
       ...optionalKeys,
-    ]) &&
+      ...chatKeys,
+    ]);
+    const baseValid = keysOk &&
       typeof cmd.signal_kind === "string" &&
       signalKinds.includes(cmd.signal_kind as SignalKind) &&
       typeof cmd.body === "string" &&
@@ -1619,7 +1815,18 @@ function validateCommand(
         )
       ) &&
       (!Object.hasOwn(cmd, "attachments") ||
-        parseSignalAttachmentRefs(cmd.attachments) !== null);
+        parseSignalAttachmentRefs(cmd.attachments) !== null) &&
+      /* thread_root_id's uuid shape is checked INSIDE chatSignalShapeProblem,
+       * not here. Keeping a copy on the edge meant a bad uuid was refused with
+       * the generic reason before the chat sentence could run, which is exactly
+       * the split that function exists to prevent. */
+      true;
+    /* The chat sentence is only the right answer when NOTHING ELSE is wrong.
+     * Gating on the key set alone was not enough: a body with signal_kind
+     * "nope" AND a thread_root_id was told the thread-kind rule, when the first
+     * broken rule is that "nope" is not a signal kind at all. A refusal that
+     * names the wrong rule sends the caller to fix the wrong thing. */
+    const valid = baseValid && chatShapeProblem === null;
     const attachments = Object.hasOwn(cmd, "attachments")
       ? parseSignalAttachmentRefs(cmd.attachments)
       : undefined;
@@ -1642,12 +1849,27 @@ function validateCommand(
           ...(cmd.until_ms === undefined
             ? {}
             : { until_ms: cmd.until_ms as number }),
+          ...(channel === undefined || channel === null
+            ? {}
+            : { channel: normalizeChannelSlug(channel as string) }),
+          ...(threadRootId === undefined
+            ? {}
+            : {
+              thread_root_id: threadRoot === null
+                ? null
+                : threadRoot.toLowerCase(),
+            }),
+          ...(broadcastToChannel === undefined
+            ? {}
+            : { broadcast_to_channel: broadcastToChannel as boolean }),
         },
       }
       : {
         ok: false,
         status: 400,
-        reason: "signal fields are malformed or over their limits",
+        reason: baseValid && chatShapeProblem !== null
+          ? chatShapeProblem
+          : "signal fields are malformed or over their limits",
       };
   }
 
@@ -1680,7 +1902,9 @@ function validateCommand(
       return {
         ok: false,
         status: 400,
-        reason: "declare_agent_model takes model (text or null) and nothing else",
+        reason: commandFieldsMessage("declare_agent_model", ["model"], [], {
+          model: MODEL_RULE_TEXT,
+        }),
       };
     }
     /* Normalize EXACTLY as the reducer will (trim, empty -> null) BEFORE
@@ -1690,12 +1914,16 @@ function validateCommand(
      * vice versa (landing-round finding 1). */
     const declaredModel = cmd.model === null ? null : cmd.model.trim();
     const normalized = declaredModel === "" ? null : declaredModel;
-    if (normalized !== null && !boundedText(normalized, 120)) {
-      return {
-        ok: false,
-        status: 400,
-        reason: "declare_agent_model takes model (text or null) and nothing else",
-      };
+    /* boundedText also refuses control characters, so answering it with the
+     * LENGTH sentence names the wrong rule for a short model carrying one. */
+    if (normalized !== null && CONTROL_RE.test(normalized)) {
+      return { ok: false, status: 400, reason: MODEL_CONTROL_RULE_TEXT };
+    }
+    if (normalized !== null && !boundedText(normalized, MODEL_MAX)) {
+      /* The LENGTH rule, not the field list. An arm sent a 121-character model
+       * with exactly the right keys and was told which fields the command
+       * takes, which is the wrong rule. */
+      return { ok: false, status: 400, reason: MODEL_RULE_TEXT };
     }
     return {
       ok: true,
@@ -1710,63 +1938,67 @@ function validateCommand(
   // src/protocol/workspace-commands.ts — hand-written duplicates here have
   // drifted before (the 8h→24h TTL constant).
   if (cmd.kind === "submit_feedback") {
-    const keysOk = exactKeys(cmd, ["kind", "feedback_id", "category", "body"]) ||
-      exactKeys(cmd, ["kind", "feedback_id", "category", "body", "context"]);
+    /* Both the check and the sentence read FEEDBACK_CATEGORIES. They were two
+     * typed copies of the same three names, which was invisible while the
+     * reason went only to swarm.audit and user-facing the moment this lane put
+     * it on the wire. */
+    const required = ["feedback_id", "category", "body"];
+    const optional = ["context"];
+    const keysOk = exactKeys(cmd, ["kind", ...required]) ||
+      exactKeys(cmd, ["kind", ...required, ...optional]);
     if (
       !keysOk ||
       typeof cmd.feedback_id !== "string" ||
       !UUID_RE.test(cmd.feedback_id) ||
-      (cmd.category !== "bug" && cmd.category !== "idea" && cmd.category !== "friction") ||
+      !FEEDBACK_CATEGORIES.includes(cmd.category as never) ||
       typeof cmd.body !== "string"
     ) {
       return {
         ok: false,
         status: 400,
-        reason:
-          "submit_feedback takes feedback_id, category (bug|idea|friction), body, and optional context",
+        reason: commandFieldsMessage("submit_feedback", required, optional, {
+          category: FEEDBACK_CATEGORIES.join("|"),
+        }),
       };
     }
-    const trimmedBody = cmd.body.trim();
-    if (
-      trimmedBody.length === 0 ||
-      trimmedBody.length > 4000 ||
-      /[\u0000-\u0008\u000b\u000c\u000e-\u001f\u007f-\u009f\u202a-\u202e\u2066-\u2069]/.test(trimmedBody)
-    ) {
-      return {
-        ok: false,
-        status: 400,
-        reason:
-          "feedback body must be 1..4000 characters; newlines and tabs are fine, other control characters are not",
-      };
+    /* The REDUCER's own normalizer, not a copy of it. This block used to
+     * re-implement the trim, the bound and the control-character class, and the
+     * comment above this validator already warned that hand-written duplicates
+     * here have drifted before. Importing the constant was not enough: the
+     * regex was still written out twice, byte for byte. Calling the function
+     * makes the wire and the reducer the same decision by construction, and its
+     * messages name which of the three rules broke instead of one sentence for
+     * all of them. */
+    /* The result types are declared here because deno infers this bundle from
+     * the generated JavaScript rather than the .d.ts, so the discriminated
+     * union does not narrow on `ok`. The shapes are the ones
+     * src/protocol/workspace-commands.ts returns. */
+    const normalizedBody = normalizedFeedbackBody(cmd.body) as
+      | { ok: true; body: string }
+      | { ok: false; message: string };
+    if (!normalizedBody.ok) {
+      return { ok: false, status: 400, reason: normalizedBody.message };
     }
-    let context: Record<string, string> | null = null;
-    if ("context" in cmd && cmd.context !== null && cmd.context !== undefined) {
-      if (typeof cmd.context !== "object" || Array.isArray(cmd.context)) {
-        return { ok: false, status: 400, reason: "feedback context must be a flat object of strings" };
-      }
-      const entries = Object.entries(cmd.context as Record<string, unknown>);
-      for (const [key, entry] of entries) {
-        if (
-          typeof entry !== "string" || key.length === 0 || key.length > 64 ||
-          entry.length > 512 || /[\u0000-\u001f\u007f-\u009f]/.test(key + entry)
-        ) {
-          return { ok: false, status: 400, reason: "feedback context must be a flat object of bounded strings" };
-        }
-      }
-      if (entries.length > 0) {
-        const flat = Object.fromEntries(entries) as Record<string, string>;
-        if (new TextEncoder().encode(JSON.stringify(flat)).length > 2048) {
-          return { ok: false, status: 400, reason: "feedback context must serialize to at most 2048 bytes" };
-        }
-        context = flat;
-      }
+    const trimmedBody = normalizedBody.body;
+    /* Same again. The duplicate also folded control characters into the
+     * "bounded strings" message, so a caller whose context was the right SIZE
+     * but carried a control character was told the wrong rule. The reducer's
+     * normalizer keeps those separate. */
+    const normalizedContext = normalizedFeedbackContext(
+      "context" in cmd ? cmd.context : null,
+    ) as
+      | { ok: true; context: Record<string, string> | null }
+      | { ok: false; message: string };
+    if (!normalizedContext.ok) {
+      return { ok: false, status: 400, reason: normalizedContext.message };
     }
+    const context = normalizedContext.context;
     return {
       ok: true,
       command: {
         kind: "submit_feedback",
         feedback_id: cmd.feedback_id.toLowerCase(),
-        category: cmd.category,
+        category: cmd.category as "bug" | "idea" | "friction",
         body: trimmedBody,
         context,
       },
@@ -1786,19 +2018,24 @@ function validateCommand(
       return {
         ok: false,
         status: 400,
-        reason:
-          "set_agent_model takes principal_id and model (text or null) and nothing else",
+        reason: commandFieldsMessage(
+          "set_agent_model",
+          ["principal_id", "model"],
+          [],
+          { model: MODEL_RULE_TEXT },
+        ),
       };
     }
     const setModel = cmd.model === null ? null : cmd.model.trim();
     const normalizedSet = setModel === "" ? null : setModel;
-    if (normalizedSet !== null && !boundedText(normalizedSet, 120)) {
-      return {
-        ok: false,
-        status: 400,
-        reason:
-          "set_agent_model takes principal_id and model (text or null) and nothing else",
-      };
+    /* boundedText also refuses control characters, so answering it with the
+     * LENGTH sentence names the wrong rule for a short model carrying one. */
+    if (normalizedSet !== null && CONTROL_RE.test(normalizedSet)) {
+      return { ok: false, status: 400, reason: MODEL_CONTROL_RULE_TEXT };
+    }
+    if (normalizedSet !== null && !boundedText(normalizedSet, MODEL_MAX)) {
+      /* The LENGTH rule, not the field list. Same defect as declare. */
+      return { ok: false, status: 400, reason: MODEL_RULE_TEXT };
     }
     return {
       ok: true,
@@ -5731,7 +5968,7 @@ async function resumeRenewalGrant(
    * was told 403; a retry then answered `renewal_grant_not_suspended`, because the resume it
    * had denied had in fact happened.
    *
-   * Same shape as the renewal preflight read at index.ts:3139 (`preflight[0]?.code ?? null`):
+   * Same shape as the renewal preflight read at index.ts:3376 (`preflight[0]?.code ?? null`):
    * preserve NULL, refuse only on a code we assign.
    *
    * WHY A REFUSAL BELOW STILL COMMITS, DELIBERATELY. `refuse` must commit — its whole job is
@@ -5966,6 +6203,361 @@ async function enforceFreeTierBudget(
   }
 
   return null;
+}
+
+type ChannelOutcome =
+  | { ok: true; channel: ChannelRecord }
+  | {
+    ok: false;
+    status: number;
+    error: string;
+    message: string;
+    reason: string;
+  };
+
+interface ChannelRow {
+  channel_id: string;
+  workspace_id: string;
+  slug: string;
+  purpose: string | null;
+  created_by_principal: string;
+  created_by_kind: CredentialKind;
+  created_at: Date;
+  archived_at: Date | null;
+}
+
+function channelRecord(row: ChannelRow): ChannelRecord {
+  return {
+    channel_id: row.channel_id,
+    workspace_id: row.workspace_id,
+    slug: row.slug,
+    purpose: row.purpose,
+    created_by_principal: row.created_by_principal,
+    created_by_kind: row.created_by_kind,
+    created_at: row.created_at.toISOString(),
+    archived_at: row.archived_at === null
+      ? null
+      : row.archived_at.toISOString(),
+  };
+}
+
+/** Live slugs in the route's workspace, for a refusal message we generate. */
+async function liveChannelSlugs(tx: Sql, route: Route): Promise<string[]> {
+  const rows = await tx<{ slug: string }[]>`
+    SELECT slug FROM swarm.channels
+    WHERE workspace_id = ${route.workspaceId}::uuid
+      AND archived_at IS NULL
+    ORDER BY slug
+    LIMIT 200
+  `;
+  return rows.map((row) => row.slug);
+}
+
+/**
+ * Channel authority. Every write is pinned to the route's workspace, so a
+ * client-supplied channel_id from another tenant resolves to nothing rather
+ * than to somebody else's row.
+ */
+async function applyChannelCommand(
+  tx: Sql,
+  route: Route,
+  auth: AuthContext,
+  command: ChannelCommand,
+): Promise<ChannelOutcome> {
+  if (command.kind === "channel_create") {
+    const existing = await tx<ChannelRow[]>`
+      SELECT channel_id, workspace_id, slug, purpose,
+             created_by_principal, created_by_kind, created_at, archived_at
+      FROM swarm.channels
+      WHERE workspace_id = ${route.workspaceId}::uuid
+        AND lower(slug) = ${command.slug}
+      LIMIT 1
+    `;
+    if (existing[0] !== undefined) {
+      return {
+        ok: false,
+        status: 409,
+        error: "channel_exists",
+        message:
+          `This workspace already has a channel named ${command.slug}. Post to it instead.`,
+        reason: "channel_slug_taken",
+      };
+    }
+    const rows = await tx<ChannelRow[]>`
+      INSERT INTO swarm.channels (
+        channel_id, workspace_id, slug, purpose,
+        created_by_principal, created_by_kind, created_at
+      ) VALUES (
+        ${crypto.randomUUID()}::uuid,
+        ${route.workspaceId}::uuid,
+        ${command.slug},
+        ${command.purpose},
+        ${canonicalPrincipal(auth.actor)}::uuid,
+        ${auth.credentialKind},
+        statement_timestamp()
+      )
+      RETURNING channel_id, workspace_id, slug, purpose,
+                created_by_principal, created_by_kind, created_at, archived_at
+    `;
+    const row = rows[0];
+    if (row === undefined) throw new Error("channel insert did not return a row");
+    return { ok: true, channel: channelRecord(row) };
+  }
+
+  const current = await tx<ChannelRow[]>`
+    SELECT channel_id, workspace_id, slug, purpose,
+           created_by_principal, created_by_kind, created_at, archived_at
+    FROM swarm.channels
+    WHERE workspace_id = ${route.workspaceId}::uuid
+      AND channel_id = ${command.channel_id}::uuid
+    LIMIT 1
+  `;
+  if (current[0] === undefined) {
+    return {
+      ok: false,
+      status: 404,
+      error: "channel_not_found",
+      message: "There is no channel with that id in this workspace.",
+      reason: "channel_not_found",
+    };
+  }
+
+  if (command.kind === "channel_archive") {
+    /* Archiving twice is an accepted no-op: the caller's intent already holds,
+     * and the append-only habit of this codebase is not to invent a conflict
+     * where the end state is the one that was asked for. */
+    const rows = await tx<ChannelRow[]>`
+      UPDATE swarm.channels
+      SET archived_at = COALESCE(archived_at, statement_timestamp())
+      WHERE workspace_id = ${route.workspaceId}::uuid
+        AND channel_id = ${command.channel_id}::uuid
+      RETURNING channel_id, workspace_id, slug, purpose,
+                created_by_principal, created_by_kind, created_at, archived_at
+    `;
+    return { ok: true, channel: channelRecord(rows[0]!) };
+  }
+
+  const clash = await tx<{ channel_id: string }[]>`
+    SELECT channel_id FROM swarm.channels
+    WHERE workspace_id = ${route.workspaceId}::uuid
+      AND lower(slug) = ${command.slug}
+      AND channel_id <> ${command.channel_id}::uuid
+    LIMIT 1
+  `;
+  if (clash[0] !== undefined) {
+    return {
+      ok: false,
+      status: 409,
+      error: "channel_exists",
+      message:
+        `This workspace already has a channel named ${command.slug}.`,
+      reason: "channel_slug_taken",
+    };
+  }
+  const renamed = await tx<ChannelRow[]>`
+    UPDATE swarm.channels
+    SET slug = ${command.slug}
+    WHERE workspace_id = ${route.workspaceId}::uuid
+      AND channel_id = ${command.channel_id}::uuid
+    RETURNING channel_id, workspace_id, slug, purpose,
+              created_by_principal, created_by_kind, created_at, archived_at
+  `;
+  return { ok: true, channel: channelRecord(renamed[0]!) };
+}
+
+interface SignalChannelResolution {
+  ok: boolean;
+  channelId: string | null;
+  status?: number;
+  error?: string;
+  message?: string;
+  reason?: string;
+}
+
+/**
+ * Slug to id, WITHIN THE ROUTE'S WORKSPACE. A client-supplied identifier is
+ * never trusted, so cross-tenant resolution is not a check that can be
+ * forgotten: the query cannot see the other tenant's row.
+ */
+async function resolveSignalChannel(
+  tx: Sql,
+  route: Route,
+  command: SignalCommand,
+): Promise<SignalChannelResolution> {
+  const slug = command.channel;
+  if (slug === undefined) return { ok: true, channelId: null };
+  const rows = await tx<{ channel_id: string; archived_at: Date | null }[]>`
+    SELECT channel_id, archived_at
+    FROM swarm.channels
+    WHERE workspace_id = ${route.workspaceId}::uuid
+      AND lower(slug) = ${slug}
+    LIMIT 1
+  `;
+  const row = rows[0];
+  if (row === undefined) {
+    return {
+      ok: false,
+      channelId: null,
+      status: 404,
+      error: "channel_not_found",
+      message: unknownChannelMessage(slug, await liveChannelSlugs(tx, route)),
+      reason: "channel_not_found",
+    };
+  }
+  if (row.archived_at !== null) {
+    return {
+      ok: false,
+      channelId: null,
+      status: 409,
+      error: "channel_archived",
+      message:
+        `${slug} is archived, so it takes no new messages. Its history still reads and its links still resolve.`,
+      reason: "channel_archived",
+    };
+  }
+  return { ok: true, channelId: row.channel_id };
+}
+
+interface ThreadRootResolution {
+  ok: boolean;
+  threadRootId: string | null;
+  rootUntil: Date | null;
+  /**
+   * The window left on the root, measured by POSTGRES against the same
+   * statement_timestamp() the clamp uses. Never recomputed from Date.now():
+   * Deno and Postgres do not share a clock, and a skewed comparison lets an
+   * explicit horizon pass the refusal and then be silently shortened by the
+   * clamp, which is the one branch this design calls dishonest.
+   */
+  rootRemainingMs: number | null;
+  rootChannelId: string | null;
+  status?: number;
+  error?: string;
+  message?: string;
+  reason?: string;
+}
+
+/**
+ * A thread hangs off a TOP-LEVEL signal in the same workspace that is still
+ * live. Rooting a thread on another thread's reply is refused rather than
+ * silently re-pointed: re-pointing is the move that quietly changes what a
+ * stored column means, which is the defect this design ruled out for
+ * in_reply_to.
+ */
+async function resolveThreadRoot(
+  tx: Sql,
+  route: Route,
+  command: SignalCommand,
+): Promise<ThreadRootResolution> {
+  const rootId = command.thread_root_id ?? null;
+  if (rootId === null) {
+    return {
+      ok: true,
+      threadRootId: null,
+      rootUntil: null,
+      rootRemainingMs: null,
+      rootChannelId: null,
+    };
+  }
+  const rows = await tx<{
+    id: string;
+    until: Date;
+    remaining_ms: number;
+    channel_id: string | null;
+    thread_root_id: string | null;
+    channel_archived_at: Date | null;
+  }[]>`
+    SELECT s.id, s.until,
+           EXTRACT(EPOCH FROM (s.until - statement_timestamp())) * 1000
+             AS remaining_ms,
+           s.channel_id, s.thread_root_id,
+           channel.archived_at AS channel_archived_at
+    FROM swarm.signals AS s
+    LEFT JOIN swarm.channels AS channel
+      ON channel.channel_id = s.channel_id
+     AND channel.workspace_id = s.workspace_id
+    WHERE s.workspace_id = ${route.workspaceId}::uuid
+      AND s.id = ${rootId}::uuid
+      /* A thread may root ONLY on an undirected signal, and this query is the
+       * enforcement. This function reads swarm.signals as swarm_command, which
+       * bypasses swarm_read.signals — the view that IS the read policy. Without
+       * this arm any member holding a signal id could hang a PUBLIC thread off
+       * a DIRECTED message between two other people: the reply itself is
+       * undirected and readable by everyone, so the thread would disclose that
+       * the private message exists and would attach public replies to it. A
+       * reply loop that needs a private one-hop answer already has in_reply_to,
+       * whose meaning this lane does not touch. */
+      AND s.to_user_id IS NULL
+      AND s.to_agent_principal_id IS NULL
+      /* Belt and braces. Every in_reply_to row is stored DIRECTED --
+       * resolveSignalWriteTarget re-addresses it to the referenced signal's
+       * author -- so the two arms above already exclude one. Asserting it here
+       * makes the property local to this query instead of a conclusion about
+       * another function that a later edit could quietly falsify. */
+      AND s.in_reply_to IS NULL
+      /* A one-second floor, not merely "still live". The reply's until is
+       * clamped to the root's in SQL, and CHECK (until > created_at) would
+       * fire if the root expired between this SELECT and the INSERT. The floor
+       * turns an unexplainable 500 into an honest refusal. */
+      AND s.until > statement_timestamp() + interval '1 second'
+    LIMIT 1
+  `;
+  const root = rows[0];
+  if (root === undefined) {
+    return {
+      ok: false,
+      threadRootId: null,
+      rootUntil: null,
+      rootRemainingMs: null,
+      rootChannelId: null,
+      status: 404,
+      error: "thread_root_not_found",
+      message:
+        "There is no live, undirected message with that id in this workspace. Threads start from messages everyone can read, and a thread cannot outlive the message it starts from. To answer a directed message privately, reply to it instead.",
+      reason: "thread_root_not_found",
+    };
+  }
+  /* A reply INHERITS its root's channel, so the archive check that
+   * resolveSignalChannel does for an explicit slug never runs for a thread
+   * reply -- a review arm found the sequence: create, post, archive, then reply
+   * with thread_root_id alone. The reply landed in the archived channel while
+   * the copy said it takes no new messages. Archive has to be checked wherever
+   * a channel is STAMPED, not only where a slug is resolved. */
+  if (root.channel_archived_at !== null) {
+    return {
+      ok: false,
+      threadRootId: null,
+      rootUntil: null,
+      rootRemainingMs: null,
+      rootChannelId: null,
+      status: 409,
+      error: "channel_archived",
+      message:
+        "That thread is in an archived channel, so it takes no new replies. Its history still reads and its links still resolve.",
+      reason: "channel_archived",
+    };
+  }
+  if (root.thread_root_id !== null) {
+    return {
+      ok: false,
+      threadRootId: null,
+      rootUntil: null,
+      rootRemainingMs: null,
+      rootChannelId: null,
+      status: 400,
+      error: "thread_root_is_a_reply",
+      message:
+        "That message is already a reply in a thread. Reply to the message the thread starts from.",
+      reason: "thread_root_is_a_reply",
+    };
+  }
+  return {
+    ok: true,
+    threadRootId: root.id,
+    rootUntil: root.until,
+    rootRemainingMs: Number(root.remaining_ms),
+    rootChannelId: root.channel_id,
+  };
 }
 
 interface SignalWriteTarget {
@@ -6231,6 +6823,31 @@ async function resolveSignalAttachments(
   return { ok: true, attachments };
 }
 
+/** Where the signal is filed, and how long it may live once clamped. */
+interface SignalPlacement {
+  channelId: string | null;
+  threadRootId: string | null;
+  broadcastToChannel: boolean;
+  untilMs: number;
+  /**
+   * A thread reply may not outlive its root. Applied in SQL against the same
+   * statement_timestamp() the row is created at, so no clock but Postgres's
+   * decides it.
+   */
+  untilCeiling: string | null;
+  /**
+   * Did the CALLER name this horizon, or is it a per-kind default?
+   *
+   * The two cases get different treatment, and the difference is the whole
+   * honesty rule. A DEFAULT may be clamped down to the ceiling silently: the
+   * caller expressed no opinion, so shortening it tells no lie. An EXPLICIT
+   * horizon may never be silently shortened -- it is either stored exactly as
+   * asked or REFUSED, and the refusal is decided in the same statement as the
+   * insert so no time can pass between the check and the write.
+   */
+  untilExplicit: boolean;
+}
+
 async function postSignal(
   tx: Sql,
   route: Route,
@@ -6238,9 +6855,9 @@ async function postSignal(
   command: SignalCommand,
   target: SignalWriteTarget,
   attachments: readonly SignalAttachment[],
-): Promise<SignalRecord> {
-  const untilMs = command.until_ms ??
-    SIGNAL_DEFAULT_UNTIL_MS[command.signal_kind];
+  placement: SignalPlacement,
+): Promise<SignalRecord | null> {
+  const untilMs = placement.untilMs;
   const signalId = crypto.randomUUID();
   const rows = await tx<{
     id: string;
@@ -6255,12 +6872,59 @@ async function postSignal(
     body: string;
     until: Date;
     created_at: Date;
+    channel_id: string | null;
+    thread_root_id: string | null;
+    broadcast_to_channel: boolean;
   }[]>`
+    WITH candidate AS (
+      /* The value that will actually be stored, computed ONCE so the WHERE
+       * below can test the same number the row would carry.
+       *
+       * An explicit horizon is stored exactly as named. A defaulted one is
+       * clamped to the ceiling with LEAST, which tells no lie because the
+       * caller expressed no opinion.
+       *
+       * GREATEST is the floor that keeps the row legal. resolveThreadRoot
+       * requires the root to be live with a one-second margin, but a client
+       * round trip separates that SELECT from this INSERT and
+       * statement_timestamp() advances with each statement. If a stall eats the
+       * whole margin, the clamped value would land at or before created_at and
+       * CHECK (until > created_at) would fire, turning a thread reply into a
+       * 500 where a refusal belongs.
+       *
+       * The floor RAISES the value, so on its own it can push a defaulted reply
+       * PAST its root -- a review arm found exactly that, on the one path the
+       * old WHERE could not refuse. The WHERE now tests this computed value for
+       * both branches, so the floor can never produce a stored row that
+       * outlives its root: it is refused instead. statement_timestamp() is
+       * stable within a statement, so the CTE and the WHERE agree. */
+      SELECT GREATEST(
+        CASE WHEN ${placement.untilExplicit}
+          THEN statement_timestamp() + ${untilMs} * interval '1 millisecond'
+          ELSE LEAST(
+            statement_timestamp() + ${untilMs} * interval '1 millisecond',
+            COALESCE(
+              ${placement.untilCeiling}::timestamptz,
+              statement_timestamp() + ${untilMs} * interval '1 millisecond'
+            )
+          )
+        END,
+        statement_timestamp() + interval '1 millisecond'
+      ) AS until_value
+    )
     INSERT INTO swarm.signals (
       id, workspace_id, from_principal, from_kind,
       to_user_id, to_agent_principal_id, in_reply_to,
-      about, kind, body, until, created_at
-    ) VALUES (
+      about, kind, body, until, created_at,
+      channel_id, thread_root_id, broadcast_to_channel
+    )
+    /* SELECT ... WHERE, not VALUES, so the fits-in-the-thread test and the
+     * write are ONE statement. A pre-check in the handler cannot give this
+     * guarantee: statement_timestamp() advances between statements, so a
+     * horizon that fit when it was checked can stop fitting before the insert,
+     * and the caller would be silently shortened instead of refused. Zero rows
+     * back is the refusal, and the handler turns it into a 409. */
+    SELECT
       ${signalId}::uuid,
       ${route.workspaceId}::uuid,
       ${canonicalPrincipal(auth.actor)}::uuid,
@@ -6271,16 +6935,35 @@ async function postSignal(
       ${command.about},
       ${command.signal_kind},
       ${command.body},
-      statement_timestamp() + ${untilMs} * interval '1 millisecond',
-      statement_timestamp()
-    )
+      candidate.until_value,
+      statement_timestamp(),
+      ${placement.channelId}::uuid,
+      ${placement.threadRootId}::uuid,
+      ${placement.broadcastToChannel}
+    FROM candidate
+    WHERE
+      ${placement.untilCeiling}::timestamptz IS NULL
+      OR candidate.until_value <= ${placement.untilCeiling}::timestamptz
     RETURNING
       id, workspace_id, from_principal, from_kind,
       to_user_id, to_agent_principal_id, in_reply_to,
-      about, kind, body, until, created_at
+      about, kind, body, until, created_at,
+      channel_id, thread_root_id, broadcast_to_channel
   `;
   const signal = rows[0];
-  if (!signal) throw new Error("signal insert did not return a row");
+  /* Zero rows is the atomic refusal above, not a failure. Every other reason an
+   * insert could return nothing is impossible here: there is no ON CONFLICT and
+   * no other WHERE arm. */
+  if (!signal) {
+    /* Zero rows is the atomic refusal above, not a failure. It is reachable on
+     * BOTH the explicit and the defaulted path: the floor can raise a defaulted
+     * value past the ceiling when a stall eats the root's margin, and refusing
+     * is better than storing a reply that outlives its thread. Every other
+     * reason an insert could return nothing is impossible here: no ON CONFLICT,
+     * and no WHERE arm but the ceiling. */
+    if (placement.untilCeiling !== null) return null;
+    throw new Error("signal insert did not return a row");
+  }
   for (const [position, attachment] of attachments.entries()) {
     await tx`
       INSERT INTO swarm.signal_attachments (
@@ -6308,6 +6991,9 @@ async function postSignal(
     attachments: [...attachments],
     until: signal.until.toISOString(),
     created_at: signal.created_at.toISOString(),
+    channel_id: signal.channel_id,
+    thread_root_id: signal.thread_root_id,
+    broadcast_to_channel: signal.broadcast_to_channel,
   };
 }
 
@@ -6452,12 +7138,26 @@ async function handleTransaction(
         reason: validation.reason,
         detail: ignoredIdentity,
       });
+      /* The reason reaches the CALLER, not only the audit table.
+       *
+       * It used to go to insertAudit alone, so a 400 was a bare
+       * `{"error":"invalid_request"}` and every sentence this edge builds --
+       * the slug rule, the reserved names, the field lists, the thread rules --
+       * was written for an operator reading Postgres rather than for the person
+       * who got the refusal. Generating those sentences from the constants is
+       * worth nothing while the caller cannot see them.
+       *
+       * Additive and safe for installed clients: they ignore unknown top-level
+       * fields by contract (src/cloud/signals.ts:315-326), and the error code
+       * they branch on is unchanged. Nothing secret is added -- the strings are
+       * validator-authored and already stored in swarm.audit. */
       return {
         status: validation.status,
         body: {
           error: validation.status === 413
             ? "payload_too_large"
             : "invalid_request",
+          message: validation.reason,
         },
       };
     }
@@ -6526,6 +7226,16 @@ async function handleTransaction(
     // scope. The reducer still requires a live membership or principal.
     const isFeedback =
       validation.command.kind === "submit_feedback";
+    /* Channel commands are agent-allowed by class, the way file commands are.
+     * A channel grants nothing and scopes nothing, so a "channel_create" scope
+     * would be pure ceremony — and existing minted tokens could never carry a
+     * new scope, so gating on one would refuse every agent already running. The
+     * reducer-free handler still requires a live membership or principal via
+     * resolveRoute. */
+    const isChannelCommand =
+      (CHANNEL_COMMAND_KINDS as readonly string[]).includes(
+        validation.command.kind,
+      );
     if (isModelDeclare && auth.agent === null) {
       await insertAudit(tx, {
         auth,
@@ -6577,6 +7287,7 @@ async function handleTransaction(
       !isAgentTokenRevoke &&
       !isModelDeclare &&
       !isFeedback &&
+      !isChannelCommand &&
       !isDeliveryCommand &&
       !isSeenCommand &&
       !isFileCommand &&
@@ -6867,6 +7578,79 @@ async function handleTransaction(
       };
     }
 
+    if ((CHANNEL_COMMAND_KINDS as readonly string[]).includes(command.kind)) {
+      const outcome = await applyChannelCommand(
+        tx,
+        route,
+        auth,
+        command as ChannelCommand,
+      );
+      if (!outcome.ok) {
+        await insertAudit(tx, {
+          auth,
+          commandKind: kind,
+          workspaceId: route.workspaceId,
+          streamId: route.streamId,
+          outcome: outcome.status === 404 ? "authz" : "domain",
+          reason: outcome.reason,
+          hash,
+        });
+        return {
+          status: outcome.status,
+          body: { error: outcome.error, message: outcome.message },
+        };
+      }
+      const channelResponse: StoredResponse = {
+        ok: true,
+        event_ids: [],
+        channel: outcome.channel,
+      };
+      const inserted = await tx<{ command_id: string }[]>`
+        INSERT INTO swarm.idempotency_keys (
+          principal_kind, principal_id, command_id,
+          workspace_id, stream_id, request_hash, response
+        ) VALUES (
+          ${auth.credentialKind},
+          ${canonicalPrincipal(auth.actor)},
+          ${commandId},
+          ${route.workspaceId}::uuid,
+          ${route.streamId}::uuid,
+          ${hash},
+          ${tx.json(channelResponse as unknown as postgres.JSONValue)}::jsonb
+        )
+        ON CONFLICT (principal_kind, principal_id, command_id) DO NOTHING
+        RETURNING command_id
+      `;
+      if (inserted.length === 0) {
+        throw new LedgerRace(
+          auth,
+          commandId,
+          kind,
+          route.workspaceId,
+          route.streamId,
+          hash,
+        );
+      }
+      await insertAudit(tx, {
+        auth,
+        commandKind: kind,
+        workspaceId: route.workspaceId,
+        streamId: route.streamId,
+        outcome: "accepted",
+        detail: ignoredIdentity,
+        hash,
+      });
+      return {
+        status: 200,
+        body: {
+          status: "accepted",
+          ...channelResponse,
+          events: [],
+          min_client_version: minClientVersion,
+        },
+      };
+    }
+
     if (command.kind === "post_signal") {
       const signalTarget = await resolveSignalWriteTarget(
         tx,
@@ -6955,6 +7739,94 @@ async function handleTransaction(
         };
       }
 
+      const channelResolution = await resolveSignalChannel(tx, route, command);
+      if (!channelResolution.ok) {
+        await insertAudit(tx, {
+          auth,
+          commandKind: kind,
+          workspaceId: route.workspaceId,
+          streamId: route.streamId,
+          outcome: channelResolution.status === 404 ? "authz" : "domain",
+          reason: channelResolution.reason!,
+          hash,
+        });
+        return {
+          status: channelResolution.status!,
+          body: {
+            error: channelResolution.error!,
+            message: channelResolution.message!,
+          },
+        };
+      }
+      const threadResolution = await resolveThreadRoot(tx, route, command);
+      if (!threadResolution.ok) {
+        await insertAudit(tx, {
+          auth,
+          commandKind: kind,
+          workspaceId: route.workspaceId,
+          streamId: route.streamId,
+          outcome: threadResolution.status === 404 ? "authz" : "domain",
+          reason: threadResolution.reason!,
+          hash,
+        });
+        return {
+          status: threadResolution.status!,
+          body: {
+            error: threadResolution.error!,
+            message: threadResolution.message!,
+          },
+        };
+      }
+      /* Reply expiry: the server CLAMPS a defaulted horizon and REFUSES an
+       * explicit one it cannot honour. Silently shortening a horizon the caller
+       * typed is the dishonest branch, and it is the one case where a refusal
+       * tells the truth. The per-kind defaults are longer than a short-lived
+       * root for almost every combination, so refusing them all would refuse
+       * almost every thread reply. */
+      const requestedUntilMs = command.until_ms ??
+        SIGNAL_DEFAULT_UNTIL_MS[command.signal_kind];
+      const rootUntil = threadResolution.rootUntil;
+      const rootRemainingMs = threadResolution.rootRemainingMs;
+      if (
+        rootUntil !== null && rootRemainingMs !== null &&
+        command.until_ms !== undefined
+      ) {
+        /* An EARLY, friendly refusal. Both sides come from Postgres, so no
+         * clock skew decides it -- but it is measured one statement before the
+         * insert, so it cannot be the guarantee. The guarantee is the WHERE in
+         * postSignal, which tests the same thing in the writing statement. This
+         * check exists to give the caller the root's expiry in the message
+         * rather than a bare conflict. */
+        if (command.until_ms > rootRemainingMs) {
+          await insertAudit(tx, {
+            auth,
+            commandKind: kind,
+            workspaceId: route.workspaceId,
+            streamId: route.streamId,
+            outcome: "domain",
+            reason: "thread_reply_until_exceeds_root",
+            hash,
+          });
+          return {
+            status: 409,
+            body: {
+              error: "thread_reply_until_exceeds_root",
+              message:
+                `A reply cannot outlive the message its thread starts from. That thread ends at ${rootUntil.toISOString()}. Ask for a shorter horizon, or leave it out and it is set for you.`,
+              root_until: rootUntil.toISOString(),
+            },
+          };
+        }
+      }
+      /* A threaded reply inherits its root's channel. The client does not get
+       * to file a reply somewhere its thread is not, and a reply whose root is
+       * unfiled stays unfiled. An explicit channel alongside thread_root_id is
+       * REFUSED by the validator (chatSignalShapeProblem), not silently
+       * ignored here, so this line only ever chooses between an inherited
+       * value and a top-level post's own channel. */
+      const placementChannelId = threadResolution.threadRootId !== null
+        ? threadResolution.rootChannelId
+        : channelResolution.channelId;
       const signal = await postSignal(
         tx,
         route,
@@ -6962,7 +7834,50 @@ async function handleTransaction(
         command,
         signalTarget,
         attachmentResolution.attachments,
+        {
+          channelId: placementChannelId,
+          threadRootId: threadResolution.threadRootId,
+          broadcastToChannel: command.broadcast_to_channel ?? false,
+          untilMs: requestedUntilMs,
+          untilCeiling: rootUntil === null ? null : rootUntil.toISOString(),
+          untilExplicit: command.until_ms !== undefined,
+        },
       );
+      if (signal === null) {
+        /* The atomic arm fired: the horizon fit when it was checked and no
+         * longer fit when the row was written. Refusing is the honest answer;
+         * storing a shorter horizon than the caller named is the branch this
+         * design rules out. */
+        await insertAudit(tx, {
+          auth,
+          commandKind: kind,
+          workspaceId: route.workspaceId,
+          streamId: route.streamId,
+          outcome: "domain",
+          reason: "thread_reply_until_exceeds_root",
+          hash,
+        });
+        return {
+          status: 409,
+          body: {
+            error: "thread_reply_until_exceeds_root",
+            /* This fires when the horizon the caller NAMED no longer fits the
+             * time the thread has left, measured in the writing statement. The
+             * thread itself is usually still very much alive -- an earlier
+             * version of this sentence said it had ended, which was false for
+             * every case but one and is the kind of confident wrong sentence
+             * this codebase keeps producing. Say what is true: the horizon does
+             * not fit, and here is what the thread runs to. */
+            message: command.until_ms !== undefined
+              ? "A reply cannot outlive the message its thread starts from, and the horizon you asked for no longer fits the time that thread has left. Ask for a shorter one, or leave it out and it is set for you."
+              /* The defaulted path reaches this arm too, because the floor can
+               * raise a defaulted value past the ceiling. Telling that caller
+               * to "leave it out" is telling them to do what they already did. */
+              : "That thread has too little time left to take a reply. Start a new message instead.",
+            ...(rootUntil === null ? {} : { root_until: rootUntil.toISOString() }),
+          },
+        };
+      }
       const signalResponse: StoredResponse = {
         ok: true,
         event_ids: [],
