@@ -6525,7 +6525,16 @@ import "../../styles/tokens.css";
       return [...urls].sort().join("\n");
     };
     const runningBuild = buildAssetsFrom(document);
+    /* OUR markup, not the whole document. Comparing the entire served HTML would flap on bytes
+       that are not ours: an injected analytics or preview toolbar, a per-request id from a proxy.
+       Everything this build renders lives inside <live-dashboard>, and anything injected around
+       it does not, so this is the part of the page a deploy actually changes. */
+    const buildMarkupFrom = (root: ParentNode): string =>
+      root.querySelector("live-dashboard")?.outerHTML ?? "";
     let baselineMarkup = "";
+    /* One poll at a time. Toggling the tab can start another before the last has answered, and
+       two in flight can settle out of order and baseline the wrong page. */
+    let pollInFlight = false;
     /* NOT the empty string. "nothing dismissed yet" has to be a value no served build can equal,
        or a probe that returns nothing compares equal to it and reads as already dismissed. */
     let dismissedBuild: string | null = null;
@@ -6540,8 +6549,9 @@ import "../../styles/tokens.css";
      * fetch, a non-OK status, and a body with no hashed assets in it — a login redirect, an SSO
      * interstitial, an error page — all mean the poll learned nothing, not that nothing changed. */
     const checkForNewBuild = async (): Promise<void> => {
-      if (!runningBuild) return;
-      let markup = "";
+      if (!runningBuild || pollInFlight) return;
+      pollInFlight = true;
+      let body = "";
       try {
         const response = await fetch(window.location.pathname, {
           cache: "no-store",
@@ -6549,18 +6559,21 @@ import "../../styles/tokens.css";
           headers: { accept: "text/html" },
         });
         if (!response.ok) return;
-        markup = await response.text();
+        body = await response.text();
       } catch {
         return;
+      } finally {
+        pollInFlight = false;
       }
-      const served = buildAssetsFrom(
-        new DOMParser().parseFromString(markup, "text/html"),
-      );
+      const page = new DOMParser().parseFromString(body, "text/html");
+      const served = buildAssetsFrom(page);
       if (!served) return;
+      const markup = buildMarkupFrom(page);
       if (!baselineMarkup) baselineMarkup = markup;
-      /* The identity of what is being served, for dismissal: the assets when they differ, and
-       * otherwise the markup, so dismissing a copy change does not also dismiss the next one. */
-      servedBuild = served === runningBuild ? markup : served;
+      /* BOTH parts, always. Branching on which one differs made a dismissal hide later builds:
+       * dismissing an asset change stored the asset set, and the next build that changed only
+       * markup carried that same asset set and compared equal to it. */
+      servedBuild = `${served}\n${markup}`;
       const isNewBuild = served !== runningBuild || markup !== baselineMarkup;
       if (!isNewBuild) {
         showUpdateNotice(false);
@@ -7016,7 +7029,8 @@ import "../../styles/tokens.css";
      This bar sits above the app bar on a phone, which is the space the 2026-09-04 mobile work
      was for, so it stays on one line: nothing wraps, the sentence truncates before the controls
      give way, and the controls keep their 44px targets. Measured at 390x844: 128px when the
-     sentence wrapped and "Not now" wrapped inside its own button, 60px after. */
+     sentence wrapped and "Not now" wrapped inside its own button, 53px after, and 53px at
+     320x568 too. */
   .dashboard__update-notice {
     grid-row: 1;
     /* A grid item's automatic minimum is its MIN-CONTENT width, so without this the bar sizes

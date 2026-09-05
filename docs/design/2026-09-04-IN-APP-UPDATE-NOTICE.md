@@ -53,7 +53,10 @@ compares it with the set in the HTML the server returns for the same path. This 
 (the code being served is not the code in this tab) and it needs no history, so it also catches a
 build that was deployed before this page ever loaded.
 
-**Signal 2 — served HTML against the first served HTML this tab saw.** Signal 1 alone does not see
+**Signal 2 — our served markup against the first our-markup this tab saw.** It reads
+`<live-dashboard>`, not the whole document. Everything this build renders is inside that element,
+and bytes that are not ours — an injected analytics or preview toolbar, a proxy's per-request id —
+land outside it. Comparing the whole document would have flapped on those and cried wolf. Signal 1 alone does not see
 a build that changed only markup. That is measured, not supposed: a build with one word changed in
 a component template produced a different `/app/index.html` and byte-identical `/_astro` names,
 because component markup is inlined into the page rather than into a hashed asset. Copy changes
@@ -67,14 +70,31 @@ build. Nothing new has to be kept in step, so nothing can drift.
 **Why it cannot fire on nothing.** A rebuild that changes no source produces the same asset names
 and the same bytes, so both comparisons are equal and no notice appears.
 
+**Dismissal is remembered against the WHOLE build**, both parts joined, never against whichever
+half happened to differ. Storing one half let a dismissal silence a later build: dismissing an
+asset change stored the asset set, and the next build that changed only markup carried that same
+asset set and compared equal to it.
+
+**One poll at a time.** Toggling the tab can start another before the last has answered, and two
+in flight can settle out of order and baseline the wrong page.
+
 **What it does when it cannot tell.** A failed fetch, a non-OK status, or a body with no hashed
 assets in it — a login redirect, an SSO interstitial, an error page — all mean the poll learned
 nothing. It does nothing and waits for the next one. Silence is the only honest output of a probe
 that did not reach what it measures.
 
-**Not covered, and named so nobody has to rediscover it.** A build deployed in the gap between
-this document loading and the first poll, which changed markup only: signal 1 sees the same assets
-and signal 2 takes the new page as its baseline. The next build after it is detected normally.
+**Not covered, and named so nobody has to rediscover it.**
+
+- A build deployed in the gap between this document loading and the first poll, which changed
+  markup only: signal 1 sees the same assets and signal 2 takes the new page as its baseline. The
+  next build after it is detected normally.
+- A change to a file `/app` does not reference from its own HTML — a lazily imported chunk whose
+  hash moved, or something under `public/`. The app has no dynamic imports today (`import(` count
+  in `LiveDashboard.astro` is 0, and the built page emits no `modulepreload`), so there is no such
+  chunk to miss; adding one would open this gap.
+- A change to markup OUTSIDE `<live-dashboard>` that also leaves every asset hash alone: a `<head>`
+  edit in the layout, for instance. Signal 1 covers head changes that touch a stylesheet or script,
+  which is most of them.
 
 ## The notice
 

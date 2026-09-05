@@ -35,7 +35,15 @@ const contentTypes: Record<string, string> = {
 };
 
 /** What the page's own poll is answered with. The document load never gets any of these. */
-type Variant = "same" | "markup" | "assets" | "assets-first" | "gone" | "no-build";
+type Variant =
+  | "same"
+  | "markup"
+  | "assets"
+  | "assets-first"
+  | "gone"
+  | "no-build"
+  | "injected"
+  | "dismiss-then-markup";
 
 /* Served from the FIRST poll, so it becomes the markup baseline and only the asset comparison
    can see it. Without this the asset signal has no case of its own: every other variant differs
@@ -74,7 +82,28 @@ const pollBody = (variant: Variant): { body: string; status: number } => {
     );
     return { body: rewritten, status: 200 };
   }
+  if (variant === "injected") {
+    /* The same build, with bytes that are not ours added around it: a preview or analytics
+       toolbar, a per-request id from a proxy. The page must not read this as a deploy. */
+    const rewritten = html.replace("</body>", '<script>window.__injected="req-000123"</script></body>');
+    assert.notEqual(rewritten, html, "injected variant injected nothing, so it tests nothing");
+    assert.ok(
+      !rewritten.includes('__injected="req-000123"</live-dashboard>'),
+      "injected variant put its bytes INSIDE live-dashboard, where a build's own markup lives",
+    );
+    return { body: rewritten, status: 200 };
+  }
   return { body: html, status: 200 };
+};
+
+/* Poll 3 of the dismissal case: the asset-changed build the reader dismissed, and then a markup
+   change on top of it. The asset set is IDENTICAL to the dismissed one, so this is caught only if
+   dismissal is remembered against the whole build and not against whichever half differed. */
+const dismissThenMarkupBody = (): string => {
+  const assets = pollBody("assets").body;
+  const rewritten = assets.replace("A new version is ready.", "A new version is ready. Build three.");
+  assert.notEqual(rewritten, assets, "the third build changed nothing, so it tests nothing");
+  return rewritten;
 };
 
 const frameScript = `<script>
@@ -88,8 +117,19 @@ const frameScript = `<script>
     const wait = (ms) => new Promise((resolve) => setTimeout(resolve, ms));
     const notice = () => frame.contentDocument?.querySelector("[data-update-notice]") ?? null;
     for (let attempt = 0; attempt < 160 && !notice(); attempt += 1) await wait(25);
-    /* The page polls once as soon as it starts. Give that first round trip room to land. */
-    await wait(900);
+    /* WAIT ON THE CONDITION, NOT A DURATION. A flat sleep made this case pass or fail with the
+       load on the host: the third poll is two round trips deep and a busy box does not finish it
+       in a fixed window. The server counts polls, so wait for the count. */
+    const polledAtLeast = async (target) => {
+      for (let attempt = 0; attempt < 300; attempt += 1) {
+        if (Number(await (await fetch("/__polls")).text()) >= target) return true;
+        await wait(25);
+      }
+      return false;
+    };
+    await polledAtLeast(1);
+    /* The decision runs after the response resolves, so give that microtask turn room. */
+    await wait(120);
     /* Then the second poll, which is the one that meets the deploy. The page polls on a timer
        and when a hidden tab comes back; driving the visibility path is how a test gets the
        second poll without waiting out the interval, and it exercises the real listener. */
@@ -99,7 +139,17 @@ const frameScript = `<script>
     doc0.dispatchEvent(new view.Event("visibilitychange"));
     Object.defineProperty(doc0, "visibilityState", { value: "visible", configurable: true });
     doc0.dispatchEvent(new view.Event("visibilitychange"));
-    await wait(900);
+    await polledAtLeast(2);
+    await wait(120);
+    if (new URL(location.href).searchParams.get("dismiss") === "1") {
+      frame.contentDocument.querySelector("[data-update-dismiss]").click();
+      Object.defineProperty(doc0, "visibilityState", { value: "hidden", configurable: true });
+      doc0.dispatchEvent(new view.Event("visibilitychange"));
+      Object.defineProperty(doc0, "visibilityState", { value: "visible", configurable: true });
+      doc0.dispatchEvent(new view.Event("visibilitychange"));
+      await polledAtLeast(3);
+      await wait(120);
+    }
     const polls = Number(await (await fetch("/__polls")).text());
     const doc = frame.contentDocument;
     const bar = notice();
@@ -112,7 +162,12 @@ const frameScript = `<script>
       polls,
       present: Boolean(bar),
       shown: bar ? !bar.hidden : false,
-      height: bar && !bar.hidden ? bar.getBoundingClientRect().height : 0,
+      height: bar ? bar.getBoundingClientRect().height : 0,
+      /* The attribute is not the question a reader has. The app's own [hidden] rule carries
+         display:none !important, and asserting the COMPUTED value is what proves the bar is
+         really gone rather than merely marked. NOTE: no backticks in here, this is inside a
+         template literal. */
+      display: bar ? frame.contentWindow.getComputedStyle(bar).display : "absent",
       buttons,
       viewportWidth: frame.contentWindow?.innerWidth ?? 0,
       documentLength: doc?.body?.innerHTML.length ?? 0,
@@ -154,6 +209,10 @@ const startServer = async (
          order is what makes that signal reachable at all. */
       const { body, status } = polls === 1 && !FROM_FIRST_POLL.has(variant)
         ? { body: appHtml(), status: 200 }
+        : variant === "dismiss-then-markup" && polls >= 3
+        ? { body: dismissThenMarkupBody(), status: 200 }
+        : variant === "dismiss-then-markup"
+        ? pollBody("assets")
         : pollBody(variant);
       response.writeHead(status, { "content-type": contentTypes[".html"] }).end(body);
       return;
@@ -212,6 +271,7 @@ type Measurement = {
   error?: string;
   height: number;
   polls: number;
+  display: string;
   present: boolean;
   shown: boolean;
   viewportWidth: number;
@@ -223,6 +283,7 @@ const measure = async (
   variant: Variant,
   width = 390,
   height = 844,
+  dismiss = false,
 ): Promise<Measurement> => {
   const server = await startServer(variant);
   try {
@@ -236,7 +297,7 @@ const measure = async (
       "--window-size=1600,1200",
       "--virtual-time-budget=20000",
       "--dump-dom",
-      `${server.origin}/__measure?width=${width}&height=${height}`,
+      `${server.origin}/__measure?width=${width}&height=${height}&dismiss=${dismiss ? 1 : 0}`,
     ], { killSignal: "SIGKILL", maxBuffer: 12 * 1024 * 1024, timeout: 40_000 });
     const encoded = stdout.match(/data-update-measurement="([^"]+)"/)?.[1];
     assert.ok(encoded, `${variant}: Chrome returned no measurement.\nDOM: ${stdout.slice(-1_500)}`);
@@ -269,6 +330,38 @@ test("the same build being served raises no notice", async () => {
   const value = await measure(await findChrome(), "same");
   assertProbeHappened(value, "same");
   assert.equal(value.shown, false, `same build must not claim an update: ${JSON.stringify(value)}`);
+  assert.equal(value.display, "none", "the bar is marked hidden but still painted");
+  assert.equal(value.height, 0, "the bar is marked hidden but still takes height");
+});
+
+/* Bytes that are not ours, around a build that did not change. A preview or analytics toolbar and
+   a proxy's per-request id both land outside <live-dashboard>, which is why the markup comparison
+   reads that element and not the whole document. */
+test("bytes injected around an unchanged build raise no notice", async () => {
+  const value = await measure(await findChrome(), "injected");
+  assertProbeHappened(value, "injected");
+  assert.equal(
+    value.shown,
+    false,
+    `an injected script is not a deploy: ${JSON.stringify(value)}`,
+  );
+  assert.equal(value.display, "none", "the bar is marked hidden but still painted");
+});
+
+/* Dismissal must not silence a LATER, different build. The third build here carries the SECOND
+   build's asset set with different markup, so it is only seen if dismissal was remembered against
+   the whole build rather than whichever half happened to differ. */
+test("dismissing one build does not hide the next one", async () => {
+  const value = await measure(await findChrome(), "dismiss-then-markup", 390, 844, true);
+  assert.ok(
+    value.polls >= 3,
+    `the third build was never served (${value.polls} polls), so this measures nothing`,
+  );
+  assert.equal(
+    value.shown,
+    true,
+    `a build after the dismissed one must ask again: ${JSON.stringify(value)}`,
+  );
 });
 
 test("a build that changed only markup is detected", async () => {
@@ -313,6 +406,8 @@ test("a probe that did not reach the page stays quiet", async () => {
       false,
       `${variant}: a probe that learned nothing must not claim an update: ${JSON.stringify(value)}`,
     );
+    assert.equal(value.display, "none", `${variant}: the bar is marked hidden but still painted`);
+    assert.equal(value.height, 0, `${variant}: the bar is marked hidden but still takes height`);
   }
 });
 
