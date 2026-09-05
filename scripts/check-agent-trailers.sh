@@ -64,8 +64,12 @@ check_commit() {
   # A merge commit's message is written by GitHub or by git, not by the agent that wrote the work.
   # The parent commits carry the trailers, so requiring them here would fail every merge forever
   # while adding nothing to the audit.
+  # Exit 3 means EXEMPT: the commit is real, but its message was written by git or by GitHub rather
+  # than by an agent. The caller counts it apart from the checked ones. Folding an exemption into
+  # the checked total says a commit's trailers were read when nothing read them, which is the same
+  # over-count grace was split out to avoid.
   if [ "$(git rev-list --no-walk --count --merges "$sha")" -gt 0 ]; then
-    return 0
+    return 3
   fi
 
   # A SQUASH MERGE is not a merge commit. GitHub writes a SINGLE-PARENT commit on the default
@@ -81,7 +85,7 @@ check_commit() {
   # gate would set BOTH. That closes the one-line evasion without touching the case this exists for.
   if [ "$(git show -s --format='%ce' "$sha")" = "$AGENT_TRAILER_GITHUB_COMMITTER" ] \
      && [ "$(git show -s --format='%ae' "$sha")" != "$AGENT_TRAILER_GITHUB_COMMITTER" ]; then
-    return 0
+    return 3
   fi
 
   local key value
@@ -126,13 +130,14 @@ check_range() {
     return 0
   fi
 
-  local bad=0 skipped=0 checked=0 sha status
+  local bad=0 skipped=0 exempt=0 checked=0 sha status
   for sha in "${shas[@]}"; do
     status=0
     check_commit "$sha" || status=$?
     case "$status" in
       0) checked=$((checked + 1)) ;;
       2) skipped=$((skipped + 1)) ;;
+      3) exempt=$((exempt + 1)) ;;
       *) checked=$((checked + 1)); bad=$((bad + 1)) ;;
     esac
   done
@@ -142,9 +147,10 @@ check_range() {
 
 AGENT-AUTHORSHIP TRAILERS MISSING OR INVALID on $bad of $checked commit(s) checked.
 
-A commit predates this rule when its own tree has no $AGENT_TRAILER_HOOK_PATH, or it was authored
-before $AGENT_TRAILER_GRACE_BEFORE; $skipped of ${#shas[@]} in this range were skipped for one of
-those reasons. The ones named above were not.
+Of ${#shas[@]} commit(s) in this range, $checked were checked, $skipped predate the rule (no
+$AGENT_TRAILER_HOOK_PATH in their own tree, or authored before $AGENT_TRAILER_GRACE_BEFORE) and
+$exempt are exempt (a merge, or a commit $AGENT_TRAILER_GITHUB_COMMITTER wrote). The ones named
+above were checked.
 
 Every commit records the model that wrote it, so past work can be audited as new models ship.
 Required on each commit: $(required_keys_sentence)
@@ -164,7 +170,7 @@ rather than leaving the field blank:
     CSWARM_AGENT_MODEL=$AGENT_TRAILER_MODEL_NO_AGENT git commit --amend --no-edit
 
 If an agent wrote it but its runtime exposes no readable model, the honest value is
-'$AGENT_TRAILER_MODEL_UNKNOWN' with Agent-Model-Source 'none'. Do NOT type a model name you did
+'$AGENT_TRAILER_MODEL_UNKNOWN' with Agent-Model-Source '$AGENT_TRAILER_SOURCE_NONE'. Do NOT type a model name you did
 not read off the runtime: a wrong value is worse than an absent one, because it is invisible.
 
 Format and escape hatches: docs/development/agent-trailers.md
@@ -172,11 +178,13 @@ MSG
     return 1
   fi
 
+  printf 'agent-trailers OK: %d of %d commit(s) checked in %s\n' "$checked" "${#shas[@]}" "$range"
   if [ "$skipped" -gt 0 ]; then
-    printf 'agent-trailers OK: %d commit(s) checked in %s; %d skipped as predating the rule (no %s in their own tree, or authored before %s)\n' \
-      "$checked" "$range" "$skipped" "$AGENT_TRAILER_HOOK_PATH" "$AGENT_TRAILER_GRACE_BEFORE"
-  else
-    printf 'agent-trailers OK: %d commit(s) checked in %s\n' "$checked" "$range"
+    printf '  %d skipped as predating the rule (no %s in their own tree, or authored before %s)\n' \
+      "$skipped" "$AGENT_TRAILER_HOOK_PATH" "$AGENT_TRAILER_GRACE_BEFORE"
+  fi
+  if [ "$exempt" -gt 0 ]; then
+    printf '  %d exempt: a merge, or a commit %s wrote\n' "$exempt" "$AGENT_TRAILER_GITHUB_COMMITTER"
   fi
   return 0
 }
@@ -474,6 +482,17 @@ Agent-Model-Source: declared" side.txt
   status=0
   ( cd "$tmp" && "$checker" --range "HEAD~1..HEAD" ) >/dev/null 2>&1 || status=$?
   assert_status 0 "$status" "a squash merge GitHub committed is exempt"
+
+  # ...and it must be REPORTED as exempt, not counted among the checked. Nothing read that commit's
+  # trailers, so calling it checked tells a reader the audit covered a commit it never opened. Same
+  # over-count grace was split out to avoid.
+  out="$( cd "$tmp" && "$checker" --range "HEAD~1..HEAD" 2>&1 )" || true
+  selftest_assertions=$((selftest_assertions + 1))
+  case "$out" in
+    *"0 of 1 commit(s) checked"*"1 exempt"*) : ;;
+    *) printf 'self-test FAIL: an exempt commit is counted as checked (got: %s)\n' "$out" >&2
+       selftest_failures=$((selftest_failures + 1)) ;;
+  esac
 
   # 14c. ...but the exemption must not become a one-line evasion. A squash merge keeps the PR
   #      author, so committer and author differ; somebody running `git config user.email

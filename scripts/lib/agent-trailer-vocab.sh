@@ -19,9 +19,16 @@
 
 # The keys the gate REQUIRES on every commit. Adding one here makes the gate stricter and updates
 # the failure message that names them; it does not need an edit anywhere else.
+#
+# Agent-Model-Source IS REQUIRED, not optional. It is the field that separates a model read off a
+# runtime from one somebody typed, and a gate that lets it be absent cannot claim the audit is
+# weighable — a reader meeting a bare `Agent-Model` has no way to tell which they are looking at.
+# The emitter always writes it, so requiring it costs nothing and closes the gap between what the
+# doc promises and what the gate enforces.
 AGENT_TRAILER_REQUIRED_KEYS=(
   Agent-Model
   Agent-Family
+  Agent-Model-Source
 )
 
 # Keys the emitter may produce. Superset of the required ones.
@@ -57,8 +64,12 @@ AGENT_TRAILER_FAMILIES=(
 
 # How the model string was obtained. This is the audit's own honesty field: it says whether the
 # model name was MEASURED off the runtime or merely ASSERTED by whoever ran the commit.
+#
+# EVERY VALUE HERE IS ONE SOMETHING ACTUALLY WRITES. A `runtime-env` value was listed once and no
+# detector produced it — not one of the four runtimes exports its model in the environment — so a
+# hand-typed `runtime-env` would have been accepted and counted as a measurement of a mechanism that
+# does not exist. Do not add a value here before something emits it.
 #   runtime-transcript  read out of the agent's own live session transcript
-#   runtime-env         read out of an environment variable the runtime itself set
 #   runtime-config      read out of the runtime's on-disk selected-model config
 #   declared            a human or a lead supplied it via CSWARM_AGENT_* (an assertion, not a read)
 #   runtime-ambiguous   MORE THAN ONE runtime's variables were visible, so the environment could
@@ -67,7 +78,6 @@ AGENT_TRAILER_FAMILIES=(
 #   none                nothing readable; the model is the `unknown` sentinel
 AGENT_TRAILER_SOURCES=(
   runtime-transcript
-  runtime-env
   runtime-config
   runtime-ambiguous
   declared
