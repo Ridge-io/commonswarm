@@ -1984,3 +1984,24 @@ comment-only rule; a behaviour failure comes back to the lead first.
 Other lanes: `listener-head-of-line` round 4 at 8e211d7, Gemini PASS, Grok FAIL (PM verifying);
 `site-chips` round 2 at cff55f7 FAIL/FAIL; `update-notice-ordering` started (measure the in-flight
 poll vs the click, then the request-version fix). Host: pressure 1, load ~2.
+
+## Addendum 2026-09-05 04:4x UTC — update-bar dismissal ordering FIXED and LIVE (merge 4857a4b)
+
+The finding both arms raised on the update-notice lane was a real product defect, measured before
+it was fixed: a poll held in flight across a Not-now click landed afterwards as a rollback answer
+and cleared the dismissal it predated, so the bar came back for the build the reader had just
+dismissed. Fix: a poll captures `noticeActionVersion` at start; Not now bumps it; an older answer
+is dropped whole. The new case is also the dismissal-memory control (deleting the save → red).
+`lane/update-notice-ordering` df38cde merged as `4857a4b`, evidence `a38bca7` (copied and counted
+before the worktree was removed this time), deployed; `/app` bar copy live. Not established: the
+ordering against the live site (harness only); the Update button does not bump the counter (both
+arms ruled that correct because it reloads); the recovery-by-next-poll path is argued, not cased.
+
+The site suite again showed 1 failure then exit 0 on rerun (load ~2 this time). Next site gate
+captures the failing test's name (`grep '^not ok'`); an unnamed intermittent is not acceptable.
+
+`lane/listener-head-of-line` 319bc5d PASS/PASS after eight rounds (nine defects found by arms,
+22 mutation controls, live control pasted); rebasing onto main under the diff-shasum rule before
+merge. Its bound: the oldest-pending age is not deliverable from the claim wire; a server change
+(return the oldest pending enqueue time on the claim response) is recorded in the lane's
+DESIGN-BOUNDS.md.
