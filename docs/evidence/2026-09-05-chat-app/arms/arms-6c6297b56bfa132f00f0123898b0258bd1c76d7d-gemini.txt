@@ -1,0 +1,43 @@
+I have completed the review exactly according to the constraints and checks outlined in `REVIEW.md`.
+
+I have saved the final report as an artifact here: [REVIEW_RESULTS.md](file:///Users/yulanbot/.gemini/antigravity-cli/brain/9400ab18-7f54-4cee-8183-f9e356344202/scratch/REVIEW_RESULTS.md).
+
+For your convenience, here is the text of the review:
+
+```markdown
+diff --git a/docs/design/2026-09-05-chat-app-channels.md b/docs/design/2026-09-05-chat-app-channels.md
+
+1. **Privacy copy.**
+Checked `LiveDashboard.astro` and `channels.ts`. All textual references to channels are honest. The empty states correctly branch on `channelListFailed` to avoid falsely claiming "No channels" when the list simply failed to load. The purpose hint uses the `CHANNEL_PURPOSE_MAX` constant. User-entered purposes bypass system copy sweeps, which is intended behavior as they are user data, not system claims.
+
+2. **A filter that replaces the predicate.**
+Checked `signalPage`, `loadSignals`, `refreshLatestSignals`, and the sample mode in `selectChannel`. `signalPage` correctly issues a server-side `eq("channel_id", channelId)` which acts as an honest narrowing condition. The sample-mode client-side filter is safe because the sample data set resides fully in memory as the total set, so filtering it locally does not replace a server authorization predicate.
+
+3. **The URL falling back to the unfiltered feed on a bad id.**
+Checked `applyChannelFromUrl`, `renderFeed`, and `renderUnknownChannel`. A URL with a bad channel ID triggers `unknownChannelId !== null`. While `loadSignals` might fetch the unfiltered feed, `renderFeed` immediately branches into `renderUnknownChannel()`, which explicitly clears the feed list (`list.replaceChildren()`) and displays the unknown channel error, strictly preventing any unfiltered rows from rendering under the channel's name. `?w=` is used only to select from the reader's already-authorized workspaces and is not treated as authorization.
+
+4. **A thread reply that the server would refuse, or one that changes addressing.**
+Checked `submitSignal` and `groupSignalThreads`. The `placement` object explicitly sets either `{ channel: ... }` OR `{ threadRootId: ..., broadcastToChannel: ... }`. It never sends a `thread_root_id` with a `channel`, nor does it send `broadcast_to_channel` without a thread root. `groupSignalThreads` safely evaluates `isOwnRow` to ensure orphan replies (where the root is missing from the page) are retained as standalone rows rather than being dropped.
+
+5. **A typed enumeration inside a message.**
+Checked `LiveDashboard.astro` and `channels.ts`. Constants are correctly used for UI limits, sizes, and labels (e.g., `CHANNEL_PURPOSE_MAX`, `SIGNAL_BODY_MAX`). The storage key `COMPOSER_DRAFT_SCOPE` purposefully hardcodes `"all-signals"` to prevent users from losing their saved drafts if the internal identifier ever changes.
+
+6. **`Object.hasOwn` grouping on the wire.**
+Checked `postBrowserSignal` in `commonswarm.ts`. The three optional placement properties (`channel`, `threadRootId`, `broadcastToChannel`) are added via independent conditional spread operators `...(placement.channel === undefined ? {} : { channel: ... })`. An empty placement yields a body byte-identical to the legacy behavior, perfectly matching the required `Object.hasOwn` boundaries on the server.
+
+7. **The tests as claim controls.**
+Checked the observer tests. The controls were legitimately strengthened or adapted, not weakened:
+- `composer.observer.test.ts`: The textual `/thread/` gate was retired in favor of an explicit `assert.deepEqual` over the exact data attributes that govern the shipped thread reply surface.
+- `ui-addressing.observer.test.ts`: The transitive asset walk correctly checks imported modules, which is stronger than a shallow read and correctly sweeps code-split chunks.
+- `composer-sprint-browser.observer.test.ts`: The `createdAt` regex anchor was tightened to end exactly at the next closing brace, preventing it from silently swallowing unrelated fields if the sample row shape changes.
+
+8. **Mobile Height CSS.**
+Checked `LiveDashboard.astro` CSS and `mobile-measurements.json`. The `.dashboard__feed-toolbar` uses `margin-block-end: -2.5rem` to extract its own height from the document flow, floating exactly over the transcript without compressing it. The measurement file method is sound (using a four-way settle and full in-viewport assertions), and the math checks out (`firstMessageClearsFloatingBand` accurately resolves `firstMessageTopAtScrollTop - channelHeadFloating.bottom`).
+
+9. **`channelAtSend` memory leak and swallowed failure.**
+**DEFECT FOUND**. In `LiveDashboard.astro`, the `submit` event listener captures `channelAtSend` and correctly attempts to discard the response if the user has navigated away while the request was in flight. However:
+- In the success path, returning early skips `clearComposerDraft()`, meaning the draft is never cleared. It also skips cleaning up `visualMentions` and `deliveryReceiptCache` for the optimistic `pendingIds`, causing a memory leak.
+- In the failure path (`catch` block), if `channelAtSend !== activeChannelId`, the code immediately returns. This swallows the failure completely, leaving the reader with no error notification, an active retry intent, and an uncleared draft. The reader has no way to tell that their message failed to post.
+
+VERDICT: FAIL
+```

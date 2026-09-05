@@ -1,0 +1,35 @@
+`diff --git a/docs/design/2026-09-05-chat-app-channels.md b/docs/design/2026-09-05-chat-app-channels.md`
+
+1. **Copy that implies privacy.** I checked `site/src/components/app/LiveDashboard.astro` (`renderChannelDialog`, `renderUnknownChannel`, `renderChannelRail`, `renderChannelHead`) and `site/src/lib/channels.ts` (`unknownChannelText`, `CHANNEL_REACH_TEXT`, `CHANNEL_EMPTY_TEXT`, `CHANNEL_ARCHIVED_TEXT`). The sweep test missed `renderChannelRail` (which sets `button.title = channel.purpose`) and `renderChannel`, but neither of those contain or render strings implying a channel is private or restricted. All copy explicitly states that every member reads every channel.
+
+2. **A filter that replaces the predicate.** I checked `site/src/components/app/LiveDashboard.astro` (`signalPage`, `loadSignals`, `refreshLatestSignals`, and the sample-mode branch in `selectChannel`). `signalPage` correctly issues `.eq("channel_id", channelId)`, passing the narrowing to the server query rather than filtering post-fetch. `loadSignals` and `refreshLatestSignals` capture `activeChannelId` and return early if the active channel has changed by the time the request lands. In `selectChannel`, sample mode honestly narrows its own array locally.
+
+3. **The URL falling back to the unfiltered feed on a bad id.** I traced `applyChannelFromUrl` (line 5650), `openWorkspace`, and `renderFeed` (line 4175) in `LiveDashboard.astro`. If `unknownChannelId !== null`, `renderFeed` immediately invokes `renderUnknownChannel()` (which clears the list and shows an honest empty state message) and returns without rendering a single row. The `?w=` parameter is strictly used as an id lookup against the user's `workspaces` array (line 1245), meaning it never acts as authorization for a workspace the user doesn't already belong to.
+
+4. **A thread reply that the server would refuse, or one that changes addressing.** I checked `postBrowserSignal` in `site/src/lib/commonswarm.ts` and `submitComposer` in `LiveDashboard.astro`. `in_reply_to` is always `null`. The `placement` object populated by `submitComposer` explicitly provides either `channel` OR `thread_root_id`, never both. The composer explicitly blocks posting a reply if `recipients.length > 0` and `threadReplyRoot !== null`. `groupSignalThreads` in `site/src/lib/signal-feed.ts` strictly partitions rows using `isOwnRow`, ensuring no row is dropped or duplicated.
+
+5. **A typed enumeration inside a message.** I reviewed `site/src/lib/channels.ts` and `LiveDashboard.astro`. UI elements build their copy and constraints directly from `ALL_SIGNALS_SLUG`, `CHANNEL_SLUG_MAX`, and `CHANNEL_PURPOSE_MAX`. The single deliberate literal `"all-signals"` string is isolated to `COMPOSER_DRAFT_SCOPE` as documented, safely preserving saved localStorage drafts. No typed enumerations exist where generated values are required.
+
+6. **`Object.hasOwn` grouping on the wire.** I examined `postCommand` payload construction inside `postBrowserSignal` (`site/src/lib/commonswarm.ts`). `channel`, `thread_root_id`, and `broadcast_to_channel` are conditionally spread. If they are `undefined` or `null`, an empty object `{}` is spread, which adds no keys to the resulting body, leaving it byte-identical to the pre-lane shape.
+
+7. **The tests as claim controls.** I checked the observer tests. In `composer.observer.test.ts`, the retired `thread` gate was replaced by asserting the presence of the actual new thread controls, preserving the test's value. In `ui-addressing.observer.test.ts`, the test was strengthened with a transitive asset walk because a constant moved into a shared chunk. In `composer-sprint-browser.observer.test.ts`, the emitted-source anchor safely matches the first closing brace after `createdAt`, accommodating the new signal shape fields.
+
+8. **Mobile.** I read the CSS in `LiveDashboard.astro`. `.dashboard__feed-toolbar` floats via a negative margin (`margin-block-end: -2.5rem`, line 11984) and `.dashboard__channel-head` uses `position: absolute; min-block-size: 0` (line 11927). Since they are taken out of document flow, they cost the transcript 0px of height. `mobile-measurements.json` uses a sound methodology by waiting for viewport settlement, checking `visualViewport`, reloading, and asserting rect bounds.
+
+## Round two: what changed since fb4ce07
+1. `unknownChannelHeadText` / `unknownChannelText`: Correctly drops the non-existent permission sentence. The logic leverages `channelListFailed` correctly to branch.
+2. Composer hidden: `unknownChannelId !== null` sets `composer.hidden` to true (line 1516), and the submit listener explicitly returns early, refusing the post.
+3. `activateWorkspaceView`: Non-signals views properly clear `aria-current`. It is correctly re-established via `syncChannelCurrent()` when reverting to a view.
+4. `ALL_SIGNALS_SLUG`: Used universally in markup; `COMPOSER_DRAFT_SCOPE` legitimately retains the literal string for backwards compatibility with drafts.
+5. `mobile-measurements.json`: Measurements are re-settled and self-consistent.
+
+## Round three: what changed since 0317a82
+1. **`applyChannelFromUrl` (line 5650):** Properly ignores a `?c=` if `?w=` designates a different workspace. Legitimate URLs with proper workspace matching are successfully loaded and maintained without dropping valid context.
+2. **Defect in `refreshChannels` (site/src/components/app/LiveDashboard.astro:5810)**
+   **What breaks:** Out-of-order `refreshChannels` responses can overwrite the channel list with stale data or an incorrect failure state.
+   **How you would see it:** If a user archives a channel and then quickly creates another, both operations invoke `refreshChannels` sharing the exact same `requestVersion` (channel mutations don't increment it). If the latter request finishes before the earlier one, the earlier (stale) response satisfies the `version !== requestVersion` check and overwrites `channels`. A newly created channel might vanish from the UI until a subsequent refresh. Similarly, if a stale fetch fails while a newer fetch succeeded, `channelListFailed` will be overwritten to `true`, incorrectly displaying a failure state for valid channel data. I attempted to refute this by seeing if `submitChannelCreate` or `submitChannelArchive` incremented `requestVersion`, but they only capture the current version without incrementing it.
+3. **`sampleSignals`:** Optimistic sample posts correctly push to `sampleSignals`, retaining the narrowing honestly without corrupting the snapshot.
+4. **`slack-shape`:** Safely pins the `<h1 data-channel-name tabindex="-1">{channelLabel(ALL_SIGNALS_SLUG)}</h1>` structural expression in `LiveDashboard.astro`, which remains a valid shell measurement.
+5. **`CHANNEL_REACH_TEXT`:** Confirmed that it includes the statement that messages expire, truthfully representing the system constraints.
+
+VERDICT: FAIL

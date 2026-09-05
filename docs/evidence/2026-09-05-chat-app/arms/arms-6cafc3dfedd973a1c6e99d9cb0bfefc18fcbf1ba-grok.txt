@@ -1,0 +1,120 @@
+I'll read REVIEW.md and DIFF.patch first, then follow REVIEW.md exactly.The first `diff --git` line is `diff --git a/docs/design/2026-09-05-chat-app-channels.md b/docs/design/2026-09-05-chat-app-channels.md`. Next I’ll verify the SHA and read the tree against every claim in REVIEW.md.SHA matches. I’ll pull the send path, URL/channel state, and the enforcement constants next so the claims can be attacked against the tree, not the write-up.The first search ran in the arm folder. I’ll point it at the lane tree and keep going through the dashboard and client code.I’ve got the map of the dashboard functions. Next I’ll read those paths end to end, plus the design sections the lane says it follows.`diff --git a/docs/design/2026-09-05-chat-app-channels.md b/docs/design/2026-09-05-chat-app-channels.md`
+
+SHA `6cafc3dfedd973a1c6e99d9cb0bfefc18fcbf1ba`. I read the patch and this tree.
+
+---
+
+**1. Round-5 send fix: `postedRowsBelongHere` drops rows that belong on the new screen, and Retry files the rest in the wrong channel.**  
+`site/src/components/app/LiveDashboard.astro` 6874–6876, 6925–6927, 7067–7102, 7110–7161.
+
+The early return is workspace/version only. Cleanup runs. That part of the last FAIL is fixed.
+
+The channel then decides with view identity, not “would this row appear in the query on screen”:
+
+```
+const postedRowsBelongHere = (): boolean => channelAtSend === activeChannelId;
+const kept = signals.filter(
+  (entry) => !pendingSet.has(entry.id) && !postedIds.has(entry.id),
+);
+signals = postedRowsBelongHere() ? [...posted, ...kept] : kept;
+setComposerStatus("");
+```
+
+`postedIds` is stripped from `kept` even when the posted rows are **not** prepended. That filter is only safe when the send is about to put those ids back.
+
+**Stay in the channel:** pending rows swap for posted rows. Draft clears. Status clears. Receipts and object URLs match. Holds.
+
+**Switch channel mid-send (live mode, there is an `await`):**
+
+- `#mobile` → `#ops`: `#ops` never had those ids. Not adding them is right. Status becomes `""`. The box is empty. Nothing says the message is in `#mobile`. `composerIntent` is null, so a retype mints new command ids and posts a second copy.
+- `#mobile` → all-signals: all-signals **should** show that row. `selectChannel` has already started `loadSignals` for the unfiltered page. If that page lands first and already contains the accepted ids, success then **deletes** them from `signals` and renders without them. Status is `""`. The next poll (2s) puts them back. The reader sees: row appears, row vanishes, row returns.
+- Thread reply from all-signals, switch into the root’s channel: same strip. The server filed the reply in that channel; the client then refuses to show it.
+
+**Failure + switch + Retry:** placement is captured again at the top of submit (`postChannel = activeChannel()`). Partial send in `#mobile`, switch to `#ops`, Retry. The first command id is replayed (idempotent, still the `#mobile` row) and the rest post to `#ops`. `channelAtSend` is now `#ops`, so `postedRowsBelongHere` is true and the `#mobile` row is prepended onto `#ops`. `refreshLatestSignals` keeps local ids the fetched page does not carry, so it stays.
+
+Sample mode cannot hit the race: a sample post does not `await` before the snapshot update.
+
+**How to see it:** in `#mobile`, send with a file (the wait is long). Click `#all-signals` before it finishes. Watch the whole feed. For Retry: tag two people, fail the second hop, switch channel, press Retry.
+
+**Refute:** I asked if the poll makes the strip a flicker only. It does heal in live mode. The flicker is still a false empty, and the Retry path does not heal — it plants a `#mobile` row in `#ops`. The new observer test pins `postedRowsBelongHere()` and that the early return does not name the channel. It does not pin the `postedIds` filter, and it does not pin Retry using the **current** channel. Gates stay green.
+
+---
+
+**2. Privacy reset never closes the channel dialog, and never clears the rail list.**  
+`LiveDashboard.astro` 4836–4910 vs 4840–4841, 5622–5648, 5826–5828, 900–976.
+
+`resetWorkspaceSessionState` already closes the roster dialog and the workspace-details dialog, and it wipes named lists because “Auth changes are a privacy boundary”. This lane added a third `showModal()` dialog **outside every panel**, plus `[data-channel-list]`. Neither is in that function. It also leaves `channels`, `activeChannelId`, `unknownChannelId`, `threadReplyRoot`, and `channelArchiveArmed` in memory.
+
+The rail lives in the channel panel, so `showPanel("signed-out")` hides those slugs. The dialog does not. Session expiry while the dialog is open leaves the previous workspace’s channel names and purposes on a modal over the signed-out surface.
+
+**How to see it:** open Channels, let the session expire (or take the `SessionExpired` branch). The dialog is still there.
+
+**Refute:** a user cannot click Sign out through `showModal`. That is why the other two dialogs are closed on auth change. This is the same duty, skipped for the new one.
+
+---
+
+**3. When the open’s channel read is dropped, `applyChannelFromUrl` still runs against whatever `channels` is, which may be `[]`.**  
+`LiveDashboard.astro` 5211–5214, 5230, 5263–5273, 5677–5691, 5837–5868.
+
+Generation is taken **before** the fetch. A newer `refreshChannels` no longer gets overwritten by a slow open. That part of the last FAIL is fixed. Two opens of the same workspace also do not deadlock: each bumps `requestVersion`, and the older open returns before it writes.
+
+The URL step is **outside** that guard. Open starts by setting `channels = []`. If a create bumps `channelReadGeneration` and its refresh has not landed yet:
+
+1. Open skips its successful snapshot (`channelGeneration !== channelReadGeneration`).
+2. `applyChannelFromUrl` resolves `?c=` against `[]`, so a real id becomes `unknownChannelId`.
+3. `syncChannelUrl` keeps that id in the bar.
+
+A create that then `selectChannel`s heals this. A create whose `workspaceChannels` **fails** does not: `channelListFailed` becomes true, `channels` stays `[]`, the head says the list did not load (or the id is missing) for a channel the dropped snapshot had. `channelListFailed` follows the latest **applied** flag, not “do we have a good list”.
+
+**How to see it:** already in a workspace with `?c=` set, re-open it (retry / current workspace in the menu), create a channel while it is pending, and fail the follow-up channel read (slow or killed network). Head: Channel not found, for a channel that exists.
+
+**Refute:** I asked if this only flashes. On the success-create path, `selectChannel` overwrites it. The stuck case needs the refresh to fail. That is narrow, and it is exactly the question round 5 asked. It is not the load-bearing FAIL; finding 1 is.
+
+---
+
+**Privacy copy (attack 1).** Swept `CHANNEL_REACH_TEXT`, `CHANNEL_EMPTY_TEXT`, `CHANNEL_ARCHIVED_TEXT`, `unknownChannelText` / `unknownChannelHeadText`, dialog archive hint, archive confirm (`Archive … for everyone`), composer reply bar, unresolved submit. No string says a channel is private, restricted, or unreadable. `unknownChannelText` is true in both branches: the failed-list sentence only when `channelListFailed` is set; the “no channel here” sentence only when the list is treated as complete. A stale failed flag is finding 3, not a wording lie.
+
+The dashboard sweep reads eight script surfaces plus reply markup plus dialog markup plus composer refusals, comments stripped, `checked >= 20`. It cannot see a member-typed `purpose` (named). It also cannot see `site/src/lib/channels.ts`; the unresolved-copy test covers that file. Invite copy about a private **link** is not a channel surface.
+
+---
+
+**Filter vs predicate (attack 2).** `signalPage` 2025–2027: `.eq("workspace_id", …)` then optional `.eq("channel_id", …)`. That cannot widen the view. `loadSignals` / `refreshLatestSignals` store `channelId` with the request and drop on mismatch. Sample mode filters `sampleSignals` locally. The sample is the whole set, and a sample post is synchronous so it cannot interleave a switch; `sampleSignals` grows on success. A poll while `unknownChannelId` is set may fetch the unfiltered page into `signals`; `renderFeed` 4187–4189 still calls `renderUnknownChannel` first. `selectChannel(null)` then clears `signals` because `unknownChannelId !== null`.
+
+---
+
+**Bad `?c=` / `?w=` (attack 3).** `applyChannelFromUrl` ignores a `?c=` whose `?w=` names another workspace. Missing id sets `unknownChannelId`. `renderFeed` does not paint rows. Composer is hidden (1524) and submit returns (6849–6859). Keyboard and Retry both `requestSubmit` that same handler. No third post path. Boot `?w=` is a membership lookup, not a grant (6163–6167). Menu, create, close-and-fall-through, retry, and boot all go through `openWorkspace` → apply then `syncChannelUrl` with no `await` between. A followed `?w=A&c=C` still applies when A is the workspace being opened. The bad id stays in the bar.
+
+---
+
+**Threads (attack 4).** Reply placement is `{ threadRootId, broadcastToChannel }` with no `channel`. Top-level is `{ channel: slug }` or `{}`. `postBrowserSignal` always sends `in_reply_to: null` and never a recipient on a thread (composer refuses tags, 6904). `canReply` matches the edge: not sample, not a reply, no `threadRootId`, broadcast only. Kind is `note` (everyone) or `ask` (agent); `working-on` is not sent from this composer. `groupSignalThreads`: orphans stay as own rows; input order kept; each id once (`signal-feed-threads.test.mjs`).
+
+---
+
+**Typed enumerations (attack 5).** Slug rule, reserved list, and purpose bound are imported from `_shared/channels.ts` and interpolated. `ALL_SIGNALS_SLUG` is asserted to be in `RESERVED_CHANNEL_SLUGS`. Markup uses `{ALL_SIGNALS_SLUG}` / `{channelLabel(ALL_SIGNALS_SLUG)}`. `COMPOSER_DRAFT_SCOPE = "all-signals"` is the one typed copy; it names saved drafts, not the view, and the Astro frontmatter never reads it. Archive hint and `CHANNEL_REACH_TEXT` are prose, not lists of enforced fields. Reach text now has the expiry half of §6. It does not list per-kind durations; the required meaning (everyone reads, messages expire) is there.
+
+---
+
+**`Object.hasOwn` grouping (attack 6).** `postBrowserSignal` 2082–2090: each of `channel`, `thread_root_id`, `broadcast_to_channel` is its own spread. Empty placement omits all three; `to_user_id`, `to_agent_principal_id`, `in_reply_to: null`, `about: null` stay unconditional. Byte-identical to the pre-lane body.
+
+Refusals: `channelCommand` throws `channelRefusalMessage` and does not parse `body.message`. `readableError` still regex-matches `error.message` for network words (1576–1579). That helper pre-exists. Today’s channel sentences do not match it. I did not treat that as a new defect.
+
+---
+
+**Tests as claim controls (attack 7).**
+
+- `composer.observer.test.ts`: `/emoji|reaction|thread/i` dropped the thread half because threads ship. Emoji/reaction still gated. Replaced with an inventory of `data-composer-reply*` and `hidden` at rest. Same property, now positive.
+- `ui-addressing.observer.test.ts`: transitive asset walk. The old bound missed a code-split column list. Pins moved to `BROWSER_SIGNAL_COLUMNS` (explicit, never `*`) and the built graph still has to contain those names. Strengthened.
+- `composer-sprint-browser.observer.test.ts`: sample-row anchor now ends at the first brace after `createdAt` (`[^{}]*`). The old `\}` immediately after `createdAt` rewrote a later span once two fields were added. The sample literal has no nested braces. Holds.
+- Six moved observer tests keep retired wording beside the reason. Slack-shape rail inventory pins `<span>{ALL_SIGNALS_SLUG}</span>`, not a comment. Mutation table: 42 mutations, 0 not discriminating. The table does not cover finding 1’s `postedIds` filter.
+
+---
+
+**Mobile (attack 8).** At `max-width: 52rem`, `.dashboard__channel-switch` is `inline-flex`, `min-block-size: 2.5rem`, `max-inline-size: 8rem`. Toolbar is `min-block-size: 2.5rem; margin-block-end: -2.5rem`. Feed padding is `--feed-band-height: 3.25rem`. The chip rides in the floating band and does not add a standing row. ≤34rem app bar stays 57px; that block does not restack a head.
+
+`mobile-measurements.json`: reload + four-way settle + scrollTop 0 + in-viewport assertion, as claimed. Arithmetic holds (390: app bar 115.1+73=188.1, band bottom 240.1, first message 240.1, clearance 0; 320: 120.8+57=177.8, first message 229.8, clearance 0). Longest legal slug 128px; filter `clientWidth` 110 / 40; `allFilterFullyOnScreen` true. Horizontal overflow false. Reply bar was measured hidden; it is composer chrome, not a second header. The sideways scroll of the filter row at 390 is stated.
+
+---
+
+**Also checked.** Archive arms on `channel.channelId` and disarms on channel change, workspace open, and dialog close. It cannot fire on the wrong id unless that id is still the active live channel. `renderChannel` runs the signals-view loop **before** rail/head, so `syncChannelCurrent` has the last word. Files/Brain clear `[data-channel-place]`. Unresolved `?c=` marks nothing current; all-signals, a live channel, Files, and Brain each have exactly one current control. Rail and head share `activeChannelId` / `unknownChannelId`. The “did NOT establish” list is honest: no production traffic, no live thread post, no `?m=`/`?t=`, purpose is unswept, four prior rounds named. It does not name findings 1–2; those are new on this SHA.
+
+VERDICT: FAIL

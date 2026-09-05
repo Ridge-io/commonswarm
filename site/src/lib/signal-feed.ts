@@ -40,6 +40,12 @@ export const filterSignals = <T extends AddressedSignal>(
   return true;
 });
 
+/* Thread grouping is NOT in this lane. `groupSignalThreads` and `threadReplyCountLabel`
+ * were written here and are cut to `lane/chat-app-threads` with the surface that used them:
+ * until it ships, a reply renders inline in the flat feed, interleaved by time, which is what
+ * the design already states for a client that does not know about threads.
+ */
+
 /* There is deliberately NO client-side channel filter here. The shipped
  * All / Broadcast / Direct-to-you filter above runs over the loaded page, so it
  * says "your direct signals" and means "among the last 25 loaded". A channel
@@ -53,54 +59,3 @@ export const filterSignals = <T extends AddressedSignal>(
  * (`command/index.ts:7827`), so a reply needs no resolution through its root to
  * land in the same narrowing as the message it answers.
  */
-
-type ThreadSignal = Pick<Signal, "id" | "threadRootId">;
-
-export interface ThreadGroup<T> {
-  root: T;
-  replies: T[];
-}
-
-/**
- * Collapse thread replies under the message their thread starts from.
- *
- * The input order is the DISPLAY order, and it is kept: a root holds the place
- * of its first appearance, and its replies come back in the order they were
- * given. A reply whose root is not in the loaded page is returned as a row of
- * its own rather than dropped — an expired or not-yet-paged root must never
- * take a visible message off the screen with it.
- */
-export const groupSignalThreads = <T extends ThreadSignal>(
-  signals: readonly T[],
-): ThreadGroup<T>[] => {
-  const rootIds = new Set(
-    signals
-      .filter((signal) => signal.threadRootId === null)
-      .map((signal) => signal.id),
-  );
-  const isOwnRow = (signal: T): boolean =>
-    signal.threadRootId === null || !rootIds.has(signal.threadRootId);
-  const groups: ThreadGroup<T>[] = [];
-  const byRootId = new Map<string, ThreadGroup<T>>();
-  /* Pass one places every row that stands on its own, IN INPUT ORDER, so an
-   * orphan reply keeps its place in the transcript instead of being appended
-   * after the rows it was written between. Pass two attaches the rest. A single
-   * pass that looked a root up as it met each reply would also assume every
-   * root precedes its replies, which is true of the oldest-first display order
-   * and not of the newest-first order the feed keeps for pagination. */
-  for (const signal of signals) {
-    if (!isOwnRow(signal)) continue;
-    const group: ThreadGroup<T> = { root: signal, replies: [] };
-    groups.push(group);
-    if (signal.threadRootId === null) byRootId.set(signal.id, group);
-  }
-  for (const signal of signals) {
-    if (isOwnRow(signal)) continue;
-    byRootId.get(signal.threadRootId!)!.replies.push(signal);
-  }
-  return groups;
-};
-
-/** "1 reply" / "N replies", so no caller retypes the plural. */
-export const threadReplyCountLabel = (count: number): string =>
-  `${count} ${count === 1 ? "reply" : "replies"}`;

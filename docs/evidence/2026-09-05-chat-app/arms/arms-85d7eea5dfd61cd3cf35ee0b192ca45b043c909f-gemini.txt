@@ -1,0 +1,19 @@
+`diff --git a/docs/design/2026-09-05-chat-app-channels.md b/docs/design/2026-09-05-chat-app-channels.md`
+
+1. **`site/src/components/app/LiveDashboard.astro` lines 7153-7200 (composer failure path)**
+   *What breaks:* The failure path updates the `signals` array to remove the `pending` rows (and prepend any partially successful rows via `visibleOnFailure`), but it NEVER calls `renderFeed()`. 
+   *How you would see it:* If a post fails (or partially fails) while you stay in the channel, the status bar shows an error and the text is returned to the composer box. However, the optimistic pending rows remain stuck on the screen forever, misleading the reader into thinking their message was posted or is still posting. Furthermore, any rows that *did* succeed in a multi-recipient message are added to `signals` but never rendered to the screen.
+
+2. **`site/src/components/app/LiveDashboard.astro` lines 6980-6996 (`composerIntent` identity check)**
+   *What breaks:* The identity check for reusing `composerIntent` does not compare the placement (`intent.placementChannelId` or `intent.placement`). 
+   *How you would see it:* If a reader's message fails, and they deliberately switch to a different channel, their composer still contains the failed text. If they press Enter without editing the body, `submit` matches the old `rawBody`, reuses the stale `composerIntent`, and replays the message to the OLD channel instead of the one they are currently looking at. 
+
+3. **`site/src/components/app/LiveDashboard.astro` line 4843 (`resetWorkspaceSessionState`)**
+   *What breaks:* `resetWorkspaceSessionState` drops channel state arrays and calls `renderChannelRail()`, but it fails to call `renderChannelHead()`, fails to clear `composerIntent`, and fails to call `syncChannelUrl()`. 
+   *How you would see it:* If the reader signs out or their access is revoked, the old workspace's channel name and description remain visible in the DOM (`[data-channel-name]`) on the signed-out surface. The `?c=` slug remains in the URL, and an uncleared `composerIntent` stays in memory, carrying the previous workspace's text and command IDs.
+
+4. **`site/src/components/app/LiveDashboard.astro` lines 5889-5892 (`refreshChannels`)**
+   *What breaks:* When `refreshChannels` re-resolves an `unknownChannelId` via `applyChannelFromUrl(workspaceId)`, it updates `activeChannelId` but fails to call `renderChannelHead()` and `renderFeed()`. 
+   *How you would see it:* If the reader opens a workspace and a channel is not yet available, they correctly get the honest empty state. When `refreshChannels` subsequently polls and the channel is now in the list, the URL is resolved and the state is updated, but the UI is left visually broken — still showing "Channel not found" and no feed, while internally the reader is in the channel.
+
+VERDICT: FAIL

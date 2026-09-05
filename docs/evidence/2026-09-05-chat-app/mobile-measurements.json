@@ -4,6 +4,7 @@
  "_longest_legal_slug": "The label is set to 32 'a' characters, which is CHANNEL_SLUG_MAX in supabase/functions/_shared/channels.ts. The DOM text is written directly for the probe; app state is untouched.",
  "_settle": "Each entry sets the device metrics, RELOADS, then waits until innerWidth, innerHeight, visualViewport.height and a rendered feed all agree with the size being claimed; it scrolls the transcript to the top; then it asserts every reported rect lies inside the viewport. The first version of this file did none of that and reported a 390x844 composer rect under a 320x568 heading, because the app sizes itself from visualViewport and CDP's override did not fire that event. A review arm found it.",
  "_clearance": "firstMessageClearsFloatingBand is the first row's top minus the floating channel head's bottom, with the transcript at scrollTop 0. Zero or more means the band does not cover the first message.",
+ "_threads": "threadSurfacesPresent is asserted 0: the thread surface was cut to lane/chat-app-threads on 2026-09-05 and nothing of it may render.",
  "390x844": {
   "viewport": {
    "width": 390,
@@ -20,6 +21,9 @@
    "position": "static"
   },
   "railChannelListHeight": 0,
+  "railChannels": [
+   "#mobile"
+  ],
   "channelHeadFloating": {
    "top": 188.1,
    "bottom": 240.1,
@@ -70,17 +74,7 @@
    "display": "grid",
    "position": "static"
   },
-  "composerReplyBarHidden": true,
-  "threadToggle": {
-   "top": 463.8,
-   "bottom": 491.2,
-   "left": 16,
-   "right": 68.6,
-   "width": 52.6,
-   "height": 27.4,
-   "display": "block",
-   "position": "static"
-  },
+  "threadSurfacesPresent": 0,
   "documentHorizontalOverflow": false
  },
  "390x844-longest-legal-slug-32-chars": {
@@ -99,6 +93,9 @@
    "position": "static"
   },
   "railChannelListHeight": 0,
+  "railChannels": [
+   "#mobile"
+  ],
   "channelHeadFloating": {
    "top": 188.1,
    "bottom": 240.1,
@@ -149,17 +146,7 @@
    "display": "grid",
    "position": "static"
   },
-  "composerReplyBarHidden": true,
-  "threadToggle": {
-   "top": 463.8,
-   "bottom": 491.2,
-   "left": 16,
-   "right": 68.6,
-   "width": 52.6,
-   "height": 27.4,
-   "display": "block",
-   "position": "static"
-  },
+  "threadSurfacesPresent": 0,
   "documentHorizontalOverflow": false
  },
  "320x568": {
@@ -178,6 +165,9 @@
    "position": "static"
   },
   "railChannelListHeight": 0,
+  "railChannels": [
+   "#mobile"
+  ],
   "channelHeadFloating": {
    "top": 177.8,
    "bottom": 229.8,
@@ -228,17 +218,7 @@
    "display": "grid",
    "position": "static"
   },
-  "composerReplyBarHidden": true,
-  "threadToggle": {
-   "top": 453.5,
-   "bottom": 480.9,
-   "left": 16,
-   "right": 68.6,
-   "width": 52.6,
-   "height": 27.4,
-   "display": "block",
-   "position": "static"
-  },
+  "threadSurfacesPresent": 0,
   "documentHorizontalOverflow": false
  },
  "320x568-longest-legal-slug-32-chars": {
@@ -257,6 +237,9 @@
    "position": "static"
   },
   "railChannelListHeight": 0,
+  "railChannels": [
+   "#mobile"
+  ],
   "channelHeadFloating": {
    "top": 177.8,
    "bottom": 229.8,
@@ -307,17 +290,7 @@
    "display": "grid",
    "position": "static"
   },
-  "composerReplyBarHidden": true,
-  "threadToggle": {
-   "top": 453.5,
-   "bottom": 480.9,
-   "left": 16,
-   "right": 68.6,
-   "width": 52.6,
-   "height": 27.4,
-   "display": "block",
-   "position": "static"
-  },
+  "threadSurfacesPresent": 0,
   "documentHorizontalOverflow": false
  },
  "1440x900-desktop": {
@@ -336,6 +309,9 @@
    "position": "static"
   },
   "railChannelListHeight": 36,
+  "railChannels": [
+   "#mobile"
+  ],
   "channelHeadFloating": {
    "top": 47.7,
    "bottom": 123.7,
@@ -386,17 +362,7 @@
    "display": "grid",
    "position": "static"
   },
-  "composerReplyBarHidden": true,
-  "threadToggle": {
-   "top": 314.2,
-   "bottom": 341.6,
-   "left": 340,
-   "right": 392.6,
-   "width": 52.6,
-   "height": 27.4,
-   "display": "block",
-   "position": "static"
-  },
+  "threadSurfacesPresent": 0,
   "documentHorizontalOverflow": false
  }
 }

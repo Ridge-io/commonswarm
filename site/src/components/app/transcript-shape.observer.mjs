@@ -21,13 +21,9 @@ const raw = readFileSync(
 const src = raw.replace(/\/\*[\s\S]*?\*\//g, "").replace(/<!--[\s\S]*?-->/g, "");
 
 test("transcript: rows render OLDEST-first so the newest sits at the bottom", () => {
-  /* ~~`for (const signal of [...visibleSignals].reverse())`~~ retired 2026-09-05: threads
-     collapse replies under their root, so the reversed array is grouped before it is
-     rendered instead of being iterated directly. The reversal is what this test is about
-     and it is still the thing being asserted. */
   assert.match(
     src,
-    /groupSignalThreads\(\[\.\.\.visibleSignals\]\.reverse\(\)\)/,
+    /for \(const signal of \[\.\.\.visibleSignals\]\.reverse\(\)\)/,
     "the display reversal is gone — newest would render at the top again",
   );
 });

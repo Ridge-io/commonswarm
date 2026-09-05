@@ -1,0 +1,99 @@
+I'll read the review brief and the patch first, then follow REVIEW.md exactly.The first `diff --git` line is established. Next I’ll read the rest of the patch and the working tree so I can attack the claims in order.I’ll keep going through the rest of the patch and the source that the claims rest on.I’ll read the remaining source and the tests that the brief says to attack.I need the CSS for the channel head and the feed toolbar, plus every post path and the privacy copy.I have a product defect on the URL path. Checking one more call site so the finding is exact.`diff --git a/docs/design/2026-09-05-chat-app-channels.md b/docs/design/2026-09-05-chat-app-channels.md`
+
+SHA `0317a82c767ba1f8cbb57e15cc5afa2155e2070e`. The five round-one defects are fixed. A new hole in the URL path is not.
+
+## Findings
+
+### 1. Workspace switch keeps the old `?c=` / `?w=` and can open as “Channel not found”
+
+**File:** `site/src/components/app/LiveDashboard.astro`
+
+- `syncChannelUrl` (5614–5627) is the only writer of `?w=` and `?c=`.
+- The only caller is `selectChannel` (5671, 5693).
+- `openWorkspace` reads the URL at 5243 (`applyChannelFromUrl`) and never writes it.
+- The workspace menu calls `openWorkspace(workspace.id)` at 3160 with no URL update.
+
+**What breaks:** The URL is not the address of what you are reading, except after a channel click.
+
+How you see it:
+
+1. Open workspace A, click a channel. URL becomes `?w=<A>&c=<C>`.
+2. Switch to workspace B from the menu.
+3. `applyChannelFromUrl` still reads `c=<C>`. C is not in B, so `unknownChannelId` is set (5634–5644).
+4. Head says “Channel not found”. Composer is hidden. B’s feed is not shown.
+5. Reload still has `?w=<A>&c=<C>`, so you land back in A.
+
+Same class of bug without a channel: first load of `/app` never writes `?w=`. Switch to B, reload, default workspace opens again.
+
+I tried to refute this: maybe some other `replaceState` writes `w=`. Grep finds only `syncChannelUrl`. Maybe UI switch is supposed to honour a leftover `?c=` as a permalink. That cannot be right: the user picked B, not a link. Design §8.1 says every filter state round-trips. The observer test at `chat-channels.observer.test.ts:230` only checks that `syncChannelUrl` contains `set("w"` and that boot reads `?w=`. It does not require `openWorkspace` to call the writer, so this stayed green.
+
+This is the same family as the round-one unknown-channel hole: the honest empty state fires, but for the wrong reason.
+
+### 2. `slack-shape` still requires `# all-signals`, and that string now lives only in a comment
+
+**File:** `site/src/components/app/slack-shape.observer.test.ts:157`  
+**Retired string:** `LiveDashboard.astro:23` (`the static "# all-signals" even carried a space…`)
+
+The rail test still does `dashboard.includes("# all-signals")`. After this lane the markup is `{channelLabel(ALL_SIGNALS_SLUG)}` (`#all-signals`, no space). The only remaining hit is the comment that records the removal.
+
+The test can go red if someone deletes the comment, and it stays green while the rail does not show that text. The header test one file later was moved onto the generating expression; this token was not.
+
+I tried to refute this: `chat-channels.observer.test.ts` now pins `{ALL_SIGNALS_SLUG}` in the rail. That is a different test. This one still claims to inventory the shell and now inventories a comment.
+
+### 3. Sample-mode posts vanish on channel switch
+
+**File:** `LiveDashboard.astro`
+
+- Boot snapshot: `sampleSignals = [...signals]` (6045).
+- Sample `selectChannel` replaces the feed from that snapshot (5667–5669).
+- A sample post `unshift`s onto `signals` only (6914). It never updates `sampleSignals`.
+
+How you see it: `/app` in sample mode, post “hello”, open `#mobile`, open `#all-signals`. “hello” is gone.
+
+I tried to refute this: sample mode is a demo, and a reload already drops sample posts. True, but this lane added the snapshot restore. After a post, “the sample IS the whole set” is false, which is the honesty argument for the client-side filter.
+
+## Attack sections with no product break
+
+**1. Privacy copy.** Swept runtime strings in the eight script surfaces, the channel dialog, the reply bar, and `channels.ts` (`CHANNEL_REACH_TEXT`, `CHANNEL_ARCHIVED_TEXT`, `unknownChannelText`). No string says a channel is private, restricted, or seen by fewer people than every member. “Archive … for everyone” and “Every member of this workspace reads every channel” say the opposite. The sweep cannot see a member-typed `purpose` (named in the lane note). It also cannot see `renderFeed` empty titles; those use `CHANNEL_EMPTY_TEXT` / channel labels, not privacy words. `readableError`’s `/network|fetch|offline|connection/i` branch (1568–1572) can replace a server sentence if one ever contains those words; today’s slug/exists sentences do not.
+
+**2. Filter vs predicate.** `signalPage` adds `channel_id=eq` only when `channelId !== null` (1993–2030 in the patch; live `LiveDashboard` ~2020). `loadSignals` and `refreshLatestSignals` capture `activeChannelId` and drop the page if it changed. A client equality cannot widen the view’s `WHERE`. Sample mode is the one local filter, and it is bounded to the four-row snapshot (finding 3 is about posts, not about that bound).
+
+**3. Bad `?c=` vs unfiltered rows.** `renderFeed` returns into `renderUnknownChannel` before it paints a row (4179–4182). Poll still runs (unknown uses view `feed`) and may load the workspace page into memory; it does not render it. `?w=` is membership-only at boot (6091–6101). Composer is hidden and submit returns (1516–1517, 6783–6793). Retry and Enter both `requestSubmit()` into that guard — no third post path. The break is finding 1: a workspace switch reuses a leftover `?c=` and *looks like* this honest state.
+
+**4. Thread wire shape and grouping.** Placement is exclusive: root post sends `{ channel }` or `{}`; reply sends `{ threadRootId, broadcastToChannel }` and no `channel` (~2013–2019 in the patch). `in_reply_to` stays `null`. Tagged reply is refused before post. `canReply` matches `chatSignalShapeProblem` (not directed, not already a reply, not sample). `groupSignalThreads` keeps input order, keeps orphans, and the unit tests pin no drop/duplicate.
+
+**5. Typed enumerations.** Slug/purpose/reserved sentences come from `_shared/channels.ts`. `ALL_SIGNALS_SLUG` is the one typed view name; reader-facing uses interpolate it. `COMPOSER_DRAFT_SCOPE = "all-signals"` as a frozen storage key is right: following the constant would orphan drafts. Astro frontmatter imports it the same way it already imports `SIGNAL_BODY_MAX`.
+
+**6. `Object.hasOwn` / empty placement.** `postBrowserSignal` spreads `channel`, `thread_root_id`, and `broadcast_to_channel` each in its own group (`commonswarm.ts:2082–2090`). Default `placement = {}` omits all three. The four old keys stay unconditional. Empty placement is the same shape as before this lane. The edge still builds `chatKeys` via `chatSignalKeys` and does not fold them into `modernKeys`.
+
+**7. Observer controls (the other moved tests).**
+
+| Test | Property |
+|---|---|
+| `composer.observer.test.ts` | `/emoji\|reaction/` kept. Thread half replaced by the exact `data-composer-reply*` set plus `hidden` at rest. Stronger, not weaker. |
+| `ui-addressing.observer.test.ts` | Transitive walk + positive control `assetGraph.length > assetPaths.length`. Column list moved to `BROWSER_SIGNAL_COLUMNS`; still forbids `select("*")`. The old shallow read would have been a confident absence. |
+| `composer-sprint-browser.observer.test.ts` | Anchor now `[^{}]*\}` after `createdAt`. Fixes the silent over-match. Sample extras are scalars, so the first brace is still the row end. |
+| `composer-sprint.observer.test.ts` / `transcript-shape.observer.mjs` | Still assert `[...visibleSignals].reverse()` inside `groupSignalThreads(...)`. Reversal property held. |
+| `workspace-switcher.observer.test.ts` | Landmark renamed `streams` → `channels`. Still “workspace control before first rail list”. |
+
+**8. Mobile.** At `max-width: 52rem` the channel head is `position: absolute`, the titleblock is clipped, the switch sits in the existing toolbar, toolbar `margin-block-end: -2.5rem` matches `min-block-size: 2.5rem`, list clearance is `--feed-band-height: 3.25rem`. No second in-flow header. `max-inline-size: 8rem` on the chip matches the 128px longest-slug rects. JSON: 390 app bar 73px, 320 app bar 57px; first-message top equals floating-head bottom (clearance 0); composer sits on the viewport bottom; longest-slug filter widths 110 and 40. `appBar.top` 115.1 / 120.8 includes the sample notice, which is honest if you measure sample mode. Desktop `appBar` is the rail (296×852), not a 73px bar; the 73px ruling is phone-only. Method (reload, four-way settle, scrollTop 0, in-viewport rects) matches the numbers.
+
+## Also checked
+
+**Rail vs head.** `renderChannel` always calls both. `selectChannel` calls rail then `activateWorkspaceView` → `renderChannelHead`. `activateWorkspaceView` for files/brain clears `[data-channel-place]` `aria-current`; returning to signals calls `renderChannelHead` → `syncChannelCurrent`. Unknown-channel is a feed view with **nothing** current, which is right. Files/brain keep their own mark.
+
+**Archive arm.** Armed id is the current channel. `selectChannel`, workspace open, dialog `close`, and rename `input` all `disarmChannelArchive`. Second press archives `activeChannel().channelId` only if it still matches the armed id.
+
+**“Did NOT establish” list.** Items 1–6 and 8 are true. Item 7 names the purpose hole. It does not name: URL write only on `selectChannel` (finding 1); sample posts vs the snapshot (finding 3); §8’s required “Messages still expire” sentence, which is still absent from `CHANNEL_REACH_TEXT`.
+
+## Round two
+
+1. **`unknownChannelText` / `unknownChannelHeadText`.** The failed-list sentence and the “no channel here” sentence are split on `channelListFailed`. A failed read cannot take the “no channel here” branch. The sentences no longer name a read permission. `channelListFailed` is not cleared on a later successful `refreshChannels`, but unknown copy is not shown on that path because create then `selectChannel`s away.
+2. **Composer third path.** Hidden + submit guard. Retry and keyboard both hit the same submit. No other `postBrowserSignal` caller in the dashboard.
+3. **`aria-current`.** Restored on return to signals. Nothing current only for unknown-channel (above).
+4. **`ALL_SIGNALS_SLUG` / `COMPOSER_DRAFT_SCOPE`.** Frontmatter import is safe. Draft-key freeze is right.
+5. **Measurements.** Self-consistent and aligned with the CSS. Method as described.
+
+The round-one five are fixed. Finding 1 is new, on the URL this lane added.
+
+VERDICT: FAIL

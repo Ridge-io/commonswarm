@@ -248,9 +248,13 @@ const assertComposerSprint = (value: ComposerArtifact): void => {
    * to restore any more — the tags are in the body, and the body goes back whole. What keeps a
    * retry from posting twice is the command id: every id is kept, so the sends that already
    * landed replay idempotently instead of arriving again. */
+  /* The rewritten intent gained `placement` / `placementChannelId` on 2026-09-05: without
+     them a retry after a partial failure posted UNFILED, because the replay reads
+     `intent.placement` and a missing one defaults to `{}`. The property here is unchanged —
+     every command id is kept — and the address is now kept beside them. */
   assert.match(
     failed,
-    /composerIntent = unsent\s*\? \{ commandIds, body: rawBody, audienceKey, attachmentKey, signalKind \}/,
+    /composerIntent = unsent[\s\S]{0,400}?commandIds,\s*\n\s*body: rawBody,\s*\n\s*audienceKey,\s*\n\s*attachmentKey,\s*\n\s*signalKind,\s*\n\s*placement,\s*\n\s*placementChannelId,/,
     "failed-send-audience: a retry must reuse every command id, not mint new ones",
   );
   assert.doesNotMatch(failed, /composerAudience|composerMention|remaining/);
@@ -678,10 +682,7 @@ const assertComposerSprint = (value: ComposerArtifact): void => {
    * the new row. */
   assertOrder(renderFeed, "const wasAtBottom = atBottom();", "list.replaceChildren();",
     "reader-scroll");
-  /* ~~`for (const signal of [...visibleSignals].reverse())`~~ retired 2026-09-05: the
-     reversed array is grouped into threads before it is rendered. The reversal itself, which
-     is what puts the newest row last, is unchanged. */
-  assert.match(renderFeed, /groupSignalThreads\(\[\.\.\.visibleSignals\]\.reverse\(\)\)/,
+  assert.match(renderFeed, /for \(const signal of \[\.\.\.visibleSignals\]\.reverse\(\)\)/,
     "reader-scroll: newest source row must render last");
   assert.match(
     renderFeed,
@@ -706,8 +707,8 @@ const mutations: Mutation[] = [
   {
     name: "a retry mints fresh command ids and reposts what already landed",
     key: "dashboard",
-    target: "? { commandIds, body: rawBody, audienceKey, attachmentKey, signalKind }",
-    replacement: "? { commandIds: commandIds.map(() => uuid()), body: rawBody, audienceKey, attachmentKey, signalKind }",
+    target: "            commandIds,\n            body: rawBody,",
+    replacement: "            commandIds: commandIds.map(() => uuid()),\n            body: rawBody,",
     expectedFailure: "failed-send-audience",
   },
   {

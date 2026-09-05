@@ -32,25 +32,11 @@ test("composer defaults to broadcast and keeps signal language", () => {
   assert.match(markup, /placeholder="What are you about to do\?"/);
   assert.doesNotMatch(markup, /Message #general|Message #all-signals/i);
   assert.doesNotMatch(markup, /only .* sees|will see|private|lock/i);
-  /* ~~assert.doesNotMatch(markup, /emoji|reaction|thread/i)~~ retired 2026-09-05. "thread"
-     was in that list because no thread surface existed, so the word inside the composer
-     could only be chrome for a feature that did not ship. Threads ship in this lane. Emoji
-     and reactions still do not, so they keep the gate; the thread half is replaced by an
-     assertion about what the shipped control IS, generated from the markup rather than
-     described. */
-  assert.doesNotMatch(markup, /emoji|reaction/i);
-  assert.deepEqual(
-    [...new Set(markup.match(/data-composer-reply[a-z-]*/g) ?? [])].sort(),
-    [
-      "data-composer-reply",
-      "data-composer-reply-broadcast",
-      "data-composer-reply-cancel",
-      "data-composer-reply-target-text",
-      "data-composer-reply-window",
-    ],
-  );
-  /* Hidden at rest, so the bar the reader pays 80px for is the bar it always was. */
-  assert.match(markup, /data-composer-reply hidden/);
+  /* This gate was retired for "thread" on 2026-09-05 when a thread reply bar shipped in the
+     composer, and RESTORED the same day when the coordinator cut the thread surface to
+     `lane/chat-app-threads`. Nothing in the composer may name a feature that is not there,
+     and none of the three is. */
+  assert.doesNotMatch(markup, /emoji|reaction|thread/i);
 
   /* An untagged body is still a broadcast; that default did not change, only where it is read
      from. There is no stored address to disagree with the text. */
@@ -106,7 +92,7 @@ test("browser-authored signals use the existing broadcast and direct target fiel
   assert.match(submit, /to: address\.toUserId/);
   assert.match(submit, /toAgent: address\.toAgentPrincipalId/);
   /* ~~`attachmentRefs,\s*\)\);`~~ retired 2026-09-05: `placement` is the last argument now,
-     and it is where the post says which channel or thread it lands in. */
+     and it is where the post says which channel it lands in. */
   assert.match(
     submit,
     /rawBody,\s*recipient,\s*recipientKinds\[index\]!,\s*attachmentRefs,\s*placement,\s*\)\);/,

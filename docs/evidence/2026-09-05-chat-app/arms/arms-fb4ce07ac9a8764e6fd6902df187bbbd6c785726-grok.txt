@@ -1,0 +1,65 @@
+I'll read REVIEW.md and DIFF.patch first, then follow REVIEW.md exactly.The brief is a SHA-exact attack review. Next I’ll keep reading the rest of DIFF.patch and the files it actually changes.I’ll keep going through the rest of the patch and the source files the claims actually rest on.SHA matches. Next I’ll read the remaining patch hunks and the source those claims depend on.I’ve got the claim list. Next I’ll trace the live paths those claims depend on: CSS, feed loading, composer post, and the observer tests.Grep was looking in the arm folder, not the repo. I’ll point it at the real tree and keep tracing.First `diff --git` line of DIFF.patch:
+
+`diff --git a/docs/design/2026-09-05-chat-app-channels.md b/docs/design/2026-09-05-chat-app-channels.md`
+
+SHA checked: `fb4ce07ac9a8764e6fd6902df187bbbd6c785726`.
+
+---
+
+1. **Unknown-channel copy says some channels cannot be read.**  
+   `LiveDashboard.astro:4137-4138` and `:5527-5528` show: "a channel that is not in this workspace, **or one you cannot read**." Design D3 and §8 say every member reads every channel. "Cannot read" is a restriction. The next sentence ("Nothing is hidden from you") tries to take it back, which proves the first sentence sounds like hiding.
+
+   How to see it: open `/app?c=` with a UUID that is not in `channels`.
+
+   Refute tried: it could mean "wrong workspace" or "deleted id." The sentence already said "not in this workspace," so the second clause is extra and names a read ACL this product does not have.
+
+2. **The privacy sweep sees that sentence and still passes.**  
+   `chat-channels.observer.test.ts:336-367` reads six functions and only double-quoted strings of length ≥ 12. The unknown-channel sentence is in that set. The regex is `\bprivate\b|\bsecret\b|\bencrypted\b|\bonly\b…(see|reads)|no one else`. It does not match "cannot read" or "hidden from you."
+
+   Surfaces this sweep cannot see: template literals (`syncComposerPlacement` at `:5448-5449`), imported `CHANNEL_*` constants, Astro markup (composer reply bar, dialog), the composer submit refusal at `:6778-6782`, runtime strings like `Archive ${channelLabel(…)} for everyone`, and user `purpose` shown as the channel description.
+
+3. **Reserved view name is typed, not generated.**  
+   `site/src/lib/channels.ts:101-102` `CHANNEL_EMPTY_TEXT` types "all-signals". `LiveDashboard.astro:5528` types "open all-signals to read every message." `ALL_SIGNALS_SLUG` and `RESERVED_CHANNEL_SLUGS` already exist; the Open button at `:4142` uses `channelLabel(ALL_SIGNALS_SLUG)`. Design §8: those constants must not be typed twice. `channels.test.mjs:116` pins the typed sentence, so renaming the slug updates the label test and leaves the empty-state sentence stale.
+
+   How to see it: change `ALL_SIGNALS_SLUG`, watch the head and the empty line disagree.
+
+4. **A bad `?c=` still posts to the unfiltered feed.**  
+   `applyChannelFromUrl` (`:5600-5609`) sets `unknownChannelId` and `activeChannelId = null`. `renderUnknownChannel` (`:4147`) calls `showChannelView("feed")`. Composer is shown for `feed` (`:1498-1499`). Submit uses `activeChannel()` (`:6797-6799`), which is null, so `placement` is `{}` and the post is unfiled. `renderFeed` (`:4154-4156`) then throws the pending row away, so the writer sees "Channel not found," sends, and sees no row. The message still lands in all-signals.
+
+   How to see it: signed-in `/app?c=<unknown-uuid>`, type a note, send, then open all-signals.
+
+   Refute tried: claim 5 is about **rendered rows**, and rows do not render. The feed list holds. The composer does not: it is the unfiltered destination under the unknown name. `loadSignals` (`:4618`) also fetches the whole workspace while unknown, stores it in `signals`, and relies only on `renderFeed`'s guard.
+
+5. **Rail and head disagree after Files or Brain.**  
+   Channel buttons omit `data-workspace-view` on purpose (`:5561-5564`). `activateWorkspaceView("files"|"brain")` (`:5412-5438`) only retargets `[data-workspace-view]` and never calls `syncChannelCurrent`. Head says "Files" / "Brain"; the last channel button keeps `aria-current="page"`.
+
+   How to see it: open `#mobile`, click Files, read the rail.
+
+   Refute tried: Slack-style "stay on the last channel" could be intended. The brief asked if rail and head can disagree. They can, and only this lane added those buttons.
+
+6. **`320x568` composer box is not in that viewport.**  
+   `docs/evidence/2026-09-05-chat-app/mobile-measurements.json:213-221`: composer `top: 781`, `bottom: 844` at height 568. That is the `390x844-longest-legal-slug` composer (`:136`) copied in. The longest-slug 320 block (`:290`) is `top: 505`, `bottom: 568`, which fits.
+
+   Header numbers at 320 still add up: app bar bottom 177.8 + band 52 = `firstMessageTop` 229.8. CSS: channel switch sits in the existing toolbar (`min-block-size: 2.5rem`, `margin-block-end: -2.5rem`), `--feed-band-height` stays `3.25rem` for the roster cluster (`:11835`). This lane does not add a standing header row. The evidence file does not measure the composer it claims to measure.
+
+---
+
+**Attack 2 (filter vs predicate).** Holds. `signalPage` (`:2000`) adds `channel_id=eq.` on top of `workspace_id`. That cannot widen the view. `loadSignals` (`:4618-4622`) and `refreshLatestSignals` (`:4650-4655`) capture the channel and drop the page if it changed. Sample mode (`selectChannel` around `:5630`) filters the fixed four-row `sampleSignals` array. That set is the whole sample, so the usual "among the last 25" lie is not in play. The All / Broadcast / Direct filter still runs on the loaded page; that is the old filter, not a channel filter. `filterSignalsByChannel` is absent.
+
+**Attack 4 (thread shape / grouping).** Holds for the wire. Top-level post sends `{ channel: slug }` or `{}`. Reply sends `{ threadRootId, broadcastToChannel }` and no `channel`. `postBrowserSignal` (`:2079`) always sends `in_reply_to: null`. Tag-on-reply is refused before post (`:6777-6784`). `canReply` (`:4425-4426`) matches the edge: not sample, not a reply, not already in a thread, broadcast only. `groupSignalThreads` (`signal-feed.ts:73-101`) keeps input order, keeps orphans as rows, and the unit tests pin no drop and no duplicate.
+
+**Attack 6 (`Object.hasOwn`).** Holds. Command edge (`command/index.ts:1716-1727`) puts each chat key in its own `Object.hasOwn` group via `chatSignalKeys`. Browser spreads `channel`, `thread_root_id`, and `broadcast_to_channel` separately (`commonswarm.ts:2082-2090`). Empty `placement` omits all three. The four old keys stay unconditional. An empty placement is the same body this app sent before.
+
+**Attack 7 (observer controls).** The five moved tests keep the old wording next to the new pin. They do not weaken the property they still claim.
+
+- `composer.observer.test.ts`: `/thread/` had to go because threads shipped (and because form comments contain "thread"). Replacement is a generated list of `data-composer-reply*` hooks plus `hidden` at rest. Emoji/reaction stay forbidden.
+- `ui-addressing.observer.test.ts`: the select string moved into `BROWSER_SIGNAL_COLUMNS` and a shared chunk. The walk has a positive control (`assetGraph.length > assetPaths.length`). Built assets still must contain `to_agent` mapping. Slightly weaker than a `select("…")` in the bundle; not a free pass.
+- `composer-sprint-browser.observer.test.ts`: `[^{}]*\}` after `createdAt` stops the silent rewrite the old `\}` anchor did. Stronger, not weaker.
+- `composer-sprint.observer.test.ts` and `transcript-shape.observer.mjs`: still require `[...visibleSignals].reverse()` inside `groupSignalThreads`. Newest-last is still the pin.
+- `slack-shape` / `workspace-switcher`: STREAMS → CHANNELS with the old name recorded.
+
+**Archive arm.** Second press is keyed by `channel.channelId` (`submitChannelArchive`). Dialog `close` disarms. `selectChannel` closes the dialog, so a channel change disarms. `openWorkspace` does **not** clear `channelArchiveArmed` (`:5169-5175`, `:7054`). The dialog can stay open across a workspace switch with a stale list. A click on a stale id returns at `selectChannel` (`channelById` miss). A press on Archive re-arms because the ids differ. It can stay armed. It cannot archive the wrong channel.
+
+**"NOT established" list.** Production, thread post from the browser, `?m=`/`?t=`, colour, multi-recipient To, and query plans are named. It does not name the unknown-`?c=` composer path (finding 4) or the Files/Brain rail mark (finding 5). The rest of the list matches what this tree can show.
+
+VERDICT: FAIL

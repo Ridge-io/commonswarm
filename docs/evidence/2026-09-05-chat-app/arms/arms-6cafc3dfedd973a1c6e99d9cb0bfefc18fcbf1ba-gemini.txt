@@ -1,0 +1,44 @@
+I have completed the review. Here are my findings:
+
+```markdown
+diff --git a/docs/design/2026-09-05-chat-app-channels.md b/docs/design/2026-09-05-chat-app-channels.md
+
+### 1. Copy that implies privacy
+Checked: `PRIVACY_CLAIM` sweep test in `chat-channels.observer.test.ts`. The sweep checks `renderChannelHead`, `renderUnknownChannel`, `renderChannelDialog`, `syncComposerPlacement`, `submitChannelArchive`, `submitChannelCreate`, `submitChannelRename`, `selectChannel`, the composer reply bar markup, channel dialog markup, and the composer refusals block.
+It misses `renderFeed`, which generates empty state copy like `Nothing in #mobile yet.` and sets `emptyDetail.textContent` to `CHANNEL_EMPTY_TEXT`. `CHANNEL_EMPTY_TEXT` is swept indirectly via `channels.test.mjs`, but the dashboard surface itself is un-swept for direct literal additions. However, no string in `LiveDashboard.astro` implies privacy. 
+
+### 2. A filter that replaces the predicate
+Checked: `signalPage`, `loadSignals`, `refreshLatestSignals`, and the sample-mode branch in `selectChannel`. 
+The `channelId` parameter passed to `signalPage` adds `.eq("channel_id", channelId)` which narrows the result set rather than widening it, as the RLS and workspace predicate remain. Both readers check `channelId !== activeChannelId` when the fetch lands. Sample mode filters honestly from `sampleSignals`, which acts as the comprehensive source of truth and incorporates new posts. The narrowing is sound.
+
+### 3. The URL falling back to the unfiltered feed on a bad id
+Checked: `applyChannelFromUrl`, `renderFeed`, `syncChannelUrl`, `openWorkspace`, and the composer submit path.
+`applyChannelFromUrl` reads `?c=` and correctly sets `unknownChannelId` if it cannot resolve the channel in the loaded list. `renderFeed` checks `unknownChannelId !== null` first and returns early, showing the empty state. `syncChannelUrl` writes `unknownChannelId ?? activeChannelId` back to the URL, preventing the bad ID from being dropped (which would turn it into the unfiltered feed). The `?w=` is used only as a fallback key for the `workspaces` array the user is a member of, and is never trusted as authorization.
+
+### 4. A thread reply that the server would refuse, or one that changes addressing
+Checked: `postBrowserSignal` and the composer submit listener in `LiveDashboard.astro`.
+The client constructs `placement` from `replyRoot`. If `replyRoot !== null`, it sets `threadRootId` and `broadcastToChannel`, but never `channel`. If `replyRoot === null`, it sets `channel`. Thus, `thread_root_id` and `channel` are never sent together. `in_reply_to` is hardcoded to `null` on the browser side. `broadcastToChannel` is gated on `replyRoot !== null`. The composer explicitly refuses to post a thread reply if `address.recipients.length > 0`. `groupSignalThreads` safely maps every row without duplication or dropping, rendering orphan replies as their own roots.
+
+### 5. A typed enumeration inside a message
+Checked: All user-facing strings including `unknownChannelText`, `channelNameHint`, `channelPurposeHint`, `CHANNEL_REACH_TEXT`, `CHANNEL_EMPTY_TEXT`, and `CHANNEL_ARCHIVED_TEXT`.
+Every bound (`CHANNEL_SLUG_MAX`, `CHANNEL_PURPOSE_MAX`) and reserved name (`ALL_SIGNALS_SLUG`, `RESERVED_CHANNEL_SLUG_TEXT`) is interpolated from the edge's constants rather than being hardcoded. No rules are retyped.
+
+### 6. Object.hasOwn grouping on the wire
+Checked: `postBrowserSignal` in `site/src/lib/commonswarm.ts`.
+Each of the three placement keys (`channel`, `threadRootId`, `broadcastToChannel`) is spread into the command object using its own independent conditional (`...(placement.channel === undefined || placement.channel === null ? {} : { channel: placement.channel })`). An empty placement spreads three empty objects `{}`, resulting in a command identical to what the client sent before this lane.
+
+### 7. The tests as claim controls
+Checked: Modifications to existing `.observer.test.ts` files.
+In `composer.observer.test.ts`, the absence check for "thread" was removed and replaced with an exact assertion on the `data-composer-reply` elements, which is a stronger structural test. In `ui-addressing.observer.test.ts`, the search was broadened from direct script tags to a transitive walk of all imported JS chunks, preventing false positives caused by code splitting. `composer-sprint-browser.observer.test.ts` anchors correctly to the first brace after `createdAt`.
+
+### 8. Mobile
+Checked: `LiveDashboard.astro` CSS media queries and `mobile-measurements.json`.
+The `.dashboard__channel-switch` is contained within `.dashboard__feed-toolbar`, taking `min-block-size: 2.5rem;` which exactly matches the toolbar's height. Because the toolbar floats over the transcript with a negative margin (`margin-block-end: -2.5rem;`), the transcript loses no height at 390x844 or 320x568. The measurement test correctly uses the visual viewport to confirm this geometry.
+
+### 9. The channel no longer aborts the send (Failure Path bug)
+**File and line:** `site/src/components/app/LiveDashboard.astro:6899-7058` (inside `submit` event listener for `[data-composer]`)
+**What breaks:** If a user submits a post, switches to a different channel, and the post fails, the message can be retried. However, the retry logic completely ignores `composerIntent.placement`. It dynamically rebuilds `placement` using `activeChannel()`. Because the user switched channels, `activeChannel()` evaluates to the *new* channel. The retry then successfully sends the message to the new channel instead of the original one. Additionally, if the failed message was a thread reply, switching channels clears `threadReplyRoot`. On retry, it gets posted as a top-level message in the new channel.
+**How you would see it:** Send a message or reply in Channel A. While "Posting..." is shown, switch to Channel B. The network request fails, and a Retry button appears in Channel B. Click Retry. The message posts successfully into Channel B.
+
+VERDICT: FAIL
+```

@@ -12,7 +12,6 @@ const FEED = "site/src/lib/signal-feed.ts";
 const CLIENT = "site/src/lib/commonswarm.ts";
 const OBS = "site/src/components/app/chat-channels.observer.test.ts";
 const CHT = "site/src/lib/channels.test.mjs";
-const THT = "site/src/lib/signal-feed-threads.test.mjs";
 
 const mutations = [
   // ── site/src/lib/channels.test.mjs
@@ -35,22 +34,6 @@ const mutations = [
     'export const channelNameHint = (): string =>\n  "A channel name uses lowercase letters. Reserved names: all-signals.";',
     "the module imports its rules and does not restate them"],
 
-  // ── site/src/lib/signal-feed-threads.test.mjs
-  [THT, FEED, "    if (!isOwnRow(signal)) continue;\n    const group: ThreadGroup<T> = { root: signal, replies: [] };",
-    "    if (signal.threadRootId !== null) continue;\n    const group: ThreadGroup<T> = { root: signal, replies: [] };",
-    "a reply whose root is not loaded keeps its own place"],
-  [THT, FEED, "  for (const signal of signals) {\n    if (isOwnRow(signal)) continue;\n    byRootId.get(signal.threadRootId!)!.replies.push(signal);\n  }",
-    "  for (const signal of signals) {\n    if (isOwnRow(signal)) continue;\n    byRootId.get(signal.threadRootId!)!.replies.unshift(signal);\n  }",
-    "replies collapse under the message their thread starts from"],
-  [THT, FEED, "  const rootIds = new Set(\n    signals\n      .filter((signal) => signal.threadRootId === null)\n      .map((signal) => signal.id),\n  );",
-    "  const rootIds = new Set<string>();",
-    "the input order is the output order, in either direction"],
-  [THT, FEED, "  groups.push(group);\n    if (signal.threadRootId === null) byRootId.set(signal.id, group);",
-    "  if (signal.threadRootId === null) { groups.push(group); byRootId.set(signal.id, group); }",
-    "every input row appears exactly once in the output"],
-  [THT, FEED, '`${count} ${count === 1 ? "reply" : "replies"}`', '`${count} replies`',
-    "the reply count reads as a count"],
-
   // ── site/src/components/app/chat-channels.observer.test.ts
   [OBS, DASH, '<h2 id="dashboard-channels-label">CHANNELS</h2>', '<h2 id="dashboard-channels-label">STREAMS</h2>',
     "the rail names channels"],
@@ -64,12 +47,6 @@ const mutations = [
   [OBS, DASH, "      input.placeholder = `Message ${channelLabel(channel.slug)}`;",
     '      input.placeholder = "What are you about to do?";',
     "the composer stamps the channel being read"],
-  [OBS, DASH, "        const canReply = !sampleMode && session !== null && !isReply &&\n          signal.threadRootId === null && signalIsBroadcast(signal);",
-    "        const canReply = !sampleMode && session !== null;",
-    "a thread reply is offered only where the server would accept one"],
-  [OBS, DASH, "          replies.hidden = !next;\n          if (next) expandedThreadIds.add(group.root.id);",
-    "          replies.hidden = !next;\n          renderFeed();\n          if (next) expandedThreadIds.add(group.root.id);",
-    "replies render collapsed under their root and expand in place"],
   [OBS, DASH, "      if (unknownChannelId !== null) {\n        renderUnknownChannel();\n        return;\n      }",
     "      if (false) {\n        renderUnknownChannel();\n        return;\n      }",
     "a ?c= that names no readable channel never shows the unfiltered feed"],
@@ -146,7 +123,7 @@ const mutations = [
   [OBS, DASH, "      closeChannelDialog();\n      one<SecretHoldingAgentConnect>(\"agent-connect\")?.clearPrompt(false);",
     "      one<SecretHoldingAgentConnect>(\"agent-connect\")?.clearPrompt(false);",
     "an auth change closes the channel dialog"],
-  [OBS, DASH, "      if (unknownChannelId !== null) {\n        applyChannelFromUrl(workspaceId);\n        syncChannelUrl();\n      }\n",
+  [OBS, DASH, "      if (unknownChannelId !== null && channelById(channels, unknownChannelId) !== null) {\n        selectChannel(unknownChannelId);\n        return;\n      }\n",
     "",
     "a later channel read gives an unresolved link one more chance"],
 ];

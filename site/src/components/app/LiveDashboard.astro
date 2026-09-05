@@ -754,24 +754,6 @@ import "../../styles/tokens.css";
                 and a body with no tag is a broadcast. That removed 47px of chrome from a bar
                 that has to fit in 80px. */}
             <form class="dashboard__composer" data-composer hidden>
-              {/* Hidden until a reply is in progress, so the composer is the same 80px bar
-                  it was at rest. A thread reply is undirected and everyone who reads the
-                  thread reads it, so there is no recipient to choose here. The window line
-                  is the ceiling the server clamps to: a reply cannot outlive the message
-                  its thread starts from, and that remaining window can be short. */}
-              <div class="dashboard__composer-reply" data-composer-reply hidden>
-                <p class="dashboard__composer-reply-target">
-                  <span data-composer-reply-target-text></span>
-                  <span class="dashboard__composer-reply-window" data-composer-reply-window></span>
-                </p>
-                <label class="dashboard__composer-reply-broadcast">
-                  <input type="checkbox" data-composer-reply-broadcast />
-                  <span>Also post this reply in the channel</span>
-                </label>
-                <button class="dashboard__text-button" type="button" data-composer-reply-cancel>
-                  Cancel reply
-                </button>
-              </div>
               <div class="dashboard__composer-box">
                 <div
                   class="dashboard__mention-picker"
@@ -1177,11 +1159,8 @@ import "../../styles/tokens.css";
   } from "../../lib/agent-activity";
   import {
     filterSignals,
-    groupSignalThreads,
     signalCounts,
-    signalIsBroadcast,
     signalIsDirectToViewer,
-    threadReplyCountLabel,
     type SignalFilter,
   } from "../../lib/signal-feed";
   import {
@@ -1329,15 +1308,18 @@ import "../../styles/tokens.css";
     /** A ?c= that resolves to no channel here. Held so the empty state can say so. */
     let unknownChannelId: string | null = null;
     /**
+     * Which of the three workspace views is on screen. The channel head and the rail's current
+     * mark belong to the signals view: a rename done from Files ran renderChannelHead and put
+     * the channel's name over a Files body, with both Files and that channel marked current.
+     * Found by a review arm.
+     */
+    let activeWorkspaceView: "signals" | "files" | "brain" = "signals";
+    /**
      * The channel read soft-fails to an empty list so a channel outage cannot take the feed
      * down with it. That makes an empty list ambiguous — no channels, or none READ — and a
      * `?c=` cannot be told apart from a bad id without this. The copy says which it is.
      */
     let channelListFailed = false;
-    /** The message a reply in progress belongs to, and the ceiling the server clamps to. */
-    let threadReplyRoot: { id: string; author: string; until: string | null } | null = null;
-    /** Thread roots the reader has opened. Replies are collapsed until then. */
-    let expandedThreadIds = new Set<string>();
     /** The whole made-up feed in sample mode, which has no server to page back to. */
     let sampleSignals: Signal[] = [];
     /**
@@ -3046,10 +3028,6 @@ import "../../styles/tokens.css";
       composerAttachmentsMissingAfterReload = false;
       composerDragDepth = 0;
       composerIntent = null;
-      /* A reply in progress belongs to one message in one workspace, and this runs on the
-         way out of that workspace. It is cleared HERE rather than in the send path, which
-         keeps a failed reply for another try. */
-      threadReplyRoot = null;
       visualMentions.clear();
       const input = one<HTMLTextAreaElement>("[data-composer-input]");
       if (input) {
@@ -4280,15 +4258,9 @@ import "../../styles/tokens.css";
        * `created_at.lt`; flipping the query to ascending would fetch the OLDEST 25 on first paint
        * and break every "load older" page after it. So the array stays newest-first for
        * pagination and is reversed once, for display. */
-      /* One row, built once, used for a thread root and for a reply alike. It was a loop
-         body until threads arrived; a reply has to be built into the thread's own list
-         rather than into the feed, and two copies of 150 lines of row would have drifted
-         the first time either changed. */
-      const buildMessageRow = (signal: Signal, isReply: boolean): HTMLLIElement => {
+      const buildMessageRow = (signal: Signal): HTMLLIElement => {
         const row = document.createElement("li");
-        row.className = isReply
-          ? "dashboard__message dashboard__message--reply"
-          : "dashboard__message";
+        row.className = "dashboard__message";
         row.dataset.signalId = signal.id;
         if (
           !sampleMode && session && activeWorkspaceId &&
@@ -4458,32 +4430,6 @@ import "../../styles/tokens.css";
           body.append(about);
         }
         appendDeliveryReceipt(body, signal);
-        /* A thread reply is undirected and readable by everyone who reads the thread, so
-           the control is offered only where that is true of the message being answered.
-           A message addressed to one recipient cannot start a thread: the server refuses
-           it, and offering a control the server refuses is a lie in a button. */
-        const canReply = !sampleMode && session !== null && !isReply &&
-          signal.threadRootId === null && signalIsBroadcast(signal);
-        if (canReply) {
-          const actions = document.createElement("div");
-          actions.className = "dashboard__message-actions";
-          const reply = document.createElement("button");
-          reply.type = "button";
-          reply.className = "dashboard__text-button dashboard__message-reply";
-          reply.textContent = "Reply in thread";
-          reply.addEventListener("click", () => {
-            threadReplyRoot = {
-              id: signal.id,
-              author: authorName,
-              until: signal.until,
-            };
-            expandedThreadIds.add(signal.id);
-            syncComposerPlacement();
-            one<HTMLTextAreaElement>("[data-composer-input]")?.focus({ preventScroll: true });
-          });
-          actions.append(reply);
-          body.append(actions);
-        }
         row.append(avatar, body);
         window.requestAnimationFrame(() => {
           if (!markdown.isConnected) return;
@@ -4508,35 +4454,14 @@ import "../../styles/tokens.css";
         return row;
       };
 
-      /* OLDEST FIRST, then threads collapsed under the message they answer. A reply keeps
-         its author, its time and its whole body: opening the thread shows the same row the
-         flat feed would have shown, in place, with no navigation. */
-      for (const group of groupSignalThreads([...visibleSignals].reverse())) {
-        list.append(buildMessageRow(group.root, group.root.threadRootId !== null));
-        if (group.replies.length === 0) continue;
-        const expanded = expandedThreadIds.has(group.root.id);
-        const thread = document.createElement("li");
-        thread.className = "dashboard__thread";
-        const replies = document.createElement("ol");
-        replies.className = "dashboard__thread-replies";
-        replies.id = `dashboard-thread-${group.root.id}`;
-        replies.hidden = !expanded;
-        for (const reply of group.replies) replies.append(buildMessageRow(reply, true));
-        const toggle = document.createElement("button");
-        toggle.type = "button";
-        toggle.className = "dashboard__thread-toggle";
-        toggle.setAttribute("aria-expanded", String(expanded));
-        toggle.setAttribute("aria-controls", replies.id);
-        toggle.textContent = threadReplyCountLabel(group.replies.length);
-        toggle.addEventListener("click", () => {
-          const next = toggle.getAttribute("aria-expanded") !== "true";
-          toggle.setAttribute("aria-expanded", String(next));
-          replies.hidden = !next;
-          if (next) expandedThreadIds.add(group.root.id);
-          else expandedThreadIds.delete(group.root.id);
-        });
-        thread.append(toggle, replies);
-        list.append(thread);
+      /* THREADS ARE NOT THIS LANE. A reply carries `thread_root_id`, and until the thread
+         surface ships it renders inline in the flat feed, interleaved by time, which is the
+         behaviour the design already states for a client that does not know about threads:
+         the feed is noisier and nothing is hidden. Cut to `lane/chat-app-threads` on
+         2026-09-05 by the coordinator, with the collapsed replies, the reply control, the
+         composer's reply bar and `broadcast_to_channel`. */
+      for (const signal of [...visibleSignals].reverse()) {
+        list.append(buildMessageRow(signal));
       }
       previousSignalIds = new Set(signals.map((signal) => signal.id));
       feedWasEmpty = false;
@@ -4876,10 +4801,11 @@ import "../../styles/tokens.css";
       channelListFailed = false;
       activeChannelId = null;
       unknownChannelId = null;
-      threadReplyRoot = null;
-      expandedThreadIds = new Set<string>();
+      /* The intent carries the previous session's body and its command ids. */
+      composerIntent = null;
       disarmChannelArchive();
       renderChannelRail();
+      renderChannelHead();
       deliveryReceiptCache.clear();
       deliveryReceiptRefreshOwner = "";
       humanSeenReporter.resetVisible();
@@ -5104,6 +5030,8 @@ import "../../styles/tokens.css";
 
     const renderChannel = (workspace: Workspace, pending = false): void => {
       const id = one<HTMLElement>("[data-channel-id]");
+      /* This IS the signals view: the loop below marks it current. */
+      activeWorkspaceView = "signals";
       /* ORDER IS LOAD-BEARING. The all-signals button is both a view control and a place
          control, so the signals-view loop below marks it current; running it AFTER the rail
          means syncChannelCurrent has the last word, the way it already does in
@@ -5238,8 +5166,6 @@ import "../../styles/tokens.css";
       activeChannelId = null;
       unknownChannelId = null;
       disarmChannelArchive();
-      threadReplyRoot = null;
-      expandedThreadIds = new Set<string>();
       signalCursor = null;
       signalHasMore = false;
       signalCutoff = "";
@@ -5490,6 +5416,7 @@ import "../../styles/tokens.css";
 
     const activateWorkspaceView = (view: "signals" | "files" | "brain"): void => {
       if (keepConnectCredentialVisible()) return;
+      activeWorkspaceView = view;
       const name = one<HTMLElement>("[data-channel-name]");
       const description = one<HTMLElement>("[data-channel-description]");
       for (const button of all<HTMLButtonElement>("[data-workspace-view]")) {
@@ -5568,7 +5495,10 @@ import "../../styles/tokens.css";
       for (const button of all<HTMLButtonElement>("[data-channel-place]")) {
         const place = button.dataset.channelPlace ?? "";
         const id = place === "" ? null : place;
-        if (id === activeChannelId && unknownChannelId === null) {
+        if (
+          activeWorkspaceView === "signals" && id === activeChannelId &&
+          unknownChannelId === null
+        ) {
           button.setAttribute("aria-current", "page");
         } else button.removeAttribute("aria-current");
       }
@@ -5582,28 +5512,6 @@ import "../../styles/tokens.css";
      */
     const syncComposerPlacement = (): void => {
       const input = one<HTMLTextAreaElement>("[data-composer-input]");
-      const bar = one<HTMLElement>("[data-composer-reply]");
-      const targetText = one<HTMLElement>("[data-composer-reply-target-text]");
-      const windowText = one<HTMLElement>("[data-composer-reply-window]");
-      const broadcast = one<HTMLInputElement>("[data-composer-reply-broadcast]");
-      if (bar) bar.hidden = threadReplyRoot === null;
-      if (threadReplyRoot !== null) {
-        if (targetText) {
-          targetText.textContent =
-            `Replying in the thread from ${threadReplyRoot.author}. Everyone who reads the thread reads this.`;
-        }
-        if (windowText) {
-          windowText.textContent = threadReplyRoot.until === null
-            ? ""
-            : `This thread ends ${formatTime(threadReplyRoot.until).relative}, and a reply cannot outlive it.`;
-        }
-        if (input) {
-          input.placeholder = "Reply in this thread";
-          input.setAttribute("aria-label", "Thread reply");
-        }
-        return;
-      }
-      if (broadcast) broadcast.checked = false;
       const channel = activeChannel();
       if (!input) return;
       if (channel === null) {
@@ -5616,6 +5524,13 @@ import "../../styles/tokens.css";
     };
 
     const renderChannelHead = (): void => {
+      /* Files and Brain own the head while they are on screen. Writing the channel's name
+         over one of them was reachable from a rename, which re-renders the head without
+         going through the view switch. */
+      if (activeWorkspaceView !== "signals") {
+        syncChannelCurrent();
+        return;
+      }
       const name = one<HTMLElement>("[data-channel-name]");
       const description = one<HTMLElement>("[data-channel-description]");
       const switchLabel = one<HTMLElement>("[data-channel-switch-label]");
@@ -5716,11 +5631,6 @@ import "../../styles/tokens.css";
       unknownChannelId = found === null ? requested : null;
     };
 
-    const cancelThreadReply = (): void => {
-      threadReplyRoot = null;
-      syncComposerPlacement();
-    };
-
     const selectChannel = (channelId: string | null): void => {
       const next = channelId === null
         ? null
@@ -5729,8 +5639,21 @@ import "../../styles/tokens.css";
       const changed = next !== activeChannelId || unknownChannelId !== null;
       activeChannelId = next;
       unknownChannelId = null;
-      cancelThreadReply();
       disarmChannelArchive();
+      /* An unfinished send is addressed to the channel it was started in, and the composer is
+         about to promise this one. Replaying the old address from a box that says
+         "Message #ops" is the contradiction; the intent is retired here instead, so a send
+         from this channel is a new message that goes where the box says. The hops that
+         already landed stay where they landed. */
+      if (composerIntent !== null) {
+        composerIntent = null;
+        const retryControl = one<HTMLButtonElement>("[data-composer-retry]");
+        if (retryControl) retryControl.hidden = true;
+        setComposerStatus(
+          "The unfinished message belongs to the channel it was written in. Sending from here posts it here, as a new message.",
+          "error",
+        );
+      }
       /* SAMPLE MODE NARROWS LOCALLY, and it is the one place that may. There is no server
          behind this page, so clearing the rows and asking for a page would replace the
          made-up feed with "not connected to CommonSwarm" — measured, before this branch
@@ -5740,7 +5663,6 @@ import "../../styles/tokens.css";
         signals = sampleSignals.filter(
           (signal) => activeChannelId === null || signal.channelId === activeChannelId,
         );
-        expandedThreadIds = new Set<string>();
         syncChannelUrl();
         renderChannelRail();
         closeChannelDialog();
@@ -5757,7 +5679,6 @@ import "../../styles/tokens.css";
         signalHasMore = false;
         signalCutoff = "";
         channelLoadError = "";
-        expandedThreadIds = new Set<string>();
         previousSignalIds.clear();
         feedWasEmpty = false;
         deliveryReceiptCache.clear();
@@ -5875,6 +5796,10 @@ import "../../styles/tokens.css";
         if (current()) {
           channelListFailed = true;
           renderChannelHead();
+          /* The feed carries the other half of that sentence. Rendering only the head left
+             the head saying the list did not load while the feed still said the id is simply
+             not here. Found by a review arm. */
+          if (unknownChannelId !== null) renderFeed();
         }
         throw error;
       }
@@ -5885,10 +5810,13 @@ import "../../styles/tokens.css";
          The workspace open resolves the URL against the list it read, and that read can be
          dropped in favour of a newer one that has not landed yet, leaving a real id resolved
          against an empty list. It can also simply be a channel someone else created after
-         this reader's list was read. Found by a review arm. */
-      if (unknownChannelId !== null) {
-        applyChannelFromUrl(workspaceId);
-        syncChannelUrl();
+         this reader's list was read. Found by a review arm.
+         It goes through selectChannel, not through applyChannelFromUrl: the head, the rail,
+         the URL and the FEED have to move together. Resolving the id in place left the reader
+         inside the channel with "Channel not found" still on the screen. */
+      if (unknownChannelId !== null && channelById(channels, unknownChannelId) !== null) {
+        selectChannel(unknownChannelId);
+        return;
       }
       /* A channel that was archived while it was open stops being the active one: the rail
          no longer lists it and posting to it is refused. Its messages stay readable in
@@ -6064,10 +5992,9 @@ import "../../styles/tokens.css";
           grantRevokedAt: null,
         },
       ];
-      /* Sample mode gets ONE channel and ONE thread, because the shapes they add to the feed
-         are the two a first-time reader cannot otherwise see: a message filed in a channel,
-         and a reply collapsed under the message it answers. The data is made up, and the
-         notice above the feed says so. */
+      /* Sample mode gets ONE channel, because a message filed in a channel is the shape a
+         first-time reader cannot otherwise see. The data is made up, and the notice above the
+         feed says so. */
       channels = [
         {
           channelId: "sample-channel-mobile",
@@ -6081,21 +6008,6 @@ import "../../styles/tokens.css";
         },
       ];
       signals = [
-        {
-          id: "sample-4",
-          from: "sample-river",
-          fromKind: "agent",
-          to: null,
-          toAgent: null,
-          kind: "note",
-          body: "Checked it at 320px. The filter row scrolls sideways, nothing is cut off.",
-          about: null,
-          until: null,
-          createdAt: new Date(now - 2 * 60_000).toISOString(),
-          channelId: null,
-          threadRootId: "sample-3",
-          broadcastToChannel: false,
-        },
         {
           id: "sample-1",
           from: "sample-lumen",
@@ -6938,20 +6850,6 @@ import "../../styles/tokens.css";
         input.focus();
         return;
       }
-      /* A reply in a thread is undirected: everyone who can read the thread reads it, so it
-         has no private half and the server refuses one that names a recipient. An @tag in a
-         reply therefore stays what it looks like — a name in the text — rather than quietly
-         turning the reply into a private message to that person. Refuse here and say why,
-         because posting it would mean the opposite of what the writer sees. */
-      if (threadReplyRoot !== null && address.recipients.length > 0) {
-        setComposerStatus(
-          "A reply in a thread goes to everyone who reads the thread, so it cannot also be " +
-            "sent to one person. Remove the tag, or cancel the reply and send it on its own.",
-          "error",
-        );
-        input.focus();
-        return;
-      }
       const recipients = address.recipients.length === 0
         ? [{ kind: "everyone" } as ComposerAudience]
         : address.recipients;
@@ -6960,16 +6858,9 @@ import "../../styles/tokens.css";
          `#` legitimately and a parser could not tell a heading from an address. A reply
          inherits its root's channel from the SERVER: the client may not file a reply
          somewhere its thread is not, and the edge refuses a body that names both. */
-      const replyRoot = threadReplyRoot;
-      const replyBroadcast = replyRoot !== null &&
-        (one<HTMLInputElement>("[data-composer-reply-broadcast]")?.checked ?? false);
-      const postChannel = replyRoot === null ? activeChannel() : null;
-      const freshPlacement = replyRoot === null
-        ? (postChannel === null ? {} : { channel: postChannel.slug })
-        : { threadRootId: replyRoot.id, broadcastToChannel: replyBroadcast };
-      const freshPlacementChannelId = replyRoot === null
-        ? postChannel?.channelId ?? null
-        : signals.find((entry) => entry.id === replyRoot.id)?.channelId ?? null;
+      const postChannel = activeChannel();
+      const freshPlacement = postChannel === null ? {} : { channel: postChannel.slug };
+      const freshPlacementChannelId = postChannel?.channelId ?? null;
       const recipientKinds = recipients.map((recipient) => browserSignalKind(recipient));
       const signalKind = recipientKinds.join("+");
       const audienceKey = composerRecipientsKey();
@@ -7028,8 +6919,8 @@ import "../../styles/tokens.css";
           /* The pending row is shown where the posted row will land, so the reader is not
              watching their message sit in one place and then move to another. */
           channelId: placementChannelId,
-          threadRootId: replyRoot === null ? null : replyRoot.id,
-          broadcastToChannel: replyBroadcast,
+          threadRootId: null,
+          broadcastToChannel: false,
         };
       });
       const retry = one<HTMLButtonElement>("[data-composer-retry]");
@@ -7093,8 +6984,8 @@ import "../../styles/tokens.css";
                 until: null,
                 createdAt: new Date().toISOString(),
                 channelId: placementChannelId,
-                threadRootId: replyRoot === null ? null : replyRoot.id,
-                broadcastToChannel: replyBroadcast,
+                threadRootId: null,
+                broadcastToChannel: false,
               }
             : await postBrowserSignal(
                 session!,
@@ -7138,10 +7029,6 @@ import "../../styles/tokens.css";
         if (sampleMode) sampleSignals = [...posted, ...sampleSignals];
         composerIntent = null;
         composerAttachmentsMissingAfterReload = false;
-        /* The reply is sent, so the next message is a message of its own. Cleared only on
-           success: a failed send keeps the reply in progress, the same way it keeps the
-           body in the box. */
-        cancelThreadReply();
         for (const attachment of attachmentSnapshot) {
           if (attachment.previewUrl) URL.revokeObjectURL(attachment.previewUrl);
         }
@@ -7185,7 +7072,19 @@ import "../../styles/tokens.css";
           persistComposerDraft();
         }
         composerIntent = unsent
-          ? { commandIds, body: rawBody, audienceKey, attachmentKey, signalKind }
+          /* WITH THE ADDRESS. Rewriting the intent without it made every retry after a partial
+             failure post UNFILED, and a failed thread reply retry a new top-level note: the
+             replay reads `intent.placement`, and `postBrowserSignal` defaults a missing one to
+             `{}`. No channel switch was needed to reach it. Both arms found it. */
+          ? {
+            commandIds,
+            body: rawBody,
+            audienceKey,
+            attachmentKey,
+            signalKind,
+            placement,
+            placementChannelId,
+          }
           : null;
         if (!unsent) {
           /* Everything posted, so this failure is a render fault and the send is FINISHED. The
@@ -7401,11 +7300,6 @@ import "../../styles/tokens.css";
       "input",
       disarmChannelArchive,
     );
-    one<HTMLButtonElement>("[data-composer-reply-cancel]")?.addEventListener("click", () => {
-      cancelThreadReply();
-      one<HTMLTextAreaElement>("[data-composer-input]")?.focus({ preventScroll: true });
-    });
-
     for (const button of all<HTMLButtonElement>("[data-feed-filter]")) {
       button.addEventListener("click", () => {
         const next = button.dataset.feedFilter;
@@ -9828,82 +9722,6 @@ import "../../styles/tokens.css";
     text-underline-offset: 0.3em;
   }
 
-  .dashboard__message-actions {
-    display: flex;
-    gap: var(--s-3);
-    margin-block-start: var(--s-1);
-  }
-
-  .dashboard__message-reply {
-    font-size: var(--t-xs);
-  }
-
-  /* The thread. One row under its root: a count that opens in place, and the replies
-     indented under it. No drawer, no navigation, and no second copy of the message. */
-  .dashboard__thread {
-    display: grid;
-    gap: var(--s-2);
-    /* Aligns with the message body, whose row begins after the 32px avatar and its gap. */
-    padding-inline-start: calc(2rem + var(--s-3));
-  }
-
-  .dashboard__thread-toggle {
-    justify-self: start;
-    padding: var(--s-1) var(--s-2);
-    color: var(--accent);
-    background: transparent;
-    border: 0;
-    border-radius: var(--radius-sm);
-    font: inherit;
-    font-size: var(--t-xs);
-    cursor: pointer;
-  }
-
-  .dashboard__thread-toggle:hover,
-  .dashboard__thread-toggle:focus-visible {
-    background: var(--surface-raised);
-  }
-
-  .dashboard__thread-replies {
-    display: grid;
-    gap: var(--s-4);
-    margin: 0;
-    padding: 0;
-    list-style: none;
-    border-inline-start: 2px solid var(--border);
-    padding-inline-start: var(--s-4);
-  }
-
-  /* The composer's reply bar. Hidden until a reply is in progress, so the bar at rest is the
-     same height it was before threads existed. */
-  .dashboard__composer-reply {
-    display: grid;
-    gap: var(--s-1);
-    padding: var(--s-2) var(--s-3);
-    margin-block-end: var(--s-2);
-    background: var(--surface-raised);
-    border: 1px solid var(--border);
-    border-radius: var(--radius);
-    font-size: var(--t-xs);
-  }
-
-  .dashboard__composer-reply-target {
-    margin: 0;
-    color: var(--text-muted);
-  }
-
-  .dashboard__composer-reply-window {
-    display: block;
-    color: var(--text-muted);
-  }
-
-  .dashboard__composer-reply-broadcast {
-    display: flex;
-    align-items: center;
-    gap: var(--s-2);
-    color: var(--text-muted);
-  }
-
   .dashboard__channel-dialog {
     inline-size: min(30rem, calc(100vw - var(--s-6)));
     max-block-size: min(42rem, calc(100dvh - var(--s-6)));
@@ -12195,12 +12013,6 @@ import "../../styles/tokens.css";
       overflow: hidden;
       text-overflow: ellipsis;
       white-space: nowrap;
-    }
-
-    /* A phone has no room for the avatar column's worth of indent, and the rule on the
-       replies already says where the thread is. */
-    .dashboard__thread {
-      padding-inline-start: var(--s-4);
     }
 
     /* A bottom sheet, the same shape the roster dialog takes at this width. */

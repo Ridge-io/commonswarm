@@ -65,27 +65,22 @@ There is **no `#` parsing of the body, ever**. Bodies contain `#` legitimately: 
 renders in a message, and `#1804`-style references are routine in this workspace's own prose. A parser
 could not tell an address from prose.
 
-## Threads
+## Threads are not in this lane
 
-A reply control appears on a message only where the server would accept a thread reply to it: not in
-sample mode, not on a reply, not on a message that is already in a thread, and not on a directed
-message. `chatSignalShapeProblem` refuses a directed root, and offering a control the server refuses is
-a lie in a button.
+**Cut on 2026-09-05 by the coordinator, after six review rounds.** The thread surface was built here —
+a reply control on eligible roots, replies collapsed under their root with a count, a composer reply
+bar, and `broadcast_to_channel` — and it is removed to `lane/chat-app-threads` so a smaller correct app
+can land. Four of the six defects the arms found in round six lived in that half.
 
-Replies render **collapsed under their root**, with `N replies` from `threadReplyCountLabel`, and expand
-in place by toggling `hidden` on a list that is already built. It is not a re-render: the reader's
-scroll position and every open "Show more" survive it.
+The browser therefore never sends `thread_root_id` or `broadcast_to_channel`. A reply written from the
+CLI still reads: it renders inline in the flat feed, interleaved by time, which is exactly what the
+reconciled design states for a client that does not know about threads. The feed is noisier and nothing
+is hidden.
 
-`groupSignalThreads` keeps the input order and returns a reply whose root is not in the loaded page as a
-row of its own. An expired or not-yet-paged root must never take a visible message off the screen.
-
-A reply is undirected. A tag typed into a reply body is refused before anything is posted, with the
-reason, rather than silently posting a directed message that means the opposite of what the writer sees.
-`broadcast_to_channel` is a checkbox on the reply bar, which is the only place the edge allows it: the
-validator refuses `broadcast_to_channel` without a `thread_root_id`.
-
-The reply bar shows the ceiling the server clamps to. A reply cannot outlive the message its thread
-starts from, and that remaining window can be short.
+`groupSignalThreads` and `threadReplyCountLabel` are cut with it; `signal-feed.ts` records where they
+went. Three observer controls the thread work had moved are **restored to their original form**: the
+composer's `/emoji|reaction|thread/i` gate, and the two reversal pins in `transcript-shape.observer.mjs`
+and `composer-sprint.observer.test.ts`.
 
 ## The URL
 
@@ -113,9 +108,13 @@ when there is no channel narrowing or when the row's own `channel_id` — the se
 guess — matches it. A row is removed from the list only when it is about to be put back.
 
 **A retry replays the address the message was sent to.** `composerIntent` carries the placement beside
-the command ids, so a partial send in one channel, a switch, and a Retry finishes in the channel the
-message was addressed to rather than the one the reader is looking at, and a failed thread reply keeps
-its thread even though the switch cleared the composer's reply state.
+the command ids, on the mint AND on the rewrite the failure path makes. Leaving it off that rewrite was
+its own defect: the replay reads `intent.placement`, and `postBrowserSignal` defaults a missing one to
+`{}`, so every retry after a partial failure posted unfiled with no channel switch involved.
+
+**And an unfinished send does not follow the reader to another channel.** Moving channel retires the
+intent and says so, because the composer is about to promise the new channel and replaying the old
+address would contradict the box being typed in. The hops that already landed stay where they landed.
 
 **A `?c=` belongs to the workspace its `?w=` names, and the URL is written on every open.** The first
 version wrote it only when a channel was clicked, so switching workspace from the menu carried the
@@ -191,13 +190,15 @@ forbids.
    the three commands against the real edge, the server-side `channel_id` narrowing, and the `?w=` /
    `?c=` round trip, which sample mode deliberately skips — are covered by tests and by reading, not by
    a request that left this machine.
-2. **No thread reply has been posted from the browser.** The reply control is gated on a session, which
-   sample mode does not have. Its wire body is asserted byte-exact against the shapes
-   `tests/p1-server/chat-signals.test.ts` sends, and that suite needs a local Supabase this lane did not
-   take.
+2. **No thread reply can be posted from the browser at all**, by the cut above. What is asserted is the
+   negative: the dashboard sends neither `thread_root_id` nor `broadcast_to_channel`. The wire bodies
+   that ARE sent are checked byte-exact against the shapes `tests/p1-server/chat-signals.test.ts` sends,
+   and that suite needs a local Supabase this lane did not take.
 3. **The `?m=` message permalink and `?t=` thread permalink are not built.**
 4. **Colour is lane L5** and shares these files. Nothing here changes `markAgentAvatar`.
-5. **The To: field with multiple recipients is not built** and waits on `chat-recipients` (L2).
+5. **The To: field with multiple recipients is not built.** L2 `chat-recipients` is live in production
+   (a signal can carry a `to` list of up to 8, and the read view carries `recipients`), and the To:
+   field is its own lane after this one.
 6. **No capacity or query-plan work.** `channel_id=eq.` rides the partial index L1 added; no plan was
    read.
 7. **The source sweeps in the observer test state their own bounds** in the test headers. A regex over

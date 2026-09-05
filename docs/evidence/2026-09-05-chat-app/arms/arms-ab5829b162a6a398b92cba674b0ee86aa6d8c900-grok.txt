@@ -1,0 +1,138 @@
+I'll read REVIEW.md and DIFF.patch first, then follow REVIEW.md exactly.The brief is a full attack review of this SHA. I’ll keep reading the rest of the diff and the files it names.I’ll keep going through the rest of the patch and the source that the claims rest on.I’ll keep reading the rest of the patch and the files the claims depend on.I’ll check whether the new tests actually run, then trace the URL, sample-post, and grouping paths.I have a likely current-mark bug in `renderChannel`. Next I’ll confirm it against CSS, URL writes, and the design copy.The `renderChannel` / `aria-current` order looks wrong. I’ll confirm the signals-view buttons and a few remaining paths.I have two real defects. Checking one more interaction so the write-up stays exact.First `diff --git` line of DIFF.patch:
+
+`diff --git a/docs/design/2026-09-05-chat-app-channels.md b/docs/design/2026-09-05-chat-app-channels.md`
+
+SHA `ab5829b162a6a398b92cba674b0ee86aa6d8c900`. Two product defects remain. Both are in the same family as earlier FAIL rounds: a current mark that lies, and a row from one channel applied under another channel’s name. I tried to drop each one. Both still stand.
+
+---
+
+### 1. Privacy copy
+
+I grepped user-facing channel strings in `site/src/lib/channels.ts`, `LiveDashboard.astro` (rail, head, dialog, composer, archive, unknown-channel, refusals), and the observer sweep.
+
+`CHANNEL_REACH_TEXT` says every member reads every channel. Archive copy says messages still read. Unknown-channel copy names no read permission. Reply copy says the thread is readable by everyone who reads it.
+
+The sweep in `chat-channels.observer.test.ts` reads double-quoted and backtick strings of length ≥ 12 in eight script surfaces, the reply-bar markup, the channel dialog markup, and the composer refusals. Positive control: `checked >= 20`. Named hole: a member-typed `purpose`, rendered verbatim in the head. It also cannot see `CHANNEL_REACH_TEXT` itself (that lives in `channels.ts`; `channels.test.mjs` pins it). Short strings under 12 characters are out of bound.
+
+No privacy claim on a surface the sweep or the constants test can see.
+
+---
+
+### 2. A post from one channel is applied under another channel’s name
+
+`loadSignals` and `refreshLatestSignals` capture `activeChannelId` and drop the page if it changed. `selectChannel` in live mode clears `signals` before the next fetch. That part holds.
+
+The composer success path does not.
+
+`LiveDashboard.astro` 7016–7026: after `postBrowserSignal` returns, the only guards are `requestVersion` and `activeWorkspaceId`. There is no `activeChannelId` check. Then:
+
+```javascript
+signals = [...posted, ...signals.filter(...)];
+```
+
+`selectChannel` (5672–5719) does **not** bump `requestVersion`. A channel click is not a workspace change.
+
+How you see it:
+
+1. Open `#mobile`. Send a message.
+2. Before “Posting…” finishes, click another live channel (`#ops`).
+3. `selectChannel` clears `signals` and starts `loadSignals` for `#ops`.
+4. If that fetch lands first, `signals` is the `#ops` page. The composer then prepends the `#mobile` row.
+5. `refreshLatestSignals` (4698–4706) keeps any local id that is not in the new page, so the stray row stays until you leave the channel.
+
+I tried to refute this: maybe `loadSignals` always overwrites after. If the post returns first, you get a flash and then the `#ops` page wins. If `loadSignals` returns first, the stray row is durable. Sample mode is synchronous, so this race is live-mode only.
+
+This is the same class of defect the query-capture was meant to close.
+
+---
+
+### 3. `renderChannel` puts `aria-current` back on `#all-signals` after the honest mark
+
+`syncChannelCurrent` (5515–5522) is correct: an unresolved `?c=` marks nothing; a live channel marks only that channel.
+
+The all-signals button has **both** `data-workspace-view="signals"` and `data-channel-place=""` (341–350). `renderChannel` (5074–5078) calls `renderChannelRail` / `renderChannelHead` (which call `syncChannelCurrent`), then marks every `[data-workspace-view="signals"]` current. That includes `#all-signals`.
+
+`openWorkspace` (5245–5253) does `applyChannelFromUrl` then `renderChannel`. That is boot, menu switch, create, retry, and close-and-fall-through.
+
+How you see it:
+
+- Reload `/app?w=<id>&c=<valid-channel-id>`. Head and channel button say `#mobile`. `#all-signals` also has `aria-current="page"` (styled at 8677). Two current places.
+- Reload with a `?c=` that is not in this workspace. Head says “Channel not found”. Doctrine at 5508–5513 says the rail marks nothing. `#all-signals` is marked current anyway, which says you are reading the whole feed.
+
+`activateWorkspaceView("signals")` runs `syncChannelCurrent` **after** the workspace-view loop, so a later click repairs the mark. The open path never does. The new test only pins the Files/Brain clear, not this order.
+
+I tried to refute this: maybe only the phone “Signals” tab is meant to stay current. That tab has `data-workspace-view` and no `data-channel-place`, so it should stay current. The all-signals **place** must not. The comment at 5605 already says `data-workspace-view` on a place button would mark the wrong thing. The static all-signals button still has both attributes.
+
+Round 2 asked whether the mark comes back correctly and whether any view has nothing current. On Files/Brain, nothing channel-related is current (good). On an unresolved `?c=` after `renderChannel`, `#all-signals` is current (bad). The design note item 8 that says the rail and head can no longer disagree is false on the open path.
+
+---
+
+### 4. Unknown `?c=` and rendered rows
+
+`renderFeed` (4179–4181) returns into `renderUnknownChannel` before any row. `loadSignals` / poll may fill `signals` with the unfiltered page (`activeChannelId` is null), but those rows are not painted.
+
+`?w=` is resolved only against `workspaceMemberships()` (6132–6136). It is not a grant.
+
+`applyChannelFromUrl` (5650+) ignores `?c=` when `?w=` names a different workspace, then `syncChannelUrl` writes. Read then write, no await between them, so the write cannot clobber a `?c=` that was about to be applied.
+
+Workspace open paths (menu 3160, create 5889, close-and-fall-through 7461, retry 7360/7366, boot 6136) all go through `openWorkspace`. A link whose own `?w=` is the workspace being opened still applies. A leftover `?c=` from the previous workspace is dropped, which is the round-3 fix.
+
+Composer: hidden in `showChannelView` (1516–1517); submit refuses (6818–6828); Enter and retry both `requestSubmit()` the same handler. No third post path.
+
+`channelListFailed` is set from the open’s soft-fail, then from `refreshChannels` on both outcomes, version- and workspace-guarded. A later success clears it; a later fail sets it and re-renders the head. Two refreshes in the same workspace could theoretically finish out of order (no per-refresh generation). Callers await, and the buttons disable, so I could not reach that from the UI. Not a finding.
+
+---
+
+### 5. Threads and wire shape
+
+`canReply` matches `chatSignalShapeProblem`: not sample, has session, not already a reply, `threadRootId === null`, broadcast only. A tagged reply is refused before send. Placement is either `{ channel }` or `{ threadRootId, broadcastToChannel }`, never both, never `in_reply_to` with a thread root (`in_reply_to` stays `null`). `broadcast_to_channel` is only sent with a thread root.
+
+`groupSignalThreads` is two-pass, keeps input order, keeps an orphan reply as its own row, and the tests pin drop/duplicate. Holds.
+
+`postBrowserSignal` spreads `channel`, `thread_root_id`, and `broadcast_to_channel` each in its own group. Default `placement = {}` omits all three. The unconditional keys (`to_user_id`, `to_agent_principal_id`, `in_reply_to: null`, `about: null`) are unchanged. An empty placement is the pre-lane body. Holds.
+
+---
+
+### 6. Generated lists vs typed lists
+
+Name hint, purpose bound, slug maxlength, reserved-name sentence, and `CHANNEL_EMPTY_TEXT` / unknown-channel sentences are built from the edge constants or `ALL_SIGNALS_SLUG`. `ALL_SIGNALS_SLUG` is typed once in `channels.ts` and asserted reserved. `COMPOSER_DRAFT_SCOPE = "all-signals"` is a storage key for drafts already saved; following the constant would orphan them. Astro frontmatter already imports `_shared` the same way as `SIGNAL_BODY_MAX`. Holds.
+
+---
+
+### 7. Observer tests as claim controls
+
+| Test | What changed | Same property? |
+|---|---|---|
+| `composer.observer.test.ts` | Dropped `thread` from `/emoji\|reaction\|thread/i`; kept emoji/reaction; added the exact `data-composer-reply*` set; bar is `hidden` at rest | Yes. Thread chrome is now inventoried, not banned. |
+| `ui-addressing.observer.test.ts` | Transitive asset walk; pin moved to `BROWSER_SIGNAL_COLUMNS` | Stronger. The old shallow read missed a shared chunk. Graph-length control is present. |
+| `composer-sprint-browser.observer.test.ts` | Sample-row anchor is first `}` after `createdAt` | Yes. Stops the silent rewrite. |
+| `slack-shape.observer.test.ts` | Token is `<span>{ALL_SIGNALS_SLUG}</span>` | Yes. Pins the generating expression, not a comment. |
+| `transcript-shape.observer.mjs` / `composer-sprint.observer.test.ts` | Reverse is `groupSignalThreads([...].reverse())` | Yes. Newest-last still asserted. |
+| `workspace-switcher.observer.test.ts` | `dashboard-channels-label` | Yes. Workspace control still first. |
+
+Mutation table: 35 mutations, 0 not discriminating. Round-2 and round-3 rows are in it.
+
+---
+
+### 8. Mobile
+
+CSS: `.dashboard__channel-switch` is `display: none` by default, `inline-flex` / `min-block-size: 2.5rem` / `max-inline-size: 8rem` inside `@media (max-width: 52rem)`. It sits in `.dashboard__feed-toolbar`, which already has `margin-block-end: -2.5rem`. It does not add a standing header row. Titleblock is clipped; channel head is `position: absolute`. `--feed-band-height: 3.25rem` is the pre-existing roster cluster, not this chip.
+
+`mobile-measurements.json`: each size reloads, waits on `innerWidth` / `innerHeight` / `visualViewport.height` / a rendered feed, scrolls the transcript to top, and requires every reported rect inside the viewport. 390: app bar height 73, first message 240.1, clearance 0. 320: app bar 57 (≤34rem), first message 229.8, clearance 0. Longest legal slug: switch width 128, filter `clientWidth` 110 / 40, `allFilterFullyOnScreen: true`. Arithmetic matches (app bar bottom = head top; first message top = head bottom). Sample notice sits above the app bar (`top` 115.1 / 120.8); that is sample chrome, not a second app header.
+
+---
+
+### 9. Round two / three leftovers
+
+- **Unknown copy.** `unknownChannelText` / `unknownChannelHeadText` branch on `channelListFailed`. Failed list says the list did not load. Found-nothing says the id is not here. Both say every channel is readable. After a successful open, a `?c=` miss cannot take the failed-list sentence.
+- **Sample posts.** On success, `sampleSignals = [...posted, ...sampleSignals]` (7039). Optimistic pending ids never enter the snapshot. Sample post is synchronous, so a channel switch cannot interleave. Local filter stays the whole set.
+- **`CHANNEL_REACH_TEXT`.** Has “every member reads every channel”, expiry, and “not who gets woken”. Design §8 required those facts in the UI. It does not name 30 / 7 / 24-hour windows; it does not claim a different window. Empty-state caveat is `CHANNEL_EMPTY_TEXT`.
+- **Archive.** Arms on `channel.channelId`. `selectChannel`, workspace open, dialog close, and rename input all `disarmChannelArchive`. Second press cannot hit the wrong channel. Cannot stay armed across a channel or workspace change.
+- **Sample-mode filter.** Bounded: no server, snapshot is the whole set, posts join it. Not the dishonest loaded-page filter.
+- **What the lane did not establish.** Items 1–7 and 9 are honest (no production hit, no live thread post, no `?m=`/`?t=`, colour is L5, no multi-recipient To, no query plan, sweep bounds). Item 8 is not: it claims the rail and head can no longer disagree. Finding 3 is that disagreement on every workspace open with `?c=` set.
+
+---
+
+Two defects. Both are visible without a debugger. The gates that were added after the last FAIL do not cover them.
+
+VERDICT: FAIL

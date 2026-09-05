@@ -155,60 +155,21 @@ test("the composer stamps the channel being read and gains no chrome for it", ()
   /* And no `#` parsing of the body, ever: bodies contain `#` legitimately (a Markdown
      heading, an issue reference), so a parser cannot tell an address from prose. */
   assert.doesNotMatch(dashboard, /rawBody[^\n]*match\([^\n]*#/);
-  const placement = between(dashboard, "const replyRoot = threadReplyRoot;", "const placementChannelId");
-  assert.match(placement, /const postChannel = replyRoot === null \? activeChannel\(\) : null;/);
-  assert.match(placement, /postChannel === null \? \{\} : \{ channel: postChannel\.slug \}/);
-  /* A reply's channel is the SERVER's to decide, from the root. The client sending both is
-     refused by the validator rather than reconciled, so the client sends neither. */
-  assert.match(placement, /\{ threadRootId: replyRoot\.id, broadcastToChannel: replyBroadcast \}/);
+  const placement = between(dashboard, "const postChannel = activeChannel();", "const placementChannelId");
+  assert.match(placement, /const freshPlacement = postChannel === null \? \{\} : \{ channel: postChannel\.slug \};/);
+  /* THREADS ARE NOT THIS LANE (cut 2026-09-05 to `lane/chat-app-threads`). The browser never
+     sends `thread_root_id` or `broadcast_to_channel`; a reply written from the CLI still
+     renders, inline in the flat feed, which is what the design states for a client that does
+     not know about threads. */
+  assert.doesNotMatch(dashboard, /threadRootId: (?!null)[a-zA-Z]/);
+  assert.doesNotMatch(dashboard, /broadcastToChannel: (?!false)[a-zA-Z]/);
   const sync = between(dashboard, "const syncComposerPlacement = (", "const renderChannelHead");
   assert.match(sync, /input\.placeholder = `Message \$\{channelLabel\(channel\.slug\)\}`;/);
   assert.match(sync, /input\.setAttribute\("aria-label", `Message in \$\{channelLabel\(channel\.slug\)\}`\)/);
 });
 
-test("a thread reply is offered only where the server would accept one", () => {
-  const feed = between(dashboard, "const buildMessageRow = (", "previousSignalIds = new Set(");
-  assert.match(
-    feed,
-    /const canReply = !sampleMode && session !== null && !isReply &&\s*signal\.threadRootId === null && signalIsBroadcast\(signal\)/,
-  );
-  /* The same three rules the edge applies to a thread reply, in chatSignalShapeProblem:
-     it is not directed, it is not itself already inside a thread, and it is not working-on.
-     The kind is the browser's own (a broadcast post is a note), so only the first two are
-     the client's to gate. */
-  const edgeRules = readFileSync(
-    join(repoRoot, "supabase", "functions", "_shared", "channels.ts"),
-    "utf8",
-  );
-  assert.match(edgeRules, /it cannot also be addressed to one recipient/);
-  /* A tag in a reply body would make it directed, so the composer refuses instead of
-     silently posting a message that means the opposite of what the writer sees. */
-  const submit = between(
-    dashboard,
-    'one<HTMLFormElement>("[data-composer]")?.addEventListener("submit"',
-    "const recipients = address.recipients.length === 0",
-  );
-  assert.match(submit, /threadReplyRoot !== null && address\.recipients\.length > 0/);
-  /* The source splits the sentence over two string literals, so the join is undone before
-     the sentence is read. Asserting the halves separately would let them drift apart. */
-  const joined = submit.replace(/" \+\s*\n\s*"/g, "");
-  assert.match(joined, /it cannot also be sent to one person\. Remove the tag/);
-});
-
-test("replies render collapsed under their root and expand in place", () => {
-  const feed = between(dashboard, "for (const group of groupSignalThreads(", "previousSignalIds = new Set(");
-  assert.match(feed, /threadReplyCountLabel\(group\.replies\.length\)/);
-  assert.match(feed, /toggle\.setAttribute\("aria-expanded", String\(expanded\)\)/);
-  assert.match(feed, /toggle\.setAttribute\("aria-controls", replies\.id\)/);
-  /* Expanding is a hidden toggle on a list that is already built, not a re-render: the
-     reader's scroll position and every open "Show more" survive it. */
-  assert.match(feed, /replies\.hidden = !next;/);
-  assert.doesNotMatch(feed, /renderFeed\(\)/);
-  assert.match(feed, /expandedThreadIds\.add\(group\.root\.id\)/);
-});
-
 test("a ?c= that names no readable channel never shows the unfiltered feed", () => {
-  const apply = between(dashboard, "const applyChannelFromUrl = (", "const cancelThreadReply");
+  const apply = between(dashboard, "const applyChannelFromUrl = (", "const selectChannel = (");
   assert.match(apply, /unknownChannelId = found === null \? requested : null;/);
   /* renderFeed stops before it renders a row. The loaded rows ARE the whole workspace's,
      because a channel that cannot be resolved cannot narrow the query, so the honest state
@@ -250,7 +211,7 @@ test("the URL is written on every workspace open, and a ?c= belongs to its own ?
    * are pinned here: a `?c=` belongs to the workspace its `?w=` names, and the address bar is
    * written after every open rather than after a click.
    */
-  const apply = between(dashboard, "const applyChannelFromUrl = (", "const cancelThreadReply");
+  const apply = between(dashboard, "const applyChannelFromUrl = (", "const selectChannel = (");
   assert.match(apply, /const applyChannelFromUrl = \(workspaceId: string\): void =>/);
   assert.match(apply, /const forWorkspace = params\.get\("w"\);/);
   assert.match(
@@ -405,7 +366,6 @@ test("an auth change closes the channel dialog and drops the channel state", () 
     "channelListFailed = false;",
     "activeChannelId = null;",
     "unknownChannelId = null;",
-    "threadReplyRoot = null;",
     "disarmChannelArchive\\(\\);",
     "renderChannelRail\\(\\);",
   ]) {
@@ -419,9 +379,12 @@ test("a later channel read gives an unresolved link one more chance", () => {
      can also simply be a channel someone else made after this reader's list was read. Found
      by a review arm. */
   const refresh = between(dashboard, "const refreshChannels = async (", "\n    };");
+  /* It goes through selectChannel, not applyChannelFromUrl: the head, the rail, the URL and
+     the FEED have to move together. Resolving the id in place left the reader inside the
+     channel with "Channel not found" still on the screen. A review arm found that. */
   assert.match(
     refresh,
-    /if \(unknownChannelId !== null\) \{\s*\n\s*applyChannelFromUrl\(workspaceId\);\s*\n\s*syncChannelUrl\(\);/,
+    /if \(unknownChannelId !== null && channelById\(channels, unknownChannelId\) !== null\) \{\s*\n\s*selectChannel\(unknownChannelId\);\s*\n\s*return;/,
   );
 });
 
@@ -551,10 +514,6 @@ test("no channel copy in the dashboard implies privacy, and none uses an em-dash
     "const selectChannel = (",
   ];
   const blocks = surfaces.map((anchor) => [anchor, between(dashboard, anchor, "\n    };")] as const);
-  blocks.push([
-    "composer reply bar (markup)",
-    between(dashboard, '<div class="dashboard__composer-reply"', "</div>"),
-  ]);
   blocks.push([
     "channel dialog (markup)",
     between(dashboard, '<dialog\n    class="dashboard__channel-dialog"', "</dialog>"),
