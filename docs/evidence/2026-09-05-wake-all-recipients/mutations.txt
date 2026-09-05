@@ -1,0 +1,375 @@
+MUTATION CONTROLS -- lane/wake-all-recipients
+M1..M10 on commit 3547d82; M11..M12 on commit a1bc2f8, the round-two SHA
+
+Every block is a mutation that removes exactly one thing this lane added, the tests
+that go RED because of it, and the restored green. Ten mutations, ten distinct
+targets. Run in a detached worktree at the same SHA so the review arms could read
+the lane checkout untouched. The migration mutations each re-ran
+`supabase db reset --local` against the local Supabase slot this lane holds.
+
+Reporter is TAP so the failing test names are readable; "# tests / # pass / # fail"
+is the node summary.
+
+== M1 checkedRecipientSlot in src/cloud/delivery.ts always reports nothing ==
+-- baseline
+# tests 29
+# pass 29
+# fail 0
+-- mutated
+not ok 27 - a delivery this agent holds at position 1 is accepted, and its slot is reported
+not ok 28 - a server that reports no recipient set leaves both fields null, never a made-up 1 of 1
+not ok 29 - a recipient slot that cannot be true is refused, and the pair is refused as a pair
+# tests 29
+# pass 26
+# fail 3
+-- restored
+# tests 29
+# pass 29
+# fail 0
+
+== M2 buildListenerPrompt never renders the recipient clause ==
+-- baseline
+# tests 105
+# pass 105
+# fail 0
+-- mutated
+not ok 35 - a multi-recipient delivery says so in the prompt, and a single one says nothing
+not ok 105 - a service that fans out reaches the prompt with this listener's own slot
+# tests 105
+# pass 103
+# fail 2
+-- restored
+# tests 105
+# pass 105
+# fail 0
+
+== M3 the runtime stops passing the delivery context to the engine ==
+-- baseline
+# tests 70
+# pass 70
+# fail 0
+-- mutated
+not ok 70 - a service that fans out reaches the prompt with this listener's own slot
+# tests 70
+# pass 69
+# fail 1
+-- restored
+# tests 70
+# pass 70
+# fail 0
+
+== M4 hydrateDeliveryRefs goes back to the scalar recipient filter ==
+-- mutated
+not ok 27 - a 0.1.55 listener claims, hydrates and replies to a delivery it holds at position 1
+# tests 31
+# pass 30
+# fail 1
+-- restored
+# tests 31
+# pass 31
+# fail 0
+
+== M5 the read edge loses its channels arm ==
+-- mutated
+not ok 30 - an agent credential can list channels, with the same tenancy every resource here takes
+not ok 31 - an archived channel is listed to an agent, with the date that says so
+# tests 31
+# pass 29
+# fail 2
+-- restored
+# tests 31
+# pass 31
+# fail 0
+
+== M6 the fan-out trigger on swarm.signal_recipients is not created ==
+db:reset exit=0
+-- mutated
+not ok 3 - every agent recipient is woken, whatever position it sits at
+not ok 4 - the fan-out cannot outrun the recipient cap, because the cap is the position CHECK
+not ok 6 - a dead signal, a revoked agent and an agent talking to itself write no delivery row
+not ok 7 - the delivery ledger is written by two triggers and by nothing else
+not ok 39 - addressing a second agent wakes it too, and wakes the first exactly once
+not ok 40 - a person first and an agent second wakes the agent, which L2 did not
+not ok 41 - a 0.1.55 listener claims, hydrates and replies to a delivery it holds at position 1
+not ok 42 - the sender's receipt names every agent that was woken
+# tests 45
+# pass 37
+# fail 8
+
+== M7 the shared predicate stops checking revoked_at ==
+db:reset exit=0
+-- mutated
+not ok 6 - a dead signal, a revoked agent and an agent talking to itself write no delivery row
+# tests 14
+# pass 13
+# fail 1
+
+== M8 the shared predicate stops refusing a self-addressed signal ==
+db:reset exit=0
+-- mutated
+not ok 6 - a dead signal, a revoked agent and an agent talking to itself write no delivery row
+# tests 14
+# pass 13
+# fail 1
+restore db:reset exit=0
+-- restored
+# tests 45
+# pass 45
+# fail 0
+
+== M9 the shared predicate stops checking until ==
+db:reset exit=0
+-- mutated
+not ok 6 - a dead signal, a revoked agent and an agent talking to itself write no delivery row
+# tests 14
+# pass 13
+# fail 1
+
+== M10 the shared predicate wakes only ask, dropping note ==
+db:reset exit=0
+-- mutated
+not ok 5 - the wakeable kinds are exactly the kinds the delivery client accepts
+# tests 14
+# pass 13
+# fail 1
+restore db:reset exit=0
+-- restored
+# tests 14
+# pass 14
+# fail 0
+
+WHAT THE SET DID NOT COVER ON 3547d82, said plainly:
+- M6 (no fan-out trigger) left "the wakeable kinds are exactly the kinds the
+  delivery client accepts" GREEN, because the trigger on swarm.signals still
+  enforced the same kind list through the same predicate. Both round-one arms
+  named it. M10 was that test's control for the kind LIST; it had none for the
+  fan-out. Closed on a1bc2f8 -- the test now asserts a delivered kind wakes BOTH
+  recipients, and M6b below turns it red.
+- No mutation was run for the receipt human half. That is a bound this lane
+  records rather than a behaviour it changes.
+
+== ROUND TWO, commit a1bc2f8 ==
+M11 and M12 control the two fixes the round-one arms forced.
+
+== M11 the removed self clause is put back (the round-one blocker) ==
+db:reset exit=0
+-- mutated
+not ok 6 - a dead signal and a revoked agent write no delivery row, and a self-note still does
+# tests 14
+# pass 13
+# fail 1
+restore db:reset exit=0
+-- restored
+# tests 14
+# pass 14
+# fail 0
+
+== M12 CHANNEL_READ_COLUMNS drops one column ==
+-- baseline
+# tests 12
+# pass 12
+# fail 0
+-- mutated
+not ok 12 - both channel readers ask for the same columns in the same order
+# tests 12
+# pass 11
+# fail 1
+not ok 31 - an archived channel is listed to an agent, with the date that says so
+# tests 31
+# pass 30
+# fail 1
+-- restored
+# tests 12
+# pass 12
+# fail 0
+not ok 1 - a body that predates channels still posts, and one that names a channel lands in it
+not ok 2 - an agent may create a channel with a token that carries only post_signal
+not ok 3 - a channel that does not exist is refused with the channels that do
+not ok 4 - an archived channel keeps its history and takes no new messages
+not ok 5 - a thread roots only on an undirected message
+not ok 6 - a thread reply is never working-on, never addressed, and never also in_reply_to
+not ok 7 - in_reply_to keeps its addressing, and a thread reply does not borrow it
+not ok 8 - a defaulted reply horizon is clamped to the thread; a named one is refused, never shortened
+not ok 9 - a channel post wakes nobody, and a directed note to an agent still does
+not ok 10 - a bad channel name is refused with the rule, and the field list names the fields
+not ok 11 - an archived channel takes no thread replies either
+not ok 12 - a refusal names the rule that was broken, with the right article
+not ok 13 - a refusal names the FIRST rule broken, not the chat rule that also fired
+not ok 14 - the EARLY horizon refusal does not claim the thread ended when it has not
+not ok 15 - the feedback categories in the refusal come from the constant the check reads
+not ok 16 - a post with `to` stores the first recipient in the scalar column and the whole set beside it
+not ok 17 - a one-entry `to` and the scalar shape store the same signal row and the same delivery ledger
+not ok 18 - an agent that is only the SECOND recipient reads the signal, and one that is not addressed does not
+not ok 19 - `to` beside a scalar recipient is refused, and the refusal names the field it found
+not ok 20 - the recipient cap refuses from the same constant the sentence is built from
+not ok 21 - a recipient who is not reachable in this workspace refuses the whole post
+not ok 22 - working-on and a private reply refuse a `to` list the same way they refuse the scalar fields
+not ok 23 - an installed client's post is unchanged by the existence of `to`
+not ok 24 - the SECOND recipient can reply privately, the way the first always could
+not ok 25 - addressing a second agent wakes it too, and wakes the first exactly once
+not ok 26 - a person first and an agent second wakes the agent, which L2 did not
+not ok 27 - a 0.1.55 listener claims, hydrates and replies to a delivery it holds at position 1
+not ok 28 - the sender's receipt names every agent that was woken
+not ok 29 - a second AGENT recipient can reply, not only a second person
+not ok 30 - an agent credential can list channels, with the same tenancy every resource here takes
+not ok 31 - an archived channel is listed to an agent, with the date that says so
+# tests 31
+# pass 0
+# fail 31
+
+NOTE on the M12 block: the first "restored" p1-server run in that transcript reads
+0 pass / 31 fail. That is the local functions runtime failing to come up on that
+spawn, not the restore. The immediately following clean run of the same file on
+the same restored tree reads:
+
+# tests 31
+# pass 31
+# fail 0
+
+The M12 mutated run is still the discriminating result: dropping archived_at from
+CHANNEL_READ_COLUMNS turns the import-based pin RED and turns the served
+archived-channel test RED, because the edge builds its SELECT from that array.
+== M6b re-run of M6 on a1bc2f8: the fan-out trigger is not created ==
+(M6 ran on 3547d82, where the wakeable-kinds test only asked whether ANY
+ agent woke. On a1bc2f8 that test also asserts a delivered kind wakes BOTH
+ recipients, so this re-measures whether it now discriminates.)
+db:reset exit=0
+-- mutated
+not ok 3 - every agent recipient is woken, whatever position it sits at
+not ok 4 - the fan-out cannot outrun the recipient cap, because the cap is the position CHECK
+not ok 5 - the wakeable kinds are exactly the kinds the delivery client accepts
+not ok 6 - a dead signal and a revoked agent write no delivery row, and a self-note still does
+not ok 7 - the delivery ledger is written by two triggers and by nothing else
+# tests 14
+# pass 9
+# fail 5
+restore db:reset exit=0
+-- restored
+# tests 14
+# pass 14
+# fail 0
+
+== ROUNDS THREE TO FIVE: the CLI wiring and the feed-side scalar re-check ==
+M13-M16 on ecbb26b, M15b and M17 on a3a69e5, M18-M19 on 4250111.
+
+== M13 signalAddressesAgent forgets the recipient list and asks only the scalar ==
+-- baseline
+# tests 79
+# pass 79
+# fail 0
+-- mutated
+not ok 27 - a signal addresses this agent at any position, and nobody else's
+not ok 70 - hook check surfaces a signal that names this agent at position 1
+not ok 79 - a message naming this agent at position 1 is emitted, and one naming other agents still stops the watch
+# tests 79
+# pass 76
+# fail 3
+-- restored
+# tests 79
+# pass 79
+# fail 0
+
+== M14 parseSignalRecord drops the recipients field it was given ==
+-- mutated
+not ok 25 - the recipient list is read when the server sends it, and stays ABSENT when it does not
+not ok 26 - a recipient list this reader cannot understand is malformed, never guessed at
+not ok 27 - a signal addresses this agent at any position, and nobody else's
+not ok 70 - hook check surfaces a signal that names this agent at position 1
+# tests 71
+# pass 67
+# fail 4
+-- restored
+# tests 27
+# pass 27
+# fail 0
+
+== M15 channelRows refuses an agent credential again ==
+-- mutated
+# tests 27
+# pass 27
+# fail 0
+-- restored
+# tests 27
+# pass 27
+# fail 0
+
+== M16 listChannelsAsAgent adds one key to the request body ==
+-- mutated
+not ok 21 - the agent channel list sends the exact body the read edge parses, and nothing more
+# tests 27
+# pass 26
+# fail 1
+-- restored
+# tests 27
+# pass 27
+# fail 0
+
+== M15b channelRows refuses an agent credential again, on a3a69e5 ==
+(M15 on ecbb26b left every channel test GREEN. The probes stopped at the
+ credential step, before the branch. a3a69e5 adds a run that gets past it.)
+-- baseline
+# tests 28
+# pass 28
+# fail 0
+-- mutated
+not ok 21 - an agent credential reaches the channel list itself, and is not turned back before it
+# tests 28
+# pass 27
+# fail 1
+-- restored
+# tests 28
+# pass 28
+# fail 0
+
+== M17 resolveChannelSelector refuses an agent again ==
+-- mutated
+not ok 21 - an agent credential reaches the channel list itself, and is not turned back before it
+# tests 28
+# pass 27
+# fail 1
+-- restored
+# tests 28
+# pass 28
+# fail 0
+
+== M18 the agent channel reader clears its deadline before the body, as it did on ecbb26b ==
+-- baseline
+# tests 29
+# pass 29
+# fail 0
+-- mutated (this run HANGS if the test cannot fail; it is bounded by the node runner)
+not ok 23 - a body that never settles is the request not completing, not a bad shape
+# tests 29
+# pass 28
+# fail 0
+-- restored
+# tests 29
+# pass 29
+# fail 0
+
+== M19 a stalled body reports the wrong sentence instead of the retryable one ==
+-- mutated
+not ok 23 - a body that never settles is the request not completing, not a bad shape
+# tests 29
+# pass 28
+# fail 1
+-- restored
+# tests 29
+# pass 29
+# fail 0
+
+TWO NOTES ON THIS SET, because both are the kind of thing that makes a green
+mutation log lie:
+
+- M15 on ecbb26b left EVERY channel test green. The offline CLI probes stop at
+  `agent_token_file_unreadable`, which is BEFORE the branch the lane removed, so
+  they could not have failed either way. That is the "a negative result must
+  reach the path it claims to test" failure, caught by the mutation rather than
+  by a review arm. a3a69e5 adds a run with a READABLE agent credential pointed at
+  a dead port, so it gets past the credential and into the channel list. M15b is
+  the same mutation against that test, and it goes red.
+
+- M18's mutated run reports `# fail 0` beside a `not ok` line. The mutation makes
+  the stalled-body test HANG, so the node runner kills it on --test-timeout and
+  the summary counter does not tally. The `not ok 23` line is the discriminating
+  result: with the deadline cleared before the body, the test cannot finish.

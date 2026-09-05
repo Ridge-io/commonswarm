@@ -25,6 +25,7 @@ import { createClient, type SupabaseClient } from "@supabase/supabase-js";
 import postgres from "postgres";
 import { awaitFunctionRunning } from "../support/edge-readiness.js";
 import {
+  CHANNEL_READ_COLUMNS,
   MODEL_RULE_TEXT,
   SIGNAL_RECIPIENT_MAX,
   uuidFieldRuleText,
@@ -1333,14 +1334,18 @@ test("the SECOND recipient can reply privately, the way the first always could",
   );
 });
 
-test("addressing a second agent does not enqueue a delivery for it, and the reason is recorded", async () => {
-  /* THE BOUND OF THIS LANE, measured through the served edge. Recipients 1..N
-   * are readable and repliable and are NOT woken. Two things would have to
-   * move together for that to change, and neither is in this lane:
-   * hydrateDeliveryRefs filters on swarm.signals.to_agent_principal_id (the
-   * scalar column, which holds recipient 0), and src/cloud/delivery.ts:423
-   * makes an installed listener refuse a delivery whose signal.to_agent is not
-   * its own principal. Section 4 of 20260905000010 carries the full reason. */
+test("addressing a second agent wakes it too, and wakes the first exactly once", async () => {
+  /* THE RETIRED BOUND OF L2, kept because a reader may still meet it in section
+   * 4 of 20260905000010 and in this file's history:
+   *
+   *   "recipients 1..N are readable and repliable and are NOT woken. Two things
+   *    would have to move together for that to change ... hydrateDeliveryRefs
+   *    filters on swarm.signals.to_agent_principal_id (the scalar column, which
+   *    holds recipient 0), and src/cloud/delivery.ts:423 makes an installed
+   *    listener refuse a delivery whose signal.to_agent is not its own
+   *    principal."
+   *
+   * Both moved, in 20260905000020. Every agent recipient gets a delivery row. */
   const posted = await send(
     f.ownerJwt,
     installedPost({
@@ -1356,15 +1361,14 @@ test("addressing a second agent does not enqueue a delivery for it, and the reas
     SELECT recipient_agent_principal_id
     FROM swarm.signal_deliveries
     WHERE signal_id = ${signalId}::uuid
+    ORDER BY recipient_agent_principal_id
   `;
   assert.deepEqual(
     ledger.map((row) => row.recipient_agent_principal_id),
-    [f.principal],
-    "only recipient 0 is woken, and it is woken exactly once",
+    [f.principal, f.principalTwo].sort(),
+    "both agents are woken, and neither twice",
   );
 
-  /* CONTROL: the SET really does name both agents, so the ledger above is the
-   * delivery bound and not a post that lost its second recipient. */
   const stored = await sql<{ recipient_agent_principal_id: string | null }[]>`
     SELECT recipient_agent_principal_id
     FROM swarm.signal_recipients
@@ -1374,6 +1378,218 @@ test("addressing a second agent does not enqueue a delivery for it, and the reas
   assert.deepEqual(
     stored.map((row) => row.recipient_agent_principal_id),
     [f.principal, f.principalTwo],
+  );
+
+  /* CONTROL: a post naming only the first agent still writes one row, so the
+   * two rows above come from the second recipient and not from the fan-out
+   * doubling every signal. */
+  const narrow = await send(
+    f.ownerJwt,
+    installedPost({
+      signal_kind: "ask",
+      body: `one agent ${randomUUID()}`,
+      to: [{ kind: "agent", id: f.principal }],
+    }),
+  );
+  assert.equal(narrow.status, 200, JSON.stringify(narrow.body));
+  const narrowLedger = await sql<{ recipient_agent_principal_id: string }[]>`
+    SELECT recipient_agent_principal_id
+    FROM swarm.signal_deliveries
+    WHERE signal_id = ${String(signalOf(narrow.body).id)}::uuid
+  `;
+  assert.deepEqual(
+    narrowLedger.map((row) => row.recipient_agent_principal_id),
+    [f.principal],
+  );
+});
+
+test("a person first and an agent second wakes the agent, which L2 did not", async () => {
+  /* The exact shape the retired clause was about. The scalar column holds a
+   * PERSON, so the trigger on swarm.signals writes nothing; the trigger on
+   * swarm.signal_recipients writes the agent's row. */
+  const posted = await send(
+    f.ownerJwt,
+    installedPost({
+      signal_kind: "ask",
+      body: `person then agent ${randomUUID()}`,
+      to: [{ kind: "user", id: f.otherId }, { kind: "agent", id: f.principal }],
+    }),
+  );
+  assert.equal(posted.status, 200, JSON.stringify(posted.body));
+  const signalId = String(signalOf(posted.body).id);
+  const signal = signalOf(posted.body);
+  assert.equal(signal.to, f.otherId, "the scalar recipient is the person");
+  assert.equal(signal.to_agent, null, "and no agent is in the scalar column");
+
+  const ledger = await sql<{ recipient_agent_principal_id: string }[]>`
+    SELECT recipient_agent_principal_id
+    FROM swarm.signal_deliveries
+    WHERE signal_id = ${signalId}::uuid
+  `;
+  assert.deepEqual(
+    ledger.map((row) => row.recipient_agent_principal_id),
+    [f.principal],
+    "the agent named after the person is woken",
+  );
+});
+
+/**
+ * Everything a 0.1.55 listener checks on one claimed delivery row, reproduced
+ * from src/cloud/delivery.ts as that release shipped it. Nothing here reads the
+ * fields this lane added, which is the point: a client that has never heard of
+ * recipient_position must still accept a row it holds at position 1.
+ */
+function accepted0155(
+  row: Record<string, unknown>,
+  expected: { workspaceId: string; principalId: string },
+): void {
+  const signal = row.signal as Record<string, unknown>;
+  assert.ok(signal, "a delivery row carries a signal");
+  assert.equal(signal.workspace_id, expected.workspaceId);
+  assert.equal(
+    signal.to_agent,
+    expected.principalId,
+    "0.1.55 refuses a delivery whose signal.to_agent is not its own principal",
+  );
+  assert.ok(
+    ["ask", "note"].includes(String(signal.kind)),
+    "0.1.55 refuses a non-direct kind",
+  );
+  assert.equal(typeof row.lease_id, "string");
+  assert.equal(typeof row.leased_until, "string");
+  assert.ok(
+    ["same_owner", "cross_owner", "unknown"].includes(
+      String(row.sender_owner_relation),
+    ),
+  );
+  assert.ok(Date.parse(String(row.leased_until)) > Date.now(), "the lease is live");
+}
+
+test("a 0.1.55 listener claims, hydrates and replies to a delivery it holds at position 1", async () => {
+  /* THE WIRE-COMPAT CLAIM, and the reason the edge answers each delivery row
+   * with THAT ROW'S recipient in `to_agent`. The checks in accepted0155 are the
+   * ones the shipped client runs; none of them knows about recipient sets. */
+  const posted = await send(
+    f.ownerJwt,
+    installedPost({
+      signal_kind: "ask",
+      body: `second seat claims ${randomUUID()}`,
+      to: [{ kind: "agent", id: f.principal }, { kind: "agent", id: f.principalTwo }],
+    }),
+  );
+  assert.equal(posted.status, 200, JSON.stringify(posted.body));
+  const signalId = String(signalOf(posted.body).id);
+  const listener = randomUUID();
+
+  const claim = await send(f.agentTokenTwo, {
+    kind: "claim_agent_inbox",
+    listener_instance_id: listener,
+    limit: 10,
+  });
+  assert.equal(claim.status, 200, JSON.stringify(claim.body));
+  const deliveries = claim.body.deliveries as Array<Record<string, unknown>>;
+  const mine = deliveries.find((row) =>
+    (row.signal as Record<string, unknown>).id === signalId
+  );
+  assert.ok(mine, `the second agent's claim must return its own row: ${JSON.stringify(claim.body)}`);
+  accepted0155(mine, { workspaceId: f.workspace, principalId: f.principalTwo });
+
+  /* The fields this lane added, checked separately so the block above stays a
+   * faithful 0.1.55 reproduction. */
+  assert.equal(mine.recipient_position, 1);
+  assert.equal(mine.recipient_count, 2);
+  assert.equal(
+    (claim.body.capabilities as Record<string, unknown>).recipient_fanout,
+    1,
+  );
+
+  const ack = await send(f.agentTokenTwo, {
+    kind: "ack_agent_delivery",
+    signal_id: signalId,
+    lease_id: mine.lease_id,
+    listener_instance_id: listener,
+    outcome: "replied",
+    last_error_code: null,
+  });
+  assert.equal(ack.status, 200, JSON.stringify(ack.body));
+  const acked = await sql<{ ack_outcome: string }[]>`
+    SELECT ack_outcome
+    FROM swarm.signal_deliveries
+    WHERE signal_id = ${signalId}::uuid
+      AND recipient_agent_principal_id = ${f.principalTwo}::uuid
+  `;
+  assert.equal(acked[0]?.ack_outcome, "replied");
+
+  /* CONTROL: the FIRST agent's own row is untouched by the second agent's
+   * acknowledgement, so the claim and ack paths treat each row independently. */
+  const first = await sql<{ ack_outcome: string | null; lease_id: string | null }[]>`
+    SELECT ack_outcome, lease_id::text
+    FROM swarm.signal_deliveries
+    WHERE signal_id = ${signalId}::uuid
+      AND recipient_agent_principal_id = ${f.principal}::uuid
+  `;
+  assert.equal(first[0]?.ack_outcome, null);
+  assert.equal(first[0]?.lease_id, null);
+
+  /* CONTROL: the first agent can still claim and hydrate its own row after the
+   * second answered, and it sees ITSELF at position 0. */
+  const firstClaim = await send(f.agentToken, {
+    kind: "claim_agent_inbox",
+    listener_instance_id: randomUUID(),
+    limit: 10,
+  });
+  assert.equal(firstClaim.status, 200, JSON.stringify(firstClaim.body));
+  const firstRows = firstClaim.body.deliveries as Array<Record<string, unknown>>;
+  const firstMine = firstRows.find((row) =>
+    (row.signal as Record<string, unknown>).id === signalId
+  );
+  assert.ok(firstMine, "the first agent still holds its own row");
+  accepted0155(firstMine, { workspaceId: f.workspace, principalId: f.principal });
+  assert.equal(firstMine.recipient_position, 0);
+  assert.equal(firstMine.recipient_count, 2);
+});
+
+test("the sender's receipt names every agent that was woken", async () => {
+  /* The receipt aggregates swarm.signal_deliveries for the signal, so the
+   * fan-out reaches it with no receipt-side change. The bound this does NOT
+   * close: the human half of that aggregate names only the scalar to_user_id,
+   * so a PERSON at position 1 still has no receipt row. People are not woken,
+   * so it is not this lane's claim to make. */
+  const posted = await send(
+    f.ownerJwt,
+    installedPost({
+      signal_kind: "ask",
+      body: `receipt for two ${randomUUID()}`,
+      to: [{ kind: "agent", id: f.principal }, { kind: "agent", id: f.principalTwo }],
+    }),
+  );
+  assert.equal(posted.status, 200, JSON.stringify(posted.body));
+  const signalId = String(signalOf(posted.body).id);
+
+  /* The read edge answers delivery_receipts only for an AGENT credential; a
+   * person reads the same function over PostgREST. So this calls the function
+   * with the author's own claims installed, which is the human path. */
+  const body = await viewRowAs(f.ownerId, async (tx) => {
+    const rows = await tx<{ receipts: Record<string, unknown> }[]>`
+      SELECT swarm_read.signal_delivery_receipts(
+        ${f.workspace}::uuid,
+        ${signalId}::uuid,
+        NULL
+      ) AS receipts
+    `;
+    return rows[0]?.receipts as Record<string, unknown>;
+  });
+  assert.ok(body, "the author can read the receipt");
+  assert.equal(body.addressed, true);
+  const receipts = body.receipts as Array<Record<string, unknown>>;
+  const agents = receipts
+    .map((row) => row.recipient_agent_principal_id)
+    .filter((value): value is string => typeof value === "string")
+    .sort();
+  assert.deepEqual(
+    agents,
+    [f.principal, f.principalTwo].sort(),
+    "the sender sees a row per woken agent",
   );
 });
 
@@ -1424,5 +1640,124 @@ test("a second AGENT recipient can reply, not only a second person", async () =>
     refused.status,
     403,
     `an agent outside the set must not reply: ${JSON.stringify(refused.body)}`,
+  );
+});
+
+/** One read-edge request, so a new resource can be probed the way signals are. */
+async function readResource(
+  bearer: string,
+  body: Record<string, unknown>,
+): Promise<{ status: number; body: Record<string, unknown> }> {
+  const response = await fetch(`${local.API_URL}/functions/v1/read`, {
+    method: "POST",
+    headers: {
+      authorization: `Bearer ${bearer}`,
+      "content-type": "application/json",
+    },
+    body: JSON.stringify(body),
+  });
+  return {
+    status: response.status,
+    body: await response.json() as Record<string, unknown>,
+  };
+}
+
+test("an agent credential can list channels, with the same tenancy every resource here takes", async () => {
+  /* The gap this closes: an agent could create a channel, post into one by
+   * name and read one by name, and could not enumerate them, because the read
+   * edge had no channels arm. `swarm_read.channels` was already granted to the
+   * swarm_read role and already gated on swarm.is_member(workspace_id,
+   * auth.uid()), and the function already installs the agent owner's claims
+   * before this query runs, so the widening is the arm and not the view. */
+  const slug = `agent-ls-${randomUUID().slice(0, 8)}`;
+  const created = await send(f.agentToken, { kind: "channel_create", slug });
+  assert.equal(created.status, 200, JSON.stringify(created.body));
+
+  const listed = await readResource(f.agentToken, {
+    resource: "channels",
+    workspace_id: f.workspace,
+  });
+  assert.equal(listed.status, 200, JSON.stringify(listed.body));
+  const channels = listed.body.channels as Array<Record<string, unknown>>;
+  assert.ok(Array.isArray(channels), "the envelope carries a channels array");
+  const found = channels.find((row) => row.slug === slug);
+  assert.ok(found, `the channel this test created must be listed: ${JSON.stringify(listed.body)}`);
+  /* Generated from the constant the edge builds its SELECT from, so this cannot
+   * become a fourth typed copy of the column list. It measures the KEYS that
+   * actually came back, which is the half tests/chat-channel-constants.test.ts
+   * cannot reach: that one compares the two exported arrays and never runs a
+   * query. */
+  assert.deepEqual(
+    Object.keys(found).sort(),
+    [...CHANNEL_READ_COLUMNS].sort(),
+    "the agent path returns exactly the columns CHANNEL_READ_COLUMNS names",
+  );
+
+  /* TENANCY: another workspace is an empty envelope, not a 403 and not another
+   * tenant's rows. That is the shape every resource in this function uses. */
+  const elsewhere = await readResource(f.agentToken, {
+    resource: "channels",
+    workspace_id: randomUUID(),
+  });
+  assert.equal(elsewhere.status, 200, JSON.stringify(elsewhere.body));
+  assert.deepEqual(elsewhere.body, { channels: [] });
+
+  /* An unknown key is refused by the same exact-key parse the other resources
+   * take, so the arm cannot be widened by a caller. */
+  const extra = await readResource(f.agentToken, {
+    resource: "channels",
+    workspace_id: f.workspace,
+    include_archived: true,
+  });
+  assert.equal(extra.status, 400, JSON.stringify(extra.body));
+  assert.equal(extra.body.error, "invalid_request");
+
+  /* A human JWT still reaches only renewal_grants on this function; people read
+   * channels over REST. This is the pre-existing rule, restated as a control so
+   * the new arm is not read as opening the function to browser sessions. */
+  const human = await readResource(f.ownerJwt, {
+    resource: "channels",
+    workspace_id: f.workspace,
+  });
+  assert.equal(human.status, 401, JSON.stringify(human.body));
+});
+
+test("an archived channel is listed to an agent, with the date that says so", async () => {
+  /* The list carries archived_at rather than hiding archived rows, which is
+   * what the human REST read does, so both callers can render the same thing.
+   * A filter here would make the two paths disagree. */
+  const slug = `agent-arch-${randomUUID().slice(0, 8)}`;
+  const created = await send(f.agentToken, { kind: "channel_create", slug });
+  assert.equal(created.status, 200, JSON.stringify(created.body));
+  const channelId = String(
+    (created.body.channel as Record<string, unknown>).channel_id,
+  );
+
+  const before = await readResource(f.agentToken, {
+    resource: "channels",
+    workspace_id: f.workspace,
+  });
+  const liveRow = (before.body.channels as Array<Record<string, unknown>>)
+    .find((row) => row.channel_id === channelId);
+  assert.ok(liveRow, "control: the channel is listed while it is live");
+  assert.equal(liveRow.archived_at, null);
+
+  const archived = await send(f.agentToken, {
+    kind: "channel_archive",
+    channel_id: channelId,
+  });
+  assert.equal(archived.status, 200, JSON.stringify(archived.body));
+
+  const after = await readResource(f.agentToken, {
+    resource: "channels",
+    workspace_id: f.workspace,
+  });
+  const archivedRow = (after.body.channels as Array<Record<string, unknown>>)
+    .find((row) => row.channel_id === channelId);
+  assert.ok(archivedRow, "an archived channel stays in the list");
+  assert.notEqual(
+    archivedRow.archived_at,
+    null,
+    "and it carries the date that says it is archived",
   );
 });

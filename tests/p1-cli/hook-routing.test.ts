@@ -1962,3 +1962,139 @@ test("listen status calls dead-listener asks stranded and gives the restart comm
     `cswarm listen start --agent-token-stdin --workspace-id ${WORKSPACE_ID} --provider claude --route main`,
   ));
 });
+
+test("hook check surfaces a signal that names this agent at position 1", async () => {
+  /* The defect this closes was live before the fan-out and got worse with it.
+   * L2 (merge 060ff67) made the read edge return a signal to EVERY agent the
+   * sender named; the scalar `to_agent` still holds only the first. This filter
+   * asked the scalar question, so a signal naming this agent second was fetched
+   * and then dropped, and after 20260905000020 the model would already be
+   * answering a message the session hook showed nothing about.
+   *
+   * The row below is exactly that shape: `to_agent` is ANOTHER agent, and
+   * `recipients` names this one at position 1. */
+  const otherAgent = "99999999-9999-4999-8999-999999999999";
+  const root = await mkdtemp(join(tmpdir(), "cswarm-hook-position1-"));
+  try {
+    const paths = await installCredential(root);
+    await writeStatus(paths);
+    let signalReads = 0;
+    const fetcher: typeof fetch = async (_input, init) => {
+      const body = JSON.parse(String(init?.body)) as { resource?: string };
+      if (body.resource === "files") {
+        return new Response(JSON.stringify({ files: [] }), { status: 200 });
+      }
+      if (body.resource === "members") {
+        /* The directory read the hook makes ONLY when it has something to
+         * render. Answering it separately keeps signalReads counting one
+         * thing. */
+        return new Response(JSON.stringify({ members: [], agents: [] }), {
+          status: 200,
+          headers: { "content-type": "application/json" },
+        });
+      }
+      signalReads += 1;
+      return new Response(
+        JSON.stringify({
+          signals: [{
+            id: SIGNAL_ID,
+            workspace_id: WORKSPACE_ID,
+            from: "33333333-3333-4333-8333-333333333333",
+            from_kind: "user",
+            to: null,
+            to_agent: otherAgent,
+            in_reply_to: null,
+            about: null,
+            kind: "ask",
+            body: "both of you please look at this",
+            until: "2099-01-01T00:00:00.000Z",
+            created_at: "2026-08-26T00:00:02.000Z",
+            sender_owner_relation: "same_owner",
+            recipients: [
+              { kind: "agent", id: otherAgent, position: 0 },
+              { kind: "agent", id: PRINCIPAL_ID, position: 1 },
+            ],
+          }],
+          capabilities: { sender_owner_relation: 1, cursor_after: 1 },
+        }),
+        { status: 200, headers: { "content-type": "application/json" } },
+      );
+    };
+    const controller = new AbortController();
+    const output = await checkListenerHooks({
+      stateDirectory: root,
+      principalIds: [PRINCIPAL_ID],
+      cooldownSeconds: 0,
+      fetcher,
+      isListenerLive: testListenerIsLive,
+      signal: controller.signal,
+      deadlineMs: Date.now() + 3_000,
+    });
+    assert.equal(signalReads, 1, "the inbox read path was reached");
+    assert.match(
+      output,
+      /both of you please look at this/,
+      "a signal naming this agent at position 1 must reach the session",
+    );
+  } finally {
+    await rm(root, { recursive: true, force: true });
+  }
+});
+
+test("hook check still drops a signal that names neither this agent nor nobody", async () => {
+  /* The control for the test above. Same page shape, same field, and the ONLY
+   * difference is which principal the recipient list names: this one is
+   * addressed to two other agents. If the filter had simply been deleted rather
+   * than moved to the recipient set, this would surface too. */
+  const otherAgent = "99999999-9999-4999-8999-999999999999";
+  const thirdAgent = "88888888-8888-4888-8888-888888888888";
+  const root = await mkdtemp(join(tmpdir(), "cswarm-hook-not-mine-"));
+  try {
+    const paths = await installCredential(root);
+    await writeStatus(paths);
+    const fetcher: typeof fetch = async (_input, init) => {
+      const body = JSON.parse(String(init?.body)) as { resource?: string };
+      if (body.resource === "files") {
+        return new Response(JSON.stringify({ files: [] }), { status: 200 });
+      }
+      return new Response(
+        JSON.stringify({
+          signals: [{
+            id: SIGNAL_ID,
+            workspace_id: WORKSPACE_ID,
+            from: "33333333-3333-4333-8333-333333333333",
+            from_kind: "user",
+            to: null,
+            to_agent: otherAgent,
+            in_reply_to: null,
+            about: null,
+            kind: "ask",
+            body: "this one is for the other two",
+            until: "2099-01-01T00:00:00.000Z",
+            created_at: "2026-08-26T00:00:02.000Z",
+            sender_owner_relation: "same_owner",
+            recipients: [
+              { kind: "agent", id: otherAgent, position: 0 },
+              { kind: "agent", id: thirdAgent, position: 1 },
+            ],
+          }],
+          capabilities: { sender_owner_relation: 1, cursor_after: 1 },
+        }),
+        { status: 200, headers: { "content-type": "application/json" } },
+      );
+    };
+    const controller = new AbortController();
+    const output = await checkListenerHooks({
+      stateDirectory: root,
+      principalIds: [PRINCIPAL_ID],
+      cooldownSeconds: 0,
+      fetcher,
+      isListenerLive: testListenerIsLive,
+      signal: controller.signal,
+      deadlineMs: Date.now() + 3_000,
+    });
+    assert.equal(output, "", "a signal addressed to other agents stays out");
+  } finally {
+    await rm(root, { recursive: true, force: true });
+  }
+});

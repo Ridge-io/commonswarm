@@ -1,0 +1,120 @@
+# Review brief — lane/wake-all-recipients @ de87327 (CommonSwarm)
+
+Repo root: /private/tmp/claude-501/-Users-yulanbot-Developer-Ridge-io-cloud-swarm/a866e6cd-5d6d-477f-af6a-740cd30407ed/scratchpad/lane-wake-all-recipients
+
+Read the whole diff at
+/private/tmp/claude-501/-Users-yulanbot-Developer-Ridge-io-cloud-swarm/a866e6cd-5d6d-477f-af6a-740cd30407ed/scratchpad/lane-wake-all-recipients/arms-de87327/DIFF.patch
+and read the files it touches in that checkout. **Quote back the first `diff --git` line of
+DIFF.patch before any finding.**
+
+An earlier SHA of this branch already passed two arms. THIS review is about the THREE COMMITS on
+top, so weight sections 1-6 heaviest; 7-9 re-check the earlier work for anything the new commits
+broke.
+
+## What the new work claims
+
+1. **CLI wiring.** `channelRows` (src/cli.ts) no longer refuses an agent credential; it calls the
+   new `listChannelsAsAgent` in `src/cloud/channels.ts`, which POSTs
+   `{"resource":"channels","workspace_id":...}` to the read edge. `resolveChannelSelector` lost its
+   agent refusal, so `channel rename`/`archive` take a NAME on an agent credential.
+   `CHANNEL_LIST_NEEDS_HUMAN_MESSAGE` and `CHANNEL_SELECTOR_NEEDS_ID_MESSAGE` are DELETED, their
+   text preserved in a comment. The usage matrix line changed.
+2. **The feed-side scalar re-check.** `parseSignalRecord` (src/cloud/signals.ts) parses a new
+   `recipients` field; absent stays absent. A new `signalAddressesAgent` is used by
+   `src/cloud/arrival-watch.ts` (which previously returned an error result), `src/listener/hook.ts`
+   (which previously dropped the row) and the resume inbox count in `src/cli.ts`.
+3. **Bounds** recorded in `docs/design/2026-09-05-chat-build-plan.md`.
+
+## Attack these, in order. Say PASS or FAIL for each and why.
+
+1. **Deleting two user-facing constants.** Is every surface that referenced them updated? Sweep for
+   any remaining sentence, help text, doc, or test that still asserts an agent cannot list channels.
+   Is the retired wording preserved where a reader will meet it? Is the deploy-coupling claim
+   accurate: what EXACTLY does a client carrying this get from a read service without the arm, and
+   does the sentence it prints match?
+2. **`listChannelsAsAgent`.** Compare it clause by clause with `listChannelsAsHuman` above it and
+   with `listFilesAsAgent` in `src/cloud/files.ts`. Timeout handling, abort, error classes,
+   `noResponse`, the retry in `channelRows`, the envelope parse. Find a failure mode one handles and
+   this does not. Does the request body match what `parseBody` in `supabase/functions/read/index.ts`
+   accepts, byte for byte and key for key?
+3. **`resolveChannelSelector` losing its guard.** An agent can now turn a name into an id. Does that
+   widen anything? What does an agent see when the name does not exist, and is that sentence
+   generated from the rows it just read? Is there any path where an agent now performs a channel
+   write it previously could not?
+4. **`parseSignalRecipients`.** It refuses an unknown key, a repeated position and a repeated id,
+   and does NOT require contiguity or ordering. Is each of those the right call? Construct a shape
+   the read view can actually emit that this refuses. Is `absent` genuinely distinguishable from
+   `[]` all the way through, including in `cswarm feed --json`? Does a malformed set take down a
+   whole page, and is that the right blast radius given `tolerateMalformedRows`?
+5. **`signalAddressesAgent` at three call sites.** `arrival-watch.ts` is a SECURITY-SHAPED guard: it
+   exists so a page for another agent cannot be surfaced. Has the correction weakened it? Can a
+   server that lies about `recipients` now get a row surfaced that the old guard refused? What does
+   the fallback-to-scalar branch do when the server sends `recipients: []` for a directed signal?
+6. **D-053.** Does anything added here branch on `error.message`? Check `channelRows`'s retry, the
+   arrival-watch catch, and the new tests.
+7. **Regression on the earlier work.** The migration, `hydrateDeliveryRefs`, the listener prompt and
+   the `recipient_position` wire were reviewed at a1bc2f8 and passed. Did the new commits change any
+   behaviour there, and does anything in commits 2-4 contradict a comment written in commit 1?
+8. **Claims in prose.** Every comment in this diff is a claim. Find one that is FALSE. Check
+   especially the retirement note in `src/cloud/channels.ts`, the ORDER paragraph in
+   `listChannelsAsAgent`, the "RETIRED" notes at the three feed call sites, and the five bounds in
+   the build plan.
+9. **Tests.** For each new or rewritten test, does it reach the path it claims? Name any that would
+   pass with the change reverted. The CLI tests are OFFLINE by design and no live control against
+   production is possible until the edge is deployed — say whether the tests are honest about that.
+
+Try to REFUTE the lane. If you find nothing in a section, say what you checked and why it holds.
+
+The last line of your reply must be exactly one of:
+VERDICT: PASS
+VERDICT: FAIL
+
+NOTE ON THE DIFF: `docs/evidence/**` is excluded from DIFF.patch on purpose — it holds the previous
+rounds' arm transcripts and mutation logs, which would be several times the size of the code. Read
+`docs/evidence/2026-09-05-wake-all-recipients/` in the checkout if you want the earlier rounds.
+
+## Round four: what changed since ecbb26b, which both arms failed
+
+Three findings were verified and fixed. Attack the FIXES hardest.
+
+1. **The deadline now covers the body in BOTH channel readers** (`listChannelsAsAgent` and
+   `listChannelsAsHuman`). One `clearTimeout` in an outer `finally`, `response.text()` inside it,
+   `JSON.parse` after. A stalled body throws the RETRYABLE `noResponse` error, not the
+   "shape this version does not understand" one. Check: is the abort actually reachable by the body
+   read, is the retryable classification right for every failure that path can produce, can a
+   genuine JSON syntax error now be misreported as a timeout or the reverse, and does
+   `channelRows`'s single retry still behave? Is the new test a probe that CAN fail, or does it
+   pass for a reason other than the deadline?
+2. **The ORDER paragraph was false and is rewritten.** It claimed `lower(slug)` and `slug` can
+   disagree for a workspace "mixing cases". `20260905000001_channels.sql` CHECKs
+   `slug ~ '^[a-z0-9]([a-z0-9-]*[a-z0-9])?$'`. Check the new paragraph and the matching one in
+   `supabase/functions/read/index.ts` for a claim that is still wrong, including whether the CHECK
+   is the only thing standing between those two collations.
+3. **Two smaller prose corrections:** the human reader is BELOW, not above; and the read function's
+   `exactKeys` compares SORTED key sets, so it does not enforce key order. The test now asserts the
+   sorted key set beside the pinned bytes. Check both statements against the code.
+4. **`channelRows`'s two attempts do not share one budget**, unlike `fileRows`. That is now written
+   down rather than fixed. Say whether the written bound is accurate and whether leaving it is safe.
+
+Also note: commit `a2c9f5d` is a message-only rewrite of an earlier commit whose subject line came
+from another lane through a shared `/tmp` path. Its tree is unchanged. Nothing to review there
+beyond the test it adds.
+
+## Round five: what changed since 4250111, which both arms failed
+
+Round four's two findings were prose only, both verified and both fixed in `de87327`:
+
+- The comment INSIDE `listChannelsAsAgent` said the human reader is "above". It is below, and the
+  comment now names `listChannelsAsHuman` instead of using a direction word. Check that no other
+  positional word in this diff is wrong, in either direction.
+- The retirement note said `channelRows` "no longer branches on the credential kind". It does
+  branch, to pick the transport. The note now says it no longer REFUSES an agent, and carries a
+  CORRECTED paragraph naming the earlier wording, including the commit message that shipped it.
+  Check whether the correction is accurate and whether any other surface still carries the wrong
+  sentence.
+- `signalAddressesAgent` now records what it trusts, after a Gemini observation that a lying server
+  could name this principal in `recipients`. Check whether the paragraph overstates or understates
+  that, given the same server writes `to_agent`.
+
+Four rounds have now failed on prose rather than behaviour. Read every comment in the diff as a
+claim and try hard to find a false one; if you cannot, say which ones you checked one by one.

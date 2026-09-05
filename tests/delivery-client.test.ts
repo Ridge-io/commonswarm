@@ -1263,3 +1263,149 @@ test("the installed claim parser ignores oldest_pending_at and an extra capabili
     (error: unknown) => /delivery_claim capability/.test(String(error)),
   );
 });
+
+/* ---------------------------------------------------------------------------
+ * The recipient set on a delivery row.
+ *
+ * A sender may address one signal to several recipients. The command edge
+ * writes one delivery row per AGENT recipient and answers each row with THAT
+ * ROW'S recipient in `signal.to_agent`, so this client's long-standing
+ * "addressed to another agent" refusal keeps its meaning and starts saying yes
+ * at any position. These tests are the client half of that claim.
+ * ------------------------------------------------------------------------ */
+
+test("a delivery this agent holds at position 1 is accepted, and its slot is reported", async () => {
+  /* THE WIRE-COMPAT SHAPE. `to_agent` is this listener's own principal even
+   * though the signal's scalar recipient is a different agent, which is what
+   * lets an installed listener take the row with no release. The scalar
+   * recipient never appears on this wire, so the test cannot assert its
+   * absence; what it asserts is that the value present is ours. */
+  const body = claimBody({
+    deliveries: [delivery({
+      recipient_position: 1,
+      recipient_count: 3,
+    })],
+  });
+  const client = new DeliveryCommandClient(
+    target,
+    capturingFetch([], () => jsonResponse(200, body)),
+  );
+  const result = await client.claimAgentInbox(claimRequest());
+  assert.equal(result.deliveries.length, 1);
+  const row = result.deliveries[0]!;
+  assert.equal(row.signal.to_agent, AGENT);
+  assert.equal(row.recipientPosition, 1);
+  assert.equal(row.recipientCount, 3);
+});
+
+test("a server that reports no recipient set leaves both fields null, never a made-up 1 of 1", async () => {
+  /* ABSENT IS NOT "one recipient". An edge from before the fan-out wakes only
+   * recipient 0, and a signal it delivers can still name several people, so
+   * defaulting here would put a false sentence in the worker prompt. */
+  const client = new DeliveryCommandClient(
+    target,
+    capturingFetch([], () => jsonResponse(200, claimBody())),
+  );
+  const result = await client.claimAgentInbox(claimRequest());
+  const row = result.deliveries[0]!;
+  assert.equal(row.recipientPosition, null);
+  assert.equal(row.recipientCount, null);
+
+  /* CONTROL: the same client DOES read the pair when the server sends it, so
+   * the nulls above are the server saying nothing rather than this parser
+   * dropping the fields. */
+  const capable = new DeliveryCommandClient(
+    target,
+    capturingFetch([], () =>
+      jsonResponse(
+        200,
+        claimBody({
+          deliveries: [delivery({ recipient_position: 0, recipient_count: 1 })],
+        }),
+      )),
+  );
+  const reported = await capable.claimAgentInbox(claimRequest());
+  assert.equal(reported.deliveries[0]!.recipientPosition, 0);
+  assert.equal(reported.deliveries[0]!.recipientCount, 1);
+});
+
+test("a recipient slot that cannot be true is refused, and the pair is refused as a pair", async () => {
+  const rejections: Array<[string, Record<string, unknown>, string]> = [
+    [
+      "position without count",
+      claimBody({ deliveries: [delivery({ recipient_position: 1 })] }),
+      "delivery claim response returned a recipient position without its count",
+    ],
+    [
+      "count without position",
+      claimBody({ deliveries: [delivery({ recipient_count: 3 })] }),
+      "delivery claim response returned a recipient position without its count",
+    ],
+    [
+      "position equal to count",
+      claimBody({
+        deliveries: [delivery({ recipient_position: 3, recipient_count: 3 })],
+      }),
+      "delivery claim response returned a recipient position outside its set",
+    ],
+    [
+      "empty set",
+      claimBody({
+        deliveries: [delivery({ recipient_position: 0, recipient_count: 0 })],
+      }),
+      "delivery claim response returned a recipient position outside its set",
+    ],
+    [
+      "negative position",
+      claimBody({
+        deliveries: [delivery({ recipient_position: -1, recipient_count: 3 })],
+      }),
+      "delivery response returned a malformed recipient_position",
+    ],
+    [
+      "fractional count",
+      claimBody({
+        deliveries: [delivery({ recipient_position: 0, recipient_count: 1.5 })],
+      }),
+      "delivery response returned a malformed recipient_count",
+    ],
+    [
+      "string position",
+      claimBody({
+        deliveries: [delivery({ recipient_position: "1", recipient_count: 3 })],
+      }),
+      "delivery response returned a malformed recipient_position",
+    ],
+  ];
+  for (const [label, body, message] of rejections) {
+    const client = new DeliveryCommandClient(
+      target,
+      capturingFetch([], () => jsonResponse(200, body)),
+    );
+    await assert.rejects(
+      client.claimAgentInbox(claimRequest()),
+      (error: unknown) => {
+        assert.ok(error instanceof DeliveryProtocolError, label);
+        assert.equal((error as Error).message, message, label);
+        return true;
+      },
+      label,
+    );
+  }
+
+  /* POSITIVE CONTROL on the same invocation shape: the last valid slot of a
+   * three-recipient set is accepted, so the refusals above are about the
+   * numbers and not about the fields existing at all. */
+  const ok = new DeliveryCommandClient(
+    target,
+    capturingFetch([], () =>
+      jsonResponse(
+        200,
+        claimBody({
+          deliveries: [delivery({ recipient_position: 2, recipient_count: 3 })],
+        }),
+      )),
+  );
+  const accepted = await ok.claimAgentInbox(claimRequest());
+  assert.equal(accepted.deliveries[0]!.recipientPosition, 2);
+});

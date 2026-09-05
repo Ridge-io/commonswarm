@@ -14,7 +14,13 @@ const UUID_RE =
   /^[0-9a-f]{8}-[0-9a-f]{4}-[1-8][0-9a-f]{3}-[89ab][0-9a-f]{3}-[0-9a-f]{12}$/i;
 const RFC3339_TIMESTAMP_RE =
   /^(\d{4})-(\d{2})-(\d{2})T(\d{2}):(\d{2}):(\d{2})(?:\.\d+)?(?:Z|([+-]\d{2}):(\d{2}))$/i;
-const DELIVERY_KINDS = new Set<SignalRecord["kind"]>(["ask", "note"]);
+/**
+ * The signal kinds that are ever delivered to an agent, exported so a test can
+ * measure the database trigger against the same set this parser enforces
+ * instead of a second typed copy. swarm.agent_delivery_is_wakeable
+ * (20260905000020) is the SQL half.
+ */
+export const DELIVERY_KINDS = new Set<SignalRecord["kind"]>(["ask", "note"]);
 const SENDER_OWNER_RELATIONS = new Set<SenderOwnerRelation>([
   "same_owner",
   "cross_owner",
@@ -125,6 +131,24 @@ export interface DeliveryRow {
    * this exact value so there is only one representation.
    */
   senderOwnerRelation: SenderOwnerRelation;
+  /**
+   * Where this listener sits in the sender's recipient set, counting from 0,
+   * and how many recipients that set holds.
+   *
+   * NULL MEANS THE SERVER DID NOT SAY, and it is not the same as position 0 of
+   * 1. An edge from before the fan-out reports neither field, and inventing
+   * "you are the only recipient" for it would be a claim this client cannot
+   * support: that edge wakes only recipient 0, but a signal it delivers can
+   * still name several people. So absence stays absence and every surface that
+   * renders a position says nothing when it is null.
+   *
+   * Both fields arrive together or neither does. The pair is checked against
+   * itself rather than against a copy of the server's cap: position is below
+   * count, and count is at least one. A typed maximum here would be a second
+   * enforcement point with nothing holding it equal to the first.
+   */
+  recipientPosition: number | null;
+  recipientCount: number | null;
 }
 
 export type DeliveryClaimCapabilities = {
@@ -395,6 +419,40 @@ function checkedOptionalArray(value: unknown, field: string): void {
   }
 }
 
+/**
+ * The recipient slot on one delivery row, or a pair of nulls when the server
+ * did not report it.
+ *
+ * Refuses a HALF answer. One field without the other cannot be rendered and
+ * cannot be checked, so it is a malformed row rather than a missing one. The
+ * bound it applies is the relation between the two numbers, not a copy of the
+ * server's recipient cap: a maximum written here would be a second enforcement
+ * point with nothing holding it equal to the one the edge reads.
+ */
+function checkedRecipientSlot(
+  row: Record<string, unknown>,
+): { position: number | null; count: number | null } {
+  const hasPosition = Object.hasOwn(row, "recipient_position");
+  const hasCount = Object.hasOwn(row, "recipient_count");
+  if (!hasPosition && !hasCount) return { position: null, count: null };
+  if (!hasPosition || !hasCount) {
+    throw new DeliveryProtocolError(
+      "delivery claim response returned a recipient position without its count",
+    );
+  }
+  const position = checkedNonNegativeCount(
+    row.recipient_position,
+    "recipient_position",
+  );
+  const count = checkedNonNegativeCount(row.recipient_count, "recipient_count");
+  if (count < 1 || position >= count) {
+    throw new DeliveryProtocolError(
+      "delivery claim response returned a recipient position outside its set",
+    );
+  }
+  return { position, count };
+}
+
 function parseDeliveryRow(
   value: unknown,
   expected: { workspaceId: string; principalId: string },
@@ -420,6 +478,15 @@ function parseDeliveryRow(
       "delivery claim response returned a signal for another workspace",
     );
   }
+  /* `to_agent` on a HYDRATED DELIVERY is the recipient this delivery is for,
+   * which is not always the signal's scalar to_agent_principal_id. A sender may
+   * name up to several recipients; the scalar column holds the first, and the
+   * command edge answers each delivery row with its own recipient
+   * (supabase/functions/command/durable-delivery.ts, hydrateDeliveryRefs). So
+   * this check is unchanged and still means "the sender addressed me" -- it now
+   * says yes at any position instead of only at the first. A feed read of the
+   * same signal still reports the scalar column, which is a different question
+   * with a different answer. */
   if (signal.to_agent !== expected.principalId) {
     throw new DeliveryProtocolError(
       "delivery claim response returned a signal addressed to another agent",
@@ -434,10 +501,18 @@ function parseDeliveryRow(
   const leaseId = checkedUuid(row.lease_id, "lease_id");
   const leasedUntil = checkedRfc3339Timestamp(row.leased_until, "leased_until");
   checkedLiveLease(leasedUntil, now);
+  const slot = checkedRecipientSlot(row);
   // The outer relation is authoritative: the immutable signal's inner relation
   // (unknown when absent) must not surface a second, contradicting value.
   signal.sender_owner_relation = senderOwnerRelation;
-  return { signal, leaseId, leasedUntil, senderOwnerRelation };
+  return {
+    signal,
+    leaseId,
+    leasedUntil,
+    senderOwnerRelation,
+    recipientPosition: slot.position,
+    recipientCount: slot.count,
+  };
 }
 
 function parseClaimSuccess(

@@ -39,13 +39,12 @@ import {
   type StreamRoute,
 } from "./cloud/command-client.js";
 import {
-  CHANNEL_LIST_NEEDS_HUMAN_MESSAGE,
   ChannelListError,
   channelSelectorProblem,
   CHANNEL_PURPOSE_MAX,
-  CHANNEL_SELECTOR_NEEDS_ID_MESSAGE,
   channelSlugProblem,
   findChannelBySlug,
+  listChannelsAsAgent,
   listChannelsAsHuman,
   normalizeChannelSlug,
   renderChannelList,
@@ -205,6 +204,7 @@ import {
   runInboxFollow,
   settleSignalAuthorLabels,
   settleSignalStatus,
+  signalAddressesAgent,
   SIGNAL_READ_TIMEOUT_MS,
   SignalReadTimeoutError,
   signalReadJsonPayload,
@@ -600,9 +600,7 @@ Credential selection for command/dogfood:
                             inbox --notify persists a per-agent cursor -- needs principal_id
                             channel create, channel rename, channel archive
                                           command only, nothing persisted     -- either form
-                            channel ls    reads swarm_read.channels over REST -- signed-in
-                                          person only; the read service has no channels
-                                          resource for an agent credential
+                            channel ls    reads swarm_read.channels          -- either form
                             file put, file ls, file get, file rm, file restore,
                             brain ls, brain get, brain put
                                           read and command, nothing persisted -- either form
@@ -3750,10 +3748,13 @@ async function runResume(args: Arguments): Promise<void> {
         fetch,
         { tolerateMalformedRows: true, maxMalformedRows: 3 },
       );
+      /* The recipient set, not the scalar column: the same correction
+       * src/listener/hook.ts:700 takes, and it has to be the same rule or the
+       * resume count and the hook listing disagree about the same page. */
       const candidates = page.signals.filter((signal) =>
         (signal.kind === "ask" || signal.kind === "note") &&
         signal.workspace_id === workspaceId &&
-        signal.to_agent === principalId
+        signalAddressesAgent(signal, principalId)
       ).map((signal) => ({ signalId: signal.id }));
       const unseen = await new FileHookSurfaceStore(instanceDirectory)
         .previewUnseen(candidates);
@@ -7435,22 +7436,38 @@ async function runFeedback(args: Arguments): Promise<void> {
  * first — and says plainly when it cannot, rather than guessing.
  */
 async function channelRows(context: FileCliContext): Promise<ChannelRow[]> {
-  if (context.selected.kind === "agent") {
-    throw new Error(CHANNEL_LIST_NEEDS_HUMAN_MESSAGE);
-  }
+  /* BOTH CREDENTIALS, two transports, one view. The read function accepts agent
+   * credentials only and a person reads swarm_read over PostgREST, which is the
+   * same split `cswarm file ls` and `cswarm members` take. Until 2026-09-05
+   * this refused an agent outright, because the read function had no channels
+   * resource; the retired sentence is kept in src/cloud/channels.ts. */
   const read = async (): Promise<ChannelRow[]> =>
-    await listChannelsAsHuman(
-      context.cloud,
-      context.selected.human!.accessToken,
-      context.selected.selectedWorkspace,
-    );
+    context.selected.kind === "agent"
+      ? await listChannelsAsAgent(
+        context.cloud,
+        context.selected.bearer,
+        context.selected.selectedWorkspace,
+      )
+      : await listChannelsAsHuman(
+        context.cloud,
+        context.selected.human!.accessToken,
+        context.selected.selectedWorkspace,
+      );
   try {
     return await read();
   } catch (error) {
     /* One repeat, and only when no response arrived. The read is idempotent and
      * the commonest failure on this path is a dropped connection, which is what
      * `fileRows` repeats for as well. A refusal is never repeated: it would
-     * arrive at the same refusal. */
+     * arrive at the same refusal.
+     *
+     * UNLIKE `fileRows`, the two attempts do NOT share one budget: each carries
+     * its own 30s deadline, so a wedged network can hold this call for 60s. A
+     * review arm named the difference. It stays because sharing one budget
+     * means passing the time left into each attempt, which is work for a case
+     * nobody has hit, and because the deadline now covers the body, which is
+     * the failure that actually hung this command. Both readers already take a
+     * `timeoutMs`, so the change would be here rather than in them. */
     if (error instanceof ChannelListError && error.noResponse) return await read();
     throw error;
   }
@@ -7482,9 +7499,8 @@ async function resolveChannelSelector(
   kind: "id" | "name",
 ): Promise<string> {
   if (kind === "id") return selector.toLowerCase();
-  if (context.selected.kind === "agent") {
-    throw new Error(CHANNEL_SELECTOR_NEEDS_ID_MESSAGE);
-  }
+  /* An agent resolves a name the same way a person does, now that channelRows
+   * answers for both. The retired refusal is quoted in src/cloud/channels.ts. */
   const rows = await channelRows(context);
   const match = findChannelBySlug(rows, selector);
   if (match === null) throw new Error(unknownChannelMessage(selector, rows));

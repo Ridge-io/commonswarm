@@ -331,6 +331,29 @@ export interface SignalRecord {
   thread_root_id?: string | null;
   /** True when a thread reply was also sent to its channel. Absent on the same terms as channel_id. */
   broadcast_to_channel?: boolean;
+  /**
+   * Everyone the sender addressed, in the order they named them.
+   *
+   * ABSENT MEANS NOBODY ASKED, the same rule channel_id carries. An edge from
+   * before multi-recipient signals never returns it, and the human REST read
+   * does not name the column. A capable edge always returns it for an
+   * agent-authenticated read, including a one-entry list for a signal that only
+   * has the scalar recipient, so an EMPTY array means the signal is addressed
+   * to nobody and is not the same as absent.
+   *
+   * `to` and `to_agent` hold position 0. A reader that knows only those two is
+   * incomplete rather than wrong, which is why this field exists: it is the only
+   * way a client can see that it is named further down the list.
+   */
+  recipients?: SignalRecipientRef[];
+}
+
+/** One entry in a signal's recipient list, as the read view builds it. */
+export interface SignalRecipientRef {
+  kind: "user" | "agent";
+  id: string;
+  /** Where the sender put them, counting from 0. */
+  position: number;
 }
 
 /**

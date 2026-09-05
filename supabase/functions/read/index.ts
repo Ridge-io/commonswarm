@@ -13,6 +13,7 @@ import {
   type ReadHandlerPhase,
 } from "./diagnostics.ts";
 import {
+  CHANNEL_READ_COLUMNS,
   channelSlugProblem,
   chatReadKeys,
   normalizeChannelSlug,
@@ -104,6 +105,22 @@ interface RenewalGrantReadRequest {
 }
 
 /**
+ * The channel list for an agent credential.
+ *
+ * An agent could already create a channel, post into one by name and read one
+ * by name; only the enumeration was out of reach, because this function had no
+ * channels arm. It is the smallest possible addition: the same tenancy every
+ * other resource here takes, and `swarm_read.channels` is already granted to
+ * the `swarm_read` role and already gated on `swarm.is_member(workspace_id,
+ * auth.uid())`, with the agent owner's claims installed before the query runs.
+ * So the widening is the parse arm and the query, and no new visibility.
+ */
+interface ChannelReadRequest {
+  resource: "channels";
+  workspace_id: string;
+}
+
+/**
  * Explicit read-contract capability markers for agent-authenticated signals.
  * delivery_claim/ack advertise that the command edge supports the durable path;
  * cursor_after remains so old clients keep the ascending-cursor fallback.
@@ -176,9 +193,20 @@ function exactKeys(
 function parseBody(
   value: unknown,
 ): SignalReadRequest | MemberReadRequest | FileReadRequest | ReceiptReadRequest |
-  RenewalGrantReadRequest | null {
+  RenewalGrantReadRequest | ChannelReadRequest | null {
   if (!value || typeof value !== "object" || Array.isArray(value)) return null;
   const body = value as Record<string, unknown>;
+  if (
+    body.resource === "channels" &&
+    exactKeys(body, ["resource", "workspace_id"]) &&
+    typeof body.workspace_id === "string" &&
+    UUID_RE.test(body.workspace_id)
+  ) {
+    return {
+      resource: "channels",
+      workspace_id: body.workspace_id.toLowerCase(),
+    };
+  }
   if (
     body.resource === "renewal_grants" &&
     exactKeys(body, ["resource", "workspace_id"]) &&
@@ -449,6 +477,9 @@ async function handle(
       if (body.resource === "renewal_grants") {
         return json(200, { grants: [] });
       }
+      if (body.resource === "channels") {
+        return json(200, { channels: [] });
+      }
       return json(200, {
         signals: [],
         capabilities: SIGNAL_CAPABILITIES,
@@ -542,6 +573,34 @@ async function handle(
     // Stay as swarm_read for membership-gated views. The definer already
     // stamped first-use; this path never elevates to swarm_command.
     await tx.unsafe("SET LOCAL search_path = swarm_read, auth, pg_catalog");
+    if (body.resource === "channels") {
+      /* Same eight columns and the same slug order the human REST read takes,
+       * so `cswarm channel ls` renders identically whichever credential ran it.
+       * `lower(slug)` here and `slug` there agree for every row that can exist:
+       * 20260905000001_channels.sql CHECKs the slug against
+       * '^[a-z0-9]([a-z0-9-]*[a-z0-9])?$', so no stored slug has an uppercase
+       * letter for the two collations to disagree about.
+       * Archived channels are included: swarm_read.channels carries
+       * archived_at and the caller decides, exactly as the REST read does.
+       *
+       * TENANCY. This runs after the agent owner's claims are installed above,
+       * so the view's own `swarm.is_member(workspace_id, auth.uid())` is the
+       * gate, and body.workspace_id was already required to equal
+       * agent.principal_workspace_id or the empty envelope was returned. Two
+       * walls, the same two every other resource here stands behind. */
+      /* The column list is GENERATED from CHANNEL_READ_COLUMNS, the same array
+       * src/cloud/channels.ts pins itself against, so this cannot become a
+       * second typed copy. Identifiers come from a frozen constant in this
+       * repo and never from the request, and the one value is a parameter. */
+      const channels = await tx.unsafe<Record<string, unknown>[]>(
+        `SELECT ${CHANNEL_READ_COLUMNS.join(", ")}
+         FROM swarm_read.channels
+         WHERE workspace_id = $1::uuid
+         ORDER BY lower(slug) ASC`,
+        [body.workspace_id],
+      );
+      return json(200, { channels });
+    }
     if (body.resource === "renewal_grants") {
       const grants = await tx<Record<string, unknown>[]>`
         SELECT *
