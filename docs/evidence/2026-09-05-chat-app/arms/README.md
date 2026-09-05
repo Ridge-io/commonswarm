@@ -1,6 +1,6 @@
 # Review arms, lane `chat-app-channels`
 
-Twelve arm outputs over six SHAs. Each file is `arms-<sha>-<family>.txt`, copied verbatim from
+Twenty-four arm outputs over twelve SHAs, ending PASS/PASS on `b92c525`. Each file is `arms-<sha>-<family>.txt`, copied verbatim from
 the worktree's `arms-<sha>/<family>/ARM.txt`.
 
 | SHA | Grok | Gemini | Defects fixed after |
@@ -19,6 +19,7 @@ the worktree's `arms-<sha>/<family>/ARM.txt`.
 | `d98c73e` | FAIL | FAIL | 1 |
 | `085d83d` | **PASS** | FAIL | 1 |
 | `684c6f2` | **PASS** | FAIL | 1 |
+| `b92c525` | **PASS** | **PASS** | — final |
 
 **`arms-85d7eea…-grok.txt` is not a review and its verdict was not counted.** It carries three
 VERDICT fragments and visibly interleaved sentences ("Next I'll pullI'll the channel read the
@@ -45,3 +46,8 @@ strict improvement on the mechanism it named. All three were fixed rather than a
 On `684c6f2` a second arm finding was verified as **pre-existing on `main`** and routed rather
 than fixed: staging or removing an attachment nulls `composerIntent` without hiding Retry
 (`d9fa25b:2468` and `:2489`).
+
+`b92c525` is the final SHA: both arms PASS, both quote the diff's first `diff --git` line, and
+both give per-section reasoning rather than a bare verdict. Grok's closes with the boundary it
+had failed one round earlier: "a lagging post that sorts at or above the 25th row stands in; a
+same-timestamp smaller-id row that is the 26th does not."

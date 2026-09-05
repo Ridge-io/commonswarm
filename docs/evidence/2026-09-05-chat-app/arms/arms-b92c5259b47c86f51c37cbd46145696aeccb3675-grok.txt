@@ -1,0 +1,101 @@
+I'll read REVIEW.md and DIFF.patch first, then follow REVIEW.md exactly.The patch is large. I'll pull the first `diff --git` line, then inspect the round-16 change and the rest of the claim family.SHA matches. Next I’ll read the page-floor code, composer address, and the observer tests.I’ll read the page-floor merge, the composer send path, and the observer tests in parallel.I’ll inspect the query order, pagination, previous arm reports, and the rest of the claim family.The round-16 diff didn’t print. I’ll pull it from the repo path and keep reading `signalPage` plus the last Gemini FAIL.I’ll keep walking create/archive, the mobile CSS, restored tests, and whether `postedSinceReset` only records visible rows.I have enough to write the review: the floor uses the full sort key, and it matches the query’s `id.lt` cursor. Checking one last comparator edge so I do not miss a real break.`diff --git a/docs/design/2026-09-05-chat-app-channels.md b/docs/design/2026-09-05-chat-app-channels.md`
+
+SHA `b92c5259b47c86f51c37cbd46145696aeccb3675`. I read DIFF.patch, `LiveDashboard.astro` (send, `selectChannel`, `loadSignals`, `refreshLatestSignals`, `openWorkspace`, `refreshChannels`, CSS), `channels.ts`, `commonswarm.ts`, `signal-feed.ts`, the observer tests, `mutate.mjs`, `mobile-measurements.json`, design §6–§8.1, and the 684c6f2 Gemini FAIL that this SHA answers.
+
+`renderFeed("latest")` is the last statement of the composer catch (`LiveDashboard.astro:7273`). `closeChannelDialog()` is inside `resetWorkspaceSessionState` (`:4886`). The composer’s early return on a workspace change skipping `clearComposerDraft()` is on `origin/main` at `d9fa25b:6202`. `refreshLatestSignals` building `[...page.rows, ...signals.filter(not on page)]` is on `origin/main` at `d9fa25b:4360`. Staging or removing an attachment nulls `composerIntent` without hiding Retry at `d9fa25b:2468` and `:2489`. I am not repeating those.
+
+---
+
+## Round sixteen walk
+
+The 684c6f2 merge asked `row.createdAt >= pageFloor` where `pageFloor` was a timestamp string. Gemini failed it: a stand-in that shares the 25th row’s timestamp with a smaller id sorts below that row under `created_at DESC, id DESC`, has rolled off, and was still kept, so the page held 26 rows. This SHA changes the same reset branch (`:4676–4694`):
+
+```
+pageFloor = page.hasMore ? page.rows.at(-1) ?? null : null
+onThisPage = pageFloor === null ||
+  row.createdAt > pageFloor.createdAt ||
+  (row.createdAt === pageFloor.createdAt && row.id >= pageFloor.id)
+keep if !fetched.has(id) && rowShowsOnScreen(row) && onThisPage(row)
+signals = [...arrivedWhileFetching, ...page.rows].sort(createdAt DESC, id DESC)
+```
+
+`signalPage` (`:2090–2098`) is `.order("created_at", { ascending: false }).order("id", { ascending: false }).limit(SIGNAL_FETCH_SIZE)` with `SIGNAL_FETCH_SIZE = 26` and `rows = slice(0, 25)`. `hasMore` is `raw.length === 26`. Confirmed, not assumed. `swarm.signals.id` is `uuid` (`20260724000003_signals.sql:4`). The next-page cursor is `created_at.lt OR (created_at.eq AND id.lt)` (`:2086–2088`). `page.rows[0]` is newest; `page.rows.at(-1)` is the oldest of the displayed 25.
+
+**Is that the query’s order exactly?** Yes. DESC on `(created_at, id)` means a row is on this page iff it is not older than the 25th. Older than the 25th is exactly the cursor predicate `created_at < floor OR (created_at = floor AND id < floor.id)`. Invert it: `createdAt > floor.createdAt OR (createdAt === floor.createdAt AND id >= floor.id)`. That is `onThisPage` when `pageFloor` is set.
+
+**Is `>=` right at the tie?** Yes. The next page uses `id.lt`, so the floor row itself stays on this page. A stand-in with the same id is the floor row and is already in `fetched`. A stand-in with a larger id sorts above the floor and belongs. A stand-in with a smaller id sorts below the floor and is the 26th — the case Gemini named. I checked JS `>=` against `localeCompare` on canonical lowercase UUID strings, including `…000f` vs `…0010`; they agree, and hyphenated lowercase hex is the same order as UUID bytes, so it matches `id.lt` on the uuid column.
+
+**`page.hasMore` as “the page is the whole history”?** Yes. `hasMore === false` means the replica returned fewer than 26 rows, so nothing has rolled off. `pageFloor` is then `null` and every pruned, on-screen, not-fetched stand-in is kept. That includes: an empty channel; a channel with 1–25 messages; and the lag case where the replica has 25 and is missing this browser’s post (25 ≠ 26). `hasMore === true` means a 26th row exists; it was fetched to know that and then sliced off `page.rows`, so `fetched` does not contain it. Without the id tie-break that discarded 26th would come back through the map. With it, `onThisPage` is false. Using `page.rows.length === 25` instead would still be wrong: a complete history of exactly 25 would look like a window.
+
+**Can a stand-in be shown twice?** Reset replaces `signals` wholesale. `!fetched.has(row.id)` keeps the Map half off `page.rows`. Load older uses `known` from current `signals` and a cursor from `page.rows.at(-1)`, not from a stand-in. The poll concat is the routed `d9fa25b:4360` path.
+
+**Ordered wrongly against a row with the same timestamp?** The merge comparator is the query’s own order, including `id DESC`. A same-timestamp stand-in with a larger id sits above the floor row; a smaller id is not merged. The 684c6f2 Gemini FAIL is closed.
+
+Mutation table: the new pins discriminate. `pageFloor` mutated back to `page.rows[0]`, the id conjunct reduced to `row.createdAt === pageFloor.createdAt`, and `onThisPage` dropped from the filter, each against the observer that names that test.
+
+---
+
+## Findings considered and refuted
+
+1. **`>=` (UTF-16) vs `localeCompare` (the merge sort) could disagree and still paint a 26th row.** File: `LiveDashboard.astro:4681–4694`. For mixed-script strings they can disagree. Signal ids are uuid text in canonical lowercase hyphenated form; I ran the pairs, including the nibble-carry case `…000f` / `…0010`. No disagreement. Postgres uuid order is the same byte order. Not a break.
+
+2. **`postedSinceReset` is written only for `visible` / `visibleOnFailure`, so a send that finishes after a move to another named channel is not in the map when the reader comes back.** File: `LiveDashboard.astro:7148–7151` and `:7192–7193`. How you would see it: attach a file, send in `#ops`, click `#mobile` during the upload, click `#ops` again before the replica has the row. I almost failed the SHA on this. Refutation: the map’s job, as written, is a page requested before the post committed. Completing on the channel, then leaving, then coming back, still records the row (round 12). Completing on a screen that must not show the row correctly does not prepend it; the return visit starts a new fetch after the write. Replica lag on that later fetch is the 2s poll. Recording every posted id would be a strict improvement; it is not the 26th-row defect this SHA claims to close, and merge already filters with `rowShowsOnScreen`.
+
+3. **`refreshLatestSignals` still concatenates `[...page.rows, ...signals.filter(not on page)]` and never asks `onThisPage`.** File: `:4743–4745`. A rolled-off stand-in that is already in `signals` can sit below the page until the next reset. Byte-identical on `origin/main` at `d9fa25b:4360`. Routed. Not this lane.
+
+---
+
+## Claim family
+
+**1. Thread surface.** No reply control, no reply bar, no To: field (`data-composer-reply` / `composer-reply` / `To:` are absent from the dashboard; the only `thread_root_id` hit is a comment at `:4525`). CSS has no `composer-reply` rules. Sample and optimistic rows set `threadRootId: null` and `broadcastToChannel: false` (`:6148–6149`, `:7059–7060`, `:7124–7125`). This composer’s placement is `{ channel }` or `{}`; `postBrowserSignal` only spreads thread keys when the placement object has them (`commonswarm.ts:2085–2090`). `groupSignalThreads` is a comment in `signal-feed.ts`. Observer: `doesNotMatch(/threadRootId: (?!null)/)` and the restored `/emoji|reaction|thread/i` gate in `composer.observer.test.ts:39`. Measurement `threadSurfacesPresent: 0`. Cut holds.
+
+**2. Privacy copy.** Swept `CHANNEL_REACH_TEXT`, `CHANNEL_EMPTY_TEXT`, `CHANNEL_ARCHIVED_TEXT`, `unknownChannelText` / `unknownChannelHeadText`, archive hint (`:5842–5843`), archive confirm, unresolved submit (`:6925–6928`), retirement sentence (`:5777–5779`), archived-send sentence (`:7017–7021`). No string says a channel is private, restricted, or unreadable. Empty titles at `:4286–4298` name the slug or wait for an agent; they do not name a permission.
+
+Sweep bounds, named: `chat-channels.observer.test.ts:641–659` reads eight script surfaces plus dialog markup plus the unknown-channel composer refusal, comments stripped, `checked >= 20`. It cannot see: a member-typed `purpose`; `renderFeed` empty titles; `site/src/lib/channels.ts` except the unresolved-copy test; the archived-send refusal (after `const recipients`); the catch sentences at `:7256–7269`. Those last two do not name a permission. The sweep comment still says “the composer’s reply bar”; the bar is gone and is not in the surface list.
+
+**3. Filter vs predicate / `showsOnScreen`.** `signalPage` (`:2070–2101`) is `workspace_id` then optional `channel_id=eq`. That cannot widen the view. Both readers capture `activeChannelId` and drop on mismatch. `filterSignalsByChannel` is absent. Sample mode is the one local filter, and the sample set grows with a post (`:7169`).
+
+| Path | Row deleted? | Reader told something true? |
+|---|---|---|
+| Stay in the channel | pending swapped for posted | yes |
+| Switch to another named channel | pending dropped; posted not prepended (`showsOnScreen` false) | status clears; hops that landed stay where they landed |
+| Switch to all-signals | posted kept (`row.channelId` matches the unfiltered query) | yes |
+| Unresolved `?c=` | `renderFeed` paints no row; composer hidden | yes |
+| Sample mode | snapshot filter; set grows on post | yes |
+| Failure, still here | landed hops stay; Retry lit | server sentence, or `Sent to N of M` |
+| Failure, moved | landed hops filtered off this screen; Retry hidden | names `addressLabel` |
+
+A row is stripped from `signals` only when its id is in the set about to be prepended (`visibleIds` / `visibleFailureIds`). The reset merge is the same `rowShowsOnScreen` plus the new whole-key floor.
+
+**4. `composerIntent` / `resumable` / `addressMoved`.** `addressMoved = composerIntent !== null && composerIntent.placementChannelId !== next` (`:5763–5764`). `resumable = unsent && addressStillActive` (`:7218–7223`). Failure writes the intent only when resumable, with `placementChannelId`. Retry is shown only when resumable. Slug is resolved at send time from the id. Gone or archived → local sentence, intent nulled, Retry hidden (`:7014–7026`). Archived permalink: `channelById` still finds it (`channels.ts:69–75`); send asks `archivedAt`.
+
+| Path | Retires? |
+|---|---|
+| Rail / dialog click, other place | yes |
+| Same place again (`changed` can still be true if unknown clears) | no |
+| `?c=` heal into a different channel | yes |
+| `?c=` heal into the same channel | no |
+| `Open #all-signals` from unknown | yes if the send had a channel |
+| Create | yes, then `selectChannel(created.channelId)` (`:7335`) |
+| Archive of current | yes (`refreshChannels` → `selectChannel(null)` at `:5949–5951`) |
+| `applyChannelFromUrl` on workspace open | does not go through `selectChannel`; a real workspace change already called `resetComposer()` (`:5229`) |
+
+Stay / move channel / move to all-signals / send from all-signals / workspace change / session expiry: intent, Retry, and the sentence match. A retry cannot double-post while `composerSending` is true (`:6912`). An unchanged body reuses command ids. Typing remints (`:6986–6999`). A send whose channel has left the list, or is archived, is refused before the wire.
+
+**5. URL.** `syncChannelUrl` writes `?w=` and `?c=` on every `selectChannel` and on every `openWorkspace` after `applyChannelFromUrl` (`:5334–5335`). A `?c=` whose `?w=` names another workspace is ignored (`:5732–5738`). A missing id sets `unknownChannelId` and stays in the bar (`:5711–5713`). Composer is hidden (`:1581`) and submit returns (`:6920–6930`). Keyboard and Retry both `requestSubmit()`. Boot `?w=` is a membership lookup. Heal goes through `selectChannel` (`:5942–5944`). No path where the painted feed is the unfiltered query under a bad id. Bar and screen: `syncChannelCurrent` last; unknown marks no place.
+
+**6. `activeWorkspaceView` / current mark.** Channel buttons have no `data-workspace-view`. `activateWorkspaceView` for files/brain clears `[data-channel-place]` (`:5541–5544`). `renderChannelHead` returns without writing the channel name when the view is not signals (`:5641–5643`). `renderChannel` runs the signals-view loop, then rail, then head, so `syncChannelCurrent` last. Unresolved: no place is current. All-signals, a live channel, Files, and Brain each have one visible current place. The hidden-on-desktop mobile `data-workspace-view="signals"` tab can also be `aria-current` at the same time; it is `display:none` above 52rem (out of the a11y tree). The phone channel chip is not an `aria-current` place.
+
+**7. `channelReadGeneration` / `channelListFailed`.** `refreshChannels` takes `++channelReadGeneration` before the fetch (`:5909`) and applies only when `generation === channelReadGeneration && version === requestVersion && workspaceId === activeWorkspaceId`. Failure sets `channelListFailed = true` and re-renders the unknown feed; success sets `false`. Open takes `channelGeneration` before `Promise.all` (`:5292`) and applies the list only if it still matches (`:5325–5328`). Two in-flight reads cannot land out of order into the list or the flag.
+
+**8. Tests as claim controls.** The observer for this round replaced `row.createdAt >= pageFloor` with the whole-key pin and kept the retired timestamp-only comparison beside it (`chat-channels.observer.test.ts:478–485`). That is the opposite of the 085d83d enshrinement: the control now fails if the id conjunct goes missing. The `[\s\S]{0,1400}` window grew to `{0,1800}` because the comments grew; the property is the same filter, plus `onThisPage`. Three restored controls are in their original form: `/emoji|reaction|thread/i` on the composer markup (`composer.observer.test.ts:35–39`); `[...visibleSignals].reverse()` in `transcript-shape.observer.mjs:26`; the composer-sprint failed-send pin now requires `placementChannelId` on the resumable rewrite (`composer-sprint.observer.test.ts:259–261`) and still requires every command id. Not weakened.
+
+**9. Mobile.** CSS, not the JSON: at `max-width: 52rem` the rail’s channel list is `display: none` (`:11906–11908`); `.dashboard__channel-switch` is `inline-flex`, `min-block-size: 2.5rem`, `max-inline-size: 8rem` (`:12150–12160`); the toolbar is `min-block-size: 2.5rem; margin-block-end: -2.5rem` (`:12060–12062`); the titleblock is clipped, not a row (`:12033–12041`); `--feed-band-height: 3.25rem` is the clearance (`:12001`). The 73px app bar is still the only in-flow header. The measurement file matches those rules: 390 app bar 73px, 320 app bar 57px, rail list height 0, switch 40px / 128px at the 32-char slug, first message top equals the floating head bottom (clearance 0), no horizontal overflow, `threadSurfacesPresent: 0`. It reloads after resize and asserts rects inside the named viewport. It measures what it says.
+
+**10. Generated lists.** Slug and purpose bounds, reserved names, and the name hint come from `_shared/channels.ts` through `channels.ts`. `ALL_SIGNALS_SLUG` is typed once as `COMPOSER_DRAFT_SCOPE` (storage key) and generated everywhere a reader sees it. Channel command bodies are checked against the edge’s `required` / `optional` arrays. Channel refusals show `body.message` and do not branch on its text (`channelRefusalMessage`; observer at `chat-channels.observer.test.ts:600–608`).
+
+---
+
+The 684c6f2 Gemini FAIL is closed. A lagging post that sorts at or above the 25th row stands in. A same-timestamp smaller-id row that is the 26th does not. An empty page, and a complete history of ≤25, keep every stand-in.
+
+VERDICT: PASS
