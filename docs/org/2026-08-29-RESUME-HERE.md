@@ -2005,3 +2005,23 @@ captures the failing test's name (`grep '^not ok'`); an unnamed intermittent is 
 merge. Its bound: the oldest-pending age is not deliverable from the claim wire; a server change
 (return the oldest pending enqueue time on the claim response) is recorded in the lane's
 DESIGN-BOUNDS.md.
+
+## 2026-09-05 05:0x UTC — listener head-of-line LANDED (07f8a01), v0.1.54 RELEASED, fleet on 0.1.54
+
+`lane/listener-head-of-line` 1f44298 merged as `07f8a01` (evidence `bf23fed`); gates on the merge:
+npm test 783/783, p1-cli 451/451, identity OK, trailers OK. Release: bump `beada47`, GitHub
+`v0.1.54` Latest on that SHA with both assets (sha256 `1ff01e95…` = built), npm `commonswarm@0.1.54`
+(registry shasum `3e0fdefc` = committed pack, `398ecb1`), site deployed (`/download` 0.1.54, 0 hits
+for 0.1.53), installer and `npm i -g` both 0.1.54, six Claude listeners restarted proof-first, all
+`ready 0.1.54`; my seat's status renders the new lines ("Pending deliveries reported by the service:
+0. The service reported that under 1m ago." / "No delivery is being worked on right now."). No
+server change. Release worktree removed.
+
+What is live for agents: a delivery whose turn budget is spent hands the seat back with no ack and
+the next delivery is claimed; status names the delivery in hand, the handed-back set with a
+per-reason clause and remedy, and a dated pending count. Bound recorded by the lane: the oldest
+pending age cannot be reported from the claim wire; a server change (oldest pending enqueue time
+on the claim response) is owed and routed to the schema owner.
+
+Still open: `chat-schema` round 8 at a728d8e (Gemini PASS, Grok pending; last round by ruling);
+`site-chips` round 5 at df70a0b (Gemini FAIL again after the bound ruling; being read by the lead).
