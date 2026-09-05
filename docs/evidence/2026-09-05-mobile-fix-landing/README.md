@@ -215,3 +215,39 @@ Accepted, not changed:
 - `assertDensity` no longer applies its band and ratio floors below 1440px. `assertPhoneHeaderRule`
   replaces them with the operator's rule, a floating-head check, a 600px transcript floor and now
   the at-rest clearance. The new clearance case is measured at 390x844 only.
+
+## 8. Round 2: both arms PASS, and what their residuals cost
+
+`190abdb`: Gemini PASS, Grok PASS, both with the quote-back and per-section reasoning.
+`arms-190abdb/{grok,gemini}/ARM.txt`. Neither found a miss of the operator's rule or of the
+round-1 fixes. Grok listed residuals, and three of them were worth the SHA:
+
+- **A claim that was simply not true.** The comment in `resetComposer`, one assertion message and
+  one mutation name all said "the send". `resetComposer()` has exactly two callers — the workspace
+  change and session teardown — and the send path is neither. The CODE is right, and right for a
+  reason worth writing down: a send keeps the caret on purpose, because a FAILED send puts the
+  body back and the reader's place in it with it. Only the words were wrong, and a mutation named
+  after a path it never observes is the "green control defending a false claim" trap. All three
+  now say what they measure, and a new assertion pins `resetComposer` at two call sites so the
+  next caller has to be checked before those words stay.
+- **Two comments still said 2.5rem** after the clearance became `--feed-band-height`, 3.25rem.
+  The number that must stay 2.5rem is the pair the filter row makes with its own negative margin;
+  the clearance is a different quantity. Both comments now say which is which.
+- **320x568 did not re-pin the at-rest clearance.** It does now, with the widest roster label,
+  which is where a band that grew a line would first stop fitting. Mutation: the property back at
+  2.5rem fails at BOTH widths, 12.0px at 390x844 and again at 320x568.
+
+One more found while answering them: a mention render armed by the last keystroke could land after
+`blur` and open a list of names under a composer nobody is in. Cancelled on blur, with a mutation.
+
+Left as residuals, named rather than fixed:
+
+- `scrollComposerCaretIntoView` counts hard line breaks only, so a caret in the middle of a long
+  soft-wrapped paragraph can land a line or two off. The code comment says so.
+- The viewport sync is behind `requestAnimationFrame` with no timer floor, unlike the autogrow.
+  A hidden tab that is resized keeps a stale height until it is foregrounded, and the keyboard
+  only opens on a visible tab. A timer floor here would run the sync every 32ms in a hidden tab,
+  which is worse. Grok's "a dropped rAF would wedge it" was not shown to happen.
+- Pinch-zoom panning on a real iPhone against `scrollTo(0, 0)` is still not established.
+- The `caret-survival` and `combobox-flush` controls are source-shape. The caret behaviour itself
+  is measured in a browser in section 3, against two builds.

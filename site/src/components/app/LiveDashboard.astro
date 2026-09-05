@@ -2809,12 +2809,18 @@ import "../../styles/tokens.css";
         input.value = "";
         input.style.blockSize = "auto";
       }
-      /* The text the caret was in has been sent. Nothing to put back. */
+      /* THIS IS NOT THE SEND PATH. The only callers are the workspace change and session
+         teardown; a send empties the box in its own handler and clears the draft on success,
+         and it deliberately keeps the caret because a FAILED send puts the body back and the
+         reader's place in it with it. What has to go here is state that belongs to the
+         workspace being left.
+         The caret, because the text it indexes is about to be replaced by another
+         workspace's draft. */
       composerCaretKnown = false;
-      /* AND the pending draft write dies here. This runs when the composer changes workspace,
-         and a timer armed against the old one fires afterwards reading an empty box against
-         the NEW key -- which removes the draft the reader is about to be shown. `blur` covers
-         a pointer switch because it flushes first; a switch that never blurred does not. */
+      /* And the pending draft write, because a timer armed against the old workspace fires
+         afterwards reading an empty box against the NEW key, which removes the draft the
+         reader is about to be shown. `blur` covers a pointer switch because it flushes first;
+         a switch that never blurred does not. */
       cancelComposerDraftTimer();
       setComposerStatus("");
       const retry = one<HTMLButtonElement>("[data-composer-retry]");
@@ -5866,6 +5872,9 @@ import "../../styles/tokens.css";
       if (!input) return;
       composerCaretKnown = true;
       composerCaret = { end: input.selectionEnd ?? 0, start: input.selectionStart ?? 0 };
+      /* A render armed by the last keystroke would otherwise land after the field was left and
+         open a list of names under a composer nobody is in. */
+      cancelMentionPickerRender();
       flushComposerDraft();
     });
     one<HTMLTextAreaElement>("[data-composer-input]")?.addEventListener("focus", () => {
@@ -10467,8 +10476,9 @@ import "../../styles/tokens.css";
 
     /* The clearance belongs to whatever is FIRST under the floating band, and only to that.
        "Load older updates" sits between the band and the list, so when it is showing it has
-       already cleared the band and the list's own clearance becomes 2.5rem of dead screen
-       between the button and the first message. Measured at 390x844: a 40px gap. */
+       already cleared the band and the list's own clearance becomes a band's height of dead
+       screen between the button and the first message. Measured at 390x844 when that clearance
+       was still the filter row's 2.5rem: a 40px gap. It is --feed-band-height now. */
     .dashboard__feed-more:not([hidden]) + .dashboard__feed {
       padding-block-start: 0;
     }

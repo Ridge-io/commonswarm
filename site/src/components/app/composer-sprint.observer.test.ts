@@ -467,10 +467,19 @@ const assertComposerSprint = (value: ComposerArtifact): void => {
     /input\.value = draft\.body;[\s\S]{0,60}composerCaretKnown = false;/,
     "caret-survival: a restored draft keeps a caret that was remembered in different text",
   );
+  /* resetComposer is NOT the send path — the only callers are the workspace change and
+     session teardown. A send empties the box in its own handler and keeps the caret on
+     purpose, because a FAILED send puts the body back and the reader's place in it with it. */
   assert.match(
     dashboard,
-    /input\.style\.blockSize = "auto";[\s\S]{0,160}composerCaretKnown = false;/,
-    "caret-survival: the send empties the box and keeps the caret it had in the sent text",
+    /input\.style\.blockSize = "auto";[\s\S]{0,420}composerCaretKnown = false;/,
+    "caret-survival: leaving a workspace keeps the caret it had in that workspace's text",
+  );
+  assert.equal(
+    occurrences(dashboard, "resetComposer();"),
+    2,
+    "caret-survival: resetComposer has gained a caller, so check it is not the send before " +
+      "the comments and messages here keep saying it is not",
   );
 
   /* EVERY DEBOUNCED TIMER DIES WHERE THE COMPOSER IS EMPTIED. This runs on a workspace change
@@ -497,6 +506,13 @@ const assertComposerSprint = (value: ComposerArtifact): void => {
     dashboard,
     /cancelMentionPickerRender\(\);\s*renderMentionPicker\(\);/,
     "combobox-flush: the pending render is cancelled without being run",
+  );
+  /* Leaving the field must also disarm it, or a render armed by the last keystroke opens a
+     list of names under a composer nobody is in. */
+  assert.match(
+    dashboard,
+    /cancelMentionPickerRender\(\);\s*flushComposerDraft\(\);/,
+    "combobox-flush: a pending mention render survives blur and opens under an empty focus",
   );
   /* The usable viewport is visualViewport and ONLY visualViewport. `window.innerHeight` used
      to be the fallback; on iOS Safari it reports the layout viewport, which does not shrink
@@ -747,6 +763,13 @@ const mutations: Mutation[] = [
     expectedFailure: "composer-reset",
   },
   {
+    name: "a pending mention render survives leaving the field",
+    key: "dashboard",
+    target: "cancelMentionPickerRender();\n      flushComposerDraft();",
+    replacement: "flushComposerDraft();",
+    expectedFailure: "combobox-flush",
+  },
+  {
     name: "Enter is judged against a mention picker that has not rendered yet",
     key: "dashboard",
     target: "cancelMentionPickerRender();\n          renderMentionPicker();",
@@ -761,10 +784,10 @@ const mutations: Mutation[] = [
     expectedFailure: "caret-survival",
   },
   {
-    name: "the send keeps the caret it had in the sent text",
+    name: "leaving a workspace keeps the caret it had in that workspace's text",
     key: "dashboard",
-    target: "/* The text the caret was in has been sent. Nothing to put back. */\n      composerCaretKnown = false;",
-    replacement: "/* The text the caret was in has been sent. Nothing to put back. */",
+    target: "workspace's draft. */\n      composerCaretKnown = false;",
+    replacement: "workspace's draft. */",
     expectedFailure: "caret-survival",
   },
   {

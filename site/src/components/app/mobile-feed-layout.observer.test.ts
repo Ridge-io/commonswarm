@@ -543,6 +543,27 @@ test("the smallest phone keeps the whole header inside the app bar row", async (
       measurement.header.height > 0 && measurement.header.top >= appBar - 0.5,
       `320x568: the channel head is gone rather than floating: ${JSON.stringify(measurement.header)}`,
     );
+    /* The at-rest clearance, re-pinned at the smallest phone and with the widest roster label,
+       which is where a band that grew a line would first stop fitting. The shared rule cannot be
+       reused whole here: its transcript floor is written for an 844px screen. */
+    assert.equal(
+      measurement.feedViewScrollTop,
+      0,
+      "320x568: the transcript is already scrolled, so \"at rest\" is not what was measured",
+    );
+    assert.ok(
+      measurement.firstRow !== null && measurement.firstRow.height > 0,
+      "320x568: there is no first message, so the clearance below measures nothing",
+    );
+    assert.ok(
+      measurement.firstRow.top >= measurement.header.bottom - 0.5 &&
+        measurement.firstRow.top >= measurement.toolbar.bottom - 0.5,
+      `320x568: the first message sits under the floating band at rest: ${JSON.stringify({
+        firstRow: measurement.firstRow,
+        header: measurement.header,
+        toolbar: measurement.toolbar,
+      })}`,
+    );
     assertInsideViewport(measurement);
     console.log(`mobile-feed-layout 320px ${JSON.stringify(measurement)}`);
   } finally {
@@ -629,12 +650,14 @@ test("an empty feed keeps the app shell at the dynamic viewport height", async (
   }
 });
 
-/* The floating band costs the reading area nothing only if its clearance is paid ONCE. Three
-   elements agree on 2.5rem: the filter row's height, the negative margin that takes that height
-   back out of the flow, and the top padding that keeps the first thing under the band clear of
-   it. "Load older updates" sits BETWEEN the band and the list, so when it is showing it is the
-   element that clears the band — and the list's own clearance becomes dead screen between the
-   button and the first message. Found by measuring at 390x844: a 40px gap. */
+/* The floating band costs the reading area nothing only if its clearance is paid ONCE. Two
+   pairs have to agree, and they are not the same number. The filter row's own 2.5rem height and
+   the negative margin that takes it back out of the flow must match EACH OTHER. The clearance
+   is a different quantity: the height of the whole band, which is the taller of its two floating
+   parts — the roster cluster at var(--feed-band-height), 3.25rem. "Load older updates" sits
+   BETWEEN the band and the list, so when it is showing it is the element that clears the band,
+   and the list's own clearance becomes dead screen between the button and the first message.
+   Found by measuring at 390x844 while that clearance was still 2.5rem: a 40px gap. */
 test("the floating band's clearance is paid once when older updates can be loaded", async () => {
   const chrome = await findChrome();
   const server = await startDistServer();
