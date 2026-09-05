@@ -35,32 +35,7 @@ two-line ceiling from 120px to 130px. The 80px was bought on 2026-09-04 by delet
 control the operator asked for again on 2026-09-05. The reverted control still fails both
 ceilings, at 128.44px / 131.38px and 147.44px / 150.38px.
 
-## What is NOT established
-
-- **Nothing here reached production.** Every browser measurement runs against `site/dist` in
-  sample mode, where a send is a local row and no `post_signal` is issued. The wire claim is
-  about the body this client BUILDS, read from the exported builder; the served edge answers
-  for that shape in `tests/p1-server/chat-signals.test.ts`, which this lane did not run.
-- **The empty-roster guard is a source claim.** Sample mode has its roster before the first
-  render, so no browser step can reach the state the guard exists for.
-- **The screenshots are window-sized.** Headless Chrome on macOS refuses a window narrower
-  than 500px, so the app is measured inside an iframe sized to the phone. The numbers are the
-  phone's; a screenshot may carry a blank gutter beside it.
-- **The 108px resting budget is measured at 1440x900 and 390x844 only.**
-  `composer-polish.observer.test.ts` opens those two viewports and no other. At 320x568 the
-  composer rests at 128.81px, above that number; it is recorded in
-  `mobile-measurements.json` with its screenshot rather than gated. The old wording said the
-  budget held "on every screen" and never opened the smallest one.
-- **Pruning on ENTRY is silent, and deliberately so.** A prune while the composer is open is
-  reported, because a chip cannot vanish from under somebody writing to that person. The set
-  restored on arrival is pruned without a word: people leave a workspace between messages,
-  and greeting every reader with a notice about a set they have not looked at yet is noise.
-- **The source sweep in `composer-to-field.observer.test.ts` reads one file.** It shows that
-  the module building the To: sentences takes its cap and its wake position from the server's
-  constants. It does not prove the app has no other typed cap anywhere, and a source regex
-  cannot: there is no complete set for it to run over.
-
-## The review rounds, and why the lane stopped
+## The review rounds
 
 | SHA | Grok | Gemini | What it found |
 |---|---|---|---|
@@ -70,28 +45,97 @@ ceilings, at 128.44px / 131.38px and 147.44px / 150.38px.
 | `d567a69` | FAIL | FAIL | the same class again: the draft restore commits against an unloaded roster, and chip edits never reach storage |
 
 Four rounds, one family: **the To: set and the record of which tags produced it are state that
-must follow the body, and they are kept in step by hand across separate handlers.** Each round
+must follow the body, and they were kept in step by hand across separate handlers.** Each round
 closed a door and the next round found another. The lane stopped at round four rather than
-making a fifth point fix, which is the rule in the PM brief.
+making a fifth point fix.
 
-Both arms converged on the same cause, in their own words. Grok: the two restores have to be
-one transaction that does not commit until the roster is known, and every live edit must also
+Both arms named the same fix in their own words. Grok: the two restores have to be one
+transaction that does not commit until the roster is known, and every live edit must also
 write the stored pair. Gemini: the set and the applied record are derived from the body and the
-roster, and they are being synchronised by hand across disconnected handlers instead of being
+roster, and they were being synchronised by hand across disconnected handlers instead of being
 one derived pass.
 
-### Open, named, not fixed
+## The derived pass, and the five items it closes
 
-1. **A workspace switch loses a draft's address.** `restoreComposerDraft` is not gated on a
-   known roster the way the remembered set is, so it prunes the draft's set to empty and marks
-   itself done; the later paint that does have a roster then writes the last-sent set over it.
-   A broadcast draft becomes directed, and a removed chip comes back.
-2. **A chip edit never reaches storage on its own.** `setComposerTo` does not write the draft,
-   so an edit is stored only on the next keystroke or `pagehide`. A workspace switch cancels
-   the draft timer without flushing, so a chips-only edit is lost.
-3. **A roster prune during an in-flight send** does not reach the closure that already captured
-   the recipients: the row hides the recipient, the post still names them.
-4. **A tag refused by the cap cannot be added back** by making room. It is marked applied so
-   the notice does not repeat every keystroke; recovery is deleting the tag and typing it again.
-5. **Two mutation expectations still fail for a reason other than the assertion they name**
-   (`secondTag`, per the round-four Gemini arm).
+`deriveComposerAddress` in `site/src/lib/composer-address.ts` is that pass. Given the body's
+tags, the roster, the stored draft and the last-sent set, it yields the To: set and the tag
+record, and it COMMITS ALL OF IT OR NONE OF IT. `syncComposerAddress` in `LiveDashboard.astro`
+is its one caller-facing wrapper: every handler that can change the address calls it and
+assigns nothing itself, and the same call writes the stored pair.
+
+**The invariant it pins.** The To: set a reader sees is the set that goes on the wire, and an
+empty set is only ever a broadcast the reader chose on this screen, never the residue of a
+transition.
+
+| open item from round four | what closed it | the control that drives it |
+|---|---|---|
+| 1. a workspace switch loses a draft's address | the pass holds while `rosterKnown` is false, and the body and the address are one transaction behind one restore key | `broadcastSurvivesSwitch`, `chipEditSurvivesSwitch`, `switchedWorkspaceAddress` in the browser; "a pass against an unknown roster commits nothing" in the pure driver |
+| 2. a chip edit never reaches storage, and a switch cancels the timer | the pass writes the stored pair on every commit; `resetComposer` FLUSHES before it empties the box; an address that differs from the last-sent set is a draft on its own | `chipEditSurvivesSwitch`, `emptyBodyEditSurvivesSwitch` |
+| 3. a roster prune during an in-flight send | the address is FROZEN for the whole post and settles in the submit's `finally` | "nothing moves the address while the message it addresses is on the wire" in the pure driver, plus a source claim that the dashboard feeds `sending` in |
+| 4. a tag refused by the cap cannot be re-added | only a name that GOT IN is marked applied; the notice is derived from `refused` on every pass rather than pushed in once | `capRefused` then `capAfterRoom` in the browser; "a tag the cap refused joins the set as soon as the reader makes room" in the pure driver |
+| 5. two mutation expectations fail for a reason other than the assertion they name | the notified mark has its own claim (`notifiedMark`), and `secondTag` and `promoted` no longer read it | the two mutations now name `notifiedMark` |
+
+### The sample workspace, and why it grew
+
+Every browser control above needs a transition sample mode could not reach. `/app` now has TWO
+sample workspaces:
+
+- **Design studio** — unchanged, and still the first screen a visitor meets.
+- **Field lab** — nine agents and two members, so the eight-recipient cap is reachable.
+
+A sample switch used to set the id and repaint. It now takes the same steps a real one does:
+`resetComposer` runs while the workspace being left is still current, the roster is cleared,
+the screen paints once with nothing known, and the roster arrives on a later task. A switch
+that skipped those steps could not measure the thing a switch breaks.
+
+## What is NOT established
+
+- **Nothing here reached production.** Every browser measurement runs against `site/dist` in
+  sample mode, where a send is a local row and no `post_signal` is issued. The wire claim is
+  about the body this client BUILDS, read from the exported builder; the served edge answers
+  for that shape in `tests/p1-server/chat-signals.test.ts`, which this lane did not run.
+- **The in-flight freeze has no browser control.** A sample send resolves without an await, so
+  there is no window in which a browser step could change a roster underneath one. What the
+  freeze DOES is driven directly through `deriveComposerAddress` in `composer-address.test.mjs`,
+  which is the same function the dashboard calls; what the dashboard FEEDS it (`sending:
+  composerSending`) is a source claim with a mutation on it. Neither reaches a real post.
+- **The write of the remembered set is not independently controlled, and the harness says so.**
+  Breaking `rememberComposerTo` changes nothing a reader sees, because `pagehide` flushes the
+  live chips into the draft and the draft restores them. The READ is controlled
+  (`remembered: []` turns `afterReload` red), which is what proves the remembered set is used.
+- **The empty-roster state is still not reachable on a RELOAD.** Sample mode has its roster
+  before the first render there. It is reachable on a SWITCH, which is what the new controls
+  use, and that is the transition the defect lived in.
+- **The screenshots are window-sized.** Headless Chrome on macOS refuses a window narrower
+  than 500px, so the app is measured inside an iframe sized to the phone. The numbers are the
+  phone's; a screenshot may carry a blank gutter beside it.
+- **The 108px resting budget is measured at 1440x900 and 390x844 only.**
+  `composer-polish.observer.test.ts` opens those two viewports and no other. At 320x568 the
+  composer rests at 128.81px, above that number; it is recorded in
+  `mobile-measurements.json` with its screenshot rather than gated.
+- **Pruning on ENTRY is silent, and deliberately so.** A prune while the composer is open is
+  reported, because a chip cannot vanish from under somebody writing to that person. The set
+  restored on arrival is pruned without a word: people leave a workspace between messages,
+  and greeting every reader with a notice about a set they have not looked at yet is noise.
+  The pass decides which case it is in from its own `source`, so no handler has to know.
+- **The source sweeps read one file each.** The call-site count in
+  `composer-to-field.observer.test.ts` shows that every handler in `LiveDashboard.astro` goes
+  through the pass and that nothing else calls it. It does not prove no other module moves the
+  set, and a source regex cannot: there is no complete set for it to run over.
+
+## Four of the original mutation wordings changed
+
+The 34 mutations of round four are all still in the harness, but four of them describe rules
+that MOVED, so their wording moved with them. Named here because a later reader comparing the
+two tables will meet the old wording:
+
+| retired wording | what replaced it, and why |
+|---|---|
+| "a roster paint does not move the address" | "one pass owns the address, and nothing else calls it". A roster paint now runs the pass on purpose; the rule is that the pass is the only writer, not that a paint never runs it. |
+| "the chips are not pruned against a roster that is not known yet" | "a workspace switch keeps the draft's own address across the roster gap". The prune left the render and became the pass's own gate. |
+| "a saved draft's tags are on the row after a reload, not lifted in at send time" | "a draft's own address beats the set the last message went to". The load-bearing ORDER of two restores became a precedence rule inside one pass. |
+| "a draft carries the set it was being written to" | the same claim, plus "and the pass reads it", because the read and the write are now separate entries. |
+
+One entry was REMOVED rather than reworded: "the next message opens addressed to the last
+message's recipients" kept its read-side control and lost its write-side one, for the reason
+in "What is NOT established" above.

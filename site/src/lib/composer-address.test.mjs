@@ -14,11 +14,13 @@ import {
   COMPOSER_TO_MAX,
   NOTIFIED_POSITION,
   addComposerRecipients,
+  composerAddressNotice,
   composerAmbiguousNotice,
   composerDeliveryNote,
   composerPromoteLabel,
   composerPrunedNotice,
   composerToFullNotice,
+  deriveComposerAddress,
   mergeMentionRecipients,
   notifiedRecipient,
   positionWord,
@@ -219,19 +221,43 @@ test("a tag adds to the set, and a removed chip does not come back while the tag
   assert.deepEqual(retyped.recipients, [dana, wren]);
 });
 
-test("a tag past the cap is named once, not on every keystroke", () => {
+test("a tag the cap refused joins the set as soon as the reader makes room", () => {
+  /* THE REFUSAL IS NOT A VERDICT. A refused tag used to be written into `applied` so the
+   * full-set notice would not repeat, which made the refusal permanent: deleting a chip to
+   * make room did nothing, and the only recovery was deleting the tag from the sentence and
+   * typing it again, which nothing on screen said. The notice is DERIVED from `refused` on
+   * every pass now, so it stays on the row without being repeated and the name stays
+   * eligible. */
   const full = Array.from({ length: COMPOSER_TO_MAX }, (_unused, index) => ({
     kind: "agent",
     id: `agent-${index}`,
   }));
   const merged = mergeMentionRecipients({ current: full, tagged: [dana], applied: [] });
   assert.deepEqual(merged.refused, [dana]);
+  assert.equal(
+    merged.applied.includes(recipientKey(dana)),
+    false,
+    "a name the cap refused was written off as applied, so making room cannot bring it back",
+  );
+  /* The tag is still in the sentence and the set is still full: the same sentence, rebuilt. */
   const again = mergeMentionRecipients({
     current: merged.recipients,
     tagged: [dana],
     applied: merged.applied,
   });
-  assert.deepEqual(again.refused, [], "the same full-set notice fired twice for one tag");
+  assert.deepEqual(again.refused, [dana], "the row stopped saying which name did not fit");
+  /* The reader deletes one chip. The tag has not moved; the pass does. */
+  const room = mergeMentionRecipients({
+    current: removeComposerRecipient(again.recipients, full[0]),
+    tagged: [dana],
+    applied: again.applied,
+  });
+  assert.deepEqual(room.refused, [], "the set has room and the name is still being refused");
+  assert.equal(
+    room.recipients.at(-1)?.id,
+    dana.id,
+    "a refused name did not join the set after the reader made room for it",
+  );
 });
 
 test("an ambiguous tag is reported rather than guessed at", () => {
@@ -250,4 +276,166 @@ test("the module states the wake bound where the constant is declared", () => {
   const source = readFileSync(new URL("./composer-address.ts", import.meta.url), "utf8");
   assert.match(source, /enqueue_signal_delivery/);
   assert.match(source, /to_agent_principal_id/);
+});
+
+/* ────────────────────────────────────────────────────────────────────────────────────────
+ * THE DERIVED PASS, DRIVEN THROUGH THE TRANSITIONS THAT USED TO BREAK IT.
+ *
+ * These reach the same function the dashboard calls. A browser cannot drive some of them:
+ * sample mode has no send that stays in flight long enough to change a roster underneath,
+ * and a real roster is never unknown there. What a browser CAN reach is measured in
+ * `src/components/app/composer-to-field.observer.test.ts`, which switches workspace mid-draft
+ * and edits a chip before switching.
+ *
+ * BOUND: these drive the pass. That the dashboard calls it at every one of its handlers is a
+ * separate claim, counted out of the source in that observer file.
+ * ──────────────────────────────────────────────────────────────────────────────────────── */
+
+/** Everyone the tests below can address. Anybody not here has left the workspace. */
+const roster = [wren, orbit, dana, ada];
+const inRoster = (entity) =>
+  roster.some((candidate) => recipientKey(candidate) === recipientKey(entity));
+
+const derive = (overrides) =>
+  deriveComposerAddress({
+    rosterKnown: true,
+    sending: false,
+    known: inRoster,
+    live: null,
+    draft: null,
+    remembered: [],
+    tagged: [],
+    ...overrides,
+  });
+
+test("a pass against an unknown roster commits nothing and keeps what is on screen", () => {
+  /* THE WORKSPACE SWITCH. The screen paints once before the roster request settles. A pass
+   * that committed there pruned the draft's set to empty against a roster that only looked
+   * empty, marked the restore done, and let the next paint write the last-sent set over a
+   * draft the reader had already addressed. */
+  const held = derive({
+    rosterKnown: false,
+    draft: { to: [wren, orbit], applied: [recipientKey(wren)] },
+    remembered: [dana],
+    tagged: [wren],
+  });
+  assert.equal(held.committed, false, "a pass committed against a roster it does not know");
+  assert.deepEqual(held.recipients, [], "an unknown roster produced a set anyway");
+  /* And the same inputs one paint later, with the roster known, restore the draft's own set
+   * rather than the last-sent one. */
+  const settled = derive({
+    draft: { to: [wren, orbit], applied: [recipientKey(wren)] },
+    remembered: [dana],
+    tagged: [wren],
+  });
+  assert.equal(settled.committed, true);
+  assert.equal(settled.source, "draft");
+  assert.deepEqual(settled.recipients, [wren, orbit], "the draft's address did not survive");
+});
+
+test("a draft that recorded an empty set is a broadcast, not a set nobody wrote down", () => {
+  const chosen = derive({ draft: { to: [], applied: [] }, remembered: [wren] });
+  assert.deepEqual(chosen.recipients, [], "an emptied To: came back addressed to last-sent");
+  assert.equal(chosen.source, "draft");
+  const nothingRecorded = derive({ draft: { to: null, applied: [] }, remembered: [wren] });
+  assert.deepEqual(nothingRecorded.recipients, [wren]);
+  assert.equal(nothingRecorded.source, "remembered");
+});
+
+test("a live set beats both stores, because it is what the reader is looking at", () => {
+  const state = derive({
+    live: { to: [ada], applied: [] },
+    draft: { to: [wren], applied: [] },
+    remembered: [orbit],
+  });
+  assert.deepEqual(state.recipients, [ada]);
+  assert.equal(state.source, "live");
+});
+
+test("a prune is announced while the reader is looking at the set and silent on arrival", () => {
+  const gone = { kind: "agent", id: "agent-departed" };
+  const live = derive({ live: { to: [wren, gone], applied: [] } });
+  assert.deepEqual(live.recipients, [wren], "a name the roster lost stayed on the row");
+  assert.equal(live.announcedPrune, 1, "a chip vanished from under the reader with no word");
+  /* AND THE SENTENCE SURVIVES A REDRAW. It is carried, not recomputed from nothing, or the
+   * next keystroke would take it off the row before it had been read. */
+  const redrawn = derive({
+    live: { to: live.recipients, applied: [] },
+    announcedPrune: live.announcedPrune,
+  });
+  assert.equal(redrawn.announcedPrune, 1);
+  /* On arrival it is silent: people leave a workspace between messages, and a notice about a
+   * set the reader has not looked at yet is noise. */
+  const arriving = derive({ remembered: [wren, gone] });
+  assert.deepEqual(arriving.recipients, [wren]);
+  assert.equal(arriving.announcedPrune, 0, "arriving in a workspace announced an old prune");
+});
+
+test("nothing moves the address while the message it addresses is on the wire", () => {
+  /* THE SEND CAPTURED ITS RECIPIENTS ALREADY. A prune that moved the chips mid-post would
+   * leave the row showing one set and the post naming another, which is the hidden recipient
+   * this row exists to rule out. The set is frozen for the whole post and settles after it. */
+  const gone = { kind: "agent", id: "agent-departed" };
+  const during = derive({ sending: true, live: { to: [wren, gone], applied: [] } });
+  assert.equal(during.committed, false, "the address was rewritten mid-send");
+  assert.deepEqual(during.recipients, [wren, gone], "the row stopped showing what was sent");
+  const after = derive({ live: { to: [wren, gone], applied: [] } });
+  assert.equal(after.committed, true);
+  assert.deepEqual(after.recipients, [wren], "the prune never landed once the send was over");
+  assert.equal(after.announcedPrune, 1);
+});
+
+test("a tag whose chip was removed stays removed, and the record travels with the pair", () => {
+  const removed = derive({
+    live: { to: [orbit], applied: [recipientKey(wren)] },
+    tagged: [wren],
+  });
+  assert.deepEqual(removed.recipients, [orbit], "a removed chip came back on the next pass");
+  assert.deepEqual(removed.applied, [recipientKey(wren)]);
+  /* The same pair read back out of a draft behaves the same way, which is what a reload and a
+   * workspace switch both depend on. */
+  const reloaded = derive({
+    draft: { to: [orbit], applied: [recipientKey(wren)] },
+    tagged: [wren],
+  });
+  assert.deepEqual(reloaded.recipients, [orbit]);
+});
+
+test("the row's sentences about names it could not honour are built from the pass", () => {
+  const full = Array.from({ length: COMPOSER_TO_MAX }, (_unused, index) => ({
+    kind: "agent",
+    id: `agent-${index}`,
+  }));
+  const state = deriveComposerAddress({
+    rosterKnown: true,
+    sending: false,
+    known: () => true,
+    live: { to: full, applied: [] },
+    draft: null,
+    remembered: [],
+    tagged: [dana],
+  });
+  const nameOf = (entity) => names.get(recipientKey(entity)) ?? entity.id;
+  assert.equal(
+    composerAddressNotice(state, { overflow: [], ambiguous: [] }, nameOf),
+    composerToFullNotice(["Dana"]),
+  );
+  /* Both ways a tag can be over the cap reach one sentence: the set having no room, and the
+   * parser stopping at its own ceiling with bare names it never resolved. */
+  assert.equal(
+    composerAddressNotice(state, { overflow: ["Ada"], ambiguous: [] }, nameOf),
+    composerToFullNotice(["Dana", "Ada"]),
+  );
+  assert.equal(
+    composerAddressNotice(
+      { refused: [], announcedPrune: 2 },
+      { overflow: [], ambiguous: ["Dana"] },
+      nameOf,
+    ),
+    `${composerAmbiguousNotice(["Dana"])} ${composerPrunedNotice(2)}`,
+  );
+  assert.equal(
+    composerAddressNotice({ refused: [], announcedPrune: 0 }, { overflow: [], ambiguous: [] }, nameOf),
+    "",
+  );
 });

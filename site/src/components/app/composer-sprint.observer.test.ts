@@ -130,7 +130,10 @@ const assertComposerSprint = (value: ComposerArtifact): void => {
   const sending = between(
     dashboard,
     "const setComposerSending =",
-    "const restoreComposerDraft =",
+    /* The draft restore and the address restore became ONE transaction on 2026-09-05
+       (`restoreComposerOnEntry`), so the old anchor no longer exists. It still marks the same
+       boundary: the next declaration after the sending-state block. */
+    "const restoreComposerOnEntry =",
     "sending-state",
   );
   const controls = between(
@@ -503,20 +506,37 @@ const assertComposerSprint = (value: ComposerArtifact): void => {
     /input\.style\.blockSize = "auto";[\s\S]{0,420}composerCaretKnown = false;/,
     "caret-survival: leaving a workspace keeps the caret it had in that workspace's text",
   );
+  /* THREE CALLERS as of 2026-09-05: the real workspace change, session teardown, and the
+     SAMPLE workspace change. The sample switch used to set the id and repaint, which is not
+     what a real switch does and so could not measure what a switch breaks; it now takes the
+     same steps in the same order. None of the three is a send. */
   assert.equal(
     occurrences(dashboard, "resetComposer();"),
-    2,
-    "caret-survival: resetComposer has gained a caller, so check it is not the send before " +
+    3,
+    "caret-survival: resetComposer has gained a caller, so check it is not the send before" +
       "the comments and messages here keep saying it is not",
   );
 
   /* EVERY DEBOUNCED TIMER DIES IN `resetComposer`, which the workspace change and session
      teardown call and a send does not. A draft timer armed against the old workspace would
      otherwise fire afterwards, read an empty box against the NEW key, and remove the draft the
-     reader is about to be shown. `blur` covers a pointer switch because it flushes first; a
-     switch that never blurred does not. The mention timer already died here through
-     closeMentionPicker. */
-  assert.match(reset, /cancelComposerDraftTimer\(\);/,
+     reader is about to be shown. The mention timer already died here through
+     closeMentionPicker.
+
+     IT IS FLUSHED, NOT CANCELLED, as of 2026-09-05. Cancelling killed the timer and the edit
+     with it: a chip removed from To: writes nothing else, so a reader who took a name out and
+     switched workspace got that name back. The flush does both jobs, because
+     `persistComposerDraft` cancels the timer itself before it writes -- which is asserted
+     here rather than assumed, since the whole claim rests on it. */
+  assert.match(reset, /persistComposerDraft\(\);/,
+    "composer-reset: the composer is emptied without writing down the draft it held");
+  const persist = between(
+    dashboard,
+    "const persistComposerDraft = (): void => {",
+    "\n    };",
+    "draft-persist",
+  );
+  assert.match(persist.slice(0, 90), /cancelComposerDraftTimer\(\);/,
     "composer-reset: a debounced draft write survives the composer being emptied, so it can " +
       "land against another workspace's key");
   assert.match(reset, /closeMentionPicker\(\);/,
@@ -652,11 +672,22 @@ const assertComposerSprint = (value: ComposerArtifact): void => {
   assert.match(draft, /input\.value = draft\.body;/,
     "draft-restore: reload must restore the exact body");
   assert.doesNotMatch(draft, /audienceKey|extraAgentIds|agentNote/);
-  /* Two callers, and both mean the same thing: the send FINISHED. The second is the failure
-     that arrives after every recipient already posted — a render fault, not a rejection — where
-     leaving the draft would let a reload bring the sent message back. */
-  assert.equal(occurrences(dashboard, "clearComposerDraft();"), 2,
+  /* THREE CALLERS, and all three mean the same thing: the send FINISHED. The second is the
+     failure that arrives after every recipient already posted — a render fault, not a
+     rejection — where leaving the draft would let a reload bring the sent message back. The
+     third is the settle in the `finally` (2026-09-05): the address pass runs there and writes
+     the pair down, which would leave a draft holding the set the send just left on the row,
+     so a landed post clears it once more AFTER that write. */
+  assert.equal(occurrences(dashboard, "clearComposerDraft();"), 3,
     "draft-clear: only a finished send may clear the draft");
+  const settle = between(
+    submit,
+    "} finally {",
+    "\n    });",
+    "send-settle",
+  );
+  assert.match(settle, /if \(posted !== null\) clearComposerDraft\(\);/,
+    "draft-clear: the settle clears the draft for a send that never landed");
   assertOrder(submit, "await postBrowserSignal(", "clearComposerDraft();", "draft-clear");
   /* RETIRED (2026-09-04): "failed sends must retain the saved draft", unconditionally. It is
      still true of a rejected send — that is the partial branch above, which persists the draft.
@@ -819,10 +850,11 @@ const mutations: Mutation[] = [
   {
     name: "the emptied composer leaves a debounced draft write armed",
     key: "dashboard",
-    /* Anchored on the line that FOLLOWS the cancel inside resetComposer. The To: reset
-       landed between the cancel and setComposerStatus on 2026-09-05. */
-    target: 'cancelComposerDraftTimer();\n      /* And the address',
-    replacement: '/* And the address',
+    /* Anchored inside `persistComposerDraft`, which is where the cancel lives now: the reset
+       FLUSHES rather than cancels, and the flush cancels the timer before it writes. Breaking
+       that cancel is what leaves a write armed against the workspace being left. */
+    target: 'const persistComposerDraft = (): void => {\n      cancelComposerDraftTimer();',
+    replacement: 'const persistComposerDraft = (): void => {',
     expectedFailure: "composer-reset",
   },
   {
@@ -842,7 +874,9 @@ const mutations: Mutation[] = [
   {
     name: "a restored draft inherits a caret from different text",
     key: "dashboard",
-    target: 'composerCaretKnown = false;\n      composerIntent = null;',
+    /* Eight spaces: the restore of the body sits inside the entry transaction's own
+       `if (draft !== null)` block as of 2026-09-05. */
+    target: 'composerCaretKnown = false;\n        composerIntent = null;',
     replacement: "composerIntent = null;",
     expectedFailure: "caret-survival",
   },

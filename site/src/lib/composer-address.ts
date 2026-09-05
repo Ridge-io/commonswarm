@@ -316,8 +316,154 @@ export const mergeMentionRecipients = (
   const applied = new Set(input.applied.filter((key) => taggedKeys.has(key)));
   const fresh = input.tagged.filter((entity) => !applied.has(recipientKey(entity)));
   const change = addComposerRecipients(input.current, fresh);
-  /* A refused tag is remembered too. Leaving it out would re-report the same full-set notice
-   * on every keystroke, which reads as the composer arguing with the reader. */
-  for (const entity of fresh) applied.add(recipientKey(entity));
+  const refusedKeys = new Set(change.refused.map(recipientKey));
+  /* ONLY A NAME THAT GOT IN IS APPLIED.
+   *
+   * A refused tag used to be marked applied as well, to stop the full-set notice repeating on
+   * every keystroke. That made the refusal permanent: the reader deleted a chip to make room
+   * and the refused name still did not join, because `applied` had already written it off.
+   * Recovery was deleting the tag from the sentence and typing it again, which nothing said.
+   *
+   * The notice does not need this record any more. It is DERIVED from `refused` on every
+   * pass, so the same sentence is rebuilt rather than pushed in once, and a refusal that
+   * still stands keeps its sentence without repeating anything. */
+  for (const entity of fresh) {
+    if (!refusedKeys.has(recipientKey(entity))) applied.add(recipientKey(entity));
+  }
   return { ...change, applied: [...applied] };
+};
+
+/* ────────────────────────────────────────────────────────────────────────────────────────
+ * ONE DERIVED PASS.
+ *
+ * The To: set and the record of which tags produced it are one pair, and the pair must
+ * follow the body. Four review rounds found the same class: the pair was kept in step BY
+ * HAND across separate handlers — a draft restore, a workspace switch, a roster paint, a
+ * chip edit, a send — and each round closed one door while the next opened another.
+ *
+ * Everything below is that pair as a function of what is known: the body's tags, the roster,
+ * the stored draft, and the set the last message went to. Every handler calls this and
+ * assigns what it returns. The rules the handlers used to carry each on their own now live
+ * here, in one place, where a control can drive them:
+ *
+ *  - NOTHING COMMITS UNTIL THE ROSTER IS KNOWN. A workspace switch paints once with an empty
+ *    roster; a pass that committed there pruned the draft's set to empty and marked itself
+ *    done, and the later paint wrote the last-sent set over it.
+ *  - NOTHING COMMITS WHILE THE MESSAGE IS ON THE WIRE. The send captured its recipients
+ *    already, so a prune that moved the chips would leave the row showing one set and the
+ *    post naming another.
+ *  - AN EMPTY SET IS A CHOICE, never a residue. `null` means "no set was recorded"; an empty
+ *    ARRAY means "the reader emptied it", and the two do not restore the same way.
+ * ──────────────────────────────────────────────────────────────────────────────────────── */
+
+/** Where the set a pass committed came from. The prune sentence follows this. */
+export type ComposerAddressSource = "pending" | "live" | "draft" | "remembered";
+
+/** The To: set and the record of which tags produced it, which never travel apart. */
+export interface ComposerAddressPair {
+  /** The set. `null` is "no set was recorded"; `[]` is a broadcast the reader chose. */
+  to: readonly ComposerRecipient[] | null;
+  applied: readonly string[];
+}
+
+export interface ComposerAddressInput {
+  /** False while the roster request has not settled. Nothing commits until it is true. */
+  rosterKnown: boolean;
+  /** True while this composer's own message is being posted. Nothing commits until it ends. */
+  sending: boolean;
+  /** Is this name still in the workspace. Read only when `rosterKnown`. */
+  known: (entity: ComposerRecipient) => boolean;
+  /** The pair on screen, or null when no pass has committed one for this workspace yet. */
+  live: ComposerAddressPair | null;
+  /** The pair saved with the draft, or null when no draft is stored. */
+  draft: ComposerAddressPair | null;
+  /** The set the last message from here went to. */
+  remembered: readonly ComposerRecipient[];
+  /** Recipients named by @tags in the body right now, in the order they appear. */
+  tagged: readonly ComposerRecipient[];
+  /** Prunes already on screen, so a redraw keeps the sentence instead of losing it. */
+  announcedPrune?: number;
+}
+
+export interface ComposerAddressState {
+  recipients: ComposerRecipient[];
+  applied: string[];
+  source: ComposerAddressSource;
+  /** Names the cap has no room for right now, so the sentence is rebuilt rather than kept. */
+  refused: ComposerRecipient[];
+  /** Recipients the roster took out of a set the reader was already looking at. */
+  announcedPrune: number;
+  /** False when the pass may not be written down and no restore may be marked done. */
+  committed: boolean;
+}
+
+export const deriveComposerAddress = (
+  input: ComposerAddressInput,
+): ComposerAddressState => {
+  const held: ComposerAddressState = {
+    recipients: [...(input.live?.to ?? [])],
+    applied: [...(input.live?.applied ?? [])],
+    source: "pending",
+    refused: [],
+    announcedPrune: input.announcedPrune ?? 0,
+    committed: false,
+  };
+  /* HOLD, do not guess. Both of these are states where the pair on screen is already right
+   * and the inputs are not: an unknown roster would prune every chip, and a send in flight
+   * has captured recipients this pass cannot reach. */
+  if (!input.rosterKnown || input.sending) return held;
+  /* WHICH SET IS THE BASE. The live pair wins because it is what the reader is looking at.
+   * With no live pair this is a cold entry: the draft's set is the message being written and
+   * beats the last-sent set, which is only the starting point when no draft recorded one. */
+  const chosen = input.live ?? input.draft;
+  const recorded = chosen !== null && chosen.to !== null;
+  const source: ComposerAddressSource = input.live !== null
+    ? "live"
+    : recorded
+    ? "draft"
+    : "remembered";
+  const base = recorded ? chosen!.to! : input.remembered;
+  const kept = pruneComposerRecipients(base, input.known);
+  const removed = base.length - kept.length;
+  const merged = mergeMentionRecipients({
+    current: kept,
+    tagged: input.tagged,
+    applied: chosen?.applied ?? [],
+  });
+  return {
+    recipients: merged.recipients,
+    applied: merged.applied,
+    source,
+    refused: merged.refused,
+    /* A PRUNE IS ANNOUNCED ONLY WHEN THE READER WAS LOOKING AT THE SET. A chip cannot vanish
+     * from under somebody writing to that person, so a live prune is said out loud. A set
+     * restored on arrival is pruned in silence: people leave a workspace between messages,
+     * and greeting every reader with a notice about a set they have not looked at yet is
+     * noise. The source decides that, so no handler has to know which case it is in. */
+    announcedPrune: source === "live"
+      ? (input.announcedPrune ?? 0) + removed
+      : 0,
+    committed: true,
+  };
+};
+
+/**
+ * Everything the row has to say about names it could not honour, built from one pass's own
+ * result. Every clause is generated: the cap sentence from the cap, the prune sentence from
+ * the count, the ambiguity sentence from the names the parser could not separate.
+ */
+export const composerAddressNotice = (
+  state: Pick<ComposerAddressState, "refused" | "announcedPrune">,
+  parsed: { overflow: readonly string[]; ambiguous: readonly string[] },
+  nameOf: (entity: ComposerRecipient) => string,
+): string => {
+  const clauses: string[] = [];
+  /* BOTH WAYS A TAG CAN BE OVER THE CAP. `refused` is the To: set having no room for a name
+   * it did resolve; `overflow` is the parser stopping at its own ceiling with bare names it
+   * never resolved. Reading only one dropped a name out of the message with nothing said. */
+  const overCap = [...state.refused.map(nameOf), ...parsed.overflow];
+  if (overCap.length > 0) clauses.push(composerToFullNotice(overCap));
+  if (parsed.ambiguous.length > 0) clauses.push(composerAmbiguousNotice(parsed.ambiguous));
+  if (state.announcedPrune > 0) clauses.push(composerPrunedNotice(state.announcedPrune));
+  return clauses.join(" ");
 };

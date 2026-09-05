@@ -1246,18 +1246,15 @@ import "../../styles/tokens.css";
   import {
     BROADCAST_CHIP_LABEL,
     COMPOSER_TO_MAX,
-    addComposerRecipients,
-    composerAmbiguousNotice,
+    composerAddressNotice,
     composerDeliveryNote,
     composerPromoteLabel,
-    composerPrunedNotice,
-    composerToFullNotice,
-    mergeMentionRecipients,
+    deriveComposerAddress,
     notifiedRecipient,
     promoteComposerRecipient,
-    pruneComposerRecipients,
     recipientKey,
     removeComposerRecipient,
+    type ComposerAddressPair,
     type ComposerRecipient,
   } from "../../lib/composer-address";
   import { SIGNAL_BODY_MAX } from "../../../../supabase/functions/_shared/signal-text";
@@ -1513,9 +1510,20 @@ import "../../styles/tokens.css";
     /* Keys already lifted out of the body into a chip. Without it, removing a chip while its
      * @tag stayed in the sentence would put the chip straight back on the next keystroke. */
     let composerToApplied: string[] = [];
+    /* HAS A PASS COMMITTED A PAIR FOR THIS WORKSPACE YET. Before it has, the two variables
+     * above are the empty starting value and not a set anybody chose, so the pass must read
+     * the stored draft rather than treat them as what is on screen. Without this flag an
+     * entry that painted before the roster settled looked identical to a reader who had
+     * emptied To: on purpose, which is the difference the whole pair exists to keep. */
+    let composerToLive = false;
+    /* Recipients the roster took out of the set while the reader was looking at it. It is a
+     * count and not a sentence: the name cannot be part of it, because the roster no longer
+     * holds them. It is not stored, because a prune on arrival is silent. */
+    let composerToPruned = 0;
     /* What the row says about a tag it could not honour: a duplicate name, or a full set.
      * It sits beside the delivery note rather than in the error status, because nothing is
-     * wrong with the message -- the reader is being told what To: does and does not hold. */
+     * wrong with the message -- the reader is being told what To: does and does not hold.
+     * DERIVED by the pass on every commit, never pushed in by whichever handler noticed. */
     let composerToNotice = "";
     let mentionPickerIndex = 0;
     let composerIntent: {
@@ -1541,8 +1549,11 @@ import "../../styles/tokens.css";
     let stagedAttachments: StagedComposerAttachment[] = [];
     let composerAttachmentsMissingAfterReload = false;
     let composerDragDepth = 0;
-    let restoredComposerDraftKey = "";
-    let restoredComposerToKey = "";
+    /* ONE KEY FOR ONE TRANSACTION. The body and the address used to have a once-per-workspace
+     * key each, and a switch could satisfy one and not the other: the draft restore marked
+     * itself done against an empty roster while the address restore correctly refused, and
+     * the paint after that wrote last-sent over the draft's own set. */
+    let restoredComposerKey = "";
     let focusedComposerWorkspaceId = "";
     const visualMentions = new Map<string, EntityRef[]>();
     const expandedSignalIds = new Set<string>();
@@ -2591,11 +2602,14 @@ import "../../styles/tokens.css";
      */
     const composerRecipients = (): ComposerRecipient[] => composerTo;
 
-    /** Identity of the whole addressee set, so changing it invalidates a pending send intent. */
-    const composerRecipientsKey = (): string =>
-      composerTo.length === 0
+    /** Identity of one addressee set, in order, so two sets can be compared as one string. */
+    const composerToKey = (recipients: readonly ComposerRecipient[]): string =>
+      recipients.length === 0
         ? composerAudienceKey({ kind: "everyone" })
-        : composerTo.map(composerAudienceKey).join("+");
+        : recipients.map(composerAudienceKey).join("+");
+
+    /** Identity of the whole addressee set, so changing it invalidates a pending send intent. */
+    const composerRecipientsKey = (): string => composerToKey(composerTo);
 
     const composerHasRecipient = (entity: EntityRef): boolean =>
       composerTo.some((recipient) => recipient.kind === entity.kind && recipient.id === entity.id);
@@ -2637,21 +2651,19 @@ import "../../styles/tokens.css";
     };
 
     /**
-     * The set the composer opens with: the recipients of the last message sent from here,
-     * minus anyone the workspace no longer has. A remembered name that has gone is dropped
-     * rather than shown, because a chip is a promise about delivery.
+     * The set the last message from here went to, exactly as it was written down. It is READ
+     * and nothing more: no pruning, no assignment, no clearing of the applied record. The one
+     * pass below decides what to do with it, which is the difference between this and the
+     * four restores it replaces.
      */
-    const restoreComposerTo = (): void => {
-      composerToApplied = [];
-      composerToNotice = "";
+    const readRememberedComposerTo = (): ComposerRecipient[] => {
       const key = composerToStorageKey();
-      composerTo = [];
-      if (!key) return;
+      if (!key) return [];
       try {
         const raw = window.localStorage.getItem(key);
-        if (!raw) return;
+        if (!raw) return [];
         const value = JSON.parse(raw) as unknown;
-        if (!Array.isArray(value)) return;
+        if (!Array.isArray(value)) return [];
         const parsed: ComposerRecipient[] = [];
         for (const entry of value) {
           if (entry === null || typeof entry !== "object") continue;
@@ -2660,38 +2672,26 @@ import "../../styles/tokens.css";
           if (candidate.kind !== "agent" && candidate.kind !== "person") continue;
           parsed.push({ kind: candidate.kind, id: candidate.id });
         }
-        /* PRUNED WITHOUT A WORD, and only here. People leave a workspace between messages;
-           saying so on arrival would greet every reader with a notice about a set they have
-           not looked at yet. A prune that happens while the composer is OPEN is reported,
-           because a chip cannot vanish from under somebody who is writing to that person. */
-        composerTo = addComposerRecipients(
-          [],
-          pruneComposerRecipients(parsed, composerRecipientKnown),
-        ).recipients;
+        return parsed;
       } catch {
-        composerTo = [];
+        return [];
       }
     };
 
     /** The name a chip shows. `entityName` already answers for both kinds. */
     const composerRecipientName = (entity: ComposerRecipient): string => entityName(entity);
 
+    /**
+     * DRAWING ONLY. It reads `composerTo` and writes the DOM; it decides nothing and changes
+     * no state. Pruning used to happen here, which is how a render came to move the address:
+     * the prune ran on a paint the reader had not caused, including the paint after a
+     * workspace switch where the roster was not known yet. That work is now the pass below,
+     * so what a reader sees on the row is always what the last commit decided.
+     */
     const renderComposerTo = (): void => {
       const chips = one<HTMLElement>("[data-composer-to-chips]");
       const note = one<HTMLElement>("[data-composer-to-note]");
       if (!chips || !note) return;
-      if (composerRosterKnown()) {
-        const pruned = pruneComposerRecipients(composerTo, composerRecipientKnown);
-        if (pruned.length !== composerTo.length) {
-          /* SAY IT. A chip that vanishes while the reader is writing to that person is the
-             one thing this row exists to prevent, and the name cannot be part of the
-             sentence: the roster no longer holds them, so there is nothing to read a name
-             from. The set restored on entry is pruned before its first render, so this fires
-             for a revocation that happened while the composer was open, not on arrival. */
-          composerToNotice = composerPrunedNotice(composerTo.length - pruned.length);
-          composerTo = pruned;
-        }
-      }
       chips.replaceChildren();
       const notified = notifiedRecipient(composerTo);
       if (composerTo.length === 0) {
@@ -2739,48 +2739,68 @@ import "../../styles/tokens.css";
         : `${sentence} ${composerToNotice}`;
     };
 
-    /** One place every edit of the set goes through, so nothing changes without redrawing. */
-    const setComposerTo = (recipients: readonly ComposerRecipient[], notice = ""): void => {
-      composerTo = [...recipients];
-      composerToNotice = notice;
+    /**
+     * THE ONE PASS. Every handler that can change the address calls this and assigns nothing
+     * itself: a keystroke, a pick from the mention list, a chip click, a draft restore, a
+     * roster paint, the flush before a submit, and the settle after one.
+     *
+     * It derives the pair from what is known — the body's tags, the roster, the stored draft,
+     * the last-sent set — and COMMITS ALL OF IT OR NONE OF IT. When it commits, the same call
+     * writes the stored pair, so an edit cannot be on screen and absent from storage; when it
+     * holds, nothing is written and no restore is marked done, so a later paint with a real
+     * roster still has everything it needs.
+     *
+     * `edit` is a set the reader chose by hand. It replaces the live set for this pass and is
+     * then pruned and merged like any other, so a removal made while a tag is still in the
+     * sentence is honoured by the same rule that honours it on the next keystroke.
+     *
+     * Returns whether it committed, which is what the restore reads.
+     */
+    const syncComposerAddress = (edit?: readonly ComposerRecipient[]): boolean => {
+      const input = one<HTMLTextAreaElement>("[data-composer-input]");
+      const rosterKnown = composerRosterKnown();
+      const draftKey = composerDraftKey();
+      const stored = draftKey === null ? null : readComposerDraft(draftKey);
+      const live: ComposerAddressPair | null = edit !== undefined
+        ? { to: [...edit], applied: composerToApplied }
+        : composerToLive
+        ? { to: composerTo, applied: composerToApplied }
+        : null;
+      /* THE TAGS ARE READ ONCE, here, and the two things the parser reports that are not
+       * recipients travel with them to the sentence builder. */
+      const parsed = rosterKnown && input !== null
+        ? composerAddressFrom(input.value)
+        : { recipients: [], overflow: [], ambiguous: [] };
+      const state = deriveComposerAddress({
+        rosterKnown,
+        sending: composerSending,
+        known: composerRecipientKnown,
+        live,
+        draft: stored === null
+          ? null
+          : { to: stored.to ?? null, applied: stored.applied ?? [] },
+        remembered: readRememberedComposerTo(),
+        tagged: parsed.recipients.map((entity) => ({ kind: entity.kind, id: entity.id })),
+        /* A HAND EDIT ANSWERS THE PRUNE SENTENCE. The reader has looked at the row and acted
+         * on it, so the notice about a set they were not looking at has done its work. */
+        announcedPrune: edit !== undefined ? 0 : composerToPruned,
+      });
+      if (!state.committed) {
+        renderComposerTo();
+        return false;
+      }
+      composerTo = state.recipients;
+      composerToApplied = state.applied;
+      composerToPruned = state.announcedPrune;
+      composerToLive = true;
+      composerToNotice = composerAddressNotice(state, parsed, composerRecipientName);
+      /* AND THE SAME CALL WRITES IT DOWN. A chip edit used to reach storage only on the next
+       * keystroke or at `pagehide`, so a workspace switch — which cancels the draft timer —
+       * lost an edit that had changed nothing else. */
+      persistComposerDraft();
       renderComposerTo();
       syncComposerControls();
-    };
-
-    /**
-     * An @tag joins the To: set. Called from the same input path that opens the mention list,
-     * so a name typed by hand and a name picked from the list arrive the same way.
-     */
-    const applyComposerMentions = (): void => {
-      const input = one<HTMLTextAreaElement>("[data-composer-input]");
-      if (!input) return;
-      const address = composerAddressFrom(input.value);
-      const merged = mergeMentionRecipients({
-        current: composerTo,
-        tagged: address.recipients.map((entity) => ({ kind: entity.kind, id: entity.id })),
-        applied: composerToApplied,
-      });
-      composerToApplied = merged.applied;
-      const notices: string[] = [];
-      /* BOTH WAYS A TAG CAN BE OVER THE CAP. `address.overflow` is the parser giving up after
-       * its ceiling, with bare names it never resolved; `merged.refused` is the To: set
-       * having no room for one it did resolve. Reading only the second dropped a name out of
-       * the message with nothing said about it. */
-      const overCap = [
-        ...merged.refused.map(composerRecipientName),
-        ...address.overflow,
-      ];
-      if (overCap.length > 0) notices.push(composerToFullNotice(overCap));
-      if (address.ambiguous.length > 0) {
-        notices.push(composerAmbiguousNotice(address.ambiguous));
-      }
-      const notice = notices.join(" ");
-      const changed = merged.recipients.length !== composerTo.length ||
-        merged.recipients.some((entity, index) =>
-          recipientKey(entity) !== recipientKey(composerTo[index]!)
-        );
-      if (!changed && notice === composerToNotice) return;
-      setComposerTo(merged.recipients, notice);
+      return true;
     };
 
     /* Two idle delays on the keystroke path. 150ms is the shortest pause that reads as a stop
@@ -2802,7 +2822,7 @@ import "../../styles/tokens.css";
      * is not a caret anybody chose. Without this flag the first focus that did not follow a tap
      * — tabbing into a draft the page restored — would set the caret to the START of a sentence
      * the reader had already written, which is the defect the caret block exists to remove.
-     * Declared here, with the timers, because `restoreComposerDraft` clears it and that runs
+     * Declared here, with the timers, because the entry restore clears it and that runs
      * above the caret block. */
     let composerCaretKnown = false;
     const cancelComposerDraftTimer = (): void => {
@@ -2896,7 +2916,17 @@ import "../../styles/tokens.css";
            emptied To: to a broadcast came back addressed to whoever they last messaged. A
            review arm found it. The two meanings look identical in storage, so the empty
            case has to be written down. */
-        if (body === "" && !hadAttachments) {
+        /* AN ADDRESS THE READER CHOSE IS A DRAFT, even with nothing typed yet. "Nothing to
+           save" used to mean an empty box and no attachment, which threw away the one edit
+           that writes nothing else: taking a name out of To:, or emptying it to a broadcast,
+           before writing the message. The reader came back to the set they had just removed.
+
+           It is compared against the LAST-SENT set rather than against emptiness, so a
+           composer sitting at its normal starting point still stores nothing and the key does
+           not grow for every workspace anybody opens. */
+        const addressChosen = composerToLive &&
+          composerToKey(composerTo) !== composerToKey(readRememberedComposerTo());
+        if (body === "" && !hadAttachments && !addressChosen) {
           window.localStorage.removeItem(key);
           return;
         }
@@ -3110,55 +3140,56 @@ import "../../styles/tokens.css";
       syncComposerControls();
     };
 
-    const restoreComposerDraft = (): void => {
+    /**
+     * THE COMPOSER'S STATE FOR THIS WORKSPACE, RESTORED AS ONE TRANSACTION.
+     *
+     * The body and the address are one thing and are put back together or not at all. They
+     * used to be two restores with two once-per-workspace keys, and that is the class four
+     * review rounds kept finding: a workspace switch paints once before the roster request
+     * settles, the draft restore committed against that empty roster — pruning every chip and
+     * marking itself done — and the later paint that did have a roster wrote the last-sent
+     * set over a draft the reader had already addressed. A broadcast draft came back
+     * directed; a chip the reader had removed came back.
+     *
+     * NOTHING HERE COMMITS UNTIL THE ROSTER IS KNOWN, and the gate is the PASS'S — there is
+     * no second copy of it here. This may put the stored body in the box on a paint that
+     * cannot yet know the roster, which is harmless because the box is the reader's own text
+     * either way; what it may not do is decide the address, and it does not: the pass holds,
+     * nothing is written, and the next paint derives the whole pair from the same stored
+     * draft this one read. A guard here as well would be a rule with no control on it.
+     */
+    const restoreComposerOnEntry = (): void => {
       const key = composerDraftKey();
-      if (!key || restoredComposerDraftKey === key) {
+      if (!key || restoredComposerKey === key) {
         syncComposerControls();
         return;
       }
-      restoredComposerDraftKey = key;
       const draft = readComposerDraft(key);
       const input = one<HTMLTextAreaElement>("[data-composer-input]");
-      if (!draft || !input) {
+      if (input === null) {
         syncComposerControls();
         return;
       }
-      input.value = draft.body;
-      /* A caret remembered in OTHER text is not a caret in this text. The restore would put
-         it back at a position the reader never chose here. Kept ADJACENT to the assignment
-         above: composer-sprint.observer.test.ts reads the two together in one window, and
-         it is right to, because they are one operation. */
-      composerCaretKnown = false;
-      composerIntent = null;
-      /* AND THE ADDRESS THAT BELONGS TO THAT BODY, both halves of it. A draft that carries
-         a set replaces the last-sent one restored a moment ago: it is what was on screen.
-         The applied record comes with it, so a tag whose chip the reader removed is not read
-         as fresh and addressed again. Restoring one without the other was measured wrong in
-         both directions. Pruned, because a draft can outlive a member. */
-      if (draft.to !== undefined) {
-        composerTo = pruneComposerRecipients(draft.to, composerRecipientKnown);
+      restoredComposerKey = key;
+      if (draft !== null) {
+        input.value = draft.body;
+        /* A caret remembered in OTHER text is not a caret in this text. The restore would put
+           it back at a position the reader never chose here. Kept ADJACENT to the assignment
+           above: composer-sprint.observer.test.ts reads the two together in one window, and
+           it is right to, because they are one operation. */
+        composerCaretKnown = false;
+        composerIntent = null;
+        const warning = one<HTMLElement>("[data-composer-reload-warning]");
+        composerAttachmentsMissingAfterReload = draft.hadAttachments === true;
+        if (warning) warning.hidden = !composerAttachmentsMissingAfterReload;
+        resizeComposerInput(input);
       }
-      composerToApplied = draft.applied ?? [];
-      const warning = one<HTMLElement>("[data-composer-reload-warning]");
-      composerAttachmentsMissingAfterReload = draft.hadAttachments === true;
-      if (warning) warning.hidden = !composerAttachmentsMissingAfterReload;
-      resizeComposerInput(input);
-      /* ONCE, HERE, because a draft is a body the reader wrote and its tags are theirs. This
-         runs inside the guard above, so it happens on an actual restore and never on a
-         later paint. */
-      applyComposerMentions();
+      /* AND THE ADDRESS THAT BELONGS TO THAT BODY. The pass reads the same stored draft this
+         function just read, so the set, the applied record and the body cannot come from
+         different moments. With no draft it derives the last-sent set instead, which is what
+         the composer opens with when there is no message being written. */
+      syncComposerAddress();
       syncComposerControls();
-    };
-
-    /**
-     * The chips a workspace opens with, once per workspace. It runs beside the draft restore
-     * and never on a later render, so a reader's edits to the set survive a roster refresh.
-     */
-    const restoreComposerToOnEntry = (): void => {
-      const key = composerToStorageKey();
-      if (!key || restoredComposerToKey === key || !composerRosterKnown()) return;
-      restoredComposerToKey = key;
-      restoreComposerTo();
     };
 
     const focusComposerOnEntry = (): void => {
@@ -3325,9 +3356,11 @@ import "../../styles/tokens.css";
       input.focus({ preventScroll: true });
       input.dispatchEvent(new Event("input"));
       /* A PICK IS A DECISION, so the chip appears now rather than after the typing pause the
-         debounce waits for. The dispatch above armed that pass; this runs it and cancels it. */
+         debounce waits for. The dispatch above armed that pass; this runs it and cancels it.
+         The pass writes the draft itself, so the persist above is the body and this is the
+         address; the two used to be one persist apart and a switch fell into that gap. */
       cancelComposerToPass();
-      applyComposerMentions();
+      syncComposerAddress();
     };
 
     const renderMentionPicker = (): void => {
@@ -3397,7 +3430,7 @@ import "../../styles/tokens.css";
       cancelComposerToPass();
       composerToTimer = window.setTimeout(() => {
         composerToTimer = 0;
-        applyComposerMentions();
+        syncComposerAddress();
       }, COMPOSER_MENTION_DEBOUNCE_MS);
     };
 
@@ -3416,6 +3449,18 @@ import "../../styles/tokens.css";
     };
 
     const resetComposer = (): void => {
+      /* THE FLUSH COMES FIRST, before the box is emptied and before the attachments go. It
+         runs while `activeWorkspaceId` is still the workspace being left, so it lands on that
+         workspace's key, and it reads the body and the To: set the reader actually had.
+
+         It used to CANCEL the pending write instead, which was right about the timer and
+         wrong about the draft. Cancelling is right because a debounced write armed against
+         the old workspace fires afterwards, reads an empty box against the NEW key, and
+         removes the draft the reader is about to be shown. But cancelling ALONE threw away
+         every edit made inside the debounce window, and a chip edit writes nothing else, so a
+         reader who took a name out of To: and switched workspace got that name back.
+         Flushing does both jobs: `persistComposerDraft` cancels the timer itself. */
+      persistComposerDraft();
       for (const attachment of stagedAttachments) {
         if (attachment.previewUrl) URL.revokeObjectURL(attachment.previewUrl);
       }
@@ -3437,19 +3482,18 @@ import "../../styles/tokens.css";
          The caret, because the text it indexes is about to be replaced by another
          workspace's draft. */
       composerCaretKnown = false;
-      /* And the pending draft write, because a timer armed against the old workspace fires
-         afterwards reading an empty box against the NEW key, which removes the draft the
-         reader is about to be shown. `blur` covers a pointer switch because it flushes first;
-         a switch that never blurred does not. */
-      cancelComposerDraftTimer();
-      /* And the address, because it belongs to the workspace being left. Clearing the
-         restore key makes the next renderRoster read the new workspace's remembered set
-         rather than carry this one's chips into a place those people may not be in. */
+      /* And the address, because it belongs to the workspace being left. Clearing the restore
+         key makes the next paint derive the new workspace's pair from that workspace's own
+         storage rather than carry this one's chips into a place those people may not be in.
+         `composerToLive` goes with it: until the next pass commits there is no set on screen,
+         and an empty one here must not be read as a broadcast anybody chose. */
       cancelComposerToPass();
       composerTo = [];
       composerToApplied = [];
       composerToNotice = "";
-      restoredComposerToKey = "";
+      composerToPruned = 0;
+      composerToLive = false;
+      restoredComposerKey = "";
       renderComposerTo();
       setComposerStatus("");
       const retry = one<HTMLButtonElement>("[data-composer-retry]");
@@ -3519,6 +3563,41 @@ import "../../styles/tokens.css";
       renderCreate(session);
     };
 
+    /**
+     * A SAMPLE SWITCH TAKES THE SAME STEPS A REAL ONE DOES, in the composer's terms. It used
+     * to set the id and repaint, which is not what `openWorkspace` does and so could not
+     * measure the thing a switch breaks. What matters here is the ORDER: the composer is torn
+     * down while the old workspace is still current, so its draft is flushed to the right
+     * key; then the roster is unknown for a frame, exactly as it is while a real roster
+     * request is in flight; then it arrives and the paint after that is the one that may
+     * commit the new workspace's pair.
+     */
+    const openSampleWorkspace = (workspace: Workspace): void => {
+      if (activeWorkspaceId === workspace.id) return;
+      resetComposer();
+      activeWorkspaceId = workspace.id;
+      agents = [];
+      members = [];
+      people = new Map();
+      signals = [];
+      sampleSignals = [];
+      channels = [];
+      activeChannelId = null;
+      renderChannel(workspace);
+      /* A TIMER, NOT A FRAME. A real roster arrives on a network callback, which is a task;
+         hanging it off a frame callback would also make the gap depend on whether anything is
+         being painted, and a headless run with no compositor need not produce a frame at all. */
+      window.setTimeout(() => {
+        if (activeWorkspaceId !== workspace.id) return;
+        const at = Date.now();
+        applySampleRoster(workspace.id);
+        channels = sampleChannelsFor(workspace.id, at);
+        signals = sampleSignalsFor(workspace.id, at);
+        sampleSignals = [...signals];
+        renderChannel(workspace);
+      }, 0);
+    };
+
     const renderWorkspaceList = (selected: Workspace): void => {
       const list = one<HTMLElement>("[data-workspace-list]");
       const trigger = one<HTMLButtonElement>("[data-workspace-menu-trigger]");
@@ -3550,8 +3629,7 @@ import "../../styles/tokens.css";
         button.addEventListener("click", () => {
           closeWorkspaceMenu(true);
           if (sampleMode) {
-            activeWorkspaceId = workspace.id;
-            renderChannel(workspace);
+            openSampleWorkspace(workspace);
             return;
           }
           void openWorkspace(workspace.id);
@@ -3576,22 +3654,19 @@ import "../../styles/tokens.css";
        * hidden recipient the To: field exists to rule out. renderComposerTo prunes before it
        * draws. The saved draft is restored at the same point, because this is where the
        * workspace reaches the screen. */
-      /* ORDER IS LOAD-BEARING. The remembered set goes in first and the draft second, which
-         replaces it with the state of the message being written. Restoring the draft first
-         and the set second overwrote the tags the reader had typed: they stayed visible in
-         the box and were absent from the delivery set until the send flushed them in, which
-         posted to a name the row had never shown. Both arms found it.
+      /* ONE CALL, AND ORDER STOPPED BEING LOAD-BEARING. There used to be three steps here in
+         an order that had to be right: the remembered set, then the draft, then a tag pass.
+         Every arrangement of them was wrong in some transition, because they were three
+         writers of one pair. The restore below is a transaction and the pass inside it is the
+         only writer, so a paint that arrives before the roster changes nothing and a paint
+         that arrives after it derives the whole pair at once.
 
-         A RENDER MUST NOT MOVE THE ADDRESS. The tag pass used to be called here as a third
-         step, so every roster paint re-parsed the box — including the empty box a send
-         leaves behind while it waits for the server, which wiped the record of which tags
-         were already applied and let a removed recipient come back under the retry. That is
-         the same defect the second fix created while closing the first, and this is its
-         cause rather than another instance of it: the pass now runs only where the reader
-         acted, which is a keystroke, a pick, a draft restore, and the submit flush. */
-      restoreComposerToOnEntry();
-      restoreComposerDraft();
-      renderComposerTo();
+         A LATER PAINT STILL PRUNES. A roster change can revoke an agent a chip names, and a
+         chip the send cannot honour is exactly the hidden recipient the To: field exists to
+         rule out. That is the second call: the restore is a no-op once its key is marked, and
+         the pass then prunes the live set and says so. */
+      restoreComposerOnEntry();
+      syncComposerAddress();
     };
 
     /*
@@ -5240,7 +5315,7 @@ import "../../styles/tokens.css";
       connectFocusObserver?.disconnect();
       connectFocusObserver = null;
       activeWorkspaceId = "";
-      restoredComposerDraftKey = "";
+      restoredComposerKey = "";
       focusedComposerWorkspaceId = "";
       pendingWorkspaceId = "";
       pendingWorkspaceCreate = false;
@@ -6380,6 +6455,139 @@ import "../../styles/tokens.css";
       }
     };
 
+    /* THE SAMPLE ROSTER, PER WORKSPACE. Kept out of `renderSample` so the workspace switch
+       can apply it the way a real one does: the roster of the workspace being left goes, the
+       screen paints with nothing known, and the new roster arrives on a later frame. */
+    const SAMPLE_ROSTERS: Record<string, { agents: Agent[]; members: Member[] }> = {
+      "sample-design-studio": {
+        members: [
+          { userId: "sample-owner", name: "Dana Rivera", role: "owner" },
+          { userId: "sample-member", name: "Kenji Ito", role: "member" },
+        ],
+        agents: [
+          { principalId: "sample-river", name: "River", model: "GPT-5", ownerUserId: "sample-owner" },
+          { principalId: "sample-orbit", name: "Orbit", model: "Claude", ownerUserId: "sample-owner" },
+          { principalId: "sample-lumen", name: "Lumen", model: "Gemini", ownerUserId: "sample-member" },
+        ],
+      },
+      "sample-field-lab": {
+        members: [
+          { userId: "sample-owner", name: "Dana Rivera", role: "owner" },
+          { userId: "sample-field-member", name: "Priya Raman", role: "member" },
+        ],
+        /* NINE AGENTS, one more than the cap, so a reader can meet the refusal and the row
+           can say which name did not fit. */
+        agents: [
+          { principalId: "sample-alto", name: "Alto", model: "Claude", ownerUserId: "sample-owner" },
+          { principalId: "sample-basalt", name: "Basalt", model: "GPT-5", ownerUserId: "sample-owner" },
+          { principalId: "sample-cinder", name: "Cinder", model: "Gemini", ownerUserId: "sample-owner" },
+          { principalId: "sample-delta", name: "Delta", model: "Claude", ownerUserId: "sample-owner" },
+          { principalId: "sample-ember", name: "Ember", model: "GPT-5", ownerUserId: "sample-owner" },
+          { principalId: "sample-flint", name: "Flint", model: "Gemini", ownerUserId: "sample-owner" },
+          { principalId: "sample-glint", name: "Glint", model: "Claude", ownerUserId: "sample-field-member" },
+          { principalId: "sample-harrow", name: "Harrow", model: "GPT-5", ownerUserId: "sample-field-member" },
+          { principalId: "sample-inlet", name: "Inlet", model: "Gemini", ownerUserId: "sample-field-member" },
+        ],
+      },
+    };
+
+    const applySampleRoster = (workspaceId: string): void => {
+      const roster = SAMPLE_ROSTERS[workspaceId] ?? { agents: [], members: [] };
+      members = [...roster.members];
+      agents = [...roster.agents];
+      people = new Map(members.map((member) => [member.userId, member.name]));
+    };
+
+    /** The made-up channels of one sample workspace. Only the first one has any. */
+    const sampleChannelsFor = (workspaceId: string, at: number): Channel[] =>
+      workspaceId === "sample-design-studio"
+        ? [
+          {
+            channelId: "sample-channel-mobile",
+            workspaceId: "sample-design-studio",
+            slug: "mobile",
+            purpose: "Narrow-screen work.",
+            createdByPrincipal: "sample-owner",
+            createdByKind: "user",
+            createdAt: new Date(at - 90 * 60_000).toISOString(),
+            archivedAt: null,
+          },
+        ]
+        : [];
+
+    /* THE FEED OF ONE SAMPLE WORKSPACE. Read by the boot AND by the workspace switch, so the
+       workspace a reader comes back to has the messages it had when they left it. Written as
+       one function rather than as a literal inside the boot, because a switch that could only
+       fill the workspace it was leaving is not a switch. */
+    const sampleSignalsFor = (workspaceId: string, at: number): Signal[] =>
+      workspaceId === "sample-field-lab"
+        ? [
+          {
+            id: "sample-field-1",
+            from: "sample-alto",
+            fromKind: "agent",
+            to: null,
+            toAgent: null,
+            kind: "note",
+            body: "Field trial notes are in; the narrow-screen capture held up.",
+            about: "field trial",
+            until: null,
+            createdAt: new Date(at - 9 * 60_000).toISOString(),
+            channelId: null,
+            threadRootId: null,
+            broadcastToChannel: false,
+          },
+        ]
+        : workspaceId === "sample-design-studio"
+        ? [
+          {
+            id: "sample-1",
+            from: "sample-lumen",
+            fromKind: "agent",
+            to: null,
+            toAgent: "sample-river",
+            kind: "note",
+            body: "Refining the workspace-first dashboard states.",
+            about: "site/src/components/app",
+            until: null,
+            createdAt: new Date(at - 4 * 60_000).toISOString(),
+            channelId: null,
+            threadRootId: null,
+            broadcastToChannel: false,
+          },
+          {
+            id: "sample-2",
+            from: "sample-river",
+            fromKind: "agent",
+            to: null,
+            toAgent: null,
+            kind: "note",
+            body: "The signup copy is ready for the dashboard handoff.",
+            about: "/app",
+            until: null,
+            createdAt: new Date(at - 18 * 60_000).toISOString(),
+            channelId: "sample-channel-mobile",
+            threadRootId: null,
+            broadcastToChannel: false,
+          },
+          {
+            id: "sample-3",
+            from: "sample-orbit",
+            fromKind: "agent",
+            to: null,
+            toAgent: null,
+            kind: "ask",
+            body: "Can someone verify the narrow-screen agent rail?",
+            about: "responsive QA",
+            until: null,
+            createdAt: new Date(at - 44 * 60_000).toISOString(),
+            channelId: null,
+            threadRootId: null,
+            broadcastToChannel: false,
+          },
+      ]
+        : [];
+
     const renderSample = (): void => {
       sampleMode = true;
       stopAgentActivity();
@@ -6389,19 +6597,16 @@ import "../../styles/tokens.css";
       signalCutoff = "";
       syncPendingPoll();
       const now = Date.now();
+      /* TWO SAMPLE WORKSPACES, because one workspace cannot show what a workspace switch
+         does. A real account has several, and moving between them is the transition that
+         used to lose a draft's address: the roster is briefly unknown, and everything the
+         composer knows has to survive that gap. The second one is also the only sample
+         roster large enough to reach the To: cap, which is eight. */
       workspaces = [
         { id: "sample-design-studio", name: "Design studio", archived: false },
+        { id: "sample-field-lab", name: "Field lab", archived: false },
       ];
-      members = [
-        { userId: "sample-owner", name: "Dana Rivera", role: "owner" },
-        { userId: "sample-member", name: "Kenji Ito", role: "member" },
-      ];
-      people = new Map(members.map((member) => [member.userId, member.name]));
-      agents = [
-        { principalId: "sample-river", name: "River", model: "GPT-5", ownerUserId: "sample-owner" },
-        { principalId: "sample-orbit", name: "Orbit", model: "Claude", ownerUserId: "sample-owner" },
-        { principalId: "sample-lumen", name: "Lumen", model: "Gemini", ownerUserId: "sample-member" },
-      ];
+      applySampleRoster("sample-design-studio");
       accessStatuses = [
         {
           workspaceId: "sample-design-studio",
@@ -6470,70 +6675,10 @@ import "../../styles/tokens.css";
           grantRevokedAt: null,
         },
       ];
-      /* Sample mode gets ONE channel, because a message filed in a channel is the shape a
-         first-time reader cannot otherwise see. The data is made up, and the notice above the
-         feed says so. */
-      channels = [
-        {
-          channelId: "sample-channel-mobile",
-          workspaceId: workspaces[0]?.id ?? "",
-          slug: "mobile",
-          purpose: "Narrow-screen work.",
-          createdByPrincipal: "sample-owner",
-          createdByKind: "user",
-          createdAt: new Date(now - 90 * 60_000).toISOString(),
-          archivedAt: null,
-        },
-      ];
-      signals = [
-        {
-          id: "sample-1",
-          from: "sample-lumen",
-          fromKind: "agent",
-          to: null,
-          toAgent: "sample-river",
-          kind: "note",
-          body: "Refining the workspace-first dashboard states.",
-          about: "site/src/components/app",
-          until: null,
-          createdAt: new Date(now - 4 * 60_000).toISOString(),
-          channelId: null,
-          threadRootId: null,
-          broadcastToChannel: false,
-        },
-        {
-          id: "sample-2",
-          from: "sample-river",
-          fromKind: "agent",
-          to: null,
-          toAgent: null,
-          kind: "note",
-          body: "The signup copy is ready for the dashboard handoff.",
-          about: "/app",
-          until: null,
-          createdAt: new Date(now - 18 * 60_000).toISOString(),
-          channelId: "sample-channel-mobile",
-          threadRootId: null,
-          broadcastToChannel: false,
-        },
-        {
-          id: "sample-3",
-          from: "sample-orbit",
-          fromKind: "agent",
-          to: null,
-          toAgent: null,
-          kind: "ask",
-          body: "Can someone verify the narrow-screen agent rail?",
-          about: "responsive QA",
-          until: null,
-          createdAt: new Date(now - 44 * 60_000).toISOString(),
-          channelId: null,
-          threadRootId: null,
-          broadcastToChannel: false,
-        },
-      ];
-      sampleSignals = [...signals];
       activeWorkspaceId = workspaces[0]?.id ?? "";
+      channels = sampleChannelsFor(activeWorkspaceId, now);
+      signals = sampleSignalsFor(activeWorkspaceId, now);
+      sampleSignals = [...signals];
       const notice = one<HTMLElement>("[data-sample-notice]");
       const chip = one<HTMLElement>("[data-sample-chip]");
       if (notice) notice.hidden = false;
@@ -7287,7 +7432,7 @@ import "../../styles/tokens.css";
          debounced, so a reader who types "@Wren" and presses Enter at once would otherwise
          send to a set that had not caught up. Run it now, then read the set. */
       cancelComposerToPass();
-      applyComposerMentions();
+      syncComposerAddress();
       const workspaceId = activeWorkspaceId;
       const version = requestVersion;
       /* THE CHANNEL IS NOT A REASON TO ABANDON THE SEND, and it is not compared as a view
@@ -7621,6 +7766,19 @@ import "../../styles/tokens.css";
       } finally {
         if (version === requestVersion && workspaceId === activeWorkspaceId) {
           setComposerSending(false);
+          /* THE ADDRESS SETTLES HERE, and only here, because it was FROZEN for the whole
+             post. The send captured its recipients before the first await; a prune that moved
+             the chips while it was on the wire would have left the row showing one set and
+             the post naming another, which is the one thing this row exists to rule out. So
+             the pass holds while `composerSending` is true and runs once the flag is down: a
+             recipient the roster lost during the post is taken off the row now, with the
+             sentence that says so, against a set nothing is being sent to any more. */
+          syncComposerAddress();
+          /* AND A SENT MESSAGE IS NOT ONE BEING WRITTEN. The settle above derives the pair
+             and writes it down, which would leave a draft holding the set the send just left
+             on the row — a second copy of something the remembered set already says, and one
+             that can disagree with it. The success path cleared the draft before this ran. */
+          if (posted !== null) clearComposerDraft();
           syncComposerControls();
           input.focus({ preventScroll: true });
         }
@@ -7650,7 +7808,10 @@ import "../../styles/tokens.css";
       composerIntent = null;
       const retryControl = one<HTMLButtonElement>("[data-composer-retry]");
       if (retryControl) retryControl.hidden = true;
-      setComposerTo(
+      /* THE HAND EDIT GOES THROUGH THE SAME PASS as a keystroke does, so the set it makes is
+         pruned, merged against the body's tags and written to storage by one call. It used to
+         be its own writer, which is why an edit reached storage only on the next keystroke. */
+      syncComposerAddress(
         removeKey !== undefined
           ? removeComposerRecipient(composerTo, entity)
           : promoteComposerRecipient(composerTo, entity),

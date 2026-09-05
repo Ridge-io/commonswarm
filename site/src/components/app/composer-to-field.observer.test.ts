@@ -22,6 +22,7 @@ import { browserSignalCommand, browserSignalKind } from "../../lib/commonswarm.j
 import {
   COMPOSER_TO_MAX,
   composerDeliveryNote,
+  composerToFullNotice,
   notifiedRecipient,
 } from "../../lib/composer-address.js";
 
@@ -41,7 +42,12 @@ type ToMeasurement = {
   /** A tag mid-sentence adds a chip and leaves the sentence alone. */
   midSentence: { value: string; chips: string[]; note: string };
   /** A second tag ADDS. The first recipient stays, and stays first. */
-  secondTag: { chips: string[]; note: string; notifiedChip: string };
+  secondTag: { chips: string[]; note: string };
+  /** WHICH CHIP CARRIES THE NOTIFIED MARK, read without the mark's own selector. */
+  notifiedMark: {
+    afterSecondTag: { marked: number; markedName: string; noteNames: string };
+    afterPromotion: { marked: number; markedName: string; noteNames: string };
+  };
   /** A person in front means the service wakes nobody, and the row says so with a remedy. */
   personFirst: {
     chips: string[];
@@ -51,7 +57,7 @@ type ToMeasurement = {
     promoteTitles: string[];
   };
   /** Choosing a name puts it first, which is the only control over who is woken. */
-  promoted: { chips: string[]; note: string; notifiedChip: string };
+  promoted: { chips: string[]; note: string };
   /** Removing a chip removes the recipient, and the still-typed tag does not put it back. */
   removed: { chips: string[]; valueStillHasTag: boolean; afterKeystroke: string[] };
   /** A tag typed and sent in the same breath is still a recipient. */
@@ -68,6 +74,18 @@ type ToMeasurement = {
   removalSurvivesReload: { chips: string[]; value: string };
   /** Emptying To: to a broadcast survives a reload too, rather than reverting to last-sent. */
   broadcastSurvivesReload: { chips: string[]; note: string; value: string };
+  /** A broadcast draft survives a WORKSPACE SWITCH, which a reload cannot stand in for. */
+  broadcastSurvivesSwitch: { chips: string[]; note: string; value: string };
+  /** A chip edit and nothing else survives the same trip, with no keystroke to save it. */
+  chipEditSurvivesSwitch: { chips: string[]; value: string };
+  /** The second workspace has its own address, and the first one's chips do not follow. */
+  switchedWorkspaceAddress: { chips: string[]; value: string };
+  /** A name the cap has no room for is named on the row rather than dropped. */
+  capRefused: { chips: string[]; note: string };
+  /** And it joins the set as soon as the reader deletes a chip to make room for it. */
+  capAfterRoom: { chips: string[]; note: string };
+  /** A chip removed with NOTHING TYPED survives a switch: an address is a draft on its own. */
+  emptyBodyEditSurvivesSwitch: { chips: string[]; value: string };
 };
 
 const contentTypes: Record<string, string> = {
@@ -96,6 +114,11 @@ const frameScript = `<script>
         chips: [...doc.querySelectorAll("[data-composer-to-chip]")].length,
         note: doc.querySelector("[data-composer-to-note]")?.textContent,
         value: doc.querySelector("[data-composer-input]")?.value,
+        /* THE WORKSPACE AND THE FEED, because a switch step waits on both and a payload that
+           named neither could not tell which half of it had not arrived. */
+        workspace: doc.querySelector("[data-sidebar-workspace-name]")?.textContent,
+        rows: doc.querySelectorAll("[data-feed-list] > li").length,
+        panel: doc.querySelector("live-dashboard")?.dataset.state,
       }));
     };
     const ready = async () => {
@@ -187,7 +210,25 @@ const frameScript = `<script>
     /* A SECOND TAG ADDS (ruling D2). Orbit stays, and stays the notified one. */
     type("as @Orbit said, ship it with @River");
     await settleChips(2, "two chips");
-    const secondTag = { chips: chipNames(), note: noteText(), notifiedChip: notifiedChip() };
+    const secondTag = { chips: chipNames(), note: noteText() };
+
+    /* THE MARK ITSELF, ON ITS OWN CLAIM. The notifiedChip helper finds a chip BY the mark,
+       so deleting the mark makes it return "" and every step that read it went red together —
+       including secondTag, which is about a tag ADDING rather than replacing, and promoted,
+       which is about order. A review arm found that: one mutation, several reds,
+       none of them naming what broke. This reads the marked chips out of the chip list
+       instead, so the mark answers for itself and the steps above answer for the set. */
+    const readMark = () => {
+      const marked = [...doc.querySelectorAll("[data-composer-to-chip]")]
+        .filter((chip) => chip.dataset.composerToNotified !== undefined);
+      return {
+        marked: marked.length,
+        markedName: marked[0]?.querySelector("[data-composer-to-promote]")?.textContent ?? "",
+        /* The sentence's own subject, so the two are compared rather than assumed equal. */
+        noteNames: noteText().split(" is notified.")[0] ?? "",
+      };
+    };
+    const markAfterSecondTag = readMark();
 
     /* A PERSON IN FRONT wakes nobody, whatever follows. Kenji Ito is a MEMBER in the sample
        roster; River, Orbit and Lumen are all agents, so a person has to be named by name. */
@@ -207,7 +248,8 @@ const frameScript = `<script>
       .find((button) => button.textContent === "Orbit")
       .click();
     await waitFor(() => chipNames()[0] === "Orbit", "Orbit at the front");
-    const promoted = { chips: chipNames(), note: noteText(), notifiedChip: notifiedChip() };
+    const promoted = { chips: chipNames(), note: noteText() };
+    const notifiedMark = { afterSecondTag: markAfterSecondTag, afterPromotion: readMark() };
 
     /* REMOVING holds, even with the tag still in the sentence. */
     [...doc.querySelectorAll("[data-composer-to-remove]")]
@@ -327,12 +369,90 @@ const frameScript = `<script>
       value: input().value,
     };
 
+    /* ── THE WORKSPACE SWITCH ──────────────────────────────────────────────────────────
+       A reload cannot stand in for this. On a reload the roster is in place before the first
+       paint; on a SWITCH the composer is torn down while the old workspace is still current,
+       the screen paints once with nothing known, and the roster arrives after that. Every
+       round of this lane closed a door on one of those three moments and the next round found
+       another, because the address and the body were kept in step by hand across them. */
+    const switchTo = async (workspaceId, workspaceName) => {
+      doc.querySelector("[data-workspace-menu-trigger]").click();
+      await waitFor(
+        () => doc.querySelector('[data-workspace-id="' + workspaceId + '"]') !== null,
+        "the workspace menu",
+      );
+      doc.querySelector('[data-workspace-id="' + workspaceId + '"]').click();
+      await waitFor(
+        () => doc.querySelector("[data-sidebar-workspace-name]")?.textContent === workspaceName &&
+          doc.querySelectorAll("[data-feed-list] > li").length > 0,
+        "the workspace named " + workspaceName,
+      );
+      /* The roster lands a frame after the paint, exactly as a real one does. Read after it,
+         or the measurement is of the gap rather than of what the reader ends up with. */
+      await new Promise((resolve) => view.setTimeout(resolve, 400));
+    };
+
+    /* A BROADCAST DRAFT IS STILL A BROADCAST AFTER A ROUND TRIP. The last message went to
+       Orbit, so anything that loses the draft's own address puts Orbit back on the row. */
+    await switchTo("sample-field-lab", "Field lab");
+    await switchTo("sample-design-studio", "Design studio");
+    const broadcastSurvivesSwitch = {
+      chips: chipNames(),
+      note: noteText(),
+      value: input().value,
+    };
+
+    /* AND A CHIP EDIT SURVIVES ONE, with nothing else changed to carry it. The removal is the
+       last thing that happens before the switch: no keystroke follows it, and the switch
+       cancels the pending draft write, so an edit that did not write itself down is gone. */
+    type("@Orbit and @River will handle it");
+    await settleChips(2, "two chips before a chip-only edit");
+    [...doc.querySelectorAll("[data-composer-to-remove]")]
+      .find((button) => button.getAttribute("aria-label") === "Remove River from To:")
+      ?.click();
+    await settle(1);
+    await switchTo("sample-field-lab", "Field lab");
+    /* The second workspace is not the first one's composer: its own address, its own draft. */
+    const switchedWorkspaceAddress = { chips: chipNames(), value: input().value };
+    await switchTo("sample-design-studio", "Design studio");
+    const chipEditSurvivesSwitch = { chips: chipNames(), value: input().value };
+
+    /* ── THE CAP, AND THE WAY BACK FROM IT ─────────────────────────────────────────────
+       Reached in the larger workspace, because the first sample roster has five taggable
+       names and the cap is eight. The set is filled by SENDING to eight, so the chips come
+       from the remembered set and the tag that follows is refused by the To: set itself
+       rather than by the parser's own ceiling. A refused name used to be written off, so
+       deleting a chip to make room did nothing and the only way back was deleting the tag. */
+    await switchTo("sample-field-lab", "Field lab");
+    await clearTo();
+    type("@Alto @Basalt @Cinder @Delta @Ember @Flint @Glint @Harrow ship it");
+    await settleChips(8, "a full To: set");
+    await send("shipping the field trial");
+    type("@Inlet should see this too");
+    await new Promise((resolve) => view.setTimeout(resolve, 400));
+    const capRefused = { chips: chipNames(), note: noteText() };
+    doc.querySelector("[data-composer-to-remove]")?.click();
+    await settle(8);
+    const capAfterRoom = { chips: chipNames(), note: noteText() };
+
+    /* AN ADDRESS IS A DRAFT ON ITS OWN. Empty the box, take one name out of To:, and leave.
+       There is no body and no attachment, so "nothing to save" used to be true and the edit
+       was dropped: the reader came back to the name they had just removed. */
+    type("");
+    await new Promise((resolve) => view.setTimeout(resolve, 400));
+    doc.querySelector("[data-composer-to-remove]")?.click();
+    await settle(7);
+    await switchTo("sample-design-studio", "Design studio");
+    await switchTo("sample-field-lab", "Field lab");
+    const emptyBodyEditSurvivesSwitch = { chips: chipNames(), value: input().value };
+
     document.documentElement.dataset.toMeasurement = btoa(unescape(encodeURIComponent(JSON.stringify({
       atRest,
       midSentence,
       taggedThenSentAtOnce,
       retaggedAfterSend,
       secondTag,
+      notifiedMark,
       personFirst,
       promoted,
       removed,
@@ -341,6 +461,12 @@ const frameScript = `<script>
       afterReloadWithDraft,
       removalSurvivesReload,
       broadcastSurvivesReload,
+      broadcastSurvivesSwitch,
+      switchedWorkspaceAddress,
+      chipEditSurvivesSwitch,
+      capRefused,
+      capAfterRoom,
+      emptyBodyEditSurvivesSwitch,
     }))));
   };
   const start = () => void runMeasurement().catch((error) => report(error?.stack ?? error));
@@ -423,10 +549,10 @@ test("the To: row is the address, and it says who is notified", async () => {
       "--no-sandbox",
       "--single-process",
       "--no-zygote",
-      "--virtual-time-budget=12000",
+      "--virtual-time-budget=60000",
       "--dump-dom",
       `${server.origin}/__measure`,
-    ], { maxBuffer: 10 * 1024 * 1024, timeout: 30_000, killSignal: "SIGKILL" });
+    ], { maxBuffer: 10 * 1024 * 1024, timeout: 60_000, killSignal: "SIGKILL" });
     const encoded = stdout.match(/data-to-measurement="([^"]+)"/)?.[1];
     const encodedError = stdout.match(/data-to-error="([^"]+)"/)?.[1];
     assert.ok(
@@ -460,8 +586,16 @@ test("the To: row is the address, and it says who is notified", async () => {
     assert.deepEqual(measured.secondTag, {
       chips: ["Orbit", "River"],
       note: "Orbit is notified. River can read this and reply.",
-      notifiedChip: "Orbit",
     }, "secondTag: a second tag adds rather than replacing");
+
+    /* EXACTLY ONE CHIP IS MARKED, and it is the one the sentence names. The mark is the only
+       thing on the row that says who the service wakes, so a chip and the sentence under it
+       cannot be allowed to disagree. Read twice, because promoting is the one control the
+       reader has over the mark. */
+    assert.deepEqual(measured.notifiedMark, {
+      afterSecondTag: { marked: 1, markedName: "Orbit", noteNames: "Orbit" },
+      afterPromotion: { marked: 1, markedName: "Orbit", noteNames: "Orbit" },
+    }, "notifiedMark: the chip carrying the notified mark and the sentence under it disagree");
 
     /* THE BOUND, ON SCREEN. A person in front means nobody is woken, however many agents
        follow, and the row says that plainly with the one remedy that exists. */
@@ -480,7 +614,6 @@ test("the To: row is the address, and it says who is notified", async () => {
     assert.deepEqual(measured.promoted, {
       chips: ["Orbit", "Kenji Ito"],
       note: "Orbit is notified. Kenji Ito can read this and reply.",
-      notifiedChip: "Orbit",
     }, "promoted: choosing a name puts it first");
 
     /* REMOVING A CHIP REMOVES THE RECIPIENT and the tag left in the prose does not undo it.
@@ -531,6 +664,63 @@ test("the To: row is the address, and it says who is notified", async () => {
       note: "No agent is notified. Everyone here can read this.",
       value: "everyone should see this",
     }, "broadcastSurvivesReload: an emptied To: is a broadcast the reader chose, not a missing set");
+
+    /* AND IT SURVIVES A WORKSPACE SWITCH, which the reload above cannot stand in for. The
+       last message went to Orbit, so any transition that loses the draft's own address puts
+       Orbit back on the row: the empty set on screen would be residue rather than a choice,
+       and the reader would broadcast-by-intent to one agent instead. */
+    assert.deepEqual(measured.broadcastSurvivesSwitch, {
+      chips: [],
+      note: "No agent is notified. Everyone here can read this.",
+      value: "everyone should see this",
+    }, "broadcastSurvivesSwitch: a workspace switch put the last-sent set back over a draft");
+
+    /* THE SECOND WORKSPACE IS ITS OWN COMPOSER. Nothing from the first one follows it there,
+       which is what makes the round trip above a real one rather than a repaint. */
+    assert.deepEqual(measured.switchedWorkspaceAddress, {
+      chips: [],
+      value: "",
+    }, "switchedWorkspaceAddress: one workspace's address followed the reader into another");
+
+    /* A CHIP EDIT AND NOTHING ELSE SURVIVES THE SAME TRIP. The removal is the last thing the
+       reader does: no keystroke follows it to carry it into storage, and the switch cancels
+       the pending draft write. An edit that did not write itself down came back undone, so
+       the reader met a recipient they had just taken out. */
+    assert.deepEqual(measured.chipEditSurvivesSwitch, {
+      chips: ["Orbit"],
+      value: "@Orbit and @River will handle it",
+    }, "chipEditSurvivesSwitch: a chip edit made with nothing else did not reach storage");
+
+    /* THE CAP NAMES WHAT DID NOT FIT, and the sentence is the module's own. */
+    assert.deepEqual(
+      measured.capRefused.chips,
+      ["Alto", "Basalt", "Cinder", "Delta", "Ember", "Flint", "Glint", "Harrow"],
+      "capRefused: the set stopped at the cap",
+    );
+    assert.equal(measured.capRefused.chips.length, COMPOSER_TO_MAX);
+    assert.ok(
+      measured.capRefused.note.endsWith(composerToFullNotice(["Inlet"])),
+      `capRefused: the row does not name the recipient the cap turned away: ${measured.capRefused.note}`,
+    );
+
+    /* AND MAKING ROOM IS THE WAY BACK. Deleting one chip lets the tag still in the sentence
+       join the set. It used to be written off as applied the moment it was refused, so the
+       only recovery was deleting the tag and typing it again, which nothing said. */
+    assert.deepEqual(
+      measured.capAfterRoom.chips,
+      ["Basalt", "Cinder", "Delta", "Ember", "Flint", "Glint", "Harrow", "Inlet"],
+      "capAfterRoom: a refused name did not join the set when the reader made room for it",
+    );
+    assert.ok(
+      !measured.capAfterRoom.note.includes("Remove one to make room"),
+      "capAfterRoom: the row still says the set is full after the reader made room",
+    );
+
+    /* AN ADDRESS IS A DRAFT ON ITS OWN, with nothing typed to carry it. */
+    assert.deepEqual(measured.emptyBodyEditSurvivesSwitch, {
+      chips: ["Cinder", "Delta", "Ember", "Flint", "Glint", "Harrow", "Inlet"],
+      value: "",
+    }, "emptyBodyEditSurvivesSwitch: an address edited with nothing typed was not written down");
   } finally {
     await server.close();
   }
@@ -583,31 +773,25 @@ test("the posted body carries the To: set and leaves both scalar fields null", (
   assert.equal(notifiedRecipient([river, orbit]), null);
 });
 
-test("nothing but the reader moves the address", () => {
-  /* A SOURCE CLAIM, and it says why. The tag pass rewrites both the To: set and the record
-     of which tags produced it, so it may run only where the reader acted: a keystroke, a
-     pick from the mention list, a draft restore, and the flush the submit does before it
-     reads the set.
+test("one pass owns the address, and every handler goes through it", () => {
+  /* A SOURCE CLAIM, and it says why. Four review rounds found one class: the To: set and the
+     record of which tags produced it are state that must follow the body, and they were being
+     kept in step BY HAND across separate handlers. Each round closed one door and the next
+     round found another. The fix both arms named is this: ONE derived pass, called by every
+     handler, which writes the pair and the stored draft in the same call.
 
-     It was called from `renderRoster` for one round. A roster paint then re-parsed whatever
-     was in the box — including the empty box a send leaves behind while it waits for the
-     server — which wiped the applied record and let a recipient the reader had removed come
-     back under the retry, at a new command id. A review arm found it.
-
-     BOUND: this counts call sites in one file. It does not prove no other module moves the
-     set, and nothing else imports these functions. */
+     BOUND: this counts call sites in one file and reads the pass's own guards out of it. It
+     does not prove no other module moves the set, and nothing else imports these functions.
+     What the pass DOES with those inputs is driven directly in
+     `src/lib/composer-address.test.mjs`, which reaches the same function. */
   const dashboard = readFileSync(
     new URL("./LiveDashboard.astro", import.meta.url),
     "utf8",
   );
-  const callSites = dashboard.split("applyComposerMentions()").length - 1;
-  assert.equal(
-    callSites,
-    4,
-    "the tag pass is called from somewhere new; every call site must be an action of the reader",
-  );
-  for (const [where, anchor, close] of [
-    ["the draft restore", "const restoreComposerDraft = (): void => {", "\n    };"],
+  /* EVERY WRITER OF THE PAIR, named. The list and the assertions come from one array, so a
+     handler that stops calling the pass fails on its own name. */
+  const writers = [
+    ["the entry restore", "const restoreComposerOnEntry = (): void => {", "\n    };"],
     ["the typing pause", "const scheduleComposerToPass = (): void => {", "\n    };"],
     ["the mention pick", "const selectMention = (mention: EntityRef): void => {", "\n    };"],
     [
@@ -615,19 +799,68 @@ test("nothing but the reader moves the address", () => {
       'one<HTMLFormElement>("[data-composer]")?.addEventListener("submit"',
       "const workspaceId = activeWorkspaceId;",
     ],
-  ] as const) {
+    [
+      "the chip edit",
+      'one<HTMLElement>("[data-composer-to-chips]")?.addEventListener',
+      "\n    });",
+    ],
+    ["the roster paint", "const renderRoster = (): void => {", "\n    };"],
+  ] as const;
+  for (const [where, anchor, close] of writers) {
     const start = dashboard.indexOf(anchor);
     assert.ok(start > 0, `${where}: anchor not found`);
     const block = dashboard.slice(start, dashboard.indexOf(close, start));
-    assert.match(block, /applyComposerMentions\(\)/, `${where} must run the tag pass`);
+    assert.match(block, /syncComposerAddress\(/, `${where} must go through the one pass`);
   }
-  const roster = dashboard.slice(
-    dashboard.indexOf("const renderRoster = (): void => {"),
+  /* AND NOBODY ELSE CALLS IT. The count is the writers above plus ONE: the send's own settle,
+     which runs in the submit's `finally` after the freeze lifts and is inside the submit
+     block already counted, so it adds a call rather than a writer. Any further call is a
+     second writer of the pair, which is the shape every round of this lane found.
+
+     The count excludes the definition, which reads `syncComposerAddress = (`. */
+  assert.equal(
+    dashboard.split("syncComposerAddress(").length - 1,
+    writers.length + 1,
+    "the pass is called from somewhere new, or a handler stopped calling it",
   );
+  const passStart = dashboard.indexOf("const syncComposerAddress = (");
+  assert.ok(passStart > 0, "the pass is not in this file");
+  const pass = dashboard.slice(passStart, dashboard.indexOf("\n    };", passStart));
+  /* THE PAIR AND THE STORED DRAFT ARE WRITTEN BY THE SAME CALL. A chip edit used to reach
+     storage only on the next keystroke, and a workspace switch cancels that write. */
+  assert.match(
+    pass,
+    /composerToApplied = state\.applied;/,
+    "the pass no longer writes the applied record",
+  );
+  assert.match(
+    pass,
+    /persistComposerDraft\(\);/,
+    "a live edit no longer writes the stored pair",
+  );
+  /* AND NOTHING COMMITS UNTIL THE PASS SAYS SO. */
+  assert.match(
+    pass,
+    /if \(!state\.committed\) \{/,
+    "the pass assigns whether or not it committed",
+  );
+  /* AND IT IS TOLD WHEN THE MESSAGE IT ADDRESSES IS ON THE WIRE. A SOURCE claim, and it says
+     why: a sample send has no in-flight window for a browser step to change a roster inside,
+     so what the freeze DOES is driven directly in src/lib/composer-address.test.mjs and what
+     the dashboard feeds it is read here. */
+  assert.match(
+    pass,
+    /sending: composerSending,/,
+    "the pass is not told when a send is in flight, so a prune can move the address under it",
+  );
+  /* THE RENDER DRAWS AND DECIDES NOTHING. Pruning used to live in it, which is how a paint
+     the reader had not caused came to move the address. */
+  const renderStart = dashboard.indexOf("const renderComposerTo = (): void => {");
+  const render = dashboard.slice(renderStart, dashboard.indexOf("\n    };", renderStart));
   assert.doesNotMatch(
-    roster.slice(0, roster.indexOf("\n    };")),
-    /applyComposerMentions\(\)/,
-    "a roster paint moves the address",
+    render,
+    /pruneComposerRecipients|composerTo = /,
+    "the render moves the address instead of drawing it",
   );
   /* And the address is not editable while its own message is on the wire. */
   const chipClicks = dashboard.slice(
@@ -640,16 +873,16 @@ test("nothing but the reader moves the address", () => {
   );
 });
 
-test("an empty roster is not read as a workspace with nobody in it", () => {
-  /* A SOURCE CLAIM, and it says so. renderWorkspace runs before the roster request settles,
-     so `agents` and `members` are briefly empty for a workspace that has both. Pruning the
-     chips against that empty roster would drop every one of them, and the restore runs once
-     per workspace, so nothing would put them back. The browser observer above cannot reach
-     this: sample mode has its roster before the first render.
+test("the body and the address are restored as one transaction", () => {
+  /* A SOURCE CLAIM, and it says why. renderWorkspace paints before the roster request
+     settles, so `agents` and `members` are briefly empty for a workspace that has both.
+     A restore that committed there pruned every chip and marked itself done, and the paint
+     that did have a roster then wrote the last-sent set over the draft. The browser observer
+     above reaches this on a WORKSPACE SWITCH, where the sample roster arrives a frame after
+     the paint; it cannot reach it on a reload, where the roster is there first.
 
-     BOUND: this reads the guard and its two call sites out of one file. It does not prove
-     the roster is empty at any particular moment; it proves the two places that would act
-     on an empty one refuse to. */
+     BOUND: this reads the guard, the single restore key, and the pass's own gate out of one
+     file. It does not prove the roster is empty at any particular moment. */
   const dashboard = readFileSync(
     new URL("./LiveDashboard.astro", import.meta.url),
     "utf8",
@@ -659,22 +892,82 @@ test("an empty roster is not read as a workspace with nobody in it", () => {
     /const composerRosterKnown = \(\): boolean => agents\.length > 0 \|\| members\.length > 0;/,
     "empty-roster guard: the predicate that separates 'not fetched yet' from 'nobody here'",
   );
-  assert.match(
+  /* ONE KEY. Two keys is what let a switch satisfy the body's restore and refuse the
+     address's, which is the split that produced the class. Five mentions and no more: the
+     declaration, the guard that reads it, the one place that marks it, the workspace switch
+     that clears it, and the sign-out teardown that clears it. */
+  assert.equal(
+    dashboard.split("restoredComposerKey").length - 1,
+    5,
+    "the restore key is read or written somewhere new",
+  );
+  assert.doesNotMatch(
     dashboard,
-    /restoredComposerToKey === key \|\| !composerRosterKnown\(\)\) return;/,
-    "the remembered set is restored against a roster that is not known yet",
+    /restoredComposerToKey|restoreComposerToOnEntry|restoreComposerDraft\b/,
+    "the second restore is back, so the body and the address can commit apart again",
+  );
+  const restoreStart = dashboard.indexOf("const restoreComposerOnEntry = (): void => {");
+  assert.ok(restoreStart > 0, "the entry restore is not in this file");
+  const restore = dashboard.slice(restoreStart, dashboard.indexOf("\n    };", restoreStart));
+  /* ONE GATE, IN THE PASS. A second copy of the roster rule here would be a rule with no
+     control on it: the pass already refuses to commit, so a guard here could be deleted and
+     no measurement would change. What the restore must not do is decide the address itself. */
+  assert.doesNotMatch(
+    restore,
+    /composerRosterKnown\(\)|pruneComposerRecipients|composerTo = /,
+    "the entry restore decides the address instead of asking the pass",
+  );
+  assert.match(
+    restore,
+    /syncComposerAddress\(\);/,
+    "the entry restore does not run the pass, so an entry commits nothing",
+  );
+  /* AND THE PASS HOLDS FOR BOTH REASONS IT MUST. */
+  const source = readFileSync(
+    new URL("../../lib/composer-address.ts", import.meta.url),
+    "utf8",
+  );
+  assert.match(
+    source,
+    /if \(!input\.rosterKnown \|\| input\.sending\) return held;/,
+    "the pass commits against an unknown roster or a message already on the wire",
+  );
+});
+
+test("a chosen address is a draft, even before anything is typed", () => {
+  /* A SOURCE CLAIM about ONE line, and it says why. "Nothing to save" used to mean an empty
+     box and no attachment, which threw away the one edit that writes nothing else: taking a
+     name out of To:, or emptying it to a broadcast, before writing the message. The reader
+     came back to the set they had just removed. The browser observer reaches the with-a-body
+     half of this on a switch; this reads the condition itself. */
+  const dashboard = readFileSync(
+    new URL("./LiveDashboard.astro", import.meta.url),
+    "utf8",
   );
   assert.match(
     dashboard,
-    /if \(composerRosterKnown\(\)\) \{\s*\n\s*const pruned = pruneComposerRecipients\(composerTo, composerRecipientKnown\);/,
-    "the chips are pruned against a roster that is not known yet",
+    /const addressChosen = composerToLive &&\s*\n\s*composerToKey\(composerTo\) !== composerToKey\(readRememberedComposerTo\(\)\);/,
+    "an address the reader chose is not what decides whether the draft is worth keeping",
   );
-  /* And when it does prune, it says so. A chip that vanishes while the reader is writing to
-     that person is the one thing the row exists to prevent. */
   assert.match(
     dashboard,
-    /composerToNotice = composerPrunedNotice\(composerTo\.length - pruned\.length\);/,
-    "a recipient the roster lost is removed without a word about it",
+    /if \(body === "" && !hadAttachments && !addressChosen\) \{/,
+    "the draft is dropped for an empty body whatever the reader did to the address",
+  );
+  /* AND THE SWITCH FLUSHES BEFORE IT CLEARS. It used to cancel the pending write, which is
+     right about the timer and wrong about the draft: an edit made inside the debounce window
+     went with it. The flush is FIRST, before the box is emptied and while the old workspace
+     is still current, or it would write an empty body against the wrong key. */
+  const resetStart = dashboard.indexOf("const resetComposer = (): void => {");
+  const reset = dashboard.slice(resetStart, dashboard.indexOf("\n    };", resetStart));
+  assert.ok(
+    reset.indexOf("persistComposerDraft();") < reset.indexOf('input.value = "";'),
+    "the workspace switch empties the box before it writes the draft down",
+  );
+  assert.doesNotMatch(
+    reset,
+    /cancelComposerDraftTimer\(\);/,
+    "the switch cancels the pending draft write instead of flushing it",
   );
 });
 
@@ -721,19 +1014,34 @@ test("a tag the parser gave up on is named, not dropped out of the message", () 
      MENTION_MAX_RECIPIENTS and handing back bare names it never resolved. Reading only the
      first dropped a name out of the message with nothing said about it.
 
-     BOUND: the sample roster has five taggable names and the cap is eight, so no browser
-     step in this file can reach the parser's overflow. This reads the source instead, and
-     the sentence itself is measured in composer-address.test.mjs. */
+     BOUND: the sample rosters have five and eleven taggable names against a cap of eight, so
+     the observer above reaches the To: set's refusal and not the parser's ceiling: the two
+     ceilings are the same number, so a body cannot pass one without passing the other. This
+     reads the source instead, and the sentence itself is measured in composer-address.test.mjs. */
+  const source = readFileSync(
+    new URL("../../lib/composer-address.ts", import.meta.url),
+    "utf8",
+  );
+  assert.match(
+    source,
+    /const overCap = \[\.\.\.state\.refused\.map\(nameOf\), \.\.\.parsed\.overflow\];/,
+    "both ways a tag can be over the cap must reach the notice",
+  );
+  assert.match(
+    source,
+    /if \(overCap\.length > 0\) clauses\.push\(composerToFullNotice\(overCap\)\);/,
+  );
+  /* And the dashboard hands the pass's own result to that builder, rather than assembling a
+     second sentence beside it. */
   const dashboard = readFileSync(
     new URL("./LiveDashboard.astro", import.meta.url),
     "utf8",
   );
   assert.match(
     dashboard,
-    /const overCap = \[\s*\n\s*\.\.\.merged\.refused\.map\(composerRecipientName\),\s*\n\s*\.\.\.address\.overflow,\s*\n\s*\];/,
-    "both ways a tag can be over the cap must reach the notice",
+    /composerToNotice = composerAddressNotice\(state, parsed, composerRecipientName\);/,
+    "the row's notice is built somewhere other than from the pass",
   );
-  assert.match(dashboard, /if \(overCap\.length > 0\) notices\.push\(composerToFullNotice\(overCap\)\);/);
 });
 
 test("the note is generated from the cap and the wake position, not typed beside them", () => {

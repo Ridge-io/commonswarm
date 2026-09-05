@@ -37,8 +37,10 @@ red  a tag typed just before Enter is still a recipient
   restored green  site/src/components/app/composer-to-field.observer.test.ts
 red  an empty roster is not read as a workspace with nobody in it
   restored green  site/src/components/app/composer-to-field.observer.test.ts
-red  the chips are not pruned against a roster that is not known yet
+red  nothing is committed against a roster that is not known yet
   restored green  site/src/components/app/composer-to-field.observer.test.ts
+red  nothing moves the address while its own message is on the wire
+  restored green  site/src/lib/composer-address.test.mjs
 red  the over-cap notice names who did not fit
   restored green  site/src/lib/composer-address.test.mjs
 red  a tag the parser gave up on is named, not dropped out of the message
@@ -46,20 +48,22 @@ red  a tag the parser gave up on is named, not dropped out of the message
 red  the pruned count and its noun are built together
   restored green  site/src/lib/composer-address.test.mjs
 red  a recipient the roster lost is removed without a word about it
-  restored green  site/src/components/app/composer-to-field.observer.test.ts
+  restored green  site/src/lib/composer-address.test.mjs
+red  arriving in a workspace does not announce a prune the reader never saw
+  restored green  site/src/lib/composer-address.test.mjs
 red  a chip's own control never promises a wake a person cannot get
   restored green  site/src/components/app/composer-to-field.observer.test.ts
 red  the chip label asks the same function the row asks
   restored green  site/src/lib/composer-address.test.mjs
-red  a saved draft's tags are on the row after a reload, not lifted in at send time
+red  a draft's own address beats the set the last message went to
   restored green  site/src/components/app/composer-to-field.observer.test.ts
 red  the applied record is cleared when the body is gone, so a tag typed again addresses again
   restored green  site/src/components/app/composer-to-field.observer.test.ts
-red  a roster paint does not move the address
+red  one pass owns the address, and nothing else calls it
   restored green  site/src/components/app/composer-to-field.observer.test.ts
 red  the address is not editable while its own message is on the wire
   restored green  site/src/components/app/composer-to-field.observer.test.ts
-red  a draft carries the set it was being written to
+red  a draft carries the set it was being written to, and the pass reads it
   restored green  site/src/components/app/composer-to-field.observer.test.ts
 red  a removal survives a reload, because the applied record travels with the draft
   restored green  site/src/components/app/composer-to-field.observer.test.ts
@@ -67,7 +71,25 @@ red  the chip label takes its position word from the wake index
   restored green  site/src/components/app/composer-to-field.observer.test.ts
 red  an emptied To: is stored as a broadcast the reader chose, not as a missing set
   restored green  site/src/components/app/composer-to-field.observer.test.ts
+red  an emptied To: is READ BACK as the broadcast the reader chose
+  restored green  site/src/lib/composer-address.test.mjs
 red  the remove control removes the recipient
   restored green  site/src/components/app/composer-addressing.observer.test.ts
+red  a workspace switch keeps the draft's own address across the roster gap
+  restored green  site/src/components/app/composer-to-field.observer.test.ts
+red  an emptied To: stays empty rather than filling from what was stored
+  restored green  site/src/components/app/composer-to-field.observer.test.ts
+red  the stored draft carries the To: set at all
+  restored green  site/src/components/app/composer-to-field.observer.test.ts
+red  an address the reader chose is a draft, even with nothing typed
+  restored green  site/src/components/app/composer-to-field.observer.test.ts
+red  the pass is told when the message it addresses is on the wire
+  restored green  site/src/components/app/composer-to-field.observer.test.ts
+red  a name the cap refused stays eligible, so making room adds it
+  restored green  site/src/lib/composer-address.test.mjs
+red  making room on the row is the way back from a refusal
+  restored green  site/src/components/app/composer-to-field.observer.test.ts
+red  the mark goes on the recipient the sentence names, and on no other
+  restored green  site/src/components/app/composer-to-field.observer.test.ts
 
-34 mutations, 0 problems
+45 mutations, 0 problems
