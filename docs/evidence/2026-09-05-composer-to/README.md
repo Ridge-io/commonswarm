@@ -59,3 +59,39 @@ ceilings, at 128.44px / 131.38px and 147.44px / 150.38px.
   the module building the To: sentences takes its cap and its wake position from the server's
   constants. It does not prove the app has no other typed cap anywhere, and a source regex
   cannot: there is no complete set for it to run over.
+
+## The review rounds, and why the lane stopped
+
+| SHA | Grok | Gemini | What it found |
+|---|---|---|---|
+| `cbf0313` | FAIL | FAIL | applied cleared before the post; draft restored before the remembered set; a chip label promising a person a wake; three control weaknesses |
+| `1d786fa` | FAIL | FAIL | the same class twice more: a reload wiped the applied record, and the tag pass ran from a render |
+| `39c32f0` | FAIL | PASS | the same class again, created by the previous fix: an empty To: stored as an omitted key |
+| `d567a69` | FAIL | FAIL | the same class again: the draft restore commits against an unloaded roster, and chip edits never reach storage |
+
+Four rounds, one family: **the To: set and the record of which tags produced it are state that
+must follow the body, and they are kept in step by hand across separate handlers.** Each round
+closed a door and the next round found another. The lane stopped at round four rather than
+making a fifth point fix, which is the rule in the PM brief.
+
+Both arms converged on the same cause, in their own words. Grok: the two restores have to be
+one transaction that does not commit until the roster is known, and every live edit must also
+write the stored pair. Gemini: the set and the applied record are derived from the body and the
+roster, and they are being synchronised by hand across disconnected handlers instead of being
+one derived pass.
+
+### Open, named, not fixed
+
+1. **A workspace switch loses a draft's address.** `restoreComposerDraft` is not gated on a
+   known roster the way the remembered set is, so it prunes the draft's set to empty and marks
+   itself done; the later paint that does have a roster then writes the last-sent set over it.
+   A broadcast draft becomes directed, and a removed chip comes back.
+2. **A chip edit never reaches storage on its own.** `setComposerTo` does not write the draft,
+   so an edit is stored only on the next keystroke or `pagehide`. A workspace switch cancels
+   the draft timer without flushing, so a chips-only edit is lost.
+3. **A roster prune during an in-flight send** does not reach the closure that already captured
+   the recipients: the row hides the recipient, the post still names them.
+4. **A tag refused by the cap cannot be added back** by making room. It is marked applied so
+   the notice does not repeat every keystroke; recovery is deleting the tag and typing it again.
+5. **Two mutation expectations still fail for a reason other than the assertion they name**
+   (`secondTag`, per the round-four Gemini arm).
