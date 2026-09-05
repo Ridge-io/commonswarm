@@ -4915,10 +4915,11 @@ export function renderListenerStatus(
     /* Past tense about this listener, plus a statement of mechanism that names
        both outcomes, so no clause asserts the row's current server state.
        The remedy comes from the same reason-keyed Record as the clause, because
-       the two reasons need OPPOSITE advice, and it names no command: the line
-       renders only while the listener is ready or stopping, and `listen start`
-       refuses in exactly those states, so any start command printed here would
-       be refused by the process that printed it.
+       the two reasons need DIFFERENT advice and only one of them names a
+       setting at all. Neither names a command: the line renders only while the
+       listener is ready or stopping, and `listen start` refuses in exactly
+       those states, so any start command printed here would be refused by the
+       process that printed it.
        Retired final clauses, all refuted by review arms:
          "If this repeats, raise the bound: cswarm listen start --turn-budget
           <duration>" -- unrunnable as printed (start needs a credential, a
@@ -4951,8 +4952,7 @@ export function renderListenerStatus(
         " This listener has not answered it. After the lease ends the service" +
         ` either delivers it again or terminates it. If this repeats, ${
           LISTENER_DELIVERY_HOLD_RELEASE_REMEDIES[newestHeldBack.reason]
-        }; the bound is read when the listener starts, so stop this listener` +
-        " and start it again to change it.",
+        }.`,
     );
   }
   lines.push(

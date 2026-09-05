@@ -4029,10 +4029,16 @@ test("the released delivery is not acknowledged with any outcome", async () => {
 
   assert.deepEqual(ackOutcomes, []);
   assert.equal(journal.record.active, null);
-  assert.equal(
-    events.filter((event) => event.type === "delivery_hold_released").length,
-    1,
-  );
+  const releases = events.filter((event): event is Extract<
+    ListenerRuntimeEvent,
+    { type: "delivery_hold_released" }
+  > => event.type === "delivery_hold_released");
+  assert.equal(releases.length, 1);
+  /* Name WHICH bound fired. Asserting only that some release happened let this
+     test stay green with the seat bound removed, because the lease bound can
+     release too; the reason is what separates them. */
+  assert.equal(releases[0]!.reason, "hold_budget");
+  assert.ok(releases[0]!.heldMs >= holdBudgetMs, String(releases[0]!.heldMs));
 });
 
 test("listen status shows the delivery in hand and how long the queue has waited", () => {
@@ -4148,14 +4154,35 @@ test("listen status shows the delivery in hand and how long the queue has waited
     /* Past tense only: the retired clause claimed the row still sat with the
        service, which is false once the service expires and acknowledges it. */
     assert.ok(!heldBack.includes("stays with the service"), heldBack);
-    assert.ok(!heldBack.includes("comes back"), heldBack);
+    /* The retired clause verbatim, not the phrase "comes back": the lease_budget
+       remedy legitimately says the row comes back under a new lease. A negative
+       control has to name what was retired, or it outlaws correct wording. */
+    assert.ok(
+      !heldBack.includes("which decides when it comes back"),
+      heldBack,
+    );
     assert.ok(
       heldBack.includes(
         "This listener has not answered it. After the lease ends the service either delivers it again or terminates it. If this repeats, " +
-          `${LISTENER_DELIVERY_HOLD_RELEASE_REMEDIES[reason]}; the bound is read when the listener starts, so stop this listener and start it again to change it.`,
+          `${LISTENER_DELIVERY_HOLD_RELEASE_REMEDIES[reason]}.`,
       ),
       heldBack,
     );
+    /* The swap control: this reason's line must NOT carry the other reason's
+       remedy. A single shared remedy passed a per-reason assertion that only
+       checked "the right text is present"; it fails only when the wrong text is
+       also required to be absent. */
+    for (const other of LISTENER_DELIVERY_HOLD_RELEASE_REASONS) {
+      if (other === reason) continue;
+      assert.ok(
+        !heldBack.includes(LISTENER_DELIVERY_HOLD_RELEASE_REMEDIES[other]),
+        `${reason} carried the ${other} remedy: ${heldBack}`,
+      );
+      assert.ok(
+        !heldBack.includes(LISTENER_DELIVERY_HOLD_RELEASE_CLAUSES[other]),
+        `${reason} carried the ${other} clause: ${heldBack}`,
+      );
+    }
     /* No command is printed. The line renders only while the listener is ready
        or stopping, and `listen start` refuses in exactly those states, so a
        start command here would be refused by the process that printed it. */
@@ -4180,17 +4207,21 @@ test("listen status shows the delivery in hand and how long the queue has waited
       "each reason needs its own wording, or the sentence stops discriminating",
     );
   }
-  /* The two remedies point OPPOSITE ways on the same flag. One shared remedy
-     was measured wrong for lease_budget: the lease is fixed by the service and
-     the phase minimum is built from transport constants, so raising the turn
-     budget only lets one turn eat more of the lease. */
+  /* Only hold_budget names a setting. --turn-budget IS the seat bound, so
+     raising it is the answer there; lease_budget needs nothing changed, because
+     the row returns under a new lease of full length. A shared remedy gave half
+     the vocabulary advice that cannot prevent its own release. */
   assert.ok(
-    LISTENER_DELIVERY_HOLD_RELEASE_REMEDIES.hold_budget.includes("larger"),
+    LISTENER_DELIVERY_HOLD_RELEASE_REMEDIES.hold_budget.includes(
+      "a larger --turn-budget",
+    ),
     LISTENER_DELIVERY_HOLD_RELEASE_REMEDIES.hold_budget,
   );
   assert.ok(
-    LISTENER_DELIVERY_HOLD_RELEASE_REMEDIES.lease_budget.includes("smaller"),
-    LISTENER_DELIVERY_HOLD_RELEASE_REMEDIES.lease_budget,
+    !LISTENER_DELIVERY_HOLD_RELEASE_REMEDIES.lease_budget.includes(
+      "--turn-budget",
+    ),
+    "a lease_budget release is not fixed by changing the turn budget",
   );
 
   // More than one can be held back at once, so the extras are counted.

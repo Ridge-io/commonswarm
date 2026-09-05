@@ -157,24 +157,34 @@ export const LISTENER_DELIVERY_HOLD_RELEASE_CLAUSES: Readonly<
 };
 
 /**
- * What actually helps, per reason. A Record for the same reason as the clauses:
- * one shared remedy was measured wrong for half the vocabulary.
+ * What the reader should do about each reason. A Record for the same reason as
+ * the clauses: one shared remedy was measured wrong for half the vocabulary.
  *
- * `--turn-budget` is the lever in both directions, but it points OPPOSITE ways.
- * Raising it gives one delivery more seat time, which is what a `hold_budget`
- * release wants. A `lease_budget` release is the other end: the server lease is
- * a fixed 15 minutes and is not an operator flag, and the phase minimum the
- * check projects against is built from fixed transport constants, not from the
- * turn budget, so RAISING the budget only lets one turn eat more of the lease
- * and makes the next check fail sooner.
+ * Only `hold_budget` names a setting. `--turn-budget` IS the seat bound, so
+ * raising it is the whole answer there. `lease_budget` needs nothing raised: the
+ * server lease is a fixed 15 minutes and is not an operator flag, and the row
+ * comes back under a NEW lease with its full length, so the next attempt starts
+ * with the room this one ran out of.
+ *
+ * Correction to a claim made while reviewing this, recorded because a later
+ * reader may meet it: raising `--turn-budget` does NOT raise the projected
+ * phase minimum that `leaseSpent` tests. `effectPhaseBudget` returns
+ * `LISTENER_PROMPT_START_MINIMUM_MS` and its siblings, built from
+ * `SIGNAL_READ_TIMEOUT_MS`, `ACP_DEFAULT_REQUEST_TIMEOUT_MS`,
+ * `SIGNAL_REQUEST_TIMEOUT_MS`, `DELIVERY_REQUEST_TIMEOUT_MS` and the safety
+ * margin. It contains no turn budget. What a larger turn budget does change is
+ * how much of the fixed lease one turn can consume before that check runs.
  */
 export const LISTENER_DELIVERY_HOLD_RELEASE_REMEDIES: Readonly<
   Record<ListenerDeliveryHoldReleaseReason, string>
 > = {
-  hold_budget: "a larger --turn-budget gives one delivery more of the seat",
+  hold_budget:
+    "a larger --turn-budget gives one delivery more of the seat, and the bound" +
+    " is read when the listener starts, so stop this listener and start it" +
+    " again to change it",
   lease_budget:
-    "the lease length is fixed by the service, so a smaller --turn-budget is" +
-    " what leaves enough of it for the steps after the turn",
+    "nothing needs changing: the row comes back under a new lease with its full" +
+    " length, so the next attempt starts with the room this one ran out of",
 };
 
 export type ListenerPermissionMode = "deny" | "allow";
