@@ -1,0 +1,27 @@
+diff --git a/site/src/components/app/LiveDashboard.astro b/site/src/components/app/LiveDashboard.astro
+
+1. **Attempted Refutation: The CSS corrections are themselves false.**
+   * **Files/Lines:** `site/src/styles/global.css:203` and `site/src/styles/seo.css:191`.
+   * **Measurement:** I read `global.css:203` and found `table { border-collapse: collapse; border-spacing: 0; }`, confirming it sets none of the scroll properties. I read `seo.css:191` and found `.seo-table { ... }`, confirming it is a class, not a bare `table` rule. I searched the built CSS in `site/dist/_astro/*.css` and confirmed that minification produces `.seo-table{`, matching the tail string `table{` from a naïve `grep`. The retired text is marked explicitly with "CORRECTION, and the retired wording...".
+   * **Result:** The comment's new claims are accurate. The refutation failed.
+   * **Severity:** None.
+
+2. **Attempted Refutation: The reworked ladder test does not reach its claim or is vulnerable to non-limit mutations.**
+   * **Files/Lines:** `site/src/lib/message-markdown.test.mjs:444` and `site/src/lib/message-markdown.ts`.
+   * **Measurement:** A 1-space ladder at 10 levels reaches a maximum indent of 9 spaces, keeping all items inside `listMatch`'s 12-space limit. The `deepestList` is dynamically constructed to hold precisely levels `cap - 1` (3) through `9`. I analyzed `renderList` and verified that mutating the logic to drop items, create multiple sibling lists, or break items into paragraphs causes the exact `deep.includes(deepestList)` substring check or the `<ul>` count to fail. Only changing the limit itself keeps the test green.
+   * **Result:** The test correctly verifies the nesting bounds. The refutation failed.
+   * **Severity:** None.
+
+3. **Attempted Refutation: The derived forbidden-attribute regex is incorrect or non-discriminating.**
+   * **Files/Lines:** `site/src/lib/message-markdown.test.mjs:291`.
+   * **Measurement:** I evaluated the array mapping `forbiddenInThisTable.map(...)`. The resulting string is precisely `\son[a-z]+\s*=|\shref\s*=|\sstyle\s*=|\sclass\s*=`. This string evaluated by `new RegExp(..., "iu")` is byte-for-byte identical to the hardcoded regex it replaced. I verified the discriminator controls: `<td class="x">` hits `class`, `<td onclick=x>` hits `on<any>`, and `<td align="center">` safely ignores all patterns.
+   * **Result:** The derived regex enforces the exact same rules correctly. The refutation failed.
+   * **Severity:** None.
+
+4. **Attempted Refutation: The correction introduced a behaviour change.**
+   * **Files/Lines:** `DIFF.patch` entirely.
+   * **Measurement:** Reviewed the diff hunks line by line. The changes to `LiveDashboard.astro` are confined inside a CSS `/* ... */` comment block. The changes to `message-markdown.test.mjs` strictly alter test variables (`forbiddenInThisTable`, `ladder`, `deepestList`) and test assertions. I successfully ran `node site/src/lib/message-markdown.test.mjs`, producing a full PASS of all 29 tests.
+   * **Result:** No production behaviour change exists. The refutation failed.
+   * **Severity:** None.
+
+VERDICT: PASS

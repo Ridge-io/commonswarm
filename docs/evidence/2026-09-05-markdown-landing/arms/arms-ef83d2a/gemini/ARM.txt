@@ -1,0 +1,30 @@
+```text
+diff --git a/site/src/components/app/LiveDashboard.astro b/site/src/components/app/LiveDashboard.astro
+```
+
+1. **`LiveDashboard.astro:9598-9618` - CSS specificity comment correction:**
+   - **Measurement:** I ran `grep -E 'table\{'` against the built CSS in `site/dist/_astro/*.css` and confirmed it matches the tail of `.seo-table{`. I also checked `site/src/styles/global.css:203` and confirmed it only contains `border-collapse: collapse;` and `border-spacing: 0;`.
+   - **Refutation attempted:** I attempted to find any bare `table` rule in `seo.css` or the built output that sets scroll properties and could actually compete. I could not find any; the comment accurately reflects the current state of the styles. The retired wording is distinctly prefixed with "CORRECTION, and the retired wording".
+   - **Severity:** None.
+
+2. **`message-markdown.test.mjs:444-453` - Ladder test indent bound and deepest list behavior:**
+   - **Measurement:** A one-space ladder over 10 levels reaches a maximum indent of 9 spaces, staying entirely under the 12-space ceiling of `listMatch`. The dynamically built `deepestList` expects exactly `<li>level3</li>` through `<li>level9</li>`, confirming the list holds `cap - 1` through 9.
+   - **Refutation attempted:** I attempted to determine if a renderer mutation could leave the test green while breaking the behavior. Changing the nesting limit alone is not a discriminating mutation because the expected `<ul>` count and the `deepestList` dynamically adjust to the limit. If I mutated the renderer to drop deep items or flatten them into paragraphs, the test would fail because `assert.ok(deep.includes(deepestList))` mandates the presence of the exact HTML string containing all folded `<li>` items. If I removed the nesting limit entirely, the test would fail because the generated `<ul>` count would be 10 instead of `nestingDepth` (4).
+   - **Severity:** None.
+
+3. **`message-markdown.test.mjs:296-302` - Derived forbidden-attribute regex:**
+   - **Measurement:** The `forbiddenInThisTable` array maps to `\son[a-z]+\s*=|\shref\s*=|\sstyle\s*=|\sclass\s*=`, which is functionally identical to the previous hardcoded regex.
+   - **Refutation attempted:** I verified the provided assertions (`class="x"`, `onclick=x`, `align="center"`) to see if the dynamically built regex fails to discriminate. The assertions correctly pass: `class` and `onclick` are caught, while `align` is bypassed, proving the derived regex is structurally sound and enforces what it claims.
+   - **Severity:** None.
+
+4. **`message-markdown.test.mjs:457-462` - Indent bound ceiling test:**
+   - **Measurement:** The test provides `- top` and a line indented by 13 spaces.
+   - **Refutation attempted:** I evaluated whether the test could falsely pass. The assertions are robust: they explicitly confirm the 13-space line renders as typed text (`assert.match`) and explicitly reject it being wrapped in an `<li>` tag (`assert.doesNotMatch`). This safely defends the 12-column ceiling claim.
+   - **Severity:** None.
+
+5. **Diff-wide - Behaviour changes:**
+   - **Measurement:** I analyzed the full 7.6 KB diff across both files.
+   - **Refutation attempted:** I tried to find any relocated CSS selectors, renderer logic changes, or unintentional behavioural modifications. The changes are strictly confined to a CSS block comment in `LiveDashboard.astro` and test fixture/assertion adjustments in `message-markdown.test.mjs`. No production code behavior was altered.
+   - **Severity:** None.
+
+VERDICT: PASS

@@ -1,0 +1,39 @@
+I'll read REVIEW.md and DIFF.patch first, then follow REVIEW.md exactly.The first `diff --git` line is:
+
+`diff --git a/site/src/components/app/LiveDashboard.astro b/site/src/components/app/LiveDashboard.astro`
+
+I'll read the files the brief names and try to refute each claim.Next I’ll read `listMatch` and the built CSS, then run the reI'll read the CSS, observers, anI'll run the renderer and the regex in `/tmp`, and I'll run attack scripts in `/tmp` against the renderer, sanitizerI have the measuremeI have enough. One last check on the indent-bound wording vs `listMatch`, then I’ll write the review.`diff --git a/site/src/components/app/LiveDashboard.astro b/site/src/components/app/LiveDashboard.astro`
+
+Reviewed `ef83d2a` read-only. Attacks ran in `/tmp` against `site/src/lib/message-markdown.ts`. Layout and brain-link observers ran against `dist/app/index.html` (no writes into the lane tree).
+
+## Refutations attempted
+
+**1. Sanitizer allowlist.** Drove `renderMessageMarkdown` and `sanitizeMessageHtml` with script/img/handler payloads in cells, task items, `del`, quotes, and fences; unquoted and slash-joined attributes (`<td/onclick=x>`, `<td align=center>`); `align="expression(alert(1))"`, `align="center "`, `align="start"`; `class="md-task evil"` and `class="dashboard__app"`; `[ok](https://example.com/" onclick="alert(1))` in a cell; userinfo phishing URLs. Kitchen-sink output attributes were only `align`, `href`, `class`. Could not get a tag or attribute outside `MESSAGE_MARKDOWN_TAGS` / `MESSAGE_MARKDOWN_ATTRIBUTES`, or an `align`/`class` value outside the exported enums, through the renderer.
+
+**2. Foster parenting.** Renderer tables always emit matched `table/thead/tbody/tr/th/td` opens. Sanitizer keeps those opens. Dropping `<caption>` or unknown tags does leave text inside the table (`<table>cap<tr>…`), which the parser would foster — but the renderer never emits those tags. Markdown `| a |\n|---|\n| </td></tr></table><script>… |` stays entities inside a `td`. The blocks observer’s broken-table control still sees `LEAKED`; the real table has no fostered text. Could not construct markdown that fosters.
+
+**3. Second escaping path.** Cell vs paragraph inner HTML matched for every `HOSTILE_INLINE_VECTORS` item. The one measured difference is `\|`, and only in a cell: `| \`a \\| b\` |` → `<code>a | b</code>`; the same source as a paragraph keeps the backslash. `|` pushed into already-escaped text is content, not markup.
+
+**4. Task items.** `- [click](…)`, `- [ x]`, `- [x]no-space`, `- [xx]`, `- []`, `- [!]` are not tasks. `- [ ]` / `- [x]` / `- [X]` / `1. [ ]` are `<li class="md-task">` plus `☐`/`☑`, never `<input>`. Class is an exact enum check. Ballot sits in the leading text node (`☐ read `); observer labels contain no ballot.
+
+**5. Brain-link boundary.** `th`/`td` may hold a `button` (phrasing). `A`/`PRE`/`BUTTON` stay opaque; the cell whose label is `[shared-host](https://example.com/s)` keeps an anchor and zero nested controls. One-word `releases` links only as a cell code span, not as cell prose. `☐ read shared-host` splits so the button text is `shared-host`. Observer: 1 header control, 2 body, 2 task, 1 sublist; 0 inside `a`/`pre`/`button`.
+
+**6. Termination / budget.** `"> ".repeat(12000)+"bottom"` → 4 `<blockquote>` in 0 ms, text kept. 12 000 table rows over budget → no `<table>`, literal pipes, 16 ms. 50 000-column header → no table, 7 ms. Exact 20 000 cells (2 `th` + 19 998 `td`) still a table; one extra row is not. Extra cells on a long row are kept and counted.
+
+**7. Block ordering.** `|---|---|` is not an `<hr>`. `| a |\n|---|\n| 1 |` is a table with no `<hr>`. `- - -` and `* * *` are `<hr>`, then `- item` is a list. A delimiter row with spaces (`| --- |`) is still a delimiter.
+
+**8. Tests and CSS.** Both layout controls discriminate (Chrome, shipped `/app` sheets): reverted scroll widens `documentScrollWidth`; reverted wrap makes `table.scrollWidth === table.clientWidth`. `text-align` is not set on cells in those sheets. Align assertions use a right `th` (UA default is center) and center/right `td` (UA default is start), so they can fail. `global.css:203` is `table { border-collapse: collapse; border-spacing: 0 }` (no overflow). `seo.css:191` is `.seo-table`, not `table`. `/app` sheets: one bare `table` rule (those two properties) and `.dashboard__message-markdown table, .dashboard__brain-markdown table` at (0,1,1). Retired wording is labeled `CORRECTION`. Specificity `(0,0,1)` / `(0,1,1)` is right. Depth-cap ladder HTML is exactly the string built from `MESSAGE_MARKDOWN_LIMITS.nestingDepth`.
+
+**9. Prose lists.** Hostile-table forbid-list is one array; generic branch mutation-tested via `class`, sentinel via `onclick`, negative via `align`. Tag allowlist in that test was already typed and is unchanged. One new sentence is false (finding 1).
+
+## Findings
+
+1. **Low — `site/src/lib/message-markdown.test.mjs:472-477`.** The new indent-bound case says `listMatch` has a “12-column ceiling”. The cutoff is `[ \t]{0,12}`: 12 **characters** of space or tab, before `indentWidth` counts a tab as four columns (`message-markdown.ts:267-278`). The fixture uses `" ".repeat(13)`, which is 13 characters and 13 columns, so it cannot tell those units apart.
+
+   Concrete input: `"- top\n" + "\t".repeat(4) + "- four-tabs"` (4 characters, 16 columns). Renders as `<ul><li>top<ul><li>four-tabs</li></ul></li></ul>` — still a list item. `"\t".repeat(12)+"- twelve-tabs"` (48 columns) is still a list item. `"\t".repeat(13)+"- thirteen-tabs"` is the first tab prefix that is not. The 13-space case does reach the real bound; the word “column” does not.
+
+   Depth-cap half of the same test is good: one space per step, deepest `<ul>` built from `cap`, measured HTML is `<ul><li>level0<ul><li>level1<ul><li>level2<ul><li>level3</li>…<li>level9</li></ul></li></ul></li></ul></li></ul>`.
+
+Not established: production `commonswarm.com` (only this tree + local `dist`). Did not re-run the historical `grep 'table{'` over a full site build; `/app`’s linked CSS has no `.seo-table`.
+
+VERDICT: PASS

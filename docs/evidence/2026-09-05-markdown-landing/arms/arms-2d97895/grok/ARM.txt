@@ -1,0 +1,91 @@
+I'll read the review brief and the patch first, then follow REVIEW.md exactly.Quoted first: `diff --git a/site/src/components/app/LiveDashboard.astro b/site/src/components/app/LiveDashboard.astro`
+
+I’ll read the CSS, tests, and renderer next and try to refute each claimed correction.SHA matches `2d97895`. Next I’ll read the CSS comment, list parser, and built sheets, and try the ladder and attribute checks in `/tmp`.I have the parser and the built CSS. Next I’ll run the renderer in `/tmp` and try the mutations the brief asks for.Tests passed and the patch matches the commit. I’ll mutate the renderer in `/tmp` and dump the ladder HTML next.I have the measurements. Checking one CSS-comment clause, then I’ll write the review.`diff --git a/site/src/components/app/LiveDashboard.astro b/site/src/components/app/LiveDashboard.astro`
+
+SHA `2d9789558169601b87f2191b03b343ea453b662c`. Rebase check: plus/minus lines are byte-identical to `ef83d2a` and to `DIFF.patch`. No conflict markers. The table/hr/th/td/task selectors and declarations match `9fa9d00`; only the comment above them moved (lane tip `4a10396` had those rules at 9617; here they start at 9937).
+
+## 1. Are the corrections themselves true?
+
+**global.css:203.** It is `table { border-collapse: collapse; border-spacing: 0; }`. No `display`, `overflow-x`, `inline-size`, or `max-inline-size`. A specificity tie with that rule cannot turn the scroll off.
+
+**seo.css:191.** It is `.seo-table`, not `table`. Built `SeoPage.CgLd2bSp.css` has `.seo-table{…inline-size:100%;min-inline-size:44rem…}`. `grep 'table{'` on that file matches the tail of `.seo-table{`.
+
+**Built CSS, every `table{`:**
+- `Base.CU6LT-wJ.css`: real `table{border-collapse:collapse;border-spacing:0}`
+- `SeoPage.CgLd2bSp.css`: `.seo-table{…}`
+- `app.DspzYwCb.css`: `.dashboard__message-markdown table,.dashboard__brain-markdown table{…display:block;overflow-x:auto}`
+
+`/app` links Base, AgentConnect, app. It does not link SeoPage. AgentConnect has no table rule.
+
+**Specificity.** `:where(.a, .b) table` is (0,0,1). `.dashboard__message-markdown table` is (0,1,1). Retired wording is marked (`CORRECTION`, `This comment first said`, `Both are false, measured`).
+
+**“Nothing competes today.”** I tried to refute this with Base’s bare `table` rule. That rule matches the same elements but only sets `border-collapse` / `border-spacing`. The named rule also sets `border-collapse: collapse` at (0,1,1), so it wins, and no scroll property is shared. The `:where(… table …)` margin rules are (0,1,0) and set margin only. I could not make “nothing competes” false for the scroll/display/size declarations.
+
+**Layout observer.** `message-blocks-layout.observer.test.ts:329` asserts computed `overflow-x` is `auto|scroll`. I read that. I did not run Chrome.
+
+I did not establish that `site/dist` was built from this SHA. The CSS edit is comment-only, so the hashed sheet would not change.
+
+## 2. Does the reworked ladder test reach its claim?
+
+`MESSAGE_MARKDOWN_LIMITS.nestingDepth` is 4. `listMatch` is `^([ \t]{0,12})[-+*][ \t]+`.
+
+One-space ladder, measured:
+
+```
+<ul><li>level0<ul><li>level1<ul><li>level2<ul><li>level3</li><li>level4</li><li>level5</li><li>level6</li><li>level7</li><li>level8</li><li>level9</li></ul></li></ul></li></ul></li></ul>
+```
+
+Four `<ul>`. Levels 0–9 are list items (9 spaces ≤ 12). Deepest list is levels 3–9, built from `cap`. `deep.includes(deepestList)` holds.
+
+Two-space ladder (the old fixture), measured: levels 7/8/9 are `<p>…level7<br>…level8<br>…level9</p>`. `level7<` matches `level7<br>`. The new `deepestList` check fails that fixture. The old parent test stays green on the current renderer.
+
+Mutations in `/tmp` (not the tree):
+
+| Change | New test | Parent test |
+|---|---|---|
+| Drop depth guard (`listDepth < cap` → always nest) | fail, `10 !== 4` | fail, `7 !== 4` |
+| Drop joined items (skip `indent > first.indent`) | fail, deepest list missing | fail, no `level4<` |
+| `nestingDepth: 4` → `5` only | still green | — |
+| Restore two-space ladder in the new test | fail, deepest list missing | — |
+
+A change to the limit alone is not a discriminating mutation: the `<ul>` count and the expected deepest list both read `MESSAGE_MARKDOWN_LIMITS.nestingDepth`.
+
+I could not find a renderer change that keeps the new test green while flattening past-cap items or dropping them. The leftover `levelN<` loop still matches `</li>` and `<br>` alike; the new `includes(deepestList)` is what actually pins joining.
+
+13-space line, measured: `"<ul><li>top</li></ul><p>             - past the indent bound</p>"`. Not a list item. Text kept. 12 spaces, measured: nested `<li>at twelve</li>` — so 12 is accepted and 13 is not.
+
+Tried to refute “12-column ceiling” with tabs: 4 tabs is 16 columns (`indentWidth` counts a tab as 4) and still matches `{0,12}` characters, rendering as a nested `<li>`. The test fixture is 13 spaces, where column = character, so the indent case still reaches “this line is not a list item.” Not a finding against the depth-cap correction.
+
+## 3. Is the derived forbidden-attribute regex correct?
+
+Built source is `\son[a-z]+\s*=|\shref\s*=|\sstyle\s*=|\sclass\s*=` with flags `iu`. That is the old typed regex, byte for byte.
+
+Samples: `class="x"`, `onclick=x`, `href=`, `style=`, `onmouseover=`, `ONCLICK=` match. `align="center"` does not. `data-href=`, `xhref=`, `on1=`, `on=` do not (same as the old regex).
+
+Two-way control: `'<td class="x">'` and `"<td onclick=x>"` match; `"<td align=\"center\">"` does not. Empty regex fails the first two. A match-everything regex fails the third.
+
+HOSTILE_TABLE output tags are all bare `table|thead|tbody|tr|th|td` with no attributes, so the loop over rendered tags cannot fail unless the renderer starts emitting attributes. The control is what makes the regex itself fail-able. Dropping `href` and `style` from the array still leaves the test green, because those names are not on the generated tags and are not in the two-way control. The array still builds the regex used by the loop, so list and check cannot drift from each other. I could not turn that into a miss on the stated bug (comment named three, regex forbade four).
+
+## 4. Other claims the check cannot support
+
+Commit message (from `git log`, not in `DIFF.patch`): “Dropping the depth guard and dropping a joined item both fail it now; **neither did before.**” The parent test already fails both mutations (`7 !== 4`, missing `level4<`). That clause is false. It is not in the patch body, and the test comments do not repeat it.
+
+No other added sentence in the patch failed a clause check I could land.
+
+## 5. Behaviour change?
+
+Commit touches only `LiveDashboard.astro` (comment) and `message-markdown.test.mjs` (fixtures and assertions). No selector, declaration, or renderer line moved. Parent copies of the two tests still pass against this renderer.
+
+## 6. Misses from earlier rounds in these files
+
+Nothing new in the lines this diff touches. The leftover `levelN<` loop is still weak; the new deepest-list string is what does the work, and the comment says so.
+
+## Findings
+
+None.
+
+Refutations I tried and could not make work: Base `table` as a live scroll competitor; SeoPage as a bare `table` rule; a green renderer that still flattens or drops past-cap items; a derived regex that misses a case the old typed regex caught; a declaration or selector change hiding in the rebase.
+
+Not established: Chrome layout-observer run; that `site/dist` was produced from this SHA.
+
+VERDICT: PASS
