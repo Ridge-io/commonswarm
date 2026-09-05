@@ -165,6 +165,15 @@ export interface ChannelRow {
   archived_at: string | null;
 }
 
+/**
+ * The columns the human REST read asks for.
+ *
+ * It must equal CHANNEL_READ_COLUMNS in supabase/functions/_shared/channels.ts,
+ * which the agent read edge builds its SELECT from, or the two credentials get
+ * different fields for the same list. This file cannot import that module --
+ * tsconfig.json pins rootDir to src -- so the two arrays are pinned by
+ * tests/chat-channel-constants.test.ts, which imports BOTH and compares them.
+ */
 export const CHANNEL_COLUMNS = [
   "channel_id",
   "workspace_id",

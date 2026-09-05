@@ -13,6 +13,7 @@ import {
   type ReadHandlerPhase,
 } from "./diagnostics.ts";
 import {
+  CHANNEL_READ_COLUMNS,
   channelSlugProblem,
   chatReadKeys,
   normalizeChannelSlug,
@@ -118,23 +119,6 @@ interface ChannelReadRequest {
   resource: "channels";
   workspace_id: string;
 }
-
-/**
- * The channel columns, in the order the human REST read asks for them, so both
- * paths hand a caller the same eight fields in the same order. ChannelRow in
- * src/cloud/channels.ts is the client-side shape and
- * tests/chat-signal-wire-compat.test.ts fails when the two lists drift.
- */
-const CHANNEL_COLUMNS = [
-  "channel_id",
-  "workspace_id",
-  "slug",
-  "purpose",
-  "created_by_principal",
-  "created_by_kind",
-  "created_at",
-  "archived_at",
-] as const;
 
 /**
  * Explicit read-contract capability markers for agent-authenticated signals.
@@ -600,14 +584,17 @@ async function handle(
        * gate, and body.workspace_id was already required to equal
        * agent.principal_workspace_id or the empty envelope was returned. Two
        * walls, the same two every other resource here stands behind. */
-      const channels = await tx<Record<string, unknown>[]>`
-        SELECT
-          channel_id, workspace_id, slug, purpose,
-          created_by_principal, created_by_kind, created_at, archived_at
-        FROM swarm_read.channels
-        WHERE workspace_id = ${body.workspace_id}::uuid
-        ORDER BY lower(slug) ASC
-      `;
+      /* The column list is GENERATED from CHANNEL_READ_COLUMNS, the same array
+       * src/cloud/channels.ts pins itself against, so this cannot become a
+       * second typed copy. Identifiers come from a frozen constant in this
+       * repo and never from the request, and the one value is a parameter. */
+      const channels = await tx.unsafe<Record<string, unknown>[]>(
+        `SELECT ${CHANNEL_READ_COLUMNS.join(", ")}
+         FROM swarm_read.channels
+         WHERE workspace_id = $1::uuid
+         ORDER BY lower(slug) ASC`,
+        [body.workspace_id],
+      );
       return json(200, { channels });
     }
     if (body.resource === "renewal_grants") {

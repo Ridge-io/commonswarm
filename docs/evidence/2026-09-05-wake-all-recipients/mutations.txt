@@ -1,0 +1,147 @@
+MUTATION CONTROLS -- lane/wake-all-recipients, commit 3547d82
+
+Every block is a mutation that removes exactly one thing this lane added, the tests
+that go RED because of it, and the restored green. Ten mutations, ten distinct
+targets. Run in a detached worktree at the same SHA so the review arms could read
+the lane checkout untouched. The migration mutations each re-ran
+`supabase db reset --local` against the local Supabase slot this lane holds.
+
+Reporter is TAP so the failing test names are readable; "# tests / # pass / # fail"
+is the node summary.
+
+== M1 checkedRecipientSlot in src/cloud/delivery.ts always reports nothing ==
+-- baseline
+# tests 29
+# pass 29
+# fail 0
+-- mutated
+not ok 27 - a delivery this agent holds at position 1 is accepted, and its slot is reported
+not ok 28 - a server that reports no recipient set leaves both fields null, never a made-up 1 of 1
+not ok 29 - a recipient slot that cannot be true is refused, and the pair is refused as a pair
+# tests 29
+# pass 26
+# fail 3
+-- restored
+# tests 29
+# pass 29
+# fail 0
+
+== M2 buildListenerPrompt never renders the recipient clause ==
+-- baseline
+# tests 105
+# pass 105
+# fail 0
+-- mutated
+not ok 35 - a multi-recipient delivery says so in the prompt, and a single one says nothing
+not ok 105 - a service that fans out reaches the prompt with this listener's own slot
+# tests 105
+# pass 103
+# fail 2
+-- restored
+# tests 105
+# pass 105
+# fail 0
+
+== M3 the runtime stops passing the delivery context to the engine ==
+-- baseline
+# tests 70
+# pass 70
+# fail 0
+-- mutated
+not ok 70 - a service that fans out reaches the prompt with this listener's own slot
+# tests 70
+# pass 69
+# fail 1
+-- restored
+# tests 70
+# pass 70
+# fail 0
+
+== M4 hydrateDeliveryRefs goes back to the scalar recipient filter ==
+-- mutated
+not ok 27 - a 0.1.55 listener claims, hydrates and replies to a delivery it holds at position 1
+# tests 31
+# pass 30
+# fail 1
+-- restored
+# tests 31
+# pass 31
+# fail 0
+
+== M5 the read edge loses its channels arm ==
+-- mutated
+not ok 30 - an agent credential can list channels, with the same tenancy every resource here takes
+not ok 31 - an archived channel is listed to an agent, with the date that says so
+# tests 31
+# pass 29
+# fail 2
+-- restored
+# tests 31
+# pass 31
+# fail 0
+
+== M6 the fan-out trigger on swarm.signal_recipients is not created ==
+db:reset exit=0
+-- mutated
+not ok 3 - every agent recipient is woken, whatever position it sits at
+not ok 4 - the fan-out cannot outrun the recipient cap, because the cap is the position CHECK
+not ok 6 - a dead signal, a revoked agent and an agent talking to itself write no delivery row
+not ok 7 - the delivery ledger is written by two triggers and by nothing else
+not ok 39 - addressing a second agent wakes it too, and wakes the first exactly once
+not ok 40 - a person first and an agent second wakes the agent, which L2 did not
+not ok 41 - a 0.1.55 listener claims, hydrates and replies to a delivery it holds at position 1
+not ok 42 - the sender's receipt names every agent that was woken
+# tests 45
+# pass 37
+# fail 8
+
+== M7 the shared predicate stops checking revoked_at ==
+db:reset exit=0
+-- mutated
+not ok 6 - a dead signal, a revoked agent and an agent talking to itself write no delivery row
+# tests 14
+# pass 13
+# fail 1
+
+== M8 the shared predicate stops refusing a self-addressed signal ==
+db:reset exit=0
+-- mutated
+not ok 6 - a dead signal, a revoked agent and an agent talking to itself write no delivery row
+# tests 14
+# pass 13
+# fail 1
+restore db:reset exit=0
+-- restored
+# tests 45
+# pass 45
+# fail 0
+
+== M9 the shared predicate stops checking until ==
+db:reset exit=0
+-- mutated
+not ok 6 - a dead signal, a revoked agent and an agent talking to itself write no delivery row
+# tests 14
+# pass 13
+# fail 1
+
+== M10 the shared predicate wakes only ask, dropping note ==
+db:reset exit=0
+-- mutated
+not ok 5 - the wakeable kinds are exactly the kinds the delivery client accepts
+# tests 14
+# pass 13
+# fail 1
+restore db:reset exit=0
+-- restored
+# tests 14
+# pass 14
+# fail 0
+
+WHAT THE SET DOES NOT COVER, said plainly:
+- M6 (no fan-out trigger) leaves "the wakeable kinds are exactly the kinds the
+  delivery client accepts" GREEN, because the trigger on swarm.signals still
+  enforces the same kind list through the same predicate. M10 is that test's own
+  control: dropping `note` from the predicate turns it red.
+- No mutation was run for the `channels` column list or the receipt human half.
+  The column list is asserted directly by the p1-server test, and the human half
+  is a bound this lane records rather than a behaviour it changes.

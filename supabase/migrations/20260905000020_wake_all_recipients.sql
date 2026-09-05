@@ -45,8 +45,8 @@
 -- way, or the ledger says one thing for position 0 and another for position 1.
 -- So the question is asked in exactly one place.
 --
--- Three of these four clauses close blind spots 20260905000010 recorded and
--- did not fix. They are stated as what they refuse:
+-- Two of these three clauses close blind spots 20260905000010 recorded and did
+-- not fix. They are stated as what they refuse:
 --
 --   kind        Only `ask` and `note` are ever delivered. Pre-existing, moved
 --               here unchanged. tests/p1-local/chat-recipients-postgres.test.ts
@@ -71,14 +71,26 @@
 --               revoked principal, so nothing ever claims the row, nothing ever
 --               terminalizes it, and it counts in pending_delivery_count for
 --               ever. This is the blind spot with no self-healing path.
---   self        An agent does not wake itself. This is a REAL BEHAVIOUR CHANGE
---               and the only clause here that is: nothing in the command edge
---               refuses a self-addressed post, so before this file an agent
---               that named itself woke itself, its listener answered, and the
---               reply was re-addressed to the sender, which is the same agent.
---               The fan-out is what makes the shape easy to reach by accident:
---               an agent posting to a group it belongs to would wake itself on
---               every turn. Nothing outside this clause prevents that.
+--
+-- A FOURTH CLAUSE WAS WRITTEN AND REMOVED, and the reason belongs here because
+-- the idea comes back every time somebody reads the fan-out:
+--
+--   self        "An agent does not wake itself." A review arm refuted it. A
+--               SELF-ADDRESSED NOTE IS A SUPPORTED FIRST-PARTY PATH:
+--               runListenerAttendanceCanary in src/listener/attendance-canary.ts
+--               posts `to_agent_principal_id: options.principalId` with the
+--               agent's own credential, and `cswarm listen canary` is that path.
+--               The clause stopped the canary's wake, so the canary would stall
+--               before `claimed` and report a listener that is running as
+--               absent. Applying it only to the recipient rows was rejected in
+--               turn: the scalar shape and a one-entry `to` list must write the
+--               same ledger, which is a measured claim in both suites.
+--
+--               So an agent CAN still wake itself, at any position, exactly as
+--               before. What the fan-out adds is the accidental shape: an agent
+--               posting to a group it belongs to wakes itself on every turn.
+--               Nothing here prevents that, and closing it needs a rule that
+--               can tell the canary apart from a group reply.
 --
 -- WHAT IT DOES NOT CLOSE, said plainly: revocation and expiry AFTER the insert.
 -- A row enqueued to a live agent that is revoked a minute later is still
@@ -106,7 +118,6 @@ AS $$
       AND s.kind IN ('ask', 'note')
       AND s.until > statement_timestamp()
       AND recipient.revoked_at IS NULL
-      AND NOT (s.from_kind = 'agent' AND s.from_principal = p_agent_principal_id)
   );
 $$;
 

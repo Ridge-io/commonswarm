@@ -590,7 +590,18 @@ test("the wakeable kinds are exactly the kinds the delivery client accepts", asy
             { agent: f.agentOne },
             { agent: f.agentTwo },
           ]);
-          if ((await wokenAgents(tx, id)).length > 0) woke.push(kind);
+          const agents = await wokenAgents(tx, id);
+          if (agents.length > 0) {
+            woke.push(kind);
+            /* A delivered kind wakes BOTH recipients, not only the scalar one.
+             * Without this the test would pass on the pre-fan-out trigger,
+             * which a review arm named. */
+            assert.deepEqual(
+              agents,
+              [f.agentOne, f.agentTwo].sort(),
+              `kind ${kind} must wake every agent recipient, not only position 0`,
+            );
+          }
         }
         assert.deepEqual(
           woke.sort(),
@@ -612,10 +623,17 @@ test("the wakeable kinds are exactly the kinds the delivery client accepts", asy
   }
 });
 
-test("a dead signal, a revoked agent and an agent talking to itself write no delivery row", async () => {
-  /* The three blind spots 20260905000010 recorded and did not fix. Each one is
-   * paired with a positive control that differs in exactly the one field, so a
-   * zero here is the clause refusing and not the fixture failing to insert. */
+test("a dead signal and a revoked agent write no delivery row, and a self-note still does", async () => {
+  /* Two of the three blind spots 20260905000010 recorded. Each is paired with a
+   * positive control that differs in exactly the one field, so a zero here is
+   * the clause refusing and not the fixture failing to insert.
+   *
+   * THE THIRD IS DELIBERATELY NOT REFUSED. A clause that stopped an agent from
+   * waking itself was written and removed: a review arm found that
+   * runListenerAttendanceCanary posts exactly that shape and `cswarm listen
+   * canary` depends on the wake. The self-note case below is therefore a
+   * POSITIVE assertion -- it must still wake -- and section 1 of
+   * 20260905000020 carries the reason. */
   const sql = postgres(databaseUrl(), { max: 1 });
   const f = newFixture();
   try {
@@ -686,7 +704,9 @@ test("a dead signal, a revoked agent and an agent talking to itself write no del
           "the live agent is woken and the revoked one is not",
         );
 
-        // SELF. An agent that names itself in its own signal.
+        /* SELF. The listener attendance canary is exactly this shape: an agent
+         * posting a note to itself with its own credential. It MUST still wake,
+         * or `cswarm listen canary` reports a running listener as absent. */
         const selfSent = randomUUID();
         await insertSignal(tx, {
           id: selfSent,
@@ -695,16 +715,16 @@ test("a dead signal, a revoked agent and an agent talking to itself write no del
           fromKind: "agent",
           toUserId: null,
           toAgent: f.agentOne,
-          kind: "ask",
-          body: "talking to myself",
+          kind: "note",
+          body: "CommonSwarm listener attendance canary. No reply is needed.",
         });
         await addRecipients(tx, selfSent, f.workspaceA, [
           { agent: f.agentOne },
         ]);
         assert.deepEqual(
           await wokenAgents(tx, selfSent),
-          [],
-          "an agent does not wake itself",
+          [f.agentOne],
+          "an agent still wakes itself, which is what cswarm listen canary needs",
         );
 
         const fromOther = randomUUID();
@@ -724,7 +744,7 @@ test("a dead signal, a revoked agent and an agent talking to itself write no del
         assert.deepEqual(
           await wokenAgents(tx, fromOther),
           [f.agentOne],
-          "control: the same agent sender wakes a DIFFERENT agent",
+          "control: the same agent sender also wakes a DIFFERENT agent",
         );
 
         throw ROLLBACK;

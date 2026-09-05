@@ -4,6 +4,7 @@ import { fileURLToPath } from "node:url";
 import test from "node:test";
 import {
   CHANNEL_PURPOSE_MAX,
+  CHANNEL_READ_COLUMNS,
   CHANNEL_SLUG_MAX,
   CHANNEL_SLUG_CLASSES,
   CHANNEL_SLUG_RE,
@@ -20,6 +21,7 @@ import {
   signalRecipientListProblem,
   unknownChannelMessage,
 } from "../supabase/functions/_shared/channels.js";
+import { CHANNEL_COLUMNS } from "../src/cloud/channels.js";
 import { COMPOSER_TO_MAX } from "../site/src/lib/composer-address.js";
 import { MENTION_MAX_RECIPIENTS } from "../site/src/lib/mention-address.js";
 
@@ -503,5 +505,29 @@ test("every surface that summarises the wake uses one clause, and every retired 
       )
     ),
     false,
+  );
+});
+
+test("both channel readers ask for the same columns in the same order", () => {
+  /* The agent read edge builds its SELECT from CHANNEL_READ_COLUMNS and the
+   * human REST read builds its `select=` from CHANNEL_COLUMNS. Neither file can
+   * import the other -- one is a Deno module, the other is inside the tsconfig
+   * rootDir -- so this is the control that keeps them one list.
+   *
+   * ITS BOUND: this compares the two EXPORTED arrays by importing both. It does
+   * not read either SQL string, so a query that stops using its constant would
+   * still pass here. That is why the edge interpolates the array into the
+   * SELECT rather than repeating it, and why the p1-server test asserts the
+   * KEYS that actually come back. */
+  assert.deepEqual(
+    [...CHANNEL_COLUMNS],
+    [...CHANNEL_READ_COLUMNS],
+    "the agent read edge and the human REST read must return the same columns",
+  );
+  /* Control: the comparison can fail. A list that differs by one entry is not
+   * deep-equal to either. */
+  assert.notDeepEqual(
+    [...CHANNEL_READ_COLUMNS].slice(1),
+    [...CHANNEL_COLUMNS],
   );
 });

@@ -25,6 +25,7 @@ import { createClient, type SupabaseClient } from "@supabase/supabase-js";
 import postgres from "postgres";
 import { awaitFunctionRunning } from "../support/edge-readiness.js";
 import {
+  CHANNEL_READ_COLUMNS,
   MODEL_RULE_TEXT,
   SIGNAL_RECIPIENT_MAX,
   uuidFieldRuleText,
@@ -1681,19 +1682,15 @@ test("an agent credential can list channels, with the same tenancy every resourc
   assert.ok(Array.isArray(channels), "the envelope carries a channels array");
   const found = channels.find((row) => row.slug === slug);
   assert.ok(found, `the channel this test created must be listed: ${JSON.stringify(listed.body)}`);
+  /* Generated from the constant the edge builds its SELECT from, so this cannot
+   * become a fourth typed copy of the column list. It measures the KEYS that
+   * actually came back, which is the half tests/chat-channel-constants.test.ts
+   * cannot reach: that one compares the two exported arrays and never runs a
+   * query. */
   assert.deepEqual(
     Object.keys(found).sort(),
-    [
-      "archived_at",
-      "channel_id",
-      "created_at",
-      "created_by_kind",
-      "created_by_principal",
-      "purpose",
-      "slug",
-      "workspace_id",
-    ],
-    "the agent path returns the same eight columns the human REST read asks for",
+    [...CHANNEL_READ_COLUMNS].sort(),
+    "the agent path returns exactly the columns CHANNEL_READ_COLUMNS names",
   );
 
   /* TENANCY: another workspace is an empty envelope, not a 403 and not another

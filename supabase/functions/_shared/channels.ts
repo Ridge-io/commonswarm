@@ -250,6 +250,30 @@ export type SignalRecipientKind = typeof SIGNAL_RECIPIENT_KINDS[number];
 export const SIGNAL_RECIPIENT_MAX = 8;
 
 /**
+ * The channel columns every reader asks for, in one order, so the human REST
+ * read and the agent read edge hand back the same eight fields.
+ *
+ * It lives here because this module is the one file BOTH sides can import: the
+ * `read` edge runs under Deno and cannot import from `src/`, and `src/` cannot
+ * import from `supabase/functions/` under `tsconfig.json`. Anything else would
+ * be a typed copy with nothing holding it equal.
+ *
+ * The control is tests/chat-channel-constants.test.ts, which imports this array
+ * AND `CHANNEL_COLUMNS` from src/cloud/channels.ts and fails when they differ.
+ * It is a real import on both sides, not a source-text sweep.
+ */
+export const CHANNEL_READ_COLUMNS = [
+  "channel_id",
+  "workspace_id",
+  "slug",
+  "purpose",
+  "created_by_principal",
+  "created_by_kind",
+  "created_at",
+  "archived_at",
+] as const;
+
+/**
  * The scalar recipient fields a body may still send. `to` replaces BOTH of
  * them, so the conflict sentence names whichever one the caller set, from this
  * list rather than from a typed pair.

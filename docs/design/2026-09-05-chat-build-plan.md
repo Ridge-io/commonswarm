@@ -386,15 +386,17 @@ Corrections to the L2 section above, which a reader may still meet:
   later in the list."** That shape wakes every agent named after the person.
 - **RETIRED: "Waking recipients 1..N ... is its own lane, not started."** It is this lane.
 
-Of the three bounds L2 recorded on the wake clause, all three are closed in the shared predicate
-`swarm.agent_delivery_is_wakeable`, and one of them is a real behaviour change:
+Of the three bounds L2 recorded on the wake clause, two are closed in the shared predicate
+`swarm.agent_delivery_is_wakeable` and the third was deliberately left open:
 
 - an expired signal no longer enqueues. Reach: `signals_check` (`until > created_at`) means the edge
   cannot produce this shape at all, so it is a second wall on a backdated direct insert.
 - a revoked agent no longer enqueues. Its row was unclaimable and uncounted-down for ever.
-- an agent no longer wakes ITSELF. Nothing in the command edge refuses a self-addressed post, so
-  this changes what an agent that names itself gets: before, a delivery, a model turn, and a reply
-  addressed back to itself.
+- an agent STILL wakes itself. A clause refusing that was written and removed after a review arm
+  found `runListenerAttendanceCanary` posts exactly that shape, so `cswarm listen canary` needs the
+  wake. What the fan-out adds is the accidental case, an agent posting to a group it belongs to and
+  waking itself on every turn; closing that needs a rule that can tell the canary apart from a
+  group reply, and this lane does not have one.
 
 Still open, and named rather than fixed: revocation or expiry AFTER the row is enqueued leaves an
 unreachable pending row, because the predicate runs once at insert.
