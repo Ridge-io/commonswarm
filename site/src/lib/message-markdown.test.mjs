@@ -133,6 +133,40 @@ test("the sanitizer keeps only the tag allowlist and href on anchors", () => {
   );
 });
 
+/* MESSAGE_MARKDOWN_ATTRIBUTES is a claim about what sanitizeTag does; sanitizeTag does not read
+   it. The test above pins the constant against a second typed copy, which is the shape AGENTS.md
+   calls out: two lists that agree with each other and nothing that makes them agree with the
+   ENFORCEMENT. So this drives the sanitizer once per allowed tag with every attribute the
+   renderer could be made to emit, and requires the survivors to equal the exported set exactly.
+
+   It fails in both directions: an attribute kept but not declared, and an attribute declared but
+   not kept. Adding a tag to MESSAGE_MARKDOWN_TAGS with no entry here asserts that it keeps
+   nothing, so a new tag cannot arrive with an undeclared attribute. */
+test("the surviving attributes are exactly the exported set, tag by tag", () => {
+  /* One value per attribute that the allowlist could legitimately accept, so a tag that keeps its
+     attribute is visible, plus the sinks that must never survive on anything. */
+  const probe =
+    ' href="https://example.com/probe" align="center" class="' + MESSAGE_TASK_CLASS + '"' +
+    ' style="color:red" id="probe" onclick="alert(1)" srcdoc="x" target="_top" rel="opener"' +
+    ' data-topic="x" title="x"';
+  const attributesOf = (html) =>
+    [...html.matchAll(/\s([a-z-]+)\s*=\s*"/giu)].map((match) => match[1]).sort();
+
+  for (const tag of MESSAGE_MARKDOWN_TAGS) {
+    const kept = sanitizeMessageHtml(`<${tag}${probe}>`);
+    const expected = [...(MESSAGE_MARKDOWN_ATTRIBUTES[tag] ?? [])].sort();
+    assert.deepEqual(attributesOf(kept), expected, `${tag} kept: ${kept}`);
+    /* The tag itself has to survive, or an empty attribute list would be vacuously right. */
+    assert.match(kept, new RegExp(`^<${tag}(?:\\s|>)`, "u"), `${tag} was dropped: ${kept}`);
+  }
+
+  /* Every tag the exported attribute map names must be a tag the allowlist actually holds, so the
+     map cannot describe a tag that no longer exists. */
+  for (const tag of Object.keys(MESSAGE_MARKDOWN_ATTRIBUTES)) {
+    assert.ok(MESSAGE_MARKDOWN_TAGS.includes(tag), `${tag} is not in MESSAGE_MARKDOWN_TAGS`);
+  }
+});
+
 test("the DOM setter uses sanitized HTML and fixes link rel and target", () => {
   const link = { rel: "", target: "" };
   const element = {
