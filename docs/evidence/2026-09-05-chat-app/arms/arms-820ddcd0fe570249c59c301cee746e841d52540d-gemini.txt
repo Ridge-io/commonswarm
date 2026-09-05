@@ -1,0 +1,19 @@
+diff --git a/docs/design/2026-09-05-chat-app-channels.md b/docs/design/2026-09-05-chat-app-channels.md
+
+1. **`addressMoved` calculation misses a move to all-signals and misfires on heal**
+- **File:** `site/src/components/app/LiveDashboard.astro`
+- **Line:** 5675
+- **What breaks:** The retirement evaluation `next !== activeChannelId` fails to fire exactly when the address moves for the paths exiting the unresolved state.
+- **How you would see it:** Walk the two paths exiting `unknownChannelId !== null` (where `activeChannelId` is always `null`):
+  1. The `?c=` heal: `selectChannel(unknownChannelId)` is called. The address conceptually stays the same (the previously broken ID is now resolved), but `addressMoved` compares the ID to `null` and evaluates to `true`, incorrectly firing retirement when the address did not actually move.
+  2. `selectChannel(null)` from the unresolved feed: The user clicks "Open #all-signals". The address moves from the broken ID to the unfiltered feed, but `addressMoved` compares `null !== null` and evaluates to `false`, incorrectly skipping retirement when the address *did* move.
+- **Refute:** Because the composer is now strictly hidden while `unknownChannelId !== null`, the user cannot mint a `composerIntent` while in the unresolved state. Therefore, misfiring or skipping the retirement in these two cases acts on a `null` intent and does not currently cause double-posts or leak state. The logic is technically flawed but practically harmless due to the hidden composer.
+
+2. **`postedSinceReset` clears in-flight posts, dropping them from the reset page**
+- **File:** `site/src/components/app/LiveDashboard.astro`
+- **Line:** 4599
+- **What breaks:** A row posted while a reset page is in flight can be dropped if the fetched page does not yet carry it.
+- **How you would see it:** The success and failure paths of the composer correctly add posted IDs to `postedSinceReset`. However, if `loadSignals` is called with `reset = true` (e.g., the user posts in `#ops` and immediately clicks `#all-signals`), line 4599 unconditionally clears `postedSinceReset = new Set<string>()`. When the new page lands, if it is slightly stale due to replica delay and doesn't contain the new post, `arrivedWhileFetching` cannot rescue the row because its ID was just erased from the set. The row vanishes from the screen and won't appear until a future poll.
+- **Refute:** The set was likely cleared here to prevent rows from leaking across channels (if `#ops` rows remained in `postedSinceReset`, `arrivedWhileFetching` would prepend them to `#mobile` because it filters only by the set, not by `showsOnScreen(row)`). However, solving the channel-leak defect by unconditionally clearing the set creates this new drop defect, directly violating the claim that a reset page does not drop a post.
+
+VERDICT: FAIL

@@ -1127,6 +1127,7 @@ import "../../styles/tokens.css";
     createChannel,
     renameChannel,
     archiveChannel,
+    type BrowserSignalPlacement,
     type Signal,
     type WorkspaceChannel,
     type AgentAccessStatus,
@@ -1341,6 +1342,15 @@ import "../../styles/tokens.css";
       if (postedSinceReset.size === 0) return;
       for (const row of rows) postedSinceReset.delete(row.id);
     };
+
+    /**
+     * Would the list on screen show this row? The SERVER stamped its channel, so this asks the
+     * same question the query on screen asks. The composer's landing rule and the reset page's
+     * merge are the same question and must not be two answers.
+     */
+    const rowShowsOnScreen = (row: Signal): boolean =>
+      unknownChannelId === null &&
+      (activeChannelId === null || row.channelId === activeChannelId);
     /**
      * One generation per channel READ, because a channel command does not bump requestVersion
      * (it is not a workspace change). Archive and Create are different buttons and each only
@@ -1412,12 +1422,15 @@ import "../../styles/tokens.css";
       audienceKey: string;
       attachmentKey: string;
       signalKind: BrowserSignalKind;
-      /** WHERE it was addressed, kept with the ids. A retry replays the address it was sent
-       * to, not the channel the reader happens to be looking at when they press it: a partial
-       * send in one channel, a switch, and a Retry filed the rest in the OTHER channel, and a
-       * failed thread reply lost its thread because the switch cleared it. Both arms. */
-      placement: BrowserSignalPlacement;
-      /** The channel id an optimistic row should show, matching that placement. */
+      /**
+       * WHERE it was addressed, as an ID and never as a slug. A retry replays the address the
+       * message was sent to rather than the channel the reader is looking at when they press
+       * it. It is the id because `post_signal` takes a SLUG and the edge resolves that slug
+       * against the live row: a rename between a failed send and its Retry made the replay
+       * name a channel that no longer exists, or — if another member had taken the freed name
+       * — someone else's. Found by a review arm. The slug is resolved from this id at the
+       * moment of sending.
+       */
       placementChannelId: string | null;
     } | null = null;
     let composerSending = false;
@@ -4594,9 +4607,6 @@ import "../../styles/tokens.css";
       if (reset) {
         signalCursor = null;
         signalCutoff = new Date().toISOString();
-        /* Cleared as the request goes out, so only rows posted while THIS page was in flight
-           are kept when it lands. */
-        postedSinceReset = new Set<string>();
       }
       /* The channel is captured with the request and checked again when it lands, the same
          way the workspace is. Without it a page fetched for #mobile could be applied after
@@ -4610,9 +4620,15 @@ import "../../styles/tokens.css";
       ) return;
       if (reset) {
         const fetched = new Set(page.rows.map((row) => row.id));
+        /* ~~cleared as the request went out~~: that dropped a row posted BEFORE the request
+           and not yet visible to the read replica, which is the case this set exists for. The
+           set is not cleared here at all; what keeps a row from another channel out is the
+           same question the screen asks, and `signals` was emptied by the move in any case.
+           Found by a review arm. */
         const arrivedWhileFetching = signals.filter(
-          (row) => postedSinceReset.has(row.id) && !fetched.has(row.id),
+          (row) => postedSinceReset.has(row.id) && !fetched.has(row.id) && rowShowsOnScreen(row),
         );
+        forgetFetchedPostedIds(page.rows);
         signals = [...arrivedWhileFetching, ...page.rows];
       } else {
         forgetFetchedPostedIds(page.rows);
@@ -5665,6 +5681,13 @@ import "../../styles/tokens.css";
         ? null
         : channelById(channels, channelId)?.channelId ?? null;
       if (channelId !== null && next === null) return;
+      /* The place the reader is leaving. An unresolved `?c=` is a place too, and comparing
+         only `activeChannelId` (which is null throughout that state) called the `?c=` heal a
+         move and called "Open all-signals" from the unresolved feed a no-op. Both are the
+         wrong way round. Found by a review arm; harmless today because the composer is hidden
+         while unresolved, so no intent can exist there — written correctly rather than left
+         to depend on that. */
+      const previousPlace = unknownChannelId ?? activeChannelId;
       const changed = next !== activeChannelId || unknownChannelId !== null;
       /* `changed` is also true when only the unresolved state clears. The RETIREMENT below
          needs the narrower question — did the address actually move — because clicking the
@@ -5672,7 +5695,7 @@ import "../../styles/tokens.css";
          replaced the send error with a sentence about a move that did not happen, and left
          Enter minting fresh command ids that reposted every hop that had already landed.
          Found by a review arm; introduced by the fix two rounds earlier. */
-      const addressMoved = next !== activeChannelId;
+      const addressMoved = next !== previousPlace;
       activeChannelId = next;
       unknownChannelId = null;
       disarmChannelArchive();
@@ -6853,17 +6876,8 @@ import "../../styles/tokens.css";
          does belong, and stripped rows out of a page that had already fetched them. The
          question a landing row has to answer is the one the list on screen asks, and the
          server stamped the row's channel, so the row answers it. Both arms found both. */
-      /**
-       * Would the list on screen show this row? The SERVER stamped its channel, so this asks
-       * the same question the query on screen asks rather than comparing view identities.
-       * Comparing identities was wrong in two directions: a post made in a channel and then
-       * read from all-signals belongs on screen and was dropped, and the row was also stripped
-       * out of a page that had already fetched it, so it appeared, vanished, and came back on
-       * the next poll. A review arm found both.
-       */
-      const showsOnScreen = (row: Signal): boolean =>
-        unknownChannelId === null &&
-        (activeChannelId === null || row.channelId === activeChannelId);
+      /* One rule, one place: `rowShowsOnScreen` is what the reset page's merge asks too. */
+      const showsOnScreen = rowShowsOnScreen;
       /* One signal per @tag. The wire has no many-recipient shape, so this is a loop, and
        * every tagged agent gets its own row, its own wake, and its own delivery receipt. An
        * untagged body is one broadcast, exactly as before.
@@ -6894,9 +6908,7 @@ import "../../styles/tokens.css";
          `#` legitimately and a parser could not tell a heading from an address. A reply
          inherits its root's channel from the SERVER: the client may not file a reply
          somewhere its thread is not, and the edge refuses a body that names both. */
-      const postChannel = activeChannel();
-      const freshPlacement = postChannel === null ? {} : { channel: postChannel.slug };
-      const freshPlacementChannelId = postChannel?.channelId ?? null;
+      const freshPlacementChannelId = activeChannel()?.channelId ?? null;
       const recipientKinds = recipients.map((recipient) => browserSignalKind(recipient));
       const signalKind = recipientKinds.join("+");
       const audienceKey = composerRecipientsKey();
@@ -6916,7 +6928,6 @@ import "../../styles/tokens.css";
           audienceKey,
           attachmentKey,
           signalKind,
-          placement: freshPlacement,
           placementChannelId: freshPlacementChannelId,
         };
         composerIntent = intent;
@@ -6925,8 +6936,26 @@ import "../../styles/tokens.css";
       /* A REPLAY KEEPS ITS OWN ADDRESS. The command ids are the server's idempotency keys, so
        * the hops that already landed must be replayed at the same address; and the hops that
        * did not are part of the same message, which was addressed once. */
-      const placement = intent.placement;
       const placementChannelId = intent.placementChannelId;
+      const placementChannel = placementChannelId === null
+        ? null
+        : channelById(channels, placementChannelId);
+      if (placementChannelId !== null && placementChannel === null) {
+        /* The channel this message was addressed to is not in the list any more: archived, or
+           removed while the send sat unfinished. Posting it unfiled would put it somewhere the
+           writer never chose, and guessing another channel would be worse. */
+        setComposerStatus(
+          "The channel this message was addressed to is not in this workspace any more. Send it from the channel you want it in.",
+          "error",
+        );
+        composerIntent = null;
+        const staleRetry = one<HTMLButtonElement>("[data-composer-retry]");
+        if (staleRetry) staleRetry.hidden = true;
+        return;
+      }
+      const placement: BrowserSignalPlacement = placementChannel === null
+        ? {}
+        : { channel: placementChannel.slug };
       /** The chip a pending or posted row shows: its own recipient, not the whole address. */
       const mentionsFor = (recipient: ComposerAudience): EntityRef[] =>
         recipient.kind === "everyone" ? [] : [{ kind: recipient.kind, id: recipient.id }];
@@ -7134,7 +7163,6 @@ import "../../styles/tokens.css";
             audienceKey,
             attachmentKey,
             signalKind,
-            placement,
             placementChannelId,
           }
           : null;

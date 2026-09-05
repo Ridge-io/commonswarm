@@ -107,10 +107,17 @@ The rule is the one the list on screen already applies, asked of the row: `shows
 when there is no channel narrowing or when the row's own `channel_id` — the server's, not the client's
 guess — matches it. A row is removed from the list only when it is about to be put back.
 
-**A retry replays the address the message was sent to.** `composerIntent` carries the placement beside
-the command ids, on the mint AND on the rewrite the failure path makes. Leaving it off that rewrite was
-its own defect: the replay reads `intent.placement`, and `postBrowserSignal` defaults a missing one to
-`{}`, so every retry after a partial failure posted unfiled with no channel switch involved.
+**A retry replays the address the message was sent to, and that address is an ID.** `composerIntent`
+carries `placementChannelId` beside the command ids, on the mint AND on the rewrite the failure path
+makes; leaving it off that rewrite was its own defect, because the replay reads it and
+`postBrowserSignal` defaults a missing address to `{}`, so every retry after a partial failure posted
+unfiled with no channel switch involved.
+
+It is the id and never the slug. `post_signal` takes a slug and the edge resolves it against the live
+row, so a rename between a failed send and its Retry made the replay name a channel that no longer
+exists — or, if another member had taken the freed name, someone else's. The slug is resolved from the
+id at the moment of sending, and a send whose channel has left the list is refused with a sentence
+rather than posted unfiled.
 
 **And an unfinished send does not follow the reader to another channel.** Moving channel retires the
 intent and says so, because the composer is about to promise the new channel and replaying the old
@@ -233,7 +240,7 @@ forbids.
    never reached them and the rail claimed a current channel while the head said Files. Found by a
    review arm. In the unresolved-channel state the rail marks NOTHING current, which both arms read
    and agreed is the honest mark: the reader is in the signals view and in no channel.
-9. **Eight review rounds cost twenty-five product defects and two evidence defects**, every one found by an
+9. **Ten review rounds cost twenty-eight product defects and two evidence defects**, every one found by an
    arm and none by a gate: the read-permission claim in the copy; the composer that posted into the
    unfiltered feed from an unresolved link; a double current mark on Files and Brain; four typed
    copies of the view's name; a workspace switch that opened as "Channel not found"; a channel-list

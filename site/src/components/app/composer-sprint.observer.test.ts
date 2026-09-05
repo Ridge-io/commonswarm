@@ -250,13 +250,15 @@ const assertComposerSprint = (value: ComposerArtifact): void => {
    * landed replay idempotently instead of arriving again. */
   /* The rewritten intent gained `placement` / `placementChannelId` on 2026-09-05: without
      them a retry after a partial failure posted UNFILED, because the replay reads
-     `intent.placement` and a missing one defaults to `{}`. It is written back only when the
+     the address and a missing one defaults to `{}`. The address is the channel ID, resolved to
+     a slug at send time, because a frozen slug made a Retry after a rename name the wrong
+     channel. It is written back only when the
      send is still `resumable` — unsent AND still addressed to the channel on screen — because
      a channel change retires it and the catch was putting it back. The property here is
      unchanged: when there IS a retry, every command id is kept. */
   assert.match(
     failed,
-    /composerIntent = resumable[\s\S]{0,400}?commandIds,\s*\n\s*body: rawBody,\s*\n\s*audienceKey,\s*\n\s*attachmentKey,\s*\n\s*signalKind,\s*\n\s*placement,\s*\n\s*placementChannelId,/,
+    /composerIntent = resumable[\s\S]{0,400}?commandIds,\s*\n\s*body: rawBody,\s*\n\s*audienceKey,\s*\n\s*attachmentKey,\s*\n\s*signalKind,\s*\n\s*placementChannelId,/,
     "failed-send-audience: a retry must reuse every command id, not mint new ones",
   );
   assert.match(

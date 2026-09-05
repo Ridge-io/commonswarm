@@ -155,8 +155,18 @@ test("the composer stamps the channel being read and gains no chrome for it", ()
   /* And no `#` parsing of the body, ever: bodies contain `#` legitimately (a Markdown
      heading, an issue reference), so a parser cannot tell an address from prose. */
   assert.doesNotMatch(dashboard, /rawBody[^\n]*match\([^\n]*#/);
-  const placement = between(dashboard, "const postChannel = activeChannel();", "const placementChannelId");
-  assert.match(placement, /const freshPlacement = postChannel === null \? \{\} : \{ channel: postChannel\.slug \};/);
+  /* THE INTENT KEEPS AN ID, NEVER A SLUG. `post_signal` takes a slug and the edge resolves it
+     against the live row, so a frozen slug made a Retry after a rename name a channel that no
+     longer exists — or, if another member had taken the freed name, someone else's. A review
+     arm found it. The slug is resolved from the id at the moment of sending, and a send whose
+     channel has left the list is refused rather than posted unfiled. */
+  const placement = between(dashboard, "const freshPlacementChannelId =", "const attachmentSnapshot");
+  assert.match(placement, /const freshPlacementChannelId = activeChannel\(\)\?\.channelId \?\? null;/);
+  const resolve = between(dashboard, "const placementChannelId = intent.placementChannelId;", "const mentionsFor");
+  assert.match(resolve, /channelById\(channels, placementChannelId\)/);
+  assert.match(resolve, /const placement: BrowserSignalPlacement = placementChannel === null\s*\n\s*\? \{\}\s*\n\s*: \{ channel: placementChannel\.slug \};/);
+  assert.match(resolve, /is not in this workspace any more/);
+  assert.doesNotMatch(dashboard, /placement: freshPlacement/);
   /* THREADS ARE NOT THIS LANE (cut 2026-09-05 to `lane/chat-app-threads`). The browser never
      sends `thread_root_id` or `broadcast_to_channel`; a reply written from the CLI still
      renders, inline in the flat feed, which is what the design states for a client that does
@@ -266,17 +276,23 @@ test("a post belongs to the channel it was sent from, whatever the reader does n
      out of a page that had already fetched it, so it appeared, vanished, and returned on the
      next poll. The question is the one the query on screen asks, and the SERVER stamped the
      row's channel, so the row answers it. A review arm found both directions. */
+  /* One rule, one place: the composer's landing rule and the reset page's merge ask the same
+     question, so they cannot be two answers. */
+  assert.match(submit, /const showsOnScreen = rowShowsOnScreen;/);
   assert.match(
-    submit,
-    /const showsOnScreen = \(row: Signal\): boolean =>\s*\n\s*unknownChannelId === null &&\s*\n\s*\(activeChannelId === null \|\| row\.channelId === activeChannelId\);/,
+    dashboard,
+    /const rowShowsOnScreen = \(row: Signal\): boolean =>\s*\n\s*unknownChannelId === null &&\s*\n\s*\(activeChannelId === null \|\| row\.channelId === activeChannelId\);/,
   );
   /* And a retry replays the address the message was sent to, not the channel the reader is
      looking at when they press it: a partial send, a switch, and a Retry filed the rest in
      the OTHER channel, and a failed thread reply lost its thread because the switch cleared
      it. Both arms found it. */
-  assert.match(submit, /placement: freshPlacement,/);
-  assert.match(submit, /const placement = intent\.placement;/);
+  /* ~~`placement: freshPlacement` / `const placement = intent.placement`~~ 2026-09-05: the
+     intent keeps the channel ID and the slug is resolved from it at send time, because a
+     frozen slug made a Retry after a rename name the wrong channel. */
+  assert.match(submit, /placementChannelId: freshPlacementChannelId,/);
   assert.match(submit, /const placementChannelId = intent\.placementChannelId;/);
+  assert.doesNotMatch(submit, /intent\.placement\b/);
   /*
    * AND IT IS NOT A REASON TO ABANDON THE SEND. Returning early on a channel change left the
    * draft uncleared, the pending rows in two caches, the status stuck on "Posting…", and — on
@@ -411,7 +427,11 @@ test("an unfinished send is not resumed into a channel it was not addressed to",
      reposted every hop that had already landed. Found by a review arm, on a fix from two
      rounds earlier. */
   const select = between(dashboard, "const selectChannel = (", "const setChannelDialogError");
-  assert.match(select, /const addressMoved = next !== activeChannelId;/);
+  /* Measured from the PLACE the reader is leaving. An unresolved `?c=` is a place too, and
+     comparing only activeChannelId called the heal a move and "Open all-signals" from the
+     unresolved feed a no-op. A review arm found both. */
+  assert.match(select, /const previousPlace = unknownChannelId \?\? activeChannelId;/);
+  assert.match(select, /const addressMoved = next !== previousPlace;/);
   assert.match(select, /if \(addressMoved && composerIntent !== null\) \{/);
 });
 
@@ -422,11 +442,15 @@ test("a page fetched before a post landed does not drop that post", () => {
      read from all-signals appeared, vanished, and came back on the next poll. Found by a
      review arm. */
   const load = between(dashboard, "const loadSignals = async (", "const refreshLatestSignals");
-  assert.match(load, /postedSinceReset = new Set<string>\(\);/, "cleared as the request goes out");
+  /* ~~cleared as the request goes out~~: that dropped a row posted BEFORE the request and not
+     yet visible to the read replica, which is the case this set exists for. A review arm found
+     it. What keeps another channel's row out is the same question the screen asks. */
+  assert.doesNotMatch(load, /postedSinceReset = new Set<string>\(\);/);
   assert.match(
     load,
-    /const arrivedWhileFetching = signals\.filter\(\s*\n\s*\(row\) => postedSinceReset\.has\(row\.id\) && !fetched\.has\(row\.id\),/,
+    /const arrivedWhileFetching = signals\.filter\(\s*\n\s*\(row\) => postedSinceReset\.has\(row\.id\) && !fetched\.has\(row\.id\) && rowShowsOnScreen\(row\),/,
   );
+  assert.match(load, /forgetFetchedPostedIds\(page\.rows\);/);
   assert.match(load, /signals = \[\.\.\.arrivedWhileFetching, \.\.\.page\.rows\];/);
   /* And the send is what records them, so only rows this browser posted are kept. */
   const applied = between(dashboard, "const visible = posted.filter(showsOnScreen);", "clearComposerDraft();");

@@ -13,6 +13,7 @@ the worktree's `arms-<sha>/<family>/ARM.txt`.
 | `85d7eea` | **NOT A REVIEW** | FAIL | 6, then the thread cut |
 | `c1774d7` | FAIL | FAIL | 2 |
 | `8a00a75` | FAIL | FAIL | 4 |
+| `820ddcd` | FAIL | FAIL | 3 |
 
 **`arms-85d7eea…-grok.txt` is not a review and its verdict was not counted.** It carries three
 VERDICT fragments and visibly interleaved sentences ("Next I'll pullI'll the channel read the

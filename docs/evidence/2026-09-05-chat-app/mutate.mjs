@@ -118,7 +118,7 @@ const mutations = [
   // ── round six: the controls added after the fifth SHA failed both arms
   [OBS, DASH, "        const visible = posted.filter(showsOnScreen);", "        const visible = posted;",
     "a post belongs to the channel it was sent from"],
-  [OBS, DASH, "      const placement = intent.placement;", "      const placement = freshPlacement;",
+  [OBS, DASH, "      const placementChannelId = intent.placementChannelId;", "      const placementChannelId = freshPlacementChannelId;",
     "a post belongs to the channel it was sent from"],
   [OBS, DASH, "      closeChannelDialog();\n      one<SecretHoldingAgentConnect>(\"agent-connect\")?.clearPrompt(false);",
     "      one<SecretHoldingAgentConnect>(\"agent-connect\")?.clearPrompt(false);",
@@ -132,7 +132,7 @@ const mutations = [
     "an unfinished send is not resumed into a channel"],
   [OBS, DASH, "        if (retry && resumable) retry.hidden = false;", "        if (retry && unsent) retry.hidden = false;",
     "an unfinished send is not resumed into a channel"],
-  [OBS, DASH, "        const arrivedWhileFetching = signals.filter(\n          (row) => postedSinceReset.has(row.id) && !fetched.has(row.id),\n        );\n        signals = [...arrivedWhileFetching, ...page.rows];",
+  [OBS, DASH, "        const arrivedWhileFetching = signals.filter(\n          (row) => postedSinceReset.has(row.id) && !fetched.has(row.id) && rowShowsOnScreen(row),\n        );\n        forgetFetchedPostedIds(page.rows);\n        signals = [...arrivedWhileFetching, ...page.rows];",
     "        signals = page.rows;",
     "a page fetched before a post landed does not drop that post"],
   [OBS, DASH, "        for (const id of visibleIds) postedSinceReset.add(id);\n", "",
@@ -145,6 +145,14 @@ const mutations = [
     "a page fetched before a post landed does not drop that post"],
   [OBS, DASH, "        forgetFetchedPostedIds(page.rows);\n        const known = new Set(page.rows.map((signal) => signal.id));",
     "        const known = new Set(page.rows.map((signal) => signal.id));",
+    "a page fetched before a post landed does not drop that post"],
+
+  // ── round eleven: the controls added after the tenth SHA failed both arms
+  [OBS, DASH, "        : { channel: placementChannel.slug };", "        : { channel: activeChannel()?.slug ?? \"\" };",
+    "the composer stamps the channel being read"],
+  [OBS, DASH, "      const addressMoved = next !== previousPlace;", "      const addressMoved = next !== activeChannelId;",
+    "an unfinished send is not resumed into a channel"],
+  [OBS, DASH, "!fetched.has(row.id) && rowShowsOnScreen(row),", "!fetched.has(row.id),",
     "a page fetched before a post landed does not drop that post"],
 ];
 
