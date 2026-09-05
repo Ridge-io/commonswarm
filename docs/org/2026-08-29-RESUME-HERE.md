@@ -1885,3 +1885,19 @@ an archived channel; Gemini's round-3 arm died on a network error and is not a v
 `model-tagging-land` at 18 commits and round 7 — asked the PM for a scope cut before more rounds;
 `google-signin-land` fb5fee9 pre-arms; `update-notice` f63622c Gemini FAIL round 1;
 `listener-head-of-line` 33cd24b round 1.
+
+## Addendum 2026-09-05 03:1x UTC — model tagging LANDED (merge 3513155)
+
+`lane/model-tagging-land` ae78971 (the other session's 60b60dd plus seven review rounds) merged
+as `3513155`; the merge commit carries an `Agent-Model` trailer because the shared checkout has
+`core.hooksPath = scripts/hooks` (the hook exits 0 on every failure path; measured). Gates on the
+merge: tsc clean, p1-cli 451/451, identity OK over 38 fields, `check-agent-trailers.sh` exit 0.
+`npm test` on the merge: first run 772/773 with ONE failure, second run 773/773 exit 0; the lane
+saw a similar unexplained 4-failure run once. Not attributed, not called transient: the name of the
+failing test was not captured either time. Evidence `f3c1c76`. Foreign `lane/model-tagging`
+retired with tag `backup/model-tagging-60b60dd`.
+
+What is live in the repo: trailers on every new commit made through the hook; the CI workflow
+`agent-trailers.yml` on the self-hosted fallback; commits before 2026-09-05 and GitHub squash
+merges skipped and counted apart. Not live: branch protection — the workflow blocks nothing until
+someone turns it on for `main` (operator decision; the check is informational until then).
