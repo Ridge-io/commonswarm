@@ -341,9 +341,15 @@ checker to reject it, then requires it to accept the same commit once tagged. CI
 assertion count out of the output and fails if it is missing or below a floor — an exit code
 cannot certify that a test run happened.
 
-Measured 2026-09-04 on this host: 37 assertions pass, and a checker mutated to always return 0
-fails 7 of them. The number grows as assertions are added, so CI floors it rather than pinning it;
-the floor is what tells "the suite did not run" apart from "the suite passed".
+**The count is deliberately not written down here.** It grows every time an assertion is added, and
+a number in prose goes stale silently — this paragraph has already been wrong twice. CI floors the
+count instead, which is what tells "the suite did not run" apart from "the suite passed". Run
+`npm run check:agent-trailers` to see the current figure.
+
+What is worth recording is the mutation result, because it is a property rather than a number:
+measured 2026-09-04, a checker mutated to always return 0 fails several of these assertions, and a
+hook path pointing at no file fails the one assertion that exists only to catch a gate skipping
+every commit.
 
 Fix commits that are missing trailers:
 

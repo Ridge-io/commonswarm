@@ -285,6 +285,15 @@ test("the doc records the no-backfill rule and the escape hatch", () => {
   assert.match(doc, /CSWARM_HUMAN_EDIT=1/);
 });
 
+test("the doc does not pin the self-test's assertion count", () => {
+  /* A count in prose goes stale silently every time an assertion is added, and this doc has already
+   * carried a wrong one twice. CI floors the count instead. This fails if somebody writes a figure
+   * back in, which is the only way the paragraph can go wrong again. */
+  const doc = readFileSync(resolve(repoRoot, "docs/development/agent-trailers.md"), "utf8");
+  const pinned = /(\d+)\s+assertions?\s+pass|passes?\s+(\d+)\s+assertions?/i.exec(doc);
+  assert.equal(pinned, null, `the doc pins an assertion count: ${pinned?.[0]}`);
+});
+
 test("the doc's tables name every family and every source in the vocabulary", () => {
   /* The doc says outright: "The accepted values live in scripts/lib/agent-trailer-vocab.sh and
    * nowhere else ... this table is documentation and the arrays are the definition. If they ever
