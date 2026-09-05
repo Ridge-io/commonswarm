@@ -4907,13 +4907,17 @@ export function renderListenerStatus(
   const newestHeldBack = heldBack[0];
   if (newestHeldBack !== undefined) {
     const others = heldBack.length - 1;
-    /* Past tense only. What this listener did is knowable here; what the
-       service has done with the row since is not. The retired final clause was
-       "It was not answered and not acknowledged, so it stays with the service,
-       which decides when it comes back" -- both arms built the sequence where
-       the row's own until elapses, the next claim expires and acknowledges it,
-       and every word after "handed back" turns false. The reader is sent to the
-       surface that does know. */
+    /* Past tense about this listener, plus a statement of mechanism that names
+       both outcomes, so no clause asserts the row's current server state.
+       Retired final clauses, both refuted by review arms:
+         "It was not answered and not acknowledged, so it stays with the
+          service, which decides when it comes back" -- false as soon as the
+          row's own until elapses and the next claim expire-acknowledges it.
+         "For what the service did with it since: cswarm receipt <id>
+          --workspace-id <ws>" -- not runnable as printed (receipt requires an
+          agent credential) and refused even with one, because the receipt read
+          is author-only and this listener is the RECIPIENT. The remedy now
+          names a command the reader can actually run. */
     lines.push(
       `Delivery ${newestHeldBack.signalId} was handed back ${
         relativeAge(newestHeldBack.at, nowMs)
@@ -4922,10 +4926,14 @@ export function renderListenerStatus(
       }.` +
         (others > 0
           ? ` ${others} other ${
-            others === 1 ? "delivery is" : "deliveries are"
-          } in the same state.`
+            others === 1 ? "delivery was" : "deliveries were"
+          } handed back earlier and ${
+            others === 1 ? "has" : "have"
+          } not come back to this listener.`
           : "") +
-        ` This listener has not answered it. For what the service did with it since: cswarm receipt ${newestHeldBack.signalId} --workspace-id ${status.workspaceId}`,
+        " This listener has not answered it. After the lease ends the service" +
+        " either delivers it again or terminates it. If this repeats, raise the" +
+        " bound: cswarm listen start --turn-budget <duration>",
     );
   }
   lines.push(

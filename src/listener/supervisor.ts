@@ -595,17 +595,25 @@ export async function runListenerSupervisor(
       /* The server counts every unacked live delivery for this agent, the one
          just claimed included, so what is WAITING is one fewer while a seat is
          held. */
-      /* Each held-back row is forgotten on its OWN evidence: it came back (this
-         claim returned it), or the pending count can no longer contain it.
-         Every held-back row is unacked, so the service's count is an upper
-         bound on how many of them survive; when the count drops below the set,
-         the oldest entries are gone, expired or handled, and naming them any
-         longer would be a false promise. An earlier version cleared the WHOLE
-         set on any single row's evidence, which forgot a second row that was
-         still genuinely held back. */
+      /* A held-back row leaves the set on its OWN evidence and nothing else:
+         this claim returned it, or it was acknowledged.
+
+         The pending count is NOT evidence, and an earlier version that trimmed
+         the set to it was unsound in both directions. Both round-4 arms proved
+         it from the server SQL: step 7 counts unacked rows whose signal
+         `until > statement_timestamp()`, while step 2 unleases only when
+         `leased_until <= statement_timestamp()`. A handed-back row whose TTL
+         elapsed under a live lease is therefore still leased, still unacked,
+         and absent from the count, so a low count dropped rows that were still
+         held back; and because the set is newest first, the slice discarded the
+         oldest, which is the one most likely to still be live. The count also
+         includes rows that were never held back, so it could sit above the set
+         and trim nothing.
+
+         The set is now exactly what it says: hand-backs this listener has not
+         seen since. Its bound is LISTENER_HELD_BACK_MAX, not a server number. */
       const heldBack = (status.heldBackDeliveries ?? [])
-        .filter((entry) => entry.signalId !== event.signalId)
-        .slice(0, Math.max(0, event.pendingDeliveryCount));
+        .filter((entry) => entry.signalId !== event.signalId);
       status = {
         ...status,
         readHealth: recordListenerClaim(

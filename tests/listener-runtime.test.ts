@@ -4150,11 +4150,17 @@ test("listen status shows the delivery in hand and how long the queue has waited
     assert.ok(!heldBack.includes("comes back"), heldBack);
     assert.ok(
       heldBack.includes(
-        `This listener has not answered it. For what the service did with it since: cswarm receipt ${HOLD_FIRST_ID} --workspace-id ${WORKSPACE_ID}`,
+        "This listener has not answered it. After the lease ends the service either delivers it again or terminates it. If this repeats, raise the bound: cswarm listen start --turn-budget <duration>",
       ),
       heldBack,
     );
-    assert.ok(!heldBack.includes("in the same state"), heldBack);
+    /* The retired remedy named `cswarm receipt <id>`: not runnable as printed,
+       because that verb requires an agent credential, and refused even with
+       one, because the receipt read is author-only and this listener is the
+       recipient. A remedy that names a command the reader cannot run is the
+       same defect class as a typed enumeration inside a correct sentence. */
+    assert.ok(!heldBack.includes("cswarm receipt"), heldBack);
+    assert.ok(!heldBack.includes("handed back earlier"), heldBack);
   }
   assert.equal(
     new Set(Object.values(LISTENER_DELIVERY_HOLD_RELEASE_CLAUSES)).size,
@@ -4174,7 +4180,9 @@ test("listen status shows the delivery in hand and how long the queue has waited
     ],
   }, evidence, nowMs);
   assert.ok(
-    twoHeldBack.includes("1 other delivery is in the same state."),
+    twoHeldBack.includes(
+      "1 other delivery was handed back earlier and has not come back to this listener.",
+    ),
     twoHeldBack,
   );
 
@@ -4419,9 +4427,12 @@ test("the supervisor tracks a handed-back delivery until it comes back", async (
         ts: "2026-07-30T00:00:04.000Z",
       });
       await record("empty claim");
-      /* The service reports nothing unacked at all, which it cannot do while a
-         held-back row is still pending: they are gone, expired or handled
-         elsewhere, and naming them any longer would be a false promise. */
+      /* A zero pending count is NOT evidence that a held-back row is gone. The
+         service counts unacked rows whose signal until is still live, and
+         unleases only once the lease deadline passes, so a hand-back whose TTL
+         elapsed under its live lease is still leased, still unacked, and not in
+         that count. Both round-4 arms proved this from the SQL against a
+         version that trimmed the set to the count. */
       onEvent({
         type: "delivery_claim",
         signalId: null,
@@ -4429,7 +4440,7 @@ test("the supervisor tracks a handed-back delivery until it comes back", async (
         terminalDeliveryFailureCount: 0,
         ts: "2026-07-30T00:00:05.000Z",
       });
-      await record("queue drained");
+      await record("zero pending count");
       return { reason: "cancelled" as const };
     },
   });
@@ -4444,7 +4455,7 @@ test("the supervisor tracks a handed-back delivery until it comes back", async (
          forgot the first one as soon as the second was reclaimed. */
       ["released second", [HOLD_SECOND_ID, HOLD_FIRST_ID], null],
       ["empty claim", [HOLD_SECOND_ID, HOLD_FIRST_ID], null],
-      ["queue drained", [], null],
+      ["zero pending count", [HOLD_SECOND_ID, HOLD_FIRST_ID], null],
     ],
   );
   assert.ok(
@@ -4456,13 +4467,15 @@ test("the supervisor tracks a handed-back delivery until it comes back", async (
     seen[3]!.heldBackLine,
   );
   assert.ok(
-    seen[3]!.heldBackLine?.includes("1 other delivery is in the same state."),
+    seen[3]!.heldBackLine?.includes(
+      "1 other delivery was handed back earlier and has not come back to this listener.",
+    ),
     seen[3]!.heldBackLine,
   );
   // An empty claim with rows still pending keeps them named.
   assert.equal(seen[4]!.heldBackLine, seen[3]!.heldBackLine);
-  // A drained queue is proof they are gone.
-  assert.equal(seen[5]!.heldBackLine, undefined);
+  // So does a zero count: it is not evidence about a live-leased hand-back.
+  assert.equal(seen[5]!.heldBackLine, seen[3]!.heldBackLine);
   // At no point is any of them described as waiting to be claimed.
   assert.equal(
     seen.some((entry) => entry.heldBackLine?.includes("waiting")),
@@ -4470,11 +4483,18 @@ test("the supervisor tracks a handed-back delivery until it comes back", async (
   );
 });
 
-test("a held-back row the service can no longer be holding is forgotten", async (t) => {
-  /* Every held-back row is unacked, so the service's pending count is an upper
-   * bound on how many of them survive. When it drops below the set, the oldest
-   * entries are gone: expired, or acknowledged without this listener hearing.
-   * Both round-3 arms built the sequence where a stale row stayed named. */
+test("the pending count never trims the held-back set", async (t) => {
+  /* An earlier version trimmed the set to the service's pending count, on the
+   * argument that every held-back row is unacked so the count bounds them. Both
+   * round-4 arms refuted it from the server SQL, and it is wrong in BOTH
+   * directions. durable-delivery.ts step 7 counts unacked rows whose signal
+   * `until > statement_timestamp()`; step 2 unleases only when
+   * `leased_until <= statement_timestamp()`. So a hand-back whose TTL elapses
+   * under its live lease is still leased, still unacked, and NOT counted -- a
+   * low count dropped rows that were still held back, and because the set is
+   * newest first the slice discarded the oldest, the one most likely to be
+   * live. The count also includes rows that were never held back, so it could
+   * sit above the set and trim nothing. */
   const stateDirectory = await mkdtemp(join(tmpdir(), "cswarm-hold-trim-"));
   t.after(async () => await rm(stateDirectory, { recursive: true, force: true }));
   const paths = listenerPaths({
@@ -4515,15 +4535,28 @@ test("a held-back row the service can no longer be holding is forgotten", async 
         });
       }
       await record();
-      /* The service now reports ONE unacked row. Two cannot still be held
-         back, so the oldest is dropped; the newest is kept, because the count
-         still leaves room for exactly one. */
+      /* The service reports ONE unacked live row, then none. Neither number is
+         evidence about either hand-back, so the set does not move. */
+      for (const [pending, ts] of [
+        [1, "2026-07-30T00:00:02.000Z"],
+        [0, "2026-07-30T00:00:03.000Z"],
+      ] as const) {
+        onEvent({
+          type: "delivery_claim",
+          signalId: null,
+          pendingDeliveryCount: pending,
+          terminalDeliveryFailureCount: 0,
+          ts,
+        });
+        await record();
+      }
+      /* Its OWN evidence does move it: this claim returned the older row. */
       onEvent({
         type: "delivery_claim",
-        signalId: null,
+        signalId: HOLD_FIRST_ID,
         pendingDeliveryCount: 1,
         terminalDeliveryFailureCount: 0,
-        ts: "2026-07-30T00:00:02.000Z",
+        ts: "2026-07-30T00:00:04.000Z",
       });
       await record();
       return { reason: "cancelled" as const };
@@ -4531,6 +4564,8 @@ test("a held-back row the service can no longer be holding is forgotten", async 
   });
 
   assert.deepEqual(held, [
+    [HOLD_SECOND_ID, HOLD_FIRST_ID],
+    [HOLD_SECOND_ID, HOLD_FIRST_ID],
     [HOLD_SECOND_ID, HOLD_FIRST_ID],
     [HOLD_SECOND_ID],
   ]);
