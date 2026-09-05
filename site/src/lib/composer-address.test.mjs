@@ -343,25 +343,37 @@ test("every retired wake phrase this lane lists sits inside a strikethrough, in 
      to notice. (The two: ~~`the only recipient it wakes`~~ against a listed
      ~~`one recipient the service wakes`~~.)
 
-     Three rounds, one class. So the title now claims exactly what the loop does and no more,
-     and the three things that let it pass while a sentence stood are closed:
+     THIS CONTROL DOES NOT CLOSE THAT CLASS, and saying it did was the fourth instance of it.
+     ~~"the three things that let it pass while a sentence stood are closed"~~ and
+     ~~"a sentence in the family of a listed phrase cannot slip past on an adjective or a line
+     break"~~ were this file's and the README's wording, and both arms refuted them on the same
+     SHA with the same shape: A LIST OF REMEMBERED SUBSTRINGS CANNOT CLOSE A FAMILY. Normalising
+     case and whitespace catches a line break and a capital. It does not catch an adjective in
+     the middle — `the only recipient the service wakes`, a blend of two listed forms, or
+     `the sole recipient it wakes` — and no list of exact strings ever will. Each round has
+     added the last miss and then claimed the family; the next standing sentence is the wording
+     nobody remembered to type.
 
-       1. MATCHING IS CASE- AND SPACE-INSENSITIVE over a normalised form, so
-          ~~`the only control over WHO IS WOKEN`~~ and ~~`one control over who is woken`~~ are
-          the same phrase to it. Exact `indexOf` was how a sentence in the family of a listed
-          phrase went unseen.
-       2. EVERY LISTED PHRASE MUST MATCH SOMETHING. Three of the eleven matched nothing, so the
-          README's claim that adding to the list changes what runs was false for those three. A
-          dead phrase is now a red, which is the only way that claim can be true.
-       3. EVERY NAMED FILE MUST CONTRIBUTE. `scanned > 200_000` was satisfied by
-          `LiveDashboard.astro` alone, so five wrong paths pointed at that one file would have
-          gone green. Each file is asserted individually.
+     SO WHAT THIS IS, exactly, and nothing more: a NAMED-SUBSTRING control. It reads six named
+     files, normalises case and whitespace, and requires every occurrence of a listed phrase to
+     sit inside a `~~ ~~` span. It cannot see a retired claim written in words no listed phrase
+     covers, and it cannot see one in a file not on this list. `composer.observer.test.ts` is on
+     the list and contributes ZERO listed phrases today, so a retired sentence could stand there
+     in any unlisted wording and this would stay green.
 
-     BOUND, AND IT IS THE WHOLE BOUND. This reads SIX named files and normalises them. It
-     catches a listed phrase, in any casing or spacing, standing outside a `~~ ~~` span. It
-     CANNOT see a retired claim written in words no listed phrase covers, and it cannot see one
-     in a file not on this list. Both lists are below and both are iterated, so adding to either
-     changes what runs — which item 2 above is what makes true.
+     It is worth having because it makes the nine leftovers two arms found un-reintroducible and
+     because it fails loudly on the exact wording that has drifted. It is NOT the answer to the
+     class, and the class is handed to the lead open rather than declared shut a fourth time.
+
+     Two things it does establish that the earlier versions did not:
+
+       1. EVERY LISTED PHRASE MUST MATCH SOMETHING. Three of eleven matched nothing, so
+          "adding to the list changes what runs" was false for those three. A dead phrase is a
+          red now, which is the only way that sentence can be true.
+       2. EVERY NAMED FILE MUST BE READ. `scanned > 200_000` was satisfied by
+          `LiveDashboard.astro` alone (567,988 characters), so five wrong paths aimed at that
+          one file would have gone green. Each file is asserted on its own and a wrong path
+          throws.
 
      ~~"no retired wake sentence stands as current, anywhere the wake copy lives"~~ was this
      test's title, and it claimed the second half of that sentence without establishing it. */
@@ -400,16 +412,30 @@ test("every retired wake phrase this lane lists sits inside a strikethrough, in 
     "way a reader can change who is woken",
     "changes who is woken",
   ];
-  const normalise = (text) => text.toLowerCase().replace(/\s+/g, " ");
+  /* COMMENT MARKERS GO BEFORE THE SPACES COLLAPSE. A sentence wrapped across two `//` or ` * `
+     lines normalises to "... the service wakes // nobody ..." and matches nothing, which a
+     review arm pointed out is the same miss one layer down. Leading markers are dropped first,
+     so the wrapped sentence reads as one. */
+  const normalise = (text) =>
+    text
+      .replace(/^[ \t]*(?:\/\/+|\*+|#+)[ \t]?/gm, " ")
+      .toLowerCase()
+      .replace(/\s+/g, " ");
   let matchedSomewhere = new Set();
   for (const file of files) {
     /* THE PHRASE LIST IS NOT ITS OWN SUBJECT. This file is on the list, and the literals below
        are in it, so the sweep reported its own list as thirteen standing sentences. The list's
        own span is removed before scanning — precisely, by its declaration rather than by
        skipping the file, so everything else in this file IS scanned, which is how the round-four
-       leftover in an assertion message a few hundred lines down is caught. */
-    const source = readFileSync(new URL(file, import.meta.url), "utf8")
-      .replace(/const retired = \[[\s\S]*?\n {2}\];/, "const retired = [];");
+       leftover in an assertion message a few hundred lines down is caught.
+
+       AND ONLY IN THIS FILE. The strip used to run over all six, so any other file that
+       happened to declare `const retired = [` would have had its contents removed before the
+       scan — a hole in the shape of the thing this sweep is for. A review arm found it. */
+    const raw = readFileSync(new URL(file, import.meta.url), "utf8");
+    const source = file === "./composer-address.test.mjs"
+      ? raw.replace(/const retired = \[[\s\S]*?\n {2}\];/, "const retired = [];")
+      : raw;
     /* EVERY FILE CONTRIBUTES. Five paths aimed at one big file would satisfy a total. */
     assert.ok(source.length > 2_000, `${file}: read only ${source.length} characters`);
     /* Character spans, not line matching: a strikethrough in this repo routinely wraps across

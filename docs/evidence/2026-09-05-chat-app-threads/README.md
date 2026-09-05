@@ -264,16 +264,40 @@ reader to notice. It also found that three of eleven listed phrases matched noth
 positive controls were satisfied by `LiveDashboard.astro` alone (567,988 characters against a
 200,000 total), and that the README typed a count of the list and got it wrong.
 
-The sweep is rebuilt rather than patched, and the three things that let it pass while a sentence
-stood are each closed:
+**ROUND SIX THEN FAILED BOTH ARMS ON THE SAME CLASS AGAIN, and this file's own words were the
+instance.** ~~"The sweep is rebuilt rather than patched, and the three things that let it pass
+while a sentence stood are each closed"~~ and ~~"a sentence in the family of a listed phrase
+cannot slip past on an adjective or a line break"~~ were what this paragraph said. Both arms
+refuted it independently and named one shape:
 
-1. **Matching is case- and space-insensitive** over a normalised copy, so a sentence in the
-   family of a listed phrase cannot slip past on an adjective or a line break.
-2. **Every listed phrase must match something.** A phrase that matches nothing is a line that
+> **A list of remembered substrings cannot close a family.** Normalising case and whitespace
+> catches a line break and a capital. It does not catch an adjective in the middle. Grok
+> constructed two that pass today: `the only recipient the service wakes`, a blend of the two
+> listed forms, and `the sole recipient it wakes`, one adjective off the phrase round five added.
+> Each round has added the last miss and then claimed the family; the next standing sentence is
+> the wording nobody remembered to type.
+
+**So the claim is withdrawn rather than narrowed again, and the class goes to the lead open.**
+What the sweep is, exactly: a NAMED-SUBSTRING control over six named files. It makes the nine
+leftovers two arms found un-reintroducible and it fails loudly on wording that has drifted. It
+does not close the family, and `composer.observer.test.ts` is on its file list while contributing
+zero listed phrases — a retired sentence could stand there in any unlisted wording and the sweep
+would stay green.
+
+Two things it does establish that the earlier versions did not, and two holes the arms found in
+it that are fixed:
+
+1. **Every listed phrase must match something.** A phrase that matches nothing is a line that
    changes no behaviour; it is a red now, which is the only thing that makes "adding to the list
    changes what runs" a fact rather than a hope.
-3. **Every named file must be read individually**, so five paths aimed at one big file cannot
+2. **Every named file must be read individually**, so five paths aimed at one big file cannot
    satisfy a total. A wrong path throws.
+3. **The phrase list is stripped from its own file only.** The strip ran over all six, so any
+   other file declaring `const retired = [` would have had its contents removed before the scan
+   — a hole in the shape of the thing the sweep is for.
+4. **Comment markers are dropped before the spaces collapse.** A sentence wrapped across two
+   `//` or ` * ` lines normalised to `... the service wakes // nobody ...` and matched nothing,
+   which is the same miss one layer down.
 
 The list of files grew to six: `composer-address.test.mjs` itself, which is where the wake
 copy's own tests live and which carried a retired sentence in an assertion message that no

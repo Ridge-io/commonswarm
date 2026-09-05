@@ -1,0 +1,24 @@
+diff --git a/docs/evidence/2026-09-05-chat-app-threads/README.md b/docs/evidence/2026-09-05-chat-app-threads/README.md
+
+The commit `94ba3e9` attempts to rebuild the sweep, but it contains critical flaws that leave the class wide open. The sweep fails to establish the empty-set claim it asserts.
+
+**1. Can it still be green while a retired sentence stands?**
+Yes. In `site/src/lib/composer-address.test.mjs` (line 6794), the `normalise` function collapses whitespace (`\s+`) but does not strip comment markers like `//` or `*`. If a retired sentence spans multiple lines in a source file like this:
+```javascript
+// A person in front means the service wakes
+// nobody, however many agents follow.
+```
+`normalise` turns it into `... the service wakes // nobody ...`. The phrase `"wakes nobody"` will not match because of the intervening `//`. The sweep will remain green and pass while the retired sentence still stands as current.
+
+**2. The dead-phrase check: can a phrase satisfy it while catching nothing that matters?**
+Yes. In `site/src/lib/composer-address.test.mjs` (line 6832), the `matchedSomewhere` check is global across all six files. Because `composer-address.test.mjs` was added to the list of scanned files, the sweep now scans the test's own explanatory comments where retired phrases are quoted inside `~~` blocks (e.g., around line 6561). A phrase can be completely deleted from the actual production files (where readers might actually meet it) and the dead-phrase check will still pass because it finds its own quoted example in the test file.
+
+**3. Are the false positives fixed in a way that could hide a real one?**
+Yes, both fixes can hide real defects:
+* **The header's quoted examples:** Fixed by `.replace(/const retired = \[[\s\S]*?\n {2}\];/, "const retired = [];")` (line 6803), which is applied to *every* scanned file before searching. If any other file (like `LiveDashboard.astro`) happens to define a `const retired = [` array, its contents will be silently stripped before the scan, hiding any real standing sentences inside it.
+* **The broad phrase:** Narrowing `"recipient the service wakes"` to exactly `"only recipient it wakes"` and `"one recipient the service wakes"` is so specific that a slightly different variation of the retired claim (e.g., `"the first recipient the service wakes"`) will now slip past entirely undetected.
+
+**4. The four mutations:**
+The mutations themselves are sound. The first mutation correctly targets the subject by putting a retired sentence back as current. This is the right shape for an empty-set claim: breaking a checker for an empty set would not fail the test (as there is nothing for the broken checker to miss), so you must break the subject to prove the control works.
+
+VERDICT: FAIL
