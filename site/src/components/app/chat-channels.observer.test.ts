@@ -461,8 +461,14 @@ test("a page fetched before a post landed does not drop that post", () => {
      arm found that. ~~`signals.filter((row) => postedSinceReset.has(row.id) && …)`~~. */
   assert.match(
     load,
-    /prunePostedRows\(\);\s*\n\s*const arrivedWhileFetching = \[\.\.\.postedSinceReset\.values\(\)\]\s*\n\s*\.map\(\(entry\) => entry\.row\)\s*\n\s*\.filter\(\(row\) => !fetched\.has\(row\.id\) && rowShowsOnScreen\(row\)\)/,
+    /prunePostedRows\(\);[\s\S]{0,900}?const arrivedWhileFetching = \[\.\.\.postedSinceReset\.values\(\)\]\s*\n\s*\.map\(\(entry\) => entry\.row\)\s*\n\s*\.filter\(\(row\) =>\s*\n\s*!fetched\.has\(row\.id\) && rowShowsOnScreen\(row\) &&\s*\n\s*\(newestFetched === "" \|\| row\.createdAt >= newestFetched\)\)/,
   );
+  /* AND NEWER THAN THE PAGE. The grace bounds how long a row may stand in; it does not say
+     WHERE it belongs, and replica lag and a page roll share every other bit. A rolled-off row
+     is older than the page's newest and was being painted above rows newer than it. Both
+     timestamps are the server's, so the question is answerable rather than guessed. Both arms
+     found it; it is not lost, it is in history where Load older fetches it. */
+  assert.match(load, /const newestFetched = page\.rows\[0\]\?\.createdAt \?\? "";/);
   /* The record has a bound in TIME and in SPACE. Without the first, a row that fell off the
      first page of its channel was re-prepended as the newest message every time the reader
      came back, and the map grew for the life of the tab. Without the second, a message posted

@@ -139,6 +139,13 @@ wrote — so it is bounded by that: `POSTED_ROW_GRACE_MS` (30 seconds, against a
 workspace the row was written in. **The grace is a chosen bound and not a measured one**: no replication
 lag was measured for this lane.
 
+And the grace bounds how long a row may stand in, not WHERE it belongs. Replica lag and a page roll
+share every other bit: both are a row the page does not carry. The difference is the timestamp, and
+both timestamps are the server's — a lagging post is newer than everything on the page, a rolled-off
+row is older than the page's newest. Only the first stands in. The second is not lost: it is in
+history, where Load older fetches it. Both arms found the resurrection, one describing it as a
+20-second-old message painted above rows newer than it.
+
 **And an unfinished send does not follow the reader to another channel.** Moving channel retires the
 intent and says so, because the composer is about to promise the new channel and replaying the old
 address would contradict the box being typed in. The hops that already landed stay where they landed.
@@ -247,20 +254,24 @@ forbids.
 5. **The To: field with multiple recipients is not built.** L2 `chat-recipients` is live in production
    (a signal can carry a `to` list of up to 8, and the read view carries `recipients`), and the To:
    field is its own lane after this one.
-6. **No capacity or query-plan work.** `channel_id=eq.` rides the partial index L1 added; no plan was
+6. **The poll's own ordering was not changed.** `refreshLatestSignals` builds
+   `[...page.rows, ...signals.filter(not on page)]`, so a row the replica has not caught up to sits
+   below the page for one tick. An arm raised it; it is byte-identical on `origin/main` at
+   `d9fa25b:4360`, it is not about channels, and it is routed rather than fixed here.
+7. **No capacity or query-plan work.** `channel_id=eq.` rides the partial index L1 added; no plan was
    read.
-7. **The source sweeps in the observer test state their own bounds** in the test headers. A regex over
+8. **The source sweeps in the observer test state their own bounds** in the test headers. A regex over
    source cannot be complete, and neither of them claims to be. The privacy sweep reads double-quoted
    and backtick strings in eight script surfaces plus two pieces of markup plus the composer's
    refusals, with comments stripped and a positive control on the number of strings it read. What it
    cannot constrain, named rather than implied: a channel `purpose`, which a member types and the head
    renders verbatim.
-8. **The rail's current mark and the head can no longer disagree**, but that was a defect and not a
+9. **The rail's current mark and the head can no longer disagree**, but that was a defect and not a
    design: the channel buttons carry no `data-workspace-view`, so `activateWorkspaceView`'s own loop
    never reached them and the rail claimed a current channel while the head said Files. Found by a
    review arm. In the unresolved-channel state the rail marks NOTHING current, which both arms read
    and agreed is the honest mark: the reader is in the signals view and in no channel.
-9. **Twelve review rounds cost thirty-three product defects and two evidence defects**, every one found by an
+10. **Thirteen review rounds cost thirty-four product defects and two evidence defects**, every one found by an
    arm and none by a gate: the read-permission claim in the copy; the composer that posted into the
    unfiltered feed from an unresolved link; a double current mark on Files and Brain; four typed
    copies of the view's name; a workspace switch that opened as "Channel not found"; a channel-list

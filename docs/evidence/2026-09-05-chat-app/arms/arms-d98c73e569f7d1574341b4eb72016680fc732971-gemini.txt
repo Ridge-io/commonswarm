@@ -1,0 +1,17 @@
+diff --git a/docs/design/2026-09-05-chat-app-channels.md b/docs/design/2026-09-05-chat-app-channels.md
+
+1. **Resurrected as the newest message**
+   - **File:** `site/src/components/app/LiveDashboard.astro`
+   - **Line:** 4664-4670 (inside `loadSignals` when `reset` is true)
+   - **What breaks:** `arrivedWhileFetching` unconditionally prepends any row in `postedSinceReset` that is younger than `POSTED_ROW_GRACE_MS` (30 seconds) and not in `page.rows`. If a channel is highly active and receives >25 messages within 30 seconds, a user's post falls off the first page of the read replica. When `loadSignals` runs (e.g., switching channels back and forth), the 20-second-old message is not in `page.rows` and is not pruned, so it is added to `arrivedWhileFetching` and prepended to the top of `signals`, rendering it as the newest message.
+   - **How you would see it:** Post a message in `#mobile` and immediately switch to `#ops`. Wait 20 seconds while other members post 25+ messages in `#mobile`. Switch back to `#mobile`. Your 20-second-old message will incorrectly appear at the very top of the feed as the newest message.
+   - **Refutation:** Could `prunePostedRows()` catch it? No, it only deletes entries older than 30 seconds. Could `fetched.has(row.id)` catch it? No, because it fell off the first page (not in `page.rows`). Could `rowShowsOnScreen(row)` filter it out? No, it evaluates to true when returning to the correct channel. The message will be resurrected.
+
+2. **Dropped when it should stand in (pushed down the feed)**
+   - **File:** `site/src/components/app/LiveDashboard.astro`
+   - **Line:** 4721 (inside `refreshLatestSignals`)
+   - **What breaks:** `refreshLatestSignals` constructs `next` by placing `page.rows` (the server's newest 25 messages) first, followed by `signals.filter(...)` (any messages currently on screen not in `page.rows`). A newly posted message that has not yet reached the read replica will be in `signals` but not `page.rows`. It is thus appended *after* `page.rows`. The array is not sorted afterward, so the newest message jumps from index 0 down to index 25.
+   - **How you would see it:** Post a message in any channel. Two seconds later the poll runs. If the read replica has not caught up to your write, your new message disappears from the top of the feed and reappears below the 25 older messages. On the next poll when the replica catches up, it jumps back to the top.
+   - **Refutation:** Does `refreshLatestSignals` use `arrivedWhileFetching` to keep pending rows at the top? No, it does not use `postedSinceReset` at all. Does the array spread `[...page.rows, ...signals.filter]` sort them? No, it simply concatenates them. The new message is pushed down.
+
+VERDICT: FAIL
