@@ -189,8 +189,8 @@ const mutations = [
     "a draft's own address beats the set the last message went to",
     "removalSurvivesReload: a recipient removed by hand", true],
   [FIELD, DASH,
-    "          syncComposerAddress();\n          /* AND A SENT MESSAGE IS NOT ONE BEING WRITTEN.",
-    "          /* AND A SENT MESSAGE IS NOT ONE BEING WRITTEN.",
+    "          syncComposerAddress();\n        }\n        /* AND A SENT MESSAGE IS NOT ONE BEING WRITTEN.",
+    "        }\n        /* AND A SENT MESSAGE IS NOT ONE BEING WRITTEN.",
     "the send settles the address once its own message is off the wire",
     "the send never settles the address", true],
   [FIELD, DASH,
@@ -314,6 +314,68 @@ const mutations = [
     "    applied.add(recipientKey(entity));",
     "making room on the row is the way back from a refusal",
     "capAfterRoom: a refused name did not join the set", true],
+  /* ── ROUND EIGHT: THE SEND'S OWN TEARDOWN, AND THE WINDOW THAT MEASURES IT ────────────
+     Every entry here is driven by the in-flight browser steps at the end of
+     composer-to-field.observer.test.ts, which are the first steps in this lane that act while
+     a message is on the wire.
+
+     THE CONTROL REACHES A GENERATION BUMP, and the first entry is the proof. Restoring the
+     old screen-guarded lift only turns the refresh step red if the sample refresh really
+     advances requestVersion; if that bump were removed the entry would report NOT CAUGHT,
+     which this harness counts as a failure. */
+  [FIELD, DASH,
+    "        if (composerSendToken === sendToken) setComposerSending(false);",
+    "        if (version === requestVersion && workspaceId === activeWorkspaceId) setComposerSending(false);",
+    "the send flag comes down because the SEND says so, not because the screen has not moved",
+    "refreshMidSend: a refresh during a post left the send flag up", true],
+  [FIELD, DASH,
+    "        const boxIsStillThisSends =\n          composerSendToken === sendToken && workspaceId === activeWorkspaceId;",
+    "        const boxIsStillThisSends =\n          version === requestVersion && workspaceId === activeWorkspaceId;",
+    "a failed send under a reopen of the same workspace still puts the message back",
+    "failedUnderRefresh: a send that failed during a refresh lost the message and said nothing",
+    true],
+  /* THE LIFT ASKS AN IDENTITY AT ALL. The entry above restores the OLD screen guard, which
+     still refuses this case because a workspace switch moves the workspace; this one removes
+     every test, which is the shape where one send lowers another's flag. */
+  [FIELD, DASH,
+    "        if (composerSendToken === sendToken) setComposerSending(false);",
+    "        setComposerSending(false);",
+    "one send cannot lower the flag another send raised",
+    "switchedUnderFailedSend: a send from another workspace lowered this composer's flag", true],
+  /* AND A TEARDOWN RETIRES THE SEND THAT RAISED THE FLAG ON IT. Without the bump, a send whose
+     composer was torn down owns it again the moment the reader returns to that workspace, and
+     its failure writes its old body over whatever is in the box by then. The counter is
+     monotonic, so a LATER send invalidates the earlier one on its own — which is why this has
+     to be measured on a return with no second send, not on the switch. */
+  [FIELD, DASH,
+    "      composerSendToken += 1;\n      setComposerSending(false);",
+    "      setComposerSending(false);",
+    "a teardown retires the send that raised the flag on the composer it tore down",
+    "returnedBeforeItFailed: a torn-down send wrote its old body over what the reader typed",
+    true],
+  [FIELD, DASH,
+    "        if (sampleMode && workspaceId === activeWorkspaceId) {\n          sampleSignals = [posted, ...sampleSignals];\n        }",
+    "        if (false) {\n          sampleSignals = [posted, ...sampleSignals];\n        }",
+    "a landed post reaches the sample's own store whatever the screen did",
+    "refreshMidSend: the message posted during a refresh is missing from the feed, or twice in it",
+    true],
+  /* THE POSITIVE CONTROL ON THE WINDOW ITSELF. Without it a sample send resolves with no
+     await, every in-flight step acts after the send is already over, and the four entries
+     above would pass while measuring nothing. */
+  [FIELD, DASH,
+    "        if (sampleMode) await sampleSendWindow();",
+    "        if (false) await sampleSendWindow();",
+    "the in-flight steps act while a message is really on the wire",
+    "refreshMidSend: the step did not act inside the send's window", true],
+  /* AND THE STORED DRAFT'S FREEZE NOW HAS A BROWSER CONTROL. The entry above reads it out of
+     the source; this one drives it. A switch mid-post flushes the box the send emptied, which
+     removes the draft that still holds the reader's text, and the message is gone. */
+  [FIELD, DASH,
+    "      if (composerSending) return;\n      const key = composerDraftKey();",
+    "      const key = composerDraftKey();",
+    "the stored draft survives a workspace switch made while its message is on the wire",
+    "unsentBodySurvivesSwitch: a message unsent under a workspace switch was lost", true],
+
   /* (5) the notified mark answers for itself rather than through another claim */
   [FIELD, DASH,
     "      if (notified !== null && recipientKey(notified) === recipientKey(entity)) {",

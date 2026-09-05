@@ -176,11 +176,75 @@ That fix is a change to the send's failure and teardown paths, which is wider th
 brief, and the PM rule is to stop rather than make a fourth fix in the same family. It is written
 down here instead.
 
+**Round eight did it.** See the next section.
+
 **Also from Grok, and fixed in the docs-only commit that carries this note:**
 `docs/design/2026-09-04-chat-platform-reconciled.md` still asserted "D2 is not shippable as
 written" and called one directed signal per tag "the composer's present workaround". Both were
 made false by this lane, and option (b) in that same block is what happened. Corrected in place
 with the retired wording preserved.
+
+### Round eight: the shape, fixed rather than named
+
+Round seven wrote the shape down and stopped: **work the SEND owns sat behind a guard that asks
+whether the SCREEN is still the send's.** Round six had moved the send's STORAGE out from behind
+that guard. This round moves the rest, and gives the moment a control.
+
+**The rule, stated once at the submit's `finally`.** Work the send owns is keyed to the send's own
+identity — its token, its workspace, its captured storage keys. The screen guard decides only what
+is RENDERED.
+
+| what the send owns | where it ran | where it runs now |
+|---|---|---|
+| lowering the send flag | the `finally`, only when `version === requestVersion && workspaceId === activeWorkspaceId` | the `finally`, when `composerSendToken === sendToken` — nothing about the screen |
+| putting the body back after a failure, with the error and Retry | under `if (version !== requestVersion \|\| workspaceId !== activeWorkspaceId) return;`, the first line of the catch | under a guard that asks the token and the workspace and NOT the generation |
+| removing the draft a landed post wrote | already send-owned (round six) | unchanged |
+| retiring the command id a landed post minted | below the screen guard | at the top of the landed path, with the rest of the send's own work |
+| releasing the send's preview URLs | leaked entirely on the early return | on every path out of the catch |
+| the sample's own store, which is what a sample refetch reads | below the screen guard, so a post during a refresh vanished from the feed | with the send's storage, still bound to the send's workspace |
+| settling the address | inside the screen guard | inside the screen guard, now keyed to the token and the workspace |
+
+`composerSendToken` is the send's identity for the flag. One submit takes a token and only that
+submit may lower the flag it raised; `resetComposer` bumps the token, which says the composer that
+send raised it on is gone. `requestVersion` cannot answer that question, and that is the whole
+defect: six controls reopen the CURRENT workspace and every one of them advances the generation
+without running `resetComposer`.
+
+**And the send finally has a window to be measured in.** A sample send resolved with no await at
+all, so no browser step in this lane could act while a message was on the wire: both in-flight
+freezes were read out of the source and the send's teardown was never driven under a screen that
+moved. `sampleSendWindow` reads two document-element hooks — a delay and a failure — and both are
+sample-only, because sample mode is entered only when there is no Supabase client at all. The
+sample workspace open now also models a REOPEN: it advances the generation and tears nothing down,
+exactly as `openWorkspace` does for the workspace already on screen, and the sample Refresh button
+takes that path instead of asking a server that is not there.
+
+| new control | what it drives |
+|---|---|
+| `refreshMidSend` | Refresh pressed mid-post: the flag comes down, the chips answer a click, a new tag still reaches the row, and the message is in the feed once |
+| `failedUnderRefresh` | the same Refresh on a send that FAILS: the body is back in the box, the row is addressed, the error names the failure and Retry is offered |
+| `switchedUnderFailedSend` | a workspace switch mid-post: the box the reader moved to keeps its own draft, and the earlier send does not lower the flag of the send THAT composer is running |
+| `unsentBodySurvivesSwitch` | and the unsent message is still in the workspace it was written in, with its address |
+| `resentOnce` | sending it again posts it once |
+| `returnedBeforeItFailed` | the reader leaves and RETURNS before the send finishes, and types: the failure does not write its old body over what is in the box now |
+
+Each step records `sawFlagUp`, which is the positive control: it says the step really acted while
+the box was read-only, so a window that stopped opening fails on its own assertion rather than
+making the step vacuous. Seven mutations drive these, and the first of them — restoring the old
+screen-guarded lift — is also the proof that the sample Refresh reaches a generation bump at all.
+
+**Two controls this round measured and then had to be rebuilt, which is worth recording.** The
+first version of the frozen-flag mutation reported RED, WRONG REASON: the in-flight steps used
+`clearTo`, which ends in a throwing wait, so a composer left frozen aborted the whole measurement
+and the defect arrived as "no measurement" instead of on its own assertion. The steps now clear
+without throwing. The first version of the teardown control reported NOT CAUGHT: the token counter
+is monotonic, so a SECOND send invalidates an earlier one on its own and a switch-then-send could
+not tell whether `resetComposer` retires the token. What does tell is a RETURN with no second
+send, which is `returnedBeforeItFailed`.
+
+**Two items left the NOT-established list.** The stored draft's freeze now has a browser control
+(`unsentBodySurvivesSwitch`, driven by a mutation that removes the guard), and a send under a
+same-workspace reopen is now measured rather than named.
 
 ## What is NOT established
 
@@ -188,10 +252,40 @@ with the retired wording preserved.
   sample mode, where a send is a local row and no `post_signal` is issued. The wire claim is
   about the body this client BUILDS, read from the exported builder; the served edge answers
   for that shape in `tests/p1-server/chat-signals.test.ts`, which this lane did not run.
-- **Neither in-flight freeze has a browser control.** The pair's freeze and the stored draft's
-  freeze are two separate guards for one rule, and a sample send never stays in flight long
-  enough for a browser step to act inside it. Both are read out of the source with a mutation
-  on each; what the pair's freeze DOES is driven through `deriveComposerAddress` directly.
+- **The PAIR's freeze still has no browser control** (2026-09-05, round eight). The stored draft's
+  freeze now does: `unsentBodySurvivesSwitch` goes red when the guard is removed. The pair's
+  freeze does not, and the reason is the sample roster: what that freeze protects is a PRUNE
+  arriving mid-post, and no sample transition loses a recipient. Removing `sending:
+  composerSending` therefore changes nothing a browser step can see, so it stays a source claim
+  with a source mutation, and what the freeze DOES is driven through `deriveComposerAddress`
+  directly.
+
+  RETIRED wording, which a reader may still meet above: "Neither in-flight freeze has a browser
+  control ... a sample send never stays in flight long enough for a browser step to act inside
+  it." A sample send now can, through `sampleSendWindow`.
+- **The in-flight window is the sample's, not a server's.** `data-sample-send-delay` and
+  `data-sample-send-fail` only reach the branch that fabricates a row locally. Nothing here
+  measures a slow or failing `post_signal`, and the timing the controls rely on is headless
+  Chrome's virtual clock rather than a network.
+- **A real Refresh was not driven.** The reopen path is the same handler in both modes, and the
+  sample Refresh button is hidden because there is no server to fetch from, so the control drives
+  a control the reader cannot see in sample mode. What a REAL refresh does after a post — refetch
+  the row from the server — is not measured here; the sample stands in for it with its own store.
+- **A message whose composer was torn down and typed over is not recovered.** The teardown
+  retires the send's token, so a failure arriving after the reader left and came back does not
+  put its body back — and by then the reader may have typed over the draft that held it. The
+  ruling is which loss is worse: overwriting live text the reader is writing cannot be undone,
+  and leaving the older message out is visible and already past. `returnedBeforeItFailed` pins
+  the ruling; nothing here recovers the older message.
+- **Two per-send cache entries are still dropped only on the screen path.** The pending row's
+  `visualMentions` and `deliveryReceiptCache` entries are deleted below the guard. They were
+  considered and left there: in both early-return cases the row they describe has already gone
+  from `signals` (a reopen and a switch each empty it), and they are two Map entries of the same
+  kind the feed already holds for every row. Nothing a reader can see depends on them.
+- **The command id retired above the guard is not independently observable.** A landed post whose
+  intent survived a generation bump could only be replayed through Retry, which a successful send
+  hides. The line is controlled by the source claim in `composer-sprint.observer.test.ts`, not by
+  a browser step.
 - **The applied record's clear after a send is not independently observable.** The submit no
   longer clears it by hand; the settle in the `finally` derives it from the box the send
   emptied. But ANY pass with an empty body drops a record whose tag has left, so a later
