@@ -7,7 +7,10 @@ import {
   chatReadKeys,
   chatSignalKeys,
   chatSignalShapeProblem,
+  CHANNEL_ID_RULE_TEXT,
   commandFieldsMessage,
+  MODEL_MAX,
+  MODEL_RULE_TEXT,
   THREAD_REPLY_KINDS,
 } from "../supabase/functions/_shared/channels.js";
 
@@ -781,4 +784,64 @@ test("the defaulted horizon refusal does not tell the caller to leave out what t
     "the defaulted branch must not tell the caller to do what they did",
   );
   assert.ok(defaulted.includes("too little time left"));
+});
+
+test("a thread reply with a bad channel is told the thread rule, not the slug rule", () => {
+  /* An arm found the slug rule firing first, so the caller would fix the slug
+   * and only then meet the rule that makes the request impossible. Name the
+   * rule that cannot be satisfied, not the one that is merely also broken. */
+  const problem = chatSignalShapeProblem({
+    signal_kind: "note",
+    to_user_id: null,
+    to_agent_principal_id: null,
+    in_reply_to: null,
+    thread_root_id: "22222222-2222-4222-8222-222222222222",
+    channel: "Not A Slug",
+  });
+  assert.ok(problem !== null);
+  assert.match(problem, /does not take a channel of its own/);
+  assert.doesNotMatch(problem, /lowercase letters/);
+  /* Control: the same bad slug WITHOUT a thread still gets the slug rule. */
+  const slugOnly = chatSignalShapeProblem({
+    signal_kind: "note",
+    to_user_id: null,
+    to_agent_principal_id: null,
+    in_reply_to: null,
+    channel: "Not A Slug",
+  });
+  assert.ok(slugOnly !== null && /lowercase letters/.test(slugOnly));
+});
+
+test("the channel_id rule text does not promise a check the validator skips", () => {
+  /* It said "the id of a channel in this workspace"; the validator at that
+   * point only tests the UUID shape. The tenancy check happens later, in
+   * applyChannelCommand, and a refusal must not claim it ran. */
+  assert.match(CHANNEL_ID_RULE_TEXT, /UUID/);
+  assert.doesNotMatch(CHANNEL_ID_RULE_TEXT, /in this workspace/);
+});
+
+test("the model length rule has its own sentence, built from its own bound", () => {
+  /* An arm sent a 121-character model with exactly the right keys and was told
+   * which FIELDS the command takes. */
+  assert.ok(MODEL_RULE_TEXT.includes(String(MODEL_MAX)));
+  const command = readFileSync(
+    fileURLToPath(
+      new URL("../supabase/functions/command/index.ts", import.meta.url),
+    ),
+    "utf8",
+  );
+  assert.equal(
+    command.includes('{ model: "text or null" }'),
+    false,
+    "the model description must not be typed beside the bound it describes",
+  );
+  for (const kind of ["declare_agent_model", "set_agent_model"]) {
+    const at = command.indexOf(`boundedText(normalized${kind === "set_agent_model" ? "Set" : ""}, MODEL_MAX)`);
+    assert.notEqual(at, -1, `${kind} must bound the model with MODEL_MAX`);
+    const block = command.slice(at, at + 320);
+    assert.ok(
+      block.includes("MODEL_RULE_TEXT"),
+      `${kind} must answer the length rule with the length sentence`,
+    );
+  }
 });
