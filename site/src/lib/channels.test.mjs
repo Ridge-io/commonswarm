@@ -108,10 +108,13 @@ test("the rail lists live channels in one order and hides the archived", () => {
   assert.equal(channelById(rows, "missing"), null);
 });
 
-test("the two facts the design puts in the UI say what they mean", () => {
-  /* Both are claims about what a channel IS, and both must hold for the hosted app and for
-     an agent posting through the CLI: a channel is an address, and it is not a scope. */
-  assert.match(CHANNEL_REACH_TEXT, /Every member of this workspace reads every channel\./);
+test("the three facts the design puts in the UI say what they mean", () => {
+  /* Claims about what a channel IS, and each must hold for the hosted app and for an agent
+     posting through the CLI: a channel is an address, it is not a scope, and it is not an
+     archive. The expiry half of the design's caveat was missing until a review arm read the
+     lane against section 6 and said so. */
+  assert.match(CHANNEL_REACH_TEXT, /Every member of this workspace reads every channel/);
+  assert.match(CHANNEL_REACH_TEXT, /messages in a channel expire/i);
   assert.match(CHANNEL_REACH_TEXT, /not who gets woken/);
   assert.match(CHANNEL_EMPTY_TEXT, /before this channel existed stay in all-signals/);
   assert.match(CHANNEL_ARCHIVED_TEXT, /Its messages still read/);

@@ -91,7 +91,7 @@ export const channelPurposeHint = (): string =>
  * filing a message in one changes nothing about who is woken.
  */
 export const CHANNEL_REACH_TEXT =
-  "Every member of this workspace reads every channel. A channel is the address of a message, not who gets woken.";
+  "Every member of this workspace reads every channel, and messages in a channel expire the same way they do anywhere else. A channel is the address of a message, not who gets woken.";
 
 /**
  * Signals written before channels existed carry no channel and can never be

@@ -241,6 +241,45 @@ test("the URL round-trips the workspace and the channel by id", () => {
   assert.match(boot, /workspaces\.find\(\(workspace\) => workspace\.id === requestedWorkspaceId\) \?\?/);
 });
 
+test("the URL is written on every workspace open, and a ?c= belongs to its own ?w=", () => {
+  /*
+   * The URL used to be written only when a channel was clicked. Switching workspace from the
+   * menu therefore carried the previous workspace's channel id into the new one, where it is
+   * not, so the reader who chose workspace B was shown "Channel not found" instead of B's
+   * feed and a reload took them back to A. Found by a review arm. Two rules fix it and both
+   * are pinned here: a `?c=` belongs to the workspace its `?w=` names, and the address bar is
+   * written after every open rather than after a click.
+   */
+  const apply = between(dashboard, "const applyChannelFromUrl = (", "const cancelThreadReply");
+  assert.match(apply, /const applyChannelFromUrl = \(workspaceId: string\): void =>/);
+  assert.match(apply, /const forWorkspace = params\.get\("w"\);/);
+  assert.match(
+    apply,
+    /\(forWorkspace !== null && forWorkspace !== workspaceId\)/,
+    "a channel id from another workspace must not be applied to this one",
+  );
+  const open = between(dashboard, "applyChannelFromUrl(selected.id);", "renderMembers();");
+  assert.match(open, /syncChannelUrl\(\);/, "the open must WRITE the address it just read");
+});
+
+test("the channel list flag follows the latest read, in both directions", () => {
+  /* It was set once at workspace open and never again, so a first read that failed kept
+     saying so after a later one succeeded, and a later one that failed left the copy claiming
+     the id is simply not here. Found by a review arm. */
+  const refresh = between(dashboard, "const refreshChannels = async (", "\n    };");
+  assert.match(refresh, /channelListFailed = true;/);
+  assert.match(refresh, /channels = next;\s*\n\s*channelListFailed = false;/);
+});
+
+test("a sample post joins the sample set, so the local narrowing stays honest", () => {
+  /* Sample mode narrows over a snapshot taken at boot, and a sample post only reached
+     `signals`. Posting then switching channel made the post vanish, and it made the argument
+     for allowing a local filter there false: "the sample IS the whole set" holds only if the
+     set grows with it. Found by a review arm. */
+  const submit = between(dashboard, "const postedIds = new Set(posted.map", "clearComposerDraft();");
+  assert.match(submit, /if \(sampleMode\) sampleSignals = \[\.\.\.posted, \.\.\.sampleSignals\];/);
+});
+
 test("the channel commands send exactly the keys the command edge accepts", () => {
   /*
    * Generated from the edge's own `required` / `optional` arrays — the arrays its

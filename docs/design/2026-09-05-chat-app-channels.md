@@ -23,7 +23,7 @@ Two facts the design requires in the UI rather than in a help page, and where th
 
 | Fact | Where the reader meets it |
 |---|---|
-| Every member reads every channel | `CHANNEL_REACH_TEXT`, at the top of the channel dialog and as a channel's description when it has no purpose |
+| Every member reads every channel, and messages in a channel still expire | `CHANNEL_REACH_TEXT`, at the top of the channel dialog and as a channel's description when it has no purpose |
 | Nothing written before a channel existed can be in it | `CHANNEL_EMPTY_TEXT`, in the empty state of a channel |
 | Archiving hides and refuses, and deletes nothing | `CHANNEL_ARCHIVED_TEXT`, as an archived channel's description, and the archive control's own hint |
 
@@ -45,8 +45,10 @@ anything, which is what makes a client-chosen narrowing structurally safe.
 **Sample mode is the one exception and it is bounded.** `/app` served without a deployment renders a
 made-up feed with no server behind it, so clearing the rows and asking for a page replaces the sample
 with "This saved page is not connected to CommonSwarm" — measured, before the branch that prevents it.
-Sample mode narrows its own fixed four-row array. The dishonesty a client-side filter usually carries
-is absent there because the sample IS the whole set.
+Sample mode narrows its own array. The dishonesty a client-side filter usually carries is absent there
+because the sample IS the whole set — which held only until someone posted into it. A sample post
+reached `signals` and not the snapshot, so posting and then switching channel made the post vanish and
+made that argument false. Found by a review arm; the set grows with the post now.
 
 ## The composer posts where you are reading
 
@@ -90,6 +92,12 @@ starts from, and that remaining window can be short.
 `?w=<workspace_id>` and `?c=<channel_id>`, by id and not by name, so a rename does not rot a link.
 `?w=` is honoured only when it names a workspace already in this reader's own memberships: the address
 bar is a convenience, never an authorization.
+
+**A `?c=` belongs to the workspace its `?w=` names, and the URL is written on every open.** The first
+version wrote it only when a channel was clicked, so switching workspace from the menu carried the
+previous workspace's channel id into the new one, where it is not: the reader who chose workspace B was
+shown "Channel not found" instead of B's feed, and a reload took them back to A. Found by a review arm.
+A link the reader followed still resolves, because its own `?w=` is the workspace being opened.
 
 A `?c=` that resolves to no channel here becomes an **honest empty state**, never the unfiltered
 feed. The loaded rows in that case ARE the whole workspace's, because a channel that cannot be
@@ -177,7 +185,15 @@ forbids.
 8. **The rail's current mark and the head can no longer disagree**, but that was a defect and not a
    design: the channel buttons carry no `data-workspace-view`, so `activateWorkspaceView`'s own loop
    never reached them and the rail claimed a current channel while the head said Files. Found by a
-   review arm.
+   review arm. In the unresolved-channel state the rail marks NOTHING current, which both arms read
+   and agreed is the honest mark: the reader is in the signals view and in no channel.
+9. **The two review rounds cost seven product defects and two evidence defects**, every one of them
+   found by an arm rather than by a gate: the read-permission claim in the copy, the composer that
+   posted into the unfiltered feed, the double current mark, four typed copies of the view's name, a
+   workspace switch that opened as "Channel not found", a channel-list flag that never followed the
+   second read, sample posts vanishing on a channel switch, a measurement file reporting one
+   viewport's rects under another's heading, and a shell inventory that had started inventorying a
+   comment. The gates were green for all of them.
 
 ## Files
 

@@ -28,9 +28,9 @@ const mutations = [
     "a refusal shows the server's sentence"],
   [CHT, CH, "    .filter((channel) => channel.archivedAt === null)", "    .filter(() => true)",
     "the rail lists live channels in one order"],
-  [CHT, CH, '"Every member of this workspace reads every channel. A channel is the address of a message, not who gets woken.";',
-    '"Only the people in this channel see it. A channel is private, not who gets woken.";',
-    "the two facts the design puts in the UI"],
+  [CHT, CH, '"Every member of this workspace reads every channel, and messages in a channel expire the same way they do anywhere else. A channel is the address of a message, not who gets woken.";',
+    '"Only the people in this channel see it. A channel is private, and messages expire, not who gets woken.";',
+    "the three facts the design puts in the UI"],
   [CHT, CH, "export const channelNameHint = (): string =>\n  `${CHANNEL_SLUG_RULE_TEXT} ${RESERVED_CHANNEL_SLUG_TEXT}`;",
     'export const channelNameHint = (): string =>\n  "A channel name uses lowercase letters. Reserved names: all-signals.";',
     "the module imports its rules and does not restate them"],
@@ -106,6 +106,23 @@ const mutations = [
     "no view but the feed leaves a channel marked current"],
   [OBS, DASH, "              <span>{ALL_SIGNALS_SLUG}</span>", "              <span>all-signals</span>",
     "the name of the unfiltered view is typed in exactly one place"],
+
+  // ── round three: the four controls added after the second SHA failed both arms
+  [OBS, DASH, '        (forWorkspace !== null && forWorkspace !== workspaceId)\n',
+    "        false\n",
+    "the URL is written on every workspace open"],
+  [OBS, DASH, "        applyChannelFromUrl(selected.id);\n        syncChannelUrl();",
+    "        applyChannelFromUrl(selected.id);",
+    "the URL is written on every workspace open"],
+  [OBS, DASH, "      channels = next;\n      channelListFailed = false;",
+    "      channels = next;",
+    "the channel list flag follows the latest read"],
+  [OBS, DASH, "        if (sampleMode) sampleSignals = [...posted, ...sampleSignals];\n",
+    "",
+    "a sample post joins the sample set"],
+  [CHT, CH, '"Every member of this workspace reads every channel, and messages in a channel expire the same way they do anywhere else. A channel is the address of a message, not who gets woken.";',
+    '"Every member of this workspace reads every channel. A channel is the address of a message, not who gets woken.";',
+    "the three facts the design puts in the UI"],
 ];
 
 const testFor = (file) => file;

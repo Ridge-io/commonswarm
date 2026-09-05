@@ -154,7 +154,13 @@ test("the workspace shell groups people with their nested agents in one bounded 
        rather than a channel among them. */
     "CHANNELS",
     "PEOPLE &amp; AGENTS",
-    "# all-signals",
+    /* ~~"# all-signals"~~ retired 2026-09-05. The rail builds that name from
+       ALL_SIGNALS_SLUG now, so the literal survived in ONE place: the comment recording the
+       change. A review arm pointed out that this token had stopped inventorying the shell
+       and started inventorying a comment, which would go red if the comment were deleted and
+       stay green if the rail stopped showing the name. It is the generating expression now,
+       the same move the header test one file down already made. */
+    "<span>{ALL_SIGNALS_SLUG}</span>",
     "Every agent belongs to a person. Workspace-owned agents are not supported yet.",
     "data-sidebar-participant-list",
   ]) {

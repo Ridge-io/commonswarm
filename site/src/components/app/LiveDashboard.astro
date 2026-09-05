@@ -5238,9 +5238,12 @@ import "../../styles/tokens.css";
         channels = nextChannels.value;
         channelListFailed = nextChannels.failed;
         /* The URL is read ONCE per workspace open, after the channels are known: a ?c= that
-           names a channel this reader cannot see must show an honest empty state, and the
-           only way to tell that from a channel that is merely empty is to have the list. */
-        applyChannelFromUrl();
+           names no channel here must show an honest empty state, and the only way to tell
+           that from a channel that is merely empty is to have the list. Then it is WRITTEN,
+           so the address bar is the address of what is being read after every open and not
+           only after a channel click. */
+        applyChannelFromUrl(selected.id);
+        syncChannelUrl();
         if (
           freshInviteWorkspaceId === selected.id &&
           shouldRetireFreshInvite(freshInviteId, nextInvites)
@@ -5502,6 +5505,13 @@ import "../../styles/tokens.css";
     const activeChannelName = (): string =>
       channelLabel(activeChannel()?.slug ?? ALL_SIGNALS_SLUG);
 
+    /**
+     * Which place the rail marks as current. An unresolved `?c=` marks NOTHING: the reader is
+     * in the signals view but in no channel, and marking all-signals would say they are
+     * reading the whole feed when the feed is not being shown. Both review arms read this
+     * state and agreed the empty mark is the honest one, so it is written down rather than
+     * left to fall out of the condition.
+     */
     const syncChannelCurrent = (): void => {
       for (const button of all<HTMLButtonElement>("[data-channel-place]")) {
         const place = button.dataset.channelPlace ?? "";
@@ -5627,13 +5637,24 @@ import "../../styles/tokens.css";
     };
 
     /**
-     * Read `?c=` once per workspace open, AFTER the channel list is known. A channel id
-     * that names nothing this reader can see becomes an honest empty state; it never
-     * falls back to the unfiltered feed under the channel's name.
+     * Read `?c=` once per workspace open, AFTER the channel list is known. A channel id that
+     * names nothing here becomes an honest empty state; it never falls back to the unfiltered
+     * feed under the channel's name.
+     *
+     * A `?c=` BELONGS TO THE WORKSPACE ITS `?w=` NAMES. Without that rule, switching workspace
+     * from the menu carried the previous workspace's channel id into the new one, which is not
+     * in it, so the reader who picked workspace B was shown "Channel not found" instead of B's
+     * feed, and a reload took them back to A. Found by a review arm. A link the reader
+     * FOLLOWED still resolves: its own `?w=` is the workspace being opened.
      */
-    const applyChannelFromUrl = (): void => {
-      const requested = new URL(window.location.href).searchParams.get("c");
-      if (requested === null || requested === "") {
+    const applyChannelFromUrl = (workspaceId: string): void => {
+      const params = new URL(window.location.href).searchParams;
+      const requested = params.get("c");
+      const forWorkspace = params.get("w");
+      if (
+        requested === null || requested === "" ||
+        (forWorkspace !== null && forWorkspace !== workspaceId)
+      ) {
         activeChannelId = null;
         unknownChannelId = null;
         return;
@@ -5787,9 +5808,23 @@ import "../../styles/tokens.css";
      * than patched.
      */
     const refreshChannels = async (workspaceId: string, version: number): Promise<void> => {
-      const next = await workspaceChannels(workspaceId);
+      let next: WorkspaceChannel[];
+      try {
+        next = await workspaceChannels(workspaceId);
+      } catch (error) {
+        /* The flag has to follow the LATEST read, in both directions. It was set once at
+           workspace open and never again, so a first read that failed kept saying so after a
+           later one succeeded, and a later one that failed left the copy claiming the id is
+           simply not here. Found by a review arm. */
+        if (version === requestVersion && workspaceId === activeWorkspaceId) {
+          channelListFailed = true;
+          renderChannelHead();
+        }
+        throw error;
+      }
       if (version !== requestVersion || workspaceId !== activeWorkspaceId) return;
       channels = next;
+      channelListFailed = false;
       /* A channel that was archived while it was open stops being the active one: the rail
          no longer lists it and posting to it is refused. Its messages stay readable in
          all-signals, which is where the reader is sent. */
@@ -6996,6 +7031,12 @@ import "../../styles/tokens.css";
           visualMentions.set(signal.id, mentionsFor(recipients[index]!));
           deliveryReceiptCache.set(signal.id, { result: null, checkedAt: 0, phase: "accepted" });
         }
+        /* Sample mode's channel narrowing rebuilds the feed from the snapshot taken at boot,
+           and a sample post only ever reached `signals`. Posting then switching channel made
+           the post disappear, and it also made the honesty argument for that local filter
+           false: "the sample IS the whole set" only holds if the set grows with it. Found by
+           a review arm. */
+        if (sampleMode) sampleSignals = [...posted, ...sampleSignals];
         composerIntent = null;
         composerAttachmentsMissingAfterReload = false;
         /* The reply is sent, so the next message is a message of its own. Cleared only on
