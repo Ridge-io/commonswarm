@@ -2209,3 +2209,20 @@ LIVE, #5 update notice LIVE, #6 chat: schema, edges, recipients, CLI (0.1.55) an
 channels LIVE; threads UI is the last piece (`lane/chat-app-threads` spawned). Also spawned:
 `lane/wake-all-recipients` (edge + listener: a delivery row per agent recipient, hydration keyed
 on the row's recipient, the 0.1.55-listener compat measured; and an agent path for `channel ls`).
+
+## Addendum 2026-09-05 19:3x UTC — wake-all-recipients PASS/PASS at a1bc2f8; extended before deploy
+
+`lane/wake-all-recipients` (evidence tip 631307c): one shared predicate behind both enqueue paths,
+a trigger on `signal_recipients` writing one delivery row per agent recipient (ON CONFLICT DO
+NOTHING), hydration answering each row with its own recipient as `to_agent` so a 0.1.55 listener
+takes a position-1 delivery unchanged, `recipient_position`/`recipient_count` on the wire; both
+arms PASS after one FAIL round (Grok caught a self-addressed refusal that would have stalled the
+attendance canary). Postgres 40/40 and 146/146 after a clean local reset. HELD from deploy until
+the same release carries: the CLI's `channel ls` agent path (`src/cli.ts:7437` still refuses an
+agent), the client fix for a PRE-EXISTING throw on a feed row naming this agent at position 1
+(`src/cloud/arrival-watch.ts:396`, `src/listener/hook.ts:700`; reachable on production today since
+L2 widened the read edge), and the To: row copy (routed to the threads lane, site owner). Apply
+order when it goes: migration `20260905000020` → `command` → `read` in one window → client 0.1.56
+→ site. Bounds the lane recorded: revocation/expiry after enqueue leaves an unreachable pending
+row; an agent still wakes itself inside a group; a hydrated delivery can carry both `to` (a
+person at position 0) and `to_agent`. The local Supabase slot holds the branch's migrations.
