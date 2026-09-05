@@ -449,12 +449,13 @@ test("a broken chat shape is refused with the sentence that says which rule brok
     command.includes("? chatShapeProblem"),
     "the chat refusal sentence must reach the caller",
   );
-  /* And ONLY when the key set was acceptable: a body that also carries an
-   * unknown key broke a more basic rule first, and naming the chat rule would
-   * send the caller to fix the wrong thing. */
+  /* And ONLY when NOTHING ELSE is wrong. Gating on the key set alone was not
+   * enough -- a review arm showed a body with an invalid signal_kind AND a
+   * thread_root_id being told the thread-kind rule, when the first broken rule
+   * is that the kind is not a signal kind at all. */
   assert.ok(
-    command.includes("keysOk && chatShapeProblem !== null"),
-    "the chat sentence is used only when exactKeys passed",
+    command.includes("baseValid && chatShapeProblem !== null"),
+    "the chat sentence is used only when every other check passed",
   );
   const sentence = chatSignalShapeProblem({
     signal_kind: "note",
@@ -577,4 +578,39 @@ test("a validation reason is safe to return because the validator cannot know an
     command.includes("message: validation.reason,"),
     "the refusal reason must reach the caller, not only swarm.audit",
   );
+});
+
+
+test("neither horizon refusal claims the thread ended", () => {
+  /* REGRESSION GUARD, and labelled as one. The atomic refusal fires only when
+   * the named horizon stops fitting between the root lookup and the insert --
+   * a band one SQL round trip wide, which no p1-server test can hit on demand.
+   * Its sentence said the thread had ended; the thread usually has most of its
+   * life left and the caller simply asked for more than now fits. A wrong
+   * sentence in a correct refusal is the shape this codebase keeps producing,
+   * so it is pinned where it can be pinned. */
+  const command = readFileSync(
+    fileURLToPath(
+      new URL("../supabase/functions/command/index.ts", import.meta.url),
+    ),
+    "utf8",
+  );
+  const start = command.indexOf('error: "thread_reply_until_exceeds_root"');
+  assert.notEqual(start, -1, "the refusal must still exist to guard");
+  /* Both arms use this error code; scan every occurrence. */
+  let cursor = 0;
+  let seen = 0;
+  while (true) {
+    const at = command.indexOf('error: "thread_reply_until_exceeds_root"', cursor);
+    if (at === -1) break;
+    seen += 1;
+    const block = command.slice(at, at + 700);
+    assert.doesNotMatch(
+      block,
+      /thread ended/i,
+      "a refusal must not say the thread ended when it has not",
+    );
+    cursor = at + 1;
+  }
+  assert.equal(seen, 2, "both the early and the atomic arm must be scanned");
 });

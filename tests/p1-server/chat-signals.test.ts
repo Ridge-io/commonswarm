@@ -614,3 +614,87 @@ test("a refusal names the rule that was broken, with the right article", async (
   assert.equal(badUuid.status, 400, JSON.stringify(badUuid.body));
   assert.match(String(badUuid.body.message), /thread_root_id/);
 });
+
+
+test("a refusal names the FIRST rule broken, not the chat rule that also fired", async () => {
+  /* A review arm found the chat sentence winning over checks that fail earlier.
+   * A body with an invalid signal_kind AND a thread_root_id was told the
+   * thread-kind rule, when the first broken rule is that the kind is not a
+   * signal kind at all. A refusal that names the wrong rule sends the caller to
+   * fix the wrong thing. */
+  const root = await send(f.ownerJwt, installedPost());
+  const rootId = String(signalOf(root.body).id);
+
+  const badKind = await send(
+    f.ownerJwt,
+    installedPost({ signal_kind: "nope", thread_root_id: rootId }),
+  );
+  assert.equal(badKind.status, 400, JSON.stringify(badKind.body));
+  assert.equal(
+    badKind.body.message,
+    "signal fields are malformed or over their limits",
+    "an invalid kind is not a thread-reply problem",
+  );
+
+  /* Control: with a VALID kind, the same thread_root_id plus a recipient does
+   * get the chat sentence, so the generic answer above is the ordering and not
+   * the chat sentence being unreachable. */
+  const chatRule = await send(
+    f.ownerJwt,
+    installedPost({ thread_root_id: rootId, to_user_id: f.otherId }),
+  );
+  assert.equal(chatRule.status, 400, JSON.stringify(chatRule.body));
+  assert.match(String(chatRule.body.message), /thread reply/i);
+});
+
+test("the EARLY horizon refusal does not claim the thread ended when it has not", async () => {
+  /* Which arm this exercises, stated rather than assumed: `until_ms` equal to
+   * the root's own horizon is always caught by the EARLY check, because time
+   * has passed since the root was written and remaining_ms is already smaller.
+   * The ATOMIC arm's band is (remaining_at_insert, remaining_at_select], one
+   * SQL round trip wide, so it is not reachable deterministically from here --
+   * a mutation that restored the old lying sentence left this test green,
+   * which is how I learned it. That arm's sentence is guarded at source in
+   * tests/chat-signal-wire-compat.test.ts instead, and that guard IS mutation
+   * checked. */
+  const root = await send(f.ownerJwt, installedPost({ until_ms: 90_000 }));
+  const rootId = String(signalOf(root.body).id);
+  const refused = await send(
+    f.ownerJwt,
+    installedPost({ thread_root_id: rootId, until_ms: 90_000 }),
+  );
+  assert.equal(refused.status, 409, JSON.stringify(refused.body));
+  const message = String(refused.body.message);
+  assert.doesNotMatch(
+    message,
+    /thread ended|that thread ended/i,
+    `the thread has ~90s left, so this sentence must not say it ended: ${message}`,
+  );
+  assert.match(message, /cannot outlive|no longer fits|ends at/i);
+});
+
+test("the feedback categories in the refusal come from the constant the check reads", async () => {
+  /* Routing every validator reason to the caller made three pre-existing typed
+   * lists user-facing. This one listed bug|idea|friction in prose beside a
+   * check that tested the same three literals. */
+  const refused = await send(f.ownerJwt, {
+    kind: "submit_feedback",
+    feedback_id: randomUUID(),
+    category: "not-a-category",
+    body: "x",
+  });
+  assert.equal(refused.status, 400, JSON.stringify(refused.body));
+  const message = String(refused.body.message);
+  for (const category of ["bug", "idea", "friction"]) {
+    assert.ok(message.includes(category), `must name ${category}: ${message}`);
+  }
+  /* Control: a valid category is accepted, so the refusal above is the category
+   * and not a broken command. */
+  const ok = await send(f.ownerJwt, {
+    kind: "submit_feedback",
+    feedback_id: randomUUID(),
+    category: "idea",
+    body: `generated categories ${randomUUID()}`,
+  });
+  assert.equal(ok.status, 200, JSON.stringify(ok.body));
+});

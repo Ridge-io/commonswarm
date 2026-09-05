@@ -15,8 +15,11 @@ import {
   CHANNEL_PURPOSE_MAX,
   channelSlugProblem,
   chatSignalKeys,
-  commandFieldsMessage,
   chatSignalShapeProblem,
+  commandFieldsMessage,
+  FEEDBACK_CATEGORIES,
+  type FeedbackCategory,
+  feedbackCategoryList,
   normalizeChannelSlug,
   SIGNAL_KINDS,
   type SignalKind,
@@ -1630,25 +1633,26 @@ function validateCommand(
 
   if (cmd.kind === "channel_rename") {
     const required = ["channel_id", "slug"];
+    /* Field list first, slug rule second: a body with an extra key AND a bad
+     * slug broke the shape before it broke the naming rule, and naming the
+     * slug rule would send the caller to fix the wrong thing. */
+    const shapeOk = exactKeys(cmd, ["kind", ...required]) &&
+      typeof cmd.channel_id === "string" && UUID_RE.test(cmd.channel_id);
     const slugProblem = channelSlugProblem(cmd.slug);
-    if (
-      !exactKeys(cmd, ["kind", ...required]) ||
-      typeof cmd.channel_id !== "string" ||
-      !UUID_RE.test(cmd.channel_id) ||
-      slugProblem !== null
-    ) {
+    if (!shapeOk || slugProblem !== null) {
       return {
         ok: false,
         status: 400,
-        reason: slugProblem ??
-          commandFieldsMessage("channel_rename", required),
+        reason: shapeOk
+          ? slugProblem!
+          : commandFieldsMessage("channel_rename", required),
       };
     }
     return {
       ok: true,
       command: {
         kind: "channel_rename",
-        channel_id: cmd.channel_id.toLowerCase(),
+        channel_id: (cmd.channel_id as string).toLowerCase(),
         slug: normalizeChannelSlug(cmd.slug as string),
       },
     };
@@ -1747,7 +1751,7 @@ function validateCommand(
       ...optionalKeys,
       ...chatKeys,
     ]);
-    const valid = keysOk &&
+    const baseValid = keysOk &&
       typeof cmd.signal_kind === "string" &&
       signalKinds.includes(cmd.signal_kind as SignalKind) &&
       typeof cmd.body === "string" &&
@@ -1801,7 +1805,13 @@ function validateCommand(
        * not here. Keeping a copy on the edge meant a bad uuid was refused with
        * the generic reason before the chat sentence could run, which is exactly
        * the split that function exists to prevent. */
-      chatShapeProblem === null;
+      true;
+    /* The chat sentence is only the right answer when NOTHING ELSE is wrong.
+     * Gating on the key set alone was not enough: a body with signal_kind
+     * "nope" AND a thread_root_id was told the thread-kind rule, when the first
+     * broken rule is that "nope" is not a signal kind at all. A refusal that
+     * names the wrong rule sends the caller to fix the wrong thing. */
+    const valid = baseValid && chatShapeProblem === null;
     const attachments = Object.hasOwn(cmd, "attachments")
       ? parseSignalAttachmentRefs(cmd.attachments)
       : undefined;
@@ -1842,10 +1852,7 @@ function validateCommand(
       : {
         ok: false,
         status: 400,
-        /* The chat sentence only when the KEY SET was acceptable. A body that
-         * also carries an unknown key broke a more basic rule first, and
-         * naming the chat rule would send the caller to fix the wrong thing. */
-        reason: keysOk && chatShapeProblem !== null
+        reason: baseValid && chatShapeProblem !== null
           ? chatShapeProblem
           : "signal fields are malformed or over their limits",
       };
@@ -1880,7 +1887,7 @@ function validateCommand(
       return {
         ok: false,
         status: 400,
-        reason: "declare_agent_model takes model (text or null) and nothing else",
+        reason: commandFieldsMessage("declare_agent_model", ["model (text or null)"]),
       };
     }
     /* Normalize EXACTLY as the reducer will (trim, empty -> null) BEFORE
@@ -1894,7 +1901,7 @@ function validateCommand(
       return {
         ok: false,
         status: 400,
-        reason: "declare_agent_model takes model (text or null) and nothing else",
+        reason: commandFieldsMessage("declare_agent_model", ["model (text or null)"]),
       };
     }
     return {
@@ -1910,20 +1917,28 @@ function validateCommand(
   // src/protocol/workspace-commands.ts — hand-written duplicates here have
   // drifted before (the 8h→24h TTL constant).
   if (cmd.kind === "submit_feedback") {
+    /* Both the check and the sentence read FEEDBACK_CATEGORIES. They were two
+     * typed copies of the same three names, which was invisible while the
+     * reason went only to swarm.audit and user-facing the moment this lane put
+     * it on the wire. */
+    const required = [
+      "feedback_id",
+      `category (${feedbackCategoryList()})`,
+      "body",
+    ];
     const keysOk = exactKeys(cmd, ["kind", "feedback_id", "category", "body"]) ||
       exactKeys(cmd, ["kind", "feedback_id", "category", "body", "context"]);
     if (
       !keysOk ||
       typeof cmd.feedback_id !== "string" ||
       !UUID_RE.test(cmd.feedback_id) ||
-      (cmd.category !== "bug" && cmd.category !== "idea" && cmd.category !== "friction") ||
+      !FEEDBACK_CATEGORIES.includes(cmd.category as never) ||
       typeof cmd.body !== "string"
     ) {
       return {
         ok: false,
         status: 400,
-        reason:
-          "submit_feedback takes feedback_id, category (bug|idea|friction), body, and optional context",
+        reason: commandFieldsMessage("submit_feedback", required, ["context"]),
       };
     }
     const trimmedBody = cmd.body.trim();
@@ -1966,7 +1981,7 @@ function validateCommand(
       command: {
         kind: "submit_feedback",
         feedback_id: cmd.feedback_id.toLowerCase(),
-        category: cmd.category,
+        category: cmd.category as FeedbackCategory,
         body: trimmedBody,
         context,
       },
@@ -1986,8 +2001,10 @@ function validateCommand(
       return {
         ok: false,
         status: 400,
-        reason:
-          "set_agent_model takes principal_id and model (text or null) and nothing else",
+        reason: commandFieldsMessage(
+          "set_agent_model",
+          ["principal_id", "model (text or null)"],
+        ),
       };
     }
     const setModel = cmd.model === null ? null : cmd.model.trim();
@@ -1996,8 +2013,10 @@ function validateCommand(
       return {
         ok: false,
         status: 400,
-        reason:
-          "set_agent_model takes principal_id and model (text or null) and nothing else",
+        reason: commandFieldsMessage(
+          "set_agent_model",
+          ["principal_id", "model (text or null)"],
+        ),
       };
     }
     return {
@@ -5931,7 +5950,7 @@ async function resumeRenewalGrant(
    * was told 403; a retry then answered `renewal_grant_not_suspended`, because the resume it
    * had denied had in fact happened.
    *
-   * Same shape as the renewal preflight read at index.ts:3339 (`preflight[0]?.code ?? null`):
+   * Same shape as the renewal preflight read at index.ts:3358 (`preflight[0]?.code ?? null`):
    * preserve NULL, refuse only on a code we assign.
    *
    * WHY A REFUSAL BELOW STILL COMMITS, DELIBERATELY. `refuse` must commit — its whole job is
@@ -7824,8 +7843,15 @@ async function handleTransaction(
           status: 409,
           body: {
             error: "thread_reply_until_exceeds_root",
+            /* This fires when the horizon the caller NAMED no longer fits the
+             * time the thread has left, measured in the writing statement. The
+             * thread itself is usually still very much alive -- an earlier
+             * version of this sentence said it had ended, which was false for
+             * every case but one and is the kind of confident wrong sentence
+             * this codebase keeps producing. Say what is true: the horizon does
+             * not fit, and here is what the thread runs to. */
             message:
-              `A reply cannot outlive the message its thread starts from, and that thread ended while this reply was being written. Post it again for a fresh horizon.`,
+              "A reply cannot outlive the message its thread starts from, and the horizon you asked for no longer fits the time that thread has left. Ask for a shorter one, or leave it out and it is set for you.",
             ...(rootUntil === null ? {} : { root_until: rootUntil.toISOString() }),
           },
         };

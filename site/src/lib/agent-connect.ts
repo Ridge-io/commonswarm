@@ -19,7 +19,7 @@
  *
  * Step 1 is not optional and is the step that is easy to miss from a browser. The command
  * function checks the mint's device binding against swarm.devices directly
- * (supabase/functions/command/index.ts:1974-1991): the device row must exist, be owned by the
+ * (supabase/functions/command/index.ts:2933-2945): the device row must exist, be owned by the
  * calling human, and not be revoked, or the mint is a bare 403 with no explanation. So the
  * browser has to be a registered device before it can mint anything.
  *
@@ -61,7 +61,7 @@ export const AGENT_TOKEN_MAX_TTL_MS = 30 * 24 * 60 * 60 * 1_000;
  *
  * The horizon is now read off `horizon_expires_at` in the accepted response, for BOTH grant
  * kinds — see mintedHorizon. A standing grant returns null there
- * (supabase/functions/command/index.ts:8671-8676), so the two facts come from one place. */
+ * (supabase/functions/command/index.ts:8697-8702), so the two facts come from one place. */
 
 /**
  * How this browser's device row is labelled, so a second visit reuses the row rather than
@@ -274,7 +274,7 @@ function assertAccepted(step: ConnectStep, outcome: CommandOutcome): Record<stri
      * NAMES BOTH DIRECTIONS OF SKEW, from 2026-09-04. It used to say only that this page may
      * be OLDER than the deployment. The mint body now carries `renewal_kind`, and a command
      * function that predates that field rejects the whole request on its exact-key check
-     * (supabase/functions/command/index.ts:2167-2175) — so the NEWER-page case is the one a
+     * (supabase/functions/command/index.ts:2189-2197) — so the NEWER-page case is the one a
      * reader is most likely to meet, on a site deploy that outran the edge deploy, and the
      * old sentence sent them looking in the opposite direction. */
     throw new AgentConnectRefused(
@@ -459,7 +459,7 @@ export interface AgentCredential {
  * (supabase/migrations/20260723000001_p1_schema.sql:196), so a generated id is accepted rather
  * than dangling. What this page did NOT establish is how that binding behaves for the lease
  * verbs — the only authorisation check on an agent credential that was read while writing this
- * is the scope check at supabase/functions/command/index.ts:4139-4160, which is what
+ * is the scope check at supabase/functions/command/index.ts:7277-7282, which is what
  * `post_signal` needs.
  *
  * NO AUTOMATIC RETRY. The CLI's comment on command ids records what a blind retry cost once:
@@ -564,8 +564,8 @@ export async function mintAgentCredential(
  * used any other horizon. One field answers both cases, so the two can never disagree.
  *
  * `horizon_expires_at` is returned unconditionally on an accepted mint
- * (supabase/functions/command/index.ts:8671-8676) — an ISO string for timeboxed, null for
- * standing — and the idempotent replay path carries it through (index.ts:2387-2393).
+ * (supabase/functions/command/index.ts:8697-8702) — an ISO string for timeboxed, null for
+ * standing — and the idempotent replay path carries it through (index.ts:2406-2412).
  *
  * ABSENT READS AS UNKNOWN, NOT AS A GUESS. A deployment old enough to omit the field answers
  * null here, and `grantKind` reads null beside it; agent-prompt.ts then uses its wording for a

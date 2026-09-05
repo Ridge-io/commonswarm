@@ -269,6 +269,20 @@ export function chatSignalShapeProblem(
  * `kind` is the command name; `required` and `optional` are the exact key
  * arrays, minus the literal "kind" every command carries.
  */
+/**
+ * The feedback categories, once. The validator tested three string literals and
+ * the refusal sentence typed the same three in prose -- invisible while the
+ * reason went only to swarm.audit, user-facing the moment this lane put it on
+ * the wire. A fourth category would have changed the check and not the sentence.
+ */
+export const FEEDBACK_CATEGORIES = ["bug", "idea", "friction"] as const;
+export type FeedbackCategory = typeof FEEDBACK_CATEGORIES[number];
+
+/** "bug|idea|friction", built from the array the validator reads. */
+export function feedbackCategoryList(): string {
+  return FEEDBACK_CATEGORIES.join("|");
+}
+
 export function commandFieldsMessage(
   kind: string,
   required: readonly string[],
