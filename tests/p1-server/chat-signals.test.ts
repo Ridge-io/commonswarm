@@ -24,6 +24,10 @@ import { setTimeout as delay } from "node:timers/promises";
 import { createClient, type SupabaseClient } from "@supabase/supabase-js";
 import postgres from "postgres";
 import { awaitFunctionRunning } from "../support/edge-readiness.js";
+import {
+  MODEL_RULE_TEXT,
+  uuidFieldRuleText,
+} from "../../supabase/functions/_shared/channels.js";
 
 interface LocalEnvironment {
   API_URL: string;
@@ -722,6 +726,62 @@ test("a refusal names the FIRST rule broken, not the chat rule that also fired",
     (blankPurpose.body.channel as Record<string, unknown>).purpose,
     null,
   );
+
+  /* Right keys, WRONG TYPE. Bundled with exactKeys, `{model: 123}` was told
+   * the field list, which ends "and nothing else" and so reports an extra key
+   * the caller did not send. The first rule broken is the type. */
+  const wrongModelType = await send(f.agentToken, {
+    kind: "declare_agent_model",
+    model: 123,
+  });
+  assert.equal(wrongModelType.status, 400, JSON.stringify(wrongModelType.body));
+  assert.equal(
+    String(wrongModelType.body.message),
+    MODEL_RULE_TEXT,
+    "a wrong type is the type rule, not the field list",
+  );
+  assert.doesNotMatch(String(wrongModelType.body.message), /nothing else/);
+
+  /* Control: an ACTUAL extra key still gets the field list, so the split did
+   * not simply swap one sentence for the other. */
+  const extraModelKey = await send(f.agentToken, {
+    kind: "declare_agent_model",
+    model: null,
+    nope: 1,
+  });
+  assert.equal(extraModelKey.status, 400, JSON.stringify(extraModelKey.body));
+  assert.match(String(extraModelKey.body.message), /nothing else/);
+
+  /* set_agent_model bundled THREE rules. A malformed principal_id is the id
+   * rule, and a wrong model type is the type rule; neither is the field list. */
+  const badPrincipal = await send(f.ownerJwt, {
+    kind: "set_agent_model",
+    principal_id: "not-a-uuid",
+    model: null,
+  });
+  assert.equal(badPrincipal.status, 400, JSON.stringify(badPrincipal.body));
+  assert.equal(
+    String(badPrincipal.body.message),
+    uuidFieldRuleText("principal_id"),
+  );
+
+  const setWrongType = await send(f.ownerJwt, {
+    kind: "set_agent_model",
+    principal_id: f.principal,
+    model: 123,
+  });
+  assert.equal(setWrongType.status, 400, JSON.stringify(setWrongType.body));
+  assert.equal(String(setWrongType.body.message), MODEL_RULE_TEXT);
+
+  /* Control for BOTH set_agent_model cases: the same body with a legal
+   * principal_id and a legal model is accepted, so the two refusals above are
+   * the rules named and not a command that cannot succeed. */
+  const setOk = await send(f.ownerJwt, {
+    kind: "set_agent_model",
+    principal_id: f.principal,
+    model: "gpt-5.6-sol",
+  });
+  assert.equal(setOk.status, 200, JSON.stringify(setOk.body));
 
   /* A short model carrying a control character is a CONTROL rule, not a length
    * rule: boundedText refuses both and the length sentence was answering both. */

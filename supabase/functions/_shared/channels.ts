@@ -123,8 +123,17 @@ const CHAT_UUID_RE =
  */
 export const RESERVED_CHANNEL_SLUGS: readonly string[] = ["all-signals"];
 
+/**
+ * "<field> must be a UUID.", from one place. Three validators answer a
+ * malformed id and each had typed its own sentence; the wording is the same
+ * shape every time, so it is built once and the field name is the only input.
+ */
+export function uuidFieldRuleText(field: string): string {
+  return `${field} must be a UUID.`;
+}
+
 /** What a channel_id is, for the refusal that fires when one is malformed. */
-export const CHANNEL_ID_RULE_TEXT = "channel_id must be a UUID.";
+export const CHANNEL_ID_RULE_TEXT = uuidFieldRuleText("channel_id");
 
 /**
  * The model bound and its sentence, together. src/protocol's normalizedModel
@@ -276,6 +285,17 @@ export function chatSignalShapeProblem(
   if (broadcast !== undefined && typeof broadcast !== "boolean") {
     return "broadcast_to_channel is true or false.";
   }
+  /* IMPOSSIBLE BEFORE MERELY WRONG, the rule the comment below states. This
+   * test used to sit at the END of this function, after the slug rule, so
+   * `broadcast_to_channel: true` with no thread_root_id and a misspelled
+   * channel was told how to spell a channel name -- advice that cannot make
+   * the request legal, because there is no thread to broadcast from. The
+   * request is impossible whatever the slug says, so say that first. It is
+   * safe here: this arm needs thread_root_id ABSENT and every rule between
+   * here and its old position needs it PRESENT, so no other refusal changes. */
+  if (broadcast === true && (threadRoot === null || threadRoot === undefined)) {
+    return "broadcast_to_channel says to send a thread reply to the channel as well, so it needs a thread_root_id.";
+  }
   /* Now that the field IS an id, the rule that makes the request impossible
    * outranks the rule that is merely also broken: a thread reply takes no
    * channel at all, so say that rather than the slug's spelling. */
@@ -328,9 +348,6 @@ export function chatSignalShapeProblem(
      * rule, so there is no second test here. */
   }
 
-  if (broadcast === true && (threadRoot === null || threadRoot === undefined)) {
-    return "broadcast_to_channel says to send a thread reply to the channel as well, so it needs a thread_root_id.";
-  }
   return null;
 }
 

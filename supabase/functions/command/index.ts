@@ -25,6 +25,7 @@ import {
   SIGNAL_KINDS,
   type SignalKind,
   unknownChannelMessage,
+  uuidFieldRuleText,
 } from "../_shared/channels.ts";
 import {
   commandAllowedOrigins,
@@ -1895,10 +1896,12 @@ function validateCommand(
   // 20260730000001_workspace_access_lifecycle.sql — a hand-written duplicate
   // here has drifted before (the 8h→24h TTL constant above).
   if (cmd.kind === "declare_agent_model") {
-    if (
-      !exactKeys(cmd, ["kind", "model"]) ||
-      (cmd.model !== null && typeof cmd.model !== "string")
-    ) {
+    /* KEYS, then TYPE, in two steps. Bundled, `{model: 123}` -- exactly the
+     * right keys, wrong type -- was answered with the field-list sentence,
+     * which ends "and nothing else" and so tells the caller they sent an extra
+     * key they did not send. channel_rename already split these two; a review
+     * arm found that these did not. */
+    if (!exactKeys(cmd, ["kind", "model"])) {
       return {
         ok: false,
         status: 400,
@@ -1906,6 +1909,9 @@ function validateCommand(
           model: MODEL_RULE_TEXT,
         }),
       };
+    }
+    if (cmd.model !== null && typeof cmd.model !== "string") {
+      return { ok: false, status: 400, reason: MODEL_RULE_TEXT };
     }
     /* Normalize EXACTLY as the reducer will (trim, empty -> null) BEFORE
      * validating, so the wire and the reducer agree on every input: a raw ""
@@ -2009,12 +2015,9 @@ function validateCommand(
   // normalize-before-validate order as declare (its landing-round finding 1),
   // and the SAME bounds — the reducer's shared normalizedModel is the source.
   if (cmd.kind === "set_agent_model") {
-    if (
-      !exactKeys(cmd, ["kind", "principal_id", "model"]) ||
-      typeof cmd.principal_id !== "string" ||
-      !UUID_RE.test(cmd.principal_id) ||
-      (cmd.model !== null && typeof cmd.model !== "string")
-    ) {
+    /* Keys, then the id shape, then the model type -- the same three-step
+     * split as declare_agent_model above, for the same reason. */
+    if (!exactKeys(cmd, ["kind", "principal_id", "model"])) {
       return {
         ok: false,
         status: 400,
@@ -2025,6 +2028,16 @@ function validateCommand(
           { model: MODEL_RULE_TEXT },
         ),
       };
+    }
+    if (typeof cmd.principal_id !== "string" || !UUID_RE.test(cmd.principal_id)) {
+      return {
+        ok: false,
+        status: 400,
+        reason: uuidFieldRuleText("principal_id"),
+      };
+    }
+    if (cmd.model !== null && typeof cmd.model !== "string") {
+      return { ok: false, status: 400, reason: MODEL_RULE_TEXT };
     }
     const setModel = cmd.model === null ? null : cmd.model.trim();
     const normalizedSet = setModel === "" ? null : setModel;

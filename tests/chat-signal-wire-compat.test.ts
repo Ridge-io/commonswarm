@@ -891,3 +891,76 @@ test("a malformed thread_root_id is the FIRST rule, ahead of the thread rules it
     /cannot be a thread reply/,
   );
 });
+
+test("broadcast_to_channel without a thread is told so before the slug rule", () => {
+  /* The twin of the test above, on the residual the schema lane left owed.
+   * broadcast_to_channel says "send this thread reply to the channel as well",
+   * so with no thread_root_id there is no thread to send and the request is
+   * impossible however the channel is spelled. The slug rule was answering
+   * first, which sends the caller to fix a name that cannot make it legal. */
+  const problem = chatSignalShapeProblem({
+    signal_kind: "note",
+    to_user_id: null,
+    to_agent_principal_id: null,
+    in_reply_to: null,
+    channel: "Not A Slug",
+    broadcast_to_channel: true,
+  });
+  assert.ok(problem !== null);
+  assert.match(problem, /needs a thread_root_id/);
+  assert.doesNotMatch(problem, /lowercase letters/);
+
+  /* Control 1: the same bad slug with broadcast_to_channel FALSE still gets
+   * the slug rule, so the reorder did not simply hide it. */
+  const notBroadcasting = chatSignalShapeProblem({
+    signal_kind: "note",
+    to_user_id: null,
+    to_agent_principal_id: null,
+    in_reply_to: null,
+    channel: "Not A Slug",
+    broadcast_to_channel: false,
+  });
+  assert.ok(notBroadcasting !== null);
+  assert.match(notBroadcasting, /lowercase letters/);
+
+  /* Control 2: broadcast_to_channel true WITH a thread_root_id and a bad slug
+   * still gets the thread rule, which outranks both. The reorder must not have
+   * moved this arm in front of that one. */
+  const threadedBroadcast = chatSignalShapeProblem({
+    signal_kind: "note",
+    to_user_id: null,
+    to_agent_principal_id: null,
+    in_reply_to: null,
+    thread_root_id: "22222222-2222-4222-8222-222222222222",
+    channel: "Not A Slug",
+    broadcast_to_channel: true,
+  });
+  assert.ok(threadedBroadcast !== null);
+  assert.match(threadedBroadcast, /does not take a channel of its own/);
+
+  /* Control 3: a malformed thread_root_id still outranks the broadcast rule,
+   * because shape comes before meaning. */
+  const badRootWithBroadcast = chatSignalShapeProblem({
+    signal_kind: "note",
+    to_user_id: null,
+    to_agent_principal_id: null,
+    in_reply_to: null,
+    thread_root_id: "nope",
+    broadcast_to_channel: true,
+  });
+  assert.ok(badRootWithBroadcast !== null);
+  assert.match(badRootWithBroadcast, /thread_root_id is the id/);
+
+  /* Control 4: a NON-BOOLEAN broadcast_to_channel is still the type rule, so
+   * the semantic arm did not move ahead of its own shape check. */
+  const badBroadcastType = chatSignalShapeProblem({
+    signal_kind: "note",
+    to_user_id: null,
+    to_agent_principal_id: null,
+    in_reply_to: null,
+    channel: "Not A Slug",
+    broadcast_to_channel: "yes",
+  });
+  assert.ok(badBroadcastType !== null);
+  assert.match(badBroadcastType, /true or false/);
+});
