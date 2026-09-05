@@ -190,6 +190,12 @@ const assertComposerSprint = (value: ComposerArtifact): void => {
     "let viewportSyncFrame = 0;",
     "caret-survival",
   );
+  const reset = between(
+    dashboard,
+    "const resetComposer =",
+    "const workspaceMenuItems =",
+    "composer-reset",
+  );
   const viewport = between(
     dashboard,
     "let viewportSyncFrame = 0;",
@@ -453,6 +459,45 @@ const assertComposerSprint = (value: ComposerArtifact): void => {
     "caret-survival: the remembered selection is never put back");
   assert.match(dashboard, /if \(Date\.now\(\) - composerPointerAt < 500\) return;/,
     "caret-survival: focus that followed a tap must keep where the tap landed");
+  /* A caret remembered in OTHER text is not a caret in this text. Both places that replace the
+     whole body have to drop it, or the restore puts the reader at a position they never chose:
+     a workspace switch that restores a different draft, and the send that empties the box. */
+  assert.match(
+    dashboard,
+    /input\.value = draft\.body;[\s\S]{0,60}composerCaretKnown = false;/,
+    "caret-survival: a restored draft keeps a caret that was remembered in different text",
+  );
+  assert.match(
+    dashboard,
+    /input\.style\.blockSize = "auto";[\s\S]{0,160}composerCaretKnown = false;/,
+    "caret-survival: the send empties the box and keeps the caret it had in the sent text",
+  );
+
+  /* EVERY DEBOUNCED TIMER DIES WHERE THE COMPOSER IS EMPTIED. This runs on a workspace change
+     as well as after a send, and a draft timer armed against the old workspace fires afterwards
+     reading an empty box against the NEW key -- which removes the draft the reader is about to
+     be shown. `blur` covers a pointer switch because it flushes first; a switch that never
+     blurred does not. The mention timer already died here through closeMentionPicker. */
+  assert.match(reset, /cancelComposerDraftTimer\(\);/,
+    "composer-reset: a debounced draft write survives the composer being emptied, so it can " +
+      "land against another workspace's key");
+  assert.match(reset, /closeMentionPicker\(\);/,
+    "composer-reset: the mention picker survives the composer being emptied");
+
+  /* A KEY THAT DECIDES ON THE PICKER MUST SEE THE PICKER. The list is debounced off the
+     keystroke, so it can still be closed when Enter arrives. Typing "@ri" and pressing Enter
+     inside 150ms sent the raw text instead of picking the name, and the recipient rides inside
+     the body. Only these four keys flush, so the debounce still holds on the typing path. */
+  assert.match(
+    dashboard,
+    /mentionPickerTimer &&\s*\(event\.key === "Enter" \|\| event\.key === "Escape" \|\|\s*event\.key === "ArrowDown" \|\| event\.key === "ArrowUp"\)/,
+    "combobox-flush: no key flushes the pending mention render, so Enter can send raw @text",
+  );
+  assert.match(
+    dashboard,
+    /cancelMentionPickerRender\(\);\s*renderMentionPicker\(\);/,
+    "combobox-flush: the pending render is cancelled without being run",
+  );
   /* The usable viewport is visualViewport and ONLY visualViewport. `window.innerHeight` used
      to be the fallback; on iOS Safari it reports the layout viewport, which does not shrink
      when the keyboard opens, so it wrote a height that was too tall at exactly the moment a
@@ -692,6 +737,34 @@ const mutations: Mutation[] = [
     key: "dashboard",
     target: "if (!input || !composerCaretKnown) return;",
     replacement: "if (!input) return;",
+    expectedFailure: "caret-survival",
+  },
+  {
+    name: "the emptied composer leaves a debounced draft write armed",
+    key: "dashboard",
+    target: 'cancelComposerDraftTimer();\n      setComposerStatus("");',
+    replacement: 'setComposerStatus("");',
+    expectedFailure: "composer-reset",
+  },
+  {
+    name: "Enter is judged against a mention picker that has not rendered yet",
+    key: "dashboard",
+    target: "cancelMentionPickerRender();\n          renderMentionPicker();",
+    replacement: "cancelMentionPickerRender();",
+    expectedFailure: "combobox-flush",
+  },
+  {
+    name: "a restored draft inherits a caret from different text",
+    key: "dashboard",
+    target: 'composerCaretKnown = false;\n      composerIntent = null;',
+    replacement: "composerIntent = null;",
+    expectedFailure: "caret-survival",
+  },
+  {
+    name: "the send keeps the caret it had in the sent text",
+    key: "dashboard",
+    target: "/* The text the caret was in has been sent. Nothing to put back. */\n      composerCaretKnown = false;",
+    replacement: "/* The text the caret was in has been sent. Nothing to put back. */",
     expectedFailure: "caret-survival",
   },
   {

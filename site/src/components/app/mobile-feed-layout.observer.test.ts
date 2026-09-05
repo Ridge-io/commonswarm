@@ -38,6 +38,8 @@ type LayoutMeasurement = {
   feedListPaddingBlockStart: string;
   feedMore: Rect | null;
   feedMoreToFirstRowGap: number | null;
+  feedViewScrollTop: number;
+  firstRow: Rect | null;
   viewport: { height: number; width: number };
   shell: {
     app: Rect;
@@ -246,9 +248,11 @@ const frameScript = (
       feedListPaddingBlockStart:
         view.getComputedStyle(doc.querySelector("[data-feed-list]")).paddingBlockStart,
       feedMore: feedMore.hidden ? null : rect("[data-feed-more]"),
+      feedViewScrollTop: doc.querySelector(".dashboard__feed-view").scrollTop,
       feedMoreToFirstRowGap: feedMore.hidden || !firstRow
         ? null
         : firstRow.getBoundingClientRect().top - feedMore.getBoundingClientRect().bottom,
+      firstRow: firstRow ? rect("[data-feed-list] > li") : null,
       header,
       input: rect(".dashboard__composer-input"),
       menu,
@@ -394,6 +398,31 @@ const assertPhoneHeaderRule = (measurement: LayoutMeasurement, width: number): v
     measurement.header.height > 0 && measurement.header.top >= appBar - 0.5,
     `${width}px density: the channel head is gone rather than floating over the transcript: ` +
       JSON.stringify(measurement.header),
+  );
+  /* FLOATING IS NOT FREE AT REST. The transcript scrolls UNDER the band, which is the point,
+   * but the first message must start below ALL of it before anybody scrolls. The band's two
+   * parts are not the same height — the filter row is 2.5rem and the roster cluster 3.25rem —
+   * and the clearance used to be the shorter one, so 12px of the first row sat under the pill.
+   * Positive control first: this measures nothing if the feed is already scrolled or empty. */
+  assert.equal(
+    measurement.feedViewScrollTop,
+    0,
+    `${width}px density: the transcript is already scrolled, so "at rest" is not what was measured`,
+  );
+  assert.ok(
+    measurement.firstRow !== null && measurement.firstRow.height > 0,
+    `${width}px density: there is no first message, so the clearance below measures nothing`,
+  );
+  assert.ok(
+    measurement.firstRow.top >= measurement.header.bottom - 0.5,
+    `${width}px density: ${(measurement.header.bottom - measurement.firstRow.top).toFixed(1)}px ` +
+      "of the first message sits under the floating roster pill at rest: " +
+      JSON.stringify({ firstRow: measurement.firstRow, header: measurement.header }),
+  );
+  assert.ok(
+    measurement.firstRow.top >= measurement.toolbar.bottom - 0.5,
+    `${width}px density: the first message sits under the floating filter row at rest: ` +
+      JSON.stringify({ firstRow: measurement.firstRow, toolbar: measurement.toolbar }),
   );
   assert.ok(
     measurement.transcriptVisibleHeight >= 600,

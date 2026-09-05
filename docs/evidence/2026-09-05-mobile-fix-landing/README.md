@@ -151,3 +151,66 @@ older updates can be loaded". It measures both variants in one case, with a posi
 the button is really on screen, and it re-runs the operator's header rule while the button is up.
 Mutation against the real source file: baseline 5 pass, the rule put back to `2.5rem` 1 fail naming
 "the band's clearance is paid twice ... (40px)", restored 5 pass.
+
+## 7. What the review arms found, and what came of it
+
+Both arms FAILED the first SHA (`2d901d3`). Every finding was checked at the cited lines before
+anything was changed. Arm output: `arms-2d901d3/{grok,gemini}/ARM.txt`.
+
+Confirmed, and fixed:
+
+- **The band's clearance was the wrong height** (Gemini 1 and 9). The band's two floating parts
+  are not the same size: the filter row is 2.5rem, the roster cluster 3.25rem. The clearance was
+  the shorter one, so at rest the first message began 113px below the top of the app bar while the
+  pill ended at 125px — 12px of the first row under the pill. One `--feed-band-height` now feeds
+  every clearance. Control in `assertPhoneHeaderRule`; mutation: baseline 5 pass, the property back
+  at 2.5rem 1 fail reading "12.0px of the first message sits under the floating roster pill at
+  rest", restored 5 pass.
+- **`resetComposer` never cancelled the debounced draft write** (Grok 4). It runs on a workspace
+  change too. A timer armed against workspace A fires after the switch, reads an empty box and
+  writes against B's key, removing the draft B was about to restore. A pointer switch blurs first
+  and is safe; a switch that never blurred is not. Fixed and pinned under `composer-reset`.
+- **Enter could be judged against a picker that had not rendered** (Grok 4). The mention list is
+  debounced 150ms, so typing `@ri` and pressing Enter inside that window sent the raw text instead
+  of picking the name — and the recipient rides inside the body, so that is a message addressed to
+  nobody. Enter, Escape and the two arrows now flush a pending render; the typing path does not,
+  so the measured debounce still holds. Pinned under `combobox-flush`.
+- **"Workspace settings" stayed in the desktop menu's arrow list** (Grok, closing). It is
+  `display: none` above 52rem, which is not the `hidden` attribute the roving-focus filter tested,
+  so arrowing through the desktop menu stopped on an item nobody could see. The filter now also
+  requires a box. Control and mutation in `workspace-switcher.observer.test.ts`.
+- **A caret remembered in other text** (Gemini 6, Grok 6). `composerCaretKnown` was never cleared,
+  so a workspace switch that restores a different draft, followed by focus with no pointer, put
+  the old index into the new text. Cleared in `restoreComposerDraft` and in `resetComposer`, with
+  two more mutations.
+- **A CSS comment named a gear that is not there** (Grok 9). The mobile-header comment listed
+  "workspace name and its gear" in the same block that sets the gear to `display: none`.
+- **The lane README's headline number** (Grok 9). "171px → 73px" pairs two different measurements.
+  Corrected in `docs/evidence/2026-09-04-mobile-fix/README.md`, retired wording kept.
+
+Checked and refuted, with what was measured:
+
+- **"`persistComposerDraft` returns early on empty input and leaves a stale draft"** (Gemini 4).
+  The function does the opposite: `if (body === "" && !hadAttachments) { window.localStorage
+  .removeItem(key); return; }`. The code the finding quotes is not in the file.
+- **"`contain: layout` traps popovers and lets messages paint over the band"** (Gemini 3). Nothing
+  inside a message row is absolutely, fixed or sticky positioned — enumerated at runtime, the list
+  is empty — and the entity panel is a top-level element, not a row's child. The filter row is
+  `position: sticky` with `z-index: 2` and the head `z-index: 4`, both above rows whose z-index is
+  auto; the 52rem block overrides neither. `elementFromPoint` at the chips returns a filter button.
+- **"`scrollTo(0, 0)` fights a scrolling user"** (Gemini 5). `.dashboard__product` is the measured
+  viewport height with `overflow: hidden`, so the layout viewport has nothing to scroll. The write
+  is also skipped at (0, 0), so it cannot loop. A pinch-zoom pan on iOS is not established either way.
+- **"`scrollComposerCaretIntoView` mishandles a caret at the end of a wrapped paragraph"**
+  (Gemini 6). That case returns before the line arithmetic: `if (caret >= input.value.length)
+  { input.scrollTop = input.scrollHeight; return; }`. Mid-paragraph soft wraps can still land a
+  line or two off, which the code comment already states.
+
+Accepted, not changed:
+
+- The `caret-survival` and `combobox-flush` controls are source-shape assertions, which is this
+  file's established pattern. The behaviour itself is measured in section 3 above, in a browser,
+  against two builds.
+- `assertDensity` no longer applies its band and ratio floors below 1440px. `assertPhoneHeaderRule`
+  replaces them with the operator's rule, a floating-head check, a 600px transcript floor and now
+  the at-rest clearance. The new clearance case is measured at 390x844 only.

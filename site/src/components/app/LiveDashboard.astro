@@ -2258,6 +2258,13 @@ import "../../styles/tokens.css";
      * put the sent text back as a draft. */
     let composerDraftTimer = 0;
     let mentionPickerTimer = 0;
+    /* There is nothing to put back until something has been remembered, and the starting value
+     * is not a caret anybody chose. Without this flag the first focus that did not follow a tap
+     * — tabbing into a draft the page restored — would set the caret to the START of a sentence
+     * the reader had already written, which is the defect the caret block exists to remove.
+     * Declared here, with the timers, because `restoreComposerDraft` clears it and that runs
+     * above the caret block. */
+    let composerCaretKnown = false;
     const cancelComposerDraftTimer = (): void => {
       if (!composerDraftTimer) return;
       window.clearTimeout(composerDraftTimer);
@@ -2540,6 +2547,9 @@ import "../../styles/tokens.css";
         return;
       }
       input.value = draft.body;
+      /* A caret remembered in OTHER text is not a caret in this text. The restore would put
+         it back at a position the reader never chose here. */
+      composerCaretKnown = false;
       composerIntent = null;
       const warning = one<HTMLElement>("[data-composer-reload-warning]");
       composerAttachmentsMissingAfterReload = draft.hadAttachments === true;
@@ -2574,11 +2584,6 @@ import "../../styles/tokens.css";
      *    typed line disappeared behind the keyboard furniture.
      */
     let composerCaret = { end: 0, start: 0 };
-    /* There is nothing to put back until something has been remembered, and the starting value
-     * is not a caret anybody chose. Without this flag the first focus that did not follow a tap
-     * — tabbing into a draft the page restored — would set the caret to the START of a sentence
-     * the reader had already written, which is the defect this whole block exists to remove. */
-    let composerCaretKnown = false;
     let composerPointerAt = 0;
     const composerInputElement = (): HTMLTextAreaElement | null =>
       one<HTMLTextAreaElement>("[data-composer-input]");
@@ -2804,6 +2809,13 @@ import "../../styles/tokens.css";
         input.value = "";
         input.style.blockSize = "auto";
       }
+      /* The text the caret was in has been sent. Nothing to put back. */
+      composerCaretKnown = false;
+      /* AND the pending draft write dies here. This runs when the composer changes workspace,
+         and a timer armed against the old one fires afterwards reading an empty box against
+         the NEW key -- which removes the draft the reader is about to be shown. `blur` covers
+         a pointer switch because it flushes first; a switch that never blurred does not. */
+      cancelComposerDraftTimer();
       setComposerStatus("");
       const retry = one<HTMLButtonElement>("[data-composer-retry]");
       if (retry) retry.hidden = true;
@@ -2818,9 +2830,14 @@ import "../../styles/tokens.css";
 
     /* The rail mirrors participants as presence/navigation only. Its shared renderer keeps
        ownership structural and names unresolved owners instead of hiding their agents. */
+    /* Two ways an item in this menu is not on offer, and the list has to know both. The
+       `hidden` attribute is one. The other is CSS: "Workspace settings" exists only below
+       52rem, where the gear leaves the app bar, and above that width it is `display: none`.
+       Filtering on `hidden` alone left it in this roving-focus list, so arrowing through the
+       desktop menu stopped on an item nobody could see. A box is the test that covers both. */
     const workspaceMenuItems = (): HTMLButtonElement[] =>
       all<HTMLButtonElement>("[data-workspace-menu] [role='menuitemradio'], [data-workspace-menu] [role='menuitem']")
-        .filter((item) => !item.hidden);
+        .filter((item) => !item.hidden && item.getClientRects().length > 0);
 
     const closeWorkspaceMenu = (restoreFocus = false): void => {
       const menu = one<HTMLElement>("[data-workspace-menu]");
@@ -5914,6 +5931,20 @@ import "../../styles/tokens.css";
       "keydown",
       (event) => {
         const input = event.currentTarget as HTMLTextAreaElement;
+        /* The mention list is debounced off the keystroke, so it can still be closed when a key
+           that DECIDES on it arrives. Typing "@ri" and pressing Enter inside 150ms sent the raw
+           text instead of picking the name the list was about to offer, and the recipient rides
+           inside the body, so that is a message addressed to nobody. Flush the pending render
+           for those four keys only: they are not the typing path, so the debounce still holds
+           where it was measured. */
+        if (
+          mentionPickerTimer &&
+          (event.key === "Enter" || event.key === "Escape" ||
+            event.key === "ArrowDown" || event.key === "ArrowUp")
+        ) {
+          cancelMentionPickerRender();
+          renderMentionPicker();
+        }
         const picker = one<HTMLElement>("[data-mention-picker]");
         const confirmKey = event.key === "Enter" &&
           !event.isComposing &&
@@ -10190,8 +10221,10 @@ import "../../styles/tokens.css";
       margin: var(--s-3);
     }
 
-    /* THE mobile header. One row, and the only chrome above the transcript: workspace name
-       and its gear, the view switcher, the account control. Everything the channel head used
+    /* THE mobile header. One row, and the only chrome above the transcript: the workspace
+       name, the view switcher, the account control. The gear is NOT among them -- it is
+       `display: none` in this same block and its dialog is reached from the workspace menu.
+       Everything the channel head used
        to stack below it now floats over the transcript instead of taking a row of its own.
        Measured at 390x844 before this change: 73px app bar + 53px channel head + 45px filter
        row = 171px of header before the first message. */
@@ -10326,6 +10359,14 @@ import "../../styles/tokens.css";
     .dashboard__channel {
       position: relative;
       grid-template-rows: minmax(0, 1fr);
+      /* ONE height for the floating band, read by every clearance that keeps the transcript
+         out from under it. The two floating parts are not the same height: the filter row is
+         2.5rem, and the roster cluster is a 2.75rem tap target inside var(--s-1) of padding,
+         which is 3.25rem. The clearance was the filter row's 2.5rem, so at rest 12px of the
+         first message sat under the roster pill — measured at 390x844: the first row began
+         113px below the top of the app bar and the pill ended at 125px. The band is as tall
+         as its tallest part, and the clearance is the band. */
+      --feed-band-height: 3.25rem;
     }
 
     .dashboard__channel-head {
@@ -10417,11 +10458,11 @@ import "../../styles/tokens.css";
     }
 
     .dashboard__feed {
-      padding-block-start: 2.5rem;
+      padding-block-start: var(--feed-band-height);
     }
 
     .dashboard__feed-more {
-      padding-block-start: 2.5rem;
+      padding-block-start: var(--feed-band-height);
     }
 
     /* The clearance belongs to whatever is FIRST under the floating band, and only to that.

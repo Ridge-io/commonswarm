@@ -159,3 +159,28 @@ base. It is NOT the gate result for the landed code: `main` gained brain-links a
 site suite is 323 tests, 322 pass, 1 skip on the rebased tree. The landing gates, the browser
 measurements taken after the rebase, and one defect found reviewing this lane are in
 `docs/evidence/2026-09-05-mobile-fix-landing/`.
+
+## Correction: the 171px → 73px row compares two different measurements
+
+The header table above has a row "**header height taken from the reading area**: **171px** →
+**73px**". The two numbers are not the same measurement, and this file defines the field they are
+labelled with. `inFlowHeaderHeight` is "the distance from the top of the screen to the top of the
+transcript's own box", and `before-measurements.json` records it as **126**, not 171. 171 is that
+file's `floatingBandBottom` / `totalHeaderChrome`: where the first message began, because the
+45px filter row lived INSIDE the transcript box rather than above it.
+
+Under one definition at a time, at 390x844:
+
+| | before | after |
+|---|---|---|
+| header above the transcript box (`inFlowHeaderHeight`) | 126px | 73px |
+| where the first message begins (`totalHeaderChrome`) | 171px | 125px |
+
+Both are real gains. The retired row is kept above because readers will meet it; the commit
+message for the lane repeats the same pairing and is wrong in the same way.
+
+The 125px in the "first message top at rest" row was ALSO not what the code did when this file was
+written: the clearance under the floating band was the filter row's 2.5rem while the band is as
+tall as the roster pill's 3.25rem, so the first message began at 113px and 12px of it sat under
+the pill. That is fixed in the landing lane and 125px is now measured. See
+`docs/evidence/2026-09-05-mobile-fix-landing/`.
