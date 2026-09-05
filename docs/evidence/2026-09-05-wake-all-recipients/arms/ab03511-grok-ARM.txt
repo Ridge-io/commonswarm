@@ -1,0 +1,116 @@
+I'll read REVIEW.md and the patch first, then follow the review instructions exactly.The patch is long. I’ll read the rest of it and the files it changes so the review can follow REVIEW.md exactly.I’ll keep reading the rest of the patch and the files the review tells me to check against the code.I’ll now check the source against the comments, and keep looking for a false claim.Next I’ll check collation, remaining comments, and the rest of the tests the brief names.The help line for `channel ls` still omits the agent flag. I’ll check whether the parser actually accepts an agent credential.`diff --git a/docs/design/2026-09-05-chat-build-plan.md b/docs/design/2026-09-05-chat-build-plan.md`
+
+## 1. Deleting the two constants — PASS
+
+`CHANNEL_LIST_NEEDS_HUMAN_MESSAGE` and `CHANNEL_SELECTOR_NEEDS_ID_MESSAGE` are gone as exports. I grepped the tree. The only live copies are the retirement note in `src/cloud/channels.ts` (verbatim) and `docs/evidence/2026-09-05-chat-client/`. Tests assert `Object.hasOwn(client, …) === false`.
+
+The usage matrix now says `channel ls` is `-- either form`. No remaining sentence still says an agent cannot list.
+
+Leftover, not the old claim: the `--help` line for `channel ls` still omits `${agentCredential}`, while `file ls` shows it. `CHANNEL_FLAGS` still includes `CREDENTIAL_FLAGS`, so `--agent-token-file` is accepted. The line does not say an agent cannot list.
+
+Deploy coupling: a client with this code against a read service with no `channels` arm hits `parseBody` → `null` → HTTP 400 `invalid_request`. `listChannelsAsAgent` then prints `The channel list was refused (HTTP 400). Nothing changed.` That matches the note in `channels.ts` and sequencing item 3 in the build plan. The test pins that sentence.
+
+## 2. `listChannelsAsAgent` — PASS
+
+Same split as `listFilesAsAgent` / `listChannelsAsHuman`: agent POST to `/functions/v1/read`, human PostgREST, `{ channels: [] }` envelope vs a raw array, `!ok` → refused (not retryable), `text()` then `JSON.parse`, bad shape → not retryable.
+
+Body is `JSON.stringify({ resource: "channels", workspace_id: workspaceId })`. `parseBody` wants `exactKeys(["resource", "workspace_id"])` plus a UUID string. `exactKeys` sorts both sides, so key order is not a server rule. The test pins the bytes and the sorted key set.
+
+Timeout: one `AbortController`, `signal` on `fetch`, `response.text()` inside the same `try`, `clearTimeout` in the outer `finally`. Abort during the body read is `ChannelListError` with `noResponse === true`. `JSON.parse` runs only after `text()` returns, so a syntax error cannot become a timeout, and a timeout cannot become a syntax error.
+
+Named gap vs `listFilesAsAgent`: `fileRows` uses `onceRetried` and one leftover budget. `channelRows` calls `read()` again with a fresh 30s. That is written down. Both readers already take `timeoutMs`, so sharing a budget is a change in `channelRows`, not in the readers. Safe for this command.
+
+`listFilesAsAgent` also races the body against the deadline even if `text()` ignores abort. The channel readers rely on the fetch `AbortSignal` reaching `response.text()`. Native fetch does that. The new test wires `init.signal` on purpose, so it measures that the timer is still live, not a custom stream.
+
+## 3. `resolveChannelSelector` losing its guard — PASS
+
+Name path: `channelRows` → `findChannelBySlug` → `unknownChannelMessage(selector, rows)` from those rows. The sentence is generated from the list just read.
+
+No new write. Rename and archive still POST `channel_rename` / `channel_archive` with an id. Agents could already do that write by id. What is new is name → id.
+
+## 4. `parseSignalRecipients` — PASS
+
+Refuses: not an array, extra or missing keys, bad kind, bad UUID, fractional or negative position, repeated position, repeated id. Does not require order or holes filled.
+
+That is the right call. PK is `(signal_id, position)`. UNIQUE per kind-id. Contiguity is `assert_signal_recipients_consistent` (`v_count <> v_highest + 1`). The view `jsonb_agg(… ORDER BY position)` emits `{kind,id,position}`. I could not build a view row this parser refuses.
+
+Absent vs `[]`: `undefined` → `{}` (no key). `[]` → `{ recipients: [] }`. `signalReadJsonPayload` passes the parsed records through. `JSON.stringify` drops a missing key and keeps `"recipients":[]`. Human REST `select=` does not name `recipients`, so a person's `cswarm feed --json` rows stay absent.
+
+Malformed list: `parseSignalRecord` throws. Hook, resume, and the listener read use `tolerateMalformedRows: true, maxMalformedRows: 3` (drop the row). Arrival-watch and `readSignals` do not, so one bad row fails the page — same as any other bad signal field. Right for a new protocol key.
+
+## 5. `signalAddressesAgent` at three call sites — PASS
+
+Old allow: `to_agent === principal` or both scalars null. New: that, plus `recipients` naming this agent.
+
+A server that puts this principal in `recipients` can surface a row the scalar check refused. Same server writes `to_agent`. Not a new trust line. The new comment says that. It does not overstate or understate it.
+
+`recipients: []` on a directed signal: scalar is still checked first. If `to_agent` is this principal, still yes. If `to_agent` is someone else, `.some` on `[]` is no. Broadcast is still `to === null && to_agent === null`, not the list. Empty list does not open the undirected arm.
+
+The guard is weaker only in the intended way: a page that names this agent at position 1 is no longer an error. Control tests: position 1 is emitted; a set that names other agents still errors; no `recipients` still uses the scalar.
+
+## 6. D-053 — PASS
+
+`channelRows` retries on `error instanceof ChannelListError && error.noResponse`, not `error.message`. Arrival-watch uses `isRetryableFollowError` and HTTP status. New tests pin user sentences; they do not classify in product code.
+
+`parseSignalRecipients` throws `new Error("signal read returned a malformed recipients list")` and `new Error("signal read returned a repeated recipient")`. That matches the existing parse style. The first one matches the pre-existing `isMalformedFollowMessage` prefix. The new code does not branch on `error.message`.
+
+## 7. Earlier work — PASS
+
+`a2c9f5d` is tests only. `4250111` is deadline plus comments. `de87327` and `ab03511` are comments. They do not change the migration, `hydrateDeliveryRefs`, the prompt slot, or `recipient_position`.
+
+No clash with commit 1. The L2 wake clause is still in the build plan as retired wording a reader may still meet, and the new section marks it retired.
+
+Leftover outside this diff's hunks: `tests/chat-channel-constants.test.ts` still says the p1-local `[person, agent]` case "reads zero". That test now asserts the agent is woken. The comment is from L2 and was already stale at `a1bc2f8`. The new commits did not write it.
+
+## 8. Claims in prose — PASS
+
+I read every comment this diff added or rewrote, against the code, not against another sentence.
+
+Checked, and they hold:
+
+- Retirement note in `src/cloud/channels.ts`: constants quoted verbatim; `channelRows` no longer **refuses** an agent; it still branches to pick the transport; names the earlier wording and the `ecbb26b` commit message.
+- Same correction in the build plan sequencing item 3. The two copies agree.
+- `listChannelsAsHuman` is **below** `listChannelsAsAgent` (JSDoc and the `//` inside the agent reader). Both name the function. No other file-position word in this diff is wrong. `channel_id above` in `parseSignalRecord` is the spread just above the call.
+- ORDER / CHECK: `20260905000001` CHECKs `slug ~ '^[a-z0-9]([a-z0-9-]*[a-z0-9])?$'`. Stored slugs have no uppercase. Unique index is `(workspace_id, lower(slug))`. That index does not stop an uppercase slug; the CHECK is what makes `ORDER BY lower(slug)` and PostgREST `slug.asc` the same strings. `lower()` keeps the input collation, so the CHECK is the thing standing between the two expressions. Read-edge comment matches.
+- `exactKeys` sorts. Test asserts the sorted key set next to the pinned bytes.
+- Deadline covers the body. Stalled body is retryable `noResponse`.
+- Unlike `fileRows`, two 30s budgets. Sharing one budget would be a change in `channelRows`. Both copies of that bound agree (`cli.ts` retry comment and the build-plan fix).
+- HTTP 400 coupling.
+- Absent ≠ `[]` on `recipients` (`command-client.ts`, `signals.ts`, tests).
+- RETIRED notes on arrival-watch, hook, resume: scalar check dropped a position-1 row; undirected arm unchanged.
+- `signalAddressesAgent` trust paragraph: same server writes `to_agent`.
+- Five bounds: post-enqueue revoke, self-wake, both `to` and `to_agent` on a hydrated delivery, `describeAudience` scalar-only, receipt human half. `describeAudience` reads `to_agent ?? to`. The three `to === null && to_agent === null` sites are arrival-watch, `cli.ts` feed digest, and `agent-signal-receipts.ts`.
+- Apply order; site To: copy not touched (`composer-to-field.observer.test.ts` still asserts person-in-front wakes nobody).
+- `CHANNEL_READ_COLUMNS` / `CHANNEL_COLUMNS` pinned by import, eight fields, generated SELECT.
+
+`ecbb26b`'s message still says `channelRows` "no longer branches on the credential kind". Later comments quote that sentence and mark it false. The tree no longer carries it as a live claim.
+
+## 9. Tests — PASS, honest about offline
+
+The probe that can fail is `readableAgentRun`: readable token, dead port, asserts `channel list did not complete`. Put the old refusal back and that test goes red. Offline `REACHED_CREDENTIAL` alone would still pass. The test says it cannot talk to production until `read` is deployed.
+
+Body-deadline test: fake `text()` listens to `init.signal`, 60 ms, `noResponse === true`, not the shape sentence. It can fail (hang or wrong class). It does not call `listChannelsAsHuman`. Revert only the human reader and this suite stays green. The two readers are the same shape.
+
+Byte-exact body test plus sorted keys: matches `exactKeys`. Extra-key 400 is covered on the server suite.
+
+Hook / arrival-watch tests hit the filter, with a control that still drops other agents. Recipient parse tests hit extra key, repeats, holes, empty vs absent, and person-then-agent.
+
+## Round four
+
+**1. Deadline covers the body — PASS.** Timer lives across `fetch` and `response.text()`. Body abort → retryable. `JSON.parse` cannot see a timeout. `channelRows` still retries once on `noResponse`. The new test can fail.
+
+**2. ORDER paragraph — PASS.** CHECK is lowercase-only. No stored slug has an uppercase letter for the two expressions to disagree about. Read-edge comment matches.
+
+**3. Human is below; `exactKeys` sorts — PASS.**
+
+**4. Two 30s budgets — PASS.** Comment is true. Leaving it is safe.
+
+## Round five
+
+Positional words: `listChannelsAsHuman` BELOW — true. Retirement note correction — true. Trust paragraph — neither over nor under.
+
+## Round six
+
+Build plan item 3 now says `channelRows` no longer **refuses** an agent, still branches, and names the `ecbb26b` wording. Same facts as `src/cloud/channels.ts`. Retry comment now says the budget change would be in `channelRows`. Both copies agree.
+
+VERDICT: PASS

@@ -1,0 +1,39 @@
+`diff --git a/docs/design/2026-09-05-chat-build-plan.md b/docs/design/2026-09-05-chat-build-plan.md`
+
+### 1. Deleting two user-facing constants
+**PASS**. I swept the diff for any remnants of the old assertion that an agent cannot list channels. All references to `CHANNEL_LIST_NEEDS_HUMAN_MESSAGE` and `CHANNEL_SELECTOR_NEEDS_ID_MESSAGE` were properly removed from `src/cli.ts` (where they were thrown) and tests. The retired wording is preserved verbatim in a comment in `src/cloud/channels.ts` and in the design doc, correctly explaining exactly why it was retired. The deploy-coupling claim is highly accurate: a client making this call against a read service without the new arm will receive a `400 Bad Request` and print precisely `"The channel list was refused (HTTP 400). Nothing changed."`, which the tests explicitly mock and assert.
+
+### 2. `listChannelsAsAgent`
+**PASS**. Compared to `listChannelsAsHuman` (which is indeed positioned BELOW it), it shares identical timeout handling (an AbortController wrapped in a 30s timeout cleared in the finally block), error classes, and JSON parsing logic. Both accurately throw `ChannelListError` with `noResponse = true` upon network/timeout failure.
+Compared to `listFilesAsAgent` in `src/cloud/files.ts`, a failure mode it does *not* handle is respecting an externally passed `AbortSignal` via `ReadDeadlineOptions`, nor does it share a single absolute retry budget across multiple attempts. However, the code documents this discrepancy explicitly: "UNLIKE fileRows, the two attempts do NOT share one budget: each carries its own 30s deadline...". 
+The request body sent by `listChannelsAsAgent` is `{"resource":"channels","workspace_id":...}`. Byte for byte and key for key, this perfectly matches the `parseBody` validation in `supabase/functions/read/index.ts` which uses `exactKeys(["resource", "workspace_id"])`.
+
+### 3. `resolveChannelSelector` losing its guard
+**PASS**. The guard loss does not widen write permissions because an agent could already read/write to a channel if it knew the ID; it simply bridges the usability gap by allowing name resolution. When an agent queries a name that does not exist, it falls through to `unknownChannelMessage(selector, rows)`, which generates an error sentence strictly derived from the channel rows it successfully fetched. There is no new write capability granted here; only the ability to resolve names to IDs.
+
+### 4. `parseSignalRecipients`
+**PASS**. Refusing an unknown key is correct because assuming the meaning of a new shape is dangerous and unpredictable. Refusing repeated IDs/positions is correct because the database strictly enforces uniqueness, so duplicates imply a corrupted read row. Permitting non-contiguous/unordered positions is correct because the database and view already handle ordering and contiguity; enforcing it here would cause legitimate server responses to be wrongly dropped if the backend query ordering ever changes.
+A shape the read view could emit that this refuses: If the read view were updated to emit a fourth property (e.g., `name`), `parseSignalRecipients` would refuse it because `keys.length !== 3`. `absent` remains perfectly distinguishable from `[]` because it returns early (`if (value === undefined) return {}`), leaving the field unpopulated rather than assigned an empty array. A malformed row correctly skips only itself (blast radius of one row) because `readAgentSignalPage` handles errors per row via `tolerateMalformedRows`.
+
+### 5. `signalAddressesAgent` at three call sites
+**PASS**. The security-shaped guard in `arrival-watch.ts` is not weakened. While it now relies on the `recipients` array, it still fundamentally trusts the server. A lying server could always write false data into `to_agent`, so trusting `recipients` does not introduce a new trust boundary. When a server sends `recipients: []` for a directed signal (e.g. older edges), the function safely falls back to the scalar branch FIRST (`if (signal.to_agent === principalId) return true;`), ensuring directed signals are never dropped.
+
+### 6. D-053
+**PASS**. No logic branches on `error.message`. `channelRows` catches retryable errors by explicitly checking the boolean `error.noResponse`. `arrival-watch.ts` simply utilizes `signalAddressesAgent` and makes no error message assertions. The only checks on `error.message` exist correctly within the test suite assertions.
+
+### 7. Regression on the earlier work
+**PASS**. The earlier work remains intact and functionally identical. `hydrateDeliveryRefs` was cleverly widened using `OR EXISTS (...)` against the `signal_recipients` table, while still safely answering the delivery row with the agent's own principal in the `to_agent` field. This brilliant trick ensures existing listeners (like 0.1.55) still see their own principal ID and pass validation checks without any client-side update. The listener prompt correctly formats based on `recipientCount`, falling back to the old string structure when absent or when the count is 1.
+
+### 8. Claims in prose
+**PASS**. I meticulously checked the prose claims that failed previous rounds:
+- Claim: The human reader is BELOW `listChannelsAsAgent`. Checked: Yes, `listChannelsAsHuman` is physically below it in `src/cloud/channels.ts`.
+- Claim: `exactKeys` compares SORTED key sets. Checked: The comment explains it does, making key ordering in the JSON payload safe.
+- Claim: The ORDER paragraph in `listChannelsAsAgent` asserts `lower(slug)` and `slug` will not disagree because the DB `CHECK` constraint `^[a-z0-9]([a-z0-9-]*[a-z0-9])?$` enforces lowercase. Checked: 100% accurate. The DB strictly prohibits uppercase letters in slugs.
+- Claim: `channelRows` no longer REFUSES an agent, but still branches on credential kind. Checked: The CLI branches between `listChannelsAsAgent` and `listChannelsAsHuman` using a ternary on `context.selected.kind === "agent"`.
+- Claim: A client against a read service without the arm receives a `400` error and gracefully handles it. Checked: Validated exactly by the test `an agent credential... says nothing changed`.
+Every comment accurately describes the code behavior, and copies of claims across files are in complete agreement.
+
+### 9. Tests
+**PASS**. The new and rewritten tests reach their claimed paths. `readableAgentRun` deliberately utilizes a mock readable token to bypass the early credential check and reach the network fetch, properly proving the old rejection branch was successfully excised. If the branch were reverted, `readableAgentRun` would incorrectly fail at the credential stage before hitting the network. The DB tests (`chat-recipients-postgres.test.ts`) actually perform inserts to trigger the DB functions directly, accurately measuring the triggered delivery rows. The offline CLI tests are explicitly documented as offline controls and openly state they do not verify a live deployed read service.
+
+VERDICT: PASS

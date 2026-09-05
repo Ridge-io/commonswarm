@@ -164,3 +164,33 @@ lane's one test file. The cause: the commit message was written to a path under
 between the write and the `git commit -F`. The two commits were rebuilt as
 `a2c9f5d` and `4250111` with `git diff` proving the trees identical, and every
 message since is written under this session's own scratchpad.
+
+## Round six, ab03511 — PASS / PASS
+
+Grok PASS on the first launch. Gemini's first launch produced ZERO bytes for 72
+minutes, far outside its 10 to 20 minute range on the five earlier rounds, so it
+was killed by its recorded pid and relaunched once; the relaunch answered PASS in
+under nine minutes. The stalled attempt's empty file is kept as
+`arms-ab03511/gemini/ARM-stalled-attempt1.txt` in the worktree and is not
+evidence of anything except the stall.
+
+Grok PASS. Its round-five FAIL was the same sentence a THIRD time: the build plan's
+sequencing item 3 still said `channelRows` "no longer branches on the credential
+kind" after round four corrected it in `src/cloud/channels.ts`. Both copies now
+agree, and the retry-budget comment now names `channelRows` rather than the two
+readers as the place a shared budget would change.
+
+The pattern across rounds three to six is worth naming: four consecutive FAILs
+were prose, and three of them were ONE claim that lived in more than one file.
+Correcting the copy a reader is most likely to meet is not the same as sweeping
+the claim family, which is what AGENTS.md already says under "Claim controls
+prove stability, not truth".
+
+## A stale claim in the site owner's file, routed rather than edited
+
+`site/src/lib/commonswarm.ts:2252` says "The read edge exposes no channel list, so
+the browser reads `swarm_read.channels` directly". The first clause is false once
+the `read` edge deploys. The second clause and the code stay correct, because the
+read function accepts agent credentials only and a browser has none. The
+replacement sentence is in the build plan's sequencing item 3b. Not edited here:
+`site/` belongs to the threads lane.

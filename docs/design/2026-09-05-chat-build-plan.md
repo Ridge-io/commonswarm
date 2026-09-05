@@ -444,6 +444,14 @@ What this lane does NOT change, and what the lead must sequence:
    against a read service without the arm gets HTTP 400 and says the list was refused. Deploy `read`
    before or with the client release.
 
+3b. **One stale comment in the site owner's file, NOT touched here.**
+   `site/src/lib/commonswarm.ts:2252` says "The read edge exposes no channel list, so the browser
+   reads `swarm_read.channels` directly". The first clause is false once the `read` edge deploys.
+   The second clause and the code stay right, because the read function accepts agent credentials
+   only and a browser has none. The one-line replacement is: "The read edge's channel list takes an
+   agent credential only, so the browser reads `swarm_read.channels` directly". Routed to the site
+   owner rather than edited here.
+
 4. **The feed-side scalar re-check is fixed here, and it was a live defect.**
    `src/cloud/arrival-watch.ts` returned `{reason: "error"}` and `src/listener/hook.ts` dropped a row
    for a signal naming this agent at position 1, both reachable from L2 (merge 060ff67) with no part
