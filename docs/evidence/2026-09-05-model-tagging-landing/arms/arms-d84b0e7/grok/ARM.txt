@@ -1,0 +1,96 @@
+I'll read REVIEW.md and the patch first, then follow the review instructions exactly.The patch is long; I'll keep reading it and the related scripts so the review can attack the claimed fixes.I'll keep reading the rest of the patch and the source files the review asks me to attack.I’ll check the identity guard, package scripts, and a few live behaviors the patch claims.I’ll probe a few live behaviors next: trailers, squash commits, Codex session files, and the checker.The on-disk tests may be longer than the patch. I’ll compare HEAD to DIFF.patch so the review stays on the claimed SHA.diff --git a/.github/workflows/agent-trailers.yml b/.github/workflows/agent-trailers.yml
+
+## Findings
+
+**1. The emitter can sign a commit with a model that did not write it, and still call that a measurement.**
+
+`scripts/agent-trailers.sh:100-102`:
+
+```
+model="$(jq -r 'select(.type=="assistant" and .isSidechain != true and .message.model != null)
+                | .message.model' "$transcript" 2>/dev/null | tail -1 || true)"
+[ -n "$model" ] && [ "$model" != "null" ] && detected_model="$model" && detected_source=runtime-transcript
+```
+
+That takes the last main-chain `.message.model` with no further filter. On this host, 30 Claude Code transcripts contain `"<synthetic>"`. In 23 of those, that placeholder is the last main-chain model.
+
+Reproduced against this SHA with one marker set (`CLAUDECODE=1`, no other runtime vars):
+
+```
+model=<synthetic>
+family=anthropic
+tool=claude-code 2.1.257
+source=runtime-transcript
+```
+
+`<synthetic>` is a harness placeholder, not a model. `Agent-Model-Source` still says `runtime-transcript`. One marker, so the ambiguous-source downgrade at `scripts/agent-trailers.sh:271-276` does not fire.
+
+`docs/development/agent-trailers.md:84` says the last main-chain `.message.model` is “the model serving the turn that is committing right now.” It does not mention this placeholder. The case is silent, not disclosed. The opencode residual at lines 157–163 is a different hole.
+
+This is the original check-2 question, and the marker-count fix does not reach it.
+
+**2. This SHA’s table-reading control still does not read the source table.**
+
+`tests/p1-cli/agent-trailers.test.ts:357-371` parses the runtime table’s first column and `deepEqual`s it to `AGENT_TRAILER_RUNTIMES`. For sources it still does `doc.includes(source)` against the whole file.
+
+`docs/development/agent-trailers.md:39-45` is the `Agent-Model-Source` table. Delete the `runtime-config` row; the grok row at line 83 still contains that word; the test stays green. `none` matches ordinary prose.
+
+The comment at lines 360-366 describes exactly this class of miss, then applies the stronger control only to runtime ids (and, separately, required keys at 375+). Families have no table; they are a `\\b${family}\\b` scan of the page.
+
+A retyped list with a control that cannot see the table is the enumeration defect this SHA claimed to close.
+
+**3. The GitHub exemption does not close the one-line evasion the comments say it closes.**
+
+`scripts/check-agent-trailers.sh:84-88`:
+
+```
+# ... somebody running `git config user.email noreply@github.com` to skip the
+# gate would set BOTH. That closes the one-line evasion ...
+if [ "$(git show -s --format='%ce' "$sha")" = "$AGENT_TRAILER_GITHUB_COMMITTER" ] \
+   && [ "$(git show -s --format='%ae' "$sha")" != "$AGENT_TRAILER_GITHUB_COMMITTER" ]; then
+  return 3
+fi
+```
+
+`GIT_COMMITTER_EMAIL=noreply@github.com git commit` sets only the committer. Author stays the seat. The commit is exempt. That is one line, and it lets real work through.
+
+The self-test at 502-512 only covers author and committer both set to that address. The doc repeats the false close at `docs/development/agent-trailers.md:258-262`.
+
+Accident-guard scope can leave this hole. It cannot claim the hole is closed.
+
+**4. The grace conjunction does not cover the case the doc says the two tests cover together.**
+
+`docs/development/agent-trailers.md:314-315`: “Together they cover each other, and neither needs maintaining: the date never moves, and the tree answers for anything built before this landed.”
+
+A lane that branched before the hook existed, committed after `AGENT_TRAILER_GRACE_BEFORE` (`scripts/lib/agent-trailer-vocab.sh:251-252`), then rebases onto a base that has the hook: the tree now contains `scripts/hooks/prepare-commit-msg`, the author date is past the cutoff, rebase does not run the hook. `scripts/check-agent-trailers.sh:55-61` requires trailers.
+
+Those original commits are gone. An `--amend` in the rebasing seat would sign them with the wrong runtime. The failure message at 162-165 tells the reader to do exactly that (`git commit --amend --no-edit` / `git rebase -r --exec 'git commit --amend --no-edit'`).
+
+**5. `--help` overstates what is checked.**
+
+`scripts/check-agent-trailers.sh:607`: “Required trailers on every non-merge commit”.
+
+Squash merges are non-merge and exempt (`86-88`). The next two lines name grace, not the GitHub exemption.
+
+**6. The last-resort CI range can fail forever.**
+
+`.github/workflows/agent-trailers.yml:121-122` falls back to `HEAD~1..HEAD` when `origin/main` is missing. On a root commit that range does not resolve. `scripts/check-agent-trailers.sh:119-122` then exits 2, and the workflow turns that into a red check. The doc at `docs/development/agent-trailers.md:284-287` says this fallback “reads only one commit.” It does not, if `HEAD~1` does not exist.
+
+## Refutation attempts that failed
+
+- Script `--help` lists for required keys, families, sources, and runtime ids are built from the vocab arrays (`scripts/agent-trailers.sh:324-326`, `scripts/check-agent-trailers.sh:32-33, 607-608`).
+- Two listed-runtime markers do downgrade `runtime-*` to `runtime-ambiguous` (`scripts/agent-trailers.sh:271-276`). The PR summary counts that source apart from measured (`scripts/pr-agent-trailers.sh` honesty line, vocab `AGENT_TRAILER_SOURCE_AMBIGUOUS`). The gate accepts it because it is in `AGENT_TRAILER_SOURCES`.
+- `runtime-env` is gone from the source array (`scripts/lib/agent-trailer-vocab.sh:79-85`).
+- `check_commit`’s exit 2 (grace skip) is not the process exit 2. `check_range` at 137-142 maps 2 → skipped and still returns 0 when nothing is bad. Unresolvable ranges stay exit 2 and CI fails them.
+- Empty ranges print `nothing to check` and the workflow warns (`.github/workflows/agent-trailers.yml:142-144`).
+- No `${{ }}` is pasted into a `run:` block; values arrive through `env:`.
+- `runs-on` is the ordered fallback, not a bare `ubuntu-latest` (line 39).
+- The self-test step parses `self-test: PASSED N assertion` and floors N at 20 (lines 71-84).
+- `package.json:15-16`: `prepare` is `npm run build`; only `hooks:install` sets `core.hooksPath`.
+- `scripts/hooks/prepare-commit-msg` always `exit 0`. Idempotency is the `Agent-Model` probe, not `--if-exists`. Without `--if-exists`, `git interpret-trailers` keeps both `Agent-Model` and `Agent-Model-Source`.
+- `scripts/check-commit-identity.sh` and `.github/workflows/commit-identity.yml` are not in this diff. `core.hooksPath` replacing `.git/hooks/` is stated in the doc at 344-347.
+- Merge vs skip vs exempt are separate counters; a commit cannot sit in two of them (`scripts/check-agent-trailers.sh:137-142`). Grace is tested first, so an old merge is skipped rather than exempt, but it is still counted once.
+- `Agent-Model-Source` is a required key. The GitHub exemption does require author ≠ committer, which does catch `git config user.email noreply@github.com`.
+- The unlisted-runtime (opencode) residual that still yields `runtime-transcript` for a parent session is disclosed at `docs/development/agent-trailers.md:157-163`.
+
+VERDICT: FAIL

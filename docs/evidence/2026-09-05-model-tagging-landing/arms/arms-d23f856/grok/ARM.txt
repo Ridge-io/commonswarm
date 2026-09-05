@@ -1,0 +1,101 @@
+I'll read REVIEW.md and DIFF.patch first, then follow REVIEW.md exactly.The first `diff --git` line is quoted. Next I’ll finish the patch and attack the eight checks.The patch is still incomplete. I’ll read the rest and pull the related identity-guard files next.I have the full patch. Next I’ll read the real files and identity-guard scripts so findings cite exact line ranges.I’ll verify assertion counts, squash-merge history, detector order, and `interpret-trailers` behavior next.The on-disk emitter may not match DIFF.patch. I’ll compare the SHA, the patch, and the worktree.Uncommitted edits are in the tree. I’ll review SHA `d23f856` from git, not the dirty files.diff --git a/.github/workflows/agent-trailers.yml b/.github/workflows/agent-trailers.yml
+
+Reviewed SHA: `d23f856b1ccae075fd2215a48f2b0d25482a8762`.
+
+## Findings
+
+### 1. Emitter can sign the wrong model as `runtime-transcript` (check 2)
+
+`scripts/lib/agent-trailer-vocab.sh:95-101` and `scripts/agent-trailers.sh:224-230` probe `codex`, then `grok`, then `agy`, then `claude-code`, and **stop at the first hit**.
+
+`scripts/agent-trailers.sh:119-122` treats any set `CODEX_THREAD_ID` as “this is Codex” and returns 0 even when the writer is not Codex. Inheritance is symmetric. A Codex parent leaves `CODEX_THREAD_ID` in a Grok child the same way a Claude Code parent leaves `CLAUDE_*`.
+
+Measured on this SHA’s emitter, with a real Codex rollout plus this process’s real `GROK_SESSION_ID` and `CLAUDECODE=1`:
+
+```
+model=gpt-5.6-sol
+family=openai
+tool=codex 0.147.0
+source=runtime-transcript
+```
+
+The same emitter with Codex unset reports `model=grok-4.6` / `source=runtime-config`. The first run is a measurement of the **parent** session, labelled as a measurement.
+
+`docs/development/agent-trailers.md:121-129` calls the unlisted-runtime + `CLAUDE_*` case “**the one way** this can produce a confident wrong value.” That is false. Listed runtimes in the wrong nest direction do it too. `scripts/lib/agent-trailer-vocab.sh:95-96` is also false: parent markers stay set; they are not “only present when they are the innermost runtime.”
+
+Nothing in the trailer says the read was ambiguous.
+
+### 2. Exhaustive lists are retyped; one of them is wrong (check 1)
+
+`scripts/lib/agent-trailer-vocab.sh` is **not** the only definition of the lists.
+
+| Location | What it retypes | Defect |
+|---|---|---|
+| `docs/development/agent-trailers.md:22-30` | all trailer keys | exhaustive table, not built from the arrays |
+| `docs/development/agent-trailers.md:39-45` | `AGENT_TRAILER_SOURCES` | exhaustive table |
+| `docs/development/agent-trailers.md:71-76` | `AGENT_TRAILER_RUNTIMES` | exhaustive table, and the id is `claude` not `claude-code` |
+| `tests/p1-cli/agent-trailers.test.ts:209` | `AGENT_TRAILER_MODEL_NO_AGENT` | pins the literal `none` |
+
+`--help` is generated (`Supported runtimes: codex, grok, agy, claude-code`). The doc table is not. They already disagree.
+
+`docs/development/agent-trailers.md:32-35` says if the table and the arrays disagree, `tests/p1-cli/agent-trailers.test.ts` fails. That test (`:75-78`, `:203-225`) checks **script help** and a few doc phrases. It does not read the doc tables. The `claude` / `claude-code` split would not fail it.
+
+### 3. A squash land is not a merge, and this gate will fail it (check 3)
+
+`scripts/check-agent-trailers.sh:57-62` exempts only `git rev-list --merges`. `docs/development/agent-trailers.md:211-212` repeats that.
+
+A GitHub squash is one parent. Its tree has the hook, so grace (`:53-54`) does not skip it. GitHub writes the message. There are no `Agent-*` trailers.
+
+This repo already has that shape on main: `cf17894` and `297f1a4` (committer `noreply@github.com`, one parent). `cf17894` says it was squash-merged to satisfy `required_linear_history`. `scripts/check-commit-identity.sh` allows `noreply@github.com` **because** of squash. This gate does not.
+
+After this lands, a squash onto main is a commit that **should** be checked and will fail for a message no agent wrote. `docs/development/agent-trailers.md:248-250` (“no window in which the rule is wrong”) is false for that path.
+
+The date-vs-tree argument for **old concurrent lanes** is sound. Tree presence is better than a cutoff date for that job. The squash path is the worse failure this lane did not cover.
+
+Deleting the hook still grants grace (`docs/development/agent-trailers.md:263-265`); that is disclosed. A range whose every commit is skipped still exits 0 with `0 commit(s) checked; N skipped`. That is reported, not folded. A GitHub checks-UI reader still sees green.
+
+### 4. `Agent-Model-Source` can be silently absent (check 8)
+
+`scripts/lib/agent-trailer-vocab.sh:22-25` requires only `Agent-Model` and `Agent-Family`. `scripts/check-agent-trailers.sh:80-84` validates `Agent-Model-Source` **only if present**.
+
+`.github/workflows/agent-trailers.yml:12-13` and `docs/development/agent-trailers.md:298-299` say the field is never silently absent. A `--no-verify` commit with those two keys and no honesty field is exit 0. The emitter always writes the source; the gate does not require it.
+
+### 5. Numbers and “fail forever” do not match the code (check 8)
+
+- `.github/workflows/agent-trailers.yml:54`: a checker that always returns 0 “fails **5**” assertions.
+- `docs/development/agent-trailers.md:308-309`: it “fails **7**.”
+- Count on this SHA: 7 (untagged, each required key, bad family, bad source, unresolvable range, untagged-with-hook). The workflow comment is stale. The “37 assertions pass” line is true (clean clone of this SHA: `self-test: PASSED 37 assertions`).
+
+`.github/workflows/agent-trailers.yml:108-110` says checking all of history would fail forever. With grace (`scripts/check-agent-trailers.sh:53-54`), old commits are skipped. That comment is leftover from before grace.
+
+### 6. Range can check nothing and still go green (checks 4–5)
+
+`check_commit` exit 2 (grace skip) is only consumed inside `check_range` (`scripts/check-agent-trailers.sh:117-123`). That overload does not leak as script exit 2. Unresolvable range is script exit 2. That part is safe.
+
+False greens:
+
+- Empty range → exit 0, `nothing to check` (`scripts/check-agent-trailers.sh:111-113`). A force-push to `main` that cannot see `before` falls through to `origin/main..HEAD` (`.github/workflows/agent-trailers.yml:111-115`). After checkout, that range is empty. Green, nothing checked.
+- `HEAD~1..HEAD` when `origin/main` is missing (`:115`): one commit, not the branch.
+
+No `${{ }}` in `run:` source. Context goes through `env` (`:85-96`). Runner is the ordered fallback (`:39`). Self-test step parses a count and floors it at 20 (`:71-81`). Those hold.
+
+### 7. `hooks:install` replaces every local hook (check 7)
+
+`package.json:16` sets `core.hooksPath` to `scripts/hooks`. Git replaces the hooks directory. At this SHA that directory is only `prepare-commit-msg`. A checkout that had `pre-commit`, `commit-msg`, or a personal hook loses them. The doc (`docs/development/agent-trailers.md:272`) does not say so.
+
+`scripts/check-commit-identity.sh` and `.github/workflows/commit-identity.yml` are unchanged vs `main`. Identity stays a CI job. Behaviour of that guard is intact **if** nobody expected a local identity hook.
+
+---
+
+## Refutation attempts that failed
+
+- **Lifecycle install.** `prepare` is `npm run build` (`package.json:15`). No `postinstall`. The test at `tests/p1-cli/agent-trailers.test.ts:181-193` requires that. Hook stays opt-in.
+- **Hook blocks or drops `Agent-Model-Source`.** `scripts/hooks/prepare-commit-msg:75` always `exit 0`. Without `--if-exists`, `git interpret-trailers` keeps both `Agent-Model` and `Agent-Model-Source` (measured). The `--if-exists doNothing` collapse they document is real; they did not ship it. Self-test on a real clone of this SHA: 37 passed, including the hook round-trip.
+- **Claude-parent + Grok-child**, Codex unset: probe order is right (`model=grok-4.6`, `source=runtime-config`). The Claude-last rule works for **that** nest only.
+- **`agy` guessing a model.** It does not. `unknown` / `none` is honest.
+- **Config-file default as a measurement.** Detectors do not read `~/.codex/config.toml` or `~/.grok/config.toml`.
+- **Skip count folded into checked.** It is not (`scripts/check-agent-trailers.sh:151-153`). Self-test requires the skip sentence.
+- **Hook path pointing at nothing.** Self-test assertion 16 and `tests/p1-cli/agent-trailers.test.ts:161-179` fail if the constant names no file.
+- **Date cutoff vs concurrent lanes.** The argument is sound. Tree presence is the right fix for **that** hole. It is not a fix for squash or for nested listed runtimes.
+
+VERDICT: FAIL

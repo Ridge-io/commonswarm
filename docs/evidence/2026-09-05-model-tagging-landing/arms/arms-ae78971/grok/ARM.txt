@@ -1,0 +1,27 @@
+I'll read REVIEW.md and DIFF.patch first, then follow REVIEW.md exactly.The first `diff --git` line is in. Next I’ll read the rest of the patch and attack the claimed fixes.The patch is complete. Next I’ll confirm the rebase delta and re-attack the claimed fixes.I’ll compare `package.json` on this SHA to `main`, then re-check the identity guard and hook install.The `package.json` delta matches the rebase story. Next I’ll read the live scripts and anything the new `main` might have changed.The cutoff date may be the hole. I’ll check the clock, then probe the checker’s range and skip logic.I'll inspect this Grok session's env and a few remaining edge cases in the checker.The hook path may not be per-worktree. I’ll measure how `core.hooksPath` actually resolves.`diff --git a/.github/workflows/agent-trailers.yml b/.github/workflows/agent-trailers.yml`
+
+No finding that changes behaviour or falsifies a stated claim on this SHA.
+
+Round 7 rebase check: this tree is `origin/main` (`c0cddbe`) plus this lane. Against `origin/main`, `package.json` only adds `hooks:install`, `agent-trailers`, `check:agent-trailers`, and inserts `tests/p1-cli/agent-trailers.test.ts` into `test`. Main’s test list is otherwise identical. `test:p1-cli` still starts with `node scripts/require-cli-build.mjs`. `prepare` is still `npm run build`. Version is still `0.1.53`. `scripts/check-commit-identity.sh` and `.github/workflows/commit-identity.yml` are unchanged.
+
+Refutations that did not hold:
+
+1. **One vocabulary.** Help text, gate errors, and the four doc tables (keys, families, sources, runtimes) are built from or compared set-wise to `scripts/lib/agent-trailer-vocab.sh`. I did not find a user-facing list that retypes those arrays.
+
+2. **Wrong model with `runtime-transcript`.** Nested grok inside Claude Code on this host emits `model=grok-4.6` / `source=runtime-ambiguous`. A fake `CODEX_THREAD_ID` emits `source=none`, not a clean measurement. The remaining false-measurement case is a runtime that is not in `AGENT_TRAILER_RUNTIMES` (the doc names `opencode`). That is disclosed.
+
+3. **Grace pair.** Both tests are required. `origin/main..HEAD` on this SHA: 17 of 18 checked, 1 skipped as before `2026-09-05T00:00:00Z`. The rebase-after-cutoff hole is named in the doc, with the `unknown` sentinel as the remedy.
+
+4. **Exit codes.** Unresolvable range exits 2 (job fails). Empty range and all-skipped print `NOTHING CHECKED` and exit 0. The workflow turns that token into a warning. `check_commit`’s 2/3 stay inside `check_range`.
+
+5. **CI workflow.** No `${{ }}` in a `run:` block. Runner is the ordered fallback. Self-test passed 48 assertions; CI requires a parsed count ≥ 20. First-commit fallback is `HEAD..HEAD`, not an unresolvable `HEAD~1`.
+
+6. **Hook opt-in.** No lifecycle script sets `core.hooksPath`. The hook exits 0 on every failure path. Idempotency does not use `--if-exists`.
+
+7. **Squash exemption.** Committer must be `noreply@github.com` and author must not. The `GIT_COMMITTER_EMAIL` evasion is disclosed. Identity files are untouched.
+
+8. **Doc vs code.** Grace, exemptions, “does not close the evasion”, “rebased after the cutoff”, and “no branch protection” match the code.
+
+`scripts/check-agent-trailers.sh --self-test` on this tree: `self-test: PASSED 48 assertions`.
+
+VERDICT: PASS

@@ -1,0 +1,31 @@
+I'll read REVIEW.md and the patch first, then follow the review instructions exactly.The first `diff --git` line is quoted. Next I’ll read the rest of the patch and the scripts it adds so I can attack the claims against the actual code.The patch is 2645 lines. I’ll keep reading the rest of it and the scripts it adds so the review is against the real code, not a summary.I’ll verify the load-bearing bits on this SHA: the cutoff date, git trailer-key matching, identity files, and whether the checker’s exit codes do what the docs say.UTC is past the cutoff, so that hole is closed. The grok folder looks empty, so I’ll find the real checkout for this SHA and re-run the trailer-key probe.Self-test passed. Next I’ll probe the leftover-parent-marker case and run the node tests — that’s the path most likely to still sign the wrong model as `runtime-transcript`.`diff --git a/.github/workflows/agent-trailers.yml b/.github/workflows/agent-trailers.yml`
+
+No finding on this SHA changes behaviour or makes a stated claim false.
+
+## Failed refutations
+
+**Round 6 table control.** `docTable` in `tests/p1-cli/agent-trailers.test.ts:347-356` cuts the section after the heading, then takes the first backticked column of each table row. It then `deepEqual`s that set to `AGENT_TRAILER_FAMILIES` and `AGENT_TRAILER_SOURCES` (`tests/p1-cli/agent-trailers.test.ts:374-383`). I checked the two sections in `docs/development/agent-trailers.md:37-58`: each has one table, and the header row is not backticked, so it is not parsed as a value. Deleting a source row, or adding a stale one, fails. A file-wide search for `none` would still pass; this test would not. Cell prose can still be wrong while the set matches. That is not a list-drift hole, and a set check cannot police wording.
+
+**Wrong model still labelled `runtime-transcript`.** Live env on this host: `CLAUDECODE=1` and `GROK_SESSION_ID=…`. `scripts/agent-trailers.sh --detect` returned `model=grok-4.6 source=runtime-ambiguous`. That is the nested case the count was built for (`scripts/agent-trailers.sh:249-256`, `281-287`; markers in `scripts/lib/agent-trailer-vocab.sh:132-137`). The model is the inner runtime; the source is not a clean measurement.
+
+`env -u GROK_SESSION_ID` then returned `model=claude-fable-5-1 source=runtime-transcript`. That is a parent model claimed as a measurement. It is the residual already written in `docs/development/agent-trailers.md:170-176`: a runtime that does not raise the marker count falls through to the parent. `opencode` is the named case. Grok with its marker unset is the same shape. I had to strip the child marker to get it. With the marker present, the source is `runtime-ambiguous`, not `runtime-transcript`.
+
+`CODEX_THREAD_ID=fake` in this same session returned `model=unknown source=none`, not a false measurement. `run_detectors` (`scripts/agent-trailers.sh:234-241`) stops on the first runtime that identifies itself, even with no model. That drops a readable grok model. It does not write a parent model as `runtime-transcript`.
+
+**`check_commit` exit 2.** Skip is `return 2` (`scripts/check-agent-trailers.sh:52-60` in the grace block). Exempt is `return 3` (`71-73`, `86-89`). `check_range` (`134-144`) maps 2 → skipped, 3 → exempt, 0 → checked, else → checked+bad. No commit is in two buckets or in none. The process exit 2 is only the unresolvable-range path (`117-123`). I ran it: `deadbeef…..HEAD` printed `COULD NOT RUN` and exited 2. Empty range and all-skipped print `NOTHING CHECKED` and exit 0 (`128-131`, and the `checked -eq 0` path later). The workflow matches that token and emits a warning (`.github/workflows/agent-trailers.yml:154-157`). A green job that read nobody is not silent.
+
+**Grace pair.** Skip if the hook is missing from that commit’s tree, or if `%at` is before `AGENT_TRAILER_GRACE_BEFORE_EPOCH`. Self-test still passes (48 assertions). UTC now is after `2026-09-05T00:00:00Z`; the epoch value is that instant. The case neither half covers (old work rebased after the cutoff) is in the doc (`docs/development/agent-trailers.md` grace section) and in the failure text.
+
+**Git trailer keys.** `git interpret-trailers --if-exists doNothing` still drops `Agent-Model-Source` when `Agent-Model` is added. The hook does not use `--if-exists` (`scripts/hooks/prepare-commit-msg`). `%(trailers:key=Agent-Model)` and `%(trailers:key=Agent-Model-Source)` return different values on git 2.50.1. The checker can require both.
+
+**CI.** No `${{ }}` in a `run:` block; event values go through `env`. `runs-on` is the three-variable fallback then `ubuntu-latest`. Self-test must print `PASSED N assertions` with N ≥ 20; this SHA prints 48. `HEAD~1` is used only after `git rev-parse --verify -q HEAD~1`; else `HEAD..HEAD`. Force-push to default still yields an empty `origin/main..HEAD`; that is written, and it hits `NOTHING CHECKED`.
+
+**Hook install.** `package.json` `prepare` is `npm run build`. Only `hooks:install` sets `core.hooksPath`. The hook exits 0 on emitter failure. `:?` on a missing `$1` would fail, and git always passes the message file.
+
+**Identity.** `scripts/check-commit-identity.sh` and `.github/workflows/commit-identity.yml` are not in this diff. `cf17894` and `297f1a4` are single-parent, committer `noreply@github.com`, author `tom@ridge.io`. The exemption needs that split. `GIT_COMMITTER_EMAIL=noreply@github.com` still slips through; the doc says so.
+
+**Placeholder and newest file.** jq drops `^<.*>$`. The test covers a real model behind a trailing `<synthetic>`, and a transcript of only placeholders → `unknown` / `none`. Session globs keep the newest match.
+
+`tests/p1-cli/agent-trailers.test.ts`: 25 passed, 0 failed.
+
+VERDICT: PASS

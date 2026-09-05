@@ -1,0 +1,35 @@
+diff --git a/.github/workflows/agent-trailers.yml b/.github/workflows/agent-trailers.yml
+
+## Findings
+
+1. **One vocabulary, generated sentences.** 
+The following files retype lists or values from the vocabulary, violating the rule that they must be generated from the arrays in `scripts/lib/agent-trailer-vocab.sh`:
+- `docs/development/agent-trailers.md`, lines 185-191: Retypes the `AGENT_TRAILER_SOURCES` values in the documentation table.
+- `docs/development/agent-trailers.md`, lines 161-165, 228-234, 297-302, 323-324, 347-351: Retypes families (`anthropic`, `openai`, `xai`, `google`, `human`), sources (`runtime-transcript`, `runtime-config`, `declared`, `none`), and sentinels (`unknown`) in examples.
+- `scripts/check-agent-trailers.sh`, lines 1096, 1112-1113, 1124-1125, 1137, 1152, 1163-1164, 1175-1176, 1260-1261: The self-test fixtures retype `anthropic`, `human`, `declared`, `unknown`, and `none` as string literals.
+- `scripts/pr-agent-trailers.sh`, lines 1698-1700: Retypes `declared` and `none` in the awk aggregation logic.
+- `tests/p1-cli/agent-trailers.test.ts`, lines 1831, 1838-1843, 1849: Test expectations explicitly retype `none`, `openai`, `declared`, and `human`.
+**Reason it matters:** Retyping these values creates a maintenance burden and a source of truth violation. If the vocabulary changes, these docs, scripts, and tests will drift silently.
+
+2. **The trailer must never claim a model it cannot establish.**
+- `scripts/agent-trailers.sh`, lines 638-672: The `detect_codex` function probes for `CODEX_THREAD_ID`. If a Codex session shells out to an unlisted child runtime (e.g., `opencode` or `agy`), the child inherits the `CODEX_THREAD_ID` variable. Because `detect_codex` is probed FIRST in the vocabulary order, it will falsely identify the child as Codex and extract the *parent* Codex's model from its rollout file.
+**Reason it matters:** The script will sign the child's work with the parent's model and claim it is a `runtime-transcript` measurement. This exact environmental inheritance flaw is documented for Claude Code, but the lane missed that Codex suffers from the same issue when placed at the top of the probe list. This case is silently possible and not disclosed.
+
+3. **The grace rule.**
+- `scripts/check-agent-trailers.sh`, lines 896-898: The gate skips any commit whose own tree lacks the hook file. However, if a user creates a branch from an older `main` (before the hook existed), and later GitHub squash-merges that PR into the new `main` (which has the hook), the squash commit is authored on `main`. The squash commit's tree will contain the hook, but it will lack the trailers because GitHub generated the commit message.
+**Reason it matters:** The push workflow running on `main` will evaluate this non-merge squash commit, see the hook in its tree, find no trailers, and fail the CI. A completely green PR will break the default branch upon merging.
+
+5. **The CI workflow.**
+- `.github/workflows/agent-trailers.yml`, lines 117-122: In the event of a force-push to `main`, `BEFORE` is unreachable. The script falls back to fetching `origin/main` and sets the range to `origin/main..HEAD`. However, in a workflow running on a push event, `origin/main` on the remote has already been updated to the new tip.
+**Reason it matters:** `origin/main..HEAD` resolves to `HEAD..HEAD` (an empty range). The CI will exit 0 and silently skip checking any commits introduced by a force-push.
+
+7. **Does it disturb the existing identity guard?**
+- `package.json`, line 502: The `hooks:install` script sets `git config core.hooksPath scripts/hooks`.
+**Reason it matters:** This entirely overrides the default `.git/hooks/` directory. If the user's checkout had any pre-existing local hooks (e.g., a custom `pre-push` or `pre-commit`), this installation will silently disable and break them.
+
+## Refutation attempts that FAILED
+
+- **Rule 4 (Exit codes and false greens):** I attempted to find a scenario where `check-agent-trailers.sh` could produce a false green that a reader might misread. However, unresolvable ranges strictly exit 2 (failing the CI step rather than passing), and empty or grace-skipped ranges output explicit, unambiguous messages ("nothing to check" or "skipped as having no..."). I could not break this claim.
+- **Rule 6 (The hook must be opt-in):** I attempted to break the `scripts/hooks/prepare-commit-msg` script to make it block or corrupt a commit. It invokes `git interpret-trailers` correctly, doesn't mishandle spaces in variable substitution, bails gracefully if the emitter returns nothing, and always exits 0. It is fully idempotent and non-blocking. I could not break this claim.
+
+VERDICT: FAIL

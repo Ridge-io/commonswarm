@@ -1,0 +1,17 @@
+diff --git a/.github/workflows/agent-trailers.yml b/.github/workflows/agent-trailers.yml
+
+## Refutations (Failed Attacks)
+
+1. **Attack on the `runtime-ambiguous` fallback:** I attempted to fool the runtime marker counter by looking for cases where a nested subagent runs without registering its own marker, allowing the parent's model to be read as a clean `runtime-transcript`. While running an unlisted runtime (like `opencode`) inside `claude-code` does exactly this (count is 1, parent's transcript is read), this exact limitation is explicitly disclosed in `docs/development/agent-trailers.md`. Similarly, if a session shells out to `agy`, the count becomes 2, `detect_agy` returns without a model, and the source correctly drops to `none` rather than being improperly flagged as a measurement. The logic is sound.
+
+2. **Attack on the grace rule (Tree presence + Date):** I tested whether the conjunction fails for commits rebased onto a new base. Rebasing places the hook in the commit's tree but preserves the author date. The rule correctly catches this and rejects the commit if it was authored after the cutoff. The one gap—a commit authored *after* the cutoff on a branch *without* the hook, which is then rebased onto `main`—is explicitly acknowledged as the residual case in the documentation. 
+
+3. **Attack on the squash merge exemption:** I attempted to break the `noreply@github.com` exemption by using it to evade the gate entirely. The check at `scripts/check-agent-trailers.sh:1110-1113` requires the committer to be GitHub's address AND the author to *not* be. A human trying to bypass the gate by setting `user.email` to `noreply@github.com` sets both fields, successfully failing the check. The exemption perfectly targets GitHub UI squash/rebase merges without opening an evasion vector.
+
+4. **Attack on CI workflow range selection:** I investigated whether `HEAD..HEAD` creates a silently green check that checks nothing. While it does check zero commits (e.g. on the very first commit of a repository where `HEAD~1` is absent), this is not silent. It reliably prints `NOTHING CHECKED` (tested on `scripts/check-agent-trailers.sh:1426`), which the workflow explicitly catches to emit a `::warning` annotation. The same applies to force-pushes to the default branch. This behavior is fully disclosed.
+
+5. **Attack on placeholder models in transcripts:** I checked if `<synthetic>` (or other placeholder rows) could trick `detect_claude_code` into returning a bogus model. The regex `select(test("^<.*>$") | not)` reliably drops these values, falling back correctly to the last valid model or `unknown` if none exist.
+
+6. **Attack on "generated sentences" rules in tests & docs:** While `tests/p1-cli/agent-trailers.test.ts` and `docs/development/agent-trailers.md` type out lists and specific expected values (e.g., `openai`, `declared`), I am not reporting these as defects. A doc table cannot execute bash to generate its contents, and tests that pull expected values dynamically from the source array they are testing fail to assert the actual string output of the tool.
+
+VERDICT: PASS

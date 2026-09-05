@@ -1,0 +1,38 @@
+`diff --git a/.github/workflows/agent-trailers.yml b/.github/workflows/agent-trailers.yml`
+
+### Findings
+
+1. **Retyped vocabulary values (Claim 1)**
+   - `tests/p1-cli/agent-trailers.test.ts` (Lines 1982-1989, 1993-1996, 2030-2035, 2051-2060): Test expectations retype the string literals `openai`, `human`, `declared`, `runtime-transcript`, and `runtime-ambiguous`.
+   - `scripts/check-agent-trailers.sh` (Lines 1167-1169, 1182, 1198-1199, 1246-1249): The self-test retypes `anthropic`, `human`, `declared`, and `telepathy` instead of reading them from the vocabulary.
+   - `scripts/pr-agent-trailers.sh` (Lines 1841-1844): The awk script retypes `runtime-ambiguous`, `declared`, and `none`.
+   - `docs/development/agent-trailers.md` (Lines 191-201): The table documenting the sources retypes the exact lists.
+   *Why it matters:* This violates the repository rule that enumerations must be generated, causing test expectations or parsing logic to break silently if the arrays in `vocab.sh` change.
+
+2. **The tree-presence rule forces backfill on rebase (Claim 3)**
+   - `scripts/check-agent-trailers.sh` (Lines 969-971): The script grants grace by checking if the commit's own tree lacks the hook (`git cat-file -e "${sha}:${AGENT_TRAILER_HOOK_PATH}"`).
+   *Why it matters:* If a user rebases an old, untagged branch onto a new `main`, the new rebased commits inherit the hook file from `main`'s tree. However, non-interactive rebases do not invoke `prepare-commit-msg`, so the commits remain untagged. The gate will fail these commits, forcing a manual backfill of trailers on old work, directly violating the explicit "No backfill" rule.
+
+3. **False greens on force-pushes and new branches (Claim 4)**
+   - `.github/workflows/agent-trailers.yml` (Lines 118-128): For a force-push to the default branch, `origin/main` is already updated, making the range `origin/main..HEAD` empty. The checker prints "nothing to check" and returns exit code 0. For new branches where `origin/main` isn't found, it falls back to `HEAD~1..HEAD`.
+   *Why it matters:* An empty range on a force-push yields a green checkmark in GitHub Actions, which a reader will misinterpret as a successful check when nothing was audited. Similarly, falling back to `HEAD~1..HEAD` on new branches skips checking all but the very last commit added by the push.
+
+4. **Squash merge exemption allows evasion (Claim 7)**
+   - `scripts/check-agent-trailers.sh` (Lines 986-988): The gate exempts any commit where the committer email is `noreply@github.com`.
+   *Why it matters:* The exemption is too wide. A user can trivially bypass the entire gate for their real work by setting their local git config to `git config user.email noreply@github.com`.
+
+5. **`hooks:install` breaks existing local hooks (Claim 7)**
+   - `package.json` (Line 551): `"hooks:install": "git config core.hooksPath scripts/hooks"`
+   *Why it matters:* Replacing the repository's hooks path entirely instructs git to stop reading the local `.git/hooks/` directory, breaking any pre-existing local hooks a user may rely on (like linting or the existing identity guard).
+
+6. **Doc claims are stronger than code behavior (Claim 8)**
+   - `docs/development/agent-trailers.md` (Line 408): "The workflow resolves only the commits a push or PR adds".
+   *Why it matters:* As noted in Finding 3, if `origin/main` is missing on a branch push, the fallback `HEAD~1..HEAD` only checks the last commit, not all commits the push added. 
+
+### Failed Refutation Attempts
+
+- **The trailer must never claim a model it cannot establish (Claim 2):** I tried to construct a scenario where the source remains `runtime-transcript` while misattributing the model. If a listed runtime (like Claude Code) spawns an unlisted runtime (like `opencode`), the marker count remains 1, no downgrade to `runtime-ambiguous` happens, and the work is falsely signed as Claude Code. However, this exact limitation is successfully disclosed in `docs/development/agent-trailers.md` (Lines 291-297), so the documentation aligns with the code's behavior.
+- **The CI workflow script injection (Claim 5):** I searched for `${{ }}` injections within the `run:` blocks of `.github/workflows/agent-trailers.yml`. All dynamic context variables are correctly safely passed via the `env:` block rather than directly interpolated into the shell script execution. 
+- **The hook must never block or corrupt a commit (Claim 6):** I attempted to find cases where `scripts/hooks/prepare-commit-msg` could fail and block the commit due to its `set -eu` declaration. However, all commands that could potentially exit non-zero (like `git rev-parse` or the `interpret-trailers` pipeline) are safely guarded (e.g., `|| echo ''`, `|| exit 0`, or nested safely inside conditionals).
+
+VERDICT: FAIL

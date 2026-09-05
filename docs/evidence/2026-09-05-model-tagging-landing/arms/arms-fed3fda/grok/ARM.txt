@@ -1,0 +1,56 @@
+I'll read REVIEW.md and DIFF.patch first, then follow REVIEW.md exactly.The patch was truncated. I'll keep reading it and the source files REVIEW.md tells me to attack.The rest of the patch and the related existing files still need reading. I'll keep going through those.I have the full patch. Next I’ll read the identity guard, package.json, and the detector paths the review tells me to attack.The lane tree has the real files. I’ll read the identity workflow, vocab, detectors, and the docs clauses that look stronger than the code.I’ll verify the GitHub squash SHAs, the live marker env, and a few gate behaviours the docs claim.The nested detector behaved as designed. Next I’ll check git’s trailer-key matching — that is the likely hole.The checker help still mentions `AGENT_TRAILER_GRACE_BEFORE`. I’ll check whether that’s in the SHA or only in the working tree.diff --git a/.github/workflows/agent-trailers.yml b/.github/workflows/agent-trailers.yml
+
+## Findings
+
+**1. Retyped runtime list in the doc disagrees with the vocab, and the claimed control does not catch it.**
+`docs/development/agent-trailers.md` 32–35, 72–77; `scripts/lib/agent-trailer-vocab.sh` 114–118; `tests/p1-cli/agent-trailers.test.ts` 297–311.
+
+The vocab runtime id is `claude-code`. The doc table lists `claude`. The doc says if a table and the arrays disagree, `tests/p1-cli/agent-trailers.test.ts` fails. That test only asks whether each family and each source string appears somewhere in the file. It does not read runtime ids. `claude` vs `claude-code` is live disagreement, and the test stays green.
+
+Same class, smaller: `scripts/check-agent-trailers.sh` 152–154 types `Agent-Model-Source 'none'` while the model sentinel next to it comes from `$AGENT_TRAILER_MODEL_UNKNOWN`. `tests/p1-cli/agent-trailers.test.ts` 170–176 retypes the marker env vars instead of reading field 3 of `AGENT_TRAILER_RUNTIMES`. Add a runtime, and those tests stop clearing it.
+
+**2. The PR honesty line retypes source values, so `runtime-ambiguous` can drift back into “measured”.**
+`scripts/pr-agent-trailers.sh` 82–85.
+
+`$4 != "runtime-ambiguous"`, `$4 == "declared"`, `$4 == "none"` are typed. The comment says folding `runtime-ambiguous` into measured would inflate the number a reader trusts most. Rename that vocab entry and this line does exactly that, with no test.
+
+`runtime-env` is in `AGENT_TRAILER_SOURCES` and counts as measured (`$4 ~ /^runtime-/`). No detector writes it. A typed `Agent-Model-Source: runtime-env` is accepted by the gate (`scripts/check-agent-trailers.sh` 90–94) and counted as a measurement.
+
+**3. The gate does not require `Agent-Model-Source`. The honesty field can be missing and CI is still green.**
+`scripts/lib/agent-trailer-vocab.sh` 22–25; `scripts/check-agent-trailers.sh` 74–95, 391–393; `docs/development/agent-trailers.md` 330–335.
+
+Required keys are only `Agent-Model` and `Agent-Family`. Source is checked only when present. The self-test says this out loud: “the gate only requires two keys, so a hook that silently dropped the others would still pass it.” The hook round-trip is a self-test on this checkout, not a check of commits in the range.
+
+The lane claim lists `Agent-Tool` and `Agent-Model-Source` as recorded on every commit. `--no-verify` plus those two required keys is enough. `git log --format='%(trailers:key=Agent-Model,valueonly)'` then treats a typed model like a measured one.
+
+The doc says `Agent-Model-Source` is how a reader weighs the value, then “the field is never silently absent.” For source, that sentence is false.
+
+**4. Claude Code guesses `Agent-Family` from the tool before it has a model. The unknown sentinel in the doc is not what the emitter writes.**
+`scripts/agent-trailers.sh` 68–71, 279–283 vs 143–150, 185–188, 210–217; `docs/development/agent-trailers.md` 53–55, 216–219.
+
+`detect_claude_code` sets `detected_family=anthropic` as soon as `CLAUDECODE=1`. Codex and grok set family only after they read a model. agy never sets it. If Claude Code is identified and the transcript is unreadable, the block is `Agent-Model: unknown`, `Agent-Family: anthropic`, `Agent-Model-Source: none`. The doc’s sentinel is `unknown` / `unknown` / `none`. That is the same “family from the tool” guess the agy notes refuse.
+
+**5. The “verified output” block was not re-measured after `runtime-ambiguous`.**
+`docs/development/agent-trailers.md` 81–89 vs `scripts/agent-trailers.sh` 271–275.
+
+The block starts `# inside Claude Code`, then shows `CODEX_THREAD_ID=…` → `runtime-transcript` and `GROK_SESSION_ID=…` → `runtime-config`. In this session both `CLAUDECODE=1` and `GROK_SESSION_ID` were set; `scripts/agent-trailers.sh --detect` printed `model=grok-4.6` `source=runtime-ambiguous`. The snippet does not unset parent markers. As printed, it is not what the current emitter does inside Claude Code.
+
+**6. Grace skips are split out. Merge and GitHub-exempt commits are not. The OK line over-counts.**
+`scripts/check-agent-trailers.sh` 60–71, 116–125, 161–166.
+
+`return 0` on a merge or on `%ce == noreply@github.com` increments `checked`. A range of those commits prints `N commit(s) checked` for commits whose trailers were not read. The doc (`docs/development/agent-trailers.md` 279–282) only talks about grace skips.
+
+**7. The squash exemption is every commit whose committer email is `noreply@github.com`, not squash merges.**
+`scripts/check-agent-trailers.sh` 70–72; `scripts/lib/agent-trailer-vocab.sh` 200–206.
+
+Measured: `cf17894` and `297f1a4` are single-parent, committer `GitHub <noreply@github.com>`. The address matches `scripts/check-commit-identity.sh`. The same key also matches a GitHub web edit, rebase-merge, or any local commit with that committer email. Those are real diffs, and the gate does not look at them.
+
+## Refutations that did not hold
+
+- **Marker count for listed runtimes.** Nested grok-in-claude in this session: `model=grok-4.6` `source=runtime-ambiguous`. Claude-only: `runtime-transcript`. Grok-only: `runtime-config`. `CODEX_THREAD_ID=fake` on top of the live env: `unknown` / `none`, not a wrong model with `runtime-transcript`. Downgrade runs on every `runtime-*` path; `declared` returns first. Unlisted runtime (opencode) still signs the parent as `runtime-transcript`; the doc already says so.
+- **Date vs tree for grace.** Concurrent lanes off old main break a timestamp; a future cutoff greens the gate. Tree presence answers “could this checkout install the hook?” Self-test assertion 16 fails if `AGENT_TRAILER_HOOK_PATH` names no file on disk, so deleting the hook is not a silent all-skip on CI unless the self-test is edited too.
+- **Exit code 2 overload.** `check_commit`’s 2 (skip) is translated in `check_range` (116–125). Unresolvable range stays 2. Empty range stays 0 with `nothing to check`. Callers of the script never see skip as “could not run.”
+- **CI injection / runner / self-test ran.** No `${{ }}` in `run:` text. `runs-on` uses the ordered fallback. The self-test step parses an assertion count and floors it at 20. Force-push to `main` → empty `origin/main..HEAD` is written on the workflow.
+- **Hook opt-in, does not block.** `package.json` `prepare` is still `npm run build`. `hooks:install` is the only script that sets `core.hooksPath`. The test at `agent-trailers.test.ts` 208–218 would fail if a lifecycle script started to. The hook exits 0 on emitter failure. `git interpret-trailers --if-exists doNothing` dropping `Agent-Model-Source` was measured; the hook does not use `--if-exists`. `core.hooksPath` replacing `.git/hooks/` is in the doc. `scripts/check-commit-identity.sh` and `.github/workflows/commit-identity.yml` are not in this diff.
+
+VERDICT: FAIL

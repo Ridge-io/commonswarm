@@ -1,0 +1,62 @@
+I'll read REVIEW.md and DIFF.patch first, then follow REVIEW.md exactly.The first `diff --git` line is `diff --git a/.github/workflows/agent-trailers.yml b/.github/workflows/agent-trailers.yml`. Next I’ll read the rest of the patch and attack the eight checks.The patch is still truncated. I’ll keep reading it and the remaining new files.I have the full patch. Next I’ll read the related existing files and attack the eight checks.I’ll verify the cutoff date, marker counting, interpret-trailers behavior, and a few other likely holes.Cutoff is in the past. Next I’ll probe marker counting, interpret-trailers, and whether a nested runtime can still look like a clean measurement.interpret-trailers treats `Agent-Model` as a prefix of `Agent-Model-Source`. I’ll check whether git’s trailer lookup has the same collision.The TypeScript doc-control test may be weaker than it claims. I’ll check whether `google` actually appears in the doc, then run that test.`diff --git a/.github/workflows/agent-trailers.yml b/.github/workflows/agent-trailers.yml`
+
+## Findings
+
+### 1. The `Agent-Model-Source` table can still drift while the tests stay green
+
+The page says the arrays are the definition and the test fails if a table disagrees:
+
+```32:35:docs/development/agent-trailers.md
+The accepted values live in `scripts/lib/agent-trailer-vocab.sh` and nowhere else. Every list
+printed by the scripts — required keys, families, sources, supported runtimes — is built from
+those arrays at print time, so this table is documentation and the arrays are the definition. If
+they ever disagree, `tests/p1-cli/agent-trailers.test.ts` fails.
+```
+
+The honesty-field table is a typed copy of `AGENT_TRAILER_SOURCES`:
+
+```39:45:docs/development/agent-trailers.md
+| value | what it means |
+|---|---|
+| `runtime-transcript` | read out of the agent's own live session record. A measurement. |
+| `runtime-config` | read out of the runtime's session-scoped state on disk. A measurement. |
+| `runtime-ambiguous` | more than one runtime's variables were visible, so the model may belong to a **parent** session. Weaker than any other `runtime-*` value. |
+| `declared` | a person or a lead supplied it. **An assertion, not a measurement.** |
+| `none` | nothing readable; `Agent-Model` is the `unknown` sentinel. |
+```
+
+The test that claims to police “the doc's tables” still uses file-wide `includes()` for sources. It only parses a table for runtime ids:
+
+```357:373:tests/p1-cli/agent-trailers.test.ts
+  for (const source of sources) {
+    assert.ok(doc.includes(source), `model source ${source} is not documented`);
+  }
+  /* Runtime ids were left out of this control once and the doc's table drifted to `claude` while
+   * the vocabulary said `claude-code` — a live disagreement the page claimed this test would catch.
+   *
+   * Asking whether the id appears ANYWHERE in the file is not enough: `claude-code` also appears in
+   * the prose around the table, so the wrong table row stayed green. The control reads the table's
+   * first column and requires the set to match the vocabulary exactly, which catches drift in
+   * either direction. */
+  const tableIds = [...doc.matchAll(/^\|\s*`([^`]+)`\s*\|\s*(?:yes|\*\*no\*\*)\s*\|/gm)].map((m) => m[1]!);
+```
+
+That comment is the previous defect. The fix was applied to the runtime table and to the required-key table (`Required.` vs `AGENT_TRAILER_REQUIRED_KEYS`). It was not applied here.
+
+Measured on this file: every source string also appears in prose. `none` appears 9 times (the model sentinel uses the same word). `runtime-ambiguous` appears 4 times. Deleting the `runtime-ambiguous` row, or putting `runtime-env` back in the table, does not fail `doc.includes`.
+
+**What a reader loses:** that table is the legend for the honesty field. If it disagrees with `AGENT_TRAILER_SOURCES`, CI stays green. A later reader weighs `declared` and `runtime-transcript` using a legend the gate does not use. That is the same class as `claude` vs `claude-code`.
+
+No other finding held.
+
+## Refutations that did not hold
+
+- **Wrong model with `runtime-transcript` among listed runtimes.** Probe order plus marker count works for the nested case this repo runs. This session has `CLAUDECODE=1` and `GROK_SESSION_ID` set. `scripts/agent-trailers.sh --detect` returned `model=grok-4.6` / `source=runtime-ambiguous`. The unlisted-runtime residual (`opencode`) is stated in the doc. I did not find a silent path that still writes `runtime-transcript` for a listed nested runtime.
+- **Placeholder rows.** Live transcripts on this host still only show `<synthetic>` as a bracketed placeholder. The jq filter drops `^<.*>$`. The test covers a trailing placeholder and a placeholder-only file.
+- **Grace conjunction.** `e50e7d46` on this branch has the hook in its tree and an author date before `AGENT_TRAILER_GRACE_BEFORE`; the checker skipped it. The rebase half is in the self-test. The remaining hole (old work rebased after the cutoff) is named in the doc with the `unknown` sentinel as the remedy.
+- **Exit 2 overload.** `check_commit`'s 2 means skip and is only consumed in `check_range`. Script-level 2 is unresolvable; the workflow maps any non-zero to a failed job. Empty and all-skipped ranges print `NOTHING CHECKED`; the workflow turns that into a warning.
+- **CI workflow.** No `${{ }}` in `run:` source text. Runner is the ordered fallback. Self-test reported `PASSED 48 assertions` (floor 20). `HEAD~1` is guarded. Force-push to default still yields an empty range; that is now visible, not silent.
+- **Hook opt-in.** `prepare` is `npm run build` only. No lifecycle script sets `core.hooksPath`. The hook exits 0 on every failure path. `scripts/check-commit-identity.sh` and `.github/workflows/commit-identity.yml` are not in the diff.
+- **Squash exemption.** `cf17894` and `297f1a4` are single-parent, committer `noreply@github.com`, author `tom@ridge.io`. The author≠committer test is in the self-test. The `GIT_COMMITTER_EMAIL` evasion is stated.
+
+VERDICT: FAIL

@@ -1,0 +1,78 @@
+diff --git a/.github/workflows/agent-trailers.yml b/.github/workflows/agent-trailers.yml
+
+## Findings
+
+**1. The Agent-Model-Source table can still drift while the tests stay green.**
+
+`docs/development/agent-trailers.md` 32-35:
+
+> The accepted values live in `scripts/lib/agent-trailer-vocab.sh` and nowhere else. … If they ever disagree, `tests/p1-cli/agent-trailers.test.ts` fails.
+
+The source table that sentence is supposed to pin is at 39-45:
+
+> `| `runtime-transcript` | read out of the agent's own live session record. A measurement. |`
+
+The test that claims to enforce that (`tests/p1-cli/agent-trailers.test.ts` 357-359) is still a substring search:
+
+> `assert.ok(doc.includes(source), \`model source ${source} is not documented\`);`
+
+The same test, ten lines later (360-371), records why thadiff --git a/.github/workflows/agent-trailers.yml b/.github/workflows/agent-trailers.yml
+
+## Findings
+
+**1. The Agent-Model-Source table can still drift while the tests stay green.**
+
+`docs/development/agent-trailers.md` 32-35:
+
+> The accepted values live in `scripts/lib/agent-trailer-vocab.sh` and nowhere else. … If they ever disagree, `tests/p1-cli/agent-trailers.test.ts` fails.
+
+The source table that sentence is supposed to pin is at 39-45:
+
+> `| `runtime-transcript` | read out of the agent's own live session record. A measurement. |`
+
+The test that claims to enforce that (`tests/p1-cli/agent-trailers.test.ts` 357-359) is still a substring search:
+
+> `assert.ok(doc.includes(source), \`model source ${source} is not documented\`);`
+
+The same test, ten lines later (360-371), records why that search is not enough, because it already failed on the runtime table:
+
+> Asking whether the id appears ANYWHERE in the file is not enough: `claude-code` also appears in the prose around the table, so the wrong table row stayed green.
+
+They then parse the runtime table's first column, and they parse the required-key table (375-388). They did not do the same for the source table, which the page calls "the field to read first". `runtime-transcript` also appears in the example block (doc 15) and in the detect transcripts (doc 94-104). Change the table row to `runtime-env` and leave those examples: `doc.includes("runtime-transcript")` stays true, extras in the table are not compared, and the test stays green. That is the same class of miss the runtime-table fix was written to close. Extra or renamed source rows are a wrong list inside a sentence the gate enforces.
+
+**2. A range whose commits are all grace-skipped is a green check that audited no trailers, and CI does not say so.**
+
+`.github/workflows/agent-trailers.yml` 136-139:
+
+> A GREEN CHECK THAT AUDITED NOTHING IS NOT A PASS A READER SHOULD MISREAD. The checker exits 0 on an empty range … so say it out loud as an annotation.
+
+The annotation match is only 150-152:
+
+> `*"nothing to check"*)`
+
+That string is printed only for a range with zero commits (`scripts/check-agent-trailers.sh` 128-130). A range that contains commits, all skipped by grace, takes the success path at 192-196:
+
+> `agent-trailers OK: %d of %d commit(s) checked`
+> `  %d skipped as predating the rule …`
+
+Exit 0, no `nothing to check`, no annotation. `check_commit` returning 2 for skip is counted apart from `checked` (133-141), so the log is honest if you open it. The checks UI is not: it is the same green tick as a range that was checked and clean. That is the case the workflow comment says it is trying to make visible. After this lands, every open PR whose commits predate the hook hits this path, which is the common case, not the empty-range force-push.
+
+`check_commit`'s exit 2 (skip) is not mixed with the script's public exit 2 (could not run): the only consumer is that `case` in `check_range`, and CI maps any non-zero from `--range` to job failure. Unresolvable ranges are not a false green. All-skipped ranges are.
+
+## Refutation attempts that FAILED
+
+- **Wrong model with `runtime-transcript`.** Nested listed runtimes now set `runtime-ambiguous` (`scripts/agent-trailers.sh` 278-283) after counting markers (246-252). A lead committing a lane's diff, and a runtime that is not in `AGENT_TRAILER_RUNTIMES` (the `opencode` residual), still sign a model that did not write the commit with `runtime-transcript`. Both are stated in `docs/development/agent-trailers.md` (detector-order / "other residual", and "Recording who wrote the diff"). I could not build an undisclosed case that still emits `runtime-transcript`.
+- **Marker count incomplete for listed runtimes.** Each of the four entries has `id|detector|marker`; the test at `tests/p1-cli/agent-trailers.test.ts` 318-328 requires three fields. The count cannot see an unlisted runtime; that is the disclosed residual, not a hole in the listed set. `agy` nested in Claude Code does not keep a parent model: it sets no `runtime-*` source, then empty model overwrites the source to `none`.
+- **Placeholder filter.** On this host, Claude transcripts have five `.message.model` values: four real ids and `'<synthetic>'` (219 rows). None of the real ids match `^<.*>$`. The pair in `tests/p1-cli/agent-trailers.test.ts` 403-429 still finds `claude-opus-5` behind a trailing placeholder, and emits `unknown` / `none` when every row is a placeholder. Codex/Grok records on this host have no placeholder models.
+- **Codex first-match rollout.** `detect_codex` breaks on the first glob match. On this host: 2091 rollout files, 2091 thread UUIDs, 0 with more than one file. The first-match cannot currently pick a stale file. Claude session ids and Grok session dirs were also unique.
+- **`%(trailers:key=Agent-Model)` vs `Agent-Model-Source`.** Measured against git 2.50.1: asking for `Agent-Model` does not return the Source value, and a Source-only commit does not satisfy `key=Agent-Model`. The `--if-exists doNothing` collision they avoided in the hook is real; the gate's `%(trailers:)` reads are not the same bug.
+- **Grace conjunction.** Tree-only loses to rebase; date-only loses to concurrent lanes; both failures have fixtures (self-test 15 / 15b / 15c). The remaining case (old work rebased after the cutoff) is named in the doc, with the `unknown` sentinel as the remedy. Hook-path-missing and a cutoff in the future each have a self-test that fails. Cutoff `2026-09-05T00:00:00Z` / epoch `1788566400` agree and, at 2026-09-05T02:00Z, are in the past.
+- **Buckets.** `check_range` maps 0 → checked, 2 → skipped, 3 → exempt, else → checked+bad. A commit cannot land in two, or in none. Merge-without-hook is skipped, not exempt; that is a category split, not a double count.
+- **`runtime-env`.** Gone from `AGENT_TRAILER_SOURCES`. Every remaining source is one a detector or `resolve` writes.
+- **Hook opt-in / never blocks.** `package.json` `prepare` is `npm run build`. `hooks:install` is the only script that sets `core.hooksPath`. The hook exits 0 on every path after the `:?` arg check. `core.hooksPath` replacing `.git/hooks/` is stated in the doc. `scripts/check-commit-identity.sh` and `.github/workflows/commit-identity.yml` are not in this diff.
+- **GitHub exemption.** `cf17894` and `297f1a4` on this repo's `main` are single-parent, `ce=noreply@github.com`, `ae=tom@ridge.io`. The author≠committer test matches that. `GIT_COMMITTER_EMAIL=…` is stated as still open. Too wide for a deliberate override; not too wide for the accident they measured.
+- **HEAD~1 on the first commit.** Guarded; falls back to `HEAD..HEAD`.
+- **Retyped single values in help / failure copy** (`source 'declared'`, `CSWARM_AGENT_FAMILY=unknown`). The *lists* in `--help` are built from the arrays. A usage example of one value is not an enumeration of the enforced set. The source *table* above is the enumeration that still has no table-shaped control.
+- **Help says "every non-merge commit"** (`scripts/check-agent-trailers.sh` 618) and does not name the GitHub squash exemption. The gate and the doc do. That sentence is stronger than the code, but it does not produce a false green.
+
+VERDICT: FAIL

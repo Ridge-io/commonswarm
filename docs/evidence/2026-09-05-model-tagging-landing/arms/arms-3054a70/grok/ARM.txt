@@ -1,0 +1,92 @@
+I'll read REVIEW.md and DIFF.patch first, then follow REVIEW.md exactly.The patch is long; I’ll read the rest and the files REVIEW.md names.I’ll verify the cutoff date, identity-guard files, hook install path, and a few claimed numbers in the patch.Cutoff is in the past. Next I’ll check identity-guard files, hook install, and a few behaviors the patch claims.The git trailer token-matching bug they mention could also affect the checker. I’ll test that next.I have enough to judge the patch. Next I’ll write the review in the REVIEW.md format.diff --git a/.github/workflows/agent-trailers.yml b/.github/workflows/agent-trailers.yml
+
+## Findings
+
+### 1. Exhaustive lists are retyped, and one has already drifted
+
+`docs/development/agent-trailers.md:22-30` retypes the key list. `docs/development/agent-trailers.md:39-45` retypes `AGENT_TRAILER_SOURCES` (`runtime-transcript`, `runtime-env`, `runtime-config`, `declared`, `none`). `docs/development/agent-trailers.md:71-76` retypes `AGENT_TRAILER_RUNTIMES` and names the Claude runtime `claude`. The vocabulary id is `claude-code` (`scripts/lib/agent-trailer-vocab.sh:97-102`). `--help` will print `claude-code`. The doc already disagrees.
+
+`docs/development/agent-trailers.md:32-35` says that if the doc table and the arrays disagree, `tests/p1-cli/agent-trailers.test.ts` fails. That test never reads those tables. It only checks that `--help` contains vocab tokens, that the cutoff ISO is *not* pasted into the doc, and that a few phrases exist. The control the doc names is not there.
+
+`tests/p1-cli/agent-trailers.test.ts:182-184` pins `CSWARM_AGENT_MODEL=none` as a literal. That is `AGENT_TRAILER_MODEL_NO_AGENT` typed again. The emitter help uses the constant; this test does not.
+
+Script `--help` and checker failure text *do* join the arrays. The hole is the doc, the runtime table, and that test line.
+
+### 2. The emitter can sign the wrong model as `runtime-transcript`
+
+Probe order is a fixed list: codex, grok, agy, then `claude-code` last (`scripts/lib/agent-trailer-vocab.sh:97-102`; `scripts/agent-trailers.sh:225-231`). First match wins and returns.
+
+`detect_codex` returns 0 as soon as `CODEX_THREAD_ID` is set (`scripts/agent-trailers.sh:120-154`). A Grok or `agy` child of Codex inherits that id, never reaches `detect_grok` / `detect_agy`, reads the parent's rollout, and writes the parent's model with `Agent-Model-Source: runtime-transcript`.
+
+`docs/development/agent-trailers.md:114-129` calls the unlisted-runtime + inherited `CLAUDE_*` case "the one way this can produce a confident wrong value." That is false. The Codex-parent case is the same class, it is in the listed set, and nothing in the trailer says the session was the wrong one.
+
+This session is the Claude-parent case: `CLAUDECODE=1` and `GROK_SESSION_ID` are both set; `--detect` returned `grok-4.6` / `runtime-config`. Claude-last works here. The hole is every listed parent that is not last.
+
+### 3. The honesty field is not required
+
+`AGENT_TRAILER_REQUIRED_KEYS` is only `Agent-Model` and `Agent-Family` (`scripts/lib/agent-trailer-vocab.sh:22-25`). The checker accepts a commit with those two and no `Agent-Model-Source` (`scripts/check-agent-trailers.sh:64-86`).
+
+The lane claim lists four trailers. `.github/workflows/agent-trailers.yml:11-13` says the field is never silently absent, and that `Agent-Model-Source` tells a later reader whether the value was measured. A `--no-verify` commit can carry a typed model, omit the source, and go green. The audit then cannot tell measurement from assertion.
+
+The hook always prints `Agent-Model-Source` (`scripts/agent-trailers.sh:271-275`). The gate does not. Absence of the hook is what the gate exists to catch; a partial hand-written block bypasses that for the one field the design says to read first.
+
+### 4. The date cutoff cannot see the checkout that wrote the commit
+
+Grace is author-date `< 2026-09-05T00:00:00Z` (`scripts/lib/agent-trailer-vocab.sh:161-162`; `scripts/check-agent-trailers.sh:51-54`). A lane that started before this SHA, on a tree with no hook, and that commits after the cutoff is required to carry trailers it could not emit. The cutoff answers "is the clock past this instant?", not "did this tree contain the hook?".
+
+The inverse is disclosed: a new commit with an old `%at` is skipped (`scripts/lib/agent-trailer-vocab.sh:155-157`; `docs/development/agent-trailers.md:256-259`).
+
+ISO and epoch agree (1788566400). The TypeScript test checks that (`tests/p1-cli/agent-trailers.test.ts:153-166`). The workflow self-test does not. It only fails a cutoff in the future (`scripts/check-agent-trailers.sh:465-482`).
+
+Skipped commits are counted apart from checked ones on the OK line (`scripts/check-agent-trailers.sh:150-155`). Merge commits return 0 and are folded into `checked` (`scripts/check-agent-trailers.sh:56-61, 106-113`). A merge-only range reports work as checked that was only exempted.
+
+Author date, not committer date, is the right rebase choice. A rebase that kept author dates would not revoke grace.
+
+### 5. Some ranges check one commit, or none, and still exit 0
+
+`.github/workflows/agent-trailers.yml:104-122`: when `before` is missing or unreachable and `origin/main` cannot be fetched, the range is `HEAD~1..HEAD`. A new-branch push of N commits then checks the tip only. The log says that one commit was checked.
+
+A force-push to `main` with unreachable `before` fetches `origin/main` as the new tip, sets `origin/main..HEAD`, gets an empty range, and `check_range` exits 0 with "nothing to check" (`scripts/check-agent-trailers.sh:100-103`). The job is green. The identity workflow uses the same fallback; this file copies the hole.
+
+Unresolvable ranges exit 2 (`scripts/check-agent-trailers.sh:91-95`). That path is not a pass.
+
+`check_commit`'s return 2 (grace skip) is only read inside `check_range` (`scripts/check-agent-trailers.sh:106-113`). The script's own exit 2 still means "could not run". The overload is safe at the only call site.
+
+### 6. Numbers in the comments do not match the suite or each other
+
+`.github/workflows/agent-trailers.yml:54` says a checker that always returns 0 fails 5 assertions. `docs/development/agent-trailers.md:302-304` says 7. The suite has seven expect-nonzero checks: untagged, each of two required keys, bad family, bad source, unresolvable range (expect 2), post-cutoff untagged. The workflow comment is wrong.
+
+`scripts/lib/agent-trailer-vocab.sh:147-149` says six open lane branches carried six non-merge commits. `docs/development/agent-trailers.md:234-237` says seven. One of those counts is false.
+
+### 7. `core.hooksPath` replaces every hook in the checkout
+
+`package.json:16` (`hooks:install`) sets `core.hooksPath` to `scripts/hooks`. That directory contains only `prepare-commit-msg`. Git then ignores `.git/hooks`. A checkout that had `pre-commit`, `commit-msg`, or `pre-push` loses them. The command does not say so.
+
+`scripts/check-commit-identity.sh` and `.github/workflows/commit-identity.yml` are not in this diff. Identity stays a CI job, not a hook, so its behaviour is unchanged. The new install path still wipes other local hooks.
+
+`prepare` is still only `npm run build`. No `postinstall`. The hook is opt-in.
+
+### 8. Doc sentences stronger than the code
+
+`docs/development/agent-trailers.md:63-64` ("The model string is read from the runtime, never typed.") is false as a rule. `CSWARM_AGENT_MODEL` is typed and recorded as `declared` (`scripts/agent-trailers.sh:238-249`). Later sections describe that override. The bold line does not.
+
+`docs/development/agent-trailers.md:51-54` presents `Agent-Model: unknown` with `Agent-Family: unknown` as the unread-runtime pair. `detect_claude_code` sets `detected_family=anthropic` before it reads a model (`scripts/agent-trailers.sh:69-72`). Claude with no transcript emits `unknown` / `anthropic` / `none`, not `unknown` / `unknown`.
+
+---
+
+## Refutations that failed
+
+- Script `--help` and checker diagnostics join `AGENT_TRAILER_*` arrays. I could not find a retyped required-key or family list in those messages.
+- `git interpret-trailers` without `--if-exists` keeps both `Agent-Model` and `Agent-Model-Source`. `--if-exists doNothing` drops the source key, as the hook comment says. The hook does not use `--if-exists`.
+- `%(trailers:key=Agent-Model,valueonly)` does not return an `Agent-Model-Source` value. The checker is not confused by the token prefix.
+- The hook always ends `exit 0` (`scripts/hooks/prepare-commit-msg:11-14, 75`). A failed emitter warns and continues. I could not make it block a normal commit.
+- Unresolvable `--range` exits 2, not 0. Empty `HEAD..HEAD` exits 0 and prints "nothing to check".
+- No `${{ }}` is pasted into a `run:` block. Context goes through `env:`.
+- `runs-on` is `CI_RUNS_ON_LIGHT || CI_RUNS_ON_NODE || CI_RUNS_ON || ubuntu-latest`.
+- The self-test step parses `self-test: PASSED N assertion` and fails if N is missing or `< 20`. An empty `--self-test` body would not go green.
+- `agy` does not read a model. Unreadable runtimes emit `unknown` / `none`.
+- Claude-last is load-bearing and held in this nested Grok session.
+- Cutoff epoch matches `2026-09-05T00:00:00Z`. At review time it is in the past. The self-test fails a future epoch.
+- Author date is the right field if a branch rebases before merge.
+
+VERDICT: FAIL

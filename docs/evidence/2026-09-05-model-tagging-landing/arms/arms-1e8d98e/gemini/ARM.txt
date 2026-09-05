@@ -1,0 +1,26 @@
+diff --git a/.github/workflows/agent-trailers.yml b/.github/workflows/agent-trailers.yml
+
+## Findings
+
+**1. One vocabulary, generated sentences**
+* `scripts/check-agent-trailers.sh`, line 1184: The error message retypes the family value as `CSWARM_AGENT_FAMILY=unknown` instead of deriving it from the vocabulary array or using a constant.
+* `scripts/agent-trailers.sh`, line 989: The help text explicitly retypes the word `declared` (`recorded with source 'declared'`) rather than building the string using `$AGENT_TRAILER_SOURCE_DECLARED`.
+* `docs/development/agent-trailers.md`, lines 360-363 and 411-414: These doc examples explicitly retype vocabulary values like `openai`, `unknown`, and `none`. 
+
+This matters because retyped strings drift silently if the underlying vocabulary changes, violating the repo rule that enumerations must be generated. 
+
+**2. Codex detector reads the oldest rollout (False `runtime-transcript`)**
+* `scripts/agent-trailers.sh`, lines 800-804: 
+The `for` loop globs Codex rollouts (`"rollout-"*"-${CODEX_THREAD_ID}.jsonl"`), which expand in lexicographical order (oldest timestamp first). Because the loop `break`s on the very first match, a thread spanning multiple rollouts will always read the *oldest* rollout file. If the model was changed mid-thread, the script signs the commit with a stale model but still confidently sets `Agent-Model-Source: runtime-transcript`. This results in a silent bad measurement that is not disclosed in the docs.
+
+**3. False green in CI for grace-skipped commits**
+* `.github/workflows/agent-trailers.yml`, lines 156-159:
+The workflow only emits the warning annotation if the script's output contains `"nothing to check"`, which only occurs on an empty range (zero commits). However, if a range contains commits but *all* of them are skipped by grace, the checker exits 0 and prints `0 of N commit(s) checked`, which doesn't match the case pattern. The CI job will silently stay green without checking any commits and without issuing the warning annotation, leading a reader to misread the check as a passed audit.
+
+## Refutation attempts that FAILED
+
+* **The tree-presence rule:** I tried to attack this rule by assessing whether deleting the hook from a branch or renaming it could bypass the gate. While this does escape the check by granting the commits grace, the doc explicitly discloses this limitation ("Deleting the hook... would grant it grace"). It is an accepted accident-guard scope, and the tree test successfully avoids the rebase/concurrent lane issues of a date cutoff.
+* **The GitHub exemption:** I tested whether `GIT_COMMITTER_EMAIL=noreply@github.com git commit` could bypass the check. It does, because the check relies on the committer email. However, the doc already explicitly discloses this ("It does not close the evasion"), meaning it functions within its known bounds.
+* **Hook idempotency and blocking:** I verified whether the hook could corrupt a commit or block execution. The hook correctly utilizes `git interpret-trailers` in a safe manner, exiting 0 upon failure. It successfully prevents blocking and does not duplicate the block when run multiple times.
+
+VERDICT: FAIL

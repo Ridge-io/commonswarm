@@ -1,0 +1,35 @@
+diff --git a/.github/workflows/agent-trailers.yml b/.github/workflows/agent-trailers.yml
+
+## Findings
+
+**1. Retyped lists/values in test expectations**
+- **File:** `tests/p1-cli/agent-trailers.test.ts`
+- **Line range:** 2179-2268 (specifically 2181, 2192, 2199, 2238, 2263) and 2459-2460
+- **Reason:** Check 1 states that ANY test expectation that retypes lists or values instead of building them from the arrays is a defect. The test expectations hardcode string literals like `"none"`, `"declared"`, `"human"`, `"runtime-transcript"`, `"runtime-ambiguous"`, and `"anthropic"` instead of deriving them from the `sources` or `families` arrays parsed from the vocabulary.
+
+**2. Claude Code detector signs subagent (sidechain) commits with the parent's model**
+- **File:** `scripts/agent-trailers.sh`
+- **Line range:** 730-733
+- **Reason:** Check 2 asks for a case where the emitter signs a commit with a model that didn't write it, while still claiming a clean `runtime-transcript`. The `claude-code` detector explicitly filters out `.isSidechain == true` rows (`select(.type=="assistant" and .isSidechain != true...)`). Since a sidechain subagent writes to the same transcript file (sharing the parent's `CLAUDE_CODE_SESSION_ID`), if the subagent executes a commit, the detector ignores its sidechain turns and reads the main chain's (parent's) model instead. This falsely attributes the subagent's work to the parent while claiming it's a clean measurement, which contradicts the script's own comments.
+
+**3. Concurrent lanes fail the gate when rebasing after the cutoff date**
+- **File:** `scripts/check-agent-trailers.sh`
+- **Line range:** 1033-1040
+- **Reason:** Check 3 asks for a worse failure in the grace rule. The grace logic skips commits only if they lack the hook in their tree *or* were authored before the cutoff date. If a concurrent lane branched off `main` before the hook was added, its commits lack the hook but may be authored *after* the cutoff date. When this lane rebases onto `main`, the rebased commits inherit the hook in their tree from `main`. Because `git rebase` preserves the author date (which is after the cutoff), both grace conditions fail and the gate requires trailers. However, `rebase` doesn't run the hook, so the commits have no trailers and the gate rejects them, forcing the exact backfill the design forbids.
+
+**4. Range resolution fails forever on the first commit of a new repository**
+- **File:** `.github/workflows/agent-trailers.yml`
+- **Line range:** 125-129
+- **Reason:** Check 5 asks if the range resolution can pick a range that fails forever. In the fallback logic, if `origin/main` doesn't exist (e.g., the very first push to a new repository or pushing an orphan branch), the script defaults to `range="HEAD~1..HEAD"`. Since `HEAD~1` is unresolvable on a repo's first commit, `git rev-list` fails, causing the checker to return exit code 2 ("COULD NOT RUN") and fail the CI job permanently until a second commit is made.
+
+**5. The GitHub committer exemption can be evaded with a single line**
+- **File:** `scripts/check-agent-trailers.sh`
+- **Line range:** 1064-1067
+- **Reason:** Check 7 questions if the exemption is too wide. The script exempts commits where the committer is `noreply@github.com` but the author is not. The documentation claims this closes the "one-line evasion" because setting `git config user.email` affects both. However, a user can still evade the gate with a single line by setting `GIT_COMMITTER_EMAIL=noreply@github.com git commit ...`. This spoofs only the committer address, bypassing the author check and letting untagged work slip through.
+
+## Failed Refutations
+
+- **Check 2 (Ambiguity fallback logic):** I attempted to break the fallback logic that downgrades the source to `runtime-ambiguous` by finding a case where `count_runtime_markers` would only count 1 marker despite multiple runtimes being active. However, because inheritance is symmetric (e.g., a Codex parent leaves `CODEX_THREAD_ID` in a Grok child) and the script checks all runtime markers regardless of probe order, the count reliably identifies nested sessions and properly issues the downgrade.
+- **Check 4 (Exit code overload):** I attempted to break the `check_range` exit code by seeing if `check_commit` returning 2 (skipped) could leak and cause a false "COULD NOT RUN" failure. However, `check_range` traps the return value in a `case` statement, increments the `skipped` counter, and safely returns 0 at the end if there are no bad commits, so the overload is safe.
+
+VERDICT: FAIL
