@@ -1,5 +1,6 @@
 ---
 import AgentConnect from "../connect/AgentConnect.astro";
+import ProviderButtons from "../auth/ProviderButtons.astro";
 ---
 
 <invite-onramp class="invite-onramp" data-state="loading">
@@ -36,10 +37,12 @@ import AgentConnect from "../connect/AgentConnect.astro";
       <input id="invite-email" type="email" autocomplete="email" required placeholder="you@example.com" />
       <button class="invite-onramp__button" type="submit">Email me a sign-in link</button>
     </form>
-    <div class="invite-onramp__divider" aria-hidden="true"><span>or</span></div>
-    <button class="invite-onramp__button invite-onramp__button--quiet" type="button" data-github>
-      Sign in with GitHub
-    </button>
+    <ProviderButtons
+      buttonClass="invite-onramp__button invite-onramp__button--quiet"
+      listClass="invite-onramp__providers"
+    >
+      <div slot="before" class="invite-onramp__divider" aria-hidden="true"><span>or</span></div>
+    </ProviderButtons>
     <p class="invite-onramp__status" data-auth-status role="status" aria-live="polite"></p>
     <p class="invite-onramp__error" data-auth-error role="alert" hidden></p>
   </section>
@@ -98,15 +101,15 @@ import AgentConnect from "../connect/AgentConnect.astro";
     CommandOutcomeUnknown,
     EmailAddressRejected,
     EmailRateLimited,
-    NoDeployment,
     acceptWorkspaceInvitation,
     currentSession,
     deployment,
     myWorkspaces,
     signInWithEmail,
-    signInWithGitHub,
+    signInWithProvider,
     uuid,
   } from "../../lib/commonswarm";
+  import { authProvider, listSentence } from "../../lib/auth-providers";
   import {
     assertInviteDeployment,
     decodeMemberInvite,
@@ -123,6 +126,27 @@ import AgentConnect from "../connect/AgentConnect.astro";
     let payload: MemberInvitePayload | null = null;
     let resumeId = "";
     let senderLink = "";
+
+    /*
+     * The provider names for prose, read off the BUTTONS THAT ARE ON THIS PAGE.
+     *
+     * Not off a second list, and not typed. AGENTS.md: "If a user-facing string lists things
+     * the code enforces … that list must come from the same constant the enforcement reads."
+     * The buttons are already generated from AUTH_PROVIDERS, so deriving the sentence from
+     * the buttons makes the sentence and the choices the same set by construction — there is
+     * no third place for the two to drift apart.
+     */
+    const renderedProviderNames = (): string[] =>
+      [...host.querySelectorAll<HTMLElement>("[data-signin-provider]")]
+        .map((button) => button.dataset.signinProvider ?? "")
+        .map((id) => {
+          try {
+            return authProvider(id).name;
+          } catch {
+            return "";
+          }
+        })
+        .filter((name) => name.length > 0);
 
     const show = (name: string): void => {
       for (const view of host.querySelectorAll<HTMLElement>("[data-view]")) {
@@ -265,9 +289,12 @@ import AgentConnect from "../connect/AgentConnect.astro";
         await signInWithEmail(input.value.trim(), redirect.href);
         if (status) status.textContent = `Check ${input.value.trim()} for your sign-in link.`;
       } catch (caught) {
+        const choices = listSentence(renderedProviderNames());
         if (error) {
           error.textContent = caught instanceof EmailRateLimited
-            ? "Email delivery is busy. Sign in with GitHub, or try again later."
+            ? choices
+              ? `Email delivery is busy. Sign in with ${choices}, or try again later.`
+              : "Email delivery is busy. Try again later."
             : caught instanceof EmailAddressRejected
             ? "Enter a complete email address."
             : caught instanceof Error
@@ -278,22 +305,44 @@ import AgentConnect from "../connect/AgentConnect.astro";
       }
     });
 
-    one<HTMLButtonElement>("[data-github]")?.addEventListener("click", async () => {
-      if (!resumeId) return;
-      const redirect = new URL("/invite", window.location.origin);
-      redirect.searchParams.set("resume", resumeId);
-      try {
-        await signInWithGitHub(redirect.href);
-      } catch (caught) {
-        const error = one<HTMLElement>("[data-auth-error]");
-        if (error) {
-          error.textContent = caught instanceof NoDeployment
-            ? "Open this link on commonswarm.com."
-            : "GitHub sign-in could not start. Try the email option.";
-          error.hidden = false;
+    /*
+     * One handler for every generated button. The id comes off the element, so a provider
+     * added to AUTH_PROVIDERS works here with no change: the button renders itself and
+     * signInWithProvider re-checks the id against the same array before any request.
+     */
+    for (const button of host.querySelectorAll<HTMLButtonElement>("[data-signin-provider]")) {
+      button.addEventListener("click", async () => {
+        if (!resumeId) return;
+        const id = button.dataset.signinProvider ?? "";
+        const redirect = new URL("/invite", window.location.origin);
+        redirect.searchParams.set("resume", resumeId);
+        button.disabled = true;
+        button.setAttribute("aria-busy", "true");
+        try {
+          await signInWithProvider(id, redirect.href);
+        } catch {
+          /*
+           * No NoDeployment branch here, and it is not an oversight. Two things make that
+           * state unreachable from this button: the buttons exist only when the BUILD read an
+           * enabled provider off a deployment, and `boot()` above shows the "unusable" panel
+           * and never reveals this view when `deployment()` is null at runtime.
+           */
+          const error = one<HTMLElement>("[data-auth-error]");
+          if (error) {
+            let name = "That";
+            try {
+              name = authProvider(id).name;
+            } catch {
+              name = "That";
+            }
+            error.textContent = `${name} sign-in could not start. Try the email option.`;
+            error.hidden = false;
+          }
+          button.disabled = false;
+          button.removeAttribute("aria-busy");
         }
-      }
-    });
+      });
+    }
 
     one<HTMLButtonElement>("[data-retry-join]")?.addEventListener("click", () => {
       void accept();
@@ -453,6 +502,12 @@ import AgentConnect from "../connect/AgentConnect.astro";
     font-weight: var(--weight-semibold);
     text-decoration: none;
     cursor: pointer;
+  }
+
+  .invite-onramp__providers {
+    display: grid;
+    gap: var(--s-3);
+    justify-items: start;
   }
 
   .invite-onramp__button--quiet {
