@@ -1945,3 +1945,24 @@ Score for the operator's list: #1 mobile LIVE, #3 standing LIVE (0.1.52), #4 bra
 Open: #2 composer To: field (waits on `chat-recipients`), #6 chat (schema lane round 5 at 5f07697;
 Gemini's round-4 "PASS" was 26 bare "No finding" lines and was not counted — correct ruling),
 listener head-of-line (round 3 at e5f75c9, Gemini FAIL), two follow-up lanes.
+
+## Addendum 2026-09-05 04:0x UTC — update-notice follow-up landed (6b2497a); its arm text is LOST, my error
+
+`lane/update-notice-followup` ed6e701 (code SHA 80cb2e7 reviewed; ed6e701 adds only the design
+note — verified: the diff 80cb2e7..ed6e701 names one docs file) merged as `6b2497a`. The PM's
+report quoted both arms PASS on 80cb2e7 with the mutation table (whole `if (!isNewBuild)` branch
+deleted → 6 of 11 fail; before the fix, 0). I did NOT read the ARM.txt files myself: my landing
+chain's copy glob matched nothing, the chain removed the worktree that held them, and the raw
+review text is unrecoverable. What survives: the PM's report (in the session transcript) and the
+design note's record. Rule, saved to memory: copy evidence, COUNT the copied files, and only then
+remove a worktree; never in one chain with an unverified glob.
+
+Also on that merge: the site suite showed 381 pass / 1 fail on the first run at host load ~20
+(three lanes running gates at once), exit 0 on the rerun; the failing test's name was not
+captured. To be re-run once load is below 8 and recorded by name.
+
+**Open finding from both arms, product-side, not fixed:** dismissal memory of the update bar is
+not proven; the PM's attempt to pin it showed the bar returning with `dismissedBuild === null`,
+consistent with a `!isNewBuild` poll still in flight at the click landing after it and clearing
+the dismissal through the rollback reset. Next lane: measure the in-flight ordering first, then
+fix by ignoring poll results that started before the click (a request version), then the control.
