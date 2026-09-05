@@ -10,6 +10,7 @@ import {
   writeListenerStatus,
   type ListenerPaths,
   type ListenerProviderId,
+  LISTENER_HELD_BACK_MAX,
   type ListenerStatus,
 } from "./control.js";
 import { isRestartableListenerStop } from "./runtime.js";
@@ -285,6 +286,7 @@ export async function runListenerSupervisor(
     lastWorkerStderrTail: null,
     deliveryMode: null,
     pendingDeliveryCount: null,
+    pendingDeliveryCountAt: null,
     lastTerminalDeliveryFailureCount: null,
     lastTerminalDeliveryFailureAt: null,
     lastClaimAt: null,
@@ -300,10 +302,7 @@ export async function runListenerSupervisor(
        be reported as held, and the queue age restarts with the observations. */
     currentDeliverySignalId: null,
     currentDeliverySince: null,
-    releasedDeliverySignalId: null,
-    releasedDeliveryAt: null,
-    releasedDeliveryReason: null,
-    releasedDeliveryCount: 0,
+    heldBackDeliveries: [],
     routeMode: options.routeMode ?? "worker",
     deferOverChars: options.deferOverChars ?? null,
     pendingForMainCount: 0,
@@ -365,10 +364,7 @@ export async function runListenerSupervisor(
         ? {
           currentDeliverySignalId: null,
           currentDeliverySince: null,
-          releasedDeliverySignalId: null,
-          releasedDeliveryAt: null,
-          releasedDeliveryReason: null,
-          releasedDeliveryCount: 0,
+          heldBackDeliveries: [],
         }
         : {}),
       state,
@@ -581,6 +577,9 @@ export async function runListenerSupervisor(
         ...status,
         deliveryMode: event.mode,
         pendingDeliveryCount: event.pendingDeliveryCount,
+        pendingDeliveryCountAt: event.pendingDeliveryCount === null
+          ? null
+          : event.ts,
         updatedAt: event.ts,
       };
       persist();
@@ -596,15 +595,17 @@ export async function runListenerSupervisor(
       /* The server counts every unacked live delivery for this agent, the one
          just claimed included, so what is WAITING is one fewer while a seat is
          held. */
-      /* Held-back rows are forgotten as soon as this listener has evidence they
-         are no longer held back: the row itself came back, or the service
-         reports nothing unacked at all, which it cannot do while any of them is
-         still pending. Without the second clause the newest held-back row could
-         be named for the rest of the run after the service expired it. */
-      const heldBackGone = event.pendingDeliveryCount === 0 ||
-        (status.releasedDeliverySignalId !== null &&
-          status.releasedDeliverySignalId !== undefined &&
-          status.releasedDeliverySignalId === event.signalId);
+      /* Each held-back row is forgotten on its OWN evidence: it came back (this
+         claim returned it), or the pending count can no longer contain it.
+         Every held-back row is unacked, so the service's count is an upper
+         bound on how many of them survive; when the count drops below the set,
+         the oldest entries are gone, expired or handled, and naming them any
+         longer would be a false promise. An earlier version cleared the WHOLE
+         set on any single row's evidence, which forgot a second row that was
+         still genuinely held back. */
+      const heldBack = (status.heldBackDeliveries ?? [])
+        .filter((entry) => entry.signalId !== event.signalId)
+        .slice(0, Math.max(0, event.pendingDeliveryCount));
       status = {
         ...status,
         readHealth: recordListenerClaim(
@@ -612,16 +613,10 @@ export async function runListenerSupervisor(
           event.ts,
         ),
         pendingDeliveryCount: event.pendingDeliveryCount,
+        pendingDeliveryCountAt: event.ts,
         currentDeliverySignalId: event.signalId,
         currentDeliverySince: event.signalId === null ? null : event.ts,
-        ...(heldBackGone
-          ? {
-            releasedDeliverySignalId: null,
-            releasedDeliveryAt: null,
-            releasedDeliveryReason: null,
-            releasedDeliveryCount: 0,
-          }
-          : {}),
+        heldBackDeliveries: heldBack,
         lastClaimAt: event.ts,
         updatedAt: event.ts,
       };
@@ -661,12 +656,15 @@ export async function runListenerSupervisor(
         /* Held back, NOT waiting to be claimed: the row keeps its live lease,
            so the service cannot hand it to anyone until that lease expires.
            Both review arms on 33cd24b measured the earlier wording counting it
-           among deliveries "waiting to be claimed". More than one can be held
-           back at once, so a count is kept beside the newest one. */
-        releasedDeliverySignalId: event.signalId,
-        releasedDeliveryAt: event.ts,
-        releasedDeliveryReason: event.reason,
-        releasedDeliveryCount: (status.releasedDeliveryCount ?? 0) + 1,
+           among deliveries "waiting to be claimed". Newest first, deduplicated
+           on the id (a row can be released, redelivered and released again),
+           and bounded. */
+        heldBackDeliveries: [
+          { signalId: event.signalId, at: event.ts, reason: event.reason },
+          ...(status.heldBackDeliveries ?? []).filter((entry) =>
+            entry.signalId !== event.signalId
+          ),
+        ].slice(0, LISTENER_HELD_BACK_MAX),
         lastSignalId: event.signalId,
         updatedAt: event.ts,
       };
@@ -694,16 +692,13 @@ export async function runListenerSupervisor(
           ? 0
           : status.consecutiveAckFailureCount,
         pendingDeliveryCount: null,
+        pendingDeliveryCountAt: null,
         currentDeliverySignalId: null,
         currentDeliverySince: null,
-        ...(status.releasedDeliverySignalId === event.signalId
-          ? {
-            releasedDeliverySignalId: null,
-            releasedDeliveryAt: null,
-            releasedDeliveryReason: null,
-            releasedDeliveryCount: 0,
-          }
-          : {}),
+        // An acknowledged row is answered and gone; drop just that one.
+        heldBackDeliveries: (status.heldBackDeliveries ?? []).filter((entry) =>
+          entry.signalId !== event.signalId
+        ),
         lastSignalId: event.signalId,
         updatedAt: event.ts,
       };
@@ -916,10 +911,7 @@ export async function effectiveListenerStatus(
            says it is what the service reported. */
         currentDeliverySignalId: null,
         currentDeliverySince: null,
-        releasedDeliverySignalId: null,
-        releasedDeliveryAt: null,
-        releasedDeliveryReason: null,
-        releasedDeliveryCount: 0,
+        heldBackDeliveries: [],
       };
       await writeListenerStatus(paths, failed);
       return failed;

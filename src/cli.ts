@@ -4641,10 +4641,9 @@ export function listenerStatusJson(
     currentDeliveryElapsedMs: status.currentDeliverySince
       ? Math.max(0, nowMs - Date.parse(status.currentDeliverySince))
       : null,
-    releasedDeliverySignalId: status.releasedDeliverySignalId ?? null,
-    releasedDeliveryAt: status.releasedDeliveryAt ?? null,
-    releasedDeliveryReason: status.releasedDeliveryReason ?? null,
-    releasedDeliveryCount: status.releasedDeliveryCount ?? 0,
+    pendingDeliveryCountAt: status.pendingDeliveryCountAt ?? null,
+    heldBackDeliveries: status.heldBackDeliveries ?? [],
+    heldBackDeliveryCount: (status.heldBackDeliveries ?? []).length,
     routeMode: status.routeMode ?? "worker",
     deferOverChars: status.deferOverChars ?? null,
     pendingForMainCount: status.pendingForMainCount ?? 0,
@@ -4869,16 +4868,18 @@ export function renderListenerStatus(
   }
   if (status.pendingDeliveryCount !== null) {
     /* The count keeps its own sentence unchanged. The SECOND sentence is what
-       both review arms asked for: the number is an observation from the last
-       claim, and on a listener that stopped claiming days ago the first
-       sentence alone reads as current. */
+       both review arms asked for: the number is an observation, and on a
+       listener that stopped claiming days ago the first sentence alone reads as
+       current. The date comes from pendingDeliveryCountAt, written wherever the
+       count is; dating it from lastClaimAt left the delivery-mode window
+       undated, which an arm reached by killing the process before its first
+       claim. */
+    const observedAt = status.pendingDeliveryCountAt ?? null;
     lines.push(
       `Pending deliveries reported by the service: ${status.pendingDeliveryCount}.` +
-        (status.lastClaimAt === null
-          ? ""
-          : ` That count is what the last claim returned, ${
-            relativeAge(status.lastClaimAt, nowMs)
-          }.`),
+        (observedAt === null
+          ? " When the service reported it was not recorded."
+          : ` The service reported that ${relativeAge(observedAt, nowMs)}.`),
     );
   }
   const currentDeliveryId = status.currentDeliverySignalId ?? null;
@@ -4902,28 +4903,29 @@ export function renderListenerStatus(
         ago, so the oldest has waited at least that long."
        "Deliveries waiting to be claimed: 1. This listener last saw an empty
         queue 4m ago." */
-  const releasedDeliveryId = status.releasedDeliverySignalId ?? null;
-  const releasedDeliveryAt = status.releasedDeliveryAt ?? null;
-  const releasedDeliveryReason = status.releasedDeliveryReason ?? null;
-  const releasedDeliveryCount = status.releasedDeliveryCount ?? 0;
-  if (
-    releasedDeliveryId !== null && releasedDeliveryAt !== null &&
-    releasedDeliveryReason !== null
-  ) {
-    const others = releasedDeliveryCount - 1;
+  const heldBack = status.heldBackDeliveries ?? [];
+  const newestHeldBack = heldBack[0];
+  if (newestHeldBack !== undefined) {
+    const others = heldBack.length - 1;
+    /* Past tense only. What this listener did is knowable here; what the
+       service has done with the row since is not. The retired final clause was
+       "It was not answered and not acknowledged, so it stays with the service,
+       which decides when it comes back" -- both arms built the sequence where
+       the row's own until elapses, the next claim expires and acknowledges it,
+       and every word after "handed back" turns false. The reader is sent to the
+       surface that does know. */
     lines.push(
-      `Delivery ${releasedDeliveryId} was handed back ${
-        relativeAge(releasedDeliveryAt, nowMs)
+      `Delivery ${newestHeldBack.signalId} was handed back ${
+        relativeAge(newestHeldBack.at, nowMs)
       } because ${
-        LISTENER_DELIVERY_HOLD_RELEASE_CLAUSES[releasedDeliveryReason]
+        LISTENER_DELIVERY_HOLD_RELEASE_CLAUSES[newestHeldBack.reason]
       }.` +
         (others > 0
-          ? ` ${others} more ${
-            others === 1 ? "delivery was" : "deliveries were"
-          } handed back before it.`
+          ? ` ${others} other ${
+            others === 1 ? "delivery is" : "deliveries are"
+          } in the same state.`
           : "") +
-        " It was not answered and not acknowledged, so it stays with the" +
-        " service, which decides when it comes back.",
+        ` This listener has not answered it. For what the service did with it since: cswarm receipt ${newestHeldBack.signalId} --workspace-id ${status.workspaceId}`,
     );
   }
   lines.push(

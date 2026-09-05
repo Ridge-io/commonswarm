@@ -1,18 +1,18 @@
 === listen start ===
 {
   "version": 1,
-  "instanceId": "ffca5386-a066-4f4f-a27d-23601dadbebd",
+  "instanceId": "3711a6bf-e6f6-4e2a-b9fd-fdd5c30bcc97",
   "provider": "grok",
   "cswarmVersion": "0.1.52",
   "permissionMode": "allow",
-  "profileId": "76f818defe6fc2d580cf8924",
-  "workspaceId": "ab1f1618-4e34-4062-b967-e07a4ad38d8f",
-  "principalId": "9810739c-d8a5-48c3-a6d7-ac3f5641caaa",
-  "pid": 59945,
+  "profileId": "dfce5e2d82968e8ef6820285",
+  "workspaceId": "3caf4c5f-b0b4-40dd-af8b-f3d0fa04c235",
+  "principalId": "fd01fe85-b373-4881-abb6-3b4af6b5dcb9",
+  "pid": 5033,
   "state": "ready",
-  "startedAt": "2026-09-05T02:55:38.935Z",
-  "readyAt": "2026-09-05T02:55:39.279Z",
-  "updatedAt": "2026-09-05T02:55:39.315Z",
+  "startedAt": "2026-09-05T03:14:32.382Z",
+  "readyAt": "2026-09-05T03:14:32.697Z",
+  "updatedAt": "2026-09-05T03:14:32.717Z",
   "stoppedAt": null,
   "lastSignalId": null,
   "lastErrorCode": null,
@@ -27,19 +27,17 @@
   "lastWorkerStderrTail": null,
   "deliveryMode": "durable_claim",
   "pendingDeliveryCount": 2,
+  "pendingDeliveryCountAt": "2026-09-05T03:14:32.717Z",
   "lastTerminalDeliveryFailureCount": null,
   "lastTerminalDeliveryFailureAt": null,
-  "lastClaimAt": "2026-09-05T02:55:39.315Z",
+  "lastClaimAt": "2026-09-05T03:14:32.717Z",
   "lastAckAt": null,
   "lastAckOutcome": null,
   "consecutiveAckFailureCount": null,
   "lastAckSignalId": null,
-  "currentDeliverySignalId": "e4f2fd3f-19ca-407f-9b35-e2469748d590",
-  "currentDeliverySince": "2026-09-05T02:55:39.315Z",
-  "releasedDeliverySignalId": null,
-  "releasedDeliveryAt": null,
-  "releasedDeliveryReason": null,
-  "releasedDeliveryCount": 0,
+  "currentDeliverySignalId": "135d51dd-5aa4-4eaa-9693-2eed6cd39ecd",
+  "currentDeliverySince": "2026-09-05T03:14:32.717Z",
+  "heldBackDeliveries": [],
   "routeMode": "worker",
   "deferOverChars": null,
   "pendingForMainCount": 0,
@@ -55,16 +53,16 @@
     "claimCadenceMs": 2000,
     "claimHours": [
       {
-        "hourStart": "2026-09-05T02:00:00.000Z",
+        "hourStart": "2026-09-05T03:00:00.000Z",
         "claims": 1
       }
     ]
   },
   "connectionsOpened": 1,
-  "connectionReuseRatio": 7,
+  "connectionReuseRatio": 4,
   "activityPublishFailures": 1,
   "activityLastErrorCode": "activity_http_rejected",
-  "logPath": "/var/folders/bb/7n7qfbls651d80fs4r9wdyk40000gn/T/cswarm-hol-6nhid1/209d0ee47e8b5f64cbfd311bfcae905adf74cc6e30aa20c6ad268068eb8a042a/events.ndjson",
+  "logPath": "/var/folders/bb/7n7qfbls651d80fs4r9wdyk40000gn/T/cswarm-hol-nFsjtk/e334dfdf21eea1e7a139d1e88f19b0f28f3ffa64eeab8a94c9f24e798b8590b8/events.ndjson",
   "providerExecutableMeasured": false,
   "providerVersionMeasured": false,
   "providerBelowDemandedMinimum": false,
@@ -100,7 +98,8 @@
   "listenerLapse": false,
   "listenerLapseCodes": [],
   "listenerLapseNextSteps": [],
-  "currentDeliveryElapsedMs": 57,
+  "currentDeliveryElapsedMs": 11,
+  "heldBackDeliveryCount": 0,
   "permission_mode": "allow",
   "same_owner_delivery": "worker session; tool requests allowed once each when the host offers allow_once, otherwise denied",
   "cross_owner_delivery": "same worker session with sender provenance; tool requests allowed once each when the host offers allow_once, otherwise denied",
@@ -115,46 +114,45 @@
 }
 
 === LIVE timeline: one seat, two deliveries ===
+// Each entry is TWO consecutive `cswarm listen status` invocations, the JSON fields then the human lines, so a delivery claimed between them can appear in one and not the other. The listener is real and detached; the service and the ACP provider are local fakes.
 [
   {
-    "atMs": 72,
+    "atMs": 65,
     "inHand": "ask-1",
-    "currentDeliveryElapsedMs": 131,
+    "currentDeliveryElapsedMs": 80,
     "pendingDeliveryCount": 2,
-    "heldBack": "none",
-    "heldBackReason": null,
-    "heldBackCount": 0,
+    "heldBack": [],
     "lastAck": "none",
     "lastAckOutcome": null,
     "human": [
-      "Pending deliveries reported by the service: 2. That count is what the last claim returned, under 1m ago.",
-      "Working on delivery e4f2fd3f-19ca-407f-9b35-e2469748d590, claimed under 1m ago."
+      "Pending deliveries reported by the service: 2. The service reported that under 1m ago.",
+      "Working on delivery 135d51dd-5aa4-4eaa-9693-2eed6cd39ecd, claimed under 1m ago."
     ]
   },
   {
-    "atMs": 30550,
+    "atMs": 30276,
     "inHand": "none",
     "currentDeliveryElapsedMs": null,
     "pendingDeliveryCount": 1,
-    "heldBack": "ask-1",
-    "heldBackReason": "hold_budget",
-    "heldBackCount": 1,
+    "heldBack": [
+      "ask-1 (hold_budget)"
+    ],
     "lastAck": "ask-2",
     "lastAckOutcome": "replied",
     "human": [
-      "Pending deliveries reported by the service: 1. That count is what the last claim returned, under 1m ago.",
+      "Pending deliveries reported by the service: 1. The service reported that under 1m ago.",
       "No delivery is being worked on right now.",
-      "Delivery e4f2fd3f-19ca-407f-9b35-e2469748d590 was handed back under 1m ago because it used the turn budget for one delivery. It was not answered and not acknowledged, so it stays with the service, which decides when it comes back."
+      "Delivery 135d51dd-5aa4-4eaa-9693-2eed6cd39ecd was handed back under 1m ago because it used the turn budget for one delivery. This listener has not answered it. For what the service did with it since: cswarm receipt 135d51dd-5aa4-4eaa-9693-2eed6cd39ecd --workspace-id 3caf4c5f-b0b4-40dd-af8b-f3d0fa04c235"
     ]
   }
 ]
 
 === hold releases recorded in the listener log ===
-{"ts":"2026-09-05T02:56:09.617Z","event":"listener_delivery_hold_released","signal_id":"e4f2fd3f-19ca-407f-9b35-e2469748d590","release_reason":"hold_budget","held_ms":30290}
+{"ts":"2026-09-05T03:15:02.848Z","event":"listener_delivery_hold_released","signal_id":"135d51dd-5aa4-4eaa-9693-2eed6cd39ecd","release_reason":"hold_budget","held_ms":30113}
 
 === first ask id ===
-e4f2fd3f-19ca-407f-9b35-e2469748d590
+135d51dd-5aa4-4eaa-9693-2eed6cd39ecd
 === second ask id ===
-60e9da6e-9d7a-4cd5-b8ff-08c041711b07
+ddf7cc76-fd97-4255-8ff5-9958207b5ff6
 === acked signal ids ===
-60e9da6e-9d7a-4cd5-b8ff-08c041711b07
+ddf7cc76-fd97-4255-8ff5-9958207b5ff6

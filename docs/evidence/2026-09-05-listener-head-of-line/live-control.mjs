@@ -299,9 +299,8 @@ async function main() {
       currentDeliverySignalId: row.currentDeliverySignalId,
       currentDeliverySince: row.currentDeliverySince,
       currentDeliveryElapsedMs: row.currentDeliveryElapsedMs,
-      releasedDeliverySignalId: row.releasedDeliverySignalId,
-      releasedDeliveryReason: row.releasedDeliveryReason,
-      releasedDeliveryCount: row.releasedDeliveryCount,
+      heldBackDeliveries: row.heldBackDeliveries,
+      pendingDeliveryCountAt: row.pendingDeliveryCountAt,
       lastAckOutcome: row.lastAckOutcome,
       lastAckSignalId: row.lastAckSignalId,
     };
@@ -327,7 +326,7 @@ async function main() {
       const row = pick(snapshot.stdout);
       const key = JSON.stringify([
         row.currentDeliverySignalId,
-        row.releasedDeliverySignalId,
+        row.heldBackDeliveries,
         row.pendingDeliveryCount,
         row.lastAckSignalId,
         row.lastAckOutcome,
@@ -339,9 +338,9 @@ async function main() {
           inHand: label(row.currentDeliverySignalId),
           currentDeliveryElapsedMs: row.currentDeliveryElapsedMs,
           pendingDeliveryCount: row.pendingDeliveryCount,
-          heldBack: label(row.releasedDeliverySignalId),
-          heldBackReason: row.releasedDeliveryReason,
-          heldBackCount: row.releasedDeliveryCount,
+          heldBack: (row.heldBackDeliveries ?? []).map((entry) =>
+            `${label(entry.signalId)} (${entry.reason})`
+          ),
           lastAck: label(row.lastAckSignalId),
           lastAckOutcome: row.lastAckOutcome,
           human: (await human()).stdout.split("\n").filter((line) =>
@@ -357,6 +356,12 @@ async function main() {
     await sleep(250);
   }
   console.log("\n=== LIVE timeline: one seat, two deliveries ===");
+  console.log(
+    "// Each entry is TWO consecutive `cswarm listen status` invocations, the" +
+      " JSON fields then the human lines, so a delivery claimed between them can" +
+      " appear in one and not the other. The listener is real and detached; the" +
+      " service and the ACP provider are local fakes.",
+  );
   console.log(JSON.stringify(timeline, null, 2));
 
   console.log("\n=== hold releases recorded in the listener log ===");

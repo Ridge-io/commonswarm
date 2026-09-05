@@ -125,23 +125,31 @@ export interface ListenerStatus {
   currentDeliverySignalId?: string | null;
   currentDeliverySince?: string | null;
   /**
-   * The newest delivery this listener handed back before it was answered, when,
-   * why, and how many it has handed back in the current run.
+   * Deliveries this listener handed back before answering them, newest first
+   * and bounded. A SET, not one row: a seat can hand back several before any of
+   * them comes round again, and a version that tracked only the newest forgot
+   * the older ones the moment the newer one was reclaimed.
    *
    * NO waiting-to-be-claimed number is derived from these. Two review rounds
    * killed every attempt: a held-back row still holds a live lease, so the
    * service counts it as pending while the claim query cannot return it, and
-   * more than one can be held back at a time, and any of them can be expired or
-   * acknowledged elsewhere without this listener hearing about it. The claim
-   * wire carries a pending count and the claimed row and nothing else, so the
-   * age of the oldest waiting delivery is NOT knowable here. Retired fields:
-   * `queueWaitingSince` / `queueWaitingForMsAtLeast`, then `queueNonEmptySince`
-   * / `queueNonEmptyForMs`.
+   * any of them can be expired or acknowledged without this listener hearing.
+   * The claim wire carries a pending count and the claimed row and nothing
+   * else, so the age of the oldest waiting delivery is NOT knowable here.
+   * Retired fields: `queueWaitingSince` / `queueWaitingForMsAtLeast`, then
+   * `queueNonEmptySince` / `queueNonEmptyForMs`, then
+   * `releasedDeliverySignalId` / `releasedDeliveryAt` /
+   * `releasedDeliveryReason` / `releasedDeliveryCount`.
    */
-  releasedDeliverySignalId?: string | null;
-  releasedDeliveryAt?: string | null;
-  releasedDeliveryReason?: ListenerDeliveryHoldReleaseReason | null;
-  releasedDeliveryCount?: number;
+  heldBackDeliveries?: ReadonlyArray<ListenerHeldBackDelivery>;
+  /**
+   * When `pendingDeliveryCount` was observed. Written wherever that count is,
+   * which is the claim AND the delivery-mode event; `lastClaimAt` is not a
+   * substitute, because the mode event sets the count from the read page and
+   * never sets `lastClaimAt`, leaving an undated count on a process that can
+   * then be killed before its first claim.
+   */
+  pendingDeliveryCountAt?: string | null;
   routeMode?: ListenerRouteMode;
   deferOverChars?: number | null;
   pendingForMainCount?: number;
@@ -252,10 +260,8 @@ const STATUS_ALLOWED_KEYS = new Set([
   "lastAckSignalId",
   "currentDeliverySignalId",
   "currentDeliverySince",
-  "releasedDeliverySignalId",
-  "releasedDeliveryAt",
-  "releasedDeliveryReason",
-  "releasedDeliveryCount",
+  "heldBackDeliveries",
+  "pendingDeliveryCountAt",
   "routeMode",
   "deferOverChars",
   "pendingForMainCount",
@@ -306,6 +312,53 @@ export const STATUS_DELIVERY_KEYS = [
 // validation read the same delivery vocabulary as the command client.
 const deliveryOutcomes = DELIVERY_ACK_OUTCOMES;
 
+/** One delivery this listener handed back, as stored and as reported. */
+export interface ListenerHeldBackDelivery {
+  signalId: string;
+  at: string;
+  reason: ListenerDeliveryHoldReleaseReason;
+}
+
+/**
+ * Bound on the stored set. A seat hands one delivery back at a time and a lease
+ * runs 15 minutes, so this is far above any real run; it exists so a listener
+ * that somehow releases without ever reclaiming cannot grow its own 0600 status
+ * file without limit (the D-051 bounded-by-construction habit).
+ */
+export const LISTENER_HELD_BACK_MAX = 16;
+
+/** Null means malformed; undefined is never returned (callers gate on that). */
+function parseHeldBackDeliveries(
+  value: unknown,
+): ListenerHeldBackDelivery[] | null {
+  if (!Array.isArray(value) || value.length > LISTENER_HELD_BACK_MAX) return null;
+  const parsed: ListenerHeldBackDelivery[] = [];
+  for (const item of value) {
+    if (!item || typeof item !== "object" || Array.isArray(item)) return null;
+    const entry = item as Record<string, unknown>;
+    for (const key of Object.keys(entry)) {
+      if (key !== "signalId" && key !== "at" && key !== "reason") return null;
+    }
+    if (
+      typeof entry.signalId !== "string" || !UUID_RE.test(entry.signalId) ||
+      typeof entry.at !== "string" || !Number.isFinite(Date.parse(entry.at)) ||
+      typeof entry.reason !== "string" ||
+      !(LISTENER_DELIVERY_HOLD_RELEASE_REASONS as readonly string[]).includes(
+        entry.reason,
+      )
+    ) {
+      return null;
+    }
+    if (parsed.some((seen) => seen.signalId === entry.signalId)) return null;
+    parsed.push({
+      signalId: entry.signalId,
+      at: entry.at,
+      reason: entry.reason as ListenerDeliveryHoldReleaseReason,
+    });
+  }
+  return parsed;
+}
+
 function parseStatus(raw: string, rejectUnknownKeys = false): ListenerStatus {
   let value: unknown;
   try {
@@ -339,6 +392,9 @@ function parseStatus(raw: string, rejectUnknownKeys = false): ListenerStatus {
   const readHealth = row.readHealth === undefined
     ? undefined
     : parseListenerReadHealth(row.readHealth, rejectUnknownKeys);
+  const heldBackDeliveries = row.heldBackDeliveries === undefined
+    ? undefined
+    : parseHeldBackDeliveries(row.heldBackDeliveries);
   if (
     row.version !== 1 ||
     typeof row.instanceId !== "string" ||
@@ -441,20 +497,9 @@ function parseStatus(raw: string, rejectUnknownKeys = false): ListenerStatus {
         UUID_RE.test(row.currentDeliverySignalId))) ||
     !(row.currentDeliverySince === undefined ||
       nullableTimestamp(row.currentDeliverySince)) ||
-    !(row.releasedDeliveryReason === undefined ||
-      row.releasedDeliveryReason === null ||
-      (typeof row.releasedDeliveryReason === "string" &&
-        (LISTENER_DELIVERY_HOLD_RELEASE_REASONS as readonly string[]).includes(
-          row.releasedDeliveryReason,
-        ))) ||
-    !(row.releasedDeliveryCount === undefined ||
-      nullableCount(row.releasedDeliveryCount)) ||
-    !(row.releasedDeliverySignalId === undefined ||
-      row.releasedDeliverySignalId === null ||
-      (typeof row.releasedDeliverySignalId === "string" &&
-        UUID_RE.test(row.releasedDeliverySignalId))) ||
-    !(row.releasedDeliveryAt === undefined ||
-      nullableTimestamp(row.releasedDeliveryAt)) ||
+    heldBackDeliveries === null ||
+    !(row.pendingDeliveryCountAt === undefined ||
+      nullableTimestamp(row.pendingDeliveryCountAt)) ||
     !(row.routeMode === undefined ||
       row.routeMode === "worker" || row.routeMode === "main" || row.routeMode === "split") ||
     !(row.deferOverChars === undefined || row.deferOverChars === null ||
@@ -526,20 +571,10 @@ function parseStatus(raw: string, rejectUnknownKeys = false): ListenerStatus {
     ...(row.currentDeliverySince === undefined ? {} : {
       currentDeliverySince: (row.currentDeliverySince ?? null) as string | null,
     }),
-    ...(row.releasedDeliveryReason === undefined ? {} : {
-      releasedDeliveryReason: (row.releasedDeliveryReason ?? null) as
-        | ListenerDeliveryHoldReleaseReason
-        | null,
-    }),
-    ...(row.releasedDeliveryCount === undefined ? {} : {
-      releasedDeliveryCount: (row.releasedDeliveryCount ?? 0) as number,
-    }),
-    ...(row.releasedDeliverySignalId === undefined ? {} : {
-      releasedDeliverySignalId:
-        (row.releasedDeliverySignalId ?? null) as string | null,
-    }),
-    ...(row.releasedDeliveryAt === undefined ? {} : {
-      releasedDeliveryAt: (row.releasedDeliveryAt ?? null) as string | null,
+    ...(heldBackDeliveries === undefined ? {} : { heldBackDeliveries }),
+    ...(row.pendingDeliveryCountAt === undefined ? {} : {
+      pendingDeliveryCountAt:
+        (row.pendingDeliveryCountAt ?? null) as string | null,
     }),
     lastErrorDetail: (row.lastErrorDetail ?? null) as string | null,
     lastWorkerStderrTail: (row.lastWorkerStderrTail ?? null) as string | null,

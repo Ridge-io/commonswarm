@@ -4071,10 +4071,8 @@ test("listen status shows the delivery in hand and how long the queue has waited
     consecutiveAckFailureCount: null,
     currentDeliverySignalId: HOLD_FIRST_ID,
     currentDeliverySince: claimedAt,
-    releasedDeliverySignalId: null,
-    releasedDeliveryAt: null,
-    releasedDeliveryReason: null,
-    releasedDeliveryCount: 0,
+    heldBackDeliveries: [],
+    pendingDeliveryCountAt: claimedAt,
     routeMode: "worker",
     deferOverChars: null,
     pendingForMainCount: 0,
@@ -4091,8 +4089,9 @@ test("listen status shows the delivery in hand and how long the queue has waited
   assert.equal(json.currentDeliverySignalId, HOLD_FIRST_ID);
   assert.equal(json.currentDeliverySince, claimedAt);
   assert.equal(json.currentDeliveryElapsedMs, 240_000);
-  assert.equal(json.releasedDeliverySignalId, null);
-  assert.equal(json.releasedDeliveryCount, 0);
+  assert.deepEqual(json.heldBackDeliveries, []);
+  assert.equal(json.heldBackDeliveryCount, 0);
+  assert.equal(json.pendingDeliveryCountAt, claimedAt);
 
   const human = renderListenerStatus(status, evidence, nowMs);
   assert.ok(
@@ -4102,9 +4101,22 @@ test("listen status shows the delivery in hand and how long the queue has waited
   // The pending count carries the age of the observation that produced it.
   assert.ok(
     human.includes(
-      "Pending deliveries reported by the service: 3. That count is what the last claim returned, 4m ago.",
+      "Pending deliveries reported by the service: 3. The service reported that 4m ago.",
     ),
     human,
+  );
+  /* An undated count is named as undated. An arm reached this window by killing
+     a listener after the delivery-mode event and before its first claim. */
+  const undated = renderListenerStatus(
+    { ...status, pendingDeliveryCountAt: null },
+    evidence,
+    nowMs,
+  );
+  assert.ok(
+    undated.includes(
+      "Pending deliveries reported by the service: 3. When the service reported it was not recorded.",
+    ),
+    undated,
   );
   /* No waiting-to-be-claimed number is rendered at all. Two review rounds
      refuted every form of it; the retired wordings are named in cli.ts. */
@@ -4122,10 +4134,7 @@ test("listen status shows the delivery in hand and how long the queue has waited
       pendingDeliveryCount: 2,
       currentDeliverySignalId: null,
       currentDeliverySince: null,
-      releasedDeliverySignalId: HOLD_FIRST_ID,
-      releasedDeliveryAt: claimedAt,
-      releasedDeliveryReason: reason,
-      releasedDeliveryCount: 1,
+      heldBackDeliveries: [{ signalId: HOLD_FIRST_ID, at: claimedAt, reason }],
     }, evidence, nowMs);
     assert.ok(
       heldBack.includes(
@@ -4135,8 +4144,17 @@ test("listen status shows the delivery in hand and how long the queue has waited
       ),
       heldBack,
     );
-    assert.ok(heldBack.includes("stays with the service"), heldBack);
-    assert.ok(!heldBack.includes("more deliveries were handed back"), heldBack);
+    /* Past tense only: the retired clause claimed the row still sat with the
+       service, which is false once the service expires and acknowledges it. */
+    assert.ok(!heldBack.includes("stays with the service"), heldBack);
+    assert.ok(!heldBack.includes("comes back"), heldBack);
+    assert.ok(
+      heldBack.includes(
+        `This listener has not answered it. For what the service did with it since: cswarm receipt ${HOLD_FIRST_ID} --workspace-id ${WORKSPACE_ID}`,
+      ),
+      heldBack,
+    );
+    assert.ok(!heldBack.includes("in the same state"), heldBack);
   }
   assert.equal(
     new Set(Object.values(LISTENER_DELIVERY_HOLD_RELEASE_CLAUSES)).size,
@@ -4150,13 +4168,13 @@ test("listen status shows the delivery in hand and how long the queue has waited
     pendingDeliveryCount: 2,
     currentDeliverySignalId: null,
     currentDeliverySince: null,
-    releasedDeliverySignalId: HOLD_SECOND_ID,
-    releasedDeliveryAt: claimedAt,
-    releasedDeliveryReason: "hold_budget",
-    releasedDeliveryCount: 2,
+    heldBackDeliveries: [
+      { signalId: HOLD_SECOND_ID, at: claimedAt, reason: "hold_budget" },
+      { signalId: HOLD_FIRST_ID, at: claimedAt, reason: "lease_budget" },
+    ],
   }, evidence, nowMs);
   assert.ok(
-    twoHeldBack.includes("1 more delivery was handed back before it."),
+    twoHeldBack.includes("1 other delivery is in the same state."),
     twoHeldBack,
   );
 
@@ -4300,8 +4318,7 @@ test("a stopped listener does not claim to be working on a delivery", async (t) 
   /* The held-back facts go too: their sentences are rendered against READ time,
      so a process that stopped observing three hours ago would still report on
      them in the present tense. Both review arms raised this on 33cd24b. */
-  assert.equal(stopped?.releasedDeliverySignalId, null);
-  assert.equal(stopped?.releasedDeliveryCount, 0);
+  assert.deepEqual(stopped?.heldBackDeliveries, []);
   const human = renderListenerStatus(stopped!, {
     pendingForMainOldestAt: null,
     hookSurfaceExists: false,
@@ -4312,10 +4329,7 @@ test("a stopped listener does not claim to be working on a delivery", async (t) 
   assert.ok(!human.includes("was handed back"), human);
   /* The pending count survives, and its own sentence dates it: both arms said
      an undated count on a listener that died hours ago reads as current. */
-  assert.ok(
-    human.includes("That count is what the last claim returned, 3h ago."),
-    human,
-  );
+  assert.ok(human.includes("The service reported that 3h ago."), human);
 });
 
 test("the supervisor tracks a handed-back delivery until it comes back", async (t) => {
@@ -4332,9 +4346,8 @@ test("the supervisor tracks a handed-back delivery until it comes back", async (
   });
   const seen: Array<{
     step: string;
-    released: string | null | undefined;
+    heldBack: readonly string[];
     current: string | null | undefined;
-    count: number | undefined;
     heldBackLine: string | undefined;
   }> = [];
   await runListenerSupervisor({
@@ -4348,9 +4361,10 @@ test("the supervisor tracks a handed-back delivery until it comes back", async (
         const snapshot = await queryListenerControl(paths, "status");
         seen.push({
           step,
-          released: snapshot.releasedDeliverySignalId,
+          heldBack: (snapshot.heldBackDeliveries ?? []).map((entry) =>
+            entry.signalId
+          ),
           current: snapshot.currentDeliverySignalId,
-          count: snapshot.releasedDeliveryCount,
           heldBackLine: renderListenerStatus(snapshot, {
             pendingForMainOldestAt: null,
             hookSurfaceExists: false,
@@ -4421,14 +4435,16 @@ test("the supervisor tracks a handed-back delivery until it comes back", async (
   });
 
   assert.deepEqual(
-    seen.map((entry) => [entry.step, entry.released, entry.current, entry.count]),
+    seen.map((entry) => [entry.step, entry.heldBack, entry.current]),
     [
-      ["claimed first", null, HOLD_FIRST_ID, 0],
-      ["released first", HOLD_FIRST_ID, null, 1],
-      ["claimed second", HOLD_FIRST_ID, HOLD_SECOND_ID, 1],
-      ["released second", HOLD_SECOND_ID, null, 2],
-      ["empty claim", HOLD_SECOND_ID, null, 2],
-      ["queue drained", null, null, 0],
+      ["claimed first", [], HOLD_FIRST_ID],
+      ["released first", [HOLD_FIRST_ID], null],
+      ["claimed second", [HOLD_FIRST_ID], HOLD_SECOND_ID],
+      /* Both are held back at once. A version that kept only the newest id
+         forgot the first one as soon as the second was reclaimed. */
+      ["released second", [HOLD_SECOND_ID, HOLD_FIRST_ID], null],
+      ["empty claim", [HOLD_SECOND_ID, HOLD_FIRST_ID], null],
+      ["queue drained", [], null],
     ],
   );
   assert.ok(
@@ -4440,7 +4456,7 @@ test("the supervisor tracks a handed-back delivery until it comes back", async (
     seen[3]!.heldBackLine,
   );
   assert.ok(
-    seen[3]!.heldBackLine?.includes("1 more delivery was handed back before it."),
+    seen[3]!.heldBackLine?.includes("1 other delivery is in the same state."),
     seen[3]!.heldBackLine,
   );
   // An empty claim with rows still pending keeps them named.
@@ -4451,5 +4467,120 @@ test("the supervisor tracks a handed-back delivery until it comes back", async (
   assert.equal(
     seen.some((entry) => entry.heldBackLine?.includes("waiting")),
     false,
+  );
+});
+
+test("a held-back row the service can no longer be holding is forgotten", async (t) => {
+  /* Every held-back row is unacked, so the service's pending count is an upper
+   * bound on how many of them survive. When it drops below the set, the oldest
+   * entries are gone: expired, or acknowledged without this listener hearing.
+   * Both round-3 arms built the sequence where a stale row stayed named. */
+  const stateDirectory = await mkdtemp(join(tmpdir(), "cswarm-hold-trim-"));
+  t.after(async () => await rm(stateDirectory, { recursive: true, force: true }));
+  const paths = listenerPaths({
+    profileId: "profile-hold-trim",
+    workspaceId: WORKSPACE_ID,
+    principalId: PRINCIPAL_ID,
+    stateDirectory,
+  });
+  const held: string[][] = [];
+  await runListenerSupervisor({
+    paths,
+    profileId: "profile-hold-trim",
+    workspaceId: WORKSPACE_ID,
+    principalId: PRINCIPAL_ID,
+    now: () => Date.parse("2026-07-30T00:00:00.000Z"),
+    run: async (_signal, onEvent) => {
+      const record = async () => {
+        const snapshot = await queryListenerControl(paths, "status");
+        held.push((snapshot.heldBackDeliveries ?? []).map((e) => e.signalId));
+      };
+      for (const [signalId, ts] of [
+        [HOLD_FIRST_ID, "2026-07-30T00:00:00.000Z"],
+        [HOLD_SECOND_ID, "2026-07-30T00:00:01.000Z"],
+      ] as const) {
+        onEvent({
+          type: "delivery_claim",
+          signalId,
+          pendingDeliveryCount: 2,
+          terminalDeliveryFailureCount: 0,
+          ts,
+        });
+        onEvent({
+          type: "delivery_hold_released",
+          signalId,
+          reason: "hold_budget",
+          heldMs: 600_000,
+          ts,
+        });
+      }
+      await record();
+      /* The service now reports ONE unacked row. Two cannot still be held
+         back, so the oldest is dropped; the newest is kept, because the count
+         still leaves room for exactly one. */
+      onEvent({
+        type: "delivery_claim",
+        signalId: null,
+        pendingDeliveryCount: 1,
+        terminalDeliveryFailureCount: 0,
+        ts: "2026-07-30T00:00:02.000Z",
+      });
+      await record();
+      return { reason: "cancelled" as const };
+    },
+  });
+
+  assert.deepEqual(held, [
+    [HOLD_SECOND_ID, HOLD_FIRST_ID],
+    [HOLD_SECOND_ID],
+  ]);
+});
+
+test("a pending count from the delivery-mode event is dated too", async (t) => {
+  /* The exact arm sequence: the mode event writes pendingDeliveryCount from the
+   * read page and never writes lastClaimAt, so dating the sentence from
+   * lastClaimAt left this window undated. On a process killed here the line
+   * read as a current count. */
+  const stateDirectory = await mkdtemp(join(tmpdir(), "cswarm-hold-mode-"));
+  t.after(async () => await rm(stateDirectory, { recursive: true, force: true }));
+  const paths = listenerPaths({
+    profileId: "profile-hold-mode",
+    workspaceId: WORKSPACE_ID,
+    principalId: PRINCIPAL_ID,
+    stateDirectory,
+  });
+  let duringRun: ListenerStatus | null = null;
+  await runListenerSupervisor({
+    paths,
+    profileId: "profile-hold-mode",
+    workspaceId: WORKSPACE_ID,
+    principalId: PRINCIPAL_ID,
+    now: () => Date.parse("2026-07-30T00:00:00.000Z"),
+    run: async (_signal, onEvent) => {
+      onEvent({
+        type: "delivery_mode",
+        mode: "durable_claim",
+        pendingDeliveryCount: 3,
+        ts: "2026-07-30T00:00:00.000Z",
+      });
+      duringRun = await queryListenerControl(paths, "status");
+      return { reason: "cancelled" as const };
+    },
+  });
+
+  const observed = duringRun as ListenerStatus | null;
+  assert.equal(observed?.pendingDeliveryCount, 3);
+  assert.equal(observed?.lastClaimAt, null, "no claim has run yet");
+  assert.equal(observed?.pendingDeliveryCountAt, "2026-07-30T00:00:00.000Z");
+  const human = renderListenerStatus(observed!, {
+    pendingForMainOldestAt: null,
+    hookSurfaceExists: false,
+    hookSurfaceAdvanced: false,
+  }, Date.parse("2026-07-30T03:00:00.000Z"));
+  assert.ok(
+    human.includes(
+      "Pending deliveries reported by the service: 3. The service reported that 3h ago.",
+    ),
+    human,
   );
 });
