@@ -44,13 +44,20 @@ check_commit() {
   local subject bad=0
   subject="$(git show -s --format='%s' "$sha")"
 
-  # Grace. If the commit's OWN TREE does not contain the hook, its author could not have installed
-  # it from this repo, so the trailer is not required. See AGENT_TRAILER_HOOK_PATH in the
-  # vocabulary for why this is the commit's own tree and not a date.
+  # Grace. A commit is required to carry trailers only when BOTH tests say it could have: the hook
+  # is in its own tree, and it was authored after the rule existed. Neither is sufficient alone —
+  # the tree test loses to a rebase, which lifts old work onto a base that carries the hook without
+  # ever running it, and the date test loses to a lane running off an older main. Both failures are
+  # measured; see AGENT_TRAILER_HOOK_PATH and AGENT_TRAILER_GRACE_BEFORE in the vocabulary.
   #
   # Exit 2 here means SKIPPED, which the caller counts and reports separately — a skipped commit
   # must never be reported as a checked one.
   if ! git cat-file -e "${sha}:${AGENT_TRAILER_HOOK_PATH}" 2>/dev/null; then
+    return 2
+  fi
+  local authored
+  authored="$(git show -s --format='%at' "$sha")"
+  if [ -n "$authored" ] && [ "$authored" -lt "$AGENT_TRAILER_GRACE_BEFORE_EPOCH" ]; then
     return 2
   fi
 
@@ -67,7 +74,13 @@ check_commit() {
   # cf17894 and 297f1a4 are single-parent commits committed by this address. Without this, the
   # first squash merge after this lands turns main red for a message no agent wrote — the same
   # fail-forever-on-main class scripts/check-commit-identity.sh warns about.
-  if [ "$(git show -s --format='%ce' "$sha")" = "$AGENT_TRAILER_GITHUB_COMMITTER" ]; then
+  #
+  # NARROW ON PURPOSE: the AUTHOR must not be that address too. A squash merge keeps the PR author
+  # (measured on this repo's main: cf17894 and 297f1a4 are committed by GitHub and authored by
+  # tom@ridge.io), while somebody running `git config user.email noreply@github.com` to skip the
+  # gate would set BOTH. That closes the one-line evasion without touching the case this exists for.
+  if [ "$(git show -s --format='%ce' "$sha")" = "$AGENT_TRAILER_GITHUB_COMMITTER" ] \
+     && [ "$(git show -s --format='%ae' "$sha")" != "$AGENT_TRAILER_GITHUB_COMMITTER" ]; then
     return 0
   fi
 
@@ -129,8 +142,9 @@ check_range() {
 
 AGENT-AUTHORSHIP TRAILERS MISSING OR INVALID on $bad of $checked commit(s) checked.
 
-A commit whose own tree has no $AGENT_TRAILER_HOOK_PATH predates this rule and is skipped; $skipped
-of ${#shas[@]} in this range were skipped for that reason. The ones named above are not.
+A commit predates this rule when its own tree has no $AGENT_TRAILER_HOOK_PATH, or it was authored
+before $AGENT_TRAILER_GRACE_BEFORE; $skipped of ${#shas[@]} in this range were skipped for one of
+those reasons. The ones named above were not.
 
 Every commit records the model that wrote it, so past work can be audited as new models ship.
 Required on each commit: $(required_keys_sentence)
@@ -159,8 +173,8 @@ MSG
   fi
 
   if [ "$skipped" -gt 0 ]; then
-    printf 'agent-trailers OK: %d commit(s) checked in %s; %d skipped as having no %s in their own tree\n' \
-      "$checked" "$range" "$skipped" "$AGENT_TRAILER_HOOK_PATH"
+    printf 'agent-trailers OK: %d commit(s) checked in %s; %d skipped as predating the rule (no %s in their own tree, or authored before %s)\n' \
+      "$checked" "$range" "$skipped" "$AGENT_TRAILER_HOOK_PATH" "$AGENT_TRAILER_GRACE_BEFORE"
   else
     printf 'agent-trailers OK: %d commit(s) checked in %s\n' "$checked" "$range"
   fi
@@ -461,6 +475,23 @@ Agent-Model-Source: declared" side.txt
   ( cd "$tmp" && "$checker" --range "HEAD~1..HEAD" ) >/dev/null 2>&1 || status=$?
   assert_status 0 "$status" "a squash merge GitHub committed is exempt"
 
+  # 14c. ...but the exemption must not become a one-line evasion. A squash merge keeps the PR
+  #      author, so committer and author differ; somebody running `git config user.email
+  #      noreply@github.com` to skip the gate sets BOTH. Without this the exemption would let any
+  #      commit through, and assertion 14b would still pass, so the pair is what makes it a rule
+  #      about GitHub rather than about an address.
+  ( cd "$tmp"
+    GIT_COMMITTER_NAME='Evader' GIT_COMMITTER_EMAIL="$AGENT_TRAILER_GITHUB_COMMITTER" \
+      git -c user.name=Evader -c user.email="$AGENT_TRAILER_GITHUB_COMMITTER" \
+      commit --quiet --no-verify --allow-empty -m "feat: untagged work under GitHub's address"
+  ) >/dev/null 2>&1
+  assert_equal "$AGENT_TRAILER_GITHUB_COMMITTER" \
+    "$( cd "$tmp" && git show -s --format='%ae' HEAD )" \
+    "the evasion fixture really is authored by that address too"
+  status=0
+  ( cd "$tmp" && "$checker" --range "HEAD~1..HEAD" ) >/dev/null 2>&1 || status=$?
+  assert_status 1 "$status" "a commit both authored and committed by that address is NOT exempt"
+
   # 15. THE GRACE PAIR. A commit whose own tree has no hook predates the rule and is accepted with
   #     no trailers; the same untagged commit WITH the hook in its tree is rejected. Neither means
   #     anything alone — the first also passes on a gate that accepts everything, the second on one
@@ -480,20 +511,36 @@ Agent-Model-Source: declared" side.txt
   out="$( cd "$tmp" && "$checker" --range "HEAD~1..HEAD" 2>&1 )" || true
   selftest_assertions=$((selftest_assertions + 1))
   case "$out" in
-    *"1 skipped as having no $AGENT_TRAILER_HOOK_PATH in their own tree"*) : ;;
+    *"1 skipped as predating the rule"*) : ;;
     *) printf 'self-test FAIL: a grace-skipped commit is not reported as skipped (got: %s)\n' "$out" >&2
        selftest_failures=$((selftest_failures + 1)) ;;
   esac
 
+  # 15b. THE REBASE CASE, and it is why the tree test is not enough on its own. A rebase replays an
+  #      old commit onto a base that carries the hook, so the commit's tree gains it while `git
+  #      rebase` never runs the hook. Without the date half of the rule, every old lane that
+  #      rebased in order to merge would be forced to backfill trailers onto work nobody could have
+  #      tagged — the one thing this design forbids. The author date is what survives a rebase, so
+  #      it is the field read.
   ( cd "$tmp"
     mkdir -p "$(dirname "$AGENT_TRAILER_HOOK_PATH")"
     printf '#!/bin/sh\nexit 0\n' >"$AGENT_TRAILER_HOOK_PATH"
     git add "$AGENT_TRAILER_HOOK_PATH"
-    fixture_commit "chore: a checkout that has the hook" grace.txt
+    GIT_AUTHOR_DATE="@$((AGENT_TRAILER_GRACE_BEFORE_EPOCH - 3600)) +0000" \
+      fixture_commit "chore: old work rebased onto a base that has the hook" grace.txt
   ) >/dev/null 2>&1
+  assert_equal 0 "$( cd "$tmp" && git cat-file -e "HEAD:$AGENT_TRAILER_HOOK_PATH" 2>/dev/null; echo $? )" \
+    "the rebase fixture really does carry the hook in its tree"
   status=0
   ( cd "$tmp" && "$checker" --range "HEAD~1..HEAD" ) >/dev/null 2>&1 || status=$?
-  assert_status 1 "$status" "an untagged commit whose tree has the hook is rejected"
+  assert_status 0 "$status" "an untagged commit with the hook but authored before the cutoff is accepted"
+
+  # 15c. ...and the same tree, authored after the cutoff, is rejected. This is the assertion the
+  #      other two exist to discriminate against: it is the only combination that must fail.
+  ( cd "$tmp" && fixture_commit "chore: a checkout that has the hook" grace.txt ) >/dev/null 2>&1
+  status=0
+  ( cd "$tmp" && "$checker" --range "HEAD~1..HEAD" ) >/dev/null 2>&1 || status=$?
+  assert_status 1 "$status" "an untagged commit with the hook, authored after the cutoff, is rejected"
 
   # 16. THE HOOK PATH MUST NAME A REAL FILE IN THIS REPO. Assertion 15 builds its fixtures from the
   #     constant so they move with it, which is what keeps them from going stale — and is exactly
@@ -501,6 +548,23 @@ Agent-Model-Source: declared" side.txt
   #     real commit and leaves the gate green while checking nothing, the same decorative-gate
   #     failure a cutoff date in the future would have caused. This assertion is the one that fails
   #     on that mutation.
+  # ...and the cutoff must be in the PAST, for the same reason. A cutoff in the future skips every
+  # commit. It is also what makes assertion 15c stable: fixture commits take the current clock, so
+  # they are on the checked side exactly as long as this holds.
+  selftest_assertions=$((selftest_assertions + 1))
+  case "$AGENT_TRAILER_GRACE_BEFORE_EPOCH" in
+    ''|*[!0-9]*)
+      printf 'self-test FAIL: the grace cutoff epoch [%s] is not a number\n' \
+        "$AGENT_TRAILER_GRACE_BEFORE_EPOCH" >&2
+      selftest_failures=$((selftest_failures + 1)) ;;
+    *)
+      if [ "$AGENT_TRAILER_GRACE_BEFORE_EPOCH" -ge "$(date -u +%s)" ]; then
+        printf 'self-test FAIL: the grace cutoff %s is in the FUTURE, so every commit is skipped and the gate checks nothing\n' \
+          "$AGENT_TRAILER_GRACE_BEFORE" >&2
+        selftest_failures=$((selftest_failures + 1))
+      fi ;;
+  esac
+
   selftest_assertions=$((selftest_assertions + 1))
   if [ ! -f "$script_dir/../$AGENT_TRAILER_HOOK_PATH" ]; then
     printf 'self-test FAIL: %s names no file, so every commit is skipped and the gate checks nothing\n' \
@@ -524,7 +588,8 @@ usage: $0 --range <git-range>
 Required trailers on every non-merge commit: $(required_keys_sentence)
 Accepted families: $(families_sentence)
 
-A commit whose own tree has no $AGENT_TRAILER_HOOK_PATH predates this rule and is not checked.
+Not checked: a commit whose own tree has no $AGENT_TRAILER_HOOK_PATH, or one authored before
+$AGENT_TRAILER_GRACE_BEFORE.
 
 Exit codes: 0 clean, 1 a commit is missing or has an invalid trailer, 2 the check could not run.
 MSG

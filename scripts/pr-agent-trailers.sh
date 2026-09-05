@@ -79,9 +79,23 @@ printf '\n'
 # `runtime-ambiguous` is deliberately NOT counted as measured. It means more than one runtime's
 # variables were visible, so the model may belong to a parent session; folding it into the measured
 # count would inflate exactly the number a reader trusts most.
-measured="$(rows | awk -F'\t' '$4 ~ /^runtime-/ && $4 != "runtime-ambiguous" { n++ } END { print n + 0 }')"
-ambiguous="$(rows | awk -F'\t' '$4 == "runtime-ambiguous" { n++ } END { print n + 0 }')"
-declared="$(rows | awk -F'\t' '$4 == "declared" { n++ } END { print n + 0 }')"
-unread="$(rows | awk -F'\t' '$4 == "none" || $4 == "" { n++ } END { print n + 0 }')"
+# The bucket names come from the vocabulary through -v, never retyped here: a renamed source value
+# would otherwise fall into no bucket and the line would count silently wrong instead of failing.
+measured="$(rows | awk -F'\t' -v amb="$AGENT_TRAILER_SOURCE_AMBIGUOUS" \
+  '$4 ~ /^runtime-/ && $4 != amb { n++ } END { print n + 0 }')"
+ambiguous="$(rows | awk -F'\t' -v amb="$AGENT_TRAILER_SOURCE_AMBIGUOUS" \
+  '$4 == amb { n++ } END { print n + 0 }')"
+declared="$(rows | awk -F'\t' -v dec="$AGENT_TRAILER_SOURCE_DECLARED" \
+  '$4 == dec { n++ } END { print n + 0 }')"
+unread="$(rows | awk -F'\t' -v non="$AGENT_TRAILER_SOURCE_NONE" \
+  '$4 == non || $4 == "" { n++ } END { print n + 0 }')"
 printf '%s of %s commit(s) had the model read from the runtime; %s read from a runtime that could not be told apart from a parent session; %s declared by hand; %s not established.\n' \
   "$measured" "$total" "$ambiguous" "$declared" "$unread"
+
+# THE BUCKETS MUST PARTITION THE COMMITS. If a source value is added to the vocabulary and no bucket
+# matches it, the four numbers above quietly stop adding up and a reader is told less work was
+# audited than was. Say so rather than printing a broken sum.
+if [ "$((measured + ambiguous + declared + unread))" -ne "$total" ]; then
+  printf '\nWARNING: those figures cover %s of %s commit(s). A model source in this range matches no\ncategory above, so the summary is incomplete. Check AGENT_TRAILER_SOURCES against this script.\n' \
+    "$((measured + ambiguous + declared + unread))" "$total"
+fi

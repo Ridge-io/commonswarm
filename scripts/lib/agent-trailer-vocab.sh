@@ -82,6 +82,13 @@ AGENT_TRAILER_SOURCES=(
 AGENT_TRAILER_MODEL_NO_AGENT=none
 AGENT_TRAILER_MODEL_UNKNOWN=unknown
 
+# Individual source values that ENFORCEMENT compares against, named so no script retypes one. The
+# PR summary sorts every commit into a bucket by these, and a renamed value would otherwise make it
+# count silently wrong rather than fail.
+AGENT_TRAILER_SOURCE_AMBIGUOUS=runtime-ambiguous
+AGENT_TRAILER_SOURCE_DECLARED=declared
+AGENT_TRAILER_SOURCE_NONE=none
+
 # ---------------------------------------------------------------------------
 # Runtime detectors
 # ---------------------------------------------------------------------------
@@ -207,3 +214,29 @@ AGENT_TRAILER_GITHUB_COMMITTER=noreply@github.com
 
 AGENT_TRAILER_HOOK_DIR=scripts/hooks
 AGENT_TRAILER_HOOK_PATH="${AGENT_TRAILER_HOOK_DIR}/prepare-commit-msg"
+
+# ...AND AUTHORED BEFORE THIS INSTANT. A commit is required to carry trailers only when BOTH tests
+# say it could have: the hook is in its tree, and it was written after the rule existed. Each
+# condition covers the other's blind spot, and NEITHER IS SUFFICIENT ALONE — both failures were
+# measured, not reasoned about.
+#
+#   The tree alone fails on REBASE. A rebase replays an old commit onto a new base, so the commit's
+#   tree picks up the hook from that base, while `git rebase` never runs prepare-commit-msg. The
+#   old work is then untagged AND on the checked side. Measured 2026-09-04 in a fixture repo: a
+#   commit with no hook in its tree had one after `git rebase` onto a base that carried it, still
+#   with no trailers. That would force exactly the backfill this design forbids, on every old lane
+#   that rebases in order to merge.
+#
+#   The date alone fails on CONCURRENT LANES. Six untagged commits on this checkout were authored
+#   after the hour this feature was written, by lanes running off an older `main` whose checkouts
+#   had no hook and could not have had one. Moving the date forward does not help either: a cutoff
+#   in the future skips every commit and leaves the gate green while checking nothing, which is why
+#   the self-test asserts the cutoff is in the past.
+#
+# AUTHOR DATE, NOT COMMITTER DATE, for the same reason the tree test is not enough on its own: a
+# rebase rewrites the committer date and leaves the author date alone.
+#
+# The two forms must agree; tests/p1-cli/agent-trailers.test.ts parses both and fails if they do
+# not. The ISO string is what messages print, the epoch is what the shell compares.
+AGENT_TRAILER_GRACE_BEFORE=2026-09-05T00:00:00Z
+AGENT_TRAILER_GRACE_BEFORE_EPOCH=1788566400
