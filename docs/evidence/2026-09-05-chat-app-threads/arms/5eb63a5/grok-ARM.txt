@@ -1,0 +1,124 @@
+I'll read REVIEW.md and DIFF.patch first, then follow REVIEW.md exactly.The patch is huge. I’ll locate the repo, then attack the new control in `5eb63a5` first.HEAD is `5eb63a5`. Next I’ll inspect that commit, then the sweep control it added.The new commit is comments plus a sweep. I’ll read that control, the mutation, and the four struck comments next.I’ll inspect the mutation, the four struck comments, and leftover retired wording in the five files.I’ll check remaining retired wording, the two positive controls, and the rest of the lane in parallel.Three listed phrases match nothing. I’ll read those comments and confirm whether the typed phrases actually catch the retired sentences.I have the defect: a retired wake sentence still stands in a file the sweep names. Checking one bound on the four replacements, then I’ll write the verdict.diff --git a/docs/evidence/2026-09-05-chat-app-threads/README.md b/docs/evidence/2026-09-05-chat-app-threads/README.md
+
+The sweep is green while a retired wake sentence still stands as current in a file the sweep itself names. That is the same class as rounds three and four. What breaks is a later agent reading the test, not a person using the app.
+
+### Finding: the sweep passes while a retired sentence stands, inside its own file list
+
+`composer-address.test.mjs:336` is named `no retired wake sentence stands as current, anywhere the wake copy lives`. Its header says the wake copy lives in five named files. One of those five is `composer-addressing.observer.test.ts`.
+
+That file still states the old rule as current:
+
+```363:364:site/src/components/app/composer-addressing.observer.test.ts
+    /* Two names, ONE row. The target is recipient 0, which is the column the server fills and
+       the only recipient it wakes; both names stay in To: for the next message. */
+```
+
+The assertion under it is about the arrow (`→ Orbit`) and the chips (`Orbit`, `Lumen`). Both names are agents. The new rule wakes both. The type comment at line 20 of the same file is still true: recipient 0 is the target. Line 364 adds a wake claim the test does not measure, and that claim is the retired rule.
+
+The sweep does not see it. The closest listed phrase is `one recipient the service wakes`. The standing text is `the only recipient it wakes`. `indexOf` does not match. The file has zero `~~` spans, so there is also no strikethrough for a later agent to notice.
+
+That is the question the brief asked: is there a way the sweep passes while a retired sentence stands? Yes. Not only in a file off the list, and not only in words nobody listed. It stands in a file on the list, in the same family as the phrase they typed for it.
+
+The mutation does reach the assertion it names. It puts back `way a reader can change who is woken` in `composer-address.ts:209`, and the failure text is `stands as current at offset`. That sentence is caught. This one is not. The mutation proves one listed phrase is live. It does not prove the empty-set claim.
+
+### The control's own claims
+
+The sweep does what the loop says: five paths, eleven phrases, start offset inside a `~~[\s\S]*?~~` span. Character spans, not lines. That part is real.
+
+The stated bound is not the whole bound.
+
+- Matching is case-sensitive and exact. `one control over who is woken` never occurs. The struck text is `the only control over who is woken` (`composer-to-field.observer.test.ts:63`) and `The only control over WHO IS WOKEN` (`LiveDashboard.astro:2845`). Putting either of those back as current still passes.
+- Three of the eleven phrases match nothing in the five files: `wake nobody`, `one control over who is woken`, `is the one the service wakes`. Adding those three does not change what runs. The README says adding to either list changes what runs (`README.md:262-263`). For those three, it does not.
+- The README types `ten retired phrases` (`README.md:261`). The list has eleven (`composer-address.test.mjs:359-371`). The commit message says eleven. The count is typed, and it is wrong.
+- Both positive controls can pass after a sweep that read the wrong thing. `scanned > 200_000` is satisfied by `LiveDashboard.astro` alone (567,988 characters). `retired.some(phrase => all.includes(phrase))` is satisfied by one hit in that same file. The comment says the second control requires a phrase to be present, struck (`composer-address.test.mjs:399-400`). The assertion does not check struck. Five missing paths would throw, not go green; five wrong large files would go green. They already measured that a file-list swap was `NOT CAUGHT`. The subject mutation is the real control. These two are not.
+
+Item 11 of the README is the narrowed claim: no listed phrase stands outside a strikethrough in five named files. That is what the sweep establishes. No more. The test title claims more, and one of those five files falsifies the title.
+
+The same file as the sweep still has the round-four leftover:
+
+```624:628:site/src/lib/composer-address.test.mjs
+  assert.equal(
+    composerAddressIsChosen([orbit, wren], [wren, orbit], () => true),
+    true,
+    "a name promoted, which changes who is woken and so changes the set",
+  );
+```
+
+Promoting does not change who is woken. The boolean is still right. The message is the old rule. That file is not on the list, so item 11 does not cover it. The title does.
+
+### The four newly struck comments
+
+I could not make them false in the other direction.
+
+- `composer-to-field.observer.test.ts:282-284`: a person in front no longer silences the agent behind. True.
+- `:852-862`: every agent chip is marked; the mark is read twice because order must not move it. True. The leftover clause that the mark is the only thing on the row that says who is woken is loose (the sentence under the chips also says it), but it is not the old rule put back.
+- `:888-891`: a person in front is a person in front. True.
+- `:903-906`: the chip label and the sentence answer different questions; labels do not match `/notif/i`. True.
+
+None of the four deleted the retired sentence. Each keeps it in `~~ ~~`.
+
+### Wake copy, user-facing
+
+I enumerated `composerDeliveryNote` and `composerPromoteLabel` for sets of size 0..`COMPOSER_TO_MAX`. The wake clause is built from `notifiedRecipients`. The count is `notified.length`. I could not find a set that claims a wake the new rule would not do, or misses one it would.
+
+The migration is not on this branch. `supabase/migrations/` ends at `20260905000010_signal_recipients.sql`. The citation test at `composer-address.test.mjs:410-437` does not assert the file exists. Item 11 of the README is honest about that.
+
+`browserSignalKind` still returns `ask` when recipient 0 is an agent. For `[person, agent]` the badge says Note and the To: row says the agent is notified. Note does not claim a non-wake. The reason is recorded.
+
+Promote still writes index 0. The feed still prints that name after `→ `. `SCALAR_POSITION` stayed. `NOTIFIED_POSITION` is gone, kept as strikethrough.
+
+One current comment in the wake module is still wrong, next to code that does the other thing: `composer-address.ts:29-30` says the note names one or two agents and counts above that. The function names one and counts two or more (`:260-264`). Tests pin the count. Not user-facing. Round four already named it.
+
+### 0. `syncComposerPlacement()` inside `renderFeed`
+
+I cannot refute this. One pass per feed paint, not per row. It does not write the To: pair, the intent, or `threadReplyRoot`. The one state write is `broadcast.checked = false` when the control is hidden, which the comment names. `threadReplyBlock` reading `channels` and `Date.now()` chooses the window sentence and whether the broadcast control is offered.
+
+### 1. Reply control vs server
+
+I cannot refute this. `threadRootBlock` asks directed, live margin, archive, then already-a-reply, in the edge's order. Archive is asked of the root's channel. A missing channel is not treated as archived. `resolveSignalWriteTarget` always writes a recipient for `in_reply_to`. The directed arm covers every row that can exist.
+
+### 2. Second write path on To:
+
+I cannot refute this. `composerSendRecipients` is the set the row and the send read. `deriveComposerAddress` holds while `replying === true`. A reply remembers nothing.
+
+### 3. Wire body
+
+I cannot refute this. A reply is `{ threadRootId, ...(broadcastToChannel ? { broadcastToChannel: true } : {}) }` with no `channel`. `browserSignalCommand` omits null/absent optional keys. `broadcast_to_channel` is only added on the thread branch when the box is ticked, so it never goes out without `thread_root_id`.
+
+### 4. Unfinished-send rule
+
+I cannot refute the two callers. A reply compares thread ids. A top-level post compares the channel on screen. Channel move does not retire a reply. Opening or cancelling a reply does.
+
+### 5. Send vs screen
+
+I cannot refute this. Submit freezes `replyRoot` and `replyBlock` before the first await. Success closes the bar only when `threadReplyRoot?.id === replyRoot.id`. Remember/clear use captured keys.
+
+### 6. False sentence / typed list (user-facing)
+
+User-facing thread copy is generated from `channelLabel` / `ALL_SIGNALS_SLUG` / `THREAD_REPLY_REACH_TEXT` / `THREAD_ROOT_BLOCKS`. Archived copy matches the edge word for word. Reach says it notifies nobody. No em-dash. No privacy claim. The leftover comments in the finding are not on screen.
+
+### 7. Control that cannot fail
+
+The two NOT CONTROLLED notes are true for values this field can hold. Dropping `Number.isFinite(until)` does not change NaN or +Infinity. Dropping `if (signal.threadRootId === null)` on registration does not change output.
+
+The liveness sweep does what its header says: one `interval '<n> second'` clause in the edge file, count first. The four-arm sweep does what its header says: four exact strings inside `resolveThreadRoot`, each once.
+
+The new sweep's header is the one that overclaims. See the finding.
+
+### 8. Retired control weakened
+
+I cannot refute this.
+
+- `composer.observer.test.ts`: "thread" is allowed only in the reply bar.
+- Display-reversal pins now match `reverse()` once.
+- `chat-channels.observer.test.ts`: the old "never send thread fields" negative is a positive top-level vs thread-branch pair. Wire omission of thread keys for a top-level post is in `chat-threads.observer.test.ts`.
+
+### Also
+
+- `groupSignalThreads`: every input id comes back once. Orphans keep their place. Replies move under their root on purpose. I could not make it drop or duplicate a row.
+- 97px vs 73px: the README names two instruments. Sample mode with the banner subtracted is 97px. The signed-in gate is `mobile-feed-layout.observer.test.ts` at 73px. That is honest.
+- The "did NOT establish" list is right on prod, local Supabase, the hold, `?t=`, and copy ahead of the wake migration. Item 11 is the right width for what the sweep measures. The test title is not.
+
+I could not refute the thread work, or the user-facing wake sentences, on a break for a reader of the app.
+
+VERDICT: FAIL

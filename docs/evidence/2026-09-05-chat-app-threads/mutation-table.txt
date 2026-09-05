@@ -23,6 +23,12 @@ red  the number in the sentence is the number of agents in the set
   restored green  site/src/lib/composer-address.test.mjs
 red  a retired wake sentence put back as current is caught
   restored green  site/src/lib/composer-address.test.mjs
+red  a retired sentence in a file with no strikethrough at all is caught
+  restored green  site/src/lib/composer-address.test.mjs
+red  a listed phrase that matches nothing is reported rather than carried
+  restored green  site/src/lib/composer-address.test.mjs
+red  each named file is read, so a wrong path cannot hide behind a total
+  restored green  site/src/lib/composer-address.test.mjs
 red  a message directed at an AGENT cannot root a public thread either
   restored green  site/src/lib/thread-reply.test.mjs
 red  a reply cannot be the root of a second thread
@@ -122,4 +128,4 @@ red  the close names THIS send's own reply, so it cannot close one opened after 
 red  the send does not reach for the reply again after its first await
   restored green  site/src/components/app/chat-threads.observer.test.ts
 
-58 mutations, 0 problems
+61 mutations, 0 problems

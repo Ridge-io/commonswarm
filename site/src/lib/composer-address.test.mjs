@@ -333,77 +333,116 @@ test("an ambiguous tag is reported rather than guessed at", () => {
   assert.match(composerAmbiguousNotice(["Dana", "Ada"]), /"Dana" and "Ada" name more than one/);
 });
 
-test("no retired wake sentence stands as current, anywhere the wake copy lives", () => {
-  /* THE CLAIM THIS MAKES CHECKABLE. `lane/wake-all-recipients`' copy commit said every retired
-     sentence was kept beside its replacement, and a review arm found five that were not; the
-     commit that fixed those five then claimed "no retired claim stands as current", and the
-     next arm found four more in one file. A general claim asserted twice and wrong twice is a
-     claim with no control on it, so here is the control.
+test("every retired wake phrase this lane lists sits inside a strikethrough, in six files", () => {
+  /* THE CLAIM THIS MAKES CHECKABLE, and the third version of it. `lane/wake-all-recipients`'
+     copy commit said every retired sentence was kept beside its replacement; an arm found five
+     that were not. The commit that fixed those five claimed "no retired claim stands as
+     current"; the next arm found four more. THIS test's first version claimed the same thing in
+     its own title, and the next arm found a fifth — in a file the sweep already named, in words
+     the phrase list missed by one adjective, in a file with no strikethrough anywhere for a reader
+     to notice. (The two: ~~`the only recipient it wakes`~~ against a listed
+     ~~`one recipient the service wakes`~~.)
 
-     BOUND, STATED. It reads the FIVE files this lane's wake copy lives in — named below,
-     because a source sweep has no complete set to run over — and requires every occurrence of
-     each retired phrase to sit inside a `~~ ~~` span, which is how this repo marks superseded
-     wording. It cannot see a retired claim written in words no phrase here matches, and it
-     cannot see one in a file not on this list. What it does catch is the exact failure that
-     happened twice: a sentence from the old rule left standing beside its own replacement.
+     Three rounds, one class. So the title now claims exactly what the loop does and no more,
+     and the three things that let it pass while a sentence stood are closed:
 
-     The phrase list and the file list are both iterated by the assertions, so adding either
-     changes what runs rather than only what a comment says. */
+       1. MATCHING IS CASE- AND SPACE-INSENSITIVE over a normalised form, so
+          ~~`the only control over WHO IS WOKEN`~~ and ~~`one control over who is woken`~~ are
+          the same phrase to it. Exact `indexOf` was how a sentence in the family of a listed
+          phrase went unseen.
+       2. EVERY LISTED PHRASE MUST MATCH SOMETHING. Three of the eleven matched nothing, so the
+          README's claim that adding to the list changes what runs was false for those three. A
+          dead phrase is now a red, which is the only way that claim can be true.
+       3. EVERY NAMED FILE MUST CONTRIBUTE. `scanned > 200_000` was satisfied by
+          `LiveDashboard.astro` alone, so five wrong paths pointed at that one file would have
+          gone green. Each file is asserted individually.
+
+     BOUND, AND IT IS THE WHOLE BOUND. This reads SIX named files and normalises them. It
+     catches a listed phrase, in any casing or spacing, standing outside a `~~ ~~` span. It
+     CANNOT see a retired claim written in words no listed phrase covers, and it cannot see one
+     in a file not on this list. Both lists are below and both are iterated, so adding to either
+     changes what runs — which item 2 above is what makes true.
+
+     ~~"no retired wake sentence stands as current, anywhere the wake copy lives"~~ was this
+     test's title, and it claimed the second half of that sentence without establishing it. */
   const files = [
     "./composer-address.ts",
+    /* Added round five: it is where the wake copy's own tests live, and it carried a retired
+       sentence in an assertion message that no earlier list covered. */
+    "./composer-address.test.mjs",
     "../components/app/composer-to-field.observer.test.ts",
     "../components/app/composer.observer.test.ts",
     "../components/app/composer-addressing.observer.test.ts",
     "../components/app/LiveDashboard.astro",
   ];
+  /* NORMALISED FORMS. Written the way the retired sentences read, and matched against a
+     lowercased, whitespace-collapsed copy of each file so a line break or an adjective's casing
+     inside a comment cannot hide one. */
   const retired = [
     "wakes nobody",
-    "wake nobody",
     "nobody is woken",
     "woken, however many",
-    "one control over who is woken",
+    "control over who is woken",
+    /* Both retired forms of the same claim, and both narrow on purpose: the CURRENT sentence
+       in this module is "every recipient the service wakes", so a phrase of
+       "recipient the service wakes" matched the correct copy and reported it as retired. A
+       sweep that fires on the sentence it is protecting is worse than none. */
+    "only recipient it wakes",
     "one recipient the service wakes",
     "first recipient is notified",
-    "No agent is notified while",
-    "EXACTLY ONE CHIP IS MARKED",
-    "is the one the service wakes",
+    "no agent is notified while",
+    "exactly one chip is marked",
+    /* ~~"is the one the service wakes"~~ matched nothing: the sentence it was for reads
+       "Orbit is STILL the one the service wakes", so the "is" is two words earlier. A phrase
+       that matches nothing is a line in a list that changes no behaviour, which is what the
+       dead-phrase check below exists to say out loud. */
+    "the one the service wakes",
     "way a reader can change who is woken",
+    "changes who is woken",
   ];
-  let scanned = 0;
+  const normalise = (text) => text.toLowerCase().replace(/\s+/g, " ");
+  let matchedSomewhere = new Set();
   for (const file of files) {
-    const source = readFileSync(new URL(file, import.meta.url), "utf8");
-    scanned += source.length;
+    /* THE PHRASE LIST IS NOT ITS OWN SUBJECT. This file is on the list, and the literals below
+       are in it, so the sweep reported its own list as thirteen standing sentences. The list's
+       own span is removed before scanning — precisely, by its declaration rather than by
+       skipping the file, so everything else in this file IS scanned, which is how the round-four
+       leftover in an assertion message a few hundred lines down is caught. */
+    const source = readFileSync(new URL(file, import.meta.url), "utf8")
+      .replace(/const retired = \[[\s\S]*?\n {2}\];/, "const retired = [];");
+    /* EVERY FILE CONTRIBUTES. Five paths aimed at one big file would satisfy a total. */
+    assert.ok(source.length > 2_000, `${file}: read only ${source.length} characters`);
     /* Character spans, not line matching: a strikethrough in this repo routinely wraps across
        several lines, and comparing a line against a concatenation of spans reported a struck
-       sentence as standing. */
+       sentence as standing. The spans are located in the NORMALISED text, so the offsets the
+       phrase search returns are in the same coordinate system. */
+    const flat = normalise(source);
     const struck = [];
-    for (const match of source.matchAll(/~~[\s\S]*?~~/g)) {
+    for (const match of flat.matchAll(/~~[\s\S]*?~~/g)) {
       struck.push([match.index, match.index + match[0].length]);
     }
     const inside = (at) => struck.some(([from, to]) => at >= from && at < to);
     for (const phrase of retired) {
-      let at = source.indexOf(phrase);
+      let at = flat.indexOf(phrase);
       while (at !== -1) {
+        matchedSomewhere.add(phrase);
         assert.ok(
           inside(at),
           `${file}: "${phrase}" stands as current at offset ${at}: ` +
-            JSON.stringify(source.slice(Math.max(0, at - 90), at + 90)),
+            JSON.stringify(flat.slice(Math.max(0, at - 110), at + 110)),
         );
-        at = source.indexOf(phrase, at + 1);
+        at = flat.indexOf(phrase, at + 1);
       }
     }
   }
-  /* POSITIVE CONTROL on the read itself: five files that resolved to nothing would satisfy
-     every assertion above, so the sweep has to have seen something. */
-  assert.ok(scanned > 200_000, `the sweep read only ${scanned} characters`);
-  /* AND ON THE PHRASE LIST: at least one retired phrase must actually be present somewhere,
-     struck, or the list is matching nothing at all and would pass over any file. */
-  const all = files
-    .map((file) => readFileSync(new URL(file, import.meta.url), "utf8"))
-    .join("");
-  assert.ok(
-    retired.some((phrase) => all.includes(phrase)),
-    "no retired phrase appears anywhere, so this sweep is not reading the wake copy",
+  /* AND EVERY LISTED PHRASE IS LIVE. A phrase that matches nothing is a line in a list that
+     changes no behaviour, and three of them were exactly that. This is what makes "adding to
+     the list changes what runs" a fact rather than a hope. */
+  const dead = retired.filter((phrase) => !matchedSomewhere.has(phrase));
+  assert.deepEqual(
+    dead,
+    [],
+    `these phrases match nothing, so listing them changes nothing: ${JSON.stringify(dead)}`,
   );
 });
 
@@ -624,7 +663,10 @@ test("a set arrival pruned is not a set the reader chose", () => {
   assert.equal(
     composerAddressIsChosen([orbit, wren], [wren, orbit], () => true),
     true,
-    "a name promoted, which changes who is woken and so changes the set",
+    /* ~~"which changes who is woken and so changes the set"~~ Retired 2026-09-05: promoting
+       changes which recipient the message shows as addressed to, and no longer changes the
+       wake. The boolean this pins was always about the SET's order, so it is unmoved. */
+    "a name promoted, which changes the order the set was chosen in",
   );
   /* And an unpruned set that matches is still not a choice. */
   assert.equal(composerAddressIsChosen([wren, orbit], [wren, orbit], () => true), false);

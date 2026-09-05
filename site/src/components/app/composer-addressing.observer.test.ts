@@ -360,8 +360,10 @@ test("rendered composer addresses several agents and preserves multiline keyboar
       value: "@Orbit @Lumen ",
       chips: ["Orbit", "Lumen"],
     });
-    /* Two names, ONE row. The target is recipient 0, which is the column the server fills and
-       the only recipient it wakes; both names stay in To: for the next message. */
+    /* Two names, ONE row. The target is recipient 0, which is the column the server fills;
+       both names stay in To: for the next message. ~~"and the only recipient it wakes"~~
+       Retired 2026-09-05: every agent in the set is woken wherever it sits, and this assertion
+       is about the ARROW and the chips, neither of which is a wake claim. */
     assert.deepEqual(measured.oneSignal, {
       added: 1,
       target: "→ Orbit",

@@ -98,6 +98,26 @@ const mutations = [
     " * which is the only way a reader can change who is woken. As of 2026-09-05 the wake",
     "a retired wake sentence put back as current is caught",
     "stands as current at offset"],
+  /* AND ONE IN THE FAMILY OF A LISTED PHRASE, which is the case round five found the sweep
+     missing: different adjective, different file, no strikethrough anywhere near it. */
+  [PURE_ADDR, "site/src/components/app/composer-addressing.observer.test.ts",
+    "both names stay in To: for the next message. ~~\"and the only recipient it wakes\"~~",
+    "both names stay in To: for the next message, and it is the only recipient it wakes.",
+    "a retired sentence in a file with no strikethrough at all is caught",
+    "stands as current at offset"],
+  /* AND A PHRASE THAT MATCHES NOTHING IS A RED, which is what makes "adding to the list changes
+     what runs" a fact. Three of eleven were dead and the sweep said nothing. */
+  [PURE_ADDR, PURE_ADDR,
+    '    "wakes nobody",',
+    '    "wakes nobody",\n    "a phrase that is nowhere in any of these files",',
+    "a listed phrase that matches nothing is reported rather than carried",
+    "these phrases match nothing, so listing them changes nothing"],
+  /* AND EVERY NAMED FILE IS READ. Five paths aimed at the one big file passed a size total. */
+  [PURE_ADDR, PURE_ADDR,
+    '    "../components/app/composer-addressing.observer.test.ts",',
+    '    "./does-not-exist-anywhere.ts",',
+    "each named file is read, so a wrong path cannot hide behind a total",
+    "ENOENT"],
 
   // ── who may start a thread ────────────────────────────────────────────────────────────
   [PURE_REPLY, REPLY,

@@ -134,7 +134,7 @@ went to nobody.
 
 ## The mutation table
 
-58 mutations, 0 problems. Two things carry NO mutation, and the harness says so in place rather
+61 mutations, 0 problems. Two things carry NO mutation, and the harness says so in place rather
 than carrying an entry that passes:
 
 - `Number.isFinite(until)` in `threadRootBlock`. Removing it changes nothing: every comparison
@@ -256,22 +256,38 @@ including a comment saying nobody is woken sitting directly above the assertion 
 Neither is on screen, so neither was a break for a reader. Both made a claim of this lane's own
 false.
 
-**A general claim asserted twice and wrong twice is a claim with no control on it**, so it has
-one now. `composer-address.test.mjs` sweeps the five files this lane's wake copy lives in and
-requires every occurrence of ten retired phrases to sit inside a `~~ ~~` span. Its bound is in
-its header: it cannot see a retired claim written in words no phrase matches, or one in a file
-not on the list, and both lists are iterated by the assertions so adding to either changes what
-runs. It has two positive controls — the sweep must have read something, and at least one
-retired phrase must be present — because five paths that resolved to nothing would satisfy every
-assertion in it.
+**THIS CLASS RAN THREE ROUNDS, and the third one was against the control itself.** Round five
+found the sweep GREEN while a retired sentence stood — in a file the sweep already named, in
+words the phrase list missed by one adjective (~~`the only recipient it wakes`~~ against a
+listed ~~`one recipient the service wakes`~~), in a file with no strikethrough anywhere for a
+reader to notice. It also found that three of eleven listed phrases matched nothing, that both
+positive controls were satisfied by `LiveDashboard.astro` alone (567,988 characters against a
+200,000 total), and that the README typed a count of the list and got it wrong.
 
-**Its mutation is of the SUBJECT, not the checker**, and that is the shape an empty-set
-assertion needs. The sweep claims no retired phrase stands outside a strikethrough; breaking the
-checker cannot fail that, because there is nothing for a broken checker to miss. The entry puts
-one retired sentence back as current — exactly the way both arms found nine of them — and
-requires the sweep to name it and its offset. The first version of that entry swapped one path
-in the file list for a duplicate of another, which changed nothing the assertions could see and
-was reported `NOT CAUGHT`.
+The sweep is rebuilt rather than patched, and the three things that let it pass while a sentence
+stood are each closed:
+
+1. **Matching is case- and space-insensitive** over a normalised copy, so a sentence in the
+   family of a listed phrase cannot slip past on an adjective or a line break.
+2. **Every listed phrase must match something.** A phrase that matches nothing is a line that
+   changes no behaviour; it is a red now, which is the only thing that makes "adding to the list
+   changes what runs" a fact rather than a hope.
+3. **Every named file must be read individually**, so five paths aimed at one big file cannot
+   satisfy a total. A wrong path throws.
+
+The list of files grew to six: `composer-address.test.mjs` itself, which is where the wake
+copy's own tests live and which carried a retired sentence in an assertion message that no
+earlier list covered. The phrase list is removed from its own scan by its declaration rather
+than by skipping that file, so everything else in it is still swept.
+
+**Four mutations, and the first is of the SUBJECT rather than the checker**, which is the shape
+an empty-set assertion needs: breaking a checker cannot fail a claim that nothing is there. They
+put a retired sentence back as current in two different files, add a phrase that matches
+nothing, and point one path at a file that does not exist. An earlier entry that swapped one
+path for a duplicate of another changed nothing any assertion could see and was reported
+`NOT CAUGHT`.
+
+**And the count in this paragraph is not typed.** `mutation-table.txt` carries it.
 
 **And the CLIENT half of that lane is not on this branch either.** `src/listener/hook.ts` still
 filters a delivery on `signal.to_agent === stored.principalId`, which is the check the wake lane
@@ -397,7 +413,7 @@ open, and it is zero at rest, which is what the phone budget in
    `20260905000020_wake_all_recipients.sql` nor the `src/` half of that lane is on this branch.
    Nothing here measures the new wake against a database or a listener; what is measured is that
    the SENTENCES follow one rule, that the rule and the chip marks agree, and that no retired
-   phrase ON A NAMED LIST stands outside a strikethrough IN FIVE NAMED FILES. That is narrower
+   phrase ON A NAMED LIST stands outside a strikethrough IN SIX NAMED FILES. That is narrower
    than "no retired claim stands as current", which is what this file said before round four
    found four counterexamples to it, and it is narrower on purpose: it is what a sweep can
    establish. The behaviour is `lane/wake-all-recipients`' to establish, and it
