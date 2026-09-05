@@ -1868,3 +1868,20 @@ target and the integer form retires when it lands.
 
 Chips closed by this landing: p1-cli fail-fast, resume streaming, brain put version check. The
 listener head-of-line chip is `lane/listener-head-of-line`, in flight.
+
+## Addendum 2026-09-05 02:4x UTC — markdown follow-up landed (8067cb6); superseded branches removed
+
+`lane/markdown-followup` 2d97895 (comment and test only; PASS/PASS, no findings) merged as
+`8067cb6`, evidence `ca35aa7`. The markdown PM is released. The other session's superseded
+branches are gone from the checkout with backup tags pushed: `backup/mobile-fix-6cbda50`,
+`backup/standing-default-e433fd9`; `lane/markdown-tables` and `lane/markdown-coverage` had
+already been removed by the landing lane after `git cherry` showed only `-`. Their `/private/tmp`
+worktrees are removed. Still foreign and still open: `lane/google-signin`, `lane/model-tagging`
+(both being landed by my lanes), `lane/chat-platform-spec` (superseded by the reconciled design
+on main; left for its owner until the chat app lanes start).
+
+In flight: `chat-schema` round 4 (Grok FAIL verified findings incl. a thread reply that lands in
+an archived channel; Gemini's round-3 arm died on a network error and is not a verdict);
+`model-tagging-land` at 18 commits and round 7 — asked the PM for a scope cut before more rounds;
+`google-signin-land` fb5fee9 pre-arms; `update-notice` f63622c Gemini FAIL round 1;
+`listener-head-of-line` 33cd24b round 1.
