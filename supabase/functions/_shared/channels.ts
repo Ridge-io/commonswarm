@@ -226,13 +226,20 @@ export type SignalRecipientKind = typeof SIGNAL_RECIPIENT_KINDS[number];
  * channel slug bound.
  *
  * The value is 8 because that is what site/src/lib/mention-address.ts already
- * enforces on a composed message (MENTION_MAX_RECIPIENTS), where each tag costs
- * a whole signal, a wake and a receipt row -- that composer posts one directed
- * signal per tag and has not moved to `to` yet. Naming a recipient HERE costs a
- * row in swarm.signal_recipients and nothing else: it wakes nobody, because
- * nothing reads that table on the way to the delivery ledger. The same test
- * pins the two numbers together, so the composer and the server cannot disagree
- * about how many recipients fit.
+ * enforces on a composed message (MENTION_MAX_RECIPIENTS). The composer now
+ * posts ONE signal carrying this whole list in `to`, and its To: field reads its
+ * cap from this constant (COMPOSER_TO_MAX in site/src/lib/composer-address.ts).
+ *
+ * RETIRED 2026-09-05: "each tag costs a whole signal, a wake and a receipt row
+ * -- that composer posts one directed signal per tag and has not moved to `to`
+ * yet." That was true of the 2026-09-04 composer, which fanned a message out
+ * into one signal per tag. It is preserved here because the reasoning it
+ * supported is not: a recipient no longer costs a signal or a wake. Naming a
+ * recipient costs a row in swarm.signal_recipients and nothing else, and only
+ * the recipient at position 0 is woken, because swarm.enqueue_signal_delivery
+ * fires on swarm.signals.to_agent_principal_id and this edge writes recipient 0
+ * into that column. The same test pins the two numbers together, so the composer
+ * and the server cannot disagree about how many recipients fit.
  */
 export const SIGNAL_RECIPIENT_MAX = 8;
 

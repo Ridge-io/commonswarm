@@ -1,0 +1,102 @@
+I'll read REVIEW.md and DIFF.patch first, then follow REVIEW.md exactly.The brief is loaded. Next I’ll read the rest of the patch and the live source, then attack each check.The first `diff --git` line is confirmed. Next I’ll enumerate every To: read/write and the round-six send-storage path.SHA is `d96de1d`. Next I’ll read the derived pass, the dashboard writers, and the send-storage path.The pass and persist look solid. Next I’ll read the send path, workspace switch, and sample switch side by side.Checking one freeze-lift path, then I’ll write the verdict.`diff --git a/docs/design/2026-09-04-chat-platform-reconciled.md b/docs/design/2026-09-04-chat-platform-reconciled.md`
+
+The derived pass is one writer of the live pair. Round six did capture the send’s storage keys and did run remember/clear before the workspace guard. The family is still open. The remaining cause is the same one round six named: send-owned work still sits behind a guard that is right for the screen and wrong for the send. Storage moved out. The freeze lift did not.
+
+## 1. A seventh instance of the same class
+
+**Live pair writers**
+
+| name | who writes it |
+|---|---|
+| `composerTo` / `composerToApplied` / `composerToPruned` / `composerToNotice` | `syncComposerAddress` on commit (`LiveDashboard.astro:2808–2812`); `resetComposer` zeros them (`3556–3560`) |
+| `composerToLive` | `true` on commit (`2811`); `false` in `resetComposer` (`3560`) |
+
+No other assignment. Chip clicks, typing, restore, roster paint, submit flush, and the send `finally` all call `syncComposerAddress`. `renderComposerTo` (`2700`) draws only.
+
+**Storage keys**
+
+- `commonswarm:composer-to:${owner}:${workspace}` — `rememberComposerTo` / `readRememberedComposerTo` (`2641–2688`). The send now passes `sendToKey`.
+- `commonswarm:composer-draft:${owner}:${workspace}:all-signals` — `persistComposerDraft` / `readComposerDraft` / `clearComposerDraft` (`2874–3003`). The send now passes `sendDraftKey`.
+
+**Body replaced without a keystroke**
+
+- `restoreComposerOnEntry` (`3233`) puts `draft.body` in the box
+- `resetComposer` (`3532`) empties it
+- submit success (`7629`) empties it
+- submit catch (`7801`) puts `rawBody` back, and only after the version/workspace guard
+
+`resetComposer` is a teardown, not a derivation. It flushes first while the old workspace is still current (`3510–3521`), then drops the pair because that workspace is gone. That claim holds for a workspace **change**.
+
+**What round six closed.** `composerDraftKey` / `composerToStorageKey` take the workspace (`2641`, `2874`). Submit captures `sendDraftKey` / `sendToKey` beside `workspaceId` (`7501–7502`). A landed post remembers and clears **before** the screen guard (`7698–7704`). The dead `persistComposerDraft()` in the catch is gone; the settle writes the restored body (`7805–7810`, `7855–7863`). I did not find a path that resurrects a sent body after a **workspace** change.
+
+**What it did not close.** `setComposerSending(false)` exists in two places: `resetComposer` (`3569`) and the submit `finally` (`7854–7855`). The `finally` still requires `version === requestVersion && workspaceId === activeWorkspaceId`. `openWorkspace` only calls `resetComposer` when the id changes (`5715–5716`), then **always** does `++requestVersion` (`5739`). Same-workspace callers:
+
+- `[data-refresh]` (`8142–8144`)
+- `[data-retry-workspace]` (`8136–8138`)
+- remove-member / edit-model / revoke / remove-agent (`1967`, `3942`, `3991`, `4034`)
+
+Refresh during a send therefore: bumps the generation, does not drop the send flag, and makes `finally` skip the freeze lift. `composerSending` stays true. The box stays `readOnly`. `deriveComposerAddress` keeps returning `held` (`composer-address.ts:414`). A later roster paint cannot commit. Catch also returns on the first line (`7752`), so a failed send never puts `rawBody` back.
+
+That is the same class: one handler mutates a generation another handler still treats as ownership of the send. A point fix on `finally` (lift the freeze when the workspace is still this one) would close this instance. It would not prove every other send-owned write has left that guard. The family is still that guard.
+
+Looked at and not used as the fail: a draft **with a body** records a silently pruned `to` (`2981–2997`). That is the sixth-item tiebreak, stated at the call site. I keep it. Adding a returning member to a message already being written cannot be taken back once sent. Leaving them out is on the row and one click from fixed. `composerAddressIsChosen` is not asked about that `to` field, on purpose.
+
+Sign-out: `resetWorkspaceSessionState` sets `activeWorkspaceId = ""` (`5377`) **before** `resetComposer` (`5432`), so the flush no-ops. Edits still inside the 300ms debounce are dropped. Pair and body stay together (both lost). Not this family.
+
+## 2. The freeze
+
+Same-workspace path with no reopen: the pass holds while `composerSending` (`414`). Chip clicks return (`7890`). The box is `readOnly` (`3178`). Submit snapshots chips after a flush (`7494–7529`), then `setComposerSending(true)` (`7625`). Catch restores the body while the flag is still up (`7801`). `finally` drops the flag, then runs the pass (`7854–7863`). Success: empty body, merge drops `applied`. Failure: restored body, old `applied` kept. I did not find a same-workspace, same-generation path where the row and the wire disagree.
+
+The reopen path above is the freeze hole. The reader can be left looking at the posted chips with a send flag that never comes down, or at an emptied box after a failed send whose restore was skipped. README already says there is no browser control for a send whose workspace changes under it. It does not name a same-workspace `openWorkspace`.
+
+## 3. The empty set, and the chosen set
+
+`null` vs `[]` inside the pass is right (`composer-address.ts:418–425`). Persist writes `to: []` rather than omitting the key (`2956–2996`). Restore of `[]` is a broadcast; missing `to` is last-sent.
+
+`composerAddressIsChosen` is right for a promotion (order is in the key), an emptied row, an add, and “pruned last-sent is not a choice” (`composer-address.test.mjs:444–472`). It is not asked about `to` on a draft that also has a body. That is the tiebreak in (1).
+
+After `resetComposer`, `composerToLive` is false, so an empty row is not stored as a chosen broadcast. On a real `openWorkspace` with `keepShell`, that paint is `feed-pending` and the composer is hidden (`1662–1663`, `5771`). Sample leaves the composer up across `setTimeout(0)` (`3640–3663`). Residue that does not land in storage is not this family.
+
+## 4. The cap
+
+A refused name is not written into `applied` (`composer-address.ts:320–333`). The notice is rebuilt from `refused` on every commit (`476–489`). Make room, and the still-typed tag joins (`composer-address.test.mjs:225–260`; `capAfterRoom` in the observer). The notice does not depend on a one-shot push, so it does not vanish while the tag still does not fit. A name cannot join twice (`seen` in `addComposerRecipients`). Nothing in this SHA makes a refusal permanent.
+
+## 5. The stored draft’s new reach
+
+Empty-body chosen address is kept (`2981–2987`). `resetComposer` flushes before it empties the box, while `activeWorkspaceId` is still the workspace being left (`3510–3521`, `5715–5716`, `3642–3643`). `clearComposerDraft` is called with `sendDraftKey` on success (`7699`), on a landed catch (`7833`), and again in `finally` when `posted !== null` (`7868`). All three use the captured key. The function itself is not gated on `composerSending` (`2918–2926`).
+
+I did not find a wrong-workspace key from that flush, or a sent body coming back as a draft after a **workspace** change. The hole is (1): a same-workspace generation bump skips the catch restore and the freeze lift. A failed send then leaves the good draft in storage and an empty frozen box on screen. Reload recovers it. The screen is residue until then.
+
+## 6. The controls
+
+`mutation-table.txt` ends `50 mutations, 0 problems`. The brief says 46. I did not re-run the harness. The README says the table carries the count, so the 46 is only in the review brief.
+
+**New round-six entries are aimed.** The persist-while-sending guard, the captured key, “storage exists at all”, and “storage before the guard” each name the assertion they break (`mutate.mjs:280–305`; observer `869–916`).
+
+**Older entry, expected string is the first red, not the named claim.** `mutate.mjs:243–251` sets `composerToLive = composerTo.length > 0` and expects `afterSend: one signal, addressed to the chips`. The `defends` line is “an emptied To: stays empty rather than filling from what was stored”. After `clearTo`, live becomes false, the next tagged body is a cold entry from last-sent, and `afterSend` goes red because Lumen is still on the row. `broadcastSurvivesReload` is the claim that names. It is never reached. The comment in the harness says this is not a mis-aim. The first assertion after a refill is still not the claim the mutation is about.
+
+**Redundant, not masking.** The line `if (!input.rosterKnown || input.sending) return held;` is broken twice in FIELD (`mutate.mjs:141–145` and `237–242`). They run apart. Each can go red. They are the same edit.
+
+**README “What is NOT established” is short.** It names the in-flight freeze, the applied clear, and a send whose **workspace** changes. It does not name a same-workspace `openWorkspace` during a send, which is the path in (1). It also does not say `composerAddressIsChosen` is not applied to `to` on a non-empty draft; that half is now a stated ruling, not an uncontrolled claim.
+
+## 7. The sample workspace
+
+`openSampleWorkspace` (`3640–3664`) does the composer steps: `resetComposer` while the old id is current, roster cleared, one paint, roster on a later task. It does not call `openWorkspace`. Real switch with `keepShell` paints `renderChannel(selected, true)` and hides the composer (`5771`, `1662–1663`). Sample paints `renderChannel(workspace)` with `pending` false, shows the feed, and leaves the composer up across `setTimeout(0)`.
+
+The observer waits for the new workspace name, a feed row, and 400ms (`378–392`). That is the settled pair, which is what those claims name. The first paint does run `restoreComposerOnEntry` against an unknown roster, which is the path round four broke. I do not treat the hidden-vs-visible difference as the fail. Sample also cannot reach (1): a sample send has no await, and `openSampleWorkspace` returns early on the same id (`3641`).
+
+## 8. Generated versus typed, and retired claims
+
+`composerAddressNotice`, `composerToFullNotice`, `composerPrunedNotice`, `composerPromoteLabel`, and `composerDeliveryNote` all take `COMPOSER_TO_MAX` or `positionWord(NOTIFIED_POSITION)`. `POSITION_WORDS` is still eight literals; the pure test pins that list to the cap (`composer-address.test.mjs:48–58`).
+
+`channels.ts:233–242` keeps the old “one directed signal per tag” sentence as `RETIRED 2026-09-05`. The two design notes mark the TO-row reversal. The `renderComposerTo prunes before it draws` sentence is gone.
+
+Still asserted as current, and this SHA made it false: `docs/design/2026-09-04-chat-platform-reconciled.md:1048–1057` still says D2 is not shippable and that “the composer's present workaround — one directed signal per tag” is what D2 forbids. D2 itself is marked ADOPTED eight lines above. The ANSWERED notes under “The original section” do not cover this block.
+
+The browser test types `"Only the first recipient is notified"` as expected output (`composer-to-field.observer.test.ts:605`). That is the generated word for position 0. The source mutation that replaces `positionWord(NOTIFIED_POSITION)` with `"first"` is a separate entry.
+
+---
+
+The pass is one writer of the live pair. Persist is a snapshot of that pair, not a second derivation. Round six bound the send’s **storage** to the send. The send’s **freeze** is still bound to `requestVersion`. Refresh, retry-workspace, and the roster mutations that call `openWorkspace(activeWorkspaceId)` still orphan it.
+
+VERDICT: FAIL

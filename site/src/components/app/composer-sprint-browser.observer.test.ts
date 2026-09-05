@@ -136,10 +136,18 @@ const patchClient = (source: string, variant: Variant): string => {
     /* The emitted restore sequence after the address moved into the body: body, staged
        attachments, the staged-attachment render, then the autosize. Only the body assignment is
        reverted, so the control measures text survival — which is now also address survival,
-       because the tag is inside that text. */
-    const restore = /([A-Za-z_$][\w$]*)\.value=([A-Za-z_$][\w$]*),([A-Za-z_$][\w$]*)=([A-Za-z_$][\w$]*),([A-Za-z_$][\w$]*)\(\),([A-Za-z_$][\w$]*)\(\1\),/;
+       because the tag is inside that text.
+
+       ~~a trailing comma after the autosize~~ retired 2026-09-05: the block used to end with a
+       dead `persistComposerDraft()` call, so the autosize was followed by `,`. That call ran
+       from behind the send flag and did nothing, and a review arm found both it and the test
+       that had been matching it; removing it made the autosize the LAST statement, so the
+       comma is gone. The tail is a lookahead now, matching whatever punctuation closes the
+       block, so a further statement appearing or leaving there cannot silently unanchor this
+       patch. An unanchored patch here hangs the page at boot rather than failing loudly. */
+    const restore = /([A-Za-z_$][\w$]*)\.value=([A-Za-z_$][\w$]*),([A-Za-z_$][\w$]*)=([A-Za-z_$][\w$]*),([A-Za-z_$][\w$]*)\(\),([A-Za-z_$][\w$]*)\(\1\)(?=[,)}])/;
     result = replaceOne(result, restore, (...values: string[]) =>
-      `${values[1]}.value=\`\`,${values[3]}=${values[4]},${values[5]}(),${values[6]}(${values[1]}),`,
+      `${values[1]}.value=\`\`,${values[3]}=${values[4]},${values[5]}(),${values[6]}(${values[1]})`,
     "text-survival-reversion");
   }
   if (variant === "double-reverted") {

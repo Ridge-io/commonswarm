@@ -1,0 +1,19 @@
+`diff --git a/docs/design/2026-09-04-chat-platform-reconciled.md b/docs/design/2026-09-04-chat-platform-reconciled.md`
+
+1. **A SEVENTH INSTANCE OF THE SAME CLASS:** No, there is no seventh instance. Both previous arms (Grok/Gemini) were finding variants of the state mismatch where a transient DOM state was read as canonical. This SHA fully addresses the text loss and message resurrection issues under a workspace switch. `persistComposerDraft` correctly returns early (`if (composerSending) return`), preventing it from overwriting the draft with an empty body while a send is in flight. Furthermore, the submit captures the `workspaceId` into `sendDraftKey` and `sendToKey`, allowing `clearComposerDraft(sendDraftKey)` and `rememberComposerTo` to act on the correct workspace even if the user has navigated away, successfully finishing its bookkeeping before the active workspace guard `if (workspaceId !== activeWorkspaceId) return`. The `resetComposer` is legitimately a teardown because it flushes, empties the local variables, and nullifies the intent, without attempting to inappropriately derive state across the transition.
+
+2. **THE FREEZE:** The freeze correctly guards the state. The submit handles the body extraction before setting `composerSending = true`. The catch block restores the raw body if the send fails, preventing the applied record from improperly re-addressing removed chips. The settle happens cleanly in `finally` when the flag drops. 
+
+3. **THE EMPTY SET, AND THE CHOSEN SET:** `composerAddressIsChosen` correctly isolates an intentionally cleared To: field from one that is empty due to a silent prune, by comparing it against the pruned remembered set. As for Grok's attack on a non-empty body saving the To: set regardless of `composerAddressIsChosen`, this is explicitly documented as a deliberate tiebreak in the README to avoid the "worse mistake" of accidentally re-adding hidden recipients to an in-progress draft.
+
+4. **THE CAP:** Refused names are kept out of `applied`. The refusal notice is properly derived from `refused` on each pass, avoiding permanent refusal loops or flickering, and allowing the name to join cleanly when space is made.
+
+5. **THE STORED DRAFT'S NEW REACH:** The captured `sendDraftKey(workspaceId)` correctly prevents the wrong workspace's draft from being overwritten or cleared. A landed post successfully deletes its draft, avoiding resurrection.
+
+6. **THE CONTROLS:** `mutate.mjs` properly targets the assertions (e.g., `notifiedMark` and checking the `WRITE` directly instead of redundant routes that would mask each other). The `What is NOT established` section provides an honest and complete boundary for the checks.
+
+7. **THE SAMPLE WORKSPACE:** `openSampleWorkspace` now accurately mirrors the teardown flow of `openWorkspace` by running `resetComposer` while the old ID is active, mimicking the exact frame gap and roster clearing behavior.
+
+8. **GENERATED VERSUS TYPED:** `POSITION_WORDS` and `COMPOSER_TO_MAX` are correctly generated rather than hardcoded. The retired assertions (like the 80px bar, and the retired comment in `channels.ts`) are properly documented or removed.
+
+VERDICT: PASS

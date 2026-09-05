@@ -20,6 +20,8 @@ import {
   signalRecipientListProblem,
   unknownChannelMessage,
 } from "../supabase/functions/_shared/channels.js";
+import { COMPOSER_TO_MAX } from "../site/src/lib/composer-address.js";
+import { MENTION_MAX_RECIPIENTS } from "../site/src/lib/mention-address.js";
 
 /**
  * Two enforcement points, two languages: the database CHECK on
@@ -237,14 +239,32 @@ test("the recipient cap is the same number in the migration, the edge and the co
   /* The composer refuses tags past its own ceiling. If it were higher than the
    * server's, a person would compose a message the server then refuses; if it
    * were lower, chips would be dropped for no reason the server would give.
-   * BOUND OF THIS CHECK, stated: it reads one exported constant by name from
-   * one file. It does not prove the composer has no other ceiling elsewhere. */
-  const declared = /MENTION_MAX_RECIPIENTS\s*=\s*(\d+)/.exec(mentionAddress);
-  assert.ok(declared, "site/src/lib/mention-address.ts must export MENTION_MAX_RECIPIENTS");
+   * Both ceilings are now the IMPORTED constant rather than a number typed
+   * twice, so this reads the values instead of grepping for a digit.
+   * BOUND OF THIS CHECK, stated: it compares two exported constants against
+   * the edge's. It does not prove the composer has no other ceiling elsewhere. */
   assert.equal(
-    Number(declared![1]),
+    COMPOSER_TO_MAX,
     SIGNAL_RECIPIENT_MAX,
-    "the composer's ceiling and the server's cap are one number",
+    "the To: field's ceiling and the server's cap are one number",
+  );
+  assert.equal(
+    MENTION_MAX_RECIPIENTS,
+    SIGNAL_RECIPIENT_MAX,
+    "the mention parser's ceiling and the server's cap are one number",
+  );
+  /* And the file may not go back to typing it. A literal here would pass the
+   * two equalities above on the day it was written and drift the day the cap
+   * moved, which is the whole failure this test exists for. */
+  assert.doesNotMatch(
+    mentionAddress,
+    /MENTION_MAX_RECIPIENTS\s*=\s*\d/,
+    "site/src/lib/mention-address.ts types its ceiling instead of importing it",
+  );
+  assert.match(
+    mentionAddress,
+    /MENTION_MAX_RECIPIENTS\s*=\s*COMPOSER_TO_MAX/,
+    "site/src/lib/mention-address.ts must take its ceiling from composer-address.ts",
   );
 });
 

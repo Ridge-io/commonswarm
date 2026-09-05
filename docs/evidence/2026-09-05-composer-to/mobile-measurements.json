@@ -1,0 +1,258 @@
+{
+  "measuredAt": "2026-09-05T16:22:20.940Z",
+  "origin": "site/dist, sample mode",
+  "viewports": {
+    "390x844": {
+      "screenshot": "mobile-390x844.png",
+      "measurement": {
+        "ready": true,
+        "viewport": {
+          "width": 390,
+          "height": 844
+        },
+        "devicePixelRatio": 1,
+        "broadcast": {
+          "label": "broadcast",
+          "chips": [],
+          "note": "No agent is notified. Everyone here can read this.",
+          "toRow": {
+            "top": 807.63,
+            "bottom": 840,
+            "left": 16,
+            "right": 374,
+            "height": 32.38,
+            "width": 358
+          },
+          "composer": {
+            "top": 744.63,
+            "bottom": 844,
+            "left": 0,
+            "right": 390,
+            "height": 99.38,
+            "width": 390
+          },
+          "input": {
+            "top": 749.63,
+            "bottom": 803.63,
+            "left": 16,
+            "right": 374,
+            "height": 54,
+            "width": 358
+          },
+          "send": {
+            "top": 754.63,
+            "bottom": 798.63,
+            "left": 321,
+            "right": 365,
+            "height": 44,
+            "width": 44
+          },
+          "appBar": {
+            "top": 188.06,
+            "bottom": 228.06,
+            "left": 16,
+            "right": 107.34,
+            "height": 40,
+            "width": 91.34
+          },
+          "firstFeedRow": {
+            "top": 60.06,
+            "bottom": 283.8,
+            "left": 0,
+            "right": 390,
+            "height": 223.73,
+            "width": 390
+          }
+        },
+        "twoChips": {
+          "label": "two-recipients",
+          "chips": [
+            "Orbit",
+            "Kenji Ito"
+          ],
+          "note": "Orbit is notified. Kenji Ito can read this and reply.",
+          "toRow": {
+            "top": 799.42,
+            "bottom": 840,
+            "left": 16,
+            "right": 374,
+            "height": 40.58,
+            "width": 358
+          },
+          "composer": {
+            "top": 716.42,
+            "bottom": 844,
+            "left": 0,
+            "right": 390,
+            "height": 127.58,
+            "width": 390
+          },
+          "input": {
+            "top": 721.42,
+            "bottom": 795.42,
+            "left": 16,
+            "right": 374,
+            "height": 74,
+            "width": 358
+          },
+          "send": {
+            "top": 746.42,
+            "bottom": 790.42,
+            "left": 321,
+            "right": 365,
+            "height": 44,
+            "width": 44
+          },
+          "appBar": {
+            "top": 188.06,
+            "bottom": 228.06,
+            "left": 16,
+            "right": 107.34,
+            "height": 40,
+            "width": 91.34
+          },
+          "firstFeedRow": {
+            "top": 60.06,
+            "bottom": 283.8,
+            "left": 0,
+            "right": 390,
+            "height": 223.73,
+            "width": 390
+          }
+        },
+        "insideViewport": {
+          "composer": true,
+          "send": true,
+          "toRow": true
+        },
+        "documentScrollsSideways": false
+      }
+    },
+    "320x568": {
+      "screenshot": "mobile-320x568.png",
+      "measurement": {
+        "ready": true,
+        "viewport": {
+          "width": 320,
+          "height": 568
+        },
+        "devicePixelRatio": 1,
+        "broadcast": {
+          "label": "broadcast",
+          "chips": [],
+          "note": "No agent is notified. Everyone here can read this.",
+          "toRow": {
+            "top": 502.19,
+            "bottom": 564,
+            "left": 16,
+            "right": 304,
+            "height": 61.81,
+            "width": 288
+          },
+          "composer": {
+            "top": 439.19,
+            "bottom": 568,
+            "left": 0,
+            "right": 320,
+            "height": 128.81,
+            "width": 320
+          },
+          "input": {
+            "top": 444.19,
+            "bottom": 498.19,
+            "left": 16,
+            "right": 304,
+            "height": 54,
+            "width": 288
+          },
+          "send": {
+            "top": 449.19,
+            "bottom": 493.19,
+            "left": 251,
+            "right": 295,
+            "height": 44,
+            "width": 44
+          },
+          "appBar": {
+            "top": 177.75,
+            "bottom": 217.75,
+            "left": 16,
+            "right": 107.34,
+            "height": 40,
+            "width": 91.34
+          },
+          "firstFeedRow": {
+            "top": -246.25,
+            "bottom": -22.52,
+            "left": 0,
+            "right": 320,
+            "height": 223.73,
+            "width": 320
+          }
+        },
+        "twoChips": {
+          "label": "two-recipients",
+          "chips": [
+            "Orbit",
+            "Kenji Ito"
+          ],
+          "note": "Orbit is notified. Kenji Ito can read this and reply.",
+          "toRow": {
+            "top": 507.23,
+            "bottom": 564,
+            "left": 16,
+            "right": 304,
+            "height": 56.77,
+            "width": 288
+          },
+          "composer": {
+            "top": 424.23,
+            "bottom": 568,
+            "left": 0,
+            "right": 320,
+            "height": 143.77,
+            "width": 320
+          },
+          "input": {
+            "top": 429.23,
+            "bottom": 503.23,
+            "left": 16,
+            "right": 304,
+            "height": 74,
+            "width": 288
+          },
+          "send": {
+            "top": 454.23,
+            "bottom": 498.23,
+            "left": 251,
+            "right": 295,
+            "height": 44,
+            "width": 44
+          },
+          "appBar": {
+            "top": 177.75,
+            "bottom": 217.75,
+            "left": 16,
+            "right": 107.34,
+            "height": 40,
+            "width": 91.34
+          },
+          "firstFeedRow": {
+            "top": -246.25,
+            "bottom": -22.52,
+            "left": 0,
+            "right": 320,
+            "height": 223.73,
+            "width": 320
+          }
+        },
+        "insideViewport": {
+          "composer": true,
+          "send": true,
+          "toRow": true
+        },
+        "documentScrollsSideways": false
+      }
+    }
+  }
+}

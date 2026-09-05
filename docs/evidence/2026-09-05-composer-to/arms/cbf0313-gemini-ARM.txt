@@ -1,0 +1,36 @@
+I have reviewed the `lane/composer-to-field` diff (SHA `cbf0313`). Here is my analysis of the 9 checks:
+
+`diff --git a/docs/design/2026-09-04-chat-platform-reconciled.md b/docs/design/2026-09-04-chat-platform-reconciled.md`
+
+### 1. Hidden recipient
+I examined all state mutations around `composerTo`, the debounced tag pass, workspace switching, roster changes, and `restoreComposerDraft`. The `composerTo` array is the single source of truth—it drives the UI via `renderComposerTo()` synchronously upon every assignment, and the send path reads it exactly via `composerRecipients()`. There is no path where the UI and the post payload disagree.
+
+### 2. The wire body
+The served edge would **not** accept every body `browserSignalCommand` can build. Because `browserSignalCommand` accepts a `placement` object, if a caller provided a placement with both `threadRootId` and `channel`, the edge would refuse it ("A thread reply is filed in the channel its thread is in, so it does not take a channel of its own."). If provided with `threadRootId` and `recipients` > 0, it would be refused because a thread reply cannot be addressed to a recipient (the edge refuses a body containing both `to` and `thread_root_id`). 
+An **older** deployed edge would refuse any body with `to` (when `recipients.length > 0`) because `to` is not in its exact match whitelist for optional keys (`CHAT_SIGNAL_OPTIONAL_KEYS`).
+
+### 3. The wake claim
+The To: row's sentence is true for **both** the hosted workspace and the optional local listener for every set. I found no set where the copy and `swarm.enqueue_signal_delivery` disagree. `notifiedRecipient` specifically reads `recipients[0]` and requires it to be an agent. The edge writes `recipients[0]` to the scalar column `to_agent_principal_id`. The delivery trigger only fires if `to_agent_principal_id IS NOT NULL AND kind IN ('ask', 'note')`. The local listener polls the exact same deliveries table. Thus, if a person is at position 0, `to_agent_principal_id` is null, no delivery is enqueued, and the copy accurately says "No agent is notified."
+
+### 4. The mention merge
+There is a path where a recipient is **silently added back**. If a user types `@agent1`, removes the chip using the 'x' (so it remains in `composerToApplied` but is removed from the To: row), clicks Send, and the network request fails (e.g. 500 or timeout), the send handler clears `composerToApplied = []` *before* the request completes. Because the send failed, the text goes back into the box. When the user resumes typing (e.g., types a space), `applyComposerMentions` parses the text again, sees `@agent1`, checks `composerToApplied` (which is now empty), considers it "fresh", and silently adds `@agent1` back to the To: row.
+
+### 5. The one-signal rewrite
+The success path **loses a posted row** from memory if the user switches channels or workspaces while the post is in flight. After `await postBrowserSignal` completes successfully, it checks `if (version !== requestVersion || workspaceId !== activeWorkspaceId)` and returns early. Because it returns early, it completely skips the `postedSinceReset.set(row.id, ...)` step. The row that successfully landed on the server is lost from the client's memory map, and if the user switches back, it won't be rendered unless it's refetched. 
+Additionally, this same early return leaves the text draft in `localStorage` without clearing it, leading to a **double-post** if the user restores the draft later and sends again, because the idempotency key (`composerIntent`) was cleared.
+
+### 6. Generated versus typed
+I looked and found no user-visible sentences or numbers about the cap, recipient kinds, or wake positions that are hardcoded. They are all dynamically constructed using `COMPOSER_TO_MAX`, `NOTIFIED_POSITION`, `positionWord()`, `countNoun()`, etc.
+
+### 7. Retired claims
+A retired claim is still asserted as current in `supabase/functions/_shared/channels.ts` lines 228-234. The comments assert that the composer still works via the old model: *"that composer posts one directed signal per tag and has not moved to `to` yet. Naming a recipient HERE costs a row in swarm.signal_recipients and nothing else: it wakes nobody..."*. This falsely reflects the 2026-09-04 direction, whereas the current lane explicitly moves to the `to` field and wakes recipient 0. 
+
+### 8. State that must follow the body
+I found a **fifth instance** of the defect shape (state failing to follow the body). During workspace entry, `restoreComposerDraft()` is called, which parses the restored draft and lifts its tags into the chips via `applyComposerMentions()`. However, `restoreComposerToOnEntry()` is called immediately afterward, which completely overwrites `composerTo` and `composerToApplied` with the `localStorage` copy of the *last sent message's recipients*. This silently wipes out any valid tags the user had typed in their saved draft, leaving the tags visible in the body but absent from the delivery set. 
+
+### 9. The controls
+* **Assertion passing for a different reason**: Yes. In `composer-to-field.observer.test.ts`, the test named `"the posted body carries the To: set and leaves both scalar fields null"` also asserts that `signal_kind` correctly follows recipient 0. When the `mutate.mjs` script breaks the `signal_kind` logic, the test fails and the runner reports the failure as `"the posted body carries the To: set..."`, passing the mutation check for a reason completely unrelated to the title of the test.
+* **Source-reading claims**: Yes, they state their bounds honestly. Both `composer-to-field.observer.test.ts` and `chat-channel-constants.test.ts` explicitly declare that they only read one file or two constants and *do not* prove the absence of other typed ceilings elsewhere in the app.
+* **Renegotiated height budgets**: Yes, the new budgets in `composer-polish.observer.test.ts` (e.g. `COMPOSER_REST_BUDGET_PX = 108`) are still able to fail. The test explicitly enforces this by asserting that the reverted legacy control fails the new, tighter budgets (`revertedFailures.some((failure) => failure.includes('over the 108px budget'))`).
+
+VERDICT: FAIL

@@ -21,10 +21,18 @@ const between = (source: string, start: string, end: string): string => {
 
 test("composer defaults to broadcast and keeps signal language", () => {
   const markup = between(dashboard, '<form class="dashboard__composer"', "</form>");
-  /* RETIRED CLAIM (2026-09-04): the composer had a TO select and a "Post a note" checkbox above
-     the text box. The address is the message now — an @tag typed in the body — so both controls
-     are gone and the bar fits in 80px. */
+  /* THE ADDRESS IS A ROW OF CHIPS (2026-09-05). What is still gone is the pair the 2026-09-04
+     direction deleted: a TO *select*, which could hold one addressee, and a "Post a note"
+     checkbox, which was a second way to say what the first recipient already says.
+
+     RETIRED CLAIM (2026-09-04): "the address is the message now — an @tag typed in the body —
+     so both controls are gone and the bar fits in 80px." The tag now ADDS to a visible set
+     (ruling D2), and the 80px budget is renegotiated against a measured number in
+     composer-polish.observer.test.ts. */
   assert.doesNotMatch(markup, /data-composer-audience|data-composer-note-toggle/);
+  assert.doesNotMatch(markup, /<select/);
+  assert.match(markup, /data-composer-to-chips/);
+  assert.match(markup, /data-composer-to-note/);
   assert.match(dashboard, /const composerRecipientsFrom = \(body: string\)/);
   assert.match(markup, /maxlength=\{SIGNAL_BODY_MAX\}/);
   assert.match(dashboard, /import \{ SIGNAL_BODY_MAX \} from/);
@@ -38,10 +46,12 @@ test("composer defaults to broadcast and keeps signal language", () => {
      and none of the three is. */
   assert.doesNotMatch(markup, /emoji|reaction|thread/i);
 
-  /* An untagged body is still a broadcast; that default did not change, only where it is read
-     from. There is no stored address to disagree with the text. */
-  assert.match(dashboard, /tagged\.length === 0 \? \[\{ kind: "everyone" \}\] : tagged/);
-  assert.doesNotMatch(dashboard, /let composerAudience|composerPostAgentNote/);
+  /* An EMPTY To: set is still a broadcast, and it is named rather than shown as nothing.
+     There is one address variable now and the row is redrawn from it on every change, so the
+     chips cannot disagree with what the send reads. */
+  assert.match(dashboard, /const composerRecipients = \(\): ComposerRecipient\[\] => composerTo;/);
+  assert.match(dashboard, /BROADCAST_CHIP_LABEL/);
+  assert.doesNotMatch(dashboard, /composerPostAgentNote/);
 });
 
 /* RETIRED (2026-09-04): "the agent-only control opts out of wake". That control was the note
@@ -49,35 +59,42 @@ test("composer defaults to broadcast and keeps signal language", () => {
    opt-out flag for the CLI's sake; the app never passes it, which is what the second assertion
    below pins. */
 test("composer kind defaults by recipient, and the app never opts out of the wake", () => {
+  /* THE KIND FOLLOWS RECIPIENT 0, because the wake does. An agent behind a person in the To:
+     set does not make this an ask, and the To: row says as much in words. */
   assert.deepEqual([
-    browserSignalKind({ kind: "everyone" }),
-    browserSignalKind({ kind: "person", id: "person-1" }),
-    browserSignalKind({ kind: "agent", id: "agent-1" }),
-  ], ["note", "note", "ask"]);
+    browserSignalKind([]),
+    browserSignalKind([{ kind: "person", id: "person-1" }]),
+    browserSignalKind([{ kind: "agent", id: "agent-1" }]),
+    browserSignalKind([{ kind: "person", id: "person-1" }, { kind: "agent", id: "agent-1" }]),
+    browserSignalKind([{ kind: "agent", id: "agent-1" }, { kind: "person", id: "person-1" }]),
+  ], ["note", "note", "ask", "note", "ask"]);
 
   const submit = between(
     dashboard,
     'one<HTMLFormElement>("[data-composer]")?.addEventListener("submit"',
     'for (const button of all<HTMLButtonElement>("[data-feed-filter]")',
   );
-  /* The kind is PER recipient now. Tags in the body can name a person and an agent in one
-     message, and the agent must be woken while the person is not — which is why the note
-     checkbox could go: an @tag on an agent IS the wake. */
-  assert.match(submit, /const recipientKinds = recipients\.map\(\(recipient\) => browserSignalKind\(recipient\)\)/);
-  assert.match(submit, /kind: recipientKinds\[index\]!/);
+  /* ONE KIND PER MESSAGE, read from the whole set rather than per recipient, because the
+     message is one signal now. `browserSignalKind` reads position 0 for both of us. */
+  assert.match(submit, /const signalKind = browserSignalKind\(recipients\);/);
+  assert.match(submit, /kind: signalKind,/);
   assert.match(
     submit,
-    /rawBody,\s*recipient,\s*recipientKinds\[index\]!,\s*attachmentRefs,\s*placement,/,
+    /rawBody,\s*recipients,\s*signalKind,\s*attachmentRefs,\s*placement,/,
   );
   assert.doesNotMatch(dashboard, /browserSignalKind\([^)]*,\s*true\)/);
 });
 
 test("browser-authored signals use the existing broadcast and direct target fields", () => {
-  const helper = between(client, "export async function postBrowserSignal", "/**\n * Reads the shared feed");
+  const helper = between(client, "export function browserSignalCommand", "/**\n * Reads the shared feed");
   assert.match(helper, /signal_kind: signalKind/);
-  assert.match(helper, /const address = browserSignalAddress\(recipient\)/);
-  assert.match(helper, /to_user_id: address\.toUserId/);
-  assert.match(helper, /to_agent_principal_id: address\.toAgentPrincipalId/);
+  /* BOTH SCALARS NULL, ALWAYS. `to` replaces them and the edge refuses a body that sets one
+     as well; it writes recipient 0 into the scalar column itself, so an old reader still
+     sees a real recipient without this client sending one. */
+  assert.match(helper, /to_user_id: null,/);
+  assert.match(helper, /to_agent_principal_id: null,/);
+  assert.doesNotMatch(helper, /to_user_id: address/);
+  assert.match(helper, /\.\.\.\(recipients\.length === 0 \? \{\} : \{ to: toWireRecipients\(recipients\) \}\)/);
   assert.match(helper, /in_reply_to: null/);
   assert.doesNotMatch(helper, /mentions|mentioned|delivery/i);
 
@@ -86,22 +103,21 @@ test("browser-authored signals use the existing broadcast and direct target fiel
     'one<HTMLFormElement>("[data-composer]")?.addEventListener("submit"',
     'for (const button of all<HTMLButtonElement>("[data-feed-filter]")',
   );
-  /* Each recipient of a fan-out resolves to the same two nullable wire fields. The address is
-     computed per recipient, so a second agent cannot inherit the first one's target. */
-  assert.match(submit, /const address = browserSignalAddress\(recipient\)/);
-  assert.match(submit, /to: address\.toUserId/);
-  assert.match(submit, /toAgent: address\.toAgentPrincipalId/);
-  /* ~~`attachmentRefs,\s*\)\);`~~ retired 2026-09-05: `placement` is the last argument now,
-     and it is where the post says which channel it lands in. */
+  /* The OPTIMISTIC row shows the scalar pair the server is about to write, which is
+     recipient 0's. It is a preview of the stored row, not a second address. */
+  assert.match(submit, /const optimisticAddress = browserSignalAddress\(recipients\);/);
+  assert.match(submit, /to: optimisticAddress\.toUserId/);
+  assert.match(submit, /toAgent: optimisticAddress\.toAgentPrincipalId/);
   assert.match(
     submit,
-    /rawBody,\s*recipient,\s*recipientKinds\[index\]!,\s*attachmentRefs,\s*placement,\s*\)\);/,
+    /rawBody,\s*recipients,\s*signalKind,\s*attachmentRefs,\s*placement,\s*\);/,
   );
   assert.match(submit, /await postBrowserSignal/);
-  /* One command id per recipient, so a retry of a partly-sent message cannot repost the ones
-     that already landed. A single shared id would make the second post look like a duplicate. */
-  assert.match(submit, /commandIds: recipients\.map\(\(\) => uuid\(\)\)/);
-  assert.match(submit, /postBrowserSignal\(\s*session!,\s*commandIds\[index\]!,/);
+  /* ONE command id for the whole message, because the whole message is one signal. A retry
+     of an unchanged message replays that same command rather than minting a second one. */
+  assert.match(submit, /commandId: uuid\(\),/);
+  assert.match(submit, /postBrowserSignal\(\s*session!,\s*commandId,/);
+  assert.doesNotMatch(submit, /commandIds/);
 });
 
 test("attachments use one picker, drop, paste, staging, and failure-restore path", () => {
@@ -210,9 +226,10 @@ test("posted mentions keep the same visual entity control without entering the c
     'one<HTMLFormElement>("[data-composer]")?.addEventListener("submit"',
     'for (const button of all<HTMLButtonElement>("[data-feed-filter]")',
   );
-  /* A posted row carries ITS OWN recipient chip. Handing every row the whole address would
-     label a message to one agent with the names of the others. */
-  assert.match(submit, /visualMentions\.set\(signal\.id, mentionsFor\(recipients\[index\]!\)\)/);
+  /* The posted row carries the WHOLE To: set, because the row IS addressed to all of it.
+     Showing one name would hide the others from the record of what was sent. */
+  assert.match(submit, /visualMentions\.set\(posted\.id, rowMentions\)/);
+  assert.match(submit, /const rowMentions: EntityRef\[\] = recipients\.map/);
   assert.doesNotMatch(
     submit.match(/await postBrowserSignal\(([\s\S]*?)\);/)?.[1] ?? "",
     /mentions/,

@@ -312,13 +312,22 @@ test("loaded-signal filters and counts classify person, agent, and broadcast tar
   assert.equal(signalIsDirectToViewer(signals[2]!, "viewer"), false);
   assert.equal(signalIsDirectToViewer(signals[3]!, "viewer"), false);
 
-  const sampleStart = dashboard.indexOf("const renderSample =");
+  /* THE SAMPLE FEED MOVED OUT OF `renderSample` on 2026-09-05, into `sampleSignalsFor`, so
+     the workspace switch can fill the workspace a reader arrives in and not only the one the
+     boot built. The slice starts there and still ends at `boot`, so it covers the fixture and
+     the render that reads it. */
+  const sampleStart = dashboard.indexOf("const sampleSignalsFor =");
   const sampleEnd = dashboard.indexOf("const boot =", sampleStart);
   assert.notEqual(sampleStart, -1, "sample-render start anchor must resolve");
   assert.notEqual(sampleEnd, -1, "sample-render end anchor must resolve");
   const sample = dashboard.slice(sampleStart, sampleEnd);
   const assertProtocolValidSamples = (source: string): void => {
-    const objects = Array.from(source.matchAll(/{\s*id:\s*"sample-\d+"[\s\S]*?\n\s*},/g));
+    /* EVERY sample row, not only the numbered ones: the second sample workspace names its
+       rows `sample-field-1`, and a pattern that skipped them would have reported a confident
+       pass over a fixture it never read. */
+    const objects = Array.from(source.matchAll(
+      /{\s*id:\s*"sample-[a-z0-9-]+",\s*\n\s*from:[\s\S]*?\n\s*},/g,
+    ));
     assert.ok(objects.length > 0, "sample signal objects must resolve");
     for (const object of objects) {
       const field = (name: "to" | "toAgent" | "kind"): string | null => {
@@ -334,12 +343,12 @@ test("loaded-signal filters and counts classify person, agent, and broadcast tar
   };
   assertProtocolValidSamples(sample);
 
-  const directedShape = `to: null,\n          toAgent: "sample-river",\n          kind: "note",`;
+  const directedShape = `to: null,\n            toAgent: "sample-river",\n            kind: "note",`;
   assert.ok(sample.includes(directedShape), "directed sample mutation anchor must resolve");
   assert.throws(
     () => assertProtocolValidSamples(sample.replace(
       directedShape,
-      `kind: "working-on",\n          to: "sample-owner",\n          toAgent: null,`,
+      `kind: "working-on",\n            to: "sample-owner",\n            toAgent: null,`,
     )),
     /working-on sample must not target a person/,
     "human-directed working-on must fail independent of field order",
@@ -347,7 +356,7 @@ test("loaded-signal filters and counts classify person, agent, and broadcast tar
   assert.throws(
     () => assertProtocolValidSamples(sample.replace(
       directedShape,
-      `kind: "working-on",\n          to: null,\n          toAgent: "sample-river",`,
+      `kind: "working-on",\n            to: null,\n            toAgent: "sample-river",`,
     )),
     /working-on sample must not target an agent/,
     "agent-directed working-on must fail independent of field order",

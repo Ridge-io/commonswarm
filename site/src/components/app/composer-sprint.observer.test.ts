@@ -130,7 +130,10 @@ const assertComposerSprint = (value: ComposerArtifact): void => {
   const sending = between(
     dashboard,
     "const setComposerSending =",
-    "const restoreComposerDraft =",
+    /* The draft restore and the address restore became ONE transaction on 2026-09-05
+       (`restoreComposerOnEntry`), so the old anchor no longer exists. It still marks the same
+       boundary: the next declaration after the sending-state block. */
+    "const restoreComposerOnEntry =",
     "sending-state",
   );
   const controls = between(
@@ -244,10 +247,12 @@ const assertComposerSprint = (value: ComposerArtifact): void => {
   /* A failed request restores the exact, untrimmed draft and the exact recipient snapshot. The
    * optimistic row is removed first, then the retry affordance is made visible. */
   assert.match(failed, /input\.value = rawBody;/, "failed-send-body: restore the exact body");
-  /* RETIRED (2026-09-04): "restore only the recipients that did not send". There is no address
-   * to restore any more — the tags are in the body, and the body goes back whole. What keeps a
-   * retry from posting twice is the command id: every id is kept, so the sends that already
-   * landed replay idempotently instead of arriving again. */
+  /* RETIRED (2026-09-04): "restore only the recipients that did not send". RETIRED AGAIN
+   * (2026-09-05): "there is no address to restore any more — the tags are in the body".
+   * There IS an address again, the To: chips, and it is not restored on failure because it
+   * was never emptied: a send leaves the chips where they are. What keeps a retry from
+   * posting twice is the command id, and there is one of them now because the message is
+   * one signal. */
   /* The rewritten intent gained `placement` / `placementChannelId` on 2026-09-05: without
      them a retry after a partial failure posted UNFILED, because the replay reads
      the address and a missing one defaults to `{}`. The address is the channel ID, resolved to
@@ -255,11 +260,11 @@ const assertComposerSprint = (value: ComposerArtifact): void => {
      channel. It is written back only when the
      send is still `resumable` — unsent AND still addressed to the channel on screen — because
      a channel change retires it and the catch was putting it back. The property here is
-     unchanged: when there IS a retry, every command id is kept. */
+     unchanged: when there IS a retry, the command id is kept. */
   assert.match(
     failed,
-    /composerIntent = resumable[\s\S]{0,400}?commandIds,\s*\n\s*body: rawBody,\s*\n\s*audienceKey,\s*\n\s*attachmentKey,\s*\n\s*signalKind,\s*\n\s*placementChannelId,/,
-    "failed-send-audience: a retry must reuse every command id, not mint new ones",
+    /composerIntent = resumable[\s\S]{0,400}?commandId,\s*\n\s*body: rawBody,\s*\n\s*audienceKey,\s*\n\s*attachmentKey,\s*\n\s*signalKind,\s*\n\s*placementChannelId,/,
+    "failed-send-audience: a retry must reuse the command id, not mint a new one",
   );
   assert.match(
     failed,
@@ -267,30 +272,47 @@ const assertComposerSprint = (value: ComposerArtifact): void => {
     "failed-send-audience: a retry is offered only where it can finish what it started",
   );
   assert.doesNotMatch(failed, /composerAudience|composerMention|remaining/);
-  assert.match(failed, /persistComposerDraft\(\);/, "failed-send-body: persist the restored draft");
-  /* ~~`: sent < recipients.length ?`~~ 2026-09-05: the partial-send sentence is now gated on
-     `resumable`, which is that same condition AND the send still being addressed to the
-     channel on screen. The reader who moved gets a different, true sentence instead of one
-     inviting them to press send again into a channel that cannot finish it. The property
-     here is unchanged: the rejection is announced inline with the counts. */
+  /* THE RESTORED BODY IS WRITTEN DOWN BY THE SETTLE, not by the catch. A persist call inside
+     the catch is dead: the send flag is still up there, so the write returns at its own guard.
+     A review arm found the call AND this assertion, which had been matching a line that did
+     nothing — a control green against a claim that was false. The catch is past the
+     changed-workspace return, so the settle covers every failure it could have covered. */
+  assert.doesNotMatch(failed, /persistComposerDraft\(\);/,
+    "failed-send-body: the catch writes a draft from behind the send flag, which does nothing");
+  const settleWrite = between(
+    submit,
+    "} finally {",
+    "\n    });",
+    "failed-send-settle",
+  );
+  assert.match(settleWrite, /syncComposerAddress\(\);/,
+    "failed-send-body: nothing writes the restored draft down");
+  /* RETIRED 2026-09-05 with the fan-out: "Sent to ${sent} of ${recipients.length}" and
+     "All ${sent} went out". A message is ONE signal now, so there is no partial send to
+     count: the command was rejected and nothing is on the server, or it landed and this
+     throw came from the render after it. A reader may still meet the counting sentences in
+     an older screenshot.
+
+     The property is unchanged: the rejection is announced inline, and the reader is told
+     whether pressing send again would repeat something. */
   assert.match(
     failed,
-    /\? `Sent to \$\{sent\} of \$\{recipients\.length\}\. \$\{readableError\(caught\)\}/,
+    /resumable\s*\n\s*\? readableError\(caught\)/,
     "failed-send-error: announce the rejection inline",
   );
-  /* A partly-sent fan-out must say how many went, or the reader cannot tell whether pressing
-   * send again repeats a message that already arrived. */
+  /* Nothing landed and the reader has moved: Retry cannot finish it, so the sentence says
+     where it was going and that none of it was sent. */
   assert.match(
     failed,
-    /Press send again to finish it; the ones that went will not go twice\./,
-    "failed-send-error: say what pressing send again will and will not repeat",
+    /That message was addressed to \$\{addressLabel\}, and `\s*\+\s*\n\s*"none of it was sent\./,
+    "failed-send-error: a send the reader moved away from must say nothing was sent",
   );
-  /* When every recipient already posted there is nothing to press send for, and saying there is
-   * would invite a duplicate the reader did not intend. */
+  /* It DID post and the throw came from the render, so there is nothing to press send for,
+     and saying there is would invite a duplicate the reader did not intend. */
   assert.match(
     failed,
-    /All \$\{sent\} went out\. \$\{readableError\(caught\)\} `\s*\+\s*"Nothing is left to send/,
-    "failed-send-error: a fully-sent failure must not ask for another send",
+    /`The message went out\. \$\{readableError\(caught\)\} `\s*\+\s*\n\s*"Nothing is left to send/,
+    "failed-send-error: a landed-then-failed send must not ask for another send",
   );
   /* A finished send must also leave the saved draft empty and its preview URLs revoked. Without
    * that, the reload the copy suggests brings the sent message back with no intent, and the next
@@ -310,11 +332,11 @@ const assertComposerSprint = (value: ComposerArtifact): void => {
     /data-composer-retry[^]*?addEventListener\("click", \(\) => \{\s*one<HTMLFormElement>\("\[data-composer\]"\)\?\.requestSubmit\(\);/,
     "retry-path: retry must resubmit the restored form",
   );
-  /* Every pending row leaves the feed before the body comes back, so a failed fan-out cannot
+  /* The pending row leaves the feed before the body comes back, so a failed send cannot
    * leave a ghost row beside the restored draft. */
   assertOrder(
     failed,
-    "!pendingSet.has(signal.id)",
+    "signal.id !== pendingId",
     "input.value = rawBody;",
     "failed-send-body",
   );
@@ -354,7 +376,7 @@ const assertComposerSprint = (value: ComposerArtifact): void => {
    * receipt cache from posting to accepted; neither phase may claim delivery. */
   assert.match(
     submit,
-    /const pendingIds = commandIds\.map\(\(commandId\) => `composer-pending-\$\{commandId\}`\);/,
+    /const pendingId = `composer-pending-\$\{commandId\}`;/,
     "optimistic-posting: use one stable pending row id",
   );
   assert.match(
@@ -362,11 +384,11 @@ const assertComposerSprint = (value: ComposerArtifact): void => {
     /deliveryReceiptCache\.set\(pendingId, \{ result: null, checkedAt: 0, phase: "posting" \}\);/,
     "optimistic-posting: pending row must use the receipt model",
   );
-  assertOrder(submit, "signals.unshift(...optimisticSignals);", "await postBrowserSignal(", "optimistic-posting");
+  assertOrder(submit, "signals.unshift(optimisticSignal);", "await postBrowserSignal(", "optimistic-posting");
   assertOrder(submit, 'renderFeed("latest");', "await postBrowserSignal(", "optimistic-posting");
   assert.match(
     submit,
-    /deliveryReceiptCache\.set\(signal\.id, \{ result: null, checkedAt: 0, phase: "accepted" \}\);/,
+    /deliveryReceiptCache\.set\(posted\.id, \{ result: null, checkedAt: 0, phase: "accepted" \}\);/,
     "optimistic-accepted: accepted response must stay in the receipt model",
   );
   const postingIndicator = between(
@@ -498,20 +520,37 @@ const assertComposerSprint = (value: ComposerArtifact): void => {
     /input\.style\.blockSize = "auto";[\s\S]{0,420}composerCaretKnown = false;/,
     "caret-survival: leaving a workspace keeps the caret it had in that workspace's text",
   );
+  /* THREE CALLERS as of 2026-09-05: the real workspace change, session teardown, and the
+     SAMPLE workspace change. The sample switch used to set the id and repaint, which is not
+     what a real switch does and so could not measure what a switch breaks; it now takes the
+     same steps in the same order. None of the three is a send. */
   assert.equal(
     occurrences(dashboard, "resetComposer();"),
-    2,
-    "caret-survival: resetComposer has gained a caller, so check it is not the send before " +
+    3,
+    "caret-survival: resetComposer has gained a caller, so check it is not the send before" +
       "the comments and messages here keep saying it is not",
   );
 
   /* EVERY DEBOUNCED TIMER DIES IN `resetComposer`, which the workspace change and session
      teardown call and a send does not. A draft timer armed against the old workspace would
      otherwise fire afterwards, read an empty box against the NEW key, and remove the draft the
-     reader is about to be shown. `blur` covers a pointer switch because it flushes first; a
-     switch that never blurred does not. The mention timer already died here through
-     closeMentionPicker. */
-  assert.match(reset, /cancelComposerDraftTimer\(\);/,
+     reader is about to be shown. The mention timer already died here through
+     closeMentionPicker.
+
+     IT IS FLUSHED, NOT CANCELLED, as of 2026-09-05. Cancelling killed the timer and the edit
+     with it: a chip removed from To: writes nothing else, so a reader who took a name out and
+     switched workspace got that name back. The flush does both jobs, because
+     `persistComposerDraft` cancels the timer itself before it writes -- which is asserted
+     here rather than assumed, since the whole claim rests on it. */
+  assert.match(reset, /persistComposerDraft\(\);/,
+    "composer-reset: the composer is emptied without writing down the draft it held");
+  const persist = between(
+    dashboard,
+    "const persistComposerDraft = (): void => {",
+    "\n    };",
+    "draft-persist",
+  );
+  assert.match(persist.slice(0, 90), /cancelComposerDraftTimer\(\);/,
     "composer-reset: a debounced draft write survives the composer being emptied, so it can " +
       "land against another workspace's key");
   assert.match(reset, /closeMentionPicker\(\);/,
@@ -616,9 +655,11 @@ const assertComposerSprint = (value: ComposerArtifact): void => {
 
   /* Draft identity includes all three ownership axes. Storage survives reset/error and is cleared
    * by the accepted response only. */
+  /* The workspace became an ARGUMENT on 2026-09-05, defaulting to the live one, so a send can
+     bind its storage to the workspace it posted from. The three axes are unchanged. */
   assert.match(
     draft,
-    /`commonswarm:composer-draft:\$\{owner\}:\$\{activeWorkspaceId\}:\$\{COMPOSER_DRAFT_SCOPE\}`/,
+    /`commonswarm:composer-draft:\$\{owner\}:\$\{workspaceId\}:\$\{COMPOSER_DRAFT_SCOPE\}`/,
     "draft-scope: key must include user, workspace, and stream",
   );
   /* The name changed with the vocabulary on 2026-09-05; "stream" is the event log on the
@@ -626,46 +667,108 @@ const assertComposerSprint = (value: ComposerArtifact): void => {
      drafts already saved in readers' browsers. */
   assert.match(draft, /COMPOSER_DRAFT_SCOPE = "all-signals";/,
     "draft-scope: stream identity must be explicit");
-  /* The draft is the body and one attachment marker. The address used to be saved beside it —
-   * audienceKey, extra agent ids, the no-wake choice — and all three are gone, because the
-   * address is inside the body the draft already holds. */
+  /* The draft is the state of the message being written: the body, one attachment marker,
+   * the To: set it is addressed to, and which of the body's tags produced that set.
+   *
+   * RETIRED (2026-09-04): "the address used to be saved beside it — audienceKey, extra agent
+   * ids, the no-wake choice — and all three are gone, because the address is inside the body
+   * the draft already holds." The address is beside the body again, and it is not those
+   * three things: a recipient LIST, and the record that keeps a removed recipient removed.
+   * Saving one without the other was measured wrong in both directions on 2026-09-05. */
   assert.match(
     draft,
     /JSON\.stringify\(\{\s*body,\s*\.\.\.\(hadAttachments \? \{ hadAttachments: true \} : \{\}\),/,
     "draft-audience: body and the lost-attachment marker must persist together",
   );
+  assert.match(
+    draft,
+    /to: composerTo,\s*\n\s*\.\.\.\(composerToApplied\.length === 0 \? \{\} : \{ applied: composerToApplied \}\),/,
+    "draft-audience: the To: set persists whole, empty included, with its applied record",
+  );
   assert.match(draft, /input\.value = draft\.body;/,
     "draft-restore: reload must restore the exact body");
   assert.doesNotMatch(draft, /audienceKey|extraAgentIds|agentNote/);
-  /* Two callers, and both mean the same thing: the send FINISHED. The second is the failure
-     that arrives after every recipient already posted — a render fault, not a rejection — where
-     leaving the draft would let a reload bring the sent message back. */
-  assert.equal(occurrences(dashboard, "clearComposerDraft();"), 2,
+  /* THREE CALLERS, and all three mean the same thing: the send FINISHED. The second is the
+     failure that arrives after every recipient already posted — a render fault, not a
+     rejection — where leaving the draft would let a reload bring the sent message back. The
+     third is the settle in the `finally` (2026-09-05): the address pass runs there and writes
+     the pair down, which would leave a draft holding the set the send just left on the row,
+     so a landed post clears it once more AFTER that write. */
+  assert.equal(occurrences(dashboard, "clearComposerDraft(sendDraftKey);"), 3,
     "draft-clear: only a finished send may clear the draft");
-  assertOrder(submit, "await postBrowserSignal(", "clearComposerDraft();", "draft-clear");
+  const settle = between(
+    submit,
+    "} finally {",
+    "\n    });",
+    "send-settle",
+  );
+  assert.match(settle, /if \(posted !== null\) clearComposerDraft\(sendDraftKey\);/,
+    "draft-clear: the settle clears the draft for a send that never landed");
+  assertOrder(submit, "await postBrowserSignal(", "clearComposerDraft(sendDraftKey);", "draft-clear");
+  /* AND EVERY CLEAR NAMES THE KEY THIS SEND CAPTURED. Reading the live one meant a post that
+     landed after the reader switched away removed whichever workspace's draft was on screen —
+     or, behind the send's own changed-workspace return, removed nothing at all and left the
+     sent body to come back as a draft. A review arm found it. */
+  assert.equal(occurrences(dashboard, "clearComposerDraft();"), 0,
+    "draft-clear: a clear reads the live workspace key instead of the one its send captured");
   /* RETIRED (2026-09-04): "failed sends must retain the saved draft", unconditionally. It is
      still true of a rejected send — that is the partial branch above, which persists the draft.
      It is false of a failure that arrives after every recipient already posted: there the send
      finished, and keeping the draft would let a reload bring the sent message back. The clear
      is inside the !unsent branch, and only there. */
-  /* Read the !unsent BLOCK, not the whole catch: a [\s\S]* match would still pass if the clear
-     were moved out below the block, where a rejected send would reach it too. */
-  const finished = between(
+  /* Read the !unsent BLOCKS, not the whole catch: a [\s\S]* match would still pass if the
+     clear were moved out below them, where a rejected send would reach it too.
+
+     THERE ARE TWO OF THEM NOW, and the split is the rule this file's newest claim is about
+     (2026-09-05). Work the SEND owns — removing the draft it wrote, retiring the command id
+     it minted — runs at the TOP of the catch, before anything asks about the screen, because
+     a reopen of the current workspace bumps the generation and a switch changes the
+     workspace, and neither makes a landed message unlanded. Work the SCREEN owns — the
+     attachment marker the composer shows, the previews it is holding open — stays below the
+     guard, with the box it is about. */
+  const finishedBySend = between(
     failed,
-    "if (!unsent) {",
+    "if (landed) {",
     "\n        }",
     "finished-send-cleanup",
   );
-  assert.match(finished, /clearComposerDraft\(\);/,
+  assert.match(finishedBySend, /clearComposerDraft\(sendDraftKey\);/,
     "draft-clear: a finished send must clear the draft");
-  assert.match(finished, /composerAttachmentsMissingAfterReload = false;/,
+  assert.match(
+    finishedBySend,
+    /if \(composerIntent\?\.commandId === commandId\) composerIntent = null;/,
+    "draft-clear: a finished send must retire the command id it minted",
+  );
+  const belowGuard = failed.slice(failed.indexOf("if (!boxIsStillThisSends) {"));
+  const finishedOnScreen = between(
+    belowGuard,
+    "if (landed) {",
+    "\n        }",
+    "finished-send-screen-cleanup",
+  );
+  assert.match(finishedOnScreen, /composerAttachmentsMissingAfterReload = false;/,
     "draft-clear: a finished send must clear the lost-attachment marker too");
-  assert.match(finished, /URL\.revokeObjectURL/,
+  assert.match(finishedOnScreen, /URL\.revokeObjectURL/,
     "draft-clear: a finished send must free its preview URLs");
   assert.doesNotMatch(
-    failed.replace(finished, ""),
+    failed.replace(finishedBySend, "").replace(finishedOnScreen, ""),
     /clearComposerDraft\(\)/,
     "draft-clear: a rejected send must retain the saved draft",
+  );
+  /* AND THE SEND'S OWN TEARDOWN IS NOT BEHIND THE SCREEN GUARD. The catch used to open with
+     the generation test, which threw the send's work away with the screen's: a landed draft
+     stayed saved, the previews leaked, and a failed send under a same-workspace REOPEN never
+     put the body back — the box stayed empty and read-only for the rest of the session. */
+  assertOrder(
+    failed,
+    "clearComposerDraft(sendDraftKey);",
+    "if (!boxIsStillThisSends) {",
+    "send-owned-before-screen-guard",
+  );
+  assert.doesNotMatch(
+    failed.slice(0, failed.indexOf("if (!boxIsStillThisSends) {")),
+    /version !== requestVersion/,
+    "send-owned-before-screen-guard: the catch still opens on the screen's generation",
   );
   /* ~~`!postedIds.has(signal.id)`~~ 2026-09-05: the id set the failure path removes is now
      the set it is about to put back, which is the posted rows the list ON SCREEN would show.
@@ -675,12 +778,12 @@ const assertComposerSprint = (value: ComposerArtifact): void => {
      twice — is unchanged, and it is the same id set on both sides of the operation. */
   assert.match(
     failed,
-    /!pendingSet\.has\(signal\.id\) && !visibleFailureIds\.has\(signal\.id\)/,
+    /signal\.id !== pendingId && !visibleFailureIds\.has\(signal\.id\)/,
     "failed-send-body: a late throw must not prepend rows the success path already added",
   );
   assert.match(
     failed,
-    /const visibleOnFailure = posted\.filter\(showsOnScreen\);/,
+    /const visibleOnFailure = posted !== null && showsOnScreen\(posted\) \? \[posted\] : \[\];/,
     "failed-send-body: the rows put back are the ones the list on screen would show",
   );
   assert.match(
@@ -708,7 +811,7 @@ const assertComposerSprint = (value: ComposerArtifact): void => {
   );
   assert.match(renderFeed, /el\.scrollTop = topBefore \+ \(el\.scrollHeight - heightBefore\);/,
     "reader-scroll: history prepend must preserve the visible row by height delta");
-  assert.match(submit, /signals\.unshift\(\.\.\.optimisticSignals\);[^]*?renderFeed\("latest"\);/,
+  assert.match(submit, /signals\.unshift\(optimisticSignal\);[^]*?renderFeed\("latest"\);/,
     "reader-scroll: optimistic append must use latest-row anchoring");
 };
 
@@ -722,17 +825,20 @@ type Mutation = {
 
 const mutations: Mutation[] = [
   {
-    name: "a retry mints fresh command ids and reposts what already landed",
+    name: "a retry mints a fresh command id and reposts what already landed",
     key: "dashboard",
-    target: "            commandIds,\n            body: rawBody,",
-    replacement: "            commandIds: commandIds.map(() => uuid()),\n            body: rawBody,",
+    target: "            commandId,\n            body: rawBody,",
+    replacement: "            commandId: uuid(),\n            body: rawBody,",
     expectedFailure: "failed-send-audience",
   },
   {
     name: "retry stops resubmitting the restored draft",
     key: "dashboard",
-    target: 'one<HTMLFormElement>("[data-composer]")?.requestSubmit();\n    });\n    syncComposerControls();',
-    replacement: 'one<HTMLFormElement>("[data-composer]")?.reset();\n    });\n    syncComposerControls();',
+    /* Anchored on the retry listener itself. It used to be anchored on the line that
+       followed it, and the To: chip listener landed between the two on 2026-09-05, so the
+       mutation stopped resolving and the control silently measured nothing. */
+    target: 'one<HTMLButtonElement>("[data-composer-retry]")?.addEventListener("click", () => {\n      one<HTMLFormElement>("[data-composer]")?.requestSubmit();',
+    replacement: 'one<HTMLButtonElement>("[data-composer-retry]")?.addEventListener("click", () => {\n      one<HTMLFormElement>("[data-composer]")?.reset();',
     expectedFailure: "retry-path",
   },
   {
@@ -801,8 +907,11 @@ const mutations: Mutation[] = [
   {
     name: "the emptied composer leaves a debounced draft write armed",
     key: "dashboard",
-    target: 'cancelComposerDraftTimer();\n      setComposerStatus("");',
-    replacement: 'setComposerStatus("");',
+    /* Anchored inside `persistComposerDraft`, which is where the cancel lives now: the reset
+       FLUSHES rather than cancels, and the flush cancels the timer before it writes. Breaking
+       that cancel is what leaves a write armed against the workspace being left. */
+    target: 'const persistComposerDraft = (): void => {\n      cancelComposerDraftTimer();',
+    replacement: 'const persistComposerDraft = (): void => {',
     expectedFailure: "composer-reset",
   },
   {
@@ -822,7 +931,9 @@ const mutations: Mutation[] = [
   {
     name: "a restored draft inherits a caret from different text",
     key: "dashboard",
-    target: 'composerCaretKnown = false;\n      composerIntent = null;',
+    /* Eight spaces: the restore of the body sits inside the entry transaction's own
+       `if (draft !== null)` block as of 2026-09-05. */
+    target: 'composerCaretKnown = false;\n        composerIntent = null;',
     replacement: "composerIntent = null;",
     expectedFailure: "caret-survival",
   },
@@ -864,8 +975,8 @@ const mutations: Mutation[] = [
   {
     name: "draft key loses user ownership",
     key: "dashboard",
-    target: "`commonswarm:composer-draft:${owner}:${activeWorkspaceId}:${COMPOSER_DRAFT_SCOPE}`",
-    replacement: "`commonswarm:composer-draft:${activeWorkspaceId}:${COMPOSER_DRAFT_SCOPE}`",
+    target: "`commonswarm:composer-draft:${owner}:${workspaceId}:${COMPOSER_DRAFT_SCOPE}`",
+    replacement: "`commonswarm:composer-draft:${workspaceId}:${COMPOSER_DRAFT_SCOPE}`",
     expectedFailure: "draft-scope",
   },
   {

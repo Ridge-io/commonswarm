@@ -1,0 +1,30 @@
+`diff --git a/docs/design/2026-09-04-chat-platform-reconciled.md b/docs/design/2026-09-04-chat-platform-reconciled.md`
+
+## 1. Hidden recipient
+The `applyComposerMentions` pass uses `composerToApplied` to remember which tags in the draft were already turned into chips (or explicitly removed by the user). However, `composerToApplied` is forcibly cleared on reload or workspace switch, while the text draft is restored intact. This means any tag the user explicitly removed from the chips but left in the text is treated as "fresh" upon reload, silently adding a hidden recipient back to the delivery set against the user's prior action.
+
+## 2. The wire body
+While the current edge accepts the new payload (with `to` list and null scalars), an **older deployed edge** would refuse any directed post. Because `to` is not in its `CHAT_SIGNAL_OPTIONAL_KEYS` whitelist, the request would be refused with a 400 error.
+
+## 3. The wake claim
+The claim holds true for both. The database trigger `swarm.enqueue_signal_delivery` specifically requires `to_agent_principal_id IS NOT NULL`. Since placing a person first writes to `to_user_id` and leaves the agent scalar null, no delivery is enqueued and the local listener does not wake. The new UI copy `"No agent is notified while a person is first"` accurately reflects this database reality.
+
+## 4. The mention merge
+The fix works for a single session and network failures. A failed send restores the text body while preserving `composerToApplied` (since it is now only cleared on the success path), preventing a rejected tag from silently popping back in. However, as noted in (1), a reload or workspace switch destroys this applied memory, leading to unwanted merges.
+
+## 5. The one-signal rewrite
+The success path **loses a posted row** and creates a **double-post**. If a user switches channels while the post is in-flight, `postBrowserSignal` succeeds but the `try` block hits an early return (`if (version !== requestVersion...)`). This skips `postedSinceReset.set()`, dropping the successful row from memory. It also skips `clearComposerDraft()`. Because `selectChannel` nullifies `composerIntent`, the uncleared draft is left in storage with no idempotency key. Restoring it and sending again mints a new `commandId` for the identical message, double-posting it.
+
+## 6. Generated versus typed
+`POSITION_WORDS` is typed as an array of 8 literal strings (`"first"`, `"second"`, etc.), which would break if `COMPOSER_TO_MAX` grows. Also, in the test harness (`composer-to-field.observer.test.ts`), assertions check for the literal string `"Only the first recipient is notified"`, hardcoding the position text rather than generating it. 
+
+## 7. Retired claims
+`supabase/functions/_shared/channels.ts` still asserts the retired claim: *"that composer posts one directed signal per tag and has not moved to `to` yet"*. Additionally, `docs/design/2026-09-04-chat-platform-reconciled.md` and `docs/design/2026-09-05-chat-app-channels.md` still contain the retired "deleted the TO row from an 80px bar" wording in their body text.
+
+## 8. State that must follow the body
+The fix for `composerToApplied` clearance creates a **fifth instance** of state failing to follow the body. The fix moved the clearance to the success path so failed sends retain their state. However, on workspace entry, `restoreComposerToOnEntry` clears `composerToApplied`. Because the text draft is restored immediately after, the memory of which tags were manually removed by the user is lost. The `applyComposerMentions` pass then scans the restored body, sees the previously-removed tags as "fresh", and silently adds them back to the delivery set, violating the user's intent.
+
+## 9. The controls
+The `mutate.mjs` script output in `mutation-table.txt` reports 25 mutations, but the `README.md` states 21. Furthermore, several FIELD mutations lazily expect the string `"the To: row is the address"`, which is simply the title of the test in `composer-to-field.observer.test.ts`. Any failure in that file matches this expectation, meaning assertions can pass for entirely unrelated reasons. The source-reading claims do state their bounds honestly (e.g., admitting they only read one file). The renegotiated height budgets in `composer-polish.observer.test.ts` can still fail because the reverted legacy control is explicitly asserted to exceed them, but at 320x568 the measured rest height is 128.81px, which exceeds the 108px budget but is not gated by the tests.
+
+VERDICT: FAIL

@@ -1,0 +1,118 @@
+I'll read REVIEW.md and DIFF.patch first, then follow REVIEW.md exactly.The brief is a D-036 attack review. I’ll keep reading the rest of the patch and the source it names, then answer each numbered check.I’ll read the source that actually owns the To: set, the freeze, the empty-set rule, and the controls.Next I’ll read the dashboard handlers, restore/send paths, and the tests that claim to pin them.The restore-vs-hold gap looks load-bearing. I’ll read the input path, tests, and sample switch next.`diff --git a/docs/design/2026-09-04-chat-platform-reconciled.md b/docs/design/2026-09-04-chat-platform-reconciled.md`
+
+The derived pass holds and commits as one write of the in-memory pair. The sixth item is not closed. `composerAddressIsChosen` only decides whether an empty-body draft is kept. Any kept draft still writes the chips on screen as `to`, including a set nobody touched.
+
+## 1. A seventh instance of the same class
+
+**Writes of the in-memory pair**
+
+| name | writers |
+|---|---|
+| `composerTo` / `composerToApplied` / `composerToPruned` / `composerToNotice` | `syncComposerAddress` (`LiveDashboard.astro:2797–2801`) on commit; `resetComposer` (`3513–3517`) zeros them |
+| `composerToLive` | `true` on commit (`2800`); `false` in `resetComposer` (`3517`) |
+
+No other assignment. Chip clicks, typing, restore, roster paint, submit flush, and the send `finally` all call `syncComposerAddress`. `renderComposerTo` (`2689`) draws only.
+
+**Storage keys**
+
+- `commonswarm:composer-to:${owner}:${workspace}` — `rememberComposerTo` / `readRememberedComposerTo` (`2632–2677`)
+- `commonswarm:composer-draft:${owner}:${workspace}:all-signals` — `persistComposerDraft` / `readComposerDraft` / `clearComposerDraft` (`2863–2960`)
+
+**Body replaced without a keystroke**
+
+- `restoreComposerOnEntry` (`3190`) puts `draft.body` in the box
+- `resetComposer` (`3489`) empties it
+- submit success (`7586`) empties it
+- submit catch (`7747`) puts `rawBody` back
+
+`resetComposer` is a teardown, not a derivation. It flushes first while the old workspace is still current (`3467–3478`), then drops the pair because that workspace is gone. That claim holds.
+
+**The pair still leaves the body.**
+
+`composerAddressIsChosen` (`composer-address.ts:462–469`) asks the right question: is this different from last-sent, pruned. Persist only uses the answer to drop an empty box (`LiveDashboard.astro:2938–2947`). A non-empty body always writes the live chips:
+
+```2948:2955:site/src/components/app/LiveDashboard.astro
+        window.localStorage.setItem(
+          key,
+          JSON.stringify({
+            body,
+            ...(hadAttachments ? { hadAttachments: true } : {}),
+            to: composerTo,
+            ...(composerToApplied.length === 0 ? {} : { applied: composerToApplied }),
+          }),
+```
+
+Sequence:
+
+1. Last send was Wren and Gone. Remembered is `[Wren, Gone]`.
+2. Gone leaves. Arrival prunes in silence. Chips show `[Wren]`. `composerAddressIsChosen` is false.
+3. Reader types `hello`. Body is not empty, so persist writes `to: [Wren]`.
+4. Gone comes back. Reload or switch. The pass prefers the draft (`composer-address.ts:418–425`). Gone stays out.
+
+That is the sixth item, still open, for every draft that has a body. The empty-body path is what the new function actually gates. A point fix on persist (write `to` only when chosen; omit it when the chips are residue) would close this door. It would not prove persist is not still a second writer of the pair.
+
+Looked at and not used as the fail: after `resetComposer`, `composerToLive` is false and the row draws “Everyone here” (`2695–2702`) until the next commit. On a real `openWorkspace` that paint is `feed-pending` and the composer is hidden (`1662–1663`, `5620–5622`). Sample leaves the composer up for one `setTimeout(0)`. A send cannot win that race. Residue that does not land in storage is not this family.
+
+## 2. The freeze
+
+The pass returns `held` while `input.sending` (`composer-address.ts:414`). Chip clicks return (`LiveDashboard.astro:7829`). The box is `readOnly` (`3135`). Submit snapshots chips after a flush (`7456–7486`), then `setComposerSending(true)` (`7582`). The `finally` drops the flag and then calls the pass (`7793–7802`).
+
+Success: body is empty, so merge drops `applied`. Chips stay as the posted set, minus a live prune, with a notice. The success block no longer writes `composerToApplied = []`.
+
+Failure: catch restores the body while the flag is still up (`7746–7751`). `applied` was never cleared. Settle then sees the restored body and the old record, so a removed chip does not come back and `audienceKey` does not change under Retry.
+
+I did not find a same-workspace path where the row and the wire disagree. A workspace change under the post still early-returns (`7644–7648`) without `rememberComposerTo`. That case is old. It is not this freeze.
+
+No browser control, as the README says.
+
+## 3. The empty set, and the chosen set
+
+`null` vs `[]` inside the pass is right (`composer-address.ts:337–339`, `419–425`). Persist writes `to: []` rather than omitting the key (`2922–2927`, `2953`). Restore of `[]` is a broadcast; missing `to` is last-sent.
+
+`composerAddressIsChosen` is right for promotion (order is in the key), for an emptied row, for an add, and for “pruned last-sent is not a choice” (`composer-address.test.mjs:444–472`).
+
+It is not asked about the `to` field of a draft that also has a body. That is (1). An empty row on screen after a real switch is not a chosen broadcast (`composerToLive` is false), and it is not what gets stored if persist does not run.
+
+## 4. The cap
+
+A refused name is not written into `applied` (`composer-address.ts:320–333`). The notice is rebuilt from `refused` on every commit (`476–489`). Make room, and the still-typed tag joins (`composer-address.test.mjs:225–260`; `capAfterRoom` in the observer).
+
+The notice does not depend on a one-shot push, so it does not vanish while the tag still does not fit, and it does not need a refusal record to avoid chatter. A name cannot join twice (`seen` in `addComposerRecipients`). Nothing in this SHA makes a refusal permanent.
+
+## 5. The stored draft’s new reach
+
+Empty-body chosen address is kept (`2938–2947`). `resetComposer` flushes before it empties the box, while `activeWorkspaceId` is still the workspace being left (`3467–3478`, `5677–5699`, `3597–3600`). `clearComposerDraft` is called on success (`7693`), on a landed catch (`7772`), and again in `finally` when `posted !== null` (`7807`).
+
+I did not find a wrong-workspace key from that flush, or a sent body coming back as a draft. The hole is (1): a body that is only prose still records a pruned `to`.
+
+## 6. The controls
+
+`mutation-table.txt` ends `46 mutations, 0 problems`. I did not re-run the harness.
+
+**New entry, wrong named assertion.** `mutate.mjs:243–247` breaks `composerToLive = true` into `composerToLive = composerTo.length > 0`, and expects `afterSend: one signal, addressed to the chips`. After `clearTo`, that assignment makes `composerToLive` false. The next tagged body is a cold entry from last-sent, so `afterSend` goes red because Lumen is still on the row, not because an emptied To: was stored. `broadcastSurvivesReload` is the claim the mutation names. It is never reached.
+
+**Redundant, not masking.** The same source line `if (!input.rosterKnown || input.sending) return held;` is broken twice in FIELD (`mutate.mjs:141–145` and `237–242`), once for the source sentence and once for `chipEditSurvivesSwitch`. They run apart. Each can go red. They are the same edit.
+
+**README “What is NOT established” is short.** It does not say that `composerAddressIsChosen` is not applied to `to` on a non-empty draft. That is the uncontrolled half of the sixth item.
+
+The `notifiedMark` split looks like it does what round four asked. The freeze source claim states its bound.
+
+## 7. The sample workspace
+
+`openSampleWorkspace` (`3597–3621`) does the composer steps: `resetComposer` while the old id is current, roster cleared, one paint, roster on a later task. It does not call `openWorkspace`. Real switch with `keepShell` paints `renderChannel(selected, true)` and hides the composer (`5620–5622`, `1662–1663`). Sample paints `renderChannel(workspace)` with `pending` false, shows the feed, and leaves the composer up across `setTimeout(0)`.
+
+The observer waits for the new workspace name, a feed row, and 400ms (`378–392`). That is the settled pair, which is what those claims name. It is not the hidden `feed-pending` path. I do not treat that as the fail.
+
+## 8. Generated versus typed, and retired claims
+
+`composerAddressNotice`, `composerToFullNotice`, `composerPrunedNotice`, `composerPromoteLabel`, and `composerDeliveryNote` all take `COMPOSER_TO_MAX` or `positionWord(NOTIFIED_POSITION)`. `POSITION_WORDS` is still eight literals; the pure test pins that list to the cap.
+
+`channels.ts:233–242` keeps the old “one directed signal per tag” sentence as `RETIRED 2026-09-05`. The two design notes mark the TO-row reversal. I did not find those claims asserted as current.
+
+Stale, and this SHA made it false: `LiveDashboard.astro:3676–3677` still says `renderComposerTo prunes before it draws`. The next comment (`3679–3689`) is the new rule. The first sentence is still there as if it were live.
+
+---
+
+The pass is one writer of the live pair. Persist is still a second writer of the stored pair, and it still records a silent prune as soon as the box has any text.
+
+VERDICT: FAIL

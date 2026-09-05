@@ -1,12 +1,19 @@
 /**
- * THE ADDRESS IS THE MESSAGE. An @tag typed in a signal body names a recipient; the send posts
- * one signal per tag because the wire carries a single recipient per signal.
+ * AN @TAG READS A NAME OUT OF A SENTENCE. What the composer then does with that name lives in
+ * `composer-address.ts`: the tag ADDS the person or agent to the To: set (ruling D2), it does
+ * not open a DM and it does not replace whoever is already there.
+ *
+ * RETIRED 2026-09-05: "THE ADDRESS IS THE MESSAGE ... the send posts one signal per tag because
+ * the wire carries a single recipient per signal." The wire learned a recipient list on
+ * 2026-09-05 (`SIGNAL_RECIPIENT_MAX` in `_shared/channels.ts`), so one message now carries the
+ * whole set. A reader who meets the old wording somewhere else should read this instead.
  *
  * This lives outside the dashboard component so it can be tested directly. Every rule below was
  * written against a defect a review arm found in the first version, and each has a test:
  * longest-name-first, boundary characters, case folding that changes a string's LENGTH,
- * two roster entries sharing a name, and more tags than one send may carry.
+ * two roster entries sharing a name, and more tags than one message may carry.
  */
+import { COMPOSER_TO_MAX } from "./composer-address.js";
 
 export interface MentionEntity {
   id: string;
@@ -26,8 +33,12 @@ export interface MentionAddress {
   recipients: MentionEntity[];
 }
 
-/** A ceiling on one send: each tag costs a signal, a wake, and a receipt row. */
-export const MENTION_MAX_RECIPIENTS = 8;
+/**
+ * A ceiling on one message, and the SAME number the server refuses above. It is imported
+ * rather than typed: a tag costs a row in `swarm.signal_recipients` now, not a whole signal,
+ * so the parser must stop exactly where the To: set does.
+ */
+export const MENTION_MAX_RECIPIENTS = COMPOSER_TO_MAX;
 
 /** What may sit in front of an @ for it to start a tag. */
 const OPENS_TAG = /\s|[([]/u;

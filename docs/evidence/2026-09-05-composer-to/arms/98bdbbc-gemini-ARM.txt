@@ -1,0 +1,29 @@
+`diff --git a/docs/design/2026-09-04-chat-platform-reconciled.md b/docs/design/2026-09-04-chat-platform-reconciled.md`
+
+## 1. A SEVENTH INSTANCE OF THE SAME CLASS
+I am attacking the ruling from Grok in the previous round about a draft with a body. The ruling claims that adding a returning member back to a draft's To: row would be a "hidden recipient" because the reader never chose them. But this logic is flawed: the reader WOULD SEE the returned member on the To: row! The row exists specifically so the reader can see the address and verify who it goes to.
+
+The real issue is that the prune upon arrival was SILENT. The reader never "chose" to remove the member; the system removed them silently on arrival. Then, the system permanently records this silent prune as a deliberate "choice" if the body happens to be non-empty. This means a member who returns is permanently excluded from a draft, even though the user was just continuing to type. Thus, a draft with a body still separates the pair from what a fresh derivation would do, treating a transition residue (the silent prune) as a choice. This is still the same class of bug.
+
+## 2. THE FREEZE
+The pass holds during a send and resolves correctly in the `finally` block, answering both success and failure cases without hand-writing `applied`. The success block correctly drops the applied record because the text body is cleared first. A failed send restores the body, preserving the applied record correctly.
+
+## 3. THE EMPTY SET, AND THE CHOSEN SET
+`composerAddressIsChosen` correctly gates an empty-body draft against the freshly pruned remembered set. But as shown in check 1, a draft WITH a body doesn't use this guard, so an empty set on screen can STILL be transition residue if the last-sent set was pruned silently.
+
+## 4. THE CAP
+The cap works as claimed. A refused name is tracked in `refused` and dynamically converted to a notice on every pass without being written to `applied`. No refusal is permanent; if the reader removes a chip to make room, the still-typed tag joins immediately on the next pass.
+
+## 5. THE STORED DRAFT'S NEW REACH
+Yes, it can resurrect a sent message! When a send succeeds, but the reader switches workspace while it is in-flight, `submit` early-returns from the `try` block (`LiveDashboard.astro:7663`) and skips the `clearComposerDraft()` call. The `finally` block also early-returns (`LiveDashboard.astro:7812`) and skips its own `clearComposerDraft()` call. The draft for the old workspace is therefore left in `localStorage`, retaining the sent text. When the reader returns to the old workspace, the message they already successfully sent is resurrected as an active draft. 
+
+## 6. THE CONTROLS
+The new entries successfully target the right assertions. There are intentionally no redundant controls that mask each other by accident; for instance, the two mutations for chip edits are explicitly acknowledged to mask each other, which is why the control targets the write itself. The README accurately documents the uncontrolled bounds.
+
+## 7. THE SAMPLE WORKSPACE
+`openSampleWorkspace` now follows the exact same code path as a real switch: it calls `resetComposer()` while the old workspace is active, clears the roster, and allows a frame to paint with nothing known before repopulating. It correctly reaches the code path the browser controls claim to test.
+
+## 8. GENERATED VERSUS TYPED, AND RETIRED CLAIMS
+All user-facing sentences are now correctly generated (e.g., using `positionWord(NOTIFIED_POSITION)`). The retired claim `renderComposerTo prunes before it draws` in `LiveDashboard.astro` has been successfully removed in this SHA, and other outdated documentation has been explicitly marked as retired.
+
+VERDICT: FAIL
