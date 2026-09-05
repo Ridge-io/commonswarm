@@ -1,0 +1,167 @@
+# Fails a push or PR whose commits carry no agent-authorship trailers.
+#
+# WHY: every commit records the model, family and tool version that wrote it, so past work can be
+# audited as new models ship. Without a gate the trailer is missing on exactly the commits most
+# worth auditing — the rushed ones, and the ones from a seat whose hook was never installed. Holes
+# in an audit are not random; they correlate with the thing being measured.
+#
+# ACCIDENT SCOPE, and saying so is what makes it not a lie. GitHub runs the workflow that ships
+# WITH the ref under test, so a workflow in the repo cannot police authorship against a deliberate
+# change — anything it reads is supplied by the thing it checks. It also cannot verify that a
+# trailer is TRUE: `Agent-Model: claude-opus-5` typed by a human is indistinguishable from one read
+# off a runtime. What it buys is that the field is never silently ABSENT, and that
+# `Agent-Model-Source` tells a later reader whether the value was measured or merely asserted.
+# The same scope note is on .github/workflows/commit-identity.yml; do not try to fix it by
+# extracting a "trusted" copy from the base ref, which buys nothing and adds a script-injection
+# hole.
+#
+# It is a CI job as well as a hook because `--no-verify` skips hooks and a standing ruling permits
+# it. scripts/hooks/prepare-commit-msg is ergonomics; this file is the enforcement.
+name: agent trailers
+
+on:
+  push:
+  pull_request:
+
+# Never cancel a run in progress: a cancelled check reads as "not failed" in the checks UI, which
+# is the wrong default for a guard.
+concurrency:
+  group: agent-trailers-${{ github.event.pull_request.number || github.ref }}
+  cancel-in-progress: false
+
+permissions:
+  contents: read
+
+jobs:
+  check:
+    # Ordered fallback to the self-hosted fleet, so deleting one repo variable reverts a tier at a
+    # time and deleting all three returns to GitHub-hosted.
+    runs-on: ${{ vars.CI_RUNS_ON_LIGHT || vars.CI_RUNS_ON_NODE || vars.CI_RUNS_ON || 'ubuntu-latest' }}
+    steps:
+      - uses: actions/checkout@v4
+        with:
+          # The check needs history, not just the tip.
+          fetch-depth: 0
+
+      # AN EXIT CODE CANNOT CERTIFY THAT A TEST RUN HAPPENED. Deleting the body of the checker's
+      # self-test would make `--self-test` exit 0 having asserted nothing, and a bare `run:` would
+      # accept that as green while the gate underneath was decorative. So this step requires a
+      # positive assertion count parsed out of the output and fails when it is missing,
+      # non-numeric, or below a floor.
+      #
+      # This is the mutation test, run on every push rather than once by hand. The suite builds a
+      # commit with NO trailers and requires the checker to REJECT it; a checker that always
+      # returned 0 fails 5 of these assertions (measured 2026-09-04).
+      #
+      # CEILING: the self-test covers the SCRIPT. It cannot cover THIS FILE — a wrong range, an
+      # added continue-on-error, or a deleted step is invisible to it. Review the workflow by
+      # reading it.
+      - name: Self-test the checker
+        run: |
+          set -euo pipefail
+          out=$(./scripts/check-agent-trailers.sh --self-test 2>&1) || {
+            printf '%s\n' "$out"
+            echo "::error title=Agent-trailer self-test failed::the checker's own suite did not pass"
+            exit 1
+          }
+          printf '%s\n' "$out"
+
+          # ANSI-stripped, anchored on the summary line, count taken from a fixed field. awk (not
+          # grep -oE) so this behaves the same on the Linux and macOS runners.
+          count=$(printf '%s\n' "$out" | awk '
+            { gsub(/\033\[[0-9;]*[a-zA-Z]/, "") }
+            /^self-test: PASSED [0-9]+ assertion/ { print $3; exit }')
+
+          case "${count:-}" in
+            '')        echo "::error title=Self-test did not report::no assertion-count line in the output. The suite did not run to completion."; exit 1 ;;
+            *[!0-9]*)  echo "::error title=Self-test count unreadable::assertion count [$count] is not a number"; exit 1 ;;
+          esac
+          if [ "$count" -lt 20 ]; then
+            echo "::error title=Self-test ran too few assertions::reported $count, expected at least 20"
+            exit 1
+          fi
+          echo "Agent-trailer self-test passed $count assertions."
+
+      # WHY EVERY CONTEXT GOES THROUGH env:
+      # A ${{ }} expression is pasted into the run: block's SHELL SOURCE TEXT before the shell
+      # parses it, so any expression carrying attacker-chosen characters is code. `git
+      # check-ref-format` accepts a branch named `base$(touch${IFS}/tmp/pwn)`. Passed through env:
+      # the same value is inert — it is a variable's contents, never source text. Never write
+      # ${{ }} inside a run: block in this file.
+      - name: Resolve the range to check
+        id: range
+        env:
+          EVENT_NAME: ${{ github.event_name }}
+          BEFORE: ${{ github.event.before }}
+          BASE_SHA: ${{ github.event.pull_request.base.sha }}
+        run: |
+          set -euo pipefail
+          if [ "$EVENT_NAME" = "pull_request" ]; then
+            range="$BASE_SHA..HEAD"
+          elif [ -n "${BEFORE:-}" ] && [ "$BEFORE" != "0000000000000000000000000000000000000000" ] \
+               && git cat-file -e "${BEFORE}^{commit}" 2>/dev/null; then
+            range="$BEFORE..HEAD"
+          else
+            # A new branch, a force-push, or a first push: `before` is absent or unreachable, so
+            # fall back to the commits this ref adds beyond the default branch.
+            #
+            # CHECKING ALL OF HISTORY HERE WOULD FAIL FOREVER. This tags work FROM NOW ON; every
+            # commit made before the hook existed has no trailers and must NOT be backfilled with
+            # guesses. See docs/development/agent-trailers.md.
+            #
+            # CEILING, and it is shared verbatim with commit-identity.yml rather than fixed in one
+            # of them: on a FORCE-PUSH TO THE DEFAULT BRANCH the remote main already points at the
+            # new tip, so `origin/main..HEAD` is empty and the checker reports "nothing to check"
+            # and exits 0. A force-push to a LANE branch is unaffected — origin/main is still
+            # behind it, so the lane's own commits are the range. Diverging the two workflows here
+            # would leave the weaker one as the one people read.
+            git fetch --no-tags origin "+refs/heads/main:refs/remotes/origin/main" 2>/dev/null || true
+            if git rev-parse --verify -q origin/main >/dev/null; then
+              range="origin/main..HEAD"
+            elif git rev-parse --verify -q HEAD~1 >/dev/null; then
+              # Reads ONE commit, which is the least this can do without walking all of history.
+              range="HEAD~1..HEAD"
+            else
+              # A repository's first commit has no HEAD~1. `HEAD~1..HEAD` would be unresolvable, and
+              # the checker exits 2 on that — correctly, it could not run — which would fail the job
+              # forever until a second commit exists. An empty range is the honest reading: there is
+              # no earlier commit to compare against, and the warning below says the check read
+              # nothing.
+              range="HEAD..HEAD"
+            fi
+          fi
+          echo "value=$range" >> "$GITHUB_OUTPUT"
+          echo "checking range: $range"
+
+      # A GREEN CHECK THAT AUDITED NOTHING IS NOT A PASS A READER SHOULD MISREAD. The checker exits
+      # 0 on an empty range, which is correct — there was nothing to check — but in the checks UI it
+      # is indistinguishable from a range that was checked and was clean. So say it out loud as an
+      # annotation. This is where the force-push-to-default-branch ceiling above becomes visible
+      # instead of silent.
+      - name: Check agent trailers
+        env:
+          RANGE: ${{ steps.range.outputs.value }}
+        run: |
+          set -euo pipefail
+          out=$(./scripts/check-agent-trailers.sh --range "$RANGE" 2>&1) || {
+            printf '%s\n' "$out"; exit 1
+          }
+          printf '%s\n' "$out"
+          # The checker prints this token whenever it read nobody's trailers — an empty range, or a
+          # range whose every commit was skipped or exempt. The second is the common one: a lane of
+          # nothing but pre-rule work produces it, and in the checks UI it is the same green tick as
+          # a range that was audited and was clean.
+          case "$out" in
+            *"NOTHING CHECKED"*)
+              echo "::warning title=Agent trailers audited nothing::no commit in [$RANGE] was checked, so this green says nothing about the work in it" ;;
+          esac
+
+      # Informational only, and deliberately after the gate. Never fails the run: a summary that
+      # can fail is a second gate nobody reviewed.
+      - name: Summarise agent authorship
+        if: always()
+        env:
+          RANGE: ${{ steps.range.outputs.value }}
+        run: |
+          ./scripts/pr-agent-trailers.sh "$RANGE" >> "$GITHUB_STEP_SUMMARY" 2>/dev/null || \
+            echo "agent-authorship summary unavailable for $RANGE" >> "$GITHUB_STEP_SUMMARY"

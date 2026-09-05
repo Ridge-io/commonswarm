@@ -1,0 +1,75 @@
+#!/bin/sh
+# Add the agent-authorship trailers to the message being written, so nobody has to remember.
+#
+# THIS IS A CONVENIENCE, NOT THE GUARD. `--no-verify` skips it, and a standing ruling permits
+# --no-verify on branch pushes, so this hook cannot make a claim about how any commit was made.
+# The guard is .github/workflows/agent-trailers.yml, which runs whether or not you want it to.
+# The same split is documented on scripts/check-commit-identity.sh and it is deliberate: a hook
+# people are allowed to skip is not a gate, and a gate that only runs in CI is annoying to hit
+# after the fact. So: hook for ergonomics, CI for enforcement.
+#
+# NEVER BLOCKS A COMMIT. If the emitter cannot run, this warns and exits 0. A trailer tool that
+# stops work would be turned off within a day, and then the audit has holes in it — which is the
+# outcome the whole design exists to prevent. A missing trailer is caught in CI, where it is a
+# fixable amend rather than a lost commit.
+set -eu
+
+msg_file="${1:?prepare-commit-msg: no message file}"
+source="${2:-}"
+
+# A merge commit's message is git's, not an agent's, and the gate exempts merges for that reason.
+# Adding trailers here would claim a model wrote a merge it did not write.
+case "$source" in
+  merge) exit 0 ;;
+esac
+
+repo_root=$(git rev-parse --show-toplevel 2>/dev/null || echo '')
+[ -n "$repo_root" ] || exit 0
+
+emitter="$repo_root/scripts/agent-trailers.sh"
+if [ ! -x "$emitter" ]; then
+  printf 'prepare-commit-msg: agent trailers NOT added (missing or not executable: %s).\n' "$emitter" >&2
+  printf 'prepare-commit-msg: CI will reject this commit. See docs/development/agent-trailers.md\n' >&2
+  exit 0
+fi
+
+trailers=$("$emitter" --emit 2>/dev/null || echo '')
+if [ -z "$trailers" ]; then
+  printf 'prepare-commit-msg: agent trailers NOT added (the emitter produced nothing).\n' >&2
+  exit 0
+fi
+
+# IDEMPOTENCY IS DECIDED HERE, NOT BY --if-exists. MEASURED 2026-09-04: git treats
+# `Agent-Model-Source` and `Agent-Model` as THE SAME TOKEN, because its trailer matcher compares
+# only the leading run of alphanumerics. With `--if-exists doNothing`, adding both drops
+# Agent-Model-Source silently:
+#
+#     $ git interpret-trailers --if-exists doNothing \
+#         --trailer 'Agent-Model: X' --trailer 'Agent-Model-Source: Y' <msg>
+#     Agent-Model: X                       # Agent-Model-Source is GONE, exit 0
+#
+# That would have removed the field that says whether the model was measured or merely asserted
+# — from every commit, with no error. So the hook asks one question itself (is the block already
+# present?) and otherwise appends the whole block, letting interpret-trailers handle placement
+# only. DO NOT reintroduce --if-exists here.
+if git interpret-trailers --parse "$msg_file" 2>/dev/null | grep -qi '^Agent-Model:'; then
+  exit 0
+fi
+
+# Build the argument list by reading the emitter's output line by line. Do NOT word-split it:
+# values contain spaces ("claude-code 2.1.257", and Agent-Name is a person's name).
+set --
+while IFS= read -r line; do
+  [ -n "$line" ] || continue
+  set -- "$@" --trailer "$line"
+done <<EOF
+$trailers
+EOF
+
+[ "$#" -gt 0 ] || exit 0
+
+if ! git interpret-trailers --in-place "$@" "$msg_file"; then
+  printf 'prepare-commit-msg: agent trailers NOT added (git interpret-trailers failed).\n' >&2
+fi
+
+exit 0
