@@ -134,3 +134,40 @@ agent_trailer_contains() {
   done
   return 1
 }
+
+# ---------------------------------------------------------------------------
+# Grace: a commit whose own tree has no hook
+# ---------------------------------------------------------------------------
+
+# A COMMIT WHOSE OWN TREE DOES NOT CONTAIN THE HOOK IS NOT REQUIRED TO CARRY TRAILERS.
+#
+# Why any grace at all. The workflow resolves only the commits a push or PR ADDS, which keeps
+# history out of it. That is not enough on its own: a pull_request event checks `base.sha..HEAD`,
+# which contains every commit a branch already had before this landed. Enumerated 2026-09-04 on
+# this checkout — eleven branches carried twenty non-merge commits with no Agent-Model between
+# them, and every one would have failed the first time it was pushed or opened as a PR, for work
+# written before the rule existed.
+#
+# WHY NOT A DATE. A cutoff timestamp was built first and does not survive contact with concurrent
+# lanes. Measured on the same checkout: six of those twenty commits were authored AFTER the hour
+# this feature was written, by five lanes that were running at that moment off an older `main`.
+# Their checkouts had no hook and could not have had one, so a date-based cutoff failed work for a
+# rule that did not exist where it was written. Moving the date forward does not fix it either: a
+# cutoff in the future skips every commit and leaves the gate green while checking nothing.
+#
+# The commit's own tree answers the question exactly, with no clock and nothing to maintain. If
+# `scripts/hooks/prepare-commit-msg` is not in the tree the commit records, the author could not
+# have installed it from this repo, so the trailer is not required. Once this lands on `main`,
+# every commit built on it carries the hook in its tree and is checked. There is no cutoff to
+# update, nothing to move forward, and no window in which the rule is wrong.
+#
+# SCOPE. Deleting the hook would grant a commit grace. That is the same accident-guard scope as
+# everything else here — it catches a checkout that never had the hook, not somebody who means to
+# evade it — and unlike a back-dated author date, deleting the hook is a visible line in the diff.
+#
+# The path is a constant because three places need to agree on it: this gate, the `hooks:install`
+# script in package.json, and the doc. tests/p1-cli/agent-trailers.test.ts fails when they differ,
+# and the self-test fails when the path names no file, which is what would silently turn every
+# commit into a skipped one.
+AGENT_TRAILER_HOOK_DIR=scripts/hooks
+AGENT_TRAILER_HOOK_PATH="${AGENT_TRAILER_HOOK_DIR}/prepare-commit-msg"
