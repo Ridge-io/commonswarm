@@ -459,9 +459,11 @@ const assertComposerSprint = (value: ComposerArtifact): void => {
     "caret-survival: the remembered selection is never put back");
   assert.match(dashboard, /if \(Date\.now\(\) - composerPointerAt < 500\) return;/,
     "caret-survival: focus that followed a tap must keep where the tap landed");
-  /* A caret remembered in OTHER text is not a caret in this text. Both places that replace the
-     whole body have to drop it, or the restore puts the reader at a position they never chose:
-     a workspace switch that restores a different draft, and the send that empties the box. */
+  /* A caret remembered in OTHER text is not a caret in this text. Two places replace the whole
+     body without the reader typing, and both drop it, or the restore puts them at a position
+     they never chose: the draft restore that follows a workspace switch, and `resetComposer`,
+     which that switch and session teardown call. A SEND is not one of them and must not be:
+     see the next comment. */
   assert.match(
     dashboard,
     /input\.value = draft\.body;[\s\S]{0,60}composerCaretKnown = false;/,
@@ -482,11 +484,12 @@ const assertComposerSprint = (value: ComposerArtifact): void => {
       "the comments and messages here keep saying it is not",
   );
 
-  /* EVERY DEBOUNCED TIMER DIES WHERE THE COMPOSER IS EMPTIED. This runs on a workspace change
-     as well as after a send, and a draft timer armed against the old workspace fires afterwards
-     reading an empty box against the NEW key -- which removes the draft the reader is about to
-     be shown. `blur` covers a pointer switch because it flushes first; a switch that never
-     blurred does not. The mention timer already died here through closeMentionPicker. */
+  /* EVERY DEBOUNCED TIMER DIES IN `resetComposer`, which the workspace change and session
+     teardown call and a send does not. A draft timer armed against the old workspace would
+     otherwise fire afterwards, read an empty box against the NEW key, and remove the draft the
+     reader is about to be shown. `blur` covers a pointer switch because it flushes first; a
+     switch that never blurred does not. The mention timer already died here through
+     closeMentionPicker. */
   assert.match(reset, /cancelComposerDraftTimer\(\);/,
     "composer-reset: a debounced draft write survives the composer being emptied, so it can " +
       "land against another workspace's key");
