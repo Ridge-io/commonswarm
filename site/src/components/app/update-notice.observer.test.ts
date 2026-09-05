@@ -47,7 +47,8 @@ type Variant =
   | "gone-first"
   | "no-build-first"
   | "other-astro-page"
-  | "rollback";
+  | "rollback"
+  | "stale-poll";
 
 /* Served from the FIRST poll, so it becomes the markup baseline and only the asset comparison
    can see it. Without this the asset signal has no case of its own: every other variant differs
@@ -159,6 +160,8 @@ const frameScript = `<script>
     let dismissTookEffect = null;
     let rollbackWentBackInStep = null;
     let startedInStep = null;
+    let staleHeldBeforeClick = null;
+    let staleLandedAfterClick = null;
     const notice = () => frame.contentDocument?.querySelector("[data-update-notice]") ?? null;
     for (let attempt = 0; attempt < 160 && !notice(); attempt += 1) await wait(25);
     /* WAIT ON THE CONDITION, NOT A DURATION. A flat sleep made this case pass or fail with the
@@ -210,6 +213,50 @@ const frameScript = `<script>
       await fetch("/__stage?to=2");
       cycle();
       dismissSawBuildTwo = await until(shownNow);
+      if (new URL(location.href).searchParams.get("ordering") === "1") {
+        /* THE SEQUENCE, in the order the browser runs it:
+             1. two polls of the running build land, so the tab starts up to date (asserted);
+             2. build two is staged and a poll raises the bar (asserted);
+             3. the server goes back to the build this tab is RUNNING, and the next poll is HELD
+                open by the server: its request is out and its body is not;
+             4. the reader clicks Not now while that poll is still open. Dismissal is against
+                build two, which is what is on screen;
+             5. the held body is released. It answers "same build as you are running", which is
+                the branch that clears the dismissal — and it measured the server BEFORE the
+                click;
+             6. build two ships again. Nothing else has been polled in between.
+           If step 5 is applied, the dismissal from step 4 is gone and step 6 raises the bar for
+           the build the reader just dismissed. That is the defect this case exists for. */
+        await fetch("/__stage?to=3");
+        await fetch("/__hold");
+        cycle();
+        /* NO TIMERS BELOW UNTIL THE HOLD IS RELEASED. Chrome runs this page under
+           --virtual-time-budget, which stops virtual time while a fetch is pending, so setTimeout
+           can sit unfired for the whole time the poll is held. Every wait in this branch is a
+           real round trip to the harness server instead, which advances on its own. */
+        const spin = async (turns) => {
+          for (let attempt = 0; attempt < turns; attempt += 1) await fetch("/__polls");
+        };
+        const untilFetched = async (path, want) => {
+          for (let attempt = 0; attempt < 600; attempt += 1) {
+            if ((await (await fetch(path)).text()) === want) return true;
+          }
+          return false;
+        };
+        staleHeldBeforeClick = await untilFetched("/__held", "1");
+        frame.contentDocument.querySelector("[data-update-dismiss]").click();
+        dismissTookEffect = !shownNow();
+        staleLandedAfterClick = (await (await fetch("/__release")).text()) === "1";
+        /* Give the page room to receive and act on the released body. */
+        await spin(60);
+        const before = Number(await (await fetch("/__polls")).text());
+        await fetch("/__stage?to=4");
+        cycle();
+        for (let attempt = 0; attempt < 600; attempt += 1) {
+          if (Number(await (await fetch("/__polls")).text()) > before) break;
+        }
+        await spin(60);
+      } else {
       frame.contentDocument.querySelector("[data-update-dismiss]").click();
       dismissTookEffect = !shownNow();
       /* Build three, only now. Any number of polls may land in between; they all carry build two,
@@ -235,6 +282,7 @@ const frameScript = `<script>
       }
       await until(shownNow);
       await wait(120);
+      }
     }
     const polls = Number(await (await fetch("/__polls")).text());
     const doc = frame.contentDocument;
@@ -261,6 +309,8 @@ const frameScript = `<script>
       dismissTookEffect,
       rollbackWentBackInStep,
       startedInStep,
+      staleHeldBeforeClick,
+      staleLandedAfterClick,
       stageNow: await (await fetch("/__stage")).text(),
       servedStages: await (await fetch("/__served")).text(),
       sampleNoticeShown: (() => {
@@ -294,10 +344,39 @@ const startServer = async (
      property of the harness and not of the product. The page advances this stage explicitly. */
   let stage = 0;
   const servedStages: number[] = [];
+  /* THE ONE THING A TEST CANNOT ARRANGE FROM THE PAGE: a poll whose REQUEST went out before the
+     reader acted and whose RESPONSE lands after. The page decides only once the body has arrived,
+     so holding the body open is what puts the click in between. `fetch()` resolves on headers, so
+     the first byte goes out at once and only the rest waits; the page is then parked on
+     `response.text()`, which is exactly where the click has to land. */
+  let holdNextPoll = false;
+  let heldRest: string | null = null;
+  let heldResponse: import("node:http").ServerResponse | null = null;
+  let releasedAt = 0;
   const server = createServer((request, response) => {
     const url = new URL(request.url ?? "/", "http://127.0.0.1");
     if (url.pathname === "/__polls") {
       response.writeHead(200, { "content-type": "text/plain" }).end(String(polls));
+      return;
+    }
+    if (url.pathname === "/__hold") {
+      holdNextPoll = true;
+      response.writeHead(200, { "content-type": "text/plain" }).end("armed");
+      return;
+    }
+    if (url.pathname === "/__held") {
+      response.writeHead(200, { "content-type": "text/plain" }).end(heldResponse ? "1" : "0");
+      return;
+    }
+    if (url.pathname === "/__release") {
+      const held = heldResponse;
+      heldResponse = null;
+      if (held) {
+        releasedAt += 1;
+        held.end(heldRest ?? "");
+        heldRest = null;
+      }
+      response.writeHead(200, { "content-type": "text/plain" }).end(String(releasedAt));
       return;
     }
     if (url.pathname === "/__stage") {
@@ -330,8 +409,10 @@ const startServer = async (
          FIRST page this tab saw, so a variant served from the very first poll would become the
          baseline and a markup-only build could never be seen. Modelling the deploy in the right
          order is what makes that signal reachable at all. */
-      if (variant === "dismiss-then-markup" || variant === "rollback") servedStages.push(stage);
-      const { body, status } = variant === "rollback"
+      if (
+        variant === "dismiss-then-markup" || variant === "rollback" || variant === "stale-poll"
+      ) servedStages.push(stage);
+      const { body, status } = variant === "rollback" || variant === "stale-poll"
         /* Stage 2 is a different build, stage 3 is the build this tab is RUNNING (the rollback),
            and stage 4 is that different build again. */
         ? stage === 2 || stage >= 4
@@ -346,6 +427,17 @@ const startServer = async (
         : polls === 1 && !FROM_FIRST_POLL.has(variant)
         ? { body: appHtml(), status: 200 }
         : pollBody(variant);
+      if (holdNextPoll) {
+        /* The body is decided HERE, from the stage as it stands at request time. That is the
+           whole point: what lands later is an answer about the server as it was BEFORE the
+           click, not as it is after. */
+        holdNextPoll = false;
+        heldRest = body.slice(1);
+        heldResponse = response;
+        response.writeHead(status, { "content-type": contentTypes[".html"] });
+        response.write(body.slice(0, 1));
+        return;
+      }
       response.writeHead(status, { "content-type": contentTypes[".html"] }).end(body);
       return;
     }
@@ -392,7 +484,11 @@ const startServer = async (
   if (address === null || typeof address === "string") throw new Error("no server address");
   return {
     close: () => new Promise<void>((resolve, reject) => {
+      /* A held response owns a socket that `server.close` would wait on for ever. */
+      heldResponse?.destroy();
+      heldResponse = null;
       server.close((error) => error ? reject(error) : resolve());
+      server.closeAllConnections();
     }),
     origin: `http://127.0.0.1:${address.port}`,
   };
@@ -408,6 +504,8 @@ type Measurement = {
   dismissTookEffect: boolean | null;
   rollbackWentBackInStep: boolean | null;
   startedInStep: boolean | null;
+  staleHeldBeforeClick: boolean | null;
+  staleLandedAfterClick: boolean | null;
   stageNow: string;
   servedStages: string;
   display: string;
@@ -439,7 +537,8 @@ const measure = async (
       "--virtual-time-budget=20000",
       "--dump-dom",
       `${server.origin}/__measure?width=${width}&height=${height}&dismiss=${dismiss ? 1 : 0}` +
-        `&rollback=${variant === "rollback" ? 1 : 0}`,
+        `&rollback=${variant === "rollback" ? 1 : 0}` +
+        `&ordering=${variant === "stale-poll" ? 1 : 0}`,
     ], { killSignal: "SIGKILL", maxBuffer: 12 * 1024 * 1024, timeout: 40_000 });
     const encoded = stdout.match(/data-update-measurement="([^"]+)"/)?.[1];
     assert.ok(encoded, `${variant}: Chrome returned no measurement.\nDOM: ${stdout.slice(-1_500)}`);
@@ -601,6 +700,61 @@ test("a rollback does not silence the build that follows it", async () => {
     true,
     `the build after a rollback must ask again: ${JSON.stringify(value)}`,
   );
+});
+
+/* THE DISMISSAL HAS TO SURVIVE A POLL THAT WAS ALREADY OPEN WHEN THE READER CLICKED. A response
+   answers about the server as it was when the request went out. Applying one that went out before
+   the click lets it undo the click: the "same build as you are running" branch clears the
+   dismissal, and the very build just dismissed raises the bar again.
+
+   This is also the only case that fails if `dismissedBuild = servedBuild` is deleted from the
+   Not-now handler, so it is the control for dismissal being remembered at all. The earlier cases
+   move straight from the click to the next staged build and nothing looks in between. */
+test("a poll that was already open when Not now was clicked does not undo it", async () => {
+  const value = await measure(await findChrome(), "stale-poll", 390, 844, true);
+  assert.equal(
+    value.startedInStep,
+    true,
+    `the bar was already up before any deploy was staged, so the dismiss below captured the ` +
+      `wrong build: ${JSON.stringify(value)}`,
+  );
+  assert.equal(
+    value.dismissSawBuildTwo,
+    true,
+    `the second build never raised the bar, so there was nothing to dismiss: ${JSON.stringify(value)}`,
+  );
+  assert.equal(
+    value.dismissTookEffect,
+    true,
+    `Not now did not put the bar down: ${JSON.stringify(value)}`,
+  );
+  /* THE ORDERING ITSELF, and without these three the case is just the dismissal case again. The
+     poll was open across the click; its body was released only afterwards; and it asked the
+     server while stage 3 — the build this tab is running — was being served, which is the branch
+     that clears a dismissal. */
+  assert.equal(
+    value.staleHeldBeforeClick,
+    true,
+    `no poll was open when Not now was clicked, so nothing here lands out of order: ` +
+      JSON.stringify(value),
+  );
+  assert.equal(
+    value.staleLandedAfterClick,
+    true,
+    `the held poll was never released, so its answer never reached the page: ${JSON.stringify(value)}`,
+  );
+  assert.ok(
+    value.servedStages.endsWith("3,4"),
+    `the held poll must have asked while the running build was served (3) and the last poll while ` +
+      `the dismissed build was served again (4): ${JSON.stringify(value)}`,
+  );
+  assert.equal(
+    value.shown,
+    false,
+    `the reader dismissed this exact build and it came back: a poll that measured the server ` +
+      `before the click was applied after it and cleared the dismissal: ${JSON.stringify(value)}`,
+  );
+  assert.equal(value.display, "none", "the bar is marked hidden but still painted");
 });
 
 test("a probe that did not reach the page stays quiet", async () => {

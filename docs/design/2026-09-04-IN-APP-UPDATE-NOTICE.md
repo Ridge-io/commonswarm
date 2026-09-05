@@ -86,25 +86,48 @@ build. Nothing new has to be kept in step, so nothing can drift.
 and the same bytes, so both comparisons are equal and no notice appears.
 
 **Dismissal is remembered against the WHOLE build**, both parts joined, never against whichever
-half happened to differ.
-
-**NOT PROVEN: that dismissal is remembered at all.** Both review arms found the same hole
-independently. Every case in `update-notice.observer.test.ts` still passes if
-`dismissedBuild = servedBuild` is deleted from the Not-now handler: the click calls
-`showUpdateNotice(false)` either way, so the bar goes down, and the case moves straight on to the
-next staged build. Nothing looks in between. Closing it means polling the SAME build again after
-the click and asserting the bar stayed down. That was attempted and did not behave as expected —
-the bar came back up with `dismissedBuild` reading `null`, and the most likely reading of the
-instrumented log is that a `!isNewBuild` response still in flight from before the click landed
-after it and cleared the dismissal through the reset above. If that is right it is a real ordering
-defect and not only a test gap, so it needs measuring rather than patching. Storing one half let a dismissal silence a later build: dismissing an
+half happened to differ. Storing one half let a dismissal silence a later build: dismissing an
 asset change stored the asset set, and the next build that changed only markup carried that same
 asset set and compared equal to it.
+
+**A poll's answer is older than a click that lands after it went out.** Both review arms found
+that dismissal memory had no control on it. Pinning it turned up a defect in the product, not
+only a gap in the tests. A poll answers about the server as it was when its request was sent.
+Held open across a Not now click, one came back saying "the same build you are running", took the
+reset branch below, cleared the dismissal, and the build the reader had just dismissed raised the
+bar again on the next poll.
+
+The fix is a count of the reader's actions, captured when a poll starts and checked when that
+poll answers. Not now bumps it, and an answer from before the bump is dropped whole: not the
+baseline, not the dismissal, not the reset. It is the same shape as `requestVersion` for workspace
+switches, kept as its own counter so that bumping it cannot cancel unrelated work. Nothing is lost
+by dropping a stale answer, because the next poll asks about the server as it is after the click
+and decides again. **So the reset below may clear a dismissal only from a poll that started after
+the reader's last action.**
+
+`a poll that was already open when Not now was clicked does not undo it` in
+`update-notice.observer.test.ts` is the control, and it is the control for dismissal memory too.
+It goes red if the version check is deleted, and it goes red if `dismissedBuild = servedBuild` is
+deleted from the Not-now handler. Both mutations were run and both turned that one case red, with
+the other eleven green. What makes the case reachable is the harness holding one poll open: the
+server sends the headers and the first byte and keeps the rest until the page asks for it, which
+is what puts a click between a poll's request and its result. No arrangement inside the page can
+do that.
+
+*Was, until 2026-09-05:* "**NOT PROVEN: that dismissal is remembered at all.** ... Every case in
+`update-notice.observer.test.ts` still passes if `dismissedBuild = servedBuild` is deleted from
+the Not-now handler ... That was attempted and did not behave as expected: the bar came back up
+with `dismissedBuild` reading `null`, and the most likely reading of the instrumented log is that
+a `!isNewBuild` response still in flight from before the click landed after it and cleared the
+dismissal through the reset above." That reading was right. The ordering it guessed at is now
+measured, fixed, and controlled.
 
 **One poll at a time, and none dropped.** Two in flight can settle out of order and baseline the
 wrong page, so a second request does not start while one is open. It is not thrown away either:
 coming back to the tab while a poll is open is exactly when a reader wants an answer, and the next
 timer tick is five minutes off, so the request is remembered and run when the open one finishes.
+This orders polls against each other only. It says nothing about a poll against the reader, which
+is what the action count above is for.
 
 **What it does when it cannot tell.** A failed fetch, a non-OK status, a body with no hashed assets
 in it, and — the case that needs saying — **a page that answers 200 but is not ours**. `fetch`
