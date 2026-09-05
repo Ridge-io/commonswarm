@@ -18,7 +18,7 @@
  */
 import assert from "node:assert/strict";
 import { execFileSync } from "node:child_process";
-import { readFileSync } from "node:fs";
+import { existsSync, readFileSync } from "node:fs";
 import { resolve } from "node:path";
 import { test } from "node:test";
 
@@ -158,6 +158,48 @@ test("the checker's self-test passes and reports its assertion count", () => {
   assert.ok(Number(count![1]) >= 20, `self-test ran only ${count![1]} assertions`);
 });
 
+test("the hook path constant, the file, and hooks:install all agree", () => {
+  /* Grace skips any commit whose tree has no hook, so this one path decides what the gate checks.
+   * Three places must agree on it and only one of them is bash: the vocabulary the gate reads, the
+   * file itself, and the `hooks:install` script in package.json, which is JSON and cannot source
+   * the constant. A path naming no file would skip every commit and leave the gate green while
+   * checking nothing, which is the failure this control exists to catch. */
+  const dir = /^AGENT_TRAILER_HOOK_DIR=(\S+)$/m.exec(vocabSource)?.[1];
+  assert.ok(dir, "AGENT_TRAILER_HOOK_DIR not found in the vocabulary");
+  const hookPath = `${dir}/prepare-commit-msg`;
+  assert.match(
+    vocabSource,
+    /^AGENT_TRAILER_HOOK_PATH="\$\{AGENT_TRAILER_HOOK_DIR\}\/prepare-commit-msg"$/m,
+    "AGENT_TRAILER_HOOK_PATH is not built from AGENT_TRAILER_HOOK_DIR",
+  );
+  assert.ok(existsSync(resolve(repoRoot, hookPath)), `${hookPath} names no file`);
+  const install = JSON.parse(readFileSync(resolve(repoRoot, "package.json"), "utf8"))
+    .scripts["hooks:install"] as string;
+  assert.ok(install.includes(dir!), `hooks:install does not install into ${dir}`);
+});
+
+test("the hook is opt-in and no lifecycle script installs it", () => {
+  /* A hook installed by `npm install` would rewrite commit messages in every checkout that ever
+   * ran it, including ones whose owner never asked. The install must stay an explicit command. */
+  const scripts = JSON.parse(readFileSync(resolve(repoRoot, "package.json"), "utf8")).scripts as
+    Record<string, string>;
+  for (const [name, body] of Object.entries(scripts)) {
+    if (name === "hooks:install") continue;
+    assert.ok(
+      !/core\.hooksPath|hooks:install/.test(body),
+      `the lifecycle-reachable script ${name} installs the hook: ${body}`,
+    );
+  }
+});
+
+test("the checker's help names the hook path from the constant", () => {
+  /* AGENTS.md, "An enumeration inside a message must be generated, not typed": the path a reader is
+   * told about must be the path the enforcement reads, not a second copy of it. */
+  const dir = /^AGENT_TRAILER_HOOK_DIR=(\S+)$/m.exec(vocabSource)![1]!;
+  const help = run(checker, ["--help"]);
+  assert.ok(help.includes(`${dir}/prepare-commit-msg`), "the checker's help does not name the hook path");
+});
+
 test("the doc records the no-backfill rule and the escape hatch", () => {
   /* These are the two things a cold reader most needs and the two most likely to be dropped in a
    * later edit: without the first the audit gets poisoned with guesses, and without the second
@@ -166,4 +208,18 @@ test("the doc records the no-backfill rule and the escape hatch", () => {
   assert.match(doc, /must not be backfilled/i);
   assert.match(doc, /CSWARM_AGENT_MODEL=none/);
   assert.match(doc, /CSWARM_HUMAN_EDIT=1/);
+});
+
+test("the doc records the grace rule and does not overstate what the gate blocks", () => {
+  /* The grace rule is what keeps the gate off work written before it existed. A later edit that
+   * drops it makes every branch that predates the rule fail for commits nobody could have tagged.
+   *
+   * The last assertion pins a claim, not a behaviour: main has no branch protection, so the
+   * workflow reports and blocks nothing. A doc that calls it a merge gate is wrong until somebody
+   * flips a repository setting, and that wrongness is invisible from inside the repo. */
+  const doc = readFileSync(resolve(repoRoot, "docs/development/agent-trailers.md"), "utf8");
+  const dir = /^AGENT_TRAILER_HOOK_DIR=(\S+)$/m.exec(vocabSource)![1]!;
+  assert.ok(doc.includes(`${dir}/prepare-commit-msg`), "the doc does not name the hook path");
+  assert.match(doc, /AGENT_TRAILER_HOOK_PATH/, "the doc does not name the grace constant");
+  assert.match(doc, /no branch protection/i, "the doc does not say the check blocks no merge today");
 });
