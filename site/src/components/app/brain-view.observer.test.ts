@@ -51,8 +51,16 @@ test("Brain renders headings, lists, code, and safe links with the transcript sa
   assert.match(snapshot.renderedHtml, /<a href="https:\/\/example\.com\/guide"/);
   assert.equal(snapshot.linkRel, "noopener noreferrer");
   assert.equal(snapshot.linkTarget, "_blank");
-  assert.doesNotMatch(snapshot.renderedHtml, /<table|<img/u);
-  assert.match(snapshot.renderedHtml, /\| left \| right \|/u);
+  assert.doesNotMatch(snapshot.renderedHtml, /<img/u);
+  /* RETIRED (2026-09-04): "| left | right |" stayed literal here. It did, and a brain topic full
+     of pipe tables read as raw text because of it. The Brain panel and the feed share one
+     renderer, so one fix reaches both; what this pins now is that the table is built through this
+     panel's live sanitizer path, in a real browser, rather than only in the pure unit test. */
+  assert.match(
+    snapshot.renderedHtml,
+    /<table><thead><tr><th>left<\/th><th>right<\/th><\/tr><\/thead>/u,
+  );
+  assert.doesNotMatch(snapshot.renderedHtml, /\| left \| right \|/u);
   assert.match(snapshot.renderedHtml, /!\[diagram\]\(https:\/\/example\.com\/diagram\.png\)/u);
   assert.equal(snapshot.historyCount, 3);
 });

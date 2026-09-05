@@ -9004,12 +9004,12 @@ import "../../styles/tokens.css";
     box-shadow: var(--focus-ring);
   }
 
-  .dashboard__brain-markdown :where(h2, h3, h4, h5, p, ul, ol, blockquote, pre) {
+  .dashboard__brain-markdown :where(h2, h3, h4, h5, p, ul, ol, blockquote, pre, table, hr) {
     margin: 0;
   }
 
-  .dashboard__brain-markdown :where(h2, h3, h4, h5, p, ul, ol, blockquote, pre) +
-    :where(h2, h3, h4, h5, p, ul, ol, blockquote, pre) {
+  .dashboard__brain-markdown :where(h2, h3, h4, h5, p, ul, ol, blockquote, pre, table, hr) +
+    :where(h2, h3, h4, h5, p, ul, ol, blockquote, pre, table, hr) {
     margin-block-start: var(--s-3);
   }
 
@@ -9847,12 +9847,12 @@ import "../../styles/tokens.css";
     overflow: hidden;
   }
 
-  .dashboard__message-markdown :where(p, ul, ol, blockquote, pre) {
+  .dashboard__message-markdown :where(p, ul, ol, blockquote, pre, table, hr) {
     margin: 0;
   }
 
-  .dashboard__message-markdown :where(p, ul, ol, blockquote, pre) +
-    :where(p, ul, ol, blockquote, pre) {
+  .dashboard__message-markdown :where(p, ul, ol, blockquote, pre, table, hr) +
+    :where(p, ul, ol, blockquote, pre, table, hr) {
     margin-block-start: var(--s-3);
   }
 
@@ -9903,6 +9903,87 @@ import "../../styles/tokens.css";
     color: var(--accent-bright);
     text-decoration: underline;
     text-underline-offset: 0.14em;
+  }
+
+  /* The four constructs the renderer gained on 2026-09-04 — a table, a rule, strikethrough, and a
+   * task item — styled once for the feed and the Brain panel, because one renderer builds both and
+   * a rule written for only one of them is a difference a reader would meet.
+   *
+   * Each selector names both classes rather than putting them in one `:where()`. `:where()` scores
+   * zero, which would leave `:where(.a, .b) table` at the same specificity as the bare `table` rule
+   * in global.css (`border-collapse`, `border-spacing`) and let stylesheet ORDER decide the winner.
+   * It happens to win today — /app links Base.css before app.css — and that is not a thing to rely
+   * on: SeoPage.css carries a `table` rule with `inline-size: 100%` and `min-inline-size: 44rem`,
+   * which would take the scroll behaviour apart if it were ever loaded here. Naming the class wins
+   * on specificity instead. The layout observer measures the computed values, so a rule that lost
+   * would fail rather than ship. */
+
+  /* A table is its own scroll container.
+   *
+   * An agent posts tables of facts, and a table of SHAs is wider than a phone. A default
+   * `display: table` grows past the message and pushes the whole page sideways, so every OTHER
+   * message moves too and the composer leaves the viewport. `display: block` makes the table an
+   * ordinary block box that `overflow-x` can scroll; `inline-size: max-content` still lets it grow
+   * to the width its columns want, and `max-inline-size: 100%` stops that growth at the width of
+   * the message. The rows keep their table layout inside it, so the columns still line up. */
+  .dashboard__message-markdown table,
+  .dashboard__brain-markdown table {
+    display: block;
+    inline-size: max-content;
+    max-inline-size: 100%;
+    overflow-x: auto;
+    border-collapse: collapse;
+    font-size: 0.95em;
+  }
+
+  /* No `text-align` here, deliberately. The `align` attribute the delimiter row produces is a
+   * presentational hint, and ANY author `text-align` rule on a cell outranks it — so a rule added
+   * for tidiness would silently delete the alignment feature. The UA defaults (a header centred, a
+   * body cell at the start edge) are what an unaligned column gets.
+   *
+   * `overflow-wrap: normal` is the other half of the scroll rule above, and without it that rule
+   * does nothing. The message body sets `anywhere`, which lets a line break inside a word; a cell
+   * inheriting it can shrink to almost no width at all, so the table always fits and never
+   * scrolls — a column of 40-character SHAs became three characters per line, forty lines tall.
+   * Measured at 320px before this rule: the table reported no overflow. A table is a grid of
+   * values, and a value the reader has to reassemble down a column is worse than one they scroll
+   * to. So a cell keeps whole words, the table takes the width it needs, and the sideways travel
+   * happens inside the table. Prose in a cell still wraps at its spaces. */
+  .dashboard__message-markdown :where(th, td),
+  .dashboard__brain-markdown :where(th, td) {
+    padding: var(--s-1) var(--s-3);
+    border: 1px solid var(--border);
+    vertical-align: top;
+    overflow-wrap: normal;
+  }
+
+  .dashboard__message-markdown th,
+  .dashboard__brain-markdown th {
+    background: var(--elev-3);
+  }
+
+  /* No `margin` here. The flow rules above already zero it and then give every block after the
+   * first its top gap, and those selectors score one class where this one scores a class plus a
+   * type — so a `margin: 0` written here outranks them and pins a rule flush against the paragraph
+   * above it. It did, until the block-spacing observer measured 0px on one side and 12px on the
+   * other. Set only what the flow rules do not. */
+  .dashboard__message-markdown hr,
+  .dashboard__brain-markdown hr {
+    border: 0;
+    border-block-start: 1px solid var(--border-strong);
+  }
+
+  .dashboard__message-markdown del,
+  .dashboard__brain-markdown del {
+    color: var(--text-muted);
+  }
+
+  /* A task item carries its own ballot marker, so the list bullet in front of it would be a
+   * second, meaningless dot. Only the task items lose their marker: a plain item in the same list
+   * keeps its bullet. */
+  .dashboard__message-markdown li.md-task,
+  .dashboard__brain-markdown li.md-task {
+    list-style: none;
   }
 
   /* Said when a control names a topic the workspace no longer holds. It sits above the topic
