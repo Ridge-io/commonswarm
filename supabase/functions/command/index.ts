@@ -12,6 +12,13 @@ import {
   SIGNAL_UNSAFE_GLOBAL_RE,
 } from "../_shared/signal-text.ts";
 import {
+  CHANNEL_PURPOSE_MAX,
+  channelSlugProblem,
+  chatSignalKeys,
+  normalizeChannelSlug,
+  unknownChannelMessage,
+} from "../_shared/channels.ts";
+import {
   commandAllowedOrigins,
   commandPreflight,
   withCommandCors,
@@ -185,6 +192,28 @@ interface SignalCommand {
   about: string | null;
   attachments?: SignalAttachmentRef[];
   until_ms?: number;
+  /* Chat fields. Each is INDEPENDENTLY optional — see chatSignalKeys. A body
+   * that carries none of them is what every installed client sends. */
+  channel?: string;
+  thread_root_id?: string | null;
+  broadcast_to_channel?: boolean;
+}
+
+/** Channel authority. Self-contained like post_signal: emits no protocol event. */
+type ChannelCommand =
+  | { kind: "channel_create"; slug: string; purpose: string | null }
+  | { kind: "channel_rename"; channel_id: string; slug: string }
+  | { kind: "channel_archive"; channel_id: string };
+
+interface ChannelRecord {
+  channel_id: string;
+  workspace_id: string;
+  slug: string;
+  purpose: string | null;
+  created_by_principal: string;
+  created_by_kind: CredentialKind;
+  created_at: string;
+  archived_at: string | null;
 }
 
 interface SignalAttachment extends SignalAttachmentRef {
@@ -207,6 +236,11 @@ interface SignalRecord {
   attachments: SignalAttachment[];
   until: string;
   created_at: string;
+  /* Added by the chat migrations. Old clients ignore unknown top-level fields
+   * by contract (src/cloud/signals.ts:315-326), so returning them is safe. */
+  channel_id: string | null;
+  thread_root_id: string | null;
+  broadcast_to_channel: boolean;
 }
 
 type DeliveryCommand = ClaimAgentInboxCommand | AckAgentDeliveryCommand;
@@ -215,6 +249,7 @@ type ValidatedCommand =
   | Command
   | ConnectCommand
   | SignalCommand
+  | ChannelCommand
   | SignalsSeenCommand
   | DeliveryCommand
   | FileCommand;
@@ -422,6 +457,7 @@ interface StoredResponse {
   renewal_grant_id?: string;
   resumed_at?: string;
   signal?: SignalRecord;
+  channel?: ChannelRecord;
 }
 
 interface EventEnvelope {
@@ -782,6 +818,17 @@ const DISPOSABLE_EMAIL_DOMAINS = [
   "trashmail.com",
   "yopmail.com",
 ] as const;
+/* Channel authority. Deliberately NOT in WORKSPACE_COMMAND_KINDS: like
+ * post_signal these are self-contained, emit no protocol event, and travel the
+ * ordinary resolveRoute path rather than forcing stream.kind === "workspace".
+ * Deliberately NOT in the agent denylist either — a channel grants nothing, so
+ * gating it behind a human would force a person into the loop to make a label. */
+const CHANNEL_COMMAND_KINDS = [
+  "channel_create",
+  "channel_rename",
+  "channel_archive",
+] as const;
+
 const COMMAND_KINDS = [
   "create",
   "acquire",
@@ -805,6 +852,7 @@ const COMMAND_KINDS = [
   "declare_agent_model",
   "submit_feedback",
   "post_signal",
+  ...CHANNEL_COMMAND_KINDS,
   SIGNALS_SEEN_KIND,
   CLAIM_AGENT_INBOX_KIND,
   ACK_AGENT_DELIVERY_KIND,
@@ -1532,6 +1580,94 @@ function validateCommand(
       };
   }
 
+  /* Channel authority. Every refusal sentence below is BUILT from the same
+   * constants the validator reads (supabase/functions/_shared/channels.ts), so
+   * a changed bound or a new reserved name cannot leave a stale sentence
+   * telling a caller a rule that is not enforced. */
+  if (cmd.kind === "channel_create") {
+    const keysOk = exactKeys(cmd, ["kind", "slug"]) ||
+      exactKeys(cmd, ["kind", "slug", "purpose"]);
+    const slugProblem = channelSlugProblem(cmd.slug);
+    if (!keysOk || slugProblem !== null) {
+      return {
+        ok: false,
+        status: 400,
+        reason: keysOk
+          ? slugProblem!
+          : "channel_create takes slug and an optional purpose",
+      };
+    }
+    const rawPurpose = Object.hasOwn(cmd, "purpose") ? cmd.purpose : null;
+    if (
+      rawPurpose !== null && rawPurpose !== undefined &&
+      (typeof rawPurpose !== "string" ||
+        sanitizeSignalText(rawPurpose).length > CHANNEL_PURPOSE_MAX)
+    ) {
+      return {
+        ok: false,
+        status: 400,
+        reason:
+          `A channel purpose is text of at most ${CHANNEL_PURPOSE_MAX} characters.`,
+      };
+    }
+    const purpose = typeof rawPurpose === "string"
+      ? sanitizeSignalText(rawPurpose).trim() || null
+      : null;
+    return {
+      ok: true,
+      command: {
+        kind: "channel_create",
+        slug: normalizeChannelSlug(cmd.slug as string),
+        purpose,
+      },
+    };
+  }
+
+  if (cmd.kind === "channel_rename") {
+    const slugProblem = channelSlugProblem(cmd.slug);
+    if (
+      !exactKeys(cmd, ["kind", "channel_id", "slug"]) ||
+      typeof cmd.channel_id !== "string" ||
+      !UUID_RE.test(cmd.channel_id) ||
+      slugProblem !== null
+    ) {
+      return {
+        ok: false,
+        status: 400,
+        reason: slugProblem ?? "channel_rename takes channel_id and slug",
+      };
+    }
+    return {
+      ok: true,
+      command: {
+        kind: "channel_rename",
+        channel_id: cmd.channel_id.toLowerCase(),
+        slug: normalizeChannelSlug(cmd.slug as string),
+      },
+    };
+  }
+
+  if (cmd.kind === "channel_archive") {
+    if (
+      !exactKeys(cmd, ["kind", "channel_id"]) ||
+      typeof cmd.channel_id !== "string" ||
+      !UUID_RE.test(cmd.channel_id)
+    ) {
+      return {
+        ok: false,
+        status: 400,
+        reason: "channel_archive takes channel_id",
+      };
+    }
+    return {
+      ok: true,
+      command: {
+        kind: "channel_archive",
+        channel_id: cmd.channel_id.toLowerCase(),
+      },
+    };
+  }
+
   if (cmd.kind === "post_signal") {
     if (Object.hasOwn(cmd, "from")) {
       return {
@@ -1550,6 +1686,21 @@ function validateCommand(
     const modernKeys = modernShape
       ? ["to_agent_principal_id", "in_reply_to"]
       : [];
+    /* Each chat key is its OWN Object.hasOwn group, the until_ms/attachments
+     * pattern. NEVER fold one into modernKeys: that pair is all-or-nothing and
+     * every installed client always sends it, so widening it would 400 every
+     * post after a perfectly ordered migration. */
+    const chatKeys = chatSignalKeys(cmd);
+    const channel = Object.hasOwn(cmd, "channel") ? cmd.channel : undefined;
+    const threadRootId = Object.hasOwn(cmd, "thread_root_id")
+      ? cmd.thread_root_id
+      : undefined;
+    const broadcastToChannel = Object.hasOwn(cmd, "broadcast_to_channel")
+      ? cmd.broadcast_to_channel
+      : undefined;
+    const threadRoot = threadRootId === undefined
+      ? null
+      : threadRootId as string | null;
     const signalKinds: readonly SignalKind[] = ["working-on", "note", "ask"];
     const sanitizedBody = typeof cmd.body === "string"
       ? sanitizeSignalText(cmd.body)
@@ -1570,6 +1721,7 @@ function validateCommand(
       ...modernKeys,
       ...attachmentKeys,
       ...optionalKeys,
+      ...chatKeys,
     ]) &&
       typeof cmd.signal_kind === "string" &&
       signalKinds.includes(cmd.signal_kind as SignalKind) &&
@@ -1619,7 +1771,32 @@ function validateCommand(
         )
       ) &&
       (!Object.hasOwn(cmd, "attachments") ||
-        parseSignalAttachmentRefs(cmd.attachments) !== null);
+        parseSignalAttachmentRefs(cmd.attachments) !== null) &&
+      (
+        channel === undefined ||
+        (typeof channel === "string" && channelSlugProblem(channel) === null)
+      ) &&
+      (threadRootId === undefined || nullableUuid(threadRootId)) &&
+      (
+        broadcastToChannel === undefined ||
+        typeof broadcastToChannel === "boolean"
+      ) &&
+      /* A threaded reply is a message in the open. It is never working-on
+       * (R11), it carries no recipient, and it does not also set in_reply_to —
+       * that column means "reply privately to the author" and the server
+       * re-addresses on it, so accepting both would make the audience
+       * ambiguous at the exact place addressing is decided. */
+      (
+        threadRoot === null ||
+        (
+          cmd.signal_kind !== "working-on" &&
+          cmd.to_user_id === null &&
+          toAgentPrincipalId === null &&
+          inReplyTo === null
+        )
+      ) &&
+      /* "Also send to the channel" is a property OF a threaded reply. */
+      (broadcastToChannel !== true || threadRoot !== null);
     const attachments = Object.hasOwn(cmd, "attachments")
       ? parseSignalAttachmentRefs(cmd.attachments)
       : undefined;
@@ -1642,6 +1819,19 @@ function validateCommand(
           ...(cmd.until_ms === undefined
             ? {}
             : { until_ms: cmd.until_ms as number }),
+          ...(channel === undefined
+            ? {}
+            : { channel: normalizeChannelSlug(channel as string) }),
+          ...(threadRootId === undefined
+            ? {}
+            : {
+              thread_root_id: threadRoot === null
+                ? null
+                : threadRoot.toLowerCase(),
+            }),
+          ...(broadcastToChannel === undefined
+            ? {}
+            : { broadcast_to_channel: broadcastToChannel as boolean }),
         },
       }
       : {
@@ -5968,6 +6158,298 @@ async function enforceFreeTierBudget(
   return null;
 }
 
+type ChannelOutcome =
+  | { ok: true; channel: ChannelRecord }
+  | {
+    ok: false;
+    status: number;
+    error: string;
+    message: string;
+    reason: string;
+  };
+
+interface ChannelRow {
+  channel_id: string;
+  workspace_id: string;
+  slug: string;
+  purpose: string | null;
+  created_by_principal: string;
+  created_by_kind: CredentialKind;
+  created_at: Date;
+  archived_at: Date | null;
+}
+
+function channelRecord(row: ChannelRow): ChannelRecord {
+  return {
+    channel_id: row.channel_id,
+    workspace_id: row.workspace_id,
+    slug: row.slug,
+    purpose: row.purpose,
+    created_by_principal: row.created_by_principal,
+    created_by_kind: row.created_by_kind,
+    created_at: row.created_at.toISOString(),
+    archived_at: row.archived_at === null
+      ? null
+      : row.archived_at.toISOString(),
+  };
+}
+
+/** Live slugs in the route's workspace, for a refusal message we generate. */
+async function liveChannelSlugs(tx: Sql, route: Route): Promise<string[]> {
+  const rows = await tx<{ slug: string }[]>`
+    SELECT slug FROM swarm.channels
+    WHERE workspace_id = ${route.workspaceId}::uuid
+      AND archived_at IS NULL
+    ORDER BY slug
+    LIMIT 200
+  `;
+  return rows.map((row) => row.slug);
+}
+
+/**
+ * Channel authority. Every write is pinned to the route's workspace, so a
+ * client-supplied channel_id from another tenant resolves to nothing rather
+ * than to somebody else's row.
+ */
+async function applyChannelCommand(
+  tx: Sql,
+  route: Route,
+  auth: AuthContext,
+  command: ChannelCommand,
+): Promise<ChannelOutcome> {
+  if (command.kind === "channel_create") {
+    const existing = await tx<ChannelRow[]>`
+      SELECT channel_id, workspace_id, slug, purpose,
+             created_by_principal, created_by_kind, created_at, archived_at
+      FROM swarm.channels
+      WHERE workspace_id = ${route.workspaceId}::uuid
+        AND lower(slug) = ${command.slug}
+      LIMIT 1
+    `;
+    if (existing[0] !== undefined) {
+      return {
+        ok: false,
+        status: 409,
+        error: "channel_exists",
+        message:
+          `This workspace already has a channel named ${command.slug}. Post to it instead.`,
+        reason: "channel_slug_taken",
+      };
+    }
+    const rows = await tx<ChannelRow[]>`
+      INSERT INTO swarm.channels (
+        channel_id, workspace_id, slug, purpose,
+        created_by_principal, created_by_kind, created_at
+      ) VALUES (
+        ${crypto.randomUUID()}::uuid,
+        ${route.workspaceId}::uuid,
+        ${command.slug},
+        ${command.purpose},
+        ${canonicalPrincipal(auth.actor)}::uuid,
+        ${auth.credentialKind},
+        statement_timestamp()
+      )
+      RETURNING channel_id, workspace_id, slug, purpose,
+                created_by_principal, created_by_kind, created_at, archived_at
+    `;
+    const row = rows[0];
+    if (row === undefined) throw new Error("channel insert did not return a row");
+    return { ok: true, channel: channelRecord(row) };
+  }
+
+  const current = await tx<ChannelRow[]>`
+    SELECT channel_id, workspace_id, slug, purpose,
+           created_by_principal, created_by_kind, created_at, archived_at
+    FROM swarm.channels
+    WHERE workspace_id = ${route.workspaceId}::uuid
+      AND channel_id = ${command.channel_id}::uuid
+    LIMIT 1
+  `;
+  if (current[0] === undefined) {
+    return {
+      ok: false,
+      status: 404,
+      error: "channel_not_found",
+      message: "There is no channel with that id in this workspace.",
+      reason: "channel_not_found",
+    };
+  }
+
+  if (command.kind === "channel_archive") {
+    /* Archiving twice is an accepted no-op: the caller's intent already holds,
+     * and the append-only habit of this codebase is not to invent a conflict
+     * where the end state is the one that was asked for. */
+    const rows = await tx<ChannelRow[]>`
+      UPDATE swarm.channels
+      SET archived_at = COALESCE(archived_at, statement_timestamp())
+      WHERE workspace_id = ${route.workspaceId}::uuid
+        AND channel_id = ${command.channel_id}::uuid
+      RETURNING channel_id, workspace_id, slug, purpose,
+                created_by_principal, created_by_kind, created_at, archived_at
+    `;
+    return { ok: true, channel: channelRecord(rows[0]!) };
+  }
+
+  const clash = await tx<{ channel_id: string }[]>`
+    SELECT channel_id FROM swarm.channels
+    WHERE workspace_id = ${route.workspaceId}::uuid
+      AND lower(slug) = ${command.slug}
+      AND channel_id <> ${command.channel_id}::uuid
+    LIMIT 1
+  `;
+  if (clash[0] !== undefined) {
+    return {
+      ok: false,
+      status: 409,
+      error: "channel_exists",
+      message:
+        `This workspace already has a channel named ${command.slug}.`,
+      reason: "channel_slug_taken",
+    };
+  }
+  const renamed = await tx<ChannelRow[]>`
+    UPDATE swarm.channels
+    SET slug = ${command.slug}
+    WHERE workspace_id = ${route.workspaceId}::uuid
+      AND channel_id = ${command.channel_id}::uuid
+    RETURNING channel_id, workspace_id, slug, purpose,
+              created_by_principal, created_by_kind, created_at, archived_at
+  `;
+  return { ok: true, channel: channelRecord(renamed[0]!) };
+}
+
+interface SignalChannelResolution {
+  ok: boolean;
+  channelId: string | null;
+  status?: number;
+  error?: string;
+  message?: string;
+  reason?: string;
+}
+
+/**
+ * Slug to id, WITHIN THE ROUTE'S WORKSPACE. A client-supplied identifier is
+ * never trusted, so cross-tenant resolution is not a check that can be
+ * forgotten: the query cannot see the other tenant's row.
+ */
+async function resolveSignalChannel(
+  tx: Sql,
+  route: Route,
+  command: SignalCommand,
+): Promise<SignalChannelResolution> {
+  const slug = command.channel;
+  if (slug === undefined) return { ok: true, channelId: null };
+  const rows = await tx<{ channel_id: string; archived_at: Date | null }[]>`
+    SELECT channel_id, archived_at
+    FROM swarm.channels
+    WHERE workspace_id = ${route.workspaceId}::uuid
+      AND lower(slug) = ${slug}
+    LIMIT 1
+  `;
+  const row = rows[0];
+  if (row === undefined) {
+    return {
+      ok: false,
+      channelId: null,
+      status: 404,
+      error: "channel_not_found",
+      message: unknownChannelMessage(slug, await liveChannelSlugs(tx, route)),
+      reason: "channel_not_found",
+    };
+  }
+  if (row.archived_at !== null) {
+    return {
+      ok: false,
+      channelId: null,
+      status: 409,
+      error: "channel_archived",
+      message:
+        `${slug} is archived, so it takes no new messages. Its history still reads and its links still resolve.`,
+      reason: "channel_archived",
+    };
+  }
+  return { ok: true, channelId: row.channel_id };
+}
+
+interface ThreadRootResolution {
+  ok: boolean;
+  threadRootId: string | null;
+  rootUntil: Date | null;
+  rootChannelId: string | null;
+  status?: number;
+  error?: string;
+  message?: string;
+  reason?: string;
+}
+
+/**
+ * A thread hangs off a TOP-LEVEL signal in the same workspace that is still
+ * live. Rooting a thread on another thread's reply is refused rather than
+ * silently re-pointed: re-pointing is the move that quietly changes what a
+ * stored column means, which is the defect this design ruled out for
+ * in_reply_to.
+ */
+async function resolveThreadRoot(
+  tx: Sql,
+  route: Route,
+  command: SignalCommand,
+): Promise<ThreadRootResolution> {
+  const rootId = command.thread_root_id ?? null;
+  if (rootId === null) {
+    return { ok: true, threadRootId: null, rootUntil: null, rootChannelId: null };
+  }
+  const rows = await tx<{
+    id: string;
+    until: Date;
+    channel_id: string | null;
+    thread_root_id: string | null;
+  }[]>`
+    SELECT id, until, channel_id, thread_root_id
+    FROM swarm.signals
+    WHERE workspace_id = ${route.workspaceId}::uuid
+      AND id = ${rootId}::uuid
+      /* A one-second floor, not merely "still live". The reply's until is
+       * clamped to the root's in SQL, and CHECK (until > created_at) would
+       * fire if the root expired between this SELECT and the INSERT. The floor
+       * turns an unexplainable 500 into an honest refusal. */
+      AND until > statement_timestamp() + interval '1 second'
+    LIMIT 1
+  `;
+  const root = rows[0];
+  if (root === undefined) {
+    return {
+      ok: false,
+      threadRootId: null,
+      rootUntil: null,
+      rootChannelId: null,
+      status: 404,
+      error: "thread_root_not_found",
+      message:
+        "There is no live message with that id in this workspace. A thread cannot outlive the message it starts from, so an expired one takes no replies.",
+      reason: "thread_root_not_found",
+    };
+  }
+  if (root.thread_root_id !== null) {
+    return {
+      ok: false,
+      threadRootId: null,
+      rootUntil: null,
+      rootChannelId: null,
+      status: 400,
+      error: "thread_root_is_a_reply",
+      message:
+        "That message is already a reply in a thread. Reply to the message the thread starts from.",
+      reason: "thread_root_is_a_reply",
+    };
+  }
+  return {
+    ok: true,
+    threadRootId: root.id,
+    rootUntil: root.until,
+    rootChannelId: root.channel_id,
+  };
+}
+
 interface SignalWriteTarget {
   toUserId: string | null;
   toAgentPrincipalId: string | null;
@@ -6231,6 +6713,20 @@ async function resolveSignalAttachments(
   return { ok: true, attachments };
 }
 
+/** Where the signal is filed, and how long it may live once clamped. */
+interface SignalPlacement {
+  channelId: string | null;
+  threadRootId: string | null;
+  broadcastToChannel: boolean;
+  untilMs: number;
+  /**
+   * A thread reply may not outlive its root. The ceiling is applied in SQL with
+   * LEAST against the same statement_timestamp() the row is created at, so the
+   * clamp cannot be defeated by clock skew between this process and Postgres.
+   */
+  untilCeiling: string | null;
+}
+
 async function postSignal(
   tx: Sql,
   route: Route,
@@ -6238,9 +6734,9 @@ async function postSignal(
   command: SignalCommand,
   target: SignalWriteTarget,
   attachments: readonly SignalAttachment[],
+  placement: SignalPlacement,
 ): Promise<SignalRecord> {
-  const untilMs = command.until_ms ??
-    SIGNAL_DEFAULT_UNTIL_MS[command.signal_kind];
+  const untilMs = placement.untilMs;
   const signalId = crypto.randomUUID();
   const rows = await tx<{
     id: string;
@@ -6255,11 +6751,15 @@ async function postSignal(
     body: string;
     until: Date;
     created_at: Date;
+    channel_id: string | null;
+    thread_root_id: string | null;
+    broadcast_to_channel: boolean;
   }[]>`
     INSERT INTO swarm.signals (
       id, workspace_id, from_principal, from_kind,
       to_user_id, to_agent_principal_id, in_reply_to,
-      about, kind, body, until, created_at
+      about, kind, body, until, created_at,
+      channel_id, thread_root_id, broadcast_to_channel
     ) VALUES (
       ${signalId}::uuid,
       ${route.workspaceId}::uuid,
@@ -6271,13 +6771,23 @@ async function postSignal(
       ${command.about},
       ${command.signal_kind},
       ${command.body},
-      statement_timestamp() + ${untilMs} * interval '1 millisecond',
-      statement_timestamp()
+      LEAST(
+        statement_timestamp() + ${untilMs} * interval '1 millisecond',
+        COALESCE(
+          ${placement.untilCeiling}::timestamptz,
+          statement_timestamp() + ${untilMs} * interval '1 millisecond'
+        )
+      ),
+      statement_timestamp(),
+      ${placement.channelId}::uuid,
+      ${placement.threadRootId}::uuid,
+      ${placement.broadcastToChannel}
     )
     RETURNING
       id, workspace_id, from_principal, from_kind,
       to_user_id, to_agent_principal_id, in_reply_to,
-      about, kind, body, until, created_at
+      about, kind, body, until, created_at,
+      channel_id, thread_root_id, broadcast_to_channel
   `;
   const signal = rows[0];
   if (!signal) throw new Error("signal insert did not return a row");
@@ -6308,6 +6818,9 @@ async function postSignal(
     attachments: [...attachments],
     until: signal.until.toISOString(),
     created_at: signal.created_at.toISOString(),
+    channel_id: signal.channel_id,
+    thread_root_id: signal.thread_root_id,
+    broadcast_to_channel: signal.broadcast_to_channel,
   };
 }
 
@@ -6526,6 +7039,16 @@ async function handleTransaction(
     // scope. The reducer still requires a live membership or principal.
     const isFeedback =
       validation.command.kind === "submit_feedback";
+    /* Channel commands are agent-allowed by class, the way file commands are.
+     * A channel grants nothing and scopes nothing, so a "channel_create" scope
+     * would be pure ceremony — and existing minted tokens could never carry a
+     * new scope, so gating on one would refuse every agent already running. The
+     * reducer-free handler still requires a live membership or principal via
+     * resolveRoute. */
+    const isChannelCommand =
+      (CHANNEL_COMMAND_KINDS as readonly string[]).includes(
+        validation.command.kind,
+      );
     if (isModelDeclare && auth.agent === null) {
       await insertAudit(tx, {
         auth,
@@ -6577,6 +7100,7 @@ async function handleTransaction(
       !isAgentTokenRevoke &&
       !isModelDeclare &&
       !isFeedback &&
+      !isChannelCommand &&
       !isDeliveryCommand &&
       !isSeenCommand &&
       !isFileCommand &&
@@ -6867,6 +7391,79 @@ async function handleTransaction(
       };
     }
 
+    if ((CHANNEL_COMMAND_KINDS as readonly string[]).includes(command.kind)) {
+      const outcome = await applyChannelCommand(
+        tx,
+        route,
+        auth,
+        command as ChannelCommand,
+      );
+      if (!outcome.ok) {
+        await insertAudit(tx, {
+          auth,
+          commandKind: kind,
+          workspaceId: route.workspaceId,
+          streamId: route.streamId,
+          outcome: outcome.status === 404 ? "authz" : "domain",
+          reason: outcome.reason,
+          hash,
+        });
+        return {
+          status: outcome.status,
+          body: { error: outcome.error, message: outcome.message },
+        };
+      }
+      const channelResponse: StoredResponse = {
+        ok: true,
+        event_ids: [],
+        channel: outcome.channel,
+      };
+      const inserted = await tx<{ command_id: string }[]>`
+        INSERT INTO swarm.idempotency_keys (
+          principal_kind, principal_id, command_id,
+          workspace_id, stream_id, request_hash, response
+        ) VALUES (
+          ${auth.credentialKind},
+          ${canonicalPrincipal(auth.actor)},
+          ${commandId},
+          ${route.workspaceId}::uuid,
+          ${route.streamId}::uuid,
+          ${hash},
+          ${tx.json(channelResponse as unknown as postgres.JSONValue)}::jsonb
+        )
+        ON CONFLICT (principal_kind, principal_id, command_id) DO NOTHING
+        RETURNING command_id
+      `;
+      if (inserted.length === 0) {
+        throw new LedgerRace(
+          auth,
+          commandId,
+          kind,
+          route.workspaceId,
+          route.streamId,
+          hash,
+        );
+      }
+      await insertAudit(tx, {
+        auth,
+        commandKind: kind,
+        workspaceId: route.workspaceId,
+        streamId: route.streamId,
+        outcome: "accepted",
+        detail: ignoredIdentity,
+        hash,
+      });
+      return {
+        status: 200,
+        body: {
+          status: "accepted",
+          ...channelResponse,
+          events: [],
+          min_client_version: minClientVersion,
+        },
+      };
+    }
+
     if (command.kind === "post_signal") {
       const signalTarget = await resolveSignalWriteTarget(
         tx,
@@ -6955,6 +7552,84 @@ async function handleTransaction(
         };
       }
 
+      const channelResolution = await resolveSignalChannel(tx, route, command);
+      if (!channelResolution.ok) {
+        await insertAudit(tx, {
+          auth,
+          commandKind: kind,
+          workspaceId: route.workspaceId,
+          streamId: route.streamId,
+          outcome: channelResolution.status === 404 ? "authz" : "domain",
+          reason: channelResolution.reason!,
+          hash,
+        });
+        return {
+          status: channelResolution.status!,
+          body: {
+            error: channelResolution.error!,
+            message: channelResolution.message!,
+          },
+        };
+      }
+      const threadResolution = await resolveThreadRoot(tx, route, command);
+      if (!threadResolution.ok) {
+        await insertAudit(tx, {
+          auth,
+          commandKind: kind,
+          workspaceId: route.workspaceId,
+          streamId: route.streamId,
+          outcome: threadResolution.status === 404 ? "authz" : "domain",
+          reason: threadResolution.reason!,
+          hash,
+        });
+        return {
+          status: threadResolution.status!,
+          body: {
+            error: threadResolution.error!,
+            message: threadResolution.message!,
+          },
+        };
+      }
+      /* Reply expiry: the server CLAMPS a defaulted horizon and REFUSES an
+       * explicit one it cannot honour. Silently shortening a horizon the caller
+       * typed is the dishonest branch, and it is the one case where a refusal
+       * tells the truth. The per-kind defaults are longer than a short-lived
+       * root for almost every combination, so refusing them all would refuse
+       * almost every thread reply. */
+      const requestedUntilMs = command.until_ms ??
+        SIGNAL_DEFAULT_UNTIL_MS[command.signal_kind];
+      const rootUntil = threadResolution.rootUntil;
+      if (rootUntil !== null && command.until_ms !== undefined) {
+        const remainingMs = rootUntil.getTime() - Date.now();
+        if (command.until_ms > remainingMs) {
+          await insertAudit(tx, {
+            auth,
+            commandKind: kind,
+            workspaceId: route.workspaceId,
+            streamId: route.streamId,
+            outcome: "domain",
+            reason: "thread_reply_until_exceeds_root",
+            hash,
+          });
+          return {
+            status: 409,
+            body: {
+              error: "thread_reply_until_exceeds_root",
+              message:
+                `A reply cannot outlive the message its thread starts from. That thread ends at ${rootUntil.toISOString()}. Ask for a shorter horizon, or leave it out and it is set for you.`,
+              root_until: rootUntil.toISOString(),
+            },
+          };
+        }
+      }
+      /* A threaded reply inherits its root's channel. The client does not get
+       * to file a reply somewhere its thread is not, and a reply whose root is
+       * unfiled stays unfiled. An explicit channel on a thread reply is
+       * ignored rather than refused, because the inherited value is the only
+       * one that can be right. */
+      const placementChannelId = threadResolution.threadRootId !== null
+        ? threadResolution.rootChannelId
+        : channelResolution.channelId;
       const signal = await postSignal(
         tx,
         route,
@@ -6962,6 +7637,13 @@ async function handleTransaction(
         command,
         signalTarget,
         attachmentResolution.attachments,
+        {
+          channelId: placementChannelId,
+          threadRootId: threadResolution.threadRootId,
+          broadcastToChannel: command.broadcast_to_channel ?? false,
+          untilMs: requestedUntilMs,
+          untilCeiling: rootUntil === null ? null : rootUntil.toISOString(),
+        },
       );
       const signalResponse: StoredResponse = {
         ok: true,

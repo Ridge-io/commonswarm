@@ -7,7 +7,7 @@
  * be true for that, and each has its own test below.
  *   1. The request must NAME the kind. Omitting it is not "no opinion" — the command function
  *      falls back to "timeboxed" with a 30-day horizon
- *      (supabase/functions/command/index.ts:1957-1959, 2888-2891), which is the month every
+ *      (supabase/functions/command/index.ts:2147-2149, 2888-2891), which is the month every
  *      web-added agent used to die after.
  *   2. `renewal_horizon_ms` must be ABSENT from the JSON. The validator accepts standing only
  *      when the key is `undefined` (index.ts:1963-1964); a present `null` fails validation and

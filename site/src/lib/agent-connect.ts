@@ -61,7 +61,7 @@ export const AGENT_TOKEN_MAX_TTL_MS = 30 * 24 * 60 * 60 * 1_000;
  *
  * The horizon is now read off `horizon_expires_at` in the accepted response, for BOTH grant
  * kinds — see mintedHorizon. A standing grant returns null there
- * (supabase/functions/command/index.ts:7803-7808), so the two facts come from one place. */
+ * (supabase/functions/command/index.ts:8485-8490), so the two facts come from one place. */
 
 /**
  * How this browser's device row is labelled, so a second visit reuses the row rather than
@@ -274,7 +274,7 @@ function assertAccepted(step: ConnectStep, outcome: CommandOutcome): Record<stri
      * NAMES BOTH DIRECTIONS OF SKEW, from 2026-09-04. It used to say only that this page may
      * be OLDER than the deployment. The mint body now carries `renewal_kind`, and a command
      * function that predates that field rejects the whole request on its exact-key check
-     * (supabase/functions/command/index.ts:1970-1978) — so the NEWER-page case is the one a
+     * (supabase/functions/command/index.ts:2160-2168) — so the NEWER-page case is the one a
      * reader is most likely to meet, on a site deploy that outran the edge deploy, and the
      * old sentence sent them looking in the opposite direction. */
     throw new AgentConnectRefused(
@@ -564,7 +564,7 @@ export async function mintAgentCredential(
  * used any other horizon. One field answers both cases, so the two can never disagree.
  *
  * `horizon_expires_at` is returned unconditionally on an accepted mint
- * (supabase/functions/command/index.ts:7803-7808) — an ISO string for timeboxed, null for
+ * (supabase/functions/command/index.ts:8485-8490) — an ISO string for timeboxed, null for
  * standing — and the idempotent replay path carries it through (index.ts:2182-2188).
  *
  * ABSENT READS AS UNKNOWN, NOT AS A GUESS. A deployment old enough to omit the field answers
