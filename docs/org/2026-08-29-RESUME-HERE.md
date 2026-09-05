@@ -2114,3 +2114,26 @@ Rule: every step of a release chain must abort the chain (no `&&`-guarded steps 
 
 Chips withdrawn as shipped: head-of-line, brain-links comment, dead landing files, reauth sweep.
 Open chips: flaky write-retry deadline test; `main()` runs on import of `src/cli.ts`.
+
+## 2026-09-05 08:5x UTC — CHAT RECIPIENTS (L2) LANDED and LIVE (merge 060ff67); a red gate I pushed, fixed
+
+Apply order held: dry run named exactly `20260905000010_signal_recipients` → pushed (history
+confirms) → `command` and `read` deployed together at 08:48 UTC (the read view names
+`s.recipients`) → live control on production with the envelope: a note with a two-agent `to` list
+accepted, scalar `to_agent` = position 0, `recipients` carries the set; nine recipients refused
+with the cap named ("at most 8 recipients. This one names 9."); the 0.1.55 client's plain note
+still posts → `main` pushed. Rulings and bounds in the build plan (`8dc2eee`): no group DMs in
+v1; `to_agent` on a hydrated delivery is position 0 (waking later recipients is its own lane);
+the wake trigger's pre-existing blind spots (expired signals, revoked agents, self-addressed).
+The delivery fan-out was removed during review because it wrote undeliverable rows.
+
+**Two errors of mine on the same landing.** (1) The gate chain used `cmd && echo` steps, so
+p1-cli's one failure on the merge did not stop the push; the failure was the chat-cli drift gate
+doing its job (the edge learned `to`, the client has no verb for it). Repaired on `main` in
+`a62400b`: the claim is now subset plus a pinned not-sent-yet list. (2) That commit's `sed`
+restore matched every `= [];` in the file and turned three unrelated lines into `= ["to"];`;
+I pushed it with 4 reds, then restored the lines in `6966294` (472/472). Both commits went to
+`main` without arms because the gate was red; both arms now run post hoc on the pair
+(scratchpad `arms-posthoc-6966294`), verdicts to be recorded here. Rule: a gate chain aborts on
+any red; an edit's restore uses the same unique anchor as its mutation, never a generic pattern;
+rerun the FILE and compare to the baseline count before commit.
