@@ -18,6 +18,7 @@ the worktree's `arms-<sha>/<family>/ARM.txt`.
 | `670ae1d` | FAIL | FAIL | 2 |
 | `d98c73e` | FAIL | FAIL | 1 |
 | `085d83d` | **PASS** | FAIL | 1 |
+| `684c6f2` | **PASS** | FAIL | 1 |
 
 **`arms-85d7eea…-grok.txt` is not a review and its verdict was not counted.** It carries three
 VERDICT fragments and visibly interleaved sentences ("Next I'll pullI'll the channel read the
@@ -40,3 +41,7 @@ byte-identical at `d9fa25b:6202`.
 `b274485` is the first split. The ruling followed PM-RULES: the FAIL was verified at the cited
 lines, two of its three findings were reproduced against the source, and the third fix was a
 strict improvement on the mechanism it named. All three were fixed rather than argued away.
+
+On `684c6f2` a second arm finding was verified as **pre-existing on `main`** and routed rather
+than fixed: staging or removing an attachment nulls `composerIntent` without hiding Retry
+(`d9fa25b:2468` and `:2489`).

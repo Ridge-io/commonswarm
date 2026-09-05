@@ -461,7 +461,7 @@ test("a page fetched before a post landed does not drop that post", () => {
      arm found that. ~~`signals.filter((row) => postedSinceReset.has(row.id) && …)`~~. */
   assert.match(
     load,
-    /prunePostedRows\(\);[\s\S]{0,1400}?const arrivedWhileFetching = \[\.\.\.postedSinceReset\.values\(\)\]\s*\n\s*\.map\(\(entry\) => entry\.row\)\s*\n\s*\.filter\(\(row\) =>\s*\n\s*!fetched\.has\(row\.id\) && rowShowsOnScreen\(row\) &&\s*\n\s*\(pageFloor === "" \|\| row\.createdAt >= pageFloor\)\)/,
+    /prunePostedRows\(\);[\s\S]{0,1800}?const arrivedWhileFetching = \[\.\.\.postedSinceReset\.values\(\)\]\s*\n\s*\.map\(\(entry\) => entry\.row\)\s*\n\s*\.filter\(\(row\) =>\s*\n\s*!fetched\.has\(row\.id\) && rowShowsOnScreen\(row\) && onThisPage\(row\)\)/,
   );
   /*
    * AND WITHIN THE PAGE'S WINDOW. The grace bounds how long a row may stand in; it does not
@@ -475,7 +475,15 @@ test("a page fetched before a post landed does not drop that post", () => {
    * thing that would have to change with it. That is the claim-control failure AGENTS.md
    * describes, caught by an arm rather than by the gate.
    */
-  assert.match(load, /const pageFloor = page\.hasMore \? page\.rows\.at\(-1\)\?\.createdAt \?\? "" : "";/);
+  /* And the floor is the WHOLE key the query orders by, not the timestamp alone: a row sharing
+     the floor row's timestamp with a smaller id sorts BELOW it and has rolled off, and
+     ~~`row.createdAt >= pageFloor`~~ kept it, so the page held twenty-six rows against a bound
+     of twenty-five. A review arm found that too. */
+  assert.match(load, /const pageFloor = page\.hasMore \? page\.rows\.at\(-1\) \?\? null : null;/);
+  assert.match(
+    load,
+    /pageFloor === null \|\|\s*\n\s*row\.createdAt > pageFloor\.createdAt \|\|\s*\n\s*\(row\.createdAt === pageFloor\.createdAt && row\.id >= pageFloor\.id\)/,
+  );
   /* And the stand-in is merged by time, not prepended: it can be the second newest row, and
      putting it on top painted it above a message newer than it. The comparator is the query's
      own order. */

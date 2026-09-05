@@ -141,8 +141,9 @@ lag was measured for this lane.
 
 And the grace bounds how long a row may stand in, not WHERE it belongs. Replica lag and a page roll
 share every other bit: both are a row the page does not carry. The difference is the timestamp, and
-both timestamps are the server's. The boundary is the page's **oldest** row: a stand-in belongs when
-the page is the whole history, or when it is at least as new as the last row on it. A row below that
+both timestamps are the server's. The boundary is the page's **oldest** row, compared on the whole key
+the query orders by (`created_at DESC, id DESC`) and not the timestamp alone: a stand-in belongs when
+the page is the whole history, or when it sorts at or above the last row on it. A row below that
 has rolled off, and it is not lost — it is in history, where Load older fetches it.
 
 Both halves of that took an arm. First the resurrection: a 20-second-old message painted above rows
@@ -151,7 +152,9 @@ itself: comparing against the page's **newest** dropped a row that still belongs
 newer than it had already replicated, which in all-signals is any other member's next post — and the
 observer control had **enshrined** that wrong comparison, which is the claim-control failure AGENTS.md
 describes, caught by an arm and not by the gate. The stand-in is merged by the query's own order
-rather than prepended, because it can be the second newest row and not the first.
+rather than prepended, because it can be the second newest row and not the first. A third arm pass
+then found the floor comparing timestamps only, which kept a row that shares the floor row's timestamp
+with a smaller id — rolled off, but held on a page whose bound is twenty-five.
 
 **And an unfinished send does not follow the reader to another channel.** Moving channel retires the
 intent and says so, because the composer is about to promise the new channel and replaying the old
@@ -261,24 +264,30 @@ forbids.
 5. **The To: field with multiple recipients is not built.** L2 `chat-recipients` is live in production
    (a signal can carry a `to` list of up to 8, and the read view carries `recipients`), and the To:
    field is its own lane after this one.
-6. **The poll's own ordering was not changed.** `refreshLatestSignals` builds
+6. **Two composer paths pre-existing on `main` are routed, not fixed.** `refreshLatestSignals` builds
+   `[...page.rows, ...signals.filter(not on page)]`, so a row the replica has not caught up to sits
+   below the page for one tick (`d9fa25b:4360`). And staging or removing an attachment nulls
+   `composerIntent` without hiding Retry, so a Retry after a file is added mints fresh command ids and
+   reposts hops that already landed (`d9fa25b:2468` and `:2489`). Both were raised by an arm, both are
+   byte-identical on `main`, and neither is about channels.
+7. **The poll's own ordering was not changed.** `refreshLatestSignals` builds
    `[...page.rows, ...signals.filter(not on page)]`, so a row the replica has not caught up to sits
    below the page for one tick. An arm raised it; it is byte-identical on `origin/main` at
    `d9fa25b:4360`, it is not about channels, and it is routed rather than fixed here.
-7. **No capacity or query-plan work.** `channel_id=eq.` rides the partial index L1 added; no plan was
+8. **No capacity or query-plan work.** `channel_id=eq.` rides the partial index L1 added; no plan was
    read.
-8. **The source sweeps in the observer test state their own bounds** in the test headers. A regex over
+9. **The source sweeps in the observer test state their own bounds** in the test headers. A regex over
    source cannot be complete, and neither of them claims to be. The privacy sweep reads double-quoted
    and backtick strings in eight script surfaces plus two pieces of markup plus the composer's
    refusals, with comments stripped and a positive control on the number of strings it read. What it
    cannot constrain, named rather than implied: a channel `purpose`, which a member types and the head
    renders verbatim.
-9. **The rail's current mark and the head can no longer disagree**, but that was a defect and not a
+10. **The rail's current mark and the head can no longer disagree**, but that was a defect and not a
    design: the channel buttons carry no `data-workspace-view`, so `activateWorkspaceView`'s own loop
    never reached them and the rail claimed a current channel while the head said Files. Found by a
    review arm. In the unresolved-channel state the rail marks NOTHING current, which both arms read
    and agreed is the honest mark: the reader is in the signals view and in no channel.
-10. **Fourteen review rounds cost thirty-five product defects and two evidence defects**, every one found by an
+11. **Fifteen review rounds cost thirty-six product defects and two evidence defects**, every one found by an
    arm and none by a gate: the read-permission claim in the copy; the composer that posted into the
    unfiltered feed from an unresolved link; a double current mark on Files and Brain; four typed
    copies of the view's name; a workspace switch that opened as "Channel not found"; a channel-list

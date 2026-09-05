@@ -4673,12 +4673,19 @@ import "../../styles/tokens.css";
            comparison. When the page is the whole history nothing has rolled off, so every
            stand-in belongs. A rolled-off row is not lost: it is in history, where Load older
            fetches it. */
-        const pageFloor = page.hasMore ? page.rows.at(-1)?.createdAt ?? "" : "";
+        /* The floor is the WHOLE key the query orders by, `created_at DESC, id DESC`, and not
+           the timestamp alone: a row sharing the floor row's timestamp with a smaller id sorts
+           BELOW it and has rolled off, and `createdAt >= floor` kept it, so the page held
+           twenty-six rows against a bound of twenty-five. A review arm found it. */
+        const pageFloor = page.hasMore ? page.rows.at(-1) ?? null : null;
+        const onThisPage = (row: Signal): boolean =>
+          pageFloor === null ||
+          row.createdAt > pageFloor.createdAt ||
+          (row.createdAt === pageFloor.createdAt && row.id >= pageFloor.id);
         const arrivedWhileFetching = [...postedSinceReset.values()]
           .map((entry) => entry.row)
           .filter((row) =>
-            !fetched.has(row.id) && rowShowsOnScreen(row) &&
-            (pageFloor === "" || row.createdAt >= pageFloor));
+            !fetched.has(row.id) && rowShowsOnScreen(row) && onThisPage(row));
         forgetFetchedPostedIds(page.rows);
         /* Merged by time, not prepended. A stand-in is not always the newest row: it can be
            the second newest, and putting it on top painted it above a message that is newer
