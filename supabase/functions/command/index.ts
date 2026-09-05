@@ -7093,9 +7093,14 @@ async function postSignal(
   }
   /* One row per recipient, in the order the sender named them. Position 0
    * repeats the scalar recipient on the signal row on purpose: the table then
-   * means exactly "what the caller addressed", with no arity-dependent branch,
-   * and the delivery trigger's ON CONFLICT DO NOTHING is exercised on the
-   * single-recipient path as well as the many-recipient one.
+   * means exactly "what the caller addressed", with no arity-dependent branch.
+   *
+   * These rows WAKE NOBODY. No trigger on swarm.signal_recipients writes to
+   * swarm.signal_deliveries, and section 4 of
+   * 20260905000010_signal_recipients.sql is a page on why: the rows such a
+   * trigger writes cannot be hydrated or accepted by an installed listener.
+   * Recipient 0 is woken from the scalar column by the trigger on
+   * swarm.signals, which ran when the insert above committed its row.
    *
    * A body with no `to` writes NOTHING here, so nothing about an installed
    * client's post changes. swarm_read.signals derives the same set from the

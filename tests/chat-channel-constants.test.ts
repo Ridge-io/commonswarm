@@ -105,7 +105,7 @@ test("every refusal sentence is generated from the constant the validator reads"
    * enforces, typed by hand, and drifting the moment the enforcement changes.
    * Each assertion below fails if the sentence stops being derived. */
   assert.ok(
-    CHANNEL_SLUG_RULE_TEXT.includes(String(CHANNEL_SLUG_MAX)),
+    new RegExp(`(?<!\\d)${CHANNEL_SLUG_MAX}(?!\\d)`).test(CHANNEL_SLUG_RULE_TEXT),
     "the slug rule sentence must name the bound the validator applies",
   );
   for (const reserved of RESERVED_CHANNEL_SLUGS) {
@@ -271,9 +271,20 @@ test("the recipient rules refuse each shape they name, and the sentences are gen
       `the rule text must name ${kind}`,
     );
   }
+  /* The NUMBER, not a substring of one. A review arm pointed out that
+   * includes("8") is satisfied by "18", so the bound could be raised and the
+   * sentence could still claim the old one. Digit boundaries on both sides. */
   assert.ok(
-    SIGNAL_RECIPIENT_RULE_TEXT.includes(String(SIGNAL_RECIPIENT_MAX)),
-    "the rule text carries the cap it enforces",
+    new RegExp(`(?<!\\d)${SIGNAL_RECIPIENT_MAX}(?!\\d)`)
+      .test(SIGNAL_RECIPIENT_RULE_TEXT),
+    "the rule text carries the cap it enforces, as that number and not inside a longer one",
+  );
+  /* Control on the matcher: it really does reject a longer number that ends in
+   * the same digits, so the assertion above is about the value. */
+  assert.equal(
+    new RegExp(`(?<!\\d)${SIGNAL_RECIPIENT_MAX}(?!\\d)`)
+      .test(`at most 1${SIGNAL_RECIPIENT_MAX} recipients`),
+    false,
   );
 
   assert.match(

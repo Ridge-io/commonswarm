@@ -833,7 +833,17 @@ test("the channel_id rule text does not promise a check the validator skips", ()
 test("the model length rule has its own sentence, built from its own bound", () => {
   /* An arm sent a 121-character model with exactly the right keys and was told
    * which FIELDS the command takes. */
-  assert.ok(MODEL_RULE_TEXT.includes(String(MODEL_MAX)));
+  /* Digit-bounded: includes(String(MODEL_MAX)) is satisfied by a longer number
+   * that ends in the same digits, so it cannot pin a bound. */
+  assert.ok(
+    new RegExp(`(?<!\\d)${MODEL_MAX}(?!\\d)`).test(MODEL_RULE_TEXT),
+    "the model sentence carries its own bound, as that number",
+  );
+  assert.equal(
+    new RegExp(`(?<!\\d)${MODEL_MAX}(?!\\d)`).test(`at most 1${MODEL_MAX}`),
+    false,
+    "control: the matcher rejects a longer number ending in the same digits",
+  );
   const command = readFileSync(
     fileURLToPath(
       new URL("../supabase/functions/command/index.ts", import.meta.url),

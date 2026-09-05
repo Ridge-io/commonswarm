@@ -201,6 +201,7 @@ async function viewRowAs<T>(
 /** The agent read path, which is the SECOND enforcement point for recipients. */
 async function readSignals(
   bearer: string,
+  inbox = false,
 ): Promise<{ status: number; body: Record<string, unknown> }> {
   const response = await fetch(`${local.API_URL}/functions/v1/read`, {
     method: "POST",
@@ -211,7 +212,7 @@ async function readSignals(
     body: JSON.stringify({
       resource: "signals",
       workspace_id: f.workspace,
-      inbox: false,
+      inbox,
       about: null,
       kind: null,
       since: null,
@@ -1103,6 +1104,18 @@ test("an agent that is only the SECOND recipient reads the signal, and one that 
     .map((row) => String(row.id));
   assert.ok(firstIds.includes(signalId), "and so must the agent at position 0");
 
+  /* inbox: true is a SECOND arm in the same query and had no served case. It
+   * narrows to what is addressed to this agent, so the later recipient must
+   * still be there -- an inbox that hid it would be the same defect one clause
+   * over. */
+  const inboxOnly = await readSignals(f.agentTokenTwo, true);
+  assert.equal(inboxOnly.status, 200, JSON.stringify(inboxOnly.body));
+  assert.ok(
+    (inboxOnly.body.signals as Record<string, unknown>[])
+      .some((row) => String(row.id) === signalId),
+    "the inbox filter reads the recipient set too",
+  );
+
   /* CONTROL: the same shape addressed to ONE agent stays invisible to the
    * other. Without this, "the second agent read it" could mean the arm admits
    * every directed signal to every agent the owner owns. */
@@ -1221,6 +1234,29 @@ test("working-on and a private reply refuse a `to` list the same way they refuse
   /* Control: a working-on with no recipient at all is accepted. */
   const ok = await send(f.ownerJwt, installedPost({ signal_kind: "working-on" }));
   assert.equal(ok.status, 200, JSON.stringify(ok.body));
+
+  /* A STATED BOUND, pinned so nobody reads it as a bug later. A working-on
+   * whose `to` ALSO breaks the cap is answered with the generic reason, not the
+   * cap sentence: the edge only prefers the chat sentence when nothing else is
+   * wrong, and "working-on takes no recipients" is the other thing that is
+   * wrong. The cap sentence is reachable whenever the rest of the body is
+   * legal, which the cap test above measures. A review arm named this; the
+   * accept/refuse boundary does not move, only which sentence is shown. */
+  const overCapWorkingOn = await send(
+    f.ownerJwt,
+    installedPost({
+      signal_kind: "working-on",
+      to: Array.from(
+        { length: SIGNAL_RECIPIENT_MAX + 1 },
+        () => ({ kind: "user" as const, id: randomUUID() }),
+      ),
+    }),
+  );
+  assert.equal(overCapWorkingOn.status, 400, JSON.stringify(overCapWorkingOn.body));
+  assert.equal(
+    String(overCapWorkingOn.body.message),
+    "signal fields are malformed or over their limits",
+  );
 });
 
 test("an installed client's post is unchanged by the existence of `to`", async () => {

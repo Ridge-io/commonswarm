@@ -39,7 +39,7 @@ except where the "Parallel" column says otherwise.
 | Lane | Owns (no other lane edits these) | Wire change | Old-client rule | Tests it adds | Parallel |
 |---|---|---|---|---|---|
 | **L1 `chat-schema`** | `supabase/migrations/20260905000001_channels.sql`, `…0002_signal_channel.sql`, `…0003_signal_threads.sql`; `supabase/functions/_shared/channels.ts`; `supabase/functions/command/index.ts`; `supabase/functions/read/index.ts`; `tests/chat-channel-constants.test.ts`; `tests/chat-signal-wire-compat.test.ts`; `tests/p1-local/chat-channels-postgres.test.ts` | `channel_create` / `channel_rename` / `channel_archive`; `post_signal` gains optional `channel`, `thread_root_id`, `broadcast_to_channel`; `read` gains optional `channel`; the signal record gains `channel_id`, `thread_root_id`, `broadcast_to_channel` | Additive nullable column, no backfill, no `SET NOT NULL`. Every new optional key is its **own** `Object.hasOwn` group; `modernKeys` is not widened | constants + generated messages; wire-compat twin of `tests/receipt-wire-compat.test.ts`; Postgres suite (channels, immutability, tenancy, delivery-neutrality) | — |
-| **L2 `chat-recipients`** | `supabase/migrations/20260905000010_signal_recipients.sql`; then `_shared/channels.ts`, `command/index.ts`, `read/index.ts` again | `post_signal` gains optional `to`, an array of `{kind, id}`, in its **own** `Object.hasOwn` group; the record and the view gain a `recipients` set | `to_user_id`/`to_agent_principal_id` STAY and hold the FIRST recipient, so an old reader sees a true recipient rather than none. `signals_one_recipient` is not relaxed | N-recipient visibility; first-recipient fallback; one delivery row per agent recipient and no duplicate for the first; the cap and its generated message; wire-compat twin | **no** — same files as L1 |
+| **L2 `chat-recipients`** | `supabase/migrations/20260905000010_signal_recipients.sql`; then `_shared/channels.ts`, `command/index.ts`, `read/index.ts` again | `post_signal` gains optional `to`, an array of `{kind, id}`, in its **own** `Object.hasOwn` group; the record and the view gain a `recipients` set | `to_user_id`/`to_agent_principal_id` STAY and hold the FIRST recipient, so an old reader sees a true recipient rather than none. `signals_one_recipient` is not relaxed | N-recipient visibility; first-recipient fallback; the delivery bound (recipient 0 woken once, nobody else, and no trigger on the recipients table); the cap and its generated message; wire-compat twin. *(**was**: "one delivery row per agent recipient and no duplicate for the first" — that fan-out was built, refused review, and was removed; see the L2 appendix.)* | **no** — same files as L1 |
 | **L3 `chat-client`** | `src/cloud/channels.ts` (new), `src/cloud/signals.ts`, `src/cloud/command-client.ts`, `src/cli.ts`, `tests/p1-cli/chat-cli.test.ts` | sends `channel` and `to` on post; `--channel` on feed; `cswarm channel ls\|new\|rename\|archive` | Client is newer than the edge only after L1 and L2 deploy. Publish the npm client **after** the edge deploy, never before | CLI parse + copy tests; slug resolver reuse of the `--to` name-or-uuid resolver | with L4 |
 | **L4 `chat-app-channels`** | `site/src/pages/app/*`, `site/src/lib/*`, `site/tests/*` for channels | none (browser reads the view directly) | Browser names its columns explicitly; L1's view append is safe. A new client against an **un-recreated** view is a PostgREST 400, so deploy order is migration → edge → site | rail, composer stamping, `?w=&c=&m=` round-trip, forbidden-copy scan, D2 mention chips | with L3 |
 | **L5 `chat-colour`** | the same site files as L4 | none | site only | colour determinism, contrast, colour-is-not-the-only-signal | **no** — same files as L4, lands after it |
@@ -316,11 +316,19 @@ refused by the same rule that already refuses the scalar spelling, with the same
    Nothing in L2 widens that endpoint, and nothing in L2 fixes it.
 4. **Not measured against production.** Local Supabase only.
 5. **Group DMs: one of the two mechanical reasons they were out of v1 stopped being true, and one did
-   not.** A three-party address is storable and readable. It does not notify the agents in it, which is
-   exactly the objection §4 raised. §4 and §10 carry the correction, including the intermediate version
+   not.** A three-party address is storable and readable. It notifies the FIRST agent recipient and
+   silently does not notify the rest, which is a weaker form of the objection §4 raised and still an
+   objection. §4 and §10 carry the correction, including the intermediate version
    that said "deliverable" and was wrong. The ruling is the coordinator's.
 
-7. **Waking a later recipient is BLOCKED, not deferred by choice.** The two changes it needs are named
+7. **One refusal shows the generic sentence where a better one exists.** A `working-on` whose `to` also
+   breaks the cap is answered "signal fields are malformed or over their limits", because the edge
+   prefers the chat sentence only when nothing else is wrong and `working-on` takes no recipients at
+   all. The cap sentence is reachable whenever the rest of the body is legal. Named by a review arm,
+   pinned by a served test, and not fixed: the accept/refuse boundary does not move, and the fix is a
+   change to how the edge chooses between two true refusals, which is bigger than this lane.
+
+8. **Waking a later recipient is BLOCKED, not deferred by choice.** The two changes it needs are named
    above and neither is in this lane. Whoever picks it up owes a decision on what `to_agent` means on a
    hydrated delivery before they write any code.
 6. **No client, no composer.** L3 and L4 still own `--to` and the mention chips; nothing a person can

@@ -471,11 +471,15 @@ reasoning is upheld below.)
 > three. `signals_one_recipient` still exists and is still not relaxed; it now bounds the SCALAR
 > columns only.
 >
-> The THIRD clause is still true, and a middle version of this correction recorded it as false:
-> *"no agent in a group DM would ever be woken."* Recipients 1..N are read-visible and are NOT woken,
-> for the reason in section 4 of `20260905000010_signal_recipients.sql`. The original paragraph's
-> conclusion -- that a conversation type which silently fails to notify the agents in it is worse than
-> none -- is therefore still live, and is the strongest argument against group DMs today.
+> The THIRD clause is **half** true, and both earlier versions of this note got it wrong in opposite
+> directions. It read *"no agent in a group DM would ever be woken."* Exactly: the agent at position 0
+> IS woken, from the scalar column, by the unchanged trigger on `swarm.signals`. Agents at positions
+> 1..N are read-visible and are NOT woken, for the reason in section 4 of
+> `20260905000010_signal_recipients.sql`. So a three-party conversation notifies its first agent
+> recipient and silently does not notify the rest, which is a weaker claim than the original sentence
+> and still the strongest argument against group DMs today. A review arm caught this slip; a middle
+> version of this correction had said the clause was false, and the version before that had said every
+> agent would be woken.
 >
 > **What is NOT settled: whether v1 should have group DMs.** That is a product decision and nobody has
 > made it. This document must not read as if the constraint decides it, because the constraint no longer
@@ -842,10 +846,15 @@ and `tests/p1-server/**` are globs; a new file in `tests/support/` runs in nothi
 | Forbidden copy | No channel surface contains *private*, *members of this channel*, *invite*, *join*, *leave*, or an audience count | Add one of those words to a fixture; the test must fail. |
 | Vocabulary | No user-facing string in `site/` uses "stream" in the room sense | The same scan finds `stream_id` in `src/` and passes, proving the scan searched the right thing. |
 
-**Live listener control.** THE EXEMPTION IS VOID as of 2026-09-05: L2 touches `signal_deliveries` from
-two directions. A trigger on `swarm.signal_recipients` writes rows to it, and the claim response gained
-`oldest_pending_at`. Every later slice owes whatever the standing rule asks of a lane that touches
-delivery.
+**Live listener control.** THE EXEMPTION IS VOID as of 2026-09-05: L2's claim response gained
+`oldest_pending_at`, which is a new READ of `swarm.signal_deliveries` on the claim path. Every later
+slice owes whatever the standing rule asks of a lane that touches delivery.
+
+> **was**, for a few hours on 2026-09-05: this paragraph also said *"L2 touches `signal_deliveries`
+> from two directions. A trigger on `swarm.signal_recipients` writes rows to it."* That trigger existed
+> and was removed the same day; see §10. Nothing L2 landed WRITES to the delivery ledger. Kept because
+> a reader who met that sentence needs to know it is retired, and because §10 and this section
+> disagreed for those hours -- a review arm found the disagreement, not the citation gate.
 
 > **was**, until 2026-09-05: *"Nothing here changes what a listener reports — delivery is untouched
 > (§7.3) — so a live listener check is not owed. If any slice begins to touch `signal_deliveries`, that
