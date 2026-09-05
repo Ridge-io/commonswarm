@@ -166,14 +166,14 @@ function codexHome(threadId: string, model: string): string {
   return home;
 }
 
-/** Every runtime marker cleared, so a case sets only the ones it means to. */
-const noRuntime = {
-  CLAUDECODE: "",
-  CLAUDE_CODE_SESSION_ID: "",
-  CODEX_THREAD_ID: "",
-  GROK_SESSION_ID: "",
-  ANTIGRAVITY_AGENT: "",
-};
+/* Every runtime marker cleared, BUILT FROM THE VOCABULARY. Retyping this list would leave a newly
+ * added runtime uncleared, so its marker would leak in from the environment the tests run in and a
+ * case would silently measure something other than what it set. `CLAUDE_CODE_SESSION_ID` is added
+ * because the Claude Code detector reads it after its own marker. */
+const runtimeMarkers = vocabArray("AGENT_TRAILER_RUNTIMES").map((entry) => entry.split("|")[2]!);
+const noRuntime: NodeJS.ProcessEnv = Object.fromEntries(
+  [...runtimeMarkers, "CLAUDE_CODE_SESSION_ID"].map((name) => [name, ""]),
+);
 
 test("one runtime marker reads the model as a clean measurement", () => {
   const home = codexHome("thread-solo", "gpt-5.6-sol");
@@ -357,6 +357,52 @@ test("the doc's tables name every family and every source in the vocabulary", ()
   for (const source of sources) {
     assert.ok(doc.includes(source), `model source ${source} is not documented`);
   }
+  /* Runtime ids were left out of this control once and the doc's table drifted to `claude` while
+   * the vocabulary said `claude-code` — a live disagreement the page claimed this test would catch.
+   *
+   * Asking whether the id appears ANYWHERE in the file is not enough: `claude-code` also appears in
+   * the prose around the table, so the wrong table row stayed green. The control reads the table's
+   * first column and requires the set to match the vocabulary exactly, which catches drift in
+   * either direction. */
+  const tableIds = [...doc.matchAll(/^\|\s*`([^`]+)`\s*\|\s*(?:yes|\*\*no\*\*)\s*\|/gm)].map((m) => m[1]!);
+  assert.deepEqual(
+    [...tableIds].sort(),
+    [...runtimeIds].sort(),
+    "the doc's runtime table and AGENT_TRAILER_RUNTIMES name different runtimes",
+  );
+});
+
+test("the doc marks exactly the required trailer keys as required", () => {
+  /* Which keys are required is enforcement, and the doc restates it in a table. Nothing tied the
+   * two together, so quietly dropping a key from AGENT_TRAILER_REQUIRED_KEYS weakened the gate and
+   * left the page still promising the field. This reads the key table and requires the two to
+   * agree, in both directions. */
+  const doc = readFileSync(resolve(repoRoot, "docs/development/agent-trailers.md"), "utf8");
+  const rows = [...doc.matchAll(/^\|\s*`(Agent-[A-Za-z-]+|Reviewed-By-Model)`\s*\|([^|]*)\|/gm)];
+  assert.ok(rows.length > 0, "the doc has no trailer-key table");
+  const documentedAsRequired = rows.filter((m) => /\bRequired\./.test(m[2]!)).map((m) => m[1]!);
+  assert.deepEqual(
+    [...documentedAsRequired].sort(),
+    [...requiredKeys].sort(),
+    "the doc's key table and AGENT_TRAILER_REQUIRED_KEYS disagree about what is required",
+  );
+});
+
+test("a runtime that cannot read its model still records the family it can establish", () => {
+  /* Claude Code serves Anthropic models and nothing else, so an unreadable transcript leaves the
+   * family known and only the model unknown. That is a measurement, not the "family from the tool"
+   * guess agy is denied: agy serves 15 model ids across three families, so its family stays
+   * unknown. The doc said the unknown sentinel was always unknown/unknown, which this pins as
+   * wrong. */
+  const detected = run(emitter, ["--detect"], {
+    ...noRuntime,
+    CLAUDECODE: "1",
+    CLAUDE_CODE_SESSION_ID: "no-such-session-exists",
+  });
+  const unknown = /^AGENT_TRAILER_MODEL_UNKNOWN=(\S+)$/m.exec(vocabSource)![1]!;
+  assert.match(detected, new RegExp(`^model=${unknown}$`, "m"));
+  assert.match(detected, /^family=anthropic$/m, "the family a runtime can establish was dropped");
+  assert.match(detected, /^source=none$/m, "an unread model must not claim a source");
 });
 
 test("the doc records the grace rule and does not overstate what the gate blocks", () => {
