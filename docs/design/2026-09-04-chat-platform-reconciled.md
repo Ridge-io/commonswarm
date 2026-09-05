@@ -911,7 +911,66 @@ answered here (§1.3 clause (c); R12); `README.md:214-216`, `:58-60`, `:38,44,53
 `mention-address.ts:2-3`; `commonswarm.ts:1292-1295`, `:1971`, `:1551`, `:1561` ("Broadcast — nobody was
 addressed or woken", which **stays true in v1** per §7.3); `app.astro:11`; `acceptable-use.astro:124`.
 
-## 12. Decisions the operator owes
+## 12. Decisions the operator owed — all three ruled on 2026-09-05
+
+**Section status: closed.** The lead ruled all three on 2026-09-05. Each item below keeps its original
+question and reasoning under a `was:` note, because a reader who met the earlier wording needs to see
+what changed rather than a section that never had an open question in it. The build plan is
+`docs/design/2026-09-05-chat-build-plan.md`.
+
+### D1 — ADOPTED: no private channels in v1
+
+Confirms R1. No `channel_members`, no membership clause in `swarm_read.signals`, and no channel surface
+may say or imply privacy (§8 forbidden copy). Appendix A stays a brief for a day that has not come.
+
+> **was:** *"Should channels ever be private? 'Behave and work like Slack' implies it; the request never
+> says it, and privacy is the expensive part. Ruled no for v1, with the brief in Appendix A. B→A is a
+> reversible narrowing; A→B is a disclosure event that cannot be undone. Leave it out until asked."*
+> The document had already ruled this; D1 is the operator-level confirmation it was waiting for.
+
+### D2 — ADOPTED: `@name` in a body is a mention, not a DM
+
+A mention adds that person to the **To:** set of the message being written. It does not open a DM and it
+does not produce a separate message. A message with a mention stays readable by everyone who could read
+it without the mention.
+
+> **was:** *"Is an `@tag` a DM or a mention? Today it is a DM that reads as a mention: the composer posts
+> one direct signal per tag (`mention-address.ts:1-3`; `MENTION_MAX_RECIPIENTS = 8` at `:30`), and a
+> direct signal is read-scoped — so `@mercury look at this` produces a signal nobody else can read.
+> `2026-08-04-COMPOSER-AND-MENTIONS.md:66-67` named this exact outcome as the thing to avoid: 'Get this
+> backwards and a mention becomes a DM that looks public.' Decide before P1 ships. Keep the behaviour,
+> badge the row, revisit with multi-recipient."* The recommendation to keep the behaviour was **not**
+> adopted; D2 reverses it.
+
+⛔ **D2 is not shippable as written until one of two things happens, and the constraint is measured, not
+guessed.** `signals_one_recipient` (`20260730000002_agent_signal_receive.sql:25-27`) allows **at most
+one** recipient per signal, so a To: set of two or more principals has nowhere to be stored. The
+composer's present workaround — one directed signal per tag — is precisely what D2 forbids, because each
+of those signals is read-scoped to its single recipient. So the composer lane must either:
+
+- **(a)** address a single mention as the message's one recipient and refuse the second mention with a
+  message that says the limit and why, or
+- **(b)** wait for multi-recipient signals (`docs/design/2026-09-03-multi-recipient-signals.md`, still
+  deferred per §10).
+
+This is a client change, not a schema one. It does not block P1's migration or edge work.
+
+### D3 — ADOPTED: a channel is the address of a signal, not a scope on delivery
+
+Confirms R1 and §7.3. `channel_id` is an immutable label stamped at post time. It never appears in an
+authorization predicate, and no phase of v1 touches `swarm.signal_deliveries` or
+`swarm.enqueue_signal_delivery()`. A channel post creates zero delivery rows and wakes nobody, exactly as
+a broadcast does today.
+
+> **was:** *"Are channels compatible with 'THE ADDRESS IS THE MESSAGE'? That direction is dated
+> 2026-09-04, the same day as this request (`LiveDashboard.astro:657-660`), and channels reintroduce a
+> place-to-post concept. §8 answers with zero chrome, but reading a channel as where and an `@`-tag as
+> who is this document's, not the operator's."* D3 settles it: the reading is now the operator's. It also
+> makes §9's delivery-neutrality control load-bearing rather than defensive — that test is what keeps D3
+> true.
+
+### The original section, for reference
+
 
 1. **Should channels ever be private?** "Behave and work like Slack" implies it; the request never says
    it, and privacy is the expensive part. Ruled **no** for v1, with the brief in Appendix A. B→A is a
