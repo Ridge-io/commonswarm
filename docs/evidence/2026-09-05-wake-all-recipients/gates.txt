@@ -1,4 +1,4 @@
-GATES -- lane/wake-all-recipients, commit 3547d82b6e6147d35358e1d0c8e9c849ddddcce6
+GATES -- lane/wake-all-recipients, commit a1bc2f80450a9f3ee1542bc4a6f4ee92b12ff04e
 base: 89ac83bc75f35581e5ccd090230615968279661d
 Local Supabase reset from this SHA's migrations before the two Postgres suites.
 
@@ -6,12 +6,12 @@ npm run build: exit=0
 tsc --noEmit: exit=0  
 npm run check:tests: exit=0  
 npm run check:edge: exit=0  
-npm test: exit=0  ℹ tests 836 ℹ pass 836 ℹ fail 0 
+npm test: exit=0  ℹ tests 837 ℹ pass 837 ℹ fail 0 
 npm run test:p1-cli: exit=0  ℹ tests 472 ℹ pass 472 ℹ fail 0 
 npm --prefix site test: exit=0  ℹ tests 450 ℹ pass 449 ℹ fail 0 
 npm run test:p1-local: exit=0  ℹ tests 40 ℹ pass 40 ℹ fail 0 
 npm run test:p1-server: exit=0  ℹ tests 146 ℹ pass 146 ℹ fail 0 
 
 commit identity:
-commit identity OK: 2 address-fields checked in origin/main..HEAD
+commit identity OK: 4 address-fields checked in origin/main..HEAD
 check-commit-identity exit=0

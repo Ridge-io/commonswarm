@@ -1,0 +1,132 @@
+I'll read REVIEW.md and the patch first, then follow the review instructions exactly.The patch is truncated. I'll read the rest of it and the files it touches so the review can follow REVIEW.md.I'll keep reading the rest of the patch and the files it changes, then attack each review item.I'll open the migration, hydrate/ack paths, and every `to_agent` consumer next.I'll read the schema, hydrate/ack code, and every consumer of a hydrated `to_agent` next.I have the canary and the false `CHANNEL_COLUMNS` test claim. I'll lock the remaining sections, then write the verdict.`diff --git a/docs/design/2026-09-05-chat-build-plan.md b/docs/design/2026-09-05-chat-build-plan.md`
+
+## 1. Tenancy and authorization — PASS
+
+`hydrateDeliveryRefs` and the `expired` ack both keep `s.workspace_id = args.workspaceId` and `s.id` pinned. The new arm is:
+
+```
+EXISTS (
+  SELECT 1 FROM swarm.signal_recipients AS addressed
+  WHERE addressed.signal_id = s.id
+    AND addressed.workspace_id = s.workspace_id
+    AND addressed.recipient_agent_principal_id = <claimer>
+)
+```
+
+`20260905000010` gives that table `FOREIGN KEY (signal_id, workspace_id) REFERENCES swarm.signals (id, workspace_id)` and `FOREIGN KEY (recipient_agent_principal_id, workspace_id) REFERENCES swarm.agent_principals (principal_id, workspace_id)`. A recipient row cannot point at another tenant. `principal_id` is a global PK, so the same agent uuid cannot live in two workspaces.
+
+The EXISTS arm only matches an **agent** principal. A person row (`recipient_user_id` set, agent column null) cannot satisfy it. The scalar `OR` is the old path and is still workspace-scoped.
+
+`hydrateDeliveryRefs` is only called with signal ids from `claimAgentInbox`, which already selected `recipient_agent_principal_id = claimer`. The expired path looks up the delivery row on `(workspace_id, signal_id, recipient_agent_principal_id)` first; if that row is missing it returns `unavailable` before the TTL SELECT. I could not build a row set that lets an unaddressed agent read a body or probe another workspace.
+
+The comment that this is “the same set the read view uses” is slightly loose: the view also admits the owner of an addressed agent via `auth.uid()`. Hydrate is narrower (this principal, not the owner). That is fail-closed, not a leak.
+
+## 2. `to_agent` on a hydrated delivery — PASS
+
+Consumers of a **hydrated** delivery’s `signal.to_agent` in `src/`:
+
+| Surface | Uses `to_agent`? | After this lane |
+|---|---|---|
+| `parseDeliveryRow` own-principal check | yes | still “this row is for me”; the edge now writes the claimer, so position 1 passes |
+| `authoritativeSignal` spread into engine/runtime | carries the field | engine, prompt, and reply do not read it |
+| listener journal fingerprint | no | hash is `[id, kind, body, until, senderOwnerRelation]` |
+| main-route `pendingMainEntry` | no | stores `options.principalId`, not `signal.to_agent` |
+| effect store | no | no `to_agent` column |
+| reply poster | no | `in_reply_to: signal.id`, `to_agent_principal_id: null` |
+| receipts | no | aggregate `signal_deliveries`, not the hydrated field |
+
+Feed/hook paths still read the **scalar** column (`hook.ts` `signal.to_agent === stored.principalId`, `cli.ts` inbox count). That is a different wire. Main-route still surfaces position 1 from the local `pending-for-main` queue, which is the load-bearing path. The inbox fallback would miss a position-1 row if the local queue were gone. That is a residual, not a broken claim path.
+
+A feed read of the same signal still reports recipient 0. The delivery comment states that split. Nothing in `src/` persists the rewritten `to_agent` and later compares it to a feed row.
+
+## 3. Double wake and lost wake — PASS
+
+Firing order is fixed by `signal_recipients_same_transaction`: recipient rows may be inserted only while the parent signal belongs to this xact, so the signal INSERT (and `signals_enqueue_delivery`) always runs first. Position 0 that is an agent is written twice; `ON CONFLICT DO NOTHING` hits `PRIMARY KEY (signal_id, recipient_agent_principal_id)` and keeps one row. The p1-local test counts **rows**, so a swallowed duplicate would show as 3, not as 2.
+
+`signal_recipients_first_is_the_scalar` is `DEFERRABLE INITIALLY DEFERRED`. Enqueue is an immediate `AFTER INSERT` row trigger. If position 0 does not match the scalar, the xact aborts at commit and the delivery rows go with it. No leftover double or zero.
+
+Bare `ON CONFLICT DO NOTHING` (no target) swallows any unique or exclusion violation. `signal_deliveries` has only that PK. A later unique index could be swallowed silently. Today there is none, so it is equivalent to conflicting on the PK.
+
+Lost wake for a wakeable agent: person at 0, agent later — scalar trigger no-ops (`to_agent_principal_id` is null), recipient trigger writes the agent. Measured on both the local and served tests. Scalar-only posts (no `to` list) still take only the signal trigger. Self/revoked/expired zeros are the new predicate, not an ordering bug.
+
+## 4. The three new refusal clauses — FAIL
+
+**`until > statement_timestamp()`.** Reachable only for a backdated direct insert, or a 1 ms floor plus a slow recipient-insert loop. `signals` has unnamed `CHECK (until > created_at)` (PG name `signals_check`) and the edge writes `created_at = statement_timestamp()` with `until` at least 1 ms later. A normal edge post is never dead on arrival. The comment’s reach is accurate enough. It refuses a shape the old trigger would enqueue. Nothing live depends on enqueueing an already-dead signal. This clause is fine.
+
+**`revoked_at IS NULL`.** Reachable. Old trigger wrote a row `claimAgentInbox` step 1 can never take, so it sat in `pending_delivery_count` for ever. Refusing it is the fix. The comment is accurate.
+
+**Self.** Reachable, and the command edge does **not** refuse it: `resolveSignalWriteTarget` only checks liveness. The comment is right about the edge.
+
+It **does** refuse something that used to work and that this repo depends on. `runListenerAttendanceCanary` posts a self-note with the agent credential:
+
+```
+to_agent_principal_id: options.principalId
+body: "CommonSwarm listener attendance canary. No reply is needed."
+```
+
+`cswarm listen canary` is that path. `from_kind = 'agent'` and `from_principal =` the same principal, so `agent_delivery_is_wakeable` is false on the scalar trigger. No delivery row. The canary stalls at `claimed`. The p1-local test now **locks that in** (`"an agent does not wake itself"`). The clause is applied to the scalar path, not only to fan-out, so the “group I belong to” rationale also kills the supported self-note.
+
+That is a real behaviour change with a first-party caller, and this lane does not update the canary.
+
+## 5. Concurrency and claim/ack — PASS
+
+`claimAgentInbox` steps 1–7 still key every lock, lease cap, pending count, poison ceiling, and `SKIP LOCKED` on `recipient_agent_principal_id`. Two recipients of one signal are two PK rows. They do not share a lease, an attempt counter, or a `FOR UPDATE` target.
+
+`DELIVERY_MAX_OUTSTANDING_LEASES` (100) and `pending_delivery_count` / `oldest_pending_at` are per principal. Waking N agents does not enlarge one listener’s cap. `SKIP LOCKED` ordering is still `enqueued_at, signal_id` for that principal.
+
+Two listeners on the **same** signal now run at once. Client `parseClaimSuccess` still refuses two deliveries in **one** claim response; that is one principal, one row per signal, unchanged. The pending-main queue uniqueness is per instance directory (per principal). Effect files are per instance. Receipts already keyed `(signal_id, recipient_agent_principal_id)`. I did not find a claim/ack invariant that assumed one delivery row per signal across principals.
+
+## 6. Wire compatibility — PASS
+
+`parseClaimLedger` still reads only body-free `delivery_refs`. It does not require `recipient_position` / `recipient_count`. Replay of an old stored ledger still parses, then `hydrateDeliveryRefs` fills the new fields on the **hydrated** response. `command/index.ts` replay (both the existing-key path and the race-winner path) goes through that pair.
+
+A 0.1.55 client: `parseSignalRecord` ignores unknown keys; old `parseDeliveryRow` never used exact keys on the row; extra `recipient_position` / `recipient_count` / `recipient_fanout` are ignored. `to_agent` is the claimer, so the own-principal check passes at position 1. Ack does not send the new fields.
+
+A new client: both fields absent → nulls (old server). Half pair refused — a capable server always sends both (`COALESCE`/`GREATEST`, required on `HydratedDelivery`). `position >= count` or `count < 1` cannot come out of the live constraints plus those two expressions. `checkedClaimCapabilities` still requires only the original three markers `=== 1` and ignores extras.
+
+## 7. `channels` read resource — PASS
+
+Same two walls as every other agent resource: `workspace_id !== principal_workspace_id` returns the empty envelope `{ channels: [] }` **before** claims are installed; the query then runs as `swarm_read` with the owner’s `sub` on `swarm_read.channels`, which is `GRANT`ed to `swarm_read` and gated on `swarm.is_member(workspace_id, auth.uid())`. Another workspace cannot return another tenant’s rows.
+
+Empty-envelope branch sits with `members` / `files` / `delivery_receipts` / `renewal_grants`, not after the query. Correct.
+
+Human JWT: `if (!agentCredential && body.resource !== "renewal_grants") return 401`. `channels` is not `renewal_grants`. A browser session cannot reach the arm. The p1-server control measures 401.
+
+The column list **is** a second typed copy: `src/cloud/channels.ts` `CHANNEL_COLUMNS`, an unused `CHANNEL_COLUMNS` in `read/index.ts`, and a handwritten `SELECT`. The query does not even read the constant. Tenancy still holds.
+
+## 8. Claims in prose — FAIL
+
+False comment, `supabase/functions/read/index.ts`:
+
+> ChannelRow in src/cloud/channels.ts is the client-side shape and tests/chat-signal-wire-compat.test.ts fails when the two lists drift.
+
+That test never mentions `CHANNEL_COLUMNS`. Neither does `tests/chat-channel-constants.test.ts`. There is no control. The read-edge list is unused. The `SELECT` is a third typed copy. That is the typed-enumeration failure this project already measured.
+
+Checked the rest of the asked comments:
+
+- Apply-order paragraph (migration then `command`): true. Old `hydrateDeliveryRefs` on a position-1 row leases, 403s, and commits. `read` and a client release are not required to stop that burn; they are a separate channels/CLI sequence. The hydration warning itself holds.
+- `until` / `signals_check`: holds (see §4).
+- Retirement notes in `_shared/channels.ts` and `command/index.ts`: the old “wake nobody / only position 0” sentences are retired in place and the new trigger behaviour matches.
+- `src/cloud/channels.ts` “CLI is not wired”: true. `channelRows` still throws `CHANNEL_LIST_NEEDS_HUMAN_MESSAGE`. That sentence becomes false when `read` deploys without a CLI change; the comment says so.
+
+## 9. Tests — PASS
+
+| Test | Reaches the claimed path? | Pass with the lane removed? |
+|---|---|---|
+| p1-local “every agent recipient is woken” | yes, both triggers + row count | no |
+| p1-local cap / person-then-agent / two-trigger names | yes | no |
+| p1-local dead / revoked / self + one-field controls | yes, backdated insert for `until` | no |
+| p1-local “wakeable kinds == `DELIVERY_KINDS`” | yes, one insert per `SIGNAL_KINDS` | **yes** — it only checks `wokenAgents.length > 0`. Old scalar trigger already woke `ask`/`note` at position 0. Measures kind agreement, not fan-out |
+| p1-server second agent / person-then-agent / 0.1.55 claim+ack / receipts | yes, served edge | no |
+| p1-server channels tenancy / archived / human 401 | yes, `/functions/v1/read` | no (for the channels arm) |
+| delivery-client slot accept / absent-null / half-pair | yes, `parseDeliveryRow` | n/a (client-only; fakes the wire) |
+| listener-engine prompt sentence | yes, `buildListenerPrompt` | n/a (client-only) |
+| listener-runtime “fans out to the prompt” | yes, runtime → `deliveryContext` → engine | n/a (fake delivery client) |
+
+No test claims to hit the DB and then only exercises a mock, except the kinds test, which does not claim fan-out. The 0.1.55 server test is the real hydrate/`to_agent` rewrite control.
+
+---
+
+§4 is the blocker: `cswarm listen canary` posts a self-note and this predicate stops the wake. §8 is a false test claim over an unused typed column list.
+
+VERDICT: FAIL

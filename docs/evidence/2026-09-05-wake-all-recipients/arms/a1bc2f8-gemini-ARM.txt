@@ -1,0 +1,50 @@
+```diff
+diff --git a/docs/design/2026-09-05-chat-build-plan.md b/docs/design/2026-09-05-chat-build-plan.md
+```
+
+**1. Tenancy and authorization**
+PASS. The `EXISTS` clause on `swarm.signal_recipients` explicitly filters on `addressed.workspace_id = s.workspace_id` AND `s.workspace_id = ${args.workspaceId}::uuid`. Because `swarm.signal_recipients` holds a composite foreign key `(signal_id, workspace_id)` referencing `swarm.signals`, a recipient row is absolutely guaranteed to belong to the signal's true workspace. Leakage across workspaces or reading unaddressed signals is structurally impossible because the caller's principal ID and workspace must match exactly.
+
+**2. `to_agent` now means something different on this wire than on a feed read**
+PASS. The consumers of `claimed.signal.to_agent` in `src/` are structurally insulated:
+- `src/cloud/delivery.ts`: `parseDeliveryRow` checks `signal.to_agent === expected.principalId`. It is not wrong or misleading; since `hydrateDeliveryRefs` maps the delivery's *own* recipient to this column, this correctly asserts "the sender addressed me" and appropriately passes at any position.
+- `src/listener/runtime.ts` (listener journal fingerprint): `immutableSignalFingerprint` explicitly does not include `to_agent`.
+- `src/listener/main-routing.ts` (main-route projection): `pendingMainEntry` uses the listener's own `principalId` from arguments, ignoring `to_agent`.
+- `src/cloud/agent-signal-receipts.ts` (receipts): `renderedBroadcastIds` checks `to === null && to_agent === null` (broadcasts). Since hydrated deliveries provide a populated `to_agent`, they are correctly excluded from broadcast receipts.
+- Nothing persisting a signal record (`ListenerEffectStore`) saves `to_agent`.
+
+**3. Double wake and lost wake**
+PASS. The `swarm.signal_deliveries` table has a `PRIMARY KEY (signal_id, recipient_agent_principal_id)` and no other `UNIQUE` or `EXCLUDE` constraints. Therefore, `ON CONFLICT DO NOTHING` can only swallow the exact duplicate insert from the `signals` trigger and the `signal_recipients` trigger. The deferred `assert_signal_recipients_consistent` trigger strictly enforces that position 0 in `signal_recipients` matches the scalar column on `signals`, meaning both triggers always try to insert the exact same agent for position 0. No wakes are lost.
+
+**4. The three new refusal clauses**
+PASS.
+- `until > statement_timestamp()`: Reachable only via a backdated insert because the `signals_check` constraint enforces `until > created_at`. The comment accurately calls it a second wall.
+- `revoked_at IS NULL`: Reachable and fixes a live defect where a revoked agent enqueues an unreachable pending delivery that `claimAgentInbox` skips forever.
+- self-address clause: Removed in Round Two.
+
+**5. Concurrency and the claim/ack paths**
+PASS. The aggregates (`pending_delivery_count`, `oldest_pending_at`, active leases, and the poison ceiling `attempt_count`) are all computed per-row or grouped/filtered by `recipient_agent_principal_id` in `claimAgentInbox`. Each agent gets its own distinct `swarm.signal_deliveries` row, so two listeners for the same signal run concurrently without locking each other's rows during `SKIP LOCKED` or messing up each other's lease caps.
+
+**6. Wire compatibility**
+PASS. A 0.1.55 client uses `parseDeliveryRow` which simply ignores the unknown `recipient_position` and `recipient_count` fields. On the server side, an old stored claim ledger missing these fields is replayed exactly as-is; the new client's `checkedRecipientSlot` safely parses absent fields into `{ position: null, count: null }` and tolerates the shape without refusing it as malformed.
+
+**7. The `channels` read resource**
+PASS. It correctly matches the tenancy of other resources by gating the query on `workspace_id = $1::uuid` combined with the implicit `swarm.is_member` check in the `swarm_read.channels` view. The empty-envelope branch correctly returns `{ channels: [] }` if `body.workspace_id !== agent.principal_workspace_id`. A human JWT cannot reach it because `AGENT_TOKEN_RE.test(token)` enforces a 401 for non-agents on the channels route. The column list is safely generated from `CHANNEL_READ_COLUMNS` via string interpolation without becoming a second typed copy.
+
+**8. Claims in prose**
+PASS. No claims are false.
+- Apply order: True, if the migration runs but the `command` edge isn't deployed, the old `hydrateDeliveryRefs` reads position 0 and throws 403 `delivery_unavailable`, burning attempts.
+- `until` reach: True, backed by the `signals_check`.
+- Retirement notes in `_shared/channels.ts` and `command/index.ts`: True.
+- CLI wiring in `channels.ts`: True, `channelRows` in `src/cli.ts` still throws `CHANNEL_LIST_NEEDS_HUMAN_MESSAGE` for agents.
+
+**9. Tests**
+PASS. The tests reach the code paths they claim, as demonstrated by the `mutations.txt` execution matrix. The only test that would pass with the feature (the fan-out trigger) removed is the `wakeable kinds` test (`"the wakeable kinds are exactly the kinds the delivery client accepts"`), because the trigger on `swarm.signals` still inherently enforces the `ask`/`note` restriction for position 0.
+
+**Round two review:**
+- **Self-addressed signal refusal**: GONE. The shared predicate wakes a self-note at every position. The test `a dead signal and a revoked agent write no delivery row, and a self-note still does` asserts it positively, and the removed clause's reason is accurately recorded in `20260905000020_wake_all_recipients.sql`.
+- **CHANNEL_READ_COLUMNS**: The column list is safely interpolated into `tx.unsafe` because the identifiers come from a frozen constant `CHANNEL_READ_COLUMNS` mapped from `_shared/channels.ts`. It is immune to drift because `chat-channel-constants.test.ts` literally imports both arrays and `assert.deepEqual`s them.
+- **`signals_check` constraint name**: Accurately reflects Postgres's default unnamed table check constraint naming format.
+- **Feed row SCALAR `to_agent` re-check**: I agree this is a pre-existing defect from L2 (060ff67) and reachable today without this lane. L2 widened `swarm_read.signals` to return signals for all recipients in the set, but `arrival-watch.ts` and `hook.ts` were not updated to check beyond the scalar `row.to_agent === options.principalId`.
+
+VERDICT: PASS
