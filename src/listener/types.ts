@@ -140,6 +140,22 @@ export const LISTENER_DELIVERY_HOLD_RELEASE_REASONS = [
 export type ListenerDeliveryHoldReleaseReason =
   typeof LISTENER_DELIVERY_HOLD_RELEASE_REASONS[number];
 
+/**
+ * The clause each release reason contributes to the operator's status line.
+ *
+ * A Record keyed by the union, so a new reason is a TYPE ERROR until it has a
+ * clause. The first version of this line said "used its turn budget" for every
+ * release; a `lease_budget` release runs no turn at all, so the sentence was
+ * false for half the vocabulary. A review arm found that, which is what a typed
+ * list inside a correct-looking sentence always costs.
+ */
+export const LISTENER_DELIVERY_HOLD_RELEASE_CLAUSES: Readonly<
+  Record<ListenerDeliveryHoldReleaseReason, string>
+> = {
+  hold_budget: "it used the turn budget for one delivery",
+  lease_budget: "what was left of its lease could not cover the next step",
+};
+
 export type ListenerPermissionMode = "deny" | "allow";
 
 export type ListenerPromptMode = "worker";

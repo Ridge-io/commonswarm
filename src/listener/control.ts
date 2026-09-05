@@ -38,7 +38,10 @@ const START_LOCK_WAIT_MS = 2_000;
 const START_LOCK_STALE_MS = 10_000;
 
 import { LISTENER_DELIVERY_HOLD_RELEASE_REASONS } from "./types.js";
-import type { ListenerPermissionMode } from "./types.js";
+import type {
+  ListenerDeliveryHoldReleaseReason,
+  ListenerPermissionMode,
+} from "./types.js";
 import type { ListenerRouteMode } from "./main-routing.js";
 import type { ActivityPublishErrorCode } from "./activity.js";
 
@@ -122,26 +125,23 @@ export interface ListenerStatus {
   currentDeliverySignalId?: string | null;
   currentDeliverySince?: string | null;
   /**
-   * When this listener first saw a non-empty queue in the current unbroken run
-   * of such observations. Cleared as soon as a claim reports nothing waiting,
-   * and on every state where this process is not watching the queue.
+   * The newest delivery this listener handed back before it was answered, when,
+   * why, and how many it has handed back in the current run.
    *
-   * It measures THIS LISTENER'S observation, and nothing about any particular
-   * row. An earlier version said the oldest delivery had waited at least this
-   * long; both review arms refuted it on 33cd24b, because the row that made the
-   * queue non-empty can expire or be handled elsewhere while newer rows keep
-   * the count above zero, and the claim wire carries a pending count and the
-   * claimed row, never the other rows' timestamps.
-   */
-  queueNonEmptySince?: string | null;
-  /**
-   * The delivery this listener handed back after it used its seat budget, and
-   * when. It is still unacked and still holds a live lease, so it counts among
-   * the service's pending deliveries while being the one row that CANNOT be
-   * claimed until that lease expires.
+   * NO waiting-to-be-claimed number is derived from these. Two review rounds
+   * killed every attempt: a held-back row still holds a live lease, so the
+   * service counts it as pending while the claim query cannot return it, and
+   * more than one can be held back at a time, and any of them can be expired or
+   * acknowledged elsewhere without this listener hearing about it. The claim
+   * wire carries a pending count and the claimed row and nothing else, so the
+   * age of the oldest waiting delivery is NOT knowable here. Retired fields:
+   * `queueWaitingSince` / `queueWaitingForMsAtLeast`, then `queueNonEmptySince`
+   * / `queueNonEmptyForMs`.
    */
   releasedDeliverySignalId?: string | null;
   releasedDeliveryAt?: string | null;
+  releasedDeliveryReason?: ListenerDeliveryHoldReleaseReason | null;
+  releasedDeliveryCount?: number;
   routeMode?: ListenerRouteMode;
   deferOverChars?: number | null;
   pendingForMainCount?: number;
@@ -252,9 +252,10 @@ const STATUS_ALLOWED_KEYS = new Set([
   "lastAckSignalId",
   "currentDeliverySignalId",
   "currentDeliverySince",
-  "queueNonEmptySince",
   "releasedDeliverySignalId",
   "releasedDeliveryAt",
+  "releasedDeliveryReason",
+  "releasedDeliveryCount",
   "routeMode",
   "deferOverChars",
   "pendingForMainCount",
@@ -440,8 +441,14 @@ function parseStatus(raw: string, rejectUnknownKeys = false): ListenerStatus {
         UUID_RE.test(row.currentDeliverySignalId))) ||
     !(row.currentDeliverySince === undefined ||
       nullableTimestamp(row.currentDeliverySince)) ||
-    !(row.queueNonEmptySince === undefined ||
-      nullableTimestamp(row.queueNonEmptySince)) ||
+    !(row.releasedDeliveryReason === undefined ||
+      row.releasedDeliveryReason === null ||
+      (typeof row.releasedDeliveryReason === "string" &&
+        (LISTENER_DELIVERY_HOLD_RELEASE_REASONS as readonly string[]).includes(
+          row.releasedDeliveryReason,
+        ))) ||
+    !(row.releasedDeliveryCount === undefined ||
+      nullableCount(row.releasedDeliveryCount)) ||
     !(row.releasedDeliverySignalId === undefined ||
       row.releasedDeliverySignalId === null ||
       (typeof row.releasedDeliverySignalId === "string" &&
@@ -519,8 +526,13 @@ function parseStatus(raw: string, rejectUnknownKeys = false): ListenerStatus {
     ...(row.currentDeliverySince === undefined ? {} : {
       currentDeliverySince: (row.currentDeliverySince ?? null) as string | null,
     }),
-    ...(row.queueNonEmptySince === undefined ? {} : {
-      queueNonEmptySince: (row.queueNonEmptySince ?? null) as string | null,
+    ...(row.releasedDeliveryReason === undefined ? {} : {
+      releasedDeliveryReason: (row.releasedDeliveryReason ?? null) as
+        | ListenerDeliveryHoldReleaseReason
+        | null,
+    }),
+    ...(row.releasedDeliveryCount === undefined ? {} : {
+      releasedDeliveryCount: (row.releasedDeliveryCount ?? 0) as number,
     }),
     ...(row.releasedDeliverySignalId === undefined ? {} : {
       releasedDeliverySignalId:

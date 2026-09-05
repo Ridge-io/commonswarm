@@ -299,9 +299,9 @@ async function main() {
       currentDeliverySignalId: row.currentDeliverySignalId,
       currentDeliverySince: row.currentDeliverySince,
       currentDeliveryElapsedMs: row.currentDeliveryElapsedMs,
-      queueNonEmptySince: row.queueNonEmptySince,
-      queueNonEmptyForMs: row.queueNonEmptyForMs,
       releasedDeliverySignalId: row.releasedDeliverySignalId,
+      releasedDeliveryReason: row.releasedDeliveryReason,
+      releasedDeliveryCount: row.releasedDeliveryCount,
       lastAckOutcome: row.lastAckOutcome,
       lastAckSignalId: row.lastAckSignalId,
     };
@@ -339,12 +339,13 @@ async function main() {
           inHand: label(row.currentDeliverySignalId),
           currentDeliveryElapsedMs: row.currentDeliveryElapsedMs,
           pendingDeliveryCount: row.pendingDeliveryCount,
-          queueNonEmptyForMs: row.queueNonEmptyForMs,
           heldBack: label(row.releasedDeliverySignalId),
+          heldBackReason: row.releasedDeliveryReason,
+          heldBackCount: row.releasedDeliveryCount,
           lastAck: label(row.lastAckSignalId),
           lastAckOutcome: row.lastAckOutcome,
           human: (await human()).stdout.split("\n").filter((line) =>
-            /^(Working on delivery|No delivery is being worked|Deliveries waiting|Pending deliveries|Delivery [0-9a-f])/.test(line)
+            /^(Working on delivery|No delivery is being worked|Pending deliveries|Delivery [0-9a-f])/.test(line)
           ),
         });
       }

@@ -51,6 +51,8 @@ import {
   FileListenerEffectStore,
   newReceivedAskRecord,
   newObservedNoteRecord,
+  LISTENER_DELIVERY_HOLD_RELEASE_REASONS,
+  LISTENER_DELIVERY_HOLD_RELEASE_CLAUSES,
   type ListenerActiveClaim,
   type ListenerDeliveryJournalRecord,
   type ListenerEffectRecord,
@@ -4069,9 +4071,10 @@ test("listen status shows the delivery in hand and how long the queue has waited
     consecutiveAckFailureCount: null,
     currentDeliverySignalId: HOLD_FIRST_ID,
     currentDeliverySince: claimedAt,
-    queueNonEmptySince: claimedAt,
     releasedDeliverySignalId: null,
     releasedDeliveryAt: null,
+    releasedDeliveryReason: null,
+    releasedDeliveryCount: 0,
     routeMode: "worker",
     deferOverChars: null,
     pendingForMainCount: 0,
@@ -4088,65 +4091,83 @@ test("listen status shows the delivery in hand and how long the queue has waited
   assert.equal(json.currentDeliverySignalId, HOLD_FIRST_ID);
   assert.equal(json.currentDeliverySince, claimedAt);
   assert.equal(json.currentDeliveryElapsedMs, 240_000);
-  assert.equal(json.queueNonEmptySince, claimedAt);
-  assert.equal(json.queueNonEmptyForMs, 240_000);
+  assert.equal(json.releasedDeliverySignalId, null);
+  assert.equal(json.releasedDeliveryCount, 0);
 
   const human = renderListenerStatus(status, evidence, nowMs);
   assert.ok(
     human.includes(`Working on delivery ${HOLD_FIRST_ID}, claimed 4m ago.`),
     human,
   );
-  // 3 pending counts the delivery in hand, so 2 are waiting behind it.
-  assert.ok(human.includes("Deliveries waiting behind it: 2."), human);
-  assert.ok(human.includes("last saw an empty queue 4m ago."), human);
-  /* The retired inference, refuted by both review arms on 33cd24b: the row that
-     made the queue non-empty can expire or be handled elsewhere while newer
-     rows keep the count above zero, so the oldest may have waited far less. */
+  // The pending count carries the age of the observation that produced it.
+  assert.ok(
+    human.includes(
+      "Pending deliveries reported by the service: 3. That count is what the last claim returned, 4m ago.",
+    ),
+    human,
+  );
+  /* No waiting-to-be-claimed number is rendered at all. Two review rounds
+     refuted every form of it; the retired wordings are named in cli.ts. */
+  assert.ok(!human.includes("waiting behind it"), human);
+  assert.ok(!human.includes("waiting to be claimed"), human);
   assert.ok(!human.includes("waited at least"), human);
+  assert.ok(!human.includes("empty queue"), human);
 
-  /* A delivery handed back after its seat budget is unacked, so the service
-     still counts it, and it holds a live lease, so it is the one row that
-     CANNOT be claimed. It is named, and it is not counted as waiting. */
-  const heldBack = renderListenerStatus({
+  /* Each release reason gets its own clause, generated from the constant the
+     runtime emits. A typed sentence said "used its turn budget" for both, which
+     is false for lease_budget: that release runs no turn at all. */
+  for (const reason of LISTENER_DELIVERY_HOLD_RELEASE_REASONS) {
+    const heldBack = renderListenerStatus({
+      ...status,
+      pendingDeliveryCount: 2,
+      currentDeliverySignalId: null,
+      currentDeliverySince: null,
+      releasedDeliverySignalId: HOLD_FIRST_ID,
+      releasedDeliveryAt: claimedAt,
+      releasedDeliveryReason: reason,
+      releasedDeliveryCount: 1,
+    }, evidence, nowMs);
+    assert.ok(
+      heldBack.includes(
+        `Delivery ${HOLD_FIRST_ID} was handed back 4m ago because ${
+          LISTENER_DELIVERY_HOLD_RELEASE_CLAUSES[reason]
+        }.`,
+      ),
+      heldBack,
+    );
+    assert.ok(heldBack.includes("stays with the service"), heldBack);
+    assert.ok(!heldBack.includes("more deliveries were handed back"), heldBack);
+  }
+  assert.equal(
+    new Set(Object.values(LISTENER_DELIVERY_HOLD_RELEASE_CLAUSES)).size,
+    LISTENER_DELIVERY_HOLD_RELEASE_REASONS.length,
+    "each reason needs its own clause, or the sentence stops discriminating",
+  );
+
+  // More than one can be held back at once, so the extras are counted.
+  const twoHeldBack = renderListenerStatus({
     ...status,
     pendingDeliveryCount: 2,
     currentDeliverySignalId: null,
     currentDeliverySince: null,
-    releasedDeliverySignalId: HOLD_FIRST_ID,
+    releasedDeliverySignalId: HOLD_SECOND_ID,
     releasedDeliveryAt: claimedAt,
+    releasedDeliveryReason: "hold_budget",
+    releasedDeliveryCount: 2,
   }, evidence, nowMs);
   assert.ok(
-    heldBack.includes(
-      `Delivery ${HOLD_FIRST_ID} used its turn budget and was handed back 4m ago.`,
-    ),
-    heldBack,
+    twoHeldBack.includes("1 more delivery was handed back before it."),
+    twoHeldBack,
   );
-  assert.ok(heldBack.includes("Deliveries waiting to be claimed: 1."), heldBack);
 
   const idle = renderListenerStatus({
     ...status,
     pendingDeliveryCount: 0,
     currentDeliverySignalId: null,
     currentDeliverySince: null,
-    queueNonEmptySince: null,
   }, evidence, nowMs);
   assert.ok(idle.includes("No delivery is being worked on right now."), idle);
-  assert.ok(!idle.includes("Deliveries waiting behind it"), idle);
-
-  // Nothing in hand and rows still pending: they wait to be claimed, and there
-  // is no "it" for them to be behind. Measured against a live listener whose
-  // fake service stopped handing rows back (live-control-output.txt).
-  const unclaimed = renderListenerStatus({
-    ...status,
-    pendingDeliveryCount: 2,
-    currentDeliverySignalId: null,
-    currentDeliverySince: null,
-  }, evidence, nowMs);
-  assert.ok(
-    unclaimed.includes("Deliveries waiting to be claimed: 2."),
-    unclaimed,
-  );
-  assert.ok(!unclaimed.includes("waiting behind it"), unclaimed);
+  assert.ok(!idle.includes("was handed back"), idle);
 });
 
 test("a fast first failure keeps the seat and retries inside the hold budget", async () => {
@@ -4276,10 +4297,11 @@ test("a stopped listener does not claim to be working on a delivery", async (t) 
   assert.equal(stopped?.state, "stopped");
   assert.equal(stopped?.currentDeliverySignalId, null);
   assert.equal(stopped?.currentDeliverySince, null);
-  /* The queue clock goes too. Its sentence is rendered against READ time, so a
-     process that stopped observing three hours ago would still report on the
-     queue in the present tense. Both review arms raised this on 33cd24b. */
-  assert.equal(stopped?.queueNonEmptySince, null);
+  /* The held-back facts go too: their sentences are rendered against READ time,
+     so a process that stopped observing three hours ago would still report on
+     them in the present tense. Both review arms raised this on 33cd24b. */
+  assert.equal(stopped?.releasedDeliverySignalId, null);
+  assert.equal(stopped?.releasedDeliveryCount, 0);
   const human = renderListenerStatus(stopped!, {
     pendingForMainOldestAt: null,
     hookSurfaceExists: false,
@@ -4287,7 +4309,13 @@ test("a stopped listener does not claim to be working on a delivery", async (t) 
   }, Date.parse("2026-07-30T03:00:00.000Z"));
   assert.ok(!human.includes("Working on delivery"), human);
   assert.ok(human.includes("No delivery is being worked on right now."), human);
-  assert.ok(!human.includes("last saw an empty queue"), human);
+  assert.ok(!human.includes("was handed back"), human);
+  /* The pending count survives, and its own sentence dates it: both arms said
+     an undated count on a listener that died hours ago reads as current. */
+  assert.ok(
+    human.includes("That count is what the last claim returned, 3h ago."),
+    human,
+  );
 });
 
 test("the supervisor tracks a handed-back delivery until it comes back", async (t) => {
@@ -4306,7 +4334,8 @@ test("the supervisor tracks a handed-back delivery until it comes back", async (
     step: string;
     released: string | null | undefined;
     current: string | null | undefined;
-    waitingLine: string | undefined;
+    count: number | undefined;
+    heldBackLine: string | undefined;
   }> = [];
   await runListenerSupervisor({
     paths,
@@ -4321,12 +4350,13 @@ test("the supervisor tracks a handed-back delivery until it comes back", async (
           step,
           released: snapshot.releasedDeliverySignalId,
           current: snapshot.currentDeliverySignalId,
-          waitingLine: renderListenerStatus(snapshot, {
+          count: snapshot.releasedDeliveryCount,
+          heldBackLine: renderListenerStatus(snapshot, {
             pendingForMainOldestAt: null,
             hookSurfaceExists: false,
             hookSurfaceAdvanced: false,
           }, Date.parse("2026-07-30T00:05:00.000Z")).split("\n").find((line) =>
-            line.startsWith("Deliveries waiting")
+            line.includes("was handed back")
           ),
         });
       };
@@ -4354,38 +4384,72 @@ test("the supervisor tracks a handed-back delivery until it comes back", async (
         ts: "2026-07-30T00:00:02.000Z",
       });
       await record("claimed second");
+      /* Two live held-back leases at once: the count grows and the newest one
+         is named. A review arm built exactly this sequence against a version
+         that tracked one id and derived a waiting count from it. */
       onEvent({
-        type: "delivery_ack",
+        type: "delivery_hold_released",
         signalId: HOLD_SECOND_ID,
-        outcome: "replied",
+        reason: "lease_budget",
+        heldMs: 1_000,
         ts: "2026-07-30T00:00:03.000Z",
       });
+      await record("released second");
+      /* An empty claim while only held-back rows are pending. The status must
+         not start calling them claimable, and must not forget them either. */
       onEvent({
         type: "delivery_claim",
-        signalId: HOLD_FIRST_ID,
-        pendingDeliveryCount: 1,
+        signalId: null,
+        pendingDeliveryCount: 2,
         terminalDeliveryFailureCount: 0,
         ts: "2026-07-30T00:00:04.000Z",
       });
-      await record("first redelivered");
+      await record("empty claim");
+      /* The service reports nothing unacked at all, which it cannot do while a
+         held-back row is still pending: they are gone, expired or handled
+         elsewhere, and naming them any longer would be a false promise. */
+      onEvent({
+        type: "delivery_claim",
+        signalId: null,
+        pendingDeliveryCount: 0,
+        terminalDeliveryFailureCount: 0,
+        ts: "2026-07-30T00:00:05.000Z",
+      });
+      await record("queue drained");
       return { reason: "cancelled" as const };
     },
   });
 
-  assert.deepEqual(seen.map((entry) => [entry.step, entry.released, entry.current]), [
-    ["claimed first", null, HOLD_FIRST_ID],
-    ["released first", HOLD_FIRST_ID, null],
-    ["claimed second", HOLD_FIRST_ID, HOLD_SECOND_ID],
-    ["first redelivered", null, HOLD_FIRST_ID],
-  ]);
-  // 2 pending, one held back and unclaimable: exactly one is waiting.
-  assert.equal(
-    seen[1]!.waitingLine,
-    "Deliveries waiting to be claimed: 1. This listener last saw an empty queue 5m ago.",
+  assert.deepEqual(
+    seen.map((entry) => [entry.step, entry.released, entry.current, entry.count]),
+    [
+      ["claimed first", null, HOLD_FIRST_ID, 0],
+      ["released first", HOLD_FIRST_ID, null, 1],
+      ["claimed second", HOLD_FIRST_ID, HOLD_SECOND_ID, 1],
+      ["released second", HOLD_SECOND_ID, null, 2],
+      ["empty claim", HOLD_SECOND_ID, null, 2],
+      ["queue drained", null, null, 0],
+    ],
   );
-  // 2 pending, one held back and one in hand: none is waiting.
+  assert.ok(
+    seen[3]!.heldBackLine?.includes(
+      `Delivery ${HOLD_SECOND_ID} was handed back 5m ago because ${
+        LISTENER_DELIVERY_HOLD_RELEASE_CLAUSES.lease_budget
+      }.`,
+    ),
+    seen[3]!.heldBackLine,
+  );
+  assert.ok(
+    seen[3]!.heldBackLine?.includes("1 more delivery was handed back before it."),
+    seen[3]!.heldBackLine,
+  );
+  // An empty claim with rows still pending keeps them named.
+  assert.equal(seen[4]!.heldBackLine, seen[3]!.heldBackLine);
+  // A drained queue is proof they are gone.
+  assert.equal(seen[5]!.heldBackLine, undefined);
+  // At no point is any of them described as waiting to be claimed.
   assert.equal(
-    seen[2]!.waitingLine,
-    "Deliveries waiting behind it: 0. This listener last saw an empty queue 5m ago.",
+    seen.some((entry) => entry.heldBackLine?.includes("waiting")),
+    false,
   );
 });

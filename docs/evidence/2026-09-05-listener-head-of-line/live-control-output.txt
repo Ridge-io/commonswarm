@@ -1,18 +1,18 @@
 === listen start ===
 {
   "version": 1,
-  "instanceId": "a459d5bc-69a0-460b-af45-efe21283a472",
+  "instanceId": "ffca5386-a066-4f4f-a27d-23601dadbebd",
   "provider": "grok",
   "cswarmVersion": "0.1.52",
   "permissionMode": "allow",
-  "profileId": "eae823339e285854a69d27a3",
-  "workspaceId": "fbd0e94b-8c62-4383-b276-41a24e4aef28",
-  "principalId": "bcd01702-4ea9-45a5-b294-e8d1e311e746",
-  "pid": 18667,
+  "profileId": "76f818defe6fc2d580cf8924",
+  "workspaceId": "ab1f1618-4e34-4062-b967-e07a4ad38d8f",
+  "principalId": "9810739c-d8a5-48c3-a6d7-ac3f5641caaa",
+  "pid": 59945,
   "state": "ready",
-  "startedAt": "2026-09-05T02:38:33.524Z",
-  "readyAt": "2026-09-05T02:38:33.850Z",
-  "updatedAt": "2026-09-05T02:38:33.895Z",
+  "startedAt": "2026-09-05T02:55:38.935Z",
+  "readyAt": "2026-09-05T02:55:39.279Z",
+  "updatedAt": "2026-09-05T02:55:39.315Z",
   "stoppedAt": null,
   "lastSignalId": null,
   "lastErrorCode": null,
@@ -29,16 +29,17 @@
   "pendingDeliveryCount": 2,
   "lastTerminalDeliveryFailureCount": null,
   "lastTerminalDeliveryFailureAt": null,
-  "lastClaimAt": "2026-09-05T02:38:33.895Z",
+  "lastClaimAt": "2026-09-05T02:55:39.315Z",
   "lastAckAt": null,
   "lastAckOutcome": null,
   "consecutiveAckFailureCount": null,
   "lastAckSignalId": null,
-  "currentDeliverySignalId": "14606412-b79e-4707-8db4-b7f7455ba202",
-  "currentDeliverySince": "2026-09-05T02:38:33.895Z",
-  "queueNonEmptySince": "2026-09-05T02:38:33.895Z",
+  "currentDeliverySignalId": "e4f2fd3f-19ca-407f-9b35-e2469748d590",
+  "currentDeliverySince": "2026-09-05T02:55:39.315Z",
   "releasedDeliverySignalId": null,
   "releasedDeliveryAt": null,
+  "releasedDeliveryReason": null,
+  "releasedDeliveryCount": 0,
   "routeMode": "worker",
   "deferOverChars": null,
   "pendingForMainCount": 0,
@@ -60,10 +61,10 @@
     ]
   },
   "connectionsOpened": 1,
-  "connectionReuseRatio": 4,
+  "connectionReuseRatio": 7,
   "activityPublishFailures": 1,
   "activityLastErrorCode": "activity_http_rejected",
-  "logPath": "/var/folders/bb/7n7qfbls651d80fs4r9wdyk40000gn/T/cswarm-hol-Yfjj1A/b96028d24ea2bf7364ab8195339f171cae98594f4bc3368924ab27ae8ccce677/events.ndjson",
+  "logPath": "/var/folders/bb/7n7qfbls651d80fs4r9wdyk40000gn/T/cswarm-hol-6nhid1/209d0ee47e8b5f64cbfd311bfcae905adf74cc6e30aa20c6ad268068eb8a042a/events.ndjson",
   "providerExecutableMeasured": false,
   "providerVersionMeasured": false,
   "providerBelowDemandedMinimum": false,
@@ -99,8 +100,7 @@
   "listenerLapse": false,
   "listenerLapseCodes": [],
   "listenerLapseNextSteps": [],
-  "currentDeliveryElapsedMs": 28,
-  "queueNonEmptyForMs": 28,
+  "currentDeliveryElapsedMs": 57,
   "permission_mode": "allow",
   "same_owner_delivery": "worker session; tool requests allowed once each when the host offers allow_once, otherwise denied",
   "cross_owner_delivery": "same worker session with sender provenance; tool requests allowed once each when the host offers allow_once, otherwise denied",
@@ -117,60 +117,44 @@
 === LIVE timeline: one seat, two deliveries ===
 [
   {
-    "atMs": 116,
+    "atMs": 72,
     "inHand": "ask-1",
-    "currentDeliveryElapsedMs": 143,
+    "currentDeliveryElapsedMs": 131,
     "pendingDeliveryCount": 2,
-    "queueNonEmptyForMs": 143,
     "heldBack": "none",
+    "heldBackReason": null,
+    "heldBackCount": 0,
     "lastAck": "none",
     "lastAckOutcome": null,
     "human": [
-      "Pending deliveries reported by the service: 2.",
-      "Working on delivery 14606412-b79e-4707-8db4-b7f7455ba202, claimed under 1m ago.",
-      "Deliveries waiting behind it: 1. This listener last saw an empty queue under 1m ago."
+      "Pending deliveries reported by the service: 2. That count is what the last claim returned, under 1m ago.",
+      "Working on delivery e4f2fd3f-19ca-407f-9b35-e2469748d590, claimed under 1m ago."
     ]
   },
   {
-    "atMs": 30485,
-    "inHand": "none",
-    "currentDeliveryElapsedMs": null,
-    "pendingDeliveryCount": 2,
-    "queueNonEmptyForMs": 30517,
-    "heldBack": "ask-1",
-    "lastAck": "none",
-    "lastAckOutcome": null,
-    "human": [
-      "Pending deliveries reported by the service: 2.",
-      "Working on delivery 84845291-d728-4050-bc7e-4d760b2ce9db, claimed under 1m ago.",
-      "Delivery 14606412-b79e-4707-8db4-b7f7455ba202 used its turn budget and was handed back under 1m ago. It keeps its lease until the service expires it, and then it is delivered again.",
-      "Deliveries waiting behind it: 0. This listener last saw an empty queue under 1m ago."
-    ]
-  },
-  {
-    "atMs": 30965,
+    "atMs": 30550,
     "inHand": "none",
     "currentDeliveryElapsedMs": null,
     "pendingDeliveryCount": 1,
-    "queueNonEmptyForMs": 30998,
     "heldBack": "ask-1",
+    "heldBackReason": "hold_budget",
+    "heldBackCount": 1,
     "lastAck": "ask-2",
     "lastAckOutcome": "replied",
     "human": [
-      "Pending deliveries reported by the service: 1.",
+      "Pending deliveries reported by the service: 1. That count is what the last claim returned, under 1m ago.",
       "No delivery is being worked on right now.",
-      "Delivery 14606412-b79e-4707-8db4-b7f7455ba202 used its turn budget and was handed back under 1m ago. It keeps its lease until the service expires it, and then it is delivered again.",
-      "Deliveries waiting to be claimed: 0. This listener last saw an empty queue under 1m ago."
+      "Delivery e4f2fd3f-19ca-407f-9b35-e2469748d590 was handed back under 1m ago because it used the turn budget for one delivery. It was not answered and not acknowledged, so it stays with the service, which decides when it comes back."
     ]
   }
 ]
 
 === hold releases recorded in the listener log ===
-{"ts":"2026-09-05T02:39:04.410Z","event":"listener_delivery_hold_released","signal_id":"14606412-b79e-4707-8db4-b7f7455ba202","release_reason":"hold_budget","held_ms":30499}
+{"ts":"2026-09-05T02:56:09.617Z","event":"listener_delivery_hold_released","signal_id":"e4f2fd3f-19ca-407f-9b35-e2469748d590","release_reason":"hold_budget","held_ms":30290}
 
 === first ask id ===
-14606412-b79e-4707-8db4-b7f7455ba202
+e4f2fd3f-19ca-407f-9b35-e2469748d590
 === second ask id ===
-84845291-d728-4050-bc7e-4d760b2ce9db
+60e9da6e-9d7a-4cd5-b8ff-08c041711b07
 === acked signal ids ===
-84845291-d728-4050-bc7e-4d760b2ce9db
+60e9da6e-9d7a-4cd5-b8ff-08c041711b07
