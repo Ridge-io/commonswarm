@@ -2574,6 +2574,11 @@ import "../../styles/tokens.css";
      *    typed line disappeared behind the keyboard furniture.
      */
     let composerCaret = { end: 0, start: 0 };
+    /* There is nothing to put back until something has been remembered, and the starting value
+     * is not a caret anybody chose. Without this flag the first focus that did not follow a tap
+     * — tabbing into a draft the page restored — would set the caret to the START of a sentence
+     * the reader had already written, which is the defect this whole block exists to remove. */
+    let composerCaretKnown = false;
     let composerPointerAt = 0;
     const composerInputElement = (): HTMLTextAreaElement | null =>
       one<HTMLTextAreaElement>("[data-composer-input]");
@@ -2581,6 +2586,7 @@ import "../../styles/tokens.css";
     const rememberComposerCaret = (): void => {
       const input = composerInputElement();
       if (!input || document.activeElement !== input) return;
+      composerCaretKnown = true;
       composerCaret = {
         end: input.selectionEnd ?? 0,
         start: input.selectionStart ?? 0,
@@ -2612,7 +2618,7 @@ import "../../styles/tokens.css";
 
     const restoreComposerCaret = (): void => {
       const input = composerInputElement();
-      if (!input) return;
+      if (!input || !composerCaretKnown) return;
       const length = input.value.length;
       input.setSelectionRange(
         Math.min(composerCaret.start, length),
@@ -5841,6 +5847,7 @@ import "../../styles/tokens.css";
     one<HTMLTextAreaElement>("[data-composer-input]")?.addEventListener("blur", () => {
       const input = composerInputElement();
       if (!input) return;
+      composerCaretKnown = true;
       composerCaret = { end: input.selectionEnd ?? 0, start: input.selectionStart ?? 0 };
       flushComposerDraft();
     });

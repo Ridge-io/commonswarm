@@ -184,6 +184,12 @@ const assertComposerSprint = (value: ComposerArtifact): void => {
     "const focusComposerOnEntry",
     "draft-scope",
   );
+  const caret = between(
+    dashboard,
+    "let composerCaret = { end: 0, start: 0 };",
+    "let viewportSyncFrame = 0;",
+    "caret-survival",
+  );
   const viewport = between(
     dashboard,
     "let viewportSyncFrame = 0;",
@@ -430,6 +436,23 @@ const assertComposerSprint = (value: ComposerArtifact): void => {
   const viewportHeightRem = 430 / 16;
   assert.ok(viewportWidthRem <= 52 && viewportHeightRem <= 36,
     "viewport-containment: 390x430 must exercise the short mobile branch");
+
+  /* THE CARET SURVIVES THE KEYBOARD. Showing and hiding a software keyboard moves focus off
+     the textarea and back, and the browser restores neither the selection nor the field's own
+     scroll position; what the operator met was a composer he could not return to the end of.
+     Three parts, and the third is what makes the other two safe: a caret nobody ever chose is
+     not a caret to put back. Without it the first focus that did not follow a tap — tabbing
+     into a draft the page restored — writes position 0 over the reader's own sentence, which
+     is the same defect in a different path. */
+  assert.match(caret, /composerCaretKnown = true;/,
+    "caret-survival: nothing records that a caret was ever remembered");
+  assert.match(caret, /if \(!input \|\| !composerCaretKnown\) return;/,
+    "caret-survival: the restore runs with a caret nobody chose, so focus arriving without a " +
+      "tap moves the reader to the start of a sentence they had already written");
+  assert.match(caret, /input\.setSelectionRange\(/,
+    "caret-survival: the remembered selection is never put back");
+  assert.match(dashboard, /if \(Date\.now\(\) - composerPointerAt < 500\) return;/,
+    "caret-survival: focus that followed a tap must keep where the tap landed");
   /* The usable viewport is visualViewport and ONLY visualViewport. `window.innerHeight` used
      to be the fallback; on iOS Safari it reports the layout viewport, which does not shrink
      when the keyboard opens, so it wrote a height that was too tall at exactly the moment a
@@ -663,6 +686,20 @@ const mutations: Mutation[] = [
     target: "max-block-size: min(calc(var(--dashboard-viewport-height, 100dvh) * 0.4), 20rem);",
     replacement: "max-block-size: 9rem;",
     expectedFailure: "autosize-max",
+  },
+  {
+    name: "the caret restore runs with a caret nobody chose",
+    key: "dashboard",
+    target: "if (!input || !composerCaretKnown) return;",
+    replacement: "if (!input) return;",
+    expectedFailure: "caret-survival",
+  },
+  {
+    name: "a tap in the text is overwritten by the remembered caret",
+    key: "dashboard",
+    target: "if (Date.now() - composerPointerAt < 500) return;",
+    replacement: "if (false) return;",
+    expectedFailure: "caret-survival",
   },
   {
     name: "keyboard resize no longer reaches the shell",
