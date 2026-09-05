@@ -173,6 +173,26 @@ import "../../styles/tokens.css";
     </section>
 
     <section class="dashboard__product" data-panel="channel" hidden>
+      {/* A NEWER BUILD OF THIS PAGE IS BEING SERVED. Placed BEFORE the sample notice on
+          purpose: `.dashboard__sample-notice:not([hidden]) + .dashboard__frame` is a real rule
+          below, and putting this between them would quietly stop it matching. */}
+      <div class="dashboard__update-notice" data-update-notice hidden>
+        {/* One short line. The buttons say what the choices are, so the sentence does not
+            repeat them: measured at 390x844, the longer wording wrapped to two lines and took
+            the bar to 128px against a 73px app bar. */}
+        <p class="dashboard__update-notice-text">A new version is ready.</p>
+        <div class="dashboard__update-notice-actions">
+          <button
+            class="dashboard__button dashboard__button--secondary"
+            type="button"
+            data-update-dismiss
+          >
+            Not now
+          </button>
+          <button class="dashboard__button" type="button" data-update-reload>Update</button>
+        </div>
+      </div>
+
       <div class="dashboard__sample-notice" data-sample-notice hidden>
         <SampleNotice />
       </div>
@@ -6474,6 +6494,112 @@ import "../../styles/tokens.css";
       }
     });
 
+    /*
+     * A NEWER BUILD OF THIS PAGE IS BEING SERVED.
+     *
+     * TWO signals, because neither one covers a build on its own. Measured, not assumed: a build
+     * that changed only markup produced a different /app/index.html and BYTE-IDENTICAL
+     * /_astro/<name>.<contenthash>.<js|css> names, so an asset-only check would have missed every
+     * copy change we ship.
+     *
+     *  1. The served asset URLs against the ones this page is RUNNING, read out of its own DOM
+     *     once, below, before any poll. This is the certain one: the code being served is not the
+     *     code in this tab. It holds even for a build deployed before this page loaded.
+     *  2. The served HTML against the first served HTML this tab saw. This is the one that catches
+     *     a markup-only build, and it can only see changes made after the first poll.
+     *
+     * The served page rather than a generated build id: a build id is a CLAIM about the build, and
+     * a stale or half-deployed one would lie in exactly the case this exists for. These bytes ARE
+     * the build, and there is no new constant to keep in step.
+     *
+     * NOT covered: a build deployed in the gap between this document loading and the first poll,
+     * which changed markup only. Signal 1 sees nothing (same assets) and signal 2 baselines the
+     * new page. The next build after it is detected normally.
+     */
+    const buildAssetsFrom = (root: ParentNode): string => {
+      const urls = new Set<string>();
+      for (const node of root.querySelectorAll<HTMLElement>("script[src], link[href]")) {
+        const raw = node.getAttribute("src") ?? node.getAttribute("href") ?? "";
+        if (/\/_astro\/[^"']+\.(?:js|css)$/.test(raw)) urls.add(raw);
+      }
+      return [...urls].sort().join("\n");
+    };
+    const runningBuild = buildAssetsFrom(document);
+    let baselineMarkup = "";
+    /* NOT the empty string. "nothing dismissed yet" has to be a value no served build can equal,
+       or a probe that returns nothing compares equal to it and reads as already dismissed. */
+    let dismissedBuild: string | null = null;
+    let servedBuild = "";
+
+    const showUpdateNotice = (show: boolean): void => {
+      const notice = one<HTMLElement>("[data-update-notice]");
+      if (notice) notice.hidden = !show;
+    };
+
+    /* Silence is the only honest output of a probe that did not reach what it measures. A failed
+     * fetch, a non-OK status, and a body with no hashed assets in it — a login redirect, an SSO
+     * interstitial, an error page — all mean the poll learned nothing, not that nothing changed. */
+    const checkForNewBuild = async (): Promise<void> => {
+      if (!runningBuild) return;
+      let markup = "";
+      try {
+        const response = await fetch(window.location.pathname, {
+          cache: "no-store",
+          credentials: "same-origin",
+          headers: { accept: "text/html" },
+        });
+        if (!response.ok) return;
+        markup = await response.text();
+      } catch {
+        return;
+      }
+      const served = buildAssetsFrom(
+        new DOMParser().parseFromString(markup, "text/html"),
+      );
+      if (!served) return;
+      if (!baselineMarkup) baselineMarkup = markup;
+      /* The identity of what is being served, for dismissal: the assets when they differ, and
+       * otherwise the markup, so dismissing a copy change does not also dismiss the next one. */
+      servedBuild = served === runningBuild ? markup : served;
+      const isNewBuild = served !== runningBuild || markup !== baselineMarkup;
+      if (!isNewBuild) {
+        showUpdateNotice(false);
+        return;
+      }
+      /* Dismissal is remembered against what caused it, in memory only: a reload takes the new
+       * build anyway, so there is nothing to persist, and a THIRD build differs from the
+       * dismissed one and asks again. */
+      showUpdateNotice(servedBuild !== dismissedBuild);
+    };
+
+    one<HTMLButtonElement>("[data-update-reload]")?.addEventListener("click", () => {
+      window.location.reload();
+    });
+    one<HTMLButtonElement>("[data-update-dismiss]")?.addEventListener("click", () => {
+      dismissedBuild = servedBuild;
+      showUpdateNotice(false);
+    });
+
+    /* Only while the document is visible. A hidden tab is not being read, and the reload happens
+     * on the reader's schedule rather than ours. */
+    const UPDATE_POLL_MS = 5 * 60_000;
+    let updatePollTimer = 0;
+    const stopUpdatePoll = (): void => {
+      if (!updatePollTimer) return;
+      window.clearInterval(updatePollTimer);
+      updatePollTimer = 0;
+    };
+    const startUpdatePoll = (): void => {
+      if (updatePollTimer || document.visibilityState !== "visible") return;
+      updatePollTimer = window.setInterval(() => void checkForNewBuild(), UPDATE_POLL_MS);
+      void checkForNewBuild();
+    };
+    document.addEventListener("visibilitychange", () => {
+      if (document.visibilityState === "visible") startUpdatePoll();
+      else stopUpdatePoll();
+    });
+    startUpdatePoll();
+
     runBoot();
   }
 </script>
@@ -6872,14 +6998,65 @@ import "../../styles/tokens.css";
     block-size: var(--dashboard-viewport-height, 100dvh);
     min-block-size: 0;
     display: grid;
-    grid-template-rows: auto minmax(0, 1fr);
+    /* Three rows, and every child is pinned to one of them. A hidden notice is not a grid item
+       at all, so its row collapses to zero and nothing below it moves; pinning is what keeps a
+       shown notice from pushing the frame out of the viewport row. */
+    grid-template-rows: auto auto minmax(0, 1fr);
     overflow: hidden;
     padding: 0;
     background: var(--bg);
   }
 
   .dashboard__sample-notice {
+    grid-row: 2;
     margin: 0;
+  }
+
+  /* ONE ROW, and it earns its height only while a different build is actually being served.
+     This bar sits above the app bar on a phone, which is the space the 2026-09-04 mobile work
+     was for, so it stays on one line: nothing wraps, the sentence truncates before the controls
+     give way, and the controls keep their 44px targets. Measured at 390x844: 128px when the
+     sentence wrapped and "Not now" wrapped inside its own button, 60px after. */
+  .dashboard__update-notice {
+    grid-row: 1;
+    /* A grid item's automatic minimum is its MIN-CONTENT width, so without this the bar sizes
+       to its buttons and overflows the column instead of being constrained by it. Measured at
+       320x568 before this line: the bar was 394.6px in a 320px shell, and the product clips its
+       overflow, so the Update button was off-screen and unreachable. */
+    min-inline-size: 0;
+    display: flex;
+    flex-wrap: nowrap;
+    align-items: center;
+    justify-content: space-between;
+    gap: var(--s-3);
+    margin: 0;
+    padding: var(--s-1) var(--s-4);
+    border-block-end: 1px solid var(--border);
+    background: var(--surface);
+  }
+
+  /* The sentence is the flexible column and the only one allowed to run out of room. */
+  .dashboard__update-notice-text {
+    flex: 1 1 auto;
+    margin: 0;
+    min-inline-size: 0;
+    overflow: hidden;
+    white-space: nowrap;
+    text-overflow: ellipsis;
+    color: var(--text);
+    font-size: var(--t-sm);
+  }
+
+  /* The controls are the column that must never give way: the sentence above truncates first. */
+  .dashboard__update-notice-actions {
+    flex: 0 0 auto;
+    display: flex;
+    align-items: center;
+    gap: var(--s-2);
+  }
+
+  .dashboard__update-notice-actions .dashboard__button {
+    white-space: nowrap;
   }
 
   .dashboard__frame {
@@ -6890,9 +7067,10 @@ import "../../styles/tokens.css";
      * exist. Measured in the browser before and after. */
     block-size: 100%;
     min-block-size: 0;
-    /* The hidden sample notice is not a grid item. Pin the frame to row 2 so it still takes
-       the minmax viewport row instead of auto-placing into the content-sized first row. */
-    grid-row: 2;
+    /* A hidden notice is not a grid item. Pin the frame to the LAST row so it still takes the
+       minmax viewport row instead of auto-placing into a content-sized notice row. Row 1 is the
+       update notice and row 2 the sample notice; both are pinned below. */
+    grid-row: 3;
     display: grid;
     grid-template-columns: var(--dashboard-rail) minmax(0, 1fr);
     grid-template-rows: minmax(0, 1fr);
