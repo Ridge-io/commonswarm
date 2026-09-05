@@ -17,7 +17,10 @@ import {
 import { FileBrainDigestStore } from "../src/listener/brain-digest.js";
 import {
   BRAIN_LIVE_VERSION_LIMIT,
+  fileVersionPreconditionMessage,
+  fileVersionPreconditionSatisfied,
   isBrainFileArtifactName,
+  isFileVersionPrecondition,
   planFileVersionWindow,
 } from "../src/protocol/brain-version-window.js";
 
@@ -153,4 +156,35 @@ test("the end-of-task nudge is fixed and exclusive to replied outcomes", () => {
     brainEndOfTaskNudge(["replied", "replied"]),
     BRAIN_END_OF_TASK_NUDGE,
   );
+});
+
+test("the version precondition compares against the live version and says both numbers", () => {
+  /* The measured loss: a topic read at v2 was rewritten while the live version
+   * had moved to v3. The check must refuse exactly that and allow the match. */
+  assert.equal(fileVersionPreconditionSatisfied(2, 2), true);
+  assert.equal(fileVersionPreconditionSatisfied(2, 3), false);
+  /* A name with no committed version reports 0, so 0 is "must not exist yet"
+   * and is a real precondition rather than a missing one. */
+  assert.equal(fileVersionPreconditionSatisfied(0, 0), true);
+  assert.equal(fileVersionPreconditionSatisfied(0, 1), false);
+
+  const stale = fileVersionPreconditionMessage(2, 3);
+  assert.match(stale, /version 3/);
+  assert.match(stale, /required version 2/);
+  assert.match(stale, /nothing was uploaded/);
+  /* A first write must not be told it is "at version 0", which reads as a
+   * version that exists. */
+  assert.match(fileVersionPreconditionMessage(1, 0), /no live version yet/);
+  assert.doesNotMatch(fileVersionPreconditionMessage(1, 0), /at version 0/);
+});
+
+test("only a whole, non-negative version is accepted as a precondition", () => {
+  assert.equal(isFileVersionPrecondition(0), true);
+  assert.equal(isFileVersionPrecondition(7), true);
+  assert.equal(isFileVersionPrecondition(-1), false);
+  assert.equal(isFileVersionPrecondition(1.5), false);
+  assert.equal(isFileVersionPrecondition(Number.NaN), false);
+  assert.equal(isFileVersionPrecondition("2"), false);
+  assert.equal(isFileVersionPrecondition(null), false);
+  assert.equal(isFileVersionPrecondition(undefined), false);
 });

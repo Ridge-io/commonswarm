@@ -260,8 +260,10 @@ export function fileVersionCreate(
     name: string;
     declaredSizeBytes: number;
     contentType: string;
+    ifVersion?: number | null;
   },
 ): Promise<FileVersionCreateResult> {
+  const ifVersion = input.ifVersion ?? null;
   return sendFileCommand<FileVersionCreateResult>(options, {
     kind: "file_version_create",
     file_id: input.fileId,
@@ -269,6 +271,10 @@ export function fileVersionCreate(
     name: input.name,
     declared_size_bytes: input.declaredSizeBytes,
     content_type: input.contentType,
+    /* The server validates an exact key set, so the key is sent only when a
+     * precondition was asked for. An unconditional write is byte-identical to
+     * what every earlier client sent. */
+    ...(ifVersion === null ? {} : { if_version: ifVersion }),
   });
 }
 

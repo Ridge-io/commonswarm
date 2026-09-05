@@ -8,6 +8,7 @@ import { homedir } from "node:os";
 import { basename, dirname, isAbsolute, join, resolve } from "node:path";
 import { createInterface } from "node:readline/promises";
 import type { Command } from "./protocol/index.js";
+import { FILE_VERSION_PRECONDITION_FAILED } from "./protocol/index.js";
 import {
   login,
   logout,
@@ -301,7 +302,7 @@ const KNOWN_FLAGS = new Set([
   "about", "agent-token-file", "agent-token-stdin", "all-devices", "allow-unattended", "anon-key", "attach", "branch", "capability-id",
   "claude-executable", "codex-executable", "confirm", "confirm-standing", "cooldown", "cwd", "defer-over", "device-id", "effort", "email",
   "epoch", "evidence", "follow", "force", "force-file-store", "foreground", "grok-executable", "head-sha",
-  "help", "include-stale", "include-tombstoned", "invitation-id", "invitation-token-stdin", "json", "kind", "limit",
+  "help", "if-version", "include-stale", "include-tombstoned", "invitation-id", "invitation-token-stdin", "json", "kind", "limit",
   "link-stdin", "local", "model", "name", "ndjson", "no-browser", "notify", "opencode-executable", "out",
   "permissions", "principal-id", "provider", "renewal-grant-id", "repo", "reveal-anon-key", "route", "run-id", "since", "site", "slug", "state-dir",
   "renewal-horizon-days", "standing", "task-id", "to", "token-id", "ttl-ms", "turn-budget", "uid", "until", "url", "user", "version", "wait", "workspace-id", "write",
@@ -517,7 +518,7 @@ Usage:
   cswarm file restore <name|file-id> [--url <url> --anon-key <key>] [--workspace-id <uuid>] ${agentCredential} [--json]
   cswarm brain ls [--url <url> --anon-key <key>] [--workspace-id <uuid>] ${agentCredential} [--json]
   cswarm brain get <topic>[@<version>] [--version <n>] [--url <url> --anon-key <key>] [--workspace-id <uuid>] ${agentCredential} [--json]
-  cswarm brain put <topic> [<markdown-path>] [--url <url> --anon-key <key>] [--workspace-id <uuid>] ${agentCredential} [--json]  # without a path, reads Markdown from stdin
+  cswarm brain put <topic> [<markdown-path>] [--url <url> --anon-key <key>] [--workspace-id <uuid>] ${agentCredential} [--if-version <n>] [--json]  # without a path, reads Markdown from stdin; --if-version refuses the write unless the live version is still <n>
   cswarm feedback "<text>" --kind bug|idea|friction [--about <ref>] [--url <url> --anon-key <key>] [--workspace-id <uuid>] ${agentCredential} [--json]
   cswarm listen start ${requiredAgentCredential} [--url <url> --anon-key <key>] --workspace-id <uuid> --provider grok|opencode|claude|codex [--cwd <absolute-path>] [--model <model>] [--effort <level>] [--permissions deny|allow] [--grok-executable <path>] [--opencode-executable <path>] [--claude-executable <path>] [--codex-executable <path>] [--turn-budget <duration>] [--route worker|main|split] [--defer-over <chars>] [--allow-unattended] [--foreground] [--json]
   cswarm listen canary ${requiredAgentCredential} [--url <url> --anon-key <key>] --workspace-id <uuid> [--state-dir <path>] [--wait <seconds>] [--json]
@@ -6666,6 +6667,7 @@ async function uploadNamedFile(
   context: FileCliContext,
   name: string,
   bytes: Uint8Array,
+  options: { ifVersion?: number } = {},
 ): Promise<FileVersionCommitResult> {
   if (bytes.byteLength > FILE_MAX_VERSION_BYTES) {
     // Preflight so a refusal costs zero upload bytes; the server enforces the
@@ -6704,6 +6706,9 @@ async function uploadNamedFile(
       name,
       declaredSizeBytes: bytes.byteLength,
       contentType,
+      ...(options.ifVersion === undefined
+        ? {}
+        : { ifVersion: options.ifVersion }),
     })
   );
   await onceRetried(() =>
@@ -7022,7 +7027,10 @@ async function runBrainPut(args: Arguments): Promise<void> {
       "cswarm brain put cannot read both the credential and Markdown from stdin; use --agent-token-file or pass a Markdown path",
     );
   }
-  const context = await fileContext(args, [], args.positionals.length);
+  const context = await fileContext(args, ["if-version"], args.positionals.length);
+  const ifVersion = args.optional("if-version") === undefined
+    ? undefined
+    : integer(args, "if-version", { minimum: 0 });
   let bytes: Uint8Array;
   if (localPath) {
     try {
@@ -7037,7 +7045,25 @@ async function runBrainPut(args: Arguments): Promise<void> {
     bytes = await readBrainMarkdownFromStdin();
   }
   decodeBrainMarkdown(bytes);
-  const committed = await uploadNamedFile(context, brainFileName(topic), bytes);
+  const committed = await uploadNamedFile(
+    context,
+    brainFileName(topic),
+    bytes,
+    ifVersion === undefined ? {} : { ifVersion },
+  ).catch((error: unknown) => {
+    /* D-053: classified by the server's stable code, never by its prose. The
+     * server's own sentence carries the live version and is printed as data. */
+    if (
+      error instanceof FileCommandRefused &&
+      error.code === FILE_VERSION_PRECONDITION_FAILED
+    ) {
+      throw new Error(
+        `not saved: ${error.message}. Someone saved a new version after you read this topic. ` +
+          `Re-read it, apply your change to that copy, then put it again: cswarm brain get ${topic}`,
+      );
+    }
+    throw error;
+  });
   if (args.has("json")) {
     process.stdout.write(`${JSON.stringify({ topic, ...committed }, null, 2)}\n`);
     return;

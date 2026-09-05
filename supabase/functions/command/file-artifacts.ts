@@ -24,7 +24,11 @@
 import type postgres from "postgres";
 import {
   BRAIN_LIVE_VERSION_LIMIT,
+  FILE_VERSION_PRECONDITION_FAILED,
+  fileVersionPreconditionMessage,
+  fileVersionPreconditionSatisfied,
   isBrainFileArtifactName,
+  isFileVersionPrecondition,
   planFileVersionWindow,
 } from "../_shared/protocol.js";
 
@@ -75,6 +79,8 @@ export interface FileVersionCreateCommand {
   name: string;
   declared_size_bytes: number;
   content_type: string;
+  /** Optional compare-and-set on the newest live version; null means none. */
+  if_version: number | null;
 }
 
 export interface FileVersionCommitCommand {
@@ -134,6 +140,9 @@ export function validateFileCommand(
   | { ok: true; command: FileCommand }
   | { ok: false; status: number; reason: string } {
   if (cmd.kind === FILE_VERSION_CREATE_KIND) {
+    /* Optional key, like sha256 on commit: an older client omits it entirely
+     * and exactKeys must still accept that request. */
+    const ifVersion = Object.hasOwn(cmd, "if_version") ? cmd.if_version : null;
     const valid = exactKeys(cmd, [
       "kind",
       "file_id",
@@ -141,6 +150,7 @@ export function validateFileCommand(
       "name",
       "declared_size_bytes",
       "content_type",
+      ...(Object.hasOwn(cmd, "if_version") ? ["if_version"] : []),
     ]) &&
       typeof cmd.file_id === "string" && UUID_RE.test(cmd.file_id) &&
       typeof cmd.version_id === "string" && UUID_RE.test(cmd.version_id) &&
@@ -149,7 +159,8 @@ export function validateFileCommand(
       Number.isInteger(cmd.declared_size_bytes) &&
       cmd.declared_size_bytes >= 1 &&
       typeof cmd.content_type === "string" &&
-      cmd.content_type.length <= 255;
+      cmd.content_type.length <= 255 &&
+      (ifVersion === null || isFileVersionPrecondition(ifVersion));
     if (!valid) {
       return {
         ok: false,
@@ -166,6 +177,7 @@ export function validateFileCommand(
         name: cmd.name as string,
         declared_size_bytes: cmd.declared_size_bytes as number,
         content_type: (cmd.content_type as string).toLowerCase(),
+        if_version: ifVersion as number | null,
       },
     };
   }
@@ -452,6 +464,24 @@ export async function fileVersionCreate(
       "a tombstoned file holds this name; restore it or wait for its purge",
       "name held by tombstone",
     );
+  }
+  /* Compare-and-set, under the file row lock taken above. current_version
+   * names the newest LIVE version and moves only at commit, so it is the
+   * number the writer actually read; max(version_n) would fail against another
+   * agent's in-flight pending upload, which is not a conflict with any content.
+   * Refused BEFORE any row is written, so a losing writer uploads no bytes.
+   * This refusal is state-dependent and, like every file refusal, is not
+   * ledgered: the same command id retried after a re-read must re-evaluate. */
+  if (cmd.if_version !== null) {
+    const liveVersion = Number(file?.current_version ?? 0);
+    if (!fileVersionPreconditionSatisfied(cmd.if_version, liveVersion)) {
+      return refuse(
+        409,
+        FILE_VERSION_PRECONDITION_FAILED,
+        fileVersionPreconditionMessage(cmd.if_version, liveVersion),
+        "version precondition failed",
+      );
+    }
   }
   const windowPlan = planFileVersionWindow(
     cmd.name,
