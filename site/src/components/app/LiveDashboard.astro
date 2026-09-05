@@ -6546,6 +6546,11 @@ import "../../styles/tokens.css";
        or a probe that returns nothing compares equal to it and reads as already dismissed. */
     let dismissedBuild: string | null = null;
     let servedBuild = "";
+    /* THE READER'S LAST ACTION, counted. A poll answers about the server as it was when its
+       request went out, so an answer that arrives after the reader has acted is older than the
+       action. Same shape as `requestVersion` above, which drops workspace responses that a later
+       switch has overtaken; kept separate because bumping that one would cancel unrelated work. */
+    let noticeActionVersion = 0;
 
     const showUpdateNotice = (show: boolean): void => {
       const notice = one<HTMLElement>("[data-update-notice]");
@@ -6562,6 +6567,8 @@ import "../../styles/tokens.css";
         return;
       }
       pollInFlight = true;
+      /* Captured before the request goes out, checked when its answer comes back. */
+      const version = noticeActionVersion;
       let body = "";
       try {
         /* PATHNAME ONLY, deliberately. This URL receives auth callbacks — the client runs with
@@ -6584,6 +6591,14 @@ import "../../styles/tokens.css";
           void checkForNewBuild();
         }
       }
+      /* THE READER MOVED WHILE THIS WAS OPEN, so this answer is older than what they acted on and
+         none of it is applied: not the baseline, not the dismissal, not the reset below. MEASURED
+         (see `a poll that was already open when Not now was clicked does not undo it`): a poll
+         held open across a Not now click came back with "the same build you are running", cleared
+         the dismissal through the reset, and the build the reader had just dismissed raised the
+         bar again. Nothing is lost by dropping it — the next poll asks about the server as it is
+         after the click, and the `finally` above has already started one if a poll was queued. */
+      if (version !== noticeActionVersion) return;
       const page = new DOMParser().parseFromString(body, "text/html");
       const served = buildAssetsFrom(page);
       if (!served) return;
@@ -6600,9 +6615,12 @@ import "../../styles/tokens.css";
       servedBuild = `${served}\n${markup}`;
       const isNewBuild = served !== runningBuild || markup !== baselineMarkup;
       if (!isNewBuild) {
-        /* Back in step, so nothing stands dismissed. Without this a rollback stranded the
-           dismissal: dismiss B, the server rolls back to A, and when B ships again it still
-           equals the remembered value and is silently swallowed for the life of the tab. */
+        /* WHAT THIS RESET IS ALLOWED TO DO, AND WHEN. It clears the reader's dismissal, and it
+           may do that only from a poll that started after the reader's last action — which is
+           what the version check above enforces. Within that limit it is needed: without it a
+           rollback stranded the dismissal, because after dismissing B and rolling back to A, B
+           shipping again still equalled the remembered value and was swallowed for the life of
+           the tab. Outside it, it is the branch that silently undid the reader's click. */
         dismissedBuild = null;
         showUpdateNotice(false);
         return;
@@ -6617,6 +6635,9 @@ import "../../styles/tokens.css";
       window.location.reload();
     });
     one<HTMLButtonElement>("[data-update-dismiss]")?.addEventListener("click", () => {
+      /* The reader has acted on what is on screen now. Any poll already open asked the server
+         before this, so it is retired here rather than allowed to answer over the click. */
+      noticeActionVersion += 1;
       dismissedBuild = servedBuild;
       showUpdateNotice(false);
     });
