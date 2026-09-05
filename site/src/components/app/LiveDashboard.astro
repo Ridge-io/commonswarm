@@ -9910,13 +9910,21 @@ import "../../styles/tokens.css";
    * a rule written for only one of them is a difference a reader would meet.
    *
    * Each selector names both classes rather than putting them in one `:where()`. `:where()` scores
-   * zero, which would leave `:where(.a, .b) table` at the same specificity as the bare `table` rule
-   * in global.css (`border-collapse`, `border-spacing`) and let stylesheet ORDER decide the winner.
-   * It happens to win today — /app links Base.css before app.css — and that is not a thing to rely
-   * on: SeoPage.css carries a `table` rule with `inline-size: 100%` and `min-inline-size: 44rem`,
-   * which would take the scroll behaviour apart if it were ever loaded here. Naming the class wins
-   * on specificity instead. The layout observer measures the computed values, so a rule that lost
-   * would fail rather than ship. */
+   * zero, so `:where(.a, .b) table` would score (0,0,1) — the same as any bare `table` rule
+   * anywhere in the app's stylesheets, leaving stylesheet ORDER to decide every property the two
+   * share. Naming the class scores (0,1,1) and takes these rules out of that race.
+   *
+   * CORRECTION, and the retired wording, because a later reader will meet the reasoning before the
+   * result. This comment first said the tie was live: that global.css's bare `table` rule competed
+   * for the scroll, and that SeoPage.css carried a `table` rule with `min-inline-size: 44rem` that
+   * would break it. Both are false, measured. global.css:203 is
+   * `table { border-collapse; border-spacing }` and sets none of the scroll properties, so a tie
+   * with it cannot turn the scroll off. seo.css:191 is `.seo-table`, not `table` — a `grep 'table{'`
+   * over the built CSS matched the tail of `.seo-table{` and read as a bare rule. Nothing competes
+   * with these rules today. The reason to name the class is the one above: (0,0,1) is the score of
+   * every bare type rule, so a `table { overflow-x: visible }` added later in any sheet this page
+   * loads would tie and be settled by link order. The layout observer measures the computed values,
+   * so a rule that lost would fail rather than ship. */
 
   /* A table is its own scroll container.
    *

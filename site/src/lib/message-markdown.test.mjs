@@ -291,13 +291,28 @@ test("hostile cell content is neutralised exactly as the same text is in a parag
   assert.doesNotMatch(rendered, /<script|<img|<b |<a /u);
   /* `onerror=` survives as literal text inside `&lt;b onerror=&quot;...`, which is the point — it
      is content, not markup. So the control reads the TAGS, not the whole string: every generated
-     tag must be one this renderer emits, and no tag may carry a handler, an href, or a style. */
+     tag must be one this renderer emits, and none may carry any of the attributes named below.
+
+     The list and the check are ONE array. An arm found the sentence here naming three attributes
+     while the regex under it forbade four, which is a typed list drifting from its enforcement
+     inside the test that exists to stop exactly that. */
+  const forbiddenInThisTable = ["on<any>", "href", "style", "class"];
+  const forbidden = new RegExp(
+    forbiddenInThisTable
+      .map((name) => name === "on<any>" ? "\\son[a-z]+\\s*=" : `\\s${name}\\s*=`)
+      .join("|"),
+    "iu",
+  );
   const tags = rendered.match(/<[^>]*>/gu) ?? [];
   assert.ok(tags.length > 0, "no tags to check");
   for (const tag of tags) {
     assert.match(tag, /^<\/?(?:table|thead|tbody|tr|th|td|p|br|code|strong|em)(?:\s|>)/u, tag);
-    assert.doesNotMatch(tag, /\son[a-z]+\s*=|\shref\s*=|\sstyle\s*=|\sclass\s*=/iu, tag);
+    assert.doesNotMatch(tag, forbidden, `${tag} carries one of ${forbiddenInThisTable.join(", ")}`);
   }
+  /* The regex has to be able to fail, or the loop above proves nothing about it. */
+  assert.match('<td class="x">', forbidden);
+  assert.match("<td onclick=x>", forbidden);
+  assert.doesNotMatch("<td align=\"center\">", forbidden);
   /* The point of the whole design: a cell is not a second escaping path. The same source text
      rendered as a paragraph and as a cell produces byte-identical inner HTML. */
   for (const vector of HOSTILE_INLINE_VECTORS) {
@@ -426,11 +441,40 @@ test("an indented list item nests instead of flattening, and the nesting stays b
     "<ul><li>a</li></ul><ol><li>b</li></ol>",
   );
   /* An indent ladder cannot recurse past the shared bound: past it the deeper items join the
-     deepest list rather than opening another one, and nothing is lost. */
-  const ladder = Array.from({ length: 10 }, (_, level) => `${"  ".repeat(level)}- level${level}`);
+     deepest list rather than opening another one, and nothing is lost.
+
+     ONE space per step, not two. A review arm measured the two-space version and found it did not
+     reach the sentence above it: at ten steps the last three items carry 14, 16 and 18 spaces, and
+     `listMatch` accepts at most 12, so those three were never list items at all -- they fell to a
+     paragraph. `level7<` matched `level7<br>` exactly as it matched `level7</li>`, so the
+     assertion could not tell the two apart. A one-space ladder stays inside the indent bound, so
+     what stops the nesting IS the depth cap, which is what this test is about. The indent bound
+     gets its own case below. */
+  const ladder = Array.from({ length: 10 }, (_, level) => `${" ".repeat(level)}- level${level}`);
   const deep = renderMessageMarkdown(ladder.join("\n"));
   assert.equal((deep.match(/<ul>/gu) ?? []).length, MESSAGE_MARKDOWN_LIMITS.nestingDepth);
+  /* Every level past the cap is a sibling INSIDE the deepest list. `levelN<` cannot say that: it
+     matches `levelN</li>` and `levelN<br>` alike, which is how the old fixture passed while three
+     of its levels sat in a paragraph.
+
+     The expected list is BUILT from the cap rather than typed, so the two cannot disagree: the
+     deepest list opens at level `cap - 1` and holds every level from there to the last. It is
+     written with its own `<ul>` so it pins where the nesting stops, not just which items are
+     adjacent. */
+  const cap = MESSAGE_MARKDOWN_LIMITS.nestingDepth;
+  const deepestList = `<ul>${
+    Array.from({ length: ladder.length - cap + 1 }, (_, index) => `<li>level${cap - 1 + index}</li>`)
+      .join("")
+  }</ul>`;
+  assert.ok(deep.includes(deepestList), `${deepestList} not found in ${deep}`);
   for (let level = 0; level < 10; level += 1) assert.match(deep, new RegExp(`level${level}<`, "u"));
+
+  /* The OTHER bound, stated separately because it is a different mechanism: a line indented past
+     `listMatch`'s 12-column ceiling is not a list item at all. It stays the text the author typed,
+     which is why the ladder above uses one space per step. */
+  const tooDeep = renderMessageMarkdown("- top\n" + " ".repeat(13) + "- past the indent bound");
+  assert.match(tooDeep, /past the indent bound/u);
+  assert.doesNotMatch(tooDeep, /<li>past the indent bound<\/li>/u);
   assertSharesTheParagraphPath(
     (vector) => `- top\n  - ${vector}`,
     /^<ul><li>top<ul><li>|<\/li><\/ul><\/li><\/ul>$/gu,
