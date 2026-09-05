@@ -45,12 +45,22 @@ test("the database CHECK and the edge regex are the same slug rule", () => {
     migration.includes(`slug ~ '${CHANNEL_SLUG_RE.source}'`),
     `20260905000001_channels.sql must CHECK the exact pattern ${CHANNEL_SLUG_RE.source}`,
   );
-  assert.ok(
-    migration.includes(`char_length(slug) BETWEEN 1 AND ${CHANNEL_SLUG_MAX}`),
+  /* The BOUNDS are read as numbers, not substring-matched. A substring test
+   * passes on a longer number that starts with the same digits ("BETWEEN 1 AND
+   * 320" contains "BETWEEN 1 AND 32"), so it cannot pin a bound at all. A
+   * review arm found this shape on the recipient cap below; it was here too. */
+  const slugBound = /char_length\(slug\) BETWEEN 1 AND (\d+)/.exec(migration);
+  assert.ok(slugBound, "the slug length CHECK must be findable");
+  assert.equal(
+    Number(slugBound![1]),
+    CHANNEL_SLUG_MAX,
     `the slug length CHECK must use ${CHANNEL_SLUG_MAX}`,
   );
-  assert.ok(
-    migration.includes(`char_length(purpose) <= ${CHANNEL_PURPOSE_MAX}`),
+  const purposeBound = /char_length\(purpose\) <= (\d+)/.exec(migration);
+  assert.ok(purposeBound, "the purpose length CHECK must be findable");
+  assert.equal(
+    Number(purposeBound![1]),
+    CHANNEL_PURPOSE_MAX,
     `the purpose CHECK must use ${CHANNEL_PURPOSE_MAX}`,
   );
   /* Control: the file really was read and really can miss a pattern, so a
@@ -202,16 +212,26 @@ test("the recipient cap is the same number in the migration, the edge and the co
    * are unique per signal, so the highest legal position is the cap minus one.
    * Asserting the derived number rather than the constant is deliberate -- it
    * is the number actually written in the SQL, and it moves with the cap. */
+  /* READ THE NUMBER, do not substring-match it. A review arm found the first
+   * version of this assertion using includes("position BETWEEN 0 AND 7"),
+   * which is satisfied by "BETWEEN 0 AND 75" -- so the cap could be raised
+   * nine-fold and the gate that exists to pin it would stay green. Extract the
+   * bound and compare it as a number; there is no prefix it can hide behind. */
+  const positionBound = /position BETWEEN 0 AND (\d+)/.exec(recipientsMigration);
   assert.ok(
-    recipientsMigration.includes(
-      `position BETWEEN 0 AND ${SIGNAL_RECIPIENT_MAX - 1}`,
-    ),
-    `20260905000010 must bound position at ${SIGNAL_RECIPIENT_MAX - 1}, one below the cap of ${SIGNAL_RECIPIENT_MAX}`,
+    positionBound,
+    "20260905000010 must CHECK the recipient position bound",
   );
-  /* Control: the file was really read and the assertion can really fail. */
   assert.equal(
-    recipientsMigration.includes("position BETWEEN 0 AND 9999"),
-    false,
+    Number(positionBound![1]),
+    SIGNAL_RECIPIENT_MAX - 1,
+    `the position bound must be ${SIGNAL_RECIPIENT_MAX - 1}, one below the cap of ${SIGNAL_RECIPIENT_MAX}`,
+  );
+  /* Control on the extractor itself: it really can read a different number out
+   * of the same shape, so the equality above is about the migration's value. */
+  assert.equal(
+    Number(/position BETWEEN 0 AND (\d+)/.exec("position BETWEEN 0 AND 75")![1]),
+    75,
   );
 
   /* The composer refuses tags past its own ceiling. If it were higher than the
@@ -261,9 +281,17 @@ test("the recipient rules refuse each shape they name, and the sentences are gen
     /at least one recipient/,
     "an empty list is refused as an empty list, not as a bad shape",
   );
-  assert.match(
-    String(signalRecipientListProblem([{ kind: "nobody", id: uuid }])),
-    /kind is user or agent/,
+  /* GENERATED, not typed. This asserted /kind is user or agent/, which is
+   * today's classList output written out by hand in a test -- the same drift
+   * one level down that the rule text exists to prevent. */
+  assert.ok(
+    String(signalRecipientListProblem([{ kind: "nobody", id: uuid }]))
+      .includes(
+        `kind is ${SIGNAL_RECIPIENT_KINDS.slice(0, -1).join(", ")} or ${
+          SIGNAL_RECIPIENT_KINDS[SIGNAL_RECIPIENT_KINDS.length - 1]
+        }`,
+      ),
+    "the kind list in the refusal is the constant's own list",
   );
   assert.match(
     String(signalRecipientListProblem([{ kind: "user", id: "nope" }])),

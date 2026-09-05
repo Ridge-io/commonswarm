@@ -1198,3 +1198,68 @@ test("delivery-client.test.ts is literally named by the root npm test script", a
     `npm test must name tests/delivery-client.test.ts; script is: ${testScript}`,
   );
 });
+
+test("the installed claim parser ignores oldest_pending_at and an extra capability marker", async () => {
+  /* The old-client half of the server change in this lane, measured on the
+   * REAL parser rather than argued. supabase/functions/command/durable-delivery.ts
+   * now returns oldest_pending_at and advertises a fourth capability marker.
+   * A shipped listener must be unable to notice either.
+   *
+   * BOUND: this is the client parser, not a running listener. It shows the
+   * response shape is accepted and the extra fields reach nothing; it does not
+   * show what `cswarm listen status` renders. No src/ file changed in this
+   * lane, so what it renders cannot have changed. */
+  const withNewFields = claimBody({
+    capabilities: {
+      delivery_claim: 1,
+      delivery_ack: 1,
+      sender_owner_relation: 1,
+      oldest_pending_at: 1,
+    },
+    oldest_pending_at: "2026-09-05T01:02:03.004Z",
+  });
+  const client = new DeliveryCommandClient(
+    target,
+    capturingFetch([], () => jsonResponse(200, withNewFields)),
+  );
+  const result = await client.claimAgentInbox(claimRequest());
+  assert.equal(result.deliveries.length, 1);
+  assert.equal(result.pendingDeliveryCount, 1);
+  assert.equal(result.terminalDeliveryFailureCount, 0);
+  assert.equal(
+    (result as unknown as Record<string, unknown>).oldestPendingAt,
+    undefined,
+    "the client does not read the field yet, and must not appear to",
+  );
+
+  /* The null form of the same field, which is what a drained queue sends. */
+  const drained = new DeliveryCommandClient(
+    target,
+    capturingFetch(
+      [],
+      () => jsonResponse(200, claimBody({ oldest_pending_at: null })),
+    ),
+  );
+  assert.equal((await drained.claimAgentInbox(claimRequest())).pendingDeliveryCount, 1);
+
+  /* CONTROL: the parser is not simply accepting everything. A required marker
+   * set to 0 in the SAME body still refuses, so the two passes above are the
+   * extra fields being ignored and not the check being absent. */
+  const brokenMarker = new DeliveryCommandClient(
+    target,
+    capturingFetch([], () =>
+      jsonResponse(200, claimBody({
+        capabilities: {
+          delivery_claim: 0,
+          delivery_ack: 1,
+          sender_owner_relation: 1,
+          oldest_pending_at: 1,
+        },
+        oldest_pending_at: "2026-09-05T01:02:03.004Z",
+      }))),
+  );
+  await assert.rejects(
+    brokenMarker.claimAgentInbox(claimRequest()),
+    (error: unknown) => /delivery_claim capability/.test(String(error)),
+  );
+});

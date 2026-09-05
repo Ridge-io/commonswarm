@@ -594,7 +594,18 @@ test("the cap is enforced by the database, at the same bound the edge reads", as
           [{ user: f.second }],
           SIGNAL_RECIPIENT_MAX - 1,
         );
-        assert.ok(true, "the cap-1 position is accepted");
+        /* Count the row rather than assert.ok(true). A review arm pointed out
+         * that the bare true asserted nothing: the insert's own throw was the
+         * whole test, so the line read as a check and was not one. */
+        const stored = await tx<{ position: number }[]>`
+          SELECT position FROM swarm.signal_recipients
+          WHERE signal_id = ${signalId}::uuid
+        `;
+        assert.deepEqual(
+          stored.map((row) => row.position),
+          [SIGNAL_RECIPIENT_MAX - 1],
+          "the cap-1 position is stored, at the position it was written to",
+        );
         await tx`ROLLBACK TO SAVEPOINT legal_top`;
 
         await assert.rejects(
@@ -724,7 +735,15 @@ test("recipient positions have to be contiguous from zero", async () => {
     await inRolledBackTx(sql, f, async (tx) => {
       await write(tx);
       await addRecipients(tx, signalId, f.workspaceA, [{ user: f.third }], 1);
-      assert.ok(true);
+      const stored = await tx<{ position: number }[]>`
+        SELECT position FROM swarm.signal_recipients
+        WHERE signal_id = ${signalId}::uuid ORDER BY position
+      `;
+      assert.deepEqual(
+        stored.map((row) => row.position),
+        [0, 1],
+        "the contiguous pair is stored, so the refusal above is the gap",
+      );
     });
   } finally {
     await sql.end({ timeout: 5 });

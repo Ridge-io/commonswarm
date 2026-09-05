@@ -1150,3 +1150,42 @@ test("the recipient rules the edge enforces outside this function are still one 
   assert.ok(workingOnBlock.includes("toAgentPrincipalId === null"));
   assert.ok(replyBlock.includes('cmd.signal_kind === "note"'));
 });
+
+test("broadcast without a thread outranks a malformed `to`, and the reason is stated", () => {
+  /* A review arm noticed this pair and asked which way it should go, because
+   * two doctrines meet on it: shape before meaning would answer the `to` first,
+   * and impossible before merely-also-broken would answer the broadcast first.
+   *
+   * The broadcast rule wins, and here is why: fixing the `to` leaves the
+   * request refused, because there is still no thread to broadcast from.
+   * Fixing the broadcast leaves a refusal the caller can then act on. Shape
+   * before meaning exists to stop a rule being quoted about a field the caller
+   * does not yet have -- the broadcast rule reads thread_root_id and
+   * broadcast_to_channel, and says nothing about `to`.
+   *
+   * This test exists so the order is a decision with a reason rather than an
+   * accident of where two blocks were written. */
+  const both = chatSignalShapeProblem({
+    signal_kind: "note",
+    to_user_id: null,
+    to_agent_principal_id: null,
+    in_reply_to: null,
+    broadcast_to_channel: true,
+    to: "everyone",
+  });
+  assert.ok(both !== null);
+  assert.match(both, /needs a thread_root_id/);
+
+  /* Control: with the broadcast rule satisfied, the malformed `to` is the
+   * answer, so the ordering above is a precedence and not a swallowed rule. */
+  const toAlone = chatSignalShapeProblem({
+    signal_kind: "note",
+    to_user_id: null,
+    to_agent_principal_id: null,
+    in_reply_to: null,
+    broadcast_to_channel: false,
+    to: "everyone",
+  });
+  assert.ok(toAlone !== null);
+  assert.match(toAlone, /to is a list of recipients/);
+});

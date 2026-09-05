@@ -1034,6 +1034,24 @@ test("a one-entry `to` and the scalar shape store the same signal row and the sa
     assert.equal(row.n, 1, `${row.signal_id} must have exactly one delivery row`);
   }
 
+  /* THE ONE THING THAT DIFFERS, named rather than left for a reader to find.
+   * The stored signal row, the delivery ledger and the rendered set match; the
+   * side table does NOT. A scalar post writes zero recipient rows and a
+   * one-entry `to` writes one, and the view's fallback is what makes the two
+   * read alike anyway. A review arm called the compat claim inaccurate for
+   * leaving this unsaid, so it is asserted here. */
+  const sideRows = await sql<{ signal_id: string; n: number }[]>`
+    SELECT signal_id, count(*)::int AS n
+    FROM swarm.signal_recipients
+    WHERE signal_id IN (${scalarId}::uuid, ${listId}::uuid)
+    GROUP BY signal_id
+  `;
+  assert.deepEqual(
+    sideRows.map((row) => [row.signal_id, row.n]),
+    [[listId, 1]],
+    "only the `to` form writes a recipient row; the scalar form writes none",
+  );
+
   /* And the READ is identical too, which is the part an old client sees. */
   const views = await viewRowAs(f.ownerId, (tx) =>
     tx<{ id: string; recipients: unknown }[]>`
@@ -1223,4 +1241,58 @@ test("an installed client's post is unchanged by the existence of `to`", async (
     WHERE signal_id = ${String(signal.id)}::uuid
   `;
   assert.equal(rows[0]!.n, 0, "and writes nothing to the new table");
+});
+
+test("the SECOND recipient can reply privately, the way the first always could", async () => {
+  /* Found by a review arm rather than by a test. in_reply_to's authorization
+   * read the scalar columns, which carry recipient 0 only, so a signal a later
+   * recipient could READ was one they could not answer. A message you can read
+   * and cannot reply to is a trap the addressing itself creates. */
+  const posted = await send(
+    f.ownerJwt,
+    installedPost({
+      signal_kind: "ask",
+      body: `reply from the second recipient ${randomUUID()}`,
+      to: [{ kind: "user", id: f.ownerId }, { kind: "user", id: f.otherId }],
+    }),
+  );
+  assert.equal(posted.status, 200, JSON.stringify(posted.body));
+  const rootId = String(signalOf(posted.body).id);
+
+  const reply = await send(
+    f.otherJwt,
+    installedPost({ signal_kind: "note", in_reply_to: rootId }),
+  );
+  assert.equal(reply.status, 200, JSON.stringify(reply.body));
+  assert.equal(
+    signalOf(reply.body).to,
+    f.ownerId,
+    "the reply is re-addressed to the author, exactly as a scalar recipient's is",
+  );
+
+  /* CONTROL: someone who is NOT in the recipient set still cannot reply. The
+   * second arm reads the recipient set, not "any member". `other` is the only
+   * other member in this fixture, so the negative case uses a signal that names
+   * only the owner. */
+  const narrow = await send(
+    f.ownerJwt,
+    installedPost({
+      signal_kind: "ask",
+      body: `owner only ${randomUUID()}`,
+      to: [{ kind: "user", id: f.ownerId }],
+    }),
+  );
+  assert.equal(narrow.status, 200, JSON.stringify(narrow.body));
+  const refused = await send(
+    f.otherJwt,
+    installedPost({
+      signal_kind: "note",
+      in_reply_to: String(signalOf(narrow.body).id),
+    }),
+  );
+  assert.equal(
+    refused.status,
+    403,
+    `a non-recipient must not be able to reply: ${JSON.stringify(refused.body)}`,
+  );
 });

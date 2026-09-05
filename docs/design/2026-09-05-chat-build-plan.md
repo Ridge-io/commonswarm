@@ -241,6 +241,19 @@ scalar column when there are none. Every signal written before this migration th
 as it would if its row existed, and a signal posted with a one-entry `to` renders identically to the same
 address sent the scalar way.
 
+**What "identical" covers, and the one thing it does not.** The `swarm.signals` row is identical column
+for column, the `swarm.signal_deliveries` rows are identical, and the rendered `recipients` is identical.
+The SIDE TABLE differs: a scalar post writes zero recipient rows and a one-entry `to` writes one. The
+view's fallback is exactly what makes the two read alike anyway. A review arm called the compat claim
+inaccurate for leaving this unsaid; the served test now asserts the difference as well as the three
+identities.
+
+**A recipient can reply to what a recipient can read.** `in_reply_to`'s authorization read the scalar
+columns, which carry recipient 0 only, so a later recipient could read a signal and got a 403 trying to
+answer it. Found by a review arm on this lane. `signalNamesRecipient` adds the second arm, granting
+exactly what the recipient set already grants on the read path, with a control that a member who is NOT
+in the set still cannot reply.
+
 **The cap** is `SIGNAL_RECIPIENT_MAX = 8` in `supabase/functions/_shared/channels.ts`, enforced twice:
 the edge validator refuses a longer list with a sentence built from the constant, and the CHECK on
 `position` bounds it at 7, which caps the row count because positions are unique per signal.

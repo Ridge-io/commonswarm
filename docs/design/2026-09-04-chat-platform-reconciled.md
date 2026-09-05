@@ -476,8 +476,10 @@ reasoning is upheld below.)
 > does. Routed to the coordinator with L2, not decided here.
 
 **`working-on` cannot be a DM** — the validator refuses a directed `working-on`
-(`command/index.ts:1580-1587`), so the DM view holds only `note` and `ask`. Correct; noted so nobody
-treats the absence as a bug.
+(`command/index.ts:1816-1824`), so the DM view holds only `note` and `ask`. Correct; noted so nobody
+treats the absence as a bug. *(**was**, until 2026-09-05: `:1580-1587`. L1 and L2 added ~1000 lines
+above that check and `:1580` now lands in `signals_seen`. The behaviour claim is unchanged; only the
+pointer moved. Found by a review arm, not by the citation gate, which registers no entry for this line.)*
 
 ## 5. RLS, spelled out
 
@@ -834,9 +836,21 @@ and `tests/p1-server/**` are globs; a new file in `tests/support/` runs in nothi
 | Forbidden copy | No channel surface contains *private*, *members of this channel*, *invite*, *join*, *leave*, or an audience count | Add one of those words to a fixture; the test must fail. |
 | Vocabulary | No user-facing string in `site/` uses "stream" in the room sense | The same scan finds `stream_id` in `src/` and passes, proving the scan searched the right thing. |
 
-**Live listener control.** Nothing here changes what a listener reports — delivery is untouched (§7.3) —
-so a live listener check is not owed. **If any slice begins to touch `signal_deliveries`, that exemption
-is void**: start one with `--state-dir <temp>` and paste its status JSON.
+**Live listener control.** THE EXEMPTION IS VOID as of 2026-09-05: L2 touches `signal_deliveries` from
+two directions. A trigger on `swarm.signal_recipients` writes rows to it, and the claim response gained
+`oldest_pending_at`. Every later slice owes whatever the standing rule asks of a lane that touches
+delivery.
+
+> **was**, until 2026-09-05: *"Nothing here changes what a listener reports — delivery is untouched
+> (§7.3) — so a live listener check is not owed. If any slice begins to touch `signal_deliveries`, that
+> exemption is void: start one with `--state-dir <temp>` and paste its status JSON."* The condition the
+> sentence named has now happened, which is why the wording is kept: it is the clause that voids itself.
+
+What L2 established instead of a live listener run, stated exactly: no file under `src/` changed in that
+lane, so the listener binary is byte-identical to the one v0.1.54 shipped and what it renders cannot have
+moved; and `tests/delivery-client.test.ts` feeds the new response shape through the REAL client parser and
+shows both new fields reach nothing, with a control that a broken required marker still refuses. What it
+did NOT establish: a running listener against the new edge. The edge is not deployed.
 
 ## 10. Out of v1
 

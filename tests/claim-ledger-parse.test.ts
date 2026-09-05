@@ -143,11 +143,17 @@ test("oldest_pending_at keeps absent, null and a time apart", () => {
   assert.notEqual(parseClaimLedger({ ...base, oldest_pending_at: when }), null);
 });
 
-test("the claim ledger says it reports the queue age, so a reader can tell absent from unsupported", () => {
-  /* Three states on the wire, and a reader needs a fourth fact to use them:
-   * whether this server reports the field at all. The capability marker is
-   * that fact. Old listeners check only the markers they require, so adding
-   * one cannot break them. */
+test("the claim capabilities ADVERTISE the queue age; the served test measures it", () => {
+  /* BOUND, stated because a review arm asked for it: this test reads one
+   * constant. It would stay green if claimAgentInbox stopped computing the
+   * value, and it is not evidence that anything is reported. The measurement
+   * lives in tests/p1-server/command.test.ts, where a real claim's
+   * oldest_pending_at is compared to min(enqueued_at) in the ledger.
+   *
+   * What it IS for: a reader needs a fourth fact to use the three wire states,
+   * namely whether this server reports the field at all. The marker is that
+   * fact. Old listeners check only the markers they require, so adding one
+   * cannot break them. */
   assert.equal(DELIVERY_CAPABILITIES.oldest_pending_at, 1);
   for (const required of ["delivery_claim", "delivery_ack", "sender_owner_relation"]) {
     assert.equal(

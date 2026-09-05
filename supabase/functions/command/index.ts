@@ -6648,6 +6648,55 @@ async function signalAgentTargetIsLive(
   return targetRows[0] !== undefined;
 }
 
+/**
+ * Is this signal addressed to the caller through swarm.signal_recipients?
+ *
+ * The scalar columns hold recipient 0 only, so a check that reads them alone
+ * answers "no" for recipients 1..N. That was found by a review arm on this
+ * lane: the second recipient of a signal could READ it and could not reply to
+ * it, because in_reply_to's authorization still asked the scalar columns. A
+ * message you can read and cannot answer is the trap this closes.
+ *
+ * It grants nothing the recipient set does not already grant: exactly the
+ * people swarm_read.signals admits through the same table, narrowed to the
+ * presenting principal when an agent is calling.
+ */
+async function signalNamesRecipient(
+  tx: Sql,
+  route: Route,
+  signalId: string,
+  caller: { agentPrincipalId: string | null; userId: string | null },
+): Promise<boolean> {
+  if (caller.agentPrincipalId === null && caller.userId === null) return false;
+  const rows = await tx<{ hit: number }[]>`
+    SELECT 1 AS hit
+    FROM swarm.signal_recipients AS r
+    WHERE r.signal_id = ${signalId}::uuid
+      AND r.workspace_id = ${route.workspaceId}::uuid
+      AND (
+        (
+          ${caller.agentPrincipalId}::uuid IS NOT NULL
+          AND r.recipient_agent_principal_id = ${caller.agentPrincipalId}::uuid
+        )
+        OR (
+          ${caller.userId}::uuid IS NOT NULL
+          AND (
+            r.recipient_user_id = ${caller.userId}::uuid
+            OR EXISTS (
+              SELECT 1
+              FROM swarm.agent_principals AS owned
+              WHERE owned.principal_id = r.recipient_agent_principal_id
+                AND owned.workspace_id = r.workspace_id
+                AND owned.owner_user_id = ${caller.userId}::uuid
+            )
+          )
+        )
+      )
+    LIMIT 1
+  `;
+  return rows[0] !== undefined;
+}
+
 async function signalAgentOwnedByUser(
   tx: Sql,
   route: Route,
@@ -6742,7 +6791,7 @@ async function resolveSignalWriteTarget(
   if (!reference) return null;
 
   const callerUserId = auth.actor.user;
-  const addressedToCaller = auth.agent !== null
+  const addressedByScalar = auth.agent !== null
     ? reference.to_agent_principal_id === auth.agent.principal_id
     : callerUserId !== null &&
       (
@@ -6754,6 +6803,14 @@ async function resolveSignalWriteTarget(
           callerUserId,
         )
       );
+  /* The scalar columns carry recipient 0. Recipients 1..N live only in
+   * swarm.signal_recipients, so asking the columns alone left a signal a
+   * caller can READ and cannot reply to. The second arm asks the set. */
+  const addressedToCaller = addressedByScalar ||
+    await signalNamesRecipient(tx, route, inReplyTo, {
+      agentPrincipalId: auth.agent !== null ? auth.agent.principal_id : null,
+      userId: auth.agent !== null ? null : callerUserId,
+    });
   if (!addressedToCaller) return null;
 
   if (reference.from_kind === "user") {
@@ -7100,8 +7157,17 @@ async function postSignal(
  * same through either surface.
  *
  * The SQL copy of this rule is in 20260905000010_signal_recipients.sql. They
- * are two expressions of one rule; tests/p1-local/chat-recipients-postgres.test.ts
- * compares them on the same row rather than trusting that they agree.
+ * are two expressions of one rule, and they do NOT render identically: the
+ * view adds a `position` to each entry and this record does not, because the
+ * order of the array already carries it.
+ *
+ * Where each half is measured, named exactly rather than approximately (a
+ * review arm found an earlier version of this comment naming the wrong file):
+ * tests/p1-local/chat-recipients-postgres.test.ts compares the SQL FALLBACK
+ * against the SQL ROWS, which is the no-backfill claim; the served test
+ * "a post with `to` stores the first recipient in the scalar column and the
+ * whole set beside it" in tests/p1-server/chat-signals.test.ts is the one that
+ * puts this function's output and the view's column side by side.
  */
 function signalRecipientSet(
   named: readonly SignalRecipient[] | null,
