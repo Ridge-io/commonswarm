@@ -85,7 +85,8 @@ test("the rail names channels, and `stream` is gone from the app's vocabulary", 
   assert.doesNotMatch(builtRail, /\bstream\b/i);
   /* all-signals sits above the list because it is not one of them: it is the whole feed. */
   assert.match(rail, /data-channel-place=""[\s\S]*?aria-current="page"/);
-  assert.match(rail, /<span>all-signals<\/span>/);
+  /* Built from the constant, not typed: ~~`<span>all-signals</span>`~~ 2026-09-05. */
+  assert.match(rail, /<span>\{ALL_SIGNALS_SLUG\}<\/span>/);
   assert.match(rail, /data-channel-list/);
   assert.match(rail, /data-channel-new[\s\S]*?aria-label="New channel"/);
   assert.ok(appHtml.includes("CHANNELS"), "the built /app page must ship the rail heading");
@@ -215,7 +216,10 @@ test("a ?c= that names no readable channel never shows the unfiltered feed", () 
   const render = between(dashboard, 'const renderFeed = (change: "history"', "const now = Date.now();");
   assert.match(render, /if \(unknownChannelId !== null\) \{\s*renderUnknownChannel\(\);\s*return;\s*\}/);
   const unknown = between(dashboard, "const renderUnknownChannel = (", "const renderFeed =");
-  assert.match(unknown, /is not in this workspace, or one you cannot read/);
+  /* ~~"is not in this workspace, or one you cannot read"~~ retired 2026-09-05: that named a
+     read permission this product does not have. The sentence is generated now, and the test
+     for what it may say is `the unresolved-channel copy names no permission…` below. */
+  assert.match(unknown, /row\.textContent = unknownChannelText\(channelListFailed\);/);
   assert.match(unknown, /selectChannel\(null\)/);
   /* The bad id STAYS in the address bar. Dropping it would turn the link into the
      unfiltered feed on the next reload, which is the same failure one step later. */
@@ -333,12 +337,24 @@ test("archiving is a second press, because nothing un-archives it", () => {
   assert.ok(CHANNEL_SLUG_MAX > 0);
 });
 
+/**
+ * The permission claim, in one place, so the sweep and the constants test refuse the same
+ * sentences. "cannot read" is in it because a review arm found exactly that sentence: the
+ * app told a reader a channel might be one they cannot read, and no such channel exists.
+ */
+const PRIVACY_CLAIM =
+  /\bprivate\b|\bsecret\b|\bencrypted\b|\bonly\b[^.]{0,40}\b(see|sees|read|reads)\b|no one else|cannot read|can(no|')t read|not allowed to (see|read)|hidden from/i;
+
 test("no channel copy in the dashboard implies privacy, and none uses an em-dash", () => {
   /*
-   * BOUND, stated: this sweep reads the channel-facing string literals this lane added —
-   * the ones reachable from the six data hooks listed below — and not every string in the
-   * dashboard. It cannot prove the file is free of a privacy claim; it proves these
-   * surfaces make none. The list is the same one the assertions iterate.
+   * BOUND, stated and widened after a review arm named what the first version could not see.
+   * It now reads BOTH double-quoted and backtick strings in the eight script surfaces below,
+   * AND the two pieces of Astro markup this lane added (the composer's reply bar and the
+   * channel dialog), AND the composer's own refusal sentences.
+   *
+   * What it still cannot see, named rather than implied: a channel `purpose`, which a member
+   * types and the head renders verbatim. No source sweep can constrain that, and nothing in
+   * this product should: it is the member's own words about their own channel.
    */
   const surfaces = [
     "const renderChannelHead = (",
@@ -346,22 +362,114 @@ test("no channel copy in the dashboard implies privacy, and none uses an em-dash
     "const renderChannelDialog = (",
     "const syncComposerPlacement = (",
     "const submitChannelArchive = async (",
+    "const submitChannelCreate = async (",
+    "const submitChannelRename = async (",
     "const selectChannel = (",
   ];
-  for (const anchor of surfaces) {
-    const block = between(dashboard, anchor, "\n    };");
-    const strings = [...block.matchAll(/"([^"\\]{12,})"/g)].map((match) => match[1]!);
+  const blocks = surfaces.map((anchor) => [anchor, between(dashboard, anchor, "\n    };")] as const);
+  blocks.push([
+    "composer reply bar (markup)",
+    between(dashboard, '<div class="dashboard__composer-reply"', "</div>"),
+  ]);
+  blocks.push([
+    "channel dialog (markup)",
+    between(dashboard, '<dialog\n    class="dashboard__channel-dialog"', "</dialog>"),
+  ]);
+  blocks.push([
+    "composer refusals",
+    between(dashboard, "if (unknownChannelId !== null) {\n        /* The hidden composer", "const recipients ="),
+  ]);
+  let checked = 0;
+  for (const [anchor, rawBlock] of blocks) {
+    /* Comments first. This repo keeps retired wording and reasoning beside the code, and both
+       legitimately contain em-dashes and the word "private". What is being swept is the copy
+       a reader can see, which is the string literals. */
+    const block = rawBlock
+      .replace(/\/\*[\s\S]*?\*\//g, "")
+      .replace(/\/\/[^\n]*/g, "");
+    const strings = [
+      ...[...block.matchAll(/"([^"\\]{12,})"/g)].map((match) => match[1]!),
+      ...[...block.matchAll(/`([^`\\]{12,})`/g)].map((match) => match[1]!),
+    ];
     for (const value of strings) {
-      /* ~~`/only .* sees|private|secret|encrypted/i`~~ widened 2026-09-05: it required the
-         plural verb, so "only members can see it" — the sentence a mutation actually wrote —
-         went straight through. The claim is about who can read a channel, so the pattern is
-         about that, not about one conjugation. */
-      assert.doesNotMatch(
-        value,
-        /\bprivate\b|\bsecret\b|\bencrypted\b|\bonly\b[^.]{0,40}\b(see|sees|read|reads)\b|no one else/i,
-        `${anchor}: ${value}`,
-      );
+      checked += 1;
+      assert.doesNotMatch(value, PRIVACY_CLAIM, `${anchor}: ${value}`);
       assert.doesNotMatch(value, /—/, `${anchor}: em-dash in ${value}`);
     }
   }
+  /* A positive control on the sweep itself: a sweep that found no strings would pass in
+     silence, which is the confident zero this project keeps measuring. */
+  assert.ok(checked >= 20, `the sweep must actually read strings; it read ${checked}`);
+});
+
+test("the unresolved-channel copy names no permission the product does not have", () => {
+  /*
+   * Every member of a workspace reads every channel in it. So a ?c= that resolves to nothing
+   * has exactly two honest causes: the id names no channel HERE, or the channel list did not
+   * load. It is never "a channel you may not read", and an earlier version of this lane said
+   * exactly that.
+   */
+  const channels = readFileSync(join(siteRoot, "src", "lib", "channels.ts"), "utf8");
+  const block = between(channels, "export const unknownChannelText", "export const channelRefusalMessage");
+  for (const value of [...block.matchAll(/`([^`\\]+)`/g)].map((match) => match[1]!)) {
+    assert.doesNotMatch(value, PRIVACY_CLAIM, value);
+  }
+  assert.match(block, /Every channel in a workspace is readable by every member of it/);
+  assert.match(block, /channelListFailed\s*\?/, "the failed-list case is a case, not a guess");
+  /* And the name of the unfiltered view inside those sentences is the constant. */
+  assert.match(block, /\$\{ALL_SIGNALS_SLUG\}/);
+  assert.doesNotMatch(block, /all-signals/, "the slug is interpolated, never typed");
+});
+
+test("an unresolved channel has no composer, and a submit into one is refused", () => {
+  /* The composer was reachable in that state, and a post from it went to the unfiltered feed
+     while the head said Channel not found; renderFeed then discarded the pending row, so the
+     writer saw nothing at all. Found by a review arm. Two controls: the affordance is gone,
+     and the rule holds without it. */
+  const show = between(dashboard, 'const composer = one<HTMLFormElement>("[data-composer]");', "app.dataset.channelView = name;");
+  assert.match(show, /composer\.hidden = unknownChannelId !== null \|\|/);
+  const submit = between(
+    dashboard,
+    'one<HTMLFormElement>("[data-composer]")?.addEventListener("submit"',
+    "const workspaceId = activeWorkspaceId;",
+  );
+  assert.match(submit, /if \(unknownChannelId !== null\) \{/);
+  assert.match(submit, /there is nowhere to post/);
+  assert.match(submit, /return;/);
+});
+
+test("no view but the feed leaves a channel marked current in the rail", () => {
+  /* Files and Brain are not a channel. The channel buttons carry no data-workspace-view on
+     purpose, so activateWorkspaceView's own loop never reached them and the rail claimed a
+     current channel while the head said Files. Found by a review arm. */
+  const activate = between(dashboard, "const activateWorkspaceView = (", "const closeConnect =");
+  assert.match(
+    activate,
+    /if \(view !== "signals"\) \{\s*for \(const button of all<HTMLButtonElement>\("\[data-channel-place\]"\)\) \{\s*button\.removeAttribute\("aria-current"\);/,
+  );
+});
+
+test("the name of the unfiltered view is typed in exactly one place, and that place is a storage key", () => {
+  /*
+   * Generated everywhere a reader sees it: the rail, the head, the phone control, the empty
+   * state, the unresolved-channel sentences. The single exception is the composer draft's
+   * storage key segment, which names drafts already saved in readers' browsers and must NOT
+   * follow the constant: doing so would orphan every saved draft the day it changed.
+   *
+   * BOUND: comments are stripped first. This repo keeps retired wording in comments on
+   * purpose, and a sweep that failed on its own doctrine would be deleted rather than fixed.
+   */
+  const code = dashboard
+    .replace(/\/\*[\s\S]*?\*\//g, "")
+    .replace(/\/\/[^\n]*/g, "");
+  const hits = [...code.matchAll(/all-signals/g)];
+  assert.equal(hits.length, 1, `all-signals is typed ${hits.length} times outside comments`);
+  assert.match(code, /const COMPOSER_DRAFT_SCOPE = "all-signals";/);
+  /* And the markup builds its three from the constant. */
+  assert.match(dashboard, /<span>\{ALL_SIGNALS_SLUG\}<\/span>/);
+  assert.match(dashboard, /data-channel-name tabindex="-1">\{channelLabel\(ALL_SIGNALS_SLUG\)\}<\/h1>/);
+  assert.match(dashboard, /<span data-channel-switch-label>\{channelLabel\(ALL_SIGNALS_SLUG\)\}<\/span>/);
+  /* ~~COMPOSER_STREAM~~ renamed with the vocabulary: "stream" is the wire's word for the
+     event log and this lane retired it from the app. */
+  assert.doesNotMatch(code, /COMPOSER_STREAM/);
 });

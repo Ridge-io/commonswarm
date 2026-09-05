@@ -91,11 +91,26 @@ starts from, and that remaining window can be short.
 `?w=` is honoured only when it names a workspace already in this reader's own memberships: the address
 bar is a convenience, never an authorization.
 
-A `?c=` that names no channel this reader can see becomes an **honest empty state**, never the
-unfiltered feed. The loaded rows in that case ARE the whole workspace's, because a channel that cannot
-be resolved cannot narrow the query, so `renderFeed` stops before it renders a row and offers
+A `?c=` that resolves to no channel here becomes an **honest empty state**, never the unfiltered
+feed. The loaded rows in that case ARE the whole workspace's, because a channel that cannot be
+resolved cannot narrow the query, so `renderFeed` stops before it renders a row and offers
 `Open #all-signals`. The bad id **stays** in the address bar: dropping it would turn the link into the
 unfiltered feed on the next reload, which is the same failure one step later.
+
+**And there is no composer in that state.** Both review arms passed the rendered-rows claim; one then
+found the hole beside it. The unresolved state is a `feed` view, the composer is shown in a `feed`
+view, and a post from it went to the **unfiltered feed** while the head said Channel not found, with
+`renderFeed` discarding the pending row so the writer saw nothing at all. The composer is now hidden
+while `unknownChannelId` is set, and the submit refuses independently of that: visibility is the
+affordance, the guard is the rule.
+
+**What the state may say.** There is no such thing as a channel a member may not read, so the copy
+may not imply one. An earlier version said "a channel that is not in this workspace, **or one you
+cannot read**", which named a permission this product does not have; both arms caught it. The two
+honest causes are that the id names no channel here, and that the channel list did not load — the
+channel read soft-fails to an empty list so a channel outage cannot take the feed down, which makes an
+empty list ambiguous. `channelListFailed` is what tells the two apart, and the sentences are generated
+from it.
 
 `?m=` (a message permalink) and `?t=` (a thread permalink) are **not** in this lane. §8.1 lists them and
 they are owed.
@@ -114,8 +129,18 @@ margin equal to its own height, so it costs the reading area no height at all.
 | App bar height | 73px | 57px (the ≤34rem rules, unchanged by this lane) |
 | Rail channel list height | 0 (hidden) | 0 (hidden) |
 | Channel control height | 40px, the band's own 2.5rem | 40px |
-| First message top | 240.1 (band bottom, exactly) | 229.8 |
+| First message top, transcript at scrollTop 0 | 240.1 | 229.8 |
+| First message clear of the floating band | 0px (it begins exactly at the band's bottom) | 0px |
 | Document horizontal overflow | none | none |
+
+**The first version of that file was wrong and a review arm found it.** It reported a 390x844 composer
+rect under a 320x568 heading. The dashboard sizes itself from `visualViewport`, and CDP's device
+metrics override does not always fire that event, so the page kept the previous layout while
+`window.innerHeight` already reported the new one. The measurement now reloads after each resize, waits
+until `innerWidth`, `innerHeight`, `visualViewport.height` and a rendered feed all agree with the size
+being claimed, scrolls the transcript to the top (it opens pinned to the newest row, where the first
+row is above the fold and says nothing about clearance), and then asserts every rect it reports lies
+inside the viewport it names.
 
 **A defect the measurement found, and the fix.** A slug may be 32 characters — `CHANNEL_SLUG_MAX`, the
 edge's own bound. Uncapped, the control rendered 249px of it and the filter row beside it fell to **24px
@@ -144,7 +169,15 @@ forbids.
 6. **No capacity or query-plan work.** `channel_id=eq.` rides the partial index L1 added; no plan was
    read.
 7. **The source sweeps in the observer test state their own bounds** in the test headers. A regex over
-   source cannot be complete, and neither of them claims to be.
+   source cannot be complete, and neither of them claims to be. The privacy sweep reads double-quoted
+   and backtick strings in eight script surfaces plus two pieces of markup plus the composer's
+   refusals, with comments stripped and a positive control on the number of strings it read. What it
+   cannot constrain, named rather than implied: a channel `purpose`, which a member types and the head
+   renders verbatim.
+8. **The rail's current mark and the head can no longer disagree**, but that was a defect and not a
+   design: the channel buttons carry no `data-workspace-view`, so `activateWorkspaceView`'s own loop
+   never reached them and the rail claimed a current channel while the head said Files. Found by a
+   review arm.
 
 ## Files
 
@@ -158,7 +191,13 @@ site/src/components/app/LiveDashboard.astro rail, dialog, feed, composer, thread
 site/src/components/app/chat-channels.observer.test.ts  new
 ```
 
-Five existing observer tests moved with the code they observe; each keeps the retired wording beside
+`COMPOSER_STREAM` is now `COMPOSER_DRAFT_SCOPE`: `stream` is the wire's word for the event log and
+this lane retired it from the app. Its VALUE is frozen at `"all-signals"` and is the one place that
+string is deliberately typed rather than built from `ALL_SIGNALS_SLUG` — it names drafts already saved
+in readers' browsers, and following the constant would orphan every one of them the day it changed.
+Everywhere a reader sees the name it is generated; a review arm found four places where it was not.
+
+Six existing observer tests moved with the code they observe; each keeps the retired wording beside
 the reason. `composer-sprint-browser.observer.test.ts` carried an emitted-source anchor that ended at
 `createdAt` and silently rewrote an unrelated span once the sample row grew two fields; it now ends at
 the first brace after `createdAt`, whatever precedes it.

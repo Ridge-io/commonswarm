@@ -597,10 +597,13 @@ const assertComposerSprint = (value: ComposerArtifact): void => {
    * by the accepted response only. */
   assert.match(
     draft,
-    /`commonswarm:composer-draft:\$\{owner\}:\$\{activeWorkspaceId\}:\$\{COMPOSER_STREAM\}`/,
+    /`commonswarm:composer-draft:\$\{owner\}:\$\{activeWorkspaceId\}:\$\{COMPOSER_DRAFT_SCOPE\}`/,
     "draft-scope: key must include user, workspace, and stream",
   );
-  assert.match(draft, /COMPOSER_STREAM = "all-signals";/,
+  /* The name changed with the vocabulary on 2026-09-05; "stream" is the event log on the
+     wire and this lane retired that word from the app. The VALUE is frozen because it names
+     drafts already saved in readers' browsers. */
+  assert.match(draft, /COMPOSER_DRAFT_SCOPE = "all-signals";/,
     "draft-scope: stream identity must be explicit");
   /* The draft is the body and one attachment marker. The address used to be saved beside it —
    * audienceKey, extra agent ids, the no-wake choice — and all three are gone, because the
@@ -827,8 +830,8 @@ const mutations: Mutation[] = [
   {
     name: "draft key loses user ownership",
     key: "dashboard",
-    target: "`commonswarm:composer-draft:${owner}:${activeWorkspaceId}:${COMPOSER_STREAM}`",
-    replacement: "`commonswarm:composer-draft:${activeWorkspaceId}:${COMPOSER_STREAM}`",
+    target: "`commonswarm:composer-draft:${owner}:${activeWorkspaceId}:${COMPOSER_DRAFT_SCOPE}`",
+    replacement: "`commonswarm:composer-draft:${activeWorkspaceId}:${COMPOSER_DRAFT_SCOPE}`",
     expectedFailure: "draft-scope",
   },
   {

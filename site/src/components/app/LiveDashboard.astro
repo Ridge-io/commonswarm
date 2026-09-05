@@ -19,6 +19,10 @@ import AgentConnect from "../connect/AgentConnect.astro";
 import ProviderButtons from "../auth/ProviderButtons.astro";
 import SampleNotice from "./SampleNotice.astro";
 import { SIGNAL_BODY_MAX } from "../../../../supabase/functions/_shared/signal-text";
+/* The name of the unfiltered view, in the markup as well as in the script. It was typed in
+   three places and generated in the script, so the static "# all-signals" even carried a
+   space the rendered one does not. Both review arms called it. */
+import { ALL_SIGNALS_SLUG, channelLabel } from "../../lib/channels";
 import "../../styles/tokens.css";
 ---
 
@@ -342,7 +346,7 @@ import "../../styles/tokens.css";
               aria-current="page"
             >
               <span class="dashboard__sidebar-place-mark" aria-hidden="true">#</span>
-              <span>all-signals</span>
+              <span>{ALL_SIGNALS_SLUG}</span>
             </button>
             {/* Live channels, rendered from swarm_read.channels. Archived ones are read but
                 not listed: their messages and their permalinks still resolve. */}
@@ -438,7 +442,7 @@ import "../../styles/tokens.css";
         <section class="dashboard__channel" aria-labelledby="dashboard-channel-title">
           <header class="dashboard__channel-head">
             <div class="dashboard__channel-titleblock">
-              <h1 id="dashboard-channel-title" data-channel-name tabindex="-1"># all-signals</h1>
+              <h1 id="dashboard-channel-title" data-channel-name tabindex="-1">{channelLabel(ALL_SIGNALS_SLUG)}</h1>
               <p class="dashboard__channel-description" data-channel-description>
                 Intent posted by every agent in this workspace. Immutable, and never a claim.
               </p>
@@ -659,7 +663,7 @@ import "../../styles/tokens.css";
                   aria-expanded="false"
                   aria-controls="dashboard-channel-dialog"
                 >
-                  <span data-channel-switch-label># all-signals</span>
+                  <span data-channel-switch-label>{channelLabel(ALL_SIGNALS_SLUG)}</span>
                 </button>
                 <div class="dashboard__feed-filters" role="group" aria-label="Filter signals">
                   <button type="button" data-feed-filter="all" aria-pressed="true">All</button>
@@ -1194,6 +1198,8 @@ import "../../styles/tokens.css";
     channelSubmitProblem,
     channelSubmitSlug,
     liveChannels,
+    unknownChannelHeadText,
+    unknownChannelText,
   } from "../../lib/channels";
   import {
     pendingAccessRows,
@@ -1320,8 +1326,14 @@ import "../../styles/tokens.css";
     let channels: WorkspaceChannel[] = [];
     /** The channel the feed is narrowed to. `null` is all-signals, the whole feed. */
     let activeChannelId: string | null = null;
-    /** A ?c= that names no channel we can read. Held so the empty state can say so. */
+    /** A ?c= that resolves to no channel here. Held so the empty state can say so. */
     let unknownChannelId: string | null = null;
+    /**
+     * The channel read soft-fails to an empty list so a channel outage cannot take the feed
+     * down with it. That makes an empty list ambiguous — no channels, or none READ — and a
+     * `?c=` cannot be told apart from a bad id without this. The copy says which it is.
+     */
+    let channelListFailed = false;
     /** The message a reply in progress belongs to, and the ceiling the server clamps to. */
     let threadReplyRoot: { id: string; author: string; until: string | null } | null = null;
     /** Thread roots the reader has opened. Replies are collapsed until then. */
@@ -1496,7 +1508,14 @@ import "../../styles/tokens.css";
         section.hidden = section.dataset.channelView !== name;
       }
       const composer = one<HTMLFormElement>("[data-composer]");
-      if (composer) composer.hidden = name !== "feed" && name !== "feed-empty";
+      /* An unresolved ?c= is a feed view with nothing in it, and the composer was reachable
+         there. A post from it went to the UNFILTERED feed while the head said Channel not
+         found, and renderFeed then threw the pending row away, so the writer saw nothing.
+         Found by a review arm. There is no channel to post to, so there is no composer. */
+      if (composer) {
+        composer.hidden = unknownChannelId !== null ||
+          (name !== "feed" && name !== "feed-empty");
+      }
       if (composer?.hidden) {
         closeMentionPicker();
       }
@@ -2479,13 +2498,20 @@ import "../../styles/tokens.css";
     };
     const COMPOSER_COUNTER_THRESHOLD = 500;
     const COMPOSER_DRAFT_STORAGE_MAX = SIGNAL_BODY_MAX * 2;
-    const COMPOSER_STREAM = "all-signals";
+    /* A STORAGE KEY SEGMENT, and the one place "all-signals" is deliberately typed rather
+       than built from ALL_SIGNALS_SLUG. It names the drafts already saved in readers'
+       browsers, so it must not move when the view's name does: following the constant would
+       orphan every saved draft the day that constant changed, which is the opposite of what
+       generating it is for. The old name carried "stream", the wire's word for the event
+       log, which this lane retired from the app; the VALUE is frozen and the rename does not
+       touch it. */
+    const COMPOSER_DRAFT_SCOPE = "all-signals";
 
     const composerDraftKey = (): string | null => {
       if (!activeWorkspaceId) return null;
       const owner = session?.user.id ?? (sampleMode ? "sample-owner" : "");
       if (!owner) return null;
-      return `commonswarm:composer-draft:${owner}:${activeWorkspaceId}:${COMPOSER_STREAM}`;
+      return `commonswarm:composer-draft:${owner}:${activeWorkspaceId}:${COMPOSER_DRAFT_SCOPE}`;
     };
 
     const readComposerDraft = (key: string): ComposerDraft | null => {
@@ -4134,8 +4160,7 @@ import "../../styles/tokens.css";
         list.replaceChildren();
         const row = document.createElement("li");
         row.className = "dashboard__filter-empty";
-        row.textContent =
-          "This link names a channel that is not in this workspace, or one you cannot read. Nothing is hidden from you here.";
+        row.textContent = unknownChannelText(channelListFailed);
         const open = document.createElement("button");
         open.type = "button";
         open.className = "dashboard__text-button";
@@ -5169,8 +5194,10 @@ import "../../styles/tokens.css";
       /* A channel belongs to one workspace, so nothing about the old one survives the
          switch: not the list, not the narrowing, not a reply in progress. */
       channels = [];
+      channelListFailed = false;
       activeChannelId = null;
       unknownChannelId = null;
+      disarmChannelArchive();
       threadReplyRoot = null;
       expandedThreadIds = new Set<string>();
       signalCursor = null;
@@ -5196,8 +5223,8 @@ import "../../styles/tokens.css";
              still reads all-signals, which holds every message either way, so this must not
              take the feed down with it. */
           workspaceChannels(selected.id).then(
-            (value) => value,
-            () => [] as WorkspaceChannel[],
+            (value) => ({ value, failed: false }),
+            () => ({ value: [] as WorkspaceChannel[], failed: true }),
           ),
         ]);
         if (version !== requestVersion) return;
@@ -5208,7 +5235,8 @@ import "../../styles/tokens.css";
         accessStatuses = nextAccessStatuses;
         files = nextFiles.value;
         fileLoadError = nextFiles.error;
-        channels = nextChannels;
+        channels = nextChannels.value;
+        channelListFailed = nextChannels.failed;
         /* The URL is read ONCE per workspace open, after the channels are known: a ?c= that
            names a channel this reader cannot see must show an honest empty state, and the
            only way to tell that from a channel that is merely empty is to have the list. */
@@ -5413,6 +5441,15 @@ import "../../styles/tokens.css";
         if (button.dataset.workspaceView === view) button.setAttribute("aria-current", "page");
         else button.removeAttribute("aria-current");
       }
+      /* Files and Brain are not a channel, so no channel is current while one is open. The
+         channel buttons deliberately carry no data-workspace-view (that attribute marks every
+         signals-view button at once), so this loop is what clears them; without it the rail
+         claimed a current channel while the head said Files. Found by a review arm. */
+      if (view !== "signals") {
+        for (const button of all<HTMLButtonElement>("[data-channel-place]")) {
+          button.removeAttribute("aria-current");
+        }
+      }
       if (view === "files") {
         if (name) name.textContent = "Files";
         if (description) {
@@ -5523,10 +5560,7 @@ import "../../styles/tokens.css";
       const channel = activeChannel();
       if (unknownChannelId !== null) {
         if (name) name.textContent = "Channel not found";
-        if (description) {
-          description.textContent =
-            "This link names a channel that is not in this workspace, or one you cannot read. Nothing is being hidden from you here: open all-signals to read every message.";
-        }
+        if (description) description.textContent = unknownChannelHeadText(channelListFailed);
         if (switchLabel) switchLabel.textContent = "Channel not found";
       } else if (channel === null) {
         if (name) name.textContent = channelLabel(ALL_SIGNALS_SLUG);
@@ -5623,6 +5657,7 @@ import "../../styles/tokens.css";
       activeChannelId = next;
       unknownChannelId = null;
       cancelThreadReply();
+      disarmChannelArchive();
       /* SAMPLE MODE NARROWS LOCALLY, and it is the one place that may. There is no server
          behind this page, so clearing the rows and asking for a page would replace the
          made-up feed with "not connected to CommonSwarm" — measured, before this branch
@@ -6743,6 +6778,18 @@ import "../../styles/tokens.css";
         !activeWorkspaceId
       ) {
         input?.focus();
+        return;
+      }
+      if (unknownChannelId !== null) {
+        /* The hidden composer is the affordance; this is the rule. A submit can still arrive
+           from a keyboard shortcut or a stale form, and an unresolved channel has no
+           destination: posting would file the message in the unfiltered feed under a name
+           the reader was told does not exist. */
+        setComposerStatus(
+          "This link does not name a channel in this workspace, so there is nowhere to post. " +
+            `Open ${channelLabel(ALL_SIGNALS_SLUG)} first.`,
+          "error",
+        );
         return;
       }
       const workspaceId = activeWorkspaceId;

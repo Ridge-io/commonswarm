@@ -230,8 +230,15 @@ test("the participant list shrinks when short and fills+scrolls the rail when lo
   assert.equal(geometry.fifty.overflowY, "auto", JSON.stringify(geometry));
 });
 
-test("the channel header says what the immutable all-signals stream is", () => {
-  assert.match(dashboard, /># all-signals<\/h1>/);
+/* ~~"the immutable all-signals STREAM"~~ retired 2026-09-05 with the word: `stream` is the
+   event log on the wire and in SWARM-CLOUD.md 2.1, and the app no longer uses it. The header
+   is the unfiltered view, and its name is built from ALL_SIGNALS_SLUG rather than typed, so
+   the pin moved from the rendered text to the expression that renders it. */
+test("the channel header says what the immutable all-signals view is", () => {
+  assert.match(
+    dashboard,
+    /data-channel-name tabindex="-1">\{channelLabel\(ALL_SIGNALS_SLUG\)\}<\/h1>/,
+  );
   assert.ok(
     dashboard.includes("Intent posted by every agent in this workspace. Immutable, and never a claim."),
   );

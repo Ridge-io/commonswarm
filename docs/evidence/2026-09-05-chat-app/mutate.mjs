@@ -93,6 +93,19 @@ const mutations = [
   [OBS, DASH, '"Archiving hides a channel from this list and refuses new messages. Nothing is deleted, and its messages still read.";',
     '"Archiving makes a channel private so only members can see it.";',
     "no channel copy in the dashboard implies privacy"],
+
+  // ── round two: the four controls added after both review arms failed the first SHA
+  [OBS, CH, "    : `No channel in this workspace has that id. It may belong to another workspace, or it may have been created after this link was made. Every channel in a workspace is readable by every member of it.`;",
+    "    : `This link names a channel that is not in this workspace, or one you cannot read.`;",
+    "the unresolved-channel copy names no permission"],
+  [OBS, DASH, "        composer.hidden = unknownChannelId !== null ||\n          (name !== \"feed\" && name !== \"feed-empty\");",
+    '        composer.hidden = name !== "feed" && name !== "feed-empty";',
+    "an unresolved channel has no composer"],
+  [OBS, DASH, '      if (view !== "signals") {\n        for (const button of all<HTMLButtonElement>("[data-channel-place]")) {\n          button.removeAttribute("aria-current");\n        }\n      }\n',
+    "",
+    "no view but the feed leaves a channel marked current"],
+  [OBS, DASH, "              <span>{ALL_SIGNALS_SLUG}</span>", "              <span>all-signals</span>",
+    "the name of the unfiltered view is typed in exactly one place"],
 ];
 
 const testFor = (file) => file;

@@ -99,7 +99,7 @@ export const CHANNEL_REACH_TEXT =
  * meets an empty channel rather than letting them conclude it is broken.
  */
 export const CHANNEL_EMPTY_TEXT =
-  "Nothing has been posted here yet. Messages written before this channel existed stay in all-signals.";
+  `Nothing has been posted here yet. Messages written before this channel existed stay in ${ALL_SIGNALS_SLUG}.`;
 
 export const CHANNEL_ARCHIVED_TEXT =
   "This channel is archived. Its messages still read, and nothing new can be posted to it.";
@@ -110,6 +110,24 @@ export const CHANNEL_ARCHIVED_TEXT =
  * this reads `body.message` as text to show and branches only on the numeric
  * status when the server sent no message at all.
  */
+/**
+ * What a `?c=` that resolves to nothing actually means. There is no such thing as a channel
+ * this reader may not read: every member of a workspace reads every channel in it, so the
+ * only honest causes are that the id names no channel HERE, or that the channel list did not
+ * load. An earlier version said "or one you cannot read", which named a read permission this
+ * product does not have; both review arms caught it.
+ */
+export const unknownChannelText = (channelListFailed: boolean): string =>
+  channelListFailed
+    ? `The list of channels did not load, so this link cannot be resolved yet. Every channel in a workspace is readable by every member of it. Reload, or open ${ALL_SIGNALS_SLUG} to read every message.`
+    : `No channel in this workspace has that id. It may belong to another workspace, or it may have been created after this link was made. Every channel in a workspace is readable by every member of it.`;
+
+/** The head's own line for that state, shorter because the feed carries the rest. */
+export const unknownChannelHeadText = (channelListFailed: boolean): string =>
+  channelListFailed
+    ? "The list of channels did not load, so this link cannot be resolved yet."
+    : `No channel in this workspace has that id. Open ${ALL_SIGNALS_SLUG} to read every message.`;
+
 export const channelRefusalMessage = (
   status: number,
   body: Record<string, unknown>,
