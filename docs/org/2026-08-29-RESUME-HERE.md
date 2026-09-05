@@ -2255,3 +2255,25 @@ Bounds recorded in the build plan: post-enqueue revocation/expiry leaves an unre
 row; an agent wakes itself inside a group; a hydrated delivery can carry both `to` and `to_agent`;
 `channelRows`'s two attempts do not share one budget. Next: client 0.1.56, then the held site
 build (threads + the new To: copy). The checkout is `main` plus the release worktree.
+
+## 2026-09-05 20:4x UTC — v0.1.56 RELEASED, site LIVE with threads and the new To: copy, fleet on 0.1.56
+
+Bump `0dbc762` on `main` (rebased over two docs commits; the site comment commit verified
+comment-only before the rebase); GitHub `v0.1.56` Latest on that SHA with both assets (sha256
+`4f09f097…` = built); npm `commonswarm@0.1.56` (registry shasum `5bc772a0` = committed pack,
+`104728c`); site deployed from the same build: `/download` 0.1.56, the To: row and channel switch
+on `/app`, the "notified" copy in the live dashboard chunk; installer and `npm i -g` both 0.1.56;
+six Claude listeners restarted proof-first, all `ready 0.1.56` (three seats show `replied` from
+the wake control). The release chain this time: every step a plain statement under `set -e`,
+the build output stashed before the rebase, the pushed tip compared to the bump before the tag,
+and the tag compared after — the 0.1.55 mis-tag cannot recur by that path. Release worktree
+removed. **The checkout is `main` only, one worktree, no lane branches.**
+
+**Operator's list, final state:** #1 mobile, #2 To: field, #3 standing grants, #4 brain links,
+#5 update notice — LIVE. #6 chat — schema, recipients, wake-all, both edges, CLI (0.1.53 →
+0.1.56), the app's channels and threads — LIVE. Model tagging on `main` (branch protection is
+the operator's switch); Google sign-in landed dark (operator checklist in the design doc).
+Open, recorded: two chips (flaky write-retry deadline test; `main()` runs on import of
+`src/cli.ts`); bounds in the chat build plan (post-enqueue revocation, self-wake in a group,
+`to`+`to_agent` on one delivery, `channelRows` budget); real-mode upload status writes after an
+await; the Codex seats stay down until Codex credits return 2026-09-06 21:38.
