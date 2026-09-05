@@ -43,19 +43,29 @@ type Variant =
   | "gone"
   | "no-build"
   | "injected"
-  | "dismiss-then-markup";
+  | "dismiss-then-markup"
+  | "gone-first"
+  | "no-build-first";
 
 /* Served from the FIRST poll, so it becomes the markup baseline and only the asset comparison
    can see it. Without this the asset signal has no case of its own: every other variant differs
    from the baseline too, so the markup comparison alone would satisfy them all. */
-const FROM_FIRST_POLL: ReadonlySet<Variant> = new Set<Variant>(["assets-first"]);
+const FROM_FIRST_POLL: ReadonlySet<Variant> = new Set<Variant>([
+  "assets-first",
+  /* The very first probe failing is its own case: offline at load, or a login wall in front of
+     the page. The quiet cases below otherwise only ever test a LATER probe failing. */
+  "gone-first",
+  "no-build-first",
+]);
 
 const appHtml = (): string => readFileSync(join(distRoot, "app", "index.html"), "utf8");
 
 const pollBody = (variant: Variant): { body: string; status: number } => {
   const html = appHtml();
-  if (variant === "gone") return { body: "Not found", status: 404 };
-  if (variant === "no-build") {
+  if (variant === "gone" || variant === "gone-first") {
+    return { body: "Not found", status: 404 };
+  }
+  if (variant === "no-build" || variant === "no-build-first") {
     return { body: "<!doctype html><title>Sign in</title><p>Sign in to continue.</p>", status: 200 };
   }
   if (variant === "assets" || variant === "assets-first") {
@@ -71,8 +81,15 @@ const pollBody = (variant: Variant): { body: string; status: number } => {
   if (variant === "markup") {
     /* A build that changed only markup. MEASURED: this is the case that produces a different
        page with byte-identical asset names, so the asset comparison alone cannot see it. */
-    const rewritten = html.replace("A new version is ready.", "A new version is ready. Build two.");
+    /* Change markup INSIDE <live-dashboard>, which is what a build does and what the markup
+       comparison reads. Keyed to the element, not to product copy: keying it to a sentence made
+       this variant silently stop changing anything the first time the copy was edited. */
+    const rewritten = html.replace("<live-dashboard ", '<live-dashboard data-build-probe="two" ');
     assert.notEqual(rewritten, html, "markup variant changed nothing, so it tests nothing");
+    assert.ok(
+      rewritten.includes('data-build-probe="two"'),
+      "markup variant did not land inside live-dashboard, where a build's own markup lives",
+    );
     const assetsOf = (source: string) =>
       (source.match(/\/_astro\/[^"']+\.(?:js|css)/g) ?? []).sort().join("\n");
     assert.equal(
@@ -101,7 +118,7 @@ const pollBody = (variant: Variant): { body: string; status: number } => {
    dismissal is remembered against the whole build and not against whichever half differed. */
 const dismissThenMarkupBody = (): string => {
   const assets = pollBody("assets").body;
-  const rewritten = assets.replace("A new version is ready.", "A new version is ready. Build three.");
+  const rewritten = assets.replace("<live-dashboard ", '<live-dashboard data-build-probe="three" ');
   assert.notEqual(rewritten, assets, "the third build changed nothing, so it tests nothing");
   return rewritten;
 };
@@ -171,6 +188,12 @@ const frameScript = `<script>
       buttons,
       viewportWidth: frame.contentWindow?.innerWidth ?? 0,
       documentLength: doc?.body?.innerHTML.length ?? 0,
+      sampleNoticeShown: (() => {
+        const s = doc?.querySelector("[data-sample-notice]");
+        return s ? !s.hidden : false;
+      })(),
+      composerBottom: doc?.querySelector(".dashboard__composer")?.getBoundingClientRect().bottom ?? 0,
+      frameHeight: doc?.querySelector(".dashboard__frame")?.getBoundingClientRect().height ?? 0,
     });
   };
   const start = () => void runMeasurement().catch((error) => report({ error: String(error) }));
@@ -271,7 +294,10 @@ type Measurement = {
   error?: string;
   height: number;
   polls: number;
+  composerBottom: number;
   display: string;
+  frameHeight: number;
+  sampleNoticeShown: boolean;
   present: boolean;
   shown: boolean;
   viewportWidth: number;
@@ -398,7 +424,7 @@ test("a build deployed before the tab loaded is detected by the asset comparison
 
 test("a probe that did not reach the page stays quiet", async () => {
   const chrome = await findChrome();
-  for (const variant of ["gone", "no-build"] as const) {
+  for (const variant of ["gone", "no-build", "gone-first", "no-build-first"] as const) {
     const value = await measure(chrome, variant);
     assertProbeHappened(value, variant);
     assert.equal(
@@ -413,14 +439,41 @@ test("a probe that did not reach the page stays quiet", async () => {
 
 /* The bar sits ABOVE the app bar on a phone, which is the space the 2026-09-04 mobile work was
    for. One row, and both controls reachable with a real target. */
+/* Both notices at once. The product grid went from two rows to three when this bar arrived, and
+   every child is pinned, so the case that breaks a pinned grid is the one where BOTH content rows
+   are filled: the frame must still get the viewport row and the composer must stay on screen. */
+test("both notices at once still leave the composer in the viewport", async () => {
+  /* Sample mode renders the sample-data notice, so this measurement has both rows filled
+     without any test-only arrangement. */
+  const value = await measure(await findChrome(), "assets", 390, 844);
+  assert.equal(value.shown, true, "the update bar must be up for this to measure anything");
+  assert.equal(
+    value.sampleNoticeShown,
+    true,
+    "the sample notice must be up too, or this is the one-notice case again",
+  );
+  assert.ok(
+    value.composerBottom > 0 && value.composerBottom <= 844 + 0.5,
+    `the composer is at ${value.composerBottom}px in an 844px viewport with both notices up: ` +
+      JSON.stringify(value),
+  );
+  assert.ok(
+    value.frameHeight > 300,
+    `the frame collapsed to ${value.frameHeight}px with both notices up: ${JSON.stringify(value)}`,
+  );
+});
+
 test("the notice is one row and both controls stay reachable on a phone", async () => {
   const chrome = await findChrome();
   for (const [width, height] of [[390, 844], [320, 568]] as const) {
     const value = await measure(chrome, "assets", width, height);
     assert.equal(value.shown, true, `${width}px: the notice must be up for this to measure it`);
     assert.equal(value.viewportWidth, width, `${width}px: viewport drifted`);
+    /* 53px is what the shipped CSS computes: var(--s-1) + a 44px button + var(--s-1) + a 1px
+       border. The bound is tight enough to fail a second line, which is the regression this
+       case exists for, and loose enough not to break on a token nudge. */
     assert.ok(
-      value.height > 0 && value.height <= 64,
+      value.height > 0 && value.height <= 56,
       `${width}px: the update bar is ${value.height}px, which is more than one row: ` +
         JSON.stringify(value),
     );

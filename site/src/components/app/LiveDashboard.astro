@@ -177,10 +177,12 @@ import "../../styles/tokens.css";
           purpose: `.dashboard__sample-notice:not([hidden]) + .dashboard__frame` is a real rule
           below, and putting this between them would quietly stop it matching. */}
       <div class="dashboard__update-notice" data-update-notice hidden>
-        {/* One short line. The buttons say what the choices are, so the sentence does not
-            repeat them: measured at 390x844, the longer wording wrapped to two lines and took
-            the bar to 128px against a 73px app bar. */}
-        <p class="dashboard__update-notice-text">A new version is ready.</p>
+        {/* "Out of date", not "new". What the page detects is that it is not running what the
+            server is serving, and a rollback is that too — the older wording called a rollback a
+            new version. One short line, because the buttons already say what the choices are:
+            measured at 390x844, longer wording wrapped to two lines and took the bar to 128px
+            against a 73px app bar. */}
+        <p class="dashboard__update-notice-text">This page is out of date.</p>
         <div class="dashboard__update-notice-actions">
           <button
             class="dashboard__button dashboard__button--secondary"
