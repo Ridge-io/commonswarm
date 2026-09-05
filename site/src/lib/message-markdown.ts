@@ -366,7 +366,15 @@ function splitTableCells(row: string): string[] {
     const character = row[index] ?? "";
     if (character === "\\" && row[index + 1] === "|") {
       /* An escaped pipe is content. Without this it would split the cell and the author's text
-       * would land in the wrong column. */
+       * would land in the wrong column.
+       *
+       * This runs before renderInline, so it applies inside an inline code span too: a cell
+       * holding `` `a \| b` `` renders the code span as `a | b`, while the same source in a
+       * PARAGRAPH keeps the backslash, because a backslash is not an escape inside a code span.
+       * The two differ on purpose and match GFM, which makes `\|` the one escape that reaches
+       * inside a span, for the reason above: a row has to be split into cells before anything can
+       * look at what is in them. A review arm read the difference as a cell being a second
+       * escaping path; the test named below is what says which it is. */
       current += "|";
       index += 1;
       continue;

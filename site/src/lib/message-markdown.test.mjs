@@ -251,6 +251,28 @@ test("an escaped pipe stays inside its cell instead of splitting the column", ()
   assert.match(rendered, /<tr><td>x \| y<\/td><td>z<\/td><\/tr>/u);
 });
 
+/* `\|` is the ONE place a cell and a paragraph differ, and the difference is deliberate. A row has
+   to be split into cells before anything can look inside them, so the escape is read before the
+   inline pass and therefore reaches inside a code span, where no other escape does. GFM makes the
+   same exception for the same reason. A review arm read the difference as a cell being a second
+   escaping path; both directions are pinned here so the next reader gets an answer instead of the
+   question, and so nobody "fixes" either side into the other. */
+test("`\\|` is the one escape that reaches inside a code span, and only in a cell", () => {
+  assert.equal(
+    renderMessageMarkdown("| `a \\| b` |\n|---|\n| x |"),
+    "<table><thead><tr><th><code>a | b</code></th></tr></thead>" +
+      "<tbody><tr><td>x</td></tr></tbody></table>",
+  );
+  /* The same source outside a table keeps the backslash: a code span has no escapes at all. */
+  assert.equal(renderMessageMarkdown("`a \\| b`"), "<p><code>a \\| b</code></p>");
+  /* No other backslash escape is read in a cell either, so this is one exception and not a rule. */
+  assert.equal(
+    renderMessageMarkdown("| a \\* b \\_ c |\n|---|\n| x |"),
+    "<table><thead><tr><th>a \\* b \\_ c</th></tr></thead>" +
+      "<tbody><tr><td>x</td></tr></tbody></table>",
+  );
+});
+
 test("hostile cell content is neutralised exactly as the same text is in a paragraph", () => {
   const rendered = renderMessageMarkdown(HOSTILE_TABLE_MARKDOWN);
   assert.match(rendered, /<table>/u);
@@ -473,8 +495,12 @@ test("unclosed fences, a 10k line, and deep nesting stay bounded and do not cras
   assert.equal(renderMessageMarkdown("```\nunclosed"), "<pre><code>unclosed</code></pre>");
   const longLine = "x".repeat(10_000);
   assert.equal(renderMessageMarkdown(longLine), `<p>${longLine}</p>`);
+  /* The bound is on the BLOCK check, not only on the paragraph-interruption check below it: a
+     review arm read the block check as unguarded and predicted a stack overflow here. 12,000
+     markers on one line, and the depth stops at the bound with every character still present. */
   const nested = renderMessageMarkdown(`${"> ".repeat(12_000)}bottom`);
   assert.equal((nested.match(/<blockquote>/gu) ?? []).length, MESSAGE_MARKDOWN_LIMITS.nestingDepth);
+  assert.match(nested, /bottom/u);
   /* 24,000 characters is a normal-sized brain topic, not something to shorten. The marker belongs
      to input no product path can store, so the control is built FROM the limit. */
   assert.doesNotMatch(nested, /Message shortened for safe display/u);
