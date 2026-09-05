@@ -208,8 +208,14 @@ export const CHANNEL_COLUMNS = [
  * Their measured cause was accurate when written and is no longer true:
  * `parseBody` in `supabase/functions/read/index.ts` had no channels arm. It has
  * one, `listChannelsAsAgent` below reads it, and `channelRows` in src/cli.ts no
- * longer branches on the credential kind, so an agent lists channels and turns
- * a name into an id exactly as a person does.
+ * longer REFUSES an agent credential, so an agent lists channels and turns a
+ * name into an id exactly as a person does.
+ *
+ * CORRECTED: an earlier draft of this note, and the commit message that landed
+ * it, said `channelRows` "no longer branches on the credential kind". It still
+ * does, and it has to: the read function accepts agent credentials only and a
+ * person reads swarm_read over PostgREST, so the kind picks the transport. What
+ * it no longer does is throw before reading anything.
  *
  * ⚠ THE COUPLING THIS CREATES. A client carrying these removals talks to a read
  * service that may not have the arm yet. Against such a deployment
@@ -243,7 +249,7 @@ export async function listChannelsAsAgent(
 ): Promise<ChannelRow[]> {
   const controller = new AbortController();
   const timer = setTimeout(() => controller.abort(), timeoutMs);
-  // Same body-covering deadline as the human read above, and the same reason.
+  // Same body-covering deadline as listChannelsAsHuman BELOW, same reason.
   try {
     let response: Response;
     try {

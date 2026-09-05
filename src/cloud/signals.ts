@@ -428,6 +428,14 @@ function parseSignalRecipients(
  * When `recipients` is absent this falls back to the scalar column, which is
  * the honest answer for an edge that never reported a set: the scalar column is
  * everything that reader knows.
+ *
+ * WHAT IT TRUSTS, because a review arm asked. The answer comes from the server's
+ * own row, so a server that put this principal in `recipients` could get a
+ * signal surfaced that the scalar check refused. That is not a new trust
+ * boundary: the same server writes `to_agent`, which the scalar check trusted
+ * for exactly the same question. The service is the authority on who a sender
+ * addressed, and no client-side rule can second-guess it without a second
+ * source.
  */
 export function signalAddressesAgent(
   signal: Pick<SignalRecord, "to_agent" | "recipients">,
