@@ -2054,3 +2054,26 @@ generated bound. My error on this lane: I removed its worktree while its final g
 
 Routed: the chat design doc still cites the deleted `landing/Hero.astro:190` (:874); the chat lane
 retargets it in its final wording pass or I fold it comment-only after its merge.
+
+## 2026-09-05 06:1x UTC — CHAT SCHEMA (L1) LANDED and LIVE in production (merge 8adf55a)
+
+Apply order held: dry run named exactly `20260905000001_channels`, `..02_signal_channel`,
+`..03_signal_threads` → `db push --linked` applied all three (the `signals_id_workspace` NOTICE is
+the known IF NOT EXISTS) → `command` v40 and `read` v20 deployed 06:00 UTC → gates on the merge
+(npm test 817/817, p1-cli 451/451, check:edge, identity over 36 fields) → live control on
+production with the real envelope (`command_id`, `client_version`, `workspace_id`, `stream`,
+`command`; token from a header FILE, never an argument): bad slug → 400 with its reason;
+`channel_create` → 200; `post_signal` with `channel` → `channel_id` set; `channel_archive` → 200;
+post into it → 409 `channel_archived` with its reason; the 0.1.54 client posts and its accepted
+signal now carries `channel_id`, `thread_root_id`, `broadcast_to_channel` → `main` pushed
+(`5c785bc`), docs `77116e3`. Evidence: `docs/evidence/2026-09-05-chat-schema/` (26 ARM.txt over
+nine rounds, the briefs, one stalled arm kept, and the PM's unreviewed residual patch).
+
+Ruling that landed it: round 9 was FAIL/FAIL on refusal ORDER only (which of two valid refusals a
+caller sees first); every schema, clamp, delivery, thread-root, and enumeration check held on
+both arms, so it landed as wording-class with the two residuals owed in the build plan. A bound
+recorded there: envelope-layer 400s are still bare; reasons reach the caller from validation on.
+
+Scratch channel `lead-scratch` exists in CICD, archived. No client release: the CLI learns
+channels in L3 (`chat-client`). The checkout is `main` only, one worktree, no foreign branches
+(backup tags `backup/*` hold every retired tip).
