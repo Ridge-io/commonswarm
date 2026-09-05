@@ -334,6 +334,14 @@ const mutations = [
     "a failed send under a reopen of the same workspace still puts the message back",
     "failedUnderRefresh: a send that failed during a refresh lost the message and said nothing",
     true],
+  /* AND THE SENTENCE COMES DOWN WITH THE FLAG. Putting the clear back at the end of the screen
+     block is the defect: a reopen returns before it, and the composer says it is posting while
+     it is finished, empty and writable. */
+  [FIELD, DASH,
+    "        if (composerSendToken === sendToken) setComposerStatus(\"\");",
+    "",
+    "the sentence a send put up comes down when the send is over, not when the screen agrees",
+    "refreshMidSend: a refresh during a post left the posting sentence standing", true],
   /* THE LIFT ASKS AN IDENTITY AT ALL. The entry above restores the OLD screen guard, which
      still refuses this case because a workspace switch moves the workspace; this one removes
      every test, which is the shape where one send lowers another's flag. */

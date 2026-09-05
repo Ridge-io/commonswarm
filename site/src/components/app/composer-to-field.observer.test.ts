@@ -94,6 +94,7 @@ type ToMeasurement = {
     readOnly: boolean;
     busy: string | null;
     sendState: string;
+    status: string;
     chips: string[];
     chipsAfterRemove: string[];
     chipsAfterTag: string[];
@@ -540,6 +541,9 @@ const frameScript = `<script>
     const refreshedReadOnly = input().readOnly;
     const refreshedBusy = input().getAttribute("aria-busy");
     const refreshedSendState = doc.querySelector("[data-composer-send]").dataset.state ?? "";
+    /* AND THE SENTENCE THE SEND PUT UP IS GONE. It was written at the END of the screen block,
+       so a reopen left "Posting message..." standing over a composer that was finished. */
+    const refreshedStatus = doc.querySelector("[data-composer-status]").textContent ?? "";
     /* THE CHIPS ANSWER A CLICK: a chip click returns early while the flag is up. */
     doc.querySelector("[data-composer-to-remove]")?.click();
     await settle(0);
@@ -559,6 +563,7 @@ const frameScript = `<script>
       readOnly: refreshedReadOnly,
       busy: refreshedBusy,
       sendState: refreshedSendState,
+      status: refreshedStatus,
       chips: refreshedChips,
       chipsAfterRemove: refreshedChipsAfterRemove,
       chipsAfterTag: refreshedChipsAfterTag,
@@ -766,19 +771,37 @@ test("the To: row is the address, and it says who is notified", async () => {
   const chrome = await findChrome();
   const server = await startDistServer();
   try {
-    const { stdout, stderr } = await run(chrome, [
-      "--headless=new",
-      "--disable-gpu",
-      "--no-sandbox",
-      "--single-process",
-      "--no-zygote",
-      /* RAISED FROM 60000 for the in-flight steps: four sends hold windows open, the waits
-         around them are virtual-clock time too, and a MUTATED build leaves a frozen composer
-         in which every settleFor below runs to its own ceiling instead of returning early. */
-      "--virtual-time-budget=240000",
-      "--dump-dom",
-      `${server.origin}/__measure`,
-    ], { maxBuffer: 10 * 1024 * 1024, timeout: 180_000, killSignal: "SIGKILL" });
+    /* ONE RETRY, AND ONLY WHEN THE BROWSER DIED ON A SIGNAL. `--single-process --no-zygote` is
+       cheap and is also the configuration that takes a SIGSEGV when this host is under memory
+       pressure: measured 2026-09-05, one crash in 58 mutation runs, in a RESTORE run whose
+       source was pristine. A crash is not a measurement, so retrying it does not weaken any
+       control here — a real defect fails on both attempts, and anything that is not a signal
+       death (an assertion, a timeout we asked for, a non-zero exit) is rethrown untouched. */
+    const runChrome = async (attempt = 0): Promise<{ stdout: string; stderr: string }> => {
+      try {
+        return await run(chrome, [
+          "--headless=new",
+          "--disable-gpu",
+          "--no-sandbox",
+          "--single-process",
+          "--no-zygote",
+          /* RAISED FROM 60000 for the in-flight steps: four sends hold windows open, the waits
+             around them are virtual-clock time too, and a MUTATED build leaves a frozen
+             composer in which every settleFor runs to its own ceiling instead of returning
+             early. */
+          "--virtual-time-budget=240000",
+          "--dump-dom",
+          `${server.origin}/__measure`,
+        ], { maxBuffer: 10 * 1024 * 1024, timeout: 180_000, killSignal: "SIGKILL" });
+      } catch (error) {
+        const signal = (error as { signal?: string | null }).signal ?? null;
+        if (attempt === 0 && signal !== null && signal !== "SIGKILL") {
+          return runChrome(attempt + 1);
+        }
+        throw error;
+      }
+    };
+    const { stdout, stderr } = await runChrome();
     const encoded = stdout.match(/data-to-measurement="([^"]+)"/)?.[1];
     const encodedError = stdout.match(/data-to-error="([^"]+)"/)?.[1];
     assert.ok(
@@ -971,6 +994,14 @@ test("the To: row is the address, and it says who is notified", async () => {
       busy: null,
       sendState: "ready",
     }, "refreshMidSend: a refresh during a post left the send flag up");
+    /* AND THE SENTENCE WITH IT. A composer that is finished and writable must not still say it
+       is posting: the status line is the send's, and it was coming down at the END of the
+       screen block that a reopen never reaches. */
+    assert.equal(
+      measured.refreshMidSend.status,
+      "",
+      "refreshMidSend: a refresh during a post left the posting sentence standing",
+    );
     assert.deepEqual({
       chips: measured.refreshMidSend.chips,
       chipsAfterRemove: measured.refreshMidSend.chipsAfterRemove,

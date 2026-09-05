@@ -7767,6 +7767,14 @@ import "../../styles/tokens.css";
            rather than clearing whatever is there, because the intent is the composer's and a
            later one would not be this send's to retire. */
         if (composerIntent?.commandId === commandId) composerIntent = null;
+        /* AND THE SENTENCE THIS SEND PUT UP COMES DOWN. It sat at the END of the screen block,
+           so a reopen of the current workspace took the early return and left "Posting
+           message…" standing under a composer that was finished, empty and writable again —
+           the send's own status line, kept alive by a question about the screen. It asks the
+           token rather than the generation, so a send that lost its composer cannot wipe the
+           sentence a LATER send put up; and a failure overwrites this from the catch, which
+           runs after it. */
+        if (composerSendToken === sendToken) setComposerStatus("");
         /* THE SAMPLE STORE IS THE SAMPLE'S SERVER, and a landed post reaches it whatever the
            reader did to the screen. It sat below the guard, so a post that landed during a
            REFRESH never joined the store and the reopen repainted without it: the sample lost
@@ -7828,7 +7836,6 @@ import "../../styles/tokens.css";
         }
         renderFeed("latest");
         void refreshDeliveryReceipts(workspaceId, version);
-        setComposerStatus("");
       } catch (caught) {
         /* THE SEND'S OWN TEARDOWN COMES FIRST, before any question about the screen. This
            block used to open with `if (version !== requestVersion || workspaceId !==
@@ -7971,8 +7978,17 @@ import "../../styles/tokens.css";
            the screen guard decides only what is RENDERED. Six rounds of this lane found six
            defects of one shape, and round six named the cause: send-owned work sitting behind
            a guard that asks whether the screen is still the send's. Those are two different
-           questions. The storage moved out then; the flag, the failure restore and the settle
-           move out here.
+           questions. The storage moved out then; the flag, the status sentence, the failure
+           restore and the settle move out here.
+
+           WHERE THE LINE IS, because it is a choice and not an oversight. Everything this send
+           has to FINISH is the send's: its flag, its status sentence, its draft, its command
+           id, its preview URLs. Everything the reader is LOOKING AT is the screen's: the feed
+           list, `postedSinceReset`, the row caches. A reopen rebuilds the list from the server,
+           so a row this client remembers would be a second source for something the refetch is
+           already bringing back; a switch is looking at another workspace entirely. The sample
+           has no server, so its own store stands in for the refetch and is written with the
+           send's storage above.
 
            THE FLAG IS THE SEND'S, so nothing about the screen may keep it up. Only the token
            is asked: a reopen of the current workspace bumps `requestVersion` and leaves this

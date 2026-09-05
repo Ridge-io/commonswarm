@@ -202,7 +202,16 @@ is RENDERED.
 | retiring the command id a landed post minted | below the screen guard | at the top of the landed path, with the rest of the send's own work |
 | releasing the send's preview URLs | leaked entirely on the early return | on every path out of the catch |
 | the sample's own store, which is what a sample refetch reads | below the screen guard, so a post during a refresh vanished from the feed | with the send's storage, still bound to the send's workspace |
+| the status sentence the send put up | the LAST line of the screen block, so a reopen left "Posting message…" standing over a composer that was finished, empty and writable | with the send's own work, keyed to the token |
 | settling the address | inside the screen guard | inside the screen guard, now keyed to the token and the workspace |
+
+**Where the line is, stated at the submit rather than left to be inferred.** Everything the send
+has to FINISH is the send's: its flag, its status sentence, its draft, its command id, its preview
+URLs. Everything the reader is LOOKING AT is the screen's: the feed list, `postedSinceReset`, the
+row caches. A reopen rebuilds the list from the server, so a row this client remembers would be a
+second source for something the refetch is already bringing back; a switch is looking at another
+workspace. The sample has no server, so its own store stands in for that refetch, and it is
+written with the send's storage.
 
 `composerSendToken` is the send's identity for the flag. One submit takes a token and only that
 submit may lower the flag it raised; `resetComposer` bumps the token, which says the composer that
@@ -221,7 +230,7 @@ takes that path instead of asking a server that is not there.
 
 | new control | what it drives |
 |---|---|
-| `refreshMidSend` | Refresh pressed mid-post: the flag comes down, the chips answer a click, a new tag still reaches the row, and the message is in the feed once |
+| `refreshMidSend` | Refresh pressed mid-post: the flag comes down, the posting sentence comes down with it, the chips answer a click, a new tag still reaches the row, and the message is in the feed once |
 | `failedUnderRefresh` | the same Refresh on a send that FAILS: the body is back in the box, the row is addressed, the error names the failure and Retry is offered |
 | `switchedUnderFailedSend` | a workspace switch mid-post: the box the reader moved to keeps its own draft, and the earlier send does not lower the flag of the send THAT composer is running |
 | `unsentBodySurvivesSwitch` | and the unsent message is still in the workspace it was written in, with its address |
@@ -230,8 +239,14 @@ takes that path instead of asking a server that is not there.
 
 Each step records `sawFlagUp`, which is the positive control: it says the step really acted while
 the box was read-only, so a window that stopped opening fails on its own assertion rather than
-making the step vacuous. Seven mutations drive these, and the first of them — restoring the old
+making the step vacuous. Eight mutations drive these, and the first of them — restoring the old
 screen-guarded lift — is also the proof that the sample Refresh reaches a generation bump at all.
+
+**The instrument retries a crashed browser, once, and only on a signal.** Measured on this host:
+one SIGSEGV in 58 mutation runs, from `--single-process --no-zygote` under memory pressure, and
+it landed in a RESTORE run whose source was pristine. A crash is not a measurement, so the retry
+weakens no control: a real defect fails on both attempts, and anything that is not a signal death
+is rethrown.
 
 **Two controls this round measured and then had to be rebuilt, which is worth recording.** The
 first version of the frozen-flag mutation reported RED, WRONG REASON: the in-flight steps used

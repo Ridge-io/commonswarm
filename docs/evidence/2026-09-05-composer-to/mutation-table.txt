@@ -103,6 +103,8 @@ red  the send flag comes down because the SEND says so, not because the screen h
   restored green  site/src/components/app/composer-to-field.observer.test.ts
 red  a failed send under a reopen of the same workspace still puts the message back
   restored green  site/src/components/app/composer-to-field.observer.test.ts
+red  the sentence a send put up comes down when the send is over, not when the screen agrees
+  restored green  site/src/components/app/composer-to-field.observer.test.ts
 red  one send cannot lower the flag another send raised
   restored green  site/src/components/app/composer-to-field.observer.test.ts
 red  a teardown retires the send that raised the flag on the composer it tore down
@@ -116,4 +118,4 @@ red  the stored draft survives a workspace switch made while its message is on t
 red  the mark goes on the recipient the sentence names, and on no other
   restored green  site/src/components/app/composer-to-field.observer.test.ts
 
-57 mutations, 0 problems
+58 mutations, 0 problems
