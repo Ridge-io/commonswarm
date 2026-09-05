@@ -35,7 +35,9 @@
  */
 import assert from "node:assert/strict";
 import { execFileSync } from "node:child_process";
-import { dirname, resolve } from "node:path";
+import { mkdtempSync, rmSync, writeFileSync } from "node:fs";
+import { tmpdir } from "node:os";
+import { dirname, join, resolve } from "node:path";
 import { fileURLToPath } from "node:url";
 import { test } from "node:test";
 
@@ -873,6 +875,82 @@ test("rename and archive take a channel NAME on an agent credential", () => {
    * was usable and not because every input now gets that far. */
   const bad = run(["channel", "archive", "Not A Name", ...offlineTarget]);
   assert.doesNotMatch(bad.output, REACHED_CREDENTIAL);
+});
+
+/**
+ * An agent credential file the CLI can actually READ, so a run gets PAST the
+ * credential step and into channelRows.
+ *
+ * The offline probes above stop at `agent_token_file_unreadable`, which is
+ * before the branch this lane removed. A test that only reached there would
+ * pass whether the branch was there or not, which is the failure AGENTS.md
+ * names: a probe that cannot fail is not evidence. These runs reach the
+ * network instead, against a port nothing listens on.
+ */
+function readableAgentRun(argv: string[]): { code: number; output: string } {
+  const dir = mkdtempSync(join(tmpdir(), "cswarm-chat-agent-"));
+  try {
+    const path = join(dir, "agent.json");
+    writeFileSync(
+      path,
+      JSON.stringify({
+        message:
+          "Agent credential minted. It is bound to this task and run so the agent's work stays scoped and attributable.",
+        status: "accepted",
+        principal_id: "33333333-3333-4333-8333-333333333333",
+        token_id: "22222222-2222-4222-8222-222222222222",
+        run_id: "44444444-4444-4444-8444-444444444444",
+        agent_token: `swm_agt_${"S".repeat(43)}`,
+        expires_at: "2099-09-02T22:00:00.000Z",
+      }),
+      { mode: 0o600 },
+    );
+    return run([
+      ...argv,
+      "--url",
+      "http://127.0.0.1:1",
+      "--anon-key",
+      "k",
+      "--workspace-id",
+      "22222222-2222-4222-8222-222222222222",
+      "--agent-token-file",
+      path,
+    ]);
+  } finally {
+    rmSync(dir, { recursive: true, force: true });
+  }
+}
+
+test("an agent credential reaches the channel list itself, and is not turned back before it", () => {
+  /* THE PROBE THAT CAN FAIL. With a readable token the run gets past the
+   * credential, so what comes back is the channel list's own transport failure
+   * against a dead port. If the removed branch came back, the output would be
+   * the retired sentence instead and this would go red. */
+  const listed = readableAgentRun(["channel", "ls"]);
+  assert.match(
+    listed.output,
+    /channel list did not complete/,
+    `an agent must reach the list: ${listed.output}`,
+  );
+  assert.doesNotMatch(listed.output, /needs a signed-in person/);
+  assert.doesNotMatch(listed.output, /agent_token_file_unreadable/);
+
+  /* rename and archive resolve a NAME through the same function, which used to
+   * refuse an agent before reading anything. */
+  for (const argv of [
+    ["channel", "rename", "deploys", "releases"],
+    ["channel", "archive", "deploys"],
+  ]) {
+    const { output } = readableAgentRun(argv);
+    assert.match(output, /channel list did not complete/, argv.join(" "));
+    assert.doesNotMatch(output, /Pass the channel id instead/, argv.join(" "));
+  }
+
+  /* CONTROL: the same readable credential on a verb that never reads the
+   * channel list produces a DIFFERENT failure, so the sentence above is the
+   * channel list's and not every command's transport error. */
+  const other = readableAgentRun(["members"]);
+  assert.doesNotMatch(other.output, /channel list did not complete/);
 });
 
 test("the agent channel list sends the exact body the read edge parses, and nothing more", async () => {
