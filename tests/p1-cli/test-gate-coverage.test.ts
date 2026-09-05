@@ -9,7 +9,12 @@ interface PackageJson {
 }
 
 const repoRoot = process.cwd();
-const pureCliCommand = "node --import tsx --test tests/p1-cli/**/*.test.ts";
+/* The gate spawns dist/cli.js, so it is preceded by a build precondition. That
+ * step reads the filesystem only: it starts no service and runs no test, so the
+ * "pure" claim below is unchanged. The pre/post hook assertions still hold,
+ * because the precondition is part of the command rather than an npm hook. */
+const pureCliCommand =
+  "node scripts/require-cli-build.mjs && node --import tsx --test tests/p1-cli/**/*.test.ts";
 /* The browser receipt control added a sixth stack-touching file; --test-concurrency=1 because each
  * p1-local file spawns the one local functions runtime (same reason p1-server
  * carries the flag). The pin moves WITH the claim it guards: all files stay
