@@ -1,18 +1,18 @@
 === listen start ===
 {
   "version": 1,
-  "instanceId": "47ec0aa0-a476-4d6e-84f0-44255f6725a9",
+  "instanceId": "c53cdcb3-ebdb-4961-9c08-f85dcd1b2dee",
   "provider": "grok",
   "cswarmVersion": "0.1.52",
   "permissionMode": "allow",
-  "profileId": "519044a23cf2033768197d10",
-  "workspaceId": "5869b24f-cb60-4e66-a692-e93f833357f0",
-  "principalId": "ba231cb4-1792-474f-afb5-aa8355a4637c",
-  "pid": 26854,
+  "profileId": "55b312e9f79bf62d0da6e841",
+  "workspaceId": "b3f940a4-e0b9-4461-8365-8bda1c8ce042",
+  "principalId": "12e3cdd3-3a44-49af-b728-02697c15323c",
+  "pid": 65425,
   "state": "ready",
-  "startedAt": "2026-09-05T04:07:23.759Z",
-  "readyAt": "2026-09-05T04:07:24.068Z",
-  "updatedAt": "2026-09-05T04:07:24.070Z",
+  "startedAt": "2026-09-05T04:24:34.539Z",
+  "readyAt": "2026-09-05T04:24:34.858Z",
+  "updatedAt": "2026-09-05T04:24:34.874Z",
   "stoppedAt": null,
   "lastSignalId": null,
   "lastErrorCode": null,
@@ -27,16 +27,16 @@
   "lastWorkerStderrTail": null,
   "deliveryMode": "durable_claim",
   "pendingDeliveryCount": 2,
-  "pendingDeliveryCountAt": "2026-09-05T04:07:23.789Z",
+  "pendingDeliveryCountAt": "2026-09-05T04:24:34.874Z",
   "lastTerminalDeliveryFailureCount": null,
   "lastTerminalDeliveryFailureAt": null,
-  "lastClaimAt": null,
+  "lastClaimAt": "2026-09-05T04:24:34.874Z",
   "lastAckAt": null,
   "lastAckOutcome": null,
   "consecutiveAckFailureCount": null,
   "lastAckSignalId": null,
-  "currentDeliverySignalId": null,
-  "currentDeliverySince": null,
+  "currentDeliverySignalId": "66a34cc7-5e79-4821-8f1e-37a37b609a9b",
+  "currentDeliverySince": "2026-09-05T04:24:34.874Z",
   "heldBackDeliveries": [],
   "routeMode": "worker",
   "deferOverChars": null,
@@ -51,13 +51,18 @@
     "retryHours": [],
     "retryMinutes": [],
     "claimCadenceMs": 2000,
-    "claimHours": []
+    "claimHours": [
+      {
+        "hourStart": "2026-09-05T04:00:00.000Z",
+        "claims": 1
+      }
+    ]
   },
   "connectionsOpened": 1,
   "connectionReuseRatio": 4,
   "activityPublishFailures": 1,
   "activityLastErrorCode": "activity_http_rejected",
-  "logPath": "/var/folders/bb/7n7qfbls651d80fs4r9wdyk40000gn/T/cswarm-hol-rmellK/5e8de097ee9a2a49d8afde73282ef0a202471a3ba91d8cd50119f7601bf798bb/events.ndjson",
+  "logPath": "/var/folders/bb/7n7qfbls651d80fs4r9wdyk40000gn/T/cswarm-hol-hVrlww/8e78792a193a2d6c1bde8ce9d61e6063ce0aefb92c4276a20240eb726160bccc/events.ndjson",
   "providerExecutableMeasured": false,
   "providerVersionMeasured": false,
   "providerBelowDemandedMinimum": false,
@@ -93,7 +98,7 @@
   "listenerLapse": false,
   "listenerLapseCodes": [],
   "listenerLapseNextSteps": [],
-  "currentDeliveryElapsedMs": null,
+  "currentDeliveryElapsedMs": 9,
   "heldBackDeliveryCount": 0,
   "permission_mode": "allow",
   "same_owner_delivery": "worker session; tool requests allowed once each when the host offers allow_once, otherwise denied",
@@ -112,20 +117,20 @@
 // Each entry is TWO consecutive `cswarm listen status` invocations, the JSON fields then the human lines, so a delivery claimed between them can appear in one and not the other. The listener is real and detached; the service and the ACP provider are local fakes.
 [
   {
-    "atMs": 73,
+    "atMs": 72,
     "inHand": "ask-1",
-    "currentDeliveryElapsedMs": 77,
+    "currentDeliveryElapsedMs": 84,
     "pendingDeliveryCount": 2,
     "heldBack": [],
     "lastAck": "none",
     "lastAckOutcome": null,
     "human": [
       "Pending deliveries reported by the service: 2. The service reported that under 1m ago.",
-      "Working on delivery eea22c83-568c-46d5-890a-332de43d2e9c, claimed under 1m ago."
+      "Working on delivery 66a34cc7-5e79-4821-8f1e-37a37b609a9b, claimed under 1m ago."
     ]
   },
   {
-    "atMs": 30633,
+    "atMs": 30790,
     "inHand": "none",
     "currentDeliveryElapsedMs": null,
     "pendingDeliveryCount": 1,
@@ -137,17 +142,17 @@
     "human": [
       "Pending deliveries reported by the service: 1. The service reported that under 1m ago.",
       "No delivery is being worked on right now.",
-      "Delivery eea22c83-568c-46d5-890a-332de43d2e9c was handed back under 1m ago because it used the turn budget for one delivery. This listener has not answered it. After the lease ends the service either delivers it again or terminates it. If this repeats, a larger --turn-budget gives one delivery more of the seat, up to the 15 minutes the service leases it for; the bound is read when the listener starts, so stop this listener and start it again to change it."
+      "Delivery 66a34cc7-5e79-4821-8f1e-37a37b609a9b was handed back under 1m ago because it used the turn budget for one delivery. This listener has not answered it. After the lease ends the service either delivers it again or terminates it. If this repeats, a larger --turn-budget gives one delivery more of the seat. Past the 15 minutes the service leases a delivery for it stops helping, because the turn then outlives its lease and the reply can no longer be acknowledged. The bound is read when the listener starts, so stop this listener and start it again to change it."
     ]
   }
 ]
 
 === hold releases recorded in the listener log ===
-{"ts":"2026-09-05T04:07:54.569Z","event":"listener_delivery_hold_released","signal_id":"eea22c83-568c-46d5-890a-332de43d2e9c","release_reason":"hold_budget","held_ms":30500}
+{"ts":"2026-09-05T04:25:05.383Z","event":"listener_delivery_hold_released","signal_id":"66a34cc7-5e79-4821-8f1e-37a37b609a9b","release_reason":"hold_budget","held_ms":30525}
 
 === first ask id ===
-eea22c83-568c-46d5-890a-332de43d2e9c
+66a34cc7-5e79-4821-8f1e-37a37b609a9b
 === second ask id ===
-6cf3bb6c-623d-4a6c-94d9-a13c478e0211
+d3fc0132-f899-4c37-ace1-e629fcb93da0
 === acked signal ids ===
-6cf3bb6c-623d-4a6c-94d9-a13c478e0211
+d3fc0132-f899-4c37-ace1-e629fcb93da0

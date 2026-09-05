@@ -280,9 +280,16 @@ export interface ListenerRuntimeOptions {
   deferOverChars?: number | null;
   pendingMainQueue?: Pick<FilePendingMainQueue, "enqueue">;
   /**
-   * Bound on one delivery's hold of the worker seat, from the moment its lease
-   * is in hand. Defaults to LISTENER_DELIVERY_HOLD_BUDGET_MS; `cswarm listen
-   * start --turn-budget` passes the same value it gives a prompt turn.
+   * Bound on one delivery's hold of the worker seat, measured from the moment
+   * the claim was RESERVED (the journal's claimCreatedAt), which precedes the
+   * lease grant by one claim round trip, so the measured hold is never shorter
+   * than the real one. Defaults to LISTENER_DELIVERY_HOLD_BUDGET_MS; `cswarm
+   * listen start --turn-budget` passes the same value it gives a prompt turn.
+   *
+   * Not clamped to the server lease. leaseSpent refuses to START a phase when
+   * what is left of the lease is under the phase minimum; it does not interrupt
+   * a running turn, so a turn budget above the lease really does hold the
+   * worker past it.
    *
    * The first process attempt of a lease always runs, so a budget shorter than
    * one turn cannot starve a delivery; the bound stops the SECOND and later

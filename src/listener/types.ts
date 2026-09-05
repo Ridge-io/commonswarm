@@ -185,10 +185,17 @@ export const LISTENER_DELIVERY_HOLD_RELEASE_REMEDIES: Readonly<
   Record<ListenerDeliveryHoldReleaseReason, string>
 > = {
   hold_budget:
-    "a larger --turn-budget gives one delivery more of the seat, up to the " +
-    `${LISTENER_DELIVERY_MAX_LEASE_MS / 60_000} minutes the service leases it ` +
-    "for; the bound is read when the listener starts, so stop this listener " +
-    "and start it again to change it",
+    "a larger --turn-budget gives one delivery more of the seat. Past the " +
+    `${LISTENER_DELIVERY_MAX_LEASE_MS / 60_000} minutes the service leases a ` +
+    "delivery for it stops helping, because the turn then outlives its lease " +
+    "and the reply can no longer be acknowledged. The bound is read when the " +
+    "listener starts, so stop this listener and start it again to change it",
+  /* NOT a cap: nothing clamps the turn budget to the lease, and leaseSpent
+     refuses to START a phase rather than interrupting one, so a 60m budget
+     really does hold the worker for 60m. The sentence says raising past the
+     lease stops helping, and why, which is what the code supports. An earlier
+     version read "up to the 15 minutes the service leases it for", which a
+     review arm read as a cap the code does not enforce. */
   lease_budget:
     "nothing needs raising: the row comes back under a new lease of full" +
     " length, so the next attempt starts with the room this one ran out of." +

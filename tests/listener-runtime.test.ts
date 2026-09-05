@@ -54,6 +54,7 @@ import {
   LISTENER_DELIVERY_HOLD_RELEASE_REASONS,
   LISTENER_DELIVERY_HOLD_RELEASE_CLAUSES,
   LISTENER_DELIVERY_HOLD_RELEASE_REMEDIES,
+  LISTENER_DELIVERY_MAX_LEASE_MS,
   type ListenerActiveClaim,
   type ListenerDeliveryJournalRecord,
   type ListenerEffectRecord,
@@ -4216,6 +4217,21 @@ test("listen status shows the delivery in hand and how long the queue has waited
       "a larger --turn-budget",
     ),
     LISTENER_DELIVERY_HOLD_RELEASE_REMEDIES.hold_budget,
+  );
+  /* The lease is named as the point where raising stops helping, with the
+     reason, NOT as a ceiling. Nothing clamps the turn budget to the lease, and
+     leaseSpent refuses to start a phase rather than interrupting a running one,
+     so "up to the 15 minutes the service leases it for" described a cap the
+     code does not enforce. A review arm read it exactly that way. */
+  assert.ok(
+    LISTENER_DELIVERY_HOLD_RELEASE_REMEDIES.hold_budget.includes(
+      `Past the ${LISTENER_DELIVERY_MAX_LEASE_MS / 60_000} minutes the service leases a delivery for it stops helping, because the turn then outlives its lease and the reply can no longer be acknowledged.`,
+    ),
+    LISTENER_DELIVERY_HOLD_RELEASE_REMEDIES.hold_budget,
+  );
+  assert.ok(
+    !LISTENER_DELIVERY_HOLD_RELEASE_REMEDIES.hold_budget.includes("up to the"),
+    "the lease is not a cap the code enforces",
   );
   assert.ok(
     !LISTENER_DELIVERY_HOLD_RELEASE_REMEDIES.lease_budget.includes(

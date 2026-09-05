@@ -48,19 +48,22 @@ clock instead of getting a fresh budget.
 
 What remains, stated accurately:
 
-- A recovered lease still gets ONE `engine.process` before the bound can fire,
-  because `processAttempt` starts at 0 again. That is the anti-starvation rule:
-  every lease gets one attempt, so a budget shorter than one phase cannot
-  starve a delivery.
+- A recovered lease still gets ONE `engine.process` before the HOLD bound can
+  fire, because `processAttempt` starts at 0 again, so a hold budget shorter
+  than one phase cannot starve a delivery. This is not "every lease gets one
+  attempt", which an earlier draft said and a review arm refuted: the LEASE
+  check is separate and can release at `processAttempt === 0`, when what is left
+  of the lease is already under the phase minimum.
 - The lease does NOT cap an in-flight turn. `leaseSpent` refuses to START a
   phase when what is left of the lease is under the phase minimum; it does not
   interrupt a turn already running. The prompt timeout is `--turn-budget`, which
   can be set as high as 60m against a 15m lease, so one turn can outlive its
   lease. The honest bound on one delivery's hold is therefore the attempts
   already started plus one turn budget, not the lease.
-- That is also why the `hold_budget` remedy names the lease as the ceiling worth
-  raising toward: past it, the turn outlives the lease the reply has to be
-  acknowledged under.
+- That is also why the `hold_budget` remedy names the lease as the point where
+  raising stops helping, and says why: past it the turn outlives the lease the
+  reply has to be acknowledged under. It is NOT a cap, and the sentence must not
+  read as one; nothing clamps the turn budget to the lease.
 
 ## The listener cannot know the age of the oldest waiting delivery
 
