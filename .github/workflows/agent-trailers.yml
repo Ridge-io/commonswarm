@@ -108,6 +108,13 @@ jobs:
             # CHECKING ALL OF HISTORY HERE WOULD FAIL FOREVER. This tags work FROM NOW ON; every
             # commit made before the hook existed has no trailers and must NOT be backfilled with
             # guesses. See docs/development/agent-trailers.md.
+            #
+            # CEILING, and it is shared verbatim with commit-identity.yml rather than fixed in one
+            # of them: on a FORCE-PUSH TO THE DEFAULT BRANCH the remote main already points at the
+            # new tip, so `origin/main..HEAD` is empty and the checker reports "nothing to check"
+            # and exits 0. A force-push to a LANE branch is unaffected — origin/main is still
+            # behind it, so the lane's own commits are the range. Diverging the two workflows here
+            # would leave the weaker one as the one people read.
             git fetch --no-tags origin "+refs/heads/main:refs/remotes/origin/main" 2>/dev/null || true
             if git rev-parse --verify -q origin/main >/dev/null; then
               range="origin/main..HEAD"

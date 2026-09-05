@@ -41,6 +41,7 @@ they ever disagree, `tests/p1-cli/agent-trailers.test.ts` fails.
 | `runtime-transcript` | read out of the agent's own live session record. A measurement. |
 | `runtime-env` | read out of a variable the runtime itself set. A measurement. |
 | `runtime-config` | read out of the runtime's session-scoped state on disk. A measurement. |
+| `runtime-ambiguous` | more than one runtime's variables were visible, so the model may belong to a **parent** session. Weaker than any other `runtime-*` value. |
 | `declared` | a person or a lead supplied it. **An assertion, not a measurement.** |
 | `none` | nothing readable; `Agent-Model` is the `unknown` sentinel. |
 
@@ -118,11 +119,25 @@ every `CLAUDE_*` variable in the child's environment; measured, both probes repo
 `CLAUDE_CODE_SESSION_ID`. A detector that tested `CLAUDECODE` first would label every nested lane
 as Claude Code and sign another family's work with Anthropic's name.
 
-**The residual, stated because it is the one way this can produce a confident wrong value.** The
-probe order only protects the runtimes that are IN the list. A runtime that is not listed and that
-inherits `CLAUDE_*` from a Claude Code parent falls through to the `claude-code` probe, which reads
-the *parent's* transcript and records the parent's model with source `runtime-transcript` — a
-measurement of the wrong session, and nothing in the trailer says so. `opencode` is the live
+**Ordering is only half the answer, and saying otherwise was wrong.** Inheritance is symmetric. A
+codex session that shells out to grok leaves `CODEX_THREAD_ID` in the child exactly as Claude Code
+leaves `CLAUDE_*`, and codex is probed *first*. Measured 2026-09-04 from inside a Claude Code
+session, `CODEX_THREAD_ID=fake scripts/agent-trailers.sh --detect` reported `tool=codex` and
+discarded the Claude Code model it could otherwise read. An order can only ever be right for one
+nesting direction, and this one is right for the nesting this repo runs: a Claude Code lead
+spawning codex, grok or agy lanes.
+
+So each entry in `AGENT_TRAILER_RUNTIMES` also names the environment variable that marks its
+runtime, and the emitter counts how many are set:
+
+- **one marker** — a clean read. The source stays `runtime-transcript` / `runtime-config`.
+- **two or more** — the environment cannot say which runtime is innermost. The order still picks,
+  but the source becomes `runtime-ambiguous`, and the PR summary counts it apart from the measured
+  ones rather than inflating them.
+
+**The other residual: a runtime that is not in the list at all.** It inherits the parent's
+variables, matches nothing itself, and so raises the count by nothing — it falls through to the
+parent's probe and is recorded as a clean measurement of the wrong session. `opencode` is the live
 example: it is installed on this host and this repo already treats it as a provider
 (`tests/host-acp-opencode.test.ts`), and it is not in `AGENT_TRAILER_RUNTIMES`. Its environment was
 not enumerated here, so no detector was written for it — writing one from a guess is the defect this
@@ -211,6 +226,14 @@ you can see and count.
 Merge commits are exempt. Their message is written by git or GitHub, not by an agent, and their
 parents carry the trailers.
 
+**Squash merges are exempt too, and they are not merge commits.** GitHub writes a *single-parent*
+commit on the default branch whose message it generated from the PR, so the merge exemption does not
+reach it and its tree contains the hook, so grace does not either. Measured on this repo's `main`:
+`cf17894` and `297f1a4` are single-parent commits committed by `noreply@github.com`. Without the
+exemption the first squash merge after this lands turns `main` red for a message no agent wrote.
+The exemption keys on that committer address, which `scripts/check-commit-identity.sh` already
+allows for the same reason.
+
 ---
 
 ## No backfill
@@ -271,6 +294,19 @@ into the same directory, so the enforcement and the sentences describing it cann
 ```sh
 npm run hooks:install     # git config core.hooksPath scripts/hooks
 ```
+
+`core.hooksPath` **replaces** the hooks directory for the whole checkout: git stops reading
+`.git/hooks/` entirely, so any local hook you keep there stops running, silently. This checkout had
+none when that was probed on 2026-09-04. If yours does, move it into `scripts/hooks/` or skip the
+install. To undo:
+
+```sh
+git config --unset core.hooksPath
+```
+
+The setting is per checkout and per clone, which is what makes the hook opt-in: nothing in
+`npm install` sets it, and `tests/p1-cli/agent-trailers.test.ts` fails if any lifecycle script
+starts to.
 
 Two layers, deliberately:
 
