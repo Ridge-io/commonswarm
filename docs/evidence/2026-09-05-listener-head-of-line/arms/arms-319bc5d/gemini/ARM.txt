@@ -1,0 +1,11 @@
+`diff --git a/docs/evidence/2026-09-05-listener-head-of-line/DESIGN-BOUNDS.md b/docs/evidence/2026-09-05-listener-head-of-line/DESIGN-BOUNDS.md`
+
+33. **The hold_budget remedy**: I verified the ack path in `supabase/functions/command/durable-delivery.ts` (the SQL `UPDATE swarm.signal_deliveries` requires `leased_until > statement_timestamp()`). The ack does in fact require a live lease. The remedy sentence in `src/listener/types.ts` is verified to no longer read as a cap ("up to the 15 minutes"); it accurately states that "Past the 15 minutes... it stops helping, because the turn then outlives its lease and the reply can no longer be acknowledged."
+
+34. **`DESIGN-BOUNDS.md`**: Verified at the source. `src/listener/runtime.ts` correctly distinguishes the two: the hold bound uses `processAttempt > 0` (the anti-starvation rule), whereas `leaseSpent` can fire at `processAttempt === 0`. The document accurately reflects this.
+
+35. **The `deliveryHoldBudgetMs` comment**: Verified. The interface comment explicitly states the hold is measured from `claimCreatedAt` (the reserve, before the grant) and that it is "Not clamped to the server lease."
+
+36. **Final sweep and verdict**: I read every user-visible sentence and factual comment added or changed in the entire diff. The local timeline references are properly worded as local history, the remedy bounds are accurately described, and the comments perfectly align with the actual code logic. The seat bound is correct, the status claims are true and accurately scoped, and no earlier fix was weakened. I find nothing that the code does not do. I PASS.
+
+VERDICT: PASS

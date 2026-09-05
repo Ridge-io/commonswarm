@@ -16,11 +16,12 @@ import {
   DeliveryProtocolError,
   DeliveryTransportError,
   DELIVERY_REQUEST_TIMEOUT_MS,
+  DELIVERY_ACK_OUTCOMES,
   type DeliveryClaimResult,
   type DeliveryOutcome,
   type DeliveryRow,
 } from "../src/cloud/delivery.js";
-import { listenerStatusJson, renderListenerStatus } from "../src/cli.js";
+import { listenerStatusJson, renderListenerStatus, usage } from "../src/cli.js";
 import {
   RenewalReauthorisationRequired,
   RenewalRevoked,
@@ -35,6 +36,7 @@ import {
   SignalTransportError,
 } from "../src/cloud/signals.js";
 import { ACP_DEFAULT_REQUEST_TIMEOUT_MS } from "../src/host/bounds.js";
+import { AcpHostError } from "../src/host/types.js";
 import {
   runListenerRuntime as runListenerRuntimeActual,
   LISTENER_DELIVERY_SAFETY_MARGIN_MS,
@@ -49,6 +51,10 @@ import {
   FileListenerEffectStore,
   newReceivedAskRecord,
   newObservedNoteRecord,
+  LISTENER_DELIVERY_HOLD_RELEASE_REASONS,
+  LISTENER_DELIVERY_HOLD_RELEASE_CLAUSES,
+  LISTENER_DELIVERY_HOLD_RELEASE_REMEDIES,
+  LISTENER_DELIVERY_MAX_LEASE_MS,
   type ListenerActiveClaim,
   type ListenerDeliveryJournalRecord,
   type ListenerEffectRecord,
@@ -3826,4 +3832,999 @@ test("a status written before lastAckOutcome existed is not called unacknowledge
   assert.doesNotMatch(restartedHuman, /No delivery acknowledgement is recorded/);
   assert.match(restartedHuman, /its outcome was not recorded\./);
   await rm(root, { recursive: true, force: true });
+});
+
+/* Head-of-line blocking, measured 2026-09-04 on the lead's own seat: one
+ * open-ended ask used the whole 10-minute turn budget and every later delivery
+ * to that seat waited behind it. Two of the five asks in that hour were
+ * byte-identical re-sends 1 to 6 minutes apart, because nothing showed the
+ * sender that the seat was busy. These three tests pin the bound, the fields
+ * that make the queue visible, and the receipt the release must not destroy. */
+
+const HOLD_FIRST_ID = "aaaaaaaa-aaaa-4aaa-8aaa-aaaaaaaaab01";
+const HOLD_SECOND_ID = "aaaaaaaa-aaaa-4aaa-8aaa-aaaaaaaaab02";
+
+/** A worker that consumes the whole seat budget on one signal and yields nothing. */
+class SeatHoggingModel implements ListenerRuntimeModel {
+  starts = 0;
+  closes = 0;
+  cancels = 0;
+  readonly prompts: string[] = [];
+  constructor(
+    private readonly hogSignalId: string,
+    private readonly burn: () => void,
+  ) {}
+  async start() {
+    this.starts += 1;
+  }
+  async prompt(signal: SignalRecord, _mode: ListenerPromptMode) {
+    this.prompts.push(signal.id);
+    if (signal.id === this.hogSignalId) {
+      this.burn();
+      // What a wedged ACP child produces: a transient timeout, so the ask stays
+      // retryable and the pre-bound loop would keep the seat for the lease.
+      throw new AcpHostError("timeout", "worker turn timed out");
+    }
+    return {
+      message: `reply-${signal.id.slice(-4)}`,
+      stopReason: "end_turn" as const,
+    };
+  }
+  cancel() {
+    this.cancels += 1;
+  }
+  async close() {
+    this.closes += 1;
+  }
+}
+
+test("a delivery that spends its hold budget hands the seat to the next delivery", async () => {
+  const first = ask(HOLD_FIRST_ID, "2026-07-30T00:00:01.000Z");
+  const second = ask(HOLD_SECOND_ID, "2026-07-30T00:00:02.000Z");
+  const holdBudgetMs = 600_000;
+  const start = Date.parse("2026-07-30T00:00:00.000Z");
+  let clock = start;
+  const journal = new MemoryDeliveryJournal();
+  const controller = new AbortController();
+  const events: ListenerRuntimeEvent[] = [];
+  const model = new SeatHoggingModel(first.id, () => {
+    clock += holdBudgetMs;
+  });
+  let claims = 0;
+  let acked: Array<{ signalId: string; outcome: DeliveryOutcome }> = [];
+  const stop = await runListenerRuntime({
+    target: cloudTarget("https://cloud.example.test", "anon"),
+    workspaceId: WORKSPACE_ID,
+    principalId: PRINCIPAL_ID,
+    listenerInstanceId: journal.record.listenerInstanceId,
+    deliveryJournal: journal,
+    deliveryHoldBudgetMs: holdBudgetMs,
+    deliveryClient: {
+      async claimAgentInbox() {
+        claims += 1;
+        // The lease outlasts the hold budget on purpose: without the bound the
+        // seat stays on the first delivery for the whole 15-minute lease.
+        const row: DeliveryRow = claims === 1
+          ? {
+            signal: first,
+            leaseId: "55555555-5555-4555-8555-555555555b01",
+            leasedUntil: "2026-07-30T00:15:00.000Z",
+            senderOwnerRelation: "same_owner",
+          }
+          : {
+            signal: second,
+            leaseId: "55555555-5555-4555-8555-555555555b02",
+            leasedUntil: "2026-07-30T00:25:00.000Z",
+            senderOwnerRelation: "same_owner",
+          };
+        return claimResult([row], claims === 1 ? 2 : 1);
+      },
+      async ackAgentDelivery(request) {
+        acked.push({ signalId: request.signalId, outcome: request.outcome });
+        controller.abort();
+        return {
+          httpStatus: 200,
+          signalId: request.signalId,
+          outcome: request.outcome,
+        };
+      },
+    },
+    credentialSession: { async bearer() { return "token"; } },
+    store: new MemoryStore(),
+    model,
+    poster: {
+      async post() {
+        return { signalId: "66666666-6666-4666-8666-666666666b02" };
+      },
+    },
+    signal: controller.signal,
+    now: () => clock,
+    sleep: async () => undefined,
+    readPage: async () => durablePage([], 2),
+    onEvent: (event) => events.push(event),
+  });
+
+  assert.equal(
+    stop.reason,
+    "cancelled",
+    stop.reason === "fatal" ? `stopped fatally: ${stop.error.message}` : "",
+  );
+  // The bound, stated as the reader reads it: the second delivery reached the
+  // worker, and it did so without waiting out the first delivery's lease.
+  assert.deepEqual(model.prompts, [first.id, second.id]);
+  const released = events.filter(
+    (event): event is Extract<
+      ListenerRuntimeEvent,
+      { type: "delivery_hold_released" }
+    > => event.type === "delivery_hold_released",
+  );
+  assert.equal(released.length, 1);
+  assert.equal(released[0]!.signalId, first.id);
+  assert.equal(released[0]!.reason, "hold_budget");
+  assert.equal(released[0]!.heldMs, holdBudgetMs);
+  assert.ok(
+    clock < Date.parse("2026-07-30T00:15:00.000Z"),
+    "the seat moved on before the first delivery's lease expired",
+  );
+  // The released delivery keeps its lease and its receipt: only the second one
+  // is acknowledged, so its sender still reads a delivery in progress.
+  assert.deepEqual(acked, [{ signalId: second.id, outcome: "replied" }]);
+});
+
+test("the released delivery is not acknowledged with any outcome", async () => {
+  // Generated from the wire vocabulary, so a new outcome cannot slip past this
+  // by being absent from a typed list.
+  const outcomes = [...DELIVERY_ACK_OUTCOMES];
+  assert.ok(outcomes.includes("observed"));
+  const first = ask(HOLD_FIRST_ID, "2026-07-30T00:00:01.000Z");
+  const holdBudgetMs = 300_000;
+  let clock = Date.parse("2026-07-30T00:00:00.000Z");
+  const journal = new MemoryDeliveryJournal();
+  const controller = new AbortController();
+  const events: ListenerRuntimeEvent[] = [];
+  const model = new SeatHoggingModel(first.id, () => {
+    clock += holdBudgetMs;
+  });
+  const ackOutcomes: string[] = [];
+  let claims = 0;
+  await runListenerRuntime({
+    target: cloudTarget("https://cloud.example.test", "anon"),
+    workspaceId: WORKSPACE_ID,
+    principalId: PRINCIPAL_ID,
+    listenerInstanceId: journal.record.listenerInstanceId,
+    deliveryJournal: journal,
+    deliveryHoldBudgetMs: holdBudgetMs,
+    deliveryClient: {
+      async claimAgentInbox() {
+        claims += 1;
+        if (claims > 1) {
+          controller.abort();
+          return claimResult([], 1);
+        }
+        return claimResult([{
+          signal: first,
+          leaseId: "55555555-5555-4555-8555-555555555b03",
+          leasedUntil: "2026-07-30T00:15:00.000Z",
+          senderOwnerRelation: "same_owner",
+        }], 1);
+      },
+      async ackAgentDelivery(request) {
+        ackOutcomes.push(request.outcome);
+        return {
+          httpStatus: 200,
+          signalId: request.signalId,
+          outcome: request.outcome,
+        };
+      },
+    },
+    credentialSession: { async bearer() { return "token"; } },
+    store: new MemoryStore(),
+    model,
+    poster: { async post() { throw new Error("no reply is ready"); } },
+    signal: controller.signal,
+    now: () => clock,
+    sleep: async () => undefined,
+    readPage: async () => durablePage([], 1),
+    onEvent: (event) => events.push(event),
+  });
+
+  assert.deepEqual(ackOutcomes, []);
+  assert.equal(journal.record.active, null);
+  const releases = events.filter((event): event is Extract<
+    ListenerRuntimeEvent,
+    { type: "delivery_hold_released" }
+  > => event.type === "delivery_hold_released");
+  assert.equal(releases.length, 1);
+  /* Name WHICH bound fired. Asserting only that some release happened let this
+     test stay green with the seat bound removed, because the lease bound can
+     release too; the reason is what separates them. */
+  assert.equal(releases[0]!.reason, "hold_budget");
+  assert.ok(releases[0]!.heldMs >= holdBudgetMs, String(releases[0]!.heldMs));
+});
+
+test("listen status shows the delivery in hand and how long the queue has waited", () => {
+  const claimedAt = "2026-07-30T00:00:00.000Z";
+  const nowMs = Date.parse("2026-07-30T00:04:00.000Z");
+  const status = {
+    version: 1,
+    instanceId: "44444444-4444-4444-8444-444444444444",
+    pid: 4242,
+    profileId: "profile-hold",
+    workspaceId: WORKSPACE_ID,
+    principalId: PRINCIPAL_ID,
+    provider: "claude",
+    state: "ready",
+    startedAt: claimedAt,
+    readyAt: claimedAt,
+    updatedAt: claimedAt,
+    stoppedAt: null,
+    lastSignalId: null,
+    lastErrorCode: null,
+    lastErrorDetail: null,
+    lastErrorReasonCode: null,
+    providerExecutable: null,
+    providerVersion: null,
+    providerLastMeasuredVersion: null,
+    providerBundledAgentSdkVersion: null,
+    providerBundledClaudeCodeVersion: null,
+    providerMinimumRequiredVersion: null,
+    lastWorkerStderrTail: null,
+    deliveryMode: "durable_claim",
+    pendingDeliveryCount: 3,
+    lastTerminalDeliveryFailureCount: null,
+    lastTerminalDeliveryFailureAt: null,
+    lastClaimAt: claimedAt,
+    lastAckAt: null,
+    lastAckOutcome: null,
+    consecutiveAckFailureCount: null,
+    currentDeliverySignalId: HOLD_FIRST_ID,
+    currentDeliverySince: claimedAt,
+    heldBackDeliveries: [],
+    pendingDeliveryCountAt: claimedAt,
+    routeMode: "worker",
+    deferOverChars: null,
+    pendingForMainCount: 0,
+    droppedForMainCount: 0,
+    logPath: "/tmp/cswarm-hold/listener.log",
+  } as unknown as ListenerStatus;
+
+  const evidence = {
+    pendingForMainOldestAt: null,
+    hookSurfaceExists: false,
+    hookSurfaceAdvanced: false,
+  };
+  const json = listenerStatusJson(status, undefined, evidence, nowMs);
+  assert.equal(json.currentDeliverySignalId, HOLD_FIRST_ID);
+  assert.equal(json.currentDeliverySince, claimedAt);
+  assert.equal(json.currentDeliveryElapsedMs, 240_000);
+  assert.deepEqual(json.heldBackDeliveries, []);
+  assert.equal(json.heldBackDeliveryCount, 0);
+  assert.equal(json.pendingDeliveryCountAt, claimedAt);
+
+  const human = renderListenerStatus(status, evidence, nowMs);
+  assert.ok(
+    human.includes(`Working on delivery ${HOLD_FIRST_ID}, claimed 4m ago.`),
+    human,
+  );
+  // The pending count carries the age of the observation that produced it.
+  assert.ok(
+    human.includes(
+      "Pending deliveries reported by the service: 3. The service reported that 4m ago.",
+    ),
+    human,
+  );
+  /* An undated count is named as undated. An arm reached this window by killing
+     a listener after the delivery-mode event and before its first claim. */
+  const undated = renderListenerStatus(
+    { ...status, pendingDeliveryCountAt: null },
+    evidence,
+    nowMs,
+  );
+  assert.ok(
+    undated.includes(
+      "Pending deliveries reported by the service: 3. When the service reported it was not recorded.",
+    ),
+    undated,
+  );
+  /* No waiting-to-be-claimed number is rendered at all. Two review rounds
+     refuted every form of it; the retired wordings are named in cli.ts. */
+  assert.ok(!human.includes("waiting behind it"), human);
+  assert.ok(!human.includes("waiting to be claimed"), human);
+  assert.ok(!human.includes("waited at least"), human);
+  assert.ok(!human.includes("empty queue"), human);
+
+  /* Each release reason gets its own clause, generated from the constant the
+     runtime emits. A typed sentence said "used its turn budget" for both, which
+     is false for lease_budget: that release runs no turn at all. */
+  for (const reason of LISTENER_DELIVERY_HOLD_RELEASE_REASONS) {
+    const heldBack = renderListenerStatus({
+      ...status,
+      pendingDeliveryCount: 2,
+      currentDeliverySignalId: null,
+      currentDeliverySince: null,
+      heldBackDeliveries: [{ signalId: HOLD_FIRST_ID, at: claimedAt, reason }],
+    }, evidence, nowMs);
+    assert.ok(
+      heldBack.includes(
+        `Delivery ${HOLD_FIRST_ID} was handed back 4m ago because ${
+          LISTENER_DELIVERY_HOLD_RELEASE_CLAUSES[reason]
+        }.`,
+      ),
+      heldBack,
+    );
+    /* Past tense only: the retired clause claimed the row still sat with the
+       service, which is false once the service expires and acknowledges it. */
+    assert.ok(!heldBack.includes("stays with the service"), heldBack);
+    /* The retired clause verbatim, not the phrase "comes back": the lease_budget
+       remedy legitimately says the row comes back under a new lease. A negative
+       control has to name what was retired, or it outlaws correct wording. */
+    assert.ok(
+      !heldBack.includes("which decides when it comes back"),
+      heldBack,
+    );
+    assert.ok(
+      heldBack.includes(
+        "This listener has not answered it. After the lease ends the service either delivers it again or terminates it. If this repeats, " +
+          `${LISTENER_DELIVERY_HOLD_RELEASE_REMEDIES[reason]}.`,
+      ),
+      heldBack,
+    );
+    /* The swap control: this reason's line must NOT carry the other reason's
+       remedy. A single shared remedy passed a per-reason assertion that only
+       checked "the right text is present"; it fails only when the wrong text is
+       also required to be absent. */
+    for (const other of LISTENER_DELIVERY_HOLD_RELEASE_REASONS) {
+      if (other === reason) continue;
+      assert.ok(
+        !heldBack.includes(LISTENER_DELIVERY_HOLD_RELEASE_REMEDIES[other]),
+        `${reason} carried the ${other} remedy: ${heldBack}`,
+      );
+      assert.ok(
+        !heldBack.includes(LISTENER_DELIVERY_HOLD_RELEASE_CLAUSES[other]),
+        `${reason} carried the ${other} clause: ${heldBack}`,
+      );
+    }
+    /* No command is printed. The line renders only while the listener is ready
+       or stopping, and `listen start` refuses in exactly those states, so a
+       start command here would be refused by the process that printed it. */
+    assert.ok(!heldBack.includes("cswarm listen start"), heldBack);
+    /* The retired remedy named `cswarm receipt <id>`: not runnable as printed,
+       because that verb requires an agent credential, and refused even with
+       one, because the receipt read is author-only and this listener is the
+       recipient. A remedy that names a command the reader cannot run is the
+       same defect class as a typed enumeration inside a correct sentence. */
+    assert.ok(!heldBack.includes("cswarm receipt"), heldBack);
+    assert.ok(!heldBack.includes("still tracking"), heldBack);
+  }
+  for (
+    const generated of [
+      LISTENER_DELIVERY_HOLD_RELEASE_CLAUSES,
+      LISTENER_DELIVERY_HOLD_RELEASE_REMEDIES,
+    ]
+  ) {
+    assert.equal(
+      new Set(Object.values(generated)).size,
+      LISTENER_DELIVERY_HOLD_RELEASE_REASONS.length,
+      "each reason needs its own wording, or the sentence stops discriminating",
+    );
+  }
+  /* Only hold_budget names a setting. --turn-budget IS the seat bound, so
+     raising it is the answer there; lease_budget needs nothing changed, because
+     the row returns under a new lease of full length. A shared remedy gave half
+     the vocabulary advice that cannot prevent its own release. */
+  assert.ok(
+    LISTENER_DELIVERY_HOLD_RELEASE_REMEDIES.hold_budget.includes(
+      "a larger --turn-budget",
+    ),
+    LISTENER_DELIVERY_HOLD_RELEASE_REMEDIES.hold_budget,
+  );
+  /* The lease is named as the point where raising stops helping, with the
+     reason, NOT as a ceiling. Nothing clamps the turn budget to the lease, and
+     leaseSpent refuses to start a phase rather than interrupting a running one,
+     so "up to the 15 minutes the service leases it for" described a cap the
+     code does not enforce. A review arm read it exactly that way. */
+  assert.ok(
+    LISTENER_DELIVERY_HOLD_RELEASE_REMEDIES.hold_budget.includes(
+      `Past the ${LISTENER_DELIVERY_MAX_LEASE_MS / 60_000} minutes the service leases a delivery for it stops helping, because the turn then outlives its lease and the reply can no longer be acknowledged.`,
+    ),
+    LISTENER_DELIVERY_HOLD_RELEASE_REMEDIES.hold_budget,
+  );
+  assert.ok(
+    !LISTENER_DELIVERY_HOLD_RELEASE_REMEDIES.hold_budget.includes("up to the"),
+    "the lease is not a cap the code enforces",
+  );
+  assert.ok(
+    !LISTENER_DELIVERY_HOLD_RELEASE_REMEDIES.lease_budget.includes(
+      "--turn-budget",
+    ),
+    "a lease_budget release is not fixed by changing the turn budget",
+  );
+
+  // More than one can be held back at once, so the extras are counted.
+  const twoHeldBack = renderListenerStatus({
+    ...status,
+    pendingDeliveryCount: 2,
+    currentDeliverySignalId: null,
+    currentDeliverySince: null,
+    heldBackDeliveries: [
+      { signalId: HOLD_SECOND_ID, at: claimedAt, reason: "hold_budget" },
+      { signalId: HOLD_FIRST_ID, at: claimedAt, reason: "lease_budget" },
+    ],
+  }, evidence, nowMs);
+  assert.ok(
+    twoHeldBack.includes(
+      "This listener is still tracking 1 other handed-back delivery.",
+    ),
+    twoHeldBack,
+  );
+  /* At the cap the count still describes the set, so it stays true. The retired
+     wording claimed every hand-back, which a capped set cannot know. */
+  const atCap = renderListenerStatus({
+    ...status,
+    currentDeliverySignalId: null,
+    currentDeliverySince: null,
+    heldBackDeliveries: Array.from({ length: 16 }, (_unused, index) => ({
+      signalId: `aaaaaaaa-aaaa-4aaa-8aaa-${String(index).padStart(12, "b")}`,
+      at: claimedAt,
+      reason: "hold_budget" as const,
+    })),
+  }, evidence, nowMs);
+  assert.ok(
+    atCap.includes("This listener is still tracking 15 other handed-back deliveries."),
+    atCap,
+  );
+
+  const idle = renderListenerStatus({
+    ...status,
+    pendingDeliveryCount: 0,
+    currentDeliverySignalId: null,
+    currentDeliverySince: null,
+  }, evidence, nowMs);
+  assert.ok(idle.includes("No delivery is being worked on right now."), idle);
+  assert.ok(!idle.includes("was handed back"), idle);
+});
+
+test("a fast first failure keeps the seat and retries inside the hold budget", async () => {
+  /* Measured on a live listener started with --turn-budget 30s: a projected
+   * bound (now + one phase minimum against the deadline) released the seat
+   * after 74ms, because one phase minimum is about four minutes and never fits
+   * inside a 30s budget. The delivery lost its retry budget without using any
+   * of its seat time. The bound is elapsed hold, so this retries. */
+  const first = ask(HOLD_FIRST_ID, "2026-07-30T00:00:01.000Z");
+  const holdBudgetMs = 30_000;
+  let clock = Date.parse("2026-07-30T00:00:00.000Z");
+  const journal = new MemoryDeliveryJournal();
+  const controller = new AbortController();
+  const events: ListenerRuntimeEvent[] = [];
+  const prompts: string[] = [];
+  let failures = 0;
+  const model: ListenerRuntimeModel = {
+    async start() {},
+    async prompt(signal: SignalRecord) {
+      prompts.push(signal.id);
+      failures += 1;
+      if (failures === 1) {
+        // A worker child that dies in milliseconds: retryable, and nowhere near
+        // the seat budget.
+        clock += 74;
+        throw new AcpHostError("child_exit", "worker child exited");
+      }
+      return {
+        message: `reply-${signal.id.slice(-4)}`,
+        stopReason: "end_turn" as const,
+      };
+    },
+    cancel() {},
+    async close() {},
+  };
+  const acked: string[] = [];
+  const stop = await runListenerRuntime({
+    target: cloudTarget("https://cloud.example.test", "anon"),
+    workspaceId: WORKSPACE_ID,
+    principalId: PRINCIPAL_ID,
+    listenerInstanceId: journal.record.listenerInstanceId,
+    deliveryJournal: journal,
+    deliveryHoldBudgetMs: holdBudgetMs,
+    deliveryClient: {
+      async claimAgentInbox() {
+        return claimResult([{
+          signal: first,
+          leaseId: "55555555-5555-4555-8555-555555555b04",
+          leasedUntil: "2026-07-30T00:15:00.000Z",
+          senderOwnerRelation: "same_owner",
+        }], 1);
+      },
+      async ackAgentDelivery(request) {
+        acked.push(request.outcome);
+        controller.abort();
+        return {
+          httpStatus: 200,
+          signalId: request.signalId,
+          outcome: request.outcome,
+        };
+      },
+    },
+    credentialSession: { async bearer() { return "token"; } },
+    store: new MemoryStore(),
+    model,
+    poster: {
+      async post() {
+        return { signalId: "66666666-6666-4666-8666-666666666b04" };
+      },
+    },
+    signal: controller.signal,
+    now: () => clock,
+    sleep: async () => undefined,
+    readPage: async () => durablePage([], 1),
+    onEvent: (event) => events.push(event),
+  });
+
+  assert.equal(
+    stop.reason,
+    "cancelled",
+    stop.reason === "fatal" ? `stopped fatally: ${stop.error.message}` : "",
+  );
+  assert.deepEqual(prompts, [first.id, first.id]);
+  assert.deepEqual(acked, ["replied"]);
+  assert.equal(
+    events.filter((event) => event.type === "delivery_hold_released").length,
+    0,
+    "74ms of a 30s seat budget is not a spent budget",
+  );
+});
+
+test("a stopped listener does not claim to be working on a delivery", async (t) => {
+  /* The status file outlives the process. Without clearing the held delivery on
+   * the terminal transition, `cswarm listen status` on a listener that stopped
+   * mid-turn reads "Working on delivery X, claimed 3h ago" about a process that
+   * no longer exists. */
+  const stateDirectory = await mkdtemp(join(tmpdir(), "cswarm-hold-stop-"));
+  t.after(async () => await rm(stateDirectory, { recursive: true, force: true }));
+  const paths = listenerPaths({
+    profileId: "profile-hold-stop",
+    workspaceId: WORKSPACE_ID,
+    principalId: PRINCIPAL_ID,
+    stateDirectory,
+  });
+  await runListenerSupervisor({
+    paths,
+    profileId: "profile-hold-stop",
+    workspaceId: WORKSPACE_ID,
+    principalId: PRINCIPAL_ID,
+    now: () => Date.parse("2026-07-30T00:00:00.000Z"),
+    run: async (_signal, onEvent) => {
+      onEvent({
+        type: "delivery_claim",
+        signalId: HOLD_FIRST_ID,
+        pendingDeliveryCount: 2,
+        terminalDeliveryFailureCount: 0,
+        ts: "2026-07-30T00:00:00.000Z",
+      });
+      const held = await queryListenerControl(paths, "status");
+      assert.equal(held.currentDeliverySignalId, HOLD_FIRST_ID);
+      assert.equal(held.currentDeliverySince, "2026-07-30T00:00:00.000Z");
+      return { reason: "cancelled" as const };
+    },
+  });
+
+  const stopped = await readListenerStatus(paths);
+  assert.equal(stopped?.state, "stopped");
+  assert.equal(stopped?.currentDeliverySignalId, null);
+  assert.equal(stopped?.currentDeliverySince, null);
+  /* The held-back facts go too: their sentences are rendered against READ time,
+     so a process that stopped observing three hours ago would still report on
+     them in the present tense. Both review arms raised this on 33cd24b. */
+  assert.deepEqual(stopped?.heldBackDeliveries, []);
+  const human = renderListenerStatus(stopped!, {
+    pendingForMainOldestAt: null,
+    hookSurfaceExists: false,
+    hookSurfaceAdvanced: false,
+  }, Date.parse("2026-07-30T03:00:00.000Z"));
+  assert.ok(!human.includes("Working on delivery"), human);
+  assert.ok(human.includes("No delivery is being worked on right now."), human);
+  assert.ok(!human.includes("was handed back"), human);
+  /* The pending count survives, and its own sentence dates it: both arms said
+     an undated count on a listener that died hours ago reads as current. */
+  assert.ok(human.includes("The service reported that 3h ago."), human);
+});
+
+test("the supervisor tracks a handed-back delivery until it comes back", async (t) => {
+  /* Not a string test: this drives the supervisor's event handling and reads
+   * the live control socket, so it pins the state machine both review arms
+   * attacked on 33cd24b. */
+  const stateDirectory = await mkdtemp(join(tmpdir(), "cswarm-hold-track-"));
+  t.after(async () => await rm(stateDirectory, { recursive: true, force: true }));
+  const paths = listenerPaths({
+    profileId: "profile-hold-track",
+    workspaceId: WORKSPACE_ID,
+    principalId: PRINCIPAL_ID,
+    stateDirectory,
+  });
+  const seen: Array<{
+    step: string;
+    heldBack: readonly string[];
+    current: string | null | undefined;
+    heldBackLine: string | undefined;
+  }> = [];
+  await runListenerSupervisor({
+    paths,
+    profileId: "profile-hold-track",
+    workspaceId: WORKSPACE_ID,
+    principalId: PRINCIPAL_ID,
+    now: () => Date.parse("2026-07-30T00:00:00.000Z"),
+    run: async (_signal, onEvent) => {
+      const record = async (step: string) => {
+        const snapshot = await queryListenerControl(paths, "status");
+        seen.push({
+          step,
+          heldBack: (snapshot.heldBackDeliveries ?? []).map((entry) =>
+            entry.signalId
+          ),
+          current: snapshot.currentDeliverySignalId,
+          heldBackLine: renderListenerStatus(snapshot, {
+            pendingForMainOldestAt: null,
+            hookSurfaceExists: false,
+            hookSurfaceAdvanced: false,
+          }, Date.parse("2026-07-30T00:05:00.000Z")).split("\n").find((line) =>
+            line.includes("was handed back")
+          ),
+        });
+      };
+      onEvent({
+        type: "delivery_claim",
+        signalId: HOLD_FIRST_ID,
+        pendingDeliveryCount: 2,
+        terminalDeliveryFailureCount: 0,
+        ts: "2026-07-30T00:00:00.000Z",
+      });
+      await record("claimed first");
+      onEvent({
+        type: "delivery_hold_released",
+        signalId: HOLD_FIRST_ID,
+        reason: "hold_budget",
+        heldMs: 600_000,
+        ts: "2026-07-30T00:00:01.000Z",
+      });
+      await record("released first");
+      onEvent({
+        type: "delivery_claim",
+        signalId: HOLD_SECOND_ID,
+        pendingDeliveryCount: 2,
+        terminalDeliveryFailureCount: 0,
+        ts: "2026-07-30T00:00:02.000Z",
+      });
+      await record("claimed second");
+      /* Two live held-back leases at once: the count grows and the newest one
+         is named. A review arm built exactly this sequence against a version
+         that tracked one id and derived a waiting count from it. */
+      onEvent({
+        type: "delivery_hold_released",
+        signalId: HOLD_SECOND_ID,
+        reason: "lease_budget",
+        heldMs: 1_000,
+        ts: "2026-07-30T00:00:03.000Z",
+      });
+      await record("released second");
+      /* An empty claim while only held-back rows are pending. The status must
+         not start calling them claimable, and must not forget them either. */
+      onEvent({
+        type: "delivery_claim",
+        signalId: null,
+        pendingDeliveryCount: 2,
+        terminalDeliveryFailureCount: 0,
+        ts: "2026-07-30T00:00:04.000Z",
+      });
+      await record("empty claim");
+      /* A zero pending count is NOT evidence that a held-back row is gone. The
+         service counts unacked rows whose signal until is still live, and
+         unleases only once the lease deadline passes, so a hand-back whose TTL
+         elapsed under its live lease is still leased, still unacked, and not in
+         that count. Both round-4 arms proved this from the SQL against a
+         version that trimmed the set to the count. */
+      onEvent({
+        type: "delivery_claim",
+        signalId: null,
+        pendingDeliveryCount: 0,
+        terminalDeliveryFailureCount: 0,
+        ts: "2026-07-30T00:00:05.000Z",
+      });
+      await record("zero pending count");
+      return { reason: "cancelled" as const };
+    },
+  });
+
+  assert.deepEqual(
+    seen.map((entry) => [entry.step, entry.heldBack, entry.current]),
+    [
+      ["claimed first", [], HOLD_FIRST_ID],
+      ["released first", [HOLD_FIRST_ID], null],
+      ["claimed second", [HOLD_FIRST_ID], HOLD_SECOND_ID],
+      /* Both are held back at once. A version that kept only the newest id
+         forgot the first one as soon as the second was reclaimed. */
+      ["released second", [HOLD_SECOND_ID, HOLD_FIRST_ID], null],
+      ["empty claim", [HOLD_SECOND_ID, HOLD_FIRST_ID], null],
+      ["zero pending count", [HOLD_SECOND_ID, HOLD_FIRST_ID], null],
+    ],
+  );
+  assert.ok(
+    seen[3]!.heldBackLine?.includes(
+      `Delivery ${HOLD_SECOND_ID} was handed back 5m ago because ${
+        LISTENER_DELIVERY_HOLD_RELEASE_CLAUSES.lease_budget
+      }.`,
+    ),
+    seen[3]!.heldBackLine,
+  );
+  assert.ok(
+    seen[3]!.heldBackLine?.includes(
+      "This listener is still tracking 1 other handed-back delivery.",
+    ),
+    seen[3]!.heldBackLine,
+  );
+  // An empty claim with rows still pending keeps them named.
+  assert.equal(seen[4]!.heldBackLine, seen[3]!.heldBackLine);
+  // So does a zero count: it is not evidence about a live-leased hand-back.
+  assert.equal(seen[5]!.heldBackLine, seen[3]!.heldBackLine);
+  // At no point is any of them described as waiting to be claimed.
+  assert.equal(
+    seen.some((entry) => entry.heldBackLine?.includes("waiting")),
+    false,
+  );
+});
+
+test("the pending count never trims the held-back set", async (t) => {
+  /* An earlier version trimmed the set to the service's pending count, on the
+   * argument that every held-back row is unacked so the count bounds them. Both
+   * round-4 arms refuted it from the server SQL, and it is wrong in BOTH
+   * directions. durable-delivery.ts step 7 counts unacked rows whose signal
+   * `until > statement_timestamp()`; step 2 unleases only when
+   * `leased_until <= statement_timestamp()`. So a hand-back whose TTL elapses
+   * under its live lease is still leased, still unacked, and NOT counted -- a
+   * low count dropped rows that were still held back, and because the set is
+   * newest first the slice discarded the oldest, the one most likely to be
+   * live. The count also includes rows that were never held back, so it could
+   * sit above the set and trim nothing. */
+  const stateDirectory = await mkdtemp(join(tmpdir(), "cswarm-hold-trim-"));
+  t.after(async () => await rm(stateDirectory, { recursive: true, force: true }));
+  const paths = listenerPaths({
+    profileId: "profile-hold-trim",
+    workspaceId: WORKSPACE_ID,
+    principalId: PRINCIPAL_ID,
+    stateDirectory,
+  });
+  const held: string[][] = [];
+  await runListenerSupervisor({
+    paths,
+    profileId: "profile-hold-trim",
+    workspaceId: WORKSPACE_ID,
+    principalId: PRINCIPAL_ID,
+    now: () => Date.parse("2026-07-30T00:00:00.000Z"),
+    run: async (_signal, onEvent) => {
+      const record = async () => {
+        const snapshot = await queryListenerControl(paths, "status");
+        held.push((snapshot.heldBackDeliveries ?? []).map((e) => e.signalId));
+      };
+      for (const [signalId, ts] of [
+        [HOLD_FIRST_ID, "2026-07-30T00:00:00.000Z"],
+        [HOLD_SECOND_ID, "2026-07-30T00:00:01.000Z"],
+      ] as const) {
+        onEvent({
+          type: "delivery_claim",
+          signalId,
+          pendingDeliveryCount: 2,
+          terminalDeliveryFailureCount: 0,
+          ts,
+        });
+        onEvent({
+          type: "delivery_hold_released",
+          signalId,
+          reason: "hold_budget",
+          heldMs: 600_000,
+          ts,
+        });
+      }
+      await record();
+      /* The service reports ONE unacked live row, then none. Neither number is
+         evidence about either hand-back, so the set does not move. */
+      for (const [pending, ts] of [
+        [1, "2026-07-30T00:00:02.000Z"],
+        [0, "2026-07-30T00:00:03.000Z"],
+      ] as const) {
+        onEvent({
+          type: "delivery_claim",
+          signalId: null,
+          pendingDeliveryCount: pending,
+          terminalDeliveryFailureCount: 0,
+          ts,
+        });
+        await record();
+      }
+      /* Its OWN evidence does move it: this claim returned the older row. */
+      onEvent({
+        type: "delivery_claim",
+        signalId: HOLD_FIRST_ID,
+        pendingDeliveryCount: 1,
+        terminalDeliveryFailureCount: 0,
+        ts: "2026-07-30T00:00:04.000Z",
+      });
+      await record();
+      return { reason: "cancelled" as const };
+    },
+  });
+
+  assert.deepEqual(held, [
+    [HOLD_SECOND_ID, HOLD_FIRST_ID],
+    [HOLD_SECOND_ID, HOLD_FIRST_ID],
+    [HOLD_SECOND_ID, HOLD_FIRST_ID],
+    [HOLD_SECOND_ID],
+  ]);
+});
+
+test("a pending count from the delivery-mode event is dated too", async (t) => {
+  /* The exact arm sequence: the mode event writes pendingDeliveryCount from the
+   * read page and never writes lastClaimAt, so dating the sentence from
+   * lastClaimAt left this window undated. On a process killed here the line
+   * read as a current count. */
+  const stateDirectory = await mkdtemp(join(tmpdir(), "cswarm-hold-mode-"));
+  t.after(async () => await rm(stateDirectory, { recursive: true, force: true }));
+  const paths = listenerPaths({
+    profileId: "profile-hold-mode",
+    workspaceId: WORKSPACE_ID,
+    principalId: PRINCIPAL_ID,
+    stateDirectory,
+  });
+  let duringRun: ListenerStatus | null = null;
+  await runListenerSupervisor({
+    paths,
+    profileId: "profile-hold-mode",
+    workspaceId: WORKSPACE_ID,
+    principalId: PRINCIPAL_ID,
+    now: () => Date.parse("2026-07-30T00:00:00.000Z"),
+    run: async (_signal, onEvent) => {
+      onEvent({
+        type: "delivery_mode",
+        mode: "durable_claim",
+        pendingDeliveryCount: 3,
+        ts: "2026-07-30T00:00:00.000Z",
+      });
+      duringRun = await queryListenerControl(paths, "status");
+      return { reason: "cancelled" as const };
+    },
+  });
+
+  const observed = duringRun as ListenerStatus | null;
+  assert.equal(observed?.pendingDeliveryCount, 3);
+  assert.equal(observed?.lastClaimAt, null, "no claim has run yet");
+  assert.equal(observed?.pendingDeliveryCountAt, "2026-07-30T00:00:00.000Z");
+  const human = renderListenerStatus(observed!, {
+    pendingForMainOldestAt: null,
+    hookSurfaceExists: false,
+    hookSurfaceAdvanced: false,
+  }, Date.parse("2026-07-30T03:00:00.000Z"));
+  assert.ok(
+    human.includes(
+      "Pending deliveries reported by the service: 3. The service reported that 3h ago.",
+    ),
+    human,
+  );
+});
+
+test("the redelivery claim reads the same in help as in status", () => {
+  /* Claim-family sweep. The status line was corrected to name both outcomes
+   * after review arms showed "redelivers" is false when the signal's own TTL
+   * elapsed under a live lease: the next claim expire-acknowledges it instead.
+   * The help text carried the same retired claim and was not swept, which an
+   * arm found on e5f75c9. */
+  const help = usage();
+  assert.ok(help.includes("--turn-budget"), "the flag is still documented");
+  assert.ok(
+    help.includes(
+      "After the lease ends the service either\ndelivers the released one again or terminates it.",
+    ),
+    help,
+  );
+  assert.ok(!help.includes("the service redelivers the released one"), help);
+});
+
+test("a lease recovered across a restart keeps its original hold clock", async () => {
+  /* The journal records claimCreatedAt in reserveClaim and keeps it through
+   * recordLease, so the hold clock survives a restart. An earlier version
+   * started it at now(), on the written claim that the original time "is not in
+   * the journal" -- false, and a review arm found it. With a fresh clock a
+   * delivery that had already spent its budget got the whole budget again on
+   * every restart, which is how a seat bound stops being a bound.
+   *
+   * Anti-starvation still applies: the recovered lease gets ONE engine.process
+   * because processAttempt is 0 again. The bound bites on the attempt after it,
+   * with no further budget. */
+  const first = ask(HOLD_FIRST_ID, "2026-07-30T00:00:01.000Z");
+  const second = ask(HOLD_SECOND_ID, "2026-07-30T00:00:02.000Z");
+  const holdBudgetMs = 600_000;
+  // The claim happened 20 minutes before this process starts: the budget was
+  // already spent by the listener that died.
+  let clock = Date.parse("2026-07-30T00:20:00.000Z");
+  const active = leasedActive({
+    signalId: first.id,
+    signal: first,
+    leasedUntil: "2026-07-30T00:35:00.000Z",
+  });
+  const journal = new MemoryDeliveryJournal(active);
+  const controller = new AbortController();
+  const events: ListenerRuntimeEvent[] = [];
+  const model = new SeatHoggingModel(first.id, () => {
+    clock += 1_000;
+  });
+  let claims = 0;
+  const acked: string[] = [];
+  const stop = await runListenerRuntime({
+    target: cloudTarget("https://cloud.example.test", "anon"),
+    workspaceId: WORKSPACE_ID,
+    principalId: PRINCIPAL_ID,
+    listenerInstanceId: journal.record.listenerInstanceId,
+    deliveryJournal: journal,
+    deliveryHoldBudgetMs: holdBudgetMs,
+    deliveryClient: {
+      async claimAgentInbox() {
+        claims += 1;
+        return claims === 1
+          ? claimResult([{
+            signal: first,
+            leaseId: active.leaseId!,
+            leasedUntil: active.leasedUntil!,
+            senderOwnerRelation: "same_owner",
+          }], 2)
+          : claimResult([{
+            signal: second,
+            leaseId: "55555555-5555-4555-8555-555555555c02",
+            // Within the server maximum lease of the clock at this moment.
+            leasedUntil: "2026-07-30T00:34:00.000Z",
+            senderOwnerRelation: "same_owner",
+          }], 1);
+      },
+      async ackAgentDelivery(request) {
+        acked.push(request.signalId);
+        controller.abort();
+        return {
+          httpStatus: 200,
+          signalId: request.signalId,
+          outcome: request.outcome,
+        };
+      },
+    },
+    credentialSession: { async bearer() { return "token"; } },
+    store: new MemoryStore(),
+    model,
+    poster: {
+      async post() {
+        return { signalId: "66666666-6666-4666-8666-666666666c02" };
+      },
+    },
+    signal: controller.signal,
+    now: () => clock,
+    sleep: async () => undefined,
+    readPage: async () => durablePage([], 2),
+    onEvent: (event) => events.push(event),
+  });
+
+  assert.equal(
+    stop.reason,
+    "cancelled",
+    stop.reason === "fatal" ? `stopped fatally: ${stop.error.message}` : "",
+  );
+  const released = events.filter((event): event is Extract<
+    ListenerRuntimeEvent,
+    { type: "delivery_hold_released" }
+  > => event.type === "delivery_hold_released");
+  assert.equal(released.length, 1);
+  assert.equal(released[0]!.signalId, first.id);
+  assert.equal(released[0]!.reason, "hold_budget");
+  /* The measured hold spans the ORIGINAL claim, not this process's start: over
+     20 minutes against a 10 minute budget. A fresh clock would report about a
+     second here, and the release would not have happened at all. */
+  assert.ok(
+    released[0]!.heldMs >= 20 * 60_000,
+    `hold measured from this process only: ${released[0]!.heldMs}`,
+  );
+  // One attempt on the recovered lease, then the seat moves on.
+  assert.deepEqual(model.prompts, [first.id, second.id]);
+  assert.deepEqual(acked, [second.id]);
 });

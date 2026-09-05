@@ -53,6 +53,12 @@ import {
   type ListenerRouteDecision,
   type ListenerRouteMode,
 } from "./main-routing.js";
+import {
+  LISTENER_DELIVERY_MAX_LEASE_MS,
+  LISTENER_PROMPT_TIMEOUT_MS,
+} from "./types.js";
+export { LISTENER_DELIVERY_MAX_LEASE_MS };
+import type { ListenerDeliveryHoldReleaseReason } from "./types.js";
 import type {
   ListenerEffectRecord,
   ListenerEffectStore,
@@ -67,7 +73,6 @@ import type { ActivityPublishErrorCode } from "./activity.js";
 export const LISTENER_PAGE_LIMIT = 100;
 export const LISTENER_IDLE_POLL_MS = 2_000;
 /** Server-fixed maximum delivery lease (§ frozen runtime budgets). */
-export const LISTENER_DELIVERY_MAX_LEASE_MS = 900_000;
 export const LISTENER_DELIVERY_SAFETY_MARGIN_MS = 30_000;
 export const LISTENER_ACK_ONLY_MINIMUM_MS =
   DELIVERY_REQUEST_TIMEOUT_MS + LISTENER_DELIVERY_SAFETY_MARGIN_MS;
@@ -77,6 +82,24 @@ export const LISTENER_PROMPT_START_MINIMUM_MS =
   SIGNAL_READ_TIMEOUT_MS +
   ACP_DEFAULT_REQUEST_TIMEOUT_MS +
   LISTENER_REPLY_ONLY_MINIMUM_MS;
+/**
+ * Default bound on how long ONE claimed delivery may hold the single worker
+ * seat, across every prompt and post attempt on that lease.
+ *
+ * Measured 2026-09-04 on the lead's seat: one open-ended ask used the whole
+ * 10-minute turn budget and four later deliveries waited behind it; two of
+ * them were byte-identical re-sends 1 to 6 minutes apart. The hold was not
+ * bounded by the turn budget at all. A lease runs 15 minutes (DELIVERY_LEASE_MS
+ * server-side), and the pre-bound loop, once no phase budget fitted in what was
+ * left of the lease, SLEPT to lease expiry with an idle worker -- up to five
+ * more minutes of a blocked seat per lease, repeated over as many as
+ * DELIVERY_MAX_ATTEMPTS redeliveries of the same row.
+ *
+ * The bound makes one delivery cost one turn budget rather than one lease.
+ * It is not a separate flag: `cswarm listen start --turn-budget` sets it, so
+ * the seat hold and the turn it bounds cannot drift apart.
+ */
+export const LISTENER_DELIVERY_HOLD_BUDGET_MS = LISTENER_PROMPT_TIMEOUT_MS;
 export const LISTENER_DELIVERY_RETRY_INITIAL_MS = 500;
 export const LISTENER_DELIVERY_RETRY_MAX_MS = 30_000;
 /** EADDRNOTAVAIL probes slowly so the listener does not amplify port exhaustion. */
@@ -182,6 +205,17 @@ export type ListenerRuntimeEvent =
   }
   | { type: "delivery_terminal_failures"; count: number; ts: string }
   | {
+    /**
+     * The seat was handed back before this delivery reached a terminal effect,
+     * so the next delivery can be claimed now instead of after the lease.
+     */
+    type: "delivery_hold_released";
+    signalId: string;
+    reason: ListenerDeliveryHoldReleaseReason;
+    heldMs: number;
+    ts: string;
+  }
+  | {
     type: "delivery_ack";
     signalId: string;
     outcome: DeliveryOutcome;
@@ -245,6 +279,24 @@ export interface ListenerRuntimeOptions {
   routeMode?: ListenerRouteMode;
   deferOverChars?: number | null;
   pendingMainQueue?: Pick<FilePendingMainQueue, "enqueue">;
+  /**
+   * Bound on one delivery's hold of the worker seat, measured from the moment
+   * the claim was RESERVED (the journal's claimCreatedAt), which precedes the
+   * lease grant by one claim round trip, so the measured hold is never shorter
+   * than the real one. Defaults to LISTENER_DELIVERY_HOLD_BUDGET_MS; `cswarm
+   * listen start --turn-budget` passes the same value it gives a prompt turn.
+   *
+   * Not clamped to the server lease. leaseSpent refuses to START a phase when
+   * what is left of the lease is under the phase minimum; it does not interrupt
+   * a running turn, so a turn budget above the lease really does hold the
+   * worker past it.
+   *
+   * The first process attempt of a lease always runs, so a budget shorter than
+   * one turn cannot starve a delivery; the bound stops the SECOND and later
+   * attempts and replaces the wait-out-the-lease sleep with an immediate
+   * release.
+   */
+  deliveryHoldBudgetMs?: number;
 }
 
 export type ListenerRuntimeStop =
@@ -707,6 +759,8 @@ export async function runListenerRuntime(
   const pollMs = options.pollMs ?? LISTENER_IDLE_POLL_MS;
   const routeMode = options.routeMode ?? "worker";
   const deferOverChars = options.deferOverChars ?? null;
+  const deliveryHoldBudgetMs = options.deliveryHoldBudgetMs ??
+    LISTENER_DELIVERY_HOLD_BUDGET_MS;
   const abort = options.signal;
   const hasInstanceId = options.listenerInstanceId !== undefined;
   const hasJournal = options.deliveryJournal !== undefined;
@@ -726,6 +780,14 @@ export async function runListenerRuntime(
     return await closeBeforeStart(
       options.model,
       new Error("an injected delivery client requires durable delivery configuration"),
+    );
+  }
+  if (
+    !Number.isSafeInteger(deliveryHoldBudgetMs) || deliveryHoldBudgetMs <= 0
+  ) {
+    return await closeBeforeStart(
+      options.model,
+      new Error("listener delivery hold budget must be a positive number of milliseconds"),
     );
   }
   try {
@@ -1409,6 +1471,26 @@ export async function runListenerRuntime(
           stop = { reason: "cancelled" };
           break;
         }
+        /* The hold clock starts when this delivery was CLAIMED, which the
+           journal records as claimCreatedAt and keeps through recordLease. A
+           lease recovered across a restart therefore keeps its original clock
+           rather than getting a fresh budget.
+
+           An earlier comment here, and the design note beside it, said the
+           original claim time was not in the journal. That was false, and a
+           review arm found it: reserveClaim writes claimCreatedAt and the
+           leased phase cannot parse without it. Reading it is what makes the
+           bound hold across a restart.
+
+           Slightly conservative on purpose: claimCreatedAt precedes the lease
+           grant by one claim round trip, so the measured hold is never shorter
+           than the real one. A recovered lease still gets one engine.process
+           before the bound can fire, because processAttempt is 0 again; that is
+           the anti-starvation rule below, not an unmeasured clock. */
+        const claimedAtMs = Date.parse(active.claimCreatedAt);
+        const holdStartedAtMs = Number.isFinite(claimedAtMs)
+          ? Math.min(claimedAtMs, now())
+          : now();
         const signal = authoritativeSignal(claimed);
         let terminal: ListenerEffectRecord | null = null;
         try {
@@ -1479,22 +1561,34 @@ export async function runListenerRuntime(
                 throw new Error("stored listener effect does not match the authoritative delivery");
               }
               const requiredBudget = effectPhaseBudget(before);
-              if (leasedUntilMs <= now() + requiredBudget) {
-                await sleep(
-                  Math.max(
-                    0,
-                    leasedUntilMs + LISTENER_DELIVERY_SAFETY_MARGIN_MS - now(),
-                  ),
-                  abort,
-                );
-                if (abort?.aborted) {
-                  stop = { reason: "cancelled" };
-                  break;
-                }
-                if (now() >= leasedUntilMs + LISTENER_DELIVERY_SAFETY_MARGIN_MS) {
-                  await journal.clearActive(eventTime(now));
-                  after = null;
-                }
+              /* ELAPSED, never projected. The lease question asks whether the
+                 next phase still FITS (requiredBudget is a projection and
+                 belongs there); the seat question asks how much of its share
+                 this delivery has already USED. Measured on a live listener
+                 with --turn-budget 30s: the projected form released after 74ms,
+                 because one phase minimum (about 4 minutes) never fits inside a
+                 30s budget, so a delivery whose first attempt failed fast lost
+                 the seat instead of using its retry budget.
+                 The first attempt on a lease also always runs, so a budget
+                 shorter than one phase cannot starve a delivery. */
+              const holdSpent = processAttempt > 0 &&
+                now() - holdStartedAtMs >= deliveryHoldBudgetMs;
+              const leaseSpent = leasedUntilMs <= now() + requiredBudget;
+              if (holdSpent || leaseSpent) {
+                /* Hand the seat back now. Waiting out the lease held an idle
+                   worker for as much as five more minutes while later
+                   deliveries queued; the row keeps its live lease either way,
+                   so the server redelivers it on the same schedule and this
+                   costs it no extra attempt. */
+                await journal.clearActive(eventTime(now));
+                after = null;
+                options.onEvent?.({
+                  type: "delivery_hold_released",
+                  signalId: signal.id,
+                  reason: holdSpent ? "hold_budget" : "lease_budget",
+                  heldMs: Math.max(0, now() - holdStartedAtMs),
+                  ts: eventTime(now),
+                });
                 break;
               }
               const processed = await engine.process(signal);

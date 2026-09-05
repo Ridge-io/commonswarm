@@ -277,6 +277,8 @@ import {
   LISTENER_DEFER_OVER_MIN,
   emptyListenerReadHealth,
   summarizeListenerReadHealth,
+  LISTENER_DELIVERY_HOLD_RELEASE_CLAUSES,
+  LISTENER_DELIVERY_HOLD_RELEASE_REMEDIES,
   type ListenerReadHealthSummary,
   type ListenerCanaryAttemptCallback,
   type ListenerPermissionMode,
@@ -487,7 +489,10 @@ const TASK_FLAGS = [
  */
 class UsageError extends Error {}
 
-function usage(): string {
+/** Exported so a claim made in help can be swept alongside the same claim in
+ * status output; a correction that reaches one surface and not the other is the
+ * failure this repo keeps measuring. */
+export function usage(): string {
   const agentCredential = "[--agent-token-file <path> | --agent-token-stdin]";
   const requiredAgentCredential = "(--agent-token-file <path> | --agent-token-stdin)";
   return `cswarm ${CLI_BUILD_VERSION} (protocol ${CLIENT_PROTOCOL_VERSION})
@@ -608,7 +613,10 @@ due — a turn never outlives its credential. Right after a rotation the full
 budget is available up to the token TTL minus 60s (about 59m on the default 1h
 TTL); a turn that lands just before a rotation can be clamped to the ~5m
 renewal lead, and if it times out there, durable delivery retries it on the
-fresh credential.
+fresh credential. The same budget also bounds how long ONE delivery may hold the
+worker seat across its retries: when it is spent the listener hands the seat
+back and claims the next delivery. After the lease ends the service either
+delivers the released one again or terminates it.
 
 listen start --route worker|main|split chooses where directed messages go. worker
 is the unchanged default. main queues every ask or note for the interactive session.
@@ -4633,6 +4641,14 @@ export function listenerStatusJson(
     lastAckOutcome: status.lastAckOutcome ?? null,
     consecutiveAckFailureCount: status.consecutiveAckFailureCount ?? null,
     lastAckSignalId: status.lastAckSignalId ?? null,
+    currentDeliverySignalId: status.currentDeliverySignalId ?? null,
+    currentDeliverySince: status.currentDeliverySince ?? null,
+    currentDeliveryElapsedMs: status.currentDeliverySince
+      ? Math.max(0, nowMs - Date.parse(status.currentDeliverySince))
+      : null,
+    pendingDeliveryCountAt: status.pendingDeliveryCountAt ?? null,
+    heldBackDeliveries: status.heldBackDeliveries ?? [],
+    heldBackDeliveryCount: (status.heldBackDeliveries ?? []).length,
     routeMode: status.routeMode ?? "worker",
     deferOverChars: status.deferOverChars ?? null,
     pendingForMainCount: status.pendingForMainCount ?? 0,
@@ -4856,8 +4872,87 @@ export function renderListenerStatus(
     lines.push("Delivery mode has not been reported yet.");
   }
   if (status.pendingDeliveryCount !== null) {
+    /* The count keeps its own sentence unchanged. The SECOND sentence is what
+       both review arms asked for: the number is an observation, and on a
+       listener that stopped claiming days ago the first sentence alone reads as
+       current. The date comes from pendingDeliveryCountAt, written wherever the
+       count is; dating it from lastClaimAt left the delivery-mode window
+       undated, which an arm reached by killing the process before its first
+       claim. */
+    const observedAt = status.pendingDeliveryCountAt ?? null;
     lines.push(
-      `Pending deliveries reported by the service: ${status.pendingDeliveryCount}.`,
+      `Pending deliveries reported by the service: ${status.pendingDeliveryCount}.` +
+        (observedAt === null
+          ? " When the service reported it was not recorded."
+          : ` The service reported that ${relativeAge(observedAt, nowMs)}.`),
+    );
+  }
+  const currentDeliveryId = status.currentDeliverySignalId ?? null;
+  const currentDeliverySince = status.currentDeliverySince ?? null;
+  if (currentDeliveryId !== null && currentDeliverySince !== null) {
+    lines.push(
+      `Working on delivery ${currentDeliveryId}, claimed ${
+        relativeAge(currentDeliverySince, nowMs)
+      }.`,
+    );
+  } else {
+    lines.push("No delivery is being worked on right now.");
+  }
+  /* No waiting-to-be-claimed number is rendered. Two review rounds refuted every
+     form of it: a held-back row still holds a live lease, so the service counts
+     it as pending while the claim query cannot return it; more than one can be
+     held back at once; and any of them can be expired or acknowledged elsewhere
+     without this listener hearing. What IS said below is what this listener did
+     and when. Retired lines, kept so a reader who met them can place them:
+       "Deliveries waiting behind it: 2. The queue has not been empty since 4m
+        ago, so the oldest has waited at least that long."
+       "Deliveries waiting to be claimed: 1. This listener last saw an empty
+        queue 4m ago." */
+  const heldBack = status.heldBackDeliveries ?? [];
+  const newestHeldBack = heldBack[0];
+  if (newestHeldBack !== undefined) {
+    const others = heldBack.length - 1;
+    /* Past tense about this listener, plus a statement of mechanism that names
+       both outcomes, so no clause asserts the row's current server state.
+       The remedy comes from the same reason-keyed Record as the clause, because
+       the two reasons need DIFFERENT advice and only one of them names a
+       setting at all. Neither names a command: the line renders only while the
+       listener is ready or stopping, and `listen start` refuses in exactly
+       those states, so any start command printed here would be refused by the
+       process that printed it.
+       Retired final clauses, all refuted by review arms:
+         "If this repeats, raise the bound: cswarm listen start --turn-budget
+          <duration>" -- unrunnable as printed (start needs a credential, a
+          workspace and a provider, and <duration> is a placeholder), refused in
+          the states where this line renders, and the wrong direction for a
+          lease_budget release.
+         "N other deliveries were handed back earlier and have not come back to
+          this listener" -- a claim about every hand-back, which the capped set
+          stops being able to make at LISTENER_HELD_BACK_MAX; the count now
+          describes what this listener still tracks, which is true at the cap.
+         "It was not answered and not acknowledged, so it stays with the
+          service, which decides when it comes back" -- false as soon as the
+          row's own until elapses and the next claim expire-acknowledges it.
+         "For what the service did with it since: cswarm receipt <id>
+          --workspace-id <ws>" -- not runnable as printed (receipt requires an
+          agent credential) and refused even with one, because the receipt read
+          is author-only and this listener is the RECIPIENT. The remedies now
+          name no command at all. */
+    lines.push(
+      `Delivery ${newestHeldBack.signalId} was handed back ${
+        relativeAge(newestHeldBack.at, nowMs)
+      } because ${
+        LISTENER_DELIVERY_HOLD_RELEASE_CLAUSES[newestHeldBack.reason]
+      }.` +
+        (others > 0
+          ? ` This listener is still tracking ${others} other handed-back ${
+            others === 1 ? "delivery" : "deliveries"
+          }.`
+          : "") +
+        " This listener has not answered it. After the lease ends the service" +
+        ` either delivers it again or terminates it. If this repeats, ${
+          LISTENER_DELIVERY_HOLD_RELEASE_REMEDIES[newestHeldBack.reason]
+        }.`,
     );
   }
   lines.push(
@@ -5618,6 +5713,9 @@ async function runConfiguredListener(options: {
             },
             routeMode,
             deferOverChars,
+            /* One delivery may hold the seat for one turn budget, not for the
+               whole 15-minute lease. Same lever, so the two cannot drift. */
+            deliveryHoldBudgetMs: turnBudgetMs,
             pendingMainQueue,
             fetcher: httpClient.fetch,
           });

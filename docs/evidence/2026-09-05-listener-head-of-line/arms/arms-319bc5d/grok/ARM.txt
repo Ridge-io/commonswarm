@@ -1,0 +1,211 @@
+I'll read REVIEW.md and DIFF.patch first, then follow REVIEW.md exactly.The patch is truncated. I'll keep reading it and pull the source files REVIEW.md names.The patch continues past the tests. I'll finish it and open the source files the brief names.I'll read the runtime, journal, durable-delivery, and types next so I can attack each review item.First `diff --git` line of DIFF.patch:
+
+`diff --git a/docs/evidence/2026-09-05-listener-head-of-line/DESIGN-BOUNDS.md b/docs/evidence/2026-09-05-listener-head-of-line/DESIGN-BOUNDS.md`
+
+SHA `319bc5d354705fcbef853628be612b524d7bb3e4`.
+
+## 1. Abandoning a live lease
+
+I tried to break recovery. I did not.
+
+Release runs only in the ask `while (terminal === null)` loop, **before** `engine.process`. It calls `journal.clearActive`. That write sets `active: null` from any phase. It does not run in `claim_pending` or `ack_pending`. It does not call `prepareAck` or `sendPreparedAck`.
+
+After `clearActive`, `terminal` stays null, so the outer loop `continue`s. The next pass calls `reserveClaim` with a **new** `claimCommandId`. Replay of the old command id is dropped on purpose. Server step 6 still needs `lease_id IS NULL`, so the released row cannot be claimed again until step 2 clears a stale lease. `attempt_count` goes up only on a new claim, not on expiry. That matches “no extra attempt”.
+
+`exactRecoveredLease` still runs only when journal phase is `leased`. A crash **before** release still replays the stored lease. A crash **after** release has nothing to replay; the row waits for `leased_until`.
+
+Double-ack: no. `prepareAck` is behind `terminal !== null`. Release leaves `terminal` null.
+
+Double-reply: the release path does not post. If the effect is already `done`, the **leased** recovery path acks it **before** the hold loop.
+
+Lost: no. The row stays unacked. If `until` has already elapsed, the next claim expire-acks it in step 3. That is the server schedule, not a lost row.
+
+`observed` is not sent at claim time. Notes never enter this hold loop.
+
+## 2. Request amplification
+
+After release, `if (terminal === null) continue` returns to the outer `while (true)`: one more read page, then `claimAgentInbox`. If the only pending row is still leased, `claimed === null`, phase is `claim_pending`, then `clearActive` and `sleep(pollMs)` (`LISTENER_IDLE_POLL_MS` = 2s).
+
+That is one extra claim, then normal idle polling. It is more traffic than the old sleep-to-lease-expiry. It is **not** worse than idle. There is no tight loop with no sleep. Empty claims sleep. Claim rate at 2s is 30/min; server limit is 120/min.
+
+A new unleased row gets a fresh 15m lease, so it cannot bounce `leaseSpent` at attempt 0 in a no-sleep chain.
+
+## 3. The bound
+
+`holdSpent = processAttempt > 0 && now() - holdStartedAtMs >= deliveryHoldBudgetMs`.
+
+Starvation of a first attempt by the **hold** bound: no. The check is at the start of the loop, and `processAttempt > 0` blocks a release before the first `engine.process`. `--turn-budget` minimum is 30s.
+
+`leaseSpent` **can** skip the first attempt on a recovered lease with less than `LISTENER_PROMPT_START_MINIMUM_MS` (240s) left. That is the old lease-fit check, not the new hold bound. DESIGN-BOUNDS now says this.
+
+Projection for lease vs elapsed for hold is the right split. The 74ms projected-hold bug is real; elapsed is the fix.
+
+A near-budget first attempt can start a second full turn (elapsed 9m59s of a 10m bound, then one more turn). The bound does not stop in-flight work. DESIGN-BOUNDS states that as “attempts already started plus one turn budget”. Not a silent miss of the bound: the next loop then releases.
+
+`holdStartedAtMs` now reads `active.claimCreatedAt`. See 29.
+
+## 4–5, 10–12, 16–19. Retired fields
+
+`waitingBehind`, `queueWaitingSince`, `releasedDeliverySignalId`, and the old queue sentences are gone. Status does not count “waiting to be claimed”.
+
+## 6 and 21. Status file compatibility
+
+New keys are optional in `parseStatus`. The `...(row.X === undefined ? {} : {…})` idiom matches `lastAckSignalId`. They are **not** in `STATUS_DELIVERY_KEYS`, so `writeListenerStatus` does not refuse a status that lacks them.
+
+An old file without those keys parses without inserting them. `JSON.stringify` of that object still omits them.
+
+Sensitive: signal ids must match `UUID_RE`; timestamps go through `nullableTimestamp`; reasons must be in `LISTENER_DELIVERY_HOLD_RELEASE_REASONS`. `STATUS_SENSITIVE_KEYS` still rejects `token`, `body`, `leaseId`, command ids.
+
+Log: `held_ms` must be a non-negative safe integer; `release_reason` must be in the same reasons array.
+
+Malformed `heldBackDeliveries` (non-array, `null`, over-cap, unknown entry key, duplicate id, bad reason) returns `null` and makes the **whole** status unreadable. That matches `readHealth`. Right for this 0600 file. An old file with no key still parses.
+
+## 7. D-053 and generated enumerations
+
+No new `error.message` branch. Read-retry still uses `classifySignalReadFailure` and `abort?.aborted`. Reasons are `LISTENER_DELIVERY_HOLD_RELEASE_REASONS`. Clauses and remedies are `Record<ListenerDeliveryHoldReleaseReason, string>`, so a new reason is a type error until it has both. Validator, log, and `cli.ts` all read those constants. The “15 minutes” in the hold_budget remedy is generated from `LISTENER_DELIVERY_MAX_LEASE_MS`.
+
+## 8. Terminal states
+
+`transition` clears current and `heldBackDeliveries` on `starting` / `stopped` / `failed`. `effectiveListenerStatus` clears them on unclean exit from `starting` / `ready` / `stopping`. `stopping` is not in `notWatching`; the process is still there. After death, the unclean-exit path clears them.
+
+`pendingDeliveryCount` stays, with its date. See 14.
+
+## 9 and 26. The tests
+
+Ten tests were added, not six. `tests/listener-runtime.test.ts` is in the `npm test` literal list.
+
+1. **Hands the seat to the next delivery.** Mutation: drop `holdSpent`, keep only `leaseSpent`. After the 600s hog, clock is 00:10, lease ends 00:15, `requiredBudget` is 240s, so `leaseSpent` is false. `model.prompts` is no longer `[first, second]`. Red. Behaviour pin.
+
+2. **Not acknowledged.** Mutation: ack on release. `ackOutcomes` is no longer `[]`. Red. Mutation: drop only `holdSpent`. Hog burns 300s; remaining lease is 10m; `leaseSpent` is false; later release is `lease_budget`. `releases[0].reason === "hold_budget"` goes red. The `heldMs >= holdBudgetMs` pin goes red with a fresh clock.
+
+3. **Status copy.** Claim test. Pins the pending sentence, each generated clause and remedy, the swap control, and the retired strings. Mutation that makes the swap red: one shared remedy string in both Record values. The one-row `!heldBack.includes("still tracking")` is not over-broad; the two-row and 16-row fixtures positively require that phrase. The old ban on “comes back” is gone. `!includes("up to the")` is on the **remedy string only**, so it does not ban a later correct use of that phrase elsewhere.
+
+   The test **name** still says “how long the queue has waited”. The body no longer asserts that. Name drift, not a green-under-mutation hole.
+
+4. **Fast first failure.** Mutation: projected hold (`now() + requiredBudget` against the hold deadline). 74ms + 240s exceeds a 30s budget. `prompts` is no longer `[first, first]`. Red.
+
+5. **Stopped listener.** Mutation: do not clear `currentDelivery*` in `transition("stopped")`. Human line includes “Working on delivery”. Red.
+
+6. **Supervisor tracking.** Mutation: drop the first id when the second is released. Last snapshots forget `HOLD_FIRST_ID`. Red.
+
+7. **Pending count never trims.** Mutation: restore `.slice(0, pendingDeliveryCount)` on claim. Snapshots after pending 1 then 0 shrink. Red.
+
+8. **Delivery-mode date.** Mutation: stop writing `pendingDeliveryCountAt` on `delivery_mode`. `lastClaimAt` stays null and the human line loses “3h ago”. Red.
+
+9. **Help sweep.** Mutation: restore “the service redelivers the released one”. The negative goes red.
+
+10. **Recovered hold clock.** `leasedActive` sets `claimCreatedAt` to `00:00:00`. Clock starts at `00:20:00`. Mutation: `holdStartedAtMs = now()`. `heldMs >= 20 * 60_000` goes red. It does not distinguish `claimCreatedAt` from `claimLastAttemptAt` (both are ~00:00). Still a behaviour pin for “not `now()`”.
+
+## 13. Waiting count gone
+
+The listener knows the claimed id, when this process last wrote the claim event, which ids it handed back and why, and the last pending count. It still says all of those. It does not know how many rows are claimable. The claim wire has no enqueue times and does not split leased vs claimable. Removing the waiting number is not a regression of a fact on the wire.
+
+## 14 and 20. Dated pending count
+
+Writers: `delivery_mode` (At is `event.ts` when count is non-null), `delivery_claim` (always `event.ts`), `delivery_ack` (both null). I found no live path that writes a non-null count without At.
+
+`stopping`: dated observation stays. Read-retry while `ready`: last observation keeps its timestamp. SIGKILL: `effectiveListenerStatus` keeps both. “When the service reported it was not recorded.” is reachable for a file that has the count and omits At. True about that file.
+
+## 15. Generated clauses
+
+A new reason without a clause is a type error. `hold_budget`: “it used the turn budget for one delivery”. Fires after a first attempt and elapsed hold ≥ `--turn-budget`. True for its path, including many short retries that sum to the budget. `lease_budget`: “what was left of its lease could not cover the next step”. That is `leasedUntilMs <= now() + requiredBudget`. True for its path, including attempt 0. If both are true, the code names `hold_budget`; hold is spent, so that clause is still true.
+
+## 22. No trim
+
+The set can name a row the service has already expire-acked or poison-acked. No event reaches the listener. The named-row clauses stay true as local history. At the cap, “still tracking 15 other handed-back deliveries” describes the set. True at 16. The 17th insert drops the oldest. That is the accepted bound, not a rendered lie.
+
+## 23. Retired start-command remedy
+
+Gone. Per-reason remedies are items 25 / 31 / 33. No `cswarm listen start` and no `cswarm receipt` in the line.
+
+## 25. Per-reason remedy (`effectPhaseBudget`)
+
+**`effectPhaseBudget` contains no turn budget.** The correction in `src/listener/types.ts` is right. The source:
+
+```
+LISTENER_ACK_ONLY_MINIMUM_MS = 30s + 30s = 60s
+LISTENER_REPLY_ONLY_MINIMUM_MS = 30s + 60s = 90s
+LISTENER_PROMPT_START_MINIMUM_MS = 30s + 120s + 90s = 240s
+```
+
+Those are `DELIVERY_REQUEST_TIMEOUT_MS`, `LISTENER_DELIVERY_SAFETY_MARGIN_MS`, `SIGNAL_REQUEST_TIMEOUT_MS`, `SIGNAL_READ_TIMEOUT_MS`, `ACP_DEFAULT_REQUEST_TIMEOUT_MS`. `LISTENER_PROMPT_TIMEOUT_MS` (600s) is not in the sum. Raising `--turn-budget` does not move `leaseSpent`. Round 5 was wrong on that point; the recorded correction is right.
+
+**`lease_budget`.** `DELIVERY_LEASE_MS` = 15m, `DELIVERY_MAX_ATTEMPTS` = 10. On a new lease, remaining is 15m > 240s, so the first `engine.process` runs. Each new claim increments `attempt_count`. After 10, step 4 writes `failed_terminal`. `LISTENER_MAX_PROMPT_ATTEMPTS` is 3 on the effect record, which survives redelivery, so a fast-fail ask can terminalize sooner. The operator does not need to change a listener setting. Repeating hand-backs are not infinite. “nothing needs raising” holds.
+
+A 60m turn budget can make `lease_budget` fire after a long failed turn (remaining < 240s). The next lease is still 15m. Still nothing to raise.
+
+**`hold_budget` as a lever.** For 30s and 10m it is the right flag, and it says the bound is read at start so the process must be stopped and started. It does not print a command. See 33 for the 15-minute wording.
+
+## 27 / 30 / 34. `DESIGN-BOUNDS.md`
+
+Three accepted bounds. I checked each reason at the source.
+
+**Held-back set can name a finished row.** Reason holds. Step 2 unleases when `leased_until <= statement_timestamp()`. Step 3 expire-acks unleased rows with `s.until <= statement_timestamp()`. Step 4 poison-acks unleased live rows with `attempt_count >= 10`. No event reaches the listener. Step 7 counts unacked rows with `s.until > statement_timestamp()` and does not look at the lease. Trim to that count is unsound. Keep as a bound.
+
+**Oldest waiting age is unknowable.** Reason holds. The claim wire has a pending count and the claimed row. It has no enqueue times and does not separate leased from claimable. Keep as a bound.
+
+**Recovered lease / in-flight turn.** The two retired sentences are gone. What remains I checked:
+
+- “The journal DOES store the claim time” — true. `reserveClaim` writes `claimCreatedAt`. `recordLease` spreads it. A `leased` parse requires `isValidIsoTimestamp(claimCreatedAt)` and `leasedUntil > claimCreatedAt`.
+- “one turn can outlive its lease” — true. `leaseSpent` does not interrupt `engine.process`. `--turn-budget` max is 60m.
+- “A recovered lease still gets ONE `engine.process` before the HOLD bound can fire” — true for `holdSpent` (`processAttempt > 0`). The document now says this is **not** “every lease gets one attempt”, and that `leaseSpent` can release at attempt 0. That matches the `if (holdSpent || leaseSpent)` block.
+
+No leftover “every lease gets one attempt” as a current claim. Keep as a bound.
+
+## 29. The hold clock reads `claimCreatedAt`
+
+Fresh claim: `reserveClaim` returns an object whose `claimCreatedAt` is the `now` argument (`eventTime(now)` from the runtime). `recordLease` does not change that field. The runtime does not re-read the journal; it uses that in-memory `active`. Present and correct.
+
+Recovered `leased` row: `read()` cannot parse without `claimCreatedAt`. The recovery test starts at `00:20:00` with `claimCreatedAt` `00:00:00` and asserts `heldMs >= 20m`. I could not make a recovered leased row silently take a fresh budget without a bad timestamp.
+
+Clamp `Math.min(claimedAtMs, now())`: reached when `claimCreatedAt` is in the future. That is a clock that stepped backward after reserve. Then `holdStartedAtMs = now()`, which is the old fresh clock. Not a real recovery sequence. Normal path (`claimCreatedAt` in the past) is unchanged.
+
+Fallback `now()` when `Date.parse` is not finite: dead for a journal-sourced row. `isValidIsoTimestamp` already requires `Date.parse` to be finite. Dead for `reserveClaim` too: it rejects a `now` that fails that check. It does **not** restore the old fresh clock on a valid recovered lease.
+
+Claim time precedes the lease grant by the claim RTT (and any claim retries). The measured hold is never shorter than the real seat hold. A long claim-retry can make the bound fire right after the first `engine.process`. That is conservative, not a silent fresh clock. `processAttempt > 0` still lets one `engine.process` run for the hold bound. It is not enough for `leaseSpent`. That split is now written in DESIGN-BOUNDS.
+
+`currentDeliverySince` is still the `delivery_claim` event ts, including a recovered replay. After restart the human line can read “claimed under 1m ago” for a lease taken 20m earlier. That line is about this process’s claim RPC, not the hold clock. The hold clock itself is the journal time. I do not treat that as a false hold bound.
+
+## 31 / 33. The two remedies, after the cap wording
+
+`LISTENER_DELIVERY_MAX_LEASE_MS` moved to `types.ts` as `900_000`. `runtime.ts` re-exports it. Tests import it from `src/listener/index.js`. Runtime still uses the same binding for the claim-pending horizon and for rejecting a lease with `leasedUntilMs > now() + LISTENER_DELIVERY_MAX_LEASE_MS`. Behaviour of those checks is unchanged. Server `DELIVERY_LEASE_MS` is also 900_000.
+
+`lease_budget` remedy matches the server: new lease is 15m, step 4 stops at 10 attempts. Nothing to raise.
+
+`hold_budget` remedy no longer says “up to the 15 minutes”. It says raising past that point stops helping, **because** the turn then outlives its lease and the reply can no longer be acknowledged.
+
+Ack path: `durable-delivery.ts` live ack requires `lease_id` match, `leased_by` match, **and** `leased_until > statement_timestamp()`. A turn that runs past the lease cannot ack `replied`. That reason is true.
+
+Does the sentence still read as a cap? No. First clause: a larger `--turn-budget` gives more of the seat (no `Math.min` against the lease; `listenerTurnBudgetMs` allows 60m). Second clause: past 15m that extra time does not get you an ack. `cli.ts` next to `deliveryHoldBudgetMs: turnBudgetMs` still says the seat bound is the turn budget, not the 15-minute lease.
+
+A 20m setting still helps a 12m turn that a 10m setting would cut, and that 12m turn can still ack. “Stops helping” is about the extra minutes **beyond** the lease, which is what the `because` clause names. Not a clamp.
+
+## 32 / 35 / 36. Whole-lane sweep on this SHA
+
+Items 1, 2, 3, 6, 7 still hold. The recovered clock is still measured from `claimCreatedAt`. Later commits did not put back a waiting count, a trim-to-pending, a start command, or a receipt command.
+
+`deliveryHoldBudgetMs` comment now says the hold is measured from `claimCreatedAt` (the reserve, before the grant) and that it is **not** clamped to the lease. Both match the code. “The first process attempt of a lease always runs” in that same comment is true of **this** bound (`holdSpent` needs `processAttempt > 0`), not of `leaseSpent`. DESIGN-BOUNDS is the precise split.
+
+User-visible sentences and factual comments I re-read:
+
+- Help: seat bound is `--turn-budget`; when spent, hand the seat back; after the lease ends the service delivers again or terminates. Matches status. Matches steps 2 then 3/4/6.
+- Status pending line, dated. True. Undated form true when At is missing.
+- “Working on delivery X, claimed …” / “No delivery is being worked on right now.” True of the current-delivery fields.
+- Held-back line: past tense, generated clause, “has not answered it” (this process; the row leaves the set on claim or ack), mechanism pair, per-reason remedy. No command.
+- `hold_budget` / `lease_budget` clauses: true on their paths.
+- Remedies: see 33. No “up to the 15 minutes”.
+- DESIGN-BOUNDS: retired false sentences are marked retired. Remaining claims match the SQL and the runtime.
+
+I did **not** find a user-visible sentence or factual comment on this SHA that the code does not do.
+
+The seat bound is correct: elapsed hold from `claimCreatedAt`, first attempt always runs for `holdSpent`, no ack on release, next claim is immediate, optional status keys round-trip. Status does not say a waiting-to-be-claimed count. No earlier fix is undone.
+
+## What the lane claims that this diff does NOT establish
+
+The brief’s original claim 3 still lists `queueWaitingSince` / `queueWaitingForMsAtLeast`. This SHA does not add them. They were added, refuted, and removed.
+
+The live control is a real detached `cswarm listen start` against **local fakes**, not hosted production. The committed output does show the seat moving after a 30s hold, `release_reason: hold_budget`, no ack of the released id, and the current hold_budget sentence (no “up to the 15 minutes”).
+
+I did not run the tests or the live control in this arm. The round-trip claim is from the parse/write code, not from a bytes dump I executed.
+
+VERDICT: PASS

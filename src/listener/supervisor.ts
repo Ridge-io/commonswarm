@@ -10,6 +10,7 @@ import {
   writeListenerStatus,
   type ListenerPaths,
   type ListenerProviderId,
+  LISTENER_HELD_BACK_MAX,
   type ListenerStatus,
 } from "./control.js";
 import { isRestartableListenerStop } from "./runtime.js";
@@ -285,6 +286,7 @@ export async function runListenerSupervisor(
     lastWorkerStderrTail: null,
     deliveryMode: null,
     pendingDeliveryCount: null,
+    pendingDeliveryCountAt: null,
     lastTerminalDeliveryFailureCount: null,
     lastTerminalDeliveryFailureAt: null,
     lastClaimAt: null,
@@ -296,6 +298,11 @@ export async function runListenerSupervisor(
     lastAckOutcome: carried?.lastAckOutcome ?? null,
     consecutiveAckFailureCount: carried?.consecutiveAckFailureCount ?? null,
     lastAckSignalId: carried?.lastAckSignalId ?? null,
+    /* Never carried across a restart: a seat this process does not hold cannot
+       be reported as held, and the queue age restarts with the observations. */
+    currentDeliverySignalId: null,
+    currentDeliverySince: null,
+    heldBackDeliveries: [],
     routeMode: options.routeMode ?? "worker",
     deferOverChars: options.deferOverChars ?? null,
     pendingForMainCount: 0,
@@ -339,9 +346,27 @@ export async function runListenerSupervisor(
     state: ListenerStatus["state"],
     changes: Partial<ListenerStatus> = {},
   ) => {
+    /* A process that has stopped, or that is starting a fresh runtime attempt,
+       holds no delivery and is not watching the queue. Clearing HERE, keyed on
+       the state, is what keeps a later exit path from leaving the claim behind:
+       a stopped listener whose status still named a delivery in hand read
+       "Working on delivery X, claimed 3h ago", and its queue clock, which is
+       rendered against read time, read "the queue has not been empty since 3h
+       ago" from a process that stopped observing it 3h ago. Both review arms on
+       33cd24b raised the second one; the in-process restart path
+       (transition("starting")) was raised there too. */
+    const notWatching = state === "starting" || state === "stopped" ||
+      state === "failed";
     status = {
       ...status,
       ...changes,
+      ...(notWatching
+        ? {
+          currentDeliverySignalId: null,
+          currentDeliverySince: null,
+          heldBackDeliveries: [],
+        }
+        : {}),
       state,
       updatedAt: iso(now),
     };
@@ -552,6 +577,9 @@ export async function runListenerSupervisor(
         ...status,
         deliveryMode: event.mode,
         pendingDeliveryCount: event.pendingDeliveryCount,
+        pendingDeliveryCountAt: event.pendingDeliveryCount === null
+          ? null
+          : event.ts,
         updatedAt: event.ts,
       };
       persist();
@@ -564,6 +592,28 @@ export async function runListenerSupervisor(
       return;
     }
     if (event.type === "delivery_claim") {
+      /* The server counts every unacked live delivery for this agent, the one
+         just claimed included, so what is WAITING is one fewer while a seat is
+         held. */
+      /* A held-back row leaves the set on its OWN evidence and nothing else:
+         this claim returned it, or it was acknowledged.
+
+         The pending count is NOT evidence, and an earlier version that trimmed
+         the set to it was unsound in both directions. Both round-4 arms proved
+         it from the server SQL: step 7 counts unacked rows whose signal
+         `until > statement_timestamp()`, while step 2 unleases only when
+         `leased_until <= statement_timestamp()`. A handed-back row whose TTL
+         elapsed under a live lease is therefore still leased, still unacked,
+         and absent from the count, so a low count dropped rows that were still
+         held back; and because the set is newest first, the slice discarded the
+         oldest, which is the one most likely to still be live. The count also
+         includes rows that were never held back, so it could sit above the set
+         and trim nothing.
+
+         The set is now exactly what it says: hand-backs this listener has not
+         seen since. Its bound is LISTENER_HELD_BACK_MAX, not a server number. */
+      const heldBack = (status.heldBackDeliveries ?? [])
+        .filter((entry) => entry.signalId !== event.signalId);
       status = {
         ...status,
         readHealth: recordListenerClaim(
@@ -571,6 +621,10 @@ export async function runListenerSupervisor(
           event.ts,
         ),
         pendingDeliveryCount: event.pendingDeliveryCount,
+        pendingDeliveryCountAt: event.ts,
+        currentDeliverySignalId: event.signalId,
+        currentDeliverySince: event.signalId === null ? null : event.ts,
+        heldBackDeliveries: heldBack,
         lastClaimAt: event.ts,
         updatedAt: event.ts,
       };
@@ -602,6 +656,36 @@ export async function runListenerSupervisor(
       });
       return;
     }
+    if (event.type === "delivery_hold_released") {
+      status = {
+        ...status,
+        currentDeliverySignalId: null,
+        currentDeliverySince: null,
+        /* Held back, NOT waiting to be claimed: the row keeps its live lease,
+           so the service cannot hand it to anyone until that lease expires.
+           Both review arms on 33cd24b measured the earlier wording counting it
+           among deliveries "waiting to be claimed". Newest first, deduplicated
+           on the id (a row can be released, redelivered and released again),
+           and bounded. */
+        heldBackDeliveries: [
+          { signalId: event.signalId, at: event.ts, reason: event.reason },
+          ...(status.heldBackDeliveries ?? []).filter((entry) =>
+            entry.signalId !== event.signalId
+          ),
+        ].slice(0, LISTENER_HELD_BACK_MAX),
+        lastSignalId: event.signalId,
+        updatedAt: event.ts,
+      };
+      persist();
+      log({
+        ts: event.ts,
+        event: "listener_delivery_hold_released",
+        signal_id: event.signalId,
+        release_reason: event.reason,
+        held_ms: Math.max(0, Math.trunc(event.heldMs)),
+      });
+      return;
+    }
     if (event.type === "delivery_ack") {
       const failed = event.outcome === "failed_terminal";
       const providerProven = DELIVERY_PROVIDER_PROVEN_OUTCOMES.has(event.outcome);
@@ -616,6 +700,13 @@ export async function runListenerSupervisor(
           ? 0
           : status.consecutiveAckFailureCount,
         pendingDeliveryCount: null,
+        pendingDeliveryCountAt: null,
+        currentDeliverySignalId: null,
+        currentDeliverySince: null,
+        // An acknowledged row is answered and gone; drop just that one.
+        heldBackDeliveries: (status.heldBackDeliveries ?? []).filter((entry) =>
+          entry.signalId !== event.signalId
+        ),
         lastSignalId: event.signalId,
         updatedAt: event.ts,
       };
@@ -822,6 +913,13 @@ export async function effectiveListenerStatus(
         updatedAt: new Date().toISOString(),
         stoppedAt: new Date().toISOString(),
         lastErrorCode: "unclean_exit",
+        /* The process is gone: it holds nothing and observes nothing, so every
+           field whose sentence is rendered in the present tense against read
+           time is cleared. pendingDeliveryCount stays, because its line already
+           says it is what the service reported. */
+        currentDeliverySignalId: null,
+        currentDeliverySince: null,
+        heldBackDeliveries: [],
       };
       await writeListenerStatus(paths, failed);
       return failed;
