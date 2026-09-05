@@ -118,6 +118,25 @@ every `CLAUDE_*` variable in the child's environment; measured, both probes repo
 `CLAUDE_CODE_SESSION_ID`. A detector that tested `CLAUDECODE` first would label every nested lane
 as Claude Code and sign another family's work with Anthropic's name.
 
+**The residual, stated because it is the one way this can produce a confident wrong value.** The
+probe order only protects the runtimes that are IN the list. A runtime that is not listed and that
+inherits `CLAUDE_*` from a Claude Code parent falls through to the `claude-code` probe, which reads
+the *parent's* transcript and records the parent's model with source `runtime-transcript` — a
+measurement of the wrong session, and nothing in the trailer says so. `opencode` is the live
+example: it is installed on this host and this repo already treats it as a provider
+(`tests/host-acp-opencode.test.ts`), and it is not in `AGENT_TRAILER_RUNTIMES`. Its environment was
+not enumerated here, so no detector was written for it — writing one from a guess is the defect this
+whole file exists to avoid.
+
+If you commit from a runtime that is not in the list, declare the model:
+
+```sh
+CSWARM_AGENT_MODEL=<the model> CSWARM_AGENT_FAMILY=<its family> git commit -m "..."
+```
+
+The durable fix is to enumerate that runtime's environment and session records the way the four
+above were, then add it to `AGENT_TRAILER_RUNTIMES` **before** `claude-code`.
+
 ---
 
 ## Recording who wrote the diff, not who ran the command
@@ -204,10 +223,46 @@ data that looks exactly like a measurement and is not one. That would poison the
 trailers exist to support: a model's measured performance would be contaminated by guesses made
 about it after the fact, in the direction of whatever the person doing the backfill believed.
 
-The CI gate only ever checks the commits a push or PR **adds**. It never walks all of history,
-which is also why it does not fail forever on the existing tree.
-
 If you need to know who wrote something older, say "not established" and stop.
+
+### Grace: a commit whose own tree has no hook
+
+Two things keep the gate off old work, and both are needed.
+
+The workflow resolves only the commits a push or PR **adds**, so it never walks all of history.
+That alone is not enough: a `pull_request` event checks `base.sha..HEAD`, which contains every
+commit a branch already had before this landed. Enumerated 2026-09-04 on this checkout, eleven
+branches carried twenty non-merge commits with no `Agent-Model` between them. Every one would have
+failed the first time it was pushed or opened as a PR, for work written before the rule existed.
+
+So the checker also skips by what the commit itself contains:
+
+> **A commit whose own tree does not contain `scripts/hooks/prepare-commit-msg` is not required to
+> carry trailers.** Every commit that does contain it is.
+
+**A date was tried first and does not work.** Six of those twenty commits were authored *after* the
+hour this feature was written, by five lanes that were running at that moment off an older `main`.
+Their checkouts had no hook and could not have had one, so a cutoff timestamp failed work for a rule
+that did not exist where it was written. Moving the date forward does not fix it either: a cutoff in
+the future skips every commit and leaves the gate green while checking nothing. The commit's own
+tree answers the question exactly, with no clock and nothing to maintain. Once this is on `main`,
+every commit built on it carries the hook and is checked; there is no cutoff to update and no window
+in which the rule is wrong.
+
+The path is a constant, `AGENT_TRAILER_HOOK_PATH` in `scripts/lib/agent-trailer-vocab.sh`. The gate
+reads it, `--help` prints it, the failure message names it, and `npm run hooks:install` installs
+into the same directory, so the enforcement and the sentences describing it cannot drift apart.
+
+- **Skipped commits are counted and reported separately**, never folded into the checked count:
+  `agent-trailers OK: 3 commit(s) checked in ...; 1 skipped as having no ... in their own tree`. A
+  gate that silently drops commits from its own total tells a reader that work was audited when it
+  was not.
+- **The path must name a real file.** A constant pointing at nothing would skip every commit and
+  leave the gate green while checking nothing. The self-test carries one assertion whose only job is
+  to fail on that, because the fixtures are built from the constant and therefore cannot notice it.
+- **Scope.** Deleting the hook would grant a commit grace. That is the same accident-guard scope as
+  the rest of this — it catches a checkout that never had the hook, not somebody who means to evade
+  it — and unlike a back-dated commit, deleting the hook is a visible line in the diff.
 
 ---
 
@@ -222,8 +277,13 @@ Two layers, deliberately:
 - **`scripts/hooks/prepare-commit-msg`** — ergonomics. It adds the block so nobody has to
   remember. It **never blocks a commit**: if the emitter fails it warns and exits 0, because a
   trailer tool that stops work gets turned off, and then the audit has holes in it.
-- **`.github/workflows/agent-trailers.yml`** — enforcement. `--no-verify` skips the hook and a
+- **`.github/workflows/agent-trailers.yml`** — the guard. `--no-verify` skips the hook and a
   standing ruling permits that, so the hook cannot be the guard.
+
+**What "guard" does and does not mean today.** Probed 2026-09-04: `main` has no branch protection
+and no rulesets on it, so a failing check shows a red X and blocks nothing. Read the job. Making it
+actually block a merge is a repository setting, not a file in this repo, and nobody has flipped it.
+Do not read the workflow's existence as a merge gate until that is done.
 
 ### What the gate does not do
 
@@ -245,7 +305,9 @@ checker to reject it, then requires it to accept the same commit once tagged. CI
 assertion count out of the output and fails if it is missing or below a floor — an exit code
 cannot certify that a test run happened.
 
-Measured 2026-09-04: 27 assertions pass; a checker mutated to always return 0 fails 5 of them.
+Measured 2026-09-04 on this host: 37 assertions pass, and a checker mutated to always return 0
+fails 7 of them. The number grows as assertions are added, so CI floors it rather than pinning it;
+the floor is what tells "the suite did not run" apart from "the suite passed".
 
 Fix commits that are missing trailers:
 
