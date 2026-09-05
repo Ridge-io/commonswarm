@@ -2190,3 +2190,22 @@ send's identity; a sample-mode hook so a control can reach an in-flight send). R
 round 5, with the corrected reason: a draft with a body keeps its own To: set — adding a recipient
 to a message being written cannot be taken back once sent; leaving one out is visible and one
 click from fixed. Evidence: seven arm pairs under `docs/evidence/2026-09-05-composer-to/arms/`.
+
+## 2026-09-05 18:1x UTC — COMPOSER To: FIELD (#2) LANDED and LIVE (merge 0741a45)
+
+`lane/composer-to-field` da7e4d4 (reviewed 3bb9815; the tip is one comment-only commit) merged as
+`0741a45`; site 449/450 (1 skip), npm test, check:edge, identity over 46 fields all green on the
+merge; deployed; `/app` carries the To: row (measured live). Three PMs and eight review rounds:
+the first built it and stopped at the rule; the second made the To:/draft pair one derived pass
+and the send own its storage keys; the third made the send own its teardown with a send token,
+gave the wedge a reachable in-flight window in sample mode, and both arms agreed the send/screen
+family is closed. 58 discriminating mutations; 24 arm files under
+`docs/evidence/2026-09-05-composer-to/arms/`. Owed, recorded: real-mode upload status writes after
+an await are ungated (a switch mid-upload can paint on a torn-down composer; sample mode cannot
+reach it); nothing here reached production (sample-mode `site/dist`).
+
+**Operator's list:** #1 mobile LIVE, #2 To: field LIVE, #3 standing grants LIVE, #4 brain links
+LIVE, #5 update notice LIVE, #6 chat: schema, edges, recipients, CLI (0.1.55) and the app's
+channels LIVE; threads UI is the last piece (`lane/chat-app-threads` spawned). Also spawned:
+`lane/wake-all-recipients` (edge + listener: a delivery row per agent recipient, hydration keyed
+on the row's recipient, the 0.1.55-listener compat measured; and an agent path for `channel ls`).
