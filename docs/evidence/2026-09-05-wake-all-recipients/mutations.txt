@@ -248,3 +248,128 @@ restore db:reset exit=0
 # tests 14
 # pass 14
 # fail 0
+
+== ROUNDS THREE TO FIVE: the CLI wiring and the feed-side scalar re-check ==
+M13-M16 on ecbb26b, M15b and M17 on a3a69e5, M18-M19 on 4250111.
+
+== M13 signalAddressesAgent forgets the recipient list and asks only the scalar ==
+-- baseline
+# tests 79
+# pass 79
+# fail 0
+-- mutated
+not ok 27 - a signal addresses this agent at any position, and nobody else's
+not ok 70 - hook check surfaces a signal that names this agent at position 1
+not ok 79 - a message naming this agent at position 1 is emitted, and one naming other agents still stops the watch
+# tests 79
+# pass 76
+# fail 3
+-- restored
+# tests 79
+# pass 79
+# fail 0
+
+== M14 parseSignalRecord drops the recipients field it was given ==
+-- mutated
+not ok 25 - the recipient list is read when the server sends it, and stays ABSENT when it does not
+not ok 26 - a recipient list this reader cannot understand is malformed, never guessed at
+not ok 27 - a signal addresses this agent at any position, and nobody else's
+not ok 70 - hook check surfaces a signal that names this agent at position 1
+# tests 71
+# pass 67
+# fail 4
+-- restored
+# tests 27
+# pass 27
+# fail 0
+
+== M15 channelRows refuses an agent credential again ==
+-- mutated
+# tests 27
+# pass 27
+# fail 0
+-- restored
+# tests 27
+# pass 27
+# fail 0
+
+== M16 listChannelsAsAgent adds one key to the request body ==
+-- mutated
+not ok 21 - the agent channel list sends the exact body the read edge parses, and nothing more
+# tests 27
+# pass 26
+# fail 1
+-- restored
+# tests 27
+# pass 27
+# fail 0
+
+== M15b channelRows refuses an agent credential again, on a3a69e5 ==
+(M15 on ecbb26b left every channel test GREEN. The probes stopped at the
+ credential step, before the branch. a3a69e5 adds a run that gets past it.)
+-- baseline
+# tests 28
+# pass 28
+# fail 0
+-- mutated
+not ok 21 - an agent credential reaches the channel list itself, and is not turned back before it
+# tests 28
+# pass 27
+# fail 1
+-- restored
+# tests 28
+# pass 28
+# fail 0
+
+== M17 resolveChannelSelector refuses an agent again ==
+-- mutated
+not ok 21 - an agent credential reaches the channel list itself, and is not turned back before it
+# tests 28
+# pass 27
+# fail 1
+-- restored
+# tests 28
+# pass 28
+# fail 0
+
+== M18 the agent channel reader clears its deadline before the body, as it did on ecbb26b ==
+-- baseline
+# tests 29
+# pass 29
+# fail 0
+-- mutated (this run HANGS if the test cannot fail; it is bounded by the node runner)
+not ok 23 - a body that never settles is the request not completing, not a bad shape
+# tests 29
+# pass 28
+# fail 0
+-- restored
+# tests 29
+# pass 29
+# fail 0
+
+== M19 a stalled body reports the wrong sentence instead of the retryable one ==
+-- mutated
+not ok 23 - a body that never settles is the request not completing, not a bad shape
+# tests 29
+# pass 28
+# fail 1
+-- restored
+# tests 29
+# pass 29
+# fail 0
+
+TWO NOTES ON THIS SET, because both are the kind of thing that makes a green
+mutation log lie:
+
+- M15 on ecbb26b left EVERY channel test green. The offline CLI probes stop at
+  `agent_token_file_unreadable`, which is BEFORE the branch the lane removed, so
+  they could not have failed either way. That is the "a negative result must
+  reach the path it claims to test" failure, caught by the mutation rather than
+  by a review arm. a3a69e5 adds a run with a READABLE agent credential pointed at
+  a dead port, so it gets past the credential and into the channel list. M15b is
+  the same mutation against that test, and it goes red.
+
+- M18's mutated run reports `# fail 0` beside a `not ok` line. The mutation makes
+  the stalled-body test HANG, so the node runner kills it on --test-timeout and
+  the summary counter does not tally. The `not ok 23` line is the discriminating
+  result: with the deadline cleared before the body, the test cannot finish.

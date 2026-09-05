@@ -7463,10 +7463,11 @@ async function channelRows(context: FileCliContext): Promise<ChannelRow[]> {
      *
      * UNLIKE `fileRows`, the two attempts do NOT share one budget: each carries
      * its own 30s deadline, so a wedged network can hold this call for 60s. A
-     * review arm named the difference. It stays because the alternative is
-     * threading a deadline through both channel readers for a case nobody has
-     * hit, and because the deadline now covers the body, which is the failure
-     * that actually hung this command. */
+     * review arm named the difference. It stays because sharing one budget
+     * means passing the time left into each attempt, which is work for a case
+     * nobody has hit, and because the deadline now covers the body, which is
+     * the failure that actually hung this command. Both readers already take a
+     * `timeoutMs`, so the change would be here rather than in them. */
     if (error instanceof ChannelListError && error.noResponse) return await read();
     throw error;
   }

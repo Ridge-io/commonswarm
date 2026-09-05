@@ -1,0 +1,30 @@
+`diff --git a/docs/design/2026-09-05-chat-build-plan.md b/docs/design/2026-09-05-chat-build-plan.md`
+
+1. **Deleting two user-facing constants.**
+   PASS. Every surface has been updated; the constants are no longer exported and only exist in historical comments in `src/cloud/channels.ts`. The help text matrix in `src/cli.ts` correctly reflects that `channel ls` reads `swarm_read.channels` via either credential. The deploy-coupling claim is accurate: if the read service lacks the arm, it returns HTTP 400. The text it prints ("The channel list was refused (HTTP 400). Nothing changed.") matches the behavior verified in `tests/p1-cli/chat-cli.test.ts`.
+
+2. **`listChannelsAsAgent`.**
+   PASS. Both `listChannelsAsAgent` and `listChannelsAsHuman` share exact parallel structures for timeout handling and parsing. The deadline now safely spans the body read in both (`finally { clearTimeout(timer); }`). A stalled body correctly throws a `ChannelListError` with `noResponse` set to true, making it retryable. The request body `JSON.stringify({ resource: "channels", workspace_id: workspaceId })` exactly matches the byte-for-byte expectation of the `exactKeys` constraint in `supabase/functions/read/index.ts`. No handled failure mode diverges.
+
+3. **`resolveChannelSelector` losing its guard.**
+   PASS. An agent can now turn a name into an ID by querying the read edge. This does not widen write permissions; an agent could always run rename or archive commands if it already knew the channel ID. If the name does not exist, the agent receives an `unknownChannelMessage` populated by the rows it successfully read, just as a human does. 
+
+4. **`parseSignalRecipients`.**
+   PASS. Refusing unknown keys ensures strict schema compliance against future changes. Refusing repeated IDs/positions is correct since the DB enforces uniqueness, meaning repeats indicate a corrupted payload. `absent` (`undefined`) is clearly distinguishable from an empty array `[]` in JS. A malformed set throws an error that is gracefully caught by `tolerateMalformedRows` (e.g., consuming 1 out of 3 allowed errors), effectively dropping only the corrupted row rather than destroying the entire page.
+
+5. **`signalAddressesAgent` at three call sites.**
+   PASS. The arrival-watch guard correctly restricts pages from surfacing another agent's directed signals. A lying server could put this agent in `recipients` and bypass the guard, but as noted, this is not a new trust boundary (the server already controls `to_agent`). If the server inexplicably sends `recipients: []` for a directed signal, the unconditional scalar branch (`if (signal.to_agent === principalId) return true;`) runs first. Thus, it successfully falls back to trusting the scalar column over the contradictory empty array.
+
+6. **D-053.**
+   PASS. `channelRows` handles retries based purely on `error.noResponse` and the class type (`ChannelListError`), not string-matching `error.message`. `arrival-watch.ts` similarly relies on `isRetryableFollowError`. The new tests use regex to match `error.message`, but this is strictly for test assertions, not runtime branching.
+
+7. **Regression on the earlier work.**
+   PASS. The fixes in commits 2-4 target timeout logic (expanding the deadline over the body) and comment prose (correcting sorting logic descriptions and relative positional text). They do not break `hydrateDeliveryRefs` logic, the `recipient_position` wire format, or listener prompt fanout text reviewed in previous commits.
+
+8. **Claims in prose.**
+   PASS. Swept the claims. The "ORDER" paragraph correctly states `lower(slug)` and `slug` agree because `20260905000001_channels.sql` enforces lowercase alphanumeric characters via CHECK. The retirement notes accurately reflect the L2 fan-out history. The design bounds hold true, specifically noting that both `to` and `to_agent` can genuinely be populated simultaneously on a hydrated delivery.
+
+9. **Tests.**
+   PASS. The tests hit their intended paths. `readableAgentRun(["channel", "ls"])` simulates an agent reading channels and expects a network timeout from an offline port; if the old guard were reverted, it would throw the constant error before the network request, failing the test. The stalled body mock ensures `abort()` on `fetch` properly drops the `ChannelListError`. The tests honestly document they are offline (`http://127.0.0.1:1`) and acknowledge production viability cannot be verified until edge deployment.
+
+VERDICT: PASS

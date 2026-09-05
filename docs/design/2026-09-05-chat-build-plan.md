@@ -436,9 +436,13 @@ What this lane does NOT change, and what the lead must sequence:
    it. That is another lane's file and it was not touched here.
 3. **The CLI is now wired to the agent `channels` resource, which makes the DEPLOY ORDER binding.**
    `CHANNEL_LIST_NEEDS_HUMAN_MESSAGE` and `CHANNEL_SELECTOR_NEEDS_ID_MESSAGE` are retired, their
-   wording kept in `src/cloud/channels.ts`, and `channelRows` no longer branches on the credential
-   kind. A client carrying this against a read service without the arm gets HTTP 400 and says the
-   list was refused. Deploy `read` before or with the client release.
+   wording kept in `src/cloud/channels.ts`, and `channelRows` no longer REFUSES an agent credential.
+   It still branches on the credential kind, and has to: the read function accepts agent credentials
+   only and a person reads `swarm_read` over PostgREST, so the kind picks the transport. (An earlier
+   draft of this item, and the `ecbb26b` commit message, said "no longer branches on the credential
+   kind". A review arm refuted it twice, here and in `src/cloud/channels.ts`.) A client carrying this
+   against a read service without the arm gets HTTP 400 and says the list was refused. Deploy `read`
+   before or with the client release.
 
 4. **The feed-side scalar re-check is fixed here, and it was a live defect.**
    `src/cloud/arrival-watch.ts` returned `{reason: "error"}` and `src/listener/hook.ts` dropped a row

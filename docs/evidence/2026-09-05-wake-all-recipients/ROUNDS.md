@@ -101,3 +101,66 @@ NOT ESTABLISHED: no test asserts this shape. The probe measured it once and was
 removed. A test for it belongs with whatever lane fixes the feed-side residual
 above, because that lane has to decide what a client should render for a signal
 addressed to a person and an agent at once.
+
+---
+
+# Second scope: the CLI wiring and the feed-side scalar re-check
+
+The lead extended the lane after the a1bc2f8 PASS/PASS, adding `src/cli.ts` and
+`src/cloud/arrival-watch.ts` to its ownership, because the release must not ship
+false copy or a reachable throw.
+
+## Round three, ecbb26b — FAIL / FAIL
+
+Both arms named the same first finding, and it is a hang.
+
+1. **Neither channel reader's deadline covered the response BODY.** Both cleared
+   the timer in the fetch's own `finally`, then awaited `.json()` with nothing
+   armed. A server that answered 200 and stalled the stream held
+   `cswarm channel ls` for ever: no abort, and `channelRows` retries only
+   `noResponse`, which a hung `json()` never becomes. `listChannelsAsAgent` was
+   copied from `listChannelsAsHuman`, which had the defect first, so BOTH are
+   fixed. A stalled body now takes the retryable sentence rather than one that
+   blames the server for our own deadline.
+2. **Grok: the ORDER paragraph was false.** It said `lower(slug)` and `slug` can
+   disagree for a workspace "mixing cases". `20260905000001_channels.sql` CHECKs
+   `slug ~ '^[a-z0-9]([a-z0-9-]*[a-z0-9])?$'`, so that workspace cannot exist.
+3. **Grok: "the human path above".** `listChannelsAsHuman` is below.
+4. **Gemini: the body comment claimed key ORDER is enforced.** `exactKeys`
+   compares SORTED key sets. The comment says what it does; the test asserts the
+   sorted key set beside the pinned bytes.
+
+A mutation, not an arm, caught the fifth: **M15 left every channel test green.**
+The offline probes stopped at the credential step, before the branch the lane
+removed, so they proved nothing about it. a3a69e5 adds a probe that reaches
+`channelRows` with a readable credential and a dead port; M15b turns it red.
+
+## Round four, 4250111 — FAIL / FAIL, prose only
+
+Both arms passed every behavioural section. Both failed section 8.
+
+- **Grok:** round three fixed the word "above" in the JSDoc and the same commit
+  wrote it again, one line later, inside the function.
+- **Gemini:** the retirement note claimed `channelRows` "no longer branches on
+  the credential kind". It branches, to pick the transport; what it no longer
+  does is refuse. The commit message of ecbb26b carries the same false sentence
+  and cannot be edited without rewriting three SHAs, so `de87327` corrects it in
+  the code and in its own message.
+- Gemini also observed that `signalAddressesAgent` trusts the server's
+  `recipients` array. Recorded in the function's doc rather than changed: the
+  same server writes `to_agent`, which the scalar check trusted for the same
+  question.
+
+## Round five, de87327
+
+Both arms relaunched on the final SHA. See `arms/de87327-*`.
+
+## A shared-host accident worth recording
+
+Commit `a3a69e5` landed with another lane's subject line, "fix(app): the stored
+draft is frozen for the whole post, like the pair". Its tree was always this
+lane's one test file. The cause: the commit message was written to a path under
+`/tmp`, which every agent on this host shares, and another lane overwrote it
+between the write and the `git commit -F`. The two commits were rebuilt as
+`a2c9f5d` and `4250111` with `git diff` proving the trees identical, and every
+message since is written under this session's own scratchpad.

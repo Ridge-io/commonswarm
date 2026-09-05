@@ -1,0 +1,100 @@
+I'll read REVIEW.md and DIFF.patch first, then follow REVIEW.md exactly.The brief is a nine-section attack plus the round-four deadline/ORDER fixes. I’ll read the rest of the patch and the files it touches next.The rest of the patch and the channel/signal readers come next — those are the round-four attack surfaces.The deadline, ORDER paragraph, and the “above/below” comments are the round-four attack. I’ll read those next to the live source.`diff --git a/docs/design/2026-09-05-chat-build-plan.md b/docs/design/2026-09-05-chat-build-plan.md`
+
+Review of `4250111` (full `425011116339826c05d1cf3fab47dccaddfaa59a`). Three commits on top of `a1bc2f8`: `ecbb26b`, `a2c9f5d` (tree is the readable-token probe; subject rewrite only), `4250111`.
+
+## 1. Deleting the two constants — PASS
+
+Swept `CHANNEL_LIST_NEEDS_HUMAN_MESSAGE`, `CHANNEL_SELECTOR_NEEDS_ID_MESSAGE`, “no channel list for an agent”, and “needs a signed-in person”.
+
+Gone as live copy. Kept verbatim in `src/cloud/channels.ts:189-218` (and in the rewritten CLI tests). Usage matrix at `src/cli.ts:603` now says `channel ls` is either form.
+
+A client on this SHA against a read service without the arm: `parseBody` returns null, `handle` answers HTTP 400 `{error:"invalid_request"}`, `listChannelsAsAgent` prints `The channel list was refused (HTTP 400). Nothing changed.` That matches the coupling note. It is worse than the retired sentences. It is not a lie.
+
+Residual, not a fail: `usage()` at `src/cli.ts:542` still omits `${agentCredential}` on `channel ls` (create/rename/archive and `file ls` show it). That does not assert an agent cannot list.
+
+## 2. `listChannelsAsAgent` — PASS
+
+Compared with `listChannelsAsHuman` below it and `listFilesAsAgent`.
+
+Body is `{"resource":"channels","workspace_id":...}`. `parseBody` takes `exactKeys(["resource","workspace_id"])` plus a UUID string. Extra or missing key is 400. Order is not enforced. Test pins both the bytes and the sorted keys.
+
+Timeout: one `AbortController`, `clearTimeout` in the outer `finally`, `response.text()` inside the armed window. Fetch failure and stalled body both throw `ChannelListError` with `noResponse: true`. Bad JSON / missing `channels` array is the non-retryable shape sentence. `channelRows` retries only `ChannelListError && noResponse`.
+
+`listFilesAsAgent` still does two things this does not: shared retry budget (`onceRetried` + `fetchWithDeadline`), and a `Promise.race` so a body that ignores `AbortSignal` still dies. The budget gap is written at `src/cli.ts:7464-7469`. Native `fetch` should abort the body when this signal fires. That is the D-034 fix they were asked for, not a new hole.
+
+## 3. `resolveChannelSelector` — PASS
+
+An agent can now turn a name into an id through `channelRows`. Miss uses `unknownChannelMessage(selector, rows)` from the rows just read.
+
+Writes are unchanged: `sendChannelCommand` still posts a `channel_id` to command. Agents could already rename/archive by id. This is discovery, not new write authority. Tenancy is still `swarm_read.channels` after the owner claims.
+
+## 4. `parseSignalRecipients` — PASS
+
+Refuses: non-array, non-object entry, extra/missing key, bad kind, non-UUID id, non-integer / negative position, repeated position, repeated id.
+
+Does not require contiguity or order. Right call: the table owns that (`PRIMARY KEY (signal_id, position)` plus the deferred contiguous-from-0 trigger). Re-deriving it here would drop a valid row this reader does not own.
+
+The view emits exactly `{kind,id,position}` (`20260905000010_signal_recipients.sql:372-377`). I could not construct a live view row this parser refuses.
+
+Absent vs `[]`: `undefined` spreads `{}`; `[]` keeps `recipients: []`. `signalReadJsonPayload` dumps the `SignalRecord` as-is, so `cswarm feed --json` keeps the two apart.
+
+Blast radius is per row, then `tolerateMalformedRows`. Hook and resume tolerate 3. `readSignals` (feed) does not, so one bad set fails that page. That is the existing feed rule, applied to a new field.
+
+## 5. `signalAddressesAgent` — PASS
+
+Old guard: `to_agent === principalId` or broadcast. New: same, plus “named in `recipients` as kind agent”.
+
+A lying server could already surface a row by setting `to_agent`. Putting this principal in `recipients` is the intended widening. Control tests still refuse a page that names only other agents (`tests/support/arrival-watch.test.ts`, `tests/p1-cli/hook-routing.test.ts`).
+
+`recipients: []` on a directed signal: empty is not nullish, so `some()` does not “fall back”. The scalar check still runs first. Directed-to-us + `[]` stays true. Directed-to-other + `[]` is false (fail closed). The view never emits `[]` for a directed row (COALESCE to a one-entry scalar list). Broadcast is still `to` and `to_agent` both null; a multi-recipient row fails that arm.
+
+## 6. D-053 — PASS
+
+`channelRows` retries on `instanceof ChannelListError && error.noResponse`. Arrival-watch catch uses `isRetryableFollowError` / HTTP status, not `error.message`. New tests assert sentences; they do not classify on them.
+
+Note, not a fail: `parseSignalRecipients` throws a plain `Error`. `"signal read returned a malformed recipients list"` hits the pre-existing `isMalformedFollowMessage` prefix. `"signal read returned a repeated recipient"` does not. That classifier was already message-based. This lane did not add a new branch on `error.message`.
+
+## 7. Regression on earlier work — PASS
+
+Commits 2–4 do not change the migration, `hydrateDeliveryRefs`, the prompt slot, or the `recipient_position` wire. They add CLI/feed-side work on top. Comments from commit 1 (self-wake kept, column list generated, retired L2 wording) still match the code.
+
+`a2c9f5d` adds the readable-token probe only.
+
+## 8. Claims in prose — FAIL
+
+The JSDoc fix is true: `listChannelsAsHuman` is below (`src/cloud/channels.ts:225`).
+
+The same commit then adds, at `src/cloud/channels.ts:246`:
+
+```246:246:src/cloud/channels.ts
+  // Same body-covering deadline as the human read above, and the same reason.
+```
+
+`listChannelsAsHuman` starts at line 332. The human deadline comment is at 345–349. Round three failed this “above” claim. Round four rewrote the JSDoc and wrote the same word into a new line in the same function.
+
+ORDER paragraph: true. CHECK at `20260905000001_channels.sql:21` is `^[a-z0-9]([a-z0-9-]*[a-z0-9])?$`. Both sorts use the slug column’s collation; the CHECK makes the *values* equal (`lower(slug)` is identity on that alphabet). Same text is in `supabase/functions/read/index.ts:313-318`.
+
+`exactKeys` sorts both sides (`read/index.ts:183-191`). Comment and test match.
+
+Retirement notes at the three feed sites match the old scalar check. Five build-plan bounds match the code (self-wake, post-enqueue revoke, both `to`+`to_agent`, `describeAudience` scalars only, human receipt on `to_user_id`).
+
+## 9. Tests — PASS
+
+The probe that can fail is `readableAgentRun` (`a2c9f5d`): readable token, dead port, expects `channel list did not complete`. Revert the agent-list branch and that goes red.
+
+The earlier offline tests that stop at `agent_token_file_unreadable` would still pass with the branch restored. The file says so.
+
+Stalled-body test: fake `text()` waits on `init.signal`. If `clearTimeout` ran after headers, abort never fires and the 5s bound fails. Control: a settling body with the same 60ms deadline returns. It only covers `listChannelsAsAgent`, not the human twin; the two functions are the same shape.
+
+CLI tests are offline and say so: no live production control until `read` is deployed. p1-server covers the edge locally.
+
+Gates: `chat-cli.test.ts` and `hook-routing.test.ts` via `test:p1-cli`; `arrival-watch` / `delivery-client` / `listener-engine` / `listener-runtime` / `chat-channel-constants` via `npm test`; postgres via `test:p1-local`; served edge via `test:p1-server`.
+
+## Round four
+
+1. **Deadline covers the body in both readers.** Abort stays armed through `response.text()`. Stalled body is retryable `noResponse`, not the shape sentence. JSON.parse is after a full body, in its own catch, so a syntax error cannot be a timeout and a timeout cannot be a syntax error. `channelRows` still retries once on `noResponse`, each try with its own 30s. The new test can fail. PASS.
+2. **ORDER paragraph.** Rewritten. Holds. PASS.
+3. **Prose.** JSDoc “BELOW” is true. New “human read above” is false. `exactKeys` sorted-keys claim is true. FAIL (the above/below fix).
+4. **Two budgets.** Accurate (`fileRows` shares one 30s via `onceRetried`; `channelRows` does not). Safe to leave: worst case is 60s on a wedged `channel ls`, written down, against the hang they actually hit. PASS.
+
+VERDICT: FAIL

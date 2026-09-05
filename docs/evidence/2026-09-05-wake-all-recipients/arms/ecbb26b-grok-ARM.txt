@@ -1,0 +1,129 @@
+I'll read REVIEW.md and the diff first, then follow the review instructions exactly.The patch is truncated. I’ll read the rest of it and the files the review brief names.The patch continues. I’ll read the rest and the files the brief names, then attack each section.The rest of the patch and the named source files still need a close read. I’ll pull those next.I’ll compare the new helpers with the existing list/read paths and check the claims clause by clause.The on-disk tests mention a body deadline the patch did not. I’ll compare the checkout to DIFF.patch.`diff --git a/docs/design/2026-09-05-chat-build-plan.md b/docs/design/2026-09-05-chat-build-plan.md`
+
+Subject is SHA `ecbb26b` as named in the brief. The checkout also has later commit `a3a69e5` (unrelated app draft freeze) and **uncommitted** edits to `src/cloud/channels.ts` and `tests/p1-cli/chat-cli.test.ts` that start to cover a hung body. Findings below are against the committed SHA / `DIFF.patch` unless I say the dirty tree.
+
+## 1. Deleting two user-facing constants — PASS
+
+Swept `src/`, `tests/`, `docs/design/`, help/usage. Live surfaces no longer say an agent cannot list channels.
+
+- Usage matrix now says `channel ls` / `swarm_read.channels` / `-- either form`.
+- `CHANNEL_LIST_NEEDS_HUMAN_MESSAGE` and `CHANNEL_SELECTOR_NEEDS_ID_MESSAGE` are gone as exports. Tests assert `Object.hasOwn(client, …) === false`.
+- Retired wording is kept verbatim in `src/cloud/channels.ts` and in `docs/evidence/2026-09-05-chat-client/`. A 0.1.55 install still prints them (`package.json` is `0.1.55`).
+- Site To: copy that a person in front wakes nobody is **named** as another lane’s file, not left as a silent lie.
+
+Deploy coupling holds. An old `parseBody` does not match `resource: "channels"`, returns `null`, answers HTTP 400 `{error:"invalid_request"}`. `listChannelsAsAgent` then prints `The channel list was refused (HTTP 400). Nothing changed.` That matches the build-plan sentence. It is worse than the old “signed-in person” line, and it is not a wrong one.
+
+`dist-npm/cswarm.cjs` still embeds the old constants. That is a stale build, not a source surface.
+
+## 2. `listChannelsAsAgent` — FAIL
+
+Request body matches `parseBody` key for key: `JSON.stringify({ resource: "channels", workspace_id })` is exactly `exactKeys(["resource", "workspace_id"])` plus a UUID string. The p1-cli test pins the bytes. Extra key → 400, not a wider read.
+
+Timeout / abort / `noResponse` / envelope parse follow `listChannelsAsHuman`: `ChannelListError`, `noResponse: true` on transport, HTTP status on refusal, `{channels: array}` vs the human path’s bare array. `channelRows` retries once on `error instanceof ChannelListError && error.noResponse`, not on `error.message`.
+
+The failure mode `listFilesAsAgent` handles and this does not: **the deadline does not cover the body.**
+
+Committed `listChannelsAsAgent` (and the human twin as of this SHA) `clearTimeout` in `finally` after headers, then `response.json()` with no abort. `listFilesAsAgent` uses `fetchWithDeadline`, which races the body too. A server that sends 200 and then stalls hangs `cswarm channel ls` with no abort and no retry. `channelRows` only retries `noResponse`; a hung `json()` never becomes that.
+
+The dirty tree starts to fix this (`response.text()` still under the timer, stalled-body test). That is **not** in `ecbb26b`. Copying the unfixed human sibling, when the file helper was already the D-034 fix, is the miss.
+
+Also vs files: `fileRows` shares one 30s budget across the retry; `channelRows` can run two full 30s attempts. Not a security hole. Named because the comment says this is “what `fileRows` repeats.”
+
+No row parser on either channel path (plain `as ChannelRow[]`). Same as files.
+
+## 3. `resolveChannelSelector` losing its guard — PASS
+
+An agent can now turn a name into an id by listing, then send the same `channel_rename` / `channel_archive` command it could already send with a UUID. The command edge is unchanged. This is CLI name resolution, not a new write right.
+
+Unknown name uses `unknownChannelMessage(selector, rows)` from the rows just read. Same sentence a person gets.
+
+No path lets an agent write a channel it could not write by id before.
+
+## 4. `parseSignalRecipients` — PASS
+
+Refusals are the right ones:
+
+| Rule | Why |
+|---|---|
+| Unknown key / not exactly `id,kind,position` | Fail closed on a shape this reader does not own |
+| Repeat position or id | DB unique; a duplicate is corruption |
+| No contiguity / sort check | DB + view own that; re-deriving it would drop a valid row |
+
+The view emits `jsonb_build_object('kind','id','position')` or `'[]'` or a one-entry scalar fallback. Parser sorts keys, so JSON key order does not matter. I could not build a shape that view actually emits that this refuses.
+
+Absent vs `[]` stays distinct: `undefined` → omit the field; `[]` → `{recipients:[]}`. `cswarm feed --json` goes through `signalReadJsonPayload` → the `SignalRecord`s as-is, so JSON has no key vs `"recipients":[]`.
+
+Malformed set: `parseSignalRecord` throws. Hook and resume use `tolerateMalformedRows: true, maxMalformedRows: 3` and skip the row. Arrival-watch does **not** tolerate, so one bad set takes down the watch. That is the right blast radius for a guard that must not emit a page it cannot classify. Same as any other malformed field on that path.
+
+## 5. `signalAddressesAgent` at three sites — PASS
+
+```ts
+if (signal.to_agent === principalId) return true;
+return (signal.recipients ?? []).some(
+  r => r.kind === "agent" && r.id === principalId,
+);
+```
+
+This does **not** weaken the guard against a page for someone else.
+
+- Honest L2 page: this agent is in `recipients` and may not be `to_agent`. Old scalar check threw / dropped. New check matches the read SQL (`to_agent = me OR recipients @> [{kind:agent,id:me}]`).
+- A server that lies by stuffing this agent into `recipients` could now pass. A server that lies could already set `to_agent`. The guard still refuses a row that names neither this agent nor broadcast (`to` and `to_agent` both null).
+- Control tests: other agents still error the watch / stay out of the hook.
+
+`recipients: []` on a directed signal: there is **no** fallback-to-scalar on a present empty list. `?? []` only fills absence. Scalar still wins if `to_agent === me` (short-circuit). If `to_agent` is someone else and `recipients` is `[]`, the watch refuses. Empty does **not** open a hole for another agent’s row.
+
+Broadcast arm is unchanged. A multi-recipient signal has position 0 in `to` or `to_agent`, so it does not look like a broadcast.
+
+## 6. D-053 — PASS
+
+Nothing **added** classifies on `error.message`.
+
+- `channelRows` retry: `instanceof ChannelListError && error.noResponse`.
+- Arrival-watch catch: `isRetryableFollowError` / HTTP status. The directed-to-another throw is a hard error, not a retry regex.
+- New tests assert wording. That is a pin, not a classifier.
+
+Note, not a fail: existing `isMalformedFollowMessage` matches `startsWith("signal read returned a malformed")`. `"malformed recipients list"` and `checkedUuid`’s `malformed recipients[].id` hit it. `"signal read returned a repeated recipient"` does **not**. Follow would label that a generic error, not malformed. Arrival-watch still stops (not retryable). Hook/resume still skip the row. Pre-existing matcher, new message.
+
+## 7. Regression on earlier work — PASS
+
+`ecbb26b` does not touch the migration, `hydrateDeliveryRefs`, `checkedRecipientSlot`, or the listener prompt. Those stay as reviewed at `a1bc2f8`.
+
+Commit 1’s “CLI is not wired” / “wake nobody on recipient rows” comments were retired in place in later commits, with the old sentences kept. No leftover comment in commit 1 still claims the old wake bound as live.
+
+Dirty-tree channel deadline fix does not change delivery behaviour.
+
+## 8. Claims in prose — FAIL
+
+Two comments cannot both be true, and one of them is false on the database.
+
+**ORDER paragraph in `listChannelsAsAgent`:** “a workspace mixing cases can list in a different order.” Slug CHECK is `^[a-z0-9]([a-z0-9-]*[a-z0-9])?$`. Mixed case cannot be stored. `ORDER BY slug` and `ORDER BY lower(slug)` agree for every legal row. The difference is dead.
+
+**Read edge, opposite claim:** “the same slug order the human REST read takes, so `cswarm channel ls` renders identically.” That one is the one that holds, because of the CHECK. The ORDER paragraph is the false one. The brief asked for this paragraph.
+
+**Also false:** “The human path above uses PostgREST.” `listChannelsAsHuman` is **below** `listChannelsAsAgent`.
+
+Retirement notes at the three feed sites hold (L2 already returned position 1; scalar check threw / dropped). Five build-plan bounds hold: post-enqueue revoke/expiry, self-wake, hydrated `to`+`to_agent`, `describeAudience` scalar-only, human receipt still `v_to_user_id` only. Deploy-coupling sentence holds (section 1).
+
+## 9. Tests — PASS
+
+| Test | Reaches the path? | Pass if the new client change is reverted? |
+|---|---|---|
+| `readableAgentRun` channel ls/rename/archive | Yes: readable token, dead port, `channel list did not complete` | **No** — old branch prints the retired person sentence |
+| Offline `REACHED_CREDENTIAL` ls/rename/archive | Credential step only; they say so | Unreadable-token half would still pass; `doesNotMatch /signed-in person/` would fail |
+| Exact body + 400 coupling | Yes, fake fetch | No (helper missing / body differs) |
+| Recipients absent vs `[]` vs two entries | Yes, `parseSignalRecord` | No |
+| Malformed / extra key / repeats | Yes | No — old parser would ignore the field |
+| `signalAddressesAgent` person-first / kind | Yes | No |
+| Hook position 1 + not-mine control | Yes, fake read | Position-1 **no**; not-mine **yes** (control) |
+| Arrival-watch position 1 + not-mine + scalar | Yes | Position-1 **no**; not-mine and scalar **yes** |
+| Stalled-body test | Only in dirty tree, not in `ecbb26b` | n/a on this SHA |
+
+CLI tests are honest: offline, no live production probe until `read` deploys. p1-server channels tests are the served-edge half; they are not claimed as production.
+
+Controls that stay green on revert are named as controls.
+
+---
+
+Section 2 is a real hang on committed `ecbb26b`. Section 8 is a false ORDER claim the brief asked to check. Uncommitted work starts to close 2 and does not close 8.
+
+VERDICT: FAIL
