@@ -1,0 +1,27 @@
+`diff --git a/docs/design/2026-09-04-GOOGLE-SIGNIN.md b/docs/design/2026-09-04-GOOGLE-SIGNIN.md`
+
+1. **Check 1: Constants read by both sides (Attempted to refute, could not).**
+`site/src/components/auth/provider-buttons.observer.test.ts:440`
+The new constants `OAUTH_CALL_SITE`, `NAMED_WRAPPER_CALL_SITES`, and `NAMED_WRAPPER_CALLS_ALLOWED` are successfully interpolated into both the `SWEEP_CATCHES` array and the `assert.deepEqual` expected values. Modifying `OAUTH_CALL_SITE` or `NAMED_WRAPPER_CALL_SITES` would break the assertion that compares the detected array (derived from actual filesystem matches) against the constant. There are no duplicate string literals of these bounds left in the file.
+
+2. **Check 2: Derivation control tautology (Attempted to refute, could not).**
+`site/src/components/auth/provider-buttons.observer.test.ts:606`
+I tried to find a way to manipulate the control without breaking the test. Deleting a claim breaks `SIGNIN_MARKER.length === 4`. Adding an untethered line breaks `SWEEP_CATCHES.length === SIGNIN_MARKER.length + 4`. Stubbing or emptying a claim breaks `entry.claim.trim().length >= 20` and the subsequent `checklist.includes(line)` doc check (as the doc still has the old text). Narrowing a pattern without breaking its probe is the only way to pass, but the instructions explicitly state the lane already admits this.
+
+3. **Check 3: Same bound in doc and file (Attempted to refute, could not).**
+`docs/design/2026-09-04-GOOGLE-SIGNIN.md:98` and `site/src/components/auth/provider-buttons.observer.test.ts:442`
+The generated bound string `signInWithGitHub( anywhere but components/app/LiveDashboard.astro, or more than 1 call(s) there` evaluates identically to what is in the document. All 8 generated lines match the markdown checklist word for word. 
+
+4. **Check 4: Sweep does what SWEEP_CATCHES says (Attempted to refute, could not).**
+`site/src/components/auth/provider-buttons.observer.test.ts:743`
+I verified if the code genuinely reflects the `SWEEP_CATCHES` strings. `literalCallers` checks `providerCallWithLiteral()` (which accurately tests for literals passed to `signInWithProvider(`). I checked `namedWrapperCalls()` and it precisely enforces "anywhere but... or more than 1 call" across the repository context.
+
+5. **Check 5: Last commit breakage (Attempted to refute, could not).**
+`site/src/components/auth/provider-buttons.observer.test.ts:413`
+Routing the assertions through constants did not weaken the tests. `oauthCalls()` dynamically returns `new RegExp(literalPattern(OAUTH_CALL), "g")`, which correctly evaluates to `/\.signInWithOAuth\(/g`, maintaining the exact same regex enforcement as the previous round.
+
+6. **Check 6: Everything else in the lane (Attempted to refute, could not).**
+`site/src/components/app/LiveDashboard.astro:182` and `site/src/lib/brain-links.test.mjs:205`
+The `/app` reauth buttons are now correctly generated via `ProviderButtons` and handle zero-provider behavior by passing string values to `authProvider()`. `Hero.astro` and `Invite.astro` have been fully deleted from the codebase, meaning the doc's assertions about them being dead code are accurate. The `brain-links` control admits its regex limitation honestly in the comments (acknowledging it can't catch alternative array/markdown spelling variations). Finally, Grok's MINOR was fixed (the comment was correctly updated from "Three ways" to "Four ways").
+
+VERDICT: PASS

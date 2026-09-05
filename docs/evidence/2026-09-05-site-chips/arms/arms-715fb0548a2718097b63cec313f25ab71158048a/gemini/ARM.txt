@@ -1,0 +1,14 @@
+```markdown
+diff --git a/TODO.md b/TODO.md
+
+1. `site/src/components/auth/provider-buttons.observer.test.ts`:319-322 - BLOCKER - The derivation control is incomplete and leaves lines in `SWEEP_CATCHES` typed in substance despite appearing derived. The claims `any ${OAUTH_CALL} outside lib/commonswarm.ts` and `more than one call to ${NAMED_PROVIDER_WRAPPER}` are hardcoded strings. If an engineer changes the enforcement assertions (e.g., allowing a second call site in `components/app/LiveDashboard.astro`), `SWEEP_CATCHES` will not update. The control `the sweep's stated bound is derived...` only verifies that the call constants (`OAUTH_CALL`, etc.) are present in the list, not the constraints surrounding them. Changing the exceptions in the test assertions allows the code and the stated bound to silently drift without the control noticing.
+
+I tried to refute the following claims and could not:
+- The stated bounds in `docs/design/2026-09-04-GOOGLE-SIGNIN.md` exactly match `SWEEP_DOES_NOT_CATCH` and the generated list word for word.
+- The `LiveDashboard.astro` reauth swap properly delegates to `ProviderButtons` without any typed provider details and handles the zero-provider state correctly (the divider hides safely).
+- The `UNGENERATED_SIGNIN_SURFACES` exception properly forces exactly 1 hand-written control source count and built count for `LiveDashboard.astro`.
+- `Hero.astro` and `Invite.astro` are fully deleted as claimed, with no lingering active imports or false comments.
+- The `brain-links` control accurately discriminates the specific defect shape while honestly documenting its gaps.
+
+VERDICT: FAIL
+```

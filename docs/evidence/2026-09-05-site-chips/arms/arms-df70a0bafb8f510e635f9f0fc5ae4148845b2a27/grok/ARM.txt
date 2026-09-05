@@ -1,0 +1,46 @@
+I'll read REVIEW.md and DIFF.patch first, then follow the review instructions exactly.The patch is long. I’ll quote the first `diff --git` line, then keep reading the rest of the diff and the files it touches.Next I’ll read the rest of the patch and the live files the checks name.The arm dir only has the brief and patch. I’ll find the checkout that actually holds the changed files.The checkout is the parent worktree. I’ll read the sweep, the doc bound, and the reauth path next.I’ll pin the sweep claims to the real marker, then check reauth, deletions, and brain-links.I’ll run the marker against the claimed shapes, then count source and built matches.The observer test doesn’t match the copy I read. I’ll re-read the current file and check git.The worktree is dirty. I’ll review the committed SHA from DIFF.patch, not the uncommitted edits.First `diff --git` line of the patch:
+
+`diff --git a/TODO.md b/TODO.md`
+
+## Findings
+
+1. **MAJOR** — `site/src/components/auth/provider-buttons.observer.test.ts:677-685` and `:836-837`; also `docs/design/2026-09-04-GOOGLE-SIGNIN.md:492-493`
+
+   Round 4’s value branch and round 3’s dataset-property widening were removed. Comments that describe them were not.
+
+   The source-sweep test still says “all matched” and lists both `el.dataset.memberReauthGithub =` and `<button data-login="github">`. I ran those strings against the marker the assertions use (`SIGNIN_MARKER_BRANCHES` joined with `gi`). Both miss. `data-login="github"` is the shape `SWEEP_DOES_NOT_CATCH` (`:272-274`) says the sweep does not catch.
+
+   The OAuth-call test then says that same door “is closed one level up instead, by the value branch of the sweep's marker”. There is no value branch. A button that hides the provider in a value and wires `signInWithProvider` with a DOM read still passes every assertion in this file. That is the bound. The comment says the opposite.
+
+   Step 6 of the checklist repeats the overclaim: the OAuth-call control is “what a button that hides the provider in an attribute value would still have to pass.” Only a *literal* wiring has to pass it.
+
+2. **MAJOR** — `site/src/components/auth/provider-buttons.observer.test.ts:255-259`, `:750-776`, and `docs/design/2026-09-04-GOOGLE-SIGNIN.md:478-487`
+
+   The new control claims the catch list cannot drift: “Delete a branch and leave its line in the list, or reword a line by hand, and this fails.”
+
+   I broke that.
+
+   - Delete line `:259` (`either of those two names built with setAttribute, or a data-signin* write through dataset`) and leave the marker alone. The control stays green. It never reads that line. It only checks that `SIGNIN_MARKER_BRANCHES` still *contains* the four constants.
+   - Reword line `:257-258` from “hyphen segment of any data-* attribute NAME” to “prefix of any class name”. The control stays green. It only requires the provider *ids* to appear as substrings.
+   - Remove `DATASET_SIGNIN_WRITE` from the branch array. That *does* go red, because of `length === 4` and `.includes()`. So “change the marker, leave the list” is noticed. The reverse is not.
+
+   Line `:256` and line `:259` are typed in full. They are not mapped from `DATA_SIGNIN_ATTRIBUTE`, `SETATTRIBUTE_PROVIDER_NAME`, or `DATASET_SIGNIN_WRITE`. Ids, labels, and the three call-name constants *are* interpolated. The branch sentences are not.
+
+   The call-name lines in `SWEEP_CATCHES` quote `OAUTH_CALL` / `GENERAL_PROVIDER_CALL` / `NAMED_PROVIDER_WRAPPER`. The assertions that find those calls type the same names again (`:488`, `:523`, `:847`, `:868`). Rename a constant and the sentence follows; the enforcement does not.
+
+   The checklist CATCHES paragraph is also a typed paraphrase, not the list. File: “either of those **two** names… one of: `"Sign in with GitHub", "Sign in with Google"`”. Doc: “either of those names… one of the labels in `auth-providers.ts`”. The control only `includes(SWEEP_DOES_NOT_CATCH)`. That one sentence matches word for word. The catch list does not, and nothing pins it.
+
+3. **MINOR** — `site/src/components/app/member-admin.observer.test.ts:36-37`
+
+   The assertion that the reauth button is not an element with `data-member-reauth-github` is right. The failure message is not: “that spelling is invisible to the provider sweep”. `PROVIDER_IN_ATTRIBUTE_NAME` now matches `<button data-member-reauth-github>`. I confirmed the hit. The LiveDashboard comment at `:908-910` says the same thing in the present tense about the old marker.
+
+## Claims I tried to refute and could not
+
+- **The sweep does what `SWEEP_CATCHES` / `SWEEP_DOES_NOT_CATCH` say.** Probes: `data-signin-github`, `data-member-reauth-github`, `data-github-login`, mixed-case `data-GitHub`, `setAttribute("data-signin-github")`, `setAttribute("data-member-reauth-github")`, `dataset.signinProvider =` all hit. `data-login="github"`, `dataset.memberReauthGithub =`, and a dataset *read* all miss. That matches the stated bound. I am not reporting that the regex is incomplete.
+- **`SWEEP_DOES_NOT_CATCH` is the same sentence in the file and in step 6.** It is.
+- **Reauth swap.** No provider id, name, or label is typed on that path. The handler reads `dataset.signinProvider` and calls `signInWithProvider`. Labels come from `ProviderButtons` / `AUTH_PROVIDERS`. Built `/app` shows one generated button, label `Sign in with GitHub`. The word “again” is in `FreshLoginRequired` (`commonswarm.ts:432`), written into `[data-member-error]` above the buttons. Zero enabled providers: `ProviderButtons` renders nothing (`providers.length > 0`); the email button stays.
+- **Exception accounting.** Source marker count on `LiveDashboard.astro` is 1 (the signed-out `data-signin-github` at line 69). Built `/app` `PROVIDER_IN_ATTRIBUTE_NAME` count is 1, and that hit contains `data-signin-github`. `data-member-reauth-github` is 0 in the build. `UNGENERATED_SIGNIN_SURFACES` allows 1.
+- **Deletion.** `Hero.astro` and `Invite.astro` are gone. Nothing under `site/` or `site/astro.config.mjs` imports them. Remaining mentions are historical, or they say the files were deleted.
+- **brain-links.** The new test fails if the header writes `(-, _, .)` and passes on the array spelling `["-", "_", "."]`. The comment names the shapes it cannot see (`- or _ or .`, backticks, a reordered constant). That is honest.
+
+VERDICT: FAIL

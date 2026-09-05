@@ -1,0 +1,55 @@
+I'll read REVIEW.md and DIFF.patch first, then follow REVIEW.md exactly.The first `diff --git` line is `diff --git a/TODO.md b/TODO.md`. I'll read the rest of the patch and the files it touches.The grok folder only has the brief. I'll find the SHA tree and the rest of the patch next.I'll check the SHA, the sixth commit, and the files the brief names.I'll read the reauth path, docs, brain-links, and hunt leftover Hero/Invite refs.The search was scoped to the arm folder. I'll run the same greps on the repo.Git was running from the arm folder. I'll rerun from the repo and test the regexes.`diff --git a/TODO.md b/TODO.md`
+
+Round 4 did close the exact door both arms named. I ran the source marker on `<button data-login="github">` and on `el.setAttribute("data-login", "github")`. Both hit. `querySelector("[data-signin-provider]")` and `button.dataset.signinProvider ?? ""` still miss, as claimed.
+
+The value branch is safe on source for generated buttons. `ProviderButtons.astro` is skipped, and its source writes `data-signin-provider={provider.id}`, not a quoted `"github"`. The skip is load-bearing for the `data-signin` prefix, not for the value branch. Keeping the value branch off the built page is also right: `dist/app/index.html` already has `data-signin-provider="github"`, and the same value pattern there would count every generated button.
+
+The rewritten residual is not exactly true. The value branch under-matches spellings that still have a literal in this tree. That is the round-4 hole.
+
+## Findings
+
+1. **MAJOR** `site/src/components/auth/provider-buttons.observer.test.ts:666-667` and `:743-745` — value branch under-matches; residual overclaims.
+
+   The new source-only alternatives are quoted HTML `attr="github"` and `setAttribute("name", "github")`. I constructed working controls that still return zero:
+
+   - `<button data-login={"github"}>` — native Astro. Compiles to `data-login="github"` in the built page. Source miss. Built-page control uses only `PROVIDER_IN_ATTRIBUTE_NAME`, so it misses too.
+   - `el.dataset.login = "github"` — the dataset spelling of the same door. The dataset branch only looks at property *names* that contain `signin` or a provider id.
+   - `<button data-login=github>` — unquoted HTML. Zero.
+
+   Wire any of those with `signInWithProvider(button.dataset.login, …)` and the call-site test stays green (DOM read, not a literal). That is the round-3 door with one extra pair of braces.
+
+   Line 743 says what no control reaches is “a provider id that is a literal nowhere — assembled at runtime, or fetched.” `{"github"}` is a literal. The comment is wider than the assertions again, in the other direction.
+
+2. **MAJOR** `docs/design/2026-09-04-GOOGLE-SIGNIN.md:478-482` and `provider-buttons.observer.test.ts:199-202` — claim family not swept.
+
+   Round 4 rewrote the call-site comment and stopped there. Two sibling claims still say the OAuth call-site test is what a value-hidden button has to pass.
+
+   The design doc (round 3, still live): “a third counts the OAuth call sites, which is what a button that hides the provider in an attribute value would still have to pass.” After round 4 that button is caught by the source value branch, or it is not caught at all. The call-site test does not see a DOM read.
+
+   `PROVIDER_IN_ATTRIBUTE_NAME` still says: “The control for that door is on the ENFORCEMENT instead — see the OAuth call-site test below, which such a button has to pass through.” First clause is true of the *name* pattern. Last clause is the same overclaim round 4 said it was killing.
+
+3. **MINOR** `site/src/components/app/member-admin.observer.test.ts:33-37` — reason is now false.
+
+   `doesNotMatch(/<[a-zA-Z][^>]*\bdata-member-reauth-github\b/)` is a good pin. The message says “that spelling is invisible to the provider sweep.” The sweep was widened so `data-member-reauth-github` *is* visible. I confirmed: that tag is a hit on `PROVIDER_IN_ATTRIBUTE_NAME`.
+
+4. **MINOR** `docs/design/2026-09-04-chat-platform-reconciled.md:874-877` — pointer at a deleted file.
+
+   Still cites `landing/Hero.astro:190`. It already said those files were imported by no page. Not reachable. Not a deletion-safety fail.
+
+## Claims I tried to refute and could not
+
+**Reauth swap (check 1).** The typed enumeration is gone, not moved. `LiveDashboard.astro:915-916` renders `ProviderButtons`. The handler at `:5430-5440` reads `button.dataset.signinProvider` and calls `signInWithProvider`. That function runs `authProvider(provider)` (`commonswarm.ts:235`) and throws `UnknownAuthProvider` for an id the array does not name. No provider id or label is typed on that path. The reader sees FreshLoginRequired’s “Sign in again, then press Remove once more.” (`commonswarm.ts:432`) above buttons labelled “Sign in with GitHub” from `AUTH_PROVIDERS`. That copy holds.
+
+**Exception counts (check 4).** Source marker on `LiveDashboard.astro` is exactly 1: the signed-out `data-signin-github` button. Built `dist/app/index.html` has that button, generated `data-signin-provider="github"` in the reauth block, and no `data-member-reauth-github`. The two counts are not the same matcher (full source marker vs name-only on the built page). That split is deliberate and correct. A third control can still hide in the hole in finding 1.
+
+**Built-page control (check 3).** Not green-by-default. Missing `dist/app/index.html` is `assert.fail`. Positive control requires `data-member-reauth` and `data-member-reauth-email` before it counts. Zero generated buttons fail `rendered.length > 0`. That last check also fails a legitimate no-OAuth build; the invite tests already assume `site/.env` reports at least one provider. If the swap had never happened, two name-hits would fail the count of 1.
+
+**Docs on `/app` button count (check 5).** Flows and step 6 no longer say `/app` has two hand-written provider buttons, or that one swap fixes both. They split signed-out (still hand-written) from reauth (generated 2026-09-05). The “eight sentences” note says the seven was not re-derived under `google: true`, and tells the reader to trust the failing test. That honesty holds. Finding 2 is the leftover that does not.
+
+**Hero / Invite deletion (check 6).** Both files are gone. `index.astro` imports `ConsumerHero` only. No import, glob, or test path still resolves to them. `hero.css` is not imported; its header now says it is orphaned. Comments in `Demo.astro`, `Verbs.astro`, `WEB-ONBOARDING.md`, and `TODO.md` say the files were deleted.
+
+**Brain-links (check 7).** Header names `BRAIN_SLUG_SEPARATORS` (`brain-links.ts:18-21`). The `doesNotMatch` half is built from the constant. The `BRAIN_SLUG_SEPARATORS` identifier in the first half is typed, and the test says so. Admitted gaps: `- or _ or .`, backtick lists, the array’s own `["-", "_", "."]` spelling (quotes break the run), a reordered constant. I could put `(- or _ or .)` back in the comment and this test would stay green. The test names that gap.
+
+**Passing breakage (check 8).** `signInWithGitHub` remains the signed-out door (`LiveDashboard.astro:5410-5416`). Reauth error path still writes `[data-member-error]` and re-enables the button (`:5441-5448`). Zero OAuth providers: `ProviderButtons` renders nothing, the email reauth button stays, the handler loop is empty. `aria-busy` is on the invite handler and the signed-out handler, not on reauth; that was already true of the old GitHub reauth button.
+
+VERDICT: FAIL

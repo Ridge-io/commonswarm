@@ -1,0 +1,19 @@
+diff --git a/TODO.md b/TODO.md
+
+1. `site/src/components/auth/provider-buttons.observer.test.ts:471` - BLOCKER
+**Reasoning (Check 2):** The derivation control is fundamentally flawed and fails to check if `SWEEP_CATCHES` is in sync with the code. The assertion checks `SIGNIN_MARKER_BRANCHES.includes(PROVIDER_IN_ATTRIBUTE_NAME) && SIGNIN_MARKER_BRANCHES.includes(...)`, which is a tautology: it merely confirms that the array `SIGNIN_MARKER_BRANCHES` contains the exact constants it was just initialized with. It never inspects `SWEEP_CATCHES` for the name, dataset, or setAttribute claims. You could completely remove those lines from `SWEEP_CATCHES` and the control would remain green, allowing silent drift.
+
+2. `site/src/components/auth/provider-buttons.observer.test.ts:546` - MAJOR
+**Reasoning (Check 1):** Lines 5 and 6 of `SWEEP_CATCHES` appear derived because they dynamically inject `${GENERAL_PROVIDER_CALL}` and `${NAMED_PROVIDER_WRAPPER}` into the list text. However, they are typed in substance: the corresponding tests hardcode the strings `/signInWithProvider\(/` and `/(?<!function\s)signInWithGitHub\(/` rather than using the constants. If the constants are changed, the bound text will update, but the assertions will remain locked to the hardcoded strings. 
+
+3. `site/src/components/auth/provider-buttons.observer.test.ts:683` - BLOCKER
+**Reasoning (Check 4):** When reverting the dataset widening (round 3) and value branches (round 4), the developer forgot to remove the corresponding descriptions from the comment block above the marker. The comment still explicitly lists `el.dataset.memberReauthGithub = the same thing with the provider in the property name` and `<button data-login="github"> the provider typed as an attribute VALUE, any attribute` as shapes caught by the marker. This leaves a comment describing branches that are no longer there, directly contradicting the stated bound.
+
+### Claims I tried to refute and could not:
+- **Check 3 (Bound documentation):** The file and `docs/design/2026-09-04-GOOGLE-SIGNIN.md` carry the exact same bound (`SWEEP_DOES_NOT_CATCH`) word for word.
+- **Check 5 (The reauth swap):** The handler accurately relies strictly on `button.dataset.signinProvider`, eliminating typed provider names and IDs from the path. If zero providers are enabled, `ProviderButtons` safely degrades by rendering no elements, leaving only the "Email a fresh sign-in link" button—which correctly honors the surrounding UI copy ("Sign in again, then press Remove once more").
+- **Check 6 (Exception accounting):** `LiveDashboard.astro` holds exactly one hand-written sign-in button (the signed-out panel's GitHub button), accurately meeting both the source count of 1 and the built page count of 1, while firing accurate messages. 
+- **Check 7 (The deletion):** `Hero.astro` and `Invite.astro` were deleted. Their mentions in `TODO.md` were accurately cleaned, and any surviving references in `WEB-ONBOARDING.md`, `2026-09-04-GOOGLE-SIGNIN.md`, and `Demo.astro` are expressly historical comments noting their deletion on 2026-09-05.
+- **Check 8 (brain-links):** The `brain-links` control accurately dynamically derives its test regex from `BRAIN_SLUG_SEPARATORS` to catch the comma-separated shape, preventing drift. It discriminates well and honestly concedes its limits (e.g., quotes, order) in its comments.
+
+VERDICT: FAIL

@@ -1,0 +1,69 @@
+I'll read REVIEW.md and DIFF.patch first, then follow REVIEW.md exactly.The brief says to quote the first `diff --git` line before findings. I'll keep reading the rest of the patch and the files it touches.I'll locate the checkout at that SHA and keep reading the rest of the patch plus the files the checks name.Checkout is at `715fb05` on `lane/site-chips`. Next I’ll read the bound-control files and try to break them.I'll extract the bound strings and run the marker against the probes the brief asks for.I'll run the marker against real markup and check the last-round findings so I don't re-report a bound they already stated.I'll mutation-test the bound control in Node and count source vs built matches.I have enough to judge the bound control. Writing the review now.
+
+`diff --git a/TODO.md b/TODO.md`
+
+## Findings
+
+None that block landing.
+
+1. **MINOR** — `site/src/components/auth/provider-buttons.observer.test.ts:738-745`
+
+   The source-sweep comment says “Three ways … all matched” and then lists four shapes: `data-signin*`, provider-as-segment, `setAttribute`, and a `dataset.signin* =` write. Those four are the branches. The word “Three” is a leftover count. It does not describe a reverted value branch or a dataset-property widening.
+
+## Bound control (checks 1–3)
+
+I ran each `SWEEP_CATCHES` line against the marker the assertions use (`SIGNIN_MARKER_BRANCHES` joined, flags `gi`).
+
+Hits: `data-signin-github`, `data-member-reauth-github`, `data-github-login`, mixed-case `data-GitHub`, `setAttribute("data-signin-github")`, `setAttribute("data-member-reauth-github")`, `dataset.signinProvider =`, `dataset['signinGithub'] =`.
+
+Misses: `data-login="github"`, `dataset.memberReauthGithub =`, a dataset read, `querySelector("[data-signin-provider]")`. That matches `SWEEP_DOES_NOT_CATCH`. I am not treating that miss as a gap.
+
+Each of the four probes matches its own pattern and the combined marker.
+
+Call names in the list are the same strings the assertion regexes are built from (`oauthCalls`, `providerCallWithLiteral`, `namedWrapperCalls`). Rename a constant and both the sentence and the search move.
+
+The eight catch lines and `SWEEP_DOES_NOT_CATCH` appear word for word in step 6 of `docs/design/2026-09-04-GOOGLE-SIGNIN.md`. I checked with `includes`.
+
+**Mutations**
+
+- Delete a `SIGNIN_MARKER` branch: `length === 4` goes red. The claim leaves `SWEEP_CATCHES` with it.
+- Reword a branch claim: the list follows; the doc check goes red until the doc is updated.
+- Narrow `DATA_SIGNIN_ATTRIBUTE` from `data-signin` to `data-signin-provider` and leave the probe: the control stays green, because the probe is already `data-signin-provider`. That is the limit of one positive probe. It is not the old tautology (the tautology stayed green after you deleted the claim). A probe that no longer matches does go red.
+
+## Reverted widenings (check 4)
+
+The value branch and the dataset-property widening are gone from the marker. Comments that used to list them as caught are rewritten. The OAuth-call test now says a value-plus-DOM-read still passes, and the checklist says the same. I could not find a comment that still claims those reverted branches run.
+
+## Reauth swap (check 5)
+
+No provider id, name, or label is typed on that path. Markup is `ProviderButtons`. The handler reads `button.dataset.signinProvider` and calls `signInWithProvider`. `authProvider()` throws `UnknownAuthProvider` for an id the array does not name.
+
+Built `/app`: one generated button, label `Sign in with GitHub`. `Sign in again with GitHub` is 0. `data-member-reauth-github` is 0. “Again” lives in `FreshLoginRequired` (`commonswarm.ts:432`), written into `[data-member-error]` above the buttons.
+
+Zero enabled providers: `ProviderButtons` renders nothing (`providers.length > 0`). The loop binds nothing. The email control stays.
+
+## Exception accounting (check 6)
+
+Source marker count on `LiveDashboard.astro` is 1 (signed-out `data-signin-github`). `UNGENERATED_SIGNIN_SURFACES` allows 1 and asserts equality. Built `/app` `PROVIDER_IN_ATTRIBUTE_NAME` count is 1, and that hit contains `data-signin-github`. The two counts use different patterns on purpose: the built control ignores `data-signin-provider` so generated buttons are not counted as hand-written. The messages about both counts are true.
+
+The targeted tests passed: source sweep, stated-bound control, OAuth call sites, built `/app` page, member-admin observer.
+
+## Deletion (check 7)
+
+`Hero.astro` and `Invite.astro` are gone. Nothing under `site/` or `site/astro.config.mjs` imports them. Remaining mentions in `WEB-ONBOARDING.md`, the Google sign-in doc, `Demo.astro`, and `Verbs.astro` say the files were deleted. `hero.css` is labelled orphaned and nothing imports it.
+
+## brain-links (check 8)
+
+Header names `BRAIN_SLUG_SEPARATORS`. The `doesNotMatch` half is built from the constant. The identifier in the first half is typed; a rename fails loud. The test says this. Gaps it names and that I confirmed: `- or _ or .`, backticks, the array spelling `["-", "_", "."]` (quotes break the run), a reordered constant. It catches `(-, _, .)`. That is honest.
+
+## Claims I tried to refute and could not
+
+- The sweep does what `SWEEP_CATCHES` / `SWEEP_DOES_NOT_CATCH` say, on the shapes those lists name.
+- The derivation control notices a deleted branch, a reworded claim (via the doc pin), and a pattern change that breaks its probe. It does not notice a narrowing that still matches the probe.
+- File and doc carry the same bound, word for word.
+- Reauth path has no typed provider. Copy still reads. Zero providers leave the email door.
+- Source count 1, built count 1, messages true.
+- Deletion is clean. Leftover mentions are historical.
+- brain-links control discriminates the defect it had and admits the shapes it cannot see.
+
+VERDICT: PASS

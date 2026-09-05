@@ -1,0 +1,72 @@
+I'll read REVIEW.md and DIFF.patch first, then follow REVIEW.md exactly.The patch is long; I’ll read the rest of DIFF.patch and the files the brief names.I’ll locate the checkout that holds this patch, then attack each REVIEW.md check against the real files.Repo is the parent lane checkout. Next I’ll read the files each check names and attack the claims.Grep was scoped to the arm folder. I’ll search the parent checkout and keep reading the files the checks name.I’ll read the signed-out markup, provider helpers, leftover Hero/Invite refs, and the regex against real cases.The inline script broke on quotes. I’ll put the regex checks in a file and run that.First `diff --git` line of the patch:
+
+`diff --git a/docs/design/2026-09-04-GOOGLE-SIGNIN.md b/docs/design/2026-09-04-GOOGLE-SIGNIN.md`
+
+Measured on this tree, not from names: `LiveDashboard.astro` source matches the widened marker **once** (the signed-out `<button data-signin-github>`). Built `site/dist/app/index.html` has **one** `PROVIDER_IN_ATTRIBUTE_NAME` hit (`data-signin-github`), **one** `data-signin-provider="github"` inside `[data-member-reauth]`, **zero** `data-member-reauth-github`, **zero** “Sign in again with GitHub”, and two “Sign in with GitHub” strings (signed-out hand-write + generated reauth).
+
+---
+
+1. **MAJOR** — `site/src/components/auth/provider-buttons.observer.test.ts:173-176` and `:607`
+
+The tag pattern was changed so `data-google-analytics-id` does not match: last segment plus `(?![a-z-])`. I ran that string against `PROVIDER_IN_ATTRIBUTE_NAME`. No match. That part of the round-1 fix holds.
+
+The `setAttribute` branch they widened in the same hunk does not get that guard:
+
+```
+setAttribute\(\s*["'`]data-(?:[a-z-]*)?(?:signin|${ids})
+```
+
+There is no end-of-name check. `el.setAttribute("data-google-analytics-id", "G-x")` matches as `setAttribute("data-google`. So does `setAttribute("data-something-signin")`.
+
+That is the same false red the new comment says this suite exists to stop. The fix applied the rule to tags and then widened the sibling without it.
+
+2. **MAJOR** — `provider-buttons.observer.test.ts:186-189` and `:652-689`
+
+Round 1: `<button data-login="github">` hides the provider in a value. The lane says the `signInWithGitHub(` count closes that, because “any such button would have to go through” that wrapper.
+
+That is false. A second GitHub-only door can call `signInWithProvider("github")` (or `const id = "github"; signInWithProvider(id)`). The literal/named-value scan at `:423-456` **allows** known ids. The new count only watches the wrapper name. Attribute-name sweeps miss the value. Built `/app` using only `PROVIDER_IN_ATTRIBUTE_NAME` misses it too.
+
+I also constructed misses the widened **name** marker still has:
+
+- `<button data-github-oauth>` / `<button data-oauth-github-id>` — provider is not the last segment
+- `el.dataset.memberReauthGithub = ""` / `el.dataset.github = "1"` — the `dataset` arm only watches `signin*`
+
+Benign name hits the last-segment rule now flags (accepted cost, not the analytics case): `<div data-from-github>`, `<button data-pre-google>`, `<a data-color-google>`.
+
+3. **MINOR** — `provider-buttons.observer.test.ts:178-180` vs `:726`
+
+The comment says the name marker is matched case-insensitively on source **and** built pages. Source uses `"gi"`. The built-page control uses `"g"` only. `<button data-GitHub>` is a miss on the built page and a hit on source. Today’s `dist/app/index.html` is lowercase, so this test is green. A mixed-case extra control would still fail the source sweep.
+
+4. **MINOR** — `docs/design/2026-09-04-GOOGLE-SIGNIN.md:458-461`
+
+This file is in the patch. It still says `Hero.astro` and `Invite.astro` “both say ‘email or GitHub’” and are dead. The same patch deletes both files. They do not say that any more. They are gone.
+
+Step 6, the flows section, and the closing “two swaps” paragraph no longer claim `/app` has two hand-written provider buttons, and they no longer say one swap fixes both. I could not refute those corrections.
+
+The 2026-09-05 “eight sentences” note is honest about what it did not re-derive. Removing the reauth label drops the unique set from 8 to 7 (1 `/app` + 4 `/privacy` + 2 `/terms`). “Ten lines” with three of them `/privacy`’s one meta description, once per description tag, is a different count. The file tells the reader to take the failing test, not this snapshot.
+
+5. **MINOR** — `site/src/lib/brain-links.test.mjs:213-215` and `:219-228`
+
+The comment says both halves are built from `BRAIN_SLUG_SEPARATORS`. Only the second half is. The first half is a typed sentence (`carrying one of the characters in\s+\*\s+BRAIN_SLUG_SEPARATORS`). Wrap the comment onto one line and that assert goes red while the constant is still named.
+
+The second half joins the array as `X, Y, Z` in array order. The test already names the gaps: `"- or _ or ."` and a reordered array. Also: `` `-`, `_`, `.` `` and the export itself (`["-", "_", "."]`) do not match, because of quotes. A comment could type the set again in those shapes and this test would stay green. The original `(-, _, .)` shape would fail, as claimed.
+
+6. **MINOR** — `TODO.md:262`, `docs/design/WEB-ONBOARDING.md:310`
+
+Both still tell a reader to edit `landing/Invite.astro`. Nothing under `site/` or `site/astro.config.mjs` imports `Hero.astro` or `Invite.astro`. Landing uses `ConsumerHero`. Tests point at `ConsumerHero.astro`. `hero.css` is marked orphaned and is not imported. Deletion is not a runtime break. `Demo.astro:16-17` and `Verbs.astro:11-13` now say the file was deleted. `Verbs.astro:10` still says “Hero states it” in the present tense.
+
+---
+
+Claims I tried to refute and could not:
+
+**Reauth enumeration (check 1).** Markup is `<ProviderButtons />`. Handler reads `button.dataset.signinProvider` and calls `signInWithProvider`. `commonswarm.ts:231-243` runs `authProvider(provider)`; `auth-providers.ts:105-108` throws `UnknownAuthProvider` for an id the array does not name. No provider id or label is typed on that path. The label the reader sees is `AUTH_PROVIDERS`’s “Sign in with GitHub”. The sentence above is `FreshLoginRequired` via `readableError` (`commonswarm.ts:432`, `LiveDashboard.astro:1643-1645`, `:1361-1386`): “Sign in again, then press Remove once more. CommonSwarm did not remove anyone.” “Again” lives in that sentence. The old button text is gone from the built page.
+
+**Built-page control (check 3).** Not green-by-default. Missing `dist/app/index.html` calls `assert.fail`. Zero `PROVIDER_IN_ATTRIBUTE_NAME` hits fail `length === 1`. The old `data-member-reauth-github` plus signed-out would be 2 and fail. Positive controls: `[data-member-reauth]` and `[data-member-reauth-email]` are in the built file I read. `rendered.length > 0` fails a no-provider build rather than passing on empty. Stale HTML from before this swap fails. I did not re-run the test file.
+
+**Exception math (check 4).** `UNGENERATED_SIGNIN_SURFACES` still allows 1. Source count on `LiveDashboard.astro` is 1. Built count is 1. Both are the signed-out `data-signin-github` button. They are not the same regex (source also has `data-signin*` / `setAttribute` / `dataset.signin*`; built is name-only). Today they fire on the same tag. A third **name** control on that page fails both. A third **value** control does not — finding 2.
+
+**Error path / zero providers (check 8).** Catch still writes `[data-member-error]`, unhides it, and sets `button.disabled = false`. `signInWithGitHub` remains the signed-out handler (`:5416`). `ProviderButtons` with zero providers renders nothing (`ProviderButtons.astro:50-61`); the `for` loop binds nothing; the email reauth button stays. I did not click this in a browser.
+
+The live second GitHub button is gone. The round-1 false-red was not removed from the `setAttribute` branch this lane widened, and the new call-site control does not do what its comment says.
+
+VERDICT: FAIL

@@ -1,0 +1,92 @@
+I'll read REVIEW.md and both patches, then follow the review instructions exactly.I'll quote the first `diff --git` line, then trace the three new constants through claims, assertions, and the design doc.The arm folder is a git checkout; I'll read the observer test and the Google sign-in doc next.The checkout is the parent worktree. I'll read the test, the design doc, and the call sites from there.I'll extract the generated bound lines, probe the markers, and read the rest of the lane.I'll run the bound probes, mutation checks, and the observer tests next.The inline script broke on zsh quoting. I'll write a probe file and run the tests from there.I'll mutate the three new constants in a copy of the test and see which cases go red.`diff --git a/TODO.md b/TODO.md`
+
+## Findings
+
+None.
+
+## 1. The three new constants are read by both sides
+
+`OAUTH_CALL_SITE`, `NAMED_WRAPPER_CALL_SITES`, and `NAMED_WRAPPER_CALLS_ALLOWED` each feed the claim line in `SWEEP_CATCHES` and the assertion that enforces it.
+
+| Constant | Claim (`provider-buttons.observer.test.ts:330-338`) | Assertion |
+|---|---|---|
+| `OAUTH_CALL_SITE` | `any ${OAUTH_CALL} outside ${OAUTH_CALL_SITE}` | expected file list is `[OAUTH_CALL_SITE]` (`:564-566`) |
+| `NAMED_WRAPPER_CALL_SITES` | `anywhere but ${NAMED_WRAPPER_CALL_SITES.join(", ")}` | expected callers are those files (`:987-989`) |
+| `NAMED_WRAPPER_CALLS_ALLOWED` | `more than ${NAMED_WRAPPER_CALLS_ALLOWED} call(s) there` | expected count on each file is that number (`:989`) |
+
+I changed each one and restored it. Both tests went red every time:
+
+- `OAUTH_CALL_SITE = "lib/foo.ts"` → `signInWithOAuth is called once` (`actual: ['lib/commonswarm.ts']`, `expected: ['lib/foo.ts']`) and the bound control (`doc missing any .signInWithOAuth( outside lib/foo.ts`).
+- `NAMED_WRAPPER_CALLS_ALLOWED = 2` → bound control (doc still has `more than 1`) and the call-site test (`LiveDashboard.astro (1)` vs `(2)`).
+- Extra file in `NAMED_WRAPPER_CALL_SITES` → bound control (regenerated line) and the call-site test (expected a second `(1)` that is not there).
+
+Gemini’s typed pair is gone. Before this commit the claim said `outside lib/commonswarm.ts` / `more than one call to ${NAMED_PROVIDER_WRAPPER}` while the assertions used `["lib/commonswarm.ts"]` and `["components/app/LiveDashboard.astro (1)"]`. Those two literals are now the constants.
+
+Still typed, and not the same constraint: `COMMONSWARM` is the URL used to *read* commonswarm.ts for the inner “one call, no literal provider” checks; `UNGENERATED_SIGNIN_SURFACES` still names `LiveDashboard.astro` for the markup count. Those are other rules. I could not find the *where / how many* rules still typed beside the constants.
+
+## 2. The derivation control is not a tautology
+
+I ran the mutations the brief names against the control at `:822`.
+
+| Mutation | Result |
+|---|---|
+| Delete a `SIGNIN_MARKER` branch | `SIGNIN_MARKER.length === 4` red. The claim leaves `SWEEP_CATCHES` with it. |
+| Empty a claim | `claim.trim().length >= 20` red. That is the path that used to stay green because `checklist.includes("")` is true of every file. |
+| Stub a short claim | length check red; if it were long enough, the doc pin would still fire. |
+| Reword a claim | list follows the record; doc pin red until the doc is updated. Reword both, green — they still match. |
+| Add an untethered `SWEEP_CATCHES` line | `length === SIGNIN_MARKER.length + 4` red. |
+| Narrow a pattern that still matches its probe | **green.** Confirmed: `DATA_SIGNIN_ATTRIBUTE` narrowed to `data-signin-provider` still matches its probe; `setAttribute` with `PROVIDER_NAME_SEGMENT` removed still matches `data-signin-${id}` and would miss `data-member-reauth-github`. The lane already admits this. It is one positive probe per branch, not the old tautology (that one stayed green after the claim was deleted). |
+
+The extra four `SWEEP_CATCHES` lines (OAuth / literal / named wrapper / labels) have no probes. They are pinned by the length check, “the call *names* appear”, provider ids/labels, and the doc `includes`. Changing `OAUTH_CALL_SITE` still trips that doc pin because the line is interpolated. Un-deriving an *assertion* so it stops reading the constant, while leaving the claim interpolated, is a future edit this control would not see. It is not the current code.
+
+## 3. File and doc carry the same bound
+
+All eight catch lines and `SWEEP_DOES_NOT_CATCH` are in `docs/design/2026-09-04-GOOGLE-SIGNIN.md` step 6, `includes` true for each. The regenerated GitHub line is exactly:
+
+`signInWithGitHub( anywhere but components/app/LiveDashboard.astro, or more than 1 call(s) there`
+
+That is the string the constants build. The bound sentence is the same too.
+
+## 4. The sweep does what `SWEEP_CATCHES` says
+
+I ran each claimed shape against the marker the assertions build (`SIGNIN_MARKER_BRANCHES` joined, flags `gi`, plus the three call regexes).
+
+Hits: `data-signin-github`, `data-signin-provider` on an `<a>`, `data-member-reauth-github`, `data-github-login`, mixed-case `data-GitHub`, `data-github`, `setAttribute("data-signin-github")`, `setAttribute("data-member-reauth-github")`, `dataset.signinProvider =`, `dataset["signinGithub"] =`, `.signInWithOAuth(`, `signInWithProvider("github"`, a `signInWithGitHub(` call.
+
+Misses that match the stated bound: `data-login="github"`, a dataset read, `querySelector("[data-signin-provider]")`, `href="data-github"`, `function signInWithGitHub(`. I am not treating those as gaps.
+
+Call regexes: a `signInWithProvider(providerId` named value is not a literal (the claim is literals only). The definition of `signInWithGitHub` is excluded by the lookbehind. One live call remains, in `LiveDashboard.astro`. One `.signInWithOAuth(` remains, in `lib/commonswarm.ts`. No string literal is handed to `signInWithProvider(` under `site/src`.
+
+`data-google-analytics-id` hits. That is the loud-failure ruling, not a missed claim.
+
+## 5. The last commit did not weaken the call-site rules
+
+Before: expected `["lib/commonswarm.ts"]` and `["components/app/LiveDashboard.astro (1)"]`.
+After: `[OAUTH_CALL_SITE]` and `NAMED_WRAPPER_CALL_SITES.map((file) => \`${file} (${NAMED_WRAPPER_CALLS_ALLOWED})\`)`.
+With the current values those are the same arrays. `oauthCalls()` and `namedWrapperCalls()` were already built from `OAUTH_CALL` / `NAMED_PROVIDER_WRAPPER`. Routing the *allowed site and count* through constants does not loosen the matchers.
+
+The source-sweep comment now says “Four ways” over four shapes.
+
+Targeted tests passed: stated bound, `signInWithOAuth is called once`, OAuth call sites, source sweep, built `/app` page, member-admin observer.
+
+## 6. Rest of the lane
+
+**Reauth swap.** No provider id, name, or label is typed on that path. Markup is `<ProviderButtons>`. The handler reads `button.dataset.signinProvider` and calls `signInWithProvider`. `authProvider()` throws `UnknownAuthProvider` for an id the array does not name. Built `/app` has one generated `data-signin-provider="github"` button labelled `Sign in with GitHub`. `Sign in again with GitHub` is gone. `data-member-reauth-github` is gone as an element. “Again” lives in `FreshLoginRequired` (`commonswarm.ts:432`) and is written into `[data-member-error]` above the buttons. Zero enabled providers: `ProviderButtons` renders nothing (`providers.length > 0`); the loop binds nothing; the email control stays.
+
+**Hero.astro / Invite.astro.** Both files are gone. Nothing under `site/` imports them. Remaining mentions in the Google sign-in doc, `WEB-ONBOARDING.md`, `Demo.astro`, and `Verbs.astro` say they were deleted.
+
+**brain-links.** The header names `BRAIN_SLUG_SEPARATORS`. The `doesNotMatch` half is built from the constant. The identifier in the first half is typed; a rename fails loud. The test says this. Gaps it names and that I confirmed: `- or _ or .`, backticks, the array spelling `["-", "_", "."]` (quotes break the run), a reordered constant. It catches `(-, _, .)`. That is honest.
+
+## Claims I tried to refute and could not
+
+- The three new constants are what both the bound sentence and the call-site assertions read. Changing one turns both tests red.
+- No remaining typed copy of those two *where / how many* rules in this file.
+- The derivation control notices a deleted branch, an empty or short stub claim, a reworded claim (via the doc pin), and an extra line. It does not notice a narrowing that still matches its probe.
+- File and doc carry the same eight catch lines and the bound sentence, word for word, including the regenerated `signInWithGitHub(` line.
+- The marker honours each `SWEEP_CATCHES` shape I ran. The value-hidden button is the stated bound.
+- Routing the expected lists through constants did not change what they enforce.
+- Reauth path has no typed provider. Copy still reads. Zero providers leave the email door.
+- Deletion is clean. Leftover mentions are historical.
+- brain-links control discriminates the defect it had and admits the shapes it cannot see.
+
+VERDICT: PASS

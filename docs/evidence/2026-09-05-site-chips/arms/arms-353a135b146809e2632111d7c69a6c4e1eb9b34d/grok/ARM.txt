@@ -1,0 +1,57 @@
+I'll read REVIEW.md and the patch first, then follow REVIEW.md exactly.The patch is long. I’ll finish reading it, then check the files the brief names.I’ll inspect the lane checkout and the files the brief names so I can attack the claims, not just the patch.The lane checkout is at SHA `353a135`. I’ll read the source, tests, and docs the brief names.Next I’ll read the marker, the built-page control, the provider functions, and the docs the brief names.The generated reauth labels may still show up in the copy sweep. I’ll trace that next, plus the unused `ids` binding and Hero/Invite leftovers.I’ll run the marker against real files and a few constructed cases, then check leftover copy and the error path.The shell was in the arm folder. I’ll rerun the marker checks from the lane checkout.Dist is present. I’ll count the built `/app` page next and check whether `ids` is unused.I have enough to judge the fixes. Next I’ll write the review in the form REVIEW.md asks for.
+
+diff --git a/TODO.md b/TODO.md
+
+The marker ruling is defensible. `data-github-login` (a working control) and `data-google-analytics-id` (benign) are the same shape: a provider id as one hyphen segment somewhere in a `data-*` name. No name-only pattern can catch one and miss the other. Taking the loud failure, plus `NON_SIGNIN_PROVIDER_ATTRIBUTES`, is the right trade. It does not swap one silent miss of that shape for another. The silent miss that remains is a different shape (provider in a *value*), which the lane named and then bound at the call site for literals.
+
+## Findings
+
+1. **MINOR** `site/src/components/auth/provider-buttons.observer.test.ts:720-722`
+
+   The new call-site test’s comment says a second GitHub-only button “goes red here, whatever it calls itself and however it spells its attributes.” That is wider than the assertions.
+
+   Still misses, under `site/src`:
+
+   ```html
+   <button type="button" data-login="github">Continue with GitHub</button>
+   ```
+   ```js
+   const providerId = button.dataset.login;
+   await signInWithProvider(providerId, redirect);
+   ```
+
+   Attribute-name sweep: no provider segment in the name. Built `/app` control: same. Literal `signInWithProvider("…")`: this is a DOM read, so it is allowed. Extra `signInWithGitHub(`: none. `toggleAttribute("data-github")` is another name-pattern miss; it would still have to pass the call-site bound.
+
+   The literal ban *does* close the round-2 hole (`data-login="github"` wired to `signInWithProvider("github", …)`). The production reauth spelling is gone. The leftover door is a new wiring, not the old one. The comment should say that.
+
+   Benign over-match (intended): `<meta data-google-analytics-id="G-123">` and `el.setAttribute("data-google-analytics-id", "1")` both hit. `data-googleplex` does not. The quote-end guard closed prefix matches, not the analytics example the comment cites; that example still matches because `PROVIDER_NAME_SEGMENT`’s suffix group swallows `-analytics-id`. That is the ruling. Register it in `NON_SIGNIN_PROVIDER_ATTRIBUTES` when it appears.
+
+2. **MINOR** `site/src/components/auth/provider-buttons.observer.test.ts:635`
+
+   `const ids = AUTH_PROVIDERS.map((provider) => provider.id).join("|")` is unused after the round-3 rewrite. The marker interpolates `PROVIDER_IN_ATTRIBUTE_NAME` / `PROVIDER_NAME_SEGMENT` / `datasetIds` instead. Leftover, not a hole.
+
+3. **MINOR** comments that still name the deleted files (not a reachability miss)
+
+   `site/src/components/landing/Demo.astro:16-17`, `Verbs.astro:10-13`, `site/src/styles/hero.css:1-3` point at `Hero.astro` in the past tense and say it is gone. `docs/design/WEB-ONBOARDING.md:310-312` and `docs/design/2026-09-04-GOOGLE-SIGNIN.md:460-465` do the same for `Invite.astro` / both. `docs/design/2026-09-04-chat-platform-reconciled.md:874-877` still cites `landing/Hero.astro:190` and already says to check liveness; nothing imports that path.
+
+   `hero.css` is still on disk and nothing imports it. `ui.css:32-33` already called it orphaned. Deletion of the `.astro` files did not leave a live resolver.
+
+## Claims I tried to refute and could not
+
+**1. Typed enumeration on the reauth path.** Markup is `<ProviderButtons buttonClass="dashboard__rail-add" />` (`LiveDashboard.astro:916`). The handler reads `button.dataset.signinProvider` and calls `signInWithProvider` (`5430-5439`). No provider id or label is typed on that path. `signInWithProvider` runs `authProvider()` (`commonswarm.ts:235-236`); an id `AUTH_PROVIDERS` does not name throws `UnknownAuthProvider` and does not reach Supabase. The label a reader sees is `AUTH_PROVIDERS.label` (“Sign in with GitHub”). The sentence above the buttons is FreshLoginRequired’s default, shown on `[data-member-error]` (`commonswarm.ts:432`, `LiveDashboard.astro:1643-1645`, `905`). “Again” lives in that sentence, not on the button. That copy is correct. GitHub remains typed on the signed-out button (`69-80`, `5410-5416`); that is the named leftover.
+
+**2. Marker.** Source count on `LiveDashboard.astro` is 1 (`data-signin-github`). `data-member-reauth-github` remains only in a comment, not in a tag, so it is not counted. `data-github-login` / `data-member-reauth-github` / mixed-case `data-GitHub` match. `<a href="data-github">` does not. Generated `data-signin-provider="github"` does not match `PROVIDER_IN_ATTRIBUTE_NAME` (built-page control); it does match the source sweep’s `data-signin*` prefix, which is why `ProviderButtons.astro` is excluded.
+
+**3. Built-page control.** Not green-by-default. Missing `dist/app/index.html` → `assert.fail` with a build instruction (`781-785`). Positive control: `[data-member-reauth]` and `[data-member-reauth-email]` (`793-798`); `/invite` has neither. Against the old markup (`data-signin-github` + `data-member-reauth-github`) the count is 2, not 1. Against a reauth block with no `ProviderButtons` output, `rendered.length > 0` fails (`830-833`). Measured on this tree’s `dist/app/index.html`: 1 attr hit (`data-signin-github`), generated `data-signin-provider="github"` with label “Sign in with GitHub”, no `data-member-reauth-github`. A no-provider build already fails the invite control in the same file; this test does not add a new failure mode there.
+
+**4. Exception accounting.** `UNGENERATED_SIGNIN_SURFACES` maps `components/app/LiveDashboard.astro` → 1 and asserts equality (`239`, `687-693`). Source count is 1. Built count (name-pattern only) is 1. They are the same leftover: the signed-out button, in the template and in the page. A third hand-written *name* under `site/src` trips the source sweep (allowed 0). A third on the built `/app` page trips the new control. A third `signInWithGitHub(` trips the call-site test. `site/public/` has no HTML buttons.
+
+**5. Docs.** Step 6, the flows section, and the closing paragraph now split signed-out (still hand-written) from reauth (generated 2026-09-05). Nothing still claims `/app` has two hand-written provider buttons, or that one swap fixes both. “There were two controls on that page, so there are two swaps, and one of them is done” (`478`) is true. The eight-sentence correction is true on this build: 10 extraction lines = 1 `/app` + 4 `/privacy` body + 3 copies of the privacy meta + 2 `/terms`; unique table rows 1+4+2 = 7; they say they did not re-derive that 7 under `google: true`. Take the failing test, not the file.
+
+**6. Hero / Invite deletion.** No import, dynamic import, glob, or test path resolves to `site/src/components/landing/Hero.astro` or `Invite.astro`. `index.astro` imports `ConsumerHero`. `invite.astro` imports `InviteOnramp`. `astro.config.mjs` has no glob of those files.
+
+**7. Brain-links control.** Only the second half is built from `BRAIN_SLUG_SEPARATORS` (the comma-separated `-, _, .` shape). The first half is a typed identifier name; a rename fails loud. The test says this. Gap it admits and that I confirmed: the comment can type `- or _ or .`, `` `-`, `_`, `.` ``, or a reordered `(_, -, .)` and the test stays green. It catches the defect it had.
+
+**8. Passing breakage.** `signInWithGitHub` still binds the signed-out button. Reauth catch still writes `[data-member-error]` and sets `button.disabled = false` (`5441-5447`). Zero OAuth providers: `ProviderButtons` renders nothing; the loop binds nothing; the email control remains. Same furniture rule as invite.
+
+VERDICT: PASS

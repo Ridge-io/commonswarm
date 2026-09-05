@@ -1,0 +1,27 @@
+`diff --git a/docs/design/2026-09-04-GOOGLE-SIGNIN.md b/docs/design/2026-09-04-GOOGLE-SIGNIN.md`
+
+1. **Reauth swap removed or moved the typed enumeration** (`site/src/components/app/LiveDashboard.astro:5431-5444`, Severity: MINOR)
+   The typed enumeration was completely removed, not moved. The handler binds to `[data-signin-provider]`, dynamically extracts the ID via `button.dataset.signinProvider`, and uses `signInWithProvider`. No provider name is typed on this path. `signInWithProvider` safely throws an `UnknownAuthProvider` error if the ID is missing from `AUTH_PROVIDERS`. The copy is correct because the word "again" is already supplied by the sentence above the buttons. I tried to refute this claim and could not.
+
+2. **Widened marker is right** (`site/src/components/auth/provider-buttons.observer.test.ts:205`, Severity: BLOCKER)
+   The widened marker `PROVIDER_IN_ATTRIBUTE_NAME` is flawed. It **over-matches** benign attributes like `<div data-google-analytics-id="1">` because the regex (`\bdata-[a-z-]*(?:github|google)\b`) only requires a word boundary after the provider, allowing it to successfully match the `data-google` prefix of `data-google-analytics`. It **under-matches** case variants like `<button data-GitHub>` or `setAttribute("data-GitHub")` because the regex lacks the case-insensitive `i` flag. I successfully refuted the claim that the widened marker is correct.
+
+3. **Built-page control is a real control** (`site/src/components/auth/provider-buttons.observer.test.ts:633`, Severity: MINOR)
+   It is a real control. If the feature is absent or `dist/app/index.html` is stale, the test safely fails its positive control asserting the presence of `<div data-member-reauth>`. If built against a deployment with zero providers, `renderedProviderIds` will be empty, explicitly failing the `assert.ok(rendered.length > 0)` check. I tried to refute this claim and could not.
+
+4. **Exception accounting adds up** (`site/src/components/auth/provider-buttons.observer.test.ts:288`, Severity: MAJOR)
+   The source and built counts evaluate to exactly 1, but they are not counting the same things. The source scan looks for multiple patterns (`data-signin*`, `setAttribute`, etc.) while the built scan only uses `PROVIDER_IN_ATTRIBUTE_NAME`. Because of this discrepancy, a third hand-written control utilizing an attribute like `<button data-login="github">` would bypass BOTH scans completely. I successfully refuted the claim that a third control cannot appear unnoticed.
+
+5. **Doc edits are true** (`docs/design/2026-09-04-GOOGLE-SIGNIN.md:30-61`, Severity: MINOR)
+   The doc edits correctly reflect the new state, clarifying that `/app` now holds exactly ONE hand-written button (the signed-out one) and that the re-authentication buttons are a separate generated control. The snapshot explicitly adds a correction that states it did NOT re-derive the total sentence count. I tried to refute this claim and could not.
+
+6. **Deletion of Hero and Invite is safe** (`site/src/styles/hero.css:1`, `site/src/components/landing/Verbs.astro:11`, `site/src/components/landing/Demo.astro:16`, `site/src/components/landing/consumer-copy.observer.mjs:47`, Severity: MINOR)
+   No active imports, globs, or tests resolve to either file, so they are unreachable as executable code. However, the deletion left behind `site/src/styles/hero.css`, which is an orphaned CSS file that now only exists for deleted files. Additionally, multiple comments still incorrectly point to `Hero.astro`'s header for documentation. I successfully refuted the claim that the deletion was perfectly clean.
+
+7. **Brain-links control discriminates** (`site/src/lib/brain-links.test.mjs:206-231`, Severity: MINOR)
+   The positive control matches the exact string name `BRAIN_SLUG_SEPARATORS`, while the negative control dynamically builds the typed list regex directly from the array values. The test explicitly admits its gap in the comments (`WHAT THIS CANNOT SEE...`), acknowledging it cannot detect reordered constants or alternative punctuation formats like "- or _". I tried to refute the claim that the test doesn't admit its gap and could not.
+
+8. **Anything broken in passing** (`site/src/components/app/LiveDashboard.astro:5431-5444`, Severity: MINOR)
+   The error path remains fully functional. The `button.disabled = false` correctly re-enables the specific scoped button from the `for...of` loop. If the deployment reports zero providers, `ProviderButtons` renders nothing, and the loop correctly exits without binding anything, while the email button safely remains. I tried to refute this claim and could not.
+
+VERDICT: FAIL

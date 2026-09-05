@@ -1,0 +1,21 @@
+```text
+diff --git a/docs/design/2026-09-04-GOOGLE-SIGNIN.md b/docs/design/2026-09-04-GOOGLE-SIGNIN.md
+```
+
+1. **`site/src/components/app/LiveDashboard.astro:5421`** — MINOR. I tried to refute the claim that the reauth swap removed the typed enumeration and correctly handled errors, but could not. The swap correctly replaces the handwritten element with `ProviderButtons`. The new handler binds dynamically to `dataset.signinProvider` and calls `signInWithProvider`, which correctly enforces `AUTH_PROVIDERS` via `authProvider()`. The error path is perfectly preserved, and if zero OAuth providers are configured, the email fallback button remains gracefully intact. 
+
+2. **`site/src/components/auth/provider-buttons.observer.test.ts:219`** — BLOCKER. The widened marker `PROVIDER_IN_ATTRIBUTE_NAME` is flawed in both directions. 
+- **Under-match**: `<button data-github-login>` is missed because the regex `(?![a-z-])` demands the provider id to be the absolute last segment. It also misses `<button data-123-github>` because digits are excluded from the `(?:[a-z-]*-)?` group.
+- **Over-match (False Positive)**: A benign attribute like `<a href="data-github">` is falsely flagged because `\bdata-github` matches string values anywhere in the element tag, without asserting it's an actual attribute name (e.g. followed by `=`).
+
+3. **`site/src/components/auth/provider-buttons.observer.test.ts:599`** — BLOCKER. The `setAttribute` branch was widened to `setAttribute\(\s*["'\`]data-(?:[a-z-]*)?(?:signin|${ids})`. This over-matches and flags benign uses like `setAttribute("data-google-analytics-id", ...)` because there is no boundary assertion at the end of the regex (`data-google` prefix satisfies the match). This reintroduces the exact defect the patch claimed to fix.
+
+4. **`site/src/components/auth/provider-buttons.observer.test.ts:311`** — MAJOR. I tried to refute the claim that the built-page control works properly and could not; it correctly reads the generated page, checks for positive assertions, and fails if `index.html` is stale or missing providers. However, the exception accounting fails the boundary logic: a third handwritten control *can* appear unnoticed. If a developer writes `<button data-login="github">` and wires it directly to the general `signInWithProvider("github", ...)` function, `data-login="github"` bypasses both attribute sweeps, and using `signInWithProvider` bypasses the new call-site sweep on `signInWithGitHub`. 
+
+5. **`docs/design/2026-09-04-GOOGLE-SIGNIN.md:439`** — MINOR. I tried to refute the claim that doc edits accurately reflect the current state, but could not. The docs honestly report that the total was "NOT re-derived" because the sweep measures description tags differently, and they correctly update the exception count to ONE remaining handwritten button on `/app`. The wording "Two controls, so two swaps" on line 473 accurately describes the state before the swap occurred.
+
+6. **`TODO.md:262` & `docs/design/WEB-ONBOARDING.md:310`** — BLOCKER. The deletion of `Invite.astro` is not safe. Both of these documents still explicitly instruct a reader to sweep and edit `landing/Invite.astro` whenever the deployment gate changes. Additionally, `site/src/styles/hero.css` remains as an orphaned CSS file that only exists for the deleted `Hero.astro` and `AuthorityDemo.astro` files, violating the review constraint.
+
+7. **`site/src/lib/brain-links.test.mjs:206`** — MINOR. The test claims both halves are built from `BRAIN_SLUG_SEPARATORS`, which is false: the first half of the check hardcodes the literal string `BRAIN_SLUG_SEPARATORS` into the regex (`/carrying one of the characters in\s+\*\s+BRAIN_SLUG_SEPARATORS/`) instead of building it from the constant. The test explicitly admits its own gap in the comment, stating it cannot see a list written in some other shape like `"- or _ or ."` or a reordered constant. If the comment were updated to type the set in this shape, the test would pass and fail to catch the drift.
+
+VERDICT: FAIL

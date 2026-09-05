@@ -1,0 +1,27 @@
+diff --git a/TODO.md b/TODO.md
+
+1. file: `site/src/components/auth/provider-buttons.observer.test.ts:275` (approximate, in `PROVIDER_IN_ATTRIBUTE_NAME` comment)
+Severity: BLOCKER
+Reasoning: I tried to refute the claim that the widened marker and enforcement sweeps catch all cases, and I successfully refuted it. The new `PROVIDER_IN_ATTRIBUTE_NAME` only checks attribute NAMES. If a human writes a hand-written control that hides the provider in a VALUE (e.g., `<button data-login="github">`) and wires it using `signInWithProvider(button.dataset.login)`, it bypasses the source attribute name sweep. The lane explicitly acknowledges this limitation, claiming "The control for that door is on the ENFORCEMENT instead — see the OAuth call-site test below." However, the call-site test explicitly ignores dynamically read IDs (`signInWithProvider(id)`) since that's what the generated buttons produce. The built-page sweep also relies exclusively on `PROVIDER_IN_ATTRIBUTE_NAME`, missing it there as well. The ruling trades one silent failure for another by leaving a massive loophole for dynamically-read custom attributes.
+
+2. file: `site/src/styles/hero.css:1`
+Severity: MINOR
+Reasoning: I checked if the deletion of `Hero.astro` and `Invite.astro` was clean and safe. The lane successfully deleted both files and nothing resolves to them anymore (so it is not a FAIL). However, it left `site/src/styles/hero.css` intact as dead code, merely adding a comment saying `hero.css — ORPHANED`. Since this CSS file only existed for those deleted components, leaving it instead of deleting it is incomplete cleanup. Additionally, comments explicitly pointing to the deleted `Hero.astro` and `Invite.astro` were left in `Demo.astro`, `Verbs.astro`, `WEB-ONBOARDING.md`, and `hero.css` to explain why they are gone, which preserves historical context but pollutes the codebase with references to dead files.
+
+3. file: `site/src/components/app/LiveDashboard.astro:5424` (approximate)
+Severity: PASS
+Reasoning: I tried to refute that the reauth swap actually removed the typed enumeration. It successfully removed the `[data-member-reauth-github]` button and `signInWithGitHub` call in favor of `ProviderButtons` and a generic `[data-signin-provider]` handler. The generic handler passes the dynamically read `providerId` to `signInWithProvider`, meaning an ID not in `AUTH_PROVIDERS` will safely be caught and never reach Supabase. The surrounding UI copy remains accurate since the prompt above the buttons ("Sign in again, then press Remove once more.") works seamlessly with the generated "Sign in with GitHub/Google" labels. If zero providers exist, the loop binds no handlers, but the email control behaves gracefully.
+
+4. file: `site/src/components/auth/provider-buttons.observer.test.ts:476` (approximate, built page sweep)
+Severity: PASS
+Reasoning: I tried to refute that the exception accounting accurately adds up. The source count and built count both exactly equal 1 for `components/app/LiveDashboard.astro` (the `data-signin-github` signed-out panel). However, they are not counting the exact same thing: the source sweep checks for `\bdata-signin` OR `PROVIDER_IN_ATTRIBUTE_NAME`, while the built sweep ONLY checks for `PROVIDER_IN_ATTRIBUTE_NAME`. As established in finding #1, a third hand-written control could appear using a value-based attribute, and neither sweep would count it. 
+
+5. file: `site/src/lib/brain-links.test.mjs:204` (approximate)
+Severity: PASS
+Reasoning: I tried to refute the claim that the brain-links control discriminates accurately. I could not. It ensures that the comment block names the constant `BRAIN_SLUG_SEPARATORS` and checks that the typed array string `-, _, .` isn't present. It explicitly documents in its own comments that it cannot catch alternative shapes (like backticks or reordered items), honestly admitting its own gap instead of claiming exhaustive coverage.
+
+6. file: `docs/design/2026-09-04-GOOGLE-SIGNIN.md:425` (approximate)
+Severity: PASS
+Reasoning: I tried to refute that the doc edits are true and consistent. I could not. The snapshot correctly reflects that `/app` now holds ONE of these hand-written controls instead of two. It is also honest about what it did not establish, explicitly stating that it did not re-derive the total under the original condition, but simply subtracted one from the count.
+
+VERDICT: FAIL

@@ -1,0 +1,35 @@
+diff --git a/TODO.md b/TODO.md
+
+1. **Check 1 (Reauth swap):** `site/src/components/app/LiveDashboard.astro:114` - PASS
+Severity: MINOR (for the check category, but it passes). 
+I tried to refute the claim that the typed enumeration was removed and could not. The `[data-signin-provider]` handler reads the provider generically via `button.dataset.signinProvider` and safely routes it through `signInWithProvider`, which validates against `authProvider()`. The fallback "Sign in again" copy aligns perfectly with the visual context.
+
+2. **Check 2 (Widened marker):** `site/src/components/auth/provider-buttons.observer.test.ts:277` - BLOCKER
+Severity: BLOCKER. 
+The `PROVIDER_IN_ATTRIBUTE_NAME` regex uses `<[a-zA-Z][^>]*` which greedily stops at the first `>` character. If an attribute placed before the provider control contains a `>` (e.g., an inline arrow function or an SVG chevron like `<button aria-label=">" data-github>`), the regex engine halts early and completely under-matches (misses) the sign-in control. Additionally, it over-matches benign attributes like `data-google-fonts` or `data-github-repo` because `PROVIDER_NAME_SEGMENT` allows trailing words after the provider segment. This same over-matching flaw exists in the widened `setAttribute` branch.
+
+3. **Check 3 (Built-page control):** `site/src/components/auth/provider-buttons.observer.test.ts:474` - MAJOR
+Severity: MAJOR. 
+I tried to refute that it lacks a positive control and could not; it correctly asserts the presence of the `<div data-member-reauth>` block to ensure it isn't green-by-default. However, if the build runs against a deployment with ZERO OAuth providers, `renderedProviderIds(app)` will be empty. The assertion `assert.ok(rendered.length > 0)` at line 524 will then loudly fail the test suite, meaning the build breaks when it should gracefully verify that only the email fallback button rendered.
+
+4. **Check 4 (Exception accounting):** `site/src/components/auth/provider-buttons.observer.test.ts:496` - MAJOR
+Severity: MAJOR. 
+The accounting can be bypassed. A handwritten control hiding the provider in a value (e.g., `<button data-login="github">`) is intentionally excluded from the built-page sweep's `PROVIDER_IN_ATTRIBUTE_NAME`. While the source sweep has a branch to catch this (`[a-z][a-z0-9-]*=["'\`](?:github|google)["'\`]`), the built-page sweep does NOT. If such a button were generated dynamically or slipped past the source sweep, it would not be counted. Furthermore, the `[^>]*` regex flaw (Finding 2) allows a third handwritten control to silently appear and bypass both counts.
+
+5. **Check 5 (Doc edits):** `docs/design/2026-09-04-GOOGLE-SIGNIN.md:44` - PASS
+Severity: MINOR. 
+I tried to refute that the doc edits were honest and could not. The document accurately distinguishes the remaining hand-written signed-out button from the now-generated re-authentication block. The added correction explicitly and honestly admits that the total sentence counts across the site were not re-derived under the original conditions.
+
+6. **Check 6 (Safe deletion):** `site/src/styles/hero.css:1` - MINOR
+Severity: MINOR. 
+The files `Hero.astro` and `Invite.astro` are deleted, and I tried to refute that the deletion left them reachable and could not (no dynamic imports or glob patterns resolve to them). However, `hero.css` only existed to style those deleted components and was left orphaned rather than being deleted. Comments in `Demo.astro`, `Verbs.astro`, and `WEB-ONBOARDING.md` still point to the deleted files, although they correctly contextualize them as dead history. 
+
+7. **Check 7 (Brain-links control):** `site/src/lib/brain-links.test.mjs:206` - PASS
+Severity: MINOR. 
+I tried to refute that the control discriminates and admits its gaps, and could not. The first half intentionally hardcodes `/BRAIN_SLUG_SEPARATORS/` because an identifier's name cannot be derived from its value. The test comment explicitly admits the gap that it would fail to catch reordered sets or lists formatted with quotes/backticks.
+
+8. **Check 8 (Passing breakage):** `site/src/components/app/LiveDashboard.astro:5446` - PASS
+Severity: MINOR. 
+I tried to refute that the error path was broken and could not. The `catch` block correctly executes `button.disabled = false` to re-enable the button after `signInWithProvider` throws an exception.
+
+VERDICT: FAIL
