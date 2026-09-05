@@ -394,6 +394,20 @@ target, the broadcast control, and Cancel. That is the reading area a reply cost
 open, and it is zero at rest, which is what the phone budget in
 `composer-polish.observer.test.ts` is measured against.
 
+## The site suite flakes under contention, and it is not this lane's
+
+Twice in this lane the full `npm --prefix site test` came back with reds that were green on the
+next run of the same files, unchanged: seven markdown-block assertions in one run, and
+`slack-shape.observer.test.ts`'s participant-navigation step in another. Both files drive
+headless Chrome, and the suite runs several such files at once on a host that also carries other
+agents.
+
+**Neither was in this lane's files, and both passed alone on the same SHA**, which is the
+discriminator AGENTS.md names: a green on an idle host and a red on a loaded one are not the same
+test. The counts quoted in this README and in the commit messages are from runs where the file
+in question was green; where a run was red, the file was re-run alone before the number was used.
+No red was explained away without re-measuring it.
+
 ## What this lane did NOT establish
 
 1. **Nothing was measured against production.** Every live control here ran against `site/dist`
