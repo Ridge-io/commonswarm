@@ -26,6 +26,12 @@
 
 import { createClient, type SupabaseClient, type Session } from "@supabase/supabase-js";
 import { authProvider, type AuthProviderId } from "./auth-providers.js";
+import {
+  notifiedRecipient,
+  scalarRecipientFields,
+  toWireRecipients,
+  type ComposerRecipient,
+} from "./composer-address.js";
 import { HUMAN_SEEN_BATCH_MAX } from "./human-seen-reporter.js";
 import {
   agentActivityTopic,
@@ -1351,23 +1357,36 @@ export type BrowserSignalRecipient =
 
 export type BrowserSignalKind = "ask" | "note";
 
-/** A direct agent address wakes by default; every other browser post stays a note. */
+/**
+ * The To: set, browser side: a list, in order, and an empty list is a broadcast. There is no
+ * "everyone" member, because the empty list already means it and two ways to say one thing is
+ * how a hidden recipient gets in.
+ */
+export type BrowserSignalAudience = readonly ComposerRecipient[];
+
+/**
+ * The kind of the ONE signal a To: set posts. The wake follows the first recipient, so the
+ * kind does too: `notifiedRecipient` is the same rule the delivery trigger enforces, read
+ * here rather than restated.
+ */
 export function browserSignalKind(
-  recipient: BrowserSignalRecipient,
+  recipients: BrowserSignalAudience,
   postAgentNote = false,
 ): BrowserSignalKind {
-  return recipient.kind === "agent" && !postAgentNote ? "ask" : "note";
+  return notifiedRecipient(recipients) !== null && !postAgentNote ? "ask" : "note";
 }
 
-/** Keeps the browser's single visible recipient and the two nullable wire fields in lockstep. */
-export function browserSignalAddress(recipient: BrowserSignalRecipient): {
+/**
+ * The scalar pair the SERVER will write for this To: set, for the optimistic row the reader
+ * sees before the server answers. The posted body sends both as null: a body that sets `to`
+ * and a scalar is refused ("to_user_id names a recipient and so does to"), and the edge fills
+ * the column from recipient 0 itself.
+ */
+export function browserSignalAddress(recipients: BrowserSignalAudience): {
   toUserId: string | null;
   toAgentPrincipalId: string | null;
 } {
-  return {
-    toUserId: recipient.kind === "person" ? recipient.id : null,
-    toAgentPrincipalId: recipient.kind === "agent" ? recipient.id : null,
-  };
+  return scalarRecipientFields(recipients);
 }
 
 export interface BrowserDeliveryReceipt {
@@ -2055,40 +2074,61 @@ export interface BrowserSignalPlacement {
   broadcastToChannel?: boolean;
 }
 
-/** Posts one browser-authored signal with either broadcast or one direct addressee. */
+/**
+ * The EXACT post_signal body one browser send puts on the wire. Exported so a test can
+ * compare the bytes rather than re-derive them from this function.
+ *
+ * The two scalar recipient fields are ALWAYS null here, including when the message is
+ * directed. `to` replaces both of them and the edge refuses a body that sets one as well
+ * ("to_user_id names a recipient and so does to", `_shared/channels.ts`); the edge then
+ * writes recipient 0 into the scalar column itself, so a reader that knows only that column
+ * still sees a real recipient. An empty To: set sends no `to` key at all, which is the body
+ * every installed client has always sent and is a broadcast.
+ */
+export function browserSignalCommand(
+  bodyText: string,
+  recipients: BrowserSignalAudience,
+  signalKind: BrowserSignalKind,
+  attachments: readonly BrowserSignalAttachmentRef[] = [],
+  placement: BrowserSignalPlacement = {},
+): Record<string, unknown> {
+  return {
+    kind: "post_signal",
+    signal_kind: signalKind,
+    body: bodyText,
+    to_user_id: null,
+    to_agent_principal_id: null,
+    in_reply_to: null,
+    about: null,
+    ...(recipients.length === 0 ? {} : { to: toWireRecipients(recipients) }),
+    ...(attachments.length === 0 ? {} : { attachments }),
+    ...(placement.channel === undefined || placement.channel === null
+      ? {}
+      : { channel: placement.channel }),
+    ...(placement.threadRootId === undefined || placement.threadRootId === null
+      ? {}
+      : { thread_root_id: placement.threadRootId }),
+    ...(placement.broadcastToChannel === undefined
+      ? {}
+      : { broadcast_to_channel: placement.broadcastToChannel }),
+  };
+}
+
+/** Posts ONE browser-authored signal to the whole To: set, or to the workspace when it is empty. */
 export async function postBrowserSignal(
   session: Session,
   commandId: string,
   workspaceId: string,
   bodyText: string,
-  recipient: BrowserSignalRecipient,
-  signalKind: BrowserSignalKind = browserSignalKind(recipient),
+  recipients: BrowserSignalAudience,
+  signalKind: BrowserSignalKind = browserSignalKind(recipients),
   attachments: readonly BrowserSignalAttachmentRef[] = [],
   placement: BrowserSignalPlacement = {},
 ): Promise<Signal> {
-  const address = browserSignalAddress(recipient);
   const { status, body } = await postCommand(
     session,
     commandId,
-    {
-      kind: "post_signal",
-      signal_kind: signalKind,
-      body: bodyText,
-      to_user_id: address.toUserId,
-      to_agent_principal_id: address.toAgentPrincipalId,
-      in_reply_to: null,
-      about: null,
-      ...(attachments.length === 0 ? {} : { attachments }),
-      ...(placement.channel === undefined || placement.channel === null
-        ? {}
-        : { channel: placement.channel }),
-      ...(placement.threadRootId === undefined || placement.threadRootId === null
-        ? {}
-        : { thread_root_id: placement.threadRootId }),
-      ...(placement.broadcastToChannel === undefined
-        ? {}
-        : { broadcast_to_channel: placement.broadcastToChannel }),
-    },
+    browserSignalCommand(bodyText, recipients, signalKind, attachments, placement),
     { workspace_id: workspaceId, stream: { kind: "workspace" } },
     "CommonSwarm lost the signal result. Refresh the feed before posting it again.",
   );
