@@ -300,7 +300,9 @@ export async function runListenerSupervisor(
        be reported as held, and the queue age restarts with the observations. */
     currentDeliverySignalId: null,
     currentDeliverySince: null,
-    queueWaitingSince: null,
+    queueNonEmptySince: null,
+    releasedDeliverySignalId: null,
+    releasedDeliveryAt: null,
     routeMode: options.routeMode ?? "worker",
     deferOverChars: options.deferOverChars ?? null,
     pendingForMainCount: 0,
@@ -344,17 +346,28 @@ export async function runListenerSupervisor(
     state: ListenerStatus["state"],
     changes: Partial<ListenerStatus> = {},
   ) => {
-    /* A process that has stopped is not working on anything. Clearing this
-       HERE, keyed on the terminal state, is what keeps a later exit path from
-       leaving the claim behind: a stopped listener whose status still named a
-       delivery in hand would read "Working on delivery X, claimed 3h ago".
-       The queue fields stay: rows waiting on the service are still waiting. */
-    const stoppedForGood = state === "stopped" || state === "failed";
+    /* A process that has stopped, or that is starting a fresh runtime attempt,
+       holds no delivery and is not watching the queue. Clearing HERE, keyed on
+       the state, is what keeps a later exit path from leaving the claim behind:
+       a stopped listener whose status still named a delivery in hand read
+       "Working on delivery X, claimed 3h ago", and its queue clock, which is
+       rendered against read time, read "the queue has not been empty since 3h
+       ago" from a process that stopped observing it 3h ago. Both review arms on
+       33cd24b raised the second one; the in-process restart path
+       (transition("starting")) was raised there too. */
+    const notWatching = state === "starting" || state === "stopped" ||
+      state === "failed";
     status = {
       ...status,
       ...changes,
-      ...(stoppedForGood
-        ? { currentDeliverySignalId: null, currentDeliverySince: null }
+      ...(notWatching
+        ? {
+          currentDeliverySignalId: null,
+          currentDeliverySince: null,
+          queueNonEmptySince: null,
+          releasedDeliverySignalId: null,
+          releasedDeliveryAt: null,
+        }
         : {}),
       state,
       updatedAt: iso(now),
@@ -585,6 +598,10 @@ export async function runListenerSupervisor(
         0,
         event.pendingDeliveryCount - (event.signalId === null ? 0 : 1),
       );
+      /* A released delivery that comes back is no longer held back. */
+      const stillReleased = status.releasedDeliverySignalId !== null &&
+        status.releasedDeliverySignalId !== undefined &&
+        status.releasedDeliverySignalId !== event.signalId;
       status = {
         ...status,
         readHealth: recordListenerClaim(
@@ -594,9 +611,13 @@ export async function runListenerSupervisor(
         pendingDeliveryCount: event.pendingDeliveryCount,
         currentDeliverySignalId: event.signalId,
         currentDeliverySince: event.signalId === null ? null : event.ts,
-        queueWaitingSince: waiting === 0
+        queueNonEmptySince: waiting === 0
           ? null
-          : status.queueWaitingSince ?? event.ts,
+          : status.queueNonEmptySince ?? event.ts,
+        ...(stillReleased ? {} : {
+          releasedDeliverySignalId: null,
+          releasedDeliveryAt: null,
+        }),
         lastClaimAt: event.ts,
         updatedAt: event.ts,
       };
@@ -633,6 +654,12 @@ export async function runListenerSupervisor(
         ...status,
         currentDeliverySignalId: null,
         currentDeliverySince: null,
+        /* Held back, NOT waiting to be claimed: the row keeps its live lease,
+           so the service cannot hand it to anyone until that lease expires.
+           Both review arms on 33cd24b measured the earlier wording counting it
+           among deliveries "waiting to be claimed". */
+        releasedDeliverySignalId: event.signalId,
+        releasedDeliveryAt: event.ts,
         lastSignalId: event.signalId,
         updatedAt: event.ts,
       };
@@ -662,6 +689,9 @@ export async function runListenerSupervisor(
         pendingDeliveryCount: null,
         currentDeliverySignalId: null,
         currentDeliverySince: null,
+        ...(status.releasedDeliverySignalId === event.signalId
+          ? { releasedDeliverySignalId: null, releasedDeliveryAt: null }
+          : {}),
         lastSignalId: event.signalId,
         updatedAt: event.ts,
       };
@@ -868,9 +898,15 @@ export async function effectiveListenerStatus(
         updatedAt: new Date().toISOString(),
         stoppedAt: new Date().toISOString(),
         lastErrorCode: "unclean_exit",
-        // The process is gone; whatever it held, it is not working on it.
+        /* The process is gone: it holds nothing and observes nothing, so every
+           field whose sentence is rendered in the present tense against read
+           time is cleared. pendingDeliveryCount stays, because its line already
+           says it is what the service reported. */
         currentDeliverySignalId: null,
         currentDeliverySince: null,
+        queueNonEmptySince: null,
+        releasedDeliverySignalId: null,
+        releasedDeliveryAt: null,
       };
       await writeListenerStatus(paths, failed);
       return failed;

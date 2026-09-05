@@ -122,15 +122,26 @@ export interface ListenerStatus {
   currentDeliverySignalId?: string | null;
   currentDeliverySince?: string | null;
   /**
-   * When this listener first saw deliveries waiting BEHIND the one it holds,
-   * in the current unbroken run of such observations. Cleared as soon as a
-   * claim reports nothing waiting.
+   * When this listener first saw a non-empty queue in the current unbroken run
+   * of such observations. Cleared as soon as a claim reports nothing waiting,
+   * and on every state where this process is not watching the queue.
    *
-   * The oldest waiting delivery has waited AT LEAST this long. It is not that
-   * delivery's enqueue time: the claim wire carries a pending count and the
+   * It measures THIS LISTENER'S observation, and nothing about any particular
+   * row. An earlier version said the oldest delivery had waited at least this
+   * long; both review arms refuted it on 33cd24b, because the row that made the
+   * queue non-empty can expire or be handled elsewhere while newer rows keep
+   * the count above zero, and the claim wire carries a pending count and the
    * claimed row, never the other rows' timestamps.
    */
-  queueWaitingSince?: string | null;
+  queueNonEmptySince?: string | null;
+  /**
+   * The delivery this listener handed back after it used its seat budget, and
+   * when. It is still unacked and still holds a live lease, so it counts among
+   * the service's pending deliveries while being the one row that CANNOT be
+   * claimed until that lease expires.
+   */
+  releasedDeliverySignalId?: string | null;
+  releasedDeliveryAt?: string | null;
   routeMode?: ListenerRouteMode;
   deferOverChars?: number | null;
   pendingForMainCount?: number;
@@ -241,7 +252,9 @@ const STATUS_ALLOWED_KEYS = new Set([
   "lastAckSignalId",
   "currentDeliverySignalId",
   "currentDeliverySince",
-  "queueWaitingSince",
+  "queueNonEmptySince",
+  "releasedDeliverySignalId",
+  "releasedDeliveryAt",
   "routeMode",
   "deferOverChars",
   "pendingForMainCount",
@@ -427,8 +440,14 @@ function parseStatus(raw: string, rejectUnknownKeys = false): ListenerStatus {
         UUID_RE.test(row.currentDeliverySignalId))) ||
     !(row.currentDeliverySince === undefined ||
       nullableTimestamp(row.currentDeliverySince)) ||
-    !(row.queueWaitingSince === undefined ||
-      nullableTimestamp(row.queueWaitingSince)) ||
+    !(row.queueNonEmptySince === undefined ||
+      nullableTimestamp(row.queueNonEmptySince)) ||
+    !(row.releasedDeliverySignalId === undefined ||
+      row.releasedDeliverySignalId === null ||
+      (typeof row.releasedDeliverySignalId === "string" &&
+        UUID_RE.test(row.releasedDeliverySignalId))) ||
+    !(row.releasedDeliveryAt === undefined ||
+      nullableTimestamp(row.releasedDeliveryAt)) ||
     !(row.routeMode === undefined ||
       row.routeMode === "worker" || row.routeMode === "main" || row.routeMode === "split") ||
     !(row.deferOverChars === undefined || row.deferOverChars === null ||
@@ -500,8 +519,15 @@ function parseStatus(raw: string, rejectUnknownKeys = false): ListenerStatus {
     ...(row.currentDeliverySince === undefined ? {} : {
       currentDeliverySince: (row.currentDeliverySince ?? null) as string | null,
     }),
-    ...(row.queueWaitingSince === undefined ? {} : {
-      queueWaitingSince: (row.queueWaitingSince ?? null) as string | null,
+    ...(row.queueNonEmptySince === undefined ? {} : {
+      queueNonEmptySince: (row.queueNonEmptySince ?? null) as string | null,
+    }),
+    ...(row.releasedDeliverySignalId === undefined ? {} : {
+      releasedDeliverySignalId:
+        (row.releasedDeliverySignalId ?? null) as string | null,
+    }),
+    ...(row.releasedDeliveryAt === undefined ? {} : {
+      releasedDeliveryAt: (row.releasedDeliveryAt ?? null) as string | null,
     }),
     lastErrorDetail: (row.lastErrorDetail ?? null) as string | null,
     lastWorkerStderrTail: (row.lastWorkerStderrTail ?? null) as string | null,

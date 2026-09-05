@@ -4640,10 +4640,12 @@ export function listenerStatusJson(
     currentDeliveryElapsedMs: status.currentDeliverySince
       ? Math.max(0, nowMs - Date.parse(status.currentDeliverySince))
       : null,
-    queueWaitingSince: status.queueWaitingSince ?? null,
-    queueWaitingForMsAtLeast: status.queueWaitingSince
-      ? Math.max(0, nowMs - Date.parse(status.queueWaitingSince))
+    queueNonEmptySince: status.queueNonEmptySince ?? null,
+    queueNonEmptyForMs: status.queueNonEmptySince
+      ? Math.max(0, nowMs - Date.parse(status.queueNonEmptySince))
       : null,
+    releasedDeliverySignalId: status.releasedDeliverySignalId ?? null,
+    releasedDeliveryAt: status.releasedDeliveryAt ?? null,
     routeMode: status.routeMode ?? "worker",
     deferOverChars: status.deferOverChars ?? null,
     pendingForMainCount: status.pendingForMainCount ?? 0,
@@ -4882,28 +4884,45 @@ export function renderListenerStatus(
   } else {
     lines.push("No delivery is being worked on right now.");
   }
+  const releasedDeliveryId = status.releasedDeliverySignalId ?? null;
+  const releasedDeliveryAt = status.releasedDeliveryAt ?? null;
+  if (releasedDeliveryId !== null && releasedDeliveryAt !== null) {
+    lines.push(
+      `Delivery ${releasedDeliveryId} used its turn budget and was handed back ${
+        relativeAge(releasedDeliveryAt, nowMs)
+      }. It keeps its lease until the service expires it, and then it is` +
+        " delivered again.",
+    );
+  }
+  /* Both the delivery in hand and the one handed back are unacked, so the
+     service counts them among its pending deliveries; neither is waiting to be
+     claimed. The held-back row is the one that CANNOT be claimed until its
+     lease expires, so counting it as waiting was measured false on 33cd24b. */
+  const notWaiting = (currentDeliveryId === null ? 0 : 1) +
+    (releasedDeliveryId === null || releasedDeliveryId === currentDeliveryId
+      ? 0
+      : 1);
   const waitingBehind = status.pendingDeliveryCount === null
     ? null
-    : Math.max(
-      0,
-      status.pendingDeliveryCount - (currentDeliveryId === null ? 0 : 1),
-    );
-  const queueWaitingSince = status.queueWaitingSince ?? null;
-  if (queueWaitingSince !== null) {
+    : Math.max(0, status.pendingDeliveryCount - notWaiting);
+  const queueNonEmptySince = status.queueNonEmptySince ?? null;
+  if (queueNonEmptySince !== null) {
     /* "behind it" only when there IS an "it": with no delivery in hand the same
        rows are waiting to be claimed, not waiting behind anything.
-       "at least": the claim wire carries a pending count and the claimed row,
-       never the enqueue times of the rows behind it, so this is when THIS
-       listener first saw the queue non-empty, not the oldest row's age. */
+       The second sentence reports THIS LISTENER'S observation and infers
+       nothing about any row's age. The retired wording was "so the oldest has
+       waited at least that long"; both review arms refuted it, because the row
+       that made the queue non-empty can expire or be handled elsewhere while
+       newer rows keep the count above zero. */
     const label = currentDeliveryId === null
       ? "Deliveries waiting to be claimed"
       : "Deliveries waiting behind it";
     lines.push(
       `${
         waitingBehind === null ? label : `${label}: ${waitingBehind}`
-      }. The queue has not been empty since ${
-        relativeAge(queueWaitingSince, nowMs)
-      }, so the oldest has waited at least that long.`,
+      }. This listener last saw an empty queue ${
+        relativeAge(queueNonEmptySince, nowMs)
+      }.`,
     );
   }
   lines.push(
