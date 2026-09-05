@@ -173,7 +173,8 @@ import "../../styles/tokens.css";
     </section>
 
     <section class="dashboard__product" data-panel="channel" hidden>
-      {/* A NEWER BUILD OF THIS PAGE IS BEING SERVED. Placed BEFORE the sample notice on
+      {/* THIS PAGE IS NOT WHAT THE SERVER IS SERVING. Not "newer": a rollback is this too, which
+          is why the bar does not say "new". Placed BEFORE the sample notice on
           purpose: `.dashboard__sample-notice:not([hidden]) + .dashboard__frame` is a real rule
           below, and putting this between them would quietly stop it matching. */}
       <div class="dashboard__update-notice" data-update-notice hidden>
@@ -6497,7 +6498,8 @@ import "../../styles/tokens.css";
     });
 
     /*
-     * A NEWER BUILD OF THIS PAGE IS BEING SERVED.
+     * THIS PAGE IS NOT WHAT THE SERVER IS SERVING. Not "newer" — a rollback serves a different
+     * build too, and the bar says "out of date" for exactly that reason.
      *
      * TWO signals, because neither one covers a build on its own. Measured, not assumed: a build
      * that changed only markup produced a different /app/index.html and BYTE-IDENTICAL

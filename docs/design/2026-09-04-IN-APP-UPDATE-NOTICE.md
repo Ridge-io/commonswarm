@@ -18,22 +18,28 @@ not re-type it.
 
 ### The version an agent is RUNNING is not exposed to the app
 
-Enumerated, not pattern-matched. The app learns about agents through exactly one path:
-`agentAccessStatuses()` (`site/src/lib/commonswarm.ts`) POSTs `resource: "renewal_grants"` to the
-`read` edge function, which runs `SELECT * FROM swarm_read.renewal_grant_for_token(...)`. That
-function's `RETURNS TABLE` names nineteen columns. **This list is a hand-typed snapshot and can
-drift; re-derive it from the migration rather than trusting this copy** —
-`supabase/migrations/20260904000001_standing_grant_resume.sql`, the latest definition of the
-function:
+Enumerated, not pattern-matched. The richest path is `agentAccessStatuses()`
+(`site/src/lib/commonswarm.ts`), which POSTs `resource: "renewal_grants"` to the `read` edge
+function. **Which SQL function answers depends on who is asking**, and the browser is always the
+human branch: with a human session JWT, `supabase/functions/read/index.ts` runs
+`swarm_read.renewal_grant_roster(workspace_id)` and returns. `renewal_grant_for_token` is the
+agent-token branch of the same endpoint and the app never reaches it. Both declare the same
+nineteen columns today, so the answer is the same either way, but a successor re-deriving this
+should read the ROSTER function.
+
+**The list below is a hand-typed snapshot and can drift; re-derive it from the migration rather
+than trusting this copy** — `swarm_read.renewal_grant_roster` in
+`supabase/migrations/20260904000001_standing_grant_resume.sql`:
 
 renewal_grant_id, principal_id, owner_user_id, agent_name, model, kind, horizon_expires_at,
 bound_device_id, last_used_at, last_used_device_id, last_used_from, new_host_at, suspended_at,
 revoked_at, token_id, issued_at, token_expires_at, first_used_at, token_revoked_at.
 
-None of them is a version. The `members` resource returns `principal_id, name, owner_user_id` for
-agents (and `user_id, display_name` for people) and no version either; neither do the feed or the
-delivery receipts. `agentAccessStatuses()` is not the only path by which the app learns about
-agents, and none of the paths carries one. Where a running version DOES exist:
+None of them is a version. It is not the only path either, and the others are no better: the
+`members` resource returns `principal_id, name, owner_user_id` for agents and `user_id,
+display_name` for people, and neither the feed nor the delivery receipts carry a version. The
+`version` on an activity frame is that frame's schema version, not a CLI version. Where a running
+version DOES exist:
 
 - `cswarmVersion` in `src/listener/control.ts` is a field of the LOCAL listener control file. It is
   what `cswarm listen status` and `cswarm resume` read off the host's own disk. It never leaves the
@@ -121,9 +127,11 @@ This bar is a grid item, and a grid item's automatic minimum is its min-content 
 explicit `min-inline-size: 0` it sized to its buttons and overflowed: measured 394.6px inside a
 320px shell, and the shell clips its overflow, so Update was off-screen and unpressable.
 
-Dismissal is remembered in memory only, against the asset set that triggered it. A reload gets the
-new build anyway, so there is nothing to persist; and if a THIRD build ships, the set differs from
-the dismissed one and the notice returns. The bar is dismissible because the operator's standing
+Dismissal is remembered in memory only, against the WHOLE build that triggered it — both signals'
+values joined, never just the half that happened to differ. Storing one half is a real bug and was
+one: see "Dismissal is remembered against the WHOLE build" above. A reload gets the new build
+anyway, so there is nothing to persist; and if a THIRD build ships, it differs from the dismissed
+one and the notice returns. The bar is dismissible because the operator's standing
 complaint about this app is chrome eating the reading area on a phone.
 
 ## Polling
