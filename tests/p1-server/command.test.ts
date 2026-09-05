@@ -9,6 +9,7 @@ import { after, before, test } from "node:test";
 import { setTimeout as delay } from "node:timers/promises";
 import { createClient, type SupabaseClient } from "@supabase/supabase-js";
 import postgres from "postgres";
+import { DELIVERY_CAPABILITIES } from "../../supabase/functions/command/durable-delivery.js";
 import {
   awaitFunctionRunning,
   postThroughColdStart,
@@ -6507,7 +6508,28 @@ test("durable-delivery: claim/ack happy path, idempotent replay, pending count",
       delivery_claim: 1,
       delivery_ack: 1,
       sender_owner_relation: 1,
+      oldest_pending_at: 1,
     });
+
+    /* The queue AGE, not only its length. A listener could report how many
+     * rows were waiting and never how long, which
+     * docs/evidence/2026-09-05-listener-head-of-line/DESIGN-BOUNDS.md records
+     * as a bound the claim wire could not close. The value is the enqueue time
+     * of the oldest row in the same set the count counts -- including the row
+     * this claim just leased, because a claim acknowledges nothing. */
+    const claimedOldest = claim.body.oldest_pending_at;
+    assert.equal(typeof claimedOldest, "string", JSON.stringify(claim.body));
+    const [enqueued] = await sql<{ at: Date }[]>`
+      SELECT min(enqueued_at) AS at
+      FROM swarm.signal_deliveries
+      WHERE signal_id = ${signalId}::uuid
+        AND acked_at IS NULL
+    `;
+    assert.equal(
+      new Date(String(claimedOldest)).getTime(),
+      enqueued!.at.getTime(),
+      "the reported age is the ledger's own enqueue time, to the millisecond",
+    );
 
     // Idempotent claim replay is body-hydrated and byte-equal on immutable fields.
     const claimReplay = await issueDelivery(f, receiver.token, {
@@ -6594,6 +6616,29 @@ test("durable-delivery: claim/ack happy path, idempotent replay, pending count",
       { after_created_at: null, after_id: null },
     );
     assert.equal(readAfter.body.pending_delivery_count, 0);
+
+    /* NULL is the other end of the bound, and it is what makes the string
+     * above a measurement: once the queue is empty the server says so with a
+     * null rather than repeating the last time it saw. Both come from the same
+     * min() over the same set, so they cannot disagree with the count. */
+    const emptyClaim = await issueDelivery(f, receiver.token, {
+      kind: "claim_agent_inbox",
+      listener_instance_id: listener,
+      limit: 10,
+    });
+    assert.equal(emptyClaim.status, 200, emptyClaim.text);
+    assert.equal(emptyClaim.body.pending_delivery_count, 0);
+    assert.equal(
+      (emptyClaim.body.deliveries as unknown[]).length,
+      0,
+      "nothing is left to claim",
+    );
+    assert.equal(
+      Object.hasOwn(emptyClaim.body as object, "oldest_pending_at"),
+      true,
+      "an empty queue reports null, it does not omit the field",
+    );
+    assert.equal(emptyClaim.body.oldest_pending_at, null);
 
     // Audit detail must not contain lease or body.
     const audits = await sql<{ detail: string | null; reason: string | null }[]>`
@@ -10247,8 +10292,10 @@ test("durable-delivery: Phase B concurrent cap — two claims behind one princip
       `;
       assert.equal(Number(unleased[0]?.n), 50, "remaining 50 rows are unleased with attempt count zero");
 
-      // The public claim path still exposes all three capability fields at
-      // capacity (claim at capacity returns zero deliveries but carries them).
+      // The public claim path still exposes EVERY capability field at capacity
+      // (claim at capacity returns zero deliveries but carries them). The
+      // expected set is the constant the edge serves, not a typed copy: this
+      // assertion listed three names in prose beside a set that grew to four.
       const pubCap = await issueDelivery(f, capAgent.token, {
         kind: "claim_agent_inbox",
         listener_instance_id: randomUUID(),
@@ -10257,8 +10304,17 @@ test("durable-delivery: Phase B concurrent cap — two claims behind one princip
       assert.equal(pubCap.status, 200, pubCap.text);
       assert.deepEqual(
         pubCap.body.capabilities,
-        { delivery_claim: 1, delivery_ack: 1, sender_owner_relation: 1 },
-        "public claim exposes all three capability fields",
+        { ...DELIVERY_CAPABILITIES },
+        `public claim exposes every capability field: ${
+          Object.keys(DELIVERY_CAPABILITIES).join(", ")
+        }`,
+      );
+      /* Rows ARE pending here (the cap left 50 unleased), so the queue age is
+       * a time rather than a null even though this claim took nothing. */
+      assert.equal(
+        typeof pubCap.body.oldest_pending_at,
+        "string",
+        JSON.stringify(pubCap.body),
       );
       assert.equal(
         (pubCap.body.deliveries as unknown[]).length,

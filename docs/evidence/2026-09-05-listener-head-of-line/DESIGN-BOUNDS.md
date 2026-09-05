@@ -77,3 +77,34 @@ time it was observed, and says nothing about which rows are claimable.
 
 Closing this properly needs a server change: return the oldest pending row's
 enqueue time on the claim response.
+
+### CORRECTED 2026-09-05: the server half is written, on `lane/chat-recipients`
+
+The claim response now carries `oldest_pending_at`, from `min(enqueued_at)` over
+the same set `pending_delivery_count` counts, in the same statement. The
+paragraph above is kept because it describes the listener as it shipped in
+v0.1.54 and a reader may still meet that wording.
+
+Three states on the wire, and they are NOT interchangeable:
+
+- **a string** the oldest pending row's enqueue time, ISO 8601.
+- **null** the server looked and nothing is pending.
+- **absent** the server did not report it. Reachable on a replay of a claim
+  stored before the field existed, whose count comes from that earlier
+  observation; collapsing absent into null would pair "nothing is waiting" with
+  a non-zero count.
+
+`DELIVERY_CAPABILITIES.oldest_pending_at` is how a listener tells "absent
+because this server does not send it" from "absent because this is a replay".
+
+**Owed by the listener lane, not done here.** Nothing on the client reads the
+field yet: `cswarm listen status` still reports a count with the time it was
+observed and says nothing about age. The three refused wordings above are still
+refused for the listener as it stands today. What the field makes sayable, once
+a listener reads it, is the age of the oldest row the SERVER counts — still not
+"waiting to be claimed", because the claim wire continues to carry no separation
+between leased rows and claimable ones.
+
+**Not deployed.** The edge change is on a branch. Until the lead deploys
+`command`, every live claim response still omits the field, and a listener that
+required it would break.

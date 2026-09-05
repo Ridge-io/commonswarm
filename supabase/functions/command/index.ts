@@ -7558,6 +7558,13 @@ async function handleTransaction(
               deliveries,
               pending_delivery_count: ledger.pending_delivery_count,
               terminal_delivery_failure_count: ledger.terminal_delivery_failure_count,
+              /* Spread, never defaulted -- see the same comment on the fresh
+               * claim below. This is the replay path, so it is the ONE place
+               * absent is actually reachable: a claim stored before the field
+               * existed. */
+              ...(ledger.oldest_pending_at === undefined
+                ? {}
+                : { oldest_pending_at: ledger.oldest_pending_at }),
               event_ids: [],
               events: [],
               min_client_version: minClientVersion,
@@ -8355,6 +8362,13 @@ async function handleTransaction(
           deliveries,
           pending_delivery_count: ledger.pending_delivery_count,
           terminal_delivery_failure_count: ledger.terminal_delivery_failure_count,
+          /* Spread, never defaulted: an ABSENT oldest_pending_at (a replay of a
+           * claim stored before the field existed) must stay absent rather than
+           * become null, which would say the queue is empty beside a count that
+           * says it is not. */
+          ...(ledger.oldest_pending_at === undefined
+            ? {}
+            : { oldest_pending_at: ledger.oldest_pending_at }),
           event_ids: [],
           events: [],
           min_client_version: minClientVersion,
@@ -9144,6 +9158,13 @@ async function resolveLedgerRace(error: LedgerRace): Promise<HttpResult> {
           deliveries,
           pending_delivery_count: ledger.pending_delivery_count,
           terminal_delivery_failure_count: ledger.terminal_delivery_failure_count,
+          /* Spread, never defaulted: an ABSENT oldest_pending_at (a replay of a
+           * claim stored before the field existed) must stay absent rather than
+           * become null, which would say the queue is empty beside a count that
+           * says it is not. */
+          ...(ledger.oldest_pending_at === undefined
+            ? {}
+            : { oldest_pending_at: ledger.oldest_pending_at }),
           event_ids: [],
           events: [],
           min_client_version: minClientVersion,
