@@ -1,0 +1,13 @@
+`diff --git a/docs/evidence/2026-09-05-listener-head-of-line/DESIGN-BOUNDS.md b/docs/evidence/2026-09-05-listener-head-of-line/DESIGN-BOUNDS.md`
+
+37. **Verify that claim yourself.** The claim is correct. Comparing the diffs of `src/cli.ts` between `<merge-base>..319bc5d` and `origin/main..<rebased HEAD>`, and stripping out the `@@` context headers and the `index` lines, the added and removed lines are identical. There is no added or removed line that is different; the differences are purely offsets.
+
+38. **Did the rebase silently drop or alter another lane's work?** No, the other lane's work survived the rebase. Both `cswarm resume` and `cswarm brain put --if-version` remain fully intact in `src/cli.ts`. The listener changes safely landed exactly inside `listenerStatusJson` and `renderListenerStatus`, exactly where they belong, without bleeding into any other functions.
+
+39. **Does anything on the new `main` invalidate a claim this lane makes?** No. I verified the commits that landed on `main`. `supabase/functions/command/durable-delivery.ts` had exactly zero changes since the branches diverged, meaning all claims regarding the service's lifecycle (delivering again or terminating) remain perfectly valid. The changes to `src/resume.ts` strictly modified `systemProcessTable` to read the host process table as a stream instead of buffering it, avoiding memory overflows; this does not affect listener seat bounds or delivery logic. The help text, status lines, and `DESIGN-BOUNDS.md` remain completely accurate against the new `main`.
+
+40. **Confirm it contains no code.** I checked the file tree of commit `1f44298`. It only adds four files: `DIFF.patch`, `REVIEW.md`, `gemini/ARM.txt`, and `grok/ARM.txt` exclusively within the `docs/evidence/.../arms-319bc5d/` directory. It contains absolutely no code.
+
+Items 37-40 hold and I have found nothing new. I say so plainly and PASS.
+
+VERDICT: PASS

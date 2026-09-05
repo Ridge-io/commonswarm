@@ -1,0 +1,66 @@
+I'll read REVIEW.md and DIFF.patch first, then follow REVIEW.md exactly.REVIEW.md is a rebase confirmation pass. I'll quote the first `diff --git` line, then verify items 37–40 against the patch and the current tree.I'll verify the rebase hashes and `src/cli.ts` hunks against the reviewed SHA, then check that `resume` and `brain put --if-version` still sit beside the listener lines.I'll compute the hashes myself, compare `src/cli.ts` hunks to `319bc5d`, and check that the docs-only commit has no code.I'll hash both diffs, compare the listener files, and inspect the `src/cli.ts` hunks plus the `resume` / `brain put` work.Hashes match. Next I’ll compare the `src/cli.ts` hunks and check that `resume` and `brain put --if-version` still sit beside the listener lines.I'll re-read the help text, status lines, and durable-delivery steps against the current files, since that's what item 39 asks.`diff --git a/docs/evidence/2026-09-05-listener-head-of-line/DESIGN-BOUNDS.md b/docs/evidence/2026-09-05-listener-head-of-line/DESIGN-BOUNDS.md`
+
+SHA under review: `1f4429891b9ac1bf337e70b7e2af35a631eb06b8` (rebase plus the docs-only commit). Code tip of the rebase: `e2b40b9`. Reviewed SHA: `319bc5d354705fcbef853628be612b524d7bb3e4`. Old merge-base: `255dc61`.
+
+I computed the hashes. They match the brief.
+
+- `git diff 255dc61..319bc5d | shasum -a 256` = `bc39a5553f3791d39881b5ac58b5d95b753407662298fce8dac727fa2eccb6d7`
+- `git diff origin/main..e2b40b9 | shasum -a 256` = `4795562152b0ea3be111ab4ff6b9ffa3fea941a9d8e4e178283a76973f34ee0f`
+
+`DIFF.patch` is `origin/main..1f44298` (`30d3b5d79acbdd8987a589349db1aacbf161dcf7b0b74abcd4b24505a2e4c759`). That extra hash is the docs commit, not a silent code change.
+
+## 37. Offsets only
+
+Blob IDs for `319bc5d` vs `e2b40b9` / `1f44298`:
+
+| file | result |
+|---|---|
+| `src/listener/control.ts` | identical `26c025e` |
+| `src/listener/runtime.ts` | identical `1f23594` |
+| `src/listener/supervisor.ts` | identical `75c0719` |
+| `src/listener/types.ts` | identical `037aa5d` |
+| `tests/listener-runtime.test.ts` | identical `2004e9d` |
+| `DESIGN-BOUNDS.md`, `live-control.mjs`, `live-control-output.txt` | identical |
+| `src/cli.ts` | different (`e4e7685` → `dbf11dc`) |
+
+`src/cli.ts` has six hunks. Every `@@` start line moved by exactly +1. Hunk count, sizes, context, added lines (101), and removed lines (3) match. No hunk has a different added or removed line.
+
+The +1 is one import that `main` added at the top of `src/cli.ts`:
+
+`import { FILE_VERSION_PRECONDITION_FAILED } from "./protocol/index.js";`
+
+No hunk is anything but an offset.
+
+## 38. Other lane work
+
+`resume` and `brain put --if-version` are still on this SHA, next to the listener lines, not inside them.
+
+- `src/resume.ts` is the same blob as `origin/main` (`3417d3d`). This lane did not edit it.
+- `usage()` still has `cswarm resume …` and `cswarm brain put … [--if-version <n>]`.
+- `KNOWN_FLAGS` still has `if-version`.
+- `runBrainPut` still reads `--if-version` and passes it to `uploadNamedFile`.
+- The resume import is still `inspectResume` / `renderResume` / `resumeJson` from `./resume.js`.
+
+The six listener hunks landed in: the listener import block, `usage()`, `listenerStatusJson`, `renderListenerStatus`, `runConfiguredListener`. None of them sit inside `runBrainPut`, `uploadNamedFile`, or the resume verb.
+
+## 39. New `main` vs this lane’s claims
+
+`supabase/functions/command/durable-delivery.ts` is the same blob on `319bc5d`, `origin/main`, and `HEAD` (`9a45021`). Steps 2, 3, 4, and 7 are unchanged. Live ack still needs `leased_until > statement_timestamp()`. `src/resume.ts` has no listener hold fields.
+
+Help, status, and `DESIGN-BOUNDS.md` still match the code on this SHA:
+
+- `--turn-budget` still bounds one delivery’s seat; when spent, the listener hands the seat back.
+- After the lease ends, the service delivers again (step 6) or terminates (steps 3 / 4).
+- Status still dates the pending count, names the delivery in hand, and uses the generated clause and remedy. It does not count “waiting to be claimed”.
+
+Nothing on the new `main` makes those sentences false.
+
+## 40. Docs-only commit
+
+`1f44298` adds four files, all under `docs/evidence/2026-09-05-listener-head-of-line/arms/arms-319bc5d/`: `DIFF.patch`, `REVIEW.md`, `gemini/ARM.txt`, `grok/ARM.txt`. No path under `src/`, `tests/`, or `supabase/`. No code.
+
+I did not run the tests. I did not re-run the live control. The listener and test blobs match `319bc5d`, so the round-8 findings are not weakened by the rebase.
+
+Items 37–40 hold. I found nothing new.
+
+VERDICT: PASS
