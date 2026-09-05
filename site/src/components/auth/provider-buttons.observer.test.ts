@@ -282,6 +282,18 @@ const NAMED_PROVIDER_WRAPPER = "signInWithGitHub(";
 const OAUTH_CALL = ".signInWithOAuth(";
 
 /*
+ * WHERE those two calls are allowed to appear. An arm found the constraints around them typed
+ * twice: `lib/commonswarm.ts` and "one call site" lived in the stated bound AND again in the
+ * assertions, so widening an assertion would leave the sentence saying the old rule. The
+ * assertions below read these, and so do the claims.
+ */
+/** The one module allowed to call Supabase's OAuth entry point. */
+const OAUTH_CALL_SITE = "lib/commonswarm.ts";
+/** The files allowed to call the named GitHub wrapper, and how many times each may. */
+const NAMED_WRAPPER_CALL_SITES: readonly string[] = ["components/app/LiveDashboard.astro"];
+const NAMED_WRAPPER_CALLS_ALLOWED = 1;
+
+/*
  * The assertions that FIND those three calls, built from the three constants above.
  *
  * A review arm found the previous version quoting the constants in the stated bound while the
@@ -317,9 +329,10 @@ const namedWrapperCalls = (): RegExp =>
  */
 const SWEEP_CATCHES: readonly string[] = [
   ...SIGNIN_MARKER.map((entry) => entry.claim),
-  `any ${OAUTH_CALL} outside lib/commonswarm.ts`,
+  `any ${OAUTH_CALL} outside ${OAUTH_CALL_SITE}`,
   `any string literal handed to ${GENERAL_PROVIDER_CALL}`,
-  `more than one call to ${NAMED_PROVIDER_WRAPPER}`,
+  `${NAMED_PROVIDER_WRAPPER} anywhere but ${NAMED_WRAPPER_CALL_SITES.join(", ")}, or more ` +
+    `than ${NAMED_WRAPPER_CALLS_ALLOWED} call(s) there`,
   `a rendered button whose label is not exactly one of: ` +
     AUTH_PROVIDERS.map((provider) => JSON.stringify(provider.label)).join(", "),
 ];
@@ -550,7 +563,7 @@ test("CONTROL: signInWithOAuth is called once and never with a literal provider"
   }
   assert.deepEqual(
     everywhere.map((entry) => entry.replace(/^.*\/src\//, "").replace(/ \(\d+\)$/, "")),
-    ["lib/commonswarm.ts"],
+    [OAUTH_CALL_SITE],
     `signInWithOAuth is called in: ${everywhere.join(", ")}. There must be exactly one call ` +
       `site. A second one is a second enforcement, and two enforcements drift.`,
   );
@@ -735,7 +748,7 @@ test("CONTROL: the source sweep covers every file type under site/src", async ()
 
 test("CONTROL: only ProviderButtons renders a sign-in button, apart from named debt", async () => {
   /*
-   * Three ways to put a sign-in control on a page, all matched:
+   * Four ways to put a sign-in control on a page, all matched:
    *
    *   <button data-signin-github>   any TAG, not just <button> — /app writes the attribute
    *                                 bare with no value, and an <a> would work as well
@@ -973,7 +986,7 @@ test("CONTROL: every OAuth call site is the named debt or an id read at runtime"
   }
   assert.deepEqual(
     callers,
-    ["components/app/LiveDashboard.astro (1)"],
+    NAMED_WRAPPER_CALL_SITES.map((file) => `${file} (${NAMED_WRAPPER_CALLS_ALLOWED})`),
     `signInWithGitHub is called from: ${callers.join(", ")}. Exactly one call site is allowed ` +
       `— /app's signed-out button, the debt UNGENERATED_SIGNIN_SURFACES already names. A ` +
       `second one is a second GitHub-only door, and it would offer GitHub on a deployment ` +
