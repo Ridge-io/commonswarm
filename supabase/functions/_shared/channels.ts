@@ -83,6 +83,10 @@ const CHAT_UUID_RE =
  */
 export const RESERVED_CHANNEL_SLUGS: readonly string[] = ["all-signals"];
 
+/** What a channel_id is, for the refusal that fires when one is malformed. */
+export const CHANNEL_ID_RULE_TEXT =
+  "channel_id is the id of a channel in this workspace, as a UUID.";
+
 /** The slug rule, in words, built from the bound the validator enforces. */
 export const CHANNEL_SLUG_RULE_TEXT =
   `A channel name uses lowercase letters, digits and hyphens, starts and ends with a letter or a digit, and is 1 to ${CHANNEL_SLUG_MAX} characters.`;
@@ -275,37 +279,33 @@ export function chatSignalShapeProblem(
  * reason went only to swarm.audit, user-facing the moment this lane put it on
  * the wire. A fourth category would have changed the check and not the sentence.
  */
-/**
- * The feedback body bound. It was typed twice in one expression -- the check
- * and the sentence describing it -- which was invisible while the reason went
- * only to swarm.audit. AGENTS.md records that these bounds must also match
- * normalizedFeedbackBody in src/protocol/workspace-commands.ts; that copy is
- * still separate and still owed, and the protocol core is deliberately out of
- * this lane's reach.
- */
-export const FEEDBACK_BODY_MAX = 4_000;
-
-export const FEEDBACK_CATEGORIES = ["bug", "idea", "friction"] as const;
-export type FeedbackCategory = typeof FEEDBACK_CATEGORIES[number];
-
-/** "bug|idea|friction", built from the array the validator reads. */
-export function feedbackCategoryList(): string {
-  return FEEDBACK_CATEGORIES.join("|");
-}
-
 export function commandFieldsMessage(
   kind: string,
   required: readonly string[],
   optional: readonly string[] = [],
+  describe: Readonly<Record<string, string>> = {},
 ): string {
+  /* `describe` decorates a key for the reader -- "category (bug|idea|friction)"
+   * -- WITHOUT forking the list. An earlier version took an already-decorated
+   * array, so the sentence and the exactKeys check read two different arrays
+   * and adding a field to one did not change the other. Both arms found it. */
+  const label = (key: string): string =>
+    describe[key] === undefined ? key : `${key} (${describe[key]})`;
   const list = (names: readonly string[]): string =>
     names.length === 1
-      ? names[0]!
-      : `${names.slice(0, -1).join(", ")} and ${names[names.length - 1]!}`;
+      ? label(names[0]!)
+      : `${names.slice(0, -1).map(label).join(", ")} and ${
+        label(names[names.length - 1]!)
+      }`;
   const head = required.length === 0
     ? `${kind} takes no fields`
     : `${kind} takes ${list(required)}`;
-  return optional.length === 0
-    ? `${head}.`
-    : `${head}, and optionally ${list(optional)}.`;
+  const body = optional.length === 0
+    ? head
+    : `${head}, and optionally ${list(optional)}`;
+  /* "and nothing else" is load-bearing: exactKeys refuses ANY extra key, and a
+   * sentence that only lists what is accepted does not say that. Dropping it
+   * when this generator replaced the typed strings was a real loss of meaning,
+   * and both arms called it. */
+  return `${body}, and nothing else.`;
 }

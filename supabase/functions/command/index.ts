@@ -17,10 +17,7 @@ import {
   chatSignalKeys,
   chatSignalShapeProblem,
   commandFieldsMessage,
-  FEEDBACK_BODY_MAX,
-  FEEDBACK_CATEGORIES,
-  type FeedbackCategory,
-  feedbackCategoryList,
+  CHANNEL_ID_RULE_TEXT,
   normalizeChannelSlug,
   SIGNAL_KINDS,
   type SignalKind,
@@ -102,6 +99,9 @@ import {
   canonicalPrincipal,
   decideWorkspace,
   DISPOSITIONS,
+  FEEDBACK_BODY_MAX,
+  FEEDBACK_CATEGORIES,
+  FEEDBACK_CONTEXT_MAX_BYTES,
   reduceTask,
   reduceWorkspace,
   RENEWAL_HORIZON_DEFAULT_MS,
@@ -1637,16 +1637,22 @@ function validateCommand(
     /* Field list first, slug rule second: a body with an extra key AND a bad
      * slug broke the shape before it broke the naming rule, and naming the
      * slug rule would send the caller to fix the wrong thing. */
-    const shapeOk = exactKeys(cmd, ["kind", ...required]) &&
-      typeof cmd.channel_id === "string" && UUID_RE.test(cmd.channel_id);
+    /* Three rules, three sentences, in the order they break. Bundling the uuid
+     * test into the key test told a caller who sent exactly the right keys with
+     * a malformed id that their FIELDS were wrong. Both arms found it. */
+    const keysOk = exactKeys(cmd, ["kind", ...required]);
+    const idOk = typeof cmd.channel_id === "string" &&
+      UUID_RE.test(cmd.channel_id);
     const slugProblem = channelSlugProblem(cmd.slug);
-    if (!shapeOk || slugProblem !== null) {
+    if (!keysOk || !idOk || slugProblem !== null) {
       return {
         ok: false,
         status: 400,
-        reason: shapeOk
-          ? slugProblem!
-          : commandFieldsMessage("channel_rename", required),
+        reason: !keysOk
+          ? commandFieldsMessage("channel_rename", required)
+          : !idOk
+          ? CHANNEL_ID_RULE_TEXT
+          : slugProblem!,
       };
     }
     return {
@@ -1661,22 +1667,23 @@ function validateCommand(
 
   if (cmd.kind === "channel_archive") {
     const required = ["channel_id"];
-    if (
-      !exactKeys(cmd, ["kind", ...required]) ||
-      typeof cmd.channel_id !== "string" ||
-      !UUID_RE.test(cmd.channel_id)
-    ) {
+    const keysOk = exactKeys(cmd, ["kind", ...required]);
+    const idOk = typeof cmd.channel_id === "string" &&
+      UUID_RE.test(cmd.channel_id);
+    if (!keysOk || !idOk) {
       return {
         ok: false,
         status: 400,
-        reason: commandFieldsMessage("channel_archive", required),
+        reason: keysOk
+          ? CHANNEL_ID_RULE_TEXT
+          : commandFieldsMessage("channel_archive", required),
       };
     }
     return {
       ok: true,
       command: {
         kind: "channel_archive",
-        channel_id: cmd.channel_id.toLowerCase(),
+        channel_id: (cmd.channel_id as string).toLowerCase(),
       },
     };
   }
@@ -1888,7 +1895,9 @@ function validateCommand(
       return {
         ok: false,
         status: 400,
-        reason: commandFieldsMessage("declare_agent_model", ["model (text or null)"]),
+        reason: commandFieldsMessage("declare_agent_model", ["model"], [], {
+          model: "text or null",
+        }),
       };
     }
     /* Normalize EXACTLY as the reducer will (trim, empty -> null) BEFORE
@@ -1902,7 +1911,9 @@ function validateCommand(
       return {
         ok: false,
         status: 400,
-        reason: commandFieldsMessage("declare_agent_model", ["model (text or null)"]),
+        reason: commandFieldsMessage("declare_agent_model", ["model"], [], {
+          model: "text or null",
+        }),
       };
     }
     return {
@@ -1922,13 +1933,10 @@ function validateCommand(
      * typed copies of the same three names, which was invisible while the
      * reason went only to swarm.audit and user-facing the moment this lane put
      * it on the wire. */
-    const required = [
-      "feedback_id",
-      `category (${feedbackCategoryList()})`,
-      "body",
-    ];
-    const keysOk = exactKeys(cmd, ["kind", "feedback_id", "category", "body"]) ||
-      exactKeys(cmd, ["kind", "feedback_id", "category", "body", "context"]);
+    const required = ["feedback_id", "category", "body"];
+    const optional = ["context"];
+    const keysOk = exactKeys(cmd, ["kind", ...required]) ||
+      exactKeys(cmd, ["kind", ...required, ...optional]);
     if (
       !keysOk ||
       typeof cmd.feedback_id !== "string" ||
@@ -1939,7 +1947,9 @@ function validateCommand(
       return {
         ok: false,
         status: 400,
-        reason: commandFieldsMessage("submit_feedback", required, ["context"]),
+        reason: commandFieldsMessage("submit_feedback", required, optional, {
+          category: FEEDBACK_CATEGORIES.join("|"),
+        }),
       };
     }
     const trimmedBody = cmd.body.trim();
@@ -1971,8 +1981,8 @@ function validateCommand(
       }
       if (entries.length > 0) {
         const flat = Object.fromEntries(entries) as Record<string, string>;
-        if (new TextEncoder().encode(JSON.stringify(flat)).length > 2048) {
-          return { ok: false, status: 400, reason: "feedback context must serialize to at most 2048 bytes" };
+        if (new TextEncoder().encode(JSON.stringify(flat)).length > FEEDBACK_CONTEXT_MAX_BYTES) {
+          return { ok: false, status: 400, reason: `feedback context must serialize to at most ${FEEDBACK_CONTEXT_MAX_BYTES} bytes` };
         }
         context = flat;
       }
@@ -1982,7 +1992,7 @@ function validateCommand(
       command: {
         kind: "submit_feedback",
         feedback_id: cmd.feedback_id.toLowerCase(),
-        category: cmd.category as FeedbackCategory,
+        category: cmd.category as "bug" | "idea" | "friction",
         body: trimmedBody,
         context,
       },
@@ -2004,7 +2014,9 @@ function validateCommand(
         status: 400,
         reason: commandFieldsMessage(
           "set_agent_model",
-          ["principal_id", "model (text or null)"],
+          ["principal_id", "model"],
+          [],
+          { model: "text or null" },
         ),
       };
     }
@@ -2016,7 +2028,9 @@ function validateCommand(
         status: 400,
         reason: commandFieldsMessage(
           "set_agent_model",
-          ["principal_id", "model (text or null)"],
+          ["principal_id", "model"],
+          [],
+          { model: "text or null" },
         ),
       };
     }
@@ -5951,7 +5965,7 @@ async function resumeRenewalGrant(
    * was told 403; a retry then answered `renewal_grant_not_suspended`, because the resume it
    * had denied had in fact happened.
    *
-   * Same shape as the renewal preflight read at index.ts:3359 (`preflight[0]?.code ?? null`):
+   * Same shape as the renewal preflight read at index.ts:3373 (`preflight[0]?.code ?? null`):
    * preserve NULL, refuse only on a code we assign.
    *
    * WHY A REFUSAL BELOW STILL COMMITS, DELIBERATELY. `refuse` must commit — its whole job is
@@ -7851,8 +7865,12 @@ async function handleTransaction(
              * every case but one and is the kind of confident wrong sentence
              * this codebase keeps producing. Say what is true: the horizon does
              * not fit, and here is what the thread runs to. */
-            message:
-              "A reply cannot outlive the message its thread starts from, and the horizon you asked for no longer fits the time that thread has left. Ask for a shorter one, or leave it out and it is set for you.",
+            message: command.until_ms !== undefined
+              ? "A reply cannot outlive the message its thread starts from, and the horizon you asked for no longer fits the time that thread has left. Ask for a shorter one, or leave it out and it is set for you."
+              /* The defaulted path reaches this arm too, because the floor can
+               * raise a defaulted value past the ceiling. Telling that caller
+               * to "leave it out" is telling them to do what they already did. */
+              : "That thread has too little time left to take a reply. Start a new message instead.",
             ...(rootUntil === null ? {} : { root_until: rootUntil.toISOString() }),
           },
         };

@@ -614,3 +614,133 @@ test("neither horizon refusal claims the thread ended", () => {
   }
   assert.equal(seen, 2, "both the early and the atomic arm must be scanned");
 });
+
+
+test("commandFieldsMessage decorates without forking the list, and says extra keys are refused", () => {
+  /* Two defects both arms found. The sentence used to take an ALREADY-decorated
+   * array -- "category (bug|idea|friction)" -- so it could not be the same
+   * array exactKeys reads, and the two drifted independently. And replacing the
+   * typed strings silently dropped "and nothing else", which is the only part
+   * that told a caller an extra key is refused. */
+  const one = commandFieldsMessage("channel_archive", ["channel_id"]);
+  assert.equal(one, "channel_archive takes channel_id, and nothing else.");
+
+  const two = commandFieldsMessage("channel_rename", ["channel_id", "slug"]);
+  assert.equal(two, "channel_rename takes channel_id and slug, and nothing else.");
+
+  const withOptional = commandFieldsMessage("channel_create", ["slug"], ["purpose"]);
+  assert.equal(
+    withOptional,
+    "channel_create takes slug, and optionally purpose, and nothing else.",
+  );
+
+  /* The decoration rides alongside the key, so the array stays the one the
+   * enforcement reads. */
+  const decorated = commandFieldsMessage(
+    "submit_feedback",
+    ["feedback_id", "category", "body"],
+    ["context"],
+    { category: "bug|idea|friction" },
+  );
+  assert.ok(decorated.includes("category (bug|idea|friction)"));
+  assert.ok(decorated.includes("feedback_id"));
+  assert.ok(decorated.endsWith("and nothing else."));
+
+  /* Control: an undecorated key is left alone, so `describe` is not rewriting
+   * everything it touches. */
+  assert.equal(decorated.includes("body ("), false);
+});
+
+test("the feedback bounds come from the protocol core, not from a copy in this lane", () => {
+  /* I introduced a THIRD copy of these constants in _shared/channels.ts while
+   * fixing a duplication. src/protocol/workspace-commands.ts already owned them
+   * and the generated bundle already exported them, which is what the edge now
+   * reads. */
+  const channels = readFileSync(
+    fileURLToPath(
+      new URL("../supabase/functions/_shared/channels.ts", import.meta.url),
+    ),
+    "utf8",
+  );
+  for (const name of ["FEEDBACK_BODY_MAX", "FEEDBACK_CATEGORIES", "FEEDBACK_CONTEXT_MAX_BYTES"]) {
+    assert.equal(
+      channels.includes(`export const ${name}`),
+      false,
+      `${name} belongs to src/protocol, not to this lane's shared module`,
+    );
+  }
+  const command = readFileSync(
+    fileURLToPath(
+      new URL("../supabase/functions/command/index.ts", import.meta.url),
+    ),
+    "utf8",
+  );
+  /* The import block ENDS at the protocol.js specifier; find its opening brace
+   * by walking back from there, not forward from a name inside it. */
+  const protocolEnd = command.indexOf('from "../_shared/protocol.js"');
+  const protocolImport = command.slice(
+    command.lastIndexOf("import {", protocolEnd),
+    protocolEnd,
+  );
+  for (const name of ["FEEDBACK_BODY_MAX", "FEEDBACK_CATEGORIES", "FEEDBACK_CONTEXT_MAX_BYTES"]) {
+    assert.ok(
+      protocolImport.includes(name),
+      `${name} must be read from the protocol bundle`,
+    );
+  }
+  /* Control: the slice really is that import block. */
+  assert.ok(protocolImport.includes("canonicalPrincipal"));
+});
+
+test("a malformed channel_id is told so, not told its fields are wrong", () => {
+  /* Both arms: bundling the uuid test into the key test meant a caller who sent
+   * exactly the right keys with a bad id was told the FIELDS were wrong. */
+  const command = readFileSync(
+    fileURLToPath(
+      new URL("../supabase/functions/command/index.ts", import.meta.url),
+    ),
+    "utf8",
+  );
+  for (const kind of ["channel_rename", "channel_archive"]) {
+    const start = command.indexOf(`if (cmd.kind === "${kind}")`);
+    assert.notEqual(start, -1, `${kind} must still be validated`);
+    const body = command.slice(start, start + 1400);
+    assert.ok(
+      body.includes("CHANNEL_ID_RULE_TEXT"),
+      `${kind} must have its own sentence for a malformed id`,
+    );
+    assert.ok(
+      body.includes("const keysOk = exactKeys(") && body.includes("const idOk ="),
+      `${kind} must test keys and id separately`,
+    );
+  }
+});
+
+test("the defaulted horizon refusal does not tell the caller to leave out what they left out", () => {
+  /* The atomic arm is reachable on the DEFAULTED path too, because the floor
+   * can raise a defaulted value past the ceiling. Its sentence was written for
+   * an explicit horizon and told that caller to "leave it out". */
+  const command = readFileSync(
+    fileURLToPath(
+      new URL("../supabase/functions/command/index.ts", import.meta.url),
+    ),
+    "utf8",
+  );
+  const at = command.indexOf("message: command.until_ms !== undefined");
+  assert.notEqual(at, -1, "the atomic refusal must branch on explicitness");
+  const block = command.slice(at, at + 900);
+  /* The explicit branch follows `? "`, the defaulted branch follows `: "`. */
+  const explicitAt = block.indexOf('? "');
+  const defaultedAt = block.indexOf(': "', explicitAt);
+  assert.ok(explicitAt !== -1 && defaultedAt !== -1, "both branches must exist");
+  const explicit = block.slice(explicitAt, defaultedAt);
+  const defaulted = block.slice(defaultedAt);
+  assert.ok(explicit.includes("horizon you asked for"), "explicit branch");
+  assert.ok(explicit.includes("leave it out"), "explicit branch offers that");
+  assert.equal(
+    defaulted.includes("leave it out"),
+    false,
+    "the defaulted branch must not tell the caller to do what they did",
+  );
+  assert.ok(defaulted.includes("too little time left"));
+});

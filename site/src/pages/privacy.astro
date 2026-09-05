@@ -9,11 +9,11 @@
  *
  *   WHAT WE GET FROM GITHUB
  *     src/cloud/auth.ts:214            provider=github, PKCE, loopback callback
- *     supabase/functions/command/index.ts:9125-9141
+ *     supabase/functions/command/index.ts:9144-9160
  *                                      user id + email; display name is the first non-empty
  *                                      of GitHub full_name, name, user_name, then the local
  *                                      part of the email, then the literal "Coswarm User"
- *     :3205 (identityVerified)         derived from Supabase's email_confirmed_at
+ *     :9158 (identityVerified)         derived from Supabase's email_confirmed_at
  *
  *   WHERE IT LANDS
  *     migrations/20260723000001_p1_schema.sql:111   swarm.users (user_id, display_name,
@@ -31,7 +31,7 @@
  *   THE IP CLAIM IS THE ONE WORTH RE-CHECKING BEFORE ANY EDIT.
  *     swarm.audit_log HAS an `ip inet` column (p1_schema.sql:400), and the edge function
  *     names it in the INSERT column list — then writes a literal NULL into it
- *     (supabase/functions/command/index.ts:1373, :1388). So the honest statement is "the
+ *     (supabase/functions/command/index.ts:1374, :1389). So the honest statement is "the
  *     column exists and we do not write to it", which is what the document says. If anyone
  *     ever populates it, THIS DOCUMENT IS WRONG THAT DAY. Do not restate the claim from
  *     memory; re-read insertAudit.
@@ -48,7 +48,11 @@
  *     schema, but no repo-mapping command is exposed — COMMAND_KINDS
  *     (supabase/functions/command/index.ts:839) is create, acquire, renew, handoff, takeover,
  *     submit, close, reopen, invite_member, accept_invitation, create_agent_principal,
- *     mint_agent_token, post_signal. Nothing reads code.
+ *     mint_agent_token, post_signal, channel_create, channel_rename,
+ *     channel_archive. Nothing reads code. (The list was already a partial
+ *     summary of COMMAND_KINDS; the chat lane added the three channel_* kinds
+ *     and this line was updated with them. The point it supports is unchanged:
+ *     none of these reads repository contents.)
  *
  * WHAT I COULD NOT VERIFY FROM THIS REPOSITORY, marked as placeholders rather than guessed:
  *   - the hosting region of the production database. supabase/config.toml is the stock local

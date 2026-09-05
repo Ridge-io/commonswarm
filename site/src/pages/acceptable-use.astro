@@ -28,11 +28,11 @@
  *                                              no product command archives a workspace)
  *   120 signals / credential / hour         -> SIGNAL_CREDENTIAL_LIMIT, :564
  *   1000 signals / workspace / hour         -> SIGNAL_WORKSPACE_LIMIT, :565
- *   hourly window, not rolling              -> incrementRateBucket, :3347 uses
+ *   hourly window, not rolling              -> incrementRateBucket, :4797 uses
  *                                              date_trunc('hour', ...)
  *   body 1-8000, about <= 500, until <= 30d -> migrations/20260827000001_expand_signal_body.sql
- *   invitation TTL <= 7 days                -> INVITATION_MAX_TTL_MS, :333
- *   agent credential TTL <= 24 hours        -> AGENT_TOKEN_MAX_TTL_MS, :334
+ *   invitation TTL <= 7 days                -> INVITATION_MAX_TTL_MS, :550
+ *   agent credential TTL <= 30 days         -> AGENT_TOKEN_MAX_TTL_MS, :555
  *   file version <= 25 MB                   -> FILE_MAX_VERSION_BYTES,
  *   workspace file bytes <= 1 GB,              supabase/functions/command/file-artifacts.ts:43-47
  *   500 unpurged names / workspace,          -> FILE_WORKSPACE_MAX_NAMES,
