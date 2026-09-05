@@ -13,13 +13,15 @@ const siteRoot = join(import.meta.dirname, "..", "..", "..");
 const distRoot = process.env.COMMONSWARM_COMPOSER_DIST_ROOT ?? join(siteRoot, "dist");
 
 type ComposerMeasurement = {
-  /** The pick writes "@Name " into the body; nothing is lifted out of the text. */
-  pick: { enterPrevented: boolean; value: string };
-  /** A second pick ADDS a second tag; the first one stays where it was typed. */
-  secondPick: { value: string };
-  /** Two tags in one body post two signals, one per tag. */
-  fanOut: { added: number; targets: string[] };
-  /** No tag at all is still one broadcast row with no target. */
+  /** The pick writes "@Name " into the body AND puts that name in To:. */
+  pick: { enterPrevented: boolean; value: string; chips: string[] };
+  /** A second pick ADDS a second tag and a second chip; neither replaces the first. */
+  secondPick: { value: string; chips: string[] };
+  /** Two names in To: post ONE signal, addressed to the set; recipient 0 is its target. */
+  oneSignal: { added: number; target: string; chipsAfterSend: string[] };
+  /** Emptying To: by hand leaves a broadcast, named on the row rather than shown as nothing. */
+  cleared: { chips: string[]; note: string };
+  /** No recipient at all is still one broadcast row with no target. */
   broadcast: { added: number; target: string };
   plainEnter: { prevented: boolean; submitted: boolean };
   shiftEnter: { insertedNewline: boolean; prevented: boolean; submitted: boolean };
@@ -42,7 +44,12 @@ const contentTypes: Record<string, string> = {
 const frameScript = `<script>
   const frame = document.querySelector("iframe");
   const reportError = (value) => {
-    document.documentElement.dataset.composerError = btoa(String(value));
+    /* UTF-8 first, exactly like the measurement below. A plain btoa threw on the first "…"
+       that reached a timeout message, and the throw replaced the real error with a
+       btoa complaint, which is a harness that hides what it exists to report. */
+    document.documentElement.dataset.composerError = btoa(
+      unescape(encodeURIComponent(String(value))),
+    );
   };
   const runMeasurement = async () => {
     const doc = frame.contentDocument;
@@ -68,6 +75,19 @@ const frameScript = `<script>
     );
     const input = doc.querySelector("[data-composer-input]");
     const list = doc.querySelector("[data-feed-list]");
+    /* THE To: SET SURVIVES A SEND on purpose, so a step that needs a broadcast has to empty
+       it. Doing that through the chip's own remove control makes this a live control of the
+       affordance as well as a set-up step. */
+    const chipNames = () => [...doc.querySelectorAll("[data-composer-to-chip]")]
+      .map((chip) => chip.querySelector("[data-composer-to-promote]")?.textContent ?? "");
+    const clearTo = async () => {
+      for (let guard = 0; guard < 12; guard += 1) {
+        const remove = doc.querySelector("[data-composer-to-remove]");
+        if (!remove) break;
+        remove.click();
+      }
+      await waitFor(() => chipNames().length === 0, "an empty To: set");
+    };
     const type = (value) => {
       input.value = value;
       input.setSelectionRange(value.length, value.length);
@@ -136,22 +156,32 @@ const frameScript = `<script>
 
     type("");
     const first = await choose("orb");
-    const pick = { enterPrevented: first.enterPrevented, value: first.value };
+    const pick = {
+      enterPrevented: first.enterPrevented,
+      value: first.value,
+      chips: chipNames(),
+    };
     const second = await choose("lum");
-    const secondPick = { value: second.value };
+    const secondPick = { value: second.value, chips: chipNames() };
 
-    /* Send with both tags in the body. One signal per tag is the whole feature, so the row count
-       and the two targets are what would fail if the send posted once. */
-    const beforeFanOut = list.children.length;
+    /* ONE SIGNAL for the whole set. Two names in To: used to be two rows; the row count and
+       the single target are what would fail if the send went back to posting per tag. */
+    const beforeSend = list.children.length;
     type(second.value + "ship it");
     pressEnter();
-    await settle(() => list.children.length >= beforeFanOut + 2);
-    const fanOut = {
-      added: list.children.length - beforeFanOut,
-      targets: [...list.children]
-        .slice(beforeFanOut)
-        .map((row) => row.querySelector(".dashboard__message-target")?.textContent?.trim() ?? "")
-        .sort(),
+    await settle(() => list.children.length > beforeSend);
+    await new Promise((resolve) => view.setTimeout(resolve, 60));
+    const oneSignal = {
+      added: list.children.length - beforeSend,
+      target: list.lastElementChild?.querySelector(".dashboard__message-target")
+        ?.textContent?.trim() ?? "",
+      chipsAfterSend: chipNames(),
+    };
+
+    await clearTo();
+    const cleared = {
+      chips: chipNames(),
+      note: doc.querySelector("[data-composer-to-note]")?.textContent ?? "",
     };
 
     const beforeBroadcast = list.children.length;
@@ -193,18 +223,23 @@ const frameScript = `<script>
     };
     const metaEnter = await sendWith("metaKey", "@River sent with command enter");
     const ctrlEnter = await sendWith("ctrlKey", "@River sent with control enter");
+    /* River is in To: now and the picker never offers a name already addressed, so the
+       shortcut steps below start from an empty set again. */
+    await clearTo();
     type("");
     const metaMentionPick = await choose("orb", { metaKey: true });
     const metaMention = { submitted: metaMentionPick.submitted, value: metaMentionPick.value };
     type("");
     const ctrlMentionPick = await choose("lum", { ctrlKey: true });
     const ctrlMention = { submitted: ctrlMentionPick.submitted, value: ctrlMentionPick.value };
+    await clearTo();
     const zeroCandidate = await sendWithStaleEmptyPicker();
 
     document.documentElement.dataset.composerMeasurement = btoa(unescape(encodeURIComponent(JSON.stringify({
       pick,
       secondPick,
-      fanOut,
+      oneSignal,
+      cleared,
       broadcast,
       plainEnter,
       shiftEnter,
@@ -277,10 +312,11 @@ const startDistServer = async (): Promise<{ close(): Promise<void>; origin: stri
   };
 };
 
-/* Two claims were retired here. "One visible recipient" went when the operator asked to address
-   two agents out of four. "A person replaces the whole address" went with the TO row: tags are
-   words in the message now, so a body CAN name a person and an agent together, and each gets its
-   own signal with its own kind. */
+/* Three retired claims, kept because a reader may still meet them.
+   "One visible recipient" went when the operator asked to address two agents out of four.
+   "A person replaces the whole address" went with the old TO row.
+   "Each gets its own signal with its own kind" went on 2026-09-05: the wire carries a
+   recipient list, so the whole To: set is ONE signal with one kind, taken from recipient 0. */
 test("rendered composer addresses several agents and preserves multiline keyboard input", async () => {
   const chrome = await findChrome();
   const server = await startDistServer();
@@ -310,12 +346,34 @@ test("rendered composer addresses several agents and preserves multiline keyboar
     const measured = JSON.parse(
       Buffer.from(encoded, "base64").toString("utf8"),
     ) as ComposerMeasurement;
-    /* The pick is a WORD IN THE MESSAGE. Nothing is lifted out of the text into a chip. */
-    assert.deepEqual(measured.pick, { enterPrevented: true, value: "@Orbit " });
-    assert.deepEqual(measured.secondPick, { value: "@Orbit @Lumen " });
-    /* Two tags, two signals: one per tag, each with its own target. */
-    assert.deepEqual(measured.fanOut, { added: 2, targets: ["→ Lumen", "→ Orbit"] });
-    /* No tag is still one broadcast row, addressed to the room rather than to a listener. */
+    /* The pick is BOTH: a word in the message and a name in To:. The tag stays where it was
+       typed, so the sentence still reads, and the chip is what the send addresses.
+       RETIRED (2026-09-04): "nothing is lifted out of the text into a chip." */
+    assert.deepEqual(measured.pick, {
+      enterPrevented: true,
+      value: "@Orbit ",
+      chips: ["Orbit"],
+    });
+    /* A SECOND PICK ADDS. Ruling D2: a mention joins the To: set, it does not open a DM and
+       it does not drop whoever was already addressed. */
+    assert.deepEqual(measured.secondPick, {
+      value: "@Orbit @Lumen ",
+      chips: ["Orbit", "Lumen"],
+    });
+    /* Two names, ONE row. The target is recipient 0, which is the column the server fills and
+       the only recipient it wakes; both names stay in To: for the next message. */
+    assert.deepEqual(measured.oneSignal, {
+      added: 1,
+      target: "→ Orbit",
+      chipsAfterSend: ["Orbit", "Lumen"],
+    });
+    /* Emptying the set through the chips leaves a NAMED broadcast, and the row says who is
+       notified rather than leaving the reader to infer it. */
+    assert.deepEqual(measured.cleared, {
+      chips: [],
+      note: "No agent is notified. Everyone here can read this.",
+    });
+    /* No recipient is still one broadcast row, addressed to the room rather than to a listener. */
     assert.deepEqual(measured.broadcast, { added: 1, target: "→ everyone" });
     assert.deepEqual(measured.plainEnter, {
       prevented: true,

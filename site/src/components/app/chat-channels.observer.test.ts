@@ -149,9 +149,12 @@ test("all-signals shows every message and names the channel each one is in", () 
 
 test("the composer stamps the channel being read and gains no chrome for it", () => {
   const composer = between(dashboard, '<form class="dashboard__composer"', "</form>");
-  /* R10 and the 2026-09-04 operator direction: no dropdown, no TO row, no second bar. */
+  /* R10: no CHANNEL chrome in the composer -- no dropdown, no second bar. The To: row the
+     2026-09-05 direction added addresses people and agents; it never names a channel, which
+     is what `data-composer-channel-select` would be. */
   assert.doesNotMatch(composer, /<select/);
-  assert.doesNotMatch(composer, /data-composer-channel-select|data-composer-audience/);
+  assert.doesNotMatch(composer, /data-composer-channel-select/);
+  assert.match(composer, /data-composer-to-chips/, "the To: row is part of the composer");
   /* And no `#` parsing of the body, ever: bodies contain `#` legitimately (a Markdown
      heading, an issue reference), so a parser cannot tell an address from prose. */
   assert.doesNotMatch(dashboard, /rawBody[^\n]*match\([^\n]*#/);
@@ -162,7 +165,7 @@ test("the composer stamps the channel being read and gains no chrome for it", ()
      channel has left the list is refused rather than posted unfiled. */
   const placement = between(dashboard, "const freshPlacementChannelId =", "const attachmentSnapshot");
   assert.match(placement, /const freshPlacementChannelId = activeChannel\(\)\?\.channelId \?\? null;/);
-  const resolve = between(dashboard, "const placementChannelId = intent.placementChannelId;", "const mentionsFor");
+  const resolve = between(dashboard, "const placementChannelId = intent.placementChannelId;", "const rowMentions");
   assert.match(resolve, /channelById\(channels, placementChannelId\)/);
   assert.match(resolve, /const placement: BrowserSignalPlacement = placementChannel === null\s*\n\s*\? \{\}\s*\n\s*: \{ channel: placementChannel\.slug \};/);
   assert.match(resolve, /is not in this workspace any more/);
@@ -252,8 +255,8 @@ test("a sample post joins the sample set, so the local narrowing stays honest", 
      `signals`. Posting then switching channel made the post vanish, and it made the argument
      for allowing a local filter there false: "the sample IS the whole set" holds only if the
      set grows with it. Found by a review arm. */
-  const submit = between(dashboard, "const visible = posted.filter(showsOnScreen);", "clearComposerDraft();");
-  assert.match(submit, /if \(sampleMode\) sampleSignals = \[\.\.\.posted, \.\.\.sampleSignals\];/);
+  const submit = between(dashboard, "const visible = showsOnScreen(posted) ? [posted] : [];", "clearComposerDraft();");
+  assert.match(submit, /if \(sampleMode\) sampleSignals = \[posted, \.\.\.sampleSignals\];/);
 });
 
 test("a post belongs to the channel it was sent from, whatever the reader does next", () => {
@@ -314,10 +317,10 @@ test("a post belongs to the channel it was sent from, whatever the reader does n
   );
   /* A row is removed from the list ONLY when it is about to be put back: the id set filtered
      out and the id set prepended are the same one, on both paths. */
-  assert.match(applied, /const visible = posted\.filter\(showsOnScreen\);/);
-  assert.match(applied, /!pendingSet\.has\(entry\.id\) && !visibleIds\.has\(entry\.id\)/);
+  assert.match(applied, /const visible = showsOnScreen\(posted\) \? \[posted\] : \[\];/);
+  assert.match(applied, /entry\.id !== pendingId && !visibleIds\.has\(entry\.id\)/);
   assert.match(applied, /signals = \[\.\.\.visible, \.\.\.kept\];/);
-  const failed = between(dashboard, "} catch (caught) {", "const sent = posted.length;");
+  const failed = between(dashboard, "} catch (caught) {", "const landed = posted !== null;");
   assert.doesNotMatch(failed.replace(/\/\*[\s\S]*?\*\//g, ""), /channelAtSend/);
   const failedRows = between(dashboard, "const keptOnFailure = signals.filter", "setComposerStatus(");
   assert.match(failedRows, /!visibleFailureIds\.has\(signal\.id\)/);
@@ -415,7 +418,7 @@ test("an unfinished send is not resumed into a channel it was not addressed to",
      undoing that: Retry reused the old command ids and the old address, and the row landed in
      a channel the reader had left, filtered off their screen by showsOnScreen. Both arms
      found it. */
-  const failed = between(dashboard, "const unsent = sent < recipients.length;", "renderFeed(\"latest\");");
+  const failed = between(dashboard, "const unsent = !landed;", "renderFeed(\"latest\");");
   assert.match(
     failed,
     /const addressStillActive =\s*\n\s*placementChannelId === \(activeChannel\(\)\?\.channelId \?\? null\);/,
@@ -504,14 +507,14 @@ test("a page fetched before a post landed does not drop that post", () => {
   assert.match(open, /postedSinceReset\.clear\(\);/, "a workspace change empties the record");
   assert.match(load, /forgetFetchedPostedIds\(page\.rows\);/);
   /* And the send is what records them, so only rows this browser posted are kept. */
-  const applied = between(dashboard, "const visible = posted.filter(showsOnScreen);", "clearComposerDraft();");
+  const applied = between(dashboard, "const visible = showsOnScreen(posted) ? [posted] : [];", "clearComposerDraft();");
   assert.match(
     applied,
     /for \(const row of visible\) \{\s*\n\s*postedSinceReset\.set\(row\.id, \{ row, workspaceId, at: Date\.now\(\) \}\);/,
   );
   /* The FAILURE path prepends rows too, and only the success path was recording them, so a
      partial failure during a channel click lost the hop that had landed. */
-  const failedRows = between(dashboard, "const visibleOnFailure = posted.filter", "const keptOnFailure");
+  const failedRows = between(dashboard, "const visibleOnFailure = posted !== null &&", "const keptOnFailure");
   assert.match(
     failedRows,
     /for \(const row of visibleOnFailure\) \{\s*\n\s*postedSinceReset\.set\(row\.id, \{ row, workspaceId, at: Date\.now\(\) \}\);/,
@@ -575,7 +578,7 @@ test("post_signal's chat keys each travel in their own group", () => {
    * optional key into it returns 400 on every post. Each chat key is spread on its own test
    * here, and a body that sends none is byte-identical to the one this app sent before.
    */
-  const helper = between(client, "export async function postBrowserSignal", "/** Best-effort command write");
+  const helper = between(client, "export function browserSignalCommand", "/** Posts ONE browser-authored signal");
   for (const [field, wire] of [
     ["channel", "channel"],
     ["threadRootId", "thread_root_id"],
@@ -655,7 +658,7 @@ test("no channel copy in the dashboard implies privacy, and none uses an em-dash
   ]);
   blocks.push([
     "composer refusals",
-    between(dashboard, "if (unknownChannelId !== null) {\n        /* The hidden composer", "const recipients ="),
+    between(dashboard, "if (unknownChannelId !== null) {\n        /* The hidden composer", "const recipients: BrowserSignalAudience ="),
   ]);
   let checked = 0;
   for (const [anchor, rawBlock] of blocks) {

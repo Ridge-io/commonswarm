@@ -244,10 +244,12 @@ const assertComposerSprint = (value: ComposerArtifact): void => {
   /* A failed request restores the exact, untrimmed draft and the exact recipient snapshot. The
    * optimistic row is removed first, then the retry affordance is made visible. */
   assert.match(failed, /input\.value = rawBody;/, "failed-send-body: restore the exact body");
-  /* RETIRED (2026-09-04): "restore only the recipients that did not send". There is no address
-   * to restore any more — the tags are in the body, and the body goes back whole. What keeps a
-   * retry from posting twice is the command id: every id is kept, so the sends that already
-   * landed replay idempotently instead of arriving again. */
+  /* RETIRED (2026-09-04): "restore only the recipients that did not send". RETIRED AGAIN
+   * (2026-09-05): "there is no address to restore any more — the tags are in the body".
+   * There IS an address again, the To: chips, and it is not restored on failure because it
+   * was never emptied: a send leaves the chips where they are. What keeps a retry from
+   * posting twice is the command id, and there is one of them now because the message is
+   * one signal. */
   /* The rewritten intent gained `placement` / `placementChannelId` on 2026-09-05: without
      them a retry after a partial failure posted UNFILED, because the replay reads
      the address and a missing one defaults to `{}`. The address is the channel ID, resolved to
@@ -255,11 +257,11 @@ const assertComposerSprint = (value: ComposerArtifact): void => {
      channel. It is written back only when the
      send is still `resumable` — unsent AND still addressed to the channel on screen — because
      a channel change retires it and the catch was putting it back. The property here is
-     unchanged: when there IS a retry, every command id is kept. */
+     unchanged: when there IS a retry, the command id is kept. */
   assert.match(
     failed,
-    /composerIntent = resumable[\s\S]{0,400}?commandIds,\s*\n\s*body: rawBody,\s*\n\s*audienceKey,\s*\n\s*attachmentKey,\s*\n\s*signalKind,\s*\n\s*placementChannelId,/,
-    "failed-send-audience: a retry must reuse every command id, not mint new ones",
+    /composerIntent = resumable[\s\S]{0,400}?commandId,\s*\n\s*body: rawBody,\s*\n\s*audienceKey,\s*\n\s*attachmentKey,\s*\n\s*signalKind,\s*\n\s*placementChannelId,/,
+    "failed-send-audience: a retry must reuse the command id, not mint a new one",
   );
   assert.match(
     failed,
@@ -268,29 +270,32 @@ const assertComposerSprint = (value: ComposerArtifact): void => {
   );
   assert.doesNotMatch(failed, /composerAudience|composerMention|remaining/);
   assert.match(failed, /persistComposerDraft\(\);/, "failed-send-body: persist the restored draft");
-  /* ~~`: sent < recipients.length ?`~~ 2026-09-05: the partial-send sentence is now gated on
-     `resumable`, which is that same condition AND the send still being addressed to the
-     channel on screen. The reader who moved gets a different, true sentence instead of one
-     inviting them to press send again into a channel that cannot finish it. The property
-     here is unchanged: the rejection is announced inline with the counts. */
+  /* RETIRED 2026-09-05 with the fan-out: "Sent to ${sent} of ${recipients.length}" and
+     "All ${sent} went out". A message is ONE signal now, so there is no partial send to
+     count: the command was rejected and nothing is on the server, or it landed and this
+     throw came from the render after it. A reader may still meet the counting sentences in
+     an older screenshot.
+
+     The property is unchanged: the rejection is announced inline, and the reader is told
+     whether pressing send again would repeat something. */
   assert.match(
     failed,
-    /\? `Sent to \$\{sent\} of \$\{recipients\.length\}\. \$\{readableError\(caught\)\}/,
+    /resumable\s*\n\s*\? readableError\(caught\)/,
     "failed-send-error: announce the rejection inline",
   );
-  /* A partly-sent fan-out must say how many went, or the reader cannot tell whether pressing
-   * send again repeats a message that already arrived. */
+  /* Nothing landed and the reader has moved: Retry cannot finish it, so the sentence says
+     where it was going and that none of it was sent. */
   assert.match(
     failed,
-    /Press send again to finish it; the ones that went will not go twice\./,
-    "failed-send-error: say what pressing send again will and will not repeat",
+    /That message was addressed to \$\{addressLabel\}, and `\s*\+\s*\n\s*"none of it was sent\./,
+    "failed-send-error: a send the reader moved away from must say nothing was sent",
   );
-  /* When every recipient already posted there is nothing to press send for, and saying there is
-   * would invite a duplicate the reader did not intend. */
+  /* It DID post and the throw came from the render, so there is nothing to press send for,
+     and saying there is would invite a duplicate the reader did not intend. */
   assert.match(
     failed,
-    /All \$\{sent\} went out\. \$\{readableError\(caught\)\} `\s*\+\s*"Nothing is left to send/,
-    "failed-send-error: a fully-sent failure must not ask for another send",
+    /`The message went out\. \$\{readableError\(caught\)\} `\s*\+\s*\n\s*"Nothing is left to send/,
+    "failed-send-error: a landed-then-failed send must not ask for another send",
   );
   /* A finished send must also leave the saved draft empty and its preview URLs revoked. Without
    * that, the reload the copy suggests brings the sent message back with no intent, and the next
@@ -310,11 +315,11 @@ const assertComposerSprint = (value: ComposerArtifact): void => {
     /data-composer-retry[^]*?addEventListener\("click", \(\) => \{\s*one<HTMLFormElement>\("\[data-composer\]"\)\?\.requestSubmit\(\);/,
     "retry-path: retry must resubmit the restored form",
   );
-  /* Every pending row leaves the feed before the body comes back, so a failed fan-out cannot
+  /* The pending row leaves the feed before the body comes back, so a failed send cannot
    * leave a ghost row beside the restored draft. */
   assertOrder(
     failed,
-    "!pendingSet.has(signal.id)",
+    "signal.id !== pendingId",
     "input.value = rawBody;",
     "failed-send-body",
   );
@@ -354,7 +359,7 @@ const assertComposerSprint = (value: ComposerArtifact): void => {
    * receipt cache from posting to accepted; neither phase may claim delivery. */
   assert.match(
     submit,
-    /const pendingIds = commandIds\.map\(\(commandId\) => `composer-pending-\$\{commandId\}`\);/,
+    /const pendingId = `composer-pending-\$\{commandId\}`;/,
     "optimistic-posting: use one stable pending row id",
   );
   assert.match(
@@ -362,11 +367,11 @@ const assertComposerSprint = (value: ComposerArtifact): void => {
     /deliveryReceiptCache\.set\(pendingId, \{ result: null, checkedAt: 0, phase: "posting" \}\);/,
     "optimistic-posting: pending row must use the receipt model",
   );
-  assertOrder(submit, "signals.unshift(...optimisticSignals);", "await postBrowserSignal(", "optimistic-posting");
+  assertOrder(submit, "signals.unshift(optimisticSignal);", "await postBrowserSignal(", "optimistic-posting");
   assertOrder(submit, 'renderFeed("latest");', "await postBrowserSignal(", "optimistic-posting");
   assert.match(
     submit,
-    /deliveryReceiptCache\.set\(signal\.id, \{ result: null, checkedAt: 0, phase: "accepted" \}\);/,
+    /deliveryReceiptCache\.set\(posted\.id, \{ result: null, checkedAt: 0, phase: "accepted" \}\);/,
     "optimistic-accepted: accepted response must stay in the receipt model",
   );
   const postingIndicator = between(
@@ -652,7 +657,7 @@ const assertComposerSprint = (value: ComposerArtifact): void => {
      were moved out below the block, where a rejected send would reach it too. */
   const finished = between(
     failed,
-    "if (!unsent) {",
+    "if (landed) {",
     "\n        }",
     "finished-send-cleanup",
   );
@@ -675,12 +680,12 @@ const assertComposerSprint = (value: ComposerArtifact): void => {
      twice — is unchanged, and it is the same id set on both sides of the operation. */
   assert.match(
     failed,
-    /!pendingSet\.has\(signal\.id\) && !visibleFailureIds\.has\(signal\.id\)/,
+    /signal\.id !== pendingId && !visibleFailureIds\.has\(signal\.id\)/,
     "failed-send-body: a late throw must not prepend rows the success path already added",
   );
   assert.match(
     failed,
-    /const visibleOnFailure = posted\.filter\(showsOnScreen\);/,
+    /const visibleOnFailure = posted !== null && showsOnScreen\(posted\) \? \[posted\] : \[\];/,
     "failed-send-body: the rows put back are the ones the list on screen would show",
   );
   assert.match(
@@ -708,7 +713,7 @@ const assertComposerSprint = (value: ComposerArtifact): void => {
   );
   assert.match(renderFeed, /el\.scrollTop = topBefore \+ \(el\.scrollHeight - heightBefore\);/,
     "reader-scroll: history prepend must preserve the visible row by height delta");
-  assert.match(submit, /signals\.unshift\(\.\.\.optimisticSignals\);[^]*?renderFeed\("latest"\);/,
+  assert.match(submit, /signals\.unshift\(optimisticSignal\);[^]*?renderFeed\("latest"\);/,
     "reader-scroll: optimistic append must use latest-row anchoring");
 };
 
@@ -722,17 +727,20 @@ type Mutation = {
 
 const mutations: Mutation[] = [
   {
-    name: "a retry mints fresh command ids and reposts what already landed",
+    name: "a retry mints a fresh command id and reposts what already landed",
     key: "dashboard",
-    target: "            commandIds,\n            body: rawBody,",
-    replacement: "            commandIds: commandIds.map(() => uuid()),\n            body: rawBody,",
+    target: "            commandId,\n            body: rawBody,",
+    replacement: "            commandId: uuid(),\n            body: rawBody,",
     expectedFailure: "failed-send-audience",
   },
   {
     name: "retry stops resubmitting the restored draft",
     key: "dashboard",
-    target: 'one<HTMLFormElement>("[data-composer]")?.requestSubmit();\n    });\n    syncComposerControls();',
-    replacement: 'one<HTMLFormElement>("[data-composer]")?.reset();\n    });\n    syncComposerControls();',
+    /* Anchored on the retry listener itself. It used to be anchored on the line that
+       followed it, and the To: chip listener landed between the two on 2026-09-05, so the
+       mutation stopped resolving and the control silently measured nothing. */
+    target: 'one<HTMLButtonElement>("[data-composer-retry]")?.addEventListener("click", () => {\n      one<HTMLFormElement>("[data-composer]")?.requestSubmit();',
+    replacement: 'one<HTMLButtonElement>("[data-composer-retry]")?.addEventListener("click", () => {\n      one<HTMLFormElement>("[data-composer]")?.reset();',
     expectedFailure: "retry-path",
   },
   {
@@ -801,8 +809,10 @@ const mutations: Mutation[] = [
   {
     name: "the emptied composer leaves a debounced draft write armed",
     key: "dashboard",
-    target: 'cancelComposerDraftTimer();\n      setComposerStatus("");',
-    replacement: 'setComposerStatus("");',
+    /* Anchored on the line that FOLLOWS the cancel inside resetComposer. The To: reset
+       landed between the cancel and setComposerStatus on 2026-09-05. */
+    target: 'cancelComposerDraftTimer();\n      /* And the address',
+    replacement: '/* And the address',
     expectedFailure: "composer-reset",
   },
   {

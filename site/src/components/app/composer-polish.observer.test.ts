@@ -341,6 +341,14 @@ const measure = async (
   return JSON.parse(Buffer.from(encoded, "base64").toString("utf8")) as PolishMeasurement;
 };
 
+/**
+ * The composer's height ceilings, measured on this build rather than chosen. Both are just
+ * above what the current bar actually is and well below the reverted control, so the pair
+ * still discriminates: see the comments at each use.
+ */
+const COMPOSER_REST_BUDGET_PX = 108;
+const COMPOSER_TWO_LINE_BUDGET_PX = 130;
+
 const geometryFailures = (measurement: PolishMeasurement): string[] => {
   const failures: string[] = [];
   if (measurement.runs !== 1) {
@@ -366,18 +374,33 @@ const geometryFailures = (measurement: PolishMeasurement): string[] => {
   if (measurement.rest.verticalAsymmetry > 1) {
     failures.push(`text vertical asymmetry ${measurement.rest.verticalAsymmetry.toFixed(2)}px > 1px`);
   }
-  /* The operator's budget (2026-09-04): this bar is 80px at rest, on every screen. The TO row
-   * and the note checkbox were removed to make that possible, so the budget is the claim that
-   * replaces the alignment claims those controls carried. */
-  if (measurement.rest.composer.height > 80) {
-    failures.push(`composer is ${measurement.rest.composer.height.toFixed(2)}px at rest, over the 80px budget`);
+  /* THE RESTING BUDGET, renegotiated 2026-09-05 and MEASURED, not guessed.
+   *
+   * RETIRED: "the operator's budget (2026-09-04): this bar is 80px at rest, on every screen.
+   * The TO row and the note checkbox were removed to make that possible." The operator asked
+   * for the To: row back on 2026-09-05, so the 80px it bought is spent. Measured on this
+   * build: 104.44px desktop, 99.38px mobile. The ceiling is set just above the larger of the
+   * two rather than at a round number, so a row that grows again fails here.
+   *
+   * The reverted control still fails it at 128.44px / 131.38px, which is what keeps this
+   * number a gate rather than a record of whatever the composer happens to be. */
+  if (measurement.rest.composer.height > COMPOSER_REST_BUDGET_PX) {
+    failures.push(
+      `composer is ${measurement.rest.composer.height.toFixed(2)}px at rest, over the ` +
+        `${COMPOSER_REST_BUDGET_PX}px budget`,
+    );
   }
   if (measurement.rest.sendInsetDelta > 1) {
     failures.push(`send/text inset delta ${measurement.rest.sendInsetDelta.toFixed(2)}px > 1px`);
   }
-  /* Two lines of text may grow the box, but not past a third of a phone screen. */
-  if (measurement.twoLine.composer.height > 120) {
-    failures.push(`two-line composer is ${measurement.twoLine.composer.height.toFixed(2)}px, over 120px`);
+  /* Two lines of text may grow the box, but not past a third of a phone screen. Measured
+   * 2026-09-05 with the To: row: 124.44px desktop, 119.38px mobile; the reverted control is
+   * 147.44px / 150.38px, so the ceiling still separates them. */
+  if (measurement.twoLine.composer.height > COMPOSER_TWO_LINE_BUDGET_PX) {
+    failures.push(
+      `two-line composer is ${measurement.twoLine.composer.height.toFixed(2)}px, over ` +
+        `${COMPOSER_TWO_LINE_BUDGET_PX}px`,
+    );
   }
   if (measurement.success.statusText.trim() !== "") {
     failures.push(`successful send left visible status text: ${JSON.stringify(measurement.success.statusText)}`);
@@ -414,7 +437,9 @@ test("Slack-shaped composer geometry stays aligned in real Chrome", async () => 
     assert.deepEqual(currentFailures, [], `composer polish drifted:\n${currentFailures.join("\n")}`);
     assert.ok(
       revertedFailures.some((failure) => failure.includes("vertical asymmetry")) &&
-        revertedFailures.some((failure) => failure.includes("over the 80px budget")) &&
+        revertedFailures.some((failure) =>
+          failure.includes(`over the ${COMPOSER_REST_BUDGET_PX}px budget`)
+        ) &&
         revertedFailures.some((failure) => failure.includes("send/text inset")) &&
         revertedFailures.some((failure) => failure.includes("visible status text")),
       `geometry reversion control did not exercise every defect:\n${revertedFailures.join("\n")}`,
