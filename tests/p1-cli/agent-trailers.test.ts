@@ -253,6 +253,55 @@ test("the hook path constant, the file, and hooks:install all agree", () => {
   assert.ok(install.includes(dir!), `hooks:install does not install into ${dir}`);
 });
 
+test("the grace cutoff's two forms agree and the cutoff is in the past", () => {
+  /* The vocabulary carries the cutoff twice: an ISO string for the sentences the scripts print and
+   * an epoch for the shell to compare. Bash cannot parse an ISO date portably, so nothing in the
+   * shell can see the two drift apart; Node can. If they drift, the gate skips a different set of
+   * commits than every message says it does. A cutoff in the future skips every commit. */
+  const iso = /^AGENT_TRAILER_GRACE_BEFORE=(\S+)$/m.exec(vocabSource)?.[1];
+  const epoch = /^AGENT_TRAILER_GRACE_BEFORE_EPOCH=(\d+)$/m.exec(vocabSource)?.[1];
+  assert.ok(iso && epoch, "the grace cutoff is not in the vocabulary in both forms");
+  const parsed = Date.parse(iso!);
+  assert.ok(Number.isFinite(parsed), `${iso} is not a date Date.parse understands`);
+  assert.equal(parsed / 1000, Number(epoch), `${iso} and epoch ${epoch} disagree`);
+  assert.ok(parsed < Date.now(), `the grace cutoff ${iso} is in the future`);
+});
+
+test("the PR summary's categories cover every model source in the vocabulary", () => {
+  /* The summary sorts commits into measured / ambiguous / declared / not-established. Those
+   * categories are built from constants, but nothing forced them to PARTITION the vocabulary: a
+   * source added to the array and matched by no category would quietly drop out of the totals, and
+   * a reader would be told less work was audited than was. So build one commit per source and
+   * require the script to account for all of them. */
+  const repo = mkdtempSync(join(tmpdir(), "agent-trailers-pr-"));
+  try {
+    const git = (...args: string[]) =>
+      execFileSync("git", args, { cwd: repo, encoding: "utf8", env: { ...process.env, HOME: repo } });
+    git("init", "--quiet", "-b", "main");
+    git("-c", "user.name=F", "-c", "user.email=f@cloud-swarm.local",
+        "commit", "--quiet", "--allow-empty", "--no-verify", "-m", "base");
+    for (const source of sources) {
+      git("-c", "user.name=F", "-c", "user.email=f@cloud-swarm.local",
+          "commit", "--quiet", "--allow-empty", "--no-verify", "-m",
+          `chore: ${source}
+
+Agent-Model: probe
+Agent-Family: unknown
+Agent-Model-Source: ${source}`);
+    }
+    const summary = execFileSync(resolve(repoRoot, "scripts/pr-agent-trailers.sh"),
+      [`HEAD~${sources.length}..HEAD`], { cwd: repo, encoding: "utf8" });
+    assert.ok(!/WARNING/.test(summary), `a model source falls into no category:
+${summary}`);
+    const counted = /^(\d+) of (\d+) commit\(s\)/m.exec(summary);
+    assert.ok(counted, `no honesty line in:
+${summary}`);
+    assert.equal(Number(counted![2]), sources.length, "the summary counted the wrong number of commits");
+  } finally {
+    rmSync(repo, { recursive: true, force: true });
+  }
+});
+
 test("the hook is opt-in and no lifecycle script installs it", () => {
   /* A hook installed by `npm install` would rewrite commit messages in every checkout that ever
    * ran it, including ones whose owner never asked. The install must stay an explicit command. */
@@ -320,6 +369,14 @@ test("the doc records the grace rule and does not overstate what the gate blocks
   const doc = readFileSync(resolve(repoRoot, "docs/development/agent-trailers.md"), "utf8");
   const dir = /^AGENT_TRAILER_HOOK_DIR=(\S+)$/m.exec(vocabSource)![1]!;
   assert.ok(doc.includes(`${dir}/prepare-commit-msg`), "the doc does not name the hook path");
-  assert.match(doc, /AGENT_TRAILER_HOOK_PATH/, "the doc does not name the grace constant");
+  assert.match(doc, /AGENT_TRAILER_HOOK_PATH/, "the doc does not name the tree half of the rule");
+  assert.match(doc, /AGENT_TRAILER_GRACE_BEFORE/, "the doc does not name the date half of the rule");
+  /* Both halves, and WHY each is needed. A later edit that drops one leaves a rule that fails on
+   * rebase or on concurrent lanes, and the reason is the part nobody reconstructs from the code. */
+  /* Anchored on the phrase, not on the bare word "rebase", which appears elsewhere on the page and
+   * would let the explanation be deleted while the test stayed green. */
+  assert.match(doc, /tree alone loses to a rebase/i, "the doc does not explain what the tree test alone loses to");
+  assert.match(doc, /date alone loses to concurrent lanes/i, "the doc does not explain what the date test alone loses to");
+  assert.match(doc, /author date, not committer date/i);
   assert.match(doc, /no branch protection/i, "the doc does not say the check blocks no merge today");
 });
