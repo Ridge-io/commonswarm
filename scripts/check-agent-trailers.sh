@@ -126,7 +126,8 @@ check_range() {
   while IFS= read -r sha; do [ -n "$sha" ] && shas+=("$sha"); done < <(git rev-list "$range")
 
   if [ "${#shas[@]}" -eq 0 ]; then
-    printf 'agent-trailers: no commits in range %s — nothing to check\n' "$range"
+    printf 'agent-trailers: no commits in range %s\n' "$range"
+    printf 'agent-trailers: NOTHING CHECKED — this run read no commit, so it is not evidence about any.\n'
     return 0
   fi
 
@@ -169,7 +170,7 @@ commit onto a base that carries the hook, so it stops qualifying for grace, but 
 wrote it is not recoverable from your session — an --amend now would sign it with YOUR runtime and
 put a wrong model into the audit, which is worse than an absent one. Record what is true instead:
 
-    CSWARM_AGENT_MODEL=$AGENT_TRAILER_MODEL_UNKNOWN CSWARM_AGENT_FAMILY=unknown \
+    CSWARM_AGENT_MODEL=$AGENT_TRAILER_MODEL_UNKNOWN CSWARM_AGENT_FAMILY=$AGENT_TRAILER_FAMILY_UNKNOWN \
       git rebase -r --exec 'git commit --amend --no-edit' <base>
 
 ...or, if you know which model wrote it, name it with CSWARM_AGENT_MODEL and it is recorded as
@@ -196,6 +197,14 @@ MSG
   fi
   if [ "$exempt" -gt 0 ]; then
     printf '  %d exempt: a merge, or a commit %s wrote\n' "$exempt" "$AGENT_TRAILER_GITHUB_COMMITTER"
+  fi
+  # ONE STABLE TOKEN FOR "THIS RUN READ NOBODY'S TRAILERS", printed whether the range was empty or
+  # every commit in it was skipped or exempt. Those look identical to a reader of the checks UI —
+  # both are a green tick — and the second is the common one, because a range of nothing but old
+  # work is what a rebased lane produces. The workflow turns this line into an annotation, and the
+  # token is what it matches on, so do not reword it without changing the workflow.
+  if [ "$checked" -eq 0 ]; then
+    printf 'agent-trailers: NOTHING CHECKED — this run read no commit, so it is not evidence about any.\n'
   fi
   return 0
 }
@@ -394,7 +403,7 @@ Agent-Model-Source: $source" ) >/dev/null 2>&1
   assert_status 0 "$status" "an empty range exits 0"
   selftest_assertions=$((selftest_assertions + 1))
   case "$out" in
-    *"nothing to check"*) : ;;
+    *"NOTHING CHECKED"*) : ;;
     *) printf 'self-test FAIL: empty range does not say nothing was checked\n' >&2
        selftest_failures=$((selftest_failures + 1)) ;;
   esac
@@ -543,6 +552,15 @@ Agent-Model-Source: declared" side.txt
   case "$out" in
     *"1 skipped as predating the rule"*) : ;;
     *) printf 'self-test FAIL: a grace-skipped commit is not reported as skipped (got: %s)\n' "$out" >&2
+       selftest_failures=$((selftest_failures + 1)) ;;
+  esac
+
+  # ...and a range whose commits were ALL skipped must carry the same token as an empty one. Both
+  # are a green tick in the checks UI, and this is the case a rebased lane actually produces.
+  selftest_assertions=$((selftest_assertions + 1))
+  case "$out" in
+    *"NOTHING CHECKED"*) : ;;
+    *) printf 'self-test FAIL: an all-skipped range does not say nothing was checked (got: %s)\n' "$out" >&2
        selftest_failures=$((selftest_failures + 1)) ;;
   esac
 

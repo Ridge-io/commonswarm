@@ -147,9 +147,13 @@ jobs:
             printf '%s\n' "$out"; exit 1
           }
           printf '%s\n' "$out"
+          # The checker prints this token whenever it read nobody's trailers — an empty range, or a
+          # range whose every commit was skipped or exempt. The second is the common one: a lane of
+          # nothing but pre-rule work produces it, and in the checks UI it is the same green tick as
+          # a range that was audited and was clean.
           case "$out" in
-            *"nothing to check"*)
-              echo "::warning title=Agent trailers audited nothing::the range [$RANGE] was empty, so this check is green without having read any commit" ;;
+            *"NOTHING CHECKED"*)
+              echo "::warning title=Agent trailers audited nothing::no commit in [$RANGE] was checked, so this green says nothing about the work in it" ;;
           esac
 
       # Informational only, and deliberately after the gate. Never fails the run: a summary that

@@ -92,9 +92,10 @@ AGENT_TRAILER_SOURCES=(
 AGENT_TRAILER_MODEL_NO_AGENT=none
 AGENT_TRAILER_MODEL_UNKNOWN=unknown
 
-# Individual source values that ENFORCEMENT compares against, named so no script retypes one. The
+# Individual values that ENFORCEMENT compares against or prints, named so no script retypes one. The
 # PR summary sorts every commit into a bucket by these, and a renamed value would otherwise make it
 # count silently wrong rather than fail.
+AGENT_TRAILER_FAMILY_UNKNOWN=unknown
 AGENT_TRAILER_SOURCE_AMBIGUOUS=runtime-ambiguous
 AGENT_TRAILER_SOURCE_DECLARED=declared
 AGENT_TRAILER_SOURCE_NONE=none

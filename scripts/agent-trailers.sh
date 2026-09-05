@@ -83,12 +83,16 @@ detect_claude_code() {
   [ -n "$session" ] || return 0
   command -v jq >/dev/null 2>&1 || return 0
 
+  # TAKE THE NEWEST MATCH, NOT THE FIRST. A glob expands in lexicographic order, so breaking on the
+  # first hit would read the oldest file whenever a session id appears more than once. Enumerated
+  # 2026-09-04 on this host: no session id appears in two project directories, and no codex thread
+  # id appears in two rollouts out of 2091 files — so this is hardening, not a fixed defect. It
+  # costs nothing and removes a way to claim `runtime-transcript` off a stale record.
   local transcript=""
   local candidate
   for candidate in "${HOME}"/.claude/projects/*/"${session}.jsonl"; do
     [ -f "$candidate" ] || continue
-    transcript="$candidate"
-    break
+    [ -z "$transcript" ] || [ "$candidate" -nt "$transcript" ] && transcript="$candidate"
   done
   [ -n "$transcript" ] || return 0
 
@@ -131,10 +135,10 @@ detect_codex() {
   local rollout=""
   local candidate
   # The sessions tree is ~/.codex/sessions/<yyyy>/<mm>/<dd>/rollout-<ts>-<thread-id>.jsonl.
+  # Newest match, for the reason given on detect_claude_code above.
   for candidate in "${HOME}"/.codex/sessions/*/*/*/"rollout-"*"-${CODEX_THREAD_ID}.jsonl"; do
     [ -f "$candidate" ] || continue
-    rollout="$candidate"
-    break
+    [ -z "$rollout" ] || [ "$candidate" -nt "$rollout" ] && rollout="$candidate"
   done
   [ -n "$rollout" ] || return 0
 
@@ -182,8 +186,7 @@ detect_grok() {
   local dir="" candidate
   for candidate in "${HOME}"/.grok/sessions/*/"${GROK_SESSION_ID}"; do
     [ -d "$candidate" ] || continue
-    dir="$candidate"
-    break
+    [ -z "$dir" ] || [ "$candidate" -nt "$dir" ] && dir="$candidate"
   done
   [ -n "$dir" ] || return 0
 
@@ -259,7 +262,7 @@ count_runtime_markers() {
 resolve() {
   if [ -n "${CSWARM_AGENT_MODEL:-}" ]; then
     detected_model="${CSWARM_AGENT_MODEL}"
-    detected_family="${CSWARM_AGENT_FAMILY:-unknown}"
+    detected_family="${CSWARM_AGENT_FAMILY:-$AGENT_TRAILER_FAMILY_UNKNOWN}"
     detected_tool="${CSWARM_AGENT_TOOL:-}"
     detected_source=declared
     # The escape hatch: a commit a person wrote by hand.
@@ -285,10 +288,10 @@ resolve() {
 
   if [ -z "$detected_model" ]; then
     detected_model="$AGENT_TRAILER_MODEL_UNKNOWN"
-    detected_source=none
+    detected_source="$AGENT_TRAILER_SOURCE_NONE"
   fi
-  [ -n "$detected_family" ] || detected_family=unknown
-  [ -n "$detected_source" ] || detected_source=none
+  [ -n "$detected_family" ] || detected_family="$AGENT_TRAILER_FAMILY_UNKNOWN"
+  [ -n "$detected_source" ] || detected_source="$AGENT_TRAILER_SOURCE_NONE"
 }
 
 agent_name() {
@@ -326,7 +329,7 @@ Model sources:      $(agent_trailer_join "${AGENT_TRAILER_SOURCES[@]}")
 Families:           $(agent_trailer_join "${AGENT_TRAILER_FAMILIES[@]}")
 
 Overrides (use when a lead commits a diff another model wrote):
-  CSWARM_AGENT_MODEL   model id; recorded with source 'declared'
+  CSWARM_AGENT_MODEL   model id; recorded with source '$AGENT_TRAILER_SOURCE_DECLARED'
   CSWARM_AGENT_FAMILY  one of the families above
   CSWARM_AGENT_TOOL    tool and version, e.g. 'codex 0.4.2'
   CSWARM_AGENT_NAME    seat name; defaults to git config user.name

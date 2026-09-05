@@ -290,8 +290,10 @@ The workflow resolves only the commits a push or PR **adds**, so it never walks 
 resolves that range from `github.event.before` or the PR base, and falls back to `origin/main..HEAD`
 and then to `HEAD~1..HEAD` when neither is reachable — a force-push to the default branch lands on
 the first fallback and yields an EMPTY range, and the last fallback reads only one commit. The job
-prints a warning annotation when the range it checked was empty, because a green check that audited
-nothing looks the same as one that audited everything.
+prints a warning annotation whenever it read **no** commit — an empty range, or a range whose every
+commit was skipped or exempt — because a green check that audited nothing looks exactly like one
+that audited everything. The all-skipped case is the common one: a lane of nothing but pre-rule work
+produces it.
 That alone is not enough: a `pull_request` event checks `base.sha..HEAD`, which contains every
 commit a branch already had before this landed. Enumerated 2026-09-04 on this checkout, eleven
 branches carried twenty non-merge commits with no `Agent-Model` between them. Every one would have
