@@ -260,6 +260,11 @@ const mutations = [
     "        const addressChosen = false &&",
     "an address the reader chose is a draft, even with nothing typed",
     "emptyBodyEditSurvivesSwitch: an address edited with nothing typed", true],
+  [PURE, ADDR,
+    "  return key(recipients) !== key(pruneComposerRecipients(remembered, known));",
+    "  return key(recipients) !== key(remembered);",
+    "a set arrival pruned is not stored as a set the reader chose",
+    "a set that is only the remembered one, pruned, was stored as a choice"],
   /* (3) a roster prune during an in-flight send */
   [FIELD, DASH,
     "        sending: composerSending,",

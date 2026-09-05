@@ -946,7 +946,7 @@ test("a chosen address is a draft, even before anything is typed", () => {
   );
   assert.match(
     dashboard,
-    /const addressChosen = composerToLive &&\s*\n\s*composerToKey\(composerTo\) !== composerToKey\(readRememberedComposerTo\(\)\);/,
+    /const addressChosen = composerToLive &&\s*\n\s*composerAddressIsChosen\(\s*\n\s*composerTo,\s*\n\s*readRememberedComposerTo\(\),\s*\n\s*composerRecipientKnown,\s*\n\s*\);/,
     "an address the reader chose is not what decides whether the draft is worth keeping",
   );
   assert.match(

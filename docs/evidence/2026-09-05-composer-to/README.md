@@ -70,7 +70,7 @@ transition.
 | open item from round four | what closed it | the control that drives it |
 |---|---|---|
 | 1. a workspace switch loses a draft's address | the pass holds while `rosterKnown` is false, and the body and the address are one transaction behind one restore key | `broadcastSurvivesSwitch`, `chipEditSurvivesSwitch`, `switchedWorkspaceAddress` in the browser; "a pass against an unknown roster commits nothing" in the pure driver |
-| 2. a chip edit never reaches storage, and a switch cancels the timer | the pass writes the stored pair on every commit; `resetComposer` FLUSHES before it empties the box; an address that differs from the last-sent set is a draft on its own | `chipEditSurvivesSwitch`, `emptyBodyEditSurvivesSwitch` |
+| 2. a chip edit never reaches storage, and a switch cancels the timer | the pass writes the stored pair on every commit; `resetComposer` FLUSHES before it empties the box; an address the reader CHOSE is a draft on its own | `chipEditSurvivesSwitch`, `emptyBodyEditSurvivesSwitch`, and "a set arrival pruned is not a set the reader chose" in the pure driver |
 | 3. a roster prune during an in-flight send | the address is FROZEN for the whole post and settles in the submit's `finally`, which is also what now clears the applied record rather than a hand write in the success block | "nothing moves the address while the message it addresses is on the wire" in the pure driver, plus a source claim that the dashboard feeds `sending` in |
 | 4. a tag refused by the cap cannot be re-added | only a name that GOT IN is marked applied; the notice is derived from `refused` on every pass rather than pushed in once | `capRefused` then `capAfterRoom` in the browser; "a tag the cap refused joins the set as soon as the reader makes room" in the pure driver |
 | 5. two mutation expectations fail for a reason other than the assertion they name | the notified mark has its own claim (`notifiedMark`), and `secondTag` and `promoted` no longer read it | the two mutations now name `notifiedMark` |
@@ -87,6 +87,19 @@ A sample switch used to set the id and repaint. It now takes the same steps a re
 `resetComposer` runs while the workspace being left is still current, the roster is cleared,
 the screen paints once with nothing known, and the roster arrives on a later task. A switch
 that skipped those steps could not measure the thing a switch breaks.
+
+### One more instance of the class, found and closed inside this lane
+
+Storing an address "the reader chose" was first written as "the set on screen differs from the
+last-sent set". That said yes to a set nobody had touched: arrival PRUNES the remembered set,
+so a workspace that had lost a member produced a difference on its own, and the draft written
+for it answered on the next arrival before the remembered set could. A member who left and came
+back stayed out of To: for good — an on-screen set that was residue, written down as a choice,
+which is the invariant this lane exists to hold, in its other direction.
+
+`composerAddressIsChosen` in the pure module asks the question properly: is this different from
+what a FRESH derivation would build, which is the remembered set pruned. It has its own test and
+its own mutation.
 
 ## What is NOT established
 

@@ -83,6 +83,8 @@ red  the stored draft carries the To: set at all
   restored green  site/src/components/app/composer-to-field.observer.test.ts
 red  an address the reader chose is a draft, even with nothing typed
   restored green  site/src/components/app/composer-to-field.observer.test.ts
+red  a set arrival pruned is not stored as a set the reader chose
+  restored green  site/src/lib/composer-address.test.mjs
 red  the pass is told when the message it addresses is on the wire
   restored green  site/src/components/app/composer-to-field.observer.test.ts
 red  a name the cap refused stays eligible, so making room adds it
@@ -92,4 +94,4 @@ red  making room on the row is the way back from a refusal
 red  the mark goes on the recipient the sentence names, and on no other
   restored green  site/src/components/app/composer-to-field.observer.test.ts
 
-45 mutations, 0 problems
+46 mutations, 0 problems

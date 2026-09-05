@@ -1246,6 +1246,7 @@ import "../../styles/tokens.css";
   import {
     BROADCAST_CHIP_LABEL,
     COMPOSER_TO_MAX,
+    composerAddressIsChosen,
     composerAddressNotice,
     composerDeliveryNote,
     composerPromoteLabel,
@@ -2602,14 +2603,11 @@ import "../../styles/tokens.css";
      */
     const composerRecipients = (): ComposerRecipient[] => composerTo;
 
-    /** Identity of one addressee set, in order, so two sets can be compared as one string. */
-    const composerToKey = (recipients: readonly ComposerRecipient[]): string =>
-      recipients.length === 0
-        ? composerAudienceKey({ kind: "everyone" })
-        : recipients.map(composerAudienceKey).join("+");
-
     /** Identity of the whole addressee set, so changing it invalidates a pending send intent. */
-    const composerRecipientsKey = (): string => composerToKey(composerTo);
+    const composerRecipientsKey = (): string =>
+      composerTo.length === 0
+        ? composerAudienceKey({ kind: "everyone" })
+        : composerTo.map(composerAudienceKey).join("+");
 
     const composerHasRecipient = (entity: EntityRef): boolean =>
       composerTo.some((recipient) => recipient.kind === entity.kind && recipient.id === entity.id);
@@ -2932,11 +2930,17 @@ import "../../styles/tokens.css";
            that writes nothing else: taking a name out of To:, or emptying it to a broadcast,
            before writing the message. The reader came back to the set they had just removed.
 
-           It is compared against the LAST-SENT set rather than against emptiness, so a
-           composer sitting at its normal starting point still stores nothing and the key does
-           not grow for every workspace anybody opens. */
+           WHAT COUNTS AS CHOSEN is the pure module's question, and it is not "does this differ
+           from the last-sent set". Arrival PRUNES that set, so a set nobody touched differs
+           from it too; writing that down made a silent prune permanent, and a member who left
+           and came back stayed out of To: for good. A composer sitting at its normal starting
+           point stores nothing, and the key does not grow for every workspace anybody opens. */
         const addressChosen = composerToLive &&
-          composerToKey(composerTo) !== composerToKey(readRememberedComposerTo());
+          composerAddressIsChosen(
+            composerTo,
+            readRememberedComposerTo(),
+            composerRecipientKnown,
+          );
         if (body === "" && !hadAttachments && !addressChosen) {
           window.localStorage.removeItem(key);
           return;

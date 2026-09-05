@@ -448,6 +448,27 @@ export const deriveComposerAddress = (
 };
 
 /**
+ * IS THIS SET A CHOICE, or merely what a fresh derivation would produce?
+ *
+ * Only a chosen address is worth storing as a draft. The question is NOT "does it differ from
+ * the last-sent set": a set that arrival PRUNED differs from it too, and writing that down
+ * turned a silent prune into a decision. A member who left and came back stayed out, because
+ * the stored draft answered on arrival before the remembered set could.
+ *
+ * So the comparison is against the set arrival would build: the remembered one, pruned. What
+ * survives that comparison is something the reader did — a chip removed, a name promoted, a
+ * tag lifted in, or To: emptied to a broadcast.
+ */
+export const composerAddressIsChosen = (
+  recipients: readonly ComposerRecipient[],
+  remembered: readonly ComposerRecipient[],
+  known: (entity: ComposerRecipient) => boolean,
+): boolean => {
+  const key = (set: readonly ComposerRecipient[]): string => set.map(recipientKey).join("+");
+  return key(recipients) !== key(pruneComposerRecipients(remembered, known));
+};
+
+/**
  * Everything the row has to say about names it could not honour, built from one pass's own
  * result. Every clause is generated: the cap sentence from the cap, the prune sentence from
  * the count, the ambiguity sentence from the names the parser could not separate.

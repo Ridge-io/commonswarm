@@ -14,6 +14,7 @@ import {
   COMPOSER_TO_MAX,
   NOTIFIED_POSITION,
   addComposerRecipients,
+  composerAddressIsChosen,
   composerAddressNotice,
   composerAmbiguousNotice,
   composerDeliveryNote,
@@ -438,4 +439,35 @@ test("the row's sentences about names it could not honour are built from the pas
     composerAddressNotice({ refused: [], announcedPrune: 0 }, { overflow: [], ambiguous: [] }, nameOf),
     "",
   );
+});
+
+test("a set arrival pruned is not a set the reader chose", () => {
+  /* ONLY A CHOICE IS WORTH STORING. Comparing the set on screen with the LAST-SENT set said
+   * yes to a set nobody had touched: arrival prunes that set, so a workspace that lost a
+   * member produced a difference on its own. Writing that down made the prune permanent —
+   * the stored draft answered on the next arrival, before the remembered set could, so a
+   * member who left and came back stayed out of To: for good. That is the invariant this lane
+   * exists to hold, in its other direction: a set on screen must be a choice, never residue.
+   */
+  const gone = { kind: "agent", id: "agent-departed" };
+  const known = (entity) => entity.id !== gone.id;
+  assert.equal(
+    composerAddressIsChosen([wren], [wren, gone], known),
+    false,
+    "a set that is only the remembered one, pruned, was stored as a choice the reader made",
+  );
+  /* What the reader actually did still counts, in each of its shapes. */
+  assert.equal(composerAddressIsChosen([], [wren, gone], known), true, "emptied to a broadcast");
+  assert.equal(
+    composerAddressIsChosen([wren, orbit], [wren, gone], known),
+    true,
+    "a name added",
+  );
+  assert.equal(
+    composerAddressIsChosen([orbit, wren], [wren, orbit], () => true),
+    true,
+    "a name promoted, which changes who is woken and so changes the set",
+  );
+  /* And an unpruned set that matches is still not a choice. */
+  assert.equal(composerAddressIsChosen([wren, orbit], [wren, orbit], () => true), false);
 });
