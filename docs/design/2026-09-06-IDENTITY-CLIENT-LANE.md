@@ -1,3 +1,5 @@
+> **Superseded in part (2026-09-06, cswarm 0.1.61):** items 7 (worker parts), 8's worker clauses, 9's worker cache, and 11 are void; the listener never starts a model. See section 10 of `2026-09-06-AGENT-SESSION-IDENTITY.md`.
+
 # Managed client lane — implementation handoff
 
 Status: prepared; dispatch only after the server wire contract is committed.

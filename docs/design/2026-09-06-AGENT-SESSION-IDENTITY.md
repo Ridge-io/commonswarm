@@ -1,10 +1,18 @@
 # Agent UUIDs and one active execution session
 
+<<<<<<< HEAD
 Status: design candidate 2; adjudicated for implementation by CswarmAstra on 2026-09-06.
 Owner: CswarmAstra, principal `6d7612ab-5087-4dc2-9301-7379c54c5ead`.
 Base: `132ac17`. User-authorized scope: repair identity, prevent duplicate execution across hosts,
 keep the user's existing chat as the agent, support duplicate display names, and release through
 CSwarmDevLead using Grok and AGY implementation agents. Token efficiency is a requirement.
+=======
+Status: design candidate 1; implementation requires Claude and Grok consensus.
+Owner: CswarmAstra, principal `6d7612ab-5087-4dc2-9301-7379c54c5ead`.
+Base: `132ac17`. User-authorized scope: repair identity, prevent duplicate execution across hosts,
+keep the user's existing chat as the agent, support duplicate display names, and release through
+CSwarmDevLead using Sol implementation agents. Token efficiency is a requirement.
+>>>>>>> d5fb88e (docs: specify agent session identity and same-chat receipt)
 
 ## 1. Outcomes and boundaries
 
@@ -49,7 +57,11 @@ new session/handoff. Use server time. Never reset the generation or delete the r
 Managed mutations carry a session proof outside the command body so all signal/file/brain/channel
 commands use the same check. Verify it in the authenticated command transaction before any side
 effect or idempotent response replay. Unknown/missing/wrong/expired proof is rejected once a principal
+<<<<<<< HEAD
 has opted into managed sessions. Proof consists of session UUID, generation, and a private session key.
+=======
+has opted into managed sessions. Proof consists of session UUID+generation; it is not a bearer secret.
+>>>>>>> d5fb88e (docs: specify agent session identity and same-chat receipt)
 The token still authenticates the principal. Apply the same rule to renewals and delivery ACKs except
 for narrowly specified bootstrap/recovery operations. Do not let a stale reply mark delivery complete.
 Enumerate exemptions in a shared constant and test each. Reads and identity/status checks remain
@@ -69,8 +81,12 @@ the client; an explicit operator recovery procedure is required, not silent down
 
 Introduce a small session-context module plus CLI lifecycle verbs (`session start|status|stop`).
 The context is an owned 0600 regular file in an owned 0700 directory outside repos. It holds public
+<<<<<<< HEAD
 binding fields, the private session key, and a reference to the unique credential file, not another
 agent-token copy. Start verifies
+=======
+binding fields and a reference to the unique credential file, not another token copy. Start verifies
+>>>>>>> d5fb88e (docs: specify agent session identity and same-chat receipt)
 authenticated whoami, canonical target, workspace, principal and session before saving. Never use a
 shared well-known credential file or guess the agent from inherited Claude/Codex environment flags.
 The managed entry point passes this context explicitly; a bound session refuses conflicting token,
@@ -93,7 +109,11 @@ do not claim exactly-once external effects. On lease loss stop dispatch immediat
 Host integration is capability-based. A supported event callback may inject one new ask into the
 registered existing conversation. If no such callback exists, report the limitation and provide a
 same-chat scheduled check where supported. Do not label scheduled polling as an instant wake.
+<<<<<<< HEAD
 For the current Codex app, native thread heartbeat is an optional scheduled path; generic CLI/IDE
+=======
+For the current Codex app, native thread heartbeat is the documented available path; generic CLI/IDE
+>>>>>>> d5fb88e (docs: specify agent session identity and same-chat receipt)
 support must not be inferred. A host must prove a delivered test ask in the same session before the
 UI says it can receive automatically. Failed/unknown hosts remain visibly manual or unverified.
 
@@ -111,6 +131,7 @@ demand; retain bounded digests where they convey new information. Report-only no
 a new planning turn. Reviewers get one small spec/diff and return findings with reasons, not full
 transcripts. Unchanged artifacts do not get gratuitous repeated reviews.
 
+<<<<<<< HEAD
 ## 6. Implementation lanes after adjudication
 
 1. AGY server lane: migration, shared server session module, command/read integration, canonical
@@ -119,6 +140,16 @@ transcripts. Unchanged artifacts do not get gratuitous repeated reviews.
 2. Grok client lane: shared wire contract/client transport, session context/lifecycle, all listener
    adapters through the common layer, identity prompt and focused CLI/runtime tests. Own src/cli.ts.
 3. Grok UI/docs lane: duplicate-name pickers/drafts, session display and setup contract, Codex
+=======
+## 6. Implementation lanes after consensus
+
+1. Sol server lane: migration, shared server session module, command/read integration, canonical
+   name constraint removal, server/Postgres tests. No CLI/site edits. Coordinate its shared command
+   edge seam with CSwarmDevLead's idle-cost and push-delivery lanes.
+2. Sol client lane: shared wire contract/client transport, session context/lifecycle, all listener
+   adapters through the common layer, identity prompt and focused CLI/runtime tests. Own src/cli.ts.
+3. Sol UI/docs lane: duplicate-name pickers/drafts, session display and setup contract, Codex
+>>>>>>> d5fb88e (docs: specify agent session identity and same-chat receipt)
    receive runbook, docs and site tests. Must use the server/client contract, not invent a parallel one.
 
 Root integrates in an isolated worktree. Each lane has its own worktree. No production change until
@@ -135,12 +166,17 @@ handoff; existing unrelated lanes are protected. Reserve an exclusive local Supa
 - Interactive path never starts an ACP subprocess; worker path names the worker it actually started.
 - Same-chat wake test distinguishes transport-ready, scheduled, surfaced and answered; repeated signal
   IDs do not produce duplicate replies. Idle operation has zero model invocations on event hosts;
+<<<<<<< HEAD
   any Codex scheduled fallback explicitly documents its nonzero model cost and chosen cadence.
+=======
+  the Codex scheduled fallback explicitly documents its nonzero model cost and five-minute cadence.
+>>>>>>> d5fb88e (docs: specify agent session identity and same-chat receipt)
 - Existing pure, CLI, edge, local server and site gates run under their named package scripts. New
   tests must be in a real gate. Final candidate reviewed on exact SHA, with substantive verdicts.
 - Live rollout proof checks correct principal/session per seat, an end-to-end directed ask, and stale
   session refusal, then records installed/pushed/landed/applied separately. No whole-fleet cleanup glob.
 
+<<<<<<< HEAD
 ## 8. Concrete contract and review resolutions
 
 This section narrows the preceding requirements. There is no default Codex schedule: the operator
@@ -240,9 +276,16 @@ agents receive disjoint file ownership, acceptance checks, and the accepted spec
 unchanged artifact only when a concrete concern invalidates previous evidence.
 
 ## 9. Questions for adversarial review
+=======
+## 8. Questions for adversarial review
+>>>>>>> d5fb88e (docs: specify agent session identity and same-chat receipt)
 
 Attack the complete design: are managed opt-in and exemptions safe together; are all mutation paths
 fenced; can a resumed old process steal a session; is interactive mode buildable without an ACP clone;
 does lease handling claim too much about external work; can duplicate names route wrongly; does the
 plan waste tokens or duplicate existing mechanisms? Prefer the smallest change that closes each
 measured failure. Return concrete blockers with section refs and a final VERDICT: PASS or FAIL.
+
+## 10. Addendum (CSwarmStrategist, 2026-09-06, after cswarm 0.1.61)
+
+The operator's absolute ruling of 2026-09-06 — no headless agent ever answers on behalf of a main agent — shipped in cswarm 0.1.61: a listener can no longer start a model, `--route main` is the only route, worker and split are refused, and a listener starts only with an attendance surface (the Claude hook or a live `inbox --notify` lock). This supersedes every "worker mode" sentence in sections 4, 6 and 8 and item 11 of the client lane: there is no managed worker, no per-adapter session binding, no worker prompt identity, and no "stop the worker on lease loss". What stands unchanged: one execution session per principal with private proof; proof on every agent write (renewal, claims, ACK, activity, signals_seen, revoke); ACK only after current proof and successful host injection; `session start|status|stop` in interactive mode with zero reachable model or ACP path; enable/disable/recover by a human; duplicate names by UUID. Lane C is rebased onto 0.1.61 with the worker pieces removed rather than reconciled. The remaining roadmap item from this project is an attendance surface for non-Claude sessions, so no seat needs a watcher as a crutch.
