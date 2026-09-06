@@ -2560,11 +2560,21 @@ async function commandWorkspaceAndCredential(
       );
     }
     const agent = await agentCredential(args);
+    /* With --session-context the silent token renewal below is an agent write
+       too (spec section 8: renewal is fenced), so the context is read first and
+       the session is built on the bound fetcher. Identity is checked after the
+       bearer exists, as before. */
+    const boundContext = contextPath === undefined ? null : await readSessionContext(contextPath);
     // Renewal is resolved HERE, before the first request rather than after a 401, so a
     // credential that is about to expire is replaced without the person watching ever
     // seeing a failure. Every caller below reads `bearer` as a plain string; the session
     // is what decided which string that is.
-    const session = await agentSession(cloud, override, agent);
+    const session = await agentSession(
+      cloud,
+      override,
+      agent,
+      boundContext === null ? undefined : boundAgentFetcher(fetch, boundContext),
+    );
     const bearer = await session.bearer();
     if (contextPath === undefined) {
       return {
@@ -2576,7 +2586,7 @@ async function commandWorkspaceAndCredential(
         fetcher: fetch,
       };
     }
-    const sessionContext = await readSessionContext(contextPath);
+    const sessionContext = boundContext!;
     const identity = await readSessionIdentity(cloud, bearer, override);
     assertSameIdentity(sessionContext, {
       identity,
@@ -3595,9 +3605,9 @@ export function renderRoster(
     );
   }
   lines.push("");
-  /* The UUID is the addressable identity and the name is not: names are unique per workspace,
-   * but a name you did not create can belong to someone you did not mean. Saying so here is
-   * the cheap half of D-062. */
+  /* The UUID is the addressable identity and the name is not: names are not unique per
+   * workspace (a duplicate is allowed by explicit choice), and a name you did not create can
+   * belong to someone you did not mean. Saying so here is the cheap half of D-062. */
   lines.push("Address an agent by the id in brackets: cswarm ask \"…\" --to <id>");
   return `${lines.join("\n")}\n`;
 }
@@ -6173,22 +6183,21 @@ async function runListenStart(args: Arguments): Promise<void> {
       token: agent.token,
       expiresAt: agent.expiresAt,
     }));
-    const opencodeExecutable = provider === "opencode"
-      ? resolveOpenCodeExecutable(
-        args.optional("opencode-executable") ?? "opencode",
-      )
+    /* cswarm 0.1.61: the listener never starts a model, so a detached start
+       does not resolve or require a bridge binary. An explicitly given
+       --*-executable is validated and forwarded for status reporting only;
+       an absent one is simply absent. */
+    const opencodeExecutable = provider === "opencode" &&
+        args.optional("opencode-executable") !== undefined
+      ? resolveOpenCodeExecutable(args.required("opencode-executable"))
       : undefined;
     let claudeExecutable: string | undefined;
-    if (provider === "claude") {
-      claudeExecutable = resolveDetachedClaudeExecutable(
-        args.optional("claude-executable") ?? "claude-agent-acp",
-      );
+    if (provider === "claude" && args.optional("claude-executable") !== undefined) {
+      claudeExecutable = resolveDetachedClaudeExecutable(args.required("claude-executable"));
     }
     let codexExecutable: string | undefined;
-    if (provider === "codex") {
-      codexExecutable = resolveDetachedCodexExecutable(
-        args.optional("codex-executable") ?? "codex-acp",
-      );
+    if (provider === "codex" && args.optional("codex-executable") !== undefined) {
+      codexExecutable = resolveDetachedCodexExecutable(args.required("codex-executable"));
     }
     /* D-080. Captured BEFORE the spawn on purpose: any status file older than this belongs to
      * an earlier run in this config-hash-keyed directory, whatever pid it carries. Taking it

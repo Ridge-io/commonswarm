@@ -6,6 +6,7 @@ import {
   SESSION_PROVIDERS,
   type SessionMode,
   type SessionProvider,
+  type AgentSessionErrorCode,
 } from "./session-contract.js";
 import { AgentSessionError } from "./session-errors.js";
 import { AgentSessionClient } from "./session-client.js";
@@ -255,6 +256,7 @@ export async function stopManagedSession(input: {
     contextPath: input.contextPath,
     context,
   });
+  let serverRefusal: AgentSessionErrorCode | null = null;
   try {
     await manager.release();
   } catch (error) {
@@ -265,16 +267,36 @@ export async function stopManagedSession(input: {
         status: publicSessionStatus(context, { state: "stopping" }),
       };
     }
-    throw error;
+    if (
+      error instanceof AgentSessionError &&
+      DEAD_PROOF_ON_STOP.includes(error.code)
+    ) {
+      /* The server no longer honours this proof (expired, retired by a human
+         recover, or invalid): the execution is over whatever we do, so the
+         local context is retired too. The code is reported, not hidden. */
+      serverRefusal = error.code;
+    } else {
+      throw error;
+    }
   }
   const released = markSessionReleased(context);
   await writeSessionContext(input.contextPath, released);
   return {
     state: "stopped",
     next: `Confirm with: cswarm session status --session-context ${input.contextPath}`,
-    status: publicSessionStatus(released),
+    status: publicSessionStatus(
+      released,
+      serverRefusal === null ? {} : { server_refusal: serverRefusal },
+    ),
   };
 }
+
+/** Codes that mean the server already treats this execution as over. */
+export const DEAD_PROOF_ON_STOP: readonly AgentSessionErrorCode[] = [
+  "session_expired",
+  "session_retired",
+  "session_proof_invalid",
+];
 
 export async function runHumanSessionLifecycle(
   kind: "enable" | "disable" | "recover",

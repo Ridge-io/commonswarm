@@ -90,26 +90,17 @@ export function buildListenerChildArgs(spec: ListenerChildSpec): string[] {
     (provider === "claude" ? spec.executable : undefined);
   const codexExe = spec.codexExecutable ??
     (provider === "codex" ? spec.executable : undefined);
-  if (provider === "opencode") {
-    // Detached supervisors must not resolve ambiguous bare "opencode" on PATH.
-    if (!opencodeExe || !opencodeExe.startsWith("/")) {
-      throw new Error(
-        "detached --provider opencode requires an absolute --opencode-executable path",
-      );
-    }
-  }
-  if (provider === "claude") {
-    if (!claudeExe || !isNativeAbsolutePath(claudeExe)) {
-      throw new Error(
-        "detached --provider claude requires an absolute --claude-executable path",
-      );
-    }
-  }
-  if (provider === "codex") {
-    if (!codexExe || !isNativeAbsolutePath(codexExe)) {
-      throw new Error(
-        "detached --provider codex requires an absolute --codex-executable path",
-      );
+  /* cswarm 0.1.61: the supervisor never starts a model, so no provider
+     requires a bridge executable. One that IS given must still be a native
+     absolute path: a bare name would be resolved on the child's PATH, which
+     the detached environment does not control. */
+  for (const [flag, value] of [
+    ["--opencode-executable", opencodeExe],
+    ["--claude-executable", claudeExe],
+    ["--codex-executable", codexExe],
+  ] as const) {
+    if (value !== undefined && !isNativeAbsolutePath(value)) {
+      throw new Error(`an absolute ${flag} path is required when it is given; the listener starts no model`);
     }
   }
   return [

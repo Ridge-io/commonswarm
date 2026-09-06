@@ -437,3 +437,44 @@ test("manager stops dispatch on typed expiry and does not overlap renewals", asy
     await rm(root, { recursive: true, force: true });
   }
 });
+
+test("stop after a human recover: the server refuses the old proof and the local context is retired", async () => {
+  const root = await mkdtemp(join(tmpdir(), "cswarm-stop-dead-"));
+  await chmod(root, 0o700);
+  try {
+    const tokenPath = await tokenFile(root);
+    const contextPath = join(root, "session.json");
+    const acquireFetcher = (async () =>
+      new Response(JSON.stringify({ ok: true, status: "accepted", generation: 1 }), { status: 200 })) as typeof fetch;
+    const started = await startManagedSession({
+      target: cloudTarget("http://127.0.0.1:9", "synthetic-anon-key"),
+      workspaceId: WORKSPACE,
+      credential: TOKEN,
+      tokenFile: tokenPath,
+      tokenPrincipalId: PRINCIPAL,
+      mode: "interactive",
+      provider: "claude",
+      hostSessionId: "thread-1",
+      contextPath,
+      fetcher: acquireFetcher,
+      readIdentity: async () => ({ principal_id: PRINCIPAL, workspace_id: WORKSPACE }),
+      runReceiver: false,
+    });
+    assert.equal(sessionProofOf(started.context) !== null, true);
+    const refused = (async () =>
+      new Response(JSON.stringify({ error: "session_expired" }), { status: 401 })) as typeof fetch;
+    const result = await stopManagedSession({
+      target: cloudTarget("http://127.0.0.1:9", "synthetic-anon-key"),
+      credential: TOKEN,
+      contextPath,
+      fetcher: refused,
+    });
+    assert.equal(result.state, "stopped");
+    assert.equal(result.status.server_refusal, "session_expired");
+    const after = await readSessionContext(contextPath);
+    assert.equal(sessionProofOf(after), null, "the dead proof is retired locally");
+    assert.equal(after.generation, 1, "generation stays for the record");
+  } finally {
+    await rm(root, { recursive: true, force: true });
+  }
+});
