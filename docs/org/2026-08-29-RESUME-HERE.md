@@ -2759,3 +2759,27 @@ tree: 898/0, p1-cli 490/0, check:edge 4/4, site 522/0/1 skipped, identity ok
 here; the lanes ran it green on their host). Remote lane branches deleted after `git cherry` showed
 nothing unmerged; the laptop worktrees under `scratchpad/listener-65415/` removed over SSH. Site
 deployed; `/app` 200 with the dashboard chunk from this build.
+
+## 2026-09-06 12:xx UTC — HEADLESS FAILURE MODE CLOSED IN THE PRODUCT: v0.1.61 LIVE on every seat
+
+`lane/main-only` 67863bd merged as `0667075`. `newModel()` returns `NullListenerModel` whose `start()` and
+`prompt()` throw (`src/cli.ts:5783-5786`, `src/listener/runtime.ts:164-179`): no provider host is
+constructed anywhere in the listener. `LISTENER_ROUTE_MODES = ["main"]`; `--route worker`, `--route split`
+and `--defer-over` are refused with a sentence built from that constant plus the ruling; older status
+files still parse (`LISTENER_STORED_ROUTE_MODES`) and print a LEGACY line. Start requires an attendance
+surface from `LISTENER_ATTENDANCE_SURFACES = ["hook","watcher"]` — a principal-scoped Claude hook or a live
+`inbox --notify` lock (`arrivalWatchLockHeld`, not pgrep); with neither it refuses and names both.
+`listen status` reports `attendingSurface`. Arms on 67863bd: Gemini PASS (round-1 FAIL on typed copy fixed),
+Grok PASS from a fresh session with no lane context; Codex unavailable (limit until 18:35 local), so the
+second arm shares the author's family and the lead verified the load-bearing claims directly. Evidence
+`docs/evidence/2026-09-06-main-only/`.
+
+Release 0.1.61: bump `d7d6fcb`, tag on it, GitHub Latest (sha256 `5a950b42…`), npm shasum `60d6a8a3…` =
+committed pack, site `/download` 0.1.61, gates 910/0 and p1-cli 491/0 and site 522/0.
+
+**Fleet, all on 0.1.61, `route main`, `mode push`, each with a named surface:** mini — CSwarmDevLead(hook),
+CSwarmStrategist(watcher), CDReporter(watcher, a notify watcher was started for it — it had no wake path
+and 0.1.61 refused the start, which is the check working), Finisher(hook), MrSentry(hook), Strategist(hook);
+toms-m1-max-mbp — Wren(claude) plus MrSEO/MrAnalyst/MrMarketing/MrBenchmark(grok), all ready;
+nikkis-macbook-air — Joist(hook). PEAstra stays down on the Codex bridge.
+Filed for later: the lane measured `listen stop` returning `stopped` while the pid was still alive.
