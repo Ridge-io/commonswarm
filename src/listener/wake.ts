@@ -48,9 +48,13 @@ export const WAKE_ERROR_CODES = [
   "closed",
   "timed_out",
   "rate_limited",
+  "wake_budget",
 ] as const;
 export type WakeErrorCode = (typeof WAKE_ERROR_CODES)[number];
 export const WAKE_ERROR_CODE_SET: ReadonlySet<string> = new Set(WAKE_ERROR_CODES);
+export const WAKE_ERROR_CODE_WAKE_BUDGET: WakeErrorCode = WAKE_ERROR_CODES.find(
+  (code): code is "wake_budget" => code === "wake_budget",
+)!;
 
 export const LISTENER_WAKE_STATUS_KEYS = [
   "mode",
@@ -208,6 +212,9 @@ export function listenerWakeStatusSentence(
     const last = lastWakeLabel === null ? "no wake yet" : `last wake ${lastWakeLabel}`;
     return `${LISTENER_WAKE_MODE_PUSH} (Realtime), ${last}, reconcile every ${formatIdlePollDuration(LISTENER_RECONCILE_POLL_MS)}.`;
   }
+  if (wake.errorCode === WAKE_ERROR_CODE_WAKE_BUDGET) {
+    return `Subscribed; claims paused until the minute clears (${WAKE_ERROR_CODE_WAKE_BUDGET}); polling every ${formatIdlePollDuration(pollIntervalMs)} meanwhile.`;
+  }
   const code = wake.errorCode ?? "disconnected";
   return `${LISTENER_WAKE_MODE_POLL} every ${formatIdlePollDuration(pollIntervalMs)}. Realtime not connected (${code}).`;
 }
@@ -256,14 +263,18 @@ export class WakeSubscriber implements WakeHandle {
   }
 
   snapshot(nowMs: number = this.now()): ListenerWakeStatus {
-    const rateLimited = this.wakeClaimPaused(nowMs);
+    const serverLimited = nowMs < this.rateLimitedUntil;
+    const overBudget = this.overWakeBudget(nowMs);
+    const rateLimited = serverLimited || overBudget;
     const mode: ListenerWakeMode =
       this.connectionState === "subscribed" && !rateLimited
         ? LISTENER_WAKE_MODE_PUSH
         : LISTENER_WAKE_MODE_POLL;
-    const errorCode = rateLimited
+    const errorCode: WakeErrorCode | null = serverLimited
       ? "rate_limited"
-      : this.lastErrorCode;
+      : overBudget
+        ? WAKE_ERROR_CODE_WAKE_BUDGET
+        : this.lastErrorCode;
     return {
       mode,
       subscribedAt: this.subscribedAt,

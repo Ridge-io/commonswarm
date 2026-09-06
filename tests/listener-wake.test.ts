@@ -50,7 +50,9 @@ import {
   runListenerRuntime,
   summarizeListenerReadHealth,
   WAKE_CLAIMS_PER_MINUTE_BUDGET,
+  WAKE_ERROR_CODES,
   WAKE_ERROR_CODE_SET,
+  WAKE_ERROR_CODE_WAKE_BUDGET,
   wakeErrorCodeFromSubscribeStatus,
   writeListenerStatus,
   createWakeSubscriber,
@@ -622,7 +624,12 @@ test("over-budget next() keeps the latch and snapshot is poll until the minute c
   const snap = wake.snapshot();
   assert.equal(snap.mode, "poll");
   assert.equal(snap.rateLimited, true);
-  assert.equal(snap.errorCode, "rate_limited");
+  assert.equal(snap.errorCode, WAKE_ERROR_CODE_WAKE_BUDGET);
+  assert.ok(snap.subscribedAt);
+  const budgetLine = listenerWakeStatusSentence(snap, IDLE_POLL_DEFAULT_MS, null);
+  assert.match(budgetLine, new RegExp(WAKE_ERROR_CODE_WAKE_BUDGET));
+  assert.doesNotMatch(budgetLine, /not connected/);
+  assert.doesNotMatch(budgetLine, /rate_limited/);
   fake.channelInstance!.emitWake();
   fake.channelInstance!.emitWake();
   assert.equal(await wake.next({ until: nowMs }), "deadline");
@@ -704,6 +711,8 @@ test("status sentence never says push unless mode is push; lists come from const
   assert.deepEqual([...LISTENER_WAKE_MODE_SET], [...LISTENER_WAKE_MODES]);
   assert.equal(LISTENER_WAKE_MODE_PUSH, LISTENER_WAKE_MODES[0]);
   assert.equal(LISTENER_WAKE_MODE_POLL, LISTENER_WAKE_MODES[1]);
+  assert.equal(WAKE_ERROR_CODE_SET.has(WAKE_ERROR_CODE_WAKE_BUDGET), true);
+  assert.deepEqual([...WAKE_ERROR_CODE_SET], [...WAKE_ERROR_CODES]);
   const push: ListenerWakeStatus = {
     ...emptyListenerWakeStatus(),
     mode: LISTENER_WAKE_MODE_PUSH,
@@ -729,6 +738,23 @@ test("status sentence never says push unless mode is push; lists come from const
   assert.match(pollLine, /channel_error/);
   assert.doesNotMatch(pushLine, /cswarm-wake:/);
   assert.doesNotMatch(pollLine, /cswarm-wake:/);
+  for (const code of WAKE_ERROR_CODES) {
+    const line = listenerWakeStatusSentence(
+      { ...emptyListenerWakeStatus(), mode: LISTENER_WAKE_MODE_POLL, errorCode: code },
+      IDLE_POLL_DEFAULT_MS,
+      null,
+    );
+    assert.match(line, new RegExp(code));
+    assert.doesNotMatch(line, /cswarm-wake:/);
+    if (code === WAKE_ERROR_CODE_WAKE_BUDGET) {
+      assert.match(line, /Subscribed/);
+      assert.match(line, new RegExp(formatIdlePollDuration(IDLE_POLL_DEFAULT_MS)));
+      assert.doesNotMatch(line, /not connected/);
+      assert.doesNotMatch(line, new RegExp(`\\b${LISTENER_WAKE_MODE_PUSH}\\b`));
+    } else {
+      assert.match(line, new RegExp(`Realtime not connected \\(${code}\\)`));
+    }
+  }
 });
 
 test("wake status persist skips lastWakeAt-only ticks inside the coalesce window", () => {
