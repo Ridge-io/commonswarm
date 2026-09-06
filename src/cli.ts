@@ -5730,6 +5730,7 @@ async function runConfiguredListener(options: {
       return stored.credential;
     },
   };
+  const leaseAbort = new AbortController();
   const sessionManager = options.sessionBinding === undefined
     ? null
     : new AgentSessionManager({
@@ -5741,6 +5742,9 @@ async function runConfiguredListener(options: {
       workspaceId: options.workspaceId,
       contextPath: options.sessionBinding.contextPath,
       context: options.sessionBinding.context,
+      onDispatchStop: () => {
+        if (!leaseAbort.signal.aborted) leaseAbort.abort();
+      },
     });
   sessionManager?.start();
   if (options.sessionBinding !== undefined) {
@@ -6019,6 +6023,16 @@ async function runConfiguredListener(options: {
             ...(options.sessionBinding === undefined
               ? {}
               : { sessionBinding: options.sessionBinding }),
+            ...(sessionManager === null
+              ? { signal }
+              : {
+                sessionDispatch: () => sessionManager.dispatchState(),
+                sessionStopReason: () => sessionManager.stopReason(),
+                onSessionLeaseLost: () => {
+                  if (!leaseAbort.signal.aborted) leaseAbort.abort();
+                },
+                signal: AbortSignal.any([signal, leaseAbort.signal]),
+              }),
           });
         } finally {
           activity.close();

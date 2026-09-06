@@ -37,6 +37,7 @@ export class AgentSessionManager {
   private timer: ReturnType<typeof setTimeout> | null = null;
   private renewing = false;
   private lastProofAt: number;
+  private lastStopReason: Error | null = null;
   private readonly now: () => number;
   private readonly setTimer: (
     callback: () => void,
@@ -62,6 +63,10 @@ export class AgentSessionManager {
 
   dispatchState(): SessionDispatchState {
     return this.dispatch;
+  }
+
+  stopReason(): Error | null {
+    return this.lastStopReason;
   }
 
   boundFetcher(fetcher: typeof fetch): typeof fetch {
@@ -153,6 +158,7 @@ export class AgentSessionManager {
 
   private stopDispatch(reason: Error): void {
     this.dispatch = "stopped";
+    this.lastStopReason = reason;
     this.stopTimers();
     this.options.onDispatchStop?.(reason);
   }
