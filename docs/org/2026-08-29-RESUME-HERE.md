@@ -2344,3 +2344,10 @@ after 21:38 UTC), our process, to production. Minimise the lead's and Strategist
 week. A haiku watcher wakes the lead when the spec note lands or lane A exits; lane A's round 2
 brief is `brief-idle-cost-ADDENDUM.md` in the session scratchpad (relaunch grok with the addendum
 in the same cwd when round 1 exits).
+
+**03:1x UTC, operator addition:** once spec B is implemented and in production, migrate the local
+agents (all listener seats on the mini and, over SSH, on the two laptops) to the new listener,
+proof-first per seat; any seat that cannot be moved is left for the operator in the morning.
+Lane A round 1 ended at 4cfff7b (8 commits; its Gemini arm FAILed on it) and round 2 runs with
+the addendum in the same grok session (`--continue`); round 1's "purge idle claim audits" commit
+is retracted by the addendum (audit_log stays append-only).
