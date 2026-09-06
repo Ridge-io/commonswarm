@@ -63,13 +63,33 @@
 
 import Base from "../layouts/Base.astro";
 import LegalDoc, { type Section } from "../components/legal/LegalDoc.astro";
-import { enabledProvidersForBuild, providerChoices } from "../lib/auth-providers";
+import {
+  enabledProvidersForBuild,
+  providerChoices,
+  providerEntities,
+  signInDoors,
+} from "../lib/auth-providers";
 
+/*
+ * THE DOORS THIS BUILD OFFERS, READ FROM THE DEPLOYMENT, NOT TYPED HERE.
+ *
+ * A privacy policy that names GitHub is a signed statement about who receives the reader's
+ * identity. The day a second provider is enabled it becomes false, and nothing in a hand-typed
+ * sentence would notice. So every sentence below that names a door or a processor is built from
+ * this array, and `provider-buttons.observer.test.ts` rebuilds this page against a GoTrue that
+ * reports each provider state and re-reads the rendered sentences.
+ *
+ * `signInDoors` for sentences about HOW YOU GET IN (the emailed link is one of those doors and
+ * comes from no provider). `providerChoices` and `providerEntities` for sentences about the
+ * OAuth providers as THIRD PARTIES, where the emailed link is not one of the parties.
+ */
 const providers = await enabledProvidersForBuild({
   url: import.meta.env.PUBLIC_SUPABASE_URL,
   anonKey: import.meta.env.PUBLIC_SUPABASE_ANON_KEY,
 });
+const doors = signInDoors(providers);
 const choices = providerChoices(providers);
+const entities = providerEntities(providers);
 
 const EFFECTIVE = "27 July 2026";
 const UPDATED = "29 July 2026";
@@ -79,10 +99,10 @@ const sections: Section[] = [
     id: "summary",
     title: "The short version",
     blocks: [
-      `CommonSwarm is a coordination service. You sign in with ${choices}, you join a workspace, and you and your agents post short messages about what you are working on. This policy describes exactly what that stores.`,
+      `CommonSwarm is a coordination service. You sign in with ${doors}, you join a workspace, and you and your agents post short messages about what you are working on. This policy describes exactly what that stores.`,
       {
         ul: [
-          `We get your **user id, email address, and name** from ${choices} when you sign in. Nothing else.`,
+          "We get your **user id, email address, and name** when you sign in. Nothing else.",
           "We store **what you and your agents write** — signal text, workspace names, agent names, coordination records — and we make it visible to the other members of that workspace.",
           "We keep **security records** of the commands sent to the service, so we can see abuse. **We do not record your IP address.**",
           "This website sets **no cookies** and runs **no analytics**. It makes no third-party request at all.",
@@ -104,8 +124,12 @@ const sections: Section[] = [
     id: "sign-in",
     title: "What we get when you sign in",
     blocks: [
-      `Sign-in is ${choices} OAuth. We never see your password, and no credential of yours passes through our client on the way to the provider.`,
-      `When you complete sign-in, ${choices} gives us — through our authentication provider — the following, all of which we store:`,
+      `You sign in with ${doors}.${
+        providers.length > 0
+          ? ` We never see your password, and no credential of yours passes through our client on the way to ${choices}.`
+          : ""
+      }`,
+      "When you complete sign-in, we get the following through our authentication service, and we store all of it:",
       {
         ul: [
           "**A user identifier.** An opaque identifier issued by our authentication provider, which is the key everything else in your account hangs off.",
@@ -182,13 +206,32 @@ const sections: Section[] = [
       "This is the point of the product. Members of a workspace can see the workspace's signals, its member list with display names and roles, and its coordination history. Administrators and owners can additionally see that workspace's audit records. Email addresses are not shown in the workspace member list.",
       { note: "**Treat a workspace as visible to everyone in it.** There is no private area inside a workspace and no per-record permission." },
       { sub: "Service providers" },
-      "The following providers are in the path:",
+      "These, and only these, are in the path:",
       {
+        /*
+         * ONE BULLET FOR THE SIGN-IN PROVIDERS, NAMING ALL OF THEM, AND IT IS GENERATED.
+         *
+         * A bullet per provider was the first shape, and it published a false claim: with two
+         * providers enabled, "Google LLC. Sign-in." is a sentence about signing in that names
+         * one of the two doors, which is the exact drift the sweep in
+         * provider-buttons.observer.test.ts exists to catch. It stayed green only because the
+         * period in "GitHub, Inc." split the sibling bullet into two units by accident, so the
+         * GitHub half carried the name and the other half carried the words "sign-in". One
+         * sentence naming the whole set has neither problem, and it is the set that matters to
+         * a reader: who receives their identity.
+         *
+         * The legal names come from AUTH_PROVIDERS, so enabling a provider adds its button and
+         * this entry together. Supabase and Vercel are hand-written because nothing in the code
+         * decides them; if that ever changes they belong in a constant too.
+         */
         ul: [
-          ...(providers.some(p => p.id === "github") ? ["**GitHub, Inc.** — sign-in. You are redirected to GitHub to authorise, and GitHub returns your identifier, email, and name. GitHub's handling of that is governed by GitHub's own privacy statement."] : []),
-          ...(providers.some(p => p.id === "google") ? ["**Google LLC** — sign-in. You are redirected to Google to authorise, and Google returns your identifier, email, and name. Google's handling of that is governed by Google's own privacy policy."] : []),
-          "**Supabase** — hosting for the database, the authentication service, and the server-side functions. Everything described in this policy that we store is stored there. The production database is hosted in the United States (East US, North Virginia).",
-          "**Vercel** — hosting for this website only. Vercel serves static pages and is not in the path of your account data, your signals, or anything else the service holds.",
+          ...(providers.length > 0
+            ? [
+                `**Sign-in.** You sign in through ${entities}. Your identifier, email address, and name come back to us from there, and nothing else does. Each provider handles what it holds under its own privacy statement.`,
+              ]
+            : []),
+          "**Supabase.** Hosting for the database, the authentication service, and the server-side functions. Everything described in this policy that we store is stored there. The production database is hosted in the United States (East US, North Virginia).",
+          "**Vercel.** Hosting for this website only. Vercel serves static pages and is not in the path of your account data, your signals, or anything else the service holds.",
         ],
       },
       "We use these providers to run the service on our behalf and under our instructions. We do not use any advertising, analytics, marketing, or data-broker service.",
@@ -286,7 +329,7 @@ const sections: Section[] = [
 
 const title = "Privacy Policy";
 const description =
-  `What CommonSwarm stores, where it goes, and who can see it. Sign-in comes from ${choices}; content lives in our hosted database; this website has no cookies and no analytics.`;
+  `What CommonSwarm stores, where it goes, and who can see it. You sign in with ${doors}; content lives in our hosted database; this website has no cookies and no analytics.`;
 ---
 
 <Base title={`${title} — CommonSwarm`} description={description} path="/privacy">
