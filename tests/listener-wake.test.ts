@@ -70,6 +70,9 @@ const WAKE_TOPIC = `${WAKE_TOPIC_PREFIX}${"A".repeat(43)}`;
 class FakeChannel implements WakeRealtimeChannel {
   statusCb: ((status: string, err?: Error) => void) | null = null;
   wakeCb: ((message: { payload?: unknown }) => void) | null = null;
+  autoSubscribe = false;
+  holdUnsubscribe = false;
+  private unsubResolve: (() => void) | null = null;
   constructor(readonly topic: string) {}
   on(
     _type: "broadcast",
@@ -81,9 +84,19 @@ class FakeChannel implements WakeRealtimeChannel {
   }
   subscribe(callback: (status: string, err?: Error) => void): WakeRealtimeChannel {
     this.statusCb = callback;
+    if (this.autoSubscribe) callback(REALTIME_SUBSCRIBE_STATUS.SUBSCRIBED);
     return this;
   }
-  unsubscribe(): void {}
+  unsubscribe(): void | Promise<void> {
+    if (!this.holdUnsubscribe) return;
+    return new Promise((resolve) => {
+      this.unsubResolve = resolve;
+    });
+  }
+  releaseUnsubscribe(): void {
+    this.unsubResolve?.();
+    this.unsubResolve = null;
+  }
   emitStatus(status: string, err?: Error): void {
     this.statusCb?.(status, err);
   }
@@ -94,13 +107,18 @@ class FakeChannel implements WakeRealtimeChannel {
 
 class FakeRealtime implements WakeRealtimeClient {
   channelInstance: FakeChannel | null = null;
+  channels: FakeChannel[] = [];
   authed: string | null = null;
+  autoSubscribe = false;
   setAuth(token: string): void {
     this.authed = token;
   }
   channel(topic: string): FakeChannel {
-    this.channelInstance = new FakeChannel(topic);
-    return this.channelInstance;
+    const channel = new FakeChannel(topic);
+    channel.autoSubscribe = this.autoSubscribe;
+    this.channelInstance = channel;
+    this.channels.push(channel);
+    return channel;
   }
   removeChannel(): void {}
   disconnect(): void {}
@@ -441,6 +459,99 @@ test("wake claim budget is 50 per clock minute", () => {
   }
   assert.equal(wake.overWakeBudget(nowMs), true);
   assert.equal(WAKE_CLAIMS_PER_MINUTE_BUDGET, 50);
+});
+
+test("over-budget next() keeps the latch and snapshot is poll until the minute clears", async () => {
+  let nowMs = Date.parse("2026-07-30T00:00:10.000Z");
+  const fake = new FakeRealtime();
+  const wake = createWakeSubscriber({
+    target: cloudTarget("https://cloud.example.test", "anon"),
+    now: () => nowMs,
+    createRealtime: () => fake,
+  });
+  wake.setTopic(WAKE_TOPIC);
+  fake.channelInstance!.emitStatus(REALTIME_SUBSCRIBE_STATUS.SUBSCRIBED);
+  assert.equal(wake.snapshot().mode, "push");
+  for (let i = 0; i < WAKE_CLAIMS_PER_MINUTE_BUDGET; i++) {
+    wake.noteWakeClaim(nowMs);
+  }
+  const snap = wake.snapshot();
+  assert.equal(snap.mode, "poll");
+  assert.equal(snap.rateLimited, true);
+  assert.equal(snap.errorCode, "rate_limited");
+  fake.channelInstance!.emitWake();
+  fake.channelInstance!.emitWake();
+  assert.equal(await wake.next({ until: nowMs }), "deadline");
+  assert.equal(await wake.next({ until: nowMs }), "deadline");
+  nowMs += 60_000;
+  assert.equal(wake.overWakeBudget(nowMs), false);
+  assert.equal(wake.snapshot().mode, "push");
+  assert.equal(wake.snapshot().rateLimited, false);
+  assert.equal(await wake.next({ until: nowMs }), "wake");
+  await wake.close();
+});
+
+test("70 wakes in one frozen minute stay at most 51 claims with no extra reads", async () => {
+  const nowMs = Date.parse("2026-07-30T00:00:10.000Z");
+  const fake = new FakeRealtime();
+  fake.autoSubscribe = true;
+  const wake = createWakeSubscriber({
+    target: cloudTarget("https://cloud.example.test", "anon"),
+    now: () => nowMs,
+    createRealtime: () => fake,
+  });
+  const journal = new MemoryJournal();
+  const controller = new AbortController();
+  let claims = 0;
+  let reads = 0;
+  let lastWake: ListenerWakeStatus | null = null;
+  const timer = setTimeout(() => controller.abort(), 200);
+  try {
+    const stop = await runListenerRuntime({
+      target: cloudTarget("https://cloud.example.test", "anon"),
+      workspaceId: WORKSPACE_ID,
+      principalId: PRINCIPAL_ID,
+      listenerInstanceId: journal.record.listenerInstanceId,
+      deliveryJournal: journal,
+      deliveryClient: {
+        async claimAgentInbox() {
+          claims += 1;
+          fake.channelInstance?.emitWake();
+          if (claims === 51) {
+            for (let i = 0; i < 20; i++) fake.channelInstance?.emitWake();
+          }
+          if (claims >= 70) controller.abort();
+          return claimResult([]);
+        },
+        async ackAgentDelivery() {
+          throw new Error("ack must not run");
+        },
+      },
+      credentialSession: { async bearer() { return "token"; } },
+      store: new MemoryStore(),
+      model: new FakeModel(),
+      signal: controller.signal,
+      pollMs: IDLE_POLL_DEFAULT_MS,
+      now: () => nowMs,
+      sleep: async () => {},
+      wake,
+      onEvent: (event) => {
+        if (event.type === "wake") lastWake = event.wake;
+      },
+      readPage: async () => {
+        reads += 1;
+        return durablePage();
+      },
+    });
+    assert.equal(stop.reason, "cancelled");
+  } finally {
+    clearTimeout(timer);
+  }
+  assert.ok(claims <= 51, `claims in one frozen minute: ${claims}`);
+  assert.equal(reads, 1);
+  assert.equal(lastWake?.mode, "poll");
+  assert.equal(lastWake?.rateLimited, true);
+  await wake.close();
 });
 
 test("status sentence never says push unless mode is push; lists come from constants", () => {

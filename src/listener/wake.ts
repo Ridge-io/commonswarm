@@ -229,7 +229,7 @@ export class WakeSubscriber implements WakeHandle {
   }
 
   snapshot(nowMs: number = this.now()): ListenerWakeStatus {
-    const rateLimited = nowMs < this.rateLimitedUntil;
+    const rateLimited = this.wakeClaimPaused(nowMs);
     const mode: ListenerWakeMode =
       this.connectionState === "subscribed" && !rateLimited ? "push" : "poll";
     const errorCode = rateLimited
@@ -310,9 +310,11 @@ export class WakeSubscriber implements WakeHandle {
     }
     const nowMs = this.now();
     if (this.pending !== null) {
-      const reason = this.pending;
-      this.pending = null;
-      return Promise.resolve(reason);
+      if (!(this.pending === "wake" && this.wakeClaimPaused(nowMs))) {
+        const reason = this.pending;
+        this.pending = null;
+        return Promise.resolve(reason);
+      }
     }
     if (nowMs >= options.until) {
       return Promise.resolve("deadline");
@@ -360,8 +362,17 @@ export class WakeSubscriber implements WakeHandle {
     this.wakeClaimTimes = this.wakeClaimTimes.filter((ts) => ts >= minuteStart);
   }
 
+  /** Client budget or a server 429: do not claim on wake; poll covers the window. */
+  private wakeClaimPaused(nowMs: number): boolean {
+    return nowMs < this.rateLimitedUntil || this.overWakeBudget(nowMs);
+  }
+
   private emitPending(reason: WakeWaitReason): void {
     if (this.waiter !== null) {
+      if (reason === "wake" && this.wakeClaimPaused(this.now())) {
+        this.pending = "wake";
+        return;
+      }
       this.finishWait(reason);
       return;
     }
