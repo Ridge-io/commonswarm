@@ -149,6 +149,7 @@ interface ReadAgentContext {
   is_revoked: boolean;
   pending_delivery_count: number;
   wake_id: string;
+  managed_at: Date | string | null;
 }
 
 function json(status: number, body: Record<string, unknown>): Response {
@@ -448,7 +449,8 @@ async function handle(
         membership_revoked_at,
         is_revoked,
         pending_delivery_count,
-        wake_id
+        wake_id,
+        managed_at
       FROM swarm.agent_delivery_read_context(
         ${tokenHash!},
         ${body.workspace_id}::uuid
@@ -626,6 +628,7 @@ async function handle(
           p.principal_id,
           p.name,
           p.owner_user_id,
+          p.managed_at,
           s.lifecycle_state,
           s.provider,
           s.host_label,
@@ -656,6 +659,7 @@ async function handle(
           principal_id: agent.principal_id,
           owner_user_id: agent.owner_user_id,
           workspace_id: agent.principal_workspace_id,
+          managed_at: agent.managed_at,
         },
       });
     }

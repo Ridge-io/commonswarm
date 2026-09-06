@@ -17,6 +17,7 @@ export interface AgentAuthRow {
   run_ended_at: Date | null;
   device_revoked_at: Date | null;
   unexpired: boolean;
+  managed_at: Date | null;
 }
 
 /**
@@ -113,7 +114,8 @@ export async function loadAgentCredential(
       p.revoked_at AS principal_revoked_at,
       r.ended_at AS run_ended_at,
       d.revoked_at AS device_revoked_at,
-      t.expires_at > statement_timestamp() AS unexpired
+      t.expires_at > statement_timestamp() AS unexpired,
+      p.managed_at AS managed_at
     FROM swarm.agent_tokens AS t
     JOIN swarm.agent_principals AS p ON p.principal_id = t.principal_id
     JOIN swarm.agent_runs AS r

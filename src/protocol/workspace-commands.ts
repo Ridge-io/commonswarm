@@ -168,7 +168,6 @@ export type WorkspaceCommand =
   | {
       kind: 'acquire_agent_session';
       session_id: string;
-      key_hash: string;
       provider?: string | null;
       host_label?: string | null;
       host_session_ref?: string | null;

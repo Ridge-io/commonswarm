@@ -2,13 +2,20 @@ import { createClient } from "npm:@supabase/supabase-js@2.110.8";
 import postgres from "npm:postgres@3.4.9";
 import {
   agentCredentialRevoked,
-  loadAgentCredential,
   enforceAgentSessionProof,
+  hashSessionKey,
+  loadAgentCredential,
   type AgentAuthRow,
 } from "../_shared/agent-auth.ts";
 import {
+  AGENT_SESSION_ID_RE,
+  AGENT_SESSION_TTL_SECONDS,
+  agentSessionErrorStatus,
   isAgentSessionProofExempt,
+  parseAgentSessionAcquireHeaders,
   parseAgentSessionProofHeaders,
+  type AgentSessionAcquireParse,
+  type AgentSessionErrorCode,
   type AgentSessionProofParse,
 } from "../../../src/cloud/session-wire.ts";
 import {
@@ -7256,6 +7263,7 @@ async function handleTransaction(
   verifiedHuman: VerifiedHuman | null,
   agentTokenHash: Uint8Array | null,
   sessionProofParse: AgentSessionProofParse,
+  acquireProofParse: AgentSessionAcquireParse,
 ): Promise<HttpResult> {
   const kind = commandKind(body);
   const commandId = String(body.command_id);
@@ -7293,6 +7301,7 @@ async function handleTransaction(
         principalId,
         workspaceId: agent.principal_workspace_id,
         proofParse: sessionProofParse,
+        managedAt: agent.managed_at ?? null,
       });
       if (!sessionResult.ok) {
         logCommandFailure(
@@ -7352,9 +7361,15 @@ async function handleTransaction(
     if (kind === "enable_agent_management") return await enableAgentManagement(tx, body, auth);
     if (kind === "disable_agent_management") return await disableAgentManagement(tx, body, auth);
     if (kind === "recover_agent_session") return await recoverAgentSession(tx, body, auth);
-    if (kind === "acquire_agent_session") return await acquireAgentSession(tx, body, auth);
-    if (kind === "renew_agent_session") return await renewAgentSession(tx, body, auth);
-    if (kind === "release_agent_session") return await releaseAgentSession(tx, body, auth);
+    if (kind === "acquire_agent_session") {
+      return await acquireAgentSession(tx, body, auth, acquireProofParse);
+    }
+    if (kind === "renew_agent_session") {
+      return await renewAgentSession(tx, body, auth, sessionProofParse);
+    }
+    if (kind === "release_agent_session") {
+      return await releaseAgentSession(tx, body, auth, sessionProofParse);
+    }
 
     await beforeStep(5);
     const invitationToken = kind === "accept_invitation"
@@ -9444,6 +9459,7 @@ async function handlePostRequest(request: Request): Promise<Response> {
   }
 
   const sessionProofParse = parseAgentSessionProofHeaders(request.headers);
+  const acquireProofParse = parseAgentSessionAcquireHeaders(request.headers);
 
   const credential = bearer(request);
   if (!credential) {
@@ -9516,6 +9532,7 @@ async function handlePostRequest(request: Request): Promise<Response> {
       verifiedHuman,
       agentTokenHash,
       sessionProofParse,
+      acquireProofParse,
     );
     /* S4: opportunistic purge-queue drain, AFTER the command's transaction and
      * in its own — a storage outage must never fail the command that happened
@@ -9603,218 +9620,497 @@ async function handleRequest(request: Request): Promise<Response> {
 }
 
 Deno.serve(handleRequest);
-async function enableAgentManagement(tx: Sql, body: RequestBody, auth: AuthContext): Promise<HttpResult> {
-  const principalId = (body.command as any).principal_id;
-  if (auth.credentialKind !== "user") {
-    return { status: 403, body: { error: "forbidden" } };
-  }
-  // Check membership and role (Owner/Admin or owns the principal)
-  const rows = await tx<{ role: string; owner_user_id: string }[]>`
-    SELECT m.role, p.owner_user_id
-    FROM swarm.agent_principals p
-    JOIN swarm.memberships m ON m.workspace_id = p.workspace_id AND m.user_id = ${auth.actor.user}::uuid AND m.revoked_at IS NULL
-    WHERE p.principal_id = ${principalId}::uuid
-  `;
-  const member = rows[0];
-  if (!member) return { status: 403, body: { error: "forbidden" } };
-  const { role, owner_user_id } = member;
-  if (role !== "owner" && role !== "admin" && owner_user_id !== auth.actor.user) {
-    return { status: 403, body: { error: "forbidden" } };
-  }
 
-  // Insert or update session row
-  await tx`
-    INSERT INTO swarm.agent_execution_sessions (principal_id, workspace_id, session_id, lifecycle_state)
-    SELECT principal_id, workspace_id, gen_random_uuid(), 'enabled'
-    FROM swarm.agent_principals
-    WHERE principal_id = ${principalId}::uuid
-    ON CONFLICT (principal_id) DO UPDATE SET lifecycle_state = 'enabled'
-  `;
-
-  return { status: 200, body: { ok: true, status: "accepted" } };
+function sessionError(error: AgentSessionErrorCode): HttpResult {
+  return { status: agentSessionErrorStatus(error), body: { error } };
 }
 
-async function disableAgentManagement(tx: Sql, body: RequestBody, auth: AuthContext): Promise<HttpResult> {
-  const principalId = (body.command as any).principal_id;
-  if (auth.credentialKind !== "user") return { status: 403, body: { error: "forbidden" } };
-  // Similar auth check
-  const rows = await tx<{ role: string; owner_user_id: string }[]>`
-    SELECT m.role, p.owner_user_id
-    FROM swarm.agent_principals p
-    JOIN swarm.memberships m ON m.workspace_id = p.workspace_id AND m.user_id = ${auth.actor.user}::uuid AND m.revoked_at IS NULL
-    WHERE p.principal_id = ${principalId}::uuid
-  `;
-  const member = rows[0];
-  if (!member) return { status: 403, body: { error: "forbidden" } };
-  const { role, owner_user_id } = member;
-  if (role !== "owner" && role !== "admin" && owner_user_id !== auth.actor.user) {
-    return { status: 403, body: { error: "forbidden" } };
-  }
-
-  await tx`
-    UPDATE swarm.agent_execution_sessions 
-    SET lifecycle_state = 'disabled', 
-        generation = generation + 1,
-        expired_at = statement_timestamp()
-    WHERE principal_id = ${principalId}::uuid
-  `;
-  return { status: 200, body: { ok: true, status: "accepted" } };
+function sessionPrincipalId(body: RequestBody): string | null {
+  const command = record(body.command);
+  const principalId = command?.principal_id;
+  return typeof principalId === "string" && UUID_RE.test(principalId)
+    ? principalId
+    : null;
 }
 
-async function recoverAgentSession(tx: Sql, body: RequestBody, auth: AuthContext): Promise<HttpResult> {
-  const principalId = (body.command as any).principal_id;
-  if (auth.credentialKind !== "user") return { status: 403, body: { error: "forbidden" } };
-  const rows = await tx<{ role: string; owner_user_id: string }[]>`
-    SELECT m.role, p.owner_user_id
-    FROM swarm.agent_principals p
-    JOIN swarm.memberships m ON m.workspace_id = p.workspace_id AND m.user_id = ${auth.actor.user}::uuid AND m.revoked_at IS NULL
-    WHERE p.principal_id = ${principalId}::uuid
-  `;
-  const member = rows[0];
-  if (!member) return { status: 403, body: { error: "forbidden" } };
-  const { role, owner_user_id } = member;
-  if (role !== "owner" && role !== "admin" && owner_user_id !== auth.actor.user) {
-    return { status: 403, body: { error: "forbidden" } };
-  }
-
-  // Retire the UUID and increment generation
-  const oldSessions = await tx<{ session_id: string }[]>`
-    SELECT session_id FROM swarm.agent_execution_sessions WHERE principal_id = ${principalId}::uuid FOR UPDATE
-  `;
-  const oldSession = oldSessions[0];
-  if (oldSession) {
-    await tx`
-      INSERT INTO swarm.retired_agent_sessions (session_id, principal_id)
-      VALUES (${oldSession.session_id}::uuid, ${principalId}::uuid)
-      ON CONFLICT DO NOTHING
-    `;
-  }
-  
-  await tx`
-    UPDATE swarm.agent_execution_sessions 
-    SET generation = generation + 1,
-        session_id = gen_random_uuid(),
-        expired_at = statement_timestamp()
-    WHERE principal_id = ${principalId}::uuid
-  `;
-
-  // Also clear unsurfaced leases for this principal!
-  // "Losing the session clears its unsurfaced leases in the same acquisition/recovery transaction, so a new holder can claim them."
+async function reclaimUnsurfacedLeases(
+  tx: Sql,
+  principalId: string,
+): Promise<void> {
   await tx`
     UPDATE swarm.signal_deliveries
-    SET claimed_by_principal = NULL, claim_expires_at = NULL
-    WHERE claimed_by_principal = ${principalId}::uuid
-      AND observed_at IS NULL
+    SET
+      lease_id = NULL,
+      leased_by = NULL,
+      leased_until = NULL,
+      updated_at = statement_timestamp()
+    WHERE recipient_agent_principal_id = ${principalId}::uuid
+      AND acked_at IS NULL
+      AND lease_id IS NOT NULL
   `;
-  
+}
+
+async function retireSessionUuid(
+  tx: Sql,
+  sessionId: string,
+  principalId: string,
+): Promise<void> {
+  await tx`
+    INSERT INTO swarm.retired_agent_sessions (session_id, principal_id)
+    VALUES (${sessionId}::uuid, ${principalId}::uuid)
+    ON CONFLICT DO NOTHING
+  `;
+}
+
+async function lockHumanManagedPrincipal(
+  tx: Sql,
+  auth: AuthContext,
+  principalId: string,
+): Promise<
+  | {
+    ok: true;
+    workspaceId: string;
+    managedAt: Date | null;
+  }
+  | { ok: false; result: HttpResult }
+> {
+  if (auth.credentialKind !== "user" || auth.actor.user === null) {
+    return { ok: false, result: { status: 403, body: { error: "forbidden" } } };
+  }
+  const rows = await tx<{
+    workspace_id: string;
+    owner_user_id: string;
+    managed_at: Date | null;
+    role: string;
+  }[]>`
+    SELECT
+      p.workspace_id,
+      p.owner_user_id,
+      p.managed_at,
+      m.role
+    FROM swarm.agent_principals AS p
+    JOIN swarm.memberships AS m
+      ON m.workspace_id = p.workspace_id
+     AND m.user_id = ${auth.actor.user}::uuid
+     AND m.revoked_at IS NULL
+    WHERE p.principal_id = ${principalId}::uuid
+      AND p.revoked_at IS NULL
+    FOR UPDATE OF p
+  `;
+  const row = rows[0];
+  if (row === undefined) {
+    return { ok: false, result: { status: 403, body: { error: "forbidden" } } };
+  }
+  if (row.role !== "owner" && row.role !== "admin") {
+    return { ok: false, result: { status: 403, body: { error: "forbidden" } } };
+  }
+  return {
+    ok: true,
+    workspaceId: row.workspace_id,
+    managedAt: row.managed_at,
+  };
+}
+
+async function enableAgentManagement(
+  tx: Sql,
+  body: RequestBody,
+  auth: AuthContext,
+): Promise<HttpResult> {
+  const principalId = sessionPrincipalId(body);
+  if (principalId === null) {
+    return { status: 400, body: { error: "invalid_request" } };
+  }
+  const locked = await lockHumanManagedPrincipal(tx, auth, principalId);
+  if (!locked.ok) return locked.result;
+  if (locked.managedAt !== null) {
+    return sessionError("session_already_managed");
+  }
+  const liveLeases = await tx<{ n: string }[]>`
+    SELECT count(*)::text AS n
+    FROM swarm.signal_deliveries
+    WHERE recipient_agent_principal_id = ${principalId}::uuid
+      AND acked_at IS NULL
+      AND lease_id IS NOT NULL
+      AND leased_until > statement_timestamp()
+  `;
+  if (Number(liveLeases[0]?.n ?? "0") > 0) {
+    return sessionError("session_leases_live");
+  }
+  const placeholder = crypto.randomUUID();
+  await tx`
+    UPDATE swarm.agent_principals
+    SET managed_at = statement_timestamp()
+    WHERE principal_id = ${principalId}::uuid
+  `;
+  await tx`
+    INSERT INTO swarm.agent_execution_sessions (
+      principal_id, workspace_id, session_id, generation,
+      lifecycle_state, expired_at, updated_at
+    ) VALUES (
+      ${principalId}::uuid,
+      ${locked.workspaceId}::uuid,
+      ${placeholder}::uuid,
+      1,
+      'enabled',
+      statement_timestamp(),
+      statement_timestamp()
+    )
+    ON CONFLICT (principal_id) DO UPDATE SET
+      lifecycle_state = 'enabled',
+      expired_at = statement_timestamp(),
+      updated_at = statement_timestamp()
+  `;
+  await retireSessionUuid(tx, placeholder, principalId);
   return { status: 200, body: { ok: true, status: "accepted" } };
 }
 
-async function acquireAgentSession(tx: Sql, body: RequestBody, auth: AuthContext): Promise<HttpResult> {
-  if (auth.credentialKind !== "agent") return { status: 403, body: { error: "forbidden" } };
-  const cmd = body.command as any;
-  const principalId = auth.actor.agent_principal!;
-  const workspaceId = auth.agent!.principal_workspace_id;
-  
-  // Verify it's not retired
-  const retired = await tx`SELECT 1 FROM swarm.retired_agent_sessions WHERE session_id = ${cmd.session_id}::uuid`;
-  if (retired.length > 0) return { status: 403, body: { error: "session_retired" } };
-
-  // Lock row
-  const sessions = await tx<{ session_id: string; lifecycle_state: string; expired_at: Date | null }[]>`
-    SELECT session_id, lifecycle_state, expired_at 
-    FROM swarm.agent_execution_sessions 
-    WHERE principal_id = ${principalId}::uuid 
-      AND workspace_id = ${workspaceId}::uuid
+async function disableAgentManagement(
+  tx: Sql,
+  body: RequestBody,
+  auth: AuthContext,
+): Promise<HttpResult> {
+  const principalId = sessionPrincipalId(body);
+  if (principalId === null) {
+    return { status: 400, body: { error: "invalid_request" } };
+  }
+  const locked = await lockHumanManagedPrincipal(tx, auth, principalId);
+  if (!locked.ok) return locked.result;
+  const sessions = await tx<{ session_id: string }[]>`
+    SELECT session_id
+    FROM swarm.agent_execution_sessions
+    WHERE principal_id = ${principalId}::uuid
     FOR UPDATE
   `;
-  
-  const s = sessions[0];
-  if (!s || s.lifecycle_state !== 'enabled') {
-    return { status: 403, body: { error: "session_not_managed" } };
+  const current = sessions[0];
+  if (current !== undefined) {
+    await retireSessionUuid(tx, current.session_id, principalId);
+    await tx`
+      UPDATE swarm.agent_execution_sessions
+      SET
+        lifecycle_state = 'disabled',
+        generation = generation + 1,
+        session_id = gen_random_uuid(),
+        key_hash = NULL,
+        expired_at = statement_timestamp(),
+        updated_at = statement_timestamp()
+      WHERE principal_id = ${principalId}::uuid
+    `;
   }
-  
-  const now = new Date();
-  
-  // Is it expired or released? (expired_at is set on release/recovery/expiry)
-  const isLive = s.expired_at === null || s.expired_at > now;
-  
-  if (isLive && s.session_id !== cmd.session_id) {
-    // Another live session
-    return { status: 409, body: { error: "session_conflict" } };
+  await tx`
+    UPDATE swarm.agent_principals
+    SET managed_at = NULL
+    WHERE principal_id = ${principalId}::uuid
+  `;
+  await reclaimUnsurfacedLeases(tx, principalId);
+  return {
+    status: 200,
+    body: {
+      ok: true,
+      status: "accepted",
+      warning: "legacy writes resume",
+    },
+  };
+}
+
+async function recoverAgentSession(
+  tx: Sql,
+  body: RequestBody,
+  auth: AuthContext,
+): Promise<HttpResult> {
+  const principalId = sessionPrincipalId(body);
+  if (principalId === null) {
+    return { status: 400, body: { error: "invalid_request" } };
   }
-  
-  // Update
-  const updated = await tx<{ generation: number }[]>`
-    UPDATE swarm.agent_execution_sessions
-    SET session_id = ${cmd.session_id}::uuid,
-        key_hash = ${cmd.key_hash},
-        provider = ${cmd.provider ?? null},
-        host_label = ${cmd.host_label ?? null},
-        host_session_ref = ${cmd.host_session_ref ?? null},
-        generation = CASE WHEN session_id != ${cmd.session_id}::uuid THEN generation + 1 ELSE generation END,
-        started_at = CASE WHEN session_id != ${cmd.session_id}::uuid THEN statement_timestamp() ELSE started_at END,
+  const locked = await lockHumanManagedPrincipal(tx, auth, principalId);
+  if (!locked.ok) return locked.result;
+  if (locked.managedAt === null) {
+    return sessionError("session_not_managed");
+  }
+  const sessions = await tx<{ session_id: string; generation: string | number }[]>`
+    SELECT session_id, generation
+    FROM swarm.agent_execution_sessions
+    WHERE principal_id = ${principalId}::uuid
+    FOR UPDATE
+  `;
+  const current = sessions[0];
+  if (current !== undefined) {
+    await retireSessionUuid(tx, current.session_id, principalId);
+    await tx`
+      UPDATE swarm.agent_execution_sessions
+      SET
+        generation = generation + 1,
+        session_id = gen_random_uuid(),
+        key_hash = NULL,
+        expired_at = statement_timestamp(),
+        updated_at = statement_timestamp()
+      WHERE principal_id = ${principalId}::uuid
+    `;
+  }
+  await reclaimUnsurfacedLeases(tx, principalId);
+  return { status: 200, body: { ok: true, status: "accepted" } };
+}
+
+async function acquireAgentSession(
+  tx: Sql,
+  body: RequestBody,
+  auth: AuthContext,
+  acquireProofParse: AgentSessionAcquireParse,
+): Promise<HttpResult> {
+  if (auth.credentialKind !== "agent") {
+    return { status: 403, body: { error: "forbidden" } };
+  }
+  const principalId = auth.actor.agent_principal;
+  const agent = auth.agent;
+  if (principalId === null || agent === null) {
+    return { status: 401, body: { error: "unauthenticated" } };
+  }
+  if (!acquireProofParse.ok) {
+    return sessionError(acquireProofParse.error);
+  }
+  const command = record(body.command);
+  if (command === null) {
+    return { status: 400, body: { error: "invalid_request" } };
+  }
+  const optionalKeys = [
+    ...(Object.hasOwn(command, "provider") ? ["provider"] : []),
+    ...(Object.hasOwn(command, "host_label") ? ["host_label"] : []),
+    ...(Object.hasOwn(command, "host_session_ref") ? ["host_session_ref"] : []),
+  ];
+  const sessionId = command.session_id;
+  if (
+    !exactKeys(command, ["kind", "session_id", ...optionalKeys]) ||
+    typeof sessionId !== "string" ||
+    !AGENT_SESSION_ID_RE.test(sessionId) ||
+    sessionId !== acquireProofParse.session_id
+  ) {
+    return { status: 400, body: { error: "invalid_request" } };
+  }
+  const optionalText = (value: unknown): string | null | undefined => {
+    if (value === undefined) return undefined;
+    if (value === null) return null;
+    return typeof value === "string" && value.length <= 120 ? value : undefined;
+  };
+  const provider = Object.hasOwn(command, "provider")
+    ? optionalText(command.provider)
+    : null;
+  const hostLabel = Object.hasOwn(command, "host_label")
+    ? optionalText(command.host_label)
+    : null;
+  const hostSessionRef = Object.hasOwn(command, "host_session_ref")
+    ? optionalText(command.host_session_ref)
+    : null;
+  if (
+    (Object.hasOwn(command, "provider") && provider === undefined) ||
+    (Object.hasOwn(command, "host_label") && hostLabel === undefined) ||
+    (Object.hasOwn(command, "host_session_ref") && hostSessionRef === undefined)
+  ) {
+    return { status: 400, body: { error: "invalid_request" } };
+  }
+
+  await tx`
+    SELECT principal_id
+    FROM swarm.agent_principals
+    WHERE principal_id = ${principalId}::uuid
+    FOR UPDATE
+  `;
+  const managed = await tx<{ managed_at: Date | null }[]>`
+    SELECT managed_at
+    FROM swarm.agent_principals
+    WHERE principal_id = ${principalId}::uuid
+  `;
+  if (managed[0] === undefined || managed[0].managed_at === null) {
+    return sessionError("session_not_managed");
+  }
+  const retired = await tx<{ session_id: string }[]>`
+    SELECT session_id
+    FROM swarm.retired_agent_sessions
+    WHERE session_id = ${sessionId}::uuid
+  `;
+  if (retired[0] !== undefined) {
+    return sessionError("session_retired");
+  }
+  const keyHash = await hashSessionKey(acquireProofParse.key);
+  const sessions = await tx<{
+    session_id: string;
+    generation: string | number | bigint;
+    key_hash: Uint8Array | null;
+    live: boolean;
+  }[]>`
+    SELECT
+      session_id,
+      generation,
+      key_hash,
+      (expired_at IS NOT NULL AND expired_at > statement_timestamp()) AS live
+    FROM swarm.agent_execution_sessions
+    WHERE principal_id = ${principalId}::uuid
+      AND workspace_id = ${agent.principal_workspace_id}::uuid
+    FOR UPDATE
+  `;
+  const current = sessions[0];
+  if (current === undefined) {
+    return sessionError("session_not_managed");
+  }
+  if (current.live && current.session_id === sessionId) {
+    const stored = current.key_hash;
+    if (
+      stored === null ||
+      stored.length === 0 ||
+      stored.length !== keyHash.length ||
+      !stored.every((byte, index) => byte === keyHash[index])
+    ) {
+      return sessionError("session_proof_invalid");
+    }
+    const renewed = await tx<{ generation: string | number | bigint }[]>`
+      UPDATE swarm.agent_execution_sessions
+      SET
         renewed_at = statement_timestamp(),
-        expired_at = statement_timestamp() + interval '120 seconds'
+        expired_at = statement_timestamp()
+          + (${AGENT_SESSION_TTL_SECONDS} * interval '1 second'),
+        updated_at = statement_timestamp()
+      WHERE principal_id = ${principalId}::uuid
+        AND session_id = ${sessionId}::uuid
+      RETURNING generation
+    `;
+    const generation = Number(renewed[0]?.generation);
+    if (!Number.isSafeInteger(generation)) {
+      return { status: 500, body: { error: "internal_error" } };
+    }
+    return {
+      status: 200,
+      body: { ok: true, status: "accepted", generation },
+    };
+  }
+  if (current.live && current.session_id !== sessionId) {
+    return sessionError("session_conflict");
+  }
+  if (!current.live && current.session_id === sessionId) {
+    return sessionError("session_expired");
+  }
+  await retireSessionUuid(tx, current.session_id, principalId);
+  const updated = await tx<{ generation: string | number | bigint }[]>`
+    UPDATE swarm.agent_execution_sessions
+    SET
+      session_id = ${sessionId}::uuid,
+      key_hash = ${keyHash},
+      provider = ${provider ?? null},
+      host_label = ${hostLabel ?? null},
+      host_session_ref = ${hostSessionRef ?? null},
+      generation = generation + 1,
+      started_at = statement_timestamp(),
+      renewed_at = statement_timestamp(),
+      expired_at = statement_timestamp()
+        + (${AGENT_SESSION_TTL_SECONDS} * interval '1 second'),
+      updated_at = statement_timestamp()
     WHERE principal_id = ${principalId}::uuid
     RETURNING generation
   `;
-
-  // If we changed session_id, clear unsurfaced leases
-  if (s.session_id !== cmd.session_id) {
-    await tx`
-      UPDATE swarm.signal_deliveries
-      SET claimed_by_principal = NULL, claim_expires_at = NULL
-      WHERE claimed_by_principal = ${principalId}::uuid
-        AND observed_at IS NULL
-    `;
-  }
-  
-  const updatedRow = updated[0];
-  if (!updatedRow) {
+  await reclaimUnsurfacedLeases(tx, principalId);
+  const generation = Number(updated[0]?.generation);
+  if (!Number.isSafeInteger(generation)) {
     return { status: 500, body: { error: "internal_error" } };
   }
-  return { status: 200, body: { ok: true, status: "accepted", generation: updatedRow.generation } };
+  return {
+    status: 200,
+    body: { ok: true, status: "accepted", generation },
+  };
 }
 
-async function renewAgentSession(tx: Sql, body: RequestBody, auth: AuthContext): Promise<HttpResult> {
-  if (auth.credentialKind !== "agent") return { status: 403, body: { error: "forbidden" } };
-  const cmd = body.command as any;
-  const principalId = auth.actor.agent_principal!;
-  
-  const updated = await tx`
-    UPDATE swarm.agent_execution_sessions
-    SET renewed_at = statement_timestamp(),
-        expired_at = statement_timestamp() + interval '120 seconds'
-    WHERE principal_id = ${principalId}::uuid
-      AND session_id = ${cmd.session_id}::uuid
-      AND generation = ${cmd.generation}
-      AND (expired_at IS NULL OR expired_at > statement_timestamp())
-  `;
-  
-  if (updated.count === 0) {
-    return { status: 403, body: { error: "session_expired" } };
+async function renewAgentSession(
+  tx: Sql,
+  body: RequestBody,
+  auth: AuthContext,
+  sessionProofParse: AgentSessionProofParse,
+): Promise<HttpResult> {
+  if (auth.credentialKind !== "agent") {
+    return { status: 403, body: { error: "forbidden" } };
   }
-  
+  const principalId = auth.actor.agent_principal;
+  if (principalId === null) {
+    return { status: 401, body: { error: "unauthenticated" } };
+  }
+  if (!sessionProofParse.ok) {
+    return sessionError(sessionProofParse.error);
+  }
+  const command = record(body.command);
+  if (
+    command === null ||
+    !exactKeys(command, ["kind", "session_id", "generation"]) ||
+    command.session_id !== sessionProofParse.proof.session_id ||
+    command.generation !== sessionProofParse.proof.generation
+  ) {
+    return { status: 400, body: { error: "invalid_request" } };
+  }
+  const updated = await tx<{ generation: string | number | bigint }[]>`
+    UPDATE swarm.agent_execution_sessions
+    SET
+      renewed_at = statement_timestamp(),
+      expired_at = statement_timestamp()
+        + (${AGENT_SESSION_TTL_SECONDS} * interval '1 second'),
+      updated_at = statement_timestamp()
+    WHERE principal_id = ${principalId}::uuid
+      AND session_id = ${sessionProofParse.proof.session_id}::uuid
+      AND generation = ${sessionProofParse.proof.generation}
+      AND expired_at IS NOT NULL
+      AND expired_at > statement_timestamp()
+    RETURNING generation
+  `;
+  if (updated[0] === undefined) {
+    return sessionError("session_expired");
+  }
   return { status: 200, body: { ok: true, status: "accepted" } };
 }
 
-async function releaseAgentSession(tx: Sql, body: RequestBody, auth: AuthContext): Promise<HttpResult> {
-  if (auth.credentialKind !== "agent") return { status: 403, body: { error: "forbidden" } };
-  const cmd = body.command as any;
-  const principalId = auth.actor.agent_principal!;
-  
+async function releaseAgentSession(
+  tx: Sql,
+  body: RequestBody,
+  auth: AuthContext,
+  sessionProofParse: AgentSessionProofParse,
+): Promise<HttpResult> {
+  if (auth.credentialKind !== "agent") {
+    return { status: 403, body: { error: "forbidden" } };
+  }
+  const principalId = auth.actor.agent_principal;
+  if (principalId === null) {
+    return { status: 401, body: { error: "unauthenticated" } };
+  }
+  if (!sessionProofParse.ok) {
+    return sessionError(sessionProofParse.error);
+  }
+  const command = record(body.command);
+  if (
+    command === null ||
+    !exactKeys(command, ["kind", "session_id", "generation"]) ||
+    command.session_id !== sessionProofParse.proof.session_id ||
+    command.generation !== sessionProofParse.proof.generation
+  ) {
+    return { status: 400, body: { error: "invalid_request" } };
+  }
+  const sessions = await tx<{ session_id: string }[]>`
+    SELECT session_id
+    FROM swarm.agent_execution_sessions
+    WHERE principal_id = ${principalId}::uuid
+      AND session_id = ${sessionProofParse.proof.session_id}::uuid
+      AND generation = ${sessionProofParse.proof.generation}
+    FOR UPDATE
+  `;
+  const current = sessions[0];
+  if (current === undefined) {
+    return sessionError("session_conflict");
+  }
+  await retireSessionUuid(tx, current.session_id, principalId);
   const updated = await tx`
     UPDATE swarm.agent_execution_sessions
-    SET expired_at = statement_timestamp()
+    SET
+      expired_at = statement_timestamp(),
+      key_hash = NULL,
+      updated_at = statement_timestamp()
     WHERE principal_id = ${principalId}::uuid
-      AND session_id = ${cmd.session_id}::uuid
-      AND generation = ${cmd.generation}
+      AND session_id = ${sessionProofParse.proof.session_id}::uuid
+      AND generation = ${sessionProofParse.proof.generation}
   `;
-  
   if (updated.count === 0) {
-    return { status: 403, body: { error: "session_conflict" } };
+    return sessionError("session_conflict");
   }
-  
+  await reclaimUnsurfacedLeases(tx, principalId);
   return { status: 200, body: { ok: true, status: "accepted" } };
 }

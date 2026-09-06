@@ -131,6 +131,7 @@ async function handle(request: Request): Promise<Response> {
       principalId: agent.principal_id,
       workspaceId: agent.principal_workspace_id,
       proofParse: parseAgentSessionProofHeaders(request.headers),
+      managedAt: agent.managed_at ?? null,
     });
     if (!sessionResult.ok) {
       return json(sessionResult.status, { error: sessionResult.error });

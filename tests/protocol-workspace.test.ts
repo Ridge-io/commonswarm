@@ -1672,6 +1672,33 @@ describe('agent session proof exemption', () => {
     assert.equal(readSrc.includes('SET LOCAL ROLE swarm_command'), false);
   });
 
+  it('the session migration does not project wake_id through swarm_read.agent_principals', () => {
+    const migration = readFileSync(
+      join(
+        repoRoot,
+        'supabase/migrations/20260906000020_agent_execution_sessions.sql',
+      ),
+      'utf8',
+    );
+    const viewBody = migration.match(
+      /CREATE VIEW swarm_read\.agent_principals[\s\S]*?;/,
+    );
+    assert.ok(viewBody, 'swarm_read.agent_principals view must be created');
+    assert.equal(viewBody[0].includes('p.*'), false);
+    assert.match(viewBody[0], /p\.managed_at/);
+    assert.equal(viewBody[0].includes('wake_id'), false);
+    assert.match(migration, /p\.managed_at/);
+    assert.match(
+      migration,
+      /swarm_read\.agent_principals must not project wake_id/,
+    );
+    assert.match(
+      migration,
+      /CREATE FUNCTION swarm\.agent_delivery_read_context/,
+    );
+    assert.match(migration, /managed_at timestamptz/);
+  });
+
   it('capability is not agent-authenticated and does not claim or ack', () => {
     const capabilitySrc = readFileSync(
       join(repoRoot, 'supabase/functions/capability/index.ts'),
