@@ -94,6 +94,7 @@ test("empty durable claims back off the idle wait and reset on a delivery", asyn
   const sleeps: number[] = [];
   const idleEvents: number[] = [];
   let claims = 0;
+  let reads = 0;
   const claimedNote = note(
     "aaaaaaaa-aaaa-4aaa-8aaa-aaaaaaaaaa80",
     "2026-07-30T00:00:01.000Z",
@@ -136,10 +137,17 @@ test("empty durable claims back off the idle wait and reset on a delivery", asyn
     onEvent: (event) => {
       if (event.type === "idle_poll") idleEvents.push(event.intervalMs);
     },
-    readPage: async () => durablePage(),
+    readPage: async () => {
+      reads += 1;
+      return durablePage();
+    },
   });
   assert.equal(stop.reason, "cancelled");
   assert.equal(LISTENER_IDLE_POLL_MS, IDLE_POLL_DEFAULT_MS);
+  assert.ok(
+    reads >= 4,
+    "the read edge POSTs on the same loop as the claim, after idleSleep",
+  );
   assert.deepEqual(
     sleeps.slice(0, 3),
     [

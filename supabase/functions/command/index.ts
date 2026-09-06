@@ -4866,6 +4866,24 @@ async function incrementRateBucket(
   };
 }
 
+/** True when this recipient still has an unacked delivery row. Idle polls do not. */
+async function hasUnackedDeliveries(
+  tx: Sql,
+  workspaceId: string,
+  principalId: string,
+): Promise<boolean> {
+  const rows = await tx<{ present: boolean }[]>`
+    SELECT EXISTS (
+      SELECT 1
+      FROM swarm.signal_deliveries
+      WHERE workspace_id = ${workspaceId}::uuid
+        AND recipient_agent_principal_id = ${principalId}::uuid
+        AND acked_at IS NULL
+    ) AS present
+  `;
+  return rows[0]?.present === true;
+}
+
 async function checkDeliveryRateLimit(
   tx: Sql,
   auth: AuthContext,
@@ -7531,15 +7549,21 @@ async function handleTransaction(
         return { status: 403, body: { error: "delivery_unavailable" } };
       }
       const operation = kind === CLAIM_AGENT_INBOX_KIND ? "claim" : "ack";
-      const rateCheck = await checkDeliveryRateLimit(
-        tx,
-        auth,
-        route.workspaceId,
-        agent.principal_id,
-        operation,
-      );
-      if (!rateCheck.allowed) {
-        return rateCheck.result;
+      /* Idle claims have nothing unacked. They must not upsert rate_buckets.
+       * Acks, and claims against a live queue, still take the bucket. */
+      const mustLimit = operation === "ack" ||
+        await hasUnackedDeliveries(tx, route.workspaceId, agent.principal_id);
+      if (mustLimit) {
+        const rateCheck = await checkDeliveryRateLimit(
+          tx,
+          auth,
+          route.workspaceId,
+          agent.principal_id,
+          operation,
+        );
+        if (!rateCheck.allowed) {
+          return rateCheck.result;
+        }
       }
     }
 
@@ -8363,13 +8387,14 @@ async function handleTransaction(
       if (ledger === null) {
         return { status: 403, body: { error: "delivery_unavailable" } };
       }
-      /* Idle polls are not state-changing for the ledger: no leased row and
-       * no poison terminalization, so no idempotency key and no audit row. A
-       * 0.1.56 listener that retries the same command id then re-executes,
-       * which can pick up a row that arrived during the retry. A claim that
-       * leases a row, or that terminalizes poison, still writes both. The
-       * outcome column cannot tell empty from non-empty on historical rows
-       * (both were "accepted"); retention therefore deletes by kind. */
+      /* Idle polls write no idempotency key, no audit row, and no rate_buckets
+       * row. Replay of a missing key re-executes (the 403 at the replay
+       * branch is only when a stored ledger is unreadable). That is the
+       * intended semantics: an empty claim has no side effect to replay, and
+       * a retry that now finds work should get it. A claim that leases a row,
+       * or that terminalizes poison, still writes the ledger. Historical
+       * audit_log.outcome cannot tell empty from leased (both were
+       * "accepted"); those rows stay. */
       const persistLedger = claimAgentInboxPersistsLedger(ledger);
       if (persistLedger) {
         const inserted = await tx<{ command_id: string }[]>`

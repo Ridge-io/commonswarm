@@ -6641,6 +6641,11 @@ test("durable-delivery: claim/ack happy path, idempotent replay, pending count",
         AND command_kind = 'claim_agent_inbox'
         AND outcome = 'accepted'
     `;
+    const claimBucket = `delivery:claim:principal:${f.workspaceA}:${receiver.principalId}`;
+    const bucketsBeforeEmpty = await sql<{ n: string }[]>`
+      SELECT count(*)::text AS n FROM swarm.rate_buckets
+      WHERE bucket_key = ${claimBucket}
+    `;
 
     /* NULL is the other end of the bound, and it is what makes the string
      * above a measurement: once the queue is empty the server says so with a
@@ -6663,6 +6668,26 @@ test("durable-delivery: claim/ack happy path, idempotent replay, pending count",
       SELECT command_id FROM swarm.idempotency_keys WHERE command_id = ${emptyClaimId}
     `;
     assert.equal(emptyIdem, undefined, "an empty claim writes no idempotency key");
+    const bucketsAfterEmpty = await sql<{ n: string }[]>`
+      SELECT count(*)::text AS n FROM swarm.rate_buckets
+      WHERE bucket_key = ${claimBucket}
+    `;
+    assert.equal(
+      Number(bucketsAfterEmpty[0]?.n),
+      Number(bucketsBeforeEmpty[0]?.n),
+      "an idle poll does not upsert rate_buckets",
+    );
+    const emptyReplay = await issueDelivery(f, receiver.token, {
+      kind: "claim_agent_inbox",
+      listener_instance_id: listener,
+      limit: 10,
+    }, emptyClaimId);
+    assert.equal(emptyReplay.status, 200, emptyReplay.text);
+    assert.equal(
+      (emptyReplay.body.deliveries as unknown[]).length,
+      0,
+      "retry of an idle command id re-executes; there is no stored ledger to replay",
+    );
     const emptyAudits = await sql<{ audit_id: string }[]>`
       SELECT audit_id FROM swarm.audit_log
       WHERE workspace_id = ${f.workspaceA}::uuid

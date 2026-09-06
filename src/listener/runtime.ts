@@ -1096,6 +1096,8 @@ export async function runListenerRuntime(
       let page: AgentSignalPage;
       try {
         const token = await options.credentialSession.bearer();
+        /* Same idle wait as the claim: idleSleep is the only pause in this
+         * loop, so the read POST and the claim POST share the back-off. */
         page = await readPage({
           token,
           after,
