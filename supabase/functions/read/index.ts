@@ -20,6 +20,7 @@ import {
   SIGNAL_KINDS as SIGNAL_KIND_LIST,
   unknownChannelMessage,
 } from "../_shared/channels.ts";
+import { optionalWake } from "../_shared/wake.ts";
 
 const AGENT_TOKEN_RE = /^swm_agt_[A-Za-z0-9_-]{43}$/;
 const UUID_RE =
@@ -147,6 +148,7 @@ interface ReadAgentContext {
   membership_revoked_at: Date | null;
   is_revoked: boolean;
   pending_delivery_count: number;
+  wake_id: string;
 }
 
 function json(status: number, body: Record<string, unknown>): Response {
@@ -445,7 +447,8 @@ async function handle(
         first_use,
         membership_revoked_at,
         is_revoked,
-        pending_delivery_count
+        pending_delivery_count,
+        wake_id
       FROM swarm.agent_delivery_read_context(
         ${tokenHash!},
         ${body.workspace_id}::uuid
@@ -829,6 +832,9 @@ async function handle(
         ? HOME_INBOX_SIGNAL_CAPABILITIES
         : SIGNAL_CAPABILITIES,
       pending_delivery_count: agent.pending_delivery_count,
+      /* Own-workspace inbox only. The foreign-workspace empty branch above
+       * returns before grant-use and must not carry the topic. */
+      ...(body.inbox ? optionalWake(agent.wake_id) : {}),
     });
   });
 }
