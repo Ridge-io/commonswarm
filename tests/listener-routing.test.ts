@@ -15,14 +15,10 @@ import {
 const WORKSPACE_ID = "11111111-1111-4111-8111-111111111111";
 const PRINCIPAL_ID = "22222222-2222-4222-8222-222222222222";
 
-test("the pure route decision keeps equal and smaller split asks on the worker", () => {
-  assert.equal(decideListenerRoute("worker", null, 10_000), "worker");
+test("the pure route decision is main only", () => {
   assert.equal(decideListenerRoute("main", null, 1), "main");
-  assert.equal(decideListenerRoute("split", 240, 239), "worker");
-  assert.equal(decideListenerRoute("split", 240, 240), "worker");
-  assert.equal(decideListenerRoute("split", 240, 241), "main");
-  assert.equal(decideListenerRoute("split", 1, 2), "main");
-  assert.equal(decideListenerRoute("split", 10_000, 10_000), "worker");
+  assert.equal(decideListenerRoute("main", null, 10_000), "main");
+  assert.throws(() => decideListenerRoute("main", 240, 1), /main route cannot have a split threshold/);
 });
 
 function entry(index: number): PendingMainEntry {

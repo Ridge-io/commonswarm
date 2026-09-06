@@ -57,11 +57,13 @@ test("detached argv is public-only and strips ambient Node hooks", () => {
   assert.equal(args.some((value) => value.startsWith("swm_agt_")), false);
   assert.ok(args.includes("--provider"));
   assert.equal(args[args.indexOf("--provider") + 1], "grok");
-  assert.deepEqual(args.slice(-4), [
+  assert.deepEqual(args.slice(-6), [
     "--model",
     "grok-4.5",
     "--effort",
     "low",
+    "--route",
+    "main",
   ]);
 });
 
