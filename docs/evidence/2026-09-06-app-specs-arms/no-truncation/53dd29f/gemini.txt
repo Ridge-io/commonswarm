@@ -1,0 +1,31 @@
+### Inversion Analysis of Load-Bearing Choices
+
+1. **Dynamic 3-Tier Graceful Degradation for Hook Surface (1,000 → 240 → 0 chars)**
+- *Inversion*: Use a static uniform preview limit (e.g. fixed 500 chars) or drop oldest signals once reaching `MAX_HOOK_SURFACE_BYTES`.
+- *Predicted Failure*: A static cap penalizes the standard case (1–5 messages of 300–900 chars) with unnecessary truncation, while dropping items loses critical signal IDs and reply paths entirely.
+- *Beat Spec?*: No. The spec's tiered degradation preserves every signal header and reply command while maximizing preview context within the 128 KiB envelope.
+
+2. **Embedding Full 8,000-char Body into `inbox --notify --json` Stream**
+- *Inversion*: Keep `--notify` strictly lightweight (snippet-only) and force consumers to fetch full bodies on demand via `cswarm get <id>`.
+- *Predicted Failure*: Causes an N+1 query burst on arrival daemons; automated listeners must make an extra roundtrip per signal, multiplying network latency and edge function load.
+- *Beat Spec?*: No. An 8 KB payload over a streaming pipe is negligible overhead to eliminate secondary read roundtrips.
+
+3. **DOM-Level Headless Chrome Observer Test (L3) for No-Loss Check**
+- *Inversion*: Assert truncation safety solely via Node.js unit tests on `message-markdown.ts` string outputs.
+- *Predicted Failure*: Blinds CI to CSS clipping (`text-overflow`, line clamp, layout overflow) and DOM tree truncation, which are the root causes of UI clipping.
+- *Beat Spec?*: No. The operator's complaint was UI-visible cutting; end-to-end DOM text verification is essential.
+
+4. **Dual-Field Payload (`snippet` + `body`) in `arrivalNotification`**
+- *Inversion*: Remove `snippet` and emit only `body`, forcing consumers to slice previews locally.
+- *Predicted Failure*: Immediately breaks backward compatibility for existing scripts consuming the `--json` stream.
+- *Beat Spec?*: No. Non-breaking additive extension is the correct contract.
+
+### What a Lane Author Would Still Have to Invent
+
+1. **[DEFECT/GAP] Tier-2 Hook Suffix Test Assertion (C2)**: The spec states that suffix arithmetic uses whichever cap applied, but then mandates asserting `N == body.length − HOOK_BODY_PREVIEW_CHARS` (hardcoded 1,000). For Tier-2 items (capped at `HOOK_BODY_PREVIEW_CHARS_MIN` = 240), `body.length − 1000` is invalid or negative for bodies between 241 and 999 characters. The author must invent the parameterized test formula (`body.length - effectiveCap`).
+2. **[GAP] Byte vs Character Measurement for Surface Bound (C2, L2)**: C2 bounds the surface by `MAX_HOOK_SURFACE_BYTES = 128 KiB` and explicitly notes 4-byte characters, but does not define how the running surface is measured (UTF-8 `Buffer.byteLength` vs JS string `.length`).
+3. **[GAP] Test HTML Mount Boilerplate (L3)**: L3 specifies reusing the observer harness and built stylesheet, but omits the minimal HTML container structure needed to mount and render the Astro message body in headless Chrome.
+
+QUOTE-BACK: # Stop truncating in the human UI
+VERDICT: FAIL
+REASON: The spec leaves byte-budget measurement undefined for the hook surface limit and contains a conflicting test assertion for tier-2 suffix arithmetic that a lane author must invent.

@@ -1,0 +1,33 @@
+### Load-Bearing Design Inversions
+
+1. **Server-side PostgREST query filter (`.eq("from", ...).eq("from_kind", ...)`) vs. Client-side feed filtering**
+   - *Inversion*: Filter client-side over already-loaded signals within `signal-feed.ts` (matching All/Broadcast/Direct).
+   - *Predicted Failure*: When an entity's recent signals are beyond the initial 25-signal page window, client filtering yields a false empty feed while older messages exist in the channel, breaking pagination.
+   - *Verdict*: Spec beats inversion. Server-side filtering avoids pagination starvation and respects plan P2.
+
+2. **12-slot discrete OKLCH palette (`hash % 12`) vs. Continuous hue (`hash % 360`)**
+   - *Inversion*: Retain continuous hue (`FNV-1a % 360`) to avoid avatar colour collisions in teams with >4 members.
+   - *Predicted Failure*: Continuous hues cannot maintain WCAG 3:1 contrast against light/dark message backgrounds without runtime per-hue luminance calculations, causing low-contrast underlines and illegible rail borders.
+   - *Verdict*: Spec beats inversion. Fixed tokens with verified contrast outweigh hue uniqueness, matching R8.
+
+3. **Interaction split (Avatar click filters feed, Name click opens panel) vs. Unified click target**
+   - *Inversion*: Unify interaction by having name click filter (as originally phrased in the chat plan) and avatar open the panel.
+   - *Predicted Failure*: Inverting removes the most frequent affordance (opening the entity panel) from its primary text anchor, while leaving avatars with split semantics (feed avatar filters, while dialog/roster avatars remain inert).
+   - *Verdict*: Spec beats inversion on preserving existing panel muscle memory, though avatar touch-target sizing remains tight.
+
+4. **Left border (`border-inline-start: 3px`) for entity colour, moving fresh-row highlight to `box-shadow` vs. Background tinting**
+   - *Inversion*: Use a subtle row background tint or badge colour; leave `border-inline-start` for the fresh-row animation.
+   - *Predicted Failure*: Tinting row backgrounds interferes with text contrast across themes and creates noisy stripes in busy feeds.
+   - *Verdict*: Spec beats inversion. Border-inline-start provides high-contrast identification without degrading body text legibility.
+
+---
+
+### What a Lane Author Still Has to Invent (Defects & Gaps)
+
+- **DEFECT (§2.2): CSS Variable Scoping**: `markEntityColour` replaces `markAgentAvatar` at `:5062` (the avatar node). CSS custom properties set on the avatar cannot inherit upwards to parent `.dashboard__message` (for the 3px left border) or across to sibling `<strong>` (`:5068-5079` for the 2px underline). The lane author must invent how the row container receives `--entity-colour`.
+- **GAP (§2.3): Realtime Broadcast Field Name**: Table schema uses `from_principal` (`20260724000003_signals.sql:6`), while view aliases it to `from`. The spec does not specify whether the `cswarm-signals` broadcast payload provides `from` or `from_principal`, forcing the author to guess the property path.
+- **GAP (§2.3, §4 L2): Filter Bar DOM & Class Contract**: The spec specifies "a chip above the feed with the entity's colour, name, and a ×", but omits the mount selector, markup hierarchy, and CSS class names tested by `mobile-feed-layout.observer.test.ts`.
+
+QUOTE-BACK: # Colour-code agents and their responses
+VERDICT: FAIL
+REASON: Scoping `markEntityColour` to the avatar at `:5062` prevents `--entity-colour` from inheriting to the parent message row and name underline without an unauthored DOM or signature change.

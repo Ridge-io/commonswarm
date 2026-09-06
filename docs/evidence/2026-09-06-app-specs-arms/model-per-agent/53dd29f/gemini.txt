@@ -1,0 +1,28 @@
+### Inversion Analysis of Load-Bearing Choices
+
+1. **Choice 1: Retain `model` as declaration and add `assigned_model`, rather than keeping `model` as assignment and adding `declared_model`.**
+   - *Inversion:* Keep `model` as human assignment (matching `set_agent_model` / `create_agent_principal` semantics) and add `declared_model` for the agent's start declaration.
+   - *Predicted Regression:* Breaks rolling upgrades. Unupgraded listeners in the field fire `declare_agent_model { model }` on startup. If `model` held human intent, legacy listeners would clobber operator assignments on restart.
+   - *Verdict against spec:* Did not beat spec. Re-purposing `model` as declaration safely sinks legacy writes without clobbering `assigned_model`.
+
+2. **Choice 2: Synchronous pre-bridge inbox read (`readAgentSignalPage`) exiting fatally on failure before bridge construction.**
+   - *Inversion:* Start the bridge with a provider default or cached value and update model assignment asynchronously after start.
+   - *Predicted Regression:* ACP bridges (Claude/Codex) and Grok instantiate models immutably at constructor time before entering `runListenerRuntime`. Deferring read or falling back to default risks executing instructions under the wrong model, incurring unintended billing and misaligned behavior.
+   - *Verdict against spec:* Did not beat spec. Fail-fast is correct because a seat unable to read its inbox cannot serve.
+
+3. **Choice 3: Explicit persisted `model_assignment_state` column (`honoured | no_mapping | cli_override | pending`) instead of dynamic string comparison.**
+   - *Inversion:* Derive mismatch state purely on the fly via `normalizedModel(assigned_model) === normalizedModel(model)`.
+   - *Predicted Regression:* String comparison cannot disambiguate *why* a mismatch exists: whether a stopped agent is awaiting restart (`pending`), the operator passed a CLI flag (`cli_override`), or the bridge lacks support (`no_mapping`).
+   - *Verdict against spec:* Did not beat spec. Durable state accurately represents asynchronous listener lifecycle.
+
+4. **Choice 4: Refusing unmeasured Claude/Codex bridge mappings until proven by probe, rather than optimistic forwarding.**
+   - *Inversion:* Optimistically inject `assigned_model` into environment variables (`ANTHROPIC_MODEL`, `CODEX_MODEL`) or ACP `session/new` options without probing.
+   - *Predicted Regression:* ACP bridges silently ignore unrecognized fields and sanitized environment variables, running default models while the UI falsely reports success.
+   - *Verdict against spec:* Did not beat spec. Probe gating guarantees truthful declaration.
+
+### Inventions Remaining for Lane Authors
+- None. Database schema changes (constraints, view projection without `wake_id`, backfill rules over `swarm.events`), wire payloads, pre-bridge read lifecycle, ACP probe sequencing, UI states, normalisation fixture, test files, and cross-spec rebases are specified with explicit file paths and line numbers.
+
+QUOTE-BACK: # A model per agent: assigned by a person, honoured by the listener, declared by the agent
+VERDICT: PASS
+REASON: All load-bearing choices withstand inversion, and the specification leaves zero gaps or unspecified files for lane implementation.

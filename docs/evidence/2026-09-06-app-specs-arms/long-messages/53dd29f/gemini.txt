@@ -1,0 +1,34 @@
+### Load-Bearing Inversions
+
+#### 1. Hard line clip without bottom fade (Sections 0, C1, C3)
+* **Inversion:** Implement the operator's requested bottom gradient fade (`mask-image` linear gradient).
+* **Failure/Regression Predicted:** As proven by commit `6712776`, fading out the last line renders partial glyphs illegible without providing scrollability, degrading readability on clipped messages.
+* **Beat the spec?** No. The spec correctly respects the repo's historical defect fix (`6712776`) and replaces the fade's communicative intent with an explicit line count.
+
+#### 2. Viewport breakpoint in pure CSS via feed-root custom property (C1)
+* **Inversion:** Manage collapse thresholds dynamically in JavaScript via `window.matchMedia` listeners or `ResizeObserver`.
+* **Failure/Regression Predicted:** JS listeners introduce layout thrashing, potential FOUC/pop before hydration, and listener cleanup leaks across workspace transitions.
+* **Beat the spec?** No. CSS inheritance on `.dashboard__feed` evaluates instantly on device rotation with zero runtime script overhead.
+
+#### 3. Dynamic line-count copy `Show more (about N lines)` (C2)
+* **Inversion:** Retain a static, unadorned `Show more` toggle.
+* **Failure/Regression Predicted:** In mixed markdown (tables, multi-line code blocks, large margins), `(scrollHeight - clientHeight) / lineHeightPx` is an approximation that can report confusing counts (e.g., a single 300px image counted as ~12 lines). Conversely, a static label forces users to expand blindly without knowing whether 1 line or 500 lines remain hidden.
+* **Beat the spec?** No. The spec explicitly scopes `N` as an approximate body-line equivalent ("about N lines") computed inside the existing `rAF` read phase, adding zero reflow cost while providing critical context.
+
+#### 4. Client-side `localStorage` per workspace capped at 200 (C4)
+* **Inversion:** Persist expansion state on the server (or leave it strictly ephemeral in-memory).
+* **Failure/Regression Predicted:** Server persistence introduces unnecessary schema churn, write latency, and network traffic for an ephemeral reading preference. Ephemeral memory forgets user reading state on page reload (the operator's core pain point).
+* **Beat the spec?** No. Keying by `commonswarm:expanded:<workspaceId>` with an FIFO cap of 200 keeps reads instantaneous before feed render and avoids network overhead.
+
+---
+
+### Inventions Remaining for the Lane Author
+
+1. **Section 4 wording anomaly:** Section 4 mentions `(the three exports)` from `message-markdown.ts`, while Section C1 explicitly specifies two (`MESSAGE_COLLAPSE_LINES_PHONE` and `MESSAGE_COLLAPSE_LINES_DESKTOP`). The author must decide whether to retain `MESSAGE_COLLAPSE_LINES` as a backward-compatible alias or export only the two new constants.
+2. **Toggle-off persistence:** The author must implement removal/filtering of the signal ID from `expandedSignalIds` and `localStorage` on "Show less" (implied by mirror behavior, but not explicitly step-by-step worded).
+
+Neither item constitutes a DEFECT or blocking GAP; the lane is fully buildable without operator escalation.
+
+QUOTE-BACK: # Long messages: a readable collapse and "Show more" that remembers
+VERDICT: PASS
+REASON: All load-bearing design inversions fail against the spec's evidence-backed decisions, and no blocking gaps or defects remain.

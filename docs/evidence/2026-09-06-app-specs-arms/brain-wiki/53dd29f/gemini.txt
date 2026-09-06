@@ -1,0 +1,30 @@
+### Inversion Analysis of Load-Bearing Choices
+
+#### 1. Virtual Dotted Hierarchy (`area.topic`) vs. First-Class Storage Hierarchy
+* **Inversion:** Store hierarchy explicitly via directory prefixes, parent foreign keys, or a dedicated metadata column in `swarm.files`.
+* **Predicted Failure / Regression:** Requires database migrations on `swarm.files`, alters file naming and tombstone accounting against the strict 500-name workspace cap, breaks existing CLI/API clients expecting flat `brain--<topic>.md` keys, and violates the "without new storage" boundary.
+* **Did it beat the spec?** No. For a 43-topic corpus where grouping is purely navigational, client-side virtual clustering over standard naming rules avoids migration hazards, write locks, and tombstone exhaustion.
+
+#### 2. Client-Side Bounded Prefetch & Detached DOM Extraction vs. Server-Side Link Graph
+* **Inversion:** Extract link edges during `brain put` / `file_commit` and persist a backlinks table or JSON column on the server.
+* **Predicted Failure / Regression:** Requires embedding a Markdown parser/sanitizer in Deno edge functions (or database triggers), increases write latency and failure domains on topic saves, and requires new persistent storage ahead of roadmap H2.
+* **Did it beat the spec?** No. Reusing the client's existing sanitizer and `brain-links.ts` DOM walker in a detached fragment guarantees 100% parity with live rendering. The bounded prefetch (≤60 topics, ≤4 MB, ≤256 KB) honestly displays scanned progress without server-side changes.
+
+#### 3. Index-Coupled `scrollIntoView` TOC vs. Slugified Heading `id` Anchors
+* **Inversion:** Generate slug IDs on headings (`<h2 id="...">`) and link TOC entries via standard `<a href="#...">` fragments.
+* **Predicted Failure / Regression:** Reopening the HTML sanitizer attribute allowlist to member-authored `id` attributes creates severe DOM-clobbering risks against `LiveDashboard.astro`'s global element IDs.
+* **Did it beat the spec?** No. Operating-system and dashboard security invariants strictly supersede the minor convenience of shareable URL heading hashes.
+
+#### 4. Asymmetric Ledger Gating on `file_download_url` (Drop Idempotency, Keep Audit) vs. All-or-Nothing Logging
+* **Inversion:** Either silence both audit and idempotency rows for prefetch reads, or preserve both.
+* **Predicted Failure / Regression:** Silencing audit rows destroys security visibility for file artifact downloads; preserving both floods the ledger with 120 rows per viewer-session on prefetch.
+* **Did it beat the spec?** No. Discarding no-op idempotency rows while retaining single-row audit logging preserves security compliance while eliminating ledger churn.
+
+---
+
+### What a Lane Author Would Still Have to Invent
+* **None.** All thresholds (≤256 KB, 60 topics, 4 MB total, 4 concurrent, 60 s refresh, 64 KB storage item, 3 headings), exact DOM selectors (`data-depth`, `data-topic`, `span.brain-index-first-line`), storage keys (`cswarm.brain.<userId>.<workspaceId>.<topic>`), handoff interfaces (`setIndexFirstLine`, `BRAIN_STORAGE_PREFIX`, `brainTree()`), files, tests, and lane sequencing are fully specified.
+
+QUOTE-BACK: # Brain wiki: hierarchy, index pages, backlinks, without new storage
+VERDICT: PASS
+REASON: All load-bearing choices successfully withstand inversion, and every contract, threshold, file allocation, and test requirement is fully specified without remaining gaps or defects.

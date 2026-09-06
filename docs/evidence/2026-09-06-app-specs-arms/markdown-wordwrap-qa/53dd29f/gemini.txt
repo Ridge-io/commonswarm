@@ -1,0 +1,31 @@
+### Load-Bearing Design Choices & Inversions
+
+1. **Choice: Measure-first QA lane fixing only observed failures vs. Proactive CSS refactoring.**
+   - *Inversion:* Proactively rewrite the markdown typography and wrap rules to standard responsive styling.
+   - *Predicted Regression:* Churns `LiveDashboard.astro` and risks breaking shipped behaviors (table scroll isolation at 320 px, composer autogrow caps, `.dashboard__brain-markdown` styling) without verifying whether the reported bug actually exists.
+   - *Did it beat spec?* No. Measuring first avoids phantom bug churn and protects brittle shared layout rules.
+
+2. **Choice: Absolute pixel targets (±2 px at 16 px root) vs. Relative typographic units (rem/lh).**
+   - *Inversion:* Specify targets in line-height ratios (`lh`) or `rem` that scale proportionally.
+   - *Predicted Regression:* Relative math produces ambiguous targets (e.g., a 0.75-line gap is 19.44 px, while `--s-3` is 12 px), creating fuzzy CI pass/fail thresholds.
+   - *Did it beat spec?* No. Fixed pixel targets with ±2 px tolerance provide an unambiguous binary verdict in a controlled headless harness.
+
+3. **Choice: Separate CLI Chrome invocation (`--headless --screenshot`) vs. In-harness CDP capture.**
+   - *Inversion:* Capture screenshots directly within the existing `findChrome` test harness via CDP (`Page.captureScreenshot`).
+   - *Predicted Regression:* In-harness capture could risk DOM state pollution if preceding assertions mutated the page.
+   - *Did it beat spec?* Yes. Invoking Chrome CLI `--headless --screenshot` against static pages exits at initial paint before client-side JS executes `location.search` to apply `data-theme`, yielding un-themed or un-rendered screenshots across 24 distinct cold processes.
+
+4. **Choice: DOM tree computed-style walk vs. Pixel sampling / visual diffing for "light text".**
+   - *Inversion:* Sample raster pixel colors along the bottom text baseline.
+   - *Predicted Regression:* Subpixel font antialiasing and GPU raster differences introduce cross-environment CI flakes.
+   - *Did it beat spec?* Partially. Spec's DOM walk cannot detect gradient overlay elements (e.g., `::after` masks or floating translucent bands), a gap §6 explicitly admits.
+
+### What a Lane Author Still Has to Invent (GAPs)
+
+1. **GAP: Screenshot Timing & Serving:** How static fixture pages are served to CLI Chrome and how `--headless --screenshot` is forced to wait for client JS (`?theme=` query parsing) and web font loading before capturing.
+2. **GAP: Brain Topic Fixture Hosting and Screenshot Paths:** Whether brain topics for fixtures 1 and 2 live on dedicated pages or are co-located, and where their screenshots are saved (the 24-file path format only accounts for 6 fixtures × 2 widths × 2 themes).
+3. **GAP: Acceptance Threshold under Missing Fixture 6:** §4 strictly demands 24 screenshots and "every cell filled" in `RESULTS.md`, but §2.1 permits running without fixture 6; the author must invent whether acceptance requires 20 screenshots and omitted rows when the human step is skipped.
+
+QUOTE-BACK: # Markdown spacing and wordwrap: measure on a phone, then fix what fails
+VERDICT: FAIL
+REASON: The spec leaves the static fixture serving/screenshot wait mechanism, brain topic screenshot routing, and acceptance criteria when human-supplied fixture 6 is absent unspecified for the lane author.

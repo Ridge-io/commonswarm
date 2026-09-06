@@ -1,0 +1,28 @@
+### Load-Bearing Design Choices and Inversions
+
+1. **Choice: Platform configuration (Dashboard / REST API) instead of in-repo code/headers (CSP or CSS).**
+   - *Inversion:* Suppress the toolbar in application code (e.g., CSP header blocking `vercel.live` or CSS hiding `.vercel-toolbar`).
+   - *Failure / Regression:* Introducing code-level suppression adds fragile runtime hacks. If Vercel modifies its injected DOM or CDN domains, suppression silently breaks; if CSP rules leak into preview builds, preview feedback breaks.
+   - *Beat the spec?* No. Platform configuration is the native, zero-runtime-cost mechanism.
+
+2. **Choice: Disabling toolbar on Production only while keeping Preview active.**
+   - *Inversion:* Disable the toolbar across all environments (Production and Preview).
+   - *Failure / Regression:* Stripping the toolbar from preview deployments eliminates Vercel comments and collaborative review tooling for team members during PR evaluation.
+   - *Beat the spec?* No. The mobile obstruction occurs on production; preview utility should be preserved.
+
+3. **Choice: Authenticated visual 3-screenshot verification with positive preview control instead of API-only verification.**
+   - *Inversion:* Verify solely by checking `GET /v9/projects/coswarm-site` for `enableProductionFeedback: false`.
+   - *Failure / Regression:* An API response does not guarantee client cache invalidation or prove that the mobile viewport is clear. Conversely, taking an unauthenticated screenshot yields a false positive because anonymous sessions never receive the toolbar.
+   - *Beat the spec?* No. Step 4's positive preview control is essential to prove the browser session was actually authenticated.
+
+4. **Choice: Operator/Lead manual action + docs-only evidence lane instead of CI automation.**
+   - *Inversion:* Automate the setting change and mobile visual verification in a CI pipeline.
+   - *Failure / Regression:* Demands storing privileged Vercel team tokens and running authenticated mobile browser sessions in CI for a one-off configuration flip, creating needless security exposure and maintenance overhead.
+   - *Beat the spec?* No. Operator execution with documented artifact evidence is the right operational boundary.
+
+### Uninvented Details (Gaps for Lane Author)
+- **None.** The spec specifies the exact dashboard path, REST endpoint/payload, target branch (`lane/toolbar-evidence`), directory (`docs/evidence/2026-09-06-vercel-toolbar/`), screenshot filenames (`before.png`, `after.png`, `control-preview.png`), and ledger recording location. No code, thresholds, or unowned tests remain for a lane author to invent.
+
+QUOTE-BACK: # Vercel toolbar off in production
+VERDICT: PASS
+REASON: All inverted alternatives introduce regressions or maintenance debt compared to the spec's zero-code platform toggle, and no implementation gaps or defects remain.

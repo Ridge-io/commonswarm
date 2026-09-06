@@ -1,0 +1,35 @@
+### Load-Bearing Design Inversions
+
+#### 1. Piggyback on Reconcile Read vs. Decoupled Dedicated Heartbeat Transport
+- **Inversion:** Keep the idle heartbeat as an independent HTTP request (`POST /functions/v1/activity`) on its own timer (e.g., dialed back to 300 s) rather than multiplexing presence telemetry into signal inbox reads.
+- **Predicted failure/regression:** Inverting to a separate call eliminates cross-subsystem coupling: a signals read regression, timeout, or schema failure cannot suppress activity presence, and awaiting `realtime.send` cannot add latency to inbox signal delivery.
+- **Did it beat the spec?** No. Separate calls double edge invocations for an idle seat (288 reads + 288 heartbeats = 576 edge calls instead of 288). The spec isolates failures by ensuring activity rejection never fails the read, while awaiting `realtime.send` adds negligible latency on an already open DB transaction.
+
+#### 2. Server-Authoritative Relay vs. Client-Direct Realtime Publishing
+- **Inversion:** Have the listener client connect and publish idle presence frames directly to the Supabase Realtime activity topic over its existing WebSocket.
+- **Predicted failure/regression:** Eliminates edge function execution entirely for heartbeats ($0 edge cost). However, as empirical tests in draft 1 proved, granting `anon` broadcast/read permissions on private topics leaks workspace presence to any entity holding a workspace ID, forfeits server stamping (`principalId`, `emittedAt`), bypasses credential redaction, and `send({ack: false})` silently drops frames on network partitions.
+- **Did it beat the spec?** No. The inversion introduces major security and trust regressions. The spec's server-stamped relay preserves data authenticity and access control.
+
+#### 3. 5-Minute Presence Freshness vs. High-Frequency (15–30 s) Presence Detection
+- **Inversion:** Maintain high-frequency (15–30 s) heartbeat intervals so the dashboard detects dead or halted daemons within 30 seconds rather than relaxing idle freshness to 330 seconds (`AGENT_ACTIVITY_IDLE_STALE_MS`).
+- **Predicted failure/regression:** Preserving 30 s stale detection avoids a ~5-minute blind spot where a crashed or disconnected listener still appears "idle · alive" on the dashboard.
+- **Did it beat the spec?** No. Burning 5,760 (or 1,440) edge invocations per seat-day solely to detect whether an idle agent stopped waiting for work violates the core design mandate. The UI copy explicitly conveys resolution (`idle · seen N min ago`), and active work transitions instantly restore 750 ms / 15 s cadence.
+
+#### 4. In-Band Capability Negotiation with Retry-on-400 vs. Strict Deploy Ordering
+- **Inversion:** Enforce strict deployment ordering (L1 edge functions deploy before L2 listener clients) or static version negotiation instead of optimistic piggybacking with runtime 400 rollback recovery.
+- **Predicted failure/regression:** Eliminates the edge case where an edge rollback burns one `400 invalid_request` read before falling back to a non-activity read.
+- **Did it beat the spec?** No. Strict deployment locks client releases to backend schedules. The spec's single retry on 400 with automatic flag clearing handles zero-downtime rollouts and emergency rollbacks without dropping inbox signals.
+
+---
+
+### Lane Author Inventions
+None. The spec exhaustively pins down:
+- Exact wire shapes and schemas (`activity` nested object, serializer extraction).
+- Parser discriminator logic (`Object.hasOwn(body, "activity")` for exact-keys parser compatibility).
+- Sequence monotonicity (`++this.sequence`).
+- Constants, bounds, and error sets (`ACTIVITY_REJECT_CODES`, `read_${code}`, 4,096-byte limit).
+- Exact file paths, cross-spec lane serialization (`MODEL-PER-AGENT.md` rebasing order, `LiveDashboard.astro`), and automated test criteria.
+
+QUOTE-BACK: # Idle heartbeat: fold it into the reconcile read
+VERDICT: PASS
+REASON: The design withstands all architectural inversions, introduces no data loss or security regressions, and specifies all interfaces, failure fallbacks, and cross-spec lane orders without leaving ambiguities for lane authors.
