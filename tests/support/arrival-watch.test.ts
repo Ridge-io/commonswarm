@@ -23,6 +23,7 @@ import {
   runArrivalWatch,
   type ArrivalCursorStore,
 } from "../../src/cloud/arrival-watch.js";
+import { cloudTarget } from "../../src/cloud/config.js";
 import { nextIdlePollMs } from "../../src/cloud/idle-poll.js";
 import {
   SignalHttpError,
@@ -30,11 +31,28 @@ import {
   type AgentSignalPage,
   type SignalCursor,
 } from "../../src/cloud/signals.js";
+import { WAKE_EVENT, WAKE_TOPIC_PREFIX } from "../../src/cloud/wake.js";
+import {
+  createWakeSubscriber,
+  LISTENER_RECONCILE_POLL_MS,
+  LISTENER_WAKE_MODE_PUSH,
+  REALTIME_SUBSCRIBE_STATUS,
+  type WakeHandle,
+  type WakeRealtimeChannel,
+  type WakeRealtimeClient,
+} from "../../src/listener/wake.js";
 
 const WORKSPACE = "aaaaaaaa-aaaa-4aaa-8aaa-aaaaaaaaaaaa";
 const AGENT = "bbbbbbbb-bbbb-4bbb-8bbb-bbbbbbbbbbbb";
 const SENDER = "cccccccc-cccc-4ccc-8ccc-cccccccccccc";
 const TARGET = { url: "https://api.example.test", anonKey: "public-anon-key" };
+const CLOUD = cloudTarget(TARGET.url, TARGET.anonKey);
+const WAKE_TOPIC = `${WAKE_TOPIC_PREFIX}${"A".repeat(43)}`;
+const WAKE_HINT = { topic: WAKE_TOPIC, event: WAKE_EVENT } as const;
+const EXISTING_CURSOR = {
+  created_at: "2026-08-28T10:04:00.000Z",
+  id: "55555555-5555-4555-8555-555555555555",
+};
 
 function row(id: string, body: string, createdAt: string): SignalRecord {
   return {
@@ -54,7 +72,10 @@ function row(id: string, body: string, createdAt: string): SignalRecord {
   };
 }
 
-function page(rows: SignalRecord[]): AgentSignalPage {
+function page(
+  rows: SignalRecord[],
+  extra: { wake?: AgentSignalPage["wake"] } = {},
+): AgentSignalPage {
   const last = rows.at(-1);
   return {
     signals: rows,
@@ -71,6 +92,78 @@ function page(rows: SignalRecord[]): AgentSignalPage {
       : null,
     malformedRows: 0,
     pendingDeliveryCount: 1,
+    ...(extra.wake === undefined ? {} : { wake: extra.wake }),
+  };
+}
+
+class FakeChannel implements WakeRealtimeChannel {
+  statusCb: ((status: string, err?: Error) => void) | null = null;
+  wakeCb: ((message: { payload?: unknown }) => void) | null = null;
+  autoSubscribe = false;
+  constructor(readonly topic: string) {}
+  on(
+    _type: "broadcast",
+    _filter: { event: string },
+    callback: (message: { payload?: unknown }) => void,
+  ): WakeRealtimeChannel {
+    this.wakeCb = callback;
+    return this;
+  }
+  subscribe(callback: (status: string, err?: Error) => void): WakeRealtimeChannel {
+    this.statusCb = callback;
+    if (this.autoSubscribe) callback(REALTIME_SUBSCRIBE_STATUS.SUBSCRIBED);
+    return this;
+  }
+  unsubscribe(): void {}
+  emitStatus(status: string, err?: Error): void {
+    this.statusCb?.(status, err);
+  }
+  emitWake(): void {
+    this.wakeCb?.({ payload: { v: 1 } });
+  }
+}
+
+class FakeRealtime implements WakeRealtimeClient {
+  channelInstance: FakeChannel | null = null;
+  channels: FakeChannel[] = [];
+  authed: string | null = null;
+  autoSubscribe = false;
+  setAuth(token: string): void {
+    this.authed = token;
+  }
+  channel(topic: string): FakeChannel {
+    const channel = new FakeChannel(topic);
+    channel.autoSubscribe = this.autoSubscribe;
+    this.channelInstance = channel;
+    this.channels.push(channel);
+    return channel;
+  }
+  removeChannel(): void {}
+  disconnect(): void {}
+}
+
+function recordUntil(inner: WakeHandle, untils: number[]): WakeHandle {
+  return {
+    get state() {
+      return inner.state;
+    },
+    get hasTopic() {
+      return inner.hasTopic;
+    },
+    snapshot: (nowMs) => inner.snapshot(nowMs),
+    next: (opts) => {
+      untils.push(opts.until);
+      return inner.next(opts);
+    },
+    setTopic: (topic) => inner.setTopic(topic),
+    noteReconcile: (nowMs) => inner.noteReconcile(nowMs),
+    noteClaim: (nowMs) => inner.noteClaim(nowMs),
+    noteWakeClaim: (nowMs) => inner.noteWakeClaim(nowMs),
+    canClaimOnWake: (nowMs) => inner.canClaimOnWake(nowMs),
+    coalescingRemainingMs: (nowMs) => inner.coalescingRemainingMs(nowMs),
+    overWakeBudget: (nowMs) => inner.overWakeBudget(nowMs),
+    markRateLimited: (nowMs) => inner.markRateLimited(nowMs),
+    close: () => inner.close(),
   };
 }
 
@@ -500,4 +593,313 @@ test("a stale arrival watch lock is stolen when the other pid is gone", async ()
   assert.match(raw, new RegExp(`"pid":${process.pid}`));
   await releaseArrivalWatchLock(lockPath, process.pid);
   await rm(root, { recursive: true, force: true });
+});
+
+test("delayed SUBSCRIBED unblocks the wait so a later wake can emit", { timeout: 5_000 }, async () => {
+  const nowMs = Date.parse("2026-09-06T00:00:00.000Z");
+  const fake = new FakeRealtime();
+  fake.autoSubscribe = false;
+  const inner = createWakeSubscriber({
+    target: CLOUD,
+    now: () => nowMs,
+    createRealtime: () => fake,
+  });
+  const abort = new AbortController();
+  const memory = memoryStore(EXISTING_CURSOR);
+  const arrived = row(
+    "aaaaaaaa-aaaa-4aaa-8aaa-aaaaaaaaaaa2",
+    "delayed wake",
+    "2026-09-06T00:00:02.000Z",
+  );
+  const emitted: string[] = [];
+  let reads = 0;
+  try {
+    await runArrivalWatch({
+      workspaceId: WORKSPACE,
+      principalId: AGENT,
+      store: memory.store,
+      signal: abort.signal,
+      now: () => nowMs,
+      wake: inner,
+      sleep: async () => undefined,
+      readPage: async () => {
+        reads += 1;
+        if (reads === 1) {
+          setTimeout(() => {
+            fake.channelInstance?.emitStatus(REALTIME_SUBSCRIBE_STATUS.SUBSCRIBED);
+            fake.channelInstance?.emitWake();
+          }, 0);
+          return page([], { wake: WAKE_HINT });
+        }
+        return page([arrived], { wake: WAKE_HINT });
+      },
+      emit: async (signal) => {
+        emitted.push(signal.id);
+        abort.abort();
+      },
+    });
+  } finally {
+    abort.abort();
+    await inner.close();
+  }
+  assert.deepEqual(emitted, [arrived.id]);
+  assert.ok(reads >= 2, `delayed SUBSCRIBED must not hang next(); reads=${reads}`);
+});
+
+test("wake drives one read, one notification, and cursor advance", { timeout: 5_000 }, async () => {
+  const nowMs = Date.parse("2026-09-06T00:00:00.000Z");
+  const fake = new FakeRealtime();
+  fake.autoSubscribe = true;
+  const inner = createWakeSubscriber({
+    target: CLOUD,
+    now: () => nowMs,
+    createRealtime: () => fake,
+  });
+  const abort = new AbortController();
+  const memory = memoryStore(EXISTING_CURSOR);
+  const arrived = row(
+    "aaaaaaaa-aaaa-4aaa-8aaa-aaaaaaaaaaa1",
+    "wake arrival",
+    "2026-09-06T00:00:01.000Z",
+  );
+  const emitted: string[] = [];
+  const lines: string[] = [];
+  let reads = 0;
+  let modeAtEnd: string | null = null;
+  try {
+    await runArrivalWatch({
+      workspaceId: WORKSPACE,
+      principalId: AGENT,
+      store: memory.store,
+      signal: abort.signal,
+      now: () => nowMs,
+      wake: inner,
+      sleep: async () => undefined,
+      readPage: async () => {
+        reads += 1;
+        if (reads === 1) return page([], { wake: WAKE_HINT });
+        if (reads === 2) {
+          queueMicrotask(() => fake.channelInstance?.emitWake());
+          return page([], { wake: WAKE_HINT });
+        }
+        return page([arrived], { wake: WAKE_HINT });
+      },
+      emit: async (signal) => {
+        const notification = arrivalNotification(signal, WORKSPACE, TARGET);
+        lines.push(formatArrivalNotification(notification), JSON.stringify(notification));
+        emitted.push(signal.id);
+        abort.abort();
+      },
+    });
+    modeAtEnd = inner.snapshot(nowMs).mode;
+  } finally {
+    abort.abort();
+    await inner.close();
+  }
+  assert.equal(modeAtEnd, LISTENER_WAKE_MODE_PUSH);
+  assert.equal(fake.authed, CLOUD.anonKey);
+  assert.deepEqual(emitted, [arrived.id]);
+  assert.equal(reads, 3, "the wake itself must cause exactly one inbox read");
+  assert.deepEqual(memory.value(), { created_at: arrived.created_at, id: arrived.id });
+  for (const line of lines) {
+    assert.equal(line.includes(WAKE_TOPIC), false);
+    assert.equal(line.includes("cswarm-wake:"), false);
+  }
+});
+
+test("three wakes in a burst cause at most two reads", { timeout: 5_000 }, async () => {
+  const nowMs = Date.parse("2026-09-06T00:00:00.000Z");
+  const fake = new FakeRealtime();
+  fake.autoSubscribe = true;
+  const inner = createWakeSubscriber({
+    target: CLOUD,
+    now: () => nowMs,
+    createRealtime: () => fake,
+  });
+  const abort = new AbortController();
+  let reads = 0;
+  let wakeReads = 0;
+  const timer = setTimeout(() => abort.abort(), 50);
+  try {
+    await runArrivalWatch({
+      workspaceId: WORKSPACE,
+      principalId: AGENT,
+      store: memoryStore(EXISTING_CURSOR).store,
+      signal: abort.signal,
+      now: () => nowMs,
+      wake: inner,
+      sleep: async () => undefined,
+      readPage: async () => {
+        reads += 1;
+        if (reads === 2) {
+          queueMicrotask(() => {
+            fake.channelInstance?.emitWake();
+            fake.channelInstance?.emitWake();
+            fake.channelInstance?.emitWake();
+          });
+        }
+        if (reads > 2) wakeReads += 1;
+        if (wakeReads >= 2) abort.abort();
+        return page([], { wake: WAKE_HINT });
+      },
+      emit: async () => undefined,
+    });
+  } finally {
+    clearTimeout(timer);
+    abort.abort();
+    await inner.close();
+  }
+  assert.ok(wakeReads >= 1, `expected at least one wake read, got ${wakeReads}`);
+  assert.ok(wakeReads <= 2, `three wakes must not each force a read; wakeReads=${wakeReads}`);
+});
+
+test("no poll timer while subscribed", { timeout: 5_000 }, async () => {
+  const nowMs = Date.parse("2026-09-06T00:00:00.000Z");
+  const fake = new FakeRealtime();
+  fake.autoSubscribe = true;
+  const inner = createWakeSubscriber({
+    target: CLOUD,
+    now: () => nowMs,
+    createRealtime: () => fake,
+  });
+  const abort = new AbortController();
+  const sleeps: number[] = [];
+  let reads = 0;
+  let modeAtEnd: string | null = null;
+  try {
+    await runArrivalWatch({
+      workspaceId: WORKSPACE,
+      principalId: AGENT,
+      store: memoryStore(EXISTING_CURSOR).store,
+      signal: abort.signal,
+      now: () => nowMs,
+      wake: inner,
+      pollMs: ARRIVAL_WATCH_POLL_MS,
+      sleep: async (ms) => {
+        sleeps.push(ms);
+      },
+      readPage: async () => {
+        reads += 1;
+        if (reads >= 2) abort.abort();
+        return page([], { wake: WAKE_HINT });
+      },
+      emit: async () => undefined,
+    });
+    modeAtEnd = inner.snapshot(nowMs).mode;
+  } finally {
+    abort.abort();
+    await inner.close();
+  }
+  assert.equal(modeAtEnd, LISTENER_WAKE_MODE_PUSH);
+  assert.equal(sleeps.includes(ARRIVAL_WATCH_POLL_MS), false);
+  assert.equal(sleeps.includes(60_000), false);
+  assert.ok(reads <= 2, `subscribed reconcile must not poll; reads=${reads}`);
+});
+
+test("CHANNEL_ERROR resumes the 60s poll and SUBSCRIBED stops it", { timeout: 5_000 }, async () => {
+  const nowMs = Date.parse("2026-09-06T00:00:00.000Z");
+  const fake = new FakeRealtime();
+  fake.autoSubscribe = true;
+  const inner = createWakeSubscriber({
+    target: CLOUD,
+    now: () => nowMs,
+    createRealtime: () => fake,
+  });
+  const untils: number[] = [];
+  const wake = recordUntil(inner, untils);
+  const abort = new AbortController();
+  let reads = 0;
+  let modeAtEnd: string | null = null;
+  const refused = new Error(
+    `Unauthorized: You do not have permissions to read from this Channel topic: ${WAKE_TOPIC}`,
+  );
+  try {
+    await runArrivalWatch({
+      workspaceId: WORKSPACE,
+      principalId: AGENT,
+      store: memoryStore(EXISTING_CURSOR).store,
+      signal: abort.signal,
+      now: () => nowMs,
+      wake,
+      pollMs: ARRIVAL_WATCH_POLL_MS,
+      sleep: async () => undefined,
+      readPage: async () => {
+        reads += 1;
+        if (reads === 2) {
+          queueMicrotask(() =>
+            fake.channelInstance?.emitStatus(
+              REALTIME_SUBSCRIBE_STATUS.CHANNEL_ERROR,
+              refused,
+            )
+          );
+        }
+        if (reads === 3) {
+          queueMicrotask(() =>
+            fake.channelInstance?.emitStatus(REALTIME_SUBSCRIBE_STATUS.SUBSCRIBED)
+          );
+        }
+        if (reads === 4) abort.abort();
+        return page([], { wake: WAKE_HINT });
+      },
+      emit: async () => undefined,
+    });
+    modeAtEnd = inner.snapshot(nowMs).mode;
+  } finally {
+    abort.abort();
+    await inner.close();
+  }
+  assert.ok(
+    untils.includes(nowMs + ARRIVAL_WATCH_POLL_MS),
+    `CHANNEL_ERROR must wait ${ARRIVAL_WATCH_POLL_MS}ms, untils=${untils.join(",")}`,
+  );
+  assert.ok(
+    untils.includes(nowMs + LISTENER_RECONCILE_POLL_MS),
+    `SUBSCRIBED must restore the ${LISTENER_RECONCILE_POLL_MS}ms reconcile, untils=${untils.join(",")}`,
+  );
+  assert.equal(modeAtEnd, LISTENER_WAKE_MODE_PUSH);
+  assert.equal(ARRIVAL_WATCH_POLL_MS, 60_000);
+  assert.equal(LISTENER_RECONCILE_POLL_MS, 300_000);
+  assert.equal(refused.message.includes(WAKE_TOPIC), true, "positive control: the Realtime error names the topic");
+});
+
+test("a server response without wake keeps today's poll and never joins", async () => {
+  const fake = new FakeRealtime();
+  const inner = createWakeSubscriber({
+    target: CLOUD,
+    createRealtime: () => fake,
+  });
+  const abort = new AbortController();
+  const sleeps: number[] = [];
+  let reads = 0;
+  const stop = await runArrivalWatch({
+    workspaceId: WORKSPACE,
+    principalId: AGENT,
+    store: memoryStore(EXISTING_CURSOR).store,
+    signal: abort.signal,
+    wake: inner,
+    pollMs: ARRIVAL_WATCH_POLL_MS,
+    sleep: async (ms) => {
+      sleeps.push(ms);
+      abort.abort();
+    },
+    readPage: async () => {
+      reads += 1;
+      return page([]);
+    },
+    emit: async () => undefined,
+  });
+  await inner.close();
+  assert.equal(stop.reason, "cancelled");
+  assert.equal(inner.hasTopic, false);
+  assert.equal(fake.channels.length, 0);
+  assert.deepEqual(sleeps, [ARRIVAL_WATCH_POLL_MS]);
+  assert.equal(reads, 1);
+});
+
+test("arrival-watch source never imports claim or ack", async () => {
+  const src = await readFile("src/cloud/arrival-watch.ts", "utf8");
+  assert.equal(src.includes("claim_agent_inbox"), false);
+  assert.equal(src.includes("ack_agent_delivery"), false);
+  assert.equal(src.includes('from "./delivery.js"'), false);
+  assert.equal(src.includes("from \"./delivery.js\""), false);
 });
