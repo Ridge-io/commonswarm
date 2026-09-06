@@ -446,6 +446,28 @@ test("CHANNEL_ERROR flips snapshot to poll without reading error.message", async
   await wake.close();
 });
 
+test("setTopic rotation records topicRotatedAt and joins the new channel", async () => {
+  const fake = new FakeRealtime();
+  const nowMs = Date.parse("2026-07-30T00:00:10.000Z");
+  const wake = createWakeSubscriber({
+    target: cloudTarget("https://cloud.example.test", "anon"),
+    now: () => nowMs,
+    createRealtime: () => fake,
+  });
+  wake.setTopic(WAKE_TOPIC);
+  fake.channels[0]!.emitStatus(REALTIME_SUBSCRIBE_STATUS.SUBSCRIBED);
+  assert.equal(wake.snapshot().topicRotatedAt, null);
+  wake.setTopic(WAKE_TOPIC_B);
+  assert.equal(fake.channels.length, 2);
+  assert.equal(fake.channels[1]!.topic, WAKE_TOPIC_B);
+  fake.channels[1]!.emitStatus(REALTIME_SUBSCRIBE_STATUS.SUBSCRIBED);
+  const snap = wake.snapshot();
+  assert.equal(snap.mode, "push");
+  assert.equal(snap.topicRotatedAt, new Date(nowMs).toISOString());
+  assert.equal(JSON.stringify(snap).includes("cswarm-wake:"), false);
+  await wake.close();
+});
+
 test("setTopic does not clobber a live subscribe when the old unsubscribe settles late", async () => {
   const fake = new FakeRealtime();
   const wake = createWakeSubscriber({
@@ -468,6 +490,77 @@ test("setTopic does not clobber a live subscribe when the old unsubscribe settle
   assert.equal(wake.state, "subscribed");
   assert.equal(wake.snapshot().mode, "push");
   assert.ok(wake.snapshot().topicRotatedAt);
+  await wake.close();
+});
+
+test("rotated wake id: CLOSED then a new topic on the next read returns to push", async () => {
+  const nowMs = Date.parse("2026-07-30T00:00:10.000Z");
+  const fake = new FakeRealtime();
+  fake.autoSubscribe = true;
+  const wake = createWakeSubscriber({
+    target: cloudTarget("https://cloud.example.test", "anon"),
+    now: () => nowMs,
+    createRealtime: () => fake,
+  });
+  const journal = new MemoryJournal();
+  const controller = new AbortController();
+  let claims = 0;
+  let reads = 0;
+  let lastWake: ListenerWakeStatus | null = null;
+  const stop = await runListenerRuntime({
+    target: cloudTarget("https://cloud.example.test", "anon"),
+    workspaceId: WORKSPACE_ID,
+    principalId: PRINCIPAL_ID,
+    listenerInstanceId: journal.record.listenerInstanceId,
+    deliveryJournal: journal,
+    deliveryClient: {
+      async claimAgentInbox() {
+        claims += 1;
+        if (claims === 1) {
+          fake.channels[0]?.emitStatus(REALTIME_SUBSCRIBE_STATUS.CLOSED);
+        }
+        if (claims >= 2 && lastWake?.mode === "push" && lastWake.topicRotatedAt) {
+          controller.abort();
+        }
+        if (claims >= 8) controller.abort();
+        return claims === 1
+          ? claimResult([])
+          : {
+            ...claimResult([]),
+            wake: { topic: WAKE_TOPIC_B, event: WAKE_EVENT },
+          };
+      },
+      async ackAgentDelivery() {
+        throw new Error("ack must not run");
+      },
+    },
+    credentialSession: { async bearer() { return "token"; } },
+    store: new MemoryStore(),
+    model: new FakeModel(),
+    signal: controller.signal,
+    pollMs: IDLE_POLL_DEFAULT_MS,
+    now: () => nowMs,
+    sleep: async () => {},
+    wake,
+    onEvent: (event) => {
+      if (event.type === "wake") lastWake = event.wake;
+    },
+    readPage: async () => {
+      reads += 1;
+      if (reads === 1) return durablePage();
+      return {
+        ...durablePage(false),
+        wake: { topic: WAKE_TOPIC_B, event: WAKE_EVENT },
+      };
+    },
+  });
+  assert.equal(stop.reason, "cancelled");
+  assert.ok(claims >= 2);
+  assert.ok(reads >= 2);
+  assert.equal(lastWake?.mode, "push");
+  assert.ok(lastWake?.topicRotatedAt);
+  assert.equal(fake.channels.length, 2);
+  assert.equal(fake.channels[1]!.topic, WAKE_TOPIC_B);
   await wake.close();
 });
 
