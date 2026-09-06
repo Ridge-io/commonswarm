@@ -11876,3 +11876,88 @@ test("durable-delivery: Phase C resolveLedgerRace recharge — denied losing cla
     }
   });
 });
+
+test("idle-cost retention deletes old claim audits by kind and expired idempotency keys in batches", async () => {
+  /* Outcome cannot distinguish empty historical claims from leased ones
+   * (both were accepted). Retention therefore deletes claim_agent_inbox
+   * older than claim_audit_retention_days. Idempotency keys follow
+   * idempotency_retention_days. */
+  await scenario(async (f) => {
+    const oldIdemId = `idle_idem_old_${randomUUID().replaceAll("-", "").slice(0, 24)}`;
+    const freshIdemId = `idle_idem_new_${randomUUID().replaceAll("-", "").slice(0, 24)}`;
+    const principal = `agent:${randomUUID()}`;
+
+    await sql`
+      INSERT INTO swarm.audit_log (occurred_at, command_kind, outcome, workspace_id)
+      VALUES
+        (statement_timestamp() - interval '8 days', 'claim_agent_inbox', 'accepted', ${f.workspaceA}::uuid),
+        (statement_timestamp() - interval '8 days', 'claim_agent_inbox', 'accepted', ${f.workspaceA}::uuid),
+        (statement_timestamp() - interval '8 days', 'claim_agent_inbox', 'accepted', ${f.workspaceA}::uuid),
+        (statement_timestamp() - interval '1 day', 'claim_agent_inbox', 'accepted', ${f.workspaceA}::uuid),
+        (statement_timestamp() - interval '8 days', 'ack_agent_delivery', 'accepted', ${f.workspaceA}::uuid)
+    `;
+    await sql`
+      INSERT INTO swarm.idempotency_keys (
+        principal_kind, principal_id, command_id,
+        workspace_id, stream_id, request_hash, response, created_at
+      ) VALUES
+        (
+          'agent', ${principal}, ${oldIdemId},
+          ${f.workspaceA}::uuid, ${f.streamA}::uuid, 'idle-old', '{}'::jsonb,
+          statement_timestamp() - interval '40 days'
+        ),
+        (
+          'agent', ${principal}, ${freshIdemId},
+          ${f.workspaceA}::uuid, ${f.streamA}::uuid, 'idle-new', '{}'::jsonb,
+          statement_timestamp() - interval '1 day'
+        )
+    `;
+
+    const beforeAudit = await sql<{ n: string }[]>`
+      SELECT count(*)::text AS n FROM swarm.audit_log
+      WHERE workspace_id = ${f.workspaceA}::uuid
+        AND command_kind = 'claim_agent_inbox'
+        AND occurred_at < statement_timestamp() - interval '7 days'
+    `;
+    const beforeIdem = await sql<{ n: string }[]>`
+      SELECT count(*)::text AS n FROM swarm.idempotency_keys
+      WHERE command_id IN (${oldIdemId}, ${freshIdemId})
+    `;
+    assert.equal(Number(beforeAudit[0]?.n) >= 3, true, `old claim audits present: ${beforeAudit[0]?.n}`);
+    assert.equal(Number(beforeIdem[0]?.n), 2);
+
+    const [purged] = await sql<{ result: unknown }[]>`
+      SELECT swarm.purge_idle_cost_tables() AS result
+    `;
+    const result = purged?.result as { audit_log_deleted: number; idempotency_keys_deleted: number };
+    assert.ok(result.audit_log_deleted >= 3, JSON.stringify(result));
+    assert.ok(result.idempotency_keys_deleted >= 1, JSON.stringify(result));
+
+    const afterOldAudit = await sql<{ n: string }[]>`
+      SELECT count(*)::text AS n FROM swarm.audit_log
+      WHERE workspace_id = ${f.workspaceA}::uuid
+        AND command_kind = 'claim_agent_inbox'
+        AND occurred_at < statement_timestamp() - interval '7 days'
+    `;
+    const afterFreshAudit = await sql<{ n: string }[]>`
+      SELECT count(*)::text AS n FROM swarm.audit_log
+      WHERE workspace_id = ${f.workspaceA}::uuid
+        AND command_kind = 'claim_agent_inbox'
+        AND occurred_at >= statement_timestamp() - interval '7 days'
+    `;
+    const afterAck = await sql<{ n: string }[]>`
+      SELECT count(*)::text AS n FROM swarm.audit_log
+      WHERE workspace_id = ${f.workspaceA}::uuid
+        AND command_kind = 'ack_agent_delivery'
+        AND occurred_at < statement_timestamp() - interval '7 days'
+    `;
+    const afterIdem = await sql<{ command_id: string }[]>`
+      SELECT command_id FROM swarm.idempotency_keys
+      WHERE command_id IN (${oldIdemId}, ${freshIdemId})
+    `;
+    assert.equal(Number(afterOldAudit[0]?.n), 0, "old claim_agent_inbox audits are gone");
+    assert.ok(Number(afterFreshAudit[0]?.n) >= 1, "fresh claim audits remain");
+    assert.ok(Number(afterAck[0]?.n) >= 1, "old ack audits are not in the claim purge");
+    assert.deepEqual(afterIdem.map((row) => row.command_id).sort(), [freshIdemId]);
+  });
+});
