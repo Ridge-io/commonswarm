@@ -818,6 +818,49 @@ test("CHANNEL_ERROR path reconciles on the idle cadence then push on resubscribe
   assert.ok(intervals.includes(IDLE_POLL_DEFAULT_MS));
 });
 
+test("wake ticks while mode is poll still read; skipRead is push-only", async () => {
+  const journal = new MemoryJournal();
+  const controller = new AbortController();
+  const wake = new ScriptedWake();
+  wake.setPoll("channel_error");
+  wake.queue.push("wake", "wake", "wake");
+  let claims = 0;
+  let reads = 0;
+  const stop = await runListenerRuntime({
+    target: cloudTarget("https://cloud.example.test", "anon"),
+    workspaceId: WORKSPACE_ID,
+    principalId: PRINCIPAL_ID,
+    listenerInstanceId: journal.record.listenerInstanceId,
+    deliveryJournal: journal,
+    deliveryClient: {
+      async claimAgentInbox() {
+        claims += 1;
+        if (claims >= 3) controller.abort();
+        return claimResult([]);
+      },
+      async ackAgentDelivery() {
+        throw new Error("ack must not run");
+      },
+    },
+    credentialSession: { async bearer() { return "token"; } },
+    store: new MemoryStore(),
+    model: new FakeModel(),
+    signal: controller.signal,
+    pollMs: IDLE_POLL_DEFAULT_MS,
+    now: () => Date.parse("2026-07-30T00:00:00.000Z"),
+    sleep: async () => {},
+    wake,
+    readPage: async () => {
+      reads += 1;
+      return durablePage();
+    },
+  });
+  assert.equal(stop.reason, "cancelled");
+  assert.equal(wake.wakeClaims, 0);
+  assert.ok(reads >= 3);
+  assert.equal(claims, 3);
+});
+
 test("reconcile deadline while subscribed is 5 minutes", () => {
   assert.equal(LISTENER_RECONCILE_POLL_MS, 300_000);
   assert.equal(formatIdlePollDuration(LISTENER_RECONCILE_POLL_MS), "5m");

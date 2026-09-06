@@ -1169,8 +1169,7 @@ export async function runListenerRuntime(
         }
         if (
           reason === "wake" &&
-          !wakeSubscriber.snapshot(now()).rateLimited &&
-          !wakeSubscriber.overWakeBudget(now())
+          wakeSubscriber.snapshot(now()).mode === "push"
         ) {
           const coalesceMs = wakeSubscriber.coalescingRemainingMs(now());
           if (coalesceMs > 0) await sleep(coalesceMs, abort);
@@ -1178,10 +1177,7 @@ export async function runListenerRuntime(
             stop = { reason: "cancelled" };
             break;
           }
-          if (
-            !wakeSubscriber.snapshot(now()).rateLimited &&
-            !wakeSubscriber.overWakeBudget(now())
-          ) {
+          if (wakeSubscriber.snapshot(now()).mode === "push") {
             skipRead = true;
           }
         }
