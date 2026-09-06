@@ -1,0 +1,146 @@
+# ARM-opus — adversarial review of lane/wake-redaction @ 3920d3217448de5f59553369c9a55d3460b47eee
+
+Quote-back, first `diff --git` line of DIFF.patch:
+
+    diff --git a/src/host/credential-redaction.ts b/src/host/credential-redaction.ts
+
+Read on this SHA in the worktree; no file in the tree was edited. Mutation work was done in a
+throwaway copy outside the tree (`scratchpad/mut-opus`, removed after use).
+
+---
+
+## R1 — REFUTE: `{43}` is the wrong bound for a wake_id
+
+Spec: `docs/design/2026-09-06-PUSH-DELIVERY.md:68` — the column default is
+`translate(encode(extensions.gen_random_bytes(32), 'base64'), '+/=', '-_')`, and
+`:118` gives `rotate_wake_id` the identical expression. Both generators are the same
+expression, so there is one length to check.
+
+base64 of 32 bytes is 44 characters with exactly one `=` pad (32 = 10*3 + 2). `translate`
+with a 3-char `from` and a 2-char `to` DELETES the third character, so `=` is removed and
+`+`/`/` are substituted 1:1 — output is always exactly 43 characters from the alphabet
+`[A-Za-z0-9_-]`. `encode(...,'base64')` wraps at 76 characters, and 44 < 76, so no newline
+is injected. The length is therefore constant at 43 for both the migration default and
+`rotate_wake_id`; it is not a uuid and never padded. `{43}` is right, and `{43,}` or `+`
+would over-match against the spec.
+
+Measured on the constant at `src/host/credential-redaction.ts:25-28`: a 43-char suffix
+matches, a 42-char suffix does not, and a 44-char suffix is redacted for its first 43 with
+one character left over (a residue of one base64url character, not a leak of the id).
+
+REFUTATION FAILED. No defect.
+
+## R2 — REFUTE: a site that can carry the topic is missed
+
+Enumerated, not pattern-matched. Under `src/` and `supabase/functions/` the only remaining
+occurrence of the multi-prefix literal `swm_(?:agt|inv|cap)_` is the definer
+`src/host/credential-redaction.ts:26`. The four other sites read the constant:
+- `src/listener/supervisor.ts:3,173` (`localDiagnostic`, the sole producer of
+  `lastErrorDetail` via `safeErrorDetail` `:180-182`, used at `:810`, `:841`, `:870`)
+- `src/listener/control.ts:29,437` (`lastErrorDetail` on read)
+- `src/listener/control.ts:474` (`lastWorkerStderrTail` on read)
+- `src/listener/control.ts:830` (per-string scan for `events.ndjson`)
+`CREDENTIAL_PREFIX_RE` no longer exists and has no importer.
+
+Remaining `swm_agt_` literals are single-prefix VALIDATORS of our own credential, not
+redactors, and are not sites this lane owns: `src/listener/hook.ts:43`,
+`src/cloud/agent-credential.ts:36`, `src/cloud/agent-credential-input.ts:3`,
+`src/cloud/renewal.ts:133`, `src/cloud/command-client.ts:20`,
+`supabase/functions/{activity,read,command}/index.ts` (`:14`, `:24`, `:583`).
+
+Other writers I checked for a bypass:
+- stderr tail: `src/host/stderr-tail.ts:43` → `redactCredentialText`; that output is what
+  becomes `lastWorkerStderrTail`, so the parser at `:474` sees an already-redacted string.
+- outbound activity tool titles: `supabase/functions/activity/index.ts:135` →
+  `redactCredentialText`; `src/host/sanitize.ts:15` likewise.
+- `events.ndjson`: the only writer is `appendListenerEvent` (`src/listener/control.ts:830`
+  scans EVERY string value, tail included). `src/listener/hook.ts:454` only builds the path;
+  it has no `appendFile`/`writeFile` of its own.
+- `cswarm listen status`: `src/cli.ts:4992-5008`, `:6116`, `:6143` render
+  `status.lastErrorDetail`, which is a value `parseStatus` already accepted, so the render
+  cannot introduce an unredacted topic that the parser did not admit.
+Other status string fields are shape-bounded and cannot hold a topic: `lastErrorCode` /
+`lastErrorReasonCode` `/^[a-z0-9_-]{1,96}$/` (`control.ts:431`, `:441`) — a topic contains
+`:` and uppercase — and `providerExecutable`/`logPath` must be absolute paths.
+
+I found no reachable write of a 43-character topic into status, `events.ndjson`, the stderr
+tail, or an activity tool title that bypasses the five sites. REFUTATION FAILED.
+
+NOT ESTABLISHED: I did not run `npm run check:edge` (Deno may fetch remote imports; this arm
+was told not to touch the network). The claim that the edge gate stays green rests only on
+`activity/index.ts:2` still importing the module, which I confirmed by reading.
+
+## R3 — REFUTE: the tests pass whether or not the topic alternative exists
+
+Mutation, run in the throwaway copy: I deleted `|cswarm-wake:[A-Za-z0-9_-]{43}` from
+`credential-redaction.ts:26` and left everything else identical.
+
+- `tests/host-stderr-tail.test.ts`: 10 pass unmutated → **2 fail** mutated
+  ("wake-topic stderr: redaction marker missing", "wake-topic stderr: secret survived",
+  "wake-topic tool title: …", "two secrets: …"), plus the definer-source assertion.
+- `tests/listener-control.test.ts`: 44 pass unmutated → **1 fail** mutated, and the failure
+  array names all four control sites separately:
+  `wake-topic events.ndjson (:829) accepted`, `wake-topic lastErrorDetail (:436) accepted`,
+  `wake-topic lastWorkerStderrTail (:473) accepted`,
+  `wake-topic localDiagnostic: marker missing`, `wake-topic localDiagnostic: secret survived`.
+
+So each of the five sites has an assertion that goes red when that site ignores the topic.
+
+Do the negatives reach the claimed gate? Yes. The `events.ndjson` case uses key
+`worker_stderr_tail`, which `control.ts:828` exempts from the 128-char cap, so the ONLY rule
+that can throw `unsafe text` for it is the secret scan. The two status cases are 61-character
+strings that satisfy `length > 0` and `<= 2_048`, so only the secret test can reject them.
+
+`swm_agt_` behaviour is unchanged: every pre-existing token assertion stayed green in both
+runs, and the agent-token half of each new case stayed green even in the mutant.
+
+Both files are inside the `npm test` literal list (`package.json:23`), so no gate edit was
+needed — matching the spec's L2c cell at `:250`.
+
+REFUTATION FAILED. No defect.
+
+## R4 — REFUTE: `lastIndex` lets a second secret through
+
+`SECRET_SHAPE_RE` (`credential-redaction.ts:25-28`) carries `i` only — no `g`, no `y` — so
+`.test()` never advances `lastIndex` (measured: 0 after a match). All three `.test()` callers
+(`control.ts:437`, `:474`, `:830`) use that object. The `g` forms are separate objects
+(`credential-redaction.ts:30`; `supervisor.ts:173` compiles a fresh one per call) and are used
+only in `.replace`, which resets `lastIndex`. I could not construct a reachable pair of calls
+that leaks. REFUTATION FAILED.
+
+## R5 — REFUTE: the marker split leaks, or the widened class is a leak
+
+`localDiagnostic` writes `[redacted]`; `parseStatus` rejects on `SECRET_SHAPE_RE`, not on a
+marker, so a `localDiagnostic` output can never be rejected for carrying its own marker — and
+the new control test asserts exactly that round-trip (the redacted detail persists and reads
+back). Conversely a topic that survived `localDiagnostic` cannot exist, because the same
+source drives both.
+
+The class change in `localDiagnostic` (old `[^\s"'\\]*` → the separator class) makes the token
+branch consume MORE characters (it no longer stops at `"`, `'`, `\`). That is a widening of
+redaction, not a leak, and it makes `localDiagnostic` agree with `redactCredentialText`, which
+already used the separator class. NIT only: a diagnostic containing `swm_agt_x"tail` now loses
+`"tail` as well. Harmless for a bounded local string.
+
+## R6 — D-053: branching on `error.message`
+
+The diff introduces no classification on `error.message`. `supervisor.ts:173` uses the message
+as text to REDACT, not to branch on, and `safeErrorDetail` (`:180-182`) is unchanged in kind.
+No new regex is tested against a provider message to decide control flow. The two `/unsafe
+text/` and `/malformed/` matches added are in `tests/listener-control.test.ts` only, asserting
+strings we ourselves throw. No defect.
+
+## Findings
+
+No DEFECT found.
+NIT 1 — `src/listener/supervisor.ts:173` widens what `localDiagnostic` eats around a token
+(now up to whitespace rather than up to a quote or backslash). Intentional, safe, worth a word
+in the lane note.
+NIT 2 — a `cswarm-wake:` prefix followed by 44+ base64url characters is redacted for its first
+43, leaving one character of residue. Not reachable from the spec's generator.
+
+NOT ESTABLISHED: `npm run check:edge`; anything requiring a database or the network; the
+sweep's bound is `src/` and `supabase/functions/` only (it does not claim `tests/`, `docs/`,
+or `dist/`), which is what its own comment says.
+
+VERDICT: PASS

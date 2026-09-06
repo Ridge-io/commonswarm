@@ -1,0 +1,37 @@
+diff --git a/src/host/credential-redaction.ts b/src/host/credential-redaction.ts
+
+## Check 1: One constant, five sites
+- `src/host/credential-redaction.ts:25`: Definer (`SECRET_SHAPE_RE`).
+- `src/listener/control.ts:437`: Reads `SECRET_SHAPE_RE` for `lastErrorDetail`.
+- `src/listener/control.ts:474`: Reads `SECRET_SHAPE_RE` for `lastWorkerStderrTail`.
+- `src/listener/control.ts:830`: Reads `SECRET_SHAPE_RE` for `events.ndjson`.
+- `src/listener/supervisor.ts:173`: Reads `SECRET_SHAPE_RE.source` for `localDiagnostic`.
+A recursive grep for `swm_(?:agt|inv|cap)_` and `CREDENTIAL_PREFIX_RE` in `src/` and `supabase/` confirms no private copies or leftover literals remain. No DEFECT.
+
+## Check 2: lastIndex
+- `src/listener/control.ts:437,474,830`: `SECRET_SHAPE_RE` is exported with the `i` flag (no `g`), so `.test()` is stateless and ignores `lastIndex`. 
+- `src/host/credential-redaction.ts:37`: `SECRET_SHAPE_GLOBAL_RE` uses `g`, but is exclusively invoked via `String.prototype.replace(regex, string)`, which executes statelessly from index 0.
+Cannot show a reachable pair of calls where leftover `lastIndex` lets a second secret through. No DEFECT.
+
+## Check 3: The {43} bound
+The generator creates exactly 32 bytes of randomness. This translates to 44 base64 characters with exactly 1 padding `=`. The `translate(..., '+/=', '-_')` function strips that `=`, yielding exactly 43 characters every single time. It cannot emit a length other than 43. No DEFECT.
+
+## Check 4: Tests reach the named site
+- `redactCredentialText` (stderr): `tests/host-stderr-tail.test.ts:210` (`${name} stderr: redaction marker missing`)
+- `redactCredentialText` (tool title): `tests/host-stderr-tail.test.ts:221` (`${name} tool title: ...`)
+- `localDiagnostic`: `tests/listener-control.test.ts:2107` (`${shape.name} localDiagnostic: marker missing`)
+- `control :829` (`events.ndjson`): `tests/listener-control.test.ts:2045` (`${shape.name} events.ndjson (:829) accepted`)
+- `control :436` (`lastErrorDetail`): `tests/listener-control.test.ts:2063` (`${shape.name} lastErrorDetail (:436) accepted`)
+- `control :473` (`lastWorkerStderrTail`): `tests/listener-control.test.ts:2075` (`${shape.name} lastWorkerStderrTail (:473) accepted`)
+No negative failures that fail when the site works. No DEFECT.
+
+## Check 5: Replacement split
+It is a widening. The old character class `[^\s"'\\]*` explicitly stopped at quotes (`"`, `'`) and backslashes (`\`). The new `SECRET_SHAPE_RE` separator class (`[^${SEPARATOR_CLASS_SOURCE}]*`) omits those, meaning it now matches and redacts quotes and backslashes instead of leaving them behind. A widening is not a leak. No DEFECT.
+
+## Check 6: Sixth path
+- `events.ndjson` is strictly gated by `src/listener/control.ts:830` (`appendListenerEvent`).
+- `lastErrorDetail` and `lastWorkerStderrTail` are strictly gated by `src/listener/control.ts:437,474` (`parseStatus`, validating every write).
+- Activity tool titles and output are sanitized via `redactCredentialText`.
+No reachable path bypasses these five sites to leak the topic into the status or event log. No DEFECT.
+
+VERDICT: PASS

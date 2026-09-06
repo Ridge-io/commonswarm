@@ -1,0 +1,333 @@
+diff --git a/src/host/credential-redaction.ts b/src/host/credential-redaction.ts
+index 35980d7..1d75698 100644
+--- a/src/host/credential-redaction.ts
++++ b/src/host/credential-redaction.ts
+@@ -15,16 +15,24 @@ const CONTROL_AND_SEPARATOR_STRIP_RE = new RegExp(
+   "g",
+ );
+ 
+-/** Credential prefixes shared by local diagnostics and outbound activity text. */
+-export const CREDENTIAL_PREFIX_RE = new RegExp(
+-  `swm_(?:agt|inv|cap)_[^${SEPARATOR_CLASS_SOURCE}]*`,
+-  "gi",
++/**
++ * Token prefixes and wake-topic names that must not leave a host boundary.
++ * The wake topic `cswarm-wake:` plus 43 base64url characters is the credential
++ * (docs/design/2026-09-06-PUSH-DELIVERY.md §2.2 W1). Flags are `i` only: a
++ * shared `/g` regex leaves lastIndex set after a match, so the next .test()
++ * on another string can miss. Replace sites compile `gi` from this source.
++ */
++export const SECRET_SHAPE_RE = new RegExp(
++  `swm_(?:agt|inv|cap)_[^${SEPARATOR_CLASS_SOURCE}]*|cswarm-wake:[A-Za-z0-9_-]{43}`,
++  "i",
+ );
+ 
++const SECRET_SHAPE_GLOBAL_RE = new RegExp(SECRET_SHAPE_RE.source, "gi");
++
+ /** Remove terminal controls and redact CommonSwarm credentials before text leaves a host boundary. */
+ export function redactCredentialText(value: string): string {
+   return value
+     .replace(ANSI_ESCAPE_GLOBAL_RE, "")
+     .replace(CONTROL_AND_SEPARATOR_STRIP_RE, "")
+-    .replace(CREDENTIAL_PREFIX_RE, "[redacted-credential]");
++    .replace(SECRET_SHAPE_GLOBAL_RE, "[redacted-credential]");
+ }
+diff --git a/src/listener/control.ts b/src/listener/control.ts
+index 26c025e..e6927dc 100644
+--- a/src/listener/control.ts
++++ b/src/listener/control.ts
+@@ -26,6 +26,7 @@ import {
+   DELIVERY_ACK_OUTCOMES,
+   type DeliveryOutcome,
+ } from "../cloud/delivery.js";
++import { SECRET_SHAPE_RE } from "../host/credential-redaction.js";
+ 
+ const UUID_RE =
+   /^[0-9a-f]{8}-[0-9a-f]{4}-[1-8][0-9a-f]{3}-[89ab][0-9a-f]{3}-[0-9a-f]{12}$/i;
+@@ -433,7 +434,7 @@ function parseStatus(raw: string, rejectUnknownKeys = false): ListenerStatus {
+       (typeof row.lastErrorDetail === "string" &&
+         row.lastErrorDetail.length > 0 &&
+         row.lastErrorDetail.length <= 2_048 &&
+-        !/swm_(?:agt|inv|cap)_/i.test(row.lastErrorDetail))) ||
++        !SECRET_SHAPE_RE.test(row.lastErrorDetail))) ||
+     !(row.lastErrorReasonCode === undefined ||
+       row.lastErrorReasonCode === null ||
+       (typeof row.lastErrorReasonCode === "string" &&
+@@ -470,7 +471,7 @@ function parseStatus(raw: string, rejectUnknownKeys = false): ListenerStatus {
+       (typeof row.lastWorkerStderrTail === "string" &&
+         row.lastWorkerStderrTail.length > 0 &&
+         row.lastWorkerStderrTail.length <= 2_048 &&
+-        !/swm_(?:agt|inv|cap)_/i.test(row.lastWorkerStderrTail))) ||
++        !SECRET_SHAPE_RE.test(row.lastWorkerStderrTail))) ||
+     typeof row.logPath !== "string" ||
+     !isAbsolute(row.logPath) ||
+     !(row.deliveryMode === undefined ||
+@@ -826,7 +827,7 @@ export async function appendListenerEvent(
+       // cap (its own bound is 2048, above); the secret scan still applies to
+       // every string, the tail included.
+       ((key !== "worker_stderr_tail" && value.length > 128) ||
+-        /swm_(?:agt|inv|cap)_/i.test(value))
++        SECRET_SHAPE_RE.test(value))
+     ) {
+       throw new Error("listener event contains unsafe text");
+     }
+diff --git a/src/listener/supervisor.ts b/src/listener/supervisor.ts
+index 75c0719..84f23dd 100644
+--- a/src/listener/supervisor.ts
++++ b/src/listener/supervisor.ts
+@@ -1,5 +1,6 @@
+ import { randomUUID } from "node:crypto";
+ import { DELIVERY_PROVIDER_PROVEN_OUTCOMES } from "../cloud/delivery.js";
++import { SECRET_SHAPE_RE } from "../host/credential-redaction.js";
+ import { AcpPermissionCanaryError } from "../host/types.js";
+ import {
+   appendListenerEvent,
+@@ -169,7 +170,7 @@ function safeErrorCode(error: Error): string {
+ /** Keep provider messages local, bounded, and free of credential-shaped text. */
+ function localDiagnostic(message: string, maxChars: number): string | null {
+   const redacted = message.replace(
+-    /swm_(?:agt|inv|cap)_[^\s"'\\]*/gi,
++    new RegExp(SECRET_SHAPE_RE.source, "gi"),
+     "[redacted]",
+   ).trim();
+   if (redacted.length === 0) return null;
+diff --git a/tests/host-stderr-tail.test.ts b/tests/host-stderr-tail.test.ts
+index 42bcb09..424688d 100644
+--- a/tests/host-stderr-tail.test.ts
++++ b/tests/host-stderr-tail.test.ts
+@@ -5,13 +5,33 @@
+  */
+ import assert from "node:assert/strict";
+ import { spawn } from "node:child_process";
++import { readdir, readFile } from "node:fs/promises";
++import { dirname, join, relative } from "node:path";
+ import { PassThrough } from "node:stream";
+ import test from "node:test";
++import { fileURLToPath } from "node:url";
++import {
++  redactCredentialText,
++  SECRET_SHAPE_RE,
++} from "../src/host/credential-redaction.js";
+ import {
+   attachStderrTailRing,
+   sanitizeStderrTail,
+ } from "../src/host/stderr-tail.js";
+ 
++const REPO_ROOT = join(dirname(fileURLToPath(import.meta.url)), "..");
++const AGENT_TOKEN = `swm_agt_${"A".repeat(43)}`;
++const WAKE_TOPIC = `cswarm-wake:${"B".repeat(43)}`;
++const SHORT_WAKE = `cswarm-wake:${"C".repeat(42)}`;
++
++const SECRET_SHAPE_SWEEP_ROOTS = ["src", "supabase/functions"] as const;
++const SECRET_SHAPE_LITERAL = "swm_(?:agt|inv|cap)_";
++const SECRET_SHAPE_DEFINER = "src/host/credential-redaction.ts";
++const SECRET_SHAPE_READERS = [
++  "src/listener/supervisor.ts",
++  "src/listener/control.ts",
++] as const;
++
+ test("ring overflow keeps the TAIL, not the head", () => {
+   const stream = new PassThrough();
+   const ring = attachStderrTailRing(stream);
+@@ -176,3 +196,89 @@ test("a single unterminated line too long for the ring is dropped WHOLE, not tru
+   assert.doesNotMatch(kept, /swm_/i, "the token in a kept line is still redacted");
+ });
+ 
++test("redactCredentialText path: token and wake-topic shapes in stderr and in a tool title", () => {
++  const shapes: Array<[string, string, RegExp]> = [
++    ["agent-token", AGENT_TOKEN, /swm_agt_/i],
++    ["wake-topic", WAKE_TOPIC, /cswarm-wake:/i],
++  ];
++  const failures: string[] = [];
++  for (const [name, secret, leak] of shapes) {
++    const stderr = sanitizeStderrTail(
++      `Unauthorized: You do not have permissions to read from this Channel topic: ${secret}\n`,
++    );
++    if (!/\[redacted-credential\]/.test(stderr)) {
++      failures.push(`${name} stderr: redaction marker missing`);
++    }
++    if (leak.test(stderr)) failures.push(`${name} stderr: secret survived`);
++    if (
++      !/Unauthorized: You do not have permissions to read from this Channel topic:/
++        .test(stderr)
++    ) {
++      failures.push(`${name} stderr: surrounding text lost`);
++    }
++    const title = redactCredentialText(`Read ${secret} record`);
++    if (title !== "Read [redacted-credential] record") {
++      failures.push(`${name} tool title: ${JSON.stringify(title)}`);
++    }
++  }
++
++  const both = sanitizeStderrTail(`auth ${AGENT_TOKEN} then ${WAKE_TOPIC} done`);
++  if (both !== "auth [redacted-credential] then [redacted-credential] done") {
++    failures.push(`two secrets: ${JSON.stringify(both)}`);
++  }
++
++  const short = sanitizeStderrTail(`topic ${SHORT_WAKE} kept`);
++  if (!short.includes(SHORT_WAKE)) failures.push("42-char wake was eaten");
++  if (/\[redacted-credential\]/.test(short)) {
++    failures.push("42-char wake was redacted");
++  }
++  if (SECRET_SHAPE_RE.test(SHORT_WAKE)) failures.push("42-char wake matched");
++  assert.deepEqual(failures, []);
++});
++
++test("SECRET_SHAPE_RE readers are the listed files and no other src or edge copy remains", async () => {
++  /* Bound of this sweep: SECRET_SHAPE_SWEEP_ROOTS (.ts and .js), not tests/,
++   * not docs/, not dist/. The allowed hit list is SECRET_SHAPE_DEFINER. The
++   * assertions iterate SECRET_SHAPE_READERS and SECRET_SHAPE_SWEEP_ROOTS; a
++   * sixth site under those roots would fail, a site outside them would not. */
++  async function listSourceFiles(dir: string): Promise<string[]> {
++    const out: string[] = [];
++    const entries = await readdir(dir, { withFileTypes: true });
++    for (const entry of entries) {
++      if (entry.name === "node_modules" || entry.name === "dist") continue;
++      const path = join(dir, entry.name);
++      if (entry.isDirectory()) {
++        out.push(...await listSourceFiles(path));
++      } else if (entry.name.endsWith(".ts") || entry.name.endsWith(".js")) {
++        out.push(path);
++      }
++    }
++    return out;
++  }
++
++  const hits: string[] = [];
++  for (const root of SECRET_SHAPE_SWEEP_ROOTS) {
++    for (const path of await listSourceFiles(join(REPO_ROOT, root))) {
++      const text = await readFile(path, "utf8");
++      if (text.includes(SECRET_SHAPE_LITERAL)) {
++        hits.push(relative(REPO_ROOT, path));
++      }
++    }
++  }
++  assert.deepEqual(hits, [SECRET_SHAPE_DEFINER]);
++
++  const definer = await readFile(join(REPO_ROOT, SECRET_SHAPE_DEFINER), "utf8");
++  assert.match(definer, /export const SECRET_SHAPE_RE/);
++  assert.match(definer, /cswarm-wake:\[A-Za-z0-9_-\]\{43\}/);
++
++  for (const reader of SECRET_SHAPE_READERS) {
++    const text = await readFile(join(REPO_ROOT, reader), "utf8");
++    assert.match(text, /SECRET_SHAPE_RE/, `${reader} must read the constant`);
++    assert.equal(
++      text.includes(SECRET_SHAPE_LITERAL),
++      false,
++      `${reader} still has a private copy of the token shape`,
++    );
++  }
++});
++
+diff --git a/tests/listener-control.test.ts b/tests/listener-control.test.ts
+index 6fd6861..f298b29 100644
+--- a/tests/listener-control.test.ts
++++ b/tests/listener-control.test.ts
+@@ -2024,6 +2024,107 @@ test("status lastErrorDetail: round-trips and old files without it normalize to
+   await assert.rejects(readListenerStatus(target), /malformed/);
+ });
+ 
++test("SECRET_SHAPE_RE: one case per control site per shape", async () => {
++  const shapes = [
++    { name: "agent-token", value: `swm_agt_${"A".repeat(43)}`, leak: /swm_agt_/i },
++    { name: "wake-topic", value: `cswarm-wake:${"B".repeat(43)}`, leak: /cswarm-wake:/i },
++  ] as const;
++  const failures: string[] = [];
++
++  for (const shape of shapes) {
++    const root = await mkdtemp(join(tmpdir(), "cswarm-secret-shape-"));
++    const target = paths(root);
++    const ts = "2026-08-19T00:00:00.000Z";
++
++    try {
++      await appendListenerEvent(target, {
++        ts,
++        event: "listener_failed",
++        worker_stderr_tail: `leaked ${shape.value}`,
++      });
++      failures.push(`${shape.name} events.ndjson (:829) accepted`);
++    } catch (error) {
++      if (!/unsafe text/.test(error instanceof Error ? error.message : "")) {
++        failures.push(`${shape.name} events.ndjson (:829) wrong error`);
++      }
++    }
++
++    const base = statusFor(target, "failed");
++    await writeListenerStatus(target, base);
++    const raw = JSON.parse(await readFile(target.statusPath, "utf8")) as {
++      lastErrorDetail?: unknown;
++      lastWorkerStderrTail?: unknown;
++    };
++
++    raw.lastErrorDetail = `token ${shape.value}`;
++    await writeSecureJsonFile(target.statusPath, JSON.stringify(raw));
++    try {
++      await readListenerStatus(target);
++      failures.push(`${shape.name} lastErrorDetail (:436) accepted`);
++    } catch (error) {
++      if (!/malformed/.test(error instanceof Error ? error.message : "")) {
++        failures.push(`${shape.name} lastErrorDetail (:436) wrong error`);
++      }
++    }
++
++    raw.lastErrorDetail = null;
++    raw.lastWorkerStderrTail = `token ${shape.value}`;
++    await writeSecureJsonFile(target.statusPath, JSON.stringify(raw));
++    try {
++      await readListenerStatus(target);
++      failures.push(`${shape.name} lastWorkerStderrTail (:473) accepted`);
++    } catch (error) {
++      if (!/malformed/.test(error instanceof Error ? error.message : "")) {
++        failures.push(`${shape.name} lastWorkerStderrTail (:473) wrong error`);
++      }
++    }
++
++    const supervisorRoot = await mkdtemp(
++      join(tmpdir(), "cswarm-secret-shape-sup-"),
++    );
++    const supervisorTarget = paths(supervisorRoot);
++    const final = await runListenerSupervisor({
++      paths: supervisorTarget,
++      profileId: "profile-secret-shape",
++      workspaceId: randomUUID(),
++      principalId: randomUUID(),
++      restart: { maxAttempts: 0 },
++      run: async () => ({
++        reason: "fatal" as const,
++        error: new Error(
++          `Unauthorized: You do not have permissions to read from this Channel topic: ${shape.value}`,
++        ),
++      }),
++    });
++    if (final.state !== "failed") {
++      failures.push(`${shape.name} localDiagnostic state=${final.state}`);
++    }
++    const detail = final.lastErrorDetail;
++    if (typeof detail !== "string") {
++      failures.push(`${shape.name} localDiagnostic: no detail`);
++    } else {
++      if (!/\[redacted\]/.test(detail)) {
++        failures.push(`${shape.name} localDiagnostic: marker missing`);
++      }
++      if (
++        !/Unauthorized: You do not have permissions to read from this Channel topic:/
++          .test(detail)
++      ) {
++        failures.push(`${shape.name} localDiagnostic: surrounding text lost`);
++      }
++      if (shape.leak.test(detail)) {
++        failures.push(`${shape.name} localDiagnostic: secret survived`);
++      }
++      const stored = await readListenerStatus(supervisorTarget);
++      if (stored?.lastErrorDetail !== detail) {
++        failures.push(`${shape.name} localDiagnostic: redacted detail did not persist`);
++      }
++    }
++  }
++
++  assert.deepEqual(failures, []);
++});
++
+ test("a failing worker's stderr tail reaches the terminal failure event and status", async () => {
+   const root = await mkdtemp(join(tmpdir(), "cswarm-control-test-"));
+   const target = paths(root);
