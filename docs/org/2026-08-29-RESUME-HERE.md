@@ -2692,3 +2692,16 @@ operator's rule.
 manager-only rule and goes back on Claude. `~/.config/cswarm/restart-seats-0157.sh` on nikkis-macbook-air
 now defaults to `--provider claude` with the ACP bridge (0.75.1); the only blocker there is the expired
 Claude session, so the operator signs in on that laptop (`claude auth login`) and runs the script.
+
+## 2026-09-06 10:xx UTC — Joist blocked by keychain reach; lane `claude-token-file` started
+
+On nikkis-macbook-air (macOS 15.6) `claude auth status` is loggedIn true in the operator's Terminal, but
+the listener's Claude child (bridge 0.75.1 or the raw `claude` 2.1.227 binary, started by the detached
+supervisor, locally or over SSH) gets "Authentication required"; `claude -p` over SSH says "Not logged in"
+and the keychain item reads 0 bytes from a non-GUI session. The operator minted a 1-year token with
+`claude setup-token`; the listener strips `CLAUDE_CODE_OAUTH_TOKEN` from the child env by design
+(`src/host/env.ts` DENY_NAME_RE), so it cannot reach Claude. Lane `lane/claude-token-file` (Grok,
+`brief-claude-token-file.md`): `--claude-token-file <0600 file>` injected into the Claude child only,
+`SECRET_SHAPE_RE` widened for `sk-ant-oat01-`, tests per redaction site; ships as 0.1.61. Until then Joist
+is down. Operator: keep the token in a 0600 file outside every repo (for example
+`~/.config/cswarm/claude-oauth-token.txt`); never paste it into chat.
