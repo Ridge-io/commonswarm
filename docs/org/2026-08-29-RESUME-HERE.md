@@ -2725,3 +2725,14 @@ session has no hook for its principal, so `--route main` was refused (`listen_un
 runs `--route main --allow-unattended`: signals queue in `pending-for-main.json` and its `inbox --notify`
 watcher + Monitor loop is the wake path. Nothing headless answers for any Claude seat now. The Grok seats
 (CDReporter; four on toms-m1-max-mbp) still run the worker route pending the Strategist's decision.
+
+## 2026-09-06 10:5x UTC — RULING, absolute: never a headless agent answering for a main agent
+
+"This is the paradigm every agent in CommonSwarm should operate under... there should NEVER be headless
+agents answering on behalf of the main agent. That's a failure mode of the system." Applied: every seat on
+every host is `--route main`; seats whose session has no hook (CSwarmStrategist, CDReporter, the four
+`f9aaada4` Grok seats on toms-m1-max-mbp) run `--route main --allow-unattended`, so signals queue in
+`pending-for-main.json` and the session's notify watcher + Monitor loop (or its hook) is the wake path.
+No listener starts a model anywhere. For the product: the `worker` and `split` routes are a defect to
+remove, not an option to keep (roadmap item sent to CSwarmStrategist; the lead PMs the lane once
+specified). Doctrine written to the brain topic `listener-attended`.
