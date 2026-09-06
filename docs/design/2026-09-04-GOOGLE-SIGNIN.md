@@ -484,7 +484,7 @@ to schedule. So do steps 7 and 8 in one sitting, or not yet.
     - a data-signin* write through dataset
     - any .signInWithOAuth( outside lib/commonswarm.ts
     - any string literal handed to signInWithProvider(
-    - signInWithGitHub( anywhere but components/app/LiveDashboard.astro, or more than 1 call(s) there
+    - any signInWithGitHub( anywhere
     - a rendered button whose label is not exactly one of: "Sign in with GitHub", "Sign in with Google"
 
     It does not catch a provider hidden in an attribute VALUE under an unrelated name, and that is a bound, not a gap this test closes.
