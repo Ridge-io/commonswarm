@@ -5,12 +5,32 @@
  */
 import assert from "node:assert/strict";
 import { spawn } from "node:child_process";
+import { readdir, readFile } from "node:fs/promises";
+import { dirname, join, relative } from "node:path";
 import { PassThrough } from "node:stream";
 import test from "node:test";
+import { fileURLToPath } from "node:url";
+import {
+  redactCredentialText,
+  SECRET_SHAPE_RE,
+} from "../src/host/credential-redaction.js";
 import {
   attachStderrTailRing,
   sanitizeStderrTail,
 } from "../src/host/stderr-tail.js";
+
+const REPO_ROOT = join(dirname(fileURLToPath(import.meta.url)), "..");
+const AGENT_TOKEN = `swm_agt_${"A".repeat(43)}`;
+const WAKE_TOPIC = `cswarm-wake:${"B".repeat(43)}`;
+const SHORT_WAKE = `cswarm-wake:${"C".repeat(42)}`;
+
+const SECRET_SHAPE_SWEEP_ROOTS = ["src", "supabase/functions"] as const;
+const SECRET_SHAPE_LITERAL = "swm_(?:agt|inv|cap)_";
+const SECRET_SHAPE_DEFINER = "src/host/credential-redaction.ts";
+const SECRET_SHAPE_READERS = [
+  "src/listener/supervisor.ts",
+  "src/listener/control.ts",
+] as const;
 
 test("ring overflow keeps the TAIL, not the head", () => {
   const stream = new PassThrough();
@@ -174,5 +194,89 @@ test("a single unterminated line too long for the ring is dropped WHOLE, not tru
   const kept = smallRing.read();
   assert.match(kept, /prefix .*suffix/, "an un-evicted line must be kept");
   assert.doesNotMatch(kept, /swm_/i, "the token in a kept line is still redacted");
+});
+
+test("redactCredentialText path: token and wake-topic shapes in stderr and in a tool title", () => {
+  const shapes: Array<[string, string, RegExp]> = [
+    ["agent-token", AGENT_TOKEN, /swm_agt_/i],
+    ["wake-topic", WAKE_TOPIC, /cswarm-wake:/i],
+  ];
+  for (const [name, secret, leak] of shapes) {
+    const stderr = sanitizeStderrTail(
+      `Unauthorized: You do not have permissions to read from this Channel topic: ${secret}\n`,
+    );
+    assert.match(
+      stderr,
+      /\[redacted-credential\]/,
+      `${name} stderr: redaction marker missing`,
+    );
+    assert.doesNotMatch(stderr, leak, `${name} stderr: secret survived`);
+    assert.match(
+      stderr,
+      /Unauthorized: You do not have permissions to read from this Channel topic:/,
+      `${name} stderr: surrounding text lost`,
+    );
+
+    const title = redactCredentialText(`Read ${secret} record`);
+    assert.equal(
+      title,
+      "Read [redacted-credential] record",
+      `${name} tool title`,
+    );
+  }
+
+  const both = sanitizeStderrTail(`auth ${AGENT_TOKEN} then ${WAKE_TOPIC} done`);
+  assert.equal(both, "auth [redacted-credential] then [redacted-credential] done");
+
+  const short = sanitizeStderrTail(`topic ${SHORT_WAKE} kept`);
+  assert.match(short, new RegExp(SHORT_WAKE));
+  assert.doesNotMatch(short, /\[redacted-credential\]/);
+  assert.equal(SECRET_SHAPE_RE.test(SHORT_WAKE), false);
+});
+
+test("SECRET_SHAPE_RE readers are the listed files and no other src or edge copy remains", async () => {
+  /* Bound of this sweep: SECRET_SHAPE_SWEEP_ROOTS (.ts and .js), not tests/,
+   * not docs/, not dist/. The allowed hit list is SECRET_SHAPE_DEFINER. The
+   * assertions iterate SECRET_SHAPE_READERS and SECRET_SHAPE_SWEEP_ROOTS; a
+   * sixth site under those roots would fail, a site outside them would not. */
+  async function listSourceFiles(dir: string): Promise<string[]> {
+    const out: string[] = [];
+    const entries = await readdir(dir, { withFileTypes: true });
+    for (const entry of entries) {
+      if (entry.name === "node_modules" || entry.name === "dist") continue;
+      const path = join(dir, entry.name);
+      if (entry.isDirectory()) {
+        out.push(...await listSourceFiles(path));
+      } else if (entry.name.endsWith(".ts") || entry.name.endsWith(".js")) {
+        out.push(path);
+      }
+    }
+    return out;
+  }
+
+  const hits: string[] = [];
+  for (const root of SECRET_SHAPE_SWEEP_ROOTS) {
+    for (const path of await listSourceFiles(join(REPO_ROOT, root))) {
+      const text = await readFile(path, "utf8");
+      if (text.includes(SECRET_SHAPE_LITERAL)) {
+        hits.push(relative(REPO_ROOT, path));
+      }
+    }
+  }
+  assert.deepEqual(hits, [SECRET_SHAPE_DEFINER]);
+
+  const definer = await readFile(join(REPO_ROOT, SECRET_SHAPE_DEFINER), "utf8");
+  assert.match(definer, /export const SECRET_SHAPE_RE/);
+  assert.match(definer, /cswarm-wake:\[A-Za-z0-9_-\]\{43\}/);
+
+  for (const reader of SECRET_SHAPE_READERS) {
+    const text = await readFile(join(REPO_ROOT, reader), "utf8");
+    assert.match(text, /SECRET_SHAPE_RE/, `${reader} must read the constant`);
+    assert.equal(
+      text.includes(SECRET_SHAPE_LITERAL),
+      false,
+      `${reader} still has a private copy of the token shape`,
+    );
+  }
 });
 

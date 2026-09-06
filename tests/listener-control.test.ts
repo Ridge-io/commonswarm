@@ -2024,6 +2024,94 @@ test("status lastErrorDetail: round-trips and old files without it normalize to 
   await assert.rejects(readListenerStatus(target), /malformed/);
 });
 
+test("SECRET_SHAPE_RE: one case per control site per shape", async () => {
+  const shapes = [
+    { name: "agent-token", value: `swm_agt_${"A".repeat(43)}`, leak: /swm_agt_/i },
+    { name: "wake-topic", value: `cswarm-wake:${"B".repeat(43)}`, leak: /cswarm-wake:/i },
+  ] as const;
+
+  for (const shape of shapes) {
+    const root = await mkdtemp(join(tmpdir(), "cswarm-secret-shape-"));
+    const target = paths(root);
+    const ts = "2026-08-19T00:00:00.000Z";
+
+    await assert.rejects(
+      appendListenerEvent(target, {
+        ts,
+        event: "listener_failed",
+        worker_stderr_tail: `leaked ${shape.value}`,
+      }),
+      /unsafe text/,
+      `${shape.name} events.ndjson (:829) must refuse`,
+    );
+
+    const base = statusFor(target, "failed");
+    await writeListenerStatus(target, base);
+    const raw = JSON.parse(await readFile(target.statusPath, "utf8")) as {
+      lastErrorDetail?: unknown;
+      lastWorkerStderrTail?: unknown;
+    };
+
+    raw.lastErrorDetail = `token ${shape.value}`;
+    await writeSecureJsonFile(target.statusPath, JSON.stringify(raw));
+    await assert.rejects(
+      readListenerStatus(target),
+      /malformed/,
+      `${shape.name} lastErrorDetail (:436) must reject`,
+    );
+
+    raw.lastErrorDetail = null;
+    raw.lastWorkerStderrTail = `token ${shape.value}`;
+    await writeSecureJsonFile(target.statusPath, JSON.stringify(raw));
+    await assert.rejects(
+      readListenerStatus(target),
+      /malformed/,
+      `${shape.name} lastWorkerStderrTail (:473) must reject`,
+    );
+
+    const supervisorRoot = await mkdtemp(
+      join(tmpdir(), "cswarm-secret-shape-sup-"),
+    );
+    const supervisorTarget = paths(supervisorRoot);
+    const final = await runListenerSupervisor({
+      paths: supervisorTarget,
+      profileId: "profile-secret-shape",
+      workspaceId: randomUUID(),
+      principalId: randomUUID(),
+      restart: { maxAttempts: 0 },
+      run: async () => ({
+        reason: "fatal" as const,
+        error: new Error(
+          `Unauthorized: You do not have permissions to read from this Channel topic: ${shape.value}`,
+        ),
+      }),
+    });
+    assert.equal(final.state, "failed", `${shape.name} localDiagnostic state`);
+    assert.equal(typeof final.lastErrorDetail, "string");
+    assert.match(
+      final.lastErrorDetail!,
+      /\[redacted\]/,
+      `${shape.name} localDiagnostic: marker missing`,
+    );
+    assert.match(
+      final.lastErrorDetail!,
+      /Unauthorized: You do not have permissions to read from this Channel topic:/,
+      `${shape.name} localDiagnostic: surrounding text lost`,
+    );
+    assert.doesNotMatch(
+      final.lastErrorDetail!,
+      shape.leak,
+      `${shape.name} localDiagnostic: secret survived`,
+    );
+    const stored = await readListenerStatus(supervisorTarget);
+    assert.equal(
+      stored?.lastErrorDetail,
+      final.lastErrorDetail,
+      `${shape.name} localDiagnostic: redacted detail must persist`,
+    );
+  }
+});
+
 test("a failing worker's stderr tail reaches the terminal failure event and status", async () => {
   const root = await mkdtemp(join(tmpdir(), "cswarm-control-test-"));
   const target = paths(root);
