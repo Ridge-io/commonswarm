@@ -37674,22 +37674,12 @@ var WakeSubscriber = class {
       return Promise.resolve("deadline");
     }
     return new Promise((resolve3) => {
-      const finish = (reason) => {
-        if (this.waiter === null) return;
-        const current = this.waiter;
-        this.waiter = null;
-        if (current.timer !== null) clearTimeout(current.timer);
-        if (current.signal && current.onAbort) {
-          current.signal.removeEventListener("abort", current.onAbort);
-        }
-        resolve3(reason);
-      };
       const delay2 = Math.max(0, options.until - this.now());
-      const timer2 = setTimeout(() => finish("deadline"), delay2);
-      const onAbort = () => finish("deadline");
+      const timer2 = setTimeout(() => this.finishWait("deadline"), delay2);
+      const onAbort = () => this.finishWait("deadline");
       options.signal?.addEventListener("abort", onAbort, { once: true });
       this.waiter = {
-        resolve: finish,
+        resolve: resolve3,
         timer: timer2,
         onAbort,
         signal: options.signal
@@ -43662,8 +43652,8 @@ var BOOLEAN_FLAGS = /* @__PURE__ */ new Set([
 ]);
 var UUID_RE23 = /^[0-9a-f]{8}-[0-9a-f]{4}-[1-8][0-9a-f]{3}-[89ab][0-9a-f]{3}-[0-9a-f]{12}$/i;
 function packageVersion() {
-  if ("0.1.58".length > 0) {
-    return "0.1.58";
+  if ("0.1.59".length > 0) {
+    return "0.1.59";
   }
   try {
     const value = JSON.parse(
