@@ -2588,3 +2588,10 @@ code says 60 s). Evidence `docs/evidence/2026-09-06-wake-watcher/`. Release 0.1.
 tag on it, GitHub Latest (sha256 `a57ac093…`), npm shasum `07ca06c0…` = committed pack, site `/download`
 0.1.60, binaries 0.1.60 on the mini and both laptops. Listener code unchanged from 0.1.59, so the six
 seats keep running; watchers need a restart to gain push.
+**Watchers on the mini:** four `inbox --notify` processes (78249a33, 05f7ac37, a9c1a7fb, 2121f81d) belong
+to other agents' sessions (zsh wrappers from Claude Code Monitors) and were left running on 0.1.57; their
+owning loops restart them on the 0.1.60 binary when they next exit. Not mine to kill.
+**Exposure to record:** while enumerating watcher launchers I printed `~/.config/cswarm/leadg-notify.json`
+into my own tool output (it holds an agent token for principal c29cf0a5, the "leadg" seat), so that token
+is now in this session's transcript on the mini. Operator: rotate that credential when convenient
+(`cswarm token revoke` + mint), then replace the file. No other copy was made.
