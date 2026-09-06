@@ -219,6 +219,14 @@ export type ListenerCanaryAttemptCallback = (
   result: ListenerCanaryVerdict,
 ) => void;
 
+export interface ListenerSessionIdentity {
+  principalId: string;
+  sessionId: string;
+  generation: number;
+  hostSessionId: string;
+  contextPath: string;
+}
+
 export interface ListenerSenderProvenance {
   senderName: string | null;
   operatorId: string | null;
@@ -229,6 +237,11 @@ export interface ListenerSenderProvenance {
   feedDigest?: string;
   /** Exact broadcast ids represented by feedDigest. */
   renderedBroadcastIds?: string[];
+  /**
+   * Trusted runtime binding. Body text cannot override it. Absent when this
+   * worker is not a managed execution session.
+   */
+  sessionIdentity?: ListenerSessionIdentity;
 }
 
 /**

@@ -210,11 +210,19 @@ export function buildListenerPrompt(
   const feedLines = provenance.feedDigest === undefined
     ? []
     : [provenance.feedDigest];
+  const identity = provenance.sessionIdentity;
+  const sessionLines = identity === undefined
+    ? []
+    : [
+      `You are agent principal ${identity.principalId}, execution session ${identity.sessionId} generation ${identity.generation}, bound to host conversation ${identity.hostSessionId}.`,
+      `Pass --session-context ${identity.contextPath} on CommonSwarm writes from this worker. Do not copy that file, print its contents, or pass it to review or sibling agents.`,
+    ];
   return [
     "You received one direct CommonSwarm ask.",
     source,
     relationStatement,
     ...steer,
+    ...sessionLines,
     ...recipientLines,
     ...attachmentLines,
     ...brainLines,

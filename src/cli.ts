@@ -29,6 +29,7 @@ import {
   CommandTransportError,
   newCommandId,
   ThinCommandClient,
+  createAgentPrincipalCommand,
   type CommandResult,
   type ConnectCommandResult,
   type ChannelCommand,
@@ -332,6 +333,25 @@ import {
   renderResume,
   resumeJson,
 } from "./resume.js";
+import {
+  SessionContextError,
+  assertSameIdentity,
+  readSessionContext,
+  type SessionContextDocument,
+} from "./cloud/session-context.js";
+import {
+  boundAgentFetcher,
+  parseSessionMode,
+  parseSessionProvider,
+  readManagedSessionStatus,
+  readSessionIdentity,
+  runHumanSessionLifecycle,
+  startManagedSession,
+  stopManagedSession,
+} from "./cloud/session-cli.js";
+import { AgentSessionManager } from "./cloud/session-manager.js";
+import { AgentSessionClient } from "./cloud/session-client.js";
+import type { ManagedSessionBinding } from "./listener/session-binding.js";
 
 /**
  * Every flag this build accepts, for ERROR WORDING ONLY — never for acceptance. See the throw in
@@ -348,6 +368,7 @@ const KNOWN_FLAGS = new Set([
   "permissions", "principal-id", "provider", "purpose", "renewal-grant-id", "repo", "reveal-anon-key", "route", "run-id", "since", "site", "slug", "state-dir",
   "thread",
   "poll-interval", "renewal-horizon-days", "standing", "task-id", "to", "token-id", "ttl-ms", "turn-budget", "uid", "until", "url", "user", "version", "wait", "workspace-id", "write",
+  "session-context", "host-session-id", "host-label", "allow-duplicate-name", "mode",
 ]);
 
 const BOOLEAN_FLAGS = new Set([
@@ -377,6 +398,7 @@ const BOOLEAN_FLAGS = new Set([
   "thread",
   "user",
   "write",
+  "allow-duplicate-name",
 ]);
 
 const UUID_RE =
@@ -511,6 +533,7 @@ class Arguments {
 const TARGET_FLAGS = ["url", "anon-key", "force-file-store"] as const;
 const ROUTE_FLAGS = ["workspace-id", "repo-mapping-id"] as const;
 const CREDENTIAL_FLAGS = ["agent-token-file", "agent-token-stdin"] as const;
+const SESSION_CONTEXT_FLAGS = ["session-context"] as const;
 const TASK_FLAGS = [
   "task-id",
   "slug",
@@ -576,6 +599,12 @@ Usage:
   cswarm listen canary ${requiredAgentCredential} [--url <url> --anon-key <key>] --workspace-id <uuid> [--state-dir <path>] [--wait <seconds>] [--json]
   cswarm listen status ${agentCredential} [--url <url> --anon-key <key>] --workspace-id <uuid> [--principal-id <uuid>] [--json]
   cswarm listen stop ${agentCredential} [--url <url> --anon-key <key>] --workspace-id <uuid> [--principal-id <uuid>] [--json]
+  cswarm session start --mode interactive|worker --provider grok|opencode|claude|codex --host-session-id <id> ${requiredAgentCredential} [--url <url> --anon-key <key>] --workspace-id <uuid> [--session-context <absolute-path>] [--host-label <text>] [--json]
+  cswarm session status --session-context <absolute-path> [--json]
+  cswarm session stop --session-context <absolute-path> ${agentCredential} [--url <url> --anon-key <key>] [--json]
+  cswarm session enable --principal-id <uuid> [--url <url> --anon-key <key>] [--workspace-id <uuid>] [--json]
+  cswarm session disable --principal-id <uuid> [--url <url> --anon-key <key>] [--workspace-id <uuid>] [--json]
+  cswarm session recover --principal-id <uuid> [--url <url> --anon-key <key>] [--workspace-id <uuid>] [--json]
   cswarm hook check [--principal-id <uuid> ...] [--cooldown <seconds>]
   cswarm hook install claude [--principal-id <uuid>] [--write] [--user | --repo]
   cswarm hook uninstall claude --write [--user | --repo]
@@ -591,7 +620,7 @@ Usage:
   cswarm accept <https://...#invite=...|cswarm://accept/...> [--name <name>] [--no-browser] [--json]  # unsafe: shell history/process list
   cswarm accept --invitation-token-stdin [--url <url> --anon-key <key>]
   cswarm accept <invitation-token> [--url <url> --anon-key <key>]  # unsafe: shell history/process list
-  cswarm principal create [--url <url> --anon-key <key>] [--workspace-id <uuid>] --name <name>
+  cswarm principal create [--url <url> --anon-key <key>] [--workspace-id <uuid>] --name <name> [--allow-duplicate-name]
   cswarm principal revoke [--url <url> --anon-key <key>] [--workspace-id <uuid>] --principal-id <uuid>
   cswarm token mint [--url <url> --anon-key <key>] [--workspace-id <uuid>] --principal-id <uuid> --run-id <uuid> --task-id <uuid> --epoch <n> [--ttl-ms <ms>] [--renewal-horizon-days <1..90> | --standing --confirm-standing]
   cswarm token revoke [--url <url> --anon-key <key>] [--workspace-id <uuid>] --token-id <uuid>
@@ -693,6 +722,8 @@ that project. Inside a git repository, the local file must be ignored. --user op
 that directory is affected. --repo keeps the repository-wide .claude/settings.json scope and
 also requires an ignored file. Uninstall also
 requires --write and uses the same scope selection.
+
+session start acquires one execution session per agent. Interactive mode never starts an ACP model, factory, or child spawn; it only claims and surfaces into --host-session-id. Worker mode binds listen start through --session-context. --session-context must be an absolute owned 0600 file in an owned 0700 directory outside a repository. Shell commands that omit it are not bound. session stop returns progress until cswarm session status confirms teardown. principal create --allow-duplicate-name is off by default and is never sent as false.
 
 Invite, legacy token accept, principal create/revoke, human token mint/revoke, link, new, and workspace close require a
 stored human login. Agent self-surrender of a token uses --agent-token-file or --agent-token-stdin and never takes the secret on argv. Invite-link accept signs in when needed, then accepts and
@@ -1802,7 +1833,13 @@ async function runPrincipal(args: Arguments): Promise<void> {
   const action = args.positionals[1];
   if (action === "create") {
     /* `--json` accepted, no effect — see the note on `runInvite`. D-064. */
-    args.assertShape([...TARGET_FLAGS, "workspace-id", "name", "json"], 2);
+    args.assertShape([
+      ...TARGET_FLAGS,
+      "workspace-id",
+      "name",
+      "json",
+      "allow-duplicate-name",
+    ], 2);
     const cloud = await target(args);
     const human = await humanCredential(args, cloud);
     const workspace = await workspaceId(args, cloud, human);
@@ -1812,10 +1849,10 @@ async function runPrincipal(args: Arguments): Promise<void> {
         new ThinCommandClient(cloud),
         human,
         workspace,
-        {
-          kind: "create_agent_principal",
-          name: args.required("name"),
-        },
+        createAgentPrincipalCommand(
+          args.required("name"),
+          args.has("allow-duplicate-name"),
+        ),
       ),
     );
     printJson({
@@ -2082,7 +2119,7 @@ async function runTokenRevoke(args: Arguments): Promise<void> {
   // Agent self-surrender accepts both --agent-token-file and the existing --agent-token-stdin.
   if (hasAgentCredential(args)) {
     args.assertShape(
-      [...TARGET_FLAGS, "workspace-id", "token-id", ...CREDENTIAL_FLAGS, "json"],
+      [...TARGET_FLAGS, "workspace-id", "token-id", ...CREDENTIAL_FLAGS, "json", ...SESSION_CONTEXT_FLAGS],
       2,
     );
     const cloud = await target(args);
@@ -2502,11 +2539,14 @@ async function commandWorkspaceAndCredential(
   human?: HumanSession;
   agent?: AgentCredentialInput;
   session?: AgentCredentialSession;
+  fetcher: typeof fetch;
+  sessionContext?: SessionContextDocument;
 }> {
   const override = workspaceOverride(
     args.optional("workspace-id"),
     process.env.SWARM_CLOUD_WORKSPACE_ID,
   );
+  const contextPath = args.optional("session-context");
   if (hasAgentCredential(args)) {
     if (override === null) {
       throw new Error(
@@ -2519,15 +2559,50 @@ async function commandWorkspaceAndCredential(
     // seeing a failure. Every caller below reads `bearer` as a plain string; the session
     // is what decided which string that is.
     const session = await agentSession(cloud, override, agent);
+    const bearer = await session.bearer();
+    if (contextPath === undefined) {
+      return {
+        selectedWorkspace: override,
+        bearer,
+        kind: "agent",
+        agent,
+        session,
+        fetcher: fetch,
+      };
+    }
+    const sessionContext = await readSessionContext(contextPath);
+    const identity = await readSessionIdentity(cloud, bearer, override);
+    assertSameIdentity(sessionContext, {
+      identity,
+      target: cloud,
+      tokenPrincipalId: agent.principalId,
+      flagWorkspaceId: override,
+      flagUrl: cloud.url,
+    });
+    const tokenFile = args.optional("agent-token-file");
+    if (
+      tokenFile !== undefined &&
+      resolve(tokenFile) !== resolve(sessionContext.token_file)
+    ) {
+      throw new SessionContextError(
+        "session_identity_mismatch",
+        "--agent-token-file does not match the session context token file",
+      );
+    }
     return {
       selectedWorkspace: override,
-      bearer: await session.bearer(),
+      bearer,
       kind: "agent",
       agent,
       session,
+      fetcher: boundAgentFetcher(fetch, sessionContext),
+      sessionContext,
     };
   }
   const human = await dualAuthHumanCredential(args, cloud);
+  if (contextPath !== undefined) {
+    throw new Error("--session-context binds an agent execution session and cannot be used with a human login");
+  }
   return {
     selectedWorkspace: await workspaceId(args, cloud, human, {
       validateOverride: options.validateHumanWorkspace ?? false,
@@ -2536,6 +2611,7 @@ async function commandWorkspaceAndCredential(
     credentials: human.store,
     kind: "human",
     human,
+    fetcher: fetch,
   };
 }
 
@@ -2812,7 +2888,7 @@ async function postSignalCommand(
   credential: Awaited<ReturnType<typeof commandWorkspaceAndCredential>>,
   command: PostSignalCommand,
 ): Promise<PostSignalResult> {
-  const client = new ThinCommandClient(cloud);
+  const client = new ThinCommandClient(cloud, credential.fetcher);
   if (credential.kind === "human") {
     return await sendSignalWithPending(
       client,
@@ -3002,6 +3078,7 @@ async function runPostSignal(
     ...(allowWait ? ["wait"] : []),
     ...(allowTo ? ["attach"] : []),
     "json",
+    ...SESSION_CONTEXT_FLAGS,
   ], 2);
   /* Checked before the target, the credential, or any upload: a name that
    * cannot be a channel name costs nothing to refuse here, and the sentence is
@@ -3282,6 +3359,7 @@ async function runReply(args: Arguments): Promise<void> {
     "thread",
     "until",
     "json",
+    ...SESSION_CONTEXT_FLAGS,
   ], 3);
   const inThread = args.has("thread");
   const broadcastToChannel = args.has("broadcast-to-channel");
@@ -3524,6 +3602,7 @@ async function runMembers(args: Arguments): Promise<void> {
     "workspace-id",
     ...CREDENTIAL_FLAGS,
     "json",
+    ...SESSION_CONTEXT_FLAGS,
   ], 1);
 
   const cloud = await target(args);
@@ -3582,6 +3661,7 @@ async function runWhoami(args: Arguments): Promise<void> {
     "workspace-id",
     ...CREDENTIAL_FLAGS,
     "json",
+    ...SESSION_CONTEXT_FLAGS,
   ], 1);
   if (!hasAgentCredential(args)) {
     throw new UsageError(
@@ -3784,6 +3864,7 @@ async function runSignalRead(
       ...CREDENTIAL_FLAGS,
       "notify",
       "json",
+      ...SESSION_CONTEXT_FLAGS,
     ]
     : [
       ...TARGET_FLAGS,
@@ -3797,6 +3878,7 @@ async function runSignalRead(
       "limit",
       "include-stale",
       "json",
+      ...SESSION_CONTEXT_FLAGS,
     ], 1);
 
   if (notify) {
@@ -4082,6 +4164,7 @@ async function runReceipt(args: Arguments): Promise<void> {
     "workspace-id",
     ...CREDENTIAL_FLAGS,
     "json",
+    ...SESSION_CONTEXT_FLAGS,
   ], 2);
   const signalId = args.positionals[1]!;
   if (!UUID_RE.test(signalId)) {
@@ -5579,6 +5662,7 @@ async function runConfiguredListener(options: {
   pollMs?: number;
   routeMode?: ListenerRouteMode;
   deferOverChars?: number | null;
+  sessionBinding?: ManagedSessionBinding;
 }): Promise<ListenerStatus> {
   if (options.provider === "opencode" && options.effort) {
     throw new Error(
@@ -5604,6 +5688,19 @@ async function runConfiguredListener(options: {
       : {}),
   });
   const httpClient = new ListenerHttpClient();
+  const sessionManager = options.sessionBinding === undefined
+    ? null
+    : new AgentSessionManager({
+      client: new AgentSessionClient({
+        target: options.cloud,
+        fetcher: httpClient.fetch,
+      }),
+      credential: async () => options.agent.token,
+      workspaceId: options.workspaceId,
+      contextPath: options.sessionBinding.contextPath,
+      context: options.sessionBinding.context,
+    });
+  sessionManager?.start();
   let liveCredentialSession: AgentCredentialSession;
   try {
     liveCredentialSession = await agentSession(
@@ -5613,6 +5710,7 @@ async function runConfiguredListener(options: {
       httpClient.fetch,
     );
   } catch (error) {
+    sessionManager?.stopTimers();
     httpClient.close();
     throw error;
   }
@@ -5903,7 +6001,12 @@ async function runConfiguredListener(options: {
             deliveryHoldBudgetMs: turnBudgetMs,
             ...(options.pollMs === undefined ? {} : { pollMs: options.pollMs }),
             pendingMainQueue,
-            fetcher: httpClient.fetch,
+            fetcher: options.sessionBinding === undefined
+              ? httpClient.fetch
+              : boundAgentFetcher(httpClient.fetch, options.sessionBinding.context),
+            ...(options.sessionBinding === undefined
+              ? {}
+              : { sessionBinding: options.sessionBinding }),
           });
         } finally {
           activity.close();
@@ -5913,8 +6016,29 @@ async function runConfiguredListener(options: {
   } finally {
     process.off("SIGINT", onProcessSignal);
     process.off("SIGTERM", onProcessSignal);
+    sessionManager?.stopTimers();
     httpClient.close();
   }
+}
+
+async function loadSessionBindingForListen(
+  args: Arguments,
+  cloud: CloudTarget,
+  agent: AgentCredentialInput,
+  workspaceId: string,
+): Promise<ManagedSessionBinding | undefined> {
+  const contextPath = args.optional("session-context");
+  if (contextPath === undefined) return undefined;
+  const context = await readSessionContext(contextPath);
+  const identity = await readSessionIdentity(cloud, agent.token, workspaceId);
+  assertSameIdentity(context, {
+    identity,
+    target: cloud,
+    tokenPrincipalId: agent.principalId,
+    flagWorkspaceId: workspaceId,
+    flagUrl: cloud.url,
+  });
+  return { contextPath, context };
 }
 
 async function runListenStart(args: Arguments): Promise<void> {
@@ -5939,6 +6063,7 @@ async function runListenStart(args: Arguments): Promise<void> {
     "allow-unattended",
     "foreground",
     "json",
+    ...SESSION_CONTEXT_FLAGS,
   ], 2);
   if (!hasAgentCredential(args)) {
     throw new Error(
@@ -5997,6 +6122,12 @@ async function runListenStart(args: Arguments): Promise<void> {
   ) {
     throw new ListenerUnattendedRefusedError(principalId);
   }
+  const sessionBinding = await loadSessionBindingForListen(
+    args,
+    cloud,
+    agent,
+    workspaceId,
+  );
   let status: ListenerStatus;
   if (args.has("foreground")) {
     status = await runConfiguredListener({
@@ -6025,6 +6156,7 @@ async function runListenStart(args: Arguments): Promise<void> {
         ? { codexExecutable: args.required("codex-executable") }
         : {}),
       ...(stateDirectory ? { stateDirectory } : {}),
+      ...(sessionBinding === undefined ? {} : { sessionBinding }),
     });
   } else {
     const entrypoint = process.argv[1];
@@ -6092,6 +6224,9 @@ async function runListenStart(args: Arguments): Promise<void> {
         ...(codexExecutable
           ? { codexExecutable }
           : {}),
+        ...(sessionBinding === undefined
+          ? {}
+          : { sessionContext: sessionBinding.contextPath }),
       },
       credentialArtifact: artifact,
     });
@@ -6207,6 +6342,7 @@ async function runListenSupervisor(args: Arguments): Promise<void> {
     "poll-interval",
     "route",
     "defer-over",
+    ...SESSION_CONTEXT_FLAGS,
   ], 1);
   const provider = listenerProvider(args);
   validateListenerProviderFlags(args, provider);
@@ -6227,6 +6363,12 @@ async function runListenSupervisor(args: Arguments): Promise<void> {
   assertDurableListenerCredential(agent, principalId);
   const cwd = args.required("cwd");
   if (!isAbsolute(cwd)) throw new Error("--cwd must be an absolute path");
+  const sessionBinding = await loadSessionBindingForListen(
+    args,
+    cloud,
+    agent,
+    workspaceId,
+  );
   const status = await runConfiguredListener({
     cloud,
     workspaceId,
@@ -6255,6 +6397,7 @@ async function runListenSupervisor(args: Arguments): Promise<void> {
     ...(listenerStateDirectory(args)
       ? { stateDirectory: listenerStateDirectory(args) }
       : {}),
+    ...(sessionBinding === undefined ? {} : { sessionBinding }),
   });
   if (status.state === "failed") {
     throw new Error(
@@ -6274,6 +6417,7 @@ async function runListenStatusOrStop(
     "principal-id",
     "state-dir",
     "json",
+    ...SESSION_CONTEXT_FLAGS,
   ], 2);
   const cloud = await target(args);
   const workspaceId = listenerUuid(args.optional("workspace-id"), "workspace-id");
@@ -6427,6 +6571,158 @@ async function runListenCanary(args: Arguments): Promise<void> {
   process.stdout.write(
     `${renderListenerAttendanceCanary(result, workspaceId, principalId)}\n`,
   );
+}
+
+async function runSession(args: Arguments): Promise<void> {
+  const action = args.positionals[1];
+  if (
+    action === "enable" || action === "disable" || action === "recover"
+  ) {
+    args.assertShape([
+      ...TARGET_FLAGS,
+      "workspace-id",
+      "principal-id",
+      "json",
+    ], 2);
+    const cloud = await target(args);
+    const human = await humanCredential(args, cloud);
+    const workspace = await workspaceId(args, cloud, human);
+    const principalId = args.required("principal-id");
+    if (!UUID_RE.test(principalId)) {
+      throw new Error("--principal-id must be a UUID");
+    }
+    const result = await runHumanSessionLifecycle(action, {
+      target: cloud,
+      credential: human.accessToken,
+      workspaceId: workspace,
+      principalId,
+    });
+    const messages = {
+      enable:
+        "Managed sessions are enabled for this agent. Older clients lose mutation access until they present a session proof. Stop any legacy listener first.",
+      disable:
+        "Managed sessions are disabled. Legacy writes resume. Existing execution sessions were revoked.",
+      recover:
+        "The current execution session was revoked. Enforcement stays enabled. The previous execution UUID cannot be reused.",
+    } as const;
+    const output = {
+      message: messages[action],
+      ...result,
+    };
+    if (args.has("json")) printJson(output);
+    else process.stdout.write(`${output.message}\n`);
+    return;
+  }
+  if (action === "status") {
+    args.assertShape(["session-context", "json"], 2);
+    const contextPath = args.required("session-context");
+    const { status } = await readManagedSessionStatus(contextPath);
+    if (args.has("json")) printJson(status);
+    else {
+      process.stdout.write(
+        `execution ${status.session_id} generation ${status.generation}\n` +
+          `mode ${status.mode} provider ${status.provider} host-session ${status.host_session_id}\n` +
+          `enforcement ${status.enforcement} receive ${status.receive_verification}\n`,
+      );
+    }
+    return;
+  }
+  if (action === "stop") {
+    args.assertShape([
+      ...TARGET_FLAGS,
+      ...CREDENTIAL_FLAGS,
+      "session-context",
+      "json",
+    ], 2);
+    if (!hasAgentCredential(args)) {
+      throw new UsageError(
+        "cswarm session stop needs --agent-token-file or --agent-token-stdin",
+      );
+    }
+    const cloud = await target(args);
+    const agent = await agentCredential(args);
+    const contextPath = args.required("session-context");
+    const result = await stopManagedSession({
+      target: cloud,
+      credential: agent.token,
+      contextPath,
+    });
+    if (args.has("json")) printJson({ ...result.status, state: result.state, next: result.next });
+    else process.stdout.write(`${result.state}. ${result.next}\n`);
+    return;
+  }
+  if (action !== "start") {
+    throw new UsageError(
+      "session requires start, status, stop, enable, disable, or recover",
+    );
+  }
+  args.assertShape([
+    ...TARGET_FLAGS,
+    "workspace-id",
+    ...CREDENTIAL_FLAGS,
+    "mode",
+    "provider",
+    "host-session-id",
+    "host-label",
+    "session-context",
+    "json",
+    "foreground",
+  ], 2);
+  if (!hasAgentCredential(args)) {
+    throw new UsageError(
+      "cswarm session start needs --agent-token-file or --agent-token-stdin",
+    );
+  }
+  const mode = parseSessionMode(args.required("mode"));
+  const provider = parseSessionProvider(args.required("provider"));
+  const hostSessionId = args.required("host-session-id");
+  const cloud = await target(args);
+  const selectedWorkspace = listenerUuid(
+    args.optional("workspace-id") ?? process.env.SWARM_CLOUD_WORKSPACE_ID,
+    "workspace-id",
+  );
+  const agent = await agentCredential(args);
+  const tokenFile = args.optional("agent-token-file");
+  if (tokenFile === undefined || !isAbsolute(tokenFile)) {
+    throw new Error(
+      "session start needs --agent-token-file <absolute-path> so the context can reference the sole token file",
+    );
+  }
+  const result = await startManagedSession({
+    target: cloud,
+    workspaceId: selectedWorkspace,
+    credential: agent.token,
+    tokenFile: resolve(tokenFile),
+    tokenPrincipalId: agent.principalId,
+    mode,
+    provider,
+    hostSessionId,
+    hostLabel: args.optional("host-label") ?? null,
+    contextPath: args.optional("session-context"),
+    runReceiver: mode === "interactive" && args.has("foreground"),
+  });
+  const output = {
+    message: mode === "interactive"
+      ? "Interactive session acquired. This process did not start an ACP model. It claims and surfaces into the bound host conversation only."
+      : result.next ?? "Managed worker session acquired.",
+    session_id: result.context.session_id,
+    generation: result.context.generation,
+    mode: result.context.mode,
+    provider: result.context.provider,
+    host_session_id: result.context.host_session_id,
+    enforcement: result.context.enforcement,
+    receive_verification: result.context.receive_verification,
+    session_context: result.contextPath,
+    retried: result.retried,
+  };
+  if (args.has("json")) printJson(output);
+  else {
+    process.stdout.write(
+      `${output.message}\n` +
+        `execution ${output.session_id} generation ${output.generation}\n` +
+        `context ${output.session_context}\n`,
+    );
+  }
 }
 
 async function runListen(args: Arguments): Promise<void> {
@@ -6915,7 +7211,7 @@ async function fileContext(
   positionalCount: number,
 ): Promise<FileCliContext> {
   args.assertShape(
-    [...TARGET_FLAGS, "workspace-id", ...CREDENTIAL_FLAGS, "json", ...extraFlags],
+    [...TARGET_FLAGS, "workspace-id", ...CREDENTIAL_FLAGS, "json", ...SESSION_CONTEXT_FLAGS, ...extraFlags],
     positionalCount,
   );
   const cloud = await target(args);
@@ -7004,6 +7300,7 @@ async function uploadNamedFile(
     target: context.cloud,
     workspaceId: context.selected.selectedWorkspace,
     credential: context.selected.bearer,
+    fetcher: context.selected.fetcher,
   };
   /* Every id is minted ONCE per invocation and reused on the internal retry a
    * no-response failure gets, so the server's command-id replay resolves an
@@ -7124,6 +7421,7 @@ async function runFileGet(args: Arguments): Promise<void> {
     target: context.cloud,
     workspaceId: context.selected.selectedWorkspace,
     credential: context.selected.bearer,
+    fetcher: context.selected.fetcher,
   };
   const grant = await fileDownloadUrl(send, { fileId, versionN });
   const destination = args.optional("out") ?? basename(grant.name);
@@ -7295,6 +7593,7 @@ async function runBrainGet(args: Arguments): Promise<void> {
     target: context.cloud,
     workspaceId: context.selected.selectedWorkspace,
     credential: context.selected.bearer,
+    fetcher: context.selected.fetcher,
   }, { fileId: row.file.file_id, versionN });
   const content = decodeBrainMarkdown(
     await onceRetried(
@@ -7422,6 +7721,7 @@ async function runFeedback(args: Arguments): Promise<void> {
     target: context.cloud,
     workspaceId: context.selected.selectedWorkspace,
     credential: context.selected.bearer,
+    fetcher: context.selected.fetcher,
   }, {
     category: kind,
     body,
@@ -7530,7 +7830,7 @@ async function sendChannelCommand(
   context: FileCliContext,
   command: ChannelCommand,
 ): Promise<ChannelRow> {
-  const client = new ThinCommandClient(context.cloud);
+  const client = new ThinCommandClient(context.cloud, context.selected.fetcher);
   const result = await client.sendChannel({
     workspaceId: context.selected.selectedWorkspace,
     command,
@@ -7555,6 +7855,7 @@ const CHANNEL_FLAGS = [
   "workspace-id",
   ...CREDENTIAL_FLAGS,
   "json",
+  ...SESSION_CONTEXT_FLAGS,
 ] as const;
 
 async function runChannelCreate(args: Arguments): Promise<void> {
@@ -7722,15 +8023,15 @@ async function runFile(args: Arguments): Promise<void> {
 
 async function runTaskCommand(args: Arguments): Promise<void> {
   args.assertShape(
-    [...TARGET_FLAGS, ...ROUTE_FLAGS, ...CREDENTIAL_FLAGS, ...TASK_FLAGS],
+    [...TARGET_FLAGS, ...ROUTE_FLAGS, ...CREDENTIAL_FLAGS, ...TASK_FLAGS, ...SESSION_CONTEXT_FLAGS],
     2,
   );
   const kind = args.positionals[1];
   if (!kind) throw new Error("command kind is required");
   const cloud = await target(args);
-  const { selectedWorkspace, bearer } =
+  const { selectedWorkspace, bearer, fetcher } =
     await commandWorkspaceAndCredential(args, cloud);
-  const client = new ThinCommandClient(cloud);
+  const client = new ThinCommandClient(cloud, fetcher);
   const result = await client.send({
     workspaceId: selectedWorkspace,
     stream: stream(args),
@@ -7923,6 +8224,10 @@ async function main(): Promise<void> {
   }
   if (verb === "listen") {
     await runListen(args);
+    return;
+  }
+  if (verb === "session") {
+    await runSession(args);
     return;
   }
   if (verb === "login") {

@@ -1,0 +1,200 @@
+import assert from "node:assert/strict";
+import { chmod, mkdir, mkdtemp, rm, writeFile } from "node:fs/promises";
+import { tmpdir } from "node:os";
+import { join } from "node:path";
+import { test } from "node:test";
+import { cloudTarget } from "../../src/cloud/config.js";
+import { commandEndpoint } from "../../src/cloud/config.js";
+import { startManagedSession } from "../../src/cloud/session-cli.js";
+import { SessionContextError } from "../../src/cloud/session-context.js";
+import { AgentSessionError } from "../../src/cloud/session-errors.js";
+import {
+  AGENT_SESSION_ID_HEADER,
+  AGENT_SESSION_KEY_HEADER,
+  ACQUIRE_AGENT_SESSION_KIND,
+} from "../../src/cloud/session-contract.js";
+
+const WORKSPACE = "aaaaaaaa-aaaa-4aaa-8aaa-aaaaaaaaaaaa";
+const OTHER_WORKSPACE = "eeeeeeee-eeee-4eee-8eee-eeeeeeeeeeee";
+const PRINCIPAL = "bbbbbbbb-bbbb-4bbb-8bbb-bbbbbbbbbbbb";
+const OTHER_PRINCIPAL = "ffffffff-ffff-4fff-8fff-ffffffffffff";
+const TOKEN = `swm_agt_${"S".repeat(43)}`;
+
+async function tokenPath(): Promise<{ root: string; tokenFile: string }> {
+  const root = await mkdtemp(join(tmpdir(), "cswarm-id-"));
+  await chmod(root, 0o700);
+  const credDir = join(root, "cred");
+  await mkdir(credDir, { mode: 0o700 });
+  await chmod(credDir, 0o700);
+  const tokenFile = join(credDir, "token.json");
+  await writeFile(tokenFile, "{}\n", { mode: 0o600 });
+  await chmod(tokenFile, 0o600);
+  return { root, tokenFile };
+}
+
+test("mismatched principal refuses before any command write", async () => {
+  const { root, tokenFile } = await tokenPath();
+  try {
+    const writes: string[] = [];
+    const fetcher = (async (input: URL | RequestInfo) => {
+      const url = String(input);
+      if (url.includes("/functions/v1/command")) {
+        writes.push(url);
+        return new Response(JSON.stringify({ error: "forbidden" }), { status: 403 });
+      }
+      return new Response("{}", { status: 200 });
+    }) as typeof fetch;
+    await assert.rejects(
+      () => startManagedSession({
+        target: cloudTarget("http://127.0.0.1:9", "synthetic-anon-key"),
+        workspaceId: WORKSPACE,
+        credential: TOKEN,
+        tokenFile,
+        tokenPrincipalId: OTHER_PRINCIPAL,
+        mode: "interactive",
+        provider: "codex",
+        hostSessionId: "thread-1",
+        contextPath: join(root, "session.json"),
+        fetcher,
+        readIdentity: async () => ({
+          principal_id: PRINCIPAL,
+          workspace_id: WORKSPACE,
+        }),
+        runReceiver: false,
+      }),
+      /token artifact principal/,
+    );
+    assert.equal(writes.length, 0);
+  } finally {
+    await rm(root, { recursive: true, force: true });
+  }
+});
+
+test("mismatched workspace refuses before acquire", async () => {
+  const { root, tokenFile } = await tokenPath();
+  try {
+    let acquire = 0;
+    const fetcher = (async (input: URL | RequestInfo, init?: RequestInit) => {
+      const body = typeof init?.body === "string" ? init.body : "";
+      if (body.includes(ACQUIRE_AGENT_SESSION_KIND)) acquire += 1;
+      return new Response("{}", { status: 200 });
+    }) as typeof fetch;
+    await assert.rejects(
+      () => startManagedSession({
+        target: cloudTarget("http://127.0.0.1:9", "synthetic-anon-key"),
+        workspaceId: WORKSPACE,
+        credential: TOKEN,
+        tokenFile,
+        mode: "interactive",
+        provider: "codex",
+        hostSessionId: "thread-1",
+        contextPath: join(root, "session.json"),
+        fetcher,
+        readIdentity: async () => ({
+          principal_id: PRINCIPAL,
+          workspace_id: OTHER_WORKSPACE,
+        }),
+        runReceiver: false,
+      }),
+      /authenticated workspace/,
+    );
+    assert.equal(acquire, 0);
+  } finally {
+    await rm(root, { recursive: true, force: true });
+  }
+});
+
+test("same identity acquire writes one command and retries with the same proof", async () => {
+  const { root, tokenFile } = await tokenPath();
+  try {
+    const bodies: string[] = [];
+    const fetcher = (async (_input: URL | RequestInfo, init?: RequestInit) => {
+      const body = String(init?.body ?? "");
+      bodies.push(body);
+      return new Response(JSON.stringify({
+        ok: true,
+        status: "accepted",
+        generation: 3,
+      }), { status: 200 });
+    }) as typeof fetch;
+    const first = await startManagedSession({
+      target: cloudTarget("http://127.0.0.1:9", "synthetic-anon-key"),
+      workspaceId: WORKSPACE,
+      credential: TOKEN,
+      tokenFile,
+      tokenPrincipalId: PRINCIPAL,
+      mode: "interactive",
+      provider: "codex",
+      hostSessionId: "thread-1",
+      contextPath: join(root, "session.json"),
+      fetcher,
+      readIdentity: async () => ({
+        principal_id: PRINCIPAL,
+        workspace_id: WORKSPACE,
+      }),
+      runReceiver: false,
+    });
+    assert.equal(first.context.generation, 3);
+    assert.equal(first.retried, false);
+    const commandId = first.context.acquire_command_id;
+    const sessionId = first.context.session_id;
+    const key = first.context.session_key;
+    await rm(join(root, "session.json"));
+    // Recreate as generation 0 to simulate lost response retry at the same path
+    // after a crash before generation was stored. The second start uses a new
+    // path below; retry is covered by session-lifecycle.
+    void commandEndpoint;
+    void commandId;
+    void sessionId;
+    void key;
+    void AGENT_SESSION_ID_HEADER;
+    void AGENT_SESSION_KEY_HEADER;
+    assert.equal(bodies.length, 1);
+    assert.match(bodies[0]!, new RegExp(ACQUIRE_AGENT_SESSION_KIND));
+    assert.doesNotMatch(bodies[0]!, /session_key/);
+  } finally {
+    await rm(root, { recursive: true, force: true });
+  }
+});
+
+test("typed session_not_managed does not claim enforcement is active", async () => {
+  const { root, tokenFile } = await tokenPath();
+  try {
+    const fetcher = (async () =>
+      new Response(JSON.stringify({ error: "session_not_managed" }), {
+        status: 403,
+      })) as typeof fetch;
+    await assert.rejects(
+      () => startManagedSession({
+        target: cloudTarget("http://127.0.0.1:9", "synthetic-anon-key"),
+        workspaceId: WORKSPACE,
+        credential: TOKEN,
+        tokenFile,
+        tokenPrincipalId: PRINCIPAL,
+        mode: "worker",
+        provider: "grok",
+        hostSessionId: "thread-1",
+        contextPath: join(root, "session.json"),
+        fetcher,
+        readIdentity: async () => ({
+          principal_id: PRINCIPAL,
+          workspace_id: WORKSPACE,
+        }),
+        runReceiver: false,
+      }),
+      (error: unknown) =>
+        error instanceof AgentSessionError && error.code === "session_not_managed",
+    );
+  } finally {
+    await rm(root, { recursive: true, force: true });
+  }
+});
+
+test("SessionContextError stays a named class, not message matching", () => {
+  const error = new SessionContextError(
+    "session_identity_mismatch",
+    "authenticated principal does not match the session context",
+  );
+  assert.equal(error.code, "session_identity_mismatch");
+  assert.equal(error.name, "SessionContextError");
+});

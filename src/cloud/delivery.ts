@@ -10,6 +10,10 @@ import {
 } from "./config.js";
 import { parseRetryAfterMs, parseSignalRecord } from "./signals.js";
 import { parseOptionalWakeHint, type WakeHint } from "./wake.js";
+import {
+  assertManagedAckAllowed,
+  type ManagedAckInput,
+} from "./session-ack.js";
 
 const UUID_RE =
   /^[0-9a-f]{8}-[0-9a-f]{4}-[1-8][0-9a-f]{3}-[89ab][0-9a-f]{3}-[0-9a-f]{12}$/i;
@@ -204,6 +208,8 @@ export interface DeliveryAckRequest {
   outcome: DeliveryOutcome;
   /** Null for every non-failed outcome; an allowed code for failed_terminal. */
   lastErrorCode: string | null;
+  /** When set, ACK is refused locally unless current proof and injection pass. */
+  managedAck?: ManagedAckInput;
 }
 
 export interface DeliveryObservationRequest {
@@ -211,6 +217,8 @@ export interface DeliveryObservationRequest {
   credential: string;
   commandId: string;
   signalId: string;
+  /** When set, observation is refused locally unless current proof and injection pass. */
+  managedAck?: ManagedAckInput;
 }
 
 export interface DeliveryClientOptions {
@@ -861,6 +869,9 @@ export class DeliveryCommandClient {
 
   /** Acknowledge one leased delivery with an exact terminal outcome. */
   async ackAgentDelivery(request: DeliveryAckRequest): Promise<DeliveryAckResult> {
+    if (request.managedAck !== undefined) {
+      assertManagedAckAllowed(request.managedAck);
+    }
     assertAckRequest(request);
     const { response, text } = await this.post(request, {
       kind: "ack_agent_delivery",
@@ -889,6 +900,9 @@ export class DeliveryCommandClient {
   async observeQueuedAgentDelivery(
     request: DeliveryObservationRequest,
   ): Promise<DeliveryAckResult> {
+    if (request.managedAck !== undefined) {
+      assertManagedAckAllowed(request.managedAck);
+    }
     checkedCommandId(request.commandId);
     assertAgentToken(request.credential);
     checkedUuidRequest(request.workspaceId, "workspaceId");

@@ -70,6 +70,8 @@ export interface CommandHttpResponse extends StoredResponse {
   resumed_at?: string;
   /** The channel a channel_create/rename/archive settled on. */
   channel?: ChannelRow;
+  /** Present on acquire_agent_session; monotone generation from the server. */
+  generation?: number;
 }
 
 export interface CommandResult {
@@ -85,7 +87,16 @@ export type ConnectCommand =
   | { kind: "create_workspace"; workspace_id: string; name: string }
   | { kind: "archive_workspace" }
   | { kind: "remove_member"; user_id: string }
-  | { kind: "create_agent_principal"; name: string; model?: string }
+  | {
+    kind: "create_agent_principal";
+    name: string;
+    model?: string;
+    /** Sent only when the caller explicitly opts in. Never sent as false. */
+    allow_duplicate_name?: true;
+  }
+  | { kind: "enable_agent_management"; principal_id: string }
+  | { kind: "disable_agent_management"; principal_id: string }
+  | { kind: "recover_agent_session"; principal_id: string }
   | { kind: "revoke_agent_principal"; principal_id: string }
   | {
     kind: "mint_agent_token";
@@ -108,6 +119,15 @@ export type ConnectCommand =
    * on itself.
    */
   | { kind: "resume_renewal_grant"; renewal_grant_id: string };
+
+export function createAgentPrincipalCommand(
+  name: string,
+  allowDuplicateName = false,
+): Extract<ConnectCommand, { kind: "create_agent_principal" }> {
+  return allowDuplicateName
+    ? { kind: "create_agent_principal", name, allow_duplicate_name: true }
+    : { kind: "create_agent_principal", name };
+}
 
 export interface ConnectCommandRequest {
   /** Omitted for accept_invitation; the capability derives tenancy server-side. */
@@ -412,6 +432,7 @@ export class CommandHttpError extends Error {
   constructor(
     readonly status: number,
     message = `command failed (HTTP ${status})`,
+    readonly code?: string,
   ) {
     super(message);
     this.name = "CommandHttpError";
@@ -926,7 +947,7 @@ export class ThinCommandClient {
 
     if (response.status === 403) {
       // Forbidden responses carry no actionable client-side distinction.
-      throw new CommandHttpError(403);
+      throw new CommandHttpError(403, `command failed (HTTP 403)`, "forbidden");
     }
     const raw = await parsedJson(response);
     if (!response.ok) {
@@ -936,11 +957,11 @@ export class ThinCommandClient {
       if (response.status === 401 && error === "fresh_auth_required") {
         throw new ReauthenticationRequired();
       }
+      const slug = typeof error === "string" ? error : undefined;
       throw new CommandHttpError(
         response.status,
-        `command failed (HTTP ${response.status}): ${
-          typeof error === "string" ? error : "unknown_error"
-        }`,
+        `command failed (HTTP ${response.status}): ${slug ?? "unknown_error"}`,
+        slug,
       );
     }
     const body = responseBody(raw);
@@ -1046,7 +1067,7 @@ export class ThinCommandClient {
     if (response.status === 403) {
       // Invitation failures are deliberately byte-identical. Do not decode or
       // branch on their body; recovery is membership-side.
-      throw new CommandHttpError(403);
+      throw new CommandHttpError(403, `command failed (HTTP 403)`, "forbidden");
     }
     const raw = await parsedJson(response);
     if (!response.ok) {
@@ -1056,11 +1077,11 @@ export class ThinCommandClient {
       if (response.status === 401 && error === "fresh_auth_required") {
         throw new ReauthenticationRequired();
       }
+      const slug = typeof error === "string" ? error : undefined;
       throw new CommandHttpError(
         response.status,
-        `command failed (HTTP ${response.status}): ${
-          typeof error === "string" ? error : "unknown_error"
-        }`,
+        `command failed (HTTP ${response.status}): ${slug ?? "unknown_error"}`,
+        slug,
       );
     }
     const body = responseBody(raw);
@@ -1392,13 +1413,15 @@ export class ThinCommandClient {
             const error = raw && typeof raw === "object" && !Array.isArray(raw)
               ? raw as Record<string, unknown>
               : {};
+            const slug = typeof error.error === "string" ? error.error : undefined;
             throw new CommandHttpError(
               response.status,
               typeof error.message === "string"
                 ? error.message
                 : `signal failed (HTTP ${response.status}): ${
-                  typeof error.error === "string" ? error.error : "unknown_error"
+                  slug ?? "unknown_error"
                 }`,
+              slug,
             );
           }
           const body = responseBody(raw);
