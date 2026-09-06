@@ -18,22 +18,25 @@ Vercel dashboard → team `ridgedotio` → project `coswarm-site` → **Settings
 
 If the team-level setting does not allow project override, set it at **team Settings → General → Vercel Toolbar → Production → Off**, which applies to every project in the team; that is acceptable because no Ridge.io production site needs the toolbar.
 
-No deploy is required; the setting takes effect on the next page load.
+The docs' disable steps do not ask for a deploy; whether the change shows on the next page load or only on a new session is what §3's before/after establishes, not something this document asserts.
 
 ## 3. Verification (the positive control)
 
+The whole check must run in a browser that is **signed in to the `ridgedotio` Vercel team**, because §1 shows an anonymous visit never carries the toolbar: an unauthenticated "after" is a false pass. Step 4 is what proves the session was authenticated.
+
 1. **Before:** a signed-in team member opens `https://commonswarm.com/app` on the phone that showed the overlay and confirms the toolbar circle is present. Screenshot into `docs/evidence/2026-09-06-vercel-toolbar/before.png`.
 2. Flip the setting.
-3. **After:** same phone, same page, new browser session (the docs note a hidden toolbar can persist for a session): no toolbar. Screenshot into `…/after.png`.
-4. **Control that the setting is the cause:** open a **preview** deployment URL in the same session and confirm the toolbar still appears there. If it does not, the flip was made at the wrong level, or the session was disabled, and the after screenshot proves nothing.
+3. **After:** same phone, same signed-in account, same page, new browser session (the docs note a hidden toolbar can persist for a session): no toolbar. Screenshot into `…/after.png`.
+4. **Control that the setting is the cause and the session is authenticated:** in the same session open a **preview** deployment URL and confirm the toolbar appears there. If it does not, either the flip was made at the wrong level, the session was disabled, or the browser is not signed in — and the after screenshot proves nothing. Screenshot into `…/control-preview.png`.
 
-## 4. Who does it
+## 4. Who does it, and why no autonomous lane can
 
-The Vercel dashboard needs a team member's login, so this is **operator-side or CSwarmDevLead with dashboard access**; no lane author can do it. The evidence directory is the durable artifact; the ledger entry records the date and who flipped it.
+The change lives in a third-party web console behind a team login, and Vercel exposes no API, CLI flag, or repo file for the toolbar visibility setting (the docs list only the dashboard, a per-session control, a preview-branch environment variable, and an automation header — none of which turns it off for production from code). So this item is in the same class as the Google client secret and branch protection: **an operator-side action**, or CSwarmDevLead with dashboard access. That is a property of the item, not a gap in the spec; a lane author who tried to "build" it would be asked for credentials, and must not be.
 
 ## 5. Lanes
 
-None. One dashboard action, one evidence commit (`lane/toolbar-evidence`, docs only, no arms needed beyond the two screenshots and the control).
+- **Human step (not a lane):** the flip in §2, by the operator or the lead.
+- **`lane/toolbar-evidence`** (docs only, authored by whoever flipped it): the three screenshots from §3 under `docs/evidence/2026-09-06-vercel-toolbar/` and one line in the ledger with the date, the level (project or team), and the account that verified. No code, no test gate, no D-036 arms beyond this spec's.
 
 ## 6. What was NOT established
 

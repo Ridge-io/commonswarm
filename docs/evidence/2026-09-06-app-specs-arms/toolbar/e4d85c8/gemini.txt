@@ -1,0 +1,33 @@
+### Inversion Analysis
+
+* **(a) Turning off the toolbar in production loses team feedback / comments:**
+  * **Argument:** The team loses the ability to leave production-context comments and inspect live metadata. A narrower control—such as disabling the toolbar per-user via Vercel preferences or a cookie toggle—would preserve production feedback.
+  * **Assessment:** **Does NOT beat the spec.** Section 2 deliberately scopes production as end-user-facing and designates Preview deployments for team comments (`"Leave Preview as it is (the toolbar is useful there for comments)"`). Desktop-centric shortcuts (`Cmd + .`) and cookie flags are impractical on mobile touchscreens where the floating element obstructs layout.
+
+* **(b) Verification in Section 3 can pass while the operator still sees the overlay:**
+  * **Argument:** In Section 3, Step 3 dictates testing in a `"new browser session"`. Because Section 1 establishes that anonymous users never see the toolbar, opening a new session (e.g. private/incognito window or cleared storage) drops Vercel team authentication, causing the toolbar to disappear regardless of whether the setting took effect. Step 4 is confounded if the preview deployment requires team auth or has separate environment rules. Furthermore, long-lived cookies, PWA standalone shells, or service-worker caching on the operator's actual device will continue rendering the overlay even after a third-party tester's verification passes.
+  * **Assessment:** **BEATS the spec.** The verification procedure contains a false-positive loophole: an unauthenticated session trivially passes the "no toolbar" check.
+
+* **(c) Item is mis-scoped (the overlay the operator saw is something else):**
+  * **Argument:** Section 1 cites the app's internal feed toolbar (`.dashboard__feed-toolbar` at `site/src/components/app/mobile-feed-layout.observer.test.ts:69`) and Section 6 admits it was not established whether the overlay was the toolbar or the comments widget. If the reading obstruction was caused by the app's own mobile layout or sticky feed toolbar, flipping the Vercel switch leaves the root UI bug unresolved.
+  * **Assessment:** **Does NOT beat the spec.** Section 3 Step 1 explicitly checks for the Vercel `"toolbar circle"` (the draggable pill widget), and Section 6 correctly observes that comments ride the Vercel toolbar runtime anyway.
+
+---
+
+### Findings
+
+1. **Section 3 (Verification): Verification fails to enforce team authentication**
+   * **Claim:** Step 3 (`"After: same phone, same page, new browser session... no toolbar"`) verifies that flipping the production toggle disabled the toolbar.
+   * **Finding:** Missing requirement to verify that the browser session in Step 3 is authenticated with Vercel team credentials. Because Section 1 proves anonymous visits do not inject the toolbar, an unauthenticated new session produces a false-positive pass.
+   * **Classification:** **GAP**
+
+2. **Section 4 & 5 (Who does it / Lanes): Item is unbuildable by an automated lane author**
+   * **Claim:** Mandate is to be buildable by a non-Claude lane author without asking questions. Section 4 states: `"The Vercel dashboard needs a team member's login, so this is operator-side or CSwarmDevLead with dashboard access; no lane author can do it"`, and Section 5 states: `"Lanes: None."`
+   * **Finding:** The specification assigns an operator-side manual dashboard task requiring privileged third-party web console credentials, making it unbuildable as an autonomous lane.
+   * **Classification:** **DEFECT**
+
+---
+
+QUOTE-BACK: # Vercel toolbar off in production
+VERDICT: FAIL
+REASON: Section 3 lacks an authentication requirement for the verification session, allowing false-positive passes, and Sections 4–5 define a manual dashboard action that cannot be built by an autonomous lane.

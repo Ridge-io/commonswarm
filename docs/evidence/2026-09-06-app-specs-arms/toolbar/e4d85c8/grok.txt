@@ -1,0 +1,23 @@
+I'll read the spec, check the cited commit, and verify each of its three claims against the tree and the Vercel docs.HEAD is `e4d85c8` on `spec/app-backlog`. Next I’ll grep `site/`, check the live HTML, and fetch the Vercel toolbar docs.The docs fetch matched. Next I’ll curl the live pages without `mktemp`, join the swarm, and check how the toolbar is actually injected.The worktree spec moved after I read it. I’ll lock the review to commit `e4d85c8` and check the redeploy claim against Vercel’s own docs.Reviewed **e4d85c8** (`docs/design/2026-09-06-VERCEL-TOOLBAR-OFF.md`). Tree now has extra uncommitted edits on that file; this verdict is the commit only.
+
+**Claim 1 — no toolbar code in `site/`.** Holds.
+- `grep -i toolbar site/` hits six files, all app feed-toolbar or design prose. Cited line is real: `site/src/components/app/mobile-feed-layout.observer.test.ts:69` is `.dashboard__feed-toolbar`.
+- `site/package.json:18-26` has no `@vercel/toolbar`. Lockfile `@vercel/*` names are optional peers of something else, not the toolbar package.
+- No `site/vercel.json`. No `VERCEL_PREVIEW_FEEDBACK_ENABLED` anywhere except this spec.
+- `site/astro.config.mjs:56` integrations are only the local sitemap.
+
+**Claim 2 — anonymous `vercel.live` control.** Holds.
+Live GET 200: `/` (38974 B), `/app` (42534 B), `/start` (5866 B). Each HTML has **0** `vercel.live` (and 0 other `vercel` strings).
+
+**Claim 3 — Vercel docs, Production Off.** Holds.
+Fetched https://vercel.com/docs/vercel-toolbar/managing-toolbar (`last_updated: 2026-08-11`). Project path is Settings → General → Vercel Toolbar. Options are Default / On / Off. Off: “Disable the toolbar for the environment.” Team fallback and “comments ride the toolbar” match the comments page (same control). Team `ridgedotio` / project `coswarm-site` match `AGENTS.md:314-315`.
+
+**§2 / §3 without asking.** A signed-in team member with dashboard access can do both: exact clicks, Preview left alone, if-no-override fallback, before/after paths, new session, preview URL from that same project as the cause control.
+
+**NIT** §2 “No deploy is required; the setting takes effect on the next page load” is not in the cited page. Official disable steps also do not ask for a deploy.
+
+No DEFECT. No GAP.
+
+QUOTE-BACK: Vercel toolbar off in production
+VERDICT: PASS
+REASON: The three claims match the tree, the live HTML, and the 2026-08-11 Vercel docs, and a dashboard user can run §2 and §3 as written.
