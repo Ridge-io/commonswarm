@@ -1,0 +1,184 @@
+Arm file written to `docs/evidence/2026-09-06-push-delivery-spec/arms/ff8a398/opus.txt` (15 KB, one `VERDICT:` line asserted).
+
+## What I checked
+
+I opened every citation myself. Confirmed correct: `command-client.ts:717-735` (unknown fields ignored), `config.ts:3`, `signals.ts:124-132`, `runtime.ts:77/1075/1104/1364/1440/1686/1762`, `arrival-watch.ts:25/337/431`, `read/index.ts:490-496`, both site files, the activity migration and edge, `20260905000020:145-220`, and `local-plans.out` against §5's prose.
+
+## Five DEFECTs
+
+**D1 — W6's revocation bound does not exist.** §2.3 pins the Realtime credential to the anon key. `realtime-js@2.110.8` `_performAuth` gates the whole `access_token` push on `if (this.accessTokenValue != tokenToSend)`. Re-calling `setAuth(anonKey)` is a no-op, so the policy is never re-evaluated. A revoked subscriber stays joined until the socket drops — not "one renewal period at most".
+
+**D2 — the watcher's `limit: 0` claim is rejected.** `command/index.ts:1510` is `integer(limit, 1)`; `integer` at `:1435-1437` is `>= minimum`. limit 0 → 400. The cited `effectiveLimit <= 0` branch is only reachable via lease exhaustion. L5 has no specified way to get its wake topic. Also: the claim is not observation-only — steps 2–4 (`durable-delivery.ts:195-253`) run before the limit and can terminalize deliveries.
+
+**D3 — the §3.1 audit gate misses two mutations.** `terminal_delivery_failure_count` comes from step 4 only. Step 2 (lease reset) and step 3 (TTL → `ack_outcome='expired'`) have no RETURNING and no ledger field (`:66-71`). A claim that expires deliveries would write zero audit rows — the opposite of the rule §3.1 states.
+
+**D4 — "the recipient's live wake key" is singular; the schema is not.** `agent_tokens` has no uniqueness on `principal_id` (`20260723000001:192-216`), and §9 itself assumes two live subscribers per principal. Two engineers build two different triggers.
+
+**D5 — §0's 72,000 is 24,000 × 3**, double-counting the hourly `rate_buckets` upsert that §1.1, §1.3, §7 and §8 all count as 24. And "to zero" contradicts §3.1 keeping that upsert.
+
+## Four GAPs
+
+Lane table gives `command/index.ts`, `runtime.ts`, `cli.ts` and `arrival-watch.ts` to two lanes each; no lane owns the retention migration (the purge floor is `GREATEST(30, config)` at `:795-805`, so the config change alone is a no-op); skipping the read starves `classifyDeliveryMode` at `runtime.ts:1104`, so push-mode listeners can never see the rollback §6 relies on; and the experiment's policy is a static `LIKE`, not the SECURITY DEFINER lookup W5 needs.
+
+## What survived
+
+The reconcile-on-subscribe race is genuinely covered — bindings register before `subscribe()` and inbound dispatch gates only on `_notThisChannelEvent`, so a wake in the join window is delivered, and the pre-join window is caught by the reconcile. The trigger's exception guard is fine: the recipient cap of 8 bounds subtransactions, `ON CONFLICT DO NOTHING` does not fire the trigger, and WAL means no wake precedes its commit. W3 really is invisible to 0.1.56.
+
+**VERDICT: FAIL.**
+at start to learn wake.topic
+    (a zero-limit claim leases nothing: effectiveLimit <= 0 ? [], durable-delivery.ts:273)".
+    The cited branch is real, but it is UNREACHABLE from a request. The command edge
+    validator rejects limit 0 with 400 "claim_agent_inbox fields are malformed":
+    command/index.ts:1510 `integer(limit, 1)` with `integer(value, minimum) => value >= minimum`
+    at :1435-1437. `effectiveLimit <= 0` is only reachable via the lease-slot path
+    (durable-delivery.ts:255-266). So L5 as specified cannot be built: the watcher has
+    NO specified way to obtain its wake topic. W3 gives `wake` on mint/renew/claim only,
+    and the watcher does none of the three.
+    Two further problems in the same paragraph:
+      (a) "It never claims or acks (:338), so it cannot steal work; it only observes."
+          arrival-watch.ts:336-338 is a documented invariant — "Read-only arrival loop.
+          It never imports or calls delivery claim/ack code." §4.1 proposes to break it.
+      (b) A claim is not observation-only at any limit. Steps 2, 3 and 4
+          (durable-delivery.ts:195-211, :212-231, :233-253) run BEFORE the limit is
+          consulted and they mutate: they reset leases, and they terminalize rows to
+          ack_outcome 'expired' and 'failed_terminal'. A "zero-limit" claim can put a
+          delivery into a terminal state.
+
+D3. §3.1 — the proposed gate does not implement the rule §3.1 states.
+    Rule: "an audit row and an idempotency row are written for a state-changing command
+    or a refused command, never for an empty read-intent command."
+    Gate: `ledger.delivery_refs.length > 0 || ledger.terminal_delivery_failure_count > 0`.
+    `terminal_delivery_failure_count` is set from step 4's RETURNING only
+    (durable-delivery.ts:253). Step 2 (lease reset, lease_expiry_count + 1, :195-211) and
+    step 3 (TTL terminalization to ack_outcome = 'expired', :212-231) have no RETURNING and
+    no field on DeliveryClaimLedgerResponse (:66-71). A claim that expires N deliveries
+    returns delivery_refs = [] and terminal_delivery_failure_count = 0, so under the gate
+    it writes ZERO audit rows. The audit trail for the 'expired' terminal outcome is lost
+    for exactly the case the rule says must be audited. L1 is unbuildable as specified:
+    either the ledger gains counters for steps 2 and 3, or the gate is wrong.
+
+D4. §2.2 W4 — "It reads the recipient's live wake key". Singular, and the schema does not
+    support singular. swarm.agent_tokens (20260723000001_p1_schema.sql:192-216) has no
+    uniqueness on principal_id; the index agent_tokens_by_principal is non-unique. Multiple
+    live tokens per principal are normal: different runs/devices, and the pending-successor
+    renewal overlap (20260728000003_pending_successor_first_use.sql). §9 itself assumes it —
+    "Two machines on one credential each subscribe and each claim." With N live keys there
+    are N topics, and the spec does not say which the trigger sends to. The two natural
+    builds differ materially:
+      (i) one row (LIMIT 1 / newest) — every other live listener is never woken, and its
+          only path is the 5-minute reconcile, permanently;
+      (ii) one send per live key — write amplification is N per delivery, which breaks
+          §5's "one insert per delivery row into the day partition" and §7's message counts.
+    L2 cannot be built without this ruling.
+
+D5. §0 and §7 — the surviving-row arithmetic is internally inconsistent and the "0" is wrong.
+    §0: "surviving rows per idle day fall from about 72,000 to zero."
+    §1.3: 24,000 audit + 24,000 idempotency + 24 rate-bucket ≈ 48,000.
+    §7 (16 seats): "0 (vs 770,000)" ⇒ 48,125 per seat.  §8: 334 per 10 min ⇒ 48,096 per day.
+    72,000 is 24,000 × 3, i.e. it counts the rate_buckets UPSERT as a new row per claim,
+    which §1.1 itself corrects ("24 rate-bucket rows (hourly upsert)"). Separately, "to
+    zero" and the §7 "rows/day surviving: 0" column contradict §3.1's own decision to KEEP
+    the rate_buckets upsert (command/index.ts:4850) — the floor is ~24 rows per principal
+    per day, not 0. The ask asked for the arithmetic; the headline paragraph most readers
+    will quote is off by 50 % on the before number and wrong on the after number.
+
+================================= GAPS =================================
+
+G1. §6 — the lane table does not give every file to exactly one lane. Four collisions:
+    - supabase/functions/command/index.ts: L1 owns ":8348-8445 only"; L3 owns the "claim
+      response builder", which is at :8429-8452 — inside and overlapping L1's range. The
+      order line says "L0 and L1 now (independent). L2 → L3 → L4", so L1 and L3 are in
+      flight at the same time on overlapping lines of one file.
+    - src/listener/runtime.ts: L0 (lane A) owns ":77" AND the "read+claim merge"; the read
+      and the claim are at :1075-1082 and :1364-1394, which is exactly the region L4 must
+      restructure to skip the read (§2.3). Two lanes, one region.
+    - src/cli.ts: L4 owns "src/cli.ts wiring", L5 owns "src/cli.ts notify wiring".
+    - src/cloud/arrival-watch.ts: L0 owns "watcher dedupe", L5 owns the file.
+
+G2. §3.2 / §5 name "the retention lane"; §6 has no such lane, and the change it must make
+    is a migration nobody owns. The purge floor is not a hedge — it is in this tree:
+    swarm.purge_expired_idempotency_keys() at 20260723000001_p1_schema.sql:793-816 computes
+        days => GREATEST(30, COALESCE(config 'idempotency_retention_days', 30))
+    so §3.2's "set the key to 2 days" is a NO-OP on its own; it needs a CREATE OR REPLACE
+    FUNCTION migration. §10 lists "the exact retention floor" as not established while §3.2
+    cites the same file three lines away. L0 owns only the config key. Required work, no owner.
+
+G3. §2.3 — "The per-tick read at :1075-1082 is skipped while wake.state === subscribed and
+    deliveryMode === durable_claim." deliveryMode is derived from that read and only from it:
+    classifyDeliveryMode(page, durableConfigured) at runtime.ts:1104, feeding :620-629. With
+    the read gone, deliveryMode is frozen at whatever the last read said. A push-mode listener
+    can then never observe the server LOSING the claim capability — which is precisely the
+    rollback §6 relies on ("every server step is additive... listeners fall to the 15 s poll
+    on their own"). It would not fall back; it would keep claiming against an edge that no
+    longer advertises the capability. The same read also drives the read-health episode
+    tracking at :1085-1103, whose cadence semantics §2.3 changes without saying what feeds it
+    when reads stop. No replacement is specified for either. (I checked the rest: in
+    durable_claim mode the loop `continue`s at :1686, so page.signals and the :1762-1776 drain
+    are cursor_fallback-only — those are genuinely safe to skip. The mode classifier is not.)
+
+G4. §2.2 W5 — "Measured, not assumed" overstates what the experiment measured, and §10 does
+    not list the difference. realtime-anon-private-topic-experiment.out applies
+        USING (extension = 'broadcast' AND (SELECT realtime.topic()) LIKE 'cswarm-inbox-test:%')
+    a STATIC predicate. W5 requires `swarm.wake_topic_authorized((SELECT realtime.topic()))`:
+    a STABLE SECURITY DEFINER function, owned by swarm_admin, doing a table lookup in schema
+    swarm, callable by `anon` — which additionally needs GRANT USAGE ON SCHEMA swarm TO anon,
+    mentioned nowhere. The experiment shows "anon may join a private topic under a policy". It
+    does not show "a policy that calls a swarm-schema function as anon works". The client also
+    differs: the experiment used supabase-js createClient(...).realtime (package.json:44 has
+    supabase-js as the only direct @supabase dep); §2.3 specifies a bare RealtimeClient with
+    `params: { apikey: anonKey }`, promoting realtime-js to a direct dependency alongside
+    supabase-js (two-copy hazard). §10 lists the raise-behaviour unknown but neither of these.
+
+================================= NITS =================================
+
+N1. §2.3's idle loop `await Promise.race([ wake.next(), sleep(...) ])` is the classic
+    abandoned-async-iterator shape: a wake delivered into the losing next() promise is
+    dropped. It happens to be harmless here (the sleep winning means a claim runs anyway),
+    but whether wakes() latches is not stated, and the "dirty flag" sentence covers only the
+    in-flight-claim case. Say it latches, or L4 gets built two ways.
+N2. Adding plaintext wake_key to swarm.agent_tokens puts it beside the column comment at
+    20260723000001_p1_schema.sql:211-212, "plaintext is never stored". The trade is argued
+    well in W5; the migration should amend that comment so a later reader does not read the
+    table as contradicting itself.
+N3. durable-delivery.ts:182-188 is cited for the FOR UPDATE; it is :183-189.
+
+======================= WHAT I ATTACKED AND FOUND SOUND =======================
+
+- Reconcile-on-subscribe against a wake sent between server-side join acceptance and the
+  client's SUBSCRIBED callback: SUFFICIENT, and the window is not even lossy. Bindings are
+  registered before subscribe(), and RealtimeChannel's inbound dispatch gates only on
+  _notThisChannelEvent (close/error/leave/join by ref) — a broadcast arriving in that window
+  is delivered to the handler. The window that matters is the pre-join one, and the
+  reconcile claim after SUBSCRIBED covers it because SUBSCRIBED strictly follows join
+  acceptance. No finding.
+- SECURITY DEFINER + EXCEPTION guard vs the inserting transaction: sound. The subtransaction
+  per delivery row is bounded at 8 (the position CHECK BETWEEN 0 AND 7 argued in
+  20260905000020's section 3), so no subxact-spill risk. ON CONFLICT DO NOTHING conflicts do
+  not fire an AFTER INSERT FOR EACH ROW trigger, so W4's "fires for both enqueue paths" is
+  right and does not double-wake. realtime.messages is read from WAL, so no wake can precede
+  the commit of the delivery row. §9 already flags the unverified realtime.send grant to
+  swarm_admin. No finding.
+- W3 additivity for a 0.1.56 client: correct. command-client.ts:717-735 validates only
+  object-ness, status, ok and event_ids, and ignores unknown fields; CLIENT_PROTOCOL_VERSION
+  is frozen at config.ts:3; the capability set at signals.ts:124-132 is a fixed four-bit
+  parse. An added optional `wake` is invisible to 0.1.56.
+- §5 plans: local-plans.out matches the prose. The claim uses signal_deliveries_unacked_oldest
+  with the (recipient, workspace) Index Cond; the audit DELETE does walk audit_by_cred on its
+  second column; the conclusion (stop the write rather than index it) follows.
+- Site citations: LiveDashboard.astro:5774 is the 2 s setInterval; commonswarm.ts:176-209 is
+  the private-topic template §4.3 says it is.
+
+DISPOSITION: five DEFECTs (D1 and D2 each make a named lane unbuildable as written; D3 loses
+audit for a real mutation; D4 is a ruling L2 cannot proceed without; D5 mis-states the cost
+the ask asked for) and four GAPs. The design's core — push is a hint, the row is the truth —
+survives every attack I made on it, and the failure-mode table is honest where it is right.
+The document is not yet a buildable spec.
+
+QUOTE-BACK: # Push delivery: wake listeners from Supabase Realtime instead of polling
+VERDICT: FAIL
+REASON: The Realtime policy-refresh bound in W6 does not exist as specified, the watcher's
+limit:0 claim is rejected by the validator so L5 has no way to learn its topic, the §3.1
+audit gate drops audit for lease-reset and TTL-expired mutations, W4 assumes one live wake
+key per principal where the schema and §9 both allow many, and §6 gives command/index.ts,
+runtime.ts, cli.ts and arrival-watch.ts to two lanes each with no owner for the retention
+migration.

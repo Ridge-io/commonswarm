@@ -1,15 +1,16 @@
 # Push delivery: wake listeners from Supabase Realtime instead of polling
 
-**Status:** SPECIFICATION, draft 1, on branch `spec/push-delivery`. Assignment B from the operator via CSwarmDevLead (ask `3e9049cf`), authored by CSwarmStrategist (principal `2121f81d`). Not implemented. Nothing here is live.
+**Status:** SPECIFICATION, draft 2, on branch `spec/push-delivery`. Assignment B from the operator via CSwarmDevLead (ask `3e9049cf`), authored by CSwarmStrategist (principal `2121f81d`). Not implemented. Nothing here is live.
 **Authority:** on adoption this document becomes the §2.13 addendum of `docs/design/SWARM-CLOUD.md`; until then the spec wins on conflict.
-**Scope ruling (CSwarmDevLead, 2026-09-06):** this spec covers option 3 of the brain topic `edge-function-invocations-2026-09`: wake listeners from Realtime, with a fallback poll. The one-constant change (`LISTENER_IDLE_POLL_MS` 2000→15000, `ACTIVITY_HEARTBEAT_MS` 15000→60000), the read+claim merge, and the retention/index quick cut are **lane A** (Grok, `lane/idle-cost`) and land first. The cross-machine duplicate-listener guard is deferred. Where this spec touches those, it says so and does not redo them.
-**Evidence:** `docs/evidence/2026-09-06-push-delivery-spec/` — the code map (`code-map-explore-agent.md`), CodexDesktop's client and server passes, the local Realtime experiment, the local query plans, and the review arms. Every file:line below was confirmed on `d500973` by the author or by one of those passes, and the pass is named where it was not the author.
+**Scope ruling (CSwarmDevLead, 2026-09-06):** this spec covers option 3 of the brain topic `edge-function-invocations-2026-09`: wake listeners from Realtime, with a fallback poll. The one-constant change (`LISTENER_IDLE_POLL_MS` 2000→15000, `ACTIVITY_HEARTBEAT_MS` 15000→60000), the read+claim merge, the watcher dedupe, and the `file_versions` scan are **lane A** (Grok, `lane/idle-cost`) and land first. The cross-machine duplicate-listener guard is deferred. Where this spec touches those, it says so and does not redo them.
+**Evidence:** `docs/evidence/2026-09-06-push-delivery-spec/` — the code map (`code-map-explore-agent.md`), CodexDesktop's client and server passes, the local Realtime experiment, the local query plans, and the review arms per SHA under `arms/`. Every file:line below was confirmed on `d500973` by the author or by a named pass.
+**Draft 2 changes:** the review record (§11) lists what draft 1's arms found and where each item landed. The design's core did not change; its wire contract, its persistence gate, its lane ownership, and its arithmetic did.
 
 ---
 
 ## 0. The answer in one paragraph
 
-A listener today spends its life asking "anything for me?" every two seconds, twice per tick, and the server writes three rows to say "no". Replace the question with a doorbell: when a delivery row is inserted for a principal, a Postgres trigger broadcasts a content-free **wake** on a private Realtime topic that only that principal's live credential can join; the listener, holding one websocket, claims on the wake. Polling stays as the safety net, not the transport: one **reconcile claim** every 5 minutes while the socket is subscribed, and one claim every 15 seconds while it is not. The claim path, the lease, the ack, and the receipts do not change; the wake is a latency hint and the `signal_deliveries` row stays the only truth, so a lost wake costs at most one reconcile interval and never a delivery. An empty claim stops persisting anything. The same wake topic serves `inbox --notify`; a workspace-level topic serves the app's feed. Measured idle cost falls from about 55,000 edge invocations per seat per day to about 1,900, and the surviving rows per idle day fall from about 72,000 to zero.
+A listener today spends its life asking "anything for me?" every two seconds, twice per tick, and the server writes three rows to say "no". Replace the question with a doorbell: when a delivery row is inserted for a principal, a Postgres trigger broadcasts a content-free **wake** on a private Realtime topic named by that principal's current **wake id**; only a client that knows the id can join, and the id changes the moment any credential of that principal is revoked. The listener holds one websocket and claims on the wake. Polling stays as the safety net, not the transport: one **reconcile** (a read plus a claim) every 5 minutes while the socket is subscribed, one claim every 15 seconds while it is not. The claim path, the lease, the ack, and the receipts do not change; the wake is a latency hint and the `signal_deliveries` row stays the only truth, so a lost wake costs at most one reconcile interval and never a delivery. An empty claim stops persisting audit and idempotency rows. The same wake topic serves `inbox --notify`; a workspace-level topic serves the app's feed. Measured idle cost per seat per day falls from about 53,800 edge invocations to about 2,200; rows written per idle day fall from about 49,400 (48,000 of them kept for 30 days) to about 400 rate-limit rows that a cron purges within two hours.
 
 ---
 
@@ -19,8 +20,8 @@ A listener today spends its life asking "anything for me?" every two seconds, tw
 
 | # | call | edge | from | persists |
 |---|---|---|---|---|
-| 1 | `readAgentSignalPage` (inbox page, limit 100) | `POST /functions/v1/read` | `src/listener/runtime.ts:1075-1082` → `src/cloud/signals.ts:1118,1140-1166` | `swarm.record_renewal_grant_use(...)` on every call (`read/index.ts:490-496`); `agent_delivery_read_context` can UPDATE `agent_tokens` and runs a COUNT(*) join over deliveries×signals (`:437-465`). No audit, no idempotency row. |
-| 2 | `claim_agent_inbox` (limit 1) | `POST /functions/v1/command` | `runtime.ts:1365-1394` → `src/cloud/delivery.ts:821-847` | **three rows per empty claim**: `audit_log` (`command/index.ts:8424-8432`), `idempotency_keys` (`:8365-8380`), `rate_buckets` upsert (`checkDeliveryRateLimit`, `:4850`). Zero `signal_deliveries` rows change. |
+| 1 | `readAgentSignalPage` (inbox page, limit 100) | `POST /functions/v1/read` | `src/listener/runtime.ts:1075-1082` → `src/cloud/signals.ts:1118,1140-1166` | `swarm.record_renewal_grant_use(...)` on every call (`read/index.ts:490-496`); `agent_delivery_read_context` can UPDATE `agent_tokens` in its handover CTE and runs a COUNT(*) join over deliveries×signals (`:437-465`). No audit, no idempotency row. |
+| 2 | `claim_agent_inbox` (limit 1) | `POST /functions/v1/command` | `runtime.ts:1365-1394` → `src/cloud/delivery.ts:821-847` | **three rows per empty claim**: `audit_log` (`command/index.ts:8424-8432`), `idempotency_keys` (`:8365-8380`), and a `rate_buckets` upsert by `checkDeliveryRateLimit` (`:4868`, `:7533`) keyed on `date_trunc('minute')` (`:4881-4888`), so one row per principal per **minute**, purged by cron after two hours (`20260723000001:845`). Zero `signal_deliveries` rows change. |
 | 3 | `sleep(LISTENER_IDLE_POLL_MS = 2_000)` | — | `runtime.ts:77`, `:778`, `:1455-1456` | — |
 
 Measured production wall clock per tick ≈ 3.6 s (ledger, `docs/org/2026-08-29-RESUME-HERE.md:2283`), so per idle seat per day: 24,000 reads + 24,000 claims.
@@ -32,7 +33,7 @@ Measured production wall clock per tick ≈ 3.6 s (ledger, `docs/org/2026-08-29-
 | activity heartbeat | every 15 s idle, up to 1.33/s active | `POST /functions/v1/activity` → `realtime.send` | `src/listener/activity.ts:13`, `:98-146`; `activity/index.ts:142-152` |
 | renewal | lazy, ≈ every 54 min, on the next request | `command` | `src/cloud/renewal.ts:852-853`, `:121-125` |
 | `inbox --notify` watcher (separate process) | every 25 s | `read` | `src/cloud/arrival-watch.ts:25`, `:357`, `:387-391` |
-| Claude hook | on prompt, ≥ 30 s apart | `read` | `src/listener/hook.ts:57`, `:1010-1022` |
+| Claude hook | on prompt, ≥ 30 s apart | `read` | `src/listener/hook.ts:57` (cooldown), `:401-410` (its check); `:998-1022` is the 3 s timeout |
 | app tab | every 2 s while visible | `read` | `site/src/components/app/LiveDashboard.astro:5774` |
 
 ### 1.3 Per idle seat per day, today
@@ -42,10 +43,10 @@ Measured production wall clock per tick ≈ 3.6 s (ledger, `docs/org/2026-08-29-
 | read invocations | 24,000 |
 | command invocations (claim) | 24,000 |
 | activity invocations | 5,760 |
-| **edge invocations** | **≈ 53,800** |
-| rows written that survive the tick | 24,000 audit + 24,000 idempotency + 24 rate-bucket rows (hourly upsert) ≈ **48,000** |
+| **edge invocations** | **≈ 53,800** (53,760) |
+| rows written per day | 24,000 audit (kept forever) + 24,000 idempotency (kept 30 days) + 1,440 rate-bucket rows (per-minute window, purged after 2 h) ≈ **49,400**, of which **48,000 survive the day** |
 
-Fleet check: 16 seats × 53,800 ≈ 861,000/day; the dashboard read 832,000 on 2026-09-05 with restarts during the day. The ledger's 390,277 commands/24 h counts the command edge only; the read edge carries the same volume (CodexDesktop, client pass, point 3).
+Fleet check: 16 seats × 53,760 ≈ 860,000/day; the dashboard read 832,000 on 2026-09-05 with restarts during the day. The ledger's 390,277 commands/24 h counts the command edge only; the read edge carries the same volume (CodexDesktop, client pass, point 3).
 
 ### 1.4 What the polling design cannot fix by tuning
 
@@ -59,34 +60,36 @@ Fleet check: 16 seats × 53,800 ≈ 861,000/day; the dashboard read 832,000 on 2
 
 ### 2.1 Principle
 
-**Push is a hint. The row is the truth.** Every wake, every reconnect, and every timer ends in the same `claim_agent_inbox` call against the same `signal_deliveries` ledger with the same lease and ack semantics. Nothing about correctness moves to the socket. This is why the design can tolerate at-most-once broadcast, duplicate wakes, reconnect storms, and a Realtime outage without a delivery being lost.
+**Push is a hint. The row is the truth.** Every wake, every reconnect, and every timer ends in the same `claim_agent_inbox` call against the same `signal_deliveries` ledger with the same lease and ack semantics. Nothing about correctness moves to the socket. This is why the design tolerates at-most-once broadcast, duplicate wakes, reconnect storms, and a Realtime outage without a delivery being lost.
 
 ### 2.2 The wire contract
 
-**W1 — wake topic (per principal, private).**
-`cswarm-wake:{principal_id}:{wake_key}` where `wake_key` is 32 random bytes as 43 base64url characters, minted with the agent token and rotated with it. Event name `wake`. Payload:
+**W1 — wake topic: one per principal, private, named by an opaque id.**
+`cswarm-wake:{wake_id}`. `wake_id` is 32 random bytes as 43 base64url characters, stored on `swarm.agent_principals.wake_id`, one per principal, regardless of how many live tokens, runs, or devices the principal has (`swarm.agent_tokens` has no uniqueness on `principal_id`, `20260723000001_p1_schema.sql:192-216`, and two machines on one credential are expected). The column is added `NOT NULL DEFAULT translate(encode(gen_random_bytes(32), 'base64'), '+/=', '-_')`: a volatile default is evaluated per row, so every existing principal gets its own id at migration time and every future `INSERT INTO swarm.agent_principals` that does not name the column (none does today) gets one too. No edge INSERT site changes; that is what makes L2 additive. Event name `wake`. Payload:
 
 ```json
 { "v": 1, "signal_id": "<uuid>", "enqueued_at": "<timestamptz>" }
 ```
 
-The payload carries no body, no sender, no kind. It says "a delivery row for you exists as of this time". A subscriber that learns a wake learns only that; the claim still needs a live `swm_agt_` token.
+No body, no sender, no kind. The payload says "a delivery row for you exists as of this time". Learning a wake gives a party nothing it can act on: the claim still needs a live `swm_agt_` token.
+
+**The topic name is the credential, and the spec says so.** With an anon JWT the only per-client input a Realtime policy can see is the topic (`realtime.topic()`); there is no join payload. So the id in the name is what authorizes the join. It is therefore treated as a low-privilege secret: our own status and error text pass `cswarm-wake:` topics through the existing credential redactor (`redactCredentialText`, used at `activity/index.ts:134`), it is never written to a signal body, and its blast radius is "learns when principal X has work" for one connection lifetime (W6). Realtime's own refusal text quotes the topic (measured: `Unauthorized: You do not have permissions to read from this Channel topic: <topic>`); the client redacts that string before it reaches a log or `listen status`.
 
 **W2 — workspace signal topic (per workspace, private, humans).**
 `cswarm-signals:{workspace_id}`, event `signal`, payload `{ "v": 1, "signal_id": "<uuid>", "created_at": "<timestamptz>" }`. Authorized exactly like the existing activity topic: `FOR SELECT TO authenticated USING (swarm.is_member(<workspace from topic>, auth.uid()))` (`20260902000003_realtime_agent_activity.sql:4-17` is the template). Replaces the app's 2 s feed poll (§4.3).
 
-**W3 — where the wake key travels.**
-1. `mint_agent_token` and `renew_agent_token` responses gain an optional `wake: { topic, event }` object.
-2. The `claim_agent_inbox` response gains the same optional `wake` object, so a listener that started on an older token learns its topic on its first claim without a re-mint.
-3. Both are additive. The client's response parsers accept unknown fields (command edge throws only on a non-object or a missing `status`, `src/cloud/command-client.ts:717-732`). A 0.1.56 client ignores `wake` and keeps polling.
+**W3 — where the wake id travels: in the responses a client already reads.**
+1. The **read** edge's inbox page (`read/index.ts:485`, `:828`, the response that already carries `capabilities`) gains an optional `wake: { topic, event }` when the caller is an agent and `inbox: true`. This is how a listener learns its topic at start (its first read classifies delivery mode anyway) and how the watcher learns it without ever calling a command.
+2. `claim_agent_inbox` (`command/index.ts:8429-8452`), `mint_agent_token`, and `renew_agent_token` responses carry the same optional object, so a rotation reaches a listener on its next claim or renewal.
+3. All additive. The client's parsers accept unknown fields (command: object with `status`, `ok`, and `event_ids`, `src/cloud/command-client.ts:717-735`; read: object with a `signals` array, `src/cloud/signals.ts:1211-1218`). A 0.1.56 client ignores `wake` and keeps polling.
 
 **W4 — the sender: a trigger, not the edge.**
-`swarm.wake_agent_delivery()` AFTER INSERT ON `swarm.signal_deliveries` FOR EACH ROW. It reads the recipient's live wake key and calls `realtime.send(payload, 'wake', topic, true)`. It runs `SECURITY DEFINER`, owner `swarm_admin`, `SET search_path = pg_catalog`, because `swarm_command` cannot execute `realtime.send` (the activity function has to `RESET ROLE` for the same reason, `activity/index.ts:139-145`). The body is wrapped in `BEGIN … EXCEPTION WHEN OTHERS THEN RETURN NULL; END` so a Realtime failure can never fail the signal insert: the row is the truth, the wake is best-effort. It fires for both enqueue paths, scalar (`enqueue_signal_delivery`, `20260905000020:152-176`) and fan-out (`enqueue_recipient_delivery`, `:191-217`), because both insert into `signal_deliveries`.
+`swarm.wake_agent_delivery()` AFTER INSERT ON `swarm.signal_deliveries` FOR EACH ROW: reads `agent_principals.wake_id` for `NEW.recipient_agent_principal_id` (one row by primary key, so exactly one topic per delivery) and calls `realtime.send(payload, 'wake', 'cswarm-wake:' || wake_id, true)` (signature `payload jsonb, event text, topic text, private boolean`, measured in `local-plans.out`). `SECURITY DEFINER`, owner `swarm_admin`, `SET search_path = pg_catalog`, because `swarm_command` cannot execute `realtime.send` (the activity function has to `RESET ROLE` for the same reason, `activity/index.ts:139-145`). The body is wrapped in `BEGIN … EXCEPTION WHEN OTHERS THEN RETURN NULL; END` so a Realtime failure can never fail the signal insert (`realtime.send` already swallows its own send errors per the Supabase docs; the guard also covers a missing grant, a missing partition, or a missing schema, which `realtime.send` cannot). The subtransaction cost is bounded by the recipient cap of 8 per signal (`20260905000010`). It fires for both enqueue paths, scalar (`enqueue_signal_delivery`, `20260905000020:152-176`) and fan-out (`enqueue_recipient_delivery`, `:191-217`), because both insert into `signal_deliveries`; `ON CONFLICT DO NOTHING` conflicts do not fire an AFTER INSERT row trigger, so a duplicate enqueue does not double-wake. Because `realtime.messages` is read from the WAL, no wake can reach a subscriber before the delivery row is committed.
 
 `swarm.wake_workspace_signal()` AFTER INSERT ON `swarm.signals` does the same for W2.
 
-**W5 — authorization: the topic is the capability.**
-An agent principal has no Supabase JWT and `auth.uid()` is null for it (code map §5). The design does not mint one. Instead the listener connects with the **anon key** and joins a **private** topic, and a `realtime.messages` SELECT policy `TO anon` admits the join only when the topic names a live credential:
+**W5 — authorization: the policy admits the topic that names a live principal.**
+An agent principal has no Supabase JWT and `auth.uid()` is null for it (code map §5). The design mints none. The listener connects with the **anon key** and joins a **private** topic; a `realtime.messages` SELECT policy `TO anon` admits the join only when the topic names a live principal's current wake id:
 
 ```sql
 CREATE POLICY "agent receives its own wake"
@@ -97,56 +100,55 @@ USING (
 );
 ```
 
-`swarm.wake_topic_authorized(topic text) RETURNS boolean` is `STABLE SECURITY DEFINER` (owner `swarm_admin`, `EXECUTE` granted to `anon`), parses `cswarm-wake:<uuid>:<key>`, and returns true iff a row exists in `swarm.agent_tokens` for that principal with `wake_key = key`, `revoked_at IS NULL`, `expires_at > now()`, whose principal, run, and device are not revoked or ended. One indexed lookup on `(principal_id, wake_key)`.
+`swarm.wake_topic_authorized(topic text) RETURNS boolean`: `STABLE SECURITY DEFINER`, owner `swarm_admin`, `SET search_path = swarm, pg_catalog`, `EXECUTE` granted to `anon` the way `swarm.is_member` is granted to `authenticated` (`20260723000001:614`, `20260820000002:25`; a policy stores the function by OID, so `anon` needs `EXECUTE` and not `USAGE` on the schema — L2 proves this on the local stack, because it is the one thing the experiment did not). It returns **false on every non-match and raises on nothing**: malformed topic, unknown id, revoked principal, and a principal with no live token all return the same false, and Realtime's refusal text is the same for all of them (measured), so the policy is not an oracle. The lookup is one row by a new unique index `agent_principals_wake_id (wake_id)` plus one indexed existence check for a live token (`agent_tokens_by_principal`, `20260723000001:213`).
 
-**Measured, not assumed:** on the local stack an anon-key client joined a private topic covered by such a policy (`SUBSCRIBED`), was refused on a topic outside it (`CHANNEL_ERROR: Unauthorized … cswarm-inbox-other:…`), and received a database-side `realtime.send()` within the 4.5 s observation window. Transcript: `docs/evidence/2026-09-06-push-delivery-spec/realtime-anon-private-topic-experiment.{mjs,out}`. This closes the gap CodexDesktop's server pass named as "Realtime is not available to agents today": it is available through a policy, without a JWT and without Postgres Changes.
+**Measured, and exactly what was measured:** on the local stack an anon-key client (via `createClient(...).realtime`) joined a private topic covered by a policy `TO anon` (`SUBSCRIBED`), was refused on a topic outside it (`CHANNEL_ERROR: Unauthorized …`), and received a database-side `realtime.send()` within the 4.5 s observation window. The policy in that experiment was a **static `LIKE` predicate**, not the `SECURITY DEFINER` lookup above, so the experiment shows that anon may join a private topic under a policy and receive database sends; it does not show that a policy calling a `swarm`-schema function as `anon` works. That is L2's first test (§6). Transcript: `docs/evidence/2026-09-06-push-delivery-spec/realtime-anon-private-topic-experiment.{mjs,out}`.
 
-Why not mint a JWT: it needs the project's legacy HS256 secret in the edge environment, which Supabase is retiring in favour of asymmetric signing keys (`supabase.com/docs/guides/auth/signing-keys`) and which no edge function holds today (code map §5, unknown 4). The topic-capability needs no secret outside Postgres. The wake key is a **low-privilege** secret: possession lets a party learn when a principal has work, nothing else. It is therefore stored in plaintext on `swarm.agent_tokens.wake_key` so the trigger can build the topic; the token itself stays hashed. The spec states this trade plainly so it is not mistaken for a token leak later.
+Why not mint a JWT: it needs the project's legacy HS256 secret in the edge environment, which Supabase is retiring in favour of asymmetric signing keys, and which no edge function holds today (code map §5, unknown 4). The wake id needs no secret outside Postgres. It is stored in plaintext on `agent_principals` so the trigger can build the topic; the token stays hashed. The migration amends the neighbouring column comment ("plaintext is never stored", `20260723000001:211-212`) to say that it applies to `token_hash` and that `wake_id` is a plaintext low-privilege capability by design.
 
-**W6 — Realtime policy caching.** Realtime evaluates the policy at join and caches it for the connection ("Client access policies are cached for the duration of the connection"). Revoking a token therefore stops new joins immediately and stops an existing subscriber only at its next reconnect or `access_token` refresh. Accepted, because W1 carries nothing a revoked party can act on. The listener re-sends `access_token` on every token renewal (≈ hourly), which re-evaluates the policy (W5) and cuts a revoked subscriber within one renewal period at most.
+**W6 — rotation and revocation, stated as what actually happens.**
+Realtime evaluates the policy at join and caches it for the connection; a client's `setAuth` with the **same** token is a no-op in `realtime-js` (`_performAuth` pushes `access_token` only `if (this.accessTokenValue != tokenToSend)`, `RealtimeClient.js:489`), so with the anon key there is no re-evaluation on renewal. The design does not rely on re-evaluation. Instead the **topic moves**: `wake_id` is rotated (a new random value written by the same transaction) whenever any token of the principal is revoked (`revoke_agent_token`), when the principal is revoked, and on an explicit `cswarm wake rotate`; the trigger sends only to the current id. A subscriber that joined on the old id stays joined to a topic nobody will ever send to again, and the join it would need for the new id is refused by W5. Revocation of wake delivery is therefore complete at the moment of the rotation; what remains for a stale subscriber is an open socket that receives nothing. Live listeners learn the new topic on their next read, claim, or renewal (W3) and resubscribe (§2.3). Ordinary token renewal does **not** rotate the id, so a renewal never costs a resubscribe.
 
 ### 2.3 The listener
 
-**New module `src/listener/wake.ts`** (`WakeSubscriber`): owns one `RealtimeClient` (`@supabase/realtime-js`, already present transitively; becomes a direct dependency) against `${target.url}/realtime/v1` with `params: { apikey: anonKey }`, `heartbeatIntervalMs: 25_000` (the library default), `setAuth(anonKey)`. It exposes:
+**New module `src/listener/wake.ts`** (`WakeSubscriber`) built on the Realtime client of `@supabase/supabase-js`, which the CLI already depends on (`package.json`), so no second copy of `realtime-js` is introduced. `createClient(target.url, target.anonKey, { auth: { persistSession: false, autoRefreshToken: false } }).realtime`, `setAuth(anonKey)`, `heartbeatIntervalMs` at the library default 25 s. It exposes:
 
-- `state`: `disconnected | connecting | subscribed | errored(code)`; `subscribedAt`, `reconnects`, `lastWakeAt`, `lastErrorCode`.
-- `wakes()`: an async iterator that yields once per coalesced wake (250 ms coalescing window) and once per transition to `subscribed`.
-- `setTopic(topic)` when a claim or renewal reports a new `wake.topic` (key rotation): unsubscribe old, subscribe new; the transition to `subscribed` on the new topic triggers a reconcile.
+- `state`: `disconnected | connecting | subscribed | errored(code)`; `subscribedAt`, `reconnects`, `lastWakeAt`, `lastErrorCode`, `topic` (redacted in any rendering).
+- `next()`: resolves once per coalesced wake (250 ms window) and once per transition to `subscribed`. **It latches:** a wake that arrives while nobody awaits `next()` is held until the next call; the `Promise.race` below cannot drop one.
+- `setTopic(topic)`: when a read, claim, or renewal reports a different `wake.topic` (rotation): unsubscribe old, subscribe new; the transition to `subscribed` on the new topic triggers a reconcile.
 
-The websocket bypasses `ListenerHttpClient` (`src/listener/http-client.ts`), which is the HTTP keep-alive adapter; that is expected and the status metrics stay HTTP-only.
+The websocket bypasses `ListenerHttpClient` (`src/listener/http-client.ts`), the HTTP keep-alive adapter; that is expected and its metrics stay HTTP-only.
 
-**Loop change in `src/listener/runtime.ts`.** The idle path (`:1440-1456`, `:1762-1778`) changes from `await sleep(pollMs)` to:
+**Loop change in `src/listener/runtime.ts`.** Two idle ticks replace one:
 
-```
-await Promise.race([ wake.next(), sleep(pollMsFor(wake.state)) ])
-```
+- **Wake tick** (on `next()` resolving with a wake): claim until empty. No read.
+- **Reconcile tick** (every `LISTENER_RECONCILE_POLL_MS = 300_000` while `state === subscribed`; every `LISTENER_IDLE_POLL_MS` otherwise; and once on every transition to `subscribed`): **read, then claim**, exactly today's tick. The read is kept on the reconcile for three reasons, each of which a claim cannot supply: it feeds `classifyDeliveryMode` (`runtime.ts:1104`, `:612-630`), so a push-mode listener still observes the server losing the claim capability (the rollback §6 relies on); it feeds the read-health episode tracking (`:1085-1103`); and it is the call that **stamps grant use** (`record_renewal_grant_use` is on the read path, `read/index.ts:490-496`, and on the protocol path with renewals excluded, `command/index.ts:9024-9036`; claims return before it, `:8433-8452`). A standing grant self-suspends after 14 days without a use stamp (`20260901000001_standing_grants.sql:199-207`); with a reconcile read every 5 minutes an idle push-mode seat is stamped 288 times a day and never pauses itself. It costs one read per 5 minutes.
 
-with `pollMsFor(subscribed) = LISTENER_RECONCILE_POLL_MS = 300_000` and `pollMsFor(anything else) = LISTENER_IDLE_POLL_MS` (15 s after lane A). The per-tick read at `:1075-1082` is skipped while `wake.state === subscribed` and `deliveryMode === durable_claim`: the claim response already carries the deliveries, and the read is a paid, writing call (§1.1). In `cursor_fallback` mode (server without claim capability) the read stays and the loop behaves as today.
+The idle wait is `await Promise.race([ wake.next(), sleep(pollMsFor(wake.state)) ])`. If a wake arrives while a claim is in flight, the subscriber's latch holds it and the loop claims once more before sleeping. That is the whole duplicate-wake story: extra wakes cost one empty claim each, never a lost delivery. `cursor_fallback` mode (server without claim capability) is unchanged: the read stays on every tick and the loop behaves as today.
 
-**On every wake and on every transition to `subscribed`: claim until empty.** The existing drain logic already re-requests immediately on a full page; the same rule applies to claims. If a wake arrives while a claim is in flight, the subscriber sets a dirty flag and the loop claims once more before sleeping. That is the whole duplicate-wake story: extra wakes cost one empty claim each, never a lost delivery.
-
-**Status** (`src/listener/control.ts` `ListenerStatus`, `cswarm listen status`): a `wake` block — `mode: "push" | "poll"`, `subscribedAt`, `reconnects`, `lastWakeAt`, `lastReconcileAt`, `lastErrorCode`, `topicRotatedAt`. The human line reads `push (Realtime), last wake 12 s ago, reconcile every 5 min` or `poll every 15 s — Realtime not connected (<code>)`. It never says `push` unless `state === subscribed` right now (false-success rule). `claimCadenceMs` / `expectedClaims` (`read-health.ts:203-207`, `:403`) become the reconcile cadence in push mode; the tests that round-trip them (`tests/listener-control.test.ts:2336`, `tests/listener-host-limits.test.ts:231`) are updated in the client lane.
+**Status** (`src/listener/control.ts` `ListenerStatus`, `cswarm listen status`; `STATUS_ALLOWED_KEYS` at `control.ts:225-274` is a closed set and L4 extends it): a `wake` block — `mode: "push" | "poll"`, `subscribedAt`, `reconnects`, `lastWakeAt`, `lastReconcileAt`, `lastErrorCode`, `topicRotatedAt`; never the topic itself. The human line reads `push (Realtime), last wake 12 s ago, reconcile every 5 min` or `poll every 15 s — Realtime not connected (<code>)`. It never says `push` unless `state === subscribed` right now (false-success rule). `claimCadenceMs` / `expectedClaims` (`read-health.ts:203-207`, `:403`) become the reconcile cadence in push mode; the tests that round-trip them (`tests/listener-control.test.ts:2336`, `tests/listener-host-limits.test.ts:231`) are updated in L4.
 
 ### 2.4 Failure modes, one by one
 
 | failure | what happens | worst case | why no delivery is lost |
 |---|---|---|---|
-| **Missed wake** (Realtime dropped it; broadcast has no replay) | nothing until the reconcile claim | 5 min latency | the row is in `signal_deliveries`; the reconcile claim reads the ledger |
+| **Missed wake** (Realtime dropped it; broadcast has no replay) | nothing until the reconcile | 5 min latency | the row is in `signal_deliveries`; the reconcile claim reads the ledger |
 | **Socket down, listener does not know yet** (half-open) | library heartbeat every 25 s detects it; state → `disconnected`; poll at 15 s begins | 25 s detection + 15 s poll = 40 s | same |
 | **Socket down, known** | 15 s poll; reconnect ladder `[1, 2, 5, 10] s` (`RealtimeClient.js:16`) | 15 s latency | same |
-| **Reconnect** | transition to `subscribed` fires one claim (reconcile-on-join) | — | any row enqueued while disconnected is claimed on join |
-| **Duplicate wake** (two listeners on one principal, retried send, coalescing miss) | each subscriber claims; `FOR UPDATE SKIP LOCKED` (`durable-delivery.ts:293`) gives the row to one | one extra empty claim per duplicate | leases are exclusive |
-| **Policy refused** (revoked/expired token, key rotated) | `CHANNEL_ERROR`; state → `errored(unauthorized)`; poll at 15 s; the next claim/renewal returns the current `wake.topic`; resubscribe | 15 s latency until re-keyed | claim still works if the token is live; if it is not, the seat is dead by design |
-| **Reconnect storm** (Realtime deploy, network blip, our own release) | every seat reconnects on the library ladder; joins are rate-limited server-side (500/s on Pro, `too_many_joins`); the client adds 0–5 s jitter before the reconcile claim | at 10,000 seats ≈ 20 s of throttled joins, then normal | the 15 s poll covers the window |
-| **Thundering herd on our deploy** (all listeners restart on a release) | each start = 1 join + 1 reconcile claim + 1 read (first page for mode classification) | 10,000 seats → ≈ 30,000 invocations in one minute, once | — |
-| **Wake arrives for a row the listener already claimed** (reconcile raced the wake) | one empty claim | — | — |
-| **Realtime message rate exceeded** (500/s Pro) | Realtime disconnects and the client reconnects when under the limit | poll covers | — |
-| **Trigger cannot send** (Realtime schema unavailable, partition missing) | exception swallowed; row inserted; wake lost | 5 min | W4's exception guard; the reconcile |
-| **Listener behind a proxy that blocks websockets** | `connecting` never reaches `subscribed`; poll at 15 s; status says so | permanent 15 s latency | this is lane A's world, unchanged |
+| **Reconnect** | transition to `subscribed` fires one reconcile (reconcile-on-join) | — | any row enqueued while disconnected is claimed on join; a wake in the window between server-side join acceptance and the client's `SUBSCRIBED` callback is delivered, because bindings are registered before `subscribe()` and inbound dispatch gates only on channel-control events |
+| **Duplicate wake** (two listeners on one principal, coalescing miss) | each subscriber claims; `FOR UPDATE SKIP LOCKED` (`durable-delivery.ts:293`) gives the row to one | one extra empty claim per duplicate | leases are exclusive |
+| **Wake id rotated** (a token of this principal was revoked) | the old topic goes silent; the next read/claim/renewal carries the new topic; `setTopic` resubscribes; reconcile on `subscribed` | one reconcile interval, or 15 s if the socket was down | the reconcile |
+| **Policy refused** (principal revoked, or a stale id after rotation) | `CHANNEL_ERROR`; state → `errored(unauthorized)`; poll at 15 s; the next read carries the current topic if the principal is live | 15 s latency until re-keyed | claim still works if the token is live; if it is not, the seat is dead by design |
+| **Reconnect storm** (Realtime deploy, network blip, our own release) | every seat reconnects on the library ladder; joins are rate-limited server-side (500/s on Pro, `too_many_joins`); the client adds 0–5 s jitter before the reconcile | at 10,000 seats ≈ 20 s of throttled joins, then normal | the 15 s poll covers the window |
+| **Thundering herd on our deploy** (all listeners restart on a release) | each start = 1 join + 1 reconcile (read + claim) | 10,000 seats → ≈ 30,000 invocations in one minute, once | — |
+| **Wake for a row already claimed** (reconcile raced the wake) | one empty claim | — | — |
+| **Realtime message rate exceeded** (500/s Pro) | Realtime disconnects; the client reconnects when under the limit | poll covers | — |
+| **Trigger cannot send** (Realtime schema unavailable, partition missing, grant missing) | exception swallowed; row inserted; wake lost | 5 min | W4's guard; the reconcile |
+| **Listener behind a proxy that blocks websockets** | `connecting` never reaches `subscribed`; poll at 15 s; status says so | permanent 15 s latency | lane A's world, unchanged |
 
 ### 2.5 What stays exactly as it is
 
-The claim (`claimAgentInbox`, `durable-delivery.ts:172`), the lease budget, `DELIVERY_MAX_ATTEMPTS`, the ack path, prepared-ack recovery (`runtime.ts:1258`), receipts, the activity heartbeat transport, the hook, `--route`, `--permissions`, the credential rotation. A 0.1.56 listener keeps working at every step (§6).
+The claim (`claimAgentInbox`, `durable-delivery.ts:172`), the lease budget, `DELIVERY_MAX_ATTEMPTS`, the ack path, prepared-ack recovery (`runtime.ts:1258`), receipts, the activity heartbeat transport, the hook, `--route`, `--permissions`, credential rotation. A 0.1.56 listener keeps working at every step (§6).
 
 ---
 
@@ -154,19 +156,24 @@ The claim (`claimAgentInbox`, `durable-delivery.ts:172`), the lease budget, `DEL
 
 ### 3.1 What a poll may persist
 
-Rule, to be written into `SWARM-CLOUD.md` §2.2: **an audit row and an idempotency row are written for a state-changing command or a refused command, never for an empty read-intent command.** `claim_agent_inbox` is the one command that is mutating in general and a read when empty. The change is confined to its branch (`command/index.ts:8348-8445`; there is no shared wrapper to gate, CodexDesktop server pass point 5): gate the `idempotency_keys` insert (`:8365`) and the `insertAudit` (`:8424`) on `ledger.delivery_refs.length > 0 || ledger.terminal_delivery_failure_count > 0`. The `rate_buckets` upsert (`:4850`) stays: it is one row per principal per hour, and it is the abuse control.
+Rule, to be written into `SWARM-CLOUD.md` §2.2: **an audit row and an idempotency row are written for a state-changing command or a refused command, never for an empty read-intent command.** `claim_agent_inbox` is the one command that is mutating in general and a read when empty. "Empty" must mean **no row changed**, and today the ledger cannot say that: steps 2 and 3 of `claimAgentInbox` (lease reset, `durable-delivery.ts:195-211`; TTL expiry to `ack_outcome = 'expired'`, `:212-231`) mutate rows without a `RETURNING` and without a field on `DeliveryClaimLedgerResponse` (`:66-71`); only step 4's poison count (`:233-253`) is reported. So L1 does two things:
 
-**Replay semantics, decided here, not deferred:** the replay branch (`:7609-7616`) returns a stored ledger for a retried `command_id`; with the empty insert skipped, a retried empty claim finds no row and re-executes. That is correct: an empty claim changed nothing, so re-executing it is indistinguishable from replaying it, except that it may now find work, which is what the caller wants. A non-empty claim still writes its row and still replays. The `LedgerRace` detector (`:8381-8389`) is untouched for non-empty claims. This is lane A's change if lane A lands it first; this spec records the decision so lane A does not have to.
+1. `DeliveryClaimLedgerResponse` gains `lease_reset_count` and `expired_count`, each from a `RETURNING` on its step.
+2. The `idempotency_keys` insert (`command/index.ts:8365`) and the `insertAudit` (`:8424`) are gated on `delivery_refs.length > 0 || terminal_delivery_failure_count > 0 || lease_reset_count > 0 || expired_count > 0`.
 
-The read edge writes `record_renewal_grant_use` on every call (`read/index.ts:490-496`). In push mode the per-tick read is gone (§2.3), so this write drops with it; the reconcile is a claim, not a read.
+A claim that only reads writes nothing but the `rate_buckets` upsert (`checkDeliveryRateLimit`, `:4868`; one row per principal per minute, purged after two hours), which stays: it is the abuse control and it is short-lived. The change is confined to the claim branch (`:8348-8445`); there is no shared wrapper to gate (CodexDesktop server pass, point 5).
+
+**Replay semantics, decided here:** the replay branch (`:7609-7616`) returns a stored ledger for a retried `command_id`; with the empty insert skipped, a retried empty claim finds no row and re-executes. That is correct: an empty claim changed nothing, so re-executing it is indistinguishable from replaying it, except that it may now find work, which is what the caller wants. Any claim that changed a row still writes its idempotency row and still replays. The `LedgerRace` detector (`:8381-8389`) is untouched for those. If lane A lands this first, it lands this rule.
+
+The read edge writes `record_renewal_grant_use` on every call (`read/index.ts:490-496`); in push mode the per-tick read is gone and the reconcile read remains (§2.3), so that write drops from 24,000 to 288 per day.
 
 ### 3.2 Retention
 
 | table | today | policy |
 |---|---|---|
-| `swarm.idempotency_keys` | purged daily at 03:17 by `swarm.purge_expired_idempotency_keys()` (`20260723000001_p1_schema.sql:793-816`, cron `:839-843`), retention from config key `idempotency_retention_days` (default 30, `:442`) | replay is needed for seconds, not weeks; set the key to **2 days**, and lower the function's floor if it has one (CodexDesktop read a 30-day floor; the retention lane verifies against the function body). Index `idem_purge (created_at)` exists (`:380`); plan in `local-plans.out` is an index scan |
-| `swarm.audit_log` | **append-only by trigger** (`audit_log_append_only`, `:588-590`): DELETE raises; no purge; no index on `occurred_at` alone (`local-plans.out` shows the delete plan using `audit_by_cred` on its second column, i.e. a full index walk) | not stopping the write is the only lever, and §3.1 stops it. Archival after one year stays an external operation, as the migration says (`:791-792`) |
-| `swarm.rate_buckets` | hourly upsert per principal per op; PK only (`:416-421`); a cron purges it (`:845`) | unchanged; one row per principal-hour |
+| `swarm.idempotency_keys` | purged daily at 03:17 by `swarm.purge_expired_idempotency_keys()` (`20260723000001_p1_schema.sql:793-816`, cron `:839-843`); retention `GREATEST(30, COALESCE(config idempotency_retention_days, 30))` days (`:801-805`), so the config key alone cannot go below 30 | replay is needed for seconds, not weeks: **L2b** replaces the function with a floor of 1 day and sets the key to 2. Index `idem_purge (created_at)` exists (`:380`); the plan is an index scan (`local-plans.out`) |
+| `swarm.audit_log` | **append-only by trigger** (`audit_log_append_only`, `:588-590`): DELETE raises; no purge; no index on `occurred_at` alone (the delete plan walks `audit_by_cred` on its second column) | not stopping the write is the only lever, and §3.1 stops it. Archival after one year stays an external operation, as the migration says (`:791-792`) |
+| `swarm.rate_buckets` | per-minute upsert per principal per claim (`:4868`, `:4881-4888`); hourly for signals (`:4850`); PK only (`:416-421`); cron purges rows older than two hours (`:845`) | unchanged; ≈ 400 rows per idle seat per day after this spec (288 reconcile + ≈ 100 wake claims), none older than two hours |
 | `realtime.messages` | partitioned by day; partitions older than 3 days are dropped by Supabase | nothing to do |
 | `swarm.signal_deliveries` | terminal rows purged by cron (`20260731000001_signal_deliveries.sql:272`) | unchanged |
 
@@ -176,9 +183,9 @@ The read edge writes `record_renewal_grant_use` on every call (`read/index.ts:49
 
 ### 4.1 `inbox --notify` (`src/cloud/arrival-watch.ts`)
 
-The watcher is a second subscriber to W1, using the same `WakeSubscriber`. On wake it does exactly what it does on a tick today: one `readPage` from its cursor, emit, persist cursor (`:431-437`). Its poll drops from 25 s to a 5-minute reconcile while subscribed and 25 s while not. It never claims or acks (`:338`), so it cannot steal work; it only observes. Where does it get the wake key? The watcher already holds the agent credential; it calls `claim_agent_inbox` with `limit: 0` once at start to learn `wake.topic` (a zero-limit claim leases nothing: `effectiveLimit <= 0 ? []`, `durable-delivery.ts:273`). Multiple watchers per principal are each a connection; the spec does not dedupe them (that is lane A's watcher dedupe), it only makes each one cheap.
+The watcher is a second subscriber to W1 through the same `WakeSubscriber`. Its read-only invariant stands: it never imports or calls claim or ack code (`:336-338`), and it learns its topic from the `wake` object on the inbox read it already performs at start (W3.1). On wake it does exactly what it does on a tick today: one `readPage` from its cursor, emit, persist the cursor (`:431-437`). Its poll drops from 25 s to a 5-minute reconcile read while subscribed and stays 25 s while not. Multiple watchers per principal are each a connection; this spec makes each one cheap and leaves dedupe to lane A.
 
-The refused-frame defect fixed on 2026-09-06 (a second-recipient row exits the watcher with code 1 and never advances the cursor) is orthogonal, but the watcher lane must land after that fix so the new subscriber is not built on a guard that dies.
+The refused-frame defect fixed on 2026-09-06 (a second-recipient row exits the watcher with code 1 and never advances the cursor) is orthogonal, but L5 lands after that fix so the subscriber is not built on a guard that dies.
 
 ### 4.2 The Claude hook
 
@@ -192,56 +199,60 @@ The 2 s feed refresh (`:5774`) becomes: subscribe to W2 on workspace open with t
 
 ## 5. Indexes and query plans for the hot paths (measured on the local database)
 
-Measured on the local Supabase stack at the current migration set (`local-plans.sql` → `local-plans.out`). The local tables are near-empty, so the numbers are plan shapes, not timings; the retention lane repeats them on a reset with a synthetic 2M-row load before it lands, per the ask.
+Measured on the local Supabase stack at the current migration set (`local-plans.sql` → `local-plans.out`). The local tables are near-empty, so these are plan shapes, not timings; L2b repeats them on a reset with a synthetic 2 M-row load before it lands.
 
 | path | plan | verdict |
 |---|---|---|
-| claim candidates (`durable-delivery.ts:272-300`) | `Index Scan using signal_deliveries_unacked_oldest` with `Index Cond (recipient, workspace)`, `Filter (acked_at IS NULL, lease_id IS NULL, attempt_count < 10)`, `LockRows`, `Limit`; 0.25 ms, 2 buffers | correct index; the filter columns are not in the index but the partial index already excludes acked rows, and unacked-unleased rows per principal are few by construction. **No change.** |
-| wake trigger lookup (new) | needs `(principal_id, wake_key)` on `swarm.agent_tokens`; the policy function does the same lookup once per join | **add** `agent_tokens_wake_key (principal_id, wake_key) WHERE revoked_at IS NULL` in the wake migration |
+| claim candidates (`durable-delivery.ts:272-300`) | `Index Scan using signal_deliveries_unacked_oldest`, `Index Cond (recipient, workspace)`, `Filter (acked_at IS NULL, lease_id IS NULL, attempt_count < 10)`, `LockRows`, `Limit`; 0.068 ms execution, 2 buffers (`local-plans.out`) | correct index; the partial index already excludes acked rows. **No change.** The per-principal `FOR UPDATE` on `agent_principals` (`:183-189`) serializes claims per principal only |
+| wake trigger lookup (new) | `agent_principals` by primary key | nothing to add |
+| policy lookup (new, once per join) | `agent_principals_wake_id (wake_id)` unique, then `agent_tokens_by_principal` existence | **add** the unique index in L2 |
 | idempotency purge | `Index Scan using idem_purge` | fine |
-| audit purge | full walk of `audit_by_cred` on `occurred_at` (second column) | DELETE is forbidden anyway (§3.2); no index added; the write stops instead |
-| `rate_buckets` upsert | PK `(bucket_key, window_start)` | fine; purge cron exists |
-| `swarm.file_versions` 2.8 M seq scans (ledger) | six indexes exist (`local-plans.out`); a missing index does not explain it | **out of this spec's scope**; lane A owns it, and the fix is an EXPLAIN on the offending query, not an index added blind |
-| `realtime.messages` insert by trigger | one insert per delivery row into the day partition | write amplification ×2 on the signal path; at 1,716 signals/day it is noise; at §7's 10,000-seat load it is still under the delivery insert cost |
+| audit purge | full walk of `audit_by_cred` on `occurred_at` | DELETE is forbidden anyway (§3.2); no index added; the write stops instead |
+| `rate_buckets` upsert | PK `(bucket_key, window_start)` | fine; the two-hour purge cron exists (`:845`) |
+| `swarm.file_versions` 2.8 M seq scans (ledger) | six indexes exist (`local-plans.out`); a missing index does not explain it | **lane A's**; the fix is an EXPLAIN on the offending query, not an index added blind |
+| `realtime.messages` insert by trigger | one insert per delivery row into the day partition | write amplification ×2 on the delivery path; at 1,716 signals/day it is noise; at §7's 10,000-seat load it is still under the delivery insert cost |
 
 ---
 
 ## 6. Apply order in lanes, with file ownership
 
-Hard constraint (CodexDesktop, client pass points 1–2; CSwarmDevLead relay): `CLIENT_PROTOCOL_VERSION` is frozen at `0.1.0` (`src/cloud/config.ts:3`), the read capability handshake is a fixed four-bit set whose parser drops unknown bits (`src/cloud/signals.ts:125-132`, `:294-310`), and the only server→client control is `min_client_version`, which can only refuse. **The server cannot identify or negotiate with a 0.1.56 client. Every push step is additive on the server and requires a client release to take effect.** The order below is built for that: server first, additive only; client last; nothing removes the claim path.
+Hard constraint (CodexDesktop, client pass points 1–2; CSwarmDevLead relay): `CLIENT_PROTOCOL_VERSION` is frozen at `0.1.0` (`src/cloud/config.ts:3`), the read capability handshake is a fixed four-bit set whose parser drops unknown bits (`src/cloud/signals.ts:125-132`, `:294-310`), and the only server→client control is `min_client_version`, which can only refuse. **The server cannot identify or negotiate with a 0.1.56 client. Every push step is additive on the server and takes effect only with a client release.** Server first, additive only; client last; nothing removes the claim path.
 
-| lane | branch | owner (subagent family) | files it owns | depends on | its tests | 0.1.56 keeps working because |
+**Ownership rule:** a file belongs to one lane at a time. Where two lanes need the same file, they are sequenced, never concurrent, and the later lane rebases on the earlier one's merge.
+
+| lane | branch | author family | files it owns (exclusively while it runs) | starts after | its tests | 0.1.56 keeps working because |
 |---|---|---|---|---|---|---|
-| **L0** lane A (already assigned) | `lane/idle-cost` | Grok | `runtime.ts:77`, `activity.ts:13`, read+claim merge, `idempotency_retention_days`, watcher dedupe | — | its own | it is a client release plus one config row |
-| **L1** empty-claim persistence | `lane/claim-persistence` | Codex (from 2026-09-06 21:38Z) or Grok | `supabase/functions/command/index.ts:8348-8445` only | — (if lane A has not taken §3.1) | `tests/p1-server/claim-empty-persists-nothing.test.ts`: empty claim → 0 audit, 0 idempotency rows; non-empty claim → both; retried empty `command_id` re-executes and returns the current ledger | invisible to clients: same response shape |
-| **L2** wake migration | `lane/wake-migration` | Codex or Gemini | new `supabase/migrations/2026MMDD000001_wake_delivery.sql`: `agent_tokens.wake_key`, index, `wake_topic_authorized()`, both triggers, both `realtime.messages` policies | — | `tests/p1-local/wake-realtime-auth.test.ts` (template: `tests/p1-local/activity-realtime-auth.test.ts`): policy admits the live key, refuses a revoked one, refuses a wrong topic; trigger inserts a `realtime.messages` row per delivery; trigger swallows a send failure | additive schema; no client reads it |
-| **L3** wake in responses | `lane/wake-command` | Codex or Grok | `command/index.ts` mint/renew/claim response builders; `_shared/` types; `src/protocol` if the response schema is shared | L2 | `tests/p1-server/wake-topic-in-responses.test.ts`; existing response tests unchanged | optional field; 0.1.56 ignores it |
-| **L4** listener client | `lane/wake-client` | Codex | new `src/listener/wake.ts`; `src/listener/runtime.ts` idle path; `src/listener/control.ts` status; `src/listener/read-health.ts` cadence semantics; `src/cli.ts` wiring; `package.json` (`@supabase/realtime-js` direct); `tests/listener-*.test.ts` | L3 contract (developed against a fake Realtime server) | fake-socket tests for every row of §2.4; a **live control** with `--state-dir <temp>` against the local stack pasting status JSON with `mode: "push"` | this *is* the release; until it lands, seats poll |
-| **L5** watcher | `lane/wake-watcher` | Gemini | `src/cloud/arrival-watch.ts`; `src/cli.ts` notify wiring; `tests/support/arrival-watch.test.ts` | L4's module; the refused-frame fix | wake → one read → cursor advance; poll fallback when not subscribed | same |
-| **L6** app | `lane/wake-site` | Gemini | `site/src/components/app/LiveDashboard.astro` feed refresh; `site/src/lib/commonswarm.ts`; site tests | L2 (W2 policy) | site observer: no 2 s poll while subscribed; poll resumes on `CHANNEL_ERROR` | site-only deploy |
-| **L7** measurement | `lane/wake-measure` | Grok | `scripts/measure-idle-cost.sh`; `docs/evidence/2026-09-xx-push-delivery-measured/` | L4 | §8's plan, run before and after | — |
-| **L8** docs | `lane/wake-docs` | any | `docs/design/SWARM-CLOUD.md` §2.13 addendum, §2.2 persistence rule; `AGENTS.md` one trap ("push is a hint; claim is the truth; a status that says push must be subscribed now") | L4 | — | — |
+| **L0** lane A (assigned) | `lane/idle-cost` | Grok | `src/listener/runtime.ts` (constants + read/claim region), `src/listener/activity.ts:13`, `src/cloud/arrival-watch.ts` (dedupe), config key `idempotency_retention_days`, the `file_versions` EXPLAIN | — | its own | client release plus one config row |
+| **L1** empty-claim persistence | `lane/claim-persistence` | Codex (from 2026-09-06 21:38Z) or Grok | `supabase/functions/command/durable-delivery.ts` (ledger counters); `supabase/functions/command/index.ts` claim branch `:8348-8445` | — | `tests/p1-server/claim-empty-persists-nothing.test.ts`: empty claim → 0 audit, 0 idempotency; claim that expired a lease → both rows; non-empty claim → both; retried empty `command_id` re-executes | same response shape plus two optional counters |
+| **L2** wake migration | `lane/wake-migration` | Codex or Gemini | new `supabase/migrations/…_wake_delivery.sql`: `agent_principals.wake_id` (volatile default, W1) + unique index, `wake_topic_authorized()` + `GRANT EXECUTE TO anon`, rotation inside `revoke_agent_token` / principal revoke, both triggers, both `realtime.messages` policies, the column-comment amendment; **plus the test gate**: `package.json:26` (`test:p1-local` is a literal eight-file list) and the pin in `tests/p1-cli/test-gate-coverage.test.ts:23-34,125-128`, because a new file under `tests/p1-local/` runs only when the script names it | — | `tests/p1-local/wake-realtime-auth.test.ts` (template `activity-realtime-auth.test.ts`), named in the gate: **first**, as `anon`, a policy calling the `SECURITY DEFINER` function admits the live id (the thing the experiment did not measure); refuses a rotated id, a revoked principal, a malformed topic, all with the same false; every existing principal has a distinct `wake_id` after the migration and a fresh INSERT gets one; trigger inserts one `realtime.messages` row per delivery; trigger swallows a send failure; revoke rotates the id | additive schema with a default; no INSERT site and no client changes |
+| **L2b** retention | `lane/retention` | Gemini | new migration replacing `swarm.purge_expired_idempotency_keys()` with a 1-day floor; the config row to 2 days; the loaded-plan evidence for §5 | — | `tests/p1-local`: purge removes a 3-day-old row and keeps a 1-day-old one | server-only |
+| **L3** wake in responses | `lane/wake-command` | Codex or Grok | `supabase/functions/read/index.ts` (inbox page `wake`); `command/index.ts` mint/renew/claim response builders (`:8429-8452` after L1 has merged); `_shared/` types; `src/protocol` if the response schema is shared | L1, L2 | `tests/p1-server/wake-topic-in-responses.test.ts`; existing response tests unchanged | optional field; 0.1.56 ignores it |
+| **L4** listener client | `lane/wake-client` | Codex | new `src/listener/wake.ts`; `src/listener/runtime.ts` (after L0 merged); `src/listener/control.ts` (incl. `STATUS_ALLOWED_KEYS`); `src/listener/read-health.ts`; `src/cli.ts` listener wiring; `tests/listener-*.test.ts`. No `package.json` change: the Realtime client comes from the existing `@supabase/supabase-js` dependency | L0, L3 (contract; developed against a fake Realtime server) | fake-socket tests for every row of §2.4 incl. the latch; a **live control** with `--state-dir <temp>` against the local stack pasting status JSON with `mode: "push"`, then with Realtime stopped showing `mode: "poll"` | this *is* the release; until it lands, seats poll |
+| **L5** watcher | `lane/wake-watcher` | Gemini | `src/cloud/arrival-watch.ts` (after L0's dedupe merged); `src/cli.ts` notify wiring (after L4 merged); `tests/support/arrival-watch.test.ts` | L0, L4, the refused-frame fix | wake → one read → cursor advance; poll fallback when not subscribed; the read-only invariant test stays green | same |
+| **L6** app | `lane/wake-site` | Gemini | `site/src/components/app/LiveDashboard.astro` feed refresh; `site/src/lib/commonswarm.ts`; site tests | L2 | site observer: no 2 s poll while subscribed; poll resumes on `CHANNEL_ERROR` | site-only deploy |
+| **L7** measurement | `lane/wake-measure` | Grok | `scripts/measure-idle-cost.sh`; `docs/evidence/2026-09-xx-push-delivery-measured/` | L4 | §8's plan, before and after | — |
+| **L8** docs | `lane/wake-docs` | any | `docs/design/SWARM-CLOUD.md` §2.13 addendum, §2.2 persistence rule; `AGENTS.md` one trap ("push is a hint; the row is the truth; a status that says push must be subscribed now") | L4 | — | — |
 
-Order: **L0 and L1 now** (independent). **L2 → L3 → L4**. **L5 and L6 in parallel after L4** (L6 needs only L2, so it may start earlier). **L7 after L4**, before "released". **L8 with the release.** Each lane carries its two D-036 arms on its own SHA. Production apply order per lane: migration → `command` edge → `read` edge → client, as `20260905000020:36-38` already states; L2's migration is applied before L3's edge deploy, and L3 is deployed before L4 is published to npm.
+Order: **L0, L1, L2, L2b now, in parallel** (disjoint files). **L3 after L1 and L2.** **L4 after L0 and L3.** **L5 after L4; L6 after L2 (may run beside L3).** **L7 after L4, before "released."** **L8 with the release.** Each lane carries its two D-036 arms on its own SHA. Production apply order per lane: migration → `command` edge → `read` edge → client, as `20260905000020:32-33` already states; L2's migration is applied before L3's edge deploy, and L3 is deployed before L4 is published to npm.
 
-Rollback: every server step is additive. Dropping the two triggers stops wakes; listeners fall to the 15 s poll on their own (the socket stays subscribed but silent, the reconcile catches everything). Dropping the policies refuses joins; listeners poll. No step needs a client rollback to undo.
+Rollback: every server step is additive. Dropping the two triggers stops wakes; listeners keep their silent subscription and the reconcile catches everything at 5-minute latency. Dropping the policies refuses joins; listeners poll at 15 s. Removing the claim capability from the read response drops a push-mode listener to `cursor_fallback` on its next reconcile read (§2.3). No step needs a client rollback to undo.
 
 ---
 
 ## 7. Capacity: what breaks at 100, 1,000, 10,000 seats
 
-Assumptions: Pro plan; one listener per seat; one `inbox --notify` per seat on half the seats; humans' tabs ignored below 10 per workspace; signals per seat-day ≈ 100 (today's fleet posts 1,716/day over 16 seats, so this is generous); activity heartbeat 60 s after lane A; reconcile 5 min.
+Assumptions: Pro plan; one listener per seat; one `inbox --notify` on half the seats; humans' tabs ignored below 10 per workspace; signals per seat-day ≈ 100 (today's fleet posts 1,716/day over 16 seats, so this is generous); activity heartbeat 60 s after lane A; reconcile 5 min.
 
-| seats | Realtime connections | Realtime messages/day | edge invocations/day | rows/day surviving | what breaks first |
+**Per idle seat per day after this spec:** reconcile 288 reads + 288 claims = 576; activity 1,440; renewals 24; wake-driven claims ≈ 100; drains ≈ 50 ⇒ **≈ 2,200 invocations** (2,478 with a watcher: 288 reconcile reads + ≈ 100 wake reads more), from ≈ 53,800: **−96 %**. Rows written: ≈ 400 `rate_buckets` rows (288 reconcile + ≈ 100 wake claims, per-minute window), all purged within two hours; nothing kept. At $2 per million: $0.0044 per seat-day. The activity heartbeat is 65 % of what remains; it is the next thing to move (§9). The 10,000-seat "presence + 15-minute reconcile" figure below is 10,000 × (96 reads + 96 claims + 24 renewals + 150 wake claims and drains + 97 watcher reads) ≈ 4.6 M/day.
+
+| seats | Realtime peak connections | Realtime messages/day | edge invocations/day (with watchers) | rows/day kept past two hours | what breaks first |
 |---|---|---|---|---|---|
-| 16 (today) | 24 | ≈ 3,500 (1,716 signals × (1 sent + 1 received) + heartbeat frames, unbilled) | ≈ 30,000 (vs 861,000) | 0 (vs 770,000) | nothing; inside the 2 M included |
-| 100 | 150 | ≈ 20,000 | ≈ 190,000 (5.7 M/month, ≈ $7 over the 2 M included) | 0 | nothing; 500 connections included |
-| 1,000 | 1,500 | ≈ 200,000 | ≈ 1.9 M/day (57 M/month ≈ $110) | 0 | **peak connections**: 1,500 > 500 → $10 per extra 1,000 (≈ $10); the activity heartbeat is now 76 % of edge spend → move it to Realtime presence (§9, not this spec) |
-| 10,000 | 15,000 | ≈ 2 M | ≈ 19 M/day (570 M/month ≈ $1,140) with heartbeat on the edge; ≈ 4 M/day (≈ $240) with heartbeat on presence and reconcile at 15 min | 0 | **connection cap**: Pro no-spend-cap and Team stop at 10,000; needs Enterprise or one connection per host rather than per seat. Joins on a restart: 15,000 at 500–2,500/s ⇒ 6–30 s of `too_many_joins`, covered by the poll. Postgres: the per-principal `FOR UPDATE` on `agent_principals` (`durable-delivery.ts:182-188`) serializes claims per principal only, and the trigger adds one `realtime.messages` insert per delivery |
+| 16 (today) | 24 | ≈ 3,500 (1,716 signals × (1 sent + 1 received) + watcher receipts; heartbeat frames predicted unbilled) | ≈ 38,000 (vs 860,000) | 0 (vs 768,000) | nothing; inside the 2 M included |
+| 100 | 150 | ≈ 20,000 | ≈ 240,000 (7.2 M/month, ≈ $10 over the 2 M included) | 0 | nothing; 500 connections included |
+| 1,000 | 1,500 | ≈ 200,000 | ≈ 2.4 M/day (72 M/month ≈ $140) | 0 | **peak connections**: 1,500 > 500 → $10 per extra 1,000 (≈ $10); the heartbeat is now most of the edge spend → Realtime presence (§9) |
+| 10,000 | 15,000 | ≈ 2 M | ≈ 24 M/day (720 M/month ≈ $1,440) with the heartbeat on the edge; ≈ 4.6 M/day (≈ $280) with the heartbeat on presence and reconcile at 15 min | 0 | **connection cap**: Pro no-spend-cap and Team stop at 10,000; needs Enterprise or one connection per host rather than per seat. Joins on a restart: 15,000 at 500–2,500/s ⇒ 6–30 s of `too_many_joins`, covered by the poll. Postgres: one `realtime.messages` insert per delivery, and the per-principal claim lock serializes per principal only |
 
-Per idle seat per day after this spec, with lane A's constants: reconcile claims 288 + activity 1,440 + renewals 24 + wake-driven claims ≈ 100 + drains ≈ 50 ⇒ **≈ 1,900 invocations** (from ≈ 53,800: −96.5 %). At $2 per million that is $0.004 per seat-day. The remaining 76 % is the activity heartbeat; it is the next thing to move, and it is out of scope here.
-
-Bounds that hold at every size: the wake payload is under 200 bytes (limit 3,000 KB); the policy lookup is one indexed row per join, not per message (policies are cached per connection); Realtime authorizes a broadcast once per topic, not per subscriber, unlike Postgres Changes, which is why W1 is broadcast and not `postgres_changes`.
+Bounds that hold at every size: the wake payload is under 200 bytes (limit 3,000 KB); the policy lookup is one indexed row per join, not per message; Realtime authorizes a broadcast once per topic, not per subscriber, unlike Postgres Changes, which is why W1 is broadcast and not `postgres_changes`.
 
 ---
 
@@ -249,54 +260,61 @@ Bounds that hold at every size: the wake payload is under 200 bytes (limit 3,000
 
 Before/after, same host, same seat, a **live listener started with `--state-dir <temp>`** against the local stack with `supabase functions serve` counting requests per edge in its log, and once against production over 10 minutes with the dashboard's per-function invocation counter read before and after.
 
-| metric | before (predicted) | before (measured by L7) | after (predicted) | after (measured by L7) |
+| metric | before (predicted) | before (measured, L7) | after (predicted) | after (measured, L7) |
 |---|---|---|---|---|
-| invocations per idle listener per 10 min | read 167 + claim 167 + activity 40 = **374** | | reconcile 2 + activity 10 + 0 reads = **12** | |
-| surviving rows per idle 10 min | 167 audit + 167 idempotency = **334** | | **0** | |
+| invocations per idle listener per 10 min | read 167 + claim 167 + activity 40 = **374** | | reconcile 2 reads + 2 claims + activity 10 = **14** | |
+| rows written per idle 10 min | 167 audit + 167 idempotency + 10 rate-bucket = **344** (334 kept) | | **2** rate-bucket rows, purged within two hours; **0** kept | |
 | wake latency: `post_signal` accepted → claim leased, directed ask from another principal, 20 trials | mean 1.8 s, max 3.6 s | | mean < 0.5 s, max 1.0 s (local experiment observed sub-second) | |
 | latency with Realtime down (container stopped) | as before | | ≤ 15 s + detection ≤ 25 s | |
 | latency with a wake dropped (trigger disabled) | — | | ≤ 300 s | |
-| status honesty | — | | `listen status` shows `mode: "push"` only while subscribed; stopping Realtime flips it to `poll` within 25 s | |
+| latency after a rotation (`cswarm wake rotate`) | — | | ≤ 300 s, or ≤ 15 s if the socket was down | |
+| status honesty | — | | `listen status` shows `mode: "push"` only while subscribed; stopping Realtime flips it to `poll` within 25 s; the topic never appears in status or logs | |
 
-Predicted per-listener per-minute: **before 37.4, after 1.2.** The measured columns are filled by L7 and pasted into this section; the spec is not "done" until they are.
+Predicted per-listener per-minute: **before 37.4, after 1.4.** The measured columns are filled by L7 and pasted here; the spec is not "done" until they are.
 
 ---
 
 ## 9. Stage 4 — what this spec does NOT settle
 
-- **Cross-machine duplicate listeners.** Deferred by ruling. Two machines on one credential each subscribe and each claim; `SKIP LOCKED` keeps it safe and wasteful.
-- **The activity heartbeat.** Still an edge call every 60 s after lane A; it becomes the dominant idle cost after this spec. Realtime presence on the wake socket is the obvious successor; not designed here.
-- **Realtime billing of heartbeat frames.** The docs count broadcast, presence, and database-change messages; they do not say whether protocol heartbeats count. Predicted as unbilled; L7 reads the usage page to confirm.
-- **Hosted project Realtime settings.** The "Allow public access" flag does not affect `private: true` topics, but the hosted project's Realtime limits and the `realtime.send` grant to `swarm_admin` are not in the repo; L2 verifies both on a linked `db query` before its migration is pushed.
+- **Cross-machine duplicate listeners.** Deferred by ruling. Two machines on one credential each subscribe to the same topic and each claim; `SKIP LOCKED` keeps it safe and wasteful.
+- **The activity heartbeat.** Still an edge call every 60 s after lane A; the dominant idle cost after this spec. Realtime presence on the wake socket is the obvious successor; not designed here.
+- **Realtime billing of heartbeat frames.** The docs count broadcast, presence, and database-change messages; they do not say whether protocol heartbeats count. Predicted unbilled; L7 reads the usage page to confirm.
+- **Hosted project Realtime settings.** The "Allow public access" flag does not affect `private: true` topics; the hosted project's limits and the `realtime.send` grant to `swarm_admin` are not in the repo (locally `EXECUTE` is `PUBLIC`, `local-plans.out`); L2 verifies both on a linked `db query` before its migration is pushed.
 - **A minted-JWT alternative.** Rejected for now (W5). If Supabase ever restricts `anon` on private channels, the fallback is an edge-minted asymmetric JWT via the project's signing keys.
-- **The `file_versions` seq scans.** Lane A's.
-- **Postgres Changes.** Not used, and not enabled: no table joins the `supabase_realtime` publication under this spec.
-- **Presence-based "attended" display**, group self-wake on channels (`20260905000020` header), and the chat platform's channel fan-out are unchanged by this spec and stay where they are.
+- **Postgres Changes.** Not used and not enabled: no table joins the `supabase_realtime` publication under this spec.
+- **Broadcast replay.** Supabase now offers an opt-in 72-hour replay for broadcast (Grok arm, from the current limits page). This design does not use it: the ledger is the replay, and the reconcile bounds the gap. If replay is ever adopted, it shortens the missed-wake worst case, not the correctness argument.
+- **Presence-based "attended" display**, group self-wake on channels (`20260905000020` header), and the chat platform's channel fan-out are unchanged.
 
 ---
 
 ## 10. What was NOT established
 
 - Production counts (390,277; 1.47 M; 2.8 M; 1,716) are the ledger's, read once by CSwarmDevLead via `supabase db query --linked`; not re-measured here.
-- Whether the idempotency purge cron is enabled on the production project, as opposed to defined in the migration (CodexDesktop's caveat); one query for L2.
+- Whether the idempotency purge cron is enabled on the production project, as opposed to defined in the migration (CodexDesktop's caveat); one query for L2b.
 - Timings under load: the local plans are shapes on a near-empty database.
-- The exact retention floor in `purge_expired_idempotency_keys()`.
-- Realtime's behaviour when a topic's policy function raises (as opposed to returning false); L2 tests it.
+- That a `realtime.messages` policy may call a `swarm`-schema `SECURITY DEFINER` function as `anon` with only `EXECUTE` granted; inferred from how `swarm.is_member` serves the `authenticated` activity policy; L2's first test.
+- Realtime's behaviour when a policy function raises (the design returns false everywhere so it never should); L2 tests it.
+- Whether `record_renewal_grant_use` writes a row on every read or only on a change; it affects §7's "rows surviving" by at most the reconcile-read count.
 
 ## 11. Review record
 
-Filled by the arms on the final SHA. Each arm's file lives in `docs/evidence/2026-09-06-push-delivery-spec/arms/<sha>/<family>.txt` and ends with a `VERDICT:` line and a quote-back of this document's first heading. Consensus means every available family ends `VERDICT: PASS` with reasoning and no unresolved finding.
+Each arm's file lives in `docs/evidence/2026-09-06-push-delivery-spec/arms/<sha>/<family>.txt` and ends with a `VERDICT:` line and a quote-back of this document's first heading. Consensus means every available family ends `VERDICT: PASS` with reasoning and no unresolved finding on the **final** SHA.
 
-| arm | SHA | verdict | file |
-|---|---|---|---|
-| Grok | | | |
-| Gemini (`agy`) | | | |
-| Opus (`claude -p`, operator-allowed) | | | |
-| Codex (credits return 2026-09-06 21:38Z) | | | |
+**Draft 1, `ff8a398`:**
+
+| arm | verdict | findings and where they landed in draft 2 |
+|---|---|---|
+| Gemini (`agy`, inversion) | PASS, 2 nits | watcher reads added to §7; "which wake key does the trigger read" resolved by the per-principal id (W1, W4) |
+| Opus (`claude -p`, adversarial) | **FAIL**: 5 defects, 4 gaps, 3 nits | D1 `setAuth` no-op → W6 rebuilt on rotation, not re-evaluation; D2 `limit: 0` is rejected by the validator (`command/index.ts:1510`, `:1435-1437`) → the watcher learns its topic from the read response (W3.1, §4.1), read-only invariant kept; D3 lease-reset and TTL-expiry mutations were invisible to the gate → ledger counters (§3.1); D4 one key per principal is not what the schema allows → `wake_id` on `agent_principals` (W1); D5 arithmetic → §0, §7, §8 recomputed with `rate_buckets` kept; G1 lane overlaps → sequenced ownership (§6); G2 purge floor `GREATEST(30, …)` → L2b; G3 mode classification starved without reads → reconcile = read + claim (§2.3); G4 the experiment's static policy vs the function → stated in W5, first test of L2, supabase-js client instead of bare realtime-js; N1 the latch; N2 the column comment; N3 citation `:183-189` |
+| Grok (exact) | **FAIL**: 6 defects, 10 nits | D1 watcher `limit: 0` → same fix as Opus D2 (W3.1, §4.1); D2 skipping the read would stop the standing-grant use stamp (`command/index.ts:9024-9036`, `20260901000001:199-207`) → the reconcile read stays and the reason is stated (§2.3); D3 claim `rate_buckets` are per-minute (`:4868`, `:4881-4888`), not hourly → §1.1, §1.3, §3.1, §3.2, §7, §8 recomputed; D4 `test:p1-local` is a literal list (`package.json:26`, `test-gate-coverage.test.ts:23-34,125-128`) → L2 owns the gate lines; D5 the new column needs an additive story → volatile default on `agent_principals.wake_id`, no INSERT site touched (W1); D6 L1∩L3 → sequenced (§6). Nits: hook citation, apply-order lines `:32-33`, `ok`/`event_ids`, 0.068 ms, `GREATEST(30, …)` floor (L2b), W6 wording, `STATUS_ALLOWED_KEYS`, the 4.6 M derivation, `realtime.send` swallowing errors, opt-in broadcast replay (§9) |
+| CodexDesktop (not an arm; three questions, signal `2cf19b81`) | — | the name is the credential and is redacted (W1); the policy is not an oracle (W5); rotation and revocation semantics stated (W6) |
+
+**Draft 2 arms:** to be run on the draft-2 SHA and recorded here.
 
 ## Sources
 
 - Brain topics `edge-function-invocations-2026-09` (Finisher), `operator-requests` (CSwarmDevLead), `false-success-signals`.
 - `docs/org/2026-08-29-RESUME-HERE.md:2277-2302` (ledger, `f59cf7d`, `d500973`).
-- Evidence directory of this spec, including the two CodexDesktop passes (signals `c650a8c7`, `327e7bc3`) and the CSwarmDevLead relay (`8fb993de`).
-- Supabase docs: Realtime broadcast (`realtime.send`, private channels, 3-day partitions), authorization (policy caching, `access_token` refresh), limits (connections, messages/s, joins/s, payload), pricing (2 M / 5 M included; $2 per million invocations; $2.50 per million messages; $10 per 1,000 peak connections), Postgres Changes (per-subscriber authorization, "use Broadcast above ~3,000 subscribers"), Edge Function limits (150 s idle, 2 s CPU), JWT signing keys.
+- Evidence directory of this spec, including the two CodexDesktop passes (signals `c650a8c7`, `327e7bc3`), the CSwarmDevLead relay (`8fb993de`), and CodexDesktop's questions on draft 1 (`2cf19b81`).
+- `node_modules/@supabase/realtime-js/dist/main/RealtimeClient.js:12` (heartbeat 25 s), `:16` (reconnect ladder), `:489` (`access_token` pushed only on change).
+- Supabase docs: Realtime broadcast (`realtime.send`, private channels, 3-day partitions), authorization (policy caching, `access_token` refresh), limits (connections, messages/s, joins/s, payload), pricing (2 M / 5 M included; $2 per million invocations; $2.50 per million messages; $10 per 1,000 peak connections), Postgres Changes (per-subscriber authorization), Edge Function limits (150 s idle, 2 s CPU), JWT signing keys.

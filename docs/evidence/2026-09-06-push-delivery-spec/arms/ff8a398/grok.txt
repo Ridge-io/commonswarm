@@ -1,0 +1,272 @@
+# D-036 EXACT arm — docs/design/2026-09-06-PUSH-DELIVERY.md
+SHA: ff8a398d6a8590c7bc480af8f52fe7edc4722a8b
+Branch: spec/push-delivery
+Role: EXACT (claims vs code and evidence, not vs the spec's own prose)
+Checkout: this working directory.
+
+Method: read the spec top to bottom; opened every cited source that exists in this tree; read every file in docs/evidence/2026-09-06-push-delivery-spec/ except the sibling arm bodies as authority; recomputed §1.3, §7, §8; compared §2.2 SQL to current Supabase Realtime authorization / realtime.send docs; checked lane file ownership against package.json gates.
+
+PASS only if no DEFECT and no GAP. Findings below.
+
+-------------------------------------------------Exact arm on `ff8a398` (`spec/push-delivery`). Claims checked against this tree and `docs/evidence/2026-09-06-push-delivery-spec/`, not against the spec’s own wording.
+
+**FAIL.** Six defects. No missing ask-section. Wire contract, failure table, invocation arithmetic, Realtime policy shape, and the 100/1k/10k capacity table mostly hold.
+
+## DEFECT
+
+**D1. §4.1** — Claim: watcher calls `claim_agent_inbox` with `limit: 0`; `durable-delivery.ts:273` leases nothing.
+
+The inner guard is real. The edge never sees `0`.
+
+- `command/index.ts:1510` uses `integer(limit, 1)` (`:1435-1436`, `>= 1`). `limit: 0` is 400.
+- Missing `limit` defaults to 10, not 0 (`:1500-1502`).
+- `DeliveryCommandClient.claimAgentInbox` hard-codes `limit: 1` (`delivery.ts:827-830`). The request type has no `limit` field.
+
+L5 does not own those files. As written, the watcher cannot learn `wake.topic` without taking a lease.
+
+**D2. §2.3 / §3.1** — Claim: skip the per-tick read while subscribed; `record_renewal_grant_use` (`read/index.ts:490-496`) drops; the claim replaces it.
+
+Claims do not stamp grant use. The claim branch returns at `command/index.ts:8433-8452`. `record_renewal_grant_use` at `:9024-9036` is on the protocol path; renewals are excluded at `:9027`. Standing grants suspend after 14 days without that stamp (`20260901000001_standing_grants.sql:199-207`). Today the inbox read is what keeps a live idle seat “used”. After L4, a push-mode idle listener with a standing grant pauses its own renewal. §2.5 says credential rotation stays as it is.
+
+**D3. §1.3 / §3.1 / §3.2** — Claim: empty claim upserts `rate_buckets` at `:4850`, one row per principal per hour, 24 rows/day.
+
+`:4850` is `incrementRateBucket` (signals, hour window). Claims use `checkDeliveryRateLimit` (`:4868`, `:7533`) with `date_trunc('minute')` at `:4881-4888`. CodexDesktop’s server pass already named `:4868`. Per idle seat-day that is 1,440 minute-window rows (2-hour purge), not 24 hourly rows.
+
+**D4. §6 L2** — Claim: tests live at `tests/p1-local/wake-realtime-auth.test.ts`.
+
+`test:p1-local` is a literal eight-file list (`package.json:26`). `tests/p1-cli/test-gate-coverage.test.ts:23-34,125-128` pins that string. A new file in that directory either never runs or turns `npm test` red. L2 does not own `package.json` or the coverage test.
+
+**D5. §6 L2 / “0.1.56 keeps working because additive schema”** — Claim: adding `agent_tokens.wake_key` is additive.
+
+Mint/renew INSERT lists columns and omits `wake_key` (`command/index.ts:3678-3694`, `:4376-4392`). L2 does not own those sites. The spec never says NULL or DEFAULT. `NOT NULL` with no default fails every mint/renew. A 0.1.56 seat would die at L2 apply.
+
+**D6. §6** — L1 owns `command/index.ts:8348-8445` only. L3 owns claim response builders. The claim body is `:8433-8452`, inside L1’s range. Order has L1 independent and L3 after L2, so both can edit the same lines.
+
+## GAP
+
+No ask item is missing as a section. Two holes sit under the defects:
+
+- No other path for `inbox --notify` to learn `wake.topic` (W3 is mint/renew/claim only).
+- No owner for writing `wake_key` at INSERT time.
+
+## NIT (not in the verdict)
+
+- §0 “72,000” surviving rows vs §1.3 “48,000” (16×48k matches §7’s 770,000).
+- `hook.ts:1010-1022` is the 3 s timeout, not the 30 s cooldown (`:57`, `:401-410`).
+- Apply order is `20260905000020:32-33`, not `:36-38`.
+- `command-client.ts:717-732` also requires `ok` and `event_ids`; extra `wake` is still ignored.
+- §5 “0.25 ms”: `local-plans.out` is 0.068 ms execution, 2 buffers. Plan shape matches.
+- `purge_expired_idempotency_keys` already uses `GREATEST(30, config)` at `:804-814`. Config key `2` is a no-op until the floor moves.
+- W6 mixes agent-token renewal with Realtime `access_token` (the socket uses the anon key).
+
+## Arithmetic (§1.3, §7, §8)
+
+Invocation figures recompute.
+
+- Today: 24,000 + 24,000 + 5,760 = 53,760 ≈ 53,800. 16 × 53,800 ≈ 861,000.
+- After: 288 + 1,440 + 24 + 100 + 50 = 1,902 ≈ 1,900. −96.5%. Activity 76%.
+- 100 / 1,000 / 10,000 seats: 150 / 1,500 / 15,000 connections; $7 / $110 / $1,140 edge overage at $2/M.
+- §8: 374 → 12 per 10 min; 37.4 → 1.2 per min.
+
+The 24 hourly rate-bucket rows do not hold (D3).
+
+## Realtime SQL sketches
+
+Checked against current Supabase authorization, broadcast, limits, settings, and functions-limits docs, plus the local experiment and `local-plans.out`.
+
+Holds: RLS on `realtime.messages`; `realtime.topic()`; `extension = 'broadcast'`; `realtime.send(payload jsonb, event text, topic text, private boolean)` in that order; SELECT-only so clients cannot publish; policy cached for the connection; 150 s idle / 2 s CPU (no edge long-poll); Pro 500 joins/s and 3,000 KB payload; local anon + private topic SUBSCRIBED vs `CHANNEL_ERROR` on a topic outside the policy; DB-side `realtime.send` arrived in 4.5 s.
+
+AFTER INSERT on `signal_deliveries` covers both enqueue paths (`20260905000020:152-176`, `:191-217`). `ON CONFLICT DO NOTHING` does not fire a second wake for position 0.
+
+Hosted “Allow public access”, hosted `realtime.send` GRANT, and production cron enablement were not checked here. §9–§10 already say that.
+
+## Citations verified
+
+`runtime.ts:77,778,1075-1082,1258,1365-1394,1440-1456,1762-1778`
+`activity.ts:13,98-146`
+`arrival-watch.ts:25,338,357,387-391,431-437`
+`signals.ts:125-132,294-310,1118,1140-1166,1501-1538`
+`delivery.ts:180-192,821-847`
+`command-client.ts:717-732`
+`config.ts:3`
+`renewal.ts:121-125,852-853`
+`hook.ts:57` (cooldown) and `:1010-1022` (timeout, not cooldown)
+`cli.ts:5885-5918` (no `pollMs`)
+`LiveDashboard.astro:5774`
+`commonswarm.ts:176-209`
+`activity/index.ts:139-153`
+`read/index.ts:437-496`
+`command/index.ts:1498-1526,3678-3694,4376-4392,4850,4868-4899,7533,7609-7616,8348-8452,9024-9036`
+`durable-delivery.ts:172,182-188,273,293,272-300`
+`20260902000003:4-17`
+`20260905000020:32-33,152-176,191-217`
+`20260723000001:380,416-421,442,588-590,793-845`
+`20260731000001:272-276`
+`read-health.ts:203-207,403`
+`listener-control.test.ts:2336`
+`listener-host-limits.test.ts:231`
+`RealtimeClient.js:11-16` (`[1000,2000,5000,10000]`, heartbeat 25 s)
+evidence dir as listed above; ledger `:2284-2285` (cited as `:2283`)
+
+## Citations not verified
+
+Production counts; hosted Realtime flags and `swarm_admin` GRANT; whether `pg_cron` is enabled on the hosted project; brain topics; original CodexDesktop signals (only the evidence copies); exact half-open detect delay beyond the 25 s heartbeat interval.
+
+Full write-up: `docs/evidence/2026-09-06-push-delivery-spec/arms/ff8a398/grok.txt`.
+
+QUOTE-BACK: Push delivery: wake listeners from Supabase Realtime instead of polling
+VERDICT: FAIL
+REASON: Six defects: watcher limit:0 is rejected by the claim validator; skipping the inbox read drops standing-grant use stamps; claim rate_buckets are per-minute not hourly; L2's p1-local test is outside the literal gate; wake_key has no additive INSERT story; L1 and L3 both own the claim response.
+anonKey)`), not the `swm_agt_` token. Docs (Realtime Authorization: cache updates on connect/subscribe and on a new JWT via `access_token`) are correctly quoted for caching. Mixing agent-token renewal with Realtime JWT refresh is confused; the accepted revocation delay still holds.
+
+N9. L4 adds a `wake` block on `ListenerStatus`. `STATUS_ALLOWED_KEYS` (`control.ts:225-274`) is a closed set. L4 owns `control.ts`, so it can extend the set; the spec does not mention it.
+
+N10. §7 "≈ 4 M/day with heartbeat on presence and reconcile at 15 min" is not derived in the text. The 19 M/day figure is derived (10,000 × 1,900).
+
+-------------------------------------------------------------------------------
+ARITHMETIC (§1.3, §7, §8)
+-------------------------------------------------------------------------------
+
+§1.3 invocations (given 3.6 s wall clock and 15 s activity):
+  86400/3.6 = 24,000 reads + 24,000 claims + 86400/15 = 5,760 activity
+  = 53,760 ≈ 53,800. 16 × 53,800 = 860,800 ≈ 861,000. Holds.
+
+§1.3 surviving rows: 24,000 audit + 24,000 idempotency is right for those two tables.
+  "+ 24 rate-bucket rows (hourly upsert)" does not hold (D3).
+
+§7 per-seat after: 86400/300 = 288 reconcile + 86400/60 = 1,440 activity
+  + 24 renewals + 100 wakes + 50 drains = 1,902 ≈ 1,900.
+  (53,760 − 1,902)/53,760 ≈ 96.5%. 1440/1900 ≈ 76% activity. Holds.
+  Connections 16→24, 100→150, 1,000→1,500, 10,000→15,000 (listener + half watchers). Holds.
+  100 seats: 190,000/day → 5.7 M/month; 3.7 M over 2 M × $2 ≈ $7. Holds.
+  1,000: 1.9 M/day → 57 M/month; 55 M × $2 = $110. Holds.
+  10,000: 19 M/day → 570 M/month × $2 ≈ $1,140. Holds.
+  Joins 15,000 / 2,500 = 6 s; / 500 = 30 s. Holds.
+  $0.004/seat-day: 1,900 × $2/1e6 ≈ $0.0038. Holds.
+  Realtime docs: Pro 500 connections / 500 joins/s / 500 msgs/s / 3,000 KB payload;
+  Pro no-spend-cap and Team 10,000 connections / 2,500 joins/s. Matches §7's cap sentence.
+  Peak-connection overage $10/1,000 and message $2.50/1e6 match
+  https://supabase.com/docs/guides/realtime/pricing.
+
+§8: 600/3.6 ≈ 167 reads+claims; 600/15 = 40 activity; 167+167+40 = 374.
+  After: 2 reconcile + 10 activity = 12. Per minute 37.4 / 1.2. Holds.
+
+Ledger `docs/org/2026-08-29-RESUME-HERE.md:2284-2285` (cited as `:2283`) is the 3.6 s / 390,277 / 1,716 / 1.47 M source. Not re-measured here.
+
+-------------------------------------------------------------------------------
+SQL / REALTIME (W4, W5, W6)
+-------------------------------------------------------------------------------
+
+Checked against:
+- https://supabase.com/docs/guides/realtime/authorization
+- https://supabase.com/docs/guides/realtime/broadcast (realtime.send argument order)
+- https://supabase.com/docs/guides/realtime/concepts (send signature, 3-day partitions)
+- https://supabase.com/docs/guides/realtime/limits (joins/s, payload, connections)
+- https://supabase.com/docs/guides/realtime/settings (Allow public access)
+- https://supabase.com/docs/guides/functions/limits (150 s idle, 2 s CPU)
+- local evidence: `realtime-anon-private-topic-experiment.{mjs,out}`, `local-plans.out`
+
+Consistent:
+- RLS on `realtime.messages`; `realtime.topic()`; `extension = 'broadcast'`; `private: true` on the channel. Matches activity template `20260902000003:4-17` and W2/W5 sketches.
+- `realtime.send(payload jsonb, event text, topic text, private boolean)` — `local-plans.out` identity arguments; W4 call order matches `activity/index.ts:146-151`.
+- SELECT-only policy: no INSERT for clients; they cannot publish. Same shape as activity.
+- Policy cache for the connection; refresh on subscribe and on `access_token` message. W6 quote is accurate.
+- Local experiment: anon + private topic SUBSCRIBED when policy matches; CHANNEL_ERROR on a topic outside it; DB-side `realtime.send` arrived in 4.5 s.
+- `realtime.send` docs: the function already swallows send errors so triggers do not break. Spec's extra EXCEPTION handler is redundant, not wrong.
+- Edge 150 s request idle timeout + 2 s CPU: long-poll on the edge is correctly rejected.
+
+Caveats (spec already lists several in §9–§10; not defects):
+- Authorization page: "To enforce private channels you need to disable Allow public access." Settings page: that flag gates public channels; `private: true` still RLS-checks. Spec §9 tells L2 to verify hosted settings. Local experiment is not hosted.
+- `local-plans.out` grants on `realtime.send`: PUBLIC and postgres, not `swarm_admin` by name. Spec §9 says L2 must verify the grant.
+- Broadcast replay now exists in current limits (72 h, opt-in). Spec's "broadcast has no replay" is true of the default transport the design uses.
+
+Trigger sketch (AFTER INSERT on `signal_deliveries`) fires for both enqueue paths (`20260905000020:152-176` and `:191-217`); ON CONFLICT DO NOTHING does not insert, so position 0 is not double-woken. SECURITY DEFINER / `RESET ROLE` rationale matches `activity/index.ts:139-145`.
+
+-------------------------------------------------------------------------------
+LANE FILE-OWNERSHIP OVERLAPS
+-------------------------------------------------------------------------------
+
+Overlap (defect D6): L1 exclusive `command/index.ts:8348-8445` ∩ L3 claim response builders.
+
+Sequential, not parallel, so rebase-ok if ordered:
+- L0 `runtime.ts:77` then L4 idle path of `runtime.ts`
+- L4 `src/cli.ts` then L5 notify wiring in `src/cli.ts`
+- L5 after L4's `wake.ts` module
+
+L2 vs L3 on `wake_key` population: see D5/G2.
+
+L4 owns `package.json` (direct `@supabase/realtime-js`, already transitive 2.110.8). L2 does not, which is why D4 bites L2 and not L4.
+
+-------------------------------------------------------------------------------
+CITATIONS VERIFIED IN THIS CHECKOUT (ff8a398)
+-------------------------------------------------------------------------------
+
+src/listener/runtime.ts:77, :778, :1075-1082, :1104, :1258, :1365-1394, :1440-1456, :1762-1778
+src/listener/activity.ts:13, :98-146, :285-341
+src/listener/hook.ts:57, :401-410, :827-846, :998-1022
+src/listener/read-health.ts:203-207, :403
+src/listener/control.ts:60-69, :160, :225-274, :300-309
+src/listener/http-client.ts:19, :73-81
+src/cloud/arrival-watch.ts:25, :338, :357, :387-391, :431-437
+src/cloud/signals.ts:125-132, :156, :294-310, :1118, :1140-1166, :1501-1538
+src/cloud/delivery.ts:180-192, :518-587, :821-847
+src/cloud/command-client.ts:717-732
+src/cloud/config.ts:3, :42-44
+src/cloud/renewal.ts:67, :121-125, :852-853
+src/cli.ts:3993, :5885-5918 (no pollMs)
+site/src/components/app/LiveDashboard.astro:5774
+site/src/lib/commonswarm.ts:176-209
+supabase/functions/activity/index.ts:15, :139-153
+supabase/functions/read/index.ts:437-496
+supabase/functions/command/index.ts:1435-1436, :1498-1526, :3678-3694, :4376-4392, :4850-4859, :4868-4899, :7533, :7609-7616, :8348-8452, :9024-9036
+supabase/functions/command/durable-delivery.ts:16-23, :172, :182-188, :270-293
+supabase/migrations/20260902000003_realtime_agent_activity.sql:4-17
+supabase/migrations/20260905000020_wake_all_recipients.sql:32-33, :152-176, :191-217
+supabase/migrations/20260723000001_p1_schema.sql:192-208, :380, :403-406, :416-421, :442, :588-590, :791-845
+supabase/migrations/20260731000001_signal_deliveries.sql:15-90, :272-276
+supabase/migrations/20260901000001_standing_grants.sql:199-207
+tests/listener-control.test.ts:2336
+tests/listener-host-limits.test.ts:231
+tests/p1-cli/test-gate-coverage.test.ts:23-34, :86-96, :125-128
+tests/p1-local/activity-realtime-auth.test.ts:201-232 (template)
+package.json:23-29 (test / test:p1-local / test:p1-server)
+node_modules/@supabase/realtime-js/dist/main/RealtimeClient.js:11-16
+  CONNECTION_TIMEOUTS.HEARTBEAT_INTERVAL 25000; RECONNECT_INTERVALS [1000,2000,5000,10000]
+docs/org/2026-08-29-RESUME-HERE.md:2283-2292
+docs/evidence/2026-09-06-push-delivery-spec/code-map-explore-agent.md
+docs/evidence/2026-09-06-push-delivery-spec/codexdesktop-server-evidence.md
+docs/evidence/2026-09-06-push-delivery-spec/devlead-apply-order-facts.md
+docs/evidence/2026-09-06-push-delivery-spec/local-plans.sql
+docs/evidence/2026-09-06-push-delivery-spec/local-plans.out
+docs/evidence/2026-09-06-push-delivery-spec/realtime-anon-private-topic-experiment.mjs
+docs/evidence/2026-09-06-push-delivery-spec/realtime-anon-private-topic-experiment.out
+
+-------------------------------------------------------------------------------
+CITATIONS NOT VERIFIED / OUT OF REACH
+-------------------------------------------------------------------------------
+
+- Production counts 390,277 / 1.47 M / 2.8 M / 1,716 / dashboard 832,000 — ledger once; not re-queried.
+- Hosted Realtime "Allow public access", hosted `realtime.send` GRANT to `swarm_admin`, whether `pg_cron` jobs are enabled on cloud-swarm-dev.
+- Brain topics `edge-function-invocations-2026-09`, `operator-requests`, `false-success-signals` (not read).
+- Original CodexDesktop signals `c650a8c7`, `327e7bc3`, `935a3911` — only the evidence markdown copies.
+- Exact Phoenix heartbeat-timeout to mark a half-open socket (library default interval 25 s is verified; worst-case detect may be one missed reply later than 25 s).
+- Anon-key JWT expiry behaviour on hosted Realtime (docs: disconnect when JWT expires if never refreshed).
+- `src/protocol` response schema sharing (L3 "if shared") — not required to exist today.
+
+-------------------------------------------------------------------------------
+WHAT THE ASK GOT
+-------------------------------------------------------------------------------
+
+(1) wire + failure table + 0.1.56 additive responses: present. D1/D2/D5 break parts of "keeps working" / watcher-on-same-model.
+(2) idle cost with arithmetic: present; invocation figures recompute; surviving-row rate_buckets term does not (D3).
+(3) persist + retention: present; empty-claim audit/idempotency gate is buildable (L1); rate_buckets window is wrong (D3); 2-day idempotency key is a no-op without lowering GREATEST(30) (N7).
+(4) watcher + app: present; watcher bootstrap is unbuildable as specified (D1).
+(5) indexes + plans: present; claim plan shape matches `local-plans.out`; wake index is new; file_versions correctly deferred.
+(6) lanes + ownership + tests + D-036: present; L1∩L3 and L2 test gate fail the ownership/tests bar (D4, D6).
+(7) 100 / 1,000 / 10,000: present and arithmetically consistent with the 1,900/seat figure.
+
+Not established (agreed with §10): production re-measure; hosted Realtime flags; load timings; policy-raise behaviour.
+
+QUOTE-BACK: Push delivery: wake listeners from Supabase Realtime instead of polling
+VERDICT: FAIL
+REASON: Six defects: watcher limit:0 is rejected by the claim validator; skipping the inbox read drops standing-grant use stamps; claim rate_buckets are per-minute not hourly; L2's p1-local test is outside the literal gate; wake_key has no additive INSERT story; L1 and L3 both own the claim response.
