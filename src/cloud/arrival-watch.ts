@@ -31,7 +31,8 @@ import {
 const UUID_RE =
   /^[0-9a-f]{8}-[0-9a-f]{4}-[1-8][0-9a-f]{3}-[89ab][0-9a-f]{3}-[0-9a-f]{12}$/i;
 const CURSOR_MAX_BYTES = 4 * 1024;
-const ARRIVAL_SNIPPET_MAX = 180;
+/** Readable notification line: the body collapsed to one line, at most this long. */
+export const ARRIVAL_SNIPPET_MAX = 180;
 const WATCH_LOCK_MAX_BYTES = 512;
 
 /** A remote-friendly cadence for a long-lived, human-visible arrival monitor. */
@@ -145,7 +146,10 @@ export interface ArrivalNotification {
   sender: string;
   sender_kind: SignalRecord["from_kind"];
   kind: SignalRecord["kind"];
+  /** The one-line preview the readable line shows; never the only copy. */
   snippet: string;
+  /** The whole body as posted, so `--json` readers need no second command. */
+  body: string;
   attachment_count: number;
   reply_command: string;
 }
@@ -352,14 +356,47 @@ export function fileArrivalCursorStore(options: {
   };
 }
 
+/** True when the snippet dropped text, i.e. the one-line body exceeded the cap. */
+export function arrivalSnippetWasCut(body: string): boolean {
+  return arrivalOneLine(body).length > ARRIVAL_SNIPPET_MAX;
+}
+
+/* The command that shows the whole body when the readable line could not. Built
+ * the way arrivalReplyCommand is: the reader is an agent, an agent identity comes
+ * only from its credential flags and then REQUIRES a workspace, so a bare
+ * `cswarm inbox` cannot show this reader anything (measured by CSwarmDevLead on
+ * 0.1.60: the bare form asks a person to log in; with only the credential it
+ * refuses to infer a target). The url and anon key are omitted for the reason
+ * recorded on arrivalReplyCommand. */
+export function arrivalFullTextCommand(workspaceId: string): string {
+  return `cswarm inbox --workspace-id ${workspaceId}`;
+}
+
+/* A snippet is a preview, and a preview must say where the whole text is. The
+ * numbers are the run-time lengths, never typed copy, so the phrase cannot drift
+ * from ARRIVAL_SNIPPET_MAX. Empty when nothing was cut. */
+export function arrivalSnippetSuffix(
+  notification: Pick<ArrivalNotification, "snippet" | "body" | "workspace_id">,
+): string {
+  if (!arrivalSnippetWasCut(notification.body)) return "";
+  const shown = notification.snippet.length.toLocaleString("en-US");
+  const total = notification.body.length.toLocaleString("en-US");
+  return ` (${shown} of ${total} chars; full text: ${arrivalFullTextCommand(notification.workspace_id)})`;
+}
+
 /** Collapse a message body to one bounded, terminal-safe notification snippet. */
 export function arrivalSnippet(body: string): string {
+  const oneLine = arrivalOneLine(body);
+  if (oneLine.length <= ARRIVAL_SNIPPET_MAX) return oneLine;
+  return `${oneLine.slice(0, ARRIVAL_SNIPPET_MAX - 1).trimEnd()}…`;
+}
+
+function arrivalOneLine(body: string): string {
   const oneLine = body
     .replace(/[\u0000-\u001f\u007f-\u009f]/g, " ")
     .replace(/\s+/g, " ")
     .trim();
-  if (oneLine.length <= ARRIVAL_SNIPPET_MAX) return oneLine;
-  return `${oneLine.slice(0, ARRIVAL_SNIPPET_MAX - 1).trimEnd()}…`;
+  return oneLine;
 }
 
 /** The exact CLI shape needed to answer the signal named by a notification. */
@@ -389,6 +426,7 @@ export function arrivalNotification(
     sender_kind: signal.from_kind,
     kind: signal.kind,
     snippet: arrivalSnippet(signal.body),
+    body: signal.body,
     attachment_count: signal.attachments?.length ?? 0,
     reply_command: arrivalReplyCommand(signal.id, workspaceId),
   };
@@ -401,7 +439,7 @@ export function formatArrivalNotification(
   const attachmentCopy = notification.attachment_count === 0
     ? ""
     : ` — ${notification.attachment_count} attachment${notification.attachment_count === 1 ? "" : "s"}`;
-  return `CommonSwarm from ${notification.sender_kind} ${notification.sender}: ${notification.snippet}${attachmentCopy} — reply: ${notification.reply_command}`;
+  return `CommonSwarm from ${notification.sender_kind} ${notification.sender}: ${notification.snippet}${arrivalSnippetSuffix(notification)}${attachmentCopy} — reply: ${notification.reply_command}`;
 }
 
 function notifyWriteError(error: Error): Error {

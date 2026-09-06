@@ -218,3 +218,136 @@ test("inbox --notify flushes readable lines and best-effort attests only the ren
     await rm(root, { recursive: true, force: true });
   }
 });
+
+/* The spec's acceptance line for C1 is `cswarm inbox --notify --json` -> a line whose `body`
+ * equals the posted body. The factory tests cannot see the CLI drop the field before writing,
+ * so this runs the real command. The body is over the snippet cap so the readable phrase's
+ * command is also checked: it names the workspace the child was started with. */
+test("inbox --notify --json carries the whole body; the readable line names a runnable inbox command", async () => {
+  const root = await mkdtemp(join(tmpdir(), "cswarm-arrival-cli-json-"));
+  const xdg = join(root, "state");
+  const longBody = `Please review\n${"x".repeat(2_000)}`;
+  const server = createServer((req, res) => {
+    let raw = "";
+    req.on("data", (chunk) => {
+      raw += chunk;
+    });
+    req.on("end", () => {
+      const body = raw.length === 0 ? {} : JSON.parse(raw) as Record<string, unknown>;
+      if (req.url !== "/functions/v1/read" || body.resource !== "signals") {
+        res.writeHead(503, { "content-type": "application/json" }).end(
+          JSON.stringify({ error: "temporarily_unavailable" }),
+        );
+        return;
+      }
+      res.writeHead(200, { "content-type": "application/json" }).end(
+        JSON.stringify({
+          signals: [
+            {
+              id: NEW_SIGNAL,
+              workspace_id: WORKSPACE,
+              from: SENDER,
+              from_kind: "agent",
+              to: null,
+              to_agent: PRINCIPAL,
+              in_reply_to: null,
+              about: null,
+              kind: "ask",
+              body: longBody,
+              until: "2030-01-01T00:00:00.000Z",
+              created_at: "2026-08-28T11:01:00.000Z",
+              sender_owner_relation: "same_owner",
+            },
+          ],
+          capabilities: { sender_owner_relation: 1, cursor_after: 1 },
+        }),
+      );
+    });
+  });
+  await new Promise<void>((resolveListen) => server.listen(0, "127.0.0.1", resolveListen));
+  const address = server.address();
+  assert.ok(address && typeof address !== "string");
+  const url = `http://127.0.0.1:${address.port}`;
+  const credential = JSON.stringify({
+    message: "Agent credential minted. It is bound to this run, so the agent's work is attributable to it.",
+    status: "accepted",
+    principal_id: PRINCIPAL,
+    token_id: "33333333-3333-4333-8333-333333333333",
+    run_id: "44444444-4444-4444-8444-444444444444",
+    agent_token: TOKEN,
+    expires_at: "2030-01-01T00:00:00.000Z",
+  });
+  const runNotify = async (extra: string[]): Promise<string> => {
+    /* A fresh watcher baselines at "now" and prints nothing already in the inbox, so each run
+       gets its own state directory with a cursor set just before the signal. */
+    const stateHome = join(xdg, extra.join("") || "readable");
+    const cursorStore = fileArrivalCursorStore({
+      target: cloudTarget(url, "anon-key-for-arrival-test"),
+      workspaceId: WORKSPACE,
+      principalId: PRINCIPAL,
+      stateDirectory: join(stateHome, "cswarm", "arrival-cursors"),
+    });
+    await cursorStore.write({ created_at: "2026-08-28T11:00:00.000Z", id: OLD_SIGNAL });
+    const child = spawn(process.execPath, [
+      "--import",
+      "tsx",
+      resolve("src/cli.ts"),
+      "inbox",
+      "--notify",
+      "--agent-token-stdin",
+      "--url",
+      url,
+      "--anon-key",
+      "anon-key-for-arrival-test",
+      "--workspace-id",
+      WORKSPACE,
+      ...extra,
+    ], {
+      cwd: process.cwd(),
+      env: { ...process.env, HOME: root, XDG_STATE_HOME: stateHome },
+      stdio: ["pipe", "pipe", "pipe"],
+    });
+    child.stdin.end(credential);
+    child.stdout.setEncoding("utf8");
+    child.stderr.setEncoding("utf8");
+    let stdout = "";
+    let stderr = "";
+    child.stdout.on("data", (chunk: string) => {
+      stdout += chunk;
+      if (stdout.includes("\n")) setTimeout(() => child.kill("SIGTERM"), 100);
+    });
+    child.stderr.on("data", (chunk: string) => {
+      stderr += chunk;
+    });
+    const code = await new Promise<number | null>((resolveExit, reject) => {
+      const timer = setTimeout(() => {
+        child.kill("SIGKILL");
+        reject(new Error(`notify CLI timed out; stderr=${stderr}`));
+      }, 10_000);
+      child.once("exit", (exitCode) => {
+        clearTimeout(timer);
+        resolveExit(exitCode);
+      });
+      child.once("error", (error) => {
+        clearTimeout(timer);
+        reject(error);
+      });
+    });
+    assert.equal(code, 0, stderr);
+    return stdout.trimEnd().split("\n")[0]!;
+  };
+  try {
+    const jsonLine = JSON.parse(await runNotify(["--json"])) as Record<string, unknown>;
+    assert.equal(jsonLine.type, "arrival");
+    assert.equal(jsonLine.body, longBody);
+    assert.equal(typeof jsonLine.snippet, "string");
+    assert.notEqual(jsonLine.snippet, longBody);
+
+    const readable = await runNotify([]);
+    assert.match(readable, new RegExp(`full text: cswarm inbox --workspace-id ${WORKSPACE}`));
+    assert.doesNotMatch(readable, /--agent-token-stdin|--agent-token-file|anon-key-for-arrival-test/);
+  } finally {
+    await new Promise<void>((resolveClose) => server.close(() => resolveClose()));
+    await rm(root, { recursive: true, force: true });
+  }
+});
