@@ -22,7 +22,12 @@ import {
   RENEW_AGENT_SESSION_KIND,
 } from "../../src/cloud/session-contract.js";
 import { sessionKeyHash } from "../../src/cloud/session-proof.js";
-import { startManagedSession } from "../../src/cloud/session-cli.js";
+import {
+  readManagedSessionStatus,
+  startManagedSession,
+  stopManagedSession,
+} from "../../src/cloud/session-cli.js";
+import { sessionProofOf } from "../../src/cloud/session-context.js";
 
 const WORKSPACE = "aaaaaaaa-aaaa-4aaa-8aaa-aaaaaaaaaaaa";
 const PRINCIPAL = "bbbbbbbb-bbbb-4bbb-8bbb-bbbbbbbbbbbb";
@@ -281,6 +286,101 @@ test("renew and release send proof headers; status omits the secret", async () =
       generation: context.generation,
     });
     assert.doesNotMatch(publicStatus, new RegExp(context.session_key));
+  } finally {
+    await rm(root, { recursive: true, force: true });
+  }
+});
+
+test("stop marks the context released so status is stopped and start acquires a fresh UUID", async () => {
+  const root = await mkdtemp(join(tmpdir(), "cswarm-stop-release-"));
+  await chmod(root, 0o700);
+  try {
+    const tokenPath = await tokenFile(root);
+    const contextPath = join(root, "session.json");
+    const kinds: string[] = [];
+    const fetcher = (async (_input: URL | RequestInfo, init?: RequestInit) => {
+      const body = JSON.parse(String(init?.body ?? "{}")) as {
+        command: { kind: string };
+      };
+      kinds.push(body.command.kind);
+      if (body.command.kind === ACQUIRE_AGENT_SESSION_KIND) {
+        return new Response(JSON.stringify({
+          ok: true,
+          status: "accepted",
+          generation: 1,
+        }), { status: 200 });
+      }
+      return new Response(JSON.stringify({ ok: true, status: "accepted" }), {
+        status: 200,
+      });
+    }) as typeof fetch;
+    const target = cloudTarget("http://127.0.0.1:9", "synthetic-anon-key");
+    const first = await startManagedSession({
+      target,
+      workspaceId: WORKSPACE,
+      credential: TOKEN,
+      tokenFile: tokenPath,
+      tokenPrincipalId: PRINCIPAL,
+      mode: "worker",
+      provider: "grok",
+      hostSessionId: "host-1",
+      contextPath,
+      fetcher,
+      readIdentity: async () => ({
+        principal_id: PRINCIPAL,
+        workspace_id: WORKSPACE,
+      }),
+      runReceiver: false,
+    });
+    const firstId = first.context.session_id;
+    const firstKey = first.context.session_key;
+    assert.equal(first.context.generation, 1);
+    assert.equal(sessionProofOf(first.context) !== null, true);
+
+    const stopped = await stopManagedSession({
+      target,
+      credential: TOKEN,
+      contextPath,
+      fetcher,
+    });
+    assert.equal(stopped.state, "stopped");
+    const afterStop = await readManagedSessionStatus(contextPath);
+    assert.equal(afterStop.status.state, "stopped");
+    assert.equal(afterStop.status.has_private_proof, false);
+    assert.equal(sessionProofOf(afterStop.context), null);
+    assert.equal(afterStop.context.session_key, "");
+    assert.equal(typeof afterStop.context.released_at, "string");
+    assert.equal(afterStop.context.generation, 1);
+    assert.equal(afterStop.context.session_id, firstId);
+
+    const second = await startManagedSession({
+      target,
+      workspaceId: WORKSPACE,
+      credential: TOKEN,
+      tokenFile: tokenPath,
+      tokenPrincipalId: PRINCIPAL,
+      mode: "worker",
+      provider: "grok",
+      hostSessionId: "host-1",
+      contextPath,
+      fetcher,
+      readIdentity: async () => ({
+        principal_id: PRINCIPAL,
+        workspace_id: WORKSPACE,
+      }),
+      runReceiver: false,
+    });
+    assert.notEqual(second.context.session_id, firstId);
+    assert.notEqual(second.context.session_key, firstKey);
+    assert.equal(second.context.generation, 1);
+    assert.equal(second.context.released_at, null);
+    assert.equal(sessionProofOf(second.context) !== null, true);
+    assert.equal(second.retried, false);
+    assert.deepEqual(kinds, [
+      ACQUIRE_AGENT_SESSION_KIND,
+      RELEASE_AGENT_SESSION_KIND,
+      ACQUIRE_AGENT_SESSION_KIND,
+    ]);
   } finally {
     await rm(root, { recursive: true, force: true });
   }

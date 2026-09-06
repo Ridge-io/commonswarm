@@ -6620,7 +6620,7 @@ async function runSession(args: Arguments): Promise<void> {
     if (args.has("json")) printJson(status);
     else {
       process.stdout.write(
-        `execution ${status.session_id} generation ${status.generation}\n` +
+        `execution ${status.session_id} generation ${status.generation} state ${status.state}\n` +
           `mode ${status.mode} provider ${status.provider} host-session ${status.host_session_id}\n` +
           `enforcement ${status.enforcement} receive ${status.receive_verification}\n`,
       );

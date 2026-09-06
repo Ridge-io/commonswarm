@@ -20,6 +20,8 @@ import {
   assertSameIdentity,
   defaultSessionContextPath,
   SessionContextError,
+  isReleasedSession,
+  markSessionReleased,
   newSessionBinding,
   publicSessionStatus,
   readSessionContext,
@@ -137,7 +139,7 @@ export async function startManagedSession(
   const existing = await readSessionContextIfPresent(contextPath);
   let context = draft;
   let retried = false;
-  if (existing !== null) {
+  if (existing !== null && !isReleasedSession(existing)) {
     if (existing.generation >= 1) {
       throw new SessionContextError(
         "session_context_conflict",
@@ -224,7 +226,6 @@ export async function readManagedSessionStatus(contextPath: string): Promise<{
   return {
     context,
     status: publicSessionStatus(context, {
-      has_private_proof: sessionProofOf(context) !== null,
       session_key: undefined,
       credential: undefined,
     }),
@@ -273,15 +274,12 @@ export async function stopManagedSession(input: {
     }
     throw error;
   }
-  const released = {
-    ...context,
-    generation: context.generation,
-  };
+  const released = markSessionReleased(context);
   await writeSessionContext(input.contextPath, released);
   return {
-    state: "stopping",
-    next: `This is still in progress. Confirm with: cswarm session status --session-context ${input.contextPath}`,
-    status: publicSessionStatus(released, { state: "stopping" }),
+    state: "stopped",
+    next: `Confirm with: cswarm session status --session-context ${input.contextPath}`,
+    status: publicSessionStatus(released),
   };
 }
 

@@ -74,6 +74,11 @@ export interface SessionContextDocument {
   host_label: string | null;
   enforcement: SessionEnforcementState;
   receive_verification: SessionReceiveState;
+  /**
+   * Set when this execution UUID was released locally. A released file keeps
+   * generation for the record, clears the private key, and is never live proof.
+   */
+  released_at: string | null;
 }
 
 export interface SessionIdentity {
@@ -312,6 +317,11 @@ export function parseSessionContext(raw: string): SessionContextDocument {
     "unknown";
   const receive = asStringSet(row.receive_verification, SESSION_RECEIVE_STATES) ??
     "manual";
+  const releasedAt = parseReleasedAt(row.released_at);
+  const keyOk = typeof row.session_key === "string" &&
+    (releasedAt !== null
+      ? row.session_key === "" || isSessionKey(row.session_key)
+      : isSessionKey(row.session_key));
   if (
     row.version !== SESSION_CONTEXT_VERSION ||
     typeof row.url !== "string" ||
@@ -327,8 +337,7 @@ export function parseSessionContext(raw: string): SessionContextDocument {
     typeof row.generation !== "number" ||
     !Number.isSafeInteger(row.generation) ||
     row.generation < 0 ||
-    typeof row.session_key !== "string" ||
-    !isSessionKey(row.session_key) ||
+    !keyOk ||
     provider === null ||
     mode === null ||
     typeof row.host_session_id !== "string" ||
@@ -341,7 +350,8 @@ export function parseSessionContext(raw: string): SessionContextDocument {
     !(
       row.host_label === null ||
       (typeof row.host_label === "string" && row.host_label.length <= 120)
-    )
+    ) ||
+    releasedAt === undefined
   ) {
     throw new SessionContextError(
       "session_context_corrupt",
@@ -365,18 +375,59 @@ export function parseSessionContext(raw: string): SessionContextDocument {
     host_label: row.host_label === null ? null : row.host_label,
     enforcement,
     receive_verification: receive,
+    released_at: releasedAt,
+  };
+}
+
+/** `undefined` means the field is malformed; `null` means not released. */
+function parseReleasedAt(value: unknown): string | null | undefined {
+  if (value === undefined || value === null) return null;
+  if (typeof value !== "string" || !Number.isFinite(Date.parse(value))) {
+    return undefined;
+  }
+  return value;
+}
+
+export function isReleasedSession(context: SessionContextDocument): boolean {
+  return context.released_at !== null;
+}
+
+/** Retire the private key locally. Generation stays for the record. */
+export function markSessionReleased(
+  context: SessionContextDocument,
+  releasedAt: string = new Date().toISOString(),
+): SessionContextDocument {
+  return {
+    ...context,
+    session_key: "",
+    released_at: releasedAt,
   };
 }
 
 export function sessionProofOf(
   context: SessionContextDocument,
 ): AgentSessionProof | null {
+  if (isReleasedSession(context)) return null;
   if (context.generation < 1) return null;
+  if (!isSessionKey(context.session_key)) return null;
   return {
     session_id: context.session_id,
     generation: context.generation,
     key: context.session_key,
   };
+}
+
+export function sessionLifecycleState(
+  context: SessionContextDocument,
+): "stopped" | "running" | "unacquired" {
+  if (
+    isReleasedSession(context) ||
+    (sessionProofOf(context) === null && context.generation >= 1)
+  ) {
+    return "stopped";
+  }
+  if (sessionProofOf(context) === null) return "unacquired";
+  return "running";
 }
 
 export function publicSessionStatus(
@@ -398,6 +449,9 @@ export function publicSessionStatus(
     token_file: context.token_file,
     enforcement: context.enforcement,
     receive_verification: context.receive_verification,
+    released_at: context.released_at,
+    state: sessionLifecycleState(context),
+    has_private_proof: sessionProofOf(context) !== null,
     ...extras,
   };
 }
@@ -432,6 +486,7 @@ export function newSessionBinding(input: {
     host_label: input.hostLabel ?? null,
     enforcement: "unknown",
     receive_verification: input.mode === "interactive" ? "manual" : "unverified",
+    released_at: null,
   };
 }
 
