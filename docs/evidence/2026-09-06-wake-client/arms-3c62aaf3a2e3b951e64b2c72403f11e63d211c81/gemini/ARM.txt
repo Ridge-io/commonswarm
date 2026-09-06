@@ -1,0 +1,12 @@
+diff --git a/package.json b/package.json
+
+I attempted to refute the round 3 fold by trying to prove that the `rate_limited` defect still leaks through to the client budget pause, or that the new `wake_budget` code was improperly integrated.
+
+1. I checked if `snapshot()` leaks `"rate_limited"` when the client hits 50 claims/min. It fails to refute: `snapshot()` isolates `serverLimited` from `overBudget`. If only `overBudget` is true, `errorCode` is properly mapped to `WAKE_ERROR_CODE_WAKE_BUDGET`. `connectionState` is untouched (remains `"subscribed"`), and `subscribedAt` remains non-null.
+2. I checked if `listenerWakeStatusSentence` still outputs the incorrect copy. It fails to refute: an explicit branch handles `WAKE_ERROR_CODE_WAKE_BUDGET`, interpolating the code to return "Subscribed; claims paused until the minute clears (wake_budget); polling every...". It does not emit "not connected", "rate_limited", or "push".
+3. I checked if `parseListenerWake` rejects `"wake_budget"`. It fails to refute: `WAKE_ERROR_CODE_SET` is built directly from `WAKE_ERROR_CODES`, which now correctly includes `"wake_budget"`.
+4. I checked if a true server 429 collapses into `"wake_budget"`. It fails to refute: `markRateLimited` sets `this.lastErrorCode = "rate_limited"`, and `snapshot()` prioritizes `serverLimited` over `overBudget` to return `"rate_limited"`.
+5. I checked if `mode` incorrectly remains `"push"` during the client pause. It fails to refute: `snapshot()` calculates `rateLimited = serverLimited || overBudget` and correctly forces `mode` to `"poll"` if `rateLimited` is true.
+6. I checked the tests to see if a budget mutation would pass unnoticed. It fails to refute: the pinned test explicitly asserts `assert.equal(snap.errorCode, WAKE_ERROR_CODE_WAKE_BUDGET)` and strictly verifies that the fallback "not connected" and "rate_limited" strings are absent. The copy test also enumerates `WAKE_ERROR_CODES` directly in a loop to guarantee branch coverage.
+
+VERDICT: PASS

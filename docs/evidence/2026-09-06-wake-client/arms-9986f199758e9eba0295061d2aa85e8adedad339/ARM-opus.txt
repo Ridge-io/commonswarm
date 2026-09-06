@@ -1,0 +1,165 @@
+ARM: independent adversarial review, round 2 (Opus 5), lane L4 wake-client
+SHA reviewed: 9986f199758e9eba0295061d2aa85e8adedad339   merge-base 012807d (13 commits)
+Round 1 arm by me: arms-6c4e219…/ARM-opus.txt (VERDICT: FAIL, one measured defect + six nits)
+
+QUOTE-BACK (first diff --git line of arms-9986f19…/DIFF.patch):
+diff --git a/package.json b/package.json
+
+Gates re-run by me in a throwaway detached worktree (scratchpad/arm-opus-9986f19, node_modules
+symlinked from the main checkout, removed at the end):
+  npm run build                          exit 0
+  npm test                               exit 0, 885 pass / 0 fail   (was 875 at 6c4e219: +10)
+  env -u FORCE_COLOR npm run test:p1-cli exit 0, 483 pass / 0 fail
+  npx tsc --noEmit -p tsconfig.json      exit 0
+  npm run check:tests                    exit 0
+  scripts/check-commit-identity.sh 012807d..HEAD  -> "commit identity OK: 26 address-fields", exit 0
+package.json still names tests/listener-wake.test.ts in the literal `test` list; no new dependency.
+
+=====================================================================
+MY ROUND-1 DEFECT: FIXED. Verified with my own probe, not theirs.
+=====================================================================
+Fix: src/listener/wake.ts:395-397 (new private wakeClaimPaused) + :342 (next() no longer drains a
+latched wake while paused) + :259 (snapshot rateLimited derives from wakeClaimPaused) + :401
+(emitPending re-latches instead of waking a parked waiter). Commit 7b50a17.
+
+I wrote a fresh probe with a DIFFERENT construction from the author's (one wake emitted per
+claim rather than a burst at 51, plus a 2 s watchdog abort), real WakeSubscriber + real
+runListenerRuntime, frozen clock so the whole run is inside one clock minute:
+
+  round 1 (6c4e219): stop=cancelled  claims=70  reads=20   <- spec ceiling is 51
+  round 2 (9986f19): stop=cancelled  claims=51  reads=1
+  final snapshot: {"mode":"poll", ..., "errorCode":"rate_limited","rateLimited":true}
+
+51 claims and 1 read. It degrades to poll and keeps the latch, exactly as §2.3 requires, and
+no delivery is dropped (the parked wake is drained on the next minute — tests :608).
+
+=====================================================================
+EVERY FOLD MUTATION-TESTED. All five of my nits and both of Gemini's discriminate.
+=====================================================================
+Each mutation applied to the arm worktree, `npx tsx --test tests/listener-wake.test.ts` run,
+then reverted; the tree was clean afterwards (git status empty apart from my probe files).
+
+M1  src/listener/wake.ts:342  drop the paused guard so next() drains a latched wake
+    -> 2 fail: "over-budget next() keeps the latch and snapshot is poll until the minute
+       clears" (:608) and "70 wakes in one frozen minute stay at most 51 claims with no
+       extra reads" (:638).
+M2  src/listener/wake.ts:484  `if (this.channel !== null) return;` -> `if (false) return;`
+    (my nit N2, the setTopic/detach race)
+    -> 2 fail: "setTopic does not clobber a live subscribe when the old unsubscribe settles
+       late" (:489) and "rotated wake id: CLOSED then a new topic on the next read returns
+       to push" (:514). The rotation row (my nit N1) now has real coverage: :467, :489, :514.
+M3  src/listener/runtime.ts:1170,1181  force the push-mode gate true (my nit N3)
+    -> 1 fail: "wake ticks while mode is poll still read; skipRead is push-only" (:877).
+M4  src/listener/read-health.ts:529  `return consecutive > LISTENER_MODE_CHANGE_SKIP_MAX;`
+    -> `return false;` (my nit N4, the flapping-listener lapse hole)
+    -> 1 fail: "a second consecutive mode-change hour is scored for throughput lapse" (:998).
+M5  src/listener/wake.ts:184  listenerWakePersistWorthy -> always true (my nit N5)
+    -> 1 fail: "wake status persist skips lastWakeAt-only ticks inside the coalesce window"
+       (:734).
+My nit N6 (no behavioural control for the reconcile bound) is folded too: :925 "a lost wake is
+claimed when next() hits the reconcile deadline" asserts wake.untils[0] === now + 300_000 and
+wakeClaims === 0, so a claim really does happen off the deadline and not off a wake.
+
+Gemini fold 1 (LISTENER_WAKE_MODES literals, 62f45a0): confirmed by enumeration, not grep-luck.
+`grep -rn '"push"|"poll"' src/listener/*.ts src/cli.ts src/cloud/wake.ts` returns ZERO lines
+outside the LISTENER_WAKE_MODES definition. parseListenerWake now derives the value with
+`LISTENER_WAKE_MODES.find(...)` (control.ts:410) and compares against LISTENER_WAKE_MODE_PUSH.
+Gemini fold 2 (unknown-key parser test, a1a38e7): test :382 pins that parseOptionalWakeHint
+DROPS unknown keys rather than rejecting them. I checked this against the spec rather than
+against the code: §1 item 4 says those three parsers "return closed objects and drop unknown
+fields", so the pinned claim is the right one.
+
+=====================================================================
+NO REGRESSION in what passed at 6c4e219 — re-derived, not assumed
+=====================================================================
+- Latch: src/listener/wake.ts:399-410; test :422 still emits two wakes and gets one "wake"
+  then "deadline". Untouched by the budget change (the pause only defers the drain).
+- D-053: wakeErrorCodeFromSubscribeStatus (wake.ts:346-357) still switches on the status CODE;
+  test :393 asserts the mapping for CHANNEL_ERROR/CLOSED/TIMED_OUT and that the Error text is
+  not the code; :445 still passes an Error whose .message contains the topic.
+- Topic refusals: STATUS_SENSITIVE_KEYS and parseListenerWake's nested refusal unchanged;
+  tests :760, :772 (topic key forbidden, topic-shaped lastErrorDetail rejected as malformed).
+- Anon-key socket: `grep agentToken|bearer()|accessToken src/listener/wake.ts` -> nothing;
+  defaultRealtime is still createClient(url, anonKey) + setAuth(anonKey). One channel per
+  subscriber; close() still awaited in runtime.ts's finally.
+- 5-minute reconcile: waitCapMs (runtime.ts:1066-1074) and reconcileDueAt (:1553-1556)
+  unchanged; :920 pins the constant and :925 now pins the behaviour.
+- The wake path still cannot ack or advance a cursor on its own: page===null, and the signals
+  loop (the only place `after` moves) is skipped.
+
+=====================================================================
+FINDING (DEFECT, measured) — the budget pause makes `listen status` state
+two things that are false, and a test pins one of them.
+=====================================================================
+Reached by: subscribe successfully, then hit the client-side 50/min budget. Nothing is wrong
+with the socket and no server refused anything.
+
+Probe (real WakeSubscriber, fake channel, SUBSCRIBED, 50 noteWakeClaim in one frozen minute):
+  connectionState before: subscribed
+  connectionState after : subscribed
+  snapshot: {"mode":"poll","subscribedAt":"2026-07-30T00:00:10.000Z","reconnects":0,
+             "lastWakeAt":null,"lastReconcileAt":null,"errorCode":"rate_limited",
+             "topicRotatedAt":null,"rateLimited":true}
+  SENTENCE: poll every 15s. Realtime not connected (rate_limited).
+
+Two false clauses in one operator-facing sentence:
+  (a) "Realtime not connected" — connectionState is `subscribed`; the socket is up and the
+      channel is joined. Source: src/listener/wake.ts:212, the poll branch of
+      listenerWakeStatusSentence (:202-213), which is selected purely on mode and hard-codes the reason.
+  (b) "(rate_limited)" — nothing rate-limited this listener. errorCode is set to
+      "rate_limited" for the CLIENT budget at wake.ts:259-266 because wakeClaimPaused()
+      (:395-397) folds the client budget and a server 429 into one predicate. Spec §2.3
+      assigns `rate_limited` to a server refusal, and §2.4's "Claim rate limit reached" row
+      says a genuine 429 "writes an audit row AND a swarm.security_alerts row". So the
+      operator who sees `wake_error_code: "rate_limited"` in events.ndjson (supervisor.ts logs
+      it) will go looking for a security_alerts row that does not exist. That is a concrete
+      wrong-triage cost, at exactly the moment the seat is busiest.
+  (c) minor, same root: the status JSON now emits mode "poll" together with a NON-NULL
+      subscribedAt, which parseListenerWake permits (control.ts:426 only constrains push).
+      A reader sees "poll" and a live subscription timestamp and cannot tell which is true.
+
+This is the repo's own named failure mode, twice over. "Honesty is not sufficient": the
+sentence must say what is true now and what happens next, and here it says the opposite of
+what is true. "Claim controls prove stability, not truth": tests/listener-wake.test.ts:625
+asserts `snap.errorCode === "rate_limited"` for the budget case, so the new control pins the
+wrong claim and will keep pinning it. The behaviour underneath is correct — this is a state
+word and a copy defect, not a delivery defect, and nothing is lost — but it is verified in the
+tree by running the code, and it is not a gap the spec allows: the spec allocates
+`rate_limited` to a server refusal and never sanctions "not connected" while subscribed.
+
+Remedy (small): give the client pause its own member of WAKE_ERROR_CODES — e.g.
+`wake_budget` — set it in snapshot() only when `nowMs >= rateLimitedUntil && overWakeBudget()`,
+and add a third branch to listenerWakeStatusSentence for it, something like
+"poll every 15s. Push is connected; wake claims are paused for the rest of this minute."
+Then flip :625 to assert the new code and add a sentence assertion for it.
+
+=====================================================================
+NITS (not the finding)
+=====================================================================
+N-a. wake.ts:3 says a present hint "must be the closed { topic, event } object", which reads
+     like unknown keys are rejected; :382 now pins that they are dropped. The spec's §1.4
+     wording ("return closed objects and drop unknown fields") is the one that is right, so
+     this is the comment, not the code. One-word fix.
+N-b. LISTENER_MODE_CHANGE_SKIP_MAX = 1 closes the flapping hole for a listener that changes
+     mode every hour, but consecutiveModeChangedHours (read-health.ts:512-524) walks backwards
+     one hour at a time over health.claimHours with a linear find per step; the array is capped
+     at LISTENER_CLAIM_HOUR_CAP = 25 so it is bounded, but it runs per lapse candidate.
+     Cosmetic.
+
+=====================================================================
+NOT ESTABLISHED by me
+=====================================================================
+- Anything against a live edge function, local Supabase, or production. I ran pure gates only;
+  no db:start, no db:reset, no test:p1-local, no test:p1-server, no check:edge, no --linked.
+- I did NOT re-audit the round-2 live control; the report's live-control caveats from round 1
+  still stand, and the HTTP leg being a fake edge still means a wrong `wake` field name or a
+  wrong claim endpoint/body on the REAL edge would be invisible to it. That belongs to L2/L3
+  and must be re-measured end to end against served local edge functions before release.
+- Real Phoenix heartbeat timing (§2.4's ~50 s half-open detection): read, not measured.
+- Site / docs / L5 watcher / L6 surfaces.
+- Whether the round-2 changes affect any consumer outside src/listener and src/cloud/wake.ts;
+  I checked those trees and the two test files only.
+My throwaway worktree and its probe files (tests/probe2.test.ts, tests/probe3.test.ts) are
+removed. The lane worktree was not modified except for this arm file.
+
+VERDICT: FAIL

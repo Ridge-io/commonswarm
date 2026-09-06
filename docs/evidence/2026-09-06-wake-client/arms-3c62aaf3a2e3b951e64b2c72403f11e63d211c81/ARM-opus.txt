@@ -1,0 +1,151 @@
+ARM: independent adversarial review, round 3 (Opus 5), lane L4 wake-client
+SHA reviewed: 3c62aaf3a2e3b951e64b2c72403f11e63d211c81  (one commit on 9986f19; merge-base 012807d)
+Prior arms by me: arms-6c4e219…/ARM-opus.txt (FAIL, budget defect), arms-9986f19…/ARM-opus.txt
+(FAIL, the budget pause stated two false things to the operator).
+
+QUOTE-BACK (first diff --git line of arms-3c62aaf…/DIFF.patch):
+diff --git a/package.json b/package.json
+
+Gates re-run by me in a throwaway detached worktree (scratchpad/arm-opus-3c62aaf, node_modules
+symlinked, removed at the end):
+  npm run build                          exit 0
+  npm test                               exit 0, 885 pass / 0 fail   (same count as 9986f19)
+  env -u FORCE_COLOR npm run test:p1-cli exit 0, 483 pass / 0 fail
+  npx tsc --noEmit -p tsconfig.json      exit 0
+  npm run check:tests                    exit 0
+  scripts/check-commit-identity.sh 012807d..HEAD -> "commit identity OK: 28 address-fields", 0
+
+NOTHING ELSE CHANGED. `git diff 9986f19..HEAD` is 41 lines across exactly two files:
+src/listener/wake.ts and tests/listener-wake.test.ts. No other source file, no package.json,
+no docs, no new dependency, no test removed. I read the whole diff, not a summary of it.
+
+=====================================================================
+MY ROUND-2 DEFECT: GONE on the path I demonstrated. Measured.
+=====================================================================
+Probe: real WakeSubscriber, fake channel, SUBSCRIBED, then 50 noteWakeClaim in one frozen
+minute — the exact construction that produced the round-2 finding.
+
+  round 2 (9986f19)  json: {"mode":"poll", ..., "errorCode":"rate_limited","rateLimited":true}
+                     sentence: poll every 15s. Realtime not connected (rate_limited).
+  round 3 (3c62aaf)  json: {"mode":"poll","subscribedAt":"2026-07-30T00:00:10.000Z",
+                            "reconnects":0,"lastWakeAt":null,"lastReconcileAt":null,
+                            "errorCode":"wake_budget","topicRotatedAt":null,"rateLimited":true}
+                     sentence: Subscribed; claims paused until the minute clears
+                               (wake_budget); polling every 15s meanwhile.
+
+Every clause of that sentence is now true: the channel really is `subscribed`
+(WakeSubscriber.state printed `subscribed` on the same object), the pause really does end when
+the clock minute clears (round-2 test :608 still proves the return to push), and the poll
+interval is the one it will actually use. The phantom `rate_limited` is gone, so the operator
+is no longer sent hunting a `swarm.security_alerts` row that does not exist — which was the
+concrete wrong-triage cost my round-2 FAIL rested on. Source: src/listener/wake.ts:266-277
+(snapshot splits serverLimited from overBudget) and :215-217 (the third sentence branch).
+
+My round-1 defect stays fixed: PROBE-A, my own construction (one wake per claim, 2 s watchdog),
+still returns **claims 51, reads 1** in a frozen minute against the spec ceiling of 51.
+
+=====================================================================
+THE SENTENCE IS DERIVED FROM THE ENUMERATION, NOT TYPED. Mutation-proved.
+=====================================================================
+WAKE_ERROR_CODE_WAKE_BUDGET (wake.ts:54-56) is `WAKE_ERROR_CODES.find(...)` over the same
+array the parser and the event validator read — not a re-typed literal — and the sentence
+interpolates that constant rather than spelling the code. The new test loop
+(tests/listener-wake.test.ts:741-755) walks **every** member of WAKE_ERROR_CODES and asserts
+each one appears in its own rendered sentence, which is the "export the set; build the
+sentence from it; add a test that fails when they differ" control AGENTS.md asks for.
+
+  M6  delete "wake_budget" from WAKE_ERROR_CODES
+      -> 1 fail: "status sentence never says push unless mode is push; lists come from
+         constants". The list really is generated: shrink it and the control breaks.
+  M7  `if (wake.errorCode === WAKE_ERROR_CODE_WAKE_BUDGET)` -> `if (false)` (fall back to the
+      old copy)
+      -> 2 fail: that same test and "over-budget next() keeps the latch and snapshot is poll
+         until the minute clears" (:608, which now asserts /Subscribed/, no /not connected/,
+         no /rate_limited/).
+  M8  make snapshot emit `rate_limited` for the client budget again (exact round-2 behaviour)
+      -> 1 fail: :608. The regression I found cannot come back silently.
+Each mutation was reverted and the tree verified clean afterwards.
+
+=====================================================================
+"mode: poll while paused, with subscribedAt set" — DEFENSIBLE. I checked it.
+=====================================================================
+The coordinator asked me to rule on this either way, so: it is right, and my round-2 sub-nit
+(c) about the contradiction is answered.
+`mode` in this design names **how the listener learns there is work**, not the socket's state.
+§2.3 already sets the precedent the report cites: "A `rate_limited` refusal, if one still
+arrives, flips the listener to the 15 s poll for 60 s and records `wake.rateLimited`" — the
+listener polls while the websocket is still perfectly joined, because a claim-endpoint refusal
+has nothing to do with the socket. The client budget is the same shape, so mode poll is the
+consistent answer, not an exception.
+§2.4's mode rule ("push only while subscribed") also survives: subscribed is still NECESSARY
+for push (snapshot.mode, wake.ts:268-272, requires connectionState === "subscribed"), it was
+never claimed to be SUFFICIENT, and no row of §2.4 says a subscribed listener must print push.
+What made round 2 wrong was not the mode value — it was that the only place carrying the socket
+fact said the opposite. Now `subscribedAt` is non-null, `errorCode` is `wake_budget`, and the
+sentence opens with the word "Subscribed", so the JSON reader and the human reader are told
+both facts and neither has to guess which is true. Test :628 pins `snap.subscribedAt` non-null
+alongside mode poll, so the pairing is deliberate and controlled rather than incidental.
+
+=====================================================================
+NIT (stated, below the FAIL bar — the surviving half of round 2's clause (a))
+=====================================================================
+`markRateLimited` (wake.ts:320) does not touch the channel, so after a REAL server 429 the
+socket is still joined — and that branch still prints the old copy. Measured on this SHA, same
+probe file:
+  SERVER429  state: subscribed
+             json: {"mode":"poll","subscribedAt":"2026-07-30T00:00:10.000Z",…,
+                    "errorCode":"rate_limited","rateLimited":true}
+             sentence: poll every 15s. Realtime not connected (rate_limited).
+"Realtime not connected" is false there for the same reason it was false in round 2:
+wake.ts:219 infers disconnection from `mode` alone, and mode is now overloaded. The new branch
+special-cased one of the two overloads instead of fixing the inference, and the test loop at
+:754 pins `Realtime not connected \(rate_limited\)`, so a control again stands behind a false
+clause.
+I am NOT failing on it, and I want the reason on the record rather than implied. The cost that
+justified my round-2 FAIL was wrong triage: an operator chasing a `security_alerts` row that
+did not exist. On this branch the code `rate_limited` is CORRECT, the alert row §2.3 describes
+really was written, the 60-second poll really is what happens next, and the operator's next
+action is right. What is left is five wrong words in a 60-second window with no consequential
+consequence, and the spec does sanction the state itself. That is a NIT by the rule I was
+given. Fix when convenient, one line: give the `rate_limited` branch its own sentence
+("Subscribed; the server refused the claim rate (rate_limited); polling every 15s for 60s.")
+or, better, derive the "connected" clause from `subscribedAt` instead of from `mode`, which
+retires the overload for every future code at once. Then flip the :754 assertion with it.
+
+Carried forward unchanged from round 2, still not fixed and still NITs: the wake.ts:3 comment
+saying a present hint "must be the closed { topic, event } object" when :382 correctly pins
+that unknown keys are DROPPED (§1.4 is the authority, so it is the comment that is wrong); and
+consecutiveModeChangedHours' per-candidate backward walk (bounded at 25 hours, cosmetic).
+
+=====================================================================
+NO REGRESSION — re-derived on this SHA, not carried over on trust
+=====================================================================
+The whole wake suite (24 tests) and the full 885-test gate are green, and I re-checked the
+items I have signed off before rather than assuming the 41-line diff could not reach them:
+the latch (:422), the D-053 status-code mapping with all codes (:393, and the healthy sentence
+still renders "push (Realtime), last wake 1s ago, reconcile every 5m."), the topic refusals
+(:760, :772), the anon-key-only socket (grep for agentToken/bearer()/accessToken in
+src/listener/wake.ts still returns nothing), the 5-minute reconcile behaviour (:925), the
+rotation folds (:467, :489, :514), push-only skipRead (:877), the lapse cap (:998), and
+persist-worthiness (:734). None of them touch the two functions this commit edited except
+through the constants, which M6-M8 already exercised.
+
+=====================================================================
+NOT ESTABLISHED by me
+=====================================================================
+- Anything against a live edge function, local Supabase, or production. Pure gates only: no
+  db:start, no db:reset, no test:p1-local, no test:p1-server, no check:edge, no --linked.
+- I did not re-run the lane's live control, and its round-1 caveat still stands: the HTTP leg
+  was a fake edge, so a wrong `wake` field name or a wrong claim endpoint/body on the REAL
+  edge remains invisible to it. That is L2/L3's to measure end to end before release.
+- Real Phoenix heartbeat timing (§2.4's ~50 s half-open detection): read, never measured.
+- Site / docs / L5 watcher / L6 surfaces.
+- Whether `wake_budget` needs anything on the server or web side; I checked src/ and tests/
+  only, and `wake_error_code` event validation reads WAKE_ERROR_CODE_SET so it accepts the new
+  member automatically.
+Process note: my first `git worktree add` used a relative path and briefly created the arm
+worktree INSIDE the lane checkout. I removed it with `worktree remove --force` and confirmed
+`git status --porcelain` in the lane worktree was empty before recreating it under scratchpad.
+The lane tree is unmodified apart from this arm file; my worktree and probe file are removed.
+
+VERDICT: PASS

@@ -1,0 +1,26 @@
+You are an independent adversarial reviewer for CommonSwarm lane L4 (listener wake client), ROUND 3.
+
+SHA: 3c62aaf3a2e3b951e64b2c72403f11e63d211c81
+Branch: lane/wake-client
+Merge-base: 012807d2588bba8683ffef4b599d076c047039a7
+Worktree (read this tree, do not edit it): /private/tmp/claude-501/-Users-yulanbot-Developer-Ridge-io-cloud-swarm/a866e6cd-5d6d-477f-af6a-740cd30407ed/scratchpad/lane-wake-client
+DIFF: /private/tmp/claude-501/-Users-yulanbot-Developer-Ridge-io-cloud-swarm/a866e6cd-5d6d-477f-af6a-740cd30407ed/scratchpad/lane-wake-client/arms-3c62aaf3a2e3b951e64b2c72403f11e63d211c81/DIFF.patch
+REVIEW: /private/tmp/claude-501/-Users-yulanbot-Developer-Ridge-io-cloud-swarm/a866e6cd-5d6d-477f-af6a-740cd30407ed/scratchpad/lane-wake-client/arms-3c62aaf3a2e3b951e64b2c72403f11e63d211c81/REVIEW.md
+Spec: docs/design/2026-09-06-PUSH-DELIVERY.md §2.3, §2.4
+
+QUOTE BACK the first `diff --git` line of DIFF.patch as the first line of your reply. If it is not `diff --git a/package.json b/package.json`, say so and VERDICT: FAIL.
+
+This round folds ONE verified defect on 9986f19: a SUBSCRIBED listener that hit the client-side 50/min wake-claim budget printed "poll every 15s. Realtime not connected (rate_limited)." Both clauses were false.
+
+Attempt to REFUTE the fold. A passing review names what you tried and why it failed. An empty PASS is not a review. End with exactly one line: VERDICT: PASS or VERDICT: FAIL.
+
+Checks:
+1. After 50 noteWakeClaim in one clock minute while SUBSCRIBED, snapshot.errorCode is the WAKE_ERROR_CODES member wake_budget, NOT rate_limited. subscribedAt is non-null. connectionState is still subscribed.
+2. listenerWakeStatusSentence for that snapshot says the socket is subscribed, claims are paused until the minute clears, and polling continues. It must interpolate the code from WAKE_ERROR_CODES / WAKE_ERROR_CODE_WAKE_BUDGET. It must NOT say "not connected" or "rate_limited" or "push".
+3. parseListenerWake / WAKE_ERROR_CODE_SET accept wake_budget (the sentence and the parser share the enumeration).
+4. A genuine server 429 still uses rate_limited (markRateLimited). Do not collapse the two.
+5. mode stays poll during the client pause (REVIEW.md states the spec line: §2.3 wake.mode is how the listener learns there is work).
+6. The pinned test fails if snapshot still emits rate_limited for the budget (mutation). The copy test enumerates WAKE_ERROR_CODES.
+7. Do not re-raise round-1/round-2 items that were folded unless you MEASURE a remaining hole.
+
+Do not touch production, --linked, or db:reset. You may run pure tests. Print VERDICT as the last line.

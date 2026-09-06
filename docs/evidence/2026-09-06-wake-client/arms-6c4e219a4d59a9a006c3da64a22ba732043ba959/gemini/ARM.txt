@@ -1,0 +1,54 @@
+`diff --git a/package.json b/package.json`
+
+**Check 1: Wait contract**
+- Attempted refutation: The socket drop during the five-minute wait might leave the loop asleep.
+- Refutation failed: `wake.ts:onSubscribeStatus` calls `emitPending("state")` when the socket disconnects, which immediately resolves `waiter` (the promise returned by `next()`), correctly breaking the 5-minute wait.
+- Attempted refutation: A wake might restart `reconcileDueAt`.
+- Refutation failed: `reconcileDueAt` is only updated when `!skipRead` is true (i.e. a Reconcile API call actually occurred). Wakes set `skipRead = true`, thus skipping the update.
+- Attempted refutation: Two wakes arriving during one claim might result in the second one being dropped.
+- Refutation failed: `emitPending("wake")` correctly collapses multiple wakes into a single pending state that `next()` will immediately consume on the next loop iteration (coalescing them).
+- Attempted refutation: `next()` is raced against a separate timer, risking lost promises.
+- Refutation failed: `next()` manages its own internal `setTimeout` and cleanup. The main loop's `idleSleep` is bypassed explicitly when `wakeSubscriber` has a topic.
+- **PASS**
+
+**Check 2: False push**
+- Attempted refutation: A rate-limited state while subscribed might still report "push".
+- Refutation failed: `src/listener/wake.ts:114` (`snapshot()`) explicitly returns `"poll"` if `rateLimited` is true, even when `connectionState === "subscribed"`.
+- Attempted refutation: An errored or disconnected socket might temporarily report "push".
+- Refutation failed: `snapshot()` explicitly checks `connectionState === "subscribed"`, which is synchronously cleared by `onSubscribeStatus` on channel errors or `CLOSED`.
+- **PASS**
+
+**Check 3: Topic leak**
+- Attempted refutation: `lastErrorDetail` could contain the topic if a runtime error surfaces it, and the status parser doesn't reject it.
+- **DEFECT**: `src/listener/control.ts:449` (in `parseListenerStatus`). The existing guard `STATUS_SENSITIVE_KEYS.has(key)` only validates the *keys* of the JSON object. It does not inspect or sanitize the string values. If an error message containing `cswarm-wake:` + 43 chars is persisted into `lastErrorDetail`, the guard will *not* reject it, allowing the leak to propagate.
+
+**Check 4: D-053**
+- Attempted refutation: The client branches on `error.message` for realtime connection failures.
+- Refutation failed: `src/listener/wake.ts:321` (`wakeErrorCodeFromSubscribeStatus`) relies entirely on the fixed literal status strings (like `REALTIME_SUBSCRIBE_STATUS.CHANNEL_ERROR`) emitted by the Realtime client and never inspects `error.message`.
+- **PASS**
+
+**Check 5: Enumerations**
+- Attempted refutation: The user-facing string hardcodes "push" instead of using constants.
+- **DEFECT**: `src/listener/control.ts:1081` (in `listenerWakeStatusSentence`) and `src/listener/control.ts:402` (in `parseListenerWake`) hardcode the `"push"` and `"poll"` string literals in the logic and output copy, rather than utilizing the explicitly required `LISTENER_WAKE_MODES` enumeration (e.g., `LISTENER_WAKE_MODES[0]`).
+
+**Check 6: Parsers**
+- Attempted refutation: Extra unknown keys on the wire hint are not tested.
+- **DEFECT**: `src/cloud/wake.ts:242` (`parseOptionalWakeHint`) silently accepts extra unknown keys on the wire payload by dropping them, but `tests/listener-wake.test.ts:1720` never tests this acceptance behavior (unlike `parseListenerWake` which explicitly tests extra key rejection). 
+
+**Check 7: Read-health**
+- Attempted refutation: `expectedClaims` is only computed dynamically and not stored at the end of the hour.
+- Refutation failed: `src/listener/read-health.ts:193` (`freezeClosedHourExpectedClaims`) actively mutates the array and calculates `expectedClaims = HOUR_MS / row.cadenceMs` for closed hours, which is then persisted.
+- Attempted refutation: A mode-change hour becomes a lapse.
+- Refutation failed: `src/listener/read-health.ts:510` (`summarizeListenerReadHealth`) explicitly excludes hours with `modeChanged === true` from the `throughputLapseHours` array.
+- **PASS**
+
+**Check 8: npm test list**
+- Attempted refutation: `tests/listener-wake.test.ts` is not literally in the `package.json` test script.
+- Refutation failed: It is explicitly included in the literal `"test"` script string in `package.json:20`.
+- **PASS**
+
+**Check 9: cursor_fallback**
+- Attempted refutation: The new wait logic skips the inbox read on `cursor_fallback`.
+- **DEFECT**: `src/listener/runtime.ts:1593`. While the wait (`wakeSubscriber.next()`) is correctly bypassed when `deliveryMode === "cursor_fallback"` (so the read is not skipped), a severe bug exists at the bottom of the loop. If `wakeSubscriber.hasTopic` is true, the loop hits a `continue` block that bypasses `await idleSleep(false)`. This throws the listener into a 100% CPU/network busy-loop, continuously polling the inbox with zero delay.
+
+VERDICT: FAIL

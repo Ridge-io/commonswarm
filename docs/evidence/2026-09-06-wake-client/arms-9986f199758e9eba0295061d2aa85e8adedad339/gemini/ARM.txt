@@ -1,0 +1,18 @@
+diff --git a/package.json b/package.json
+
+I attempted to refute the claims as requested. Here is what I analyzed and why the refutations failed:
+
+1. **Wait contract**: I traced `reconcileDueAt` in `runListenerRuntime`. It is only updated during an actual read (`!skipRead`), meaning wakes never reset the reconcile deadline. The `onSubscribeStatus` callback successfully triggers `emitPending("state")`, ensuring socket drops interrupt the wait loop instead of blocking.
+2. **False push**: I verified `snapshot()` actively enforces `!rateLimited` (via `wakeClaimPaused`) alongside `connectionState === "subscribed"` to return `LISTENER_WAKE_MODE_PUSH`. Status sentence generation cleanly relies on these modes.
+3. **Topic leak**: I checked the implementation of `SECRET_SHAPE_RE`. It has been correctly updated to include `cswarm-wake:`, meaning `control.ts` natively rejects topics found in `lastErrorDetail`. `writeListenerStatus` rejects topic keys, and `readListenerStatus` fails when reading a topic-shaped error detail, leaving no remaining hole.
+4. **D-053**: Checked `wakeErrorCodeFromSubscribeStatus`. It directly maps raw realtime `status` strings (like `CHANNEL_ERROR` and `CLOSED`), ensuring `error.message` is never read for these classifications.
+5. **Enumerations**: `parseListenerWake` finds the mode within the `LISTENER_WAKE_MODES` array rather than literal strings, and `listenerWakeStatusSentence` uses the same constants.
+6. **Parsers**: `parseOptionalWakeHint` manually assigns `topic` and `event` into a new object, inherently dropping any extra keys. `parseListenerWake` honors the `rejectUnknownKeys` flag by explicitly checking against `WAKE_STATUS_KEY_SET` and returning null if unknown keys are found.
+7. **Budget**: I attempted to force an immediate read loop by maxing the budget. When `overWakeBudget` is true, `wakeClaimPaused` becomes true. When `emitPending("wake")` fires in this state, it stores `"wake"` but intentionally skips early resolution. Thus `next()` falls back to the timer (`waitCapMs`), which switches to the idle cadence (`LISTENER_IDLE_POLL_MS`) because the mode downgraded to `LISTENER_WAKE_MODE_POLL`. The 5000ms delay prevents an immediate read+claim, cleanly holding at 51 claims in the frozen-clock probe before the test aborts.
+8. **Rotation**: Checked `detachChannel()` inside `setTopic`. The late unsubscribe settlement is safely protected by `if (this.channel !== null) return;`. Since `setTopic` assigns the new channel synchronously before the old unsubscribe finishes, the old settlement cannot nullify `this.subscribedAt` or clobber the live state.
+9. **skipRead**: I verified that `skipRead = true` explicitly demands `mode === LISTENER_WAKE_MODE_PUSH`. The entirety of the `skipRead` mechanism sits safely inside the `deliveryMode === "durable_claim"` guard. `cursor_fallback` remains undisturbed.
+10. **npm test**: Inspected the diff for `package.json` and verified that `tests/listener-wake.test.ts` is explicitly listed in the `test` script.
+
+All checks passed analysis and could not be refuted.
+
+VERDICT: PASS

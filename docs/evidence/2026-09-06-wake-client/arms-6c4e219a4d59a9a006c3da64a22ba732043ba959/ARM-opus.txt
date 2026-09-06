@@ -1,0 +1,234 @@
+ARM: independent adversarial review (Opus 5), lane L4 wake-client
+SHA reviewed: 6c4e219a4d59a9a006c3da64a22ba732043ba959   merge-base 78b0469
+
+QUOTE-BACK (first diff --git line of DIFF.patch):
+diff --git a/package.json b/package.json
+
+Gates re-run by me in a throwaway detached worktree (arm-opus-6c4e219, node_modules symlinked):
+  npm run build                          exit 0
+  npm test                               exit 0, 875 pass / 0 fail
+  env -u FORCE_COLOR npm run test:p1-cli exit 0, 0 fail
+  npx tsc --noEmit -p tsconfig.json      exit 0
+  scripts/check-commit-identity.sh 78b0469..HEAD  -> "commit identity OK: 6 address-fields checked", exit 0
+The author's gate table reproduces exactly. No new dependency: the package.json diff is the
+`test` script line only, and it does add tests/listener-wake.test.ts to the literal list (item 8 OK).
+
+=====================================================================
+FINDING 1 (DEFECT, measured) — the 50/min wake-claim budget does not bound
+the claim rate. Past the budget the listener issues MORE server work, not less.
+=====================================================================
+
+Spec, docs/design/2026-09-06-PUSH-DELIVERY.md §2.3:
+  "WAKE_CLAIMS_PER_MINUTE_BUDGET = 50 is enforced client-side: past it the subscriber
+   stops claiming on wakes for the rest of that minute and the reconcile catches up."
+Spec §2.4, "Claim rate limit reached" row:
+  "the client budget (§2.3: 1 s coalescing, 50 wake-claims/min) keeps one listener at
+   <= 51/min and two at <= 102"
+The whole argument that the server's DELIVERY_CLAIM_RATE_LIMIT_PER_MINUTE = 120 refusal
+(which writes an audit row AND a swarm.security_alerts row) is never approached rests on
+that <= 51/min number.
+
+Code: src/listener/runtime.ts:1170-1188.
+  1170  if (reason === "wake" && !rateLimited && !wakeSubscriber.overWakeBudget(now())) {
+  ...
+  1185      skipRead = true;
+When overWakeBudget() is true the ONLY effect is that skipRead stays false. Control then
+falls through to the ordinary read branch at :1192 and on to the same claim_agent_inbox
+call. Nothing waits, nothing polls: the loop still runs once per latched wake, because the
+top-of-loop wait is wakeSubscriber.next() (:1160-1164) and a latched wake resolves it
+immediately (src/listener/wake.ts:305-317, the `pending` fast path).
+Worse, src/listener/runtime.ts:1556-1557 then calls noteClaim() and NOT noteWakeClaim(),
+so wakeClaimTimes never grows past 50, overWakeBudget() stays permanently true for the
+rest of the minute, and every further wake in that minute costs one read POST plus one
+claim POST instead of the one claim it was trying to avoid.
+
+MEASURED, not reasoned. Probe test (real WakeSubscriber + real runListenerRuntime, fake
+Realtime channel, frozen clock so the whole run is inside one clock minute; each claim
+emits the next wake, abort at 70):
+
+  test("PROBE: wake claims past the 50/min budget")   -- my file, arm worktree only
+  result: stop=cancelled  claims=70  reads=20
+  assertion `claims <= 51` FAILED with "claims in one frozen minute: 70"
+
+50 wake-claims, then 20 read+claim pairs, all inside one clock minute. The spec's ceiling
+is 51. The same run also shows 20 read POSTs the budget was supposed to prevent. With a
+wake rate above ~120/min -- reachable by the very cases §2.4 enumerates (duplicate wake
+from two listeners on one principal, reconnect storm, a burst of directed signals) -- the
+client sails through the server limit and trips the security_alerts row §2.3 says the
+budget exists to avoid.
+
+No delivery is dropped (the read+claim path still claims), so this is a rate/cost defect,
+not data loss. It is still a defect against the stated contract, and it is the exact row
+the review brief asked me to refute: "the per-minute wake-claim budget (50/min) and what
+happens when it is hit (must degrade to poll, never drop a delivery)". It does not degrade
+to poll. It escalates.
+
+There is also NO test for this row at runtime level. tests/listener-wake.test.ts:430
+("wake claim budget is 50 per clock minute") asserts only WakeSubscriber.overWakeBudget()
+in isolation; it never runs the runtime, so the runtime's response to a hit budget is
+unmeasured. That is why two review arms and the author's own mutation table missed it:
+the mutation row "WAKE_CLAIMS_PER_MINUTE_BUDGET note 50 wake claims -> overWakeBudget true"
+proves the flag flips, not that anything acts on it.
+
+Suggested fix (one line, plus a test): when overWakeBudget() is true, treat the pass like
+the poll cadence -- i.e. do not fall through to an immediate read; sleep to
+min(reconcileDueAt, now + nextIdlePollMs(...)) before the next iteration. Then add a
+runtime test asserting claims <= 51 in a frozen minute under continuous wakes.
+
+=====================================================================
+The rest of the checklist — what I could NOT refute
+=====================================================================
+
+2. Latch / one wake -> one claim. HOLDS.
+   src/listener/wake.ts:355-362 emitPending() sets pending="wake" when no waiter, and
+   :303-309 next() drains it once. Test tests/listener-wake.test.ts:385 ("WakeSubscriber
+   latches a wake while nobody awaits next()") emits two wakes, gets one "wake" then
+   "deadline" -- exactly one more claim. That test reaches the real WakeSubscriber.
+
+3. CHANNEL_ERROR / CLOSED / TIMED_OUT -> poll, then push on SUBSCRIBED. HOLDS.
+   src/listener/wake.ts:339-350 (wakeErrorCodeFromSubscribeStatus) maps by status CODE,
+   never by error.message; :283-286 snapshot() derives mode from connectionState only.
+   tests: :356 (all three codes map, and asserts the Error text is NOT the code),
+   :408 (CHANNEL_ERROR carrying an Error whose .message contains the topic -> mode poll,
+   errorCode channel_error, topic absent from the snapshot JSON), :545 (runtime: idle
+   cadence recorded, then push on resubscribe). D-053 satisfied.
+
+4. Reconcile 5 min while subscribed / idle cadence while not. HOLDS in code.
+   runtime.ts:1160 until = min(reconcileDueAt, now()+waitCapMs()); waitCapMs()
+   (:1063-1072) returns LISTENER_RECONCILE_POLL_MS in push and nextIdlePollMs() otherwise;
+   :1552-1554 advances reconcileDueAt only on a non-wake claim, so a stream of wake ticks
+   cannot postpone the 5-minute reconcile. The empty-claim path :1592-1605 continues
+   without sleeping and lets next() supply the wait, which is correct because
+   reconcileDueAt was just set. I could not construct a hot-spin from this.
+
+5. Nothing acks or advances a cursor on a wake alone. HOLDS.
+   On a wake tick page===null, and runtime.ts:1847 "if (page === null) continue;" skips
+   the signals loop, which is the only place `after` moves. The `|| skipRead` at :1368 and
+   :1401 lets a JOURNALLED prepared ack finish -- that is recovery of an already-claimed
+   delivery, not an ack caused by the wake. It is sound because classifyDeliveryMode
+   (:641-659) throws unless deliveryClaim AND deliveryAck are both present, so
+   deliveryMode==="durable_claim" (the wake branch's own precondition at :1156) already
+   implies deliveryAck.
+
+6. Status file. HOLDS.
+   src/listener/control.ts:290 adds "wake" to STATUS_ALLOWED_KEYS; :316-318 adds
+   topic/wakeTopic/wake_topic to STATUS_SENSITIVE_KEYS; parseListenerWake (:395-430)
+   re-refuses those keys at the nested depth and requires every one of
+   LISTENER_WAKE_STATUS_KEYS. All 8 nested keys are listed and parsed. Extra invariant I
+   like: :421 rejects mode "push" with subscribedAt null, so a status file cannot claim
+   push without a subscription. Old 0.1.57 files parse: :473 `row.wake === undefined ->
+   undefined`, and the failure test at :594 is `wake === null`, not `undefined`.
+   Tests :474 and :486 cover the refusals including a topic-shaped lastErrorDetail.
+   Human sentence (wake.ts:167-177) reads "push (Realtime), last wake 12s ago, reconcile
+   every 5m." / "poll every 15s. Realtime not connected (channel_error)." -- states what is
+   true now and what happens next. Both durations come from
+   formatIdlePollDuration(LISTENER_RECONCILE_POLL_MS), not typed. Test :446 asserts the
+   poll line never contains "push".
+
+7. Parsers optional on EVERY response. HOLDS.
+   parseOptionalWakeHint (src/cloud/wake.ts:38-40) returns undefined for both undefined
+   and null, and all three call sites spread conditionally: signals.ts, delivery.ts (both
+   the claim body and the replay branch), renewal.ts. So a 0.1.57 server omitting `wake`,
+   and L3's mint/renew replay omitting it while claim replay carries it, both parse. The
+   43-char id is validated by WAKE_TOPIC_RE (wake.ts:11). No thrown message anywhere
+   interpolates the topic: the four throw sites say "wake hint topic is malformed",
+   "delivery claim response wake field is malformed", "signal read returned a malformed
+   wake hint", and renewal's "malformed_wake" code -- none carry the value.
+
+8. Runtime wiring. HOLDS.
+   defaultRealtime (wake.ts:126-131) is createClient(target.url, target.anonKey) and
+   setAuth(target.anonKey). grep for agentToken / bearer() / accessToken in
+   src/listener/wake.ts returns nothing -- the agent token never reaches the socket URL or
+   headers. One channel per subscriber (`this.channel`), replaced through detachChannel().
+   Teardown: runtime.ts:1943-1947 awaits wakeSubscriber.close() in the finally, wrapped so
+   it cannot mask the model close outcome; close() (:341-356) swallows a dead-socket
+   disconnect. setAuth's promise is `void`-ed but the interface returns void|Promise and
+   Supabase's is sync, so no unhandled rejection there; detachChannel awaits inside
+   try/catch. No new dependency.
+
+9. Read-health. Lane A's slowest-cadence rule survives: recordListenerClaimCadence still
+   takes the max, and freezeClosedHourExpectedClaims (read-health.ts:208-218) only freezes
+   CLOSED hours, from that same slowest cadence. Supervisor records the cadence from the
+   wake event (5 min in push, idlePollMs in poll).
+
+=====================================================================
+NITS (design gaps the spec allows, or coverage holes — not the FAIL)
+=====================================================================
+
+N1. §2.4 "Wake id rotated" has ZERO test. grep setTopic tests/ returns only the class stub
+    at tests/listener-wake.test.ts:275 and two calls with the SAME topic (:391, :414).
+    topicRotatedAt is never asserted anywhere. The live control exercised rotation once,
+    but the tree has no control that would fail if setTopic's rotation branch broke.
+
+N2. Rotation race in src/listener/wake.ts:288-298. setTopic() does `void this.detachChannel()`
+    and then calls connect() synchronously. detachChannel's tail (:437-440) later runs
+    "if (this.connectionState === 'subscribed') { connectionState='disconnected';
+    subscribedAt=null }". connect() sets state to "connecting", so the normal path is safe,
+    but if the NEW channel's SUBSCRIBED callback lands before the old unsubscribe()
+    promise settles, the stale detach clobbers a live subscription back to disconnected and
+    the listener reports poll while pushing. Cheap fix: capture the channel identity and
+    only clear state when this.channel is still that channel.
+
+N3. The wake branch (runtime.ts:1154-1158) gates on hasTopic, not on mode==="push". My
+    probe took wake ticks while the subscriber had never reported SUBSCRIBED. Harmless
+    today (a wake only exists if the socket delivered one) but it means "mode push only
+    while subscribed" is true of the STATUS field and not of the claim path.
+
+N4. "mode-change hours skipped for lapse" (read-health.ts:513-515) IS a detection hole,
+    but not the one to worry about. A wedged push-mode listener whose socket half-opens
+    and never errors does NOT change mode, so its hours are scored normally at
+    expectedClaims = 3600000/300000 = 12, and the 5-minute reconcile (runtime.ts:1160,
+    capped by waitCapMs()) really does fire and really does claim -- so it keeps hitting
+    12/hr and is correctly healthy, at 5-minute latency instead of 15 seconds. Nothing is
+    lost; the reconcile catches it, exactly as §2.4's half-open row says. The actual hole
+    is a listener that FLAPS mode every hour: every hour gets modeChanged=true, so
+    throughput-lapse scoring is permanently suppressed for it even if it genuinely stops
+    claiming. One flap per hour is enough. Worth a cap (e.g. skip at most N consecutive
+    mode-change hours) but the spec does not forbid the current rule.
+
+N5. Write amplification: emitWake() runs on every loop pass and every wake tick, and the
+    supervisor persists status.json on every "wake" event. At the wake rates §2.4
+    contemplates that is one secure file write per wake. Not a correctness problem.
+
+N6. No behavioural control for the review brief's item 2 ("a lost wake ends in the delivery
+    being claimed within the reconcile bound"). tests/listener-wake.test.ts:591 asserts
+    only that LISTENER_RECONCILE_POLL_MS === 300_000 and formats as "5m" -- a constant, not
+    a behaviour. The wait-contract code is right as far as I can read it, but nothing in
+    the tree fails if the reconcile deadline stops being applied.
+
+=====================================================================
+Item 7 — what the report's live control did and did not establish
+=====================================================================
+DID: a real detached `cswarm listen start --state-dir <temp>` process wrote a real
+status.json whose nested `wake` block carried non-null subscribedAt / lastWakeAt /
+lastReconcileAt in push and errorCode "closed" + topicRotatedAt in poll -- so the fields are
+populated on a live listener, which is the AGENTS.md "live control" requirement and is
+exactly what v0.1.46 got wrong. The websocket leg was the REAL local Realtime stack at
+127.0.0.1:54321 with the real @supabase/supabase-js client, so the anon-key private-channel
+join and the SUBSCRIBED/CLOSED callbacks are real. grep "cswarm-wake:" over that run's
+status.json and events.ndjson returned 0 -- real redaction evidence.
+DID NOT: the HTTP leg was a FAKE edge. So the topic the listener joined came from the
+lane's own fixture, not from a server response. A wrong field name or nesting on the real
+edge (`wake_topic` vs `wake.topic`, snake_case payload, the hint attached to only one of
+the three responses) would be completely invisible to this control, and so would a wrong
+claim endpoint path or request body -- the fake answered whatever was asked. It also
+establishes nothing about the server ACTUALLY broadcasting on that topic on insert (W4's
+trigger); the wake was injected locally. Those all belong to L2/L3 and must be re-measured
+end to end against served local edge functions before release.
+
+=====================================================================
+NOT ESTABLISHED by me
+=====================================================================
+- Anything against a live edge function, local Supabase, or production. I ran only pure
+  gates; I did not run db:reset, db:start, test:p1-local, test:p1-server, check:edge, or
+  touch --linked.
+- Whether the server side actually emits `wake` on read/claim/renewal (L2/L3's lanes).
+- Real Phoenix heartbeat timing (§2.4's ~50 s half-open detection). I read the claim; I did
+  not measure @supabase/phoenix.
+- Site / docs / L5 watcher / L6 surfaces.
+- Whether any OTHER caller relies on WAKE_CLAIMS_PER_MINUTE_BUDGET semantics; I checked the
+  runtime and the tests only.
+My throwaway worktree at scratchpad/arm-opus-6c4e219 (and tests/probe-budget.test.ts inside
+it) is removed; the lane worktree was not modified.
+
+VERDICT: FAIL

@@ -1,0 +1,2126 @@
+diff --git a/package.json b/package.json
+index 362fa98..36c5419 100644
+--- a/package.json
++++ b/package.json
+@@ -20,7 +20,7 @@
+     "dev": "tsc --watch",
+     "check:tests": "tsc -p tsconfig.tests.json",
+     "check:edge": "deno check --config supabase/functions/command/deno.json supabase/functions/command/index.ts supabase/functions/read/index.ts supabase/functions/capability/index.ts supabase/functions/activity/index.ts",
+-    "test": "node --import tsx --test tests/brain-namespace.test.ts tests/signal-attachments.test.ts tests/host-version-floor.test.ts tests/protocol-next.test.ts tests/protocol-workspace.test.ts tests/protocol-agent-token-binding.test.ts tests/support/cold-start-retry.test.ts tests/support/signal-fetch-deadline.test.ts tests/support/agent-receive-cli.test.ts tests/support/arrival-watch.test.ts tests/p1-cli/resume.test.ts tests/p1-cli/resume-process-table.test.ts tests/delivery-client.test.ts tests/delivery-receipts.test.ts tests/p1-cli/d038-invite-form.test.ts tests/p1-cli/listener-provider.test.ts tests/p1-cli/standing-grants.test.ts tests/p1-cli/citation-drift.test.ts tests/p1-cli/test-gate-coverage.test.ts tests/p1-cli/agent-trailers.test.ts tests/command-cors.test.ts tests/command-durable-failures.test.ts tests/fresh-auth.test.ts tests/remove-member-mutation.test.ts tests/agent-revocation-mutation.test.ts tests/read-edge-diagnostics.test.ts tests/host-acp-grok.test.ts tests/host-permission-session-scope.test.ts tests/host-acp-claude.test.ts tests/host-acp-codex.test.ts tests/host-stderr-tail.test.ts tests/listener-activity.test.ts tests/listener-engine.test.ts tests/listener-effect-store.test.ts tests/listener-grok-model.test.ts tests/listener-claude-model.test.ts tests/listener-codex-model.test.ts tests/idle-poll.test.ts tests/idle-cost-retention.test.ts tests/listener-runtime.test.ts tests/listener-routing.test.ts tests/listener-control.test.ts tests/listener-detach.test.ts tests/listener-cli-process.test.ts tests/host-acp-opencode.test.ts tests/listener-opencode-model.test.ts tests/host-acp-opencode-homes.test.ts tests/listener-host-limits.test.ts tests/listener-delivery-journal.test.ts tests/claim-ledger-parse.test.ts tests/receipt-wire-compat.test.ts tests/chat-channel-constants.test.ts tests/chat-signal-wire-compat.test.ts",
++    "test": "node --import tsx --test tests/brain-namespace.test.ts tests/signal-attachments.test.ts tests/host-version-floor.test.ts tests/protocol-next.test.ts tests/protocol-workspace.test.ts tests/protocol-agent-token-binding.test.ts tests/support/cold-start-retry.test.ts tests/support/signal-fetch-deadline.test.ts tests/support/agent-receive-cli.test.ts tests/support/arrival-watch.test.ts tests/p1-cli/resume.test.ts tests/p1-cli/resume-process-table.test.ts tests/delivery-client.test.ts tests/delivery-receipts.test.ts tests/p1-cli/d038-invite-form.test.ts tests/p1-cli/listener-provider.test.ts tests/p1-cli/standing-grants.test.ts tests/p1-cli/citation-drift.test.ts tests/p1-cli/test-gate-coverage.test.ts tests/p1-cli/agent-trailers.test.ts tests/command-cors.test.ts tests/command-durable-failures.test.ts tests/fresh-auth.test.ts tests/remove-member-mutation.test.ts tests/agent-revocation-mutation.test.ts tests/read-edge-diagnostics.test.ts tests/host-acp-grok.test.ts tests/host-permission-session-scope.test.ts tests/host-acp-claude.test.ts tests/host-acp-codex.test.ts tests/host-stderr-tail.test.ts tests/listener-activity.test.ts tests/listener-engine.test.ts tests/listener-effect-store.test.ts tests/listener-grok-model.test.ts tests/listener-claude-model.test.ts tests/listener-codex-model.test.ts tests/idle-poll.test.ts tests/idle-cost-retention.test.ts tests/listener-runtime.test.ts tests/listener-wake.test.ts tests/listener-routing.test.ts tests/listener-control.test.ts tests/listener-detach.test.ts tests/listener-cli-process.test.ts tests/host-acp-opencode.test.ts tests/listener-opencode-model.test.ts tests/host-acp-opencode-homes.test.ts tests/listener-host-limits.test.ts tests/listener-delivery-journal.test.ts tests/claim-ledger-parse.test.ts tests/receipt-wire-compat.test.ts tests/chat-channel-constants.test.ts tests/chat-signal-wire-compat.test.ts",
+     "test:site": "npm --prefix site test",
+     "test:p1-cli": "node scripts/require-cli-build.mjs && node --import tsx --test tests/p1-cli/**/*.test.ts",
+     "test:p1-local": "node --import tsx --test --test-concurrency=1 tests/p1-local/local-integration.test.ts tests/p1-local/file-artifacts-e2e.test.ts tests/p1-local/delivery-receipts-postgres.test.ts tests/p1-local/human-seen-browser.test.ts tests/p1-local/standing-grants-postgres.test.ts tests/p1-local/activity-realtime-auth.test.ts tests/p1-local/chat-channels-postgres.test.ts tests/p1-local/chat-recipients-postgres.test.ts tests/p1-local/wake-realtime-auth.test.ts",
+diff --git a/src/cli.ts b/src/cli.ts
+index df50c9f..615cdc6 100755
+--- a/src/cli.ts
++++ b/src/cli.ts
+@@ -236,6 +236,7 @@ import {
+   writeArrivalMonitorLine,
+ } from "./cloud/arrival-watch.js";
+ import {
++  IDLE_POLL_DEFAULT_MS,
+   idlePollHelpSentence,
+   idlePollStatusSentence,
+   parseIdlePollIntervalMs,
+@@ -302,6 +303,8 @@ import {
+   LISTENER_DEFER_OVER_MIN,
+   emptyListenerReadHealth,
+   summarizeListenerReadHealth,
++  listenerWakeStatusSentence,
++  emptyListenerWakeStatus,
+   LISTENER_DELIVERY_HOLD_RELEASE_CLAUSES,
+   LISTENER_DELIVERY_HOLD_RELEASE_REMEDIES,
+   type ListenerReadHealthSummary,
+@@ -4849,6 +4852,8 @@ export function listenerStatusJson(
+     idlePollSentence: status.idlePollMs === undefined || status.idlePollMs === null
+       ? null
+       : idlePollStatusSentence(status.idlePollMs),
++    wake: status.wake ?? emptyListenerWakeStatus(),
++    mode: (status.wake ?? emptyListenerWakeStatus()).mode,
+     claimThroughputHours: readSummary.claimThroughputHours,
+     listenerLapse: lapseNotices.length > 0,
+     listenerLapseCodes: lapseNotices.map((notice) => notice.code),
+@@ -5013,6 +5018,15 @@ export function renderListenerStatus(
+     status.idlePollMs === undefined || status.idlePollMs === null
+       ? "Current idle poll interval has not been reported yet."
+       : idlePollStatusSentence(status.idlePollMs),
++    listenerWakeStatusSentence(
++      status.wake ?? emptyListenerWakeStatus(),
++      status.idlePollMs && status.idlePollMs > 0
++        ? status.idlePollMs
++        : IDLE_POLL_DEFAULT_MS,
++      status.wake?.lastWakeAt
++        ? relativeAge(status.wake.lastWakeAt, nowMs)
++        : null,
++    ),
+   ];
+   for (const notice of lapseNotices) {
+     lines.push(`WARNING [${notice.code}]: ${notice.message}`);
+diff --git a/src/cloud/delivery.ts b/src/cloud/delivery.ts
+index 90e0530..6dde817 100644
+--- a/src/cloud/delivery.ts
++++ b/src/cloud/delivery.ts
+@@ -9,6 +9,7 @@ import {
+   type CloudTarget,
+ } from "./config.js";
+ import { parseRetryAfterMs, parseSignalRecord } from "./signals.js";
++import { parseOptionalWakeHint, type WakeHint } from "./wake.js";
+ 
+ const UUID_RE =
+   /^[0-9a-f]{8}-[0-9a-f]{4}-[1-8][0-9a-f]{3}-[89ab][0-9a-f]{3}-[0-9a-f]{12}$/i;
+@@ -167,6 +168,8 @@ export interface DeliveryClaimResult {
+    * transaction. Safe metadata, never content.
+    */
+   terminalDeliveryFailureCount: number;
++  /** Optional wake join hint. 0.1.57 servers omit it. */
++  wake?: WakeHint;
+ }
+ 
+ export interface DeliveryAckResult {
+@@ -524,6 +527,7 @@ function parseClaimSuccess(
+   deliveries: DeliveryRow[];
+   pendingDeliveryCount: number;
+   terminalDeliveryFailureCount: number;
++  wake?: WakeHint;
+ } {
+   if (!body || typeof body !== "object" || Array.isArray(body)) {
+     throw new DeliveryProtocolError("delivery claim response was not an object");
+@@ -579,11 +583,18 @@ function parseClaimSuccess(
+       "delivery claim response returned more deliveries than its pending count",
+     );
+   }
++  let wake: WakeHint | undefined;
++  try {
++    wake = parseOptionalWakeHint(row.wake);
++  } catch {
++    throw new DeliveryProtocolError("delivery claim response wake field is malformed");
++  }
+   return {
+     capabilities,
+     deliveries,
+     pendingDeliveryCount,
+     terminalDeliveryFailureCount,
++    ...(wake === undefined ? {} : { wake }),
+   };
+ }
+ 
+@@ -844,6 +855,7 @@ export class DeliveryCommandClient {
+       deliveries: parsed.deliveries,
+       pendingDeliveryCount: parsed.pendingDeliveryCount,
+       terminalDeliveryFailureCount: parsed.terminalDeliveryFailureCount,
++      ...(parsed.wake === undefined ? {} : { wake: parsed.wake }),
+     };
+   }
+ 
+diff --git a/src/cloud/renewal.ts b/src/cloud/renewal.ts
+index 51b4bdd..847d835 100644
+--- a/src/cloud/renewal.ts
++++ b/src/cloud/renewal.ts
+@@ -59,6 +59,7 @@ import type {
+   AgentCredentialRecord,
+   AgentCredentialStore,
+ } from "./agent-credential.js";
++import { parseOptionalWakeHint, type WakeHint } from "./wake.js";
+ 
+ /* THE NUMBERS. Decided centrally so the CLI, the site and the server cannot drift.
+  * TTL is deliberately absent from that list: renewal does not change it. */
+@@ -228,6 +229,8 @@ export interface SuccessorCredential {
+   expiresAt: number;
+   horizonExpiresAt: number | null;
+   successorsRemaining: number | null;
++  /** Optional wake join hint. 0.1.57 servers omit it. */
++  wake?: WakeHint;
+ }
+ 
+ /**
+@@ -620,6 +623,16 @@ export async function requestSuccessor(options: {
+       "The deployment issued a successor credential that lasts longer than eight hours. cswarm refused to store it. Agent credentials stay short on purpose; renewal is what makes that survivable.",
+     );
+   }
++  let wake: WakeHint | undefined;
++  try {
++    wake = parseOptionalWakeHint(body.wake);
++  } catch {
++    throw new RenewalRefused(
++      response.status,
++      "malformed_wake",
++      "The deployment returned a successor credential with a malformed wake hint. It was not stored.",
++    );
++  }
+   return {
+     token,
+     tokenId: tokenId.toLowerCase(),
+@@ -629,6 +642,7 @@ export async function requestSuccessor(options: {
+     expiresAt,
+     horizonExpiresAt: timestamp(body.horizon_expires_at),
+     successorsRemaining: count(body.successors_remaining),
++    ...(wake === undefined ? {} : { wake }),
+   };
+ }
+ 
+diff --git a/src/cloud/signals.ts b/src/cloud/signals.ts
+index a489a71..59fc532 100644
+--- a/src/cloud/signals.ts
++++ b/src/cloud/signals.ts
+@@ -26,6 +26,7 @@ import {
+   formatAttachmentSize,
+   parseSignalAttachments,
+ } from "./attachments.js";
++import { parseOptionalWakeHint, type WakeHint } from "./wake.js";
+ 
+ const UUID_RE =
+   /^[0-9a-f]{8}-[0-9a-f]{4}-[1-8][0-9a-f]{3}-[89ab][0-9a-f]{3}-[0-9a-f]{12}$/i;
+@@ -147,6 +148,8 @@ export interface AgentSignalPage {
+    * valid non-negative safe integer. No content is ever included.
+    */
+   pendingDeliveryCount: number | null;
++  /** Optional wake join hint. 0.1.57 servers omit it. */
++  wake?: WakeHint;
+ }
+ 
+ /** Bounded CLI wait window for inbox --wait / ask --wait (seconds). */
+@@ -1226,6 +1229,12 @@ async function agentSignalPage(
+   const rawRows = (body as Record<string, unknown>).signals as unknown[];
+   const parsedRows = parseSignalRows(rawRows, parseOptions);
+   const ascending = query.ascending === true || query.after !== undefined;
++  let wake: WakeHint | undefined;
++  try {
++    wake = parseOptionalWakeHint((body as Record<string, unknown>).wake);
++  } catch {
++    throw plainMalformedError("signal read returned a malformed wake hint");
++  }
+   return {
+     signals: sortSignals(
+       rowsAfterCursor(parsedRows.signals, query.after),
+@@ -1239,6 +1248,7 @@ async function agentSignalPage(
+       : cursorFromUnknown(rawRows[rawRows.length - 1]),
+     malformedRows: parsedRows.malformedRows,
+     pendingDeliveryCount,
++    ...(wake === undefined ? {} : { wake }),
+   };
+ }
+ 
+diff --git a/src/cloud/wake.ts b/src/cloud/wake.ts
+new file mode 100644
+index 0000000..b936360
+--- /dev/null
++++ b/src/cloud/wake.ts
+@@ -0,0 +1,46 @@
++/**
++ * Optional wake hint on read, claim, and renewal responses (W3.4).
++ * 0.1.57 servers omit it. A present value must be the closed { topic, event } object.
++ */
++
++export const WAKE_EVENT = "wake";
++export const WAKE_TOPIC_PREFIX = "cswarm-wake:";
++export const WAKE_ID_LENGTH = 43;
++export const WAKE_ID_RE = /^[A-Za-z0-9_-]{43}$/;
++export const WAKE_TOPIC_RE = /^cswarm-wake:[A-Za-z0-9_-]{43}$/;
++
++export interface WakeHint {
++  topic: string;
++  event: typeof WAKE_EVENT;
++}
++
++export function isWakeTopic(value: string): boolean {
++  return WAKE_TOPIC_RE.test(value);
++}
++
++export class WakeHintError extends Error {
++  readonly code = "malformed_wake";
++  constructor(message: string) {
++    super(message);
++    this.name = "WakeHintError";
++  }
++}
++
++/**
++ * Absent or null means the server did not send a hint. A present value is
++ * checked against the same topic shape the Realtime join uses.
++ */
++export function parseOptionalWakeHint(value: unknown): WakeHint | undefined {
++  if (value === undefined || value === null) return undefined;
++  if (typeof value !== "object" || Array.isArray(value)) {
++    throw new WakeHintError("wake hint must be an object");
++  }
++  const row = value as Record<string, unknown>;
++  if (typeof row.topic !== "string" || !isWakeTopic(row.topic)) {
++    throw new WakeHintError("wake hint topic is malformed");
++  }
++  if (row.event !== WAKE_EVENT) {
++    throw new WakeHintError("wake hint event is malformed");
++  }
++  return { topic: row.topic, event: WAKE_EVENT };
++}
+diff --git a/src/listener/control.ts b/src/listener/control.ts
+index 0b0eb99..55c0df4 100644
+--- a/src/listener/control.ts
++++ b/src/listener/control.ts
+@@ -22,6 +22,13 @@ import {
+   parseListenerReadHealth,
+   type ListenerReadHealth,
+ } from "./read-health.js";
++import {
++  LISTENER_WAKE_MODE_SET,
++  LISTENER_WAKE_STATUS_KEYS,
++  LISTENER_WAKE_SENSITIVE_KEYS,
++  WAKE_ERROR_CODE_SET,
++  type ListenerWakeStatus,
++} from "./wake.js";
+ import {
+   DELIVERY_ACK_OUTCOMES,
+   type DeliveryOutcome,
+@@ -170,6 +177,8 @@ export interface ListenerStatus {
+    * status file written by a listener older than this field omits it.
+    */
+   idlePollMs?: number | null;
++  /** How the listener learns there is work. Optional: older files omit it. */
++  wake?: ListenerWakeStatus;
+   logPath: string;
+ }
+ 
+@@ -278,6 +287,7 @@ const STATUS_ALLOWED_KEYS = new Set([
+   "activityPublishFailures",
+   "activityLastErrorCode",
+   "idlePollMs",
++  "wake",
+ ]);
+ const STATUS_ACTIVITY_ERROR_CODES = new Set<ActivityPublishErrorCode>([
+   "activity_credential_failed",
+@@ -303,6 +313,9 @@ const STATUS_SENSITIVE_KEYS = new Set([
+   "owner",
+   "ownerId",
+   "owner_id",
++  "topic",
++  "wakeTopic",
++  "wake_topic",
+ ]);
+ export const STATUS_DELIVERY_KEYS = [
+   "deliveryMode",
+@@ -370,6 +383,57 @@ function parseHeldBackDeliveries(
+   return parsed;
+ }
+ 
++const WAKE_STATUS_KEY_SET = new Set<string>(LISTENER_WAKE_STATUS_KEYS);
++const WAKE_SENSITIVE_KEY_SET = new Set<string>(LISTENER_WAKE_SENSITIVE_KEYS);
++
++function nullableIso(value: unknown): boolean {
++  return value === null ||
++    (typeof value === "string" && Number.isFinite(Date.parse(value)));
++}
++
++/** Closed nested parser for the wake status block. Topic keys are refused at this depth too. */
++export function parseListenerWake(
++  value: unknown,
++  rejectUnknownKeys = false,
++): ListenerWakeStatus | null {
++  if (!value || typeof value !== "object" || Array.isArray(value)) return null;
++  const row = value as Record<string, unknown>;
++  for (const key of Object.keys(row)) {
++    if (WAKE_SENSITIVE_KEY_SET.has(key)) return null;
++    if (rejectUnknownKeys && !WAKE_STATUS_KEY_SET.has(key)) return null;
++  }
++  for (const key of LISTENER_WAKE_STATUS_KEYS) {
++    if (!(key in row)) return null;
++  }
++  if (
++    typeof row.mode !== "string" ||
++    !LISTENER_WAKE_MODE_SET.has(row.mode) ||
++    !nullableIso(row.subscribedAt) ||
++    !(typeof row.reconnects === "number" &&
++      Number.isSafeInteger(row.reconnects) && row.reconnects >= 0) ||
++    !nullableIso(row.lastWakeAt) ||
++    !nullableIso(row.lastReconcileAt) ||
++    !(row.errorCode === null ||
++      (typeof row.errorCode === "string" &&
++        WAKE_ERROR_CODE_SET.has(row.errorCode))) ||
++    !nullableIso(row.topicRotatedAt) ||
++    typeof row.rateLimited !== "boolean"
++  ) {
++    return null;
++  }
++  if (row.mode === "push" && row.subscribedAt === null) return null;
++  return {
++    mode: row.mode as ListenerWakeStatus["mode"],
++    subscribedAt: row.subscribedAt as string | null,
++    reconnects: row.reconnects as number,
++    lastWakeAt: row.lastWakeAt as string | null,
++    lastReconcileAt: row.lastReconcileAt as string | null,
++    errorCode: row.errorCode as ListenerWakeStatus["errorCode"],
++    topicRotatedAt: row.topicRotatedAt as string | null,
++    rateLimited: row.rateLimited as boolean,
++  };
++}
++
+ function parseStatus(raw: string, rejectUnknownKeys = false): ListenerStatus {
+   let value: unknown;
+   try {
+@@ -406,6 +470,9 @@ function parseStatus(raw: string, rejectUnknownKeys = false): ListenerStatus {
+   const heldBackDeliveries = row.heldBackDeliveries === undefined
+     ? undefined
+     : parseHeldBackDeliveries(row.heldBackDeliveries);
++  const wake = row.wake === undefined
++    ? undefined
++    : parseListenerWake(row.wake, rejectUnknownKeys);
+   if (
+     row.version !== 1 ||
+     typeof row.instanceId !== "string" ||
+@@ -524,6 +591,7 @@ function parseStatus(raw: string, rejectUnknownKeys = false): ListenerStatus {
+       (typeof row.droppedForMainCount === "number" &&
+         Number.isSafeInteger(row.droppedForMainCount) && row.droppedForMainCount >= 0)) ||
+     readHealth === null ||
++    wake === null ||
+     !(row.connectionsOpened === undefined ||
+       (typeof row.connectionsOpened === "number" &&
+         Number.isSafeInteger(row.connectionsOpened) && row.connectionsOpened >= 0)) ||
+@@ -607,6 +675,7 @@ function parseStatus(raw: string, rejectUnknownKeys = false): ListenerStatus {
+     ...(row.idlePollMs === undefined
+       ? {}
+       : { idlePollMs: (row.idlePollMs ?? null) as number | null }),
++    ...(wake === undefined ? {} : { wake }),
+   };
+ }
+ 
+@@ -695,6 +764,10 @@ export async function appendListenerEvent(
+     "held_ms",
+     "release_reason",
+     "idle_poll_ms",
++    "wake_mode",
++    "wake_error_code",
++    "wake_reconnects",
++    "rate_limited",
+   ]);
+   const deliveryModes = new Set(["durable_claim", "cursor_fallback"]);
+   const routeModes = new Set(["worker", "main", "split"]);
+@@ -820,6 +893,28 @@ export async function appendListenerEvent(
+     ) {
+       throw new Error("listener event idle poll interval is not allowed");
+     }
++    if (
++      key === "wake_mode" &&
++      !(typeof value === "string" && LISTENER_WAKE_MODE_SET.has(value))
++    ) {
++      throw new Error("listener event wake mode is not allowed");
++    }
++    if (
++      key === "wake_error_code" &&
++      !(value === null ||
++        (typeof value === "string" && WAKE_ERROR_CODE_SET.has(value)))
++    ) {
++      throw new Error("listener event wake error code is not allowed");
++    }
++    if (
++      key === "wake_reconnects" &&
++      !(typeof value === "number" && Number.isSafeInteger(value) && value >= 0)
++    ) {
++      throw new Error("listener event wake reconnect count is not allowed");
++    }
++    if (key === "rate_limited" && typeof value !== "boolean") {
++      throw new Error("listener event rate-limited flag is not allowed");
++    }
+     if (
+       key === "release_reason" &&
+       !(typeof value === "string" &&
+diff --git a/src/listener/index.ts b/src/listener/index.ts
+index 241bd46..2f6812c 100644
+--- a/src/listener/index.ts
++++ b/src/listener/index.ts
+@@ -16,3 +16,4 @@ export * from "./hook.js";
+ export * from "./brain-digest.js";
+ export * from "./attendance-canary.js";
+ export * from "./activity.js";
++export * from "./wake.js";
+diff --git a/src/listener/read-health.ts b/src/listener/read-health.ts
+index 86281d3..b224c4c 100644
+--- a/src/listener/read-health.ts
++++ b/src/listener/read-health.ts
+@@ -29,6 +29,10 @@ export interface ListenerClaimHour {
+   claims: number;
+   /** Slowest cadence recorded in this hour; absent on files written before per-hour scoring. */
+   cadenceMs?: number;
++  /** Frozen when the hour closes, from the slowest cadence recorded in it. */
++  expectedClaims?: number;
++  /** Set when wake.mode changed during this hour; lapse scoring skips those hours. */
++  modeChanged?: boolean;
+ }
+ 
+ export interface ListenerReadHealth {
+@@ -201,6 +205,18 @@ export function recordListenerReadRecovery(
+   };
+ }
+ 
++function freezeClosedHourExpectedClaims(
++  rows: ListenerClaimHour[],
++  currentHourStart: string,
++): ListenerClaimHour[] {
++  return rows.map((row) => {
++    if (row.hourStart === currentHourStart) return row;
++    if (row.expectedClaims !== undefined) return row;
++    if (row.cadenceMs === undefined || row.cadenceMs < 1) return row;
++    return { ...row, expectedClaims: HOUR_MS / row.cadenceMs };
++  });
++}
++
+ /** An hour is scored at the slowest cadence recorded in it. */
+ export function recordListenerClaimCadence(
+   health: ListenerReadHealth,
+@@ -208,7 +224,10 @@ export function recordListenerClaimCadence(
+   ts: string,
+ ): ListenerReadHealth {
+   const hourStart = bucketStart(ts, HOUR_MS);
+-  const claimHours = health.claimHours.map((row) => ({ ...row }));
++  const claimHours = freezeClosedHourExpectedClaims(
++    health.claimHours.map((row) => ({ ...row })),
++    hourStart,
++  );
+   const hour = claimHours.find((row) => row.hourStart === hourStart);
+   if (hour) {
+     hour.cadenceMs = hour.cadenceMs === undefined
+@@ -224,13 +243,35 @@ export function recordListenerClaimCadence(
+   };
+ }
+ 
++/** Mark the current hour so throughput lapse scoring will skip it. */
++export function recordListenerWakeModeChange(
++  health: ListenerReadHealth,
++  ts: string,
++): ListenerReadHealth {
++  const hourStart = bucketStart(ts, HOUR_MS);
++  const claimHours = freezeClosedHourExpectedClaims(
++    health.claimHours.map((row) => ({ ...row })),
++    hourStart,
++  );
++  const hour = claimHours.find((row) => row.hourStart === hourStart);
++  if (hour) hour.modeChanged = true;
++  else claimHours.push({ hourStart, claims: 0, modeChanged: true });
++  return {
++    ...health,
++    claimHours: trimNewest(claimHours, LISTENER_CLAIM_HOUR_CAP),
++  };
++}
++
+ /** Increment one local claim-throughput hour. */
+ export function recordListenerClaim(
+   health: ListenerReadHealth,
+   ts: string,
+ ): ListenerReadHealth {
+   const hourStart = bucketStart(ts, HOUR_MS);
+-  const claimHours = health.claimHours.map((row) => ({ ...row }));
++  const claimHours = freezeClosedHourExpectedClaims(
++    health.claimHours.map((row) => ({ ...row })),
++    hourStart,
++  );
+   const hour = claimHours.find((row) => row.hourStart === hourStart);
+   if (hour) hour.claims += 1;
+   else claimHours.push({ hourStart, claims: 1 });
+@@ -334,7 +375,8 @@ export function parseListenerReadHealth(
+     if (
+       rejectUnknownKeys &&
+       Object.keys(hour).some((key) =>
+-        key !== "hourStart" && key !== "claims" && key !== "cadenceMs"
++        key !== "hourStart" && key !== "claims" && key !== "cadenceMs" &&
++        key !== "expectedClaims" && key !== "modeChanged"
+       )
+     ) return null;
+     if (
+@@ -342,6 +384,14 @@ export function parseListenerReadHealth(
+       !(typeof hour.cadenceMs === "number" &&
+         Number.isSafeInteger(hour.cadenceMs) && hour.cadenceMs >= 1)
+     ) return null;
++    if (
++      hour.expectedClaims !== undefined &&
++      !(typeof hour.expectedClaims === "number" &&
++        Number.isFinite(hour.expectedClaims) && hour.expectedClaims > 0)
++    ) return null;
++    if (hour.modeChanged !== undefined && typeof hour.modeChanged !== "boolean") {
++      return null;
++    }
+   }
+   return {
+     currentEpisodeStartedAt: row.currentEpisodeStartedAt as string | null,
+@@ -363,10 +413,14 @@ export function parseListenerReadHealth(
+     claimCadenceMs: row.claimCadenceMs as number | null,
+     claimHours: (row.claimHours as Array<Record<string, unknown>>).map((hour) => {
+       const cadenceMs = hour.cadenceMs;
++      const expectedClaims = hour.expectedClaims;
++      const modeChanged = hour.modeChanged;
+       return {
+         hourStart: hour.hourStart as string,
+         claims: hour.claims as number,
+         ...(typeof cadenceMs === "number" ? { cadenceMs } : {}),
++        ...(typeof expectedClaims === "number" ? { expectedClaims } : {}),
++        ...(modeChanged === true ? { modeChanged: true } : {}),
+       };
+     }),
+   };
+@@ -433,14 +487,18 @@ export function summarizeListenerReadHealth(
+       health.claimHours.map((row) => [row.hourStart, row.claims]),
+     );
+     const cadenceByHour = new Map<string, number>();
++    const expectedByHour = new Map<string, number>();
+     for (const row of health.claimHours) {
+       if (row.cadenceMs !== undefined) cadenceByHour.set(row.hourStart, row.cadenceMs);
++      if (row.expectedClaims !== undefined) {
++        expectedByHour.set(row.hourStart, row.expectedClaims);
++      }
+     }
+     for (let hour = first; hour < currentHour; hour += HOUR_MS) {
+       const hourStart = new Date(hour).toISOString();
+       const claims = claimsByHour.get(hourStart) ?? 0;
+       const cadenceMs = cadenceByHour.get(hourStart) ?? health.claimCadenceMs;
+-      const expectedClaims = HOUR_MS / cadenceMs;
++      const expectedClaims = expectedByHour.get(hourStart) ?? (HOUR_MS / cadenceMs);
+       claimThroughputHours.push({
+         hourStart,
+         claims,
+@@ -450,7 +508,11 @@ export function summarizeListenerReadHealth(
+     }
+   }
+   const throughputLapseHours = claimThroughputHours.filter(
+-    (hour) => hour.ratio < LISTENER_THROUGHPUT_LAPSE_RATIO,
++    (hour) =>
++      hour.ratio < LISTENER_THROUGHPUT_LAPSE_RATIO &&
++      !health.claimHours.some((row) =>
++        row.hourStart === hour.hourStart && row.modeChanged === true
++      ),
+   );
+   return {
+     currentEpisodeDurationMs,
+diff --git a/src/listener/runtime.ts b/src/listener/runtime.ts
+index f8d986e..14b8d4a 100644
+--- a/src/listener/runtime.ts
++++ b/src/listener/runtime.ts
+@@ -77,6 +77,13 @@ import {
+   IDLE_POLL_MAX_MS,
+   nextIdlePollMs,
+ } from "../cloud/idle-poll.js";
++import type { WakeHint } from "../cloud/wake.js";
++import {
++  createWakeSubscriber,
++  LISTENER_RECONCILE_POLL_MS,
++  type ListenerWakeStatus,
++  type WakeHandle,
++} from "./wake.js";
+ 
+ export const LISTENER_PAGE_LIMIT = 100;
+ export const LISTENER_IDLE_POLL_MS = IDLE_POLL_DEFAULT_MS;
+@@ -251,6 +258,11 @@ export type ListenerRuntimeEvent =
+     droppedOldest: boolean;
+     droppedCount: number;
+     ts: string;
++  }
++  | {
++    type: "wake";
++    wake: ListenerWakeStatus;
++    ts: string;
+   };
+ 
+ export interface ListenerRuntimeOptions {
+@@ -311,6 +323,12 @@ export interface ListenerRuntimeOptions {
+    * release.
+    */
+   deliveryHoldBudgetMs?: number;
++  /**
++   * Injected wake subscriber for tests. Production constructs one on the first
++   * wake hint. Absent topic means the loop stays on the idle poll.
++   */
++  wake?: WakeHandle;
++  createWake?: (target: CloudTarget) => WakeHandle;
+ }
+ 
+ export type ListenerRuntimeStop =
+@@ -1015,6 +1033,45 @@ export async function runListenerRuntime(
+     abort.addEventListener("abort", onAbort);
+   }
+   let stop: ListenerRuntimeStop | undefined;
++  let wakeSubscriber: WakeHandle | null = options.wake ?? null;
++  let reconcileDueAt = now();
++
++  const ensureWake = (): WakeHandle => {
++    if (wakeSubscriber === null) {
++      wakeSubscriber = options.createWake
++        ? options.createWake(options.target)
++        : createWakeSubscriber({ target: options.target, now });
++    }
++    return wakeSubscriber;
++  };
++
++  const applyWakeHint = (hint: WakeHint | undefined): void => {
++    if (hint === undefined) return;
++    try {
++      ensureWake().setTopic(hint.topic);
++    } catch {
++      // Parsed hints are valid; a closed subscriber is ignored.
++    }
++  };
++
++  const emitWake = (): void => {
++    if (wakeSubscriber === null) return;
++    options.onEvent?.({
++      type: "wake",
++      wake: wakeSubscriber.snapshot(now()),
++      ts: eventTime(now),
++    });
++  };
++
++  const waitCapMs = (): number => {
++    if (
++      wakeSubscriber !== null &&
++      wakeSubscriber.snapshot(now()).mode === "push"
++    ) {
++      return LISTENER_RECONCILE_POLL_MS;
++    }
++    return nextIdlePollMs(pollMs, emptyIdleStreak, LISTENER_IDLE_POLL_MAX_MS);
++  };
+ 
+   const sendPreparedAck = async (
+     active: NonNullable<ListenerDeliveryJournalRecord["active"]>,
+@@ -1093,8 +1150,46 @@ export async function runListenerRuntime(
+         stop = { reason: "cancelled" };
+         break;
+       }
+-      let page: AgentSignalPage;
+-      try {
++      let skipRead = false;
++      if (
++        ready &&
++        deliveryMode === "durable_claim" &&
++        wakeSubscriber !== null &&
++        wakeSubscriber.hasTopic
++      ) {
++        const until = Math.min(reconcileDueAt, now() + waitCapMs());
++        const reason = await wakeSubscriber.next({
++          until,
++          ...(abort ? { signal: abort } : {}),
++        });
++        emitWake();
++        if (abort?.aborted) {
++          stop = { reason: "cancelled" };
++          break;
++        }
++        if (
++          reason === "wake" &&
++          !wakeSubscriber.snapshot(now()).rateLimited &&
++          !wakeSubscriber.overWakeBudget(now())
++        ) {
++          const coalesceMs = wakeSubscriber.coalescingRemainingMs(now());
++          if (coalesceMs > 0) await sleep(coalesceMs, abort);
++          if (abort?.aborted) {
++            stop = { reason: "cancelled" };
++            break;
++          }
++          if (
++            !wakeSubscriber.snapshot(now()).rateLimited &&
++            !wakeSubscriber.overWakeBudget(now())
++          ) {
++            skipRead = true;
++          }
++        }
++      }
++      let page: AgentSignalPage | null = null;
++      if (skipRead) {
++        /* Wake tick: claim without a read. */
++      } else try {
+         const token = await options.credentialSession.bearer();
+         /* Same idle wait as the claim: idleSleep is the only pause in this
+          * loop, so the read POST and the claim POST share the back-off. */
+@@ -1114,6 +1209,8 @@ export async function runListenerRuntime(
+           },
+         });
+         requireCapabilities(page);
++        applyWakeHint(page.wake);
++        emitWake();
+         if (ready && readEpisodeStartedAtMs !== null) {
+           const recoveredAtMs = now();
+           options.onEvent?.({
+@@ -1268,7 +1365,7 @@ export async function runListenerRuntime(
+           }
+         }
+         if (
+-          page.capabilities.deliveryAck && now() < horizon &&
++          (page?.capabilities.deliveryAck === true || skipRead) && now() < horizon &&
+           !preparedNeedsMainRoute
+         ) {
+           const ackStop = await sendPreparedAck(recovery);
+@@ -1301,7 +1398,7 @@ export async function runListenerRuntime(
+       }
+ 
+       if (recovery?.phase === "leased") {
+-        if (page.capabilities.deliveryAck) {
++        if (page?.capabilities.deliveryAck === true || skipRead) {
+           let terminal: ListenerEffectRecord | null = null;
+           if (recovery.signalId !== null) {
+             try {
+@@ -1426,6 +1523,13 @@ export async function runListenerRuntime(
+               stop = { reason: "credential", error: asError(error) };
+               break;
+             }
++            if (
++              error instanceof DeliveryHttpError &&
++              error.code === "rate_limited"
++            ) {
++              wakeSubscriber?.markRateLimited(now());
++              emitWake();
++            }
+             if (!isRetryableDeliveryError(error)) {
+               stop = { reason: "fatal", error: asError(error) };
+               break;
+@@ -1444,6 +1548,14 @@ export async function runListenerRuntime(
+           stop = { reason: "fatal", error: new Error("delivery claim did not settle") };
+           break;
+         }
++        applyWakeHint(result.wake);
++        if (!skipRead && wakeSubscriber !== null && wakeSubscriber.hasTopic) {
++          wakeSubscriber.noteReconcile(now());
++          reconcileDueAt = now() + LISTENER_RECONCILE_POLL_MS;
++        }
++        if (skipRead) wakeSubscriber?.noteWakeClaim(now());
++        else wakeSubscriber?.noteClaim(now());
++        emitWake();
+         const claimed = result.deliveries[0] ?? null;
+         options.onEvent?.({
+           type: "delivery_claim",
+@@ -1477,6 +1589,21 @@ export async function runListenerRuntime(
+             stop = { reason: "fatal", error: asError(error) };
+             break;
+           }
++          if (wakeSubscriber !== null && wakeSubscriber.hasTopic) {
++            const snap = wakeSubscriber.snapshot(now());
++            const intervalMs = snap.mode === "push"
++              ? LISTENER_RECONCILE_POLL_MS
++              : nextIdlePollMs(pollMs, emptyIdleStreak, LISTENER_IDLE_POLL_MAX_MS);
++            if (snap.mode === "push") emptyIdleStreak = 0;
++            else emptyIdleStreak += 1;
++            options.onEvent?.({
++              type: "idle_poll",
++              intervalMs,
++              ts: eventTime(now),
++            });
++            emitWake();
++            continue;
++          }
+           await idleSleep(false);
+           continue;
+         }
+@@ -1717,6 +1844,8 @@ export async function runListenerRuntime(
+         continue;
+       }
+ 
++      if (page === null) continue;
++
+       for (const signal of page.signals) {
+         if (abort?.aborted) {
+           stop = { reason: "cancelled" };
+@@ -1811,6 +1940,11 @@ export async function runListenerRuntime(
+   } finally {
+     abort?.removeEventListener("abort", onAbort);
+     options.model.cancel();
++    try {
++      await wakeSubscriber?.close();
++    } catch {
++      // A down socket must not hide the model close outcome.
++    }
+     // Never swallow close failures — child_exit_timeout must reach supervisor.
+     try {
+       await options.model.close();
+diff --git a/src/listener/supervisor.ts b/src/listener/supervisor.ts
+index 6a2dc35..841b736 100644
+--- a/src/listener/supervisor.ts
++++ b/src/listener/supervisor.ts
+@@ -28,7 +28,12 @@ import {
+   recordListenerClaimCadence,
+   recordListenerReadRecovery,
+   recordListenerReadRetry,
++  recordListenerWakeModeChange,
+ } from "./read-health.js";
++import {
++  emptyListenerWakeStatus,
++  LISTENER_RECONCILE_POLL_MS,
++} from "./wake.js";
+ 
+ const UUID_RE =
+   /^[0-9a-f]{8}-[0-9a-f]{4}-[1-8][0-9a-f]{3}-[89ab][0-9a-f]{3}-[0-9a-f]{12}$/i;
+@@ -314,6 +319,7 @@ export async function runListenerSupervisor(
+     activityPublishFailures: 0,
+     activityLastErrorCode: null,
+     idlePollMs: null,
++    wake: emptyListenerWakeStatus(),
+     logPath: options.paths.logPath,
+   };
+   let writes = Promise.resolve();
+@@ -419,6 +425,41 @@ export async function runListenerSupervisor(
+   };
+ 
+   const onEvent = (event: ListenerRuntimeEvent) => {
++    if (event.type === "wake") {
++      const previous = status.wake?.mode;
++      let readHealth = status.readHealth ?? emptyListenerReadHealth();
++      if (previous !== undefined && previous !== event.wake.mode) {
++        readHealth = recordListenerWakeModeChange(readHealth, event.ts);
++      }
++      const cadenceMs = event.wake.mode === "push"
++        ? LISTENER_RECONCILE_POLL_MS
++        : (status.idlePollMs && status.idlePollMs > 0
++          ? status.idlePollMs
++          : null);
++      if (cadenceMs !== null) {
++        readHealth = recordListenerClaimCadence(
++          readHealth,
++          cadenceMs,
++          event.ts,
++        );
++      }
++      status = {
++        ...status,
++        wake: event.wake,
++        readHealth,
++        updatedAt: event.ts,
++      };
++      persist();
++      log({
++        ts: event.ts,
++        event: "listener_wake",
++        wake_mode: event.wake.mode,
++        wake_error_code: event.wake.errorCode,
++        wake_reconnects: event.wake.reconnects,
++        rate_limited: event.wake.rateLimited,
++      });
++      return;
++    }
+     if (event.type === "idle_poll") {
+       status = {
+         ...status,
+diff --git a/src/listener/wake.ts b/src/listener/wake.ts
+new file mode 100644
+index 0000000..0e232e4
+--- /dev/null
++++ b/src/listener/wake.ts
+@@ -0,0 +1,457 @@
++/**
++ * Realtime wake subscriber. Push is a hint; the claim row stays the truth.
++ * The topic is held in memory and never rendered, logged, or written to status.
++ */
++import { createClient } from "@supabase/supabase-js";
++import type { CloudTarget } from "../cloud/config.js";
++import {
++  WAKE_EVENT,
++  WAKE_TOPIC_PREFIX,
++  isWakeTopic,
++} from "../cloud/wake.js";
++import { formatIdlePollDuration } from "../cloud/idle-poll.js";
++
++export const LISTENER_RECONCILE_POLL_MS = 300_000;
++export const WAKE_COALESCE_MS = 1_000;
++export const WAKE_CLAIMS_PER_MINUTE_BUDGET = 50;
++export const WAKE_RATE_LIMIT_POLL_MS = 60_000;
++
++/** Realtime subscribe callback statuses, mapped at this boundary (D-053). */
++export const REALTIME_SUBSCRIBE_STATUS = {
++  SUBSCRIBED: "SUBSCRIBED",
++  CHANNEL_ERROR: "CHANNEL_ERROR",
++  CLOSED: "CLOSED",
++  TIMED_OUT: "TIMED_OUT",
++} as const;
++
++export type RealtimeSubscribeStatus =
++  (typeof REALTIME_SUBSCRIBE_STATUS)[keyof typeof REALTIME_SUBSCRIBE_STATUS];
++
++export const WAKE_CONNECTION_STATES = [
++  "disconnected",
++  "connecting",
++  "subscribed",
++  "errored",
++] as const;
++export type WakeConnectionState = (typeof WAKE_CONNECTION_STATES)[number];
++
++export const LISTENER_WAKE_MODES = ["push", "poll"] as const;
++export type ListenerWakeMode = (typeof LISTENER_WAKE_MODES)[number];
++export const LISTENER_WAKE_MODE_SET: ReadonlySet<string> = new Set(
++  LISTENER_WAKE_MODES,
++);
++
++export const WAKE_ERROR_CODES = [
++  "channel_error",
++  "closed",
++  "timed_out",
++  "rate_limited",
++] as const;
++export type WakeErrorCode = (typeof WAKE_ERROR_CODES)[number];
++export const WAKE_ERROR_CODE_SET: ReadonlySet<string> = new Set(WAKE_ERROR_CODES);
++
++export const LISTENER_WAKE_STATUS_KEYS = [
++  "mode",
++  "subscribedAt",
++  "reconnects",
++  "lastWakeAt",
++  "lastReconcileAt",
++  "errorCode",
++  "topicRotatedAt",
++  "rateLimited",
++] as const;
++
++export const LISTENER_WAKE_SENSITIVE_KEYS = [
++  "topic",
++  "wakeTopic",
++  "wake_topic",
++] as const;
++
++export type WakeWaitReason = "wake" | "state" | "deadline";
++
++export interface ListenerWakeStatus {
++  mode: ListenerWakeMode;
++  subscribedAt: string | null;
++  reconnects: number;
++  lastWakeAt: string | null;
++  lastReconcileAt: string | null;
++  errorCode: WakeErrorCode | null;
++  topicRotatedAt: string | null;
++  rateLimited: boolean;
++}
++
++export interface WakeRealtimeChannel {
++  on(
++    type: "broadcast",
++    filter: { event: string },
++    callback: (message: { payload?: unknown }) => void,
++  ): WakeRealtimeChannel;
++  subscribe(
++    callback: (status: string, err?: Error) => void,
++  ): WakeRealtimeChannel;
++  unsubscribe(): void | Promise<void>;
++}
++
++export interface WakeRealtimeClient {
++  setAuth(token: string): void | Promise<void>;
++  channel(
++    topic: string,
++    options: { config: { private: boolean } },
++  ): WakeRealtimeChannel;
++  removeChannel?(channel: WakeRealtimeChannel): void | Promise<void>;
++  disconnect?(): void;
++}
++
++export interface WakeHandle {
++  readonly state: WakeConnectionState;
++  readonly hasTopic: boolean;
++  snapshot(nowMs?: number): ListenerWakeStatus;
++  next(options: {
++    until: number;
++    signal?: AbortSignal;
++  }): Promise<WakeWaitReason>;
++  setTopic(topic: string): void;
++  noteReconcile(nowMs?: number): void;
++  noteClaim(nowMs?: number): void;
++  noteWakeClaim(nowMs?: number): void;
++  canClaimOnWake(nowMs?: number): boolean;
++  coalescingRemainingMs(nowMs?: number): number;
++  overWakeBudget(nowMs?: number): boolean;
++  markRateLimited(nowMs?: number): void;
++  close(): Promise<void>;
++}
++
++export interface WakeSubscriberOptions {
++  target: CloudTarget;
++  now?: () => number;
++  createRealtime?: (target: CloudTarget) => WakeRealtimeClient;
++}
++
++function defaultRealtime(target: CloudTarget): WakeRealtimeClient {
++  const client = createClient(target.url, target.anonKey, {
++    auth: { persistSession: false, autoRefreshToken: false },
++  });
++  return client.realtime as unknown as WakeRealtimeClient;
++}
++
++function isSubscribeStatus(value: string): value is RealtimeSubscribeStatus {
++  return (
++    value === REALTIME_SUBSCRIBE_STATUS.SUBSCRIBED ||
++    value === REALTIME_SUBSCRIBE_STATUS.CHANNEL_ERROR ||
++    value === REALTIME_SUBSCRIBE_STATUS.CLOSED ||
++    value === REALTIME_SUBSCRIBE_STATUS.TIMED_OUT
++  );
++}
++
++/** Map a Realtime subscribe status code. Never reads error.message. */
++export function wakeErrorCodeFromSubscribeStatus(
++  status: string,
++): WakeErrorCode | null {
++  switch (status) {
++    case REALTIME_SUBSCRIBE_STATUS.CHANNEL_ERROR:
++      return "channel_error";
++    case REALTIME_SUBSCRIBE_STATUS.CLOSED:
++      return "closed";
++    case REALTIME_SUBSCRIBE_STATUS.TIMED_OUT:
++      return "timed_out";
++    default:
++      return null;
++  }
++}
++
++export function emptyListenerWakeStatus(): ListenerWakeStatus {
++  return {
++    mode: "poll",
++    subscribedAt: null,
++    reconnects: 0,
++    lastWakeAt: null,
++    lastReconcileAt: null,
++    errorCode: null,
++    topicRotatedAt: null,
++    rateLimited: false,
++  };
++}
++
++export function listenerWakeStatusSentence(
++  wake: ListenerWakeStatus,
++  pollIntervalMs: number,
++  lastWakeLabel: string | null,
++): string {
++  if (wake.mode === "push") {
++    const last = lastWakeLabel === null ? "no wake yet" : `last wake ${lastWakeLabel}`;
++    return `push (Realtime), ${last}, reconcile every ${formatIdlePollDuration(LISTENER_RECONCILE_POLL_MS)}.`;
++  }
++  const code = wake.errorCode ?? "disconnected";
++  return `poll every ${formatIdlePollDuration(pollIntervalMs)}. Realtime not connected (${code}).`;
++}
++
++type Waiter = {
++  resolve: (reason: WakeWaitReason) => void;
++  timer: ReturnType<typeof setTimeout> | null;
++  onAbort: (() => void) | null;
++  signal: AbortSignal | undefined;
++};
++
++export class WakeSubscriber implements WakeHandle {
++  private readonly now: () => number;
++  private readonly target: CloudTarget;
++  private readonly createRealtime: (target: CloudTarget) => WakeRealtimeClient;
++  private realtime: WakeRealtimeClient | null = null;
++  private channel: WakeRealtimeChannel | null = null;
++  private topic: string | null = null;
++  private waiter: Waiter | null = null;
++  private pending: WakeWaitReason | null = null;
++  private connectionState: WakeConnectionState = "disconnected";
++  private subscribedAt: string | null = null;
++  private reconnects = 0;
++  private lastWakeAt: string | null = null;
++  private lastReconcileAt: string | null = null;
++  private lastErrorCode: WakeErrorCode | null = null;
++  private topicRotatedAt: string | null = null;
++  private rateLimitedUntil = 0;
++  private lastClaimAt = 0;
++  private wakeClaimTimes: number[] = [];
++  private closed = false;
++  private everSubscribed = false;
++
++  constructor(options: WakeSubscriberOptions) {
++    this.target = options.target;
++    this.now = options.now ?? Date.now;
++    this.createRealtime = options.createRealtime ?? defaultRealtime;
++  }
++
++  get state(): WakeConnectionState {
++    return this.connectionState;
++  }
++
++  get hasTopic(): boolean {
++    return this.topic !== null;
++  }
++
++  snapshot(nowMs: number = this.now()): ListenerWakeStatus {
++    const rateLimited = nowMs < this.rateLimitedUntil;
++    const mode: ListenerWakeMode =
++      this.connectionState === "subscribed" && !rateLimited ? "push" : "poll";
++    const errorCode = rateLimited
++      ? "rate_limited"
++      : this.lastErrorCode;
++    return {
++      mode,
++      subscribedAt: this.subscribedAt,
++      reconnects: this.reconnects,
++      lastWakeAt: this.lastWakeAt,
++      lastReconcileAt: this.lastReconcileAt,
++      errorCode,
++      topicRotatedAt: this.topicRotatedAt,
++      rateLimited,
++    };
++  }
++
++  noteReconcile(nowMs: number = this.now()): void {
++    this.lastReconcileAt = new Date(nowMs).toISOString();
++  }
++
++  noteClaim(nowMs: number = this.now()): void {
++    this.lastClaimAt = nowMs;
++  }
++
++  noteWakeClaim(nowMs: number = this.now()): void {
++    this.noteClaim(nowMs);
++    this.wakeClaimTimes.push(nowMs);
++    this.trimWakeClaims(nowMs);
++  }
++
++  coalescingRemainingMs(nowMs: number = this.now()): number {
++    if (this.lastClaimAt <= 0) return 0;
++    return Math.max(0, this.lastClaimAt + WAKE_COALESCE_MS - nowMs);
++  }
++
++  overWakeBudget(nowMs: number = this.now()): boolean {
++    this.trimWakeClaims(nowMs);
++    return this.wakeClaimTimes.length >= WAKE_CLAIMS_PER_MINUTE_BUDGET;
++  }
++
++  canClaimOnWake(nowMs: number = this.now()): boolean {
++    if (nowMs < this.rateLimitedUntil) return false;
++    if (this.coalescingRemainingMs(nowMs) > 0) return false;
++    return !this.overWakeBudget(nowMs);
++  }
++
++  markRateLimited(nowMs: number = this.now()): void {
++    this.rateLimitedUntil = nowMs + WAKE_RATE_LIMIT_POLL_MS;
++    this.lastErrorCode = "rate_limited";
++    this.emitPending("state");
++  }
++
++  setTopic(topic: string): void {
++    if (this.closed) return;
++    if (!isWakeTopic(topic)) {
++      throw new Error("wake topic is malformed");
++    }
++    if (this.topic === topic) return;
++    const rotated = this.topic !== null;
++    void this.detachChannel();
++    this.topic = topic;
++    if (rotated) {
++      this.topicRotatedAt = new Date(this.now()).toISOString();
++    }
++    this.connect();
++  }
++
++  next(options: {
++    until: number;
++    signal?: AbortSignal;
++  }): Promise<WakeWaitReason> {
++    if (this.waiter !== null) {
++      throw new Error("wake next() already has a waiter");
++    }
++    if (options.signal?.aborted) {
++      return Promise.resolve("deadline");
++    }
++    const nowMs = this.now();
++    if (this.pending !== null) {
++      const reason = this.pending;
++      this.pending = null;
++      return Promise.resolve(reason);
++    }
++    if (nowMs >= options.until) {
++      return Promise.resolve("deadline");
++    }
++    return new Promise<WakeWaitReason>((resolve) => {
++      const finish = (reason: WakeWaitReason) => {
++        if (this.waiter === null) return;
++        const current = this.waiter;
++        this.waiter = null;
++        if (current.timer !== null) clearTimeout(current.timer);
++        if (current.signal && current.onAbort) {
++          current.signal.removeEventListener("abort", current.onAbort);
++        }
++        resolve(reason);
++      };
++      const delay = Math.max(0, options.until - this.now());
++      const timer = setTimeout(() => finish("deadline"), delay);
++      const onAbort = () => finish("deadline");
++      options.signal?.addEventListener("abort", onAbort, { once: true });
++      this.waiter = {
++        resolve: finish,
++        timer,
++        onAbort,
++        signal: options.signal,
++      };
++    });
++  }
++
++  async close(): Promise<void> {
++    this.closed = true;
++    this.topic = null;
++    this.finishWait("deadline");
++    await this.detachChannel();
++    try {
++      this.realtime?.disconnect?.();
++    } catch {
++      // Closing a socket that is already down is not a listener failure.
++    }
++    this.realtime = null;
++    this.connectionState = "disconnected";
++  }
++
++  private trimWakeClaims(nowMs: number): void {
++    const minuteStart = Math.floor(nowMs / 60_000) * 60_000;
++    this.wakeClaimTimes = this.wakeClaimTimes.filter((ts) => ts >= minuteStart);
++  }
++
++  private emitPending(reason: WakeWaitReason): void {
++    if (this.waiter !== null) {
++      this.finishWait(reason);
++      return;
++    }
++    if (reason === "wake" || this.pending !== "wake") {
++      this.pending = reason;
++    }
++  }
++
++  private finishWait(reason: WakeWaitReason): void {
++    const waiter = this.waiter;
++    if (waiter === null) return;
++    this.waiter = null;
++    if (waiter.timer !== null) clearTimeout(waiter.timer);
++    if (waiter.signal && waiter.onAbort) {
++      waiter.signal.removeEventListener("abort", waiter.onAbort);
++    }
++    waiter.resolve(reason);
++  }
++
++  private connect(): void {
++    if (this.closed || this.topic === null) return;
++    if (this.realtime === null) {
++      this.realtime = this.createRealtime(this.target);
++      void this.realtime.setAuth(this.target.anonKey);
++    }
++    const topic = this.topic;
++    this.connectionState = "connecting";
++    this.lastErrorCode = null;
++    const channel = this.realtime.channel(topic, {
++      config: { private: true },
++    });
++    this.channel = channel;
++    channel.on("broadcast", { event: WAKE_EVENT }, () => {
++      this.lastWakeAt = new Date(this.now()).toISOString();
++      this.emitPending("wake");
++    });
++    channel.subscribe((status) => {
++      this.onSubscribeStatus(status);
++    });
++  }
++
++  private onSubscribeStatus(status: string): void {
++    if (this.closed) return;
++    if (!isSubscribeStatus(status)) return;
++    const wasSubscribed = this.connectionState === "subscribed";
++    if (status === REALTIME_SUBSCRIBE_STATUS.SUBSCRIBED) {
++      this.connectionState = "subscribed";
++      this.subscribedAt = new Date(this.now()).toISOString();
++      this.lastErrorCode = null;
++      if (this.everSubscribed && !wasSubscribed) this.reconnects += 1;
++      this.everSubscribed = true;
++      if (!wasSubscribed) this.emitPending("state");
++      return;
++    }
++    const code = wakeErrorCodeFromSubscribeStatus(status);
++    if (status === REALTIME_SUBSCRIBE_STATUS.CLOSED) {
++      this.connectionState = "disconnected";
++    } else {
++      this.connectionState = "errored";
++    }
++    this.lastErrorCode = code;
++    this.subscribedAt = null;
++    if (wasSubscribed) this.emitPending("state");
++  }
++
++  private async detachChannel(): Promise<void> {
++    const channel = this.channel;
++    this.channel = null;
++    if (channel === null) return;
++    try {
++      await channel.unsubscribe();
++    } catch {
++      // Unsubscribe after a drop is best-effort.
++    }
++    try {
++      await this.realtime?.removeChannel?.(channel);
++    } catch {
++      // Same: the socket may already be gone.
++    }
++    if (this.connectionState === "subscribed") {
++      this.connectionState = "disconnected";
++      this.subscribedAt = null;
++    }
++  }
++}
++
++export function createWakeSubscriber(
++  options: WakeSubscriberOptions,
++): WakeSubscriber {
++  return new WakeSubscriber(options);
++}
++
++export { WAKE_EVENT, WAKE_TOPIC_PREFIX, isWakeTopic };
+diff --git a/tests/listener-control.test.ts b/tests/listener-control.test.ts
+index f298b29..a44367b 100644
+--- a/tests/listener-control.test.ts
++++ b/tests/listener-control.test.ts
+@@ -1271,6 +1271,9 @@ test("status ignores unknown keys, renders old counters as unmeasured, and rejec
+     "prompt",
+     "reply",
+     "owner",
++    "topic",
++    "wakeTopic",
++    "wake_topic",
+   ]) {
+     await writeRaw((row) => {
+       row[key] = "forbidden";
+diff --git a/tests/listener-wake.test.ts b/tests/listener-wake.test.ts
+new file mode 100644
+index 0000000..b930457
+--- /dev/null
++++ b/tests/listener-wake.test.ts
+@@ -0,0 +1,750 @@
++/**
++ * Fake-socket and parser controls for listener push delivery (L4).
++ * Named in the npm test list.
++ */
++import assert from "node:assert/strict";
++import { randomUUID } from "node:crypto";
++import { mkdtemp, readFile } from "node:fs/promises";
++import { tmpdir } from "node:os";
++import { join } from "node:path";
++import test from "node:test";
++import { cloudTarget } from "../src/cloud/config.js";
++import {
++  DeliveryCommandClient,
++  type DeliveryClaimResult,
++  type DeliveryRow,
++} from "../src/cloud/delivery.js";
++import {
++  IDLE_POLL_DEFAULT_MS,
++  formatIdlePollDuration,
++} from "../src/cloud/idle-poll.js";
++import type { SignalRecord } from "../src/cloud/command-client.js";
++import type { AgentSignalPage } from "../src/cloud/signals.js";
++import {
++  parseOptionalWakeHint,
++  WAKE_EVENT,
++  WAKE_TOPIC_PREFIX,
++} from "../src/cloud/wake.js";
++import { writeSecureJsonFile } from "../src/cloud/storage.js";
++import { listenerStatusJson, renderListenerStatus } from "../src/cli.js";
++import {
++  claimCommandId,
++  emptyListenerReadHealth,
++  emptyListenerWakeStatus,
++  LISTENER_RECONCILE_POLL_MS,
++  LISTENER_WAKE_MODES,
++  LISTENER_WAKE_MODE_SET,
++  listenerPaths,
++  listenerWakeStatusSentence,
++  parseListenerWake,
++  readListenerStatus,
++  recordListenerClaim,
++  recordListenerClaimCadence,
++  recordListenerWakeModeChange,
++  REALTIME_SUBSCRIBE_STATUS,
++  runListenerRuntime,
++  summarizeListenerReadHealth,
++  WAKE_CLAIMS_PER_MINUTE_BUDGET,
++  WAKE_ERROR_CODE_SET,
++  wakeErrorCodeFromSubscribeStatus,
++  writeListenerStatus,
++  createWakeSubscriber,
++  type ListenerActiveClaim,
++  type ListenerDeliveryJournalRecord,
++  type ListenerEffectRecord,
++  type ListenerEffectStore,
++  type ListenerPromptMode,
++  type ListenerRuntimeModel,
++  type ListenerStatus,
++  type ListenerWakeStatus,
++  type WakeHandle,
++  type WakeRealtimeChannel,
++  type WakeRealtimeClient,
++  type WakeWaitReason,
++} from "../src/listener/index.js";
++
++const WORKSPACE_ID = "11111111-1111-4111-8111-111111111111";
++const PRINCIPAL_ID = "22222222-2222-4222-8222-222222222222";
++const WAKE_TOPIC = `${WAKE_TOPIC_PREFIX}${"A".repeat(43)}`;
++
++class FakeChannel implements WakeRealtimeChannel {
++  statusCb: ((status: string, err?: Error) => void) | null = null;
++  wakeCb: ((message: { payload?: unknown }) => void) | null = null;
++  constructor(readonly topic: string) {}
++  on(
++    _type: "broadcast",
++    _filter: { event: string },
++    callback: (message: { payload?: unknown }) => void,
++  ): WakeRealtimeChannel {
++    this.wakeCb = callback;
++    return this;
++  }
++  subscribe(callback: (status: string, err?: Error) => void): WakeRealtimeChannel {
++    this.statusCb = callback;
++    return this;
++  }
++  unsubscribe(): void {}
++  emitStatus(status: string, err?: Error): void {
++    this.statusCb?.(status, err);
++  }
++  emitWake(): void {
++    this.wakeCb?.({ payload: { v: 1 } });
++  }
++}
++
++class FakeRealtime implements WakeRealtimeClient {
++  channelInstance: FakeChannel | null = null;
++  authed: string | null = null;
++  setAuth(token: string): void {
++    this.authed = token;
++  }
++  channel(topic: string): FakeChannel {
++    this.channelInstance = new FakeChannel(topic);
++    return this.channelInstance;
++  }
++  removeChannel(): void {}
++  disconnect(): void {}
++}
++
++function note(id: string): SignalRecord {
++  return {
++    id,
++    workspace_id: WORKSPACE_ID,
++    from: "33333333-3333-4333-8333-333333333333",
++    from_kind: "agent",
++    to: null,
++    to_agent: PRINCIPAL_ID,
++    in_reply_to: null,
++    about: null,
++    kind: "note",
++    body: "note",
++    until: "2036-08-30T00:00:00.000Z",
++    created_at: "2026-07-30T00:00:01.000Z",
++    sender_owner_relation: "same_owner",
++  };
++}
++
++function durablePage(wake = true): AgentSignalPage {
++  return {
++    signals: [],
++    capabilities: {
++      senderOwnerRelation: true,
++      cursorAfter: true,
++      deliveryClaim: true,
++      deliveryAck: true,
++    },
++    legacyCursorFallback: false,
++    rawCount: 0,
++    nextCursor: null,
++    malformedRows: 0,
++    pendingDeliveryCount: 0,
++    ...(wake ? { wake: { topic: WAKE_TOPIC, event: WAKE_EVENT } } : {}),
++  };
++}
++
++function claimResult(deliveries: DeliveryRow[] = []): DeliveryClaimResult {
++  return {
++    httpStatus: 200,
++    capabilities: {
++      deliveryClaim: true,
++      deliveryAck: true,
++      senderOwnerRelation: true,
++    },
++    deliveries,
++    pendingDeliveryCount: deliveries.length,
++    terminalDeliveryFailureCount: 0,
++    wake: { topic: WAKE_TOPIC, event: WAKE_EVENT },
++  };
++}
++
++class MemoryStore implements ListenerEffectStore {
++  readonly records = new Map<string, ListenerEffectRecord>();
++  async read(id: string) {
++    return structuredClone(this.records.get(id) ?? null);
++  }
++  async write(record: ListenerEffectRecord) {
++    this.records.set(record.signalId, structuredClone(record));
++  }
++}
++
++class FakeModel implements ListenerRuntimeModel {
++  async start() {}
++  async prompt(_signal: SignalRecord, _mode: ListenerPromptMode, _prompt: string) {
++    return { message: "ok", stopReason: "end_turn" as const };
++  }
++  cancel() {}
++  async close() {}
++}
++
++class MemoryJournal {
++  record: ListenerDeliveryJournalRecord;
++  constructor() {
++    this.record = {
++      version: 1,
++      workspaceId: WORKSPACE_ID,
++      principalId: PRINCIPAL_ID,
++      listenerInstanceId: "44444444-4444-4444-8444-444444444444",
++      nextClaimOrdinal: 0,
++      active: null,
++      updatedAt: "2026-07-30T00:00:00.000Z",
++    };
++  }
++  async read() {
++    return structuredClone(this.record);
++  }
++  async reserveClaim(now = new Date().toISOString()) {
++    const ordinal = this.record.nextClaimOrdinal;
++    const active: ListenerActiveClaim = {
++      phase: "claim_pending",
++      claimOrdinal: ordinal,
++      claimCommandId: claimCommandId(this.record.listenerInstanceId, ordinal),
++      claimCreatedAt: now,
++      claimLastAttemptAt: null,
++      signalId: null,
++      leaseId: null,
++      leasedUntil: null,
++      ack: null,
++    };
++    this.record.active = active;
++    this.record.nextClaimOrdinal += 1;
++    this.record.updatedAt = now;
++    return structuredClone(active);
++  }
++  async recordClaimAttempt(now = new Date().toISOString()) {
++    assert.ok(this.record.active);
++    this.record.active.claimLastAttemptAt = now;
++    this.record.updatedAt = now;
++  }
++  async recordLease() {
++    throw new Error("lease must not run in empty-claim tests");
++  }
++  async prepareAck() {
++    throw new Error("ack must not run in empty-claim tests");
++  }
++  async clearActive(now = new Date().toISOString()) {
++    this.record.active = null;
++    this.record.updatedAt = now;
++  }
++}
++
++class ScriptedWake implements WakeHandle {
++  state: "disconnected" | "connecting" | "subscribed" | "errored" = "disconnected";
++  hasTopic = false;
++  queue: WakeWaitReason[] = [];
++  waits = 0;
++  wakeClaims = 0;
++  claims = 0;
++  closed = false;
++  rateLimitedFlag = false;
++  private snap: ListenerWakeStatus = emptyListenerWakeStatus();
++
++  setPush(): void {
++    this.state = "subscribed";
++    this.hasTopic = true;
++    this.snap = {
++      ...emptyListenerWakeStatus(),
++      mode: "push",
++      subscribedAt: "2026-07-30T00:00:00.000Z",
++    };
++  }
++
++  setPoll(code: ListenerWakeStatus["errorCode"] = "channel_error"): void {
++    this.state = "errored";
++    this.hasTopic = true;
++    this.snap = {
++      ...emptyListenerWakeStatus(),
++      mode: "poll",
++      errorCode: code,
++    };
++  }
++
++  snapshot(): ListenerWakeStatus {
++    return {
++      ...this.snap,
++      rateLimited: this.rateLimitedFlag,
++      mode: this.rateLimitedFlag ? "poll" : this.snap.mode,
++      errorCode: this.rateLimitedFlag ? "rate_limited" : this.snap.errorCode,
++    };
++  }
++
++  async next(): Promise<WakeWaitReason> {
++    this.waits += 1;
++    return this.queue.shift() ?? "deadline";
++  }
++
++  setTopic(_topic: string): void {
++    this.hasTopic = true;
++  }
++
++  noteReconcile(): void {}
++  noteClaim(): void {
++    this.claims += 1;
++  }
++  noteWakeClaim(): void {
++    this.wakeClaims += 1;
++    this.claims += 1;
++  }
++  canClaimOnWake(): boolean {
++    return !this.rateLimitedFlag && this.wakeClaims < WAKE_CLAIMS_PER_MINUTE_BUDGET;
++  }
++  coalescingRemainingMs(): number {
++    return 0;
++  }
++  overWakeBudget(): boolean {
++    return this.wakeClaims >= WAKE_CLAIMS_PER_MINUTE_BUDGET;
++  }
++  markRateLimited(): void {
++    this.rateLimitedFlag = true;
++    this.snap.rateLimited = true;
++    this.snap.mode = "poll";
++    this.snap.errorCode = "rate_limited";
++  }
++  async close(): Promise<void> {
++    this.closed = true;
++  }
++}
++
++function statusShell(paths: ReturnType<typeof listenerPaths>): ListenerStatus {
++  const ts = "2026-07-30T00:00:00.000Z";
++  return {
++    version: 1,
++    instanceId: randomUUID(),
++    provider: "grok",
++    profileId: "profile-test",
++    workspaceId: randomUUID(),
++    principalId: randomUUID(),
++    pid: process.pid,
++    state: "ready",
++    startedAt: ts,
++    readyAt: ts,
++    updatedAt: ts,
++    stoppedAt: null,
++    lastSignalId: null,
++    lastErrorCode: null,
++    lastErrorDetail: null,
++    providerVersion: null,
++    providerLastMeasuredVersion: null,
++    lastWorkerStderrTail: null,
++    deliveryMode: "durable_claim",
++    pendingDeliveryCount: 0,
++    lastTerminalDeliveryFailureCount: null,
++    lastTerminalDeliveryFailureAt: null,
++    lastClaimAt: null,
++    lastAckAt: null,
++    lastAckOutcome: null,
++    consecutiveAckFailureCount: null,
++    routeMode: "worker",
++    deferOverChars: null,
++    pendingForMainCount: 0,
++    droppedForMainCount: 0,
++    logPath: paths.logPath,
++  };
++}
++
++test("wake hint parser accepts the closed object and omits 0.1.57 silence", () => {
++  assert.equal(parseOptionalWakeHint(undefined), undefined);
++  assert.equal(parseOptionalWakeHint(null), undefined);
++  assert.deepEqual(parseOptionalWakeHint({ topic: WAKE_TOPIC, event: WAKE_EVENT }), {
++    topic: WAKE_TOPIC,
++    event: WAKE_EVENT,
++  });
++  assert.throws(() => parseOptionalWakeHint({ topic: "nope", event: WAKE_EVENT }));
++  assert.throws(() => parseOptionalWakeHint({ topic: WAKE_TOPIC, event: "signal" }));
++  assert.throws(() => parseOptionalWakeHint("cswarm-wake:x"));
++});
++
++test("Realtime subscribe statuses map by code, never by error.message", () => {
++  assert.equal(
++    wakeErrorCodeFromSubscribeStatus(REALTIME_SUBSCRIBE_STATUS.CHANNEL_ERROR),
++    "channel_error",
++  );
++  assert.equal(
++    wakeErrorCodeFromSubscribeStatus(REALTIME_SUBSCRIBE_STATUS.CLOSED),
++    "closed",
++  );
++  assert.equal(
++    wakeErrorCodeFromSubscribeStatus(REALTIME_SUBSCRIBE_STATUS.TIMED_OUT),
++    "timed_out",
++  );
++  assert.equal(
++    wakeErrorCodeFromSubscribeStatus(REALTIME_SUBSCRIBE_STATUS.SUBSCRIBED),
++    null,
++  );
++  const unauthorized = new Error(
++    "Unauthorized: You do not have permissions to read from this Channel topic: " +
++      WAKE_TOPIC,
++  );
++  assert.equal(
++    wakeErrorCodeFromSubscribeStatus(REALTIME_SUBSCRIBE_STATUS.CHANNEL_ERROR),
++    "channel_error",
++  );
++  assert.equal(WAKE_ERROR_CODE_SET.has("channel_error"), true);
++  assert.doesNotMatch(unauthorized.message, /^channel_error$/);
++});
++
++test("WakeSubscriber latches a wake while nobody awaits next()", async () => {
++  const fake = new FakeRealtime();
++  const wake = createWakeSubscriber({
++    target: cloudTarget("https://cloud.example.test", "anon"),
++    createRealtime: () => fake,
++  });
++  wake.setTopic(WAKE_TOPIC);
++  assert.equal(fake.authed, "anon");
++  fake.channelInstance!.emitStatus(REALTIME_SUBSCRIBE_STATUS.SUBSCRIBED);
++  assert.equal(wake.state, "subscribed");
++  assert.equal(wake.snapshot().mode, "push");
++  fake.channelInstance!.emitWake();
++  fake.channelInstance!.emitWake();
++  const first = await wake.next({ until: Date.now() + 1_000 });
++  const second = await wake.next({ until: Date.now() });
++  assert.equal(first, "wake");
++  assert.equal(second, "deadline");
++  const snap = wake.snapshot();
++  assert.equal("topic" in snap, false);
++  assert.equal(JSON.stringify(snap).includes("cswarm-wake:"), false);
++  await wake.close();
++});
++
++test("CHANNEL_ERROR flips snapshot to poll without reading error.message", async () => {
++  const fake = new FakeRealtime();
++  const wake = createWakeSubscriber({
++    target: cloudTarget("https://cloud.example.test", "anon"),
++    createRealtime: () => fake,
++  });
++  wake.setTopic(WAKE_TOPIC);
++  fake.channelInstance!.emitStatus(REALTIME_SUBSCRIBE_STATUS.SUBSCRIBED);
++  const until = Date.now() + 200;
++  const waiting = wake.next({ until });
++  fake.channelInstance!.emitStatus(
++    REALTIME_SUBSCRIBE_STATUS.CHANNEL_ERROR,
++    new Error("Unauthorized: " + WAKE_TOPIC),
++  );
++  assert.equal(await waiting, "state");
++  const snap = wake.snapshot();
++  assert.equal(snap.mode, "poll");
++  assert.equal(snap.errorCode, "channel_error");
++  assert.equal(JSON.stringify(snap).includes("cswarm-wake:"), false);
++  await wake.close();
++});
++
++test("wake claim budget is 50 per clock minute", () => {
++  const fake = new FakeRealtime();
++  const nowMs = Date.parse("2026-07-30T00:00:10.000Z");
++  const wake = createWakeSubscriber({
++    target: cloudTarget("https://cloud.example.test", "anon"),
++    now: () => nowMs,
++    createRealtime: () => fake,
++  });
++  for (let i = 0; i < WAKE_CLAIMS_PER_MINUTE_BUDGET; i++) {
++    assert.equal(wake.overWakeBudget(nowMs), false);
++    wake.noteWakeClaim(nowMs);
++  }
++  assert.equal(wake.overWakeBudget(nowMs), true);
++  assert.equal(WAKE_CLAIMS_PER_MINUTE_BUDGET, 50);
++});
++
++test("status sentence never says push unless mode is push; lists come from constants", () => {
++  assert.deepEqual([...LISTENER_WAKE_MODE_SET], [...LISTENER_WAKE_MODES]);
++  const push: ListenerWakeStatus = {
++    ...emptyListenerWakeStatus(),
++    mode: "push",
++    subscribedAt: "2026-07-30T00:00:00.000Z",
++    lastWakeAt: "2026-07-30T00:00:12.000Z",
++  };
++  const poll: ListenerWakeStatus = {
++    ...emptyListenerWakeStatus(),
++    mode: "poll",
++    errorCode: "channel_error",
++  };
++  const pushLine = listenerWakeStatusSentence(push, IDLE_POLL_DEFAULT_MS, "12s ago");
++  const pollLine = listenerWakeStatusSentence(
++    poll,
++    IDLE_POLL_DEFAULT_MS,
++    null,
++  );
++  assert.match(pushLine, /^push \(Realtime\)/);
++  assert.match(pushLine, new RegExp(formatIdlePollDuration(LISTENER_RECONCILE_POLL_MS)));
++  assert.doesNotMatch(pollLine, /\bpush\b/);
++  assert.match(pollLine, new RegExp(formatIdlePollDuration(IDLE_POLL_DEFAULT_MS)));
++  assert.match(pollLine, /channel_error/);
++  assert.doesNotMatch(pushLine, /cswarm-wake:/);
++  assert.doesNotMatch(pollLine, /cswarm-wake:/);
++});
++
++test("parseListenerWake is closed and refuses topic keys", () => {
++  const good: ListenerWakeStatus = emptyListenerWakeStatus();
++  assert.deepEqual(parseListenerWake(good, true), good);
++  assert.equal(parseListenerWake({ ...good, extra: 1 }, true), null);
++  assert.equal(parseListenerWake({ ...good, topic: WAKE_TOPIC }, true), null);
++  assert.equal(parseListenerWake({ ...good, wakeTopic: WAKE_TOPIC }, true), null);
++  assert.equal(
++    parseListenerWake({ ...good, mode: "push", subscribedAt: null }, true),
++    null,
++  );
++});
++
++test("a status file cannot store a topic key or a topic-shaped lastErrorDetail", async () => {
++  const root = await mkdtemp(join(tmpdir(), "cswarm-wake-status-"));
++  const paths = listenerPaths({
++    profileId: "profile-wake",
++    workspaceId: randomUUID(),
++    principalId: randomUUID(),
++    stateDirectory: root,
++  });
++  const base = statusShell(paths);
++  await writeListenerStatus(paths, { ...base, wake: emptyListenerWakeStatus() });
++  await assert.rejects(
++    writeListenerStatus(paths, { ...base, topic: WAKE_TOPIC } as unknown as ListenerStatus),
++    /forbidden/,
++  );
++  const raw = JSON.parse(await readFile(paths.statusPath, "utf8")) as Record<string, unknown>;
++  raw.lastErrorDetail = `Unauthorized: ${WAKE_TOPIC}`;
++  await writeSecureJsonFile(paths.statusPath, JSON.stringify(raw));
++  await assert.rejects(readListenerStatus(paths), /malformed/);
++});
++
++test("subscribed wake then one empty claim; two wakes in one claim latch one more", async () => {
++  const journal = new MemoryJournal();
++  const controller = new AbortController();
++  const wake = new ScriptedWake();
++  wake.setPush();
++  wake.queue.push("wake", "wake");
++  let claims = 0;
++  const stop = await runListenerRuntime({
++    target: cloudTarget("https://cloud.example.test", "anon"),
++    workspaceId: WORKSPACE_ID,
++    principalId: PRINCIPAL_ID,
++    listenerInstanceId: journal.record.listenerInstanceId,
++    deliveryJournal: journal,
++    deliveryClient: {
++      async claimAgentInbox() {
++        claims += 1;
++        if (claims >= 3) controller.abort();
++        return claimResult([]);
++      },
++      async ackAgentDelivery() {
++        throw new Error("ack must not run");
++      },
++    },
++    credentialSession: { async bearer() { return "token"; } },
++    store: new MemoryStore(),
++    model: new FakeModel(),
++    signal: controller.signal,
++    pollMs: IDLE_POLL_DEFAULT_MS,
++    now: () => Date.parse("2026-07-30T00:00:00.000Z"),
++    sleep: async () => {},
++    wake,
++    readPage: async () => durablePage(),
++  });
++  assert.equal(stop.reason, "cancelled");
++  assert.equal(claims, 3);
++  assert.equal(wake.wakeClaims, 2);
++  assert.ok(wake.waits >= 1);
++});
++
++test("CHANNEL_ERROR path reconciles on the idle cadence then push on resubscribe", async () => {
++  const journal = new MemoryJournal();
++  const controller = new AbortController();
++  const wake = new ScriptedWake();
++  wake.setPoll("channel_error");
++  wake.queue.push("state", "deadline");
++  const intervals: number[] = [];
++  let claims = 0;
++  const stop = await runListenerRuntime({
++    target: cloudTarget("https://cloud.example.test", "anon"),
++    workspaceId: WORKSPACE_ID,
++    principalId: PRINCIPAL_ID,
++    listenerInstanceId: journal.record.listenerInstanceId,
++    deliveryJournal: journal,
++    deliveryClient: {
++      async claimAgentInbox() {
++        claims += 1;
++        if (claims === 2) wake.setPush();
++        if (claims >= 3) controller.abort();
++        return claimResult([]);
++      },
++      async ackAgentDelivery() {
++        throw new Error("ack must not run");
++      },
++    },
++    credentialSession: { async bearer() { return "token"; } },
++    store: new MemoryStore(),
++    model: new FakeModel(),
++    signal: controller.signal,
++    pollMs: IDLE_POLL_DEFAULT_MS,
++    now: () => Date.parse("2026-07-30T00:00:00.000Z"),
++    sleep: async () => {},
++    wake,
++    onEvent: (event) => {
++      if (event.type === "idle_poll") intervals.push(event.intervalMs);
++      if (event.type === "wake" && event.wake.mode === "push" && claims >= 2) {
++        /* observed */
++      }
++    },
++    readPage: async () => durablePage(),
++  });
++  assert.equal(stop.reason, "cancelled");
++  assert.ok(claims >= 3);
++  assert.ok(intervals.includes(IDLE_POLL_DEFAULT_MS));
++});
++
++test("reconcile deadline while subscribed is 5 minutes", () => {
++  assert.equal(LISTENER_RECONCILE_POLL_MS, 300_000);
++  assert.equal(formatIdlePollDuration(LISTENER_RECONCILE_POLL_MS), "5m");
++});
++
++test("claim throughput skips a mode-change hour and keeps the slowest cadence", () => {
++  const hourStart = "2026-09-01T10:00:00.000Z";
++  const readyAt = "2026-09-01T09:00:00.000Z";
++  let health = recordListenerClaimCadence(
++    emptyListenerReadHealth(),
++    LISTENER_RECONCILE_POLL_MS,
++    hourStart,
++  );
++  health = recordListenerWakeModeChange(health, hourStart);
++  for (let i = 0; i < 12; i++) health = recordListenerClaim(health, hourStart);
++  const nextHour = "2026-09-01T11:00:00.000Z";
++  health = recordListenerClaimCadence(health, IDLE_POLL_DEFAULT_MS, nextHour);
++  const summary = summarizeListenerReadHealth(
++    health,
++    readyAt,
++    Date.parse("2026-09-01T12:00:00.000Z"),
++  );
++  const changed = summary.claimThroughputHours.find((row) => row.hourStart === hourStart);
++  assert.ok(changed);
++  assert.equal(
++    summary.throughputLapseHours.some((row) => row.hourStart === hourStart),
++    false,
++  );
++  assert.equal(health.claimHours[0]?.modeChanged, true);
++  const frozen = health.claimHours.find((row) => row.hourStart === hourStart);
++  assert.equal(frozen?.expectedClaims, 3600_000 / LISTENER_RECONCILE_POLL_MS);
++});
++
++test("listen status JSON names mode from the same wake.mode constant set", () => {
++  const ts = "2026-07-30T00:00:00.000Z";
++  const status = {
++    version: 1 as const,
++    instanceId: randomUUID(),
++    provider: "grok" as const,
++    profileId: "p",
++    workspaceId: randomUUID(),
++    principalId: randomUUID(),
++    pid: 1,
++    state: "ready" as const,
++    startedAt: ts,
++    readyAt: ts,
++    updatedAt: ts,
++    stoppedAt: null,
++    lastSignalId: null,
++    lastErrorCode: null,
++    lastErrorDetail: null,
++    lastWorkerStderrTail: null,
++    deliveryMode: "durable_claim" as const,
++    pendingDeliveryCount: 0,
++    lastTerminalDeliveryFailureCount: null,
++    lastTerminalDeliveryFailureAt: null,
++    lastClaimAt: ts,
++    lastAckAt: null,
++    lastAckOutcome: null,
++    consecutiveAckFailureCount: null,
++    routeMode: "worker" as const,
++    deferOverChars: null,
++    pendingForMainCount: 0,
++    droppedForMainCount: 0,
++    idlePollMs: IDLE_POLL_DEFAULT_MS,
++    wake: {
++      ...emptyListenerWakeStatus(),
++      mode: "push" as const,
++      subscribedAt: ts,
++      lastWakeAt: ts,
++      lastReconcileAt: ts,
++    },
++    logPath: "/tmp/cswarm-wake.log",
++  };
++  const json = listenerStatusJson(status);
++  assert.equal(json.mode, "push");
++  assert.equal((json.wake as ListenerWakeStatus).mode, "push");
++  assert.equal(LISTENER_WAKE_MODE_SET.has(json.mode as string), true);
++  const human = renderListenerStatus(status);
++  assert.match(human, /^push \(Realtime\)|push \(Realtime\)/m);
++  assert.doesNotMatch(human, /cswarm-wake:/);
++  assert.equal(JSON.stringify(json).includes("cswarm-wake:"), false);
++});
++
++test("delivery claim parser carries optional wake and ignores its absence", async () => {
++  const SIGNAL = "aaaaaaaa-aaaa-4aaa-8aaa-aaaaaaaaaaaa";
++  const LEASE = "bbbbbbbb-bbbb-4bbb-8bbb-bbbbbbbbbbbb";
++  const body = {
++    status: "accepted",
++    ok: true,
++    capabilities: {
++      delivery_claim: 1,
++      delivery_ack: 1,
++      sender_owner_relation: 1,
++    },
++    deliveries: [{
++      signal: {
++        id: SIGNAL,
++        workspace_id: WORKSPACE_ID,
++        from: "33333333-3333-4333-8333-333333333333",
++        from_kind: "agent",
++        to: null,
++        to_agent: PRINCIPAL_ID,
++        in_reply_to: null,
++        about: null,
++        kind: "note",
++        body: "note",
++        until: "2036-08-30T00:00:00.000Z",
++        created_at: "2026-07-30T00:00:01.000Z",
++        sender_owner_relation: "same_owner",
++      },
++      lease_id: LEASE,
++      leased_until: "2036-07-30T00:15:00.000Z",
++      sender_owner_relation: "same_owner",
++    }],
++    pending_delivery_count: 1,
++    terminal_delivery_failure_count: 0,
++    event_ids: [],
++    events: [],
++    wake: { topic: WAKE_TOPIC, event: WAKE_EVENT },
++  };
++  const client = new DeliveryCommandClient(
++    cloudTarget("https://cloud.example.test", "anon"),
++    async () =>
++      new Response(JSON.stringify(body), {
++        status: 200,
++        headers: { "content-type": "application/json" },
++      }),
++    { now: () => Date.parse("2026-07-30T00:00:00.000Z") },
++  );
++  const result = await client.claimAgentInbox({
++    workspaceId: WORKSPACE_ID,
++    credential: "swm_agt_" + "c".repeat(43),
++    commandId: "claimcmd01",
++    listenerInstanceId: "44444444-4444-4444-8444-444444444444",
++    expectedPrincipalId: PRINCIPAL_ID,
++  });
++  assert.equal(result.wake?.topic, WAKE_TOPIC);
++  assert.equal(result.wake?.event, WAKE_EVENT);
++
++  const without = { ...body };
++  delete (without as { wake?: unknown }).wake;
++  const client2 = new DeliveryCommandClient(
++    cloudTarget("https://cloud.example.test", "anon"),
++    async () =>
++      new Response(JSON.stringify(without), {
++        status: 200,
++        headers: { "content-type": "application/json" },
++      }),
++    { now: () => Date.parse("2026-07-30T00:00:00.000Z") },
++  );
++  const omitted = await client2.claimAgentInbox({
++    workspaceId: WORKSPACE_ID,
++    credential: "swm_agt_" + "c".repeat(43),
++    commandId: "claimcmd02",
++    listenerInstanceId: "44444444-4444-4444-8444-444444444444",
++    expectedPrincipalId: PRINCIPAL_ID,
++  });
++  assert.equal(omitted.wake, undefined);
++});
