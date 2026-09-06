@@ -127,6 +127,26 @@ const mutations = [
     control: "signed-out /app onramp is cold-stranger, email-first, free, draft-legal",
     why: "the panel's handler bound to another panel's buttons — the loose assertion this replaced stayed green here",
   },
+  // ── the stated bound, and the shape of the names it is generated from
+  {
+    test: PB,
+    target: PB,
+    from: "  ...NAMED_PROVIDER_WRAPPERS.map((wrapper) => `any ${wrapper} anywhere`),",
+    to:
+      "  ...NAMED_PROVIDER_WRAPPERS.map((wrapper) => `any ${wrapper} anywhere`),\n" +
+      '  "and anything else a reader might assume",',
+    control: "the sweep's stated bound is derived from its own assertions, and the doc carries it",
+    why: "a line TYPED into SWEEP_CATCHES beside the generated ones. An arm called the length check a tautology after the wrapper term became generated; this is what it still catches",
+  },
+  {
+    test: PB,
+    target: AP,
+    from: '    name: "Google",',
+    to: '    name: "Google Cloud",',
+    control: "the sweep's stated bound is derived from its own assertions, and the doc carries it",
+    why: "a provider name with a space, which generates the dead ban `signInWith${name}(` that no source file can ever contain",
+  },
+
   // ── the control on generated punctuation
   {
     test: PB,

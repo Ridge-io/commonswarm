@@ -565,7 +565,7 @@ to schedule. So do steps 7 and 8 in one sitting, or not yet.
     - any signInWithGoogle( anywhere
     - a rendered button whose label is not exactly one of: "Sign in with GitHub", "Sign in with Google"
 
-    It does not catch a provider hidden in an attribute VALUE under an unrelated name, and that is a bound, not a gap this test closes.
+    It does not catch a provider hidden in an attribute VALUE under an unrelated name, and it recognises a per-provider wrapper only in the exact shape signInWith<Name>(, so a differently spelled one is not one. Both are bounds, not gaps this test closes: a wrapper under any name still has to hand a provider to signInWithProvider, which the call-site control reads.
 
     Every line above is generated in the test from the patterns and call names its own
     assertions run, and a control there requires this file to carry each one word for word.

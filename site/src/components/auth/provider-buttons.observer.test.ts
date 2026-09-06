@@ -413,8 +413,11 @@ const SWEEP_CATCHES: readonly string[] = [
  * the control below, so the doc and this file cannot drift apart.
  */
 const SWEEP_DOES_NOT_CATCH =
-  "It does not catch a provider hidden in an attribute VALUE under an unrelated name, " +
-  "and that is a bound, not a gap this test closes.";
+  "It does not catch a provider hidden in an attribute VALUE under an unrelated name, and it " +
+  "recognises a per-provider wrapper only in the exact shape signInWith<Name>(, so a " +
+  "differently spelled one is not one. Both are bounds, not gaps this test closes: a wrapper " +
+  "under any name still has to hand a provider to signInWithProvider, which the call-site " +
+  "control reads.";
 
 /**
  * `data-*` attribute names that carry a provider id and are NOT sign-in controls.
@@ -841,7 +844,10 @@ test("CONTROL: no built page doubles a full stop or a comma, in any provider sta
    * so a " ." pattern reads 59 false hits on today's build and would be a control that fails
    * for a reason it does not claim. An ellipsis is excluded because the app uses one.
    */
-  const DOUBLED = /(?<!\.)\.\.(?!\.)|,\s*,/;
+  // `. .` as well as `..`: a review arm asked whether a space between the two periods slips
+  // through, and it did. Measured across all four builds after widening: zero false hits, and
+  // it still misses "…", "Wait... then retry." and "GitHub, Inc., and Google LLC".
+  const DOUBLED = /(?<!\.)\.\s*\.(?!\.)|,\s*,/;
   const offenders: string[] = [];
   let inspected = 0;
   for (const { state, dir } of await sweepStates()) {
@@ -866,6 +872,8 @@ test("CONTROL: no built page doubles a full stop or a comma, in any provider sta
   );
   // The control on the control: the pattern must fire on the exact string that shipped.
   assert.match("You sign in through GitHub, Inc..", DOUBLED);
+  assert.match("You sign in through GitHub, Inc. .", DOUBLED);
+  assert.doesNotMatch("GitHub, Inc., and Google LLC receive it.", DOUBLED);
   assert.doesNotMatch("Opening CommonSwarm…", DOUBLED);
   assert.doesNotMatch("Wait... then retry.", DOUBLED);
   assert.deepEqual(
@@ -1247,6 +1255,29 @@ test("CONTROL: the sweep's stated bound is derived from its own assertions, and 
    * derived, so adding a provider widens the expected count with the list rather than making
    * this control red for the wrong reason. It was `SIGNIN_MARKER.length + 4` with the wrapper
    * count typed into the 4, which broke the moment the wrapper list stopped being one item.
+   */
+  /*
+   * The generated wrapper names must be USABLE, not merely generated. `signInWith${name}(` is
+   * built from a provider's display name, and a name carrying a space or a hyphen would
+   * produce `signInWith Foo Bar(`, which no source file can contain: a dead branch that reads
+   * like a working ban. An arm raised exactly that shape.
+   */
+  for (const wrapper of NAMED_PROVIDER_WRAPPERS) {
+    assert.match(
+      wrapper,
+      /^signInWith[A-Za-z][A-Za-z0-9]*\($/,
+      `"${wrapper}" is not a JavaScript identifier followed by "(", so nothing can ever match ` +
+        `it and the ban it states is dead. A provider name with a space or punctuation in it ` +
+        `needs its own identifier field in auth-providers.ts.`,
+    );
+  }
+
+  /*
+   * WHAT THIS LENGTH CHECK DOES AND DOES NOT DO. The marker and wrapper terms are derived on
+   * both sides, so it cannot catch a mismatch inside those. What it catches is the thing its
+   * message names: a line TYPED into SWEEP_CATCHES beside the generated ones, which is how a
+   * stated bound starts claiming something no assertion enforces. CALL_CLAIMS and LABEL_CLAIM
+   * are the two terms that stay typed, and they are what makes it more than a spread operator.
    */
   const CALL_CLAIMS = 2;
   const LABEL_CLAIM = 1;
