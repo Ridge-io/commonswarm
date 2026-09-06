@@ -402,6 +402,54 @@ test("an hour wedged at 15s still lapses after cadence is later 60s", () => {
   assert.match(rendered, /60\/240 expected \(0\.250\)/);
 });
 
+const MID_HOUR = "2026-09-01T10:59:30.000Z";
+
+function healthHourThenMidHourCadence(
+  hourCadenceMs: number,
+  claims: number,
+  midHourCadenceMs: number,
+) {
+  let health = recordListenerClaimCadence(
+    emptyListenerReadHealth(),
+    hourCadenceMs,
+    HOUR_START,
+  );
+  for (let i = 0; i < claims; i++) {
+    health = recordListenerClaim(health, HOUR_START);
+  }
+  return recordListenerClaimCadence(health, midHourCadenceMs, MID_HOUR);
+}
+
+test("an hour idled at 60s does not lapse after a 15s record mid-hour", () => {
+  const health = healthHourThenMidHourCadence(
+    IDLE_POLL_MAX_MS,
+    61,
+    IDLE_POLL_DEFAULT_MS,
+  );
+  const rendered = renderListenerStatus(
+    readHealthStatus(health),
+    undefined,
+    Date.parse(NEXT_HOUR),
+  );
+  assert.doesNotMatch(rendered, /listener_claim_throughput_lapse/);
+  assert.match(rendered, /^Listener ready /);
+});
+
+test("an hour at 15s then 60s mid-hour with 60 claims does not lapse", () => {
+  const health = healthHourThenMidHourCadence(
+    IDLE_POLL_DEFAULT_MS,
+    CLAIMS_HEALTHY_AT_60S_LAPSE_AT_15S,
+    IDLE_POLL_MAX_MS,
+  );
+  const rendered = renderListenerStatus(
+    readHealthStatus(health),
+    undefined,
+    Date.parse(NEXT_HOUR),
+  );
+  assert.doesNotMatch(rendered, /listener_claim_throughput_lapse/);
+  assert.match(rendered, /^Listener ready /);
+});
+
 test("claim-hour parse keeps old files and records per-hour cadence", () => {
   const oldFile = parseListenerReadHealth({
     ...emptyListenerReadHealth(),

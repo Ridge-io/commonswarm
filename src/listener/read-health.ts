@@ -27,7 +27,7 @@ export interface ListenerReadRetryMinute {
 export interface ListenerClaimHour {
   hourStart: string;
   claims: number;
-  /** Cadence in force during this hour; absent on files written before per-hour scoring. */
+  /** Slowest cadence recorded in this hour; absent on files written before per-hour scoring. */
   cadenceMs?: number;
 }
 
@@ -201,7 +201,7 @@ export function recordListenerReadRecovery(
   };
 }
 
-/** Record the claim cadence in force at `ts` for that hour's expected count. */
+/** An hour is scored at the slowest cadence recorded in it. */
 export function recordListenerClaimCadence(
   health: ListenerReadHealth,
   cadenceMs: number,
@@ -210,8 +210,13 @@ export function recordListenerClaimCadence(
   const hourStart = bucketStart(ts, HOUR_MS);
   const claimHours = health.claimHours.map((row) => ({ ...row }));
   const hour = claimHours.find((row) => row.hourStart === hourStart);
-  if (hour) hour.cadenceMs = cadenceMs;
-  else claimHours.push({ hourStart, claims: 0, cadenceMs });
+  if (hour) {
+    hour.cadenceMs = hour.cadenceMs === undefined
+      ? cadenceMs
+      : Math.max(hour.cadenceMs, cadenceMs);
+  } else {
+    claimHours.push({ hourStart, claims: 0, cadenceMs });
+  }
   return {
     ...health,
     claimCadenceMs: cadenceMs,

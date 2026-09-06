@@ -62,3 +62,4 @@ EXPLAIN ANALYZE, large local seed (4,084 rows in one workspace): Seq Scan, 0.986
 - A live 0.1.56 listener pointed at this worktree's edge.
 - `test:p1-local` human-seen-browser (Chrome POST count flake, not this lane).
 - Empty-queue `claim_agent_inbox` skips `checkDeliveryRateLimit` (`mustLimit` is false). An agent token with an empty queue has no server-side claim ceiling; each request still runs the claim function's three UPDATEs. Ruled acceptable for now. The next lane (`push`) is where that ceiling returns.
+- An hour whose cadence changes is scored at the slowest cadence recorded in it. That cannot false-lapse. It can miss a wedge only inside one hour that also had a slow interval.
