@@ -1,0 +1,122 @@
+### D-036 Review Arm — Inversion Role (Final Round)
+
+**Document Under Review:** `docs/design/2026-09-06-PUSH-DELIVERY.md` at commit `22e2bea` (Draft 4, Final-Round Candidate)  
+**Branch:** `spec/push-delivery`  
+**Review Type:** INVERSION Arm (Refutation Analysis & Final Verification)
+
+---
+
+### 1. Citations & Code Artifacts Checked
+
+The claims and file citations in Draft 4 were verified against the codebase schemas, runtime definitions, test harnesses, and experiment records:
+- **Server Edge Functions & SQL:**
+  - `supabase/functions/command/index.ts`: `:3576`, `:4112`, `:4140`, `:4208` (the exact four `revoked_at` writes to `agent_tokens` and `agent_principals`); `:3973`, `:4012`, `:4172`, `:4181`, `:4237`, `:4428`, `:5778` (the seven non-agent `revoked_at` statements confirmed excluded); `:4868`, `:4881-4888` (`rate_buckets` minute window); `:4904-4934` (claim rate limit of 120/min and alert emission); `:8348-8451` (claim branch idempotency and audit gate); `:8433-8451` (claim response object).
+  - `supabase/functions/command/durable-delivery.ts`: `:21` (`DELIVERY_CLAIM_RATE_LIMIT_PER_MINUTE = 120`); `:66-71` (`DeliveryClaimLedgerResponse` fields); `:195-211` (lease reset mutation); `:212-231` (TTL expiry mutation); `:272-300` (claim query index scan).
+  - `supabase/functions/read/index.ts`: `:417-418` (`swarm_read` execution role); `:437-451` (`agent_delivery_read_context` invocation); `:483-487` (foreign-workspace early return); `:490-496` (`record_renewal_grant_use`); `:826-832` (own-workspace response payload carrying `wake`).
+  - `supabase/functions/activity/index.ts`: `:139-145` (`RESET ROLE` restoring connection role `postgres` to execute `realtime.send`).
+- **Client Runtime & Parsers:**
+  - `src/listener/runtime.ts`: `:77`, `:778`, `:1455-1456` (`LISTENER_IDLE_POLL_MS = 2000`); `:612-630`, `:1104` (`classifyDeliveryMode`); `:1075-1082` (`readAgentSignalPage`); `:1365-1394` (`claim_agent_inbox`).
+  - `src/listener/control.ts`: `:225-274` (`STATUS_ALLOWED_KEYS`); `:282-297` (`STATUS_SENSITIVE_KEYS`); `:377-381`, `:550` (top-level key filtering); `:396-398` (`parseListenerReadHealth`).
+  - `src/listener/read-health.ts`: `:12`, `:415` (`LISTENER_THROUGHPUT_LAPSE_RATIO`); `:40`, `:202-207` (`claimCadenceMs`); `:403-413` (`expectedClaims` derivation).
+  - `src/cloud/signals.ts`: `:125-132`, `:294-310` (read capabilities); `:1211-1218` (parser ignoring unknown JSON fields); `:1501-1538` (`--wait` loop).
+  - `src/cloud/delivery.ts`: `:518-587` (`parseClaimSuccess`); `:821-847` (`claim_agent_inbox`).
+  - `src/cloud/renewal.ts`: `:121-125`, `:852-853` (token renewal parser and loop).
+  - `src/cloud/arrival-watch.ts`: `:25`, `:357`, `:387-391` (`ARRIVAL_WATCH_POLL_MS = 25000`); `:336-338`, `:431-437` (read-only cursor advance).
+  - `src/host/credential-redaction.ts`: `:19-21` (`CREDENTIAL_PREFIX_RE`).
+  - `src/host/stderr-tail.ts`: `:43`.
+- **Database Migrations & Test Gates:**
+  - `20260723000001_p1_schema.sql`: `:192-216` (`agent_tokens`, `agent_principals`); `:213` (`agent_tokens_by_principal`); `:380` (`idem_purge` index); `:588-590` (`audit_log_append_only`); `:793-816` (`purge_expired_idempotency_keys`).
+  - `20260731000001_signal_deliveries.sql`: `:487` (`agent_delivery_read_context` definition).
+  - `20260820000002_p1_grants.sql`: `:25` (`is_member` grant); `:306` (`agent_delivery_read_context` grant).
+  - `20260905000020_enqueue_triggers.sql`: `:152-176`, `:189-217` (`enqueue_signal_delivery`, `enqueue_recipient_delivery` with `SET search_path = pg_catalog`).
+  - `package.json`: `:23` (`npm test`), `:25` (`test:p1-cli`), `:26` (`test:p1-local`), `:29` (`test:p1-server`).
+  - `tests/p1-cli/test-gate-coverage.test.ts`: `:19-21`, `:23-34`, `:86-96`, `:124`, `:125-133` (exact gate coverage pins).
+  - `docs/evidence/2026-09-06-push-delivery-spec/realtime-anon-private-topic-experiment.{mjs,out}` (anon key join, private topic, RLS policy evaluation, sub-second send delivery).
+
+---
+
+### 2. Inversion Arguments Evaluation
+
+#### Inversion (a): That owning the trigger functions as `postgres` is unsafe or unavailable on hosted Supabase.
+- **Inversion Claim:** Assigning trigger functions to `postgres` represents an unacceptable privilege escalation vulnerability or will be rejected/unavailable in managed Supabase environments.
+- **Spec & Evidence Analysis:**
+  1. *Availability:* All migrations run through the Supabase CLI (`supabase db push`) or dashboard connect as the administrative superuser role `postgres`. `ALTER FUNCTION ... OWNER TO postgres` is standard across Supabase extensions and migrations. Furthermore, `realtime.send` is deployed into schema `realtime`, where `postgres` natively holds `USAGE` and `INSERT` privileges on `realtime.messages`.
+  2. *Necessity:* Opus D1 established on the local stack that `swarm_admin` lacks `USAGE` on `realtime` and `INSERT` on `realtime.messages` (`has_schema_privilege('swarm_admin','realtime','USAGE') = false`). Granting table-level permissions to `swarm_admin` fails because `realtime.messages` is partitioned daily by the Realtime service, and newly created partitions do not reliably inherit grants.
+  3. *Safety & Containment:* The trigger functions (`swarm.wake_agent_delivery()`, `swarm.wake_workspace_signal()`) are hardened with `SET search_path = pg_catalog`, preventing search-path hijacking. All table accesses (`swarm.agent_principals`) and function calls (`realtime.send`) are fully schema-qualified. The trigger takes no user parameters, executes no dynamic SQL, and only emits a content-free broadcast (`signal_id`, `enqueued_at`).
+  4. *Codebase Precedent:* The existing activity edge function already relies on `RESET ROLE` to revert to the connection role `postgres` precisely to invoke `realtime.send` (`activity/index.ts:139-145`).
+- **Verdict:** **BEATEN BY SPEC (Refuted).**
+
+---
+
+#### Inversion (b): That re-creating `agent_delivery_read_context` with an extra output column breaks a 0.1.56 client or the read edge during the apply window.
+- **Inversion Claim:** Replacing `swarm.agent_delivery_read_context` via `DROP FUNCTION` / `CREATE FUNCTION` to add the 11th `OUT` column (`wake_id`) breaks backward compatibility for 0.1.56 listeners and causes runtime failures in `read/index.ts` during migration deployment.
+- **Spec & Evidence Analysis:**
+  1. *0.1.56 Client Isolation:* 0.1.56 listeners invoke the HTTP endpoint `POST /functions/v1/read`, never database functions directly. The response parser in `src/cloud/signals.ts:1211-1218` strictly parses known fields and silently drops unrecognized keys. The addition of `wake: { topic, event }` in the response is purely additive.
+  2. *Apply Window Invariant:* In Postgres, function replacement inside a DDL transaction is atomic. The input argument signature `(bytea, uuid)` remains identical. Adding an OUT parameter changes the composite record return type; calling queries in the pre-L3 `read/index.ts:437-451` that select explicit columns continue resolving their requested fields without error.
+  3. *Apply Sequence:* The lane sequencing in §6 explicitly enforces: L2 migration applied first → L3 read/command edge deployed second → L4 client deployed last. Pre-L3 `read` ignores the 11th column until L3 deploys; 0.1.56 clients ignore `wake` indefinitely and continue polling at their existing cadence.
+- **Verdict:** **BEATEN BY SPEC (Refuted).**
+
+---
+
+#### Inversion (c): That the lane order still lets two lanes hold the local database at once.
+- **Inversion Claim:** The revised lane schedule in §6 still allows concurrent database test execution or lock contention across lanes sharing the local database container.
+- **Spec & Evidence Analysis:**
+  1. *Resource Serialization Rule:* The local database is explicitly treated as an exclusive lock resource: any lane executing `test:p1-local` or `test:p1-server` requires exclusive access to prevent `db:reset` collisions (`tests/p1-cli/test-gate-coverage.test.ts:19-21`).
+  2. *Verification of Database-Holding Lanes:*
+     - L0 (idle cost constants): touches no database.
+     - L1 (claim persistence): runs `test:p1-server`. Holds local DB exclusively.
+     - L2c (credential redaction): pure unit tests, touches no database. Runs in parallel with L0/L1.
+     - L2 (wake migration): runs `test:p1-local`. Scheduled strictly *after* L1 merges.
+     - L2b (retention policy): runs `test:p1-local`. Scheduled strictly *after* L2 merges.
+     - L3 (wake response & rotation): runs `test:p1-server`. Scheduled strictly *after* L2 merges.
+     - L4 (listener client): fake-socket tests in CI; live local validation is an isolated manual step. Scheduled strictly *after* L0, L2b, L2c, and L3.
+     - L5, L6, L7, L8: sequenced downstream; L6 runs site tests only with zero database interaction.
+  3. All lanes touching the database (`L1 -> L2 -> L2b -> L3`) form a strictly serialized chain.
+- **Verdict:** **BEATEN BY SPEC (Refuted).**
+
+---
+
+#### Inversion (d): That 'revocation by intent' leaves a credential path whose stale subscriber learns more than 'principal X has work'.
+- **Inversion Claim:** Because rotation does not trigger on database-level cascades (such as grant expiry, run completion, or workspace archival), a stale subscriber holding an unrotated `wake_id` can observe sensitive message contents or metadata.
+- **Spec & Evidence Analysis:**
+  1. *Payload Boundary:* W1 and W4 define the wake payload strictly as:
+     `{ "v": 1, "signal_id": "<uuid>", "enqueued_at": "<timestamptz>" }`
+     The payload carries zero signal bodies, no sender principal, no channel names, no kinds, and no arguments.
+  2. *Claim & Read Enforcement:* A wake conveys no capability to read data. To claim or read the payload, an agent must present a valid, unrevoked bearer token (`swm_agt_...`) to `POST /functions/v1/command` or `/read`. When credentials expire or are revoked via cascade, the claim/read calls are rejected with 401/403.
+  3. *Channel Authorization:* Realtime RLS policy `agent receives its own wake` (W5) restricts anon listeners to matching `cswarm-wake:{wake_id}`. Stale subscribers cannot join workspace topics (`cswarm-signals:{workspace_id}`) or other principals' topics. The maximum possible leakage for a stale subscriber is knowing that a signal was enqueued for principal X at timestamp T—exactly "principal X has work".
+- **Verdict:** **BEATEN BY SPEC (Refuted).**
+
+---
+
+#### Inversion (e): That the whole design is not worth it against lane A's 15-second poll (the strongest case for doing nothing).
+- **Inversion Claim:** Lane A's simple constant change to a 15-second poll reduces invocations sufficiently that building push delivery adds unnecessary complexity.
+- **Spec & Evidence Analysis:**
+  1. *Latency Penalties:* Lane A introduces an unavoidable delivery latency of up to 15 seconds (mean 7.5 s) on every single delivery turn. In multi-agent collaborative workflows and interactive CLI commands, adding 7.5–15 seconds per hop degrades system performance and violates the operator requirement that the system "works well". Push delivery delivers wakes in < 0.5 s (sub-second observed locally).
+  2. *Scaling Asymptotics:*
+     - Lane A's 15 s polling cuts invocations by ~7×, but cost continues to scale linearly with seats: `seats × (1 / cadence)`. At 1,000 seats, Lane A consumes ~7.2 million edge invocations/day (~$140/mo); at 10,000 seats, it consumes ~72 million invocations/day (~2.16 billion/month, ~$4,300/mo).
+     - Push delivery reduces idle edge invocations by 96% (from ~53,800 to ~2,200 per seat/day). At 1,000 seats, edge invocations drop to ~2.4M/day; with presence (Successor 1), 10,000 seats drop to ~4.6M/day (~$280/mo).
+  3. *Persistence Write Amplification:* Under Lane A polling, each seat continues executing claims that hit `checkDeliveryRateLimit` minute buckets and consume database CPU. Push delivery eliminates per-tick polling, reducing rows written per idle day from 49,400 to ~400 short-lived rate-bucket rows.
+  4. *Complementarity:* Lane A is not an alternative to push delivery; it is lane L0, which serves as the safety net and fallback transport during reconnects, outages, and proxy restrictions.
+- **Verdict:** **BEATEN BY SPEC (Refuted).**
+
+---
+
+### 3. Review Against Requirements
+
+1. **Wire contract & failure modes:** Push-as-hint with private topic `cswarm-wake:{wake_id}`, exact JSON payload, authorization via `wake_topic_authorized`, and full breakdown of all 14 failure modes (§2.2, §2.4).
+2. **Cost per idle seat per day & arithmetic:** Derived in §1.3 and §7; drops from 53,800 to 2,200 edge invocations/day (−96%) and 49,400 rows to 400 rows/day.
+3. **Persistence and retention:** Zero audit/idempotency persistence on empty claims (§3.1); idempotency retention floor lowered to 1 day with 2-day active retention in L2b (§3.2).
+4. **Watcher and web app:** `inbox --notify` unified on W1 (§4.1); app live feed unified on W2 workspace topic (§4.3).
+5. **Indexes & query plans:** Confirmed against `local-plans.out` with partial index scan on `signal_deliveries_unacked_oldest` and unique index on `agent_principals_wake_id` (§5).
+6. **Lane apply order & file ownership:** Explicit ownership matrix across L0–L8 with disjoint file assignments, test pins, and exclusive single-file local database sequencing (§6).
+7. **Capacity scaling:** Evaluated at 100, 1,000, and 10,000 seats with explicit connection and message limits (§7).
+
+**DEFECTS:** 0  
+**GAPS:** 0  
+**NITS:** 0  
+
+---
+
+QUOTE-BACK: # Push delivery: wake listeners from Supabase Realtime instead of polling
+VERDICT: PASS
+REASON: All five inversion challenges are conclusively refuted by the spec's verified architectural invariants, security boundaries, and strictly serialized database test lanes.
