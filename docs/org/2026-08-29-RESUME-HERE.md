@@ -2368,3 +2368,17 @@ arm's read-health finding); L1 (empty-claim persistence) is COVERED by lane A's 
 client-only) started now under Grok in `lane-wake-redaction`; then L2b, L3, L4 (the client, Opus
 review on every SHA), L5, L6 (Gemini, site), L7, L8. One local database at a time; §9's four-item
 hosted-privilege check runs before L2's migration reaches production.
+
+## 2026-09-06 05:3x UTC — GOOGLE SIGN-IN LIVE end to end (merge bc54c78)
+
+The operator's browser agent completed the Google Cloud side (project `commonswarm`, number
+130762122221, client "CommonSwarm web", consent screen published External, three identity
+scopes, redirect `https://api.commonswarm.com/auth/v1/callback`); the operator pasted the secret;
+`/auth/v1/settings` reads `google: true`; authorize redirects to Google with that client id.
+`lane/google-copy` 824c4fb (reviewed 22048d3; Opus PM after the Gemini author stopped at its
+first FAIL) merged as `bc54c78`: every sentence naming a sign-in door is generated from
+AUTH_PROVIDERS; a fixture starts a fake GoTrue and runs the real astro build in four provider
+states; the live policy had published "GitHub, Inc.." and now does not. Deployed: Google button
+live on `/invite` and `/app`, `/privacy` names Google LLC. Not established: a real Google sign-in
+(operator, step 9 of the checklist); account linking on an address that already has GitHub.
+Filed: `cswarm login` still hardcodes GitHub (`src/cloud/auth.ts:227`).
