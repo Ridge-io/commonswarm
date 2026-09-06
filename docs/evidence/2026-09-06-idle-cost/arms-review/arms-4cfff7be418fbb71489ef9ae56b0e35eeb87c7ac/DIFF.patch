@@ -1,0 +1,1909 @@
+diff --git a/docs/evidence/2026-09-06-idle-cost/README.md b/docs/evidence/2026-09-06-idle-cost/README.md
+new file mode 100644
+index 0000000..9b4457d
+--- /dev/null
++++ b/docs/evidence/2026-09-06-idle-cost/README.md
+@@ -0,0 +1,68 @@
++# Idle edge cost (lane A)
++
++Local measurements on 2026-09-05 against `127.0.0.1:54322` only. Production was not touched. The seed was applied with `npx supabase migration up --local` plus INSERT; this was not a `db:reset` (the host shares the local stack). Outcome on historical `claim_agent_inbox` rows cannot tell empty from leased: both were stored as `outcome = 'accepted'`. Retention therefore deletes by kind after 7 days.
++
++## Calls per seat per day
++
++`86400 / interval`. Code default before this lane: `LISTENER_IDLE_POLL_MS = 2000`. Production 2026-09-05: 390,277 edge commands in 24 h, 100% `claim_agent_inbox`, 16 seats, median 3.6 s (~24,000 calls/seat/day). After this lane, empty polls wait 15 s, then 30 s, then 60 s until a delivery resets to the configured base.
++
++| cadence | calls/seat/day | 16 seats / day | 16 seats / 30 days |
++|---|---:|---:|---:|
++| 2 s (old code default) | 43,200 | 691,200 | 20,736,000 |
++| 3.6 s (measured median) | 24,000 | 384,000 | 11,520,000 |
++| 15 s (new default, idle, no back-off yet) | 5,760 | 92,160 | 2,764,800 |
++| 60 s (back-off floor) | 1,440 | 23,040 | 691,200 |
++
++A fleet that stays idle at the 60 s floor is 30 times quieter than the 2 s default, 16.7 times quieter than the measured 3.6 s median. The 15 s default alone is 7.5 times quieter than 2 s. These numbers count command-edge `claim_agent_inbox` only. An idle listener also POSTs the read edge each tick; that cut is the same client cadence and is not a second persistence row.
++
++`inbox --notify` was 25 s (`ARRIVAL_WATCH_POLL_MS`). It now starts at 60 s and uses the same back-off helper. 21 watchers at 25 s were 3,456 reads/watcher/day; at 60 s that is 1,440. A second watcher for the same principal on the same host is refused (lock file beside the cursor; the sentence names the other pid).
++
++## Rows no longer written
++
++Every empty poll used to INSERT one `swarm.audit_log` row and one `swarm.idempotency_keys` row. Production held 1.47 M of each (1.5 GB) against 1,716 signals. After the edge change, `claimAgentInboxPersistsLedger` is `delivery_refs.length > 0 || terminal_delivery_failure_count > 0`: an idle poll returns 200 and writes neither row. A claim that leases a row, or that terminalizes a poisoned row, still writes both. Idempotency for every other command is unchanged. A 0.1.56 listener that retries an idle command id re-executes (intended: it can pick up a row that arrived during the retry).
++
++Not skipped: `rate_buckets` still upserts on the claim path (one row per principal per window; `swarm-purge-rate-buckets` already drains it). Poison / hydration failure still write their audit and alert rows.
++
++Going forward, idle seats write 0 of the two growing tables. At the measured 24,000 empty polls/seat/day that is 48,000 rows/seat/day that stop landing (16 seats: 768,000/day, 23.0 M/month). At the new 15 s default, 5,760 empty polls would have written 11,520 of those rows/seat/day; they now write 0. Historical idle rows are bounded by the purge below.
++
++## Retention (local seed)
++
++`audit_log` cannot distinguish empty historical claims, so `purge_idle_claim_audit` deletes `command_kind = 'claim_agent_inbox'` older than `claim_audit_retention_days` (7, floor 7). `purge_expired_idempotency_keys(batch_size)` deletes keys older than `idempotency_retention_days` (floor 30) in batches of 5,000. `purge_idle_cost_tables()` loops both (cap 200 batches each). pg_cron job `swarm-purge-idle-cost` at `23 3 * * *` (`SELECT swarm.purge_idle_cost_tables()`). Existing `swarm-purge-idempotency-keys` at `17 3 * * *` kept. The append-only trigger now blocks UPDATE only; DELETE is reserved for this SECURITY DEFINER purge owned by `swarm_admin`. `swarm_command` still INSERT-only.
++
++Seed (principal `idle-cost-seed`, dedicated workspace): 40 old claim audits + 5 fresh extra (fresh total 71 including pre-existing); 12 old + 3 fresh idempotency keys.
++
++```
++SELECT swarm.purge_idle_cost_tables();
++-- { "audit_log_deleted": 40, "idempotency_keys_deleted": 12 }
++```
++
++After: old claim audits 0, fresh claim audits 71, old keys 0, fresh keys 3. Re-query after the purge (same stack): `claim_old=0`, `claim_fresh=71`, `old_keys=0`, `all_keys=957`. Claim outcomes present on this stack: accepted 51, replayed 6, authz 5, revocation 4, conflict 3, rate_limit 2. None of those outcomes means "empty".
++
++## file_versions quota index
++
++Hot query: `file-artifacts.ts` `SUM(size_bytes)` where `workspace_id = $1 AND (state IN ('live','retired') OR (state = 'pending' AND created_at > now() - 3h))`. Seed: workspace `aaaaaaaa-aaaa-4aaa-8aaa-aaaaaaaac001`, 8,000 versions; table `reltuples=8090`, 2,015,232 bytes. Indexes already present: unique `(file_id, workspace_id, version_n)`, `(workspace_id, state)`, pending partial on `created_at`. Added: `file_versions_workspace_state_created` btree `(workspace_id, state, created_at)`.
++
++EXPLAIN before (after other indexes, before the new one):
++
++```
++Aggregate  (cost=466.38..466.40 rows=1 width=32)
++  ->  Seq Scan on file_versions  (cost=0.00..448.25 rows=7252 width=8)
++        Filter: ((workspace_id = 'aaaaaaaa-aaaa-4aaa-8aaa-aaaaaaaac001'::uuid) AND ((state = ANY ('{live,retired}'::text[])) OR ((state = 'pending'::text) AND (created_at > (statement_timestamp() - '03:00:00'::interval)))))
++```
++
++EXPLAIN after (index listed in `pg_indexes`; planner still Seq Scan, same cost). EXPLAIN ANALYZE after: actual 8,000 rows, 5.531 ms, Seq Scan, 90 rows removed by filter. With `enable_seqscan=off` the same query is `Bitmap Index Scan on file_versions_workspace_state_created` (cost 566.23, 7.426 ms). The index is usable. At 8k rows seq scan is cheaper. Production's 2.8 M sequential scans is the size this index is for. Index Scan on production was not observed.
++
++## Apply order
++
++1. Migration (`20260906000001_idle_cost_retention`, `20260906000002_file_versions_quota_index`).
++2. Edge (`command`; empty claims skip both writes).
++3. Client release (15 s / 60 s cadence, `--poll-interval`, status sentence, notify lock).
++4. Fleet restart (0.1.56 listeners keep the 2 s poll until they run the new binary).
++
++## Not established
++
++- Production apply, production EXPLAIN, or any write to `cloud-swarm-dev`.
++- That 8k-row local EXPLAIN would choose the new index.
++- That `rate_buckets` upserts stop (they do not).
++- That a live 0.1.56 listener was pointed at this worktree's edge (compat is by construction: empty retry re-executes; old clients ignore unknown status fields).
++- A `db:reset` seed of the retention shape (the counts above are a dedicated seed on the shared local stack).
+diff --git a/package.json b/package.json
+index 9221554..0c8237d 100644
+--- a/package.json
++++ b/package.json
+@@ -20,7 +20,7 @@
+     "dev": "tsc --watch",
+     "check:tests": "tsc -p tsconfig.tests.json",
+     "check:edge": "deno check --config supabase/functions/command/deno.json supabase/functions/command/index.ts supabase/functions/read/index.ts supabase/functions/capability/index.ts supabase/functions/activity/index.ts",
+-    "test": "node --import tsx --test tests/brain-namespace.test.ts tests/signal-attachments.test.ts tests/host-version-floor.test.ts tests/protocol-next.test.ts tests/protocol-workspace.test.ts tests/protocol-agent-token-binding.test.ts tests/support/cold-start-retry.test.ts tests/support/signal-fetch-deadline.test.ts tests/support/agent-receive-cli.test.ts tests/support/arrival-watch.test.ts tests/p1-cli/resume.test.ts tests/p1-cli/resume-process-table.test.ts tests/delivery-client.test.ts tests/delivery-receipts.test.ts tests/p1-cli/d038-invite-form.test.ts tests/p1-cli/listener-provider.test.ts tests/p1-cli/standing-grants.test.ts tests/p1-cli/citation-drift.test.ts tests/p1-cli/test-gate-coverage.test.ts tests/p1-cli/agent-trailers.test.ts tests/command-cors.test.ts tests/command-durable-failures.test.ts tests/fresh-auth.test.ts tests/remove-member-mutation.test.ts tests/agent-revocation-mutation.test.ts tests/read-edge-diagnostics.test.ts tests/host-acp-grok.test.ts tests/host-permission-session-scope.test.ts tests/host-acp-claude.test.ts tests/host-acp-codex.test.ts tests/host-stderr-tail.test.ts tests/listener-activity.test.ts tests/listener-engine.test.ts tests/listener-effect-store.test.ts tests/listener-grok-model.test.ts tests/listener-claude-model.test.ts tests/listener-codex-model.test.ts tests/listener-runtime.test.ts tests/listener-routing.test.ts tests/listener-control.test.ts tests/listener-detach.test.ts tests/listener-cli-process.test.ts tests/host-acp-opencode.test.ts tests/listener-opencode-model.test.ts tests/host-acp-opencode-homes.test.ts tests/listener-host-limits.test.ts tests/listener-delivery-journal.test.ts tests/claim-ledger-parse.test.ts tests/receipt-wire-compat.test.ts tests/chat-channel-constants.test.ts tests/chat-signal-wire-compat.test.ts",
++    "test": "node --import tsx --test tests/brain-namespace.test.ts tests/signal-attachments.test.ts tests/host-version-floor.test.ts tests/protocol-next.test.ts tests/protocol-workspace.test.ts tests/protocol-agent-token-binding.test.ts tests/support/cold-start-retry.test.ts tests/support/signal-fetch-deadline.test.ts tests/support/agent-receive-cli.test.ts tests/support/arrival-watch.test.ts tests/p1-cli/resume.test.ts tests/p1-cli/resume-process-table.test.ts tests/delivery-client.test.ts tests/delivery-receipts.test.ts tests/p1-cli/d038-invite-form.test.ts tests/p1-cli/listener-provider.test.ts tests/p1-cli/standing-grants.test.ts tests/p1-cli/citation-drift.test.ts tests/p1-cli/test-gate-coverage.test.ts tests/p1-cli/agent-trailers.test.ts tests/command-cors.test.ts tests/command-durable-failures.test.ts tests/fresh-auth.test.ts tests/remove-member-mutation.test.ts tests/agent-revocation-mutation.test.ts tests/read-edge-diagnostics.test.ts tests/host-acp-grok.test.ts tests/host-permission-session-scope.test.ts tests/host-acp-claude.test.ts tests/host-acp-codex.test.ts tests/host-stderr-tail.test.ts tests/listener-activity.test.ts tests/listener-engine.test.ts tests/listener-effect-store.test.ts tests/listener-grok-model.test.ts tests/listener-claude-model.test.ts tests/listener-codex-model.test.ts tests/idle-poll.test.ts tests/idle-cost-retention.test.ts tests/listener-runtime.test.ts tests/listener-routing.test.ts tests/listener-control.test.ts tests/listener-detach.test.ts tests/listener-cli-process.test.ts tests/host-acp-opencode.test.ts tests/listener-opencode-model.test.ts tests/host-acp-opencode-homes.test.ts tests/listener-host-limits.test.ts tests/listener-delivery-journal.test.ts tests/claim-ledger-parse.test.ts tests/receipt-wire-compat.test.ts tests/chat-channel-constants.test.ts tests/chat-signal-wire-compat.test.ts",
+     "test:site": "npm --prefix site test",
+     "test:p1-cli": "node scripts/require-cli-build.mjs && node --import tsx --test tests/p1-cli/**/*.test.ts",
+     "test:p1-local": "node --import tsx --test --test-concurrency=1 tests/p1-local/local-integration.test.ts tests/p1-local/file-artifacts-e2e.test.ts tests/p1-local/delivery-receipts-postgres.test.ts tests/p1-local/human-seen-browser.test.ts tests/p1-local/standing-grants-postgres.test.ts tests/p1-local/activity-realtime-auth.test.ts tests/p1-local/chat-channels-postgres.test.ts tests/p1-local/chat-recipients-postgres.test.ts",
+diff --git a/src/cli.ts b/src/cli.ts
+index d0d26df..df50c9f 100755
+--- a/src/cli.ts
++++ b/src/cli.ts
+@@ -221,7 +221,9 @@ import {
+   type SignalAttachmentRef,
+ } from "./cloud/attachments.js";
+ import {
++  acquireArrivalWatchLock,
+   arrivalNotification,
++  arrivalWatchLockPath,
+   createArrivalRetryNoticePolicy,
+   fileArrivalCursorStore,
+   formatArrivalNotification,
+@@ -229,9 +231,15 @@ import {
+   ARRIVAL_RETRY_NOTICE_THRESHOLD_MS,
+   EXIT_NOTIFY_ORPHANED,
+   NotifyStdoutClosedError,
++  releaseArrivalWatchLock,
+   runArrivalWatch,
+   writeArrivalMonitorLine,
+ } from "./cloud/arrival-watch.js";
++import {
++  idlePollHelpSentence,
++  idlePollStatusSentence,
++  parseIdlePollIntervalMs,
++} from "./cloud/idle-poll.js";
+ import {
+   renderSignalReceiptReport,
+   signalReceiptJsonPayload,
+@@ -326,7 +334,7 @@ const KNOWN_FLAGS = new Set([
+   "link-stdin", "local", "model", "name", "ndjson", "no-browser", "notify", "opencode-executable", "out",
+   "permissions", "principal-id", "provider", "purpose", "renewal-grant-id", "repo", "reveal-anon-key", "route", "run-id", "since", "site", "slug", "state-dir",
+   "thread",
+-  "renewal-horizon-days", "standing", "task-id", "to", "token-id", "ttl-ms", "turn-budget", "uid", "until", "url", "user", "version", "wait", "workspace-id", "write",
++  "poll-interval", "renewal-horizon-days", "standing", "task-id", "to", "token-id", "ttl-ms", "turn-budget", "uid", "until", "url", "user", "version", "wait", "workspace-id", "write",
+ ]);
+ 
+ const BOOLEAN_FLAGS = new Set([
+@@ -551,7 +559,7 @@ Usage:
+   cswarm brain get <topic>[@<version>] [--version <n>] [--url <url> --anon-key <key>] [--workspace-id <uuid>] ${agentCredential} [--json]
+   cswarm brain put <topic> [<markdown-path>] [--url <url> --anon-key <key>] [--workspace-id <uuid>] ${agentCredential} [--if-version <n>] [--json]  # without a path, reads Markdown from stdin; --if-version refuses the write unless the live version is still <n>
+   cswarm feedback "<text>" --kind bug|idea|friction [--about <ref>] [--url <url> --anon-key <key>] [--workspace-id <uuid>] ${agentCredential} [--json]
+-  cswarm listen start ${requiredAgentCredential} [--url <url> --anon-key <key>] --workspace-id <uuid> --provider grok|opencode|claude|codex [--cwd <absolute-path>] [--model <model>] [--effort <level>] [--permissions deny|allow] [--grok-executable <path>] [--opencode-executable <path>] [--claude-executable <path>] [--codex-executable <path>] [--turn-budget <duration>] [--route worker|main|split] [--defer-over <chars>] [--allow-unattended] [--foreground] [--json]
++  cswarm listen start ${requiredAgentCredential} [--url <url> --anon-key <key>] --workspace-id <uuid> --provider grok|opencode|claude|codex [--cwd <absolute-path>] [--model <model>] [--effort <level>] [--permissions deny|allow] [--grok-executable <path>] [--opencode-executable <path>] [--claude-executable <path>] [--codex-executable <path>] [--turn-budget <duration>] [--poll-interval <duration>] [--route worker|main|split] [--defer-over <chars>] [--allow-unattended] [--foreground] [--json]
+   cswarm listen canary ${requiredAgentCredential} [--url <url> --anon-key <key>] --workspace-id <uuid> [--state-dir <path>] [--wait <seconds>] [--json]
+   cswarm listen status ${agentCredential} [--url <url> --anon-key <key>] --workspace-id <uuid> [--principal-id <uuid>] [--json]
+   cswarm listen stop ${agentCredential} [--url <url> --anon-key <key>] --workspace-id <uuid> [--principal-id <uuid>] [--json]
+@@ -641,6 +649,8 @@ Place -- before signal text that itself begins with -- to stop option parsing.
+ Signal text is at most 8000 characters and --about at most 500; a longer body is
+ refused locally before any network call, so compose within the limit.
+ 
++${idlePollHelpSentence()}
++
+ listen start --turn-budget bounds ONE worker prompt turn (default 10m): how long
+ the worker may think and use tools on a single message before the turn times out
+ and durable delivery retries it. A whole number plus s, m, or h (for example
+@@ -2603,6 +2613,11 @@ function listenerTurnBudgetMs(value: string | undefined): number {
+   return milliseconds;
+ }
+ 
++/** Idle claim wait. Bounds and labels come from idle-poll.ts. */
++export function listenerPollIntervalMs(value: string | undefined): number {
++  return parseIdlePollIntervalMs(value);
++}
++
+ /** Parse the public route pair before credentials or network work. */
+ export function listenerRouteConfiguration(
+   routeValue: string | undefined,
+@@ -3982,6 +3997,12 @@ async function runInboxNotifyCommand(args: Arguments): Promise<void> {
+   const stop = () => controller.abort();
+   process.on("SIGINT", stop);
+   process.on("SIGTERM", stop);
++  const lockPath = arrivalWatchLockPath(
++    cloud,
++    selected.selectedWorkspace,
++    principalId,
++  );
++  await acquireArrivalWatchLock(lockPath);
+   try {
+     const retryNotices = createArrivalRetryNoticePolicy();
+     let renderedBearer = selected.bearer;
+@@ -4059,6 +4080,7 @@ async function runInboxNotifyCommand(args: Arguments): Promise<void> {
+     process.off("SIGINT", stop);
+     process.off("SIGTERM", stop);
+     httpClient.close();
++    await releaseArrivalWatchLock(lockPath);
+   }
+ }
+ 
+@@ -4823,6 +4845,10 @@ export function listenerStatusJson(
+     readRetriesLastHour: readSummary.retriesLastHour,
+     readRetryHours: readSummary.retryHours,
+     claimCadenceMs: readHealth.claimCadenceMs,
++    idlePollMs: status.idlePollMs ?? null,
++    idlePollSentence: status.idlePollMs === undefined || status.idlePollMs === null
++      ? null
++      : idlePollStatusSentence(status.idlePollMs),
+     claimThroughputHours: readSummary.claimThroughputHours,
+     listenerLapse: lapseNotices.length > 0,
+     listenerLapseCodes: lapseNotices.map((notice) => notice.code),
+@@ -4984,6 +5010,9 @@ export function renderListenerStatus(
+     readSummary.claimThroughputHours.length === 0
+       ? "Claim throughput by full hour: no complete listener hour is available yet."
+       : `Claim throughput by full hour: ${readSummary.claimThroughputHours.map((hour) => `${hour.hourStart} ${hour.claims}/${Math.round(hour.expectedClaims)} (${hour.ratio.toFixed(3)})`).join("; ")}.`,
++    status.idlePollMs === undefined || status.idlePollMs === null
++      ? "Current idle poll interval has not been reported yet."
++      : idlePollStatusSentence(status.idlePollMs),
+   ];
+   for (const notice of lapseNotices) {
+     lines.push(`WARNING [${notice.code}]: ${notice.message}`);
+@@ -5524,6 +5553,7 @@ async function runConfiguredListener(options: {
+   codexExecutable?: string;
+   stateDirectory?: string;
+   turnBudgetMs?: number;
++  pollMs?: number;
+   routeMode?: ListenerRouteMode;
+   deferOverChars?: number | null;
+ }): Promise<ListenerStatus> {
+@@ -5913,6 +5943,7 @@ async function runConfiguredListener(options: {
+             /* One delivery may hold the seat for one turn budget, not for the
+                whole 15-minute lease. Same lever, so the two cannot drift. */
+             deliveryHoldBudgetMs: turnBudgetMs,
++            ...(options.pollMs === undefined ? {} : { pollMs: options.pollMs }),
+             pendingMainQueue,
+             fetcher: httpClient.fetch,
+           });
+@@ -5944,6 +5975,7 @@ async function runListenStart(args: Arguments): Promise<void> {
+     "codex-executable",
+     "state-dir",
+     "turn-budget",
++    "poll-interval",
+     "route",
+     "defer-over",
+     "allow-unattended",
+@@ -5961,6 +5993,7 @@ async function runListenStart(args: Arguments): Promise<void> {
+   // fast; the detached path forwards the validated string for the supervisor
+   // to re-parse.
+   const turnBudgetMs = listenerTurnBudgetMs(args.optional("turn-budget"));
++  const pollMs = listenerPollIntervalMs(args.optional("poll-interval"));
+   const routing = listenerRouteConfiguration(
+     args.optional("route"),
+     args.optional("defer-over"),
+@@ -6012,6 +6045,7 @@ async function runListenStart(args: Arguments): Promise<void> {
+       permissionMode,
+       provider,
+       turnBudgetMs,
++      pollMs,
+       ...routing,
+       ...(args.optional("model") ? { model: args.required("model") } : {}),
+       ...(args.optional("effort") ? { effort: args.required("effort") } : {}),
+@@ -6083,6 +6117,9 @@ async function runListenStart(args: Arguments): Promise<void> {
+         ...(args.optional("turn-budget")
+           ? { turnBudget: args.required("turn-budget") }
+           : {}),
++        ...(args.optional("poll-interval")
++          ? { pollInterval: args.required("poll-interval") }
++          : {}),
+         ...(args.optional("grok-executable")
+           ? { executable: args.required("grok-executable") }
+           : {}),
+@@ -6242,6 +6279,7 @@ async function runListenSupervisor(args: Arguments): Promise<void> {
+     "codex-executable",
+     "state-dir",
+     "turn-budget",
++    "poll-interval",
+     "route",
+     "defer-over",
+   ], 1);
+@@ -6250,6 +6288,7 @@ async function runListenSupervisor(args: Arguments): Promise<void> {
+   // Validated before the credential is read, like the public listen start
+   // path: a bad duration must fail fast, not after secrets moved.
+   const turnBudgetMs = listenerTurnBudgetMs(args.optional("turn-budget"));
++  const pollMs = listenerPollIntervalMs(args.optional("poll-interval"));
+   const routing = listenerRouteConfiguration(
+     args.optional("route"),
+     args.optional("defer-over"),
+@@ -6272,6 +6311,7 @@ async function runListenSupervisor(args: Arguments): Promise<void> {
+     permissionMode: listenerPermissionMode(args.optional("permissions")),
+     provider,
+     turnBudgetMs,
++    pollMs,
+     ...routing,
+     ...(args.optional("model") ? { model: args.required("model") } : {}),
+     ...(args.optional("effort") ? { effort: args.required("effort") } : {}),
+diff --git a/src/cloud/arrival-watch.ts b/src/cloud/arrival-watch.ts
+index 77a6f8b..f194b5a 100644
+--- a/src/cloud/arrival-watch.ts
++++ b/src/cloud/arrival-watch.ts
+@@ -1,5 +1,6 @@
+ import { homedir } from "node:os";
+-import { join } from "node:path";
++import { dirname, join } from "node:path";
++import { open, readFile, unlink } from "node:fs/promises";
+ import type { SignalRecord } from "./command-client.js";
+ import type { CloudTarget } from "./config.js";
+ import {
+@@ -12,17 +13,24 @@ import {
+   type SignalCursor,
+ } from "./signals.js";
+ import {
++  ensureSecureStateDirectory,
+   readSecureJsonFile,
+   writeSecureJsonFile,
+ } from "./storage.js";
++import {
++  ARRIVAL_WATCH_POLL_MS as IDLE_ARRIVAL_WATCH_POLL_MS,
++  IDLE_POLL_MAX_MS,
++  nextIdlePollMs,
++} from "./idle-poll.js";
+ 
+ const UUID_RE =
+   /^[0-9a-f]{8}-[0-9a-f]{4}-[1-8][0-9a-f]{3}-[89ab][0-9a-f]{3}-[0-9a-f]{12}$/i;
+ const CURSOR_MAX_BYTES = 4 * 1024;
+ const ARRIVAL_SNIPPET_MAX = 180;
++const WATCH_LOCK_MAX_BYTES = 512;
+ 
+ /** A remote-friendly cadence for a long-lived, human-visible arrival monitor. */
+-export const ARRIVAL_WATCH_POLL_MS = 25_000;
++export const ARRIVAL_WATCH_POLL_MS = IDLE_ARRIVAL_WATCH_POLL_MS;
+ /** Continuous read failure time before a human-visible monitor warning. */
+ export const ARRIVAL_RETRY_NOTICE_THRESHOLD_MS = 60_000;
+ /** sysexits EX_IOERR: stdout's pipe reader is gone, so the monitor must stop. */
+@@ -156,6 +164,112 @@ export function arrivalCursorPath(
+   );
+ }
+ 
++/** Lock beside the cursor so one host cannot run two watchers for one agent. */
++export function arrivalWatchLockPath(
++  target: CloudTarget,
++  workspaceId: string,
++  principalId: string,
++  root = stateRoot(),
++): string {
++  return arrivalCursorPath(target, workspaceId, principalId, root).replace(
++    /\.json$/u,
++    ".lock",
++  );
++}
++
++export function arrivalWatchAlreadyRunningSentence(pid: number): string {
++  return `inbox --notify is already running for this agent as pid ${pid}.`;
++}
++
++export class ArrivalWatchAlreadyRunningError extends Error {
++  readonly code = "notify_already_running";
++  readonly pid: number;
++  constructor(pid: number) {
++    super(arrivalWatchAlreadyRunningSentence(pid));
++    this.name = "ArrivalWatchAlreadyRunningError";
++    this.pid = pid;
++  }
++}
++
++function pidIsAlive(pid: number): boolean {
++  if (!Number.isSafeInteger(pid) || pid <= 0) return false;
++  try {
++    process.kill(pid, 0);
++    return true;
++  } catch (error) {
++    return (error as NodeJS.ErrnoException).code !== "ESRCH";
++  }
++}
++
++function parseWatchLock(raw: string): { pid: number } | null {
++  let value: unknown;
++  try {
++    value = JSON.parse(raw);
++  } catch {
++    return null;
++  }
++  if (!value || typeof value !== "object" || Array.isArray(value)) return null;
++  const row = value as Record<string, unknown>;
++  if (row.version !== 1 || !Number.isSafeInteger(row.pid) || (row.pid as number) <= 0) {
++    return null;
++  }
++  return { pid: row.pid as number };
++}
++
++export async function acquireArrivalWatchLock(
++  path: string,
++  pid: number = process.pid,
++): Promise<void> {
++  if (!Number.isSafeInteger(pid) || pid <= 0) {
++    throw new Error("arrival watch lock pid must be a positive integer");
++  }
++  await ensureSecureStateDirectory(dirname(path));
++  const payload = `${JSON.stringify({ version: 1, pid })}\n`;
++  for (let attempt = 0; attempt < 2; attempt += 1) {
++    try {
++      const handle = await open(path, "wx", 0o600);
++      try {
++        await handle.writeFile(payload, "utf8");
++      } finally {
++        await handle.close();
++      }
++      return;
++    } catch (error) {
++      if ((error as NodeJS.ErrnoException).code !== "EEXIST") throw error;
++    }
++    let existing: { pid: number } | null = null;
++    try {
++      const raw = await readFile(path, "utf8");
++      if (Buffer.byteLength(raw, "utf8") <= WATCH_LOCK_MAX_BYTES) {
++        existing = parseWatchLock(raw);
++      }
++    } catch (error) {
++      if ((error as NodeJS.ErrnoException).code !== "ENOENT") throw error;
++      continue;
++    }
++    if (existing !== null && pidIsAlive(existing.pid)) {
++      throw new ArrivalWatchAlreadyRunningError(existing.pid);
++    }
++    await unlink(path).catch(() => undefined);
++  }
++  throw new Error("arrival watch lock could not be acquired");
++}
++
++export async function releaseArrivalWatchLock(
++  path: string,
++  pid: number = process.pid,
++): Promise<void> {
++  try {
++    const raw = await readFile(path, "utf8");
++    const existing = parseWatchLock(raw);
++    if (existing === null || existing.pid !== pid) return;
++    await unlink(path);
++  } catch (error) {
++    if ((error as NodeJS.ErrnoException).code === "ENOENT") return;
++    throw error;
++  }
++}
++
+ function parseCursor(
+   raw: string,
+   workspaceId: string,
+@@ -356,6 +470,7 @@ export async function runArrivalWatch(options: {
+ }): Promise<ArrivalWatchStop> {
+   const pollMs = options.pollMs ?? ARRIVAL_WATCH_POLL_MS;
+   const random = options.random ?? Math.random;
++  let emptyIdleStreak = 0;
+   let cursor = await options.store.read();
+   let baseline = cursor === undefined;
+   let attempt = 0;
+@@ -382,6 +497,13 @@ export async function runArrivalWatch(options: {
+     });
+   };
+ 
++  const idleWait = async (hadDelivery: boolean): Promise<void> => {
++    if (hadDelivery) emptyIdleStreak = 0;
++    const intervalMs = nextIdlePollMs(pollMs, emptyIdleStreak, IDLE_POLL_MAX_MS);
++    if (!hadDelivery) emptyIdleStreak += 1;
++    await wait(intervalMs);
++  };
++
+   while (!cancelled()) {
+     try {
+       const page = await options.readPage({
+@@ -423,7 +545,7 @@ export async function runArrivalWatch(options: {
+         await options.store.write(cursor);
+         baseline = false;
+         if (cancelled()) break;
+-        await wait(pollMs);
++        await idleWait(false);
+         continue;
+       }
+ 
+@@ -441,7 +563,8 @@ export async function runArrivalWatch(options: {
+       if (cancelled()) break;
+ 
+       const fullPage = page.rawCount >= SIGNAL_FOLLOW_PAGE_LIMIT;
+-      await wait(fullPage ? 0 : pollMs);
++      if (fullPage) await wait(0);
++      else await idleWait(emittedSignals.length > 0);
+     } catch (error) {
+       if (cancelled()) break;
+       const http = followHttpDetails(error);
+diff --git a/src/cloud/idle-poll.ts b/src/cloud/idle-poll.ts
+new file mode 100644
+index 0000000..2d8139b
+--- /dev/null
++++ b/src/cloud/idle-poll.ts
+@@ -0,0 +1,99 @@
++/**
++ * Shared idle-poll cadence for the listener claim loop and inbox --notify.
++ *
++ * Empty polls back off from the configured base to IDLE_POLL_MAX_MS.
++ * Any delivery (a claimed row, or a rendered arrival) resets to the base.
++ * The flag parser, status sentence, and bound copy all read these constants.
++ */
++
++export const IDLE_POLL_DEFAULT_MS = 15_000;
++export const IDLE_POLL_MAX_MS = 60_000;
++export const IDLE_POLL_MIN_MS = 1_000;
++export const ARRIVAL_WATCH_POLL_MS = IDLE_POLL_MAX_MS;
++
++const DURATION_RE = /^([1-9]\d*)(s|m)$/;
++
++/** Whole-second duration used in flag errors and status sentences. */
++export function formatIdlePollDuration(ms: number): string {
++  if (!Number.isSafeInteger(ms) || ms <= 0) {
++    throw new Error("idle poll duration must be a positive number of milliseconds");
++  }
++  if (ms % 60_000 === 0) return `${ms / 60_000}m`;
++  if (ms % 1_000 === 0) return `${ms / 1_000}s`;
++  throw new Error("idle poll duration must be a whole number of seconds");
++}
++
++export const IDLE_POLL_MIN_LABEL = formatIdlePollDuration(IDLE_POLL_MIN_MS);
++export const IDLE_POLL_DEFAULT_LABEL = formatIdlePollDuration(IDLE_POLL_DEFAULT_MS);
++export const IDLE_POLL_MAX_LABEL = formatIdlePollDuration(IDLE_POLL_MAX_MS);
++
++export const IDLE_POLL_DURATION_EXAMPLES = ["15s", "30s", "1m"] as const;
++
++export function idlePollDurationHint(): string {
++  return IDLE_POLL_DURATION_EXAMPLES.join(", ");
++}
++
++export function idlePollBoundSentence(): string {
++  return `between ${IDLE_POLL_MIN_LABEL} and ${IDLE_POLL_MAX_LABEL}`;
++}
++
++/**
++ * Parse --poll-interval. Same shape as --turn-budget (whole number plus s or m).
++ * Bounds come from IDLE_POLL_MIN_MS / IDLE_POLL_MAX_MS so the error cannot drift.
++ */
++export function parseIdlePollIntervalMs(
++  value: string | undefined,
++  defaultMs: number = IDLE_POLL_DEFAULT_MS,
++): number {
++  if (value === undefined) return defaultMs;
++  const match = DURATION_RE.exec(value);
++  if (!match) {
++    throw new Error(
++      `--poll-interval must be a duration such as ${idlePollDurationHint()}`,
++    );
++  }
++  const unit = match[2] === "s" ? 1_000 : 60_000;
++  const milliseconds = Number(match[1]) * unit;
++  if (
++    !Number.isSafeInteger(milliseconds) ||
++    milliseconds < IDLE_POLL_MIN_MS ||
++    milliseconds > IDLE_POLL_MAX_MS
++  ) {
++    throw new Error(`--poll-interval must be ${idlePollBoundSentence()}`);
++  }
++  return milliseconds;
++}
++
++/**
++ * Next wait after an empty poll. emptyStreak is 0-based: the first empty wait
++ * is the configured base, then it doubles until maxMs (IDLE_POLL_MAX_MS).
++ * The flag parser enforces MIN/MAX; this helper does not raise a 1ms test
++ * injection to IDLE_POLL_MIN_MS.
++ */
++export function nextIdlePollMs(
++  baseMs: number,
++  emptyStreak: number,
++  maxMs: number = IDLE_POLL_MAX_MS,
++): number {
++  if (!Number.isSafeInteger(baseMs) || baseMs < 0) {
++    throw new Error("idle poll base must be a non-negative number of milliseconds");
++  }
++  if (!Number.isSafeInteger(emptyStreak) || emptyStreak < 0) {
++    throw new Error("idle poll empty streak must be a non-negative integer");
++  }
++  if (!Number.isSafeInteger(maxMs) || maxMs < 0) {
++    throw new Error("idle poll max must be a non-negative number of milliseconds");
++  }
++  const shift = Math.min(emptyStreak, 16);
++  const grown = baseMs * (2 ** shift);
++  return Math.min(maxMs, grown);
++}
++
++/** Status sentence. Names the interval in force right now, from the same constants. */
++export function idlePollStatusSentence(currentMs: number): string {
++  return `Current idle poll interval: ${formatIdlePollDuration(currentMs)}.`;
++}
++
++export function idlePollHelpSentence(defaultMs: number = IDLE_POLL_DEFAULT_MS): string {
++  return `listen start --poll-interval sets how long the listener waits after an empty claim (default ${formatIdlePollDuration(defaultMs)}). A whole number plus s or m (for example ${idlePollDurationHint()}), ${idlePollBoundSentence()}. Empty polls double that wait up to ${IDLE_POLL_MAX_LABEL}; any delivery resets it to the configured interval.`;
++}
+diff --git a/src/listener/control.ts b/src/listener/control.ts
+index 26c025e..a1d5927 100644
+--- a/src/listener/control.ts
++++ b/src/listener/control.ts
+@@ -164,6 +164,11 @@ export interface ListenerStatus {
+   activityPublishFailures?: number;
+   /** Stable code for the newest activity publish failure; local status only. */
+   activityLastErrorCode?: ActivityPublishErrorCode | null;
++  /**
++   * Idle poll interval in force right now, including backoff. Optional: a
++   * status file written by a listener older than this field omits it.
++   */
++  idlePollMs?: number | null;
+   logPath: string;
+ }
+ 
+@@ -271,6 +276,7 @@ const STATUS_ALLOWED_KEYS = new Set([
+   "connectionReuseRatio",
+   "activityPublishFailures",
+   "activityLastErrorCode",
++  "idlePollMs",
+ ]);
+ const STATUS_ACTIVITY_ERROR_CODES = new Set<ActivityPublishErrorCode>([
+   "activity_credential_failed",
+@@ -532,7 +538,11 @@ function parseStatus(raw: string, rejectUnknownKeys = false): ListenerStatus {
+       (typeof row.activityLastErrorCode === "string" &&
+         STATUS_ACTIVITY_ERROR_CODES.has(
+           row.activityLastErrorCode as ActivityPublishErrorCode,
+-        )))
++        ))) ||
++    !(row.idlePollMs === undefined ||
++      row.idlePollMs === null ||
++      (typeof row.idlePollMs === "number" &&
++        Number.isSafeInteger(row.idlePollMs) && row.idlePollMs >= 0))
+   ) {
+     throw new Error("stored listener status is malformed");
+   }
+@@ -593,6 +603,9 @@ function parseStatus(raw: string, rejectUnknownKeys = false): ListenerStatus {
+     pendingForMainCount: (row.pendingForMainCount ?? 0) as number,
+     droppedForMainCount: (row.droppedForMainCount ?? 0) as number,
+     ...(readHealth === undefined ? {} : { readHealth }),
++    ...(row.idlePollMs === undefined
++      ? {}
++      : { idlePollMs: (row.idlePollMs ?? null) as number | null }),
+   };
+ }
+ 
+@@ -680,6 +693,7 @@ export async function appendListenerEvent(
+     // How long one delivery held the worker seat, and why it gave it back.
+     "held_ms",
+     "release_reason",
++    "idle_poll_ms",
+   ]);
+   const deliveryModes = new Set(["durable_claim", "cursor_fallback"]);
+   const routeModes = new Set(["worker", "main", "split"]);
+@@ -799,6 +813,12 @@ export async function appendListenerEvent(
+     ) {
+       throw new Error("listener event hold duration is not allowed");
+     }
++    if (
++      key === "idle_poll_ms" &&
++      !(typeof value === "number" && Number.isSafeInteger(value) && value >= 0)
++    ) {
++      throw new Error("listener event idle poll interval is not allowed");
++    }
+     if (
+       key === "release_reason" &&
+       !(typeof value === "string" &&
+diff --git a/src/listener/detach.ts b/src/listener/detach.ts
+index 6b5884d..1c9130a 100644
+--- a/src/listener/detach.ts
++++ b/src/listener/detach.ts
+@@ -29,6 +29,8 @@ export interface ListenerChildSpec {
+   effort?: string;
+   /** Validated --turn-budget duration string, forwarded verbatim. */
+   turnBudget?: string;
++  /** Validated --poll-interval duration string, forwarded verbatim. */
++  pollInterval?: string;
+   route?: "worker" | "main" | "split";
+   deferOver?: number;
+   nodeExecArgv?: string[];
+@@ -146,6 +148,7 @@ export function buildListenerChildArgs(spec: ListenerChildSpec): string[] {
+     ...(spec.model ? ["--model", spec.model] : []),
+     ...(provider === "grok" && spec.effort ? ["--effort", spec.effort] : []),
+     ...(spec.turnBudget ? ["--turn-budget", spec.turnBudget] : []),
++    ...(spec.pollInterval ? ["--poll-interval", spec.pollInterval] : []),
+     ...(spec.route && spec.route !== "worker" ? ["--route", spec.route] : []),
+     ...(spec.deferOver !== undefined ? ["--defer-over", String(spec.deferOver)] : []),
+   ];
+diff --git a/src/listener/runtime.ts b/src/listener/runtime.ts
+index 49d34b6..c80a560 100644
+--- a/src/listener/runtime.ts
++++ b/src/listener/runtime.ts
+@@ -72,9 +72,15 @@ import type {
+   ListenerSenderProvenanceContext,
+ } from "./types.js";
+ import type { ActivityPublishErrorCode } from "./activity.js";
++import {
++  IDLE_POLL_DEFAULT_MS,
++  IDLE_POLL_MAX_MS,
++  nextIdlePollMs,
++} from "../cloud/idle-poll.js";
+ 
+ export const LISTENER_PAGE_LIMIT = 100;
+-export const LISTENER_IDLE_POLL_MS = 2_000;
++export const LISTENER_IDLE_POLL_MS = IDLE_POLL_DEFAULT_MS;
++export const LISTENER_IDLE_POLL_MAX_MS = IDLE_POLL_MAX_MS;
+ /** Server-fixed maximum delivery lease (§ frozen runtime budgets). */
+ export const LISTENER_DELIVERY_SAFETY_MARGIN_MS = 30_000;
+ export const LISTENER_ACK_ONLY_MINIMUM_MS =
+@@ -155,6 +161,11 @@ export type ListenerRuntimeEvent =
+     cadenceMs?: number;
+     ts: string;
+   }
++  | {
++    type: "idle_poll";
++    intervalMs: number;
++    ts: string;
++  }
+   | {
+     type: "canary_attempt";
+     attempt: number;
+@@ -776,11 +787,23 @@ export async function runListenerRuntime(
+   const random = options.random ?? Math.random;
+   const pageLimit = options.pageLimit ?? LISTENER_PAGE_LIMIT;
+   const pollMs = options.pollMs ?? LISTENER_IDLE_POLL_MS;
++  let emptyIdleStreak = 0;
+   const routeMode = options.routeMode ?? "worker";
+   const deferOverChars = options.deferOverChars ?? null;
+   const deliveryHoldBudgetMs = options.deliveryHoldBudgetMs ??
+     LISTENER_DELIVERY_HOLD_BUDGET_MS;
+   const abort = options.signal;
++  const idleSleep = async (hadDelivery: boolean): Promise<void> => {
++    if (hadDelivery) emptyIdleStreak = 0;
++    const intervalMs = nextIdlePollMs(pollMs, emptyIdleStreak, LISTENER_IDLE_POLL_MAX_MS);
++    if (!hadDelivery) emptyIdleStreak += 1;
++    options.onEvent?.({
++      type: "idle_poll",
++      intervalMs,
++      ts: eventTime(now),
++    });
++    await sleep(intervalMs, abort);
++  };
+   const hasInstanceId = options.listenerInstanceId !== undefined;
+   const hasJournal = options.deliveryJournal !== undefined;
+   if (hasInstanceId !== hasJournal) {
+@@ -1255,7 +1278,7 @@ export async function runListenerRuntime(
+             stop = { reason: "cancelled" };
+             break;
+           }
+-          await sleep(pollMs, abort);
++          await idleSleep(true);
+           continue;
+         }
+         await sleep(Math.max(0, horizon - now()), abort);
+@@ -1452,9 +1475,15 @@ export async function runListenerRuntime(
+             stop = { reason: "fatal", error: asError(error) };
+             break;
+           }
+-          await sleep(pollMs, abort);
++          await idleSleep(false);
+           continue;
+         }
++        emptyIdleStreak = 0;
++        options.onEvent?.({
++          type: "idle_poll",
++          intervalMs: pollMs,
++          ts: eventTime(now),
++        });
+ 
+         const leasedUntilMs = Date.parse(claimed.leasedUntil);
+         if (
+@@ -1775,7 +1804,7 @@ export async function runListenerRuntime(
+       }
+       // Full scan complete. Reset so late commits with older timestamps appear.
+       after = null;
+-      await sleep(pollMs, abort);
++      await idleSleep(page.signals.length > 0);
+     }
+   } finally {
+     abort?.removeEventListener("abort", onAbort);
+diff --git a/src/listener/supervisor.ts b/src/listener/supervisor.ts
+index 75c0719..1fa1dd9 100644
+--- a/src/listener/supervisor.ts
++++ b/src/listener/supervisor.ts
+@@ -312,6 +312,7 @@ export async function runListenerSupervisor(
+     connectionReuseRatio: 0,
+     activityPublishFailures: 0,
+     activityLastErrorCode: null,
++    idlePollMs: null,
+     logPath: options.paths.logPath,
+   };
+   let writes = Promise.resolve();
+@@ -417,6 +418,24 @@ export async function runListenerSupervisor(
+   };
+ 
+   const onEvent = (event: ListenerRuntimeEvent) => {
++    if (event.type === "idle_poll") {
++      status = {
++        ...status,
++        idlePollMs: event.intervalMs,
++        readHealth: recordListenerClaimCadence(
++          status.readHealth ?? emptyListenerReadHealth(),
++          event.intervalMs > 0 ? event.intervalMs : 1,
++        ),
++        updatedAt: event.ts,
++      };
++      persist();
++      log({
++        ts: event.ts,
++        event: "listener_idle_poll",
++        idle_poll_ms: event.intervalMs,
++      });
++      return;
++    }
+     if (event.type === "ready") {
+       const versionNotice = options.getProviderVersionNotice?.() ?? null;
+       transition("ready", {
+diff --git a/supabase/functions/command/durable-delivery.ts b/supabase/functions/command/durable-delivery.ts
+index 3cd18da..797f628 100644
+--- a/supabase/functions/command/durable-delivery.ts
++++ b/supabase/functions/command/durable-delivery.ts
+@@ -12,6 +12,19 @@ type Sql = postgres.TransactionSql<Record<string, unknown>>;
+ export const CLAIM_AGENT_INBOX_KIND = "claim_agent_inbox";
+ export const ACK_AGENT_DELIVERY_KIND = "ack_agent_delivery";
+ 
++/**
++ * Idle polls write no audit_log row and no idempotency_keys row. A claim that
++ * leases a row, or that terminalizes a poisoned row, still writes both. Poison
++ * is state-changing even when delivery_refs is empty; a retry must replay, not
++ * re-execute. The same predicate the command edge uses; do not retype it.
++ */
++export function claimAgentInboxPersistsLedger(
++  ledger: DeliveryClaimLedgerResponse,
++): boolean {
++  return ledger.delivery_refs.length > 0 ||
++    ledger.terminal_delivery_failure_count > 0;
++}
++
+ /** Fixed first-release lease duration; callers cannot widen it. */
+ export const DELIVERY_LEASE_MS = 15 * 60 * 1000;
+ /** Server-side poison ceiling; callers cannot raise it. */
+diff --git a/supabase/functions/command/index.ts b/supabase/functions/command/index.ts
+index df202f9..aa5b0d2 100644
+--- a/supabase/functions/command/index.ts
++++ b/supabase/functions/command/index.ts
+@@ -51,6 +51,7 @@ import {
+   ackAgentDelivery,
+   CLAIM_AGENT_INBOX_KIND,
+   claimAgentInbox,
++  claimAgentInboxPersistsLedger,
+   DELIVERY_ACK_OUTCOMES,
+   DELIVERY_ACK_RATE_LIMIT_PER_MINUTE,
+   DELIVERY_CAPABILITIES,
+@@ -8362,31 +8363,41 @@ async function handleTransaction(
+       if (ledger === null) {
+         return { status: 403, body: { error: "delivery_unavailable" } };
+       }
+-      const inserted = await tx<{ command_id: string }[]>`
+-        INSERT INTO swarm.idempotency_keys (
+-          principal_kind, principal_id, command_id,
+-          workspace_id, stream_id, request_hash, response
+-        ) VALUES (
+-          ${auth.credentialKind},
+-          ${canonicalPrincipal(auth.actor)},
+-          ${commandId},
+-          ${route.workspaceId}::uuid,
+-          ${route.streamId}::uuid,
+-          ${hash},
+-          ${tx.json(ledger as unknown as postgres.JSONValue)}::jsonb
+-        )
+-        ON CONFLICT (principal_kind, principal_id, command_id) DO NOTHING
+-        RETURNING command_id
+-      `;
+-      if (inserted.length === 0) {
+-        throw new LedgerRace(
+-          auth,
+-          commandId,
+-          kind,
+-          route.workspaceId,
+-          route.streamId,
+-          hash,
+-        );
++      /* Idle polls are not state-changing for the ledger: no leased row and
++       * no poison terminalization, so no idempotency key and no audit row. A
++       * 0.1.56 listener that retries the same command id then re-executes,
++       * which can pick up a row that arrived during the retry. A claim that
++       * leases a row, or that terminalizes poison, still writes both. The
++       * outcome column cannot tell empty from non-empty on historical rows
++       * (both were "accepted"); retention therefore deletes by kind. */
++      const persistLedger = claimAgentInboxPersistsLedger(ledger);
++      if (persistLedger) {
++        const inserted = await tx<{ command_id: string }[]>`
++          INSERT INTO swarm.idempotency_keys (
++            principal_kind, principal_id, command_id,
++            workspace_id, stream_id, request_hash, response
++          ) VALUES (
++            ${auth.credentialKind},
++            ${canonicalPrincipal(auth.actor)},
++            ${commandId},
++            ${route.workspaceId}::uuid,
++            ${route.streamId}::uuid,
++            ${hash},
++            ${tx.json(ledger as unknown as postgres.JSONValue)}::jsonb
++          )
++          ON CONFLICT (principal_kind, principal_id, command_id) DO NOTHING
++          RETURNING command_id
++        `;
++        if (inserted.length === 0) {
++          throw new LedgerRace(
++            auth,
++            commandId,
++            kind,
++            route.workspaceId,
++            route.streamId,
++            hash,
++          );
++        }
+       }
+       const deliveries = await hydrateDeliveryRefs(tx, {
+         workspaceId: route.workspaceId,
+@@ -8421,15 +8432,17 @@ async function handleTransaction(
+           )
+         `;
+       }
+-      await insertAudit(tx, {
+-        auth,
+-        commandKind: kind,
+-        workspaceId: route.workspaceId,
+-        streamId: route.streamId,
+-        outcome: "accepted",
+-        detail: `terminal_delivery_failure_count=${ledger.terminal_delivery_failure_count}`,
+-        hash,
+-      });
++      if (persistLedger) {
++        await insertAudit(tx, {
++          auth,
++          commandKind: kind,
++          workspaceId: route.workspaceId,
++          streamId: route.streamId,
++          outcome: "accepted",
++          detail: `terminal_delivery_failure_count=${ledger.terminal_delivery_failure_count}`,
++          hash,
++        });
++      }
+       return {
+         status: 200,
+         body: {
+diff --git a/supabase/migrations/20260906000001_idle_cost_retention.sql b/supabase/migrations/20260906000001_idle_cost_retention.sql
+new file mode 100644
+index 0000000..cc0bf49
+--- /dev/null
++++ b/supabase/migrations/20260906000001_idle_cost_retention.sql
+@@ -0,0 +1,175 @@
++-- Idle-cost retention.
++--
++-- swarm.audit_log cannot tell an empty claim_agent_inbox from one that leased
++-- a row: both were stored as outcome = 'accepted'. Going forward, empty claims
++-- write no row. Historical idle polls are deleted by kind after
++-- claim_audit_retention_days (7). Idempotency keys older than their contract
++-- window (idempotency_retention_days, at least 30) are deleted in batches.
++--
++-- The append-only trigger on audit_log blocked DELETE. It now blocks UPDATE
++-- only. DELETE is reserved for this SECURITY DEFINER purge, owned by
++-- swarm_admin. swarm_command still has INSERT only.
++
++INSERT INTO swarm.config (key, value)
++VALUES ('claim_audit_retention_days', '7'::jsonb)
++ON CONFLICT (key) DO NOTHING;
++
++DROP TRIGGER IF EXISTS audit_log_append_only ON swarm.audit_log;
++CREATE TRIGGER audit_log_append_only
++  BEFORE UPDATE ON swarm.audit_log
++  FOR EACH ROW EXECUTE FUNCTION swarm.prevent_append_only_mutation();
++
++CREATE INDEX IF NOT EXISTS audit_claim_idle_purge
++  ON swarm.audit_log (occurred_at)
++  WHERE command_kind = 'claim_agent_inbox';
++
++CREATE OR REPLACE FUNCTION swarm.purge_idle_claim_audit(
++  batch_size integer DEFAULT 5000
++)
++RETURNS integer
++LANGUAGE plpgsql
++VOLATILE
++SECURITY DEFINER
++SET search_path = swarm, pg_catalog
++AS $$
++DECLARE
++  deleted integer;
++  retain_days integer;
++BEGIN
++  IF batch_size IS NULL OR batch_size < 1 OR batch_size > 50000 THEN
++    RAISE EXCEPTION 'purge batch_size must be between 1 and 50000';
++  END IF;
++  retain_days := GREATEST(
++    7,
++    COALESCE(
++      (
++        SELECT (value #>> '{}')::integer
++        FROM swarm.config
++        WHERE key = 'claim_audit_retention_days'
++      ),
++      7
++    )
++  );
++  DELETE FROM swarm.audit_log
++  WHERE audit_id IN (
++    SELECT audit_id
++    FROM swarm.audit_log
++    WHERE command_kind = 'claim_agent_inbox'
++      AND occurred_at < statement_timestamp() - make_interval(days => retain_days)
++    ORDER BY audit_id
++    LIMIT batch_size
++  );
++  GET DIAGNOSTICS deleted = ROW_COUNT;
++  RETURN deleted;
++END;
++$$;
++
++ALTER FUNCTION swarm.purge_idle_claim_audit(integer) OWNER TO swarm_admin;
++REVOKE ALL ON FUNCTION swarm.purge_idle_claim_audit(integer) FROM PUBLIC;
++
++CREATE OR REPLACE FUNCTION swarm.purge_expired_idempotency_keys(
++  batch_size integer DEFAULT 5000
++)
++RETURNS integer
++LANGUAGE plpgsql
++VOLATILE
++SECURITY DEFINER
++SET search_path = swarm, pg_catalog
++AS $$
++DECLARE
++  deleted integer;
++  retain_days integer;
++BEGIN
++  IF batch_size IS NULL OR batch_size < 1 OR batch_size > 50000 THEN
++    RAISE EXCEPTION 'purge batch_size must be between 1 and 50000';
++  END IF;
++  retain_days := GREATEST(
++    30,
++    COALESCE(
++      (
++        SELECT (value #>> '{}')::integer
++        FROM swarm.config
++        WHERE key = 'idempotency_retention_days'
++      ),
++      30
++    )
++  );
++  DELETE FROM swarm.idempotency_keys
++  WHERE (principal_kind, principal_id, command_id) IN (
++    SELECT principal_kind, principal_id, command_id
++    FROM swarm.idempotency_keys
++    WHERE created_at < statement_timestamp() - make_interval(days => retain_days)
++    ORDER BY created_at, principal_kind, principal_id, command_id
++    LIMIT batch_size
++  );
++  GET DIAGNOSTICS deleted = ROW_COUNT;
++  RETURN deleted;
++END;
++$$;
++
++ALTER FUNCTION swarm.purge_expired_idempotency_keys(integer) OWNER TO swarm_admin;
++REVOKE ALL ON FUNCTION swarm.purge_expired_idempotency_keys(integer) FROM PUBLIC;
++
++CREATE OR REPLACE FUNCTION swarm.purge_idle_cost_tables()
++RETURNS jsonb
++LANGUAGE plpgsql
++VOLATILE
++SECURITY DEFINER
++SET search_path = swarm, pg_catalog
++AS $$
++DECLARE
++  audit_deleted integer := 0;
++  idem_deleted integer := 0;
++  n integer;
++  batches integer := 0;
++BEGIN
++  LOOP
++    n := swarm.purge_idle_claim_audit(5000);
++    audit_deleted := audit_deleted + n;
++    batches := batches + 1;
++    EXIT WHEN n = 0 OR batches >= 200;
++  END LOOP;
++  batches := 0;
++  LOOP
++    n := swarm.purge_expired_idempotency_keys(5000);
++    idem_deleted := idem_deleted + n;
++    batches := batches + 1;
++    EXIT WHEN n = 0 OR batches >= 200;
++  END LOOP;
++  RETURN jsonb_build_object(
++    'audit_log_deleted', audit_deleted,
++    'idempotency_keys_deleted', idem_deleted
++  );
++END;
++$$;
++
++ALTER FUNCTION swarm.purge_idle_cost_tables() OWNER TO swarm_admin;
++REVOKE ALL ON FUNCTION swarm.purge_idle_cost_tables() FROM PUBLIC;
++
++CREATE OR REPLACE FUNCTION swarm.purge_expired_idempotency_keys()
++RETURNS void
++LANGUAGE plpgsql
++VOLATILE
++SECURITY DEFINER
++SET search_path = swarm, pg_catalog
++AS $$
++DECLARE
++  n integer;
++  batches integer := 0;
++BEGIN
++  LOOP
++    n := swarm.purge_expired_idempotency_keys(5000);
++    batches := batches + 1;
++    EXIT WHEN n = 0 OR batches >= 200;
++  END LOOP;
++END;
++$$;
++
++ALTER FUNCTION swarm.purge_expired_idempotency_keys() OWNER TO swarm_admin;
++REVOKE ALL ON FUNCTION swarm.purge_expired_idempotency_keys() FROM PUBLIC;
++
++SELECT cron.schedule(
++  'swarm-purge-idle-cost',
++  '23 3 * * *',
++  'SELECT swarm.purge_idle_cost_tables()'
++);
+diff --git a/supabase/migrations/20260906000002_file_versions_quota_index.sql b/supabase/migrations/20260906000002_file_versions_quota_index.sql
+new file mode 100644
+index 0000000..610fd5d
+--- /dev/null
++++ b/supabase/migrations/20260906000002_file_versions_quota_index.sql
+@@ -0,0 +1,9 @@
++-- Missing index for the file_versions quota SUM in
++-- supabase/functions/command/file-artifacts.ts (workspace_id + state, with
++-- pending rows further filtered by created_at). Production seq-scanned this
++-- table 2.8M times with only the unique (file_id, workspace_id, version_n)
++-- index in the path. The existing (workspace_id, state) index does not cover
++-- the pending age predicate, so the OR arm seq-scans.
++
++CREATE INDEX IF NOT EXISTS file_versions_workspace_state_created
++  ON swarm.file_versions (workspace_id, state, created_at);
+diff --git a/tests/claim-ledger-parse.test.ts b/tests/claim-ledger-parse.test.ts
+index 63de3b1..1c8407e 100644
+--- a/tests/claim-ledger-parse.test.ts
++++ b/tests/claim-ledger-parse.test.ts
+@@ -1,10 +1,50 @@
+ import assert from "node:assert/strict";
+ import { test } from "node:test";
+ import {
++  claimAgentInboxPersistsLedger,
+   DELIVERY_CAPABILITIES,
+   parseClaimLedger,
+ } from "../supabase/functions/command/durable-delivery.js";
+ 
++test("empty claims do not persist the ledger; a claimed row does", () => {
++  const empty = parseClaimLedger({
++    ok: true,
++    event_ids: [],
++    delivery_refs: [],
++    pending_delivery_count: 0,
++  });
++  assert.ok(empty);
++  assert.equal(claimAgentInboxPersistsLedger(empty), false);
++
++  const claimed = parseClaimLedger({
++    ok: true,
++    event_ids: [],
++    delivery_refs: [{
++      signal_id: "aaaaaaaa-aaaa-4aaa-8aaa-aaaaaaaaaaaa",
++      lease_id: "bbbbbbbb-bbbb-4bbb-8bbb-bbbbbbbbbbbb",
++      leased_until: "2026-07-30T00:15:00.000Z",
++      sender_owner_relation: "same_owner",
++    }],
++    pending_delivery_count: 1,
++  });
++  assert.ok(claimed);
++  assert.equal(claimAgentInboxPersistsLedger(claimed), true);
++
++  const poison = parseClaimLedger({
++    ok: true,
++    event_ids: [],
++    delivery_refs: [],
++    pending_delivery_count: 0,
++    terminal_delivery_failure_count: 1,
++  });
++  assert.ok(poison);
++  assert.equal(
++    claimAgentInboxPersistsLedger(poison),
++    true,
++    "poison terminalization is state-changing even with no leased row",
++  );
++});
++
+ test("production parseClaimLedger behavior", () => {
+   // absent terminal_delivery_failure_count -> 0
+   const absent = parseClaimLedger({
+diff --git a/tests/idle-cost-retention.test.ts b/tests/idle-cost-retention.test.ts
+new file mode 100644
+index 0000000..23b70e6
+--- /dev/null
++++ b/tests/idle-cost-retention.test.ts
+@@ -0,0 +1,47 @@
++/**
++ * Pins the idle-cost SQL migrations to the constants they enforce.
++ *
++ * Bound of this sweep: the SQL in
++ * supabase/migrations/20260906000001_idle_cost_retention.sql and
++ * supabase/migrations/20260906000002_file_versions_quota_index.sql.
++ * It does not prove the functions run on a live database; p1-server does that.
++ *
++ * Reached by `npm test` (named in the literal list).
++ */
++import assert from "node:assert/strict";
++import { readFileSync } from "node:fs";
++import { test } from "node:test";
++
++const SQL_PATH = "supabase/migrations/20260906000001_idle_cost_retention.sql";
++
++test("file_versions quota index covers workspace, state, and created_at", () => {
++  const sql = readFileSync(
++    "supabase/migrations/20260906000002_file_versions_quota_index.sql",
++    "utf8",
++  );
++  assert.match(sql, /file_versions_workspace_state_created/);
++  assert.match(
++    sql,
++    /ON swarm\.file_versions \(workspace_id, state, created_at\)/,
++  );
++});
++
++test("retention migration deletes claim audits by kind after 7 days and batches idempotency", () => {
++  const sql = readFileSync(SQL_PATH, "utf8");
++  assert.match(sql, /claim_audit_retention_days',\s*'7'/);
++  assert.match(sql, /GREATEST\(\s*7,/);
++  assert.match(
++    sql,
++    /command_kind = 'claim_agent_inbox'/,
++    "cannot distinguish empty vs leased historical rows; delete by kind",
++  );
++  assert.match(sql, /LIMIT batch_size/);
++  assert.match(sql, /cron\.schedule\(\s*'swarm-purge-idle-cost'/);
++  assert.match(sql, /BEFORE UPDATE ON swarm\.audit_log/);
++  assert.doesNotMatch(
++    sql,
++    /BEFORE UPDATE OR DELETE ON swarm\.audit_log/,
++  );
++  assert.match(sql, /purge_idle_cost_tables/);
++  assert.match(sql, /idempotency_retention_days/);
++});
+diff --git a/tests/idle-poll.test.ts b/tests/idle-poll.test.ts
+new file mode 100644
+index 0000000..2c68ded
+--- /dev/null
++++ b/tests/idle-poll.test.ts
+@@ -0,0 +1,102 @@
++/**
++ * Pure controls for idle poll bounds, backoff, and generated copy.
++ *
++ * Reached by `npm test` (named in the literal list).
++ */
++import assert from "node:assert/strict";
++import { test } from "node:test";
++import {
++  ARRIVAL_WATCH_POLL_MS,
++  formatIdlePollDuration,
++  idlePollBoundSentence,
++  idlePollDurationHint,
++  idlePollHelpSentence,
++  idlePollStatusSentence,
++  IDLE_POLL_DEFAULT_LABEL,
++  IDLE_POLL_DEFAULT_MS,
++  IDLE_POLL_DURATION_EXAMPLES,
++  IDLE_POLL_MAX_LABEL,
++  IDLE_POLL_MAX_MS,
++  IDLE_POLL_MIN_LABEL,
++  IDLE_POLL_MIN_MS,
++  nextIdlePollMs,
++  parseIdlePollIntervalMs,
++} from "../src/cloud/idle-poll.js";
++import { LISTENER_IDLE_POLL_MS, LISTENER_IDLE_POLL_MAX_MS } from "../src/listener/runtime.js";
++import { listenerPollIntervalMs, usage } from "../src/cli.js";
++
++test("idle poll constants are one set: default 15s, cap 60s, notify uses the cap", () => {
++  assert.equal(IDLE_POLL_DEFAULT_MS, 15_000);
++  assert.equal(IDLE_POLL_MAX_MS, 60_000);
++  assert.equal(IDLE_POLL_MIN_MS, 1_000);
++  assert.equal(LISTENER_IDLE_POLL_MS, IDLE_POLL_DEFAULT_MS);
++  assert.equal(LISTENER_IDLE_POLL_MAX_MS, IDLE_POLL_MAX_MS);
++  assert.equal(ARRIVAL_WATCH_POLL_MS, IDLE_POLL_MAX_MS);
++  assert.equal(formatIdlePollDuration(IDLE_POLL_DEFAULT_MS), "15s");
++  assert.equal(formatIdlePollDuration(IDLE_POLL_MAX_MS), "1m");
++  assert.equal(IDLE_POLL_DEFAULT_LABEL, "15s");
++  assert.equal(IDLE_POLL_MAX_LABEL, "1m");
++  assert.equal(IDLE_POLL_MIN_LABEL, "1s");
++});
++
++test("empty polls double from the base until the cap, then stay there", () => {
++  assert.equal(nextIdlePollMs(IDLE_POLL_DEFAULT_MS, 0), 15_000);
++  assert.equal(nextIdlePollMs(IDLE_POLL_DEFAULT_MS, 1), 30_000);
++  assert.equal(nextIdlePollMs(IDLE_POLL_DEFAULT_MS, 2), 60_000);
++  assert.equal(nextIdlePollMs(IDLE_POLL_DEFAULT_MS, 3), 60_000);
++  assert.equal(nextIdlePollMs(IDLE_POLL_DEFAULT_MS, 16), 60_000);
++  assert.equal(nextIdlePollMs(5_000, 0), 5_000);
++  assert.equal(nextIdlePollMs(5_000, 1), 10_000);
++  assert.equal(nextIdlePollMs(5_000, 2), 20_000);
++  assert.equal(nextIdlePollMs(5_000, 3), 40_000);
++  assert.equal(nextIdlePollMs(5_000, 4), 60_000);
++  assert.equal(nextIdlePollMs(IDLE_POLL_MAX_MS, 0), IDLE_POLL_MAX_MS);
++  assert.equal(nextIdlePollMs(IDLE_POLL_MAX_MS, 3), IDLE_POLL_MAX_MS);
++  assert.equal(nextIdlePollMs(0, 0), 0);
++  assert.equal(nextIdlePollMs(0, 4), 0);
++});
++
++test("a delivery resets the wait to the configured base", () => {
++  const afterTwoEmpty = nextIdlePollMs(IDLE_POLL_DEFAULT_MS, 2);
++  assert.equal(afterTwoEmpty, IDLE_POLL_MAX_MS);
++  assert.equal(nextIdlePollMs(IDLE_POLL_DEFAULT_MS, 0), IDLE_POLL_DEFAULT_MS);
++});
++
++test("--poll-interval parses the same duration shape the flag documents", () => {
++  assert.equal(parseIdlePollIntervalMs(undefined), IDLE_POLL_DEFAULT_MS);
++  assert.equal(parseIdlePollIntervalMs("15s"), 15_000);
++  assert.equal(parseIdlePollIntervalMs("30s"), 30_000);
++  assert.equal(parseIdlePollIntervalMs("1m"), 60_000);
++  assert.equal(listenerPollIntervalMs("15s"), 15_000);
++  assert.throws(
++    () => parseIdlePollIntervalMs("90x"),
++    /--poll-interval must be a duration such as 15s, 30s, 1m/,
++  );
++  assert.throws(
++    () => parseIdlePollIntervalMs("2m"),
++    /--poll-interval must be between 1s and 1m/,
++  );
++  assert.throws(
++    () => parseIdlePollIntervalMs("0s"),
++    /--poll-interval must be a duration such as 15s, 30s, 1m/,
++  );
++});
++
++test("user-facing idle poll lists and bounds are generated from the constants that enforce them", () => {
++  const hint = idlePollDurationHint();
++  assert.equal(hint, IDLE_POLL_DURATION_EXAMPLES.join(", "));
++  assert.match(hint, /15s/);
++  assert.match(hint, /1m/);
++  const bound = idlePollBoundSentence();
++  assert.equal(bound, `between ${IDLE_POLL_MIN_LABEL} and ${IDLE_POLL_MAX_LABEL}`);
++  const help = idlePollHelpSentence();
++  assert.match(help, new RegExp(IDLE_POLL_DEFAULT_LABEL));
++  assert.match(help, new RegExp(IDLE_POLL_MAX_LABEL));
++  assert.match(help, /--poll-interval/);
++  assert.equal(idlePollStatusSentence(15_000), "Current idle poll interval: 15s.");
++  assert.equal(idlePollStatusSentence(30_000), "Current idle poll interval: 30s.");
++  assert.equal(idlePollStatusSentence(60_000), "Current idle poll interval: 1m.");
++  const usageText = usage();
++  assert.match(usageText, /--poll-interval <duration>/);
++  assert.ok(usageText.includes(help));
++});
+diff --git a/tests/listener-detach.test.ts b/tests/listener-detach.test.ts
+index 123a334..17eb637 100644
+--- a/tests/listener-detach.test.ts
++++ b/tests/listener-detach.test.ts
+@@ -34,6 +34,15 @@ const SPEC: ListenerChildSpec = {
+   ],
+ };
+ 
++test("detached argv forwards a validated poll-interval verbatim", () => {
++  const args = buildListenerChildArgs({
++    ...SPEC,
++    pollInterval: "15s",
++  });
++  assert.ok(args.includes("--poll-interval"));
++  assert.equal(args[args.indexOf("--poll-interval") + 1], "15s");
++});
++
+ test("detached argv is public-only and strips ambient Node hooks", () => {
+   const args = buildListenerChildArgs(SPEC);
+   assert.deepEqual(listenerNodeExecArgv(SPEC.nodeExecArgv ?? []), [
+diff --git a/tests/listener-runtime.test.ts b/tests/listener-runtime.test.ts
+index 5e7e5f7..aff781f 100644
+--- a/tests/listener-runtime.test.ts
++++ b/tests/listener-runtime.test.ts
+@@ -22,6 +22,11 @@ import {
+   type DeliveryRow,
+ } from "../src/cloud/delivery.js";
+ import { listenerStatusJson, renderListenerStatus, usage } from "../src/cli.js";
++import {
++  idlePollStatusSentence,
++  IDLE_POLL_DEFAULT_MS,
++  nextIdlePollMs,
++} from "../src/cloud/idle-poll.js";
+ import {
+   RenewalReauthorisationRequired,
+   RenewalRevoked,
+@@ -39,6 +44,7 @@ import { ACP_DEFAULT_REQUEST_TIMEOUT_MS } from "../src/host/bounds.js";
+ import { AcpHostError } from "../src/host/types.js";
+ import {
+   runListenerRuntime as runListenerRuntimeActual,
++  LISTENER_IDLE_POLL_MS,
+   LISTENER_DELIVERY_SAFETY_MARGIN_MS,
+   LISTENER_HOST_PORTS_PROBE_MS,
+   LISTENER_PROMPT_START_MINIMUM_MS,
+@@ -82,6 +88,74 @@ async function runListenerRuntime(
+   });
+ }
+ 
++test("empty durable claims back off the idle wait and reset on a delivery", async () => {
++  const journal = new MemoryDeliveryJournal();
++  const controller = new AbortController();
++  const sleeps: number[] = [];
++  const idleEvents: number[] = [];
++  let claims = 0;
++  const claimedNote = note(
++    "aaaaaaaa-aaaa-4aaa-8aaa-aaaaaaaaaa80",
++    "2026-07-30T00:00:01.000Z",
++  );
++  const lease: DeliveryRow = {
++    signal: claimedNote,
++    leaseId: "55555555-5555-4555-8555-555555555555",
++    leasedUntil: "2026-07-30T00:15:00.000Z",
++    senderOwnerRelation: "same_owner",
++    recipientPosition: null,
++    recipientCount: null,
++  };
++  const stop = await runListenerRuntime({
++    target: cloudTarget("https://cloud.example.test", "anon"),
++    workspaceId: WORKSPACE_ID,
++    principalId: PRINCIPAL_ID,
++    listenerInstanceId: journal.record.listenerInstanceId,
++    deliveryJournal: journal,
++    deliveryClient: {
++      async claimAgentInbox() {
++        claims += 1;
++        if (claims <= 3) return claimResult([], 0);
++        if (claims === 4) return claimResult([lease], 1);
++        controller.abort();
++        return claimResult([], 0);
++      },
++      async ackAgentDelivery() {
++        return { httpStatus: 200, signalId: claimedNote.id, outcome: "observed" as const };
++      },
++    },
++    credentialSession: { async bearer() { return "token"; } },
++    store: new MemoryStore(),
++    model: new FakeModel(),
++    signal: controller.signal,
++    pollMs: IDLE_POLL_DEFAULT_MS,
++    now: () => Date.parse("2026-07-30T00:00:00.000Z"),
++    sleep: async (ms) => {
++      sleeps.push(ms);
++    },
++    onEvent: (event) => {
++      if (event.type === "idle_poll") idleEvents.push(event.intervalMs);
++    },
++    readPage: async () => durablePage(),
++  });
++  assert.equal(stop.reason, "cancelled");
++  assert.equal(LISTENER_IDLE_POLL_MS, IDLE_POLL_DEFAULT_MS);
++  assert.deepEqual(
++    sleeps.slice(0, 3),
++    [
++      nextIdlePollMs(IDLE_POLL_DEFAULT_MS, 0),
++      nextIdlePollMs(IDLE_POLL_DEFAULT_MS, 1),
++      nextIdlePollMs(IDLE_POLL_DEFAULT_MS, 2),
++    ],
++  );
++  assert.deepEqual(sleeps.slice(0, 3), [15_000, 30_000, 60_000]);
++  const resetSleep = sleeps.find((ms, index) => index >= 3 && ms === IDLE_POLL_DEFAULT_MS);
++  assert.equal(resetSleep, IDLE_POLL_DEFAULT_MS, "a delivery must reset the idle wait to the base");
++  assert.ok(idleEvents.includes(15_000));
++  assert.ok(idleEvents.includes(30_000));
++  assert.ok(idleEvents.includes(60_000));
++});
++
+ test("prompt-start lease budget reserves the provenance directory deadline", () => {
+   assert.equal(
+     LISTENER_PROMPT_START_MINIMUM_MS,
+@@ -4125,6 +4199,7 @@ test("listen status shows the delivery in hand and how long the queue has waited
+     deferOverChars: null,
+     pendingForMainCount: 0,
+     droppedForMainCount: 0,
++    idlePollMs: 30_000,
+     logPath: "/tmp/cswarm-hold/listener.log",
+   } as unknown as ListenerStatus;
+ 
+@@ -4142,6 +4217,12 @@ test("listen status shows the delivery in hand and how long the queue has waited
+   assert.equal(json.pendingDeliveryCountAt, claimedAt);
+ 
+   const human = renderListenerStatus(status, evidence, nowMs);
++  assert.ok(
++    human.includes(idlePollStatusSentence(30_000)),
++    human,
++  );
++  assert.equal(json.idlePollMs, 30_000);
++  assert.equal(json.idlePollSentence, idlePollStatusSentence(30_000));
+   assert.ok(
+     human.includes(`Working on delivery ${HOLD_FIRST_ID}, claimed 4m ago.`),
+     human,
+@@ -4758,6 +4839,7 @@ test("the redelivery claim reads the same in help as in status", () => {
+    * arm found on e5f75c9. */
+   const help = usage();
+   assert.ok(help.includes("--turn-budget"), "the flag is still documented");
++  assert.ok(help.includes("--poll-interval"), "idle poll flag is documented");
+   assert.ok(
+     help.includes(
+       "After the lease ends the service either\ndelivers the released one again or terminates it.",
+diff --git a/tests/p1-cli/citation-drift.test.ts b/tests/p1-cli/citation-drift.test.ts
+index 862dde2..96f0cb4 100644
+--- a/tests/p1-cli/citation-drift.test.ts
++++ b/tests/p1-cli/citation-drift.test.ts
+@@ -41,7 +41,7 @@ const CITATIONS: Citation[] = [
+   {
+     citedBy: "site/src/lib/agent-connect.ts (mintedHorizon)",
+     file: "supabase/functions/command/index.ts",
+-    lines: [8930, 8935],
++    lines: [8942, 8947],
+     contains: "horizon_expires_at: prepared.command.renewal_horizon_ms === null",
+   },
+   {
+@@ -84,14 +84,14 @@ const CITATIONS: Citation[] = [
+   {
+     citedBy: "agent-connect-mint.observer.test.ts (standing binds to the request device)",
+     file: "supabase/functions/command/index.ts",
+-    lines: [4366, 4366],
++    lines: [4367, 4367],
+     contains: "standing ? prepared.wire.device_id : null",
+   },
+   // supabase/functions/command/index.ts — the resume handler's own comment
+   {
+     citedBy: "command/index.ts (resume handler, the pattern it copies)",
+     file: "supabase/functions/command/index.ts",
+-    lines: [3420, 3420],
++    lines: [3421, 3421],
+     contains: "grant_preflight_code: (preflight[0]?.code ?? null)",
+   },
+   {
+diff --git a/tests/p1-cli/listener-provider.test.ts b/tests/p1-cli/listener-provider.test.ts
+index e02eecc..d918c4a 100644
+--- a/tests/p1-cli/listener-provider.test.ts
++++ b/tests/p1-cli/listener-provider.test.ts
+@@ -250,6 +250,37 @@ test("hidden supervisor rejects another provider's executable before credentials
+   assert.doesNotMatch(result.stderr, /credential|workspace-id must be a UUID/i);
+ });
+ 
++test("--poll-interval rejects out-of-bounds and malformed durations before any credential work", () => {
++  const base = [
++    "listen",
++    "start",
++    "--agent-token-stdin",
++    "--provider",
++    "grok",
++    "--url",
++    "https://unreachable.example.test",
++    "--anon-key",
++    "anon",
++    "--workspace-id",
++    "11111111-1111-4111-8111-111111111111",
++  ];
++  const tooShort = runCli([...base, "--poll-interval", "0s"]);
++  assert.equal(tooShort.status, 1);
++  assert.match(tooShort.stderr, /--poll-interval must be a duration such as 15s, 30s, 1m/);
++
++  const tooLong = runCli([...base, "--poll-interval", "2m"]);
++  assert.equal(tooLong.status, 1);
++  assert.match(tooLong.stderr, /--poll-interval must be between 1s and 1m/);
++
++  const malformed = runCli([...base, "--poll-interval", "90x"]);
++  assert.equal(malformed.status, 1);
++  assert.match(malformed.stderr, /--poll-interval must be a duration such as 15s, 30s, 1m/);
++
++  const valid = runCli([...base, "--poll-interval", "15s"]);
++  assert.equal(valid.status, 1);
++  assert.doesNotMatch(valid.stderr, /--poll-interval/);
++});
++
+ test("--turn-budget rejects out-of-bounds and malformed durations before any credential work", () => {
+   const base = [
+     "listen",
+diff --git a/tests/p1-server/command.test.ts b/tests/p1-server/command.test.ts
+index 8a060ca..44c53eb 100644
+--- a/tests/p1-server/command.test.ts
++++ b/tests/p1-server/command.test.ts
+@@ -6497,6 +6497,18 @@ test("durable-delivery: claim/ack happy path, idempotent replay, pending count",
+     assert.equal(claim.body.status, "accepted");
+     const deliveries = claim.body.deliveries as Array<Record<string, unknown>>;
+     assert.equal(deliveries.length, 1);
++    const [nonEmptyIdem] = await sql<{ command_id: string }[]>`
++      SELECT command_id FROM swarm.idempotency_keys WHERE command_id = ${claimId}
++    `;
++    assert.equal(nonEmptyIdem?.command_id, claimId, "a claim that returns a row writes an idempotency key");
++    const nonEmptyAudits = await sql<{ audit_id: string }[]>`
++      SELECT audit_id FROM swarm.audit_log
++      WHERE workspace_id = ${f.workspaceA}::uuid
++        AND actor_agent_principal = ${receiver.principalId}::uuid
++        AND command_kind = 'claim_agent_inbox'
++        AND outcome = 'accepted'
++    `;
++    assert.ok(nonEmptyAudits.length >= 1, "a claim that returns a row writes an audit row");
+     const d0 = deliveries[0]!;
+     assert.equal((d0.signal as Record<string, unknown>).id, signalId);
+     assert.equal((d0.signal as Record<string, unknown>).body, "dd-happy-body-secret");
+@@ -6622,15 +6634,24 @@ test("durable-delivery: claim/ack happy path, idempotent replay, pending count",
+     );
+     assert.equal(readAfter.body.pending_delivery_count, 0);
+ 
++    const acceptedBeforeEmpty = await sql<{ n: string }[]>`
++      SELECT count(*)::text AS n FROM swarm.audit_log
++      WHERE workspace_id = ${f.workspaceA}::uuid
++        AND actor_agent_principal = ${receiver.principalId}::uuid
++        AND command_kind = 'claim_agent_inbox'
++        AND outcome = 'accepted'
++    `;
++
+     /* NULL is the other end of the bound, and it is what makes the string
+      * above a measurement: once the queue is empty the server says so with a
+      * null rather than repeating the last time it saw. Both come from the same
+      * min() over the same set, so they cannot disagree with the count. */
++    const emptyClaimId = commandId("claim_agent_inbox");
+     const emptyClaim = await issueDelivery(f, receiver.token, {
+       kind: "claim_agent_inbox",
+       listener_instance_id: listener,
+       limit: 10,
+-    });
++    }, emptyClaimId);
+     assert.equal(emptyClaim.status, 200, emptyClaim.text);
+     assert.equal(emptyClaim.body.pending_delivery_count, 0);
+     assert.equal(
+@@ -6638,6 +6659,22 @@ test("durable-delivery: claim/ack happy path, idempotent replay, pending count",
+       0,
+       "nothing is left to claim",
+     );
++    const [emptyIdem] = await sql<{ command_id: string }[]>`
++      SELECT command_id FROM swarm.idempotency_keys WHERE command_id = ${emptyClaimId}
++    `;
++    assert.equal(emptyIdem, undefined, "an empty claim writes no idempotency key");
++    const emptyAudits = await sql<{ audit_id: string }[]>`
++      SELECT audit_id FROM swarm.audit_log
++      WHERE workspace_id = ${f.workspaceA}::uuid
++        AND actor_agent_principal = ${receiver.principalId}::uuid
++        AND command_kind = 'claim_agent_inbox'
++        AND outcome = 'accepted'
++    `;
++    assert.equal(
++      emptyAudits.length,
++      Number(acceptedBeforeEmpty[0]?.n),
++      "an empty claim writes no audit row; the non-empty claim's row remains",
++    );
+     assert.equal(
+       Object.hasOwn(emptyClaim.body as object, "oldest_pending_at"),
+       true,
+@@ -7996,9 +8033,54 @@ test("durable-delivery: relation matrix on claim matches read; cursor path still
+ test("durable-delivery: claim idempotency mismatch and workspace-only delivery routes", async () => {
+   await scenario(async (f) => {
+     const receiver = await createFixtureAgent(f, f.ua, "dd-idemp-mismatch");
++    const emptyCmdId = randomUUID();
++    const emptyInstId = randomUUID();
++
++    const emptyClaim = await issueDelivery(
++      f,
++      receiver.token,
++      {
++        kind: "claim_agent_inbox",
++        listener_instance_id: emptyInstId,
++        limit: 10,
++      },
++      emptyCmdId,
++    );
++    assert.equal(emptyClaim.status, 200, emptyClaim.text);
++    assert.equal((emptyClaim.body.deliveries as unknown[]).length, 0);
++    const [emptyKey] = await sql<{ command_id: string }[]>`
++      SELECT command_id FROM swarm.idempotency_keys WHERE command_id = ${emptyCmdId}
++    `;
++    assert.equal(emptyKey, undefined, "an idle poll writes no idempotency key");
++
++    const emptyMismatch = await issueDelivery(
++      f,
++      receiver.token,
++      {
++        kind: "claim_agent_inbox",
++        listener_instance_id: randomUUID(),
++        limit: 10,
++      },
++      emptyCmdId,
++    );
++    assert.equal(
++      emptyMismatch.status,
++      200,
++      "an idle poll retries the same command id by re-executing, not as a conflict",
++    );
++
+     const cmdId = randomUUID();
+     const instId = randomUUID();
+-
++    const postedForIdem = await issueSignal(f, f.uaJwt, {
++      kind: "post_signal",
++      signal_kind: "note",
++      body: "dd-idemp-filled",
++      to_user_id: null,
++      to_agent_principal_id: receiver.principalId,
++      in_reply_to: null,
++      about: "dd-idemp-filled",
++    });
++    assert.equal(postedForIdem.status, 200, postedForIdem.text);
+     const claim1 = await issueDelivery(
+       f,
+       receiver.token,
+@@ -8010,8 +8092,11 @@ test("durable-delivery: claim idempotency mismatch and workspace-only delivery r
+       cmdId,
+     );
+     assert.equal(claim1.status, 200, claim1.text);
++    assert.ok(
++      (claim1.body.deliveries as unknown[]).length > 0,
++      "a non-empty claim is the control that still writes the ledger",
++    );
+ 
+-    // Mismatched listener_instance_id -> 409 command_id_conflict
+     const mismatchInst = await issueDelivery(
+       f,
+       receiver.token,
+@@ -8025,7 +8110,6 @@ test("durable-delivery: claim idempotency mismatch and workspace-only delivery r
+     assert.equal(mismatchInst.status, 409, mismatchInst.text);
+     assert.equal(mismatchInst.body.error, "command_id_conflict");
+ 
+-    // Mismatched limit -> 409 command_id_conflict
+     const mismatchLimit = await issueDelivery(
+       f,
+       receiver.token,
+@@ -11839,3 +11923,88 @@ test("durable-delivery: Phase C resolveLedgerRace recharge — denied losing cla
+     }
+   });
+ });
++
++test("idle-cost retention deletes old claim audits by kind and expired idempotency keys in batches", async () => {
++  /* Outcome cannot distinguish empty historical claims from leased ones
++   * (both were accepted). Retention therefore deletes claim_agent_inbox
++   * older than claim_audit_retention_days. Idempotency keys follow
++   * idempotency_retention_days. Uses fixture() not scenario(): the seed
++   * rows are not command-path ledger entries, so I4 would reject them. */
++  const f = await fixture();
++    const oldIdemId = `idle_idem_old_${randomUUID().replaceAll("-", "").slice(0, 24)}`;
++    const freshIdemId = `idle_idem_new_${randomUUID().replaceAll("-", "").slice(0, 24)}`;
++    const principal = `agent:${randomUUID()}`;
++
++    await sql`
++      INSERT INTO swarm.audit_log (occurred_at, command_kind, outcome, workspace_id)
++      VALUES
++        (statement_timestamp() - interval '8 days', 'claim_agent_inbox', 'accepted', ${f.workspaceA}::uuid),
++        (statement_timestamp() - interval '8 days', 'claim_agent_inbox', 'accepted', ${f.workspaceA}::uuid),
++        (statement_timestamp() - interval '8 days', 'claim_agent_inbox', 'accepted', ${f.workspaceA}::uuid),
++        (statement_timestamp() - interval '1 day', 'claim_agent_inbox', 'accepted', ${f.workspaceA}::uuid),
++        (statement_timestamp() - interval '8 days', 'ack_agent_delivery', 'accepted', ${f.workspaceA}::uuid)
++    `;
++    await sql`
++      INSERT INTO swarm.idempotency_keys (
++        principal_kind, principal_id, command_id,
++        workspace_id, stream_id, request_hash, response, created_at
++      ) VALUES
++        (
++          'agent', ${principal}, ${oldIdemId},
++          ${f.workspaceA}::uuid, ${f.streamA}::uuid, 'idle-old', '{}'::jsonb,
++          statement_timestamp() - interval '40 days'
++        ),
++        (
++          'agent', ${principal}, ${freshIdemId},
++          ${f.workspaceA}::uuid, ${f.streamA}::uuid, 'idle-new', '{}'::jsonb,
++          statement_timestamp() - interval '1 day'
++        )
++    `;
++
++    const beforeAudit = await sql<{ n: string }[]>`
++      SELECT count(*)::text AS n FROM swarm.audit_log
++      WHERE workspace_id = ${f.workspaceA}::uuid
++        AND command_kind = 'claim_agent_inbox'
++        AND occurred_at < statement_timestamp() - interval '7 days'
++    `;
++    const beforeIdem = await sql<{ n: string }[]>`
++      SELECT count(*)::text AS n FROM swarm.idempotency_keys
++      WHERE command_id IN (${oldIdemId}, ${freshIdemId})
++    `;
++    assert.equal(Number(beforeAudit[0]?.n) >= 3, true, `old claim audits present: ${beforeAudit[0]?.n}`);
++    assert.equal(Number(beforeIdem[0]?.n), 2);
++
++    const [purged] = await sql<{ result: unknown }[]>`
++      SELECT swarm.purge_idle_cost_tables() AS result
++    `;
++    const result = purged?.result as { audit_log_deleted: number; idempotency_keys_deleted: number };
++    assert.ok(result.audit_log_deleted >= 3, JSON.stringify(result));
++    assert.ok(result.idempotency_keys_deleted >= 1, JSON.stringify(result));
++
++    const afterOldAudit = await sql<{ n: string }[]>`
++      SELECT count(*)::text AS n FROM swarm.audit_log
++      WHERE workspace_id = ${f.workspaceA}::uuid
++        AND command_kind = 'claim_agent_inbox'
++        AND occurred_at < statement_timestamp() - interval '7 days'
++    `;
++    const afterFreshAudit = await sql<{ n: string }[]>`
++      SELECT count(*)::text AS n FROM swarm.audit_log
++      WHERE workspace_id = ${f.workspaceA}::uuid
++        AND command_kind = 'claim_agent_inbox'
++        AND occurred_at >= statement_timestamp() - interval '7 days'
++    `;
++    const afterAck = await sql<{ n: string }[]>`
++      SELECT count(*)::text AS n FROM swarm.audit_log
++      WHERE workspace_id = ${f.workspaceA}::uuid
++        AND command_kind = 'ack_agent_delivery'
++        AND occurred_at < statement_timestamp() - interval '7 days'
++    `;
++    const afterIdem = await sql<{ command_id: string }[]>`
++      SELECT command_id FROM swarm.idempotency_keys
++      WHERE command_id IN (${oldIdemId}, ${freshIdemId})
++    `;
++    assert.equal(Number(afterOldAudit[0]?.n), 0, "old claim_agent_inbox audits are gone");
++    assert.ok(Number(afterFreshAudit[0]?.n) >= 1, "fresh claim audits remain");
++    assert.ok(Number(afterAck[0]?.n) >= 1, "old ack audits are not in the claim purge");
++    assert.deepEqual(afterIdem.map((row) => row.command_id).sort(), [freshIdemId]);
++});
+diff --git a/tests/support/arrival-watch.test.ts b/tests/support/arrival-watch.test.ts
+index 681a0d1..8865798 100644
+--- a/tests/support/arrival-watch.test.ts
++++ b/tests/support/arrival-watch.test.ts
+@@ -4,18 +4,26 @@
+  * ★ Named by `npm test`; it needs no network or database.
+  */
+ import assert from "node:assert/strict";
++import { mkdtemp, readFile, rm, writeFile } from "node:fs/promises";
++import { tmpdir } from "node:os";
++import { join } from "node:path";
+ import { test } from "node:test";
+ import type { SignalRecord } from "../../src/cloud/command-client.js";
+ import {
++  acquireArrivalWatchLock,
+   arrivalNotification,
++  arrivalWatchAlreadyRunningSentence,
++  ArrivalWatchAlreadyRunningError,
+   ARRIVAL_RETRY_NOTICE_THRESHOLD_MS,
+   ARRIVAL_WATCH_POLL_MS,
+   createArrivalRetryNoticePolicy,
+   formatArrivalNotification,
+   formatArrivalRetryNotice,
++  releaseArrivalWatchLock,
+   runArrivalWatch,
+   type ArrivalCursorStore,
+ } from "../../src/cloud/arrival-watch.js";
++import { nextIdlePollMs } from "../../src/cloud/idle-poll.js";
+ import {
+   SignalHttpError,
+   SignalTransportError,
+@@ -235,7 +243,7 @@ test("a transient failure and a 5xx keep the watcher armed without a busy loop",
+   assert.equal(reads, 3);
+   assert.deepEqual(sleeps, [250, 500]);
+   assert.ok(sleeps[0]! > 0, "retry must not spin hot");
+-  assert.equal(ARRIVAL_WATCH_POLL_MS, 25_000);
++  assert.equal(ARRIVAL_WATCH_POLL_MS, 60_000);
+ });
+ 
+ test("retry notices stay silent for 60s, emit once, then emit one recovery", () => {
+@@ -415,3 +423,81 @@ test("a message naming this agent at position 1 is emitted, and one naming other
+   });
+   assert.equal(scalarEmitted.length, 1);
+ });
++
++test("empty arrival pages back off to 60s and reset on a delivery", async () => {
++  const existingCursor = {
++    created_at: "2026-08-28T10:04:00.000Z",
++    id: "55555555-5555-4555-8555-555555555555",
++  };
++  const delivered = row(
++    "99999999-9999-4999-8999-999999999999",
++    "arrived",
++    "2026-08-28T10:07:00.000Z",
++  );
++  const memory = memoryStore(existingCursor);
++  const abort = new AbortController();
++  const sleeps: number[] = [];
++  let reads = 0;
++  const stop = await runArrivalWatch({
++    workspaceId: WORKSPACE,
++    principalId: AGENT,
++    store: memory.store,
++    signal: abort.signal,
++    pollMs: ARRIVAL_WATCH_POLL_MS,
++    sleep: async (ms) => {
++      sleeps.push(ms);
++    },
++    readPage: async () => {
++      reads += 1;
++      if (reads <= 3) return page([]);
++      if (reads === 4) return page([delivered]);
++      abort.abort();
++      return page([]);
++    },
++    emit: async () => undefined,
++  });
++  assert.equal(stop.reason, "cancelled");
++  assert.deepEqual(
++    sleeps.slice(0, 3),
++    [
++      nextIdlePollMs(ARRIVAL_WATCH_POLL_MS, 0),
++      nextIdlePollMs(ARRIVAL_WATCH_POLL_MS, 1),
++      nextIdlePollMs(ARRIVAL_WATCH_POLL_MS, 2),
++    ],
++  );
++  assert.deepEqual(sleeps.slice(0, 3), [60_000, 60_000, 60_000]);
++  assert.equal(sleeps[3], ARRIVAL_WATCH_POLL_MS, "a delivery resets the idle wait");
++});
++
++test("a second arrival watcher for the same agent names the other pid", async () => {
++  const root = await mkdtemp(join(tmpdir(), "cswarm-notify-lock-"));
++  const lockPath = join(root, "watch.lock");
++  const ownerPid = process.pid;
++  await acquireArrivalWatchLock(lockPath, ownerPid);
++  await assert.rejects(
++    () => acquireArrivalWatchLock(lockPath, ownerPid + 1),
++    (error: unknown) => {
++      assert.ok(error instanceof ArrivalWatchAlreadyRunningError);
++      assert.equal(error.pid, ownerPid);
++      assert.equal(error.message, arrivalWatchAlreadyRunningSentence(ownerPid));
++      return true;
++    },
++  );
++  await releaseArrivalWatchLock(lockPath, ownerPid);
++  await acquireArrivalWatchLock(lockPath, ownerPid + 1);
++  await releaseArrivalWatchLock(lockPath, ownerPid + 1);
++  await rm(root, { recursive: true, force: true });
++});
++
++test("a stale arrival watch lock is stolen when the other pid is gone", async () => {
++  const root = await mkdtemp(join(tmpdir(), "cswarm-notify-stale-"));
++  const lockPath = join(root, "watch.lock");
++  await writeFile(lockPath, `${JSON.stringify({ version: 1, pid: 999999 })}\n`, {
++    mode: 0o600,
++  });
++  await acquireArrivalWatchLock(lockPath, process.pid);
++  const raw = await readFile(lockPath, "utf8");
++  assert.match(raw, new RegExp(`"pid":${process.pid}`));
++  await releaseArrivalWatchLock(lockPath, process.pid);
++  await rm(root, { recursive: true, force: true });
++});

@@ -1,0 +1,35 @@
+diff --git a/docs/evidence/2026-09-06-idle-cost/README.md b/docs/evidence/2026-09-06-idle-cost/README.md
+
+### Check 1: Grep the two 20260906 migrations for audit_log
+*   **Attempted refutation:** Grepped both migrations for `audit_log` and found no matches. Searched the file tree for `20260906000003_idle_cost_round2.sql` and confirmed it is absent.
+*   **Finding (PASS):** No `audit_log` references in `supabase/migrations/20260906000001_idle_cost_retention.sql` or `supabase/migrations/20260906000002_file_versions_quota_index.sql`. `20260906000003_idle_cost_round2.sql` does not exist in the tree.
+
+### Check 2: 000001 on a fresh database
+*   **Attempted refutation:** Verified the migration `CREATE OR REPLACE FUNCTION` statements, the 2-day config `ON CONFLICT DO UPDATE`, the `rate_buckets_window_start` index, and confirmed `cron.schedule` is not called.
+*   **Finding (PASS):** All requirements are cleanly met in `supabase/migrations/20260906000001_idle_cost_retention.sql:13` and onwards.
+
+### Check 3: Claim-class 2-day vs 30-day others
+*   **Attempted refutation:** Traced the generation of command IDs for delivery claims to see if they match the migration's `command_id LIKE 'claim_agent_inbox_%'` predicate.
+*   **Finding (DEFECT):** `supabase/migrations/20260906000001_idle_cost_retention.sql:46` uses `command_id LIKE 'claim_agent_inbox_%'`. However, `src/listener/delivery-journal.ts:216` generates the actual claim command ID as `const id = \`claim_${cleanUuid}_${base36Ordinal}\`;`. Because the generated ID begins with `claim_` and not `claim_agent_inbox_`, the migration's predicate will fail to match persisted claims, leaving them at the 30-day retention instead of 2-day.
+
+### Check 4: Idle three-row skip
+*   **Attempted refutation:** Traced the `rate_buckets` upsert logic to ensure empty polls skip it while poison doesn't.
+*   **Finding (PASS):** In `supabase/functions/command/index.ts:7551`, `mustLimit` is `true` if `hasUnackedDeliveries` is `true`. Empty polls (truly empty queue) have no unacked deliveries, so `mustLimit` evaluates to `false` and `rate_buckets` is skipped. Poison rows have `acked_at IS NULL`, so `hasUnackedDeliveries` is `true` and the rate limit bucket is correctly taken.
+
+### Check 5: Generated examples
+*   **Attempted refutation:** Searched `src/cloud/idle-poll.ts` for the hardcoded typed list `["15s", "30s", "1m"]`.
+*   **Finding (PASS):** The defect from round 2 is fixed. `src/cloud/idle-poll.ts:31` now correctly generates the labels dynamically in `idlePollDurationExamples()`.
+
+### Check 6: Quota index honesty
+*   **Attempted refutation:** Checked the README for false claims about `Index Scan` on production.
+*   **Finding (PASS):** `docs/evidence/2026-09-06-idle-cost/README.md:53` explicitly states: "Index Scan on production was not observed."
+
+### Check 7: Both-edge arithmetic
+*   **Attempted refutation:** Recalculated the math provided in the README table.
+*   **Finding (PASS):** `docs/evidence/2026-09-06-idle-cost/README.md:18` arithmetic perfectly matches the recalculations (`86400 / 2 * 2 = 86,400`; `86,400 * 16 * 30 = 41,472,000`). `docs/evidence/2026-09-06-idle-cost/README.md:20` correctly recalculates the 15 s cadence (`86400 / 15 * 2 = 11,520`; `11,520 * 16 * 30 = 5,529,600`).
+
+### Check 8: Apply order and cadence
+*   **Attempted refutation:** Verified the README apply order and checked that the migration preserves the `audit_log` append-only trigger.
+*   **Finding (PASS):** The apply order in `docs/evidence/2026-09-06-idle-cost/README.md:59` matches exactly. The migration `supabase/migrations/20260906000001_idle_cost_retention.sql` does not modify the `swarm.audit_log` triggers, meaning the append-only DELETE guarantee is completely preserved.
+
+VERDICT: FAIL

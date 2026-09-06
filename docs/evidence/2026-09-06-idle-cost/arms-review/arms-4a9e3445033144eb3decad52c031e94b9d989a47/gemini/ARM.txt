@@ -1,0 +1,47 @@
+diff --git a/docs/evidence/2026-09-06-idle-cost/README.md b/docs/evidence/2026-09-06-idle-cost/README.md
+
+### Check 1: Grep migrations for `audit_log`
+*   **Attempted refutation:** Searched `supabase/migrations/20260906000001_idle_cost_retention.sql` and `supabase/migrations/20260906000002_file_versions_quota_index.sql` for the string `audit_log`, and checked for the existence of `20260906000003_idle_cost_round2.sql`.
+*   **Finding (PASS):** No references to `audit_log` were found in either of the two migrations.
+*   **Finding (PASS):** Verified that `20260906000003_idle_cost_round2.sql` does not exist in the branch. Tests also enforce its absence at `tests/idle-cost-retention.test.ts:39`.
+
+### Check 2: Generator and SQL shape
+*   **Attempted refutation:** Analyzed `claimCommandId()` generation logic and compared it against the regex in the SQL migration. Checked for `LIKE` usage or flawed match boundaries.
+*   **Finding (PASS):** `src/listener/delivery-journal.ts:212-213` cleanly generates the ID using `cleanUuid` (32 hex) and `claimOrdinal.toString(36)`.
+*   **Finding (PASS):** `supabase/migrations/20260906000001_idle_cost_retention.sql:33` accurately assigns this regex exactly once: `claim_id_re text := '^claim_[0-9a-f]{32}_[0-9a-z]+$';`.
+*   **Finding (PASS):** The migration correctly applies it for both matches (`command_id ~ claim_id_re` at line 62) and non-matches (`command_id !~ claim_id_re` at line 66).
+*   **Finding (PASS):** `LIKE 'claim_agent_inbox_%'` is absent from the migration, and `'claim_agent_inbox_x'` definitively fails to match the strict regex.
+
+### Check 3: Zero-arg cron uniqueness
+*   **Attempted refutation:** Inspected the integer overload of `swarm.purge_expired_idempotency_keys` in the migration for a `DEFAULT` assignment that would make `SELECT swarm.purge_expired_idempotency_keys()` ambiguous.
+*   **Finding (PASS):** `supabase/migrations/20260906000001_idle_cost_retention.sql:22` defines `batch_size integer` without any `DEFAULT`. The zero-arg wrapper at line 81 uniquely handles the cron call.
+
+### Check 4: Pins
+*   **Attempted refutation:** Reviewed test assertions in `idle-cost-retention.test.ts` and `command.test.ts` to ensure they mint IDs organically rather than hardcoding `claim_agent_inbox_${hex}`.
+*   **Finding (PASS):** The pure test at `tests/idle-cost-retention.test.ts:58` reads the regex directly from disk, mints via `claimCommandId(INSTANCE_ID, 0)`, verifies the match, and explicitly rejects `"claim_agent_inbox_x"`.
+*   **Finding (PASS):** The server integration test at `tests/p1-server/command.test.ts:11961` successfully mints an ID via `claimCommandId()`, writes a 3-day key, runs the zero-arg purge function, and proves the 3-day claim key is deleted (line 12022) while a 3-day non-claim key (`midOtherId`) remains intact.
+*   **Finding (PASS):** Neither test hardcodes `claim_agent_inbox_` combined with hex for insertion.
+
+### Check 5: Idle three-row skip and poison persistence
+*   **Attempted refutation:** Audited `command/index.ts` to verify the `rate_buckets` upsert logic for empty polls, and `durable-delivery.ts` for poison handling during the ledger write.
+*   **Finding (PASS):** Empty polls skip the `rate_buckets` upsert. At `supabase/functions/command/index.ts:7555`, `mustLimit` is short-circuited to `false` when `hasUnackedDeliveries` returns false (no unacked deliveries exist), bypassing `checkDeliveryRateLimit`.
+*   **Finding (PASS):** The ledger persistence predicate (`claimAgentInboxPersistsLedger` at `supabase/functions/command/durable-delivery.ts:24`) accurately returns `true` if `terminal_delivery_failure_count > 0`, guaranteeing poisoned deliveries still safely trigger the ledger and idempotency/audit writes.
+
+### Check 6: Generated examples
+*   **Attempted refutation:** Searched `src/cloud/idle-poll.ts` for hardcoded duration arrays that might drift from the actual constants.
+*   **Finding (PASS):** `src/cloud/idle-poll.ts:34` defines `idlePollDurationExamples()` which dynamically derives the strings directly from `IDLE_POLL_DEFAULT_MS` and `IDLE_POLL_MAX_MS`. The hardcoded list `["15s", "30s", "1m"]` was removed and is no longer present.
+
+### Check 7: Both-edge arithmetic
+*   **Attempted refutation:** Recalculated the math backing the claims in the README and verified claims regarding production EXPLAIN plans.
+*   **Finding (PASS):** The arithmetic is perfectly sound:
+    * 2s cadence: 86,400 per seat/day → 1,382,400 across 16 seats → 41,472,000 across 30 days.
+    * 15s cadence: 11,520 per seat/day → 184,320 across 16 seats → 5,529,600 across 30 days.
+    * The README table (`docs/evidence/2026-09-06-idle-cost/README.md:18`) exactly mirrors these totals.
+*   **Finding (PASS):** The README explicitly notes at `docs/evidence/2026-09-06-idle-cost/README.md:53` that "Index Scan on production was not observed."
+
+### Check 8: Apply order and cadence
+*   **Attempted refutation:** Checked the README for correctness of the documented rollout process and behavior of old clients.
+*   **Finding (PASS):** `docs/evidence/2026-09-06-idle-cost/README.md:57` correctly maps the apply order (migrations, edge update, client release, fleet restart).
+*   **Finding (PASS):** It correctly notes that 0.1.56 listeners remain bound to the hardcoded 2 s polling interval until they are restarted with the new binary (line 62).
+
+VERDICT: PASS

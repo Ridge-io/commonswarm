@@ -1,0 +1,46 @@
+diff --git a/docs/evidence/2026-09-06-idle-cost/README.md b/docs/evidence/2026-09-06-idle-cost/README.md
+
+### 1. Grep the two 20260906 migrations for audit_log
+* **Attempted refutation:** Searched `supabase/migrations/20260906000001_idle_cost_retention.sql` and `supabase/migrations/20260906000002_file_versions_quota_index.sql` for the string `audit_log`.
+* **Finding (NIT):** `supabase/migrations/20260906000001_idle_cost_retention.sql` does not contain `audit_log`.
+* **Finding (NIT):** `supabase/migrations/20260906000002_file_versions_quota_index.sql` does not contain `audit_log`. Any hit would be a DEFECT, but none were found.
+
+### 2. Claim-id regex and Integer purge default
+* **Attempted refutation:** Analyzed regex `^claim_[0-9a-f]{32}_[0-9a-z]+$` to see if it allows invalid claim IDs or rejects valid ones, and checked the parameter signature for `purge_expired_idempotency_keys(batch_size integer)` for defaults.
+* **Finding (NIT):** `supabase/migrations/20260906000001_idle_cost_retention.sql:35` defines `claim_id_re text := '^claim_[0-9a-f]{32}_[0-9a-z]+$';`. This safely rejects `claim_agent_inbox_x` because the regex requires exactly 32 hex characters immediately after `claim_`, followed by a base-36 component.
+* **Finding (NIT):** `src/listener/delivery-journal.ts` (via `claimCommandId()`) correctly generates IDs using a 32-character hex sequence (`cleanUuid`) and an alphanumeric base-36 ordinal (`base36Ordinal`), which perfectly matches the regex.
+* **Finding (NIT):** `supabase/migrations/20260906000001_idle_cost_retention.sql:22` correctly declares `CREATE OR REPLACE FUNCTION swarm.purge_expired_idempotency_keys(batch_size integer)` with no DEFAULT clause.
+
+### 3. recordListenerClaimCadence max behavior and comments
+* **Attempted refutation:** Investigated if `recordListenerClaimCadence` uses a simple overwrite (`hour.cadenceMs = cadenceMs`) instead of `Math.max(existing, new)`. Scanned `read-health.ts` for the rule sentence.
+* **Finding (NIT):** `src/listener/read-health.ts` (inside `recordListenerClaimCadence`) correctly applies the logic `Math.max(hour.cadenceMs, cadenceMs)` to keep the max value (the slowest cadence). It does NOT incorrectly overwrite.
+* **Finding (NIT):** `src/listener/read-health.ts` explicitly includes the sentence: `/** An hour is scored at the slowest cadence recorded in it. */` 
+
+### 4. Tests
+* **Attempted refutation:** Checked if the mid-hour test logic uses `recordListenerClaimCadence` rather than purely hand-built objects, and verified assertions for 60s/15s mid-hour scenarios.
+* **Finding (NIT):** The test helper `healthHourThenMidHourCadence` intentionally uses `recordListenerClaimCadence` directly to drive the data structures, not just hand-built objects.
+* **Finding (NIT):** The test `"an hour idled at 60s does not lapse after a 15s record mid-hour"` utilizes 61 claims (60s then 15s) and asserts no lapse (`assert.doesNotMatch(rendered, /listener_claim_throughput_lapse/)`).
+* **Finding (NIT):** The test `"an hour at 15s then 60s mid-hour with 60 claims does not lapse"` accurately utilizes 60 claims and asserts no lapse.
+* **Finding (NIT):** Round-5 across-hour tests remain intact.
+
+### 5. README Not established and Time-weighted segments
+* **Attempted refutation:** Searched `docs/evidence/2026-09-06-idle-cost/README.md` for the explicit "slowest cadence" rule under "Not established". Read `summarizeListenerReadHealth` to ensure no time-weighted logic.
+* **Finding (NIT):** `docs/evidence/2026-09-06-idle-cost/README.md` under "Not established" explicitly specifies: "An hour whose cadence changes is scored at the slowest cadence recorded in it. That cannot false-lapse. It can miss a wedge only inside one hour that also had a slow interval."
+* **Finding (NIT):** `src/listener/read-health.ts` calculates expected claims with a direct division (`const expectedClaims = HOUR_MS / cadenceMs;`), correctly lacking time-weighted segment calculations.
+
+### 6. Idle three-row skip
+* **Attempted refutation:** Analyzed whether the empty-queue rate-limit logic is skipped in the code and checked if the `push` lane is properly cited in the README.
+* **Finding (NIT):** `docs/evidence/2026-09-06-idle-cost/README.md` notes the rate-limit skip: "Empty-queue `claim_agent_inbox` skips `checkDeliveryRateLimit` ... The next lane (`push`) is where that ceiling returns."
+* **Finding (NIT):** `supabase/functions/command/index.ts` appropriately applies the skip rule via `const mustLimit = operation === "ack" || await hasUnackedDeliveries(tx, route.workspaceId, agent.principal_id);`. The empty-queue 3-row skip holds.
+
+### 7. Generated duration examples and arithmetic
+* **Attempted refutation:** Validated the calls/seat/day calculation blocks and the purge cap text in the README.
+* **Finding (NIT):** `docs/evidence/2026-09-06-idle-cost/README.md` properly documents `2 s (old code default) | 43,200 | 86,400`.
+* **Finding (NIT):** `docs/evidence/2026-09-06-idle-cost/README.md` properly documents `15 s (new default, idle) | 5,760 | 11,520`.
+* **Finding (NIT):** `docs/evidence/2026-09-06-idle-cost/README.md` explicitly specifies "The zero-arg purge loops at most 200 batches of 5000 = 1 M rows per nightly run. Production holds ~1.47 M keys, so the first apply drains over two nights."
+
+### 8. Apply order
+* **Attempted refutation:** Checked for the exact deployment sequence listed in instructions.
+* **Finding (NIT):** `docs/evidence/2026-09-06-idle-cost/README.md` maps exactly to the requested sequence: `1. Migration (20260906000001..., 20260906000002...)`, `2. Edge (...)`, `3. Client release (...)`, `4. Fleet restart (...)`.
+
+VERDICT: PASS

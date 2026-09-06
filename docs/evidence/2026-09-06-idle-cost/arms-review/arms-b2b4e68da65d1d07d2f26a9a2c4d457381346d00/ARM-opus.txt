@@ -1,0 +1,172 @@
+Adversarial arm (Opus, lane A idle cost) — SHA b2b4e68da65d1d07d2f26a9a2c4d457381346d00
+
+QUOTE-BACK (first `diff --git` line of DIFF.patch):
+diff --git a/docs/evidence/2026-09-06-idle-cost/README.md b/docs/evidence/2026-09-06-idle-cost/README.md
+
+Gates run in a detached throwaway worktree at this SHA (built first):
+  npx tsc --noEmit -> clean; npm test -> tests 856, pass 856, fail 0, exit 0.
+
+================================================================
+ATTEMPTED REFUTATIONS
+================================================================
+
+(1) DEFECT 2 (per-hour cadence) — PARTLY FIXED. One residual defect verified.
+
+REFUTED (the across-hours case is genuinely fixed):
+ - src/listener/read-health.ts:427-438 no longer computes expectedClaims once.
+   It builds `cadenceByHour` from `claimHours[].cadenceMs` (:430-433) and reads
+   `cadenceByHour.get(hourStart) ?? health.claimCadenceMs` per hour (:437).
+ - src/listener/read-health.ts:205-219 `recordListenerClaimCadence(health,
+   cadenceMs, ts)` takes `ts` and stamps the cadence onto that hour's bucket.
+ - Supervisor passes the event timestamp at both call sites:
+   src/listener/supervisor.ts:425-429 (idle_poll, `event.ts`) and
+   src/listener/supervisor.ts:464-468 (ready, `event.ts`).
+ - Old ledger files parse: `cadenceMs` is optional in the type
+   (read-health.ts:31), accepted as a known key under rejectUnknownKeys
+   (read-health.ts:330-334), range-checked only when present (:336-339), and
+   omitted on output when absent (:359-365). Fallback to `claimCadenceMs` at
+   :437.
+ - Both required tests exist and drive the real recorder, not hand-built
+   objects: tests/listener-host-limits.test.ts:358-403 (`healthHourThenReset`
+   calls recordListenerClaimCadence + recordListenerClaim), :374 the 60 s hour
+   after a 15 s reset does NOT lapse, :389 the wedged 15 s hour DOES lapse and
+   asserts the discriminating string `60/240 expected (0.250)` (:402).
+   tests/listener-host-limits.test.ts:405-432 covers old-file parse and the
+   unknown-key rejection.
+
+NOT REFUTED — DEFECT (verified in the tree, with a positive control):
+ A cadence change WITHIN an hour is neither handled nor stated. The bucket is
+ last-writer-wins: src/listener/read-health.ts:213 `if (hour) hour.cadenceMs =
+ cadenceMs;` overwrites whatever the hour was actually run at. The doc comment
+ at read-health.ts:204 ("the claim cadence in force at `ts` for that hour's
+ expected count") asserts a single cadence per hour that the code does not
+ guarantee, and neither the README nor any comment states the last-writer rule.
+
+ The reachable sequence is ordinary, not exotic: a seat idles an hour at the
+ 60 s back-off floor, then ONE delivery arrives near the end of that hour. The
+ delivery resets the idle streak, so the next idle_poll event carries the 15 s
+ base (src/cloud/idle-poll.ts:90-107 resets to base on any delivery;
+ supervisor.ts:421-429 records that interval against the SAME hour). The hour
+ is then scored at 240 expected against ~60 real polls.
+
+ Measured against this SHA's own dist (node probe, summarizeListenerReadHealth):
+   60 polls at 60 s + one 15 s cadence record at :59:30 in the same hour
+     -> {hourStart 2026-09-01T10:00Z, claims 61, expectedClaims 240,
+         ratio 0.254} and throughputLapseHours contains that hour.
+   src/cli.ts:4686 renders this as
+     "Claim throughput fell below 0.50 for the full hour at <hour>: 61/240
+      expected (0.254)."
+ POSITIVE CONTROL (same 61 claims, only the mid-hour 15 s record removed):
+     -> {claims 61, expectedClaims 60, ratio 1.017}, throughputLapseHours [].
+ The single mid-hour cadence write is the whole cause. This is the same
+ false-lapse-on-a-healthy-listener failure that round 5 set out to remove,
+ narrowed from "every past hour" to "the hour in which the cadence changed".
+
+ The lane's own tests do not reach it: `healthHourThenReset`
+ (tests/listener-host-limits.test.ts:371) deliberately records the later
+ cadence at NEXT_HOUR, so the mid-hour path has no control on it.
+
+ Fix shape (either is acceptable): accumulate expected claims by summing the
+ per-poll interval into the hour bucket (expected = sum of intervals / hour),
+ or keep the MINIMUM-expected (i.e. largest cadence) seen in the hour, or —
+ if the lane chooses to defer — say plainly in README "Not established" and in
+ the read-health.ts:204 comment that an hour whose cadence changes is scored
+ at the LAST cadence of that hour and can over-expect. Add a test that drives
+ 60 polls at 60 s then a 15 s record inside the same hour.
+
+(2) Retention migration — REFUTED (no defect).
+ - `grep audit_log supabase/migrations/2026090600000*.sql` -> NONE. Only
+   20260906000001 and 20260906000002 exist; no 000003.
+ - Predicate `'^claim_[0-9a-f]{32}_[0-9a-z]+$'`
+   (20260906000001_idle_cost_retention.sql:35) matches `claimCommandId()`'s
+   `claim_${cleanUuid}_${base36}` (src/listener/delivery-journal.ts:204) and
+   rejects `claim_agent_inbox_%` (the literal `agent` is not hex). Anchored
+   both ends.
+ - The integer overload has no DEFAULT (:22-24), so the existing cron's
+   `SELECT swarm.purge_expired_idempotency_keys()` still resolves only to the
+   zero-arg wrapper (:85). Guard rejects batch_size outside 1..50000 (:37-39).
+ - Index use: the DELETE's subselect is `ORDER BY created_at ... LIMIT
+   batch_size` (:74-75) and `swarm.idempotency_keys (created_at)` exists
+   (20260723000001_p1_schema.sql:381), so the planner can stop early rather
+   than filter 1.47 M rows per batch. Batching bounds per-statement work.
+ - README states the two-night drain (docs/evidence/2026-09-06-idle-cost/
+   README.md, Retention paragraph: 200 x 5000 = 1 M/run vs ~1.47 M held).
+ NIT (not a defect, and not established either way): the 200 batches run
+ inside ONE function call, therefore one transaction, so up to 1 M row locks
+ and a long transaction are held for the whole nightly run. That is strictly
+ better than the single unbatched DELETE it replaces, and the rows are >2 days
+ old so live INSERT contention is implausible — but "lock time on a 1.47 M-row
+ production table" was NOT measured by this lane and the README does not claim
+ it was.
+
+(3) Command edge — REFUTED (no defect).
+ - Empty claim writes none of the three rows: rate bucket gated by `mustLimit`
+   (supabase/functions/command/index.ts:7552-7566), idempotency INSERT and
+   `insertAudit` both gated by `persistLedger`
+   (index.ts:8390-8425 and :8460-8469).
+ - `claimAgentInboxPersistsLedger` (durable-delivery.ts:15-25) is true when
+   `delivery_refs.length > 0 || terminal_delivery_failure_count > 0`, so a
+   claim that leases a row AND a claim that terminalizes poison both still
+   write the ledger and the audit row. Non-empty idempotency semantics are
+   byte-identical to before — the INSERT, ON CONFLICT DO NOTHING, and the
+   LedgerRace throw are unchanged, only wrapped.
+ - A retried empty command_id re-executes because no key was stored; the
+   comment at index.ts:8390-8397 states this as intended.
+ - `hasUnackedDeliveries` (index.ts:4870-4884) is covered exactly by the
+   partial index `signal_deliveries_unacked_oldest ... WHERE acked_at IS NULL`
+   on (recipient_agent_principal_id, workspace_id, ...)
+   (20260731000001_signal_deliveries.sql:79-86), so the extra per-poll SELECT
+   is an index probe.
+ - Race noted, benign: a row arriving between `hasUnackedDeliveries` and the
+   claim gives mustLimit=false with persistLedger=true, so one claim can skip
+   the bucket while writing the ledger. At most one slip per arrival.
+
+(4) Client — REFUTED (no defect).
+ - src/cloud/idle-poll.ts:9-11 is the single constant set; :34-45
+   `idlePollDurationExamples()` GENERATES the examples from
+   IDLE_POLL_DEFAULT_MS, its double capped at max, and IDLE_POLL_MAX_MS — no
+   typed list. Bound sentence (:53-55), status sentence (:110-112), help
+   sentence (:114-116) and the parser error (:69, :79) all read the same
+   constants.
+ - Back-off: `nextIdlePollMs` (:90-107) doubles from base and clamps at
+   IDLE_POLL_MAX_MS (60 s); any delivery resets to base (15 s).
+ - Notify: `ARRIVAL_WATCH_POLL_MS` was 25_000 and is now
+   IDLE_POLL_MAX_MS = 60 s (src/cloud/arrival-watch.ts:31-32). A second
+   watcher for the same principal is refused via a lock file beside the cursor
+   (arrival-watch.ts:168-176) with `ArrivalWatchAlreadyRunningError` and a
+   sentence generated from the owner pid (:180-182).
+ - Nothing in the diff changes the wire protocol: the edge request/response
+   shapes are untouched; only which rows the server persists changed.
+
+(5) D-053 — REFUTED (no defect). No new branching on `error.message` in the
+ diff. Error classification uses codes: `(error as NodeJS.ErrnoException).code`
+ for ESRCH / EEXIST / ENOENT in src/cloud/arrival-watch.ts. The one added
+ `error.message` reference is a TEST assertion comparing against the generated
+ `arrivalWatchAlreadyRunningSentence(ownerPid)`, which is a claim control, not
+ a classifier.
+
+(6) Enumerations — REFUTED (no defect). Every user-facing list in the diff is
+ generated: the duration examples from the constants (idle-poll.ts:34-47), the
+ bound sentence from MIN/MAX labels (:53-55), the lapse threshold in the CLI
+ sentence from LISTENER_THROUGHPUT_LAPSE_RATIO (src/cli.ts:4686 reading
+ read-health.ts:12), the notify-lock sentence from the pid.
+
+================================================================
+WHAT I DID NOT ESTABLISH
+================================================================
+- Nothing was applied, deployed, or run against any database. No production
+  or local Supabase was touched; the two migrations were read, never executed.
+- Purge lock time, transaction duration, and real plan on a 1.47 M-row table
+  are unmeasured (see the NIT under (2)). The claimed index use is read from
+  the DDL, not from an EXPLAIN.
+- The edge functions were read only; `npm run check:edge` needs Deno and was
+  not run, and no p1-server suite was run (it needs a database).
+- No live listener was started, so the rendered status of a real detached
+  listener at this SHA is unverified; my read-health evidence comes from this
+  SHA's own built dist, not from a running supervisor.
+- The frequency of the mid-hour cadence change in production is unknown; I
+  established that it is reachable and false-lapses, not how often it fires.
+
+DEFECT (1) is verified in the tree with a discriminating positive control, so:
+
+VERDICT: FAIL

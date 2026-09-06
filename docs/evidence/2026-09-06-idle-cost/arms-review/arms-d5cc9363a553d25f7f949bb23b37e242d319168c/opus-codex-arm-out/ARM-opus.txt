@@ -1,0 +1,177 @@
+ARM: Claude Opus (independent cross-family arm) — lane A, SHA d5cc9363a553d25f7f949bb23b37e242d319168c
+Worktree reviewed: /private/tmp/claude-501/-Users-yulanbot-Developer-Ridge-io-cloud-swarm/a866e6cd-5d6d-477f-af6a-740cd30407ed/scratchpad/arm2-idle-cost-d5cc936 (detached at d5cc936)
+
+First `diff --git` line of arm-out/DIFF.patch, quoted back exactly:
+
+diff --git a/docs/evidence/2026-09-06-idle-cost/README.md b/docs/evidence/2026-09-06-idle-cost/README.md
+
+Gates run on this SHA in this worktree: `npm test` 852 pass / 0 fail; `npm run build` then
+`npm run test:p1-cli` 483 pass / 0 fail. No database was started; production was not touched.
+
+================================================================
+DEFECT 1 — the 2-day claim retention matches ZERO real keys
+================================================================
+supabase/migrations/20260906000001_idle_cost_retention.sql:60 and :64
+supabase/migrations/20260906000001_idle_cost_retention.sql:5 (comment)
+docs/evidence/2026-09-06-idle-cost/README.md:31
+tests/p1-server/command.test.ts:11959-11960 (the control that hides it)
+
+The purge splits classes with `command_id LIKE 'claim_agent_inbox_%'`.
+The only producer of a claim command id is:
+
+  src/listener/delivery-journal.ts:204-221  claimCommandId()
+      const id = `claim_${cleanUuid}_${base36Ordinal}`;
+
+so every claim key ever written is `claim_<32 hex>_<base36 ordinal>` — for example
+`claim_9f0c...ab_3`. It does NOT begin with `claim_agent_inbox_`. Attempted refutation, all
+failed:
+  - repo-wide search for another producer: `grep -rn "claim_agent_inbox_" src supabase tests
+    docs uxtest scripts site/src` returns only the migration itself, the two pure/served
+    tests, and the README. No code path emits that prefix.
+  - the edge does not rewrite the id: supabase/functions/command/index.ts:8397 inserts
+    `${commandId}` verbatim, the client value.
+  - `CLAIM_AGENT_INBOX_KIND = "claim_agent_inbox"` (durable-delivery.ts:14) is the command
+    KIND in the request body, not the command_id, and `swarm.idempotency_keys` stores no kind
+    column to fall back on.
+
+Consequence: `claim_idempotency_retention_days = 2` is inert. Every persisted (non-empty)
+claim key falls into the `NOT LIKE` arm and keeps `GREATEST(30, ...)`. The migration, its
+header comment, and README line 31 ("sets `claim_idempotency_retention_days = 2` ... for
+`command_id LIKE 'claim_agent_inbox_%'`") state a behaviour the code does not have.
+
+The served control cannot catch this. tests/p1-server/command.test.ts:11959 builds
+`claim_agent_inbox_${uuid...}` and INSERTs it directly; it never asks a real claim what id it
+wrote. It is green whether or not any listener can produce a matching key, so its PASS is not
+evidence about the retention class. Same for the pure pin: tests/idle-cost-retention.test.ts:40
+asserts the SQL contains the literal, which is the same typed string, not the enforcement.
+
+Fix shape (both halves needed): make the predicate `command_id LIKE 'claim\_%'` (or match the
+32-hex form) AND add a control that derives the id from `claimCommandId()` instead of typing
+it. This is the AGENTS.md rule verbatim: the list inside the statement must come from the same
+constant the enforcement reads.
+
+================================================================
+DEFECT 2 — a varying idle interval is written into claimCadenceMs, which the
+health math treats as one constant for every past hour
+================================================================
+src/listener/supervisor.ts:421-429 (new `idle_poll` branch)
+src/listener/read-health.ts:403 (`const expectedClaims = HOUR_MS / health.claimCadenceMs;`)
+src/listener/read-health.ts:202 (doc comment "the configured claim cadence")
+src/cli.ts:4686 (the lapse WARNING built from it)
+
+Before this lane, `claimCadenceMs` was set once, from the `ready` event's `cadenceMs`
+(supervisor.ts:459-467), and the poll interval was the constant 2 s, so
+`expectedClaims = 3_600_000 / cadence` was a sound per-hour expectation: a `delivery_claim`
+event fires on EVERY claim POST, empty ones included (runtime.ts:1448, signalId null), so
+claims/hour ≈ 3600 s / interval.
+
+This lane makes the interval swing 15 s → 30 s → 60 s and writes the CURRENT value into the
+same field on every poll. read-health.ts:403 then applies that one value to every hour in the
+window. Worked example with this SHA's constants:
+  - a listener idles a whole hour at the 60 s floor → ~60 claim POSTs in that hour;
+  - a delivery lands just before the hour closes → runtime.ts:1481-1486 resets the streak and
+    emits `idle_poll` with intervalMs = pollMs = 15 s;
+  - the closed hour is now scored expected = 240, actual ≈ 60, ratio 0.25;
+  - 0.25 < LISTENER_THROUGHPUT_LAPSE_RATIO (0.5, read-health.ts:12) → `listenerLapse` true and
+    `cswarm listen status` prints "Claim throughput fell below 0.50 ..." for a healthy listener.
+The inverse is worse: a listener that wedged during a busy hour but ends parked at 60 s is
+scored expected = 60, so a real lapse is hidden.
+
+Attempted refutation, all failed:
+  - "the hours are recomputed per hour with the cadence of that hour": no. There is one scalar
+    `health.claimCadenceMs`; `expectedClaims` is computed once outside the hour loop
+    (read-health.ts:403) and assigned to every row.
+  - "claims counts deliveries, so the ratio was already loose": no. `recordListenerClaim`
+    (supervisor.ts:637) runs in the `delivery_claim` branch, which the runtime emits for every
+    claim POST including empty ones. The metric really did mean POSTs per hour.
+  - "back-off only reaches 60 s when nothing arrives, so the reset case is rare": the reset is
+    exactly the interesting case — the hour in which work finally arrives is the hour most
+    likely to be inspected, and it is the one this scores wrong.
+No test in the diff pins hourly throughput across a cadence change; `grep -rn claimCadence
+tests/` finds only three unrelated fixtures.
+This also falsifies the doc comment at read-health.ts:202: the value is no longer "configured".
+
+================================================================
+NIT 1 — empty claims now bypass the ONLY throttle on claim_agent_inbox
+================================================================
+supabase/functions/command/index.ts:7552-7567
+
+`mustLimit` is false for every claim made against an empty queue, so
+`checkDeliveryRateLimit` (the `DELIVERY_CLAIM_RATE_LIMIT_PER_MINUTE` bucket, index.ts:4887) is
+not consulted at all on that path. I enumerated the other limiters reachable by a command POST
+(index.ts:4744, 4987, 5086, 5511, 6199, 8224, 8695): none covers `claim_agent_inbox`. So a
+holder of a valid agent token whose queue is empty can now POST claims without any server-side
+rate ceiling, and each one still runs the claim function's three UPDATE statements
+(durable-delivery.ts:208-268) plus the new EXISTS probe. The lead ruled the zero-row outcome
+intended, so this is not a defect against the ruling — but it is an undocumented loss of the
+only claim throttle, and README's "Not established" section should say so.
+
+NIT 2 — supabase/migrations/20260906000001_idle_cost_retention.sql:88-99. The zero-arg loop
+caps at 200 × 5000 = 1,000,000 rows per nightly run. README says production holds ~1.47 M
+idempotency keys, so a first run cannot drain the backlog in one night. Harmless (it converges
+over a few nights) but worth stating rather than leaving a reader to infer a single-pass purge.
+
+================================================================
+Checks that PASSED an attempted refutation
+================================================================
+1. audit_log untouched. `grep -n audit_log` over both new migrations: no match (exit 1).
+   No trigger, no index, no DELETE, no `claim_audit_retention_days`.
+   `ls supabase/migrations | tail` confirms there is no `20260906000003*`; the tree ends at
+   `20260906000002_file_versions_quota_index.sql`. The edge only ever SKIPS an
+   `insertAudit` (index.ts:8460-8470); it deletes nothing. The p1-server test at :11966
+   and :12009 measures audit rows before/after the purge and requires equality.
+2. Fresh-database shape. `CREATE OR REPLACE` of the zero-arg function is legal here: the
+   original (20260723000001_p1_schema.sql:793-816) is `RETURNS void` zero-arg, and the
+   replacement keeps `RETURNS void` and the same (empty) argument list — only LANGUAGE changes
+   sql → plpgsql, which REPLACE permits. Owner and REVOKE are re-stated for both signatures.
+   The config INSERT is `ON CONFLICT (key) DO UPDATE`. No `cron.schedule` in the file (pinned
+   by tests/idle-cost-retention.test.ts:37), so `swarm-purge-idempotency-keys` from
+   20260723000001_p1_schema.sql:839 stays the only job and still calls the zero-arg name.
+   `CREATE INDEX IF NOT EXISTS rate_buckets_window_start` is idempotent.
+3. Class split logic — see DEFECT 1. The 30-day arm itself is correct: a 3-day `post_signal_%`
+   key survives, a 40-day one goes.
+4. Three-row skip. `claimAgentInboxPersistsLedger` (durable-delivery.ts:19-26) gates BOTH the
+   idempotency INSERT (index.ts:8399) and `insertAudit` (index.ts:8460), and returns true when
+   `terminal_delivery_failure_count > 0`, so poison still persists and still replays. The
+   rate-bucket skip is keyed on `hasUnackedDeliveries` (index.ts:4870-4884), which is
+   conservative: a recipient holding a live unacked lease still takes the bucket even if that
+   poll returns nothing. README line 27 states exactly that condition ("when there is no
+   unacked delivery and no poison"), so the prose is not overclaiming.
+5. Generated examples. `idlePollDurationExamples()` (src/cloud/idle-poll.ts:37-46) builds from
+   DEFAULT, min(MAX, DEFAULT×2), MAX with a dedupe pass; every user-facing string
+   (flag error, hint, bound sentence, help, usage line) is composed from it or from
+   `formatIdlePollDuration`. No typed `["15s","30s","1m"]` anywhere in src/.
+   tests/idle-poll.test.ts re-derives the expected list from the constants rather than typing it.
+6. Quota-index honesty. README line 50: "Index Scan on production was not observed." Present
+   and unqualified. The Seq-Scan-on-local-seed explanation is given a WHY, not hand-waved.
+7. Arithmetic. 86400/2 = 43,200 command/seat/day; ×2 edges = 86,400; ×16×30 = 41,472,000 ✓.
+   86400/15 = 5,760; ×2 = 11,520; ×16×30 = 5,529,600 ✓. The 3.6 s and 60 s rows also check
+   (48,000 / 23,040,000 and 2,880 / 1,382,400) ✓.
+8. Apply order and cadence. README "Apply order" lists migrations → edge → client → fleet
+   restart and says 0.1.56 keeps 2 s until restarted. Nothing in either migration or in the
+   edge issues a DELETE against an append-only table, so a production apply of this SHA does
+   not drop that guarantee for any statement.
+Also checked and clean: no branching on `error.message` in the new code — the notify lock uses
+`ErrnoException.code` (`EEXIST`, `ESRCH`) and a named `ArrivalWatchAlreadyRunningError` with a
+stable `code` (src/cloud/arrival-watch.ts:180-200). The read POST and the claim POST really do
+share one pause: `idleSleep` is the only sleep in the runtime loop's idle path
+(runtime.ts:796-806, 1481, 1809).
+
+================================================================
+NOT established by this arm
+================================================================
+- No database was started: `test:p1-local` and `test:p1-server` were NOT run, so neither the
+  purge function's runtime behaviour nor the served empty-claim row counts were measured here.
+  DEFECT 1 is established from the id producer and the client call path, not from a live purge.
+- No live listener was started, so the new `idlePollMs` status field and the
+  `listener_idle_poll` log line were not observed on a real detached listener; DEFECT 2's
+  false-lapse walk-through is derived from the code, not observed in a status JSON.
+- Nothing in production was read or written; no production EXPLAIN, no key-age mix.
+- I did not review the site/ or npm-dist legs, nor the unchanged parts of the claim SQL beyond
+  the steps needed for checks 4 and DEFECT 1.
+
+Ruling: DEFECT 1 is a user- and operator-facing claim (migration comment, README, and the
+retention behaviour itself) that the code does not hold, defended by a control that cannot
+fail for the claimed reason. DEFECT 2 corrupts an operator health signal in both directions.
+
+VERDICT: FAIL

@@ -1,0 +1,35 @@
+diff --git a/docs/evidence/2026-09-06-idle-cost/README.md b/docs/evidence/2026-09-06-idle-cost/README.md
+
+### Check 1: Grep the two 20260906 migrations for audit_log.
+*   **Attempted refutation:** Searched all 20260906 migrations for any reference to `audit_log` and checked for the existence of `20260906000003`.
+*   **Finding (NIT):** No hits for `audit_log` in the migrations (`supabase/migrations/20260906000001_idle_cost_retention.sql` and `supabase/migrations/20260906000002_file_versions_quota_index.sql`). The `20260906000003` file does not exist.
+
+### Check 2: Claim-id regex still matches claimCommandId() and rejects claim_agent_inbox_x.
+*   **Attempted refutation:** Inspected `claimCommandId` output in `src/listener/delivery-journal.ts`, regex assignment in `supabase/migrations/20260906000001_idle_cost_retention.sql`, and `purge_expired_idempotency_keys` signature.
+*   **Finding (NIT):** The regex `^claim_[0-9a-f]{32}_[0-9a-z]+$` (`supabase/migrations/20260906000001_idle_cost_retention.sql:32`) accurately matches deterministic IDs like `claim_c3d4e5f6a7b84c9d8e1f2a3b4c5d6e7f_0` generated from `src/listener/delivery-journal.ts:214-215` and effectively rejects `claim_agent_inbox_x`. The `batch_size integer` parameter (`supabase/migrations/20260906000001_idle_cost_retention.sql:23`) has no `DEFAULT`.
+
+### Check 3: Per-hour cadence.
+*   **Attempted refutation:** Analyzed if `summarizeListenerReadHealth` continues to incorrectly apply the latest cadence uniformly, and verified if `recordListenerClaimCadence`, `Supervisor idle_poll` and `ready` use the emitted `event.ts`.
+*   **Finding (NIT):** `src/listener/read-health.ts:430-438` safely computes expected claims per hour bucket using `cadenceByHour.get(hourStart) ?? health.claimCadenceMs`. `recordListenerClaimCadence` (`src/listener/read-health.ts:208`) takes `ts: string` and records `cadenceMs`. Supervisor passes `event.ts` for both `idle_poll` (`src/listener/supervisor.ts:424`) and `ready` (`src/listener/supervisor.ts:467`).
+
+### Check 4: The two tests.
+*   **Attempted refutation:** Checked for weakly mocked test objects or logic that still incorrectly scores against the newest cadence.
+*   **Finding (NIT):** `tests/listener-host-limits.test.ts:374` ("an hour idled at 60s does not lapse after a delivery resets cadence to 15s") and `tests/listener-host-limits.test.ts:389` ("an hour wedged at 15s still lapses after cadence is later 60s") successfully implement the edge cases. They utilize `healthHourThenReset` and `recordListenerClaimCadence` appropriately, relying completely on the real implementation.
+
+### Check 5: Old files.
+*   **Attempted refutation:** Validated if `parseListenerReadHealth` enforces missing `cadenceMs` as an error when `rejectUnknownKeys` is true.
+*   **Finding (NIT):** `src/listener/read-health.ts:327-341` passes `false` to `hasExpectedKeys` to allow missing fields, and then manually validates that keys are restricted to `"hourStart"`, `"claims"`, and `"cadenceMs"` if `rejectUnknownKeys = true`. It gracefully accepts old `{hourStart, claims}` blobs while acknowledging `cadenceMs` when present.
+
+### Check 6: Idle three-row skip still holds.
+*   **Attempted refutation:** Checked if empty polls still inadvertently upsert `rate_buckets` or if the README glosses over the rate-limit skip.
+*   **Finding (NIT):** `supabase/functions/command/index.ts:7553` computes `mustLimit = operation === "ack" || await hasUnackedDeliveries(...)`, correctly bypassing the `rate_buckets` upsert for empty queues. `docs/evidence/2026-09-06-idle-cost/README.md:70` names the empty-queue rate-limit skip and clearly states "The next lane (`push`) is where that ceiling returns."
+
+### Check 7: Purge cap.
+*   **Attempted refutation:** Verified the purge batch arithmetic, generated duration examples, and the calls/seat/day calculation in `README.md`.
+*   **Finding (NIT):** `docs/evidence/2026-09-06-idle-cost/README.md:37` explicitly mentions the "200 × 5000 = 1 M" nightly cap and how it drains "~1.47 M keys" over "two nights". `docs/evidence/2026-09-06-idle-cost/README.md:10` highlights generated duration examples. `docs/evidence/2026-09-06-idle-cost/README.md:18` provides the exact arithmetic `2 s -> 86,400; 15 s -> 11,520`.
+
+### Check 8: Apply order.
+*   **Attempted refutation:** Confirmed the sequence of the apply order.
+*   **Finding (NIT):** `docs/evidence/2026-09-06-idle-cost/README.md:59-62` precisely dictates the sequence: 1. Migration (000001 then 000002), 2. Edge, 3. Client release, 4. Fleet restart.
+
+VERDICT: PASS

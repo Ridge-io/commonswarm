@@ -1,0 +1,141 @@
+Adversarial arm (Opus, lane A idle cost) — round 6
+SHA 446ebb43b84693a30704a4b4bd59e5ad7b1b60bb (one commit on b2b4e68)
+
+QUOTE-BACK (first `diff --git` line of arms-446ebb43.../DIFF.patch):
+diff --git a/docs/evidence/2026-09-06-idle-cost/README.md b/docs/evidence/2026-09-06-idle-cost/README.md
+
+Method: detached throwaway worktree at this SHA, node_modules symlinked, built
+first. Every mutation below was applied in that throwaway copy only and
+restored (`git status --porcelain` empty after each). The lane worktree was
+read, never written, except this file.
+
+GATES AT THIS SHA
+  npx tsc --noEmit      -> exit 0, no output
+  npm test              -> tests 858, pass 858, fail 0   (was 856 at b2b4e68;
+                           the two new tests are the delta)
+
+================================================================
+1. MY ROUND-5 DEFECT IS FIXED — re-measured the same way
+================================================================
+The fix is `src/listener/read-health.ts:213-217`:
+    hour.cadenceMs = hour.cadenceMs === undefined
+      ? cadenceMs
+      : Math.max(hour.cadenceMs, cadenceMs);
+Max keeps the SLOWEST cadence (largest ms), so expectedClaims can only fall,
+and an hour can no longer be scored against a cadence faster than any it
+actually ran at. Scoring itself is unchanged (read-health.ts:437-444).
+
+The exact case I measured at b2b4e68 — 60 polls at 60 s, then one 15 s cadence
+record at :59:30 INSIDE the same hour — re-run against this SHA's own built
+dist through `summarizeListenerReadHealth`:
+
+  b2b4e68 : {hourStart 2026-09-01T10:00Z, claims 61, expectedClaims 240,
+             ratio 0.254}  -> hour PRESENT in throughputLapseHours   (FALSE LAPSE)
+  446ebb4 : {hourStart 2026-09-01T10:00Z, claims 61, expectedClaims 60,
+             ratio 1.017}  -> hour ABSENT from throughputLapseHours  (FIXED)
+
+POSITIVE CONTROL (same 61 claims, the mid-hour 15 s record removed) at 446ebb4:
+  {claims 61, expectedClaims 60, ratio 1.017}, throughputLapseHours [] —
+  identical to the defect case, which is the point: the mid-hour record no
+  longer changes the score.
+
+NEGATIVE/DETECTION CONTROL (proves the probe still reaches a real lapse, i.e.
+the fix did not simply disable lapse detection): an hour recorded ONLY at 15 s
+with 60 claims, same SHA, same probe:
+  {claims 60, expectedClaims 240, ratio 0.250}, throughputLapseHours length 1.
+A genuine wedge at a uniform fast cadence still lapses.
+
+(The `2026-09-01T09:00Z` zero-claim lapse visible in my probe output is an
+artifact of the readyAt I passed, not of the fix; it is identical at both SHAs.)
+
+================================================================
+2. THE TWO NEW TESTS REACH THE RECORDER, AND ONE FAILS UNDER
+   LAST-WRITER-WINS (mutation-proved)
+================================================================
+tests/listener-host-limits.test.ts:405-419 `healthHourThenMidHourCadence`
+calls the real `recordListenerClaimCadence` and `recordListenerClaim` — no
+hand-built health object — and records the second cadence at
+MID_HOUR = "2026-09-01T10:59:30.000Z" (:405), the SAME hour bucket as
+HOUR_START. That is the path b2b4e68's `healthHourThenReset` deliberately
+avoided by using NEXT_HOUR, so the mid-hour path now has a control on it.
+Both tests assert through `renderListenerStatus` (:426-432, :440-446), i.e.
+the user-visible CLI sentence, not an internal number.
+
+MUTATION 1 — revert to last-writer-wins (`hour.cadenceMs = cadenceMs;`):
+  baseline : both mid-hour tests PASS, file 14 pass / 0 fail
+  mutated  : "an hour idled at 60s does not lapse after a 15s record
+              mid-hour" (:421) FAILS; 13 pass / 1 fail
+  -> that test is a real control on exactly the defect I raised.
+
+MUTATION 2 — `Math.min` instead of `Math.max` (score at the fastest cadence):
+  BOTH mid-hour tests FAIL; 12 pass / 2 fail.
+  -> the second test, "an hour at 15s then 60s mid-hour with 60 claims does
+     not lapse" (:435), is NOT a control on last-writer-wins (it passes under
+     mutation 1, because last-writer there also lands on 60 s). It is the
+     control on the OTHER direction: it pins that the slowest cadence wins
+     rather than the fastest. Worth stating plainly so nobody counts it as
+     evidence against last-writer-wins.
+Both mutations were reverted; `git status --porcelain` was empty afterwards
+and the 858/858 gate above was run on the restored tree.
+
+================================================================
+3. THE RULE IS STATED, IN BOTH PLACES, AND MATCHES THE CODE
+================================================================
+README (docs/evidence/2026-09-06-idle-cost/README.md, last line of
+"Not established"):
+  "An hour whose cadence changes is scored at the slowest cadence recorded in
+   it. That cannot false-lapse. It can miss a wedge only inside one hour that
+   also had a slow interval."
+Code comments, both updated away from the now-false "cadence in force":
+  src/listener/read-health.ts:30  "Slowest cadence recorded in this hour;
+    absent on files written before per-hour scoring."
+  src/listener/read-health.ts:204 "An hour is scored at the slowest cadence
+    recorded in it."
+I checked the under-detection claim against the code rather than against the
+sentence: test :435 IS that case made concrete — an hour that really ran 60
+claims at 15 s but also saw a 60 s record scores 60/60 and does not lapse,
+where a uniformly-15 s hour with the same 60 claims scores 60/240 and does
+(my detection control above). So the documented miss is real, bounded to one
+hour, and the direction of the error is the safe one: under-detect, never
+false-alarm. The README states it as a limitation and not as a guarantee.
+
+================================================================
+4. CARRIED FORWARD FROM MY b2b4e68 ARM — STILL TRUE AT THIS SHA
+================================================================
+This commit touches only read-health.ts, that test file, and the README. My
+round-5 refutations of the other checks stand unchanged and I re-confirmed
+the files are byte-identical to b2b4e68: no `audit_log` in either 20260906
+migration and no 000003; the claim regex matches `claimCommandId()`
+(src/listener/delivery-journal.ts:204) and rejects `claim_agent_inbox_%`; the
+integer purge overload has no DEFAULT; the edge gates all three writes on
+`persistLedger` / `mustLimit` with non-empty idempotency semantics unchanged;
+`hasUnackedDeliveries` is covered by `signal_deliveries_unacked_oldest`; all
+`--poll-interval` copy is generated from `src/cloud/idle-poll.ts:9-11`; no new
+branching on `error.message`.
+The one open NIT also carries forward: the zero-arg purge runs its 200
+batches inside ONE function call, hence one transaction, so lock time on a
+1.47 M-row production table is bounded by the whole run, not by a batch. Not
+a regression (it replaces a single unbatched DELETE) and not measured.
+
+================================================================
+WHAT I DID NOT ESTABLISH
+================================================================
+- Nothing applied, deployed, or run against any database; the migrations were
+  read, never executed. No p1-local / p1-server suite, no `check:edge` (Deno).
+- No live listener was started. My read-health evidence comes from this SHA's
+  built dist called directly, not from a running supervisor writing a real
+  state file, so the end-to-end status JSON of a detached listener at this SHA
+  is still unverified.
+- I did not establish how often a mixed-cadence hour occurs in production, so
+  the practical size of the documented under-detection window is unknown. I
+  established only that it is bounded to a single hour and cannot produce a
+  false lapse.
+- `claimCadenceMs` at the top level is still last-write (read-health.ts:219).
+  That is only the fallback for hours carrying no `cadenceMs` (old files), so
+  it cannot reintroduce the defect for hours this build wrote — but old-file
+  hours are still scored at whatever cadence was current when the file was
+  last written, and I did not test that legacy path against a mixed hour.
+
+No defect verified in the tree at this SHA.
+
+VERDICT: PASS
