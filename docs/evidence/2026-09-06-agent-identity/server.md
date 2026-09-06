@@ -1,13 +1,16 @@
-# Lane A — server execution sessions (fix-up)
+# Lane A — server execution sessions (round 2)
 
-Builder: Grok, taking over from a Gemini run that landed grants (2525d1a),
-null handling (f994c22), and the protocol bundle (1f8a31e), then stopped.
-Branch: `lane/identity-server`. This file replaces the earlier "Gaps: None"
-claim, which was false: grants were missing until 2525d1a, `check:edge` was
-red until f994c22, the bundle was stale until 1f8a31e, the exemption set was
-not exported, activity was unfenced, unmanaged principals paid a session-table
-query on every command, and the two mega-tests did not isolate the Lane A
-items.
+Builder: Grok on `lane/identity-server-r2`, cut from `lane/agent-identity`
+`5380a01`. Round 1 established the fence, opt-in, and typed session codes.
+The Grok exact arm on `5380a01` FAILed because pending-surface and
+session-bound deliveries were not on the wire. This round ships that
+contract. Import every name from `src/cloud/session-wire.ts`; do not invent
+a parallel client protocol.
+
+The named arm path `docs/evidence/2026-09-06-agent-identity/arms-5380a01/grok.txt`
+was missing in this worktree. The same report is at
+`docs/evidence/2026-09-06-agent-identity/reviews-5380a01/grok.md` and was
+pasted in the round-2 brief.
 
 ## Established
 
@@ -40,14 +43,25 @@ items.
   `create_agent_principal` still refuses; `allow_duplicate_name: true` creates
   a second principal; concurrent defaults take `pg_advisory_xact_lock` and
   produce exactly one row.
+- Round 2 (`20260906000030`): `swarm.signal_deliveries` has `session_id`,
+  `session_generation`, and `surfaced_at`. Claim on a managed principal copies
+  the verified proof onto the row. Managed `queued` stays nonterminal until
+  `surfaced_at`. ACK `observed` without `surfaced: true` is
+  `delivery_not_surfaced`. Recovery reopens unsurfaced queued rows without
+  incrementing `attempt_count`. Acquire retry with a changed host binding is
+  `session_conflict`. `swarm_read` cannot select `key_hash`.
+  `swarm_read.agent_principals` is revoked from `anon`. Read `is_live` treats
+  NULL `expired_at` as dead. Re-enable `ON CONFLICT` writes the placeholder
+  `session_id` it then retires. Server tests name `session_not_managed`,
+  `session_already_managed`, and `session_leases_live`.
 
 ## Not established
 
 - Live listener / CLI session context (Lane C, not this worktree).
 - Site UUID pickers (Lane B).
-- Production deploy, `db:push`, or any call to `cloud-swarm-dev`.
-- Whether `npm run test:p1-server` is green on this SHA: recorded below only
-  after that gate finishes. A previous builder's "Gaps: None" is retired.
+- Interactive ACP/model factory (client lane, not this worktree).
+- Production deploy, `db:push`, apply of `20260906000030`, or any call to
+  `cloud-swarm-dev`.
 - Exact host-conversation binding and capability handshake (client lane).
 - Automatic sweeping of unrelated principals: not implemented, by design.
 
@@ -125,8 +139,111 @@ From `src/cloud/session-wire.ts` `AgentSessionErrorCode`:
 | `session_not_managed` | 403 |
 | `session_already_managed` | 409 |
 | `session_leases_live` | 409 |
+| `delivery_not_surfaced` | 409 |
 
 Tests assert `body.error` (the code), never `error.message` (D-053).
+
+`ACK_AGENT_DELIVERY_SURFACED_FIELD` is `"surfaced"`.
+`AGENT_SESSION_BINDING_FIELDS` is `provider`, `host_label`, `host_session_ref`.
+
+## Pending-surface wire (round 2)
+
+Delivery rows bind to the live execution session at **claim** time, from the
+verified proof, never from the body.
+
+`swarm.signal_deliveries` columns (migration `20260906000030`):
+
+| column | meaning |
+|---|---|
+| `session_id uuid NULL` | Copied from the proof at claim when the principal is managed. |
+| `session_generation integer NULL` | Copied with `session_id`. NULL iff `session_id` is NULL. |
+| `surfaced_at timestamptz NULL` | Set when a managed principal ACKs `observed` with `surfaced: true`, or a terminal non-queued outcome. |
+
+For a **managed** principal, `queued` is nonterminal until `surfaced_at` is
+set. Recovery (`recover_agent_session`, a fresh acquire after expiry, and
+`disable_agent_management`) clears `session_id` / `session_generation` /
+lease on every row of that principal with `surfaced_at IS NULL`, including
+rows already ACKed `queued`, and reopens those queued rows so a new holder
+can claim them. `attempt_count` is not incremented for that queue-only
+reclaim. Signal TTL still applies.
+
+### claim_agent_inbox (managed)
+
+Proof headers required (existing fence). The claim UPDATE writes
+`session_id` and `session_generation` from the verified proof.
+
+Stale generation: 409 `{ "error": "session_conflict" }`.
+
+Expired proof: 401 `{ "error": "session_expired" }`.
+
+### ack_agent_delivery (managed)
+
+ACK body field `surfaced` is a closed boolean. Required for managed
+`observed`. Ignored and optional for unmanaged.
+
+Bare queued-to-observed (lease_id null, `surfaced` missing or false):
+
+```
+POST /functions/v1/command
+Authorization: Bearer swm_agt_<43-char-synth>
+x-cswarm-session-id: 00000000-0000-4000-8000-000000000021
+x-cswarm-session-generation: 2
+x-cswarm-session-key: AAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAA
+{
+  "command_id": "00000000-0000-4000-8000-000000000201",
+  "client_version": "0.1.0",
+  "workspace_id": "00000000-0000-4000-8000-000000000001",
+  "stream": { "kind": "workspace" },
+  "command": {
+    "kind": "ack_agent_delivery",
+    "signal_id": "00000000-0000-4000-8000-000000000301",
+    "lease_id": null,
+    "listener_instance_id": null,
+    "outcome": "observed",
+    "last_error_code": null
+  }
+}
+```
+
+Response 409: `{ "error": "delivery_not_surfaced" }`
+
+Surfaced ACK after host injection (same proof as the row's
+`session_id` + `session_generation`):
+
+```
+"command": {
+  "kind": "ack_agent_delivery",
+  "signal_id": "00000000-0000-4000-8000-000000000301",
+  "lease_id": null,
+  "listener_instance_id": null,
+  "outcome": "observed",
+  "last_error_code": null,
+  "surfaced": true
+}
+```
+
+Response 200: `{ "ok": true, "status": "accepted", "outcome": "observed" }`
+and `surfaced_at` is set.
+
+Queued pending-surface (not yet injected): `"outcome": "queued"` with the
+live `lease_id` and `"surfaced": false`. Does not set `surfaced_at`.
+
+### Unmanaged ACK (positive control)
+
+No session headers. No `surfaced` field. Today's queued-to-observed
+promotion still returns 200 and leaves `session_id` / `surfaced_at` NULL.
+
+### acquire retry binding
+
+Same live UUID+key with a different `provider` / `host_label` /
+`host_session_ref` is 409 `{ "error": "session_conflict" }`. Same binding
+retries 200 with the same generation.
+
+### key_hash
+
+`swarm_read` has no column privilege on `swarm.agent_execution_sessions.key_hash`.
+`swarm_read.agent_execution_sessions` does not project it. `read/index.ts`
+joins the view. NULL `expired_at` is dead (`is_live` matches the fence).
 
 ## Synthetic request/response examples
 
@@ -187,7 +304,10 @@ Live other session: 409 `{ "error": "session_conflict" }`
 
 Retired UUID: 403 `{ "error": "session_retired" }`
 
-Same UUID+key retry while live: 200, same generation.
+Same UUID+key retry while live, same host binding: 200, same generation.
+
+Same UUID+key retry with a different `provider` / `host_label` /
+`host_session_ref`: 409 `{ "error": "session_conflict" }`.
 
 ### renew_agent_session
 
@@ -235,6 +355,12 @@ query.
   `x-cswarm-session-key` on every managed mutation, including activity,
   `renew_agent_token`, claim, and ACK. Import names from
   `src/cloud/session-wire.ts`.
+- ACK `observed` for a managed principal must send `surfaced: true` after
+  host injection. A bare queued-to-observed promotion is
+  `delivery_not_surfaced`. Import `ACK_AGENT_DELIVERY_SURFACED_FIELD` and
+  `DELIVERY_NOT_SURFACED_CODE`.
+- Acquire retries must resend the same `provider` / `host_label` /
+  `host_session_ref`. Import `AGENT_SESSION_BINDING_FIELDS`.
 - Generate the 32-byte key before acquire; never ask the server to return it.
 - Treat `session_not_managed` on acquire as "operator must enable", not as
   silent opt-in.
@@ -250,7 +376,8 @@ query.
 | `npm run build` | pass (tsc) |
 | `npm run check:tests` | pass |
 | `npm run check:edge` | 0 Deno errors (command, read, capability, activity) |
-| `npm test` | 903 pass / 0 fail / 26 suites |
-| `npm run test:p1-server` | full serial glob: 156 pass / 10 fail / 166 tests (192.5s). All 10 fails are in `tests/p1-server/command.test.ts` and all 10 passed when that file ran alone: 72 pass / 0 fail (140.5s). The 10 were file-seam flakes (`functions serve` zombie / 502 "invalid response from the upstream server" / `SWARM_SELF_SERVE` not on the leftover worker). Lane A session tests: 11 pass / 0 fail. |
+| `npm test` | 922 pass / 0 fail / 26 suites |
+| `npm run test:p1-server` | full serial glob after `db:reset`: 177 pass / 0 fail (264.9s). Includes `managed-delivery.test.ts` and the new typed-code tests in `agent-execution-sessions.test.ts`. |
+| `npm run test:p1-local` | 48 pass / 0 fail (107.8s). |
 
-A previous builder's "Gaps: None" is retired. This file is the inventory.
+A previous builder's "Gaps: None" is retired. Round-1 `test:p1-server` flake note (10 fails in `command.test.ts` when globbed) was not reproduced on this SHA.
