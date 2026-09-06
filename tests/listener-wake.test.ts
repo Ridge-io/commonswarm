@@ -41,6 +41,7 @@ import {
   recordListenerClaim,
   recordListenerClaimCadence,
   recordListenerWakeModeChange,
+  LISTENER_MODE_CHANGE_SKIP_MAX,
   REALTIME_SUBSCRIBE_STATUS,
   runListenerRuntime,
   summarizeListenerReadHealth,
@@ -892,6 +893,33 @@ test("claim throughput skips a mode-change hour and keeps the slowest cadence", 
   assert.equal(health.claimHours[0]?.modeChanged, true);
   const frozen = health.claimHours.find((row) => row.hourStart === hourStart);
   assert.equal(frozen?.expectedClaims, 3600_000 / LISTENER_RECONCILE_POLL_MS);
+});
+
+test("a second consecutive mode-change hour is scored for throughput lapse", () => {
+  const hour10 = "2026-09-01T10:00:00.000Z";
+  const hour11 = "2026-09-01T11:00:00.000Z";
+  const hour12 = "2026-09-01T12:00:00.000Z";
+  const readyAt = "2026-09-01T09:00:00.000Z";
+  let health = recordListenerClaimCadence(
+    emptyListenerReadHealth(),
+    IDLE_POLL_DEFAULT_MS,
+    hour10,
+  );
+  health = recordListenerWakeModeChange(health, hour10);
+  health = recordListenerClaimCadence(health, IDLE_POLL_DEFAULT_MS, hour11);
+  health = recordListenerWakeModeChange(health, hour11);
+  health = recordListenerClaimCadence(health, IDLE_POLL_DEFAULT_MS, hour12);
+  const summary = summarizeListenerReadHealth(
+    health,
+    readyAt,
+    Date.parse(hour12),
+  );
+  const lapsed = new Set(
+    summary.throughputLapseHours.map((row) => row.hourStart),
+  );
+  assert.equal(lapsed.has(hour10), false);
+  assert.equal(lapsed.has(hour11), true);
+  assert.equal(LISTENER_MODE_CHANGE_SKIP_MAX, 1);
 });
 
 test("listen status JSON names mode from the same wake.mode constant set", () => {
