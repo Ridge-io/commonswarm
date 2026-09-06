@@ -2505,3 +2505,17 @@ race, `LISTENER_WAKE_MODES` for the mode literals, the unknown-key parser test.
 
 L6 `lane/wake-site` 4c04bae (Grok): report clean, but my brief said a 5-minute reconcile while the spec
 §4.3 says 30 s for the app; the spec wins; round 2 changes the constant. Arms run after round 2.
+
+## 2026-09-06 07:xx UTC — L6 LANDED (a47da16) and the site is DEPLOYED
+
+`lane/wake-site` 3be01a8 (Grok; round 2 set the reconcile to the spec's 30 s): the app joins
+`cswarm-signals:{workspace_id}` with the human's access token (`private: true`), refreshes the feed on a
+`signal` event (one in flight, one queued), runs no 2 s poll while subscribed, reconciles every 30 s,
+and falls back to the 2 s poll on CHANNEL_ERROR/TIMED_OUT/CLOSED with backoff [1,2,5,10] s. Arms:
+Gemini PASS on both SHAs; Opus PASS on 3be01a8 (four mutations each failed a named test; the backoff
+array is uncovered; the workspace id is captured and generation-guarded at every callback). Evidence
+`docs/evidence/2026-09-06-wake-site/`. Gates on merged main: site 511/511 after a clean build,
+861/861. Deployed: `/app` references the new dashboard chunk and the served `commonswarm.CTlzRaCF.js`
+carries the subscription (1 match live, 1 local). Not established: a live signed-in browser join on
+hosted Realtime (the tests used a fake client); the operator's next visit to `/app` is that control —
+the feed should update without the 2 s poll (Network tab shows no 2 s `read` calls while connected).
