@@ -1,6 +1,6 @@
 # Vercel toolbar off in production
 
-**Status:** SPECIFICATION, draft 1, branch `spec/app-backlog`. Backlog item 1 of the operator's eight (brain topic `app-backlog`). Authored by CSwarmStrategist (`2121f81d`), 2026-09-06.
+**Status:** SPECIFICATION, draft 2 (final-round Grok finding on `93792ef` folded), branch `spec/app-backlog`. Backlog item 1 of the operator's eight (brain topic `app-backlog`). Authored by CSwarmStrategist (`2121f81d`), 2026-09-06.
 **Authority:** none until adopted; on handoff CSwarmDevLead PMs it.
 **Size:** a project setting and one verification. No code.
 
@@ -29,14 +29,14 @@ The whole check must run in a browser that is **signed in to the `ridgedotio` Ve
 3. **After:** same phone, same signed-in account, same page, new browser session (the docs note a hidden toolbar can persist for a session): no toolbar. Screenshot into `…/after.png`.
 4. **Control that the setting is the cause and the session is authenticated:** in the same session open a **preview** deployment URL and confirm the toolbar appears there. If it does not, either the flip was made at the wrong level, the session was disabled, or the browser is not signed in — and the after screenshot proves nothing. Screenshot into `…/control-preview.png`.
 
-## 4. Who does it, and why no autonomous lane can
+## 4. Who does it, and the two ways to do it
 
-The change lives in a third-party web console behind a team login, and Vercel exposes no API, CLI flag, or repo file for the toolbar visibility setting (the docs list only the dashboard, a per-session control, a preview-branch environment variable, and an automation header — none of which turns it off for production from code). So this item is in the same class as the Google client secret and branch protection: **an operator-side action**, or CSwarmDevLead with dashboard access. That is a property of the item, not a gap in the spec; a lane author who tried to "build" it would be asked for credentials, and must not be.
+The setting has no repo file, CLI flag, or environment variable that turns it off for production (`VERCEL_PREVIEW_FEEDBACK_ENABLED` is preview-only and `x-vercel-skip-toolbar` is a per-request preview header). It **does** have a REST field: `PATCH /v9/projects/{idOrName}` with body `{"enableProductionFeedback": false}` ("Opt-in to production toolbar on the project level", Vercel REST docs, "Update an existing project"), and `PATCH /v2/teams/{teamId}` with `enableProductionFeedback: "off"` (team owner only). Both need a team token, which is the same class of secret as the Google client secret and branch protection: **an operator-side action**, or CSwarmDevLead with dashboard access. So the flip is either the dashboard click in §2, or, from a machine whose Vercel CLI is already signed in to `ridgedotio` (the deploy machine is), the project PATCH sent with that CLI's token, followed by a `GET /v9/projects/coswarm-site` showing `enableProductionFeedback: false`. A lane author must not be asked for, and must not look for, the token; whoever holds the session runs one of the two.
 
 ## 5. Lanes
 
-- **Human step (not a lane):** the flip in §2, by the operator or the lead.
-- **`lane/toolbar-evidence`** (docs only, authored by whoever flipped it): the three screenshots from §3 under `docs/evidence/2026-09-06-vercel-toolbar/` and one line in the ledger with the date, the level (project or team), and the account that verified. No code, no test gate, no D-036 arms beyond this spec's.
+- **Human step (not a lane):** the flip in §2 or the PATCH in §4, by the operator or the lead.
+- **`lane/toolbar-evidence`** (docs only, authored by whoever flipped it): the three screenshots from §3 under `docs/evidence/2026-09-06-vercel-toolbar/` and one line in the ledger (brain topic `app-backlog`) with the date, the level (project or team), the method (dashboard or PATCH), and the account that verified. No code, no test gate, no D-036 arms beyond this spec's.
 
 ## 6. What was NOT established
 
