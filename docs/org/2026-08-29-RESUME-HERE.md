@@ -2403,3 +2403,39 @@ database this round because L2 holds it) is in flight; the round-5 server gates 
 the `command` edge, which round 6 does not touch. L2 (`lane/wake-migration`, Grok) started from aecd3b4 with
 `scratchpad/brief-wake-migration.md`. Foreign worktrees under `/private/tmp/cswarm-astra-identity-*`
 (`lane/agent-identity`) are not mine and were left alone.
+
+## 2026-09-06 04:3x UTC — LANE A LANDED (915df5b), migrations + `command` edge LIVE, v0.1.57 RELEASED, fleet restarted
+
+Lane A `lane/idle-cost` round 6 446ebb4: Gemini PASS, Opus PASS (its own round-5 FAIL reproduced as
+fixed, with a detection control). Merged `915df5b`; evidence for rounds 1–6 under
+`docs/evidence/2026-09-06-idle-cost/arms-review/`. Production, in apply order: `supabase db push
+--linked` applied `20260906000001_idle_cost_retention.sql` and `20260906000002_file_versions_quota_index.sql`
+(dry-run listed exactly those two); `command` edge deployed. **Live control:** `swarm.audit_log` rows
+with `command_kind='claim_agent_inbox'` went from ~220/min (04:05–04:17) to 0 in the minutes after the
+deploy (16 seats still on 0.1.56's 2 s cadence; empty claims now persist nothing).
+
+**v0.1.57:** bump `0430071` on `main`, tag on that SHA, GitHub Latest with both assets (sha256
+`48e3ce4d…`); npm `commonswarm@0.1.57` shasum `8497e916…` = the committed pack (`f252f8b`); site
+deployed, `/download` says 0.1.57, installer 200, no service-role JWT; `~/.local/bin/cswarm` on the mini
+and both laptops is 0.1.57. Notes: idle poll 15 s → 60 s back-off, `--poll-interval`, empty claims
+persist nothing, notify watcher 60 s + single-watcher lock, per-hour read-health cadence (slowest wins),
+wake-topic redaction (L2c).
+
+**Fleet:** mini — six Claude seats `ready 0.1.57` (8d10fe67 proof-first, 2121f81d, 214fa712, 78249a33,
+05f7ac37, a9c1a7fb route main); Codex seat b0c4004f `failed` (codex-acp "Internal error", the credit
+state; operator's). Laptop `toms-m1-max-mbp`: d1a8b6dc `ready 0.1.57`; the two four-day wren watchers
+replaced by one 0.1.57 watcher (pid 65201); the four `f9aaada4` seats (91d15f65, f3fa13eb, 73a96913,
+e1fb5a3e) stopped and restarted but `failed`: `claude_canary_auth_failed` "Authentication required"
+with both the ACP bridge and the raw Claude binary, so the Claude session on that host is expired
+(the same failure the mini had twice yesterday); their four `inbox --notify` watchers were left
+running. Laptop `nikkis-macbook-air`: b9890f37 restarted, `failed` the same way (bridge upgraded
+0.64.2 → 0.75.1 first; not the cause). **Operator, morning:** sign in to Claude on each laptop, then run
+`~/.config/cswarm/restart-seats-0157.sh` there (written on both; it restarts every seat and prints
+state). Token files for the laptop seats were rebuilt at `~/.config/cswarm/agent-<8>.json` from the
+listener's own `listener-credential.json` plus the token's `token_id`/`run_id`/`expires_at` from the
+database (credential matched by sha256 against `agent_tokens.token_hash`).
+
+Not established: whether those five laptop seats were healthy before the restart (their status files
+said `ready` from an old start; the mini's seats had failed the same way yesterday). Next: L2
+(`lane/wake-migration`, Grok pid 66472, holds the local database) → arms → §9 privilege check →
+production; then L2b, L3, L4.
