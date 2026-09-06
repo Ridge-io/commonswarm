@@ -29,8 +29,8 @@ const mutations = [
   {
     test: PB,
     target: PRIV,
-    from: "You sign in through ${entities}.",
-    to: "You sign in through ${providers[0]?.legalEntity ?? \"\"}.",
+    from: "You sign in through ${entities}, and your identifier",
+    to: "You sign in through ${providers[0]?.legalEntity ?? \"\"}, and your identifier",
     control: "sign-in copy names the providers this build renders, in every provider state",
     why: "the processor entry names ONE provider while the build renders two — the defect a review arm found on the previous SHA",
   },
@@ -45,8 +45,8 @@ const mutations = [
   {
     test: PB,
     target: TERMS,
-    from: "governed by them: today, ${entities}.",
-    to: "governed by them: today, GitHub, Inc.",
+    from: "Today the sign-in providers are ${entities}, and your use",
+    to: "Today the sign-in providers are GitHub, Inc., and your use",
     control: "sign-in copy names the providers this build renders, in every provider state",
     why: "a typed entity list in the terms third-party clause",
   },
@@ -127,6 +127,16 @@ const mutations = [
     control: "signed-out /app onramp is cold-stranger, email-first, free, draft-legal",
     why: "the panel's handler bound to another panel's buttons — the loose assertion this replaced stayed green here",
   },
+  // ── the control on generated punctuation
+  {
+    test: PB,
+    target: PRIV,
+    from: "You sign in through ${entities}, and your identifier, email address, and name come back to us from there. Nothing else does.",
+    to: "You sign in through ${entities}. Your identifier, email address, and name come back to us from there, and nothing else does.",
+    control: "no built page doubles a full stop or a comma, in any provider state",
+    why: 'the entity list ending the sentence again, which published "You sign in through GitHub, Inc.." to every reader',
+  },
+
   {
     test: SO,
     target: BUTTONS,

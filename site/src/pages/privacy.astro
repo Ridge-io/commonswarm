@@ -227,7 +227,12 @@ const sections: Section[] = [
         ul: [
           ...(providers.length > 0
             ? [
-                `**Sign-in.** You sign in through ${entities}. Your identifier, email address, and name come back to us from there, and nothing else does. Each provider handles what it holds under its own privacy statement.`,
+                /*
+                 * THE ENTITY LIST NEVER ENDS THE SENTENCE. "GitHub, Inc." carries its own
+                 * period, so a sentence that closed on it published "GitHub, Inc.." to the
+                 * reader. Keep a clause after the list in every sentence that interpolates it.
+                 */
+                `**Sign-in.** You sign in through ${entities}, and your identifier, email address, and name come back to us from there. Nothing else does. Each provider handles what it holds under its own privacy statement.`,
               ]
             : []),
           "**Supabase.** Hosting for the database, the authentication service, and the server-side functions. Everything described in this policy that we store is stored there. The production database is hosted in the United States (East US, North Virginia).",

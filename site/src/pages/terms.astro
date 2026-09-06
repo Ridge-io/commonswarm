@@ -233,7 +233,9 @@ const sections: Section[] = [
       "The Service depends on services we do not control, including the providers we offer for sign-in and our hosting and database providers. Their availability, behaviour, terms, and pricing are theirs, not ours. We are not responsible for anything they do or fail to do, and an outage or a change on their side is not a breach of these Terms by us.",
       ...(providers.length > 0
         ? [
-            `Each sign-in provider has its own terms and privacy policy, and your use of that provider is governed by them: today, ${entities}.`,
+            // The entity list never ends the sentence: "GitHub, Inc." carries its own period,
+            // and a sentence closing on it renders "GitHub, Inc..". Keep a clause after it.
+            `Today the sign-in providers are ${entities}, and your use of each one is governed by that company's own terms and privacy policy, not by these Terms.`,
           ]
         : []),
       "The [Privacy Policy](/privacy) lists the providers that are actually in the path of your data.",

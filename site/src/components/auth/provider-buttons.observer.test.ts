@@ -806,6 +806,53 @@ test("CONTROL: sign-in copy names the providers this build renders, in every pro
   );
 });
 
+test("CONTROL: no built page doubles a full stop or a comma, in any provider state", async () => {
+  /*
+   * A GENERATED SENTENCE CAN CARRY ITS OWN PUNCTUATION. "GitHub, Inc." ends in a period, so
+   * `You sign in through ${entities}.` published "You sign in through GitHub, Inc.." to every
+   * reader of the privacy policy. Nothing else here could see it: the sweep reads WHICH
+   * providers a sentence names, not whether the sentence is well formed, and the state that
+   * shows it is the one nobody builds.
+   *
+   * Doubled punctuation only. Tag-stripping inserts a space before every `<strong>` and `<a>`,
+   * so a " ." pattern reads 59 false hits on today's build and would be a control that fails
+   * for a reason it does not claim. An ellipsis is excluded because the app uses one.
+   */
+  const DOUBLED = /(?<!\.)\.\.(?!\.)|,\s*,/;
+  const offenders: string[] = [];
+  let inspected = 0;
+  for (const { state, dir } of await sweepStates()) {
+    for (const page of await builtPages(dir)) {
+      const html = await readFile(page, "utf8");
+      for (const unit of copyUnits(html)) {
+        inspected += 1;
+        const found = DOUBLED.exec(unit);
+        if (found) {
+          offenders.push(
+            `${state}${page.pathname.slice(page.pathname.lastIndexOf("/", page.pathname.lastIndexOf("/") - 1))}: ` +
+              `"${unit.slice(Math.max(0, found.index - 70), found.index + 30)}"`,
+          );
+        }
+      }
+    }
+  }
+  assert.ok(
+    inspected > 1000,
+    `Only ${inspected} copy units were read across every state; this control is not reading the ` +
+      `built site.`,
+  );
+  // The control on the control: the pattern must fire on the exact string that shipped.
+  assert.match("You sign in through GitHub, Inc..", DOUBLED);
+  assert.doesNotMatch("Opening CommonSwarm…", DOUBLED);
+  assert.doesNotMatch("Wait... then retry.", DOUBLED);
+  assert.deepEqual(
+    offenders,
+    [],
+    `A built sentence has doubled punctuation. A generated list that already ends in a period ` +
+      `must not also end the sentence:\n  ${offenders.join("\n  ")}`,
+  );
+});
+
 test("CONTROL: the provider fixtures are the states they claim to be", async () => {
   /*
    * The positive control for the control above. Its offender lists are empty either because the
