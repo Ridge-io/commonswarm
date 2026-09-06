@@ -330,8 +330,22 @@ function literalPattern(text: string): string {
 
 /** The one general call that reaches Supabase, named once because assertions and prose share it. */
 const GENERAL_PROVIDER_CALL = "signInWithProvider(";
-/** The one wrapper with a provider in its name. commonswarm.ts calls it the named debt. */
-const NAMED_PROVIDER_WRAPPER = "signInWithGitHub(";
+/**
+ * A per-provider sign-in wrapper, one spelling per provider the array names.
+ *
+ * GENERATED, AND THAT IS A CORRECTION. This was the single literal `"signInWithGitHub("`,
+ * because that was the one wrapper that existed. A review arm pointed out what the sentence
+ * beside it then claimed and the pattern did not: a new `signInWithGoogle` would have passed
+ * every assertion in this file in silence, while the comment said "a new named per-provider
+ * wrapper goes red here". Building the list from AUTH_PROVIDERS makes the sentence true, and
+ * adds each future provider's spelling on the day the provider is added.
+ *
+ * `signInWithGitHub` itself was deleted from site/src/lib/commonswarm.ts on 2026-09-06 with the
+ * last button that called it. The rule outlives the function: it forbids the SHAPE.
+ */
+const NAMED_PROVIDER_WRAPPERS: readonly string[] = AUTH_PROVIDERS.map(
+  (provider) => `signInWith${provider.name}(`,
+);
 /** Supabase's own call. There must be exactly one site for it. */
 const OAUTH_CALL = ".signInWithOAuth(";
 
@@ -368,7 +382,10 @@ const providerCallWithName = (): RegExp =>
   );
 /** `signInWithGitHub(` at a call site, never at its own definition. */
 const namedWrapperCalls = (): RegExp =>
-  new RegExp(`(?<!function\\s)${literalPattern(NAMED_PROVIDER_WRAPPER)}`, "g");
+  new RegExp(
+    `(?<!function\\s)(?:${NAMED_PROVIDER_WRAPPERS.map(literalPattern).join("|")})`,
+    "g",
+  );
 
 /**
  * WHAT THIS SUITE CATCHES, AND WHAT IT DOES NOT — generated from the values the assertions
@@ -385,7 +402,7 @@ const SWEEP_CATCHES: readonly string[] = [
   ...SIGNIN_MARKER.map((entry) => entry.claim),
   `any ${OAUTH_CALL} outside ${OAUTH_CALL_SITE}`,
   `any string literal handed to ${GENERAL_PROVIDER_CALL}`,
-  `any ${NAMED_PROVIDER_WRAPPER} anywhere`,
+  ...NAMED_PROVIDER_WRAPPERS.map((wrapper) => `any ${wrapper} anywhere`),
   `a rendered button whose label is not exactly one of: ` +
     AUTH_PROVIDERS.map((provider) => JSON.stringify(provider.label)).join(", "),
 ];
@@ -1224,10 +1241,20 @@ test("CONTROL: the sweep's stated bound is derived from its own assertions, and 
         `travels with: ${JSON.stringify(entry.claim)} for ${entry.pattern}`,
     );
   }
+  /*
+   * The bound is exactly: one claim per marker branch, one per named per-provider wrapper (one
+   * per provider, GENERATED), the two general call claims, and the label claim. Every term is
+   * derived, so adding a provider widens the expected count with the list rather than making
+   * this control red for the wrong reason. It was `SIGNIN_MARKER.length + 4` with the wrapper
+   * count typed into the 4, which broke the moment the wrapper list stopped being one item.
+   */
+  const CALL_CLAIMS = 2;
+  const LABEL_CLAIM = 1;
   assert.equal(
     SWEEP_CATCHES.length,
-    SIGNIN_MARKER.length + 4,
-    `the stated bound must be the four branch claims plus the three call claims and the label ` +
+    SIGNIN_MARKER.length + NAMED_PROVIDER_WRAPPERS.length + CALL_CLAIMS + LABEL_CLAIM,
+    `the stated bound must be one claim per marker branch, one per named per-provider wrapper ` +
+      `(${NAMED_PROVIDER_WRAPPERS.length} of them), the two general call claims and the label ` +
       `claim, and nothing typed beside them`,
   );
   for (const id of AUTH_PROVIDERS.map((provider) => provider.id)) {
@@ -1242,7 +1269,7 @@ test("CONTROL: the sweep's stated bound is derived from its own assertions, and 
       `the bound must quote every label the array holds; "${provider.label}" is missing`,
     );
   }
-  for (const call of [OAUTH_CALL, GENERAL_PROVIDER_CALL, NAMED_PROVIDER_WRAPPER]) {
+  for (const call of [OAUTH_CALL, GENERAL_PROVIDER_CALL, ...NAMED_PROVIDER_WRAPPERS]) {
     assert.ok(
       SWEEP_CATCHES.some((line) => line.includes(call)),
       `the bound must name ${call}, which the assertions below use`,
@@ -1296,11 +1323,13 @@ test("CONTROL: every OAuth call site is an id read at runtime", async () => {
    *                             is what a generated button gives, and a named value, which the
    *                             "signInWithOAuth is called once" control above already checks
    *                             against AUTH_PROVIDERS.
-   *   signInWithGitHub()        a wrapper with a provider in its NAME. It existed for /app's
-   *                             hand-written signed-out button; that button became
+   *   signInWith<Name>()        a wrapper with a provider in its NAME, one spelling per
+   *                             provider in AUTH_PROVIDERS. `signInWithGitHub` existed for
+   *                             /app's hand-written signed-out button; that button became
    *                             ProviderButtons on 2026-09-06 and the wrapper was deleted with
-   *                             it. ZERO call sites and no definition. The rule stays as a
-   *                             forbid: a new named per-provider wrapper goes red here.
+   *                             it. ZERO call sites and no definition, for any provider. The
+   *                             rule outlives the function: it forbids the SHAPE, so
+   *                             `signInWithGoogle` is refused before anyone writes it.
    *                             Retired wording: "the one remaining named provider, left for
    *                             /app's signed-out button. Exactly one call site."
    *
@@ -1338,7 +1367,8 @@ test("CONTROL: every OAuth call site is an id read at runtime", async () => {
 
   const callers: string[] = [];
   for (const file of await sourceFiles(SRC)) {
-    // `export async function signInWithGitHub(` is the definition, not a call site.
+    // `export async function signInWith<Name>(` is a definition, not a call site. No such
+    // definition exists today; the lookbehind is what keeps the rule true if one returns.
     const calls = ((await readFile(file, "utf8")).match(namedWrapperCalls()) ?? []).length;
     if (calls > 0) {
       callers.push(`${file.pathname.slice(file.pathname.indexOf("/src/") + 5)} (${calls})`);
@@ -1347,8 +1377,9 @@ test("CONTROL: every OAuth call site is an id read at runtime", async () => {
   assert.deepEqual(
     callers,
     NAMED_WRAPPER_CALL_SITES.map((file) => `${file} (${NAMED_WRAPPER_CALLS_ALLOWED})`),
-    `signInWithGitHub is called from: ${callers.join(", ")}. No call site is allowed ` +
-      `because every sign-in control must come from ProviderButtons.`,
+    `A named per-provider wrapper (${NAMED_PROVIDER_WRAPPERS.join(", ")}) is called from: ` +
+      `${callers.join(", ")}. No call site is allowed for any of them, because every sign-in ` +
+      `control must come from ProviderButtons and read its id off the element.`,
   );
 });
 

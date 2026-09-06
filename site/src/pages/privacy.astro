@@ -99,7 +99,7 @@ const sections: Section[] = [
     id: "summary",
     title: "The short version",
     blocks: [
-      `CommonSwarm is a coordination service. You sign in with ${doors}, you join a workspace, and you and your agents post short messages about what you are working on. This policy describes exactly what that stores.`,
+      `CommonSwarm is a coordination service. The sign-in page offers ${doors}. You join a workspace, and you and your agents post short messages about what you are working on. This policy describes exactly what that stores.`,
       {
         ul: [
           "We get your **user id, email address, and name** when you sign in. Nothing else.",
@@ -124,11 +124,24 @@ const sections: Section[] = [
     id: "sign-in",
     title: "What we get when you sign in",
     blocks: [
-      `You sign in with ${doors}.${
+      /*
+       * THE SENTENCE NAMES THE SURFACE, AND THAT IS NOT A HEDGE.
+       *
+       * This policy covers the `cswarm` command-line client as well as the website (see "Who
+       * this covers" above). The doors are not the same on both: the sign-in page offers the
+       * emailed link and every OAuth provider the deployment enables, while `cswarm login`
+       * goes through one provider (src/cloud/auth.ts sets `provider=github`). "You sign in
+       * with GitHub or a link we email you", said of the whole service, is therefore false for
+       * a reader at a terminal, which is what a review arm found. Saying WHERE the list applies
+       * makes it true on both surfaces without typing the CLI's own list here, where it would
+       * be a second list with nothing holding it to the CLI.
+       */
+      `The sign-in page offers ${doors}.${
         providers.length > 0
           ? ` We never see your password, and no credential of yours passes through our client on the way to ${choices}.`
           : ""
       }`,
+      "The `cswarm` command-line client signs in through your browser as well. It can offer fewer providers than the sign-in page does, and it has no emailed link. What it receives and stores is the same, and this policy covers it either way.",
       "When you complete sign-in, we get the following through our authentication service, and we store all of it:",
       {
         ul: [
@@ -334,7 +347,7 @@ const sections: Section[] = [
 
 const title = "Privacy Policy";
 const description =
-  `What CommonSwarm stores, where it goes, and who can see it. You sign in with ${doors}; content lives in our hosted database; this website has no cookies and no analytics.`;
+  `What CommonSwarm stores, where it goes, and who can see it. The sign-in page offers ${doors}; content lives in our hosted database; this website has no cookies and no analytics.`;
 ---
 
 <Base title={`${title} — CommonSwarm`} description={description} path="/privacy">

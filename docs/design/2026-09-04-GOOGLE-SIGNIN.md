@@ -562,6 +562,7 @@ to schedule. So do steps 7 and 8 in one sitting, or not yet.
     - any .signInWithOAuth( outside lib/commonswarm.ts
     - any string literal handed to signInWithProvider(
     - any signInWithGitHub( anywhere
+    - any signInWithGoogle( anywhere
     - a rendered button whose label is not exactly one of: "Sign in with GitHub", "Sign in with Google"
 
     It does not catch a provider hidden in an attribute VALUE under an unrelated name, and that is a bound, not a gap this test closes.
@@ -611,6 +612,18 @@ to schedule. So do steps 7 and 8 in one sitting, or not yet.
        -H "apikey: <the anon key>" | grep -o '"google":[a-z]*'
      # want: "google":true      (it reads "google":false today)
      ```
+
+     **MEASURED 2026-09-06, step 7 IS DONE.** `https://api.commonswarm.com/auth/v1/settings`
+     answers `{"github": true, "google": true, "email": true}`. The toggle is on in production.
+
+     **This arms step 8 and makes it urgent.** A site build now reads `google: true` and renders
+     a Google button on `/app` and `/invite`. The site deployed at the time of measurement is an
+     older build: it offers GitHub only and its privacy policy names only GitHub, so nothing is
+     inconsistent while it stands. The moment the site is rebuilt and deployed, the buttons
+     change. Deploy a build that carries the step 6 copy, or the published page offers a Google
+     button beside a privacy policy that does not name Google LLC as a processor. Any site
+     deploy for an unrelated reason does this too, which is why the copy work is a prerequisite
+     and not a follow-up.
 
      **Corrected 2026-09-06, stated plainly.** Reading `"github":true` in the same output is
      not a step to perform. GitHub is already configured and enabled on this project, so

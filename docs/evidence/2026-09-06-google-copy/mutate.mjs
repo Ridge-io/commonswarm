@@ -37,8 +37,8 @@ const mutations = [
   {
     test: PB,
     target: PRIV,
-    from: "You sign in with ${doors}, you join a workspace",
-    to: "You sign in with GitHub, you join a workspace",
+    from: "The sign-in page offers ${doors}. You join a workspace",
+    to: "The sign-in page offers GitHub. You join a workspace",
     control: "sign-in copy names the providers this build renders, in every provider state",
     why: "a typed provider name in the privacy summary",
   },
