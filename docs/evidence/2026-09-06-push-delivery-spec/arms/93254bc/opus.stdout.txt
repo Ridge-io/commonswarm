@@ -1,0 +1,68 @@
+Report written to `docs/evidence/2026-09-06-push-delivery-spec/arms/93254bc/opus.txt`:
+
+```
+D-036 ARM — ADVERSARIAL SYSTEMS (Opus), FINAL SHA 93254bc (draft 8)
+Document: docs/design/2026-09-06-PUSH-DELIVERY.md, branch spec/push-delivery.
+Scope per the brief: the diff 82bbe7b..93254bc only (8 hunks, +18/-11). Prior report:
+arms/82bbe7b/opus.txt (1 defect, 3 nits). Nothing I passed on drafts 6-7 re-attacked.
+
+CITATIONS I READ THIS PASS (each opened, none inferred)
+  command/index.ts:7028-7040 — the until_value CTE; :7029-7038 is the CASE, whose
+    non-explicit branch is LEAST(now+default, COALESCE(untilCeiling, now+default)).
+  command/index.ts:8046 — untilCeiling: rootUntil.toISOString(); rootUntil is
+    root.until (:6601; refusal copy :8019). :7071-7073 — the WHERE that refuses
+    until_value > untilCeiling, so the explicit branch is refused, not clamped.
+  durable-delivery.ts:279-294 — the CTE; :290 is AND s.until > statement_timestamp();
+    :283 is the JOIN's ON, so the old citation was indeed wrong.
+  20260723000001_p1_schema.sql:210-211 — COMMENT ON COLUMN … token_hash IS / string.
+  20260820000002 — :103 CREATE OR REPLACE, :299 $$;, :301 ALTER OWNER, :302 REVOKE,
+    :305 GRANT USAGE, :306 GRANT EXECUTE.
+  arms/82bbe7b/grok.txt — VERDICT: PASS, three nits, as §11 reports them.
+
+1. MY DEFECT: FOLDED, correctly, on all four surfaces.
+§0 (:13) "a signal whose stored expiry is shorter than the reconcile interval — an
+explicit `--until` under 5 minutes …, or a thread reply clamped to a nearly expired
+root". §2.1 (:63) drops "exactly the set with `--until`", says **stored** `until`, and
+names both paths with the right code (:7029-7038 clamp, :8046 ceiling). §2.4 (:155)
+reads "stored `until`"; the trigger-cannot-send row (:167) inherits it by reference.
+§9 (:307) keys remedy (a) on the stored value, says why ("a clamped thread reply has
+none"), and says (b) covers both paths. "The edge clamps a reply's default horizon to
+the root's remaining TTL" is exactly what LEAST does on the non-explicit branch, and
+the spec claims nothing about the explicit branch that the WHERE contradicts.
+
+2. MY THREE NITS: FOLDED. N1 the L2 cell (:248) no longer says "its re-`GRANT`"; it
+says re-created from the live body plus the three privilege statements (W3.1). N2
+§2.1 now cites `durable-delivery.ts:290` inside `:279-294`; no `:283` survives in the
+file (grepped). N3 §2.2 (:112) cites `20260723000001:210-211`, and §11's draft-7 row
+records that my other three off-by-one claims were wrong. Grok's two open nits are
+folded too: L3's "starts after" (:251) names L2b, and W6 (:118) now says the schema-
+USAGE check is under the **owner's** identity, which is the only reading the
+owner-pair measurement supports.
+
+3. NEW FALSE STATEMENTS IN THE DIFF: none found. Every added clause I could test
+resolves to the code above, and §11's new draft-7 table matches both arm files on disk.
+
+4. FINDINGS — DEFECTS: none. GAPS: none; the diff removed no answer to the seven items.
+NIT 1. W3.1 and the L2 cell call `20260820000002:103-301` "the live body" while also
+  citing `:301` as the first privilege statement. The body ends at `:299`; the range
+  overlaps ALTER OWNER by one statement. Grok wrote `103-306`. Either builds; the two
+  sentences should not disagree by two lines.
+NIT 2. §9(a) "refuses or **raises** the stored `until`" cannot raise a clamped reply's:
+  `command/index.ts:7071-7073` refuses any row outliving its root (copy at `:8019`).
+  For the reply path (a) can only refuse. The spec already says (a) needs its own
+  ruling, so this is a nit.
+NIT 3. §2.1 closes "found the bound on the final round and the reply path on the next"
+  — a round after the final round. Say "on draft 7 … on draft 8".
+
+5. NOT ESTABLISHED
+- Nothing outside the diff re-measured; no database probe run this pass.
+- How often a nearly expired thread root receives a reply: frequency, not existence.
+- §11 discloses that this SHA carries one arm (this one) under the operator's cost
+  rule, with Gemini's PASS from `a793eaf` and Grok's from `82bbe7b`. That is a
+  disclosure, not a false statement; whether it satisfies D-036's two-arms-on-the-
+  exact-SHA rule is the lead's ruling, not a finding of this arm.
+```
+
+QUOTE-BACK: # Push delivery: wake listeners from Supabase Realtime instead of polling
+VERDICT: PASS
+REASON: The exposure set now keys on the stored `until` with both paths and correct citations (`command/index.ts:7029-7038`, `:8046`, `durable-delivery.ts:290`, `20260723000001:210-211`), §9(a) is scoped to the stored value, my three nits and Grok's two open nits are folded, and the diff adds no statement the code contradicts — three nits remain, no defect and no gap.
