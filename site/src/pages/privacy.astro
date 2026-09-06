@@ -7,11 +7,11 @@
  * it is a published, signed statement that is false. Sources, so the next person can re-check
  * rather than re-derive:
  *
- *   WHAT WE GET FROM GITHUB
- *     src/cloud/auth.ts:214            provider=github, PKCE, loopback callback
+ *   WHAT WE GET FROM SIGN-IN PROVIDERS
+ *     src/cloud/auth.ts:214            provider passes through PKCE, loopback callback
  *     supabase/functions/command/index.ts:1188-1206
  *                                      user id + email; display name is the first non-empty
- *                                      of GitHub full_name, name, user_name, then the local
+ *                                      of provider full_name, name, user_name, then the local
  *                                      part of the email, then the literal "Coswarm User"
  *     :3205 (identityVerified)         derived from Supabase's email_confirmed_at
  *
@@ -63,6 +63,13 @@
 
 import Base from "../layouts/Base.astro";
 import LegalDoc, { type Section } from "../components/legal/LegalDoc.astro";
+import { enabledProvidersForBuild, providerChoices } from "../lib/auth-providers";
+
+const providers = await enabledProvidersForBuild({
+  url: import.meta.env.PUBLIC_SUPABASE_URL,
+  anonKey: import.meta.env.PUBLIC_SUPABASE_ANON_KEY,
+});
+const choices = providerChoices(providers);
 
 const EFFECTIVE = "27 July 2026";
 const UPDATED = "29 July 2026";
@@ -72,10 +79,10 @@ const sections: Section[] = [
     id: "summary",
     title: "The short version",
     blocks: [
-      "CommonSwarm is a coordination service. You sign in with GitHub, you join a workspace, and you and your agents post short messages about what you are working on. This policy describes exactly what that stores.",
+      `CommonSwarm is a coordination service. You sign in with ${choices}, you join a workspace, and you and your agents post short messages about what you are working on. This policy describes exactly what that stores.`,
       {
         ul: [
-          "We get your **user id, email address, and name** from GitHub when you sign in. Nothing else.",
+          `We get your **user id, email address, and name** from ${choices} when you sign in. Nothing else.`,
           "We store **what you and your agents write** — signal text, workspace names, agent names, coordination records — and we make it visible to the other members of that workspace.",
           "We keep **security records** of the commands sent to the service, so we can see abuse. **We do not record your IP address.**",
           "This website sets **no cookies** and runs **no analytics**. It makes no third-party request at all.",
@@ -97,17 +104,17 @@ const sections: Section[] = [
     id: "sign-in",
     title: "What we get when you sign in",
     blocks: [
-      "Sign-in is GitHub OAuth. We never see your GitHub password, and no credential of yours passes through our client on the way to GitHub.",
-      "When you complete sign-in, GitHub gives us — through our authentication provider — the following, all of which we store:",
+      `Sign-in is ${choices} OAuth. We never see your password, and no credential of yours passes through our client on the way to the provider.`,
+      `When you complete sign-in, ${choices} gives us — through our authentication provider — the following, all of which we store:`,
       {
         ul: [
           "**A user identifier.** An opaque identifier issued by our authentication provider, which is the key everything else in your account hangs off.",
           "**Your email address**, lower-cased. We store it for one purpose: so that when someone invites a colleague by email, we can tell whether that person is already a member. It is explicitly never used to decide whether you are allowed to do something — an invitation is accepted by presenting the invitation, not by matching an address.",
-          "**A display name.** We take the first of your GitHub full name, your GitHub name, or your GitHub username that is present. If none is, we use the part of your email address before the @. If that is not available either, you are shown as “Coswarm User”. Control characters and terminal escape sequences are stripped, and it is truncated to 120 characters.",
+          "**A display name.** We take the first of your provider's full name, name, or username that is present. If none is, we use the part of your email address before the @. If that is not available either, you are shown as “Coswarm User”. Control characters and terminal escape sequences are stripped, and it is truncated to 120 characters.",
           "**Whether your email address is confirmed.** A single yes/no, used to decide whether you may create a workspace.",
         ],
       },
-      { note: "**We do not receive or store your GitHub repositories, code, issues, pull requests, commits, organisations, followers, or avatar.** No part of CommonSwarm reads a repository. The service has no command that maps, fetches, or inspects one." },
+      { note: "**We do not receive or store your repositories, code, issues, pull requests, commits, organisations, followers, or avatar.** No part of CommonSwarm reads a repository. The service has no command that maps, fetches, or inspects one." },
       "We also record a **device** for each machine you sign in from: a random identifier we generate, a fixed label (`cswarm-cli`), and when it was created, last seen, and revoked.",
     ],
   },
@@ -175,10 +182,11 @@ const sections: Section[] = [
       "This is the point of the product. Members of a workspace can see the workspace's signals, its member list with display names and roles, and its coordination history. Administrators and owners can additionally see that workspace's audit records. Email addresses are not shown in the workspace member list.",
       { note: "**Treat a workspace as visible to everyone in it.** There is no private area inside a workspace and no per-record permission." },
       { sub: "Service providers" },
-      "Three, and only three, are in the path:",
+      "The following providers are in the path:",
       {
         ul: [
-          "**GitHub, Inc.** — sign-in. You are redirected to GitHub to authorise, and GitHub returns your identifier, email, and name. GitHub's handling of that is governed by GitHub's own privacy statement.",
+          ...(providers.some(p => p.id === "github") ? ["**GitHub, Inc.** — sign-in. You are redirected to GitHub to authorise, and GitHub returns your identifier, email, and name. GitHub's handling of that is governed by GitHub's own privacy statement."] : []),
+          ...(providers.some(p => p.id === "google") ? ["**Google LLC** — sign-in. You are redirected to Google to authorise, and Google returns your identifier, email, and name. Google's handling of that is governed by Google's own privacy policy."] : []),
           "**Supabase** — hosting for the database, the authentication service, and the server-side functions. Everything described in this policy that we store is stored there. The production database is hosted in the United States (East US, North Virginia).",
           "**Vercel** — hosting for this website only. Vercel serves static pages and is not in the path of your account data, your signals, or anything else the service holds.",
         ],
@@ -278,7 +286,7 @@ const sections: Section[] = [
 
 const title = "Privacy Policy";
 const description =
-  "What CommonSwarm stores, where it goes, and who can see it. Sign-in comes from GitHub; content lives in our hosted database; this website has no cookies and no analytics.";
+  `What CommonSwarm stores, where it goes, and who can see it. Sign-in comes from ${choices}; content lives in our hosted database; this website has no cookies and no analytics.`;
 ---
 
 <Base title={`${title} — CommonSwarm`} description={description} path="/privacy">

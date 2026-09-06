@@ -44,7 +44,7 @@ test("/start is only a query-and-fragment-preserving compatibility handoff", () 
 test("/app is email-first, truthful about the free tier, and owns consent", () => {
   const dashboard = read("src/components/app/LiveDashboard.astro");
   const emailAt = dashboard.indexOf('id="dashboard-email"');
-  const githubAt = dashboard.indexOf("data-signin-github");
+  const githubAt = dashboard.indexOf('<ProviderButtons');
 
   assert.ok(emailAt >= 0);
   assert.ok(githubAt > emailAt, "email must appear before GitHub in the signed-out gateway");

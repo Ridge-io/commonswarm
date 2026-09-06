@@ -25,11 +25,10 @@ test("signed-out /app onramp is cold-stranger, email-first, free, draft-legal", 
   assert.doesNotMatch(panel, /invitation/i);
 
   const email = panel.indexOf('id="dashboard-email"');
-  const github = panel.indexOf("data-signin-github");
+  const github = panel.indexOf('<ProviderButtons');
   assert.ok(email >= 0 && github > email, "email must precede GitHub in the shared auth view");
   assert.match(panel, /data-auth-view="choices">/);
   assert.doesNotMatch(panel, /data-auth-view="choices" hidden/);
-  assert.match(panel, /Sign in with GitHub/);
   assert.match(panel, /Email me a sign-in link/);
   assert.match(panel, /No password\. The link returns you to this page\./);
   assert.match(panel, /Use a different address/);
@@ -39,6 +38,6 @@ test("signed-out /app onramp is cold-stranger, email-first, free, draft-legal", 
   assert.match(panel, /drafts published for review \(not yet in force\)/);
   assert.doesNotMatch(panel, /by using this service you agree/i);
 
-  assert.match(source, /signInWithGitHub\(new URL\("\/app"/);
+  assert.match(source, /signInWithProvider\(/);
   assert.match(source, /showAuthView\("choices"\)/);
 });

@@ -172,8 +172,8 @@ async function inviteHtml(): Promise<string> {
 }
 
 function renderedProviderIds(html: string): string[] {
-  return [...html.matchAll(/data-signin-provider="([^"]+)"/g)]
-    .map((match) => match[1] as string)
+  return [...new Set([...html.matchAll(/data-signin-provider="([^"]+)"/g)]
+    .map((match) => match[1] as string))]
     .sort();
 }
 
@@ -290,8 +290,8 @@ const OAUTH_CALL = ".signInWithOAuth(";
 /** The one module allowed to call Supabase's OAuth entry point. */
 const OAUTH_CALL_SITE = "lib/commonswarm.ts";
 /** The files allowed to call the named GitHub wrapper, and how many times each may. */
-const NAMED_WRAPPER_CALL_SITES: readonly string[] = ["components/app/LiveDashboard.astro"];
-const NAMED_WRAPPER_CALLS_ALLOWED = 1;
+const NAMED_WRAPPER_CALL_SITES: readonly string[] = [];
+const NAMED_WRAPPER_CALLS_ALLOWED = 0;
 
 /*
  * The assertions that FIND those three calls, built from the three constants above.
@@ -331,8 +331,7 @@ const SWEEP_CATCHES: readonly string[] = [
   ...SIGNIN_MARKER.map((entry) => entry.claim),
   `any ${OAUTH_CALL} outside ${OAUTH_CALL_SITE}`,
   `any string literal handed to ${GENERAL_PROVIDER_CALL}`,
-  `${NAMED_PROVIDER_WRAPPER} anywhere but ${NAMED_WRAPPER_CALL_SITES.join(", ")}, or more ` +
-    `than ${NAMED_WRAPPER_CALLS_ALLOWED} call(s) there`,
+  `any ${NAMED_PROVIDER_WRAPPER} anywhere`,
   `a rendered button whose label is not exactly one of: ` +
     AUTH_PROVIDERS.map((provider) => JSON.stringify(provider.label)).join(", "),
 ];
@@ -380,7 +379,7 @@ const UNSCANNABLE_EXTENSIONS = ["css"];
  * control appear there and never trip the sweep. The control also asserts the file still
  * exists and still matches, so a rename or a cleanup cannot quietly retire the exception.
  */
-const UNGENERATED_SIGNIN_SURFACES = new Map([["components/app/LiveDashboard.astro", 1]]);
+const UNGENERATED_SIGNIN_SURFACES = new Map<string, number>([]);
 
 async function sourceFiles(dir: URL): Promise<URL[]> {
   const found: URL[] = [];
@@ -921,7 +920,7 @@ test("CONTROL: the sweep's stated bound is derived from its own assertions, and 
   );
 });
 
-test("CONTROL: every OAuth call site is the named debt or an id read at runtime", async () => {
+test("CONTROL: every OAuth call site is an id read at runtime", async () => {
   /*
    * THE ATTRIBUTE SWEEPS CANNOT CLOSE THIS ON THEIR OWN, and two review arms proved it:
    * `<button data-login="github">` hides the provider in a VALUE, so no pattern over attribute
@@ -987,10 +986,8 @@ test("CONTROL: every OAuth call site is the named debt or an id read at runtime"
   assert.deepEqual(
     callers,
     NAMED_WRAPPER_CALL_SITES.map((file) => `${file} (${NAMED_WRAPPER_CALLS_ALLOWED})`),
-    `signInWithGitHub is called from: ${callers.join(", ")}. Exactly one call site is allowed ` +
-      `— /app's signed-out button, the debt UNGENERATED_SIGNIN_SURFACES already names. A ` +
-      `second one is a second GitHub-only door, and it would offer GitHub on a deployment ` +
-      `that has Google on. Render ProviderButtons and call signInWithProvider instead.`,
+    `signInWithGitHub is called from: ${callers.join(", ")}. No call site is allowed ` +
+      `because every sign-in control must come from ProviderButtons.`,
   );
 });
 
@@ -1036,17 +1033,9 @@ test("CONTROL: /app's built page hand-writes exactly one provider control, and i
     withoutAllowedAttributes(app).match(new RegExp(PROVIDER_IN_ATTRIBUTE_NAME, "gi")) ?? [];
   assert.equal(
     handWritten.length,
-    1,
+    0,
     `The built /app page names a provider inside ${handWritten.length} attribute name(s): ` +
-      `${handWritten.join(" | ")}. Exactly one is allowed — the signed-out ` +
-      `[data-signin-github] button, which UNGENERATED_SIGNIN_SURFACES names as debt. Every ` +
-      `other sign-in control on that page must come from ProviderButtons.`,
-  );
-  assert.match(
-    handWritten[0] as string,
-    /\bdata-signin-github\b/,
-    `The one hand-written provider control on /app must be the signed-out button. It is ` +
-      `now: ${handWritten[0]}`,
+      `${handWritten.join(" | ")}. Every sign-in control on that page must come from ProviderButtons.`,
   );
 
   /*
