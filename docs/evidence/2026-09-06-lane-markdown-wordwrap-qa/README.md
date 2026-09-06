@@ -39,6 +39,18 @@ Loads: 28 shipped + 3 controls, sequential. Rows: 352. Screenshots: 28, one Chro
 (`--headless=new --screenshot --window-size --virtual-time-budget=5000`), at
 `docs/evidence/2026-09-06-markdown-qa/<fixture>-<surface>-<width>-<theme>.png`.
 
+## D-036 arms
+
+| SHA | arm | file | verdict |
+|---|---|---|---|
+| 23255e2d (round 1: fixtures, observer, fix, README) | Gemini (agy) inversion | `arm-agy-inversion-23255e2d.md` | PASS, two nits: the header comment claimed every family has a control (scroll has none) — fixed in the next commit; `h6` absent from the heading selectors — moot, the renderer emits levels 2-5 only (`site/src/lib/message-markdown.ts:349`) |
+| 23255e2d | Grok exact | — | started, stopped by the lane when the comment fix moved the SHA; no verdict, not a review |
+| 534a8405 (round 2: comment fix, site gate log) | Grok exact | `arm-grok-exact-534a8405.md` | PASS, nits only (README wording on the gap control; fixture 6 noted in the header not per row; assertions in the new file rather than the sibling; `list→paragraph` not in the corpus) |
+| 534a8405 | Gemini (agy) inversion | `arm-agy-inversion-534a8405.md` | PASS, no findings |
+| — | Codex gpt-5.6-sol | — | not run: operator ruling 2026-09-06, Codex unavailable until the weekly reset at 21:00 CDT |
+
+Round 1 and round 2 differ only in a comment in the observer test and in this directory, so the round-1 Gemini review reads on the same code.
+
 ## Results
 
 - Before any fix: `RESULTS-before-fix.md` in this directory — 316 PASS, **36 FAIL**, all in the gap family.
