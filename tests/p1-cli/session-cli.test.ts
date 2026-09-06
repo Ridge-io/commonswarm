@@ -68,19 +68,10 @@ test("session start copy is generated from the mode that actually started", () =
   assert.equal(foreground.mode, "foreground");
   assert.match(foreground.message, /claims and surfaces/);
   assert.doesNotMatch(foreground.message, /did not claim or surface/);
-  const worker = sessionStartCopy({
-    mode: "worker",
-    runReceiver: false,
-    workerNext: "Managed worker session acquired. Start the worker with: cswarm listen start",
-  });
-  assert.equal(worker.mode, "worker");
-  assert.match(worker.message, /Managed worker session acquired/);
-  assert.doesNotMatch(worker.message, /claims and surfaces/);
 });
 
 test("session parsers refuse unknown mode and provider", () => {
   assert.equal(parseSessionMode("interactive"), "interactive");
-  assert.equal(parseSessionMode("worker"), "worker");
   assert.throws(() => parseSessionMode("hidden"), /--mode must be/);
   assert.equal(parseSessionProvider("codex"), "codex");
   assert.throws(() => parseSessionProvider("mystery"), /--provider must be/);

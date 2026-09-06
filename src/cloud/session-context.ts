@@ -1,5 +1,5 @@
 import { randomUUID } from "node:crypto";
-import { lstat, mkdir, chmod } from "node:fs/promises";
+import { lstat, mkdir, chmod, readdir } from "node:fs/promises";
 import { homedir } from "node:os";
 import { dirname, isAbsolute, join, parse as parsePath, resolve } from "node:path";
 import {
@@ -565,6 +565,40 @@ export async function readSessionContextIfPresent(
     }
     throw error;
   }
+}
+
+/**
+ * Every readable session context saved under the default root for one
+ * workspace/principal pair. Unreadable or malformed files are skipped: a
+ * caller that needs the live proof treats "none" and "more than one" alike,
+ * never picking a first match.
+ */
+export async function listSessionContexts(
+  workspaceId: string,
+  principalId: string,
+): Promise<SessionContextDocument[]> {
+  const directory = join(
+    defaultSessionRootDirectory(),
+    workspaceId.toLowerCase(),
+    principalId.toLowerCase(),
+  );
+  let names: string[];
+  try {
+    names = await readdir(directory);
+  } catch {
+    return [];
+  }
+  const contexts: SessionContextDocument[] = [];
+  for (const name of names.sort()) {
+    if (!name.endsWith(".json")) continue;
+    try {
+      const context = await readSessionContextIfPresent(join(directory, name));
+      if (context !== null) contexts.push(context);
+    } catch {
+      continue;
+    }
+  }
+  return contexts;
 }
 
 export async function deleteSessionContext(path: string): Promise<void> {

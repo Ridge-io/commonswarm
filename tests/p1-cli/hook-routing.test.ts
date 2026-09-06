@@ -30,13 +30,13 @@ import {
   runListenerHookCheck,
   startListenerControlServer,
   writeListenerCredentialState,
-  writeListenerSessionBinding,
   writeListenerStatus,
   type ListenerPaths,
   type ListenerStatus,
   type PendingMainEntry,
 } from "../../src/listener/index.js";
 import {
+  defaultSessionContextPath,
   markSessionReleased,
   newSessionBinding,
   writeSessionContext,
@@ -574,16 +574,16 @@ test("hook marks a queued delivery observed only after stdout and retries silent
 
 async function writeManagedHookSession(
   root: string,
-  paths: ListenerPaths,
-  options: { generation?: number; released?: boolean; missingFile?: boolean } = {},
+  options: { generation?: number; released?: boolean; sessionId?: string } = {},
 ) {
+  /* The hook reads contexts from the default session root, which follows
+     XDG_CONFIG_HOME; the test points that at its own temp root. */
   const credDir = join(root, "session-cred");
   await mkdir(credDir, { recursive: true, mode: 0o700 });
   await chmod(credDir, 0o700);
   const tokenFile = join(credDir, "token.json");
   await writeFile(tokenFile, "{}\n", { mode: 0o600 });
   await chmod(tokenFile, 0o600);
-  const contextPath = join(root, "session.json");
   const context = {
     ...newSessionBinding({
       target: cloudTarget("https://cloud.example.test", "anon"),
@@ -596,19 +596,20 @@ async function writeManagedHookSession(
     }),
     generation: options.generation ?? 2,
   };
-  if (!options.missingFile) {
-    const stored = options.released ? markSessionReleased(context) : context;
-    await writeSessionContext(contextPath, stored);
-  }
-  await writeListenerSessionBinding(paths.instanceDirectory, {
-    contextPath,
-    context,
-  });
+  const stored = options.released ? markSessionReleased(context) : context;
+  const contextPath = defaultSessionContextPath(
+    WORKSPACE_ID,
+    PRINCIPAL_ID,
+    options.sessionId ?? context.session_id,
+  );
+  await writeSessionContext(contextPath, stored);
   return { contextPath, context };
 }
 
-test("a managed hook with a stale or absent session context cannot mark an ask observed", async () => {
+test("a managed hook with a released or ambiguous session context cannot mark an ask observed", async () => {
   const root = await mkdtemp(join(tmpdir(), "cswarm-hook-managed-stale-"));
+  const previousXdg = process.env.XDG_CONFIG_HOME;
+  process.env.XDG_CONFIG_HOME = join(root, "xdg");
   try {
     const paths = await installCredential(root);
     await writeStatus(paths, PRINCIPAL_ID, { pendingForMainCount: 1 });
@@ -645,25 +646,28 @@ test("a managed hook with a stale or absent session context cannot mark an ask o
       deadlineMs: Date.now() + 3_000,
     });
 
-    await writeManagedHookSession(root, paths, { missingFile: true });
+    // Only a released (stopped) context on disk: no live proof, so no observe.
+    const released = await writeManagedHookSession(root, { generation: 2, released: true });
     await invoke();
-    assert.equal(observations, 0, "absent session context must not observe");
+    assert.equal(observations, 0, "released session context must not observe");
     assert.equal(await queue.count(), 1);
 
-    const live = await writeManagedHookSession(root, paths, { generation: 2 });
-    await writeListenerSessionBinding(paths.instanceDirectory, {
-      contextPath: live.contextPath,
-      context: live.context,
-      proof: {
-        session_id: live.context.session_id,
-        generation: 1,
-        key: live.context.session_key,
-      },
-    });
+    // Two live contexts: ambiguous, refused before any write (never first match).
+    const first = await writeManagedHookSession(root, { generation: 3 });
+    await writeManagedHookSession(root, { generation: 4 });
     await invoke();
-    assert.equal(observations, 0, "stale generation must not observe");
+    assert.equal(observations, 0, "two live contexts must not observe");
     assert.equal(await queue.count(), 1);
+
+    // Exactly one live context: the current proof gates the observe and it proceeds.
+    await rm(released.contextPath, { force: true });
+    await rm(defaultSessionContextPath(WORKSPACE_ID, PRINCIPAL_ID, first.context.session_id), { force: true });
+    await invoke();
+    assert.equal(observations, 1, "one live context is the positive control");
+    assert.equal(await queue.count(), 0);
   } finally {
+    if (previousXdg === undefined) delete process.env.XDG_CONFIG_HOME;
+    else process.env.XDG_CONFIG_HOME = previousXdg;
     await rm(root, { recursive: true, force: true });
   }
 });

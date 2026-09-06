@@ -25,7 +25,8 @@ export const AGENT_SESSION_RENEW_AFTER_MS = 40_000;
 
 export const SESSION_CONTEXT_VERSION = 1 as const;
 
-export const SESSION_MODES = ["interactive", "worker"] as const;
+/* cswarm 0.1.61: the listener never starts a model, so there is no managed worker mode (spec section 10). */
+export const SESSION_MODES = ["interactive"] as const;
 export type SessionMode = (typeof SESSION_MODES)[number];
 
 export const SESSION_PROVIDERS = ["grok", "opencode", "claude", "codex"] as const;
@@ -53,6 +54,7 @@ export const AGENT_SESSION_ERROR_CODE_LIST = [
   "session_conflict",
   "session_not_managed",
   "session_already_managed",
+  "session_leases_live",
 ] as const satisfies readonly AgentSessionErrorCode[];
 
 export const AGENT_SESSION_ERROR_CODE_SET: ReadonlySet<string> = new Set(

@@ -15,6 +15,8 @@ const SESSION_ERROR_MESSAGES = {
   session_not_managed:
     "managed sessions are not enabled for this agent; an owner or admin must enable them first",
   session_already_managed: "managed sessions are already enabled for this agent",
+  session_leases_live:
+    "legacy delivery leases are still live for this agent; stop the old receiver and wait for them to expire before enabling",
 } as const satisfies Record<AgentSessionErrorCode, string>;
 
 /**

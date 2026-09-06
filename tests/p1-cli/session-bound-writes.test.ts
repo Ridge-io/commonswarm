@@ -44,7 +44,7 @@ async function fixture() {
       workspaceId: WORKSPACE,
       principalId: PRINCIPAL,
       provider: "grok",
-      mode: "worker",
+      mode: "interactive",
       hostSessionId: "host-bound",
       tokenFile,
     }),

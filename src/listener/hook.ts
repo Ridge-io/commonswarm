@@ -14,10 +14,9 @@ import {
   managedAckInput,
 } from "../cloud/session-ack.js";
 import {
-  readSessionContextIfPresent,
+  listSessionContexts,
   sessionProofOf,
 } from "../cloud/session-context.js";
-import { readListenerSessionBinding } from "./session-binding.js";
 import {
   followHttpDetails,
   readAgentSignalDirectory,
@@ -887,27 +886,24 @@ async function recordQueuedObservations(
   ) {
     return new Set();
   }
-  const binding = await readListenerSessionBinding(check.context.instanceDirectory);
+  /* Managed gate (spec section 8): observe only with the current proof. The
+     hook has no listener-written binding (0.1.61 removed the worker), so it
+     reads the session contexts saved for this workspace/principal. No context
+     means the legacy path; the server fences a managed principal itself.
+     Anything but exactly one live context refuses before any write. */
+  const contexts = await listSessionContexts(stored.workspaceId, stored.principalId);
   let managedAck: ReturnType<typeof managedAckInput> | undefined;
-  if (binding !== null) {
-    const context = await readSessionContextIfPresent(binding.contextPath);
-    if (context === null) return new Set();
-    const proof = sessionProofOf(context);
-    const presented = proof !== null &&
-        proof.session_id === binding.sessionId &&
-        proof.generation === binding.generation
-      ? proof
-      : {
-        session_id: binding.sessionId,
-        generation: binding.generation,
-        key: proof?.key ?? context.session_key,
-      };
+  if (contexts.length > 0) {
+    const live = contexts.filter((context) => sessionProofOf(context) !== null);
+    if (live.length !== 1) return new Set();
+    const context = live[0]!;
+    const proof = sessionProofOf(context)!;
     managedAck = managedAckInput({
       context,
-      proof: presented,
+      proof,
       injectionSucceeded: true,
       observedHostSessionId: context.host_session_id,
-      hostIdentityTrusted: proof !== null,
+      hostIdentityTrusted: true,
     });
     if (!canAckManagedDelivery(managedAck).ok) return new Set();
   }

@@ -195,7 +195,7 @@ test("typed session_not_managed does not claim enforcement is active", async () 
         credential: TOKEN,
         tokenFile,
         tokenPrincipalId: PRINCIPAL,
-        mode: "worker",
+        mode: "interactive",
         provider: "grok",
         hostSessionId: "thread-1",
         contextPath: join(root, "session.json"),

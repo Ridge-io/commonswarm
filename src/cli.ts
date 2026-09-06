@@ -352,13 +352,7 @@ import {
   startManagedSession,
   stopManagedSession,
 } from "./cloud/session-cli.js";
-import { AgentSessionManager } from "./cloud/session-manager.js";
-import { AgentSessionClient } from "./cloud/session-client.js";
-import {
-  boundAdapterEnv,
-  writeListenerSessionBinding,
-  type ManagedSessionBinding,
-} from "./listener/session-binding.js";
+import { SESSION_MODES } from "./cloud/session-contract.js";
 
 /**
  * Every flag this build accepts, for ERROR WORDING ONLY — never for acceptance. See the throw in
@@ -606,7 +600,7 @@ Usage:
   cswarm listen canary ${requiredAgentCredential} [--url <url> --anon-key <key>] --workspace-id <uuid> [--state-dir <path>] [--wait <seconds>] [--json]
   cswarm listen status ${agentCredential} [--url <url> --anon-key <key>] --workspace-id <uuid> [--principal-id <uuid>] [--json]
   cswarm listen stop ${agentCredential} [--url <url> --anon-key <key>] --workspace-id <uuid> [--principal-id <uuid>] [--json]
-  cswarm session start --mode interactive|worker --provider grok|opencode|claude|codex --host-session-id <id> ${requiredAgentCredential} [--url <url> --anon-key <key>] --workspace-id <uuid> [--session-context <absolute-path>] [--host-label <text>] [--foreground] [--json]
+  cswarm session start --mode ${SESSION_MODES.join("|")} --provider grok|opencode|claude|codex --host-session-id <id> ${requiredAgentCredential} [--url <url> --anon-key <key>] --workspace-id <uuid> [--session-context <absolute-path>] [--host-label <text>] [--foreground] [--json]
   cswarm session status --session-context <absolute-path> [--json]
   cswarm session stop --session-context <absolute-path> ${agentCredential} [--url <url> --anon-key <key>] [--json]
   cswarm session enable --principal-id <uuid> [--url <url> --anon-key <key>] [--workspace-id <uuid>] [--json]
@@ -730,7 +724,7 @@ that directory is affected. --repo keeps the repository-wide .claude/settings.js
 also requires an ignored file. Uninstall also
 requires --write and uses the same scope selection.
 
-session start acquires one execution session per agent. Interactive mode never starts an ACP model, factory, or child spawn. The default path only acquires; --foreground claims and surfaces into --host-session-id. Worker mode binds listen start through --session-context. --session-context must be an absolute owned 0600 file in an owned 0700 directory outside a repository. Shell commands that omit it are not bound. session stop returns progress until cswarm session status confirms teardown. principal create --allow-duplicate-name is off by default and is never sent as false.
+session start acquires one execution session per agent. Interactive mode never starts an ACP model, factory, or child spawn. The default path only acquires; --foreground claims and surfaces into --host-session-id. There is no worker mode: the listener never starts a model (cswarm 0.1.61), so listen start takes no --session-context. --session-context must be an absolute owned 0600 file in an owned 0700 directory outside a repository. Shell commands that omit it are not bound. session stop returns progress until cswarm session status confirms teardown. principal create --allow-duplicate-name is off by default and is never sent as false.
 
 Invite, legacy token accept, principal create/revoke, human token mint/revoke, link, new, and workspace close require a
 stored human login. Agent self-surrender of a token uses --agent-token-file or --agent-token-stdin and never takes the secret on argv. Invite-link accept signs in when needed, then accepts and
@@ -5669,7 +5663,6 @@ async function runConfiguredListener(options: {
   pollMs?: number;
   routeMode?: ListenerRouteMode;
   deferOverChars?: number | null;
-  sessionBinding?: ManagedSessionBinding;
 }): Promise<ListenerStatus> {
   if (options.provider === "opencode" && options.effort) {
     throw new Error(
@@ -5695,10 +5688,7 @@ async function runConfiguredListener(options: {
       : {}),
   });
   const httpClient = new ListenerHttpClient();
-  const boundFetch = fetcherForSessionContext(
-    httpClient.fetch,
-    options.sessionBinding?.context,
-  );
+  const boundFetch = httpClient.fetch;
   let liveCredentialSession: AgentCredentialSession;
   try {
     liveCredentialSession = await agentSession(
@@ -5732,29 +5722,6 @@ async function runConfiguredListener(options: {
       return stored.credential;
     },
   };
-  const leaseAbort = new AbortController();
-  const sessionManager = options.sessionBinding === undefined
-    ? null
-    : new AgentSessionManager({
-      client: new AgentSessionClient({
-        target: options.cloud,
-        fetcher: boundFetch,
-      }),
-      credential: async () => credentialSession.bearer(),
-      workspaceId: options.workspaceId,
-      contextPath: options.sessionBinding.contextPath,
-      context: options.sessionBinding.context,
-      onDispatchStop: () => {
-        if (!leaseAbort.signal.aborted) leaseAbort.abort();
-      },
-    });
-  sessionManager?.start();
-  if (options.sessionBinding !== undefined) {
-    await writeListenerSessionBinding(
-      paths.instanceDirectory,
-      options.sessionBinding,
-    );
-  }
   const resolveSenderProvenance = async (
     signal: SignalRecord,
     context: ListenerSenderProvenanceContext,
@@ -6021,19 +5988,7 @@ async function runConfiguredListener(options: {
             ...(options.pollMs === undefined ? {} : { pollMs: options.pollMs }),
             pendingMainQueue,
             fetcher: boundFetch,
-            ...(options.sessionBinding === undefined
-              ? {}
-              : { sessionBinding: options.sessionBinding }),
-            ...(sessionManager === null
-              ? { signal }
-              : {
-                sessionDispatch: () => sessionManager.dispatchState(),
-                sessionStopReason: () => sessionManager.stopReason(),
-                onSessionLeaseLost: () => {
-                  if (!leaseAbort.signal.aborted) leaseAbort.abort();
-                },
-                signal: AbortSignal.any([signal, leaseAbort.signal]),
-              }),
+            signal,
           });
         } finally {
           activity.close();
@@ -6043,29 +5998,8 @@ async function runConfiguredListener(options: {
   } finally {
     process.off("SIGINT", onProcessSignal);
     process.off("SIGTERM", onProcessSignal);
-    sessionManager?.stopTimers();
     httpClient.close();
   }
-}
-
-async function loadSessionBindingForListen(
-  args: Arguments,
-  cloud: CloudTarget,
-  agent: AgentCredentialInput,
-  workspaceId: string,
-): Promise<ManagedSessionBinding | undefined> {
-  const contextPath = args.optional("session-context");
-  if (contextPath === undefined) return undefined;
-  const context = await readSessionContext(contextPath);
-  const identity = await readSessionIdentity(cloud, agent.token, workspaceId);
-  assertSameIdentity(context, {
-    identity,
-    target: cloud,
-    tokenPrincipalId: agent.principalId,
-    flagWorkspaceId: workspaceId,
-    flagUrl: cloud.url,
-  });
-  return { contextPath, context };
 }
 
 async function runListenStart(args: Arguments): Promise<void> {
@@ -6090,7 +6024,6 @@ async function runListenStart(args: Arguments): Promise<void> {
     "allow-unattended",
     "foreground",
     "json",
-    ...SESSION_CONTEXT_FLAGS,
   ], 2);
   if (!hasAgentCredential(args)) {
     throw new Error(
@@ -6149,12 +6082,6 @@ async function runListenStart(args: Arguments): Promise<void> {
   ) {
     throw new ListenerUnattendedRefusedError(principalId);
   }
-  const sessionBinding = await loadSessionBindingForListen(
-    args,
-    cloud,
-    agent,
-    workspaceId,
-  );
   let status: ListenerStatus;
   if (args.has("foreground")) {
     status = await runConfiguredListener({
@@ -6183,7 +6110,6 @@ async function runListenStart(args: Arguments): Promise<void> {
         ? { codexExecutable: args.required("codex-executable") }
         : {}),
       ...(stateDirectory ? { stateDirectory } : {}),
-      ...(sessionBinding === undefined ? {} : { sessionBinding }),
     });
   } else {
     const entrypoint = process.argv[1];
@@ -6251,9 +6177,6 @@ async function runListenStart(args: Arguments): Promise<void> {
         ...(codexExecutable
           ? { codexExecutable }
           : {}),
-        ...(sessionBinding === undefined
-          ? {}
-          : { sessionContext: sessionBinding.contextPath }),
       },
       credentialArtifact: artifact,
     });
@@ -6390,12 +6313,6 @@ async function runListenSupervisor(args: Arguments): Promise<void> {
   assertDurableListenerCredential(agent, principalId);
   const cwd = args.required("cwd");
   if (!isAbsolute(cwd)) throw new Error("--cwd must be an absolute path");
-  const sessionBinding = await loadSessionBindingForListen(
-    args,
-    cloud,
-    agent,
-    workspaceId,
-  );
   const status = await runConfiguredListener({
     cloud,
     workspaceId,
@@ -6424,7 +6341,6 @@ async function runListenSupervisor(args: Arguments): Promise<void> {
     ...(listenerStateDirectory(args)
       ? { stateDirectory: listenerStateDirectory(args) }
       : {}),
-    ...(sessionBinding === undefined ? {} : { sessionBinding }),
   });
   if (status.state === "failed") {
     throw new Error(
