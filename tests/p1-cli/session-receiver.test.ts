@@ -107,7 +107,7 @@ test("no callback stays manual and does not ACK", async () => {
     }, new Set());
     assert.equal(pass.receive, "manual");
     assert.equal(pass.acked, 0);
-    assert.equal(pass.buffered, 1);
+    assert.equal(pass.buffered, 0, "manual claims nothing");
     assert.equal(acks, 0);
   } finally {
     await rm(root, { recursive: true, force: true });

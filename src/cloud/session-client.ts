@@ -6,6 +6,8 @@ import {
 import { CommandTransportError, newCommandId } from "./command-client.js";
 import {
   ACQUIRE_AGENT_SESSION_KIND,
+  AGENT_SESSION_ID_HEADER,
+  AGENT_SESSION_KEY_HEADER,
   DISABLE_AGENT_MANAGEMENT_KIND,
   ENABLE_AGENT_MANAGEMENT_KIND,
   RECOVER_AGENT_SESSION_KIND,
@@ -17,7 +19,7 @@ import {
   AgentSessionError,
   agentSessionErrorFromBody,
 } from "./session-errors.js";
-import { proofHeaders, redactSessionHeaders, sessionKeyHash } from "./session-proof.js";
+import { proofHeaders, redactSessionHeaders } from "./session-proof.js";
 import type { SessionContextDocument } from "./session-context.js";
 
 export interface SessionCommandClientOptions {
@@ -53,6 +55,7 @@ async function postSessionCommand(
     command: Record<string, unknown>;
     commandId: string;
     proof?: AgentSessionProof | null;
+    acquireProof?: { session_id: string; key: string };
   },
 ): Promise<{ status: number; body: unknown }> {
   const fetcher = options.fetcher ?? fetch;
@@ -66,6 +69,12 @@ async function postSessionCommand(
     apikey: options.target.anonKey,
     "content-type": "application/json",
     ...(input.proof ? proofHeaders(input.proof) : {}),
+    ...(input.acquireProof
+      ? {
+        [AGENT_SESSION_ID_HEADER]: input.acquireProof.session_id,
+        [AGENT_SESSION_KEY_HEADER]: input.acquireProof.key,
+      }
+      : {}),
   };
   let response: Response;
   try {
@@ -130,10 +139,17 @@ export class AgentSessionClient {
       credential: request.credential,
       workspaceId: request.workspaceId,
       commandId,
+      /* The server (session-wire.ts parseAgentSessionAcquireHeaders) reads the
+         session id and the private key from the proof headers and stores only
+         the key's digest; the body carries no key material and no digest. The
+         generation header is omitted: nothing has been acquired yet. */
+      acquireProof: {
+        session_id: request.context.session_id,
+        key: request.context.session_key,
+      },
       command: {
         kind: ACQUIRE_AGENT_SESSION_KIND,
         session_id: request.context.session_id,
-        key_hash: sessionKeyHash(request.context.session_key),
         provider: request.context.provider,
         host_label: request.context.host_label,
         host_session_ref: request.context.host_session_id,

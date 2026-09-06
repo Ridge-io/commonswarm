@@ -168,6 +168,12 @@ export async function runInteractiveReceiveOnce(
     : trusted
     ? "callback"
     : "unverified";
+  if (injection === null || !trusted) {
+    /* Spec section 8: no supported callback means manual status. A claim
+       without a way to surface would hold a lease the seat cannot ACK, so
+       manual claims nothing; the ask stays durable on the server. */
+    return { surfaced: 0, acked: 0, buffered: 0, receive };
+  }
   const claims = options.claimClient ?? defaultClaimClient(options);
   const deliveries = await claims.claim();
   options.manager.noteSuccessfulWrite();
@@ -252,10 +258,6 @@ export async function runInteractiveReceiver(
     acked,
     buffered,
   };
-}
-
-export function interactiveReceiverHasNoModelFactory(): true {
-  return true;
 }
 
 export { AgentSessionClient };

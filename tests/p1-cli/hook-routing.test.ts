@@ -606,7 +606,7 @@ async function writeManagedHookSession(
   return { contextPath, context };
 }
 
-test("a managed hook with a released or ambiguous session context cannot mark an ask observed", async () => {
+test("a managed hook observes only with one live context, the bound host conversation, and proof headers", async () => {
   const root = await mkdtemp(join(tmpdir(), "cswarm-hook-managed-stale-"));
   const previousXdg = process.env.XDG_CONFIG_HOME;
   process.env.XDG_CONFIG_HOME = join(root, "xdg");
@@ -619,10 +619,12 @@ test("a managed hook with a released or ambiguous session context cannot mark an
       observationPending: true,
     });
     let observations = 0;
+    let proofHeaderSeen = 0;
     const fetcher: typeof fetch = async (_input, init) => {
       const body = JSON.parse(String(init?.body)) as Record<string, any>;
       if (body.command?.kind === "ack_agent_delivery") {
         observations += 1;
+        if (new Headers(init?.headers).get("x-cswarm-session-key") !== null) proofHeaderSeen += 1;
         return new Response(JSON.stringify({
           status: "accepted",
           ok: true,
@@ -637,33 +639,42 @@ test("a managed hook with a released or ambiguous session context cannot mark an
         capabilities: { sender_owner_relation: 1, cursor_after: 1 },
       }), { status: 200 });
     };
-    const invoke = async () => checkListenerHooks({
+    const invoke = async (hostSessionId?: string) => checkListenerHooks({
       stateDirectory: root,
       cooldownSeconds: 0,
       fetcher,
       isListenerLive: testListenerIsLive,
       signal: new AbortController().signal,
       deadlineMs: Date.now() + 3_000,
+      ...(hostSessionId === undefined ? {} : { hostSessionId }),
     });
 
     // Only a released (stopped) context on disk: no live proof, so no observe.
     const released = await writeManagedHookSession(root, { generation: 2, released: true });
-    await invoke();
+    await invoke("thread-hook");
     assert.equal(observations, 0, "released session context must not observe");
     assert.equal(await queue.count(), 1);
 
     // Two live contexts: ambiguous, refused before any write (never first match).
     const first = await writeManagedHookSession(root, { generation: 3 });
     await writeManagedHookSession(root, { generation: 4 });
-    await invoke();
+    await invoke("thread-hook");
     assert.equal(observations, 0, "two live contexts must not observe");
     assert.equal(await queue.count(), 1);
 
-    // Exactly one live context: the current proof gates the observe and it proceeds.
+    // One live context but the host did not report its conversation: fail closed to manual.
     await rm(released.contextPath, { force: true });
     await rm(defaultSessionContextPath(WORKSPACE_ID, PRINCIPAL_ID, first.context.session_id), { force: true });
     await invoke();
-    assert.equal(observations, 1, "one live context is the positive control");
+    assert.equal(observations, 0, "no host session id must not observe");
+    await invoke("some-other-thread");
+    assert.equal(observations, 0, "a different host conversation must not observe");
+    assert.equal(await queue.count(), 1);
+
+    // Exactly one live context and the bound host conversation: the observe proceeds with the proof headers.
+    await invoke("thread-hook");
+    assert.equal(observations, 1, "one live context plus the bound host is the positive control");
+    assert.equal(proofHeaderSeen, 1, "the observe carries the session proof headers");
     assert.equal(await queue.count(), 0);
   } finally {
     if (previousXdg === undefined) delete process.env.XDG_CONFIG_HOME;

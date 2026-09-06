@@ -13,6 +13,7 @@ import {
 } from "../../src/cloud/session-context.js";
 import { AgentSessionError } from "../../src/cloud/session-errors.js";
 import {
+  AGENT_SESSION_GENERATION_HEADER,
   AGENT_SESSION_ID_HEADER,
   AGENT_SESSION_KEY_HEADER,
   ACQUIRE_AGENT_SESSION_KIND,
@@ -112,9 +113,11 @@ test("same identity acquire writes one command and retries with the same proof",
   const { root, tokenFile } = await tokenPath();
   try {
     const bodies: string[] = [];
+    const headerSets: Headers[] = [];
     const fetcher = (async (_input: URL | RequestInfo, init?: RequestInit) => {
       const body = String(init?.body ?? "");
       bodies.push(body);
+      headerSets.push(new Headers(init?.headers));
       return new Response(JSON.stringify({
         ok: true,
         status: "accepted",
@@ -172,10 +175,16 @@ test("same identity acquire writes one command and retries with the same proof",
     assert.equal(bodies.length, 2);
     assert.equal(bodies[0], bodies[1]);
     assert.match(bodies[0]!, new RegExp(ACQUIRE_AGENT_SESSION_KIND));
-    assert.doesNotMatch(bodies[0]!, /session_key/);
+    assert.doesNotMatch(bodies[0]!, /session_key|key_hash/);
+    /* The wire contract: the acquire carries the session id and the private
+       key as headers (the server stores the digest); the body never does. */
+    assert.equal(headerSets.length, 2);
+    for (const headers of headerSets) {
+      assert.equal(headers.get(AGENT_SESSION_ID_HEADER), sessionId);
+      assert.equal(headers.get(AGENT_SESSION_KEY_HEADER), key);
+      assert.equal(headers.get(AGENT_SESSION_GENERATION_HEADER), null);
+    }
     void commandEndpoint;
-    void AGENT_SESSION_ID_HEADER;
-    void AGENT_SESSION_KEY_HEADER;
   } finally {
     await rm(root, { recursive: true, force: true });
   }

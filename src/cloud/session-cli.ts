@@ -308,7 +308,7 @@ const SESSION_START_COPY = {
   acquired:
     "Interactive session acquired. This process did not start an ACP model and did not claim or surface asks. Run the same command with --foreground to claim and surface into the bound host conversation.",
   foreground:
-    "Interactive session acquired. This process did not start an ACP model. It claims and surfaces into the bound host conversation only.",
+    "Interactive session acquired. This process did not start an ACP model. It claims and surfaces into the bound host conversation only when the host registered an injection callback; without one it stays manual and claims nothing.",
 } as const satisfies Record<SessionStartCopyMode, string>;
 
 export function sessionStartCopy(input: {

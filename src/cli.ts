@@ -336,7 +336,10 @@ import {
 import {
   SessionContextError,
   assertSameIdentity,
+  defaultSessionContextPath,
+  listSessionContexts,
   readSessionContext,
+  sessionProofOf,
   type SessionContextDocument,
 } from "./cloud/session-context.js";
 import {
@@ -353,6 +356,8 @@ import {
   stopManagedSession,
 } from "./cloud/session-cli.js";
 import { SESSION_MODES } from "./cloud/session-contract.js";
+import { AgentSessionManager } from "./cloud/session-manager.js";
+import { AgentSessionClient } from "./cloud/session-client.js";
 
 /**
  * Every flag this build accepts, for ERROR WORDING ONLY — never for acceptance. See the throw in
@@ -3503,8 +3508,8 @@ async function runReply(args: Arguments): Promise<void> {
  * exactly what was asked. Enumerating (`cswarm members`) is the other half.
  *
  * The id is printed even when the name is known, because the id is the addressable identity:
- * names are unique per workspace, but a name you did not create can belong to someone you did
- * not mean. When the directory does not know the recipient the bare id is printed rather than a
+ * names are not unique per workspace (duplicate names are allowed by explicit choice), and a
+ * name you did not create can belong to someone you did not mean. When the directory does not know the recipient the bare id is printed rather than a
  * guessed label — a wrong name here would be worse than no name, which is the defect itself.
  */
 export function describeAudience(
@@ -5688,7 +5693,49 @@ async function runConfiguredListener(options: {
       : {}),
   });
   const httpClient = new ListenerHttpClient();
-  const boundFetch = httpClient.fetch;
+  /* Managed principal (spec section 8, section 10): the route-main listener is
+     the seat's own claim loop, so its writes carry the live session proof and
+     it owns the deterministic renewal (a timer, never a model). The context
+     is the one `cswarm session start` saved for this workspace/principal.
+     None: legacy path, the server fences a managed principal. More than one
+     live: refuse rather than pick a first match. */
+  const managedContexts = (await listSessionContexts(options.workspaceId, options.principalId))
+    .filter((context) => sessionProofOf(context) !== null);
+  if (managedContexts.length > 1) {
+    httpClient.close();
+    throw new Error(
+      `listen start found ${managedContexts.length} live session contexts for this agent; stop the stale ones with cswarm session stop --session-context <path> first`,
+    );
+  }
+  const managedContext = managedContexts[0] ?? null;
+  const leaseAbort = new AbortController();
+  let credentialBearer: (() => Promise<string>) | null = null;
+  const sessionManager = managedContext === null
+    ? null
+    : new AgentSessionManager({
+      client: new AgentSessionClient({
+        target: options.cloud,
+        fetcher: httpClient.fetch,
+      }),
+      credential: async () => {
+        if (credentialBearer === null) throw new Error("listener credential session not ready");
+        return await credentialBearer();
+      },
+      workspaceId: options.workspaceId,
+      contextPath: defaultSessionContextPath(
+        options.workspaceId,
+        options.principalId,
+        managedContext.session_id,
+      ),
+      context: managedContext,
+      onDispatchStop: () => {
+        if (!leaseAbort.signal.aborted) leaseAbort.abort();
+      },
+    });
+  const boundFetch: typeof fetch = sessionManager === null
+    ? httpClient.fetch
+    : ((input: URL | RequestInfo, init?: RequestInit) =>
+      sessionManager.boundFetcher(httpClient.fetch)(input, init)) as typeof fetch;
   let liveCredentialSession: AgentCredentialSession;
   try {
     liveCredentialSession = await agentSession(
@@ -5722,6 +5769,8 @@ async function runConfiguredListener(options: {
       return stored.credential;
     },
   };
+  credentialBearer = () => credentialSession.bearer();
+  sessionManager?.start();
   const resolveSenderProvenance = async (
     signal: SignalRecord,
     context: ListenerSenderProvenanceContext,
@@ -5988,7 +6037,7 @@ async function runConfiguredListener(options: {
             ...(options.pollMs === undefined ? {} : { pollMs: options.pollMs }),
             pendingMainQueue,
             fetcher: boundFetch,
-            signal,
+            signal: sessionManager === null ? signal : AbortSignal.any([signal, leaseAbort.signal]),
           });
         } finally {
           activity.close();
@@ -5998,6 +6047,7 @@ async function runConfiguredListener(options: {
   } finally {
     process.off("SIGINT", onProcessSignal);
     process.off("SIGTERM", onProcessSignal);
+    sessionManager?.stopTimers();
     httpClient.close();
   }
 }
@@ -7035,6 +7085,45 @@ async function hookInstallPrincipalId(args: Arguments): Promise<string> {
   );
 }
 
+/**
+ * Claude Code writes one JSON object to a hook's stdin; its `session_id` is the
+ * durable conversation this hook runs inside. That is the only host identity
+ * a managed observe may trust (spec section 8). No stdin, a TTY, malformed
+ * JSON, or a missing field all read as "not proven": null, never a guess.
+ */
+async function hookHostSessionIdFromStdin(): Promise<string | null> {
+  if (process.stdin.isTTY) return null;
+  const raw = await new Promise<string>((resolve) => {
+    let text = "";
+    const done = () => resolve(text);
+    const timer = setTimeout(done, 250);
+    process.stdin.setEncoding("utf8");
+    process.stdin.on("data", (chunk: string) => {
+      text += chunk;
+      if (text.length > 64 * 1024) {
+        clearTimeout(timer);
+        done();
+      }
+    });
+    process.stdin.on("end", () => {
+      clearTimeout(timer);
+      done();
+    });
+    process.stdin.on("error", () => {
+      clearTimeout(timer);
+      done();
+    });
+  });
+  try {
+    const value = JSON.parse(raw) as unknown;
+    if (value === null || typeof value !== "object" || Array.isArray(value)) return null;
+    const id = (value as Record<string, unknown>).session_id;
+    return typeof id === "string" && id.length > 0 && id.length <= 200 ? id : null;
+  } catch {
+    return null;
+  }
+}
+
 async function runHook(args: Arguments): Promise<void> {
   const command = args.positionals[1];
   if (command === "check") {
@@ -7059,10 +7148,12 @@ async function runHook(args: Arguments): Promise<void> {
     }, 3_000);
     hardExit.unref();
     const httpClient = new ListenerHttpClient();
+    const hostSessionId = await hookHostSessionIdFromStdin();
     try {
       await runListenerHookCheck({
         ...(cooldownSeconds === undefined ? {} : { cooldownSeconds }),
         ...(principalIds.length === 0 ? {} : { principalIds }),
+        ...(hostSessionId === null ? {} : { hostSessionId }),
         fetcher: httpClient.fetch,
         write: async (output) => {
           await new Promise<void>((resolve, reject) => {

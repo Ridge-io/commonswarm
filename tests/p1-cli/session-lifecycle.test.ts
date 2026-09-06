@@ -44,7 +44,7 @@ async function tokenFile(root: string): Promise<string> {
   return path;
 }
 
-test("acquire retry reuses the same UUID, key hash, and command id", async () => {
+test("acquire retry reuses the same UUID, private key header, and command id", async () => {
   const root = await mkdtemp(join(tmpdir(), "cswarm-life-"));
   await chmod(root, 0o700);
   try {
@@ -55,10 +55,10 @@ test("acquire retry reuses the same UUID, key hash, and command id", async () =>
     const fetcher = (async (_input: URL | RequestInfo, init?: RequestInit) => {
       const body = JSON.parse(String(init?.body ?? "{}")) as {
         command_id: string;
-        command: { key_hash: string; session_id: string; kind: string };
+        command: { session_id: string; kind: string };
       };
       ids.push(body.command_id);
-      hashes.add(body.command.key_hash);
+      hashes.add(String(new Headers(init?.headers).get("x-cswarm-session-key")));
       return new Response(JSON.stringify({
         ok: true,
         status: "accepted",
@@ -111,7 +111,7 @@ test("acquire retry reuses the same UUID, key hash, and command id", async () =>
       first.context.acquire_command_id,
     ]);
     assert.equal(hashes.size, 1);
-    assert.equal([...hashes][0], sessionKeyHash(first.context.session_key));
+    assert.equal([...hashes][0], first.context.session_key);
   } finally {
     await rm(root, { recursive: true, force: true });
   }
