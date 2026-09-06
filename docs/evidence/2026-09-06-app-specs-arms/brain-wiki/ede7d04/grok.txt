@@ -1,1 +1,34 @@
-I'll review the brain-wiki spec against the code and earlier arm outputs. First I'll load the spec, prior findings, sibling specs, and the files it cites.I'll check the commit, earlier arm findings, and every cited file:line in parallel.HEAD is `8f0d553`, not `ede7d04`. I'll check whether the spec moved and read the earlier arm outputs.The working tree is draft 5, not `ede7d04`. I'll read the current-round arms, the spec delta, and every cited file.
+I'll review the brain-wiki spec against the code and earlier arm outputs. First I'll load the spec, prior findings, sibling specs, and the files it cites.I'll check the commit, earlier arm findings, and every cited file:line in parallel.HEAD is `8f0d553`, not `ede7d04`. I'll check whether the spec moved and read the earlier arm outputs.The working tree is draft 5, not `ede7d04`. I'll read the current-round arms, the spec delta, and every cited file.Draft 5 folded the Gemini gaps. I'll verify every cited line and check sibling specs for file-order conflicts.I'll verify the remaining cited ranges, test gates, and the `ops.example` vs grouping-rule clash.I have the remaining defects. Checking one refresh call site, then I'll write the arm.D-036 EXACT arm — `docs/design/2026-09-06-BRAIN-WIKI.md` draft 5. Worktree HEAD `8f0d553`; spec last changed at `c12182b`. Named SHA `ede7d04` is draft 4; a lane would build this file.
+
+Earlier findings that this draft folded (500-name cap, DOM extraction, bounded prefetch, audit kept, no heading `id`, no CLI cache, H2 not this slice, grouping rule, four-tag allowlist, L4 after L3, `BRAIN_VERBS`, `setIndexFirstLine`, `sessionStorage` user id, L0 shared-path flag): checked against the code; not re-reported.
+
+## DEFECTS
+
+**D1 — §3 vs §2.1 / L2 tests.** §3: creating `ops.example` “shows an `ops` area”. §2.1: an area exists only if two names share the prefix or `<area>._index` exists; a lone dotted name stays at root. L2 tests say the same. `ops.example` alone matches `release_notes.v2`. L2’s grouping test and §3’s site test cannot both pass.
+
+**D2 — §2.2 remote refresh is false.** “The panel’s existing list refresh (`LiveDashboard.astro:1268-1279`) already re-reads versions” — that range is the `brain-view` import. The list re-read is `readBrainTopics` at `:4511-4534`, offered from the feed tick at `:5547-5549`, one request per 30 s. Its own comment says the Brain panel is **not** rebuilt (`:4523-4529`). Opening Brain calls `showChannelView("brain")` → `disarmLiveFeed()` (`:1743-1745`), so that tick stops. While the panel is open, versions do not refresh. L3 cannot “refetch only the bodies whose version moved” on a cadence that does not run. Gemini’s live-invalidation gap was folded with this false cite.
+
+## GAPS
+
+**G1 — §2.3 sign-out clear has no owner.** The `cswarm.brain.` prefix clear in `resetWorkspaceSessionState` (`:5683`; `:5755` is `expandedSignalIds.clear()` inside it) is the revocation control. L2’s files column does not name that function. L3 “never edits” `LiveDashboard.astro`. No `onBrainSessionReset` hook is named (unlike open/close). L3 cannot build the clear as written.
+
+**G2 — sibling order.** `MODEL-PER-AGENT.md` L1 still edits `command/index.ts` and holds the DB slot, and does not name `lane/download-url-persists-nothing`. `MARKDOWN-WORDWRAP-QA.md:71` says that lane runs **first** of `lane/brain-toc`; this spec’s L4 is only after L3. Shared-files sentence omits `lane/idle-staleness` (HEARTBEAT L3, same `LiveDashboard.astro`).
+
+## NITS
+
+- `resetWorkspaceSessionState` starts at `:5683`, not `:5755`.
+- `cswarm brain tree` has no `--json`; every other brain verb does (`cli.ts:562-564`).
+- Lane name `download-url-persists-nothing` still says zero rows; tests now require one audit row.
+- “43 topics” / hyphen count: live workspace, not in repo.
+
+## Citations that hold
+
+`brain.ts:1-8,21,34-46,116-124`; `brain-version-window.ts:14,82-103` (245 is `:12-13`); `brain-namespace.test.ts:31,37`; `read/index.ts:656-665`; `files.ts:21,156-172`; `cli.ts:562-564,617,7285-7443,7310,7442`; `brain-view.ts:1-3,57-68,75-278,82-85,182`; `LiveDashboard.astro:695-748,1746-1748,2091,4377-4388,4413-4426,5683,6379-6390`; `brain-links.ts:5-40,92,130-139,205-211,378-384`; `commonswarm.ts:998-1001,1018-1028,1198-1214`; `file-artifacts.ts:52-54,67,517-526,869-960`; `command/index.ts:8305-8306,8368-8402`; `message-markdown.ts:59-67,73-78,346-349,497,572-592,625-635`; `brain-view.fixture.ts:16-20`; `brain-verbs.test.ts:334`; `brain-links.observer.test.ts:247-267`; `AGENTS.md:274-295`; `BRAIN-LINKS-IN-SIGNALS.md:24-30`; `PUSH-DELIVERY.md:182`; `ROADMAP-DRAFT.md:107-112`; `brain-digest.ts:104-114`; `engine.ts:207-209`; `hook.ts:751-770`. Gates: `npm test` names `brain-namespace.test.ts`; `test:p1-cli` / `test:p1-server` glob; site `src/lib/*.test.mjs` + observer glob.
+
+## Not established
+
+No `npm test`, no local Supabase, no browser. Production topic count and body sizes not measured.
+
+QUOTE-BACK: # Brain wiki: hierarchy, index pages, backlinks, without new storage
+VERDICT: FAIL
+REASON: §3 still requires a one-topic `ops` area that the grouping rule forbids; the claimed in-panel version refresh cites the import block and the feed tick that `showChannelView("brain")` disarms; the sign-out `sessionStorage` clear and two sibling file orders are still unowned.
