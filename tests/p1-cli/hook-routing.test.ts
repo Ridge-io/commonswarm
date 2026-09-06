@@ -30,11 +30,17 @@ import {
   runListenerHookCheck,
   startListenerControlServer,
   writeListenerCredentialState,
+  writeListenerSessionBinding,
   writeListenerStatus,
   type ListenerPaths,
   type ListenerStatus,
   type PendingMainEntry,
 } from "../../src/listener/index.js";
+import {
+  markSessionReleased,
+  newSessionBinding,
+  writeSessionContext,
+} from "../../src/cloud/session-context.js";
 
 const repoRoot = resolve(dirname(fileURLToPath(import.meta.url)), "../..");
 const cliPath = join(repoRoot, "src", "cli.ts");
@@ -561,6 +567,146 @@ test("hook marks a queued delivery observed only after stdout and retries silent
     assert.equal(observationAttempts, 2);
     assert.equal(await queue.count(), 0, "only a successful observed write-back drains the queue");
     assert.equal((await readListenerStatus(paths))?.pendingForMainCount, 0);
+  } finally {
+    await rm(root, { recursive: true, force: true });
+  }
+});
+
+async function writeManagedHookSession(
+  root: string,
+  paths: ListenerPaths,
+  options: { generation?: number; released?: boolean; missingFile?: boolean } = {},
+) {
+  const credDir = join(root, "session-cred");
+  await mkdir(credDir, { recursive: true, mode: 0o700 });
+  await chmod(credDir, 0o700);
+  const tokenFile = join(credDir, "token.json");
+  await writeFile(tokenFile, "{}\n", { mode: 0o600 });
+  await chmod(tokenFile, 0o600);
+  const contextPath = join(root, "session.json");
+  const context = {
+    ...newSessionBinding({
+      target: cloudTarget("https://cloud.example.test", "anon"),
+      workspaceId: WORKSPACE_ID,
+      principalId: PRINCIPAL_ID,
+      provider: "claude",
+      mode: "interactive",
+      hostSessionId: "thread-hook",
+      tokenFile,
+    }),
+    generation: options.generation ?? 2,
+  };
+  if (!options.missingFile) {
+    const stored = options.released ? markSessionReleased(context) : context;
+    await writeSessionContext(contextPath, stored);
+  }
+  await writeListenerSessionBinding(paths.instanceDirectory, {
+    contextPath,
+    context,
+  });
+  return { contextPath, context };
+}
+
+test("a managed hook with a stale or absent session context cannot mark an ask observed", async () => {
+  const root = await mkdtemp(join(tmpdir(), "cswarm-hook-managed-stale-"));
+  try {
+    const paths = await installCredential(root);
+    await writeStatus(paths, PRINCIPAL_ID, { pendingForMainCount: 1 });
+    const queue = new FilePendingMainQueue(paths.instanceDirectory);
+    await queue.enqueue({
+      ...pending(SIGNAL_ID, "managed stale must not observe", "note"),
+      observationPending: true,
+    });
+    let observations = 0;
+    const fetcher: typeof fetch = async (_input, init) => {
+      const body = JSON.parse(String(init?.body)) as Record<string, any>;
+      if (body.command?.kind === "ack_agent_delivery") {
+        observations += 1;
+        return new Response(JSON.stringify({
+          status: "accepted",
+          ok: true,
+          signal_id: SIGNAL_ID,
+          outcome: "observed",
+          event_ids: [],
+          events: [],
+        }), { status: 200 });
+      }
+      return new Response(JSON.stringify({
+        signals: [],
+        capabilities: { sender_owner_relation: 1, cursor_after: 1 },
+      }), { status: 200 });
+    };
+    const invoke = async () => checkListenerHooks({
+      stateDirectory: root,
+      cooldownSeconds: 0,
+      fetcher,
+      isListenerLive: testListenerIsLive,
+      signal: new AbortController().signal,
+      deadlineMs: Date.now() + 3_000,
+    });
+
+    await writeManagedHookSession(root, paths, { missingFile: true });
+    await invoke();
+    assert.equal(observations, 0, "absent session context must not observe");
+    assert.equal(await queue.count(), 1);
+
+    const live = await writeManagedHookSession(root, paths, { generation: 2 });
+    await writeListenerSessionBinding(paths.instanceDirectory, {
+      contextPath: live.contextPath,
+      context: live.context,
+      proof: {
+        session_id: live.context.session_id,
+        generation: 1,
+        key: live.context.session_key,
+      },
+    });
+    await invoke();
+    assert.equal(observations, 0, "stale generation must not observe");
+    assert.equal(await queue.count(), 1);
+  } finally {
+    await rm(root, { recursive: true, force: true });
+  }
+});
+
+test("an unmanaged hook can still mark a queued ask observed", async () => {
+  const root = await mkdtemp(join(tmpdir(), "cswarm-hook-unmanaged-observe-"));
+  try {
+    const paths = await installCredential(root);
+    await writeStatus(paths, PRINCIPAL_ID, { pendingForMainCount: 1 });
+    const queue = new FilePendingMainQueue(paths.instanceDirectory);
+    await queue.enqueue({
+      ...pending(SIGNAL_ID, "unmanaged may observe", "note"),
+      observationPending: true,
+    });
+    let observations = 0;
+    const fetcher: typeof fetch = async (_input, init) => {
+      const body = JSON.parse(String(init?.body)) as Record<string, any>;
+      if (body.command?.kind === "ack_agent_delivery") {
+        observations += 1;
+        return new Response(JSON.stringify({
+          status: "accepted",
+          ok: true,
+          signal_id: SIGNAL_ID,
+          outcome: "observed",
+          event_ids: [],
+          events: [],
+        }), { status: 200 });
+      }
+      return new Response(JSON.stringify({
+        signals: [],
+        capabilities: { sender_owner_relation: 1, cursor_after: 1 },
+      }), { status: 200 });
+    };
+    await checkListenerHooks({
+      stateDirectory: root,
+      cooldownSeconds: 0,
+      fetcher,
+      isListenerLive: testListenerIsLive,
+      signal: new AbortController().signal,
+      deadlineMs: Date.now() + 3_000,
+    });
+    assert.equal(observations, 1, "unmanaged principal is the positive control");
+    assert.equal(await queue.count(), 0);
   } finally {
     await rm(root, { recursive: true, force: true });
   }

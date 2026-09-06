@@ -1,3 +1,4 @@
+import { isAbsolute, join } from "node:path";
 import { sanitizeChildEnv } from "../host/env.js";
 import {
   SESSION_CONTEXT_ENV,
@@ -5,7 +6,21 @@ import {
 } from "../cloud/session-contract.js";
 import type { SessionContextDocument } from "../cloud/session-context.js";
 import { sessionProofOf } from "../cloud/session-context.js";
+import {
+  deleteSecureJsonFile,
+  readSecureJsonFile,
+  writeSecureJsonFile,
+} from "../cloud/storage.js";
 import type { ListenerSessionIdentity } from "./types.js";
+
+export const LISTENER_SESSION_BINDING_FILE = "session-binding.json";
+
+export interface ListenerSessionBindingRecord {
+  version: 1;
+  contextPath: string;
+  sessionId: string;
+  generation: number;
+}
 
 export interface ManagedSessionBinding {
   contextPath: string;
@@ -62,4 +77,72 @@ export function envHasSessionBinding(
 ): boolean {
   const value = env[SESSION_CONTEXT_ENV];
   return typeof value === "string" && value.length > 0;
+}
+
+/** Persist the bound context path and generation for the hook process. Never stores the key. */
+export async function writeListenerSessionBinding(
+  instanceDirectory: string,
+  binding: ManagedSessionBinding,
+): Promise<void> {
+  if (!isAbsolute(instanceDirectory) || !isAbsolute(binding.contextPath)) {
+    throw new Error("managed session binding paths must be absolute");
+  }
+  const proof = bindingProof(binding);
+  const record: ListenerSessionBindingRecord = {
+    version: 1,
+    contextPath: binding.contextPath,
+    sessionId: binding.context.session_id,
+    generation: proof?.generation ?? binding.context.generation,
+  };
+  await writeSecureJsonFile(
+    join(instanceDirectory, LISTENER_SESSION_BINDING_FILE),
+    `${JSON.stringify(record)}\n`,
+  );
+}
+
+export async function readListenerSessionBinding(
+  instanceDirectory: string,
+): Promise<ListenerSessionBindingRecord | null> {
+  if (!isAbsolute(instanceDirectory)) return null;
+  const raw = await readSecureJsonFile(
+    join(instanceDirectory, LISTENER_SESSION_BINDING_FILE),
+    4 * 1024,
+  );
+  if (raw === null) return null;
+  let value: unknown;
+  try {
+    value = JSON.parse(raw);
+  } catch {
+    return null;
+  }
+  if (value === null || typeof value !== "object" || Array.isArray(value)) {
+    return null;
+  }
+  const row = value as Record<string, unknown>;
+  if (
+    row.version !== 1 ||
+    typeof row.contextPath !== "string" ||
+    !isAbsolute(row.contextPath) ||
+    typeof row.sessionId !== "string" ||
+    typeof row.generation !== "number" ||
+    !Number.isSafeInteger(row.generation) ||
+    row.generation < 1
+  ) {
+    return null;
+  }
+  return {
+    version: 1,
+    contextPath: row.contextPath,
+    sessionId: row.sessionId.toLowerCase(),
+    generation: row.generation,
+  };
+}
+
+export async function deleteListenerSessionBinding(
+  instanceDirectory: string,
+): Promise<void> {
+  if (!isAbsolute(instanceDirectory)) return;
+  await deleteSecureJsonFile(
+    join(instanceDirectory, LISTENER_SESSION_BINDING_FILE),
+  ).catch(() => undefined);
 }

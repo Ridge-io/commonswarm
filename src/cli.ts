@@ -351,7 +351,10 @@ import {
 } from "./cloud/session-cli.js";
 import { AgentSessionManager } from "./cloud/session-manager.js";
 import { AgentSessionClient } from "./cloud/session-client.js";
-import type { ManagedSessionBinding } from "./listener/session-binding.js";
+import {
+  writeListenerSessionBinding,
+  type ManagedSessionBinding,
+} from "./listener/session-binding.js";
 
 /**
  * Every flag this build accepts, for ERROR WORDING ONLY — never for acceptance. See the throw in
@@ -5701,6 +5704,12 @@ async function runConfiguredListener(options: {
       context: options.sessionBinding.context,
     });
   sessionManager?.start();
+  if (options.sessionBinding !== undefined) {
+    await writeListenerSessionBinding(
+      paths.instanceDirectory,
+      options.sessionBinding,
+    );
+  }
   let liveCredentialSession: AgentCredentialSession;
   try {
     liveCredentialSession = await agentSession(

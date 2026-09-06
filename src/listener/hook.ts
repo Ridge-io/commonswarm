@@ -10,6 +10,15 @@ import {
   observationCommandId,
 } from "../cloud/delivery.js";
 import {
+  canAckManagedDelivery,
+  managedAckInput,
+} from "../cloud/session-ack.js";
+import {
+  readSessionContextIfPresent,
+  sessionProofOf,
+} from "../cloud/session-context.js";
+import { readListenerSessionBinding } from "./session-binding.js";
+import {
   followHttpDetails,
   readAgentSignalDirectory,
   readAgentSignalPage,
@@ -878,6 +887,30 @@ async function recordQueuedObservations(
   ) {
     return new Set();
   }
+  const binding = await readListenerSessionBinding(check.context.instanceDirectory);
+  let managedAck: ReturnType<typeof managedAckInput> | undefined;
+  if (binding !== null) {
+    const context = await readSessionContextIfPresent(binding.contextPath);
+    if (context === null) return new Set();
+    const proof = sessionProofOf(context);
+    const presented = proof !== null &&
+        proof.session_id === binding.sessionId &&
+        proof.generation === binding.generation
+      ? proof
+      : {
+        session_id: binding.sessionId,
+        generation: binding.generation,
+        key: proof?.key ?? context.session_key,
+      };
+    managedAck = managedAckInput({
+      context,
+      proof: presented,
+      injectionSucceeded: true,
+      observedHostSessionId: context.host_session_id,
+      hostIdentityTrusted: proof !== null,
+    });
+    if (!canAckManagedDelivery(managedAck).ok) return new Set();
+  }
   const client = new DeliveryCommandClient(
     cloudTarget(stored.targetUrl, stored.anonKey),
     options.fetcher ?? fetch,
@@ -890,6 +923,7 @@ async function recordQueuedObservations(
         credential: stored.credential,
         commandId: observationCommandId(signalId),
         signalId,
+        ...(managedAck === undefined ? {} : { managedAck }),
       });
       return signalId;
     } catch {
