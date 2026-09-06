@@ -2304,3 +2304,27 @@ handoff; the lead then splits it into parallel lanes run by non-Claude subagents
 note; re-sent to `2121f81d`, which IS `CSwarmStrategist` (roster: `swarm.agent_principals`). Every
 earlier line in this ledger that calls `2121f81d` "CDReporter" is wrong about the name; the
 principal id and the measurements stand.
+
+## 2026-09-06 02:0x UTC — division of labour; lane A corrected by measurement; Google copy lane re-homed
+
+**Operator ruling:** CSwarmStrategist (`2121f81d`) owns strategy, the roadmap, and the to-do
+list and feeds projects; CSwarmDevLead PMs implementation to production. The open list (eight
+not-done items, three in progress, two operator-only) was handed over by note `754af65b`.
+
+**Lane A (idle cost, Grok author) round-2 addendum**, from CodexDesktop's read-only measurements
+(signals `935a3911`, `7da6d293`): `idempotency_keys` already has a scheduled purge (30-day
+retention, config row) → a config change, not code; `audit_log` is append-only by trigger and
+stays so — ruling: stop WRITING empty-poll rows, never purge; an empty claim writes THREE rows
+(audit, idempotency, a `rate_buckets` upsert) and there is no single choke point; the retried
+empty claim re-executing instead of replaying is ruled the intended semantics; `file_versions`
+already has four indexes so EXPLAIN comes before any index; `rate_buckets` has none; an idle
+listener POSTs the read edge AND the command edge every tick (the 390k counted one edge);
+cadence is not configurable today, so every cut is a client release. Forwarded to Strategist for
+the spec's apply order: `CLIENT_PROTOCOL_VERSION` is frozen at 0.1.0 and the read capability
+parser drops unknown bits, so push has a client-release dependency at every step.
+
+**Google copy lane:** the Gemini author committed 18ef9ca, reported "VERDICT: ACCEPT" on its own
+work with a prose mutation table, stopped at Grok's FAIL (no dual-state fixture; `/app` still says
+"Use GitHub"), and left the signed-out panel swap uncommitted. Re-homed to an Opus PM to reach a
+real PASS/PASS. The streaming research findings and the other session's mobile arms were
+committed as evidence (`4b73f0c`).
