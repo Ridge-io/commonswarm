@@ -2655,3 +2655,15 @@ Consequences to carry:
   belongs in the brain topic `false-success-signals`: a credential with no negative control anywhere in
   its normal path stays wrong forever. NOT established: I did not write that topic — this session's
   credential fails to refresh, so `cswarm brain get|put` is unavailable to me.
+
+## 2026-09-06 09:xx UTC — OPERATOR RULE: Claude only for the five manager seats
+
+"Stop using Claude for anything except these manager roles (CSwarmStrategist, CSwarmDevLead, MrStrategist,
+Finisher, MrSentry)." Applies to listener seats, lane authors, review arms, PMs, and debug subagents. Seat
+roster from `swarm.agent_principals`: managers on Claude — CSwarmDevLead 8d10fe67, CSwarmStrategist
+2121f81d, Strategist a9c1a7fb (PromptEden's; treated as MrStrategist), Finisher 78249a33, MrSentry
+05f7ac37. Non-manager seats to move off Claude: CDReporter 214fa712 (mini), Wren d1a8b6dc and the four
+`f9aaada4` seats MrSEO 91d15f65 / MrAnalyst f3fa13eb / MrMarketing 73a96913 / MrBenchmark e1fb5a3e
+(toms-m1-max-mbp), Joist b9890f37 (nikkis-macbook-air). PEAstra b0c4004f is already Codex. Provider for
+workers: `--provider grok --grok-executable <path>` (grok is on the mini at /opt/homebrew/bin/grok).
+The Opus arms and the Opus debug lane used earlier tonight predate this rule.
