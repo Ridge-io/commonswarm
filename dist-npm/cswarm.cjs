@@ -27126,6 +27126,34 @@ function describeRenewalGrant(grant) {
   return lines;
 }
 
+// src/cloud/wake.ts
+var WAKE_EVENT = "wake";
+var WAKE_TOPIC_RE = /^cswarm-wake:[A-Za-z0-9_-]{43}$/;
+function isWakeTopic(value) {
+  return WAKE_TOPIC_RE.test(value);
+}
+var WakeHintError = class extends Error {
+  code = "malformed_wake";
+  constructor(message) {
+    super(message);
+    this.name = "WakeHintError";
+  }
+};
+function parseOptionalWakeHint(value) {
+  if (value === void 0 || value === null) return void 0;
+  if (typeof value !== "object" || Array.isArray(value)) {
+    throw new WakeHintError("wake hint must be an object");
+  }
+  const row = value;
+  if (typeof row.topic !== "string" || !isWakeTopic(row.topic)) {
+    throw new WakeHintError("wake hint topic is malformed");
+  }
+  if (row.event !== WAKE_EVENT) {
+    throw new WakeHintError("wake hint event is malformed");
+  }
+  return { topic: row.topic, event: WAKE_EVENT };
+}
+
 // src/cloud/renewal.ts
 var AGENT_TOKEN_DEFAULT_TTL_MS2 = 60 * 60 * 1e3;
 var AGENT_TOKEN_MAX_TTL_MS2 = 8 * 60 * 60 * 1e3;
@@ -27427,6 +27455,16 @@ async function requestSuccessor(options) {
       "The deployment issued a successor credential that lasts longer than eight hours. cswarm refused to store it. Agent credentials stay short on purpose; renewal is what makes that survivable."
     );
   }
+  let wake;
+  try {
+    wake = parseOptionalWakeHint(body.wake);
+  } catch {
+    throw new RenewalRefused(
+      response.status,
+      "malformed_wake",
+      "The deployment returned a successor credential with a malformed wake hint. It was not stored."
+    );
+  }
   return {
     token,
     tokenId: tokenId.toLowerCase(),
@@ -27435,7 +27473,8 @@ async function requestSuccessor(options) {
     issuedAt,
     expiresAt,
     horizonExpiresAt: timestamp(body.horizon_expires_at),
-    successorsRemaining: count(body.successors_remaining)
+    successorsRemaining: count(body.successors_remaining),
+    ...wake === void 0 ? {} : { wake }
   };
 }
 var AgentCredentialSession = class _AgentCredentialSession {
@@ -30010,6 +30049,12 @@ async function agentSignalPage(target2, credential, query, options, allowLegacyC
   const rawRows = body.signals;
   const parsedRows = parseSignalRows(rawRows, parseOptions2);
   const ascending = query.ascending === true || query.after !== void 0;
+  let wake;
+  try {
+    wake = parseOptionalWakeHint(body.wake);
+  } catch {
+    throw plainMalformedError("signal read returned a malformed wake hint");
+  }
   return {
     signals: sortSignals(
       rowsAfterCursor(parsedRows.signals, query.after),
@@ -30020,7 +30065,8 @@ async function agentSignalPage(target2, credential, query, options, allowLegacyC
     rawCount: rawRows.length,
     nextCursor: rawRows.length === 0 ? null : cursorFromUnknown(rawRows[rawRows.length - 1]),
     malformedRows: parsedRows.malformedRows,
-    pendingDeliveryCount
+    pendingDeliveryCount,
+    ...wake === void 0 ? {} : { wake }
   };
 }
 function parseAgentMemberRow(value) {
@@ -32076,11 +32122,18 @@ function parseClaimSuccess(body, expected, now) {
       "delivery claim response returned more deliveries than its pending count"
     );
   }
+  let wake;
+  try {
+    wake = parseOptionalWakeHint(row.wake);
+  } catch {
+    throw new DeliveryProtocolError("delivery claim response wake field is malformed");
+  }
   return {
     capabilities,
     deliveries,
     pendingDeliveryCount,
-    terminalDeliveryFailureCount
+    terminalDeliveryFailureCount,
+    ...wake === void 0 ? {} : { wake }
   };
 }
 function parseAckSuccess(body, expected) {
@@ -32294,7 +32347,8 @@ var DeliveryCommandClient = class {
       capabilities: parsed.capabilities,
       deliveries: parsed.deliveries,
       pendingDeliveryCount: parsed.pendingDeliveryCount,
-      terminalDeliveryFailureCount: parsed.terminalDeliveryFailureCount
+      terminalDeliveryFailureCount: parsed.terminalDeliveryFailureCount,
+      ...parsed.wake === void 0 ? {} : { wake: parsed.wake }
     };
   }
   /** Acknowledge one leased delivery with an exact terminal outcome. */
@@ -37412,6 +37466,346 @@ function pendingMainEntry(signal, principalId, provenance, now, options = {}) {
   }, true);
 }
 
+// src/listener/wake.ts
+var LISTENER_RECONCILE_POLL_MS = 3e5;
+var WAKE_COALESCE_MS = 1e3;
+var WAKE_CLAIMS_PER_MINUTE_BUDGET = 50;
+var WAKE_RATE_LIMIT_POLL_MS = 6e4;
+var REALTIME_SUBSCRIBE_STATUS = {
+  SUBSCRIBED: "SUBSCRIBED",
+  CHANNEL_ERROR: "CHANNEL_ERROR",
+  CLOSED: "CLOSED",
+  TIMED_OUT: "TIMED_OUT"
+};
+var LISTENER_WAKE_MODES = ["push", "poll"];
+var LISTENER_WAKE_MODE_PUSH = LISTENER_WAKE_MODES[0];
+var LISTENER_WAKE_MODE_POLL = LISTENER_WAKE_MODES[1];
+var LISTENER_WAKE_MODE_SET = new Set(
+  LISTENER_WAKE_MODES
+);
+var WAKE_ERROR_CODES = [
+  "channel_error",
+  "closed",
+  "timed_out",
+  "rate_limited",
+  "wake_budget"
+];
+var WAKE_ERROR_CODE_SET = new Set(WAKE_ERROR_CODES);
+var WAKE_ERROR_CODE_WAKE_BUDGET = WAKE_ERROR_CODES.find(
+  (code) => code === "wake_budget"
+);
+var LISTENER_WAKE_STATUS_KEYS = [
+  "mode",
+  "subscribedAt",
+  "reconnects",
+  "lastWakeAt",
+  "lastReconcileAt",
+  "errorCode",
+  "topicRotatedAt",
+  "rateLimited"
+];
+var LISTENER_WAKE_SENSITIVE_KEYS = [
+  "topic",
+  "wakeTopic",
+  "wake_topic"
+];
+function defaultRealtime(target2) {
+  const client = createClient(target2.url, target2.anonKey, {
+    auth: { persistSession: false, autoRefreshToken: false }
+  });
+  return client.realtime;
+}
+function isSubscribeStatus(value) {
+  return value === REALTIME_SUBSCRIBE_STATUS.SUBSCRIBED || value === REALTIME_SUBSCRIBE_STATUS.CHANNEL_ERROR || value === REALTIME_SUBSCRIBE_STATUS.CLOSED || value === REALTIME_SUBSCRIBE_STATUS.TIMED_OUT;
+}
+function wakeErrorCodeFromSubscribeStatus(status) {
+  switch (status) {
+    case REALTIME_SUBSCRIBE_STATUS.CHANNEL_ERROR:
+      return "channel_error";
+    case REALTIME_SUBSCRIBE_STATUS.CLOSED:
+      return "closed";
+    case REALTIME_SUBSCRIBE_STATUS.TIMED_OUT:
+      return "timed_out";
+    default:
+      return null;
+  }
+}
+function emptyListenerWakeStatus() {
+  return {
+    mode: LISTENER_WAKE_MODE_POLL,
+    subscribedAt: null,
+    reconnects: 0,
+    lastWakeAt: null,
+    lastReconcileAt: null,
+    errorCode: null,
+    topicRotatedAt: null,
+    rateLimited: false
+  };
+}
+function listenerWakePersistWorthy(previous, next, lastPersistMs, nowMs) {
+  if (previous === void 0) return true;
+  if (previous.mode !== next.mode || previous.rateLimited !== next.rateLimited || previous.errorCode !== next.errorCode || previous.reconnects !== next.reconnects || previous.subscribedAt !== next.subscribedAt || previous.topicRotatedAt !== next.topicRotatedAt || previous.lastReconcileAt !== next.lastReconcileAt) {
+    return true;
+  }
+  if (previous.lastWakeAt !== next.lastWakeAt) {
+    return nowMs - lastPersistMs >= WAKE_COALESCE_MS;
+  }
+  return false;
+}
+function listenerWakeStatusSentence(wake, pollIntervalMs, lastWakeLabel) {
+  if (wake.mode === LISTENER_WAKE_MODE_PUSH) {
+    const last = lastWakeLabel === null ? "no wake yet" : `last wake ${lastWakeLabel}`;
+    return `${LISTENER_WAKE_MODE_PUSH} (Realtime), ${last}, reconcile every ${formatIdlePollDuration(LISTENER_RECONCILE_POLL_MS)}.`;
+  }
+  if (wake.errorCode === WAKE_ERROR_CODE_WAKE_BUDGET) {
+    return `Subscribed; claims paused until the minute clears (${WAKE_ERROR_CODE_WAKE_BUDGET}); polling every ${formatIdlePollDuration(pollIntervalMs)} meanwhile.`;
+  }
+  const code = wake.errorCode ?? "disconnected";
+  return `${LISTENER_WAKE_MODE_POLL} every ${formatIdlePollDuration(pollIntervalMs)}. Realtime not connected (${code}).`;
+}
+var WakeSubscriber = class {
+  now;
+  target;
+  createRealtime;
+  realtime = null;
+  channel = null;
+  topic = null;
+  waiter = null;
+  pending = null;
+  connectionState = "disconnected";
+  subscribedAt = null;
+  reconnects = 0;
+  lastWakeAt = null;
+  lastReconcileAt = null;
+  lastErrorCode = null;
+  topicRotatedAt = null;
+  rateLimitedUntil = 0;
+  lastClaimAt = 0;
+  wakeClaimTimes = [];
+  closed = false;
+  everSubscribed = false;
+  constructor(options) {
+    this.target = options.target;
+    this.now = options.now ?? Date.now;
+    this.createRealtime = options.createRealtime ?? defaultRealtime;
+  }
+  get state() {
+    return this.connectionState;
+  }
+  get hasTopic() {
+    return this.topic !== null;
+  }
+  snapshot(nowMs = this.now()) {
+    const serverLimited = nowMs < this.rateLimitedUntil;
+    const overBudget = this.overWakeBudget(nowMs);
+    const rateLimited = serverLimited || overBudget;
+    const mode3 = this.connectionState === "subscribed" && !rateLimited ? LISTENER_WAKE_MODE_PUSH : LISTENER_WAKE_MODE_POLL;
+    const errorCode = serverLimited ? "rate_limited" : overBudget ? WAKE_ERROR_CODE_WAKE_BUDGET : this.lastErrorCode;
+    return {
+      mode: mode3,
+      subscribedAt: this.subscribedAt,
+      reconnects: this.reconnects,
+      lastWakeAt: this.lastWakeAt,
+      lastReconcileAt: this.lastReconcileAt,
+      errorCode,
+      topicRotatedAt: this.topicRotatedAt,
+      rateLimited
+    };
+  }
+  noteReconcile(nowMs = this.now()) {
+    this.lastReconcileAt = new Date(nowMs).toISOString();
+  }
+  noteClaim(nowMs = this.now()) {
+    this.lastClaimAt = nowMs;
+  }
+  noteWakeClaim(nowMs = this.now()) {
+    this.noteClaim(nowMs);
+    this.wakeClaimTimes.push(nowMs);
+    this.trimWakeClaims(nowMs);
+  }
+  coalescingRemainingMs(nowMs = this.now()) {
+    if (this.lastClaimAt <= 0) return 0;
+    return Math.max(0, this.lastClaimAt + WAKE_COALESCE_MS - nowMs);
+  }
+  overWakeBudget(nowMs = this.now()) {
+    this.trimWakeClaims(nowMs);
+    return this.wakeClaimTimes.length >= WAKE_CLAIMS_PER_MINUTE_BUDGET;
+  }
+  canClaimOnWake(nowMs = this.now()) {
+    if (nowMs < this.rateLimitedUntil) return false;
+    if (this.coalescingRemainingMs(nowMs) > 0) return false;
+    return !this.overWakeBudget(nowMs);
+  }
+  markRateLimited(nowMs = this.now()) {
+    this.rateLimitedUntil = nowMs + WAKE_RATE_LIMIT_POLL_MS;
+    this.lastErrorCode = "rate_limited";
+    this.emitPending("state");
+  }
+  setTopic(topic) {
+    if (this.closed) return;
+    if (!isWakeTopic(topic)) {
+      throw new Error("wake topic is malformed");
+    }
+    if (this.topic === topic) return;
+    const rotated = this.topic !== null;
+    void this.detachChannel();
+    this.topic = topic;
+    if (rotated) {
+      this.topicRotatedAt = new Date(this.now()).toISOString();
+    }
+    this.connect();
+  }
+  next(options) {
+    if (this.waiter !== null) {
+      throw new Error("wake next() already has a waiter");
+    }
+    if (options.signal?.aborted) {
+      return Promise.resolve("deadline");
+    }
+    const nowMs = this.now();
+    if (this.pending !== null) {
+      if (!(this.pending === "wake" && this.wakeClaimPaused(nowMs))) {
+        const reason = this.pending;
+        this.pending = null;
+        return Promise.resolve(reason);
+      }
+    }
+    if (nowMs >= options.until) {
+      return Promise.resolve("deadline");
+    }
+    return new Promise((resolve3) => {
+      const finish = (reason) => {
+        if (this.waiter === null) return;
+        const current = this.waiter;
+        this.waiter = null;
+        if (current.timer !== null) clearTimeout(current.timer);
+        if (current.signal && current.onAbort) {
+          current.signal.removeEventListener("abort", current.onAbort);
+        }
+        resolve3(reason);
+      };
+      const delay2 = Math.max(0, options.until - this.now());
+      const timer2 = setTimeout(() => finish("deadline"), delay2);
+      const onAbort = () => finish("deadline");
+      options.signal?.addEventListener("abort", onAbort, { once: true });
+      this.waiter = {
+        resolve: finish,
+        timer: timer2,
+        onAbort,
+        signal: options.signal
+      };
+    });
+  }
+  async close() {
+    this.closed = true;
+    this.topic = null;
+    this.finishWait("deadline");
+    await this.detachChannel();
+    try {
+      this.realtime?.disconnect?.();
+    } catch {
+    }
+    this.realtime = null;
+    this.connectionState = "disconnected";
+  }
+  trimWakeClaims(nowMs) {
+    const minuteStart = Math.floor(nowMs / 6e4) * 6e4;
+    this.wakeClaimTimes = this.wakeClaimTimes.filter((ts) => ts >= minuteStart);
+  }
+  /** Client budget or a server 429: do not claim on wake; poll covers the window. */
+  wakeClaimPaused(nowMs) {
+    return nowMs < this.rateLimitedUntil || this.overWakeBudget(nowMs);
+  }
+  emitPending(reason) {
+    if (this.waiter !== null) {
+      if (reason === "wake" && this.wakeClaimPaused(this.now())) {
+        this.pending = "wake";
+        return;
+      }
+      this.finishWait(reason);
+      return;
+    }
+    if (reason === "wake" || this.pending !== "wake") {
+      this.pending = reason;
+    }
+  }
+  finishWait(reason) {
+    const waiter = this.waiter;
+    if (waiter === null) return;
+    this.waiter = null;
+    if (waiter.timer !== null) clearTimeout(waiter.timer);
+    if (waiter.signal && waiter.onAbort) {
+      waiter.signal.removeEventListener("abort", waiter.onAbort);
+    }
+    waiter.resolve(reason);
+  }
+  connect() {
+    if (this.closed || this.topic === null) return;
+    if (this.realtime === null) {
+      this.realtime = this.createRealtime(this.target);
+      void this.realtime.setAuth(this.target.anonKey);
+    }
+    const topic = this.topic;
+    this.connectionState = "connecting";
+    this.lastErrorCode = null;
+    const channel = this.realtime.channel(topic, {
+      config: { private: true }
+    });
+    this.channel = channel;
+    channel.on("broadcast", { event: WAKE_EVENT }, () => {
+      this.lastWakeAt = new Date(this.now()).toISOString();
+      this.emitPending("wake");
+    });
+    channel.subscribe((status) => {
+      this.onSubscribeStatus(status);
+    });
+  }
+  onSubscribeStatus(status) {
+    if (this.closed) return;
+    if (!isSubscribeStatus(status)) return;
+    const wasSubscribed = this.connectionState === "subscribed";
+    if (status === REALTIME_SUBSCRIBE_STATUS.SUBSCRIBED) {
+      this.connectionState = "subscribed";
+      this.subscribedAt = new Date(this.now()).toISOString();
+      this.lastErrorCode = null;
+      if (this.everSubscribed && !wasSubscribed) this.reconnects += 1;
+      this.everSubscribed = true;
+      if (!wasSubscribed) this.emitPending("state");
+      return;
+    }
+    const code = wakeErrorCodeFromSubscribeStatus(status);
+    if (status === REALTIME_SUBSCRIBE_STATUS.CLOSED) {
+      this.connectionState = "disconnected";
+    } else {
+      this.connectionState = "errored";
+    }
+    this.lastErrorCode = code;
+    this.subscribedAt = null;
+    if (wasSubscribed) this.emitPending("state");
+  }
+  async detachChannel() {
+    const channel = this.channel;
+    this.channel = null;
+    if (channel === null) return;
+    try {
+      await channel.unsubscribe();
+    } catch {
+    }
+    try {
+      await this.realtime?.removeChannel?.(channel);
+    } catch {
+    }
+    if (this.channel !== null) return;
+    if (this.connectionState === "subscribed") {
+      this.connectionState = "disconnected";
+      this.subscribedAt = null;
+    }
+  }
+};
+function createWakeSubscriber(options) {
+  return new WakeSubscriber(options);
+}
+
 // src/listener/runtime.ts
 var LISTENER_PAGE_LIMIT = 100;
 var LISTENER_IDLE_POLL_MS = IDLE_POLL_DEFAULT_MS;
@@ -37901,6 +38295,35 @@ async function runListenerRuntime(options) {
     abort.addEventListener("abort", onAbort);
   }
   let stop;
+  let wakeSubscriber = options.wake ?? null;
+  let reconcileDueAt = now();
+  const ensureWake = () => {
+    if (wakeSubscriber === null) {
+      wakeSubscriber = options.createWake ? options.createWake(options.target) : createWakeSubscriber({ target: options.target, now });
+    }
+    return wakeSubscriber;
+  };
+  const applyWakeHint = (hint) => {
+    if (hint === void 0) return;
+    try {
+      ensureWake().setTopic(hint.topic);
+    } catch {
+    }
+  };
+  const emitWake = () => {
+    if (wakeSubscriber === null) return;
+    options.onEvent?.({
+      type: "wake",
+      wake: wakeSubscriber.snapshot(now()),
+      ts: eventTime(now)
+    });
+  };
+  const waitCapMs = () => {
+    if (wakeSubscriber !== null && wakeSubscriber.snapshot(now()).mode === LISTENER_WAKE_MODE_PUSH) {
+      return LISTENER_RECONCILE_POLL_MS;
+    }
+    return nextIdlePollMs(pollMs, emptyIdleStreak, LISTENER_IDLE_POLL_MAX_MS);
+  };
   const sendPreparedAck = async (active) => {
     if (active.phase !== "ack_pending" || active.signalId === null || active.leaseId === null || active.leasedUntil === null || active.ack === null) {
       return {
@@ -37967,8 +38390,33 @@ async function runListenerRuntime(options) {
         stop = { reason: "cancelled" };
         break;
       }
-      let page;
-      try {
+      let skipRead = false;
+      if (ready && deliveryMode === "durable_claim" && wakeSubscriber !== null && wakeSubscriber.hasTopic) {
+        const until = Math.min(reconcileDueAt, now() + waitCapMs());
+        const reason = await wakeSubscriber.next({
+          until,
+          ...abort ? { signal: abort } : {}
+        });
+        emitWake();
+        if (abort?.aborted) {
+          stop = { reason: "cancelled" };
+          break;
+        }
+        if (reason === "wake" && wakeSubscriber.snapshot(now()).mode === LISTENER_WAKE_MODE_PUSH) {
+          const coalesceMs = wakeSubscriber.coalescingRemainingMs(now());
+          if (coalesceMs > 0) await sleep2(coalesceMs, abort);
+          if (abort?.aborted) {
+            stop = { reason: "cancelled" };
+            break;
+          }
+          if (wakeSubscriber.snapshot(now()).mode === LISTENER_WAKE_MODE_PUSH) {
+            skipRead = true;
+          }
+        }
+      }
+      let page = null;
+      if (skipRead) {
+      } else try {
         const token = await options.credentialSession.bearer();
         page = await readPage({
           token,
@@ -37986,6 +38434,8 @@ async function runListenerRuntime(options) {
           }
         });
         requireCapabilities(page);
+        applyWakeHint(page.wake);
+        emitWake();
         if (ready && readEpisodeStartedAtMs !== null) {
           const recoveredAtMs = now();
           options.onEvent?.({
@@ -38113,7 +38563,7 @@ async function runListenerRuntime(options) {
             break;
           }
         }
-        if (page.capabilities.deliveryAck && now() < horizon && !preparedNeedsMainRoute) {
+        if ((page?.capabilities.deliveryAck === true || skipRead) && now() < horizon && !preparedNeedsMainRoute) {
           const ackStop = await sendPreparedAck(recovery);
           if (ackStop !== null) {
             stop = ackStop;
@@ -38143,7 +38593,7 @@ async function runListenerRuntime(options) {
         continue;
       }
       if (recovery?.phase === "leased") {
-        if (page.capabilities.deliveryAck) {
+        if (page?.capabilities.deliveryAck === true || skipRead) {
           let terminal = null;
           if (recovery.signalId !== null) {
             try {
@@ -38253,6 +38703,10 @@ async function runListenerRuntime(options) {
               stop = { reason: "credential", error: asError2(error) };
               break;
             }
+            if (error instanceof DeliveryHttpError && error.code === "rate_limited") {
+              wakeSubscriber?.markRateLimited(now());
+              emitWake();
+            }
             if (!isRetryableDeliveryError(error)) {
               stop = { reason: "fatal", error: asError2(error) };
               break;
@@ -38271,6 +38725,14 @@ async function runListenerRuntime(options) {
           stop = { reason: "fatal", error: new Error("delivery claim did not settle") };
           break;
         }
+        applyWakeHint(result.wake);
+        if (!skipRead && wakeSubscriber !== null && wakeSubscriber.hasTopic) {
+          wakeSubscriber.noteReconcile(now());
+          reconcileDueAt = now() + LISTENER_RECONCILE_POLL_MS;
+        }
+        if (skipRead) wakeSubscriber?.noteWakeClaim(now());
+        else wakeSubscriber?.noteClaim(now());
+        emitWake();
         const claimed = result.deliveries[0] ?? null;
         options.onEvent?.({
           type: "delivery_claim",
@@ -38300,6 +38762,19 @@ async function runListenerRuntime(options) {
           } catch (error) {
             stop = { reason: "fatal", error: asError2(error) };
             break;
+          }
+          if (wakeSubscriber !== null && wakeSubscriber.hasTopic) {
+            const snap = wakeSubscriber.snapshot(now());
+            const intervalMs = snap.mode === LISTENER_WAKE_MODE_PUSH ? LISTENER_RECONCILE_POLL_MS : nextIdlePollMs(pollMs, emptyIdleStreak, LISTENER_IDLE_POLL_MAX_MS);
+            if (snap.mode === LISTENER_WAKE_MODE_PUSH) emptyIdleStreak = 0;
+            else emptyIdleStreak += 1;
+            options.onEvent?.({
+              type: "idle_poll",
+              intervalMs,
+              ts: eventTime(now)
+            });
+            emitWake();
+            continue;
           }
           await idleSleep(false);
           continue;
@@ -38495,6 +38970,7 @@ async function runListenerRuntime(options) {
         }
         continue;
       }
+      if (page === null) continue;
       for (const signal of page.signals) {
         if (abort?.aborted) {
           stop = { reason: "cancelled" };
@@ -38588,6 +39064,10 @@ async function runListenerRuntime(options) {
     abort?.removeEventListener("abort", onAbort);
     options.model.cancel();
     try {
+      await wakeSubscriber?.close();
+    } catch {
+    }
+    try {
       await options.model.close();
     } catch (error) {
       stop = { reason: "fatal", error: asError2(error) };
@@ -38604,6 +39084,7 @@ var LISTENER_READ_RETRY_HOUR_CAP = 25;
 var LISTENER_READ_RETRY_MINUTE_CAP = 61;
 var LISTENER_CLAIM_HOUR_CAP = 25;
 var LISTENER_THROUGHPUT_LAPSE_RATIO = 0.5;
+var LISTENER_MODE_CHANGE_SKIP_MAX = 1;
 var FAILURE_CODES = /* @__PURE__ */ new Set([
   "http_status",
   "no_response",
@@ -38700,9 +39181,20 @@ function recordListenerReadRecovery(health, input) {
     retryHours: trimNewest(retryHours, LISTENER_READ_RETRY_HOUR_CAP)
   };
 }
+function freezeClosedHourExpectedClaims(rows3, currentHourStart) {
+  return rows3.map((row) => {
+    if (row.hourStart === currentHourStart) return row;
+    if (row.expectedClaims !== void 0) return row;
+    if (row.cadenceMs === void 0 || row.cadenceMs < 1) return row;
+    return { ...row, expectedClaims: HOUR_MS / row.cadenceMs };
+  });
+}
 function recordListenerClaimCadence(health, cadenceMs, ts) {
   const hourStart = bucketStart(ts, HOUR_MS);
-  const claimHours = health.claimHours.map((row) => ({ ...row }));
+  const claimHours = freezeClosedHourExpectedClaims(
+    health.claimHours.map((row) => ({ ...row })),
+    hourStart
+  );
   const hour = claimHours.find((row) => row.hourStart === hourStart);
   if (hour) {
     hour.cadenceMs = hour.cadenceMs === void 0 ? cadenceMs : Math.max(hour.cadenceMs, cadenceMs);
@@ -38715,9 +39207,26 @@ function recordListenerClaimCadence(health, cadenceMs, ts) {
     claimHours: trimNewest(claimHours, LISTENER_CLAIM_HOUR_CAP)
   };
 }
+function recordListenerWakeModeChange(health, ts) {
+  const hourStart = bucketStart(ts, HOUR_MS);
+  const claimHours = freezeClosedHourExpectedClaims(
+    health.claimHours.map((row) => ({ ...row })),
+    hourStart
+  );
+  const hour = claimHours.find((row) => row.hourStart === hourStart);
+  if (hour) hour.modeChanged = true;
+  else claimHours.push({ hourStart, claims: 0, modeChanged: true });
+  return {
+    ...health,
+    claimHours: trimNewest(claimHours, LISTENER_CLAIM_HOUR_CAP)
+  };
+}
 function recordListenerClaim(health, ts) {
   const hourStart = bucketStart(ts, HOUR_MS);
-  const claimHours = health.claimHours.map((row) => ({ ...row }));
+  const claimHours = freezeClosedHourExpectedClaims(
+    health.claimHours.map((row) => ({ ...row })),
+    hourStart
+  );
   const hour = claimHours.find((row) => row.hourStart === hourStart);
   if (hour) hour.claims += 1;
   else claimHours.push({ hourStart, claims: 1 });
@@ -38774,9 +39283,13 @@ function parseListenerReadHealth(value, rejectUnknownKeys = false) {
     const hour = value2;
     if (!hasExpectedKeys(hour, ["hourStart", "claims"], false) || !validTimestamp(hour.hourStart) || !validCount(hour.claims)) return null;
     if (rejectUnknownKeys && Object.keys(hour).some(
-      (key2) => key2 !== "hourStart" && key2 !== "claims" && key2 !== "cadenceMs"
+      (key2) => key2 !== "hourStart" && key2 !== "claims" && key2 !== "cadenceMs" && key2 !== "expectedClaims" && key2 !== "modeChanged"
     )) return null;
     if (hour.cadenceMs !== void 0 && !(typeof hour.cadenceMs === "number" && Number.isSafeInteger(hour.cadenceMs) && hour.cadenceMs >= 1)) return null;
+    if (hour.expectedClaims !== void 0 && !(typeof hour.expectedClaims === "number" && Number.isFinite(hour.expectedClaims) && hour.expectedClaims > 0)) return null;
+    if (hour.modeChanged !== void 0 && typeof hour.modeChanged !== "boolean") {
+      return null;
+    }
   }
   return {
     currentEpisodeStartedAt: row.currentEpisodeStartedAt,
@@ -38798,10 +39311,14 @@ function parseListenerReadHealth(value, rejectUnknownKeys = false) {
     claimCadenceMs: row.claimCadenceMs,
     claimHours: row.claimHours.map((hour) => {
       const cadenceMs = hour.cadenceMs;
+      const expectedClaims = hour.expectedClaims;
+      const modeChanged = hour.modeChanged;
       return {
         hourStart: hour.hourStart,
         claims: hour.claims,
-        ...typeof cadenceMs === "number" ? { cadenceMs } : {}
+        ...typeof cadenceMs === "number" ? { cadenceMs } : {},
+        ...typeof expectedClaims === "number" ? { expectedClaims } : {},
+        ...modeChanged === true ? { modeChanged: true } : {}
       };
     })
   };
@@ -38838,14 +39355,18 @@ function summarizeListenerReadHealth(health, readyAt, nowMs) {
       health.claimHours.map((row) => [row.hourStart, row.claims])
     );
     const cadenceByHour = /* @__PURE__ */ new Map();
+    const expectedByHour = /* @__PURE__ */ new Map();
     for (const row of health.claimHours) {
       if (row.cadenceMs !== void 0) cadenceByHour.set(row.hourStart, row.cadenceMs);
+      if (row.expectedClaims !== void 0) {
+        expectedByHour.set(row.hourStart, row.expectedClaims);
+      }
     }
     for (let hour = first; hour < currentHour; hour += HOUR_MS) {
       const hourStart = new Date(hour).toISOString();
       const claims = claimsByHour.get(hourStart) ?? 0;
       const cadenceMs = cadenceByHour.get(hourStart) ?? health.claimCadenceMs;
-      const expectedClaims = HOUR_MS / cadenceMs;
+      const expectedClaims = expectedByHour.get(hourStart) ?? HOUR_MS / cadenceMs;
       claimThroughputHours.push({
         hourStart,
         claims,
@@ -38854,9 +39375,25 @@ function summarizeListenerReadHealth(health, readyAt, nowMs) {
       });
     }
   }
-  const throughputLapseHours = claimThroughputHours.filter(
-    (hour) => hour.ratio < LISTENER_THROUGHPUT_LAPSE_RATIO
-  );
+  const consecutiveModeChangedHours = (hourStart) => {
+    let count2 = 0;
+    let t = Date.parse(hourStart);
+    if (!Number.isFinite(t)) return 0;
+    while (true) {
+      const start = new Date(t).toISOString();
+      const row = health.claimHours.find((hour) => hour.hourStart === start);
+      if (row?.modeChanged !== true) break;
+      count2 += 1;
+      t -= HOUR_MS;
+    }
+    return count2;
+  };
+  const throughputLapseHours = claimThroughputHours.filter((hour) => {
+    if (hour.ratio >= LISTENER_THROUGHPUT_LAPSE_RATIO) return false;
+    const consecutive = consecutiveModeChangedHours(hour.hourStart);
+    if (consecutive === 0) return true;
+    return consecutive > LISTENER_MODE_CHANGE_SKIP_MAX;
+  });
   return {
     currentEpisodeDurationMs,
     episodesLast24h,
@@ -38960,7 +39497,8 @@ var STATUS_ALLOWED_KEYS = /* @__PURE__ */ new Set([
   "connectionReuseRatio",
   "activityPublishFailures",
   "activityLastErrorCode",
-  "idlePollMs"
+  "idlePollMs",
+  "wake"
 ]);
 var STATUS_ACTIVITY_ERROR_CODES = /* @__PURE__ */ new Set([
   "activity_credential_failed",
@@ -38983,7 +39521,10 @@ var STATUS_SENSITIVE_KEYS = /* @__PURE__ */ new Set([
   "reply",
   "owner",
   "ownerId",
-  "owner_id"
+  "owner_id",
+  "topic",
+  "wakeTopic",
+  "wake_topic"
 ]);
 var STATUS_DELIVERY_KEYS = [
   "deliveryMode",
@@ -39020,6 +39561,37 @@ function parseHeldBackDeliveries(value) {
   }
   return parsed;
 }
+var WAKE_STATUS_KEY_SET = new Set(LISTENER_WAKE_STATUS_KEYS);
+var WAKE_SENSITIVE_KEY_SET = new Set(LISTENER_WAKE_SENSITIVE_KEYS);
+function nullableIso(value) {
+  return value === null || typeof value === "string" && Number.isFinite(Date.parse(value));
+}
+function parseListenerWake(value, rejectUnknownKeys = false) {
+  if (!value || typeof value !== "object" || Array.isArray(value)) return null;
+  const row = value;
+  for (const key2 of Object.keys(row)) {
+    if (WAKE_SENSITIVE_KEY_SET.has(key2)) return null;
+    if (rejectUnknownKeys && !WAKE_STATUS_KEY_SET.has(key2)) return null;
+  }
+  for (const key2 of LISTENER_WAKE_STATUS_KEYS) {
+    if (!(key2 in row)) return null;
+  }
+  const mode3 = LISTENER_WAKE_MODES.find((item) => item === row.mode);
+  if (mode3 === void 0 || !nullableIso(row.subscribedAt) || !(typeof row.reconnects === "number" && Number.isSafeInteger(row.reconnects) && row.reconnects >= 0) || !nullableIso(row.lastWakeAt) || !nullableIso(row.lastReconcileAt) || !(row.errorCode === null || typeof row.errorCode === "string" && WAKE_ERROR_CODE_SET.has(row.errorCode)) || !nullableIso(row.topicRotatedAt) || typeof row.rateLimited !== "boolean") {
+    return null;
+  }
+  if (mode3 === LISTENER_WAKE_MODE_PUSH && row.subscribedAt === null) return null;
+  return {
+    mode: mode3,
+    subscribedAt: row.subscribedAt,
+    reconnects: row.reconnects,
+    lastWakeAt: row.lastWakeAt,
+    lastReconcileAt: row.lastReconcileAt,
+    errorCode: row.errorCode,
+    topicRotatedAt: row.topicRotatedAt,
+    rateLimited: row.rateLimited
+  };
+}
 function parseStatus(raw, rejectUnknownKeys = false) {
   let value;
   try {
@@ -39044,7 +39616,8 @@ function parseStatus(raw, rejectUnknownKeys = false) {
   const nullableTimestamp3 = (candidate) => candidate === null || typeof candidate === "string" && Number.isFinite(Date.parse(candidate));
   const readHealth = row.readHealth === void 0 ? void 0 : parseListenerReadHealth(row.readHealth, rejectUnknownKeys);
   const heldBackDeliveries = row.heldBackDeliveries === void 0 ? void 0 : parseHeldBackDeliveries(row.heldBackDeliveries);
-  if (row.version !== 1 || typeof row.instanceId !== "string" || !UUID_RE18.test(row.instanceId) || row.provider !== "grok" && row.provider !== "opencode" && row.provider !== "claude" && row.provider !== "codex" || typeof row.profileId !== "string" || typeof row.workspaceId !== "string" || !UUID_RE18.test(row.workspaceId) || typeof row.principalId !== "string" || !UUID_RE18.test(row.principalId) || !Number.isSafeInteger(row.pid) || row.pid < 1 || typeof row.state !== "string" || !["starting", "ready", "stopping", "stopped", "failed"].includes(row.state) || typeof row.startedAt !== "string" || !Number.isFinite(Date.parse(row.startedAt)) || !(row.readyAt === null || typeof row.readyAt === "string" && Number.isFinite(Date.parse(row.readyAt))) || typeof row.updatedAt !== "string" || !Number.isFinite(Date.parse(row.updatedAt)) || !(row.stoppedAt === null || typeof row.stoppedAt === "string" && Number.isFinite(Date.parse(row.stoppedAt))) || !nullableUuid3(row.lastSignalId) || !(row.lastErrorCode === null || typeof row.lastErrorCode === "string" && /^[a-z0-9_-]{1,96}$/.test(row.lastErrorCode)) || !(row.lastErrorDetail === void 0 || row.lastErrorDetail === null || typeof row.lastErrorDetail === "string" && row.lastErrorDetail.length > 0 && row.lastErrorDetail.length <= 2048 && !SECRET_SHAPE_RE.test(row.lastErrorDetail)) || !(row.lastErrorReasonCode === void 0 || row.lastErrorReasonCode === null || typeof row.lastErrorReasonCode === "string" && /^[a-z0-9_-]{1,96}$/.test(row.lastErrorReasonCode)) || !(row.providerExecutable === void 0 || row.providerExecutable === null || typeof row.providerExecutable === "string" && (0, import_node_path16.isAbsolute)(row.providerExecutable)) || !(row.providerVersion === void 0 || row.providerVersion === null || typeof row.providerVersion === "string" && SEMVER_RE2.test(row.providerVersion)) || !(row.providerLastMeasuredVersion === void 0 || row.providerLastMeasuredVersion === null || typeof row.providerLastMeasuredVersion === "string" && SEMVER_RE2.test(row.providerLastMeasuredVersion)) || !(row.providerBundledAgentSdkVersion === void 0 || row.providerBundledAgentSdkVersion === null || typeof row.providerBundledAgentSdkVersion === "string" && SEMVER_RE2.test(row.providerBundledAgentSdkVersion)) || !(row.providerBundledClaudeCodeVersion === void 0 || row.providerBundledClaudeCodeVersion === null || typeof row.providerBundledClaudeCodeVersion === "string" && SEMVER_RE2.test(row.providerBundledClaudeCodeVersion)) || !(row.providerMinimumRequiredVersion === void 0 || row.providerMinimumRequiredVersion === null || typeof row.providerMinimumRequiredVersion === "string" && SEMVER_RE2.test(row.providerMinimumRequiredVersion)) || !(row.cswarmVersion === void 0 || row.cswarmVersion === null || typeof row.cswarmVersion === "string" && SEMVER_RE2.test(row.cswarmVersion)) || (row.providerVersion === null || row.providerVersion === void 0) !== (row.providerLastMeasuredVersion === null || row.providerLastMeasuredVersion === void 0) || !(row.lastWorkerStderrTail === void 0 || row.lastWorkerStderrTail === null || typeof row.lastWorkerStderrTail === "string" && row.lastWorkerStderrTail.length > 0 && row.lastWorkerStderrTail.length <= 2048 && !SECRET_SHAPE_RE.test(row.lastWorkerStderrTail)) || typeof row.logPath !== "string" || !(0, import_node_path16.isAbsolute)(row.logPath) || !(row.deliveryMode === void 0 || row.deliveryMode === null || typeof row.deliveryMode === "string" && STATUS_DELIVERY_MODES.has(row.deliveryMode)) || !(row.pendingDeliveryCount === void 0 || nullableCount(row.pendingDeliveryCount)) || !(row.lastTerminalDeliveryFailureCount === void 0 || nullableCount(row.lastTerminalDeliveryFailureCount)) || !(row.lastTerminalDeliveryFailureAt === void 0 || nullableTimestamp3(row.lastTerminalDeliveryFailureAt)) || !(row.lastClaimAt === void 0 || nullableTimestamp3(row.lastClaimAt)) || !(row.lastAckAt === void 0 || nullableTimestamp3(row.lastAckAt)) || !(row.lastAckOutcome === void 0 || row.lastAckOutcome === null || typeof row.lastAckOutcome === "string" && deliveryOutcomes.has(row.lastAckOutcome)) || !(row.consecutiveAckFailureCount === void 0 || nullableCount(row.consecutiveAckFailureCount)) || !(row.lastAckSignalId === void 0 || row.lastAckSignalId === null || typeof row.lastAckSignalId === "string" && UUID_RE18.test(row.lastAckSignalId)) || !(row.currentDeliverySignalId === void 0 || row.currentDeliverySignalId === null || typeof row.currentDeliverySignalId === "string" && UUID_RE18.test(row.currentDeliverySignalId)) || !(row.currentDeliverySince === void 0 || nullableTimestamp3(row.currentDeliverySince)) || heldBackDeliveries === null || !(row.pendingDeliveryCountAt === void 0 || nullableTimestamp3(row.pendingDeliveryCountAt)) || !(row.routeMode === void 0 || row.routeMode === "worker" || row.routeMode === "main" || row.routeMode === "split") || !(row.deferOverChars === void 0 || row.deferOverChars === null || typeof row.deferOverChars === "number" && Number.isSafeInteger(row.deferOverChars) && row.deferOverChars >= 1 && row.deferOverChars <= 1e4) || !(row.pendingForMainCount === void 0 || typeof row.pendingForMainCount === "number" && Number.isSafeInteger(row.pendingForMainCount) && row.pendingForMainCount >= 0) || !(row.droppedForMainCount === void 0 || typeof row.droppedForMainCount === "number" && Number.isSafeInteger(row.droppedForMainCount) && row.droppedForMainCount >= 0) || readHealth === null || !(row.connectionsOpened === void 0 || typeof row.connectionsOpened === "number" && Number.isSafeInteger(row.connectionsOpened) && row.connectionsOpened >= 0) || !(row.connectionReuseRatio === void 0 || typeof row.connectionReuseRatio === "number" && Number.isFinite(row.connectionReuseRatio) && row.connectionReuseRatio >= 0) || !(row.activityPublishFailures === void 0 || typeof row.activityPublishFailures === "number" && Number.isSafeInteger(row.activityPublishFailures) && row.activityPublishFailures >= 0) || !(row.activityLastErrorCode === void 0 || row.activityLastErrorCode === null || typeof row.activityLastErrorCode === "string" && STATUS_ACTIVITY_ERROR_CODES.has(
+  const wake = row.wake === void 0 ? void 0 : parseListenerWake(row.wake, rejectUnknownKeys);
+  if (row.version !== 1 || typeof row.instanceId !== "string" || !UUID_RE18.test(row.instanceId) || row.provider !== "grok" && row.provider !== "opencode" && row.provider !== "claude" && row.provider !== "codex" || typeof row.profileId !== "string" || typeof row.workspaceId !== "string" || !UUID_RE18.test(row.workspaceId) || typeof row.principalId !== "string" || !UUID_RE18.test(row.principalId) || !Number.isSafeInteger(row.pid) || row.pid < 1 || typeof row.state !== "string" || !["starting", "ready", "stopping", "stopped", "failed"].includes(row.state) || typeof row.startedAt !== "string" || !Number.isFinite(Date.parse(row.startedAt)) || !(row.readyAt === null || typeof row.readyAt === "string" && Number.isFinite(Date.parse(row.readyAt))) || typeof row.updatedAt !== "string" || !Number.isFinite(Date.parse(row.updatedAt)) || !(row.stoppedAt === null || typeof row.stoppedAt === "string" && Number.isFinite(Date.parse(row.stoppedAt))) || !nullableUuid3(row.lastSignalId) || !(row.lastErrorCode === null || typeof row.lastErrorCode === "string" && /^[a-z0-9_-]{1,96}$/.test(row.lastErrorCode)) || !(row.lastErrorDetail === void 0 || row.lastErrorDetail === null || typeof row.lastErrorDetail === "string" && row.lastErrorDetail.length > 0 && row.lastErrorDetail.length <= 2048 && !SECRET_SHAPE_RE.test(row.lastErrorDetail)) || !(row.lastErrorReasonCode === void 0 || row.lastErrorReasonCode === null || typeof row.lastErrorReasonCode === "string" && /^[a-z0-9_-]{1,96}$/.test(row.lastErrorReasonCode)) || !(row.providerExecutable === void 0 || row.providerExecutable === null || typeof row.providerExecutable === "string" && (0, import_node_path16.isAbsolute)(row.providerExecutable)) || !(row.providerVersion === void 0 || row.providerVersion === null || typeof row.providerVersion === "string" && SEMVER_RE2.test(row.providerVersion)) || !(row.providerLastMeasuredVersion === void 0 || row.providerLastMeasuredVersion === null || typeof row.providerLastMeasuredVersion === "string" && SEMVER_RE2.test(row.providerLastMeasuredVersion)) || !(row.providerBundledAgentSdkVersion === void 0 || row.providerBundledAgentSdkVersion === null || typeof row.providerBundledAgentSdkVersion === "string" && SEMVER_RE2.test(row.providerBundledAgentSdkVersion)) || !(row.providerBundledClaudeCodeVersion === void 0 || row.providerBundledClaudeCodeVersion === null || typeof row.providerBundledClaudeCodeVersion === "string" && SEMVER_RE2.test(row.providerBundledClaudeCodeVersion)) || !(row.providerMinimumRequiredVersion === void 0 || row.providerMinimumRequiredVersion === null || typeof row.providerMinimumRequiredVersion === "string" && SEMVER_RE2.test(row.providerMinimumRequiredVersion)) || !(row.cswarmVersion === void 0 || row.cswarmVersion === null || typeof row.cswarmVersion === "string" && SEMVER_RE2.test(row.cswarmVersion)) || (row.providerVersion === null || row.providerVersion === void 0) !== (row.providerLastMeasuredVersion === null || row.providerLastMeasuredVersion === void 0) || !(row.lastWorkerStderrTail === void 0 || row.lastWorkerStderrTail === null || typeof row.lastWorkerStderrTail === "string" && row.lastWorkerStderrTail.length > 0 && row.lastWorkerStderrTail.length <= 2048 && !SECRET_SHAPE_RE.test(row.lastWorkerStderrTail)) || typeof row.logPath !== "string" || !(0, import_node_path16.isAbsolute)(row.logPath) || !(row.deliveryMode === void 0 || row.deliveryMode === null || typeof row.deliveryMode === "string" && STATUS_DELIVERY_MODES.has(row.deliveryMode)) || !(row.pendingDeliveryCount === void 0 || nullableCount(row.pendingDeliveryCount)) || !(row.lastTerminalDeliveryFailureCount === void 0 || nullableCount(row.lastTerminalDeliveryFailureCount)) || !(row.lastTerminalDeliveryFailureAt === void 0 || nullableTimestamp3(row.lastTerminalDeliveryFailureAt)) || !(row.lastClaimAt === void 0 || nullableTimestamp3(row.lastClaimAt)) || !(row.lastAckAt === void 0 || nullableTimestamp3(row.lastAckAt)) || !(row.lastAckOutcome === void 0 || row.lastAckOutcome === null || typeof row.lastAckOutcome === "string" && deliveryOutcomes.has(row.lastAckOutcome)) || !(row.consecutiveAckFailureCount === void 0 || nullableCount(row.consecutiveAckFailureCount)) || !(row.lastAckSignalId === void 0 || row.lastAckSignalId === null || typeof row.lastAckSignalId === "string" && UUID_RE18.test(row.lastAckSignalId)) || !(row.currentDeliverySignalId === void 0 || row.currentDeliverySignalId === null || typeof row.currentDeliverySignalId === "string" && UUID_RE18.test(row.currentDeliverySignalId)) || !(row.currentDeliverySince === void 0 || nullableTimestamp3(row.currentDeliverySince)) || heldBackDeliveries === null || !(row.pendingDeliveryCountAt === void 0 || nullableTimestamp3(row.pendingDeliveryCountAt)) || !(row.routeMode === void 0 || row.routeMode === "worker" || row.routeMode === "main" || row.routeMode === "split") || !(row.deferOverChars === void 0 || row.deferOverChars === null || typeof row.deferOverChars === "number" && Number.isSafeInteger(row.deferOverChars) && row.deferOverChars >= 1 && row.deferOverChars <= 1e4) || !(row.pendingForMainCount === void 0 || typeof row.pendingForMainCount === "number" && Number.isSafeInteger(row.pendingForMainCount) && row.pendingForMainCount >= 0) || !(row.droppedForMainCount === void 0 || typeof row.droppedForMainCount === "number" && Number.isSafeInteger(row.droppedForMainCount) && row.droppedForMainCount >= 0) || readHealth === null || wake === null || !(row.connectionsOpened === void 0 || typeof row.connectionsOpened === "number" && Number.isSafeInteger(row.connectionsOpened) && row.connectionsOpened >= 0) || !(row.connectionReuseRatio === void 0 || typeof row.connectionReuseRatio === "number" && Number.isFinite(row.connectionReuseRatio) && row.connectionReuseRatio >= 0) || !(row.activityPublishFailures === void 0 || typeof row.activityPublishFailures === "number" && Number.isSafeInteger(row.activityPublishFailures) && row.activityPublishFailures >= 0) || !(row.activityLastErrorCode === void 0 || row.activityLastErrorCode === null || typeof row.activityLastErrorCode === "string" && STATUS_ACTIVITY_ERROR_CODES.has(
     row.activityLastErrorCode
   )) || !(row.idlePollMs === void 0 || row.idlePollMs === null || typeof row.idlePollMs === "number" && Number.isSafeInteger(row.idlePollMs) && row.idlePollMs >= 0)) {
     throw new Error("stored listener status is malformed");
@@ -39090,7 +39663,8 @@ function parseStatus(raw, rejectUnknownKeys = false) {
     pendingForMainCount: row.pendingForMainCount ?? 0,
     droppedForMainCount: row.droppedForMainCount ?? 0,
     ...readHealth === void 0 ? {} : { readHealth },
-    ...row.idlePollMs === void 0 ? {} : { idlePollMs: row.idlePollMs ?? null }
+    ...row.idlePollMs === void 0 ? {} : { idlePollMs: row.idlePollMs ?? null },
+    ...wake === void 0 ? {} : { wake }
   };
 }
 async function writeListenerStatus(paths, status) {
@@ -39161,7 +39735,11 @@ async function appendListenerEvent(paths, event) {
     // How long one delivery held the worker seat, and why it gave it back.
     "held_ms",
     "release_reason",
-    "idle_poll_ms"
+    "idle_poll_ms",
+    "wake_mode",
+    "wake_error_code",
+    "wake_reconnects",
+    "rate_limited"
   ]);
   const deliveryModes = /* @__PURE__ */ new Set(["durable_claim", "cursor_fallback"]);
   const routeModes = /* @__PURE__ */ new Set(["worker", "main", "split"]);
@@ -39228,6 +39806,18 @@ async function appendListenerEvent(paths, event) {
     }
     if (key2 === "idle_poll_ms" && !(typeof value === "number" && Number.isSafeInteger(value) && value >= 0)) {
       throw new Error("listener event idle poll interval is not allowed");
+    }
+    if (key2 === "wake_mode" && !(typeof value === "string" && LISTENER_WAKE_MODE_SET.has(value))) {
+      throw new Error("listener event wake mode is not allowed");
+    }
+    if (key2 === "wake_error_code" && !(value === null || typeof value === "string" && WAKE_ERROR_CODE_SET.has(value))) {
+      throw new Error("listener event wake error code is not allowed");
+    }
+    if (key2 === "wake_reconnects" && !(typeof value === "number" && Number.isSafeInteger(value) && value >= 0)) {
+      throw new Error("listener event wake reconnect count is not allowed");
+    }
+    if (key2 === "rate_limited" && typeof value !== "boolean") {
+      throw new Error("listener event rate-limited flag is not allowed");
     }
     if (key2 === "release_reason" && !(typeof value === "string" && LISTENER_DELIVERY_HOLD_RELEASE_REASONS.includes(
       value
@@ -39640,6 +40230,7 @@ async function runListenerSupervisor(options) {
     activityPublishFailures: 0,
     activityLastErrorCode: null,
     idlePollMs: null,
+    wake: emptyListenerWakeStatus(),
     logPath: options.paths.logPath
   };
   let writes = Promise.resolve();
@@ -39712,7 +40303,50 @@ async function runListenerSupervisor(options) {
     const fitted = fitWorkerStderrTailForLog(tail);
     return fitted.length > 0 ? fitted : null;
   };
+  let lastWakePersistMs = 0;
   const onEvent = (event) => {
+    if (event.type === "wake") {
+      const previousWake = status.wake;
+      const previous = previousWake?.mode;
+      let readHealth = status.readHealth ?? emptyListenerReadHealth();
+      if (previous !== void 0 && previous !== event.wake.mode) {
+        readHealth = recordListenerWakeModeChange(readHealth, event.ts);
+      }
+      const cadenceMs = event.wake.mode === LISTENER_WAKE_MODE_PUSH ? LISTENER_RECONCILE_POLL_MS : status.idlePollMs && status.idlePollMs > 0 ? status.idlePollMs : null;
+      if (cadenceMs !== null) {
+        readHealth = recordListenerClaimCadence(
+          readHealth,
+          cadenceMs,
+          event.ts
+        );
+      }
+      status = {
+        ...status,
+        wake: event.wake,
+        readHealth,
+        updatedAt: event.ts
+      };
+      const eventMs = Date.parse(event.ts);
+      const nowMs = Number.isFinite(eventMs) ? eventMs : Date.now();
+      if (listenerWakePersistWorthy(
+        previousWake,
+        event.wake,
+        lastWakePersistMs,
+        nowMs
+      )) {
+        lastWakePersistMs = nowMs;
+        persist();
+        log({
+          ts: event.ts,
+          event: "listener_wake",
+          wake_mode: event.wake.mode,
+          wake_error_code: event.wake.errorCode,
+          wake_reconnects: event.wake.reconnects,
+          rate_limited: event.wake.rateLimited
+        });
+      }
+      return;
+    }
     if (event.type === "idle_poll") {
       status = {
         ...status,
@@ -43028,8 +43662,8 @@ var BOOLEAN_FLAGS = /* @__PURE__ */ new Set([
 ]);
 var UUID_RE23 = /^[0-9a-f]{8}-[0-9a-f]{4}-[1-8][0-9a-f]{3}-[89ab][0-9a-f]{3}-[0-9a-f]{12}$/i;
 function packageVersion() {
-  if ("0.1.57".length > 0) {
-    return "0.1.57";
+  if ("0.1.58".length > 0) {
+    return "0.1.58";
   }
   try {
     const value = JSON.parse(
@@ -46368,6 +47002,8 @@ function listenerStatusJson(status, permissionMode, evidence = {
     claimCadenceMs: readHealth.claimCadenceMs,
     idlePollMs: status.idlePollMs ?? null,
     idlePollSentence: status.idlePollMs === void 0 || status.idlePollMs === null ? null : idlePollStatusSentence(status.idlePollMs),
+    wake: status.wake ?? emptyListenerWakeStatus(),
+    mode: (status.wake ?? emptyListenerWakeStatus()).mode,
     claimThroughputHours: readSummary.claimThroughputHours,
     listenerLapse: lapseNotices.length > 0,
     listenerLapseCodes: lapseNotices.map((notice) => notice.code),
@@ -46439,7 +47075,12 @@ function renderListenerStatus(status, evidence = {
     readSummary.longestEpisodeAttemptsLast24h === 0 ? "Longest read retry episode in the last 24h: none recorded." : `Longest read retry episode in the last 24h: ${readSummary.longestEpisodeAttemptsLast24h} attempts over ${Math.floor(readSummary.longestEpisodeDurationMsLast24h / 1e3)}s.`,
     readSummary.retryHours.length === 0 ? "Read retries by hour in the last 24h: none." : `Read retries by hour in the last 24h: ${readSummary.retryHours.map((hour) => `${hour.hourStart}=${hour.retries}`).join("; ")}.`,
     readSummary.claimThroughputHours.length === 0 ? "Claim throughput by full hour: no complete listener hour is available yet." : `Claim throughput by full hour: ${readSummary.claimThroughputHours.map((hour) => `${hour.hourStart} ${hour.claims}/${Math.round(hour.expectedClaims)} (${hour.ratio.toFixed(3)})`).join("; ")}.`,
-    status.idlePollMs === void 0 || status.idlePollMs === null ? "Current idle poll interval has not been reported yet." : idlePollStatusSentence(status.idlePollMs)
+    status.idlePollMs === void 0 || status.idlePollMs === null ? "Current idle poll interval has not been reported yet." : idlePollStatusSentence(status.idlePollMs),
+    listenerWakeStatusSentence(
+      status.wake ?? emptyListenerWakeStatus(),
+      status.idlePollMs && status.idlePollMs > 0 ? status.idlePollMs : IDLE_POLL_DEFAULT_MS,
+      status.wake?.lastWakeAt ? relativeAge(status.wake.lastWakeAt, nowMs) : null
+    )
   ];
   for (const notice of lapseNotices) {
     lines.push(`WARNING [${notice.code}]: ${notice.message}`);
