@@ -10,6 +10,8 @@ export const LISTENER_READ_RETRY_HOUR_CAP = 25;
 export const LISTENER_READ_RETRY_MINUTE_CAP = 61;
 export const LISTENER_CLAIM_HOUR_CAP = 25;
 export const LISTENER_THROUGHPUT_LAPSE_RATIO = 0.5;
+/** Skip at most this many consecutive mode-change hours from lapse scoring. */
+export const LISTENER_MODE_CHANGE_SKIP_MAX = 1;
 
 export interface ListenerReadRetryHour {
   hourStart: string;
@@ -29,6 +31,10 @@ export interface ListenerClaimHour {
   claims: number;
   /** Slowest cadence recorded in this hour; absent on files written before per-hour scoring. */
   cadenceMs?: number;
+  /** Frozen when the hour closes, from the slowest cadence recorded in it. */
+  expectedClaims?: number;
+  /** Set when wake.mode changed this hour. Lapse scoring skips at most one consecutive such hour. */
+  modeChanged?: boolean;
 }
 
 export interface ListenerReadHealth {
@@ -201,6 +207,18 @@ export function recordListenerReadRecovery(
   };
 }
 
+function freezeClosedHourExpectedClaims(
+  rows: ListenerClaimHour[],
+  currentHourStart: string,
+): ListenerClaimHour[] {
+  return rows.map((row) => {
+    if (row.hourStart === currentHourStart) return row;
+    if (row.expectedClaims !== undefined) return row;
+    if (row.cadenceMs === undefined || row.cadenceMs < 1) return row;
+    return { ...row, expectedClaims: HOUR_MS / row.cadenceMs };
+  });
+}
+
 /** An hour is scored at the slowest cadence recorded in it. */
 export function recordListenerClaimCadence(
   health: ListenerReadHealth,
@@ -208,7 +226,10 @@ export function recordListenerClaimCadence(
   ts: string,
 ): ListenerReadHealth {
   const hourStart = bucketStart(ts, HOUR_MS);
-  const claimHours = health.claimHours.map((row) => ({ ...row }));
+  const claimHours = freezeClosedHourExpectedClaims(
+    health.claimHours.map((row) => ({ ...row })),
+    hourStart,
+  );
   const hour = claimHours.find((row) => row.hourStart === hourStart);
   if (hour) {
     hour.cadenceMs = hour.cadenceMs === undefined
@@ -224,13 +245,35 @@ export function recordListenerClaimCadence(
   };
 }
 
+/** Mark the current hour so throughput lapse scoring may skip it (capped). */
+export function recordListenerWakeModeChange(
+  health: ListenerReadHealth,
+  ts: string,
+): ListenerReadHealth {
+  const hourStart = bucketStart(ts, HOUR_MS);
+  const claimHours = freezeClosedHourExpectedClaims(
+    health.claimHours.map((row) => ({ ...row })),
+    hourStart,
+  );
+  const hour = claimHours.find((row) => row.hourStart === hourStart);
+  if (hour) hour.modeChanged = true;
+  else claimHours.push({ hourStart, claims: 0, modeChanged: true });
+  return {
+    ...health,
+    claimHours: trimNewest(claimHours, LISTENER_CLAIM_HOUR_CAP),
+  };
+}
+
 /** Increment one local claim-throughput hour. */
 export function recordListenerClaim(
   health: ListenerReadHealth,
   ts: string,
 ): ListenerReadHealth {
   const hourStart = bucketStart(ts, HOUR_MS);
-  const claimHours = health.claimHours.map((row) => ({ ...row }));
+  const claimHours = freezeClosedHourExpectedClaims(
+    health.claimHours.map((row) => ({ ...row })),
+    hourStart,
+  );
   const hour = claimHours.find((row) => row.hourStart === hourStart);
   if (hour) hour.claims += 1;
   else claimHours.push({ hourStart, claims: 1 });
@@ -334,7 +377,8 @@ export function parseListenerReadHealth(
     if (
       rejectUnknownKeys &&
       Object.keys(hour).some((key) =>
-        key !== "hourStart" && key !== "claims" && key !== "cadenceMs"
+        key !== "hourStart" && key !== "claims" && key !== "cadenceMs" &&
+        key !== "expectedClaims" && key !== "modeChanged"
       )
     ) return null;
     if (
@@ -342,6 +386,14 @@ export function parseListenerReadHealth(
       !(typeof hour.cadenceMs === "number" &&
         Number.isSafeInteger(hour.cadenceMs) && hour.cadenceMs >= 1)
     ) return null;
+    if (
+      hour.expectedClaims !== undefined &&
+      !(typeof hour.expectedClaims === "number" &&
+        Number.isFinite(hour.expectedClaims) && hour.expectedClaims > 0)
+    ) return null;
+    if (hour.modeChanged !== undefined && typeof hour.modeChanged !== "boolean") {
+      return null;
+    }
   }
   return {
     currentEpisodeStartedAt: row.currentEpisodeStartedAt as string | null,
@@ -363,10 +415,14 @@ export function parseListenerReadHealth(
     claimCadenceMs: row.claimCadenceMs as number | null,
     claimHours: (row.claimHours as Array<Record<string, unknown>>).map((hour) => {
       const cadenceMs = hour.cadenceMs;
+      const expectedClaims = hour.expectedClaims;
+      const modeChanged = hour.modeChanged;
       return {
         hourStart: hour.hourStart as string,
         claims: hour.claims as number,
         ...(typeof cadenceMs === "number" ? { cadenceMs } : {}),
+        ...(typeof expectedClaims === "number" ? { expectedClaims } : {}),
+        ...(modeChanged === true ? { modeChanged: true } : {}),
       };
     }),
   };
@@ -433,14 +489,18 @@ export function summarizeListenerReadHealth(
       health.claimHours.map((row) => [row.hourStart, row.claims]),
     );
     const cadenceByHour = new Map<string, number>();
+    const expectedByHour = new Map<string, number>();
     for (const row of health.claimHours) {
       if (row.cadenceMs !== undefined) cadenceByHour.set(row.hourStart, row.cadenceMs);
+      if (row.expectedClaims !== undefined) {
+        expectedByHour.set(row.hourStart, row.expectedClaims);
+      }
     }
     for (let hour = first; hour < currentHour; hour += HOUR_MS) {
       const hourStart = new Date(hour).toISOString();
       const claims = claimsByHour.get(hourStart) ?? 0;
       const cadenceMs = cadenceByHour.get(hourStart) ?? health.claimCadenceMs;
-      const expectedClaims = HOUR_MS / cadenceMs;
+      const expectedClaims = expectedByHour.get(hourStart) ?? (HOUR_MS / cadenceMs);
       claimThroughputHours.push({
         hourStart,
         claims,
@@ -449,9 +509,25 @@ export function summarizeListenerReadHealth(
       });
     }
   }
-  const throughputLapseHours = claimThroughputHours.filter(
-    (hour) => hour.ratio < LISTENER_THROUGHPUT_LAPSE_RATIO,
-  );
+  const consecutiveModeChangedHours = (hourStart: string): number => {
+    let count = 0;
+    let t = Date.parse(hourStart);
+    if (!Number.isFinite(t)) return 0;
+    while (true) {
+      const start = new Date(t).toISOString();
+      const row = health.claimHours.find((hour) => hour.hourStart === start);
+      if (row?.modeChanged !== true) break;
+      count += 1;
+      t -= HOUR_MS;
+    }
+    return count;
+  };
+  const throughputLapseHours = claimThroughputHours.filter((hour) => {
+    if (hour.ratio >= LISTENER_THROUGHPUT_LAPSE_RATIO) return false;
+    const consecutive = consecutiveModeChangedHours(hour.hourStart);
+    if (consecutive === 0) return true;
+    return consecutive > LISTENER_MODE_CHANGE_SKIP_MAX;
+  });
   return {
     currentEpisodeDurationMs,
     episodesLast24h,

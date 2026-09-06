@@ -23,6 +23,15 @@ import {
   type ListenerReadHealth,
 } from "./read-health.js";
 import {
+  LISTENER_WAKE_MODES,
+  LISTENER_WAKE_MODE_PUSH,
+  LISTENER_WAKE_MODE_SET,
+  LISTENER_WAKE_STATUS_KEYS,
+  LISTENER_WAKE_SENSITIVE_KEYS,
+  WAKE_ERROR_CODE_SET,
+  type ListenerWakeStatus,
+} from "./wake.js";
+import {
   DELIVERY_ACK_OUTCOMES,
   type DeliveryOutcome,
 } from "../cloud/delivery.js";
@@ -170,6 +179,8 @@ export interface ListenerStatus {
    * status file written by a listener older than this field omits it.
    */
   idlePollMs?: number | null;
+  /** How the listener learns there is work. Optional: older files omit it. */
+  wake?: ListenerWakeStatus;
   logPath: string;
 }
 
@@ -278,6 +289,7 @@ const STATUS_ALLOWED_KEYS = new Set([
   "activityPublishFailures",
   "activityLastErrorCode",
   "idlePollMs",
+  "wake",
 ]);
 const STATUS_ACTIVITY_ERROR_CODES = new Set<ActivityPublishErrorCode>([
   "activity_credential_failed",
@@ -303,6 +315,9 @@ const STATUS_SENSITIVE_KEYS = new Set([
   "owner",
   "ownerId",
   "owner_id",
+  "topic",
+  "wakeTopic",
+  "wake_topic",
 ]);
 export const STATUS_DELIVERY_KEYS = [
   "deliveryMode",
@@ -370,6 +385,57 @@ function parseHeldBackDeliveries(
   return parsed;
 }
 
+const WAKE_STATUS_KEY_SET = new Set<string>(LISTENER_WAKE_STATUS_KEYS);
+const WAKE_SENSITIVE_KEY_SET = new Set<string>(LISTENER_WAKE_SENSITIVE_KEYS);
+
+function nullableIso(value: unknown): boolean {
+  return value === null ||
+    (typeof value === "string" && Number.isFinite(Date.parse(value)));
+}
+
+/** Closed nested parser for the wake status block. Topic keys are refused at this depth too. */
+export function parseListenerWake(
+  value: unknown,
+  rejectUnknownKeys = false,
+): ListenerWakeStatus | null {
+  if (!value || typeof value !== "object" || Array.isArray(value)) return null;
+  const row = value as Record<string, unknown>;
+  for (const key of Object.keys(row)) {
+    if (WAKE_SENSITIVE_KEY_SET.has(key)) return null;
+    if (rejectUnknownKeys && !WAKE_STATUS_KEY_SET.has(key)) return null;
+  }
+  for (const key of LISTENER_WAKE_STATUS_KEYS) {
+    if (!(key in row)) return null;
+  }
+  const mode = LISTENER_WAKE_MODES.find((item) => item === row.mode);
+  if (
+    mode === undefined ||
+    !nullableIso(row.subscribedAt) ||
+    !(typeof row.reconnects === "number" &&
+      Number.isSafeInteger(row.reconnects) && row.reconnects >= 0) ||
+    !nullableIso(row.lastWakeAt) ||
+    !nullableIso(row.lastReconcileAt) ||
+    !(row.errorCode === null ||
+      (typeof row.errorCode === "string" &&
+        WAKE_ERROR_CODE_SET.has(row.errorCode))) ||
+    !nullableIso(row.topicRotatedAt) ||
+    typeof row.rateLimited !== "boolean"
+  ) {
+    return null;
+  }
+  if (mode === LISTENER_WAKE_MODE_PUSH && row.subscribedAt === null) return null;
+  return {
+    mode,
+    subscribedAt: row.subscribedAt as string | null,
+    reconnects: row.reconnects as number,
+    lastWakeAt: row.lastWakeAt as string | null,
+    lastReconcileAt: row.lastReconcileAt as string | null,
+    errorCode: row.errorCode as ListenerWakeStatus["errorCode"],
+    topicRotatedAt: row.topicRotatedAt as string | null,
+    rateLimited: row.rateLimited as boolean,
+  };
+}
+
 function parseStatus(raw: string, rejectUnknownKeys = false): ListenerStatus {
   let value: unknown;
   try {
@@ -406,6 +472,9 @@ function parseStatus(raw: string, rejectUnknownKeys = false): ListenerStatus {
   const heldBackDeliveries = row.heldBackDeliveries === undefined
     ? undefined
     : parseHeldBackDeliveries(row.heldBackDeliveries);
+  const wake = row.wake === undefined
+    ? undefined
+    : parseListenerWake(row.wake, rejectUnknownKeys);
   if (
     row.version !== 1 ||
     typeof row.instanceId !== "string" ||
@@ -524,6 +593,7 @@ function parseStatus(raw: string, rejectUnknownKeys = false): ListenerStatus {
       (typeof row.droppedForMainCount === "number" &&
         Number.isSafeInteger(row.droppedForMainCount) && row.droppedForMainCount >= 0)) ||
     readHealth === null ||
+    wake === null ||
     !(row.connectionsOpened === undefined ||
       (typeof row.connectionsOpened === "number" &&
         Number.isSafeInteger(row.connectionsOpened) && row.connectionsOpened >= 0)) ||
@@ -607,6 +677,7 @@ function parseStatus(raw: string, rejectUnknownKeys = false): ListenerStatus {
     ...(row.idlePollMs === undefined
       ? {}
       : { idlePollMs: (row.idlePollMs ?? null) as number | null }),
+    ...(wake === undefined ? {} : { wake }),
   };
 }
 
@@ -695,6 +766,10 @@ export async function appendListenerEvent(
     "held_ms",
     "release_reason",
     "idle_poll_ms",
+    "wake_mode",
+    "wake_error_code",
+    "wake_reconnects",
+    "rate_limited",
   ]);
   const deliveryModes = new Set(["durable_claim", "cursor_fallback"]);
   const routeModes = new Set(["worker", "main", "split"]);
@@ -819,6 +894,28 @@ export async function appendListenerEvent(
       !(typeof value === "number" && Number.isSafeInteger(value) && value >= 0)
     ) {
       throw new Error("listener event idle poll interval is not allowed");
+    }
+    if (
+      key === "wake_mode" &&
+      !(typeof value === "string" && LISTENER_WAKE_MODE_SET.has(value))
+    ) {
+      throw new Error("listener event wake mode is not allowed");
+    }
+    if (
+      key === "wake_error_code" &&
+      !(value === null ||
+        (typeof value === "string" && WAKE_ERROR_CODE_SET.has(value)))
+    ) {
+      throw new Error("listener event wake error code is not allowed");
+    }
+    if (
+      key === "wake_reconnects" &&
+      !(typeof value === "number" && Number.isSafeInteger(value) && value >= 0)
+    ) {
+      throw new Error("listener event wake reconnect count is not allowed");
+    }
+    if (key === "rate_limited" && typeof value !== "boolean") {
+      throw new Error("listener event rate-limited flag is not allowed");
     }
     if (
       key === "release_reason" &&
