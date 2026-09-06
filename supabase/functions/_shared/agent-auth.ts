@@ -160,3 +160,61 @@ export async function agentCredentialRevoked(
   const expected = new Set(targets.map(([kind, id]) => `${kind}:${id}`));
   return rows.some((row) => expected.has(`${row.kind}:${row.target_id}`));
 }
+
+export interface AgentSessionProof {
+  sessionId: string;
+  generation: number;
+  key: string;
+}
+
+export async function authenticateAgentSession(
+  tx: Sql,
+  principalId: string,
+  workspaceId: string,
+  proof: AgentSessionProof | null,
+  isAcquire: boolean,
+): Promise<{ ok: true } | { ok: false; error: string }> {
+  // Check if principal is managed
+  const rows = await tx<{ lifecycle_state: string; session_id: string; generation: number; key_hash: string }[]>`
+    SELECT lifecycle_state, session_id, generation, key_hash
+    FROM swarm.agent_execution_sessions
+    WHERE principal_id = ${principalId}::uuid
+      AND workspace_id = ${workspaceId}::uuid
+  `;
+  const session = rows[0];
+  
+  if (!session || session.lifecycle_state !== 'enabled') {
+    // Unmanaged principal requires no proof for regular commands
+    if (proof) return { ok: false, error: 'session_conflict' };
+    return { ok: true };
+  }
+  
+  if (isAcquire) {
+    // acquire_agent_session performs its own row-locked check
+    return { ok: true };
+  }
+  
+  if (!proof) {
+    return { ok: false, error: 'session_proof_missing' };
+  }
+  
+  if (proof.sessionId !== session.session_id) {
+    return { ok: false, error: 'session_conflict' };
+  }
+  
+  if (proof.generation !== session.generation) {
+    return { ok: false, error: 'session_conflict' };
+  }
+  
+  // Hash the proof key
+  const keyBuffer = new TextEncoder().encode(proof.key);
+  const hashBuffer = await crypto.subtle.digest('SHA-256', keyBuffer);
+  const hashArray = Array.from(new Uint8Array(hashBuffer));
+  const keyHash = hashArray.map(b => b.toString(16).padStart(2, '0')).join('');
+  
+  if (keyHash !== session.key_hash) {
+    return { ok: false, error: 'session_proof_invalid' };
+  }
+  
+  return { ok: true };
+}

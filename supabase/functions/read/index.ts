@@ -625,8 +625,18 @@ async function handle(
         SELECT
           p.principal_id,
           p.name,
-          p.owner_user_id
+          p.owner_user_id,
+          s.lifecycle_state,
+          s.provider,
+          s.host_label,
+          s.host_session_ref,
+          s.session_id,
+          s.started_at,
+          s.renewed_at,
+          s.expired_at,
+          (s.expired_at IS NULL OR s.expired_at > statement_timestamp()) AS is_live
         FROM swarm_read.agent_principals AS p
+        LEFT JOIN swarm.agent_execution_sessions s ON s.principal_id = p.principal_id
         JOIN swarm_read.member_profiles AS owner
           ON owner.workspace_id = p.workspace_id
          AND owner.user_id = p.owner_user_id
