@@ -186,7 +186,9 @@ function localDiagnostic(message: string, maxChars: number): string | null {
 }
 
 export function listenerSafeErrorDetail(error: Error): string | null {
-  return localDiagnostic(redactSessionText(error.message), 2_048);
+  const first = localDiagnostic(error.message, 2_048);
+  if (first === null) return null;
+  return redactSessionText(first);
 }
 
 function safeErrorDetail(error: Error): string | null {
