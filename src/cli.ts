@@ -221,7 +221,9 @@ import {
   type SignalAttachmentRef,
 } from "./cloud/attachments.js";
 import {
+  acquireArrivalWatchLock,
   arrivalNotification,
+  arrivalWatchLockPath,
   createArrivalRetryNoticePolicy,
   fileArrivalCursorStore,
   formatArrivalNotification,
@@ -229,6 +231,7 @@ import {
   ARRIVAL_RETRY_NOTICE_THRESHOLD_MS,
   EXIT_NOTIFY_ORPHANED,
   NotifyStdoutClosedError,
+  releaseArrivalWatchLock,
   runArrivalWatch,
   writeArrivalMonitorLine,
 } from "./cloud/arrival-watch.js";
@@ -3994,6 +3997,12 @@ async function runInboxNotifyCommand(args: Arguments): Promise<void> {
   const stop = () => controller.abort();
   process.on("SIGINT", stop);
   process.on("SIGTERM", stop);
+  const lockPath = arrivalWatchLockPath(
+    cloud,
+    selected.selectedWorkspace,
+    principalId,
+  );
+  await acquireArrivalWatchLock(lockPath);
   try {
     const retryNotices = createArrivalRetryNoticePolicy();
     let renderedBearer = selected.bearer;
@@ -4071,6 +4080,7 @@ async function runInboxNotifyCommand(args: Arguments): Promise<void> {
     process.off("SIGINT", stop);
     process.off("SIGTERM", stop);
     httpClient.close();
+    await releaseArrivalWatchLock(lockPath);
   }
 }
 

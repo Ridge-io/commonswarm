@@ -1,5 +1,6 @@
 import { homedir } from "node:os";
-import { join } from "node:path";
+import { dirname, join } from "node:path";
+import { open, readFile, unlink } from "node:fs/promises";
 import type { SignalRecord } from "./command-client.js";
 import type { CloudTarget } from "./config.js";
 import {
@@ -12,17 +13,24 @@ import {
   type SignalCursor,
 } from "./signals.js";
 import {
+  ensureSecureStateDirectory,
   readSecureJsonFile,
   writeSecureJsonFile,
 } from "./storage.js";
+import {
+  ARRIVAL_WATCH_POLL_MS as IDLE_ARRIVAL_WATCH_POLL_MS,
+  IDLE_POLL_MAX_MS,
+  nextIdlePollMs,
+} from "./idle-poll.js";
 
 const UUID_RE =
   /^[0-9a-f]{8}-[0-9a-f]{4}-[1-8][0-9a-f]{3}-[89ab][0-9a-f]{3}-[0-9a-f]{12}$/i;
 const CURSOR_MAX_BYTES = 4 * 1024;
 const ARRIVAL_SNIPPET_MAX = 180;
+const WATCH_LOCK_MAX_BYTES = 512;
 
 /** A remote-friendly cadence for a long-lived, human-visible arrival monitor. */
-export const ARRIVAL_WATCH_POLL_MS = 25_000;
+export const ARRIVAL_WATCH_POLL_MS = IDLE_ARRIVAL_WATCH_POLL_MS;
 /** Continuous read failure time before a human-visible monitor warning. */
 export const ARRIVAL_RETRY_NOTICE_THRESHOLD_MS = 60_000;
 /** sysexits EX_IOERR: stdout's pipe reader is gone, so the monitor must stop. */
@@ -154,6 +162,112 @@ export function arrivalCursorPath(
     root,
     `${target.profileId}-${workspaceId.toLowerCase()}-${principalId.toLowerCase()}.json`,
   );
+}
+
+/** Lock beside the cursor so one host cannot run two watchers for one agent. */
+export function arrivalWatchLockPath(
+  target: CloudTarget,
+  workspaceId: string,
+  principalId: string,
+  root = stateRoot(),
+): string {
+  return arrivalCursorPath(target, workspaceId, principalId, root).replace(
+    /\.json$/u,
+    ".lock",
+  );
+}
+
+export function arrivalWatchAlreadyRunningSentence(pid: number): string {
+  return `inbox --notify is already running for this agent as pid ${pid}.`;
+}
+
+export class ArrivalWatchAlreadyRunningError extends Error {
+  readonly code = "notify_already_running";
+  readonly pid: number;
+  constructor(pid: number) {
+    super(arrivalWatchAlreadyRunningSentence(pid));
+    this.name = "ArrivalWatchAlreadyRunningError";
+    this.pid = pid;
+  }
+}
+
+function pidIsAlive(pid: number): boolean {
+  if (!Number.isSafeInteger(pid) || pid <= 0) return false;
+  try {
+    process.kill(pid, 0);
+    return true;
+  } catch (error) {
+    return (error as NodeJS.ErrnoException).code !== "ESRCH";
+  }
+}
+
+function parseWatchLock(raw: string): { pid: number } | null {
+  let value: unknown;
+  try {
+    value = JSON.parse(raw);
+  } catch {
+    return null;
+  }
+  if (!value || typeof value !== "object" || Array.isArray(value)) return null;
+  const row = value as Record<string, unknown>;
+  if (row.version !== 1 || !Number.isSafeInteger(row.pid) || (row.pid as number) <= 0) {
+    return null;
+  }
+  return { pid: row.pid as number };
+}
+
+export async function acquireArrivalWatchLock(
+  path: string,
+  pid: number = process.pid,
+): Promise<void> {
+  if (!Number.isSafeInteger(pid) || pid <= 0) {
+    throw new Error("arrival watch lock pid must be a positive integer");
+  }
+  await ensureSecureStateDirectory(dirname(path));
+  const payload = `${JSON.stringify({ version: 1, pid })}\n`;
+  for (let attempt = 0; attempt < 2; attempt += 1) {
+    try {
+      const handle = await open(path, "wx", 0o600);
+      try {
+        await handle.writeFile(payload, "utf8");
+      } finally {
+        await handle.close();
+      }
+      return;
+    } catch (error) {
+      if ((error as NodeJS.ErrnoException).code !== "EEXIST") throw error;
+    }
+    let existing: { pid: number } | null = null;
+    try {
+      const raw = await readFile(path, "utf8");
+      if (Buffer.byteLength(raw, "utf8") <= WATCH_LOCK_MAX_BYTES) {
+        existing = parseWatchLock(raw);
+      }
+    } catch (error) {
+      if ((error as NodeJS.ErrnoException).code !== "ENOENT") throw error;
+      continue;
+    }
+    if (existing !== null && pidIsAlive(existing.pid)) {
+      throw new ArrivalWatchAlreadyRunningError(existing.pid);
+    }
+    await unlink(path).catch(() => undefined);
+  }
+  throw new Error("arrival watch lock could not be acquired");
+}
+
+export async function releaseArrivalWatchLock(
+  path: string,
+  pid: number = process.pid,
+): Promise<void> {
+  try {
+    const raw = await readFile(path, "utf8");
+    const existing = parseWatchLock(raw);
+    if (existing === null || existing.pid !== pid) return;
+    await unlink(path);
+  } catch (error) {
+    if ((error as NodeJS.ErrnoException).code === "ENOENT") return;
+    throw error;
+  }
 }
 
 function parseCursor(
@@ -356,6 +470,7 @@ export async function runArrivalWatch(options: {
 }): Promise<ArrivalWatchStop> {
   const pollMs = options.pollMs ?? ARRIVAL_WATCH_POLL_MS;
   const random = options.random ?? Math.random;
+  let emptyIdleStreak = 0;
   let cursor = await options.store.read();
   let baseline = cursor === undefined;
   let attempt = 0;
@@ -380,6 +495,13 @@ export async function runArrivalWatch(options: {
       options.signal?.addEventListener("abort", finish, { once: true });
       timer = setTimeout(finish, ms);
     });
+  };
+
+  const idleWait = async (hadDelivery: boolean): Promise<void> => {
+    if (hadDelivery) emptyIdleStreak = 0;
+    const intervalMs = nextIdlePollMs(pollMs, emptyIdleStreak, IDLE_POLL_MAX_MS);
+    if (!hadDelivery) emptyIdleStreak += 1;
+    await wait(intervalMs);
   };
 
   while (!cancelled()) {
@@ -423,7 +545,7 @@ export async function runArrivalWatch(options: {
         await options.store.write(cursor);
         baseline = false;
         if (cancelled()) break;
-        await wait(pollMs);
+        await idleWait(false);
         continue;
       }
 
@@ -441,7 +563,8 @@ export async function runArrivalWatch(options: {
       if (cancelled()) break;
 
       const fullPage = page.rawCount >= SIGNAL_FOLLOW_PAGE_LIMIT;
-      await wait(fullPage ? 0 : pollMs);
+      if (fullPage) await wait(0);
+      else await idleWait(emittedSignals.length > 0);
     } catch (error) {
       if (cancelled()) break;
       const http = followHttpDetails(error);
