@@ -11973,14 +11973,15 @@ import "../../styles/tokens.css";
     box-shadow: var(--focus-ring);
   }
 
-  .dashboard__brain-markdown :where(h2, h3, h4, h5, p, ul, ol, blockquote, pre, table, hr) {
-    margin: 0;
-  }
-
-  .dashboard__brain-markdown :where(h2, h3, h4, h5, p, ul, ol, blockquote, pre, table, hr) +
-    :where(h2, h3, h4, h5, p, ul, ol, blockquote, pre, table, hr) {
-    margin-block-start: var(--s-3);
-  }
+  /* No block spacing here. The brain node carries `.dashboard__message-markdown` as well, and the
+   * rhythm rules under that class (further down this sheet) set every gap for both surfaces.
+   *
+   * RETIRED, and why: this block used to carry its own pair
+   *   `:where(h2, h3, h4, h5, p, …) { margin: 0 }` and `… + … { margin-block-start: var(--s-3) }`.
+   * The feed's `:where(p, ul, …) { margin: 0 }` is written LATER in this sheet at the same (0,1,0)
+   * score, so a paragraph after a heading took the feed's 0 rather than the brain's 12: measured
+   * 0px below every brain heading (markdown-wordwrap-qa.observer.test.ts, before the fix). One set
+   * of rules, on the class both nodes share, is what removes the race. */
 
   .dashboard__brain-markdown h2 {
     font-size: var(--t-lg);
@@ -12913,13 +12914,37 @@ import "../../styles/tokens.css";
     overflow: hidden;
   }
 
-  .dashboard__message-markdown :where(p, ul, ol, blockquote, pre, table, hr) {
+  /* Block rhythm, measured (markdown-wordwrap-qa.observer.test.ts, real Chrome at 390 and 1440,
+   * both themes, feed and brain): 12px between blocks, 4px between list items, 24px above a
+   * heading and 8px below it, so a heading belongs to what follows. Targets are the spec's
+   * (docs/design/2026-09-06-MARKDOWN-WORDWRAP-QA.md §2.3), read as tokens so they cannot drift.
+   *
+   * Headings are in the list on purpose. They were not, and `* { margin: 0 }` in global.css then
+   * set every feed heading flush against the paragraph on each side: measured 0px above and 0px
+   * below before this rule. The Brain panel's node carries this class too, so these rules serve
+   * both surfaces; see the note at `.dashboard__brain-markdown` for what that ordering cost. */
+  .dashboard__message-markdown :where(h2, h3, h4, h5, p, ul, ol, blockquote, pre, table, hr) {
     margin: 0;
   }
 
-  .dashboard__message-markdown :where(p, ul, ol, blockquote, pre, table, hr) +
-    :where(p, ul, ol, blockquote, pre, table, hr) {
+  .dashboard__message-markdown :where(h2, h3, h4, h5, p, ul, ol, blockquote, pre, table, hr) +
+    :where(h2, h3, h4, h5, p, ul, ol, blockquote, pre, table, hr) {
     margin-block-start: var(--s-3);
+  }
+
+  /* After the general pair rule, at the same (0,1,0) score, so order decides and these win. */
+  .dashboard__message-markdown :where(p, ul, ol, blockquote, pre, table, hr) +
+    :where(h2, h3, h4, h5) {
+    margin-block-start: var(--s-6);
+  }
+
+  .dashboard__message-markdown :where(h2, h3, h4, h5) +
+    :where(p, ul, ol, blockquote, pre, table, hr) {
+    margin-block-start: var(--s-2);
+  }
+
+  .dashboard__message-markdown li + li {
+    margin-block-start: var(--s-1);
   }
 
   .dashboard__message-markdown :where(ul, ol) {
