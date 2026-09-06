@@ -30841,6 +30841,336 @@ function idlePollHelpSentence(defaultMs = IDLE_POLL_DEFAULT_MS) {
   return `listen start --poll-interval sets how long the listener waits after an empty claim (default ${formatIdlePollDuration(defaultMs)}). A whole number plus s or m (for example ${idlePollDurationHint()}), ${idlePollBoundSentence()}. Empty polls double that wait up to ${IDLE_POLL_MAX_LABEL}; any delivery resets it to the configured interval.`;
 }
 
+// src/listener/wake.ts
+var LISTENER_RECONCILE_POLL_MS = 3e5;
+var WAKE_COALESCE_MS = 1e3;
+var WAKE_CLAIMS_PER_MINUTE_BUDGET = 50;
+var WAKE_RATE_LIMIT_POLL_MS = 6e4;
+var REALTIME_SUBSCRIBE_STATUS = {
+  SUBSCRIBED: "SUBSCRIBED",
+  CHANNEL_ERROR: "CHANNEL_ERROR",
+  CLOSED: "CLOSED",
+  TIMED_OUT: "TIMED_OUT"
+};
+var LISTENER_WAKE_MODES = ["push", "poll"];
+var LISTENER_WAKE_MODE_PUSH = LISTENER_WAKE_MODES[0];
+var LISTENER_WAKE_MODE_POLL = LISTENER_WAKE_MODES[1];
+var LISTENER_WAKE_MODE_SET = new Set(
+  LISTENER_WAKE_MODES
+);
+var WAKE_ERROR_CODES = [
+  "channel_error",
+  "closed",
+  "timed_out",
+  "rate_limited",
+  "wake_budget"
+];
+var WAKE_ERROR_CODE_SET = new Set(WAKE_ERROR_CODES);
+var WAKE_ERROR_CODE_WAKE_BUDGET = WAKE_ERROR_CODES.find(
+  (code) => code === "wake_budget"
+);
+var LISTENER_WAKE_STATUS_KEYS = [
+  "mode",
+  "subscribedAt",
+  "reconnects",
+  "lastWakeAt",
+  "lastReconcileAt",
+  "errorCode",
+  "topicRotatedAt",
+  "rateLimited"
+];
+var LISTENER_WAKE_SENSITIVE_KEYS = [
+  "topic",
+  "wakeTopic",
+  "wake_topic"
+];
+function defaultRealtime(target2) {
+  const client = createClient(target2.url, target2.anonKey, {
+    auth: { persistSession: false, autoRefreshToken: false }
+  });
+  return client.realtime;
+}
+function isSubscribeStatus(value) {
+  return value === REALTIME_SUBSCRIBE_STATUS.SUBSCRIBED || value === REALTIME_SUBSCRIBE_STATUS.CHANNEL_ERROR || value === REALTIME_SUBSCRIBE_STATUS.CLOSED || value === REALTIME_SUBSCRIBE_STATUS.TIMED_OUT;
+}
+function wakeErrorCodeFromSubscribeStatus(status) {
+  switch (status) {
+    case REALTIME_SUBSCRIBE_STATUS.CHANNEL_ERROR:
+      return "channel_error";
+    case REALTIME_SUBSCRIBE_STATUS.CLOSED:
+      return "closed";
+    case REALTIME_SUBSCRIBE_STATUS.TIMED_OUT:
+      return "timed_out";
+    default:
+      return null;
+  }
+}
+function emptyListenerWakeStatus() {
+  return {
+    mode: LISTENER_WAKE_MODE_POLL,
+    subscribedAt: null,
+    reconnects: 0,
+    lastWakeAt: null,
+    lastReconcileAt: null,
+    errorCode: null,
+    topicRotatedAt: null,
+    rateLimited: false
+  };
+}
+function listenerWakePersistWorthy(previous, next, lastPersistMs, nowMs) {
+  if (previous === void 0) return true;
+  if (previous.mode !== next.mode || previous.rateLimited !== next.rateLimited || previous.errorCode !== next.errorCode || previous.reconnects !== next.reconnects || previous.subscribedAt !== next.subscribedAt || previous.topicRotatedAt !== next.topicRotatedAt || previous.lastReconcileAt !== next.lastReconcileAt) {
+    return true;
+  }
+  if (previous.lastWakeAt !== next.lastWakeAt) {
+    return nowMs - lastPersistMs >= WAKE_COALESCE_MS;
+  }
+  return false;
+}
+function listenerWakeStatusSentence(wake, pollIntervalMs, lastWakeLabel) {
+  if (wake.mode === LISTENER_WAKE_MODE_PUSH) {
+    const last = lastWakeLabel === null ? "no wake yet" : `last wake ${lastWakeLabel}`;
+    return `${LISTENER_WAKE_MODE_PUSH} (Realtime), ${last}, reconcile every ${formatIdlePollDuration(LISTENER_RECONCILE_POLL_MS)}.`;
+  }
+  if (wake.errorCode === WAKE_ERROR_CODE_WAKE_BUDGET) {
+    return `Subscribed; claims paused until the minute clears (${WAKE_ERROR_CODE_WAKE_BUDGET}); polling every ${formatIdlePollDuration(pollIntervalMs)} meanwhile.`;
+  }
+  const code = wake.errorCode ?? "disconnected";
+  return `${LISTENER_WAKE_MODE_POLL} every ${formatIdlePollDuration(pollIntervalMs)}. Realtime not connected (${code}).`;
+}
+var WakeSubscriber = class {
+  now;
+  target;
+  createRealtime;
+  realtime = null;
+  channel = null;
+  topic = null;
+  waiter = null;
+  pending = null;
+  connectionState = "disconnected";
+  subscribedAt = null;
+  reconnects = 0;
+  lastWakeAt = null;
+  lastReconcileAt = null;
+  lastErrorCode = null;
+  topicRotatedAt = null;
+  rateLimitedUntil = 0;
+  lastClaimAt = 0;
+  wakeClaimTimes = [];
+  closed = false;
+  everSubscribed = false;
+  constructor(options) {
+    this.target = options.target;
+    this.now = options.now ?? Date.now;
+    this.createRealtime = options.createRealtime ?? defaultRealtime;
+  }
+  get state() {
+    return this.connectionState;
+  }
+  get hasTopic() {
+    return this.topic !== null;
+  }
+  snapshot(nowMs = this.now()) {
+    const serverLimited = nowMs < this.rateLimitedUntil;
+    const overBudget = this.overWakeBudget(nowMs);
+    const rateLimited = serverLimited || overBudget;
+    const mode3 = this.connectionState === "subscribed" && !rateLimited ? LISTENER_WAKE_MODE_PUSH : LISTENER_WAKE_MODE_POLL;
+    const errorCode = serverLimited ? "rate_limited" : overBudget ? WAKE_ERROR_CODE_WAKE_BUDGET : this.lastErrorCode;
+    return {
+      mode: mode3,
+      subscribedAt: this.subscribedAt,
+      reconnects: this.reconnects,
+      lastWakeAt: this.lastWakeAt,
+      lastReconcileAt: this.lastReconcileAt,
+      errorCode,
+      topicRotatedAt: this.topicRotatedAt,
+      rateLimited
+    };
+  }
+  noteReconcile(nowMs = this.now()) {
+    this.lastReconcileAt = new Date(nowMs).toISOString();
+  }
+  noteClaim(nowMs = this.now()) {
+    this.lastClaimAt = nowMs;
+  }
+  noteWakeClaim(nowMs = this.now()) {
+    this.noteClaim(nowMs);
+    this.wakeClaimTimes.push(nowMs);
+    this.trimWakeClaims(nowMs);
+  }
+  coalescingRemainingMs(nowMs = this.now()) {
+    if (this.lastClaimAt <= 0) return 0;
+    return Math.max(0, this.lastClaimAt + WAKE_COALESCE_MS - nowMs);
+  }
+  overWakeBudget(nowMs = this.now()) {
+    this.trimWakeClaims(nowMs);
+    return this.wakeClaimTimes.length >= WAKE_CLAIMS_PER_MINUTE_BUDGET;
+  }
+  canClaimOnWake(nowMs = this.now()) {
+    if (nowMs < this.rateLimitedUntil) return false;
+    if (this.coalescingRemainingMs(nowMs) > 0) return false;
+    return !this.overWakeBudget(nowMs);
+  }
+  markRateLimited(nowMs = this.now()) {
+    this.rateLimitedUntil = nowMs + WAKE_RATE_LIMIT_POLL_MS;
+    this.lastErrorCode = "rate_limited";
+    this.emitPending("state");
+  }
+  setTopic(topic) {
+    if (this.closed) return;
+    if (!isWakeTopic(topic)) {
+      throw new Error("wake topic is malformed");
+    }
+    if (this.topic === topic) return;
+    const rotated = this.topic !== null;
+    void this.detachChannel();
+    this.topic = topic;
+    if (rotated) {
+      this.topicRotatedAt = new Date(this.now()).toISOString();
+    }
+    this.connect();
+  }
+  next(options) {
+    if (this.waiter !== null) {
+      throw new Error("wake next() already has a waiter");
+    }
+    if (options.signal?.aborted) {
+      return Promise.resolve("deadline");
+    }
+    const nowMs = this.now();
+    if (this.pending !== null) {
+      if (!(this.pending === "wake" && this.wakeClaimPaused(nowMs))) {
+        const reason = this.pending;
+        this.pending = null;
+        return Promise.resolve(reason);
+      }
+    }
+    if (nowMs >= options.until) {
+      return Promise.resolve("deadline");
+    }
+    return new Promise((resolve3) => {
+      const delay2 = Math.max(0, options.until - this.now());
+      const timer2 = setTimeout(() => this.finishWait("deadline"), delay2);
+      const onAbort = () => this.finishWait("deadline");
+      options.signal?.addEventListener("abort", onAbort, { once: true });
+      this.waiter = {
+        resolve: resolve3,
+        timer: timer2,
+        onAbort,
+        signal: options.signal
+      };
+    });
+  }
+  async close() {
+    this.closed = true;
+    this.topic = null;
+    this.finishWait("deadline");
+    await this.detachChannel();
+    try {
+      this.realtime?.disconnect?.();
+    } catch {
+    }
+    this.realtime = null;
+    this.connectionState = "disconnected";
+  }
+  trimWakeClaims(nowMs) {
+    const minuteStart = Math.floor(nowMs / 6e4) * 6e4;
+    this.wakeClaimTimes = this.wakeClaimTimes.filter((ts) => ts >= minuteStart);
+  }
+  /** Client budget or a server 429: do not claim on wake; poll covers the window. */
+  wakeClaimPaused(nowMs) {
+    return nowMs < this.rateLimitedUntil || this.overWakeBudget(nowMs);
+  }
+  emitPending(reason) {
+    if (this.waiter !== null) {
+      if (reason === "wake" && this.wakeClaimPaused(this.now())) {
+        this.pending = "wake";
+        return;
+      }
+      this.finishWait(reason);
+      return;
+    }
+    if (reason === "wake" || this.pending !== "wake") {
+      this.pending = reason;
+    }
+  }
+  finishWait(reason) {
+    const waiter = this.waiter;
+    if (waiter === null) return;
+    this.waiter = null;
+    if (waiter.timer !== null) clearTimeout(waiter.timer);
+    if (waiter.signal && waiter.onAbort) {
+      waiter.signal.removeEventListener("abort", waiter.onAbort);
+    }
+    waiter.resolve(reason);
+  }
+  connect() {
+    if (this.closed || this.topic === null) return;
+    if (this.realtime === null) {
+      this.realtime = this.createRealtime(this.target);
+      void this.realtime.setAuth(this.target.anonKey);
+    }
+    const topic = this.topic;
+    this.connectionState = "connecting";
+    this.lastErrorCode = null;
+    const channel = this.realtime.channel(topic, {
+      config: { private: true }
+    });
+    this.channel = channel;
+    channel.on("broadcast", { event: WAKE_EVENT }, () => {
+      this.lastWakeAt = new Date(this.now()).toISOString();
+      this.emitPending("wake");
+    });
+    channel.subscribe((status) => {
+      this.onSubscribeStatus(status);
+    });
+  }
+  onSubscribeStatus(status) {
+    if (this.closed) return;
+    if (!isSubscribeStatus(status)) return;
+    const wasSubscribed = this.connectionState === "subscribed";
+    if (status === REALTIME_SUBSCRIBE_STATUS.SUBSCRIBED) {
+      this.connectionState = "subscribed";
+      this.subscribedAt = new Date(this.now()).toISOString();
+      this.lastErrorCode = null;
+      if (this.everSubscribed && !wasSubscribed) this.reconnects += 1;
+      this.everSubscribed = true;
+      if (!wasSubscribed) this.emitPending("state");
+      return;
+    }
+    const code = wakeErrorCodeFromSubscribeStatus(status);
+    if (status === REALTIME_SUBSCRIBE_STATUS.CLOSED) {
+      this.connectionState = "disconnected";
+    } else {
+      this.connectionState = "errored";
+    }
+    this.lastErrorCode = code;
+    this.subscribedAt = null;
+    if (wasSubscribed) this.emitPending("state");
+  }
+  async detachChannel() {
+    const channel = this.channel;
+    this.channel = null;
+    if (channel === null) return;
+    try {
+      await channel.unsubscribe();
+    } catch {
+    }
+    try {
+      await this.realtime?.removeChannel?.(channel);
+    } catch {
+    }
+    if (this.channel !== null) return;
+    if (this.connectionState === "subscribed") {
+      this.connectionState = "disconnected";
+      this.subscribedAt = null;
+    }
+  }
+};
+function createWakeSubscriber(options) {
+  return new WakeSubscriber(options);
+}
+
 // src/cloud/arrival-watch.ts
 var UUID_RE11 = /^[0-9a-f]{8}-[0-9a-f]{4}-[1-8][0-9a-f]{3}-[89ab][0-9a-f]{3}-[0-9a-f]{12}$/i;
 var CURSOR_MAX_BYTES = 4 * 1024;
@@ -31102,10 +31432,15 @@ function assertCursorPage(page) {
 async function runArrivalWatch(options) {
   const pollMs = options.pollMs ?? ARRIVAL_WATCH_POLL_MS2;
   const random = options.random ?? Math.random;
+  const now = options.now ?? Date.now;
+  const reconcileMs = options.reconcileMs ?? LISTENER_RECONCILE_POLL_MS;
+  const wake = options.wake;
   let emptyIdleStreak = 0;
   let cursor = await options.store.read();
   let baseline = cursor === void 0;
   let attempt = 0;
+  let reconcileDueAt = now();
+  let pendingKind = "other";
   const cancelled = () => options.signal?.aborted === true;
   const wait = async (ms) => {
     if (options.sleep) {
@@ -31133,6 +31468,52 @@ async function runArrivalWatch(options) {
     if (!hadDelivery) emptyIdleStreak += 1;
     await wait(intervalMs);
   };
+  const pushMode = () => wake !== void 0 && wake.hasTopic && wake.snapshot(now()).mode === LISTENER_WAKE_MODE_PUSH;
+  const waitCapMs = () => {
+    if (pushMode()) return reconcileMs;
+    return nextIdlePollMs(pollMs, emptyIdleStreak, IDLE_POLL_MAX_MS);
+  };
+  const applyWakeHint = (page) => {
+    const topic = page.wake?.topic;
+    if (topic === void 0 || wake === void 0) return;
+    try {
+      wake.setTopic(topic);
+    } catch {
+    }
+  };
+  const waitForTrigger = async (hadDelivery) => {
+    if (hadDelivery) emptyIdleStreak = 0;
+    if (wake === void 0 || !wake.hasTopic) {
+      pendingKind = "other";
+      await idleWait(hadDelivery);
+      return;
+    }
+    const cap = waitCapMs();
+    const until = Math.min(reconcileDueAt, now() + cap);
+    const reason = await wake.next({
+      until,
+      ...options.signal ? { signal: options.signal } : {}
+    });
+    if (cancelled()) return;
+    if (reason === "wake" && pushMode()) {
+      const coalesceMs = wake.coalescingRemainingMs(now());
+      if (coalesceMs > 0) await wait(coalesceMs);
+      pendingKind = pushMode() ? "wake" : "other";
+      return;
+    }
+    pendingKind = "other";
+    if (!hadDelivery && reason === "deadline" && !pushMode()) {
+      emptyIdleStreak += 1;
+    }
+  };
+  const noteCycle = () => {
+    if (pendingKind === "wake") {
+      wake?.noteClaim(now());
+      return;
+    }
+    reconcileDueAt = now() + reconcileMs;
+    wake?.noteReconcile(now());
+  };
   while (!cancelled()) {
     try {
       const page = await options.readPage({
@@ -31141,6 +31522,7 @@ async function runArrivalWatch(options) {
         limit: baseline ? 1 : SIGNAL_FOLLOW_PAGE_LIMIT
       });
       assertCursorPage(page);
+      applyWakeHint(page);
       if (page.signals.some(
         (row) => row.workspace_id !== options.workspaceId || !(signalAddressesAgent(row, options.principalId) || row.to === null && row.to_agent === null)
       )) {
@@ -31158,7 +31540,8 @@ async function runArrivalWatch(options) {
         await options.store.write(cursor);
         baseline = false;
         if (cancelled()) break;
-        await idleWait(false);
+        noteCycle();
+        await waitForTrigger(false);
         continue;
       }
       const emittedSignals = [];
@@ -31174,8 +31557,12 @@ async function runArrivalWatch(options) {
       }
       if (cancelled()) break;
       const fullPage = page.rawCount >= SIGNAL_FOLLOW_PAGE_LIMIT;
-      if (fullPage) await wait(0);
-      else await idleWait(emittedSignals.length > 0);
+      if (fullPage) {
+        await wait(0);
+        continue;
+      }
+      noteCycle();
+      await waitForTrigger(emittedSignals.length > 0);
     } catch (error) {
       if (cancelled()) break;
       const http = followHttpDetails(error);
@@ -37466,336 +37853,6 @@ function pendingMainEntry(signal, principalId, provenance, now, options = {}) {
   }, true);
 }
 
-// src/listener/wake.ts
-var LISTENER_RECONCILE_POLL_MS = 3e5;
-var WAKE_COALESCE_MS = 1e3;
-var WAKE_CLAIMS_PER_MINUTE_BUDGET = 50;
-var WAKE_RATE_LIMIT_POLL_MS = 6e4;
-var REALTIME_SUBSCRIBE_STATUS = {
-  SUBSCRIBED: "SUBSCRIBED",
-  CHANNEL_ERROR: "CHANNEL_ERROR",
-  CLOSED: "CLOSED",
-  TIMED_OUT: "TIMED_OUT"
-};
-var LISTENER_WAKE_MODES = ["push", "poll"];
-var LISTENER_WAKE_MODE_PUSH = LISTENER_WAKE_MODES[0];
-var LISTENER_WAKE_MODE_POLL = LISTENER_WAKE_MODES[1];
-var LISTENER_WAKE_MODE_SET = new Set(
-  LISTENER_WAKE_MODES
-);
-var WAKE_ERROR_CODES = [
-  "channel_error",
-  "closed",
-  "timed_out",
-  "rate_limited",
-  "wake_budget"
-];
-var WAKE_ERROR_CODE_SET = new Set(WAKE_ERROR_CODES);
-var WAKE_ERROR_CODE_WAKE_BUDGET = WAKE_ERROR_CODES.find(
-  (code) => code === "wake_budget"
-);
-var LISTENER_WAKE_STATUS_KEYS = [
-  "mode",
-  "subscribedAt",
-  "reconnects",
-  "lastWakeAt",
-  "lastReconcileAt",
-  "errorCode",
-  "topicRotatedAt",
-  "rateLimited"
-];
-var LISTENER_WAKE_SENSITIVE_KEYS = [
-  "topic",
-  "wakeTopic",
-  "wake_topic"
-];
-function defaultRealtime(target2) {
-  const client = createClient(target2.url, target2.anonKey, {
-    auth: { persistSession: false, autoRefreshToken: false }
-  });
-  return client.realtime;
-}
-function isSubscribeStatus(value) {
-  return value === REALTIME_SUBSCRIBE_STATUS.SUBSCRIBED || value === REALTIME_SUBSCRIBE_STATUS.CHANNEL_ERROR || value === REALTIME_SUBSCRIBE_STATUS.CLOSED || value === REALTIME_SUBSCRIBE_STATUS.TIMED_OUT;
-}
-function wakeErrorCodeFromSubscribeStatus(status) {
-  switch (status) {
-    case REALTIME_SUBSCRIBE_STATUS.CHANNEL_ERROR:
-      return "channel_error";
-    case REALTIME_SUBSCRIBE_STATUS.CLOSED:
-      return "closed";
-    case REALTIME_SUBSCRIBE_STATUS.TIMED_OUT:
-      return "timed_out";
-    default:
-      return null;
-  }
-}
-function emptyListenerWakeStatus() {
-  return {
-    mode: LISTENER_WAKE_MODE_POLL,
-    subscribedAt: null,
-    reconnects: 0,
-    lastWakeAt: null,
-    lastReconcileAt: null,
-    errorCode: null,
-    topicRotatedAt: null,
-    rateLimited: false
-  };
-}
-function listenerWakePersistWorthy(previous, next, lastPersistMs, nowMs) {
-  if (previous === void 0) return true;
-  if (previous.mode !== next.mode || previous.rateLimited !== next.rateLimited || previous.errorCode !== next.errorCode || previous.reconnects !== next.reconnects || previous.subscribedAt !== next.subscribedAt || previous.topicRotatedAt !== next.topicRotatedAt || previous.lastReconcileAt !== next.lastReconcileAt) {
-    return true;
-  }
-  if (previous.lastWakeAt !== next.lastWakeAt) {
-    return nowMs - lastPersistMs >= WAKE_COALESCE_MS;
-  }
-  return false;
-}
-function listenerWakeStatusSentence(wake, pollIntervalMs, lastWakeLabel) {
-  if (wake.mode === LISTENER_WAKE_MODE_PUSH) {
-    const last = lastWakeLabel === null ? "no wake yet" : `last wake ${lastWakeLabel}`;
-    return `${LISTENER_WAKE_MODE_PUSH} (Realtime), ${last}, reconcile every ${formatIdlePollDuration(LISTENER_RECONCILE_POLL_MS)}.`;
-  }
-  if (wake.errorCode === WAKE_ERROR_CODE_WAKE_BUDGET) {
-    return `Subscribed; claims paused until the minute clears (${WAKE_ERROR_CODE_WAKE_BUDGET}); polling every ${formatIdlePollDuration(pollIntervalMs)} meanwhile.`;
-  }
-  const code = wake.errorCode ?? "disconnected";
-  return `${LISTENER_WAKE_MODE_POLL} every ${formatIdlePollDuration(pollIntervalMs)}. Realtime not connected (${code}).`;
-}
-var WakeSubscriber = class {
-  now;
-  target;
-  createRealtime;
-  realtime = null;
-  channel = null;
-  topic = null;
-  waiter = null;
-  pending = null;
-  connectionState = "disconnected";
-  subscribedAt = null;
-  reconnects = 0;
-  lastWakeAt = null;
-  lastReconcileAt = null;
-  lastErrorCode = null;
-  topicRotatedAt = null;
-  rateLimitedUntil = 0;
-  lastClaimAt = 0;
-  wakeClaimTimes = [];
-  closed = false;
-  everSubscribed = false;
-  constructor(options) {
-    this.target = options.target;
-    this.now = options.now ?? Date.now;
-    this.createRealtime = options.createRealtime ?? defaultRealtime;
-  }
-  get state() {
-    return this.connectionState;
-  }
-  get hasTopic() {
-    return this.topic !== null;
-  }
-  snapshot(nowMs = this.now()) {
-    const serverLimited = nowMs < this.rateLimitedUntil;
-    const overBudget = this.overWakeBudget(nowMs);
-    const rateLimited = serverLimited || overBudget;
-    const mode3 = this.connectionState === "subscribed" && !rateLimited ? LISTENER_WAKE_MODE_PUSH : LISTENER_WAKE_MODE_POLL;
-    const errorCode = serverLimited ? "rate_limited" : overBudget ? WAKE_ERROR_CODE_WAKE_BUDGET : this.lastErrorCode;
-    return {
-      mode: mode3,
-      subscribedAt: this.subscribedAt,
-      reconnects: this.reconnects,
-      lastWakeAt: this.lastWakeAt,
-      lastReconcileAt: this.lastReconcileAt,
-      errorCode,
-      topicRotatedAt: this.topicRotatedAt,
-      rateLimited
-    };
-  }
-  noteReconcile(nowMs = this.now()) {
-    this.lastReconcileAt = new Date(nowMs).toISOString();
-  }
-  noteClaim(nowMs = this.now()) {
-    this.lastClaimAt = nowMs;
-  }
-  noteWakeClaim(nowMs = this.now()) {
-    this.noteClaim(nowMs);
-    this.wakeClaimTimes.push(nowMs);
-    this.trimWakeClaims(nowMs);
-  }
-  coalescingRemainingMs(nowMs = this.now()) {
-    if (this.lastClaimAt <= 0) return 0;
-    return Math.max(0, this.lastClaimAt + WAKE_COALESCE_MS - nowMs);
-  }
-  overWakeBudget(nowMs = this.now()) {
-    this.trimWakeClaims(nowMs);
-    return this.wakeClaimTimes.length >= WAKE_CLAIMS_PER_MINUTE_BUDGET;
-  }
-  canClaimOnWake(nowMs = this.now()) {
-    if (nowMs < this.rateLimitedUntil) return false;
-    if (this.coalescingRemainingMs(nowMs) > 0) return false;
-    return !this.overWakeBudget(nowMs);
-  }
-  markRateLimited(nowMs = this.now()) {
-    this.rateLimitedUntil = nowMs + WAKE_RATE_LIMIT_POLL_MS;
-    this.lastErrorCode = "rate_limited";
-    this.emitPending("state");
-  }
-  setTopic(topic) {
-    if (this.closed) return;
-    if (!isWakeTopic(topic)) {
-      throw new Error("wake topic is malformed");
-    }
-    if (this.topic === topic) return;
-    const rotated = this.topic !== null;
-    void this.detachChannel();
-    this.topic = topic;
-    if (rotated) {
-      this.topicRotatedAt = new Date(this.now()).toISOString();
-    }
-    this.connect();
-  }
-  next(options) {
-    if (this.waiter !== null) {
-      throw new Error("wake next() already has a waiter");
-    }
-    if (options.signal?.aborted) {
-      return Promise.resolve("deadline");
-    }
-    const nowMs = this.now();
-    if (this.pending !== null) {
-      if (!(this.pending === "wake" && this.wakeClaimPaused(nowMs))) {
-        const reason = this.pending;
-        this.pending = null;
-        return Promise.resolve(reason);
-      }
-    }
-    if (nowMs >= options.until) {
-      return Promise.resolve("deadline");
-    }
-    return new Promise((resolve3) => {
-      const delay2 = Math.max(0, options.until - this.now());
-      const timer2 = setTimeout(() => this.finishWait("deadline"), delay2);
-      const onAbort = () => this.finishWait("deadline");
-      options.signal?.addEventListener("abort", onAbort, { once: true });
-      this.waiter = {
-        resolve: resolve3,
-        timer: timer2,
-        onAbort,
-        signal: options.signal
-      };
-    });
-  }
-  async close() {
-    this.closed = true;
-    this.topic = null;
-    this.finishWait("deadline");
-    await this.detachChannel();
-    try {
-      this.realtime?.disconnect?.();
-    } catch {
-    }
-    this.realtime = null;
-    this.connectionState = "disconnected";
-  }
-  trimWakeClaims(nowMs) {
-    const minuteStart = Math.floor(nowMs / 6e4) * 6e4;
-    this.wakeClaimTimes = this.wakeClaimTimes.filter((ts) => ts >= minuteStart);
-  }
-  /** Client budget or a server 429: do not claim on wake; poll covers the window. */
-  wakeClaimPaused(nowMs) {
-    return nowMs < this.rateLimitedUntil || this.overWakeBudget(nowMs);
-  }
-  emitPending(reason) {
-    if (this.waiter !== null) {
-      if (reason === "wake" && this.wakeClaimPaused(this.now())) {
-        this.pending = "wake";
-        return;
-      }
-      this.finishWait(reason);
-      return;
-    }
-    if (reason === "wake" || this.pending !== "wake") {
-      this.pending = reason;
-    }
-  }
-  finishWait(reason) {
-    const waiter = this.waiter;
-    if (waiter === null) return;
-    this.waiter = null;
-    if (waiter.timer !== null) clearTimeout(waiter.timer);
-    if (waiter.signal && waiter.onAbort) {
-      waiter.signal.removeEventListener("abort", waiter.onAbort);
-    }
-    waiter.resolve(reason);
-  }
-  connect() {
-    if (this.closed || this.topic === null) return;
-    if (this.realtime === null) {
-      this.realtime = this.createRealtime(this.target);
-      void this.realtime.setAuth(this.target.anonKey);
-    }
-    const topic = this.topic;
-    this.connectionState = "connecting";
-    this.lastErrorCode = null;
-    const channel = this.realtime.channel(topic, {
-      config: { private: true }
-    });
-    this.channel = channel;
-    channel.on("broadcast", { event: WAKE_EVENT }, () => {
-      this.lastWakeAt = new Date(this.now()).toISOString();
-      this.emitPending("wake");
-    });
-    channel.subscribe((status) => {
-      this.onSubscribeStatus(status);
-    });
-  }
-  onSubscribeStatus(status) {
-    if (this.closed) return;
-    if (!isSubscribeStatus(status)) return;
-    const wasSubscribed = this.connectionState === "subscribed";
-    if (status === REALTIME_SUBSCRIBE_STATUS.SUBSCRIBED) {
-      this.connectionState = "subscribed";
-      this.subscribedAt = new Date(this.now()).toISOString();
-      this.lastErrorCode = null;
-      if (this.everSubscribed && !wasSubscribed) this.reconnects += 1;
-      this.everSubscribed = true;
-      if (!wasSubscribed) this.emitPending("state");
-      return;
-    }
-    const code = wakeErrorCodeFromSubscribeStatus(status);
-    if (status === REALTIME_SUBSCRIBE_STATUS.CLOSED) {
-      this.connectionState = "disconnected";
-    } else {
-      this.connectionState = "errored";
-    }
-    this.lastErrorCode = code;
-    this.subscribedAt = null;
-    if (wasSubscribed) this.emitPending("state");
-  }
-  async detachChannel() {
-    const channel = this.channel;
-    this.channel = null;
-    if (channel === null) return;
-    try {
-      await channel.unsubscribe();
-    } catch {
-    }
-    try {
-      await this.realtime?.removeChannel?.(channel);
-    } catch {
-    }
-    if (this.channel !== null) return;
-    if (this.connectionState === "subscribed") {
-      this.connectionState = "disconnected";
-      this.subscribedAt = null;
-    }
-  }
-};
-function createWakeSubscriber(options) {
-  return new WakeSubscriber(options);
-}
-
 // src/listener/runtime.ts
 var LISTENER_PAGE_LIMIT = 100;
 var LISTENER_IDLE_POLL_MS = IDLE_POLL_DEFAULT_MS;
@@ -43652,8 +43709,8 @@ var BOOLEAN_FLAGS = /* @__PURE__ */ new Set([
 ]);
 var UUID_RE23 = /^[0-9a-f]{8}-[0-9a-f]{4}-[1-8][0-9a-f]{3}-[89ab][0-9a-f]{3}-[0-9a-f]{12}$/i;
 function packageVersion() {
-  if ("0.1.59".length > 0) {
-    return "0.1.59";
+  if ("0.1.60".length > 0) {
+    return "0.1.60";
   }
   try {
     const value = JSON.parse(
@@ -46417,6 +46474,7 @@ async function runInboxNotifyCommand(args) {
     principalId
   );
   await acquireArrivalWatchLock(lockPath);
+  const wake = createWakeSubscriber({ target: cloud });
   try {
     const retryNotices = createArrivalRetryNoticePolicy();
     let renderedBearer = selected.bearer;
@@ -46430,6 +46488,7 @@ async function runInboxNotifyCommand(args) {
       principalId,
       store: cursorStore,
       signal: controller.signal,
+      wake,
       readPage: async ({ after, baseline, limit }) => {
         const token = selected.session ? await selected.session.bearer() : selected.bearer;
         renderedBearer = token;
@@ -46490,6 +46549,7 @@ async function runInboxNotifyCommand(args) {
     process.off("SIGINT", stop);
     process.off("SIGTERM", stop);
     httpClient.close();
+    await wake.close();
     await releaseArrivalWatchLock(lockPath);
   }
 }
