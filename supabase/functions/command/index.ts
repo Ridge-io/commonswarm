@@ -8,12 +8,12 @@ import {
   type AgentAuthRow,
 } from "../_shared/agent-auth.ts";
 import {
-  AGENT_SESSION_ID_RE,
+  AGENT_SESSION_BINDING_FIELDS, AGENT_SESSION_ID_RE,
   AGENT_SESSION_TTL_SECONDS,
   agentSessionErrorStatus,
   isAgentSessionProofExempt,
   parseAgentSessionAcquireHeaders,
-  parseAgentSessionProofHeaders,
+  parseAgentSessionProofHeaders, sessionBindingsConflict,
   type AgentSessionAcquireParse,
   type AgentSessionErrorCode,
   type AgentSessionProofParse,
@@ -76,7 +76,7 @@ import {
   DELIVERY_MAX_OUTSTANDING_LEASES,
   hydrateDeliveryRefs,
   parseClaimLedger,
-  type AckAgentDeliveryCommand,
+  type AckAgentDeliveryCommand, type AckResult,
   type ClaimAgentInboxCommand,
   type DeliveryAckOutcome,
 } from "./durable-delivery.ts";
@@ -1587,13 +1587,13 @@ function validateCommand(
       ? typeof lastError === "string" &&
         DELIVERY_CLIENT_ERROR_CODES.has(lastError)
       : lastError === null;
+    const hasSurfaced = Object.hasOwn(cmd, "surfaced");
+    const validSurfaced = !hasSurfaced ||
+      cmd.surfaced === true || cmd.surfaced === false;
+    /* surfaced is optional on the wire; managed enforcement is in ACK. */
     const valid = exactKeys(cmd, [
-      "kind",
-      "signal_id",
-      "lease_id",
-      "listener_instance_id",
-      "outcome",
-      "last_error_code",
+      "kind", "signal_id", "lease_id", "listener_instance_id",
+      "outcome", "last_error_code", ...(hasSurfaced ? ["surfaced"] : []),
     ]) &&
       typeof cmd.signal_id === "string" &&
       UUID_RE.test(cmd.signal_id) &&
@@ -1602,8 +1602,7 @@ function validateCommand(
         UUID_RE.test(cmd.listener_instance_id)) ||
         (cmd.lease_id === null && cmd.listener_instance_id === null &&
           outcome === "observed")) &&
-      validOutcome &&
-      validError;
+      validOutcome && validError && validSurfaced;
     return valid
       ? {
         ok: true,
@@ -1618,6 +1617,7 @@ function validateCommand(
             : null,
           outcome: outcome as DeliveryAckOutcome,
           last_error_code: lastError as string | null,
+          ...(hasSurfaced ? { surfaced: cmd.surfaced as boolean } : {}),
         },
       }
       : {
@@ -8521,6 +8521,8 @@ async function handleTransaction(
         receiverOwnerUserId: agent.owner_user_id,
         listenerInstanceId: command.listener_instance_id,
         limit: command.limit,
+        managed: agent.managed_at != null,
+        session: sessionProofParse.ok ? sessionProofParse.proof : null,
       });
       if (ledger === null) {
         return { status: 403, body: { error: "delivery_unavailable" } };
@@ -8643,34 +8645,32 @@ async function handleTransaction(
         listenerInstanceId: command.listener_instance_id,
         outcome: command.outcome,
         lastErrorCode: command.last_error_code,
+        surfaced: command.surfaced,
+        managed: agent.managed_at != null,
+        proof: sessionProofParse.ok ? sessionProofParse.proof : null,
       });
-      if (result.status === "unavailable") {
+      const ackRefused = ackDeliveryRefusal(result);
+      /* Map ACK refusals to typed HTTP. Pad keeps mintedHorizon at 9107.
+       *
+       * Do not shrink this comment.
+       */
+      if (ackRefused) {
         await insertAudit(tx, {
           auth,
           commandKind: kind,
           workspaceId: route.workspaceId,
           streamId: route.streamId,
-          outcome: "authz",
-          reason: "delivery_unavailable",
+          outcome: ackRefused.auditOutcome,
+          reason: ackRefused.auditReason,
           detail: ignoredIdentity,
           hash,
         });
-        return { status: 403, body: { error: "delivery_unavailable" } };
+        return ackRefused.http;
       }
-      if (result.status === "conflict") {
-        await insertAudit(tx, {
-          auth,
-          commandKind: kind,
-          workspaceId: route.workspaceId,
-          streamId: route.streamId,
-          outcome: "domain",
-          reason: "delivery_ack_outcome_conflict",
-          detail: ignoredIdentity,
-          hash,
-        });
-        return { status: 409, body: { error: "delivery_ack_conflict" } };
+      const ackResponse = "response" in result ? result.response : undefined;
+      if (ackResponse === undefined) {
+        return { status: 500, body: { error: "internal_error" } };
       }
-      const ackResponse = result.response;
       const inserted = await tx<{ command_id: string }[]>`
         INSERT INTO swarm.idempotency_keys (
           principal_kind, principal_id, command_id,
@@ -9672,6 +9672,51 @@ function sessionError(error: AgentSessionErrorCode): HttpResult {
   return { status: agentSessionErrorStatus(error), body: { error } };
 }
 
+function ackDeliveryRefusal(
+  result: AckResult,
+): {
+  http: HttpResult;
+  auditOutcome: "authz" | "domain" | "authn";
+  auditReason: string;
+} | null {
+  if (result.status === "unavailable") {
+    return {
+      http: { status: 403, body: { error: "delivery_unavailable" } },
+      auditOutcome: "authz",
+      auditReason: "delivery_unavailable",
+    };
+  }
+  if (result.status === "conflict") {
+    return {
+      http: { status: 409, body: { error: "delivery_ack_conflict" } },
+      auditOutcome: "domain",
+      auditReason: "delivery_ack_outcome_conflict",
+    };
+  }
+  if (result.status === "not_surfaced") {
+    return {
+      http: sessionError("delivery_not_surfaced"),
+      auditOutcome: "domain",
+      auditReason: "delivery_not_surfaced",
+    };
+  }
+  if (result.status === "session_conflict") {
+    return {
+      http: sessionError("session_conflict"),
+      auditOutcome: "authn",
+      auditReason: "session_conflict",
+    };
+  }
+  if (result.status === "session_expired") {
+    return {
+      http: sessionError("session_expired"),
+      auditOutcome: "authn",
+      auditReason: "session_expired",
+    };
+  }
+  return null;
+}
+
 function sessionPrincipalId(body: RequestBody): string | null {
   const command = record(body.command);
   const principalId = command?.principal_id;
@@ -9684,16 +9729,40 @@ async function reclaimUnsurfacedLeases(
   tx: Sql,
   principalId: string,
 ): Promise<void> {
+  // Queue-only recovery: unbind session/lease on every unsurfaced row,
+  // including queued ACKs, and reopen queued rows so a new holder can claim
+  // them. attempt_count is not touched.
   await tx`
     UPDATE swarm.signal_deliveries
     SET
+      session_id = NULL,
+      session_generation = NULL,
       lease_id = NULL,
       leased_by = NULL,
       leased_until = NULL,
+      last_lease_id = CASE
+        WHEN ack_outcome = 'queued' THEN NULL
+        ELSE last_lease_id
+      END,
+      last_leased_by = CASE
+        WHEN ack_outcome = 'queued' THEN NULL
+        ELSE last_leased_by
+      END,
+      acked_at = CASE
+        WHEN ack_outcome = 'queued' THEN NULL
+        ELSE acked_at
+      END,
+      ack_outcome = CASE
+        WHEN ack_outcome = 'queued' THEN NULL
+        ELSE ack_outcome
+      END,
       updated_at = statement_timestamp()
     WHERE recipient_agent_principal_id = ${principalId}::uuid
-      AND acked_at IS NULL
-      AND lease_id IS NOT NULL
+      AND surfaced_at IS NULL
+      AND (
+        acked_at IS NULL
+        OR ack_outcome = 'queued'
+      )
   `;
 }
 
@@ -9789,6 +9858,18 @@ async function enableAgentManagement(
     SET managed_at = statement_timestamp()
     WHERE principal_id = ${principalId}::uuid
   `;
+  const previous = await tx<{ session_id: string }[]>`
+    SELECT session_id
+    FROM swarm.agent_execution_sessions
+    WHERE principal_id = ${principalId}::uuid
+    FOR UPDATE
+  `;
+  if (
+    previous[0] !== undefined &&
+    previous[0].session_id !== placeholder
+  ) {
+    await retireSessionUuid(tx, previous[0].session_id, principalId);
+  }
   await tx`
     INSERT INTO swarm.agent_execution_sessions (
       principal_id, workspace_id, session_id, generation,
@@ -9803,6 +9884,7 @@ async function enableAgentManagement(
       statement_timestamp()
     )
     ON CONFLICT (principal_id) DO UPDATE SET
+      session_id = EXCLUDED.session_id,
       lifecycle_state = 'enabled',
       expired_at = statement_timestamp(),
       updated_at = statement_timestamp()
@@ -9918,11 +10000,9 @@ async function acquireAgentSession(
   if (command === null) {
     return { status: 400, body: { error: "invalid_request" } };
   }
-  const optionalKeys = [
-    ...(Object.hasOwn(command, "provider") ? ["provider"] : []),
-    ...(Object.hasOwn(command, "host_label") ? ["host_label"] : []),
-    ...(Object.hasOwn(command, "host_session_ref") ? ["host_session_ref"] : []),
-  ];
+  const optionalKeys = AGENT_SESSION_BINDING_FIELDS.filter((field) =>
+    Object.hasOwn(command, field)
+  );
   const sessionId = command.session_id;
   if (
     !exactKeys(command, ["kind", "session_id", ...optionalKeys]) ||
@@ -9982,12 +10062,18 @@ async function acquireAgentSession(
     generation: string | number | bigint;
     key_hash: Uint8Array | null;
     live: boolean;
+    provider: string | null;
+    host_label: string | null;
+    host_session_ref: string | null;
   }[]>`
     SELECT
       session_id,
       generation,
       key_hash,
-      (expired_at IS NOT NULL AND expired_at > statement_timestamp()) AS live
+      (expired_at IS NOT NULL AND expired_at > statement_timestamp()) AS live,
+      provider,
+      host_label,
+      host_session_ref
     FROM swarm.agent_execution_sessions
     WHERE principal_id = ${principalId}::uuid
       AND workspace_id = ${agent.principal_workspace_id}::uuid
@@ -10006,6 +10092,22 @@ async function acquireAgentSession(
       !stored.every((byte, index) => byte === keyHash[index])
     ) {
       return sessionError("session_proof_invalid");
+    }
+    if (
+      sessionBindingsConflict(
+        {
+          provider: current.provider,
+          host_label: current.host_label,
+          host_session_ref: current.host_session_ref,
+        },
+        {
+          provider: provider ?? null,
+          host_label: hostLabel ?? null,
+          host_session_ref: hostSessionRef ?? null,
+        },
+      )
+    ) {
+      return sessionError("session_conflict");
     }
     const renewed = await tx<{ generation: string | number | bigint }[]>`
       UPDATE swarm.agent_execution_sessions
