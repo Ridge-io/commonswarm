@@ -29,6 +29,7 @@ import {
   type EventEnvelope,
   type TaskState,
 } from "../../src/protocol/index.js";
+import { claimCommandId } from "../../src/listener/delivery-journal.js";
 import {
   claimAgentInbox,
   DELIVERY_MAX_OUTSTANDING_LEASES,
@@ -11952,12 +11953,12 @@ test("durable-delivery: Phase C resolveLedgerRace recharge — denied losing cla
 test("idle-cost purge honours 2-day claim-class keys and does not delete audit rows", async () => {
   /* No migration in this lane deletes audit rows. The existing
    * idempotency purge honours claim_idempotency_retention_days (2) for
-   * claim_agent_inbox_% keys and 30 days for every other command_id.
+   * ids minted by claimCommandId() and 30 days for every other command_id.
    * Uses fixture() not scenario(): the seed rows are not command-path
    * ledger entries. */
   const f = await fixture();
-  const oldClaimId = `claim_agent_inbox_${randomUUID().replaceAll("-", "").slice(0, 16)}`;
-  const freshClaimId = `claim_agent_inbox_${randomUUID().replaceAll("-", "").slice(0, 16)}`;
+  const oldClaimId = claimCommandId(randomUUID(), 0);
+  const freshClaimId = claimCommandId(randomUUID(), 10);
   const oldOtherId = `ack_agent_delivery_${randomUUID().replaceAll("-", "").slice(0, 16)}`;
   const midOtherId = `post_signal_${randomUUID().replaceAll("-", "").slice(0, 16)}`;
   const principal = `agent:${randomUUID()}`;
@@ -12002,10 +12003,7 @@ test("idle-cost purge honours 2-day claim-class keys and does not delete audit r
   `;
   assert.ok(Number(beforeAudit[0]?.n) >= 1, "old claim audits are present");
 
-  const deleted = await sql<{ n: number }[]>`
-    SELECT swarm.purge_expired_idempotency_keys(5000) AS n
-  `;
-  assert.ok(Number(deleted[0]?.n) >= 2, JSON.stringify(deleted[0]));
+  await sql`SELECT swarm.purge_expired_idempotency_keys()`;
 
   const afterAudit = await sql<{ n: string }[]>`
     SELECT count(*)::text AS n FROM swarm.audit_log

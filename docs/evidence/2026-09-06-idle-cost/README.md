@@ -28,7 +28,7 @@ Going forward at the measured 24,000 idle polls/seat/day: 3 × 24,000 = 72,000 r
 
 `audit_log` is never purged. No migration in this lane names that table: no trigger change, no index, no DELETE, no config key. Historical idle-poll audit rows (662 MB) stay as a one-time cost. Going forward idle polls write none.
 
-`idempotency_keys` already had `swarm-purge-idempotency-keys`. No second job. One migration (`20260906000001`) sets `claim_idempotency_retention_days = 2` (floor 2) for `command_id LIKE 'claim_agent_inbox_%'` and batches the existing purge. Other keys keep `GREATEST(30, idempotency_retention_days)`. At the measured 24,000 idle polls/seat/day, a 30-day claim-key window would hold 11.52 M rows for 16 seats; a 2-day window holds 768,000. Going forward idle polls write no key, so the 2-day window only bounds persisted (non-empty) claims.
+`idempotency_keys` already had `swarm-purge-idempotency-keys`. No second job. The table has no command-kind column. One migration (`20260906000001`) sets `claim_idempotency_retention_days = 2` (floor 2) for ids that match `claimCommandId()`: `command_id ~ '^claim_[0-9a-f]{32}_[0-9a-z]+$'` (32 lowercase hex, then `_`, then a base-36 ordinal). Other keys keep `GREATEST(30, idempotency_retention_days)`. The predicate `LIKE 'claim_agent_inbox_%'` never matches live client ids, so it is not used. At the measured 24,000 idle polls/seat/day, a 30-day claim-key window would hold 11.52 M rows for 16 seats; a 2-day window holds 768,000. Going forward idle polls write no key, so the 2-day window only bounds persisted (non-empty) claims.
 
 ## file_versions quota query
 
