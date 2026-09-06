@@ -318,15 +318,40 @@ to schedule. So do steps 7 and 8 in one sitting, or not yet.
    — one Google Cloud project holds the OAuth client. Note its name; every link below is scoped
    to whichever project is selected in the console header.
 
+   **Measured 2026-09-06.** The project created for this was named `CommonSwarm`, project id
+   `commonswarm`, project number `130762122221`. The project id and project number are
+   identifiers, not secrets, so they are safe to keep written down here.
+
 2. **Configure the consent screen (branding).**
    <https://console.cloud.google.com/auth/branding>
-   - App name: `CommonSwarm`
-   - User support email: `tom@chartingalpha.com`
+
+   **Corrected 2026-09-06.** On a freshly created project this URL opens a combined "Project
+   configuration" wizard, not the Branding page described below. The wizard has four panes:
+   App Information, Audience, Contact Information, Finish. It sets the app name and the
+   support email. It does **not** have fields for the home page, privacy policy, terms, or
+   authorized domains. Those four live only on the Branding page, and that page is reachable
+   only after the wizard finishes. On a fresh project, work through the wizard first:
+
+   - **App Information pane:** App name `CommonSwarm`, user support email
+     `tom@chartingalpha.com`.
+   - **Audience pane:** this is the same choice as step 3 below. Making it here satisfies
+     step 3 as well; do not set it twice.
+   - **Contact Information pane:** developer contact email `tom@chartingalpha.com`.
+   - **Finish pane:** agree and continue.
+
+   Once the wizard finishes, the console returns to an ordinary Branding page, and only then do
+   these fields exist:
+
    - App home page: `https://commonswarm.com`
    - Privacy policy: `https://commonswarm.com/privacy`
    - Terms of service: `https://commonswarm.com/terms`
    - **Authorized domains:** add `commonswarm.com`. This one entry covers both the site and the
      API host, because `api.commonswarm.com` is a subdomain of it.
+
+   **Was:** the step described a single Branding page holding all seven fields (app name,
+   support email, home page, privacy, terms, authorized domains) at once. That is still what
+   the Branding page looks like on a project whose consent screen already exists; the wizard
+   above is what a project shows the FIRST time.
 
    **Google will not accept an authorized domain it cannot see you own.** The domain has to be
    verified in Google Search Console first, under the same Google account, at
@@ -334,7 +359,24 @@ to schedule. So do steps 7 and 8 in one sitting, or not yet.
    complete the DNS TXT record it asks for. Cloudflare holds the DNS for this domain. If step 2
    rejects the domain with no explanation, this is why.
 
+   **Corrected 2026-09-06.** Search Console offers two verification paths for this domain, not
+   one:
+
+   - **One-click verification.** Google detects the domain's DNS is hosted on Cloudflare and
+     offers to verify it in one click, through an OAuth grant to the Cloudflare account that
+     holds the DNS. No manual record.
+   - **Manual TXT record.** Switch the "Instructions for" selector on the verification page
+     from Cloudflare to **Any DNS provider**. Only then does Search Console show the DNS TXT
+     record to add by hand. This is the path described above, and it is the path this runbook
+     wants: it needs no OAuth grant to a third party, so it can be carried out without asking
+     for a permission that reaches outside this task.
+
 3. **Set the audience.** <https://console.cloud.google.com/auth/audience>
+
+   **Corrected 2026-09-06.** On a fresh project this is the Audience pane inside step 2's
+   wizard, set there rather than by a separate visit to this URL. On a project whose consent
+   screen already exists, this URL opens its own page with the same choice, as below.
+
    - User type: **External**.
    - Publishing status: **Publish app** (that is, "In production"). Publish it because this is
      a public product, not because *Testing* would block sign-in: with only the basic identity
@@ -402,8 +444,37 @@ to schedule. So do steps 7 and 8 in one sitting, or not yet.
      Redirect URLs, because that is the list `redirect_to` is checked against. That is a
      Supabase setting, not a Google one, and this checklist does not change it.
 
-   - Press **Create** and copy the **Client ID** and **Client secret** before closing the
-     dialog. The secret is shown once.
+   - Press **Create**. Google shows the **Client ID** and the **Client secret** once, inside
+     the creation dialog, and never again.
+
+     **Corrected 2026-09-06.** "Copy it before closing the dialog" assumes a human is at the
+     keyboard. It strands the secret when an AGENT runs this step: the agent has nowhere to
+     hand a value off to, and there is no page to go back and read the secret from afterward.
+     Split the step by who is running it:
+
+     - **A human is running this step:** copy both values out of the dialog while it is still
+       open, and paste the Client secret straight into Supabase in step 7, in the same
+       sitting. Do not write the secret into this file, into a chat message, or into any file
+       in this repo.
+     - **An agent is running this step:** stop right after pressing Create. Report "client
+       created" and hand off to a human for the secret, naming the client (`CommonSwarm web`)
+       and its Client ID so the human can find the right dialog, or use the recovery path
+       below if the dialog is already gone. Do not attempt to read or relay a secret you never
+       captured.
+
+     **Recovery, if the dialog was already closed with the secret unread.** The client's own
+     page (<https://console.cloud.google.com/auth/clients>, then the client name) cannot show
+     the original secret again: it says "Viewing and downloading client secrets is no longer
+     available." Press **+ Add secret** instead. This mints a REPLACEMENT secret, shown once,
+     the same way as the first. Paste the replacement into Supabase (step 7) and save, then,
+     on the same client page, disable the orphaned original secret so a lost or leaked copy of
+     it cannot still be used.
+
+     **Measured 2026-09-06.** Client name `CommonSwarm web`, Client ID
+     `130762122221-eedjhi9gfdo519pdam03var7nunbbb6e.apps.googleusercontent.com`. The Client ID
+     is an identifier, not a secret: safe to write down, paste into chat, or commit. The
+     Client secret is a credential and must never be written into this repo, in any file,
+     under any heading.
 
 ### The copy that says GitHub
 
@@ -506,9 +577,23 @@ to schedule. So do steps 7 and 8 in one sitting, or not yet.
 
 7. **Enable the provider.**
    <https://supabase.com/dashboard/project/ukezjcnxjvkpkeezxaew/auth/providers?provider=Google>
+
+   **Corrected 2026-09-06.** This step assumed the Google provider page would be blank. It is
+   not. **Measured:** the page already held a DEAD client from an abandoned project called
+   "gluco-tracker", with a Client Secret already set and the **Enable** toggle off. Before
+   pasting anything:
+
+   - Expect existing values in *Client IDs* and *Client Secret (for OAuth)*. Do not assume the
+     fields are empty.
+   - **Confirm before overwriting.** Supabase stores exactly ONE secret per provider. Pasting
+     the new Client ID and secret replaces the gluco-tracker ones outright; there is no way to
+     hold both at once. Confirm first that nothing still depends on the gluco-tracker client,
+     because overwriting it will break that.
+
    - Toggle **Enable Sign in with Google** on.
-   - Paste the **Client ID** into *Client IDs*.
-   - Paste the **Client secret** into *Client Secret (for OAuth)*.
+   - Paste the **Client ID** into *Client IDs*, replacing whatever is already there.
+   - Paste the **Client secret** into *Client Secret (for OAuth)*, replacing whatever is
+     already there.
    - Leave *Skip nonce check* **off**. It is only for native One Tap, which we do not use.
    - Save.
    - **Confirm it took, from outside the dashboard:**
@@ -519,7 +604,11 @@ to schedule. So do steps 7 and 8 in one sitting, or not yet.
      # want: "google":true      (it reads "google":false today)
      ```
 
-     Reading `"github":true` in the same output is the positive control that the probe works.
+     **Corrected 2026-09-06, stated plainly.** Reading `"github":true` in the same output is
+     not a step to perform. GitHub is already configured and enabled on this project, so
+     `"github":true` coming back is a POSITIVE CONTROL: it shows the probe reached a real
+     settings answer, not a cached or empty one. `"google":true` is the actual result being
+     checked.
 
    ⚠️ `ukezjcnxjvkpkeezxaew` **is production.** There is no separate CommonSwarm production
    project. This step is live the moment it is saved: the Auth API accepts `?provider=google`
