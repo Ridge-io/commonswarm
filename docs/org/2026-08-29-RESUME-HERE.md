@@ -2718,3 +2718,10 @@ ruling makes moot. Open for CSwarmStrategist: the Grok worker seats (CDReporter 
 `f9aaada4` seats on toms-m1-max-mbp) still answer headlessly; whether each has a live session to wake
 (and how a Grok TUI is woken: the `swarm-awareness` hook) is a roadmap decision, not mine. Memory file
 `signals-wake-existing-sessions` records the rule.
+**Route main applied (10:4x UTC):** Joist on the Air `ready 0.1.60 route main mode push` with no Claude
+sign-in (the listener starts no model on route main). Mini: CSwarmDevLead, Finisher, MrSentry,
+Strategist(PE) `ready` on route main (their sessions carry the hook: "ATTENDED: yes"). CSwarmStrategist's
+session has no hook for its principal, so `--route main` was refused (`listen_unattended_refused`); it
+runs `--route main --allow-unattended`: signals queue in `pending-for-main.json` and its `inbox --notify`
+watcher + Monitor loop is the wake path. Nothing headless answers for any Claude seat now. The Grok seats
+(CDReporter; four on toms-m1-max-mbp) still run the worker route pending the Strategist's decision.
