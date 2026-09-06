@@ -223,6 +223,7 @@ import {
 import {
   acquireArrivalWatchLock,
   arrivalNotification,
+  arrivalWatchLockHeld,
   arrivalWatchLockPath,
   createArrivalRetryNoticePolicy,
   fileArrivalCursorStore,
@@ -267,17 +268,13 @@ import {
 } from "./host/version.js";
 import {
   classifyClaudeCanaryFailure,
-  ClaudeListenerModel,
-  CodexListenerModel,
   AgentActivityEndpointTransport,
   FileBrainDigestStore,
   FileHookSurfaceStore,
   FileListenerEffectStore,
   FilePendingMainQueue,
-  GrokListenerModel,
   ListenerStartupError,
   ListenerActivityController,
-  OpenCodeListenerModel,
   effectiveListenerStatus,
   listenerPaths,
   defaultListenerStateDirectory,
@@ -299,8 +296,18 @@ import {
   writeListenerCredentialState,
   LISTENER_DELIVERY_FAILING_THRESHOLD,
   LISTENER_THROUGHPUT_LAPSE_RATIO,
-  LISTENER_DEFER_OVER_MAX,
-  LISTENER_DEFER_OVER_MIN,
+  LISTENER_ROUTE_MODES,
+  listenerRouteUsage,
+  listenerRouteRefusedSentence,
+  listenerDeferOverRefusedSentence,
+  listenerLegacyRouteSentence,
+  listenerUnattendedRefusedMessage,
+  listenerAttendanceRemediesSentence,
+  listenerAttendingSurfaces,
+  listenerAttendingSentence,
+  LISTENER_NONE_ATTENDING_SENTENCE,
+  isLiveListenerRouteMode,
+  NullListenerModel,
   emptyListenerReadHealth,
   summarizeListenerReadHealth,
   listenerWakeStatusSentence,
@@ -316,6 +323,7 @@ import {
   type ListenerSenderProvenanceContext,
   type ListenerStatus,
   type ListenerRouteMode,
+  type ListenerAttendanceSurface,
 } from "./listener/index.js";
 import { ListenerHttpClient } from "./listener/http-client.js";
 import {
@@ -563,7 +571,7 @@ Usage:
   cswarm brain get <topic>[@<version>] [--version <n>] [--url <url> --anon-key <key>] [--workspace-id <uuid>] ${agentCredential} [--json]
   cswarm brain put <topic> [<markdown-path>] [--url <url> --anon-key <key>] [--workspace-id <uuid>] ${agentCredential} [--if-version <n>] [--json]  # without a path, reads Markdown from stdin; --if-version refuses the write unless the live version is still <n>
   cswarm feedback "<text>" --kind bug|idea|friction [--about <ref>] [--url <url> --anon-key <key>] [--workspace-id <uuid>] ${agentCredential} [--json]
-  cswarm listen start ${requiredAgentCredential} [--url <url> --anon-key <key>] --workspace-id <uuid> --provider grok|opencode|claude|codex [--cwd <absolute-path>] [--model <model>] [--effort <level>] [--permissions deny|allow] [--grok-executable <path>] [--opencode-executable <path>] [--claude-executable <path>] [--codex-executable <path>] [--turn-budget <duration>] [--poll-interval <duration>] [--route worker|main|split] [--defer-over <chars>] [--allow-unattended] [--foreground] [--json]
+  cswarm listen start ${requiredAgentCredential} [--url <url> --anon-key <key>] --workspace-id <uuid> --provider grok|opencode|claude|codex [--cwd <absolute-path>] [--model <model>] [--effort <level>] [--permissions deny|allow] [--grok-executable <path>] [--opencode-executable <path>] [--claude-executable <path>] [--codex-executable <path>] [--turn-budget <duration>] [--poll-interval <duration>] [--route ${listenerRouteUsage()}] [--allow-unattended] [--foreground] [--json]
   cswarm listen canary ${requiredAgentCredential} [--url <url> --anon-key <key>] --workspace-id <uuid> [--state-dir <path>] [--wait <seconds>] [--json]
   cswarm listen status ${agentCredential} [--url <url> --anon-key <key>] --workspace-id <uuid> [--principal-id <uuid>] [--json]
   cswarm listen stop ${agentCredential} [--url <url> --anon-key <key>] --workspace-id <uuid> [--principal-id <uuid>] [--json]
@@ -655,31 +663,28 @@ refused locally before any network call, so compose within the limit.
 
 ${idlePollHelpSentence()}
 
-listen start --turn-budget bounds ONE worker prompt turn (default 10m): how long
-the worker may think and use tools on a single message before the turn times out
-and durable delivery retries it. A whole number plus s, m, or h (for example
-90s, 5m, 1h), at least 30s and at most 60m. Each turn is additionally clamped
-to the live credential's remaining lifetime minus 60s, after renewing it when
-due — a turn never outlives its credential. Right after a rotation the full
-budget is available up to the token TTL minus 60s (about 59m on the default 1h
-TTL); a turn that lands just before a rotation can be clamped to the ~5m
-renewal lead, and if it times out there, durable delivery retries it on the
-fresh credential. The same budget also bounds how long ONE delivery may hold the
-worker seat across its retries: when it is spent the listener hands the seat
-back and claims the next delivery. After the lease ends the service either
+listen start --turn-budget bounds how long ONE claimed delivery may hold this
+listener before it is handed back (default 10m). The listener never starts a
+model, so this is not thinking-time for a worker. A whole number plus s, m, or h
+(for example 90s, 5m, 1h), at least 30s and at most 60m. Each hold is additionally
+clamped to the live credential's remaining lifetime minus 60s, after renewing it
+when due. Right after a rotation the full budget is available up to the token
+TTL minus 60s (about 59m on the default 1h TTL); a hold that lands just before a
+rotation can be clamped to the ~5m renewal lead. After the lease ends the service either
 delivers the released one again or terminates it.
 
-listen start --route worker|main|split chooses where directed messages go. worker
-is the unchanged default. main queues every ask or note for the interactive session.
-split queues messages whose body is longer than --defer-over <chars>; the bound is
-1..10000 and an equal-length message stays on the worker path. main and split require
-a principal-scoped Claude hook or prior hook surface. --allow-unattended accepts the
-risk explicitly. Run cswarm hook check
+listen start --route ${listenerRouteUsage()} is the only live route: the listener
+claims deliveries into pending-for-main.json and never starts a model. A listener
+never answers for a session; the seat's own session reads the queue. Start is accepted
+when a principal-scoped hook or a running cswarm inbox --notify watcher for the same
+principal is present on this host. --allow-unattended accepts a queue that may not
+wake a session. --route worker, --route split, and --defer-over are refused. Run
+cswarm hook check
 --principal-id <uuid> to surface that agent's queued messages. A bare check works only
 when the state directory holds one principal. hook check has its own 3s ceiling, exits 0
 on every outcome, and skips network checks made within --cooldown seconds (default 30).
 listen canary posts one self-addressed note, waits at most --wait seconds (default 10),
-and reports accepted, claimed, queued/worker, surfaced, and observed as separate hops.
+and reports accepted, claimed, queued, surfaced, and observed as separate hops.
 hook install claude prints principal-scoped UserPromptSubmit JSON by default. --write changes
 <project>/.claude/settings.local.json, which applies only to Claude Code sessions started in
 that project. Inside a git repository, the local file must be ignored. --user opts in to
@@ -2622,40 +2627,19 @@ export function listenerPollIntervalMs(value: string | undefined): number {
   return parseIdlePollIntervalMs(value);
 }
 
-/** Parse the public route pair before credentials or network work. */
+/** Parse the public route before credentials or network work. */
 export function listenerRouteConfiguration(
   routeValue: string | undefined,
   deferOverValue: string | undefined,
 ): { routeMode: ListenerRouteMode; deferOverChars: number | null } {
-  const routeMode = routeValue ?? "worker";
-  if (routeMode !== "worker" && routeMode !== "main" && routeMode !== "split") {
-    throw new Error("--route must be worker, main, or split");
+  if (deferOverValue !== undefined) {
+    throw new Error(listenerDeferOverRefusedSentence());
   }
-  if (routeMode !== "split") {
-    if (deferOverValue !== undefined) {
-      throw new Error("--defer-over is only valid with --route split");
-    }
-    return { routeMode, deferOverChars: null };
+  const routeMode = routeValue ?? LISTENER_ROUTE_MODES[0];
+  if (!isLiveListenerRouteMode(routeMode)) {
+    throw new Error(listenerRouteRefusedSentence(routeMode));
   }
-  if (deferOverValue === undefined) {
-    throw new Error("--route split requires --defer-over <chars>");
-  }
-  if (!/^\d+$/.test(deferOverValue)) {
-    throw new Error(
-      `--defer-over must be an integer from ${LISTENER_DEFER_OVER_MIN} to ${LISTENER_DEFER_OVER_MAX}`,
-    );
-  }
-  const deferOverChars = Number(deferOverValue);
-  if (
-    !Number.isSafeInteger(deferOverChars) ||
-    deferOverChars < LISTENER_DEFER_OVER_MIN ||
-    deferOverChars > LISTENER_DEFER_OVER_MAX
-  ) {
-    throw new Error(
-      `--defer-over must be an integer from ${LISTENER_DEFER_OVER_MIN} to ${LISTENER_DEFER_OVER_MAX}`,
-    );
-  }
-  return { routeMode, deferOverChars };
+  return { routeMode, deferOverChars: null };
 }
 
 /** Post-turn work (the ack, the reply post, the renewal request itself) must fit between turn end and credential expiry. */
@@ -4545,6 +4529,18 @@ export interface ListenerAttendanceEvidence {
   pendingForMainOldestAt: string | null;
   hookSurfaceExists: boolean;
   hookSurfaceAdvanced: boolean;
+  watcherLockHeld?: boolean;
+  attendingSurfaces?: ListenerAttendanceSurface[];
+}
+
+function emptyAttendanceEvidence(): ListenerAttendanceEvidence {
+  return {
+    pendingForMainOldestAt: null,
+    hookSurfaceExists: false,
+    hookSurfaceAdvanced: false,
+    watcherLockHeld: false,
+    attendingSurfaces: [],
+  };
 }
 
 function listenerAttendanceState(
@@ -4557,16 +4553,17 @@ function listenerAttendanceState(
   handled: boolean | null;
   handledState: "handled" | "not_handled" | "not_yet_measured";
 } {
-  const routeMode = status.routeMode ?? "worker";
   const pending = status.pendingForMainCount ?? 0;
   const connected = status.state === "ready";
-  const attendanceState = routeMode === "worker"
-    ? "not_required"
-    : pending > 0
+  const attendingSurfaces = evidence.attendingSurfaces ?? [];
+  const hasSurface = attendingSurfaces.length > 0;
+  const attendanceState = pending > 0
     ? "unattended"
-    : evidence.hookSurfaceAdvanced
+    : hasSurface && evidence.hookSurfaceAdvanced
     ? "attended"
-    : "unproven";
+    : hasSurface
+    ? "unproven"
+    : "unattended";
   const attended = attendanceState === "attended"
     ? true
     : attendanceState === "unattended"
@@ -4585,7 +4582,9 @@ function listenerAttendanceState(
       LISTENER_DELIVERY_FAILING_THRESHOLD;
   const handled = pending > 0
     ? false
-    : routeMode !== "worker" || lastAckOutcome === null
+    : lastAckOutcome === null
+    ? null
+    : lastAckOutcome === "queued"
     ? null
     : deliveryFailing
     ? false
@@ -4608,7 +4607,7 @@ function listenerAttendanceState(
 }
 
 function listenerAttendanceRemedy(principalId: string): string {
-  return `cswarm hook install claude --principal-id ${principalId} --write, then start a fresh session. Or restart the listener with --route worker.`;
+  return listenerAttendanceRemediesSentence(principalId);
 }
 
 interface ListenerLapseNotice {
@@ -4787,11 +4786,7 @@ function providerRestartRequired(
 export function listenerStatusJson(
   status: ListenerStatus,
   permissionMode?: ListenerPermissionMode,
-  evidence: ListenerAttendanceEvidence = {
-    pendingForMainOldestAt: null,
-    hookSurfaceExists: false,
-    hookSurfaceAdvanced: false,
-  },
+  evidence: ListenerAttendanceEvidence = emptyAttendanceEvidence(),
   nowMs: number = Date.now(),
   installed: ListenerProviderInstallEvidence | null = null,
 ): Record<string, unknown> {
@@ -4828,6 +4823,14 @@ export function listenerStatusJson(
     ...attendance,
     hookSurfaceExists: evidence.hookSurfaceExists,
     hookSurfaceAdvanced: evidence.hookSurfaceAdvanced,
+    watcherLockHeld: evidence.watcherLockHeld ?? false,
+    attendingSurfaces: evidence.attendingSurfaces ?? [],
+    attendingSurface: (evidence.attendingSurfaces ?? []).length === 0
+      ? "none"
+      : (evidence.attendingSurfaces ?? []).length === 1
+      ? evidence.attendingSurfaces![0]
+      : (evidence.attendingSurfaces ?? []).join("+"),
+    attendingSentence: listenerAttendingSentence(evidence.attendingSurfaces ?? []),
     pendingForMainOldestAt: evidence.pendingForMainOldestAt,
     pendingForMainOldestAgeMs: evidence.pendingForMainOldestAt === null
       ? null
@@ -4913,11 +4916,7 @@ export function listenerStatusJson(
 
 export function renderListenerStatus(
   status: ListenerStatus,
-  evidence: ListenerAttendanceEvidence = {
-    pendingForMainOldestAt: null,
-    hookSurfaceExists: false,
-    hookSurfaceAdvanced: false,
-  },
+  evidence: ListenerAttendanceEvidence = emptyAttendanceEvidence(),
   nowMs: number = Date.now(),
   installed: ListenerProviderInstallEvidence | null = null,
 ): string {
@@ -4939,13 +4938,14 @@ export function renderListenerStatus(
       ? `Listener WARNING for agent ${status.principalId}: ${unattendedCount}.`
       : `Listener ${status.state} for agent ${status.principalId}.`,
     `CONNECTED: ${attendance.connected ? "yes" : "no"}. Transport state is ${status.state}.`,
+    listenerAttendingSentence(evidence.attendingSurfaces ?? []),
     `ATTENDED: ${
       attendance.attendanceState === "attended"
         ? "yes. The session hook has surfaced messages on this host"
         : attendance.attendanceState === "unattended"
-        ? "no. The main-session queue is not draining"
-        : attendance.attendanceState === "not_required"
-        ? "not required for the worker route"
+        ? (evidence.attendingSurfaces ?? []).length === 0
+          ? `no. ${LISTENER_NONE_ATTENDING_SENTENCE.replace(/\.$/, "")}`
+          : "no. The main-session queue is not draining"
         : "not yet proven on this host"
     }.`,
     `HANDLED: ${
@@ -4978,7 +4978,6 @@ export function renderListenerStatus(
     status.lastSignalId
       ? pendingForMainCount > 0
         ? `Last claimed and queued signal: ${status.lastSignalId}. It is not handled yet.`
-        : routeMode === "worker"
         // Keyed on the OUTCOME, never on handledState: an `observed` note is not
         // a failed delivery, and during a failure run it is not evidence of
         // handling either, so it gets the neutral sentence naming its outcome.
@@ -4989,7 +4988,7 @@ export function renderListenerStatus(
         // written by a listener older than this CLI carries lastAckAt with no
         // outcome -- every fleet listener at the 0.1.51 upgrade, and any new CLI
         // reading a running 0.1.50 listener -- and DID acknowledge something.
-        ? status.lastAckAt === null
+        : status.lastAckAt === null
           ? `Last listener signal: ${status.lastSignalId}. No delivery acknowledgement is recorded.`
           : status.lastAckOutcome === null
           ? `Last listener signal: ${status.lastSignalId}. An acknowledgement was recorded at ${status.lastAckAt}; its outcome was not recorded.`
@@ -5001,7 +5000,6 @@ export function renderListenerStatus(
               deliveryFailureRun < LISTENER_DELIVERY_FAILING_THRESHOLD
           ? `Last handled signal: ${status.lastAckSignalId}.`
           : `Last acknowledged signal: ${status.lastAckSignalId}. Its outcome was ${status.lastAckOutcome}.`
-        : `Last listener signal: ${status.lastSignalId}. Local status does not prove its final observed receipt.`
       : "No signal has been handled yet.",
     status.lastErrorCode
       ? `Last status code: ${status.lastErrorCode}.`
@@ -5199,39 +5197,31 @@ export function renderListenerStatus(
         }.`,
     );
   }
-  lines.push(
-    routeMode === "split"
-      ? `Ask route: split; bodies over ${status.deferOverChars} characters wait for this interactive session.`
-      : routeMode === "main"
-      ? "Ask route: main; directed asks wait for this interactive session."
-      : "Ask route: worker (default).",
-  );
-  if (routeMode !== "worker") {
-    lines.push(`Asks waiting for this session: ${pendingForMainCount}.`);
-    lines.push(`Routed asks dropped from the overflow queue: ${droppedForMainCount}.`);
-    if (droppedForMainCount > 0) {
+  lines.push(listenerLegacyRouteSentence(routeMode));
+  lines.push(`Asks waiting for this session: ${pendingForMainCount}.`);
+  lines.push(`Routed asks dropped from the overflow queue: ${droppedForMainCount}.`);
+  if (droppedForMainCount > 0) {
+    lines.push(
+      "The signals remain in the inbox. Recover them with: cswarm inbox",
+    );
+  }
+  if (pendingForMainCount > 0) {
+    lines.push(
+      `WARNING [listener_unattended_main_queue]: ${unattendedCount}. The oldest was queued ${
+        evidence.pendingForMainOldestAt === null
+          ? "an unknown time"
+          : relativeAge(evidence.pendingForMainOldestAt, nowMs)
+      }${
+        evidence.pendingForMainOldestAt === null
+          ? ""
+          : ` (queued at ${evidence.pendingForMainOldestAt})`
+      }.`,
+    );
+    lines.push(`Next: ${listenerAttendanceRemedy(status.principalId)}`);
+    if (status.state === "stopped" || status.state === "failed") {
       lines.push(
-        "The signals remain in the inbox. Recover them with: cswarm inbox",
+        `${pendingForMainCount} ${pendingForMainCount === 1 ? "message is" : "messages are"} also stranded because this listener is not running. Restart it by piping the same agent credential into: ${listenerRestartCommand(status)}`,
       );
-    }
-    if (pendingForMainCount > 0) {
-      lines.push(
-        `WARNING [listener_unattended_main_queue]: ${unattendedCount}. The oldest was queued ${
-          evidence.pendingForMainOldestAt === null
-            ? "an unknown time"
-            : relativeAge(evidence.pendingForMainOldestAt, nowMs)
-        }${
-          evidence.pendingForMainOldestAt === null
-            ? ""
-            : ` (queued at ${evidence.pendingForMainOldestAt})`
-        }.`,
-      );
-      lines.push(`Next: ${listenerAttendanceRemedy(status.principalId)}`);
-      if (status.state === "stopped" || status.state === "failed") {
-        lines.push(
-          `${pendingForMainCount} ${pendingForMainCount === 1 ? "message is" : "messages are"} also stranded because this listener is not running. Restart it by piping the same agent credential into: ${listenerRestartCommand(status)}`,
-        );
-      }
     }
   }
   if (
@@ -5775,81 +5765,16 @@ async function runConfiguredListener(options: {
       lastWorkerStderrTail = tail.length > 0 ? tail : null;
     };
   };
-  // A factory, not a value: the supervisor may run the listener more than once
-  // and a model is single-use (runListenerRuntime closes it on every exit, and
-  // every adapter throws "listener model is closed" once closed). Constructing
-  // one here and capturing it would make every restart fail instantly.
   const newModel = (
-    onCanaryAttempt: ListenerCanaryAttemptCallback,
-    events: ListenerActivityController["events"],
-  ) => {
-    providerVersionNotice = null;
-    return options.provider === "opencode"
-    ? new OpenCodeListenerModel({
-      cwd: options.cwd,
-      permissionMode: options.permissionMode,
-      promptTimeoutMs: resolveTurnBudgetMs,
-      onWorkerStderrTail: newWorkerStderrTailSink(),
-      onCanaryAttempt,
-      onVersionNotice,
-      events,
-      ...(options.model ? { model: options.model } : {}),
-      ...(options.opencodeExecutable
-        ? { executable: options.opencodeExecutable }
-        : options.executable
-        ? { executable: options.executable }
-        : {}),
-    })
-    : options.provider === "claude"
-    ? new ClaudeListenerModel({
-      cwd: options.cwd,
-      permissionMode: options.permissionMode,
-      promptTimeoutMs: resolveTurnBudgetMs,
-      onWorkerStderrTail: newWorkerStderrTailSink(),
-      onCanaryAttempt,
-      onRuntimeNotice: onClaudeRuntimeNotice,
-      onVersionNotice,
-      events,
-      ...(options.claudeExecutable
-        ? { executable: options.claudeExecutable }
-        : options.executable
-        ? { executable: options.executable }
-        : {}),
-    })
-    : options.provider === "codex"
-    ? new CodexListenerModel({
-      cwd: options.cwd,
-      permissionMode: options.permissionMode,
-      promptTimeoutMs: resolveTurnBudgetMs,
-      onWorkerStderrTail: newWorkerStderrTailSink(),
-      onCanaryAttempt,
-      onVersionNotice,
-      events,
-      ...(options.codexExecutable
-        ? { executable: options.codexExecutable }
-        : options.executable
-        ? { executable: options.executable }
-        : {}),
-    })
-    : new GrokListenerModel({
-      cwd: options.cwd,
-      permissionMode: options.permissionMode,
-      promptTimeoutMs: resolveTurnBudgetMs,
-      onWorkerStderrTail: newWorkerStderrTailSink(),
-      onCanaryAttempt,
-      onVersionNotice,
-      events,
-      ...(options.model ? { model: options.model } : {}),
-      ...(options.effort ? { effort: options.effort } : {}),
-      ...(options.executable ? { executable: options.executable } : {}),
-    });
-  };
+    _onCanaryAttempt: ListenerCanaryAttemptCallback,
+    _events: ListenerActivityController["events"],
+  ) => new NullListenerModel();
   const onProcessSignal = () => {
     void stopListener(paths);
   };
   let selectedJournal: ListenerDeliveryJournal | undefined;
   let selectedListenerInstanceId: string | undefined;
-  const routeMode = options.routeMode ?? "worker";
+  const routeMode = options.routeMode ?? "main";
   const deferOverChars = options.deferOverChars ?? null;
   const pendingMainQueue = new FilePendingMainQueue(paths.instanceDirectory);
   process.on("SIGINT", onProcessSignal);
@@ -6046,9 +5971,14 @@ async function runListenStart(args: Arguments): Promise<void> {
     );
   }
   if (
-    routing.routeMode !== "worker" &&
     !args.has("allow-unattended") &&
-    !(await listenerHasAttendanceSurface(paths.instanceDirectory, cwd, principalId))
+    !(await listenerHasAttendanceSurface({
+      instanceDirectory: paths.instanceDirectory,
+      cwd,
+      principalId,
+      cloud,
+      workspaceId,
+    }))
   ) {
     throw new ListenerUnattendedRefusedError(principalId);
   }
@@ -6126,9 +6056,6 @@ async function runListenStart(args: Arguments): Promise<void> {
         provider,
         nodeExecArgv: process.execArgv,
         route: routing.routeMode,
-        ...(routing.deferOverChars === null
-          ? {}
-          : { deferOver: routing.deferOverChars }),
         ...(stateDirectory ? { stateDirectory } : {}),
         ...(args.optional("model") ? { model: args.required("model") } : {}),
         ...(args.optional("effort") ? { effort: args.required("effort") } : {}),
@@ -6201,50 +6128,35 @@ async function runListenStart(args: Arguments): Promise<void> {
       )}. ${listenerProviderIdentitySummary(status)}`,
     );
   }
-  let attendanceEvidence: ListenerAttendanceEvidence = {
-    pendingForMainOldestAt: null,
-    hookSurfaceExists: false,
-    hookSurfaceAdvanced: false,
+  const recordedPendingStart = status.pendingForMainCount ?? 0;
+  const recordedDroppedStart = status.droppedForMainCount ?? 0;
+  const queueStatsStart = await unsurfacedPendingMainStats(
+    paths.instanceDirectory,
+    { count: recordedPendingStart, droppedCount: recordedDroppedStart },
+  );
+  status = {
+    ...status,
+    pendingForMainCount: queueStatsStart.count,
+    droppedForMainCount: queueStatsStart.droppedCount,
   };
-  if ((status.routeMode ?? "worker") !== "worker") {
-    const recordedPending = status.pendingForMainCount ?? 0;
-    const recordedDropped = status.droppedForMainCount ?? 0;
-    const queueStats = await unsurfacedPendingMainStats(
-      paths.instanceDirectory,
-      { count: recordedPending, droppedCount: recordedDropped },
-    );
-    status = {
-      ...status,
-      pendingForMainCount: queueStats.count,
-      droppedForMainCount: queueStats.droppedCount,
-    };
-    attendanceEvidence = {
-      pendingForMainOldestAt: queueStats.oldestAt,
-      hookSurfaceExists: queueStats.hookSurfaceExists,
-      hookSurfaceAdvanced: queueStats.hookSurfaceAdvanced,
-    };
-  }
+  const attendanceEvidence = await collectListenerAttendanceEvidence({
+    instanceDirectory: paths.instanceDirectory,
+    cwd,
+    principalId,
+    cloud,
+    workspaceId,
+    pendingForMainOldestAt: queueStatsStart.oldestAt,
+    hookSurfaceExists: queueStatsStart.hookSurfaceExists,
+    hookSurfaceAdvanced: queueStatsStart.hookSurfaceAdvanced,
+  });
   if (args.has("json")) {
     printJson(listenerStatusJson(status, permissionMode, attendanceEvidence));
     return;
   }
-  const routingNote = routing.routeMode === "main"
-    ? "Directed asks are queued for your interactive session and never prompt the ACP worker. Run cswarm hook check to surface them.\n"
-    : routing.routeMode === "split"
-    ? `Directed asks over ${routing.deferOverChars} characters are queued for your interactive session; shorter asks use the worker. Run cswarm hook check to surface queued asks.\n`
-    : "";
-  const workerAudience = routing.routeMode === "main"
-    ? "Directed asks do not reach that worker."
-    : routing.routeMode === "split"
-    ? "Only asks at or below the split threshold reach that worker, with sender and operator provenance in the prompt."
-    : "Every sender reaches that worker with sender and operator provenance in the prompt.";
-  const hostNote = provider === "opencode"
-    ? `The OpenCode worker uses one private auth/config home and your selected project cwd. ${workerAudience} Tool requests are approved one at a time by default, when the worker asks and the host offers a one-time approval; --permissions deny refuses them. The deny canary does not cover steady-state allow.\n`
-    : provider === "claude"
-    ? `The Claude worker uses your selected cwd and normal Claude Code keychain/OAuth state through claude-agent-acp 0.64.2 or newer. ${workerAudience}\n`
-    : provider === "codex"
-    ? `The Codex worker uses your selected cwd and normal ChatGPT/Codex auth through codex-acp 1.1.9 or newer. CommonSwarm selects read-only mode before its deny canary. ${workerAudience}\n`
-    : `The Grok worker uses your selected cwd and local Grok configuration, including user and cmux hooks. ${workerAudience}\n`;
+  const routingNote =
+    "Directed asks are queued for your interactive session and never start a model. Run cswarm hook check to surface them.\n";
+  const workerAudience = "The listener never starts a model; the seat's own session reads the queue.";
+  const hostNote = `--provider ${provider} names the attendance surface kind for this seat. ${workerAudience}\n`;
   process.stdout.write(
     `${
       args.has("foreground")
@@ -6253,26 +6165,6 @@ async function runListenStart(args: Arguments): Promise<void> {
         ? "Listener transport is connected, but queued messages are unattended."
         : "Listener is ready and will keep receiving after this command exits."
     }\n${renderListenerStatus(status, attendanceEvidence)}\n` +
-      /* ~~"allowed once because you explicitly selected --permissions allow" / "denied by
-       * default"~~ Dead 2026-08-11. Flipping the default inverted BOTH clauses at once: allow is
-       * no longer explicitly selected and deny is no longer the default. Neither string appeared
-       * in the diff that changed the default, which is why the sweep has to be over claims rather
-       * than over changed lines.
-       *
-       * The deny branch also now states the COST. Measured the same day: a worker under deny had
-       * Bash and Write refused, so it could answer and could not act, and every status surface
-       * called it healthy — the operator had nothing to read that explained it. "Tool requests are
-       * denied" is true and gets skimmed past; naming what the worker cannot do does not. */
-      `Same-owner tool requests are ${
-        permissionMode === "allow"
-          ? "approved one at a time, when the worker asks and the host offers a one-time approval"
-          /* ~~"running commands and writing files were both refused in testing"~~ Dead: this line
-           * is emitted for EVERY provider, and the durable record
-           * (docs/evidence/2026-08-10-dogfood/README.md) exercised only OpenCode. A measurement
-           * from one provider was being asserted for four. Caught by the exact-review arm. */
-          : "denied. This worker can reply to messages but cannot do anything it must ask " +
-            "permission for; restart with --permissions allow if that is not what you want"
-      }. The same permission mode applies to every sender relation.\n` +
       "The short credential rotates while this process remains alive and secure local state is available. Run cswarm whoami with this credential to see whether its grant is timeboxed or standing.\n" +
       routingNote +
       hostNote +
@@ -6417,29 +6309,27 @@ async function runListenStatusOrStop(
     }
     return;
   }
-  let attendanceEvidence: ListenerAttendanceEvidence = {
-    pendingForMainOldestAt: null,
-    hookSurfaceExists: false,
-    hookSurfaceAdvanced: false,
+  const recordedPendingStatus = status.pendingForMainCount ?? 0;
+  const recordedDroppedStatus = status.droppedForMainCount ?? 0;
+  const queueStatsStatus = await unsurfacedPendingMainStats(
+    paths.instanceDirectory,
+    { count: recordedPendingStatus, droppedCount: recordedDroppedStatus },
+  );
+  status = {
+    ...status,
+    pendingForMainCount: queueStatsStatus.count,
+    droppedForMainCount: queueStatsStatus.droppedCount,
   };
-  if ((status.routeMode ?? "worker") !== "worker") {
-    const recordedPending = status.pendingForMainCount ?? 0;
-    const recordedDropped = status.droppedForMainCount ?? 0;
-    const queueStats = await unsurfacedPendingMainStats(
-      paths.instanceDirectory,
-      { count: recordedPending, droppedCount: recordedDropped },
-    );
-    status = {
-      ...status,
-      pendingForMainCount: queueStats.count,
-      droppedForMainCount: queueStats.droppedCount,
-    };
-    attendanceEvidence = {
-      pendingForMainOldestAt: queueStats.oldestAt,
-      hookSurfaceExists: queueStats.hookSurfaceExists,
-      hookSurfaceAdvanced: queueStats.hookSurfaceAdvanced,
-    };
-  }
+  const attendanceEvidence = await collectListenerAttendanceEvidence({
+    instanceDirectory: paths.instanceDirectory,
+    cwd: process.cwd(),
+    principalId,
+    cloud,
+    workspaceId,
+    pendingForMainOldestAt: queueStatsStatus.oldestAt,
+    hookSurfaceExists: queueStatsStatus.hookSurfaceExists,
+    hookSurfaceAdvanced: queueStatsStatus.hookSurfaceAdvanced,
+  });
   const installed = command === "status"
     ? await listenerProviderInstallEvidence(status)
     : null;
@@ -6558,11 +6448,7 @@ export class ListenerUnattendedRefusedError extends Error {
   readonly code = "listen_unattended_refused";
 
   constructor(principalId: string) {
-    super(
-      `listen_unattended_refused: --route main and --route split need an attendance surface for agent ${principalId}. ` +
-      `Next: cswarm hook install claude --principal-id ${principalId} --write, then start a fresh session. ` +
-      "Or use --route worker. Use --allow-unattended only when you accept a queue that may not wake a session.",
-    );
+    super(listenerUnattendedRefusedMessage(principalId));
     this.name = "ListenerUnattendedRefusedError";
   }
 }
@@ -6588,7 +6474,7 @@ function settingsHaveScopedClaudeHook(
   });
 }
 
-async function listenerHasAttendanceSurface(
+async function listenerHookSurfacePresent(
   instanceDirectory: string,
   cwd: string,
   principalId: string,
@@ -6607,6 +6493,66 @@ async function listenerHasAttendanceSurface(
     }
   }
   return false;
+}
+
+async function listenerWatcherSurfacePresent(
+  cloud: CloudTarget,
+  workspaceId: string,
+  principalId: string,
+): Promise<boolean> {
+  return await arrivalWatchLockHeld(
+    arrivalWatchLockPath(cloud, workspaceId, principalId),
+  );
+}
+
+async function listenerHasAttendanceSurface(options: {
+  instanceDirectory: string;
+  cwd: string;
+  principalId: string;
+  cloud: CloudTarget;
+  workspaceId: string;
+}): Promise<boolean> {
+  const hook = await listenerHookSurfacePresent(
+    options.instanceDirectory,
+    options.cwd,
+    options.principalId,
+  );
+  if (hook) return true;
+  return await listenerWatcherSurfacePresent(
+    options.cloud,
+    options.workspaceId,
+    options.principalId,
+  );
+}
+
+async function collectListenerAttendanceEvidence(options: {
+  instanceDirectory: string;
+  cwd: string;
+  principalId: string;
+  cloud: CloudTarget;
+  workspaceId: string;
+  pendingForMainOldestAt: string | null;
+  hookSurfaceExists: boolean;
+  hookSurfaceAdvanced: boolean;
+}): Promise<ListenerAttendanceEvidence> {
+  const hook = options.hookSurfaceExists ||
+    await listenerHookSurfacePresent(
+      options.instanceDirectory,
+      options.cwd,
+      options.principalId,
+    );
+  const watcher = await listenerWatcherSurfacePresent(
+    options.cloud,
+    options.workspaceId,
+    options.principalId,
+  );
+  return {
+    pendingForMainOldestAt: options.pendingForMainOldestAt,
+    hookSurfaceExists: hook,
+    hookSurfaceAdvanced: options.hookSurfaceAdvanced,
+    watcherLockHeld: watcher,
+    attendingSurfaces: listenerAttendingSurfaces(hook, watcher),
+  };
 }
 
 /** Exact project-settings fragment printed by `cswarm hook install claude`. */

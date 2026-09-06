@@ -733,18 +733,13 @@ export function renderHookSignals(
 
 /** Give hook and status output one restart command that preserves recorded routing. */
 export function listenerRestartCommand(status: ListenerStatus): string {
-  const routeMode = status.routeMode ?? "worker";
   return [
     "cswarm listen start",
     "--agent-token-stdin",
     `--workspace-id ${status.workspaceId}`,
     `--provider ${status.provider}`,
     ...(status.permissionMode ? [`--permissions ${status.permissionMode}`] : []),
-    `--route ${routeMode}`,
-    ...(routeMode === "split" && status.deferOverChars !== null &&
-        status.deferOverChars !== undefined
-      ? [`--defer-over ${status.deferOverChars}`]
-      : []),
+    "--route main",
   ].join(" ");
 }
 

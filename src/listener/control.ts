@@ -52,7 +52,12 @@ import type {
   ListenerDeliveryHoldReleaseReason,
   ListenerPermissionMode,
 } from "./types.js";
-import type { ListenerRouteMode } from "./main-routing.js";
+import {
+  LISTENER_ROUTE_MODES,
+  LISTENER_STORED_ROUTE_MODES,
+  isStoredListenerRouteMode,
+  type StoredListenerRouteMode,
+} from "./main-routing.js";
 import type { ActivityPublishErrorCode } from "./activity.js";
 
 export type ListenerStatusState =
@@ -160,7 +165,7 @@ export interface ListenerStatus {
    * then be killed before its first claim.
    */
   pendingDeliveryCountAt?: string | null;
-  routeMode?: ListenerRouteMode;
+  routeMode?: StoredListenerRouteMode;
   deferOverChars?: number | null;
   pendingForMainCount?: number;
   droppedForMainCount?: number;
@@ -581,7 +586,7 @@ function parseStatus(raw: string, rejectUnknownKeys = false): ListenerStatus {
     !(row.pendingDeliveryCountAt === undefined ||
       nullableTimestamp(row.pendingDeliveryCountAt)) ||
     !(row.routeMode === undefined ||
-      row.routeMode === "worker" || row.routeMode === "main" || row.routeMode === "split") ||
+      (typeof row.routeMode === "string" && isStoredListenerRouteMode(row.routeMode))) ||
     !(row.deferOverChars === undefined || row.deferOverChars === null ||
       (typeof row.deferOverChars === "number" &&
         Number.isSafeInteger(row.deferOverChars) && row.deferOverChars >= 1 &&
@@ -617,7 +622,7 @@ function parseStatus(raw: string, rejectUnknownKeys = false): ListenerStatus {
   ) {
     throw new Error("stored listener status is malformed");
   }
-  const routeMode = (row.routeMode ?? "worker") as ListenerRouteMode;
+  const routeMode = (row.routeMode ?? "worker") as StoredListenerRouteMode;
   const deferOverChars = (row.deferOverChars ?? null) as number | null;
   if (
     (routeMode === "split" && deferOverChars === null) ||
@@ -772,8 +777,8 @@ export async function appendListenerEvent(
     "rate_limited",
   ]);
   const deliveryModes = new Set(["durable_claim", "cursor_fallback"]);
-  const routeModes = new Set(["worker", "main", "split"]);
-  const routeDecisions = new Set(["worker", "main"]);
+  const routeModes = new Set<string>(LISTENER_STORED_ROUTE_MODES);
+  const routeDecisions = new Set<string>(LISTENER_ROUTE_MODES);
   for (const [key, value] of Object.entries(event)) {
     if (!allowed.has(key)) {
       throw new Error(`listener event field is not allowed: ${key}`);

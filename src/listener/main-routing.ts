@@ -32,10 +32,107 @@ export const LISTENER_MAIN_QUEUE_MAX = 200;
 export const LISTENER_DEFER_OVER_MIN = 1;
 export const LISTENER_DEFER_OVER_MAX = 10_000;
 
-export type ListenerRouteMode = "worker" | "main" | "split";
-export type ListenerRouteDecision = "worker" | "main";
+/** The only route a listener may start. Parser, usage, and every refusal read this. */
+export const LISTENER_ROUTE_MODES = ["main"] as const;
+export type ListenerRouteMode = (typeof LISTENER_ROUTE_MODES)[number];
+export type ListenerRouteDecision = ListenerRouteMode;
 
-/** Keep the default worker path exact while making the split boundary explicit. */
+/** Status files from older builds still parse; they cannot be started again. */
+export const LISTENER_STORED_ROUTE_MODES = ["worker", "main", "split"] as const;
+export type StoredListenerRouteMode = (typeof LISTENER_STORED_ROUTE_MODES)[number];
+
+export const LISTENER_ROUTE_RULING =
+  "a listener never answers for a session; the seat's own session reads the queue";
+
+export const LISTENER_ATTENDANCE_SURFACES = ["hook", "watcher"] as const;
+export type ListenerAttendanceSurface = (typeof LISTENER_ATTENDANCE_SURFACES)[number];
+
+export const LISTENER_ALLOW_UNATTENDED_CLAUSE =
+  "Use --allow-unattended only when you accept a queue that may not wake a session.";
+
+export const LISTENER_NONE_ATTENDING_SENTENCE =
+  "Signals queue and nothing wakes the session.";
+
+function orList(values: readonly string[]): string {
+  return values.length <= 1
+    ? values.join("")
+    : `${values.slice(0, -1).join(", ")}, or ${values[values.length - 1]}`;
+}
+
+export function listenerAcceptedRoutesSentence(): string {
+  return orList(LISTENER_ROUTE_MODES);
+}
+
+export function listenerRouteUsage(): string {
+  return LISTENER_ROUTE_MODES.join("|");
+}
+
+export function isLiveListenerRouteMode(value: string): value is ListenerRouteMode {
+  return (LISTENER_ROUTE_MODES as readonly string[]).includes(value);
+}
+
+export function isStoredListenerRouteMode(
+  value: string,
+): value is StoredListenerRouteMode {
+  return (LISTENER_STORED_ROUTE_MODES as readonly string[]).includes(value);
+}
+
+export function listenerRouteRefusedSentence(requested: string): string {
+  return `--route ${requested} is refused: accepted --route values are ${listenerAcceptedRoutesSentence()}; ${LISTENER_ROUTE_RULING}.`;
+}
+
+export function listenerDeferOverRefusedSentence(): string {
+  return `--defer-over is refused: it only applied to split, and accepted --route values are ${listenerAcceptedRoutesSentence()}; ${LISTENER_ROUTE_RULING}.`;
+}
+
+export function listenerLegacyRouteSentence(
+  routeMode: StoredListenerRouteMode,
+): string {
+  if (isLiveListenerRouteMode(routeMode)) {
+    return "Ask route: main; directed asks wait for this interactive session.";
+  }
+  return `LEGACY: this status file has routeMode ${routeMode}. That route cannot be started again; ${LISTENER_ROUTE_RULING}.`;
+}
+
+export function listenerAttendanceSurfaceRemedy(
+  surface: ListenerAttendanceSurface,
+  principalId: string,
+): string {
+  if (surface === "hook") {
+    return `cswarm hook install claude --principal-id ${principalId} --write, then start a fresh session`;
+  }
+  return `cswarm inbox --notify for agent ${principalId} on this host`;
+}
+
+export function listenerAttendanceRemediesSentence(principalId: string): string {
+  return LISTENER_ATTENDANCE_SURFACES
+    .map((surface) => listenerAttendanceSurfaceRemedy(surface, principalId))
+    .join("; or ");
+}
+
+export function listenerUnattendedRefusedMessage(principalId: string): string {
+  return `listen_unattended_refused: listen start needs an attendance surface for agent ${principalId}. Next: ${listenerAttendanceRemediesSentence(principalId)}. ${LISTENER_ALLOW_UNATTENDED_CLAUSE}`;
+}
+
+export function listenerAttendingSurfaces(
+  hook: boolean,
+  watcher: boolean,
+): ListenerAttendanceSurface[] {
+  return LISTENER_ATTENDANCE_SURFACES.filter((surface) =>
+    surface === "hook" ? hook : watcher
+  );
+}
+
+export function listenerAttendingSentence(
+  surfaces: readonly ListenerAttendanceSurface[],
+): string {
+  if (surfaces.length === 0) {
+    return `ATTENDING: none. ${LISTENER_NONE_ATTENDING_SENTENCE}`;
+  }
+  return `ATTENDING: ${orList(surfaces)}.`;
+}
+
+/** Main is the only live route; a split threshold is never valid. */
 export function decideListenerRoute(
   route: ListenerRouteMode,
   threshold: number | null,
@@ -44,30 +141,13 @@ export function decideListenerRoute(
   if (!Number.isSafeInteger(bodyLength) || bodyLength < 0) {
     throw new Error("listener route body length must be a non-negative integer");
   }
-  if (route === "worker") {
-    if (threshold !== null) {
-      throw new Error("worker route cannot have a split threshold");
-    }
-    return "worker";
-  }
-  if (route === "main") {
-    if (threshold !== null) {
-      throw new Error("main route cannot have a split threshold");
-    }
-    return "main";
-  }
-  if (route !== "split") {
+  if (!isLiveListenerRouteMode(route)) {
     throw new Error("listener route mode is invalid");
   }
-  if (
-    threshold === null ||
-    !Number.isSafeInteger(threshold) ||
-    threshold < LISTENER_DEFER_OVER_MIN ||
-    threshold > LISTENER_DEFER_OVER_MAX
-  ) {
-    throw new Error("split route threshold is invalid");
+  if (threshold !== null) {
+    throw new Error("main route cannot have a split threshold");
   }
-  return bodyLength > threshold ? "main" : "worker";
+  return "main";
 }
 
 export interface PendingMainEntry {

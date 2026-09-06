@@ -4,7 +4,6 @@ import {
   CommandTransportError,
   declareAgentModel,
   SIGNAL_REQUEST_TIMEOUT_MS,
-  ThinCommandClient,
   type SignalRecord,
 } from "../cloud/command-client.js";
 import type { CloudTarget } from "../cloud/config.js";
@@ -41,7 +40,7 @@ import type {
   ListenerDeliveryJournal,
   ListenerDeliveryJournalRecord,
 } from "./delivery-journal.js";
-import { ListenerEngine, newReceivedAskRecord } from "./engine.js";
+import { newReceivedAskRecord } from "./engine.js";
 import {
   newObservedNoteRecord,
   newRoutedMainRecord,
@@ -59,7 +58,6 @@ import {
 } from "./types.js";
 export { LISTENER_DELIVERY_MAX_LEASE_MS };
 import type {
-  ListenerDeliveryContext,
   ListenerDeliveryHoldReleaseReason,
 } from "./types.js";
 import type {
@@ -67,6 +65,8 @@ import type {
   ListenerEffectStore,
   ListenerModel,
   ListenerProcessResult,
+  ListenerPromptMode,
+  ListenerPromptResult,
   ListenerReplyPoster,
   ListenerSenderProvenance,
   ListenerSenderProvenanceContext,
@@ -159,6 +159,23 @@ export interface ListenerRuntimeModel extends ListenerModel {
   start(): Promise<void>;
   cancel(): void;
   close(): Promise<void>;
+}
+
+/** Stand-in so the listener never constructs a provider host. start() and prompt() throw. */
+export class NullListenerModel implements ListenerRuntimeModel {
+  async start(): Promise<void> {
+    throw new Error("listener never starts a model");
+  }
+  async prompt(
+    _signal: SignalRecord,
+    _mode: ListenerPromptMode,
+    _prompt: string,
+    _attempt: number,
+  ): Promise<ListenerPromptResult> {
+    throw new Error("listener never prompts a model");
+  }
+  cancel(): void {}
+  async close(): Promise<void> {}
 }
 
 export type ListenerRuntimeEvent =
@@ -488,22 +505,6 @@ function exactRecoveredLease(
     active.leasedUntil === delivery.leasedUntil;
 }
 
-/**
- * The recipient set this delivery belongs to, or nothing when the server did
- * not report one. Absent stays absent all the way to the prompt: an edge from
- * before the fan-out wakes only recipient 0 but still delivers signals that
- * name several people, so a defaulted "1 of 1" would be a claim, not a default.
- */
-function deliveryContext(delivery: DeliveryRow): ListenerDeliveryContext | undefined {
-  if (delivery.recipientPosition === null || delivery.recipientCount === null) {
-    return undefined;
-  }
-  return {
-    recipientPosition: delivery.recipientPosition,
-    recipientCount: delivery.recipientCount,
-  };
-}
-
 function authoritativeSignal(delivery: DeliveryRow): SignalRecord {
   return {
     ...delivery.signal,
@@ -564,25 +565,6 @@ function isAckableTerminalEffect(
       record.signalKind === "ask" &&
       Date.parse(record.askUntil) <= now()) ||
     (record.state === "failed" && record.signalKind === "ask");
-}
-
-function effectPhaseBudget(record: ListenerEffectRecord | null): number {
-  if (record === null || record.state === "received" || record.state === "prompting") {
-    return LISTENER_PROMPT_START_MINIMUM_MS;
-  }
-  if (record.state === "reply_ready" || record.state === "posting") {
-    return LISTENER_REPLY_ONLY_MINIMUM_MS;
-  }
-  return LISTENER_ACK_ONLY_MINIMUM_MS;
-}
-
-function observedNoteNeedsMainRoute(
-  record: ListenerEffectRecord | null,
-  routeMode: ListenerRouteMode,
-  deferOverChars: number | null,
-): boolean {
-  return record?.state === "observed" && record.signalKind === "note" &&
-    decideListenerRoute(routeMode, deferOverChars, record.askBody.length) === "main";
 }
 
 function verifyPreparedAckEffect(
@@ -711,37 +693,6 @@ function sameRecoveredEffect(
     );
 }
 
-async function observeFallbackNote(
-  store: ListenerEffectStore,
-  signal: SignalRecord,
-  now: () => number,
-): Promise<ListenerEffectRecord> {
-  const existing = await store.read(signal.id);
-  if (existing !== null) {
-    if (!sameEffectSignal(existing, signal) || existing.state !== "observed") {
-      throw new Error("stored listener effect does not match the direct note");
-    }
-    return existing;
-  }
-  const observed = newObservedNoteRecord({
-    signalId: signal.id,
-    body: signal.body,
-    until: signal.until,
-    senderOwnerRelation: signal.sender_owner_relation ?? "unknown",
-    updatedAt: eventTime(now),
-  });
-  await store.write(observed);
-  const persisted = await store.read(signal.id);
-  if (
-    persisted === null ||
-    !sameEffectSignal(persisted, signal) ||
-    persisted.state !== "observed"
-  ) {
-    throw new Error("stored listener note effect could not be verified");
-  }
-  return persisted;
-}
-
 async function readOrReplaceUnreadableEffect(
   store: ListenerEffectStore,
   signal: SignalRecord,
@@ -807,7 +758,7 @@ export async function runListenerRuntime(
   const pageLimit = options.pageLimit ?? LISTENER_PAGE_LIMIT;
   const pollMs = options.pollMs ?? LISTENER_IDLE_POLL_MS;
   let emptyIdleStreak = 0;
-  const routeMode = options.routeMode ?? "worker";
+  const routeMode = options.routeMode ?? "main";
   const deferOverChars = options.deferOverChars ?? null;
   const deliveryHoldBudgetMs = options.deliveryHoldBudgetMs ??
     LISTENER_DELIVERY_HOLD_BUDGET_MS;
@@ -853,7 +804,7 @@ export async function runListenerRuntime(
   }
   try {
     decideListenerRoute(routeMode, deferOverChars, 0);
-    if (routeMode !== "worker" && options.pendingMainQueue === undefined) {
+    if (options.pendingMainQueue === undefined) {
       throw new Error("main listener routing requires a pending queue");
     }
   } catch (error) {
@@ -880,48 +831,6 @@ export async function runListenerRuntime(
     : null;
   let journalSnapshot = initialJournal;
   const warnedClaimCommands = new Set<string>();
-  const client = new ThinCommandClient(options.target, options.fetcher);
-  const poster: ListenerReplyPoster = options.poster ?? {
-    post: async ({ signal, body, commandId, abortSignal }) => {
-      const credential = await options.credentialSession.bearer();
-      const result = await client.sendSignal({
-        workspaceId: options.workspaceId,
-        credential,
-        commandId,
-        // The engine-provided caller signal becomes the transport's caller
-        // signal; no second signal is constructed and the command envelope is
-        // unchanged.
-        ...(abortSignal === undefined ? {} : { signal: abortSignal }),
-        command: {
-          kind: "post_signal",
-          signal_kind: "note",
-          body,
-          to_user_id: null,
-          to_agent_principal_id: null,
-          in_reply_to: signal.id,
-          about: null,
-        },
-      });
-      return { signalId: result.response.signal!.id };
-    },
-  };
-  const engine = new ListenerEngine({
-    store: options.store,
-    model: options.model,
-    poster,
-    now,
-    // The runtime caller signal is cancellation only; the closed credential
-    // predicate is wired into the engine seam so credential loss during reply
-    // posting stops as credential instead of terminalizing the effect.
-    ...(options.signal === undefined ? {} : { signal: options.signal }),
-    ...(options.resolveSenderProvenance === undefined
-      ? {}
-      : { resolveSenderProvenance: options.resolveSenderProvenance }),
-    ...(options.onBroadcastsConsumed === undefined
-      ? {}
-      : { onBroadcastsConsumed: options.onBroadcastsConsumed }),
-    isCredentialFailure: isCredentialLoss,
-  });
   const routeSignalToMain = async (
     signal: SignalRecord,
   ): Promise<ListenerEffectRecord> => {
@@ -967,9 +876,6 @@ export async function runListenerRuntime(
       }
       if (existing.state === "routed_main") {
         return existing;
-      }
-      if (!(existing.signalKind === "note" && existing.state === "observed")) {
-        throw new Error("stored listener effect does not match the main-routed message");
       }
     }
     await options.store.write(newRoutedMainRecord({
@@ -1284,14 +1190,6 @@ export async function runListenerRuntime(
       }
 
       if (!ready) {
-        if (routeMode !== "main") {
-          try {
-            await options.model.start();
-          } catch (error) {
-            stop = { reason: "fatal", error: asError(error) };
-            break;
-          }
-        }
         ready = true;
         options.onEvent?.({
           type: "ready",
@@ -1348,22 +1246,8 @@ export async function runListenerRuntime(
       if (recovery?.phase === "ack_pending") {
         const horizon = Date.parse(recovery.leasedUntil!) +
           LISTENER_DELIVERY_SAFETY_MARGIN_MS;
-        let preparedNeedsMainRoute = false;
-        if (recovery.signalId !== null) {
-          try {
-            preparedNeedsMainRoute = observedNoteNeedsMainRoute(
-              await options.store.read(recovery.signalId),
-              routeMode,
-              deferOverChars,
-            );
-          } catch (error) {
-            stop = { reason: "fatal", error: asError(error) };
-            break;
-          }
-        }
         if (
-          (page?.capabilities.deliveryAck === true || skipRead) && now() < horizon &&
-          !preparedNeedsMainRoute
+          (page?.capabilities.deliveryAck === true || skipRead) && now() < horizon
         ) {
           const ackStop = await sendPreparedAck(recovery);
           if (ackStop !== null) {
@@ -1409,7 +1293,6 @@ export async function runListenerRuntime(
           if (
             terminal !== null &&
             sameRecoveredEffect(recovery, terminal) &&
-            !observedNoteNeedsMainRoute(terminal, routeMode, deferOverChars) &&
             isAckableTerminalEffect(terminal, now)
           ) {
             try {
@@ -1645,26 +1528,6 @@ export async function runListenerRuntime(
           stop = { reason: "cancelled" };
           break;
         }
-        /* The hold clock starts when this delivery was CLAIMED, which the
-           journal records as claimCreatedAt and keeps through recordLease. A
-           lease recovered across a restart therefore keeps its original clock
-           rather than getting a fresh budget.
-
-           An earlier comment here, and the design note beside it, said the
-           original claim time was not in the journal. That was false, and a
-           review arm found it: reserveClaim writes claimCreatedAt and the
-           leased phase cannot parse without it. Reading it is what makes the
-           bound hold across a restart.
-
-           Slightly conservative on purpose: claimCreatedAt precedes the lease
-           grant by one claim round trip, so the measured hold is never shorter
-           than the real one. A recovered lease still gets one engine.process
-           before the bound can fire, because processAttempt is 0 again; that is
-           the anti-starvation rule below, not an unmeasured clock. */
-        const claimedAtMs = Date.parse(active.claimCreatedAt);
-        const holdStartedAtMs = Number.isFinite(claimedAtMs)
-          ? Math.min(claimedAtMs, now())
-          : now();
         const signal = authoritativeSignal(claimed);
         let terminal: ListenerEffectRecord | null = null;
         try {
@@ -1693,7 +1556,21 @@ export async function runListenerRuntime(
             bodyLength: signal.body.length,
             ts: eventTime(now),
           });
-          if (decision === "main") {
+          if (
+            existing !== null &&
+            (existing.state === "failed" ||
+              existing.state === "done" ||
+              existing.state === "expired")
+          ) {
+            terminal = existing;
+            options.onEvent?.({
+              type: "effect",
+              signalId: signal.id,
+              status: existing.state,
+              failureCode: existing.failureCode,
+              ts: eventTime(now),
+            });
+          } else {
             terminal = await routeSignalToMain(signal);
             options.onEvent?.({
               type: "effect",
@@ -1702,98 +1579,6 @@ export async function runListenerRuntime(
               failureCode: null,
               ts: eventTime(now),
             });
-          } else if (signal.kind === "note") {
-            if (existing === null) {
-              await options.store.write(newObservedNoteRecord({
-                signalId: signal.id,
-                body: signal.body,
-                until: signal.until,
-                senderOwnerRelation: signal.sender_owner_relation ?? "unknown",
-                updatedAt: eventTime(now),
-              }));
-            }
-            terminal = await options.store.read(signal.id);
-            if (
-              terminal === null ||
-              !sameEffectSignal(terminal, signal) ||
-              terminal.state !== "observed"
-            ) {
-              throw new Error("persisted note effect does not match the authoritative delivery");
-            }
-            options.onEvent?.({
-              type: "effect",
-              signalId: signal.id,
-              status: "observed",
-              failureCode: null,
-              ts: eventTime(now),
-            });
-          } else {
-            let processAttempt = 0;
-            while (terminal === null) {
-              const before = await options.store.read(signal.id);
-              if (before !== null && !sameEffectSignal(before, signal)) {
-                throw new Error("stored listener effect does not match the authoritative delivery");
-              }
-              const requiredBudget = effectPhaseBudget(before);
-              /* ELAPSED, never projected. The lease question asks whether the
-                 next phase still FITS (requiredBudget is a projection and
-                 belongs there); the seat question asks how much of its share
-                 this delivery has already USED. Measured on a live listener
-                 with --turn-budget 30s: the projected form released after 74ms,
-                 because one phase minimum (about 4 minutes) never fits inside a
-                 30s budget, so a delivery whose first attempt failed fast lost
-                 the seat instead of using its retry budget.
-                 The first attempt on a lease also always runs, so a budget
-                 shorter than one phase cannot starve a delivery. */
-              const holdSpent = processAttempt > 0 &&
-                now() - holdStartedAtMs >= deliveryHoldBudgetMs;
-              const leaseSpent = leasedUntilMs <= now() + requiredBudget;
-              if (holdSpent || leaseSpent) {
-                /* Hand the seat back now. Waiting out the lease held an idle
-                   worker for as much as five more minutes while later
-                   deliveries queued; the row keeps its live lease either way,
-                   so the server redelivers it on the same schedule and this
-                   costs it no extra attempt. */
-                await journal.clearActive(eventTime(now));
-                after = null;
-                options.onEvent?.({
-                  type: "delivery_hold_released",
-                  signalId: signal.id,
-                  reason: holdSpent ? "hold_budget" : "lease_budget",
-                  heldMs: Math.max(0, now() - holdStartedAtMs),
-                  ts: eventTime(now),
-                });
-                break;
-              }
-              const processed = await engine.process(
-                signal,
-                deliveryContext(claimed),
-              );
-              const effect = "record" in processed ? processed.record : null;
-              options.onEvent?.({
-                type: "effect",
-                signalId: signal.id,
-                status: processed.status,
-                failureCode: effect?.failureCode ?? null,
-                ts: eventTime(now),
-              });
-              if (processed.status === "ignored") {
-                throw new Error("claimed delivery was ignored by the listener engine");
-              }
-              if (processed.status === "retry_pending") {
-                processAttempt += 1;
-                await sleep(
-                  deliveryRetryDelay(processAttempt, null, random),
-                  abort,
-                );
-                if (abort?.aborted) {
-                  stop = { reason: "cancelled" };
-                  break;
-                }
-                continue;
-              }
-              terminal = processed.record;
-            }
           }
         } catch (error) {
           if (abort?.aborted) {
@@ -1849,9 +1634,12 @@ export async function runListenerRuntime(
           break;
         }
         if (signal.kind !== "ask" && signal.kind !== "note") continue;
-        let result: ListenerProcessResult;
         try {
-          await readOrReplaceUnreadableEffect(options.store, signal, now);
+          const existing = await readOrReplaceUnreadableEffect(
+            options.store,
+            signal,
+            now,
+          );
           const decision = decideListenerRoute(
             routeMode,
             deferOverChars,
@@ -1866,29 +1654,29 @@ export async function runListenerRuntime(
             bodyLength: signal.body.length,
             ts: eventTime(now),
           });
-          if (decision === "main") {
-            await routeSignalToMain(signal);
+          if (
+            existing !== null &&
+            (existing.state === "failed" ||
+              existing.state === "done" ||
+              existing.state === "expired")
+          ) {
             options.onEvent?.({
               type: "effect",
               signalId: signal.id,
-              status: "routed_main",
-              failureCode: null,
+              status: existing.state,
+              failureCode: existing.failureCode,
               ts: eventTime(now),
             });
             continue;
           }
-          if (signal.kind === "note") {
-            const record = await observeFallbackNote(options.store, signal, now);
-            options.onEvent?.({
-              type: "effect",
-              signalId: signal.id,
-              status: "observed",
-              failureCode: record.failureCode,
-              ts: eventTime(now),
-            });
-            continue;
-          }
-          result = await engine.process(signal);
+          await routeSignalToMain(signal);
+          options.onEvent?.({
+            type: "effect",
+            signalId: signal.id,
+            status: "routed_main",
+            failureCode: null,
+            ts: eventTime(now),
+          });
         } catch (error) {
           if (abort?.aborted) {
             stop = { reason: "cancelled" };
@@ -1905,14 +1693,6 @@ export async function runListenerRuntime(
           stop = { reason: "fatal", error: asError(error) };
           break;
         }
-        const record = "record" in result ? result.record : null;
-        options.onEvent?.({
-          type: "effect",
-          signalId: signal.id,
-          status: result.status,
-          failureCode: record?.failureCode ?? null,
-          ts: eventTime(now),
-        });
       }
       if (stop) break;
 

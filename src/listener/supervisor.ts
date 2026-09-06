@@ -311,7 +311,7 @@ export async function runListenerSupervisor(
     currentDeliverySignalId: null,
     currentDeliverySince: null,
     heldBackDeliveries: [],
-    routeMode: options.routeMode ?? "worker",
+    routeMode: options.routeMode ?? "main",
     deferOverChars: options.deferOverChars ?? null,
     pendingForMainCount: 0,
     droppedForMainCount: 0,

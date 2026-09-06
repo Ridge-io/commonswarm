@@ -278,7 +278,7 @@ export function renderListenerAttendanceCanary(
     lines.push(
       "STALLED: surfaced. Next: " +
         `cswarm hook install claude --principal-id ${principalId} --write, ` +
-        "then start a fresh session. Or restart the listener with --route worker.",
+        "then start a fresh session.",
     );
   } else {
     lines.push(`STALLED: ${result.stalledAt}. Next: ${statusCommand}`);
