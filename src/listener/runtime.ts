@@ -81,6 +81,7 @@ import type { WakeHint } from "../cloud/wake.js";
 import {
   createWakeSubscriber,
   LISTENER_RECONCILE_POLL_MS,
+  LISTENER_WAKE_MODE_PUSH,
   type ListenerWakeStatus,
   type WakeHandle,
 } from "./wake.js";
@@ -1066,7 +1067,7 @@ export async function runListenerRuntime(
   const waitCapMs = (): number => {
     if (
       wakeSubscriber !== null &&
-      wakeSubscriber.snapshot(now()).mode === "push"
+      wakeSubscriber.snapshot(now()).mode === LISTENER_WAKE_MODE_PUSH
     ) {
       return LISTENER_RECONCILE_POLL_MS;
     }
@@ -1169,7 +1170,7 @@ export async function runListenerRuntime(
         }
         if (
           reason === "wake" &&
-          wakeSubscriber.snapshot(now()).mode === "push"
+          wakeSubscriber.snapshot(now()).mode === LISTENER_WAKE_MODE_PUSH
         ) {
           const coalesceMs = wakeSubscriber.coalescingRemainingMs(now());
           if (coalesceMs > 0) await sleep(coalesceMs, abort);
@@ -1177,7 +1178,7 @@ export async function runListenerRuntime(
             stop = { reason: "cancelled" };
             break;
           }
-          if (wakeSubscriber.snapshot(now()).mode === "push") {
+          if (wakeSubscriber.snapshot(now()).mode === LISTENER_WAKE_MODE_PUSH) {
             skipRead = true;
           }
         }
@@ -1587,10 +1588,10 @@ export async function runListenerRuntime(
           }
           if (wakeSubscriber !== null && wakeSubscriber.hasTopic) {
             const snap = wakeSubscriber.snapshot(now());
-            const intervalMs = snap.mode === "push"
+            const intervalMs = snap.mode === LISTENER_WAKE_MODE_PUSH
               ? LISTENER_RECONCILE_POLL_MS
               : nextIdlePollMs(pollMs, emptyIdleStreak, LISTENER_IDLE_POLL_MAX_MS);
-            if (snap.mode === "push") emptyIdleStreak = 0;
+            if (snap.mode === LISTENER_WAKE_MODE_PUSH) emptyIdleStreak = 0;
             else emptyIdleStreak += 1;
             options.onEvent?.({
               type: "idle_poll",

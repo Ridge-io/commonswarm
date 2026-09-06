@@ -37,6 +37,8 @@ export type WakeConnectionState = (typeof WAKE_CONNECTION_STATES)[number];
 
 export const LISTENER_WAKE_MODES = ["push", "poll"] as const;
 export type ListenerWakeMode = (typeof LISTENER_WAKE_MODES)[number];
+export const LISTENER_WAKE_MODE_PUSH = LISTENER_WAKE_MODES[0];
+export const LISTENER_WAKE_MODE_POLL = LISTENER_WAKE_MODES[1];
 export const LISTENER_WAKE_MODE_SET: ReadonlySet<string> = new Set(
   LISTENER_WAKE_MODES,
 );
@@ -161,7 +163,7 @@ export function wakeErrorCodeFromSubscribeStatus(
 
 export function emptyListenerWakeStatus(): ListenerWakeStatus {
   return {
-    mode: "poll",
+    mode: LISTENER_WAKE_MODE_POLL,
     subscribedAt: null,
     reconnects: 0,
     lastWakeAt: null,
@@ -202,12 +204,12 @@ export function listenerWakeStatusSentence(
   pollIntervalMs: number,
   lastWakeLabel: string | null,
 ): string {
-  if (wake.mode === "push") {
+  if (wake.mode === LISTENER_WAKE_MODE_PUSH) {
     const last = lastWakeLabel === null ? "no wake yet" : `last wake ${lastWakeLabel}`;
-    return `push (Realtime), ${last}, reconcile every ${formatIdlePollDuration(LISTENER_RECONCILE_POLL_MS)}.`;
+    return `${LISTENER_WAKE_MODE_PUSH} (Realtime), ${last}, reconcile every ${formatIdlePollDuration(LISTENER_RECONCILE_POLL_MS)}.`;
   }
   const code = wake.errorCode ?? "disconnected";
-  return `poll every ${formatIdlePollDuration(pollIntervalMs)}. Realtime not connected (${code}).`;
+  return `${LISTENER_WAKE_MODE_POLL} every ${formatIdlePollDuration(pollIntervalMs)}. Realtime not connected (${code}).`;
 }
 
 type Waiter = {
@@ -256,7 +258,9 @@ export class WakeSubscriber implements WakeHandle {
   snapshot(nowMs: number = this.now()): ListenerWakeStatus {
     const rateLimited = this.wakeClaimPaused(nowMs);
     const mode: ListenerWakeMode =
-      this.connectionState === "subscribed" && !rateLimited ? "push" : "poll";
+      this.connectionState === "subscribed" && !rateLimited
+        ? LISTENER_WAKE_MODE_PUSH
+        : LISTENER_WAKE_MODE_POLL;
     const errorCode = rateLimited
       ? "rate_limited"
       : this.lastErrorCode;

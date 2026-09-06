@@ -23,6 +23,8 @@ import {
   type ListenerReadHealth,
 } from "./read-health.js";
 import {
+  LISTENER_WAKE_MODES,
+  LISTENER_WAKE_MODE_PUSH,
   LISTENER_WAKE_MODE_SET,
   LISTENER_WAKE_STATUS_KEYS,
   LISTENER_WAKE_SENSITIVE_KEYS,
@@ -405,9 +407,9 @@ export function parseListenerWake(
   for (const key of LISTENER_WAKE_STATUS_KEYS) {
     if (!(key in row)) return null;
   }
+  const mode = LISTENER_WAKE_MODES.find((item) => item === row.mode);
   if (
-    typeof row.mode !== "string" ||
-    !LISTENER_WAKE_MODE_SET.has(row.mode) ||
+    mode === undefined ||
     !nullableIso(row.subscribedAt) ||
     !(typeof row.reconnects === "number" &&
       Number.isSafeInteger(row.reconnects) && row.reconnects >= 0) ||
@@ -421,9 +423,9 @@ export function parseListenerWake(
   ) {
     return null;
   }
-  if (row.mode === "push" && row.subscribedAt === null) return null;
+  if (mode === LISTENER_WAKE_MODE_PUSH && row.subscribedAt === null) return null;
   return {
-    mode: row.mode as ListenerWakeStatus["mode"],
+    mode,
     subscribedAt: row.subscribedAt as string | null,
     reconnects: row.reconnects as number,
     lastWakeAt: row.lastWakeAt as string | null,

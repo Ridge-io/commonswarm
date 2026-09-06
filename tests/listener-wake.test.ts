@@ -33,6 +33,8 @@ import {
   emptyListenerWakeStatus,
   LISTENER_RECONCILE_POLL_MS,
   LISTENER_WAKE_MODES,
+  LISTENER_WAKE_MODE_POLL,
+  LISTENER_WAKE_MODE_PUSH,
   LISTENER_WAKE_MODE_SET,
   listenerPaths,
   listenerWakePersistWorthy,
@@ -680,15 +682,17 @@ test("70 wakes in one frozen minute stay at most 51 claims with no extra reads",
 
 test("status sentence never says push unless mode is push; lists come from constants", () => {
   assert.deepEqual([...LISTENER_WAKE_MODE_SET], [...LISTENER_WAKE_MODES]);
+  assert.equal(LISTENER_WAKE_MODE_PUSH, LISTENER_WAKE_MODES[0]);
+  assert.equal(LISTENER_WAKE_MODE_POLL, LISTENER_WAKE_MODES[1]);
   const push: ListenerWakeStatus = {
     ...emptyListenerWakeStatus(),
-    mode: "push",
+    mode: LISTENER_WAKE_MODE_PUSH,
     subscribedAt: "2026-07-30T00:00:00.000Z",
     lastWakeAt: "2026-07-30T00:00:12.000Z",
   };
   const poll: ListenerWakeStatus = {
     ...emptyListenerWakeStatus(),
-    mode: "poll",
+    mode: LISTENER_WAKE_MODE_POLL,
     errorCode: "channel_error",
   };
   const pushLine = listenerWakeStatusSentence(push, IDLE_POLL_DEFAULT_MS, "12s ago");
@@ -697,9 +701,10 @@ test("status sentence never says push unless mode is push; lists come from const
     IDLE_POLL_DEFAULT_MS,
     null,
   );
-  assert.match(pushLine, /^push \(Realtime\)/);
+  assert.match(pushLine, new RegExp(`^${LISTENER_WAKE_MODE_PUSH} \\(Realtime\\)`));
   assert.match(pushLine, new RegExp(formatIdlePollDuration(LISTENER_RECONCILE_POLL_MS)));
-  assert.doesNotMatch(pollLine, /\bpush\b/);
+  assert.doesNotMatch(pollLine, new RegExp(`\\b${LISTENER_WAKE_MODE_PUSH}\\b`));
+  assert.match(pollLine, new RegExp(`^${LISTENER_WAKE_MODE_POLL} every`));
   assert.match(pollLine, new RegExp(formatIdlePollDuration(IDLE_POLL_DEFAULT_MS)));
   assert.match(pollLine, /channel_error/);
   assert.doesNotMatch(pushLine, /cswarm-wake:/);

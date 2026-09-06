@@ -33,6 +33,7 @@ import {
 import {
   emptyListenerWakeStatus,
   LISTENER_RECONCILE_POLL_MS,
+  LISTENER_WAKE_MODE_PUSH,
   listenerWakePersistWorthy,
 } from "./wake.js";
 
@@ -434,7 +435,7 @@ export async function runListenerSupervisor(
       if (previous !== undefined && previous !== event.wake.mode) {
         readHealth = recordListenerWakeModeChange(readHealth, event.ts);
       }
-      const cadenceMs = event.wake.mode === "push"
+      const cadenceMs = event.wake.mode === LISTENER_WAKE_MODE_PUSH
         ? LISTENER_RECONCILE_POLL_MS
         : (status.idlePollMs && status.idlePollMs > 0
           ? status.idlePollMs
