@@ -1,1 +1,46 @@
-I'll review the heartbeat-on-wake spec against the code, earlier arm findings, and sibling specs. Reading those first.I'll join the swarm, then check earlier arm findings and the cited code in parallel.Draft 4 claims to fold the last gaps. I'll join the swarm and check those claims against the code and sibling specs.Next I’ll check the cited parsers, sibling specs, and status fields against the draft.
+I'll review the heartbeat-on-wake spec against the code, earlier arm findings, and sibling specs. Reading those first.I'll join the swarm, then check earlier arm findings and the cited code in parallel.Draft 4 claims to fold the last gaps. I'll join the swarm and check those claims against the code and sibling specs.Next I’ll check the cited parsers, sibling specs, and status fields against the draft.Exact arm on `ede7d04` (`spec/app-backlog`), draft 4. fa44311 socket findings are gone. 93792ef D1/D2 and G1–G5 are folded (`exactKeys`, `workspace_id` on the object, `carriesActivity`, `ACTIVITY_REJECT_CODES`, `idleFrame()` increments, L1-before-`assigned-model`, one counter). Draft-3 G1–G4 are folded (page parser, listener-file order, panel serialise, L4 path). New issues below are from this draft’s own sentences.
+
+## DEFECT
+
+**D1 — §2.3. `idleFrame()` has two shapes, and the runtime attaches it with no phase guard.**  
+The JSON in §2.2 is `phase: "idle"`. The same bullet says `idleFrame()` “increments the sequence exactly as `flush()` does” (`activity.ts:318-329`), and `flush()` uses `phase: this.phase`. Then: “the runtime attaches `idleFrame()` to every reconcile read and to every 15 s fallback read.” Reconcile still runs during work (`runtime.ts:1549-1551`).  
+- If the frame is always idle, the site keeps it (`agent-activity.ts:137-138`, newer sequence on the same `streamId`) and the panel shows idle while a tool runs.  
+- If it is a `flush()` clone, L1 rejects `not_idle` and `activityPublishFailures` ticks every five minutes of work.  
+L2’s tests never cover “reconcile during `tool-running`”. Say: return `null` and do not increment unless `phase === "idle"`; attach only then.
+
+**D2 — §2.3. `activityIdleCarrier: "edge"` until the capability is seen does not match the idle timer being removed.**  
+The field “says which call currently carries idle frames (`edge` until the capability has been seen)”. The same section removes `armHeartbeat()` for idle and L2’s test is “a read without the capability seen carries nothing”. Nothing then carries idle frames, but status says `edge`. L2-first (claimed safe) goes silent after the one into-idle edge frame.
+
+## GAP
+
+**G1 — §2.3 / §2.2. CamelCase `idleFrame()` vs the snake_case activity body.**  
+`idleFrame()` returns `AgentActivityFrameRequest` (`activity.ts:47-57, 318-329`). `parseActivityRequest` closes on `workspace_id`, `stream_id`, … (`activity/core.ts:15-24`). The only map is inline in `AgentActivityEndpointTransport` (`:119-128`). Attach the return value as `activity` and every frame is `invalid_request`. L2 is not given one serializer both paths use.
+
+**G2 — §2.3. `activityLastErrorCode` cannot hold `ACTIVITY_REJECT_CODES` as written.**  
+The field is closed on `ActivityPublishErrorCode` (`activity.ts:17-22`; `STATUS_ACTIVITY_ERROR_CODES` at `control.ts:294-300, 607-611`). Reject codes are `invalid_request | forbidden | workspace_mismatch | not_idle`. Writing `not_idle` into the status file makes `listen status` report malformed. Spec does not say to extend the set, prefix, or map to `activity_http_rejected`.
+
+**G3 — §4 L2. `supervisor.ts` is the writer and is not named.**  
+`activityPublishFailures` is initialised and incremented in `supervisor.ts:321, 633-637`. `activityIdleCarrier` and read-path rejects have to land in the same persist path for the live control (`activityIdleCarrier: read`) to be true. L2 names `control.ts` and `cli.ts` only.
+
+## NIT
+
+- §4 “six site lanes” on `LiveDashboard.astro`: siblings name seven (`long-messages`, `markdown-wordwrap-qa`, `brain-tree-site`, `brain-toc`, `entity-colour`, `entity-filter`, `agent-model-rows`). Lead serialise still holds.
+- §1 `agent-activity.ts:135-141` is `:133-140`; grant stamp is `read/index.ts:493-498`, not `:437-496`.
+- §1 “ledger 2026-09-06” is not a file; 90 % is the 15 s remainder, 65 % is after lane A (`PUSH-DELIVERY.md` §7).
+- Copy `RESET ROLE` + `search_path` from `activity/index.ts:141-144`; the read tx is `swarm_read` (`read/index.ts:419`).
+
+## Folded (do not re-open)
+
+Anon SELECT / `ack:false` / partial HMAC / old site drops keys (fa44311). exactKeys 400, parser minus `workspace_id`, optional-key mechanism, invented reasons, sequence, L1 rollback 400, counter split, `AgentSignalPage` fields, listener-file order vs model L2, L4 path (93792ef + draft 3).
+
+## Holds
+
+`ACTIVITY_*` `activity.ts:12-13, 285-292, 337-341`; transport `:88-147`; edge `:79-150`; `exactKeys` `read/index.ts:184-192`, signals keys `:268-281`, 400 `:395-398`; `LISTENER_RECONCILE_POLL_MS = 300_000` `wake.ts:14` / `runtime.ts:1551`; idle default 15 s `idle-poll.ts:9`; `package.json:29` is the `p1-server` glob; site glob `site/package.json:11`; `entity-panel.observer.test.ts:97`; `wake-command` on `main` (`ca37cee`); `measure-idle-cost.sh` exists; `FRAME_KEYS` unchanged.
+
+## Not established
+
+Awaited `realtime.send` latency (§6). Hosted Realtime. Whether L1 applies the 4,096-byte cap to the nested object (`read` uses unbounded `request.json()` at `:378`).
+
+QUOTE-BACK: # Idle heartbeat: fold it into the reconcile read
+VERDICT: FAIL
+REASON: §2.3 still cannot be built as written: idleFrame() is both an always-idle payload and a flush() clone, attached to every reconcile with no phase guard, while activityIdleCarrier claims the edge carries idle frames after the idle timer is removed; L2 must also invent the camelCase-to-wire map, the reject-code union for activityLastErrorCode, and the supervisor.ts write path.
