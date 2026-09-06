@@ -250,6 +250,37 @@ test("hidden supervisor rejects another provider's executable before credentials
   assert.doesNotMatch(result.stderr, /credential|workspace-id must be a UUID/i);
 });
 
+test("--poll-interval rejects out-of-bounds and malformed durations before any credential work", () => {
+  const base = [
+    "listen",
+    "start",
+    "--agent-token-stdin",
+    "--provider",
+    "grok",
+    "--url",
+    "https://unreachable.example.test",
+    "--anon-key",
+    "anon",
+    "--workspace-id",
+    "11111111-1111-4111-8111-111111111111",
+  ];
+  const tooShort = runCli([...base, "--poll-interval", "0s"]);
+  assert.equal(tooShort.status, 1);
+  assert.match(tooShort.stderr, /--poll-interval must be a duration such as 15s, 30s, 1m/);
+
+  const tooLong = runCli([...base, "--poll-interval", "2m"]);
+  assert.equal(tooLong.status, 1);
+  assert.match(tooLong.stderr, /--poll-interval must be between 1s and 1m/);
+
+  const malformed = runCli([...base, "--poll-interval", "90x"]);
+  assert.equal(malformed.status, 1);
+  assert.match(malformed.stderr, /--poll-interval must be a duration such as 15s, 30s, 1m/);
+
+  const valid = runCli([...base, "--poll-interval", "15s"]);
+  assert.equal(valid.status, 1);
+  assert.doesNotMatch(valid.stderr, /--poll-interval/);
+});
+
 test("--turn-budget rejects out-of-bounds and malformed durations before any credential work", () => {
   const base = [
     "listen",

@@ -392,6 +392,10 @@ export async function fileVersionCreate(
   // ★R5 byte cap: committed bytes (live OR retired) plus not-yet-expired
   // pending DECLARED bytes. Retiring a brain version keeps its object, so it
   // must not release workspace storage quota.
+  /* BitmapOr on file_versions_workspace_state_created after ANALYZE.
+   * An OR of (live/retired) and (pending AND age) seq-scans on a tiny
+   * table; ANALYZE plus the (workspace_id, state, created_at) index is
+   * what makes the planner pick the index when workspace_id is selective. */
   const byteRows = await tx<{ total: string }[]>`
     SELECT coalesce(sum(size_bytes), 0)::text AS total
     FROM swarm.file_versions

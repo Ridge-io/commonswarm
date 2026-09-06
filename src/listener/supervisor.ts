@@ -313,6 +313,7 @@ export async function runListenerSupervisor(
     connectionReuseRatio: 0,
     activityPublishFailures: 0,
     activityLastErrorCode: null,
+    idlePollMs: null,
     logPath: options.paths.logPath,
   };
   let writes = Promise.resolve();
@@ -418,6 +419,25 @@ export async function runListenerSupervisor(
   };
 
   const onEvent = (event: ListenerRuntimeEvent) => {
+    if (event.type === "idle_poll") {
+      status = {
+        ...status,
+        idlePollMs: event.intervalMs,
+        readHealth: recordListenerClaimCadence(
+          status.readHealth ?? emptyListenerReadHealth(),
+          event.intervalMs > 0 ? event.intervalMs : 1,
+          event.ts,
+        ),
+        updatedAt: event.ts,
+      };
+      persist();
+      log({
+        ts: event.ts,
+        event: "listener_idle_poll",
+        idle_poll_ms: event.intervalMs,
+      });
+      return;
+    }
     if (event.type === "ready") {
       const versionNotice = options.getProviderVersionNotice?.() ?? null;
       transition("ready", {
@@ -445,6 +465,7 @@ export async function runListenerSupervisor(
             readHealth: recordListenerClaimCadence(
               status.readHealth ?? emptyListenerReadHealth(),
               event.cadenceMs,
+              event.ts,
             ),
           }),
       });

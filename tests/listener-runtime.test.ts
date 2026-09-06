@@ -23,6 +23,11 @@ import {
 } from "../src/cloud/delivery.js";
 import { listenerStatusJson, renderListenerStatus, usage } from "../src/cli.js";
 import {
+  idlePollStatusSentence,
+  IDLE_POLL_DEFAULT_MS,
+  nextIdlePollMs,
+} from "../src/cloud/idle-poll.js";
+import {
   RenewalReauthorisationRequired,
   RenewalRevoked,
 } from "../src/cloud/renewal.js";
@@ -39,6 +44,7 @@ import { ACP_DEFAULT_REQUEST_TIMEOUT_MS } from "../src/host/bounds.js";
 import { AcpHostError } from "../src/host/types.js";
 import {
   runListenerRuntime as runListenerRuntimeActual,
+  LISTENER_IDLE_POLL_MS,
   LISTENER_DELIVERY_SAFETY_MARGIN_MS,
   LISTENER_HOST_PORTS_PROBE_MS,
   LISTENER_PROMPT_START_MINIMUM_MS,
@@ -81,6 +87,82 @@ async function runListenerRuntime(
     ...options,
   });
 }
+
+test("empty durable claims back off the idle wait and reset on a delivery", async () => {
+  const journal = new MemoryDeliveryJournal();
+  const controller = new AbortController();
+  const sleeps: number[] = [];
+  const idleEvents: number[] = [];
+  let claims = 0;
+  let reads = 0;
+  const claimedNote = note(
+    "aaaaaaaa-aaaa-4aaa-8aaa-aaaaaaaaaa80",
+    "2026-07-30T00:00:01.000Z",
+  );
+  const lease: DeliveryRow = {
+    signal: claimedNote,
+    leaseId: "55555555-5555-4555-8555-555555555555",
+    leasedUntil: "2026-07-30T00:15:00.000Z",
+    senderOwnerRelation: "same_owner",
+    recipientPosition: null,
+    recipientCount: null,
+  };
+  const stop = await runListenerRuntime({
+    target: cloudTarget("https://cloud.example.test", "anon"),
+    workspaceId: WORKSPACE_ID,
+    principalId: PRINCIPAL_ID,
+    listenerInstanceId: journal.record.listenerInstanceId,
+    deliveryJournal: journal,
+    deliveryClient: {
+      async claimAgentInbox() {
+        claims += 1;
+        if (claims <= 3) return claimResult([], 0);
+        if (claims === 4) return claimResult([lease], 1);
+        controller.abort();
+        return claimResult([], 0);
+      },
+      async ackAgentDelivery() {
+        return { httpStatus: 200, signalId: claimedNote.id, outcome: "observed" as const };
+      },
+    },
+    credentialSession: { async bearer() { return "token"; } },
+    store: new MemoryStore(),
+    model: new FakeModel(),
+    signal: controller.signal,
+    pollMs: IDLE_POLL_DEFAULT_MS,
+    now: () => Date.parse("2026-07-30T00:00:00.000Z"),
+    sleep: async (ms) => {
+      sleeps.push(ms);
+    },
+    onEvent: (event) => {
+      if (event.type === "idle_poll") idleEvents.push(event.intervalMs);
+    },
+    readPage: async () => {
+      reads += 1;
+      return durablePage();
+    },
+  });
+  assert.equal(stop.reason, "cancelled");
+  assert.equal(LISTENER_IDLE_POLL_MS, IDLE_POLL_DEFAULT_MS);
+  assert.ok(
+    reads >= 4,
+    "the read edge POSTs on the same loop as the claim, after idleSleep",
+  );
+  assert.deepEqual(
+    sleeps.slice(0, 3),
+    [
+      nextIdlePollMs(IDLE_POLL_DEFAULT_MS, 0),
+      nextIdlePollMs(IDLE_POLL_DEFAULT_MS, 1),
+      nextIdlePollMs(IDLE_POLL_DEFAULT_MS, 2),
+    ],
+  );
+  assert.deepEqual(sleeps.slice(0, 3), [15_000, 30_000, 60_000]);
+  const resetSleep = sleeps.find((ms, index) => index >= 3 && ms === IDLE_POLL_DEFAULT_MS);
+  assert.equal(resetSleep, IDLE_POLL_DEFAULT_MS, "a delivery must reset the idle wait to the base");
+  assert.ok(idleEvents.includes(15_000));
+  assert.ok(idleEvents.includes(30_000));
+  assert.ok(idleEvents.includes(60_000));
+});
 
 test("prompt-start lease budget reserves the provenance directory deadline", () => {
   assert.equal(
@@ -4125,6 +4207,7 @@ test("listen status shows the delivery in hand and how long the queue has waited
     deferOverChars: null,
     pendingForMainCount: 0,
     droppedForMainCount: 0,
+    idlePollMs: 30_000,
     logPath: "/tmp/cswarm-hold/listener.log",
   } as unknown as ListenerStatus;
 
@@ -4142,6 +4225,12 @@ test("listen status shows the delivery in hand and how long the queue has waited
   assert.equal(json.pendingDeliveryCountAt, claimedAt);
 
   const human = renderListenerStatus(status, evidence, nowMs);
+  assert.ok(
+    human.includes(idlePollStatusSentence(30_000)),
+    human,
+  );
+  assert.equal(json.idlePollMs, 30_000);
+  assert.equal(json.idlePollSentence, idlePollStatusSentence(30_000));
   assert.ok(
     human.includes(`Working on delivery ${HOLD_FIRST_ID}, claimed 4m ago.`),
     human,
@@ -4758,6 +4847,7 @@ test("the redelivery claim reads the same in help as in status", () => {
    * arm found on e5f75c9. */
   const help = usage();
   assert.ok(help.includes("--turn-budget"), "the flag is still documented");
+  assert.ok(help.includes("--poll-interval"), "idle poll flag is documented");
   assert.ok(
     help.includes(
       "After the lease ends the service either\ndelivers the released one again or terminates it.",

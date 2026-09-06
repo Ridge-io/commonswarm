@@ -29,6 +29,7 @@ import {
   type EventEnvelope,
   type TaskState,
 } from "../../src/protocol/index.js";
+import { claimCommandId } from "../../src/listener/delivery-journal.js";
 import {
   claimAgentInbox,
   DELIVERY_MAX_OUTSTANDING_LEASES,
@@ -6497,6 +6498,18 @@ test("durable-delivery: claim/ack happy path, idempotent replay, pending count",
     assert.equal(claim.body.status, "accepted");
     const deliveries = claim.body.deliveries as Array<Record<string, unknown>>;
     assert.equal(deliveries.length, 1);
+    const [nonEmptyIdem] = await sql<{ command_id: string }[]>`
+      SELECT command_id FROM swarm.idempotency_keys WHERE command_id = ${claimId}
+    `;
+    assert.equal(nonEmptyIdem?.command_id, claimId, "a claim that returns a row writes an idempotency key");
+    const nonEmptyAudits = await sql<{ audit_id: string }[]>`
+      SELECT audit_id FROM swarm.audit_log
+      WHERE workspace_id = ${f.workspaceA}::uuid
+        AND actor_agent_principal = ${receiver.principalId}::uuid
+        AND command_kind = 'claim_agent_inbox'
+        AND outcome = 'accepted'
+    `;
+    assert.ok(nonEmptyAudits.length >= 1, "a claim that returns a row writes an audit row");
     const d0 = deliveries[0]!;
     assert.equal((d0.signal as Record<string, unknown>).id, signalId);
     assert.equal((d0.signal as Record<string, unknown>).body, "dd-happy-body-secret");
@@ -6622,21 +6635,71 @@ test("durable-delivery: claim/ack happy path, idempotent replay, pending count",
     );
     assert.equal(readAfter.body.pending_delivery_count, 0);
 
+    const acceptedBeforeEmpty = await sql<{ n: string }[]>`
+      SELECT count(*)::text AS n FROM swarm.audit_log
+      WHERE workspace_id = ${f.workspaceA}::uuid
+        AND actor_agent_principal = ${receiver.principalId}::uuid
+        AND command_kind = 'claim_agent_inbox'
+        AND outcome = 'accepted'
+    `;
+    const claimBucket = `delivery:claim:principal:${f.workspaceA}:${receiver.principalId}`;
+    const bucketsBeforeEmpty = await sql<{ n: string }[]>`
+      SELECT count(*)::text AS n FROM swarm.rate_buckets
+      WHERE bucket_key = ${claimBucket}
+    `;
+
     /* NULL is the other end of the bound, and it is what makes the string
      * above a measurement: once the queue is empty the server says so with a
      * null rather than repeating the last time it saw. Both come from the same
      * min() over the same set, so they cannot disagree with the count. */
+    const emptyClaimId = commandId("claim_agent_inbox");
     const emptyClaim = await issueDelivery(f, receiver.token, {
       kind: "claim_agent_inbox",
       listener_instance_id: listener,
       limit: 10,
-    });
+    }, emptyClaimId);
     assert.equal(emptyClaim.status, 200, emptyClaim.text);
     assert.equal(emptyClaim.body.pending_delivery_count, 0);
     assert.equal(
       (emptyClaim.body.deliveries as unknown[]).length,
       0,
       "nothing is left to claim",
+    );
+    const [emptyIdem] = await sql<{ command_id: string }[]>`
+      SELECT command_id FROM swarm.idempotency_keys WHERE command_id = ${emptyClaimId}
+    `;
+    assert.equal(emptyIdem, undefined, "an empty claim writes no idempotency key");
+    const bucketsAfterEmpty = await sql<{ n: string }[]>`
+      SELECT count(*)::text AS n FROM swarm.rate_buckets
+      WHERE bucket_key = ${claimBucket}
+    `;
+    assert.equal(
+      Number(bucketsAfterEmpty[0]?.n),
+      Number(bucketsBeforeEmpty[0]?.n),
+      "an idle poll does not upsert rate_buckets",
+    );
+    const emptyReplay = await issueDelivery(f, receiver.token, {
+      kind: "claim_agent_inbox",
+      listener_instance_id: listener,
+      limit: 10,
+    }, emptyClaimId);
+    assert.equal(emptyReplay.status, 200, emptyReplay.text);
+    assert.equal(
+      (emptyReplay.body.deliveries as unknown[]).length,
+      0,
+      "retry of an idle command id re-executes; there is no stored ledger to replay",
+    );
+    const emptyAudits = await sql<{ audit_id: string }[]>`
+      SELECT audit_id FROM swarm.audit_log
+      WHERE workspace_id = ${f.workspaceA}::uuid
+        AND actor_agent_principal = ${receiver.principalId}::uuid
+        AND command_kind = 'claim_agent_inbox'
+        AND outcome = 'accepted'
+    `;
+    assert.equal(
+      emptyAudits.length,
+      Number(acceptedBeforeEmpty[0]?.n),
+      "an empty claim writes no audit row; the non-empty claim's row remains",
     );
     assert.equal(
       Object.hasOwn(emptyClaim.body as object, "oldest_pending_at"),
@@ -7996,9 +8059,54 @@ test("durable-delivery: relation matrix on claim matches read; cursor path still
 test("durable-delivery: claim idempotency mismatch and workspace-only delivery routes", async () => {
   await scenario(async (f) => {
     const receiver = await createFixtureAgent(f, f.ua, "dd-idemp-mismatch");
+    const emptyCmdId = randomUUID();
+    const emptyInstId = randomUUID();
+
+    const emptyClaim = await issueDelivery(
+      f,
+      receiver.token,
+      {
+        kind: "claim_agent_inbox",
+        listener_instance_id: emptyInstId,
+        limit: 10,
+      },
+      emptyCmdId,
+    );
+    assert.equal(emptyClaim.status, 200, emptyClaim.text);
+    assert.equal((emptyClaim.body.deliveries as unknown[]).length, 0);
+    const [emptyKey] = await sql<{ command_id: string }[]>`
+      SELECT command_id FROM swarm.idempotency_keys WHERE command_id = ${emptyCmdId}
+    `;
+    assert.equal(emptyKey, undefined, "an idle poll writes no idempotency key");
+
+    const emptyMismatch = await issueDelivery(
+      f,
+      receiver.token,
+      {
+        kind: "claim_agent_inbox",
+        listener_instance_id: randomUUID(),
+        limit: 10,
+      },
+      emptyCmdId,
+    );
+    assert.equal(
+      emptyMismatch.status,
+      200,
+      "an idle poll retries the same command id by re-executing, not as a conflict",
+    );
+
     const cmdId = randomUUID();
     const instId = randomUUID();
-
+    const postedForIdem = await issueSignal(f, f.uaJwt, {
+      kind: "post_signal",
+      signal_kind: "note",
+      body: "dd-idemp-filled",
+      to_user_id: null,
+      to_agent_principal_id: receiver.principalId,
+      in_reply_to: null,
+      about: "dd-idemp-filled",
+    });
+    assert.equal(postedForIdem.status, 200, postedForIdem.text);
     const claim1 = await issueDelivery(
       f,
       receiver.token,
@@ -8010,8 +8118,11 @@ test("durable-delivery: claim idempotency mismatch and workspace-only delivery r
       cmdId,
     );
     assert.equal(claim1.status, 200, claim1.text);
+    assert.ok(
+      (claim1.body.deliveries as unknown[]).length > 0,
+      "a non-empty claim is the control that still writes the ledger",
+    );
 
-    // Mismatched listener_instance_id -> 409 command_id_conflict
     const mismatchInst = await issueDelivery(
       f,
       receiver.token,
@@ -8025,7 +8136,6 @@ test("durable-delivery: claim idempotency mismatch and workspace-only delivery r
     assert.equal(mismatchInst.status, 409, mismatchInst.text);
     assert.equal(mismatchInst.body.error, "command_id_conflict");
 
-    // Mismatched limit -> 409 command_id_conflict
     const mismatchLimit = await issueDelivery(
       f,
       receiver.token,
@@ -11838,4 +11948,82 @@ test("durable-delivery: Phase C resolveLedgerRace recharge — denied losing cla
       assert.equal(alertText.includes(sentinel), false, `denied alert forbids non-correlation sentinel ${sentinel}`);
     }
   });
+});
+
+test("idle-cost purge honours 2-day claim-class keys and does not delete audit rows", async () => {
+  /* No migration in this lane deletes audit rows. The existing
+   * idempotency purge honours claim_idempotency_retention_days (2) for
+   * ids minted by claimCommandId() and 30 days for every other command_id.
+   * Uses fixture() not scenario(): the seed rows are not command-path
+   * ledger entries. */
+  const f = await fixture();
+  const oldClaimId = claimCommandId(randomUUID(), 0);
+  const freshClaimId = claimCommandId(randomUUID(), 10);
+  const oldOtherId = `ack_agent_delivery_${randomUUID().replaceAll("-", "").slice(0, 16)}`;
+  const midOtherId = `post_signal_${randomUUID().replaceAll("-", "").slice(0, 16)}`;
+  const principal = `agent:${randomUUID()}`;
+
+  await sql`
+    INSERT INTO swarm.audit_log (occurred_at, command_kind, outcome, workspace_id)
+    VALUES
+      (statement_timestamp() - interval '8 days', 'claim_agent_inbox', 'accepted', ${f.workspaceA}::uuid)
+  `;
+  await sql`
+    INSERT INTO swarm.idempotency_keys (
+      principal_kind, principal_id, command_id,
+      workspace_id, stream_id, request_hash, response, created_at
+    ) VALUES
+      (
+        'agent', ${principal}, ${oldClaimId},
+        ${f.workspaceA}::uuid, ${f.streamA}::uuid, 'idle-claim-old', '{"ok":true}'::jsonb,
+        statement_timestamp() - interval '3 days'
+      ),
+      (
+        'agent', ${principal}, ${freshClaimId},
+        ${f.workspaceA}::uuid, ${f.streamA}::uuid, 'idle-claim-new', '{"ok":true}'::jsonb,
+        statement_timestamp() - interval '1 day'
+      ),
+      (
+        'agent', ${principal}, ${oldOtherId},
+        ${f.workspaceA}::uuid, ${f.streamA}::uuid, 'idle-ack-old', '{"ok":true}'::jsonb,
+        statement_timestamp() - interval '40 days'
+      ),
+      (
+        'agent', ${principal}, ${midOtherId},
+        ${f.workspaceA}::uuid, ${f.streamA}::uuid, 'idle-post-mid', '{"ok":true}'::jsonb,
+        statement_timestamp() - interval '3 days'
+      )
+  `;
+
+  const beforeAudit = await sql<{ n: string }[]>`
+    SELECT count(*)::text AS n FROM swarm.audit_log
+    WHERE workspace_id = ${f.workspaceA}::uuid
+      AND command_kind = 'claim_agent_inbox'
+      AND occurred_at < statement_timestamp() - interval '7 days'
+  `;
+  assert.ok(Number(beforeAudit[0]?.n) >= 1, "old claim audits are present");
+
+  await sql`SELECT swarm.purge_expired_idempotency_keys()`;
+
+  const afterAudit = await sql<{ n: string }[]>`
+    SELECT count(*)::text AS n FROM swarm.audit_log
+    WHERE workspace_id = ${f.workspaceA}::uuid
+      AND command_kind = 'claim_agent_inbox'
+      AND occurred_at < statement_timestamp() - interval '7 days'
+  `;
+  assert.equal(
+    Number(afterAudit[0]?.n),
+    Number(beforeAudit[0]?.n),
+    "audit_log rows are not purged",
+  );
+
+  const remaining = await sql<{ command_id: string }[]>`
+    SELECT command_id FROM swarm.idempotency_keys
+    WHERE command_id IN (${oldClaimId}, ${freshClaimId}, ${oldOtherId}, ${midOtherId})
+  `;
+  assert.deepEqual(
+    remaining.map((row) => row.command_id).sort(),
+    [freshClaimId, midOtherId].sort(),
+    "3-day claim keys go; 3-day non-claim keys stay; 40-day other keys go",
+  );
 });

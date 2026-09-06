@@ -72,9 +72,15 @@ import type {
   ListenerSenderProvenanceContext,
 } from "./types.js";
 import type { ActivityPublishErrorCode } from "./activity.js";
+import {
+  IDLE_POLL_DEFAULT_MS,
+  IDLE_POLL_MAX_MS,
+  nextIdlePollMs,
+} from "../cloud/idle-poll.js";
 
 export const LISTENER_PAGE_LIMIT = 100;
-export const LISTENER_IDLE_POLL_MS = 2_000;
+export const LISTENER_IDLE_POLL_MS = IDLE_POLL_DEFAULT_MS;
+export const LISTENER_IDLE_POLL_MAX_MS = IDLE_POLL_MAX_MS;
 /** Server-fixed maximum delivery lease (§ frozen runtime budgets). */
 export const LISTENER_DELIVERY_SAFETY_MARGIN_MS = 30_000;
 export const LISTENER_ACK_ONLY_MINIMUM_MS =
@@ -153,6 +159,11 @@ export type ListenerRuntimeEvent =
     workspaceId: string;
     principalId: string;
     cadenceMs?: number;
+    ts: string;
+  }
+  | {
+    type: "idle_poll";
+    intervalMs: number;
     ts: string;
   }
   | {
@@ -776,11 +787,23 @@ export async function runListenerRuntime(
   const random = options.random ?? Math.random;
   const pageLimit = options.pageLimit ?? LISTENER_PAGE_LIMIT;
   const pollMs = options.pollMs ?? LISTENER_IDLE_POLL_MS;
+  let emptyIdleStreak = 0;
   const routeMode = options.routeMode ?? "worker";
   const deferOverChars = options.deferOverChars ?? null;
   const deliveryHoldBudgetMs = options.deliveryHoldBudgetMs ??
     LISTENER_DELIVERY_HOLD_BUDGET_MS;
   const abort = options.signal;
+  const idleSleep = async (hadDelivery: boolean): Promise<void> => {
+    if (hadDelivery) emptyIdleStreak = 0;
+    const intervalMs = nextIdlePollMs(pollMs, emptyIdleStreak, LISTENER_IDLE_POLL_MAX_MS);
+    if (!hadDelivery) emptyIdleStreak += 1;
+    options.onEvent?.({
+      type: "idle_poll",
+      intervalMs,
+      ts: eventTime(now),
+    });
+    await sleep(intervalMs, abort);
+  };
   const hasInstanceId = options.listenerInstanceId !== undefined;
   const hasJournal = options.deliveryJournal !== undefined;
   if (hasInstanceId !== hasJournal) {
@@ -1073,6 +1096,8 @@ export async function runListenerRuntime(
       let page: AgentSignalPage;
       try {
         const token = await options.credentialSession.bearer();
+        /* Same idle wait as the claim: idleSleep is the only pause in this
+         * loop, so the read POST and the claim POST share the back-off. */
         page = await readPage({
           token,
           after,
@@ -1255,7 +1280,7 @@ export async function runListenerRuntime(
             stop = { reason: "cancelled" };
             break;
           }
-          await sleep(pollMs, abort);
+          await idleSleep(true);
           continue;
         }
         await sleep(Math.max(0, horizon - now()), abort);
@@ -1452,9 +1477,15 @@ export async function runListenerRuntime(
             stop = { reason: "fatal", error: asError(error) };
             break;
           }
-          await sleep(pollMs, abort);
+          await idleSleep(false);
           continue;
         }
+        emptyIdleStreak = 0;
+        options.onEvent?.({
+          type: "idle_poll",
+          intervalMs: pollMs,
+          ts: eventTime(now),
+        });
 
         const leasedUntilMs = Date.parse(claimed.leasedUntil);
         if (
@@ -1775,7 +1806,7 @@ export async function runListenerRuntime(
       }
       // Full scan complete. Reset so late commits with older timestamps appear.
       after = null;
-      await sleep(pollMs, abort);
+      await idleSleep(page.signals.length > 0);
     }
   } finally {
     abort?.removeEventListener("abort", onAbort);

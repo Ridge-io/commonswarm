@@ -29,6 +29,8 @@ export interface ListenerChildSpec {
   effort?: string;
   /** Validated --turn-budget duration string, forwarded verbatim. */
   turnBudget?: string;
+  /** Validated --poll-interval duration string, forwarded verbatim. */
+  pollInterval?: string;
   route?: "worker" | "main" | "split";
   deferOver?: number;
   nodeExecArgv?: string[];
@@ -146,6 +148,7 @@ export function buildListenerChildArgs(spec: ListenerChildSpec): string[] {
     ...(spec.model ? ["--model", spec.model] : []),
     ...(provider === "grok" && spec.effort ? ["--effort", spec.effort] : []),
     ...(spec.turnBudget ? ["--turn-budget", spec.turnBudget] : []),
+    ...(spec.pollInterval ? ["--poll-interval", spec.pollInterval] : []),
     ...(spec.route && spec.route !== "worker" ? ["--route", spec.route] : []),
     ...(spec.deferOver !== undefined ? ["--defer-over", String(spec.deferOver)] : []),
   ];

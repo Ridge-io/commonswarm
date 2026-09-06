@@ -221,7 +221,9 @@ import {
   type SignalAttachmentRef,
 } from "./cloud/attachments.js";
 import {
+  acquireArrivalWatchLock,
   arrivalNotification,
+  arrivalWatchLockPath,
   createArrivalRetryNoticePolicy,
   fileArrivalCursorStore,
   formatArrivalNotification,
@@ -229,9 +231,15 @@ import {
   ARRIVAL_RETRY_NOTICE_THRESHOLD_MS,
   EXIT_NOTIFY_ORPHANED,
   NotifyStdoutClosedError,
+  releaseArrivalWatchLock,
   runArrivalWatch,
   writeArrivalMonitorLine,
 } from "./cloud/arrival-watch.js";
+import {
+  idlePollHelpSentence,
+  idlePollStatusSentence,
+  parseIdlePollIntervalMs,
+} from "./cloud/idle-poll.js";
 import {
   renderSignalReceiptReport,
   signalReceiptJsonPayload,
@@ -326,7 +334,7 @@ const KNOWN_FLAGS = new Set([
   "link-stdin", "local", "model", "name", "ndjson", "no-browser", "notify", "opencode-executable", "out",
   "permissions", "principal-id", "provider", "purpose", "renewal-grant-id", "repo", "reveal-anon-key", "route", "run-id", "since", "site", "slug", "state-dir",
   "thread",
-  "renewal-horizon-days", "standing", "task-id", "to", "token-id", "ttl-ms", "turn-budget", "uid", "until", "url", "user", "version", "wait", "workspace-id", "write",
+  "poll-interval", "renewal-horizon-days", "standing", "task-id", "to", "token-id", "ttl-ms", "turn-budget", "uid", "until", "url", "user", "version", "wait", "workspace-id", "write",
 ]);
 
 const BOOLEAN_FLAGS = new Set([
@@ -551,7 +559,7 @@ Usage:
   cswarm brain get <topic>[@<version>] [--version <n>] [--url <url> --anon-key <key>] [--workspace-id <uuid>] ${agentCredential} [--json]
   cswarm brain put <topic> [<markdown-path>] [--url <url> --anon-key <key>] [--workspace-id <uuid>] ${agentCredential} [--if-version <n>] [--json]  # without a path, reads Markdown from stdin; --if-version refuses the write unless the live version is still <n>
   cswarm feedback "<text>" --kind bug|idea|friction [--about <ref>] [--url <url> --anon-key <key>] [--workspace-id <uuid>] ${agentCredential} [--json]
-  cswarm listen start ${requiredAgentCredential} [--url <url> --anon-key <key>] --workspace-id <uuid> --provider grok|opencode|claude|codex [--cwd <absolute-path>] [--model <model>] [--effort <level>] [--permissions deny|allow] [--grok-executable <path>] [--opencode-executable <path>] [--claude-executable <path>] [--codex-executable <path>] [--turn-budget <duration>] [--route worker|main|split] [--defer-over <chars>] [--allow-unattended] [--foreground] [--json]
+  cswarm listen start ${requiredAgentCredential} [--url <url> --anon-key <key>] --workspace-id <uuid> --provider grok|opencode|claude|codex [--cwd <absolute-path>] [--model <model>] [--effort <level>] [--permissions deny|allow] [--grok-executable <path>] [--opencode-executable <path>] [--claude-executable <path>] [--codex-executable <path>] [--turn-budget <duration>] [--poll-interval <duration>] [--route worker|main|split] [--defer-over <chars>] [--allow-unattended] [--foreground] [--json]
   cswarm listen canary ${requiredAgentCredential} [--url <url> --anon-key <key>] --workspace-id <uuid> [--state-dir <path>] [--wait <seconds>] [--json]
   cswarm listen status ${agentCredential} [--url <url> --anon-key <key>] --workspace-id <uuid> [--principal-id <uuid>] [--json]
   cswarm listen stop ${agentCredential} [--url <url> --anon-key <key>] --workspace-id <uuid> [--principal-id <uuid>] [--json]
@@ -640,6 +648,8 @@ number plus m, h, or d (for example 90m, 24h, or 7d) and are capped at 30d.
 Place -- before signal text that itself begins with -- to stop option parsing.
 Signal text is at most 8000 characters and --about at most 500; a longer body is
 refused locally before any network call, so compose within the limit.
+
+${idlePollHelpSentence()}
 
 listen start --turn-budget bounds ONE worker prompt turn (default 10m): how long
 the worker may think and use tools on a single message before the turn times out
@@ -2603,6 +2613,11 @@ function listenerTurnBudgetMs(value: string | undefined): number {
   return milliseconds;
 }
 
+/** Idle claim wait. Bounds and labels come from idle-poll.ts. */
+export function listenerPollIntervalMs(value: string | undefined): number {
+  return parseIdlePollIntervalMs(value);
+}
+
 /** Parse the public route pair before credentials or network work. */
 export function listenerRouteConfiguration(
   routeValue: string | undefined,
@@ -3982,6 +3997,12 @@ async function runInboxNotifyCommand(args: Arguments): Promise<void> {
   const stop = () => controller.abort();
   process.on("SIGINT", stop);
   process.on("SIGTERM", stop);
+  const lockPath = arrivalWatchLockPath(
+    cloud,
+    selected.selectedWorkspace,
+    principalId,
+  );
+  await acquireArrivalWatchLock(lockPath);
   try {
     const retryNotices = createArrivalRetryNoticePolicy();
     let renderedBearer = selected.bearer;
@@ -4059,6 +4080,7 @@ async function runInboxNotifyCommand(args: Arguments): Promise<void> {
     process.off("SIGINT", stop);
     process.off("SIGTERM", stop);
     httpClient.close();
+    await releaseArrivalWatchLock(lockPath);
   }
 }
 
@@ -4823,6 +4845,10 @@ export function listenerStatusJson(
     readRetriesLastHour: readSummary.retriesLastHour,
     readRetryHours: readSummary.retryHours,
     claimCadenceMs: readHealth.claimCadenceMs,
+    idlePollMs: status.idlePollMs ?? null,
+    idlePollSentence: status.idlePollMs === undefined || status.idlePollMs === null
+      ? null
+      : idlePollStatusSentence(status.idlePollMs),
     claimThroughputHours: readSummary.claimThroughputHours,
     listenerLapse: lapseNotices.length > 0,
     listenerLapseCodes: lapseNotices.map((notice) => notice.code),
@@ -4984,6 +5010,9 @@ export function renderListenerStatus(
     readSummary.claimThroughputHours.length === 0
       ? "Claim throughput by full hour: no complete listener hour is available yet."
       : `Claim throughput by full hour: ${readSummary.claimThroughputHours.map((hour) => `${hour.hourStart} ${hour.claims}/${Math.round(hour.expectedClaims)} (${hour.ratio.toFixed(3)})`).join("; ")}.`,
+    status.idlePollMs === undefined || status.idlePollMs === null
+      ? "Current idle poll interval has not been reported yet."
+      : idlePollStatusSentence(status.idlePollMs),
   ];
   for (const notice of lapseNotices) {
     lines.push(`WARNING [${notice.code}]: ${notice.message}`);
@@ -5524,6 +5553,7 @@ async function runConfiguredListener(options: {
   codexExecutable?: string;
   stateDirectory?: string;
   turnBudgetMs?: number;
+  pollMs?: number;
   routeMode?: ListenerRouteMode;
   deferOverChars?: number | null;
 }): Promise<ListenerStatus> {
@@ -5913,6 +5943,7 @@ async function runConfiguredListener(options: {
             /* One delivery may hold the seat for one turn budget, not for the
                whole 15-minute lease. Same lever, so the two cannot drift. */
             deliveryHoldBudgetMs: turnBudgetMs,
+            ...(options.pollMs === undefined ? {} : { pollMs: options.pollMs }),
             pendingMainQueue,
             fetcher: httpClient.fetch,
           });
@@ -5944,6 +5975,7 @@ async function runListenStart(args: Arguments): Promise<void> {
     "codex-executable",
     "state-dir",
     "turn-budget",
+    "poll-interval",
     "route",
     "defer-over",
     "allow-unattended",
@@ -5961,6 +5993,7 @@ async function runListenStart(args: Arguments): Promise<void> {
   // fast; the detached path forwards the validated string for the supervisor
   // to re-parse.
   const turnBudgetMs = listenerTurnBudgetMs(args.optional("turn-budget"));
+  const pollMs = listenerPollIntervalMs(args.optional("poll-interval"));
   const routing = listenerRouteConfiguration(
     args.optional("route"),
     args.optional("defer-over"),
@@ -6012,6 +6045,7 @@ async function runListenStart(args: Arguments): Promise<void> {
       permissionMode,
       provider,
       turnBudgetMs,
+      pollMs,
       ...routing,
       ...(args.optional("model") ? { model: args.required("model") } : {}),
       ...(args.optional("effort") ? { effort: args.required("effort") } : {}),
@@ -6082,6 +6116,9 @@ async function runListenStart(args: Arguments): Promise<void> {
         ...(args.optional("effort") ? { effort: args.required("effort") } : {}),
         ...(args.optional("turn-budget")
           ? { turnBudget: args.required("turn-budget") }
+          : {}),
+        ...(args.optional("poll-interval")
+          ? { pollInterval: args.required("poll-interval") }
           : {}),
         ...(args.optional("grok-executable")
           ? { executable: args.required("grok-executable") }
@@ -6242,6 +6279,7 @@ async function runListenSupervisor(args: Arguments): Promise<void> {
     "codex-executable",
     "state-dir",
     "turn-budget",
+    "poll-interval",
     "route",
     "defer-over",
   ], 1);
@@ -6250,6 +6288,7 @@ async function runListenSupervisor(args: Arguments): Promise<void> {
   // Validated before the credential is read, like the public listen start
   // path: a bad duration must fail fast, not after secrets moved.
   const turnBudgetMs = listenerTurnBudgetMs(args.optional("turn-budget"));
+  const pollMs = listenerPollIntervalMs(args.optional("poll-interval"));
   const routing = listenerRouteConfiguration(
     args.optional("route"),
     args.optional("defer-over"),
@@ -6272,6 +6311,7 @@ async function runListenSupervisor(args: Arguments): Promise<void> {
     permissionMode: listenerPermissionMode(args.optional("permissions")),
     provider,
     turnBudgetMs,
+    pollMs,
     ...routing,
     ...(args.optional("model") ? { model: args.required("model") } : {}),
     ...(args.optional("effort") ? { effort: args.required("effort") } : {}),

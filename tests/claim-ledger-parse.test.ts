@@ -1,9 +1,49 @@
 import assert from "node:assert/strict";
 import { test } from "node:test";
 import {
+  claimAgentInboxPersistsLedger,
   DELIVERY_CAPABILITIES,
   parseClaimLedger,
 } from "../supabase/functions/command/durable-delivery.js";
+
+test("empty claims do not persist the ledger; a claimed row does", () => {
+  const empty = parseClaimLedger({
+    ok: true,
+    event_ids: [],
+    delivery_refs: [],
+    pending_delivery_count: 0,
+  });
+  assert.ok(empty);
+  assert.equal(claimAgentInboxPersistsLedger(empty), false);
+
+  const claimed = parseClaimLedger({
+    ok: true,
+    event_ids: [],
+    delivery_refs: [{
+      signal_id: "aaaaaaaa-aaaa-4aaa-8aaa-aaaaaaaaaaaa",
+      lease_id: "bbbbbbbb-bbbb-4bbb-8bbb-bbbbbbbbbbbb",
+      leased_until: "2026-07-30T00:15:00.000Z",
+      sender_owner_relation: "same_owner",
+    }],
+    pending_delivery_count: 1,
+  });
+  assert.ok(claimed);
+  assert.equal(claimAgentInboxPersistsLedger(claimed), true);
+
+  const poison = parseClaimLedger({
+    ok: true,
+    event_ids: [],
+    delivery_refs: [],
+    pending_delivery_count: 0,
+    terminal_delivery_failure_count: 1,
+  });
+  assert.ok(poison);
+  assert.equal(
+    claimAgentInboxPersistsLedger(poison),
+    true,
+    "poison terminalization is state-changing even with no leased row",
+  );
+});
 
 test("production parseClaimLedger behavior", () => {
   // absent terminal_delivery_failure_count -> 0

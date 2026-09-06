@@ -4,18 +4,26 @@
  * ★ Named by `npm test`; it needs no network or database.
  */
 import assert from "node:assert/strict";
+import { mkdtemp, readFile, rm, writeFile } from "node:fs/promises";
+import { tmpdir } from "node:os";
+import { join } from "node:path";
 import { test } from "node:test";
 import type { SignalRecord } from "../../src/cloud/command-client.js";
 import {
+  acquireArrivalWatchLock,
   arrivalNotification,
+  arrivalWatchAlreadyRunningSentence,
+  ArrivalWatchAlreadyRunningError,
   ARRIVAL_RETRY_NOTICE_THRESHOLD_MS,
   ARRIVAL_WATCH_POLL_MS,
   createArrivalRetryNoticePolicy,
   formatArrivalNotification,
   formatArrivalRetryNotice,
+  releaseArrivalWatchLock,
   runArrivalWatch,
   type ArrivalCursorStore,
 } from "../../src/cloud/arrival-watch.js";
+import { nextIdlePollMs } from "../../src/cloud/idle-poll.js";
 import {
   SignalHttpError,
   SignalTransportError,
@@ -235,7 +243,7 @@ test("a transient failure and a 5xx keep the watcher armed without a busy loop",
   assert.equal(reads, 3);
   assert.deepEqual(sleeps, [250, 500]);
   assert.ok(sleeps[0]! > 0, "retry must not spin hot");
-  assert.equal(ARRIVAL_WATCH_POLL_MS, 25_000);
+  assert.equal(ARRIVAL_WATCH_POLL_MS, 60_000);
 });
 
 test("retry notices stay silent for 60s, emit once, then emit one recovery", () => {
@@ -414,4 +422,82 @@ test("a message naming this agent at position 1 is emitted, and one naming other
     },
   });
   assert.equal(scalarEmitted.length, 1);
+});
+
+test("empty arrival pages back off to 60s and reset on a delivery", async () => {
+  const existingCursor = {
+    created_at: "2026-08-28T10:04:00.000Z",
+    id: "55555555-5555-4555-8555-555555555555",
+  };
+  const delivered = row(
+    "99999999-9999-4999-8999-999999999999",
+    "arrived",
+    "2026-08-28T10:07:00.000Z",
+  );
+  const memory = memoryStore(existingCursor);
+  const abort = new AbortController();
+  const sleeps: number[] = [];
+  let reads = 0;
+  const stop = await runArrivalWatch({
+    workspaceId: WORKSPACE,
+    principalId: AGENT,
+    store: memory.store,
+    signal: abort.signal,
+    pollMs: ARRIVAL_WATCH_POLL_MS,
+    sleep: async (ms) => {
+      sleeps.push(ms);
+    },
+    readPage: async () => {
+      reads += 1;
+      if (reads <= 3) return page([]);
+      if (reads === 4) return page([delivered]);
+      abort.abort();
+      return page([]);
+    },
+    emit: async () => undefined,
+  });
+  assert.equal(stop.reason, "cancelled");
+  assert.deepEqual(
+    sleeps.slice(0, 3),
+    [
+      nextIdlePollMs(ARRIVAL_WATCH_POLL_MS, 0),
+      nextIdlePollMs(ARRIVAL_WATCH_POLL_MS, 1),
+      nextIdlePollMs(ARRIVAL_WATCH_POLL_MS, 2),
+    ],
+  );
+  assert.deepEqual(sleeps.slice(0, 3), [60_000, 60_000, 60_000]);
+  assert.equal(sleeps[3], ARRIVAL_WATCH_POLL_MS, "a delivery resets the idle wait");
+});
+
+test("a second arrival watcher for the same agent names the other pid", async () => {
+  const root = await mkdtemp(join(tmpdir(), "cswarm-notify-lock-"));
+  const lockPath = join(root, "watch.lock");
+  const ownerPid = process.pid;
+  await acquireArrivalWatchLock(lockPath, ownerPid);
+  await assert.rejects(
+    () => acquireArrivalWatchLock(lockPath, ownerPid + 1),
+    (error: unknown) => {
+      assert.ok(error instanceof ArrivalWatchAlreadyRunningError);
+      assert.equal(error.pid, ownerPid);
+      assert.equal(error.message, arrivalWatchAlreadyRunningSentence(ownerPid));
+      return true;
+    },
+  );
+  await releaseArrivalWatchLock(lockPath, ownerPid);
+  await acquireArrivalWatchLock(lockPath, ownerPid + 1);
+  await releaseArrivalWatchLock(lockPath, ownerPid + 1);
+  await rm(root, { recursive: true, force: true });
+});
+
+test("a stale arrival watch lock is stolen when the other pid is gone", async () => {
+  const root = await mkdtemp(join(tmpdir(), "cswarm-notify-stale-"));
+  const lockPath = join(root, "watch.lock");
+  await writeFile(lockPath, `${JSON.stringify({ version: 1, pid: 999999 })}\n`, {
+    mode: 0o600,
+  });
+  await acquireArrivalWatchLock(lockPath, process.pid);
+  const raw = await readFile(lockPath, "utf8");
+  assert.match(raw, new RegExp(`"pid":${process.pid}`));
+  await releaseArrivalWatchLock(lockPath, process.pid);
+  await rm(root, { recursive: true, force: true });
 });

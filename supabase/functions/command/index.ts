@@ -51,6 +51,7 @@ import {
   ackAgentDelivery,
   CLAIM_AGENT_INBOX_KIND,
   claimAgentInbox,
+  claimAgentInboxPersistsLedger,
   DELIVERY_ACK_OUTCOMES,
   DELIVERY_ACK_RATE_LIMIT_PER_MINUTE,
   DELIVERY_CAPABILITIES,
@@ -4865,6 +4866,24 @@ async function incrementRateBucket(
   };
 }
 
+/** True when this recipient still has an unacked delivery row. Idle polls do not. */
+async function hasUnackedDeliveries(
+  tx: Sql,
+  workspaceId: string,
+  principalId: string,
+): Promise<boolean> {
+  const rows = await tx<{ present: boolean }[]>`
+    SELECT EXISTS (
+      SELECT 1
+      FROM swarm.signal_deliveries
+      WHERE workspace_id = ${workspaceId}::uuid
+        AND recipient_agent_principal_id = ${principalId}::uuid
+        AND acked_at IS NULL
+    ) AS present
+  `;
+  return rows[0]?.present === true;
+}
+
 async function checkDeliveryRateLimit(
   tx: Sql,
   auth: AuthContext,
@@ -7530,15 +7549,21 @@ async function handleTransaction(
         return { status: 403, body: { error: "delivery_unavailable" } };
       }
       const operation = kind === CLAIM_AGENT_INBOX_KIND ? "claim" : "ack";
-      const rateCheck = await checkDeliveryRateLimit(
-        tx,
-        auth,
-        route.workspaceId,
-        agent.principal_id,
-        operation,
-      );
-      if (!rateCheck.allowed) {
-        return rateCheck.result;
+      /* Idle claims have nothing unacked. They must not upsert rate_buckets.
+       * Acks, and claims against a live queue, still take the bucket. */
+      const mustLimit = operation === "ack" ||
+        await hasUnackedDeliveries(tx, route.workspaceId, agent.principal_id);
+      if (mustLimit) {
+        const rateCheck = await checkDeliveryRateLimit(
+          tx,
+          auth,
+          route.workspaceId,
+          agent.principal_id,
+          operation,
+        );
+        if (!rateCheck.allowed) {
+          return rateCheck.result;
+        }
       }
     }
 
@@ -8362,31 +8387,42 @@ async function handleTransaction(
       if (ledger === null) {
         return { status: 403, body: { error: "delivery_unavailable" } };
       }
-      const inserted = await tx<{ command_id: string }[]>`
-        INSERT INTO swarm.idempotency_keys (
-          principal_kind, principal_id, command_id,
-          workspace_id, stream_id, request_hash, response
-        ) VALUES (
-          ${auth.credentialKind},
-          ${canonicalPrincipal(auth.actor)},
-          ${commandId},
-          ${route.workspaceId}::uuid,
-          ${route.streamId}::uuid,
-          ${hash},
-          ${tx.json(ledger as unknown as postgres.JSONValue)}::jsonb
-        )
-        ON CONFLICT (principal_kind, principal_id, command_id) DO NOTHING
-        RETURNING command_id
-      `;
-      if (inserted.length === 0) {
-        throw new LedgerRace(
-          auth,
-          commandId,
-          kind,
-          route.workspaceId,
-          route.streamId,
-          hash,
-        );
+      /* Idle polls write no idempotency key, no audit row, and no rate_buckets
+       * row. Replay of a missing key re-executes (the 403 at the replay
+       * branch is only when a stored ledger is unreadable). That is the
+       * intended semantics: an empty claim has no side effect to replay, and
+       * a retry that now finds work should get it. A claim that leases a row,
+       * or that terminalizes poison, still writes the ledger. Historical
+       * audit_log.outcome cannot tell empty from leased (both were
+       * "accepted"); those rows stay. */
+      const persistLedger = claimAgentInboxPersistsLedger(ledger);
+      if (persistLedger) {
+        const inserted = await tx<{ command_id: string }[]>`
+          INSERT INTO swarm.idempotency_keys (
+            principal_kind, principal_id, command_id,
+            workspace_id, stream_id, request_hash, response
+          ) VALUES (
+            ${auth.credentialKind},
+            ${canonicalPrincipal(auth.actor)},
+            ${commandId},
+            ${route.workspaceId}::uuid,
+            ${route.streamId}::uuid,
+            ${hash},
+            ${tx.json(ledger as unknown as postgres.JSONValue)}::jsonb
+          )
+          ON CONFLICT (principal_kind, principal_id, command_id) DO NOTHING
+          RETURNING command_id
+        `;
+        if (inserted.length === 0) {
+          throw new LedgerRace(
+            auth,
+            commandId,
+            kind,
+            route.workspaceId,
+            route.streamId,
+            hash,
+          );
+        }
       }
       const deliveries = await hydrateDeliveryRefs(tx, {
         workspaceId: route.workspaceId,
@@ -8421,15 +8457,17 @@ async function handleTransaction(
           )
         `;
       }
-      await insertAudit(tx, {
-        auth,
-        commandKind: kind,
-        workspaceId: route.workspaceId,
-        streamId: route.streamId,
-        outcome: "accepted",
-        detail: `terminal_delivery_failure_count=${ledger.terminal_delivery_failure_count}`,
-        hash,
-      });
+      if (persistLedger) {
+        await insertAudit(tx, {
+          auth,
+          commandKind: kind,
+          workspaceId: route.workspaceId,
+          streamId: route.streamId,
+          outcome: "accepted",
+          detail: `terminal_delivery_failure_count=${ledger.terminal_delivery_failure_count}`,
+          hash,
+        });
+      }
       return {
         status: 200,
         body: {
