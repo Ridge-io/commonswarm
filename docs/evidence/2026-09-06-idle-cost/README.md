@@ -26,9 +26,9 @@ Going forward at the measured 24,000 idle polls/seat/day: 3 × 24,000 = 72,000 r
 
 ## Retention
 
-`audit_log` stays append-only (`BEFORE UPDATE OR DELETE`). Round 1's audit purge and `swarm-purge-idle-cost` job are removed. The 662 MB of historical idle-poll audit rows is a one-time cost; they are not deleted.
+`audit_log` is never purged. No migration in this lane names that table: no trigger change, no index, no DELETE, no config key. Historical idle-poll audit rows (662 MB) stay as a one-time cost. Going forward idle polls write none.
 
-`idempotency_keys` already had `swarm-purge-idempotency-keys`. No second job. Config `claim_idempotency_retention_days = 2` (floor 2) applies to `command_id LIKE 'claim_agent_inbox_%'`. Other keys keep `GREATEST(30, idempotency_retention_days)`. At the measured 24,000 idle polls/seat/day, a 30-day claim-key window would hold 11.52 M rows for 16 seats; a 2-day window holds 768,000. Going forward idle polls write no key, so the 2-day window only bounds persisted (non-empty) claims.
+`idempotency_keys` already had `swarm-purge-idempotency-keys`. No second job. One migration (`20260906000001`) sets `claim_idempotency_retention_days = 2` (floor 2) for `command_id LIKE 'claim_agent_inbox_%'` and batches the existing purge. Other keys keep `GREATEST(30, idempotency_retention_days)`. At the measured 24,000 idle polls/seat/day, a 30-day claim-key window would hold 11.52 M rows for 16 seats; a 2-day window holds 768,000. Going forward idle polls write no key, so the 2-day window only bounds persisted (non-empty) claims.
 
 ## file_versions quota query
 
@@ -50,7 +50,7 @@ EXPLAIN ANALYZE, large local seed (4,084 rows in one workspace): Seq Scan, 0.986
 
 ## Apply order
 
-1. Migration (`20260906000001`, `20260906000002`, `20260906000003`).
+1. Migration (`20260906000001` idempotency + rate_buckets index, `20260906000002` file_versions index).
 2. Edge (`command`: idle skip of audit, idempotency, and rate_buckets).
 3. Client release (15 s / 60 s, `--poll-interval`, notify lock). Every seat must restart to change cadence.
 4. Fleet restart (0.1.56 listeners keep the 2 s poll until they run the new binary).

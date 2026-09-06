@@ -11949,11 +11949,12 @@ test("durable-delivery: Phase C resolveLedgerRace recharge — denied losing cla
   });
 });
 
-test("idle-cost purge honours 2-day claim-class keys and leaves audit_log append-only", async () => {
-  /* Round 2: do not purge audit_log. The existing idempotency purge
-   * honours claim_idempotency_retention_days (2) for claim_agent_inbox_%
-   * keys and 30 days for every other command_id. Uses fixture() not
-   * scenario(): the seed rows are not command-path ledger entries. */
+test("idle-cost purge honours 2-day claim-class keys and does not delete audit rows", async () => {
+  /* No migration in this lane deletes audit rows. The existing
+   * idempotency purge honours claim_idempotency_retention_days (2) for
+   * claim_agent_inbox_% keys and 30 days for every other command_id.
+   * Uses fixture() not scenario(): the seed rows are not command-path
+   * ledger entries. */
   const f = await fixture();
   const oldClaimId = `claim_agent_inbox_${randomUUID().replaceAll("-", "").slice(0, 16)}`;
   const freshClaimId = `claim_agent_inbox_${randomUUID().replaceAll("-", "").slice(0, 16)}`;
