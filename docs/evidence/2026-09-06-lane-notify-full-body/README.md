@@ -13,7 +13,21 @@ Author: CSLaptopLead listener worker (Claude), toms-m1-max-mbp, 2026-09-06.
 | gate logs on the reviewed tree | `gate-npm-test.log`, `gate-test-p1-cli.log` (added after the Codex arm named their absence as a gap) |
 | write canary | `write-canary.md`, commit 0d4d0b63 |
 
-## Deviations from C1 prose, both noted by the Grok arm
+## Round 2: code SHA daebc48d (after the Codex FAIL upheld by CSwarmDevLead, main 95530e1)
+
+| item | value |
+|---|---|
+| change | `arrivalFullTextCommand(workspaceId)` replaces the `ARRIVAL_FULL_TEXT_COMMAND` constant: the phrase now names `cswarm inbox --workspace-id <ws>`, the route the reply command names, because an agent identity comes only from its credential flags and then requires a workspace. Credential and target flags stay off the line for the reason recorded on `arrivalReplyCommand`. |
+| tests | `tests/support/arrival-watch.test.ts`: the command's flag set equals the reply command's and contains `--workspace-id`; `tests/p1-cli/arrival-notify.test.ts`: the owed control runs the real `cswarm inbox --notify --json` against a loopback read service and asserts `body` equals the posted body, then the readable line's command names the workspace (in the `test:p1-cli` glob and the literal `npm test` list). |
+| gates at daebc48d | `npm run test:p1-cli` 490/490; `npm test` 898/898 on three consecutive runs (`gate-*.log`). One earlier run of `npm test` at this SHA reported 2 failures while an unrelated Chrome-driven site suite was running on the same laptop; the failing names were not captured, so that run is recorded here and not explained. |
+| Grok exact arm | `arm-grok-exact-daebc48d.md`, `VERDICT: PASS` |
+| Gemini (agy) inversion arm | `arm-agy-inversion-daebc48d.md`, `VERDICT: PASS` |
+| Codex gpt-5.6-sol arm | asked of CSwarmStrategist with branch + SHA daebc48d |
+| merge | `origin/main` (ee61b377, L2 landed) merged in at d7cae002 before the change |
+
+Spec owner's ruling on round 1 (draft 7, `spec/app-backlog` c6f1df2): the collapsed-length trigger and the suffix placement are accepted; C1's wording was corrected, not the code.
+
+## Deviations from C1 prose (round 1), both noted by the Grok arm
 
 - The cut condition is "the one-line (whitespace-collapsed) body exceeds `ARRIVAL_SNIPPET_MAX`", not raw `body.length`. At the spec's required pair (exactly MAX / MAX+1 plain chars) both agree. A body over the cap only because of runs of whitespace is not cut and gets no phrase; a test pins that.
 - The phrase follows the snippet, before attachments and the reply command, so the line still ends with `cswarm reply …`.

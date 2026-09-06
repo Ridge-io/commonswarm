@@ -1,0 +1,9 @@
+I'll read the named files and the CLI inbox flag path, then judge the round-2 fix against the lead's ruling.Next I’ll check what `cswarm inbox` actually requires of an agent, and how `--json` writes the notification.I still need the notify JSON writer and the inbox agent-credential gate so I can check the command is actually runnable.I need to confirm `cswarm inbox` actually prints the full body, and whether `--json` can drop that field before write.The named command is `cswarm inbox --workspace-id <id>` (`arrival-watch.ts:371-372`, suffix at `:384`). An agent `inbox` needs credential flags (`cli.ts:877-879`, `:2504`), then `--workspace-id` (`cli.ts:2504-2508`). `--url` / `--anon-key` are also required unless env supplies the target (`current-target.ts:314`). Credential and target flags are omitted on purpose, same as `arrivalReplyCommand` (`arrival-watch.ts:403-412`, `:369-370`). The new test pins that omission (`arrival-watch.test.ts:323-324`).
+
+`--workspace-id` is taken from the notification at run time (`arrival-watch.ts:384`), not typed. Cut numbers still come from `snippet.length` / `body.length` and `ARRIVAL_SNIPPET_MAX` (`arrival-watch.ts:381-384`, `:278-297`). The flag check compares this command to `arrivalReplyCommand`, not to `CREDENTIAL_FLAGS` in `cli.ts`. That matches the lead’s “same as reply” rule.
+
+The new CLI test spawns `src/cli.ts inbox --notify --json` (`arrival-notify.test.ts:291-305`, `:340`). `runInboxNotifyCommand` writes `JSON.stringify(notification)` (`cli.ts:4054-4057`). `assert.equal(jsonLine.body, longBody)` (`arrival-notify.test.ts:342`) fails if that write drops `body`. The readable run checks the workspace in the phrase (`arrival-notify.test.ts:346-347`).
+
+No false claim in the comments or test names. JSON still has `body` next to `snippet`. The readable line still has the suffix before reply. Credentials stay off the line.
+
+VERDICT: PASS
