@@ -13512,6 +13512,7 @@ __export(cli_exports, {
   listenerFailureMessage: () => listenerFailureMessage,
   listenerHostLimits: () => listenerHostLimits,
   listenerPermissionMode: () => listenerPermissionMode,
+  listenerPollIntervalMs: () => listenerPollIntervalMs,
   listenerProviderInstallEvidence: () => listenerProviderInstallEvidence,
   listenerRouteConfiguration: () => listenerRouteConfiguration,
   listenerStatusJson: () => listenerStatusJson,
@@ -13528,10 +13529,10 @@ module.exports = __toCommonJS(cli_exports);
 var import_node_crypto22 = require("node:crypto");
 var import_node_child_process9 = require("node:child_process");
 var import_node_fs7 = require("node:fs");
-var import_promises12 = require("node:fs/promises");
+var import_promises13 = require("node:fs/promises");
 var import_node_os10 = require("node:os");
 var import_node_path21 = require("node:path");
-var import_promises13 = require("node:readline/promises");
+var import_promises14 = require("node:readline/promises");
 
 // src/protocol/events.ts
 var SCHEMA_VERSION = 1;
@@ -26174,7 +26175,7 @@ var src_default = Postgres;
 function Postgres(a, b2) {
   const options = parseOptions(a, b2), subscribe = options.no_subscribe || Subscribe(Postgres, { ...options });
   let ending = false;
-  const queries = queue_default(), connecting = queue_default(), reserved = queue_default(), closed = queue_default(), ended = queue_default(), open6 = queue_default(), busy = queue_default(), full = queue_default(), queues = { connecting, reserved, closed, ended, open: open6, busy, full };
+  const queries = queue_default(), connecting = queue_default(), reserved = queue_default(), closed = queue_default(), ended = queue_default(), open7 = queue_default(), busy = queue_default(), full = queue_default(), queues = { connecting, reserved, closed, ended, open: open7, busy, full };
   const connections = [...Array(options.max)].map(() => connection_default(options, queues, { onopen, onend, onclose }));
   const sql = Sql(handler);
   Object.assign(sql, {
@@ -26287,7 +26288,7 @@ function Postgres(a, b2) {
   }
   async function reserve() {
     const queue = queue_default();
-    const c = open6.length ? open6.shift() : await new Promise((resolve3, reject) => {
+    const c = open7.length ? open7.shift() : await new Promise((resolve3, reject) => {
       const query = { reserve: resolve3, reject };
       queries.push(query);
       closed.length && connect(closed.shift(), query);
@@ -26360,7 +26361,7 @@ function Postgres(a, b2) {
     c.queue.remove(c);
     queue.push(c);
     c.queue = queue;
-    queue === open6 ? c.idleTimer.start() : c.idleTimer.cancel();
+    queue === open7 ? c.idleTimer.start() : c.idleTimer.cancel();
     return c;
   }
   function json(x) {
@@ -26374,8 +26375,8 @@ function Postgres(a, b2) {
   function handler(query) {
     if (ending)
       return query.reject(Errors.connection("CONNECTION_ENDED", options, options));
-    if (open6.length)
-      return go(open6.shift(), query);
+    if (open7.length)
+      return go(open7.shift(), query);
     if (closed.length)
       return connect(closed.shift(), query);
     busy.length ? go(busy.shift(), query) : queries.push(query);
@@ -26420,7 +26421,7 @@ function Postgres(a, b2) {
   }
   function onopen(c) {
     if (queries.length === 0)
-      return move(c, open6);
+      return move(c, open7);
     let max = Math.ceil(queries.length / (connecting.length + 1)), ready = true;
     while (ready && queries.length && max-- > 0) {
       const query = queries.shift();
@@ -30720,10 +30721,86 @@ async function runInboxFollow(options) {
 // src/cloud/arrival-watch.ts
 var import_node_os4 = require("node:os");
 var import_node_path4 = require("node:path");
+var import_promises4 = require("node:fs/promises");
+
+// src/cloud/idle-poll.ts
+var IDLE_POLL_DEFAULT_MS = 15e3;
+var IDLE_POLL_MAX_MS = 6e4;
+var IDLE_POLL_MIN_MS = 1e3;
+var ARRIVAL_WATCH_POLL_MS = IDLE_POLL_MAX_MS;
+var DURATION_RE = /^([1-9]\d*)(s|m)$/;
+function formatIdlePollDuration(ms) {
+  if (!Number.isSafeInteger(ms) || ms <= 0) {
+    throw new Error("idle poll duration must be a positive number of milliseconds");
+  }
+  if (ms % 6e4 === 0) return `${ms / 6e4}m`;
+  if (ms % 1e3 === 0) return `${ms / 1e3}s`;
+  throw new Error("idle poll duration must be a whole number of seconds");
+}
+var IDLE_POLL_MIN_LABEL = formatIdlePollDuration(IDLE_POLL_MIN_MS);
+var IDLE_POLL_DEFAULT_LABEL = formatIdlePollDuration(IDLE_POLL_DEFAULT_MS);
+var IDLE_POLL_MAX_LABEL = formatIdlePollDuration(IDLE_POLL_MAX_MS);
+function idlePollDurationExamples() {
+  const midMs = Math.min(IDLE_POLL_MAX_MS, IDLE_POLL_DEFAULT_MS * 2);
+  const labels = [];
+  const seen = /* @__PURE__ */ new Set();
+  for (const ms of [IDLE_POLL_DEFAULT_MS, midMs, IDLE_POLL_MAX_MS]) {
+    const label = formatIdlePollDuration(ms);
+    if (seen.has(label)) continue;
+    seen.add(label);
+    labels.push(label);
+  }
+  return labels;
+}
+var IDLE_POLL_DURATION_EXAMPLES = idlePollDurationExamples();
+function idlePollDurationHint() {
+  return idlePollDurationExamples().join(", ");
+}
+function idlePollBoundSentence() {
+  return `between ${IDLE_POLL_MIN_LABEL} and ${IDLE_POLL_MAX_LABEL}`;
+}
+function parseIdlePollIntervalMs(value, defaultMs = IDLE_POLL_DEFAULT_MS) {
+  if (value === void 0) return defaultMs;
+  const match = DURATION_RE.exec(value);
+  if (!match) {
+    throw new Error(
+      `--poll-interval must be a duration such as ${idlePollDurationHint()}`
+    );
+  }
+  const unit = match[2] === "s" ? 1e3 : 6e4;
+  const milliseconds = Number(match[1]) * unit;
+  if (!Number.isSafeInteger(milliseconds) || milliseconds < IDLE_POLL_MIN_MS || milliseconds > IDLE_POLL_MAX_MS) {
+    throw new Error(`--poll-interval must be ${idlePollBoundSentence()}`);
+  }
+  return milliseconds;
+}
+function nextIdlePollMs(baseMs, emptyStreak, maxMs = IDLE_POLL_MAX_MS) {
+  if (!Number.isSafeInteger(baseMs) || baseMs < 0) {
+    throw new Error("idle poll base must be a non-negative number of milliseconds");
+  }
+  if (!Number.isSafeInteger(emptyStreak) || emptyStreak < 0) {
+    throw new Error("idle poll empty streak must be a non-negative integer");
+  }
+  if (!Number.isSafeInteger(maxMs) || maxMs < 0) {
+    throw new Error("idle poll max must be a non-negative number of milliseconds");
+  }
+  const shift = Math.min(emptyStreak, 16);
+  const grown = baseMs * 2 ** shift;
+  return Math.min(maxMs, grown);
+}
+function idlePollStatusSentence(currentMs) {
+  return `Current idle poll interval: ${formatIdlePollDuration(currentMs)}.`;
+}
+function idlePollHelpSentence(defaultMs = IDLE_POLL_DEFAULT_MS) {
+  return `listen start --poll-interval sets how long the listener waits after an empty claim (default ${formatIdlePollDuration(defaultMs)}). A whole number plus s or m (for example ${idlePollDurationHint()}), ${idlePollBoundSentence()}. Empty polls double that wait up to ${IDLE_POLL_MAX_LABEL}; any delivery resets it to the configured interval.`;
+}
+
+// src/cloud/arrival-watch.ts
 var UUID_RE11 = /^[0-9a-f]{8}-[0-9a-f]{4}-[1-8][0-9a-f]{3}-[89ab][0-9a-f]{3}-[0-9a-f]{12}$/i;
 var CURSOR_MAX_BYTES = 4 * 1024;
 var ARRIVAL_SNIPPET_MAX = 180;
-var ARRIVAL_WATCH_POLL_MS = 25e3;
+var WATCH_LOCK_MAX_BYTES = 512;
+var ARRIVAL_WATCH_POLL_MS2 = ARRIVAL_WATCH_POLL_MS;
 var ARRIVAL_RETRY_NOTICE_THRESHOLD_MS = 6e4;
 var EXIT_NOTIFY_ORPHANED = 74;
 var NotifyStdoutClosedError = class extends Error {
@@ -30775,6 +30852,94 @@ function arrivalCursorPath(target2, workspaceId2, principalId, root = stateRoot(
     root,
     `${target2.profileId}-${workspaceId2.toLowerCase()}-${principalId.toLowerCase()}.json`
   );
+}
+function arrivalWatchLockPath(target2, workspaceId2, principalId, root = stateRoot()) {
+  return arrivalCursorPath(target2, workspaceId2, principalId, root).replace(
+    /\.json$/u,
+    ".lock"
+  );
+}
+function arrivalWatchAlreadyRunningSentence(pid) {
+  return `inbox --notify is already running for this agent as pid ${pid}.`;
+}
+var ArrivalWatchAlreadyRunningError = class extends Error {
+  code = "notify_already_running";
+  pid;
+  constructor(pid) {
+    super(arrivalWatchAlreadyRunningSentence(pid));
+    this.name = "ArrivalWatchAlreadyRunningError";
+    this.pid = pid;
+  }
+};
+function pidIsAlive(pid) {
+  if (!Number.isSafeInteger(pid) || pid <= 0) return false;
+  try {
+    process.kill(pid, 0);
+    return true;
+  } catch (error) {
+    return error.code !== "ESRCH";
+  }
+}
+function parseWatchLock(raw) {
+  let value;
+  try {
+    value = JSON.parse(raw);
+  } catch {
+    return null;
+  }
+  if (!value || typeof value !== "object" || Array.isArray(value)) return null;
+  const row = value;
+  if (row.version !== 1 || !Number.isSafeInteger(row.pid) || row.pid <= 0) {
+    return null;
+  }
+  return { pid: row.pid };
+}
+async function acquireArrivalWatchLock(path, pid = process.pid) {
+  if (!Number.isSafeInteger(pid) || pid <= 0) {
+    throw new Error("arrival watch lock pid must be a positive integer");
+  }
+  await ensureSecureStateDirectory((0, import_node_path4.dirname)(path));
+  const payload = `${JSON.stringify({ version: 1, pid })}
+`;
+  for (let attempt = 0; attempt < 2; attempt += 1) {
+    try {
+      const handle = await (0, import_promises4.open)(path, "wx", 384);
+      try {
+        await handle.writeFile(payload, "utf8");
+      } finally {
+        await handle.close();
+      }
+      return;
+    } catch (error) {
+      if (error.code !== "EEXIST") throw error;
+    }
+    let existing = null;
+    try {
+      const raw = await (0, import_promises4.readFile)(path, "utf8");
+      if (Buffer.byteLength(raw, "utf8") <= WATCH_LOCK_MAX_BYTES) {
+        existing = parseWatchLock(raw);
+      }
+    } catch (error) {
+      if (error.code !== "ENOENT") throw error;
+      continue;
+    }
+    if (existing !== null && pidIsAlive(existing.pid)) {
+      throw new ArrivalWatchAlreadyRunningError(existing.pid);
+    }
+    await (0, import_promises4.unlink)(path).catch(() => void 0);
+  }
+  throw new Error("arrival watch lock could not be acquired");
+}
+async function releaseArrivalWatchLock(path, pid = process.pid) {
+  try {
+    const raw = await (0, import_promises4.readFile)(path, "utf8");
+    const existing = parseWatchLock(raw);
+    if (existing === null || existing.pid !== pid) return;
+    await (0, import_promises4.unlink)(path);
+  } catch (error) {
+    if (error.code === "ENOENT") return;
+    throw error;
+  }
 }
 function parseCursor(raw, workspaceId2, principalId) {
   let value;
@@ -30889,8 +31054,9 @@ function assertCursorPage(page) {
   }
 }
 async function runArrivalWatch(options) {
-  const pollMs = options.pollMs ?? ARRIVAL_WATCH_POLL_MS;
+  const pollMs = options.pollMs ?? ARRIVAL_WATCH_POLL_MS2;
   const random = options.random ?? Math.random;
+  let emptyIdleStreak = 0;
   let cursor = await options.store.read();
   let baseline = cursor === void 0;
   let attempt = 0;
@@ -30914,6 +31080,12 @@ async function runArrivalWatch(options) {
       options.signal?.addEventListener("abort", finish, { once: true });
       timer2 = setTimeout(finish, ms);
     });
+  };
+  const idleWait = async (hadDelivery) => {
+    if (hadDelivery) emptyIdleStreak = 0;
+    const intervalMs = nextIdlePollMs(pollMs, emptyIdleStreak, IDLE_POLL_MAX_MS);
+    if (!hadDelivery) emptyIdleStreak += 1;
+    await wait(intervalMs);
   };
   while (!cancelled()) {
     try {
@@ -30940,7 +31112,7 @@ async function runArrivalWatch(options) {
         await options.store.write(cursor);
         baseline = false;
         if (cancelled()) break;
-        await wait(pollMs);
+        await idleWait(false);
         continue;
       }
       const emittedSignals = [];
@@ -30956,7 +31128,8 @@ async function runArrivalWatch(options) {
       }
       if (cancelled()) break;
       const fullPage = page.rawCount >= SIGNAL_FOLLOW_PAGE_LIMIT;
-      await wait(fullPage ? 0 : pollMs);
+      if (fullPage) await wait(0);
+      else await idleWait(emittedSignals.length > 0);
     } catch (error) {
       if (cancelled()) break;
       const http = followHttpDetails(error);
@@ -32288,12 +32461,13 @@ var CONTROL_AND_SEPARATOR_STRIP_RE = new RegExp(
   "[\\u0000-\\u0008\\u000b-\\u001f\\u007f-\\u009f" + EXOTIC_SEPARATORS + "]",
   "g"
 );
-var CREDENTIAL_PREFIX_RE = new RegExp(
-  `swm_(?:agt|inv|cap)_[^${SEPARATOR_CLASS_SOURCE}]*`,
-  "gi"
+var SECRET_SHAPE_RE = new RegExp(
+  `swm_(?:agt|inv|cap)_[^${SEPARATOR_CLASS_SOURCE}]*|cswarm-wake:[A-Za-z0-9_-]{43}`,
+  "i"
 );
+var SECRET_SHAPE_GLOBAL_RE = new RegExp(SECRET_SHAPE_RE.source, "gi");
 function redactCredentialText(value) {
-  return value.replace(ANSI_ESCAPE_GLOBAL_RE2, "").replace(CONTROL_AND_SEPARATOR_STRIP_RE, "").replace(CREDENTIAL_PREFIX_RE, "[redacted-credential]");
+  return value.replace(ANSI_ESCAPE_GLOBAL_RE2, "").replace(CONTROL_AND_SEPARATOR_STRIP_RE, "").replace(SECRET_SHAPE_GLOBAL_RE, "[redacted-credential]");
 }
 
 // src/host/stderr-tail.ts
@@ -32368,7 +32542,7 @@ function attachStderrTailExitObserver(child, onStderrTail) {
 
 // src/host/opencode.ts
 var import_node_fs3 = require("node:fs");
-var import_promises4 = require("node:fs/promises");
+var import_promises5 = require("node:fs/promises");
 var import_node_os5 = require("node:os");
 var import_node_path6 = require("node:path");
 
@@ -33712,18 +33886,18 @@ function buildOpenCodeHomeOwner(options) {
 }
 async function writeOpenCodeHomeOwner(home, owner) {
   const path = (0, import_node_path6.join)(home, OPENCODE_HOME_OWNER_FILE);
-  await (0, import_promises4.writeFile)(path, `${JSON.stringify(owner)}
+  await (0, import_promises5.writeFile)(path, `${JSON.stringify(owner)}
 `, {
     flag: "wx",
     mode: 384
   });
-  await (0, import_promises4.chmod)(path, 384);
+  await (0, import_promises5.chmod)(path, 384);
 }
 async function readOpenCodeHomeOwner(home) {
   const path = (0, import_node_path6.join)(home, OPENCODE_HOME_OWNER_FILE);
   let raw;
   try {
-    raw = await (0, import_promises4.readFile)(path, "utf8");
+    raw = await (0, import_promises5.readFile)(path, "utf8");
   } catch {
     return null;
   }
@@ -33744,10 +33918,10 @@ async function releaseOpenCodeHome(home, instanceId) {
     return;
   }
   try {
-    await (0, import_promises4.rm)(home, { recursive: true, force: true });
+    await (0, import_promises5.rm)(home, { recursive: true, force: true });
   } catch {
-    await (0, import_promises4.chmod)(home, 448);
-    await (0, import_promises4.rm)(home, { recursive: true, force: true });
+    await (0, import_promises5.chmod)(home, 448);
+    await (0, import_promises5.rm)(home, { recursive: true, force: true });
   }
 }
 function parseOpenCodeVersionOutput(stdout) {
@@ -33815,7 +33989,7 @@ function buildOpenCodeSafeConfigJson(options) {
 async function readValidatedOpenCodeAuth(sourceAuthPath, options) {
   let info;
   try {
-    info = await (0, import_promises4.lstat)(sourceAuthPath);
+    info = await (0, import_promises5.lstat)(sourceAuthPath);
   } catch (error) {
     if (error.code === "ENOENT") {
       if (options?.allowMissing) return null;
@@ -33844,7 +34018,7 @@ async function readValidatedOpenCodeAuth(sourceAuthPath, options) {
       "OpenCode auth file exceeds the listener safety bound"
     );
   }
-  const raw = await (0, import_promises4.readFile)(sourceAuthPath);
+  const raw = await (0, import_promises5.readFile)(sourceAuthPath);
   if (raw.byteLength > MAX_OPENCODE_AUTH_BYTES) {
     throw new AcpHostError(
       "opencode_auth_too_large",
@@ -33870,53 +34044,53 @@ function resolveOpenCodeAuthSourcePath(parent = process.env) {
   return (0, import_node_path6.join)(home, ".local", "share", "opencode", "auth.json");
 }
 async function prepareOpenCodeIsolatedHome(options) {
-  const home = options.home ?? await (0, import_promises4.mkdtemp)((0, import_node_path6.join)((0, import_node_os5.tmpdir)(), OPENCODE_HOME_PREFIX));
+  const home = options.home ?? await (0, import_promises5.mkdtemp)((0, import_node_path6.join)((0, import_node_os5.tmpdir)(), OPENCODE_HOME_PREFIX));
   if (!(0, import_node_path6.isAbsolute)(home)) {
     throw new AcpHostError(
       "isolated_home_invalid",
       "isolated OpenCode home must be absolute"
     );
   }
-  await (0, import_promises4.chmod)(home, 448);
+  await (0, import_promises5.chmod)(home, 448);
   try {
     const xdgConfig = (0, import_node_path6.join)(home, "xdg-config");
     const xdgData = (0, import_node_path6.join)(home, "xdg-data");
     const xdgCache = (0, import_node_path6.join)(home, "xdg-cache");
     const xdgState = (0, import_node_path6.join)(home, "xdg-state");
     for (const dir of [xdgConfig, xdgData, xdgCache, xdgState]) {
-      await (0, import_promises4.mkdir)(dir, { recursive: true, mode: 448 });
-      await (0, import_promises4.chmod)(dir, 448);
+      await (0, import_promises5.mkdir)(dir, { recursive: true, mode: 448 });
+      await (0, import_promises5.chmod)(dir, 448);
     }
     const configDir = (0, import_node_path6.join)(xdgConfig, "opencode");
     const dataDir = (0, import_node_path6.join)(xdgData, "opencode");
-    await (0, import_promises4.mkdir)(configDir, { recursive: true, mode: 448 });
-    await (0, import_promises4.mkdir)(dataDir, { recursive: true, mode: 448 });
-    await (0, import_promises4.chmod)(configDir, 448);
-    await (0, import_promises4.chmod)(dataDir, 448);
+    await (0, import_promises5.mkdir)(configDir, { recursive: true, mode: 448 });
+    await (0, import_promises5.mkdir)(dataDir, { recursive: true, mode: 448 });
+    await (0, import_promises5.chmod)(configDir, 448);
+    await (0, import_promises5.chmod)(dataDir, 448);
     const configPath = (0, import_node_path6.join)(configDir, "opencode.json");
-    await (0, import_promises4.writeFile)(
+    await (0, import_promises5.writeFile)(
       configPath,
       buildOpenCodeSafeConfigJson(
         options.model ? { model: options.model } : void 0
       ),
       { flag: "wx", mode: 384 }
     );
-    await (0, import_promises4.chmod)(configPath, 384);
+    await (0, import_promises5.chmod)(configPath, 384);
     const sourceAuth = resolveOpenCodeAuthSourcePath(options.env ?? process.env);
     const authBytes = await readValidatedOpenCodeAuth(sourceAuth, {
       allowMissing: options.allowMissingAuth === true
     });
     if (authBytes) {
       const destAuth = (0, import_node_path6.join)(dataDir, "auth.json");
-      await (0, import_promises4.writeFile)(destAuth, authBytes, { flag: "wx", mode: 384 });
-      await (0, import_promises4.chmod)(destAuth, 384);
+      await (0, import_promises5.writeFile)(destAuth, authBytes, { flag: "wx", mode: 384 });
+      await (0, import_promises5.chmod)(destAuth, 384);
     }
     const owner = options.owner ?? buildOpenCodeHomeOwner({ role: "ephemeral" });
     await writeOpenCodeHomeOwner(home, owner);
     return home;
   } catch (error) {
     if (!options.home) {
-      await (0, import_promises4.rm)(home, { recursive: true, force: true }).catch(() => void 0);
+      await (0, import_promises5.rm)(home, { recursive: true, force: true }).catch(() => void 0);
     }
     throw error;
   }
@@ -33941,10 +34115,10 @@ function buildOpenCodeChildEnv(parent, home) {
   };
 }
 async function assertOpenCodeEffectiveConfig(options) {
-  const hostile = await (0, import_promises4.mkdtemp)((0, import_node_path6.join)((0, import_node_os5.tmpdir)(), "cswarm-opencode-hostile-"));
+  const hostile = await (0, import_promises5.mkdtemp)((0, import_node_path6.join)((0, import_node_os5.tmpdir)(), "cswarm-opencode-hostile-"));
   try {
-    await (0, import_promises4.chmod)(hostile, 448);
-    await (0, import_promises4.writeFile)(
+    await (0, import_promises5.chmod)(hostile, 448);
+    await (0, import_promises5.writeFile)(
       (0, import_node_path6.join)(hostile, "opencode.json"),
       `${JSON.stringify({
         permission: {
@@ -34007,7 +34181,7 @@ async function assertOpenCodeEffectiveConfig(options) {
     assertForcedAskPermissionMap(map);
     return { permission: map };
   } finally {
-    await (0, import_promises4.rm)(hostile, { recursive: true, force: true }).catch(() => void 0);
+    await (0, import_promises5.rm)(hostile, { recursive: true, force: true }).catch(() => void 0);
   }
 }
 function assertForcedAskPermissionMap(map) {
@@ -34058,7 +34232,7 @@ async function sweepStaleOpenCodeHomes(options) {
   let removed = 0;
   let entries;
   try {
-    entries = await (0, import_promises4.readdir)(root);
+    entries = await (0, import_promises5.readdir)(root);
   } catch {
     return 0;
   }
@@ -34066,7 +34240,7 @@ async function sweepStaleOpenCodeHomes(options) {
     if (!name.startsWith(OPENCODE_HOME_PREFIX)) continue;
     const full = (0, import_node_path6.join)(root, name);
     try {
-      const st = await (0, import_promises4.lstat)(full);
+      const st = await (0, import_promises5.lstat)(full);
       if (!st.isDirectory() || st.isSymbolicLink()) continue;
       if (selfUid !== null && typeof st.uid === "number" && st.uid !== selfUid) {
         continue;
@@ -34080,12 +34254,12 @@ async function sweepStaleOpenCodeHomes(options) {
         if (alive(owner.pid)) {
           continue;
         }
-        await (0, import_promises4.rm)(full, { recursive: true, force: true });
+        await (0, import_promises5.rm)(full, { recursive: true, force: true });
         removed += 1;
         continue;
       }
       if (now - st.mtimeMs < maxAgeMs) continue;
-      await (0, import_promises4.rm)(full, { recursive: true, force: true });
+      await (0, import_promises5.rm)(full, { recursive: true, force: true });
       removed += 1;
     } catch {
     }
@@ -34146,10 +34320,10 @@ async function openOpenCodeAcpSession(options) {
   const disposeHome = async () => {
     if (createdHome) {
       try {
-        await (0, import_promises4.rm)(home, { recursive: true, force: true });
+        await (0, import_promises5.rm)(home, { recursive: true, force: true });
       } catch {
-        await (0, import_promises4.chmod)(home, 448);
-        await (0, import_promises4.rm)(home, { recursive: true, force: true });
+        await (0, import_promises5.chmod)(home, 448);
+        await (0, import_promises5.rm)(home, { recursive: true, force: true });
       }
     }
   };
@@ -35827,7 +36001,7 @@ var FileListenerEffectStore = class {
 
 // src/listener/grok-model.ts
 var import_node_crypto14 = require("node:crypto");
-var import_promises5 = require("node:fs/promises");
+var import_promises6 = require("node:fs/promises");
 var import_node_os7 = require("node:os");
 var import_node_path11 = require("node:path");
 
@@ -36099,9 +36273,9 @@ var GrokListenerModel = class {
     }
     let sentinelCreated = false;
     try {
-      await (0, import_promises5.lstat)(sentinelPath);
+      await (0, import_promises6.lstat)(sentinelPath);
       sentinelCreated = true;
-      await (0, import_promises5.unlink)(sentinelPath);
+      await (0, import_promises6.unlink)(sentinelPath);
     } catch (error) {
       if (error.code !== "ENOENT") throw error;
     }
@@ -36123,7 +36297,7 @@ var GrokListenerModel = class {
     const sourceAuth = (0, import_node_path11.join)(sourceHome, "auth.json");
     let info;
     try {
-      info = await (0, import_promises5.lstat)(sourceAuth);
+      info = await (0, import_promises6.lstat)(sourceAuth);
     } catch (error) {
       if (error.code !== "ENOENT") throw error;
       throw new AcpHostError(
@@ -36149,7 +36323,7 @@ var GrokListenerModel = class {
         "Grok auth file exceeds the listener safety bound"
       );
     }
-    const raw = await (0, import_promises5.readFile)(sourceAuth);
+    const raw = await (0, import_promises6.readFile)(sourceAuth);
     if (raw.byteLength > MAX_GROK_AUTH_BYTES) {
       throw new AcpHostError(
         "grok_auth_too_large",
@@ -36169,7 +36343,7 @@ var GrokListenerModel = class {
 
 // src/listener/opencode-model.ts
 var import_node_crypto15 = require("node:crypto");
-var import_promises6 = require("node:fs/promises");
+var import_promises7 = require("node:fs/promises");
 var import_node_path12 = require("node:path");
 function asError(error) {
   return error instanceof Error ? error : new Error(String(error));
@@ -36181,8 +36355,8 @@ var OpenCodeListenerModel = class {
     this.openSession = options.open ?? openOpenCodeAcpSession;
     this.prepareHome = options.prepareHome ?? prepareOpenCodeIsolatedHome;
     this.prepareWorkerCwd = options.prepareWorkerCwd ?? (async (home) => {
-      const cwd = await (0, import_promises6.mkdtemp)((0, import_node_path12.join)(home, "canary-cwd-"));
-      await (0, import_promises6.chmod)(cwd, 448);
+      const cwd = await (0, import_promises7.mkdtemp)((0, import_node_path12.join)(home, "canary-cwd-"));
+      await (0, import_promises7.chmod)(cwd, 448);
       return cwd;
     });
     this.permissionMode = options.permissionMode ?? "deny";
@@ -36526,11 +36700,11 @@ var OpenCodeListenerModel = class {
               await closeWorker();
             } catch (error) {
               if (error?.code !== "child_exit_timeout") {
-                await (0, import_promises6.rm)(ownedCanaryCwd, { recursive: true, force: true }).catch(() => void 0);
+                await (0, import_promises7.rm)(ownedCanaryCwd, { recursive: true, force: true }).catch(() => void 0);
               }
               throw error;
             }
-            await (0, import_promises6.rm)(ownedCanaryCwd, { recursive: true, force: true }).catch(() => void 0);
+            await (0, import_promises7.rm)(ownedCanaryCwd, { recursive: true, force: true }).catch(() => void 0);
           })();
           return await closePromise;
         };
@@ -36601,7 +36775,7 @@ var OpenCodeListenerModel = class {
       throw finalErr;
     } finally {
       if (canaryCwd !== null && !canaryCwdOwnedByHandle && !retainCanaryCwd) {
-        await (0, import_promises6.rm)(canaryCwd, { recursive: true, force: true }).catch(() => void 0);
+        await (0, import_promises7.rm)(canaryCwd, { recursive: true, force: true }).catch(() => void 0);
       }
     }
   }
@@ -36609,7 +36783,7 @@ var OpenCodeListenerModel = class {
 
 // src/listener/claude-model.ts
 var import_node_crypto16 = require("node:crypto");
-var import_promises7 = require("node:fs/promises");
+var import_promises8 = require("node:fs/promises");
 var import_node_os8 = require("node:os");
 var import_node_path13 = require("node:path");
 var CLAUDE_CODE_VERSION_REQUIRED_RE = /\bClaude Code (\d+\.\d+\.\d+) does not support this model; version (\d+\.\d+\.\d+) or newer is required\b/;
@@ -36798,9 +36972,9 @@ var ClaudeListenerModel = class {
       canaryError = error;
     } finally {
       try {
-        await (0, import_promises7.lstat)(sentinelPath);
+        await (0, import_promises8.lstat)(sentinelPath);
         sentinelCreated = true;
-        await (0, import_promises7.unlink)(sentinelPath);
+        await (0, import_promises8.unlink)(sentinelPath);
       } catch (error) {
         if (error.code !== "ENOENT") throw error;
       }
@@ -36829,7 +37003,7 @@ var ClaudeListenerModel = class {
 
 // src/listener/codex-model.ts
 var import_node_crypto17 = require("node:crypto");
-var import_promises8 = require("node:fs/promises");
+var import_promises9 = require("node:fs/promises");
 var import_node_os9 = require("node:os");
 var import_node_path14 = require("node:path");
 var CodexListenerClosedDuringOpen = class extends Error {
@@ -36977,11 +37151,11 @@ var CodexListenerModel = class {
     const configuredHome = this.options.env?.HOME;
     const home = configuredHome && (0, import_node_path14.isAbsolute)(configuredHome) ? configuredHome : (0, import_node_os9.homedir)();
     const sentinelDirectory = (0, import_node_path14.join)(home, ".cswarm", "canary");
-    await (0, import_promises8.mkdir)(sentinelDirectory, { recursive: true, mode: 448 });
-    await (0, import_promises8.chmod)(sentinelDirectory, 448);
+    await (0, import_promises9.mkdir)(sentinelDirectory, { recursive: true, mode: 448 });
+    await (0, import_promises9.chmod)(sentinelDirectory, 448);
     const [workerCwd, canaryDirectory] = await Promise.all([
-      (0, import_promises8.realpath)(this.options.cwd),
-      (0, import_promises8.realpath)(sentinelDirectory)
+      (0, import_promises9.realpath)(this.options.cwd),
+      (0, import_promises9.realpath)(sentinelDirectory)
     ]);
     if (pathIsInsideOrEqual(workerCwd, canaryDirectory)) {
       throw new AcpPermissionCanaryError(
@@ -37004,9 +37178,9 @@ var CodexListenerModel = class {
       canaryError = error;
     } finally {
       try {
-        await (0, import_promises8.lstat)(sentinelPath);
+        await (0, import_promises9.lstat)(sentinelPath);
         sentinelCreated = true;
-        await (0, import_promises8.unlink)(sentinelPath);
+        await (0, import_promises9.unlink)(sentinelPath);
       } catch (error) {
         if (error.code !== "ENOENT") throw error;
       }
@@ -37240,7 +37414,8 @@ function pendingMainEntry(signal, principalId, provenance, now, options = {}) {
 
 // src/listener/runtime.ts
 var LISTENER_PAGE_LIMIT = 100;
-var LISTENER_IDLE_POLL_MS = 2e3;
+var LISTENER_IDLE_POLL_MS = IDLE_POLL_DEFAULT_MS;
+var LISTENER_IDLE_POLL_MAX_MS = IDLE_POLL_MAX_MS;
 var LISTENER_DELIVERY_SAFETY_MARGIN_MS = 3e4;
 var LISTENER_ACK_ONLY_MINIMUM_MS = DELIVERY_REQUEST_TIMEOUT_MS + LISTENER_DELIVERY_SAFETY_MARGIN_MS;
 var LISTENER_REPLY_ONLY_MINIMUM_MS = SIGNAL_REQUEST_TIMEOUT_MS + LISTENER_ACK_ONLY_MINIMUM_MS;
@@ -37525,10 +37700,22 @@ async function runListenerRuntime(options) {
   const random = options.random ?? Math.random;
   const pageLimit = options.pageLimit ?? LISTENER_PAGE_LIMIT;
   const pollMs = options.pollMs ?? LISTENER_IDLE_POLL_MS;
+  let emptyIdleStreak = 0;
   const routeMode = options.routeMode ?? "worker";
   const deferOverChars = options.deferOverChars ?? null;
   const deliveryHoldBudgetMs = options.deliveryHoldBudgetMs ?? LISTENER_DELIVERY_HOLD_BUDGET_MS;
   const abort = options.signal;
+  const idleSleep = async (hadDelivery) => {
+    if (hadDelivery) emptyIdleStreak = 0;
+    const intervalMs = nextIdlePollMs(pollMs, emptyIdleStreak, LISTENER_IDLE_POLL_MAX_MS);
+    if (!hadDelivery) emptyIdleStreak += 1;
+    options.onEvent?.({
+      type: "idle_poll",
+      intervalMs,
+      ts: eventTime(now)
+    });
+    await sleep2(intervalMs, abort);
+  };
   const hasInstanceId = options.listenerInstanceId !== void 0;
   const hasJournal = options.deliveryJournal !== void 0;
   if (hasInstanceId !== hasJournal) {
@@ -37936,7 +38123,7 @@ async function runListenerRuntime(options) {
             stop = { reason: "cancelled" };
             break;
           }
-          await sleep2(pollMs, abort);
+          await idleSleep(true);
           continue;
         }
         await sleep2(Math.max(0, horizon - now()), abort);
@@ -38114,9 +38301,15 @@ async function runListenerRuntime(options) {
             stop = { reason: "fatal", error: asError2(error) };
             break;
           }
-          await sleep2(pollMs, abort);
+          await idleSleep(false);
           continue;
         }
+        emptyIdleStreak = 0;
+        options.onEvent?.({
+          type: "idle_poll",
+          intervalMs: pollMs,
+          ts: eventTime(now)
+        });
         const leasedUntilMs = Date.parse(claimed.leasedUntil);
         if (!Number.isFinite(leasedUntilMs) || leasedUntilMs > now() + LISTENER_DELIVERY_MAX_LEASE_MS) {
           stop = { reason: "fatal", error: new Error("delivery lease deadline is invalid") };
@@ -38389,7 +38582,7 @@ async function runListenerRuntime(options) {
         continue;
       }
       after = null;
-      await sleep2(pollMs, abort);
+      await idleSleep(page.signals.length > 0);
     }
   } finally {
     abort?.removeEventListener("abort", onAbort);
@@ -38507,8 +38700,20 @@ function recordListenerReadRecovery(health, input) {
     retryHours: trimNewest(retryHours, LISTENER_READ_RETRY_HOUR_CAP)
   };
 }
-function recordListenerClaimCadence(health, cadenceMs) {
-  return { ...health, claimCadenceMs: cadenceMs };
+function recordListenerClaimCadence(health, cadenceMs, ts) {
+  const hourStart = bucketStart(ts, HOUR_MS);
+  const claimHours = health.claimHours.map((row) => ({ ...row }));
+  const hour = claimHours.find((row) => row.hourStart === hourStart);
+  if (hour) {
+    hour.cadenceMs = hour.cadenceMs === void 0 ? cadenceMs : Math.max(hour.cadenceMs, cadenceMs);
+  } else {
+    claimHours.push({ hourStart, claims: 0, cadenceMs });
+  }
+  return {
+    ...health,
+    claimCadenceMs: cadenceMs,
+    claimHours: trimNewest(claimHours, LISTENER_CLAIM_HOUR_CAP)
+  };
 }
 function recordListenerClaim(health, ts) {
   const hourStart = bucketStart(ts, HOUR_MS);
@@ -38567,7 +38772,11 @@ function parseListenerReadHealth(value, rejectUnknownKeys = false) {
   for (const value2 of row.claimHours) {
     if (!value2 || typeof value2 !== "object" || Array.isArray(value2)) return null;
     const hour = value2;
-    if (!hasExpectedKeys(hour, ["hourStart", "claims"], rejectUnknownKeys) || !validTimestamp(hour.hourStart) || !validCount(hour.claims)) return null;
+    if (!hasExpectedKeys(hour, ["hourStart", "claims"], false) || !validTimestamp(hour.hourStart) || !validCount(hour.claims)) return null;
+    if (rejectUnknownKeys && Object.keys(hour).some(
+      (key2) => key2 !== "hourStart" && key2 !== "claims" && key2 !== "cadenceMs"
+    )) return null;
+    if (hour.cadenceMs !== void 0 && !(typeof hour.cadenceMs === "number" && Number.isSafeInteger(hour.cadenceMs) && hour.cadenceMs >= 1)) return null;
   }
   return {
     currentEpisodeStartedAt: row.currentEpisodeStartedAt,
@@ -38587,10 +38796,14 @@ function parseListenerReadHealth(value, rejectUnknownKeys = false) {
       retries: minute.retries
     })),
     claimCadenceMs: row.claimCadenceMs,
-    claimHours: row.claimHours.map((hour) => ({
-      hourStart: hour.hourStart,
-      claims: hour.claims
-    }))
+    claimHours: row.claimHours.map((hour) => {
+      const cadenceMs = hour.cadenceMs;
+      return {
+        hourStart: hour.hourStart,
+        claims: hour.claims,
+        ...typeof cadenceMs === "number" ? { cadenceMs } : {}
+      };
+    })
   };
 }
 function summarizeListenerReadHealth(health, readyAt, nowMs) {
@@ -38624,10 +38837,15 @@ function summarizeListenerReadHealth(health, readyAt, nowMs) {
     const claimsByHour = new Map(
       health.claimHours.map((row) => [row.hourStart, row.claims])
     );
-    const expectedClaims = HOUR_MS / health.claimCadenceMs;
+    const cadenceByHour = /* @__PURE__ */ new Map();
+    for (const row of health.claimHours) {
+      if (row.cadenceMs !== void 0) cadenceByHour.set(row.hourStart, row.cadenceMs);
+    }
     for (let hour = first; hour < currentHour; hour += HOUR_MS) {
       const hourStart = new Date(hour).toISOString();
       const claims = claimsByHour.get(hourStart) ?? 0;
+      const cadenceMs = cadenceByHour.get(hourStart) ?? health.claimCadenceMs;
+      const expectedClaims = HOUR_MS / cadenceMs;
       claimThroughputHours.push({
         hourStart,
         claims,
@@ -38654,7 +38872,7 @@ function summarizeListenerReadHealth(health, readyAt, nowMs) {
 // src/listener/control.ts
 var import_node_crypto19 = require("node:crypto");
 var import_node_net = require("node:net");
-var import_promises9 = require("node:fs/promises");
+var import_promises10 = require("node:fs/promises");
 var import_node_path16 = require("node:path");
 var UUID_RE18 = /^[0-9a-f]{8}-[0-9a-f]{4}-[1-8][0-9a-f]{3}-[89ab][0-9a-f]{3}-[0-9a-f]{12}$/i;
 var SEMVER_RE2 = /^(?:0|[1-9]\d*)\.(?:0|[1-9]\d*)\.(?:0|[1-9]\d*)(?:-(?:0|[1-9]\d*|[A-Za-z-][0-9A-Za-z-]*)(?:\.(?:0|[1-9]\d*|[A-Za-z-][0-9A-Za-z-]*))*)?(?:\+[0-9A-Za-z-]+(?:\.[0-9A-Za-z-]+)*)?$/;
@@ -38741,7 +38959,8 @@ var STATUS_ALLOWED_KEYS = /* @__PURE__ */ new Set([
   "connectionsOpened",
   "connectionReuseRatio",
   "activityPublishFailures",
-  "activityLastErrorCode"
+  "activityLastErrorCode",
+  "idlePollMs"
 ]);
 var STATUS_ACTIVITY_ERROR_CODES = /* @__PURE__ */ new Set([
   "activity_credential_failed",
@@ -38825,9 +39044,9 @@ function parseStatus(raw, rejectUnknownKeys = false) {
   const nullableTimestamp3 = (candidate) => candidate === null || typeof candidate === "string" && Number.isFinite(Date.parse(candidate));
   const readHealth = row.readHealth === void 0 ? void 0 : parseListenerReadHealth(row.readHealth, rejectUnknownKeys);
   const heldBackDeliveries = row.heldBackDeliveries === void 0 ? void 0 : parseHeldBackDeliveries(row.heldBackDeliveries);
-  if (row.version !== 1 || typeof row.instanceId !== "string" || !UUID_RE18.test(row.instanceId) || row.provider !== "grok" && row.provider !== "opencode" && row.provider !== "claude" && row.provider !== "codex" || typeof row.profileId !== "string" || typeof row.workspaceId !== "string" || !UUID_RE18.test(row.workspaceId) || typeof row.principalId !== "string" || !UUID_RE18.test(row.principalId) || !Number.isSafeInteger(row.pid) || row.pid < 1 || typeof row.state !== "string" || !["starting", "ready", "stopping", "stopped", "failed"].includes(row.state) || typeof row.startedAt !== "string" || !Number.isFinite(Date.parse(row.startedAt)) || !(row.readyAt === null || typeof row.readyAt === "string" && Number.isFinite(Date.parse(row.readyAt))) || typeof row.updatedAt !== "string" || !Number.isFinite(Date.parse(row.updatedAt)) || !(row.stoppedAt === null || typeof row.stoppedAt === "string" && Number.isFinite(Date.parse(row.stoppedAt))) || !nullableUuid3(row.lastSignalId) || !(row.lastErrorCode === null || typeof row.lastErrorCode === "string" && /^[a-z0-9_-]{1,96}$/.test(row.lastErrorCode)) || !(row.lastErrorDetail === void 0 || row.lastErrorDetail === null || typeof row.lastErrorDetail === "string" && row.lastErrorDetail.length > 0 && row.lastErrorDetail.length <= 2048 && !/swm_(?:agt|inv|cap)_/i.test(row.lastErrorDetail)) || !(row.lastErrorReasonCode === void 0 || row.lastErrorReasonCode === null || typeof row.lastErrorReasonCode === "string" && /^[a-z0-9_-]{1,96}$/.test(row.lastErrorReasonCode)) || !(row.providerExecutable === void 0 || row.providerExecutable === null || typeof row.providerExecutable === "string" && (0, import_node_path16.isAbsolute)(row.providerExecutable)) || !(row.providerVersion === void 0 || row.providerVersion === null || typeof row.providerVersion === "string" && SEMVER_RE2.test(row.providerVersion)) || !(row.providerLastMeasuredVersion === void 0 || row.providerLastMeasuredVersion === null || typeof row.providerLastMeasuredVersion === "string" && SEMVER_RE2.test(row.providerLastMeasuredVersion)) || !(row.providerBundledAgentSdkVersion === void 0 || row.providerBundledAgentSdkVersion === null || typeof row.providerBundledAgentSdkVersion === "string" && SEMVER_RE2.test(row.providerBundledAgentSdkVersion)) || !(row.providerBundledClaudeCodeVersion === void 0 || row.providerBundledClaudeCodeVersion === null || typeof row.providerBundledClaudeCodeVersion === "string" && SEMVER_RE2.test(row.providerBundledClaudeCodeVersion)) || !(row.providerMinimumRequiredVersion === void 0 || row.providerMinimumRequiredVersion === null || typeof row.providerMinimumRequiredVersion === "string" && SEMVER_RE2.test(row.providerMinimumRequiredVersion)) || !(row.cswarmVersion === void 0 || row.cswarmVersion === null || typeof row.cswarmVersion === "string" && SEMVER_RE2.test(row.cswarmVersion)) || (row.providerVersion === null || row.providerVersion === void 0) !== (row.providerLastMeasuredVersion === null || row.providerLastMeasuredVersion === void 0) || !(row.lastWorkerStderrTail === void 0 || row.lastWorkerStderrTail === null || typeof row.lastWorkerStderrTail === "string" && row.lastWorkerStderrTail.length > 0 && row.lastWorkerStderrTail.length <= 2048 && !/swm_(?:agt|inv|cap)_/i.test(row.lastWorkerStderrTail)) || typeof row.logPath !== "string" || !(0, import_node_path16.isAbsolute)(row.logPath) || !(row.deliveryMode === void 0 || row.deliveryMode === null || typeof row.deliveryMode === "string" && STATUS_DELIVERY_MODES.has(row.deliveryMode)) || !(row.pendingDeliveryCount === void 0 || nullableCount(row.pendingDeliveryCount)) || !(row.lastTerminalDeliveryFailureCount === void 0 || nullableCount(row.lastTerminalDeliveryFailureCount)) || !(row.lastTerminalDeliveryFailureAt === void 0 || nullableTimestamp3(row.lastTerminalDeliveryFailureAt)) || !(row.lastClaimAt === void 0 || nullableTimestamp3(row.lastClaimAt)) || !(row.lastAckAt === void 0 || nullableTimestamp3(row.lastAckAt)) || !(row.lastAckOutcome === void 0 || row.lastAckOutcome === null || typeof row.lastAckOutcome === "string" && deliveryOutcomes.has(row.lastAckOutcome)) || !(row.consecutiveAckFailureCount === void 0 || nullableCount(row.consecutiveAckFailureCount)) || !(row.lastAckSignalId === void 0 || row.lastAckSignalId === null || typeof row.lastAckSignalId === "string" && UUID_RE18.test(row.lastAckSignalId)) || !(row.currentDeliverySignalId === void 0 || row.currentDeliverySignalId === null || typeof row.currentDeliverySignalId === "string" && UUID_RE18.test(row.currentDeliverySignalId)) || !(row.currentDeliverySince === void 0 || nullableTimestamp3(row.currentDeliverySince)) || heldBackDeliveries === null || !(row.pendingDeliveryCountAt === void 0 || nullableTimestamp3(row.pendingDeliveryCountAt)) || !(row.routeMode === void 0 || row.routeMode === "worker" || row.routeMode === "main" || row.routeMode === "split") || !(row.deferOverChars === void 0 || row.deferOverChars === null || typeof row.deferOverChars === "number" && Number.isSafeInteger(row.deferOverChars) && row.deferOverChars >= 1 && row.deferOverChars <= 1e4) || !(row.pendingForMainCount === void 0 || typeof row.pendingForMainCount === "number" && Number.isSafeInteger(row.pendingForMainCount) && row.pendingForMainCount >= 0) || !(row.droppedForMainCount === void 0 || typeof row.droppedForMainCount === "number" && Number.isSafeInteger(row.droppedForMainCount) && row.droppedForMainCount >= 0) || readHealth === null || !(row.connectionsOpened === void 0 || typeof row.connectionsOpened === "number" && Number.isSafeInteger(row.connectionsOpened) && row.connectionsOpened >= 0) || !(row.connectionReuseRatio === void 0 || typeof row.connectionReuseRatio === "number" && Number.isFinite(row.connectionReuseRatio) && row.connectionReuseRatio >= 0) || !(row.activityPublishFailures === void 0 || typeof row.activityPublishFailures === "number" && Number.isSafeInteger(row.activityPublishFailures) && row.activityPublishFailures >= 0) || !(row.activityLastErrorCode === void 0 || row.activityLastErrorCode === null || typeof row.activityLastErrorCode === "string" && STATUS_ACTIVITY_ERROR_CODES.has(
+  if (row.version !== 1 || typeof row.instanceId !== "string" || !UUID_RE18.test(row.instanceId) || row.provider !== "grok" && row.provider !== "opencode" && row.provider !== "claude" && row.provider !== "codex" || typeof row.profileId !== "string" || typeof row.workspaceId !== "string" || !UUID_RE18.test(row.workspaceId) || typeof row.principalId !== "string" || !UUID_RE18.test(row.principalId) || !Number.isSafeInteger(row.pid) || row.pid < 1 || typeof row.state !== "string" || !["starting", "ready", "stopping", "stopped", "failed"].includes(row.state) || typeof row.startedAt !== "string" || !Number.isFinite(Date.parse(row.startedAt)) || !(row.readyAt === null || typeof row.readyAt === "string" && Number.isFinite(Date.parse(row.readyAt))) || typeof row.updatedAt !== "string" || !Number.isFinite(Date.parse(row.updatedAt)) || !(row.stoppedAt === null || typeof row.stoppedAt === "string" && Number.isFinite(Date.parse(row.stoppedAt))) || !nullableUuid3(row.lastSignalId) || !(row.lastErrorCode === null || typeof row.lastErrorCode === "string" && /^[a-z0-9_-]{1,96}$/.test(row.lastErrorCode)) || !(row.lastErrorDetail === void 0 || row.lastErrorDetail === null || typeof row.lastErrorDetail === "string" && row.lastErrorDetail.length > 0 && row.lastErrorDetail.length <= 2048 && !SECRET_SHAPE_RE.test(row.lastErrorDetail)) || !(row.lastErrorReasonCode === void 0 || row.lastErrorReasonCode === null || typeof row.lastErrorReasonCode === "string" && /^[a-z0-9_-]{1,96}$/.test(row.lastErrorReasonCode)) || !(row.providerExecutable === void 0 || row.providerExecutable === null || typeof row.providerExecutable === "string" && (0, import_node_path16.isAbsolute)(row.providerExecutable)) || !(row.providerVersion === void 0 || row.providerVersion === null || typeof row.providerVersion === "string" && SEMVER_RE2.test(row.providerVersion)) || !(row.providerLastMeasuredVersion === void 0 || row.providerLastMeasuredVersion === null || typeof row.providerLastMeasuredVersion === "string" && SEMVER_RE2.test(row.providerLastMeasuredVersion)) || !(row.providerBundledAgentSdkVersion === void 0 || row.providerBundledAgentSdkVersion === null || typeof row.providerBundledAgentSdkVersion === "string" && SEMVER_RE2.test(row.providerBundledAgentSdkVersion)) || !(row.providerBundledClaudeCodeVersion === void 0 || row.providerBundledClaudeCodeVersion === null || typeof row.providerBundledClaudeCodeVersion === "string" && SEMVER_RE2.test(row.providerBundledClaudeCodeVersion)) || !(row.providerMinimumRequiredVersion === void 0 || row.providerMinimumRequiredVersion === null || typeof row.providerMinimumRequiredVersion === "string" && SEMVER_RE2.test(row.providerMinimumRequiredVersion)) || !(row.cswarmVersion === void 0 || row.cswarmVersion === null || typeof row.cswarmVersion === "string" && SEMVER_RE2.test(row.cswarmVersion)) || (row.providerVersion === null || row.providerVersion === void 0) !== (row.providerLastMeasuredVersion === null || row.providerLastMeasuredVersion === void 0) || !(row.lastWorkerStderrTail === void 0 || row.lastWorkerStderrTail === null || typeof row.lastWorkerStderrTail === "string" && row.lastWorkerStderrTail.length > 0 && row.lastWorkerStderrTail.length <= 2048 && !SECRET_SHAPE_RE.test(row.lastWorkerStderrTail)) || typeof row.logPath !== "string" || !(0, import_node_path16.isAbsolute)(row.logPath) || !(row.deliveryMode === void 0 || row.deliveryMode === null || typeof row.deliveryMode === "string" && STATUS_DELIVERY_MODES.has(row.deliveryMode)) || !(row.pendingDeliveryCount === void 0 || nullableCount(row.pendingDeliveryCount)) || !(row.lastTerminalDeliveryFailureCount === void 0 || nullableCount(row.lastTerminalDeliveryFailureCount)) || !(row.lastTerminalDeliveryFailureAt === void 0 || nullableTimestamp3(row.lastTerminalDeliveryFailureAt)) || !(row.lastClaimAt === void 0 || nullableTimestamp3(row.lastClaimAt)) || !(row.lastAckAt === void 0 || nullableTimestamp3(row.lastAckAt)) || !(row.lastAckOutcome === void 0 || row.lastAckOutcome === null || typeof row.lastAckOutcome === "string" && deliveryOutcomes.has(row.lastAckOutcome)) || !(row.consecutiveAckFailureCount === void 0 || nullableCount(row.consecutiveAckFailureCount)) || !(row.lastAckSignalId === void 0 || row.lastAckSignalId === null || typeof row.lastAckSignalId === "string" && UUID_RE18.test(row.lastAckSignalId)) || !(row.currentDeliverySignalId === void 0 || row.currentDeliverySignalId === null || typeof row.currentDeliverySignalId === "string" && UUID_RE18.test(row.currentDeliverySignalId)) || !(row.currentDeliverySince === void 0 || nullableTimestamp3(row.currentDeliverySince)) || heldBackDeliveries === null || !(row.pendingDeliveryCountAt === void 0 || nullableTimestamp3(row.pendingDeliveryCountAt)) || !(row.routeMode === void 0 || row.routeMode === "worker" || row.routeMode === "main" || row.routeMode === "split") || !(row.deferOverChars === void 0 || row.deferOverChars === null || typeof row.deferOverChars === "number" && Number.isSafeInteger(row.deferOverChars) && row.deferOverChars >= 1 && row.deferOverChars <= 1e4) || !(row.pendingForMainCount === void 0 || typeof row.pendingForMainCount === "number" && Number.isSafeInteger(row.pendingForMainCount) && row.pendingForMainCount >= 0) || !(row.droppedForMainCount === void 0 || typeof row.droppedForMainCount === "number" && Number.isSafeInteger(row.droppedForMainCount) && row.droppedForMainCount >= 0) || readHealth === null || !(row.connectionsOpened === void 0 || typeof row.connectionsOpened === "number" && Number.isSafeInteger(row.connectionsOpened) && row.connectionsOpened >= 0) || !(row.connectionReuseRatio === void 0 || typeof row.connectionReuseRatio === "number" && Number.isFinite(row.connectionReuseRatio) && row.connectionReuseRatio >= 0) || !(row.activityPublishFailures === void 0 || typeof row.activityPublishFailures === "number" && Number.isSafeInteger(row.activityPublishFailures) && row.activityPublishFailures >= 0) || !(row.activityLastErrorCode === void 0 || row.activityLastErrorCode === null || typeof row.activityLastErrorCode === "string" && STATUS_ACTIVITY_ERROR_CODES.has(
     row.activityLastErrorCode
-  ))) {
+  )) || !(row.idlePollMs === void 0 || row.idlePollMs === null || typeof row.idlePollMs === "number" && Number.isSafeInteger(row.idlePollMs) && row.idlePollMs >= 0)) {
     throw new Error("stored listener status is malformed");
   }
   const routeMode = row.routeMode ?? "worker";
@@ -38870,7 +39089,8 @@ function parseStatus(raw, rejectUnknownKeys = false) {
     deferOverChars,
     pendingForMainCount: row.pendingForMainCount ?? 0,
     droppedForMainCount: row.droppedForMainCount ?? 0,
-    ...readHealth === void 0 ? {} : { readHealth }
+    ...readHealth === void 0 ? {} : { readHealth },
+    ...row.idlePollMs === void 0 ? {} : { idlePollMs: row.idlePollMs ?? null }
   };
 }
 async function writeListenerStatus(paths, status) {
@@ -38940,7 +39160,8 @@ async function appendListenerEvent(paths, event) {
     "dropped_count",
     // How long one delivery held the worker seat, and why it gave it back.
     "held_ms",
-    "release_reason"
+    "release_reason",
+    "idle_poll_ms"
   ]);
   const deliveryModes = /* @__PURE__ */ new Set(["durable_claim", "cursor_fallback"]);
   const routeModes = /* @__PURE__ */ new Set(["worker", "main", "split"]);
@@ -39005,6 +39226,9 @@ async function appendListenerEvent(paths, event) {
     if (key2 === "held_ms" && !(typeof value === "number" && Number.isSafeInteger(value) && value >= 0)) {
       throw new Error("listener event hold duration is not allowed");
     }
+    if (key2 === "idle_poll_ms" && !(typeof value === "number" && Number.isSafeInteger(value) && value >= 0)) {
+      throw new Error("listener event idle poll interval is not allowed");
+    }
     if (key2 === "release_reason" && !(typeof value === "string" && LISTENER_DELIVERY_HOLD_RELEASE_REASONS.includes(
       value
     ))) {
@@ -39019,7 +39243,7 @@ async function appendListenerEvent(paths, event) {
     if (typeof value === "string" && // worker_stderr_tail is deliberately exempt from the generic 128-char
     // cap (its own bound is 2048, above); the secret scan still applies to
     // every string, the tail included.
-    (key2 !== "worker_stderr_tail" && value.length > 128 || /swm_(?:agt|inv|cap)_/i.test(value))) {
+    (key2 !== "worker_stderr_tail" && value.length > 128 || SECRET_SHAPE_RE.test(value))) {
       throw new Error("listener event contains unsafe text");
     }
   }
@@ -39039,7 +39263,7 @@ async function appendListenerEvent(paths, event) {
     throw new Error("listener event is too large");
   }
   try {
-    const info = await (0, import_promises9.lstat)(paths.logPath);
+    const info = await (0, import_promises10.lstat)(paths.logPath);
     if (!info.isFile() || info.isSymbolicLink() || (info.mode & 511) !== 384) {
       throw new Error("listener event log is not a secure regular file");
     }
@@ -39049,14 +39273,14 @@ async function appendListenerEvent(paths, event) {
   } catch (error) {
     if (error.code !== "ENOENT") throw error;
   }
-  const handle = await (0, import_promises9.open)(paths.logPath, "a", 384);
+  const handle = await (0, import_promises10.open)(paths.logPath, "a", 384);
   try {
     await handle.writeFile(serialized, "utf8");
     await handle.sync();
   } finally {
     await handle.close();
   }
-  await (0, import_promises9.chmod)(paths.logPath, 384);
+  await (0, import_promises10.chmod)(paths.logPath, 384);
 }
 function parseControlRequest(raw) {
   let value;
@@ -39091,7 +39315,7 @@ async function startupLock(paths) {
   while (Date.now() < deadline) {
     let handle;
     try {
-      handle = await (0, import_promises9.open)(lockPath, "wx", 384);
+      handle = await (0, import_promises10.open)(lockPath, "wx", 384);
     } catch (error) {
       if (error.code !== "EEXIST") throw error;
       try {
@@ -39100,9 +39324,9 @@ async function startupLock(paths) {
       } catch (queryError) {
         if (queryError instanceof ListenerAlreadyRunningError) throw queryError;
       }
-      const info = await (0, import_promises9.lstat)(lockPath).catch(() => null);
+      const info = await (0, import_promises10.lstat)(lockPath).catch(() => null);
       if (info && Date.now() - info.mtimeMs >= START_LOCK_STALE_MS) {
-        await (0, import_promises9.unlink)(lockPath).catch(() => void 0);
+        await (0, import_promises10.unlink)(lockPath).catch(() => void 0);
         continue;
       }
       await new Promise((resolve3) => setTimeout(resolve3, 25));
@@ -39114,12 +39338,12 @@ async function startupLock(paths) {
       await handle.sync();
     } catch (error) {
       await handle.close().catch(() => void 0);
-      await (0, import_promises9.unlink)(lockPath).catch(() => void 0);
+      await (0, import_promises10.unlink)(lockPath).catch(() => void 0);
       throw error;
     }
     return async () => {
       await handle.close().catch(() => void 0);
-      await (0, import_promises9.unlink)(lockPath).catch(() => void 0);
+      await (0, import_promises10.unlink)(lockPath).catch(() => void 0);
     };
   }
   throw new ListenerAlreadyRunningError();
@@ -39136,7 +39360,7 @@ async function prepareSocket(paths) {
   } catch (error) {
     if (error instanceof ListenerAlreadyRunningError) throw error;
     if (process.platform !== "win32") {
-      await (0, import_promises9.unlink)(paths.socketPath).catch((unlinkError) => {
+      await (0, import_promises10.unlink)(paths.socketPath).catch((unlinkError) => {
         if (unlinkError.code !== "ENOENT") {
           throw unlinkError;
         }
@@ -39193,13 +39417,13 @@ async function startListenerControlServer(options) {
       server.listen(options.paths.socketPath);
     });
     if (process.platform !== "win32") {
-      await (0, import_promises9.chmod)(options.paths.socketPath, 384);
+      await (0, import_promises10.chmod)(options.paths.socketPath, 384);
     }
   } catch (error) {
     if (server.listening) {
       await new Promise((resolve3) => server.close(() => resolve3()));
       if (process.platform !== "win32") {
-        await (0, import_promises9.unlink)(options.paths.socketPath).catch(() => void 0);
+        await (0, import_promises10.unlink)(options.paths.socketPath).catch(() => void 0);
       }
     }
     throw error;
@@ -39210,7 +39434,7 @@ async function startListenerControlServer(options) {
     close: async () => {
       await new Promise((resolve3) => server.close(() => resolve3()));
       if (process.platform !== "win32") {
-        await (0, import_promises9.unlink)(options.paths.socketPath).catch(() => void 0);
+        await (0, import_promises10.unlink)(options.paths.socketPath).catch(() => void 0);
       }
     }
   };
@@ -39307,7 +39531,7 @@ function safeErrorCode(error) {
 }
 function localDiagnostic(message, maxChars) {
   const redacted = message.replace(
-    /swm_(?:agt|inv|cap)_[^\s"'\\]*/gi,
+    new RegExp(SECRET_SHAPE_RE.source, "gi"),
     "[redacted]"
   ).trim();
   if (redacted.length === 0) return null;
@@ -39415,6 +39639,7 @@ async function runListenerSupervisor(options) {
     connectionReuseRatio: 0,
     activityPublishFailures: 0,
     activityLastErrorCode: null,
+    idlePollMs: null,
     logPath: options.paths.logPath
   };
   let writes = Promise.resolve();
@@ -39488,6 +39713,25 @@ async function runListenerSupervisor(options) {
     return fitted.length > 0 ? fitted : null;
   };
   const onEvent = (event) => {
+    if (event.type === "idle_poll") {
+      status = {
+        ...status,
+        idlePollMs: event.intervalMs,
+        readHealth: recordListenerClaimCadence(
+          status.readHealth ?? emptyListenerReadHealth(),
+          event.intervalMs > 0 ? event.intervalMs : 1,
+          event.ts
+        ),
+        updatedAt: event.ts
+      };
+      persist();
+      log({
+        ts: event.ts,
+        event: "listener_idle_poll",
+        idle_poll_ms: event.intervalMs
+      });
+      return;
+    }
     if (event.type === "ready") {
       const versionNotice = options.getProviderVersionNotice?.() ?? null;
       transition("ready", {
@@ -39512,7 +39756,8 @@ async function runListenerSupervisor(options) {
         ...event.cadenceMs === void 0 ? {} : {
           readHealth: recordListenerClaimCadence(
             status.readHealth ?? emptyListenerReadHealth(),
-            event.cadenceMs
+            event.cadenceMs,
+            event.ts
           )
         }
       });
@@ -40785,6 +41030,7 @@ function buildListenerChildArgs(spec) {
     ...spec.model ? ["--model", spec.model] : [],
     ...provider === "grok" && spec.effort ? ["--effort", spec.effort] : [],
     ...spec.turnBudget ? ["--turn-budget", spec.turnBudget] : [],
+    ...spec.pollInterval ? ["--poll-interval", spec.pollInterval] : [],
     ...spec.route && spec.route !== "worker" ? ["--route", spec.route] : [],
     ...spec.deferOver !== void 0 ? ["--defer-over", String(spec.deferOver)] : []
   ];
@@ -40820,7 +41066,7 @@ async function spawnDetachedListener(options) {
 }
 
 // src/listener/hook.ts
-var import_promises10 = require("node:fs/promises");
+var import_promises11 = require("node:fs/promises");
 var import_node_path20 = require("node:path");
 
 // src/listener/brain-digest.ts
@@ -41218,7 +41464,7 @@ async function listenerIsLive(context) {
 async function discoverStoredStatusContexts(stateDirectory2) {
   let entries;
   try {
-    entries = await (0, import_promises10.readdir)(stateDirectory2, { withFileTypes: true });
+    entries = await (0, import_promises11.readdir)(stateDirectory2, { withFileTypes: true });
   } catch (error) {
     if (error.code === "ENOENT") return [];
     throw error;
@@ -41618,7 +41864,7 @@ async function runListenerHookCheck(options = {}) {
 }
 
 // src/listener/attendance-canary.ts
-var import_promises11 = require("node:fs/promises");
+var import_promises12 = require("node:fs/promises");
 var LOG_TAIL_BYTES = 256 * 1024;
 function agentReceipt(receipts, principalId) {
   for (const receipt of receipts) {
@@ -41631,7 +41877,7 @@ function agentReceipt(receipts, principalId) {
 async function readLogTail(path) {
   let handle;
   try {
-    handle = await (0, import_promises11.open)(path, "r");
+    handle = await (0, import_promises12.open)(path, "r");
   } catch (error) {
     if (error.code === "ENOENT") return "";
     throw error;
@@ -42735,6 +42981,7 @@ var KNOWN_FLAGS = /* @__PURE__ */ new Set([
   "slug",
   "state-dir",
   "thread",
+  "poll-interval",
   "renewal-horizon-days",
   "standing",
   "task-id",
@@ -42781,8 +43028,8 @@ var BOOLEAN_FLAGS = /* @__PURE__ */ new Set([
 ]);
 var UUID_RE23 = /^[0-9a-f]{8}-[0-9a-f]{4}-[1-8][0-9a-f]{3}-[89ab][0-9a-f]{3}-[0-9a-f]{12}$/i;
 function packageVersion() {
-  if ("0.1.56".length > 0) {
-    return "0.1.56";
+  if ("0.1.57".length > 0) {
+    return "0.1.57";
   }
   try {
     const value = JSON.parse(
@@ -42923,7 +43170,7 @@ Usage:
   cswarm brain get <topic>[@<version>] [--version <n>] [--url <url> --anon-key <key>] [--workspace-id <uuid>] ${agentCredential2} [--json]
   cswarm brain put <topic> [<markdown-path>] [--url <url> --anon-key <key>] [--workspace-id <uuid>] ${agentCredential2} [--if-version <n>] [--json]  # without a path, reads Markdown from stdin; --if-version refuses the write unless the live version is still <n>
   cswarm feedback "<text>" --kind bug|idea|friction [--about <ref>] [--url <url> --anon-key <key>] [--workspace-id <uuid>] ${agentCredential2} [--json]
-  cswarm listen start ${requiredAgentCredential} [--url <url> --anon-key <key>] --workspace-id <uuid> --provider grok|opencode|claude|codex [--cwd <absolute-path>] [--model <model>] [--effort <level>] [--permissions deny|allow] [--grok-executable <path>] [--opencode-executable <path>] [--claude-executable <path>] [--codex-executable <path>] [--turn-budget <duration>] [--route worker|main|split] [--defer-over <chars>] [--allow-unattended] [--foreground] [--json]
+  cswarm listen start ${requiredAgentCredential} [--url <url> --anon-key <key>] --workspace-id <uuid> --provider grok|opencode|claude|codex [--cwd <absolute-path>] [--model <model>] [--effort <level>] [--permissions deny|allow] [--grok-executable <path>] [--opencode-executable <path>] [--claude-executable <path>] [--codex-executable <path>] [--turn-budget <duration>] [--poll-interval <duration>] [--route worker|main|split] [--defer-over <chars>] [--allow-unattended] [--foreground] [--json]
   cswarm listen canary ${requiredAgentCredential} [--url <url> --anon-key <key>] --workspace-id <uuid> [--state-dir <path>] [--wait <seconds>] [--json]
   cswarm listen status ${agentCredential2} [--url <url> --anon-key <key>] --workspace-id <uuid> [--principal-id <uuid>] [--json]
   cswarm listen stop ${agentCredential2} [--url <url> --anon-key <key>] --workspace-id <uuid> [--principal-id <uuid>] [--json]
@@ -43012,6 +43259,8 @@ number plus m, h, or d (for example 90m, 24h, or 7d) and are capped at 30d.
 Place -- before signal text that itself begins with -- to stop option parsing.
 Signal text is at most 8000 characters and --about at most 500; a longer body is
 refused locally before any network call, so compose within the limit.
+
+${idlePollHelpSentence()}
 
 listen start --turn-budget bounds ONE worker prompt turn (default 10m): how long
 the worker may think and use tools on a single message before the turn times out
@@ -43251,7 +43500,7 @@ async function stdinInviteLink() {
   return link;
 }
 async function confirmationLine(prompt) {
-  const reader = (0, import_promises13.createInterface)({
+  const reader = (0, import_promises14.createInterface)({
     input: process.stdin,
     output: process.stderr,
     terminal: Boolean(process.stdin.isTTY)
@@ -44555,6 +44804,9 @@ function listenerTurnBudgetMs(value) {
   }
   return milliseconds;
 }
+function listenerPollIntervalMs(value) {
+  return parseIdlePollIntervalMs(value);
+}
 function listenerRouteConfiguration(routeValue, deferOverValue) {
   const routeMode = routeValue ?? "worker";
   if (routeMode !== "worker" && routeMode !== "main" && routeMode !== "split") {
@@ -45535,6 +45787,12 @@ async function runInboxNotifyCommand(args) {
   const stop = () => controller.abort();
   process.on("SIGINT", stop);
   process.on("SIGTERM", stop);
+  const lockPath = arrivalWatchLockPath(
+    cloud,
+    selected.selectedWorkspace,
+    principalId
+  );
+  await acquireArrivalWatchLock(lockPath);
   try {
     const retryNotices = createArrivalRetryNoticePolicy();
     let renderedBearer = selected.bearer;
@@ -45608,6 +45866,7 @@ async function runInboxNotifyCommand(args) {
     process.off("SIGINT", stop);
     process.off("SIGTERM", stop);
     httpClient.close();
+    await releaseArrivalWatchLock(lockPath);
   }
 }
 async function runReceipt(args) {
@@ -46107,6 +46366,8 @@ function listenerStatusJson(status, permissionMode, evidence = {
     readRetriesLastHour: readSummary.retriesLastHour,
     readRetryHours: readSummary.retryHours,
     claimCadenceMs: readHealth.claimCadenceMs,
+    idlePollMs: status.idlePollMs ?? null,
+    idlePollSentence: status.idlePollMs === void 0 || status.idlePollMs === null ? null : idlePollStatusSentence(status.idlePollMs),
     claimThroughputHours: readSummary.claimThroughputHours,
     listenerLapse: lapseNotices.length > 0,
     listenerLapseCodes: lapseNotices.map((notice) => notice.code),
@@ -46177,7 +46438,8 @@ function renderListenerStatus(status, evidence = {
     `Read retry episodes in the last 24h: ${readSummary.episodesLast24h}; retries in the rolling hour: ${readSummary.retriesLastHour}.`,
     readSummary.longestEpisodeAttemptsLast24h === 0 ? "Longest read retry episode in the last 24h: none recorded." : `Longest read retry episode in the last 24h: ${readSummary.longestEpisodeAttemptsLast24h} attempts over ${Math.floor(readSummary.longestEpisodeDurationMsLast24h / 1e3)}s.`,
     readSummary.retryHours.length === 0 ? "Read retries by hour in the last 24h: none." : `Read retries by hour in the last 24h: ${readSummary.retryHours.map((hour) => `${hour.hourStart}=${hour.retries}`).join("; ")}.`,
-    readSummary.claimThroughputHours.length === 0 ? "Claim throughput by full hour: no complete listener hour is available yet." : `Claim throughput by full hour: ${readSummary.claimThroughputHours.map((hour) => `${hour.hourStart} ${hour.claims}/${Math.round(hour.expectedClaims)} (${hour.ratio.toFixed(3)})`).join("; ")}.`
+    readSummary.claimThroughputHours.length === 0 ? "Claim throughput by full hour: no complete listener hour is available yet." : `Claim throughput by full hour: ${readSummary.claimThroughputHours.map((hour) => `${hour.hourStart} ${hour.claims}/${Math.round(hour.expectedClaims)} (${hour.ratio.toFixed(3)})`).join("; ")}.`,
+    status.idlePollMs === void 0 || status.idlePollMs === null ? "Current idle poll interval has not been reported yet." : idlePollStatusSentence(status.idlePollMs)
   ];
   for (const notice of lapseNotices) {
     lines.push(`WARNING [${notice.code}]: ${notice.message}`);
@@ -46811,6 +47073,7 @@ async function runConfiguredListener(options) {
             /* One delivery may hold the seat for one turn budget, not for the
                whole 15-minute lease. Same lever, so the two cannot drift. */
             deliveryHoldBudgetMs: turnBudgetMs,
+            ...options.pollMs === void 0 ? {} : { pollMs: options.pollMs },
             pendingMainQueue,
             fetcher: httpClient.fetch
           });
@@ -46841,6 +47104,7 @@ async function runListenStart(args) {
     "codex-executable",
     "state-dir",
     "turn-budget",
+    "poll-interval",
     "route",
     "defer-over",
     "allow-unattended",
@@ -46855,6 +47119,7 @@ async function runListenStart(args) {
   const provider = listenerProvider(args);
   validateListenerProviderFlags(args, provider);
   const turnBudgetMs = listenerTurnBudgetMs(args.optional("turn-budget"));
+  const pollMs = listenerPollIntervalMs(args.optional("poll-interval"));
   const routing = listenerRouteConfiguration(
     args.optional("route"),
     args.optional("defer-over")
@@ -46897,6 +47162,7 @@ async function runListenStart(args) {
       permissionMode,
       provider,
       turnBudgetMs,
+      pollMs,
       ...routing,
       ...args.optional("model") ? { model: args.required("model") } : {},
       ...args.optional("effort") ? { effort: args.required("effort") } : {},
@@ -46951,6 +47217,7 @@ async function runListenStart(args) {
         ...args.optional("model") ? { model: args.required("model") } : {},
         ...args.optional("effort") ? { effort: args.required("effort") } : {},
         ...args.optional("turn-budget") ? { turnBudget: args.required("turn-budget") } : {},
+        ...args.optional("poll-interval") ? { pollInterval: args.required("poll-interval") } : {},
         ...args.optional("grok-executable") ? { executable: args.required("grok-executable") } : {},
         ...opencodeExecutable ? { opencodeExecutable } : {},
         ...claudeExecutable ? { claudeExecutable } : {},
@@ -47059,12 +47326,14 @@ async function runListenSupervisor(args) {
     "codex-executable",
     "state-dir",
     "turn-budget",
+    "poll-interval",
     "route",
     "defer-over"
   ], 1);
   const provider = listenerProvider(args);
   validateListenerProviderFlags(args, provider);
   const turnBudgetMs = listenerTurnBudgetMs(args.optional("turn-budget"));
+  const pollMs = listenerPollIntervalMs(args.optional("poll-interval"));
   const routing = listenerRouteConfiguration(
     args.optional("route"),
     args.optional("defer-over")
@@ -47085,6 +47354,7 @@ async function runListenSupervisor(args) {
     permissionMode: listenerPermissionMode(args.optional("permissions")),
     provider,
     turnBudgetMs,
+    pollMs,
     ...routing,
     ...args.optional("model") ? { model: args.required("model") } : {},
     ...args.optional("effort") ? { effort: args.required("effort") } : {},
@@ -48337,7 +48607,7 @@ async function runSeed(args) {
   if (!tokenOut || !(0, import_node_path21.isAbsolute)(tokenOut)) {
     throw new Error("SEED_TOKEN_OUT must be an absolute path");
   }
-  const tokenFile = await (0, import_promises12.open)(tokenOut, "wx", 384).catch((error) => {
+  const tokenFile = await (0, import_promises13.open)(tokenOut, "wx", 384).catch((error) => {
     if (error.code === "EEXIST") {
       throw new Error("SEED_TOKEN_OUT already exists; refusing to overwrite it");
     }
@@ -48376,7 +48646,7 @@ async function runSeed(args) {
       tokenWritten = true;
     }
     await tokenFile.close();
-    if (!tokenWritten) await (0, import_promises12.unlink)(tokenOut);
+    if (!tokenWritten) await (0, import_promises13.unlink)(tokenOut);
     process.stdout.write(`${JSON.stringify({
       userId: result.userId,
       membershipRole: result.membershipRole,
@@ -48389,7 +48659,7 @@ async function runSeed(args) {
 `);
   } catch (error) {
     await tokenFile.close().catch(() => void 0);
-    if (!tokenWritten) await (0, import_promises12.unlink)(tokenOut).catch(() => void 0);
+    if (!tokenWritten) await (0, import_promises13.unlink)(tokenOut).catch(() => void 0);
     throw error;
   }
 }
@@ -48653,6 +48923,7 @@ ${usage()}
   listenerFailureMessage,
   listenerHostLimits,
   listenerPermissionMode,
+  listenerPollIntervalMs,
   listenerProviderInstallEvidence,
   listenerRouteConfiguration,
   listenerStatusJson,
