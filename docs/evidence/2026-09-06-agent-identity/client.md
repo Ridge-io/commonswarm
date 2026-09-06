@@ -3,9 +3,9 @@
 Branch: `lane/identity-client` (based on `lane/identity-server`).
 Builder: Grok. Wire contract: `src/cloud/session-wire.ts` (not edited).
 
-HEAD: `6d007a985fa08cbb0c49239d706cfd15ab9fb1b5` on `lane/identity-client`.
+HEAD: `619138d4c33b82212e36b5c3c5f4bed8b8285cc7` on `lane/identity-client`.
 
-The prior evidence named `cb00d6435ef7b32109533821ff396179416cc8a1`. That commit does not exist in this repository. The lane's first implementation commit is `a90d395b30a3d9f9be7a6ef42223064b1a28ac3c`. This file records the SHA after the fix-round code commits. A follow-up docs-only commit may replace this HEAD line with the SHA of the evidence commit itself.
+The prior evidence named `cb00d6435ef7b32109533821ff396179416cc8a1`. That commit does not exist in this repository. The lane's first implementation commit is `a90d395b30a3d9f9be7a6ef42223064b1a28ac3c`. `619138d` is the docs commit that first wrote this corrected HEAD.
 
 ## Gates
 
