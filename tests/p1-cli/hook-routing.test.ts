@@ -1971,7 +1971,7 @@ test("the tier walk never goes back up once it has dropped", () => {
  * 8,000-character cap, all four-byte characters. Before 2026-09-06 no bound
  * applied to rendered text; 100 such previews at the old 240 cap were under the
  * budget only by luck of the cap. This pins the rule, not the luck. */
-test("a 100-signal page of four-byte bodies stays under HOOK_RENDER_BUDGET_BYTES and hits every tier arithmetic", () => {
+test("a 100-signal page of four-byte bodies stays under HOOK_RENDER_BUDGET_BYTES, walks down to the floor, and every suffix N is exact", () => {
   const items = Array.from({ length: 100 }, (_, index) =>
     pending(
       `${String(index).padStart(8, "0")}-4444-4444-8444-444444444444`,

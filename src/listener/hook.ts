@@ -675,7 +675,7 @@ export function renderHookSignal(
     preview(item.body, cap),
     ...(item.attachmentCount === undefined
       ? []
-      : [`Attachments: ${item.attachmentCount}. Run cswarm inbox to see names and exact retrieval commands.`]),
+      : [`Attachments: ${item.attachmentCount}. Run ${HOOK_FULL_TEXT_COMMAND} to see names and exact retrieval commands.`]),
     replyLine,
   ].join("\n");
 }
