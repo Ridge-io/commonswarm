@@ -2530,3 +2530,28 @@ the server-429 code reused for the client pause (`src/listener/wake.ts:212`, `:2
 distinct `wake_budget` code in the code enumeration, a third sentence branch that says what is true
 and what happens next, the pinned test fixed to fail on the old code. Both arms rerun on the new SHA.
 L5 brief (`brief-wake-watcher.md`) and L7 brief (`brief-wake-measure.md`) are written and wait for L4.
+
+## 2026-09-06 07:0x UTC — L4 LANDED (49d44ec), v0.1.58 RELEASED, then the live control FAILED; seats rolled back to 0.1.57
+
+L4 `lane/wake-client` 3c62aaf: three rounds (inert budget; false status sentence; `wake_budget` code),
+Gemini PASS + Opus PASS on the final SHA; evidence `docs/evidence/2026-09-06-wake-client/`. Released
+0.1.58: bump `0f53f5e`, tag on it, GitHub Latest with both assets (sha256 `154be397…`), npm
+`commonswarm@0.1.58` shasum `5eeec2f8…` = committed pack (`0a9f353`), site `/download` 0.1.58,
+installer + `npm i -g` verified, laptops' binaries upgraded.
+
+**Live control on production (my seat 8d10fe67, then 2121f81d):** `listen status` showed `mode: push`,
+subscribed, no topic in the file — but a note to the seat produced NO wake and no claim; the server
+DID write the `realtime.messages` wake row, and a bare supabase-js client on the same topic with the
+anon key RECEIVED it within a second (`scratchpad/rx-test.mjs`). So delivery is proven and the
+listener's own receive path is not. 2121f81d ran its 5-minute reconcile, claimed the note, and then
+dropped to `mode: poll` with `errorCode: channel_error`; 8d10fe67's events stopped after its first
+300000 ms idle_poll and its reconcile did not fire on time. The lane's live control had used a fake
+HTTP edge with Realtime proxied to the LOCAL stack, and passed — the trap AGENTS.md names ("a claim about
+a running listener needs a live control") held against a control that was not against production.
+
+**Action:** the five other mini Claude seats and both laptops' binaries are back on 0.1.57 (poll 15 s →
+60 s; verified `ready 0.1.57` on the mini). My seat is stopped and lent to an Opus debug lane
+(`lane/wake-client-fix`) reproducing against production with `--state-dir <temp>`; the fix ships as
+0.1.59 with the same arms. The 0.1.58 artifacts stay published: a 0.1.58 listener still claims within
+5 minutes or falls to 15 s polling, so it is degraded, not broken. L5 (watcher, Grok) and L7
+(measurement, Grok) run in parallel; L7's "after" numbers must wait for 0.1.59.
