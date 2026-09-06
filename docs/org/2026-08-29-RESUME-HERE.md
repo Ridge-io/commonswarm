@@ -2676,3 +2676,15 @@ the mini's `~/.grok/auth.json` (0600) over scp, and matched the `[ui]`/`[models]
 bare config. **Exposure to record:** `~/.grok/config.toml` on toms-m1-max-mbp holds a DataForSEO login
 and password in the clear under `[mcp_servers.dataforseo.env]`; it appeared in my tool output while
 comparing configs. Operator: move it to an env file or rotate it.
+**Joist (b9890f37, nikkis-macbook-air, macOS 15.6) stays DOWN.** On Grok the listener's permission canary
+fails: grok's own log shows `run_terminal_command` executed (`shell.tool.exec_done success`) with no
+permission request to the ACP client, so the sentinel is written ("permission denial did not block the
+write"); on the mini (macOS 26.3.1, grok 1.0.13) and toms-m1-max-mbp (macOS 26.2, grok 1.0.5) the same
+session shows one inference and no tool run — grok asked, was denied, stopped. Tried on the laptop: grok
+1.0.13 and 1.0.5; the mini's `[ui]`/`[models]`/`[privacy]` config; `permission_mode = "ask"`;
+trusted-folder entries for the cwd, `/private/tmp`, and `/var/folders`. None changed it. Hypothesis, not
+established: a macOS-15 sandbox path in grok that treats a sandboxed shell as pre-approved. Left in place:
+grok installed and signed in (auth copied from the mini), the Codex bridge installed, and
+`~/.config/cswarm/restart-seats-0157.sh` with a `PROVIDER=codex PROVIDER_EXE=…` switch (the script header
+shows the exact line) for when Codex credits return. Claude is not an option for Joist under the
+operator's rule.
