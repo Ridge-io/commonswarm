@@ -444,6 +444,51 @@ test("WakeSubscriber latches a wake while nobody awaits next()", async () => {
   await wake.close();
 });
 
+test("next() settles on a wake and on a state change that arrive while it waits", async () => {
+  /* Regression: `finishWait` cleared `this.waiter` and then called the waiter's
+   * resolve, which was a closure that returned early when `this.waiter` was
+   * null. Every wake or state change that arrived while `next()` was actually
+   * awaiting was dropped AND cleared the deadline timer, so the loop wedged
+   * for good. The tests around this one all latch before they call `next()`,
+   * so they resolve from `pending` and never install a waiter. */
+  const raceMs = 1_000;
+  const settle = async (promise: Promise<WakeWaitReason>): Promise<string> => {
+    let timer: ReturnType<typeof setTimeout> | undefined;
+    const timeout = new Promise<string>((resolve) => {
+      timer = setTimeout(() => resolve("hung"), raceMs);
+    });
+    try {
+      return await Promise.race([promise, timeout]);
+    } finally {
+      if (timer !== undefined) clearTimeout(timer);
+    }
+  };
+
+  const fake = new FakeRealtime();
+  const wake = createWakeSubscriber({
+    target: cloudTarget("https://cloud.example.test", "anon"),
+    createRealtime: () => fake,
+  });
+  wake.setTopic(WAKE_TOPIC);
+  fake.channelInstance!.emitStatus(REALTIME_SUBSCRIBE_STATUS.SUBSCRIBED);
+  /* Drain the latched join transition so the next call really installs a
+   * waiter instead of returning `pending` synchronously. */
+  assert.equal(await wake.next({ until: Date.now() }), "state");
+
+  const waitingForWake = wake.next({ until: Date.now() + LISTENER_RECONCILE_POLL_MS });
+  fake.channelInstance!.emitWake();
+  assert.equal(await settle(waitingForWake), "wake");
+  assert.equal(wake.snapshot().mode, "push");
+
+  const waitingForState = wake.next({ until: Date.now() + LISTENER_RECONCILE_POLL_MS });
+  fake.channelInstance!.emitStatus(REALTIME_SUBSCRIBE_STATUS.CHANNEL_ERROR);
+  assert.equal(await settle(waitingForState), "state");
+  assert.equal(wake.snapshot().mode, "poll");
+  assert.equal(wake.snapshot().errorCode, "channel_error");
+
+  await wake.close();
+});
+
 test("CHANNEL_ERROR flips snapshot to poll without reading error.message", async () => {
   const fake = new FakeRealtime();
   const wake = createWakeSubscriber({

@@ -360,22 +360,16 @@ export class WakeSubscriber implements WakeHandle {
       return Promise.resolve("deadline");
     }
     return new Promise<WakeWaitReason>((resolve) => {
-      const finish = (reason: WakeWaitReason) => {
-        if (this.waiter === null) return;
-        const current = this.waiter;
-        this.waiter = null;
-        if (current.timer !== null) clearTimeout(current.timer);
-        if (current.signal && current.onAbort) {
-          current.signal.removeEventListener("abort", current.onAbort);
-        }
-        resolve(reason);
-      };
+      /* `finishWait` is the only teardown: it clears the waiter, the timer and
+       * the abort listener, then settles. The waiter therefore holds the raw
+       * `resolve`; a second teardown that also guarded on `this.waiter` would
+       * see the field already nulled and drop the settle on the floor. */
       const delay = Math.max(0, options.until - this.now());
-      const timer = setTimeout(() => finish("deadline"), delay);
-      const onAbort = () => finish("deadline");
+      const timer = setTimeout(() => this.finishWait("deadline"), delay);
+      const onAbort = () => this.finishWait("deadline");
       options.signal?.addEventListener("abort", onAbort, { once: true });
       this.waiter = {
-        resolve: finish,
+        resolve,
         timer,
         onAbort,
         signal: options.signal,
