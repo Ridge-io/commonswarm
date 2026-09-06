@@ -177,7 +177,12 @@ type ConnectCommand =
   | { kind: "accept_invitation"; token: string }
   | { kind: "remove_member"; user_id: string }
   | { kind: "archive_workspace" }
-  | { kind: "create_agent_principal"; name: string; model?: string }
+  | {
+    kind: "create_agent_principal";
+    name: string;
+    model?: string;
+    allow_duplicate_name?: boolean;
+  }
   | { kind: "revoke_agent_principal"; principal_id: string }
   | {
     kind: "mint_agent_token";
@@ -360,6 +365,7 @@ type WorkspaceCommand =
     principal_id: string;
     name: string;
     model: string | null;
+    allow_duplicate_name?: boolean;
   }
   | { kind: "revoke_agent_principal"; principal_id: string }
   | {
@@ -2225,16 +2231,26 @@ function validateCommand(
         };
     }
     if (cmd.kind === "create_agent_principal") {
-      const optionalKeys = Object.hasOwn(cmd, "model") ? ["model"] : [];
+      const optionalKeys = [
+        ...(Object.hasOwn(cmd, "model") ? ["model"] : []),
+        ...(Object.hasOwn(cmd, "allow_duplicate_name")
+          ? ["allow_duplicate_name"]
+          : []),
+      ];
+      const allowDuplicate = cmd.allow_duplicate_name;
       return exactKeys(cmd, ["kind", "name", ...optionalKeys]) &&
           boundedText(cmd.name, 80) &&
-          (cmd.model === undefined || boundedText(cmd.model, 120))
+          (cmd.model === undefined || boundedText(cmd.model, 120)) &&
+          (allowDuplicate === undefined || typeof allowDuplicate === "boolean")
         ? {
           ok: true,
           command: {
             kind: "create_agent_principal",
             name: cmd.name,
             ...(cmd.model === undefined ? {} : { model: cmd.model }),
+            ...(allowDuplicate === undefined
+              ? {}
+              : { allow_duplicate_name: allowDuplicate }),
           },
         }
         : { ok: false, status: 400, reason: "principal name is malformed" };
@@ -3140,6 +3156,9 @@ async function prepareWorkspaceCommand(
       principal_id: crypto.randomUUID(),
       name: wire.name,
       model: wire.model ?? null,
+      ...(wire.allow_duplicate_name === undefined
+        ? {}
+        : { allow_duplicate_name: wire.allow_duplicate_name }),
     };
   } else if (wire.kind === "remove_member") {
     command = { kind: "remove_member", user_id: wire.user_id };
@@ -6307,6 +6326,34 @@ async function enforceFreeTierBudget(
           },
         },
       );
+    }
+    await tx`
+      SELECT pg_advisory_xact_lock(
+        hashtext(${route.workspaceId}::text),
+        hashtext(${command.name})
+      )
+    `;
+    if (command.allow_duplicate_name !== true) {
+      const taken = await tx<{ principal_id: string }[]>`
+        SELECT principal_id
+        FROM swarm.agent_principals
+        WHERE workspace_id = ${route.workspaceId}::uuid
+          AND name = ${command.name}
+        LIMIT 1
+      `;
+      if (taken[0] !== undefined) {
+        return {
+          status: 200,
+          body: {
+            ok: false,
+            status: "rejected",
+            class: "domain",
+            reason: "principal_name_taken",
+            event_ids: [],
+            events: [],
+          },
+        };
+      }
     }
   }
 

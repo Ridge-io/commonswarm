@@ -780,6 +780,36 @@ describe('agent principals', () => {
     );
   });
 
+  it('allow_duplicate_name true creates a second principal; default still refuses', () => {
+    const world = makeWorld();
+    world.create();
+    world.join('bob');
+    world.createPrincipal('bob');
+    rejected(
+      world.apply(
+        {
+          kind: 'create_agent_principal',
+          principal_id: 'synth-dup-default',
+          name: 'agent-bob',
+        },
+        { actor: human('bob') },
+      ),
+      'principal_name_taken',
+    );
+    const allowed = world.apply(
+      {
+        kind: 'create_agent_principal',
+        principal_id: 'synth-dup-allowed',
+        name: 'agent-bob',
+        allow_duplicate_name: true,
+      },
+      { actor: human('bob') },
+    );
+    assert.equal(allowed.ok, true);
+    assert.equal(world.state()!.principals['synth-dup-allowed'].name, 'agent-bob');
+    assert.equal(world.state()!.principals['principal-bob'].name, 'agent-bob');
+  });
+
   it('create/revoke principal are human-only; a Member may revoke only their own', () => {
     const world = makeWorld();
     world.create();
