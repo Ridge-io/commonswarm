@@ -1,0 +1,213 @@
+# ARM-opus — D-036 inversion arm, lane/wake-docs @ 9dd25ef7b493ec827843585834c26ac90a7be198
+# Family: Claude (Opus 5). Read-only. No tree edits.
+
+QUOTE-BACK, first `diff --git` line of DIFF.patch:
+
+    diff --git a/AGENTS.md b/AGENTS.md
+
+DIFF touches exactly two paths (attack 14): `AGENTS.md`, `docs/design/SWARM-CLOUD.md`. PASS.
+
+--------------------------------------------------------------------------
+SENTENCE-BY-SENTENCE
+--------------------------------------------------------------------------
+
+## AGENTS.md
+
+A1. Commands table: "`npm run check:edge` | Runs `deno check` on `command`, `read`,
+    `capability`, and `activity`".
+    package.json:22 -> `deno check --config supabase/functions/command/deno.json
+    supabase/functions/command/index.ts supabase/functions/read/index.ts
+    supabase/functions/capability/index.ts supabase/functions/activity/index.ts`.
+    Four entrypoints, those four, no others. TRUE. (attack 13)
+
+A2. Trap: "it names the current four entrypoints (`command`, `read`, `capability`,
+    `activity`) ... A fifth function would need adding".
+    Same source, package.json:22. TRUE.
+
+A3. Retired "three entrypoints" wording (attack 13, second half):
+    `grep -n -i 'three' AGENTS.md` -> zero hits on the whole file. Retired wording gone. PASS.
+
+A4. Trap title: "Push is a hint; the row is the truth; a status that says push must be
+    subscribed now."
+    Sourced, not invented: docs/design/2026-09-06-PUSH-DELIVERY.md:63 "**Push is a hint. The
+    row is the truth.**" and :147 "It never says `push` unless `state === subscribed` right
+    now". Not an invented X-not-Y contrast (attack 2). "the truth" is the brief-required
+    clause and carries a fact (which store is authoritative), so it is not a filler modifier
+    (attack 1). No banned modifier elsewhere in the added prose. PASS.
+
+A5. "A wake event is a latency hint." Same source, :63 and :155. TRUE.
+
+A6. "`claim_agent_inbox` reads `swarm.signal_deliveries`."
+    supabase/functions/command/durable-delivery.ts:12 defines CLAIM_AGENT_INBOX_KIND; the
+    claim path selects/leases from `swarm.signal_deliveries`
+    (command/index.ts:4902-4916 hasUnackedDeliveries reads that table for the same principal;
+    claim ledger at :8415-8420). TRUE.
+
+A7. "`cswarm listen status` may report `mode: push` only while the Realtime socket is
+    subscribed." L4 text; `src/listener/` (ls) has no `wake.ts` and no wake module, so this
+    is correctly NOT presented as a measured LIVE fact — it reads as a rule for authors.
+    Consistent with the addendum's own "listener client (L4) ships in the next release".
+    Acceptable. (attack 12)
+
+## docs/design/SWARM-CLOUD.md §2.2
+
+B1. HEADING: "**Empty `claim_agent_inbox` persists nothing (LIVE).**"  <-- DEFECT (attack 9)
+    Enforcement, command/index.ts:7583-7588:
+        /* Idle claims have nothing unacked. They must not upsert rate_buckets.
+         * Acks, and claims against a live queue, still take the bucket. */
+        const mustLimit = operation === "ack" ||
+          await hasUnackedDeliveries(tx, route.workspaceId, agent.principal_id);
+    hasUnackedDeliveries (command/index.ts:4902-4917) is TRUE whenever ANY row exists with
+    `acked_at IS NULL` for that principal — including rows currently leased by another
+    listener, and poisoned rows. Such a claim returns zero deliveries (it is empty) and
+    STILL executes checkDeliveryRateLimit, which unconditionally
+    `INSERT INTO swarm.rate_buckets ... ON CONFLICT DO UPDATE` (command/index.ts:4932-4939).
+    So an EMPTY claim against a live queue DOES persist a `rate_buckets` row. The bolded
+    sentence, read as written, states something the code does not do. The correct word is the
+    one the body already uses and the code comment uses: **Idle**. One-word fix.
+
+B2. "An idle claim — no unacked delivery for the principal — writes no `audit_log` row, no
+    `idempotency_keys` row, and no `rate_buckets` row."
+    rate_buckets: gated by hasUnackedDeliveries, whose predicate is exactly "no unacked
+    delivery for the principal" (index.ts:4902-4917, :7586-7587). MATCHES.
+    audit_log / idempotency_keys: gated by `persistLedger`
+    (index.ts:8431-8432 idempotency insert, :8493 audit) =
+    claimAgentInboxPersistsLedger (durable-delivery.ts:21-25):
+        return ledger.delivery_refs.length > 0 ||
+          ledger.terminal_delivery_failure_count > 0;
+    With no unacked rows at all, both are 0, so both writes are skipped. TRUE.
+    Note the two gates use DIFFERENT predicates (unacked-exists vs ledger-nonempty); they
+    coincide only for the idle case the sentence names. This is precisely why B1's wider
+    word is wrong and B2's narrower word is right.
+
+B3. "A claim that leases a delivery, or that terminalizes a poisoned row, writes those rows
+    as before."
+    Leases: delivery_refs.length > 0 -> persistLedger true (audit + idempotency), and
+    hasUnackedDeliveries true -> rate_buckets. Terminalizes poison:
+    terminal_delivery_failure_count > 0 -> persistLedger true (durable-delivery.ts:16-18
+    "Poison is state-changing even when delivery_refs is empty"), and the poisoned row is
+    unacked at entry -> rate_buckets. TRUE for all three tables in both cases.
+
+## docs/design/SWARM-CLOUD.md §2.13 addendum "Push delivery (wake topics)"
+
+C1. "Server facts in this subsection are LIVE. The listener client (L4) ships in the next
+    release." `src/listener/` contains no wake module (ls: activity, attendance-canary,
+    brain-digest, claude-model, codex-model, control, delivery-journal, detach, engine,
+    file-store, grok-model, hook, http-client, index, main-routing, opencode-model,
+    read-health, runtime, supervisor, types). LIVE/next-release split is correct, not
+    inverted. TRUE.
+
+C2. "Design argument: `docs/design/2026-09-06-PUSH-DELIVERY.md`." File exists on this
+    worktree. TRUE.
+
+C3. "Each `swarm.agent_principals` row carries a `wake_id` of 32 random bytes as 43
+    base64url characters." (attack 3)
+    20260906000010_wake_delivery.sql:21-27:
+        ADD COLUMN wake_id text NOT NULL
+        DEFAULT translate(encode(extensions.gen_random_bytes(32), 'base64'), '+/=', '-_')
+    32 bytes -> base64 is 44 chars incl. one `=`; `translate` with a 2-char `to` deletes the
+    `=`, leaving 43. Agrees with _shared/wake.ts:11 `WAKE_ID_LENGTH = 43` and :12
+    `WAKE_ID_RE = /^[A-Za-z0-9_-]{43}$/`, and with the SQL predicate's own `{43}` at
+    migration:62. Column comment at :32-33 states the same. TRUE.
+
+C4. "The private Realtime topic is `cswarm-wake:{wake_id}`." (attack 4)
+    _shared/wake.ts:10 `WAKE_TOPIC_PREFIX = "cswarm-wake:"`, :23-25 wakeTopic concatenates.
+    Trigger builds `'cswarm-wake:' || v_wake_id` (migration:176). Policy predicate matches
+    `'^cswarm-wake:([A-Za-z0-9_-]{43})$'` (migration:62). TRUE.
+
+C5. "An AFTER INSERT trigger on `swarm.signal_deliveries` (`swarm.wake_agent_delivery`)
+    sends a content-free `wake` event on that topic."
+    migration:196-199 `CREATE TRIGGER signal_deliveries_wake_agent AFTER INSERT ON
+    swarm.signal_deliveries FOR EACH ROW EXECUTE FUNCTION swarm.wake_agent_delivery();`
+    Event name: migration:175 `'wake'` = _shared/wake.ts:9 `WAKE_EVENT = "wake"`. TRUE.
+    TWO trigger functions exist in this migration (attack, "one or two"):
+    `swarm.wake_agent_delivery` (:150, on signal_deliveries) and
+    `swarm.wake_workspace_signal` (:201, on swarm.signals, event `signal`, topic
+    `cswarm-signals:{workspace_id}`). The addendum claims only the signal_deliveries one and
+    names it correctly, so it does not misattribute. NIT: the parenthetical names the trigger
+    FUNCTION while the sentence says "trigger"; the TRIGGER is `signal_deliveries_wake_agent`.
+    A reader grepping for a trigger by that name finds a function. Not false, imprecise.
+    NIT (attack 5): "content-free" — the payload is
+    `jsonb_build_object('v',1,'signal_id',NEW.signal_id,'enqueued_at',NEW.enqueued_at)`
+    (:170-174), so it is not literally empty. It carries no body, sender, or kind, and the
+    migration's own comment (:191) and the spec use the same word. Term of art, holds.
+
+C6. "`swarm.wake_topic_authorized` is the predicate of the `realtime.messages` SELECT policy
+    `TO anon`." (attack 6)
+    migration:242-249 `CREATE POLICY "agent receives its own wake" ON realtime.messages FOR
+    SELECT TO anon USING (realtime.messages.extension = 'broadcast' AND
+    swarm.wake_topic_authorized((SELECT realtime.topic())))`. Function exists at :51,
+    GRANT EXECUTE TO anon at :92. The second policy (:251 "workspace members receive
+    signals") is `TO authenticated`, so "the ... policy TO anon" is unambiguous — one policy
+    matches. NIT: the function is a CONJUNCT of the USING clause, not the whole predicate
+    (`extension = 'broadcast'` is the other). "the predicate" is a slight overstatement, not
+    a false object. NIT.
+
+C7. "`swarm.rotate_wake_id` runs in the same transaction as a revocation by intent
+    (principal revoke; token revoke)." (attack 7)
+    Function: migration:106-125. Call sites, both inside the command transaction `tx`:
+      command/index.ts:4153 `await rotateWakeId(tx, principalId);` immediately after the
+        AgentPrincipalRevoked projection UPDATE (:4140-4152), before the tombstone insert.
+      command/index.ts:4255 `await rotateWakeId(tx, revoked[0]!.principal_id);` immediately
+        after the AgentTokenRevoked projection, before its tombstone insert.
+    Those are the only two call sites (`grep -n 'rotateWakeId'` -> :1408 def, :4153, :4255).
+    Ordinary renewal does NOT rotate — and the addendum does not claim it does; the
+    enumerated parenthetical "(principal revoke; token revoke)" is closed and exact, so the
+    omission is not a defect. TRUE.
+
+C8. "The own-workspace agent inbox page (`read`, `inbox: true`) and the mint, renew, and
+    claim responses carry optional `wake: { topic, event }`." (attack 8)
+    read/index.ts:837 `...(body.inbox ? optionalWake(agent.wake_id) : {}),` — gated on
+    `inbox: true` (body field validated at :285, :318) and on the AGENT's wake_id, which is
+    supplied only by `swarm.agent_delivery_read_context` (read/index.ts:451, migration:293,
+    :476). So `inbox: false` does NOT carry it, and a human read has no `agent.wake_id`
+    source. The comment at :835-836 confirms the foreign-workspace branch is excluded, so
+    "own-workspace" holds.
+    mint / renew: command/index.ts:9190-9202, branch `kind === "mint_agent_token" ||
+    kind === RENEW_AGENT_TOKEN_KIND` -> `optionalWakeForPrincipal`.
+    claim: command/index.ts:8523 (fresh claim response) and :7705 (replay of a stored claim).
+    Shape: _shared/wake.ts:14-17 `WakeWire = { topic, event }`, :34-39 optionalWake returns
+    `{}` or `{ wake }`. "optional" is exact. TRUE.
+    (Ack responses do not carry it; the sentence does not claim they do.)
+
+C9. "The next client release subscribes to that topic." / "On `wake` it claims."
+    L4 spec text, marked as next release by C1; PUSH-DELIVERY.md:63, :138. Not claimed LIVE.
+    Consistent.
+
+C10. "While the socket is subscribed it reconciles (read, then claim) every 5 minutes; while
+     it is not, it uses the idle poll cadence in `src/cloud/idle-poll.ts`." (attacks 10, 11)
+     5 minutes: PUSH-DELIVERY.md:138 `LISTENER_RECONCILE_POLL_MS = 300_000`, and :13, :140.
+     Cited design doc is named in the addendum's own header, and L4 is marked next-release, so
+     the number has a source and is not presented as measured. Acceptable.
+     "read, then claim" matches PUSH-DELIVERY.md:138 "**read, then claim**".
+     Idle cadence: idle-poll.ts:9 `IDLE_POLL_DEFAULT_MS = 15_000`, :10 `IDLE_POLL_MAX_MS =
+     60_000`, :90-107 `nextIdlePollMs` doubles on empty streaks up to the cap. The addendum
+     names the FILE rather than a number, so it does not assert 15 s and does not hide the
+     backoff. Deliberately underspecified, not false. TRUE.
+
+C11. "`cswarm listen status` reports `mode: push` or `mode: poll`. `mode: push` is reported
+     only while the socket is subscribed." (attack 12)
+     PUSH-DELIVERY.md:147. `src/listener/wake.ts` absent -> not claimed LIVE, and C1's
+     paragraph scopes it to the next release. Consistent.
+
+--------------------------------------------------------------------------
+RULING
+--------------------------------------------------------------------------
+Twenty-two added sentences checked. Twenty-one hold against the named sources with file:line.
+The bolded lede B1 does not: "Empty `claim_agent_inbox` persists nothing" is the claim a
+reader quotes and carries forward, and it is false for the case the code comment at
+command/index.ts:7584-7585 calls out by name — "claims against a live queue ... still take
+the bucket". The paragraph's own next clause uses the right word ("idle"), which is the
+proof the wider word in the heading is not what the enforcement does. This is the repo's own
+"claim controls" pattern: a correct sibling clause standing beside an overclaiming one.
+Remedy is one word: `**Idle `claim_agent_inbox` persists nothing (LIVE).**`
+
+C5's "trigger (function)" naming and C6's "the predicate" (a conjunct) are NITS and do not
+by themselves make a sentence false.
+
+NOT ESTABLISHED by this arm: I did not execute `npm run check:edge`, apply the migration, or
+run any test; every check above is a static read of the worktree at this SHA. I did not
+verify that `deno check` passes on `activity`, only that package.json:22 names it. I did not
+verify L4 runtime behaviour, which does not exist in this tree.
+
+VERDICT: FAIL

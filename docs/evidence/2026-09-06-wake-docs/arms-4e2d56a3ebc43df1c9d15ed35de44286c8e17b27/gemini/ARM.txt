@@ -1,0 +1,20 @@
+The first `diff --git` line from the patch is:
+`diff --git a/AGENTS.md b/AGENTS.md`
+
+I have reviewed the code across the edge functions, migrations, and `package.json` to verify the added documentation sentences:
+
+1. **`package.json` check:edge update:** Verified. The script in `package.json` now includes `supabase/functions/activity/index.ts`, confirming there are now four entrypoints exactly as stated in `AGENTS.md`.
+2. **Wake ID structure and topics:** Verified. `20260906000010_wake_delivery.sql` defines `wake_id` as 32 random bytes encoded in base64url (43 characters). `_shared/wake.ts` defines the topic prefix as `cswarm-wake:`.
+3. **Database trigger and RLS:** Verified. The AFTER INSERT trigger `wake_agent_delivery` fires on `swarm.signal_deliveries` and calls `realtime.send` with the `wake` event. The Realtime policy `agent receives its own wake` uses `swarm.wake_topic_authorized` as its predicate. 
+4. **Rotation with revocation:** Verified. In `command/index.ts`, `rotateWakeId` is called inside the same transaction as both principal revocation (`AgentPrincipalRevoked`) and token revocation (`AgentTokenRevoked`).
+5. **Responses carrying optional wake:** Verified. The `optionalWakeForPrincipal` function is appended to the payloads for `mint_agent_token`, `renew_agent_token`, and `claim_agent_inbox` in `command/index.ts`. `read/index.ts` also conditionally adds it for `inbox: true`.
+
+**Verification of the §2.2 lede:**
+It is **TRUE** that a claim persists nothing *exactly* when `hasUnackedDeliveries` is false.
+- If `hasUnackedDeliveries` is `false`, the `mustLimit` boolean resolves to `false` which entirely skips the `checkDeliveryRateLimit` upsert (avoiding the `rate_buckets` write). Then, because there are no unacked deliveries, `ledger.delivery_refs` is empty and `terminal_delivery_failure_count` is 0. This causes `claimAgentInboxPersistsLedger` to return `false`, which completely skips the `idempotency_keys` write and bypasses the `insertAudit` wrapper on line 8493. No rows are written.
+- If `hasUnackedDeliveries` is `true`, `mustLimit` evaluates to `true`, and the `rate_buckets` upsert executes. Thus, the operation does write to the database (even if `persistLedger` resolves to `false` due to another worker concurrently holding the leases).
+- Therefore, the claim performs 0 writes *if and only if* `hasUnackedDeliveries` is `false`.
+
+Every sentence added in the diff perfectly aligns with the implementation behavior.
+
+VERDICT: PASS

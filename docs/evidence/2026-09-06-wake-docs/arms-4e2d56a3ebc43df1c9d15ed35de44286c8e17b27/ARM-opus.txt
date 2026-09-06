@@ -1,0 +1,109 @@
+# ARM-opus — D-036 inversion arm, RE-VERIFY on lane/wake-docs @ 4e2d56a3ebc43df1c9d15ed35de44286c8e17b27
+# Family: Claude (Opus 5). Read-only. Prior arm on 9dd25ef returned VERDICT: FAIL (one defect).
+
+QUOTE-BACK, first `diff --git` line of
+arms-4e2d56a3ebc43df1c9d15ed35de44286c8e17b27/DIFF.patch:
+
+    diff --git a/AGENTS.md b/AGENTS.md
+
+HEAD on this worktree = 4e2d56a3ebc43df1c9d15ed35de44286c8e17b27; `git status --porcelain` is empty,
+so the tree read below IS the frozen SHA.
+
+DIFF.patch fidelity: `git diff 78b0469..4e2d56a` is byte-identical to the supplied DIFF.patch
+(`diff` returned no output). The patch is the commit, not a stale copy.
+
+--------------------------------------------------------------------------
+1. THE DEFECT IS FIXED
+--------------------------------------------------------------------------
+docs/design/SWARM-CLOUD.md, §2.2 lede, now reads:
+
+    **Idle `claim_agent_inbox` persists nothing (LIVE).** An idle claim — no unacked delivery
+    for the principal — writes no `audit_log` row, no `idempotency_keys` row, and no
+    `rate_buckets` row.
+
+`grep -c 'Empty \`claim_agent_inbox\`' docs/design/SWARM-CLOUD.md` -> 0. The retired word is gone
+from the file, not merely from the diff hunk.
+
+Does the lede now match the gate EXACTLY? Yes.
+  supabase/functions/command/index.ts:7584-7587
+      /* Idle claims have nothing unacked. They must not upsert rate_buckets.
+       * Acks, and claims against a live queue, still take the bucket. */
+      const mustLimit = operation === "ack" ||
+        await hasUnackedDeliveries(tx, route.workspaceId, agent.principal_id);
+  supabase/functions/command/index.ts:4902-4917 — hasUnackedDeliveries is
+      EXISTS (SELECT 1 FROM swarm.signal_deliveries
+              WHERE workspace_id = $1 AND recipient_agent_principal_id = $2
+                AND acked_at IS NULL)
+  The gate's predicate is "no unacked delivery row exists for this principal in this workspace".
+  The lede's subject term is now "Idle", glossed in the same sentence as "no unacked delivery for
+  the principal". Same condition, same words. The previously-false case — an EMPTY claim against a
+  live queue, which the code comment at :7585 names explicitly and which DOES upsert rate_buckets
+  via checkDeliveryRateLimit (:4932-4939) — is no longer inside the claim's scope.
+
+  The audit/idempotency half is unchanged and still holds: `persistLedger`
+  (index.ts:8431-8432 idempotency, :8493 audit) = claimAgentInboxPersistsLedger
+  (supabase/functions/command/durable-delivery.ts:21-25), `delivery_refs.length > 0 ||
+  terminal_delivery_failure_count > 0`, both zero when nothing is unacked.
+
+  Sentence 2, "A claim that leases a delivery, or that terminalizes a poisoned row, writes those
+  rows as before", is unchanged and was verified TRUE on 9dd25ef for all three tables.
+
+--------------------------------------------------------------------------
+2. THE SECOND CHANGE
+--------------------------------------------------------------------------
+AGENTS.md Layout block:
+    -supabase/       migrations + Deno edge functions: command, read, capability
+    +supabase/       migrations + Deno edge functions: command, read, capability, activity
+`ls supabase/functions/` -> `_shared  activity  capability  command  read`. Four functions plus the
+shared module. The line now names all four and only those four; `_shared` is not an entrypoint and
+is correctly absent. TRUE, and it removes the last surface where the retired three-function claim
+survived — this is the line my 9dd25ef arm's `grep -i three` could not catch, because that line
+enumerated without using the word.
+
+`grep -n -i 'three' AGENTS.md` -> zero hits. No retired "three entrypoints" wording anywhere.
+
+--------------------------------------------------------------------------
+3. NOTHING ELSE CHANGED
+--------------------------------------------------------------------------
+`git diff --stat 9dd25ef..4e2d56a`:
+    AGENTS.md                  | 2 +-
+    docs/design/SWARM-CLOUD.md | 2 +-
+    2 files changed, 2 insertions(+), 2 deletions(-)
+Two files, one line each, both the lines the coordinator named. The full incremental diff shows
+only `Empty` -> `Idle` and the layout line. No third edit, no whitespace churn, no re-flow of the
+addendum. Every other sentence is byte-identical to 9dd25ef, where I checked each one against
+file:line and found it true:
+  - wake_id 32 bytes / 43 base64url chars (migration:21-27 translate drops the `=` pad;
+    _shared/wake.ts:11 WAKE_ID_LENGTH = 43, :12 the {43} regex, migration:62 the SQL {43})
+  - topic `cswarm-wake:{wake_id}` (_shared/wake.ts:10; migration:176) and event `wake`
+    (_shared/wake.ts:9; migration:175)
+  - AFTER INSERT trigger on swarm.signal_deliveries running swarm.wake_agent_delivery
+    (migration:196-199); the sibling function swarm.wake_workspace_signal (:201) is on
+    swarm.signals and is correctly not claimed here
+  - the single `TO anon` SELECT policy on realtime.messages (migration:242-249); the other policy
+    (:251) is TO authenticated, so "the ... policy TO anon" is unambiguous
+  - rotate_wake_id at both and only both revoke-by-intent sites, inside the command tx
+    (index.ts:4153 principal revoke, :4255 token revoke)
+  - wake carried by read `inbox: true` only (read/index.ts:837), mint/renew (index.ts:9190-9202),
+    claim fresh (:8523) and claim replay (:7705); shape { topic, event } (_shared/wake.ts:14-17)
+  - check:edge four entrypoints (package.json:22)
+  - 5-minute reconcile and the L4/next-release marking (PUSH-DELIVERY.md:138, :147; no wake module
+    in src/listener/, so nothing L4 is claimed LIVE)
+  - AGENTS.md trap sourced from PUSH-DELIVERY.md:63 and :147 — no invented contrast, no filler
+    modifier
+
+Two NITS carried over from 9dd25ef, neither making a sentence false and neither worth another SHA:
+  (a) the parenthetical `(swarm.wake_agent_delivery)` names the trigger FUNCTION while the
+      sentence says "trigger"; the TRIGGER is `signal_deliveries_wake_agent` (migration:196).
+  (b) "the predicate" of the anon policy is strictly a conjunct — `extension = 'broadcast'` is the
+      other half of the USING clause (migration:246-248).
+
+--------------------------------------------------------------------------
+NOT ESTABLISHED by this arm
+--------------------------------------------------------------------------
+Static read of the worktree at this SHA only. I did not run `npm run check:edge`, did not apply the
+migration, did not run any test, and did not exercise a live listener. package.json:22 names
+`activity`; I did not prove `deno check` passes on it. L4 runtime behaviour does not exist in this
+tree and was checked only as spec text against the cited design doc.
+
+VERDICT: PASS

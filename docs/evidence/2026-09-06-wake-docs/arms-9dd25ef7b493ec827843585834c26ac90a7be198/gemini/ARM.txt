@@ -1,0 +1,40 @@
+# L8 wake-docs — freeze at 9dd25ef7b493ec827843585834c26ac90a7be198
+#### Push delivery (wake topics)
+
+**SWARM-CLOUD.md §2.2**
+- `**Empty claim_agent_inbox persists nothing (LIVE).**`
+  False (Attack 9 lands). `supabase/functions/command/index.ts:4902-4915` (`hasUnackedDeliveries`) checks for *any* unacked delivery. If an unacked delivery exists but the claim returns empty (e.g. lock contention), `mustLimit` evaluates to true (`index.ts:7586-7589`), which causes `checkDeliveryRateLimit` to write a `rate_buckets` row. So an empty claim against a live queue *does* persist something.
+- `An idle claim — no unacked delivery for the principal — writes no audit_log row, no idempotency_keys row, and no rate_buckets row.`
+  True. `supabase/functions/command/index.ts:7586-7589` skips `rate_buckets` if `hasUnackedDeliveries` is false. `index.ts:8431-8459` skips `idempotency_keys` and `audit_log` because `claimAgentInboxPersistsLedger` returns false.
+- `A claim that leases a delivery, or that terminalizes a poisoned row, writes those rows as before.`
+  True. `supabase/functions/command/durable-delivery.ts:21-26` (`claimAgentInboxPersistsLedger`) returns true, causing `index.ts:8431-8459` to write the rows.
+
+**SWARM-CLOUD.md §2.13 addendum "Push delivery (wake topics)"**
+- `> **Addendum 2026-09-06.** Server facts in this subsection are LIVE.` / `The listener client (L4) ships in the next release.` / `Design argument: docs/design/2026-09-06-PUSH-DELIVERY.md.`
+  True. Aligns with the L4 spec boundaries defined in `docs/design/2026-09-06-PUSH-DELIVERY.md`.
+- `Each swarm.agent_principals row carries a wake_id of 32 random bytes as 43 base64url characters.`
+  True. `supabase/migrations/20260906000010_wake_delivery.sql:23-27` generates 32 bytes and encodes them to base64url, which equals 43 characters (`supabase/functions/_shared/wake.ts:11` `WAKE_ID_LENGTH = 43`).
+- `The private Realtime topic is cswarm-wake:{wake_id}.`
+  True. Matches `supabase/migrations/20260906000010_wake_delivery.sql:176` and `supabase/functions/_shared/wake.ts:10`.
+- `An AFTER INSERT trigger on swarm.signal_deliveries (swarm.wake_agent_delivery) sends a content-free wake event on that topic.`
+  True. `supabase/migrations/20260906000010_wake_delivery.sql:196-199` defines the trigger, which sends the `wake` event with only `v`, `signal_id`, and `enqueued_at` (content-free as per spec).
+- `swarm.wake_topic_authorized is the predicate of the realtime.messages SELECT policy TO anon.`
+  True. `supabase/migrations/20260906000010_wake_delivery.sql:242-249` defines this exact policy.
+- `swarm.rotate_wake_id runs in the same transaction as a revocation by intent (principal revoke; token revoke).`
+  True. `supabase/functions/command/index.ts:4153` (principal revoke) and `index.ts:4255` (token revoke) call `rotateWakeId` within the same transaction.
+- `The own-workspace agent inbox page (read, inbox: true) and the mint, renew, and claim responses carry optional wake: { topic, event }.`
+  True. `supabase/functions/read/index.ts:837` explicitly checks `body.inbox ? optionalWake(agent.wake_id) : {}` (excluding `inbox: false` and foreign workspaces which return early at `487`), and the command responses do the same.
+- `The next client release subscribes to that topic.` / `On wake it claims.` / `While the socket is subscribed it reconciles (read, then claim) every 5 minutes; while it is not, it uses the idle poll cadence in src/cloud/idle-poll.ts.` / `cswarm listen status reports mode: push or mode: poll.` / `mode: push is reported only while the socket is subscribed.`
+  True. Matches L4 specifications and `src/cloud/idle-poll.ts`.
+
+**AGENTS.md**
+- `**Push is a hint; the row is the truth; a status that says push must be subscribed now.**` / `A wake event is a latency hint.`
+  True. Directly aligns with spec principles (line 63). The "truth" keyword was required by the brief. 
+- `claim_agent_inbox reads swarm.signal_deliveries.`
+  True. `supabase/functions/command/durable-delivery.ts:185-364` queries the table.
+- `cswarm listen status may report mode: push only while the Realtime socket is subscribed.`
+  True. Matches L4 specifications.
+- `| npm run check:edge | Runs deno check on command, read, capability, and activity; needs Deno. |` / `npm run check:edge; it names the current four entrypoints (command, read, capability, activity) and no other gate runs it.` / `A fifth function would need adding, and a stale generated protocol bundle can still typecheck.`
+  True. `package.json:22` includes exactly those four `index.ts` files, replacing the "three entrypoints" language.
+
+VERDICT: FAIL
