@@ -524,7 +524,7 @@ test("rotated wake id: CLOSED then a new topic on the next read returns to push"
   const controller = new AbortController();
   let claims = 0;
   let reads = 0;
-  let lastWake: ListenerWakeStatus | null = null;
+  const wakeSnaps: ListenerWakeStatus[] = [];
   const stop = await runListenerRuntime({
     target: cloudTarget("https://cloud.example.test", "anon"),
     workspaceId: WORKSPACE_ID,
@@ -537,7 +537,12 @@ test("rotated wake id: CLOSED then a new topic on the next read returns to push"
         if (claims === 1) {
           fake.channels[0]?.emitStatus(REALTIME_SUBSCRIBE_STATUS.CLOSED);
         }
-        if (claims >= 2 && lastWake?.mode === "push" && lastWake.topicRotatedAt) {
+        const latest = wakeSnaps.at(-1);
+        if (
+          claims >= 2 &&
+          latest?.mode === LISTENER_WAKE_MODE_PUSH &&
+          latest.topicRotatedAt
+        ) {
           controller.abort();
         }
         if (claims >= 8) controller.abort();
@@ -561,7 +566,7 @@ test("rotated wake id: CLOSED then a new topic on the next read returns to push"
     sleep: async () => {},
     wake,
     onEvent: (event) => {
-      if (event.type === "wake") lastWake = event.wake;
+      if (event.type === "wake") wakeSnaps.push(event.wake);
     },
     readPage: async () => {
       reads += 1;
@@ -575,8 +580,10 @@ test("rotated wake id: CLOSED then a new topic on the next read returns to push"
   assert.equal(stop.reason, "cancelled");
   assert.ok(claims >= 2);
   assert.ok(reads >= 2);
-  assert.equal(lastWake?.mode, "push");
-  assert.ok(lastWake?.topicRotatedAt);
+  const rotated = wakeSnaps.at(-1);
+  assert.ok(rotated);
+  assert.equal(rotated.mode, LISTENER_WAKE_MODE_PUSH);
+  assert.ok(rotated.topicRotatedAt);
   assert.equal(fake.channels.length, 2);
   assert.equal(fake.channels[1]!.topic, WAKE_TOPIC_B);
   await wake.close();
@@ -641,7 +648,7 @@ test("70 wakes in one frozen minute stay at most 51 claims with no extra reads",
   const controller = new AbortController();
   let claims = 0;
   let reads = 0;
-  let lastWake: ListenerWakeStatus | null = null;
+  const wakeSnaps: ListenerWakeStatus[] = [];
   const timer = setTimeout(() => controller.abort(), 200);
   try {
     const stop = await runListenerRuntime({
@@ -673,7 +680,7 @@ test("70 wakes in one frozen minute stay at most 51 claims with no extra reads",
       sleep: async () => {},
       wake,
       onEvent: (event) => {
-        if (event.type === "wake") lastWake = event.wake;
+        if (event.type === "wake") wakeSnaps.push(event.wake);
       },
       readPage: async () => {
         reads += 1;
@@ -686,8 +693,10 @@ test("70 wakes in one frozen minute stay at most 51 claims with no extra reads",
   }
   assert.ok(claims <= 51, `claims in one frozen minute: ${claims}`);
   assert.equal(reads, 1);
-  assert.equal(lastWake?.mode, "poll");
-  assert.equal(lastWake?.rateLimited, true);
+  const budgeted = wakeSnaps.at(-1);
+  assert.ok(budgeted);
+  assert.equal(budgeted.mode, LISTENER_WAKE_MODE_POLL);
+  assert.equal(budgeted.rateLimited, true);
   await wake.close();
 });
 
