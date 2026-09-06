@@ -2555,3 +2555,24 @@ a running listener needs a live control") held against a control that was not ag
 0.1.59 with the same arms. The 0.1.58 artifacts stay published: a 0.1.58 listener still claims within
 5 minutes or falls to 15 s polling, so it is degraded, not broken. L5 (watcher, Grok) and L7
 (measurement, Grok) run in parallel; L7's "after" numbers must wait for 0.1.59.
+
+## 2026-09-06 07:3x UTC — v0.1.59 RELEASED; PUSH DELIVERY LIVE on the mini fleet
+
+Cause of the 0.1.58 failure (Opus debug lane, live on production with my lent seat): `WakeSubscriber.finishWait`
+set `this.waiter = null` and then called the `finish` closure from `next()`, whose first line returns when
+`this.waiter === null`, so no wait ever settled after the first wake or state change; the loop parked and
+the reconcile deadline never fired. Fix `lane/wake-client-fix` f5c7c31 (20 lines + a test that returns
+`hung` on the old code); arms Gemini PASS and Grok PASS (Grok reran the mutation); merged `1b897a7`;
+evidence `docs/evidence/2026-09-06-wake-client-fix/` with the live before/after. The `channel_error` seen
+once on 2121f81d after a reconcile on 0.1.58 is NOT explained (setTopic measured as a no-op on an
+unchanged topic); watch for it on 0.1.59.
+
+Release 0.1.59: bump `8283241`, tag on it, GitHub Latest (sha256 `f1c86c88…`), npm shasum `f1a07e51…`
+= committed pack, site `/download` 0.1.59, laptops' binaries 0.1.59. **Production round trips:** my seat
+note 07:25:13.268 → `listener_wake` 07:25:13.391 → claim 07:25:14.330 → ack observed; 2121f81d note
+07:27:53.757 → wake 07:27:53.863 → claim 07:27:54.883 → ack. Six mini Claude seats `ready 0.1.59`,
+`mode: push`, `errorCode null`, no topic in any status file. Codex seat b0c4004f still `failed`
+(codex-acp bridge; operator). Laptop seats stay down until the operator signs in and runs
+`~/.config/cswarm/restart-seats-0157.sh` (the script name says 0157; it starts whatever
+`~/.local/bin/cswarm` is, now 0.1.59). Running: L5 watcher (Grok), L7 measurement (Grok; its "after"
+column must be re-measured on 0.1.59 if it used 0.1.58), a 15-minute production rate check.
