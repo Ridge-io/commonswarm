@@ -2688,3 +2688,40 @@ grok installed and signed in (auth copied from the mini), the Codex bridge insta
 `~/.config/cswarm/restart-seats-0157.sh` with a `PROVIDER=codex PROVIDER_EXE=…` switch (the script header
 shows the exact line) for when Codex credits return. Claude is not an option for Joist under the
 operator's rule.
+**Correction (operator, 2026-09-06 ~10:xx UTC): Joist is a Claude agent.** It is an exception to the
+manager-only rule and goes back on Claude. `~/.config/cswarm/restart-seats-0157.sh` on nikkis-macbook-air
+now defaults to `--provider claude` with the ACP bridge (0.75.1); the only blocker there is the expired
+Claude session, so the operator signs in on that laptop (`claude auth login`) and runs the script.
+
+## 2026-09-06 10:xx UTC — Joist blocked by keychain reach; lane `claude-token-file` started
+
+On nikkis-macbook-air (macOS 15.6) `claude auth status` is loggedIn true in the operator's Terminal, but
+the listener's Claude child (bridge 0.75.1 or the raw `claude` 2.1.227 binary, started by the detached
+supervisor, locally or over SSH) gets "Authentication required"; `claude -p` over SSH says "Not logged in"
+and the keychain item reads 0 bytes from a non-GUI session. The operator minted a 1-year token with
+`claude setup-token`; the listener strips `CLAUDE_CODE_OAUTH_TOKEN` from the child env by design
+(`src/host/env.ts` DENY_NAME_RE), so it cannot reach Claude. Lane `lane/claude-token-file` (Grok,
+`brief-claude-token-file.md`): `--claude-token-file <0600 file>` injected into the Claude child only,
+`SECRET_SHAPE_RE` widened for `sk-ant-oat01-`, tests per redaction site; ships as 0.1.61. Until then Joist
+is down. Operator: keep the token in a 0600 file outside every repo (for example
+`~/.config/cswarm/claude-oauth-token.txt`); never paste it into chat.
+
+## 2026-09-06 10:xx UTC — OPERATOR RULING: signals wake the existing session; no headless stand-in
+
+"This breaks the whole point of CommonSwarm. The point is to interact with the existing sessions because
+we want their context window benefits... that's why we had the monitor system whose primary purpose was
+to wake the agent and ask it to read the message." Consequences applied now: every Claude manager seat on
+the mini and Joist on the Air run `--route main` (the listener starts no model, needs no Claude
+sign-in or canary, and queues each signal in `pending-for-main.json` for the TUI hook to surface).
+Lane `claude-token-file` cancelled (worktree and branch removed) — it solved a worker-route problem the
+ruling makes moot. Open for CSwarmStrategist: the Grok worker seats (CDReporter on the mini; the four
+`f9aaada4` seats on toms-m1-max-mbp) still answer headlessly; whether each has a live session to wake
+(and how a Grok TUI is woken: the `swarm-awareness` hook) is a roadmap decision, not mine. Memory file
+`signals-wake-existing-sessions` records the rule.
+**Route main applied (10:4x UTC):** Joist on the Air `ready 0.1.60 route main mode push` with no Claude
+sign-in (the listener starts no model on route main). Mini: CSwarmDevLead, Finisher, MrSentry,
+Strategist(PE) `ready` on route main (their sessions carry the hook: "ATTENDED: yes"). CSwarmStrategist's
+session has no hook for its principal, so `--route main` was refused (`listen_unattended_refused`); it
+runs `--route main --allow-unattended`: signals queue in `pending-for-main.json` and its `inbox --notify`
+watcher + Monitor loop is the wake path. Nothing headless answers for any Claude seat now. The Grok seats
+(CDReporter; four on toms-m1-max-mbp) still run the worker route pending the Strategist's decision.
