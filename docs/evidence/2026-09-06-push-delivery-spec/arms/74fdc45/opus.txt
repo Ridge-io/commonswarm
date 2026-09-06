@@ -1,0 +1,479 @@
+D-036 REVIEW ARM — ADVERSARIAL SYSTEMS (Opus, operator-allowed), round 3
+Document: docs/design/2026-09-06-PUSH-DELIVERY.md (draft 3)
+SHA under review: 74fdc45902a60cf0795626acbcb7924f3f5ac695
+Branch: spec/push-delivery (this worktree)
+Prior arms by this family: arms/ff8a398/opus.txt, arms/f6bcd83/opus.txt
+Date: 2026-09-05
+
+=========================================================================
+PART 0 — WHAT I CHECKED, AND HOW
+=========================================================================
+
+Code and evidence read at this SHA (every line below was opened, not grepped
+for a keyword):
+
+  supabase/functions/command/index.ts   :294-4540 (revoked_at inventory),
+                                        :1377, :3548-3672, :3913, :4025-4036,
+                                        :4403-4436, :4840-4940, :8355-8455, :9400
+  supabase/functions/command/durable-delivery.ts :15-30, :60-75, :180-260
+  supabase/functions/read/index.ts      :405-500, :820-840
+  supabase/functions/activity/index.ts  :1-10, :85-155
+  supabase/migrations/20260723000001_p1_schema.sql :190-216, :610-616,
+                                        :705-790, :798-810, :838-848
+  supabase/migrations/20260728000002_worker_token_renewal.sql :400-455
+  supabase/migrations/20260728000003_pending_successor_first_use.sql :370-395
+  supabase/migrations/20260820000002_archive_revokes_access.sql :1-40, :130-185
+  supabase/migrations/20260901000001_standing_grants.sql :197-209
+  supabase/migrations/20260902000003_realtime_agent_activity.sql :1-20
+  supabase/migrations/20260905000010_signal_recipients.sql :1-12, :58
+  supabase/migrations/20260905000020_wake_all_recipients.sql :28-36, :150-218
+  src/listener/control.ts   :220-300, :370-400, :540-560
+  src/listener/read-health.ts :1-50, :195-215, :245-300, :390-425
+  src/listener/runtime.ts   :75-80, :610-632, :1070-1108, :1360-1396, :1452-1458
+  src/listener/activity.ts :11-16 ; src/listener/hook.ts :55-60
+  src/cloud/arrival-watch.ts :20-30, :330-342, :353-360, :385-393
+  src/cloud/signals.ts :1205-1222 ; src/cloud/command-client.ts :712-738
+  src/cloud/delivery.ts :512-528 ; src/cloud/renewal.ts :848-856
+  src/cloud/config.ts :1-6 ; src/cloud/seed.ts :145-180
+  src/host/credential-redaction.ts (whole) ; src/host/stderr-tail.ts :38-48
+  src/cli.ts :5880-5920
+  site/src/components/app/LiveDashboard.astro :5770-5780
+  package.json :18-32 (also at d500973) ; tests/p1-cli/test-gate-coverage.test.ts (whole)
+  tests/p1-cli/citation-drift.test.ts :1-40
+  node_modules/@supabase/realtime-js/dist/main/RealtimeClient.js :10-20, :485-495
+
+Live probes against the running local stack (container supabase_db_cloud-swarm),
+each with a positive control on the same invocation, all objects dropped and the
+drop verified. Probe SQL and results are transcribed in PART 2 (D1) and PART 4.
+
+=========================================================================
+PART 1 — DRAFT-2 ITEMS: VERIFIED FIXED
+=========================================================================
+
+Section 11 claims each of my draft-2 items landed. Each is confirmed against
+the code, not against the spec's prose.
+
+DA (rotation had no home) — FIXED. There is still no swarm.revoke_agent_token;
+revocation is TypeScript. W6 now names swarm.rotate_wake_id() as an L2-defined
+SECURITY DEFINER function called by L3 from the revocation-by-intent sites, and
+uses no AFTER UPDATE OF revoked_at trigger. discardStrandedSuccessor really is
+command/index.ts:3565-3587 with the UPDATE at :3576, called from the ordinary
+renewal handover inside fenceRenewal's savepoint at :3658-3667. Excluding it by
+name is correct. Callability: swarm_command holds SELECT and INSERT,UPDATE on
+swarm.agent_principals (20260723000001:717-762, table-level, so a new column is
+covered), measured has_table_privilege('swarm_command','swarm.agent_principals',
+'UPDATE') = true. The SECURITY DEFINER wrapper is not strictly required for the
+UPDATE but is safe, and the existing precedent (GRANT EXECUTE ON swarm.is_member
+TO swarm_command, :614) is the right template. Callable after SET LOCAL ROLE
+swarm_command (command/index.ts:1377): yes. See N3/N4 for what the surrounding
+sentence still gets wrong.
+
+DB (pgcrypto / search_path) — FIXED, and re-measured. pgcrypto is installed in
+schema `extensions`. Positive control on the same session:
+    SET search_path = swarm, pg_catalog; SELECT gen_random_bytes(32);
+    -> ERROR: function gen_random_bytes(integer) does not exist
+    SELECT translate(encode(extensions.gen_random_bytes(32),'base64'),'+/=','-_');
+    -> AIkz0VtVe8FmAqdCRzfObz1GFZ0_MdaXUsMDaRA-msQ   (length 43)
+    5 rows from generate_series(1,5) -> 5 distinct values
+So W1's 43-character claim, the base64url translate (the shorter `to` argument
+deletes the '=' pad), and the volatile per-row default all hold, and the
+schema-qualified form is the only one that resolves. CREATE EXTENSION ... WITH
+SCHEMA extensions in L2 is the right belt.
+
+DC (topic redaction) — FIXED. CREDENTIAL_PREFIX_RE is src/host/credential-
+redaction.ts:19-22 and matches only swm_(agt|inv|cap)_, so a bare topic would
+pass through today. The module is imported by supabase/functions/activity/
+index.ts:2 and that file is inside `npm run check:edge` (package.json:22 names
+command, read, capability AND activity), so L2c does run both gates as claimed.
+The proposed alternation `cswarm-wake:[A-Za-z0-9_-]{43}` is well-formed against
+the existing `gi` regex and runs after the control/separator strip, so a laced
+topic is reassembled before the match, same as a credential.
+
+DD (L2/L2b contention) — FIXED for that pair. L2b is sequenced after L2, owns
+the config row, and the local database is declared a file. But the same rule is
+violated by a different pair — see D3.
+
+GA (status parser closed at the top level only) — FIXED and buildable.
+STATUS_ALLOWED_KEYS is control.ts:225-273, STATUS_SENSITIVE_KEYS is :282-297,
+both applied over top-level keys only at :377-381, and the allowed-key filter is
+re-applied at :550. readHealth is the one nested block and has its own
+sub-parser at :396-398. parseListenerReadHealth (read-health.ts:246) has the
+signature (value: unknown, rejectUnknownKeys = false) and rejects with
+hasExpectedKeys(row, [...9 keys...], rejectUnknownKeys), returning null rather
+than throwing. parseListenerWake can be built from exactly that pattern; the
+spec's eight-key closed list and the "sensitive check inside the sub-parser too"
+requirement both fit it, and control.ts is the file L4 already owns.
+
+GB (read health rescoring the past) — FIXED and correctly diagnosed.
+claimCadenceMs is one scalar (read-health.ts:40, set wholesale by
+recordListenerClaimCadence at :202-207); `const expectedClaims = HOUR_MS /
+health.claimCadenceMs` is computed once at :403 OUTSIDE the loop at :404-413 and
+applied to every past hour; the lapse filter is :414-416 against
+LISTENER_THROUGHPUT_LAPSE_RATIO (:12). A push->poll flip would therefore
+retroactively re-score every closed hour, exactly as stated. Storing
+expectedClaims per hour and excluding mode-change hours is the right fix and L4
+owns the file.
+
+GC (claim rate limit) — FIXED in substance. DELIVERY_CLAIM_RATE_LIMIT_PER_MINUTE
+= 120 is durable-delivery.ts:21; checkDeliveryRateLimit is command/index.ts:4868
+with the per-minute bucket at :4880-4888 and the refusal block at :4904-4933,
+which writes an audit row (reason delivery_claim_rate_limited) AND a
+swarm.security_alerts row, once, at count === limit + 1. The client budget is
+now specified. The arithmetic around it is wrong in one sentence — see N1.
+
+GD (L4's new test file needs a gate line) — FIXED in substance, wrong in the
+pointer. See D4.
+
+=========================================================================
+PART 2 — DEFECTS
+=========================================================================
+
+-------------------------------------------------------------------------
+D1. §2.2 W4 — the wake trigger as specified CANNOT SEND, and its own
+    exception guard hides that forever.
+-------------------------------------------------------------------------
+CLAIM. "swarm.wake_agent_delivery() AFTER INSERT ON swarm.signal_deliveries ...
+calls realtime.send(payload,'wake','cswarm-wake:'||wake_id,true). SECURITY
+DEFINER, owner swarm_admin, SET search_path = pg_catalog, because swarm_command
+cannot execute realtime.send (the activity function has to RESET ROLE for the
+same reason, activity/index.ts:139-145). The body is wrapped in BEGIN ...
+EXCEPTION WHEN OTHERS THEN RETURN NULL; END so a Realtime failure can never fail
+the signal insert." The same construction is specified for
+swarm.wake_workspace_signal() (W2/W4). §9 adds: "the realtime.send grant to
+swarm_admin [is] not in the repo (locally EXECUTE is PUBLIC, local-plans.out)".
+
+WHAT IS WRONG. swarm_admin cannot reach schema realtime at all.
+
+  select has_schema_privilege('swarm_admin','realtime','USAGE');        -> false
+  select has_table_privilege('swarm_admin','realtime.messages','INSERT');-> false
+  select has_function_privilege('swarm_admin',
+         'realtime.send(jsonb,text,text,boolean)','EXECUTE');            -> true
+  select rolsuper, rolbypassrls from pg_roles where rolname='swarm_admin';
+                                                        -> false, false
+
+Live probe, with a positive control on the same invocation. Two byte-identical
+plpgsql functions, both SECURITY DEFINER with SET search_path = pg_catalog, both
+doing PERFORM realtime.send('{"v":1}'::jsonb,'wake',t,true); the first created
+in schema swarm and ALTERed to OWNER swarm_admin (verified:
+"owner=swarm_admin secdef=true"), the second left owned by postgres. Both
+GRANTed EXECUTE to swarm_command and both called inside a transaction after
+SET LOCAL ROLE swarm_command, which is exactly what command/index.ts:1377 does:
+
+  SELECT swarm.zz_wake_probe_admin('cswarm-wake:PROBE-ADMIN');
+    ERROR:  permission denied for schema realtime
+    LINE 1: SELECT realtime.send('{"v":1}'::jsonb, 'wake', t, true)
+    CONTEXT: PL/pgSQL function swarm.zz_wake_probe_admin(text) line 3 at PERFORM
+
+  positive control, same session, prior run:
+  SELECT zz_wake_probe.as_postgres('cswarm-wake:PROBE-POSTGRES');
+    -> topic cswarm-wake:PROBE-POSTGRES | count 1  in realtime.messages
+
+Both objects dropped afterwards; leftover_funcs=0, leftover_schema=0,
+leftover_msgs=0.
+
+CONSEQUENCE. The failure is inside the trigger body, which W4 deliberately wraps
+in EXCEPTION WHEN OTHERS THEN RETURN NULL. So: the delivery row commits, the
+listener's join succeeds (W5 is unaffected), `cswarm listen status` reads
+mode: "push" because state === subscribed is genuinely true, and NO WAKE IS EVER
+SENT. Every seat runs on the 5-minute reconcile with nothing anywhere reporting
+a fault. That is the precise false-success shape §2.3's own status rule and the
+brain topic false-success-signals exist to stop, and §2.4's "Trigger cannot send"
+row assumes this is a rare degradation rather than the default state.
+
+The stated REASON is also wrong, in a way that matters for the fix.
+realtime.send is SECURITY INVOKER (prosecdef=false) with proacl
+`=X/supabase_admin,...`, i.e. EXECUTE to PUBLIC — swarm_command CAN execute it.
+What swarm_command lacks is USAGE on schema realtime (false) and INSERT on
+realtime.messages (false). activity/index.ts:139-145 works because RESET ROLE
+restores the CONNECTION role (postgres), not because it becomes swarm_admin.
+And realtime.send swallows its own INSERT failure with RAISE WARNING (read its
+pg_get_functiondef), so even a privilege that only blocks the INSERT produces a
+silent no-op rather than an error.
+
+WHAT TO CHANGE. Either (a) own both trigger functions with the role the
+connection already uses — postgres/supabase_admin — which is what the positive
+control proves works and what the activity precedent actually does; or (b) have
+L2's migration add GRANT USAGE ON SCHEMA realtime TO swarm_admin and GRANT
+INSERT ON realtime.messages TO swarm_admin (and confirm the day partition
+inherits it). Either way §9's "not in the repo ... locally EXECUTE is PUBLIC"
+must be rewritten: EXECUTE is not the binding privilege, and the local state is
+NOT already sufficient. L2's listed test "trigger inserts one realtime.messages
+row per delivery" is the right control and would catch this — but only once the
+owner or the grants are fixed, and it must assert the ROW, never the absence of
+an error, because the guard guarantees there is no error.
+
+-------------------------------------------------------------------------
+D2. §2.2 W3.1 / §4.1 / §6 — no lane owns the database change the read edge
+    needs before it can return `wake`, so the watcher can never learn a topic.
+-------------------------------------------------------------------------
+CLAIM. W3.1: "The read edge's inbox page (read/index.ts:826-832 ...) gains an
+optional wake: { topic, event } when the caller is an agent and inbox: true.
+This is how a listener learns its topic at start ... and how the watcher learns
+it without ever calling a command." §4.1 repeats it as the watcher's only
+source. §6 gives L3 `supabase/functions/read/index.ts` and gives L2 an
+enumerated migration containing the column, the unique index,
+wake_topic_authorized, rotate_wake_id, both triggers, both policies, the comment
+amendment and the test-gate lines — and no read-path grant or function change.
+
+WHAT IS WRONG. The read edge runs as swarm_read, which cannot see the column.
+
+  read/index.ts:417   await tx.unsafe("SET LOCAL ROLE swarm_read");
+  read/index.ts:418   SET LOCAL search_path = swarm_read, swarm, pg_catalog
+  select has_table_privilege('swarm_read','swarm.agent_principals','SELECT');
+                                                                   -> false
+
+swarm_read's only reach into principals is EXECUTE on the narrow SECURITY
+DEFINER swarm.agent_delivery_read_context(bytea,uuid) (20260731000001:487,
+re-granted 20260820000002:306), whose live signature is a fixed list:
+  RETURNS TABLE(token_id, principal_id, owner_user_id, principal_workspace_id,
+                run_id, device_id, first_use, membership_revoked_at,
+                is_revoked, pending_delivery_count)
+and read/index.ts:437-451 selects exactly those ten. There is no wake column and
+no other principal read on the agent branch.
+
+The obvious escape hatch is closed too. The view swarm_read.agent_principals
+exists, but its definition is
+  SELECT principal_id, workspace_id, owner_user_id, name, created_at,
+         revoked_at, model FROM swarm.agent_principals p
+  WHERE swarm.is_member(workspace_id, auth.uid());
+and the agent branch of read/index.ts installs no request.jwt.claims (only the
+human branch does, :421-428), so auth.uid() is null and the view returns no
+rows for an agent.
+
+CONSEQUENCE. W3.1 requires a migration: either a new grant, or a new column on
+the swarm_read view, or an extra output column on agent_delivery_read_context —
+and that last one cannot be done with CREATE OR REPLACE, because the OUT
+parameter list changes, so it is a DROP/CREATE plus a re-GRANT. All three are
+L2's file. L2's enumerated contents contain none of them and L3 owns no
+migration. So L3 cannot build the read half of the wire contract.
+
+This is not cosmetic. W3.2's command-side path is fine (swarm_command does hold
+SELECT on agent_principals, measured true), so a LISTENER could eventually learn
+its topic from a claim. The watcher cannot: arrival-watch.ts:336-338 states and
+enforces the read-only invariant ("It never imports or calls delivery claim/ack
+code"), and §4.1 leans on W3.1 by name. With W3.1 unbuildable, L5 has no topic
+source at all and requirement (4) of the ask — the watcher on the same model —
+cannot be delivered in the order §6 gives.
+
+-------------------------------------------------------------------------
+D3. §6 — L1 and L2 are scheduled in parallel and both need the exclusive
+    local database, breaking the section's own rule.
+-------------------------------------------------------------------------
+CLAIM. "The local database is a file for this purpose: test:p1-local and
+test:p1-server need the one local stack and an exclusive slot (AGENTS.md;
+tests/p1-cli/test-gate-coverage.test.ts:19-21), so no two lanes that run them
+are ever 'in parallel'." Then: "Order: L0, L1, L2, L2c now, in parallel
+(disjoint files; only L2 uses the local database)."
+
+WHAT IS WRONG. L1's own named test is
+tests/p1-server/claim-empty-persists-nothing.test.ts. That file is reached only
+by `test:p1-server` (package.json:29, glob tests/p1-server/**/*.test.ts), which
+AGENTS.md's command table records as "needs local Supabase and an exclusive DB
+slot", and which carries --test-concurrency=1 and a pretest hook that
+regenerates supabase/functions/_shared/protocol.js. So L1 uses the local
+database, "only L2 uses the local database" is false, and the parenthetical
+that authorises the parallel start contradicts the rule three sentences above
+it. L1 and L2 must be sequenced (either order), or L1 must run against a
+separate stack that the spec does not provide.
+
+L3 is already correctly sequenced after L1 and L2, and its tests are p1-server
+too, so the rest of the order holds once this pair is fixed.
+
+-------------------------------------------------------------------------
+D4. §6 — the package.json gate lines are mis-numbered, and `npm test` is not
+    pinned by anything.
+-------------------------------------------------------------------------
+CLAIM. "`npm test` (package.json:25) and test:p1-local (:26) are literal lists
+pinned by test-gate-coverage.test.ts:23-34, :85-95, :125-133; a lane that adds a
+test file owns the matching package.json line and the pin for as long as it
+runs." L4: "new tests/listener-wake.test.ts and therefore package.json:25 plus
+the pin, after L2b has merged". L3: "tests/p1-server/wake-topic-in-responses.
+test.ts (named in package.json:27's glob, so no gate edit)".
+
+WHAT IS WRONG. Measured at 74fdc45 and, identically, at d500973 (the SHA the
+document says every citation was confirmed on):
+  package.json:23  "test"           <- the literal list
+  package.json:25  "test:p1-cli"    <- a GLOB, tests/p1-cli/**/*.test.ts
+  package.json:26  "test:p1-local"  <- literal list, correct
+  package.json:27  "test:uxtest"
+  package.json:29  "test:p1-server" <- the glob L3's test is reached by
+And in tests/p1-cli/test-gate-coverage.test.ts: :23-34 is localStackCommand plus
+localStackTests (correct); :86-96 is the D-030 reachability test (the spec says
+:85-95); :124 pins test:p1-cli's exact string; :125 pins test:p1-local's. There
+is NO assertion anywhere pinning the `test` script's string.
+
+CONSEQUENCE. L4 is told to add a new root-level test file to package.json:25.
+That line is the p1-cli glob: its pattern cannot match tests/listener-wake.
+test.ts, so the file stays unreachable and the D-030 reachability assertion at
+:86-96 fails; and editing that line's string breaks the exact-string pin at
+:124. The correct edit is package.json:23, and there is no pin for L4 to own —
+which also means the stated reason for sequencing L4 after L2b ("same gate
+lines") does not exist. L2/L2b are the only lanes that really own a pin, and
+L3's :27 should read :29.
+
+=========================================================================
+PART 3 — GAPS
+=========================================================================
+
+None new. All four of my draft-2 gaps (GA, GB, GC, GD) are addressed in
+substance, as verified in PART 1. Each of the ask's seven requirements is
+answered somewhere in the document: (1) §2.2, §2.4, §6; (2) §1.3, §7; (3) §3;
+(4) §4; (5) §5; (6) §6; (7) §7. D1 and D2 are defects in HOW two of them are
+built, not absences.
+
+=========================================================================
+PART 4 — NITS
+=========================================================================
+
+N1. §2.3 / §2.4 / §9 — the two-listener claim-rate sentence contradicts the
+budget in the same paragraph. checkDeliveryRateLimit refuses at
+`if (count > limit)` (command/index.ts:4904), so the 121st claim in a minute is
+the first refusal and the one that writes the audit + security_alerts pair
+(count === limit + 1, :4905-4932). §2.3 says coalescing gives "at most 60
+wake-driven claims per minute plus its reconcile", so two listeners are 122, not
+"120, the limit" — they are over it, and the sentence's own conclusion is wrong
+by its own terms. The number that makes the design safe is the client budget the
+same paragraph specifies: WAKE_CLAIMS_PER_MINUTE_BUDGET = 50 gives 2x50 + 2 =
+102, comfortably under 120, and it is what makes §9's "two is the most the
+120/min claim limit tolerates at the client budget" true (three would be 153).
+Keep the 50-budget arithmetic; delete the 60/120 sentence.
+
+N2. §2.2 W1 — "the one site is command/index.ts:4025-4036" is a typed
+enumeration with a second member. src/cloud/seed.ts:157 (seedDogfood, reached
+from src/cli.ts:101 and from tests/p1-local/local-integration.test.ts and
+tests/p1-local/human-seen-browser.test.ts) also does INSERT INTO
+swarm.agent_principals, naming four columns. The volatile default still applies
+and nothing breaks; the count is wrong, and this is the shape of error AGENTS.md
+names ("an enumeration inside a message must be generated, not typed").
+
+N3. §2.2 W6 — the nine-statement enumeration is right about the line numbers and
+wrong about their shape. Eight of the nine (:3973, :4012, :4112, :4140, :4172,
+:4181, :4208, :4237) are all inside ONE function, updateWorkspaceProjection
+(:3913), i.e. all already on the event-apply path; only :3576
+(discardStrandedSuccessor, :3565) sits outside it, so "(plus :4428 on an
+event-apply path)" implies a distinction that does not exist. Worse, :4428 is
+inside applyEventSideEffects (:4403) and is `UPDATE swarm.grants SET revoked_at`
+on TaskReopened — a task grant, not a credential; it is neither agent_tokens nor
+agent_principals and should not be on a list the sentence scopes to those two
+tables. By that scoping only :4112 (AgentPrincipalRevoked -> agent_principals),
+:4140 (its token cascade) and :4208 (AgentTokenRevoked) qualify, alongside
+:3576; :3973 is swarm.invitations and :4012 is swarm.memberships. The claim that
+:3576 is the only renewal-path one HOLDS: I found no other revoked_at write
+between fenceRenewal (:3624) and appendEvents (:3749), and the handover paths
+(20260820000002:156-173) write first_used_at and expires_at, not revoked_at.
+
+N4. §0 / §2.2 W6 — "the id changes the moment any credential of that principal
+is revoked" is stronger than what §2.2 builds. swarm.renewal_grants_revoke_
+cascade() (20260728000002:413-431, trigger :441-453) stamps agent_tokens.
+revoked_at from inside the database on every grant revoke, and device revoke
+(command/index.ts:4534), run end, membership revoke and workspace archive each
+kill a credential without touching agent_tokens.revoked_at at all. None rotate
+wake_id, and W5's wake_topic_authorized checks only "a live token" via
+agent_tokens_by_principal, not the fuller liveness agent_delivery_read_context
+enforces. The blast radius stays exactly what W1 already concedes — a holder of
+a stale id learns THAT the principal has work — so this is a wording defect, not
+a hole. Say "on a revocation by intent", which is what the design actually does,
+and note that the grant cascade means "revocation is not a database function" is
+only true of the entry point, not of the effect.
+
+N5. §2.2 W4 — the trigger is specified SET search_path = pg_catalog and then
+described as reading "agent_principals.wake_id". Under that search_path the
+reference must be written swarm.agent_principals. The two enqueue triggers the
+spec cites as its model (20260905000020:152-176 and :189-217) are both
+SET search_path = pg_catalog and qualify every object; L2 should follow them.
+
+N6. Citation drift, each opened and checked: STATUS_SENSITIVE_KEYS is
+control.ts:282-297, not :284-299. parseListenerReadHealth's closed key list is
+read-health.ts:253-261, not :252-261. The D-030 reachability test is
+test-gate-coverage.test.ts:86-96, not :85-95. checkDeliveryRateLimit's refusal
+block is command/index.ts:4904-4933, not :4905-4934. Everything else I sampled
+resolved exactly: runtime.ts:77, :612-630, :1104, :1455-1456; activity.ts:13;
+hook.ts:57; arrival-watch.ts:25, :336-338, :357, :387-391; signals.ts:1211-1218;
+command-client.ts:717-735; delivery.ts:518-587; renewal.ts:852-853; config.ts:3;
+stderr-tail.ts:43; cli.ts:5885-5918 (and it passes no pollMs, as claimed);
+LiveDashboard.astro:5774; read/index.ts:826-832 (own-workspace branch, carries
+capabilities); durable-delivery.ts:21, :66-71, :195-211 (no RETURNING),
+:212-231 (no RETURNING), :233-253 (RETURNING d.signal_id), :183-189;
+20260723000001:192-216, :211-212, :213, :614, :801-805, :839-843, :845;
+20260901000001:199-207; 20260902000003:4-17; 20260905000010:58 (the cap of 8);
+20260905000020:32-33; RealtimeClient.js:12 (25000), :16 ([1000,2000,5000,10000]),
+:489 (accessTokenValue != tokenToSend). Note that tests/p1-cli/citation-drift.
+test.ts exists for exactly this class of error and covers no file under
+docs/design/, so nothing catches these but a reader.
+
+=========================================================================
+PART 5 — WHAT I CHECKED AND FOUND SOUND
+=========================================================================
+
+- W1's opaque-id construction: 43 chars, per-row volatile default, base64url via
+  the deleting translate, no 76-column newline at 44 bytes. All measured.
+- W4's ON CONFLICT reasoning: both enqueue triggers use ON CONFLICT DO NOTHING
+  (20260905000020:171, :210), and a conflicting row genuinely does not fire an
+  AFTER INSERT FOR EACH ROW trigger, so a duplicate enqueue does not double-wake.
+- W5's privilege inference: authenticated has EXECUTE on swarm.is_member
+  (20260723000001:614) and has_schema_privilege('authenticated','swarm','USAGE')
+  is FALSE, yet the activity policy (20260902000003:4-17) works in production.
+  That is real support for "a policy stores the function by OID, so anon needs
+  EXECUTE and not USAGE". L2's test is still owed, and the spec says so.
+- §3.1's persistence diagnosis: steps 2 and 3 of claimAgentInbox really do mutate
+  without RETURNING (durable-delivery.ts:195-211, :212-231) and are invisible to
+  DeliveryClaimLedgerResponse (:66-71); only step 4 returns (:233-253). The
+  idempotency insert (:8365-8380) and insertAudit (:8424-8432) are inside the
+  claim branch with no shared wrapper, so the gate is confined as claimed. The
+  claim response builder is :8433-8452 and already carries capabilities and
+  min_client_version, so an additive `wake` is safe.
+- §3.2's retention facts: GREATEST(30, config) floor at :801-805, cron at
+  :839-843, rate-bucket purge cron at :845, audit append-only trigger, idem_purge
+  index. All as stated.
+- 0.1.56 tolerance: command-client.ts:717-735 validates only status/ok/event_ids
+  and returns the body; signals.ts:1211-1218 validates only that `signals` is an
+  array. Unknown top-level fields are ignored. The claim holds.
+- Every arithmetic chain I re-derived: 86400/3.6 = 24,000; 24,000+24,000+5,760 =
+  53,760; 24,000+24,000+1,440 = 49,440 with 48,000 surviving; 576+1,440+24+100+50
+  = 2,190; +388 watcher = 2,578; 16x2,200 + 8x388 = 38,304; 100 seats = 239,400;
+  10,000 x 463 = 4.63M; 288 + ~100 = ~388 rate-bucket rows; 1,440/2,190 = 65.7%;
+  24,000/144 = 167, 5,760/144 = 40, total 374, after 2+2+10 = 14, i.e. 37.4 and
+  1.4 per minute; 2,200 x $2/M = $0.0044. All consistent with the document.
+- The recipient cap of 8 (20260905000010:58) bounds W4's per-signal subtransaction
+  cost as claimed.
+
+=========================================================================
+PART 6 — WHAT I DID NOT ESTABLISH
+=========================================================================
+
+- I did NOT run an end-to-end anon Realtime join against a policy that calls a
+  swarm-schema SECURITY DEFINER function. I established the privilege shape that
+  makes it plausible (PART 5) and nothing more. That remains L2's first test, as
+  §10 says.
+- D1 was measured on the LOCAL stack only. The hosted project's grants to
+  swarm_admin on schema realtime could differ and must be measured there the same
+  way, with the same positive control, before L2's migration is pushed. §10
+  already lists a linked db query for pgcrypto and the realtime.send grant; that
+  query must now ask for schema USAGE and table INSERT, not EXECUTE.
+- I did not verify the production counts (390,277; 1.47M; 2.8M; 1,716), the
+  Supabase pricing and limit figures in §7 and §9, or whether the idempotency
+  purge cron is enabled on the hosted project.
+- I ran no npm gate. Nothing in this branch changes code, so there is nothing for
+  npm test or test:p1-cli to measure about this spec; the gate claims in §6 were
+  checked by reading package.json and test-gate-coverage.test.ts, not by running.
+- I did not review the draft-2 Grok or Gemini arms' reasoning, only §11's summary
+  of where their items landed.
+- Whether a listener's first claim can carry the topic before its first read is
+  not settled by me: W3.2 makes it possible for the listener, but D2 still leaves
+  the watcher with no source, and the spec's own §4.1 routes both through W3.1.
+
+=========================================================================
+SUMMARY
+=========================================================================
+DEFECTS: 4  (D1 wake trigger cannot send and the failure is swallowed;
+             D2 no lane owns the read-path database change, so the watcher
+             cannot learn a topic; D3 L1 and L2 collide on the local database;
+             D4 wrong package.json gate lines and a pin that does not exist)
+GAPS:    0
+NITS:    6
+All four draft-2 defects (DA, DB, DC, DD) and all four draft-2 gaps
+(GA, GB, GC, GD) are confirmed fixed against the code.
+
+QUOTE-BACK: # Push delivery: wake listeners from Supabase Realtime instead of polling
+VERDICT: FAIL
+REASON: The trigger that is the entire push mechanism is specified with an owner that cannot reach schema realtime — measured, with a positive control — behind an exception guard that would hide the failure forever, and the read-edge half of the wire contract needs a database change that no lane in §6 owns.

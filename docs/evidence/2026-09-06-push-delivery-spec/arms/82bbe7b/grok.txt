@@ -1,0 +1,67 @@
+# D-036 EXACT arm — docs/design/2026-09-06-PUSH-DELIVERY.md
+SHA: 82bbe7b5e4dcb4d9a98606ba9a2e210ca4c1281d
+Branch: spec/push-delivery (this working directory)
+Role: EXACT, FINAL SHA (draft 7)
+Prior: PASS on a793eaf with four nits.
+
+Method: spec-only diff a793eaf→82bbe7b; opened the cited sources; did not re-run local-stack probes. Did not treat sibling arm bodies as authority.
+
+PASS only if no DEFECT and no GAP.
+
+## Diff checked
+
+Exact arm on `82bbe7b` (draft 7). Checked only the a793eaf→82bbe7b diff against the named sources.
+
+**Bound (§0, §2.1, §2.4, §9).** Holds. Step 3 writes `ack_outcome = 'expired'` at `durable-delivery.ts:212-231`. The candidate select keeps `s.until > statement_timestamp()` at `:290`. The edge takes `until_ms` from 1 ms (`command/index.ts:1844`, `integer` at `:1435-1437`). CLI floor is 1 minute (`src/cli.ts:2567`). Defaults are days (`SIGNAL_DEFAULT_UNTIL_MS` ask 7 d, note 30 d). A sender receipt then shows `expired` (`delivery-receipts.ts:488`; `command.test.ts:7097`).
+
+**W3.1.** Holds. Live body is `20260820000002:103-299` (spec range `:103-301` also takes the OWNER line). One added predicate at `:232-233`. Old body at `20260731000001:414` has no `is_member` check. Privilege lines are `:301,:302,:306` (first written `:482,:483,:487`). Guards: `command.test.ts:3580-3582` (archived read → 403) and `:9267-9271` (`anon` / `authenticated` / `public` cannot execute). Five plpgsql callers name their columns. L2 is told to copy the live body and keep `test:p1-server` green.
+
+**Folds.** Privilege lines, the 35-function count, the 15 s read+claim path, L2c redact vs refuse, two `AGENTS.md` lines, `next({ until })`, and half-seat watcher math. Nothing I passed on a793eaf moved.
+
+**NITS** (do not fail)
+
+1. §2.1 cites `durable-delivery.ts:283` for the until filter. `:283` is the JOIN. The filter is `:290`.
+2. §6 L3 `starts after` still says `L1, L2`. The Order paragraph still puts L3 after L2b. §11 says this nit was folded; the cell was not edited.
+3. W6 still says schema USAGE is checked as the caller. The owner pair shows it is the owner. Owner `postgres` is still the right build. §11 says this nit was folded; the sentence was not edited.
+
+Write-up: `docs/evidence/2026-09-06-push-delivery-spec/arms/82bbe7b/grok.txt`.
+
+QUOTE-BACK: # Push delivery: wake listeners from Supabase Realtime instead of polling
+VERDICT: PASS
+REASON: The short-until bound matches the claim path (durable-delivery.ts:212-231,:290; command/index.ts:1844; CLI 1 m floor) and W3.1 now points L2 at the live 20260820000002 body plus the two guarding tests, with no remaining defect or gap.
+93eaf
+
+Folded: privilege lines (`:301,:302,:306` / `:482,:483,:487`); W4 count 35; §0 15 s path is read+claim; L2c redact vs refuse; L8 two AGENTS.md lines; `next({ until })`; §7 watcher reads on half the seats.
+
+Not folded (still nits, not defects): L3 `starts after` cell; W6 "caller's identity".
+
+## No regression of the a793eaf PASS
+
+Rotate owner `postgres`, privilege triple, five redaction sites, RLS third gate, L2 after L1, L2b after L2, L3 after L2b in the Order paragraph: unchanged.
+
+## NITS (do not fail)
+
+1. §2.1 cites `durable-delivery.ts:283` for the until exclusion. `:283` is `ON s.id = d.signal_id`. The predicate is `:290`.
+2. §6 L3 `starts after` still says `L1, L2`. The Order paragraph still sequences L3 after L2b. §11 says this nit was folded; the cell was not edited.
+3. W6 still says schema USAGE is checked under the caller's identity. The owner pair (same caller, owner `swarm_admin` vs `postgres`) shows it is the owner. Owner `postgres` is still the right prescription. §11 says this nit was folded; the sentence was not edited.
+
+## Citations verified this round
+
+`durable-delivery.ts:212-231,:283,:290`
+`command/index.ts:575-579,:1435-1437,:1844`
+`src/cli.ts:2565-2581`
+`src/cloud/delivery-receipts.ts:488`
+`command.test.ts:3580-3582,:7097,:9267-9271`
+`20260820000002:103-306` (body `:103-299`, OWNER `:301`, REVOKE `:302`, GRANT `:306`; predicate `:232-233`)
+`20260731000001:285-489` (old ELSIF `:414`; OWNER/REVOKE/GRANT `:482,:483,:487`)
+`read/index.ts:437-451,:483-487,:490-496,:826-832`
+five named-column callers as listed
+`SIGNAL_DEFAULT_UNTIL_MS` ask/note
+
+## Citations not re-opened this round
+
+Everything else I opened on a793eaf and that this diff did not touch: W4/W6 local-stack probes, RLS, pgcrypto, redaction sites, gate lines, arithmetic, hosted project.
+
+QUOTE-BACK: # Push delivery: wake listeners from Supabase Realtime instead of polling
+VERDICT: PASS
+REASON: The short-until bound matches the claim path (durable-delivery.ts:212-231,:290; command/index.ts:1844; CLI 1 m floor) and W3.1 now points L2 at the live 20260820000002 body plus the two guarding tests, with no remaining defect or gap.

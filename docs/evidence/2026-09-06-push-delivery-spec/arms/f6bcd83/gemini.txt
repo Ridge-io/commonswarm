@@ -1,0 +1,142 @@
+# CommonSwarm D-036 Review: Second-Round INVERSION Arm
+**Target Document:** `docs/design/2026-09-06-PUSH-DELIVERY.md` (commit `f6bcd83`, draft 2, branch `spec/push-delivery`)  
+**Role:** Inversion Arm, Round 2  
+**Authority / Scope Ruling:** Answers ask `3e9049cf` under DevLead ruling (Option 3: Realtime push + fallback poll; Lane A items out of scope).
+
+---
+
+## 1. Code & Evidence Citations Checked
+
+The claims in draft 2 and supporting evidence were verified against the codebase at baseline `d500973` and the local experiment record:
+- `src/listener/runtime.ts:77,778,1455-1456` (`LISTENER_IDLE_POLL_MS = 2_000`, sleep call sites, `pollMs` option).
+- `src/listener/runtime.ts:1075-1082,1365-1394` (`readAgentSignalPage` and `claim_agent_inbox` call sequence).
+- `src/listener/runtime.ts:612-630,1085-1104` (`classifyDeliveryMode` and read-health episode tracking).
+- `src/cloud/signals.ts:125-132,294-310,1211-1218,1501-1538` (capability handshake bits, signal response parser, `--wait` loop).
+- `src/cloud/arrival-watch.ts:25,336-338,357,387-391,431-437` (`ARRIVAL_WATCH_POLL_MS = 25_000`, read-only invariant, cursor persistence).
+- `supabase/functions/read/index.ts:437-465,490-496` (`agent_delivery_read_context` query, `swarm.record_renewal_grant_use`).
+- `supabase/functions/command/durable-delivery.ts:66-71,172-300` (`claimAgentInbox` steps 1–6, missing RETURNING counters in current code, candidate selection with `FOR UPDATE SKIP LOCKED`).
+- `supabase/functions/command/index.ts:4868,4881-4888,7609-7616,8348-8452,9024-9036` (rate-limit windowing, replay branch, claim handler execution flow exiting before step 13's protocol grant stamp).
+- `supabase/migrations/20260723000001_p1_schema.sql:192-216,380,416-421,588-590,793-816,845` (`agent_principals`, `agent_tokens`, `idem_purge`, `audit_log_append_only`, purge crons).
+- `supabase/migrations/20260901000001_standing_grants.sql:199-207` (14-day idle suspension threshold).
+- `supabase/migrations/20260905000020_wake_all_recipients.sql:32-33,152-217` (deployment apply order, scalar and fan-out delivery enqueue triggers).
+- `package.json:26` & `tests/p1-cli/test-gate-coverage.test.ts:23-34,125-128` (test gate script pinning the 8 `tests/p1-local` test suites).
+- `src/listener/control.ts:225-274` (`STATUS_ALLOWED_KEYS` set).
+- `docs/evidence/2026-09-06-push-delivery-spec/realtime-anon-private-topic-experiment.{mjs,out}` (anon private topic authorization and `realtime.send` delivery verification).
+
+---
+
+## 2. Inversion Arguments on Draft-2 Changes
+
+### (a) Inversion: Rotating the wake ID on revocation does not make revocation complete
+
+* **Inversion Hypothesis:** Rotating `agent_principals.wake_id` upon token/principal revocation leaves an open socket or race condition whereby an adversary with a revoked credential still observes wakes or claims deliveries.
+* **Interleaving Analysis:**
+  1. *Eavesdropping on old topic:* Assume adversary holds revoked token $T_1$ and maintains an active websocket joined to `cswarm-wake:{wake_id_old}`. The revocation transaction atomically marks $T_1$ revoked in `swarm.agent_tokens` and updates `swarm.agent_principals.wake_id` to `wake_id_new`. When a new delivery arrives, trigger `swarm.wake_agent_delivery()` (W4) reads the current `agent_principals.wake_id` (`wake_id_new`) and calls `realtime.send(..., 'cswarm-wake:' || wake_id_new, true)`. Realtime broadcast routes strictly by exact topic name. The adversary receives zero messages on `cswarm-wake:{wake_id_old}`.
+  2. *Re-joining on new topic:* To join `cswarm-wake:{wake_id_new}`, the adversary must obtain `wake_id_new`. Under W3, `wake_id` is only returned in the response payloads of `read` (inbox), `claim_agent_inbox`, `mint_agent_token`, and `renew_agent_token`. All four endpoints validate the caller's bearer token against `agent_tokens`; because $T_1$ is revoked, these endpoints return 401/403. Even if `wake_id_new` (32 cryptographically random bytes = 256 bits entropy) could be guessed, policy W5 (`swarm.wake_topic_authorized`) checks `agent_tokens_by_principal` for the existence of an active, unrevoked token. If the principal was revoked or has no remaining active tokens, the policy returns `false`, causing Realtime to reject the join with `CHANNEL_ERROR: Unauthorized`.
+  3. *Racing delivery claims:* Suppose a wake was broadcast to `wake_id_old` a millisecond before revocation committed. The adversary receives `{ "v": 1, "signal_id": "<uuid>", "enqueued_at": "<timestamptz>" }`. This payload contains no message body, payload data, or sender. To claim the delivery, the adversary must execute `POST /functions/v1/command` (`claim_agent_inbox`). At step 1 (`command/index.ts:8352`), the token authentication and principal validation reject the revoked token before any claim can occur.
+* **Verdict on Inversion (a):** **REFUTED (Did not beat spec).** Revocation of delivery visibility is complete at the instant the rotation transaction commits.
+
+---
+
+### (b) Inversion: A per-principal wake ID with two listeners on one credential loses or duplicates deliveries
+
+* **Inversion Hypothesis:** Because `wake_id` is per-principal rather than per-listener or per-token, two concurrent listeners ($L_1$ and $L_2$) sharing a credential will race upon receiving the same wake broadcast, causing duplicate delivery claims or message loss.
+* **Concurrency Analysis:**
+  1. *Duplicate deliveries:* When a wake fires on `cswarm-wake:{wake_id}`, both $L_1$ and $L_2$ wake and issue `POST /functions/v1/command` (`claim_agent_inbox`). In the database (`durable-delivery.ts:183-189, 272-300`):
+     - Step 1 executes `SELECT ... FROM swarm.agent_principals ... FOR UPDATE`, strictly serializing concurrent claim transactions for the same principal.
+     - The first claim transaction ($L_1$) selects candidate rows with `FOR UPDATE SKIP LOCKED LIMIT 1`, updates `lease_id = gen_random_uuid()` and `leased_until = statement_timestamp() + 30s`, and returns the leased delivery.
+     - The second claim transaction ($L_2$) executes immediately after. It finds no rows satisfying `acked_at IS NULL AND lease_id IS NULL`, returning `delivery_refs = []`.
+     - Because leases are exclusive and guarded by database transactions, $L_2$ never receives the row claimed by $L_1$. No duplicate delivery occurs.
+  2. *Lost deliveries:*
+     - If $L_1$ crashes while holding the lease, the lease expires after `DELIVERY_LEASE_MS` (30 s). On the next reconcile tick (or subsequent wake), step 2 of `claimAgentInbox` resets expired leases (`lease_id = NULL`), allowing $L_2$ (or restarted $L_1$) to claim and process the delivery.
+     - If a wake broadcast is dropped by the network or Realtime, the delivery row remains recorded in `swarm.signal_deliveries` (`acked_at IS NULL`). The periodic reconcile tick (every 5 minutes while subscribed, or 15 s if disconnected) executes `claim_agent_inbox` directly against the database table.
+     - If two signals ($S_1, S_2$) arrive concurrently, $L_1$ claims $S_1$ and $L_2$ claims $S_2$, or $L_1$ claims $S_1$ and drains $S_2$ on its subsequent loop tick.
+* **Verdict on Inversion (b):** **REFUTED (Did not beat spec).** "Push is a hint. The row is the truth." Postgres locks and leases guarantee delivery exclusivity and prevent loss.
+
+---
+
+### (c) Inversion: Keeping a read on the 5-minute reconcile is either insufficient for the standing-grant use stamp or makes the cost claim wrong
+
+* **Inversion Hypothesis:** Retaining `readAgentSignalPage` every 5 minutes either fails to keep standing grants from self-suspending, or invalidates the cost reductions calculated in sections 1.3, 7, and 8.
+* **Verification & Arithmetic Recomputation:**
+  1. *Standing-grant use stamp sufficiency:* Under `supabase/migrations/20260901000001_standing_grants.sql:199-207`, standing grants self-suspend only after 14 days without activity (`interval '14 days'`). A reconcile read executed every 5 minutes executes $24 \times 12 = 288$ times per day ($4,032$ times per 14-day window). This provides a $\sim 4,000\times$ safety margin against idle suspension.
+  2. *Cost calculations:*
+     - **Section 1.3 (Baseline today):** Measured wall-clock tick $\approx 3.6$ s yields 24,000 ticks/day. $24,000 \text{ reads} + 24,000 \text{ claims} + 5,760 \text{ activity} = 53,760 \approx 53,800$ invocations/day. Consistent.
+     - **Section 7 (Post-spec idle seat-day):**
+       - Reconcile ticks: $1,440 \text{ min} / 5 \text{ min} = 288$.
+       - Reconcile edge invocations: $288 \text{ reads} + 288 \text{ claims} = 576$.
+       - Heartbeat: $1,440 \text{ min} \times 1/\text{min} = 1,440$.
+       - Renewals: $24$. Wake claims: $\approx 100$. Drains: $\approx 50$.
+       - Total: $576 + 1,440 + 24 + 100 + 50 = 2,190 \approx 2,200$ invocations/day.
+       - With watcher: $2,190 + 288 \text{ watcher reconcile reads} = 2,478$ invocations/day.
+       - Rows written: Reconcile claims (288) + wake claims ($\approx 100$) write to `rate_buckets` (per-minute bucket). Total $\approx 400$ rows, purged within 2 hours ($0$ surviving past 2 h).
+       - At 10,000 seats with 15-min reconcile: $10,000 \times (96 \text{ reads} + 96 \text{ claims} + 24 \text{ renewals} + 150 \text{ wakes/drains} + 97 \text{ watcher}) = 4.63\text{ M} \approx 4.6\text{ M}$ invocations/day.
+     - **Section 8 (10-minute idle measurement window):**
+       - Reconcile: $10 \text{ min} / 5 \text{ min} = 2 \text{ ticks} \implies 2 \text{ reads} + 2 \text{ claims} = 4$.
+       - Activity: $10 \text{ min} \times 1/\text{min} = 10$.
+       - Total: $2 + 2 + 10 = 14$ invocations in 10 minutes ($1.4/\text{min}$).
+       - Rows written: $2 \text{ rate-bucket rows}$, $0$ kept past 2 hours.
+* **Verdict on Inversion (c):** **REFUTED (Did not beat spec).** Reconcile reads are fully and accurately budgeted across sections 0, 1.3, 7, and 8, and guarantee grant freshness.
+
+---
+
+### (d) Inversion: A volatile DEFAULT on `agent_principals.wake_id` is not additive for a 0.1.56 seat at migration time
+
+* **Inversion Hypothesis:** Adding `wake_id text NOT NULL DEFAULT translate(encode(gen_random_bytes(32), 'base64'), '+/=', '-_')` violates additivity, causing migration failures or errors for deployed 0.1.56 clients/functions.
+* **Schema & Additivity Analysis:**
+  1. *PostgreSQL migration execution:* Because `gen_random_bytes()` is volatile, Postgres evaluates the expression for each existing row in `swarm.agent_principals`. Every existing principal is immediately populated with a unique 32-byte (43-character base64url) identifier. The subsequent `CREATE UNIQUE INDEX agent_principals_wake_id` succeeds without collision.
+  2. *Unmodified `INSERT` statements:* Existing edge functions (e.g. `mint_agent_token`) do not specify `wake_id` in their `INSERT INTO swarm.agent_principals` column lists. Postgres automatically assigns the generated default value. No deployed INSERT statement fails.
+  3. *Client compatibility (0.1.56):* 0.1.56 clients do not query Postgres directly and ignore unfamiliar fields in `/functions/v1/read` and `/functions/v1/command` JSON payloads (`src/cloud/command-client.ts:717-735`, `src/cloud/signals.ts:1211-1218`). 0.1.56 clients continue their polling loop unimpeded.
+* **Verdict on Inversion (d):** **REFUTED (Did not beat spec).** The column definition is fully backward-compatible and additive.
+
+---
+
+### (e) Inversion: The persistence gate in 3.1 still misses a mutation
+
+* **Inversion Hypothesis:** The gate in Section 3.1:
+  `delivery_refs.length > 0 || terminal_delivery_failure_count > 0 || lease_reset_count > 0 || expired_count > 0`
+  fails to account for some database mutation performed during an empty `claim_agent_inbox` call, causing an unrecorded state change.
+* **Code Trace (`command/durable-delivery.ts` & `command/index.ts`):**
+  - Step 1 (`:183-189`): `SELECT principal_id, revoked_at FROM swarm.agent_principals FOR UPDATE` — acquires row lock; modifies 0 rows.
+  - Step 2 (`:195-211`): `UPDATE swarm.signal_deliveries` (resetting stale expired leases) — captured by `RETURNING` into `lease_reset_count`.
+  - Step 3 (`:212-231`): `UPDATE swarm.signal_deliveries` (marking expired TTLs) — captured by `RETURNING` into `expired_count`.
+  - Step 4 (`:233-253`): `UPDATE swarm.signal_deliveries` (marking 10-attempt ceiling poison rows) — captured by `poisonRows.length` into `terminalDeliveryFailureCount`.
+  - Step 5 (`:256-267`): `SELECT count(*)::int AS active` — read-only; modifies 0 rows.
+  - Step 6 (`:272-300`): `UPDATE candidates` (leasing unacked rows) — captured by `claimed` into `delivery_refs`.
+  - Handler checks (`command/index.ts:8404-8422`): `security_alerts` insertion runs only when `terminal_delivery_failure_count > 0`. `hydrateDeliveryRefs` on `[]` returns `[]`.
+  - Protocol step 13 (`:9024-9036`): Claim handler returns at line 8452 before protocol step 13 is reached; `record_renewal_grant_use` is never invoked on claims.
+  - Rate limiting (`:4868`): `rate_buckets` upsert occurs prior to `claimAgentInbox` and is explicitly documented as preserved short-lived abuse control (purged after 2 hours).
+* **Verdict on Inversion (e):** **REFUTED (Did not beat spec).** All possible state mutations in `claimAgentInbox` are covered by the 4 gate conditions.
+
+---
+
+### (f) Inversion: Lane ownership in Section 6 still lets two lanes edit one file at the same time
+
+* **Inversion Hypothesis:** The lane breakdown in Section 6 permits concurrent edits to shared files, creating merge hazards.
+* **Lane & File Dependency Graph:**
+  - *Parallel Group:* Lanes **L0**, **L1**, **L2**, and **L2b** start immediately in parallel.
+    - L0: `src/listener/runtime.ts`, `src/listener/activity.ts:13`, `src/cloud/arrival-watch.ts`, `file_versions` EXPLAIN.
+    - L1: `supabase/functions/command/durable-delivery.ts`, `supabase/functions/command/index.ts:8348-8445`.
+    - L2: `..._wake_delivery.sql`, `package.json:26`, `tests/p1-cli/test-gate-coverage.test.ts:23-34,125-128`, `tests/p1-local/wake-realtime-auth.test.ts`.
+    - L2b: new migration for idempotency purge, config row, `tests/p1-local` test.
+    *Result:* The file sets of L0, L1, L2, and L2b are mutually disjoint.
+  - *Sequenced Files:*
+    - `command/index.ts`: Owned by L1; L3 touches lines `:8429-8452` only after L1 merges ("Starts after: L1, L2").
+    - `src/listener/runtime.ts`: Owned by L0; L4 modifies it only after L0 merges ("Starts after: L0, L3").
+    - `src/cloud/arrival-watch.ts`: Owned by L0; L5 modifies it only after L0 merges ("Starts after: L0, L4, the refused-frame fix").
+    - `src/cli.ts`: Owned by L4; L5 modifies notify wiring only after L4 merges ("Starts after: L4 merged").
+* **Verdict on Inversion (f):** **REFUTED (Did not beat spec).** No two active lanes own or edit the same file simultaneously.
+
+---
+
+## 3. Review Findings Summary
+
+- **DEFECTS:** None found.
+- **GAPS:** None found. All 7 requirements of ask `3e9049cf` are satisfied.
+- **NITS:** None.
+
+---
+
+QUOTE-BACK: # Push delivery: wake listeners from Supabase Realtime instead of polling
+VERDICT: PASS
+REASON: All draft-2 load-bearing revisions withstand rigorous inversion analysis with zero defects or unowned file overlaps.

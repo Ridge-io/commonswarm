@@ -1,0 +1,412 @@
+Report written to `docs/evidence/2026-09-06-push-delivery-spec/arms/22e2bea/opus.txt` (539 lines). Full text:
+
+```
+D-036 ADVERSARIAL SYSTEMS ARM (Opus) — FINAL ROUND
+Document: docs/design/2026-09-06-PUSH-DELIVERY.md
+SHA under review: 22e2bea (draft 4), branch spec/push-delivery
+Prior reports by this arm: arms/ff8a398/opus.txt, arms/f6bcd83/opus.txt, arms/74fdc45/opus.txt
+Stack: local Supabase (supabase_db_cloud-swarm), PostgreSQL 17.6, migrations at head.
+Every probe below ran read-only or inside a transaction that was rolled back; the two
+objects I created were dropped and the leftovers counted.
+
+===== PART 0 — CORRECTION TO MY OWN DRAFT-3 REPORT =====
+Two citation numbers in my draft-3 nit N6 were wrong, and draft 4 adopted them. Measured at 22e2bea:
+  STATUS_SENSITIVE_KEYS starts at src/listener/control.ts:284 and its `]);` is at :299.
+  Draft 3 had :284-299 and was RIGHT; I told the author :282-297, and §2.3 now carries my wrong number.
+  checkDeliveryRateLimit's refusal is `if (count > limit)` at command/index.ts:4905 and the
+  audit + security_alerts block runs :4906-4934. Draft 3 had :4905-4934 and was RIGHT for the
+  outer block; I told the author :4904-4933, and §2.4 now carries that.
+Both are cosmetic, and both are listed again under NITS so the next draft has one place to fix them.
+
+===== PART 1 — VERIFYING §11's DRAFT-3 CLAIMS AGAINST THE CODE AND THE STACK =====
+
+D1 (the wake trigger cannot send) — FIXED, and I re-measured the fix end to end.
+  has_schema_privilege / has_table_privilege, one invocation:
+    realtime USAGE      postgres=true  swarm_admin=false swarm_command=false swarm_read=false anon=true
+    realtime.messages   postgres=true  swarm_admin=false swarm_command=false swarm_read=false anon=true
+      INSERT
+    pg_roles postgres:  rolsuper=false  rolbypassrls=true
+    realtime.send:      prosecdef=false, owner supabase_admin (EXECUTE is PUBLIC)
+  Live probe, positive and negative control in the same invocation. Two byte-identical plpgsql
+  functions, SECURITY DEFINER, SET search_path=pg_catalog, body `PERFORM realtime.send(...)`,
+  both GRANTed to swarm_command, both called inside a transaction after SET LOCAL ROLE
+  swarm_command (what command/index.ts:1377 does):
+    owner postgres      -> realtime.messages rowcount 1 for the expected topic
+    owner swarm_admin   -> ERROR: permission denied for schema realtime, 0 rows
+  Both dropped; leftover_funcs=0, leftover_msgs=0.
+  So draft 4's "owned by postgres" is sufficient on this stack, W4's stated reason (USAGE +
+  INSERT, not EXECUTE) is the right reason, and L2's row-asserting test is the right control.
+  See D5 for the one gate W4 and §9 still omit.
+
+D2 (the read edge cannot see wake_id) — FIXED in design, and the migration/deploy window is safe.
+  I measured the three things the fix depends on, in one transaction that I rolled back:
+  - DROP FUNCTION swarm.agent_delivery_read_context(bytea, uuid) succeeds with NO CASCADE. Its
+    callers (20260731000001, 20260820000002, 20260828000001, 20260828000002, 20260829000001,
+    20260901000020, 20260902000001) are plpgsql, whose bodies are not dependency-tracked.
+  - The RUNNING read edge does not break between the migration and its deploy. read/index.ts:437-451
+    selects ten columns BY NAME; I re-created the function with an eleventh OUT column `wake_id`
+    and ran that exact ten-column SELECT against it: it planned and executed. So the additive OUT
+    column is backward-compatible for a 0.1.56-era deployed read edge, and §6's stated production
+    order (migration -> command -> read -> client) holds.
+  - After ROLLBACK the live function is intact: owner swarm_admin,
+    acl {swarm_admin=X/swarm_admin,swarm_read=X/swarm_admin}.
+  What the fix's ENUMERATED CONTENT omits is D2 below.
+
+D3 (L1 and L2 both hold the exclusive local database) — FIXED for that pair. §6 now reads "L2 after
+  L1 (same database)". The same collision reappears one row later; see D3 below.
+
+D4 (package.json gate lines) — FIXED and verified line by line:
+  package.json:23 "test" (literal list), :25 "test:p1-cli" (glob), :26 "test:p1-local" (literal
+  list), :29 "test:p1-server" (glob). tests/p1-cli/test-gate-coverage.test.ts: :19-21 is the
+  one-local-runtime comment, :23-34 is localStackCommand + localStackTests, :86-96 is the D-030
+  reachability test, :124 pins test:p1-cli's exact string, :125 pins test:p1-local's, :126-137 pin
+  the file list. `grep -n '"test"'` on that file returns nothing: there is no pin for the `test`
+  script string, exactly as §6 now says.
+
+N1 (two listeners are 102, not 120) — FIXED. §2.3, §2.4 and §9 now all use the 50/min client budget
+  and 2x50+2 = 102 against a limit that first refuses on the 121st claim. The 60/120 sentence is gone.
+
+N2 (seed.ts is a second agent_principals INSERT) — FIXED. `grep -rn "INSERT INTO swarm.agent_principals"`
+  over supabase/ src/ tests/ site/ returns 22 hits, of which exactly two are non-test:
+  supabase/functions/command/index.ts:4025 and src/cloud/seed.ts:157. W1 names both.
+
+N3 (the nine-line enumeration) — FIXED IN W6, still wrong in §6; see N1 below. I re-derived the set
+  independently. `grep -n "revoked_at = " supabase/functions/command/index.ts` gives 13 hits, of
+  which 11 are SET statements and 2 are `revoked_at = NULL` clauses (:4001, :4789). Reading the
+  UPDATE target above each of the 11:
+    :3576 swarm.agent_tokens      :3973 swarm.invitations
+    :4012 swarm.memberships       :4112 swarm.agent_principals
+    :4140 swarm.agent_tokens      :4172 swarm.renewal_grants
+    :4181 swarm.renewal_grants    :4208 swarm.agent_tokens
+    :4237 swarm.renewal_grants    :4428 swarm.grants
+    :5778 swarm.capability_urls
+  W6's four-line set (:3576, :4112, :4140, :4208) and its seven-line "everything else" list are
+  both exactly right, and together they account for all 11.
+
+N4 ("by intent") — FIXED in wording; one of its new citations is wrong, see N2.
+
+N5 (schema-qualify inside the trigger) — FIXED. W4 now says "every object schema-qualified, because
+  the function runs with SET search_path = pg_catalog like the two enqueue triggers it sits beside".
+
+N6 (citation drift) — mostly fixed; two of my own numbers were wrong (PART 0) and survive in the
+  document. Everything else I re-opened at 22e2bea resolved: read/index.ts:826-832 (the own-workspace
+  response, exactly those seven lines), read/index.ts:417-418, :437-451, :490-496;
+  durable-delivery.ts:21 (DELIVERY_CLAIM_RATE_LIMIT_PER_MINUTE = 120), :293 (FOR UPDATE OF d SKIP
+  LOCKED); runtime.ts:77 (LISTENER_IDLE_POLL_MS = 2_000), :1455-1456; read-health.ts:12
+  (LISTENER_THROUGHPUT_LAPSE_RATIO = 0.5), :40, :202-207, :253-261, :403, :404-413; cli.ts:4664;
+  control.ts:225 (STATUS_ALLOWED_KEYS), :377-381, :396-398, :550; credential-redaction.ts:19-22;
+  activity/index.ts:2, :135; RealtimeClient.js:12 (25000), :16 ([1000,2000,5000,10000]), :489;
+  20260723000001:213 (agent_tokens_by_principal); 20260731000001:79 (signal_deliveries_unacked_oldest);
+  20260905000010:58 (the cap of 8); 20260905000020:126, :221 (the REVOKE-from-PUBLIC precedent).
+  Also: package.json:22 shows check:edge naming FOUR entrypoints including
+  supabase/functions/activity/index.ts, so §6's L2c claim ("check:edge green because
+  activity/index.ts:2 imports the module") is correct — AGENTS.md's "three entrypoints" is the
+  stale text, not the spec.
+
+W1's volatile default, re-measured at a useful size. In a rolled-back transaction I added the column
+  with the exact default the spec writes:
+    ALTER TABLE swarm.agent_principals ADD COLUMN wake_id text NOT NULL
+      DEFAULT translate(encode(extensions.gen_random_bytes(32),'base64'),'+/=','-_');
+    -> 389 rows, 389 distinct wake_ids, min(length) = 43.
+  Draft 2 measured five rows; 389 distinct out of 389 is a much stronger control. The claim holds.
+
+===== PART 2 — DEFECTS =====
+
+D1. §2.2 W6 — swarm.rotate_wake_id() as specified RAISES, so every revocation-by-intent
+    command fails.
+CLAIM. "L2 defines swarm.rotate_wake_id(principal uuid): UPDATE swarm.agent_principals SET wake_id
+= <new value> WHERE principal_id = $1, SECURITY DEFINER, owner swarm_admin, SET search_path = swarm,
+extensions, pg_catalog, EXECUTE granted to swarm_command." L3 calls it from the token-revoke command
+(:4207-4216) and the principal-revoke path (:4111-4117), inside the command edge's transaction.
+WHAT IS WRONG. swarm_admin has no USAGE on schema extensions, and a plpgsql body is parsed at run
+time under the function's own search_path, where schema USAGE IS checked.
+  has_schema_privilege(role,'extensions','USAGE'):
+    postgres=true  anon=true  authenticated=true
+    swarm_admin=FALSE  swarm_command=FALSE  swarm_read=FALSE
+  has_function_privilege(role,'extensions.gen_random_bytes(integer)','EXECUTE'):
+    swarm_admin=true  swarm_command=true  swarm_read=true
+  pgcrypto is installed in schema `extensions`.
+  Live probe, three arms in one invocation. The same body,
+  `RETURN translate(encode(extensions.gen_random_bytes(32),'base64'),'+/=','-_')`, SECURITY DEFINER,
+  SET search_path = swarm, extensions, pg_catalog, EXECUTE to swarm_command, called after
+  SET LOCAL ROLE swarm_command:
+    owner swarm_admin (AS SPECIFIED)
+      -> ERROR: permission denied for schema extensions
+         CONTEXT: PL/pgSQL function zz_opus4_rot() line 3 at RETURN
+    owner postgres (control)                       -> 43-character id
+    owner swarm_admin after GRANT USAGE ON SCHEMA extensions TO swarm_admin (control, rolled back)
+                                                   -> 43-character id
+  Both functions dropped; leftover=0; ext_usage_after('swarm_admin')=false.
+CONSEQUENCE. The spec puts no exception guard on rotate_wake_id — correctly, it is not a best-effort
+side channel like the trigger. So the raise propagates: the AgentTokenRevoked and
+AgentPrincipalRevoked commands abort. Revoking an agent credential stops working the moment L3 lands
+on top of L2. That is worse than a lost wake; it breaks the revocation path this design leans on for
+rotation.
+Note the shape: draft 2's DB defect was that `gen_random_bytes` could not be NAMED under the tree's
+search_path convention. Draft 4 fixed the naming by qualifying it and left the PRIVILEGE unfixed.
+Qualifying a name does not grant schema USAGE.
+WHAT I ALSO MEASURED, WHICH CORRECTS AN INFERENCE OF MINE. The column DEFAULT is FINE. I expected it
+to fail for the same reason and it does not: a stored default is a parsed expression tree holding the
+function OID, so execution checks only EXECUTE on that OID, which swarm_command holds. Measured end
+to end — column added with the spec's default, then the edge's own INSERT INTO swarm.agent_principals
+(the seven columns of command/index.ts:4025-4035, not naming wake_id) run under SET LOCAL ROLE
+swarm_command: `INSERT 0 1`, with the identical INSERT as postgres as the control in the same
+transaction, both rolled back. W1's additive story survives; only W6's function is broken.
+WHAT TO CHANGE. Either own rotate_wake_id by `postgres` as W4 now does for the two trigger functions
+(measured working, and it keeps the reason in one place), or add GRANT USAGE ON SCHEMA extensions TO
+swarm_admin to L2's migration (measured working), or generate the id from pg_catalog only. Whichever
+is chosen, L2's test must call rotate_wake_id from inside SET LOCAL ROLE swarm_command and assert the
+returned/updated id — the spec's current test line says it "resolves gen_random_bytes under the
+function's own search_path", which is the right idea under the wrong name: search_path resolution is
+not the failing check, schema USAGE is.
+
+D2. §6 L2 — re-creating agent_delivery_read_context as "DROP/CREATE plus the re-GRANT" silently
+    changes its owner to postgres, restores EXECUTE to PUBLIC, and fails a test in a file no lane owns.
+CLAIM. §6's L2 cell enumerates the migration's contents and ends with "agent_delivery_read_context
+re-created with wake_id as its eleventh output column plus its re-GRANT to swarm_read (W3.1)". W3.1
+says the same: "a DROP / CREATE plus the re-GRANT, because an OUT-parameter change cannot CREATE OR
+REPLACE".
+WHAT IS WRONG. The live object carries three privilege statements, not one (20260731000001:495-500,
+repeated at 20260820000002:304-306):
+  ALTER FUNCTION ... OWNER TO swarm_admin;
+  REVOKE ALL ON FUNCTION ... FROM PUBLIC;
+  GRANT EXECUTE ON FUNCTION ... TO swarm_read;
+Measured live: prosecdef=true, owner=swarm_admin, acl={swarm_admin=X/swarm_admin,swarm_read=X/swarm_admin}.
+I ran exactly what §6 enumerates (DROP, CREATE with the 11th column, GRANT EXECUTE TO swarm_read)
+inside a rolled-back transaction:
+  new owner/acl: postgres  acl={=X/postgres,postgres=X/postgres,swarm_read=X/postgres}
+  has_function_privilege('anon',         '...','EXECUTE') = TRUE
+  has_function_privilege('authenticated','...','EXECUTE') = TRUE
+  has_function_privilege('public',       '...','EXECUTE') = TRUE
+CONSEQUENCE, two of them.
+1. tests/p1-server/command.test.ts:9267-9271 asserts FALSE for anon, authenticated and public on this
+   exact signature. It is reached by the test:p1-server glob (package.json:29), so it runs for L3 and
+   for every later lane. §6 gives that file to no lane. L2 as enumerated turns a green gate red in a
+   file its owner is not allowed to touch.
+2. The read edge's only SECURITY DEFINER stops running as swarm_admin and starts running as postgres,
+   which on this stack is rolbypassrls=true and rolcreatedb=true (measured). That is a real privilege
+   widening on the function that authenticates every agent read by token hash, introduced as a side
+   effect of adding an output column.
+WHAT TO CHANGE. Write all three statements into L2's enumerated contents, not one. This is the same
+class of error the document itself names: the enumeration in §6 is typed, and the code it is supposed
+to reproduce has three members.
+
+D3. §6 — L2b and L3 are both gated only on L2 and nothing orders them against each other; both hold
+    the exclusive local database.
+CLAIM. §6's own rule: "The local database is a file for this purpose: test:p1-local and
+test:p1-server need the one local stack and an exclusive slot (AGENTS.md;
+tests/p1-cli/test-gate-coverage.test.ts:19-21), so no two lanes that run them are ever 'in
+parallel'." The order paragraph: "L2b after L2 (same gate lines, same database). L3 after L2 (same
+database; its p1-server tests)." The table's "starts after" column says L2b: L2; L3: L1, L2.
+WHAT IS WRONG. Nothing sequences L2b against L3. Both become runnable the moment L2 merges. L2b runs
+tests/p1-local/idempotency-retention.test.ts; L3 runs tests/p1-server/wake-topic-in-responses.test.ts
+and tests/p1-server/wake-rotation.test.ts. Both suites need the one local stack and an exclusive slot,
+and L2b's migration (replacing purge_expired_idempotency_keys and setting the config row) is applied
+by a db:reset while L3's p1-server suite would be mid-run. That is the exact collision the paragraph
+says the order exists to prevent: "a db:reset by one lane while another's suite runs is the collision
+this order exists to prevent."
+This is my draft-3 D3 with a new pair. The fix there was to sequence L1 -> L2; the fix here is one
+clause: L3 after L2b (or L2b after L3). L4 already waits for both, which shows the dependency was
+seen and only the mutual ordering was missed.
+Checked and sound in the same paragraph: L0 and L2c genuinely touch no suite that holds the stack
+(L0's listed tests are pure; L2c edits tests/host-stderr-tail.test.ts and tests/listener-control.test.ts,
+both in the `npm test` literal list at package.json:23), and L6's site tests need no database.
+
+D4. §2.2 W1 / lane L2c — redactCredentialText is NOT the guard on lastErrorDetail or events.ndjson,
+    so L2c's one-constant change does not redact the topic where W1 says it will, and the file that
+    would is owned by no lane.
+CLAIM. W1: "The existing redactor does not cover it: CREDENTIAL_PREFIX_RE in
+src/host/credential-redaction.ts:19-21 matches only swm_(agt|inv|cap)_..., so redactCredentialText
+would pass a topic through unchanged into events.ndjson, lastErrorDetail, the stderr tail
+(src/host/stderr-tail.ts:43), and status. Lane L2c extends that regex ... (one alternation, one
+shared constant ...) ... Realtime's own refusal text quotes the topic ...; after L2c that string is
+redacted on the way into any log or `listen status`." §8's status-honesty row: "the topic never
+appears in status or logs".
+WHAT IS WRONG. The credential shape is typed out in FIVE places, and CREDENTIAL_PREFIX_RE is only one
+of them. Measured with `grep -rn "swm_(?:agt|inv|cap)_" src/ supabase/`:
+  src/host/credential-redaction.ts:20  CREDENTIAL_PREFIX_RE   <- the only one L2c edits
+  src/listener/supervisor.ts:172       a SECOND redactor, inside localDiagnostic (:170-177),
+                                       literal /swm_(?:agt|inv|cap)_[^\s"'\\]*/gi
+  src/listener/control.ts:436          status parser: rejects a lastErrorDetail matching
+                                       /swm_(?:agt|inv|cap)_/i
+  src/listener/control.ts:473          same for lastWorkerStderrTail
+  src/listener/control.ts:829          the listener-EVENT secret scan, applied to every string
+                                       written to events.ndjson
+And lastErrorDetail is produced by safeErrorDetail (supervisor.ts:179-181), which is localDiagnostic
+and nothing else. redactCredentialText never touches it. `grep -rn redactCredentialText src/ supabase/`
+returns exactly four call sites: credential-redaction.ts:29 (its own definition), host/sanitize.ts:15,
+host/stderr-tail.ts:43, activity/index.ts:135. Neither lastErrorDetail nor events.ndjson is among them.
+CONSEQUENCE. Of the four sinks W1 names, L2c reaches one (the stderr tail) plus the host update
+surface and the activity edge. It does not reach lastErrorDetail and it does not reach events.ndjson,
+which are two of the four the sentence promises. §2.3's STATUS_SENSITIVE_KEYS work is orthogonal: it
+rejects a KEY named `topic`, not a topic embedded inside a string VALUE, which is exactly the form the
+measured Realtime refusal text takes. And §6 gives src/listener/supervisor.ts to NO lane at all, so as
+written no lane may fix it; L4 owns control.ts but its cell says nothing about :436/:473/:829.
+This is my draft-3 D2 shape again: a stated behaviour whose implementation needs a file the lane table
+does not assign.
+WHAT TO CHANGE. Either give L2c src/listener/supervisor.ts and the three control.ts literals and have
+all five read the one exported constant (which is what "one shared constant" would then mean), or
+narrow W1 to the sinks redactCredentialText actually covers and say plainly that lastErrorDetail and
+events.ndjson are guarded separately by their own copies. §8's status-honesty row currently promises
+the wider claim.
+
+D5. §9 / §10 — the trigger privilege enumeration is incomplete: RLS on realtime.messages is a third,
+    load-bearing gate, and it fails silently.
+CLAIM. §9: "The privilege that matters for the trigger is USAGE on schema realtime plus INSERT on
+realtime.messages for the trigger function's owner (postgres, W4), not EXECUTE on realtime.send, which
+is PUBLIC; L2 verifies on a linked db query that the hosted postgres role holds both before its
+migration is pushed." W4 states the same pair. §10 repeats the pre-push check.
+WHAT IS WRONG. Holding both is not sufficient. Measured:
+  realtime.messages: relrowsecurity = TRUE, owner = supabase_realtime_admin
+  policies on realtime.messages with polcmd in ('a','*') (INSERT or ALL): 0
+  pg_roles: anon rolbypassrls=false; postgres rolbypassrls=TRUE
+  Negative and positive control in one invocation. `anon` holds BOTH privileges the spec names
+  (has_schema_privilege('anon','realtime','USAGE')=true,
+   has_table_privilege('anon','realtime.messages','INSERT')=true):
+    SET LOCAL ROLE anon; INSERT INTO realtime.messages (...)
+      -> ERROR: new row violates row-level security policy for table "messages"
+    same INSERT as postgres (rolbypassrls=true), same invocation
+      -> INSERT 0 1
+  Both in transactions that were rolled back; leftover rows = 0.
+So the third gate is `rolbypassrls` on the trigger function's owner (or ownership of
+realtime.messages). It is load-bearing because there is no INSERT policy at all: any non-bypassing
+role is refused by RLS, full stop.
+CONSEQUENCE. If the hosted `postgres` role does not carry BYPASSRLS, the RLS refusal is raised inside
+realtime.send's own `BEGIN ... EXCEPTION WHEN OTHERS THEN RAISE WARNING
+'ErrorSendingBroadcastMessage: %'` (read from its pg_get_functiondef on this stack), and anything left
+is swallowed by W4's own guard. Result: delivery rows commit, joins succeed, `listen status` says
+mode: "push" truthfully, and no wake is ever sent — the identical silent-failure shape that draft 4
+exists to remove, one privilege deeper. L2's row-asserting test catches it locally, where postgres does
+have BYPASSRLS, so it will pass locally and prove nothing about production. The pre-push linked query
+is the only control that can catch it, and its stated contents ("holds both") do not ask.
+WHAT TO CHANGE. Make the pre-push check three items, not two: USAGE on schema realtime, INSERT on
+realtime.messages, and `rolbypassrls` on postgres (or ownership of realtime.messages) — plus, cheaply,
+a count of INSERT policies on realtime.messages, because a hosted project that HAS one would change
+the answer.
+
+===== PART 3 — GAPS =====
+None. Each of the ask's seven requirements is answered somewhere: (1) §2.2, §2.4, §6; (2) §0, §1.3,
+§7; (3) §3; (4) §4; (5) §5; (6) §6; (7) §7. All five defects above are faults in HOW parts of (1), (3)
+and (6) are built, not absences.
+
+===== PART 4 — NITS =====
+N1. §6, L3's cell still says "the rotate_wake_id calls at the revocation-by-intent sites (W6, nine
+revoked_at statements classified in the PR)". W6 was corrected this draft to four (of eleven), and I
+re-derived all eleven against the code (PART 1, N3). The lane table is the text an implementer reads;
+it now contradicts §2.2 on the same page.
+N2. §2.2 W6, "What does not rotate": "device revoke (command/index.ts:4534)". Line 4534 is
+`UPDATE swarm.devices SET label = ..., last_seen_at = statement_timestamp()` — device registration,
+not revocation. And there is no device-revoke write anywhere in the tree: the only writes to
+swarm.devices are the INSERT at :4503 and that label update; `revoked_at` on devices appears only in
+reads (:2995, :4512) and in agent_delivery_read_context's liveness check. The list item is harmlessly
+vacuous (a path that does not exist cannot rotate), but the citation names a line that does something
+else.
+N3. Citation drift, including the two I introduced (PART 0):
+  STATUS_SENSITIVE_KEYS is control.ts:284-299, not :282-297.
+  The refusal is `count > limit` at command/index.ts:4905, and the audit + security_alerts block runs
+  :4906-4934. The document says :4905-4934 in §2.3 and :4904 / :4904-4933 in §2.4 — the two are
+  inconsistent with each other and one is wrong.
+  CREDENTIAL_PREFIX_RE spans credential-redaction.ts:19-22, not :19-21. Cosmetic.
+N4. §6, L2: the two new trigger functions are specified with an owner and no REVOKE. Every other
+function in this tree pairs `ALTER FUNCTION ... OWNER TO ...` with `REVOKE ALL ON FUNCTION ... FROM
+PUBLIC` (20260905000020:125-126, :220-221; 20260731000001:496-497). These two are the first SECURITY
+DEFINER functions in the schema owned by a role with rolbypassrls=true, so they are the ones that most
+deserve the REVOKE. Direct invocation is harmless (a trigger function called outside a trigger raises),
+so this is hardening and convention, not an exploit.
+N5. §2.2 W4: "The subtransaction cost is bounded by the recipient cap of 8 per signal." It is two
+subtransactions per delivery row, not one: realtime.send opens its own `BEGIN ... EXCEPTION` (read
+from its definition on this stack) inside W4's guard. Up to 16 per signal. Still bounded, still small;
+the sentence understates by 2x.
+N6. AGENTS.md says check:edge covers three entrypoints. package.json:22 names four, including
+supabase/functions/activity/index.ts. The spec's L2c reasoning is right and AGENTS.md is the stale
+text — worth a one-line correction there, not here.
+
+===== PART 5 — WHAT I CHECKED AND FOUND SOUND =====
+- W4's owner-postgres fix, measured with a positive and a negative control (PART 1, D1). This is the
+  substantive change of draft 4 and it works.
+- The DROP/CREATE window for agent_delivery_read_context: no CASCADE needed, and the running old read
+  edge's ten-column named SELECT executes against the eleven-column function. The stated production
+  order is safe (PART 1, D2).
+- W5's policy syntax: I created `CREATE POLICY ... ON realtime.messages FOR SELECT TO anon USING
+  (realtime.messages.extension = 'broadcast')` on this stack and it was accepted, then dropped it. The
+  three-part qualified column reference the spec writes is valid in a policy expression.
+  (leftover_pols = 0.)
+- W5's privilege inference: the ONE existing policy on realtime.messages is "workspace members receive
+  agent activity", polcmd 'r', TO authenticated, USING (extension='broadcast' AND
+  swarm.is_member(substring(topic,...)::uuid, auth.uid())). It works in production while
+  has_schema_privilege('authenticated','swarm','USAGE') is false, which is real support for "a policy
+  stores the function by OID, so anon needs EXECUTE and not USAGE". L2's first test is still owed and
+  the spec says so.
+- W1's volatile default at 389 rows, 389 distinct, length 43 (PART 1).
+- W1's INSERT-site enumeration: two non-test sites, both named.
+- W6's four-line revoke set and its seven-line complement: all 11 SET statements classified against
+  their UPDATE targets (PART 1, N3).
+- W4's ON CONFLICT reasoning: both enqueue triggers use ON CONFLICT DO NOTHING (20260905000020:171,
+  :210) and a conflicting row does not fire an AFTER INSERT FOR EACH ROW trigger, so a duplicate
+  enqueue does not double-wake.
+- W4's WAL argument: realtime.send INSERTs into realtime.messages, which Realtime reads by logical
+  decoding, and logical decoding emits only committed transactions. No wake can precede its delivery row.
+- §3.1's persistence diagnosis, unchanged and still right: durable-delivery.ts :195-211 and :212-231
+  mutate with no RETURNING and are invisible to DeliveryClaimLedgerResponse (:66-71); only :233-253
+  returns.
+- §6's gate facts, all four line numbers and all four pins (PART 1, D4).
+- 0.1.56 tolerance: command-client.ts:717-735 validates status/ok/event_ids only; signals.ts:1211-1218
+  validates only that `signals` is an array. Additive fields are ignored.
+- The realtime-js facts at node_modules/@supabase/realtime-js/dist/main/RealtimeClient.js:12
+  (HEARTBEAT_INTERVAL 25000), :16 (RECONNECT_INTERVALS [1000,2000,5000,10000]), :489
+  (accessTokenValue != tokenToSend).
+- The indexes §5 relies on exist: signal_deliveries_unacked_oldest (20260731000001:79) and
+  agent_tokens_by_principal (20260723000001:213).
+- Every arithmetic chain I re-derived in draft 3 is unchanged in draft 4 and still consistent (53,760
+  before; 2,190 after; 2,578 with a watcher; 37.4 and 1.4 per minute; $0.0044 per seat-day; 2x50+2 =
+  102 against a first refusal on the 121st).
+
+===== PART 6 — WHAT I DID NOT ESTABLISH =====
+- I did not run an end-to-end anon Realtime JOIN against a policy that calls a swarm-schema SECURITY
+  DEFINER function. I established the privilege shape and the policy syntax; the join itself remains
+  L2's first test, as §10 says.
+- My first attempt to prove D5 by building a role with USAGE + INSERT and no BYPASSRLS failed:
+  postgres cannot GRANT USAGE ON SCHEMA realtime ("no privileges were granted") and cannot ALTER
+  FUNCTION ... OWNER TO a role it cannot SET ROLE to. That probe produced a misleading rowcount and I
+  discarded it. D5 is proved instead with `anon`, which already holds both privileges and no BYPASSRLS,
+  against a postgres control.
+- Everything I measured is the LOCAL stack. The hosted project's postgres BYPASSRLS, its realtime
+  grants, its pgcrypto schema, and its swarm_admin privileges could all differ and must be measured
+  there the same way, with the same controls, before L2's migration is pushed. §10 lists a linked
+  query; D1 and D5 say what it must ask.
+- I did not verify the production counts (390,277; 1.47 M; 2.8 M; 1,716), the Supabase pricing and
+  limit figures in §7 and §9, or whether the idempotency purge cron is enabled on the hosted project.
+- I ran no npm gate. Nothing on this branch changes code, so no gate measures anything about this
+  spec; the §6 gate claims were checked by reading package.json and test-gate-coverage.test.ts.
+- I did not re-review the draft-3 Grok or Gemini arms' reasoning, only §11's summary of where their
+  items landed — except Grok's D1, which I re-derived independently from the code and confirm.
+
+===== SUMMARY =====
+DEFECTS: 5
+  D1 rotate_wake_id owned by swarm_admin raises "permission denied for schema extensions"; every
+     revocation-by-intent command would fail (measured, with two controls). The column DEFAULT is
+     fine — that part of my expectation was wrong and the measurement corrects it.
+  D2 L2's enumerated migration for agent_delivery_read_context omits the OWNER and the REVOKE FROM
+     PUBLIC, changing the read edge's only SECURITY DEFINER to a BYPASSRLS owner, restoring PUBLIC
+     EXECUTE, and failing tests/p1-server/command.test.ts:9267-9271, a file no lane owns (measured).
+  D3 L2b and L3 are both gated only on L2 and both hold the exclusive local database, breaking §6's
+     own rule.
+  D4 L2c's single-constant redaction does not reach lastErrorDetail or events.ndjson; localDiagnostic
+     (supervisor.ts:170-177) and three literals in control.ts carry their own copies, and
+     supervisor.ts is owned by no lane.
+  D5 §9/§10's "USAGE plus INSERT" is an incomplete privilege list; RLS on realtime.messages with zero
+     INSERT policies makes rolbypassrls a third gate that fails silently (measured, anon vs postgres).
+GAPS: 0
+NITS: 6
+
+Every draft-3 item this arm raised is fixed: D1 (measured working), D2 (measured buildable and
+deploy-safe), D3 (for that pair), D4 (all four line numbers), and N1-N6 apart from the two numbers I
+got wrong myself. The design's core continues to hold: the row is the truth, the wake is a hint, and
+none of the five defects above can lose a delivery. Four of them break something else — revocation, a
+gate, a privilege boundary, or the redaction promise — and the fifth would make push a silent no-op in
+production while status truthfully says "push".
+```
+
+QUOTE-BACK: # Push delivery: wake listeners from Supabase Realtime instead of polling
+VERDICT: FAIL
+REASON: Five defects remain on this SHA — rotate_wake_id as specified raises "permission denied for schema extensions" and would break every revocation-by-intent command, L2's re-created agent_delivery_read_context loses its owner and its REVOKE and reddens a test no lane owns, L2b and L3 still collide on the exclusive local database, L2c's redaction does not reach two of the four sinks W1 names, and the hosted pre-push privilege check omits the BYPASSRLS gate that makes the whole trigger fail silently.

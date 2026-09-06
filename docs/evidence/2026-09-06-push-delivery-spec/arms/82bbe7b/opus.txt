@@ -1,0 +1,148 @@
+D-036 ARM — ADVERSARIAL SYSTEMS (Opus), FINAL SHA
+Document: docs/design/2026-09-06-PUSH-DELIVERY.md at 82bbe7b (draft 7, final)
+Branch: spec/push-delivery. Prior report by this arm: arms/a793eaf/opus.txt (draft 6).
+Scope of this pass, per the arm brief: (1) are my two draft-6 defects and eight nits
+folded as §11 claims, measured against the code; (2) is the short-until bound as now
+stated honest and complete; (3) did anything in a793eaf..82bbe7b introduce a new
+false statement. I did not re-attack what I passed on draft 6.
+
+=====================================================================
+WHAT I CHECKED
+=====================================================================
+Diff read in full: git diff a793eaf..82bbe7b -- docs/design/2026-09-06-PUSH-DELIVERY.md
+(the spec's changes are 33 lines: §0, §2.1, §2.2 W3.1 and W4, §2.3's next() bullet,
+§2.4 two rows, §6 L2c and L8, §7's 4.6 M derivation, §9's new bullet, §11's table).
+
+Code and files re-read for this pass (file:line, each confirmed unless a finding says
+otherwise):
+  supabase/functions/command/durable-delivery.ts:212-231 (step 3, terminalize as
+    'expired'), :279-294 (candidates CTE), :290 (the s.until filter), :253, :367
+  supabase/functions/command/index.ts:574-579 (SIGNAL_MAX_UNTIL_MS,
+    SIGNAL_DEFAULT_UNTIL_MS: working-on 24 h, ask 7 d, note 30 d), :1842-1845
+    (integer(cmd.until_ms, 1)), :6964-6975, :7020-7079 (postSignal's until CTE),
+    :7990-8023 (thread-reply horizon), :8046-8047
+  src/cli.ts:2565-2581 (signalDuration: /^([1-9]\d*)(m|h|d)$/, floor 1 m, cap 30 d),
+    :3042, :3305, :4117-4118, :5133-5137
+  src/cloud/delivery-receipts.ts:14, :131 ('expired' is a receipt outcome)
+  site/src/components/app/LiveDashboard.astro:13319, site/src/lib/commonswarm.ts:2403
+    (the app renders receipt outcome 'expired', so a human sender sees it too)
+  supabase/functions/read/index.ts:483-487, :490-496, :824-833
+  supabase/migrations/20260723000001_p1_schema.sql:210-211
+  AGENTS.md:87, :112; package.json:22 (check:edge names four entrypoints)
+  arms/a793eaf/grok.txt (PASS), arms/a793eaf/gemini.txt (PASS) — §11's verdicts for
+    those two arms are stated correctly.
+
+=====================================================================
+1. MY DRAFT-6 FINDINGS AS §11 CLAIMS
+=====================================================================
+D1 (the unconditional "never a delivery") — FOLDED in §0, §2.1, both §2.4 rows, and
+§9. The mechanism as now written is exact against the code: step 3 terminalizes
+unleased unacked rows whose signal has passed `until` as `ack_outcome = 'expired'`
+(:212-231, the predicate at :230), the candidate CTE excludes them (:290), the edge
+accepts `until_ms` from 1 ms (:1844) up to 30 d (:574), the CLI floor is 1 minute
+(cli.ts:2567), the per-kind defaults are 24 h / 7 d / 30 d (:575-579), and "the
+sender's receipt reads expired" holds on both surfaces — the agent receipt path
+(delivery-receipts.ts:14) and the app (LiveDashboard.astro:13319). The bound is
+stated, not hidden, and §9 names two ways to close it. One thing in the new text is
+still false: DEFECT 1 below.
+
+D2 (L2's DROP/CREATE pointed at the superseded body) — FOLDED in W3.1: the live body
+is named as 20260820000002:103-301, the superseded file is named as superseded, the
+three privilege statements are cited at :301/:302/:306, command.test.ts:3580-3582 is
+added, and L2 is told to run test:p1-server. One surface of the same claim family was
+not swept: NIT 1.
+
+The eight nits: §0 now says "a read plus a claim every 15 seconds" (N1, folded);
+W3.1's privilege citations are the real lines (N2, folded); "35 on the local stack"
+matches what I measured (N3, folded); L2c's test cell now separates the two redacting
+sites from the three refusing ones (N4, folded — the sentence matches control.ts:436,
+:473, :829 behaviour); L8 says two AGENTS.md places and I confirmed lines 87 and 112
+(N5, folded); the next() bullet now carries the three conditions (N7, folded); §7's
+4.6 M is now 10,000 × 366 + 5,000 × 196 = 4.64 M with the watcher on half the seats
+(N8, folded, arithmetic re-run). N6 (off-by-one citations): see NIT 3 — and three of
+the four items in my own draft-6 N6 were wrong; I correct them there.
+
+=====================================================================
+2. FINDINGS
+=====================================================================
+DEFECT 1. §2.1 (and §0, both §2.4 rows, §9's bullet (a)) — the bound's exposure set is
+stated as "exactly the set of signals with `--until` under LISTENER_RECONCILE_POLL_MS".
+It is not. A thread reply with NO `--until` inherits its root's remaining horizon.
+
+  command/index.ts:7029-7038 — the `until_value` CTE. When `untilExplicit` is false
+  (i.e. the caller sent no `until_ms`), the value is
+  `LEAST(now + default, COALESCE(untilCeiling, now + default))`, and `untilCeiling`
+  is the thread root's `until` (:8046). The explicit branch does not clamp; it is
+  refused instead (:8004-8023, and the WHERE at :7072-7073).
+
+So a `cswarm ask --thread <root>` (or any directed reply) into a thread whose root has
+40 seconds left is stored with `until = now + 40 s` although nobody typed `--until`
+and the kind default is 7 days. That delivery sits in exactly the window the bound
+describes: a dropped wake, a 300 s reconcile, step 3 terminalizes it as `expired`.
+
+Two consequences, both in text the diff introduced:
+  - §2.1's "the exposure is exactly the set of signals with `--until` under
+    `LISTENER_RECONCILE_POLL_MS`" and §0's "a signal whose sender set an expiry
+    shorter than the reconcile interval" are both false for this path; the sender set
+    nothing.
+  - §9's remedy (a), "the edge refuses or clamps `until_ms` below 2 ×
+    LISTENER_RECONCILE_POLL_MS for directed signals", is written against `until_ms`
+    only. Built as written it would leave the clamped-reply path open while the spec
+    says the bound is closed. Remedy (b) (a second wake at `until − margin`) covers
+    both, because it keys on the stored `until`.
+Fix, one clause and one qualifier: say the exposure is every signal whose stored
+`until` is under the reconcile interval — signals posted with `--until` below it, and
+thread replies clamped to a nearly-expired root (`command/index.ts:7029-7038`) — and
+scope §9(a) to the stored value rather than to `until_ms`. L7's measurement line
+already says "signals under 5 minutes", which is the right instrument for both.
+
+GAPS: none. All seven items of the ask remain answered; nothing the diff touched
+removed an answer.
+
+NIT 1. §6, the L2 row's ownership cell still reads "`agent_delivery_read_context`
+re-created with `wake_id` as its eleventh output column **plus its re-`GRANT` to
+`swarm_read`** (W3.1)". "Its re-GRANT" is the exact wording W3.1 now repudiates (a
+re-create with only the GRANT leaves it owned by `postgres` with EXECUTE to PUBLIC),
+and the cell does not name the live body. The "(W3.1)" pointer keeps it buildable, so
+this is a nit and not a repeat of D2; it is the surviving surface of that claim family.
+Fix: "plus the three privilege statements, from the live body (W3.1)".
+
+NIT 2. §2.1 cites `durable-delivery.ts:283` for "the claim's candidate select excludes
+rows whose signal has passed it". :283 is the JOIN's `ON s.id = d.signal_id`; the
+filter is `AND s.until > statement_timestamp()` at :290, inside the CTE at :279-294.
+The spec inherited this citation from my draft-6 report; the error is mine, and it
+should not ship in the spec.
+
+NIT 3. §11 records "off-by-one citations" as folded. One is still open and three were
+not errors. Open: the column comment is `20260723000001:210-211`
+(`COMMENT ON COLUMN … token_hash` at :210, its string at :211); §2.2 says `:211-212`.
+Correction to my own draft-6 N6, measured again this pass: the spec's
+`read/index.ts:490-496` (the `record_renewal_grant_use` statement), `:826-832` (the
+inbox response object) and `:483-487` (the foreign-workspace empty branch) are all
+CORRECT as the spec has them; my draft-6 nit claiming :491-497, :826-833 and :484-488
+was wrong on all three, and §11 should not carry them as folded fixes.
+
+=====================================================================
+3. NEW FALSE STATEMENTS IN a793eaf..82bbe7b
+=====================================================================
+One: the "exactly" in §2.1 and the "sender set an expiry" framing in §0 and §2.4
+(DEFECT 1). Everything else the diff added is true against the code — the §2.1
+mechanism sentence, the 35-function count, W3.1's live-body and privilege lines, the
+L2c test cell, the L8 two-places correction, §2.3's next() signature, §7's 4.6 M, and
+§11's report of Grok's and Gemini's draft-6 verdicts (both PASS, files present).
+
+=====================================================================
+4. WHAT I DID NOT ESTABLISH
+=====================================================================
+- How often a nearly-expired thread root actually receives a directed reply. I
+  established the code path and the clamp, not its frequency; frequency changes the
+  priority of DEFECT 1, not its correctness.
+- Anything on the hosted project. §9's four-item pre-push privilege check is still the
+  right instrument and is still unrun.
+- The anon-policy-calls-a-definer question (§10, L2's first test). Unrun, as before.
+- I ran no database probes this pass; §11's privilege claims were measured in my
+  draft-6 pass with controls and are unchanged in the diff.
+
+QUOTE-BACK: # Push delivery: wake listeners from Supabase Realtime instead of polling
+VERDICT: FAIL
+REASON: The newly written bound is honest about the mechanism but not complete about its exposure — §2.1 says it is "exactly the set of signals with `--until` under LISTENER_RECONCILE_POLL_MS" while a thread reply with no `--until` is clamped to a nearly-expired root's horizon (`command/index.ts:7029-7038`), which also leaves §9's remedy (a) unable to close the bound it claims to close.

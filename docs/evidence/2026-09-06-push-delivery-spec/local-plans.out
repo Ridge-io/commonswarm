@@ -1,0 +1,67 @@
+=== claim candidates plan ===
+CTE Scan on candidates (actual time=0.023..0.023 rows=0 loops=1)
+  Buffers: shared hit=2
+  CTE candidates
+    ->  Limit (actual time=0.022..0.022 rows=0 loops=1)
+          Buffers: shared hit=2
+          ->  LockRows (actual time=0.021..0.021 rows=0 loops=1)
+                Buffers: shared hit=2
+                ->  Nested Loop (actual time=0.021..0.021 rows=0 loops=1)
+                      Join Filter: (s.id = d.signal_id)
+                      Buffers: shared hit=2
+                      ->  Index Scan using signal_deliveries_unacked_oldest on signal_deliveries d (actual time=0.021..0.021 rows=0 loops=1)
+                            Index Cond: ((recipient_agent_principal_id = '2121f81d-71c1-44be-ba91-11badb2b02dd'::uuid) AND (workspace_id = '292be0f9-ca5d-43ed-a6f7-31354fe7fe56'::uuid))
+                            Filter: ((acked_at IS NULL) AND (lease_id IS NULL) AND (attempt_count < 10))
+                            Buffers: shared hit=2
+                      ->  Index Scan using signals_workspace_newest on signals s (never executed)
+                            Index Cond: (workspace_id = '292be0f9-ca5d-43ed-a6f7-31354fe7fe56'::uuid)
+                            Filter: (until > statement_timestamp())
+Planning:
+  Buffers: shared hit=405
+Planning Time: 0.937 ms
+Execution Time: 0.068 ms
+=== idempotency purge plan ===
+Delete on idempotency_keys
+  ->  Index Scan using idem_purge on idempotency_keys
+        Index Cond: (created_at < (now() - '1 day'::interval))
+=== audit purge plan ===
+Delete on audit_log
+  ->  Index Scan using audit_by_cred on audit_log
+        Index Cond: (occurred_at < (now() - '90 days'::interval))
+=== table sizes local ===
+audit_log|0|600 kB
+file_versions|0|168 kB
+idempotency_keys|0|808 kB
+signal_deliveries|0|336 kB
+signal_recipients|0|104 kB
+signals|0|552 kB
+=== is_member ===
+CREATE OR REPLACE FUNCTION swarm.is_member(p_workspace uuid, p_user uuid)
+ RETURNS boolean
+ LANGUAGE sql
+ STABLE SECURITY DEFINER
+ SET search_path TO 'swarm', 'pg_catalog'
+AS $function$
+  SELECT EXISTS (
+    SELECT 1
+    FROM swarm.memberships AS m
+    JOIN swarm.workspaces AS w
+      ON w.workspace_id = m.workspace_id
+     AND w.archived_at IS NULL
+    WHERE m.workspace_id = p_workspace
+      AND m.user_id = p_user
+      AND m.revoked_at IS NULL
+  )
+$function$
+
+=== file_versions indexes ===
+CREATE UNIQUE INDEX file_versions_pkey ON swarm.file_versions USING btree (version_id)
+CREATE UNIQUE INDEX file_versions_file_id_version_n_key ON swarm.file_versions USING btree (file_id, version_n)
+CREATE INDEX file_versions_workspace_state ON swarm.file_versions USING btree (workspace_id, state)
+CREATE INDEX file_versions_pending_created ON swarm.file_versions USING btree (created_at) WHERE (state = 'pending'::text)
+CREATE UNIQUE INDEX file_versions_file_workspace_version ON swarm.file_versions USING btree (file_id, workspace_id, version_n)
+CREATE INDEX file_versions_file_state_version ON swarm.file_versions USING btree (file_id, state, version_n)
+=== realtime.send signature + grants ===
+payload jsonb, event text, topic text, private boolean
+PUBLIC|EXECUTE
+postgres|EXECUTE
