@@ -12,7 +12,14 @@ import {
 import { OPENCODE_FORCED_PERMISSION_TOOLS } from "../src/host/bounds.js";
 import type { ListenerStatus } from "../src/listener/control.js";
 import {
+  IDLE_POLL_DEFAULT_MS,
+  IDLE_POLL_MAX_MS,
+} from "../src/cloud/idle-poll.js";
+import {
   emptyListenerReadHealth,
+  parseListenerReadHealth,
+  recordListenerClaim,
+  recordListenerClaimCadence,
   recordListenerReadRetry,
 } from "../src/listener/read-health.js";
 import { readFileSync } from "node:fs";
@@ -342,4 +349,84 @@ test("a full-hour claim ratio below 0.50 is a host lapse; 0.50 is not", () => {
   );
   assert.doesNotMatch(threshold, /listener_claim_throughput_lapse/);
   assert.match(threshold, /^Listener ready /);
+});
+
+const HOUR_START = "2026-09-01T10:00:00.000Z";
+const NEXT_HOUR = "2026-09-01T11:00:00.000Z";
+const CLAIMS_HEALTHY_AT_60S_LAPSE_AT_15S = 60;
+
+function healthHourThenReset(
+  hourCadenceMs: number,
+  claims: number,
+  laterCadenceMs: number,
+) {
+  let health = recordListenerClaimCadence(
+    emptyListenerReadHealth(),
+    hourCadenceMs,
+    HOUR_START,
+  );
+  for (let i = 0; i < claims; i++) {
+    health = recordListenerClaim(health, HOUR_START);
+  }
+  return recordListenerClaimCadence(health, laterCadenceMs, NEXT_HOUR);
+}
+
+test("an hour idled at 60s does not lapse after a delivery resets cadence to 15s", () => {
+  const health = healthHourThenReset(
+    IDLE_POLL_MAX_MS,
+    CLAIMS_HEALTHY_AT_60S_LAPSE_AT_15S,
+    IDLE_POLL_DEFAULT_MS,
+  );
+  const rendered = renderListenerStatus(
+    readHealthStatus(health),
+    undefined,
+    Date.parse(NEXT_HOUR),
+  );
+  assert.doesNotMatch(rendered, /listener_claim_throughput_lapse/);
+  assert.match(rendered, /^Listener ready /);
+});
+
+test("an hour wedged at 15s still lapses after cadence is later 60s", () => {
+  const health = healthHourThenReset(
+    IDLE_POLL_DEFAULT_MS,
+    CLAIMS_HEALTHY_AT_60S_LAPSE_AT_15S,
+    IDLE_POLL_MAX_MS,
+  );
+  const rendered = renderListenerStatus(
+    readHealthStatus(health),
+    undefined,
+    Date.parse(NEXT_HOUR),
+  );
+  assert.match(rendered, /^Listener LAPSE /);
+  assert.match(rendered, /listener_claim_throughput_lapse/);
+  assert.match(rendered, /60\/240 expected \(0\.250\)/);
+});
+
+test("claim-hour parse keeps old files and records per-hour cadence", () => {
+  const oldFile = parseListenerReadHealth({
+    ...emptyListenerReadHealth(),
+    claimCadenceMs: IDLE_POLL_DEFAULT_MS,
+    claimHours: [{ hourStart: HOUR_START, claims: 60 }],
+  }, true);
+  assert.ok(oldFile);
+  assert.equal(oldFile.claimHours[0]?.cadenceMs, undefined);
+
+  const recorded = recordListenerClaimCadence(
+    emptyListenerReadHealth(),
+    IDLE_POLL_MAX_MS,
+    HOUR_START,
+  );
+  const parsed = parseListenerReadHealth(recorded, true);
+  assert.ok(parsed);
+  assert.equal(parsed.claimHours[0]?.cadenceMs, IDLE_POLL_MAX_MS);
+
+  assert.equal(parseListenerReadHealth({
+    ...recorded,
+    claimHours: [{
+      hourStart: HOUR_START,
+      claims: 1,
+      cadenceMs: IDLE_POLL_MAX_MS,
+      extra: true,
+    }],
+  }, true), null);
 });

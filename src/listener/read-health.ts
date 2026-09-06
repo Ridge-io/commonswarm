@@ -27,6 +27,8 @@ export interface ListenerReadRetryMinute {
 export interface ListenerClaimHour {
   hourStart: string;
   claims: number;
+  /** Cadence in force during this hour; absent on files written before per-hour scoring. */
+  cadenceMs?: number;
 }
 
 export interface ListenerReadHealth {
@@ -199,12 +201,22 @@ export function recordListenerReadRecovery(
   };
 }
 
-/** Record the configured claim cadence used to compute an expected hourly count. */
+/** Record the claim cadence in force at `ts` for that hour's expected count. */
 export function recordListenerClaimCadence(
   health: ListenerReadHealth,
   cadenceMs: number,
+  ts: string,
 ): ListenerReadHealth {
-  return { ...health, claimCadenceMs: cadenceMs };
+  const hourStart = bucketStart(ts, HOUR_MS);
+  const claimHours = health.claimHours.map((row) => ({ ...row }));
+  const hour = claimHours.find((row) => row.hourStart === hourStart);
+  if (hour) hour.cadenceMs = cadenceMs;
+  else claimHours.push({ hourStart, claims: 0, cadenceMs });
+  return {
+    ...health,
+    claimCadenceMs: cadenceMs,
+    claimHours: trimNewest(claimHours, LISTENER_CLAIM_HOUR_CAP),
+  };
 }
 
 /** Increment one local claim-throughput hour. */
@@ -312,8 +324,19 @@ export function parseListenerReadHealth(
   for (const value of row.claimHours) {
     if (!value || typeof value !== "object" || Array.isArray(value)) return null;
     const hour = value as Record<string, unknown>;
-    if (!hasExpectedKeys(hour, ["hourStart", "claims"], rejectUnknownKeys) ||
+    if (!hasExpectedKeys(hour, ["hourStart", "claims"], false) ||
       !validTimestamp(hour.hourStart) || !validCount(hour.claims)) return null;
+    if (
+      rejectUnknownKeys &&
+      Object.keys(hour).some((key) =>
+        key !== "hourStart" && key !== "claims" && key !== "cadenceMs"
+      )
+    ) return null;
+    if (
+      hour.cadenceMs !== undefined &&
+      !(typeof hour.cadenceMs === "number" &&
+        Number.isSafeInteger(hour.cadenceMs) && hour.cadenceMs >= 1)
+    ) return null;
   }
   return {
     currentEpisodeStartedAt: row.currentEpisodeStartedAt as string | null,
@@ -333,10 +356,14 @@ export function parseListenerReadHealth(
       retries: minute.retries as number,
     })),
     claimCadenceMs: row.claimCadenceMs as number | null,
-    claimHours: (row.claimHours as Array<Record<string, unknown>>).map((hour) => ({
-      hourStart: hour.hourStart as string,
-      claims: hour.claims as number,
-    })),
+    claimHours: (row.claimHours as Array<Record<string, unknown>>).map((hour) => {
+      const cadenceMs = hour.cadenceMs;
+      return {
+        hourStart: hour.hourStart as string,
+        claims: hour.claims as number,
+        ...(typeof cadenceMs === "number" ? { cadenceMs } : {}),
+      };
+    }),
   };
 }
 
@@ -400,10 +427,15 @@ export function summarizeListenerReadHealth(
     const claimsByHour = new Map(
       health.claimHours.map((row) => [row.hourStart, row.claims]),
     );
-    const expectedClaims = HOUR_MS / health.claimCadenceMs;
+    const cadenceByHour = new Map<string, number>();
+    for (const row of health.claimHours) {
+      if (row.cadenceMs !== undefined) cadenceByHour.set(row.hourStart, row.cadenceMs);
+    }
     for (let hour = first; hour < currentHour; hour += HOUR_MS) {
       const hourStart = new Date(hour).toISOString();
       const claims = claimsByHour.get(hourStart) ?? 0;
+      const cadenceMs = cadenceByHour.get(hourStart) ?? health.claimCadenceMs;
+      const expectedClaims = HOUR_MS / cadenceMs;
       claimThroughputHours.push({
         hourStart,
         claims,

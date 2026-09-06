@@ -425,6 +425,7 @@ export async function runListenerSupervisor(
         readHealth: recordListenerClaimCadence(
           status.readHealth ?? emptyListenerReadHealth(),
           event.intervalMs > 0 ? event.intervalMs : 1,
+          event.ts,
         ),
         updatedAt: event.ts,
       };
@@ -463,6 +464,7 @@ export async function runListenerSupervisor(
             readHealth: recordListenerClaimCadence(
               status.readHealth ?? emptyListenerReadHealth(),
               event.cadenceMs,
+              event.ts,
             ),
           }),
       });
