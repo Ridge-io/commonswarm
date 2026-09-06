@@ -2382,3 +2382,12 @@ states; the live policy had published "GitHub, Inc.." and now does not. Deployed
 live on `/invite` and `/app`, `/privacy` names Google LLC. Not established: a real Google sign-in
 (operator, step 9 of the checklist); account linking on an address that already has GitHub.
 Filed: `cswarm login` still hardcodes GitHub (`src/cloud/auth.ts:227`).
+
+## 2026-09-06 06:xx UTC — L2c wake-topic redaction LANDED (merge 6905e17)
+
+`lane/wake-redaction` 3920d32 (Grok author): one `SECRET_SHAPE_RE` covers `swm_{agt,inv,cap}_`
+and `cswarm-wake:` + 43 base64url chars at all five sites (stderr/tool titles, localDiagnostic,
+events.ndjson, lastErrorDetail, stderr tail). Arms: Gemini PASS (six refutations attempted) and
+Opus PASS (mutation reran in a throwaway copy; `{43}` proven from the spec's generator). Evidence:
+`docs/evidence/2026-09-06-wake-redaction/arms-3920d32/`. Client-only; ships in the next release.
+Worktree and branch removed. Not established: check:edge by the Opus arm (Grok's report: exit 0).
