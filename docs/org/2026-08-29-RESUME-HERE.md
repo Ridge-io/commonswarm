@@ -2747,3 +2747,15 @@ second attendance surface beside the hook, so `--allow-unattended` is only an ex
 `listen status` names the attending surface; docs + AGENTS.md trap. Arms Grok + Gemini; ships as 0.1.61
 and every seat restarts on it. Queued behind it: CSLaptopLead's three lanes (notify-full-body and two
 more) awaiting the lead's merge.
+
+## 2026-09-06 11:2x UTC — CSLaptopLead's three lanes MERGED (main 5c271eb), site deployed
+
+`lane/notify-full-body` (notify line carries the full body under the snippet cap; Codex FAIL on 727f4c44
+upheld by the lead and fixed in round 2 daebc48d, Grok PASS + Gemini PASS; Codex arm waived by the
+operator, signal 460e3451), `lane/hook-preview-1000` (docs/evidence only), `lane/markdown-wordwrap-qa`
+(markdown block rhythm in the feed and brain, QA fixtures, Grok PASS + Gemini PASS). Gates on the merged
+tree: 898/0, p1-cli 490/0, check:edge 4/4, site 522/0/1 skipped, identity ok
+(`scripts/check-agent-trailers.sh` exits 2 "could not run" in this checkout — hooks are not installed
+here; the lanes ran it green on their host). Remote lane branches deleted after `git cherry` showed
+nothing unmerged; the laptop worktrees under `scratchpad/listener-65415/` removed over SSH. Site
+deployed; `/app` 200 with the dashboard chunk from this build.
