@@ -1,0 +1,139 @@
+ARM: Opus (claude, adversarial exact review) — re-review after the fix
+LANE: L7 wake-measure
+SHA: 2b1a402c6fa79e0dcaa7c8367f913d40ef7623e2 on lane/wake-measure
+PRIOR ARM: arms-4063e1dc.../ARM-opus.txt -> VERDICT: FAIL (one wrong number)
+
+QUOTE-BACK (first `diff --git` line of the frozen DIFF.patch):
+diff --git a/docs/design/2026-09-06-PUSH-DELIVERY.md b/docs/design/2026-09-06-PUSH-DELIVERY.md
+
+================================================================
+1. THE FAIL IS CLEARED
+================================================================
+Prior defect: §8's Realtime-down row said the 0.1.58 listener "stayed
+`push` for 80 s after stop" while citing a file containing no such number.
+
+NOW (docs/design/2026-09-06-PUSH-DELIVERY.md, Realtime-down row):
+  "**0.1.58:** mode never flipped to `poll` after the stop —
+   `detectPollMs: null`, `detectWallMs: 535397`
+   (`probes/realtime-down-0.1.58.json`)."
+
+Checked against E/probes/realtime-down-0.1.58.json:
+  :3  "detectPollMs": null          -> quoted verbatim
+  :4  "detectWallMs": 535397        -> quoted verbatim
+  :5-8 "detectWake": {"mode":"push","reconnects":0,...}
+        -> supports "never flipped to poll"
+Both values are now literal quotes of the named file, and the claim
+("never flipped") is exactly what `detectPollMs: null` plus a `push`
+detectWake establishes — no derived or rounded figure to go wrong.
+
+`grep -o '80 s'` over the whole design doc returns ZERO hits: the wrong
+number is gone from the document, not merely from that one cell.
+
+================================================================
+2. NOTHING ELSE MOVED
+================================================================
+`git diff 4063e1dc..2b1a402c -- docs/design/2026-09-06-PUSH-DELIVERY.md`
+is 2 content lines (one `-`, one `+`), and both are the Realtime-down row.
+Every other §8 cell is byte-identical to the text I verified at 4063e1dc,
+so all of the following carry forward unchanged and re-confirmed:
+  invocations before 16+14+40=70 (state/before/counts.json:14-19)
+  invocations after  2+2+39=43   (state/after-0.1.60-clean/counts.json:14-19)
+  seat claims 10 / 2             (recounted in-window from events.ndjson)
+  rows 0/0/0 both sides          (counts.json rows block; psql-derived)
+  wake latency 525.7 / 937 / 150 / n=20 (recomputed from the raw array)
+  anon control 20/20 and 19/19
+  realtime-down 0.1.60: 65 ms; 14.5/15.7/10.1/1.0/1.1 s; max 15.7 s
+  post-restart push / reconnects 1 / subscribedAt 08:27:19.866Z
+  wake dropped 128.6 / 429.0 / 729.5 s; trigger D -> O
+  rotation wake_id changed, CHANNEL_ERROR / SUBSCRIBED
+  honesty grep 0 with a live positive control on all three subjects
+  production 6 rows: claim 1+2, ack 1+2, post_signal 1+1
+  per-minute 7.0 / 4.3 / 1.0 / 0.2
+The full file:line derivation for each is in the prior arm file and is not
+repeated here; I re-ran the diff to prove none of them changed.
+
+================================================================
+3. README ADDITIONS CHECKED AGAINST THE FILES
+================================================================
+R1. New Binaries row: "| `bin/v0.1.60/cswarm` | 0.1.60 |
+    `bin/v0.1.60/cswarm.sha256` (a57ac093…) |"
+    - the sha256 file and the bytes agree: recomputed
+      a57ac0935b01be5bb73a48a440f49a230489c959cbd8571d8e5abb18a8fd7958.
+      Prefix a57ac093 MATCHES.
+    - version 0.1.60 confirmed from the bundle's build-time substitution:
+      `if ("0.1.60".length > 0) { return "0.1.60";`
+    - bin/v0.1.60/{cswarm,cswarm.sha256,package.json} are all tracked at
+      this SHA (`git ls-tree -r HEAD -- .../bin/` lists nine files, three
+      per version). The tree matches the README table. CONFIRMED.
+R2. "'After' in §8 is 0.1.60 (the 0.1.59 wake fix plus the watcher); the
+    0.1.58 runs stay under `state/after/` and `probes/*-0.1.58.json`".
+    Both paths exist and hold the 0.1.58 record. This retires the stale
+    "'After' is 0.1.58" sentence I flagged as N3. FIXED.
+R3. Reproduce command:
+    "AFTER_BIN=docs/evidence/2026-09-06-push-delivery-measured/bin/v0.1.60/cswarm
+     AFTER_LABEL=after-0.1.60-clean scripts/measure-idle-cost.sh"
+    Checked against scripts/measure-idle-cost.sh: AFTER_BIN is read at :23
+    and AFTER_LABEL at :24, both `${VAR:-default}` overridable; AFTER_LABEL
+    is what run_idle_window uses to name `$EVIDENCE/state/$label`, and the
+    committed dir is `state/after-0.1.60-clean` — the label matches the
+    published artifact exactly. My N4 is FIXED.
+R4. "The 0.1.57 honesty grep (before column) was run by hand over
+    `state/before/` and is not in `honesty/probe.txt`, which the script
+    writes for the after seat only."
+    Correct on both halves: honesty() in the script takes
+    "$EVIDENCE/state/$AFTER_LABEL", and probe.txt's three sections are the
+    after status JSON, the after events.ndjson, and serve.log. I re-ran the
+    before-dir grep myself: `grep -rc 'cswarm-wake:' state/before/` is 0 in
+    every file. The §8 before-honesty claim is true and the README now says
+    honestly that it is hand-run and uncontrolled. My N1 is ADDRESSED (the
+    gap is disclosed rather than closed, which is the right call for a
+    trivially-true negative).
+
+================================================================
+4. SECRET SCAN AT THIS SHA
+================================================================
+Every file touched between 4063e1dc and 2b1a402c (design doc, README, and
+eight `brain-digest.json` / `delivery-journal.json` state files) scanned in
+their committed form for `cswarm-wake:` + 43 chars and for `swm_agt_` +
+16 chars: ZERO hits. The tree-wide result from the prior arm still holds —
+no wake topic and no agent token value is committed; `swm_agt_` appears
+only as a prefix literal in the three bundles and as the generator at
+harness/seed-local.mjs:46. PASS.
+
+================================================================
+5. SCRIPT
+================================================================
+scripts/measure-idle-cost.sh is unchanged at this SHA. `bash -n` exit 0;
+no `--linked`, no production ref, no deploy or db push; all I/O is
+127.0.0.1:54321 and `docker exec supabase_db_cloud-swarm psql`. PASS.
+
+================================================================
+6. REMAINING NITS (none blocking)
+================================================================
+N2 (carried, unfixed): the 65 ms figure still cites "`remaining-probes` log
+   08:25:38.147Z", and that run log is not committed (only
+   harness/remaining-probes.mjs is). The number itself IS in the committed
+   probes/realtime-down-0.1.60.json:3, cited in the same cell, so the
+   number has a file even though the log citation dangles.
+N5: `method.cadence` inside both counts.json files still reads
+   "after = 0.1.58 push + 5min reconcile", including in the
+   after-0.1.60-clean file. Machine-written string, contradicted by the
+   README and §8; harmless to every number but stale.
+N6: the reproduce command leaves SKIP_BEFORE unset, so a naive re-run also
+   re-measures the before window. Cosmetic.
+
+================================================================
+7. NOT ESTABLISHED BY THIS ARM
+================================================================
+- I did not run the measurement script, the local stack, or any probe; all
+  values are recomputed from committed artifacts only.
+- I did not re-verify that serve.log lines 52-135 isolate this listener
+  from L5's concurrent `inbox --notify`; §8 discloses the contamination but
+  the split is not itself evidenced.
+- The 0.1.58 -> 0.1.59 `finishWait` fix is asserted, not shown here.
+- npm test / test:p1-cli were run on an earlier SHA and their logs are
+  untracked; not re-run.
+- Whether 39 vs the predicted 40 activity calls is a window-boundary
+  artefact or a missed heartbeat.
+
+VERDICT: PASS

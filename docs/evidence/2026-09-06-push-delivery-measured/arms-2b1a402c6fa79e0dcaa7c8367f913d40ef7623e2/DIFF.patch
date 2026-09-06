@@ -1,0 +1,493 @@
+diff --git a/docs/design/2026-09-06-PUSH-DELIVERY.md b/docs/design/2026-09-06-PUSH-DELIVERY.md
+index a8f9474..4b980cb 100644
+--- a/docs/design/2026-09-06-PUSH-DELIVERY.md
++++ b/docs/design/2026-09-06-PUSH-DELIVERY.md
+@@ -288,15 +288,15 @@ Before/after, same host, same seat, a **live listener started with `--state-dir
+ 
+ | metric | before (predicted) | before (measured, L7) | after (predicted) | after (measured, L7) |
+ |---|---|---|---|---|
+-| invocations per idle listener per 10 min | read 167 + claim 167 + activity 40 = **374** | | reconcile 2 reads + 2 claims + activity 10 = **14** | |
+-| rows written per idle 10 min | 167 audit + 167 idempotency + 10 rate-bucket = **344** (334 kept) | | **2** rate-bucket rows, purged within two hours; **0** kept | |
+-| wake latency: `post_signal` accepted → claim leased, directed ask from another principal, 20 trials | mean 1.8 s, max 3.6 s | | mean < 0.5 s, max 1.0 s (local experiment observed sub-second) | |
+-| latency with Realtime down (container stopped, and separately a silent network failure right after a heartbeat reply) | as before | | ≤ 15 s + detection ≤ 50 s (two heartbeat intervals) | |
+-| latency with a wake dropped (trigger disabled) | — | | ≤ 300 s | |
+-| latency after a rotation (probe: revoke one of two live tokens of the principal, which rotates; the other token's listener must resubscribe) | — | | ≤ 300 s, or ≤ 15 s if the socket was down | |
+-| status honesty | — | | `listen status` shows `mode: "push"` only while subscribed; stopping Realtime flips it to `poll` within 50 s; the topic never appears in status or logs | |
+-
+-Predicted per-listener per-minute: **before 37.4, after 1.4.** The measured columns are filled by L7 and pasted here; the spec is not "done" until they are.
++| invocations per idle listener per 10 min | read 167 + claim 167 + activity 40 = **374** | read 16 + claim 14 + activity 40 = **70** from `serve.log` lines 52–135 (`state/before/counts.json`). Cadence is L0 **15 s poll, empty backoff to 60 s**, not the retired 2 s poll. Seat-attributed empty claims in that window: **10** (`state/before` `events.ndjson`). Extra serve-log reads/commands were L5's local `inbox --notify` sharing the same `functions serve`. | reconcile 2 reads + 2 claims + activity 10 = **14** | On **0.1.60** (listener code of 0.1.59; 0.1.58 hung — see below): read 2 + claim 2 + activity 39 = **43** (`state/after-0.1.60-clean/counts.json`, serve.log lines 515–571). Seat-attributed empty claims: **2** (`events.ndjson`). `ACTIVITY_HEARTBEAT_MS` is still **15 s** (`src/listener/activity.ts:13`), so activity is ~40/10 min, not the predicted 10. |
++| rows written per idle 10 min | 167 audit + 167 idempotency + 10 rate-bucket = **344** (334 kept) | audit **0** + idempotency **0** + rate_buckets **0** (`state/before/counts.json`; empty claims persist nothing). | **2** rate-bucket rows, purged within two hours; **0** kept | audit **0** + idempotency **0** + rate_buckets **0** (`state/after-0.1.60-clean/counts.json`). Empty reconcile claims write none of the three. |
++| wake latency: `post_signal` accepted → claim leased, directed ask from another principal, 20 trials | mean 1.8 s, max 3.6 s | not re-measured on 0.1.57 (poll 15–60 s). | mean < 0.5 s, max 1.0 s (local experiment observed sub-second) | **0.1.60:** mean **525.7 ms**, max **937 ms**, min 150 ms, n=20 (`probes/wake-latency-0.1.60.json`). Anon supabase-js client on the same topic received 20/20 wakes. **0.1.58:** 20/20 timed out at 330 s; anon received 19/19; `lastWakeAt` stayed null and reconcile did not fire (`probes/wake-latency-0.1.58.json`) — the `finishWait` hang, fixed in 0.1.59. |
++| latency with Realtime down (container stopped, and separately a silent network failure right after a heartbeat reply) | as before | 0.1.57 poll already 15–60 s. | ≤ 15 s + detection ≤ 50 s (two heartbeat intervals) | **0.1.60:** status flipped `push` → `poll` in **65 ms** (`remaining-probes` log 08:25:38.147Z). Five asks while poll: 14.5, 15.7, 10.1, 1.0, 1.1 s (max **15.7 s**) (`probes/realtime-down-0.1.60.json`). After `docker start`, status `mode: "push"`, `reconnects: 1`, `subscribedAt` 08:27:19.866Z. Silent half-open after a heartbeat reply was **not** separately measured. **0.1.58:** mode never flipped to `poll` after the stop — `detectPollMs: null`, `detectWallMs: 535397` (`probes/realtime-down-0.1.58.json`). |
++| latency with a wake dropped (trigger disabled) | — | — | ≤ 300 s | **0.1.60:** trigger `signal_deliveries_wake_agent` disabled (`tgenabled=D`); three asks claimed at **128.6 s**, **429.0 s**, **729.5 s** (`probes/wake-dropped-0.1.60.json`) — one lease per 5 min reconcile, not claim-until-empty. First ask ≤ 300 s; later asks stacked. Trigger re-enabled (`O`). |
++| latency after a rotation (probe: revoke one of two live tokens of the principal, which rotates; the other token's listener must resubscribe) | — | — | ≤ 300 s, or ≤ 15 s if the socket was down | **0.1.58** (server-side, still valid): `revoke_agent_token` accepted; `wake_id` changed; anon join of the old topic `CHANNEL_ERROR`, new topic `SUBSCRIBED` (`probes/rotation-0.1.58.json`). Token2's 0.1.58 listener went to `mode: "poll"` (waiter hang). **0.1.60 client resubscribe timing was not re-run** (token1 already revoked). |
++| status honesty | — | `cswarm-wake:` count 0 on the 0.1.57 state dir. | `listen status` shows `mode: "push"` only while subscribed; stopping Realtime flips it to `poll` within 50 s; the topic never appears in status or logs | **0.1.60** `status-window-end.json`: `wake.mode` `"push"` while subscribed. Stopping Realtime → `poll` in 65 ms. `grep -c 'cswarm-wake:'` = **0** on status JSON, `events.ndjson`, and `serve.log`; `scripts/probe-check.sh` CLEAN with a positive-control grep on each (`honesty/probe.txt`). |
++
++Predicted per-listener per-minute: **before 37.4, after 1.4.** Measured (L7, local stack, 10 min windows): **before 7.0** serve-log invocations/min (0.1.57; 15 s/60 s cadence, not 2 s). **after 4.3** serve-log invocations/min on 0.1.60 (2 reconciles + ~40 activity heartbeats at 15 s). Seat-attributed idle claims: **before 1.0/min, after 0.2/min**. Evidence: `docs/evidence/2026-09-06-push-delivery-measured/`. Production 10-minute `audit_log` rollup: `production-audit-10min.txt` (read-only `--linked` to `ukezjcnxjvkpkeezxaew` at 07:04:29Z): six rows, `claim_agent_inbox` 1+2, `ack_agent_delivery` 1+2, `post_signal` 1+1. The spec is not "done" until these columns are filled; they are filled.
+ 
+ ---
+ 
+diff --git a/docs/evidence/2026-09-06-push-delivery-measured/README.md b/docs/evidence/2026-09-06-push-delivery-measured/README.md
+new file mode 100644
+index 0000000..35053c5
+--- /dev/null
++++ b/docs/evidence/2026-09-06-push-delivery-measured/README.md
+@@ -0,0 +1,62 @@
++# Push delivery measured (L7)
++
++Local stack only, except `production-audit-10min.txt` which is the one
++read-only `--linked` query named in the L7 brief.
++
++## Binaries
++
++| file | version | sha256 |
++|---|---|---|
++| `bin/v0.1.57/cswarm` | 0.1.57 | `bin/v0.1.57/cswarm.sha256` (48e3ce4d…) |
++| `bin/v0.1.58/cswarm` | 0.1.58 | `bin/v0.1.58/cswarm.sha256` (154be397…) |
++| `bin/v0.1.60/cswarm` | 0.1.60 | `bin/v0.1.60/cswarm.sha256` (a57ac093…) |
++
++v0.1.57 is the GitHub release asset. v0.1.58 is a copy of `~/.local/bin/cswarm`
++as installed when the lane started. Each dir has `package.json` `{"type":"commonjs"}`
++so Node 22+ will run the CJS bundle from inside this repo (`"type": "module"`).
++
++## Cadence (say this next to every idle number)
++
++"Before" is **not** the retired 2 s poll. L0 already shipped 15 s idle poll with
++empty backoff to 60 s, and empty claims persist nothing (no audit, no
++idempotency, no rate_buckets). Predicted §8 "before" 167/167/344 is the old 2 s
++world; measured before is the 15 s/60 s world.
++
++"After" in §8 is 0.1.60 (the 0.1.59 wake fix plus the watcher); the 0.1.58 runs stay under `state/after/` and `probes/*-0.1.58.json` as the record of the hang. Production live control of 0.1.58
++failed (ledger `6ea3863`): status could say `push` while the listener did not
++receive the wake. This lane measures the **local** stack. If wakes do not
++arrive here either, the after idle numbers are still the reconcile+activity
++cost, and wake-latency rows record that.
++
++## How idle counts were taken
++
++`scripts/measure-idle-cost.sh` starts a live `cswarm listen start --state-dir`
++against `supabase functions serve` (log: `serve.log`). After `ready` it waits
++30 s so startup ticks are outside the window, then 600 s.
++
++- Invocations: `grep -c 'serving the request with supabase/functions/<fn>'` on
++  the serve log **line range** recorded at window start/end (`state/*/counts.json`).
++- Rows: `docker exec supabase_db_cloud-swarm psql` counts of
++  `swarm.audit_log`, `swarm.idempotency_keys`, `swarm.rate_buckets` in `[t0, t1)`
++  for the listener principal.
++- Honesty: `scripts/probe-check.sh` with a positive-control grep on the same
++  file, then `grep -o 'cswarm-wake:'` (subject). `grep -c` of the subject is
++  also recorded; the control is not `grep -c` (that prints `0` on a miss and
++  cannot be a control).
++
++## Other files
++
++| path | what |
++|---|---|
++| `state/before/`, `state/after/` | `--state-dir` trees, window timestamps, status JSON, counts |
++| `honesty/probe.txt` | row 7 greps |
++| `serve.log` / `serve.pid` / `serve.env` | local `functions serve` |
++| `probes/` | rows 3–6 (wake latency, realtime down, trigger off, rotation) |
++| `production-audit-10min.txt` | row 8, `--linked` to `ukezjcnxjvkpkeezxaew` |
++| `harness/` | seed, fake grok, probes, watchers |
++| `gate-*.log` | `npm test` and `test:p1-cli` |
++
++`creds/` and `fixture.json` hold local-stack tokens and are gitignored.
++
++
++To reproduce the published after column: `AFTER_BIN=docs/evidence/2026-09-06-push-delivery-measured/bin/v0.1.60/cswarm AFTER_LABEL=after-0.1.60-clean scripts/measure-idle-cost.sh`. The 0.1.57 honesty grep (before column) was run by hand over `state/before/` and is not in `honesty/probe.txt`, which the script writes for the after seat only.
+diff --git a/scripts/measure-idle-cost.sh b/scripts/measure-idle-cost.sh
+new file mode 100755
+index 0000000..1f66528
+--- /dev/null
++++ b/scripts/measure-idle-cost.sh
+@@ -0,0 +1,390 @@
++#!/usr/bin/env bash
++# L7: idle cost before (v0.1.57, 15s/60s poll) and after (v0.1.58, push), plus
++# status-honesty greps. Prints the §8 table rows for measurements 1, 2, and 7.
++#
++# Needs: local Supabase up, `supabase functions serve` logging to
++# $EVIDENCE/serve.log (this script starts it if the pid file is stale), and a
++# seeded fixture from harness/seed-local.mjs (this script runs that too).
++#
++# Cadence note (must stay in every write-up of these numbers): "before" is the
++# L0 15 s idle poll with empty-poll backoff to 60 s, not the retired 2 s poll.
++# L0/L1 already made empty claims persist nothing, so row counts are not the
++# old 167 audit + 167 idempotency prediction.
++set -euo pipefail
++
++ROOT="$(cd "$(dirname "$0")/.." && pwd)"
++EVIDENCE="${EVIDENCE:-$ROOT/docs/evidence/2026-09-06-push-delivery-measured}"
++WINDOW_SEC="${WINDOW_SEC:-600}"
++SETTLE_SEC="${SETTLE_SEC:-30}"
++READY_TIMEOUT_SEC="${READY_TIMEOUT_SEC:-90}"
++BEFORE_BIN="${BEFORE_BIN:-$EVIDENCE/bin/v0.1.57/cswarm}"
++AFTER_BIN="${AFTER_BIN:-$EVIDENCE/bin/v0.1.58/cswarm}"
++AFTER_LABEL="${AFTER_LABEL:-after}"
++TOKEN_KEY="${TOKEN_KEY:-listener_token1}"
++SKIP_BEFORE="${SKIP_BEFORE:-0}"
++FAKE_GROK="${FAKE_GROK:-$EVIDENCE/harness/fake-grok.mjs}"
++SERVE_ENV="$EVIDENCE/serve.env"
++SERVE_LOG="$EVIDENCE/serve.log"
++SERVE_PID_FILE="$EVIDENCE/serve.pid"
++FIXTURE="$EVIDENCE/fixture.json"
++PROBE_CHECK="$ROOT/scripts/probe-check.sh"
++
++utc_now() {
++  python3 -c 'from datetime import datetime, timezone; print(datetime.now(timezone.utc).strftime("%Y-%m-%dT%H:%M:%S.%f")[:-3] + "Z")'
++}
++
++log() { printf '%s %s\n' "$(utc_now)" "$*"; }
++
++need_file() {
++  local path=$1
++  [ -f "$path" ] || { echo "missing $path" >&2; exit 1; }
++}
++
++json_field() {
++  python3 -c 'import json,sys; d=json.load(open(sys.argv[1])); print(d[sys.argv[2]])' "$1" "$2"
++}
++
++nested_field() {
++  python3 -c 'import json,sys; d=json.load(open(sys.argv[1])); cur=d
++for k in sys.argv[2:]:
++    cur = (cur or {}).get(k) if isinstance(cur, dict) else None
++print("" if cur is None else cur)' "$@"
++}
++
++ensure_serve() {
++  mkdir -p "$EVIDENCE"
++  if [ ! -f "$SERVE_ENV" ]; then
++    printf 'SWARM_ENV=test\nSWARM_SELF_SERVE=1\n' > "$SERVE_ENV"
++  fi
++  local alive=0
++  if [ -f "$SERVE_PID_FILE" ]; then
++    local pid
++    pid=$(tr -d '[:space:]' < "$SERVE_PID_FILE")
++    if [ -n "$pid" ] && kill -0 "$pid" 2>/dev/null; then
++      alive=1
++    fi
++  fi
++  if [ "$alive" -eq 0 ]; then
++    log "starting supabase functions serve"
++    (
++      cd "$ROOT"
++      nohup supabase functions serve --no-verify-jwt --env-file "$SERVE_ENV" >> "$SERVE_LOG" 2>&1 &
++      echo $! > "$SERVE_PID_FILE"
++    )
++  fi
++  local deadline=$((SECONDS + 60))
++  while [ "$SECONDS" -lt "$deadline" ]; do
++    if grep -q 'Serving functions on' "$SERVE_LOG" 2>/dev/null; then
++      local body
++      body=$(curl -sS -X POST http://127.0.0.1:54321/functions/v1/read \
++        -H 'content-type: application/json' -d '{}' || true)
++      printf '%s' "$body" | grep -q 'unauthenticated' && return 0
++    fi
++    sleep 1
++  done
++  echo "functions serve did not become ready; last log:" >&2
++  tail -40 "$SERVE_LOG" >&2
++  exit 1
++}
++
++ensure_seed() {
++  if [ -f "$FIXTURE" ]; then
++    log "using existing fixture $FIXTURE"
++    return 0
++  fi
++  log "seeding local stack"
++  (cd "$ROOT" && node "$EVIDENCE/harness/seed-local.mjs")
++  need_file "$FIXTURE"
++}
++
++count_fn() {
++  local log=$1 fn=$2 from_line=$3 to_line=$4
++  sed -n "${from_line},${to_line}p" "$log" | grep -c "serving the request with supabase/functions/${fn}" || true
++}
++
++db_counts() {
++  local start=$1 end=$2 principal=$3
++  docker exec supabase_db_cloud-swarm psql -U postgres -d postgres -At -F $'\t' -c "
++    SELECT
++      (SELECT count(*) FROM swarm.audit_log
++        WHERE occurred_at >= '${start}'::timestamptz
++          AND occurred_at < '${end}'::timestamptz
++          AND actor_agent_principal = '${principal}'::uuid) AS audit,
++      (SELECT count(*) FROM swarm.idempotency_keys
++        WHERE created_at >= '${start}'::timestamptz
++          AND created_at < '${end}'::timestamptz
++          AND principal_id = '${principal}') AS idem,
++      (SELECT count(*) FROM swarm.rate_buckets
++        WHERE window_start >= date_trunc('minute', '${start}'::timestamptz)
++          AND window_start < '${end}'::timestamptz
++          AND bucket_key LIKE '%${principal}%') AS rate;
++  "
++}
++
++log_line_count() {
++  wc -l < "$SERVE_LOG" | tr -d ' '
++}
++
++listen_status() {
++  local bin=$1 statedir=$2 token_file=$3 workspace=$4 url=$5 anon=$6
++  "$bin" listen status \
++    --agent-token-file "$token_file" \
++    --url "$url" \
++    --anon-key "$anon" \
++    --workspace-id "$workspace" \
++    --state-dir "$statedir" \
++    --json
++}
++
++listen_stop() {
++  local bin=$1 statedir=$2 token_file=$3 workspace=$4 url=$5 anon=$6
++  "$bin" listen stop \
++    --agent-token-file "$token_file" \
++    --url "$url" \
++    --anon-key "$anon" \
++    --workspace-id "$workspace" \
++    --state-dir "$statedir" \
++    --json || true
++}
++
++wait_ready() {
++  local bin=$1 statedir=$2 token_file=$3 workspace=$4 url=$5 anon=$6 want_push=$7
++  local deadline=$((SECONDS + READY_TIMEOUT_SEC))
++  local last=""
++  while [ "$SECONDS" -lt "$deadline" ]; do
++    if last=$(listen_status "$bin" "$statedir" "$token_file" "$workspace" "$url" "$anon" 2>/dev/null); then
++      printf '%s\n' "$last" > "$statedir/last-status.json"
++      local state mode
++      state=$(python3 -c 'import json,sys; print(json.load(sys.stdin).get("state",""))' <<<"$last")
++      mode=$(python3 -c 'import json,sys; d=json.load(sys.stdin); w=d.get("wake") or {}; print(w.get("mode") or d.get("mode") or "")' <<<"$last")
++      if [ "$state" = "ready" ]; then
++        if [ "$want_push" = "1" ] && [ "$mode" != "push" ]; then
++          sleep 1
++          continue
++        fi
++        return 0
++      fi
++    fi
++    sleep 1
++  done
++  echo "listener did not become ready (want_push=$want_push). last status:" >&2
++  cat "$statedir/last-status.json" >&2 || true
++  return 1
++}
++
++run_idle_window() {
++  local label=$1 bin=$2 want_push=$3
++  local workspace url anon principal token_file
++  workspace=$(json_field "$FIXTURE" workspace_id)
++  url=$(json_field "$FIXTURE" api_url)
++  anon=$(json_field "$FIXTURE" anon_key)
++  principal=$(json_field "$FIXTURE" listener_principal_id)
++  token_file=$(python3 -c 'import json,sys; print(json.load(open(sys.argv[1]))["creds"][sys.argv[2]])' "$FIXTURE" "$TOKEN_KEY")
++
++  local statedir cwd grok_home
++  statedir="$EVIDENCE/state/$label"
++  cwd="$EVIDENCE/cwd/$label"
++  grok_home="$EVIDENCE/grok-home/$label"
++  rm -rf "$statedir" "$cwd" "$grok_home"
++  mkdir -p "$statedir" "$cwd" "$grok_home"
++  chmod 700 "$statedir" "$cwd" "$grok_home"
++  printf '%s\n' '{"access_token":"fake-local-login"}' > "$grok_home/auth.json"
++  chmod 600 "$grok_home/auth.json"
++  chmod 700 "$FAKE_GROK"
++
++  log "$label: stopping any previous listener"
++  listen_stop "$bin" "$statedir" "$token_file" "$workspace" "$url" "$anon" >/dev/null 2>&1 || true
++
++  log "$label: listen start with $bin"
++  GROK_HOME="$grok_home" CSWARM_FAKE_GROK_AUDIT="$grok_home/audit.ndjson" \
++    "$bin" listen start \
++      --agent-token-file "$token_file" \
++      --url "$url" \
++      --anon-key "$anon" \
++      --workspace-id "$workspace" \
++      --provider grok \
++      --grok-executable "$FAKE_GROK" \
++      --cwd "$cwd" \
++      --permissions deny \
++      --allow-unattended \
++      --route worker \
++      --state-dir "$statedir" \
++      --json | tee "$statedir/start.json"
++
++  wait_ready "$bin" "$statedir" "$token_file" "$workspace" "$url" "$anon" "$want_push"
++  log "$label: ready; settling ${SETTLE_SEC}s so startup ticks are outside the window"
++  sleep "$SETTLE_SEC"
++
++  local t0 t1 start_line end_line
++  t0=$(utc_now)
++  start_line=$(log_line_count)
++  start_line=$((start_line + 1))
++  printf '%s\n' "$t0" > "$statedir/window-start.txt"
++  printf '%s\n' "$start_line" > "$statedir/serve-log-start-line.txt"
++  listen_status "$bin" "$statedir" "$token_file" "$workspace" "$url" "$anon" \
++    | tee "$statedir/status-window-start.json" >/dev/null
++
++  log "$label: idle window ${WINDOW_SEC}s starting at $t0 (serve log line $start_line)"
++  sleep "$WINDOW_SEC"
++
++  t1=$(utc_now)
++  end_line=$(log_line_count)
++  printf '%s\n' "$t1" > "$statedir/window-end.txt"
++  printf '%s\n' "$end_line" > "$statedir/serve-log-end-line.txt"
++  listen_status "$bin" "$statedir" "$token_file" "$workspace" "$url" "$anon" \
++    | tee "$statedir/status-window-end.json" >/dev/null
++
++  local reads claims activity
++  reads=$(count_fn "$SERVE_LOG" read "$start_line" "$end_line")
++  claims=$(count_fn "$SERVE_LOG" command "$start_line" "$end_line")
++  activity=$(count_fn "$SERVE_LOG" activity "$start_line" "$end_line")
++  local db
++  db=$(db_counts "$t0" "$t1" "$principal")
++  local audit idem rate
++  audit=$(printf '%s' "$db" | cut -f1)
++  idem=$(printf '%s' "$db" | cut -f2)
++  rate=$(printf '%s' "$db" | cut -f3)
++
++  python3 - "$statedir/counts.json" <<PY
++import json, sys
++out = {
++  "label": "$label",
++  "binary": "$bin",
++  "window_start": "$t0",
++  "window_end": "$t1",
++  "window_sec": $WINDOW_SEC,
++  "serve_log": "$SERVE_LOG",
++  "serve_log_lines": {"from": $start_line, "to": $end_line},
++  "invocations": {
++    "read": int("$reads"),
++    "command": int("$claims"),
++    "activity": int("$activity"),
++    "total": int("$reads") + int("$claims") + int("$activity"),
++  },
++  "rows": {
++    "audit_log": int("$audit"),
++    "idempotency_keys": int("$idem"),
++    "rate_buckets": int("$rate"),
++  },
++  "method": {
++    "invocations": "grep -c 'serving the request with supabase/functions/<fn>' on $SERVE_LOG lines ${start_line}-${end_line}",
++    "rows": "docker exec supabase_db_cloud-swarm psql counts of swarm.audit_log / idempotency_keys / rate_buckets in [$t0, $t1) for principal $principal",
++    "cadence": "before = 0.1.57 default 15s poll with empty backoff to 60s (not the retired 2s poll); after = 0.1.58 push + 5min reconcile",
++  },
++}
++open(sys.argv[1], "w").write(json.dumps(out, indent=2) + "\\n")
++print(json.dumps(out, indent=2))
++PY
++
++  if [ "$label" = "before" ]; then
++    log "$label: stopping listener so after can use the same seat"
++    listen_stop "$bin" "$statedir" "$token_file" "$workspace" "$url" "$anon" \
++      | tee "$statedir/stop.json" >/dev/null
++    local stop_deadline=$((SECONDS + 30))
++    while [ "$SECONDS" -lt "$stop_deadline" ]; do
++      local st
++      st=$(listen_status "$bin" "$statedir" "$token_file" "$workspace" "$url" "$anon" 2>/dev/null || true)
++      local state
++      state=$(python3 -c 'import json,sys; print((json.loads(sys.argv[1]) if sys.argv[1] else {}).get("state",""))' "$st" 2>/dev/null || true)
++      case "$state" in
++        stopped|failed|"") break ;;
++      esac
++      sleep 1
++    done
++  fi
++}
++
++honesty() {
++  local statedir=$1
++  local status="$statedir/status-window-end.json"
++  local events
++  events=$(find "$statedir" -name events.ndjson | head -1)
++  need_file "$status"
++  mkdir -p "$EVIDENCE/honesty"
++  {
++    echo "## status.json"
++    echo "positive control (grep -o '\"state\"' must hit):"
++    grep -o '"state"' "$status" | head -5
++    echo "subject grep -c cswarm-wake: $(grep -c 'cswarm-wake:' "$status" || true)"
++    "$PROBE_CHECK" \
++      "grep -o '\"state\"' '$status'" \
++      "grep -o 'cswarm-wake:' '$status'" || true
++    echo
++    echo "## events.ndjson ($events)"
++    if [ -n "$events" ] && [ -f "$events" ]; then
++      echo "positive control (grep -o '\"event\"' must hit):"
++      grep -o '"event"' "$events" | head -5
++      echo "subject grep -c cswarm-wake: $(grep -c 'cswarm-wake:' "$events" || true)"
++      "$PROBE_CHECK" \
++        "grep -o '\"event\"' '$events'" \
++        "grep -o 'cswarm-wake:' '$events'" || true
++    else
++      echo "NO events.ndjson found under $statedir"
++    fi
++    echo
++    echo "## serve.log"
++    echo "positive control (grep -o serving the request with supabase/functions/read):"
++    grep -o 'serving the request with supabase/functions/read' "$SERVE_LOG" | head -3
++    echo "subject grep -c cswarm-wake: $(grep -c 'cswarm-wake:' "$SERVE_LOG" || true)"
++    "$PROBE_CHECK" \
++      "grep -o 'serving the request with supabase/functions/read' '$SERVE_LOG'" \
++      "grep -o 'cswarm-wake:' '$SERVE_LOG'" || true
++  } | tee "$EVIDENCE/honesty/probe.txt"
++}
++
++print_table_rows() {
++  python3 - "$EVIDENCE/state/before/counts.json" "$EVIDENCE/state/after/counts.json" "$EVIDENCE/state/after/status-window-end.json" <<'PY'
++import json, sys
++before = json.load(open(sys.argv[1]))
++after = json.load(open(sys.argv[2]))
++status = json.load(open(sys.argv[3]))
++wake = status.get("wake") or {}
++bi = before["invocations"]
++ai = after["invocations"]
++br = before["rows"]
++ar = after["rows"]
++print()
++print("§8 rows (measurements 1, 2, 7) — every number names its file")
++print()
++print(f"invocations per idle listener per {before['window_sec']} s")
++print(f"  before (measured): read {bi['read']} + claim {bi['command']} + activity {bi['activity']} = {bi['total']}  [{sys.argv[1]}]")
++print(f"  after  (measured): read {ai['read']} + claim {ai['command']} + activity {ai['activity']} = {ai['total']}  [{sys.argv[2]}]")
++print(f"  method before: {before['method']['invocations']}")
++print(f"  method after:  {after['method']['invocations']}")
++print(f"  cadence: {before['method']['cadence']}")
++print()
++print(f"rows written per idle {before['window_sec']} s")
++print(f"  before (measured): audit {br['audit_log']} + idempotency {br['idempotency_keys']} + rate_buckets {br['rate_buckets']}  [{sys.argv[1]}]")
++print(f"  after  (measured): audit {ar['audit_log']} + idempotency {ar['idempotency_keys']} + rate_buckets {ar['rate_buckets']}  [{sys.argv[2]}]")
++print(f"  method: {before['method']['rows']}")
++print()
++print("status honesty")
++print(f"  listen status wake.mode = {wake.get('mode')!r}  [{sys.argv[3]}]")
++print(f"  honesty probe: docs/evidence/2026-09-06-push-delivery-measured/honesty/probe.txt")
++PY
++}
++
++mkdir -p "$EVIDENCE"
++need_file "$BEFORE_BIN"
++need_file "$AFTER_BIN"
++need_file "$FAKE_GROK"
++chmod 700 "$FAKE_GROK"
++
++ensure_serve
++ensure_seed
++
++if [ "$SKIP_BEFORE" != "1" ]; then
++  log "BEFORE idle window ($BEFORE_BIN)"
++  run_idle_window before "$BEFORE_BIN" 0
++fi
++
++log "AFTER idle window ($AFTER_BIN, want mode=push, label=$AFTER_LABEL)"
++run_idle_window "$AFTER_LABEL" "$AFTER_BIN" 1
++
++log "honesty greps on the after seat"
++honesty "$EVIDENCE/state/$AFTER_LABEL"
++
++if [ "$AFTER_LABEL" = "after" ] && [ -f "$EVIDENCE/state/before/counts.json" ] && [ -f "$EVIDENCE/state/after/counts.json" ]; then
++  print_table_rows
++fi
++log "done"

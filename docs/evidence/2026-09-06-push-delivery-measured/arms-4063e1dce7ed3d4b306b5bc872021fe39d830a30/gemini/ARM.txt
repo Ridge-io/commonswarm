@@ -1,0 +1,16 @@
+diff --git a/docs/design/2026-09-06-PUSH-DELIVERY.md b/docs/design/2026-09-06-PUSH-DELIVERY.md
+
+I have verified every number in the "before (measured, L7)" and "after (measured, L7)" columns of §8 against the specified evidence files:
+- `state/before/counts.json` confirms read 16, claim 14, and activity 40 (total 70) from serve.log lines 52–135, and 0/0/0 for the written rows.
+- Filtering `events.ndjson` in the `state/before` window confirms exactly 10 empty claims.
+- `state/after-0.1.60-clean/counts.json` confirms read 2, claim 2, and activity 39 (total 43) from serve.log lines 515–571, and 0/0/0 for the written rows.
+- Filtering `events.ndjson` in the `state/after-0.1.60-clean` window confirms exactly 2 empty claims.
+- `probes/wake-latency-0.1.60.json` confirms n=20, mean 525.7 ms, max 937 ms, and min 150 ms, with 20 anon frames.
+- `probes/wake-latency-0.1.58.json` confirms the 20/20 timeouts and 19/19 anon frames.
+- `probes/realtime-down-0.1.60.json` confirms a 65 ms detect poll and ask latencies of 14.5 s, 15.7 s, 10.1 s, 1.0 s, and 1.1 s (max 15.7 s).
+- `probes/wake-dropped-0.1.60.json` confirms latencies of 128.6 s, 429.0 s, and 729.5 s.
+- `honesty/probe.txt` confirms a `grep -c` of 0 for `cswarm-wake:` across the status JSON, events, and serve.log with a CLEAN result.
+- `production-audit-10min.txt` confirms the exact six-row set: `claim_agent_inbox` 1+2, `ack_agent_delivery` 1+2, and `post_signal` 1+1.
+- The after column correctly presents 0.1.60 and appropriately notes 0.1.58 as hung.
+
+VERDICT: PASS
