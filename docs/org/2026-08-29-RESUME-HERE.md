@@ -2736,3 +2736,14 @@ every host is `--route main`; seats whose session has no hook (CSwarmStrategist,
 No listener starts a model anywhere. For the product: the `worker` and `split` routes are a defect to
 remove, not an option to keep (roadmap item sent to CSwarmStrategist; the lead PMs the lane once
 specified). Doctrine written to the brain topic `listener-attended`.
+
+## 2026-09-06 11:0x UTC — HIGHEST PRIORITY: close the headless failure mode in the product (lane `main-only`)
+
+Operator: "close it in the product, highest priority." Lane `lane/main-only` (Grok, `brief-main-only.md`):
+`ListenerRouteMode` becomes `["main"]` (worker/split/--defer-over refused with a generated sentence; legacy
+status files still parse); `runtime.ts` loses every path that starts a model (test: a fake model whose
+`start()` throws still reaches `ready`); a running `inbox --notify` watcher (lane A's lock) becomes the
+second attendance surface beside the hook, so `--allow-unattended` is only an explicit opt-in;
+`listen status` names the attending surface; docs + AGENTS.md trap. Arms Grok + Gemini; ships as 0.1.61
+and every seat restarts on it. Queued behind it: CSLaptopLead's three lanes (notify-full-body and two
+more) awaiting the lead's merge.
