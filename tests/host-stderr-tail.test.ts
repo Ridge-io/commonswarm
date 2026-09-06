@@ -201,37 +201,39 @@ test("redactCredentialText path: token and wake-topic shapes in stderr and in a 
     ["agent-token", AGENT_TOKEN, /swm_agt_/i],
     ["wake-topic", WAKE_TOPIC, /cswarm-wake:/i],
   ];
+  const failures: string[] = [];
   for (const [name, secret, leak] of shapes) {
     const stderr = sanitizeStderrTail(
       `Unauthorized: You do not have permissions to read from this Channel topic: ${secret}\n`,
     );
-    assert.match(
-      stderr,
-      /\[redacted-credential\]/,
-      `${name} stderr: redaction marker missing`,
-    );
-    assert.doesNotMatch(stderr, leak, `${name} stderr: secret survived`);
-    assert.match(
-      stderr,
-      /Unauthorized: You do not have permissions to read from this Channel topic:/,
-      `${name} stderr: surrounding text lost`,
-    );
-
+    if (!/\[redacted-credential\]/.test(stderr)) {
+      failures.push(`${name} stderr: redaction marker missing`);
+    }
+    if (leak.test(stderr)) failures.push(`${name} stderr: secret survived`);
+    if (
+      !/Unauthorized: You do not have permissions to read from this Channel topic:/
+        .test(stderr)
+    ) {
+      failures.push(`${name} stderr: surrounding text lost`);
+    }
     const title = redactCredentialText(`Read ${secret} record`);
-    assert.equal(
-      title,
-      "Read [redacted-credential] record",
-      `${name} tool title`,
-    );
+    if (title !== "Read [redacted-credential] record") {
+      failures.push(`${name} tool title: ${JSON.stringify(title)}`);
+    }
   }
 
   const both = sanitizeStderrTail(`auth ${AGENT_TOKEN} then ${WAKE_TOPIC} done`);
-  assert.equal(both, "auth [redacted-credential] then [redacted-credential] done");
+  if (both !== "auth [redacted-credential] then [redacted-credential] done") {
+    failures.push(`two secrets: ${JSON.stringify(both)}`);
+  }
 
   const short = sanitizeStderrTail(`topic ${SHORT_WAKE} kept`);
-  assert.match(short, new RegExp(SHORT_WAKE));
-  assert.doesNotMatch(short, /\[redacted-credential\]/);
-  assert.equal(SECRET_SHAPE_RE.test(SHORT_WAKE), false);
+  if (!short.includes(SHORT_WAKE)) failures.push("42-char wake was eaten");
+  if (/\[redacted-credential\]/.test(short)) {
+    failures.push("42-char wake was redacted");
+  }
+  if (SECRET_SHAPE_RE.test(SHORT_WAKE)) failures.push("42-char wake matched");
+  assert.deepEqual(failures, []);
 });
 
 test("SECRET_SHAPE_RE readers are the listed files and no other src or edge copy remains", async () => {

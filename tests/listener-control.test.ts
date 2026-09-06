@@ -2029,21 +2029,25 @@ test("SECRET_SHAPE_RE: one case per control site per shape", async () => {
     { name: "agent-token", value: `swm_agt_${"A".repeat(43)}`, leak: /swm_agt_/i },
     { name: "wake-topic", value: `cswarm-wake:${"B".repeat(43)}`, leak: /cswarm-wake:/i },
   ] as const;
+  const failures: string[] = [];
 
   for (const shape of shapes) {
     const root = await mkdtemp(join(tmpdir(), "cswarm-secret-shape-"));
     const target = paths(root);
     const ts = "2026-08-19T00:00:00.000Z";
 
-    await assert.rejects(
-      appendListenerEvent(target, {
+    try {
+      await appendListenerEvent(target, {
         ts,
         event: "listener_failed",
         worker_stderr_tail: `leaked ${shape.value}`,
-      }),
-      /unsafe text/,
-      `${shape.name} events.ndjson (:829) must refuse`,
-    );
+      });
+      failures.push(`${shape.name} events.ndjson (:829) accepted`);
+    } catch (error) {
+      if (!/unsafe text/.test(error instanceof Error ? error.message : "")) {
+        failures.push(`${shape.name} events.ndjson (:829) wrong error`);
+      }
+    }
 
     const base = statusFor(target, "failed");
     await writeListenerStatus(target, base);
@@ -2054,20 +2058,26 @@ test("SECRET_SHAPE_RE: one case per control site per shape", async () => {
 
     raw.lastErrorDetail = `token ${shape.value}`;
     await writeSecureJsonFile(target.statusPath, JSON.stringify(raw));
-    await assert.rejects(
-      readListenerStatus(target),
-      /malformed/,
-      `${shape.name} lastErrorDetail (:436) must reject`,
-    );
+    try {
+      await readListenerStatus(target);
+      failures.push(`${shape.name} lastErrorDetail (:436) accepted`);
+    } catch (error) {
+      if (!/malformed/.test(error instanceof Error ? error.message : "")) {
+        failures.push(`${shape.name} lastErrorDetail (:436) wrong error`);
+      }
+    }
 
     raw.lastErrorDetail = null;
     raw.lastWorkerStderrTail = `token ${shape.value}`;
     await writeSecureJsonFile(target.statusPath, JSON.stringify(raw));
-    await assert.rejects(
-      readListenerStatus(target),
-      /malformed/,
-      `${shape.name} lastWorkerStderrTail (:473) must reject`,
-    );
+    try {
+      await readListenerStatus(target);
+      failures.push(`${shape.name} lastWorkerStderrTail (:473) accepted`);
+    } catch (error) {
+      if (!/malformed/.test(error instanceof Error ? error.message : "")) {
+        failures.push(`${shape.name} lastWorkerStderrTail (:473) wrong error`);
+      }
+    }
 
     const supervisorRoot = await mkdtemp(
       join(tmpdir(), "cswarm-secret-shape-sup-"),
@@ -2086,30 +2096,33 @@ test("SECRET_SHAPE_RE: one case per control site per shape", async () => {
         ),
       }),
     });
-    assert.equal(final.state, "failed", `${shape.name} localDiagnostic state`);
-    assert.equal(typeof final.lastErrorDetail, "string");
-    assert.match(
-      final.lastErrorDetail!,
-      /\[redacted\]/,
-      `${shape.name} localDiagnostic: marker missing`,
-    );
-    assert.match(
-      final.lastErrorDetail!,
-      /Unauthorized: You do not have permissions to read from this Channel topic:/,
-      `${shape.name} localDiagnostic: surrounding text lost`,
-    );
-    assert.doesNotMatch(
-      final.lastErrorDetail!,
-      shape.leak,
-      `${shape.name} localDiagnostic: secret survived`,
-    );
-    const stored = await readListenerStatus(supervisorTarget);
-    assert.equal(
-      stored?.lastErrorDetail,
-      final.lastErrorDetail,
-      `${shape.name} localDiagnostic: redacted detail must persist`,
-    );
+    if (final.state !== "failed") {
+      failures.push(`${shape.name} localDiagnostic state=${final.state}`);
+    }
+    const detail = final.lastErrorDetail;
+    if (typeof detail !== "string") {
+      failures.push(`${shape.name} localDiagnostic: no detail`);
+    } else {
+      if (!/\[redacted\]/.test(detail)) {
+        failures.push(`${shape.name} localDiagnostic: marker missing`);
+      }
+      if (
+        !/Unauthorized: You do not have permissions to read from this Channel topic:/
+          .test(detail)
+      ) {
+        failures.push(`${shape.name} localDiagnostic: surrounding text lost`);
+      }
+      if (shape.leak.test(detail)) {
+        failures.push(`${shape.name} localDiagnostic: secret survived`);
+      }
+      const stored = await readListenerStatus(supervisorTarget);
+      if (stored?.lastErrorDetail !== detail) {
+        failures.push(`${shape.name} localDiagnostic: redacted detail did not persist`);
+      }
+    }
   }
+
+  assert.deepEqual(failures, []);
 });
 
 test("a failing worker's stderr tail reaches the terminal failure event and status", async () => {
