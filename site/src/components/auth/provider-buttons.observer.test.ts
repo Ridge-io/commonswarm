@@ -438,8 +438,11 @@ function withoutAllowedAttributes(text: string): string {
   );
 }
 
-/** File types that can carry markup or DOM code, and are therefore scanned. */
-const SCANNED_EXTENSIONS = ["astro", "mjs", "ts"];
+/** File types that can carry markup or DOM code, and are therefore scanned. `md` is the QA corpus
+ * under `components/app/fixtures/markdown-qa/`: a body reaches the DOM only through the
+ * escape-first renderer, so it cannot produce a button, but scanning it costs nothing and is the
+ * stricter of the two lists. */
+const SCANNED_EXTENSIONS = ["astro", "md", "mjs", "ts"];
 /** File types that cannot carry a button, listed so the coverage check below is complete. */
 const UNSCANNABLE_EXTENSIONS = ["css"];
 
