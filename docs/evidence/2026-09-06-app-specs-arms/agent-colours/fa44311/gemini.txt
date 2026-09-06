@@ -1,0 +1,33 @@
+### Inversion Analysis
+
+1. **Choice: Fixed 12-swatch OKLCH palette via `hash % 12` (§2.1) vs. Continuous hue hashing (`hash % 360`)**
+   - *Inversion*: Retain continuous hue hashing (as in `LiveDashboard.astro:2317-2326`) for all entities.
+   - *Failure/Regression*: Continuous hues cannot guarantee fixed WCAG 3:1 contrast against light/dark message backgrounds without dynamic luminance computation.
+   - *Outcome*: Spec wins. A fixed, contrast-checked 12-swatch palette prevents unreadable UI, despite collision risk across >12 entities.
+
+2. **Choice: Perimeter framing (3px left edge border + 2px underline) (§2.2) vs. Card/bubble background tinting**
+   - *Inversion*: Tint the message container background or author badge with the entity colour.
+   - *Failure/Regression*: Introduces extreme visual clutter in dense feeds, causes text legibility regressions across themes, and violates ruling R8 ("never the only signal", colour never on body/bg).
+   - *Outcome*: Spec wins. Left-edge borders and name underlines provide immediate visual grouping without degrading body text contrast.
+
+3. **Choice: Server-side feed query filtering via URL parameters (§2.3) vs. Client-side feed filtering**
+   - *Inversion*: Reuse `site/src/lib/signal-feed.ts` to filter loaded DOM/in-memory messages client-side.
+   - *Failure/Regression*: Client-side filtering over the ~25 loaded rows creates false empty states and silently hides older historical messages from low-frequency authors.
+   - *Outcome*: Spec wins. Paging from the server is required for correctness, pagination truthfulness, and shareable deep links.
+
+4. **Choice: Split interaction affordance (avatar/glyph filters, name opens panel) (§2.3) vs. Direct name-click filtering**
+   - *Inversion*: Wire the author name click directly to filter the feed (as phrased in plan R8/P2).
+   - *Failure/Regression*: Destroys the established primary interaction of opening the entity inspection panel, causing accidental filter triggers during entity inspection.
+   - *Outcome*: Spec wins. Preserving the entity panel on the name while dedicating the avatar button and glyph to filtering avoids navigation regressions.
+
+---
+
+### GAPs: What a Lane Author Must Still Invent
+
+- **GAP 1 (§2.1, L1)**: *Palette token definitions and golden vectors*. The spec specifies "twelve named OKLCH colours" and "golden vectors for six known ids", but provides no color names/values for `ENTITY_COLOUR_PALETTE` and no concrete fixture IDs or expected indices for `entity-colour.test.mjs`.
+- **GAP 2 (§2.3, §4 L2)**: *Read edge parameter contract*. The spec leaves unspecified the query parameter schema expected by `readWorkspaceSignals` and `supabase/functions/read/index.ts` (e.g. `agent` vs `agent_id`), how simultaneous `?agent=` and `?person=` parameters are reconciled, and index requirements on author columns.
+- **GAP 3 (§2.3, §4 L3)**: *Navigation mechanism & empty states*. The spec does not state whether filtering performs a full page navigation or an in-place `history.pushState` feed refetch, nor does it specify the empty state UI when a filtered author has zero messages.
+
+QUOTE-BACK: # Colour-code agents and their responses
+VERDICT: FAIL
+REASON: A lane author cannot implement the palette or server-side filtering without inventing color token names, test fixture vectors, and the edge function parameter contract.

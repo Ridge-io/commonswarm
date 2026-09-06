@@ -1,0 +1,32 @@
+### Load-Bearing Choices & Inversions
+
+1. **Repurposing `model` as Declaration & Adding `assigned_model` for Assignment (Sec 2.1)**
+   - *Inversion*: Keep `model` as the assigned/canonical target; store declaration in a new column (`declared_model`) or ephemeral status.
+   - *Predicted Failure/Regression*: Repurposing `model` injects verbose banner strings (`"<model> via <provider> (<bridge> <version>)"`) into the legacy column, breaking downstream readers, API callers, and queries expecting canonical model identifiers.
+   - *Result*: **Beat the spec**. Reversing column semantics creates unnecessary backwards-incompatibility.
+
+2. **Deferring Claude/Codex Bridge Mapping Discovery to Lane L2 (Sec 2.2, 4)**
+   - *Inversion*: Measure and define bridge mapping parameters upfront in the specification before commissioning lanes.
+   - *Predicted Failure/Regression*: L2 is tasked with open-ended capability research. If `claude-agent-acp` or `codex-acp` do not expose model flags/config in their current bridge builds, automated lanes stall or produce dead fallback code for the two core bridges.
+   - *Result*: **Beat the spec**. Delegating core feasibility R&D to an implementation lane violates autonomous execution.
+
+3. **Bifurcated & Ephemeral Transport for `assignment_state` (Sec 2.3)**
+   - *Inversion*: Deterministically persist `assignment_state` in `swarm.agent_principals` alongside the model columns.
+   - *Predicted Failure/Regression*: Spec leaves transport split ("activity frame ... or, until that lands, declare_agent_model payload"). Inactive/offline agents cannot surface mismatch marks from ephemeral frames, and dual pathways cause cross-lane integration drift.
+   - *Result*: **Beat the spec**. Reliable UI mismatch badging across sessions requires relational persistence.
+
+4. **CLI `--model` Precedence Over Database `assigned_model` (Sec 2.2)**
+   - *Inversion*: Central database `assigned_model` strictly overrides local CLI `--model`.
+   - *Predicted Failure/Regression*: Local operators and developers cannot test alternative models or bypass broken workspace configurations from the terminal.
+   - *Result*: **Spec won**. Operator CLI override is necessary for local runtime debugging.
+
+### What a Lane Author Still Has to Invent
+
+- **GAP (Sec 2.1, L1 Migration)**: Unnamed event log table, schema, and query mechanism needed to inspect `actor_user` on `AgentModelSet` events for backfilling `assigned_model`.
+- **GAP (Sec 2.3, L1/L2/L3 Protocol)**: Unspecified schema and storage target for `assignment_state` (untracked in L1 migration/commands; ambiguous fallback between command payload and activity frame).
+- **GAP (Sec 2.2, L2 Mapping)**: Exact subprocess arguments, configuration keys, or environment variables for `codex-acp` and `claude-agent-acp`.
+- **GAP (Sec 2.3, L3 Site)**: UI mismatch evaluation rule—unspecified whether L3 parses composite declaration strings via regex or depends on `assignment_state`.
+
+QUOTE-BACK: # A model per agent: assigned by a person, honoured by the listener, declared by the agent
+VERDICT: FAIL
+REASON: The spec leaves assignment state transport ambiguous, delegates bridge mapping R&D to L2, and omits the event log schema required for migration backfill.

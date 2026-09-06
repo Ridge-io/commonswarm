@@ -1,0 +1,35 @@
+### Inversion Review: Load-Bearing Choices
+
+1. **Hierarchy as Dot-Naming (`area.topic`) without Renames**
+   * *Inversion:* First-class hierarchical paths/metadata with atomic rename support.
+   * *Predicted failure:* Dotted names collide with versioning semantics (e.g. `release_notes.v2`); lack of rename creates dangling tombstone topics ("Moved to..."), fragments 20-version history windows, and breaks backlinks targeting old names.
+   * *Verdict against spec:* Inversion beats spec on link integrity; spec's "no rename" permanently leaks dead topics.
+
+2. **Client-Generated Index Pages vs. Stored Curated Indices**
+   * *Inversion:* Stored, human/agent-curated `<area>.index` topics.
+   * *Predicted failure:* Ephemeral index pages cannot provide curated narrative context; falling back to line 1 or "updated by" yields low-signal navigation.
+   * *Verdict against spec:* Spec beats inversion on concurrency: stored index topics become multi-agent write hotspots that rapidly churn the 20-version window.
+
+3. **Client-Side Background Body Crawl for Backlinks vs. Server-Side Extraction**
+   * *Inversion:* Server-side link extraction on `brain put` stored in an edge/relational index.
+   * *Predicted failure:* Client-side crawl requires $O(N)$ HTTP requests per session/CLI run; causes network stampedes, rate-limit exhaustion, mobile battery drain, and stale/partial backlink graphs until crawl completes.
+   * *Verdict against spec:* Inversion beats spec decisively. Pushing full-corpus graph indexing to client browsers and CLI caches is fragile and scales poorly.
+
+4. **Implicit Mention Linkification vs. Explicit `[[topic]]` Syntax**
+   * *Inversion:* Explicit `[[topic]]` wiki syntax.
+   * *Predicted failure:* Implicit matching turns common words into accidental graph edges; adding a new topic retroactively rewrites the backlink graph across historical topics.
+   * *Verdict against spec:* Inversion beats spec on graph stability, though spec adheres to prior design doctrine.
+
+---
+
+### Findings (GAPs & DEFECTs)
+
+- **DEFECT (§2.1):** False claim that existing flat names appear under root. `release_notes.v2` contains a dot and will be parsed as area `release_notes` topic `v2` unless an unspecified exception grammar exists.
+- **GAP (§2.1):** Parsing rule for names with $>3$ segments (`a.b.c.d`) is unspecified (reject, flatten to root, or truncate).
+- **GAP (§2.2, L2):** Reactive state propagation for background cache population in `LiveDashboard.astro` is undefined (how index pages re-render when line 1 arrives).
+- **GAP (§2.3, L3):** Eviction policy for 64MB CLI cache is unspecified ("evicted by version" does not define LRU/size eviction when quota is reached).
+- **GAP (§2.3):** Unspecified threshold and failure contract for `sessionStorage` ("when it fits").
+
+QUOTE-BACK: # Brain wiki: hierarchy, index pages, backlinks, without new storage
+VERDICT: FAIL
+REASON: The design introduces client-side O(N) fetch hazards for backlinks and leaves dotted name parsing and cache eviction unspecified for lane authors.

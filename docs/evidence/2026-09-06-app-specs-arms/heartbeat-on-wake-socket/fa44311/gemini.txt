@@ -1,0 +1,35 @@
+### Load-Bearing Inversions
+
+1. **Choice: Anon socket with payload HMAC verified via `realtime.messages` INSERT RLS**
+   - *Opposite:* Keep server-authenticated ingress (edge endpoint or agent JWT) instead of database-evaluated HMAC on `anon` INSERT.
+   - *Failure predicted:* Every heartbeat incurs Postgres execution running `pgcrypto` and table lookups on `realtime.messages`, shifting load from serverless edge compute to database CPU and connection locks.
+   - *Beat spec?* No. Edge invocations represent ~90% of idle costs; moving ingress to the socket achieves the operator's primary cost mandate, provided database overhead remains negligible.
+
+2. **Choice: Second private channel (`cswarm-activity:{workspace}`) on the wake socket**
+   - *Opposite:* Broadcast heartbeat over the existing `cswarm-wake:{wake_id}` channel.
+   - *Failure predicted:* Web dashboard tabs would have to open $N$ individual wake channel subscriptions per seat instead of a single workspace channel, quickly exceeding browser websocket channel limits.
+   - *Beat spec?* No. Multiplexing onto the existing workspace activity topic preserves the dashboard fanout architecture.
+
+3. **Choice: Client-stamped `emittedAt` trusted within a 30s freshness window**
+   - *Opposite:* Enforce server-authoritative timestamping.
+   - *Failure predicted:* Client host clock skew (>30s) silently causes dashboard drops (`now - emittedAt <= 30 s`), falsely reporting healthy agents as dead without listener error.
+   - *Beat spec?* Yes. Clock skew on unmanaged client seats is a real regression not mitigated by the spec.
+
+4. **Choice: Dual-cadence transport fallback (15s socket vs. 60s HTTP edge)**
+   - *Opposite:* Maintain a single uniform 15s or 60s cadence across both transports.
+   - *Failure predicted:* Rapid reconnect flapping dynamically resets timers, causing bursty HTTP traffic or stale dashboard grace timeouts.
+   - *Beat spec?* Yes. Leaving dynamic interval re-arming as an open "Decision for the lead" stalls lane implementation.
+
+---
+
+### Findings & What a Lane Author Must Invent
+
+- **DEFECT (§2.2, §2.3, §4 L1):** Channel join rejection on `anon` role. `cswarm-activity:{workspace}` is a private channel (`private: true`). Realtime requires a matching `SELECT` RLS policy on `realtime.messages` to join. Today, only `authenticated` members have `SELECT` privilege; `anon` has none. Without adding an `anon` `SELECT` policy (or scoped publish-only join), `WakeSubscriber` fails to join the activity channel.
+- **DEFECT (§2.2, §4 L1):** Missing SQL `base64url` decoding/encoding. Postgres `pgcrypto.hmac` returns `bytea`. Standard `encode(..., 'base64')` outputs standard Base64 (`+`, `/`, `=`), whereas the client generates `base64url`. The equality check will fail unless a custom SQL translation function is provided.
+- **GAP (§2.3):** Unresolved cadence logic. The spec states *"Decision for the lead: keep 15 s on the socket and 60 s on the HTTP fallback"*. A lane author cannot build without a concrete cadence contract and timer re-arming specification in `ListenerActivityController`.
+- **GAP (§2.3, §4 L2):** `WakeSubscriber.publishActivity` queueing/reconnection semantics. The spec does not define whether `publishActivity` buffers frames during socket reconnects or immediately trips fallback to the HTTP edge.
+- **GAP (§4 L1):** Migration versioning and naming for L1 (`202609..._activity_publish_policy.sql`) is unspecified.
+
+QUOTE-BACK: # Heartbeat on the wake socket: retire the activity edge call
+VERDICT: FAIL
+REASON: The design fails to provide an `anon` SELECT policy required to join private Realtime channels, omits Postgres base64url HMAC verification, and leaves cadence switching as an unmade decision.

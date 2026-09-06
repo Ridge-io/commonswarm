@@ -1,0 +1,33 @@
+### Load-Bearing Design Choices & Inversions
+
+1. **Choice: Measurement-first QA lane before fixes (measure, fix only FAIL rows).**
+   - *Inversion:* Proactively rewrite `.dashboard__message-markdown` spacing and wrap rules directly to Notion values without prior measurement.
+   - *Predicted Failure:* Rewriting blind risks breaking working message formatting and introduces regressions into shipped layout (`LiveDashboard.astro:12891-13061`) without knowing if "light text / no scroll" was already resolved.
+   - *Result:* Spec beats inversion. An empirical harness prevents churn against an unverified phantom bug.
+
+2. **Choice: Headless Chrome at 390×844 as the mobile test harness.**
+   - *Inversion:* Test on real WebKit / iOS Safari (or physical device viewports).
+   - *Predicted Failure:* Testing only desktop Chrome at 390px yields false PASS verdicts on mobile-specific layout bugs (e.g., iOS Safari dynamic viewport resizing, momentum scroll lock, or subpixel gradient rendering at viewport boundaries).
+   - *Result:* Inversion beats spec. Chrome desktop emulation cannot reproduce iOS WebKit rendering or viewport scrolling quirks.
+
+3. **Choice: Spacing targets defined by fractional line-height multipliers (0.75×, 0.25×, 1.5×) rather than CSS token values (`--s-*`).**
+   - *Inversion:* Pin spacing strictly to the design system's `--s-*` tokens (e.g., `--s-3`).
+   - *Predicted Failure:* Fractional line-height ratios create subpixel rounding mismatches against CSS rem tokens across varying font sizes and zoom levels, triggering brittle assertion failures.
+   - *Result:* Inversion beats spec. The shipped stylesheet uses `--s-3` (`:12916-12923`); enforcing arbitrary dynamic ratios conflicts with the token system.
+
+4. **Choice: Ad-hoc corpus including the "operator's own longest recent channel message" (Fixture 6).**
+   - *Inversion:* Use a strictly synthetic, deterministic boundary corpus covering all markdown element combinations.
+   - *Predicted Failure:* Relying on operator channel copy blocks implementation when the text is missing from the spec, whereas synthetic stress cases isolate layout boundaries deterministically.
+   - *Result:* Inversion beats spec. Synthetic fixtures avoid dependency on external private text.
+
+---
+
+### What a Lane Author Would Still Have to Invent
+
+- **[GAP §2.1] Fixture 6 Text:** The spec mandates copying the "operator's own longest recent channel message, copied verbatim", but provides no text, channel identifier, or message ID.
+- **[GAP §2.2 / §2.3] Last-Line DOM Extraction:** Neither DOM nor CSS provides a `::last-line` selector. The author must invent an inspection mechanism (e.g., `Range`/`getClientRects` heuristics) to locate and compute styles on the "last visible line".
+- **[GAP §2.3] Target Tolerances:** The spec gives exact ratios (e.g., `0.75 × line-height (≈ --s-3)`) without specifying allowable pixel tolerance (delta) before an assertion fails.
+
+QUOTE-BACK: # Markdown spacing and wordwrap: measure on a phone, then fix what fails
+VERDICT: FAIL
+REASON: The lane author must invent the missing Fixture 6 text, the DOM inspection mechanism for the last visible line, and the numerical tolerances for spacing assertions.

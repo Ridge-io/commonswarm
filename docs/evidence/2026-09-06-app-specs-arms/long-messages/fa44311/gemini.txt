@@ -1,0 +1,39 @@
+### Inversion Analysis of Load-Bearing Choices
+
+1. **Choice 1: Hard clip at whole line boundary instead of bottom fade gradient (Sections 0, C2)**
+   - *Inversion:* Reintroduce bottom fade gradient mask as requested by the operator.
+   - *Predicted Failure/Regression:* Half-cut glyphs, low-contrast text on dark backgrounds, and unreadable partial sentences (re-triggering the exact defect solved in `6712776`).
+   - *Beat Spec?* No. Hard clip + clear button indicator beats bottom fade.
+
+2. **Choice 2: Viewport-split thresholds (14 phone / 40 desktop) in TS and CSS (Section 2, C1)**
+   - *Inversion:* Keep a single uniform collapse threshold across all viewports.
+   - *Predicted Failure/Regression:* On phones, long thresholds push the toggle below the viewport fold; on desktop, short thresholds create aggressive accordion clutter on routine multi-paragraph agent responses.
+   - *Beat Spec?* No on UX, but the inversion highlights an architectural tension: exporting JS constants while applying thresholds via CSS media queries invites drift unless injected dynamically.
+
+3. **Choice 3: Dynamic line count in toggle copy `Show more (about N lines)` (Section 2, C2, C3)**
+   - *Inversion:* Use static label `Show more` / `Show less`.
+   - *Predicted Failure/Regression:* Users lack preview context before expanding, but the spec's `(scrollHeight - clientHeight) / lh-base` formula breaks on markdown with non-standard line-height items (images, callouts, tables, fenced code padding), producing erratic or negative line estimates.
+   - *Beat Spec?* Yes. Static toggle copy beats an inaccurate heuristic that miscounts multi-line markdown block elements.
+
+4. **Choice 4: Workspace-scoped `localStorage` FIFO cache (capped at 200 IDs) (Section 2, C4)**
+   - *Inversion:* Keep expansion state purely ephemeral in memory (`expandedSignalIds`).
+   - *Predicted Failure/Regression:* Page refreshes or navigating between workspaces collapse open messages, destroying reading continuity.
+   - *Beat Spec?* No. Ephemeral state degrades UX; local key-value persistence is light and requires no server migration.
+
+---
+
+### Findings (What a Lane Author Must Invent)
+
+- **GAP** — Section 5 ("What was NOT established") & Section 2 (C1):
+  *Claim:* "The exact phone breakpoint constant the shell uses after `7dbfbae`; the lane reads it from the code..."
+  *What is missing:* The breakpoint query/value is explicitly unspecified. Furthermore, the spec does not define how TypeScript exports (`MESSAGE_COLLAPSE_LINES_PHONE/DESKTOP`) bind to Astro CSS media queries without manual constant duplication.
+- **GAP** — Section 2 (C5):
+  *Claim:* `aria-controls` points at the message body id.
+  *What is missing:* Message markdown containers do not have assigned element IDs in the spec; the lane author must invent an ID generation scheme (e.g. `message-body-${signal.id}`).
+- **NIT** — Section 2 (C2):
+  *Claim:* Toggle copy reads `Show more (about N lines)`.
+  *What is missing:* No singular handling specified when $N = 1$ (`about 1 line` vs `about 1 lines`).
+
+QUOTE-BACK: # Long messages: a readable collapse and "Show more" that remembers
+VERDICT: FAIL
+REASON: A lane author must invent the shell breakpoint value, the mechanism synchronizing TypeScript constants with CSS media queries, and the DOM ID naming scheme for aria-controls.

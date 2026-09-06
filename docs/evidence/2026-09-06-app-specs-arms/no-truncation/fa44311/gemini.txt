@@ -1,0 +1,33 @@
+### Inversion Analysis of Load-Bearing Choices
+
+1. **Choice 1: Expanding hook preview from 240 to 1,000 characters (`HOOK_BODY_PREVIEW_CHARS`, C2/L2)**
+   - *Inversion:* Keep hook preview strictly bounded at 240 chars.
+   - *Predicted Failure/Regression:* 40 backlog signals × 1,000 chars injects ~40,000 characters (~10k tokens) into prompt context on every `UserPromptSubmit`, ballooning latency and token cost, and risking context budget exhaustion.
+   - *Outcome:* **Beat the spec.** Spec §5 explicitly admits the hook context budget constant was never established and whether 40 × 1,000 fits is unknown.
+
+2. **Choice 2: Injecting full 8,000-character body into `inbox --notify --json` (C1/L1)**
+   - *Inversion:* Keep notification events lightweight (ID + snippet only).
+   - *Predicted Failure/Regression:* Emitting full 8KB bodies across continuous arrival-watch loops inflates daemon memory buffers and streaming bandwidth.
+   - *Outcome:* **Did not beat the spec.** Programmatic consumers of `--json` need payload immutability to prevent round-trip read races; 8KB is trivial overhead for local IPC.
+
+3. **Choice 3: Zero app product changes, relying solely on DOM text equality testing (C3/L3)**
+   - *Inversion:* The app contains visual CSS clipping, requiring product code fixes.
+   - *Predicted Failure/Regression:* The operator's reported clipping stems from CSS rules (e.g. `overflow: hidden`, `line-clamp`, or container bounding), not JavaScript string slicing. A DOM text equality test passes green while the visual defect remains live in production.
+   - *Outcome:* **Beat the spec.** Asserting DOM node text content completely overlooks visual layout clipping and rendered markdown display constraints.
+
+4. **Choice 4: Computing dynamic char-offset suffix arithmetic (`[… N more chars]`, C1/C2)**
+   - *Inversion:* Use static truncation markers without character count arithmetic.
+   - *Predicted Failure/Regression:* Raw character slicing splits multi-byte Unicode codepoints/graphemes and severs markdown syntax, corrupting terminal renderers and LLM context formatting.
+   - *Outcome:* **Spec holds on ASCII, but inversion exposes unhandled multi-byte and markdown boundary issues.**
+
+---
+
+### What a Lane Author Still Has to Invent
+
+- **[GAP] §4 (L2) Context Budget Fallback:** Spec §5 admits the budget constant is unverified. If 40 × 1,000 chars exceeds the hook's real limit, the author must invent whether to drop signals, clamp preview length, or fail.
+- **[GAP] §4 (L3) Missing Fixture Corpus:** Spec §5 specifies using "the operator's own recent channel messages as the corpus" for L3, but defines no fixture file path, mock data, or repository source.
+- **[GAP] §4 (L3) Test Execution Harness:** Spec mandates `message-body.observer.test.ts` under `site/src/components/app/` without specifying the runner (e.g., Playwright vs Vitest) or DOM mounting harness for Astro components.
+
+QUOTE-BACK: # Stop truncating in the human UI
+VERDICT: FAIL
+REASON: Unverified context budgets in L2 and unspecified test fixtures and runner harnesses in L3 force lane authors to invent critical implementation details.
