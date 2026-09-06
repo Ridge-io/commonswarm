@@ -1,0 +1,387 @@
+D-036 independent cross-family arm (Opus, adversarial) — lane L2 wake migration
+SHA: e00ba932c441522f7655d7d2e5585561b8e4d764   merge-base: 0f37532
+Worktree: /private/tmp/claude-501/-Users-yulanbot-Developer-Ridge-io-cloud-swarm/a866e6cd-5d6d-477f-af6a-740cd30407ed/scratchpad/lane-wake-migration
+
+QUOTE-BACK, first `diff --git` line of DIFF.patch, verbatim:
+
+    diff --git a/package.json b/package.json
+
+Method: read the three changed files and the spec at the named sections; ran `npm run db:reset`
+(exit 0) on the local stack at 127.0.0.1:54322 and queried the resulting catalog directly through
+`docker exec supabase_db_cloud-swarm psql`; ran the new test file, the full `test:p1-local`, and
+`test:p1-cli`; ran two OID-preserving mutations of my own. Nothing hosted was touched: no
+`--linked`, no `db push`, no reference to ukezjcnxjvkpkeezxaew.
+
+
+================================================================================
+1. agent_delivery_read_context re-created from the LIVE body — REFUTATION FAILED
+================================================================================
+
+Mechanical diff of the new body against the live one. Extracted
+`supabase/migrations/20260820000002_archive_revokes_access.sql:103-299` and
+`supabase/migrations/20260906000010_wake_delivery.sql:278-479`, then `diff -u`. The complete set
+of differences is five hunks and nothing else:
+
+  - CREATE OR REPLACE FUNCTION  ->  CREATE FUNCTION      (required; DROP/CREATE for an OUT change)
+  - AS $$ ... $$               ->  AS $fn$ ... $fn$      (dollar tag only)
+  + pending_delivery_count integer,   wake_id text       (the eleventh output column)
+  + v_wake_id text                                       (declaration)
+  + p.wake_id  /  v_wake_id                              (one SELECT item, one INTO target)
+  + wake_id := v_wake_id;                                (one assignment before RETURN NEXT)
+
+No predicate, join, CTE, or control-flow line differs. The archive predicate that
+`tests/p1-server/command.test.ts:3580-3582` guards
+(`NOT swarm.is_member(...) OR v_membership_revoked_at IS NOT NULL`, new file :411-412) is present
+verbatim. The older 20260731000001 body was not used.
+
+The three privilege statements follow at wake_delivery.sql:481-483, in the spec's order:
+  481  ALTER FUNCTION swarm.agent_delivery_read_context(bytea, uuid) OWNER TO swarm_admin;
+  482  REVOKE ALL ON FUNCTION swarm.agent_delivery_read_context(bytea, uuid) FROM PUBLIC;
+  483  GRANT EXECUTE ON FUNCTION swarm.agent_delivery_read_context(bytea, uuid) TO swarm_read;
+These are 20260820000002:301, :302, :306. `:305` (GRANT USAGE ON SCHEMA swarm TO swarm_read) is
+correctly omitted — the grant already exists and the spec names only :301, :302, :306.
+
+Local catalog after db:reset (pg_proc/proacl):
+
+  proname                     | owner       | secdef | vol | proacl
+  agent_delivery_read_context | swarm_admin | t      | v   | {swarm_admin=X/swarm_admin,swarm_read=X/swarm_admin}
+
+  role          | has_function_privilege(... ,'EXECUTE')
+  anon          | f
+  authenticated | f
+  public        | f
+  swarm_read    | t
+  swarm_command | f
+
+Owner is swarm_admin, PUBLIC is absent from the ACL, and anon/authenticated/public cannot execute
+it. The failure mode the spec measured (owner postgres + EXECUTE to PUBLIC) did not occur.
+
+
+================================================================================
+2. Ownership and grants of every new function — REFUTATION FAILED
+================================================================================
+
+Single pg_proc query on the reset stack. Full ACL of every new object, nothing elided:
+
+  proname               | owner       | secdef | vol | proconfig                    | proacl
+  wake_topic_authorized | swarm_admin | t      | s   | {"search_path=swarm, pg_catalog"} | {swarm_admin=X/swarm_admin,anon=X/swarm_admin}
+  rotate_wake_id        | postgres    | t      | v   | {search_path=pg_catalog}      | {postgres=X/postgres,swarm_command=X/postgres}
+  wake_agent_delivery   | postgres    | t      | v   | {search_path=pg_catalog}      | {postgres=X/postgres}
+  wake_workspace_signal | postgres    | t      | v   | {search_path=pg_catalog}      | {postgres=X/postgres}
+
+Every one matches the spec. `provolatile = 's'` confirms wake_topic_authorized is STABLE; the
+other three are VOLATILE, which is correct for a rotation and for triggers. No ACL contains a
+bare `=X/` entry, so PUBLIC was revoked everywhere.
+
+Enumerated has_function_privilege, rather than reading ACLs only:
+
+  role          | wake_topic_authorized | rotate_wake_id | wake_agent_delivery | wake_workspace_signal
+  anon          | t                     | f              | f                   | f
+  authenticated | f                     | f              | f                   | f
+  public        | f                     | f              | f                   | f
+  swarm_read    | f                     | f              | f                   | f
+  swarm_command | f                     | t              | f                   | f
+  swarm_admin   | -                     | -              | f                   | f
+
+anon can execute exactly one new function, wake_topic_authorized, which is what the spec grants.
+rotate_wake_id is reachable only by swarm_command. Neither trigger function is callable by any
+role but its owner. No function is callable by anon or authenticated beyond the spec.
+
+
+================================================================================
+3. wake_topic_authorized returns false and never raises — REFUTATION FAILED
+================================================================================
+
+First, a correction to the task's framing that is itself worth recording. A direct call **as anon**
+is impossible and is supposed to be:
+
+  BEGIN; SET LOCAL ROLE anon;
+  SELECT swarm.wake_topic_authorized('cswarm-wake:not-valid');
+  ERROR:  permission denied for schema swarm
+
+That is the spec's own design (W5, PUSH-DELIVERY.md:108): a policy stores the function by OID, so
+anon needs EXECUTE and not USAGE on the schema. So the anon path is exercised only through the
+policy, which is the file's first test. I therefore measured the input matrix as the owner and the
+anon path through Realtime separately.
+
+Input matrix (owner-side, one statement, all nine inputs):
+
+  malformed      cswarm-wake:not-valid                    -> false
+  empty          ''                                       -> false
+  null           NULL                                     -> false
+  wrongprefix    cswarm-signals:abc                       -> false
+  unknown43      cswarm-wake:AAAA…(43)                    -> false
+  len42          cswarm-wake:AAAA…(42)                    -> false
+  len44          cswarm-wake:AAAA…(44)                    -> false
+  quote          cswarm-wake:' or '1'='1                  -> false
+  newline-embed  cswarm-wake:AAAA…(43)\nx                 -> false
+
+Nine inputs, nine `false`, zero errors raised. I added the last three myself: `len42`/`len44`
+probe the exact-43 anchor, `quote` probes the fact that the argument reaches a parameterized
+comparison and not string concatenation, and `newline-embed` probes whether Postgres's `$` could
+match before a trailing newline and let a padded topic through — it does not, because the regex
+carries no newline-sensitive flag.
+
+Positive control on the same invocation (this is what makes the nine `false` results evidence
+about the function and not about a function that always returns false):
+
+  live topic   swarm.wake_topic_authorized('cswarm-wake:'||wake_id)          -> true
+  neg control  swarm.wake_topic_authorized('cswarm-wake:'||reverse(wake_id)) -> false
+
+Index use, not asserted from the index's existence but from the plan:
+
+  EXPLAIN (COSTS OFF) SELECT p.principal_id FROM swarm.agent_principals p
+    WHERE p.wake_id='x' AND p.revoked_at IS NULL;
+  Index Scan using agent_principals_wake_id on agent_principals p
+    Index Cond: (wake_id = 'x'::text)
+    Filter: (revoked_at IS NULL)
+
+The unique index is used; the revoked check is a filter on the single fetched row, so a revoked
+principal costs the same lookup as a live one.
+
+Timing/existence leakage: the four refusal classes are not distinguishable to the caller, because
+the caller never sees the boolean — Realtime sees it. The file's second test measures this the
+right way: it normalizes the topic out of the refusal string (`refusalWithoutTopic`, necessary
+because Realtime quotes the topic back) and asserts all four normalized strings are equal. It
+passed. I did not measure wall-clock timing differences between the four classes; see NOT
+ESTABLISHED.
+
+
+================================================================================
+4. RLS policies on realtime.messages — REFUTATION FAILED
+================================================================================
+
+Enumerated every policy on the table after db:reset — the whole set, counted, not grepped:
+
+  policyname                                | cmd    | roles           | qual
+  agent receives its own wake               | SELECT | {anon}          | ((extension = 'broadcast') AND swarm.wake_topic_authorized((SELECT realtime.topic())))
+  workspace members receive agent activity  | SELECT | {authenticated} | ((extension = 'broadcast') AND swarm.is_member(substring((SELECT realtime.topic()), '^cswarm-activity:([0-9a-f]{8}-…)$')::uuid, (SELECT auth.uid())))
+  workspace members receive signals         | SELECT | {authenticated} | ((extension = 'broadcast') AND swarm.is_member(substring((SELECT realtime.topic()), '^cswarm-signals:([0-9a-f]{8}-…)$')::uuid, (SELECT auth.uid())))
+  (3 rows)
+
+Three policies total: the pre-existing activity policy plus exactly the two the spec lists. The
+anon policy is byte-for-byte the spec's block at PUSH-DELIVERY.md:99-106. The signals policy is
+the activity policy with `cswarm-activity:` replaced by `cswarm-signals:`, which is what
+"authorized exactly like the existing activity topic" (W2, :79) asks for. No INSERT, UPDATE,
+DELETE, or ALL policy was added. There is no policy that lets anon read the signals topic or the
+activity topic, and none that lets authenticated read a wake topic.
+
+I probed the one widening I could construct. anon does hold ambient reach into the schema:
+
+  has_schema_privilege('anon','realtime','USAGE')          -> t
+  has_table_privilege('anon','realtime.messages','SELECT')  -> t
+
+so before this migration anon's SELECT was blocked purely by there being no anon SELECT policy,
+and this migration adds the first one. That makes "does it leak outside a Realtime connection?"
+a real question rather than a formality. It does not:
+
+  SELECT realtime.topic();                                  -> NULL
+  SELECT swarm.wake_topic_authorized(realtime.topic());     -> false
+
+`realtime.topic()` reads a GUC the Realtime service sets per channel, so on any ordinary
+connection the USING clause is false and the policy grants nothing. Note that these two
+privileges are pre-existing stack state, not something this lane granted.
+
+
+================================================================================
+5. The trigger — REFUTATION FAILED (including the double-wake case, measured)
+================================================================================
+
+I did not rely on the author's test for this. One rolled-back transaction, seeded from scratch,
+inserting as `swarm_command`:
+
+  -- W2 trigger on swarm.signals
+  signals_rows | ev     | payload
+  1            | signal | {"v":1,"id":"1159df67-…","signal_id":"1111…0006","created_at":"2026-09-06T04:42:07.36+00:00"}
+
+  -- the edge's own 7-column INSERT, run under SET LOCAL ROLE swarm_command
+  INSERT INTO swarm.agent_principals (principal_id,workspace_id,owner_user_id,name,model,created_at,revoked_at)
+  edge_len | edge_shape
+  43       | t
+
+  -- delivery insert, then the SAME insert again with ON CONFLICT DO NOTHING
+  INSERT 0 1
+  INSERT 0 0
+  wake_rows | ev   | ext       | payload
+  1         | wake | broadcast | {"v":1,"id":"2a17fb8a-…","signal_id":"1111…0006","enqueued_at":"2026-09-06T04:42:07.37+00:00"}
+
+  -- rotation from inside SET LOCAL ROLE swarm_command
+  rotated_len | 43
+
+  -- backfill
+  n | distinct_ids | bad_len
+  2 | 2            | 0
+
+Findings from that run:
+- Exactly ONE realtime.messages row per delivery, event `wake`, extension `broadcast`.
+- **The ON CONFLICT DO NOTHING duplicate did not double-wake.** The second insert reported
+  `INSERT 0 0` and the row count stayed at 1. This is the spec's claim at :92 and no test in the
+  lane asserts it; I measured it directly.
+- The wake payload is `{v, signal_id, enqueued_at}` — exactly PUSH-DELIVERY.md:70, content-free.
+  The extra `id` key is realtime.send's own message id, not something the trigger put there.
+- The W2 signals payload is `{v, signal_id, created_at}` — exactly :79.
+- The edge's seven-column INSERT still works and receives a 43-character id, confirming the
+  stored default resolves `extensions.gen_random_bytes` by OID under swarm_command.
+- Both enqueue paths land in swarm.signal_deliveries, so the one AFTER INSERT FOR EACH ROW trigger
+  (wake_delivery.sql:196-199) covers scalar and fan-out. That is a property of the trigger's
+  target table, and both paths are exercised across the 48-test p1-local run.
+
+Exception guard: bodies are wrapped `BEGIN … EXCEPTION WHEN OTHERS THEN RETURN NULL; END` at
+:159-182 and :208-222, inside a trigger that returns NULL either way. The lane's test forces the
+real W4 failure (re-owning the function to swarm_admin, which has no USAGE on realtime) and
+asserts the delivery row survives; it passed.
+
+Test file, run by me on the freshly reset stack:
+
+  node --import tsx --test --test-concurrency=1 tests/p1-local/wake-realtime-auth.test.ts
+  ✔ anon joins a private wake topic for a live id
+  ✔ Realtime refusal text is identical for rotated, revoked, malformed, and no-live-token topics
+  ✔ every principal has a distinct 43-character wake_id and a fresh insert gets one
+  ✔ rotate_wake_id as swarm_command changes the id
+  ✔ a delivery inserted as swarm_command leaves exactly one realtime.messages row on the wake topic
+  ✔ the wake trigger swallows a send failure and the delivery insert still commits
+  ✔ agent_delivery_read_context returns wake_id to swarm_read
+  ✔ new function owners and agent_delivery_read_context execute privileges match the spec
+  ℹ pass 8   ℹ fail 0   exit 0
+
+Full suite, because the new W2 trigger fires on EVERY swarm.signals insert in every local test and
+that is the lane's real regression surface:
+
+  npm run test:p1-local   ->   ℹ pass 48   ℹ fail 0   exit 0
+  npm run test:p1-cli     ->   ℹ pass 482  ℹ fail 0   exit 0
+
+MY OWN MUTATIONS (not the author's), both OID-preserving, both restored by a full db:reset:
+
+  M1. DROP POLICY "agent receives its own wake" ON realtime.messages;
+      -> test 1 FAILS (✖, 5134ms). So the join is admitted by THIS policy, not by ambient
+         permissiveness. The author's mutation removed the GRANT; this one removes the policy, and
+         they discriminate different things.
+
+  M2. CREATE OR REPLACE swarm.wake_topic_authorized(text) ... RETURN true;
+      -> test 2 FAILS (✖, 105ms). So the refusal test measures the function's return value.
+
+  A NOTE ON A FALSE NEGATIVE I PRODUCED AND CAUGHT. My first attempt at M2 renamed the real
+  function aside and created a stub under the original name. The refusal test PASSED, which
+  looked like "the test does not reach the function it claims to test". It was my probe that was
+  wrong: an RLS policy binds the function by OID, and `ALTER FUNCTION … RENAME` preserves the OID,
+  so the policy went on calling the real function and my stub was never invoked. Redone with
+  CREATE OR REPLACE, which also preserves the OID but replaces the body, the test failed as it
+  should. Recording this because the same mistake would make any future reviewer of this policy
+  report a defect that is not there.
+
+
+================================================================================
+6. wake_id default, width, backfill, edge INSERT — REFUTATION FAILED
+================================================================================
+
+  attname | type | attnotnull
+  wake_id | text | t
+
+  indexname                | indexdef
+  agent_principals_wake_id | CREATE UNIQUE INDEX agent_principals_wake_id ON swarm.agent_principals USING btree (wake_id)
+
+  extname   | schema
+  pgcrypto  | extensions
+
+Default at wake_delivery.sql:23-27 is `translate(encode(extensions.gen_random_bytes(32),'base64'),
+'+/=','-_')` — schema-qualified, matching PUSH-DELIVERY.md:68 exactly. 32 bytes base64 is 44
+characters with one `=` pad; `translate` maps `=` to nothing, giving 43. Measured, not reasoned:
+every principal on the stack had `length(wake_id)=43`, matched `^[A-Za-z0-9_-]{43}$`, and
+`count(*) = count(DISTINCT wake_id)` with `bad_len = 0`, so the volatile default was evaluated per
+row rather than once. The edge's own seven-column column list (command/index.ts:4025-4036, which
+does not name wake_id) inserted successfully under swarm_command and got a 43-character id.
+`src/cloud/seed.ts:157-164`, the four-column INSERT, likewise does not name the column and is
+exercised throughout the 48-test p1-local run.
+
+
+================================================================================
+7. The gate — REFUTATION FAILED
+================================================================================
+
+package.json:26 `test:p1-local` gains ` tests/p1-local/wake-realtime-auth.test.ts` as the ninth
+file. tests/p1-cli/test-gate-coverage.test.ts:24 `localStackCommand` gains the identical suffix,
+and `localStackTests` gains the path in sorted position (:34). I compared the two strings
+character by character via the diff: the added text is byte-identical in both places, which is
+what the pin exists to enforce. `npm run test:p1-cli` (482 pass) includes that pin test. The file
+is reachable only through `test:p1-local` and through no pure gate, which is the invariant the
+comment at :19-21 states.
+
+
+================================================================================
+8. THE FOUR §9 HOSTED-PRIVILEGE PROBES FOR THE LEAD (run before `db push`; NOT run by me)
+================================================================================
+
+Run these against the hosted project (ref ukezjcnxjvkpkeezxaew) BEFORE pushing this migration.
+I did NOT run them; I ran them only against the local stack, whose answers are below for contrast.
+One statement, so every answer comes from the same invocation:
+
+  SELECT
+    has_schema_privilege('postgres','realtime','USAGE')            AS p1_realtime_usage,
+    has_table_privilege('postgres','realtime.messages','INSERT')   AS p2_messages_insert,
+    (SELECT rolbypassrls FROM pg_roles WHERE rolname='postgres')   AS p3_bypassrls,
+    (SELECT count(*) FROM pg_policies
+       WHERE schemaname='realtime' AND tablename='messages'
+         AND cmd IN ('INSERT','ALL'))                              AS p4_insert_policies;
+
+  -- and the §10 pgcrypto question, which gates the column default itself:
+  SELECT e.extname, n.nspname AS schema
+  FROM pg_extension e JOIN pg_namespace n ON n.oid = e.extnamespace
+  WHERE e.extname = 'pgcrypto';
+
+Required answers: p1 = t, p2 = t, p3 = t (or postgres owns realtime.messages), p4 = 0, and
+pgcrypto in schema `extensions`.
+
+Local values, measured by me on the reset stack, for comparison only:
+  p1_realtime_usage | p2_messages_insert | p3_bypassrls | p4_insert_policies
+  t                 | t                  | t            | 0
+  pgcrypto | extensions
+
+Why each matters. If p3 is false and postgres does not own the table, `realtime.send` swallows the
+RLS refusal with its own RAISE WARNING, the trigger's guard swallows the rest, and no wake is ever
+sent while `listen status` truthfully reports `push` — and the lane's row test would still be
+green locally. If p4 is non-zero the hosted project has an INSERT policy this analysis did not
+account for and the answer changes. If pgcrypto is NOT in `extensions` on the hosted project, the
+`CREATE EXTENSION IF NOT EXISTS pgcrypto WITH SCHEMA extensions` at :13 is a no-op (IF NOT EXISTS
+does not relocate an existing extension) and every `extensions.gen_random_bytes` call — the column
+default and rotate_wake_id — fails, which would make the ALTER TABLE itself fail at push time.
+
+
+================================================================================
+NOT ESTABLISHED
+================================================================================
+
+- Anything about the hosted project. I ran no query against ukezjcnxjvkpkeezxaew, no `--linked`,
+  no `db push`. All eight probes above are local-stack measurements. The §9 answers are unknown.
+- That Realtime's hosted refusal text matches the local text. Only the local text was compared,
+  and only after the topic was normalized out of it.
+- Wall-clock timing differences between the four refusal classes. I established that the four
+  refusal STRINGS are identical and that the lookup is a single index scan in all cases, which
+  bounds the difference, but I did not measure latency distributions. A timing side channel that
+  distinguishes "unknown id" from "revoked principal" is not excluded by anything I ran.
+- Behavior under concurrency: a rotation committing while a delivery insert is in flight. The
+  spec bounds this at one extra payload to the stale topic (W6, :123); I did not construct the
+  interleaving.
+- The authenticated join to `cswarm-signals:{workspace_id}` over a live Realtime connection. I
+  verified the policy exists, is TO authenticated, and mirrors the activity template, and I
+  verified the trigger writes the row — but no test in this lane joins that topic as an
+  authenticated client, so the W2 end-to-end path is unproven. Not this lane's scope by the
+  brief, but it is unproven.
+- `npm test`, `npm run check:edge`, `npm run check:tests`, `npm run test:p1-server`, and
+  `scripts/check-commit-identity.sh`. The author reports exit 0 for each; I re-ran only
+  `test:p1-cli`, `test:p1-local`, and the wake file. In particular I did NOT independently re-run
+  `test:p1-server`, so `command.test.ts:3580-3582` and `:9267-9271` staying green rests on the
+  author's report plus my body diff and my direct privilege query, not on my own execution of
+  that suite.
+- That this SHA is on main. It is not; I reviewed the branch.
+
+Worktree left clean: `git status --porcelain` empty, HEAD at
+e00ba932c441522f7655d7d2e5585561b8e4d764. Local stack left at a clean `npm run db:reset` (exit 0)
+with both of my mutations gone: wake_topic_authorized is back to owner swarm_admin, STABLE, ACL
+{swarm_admin=X/swarm_admin,anon=X/swarm_admin}, and realtime.messages carries its 3 policies.
+
+I found no defect. Every spec-named property I could measure, I measured, and each held with a
+positive control on the same invocation; the two mutations I ran show the lane's two load-bearing
+tests can fail. The one thing I would not sign is production behavior, which the §8 probes exist
+to settle and which no local measurement can reach.
+
+VERDICT: PASS

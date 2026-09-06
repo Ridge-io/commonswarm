@@ -1,0 +1,31 @@
+1. **Quote the first `diff --git` line from DIFF.patch.**
+   `diff --git a/package.json b/package.json`
+
+2. **Is `agent_delivery_read_context` re-created from the 20260820 live body (the archive predicate `NOT swarm.is_member(...) OR v_membership_revoked_at IS NOT NULL`) and not from 20260731000001? Cite the migration lines.**
+   Yes, it is re-created from the 20260820 live body. The exact archive predicate is present at lines 430-431 of the migration file `20260906000010_wake_delivery.sql`.
+
+3. **After that DROP/CREATE, are all three privilege statements present: OWNER TO swarm_admin; REVOKE ALL FROM PUBLIC; GRANT EXECUTE TO swarm_read? A GRANT-only re-create fails command.test.ts:9267-9271.**
+   Yes, all three privilege statements are present immediately after the function creation (lines 481-483 in the new migration).
+
+4. **Is `rotate_wake_id` SECURITY DEFINER, owned by postgres, `SET search_path = pg_catalog`, and does it call `extensions.gen_random_bytes(32)` schema-qualified? Owner swarm_admin raises permission denied for schema extensions.**
+   Yes, `rotate_wake_id` is declared `SECURITY DEFINER`, with `SET search_path = pg_catalog` (lines 109-110). Its owner is set to `postgres` (line 127), and it calls `extensions.gen_random_bytes(32)` schema-qualified (line 117).
+
+5. **Are both trigger functions (`wake_agent_delivery`, `wake_workspace_signal`) owned by postgres, wrapping `realtime.send` in `BEGIN … EXCEPTION WHEN OTHERS THEN RETURN NULL`?**
+   Yes, both trigger functions are owned by postgres and both wrap their inner operations (including `realtime.send`) within `BEGIN ... EXCEPTION WHEN OTHERS THEN RETURN NULL; END;` blocks. 
+
+6. **Does `wake_topic_authorized` GRANT EXECUTE TO anon, return false on malformed / unknown / revoked / no live token, and never raise?**
+   Yes, it grants EXECUTE to anon (line 92). The function explicitly returns `false` if `v_wake_id IS NULL` (malformed), if `v_principal_id IS NULL` (unknown/revoked), or if the `EXISTS` query for a live, unexpired token evaluates to false. It never raises, returning `false` via an `EXCEPTION WHEN OTHERS THEN RETURN false;` catch-all.
+
+7. **Does the first test join as anon to `cswarm-wake:<live id>` and require SUBSCRIBED?**
+   Yes, the first test ("anon joins a private wake topic for a live id") uses `newAnonClient()` to join `wakeTopic(principal.wakeId)` and asserts that the connection status is exactly `"SUBSCRIBED"`.
+
+8. **Does the delivery test assert exactly one `realtime.messages` row for the expected topic after INSERT as swarm_command, never merely that no error was raised?**
+   Yes, the test ("a delivery inserted as swarm_command leaves exactly one realtime.messages row on the wake topic") queries `realtime.messages` for the topic and executes `assert.equal(messages.length, 1, "assert the row, never the absence of an error");` along with asserting the event and extension types.
+
+9. **Are `package.json` `test:p1-local` and `tests/p1-cli/test-gate-coverage.test.ts` `localStackCommand` the same string, and is `tests/p1-local/wake-realtime-auth.test.ts` in `localStackTests`?**
+   Yes, both values in `package.json` and `test-gate-coverage.test.ts` are identical strings that include `tests/p1-local/wake-realtime-auth.test.ts` at the end, and the file is present in the `localStackTests` array.
+
+10. **Does production SQL classify by named state (false / exception handler) rather than `error.message`? Tests may compare Realtime refusal text as a claim control.**
+    Yes, the production SQL functions and triggers catch arbitrary errors via `EXCEPTION WHEN OTHERS THEN ...` (returning false or NULL) and perform explicit logical checks, entirely avoiding inspection or branching on error messages. The test file independently validates that the Realtime refusal texts map identically across different failure conditions.
+
+VERDICT: PASS
