@@ -8033,9 +8033,54 @@ test("durable-delivery: relation matrix on claim matches read; cursor path still
 test("durable-delivery: claim idempotency mismatch and workspace-only delivery routes", async () => {
   await scenario(async (f) => {
     const receiver = await createFixtureAgent(f, f.ua, "dd-idemp-mismatch");
+    const emptyCmdId = randomUUID();
+    const emptyInstId = randomUUID();
+
+    const emptyClaim = await issueDelivery(
+      f,
+      receiver.token,
+      {
+        kind: "claim_agent_inbox",
+        listener_instance_id: emptyInstId,
+        limit: 10,
+      },
+      emptyCmdId,
+    );
+    assert.equal(emptyClaim.status, 200, emptyClaim.text);
+    assert.equal((emptyClaim.body.deliveries as unknown[]).length, 0);
+    const [emptyKey] = await sql<{ command_id: string }[]>`
+      SELECT command_id FROM swarm.idempotency_keys WHERE command_id = ${emptyCmdId}
+    `;
+    assert.equal(emptyKey, undefined, "an idle poll writes no idempotency key");
+
+    const emptyMismatch = await issueDelivery(
+      f,
+      receiver.token,
+      {
+        kind: "claim_agent_inbox",
+        listener_instance_id: randomUUID(),
+        limit: 10,
+      },
+      emptyCmdId,
+    );
+    assert.equal(
+      emptyMismatch.status,
+      200,
+      "an idle poll retries the same command id by re-executing, not as a conflict",
+    );
+
     const cmdId = randomUUID();
     const instId = randomUUID();
-
+    const postedForIdem = await issueSignal(f, f.uaJwt, {
+      kind: "post_signal",
+      signal_kind: "note",
+      body: "dd-idemp-filled",
+      to_user_id: null,
+      to_agent_principal_id: receiver.principalId,
+      in_reply_to: null,
+      about: "dd-idemp-filled",
+    });
+    assert.equal(postedForIdem.status, 200, postedForIdem.text);
     const claim1 = await issueDelivery(
       f,
       receiver.token,
@@ -8047,8 +8092,11 @@ test("durable-delivery: claim idempotency mismatch and workspace-only delivery r
       cmdId,
     );
     assert.equal(claim1.status, 200, claim1.text);
+    assert.ok(
+      (claim1.body.deliveries as unknown[]).length > 0,
+      "a non-empty claim is the control that still writes the ledger",
+    );
 
-    // Mismatched listener_instance_id -> 409 command_id_conflict
     const mismatchInst = await issueDelivery(
       f,
       receiver.token,
@@ -8062,7 +8110,6 @@ test("durable-delivery: claim idempotency mismatch and workspace-only delivery r
     assert.equal(mismatchInst.status, 409, mismatchInst.text);
     assert.equal(mismatchInst.body.error, "command_id_conflict");
 
-    // Mismatched limit -> 409 command_id_conflict
     const mismatchLimit = await issueDelivery(
       f,
       receiver.token,
@@ -11881,8 +11928,9 @@ test("idle-cost retention deletes old claim audits by kind and expired idempoten
   /* Outcome cannot distinguish empty historical claims from leased ones
    * (both were accepted). Retention therefore deletes claim_agent_inbox
    * older than claim_audit_retention_days. Idempotency keys follow
-   * idempotency_retention_days. */
-  await scenario(async (f) => {
+   * idempotency_retention_days. Uses fixture() not scenario(): the seed
+   * rows are not command-path ledger entries, so I4 would reject them. */
+  const f = await fixture();
     const oldIdemId = `idle_idem_old_${randomUUID().replaceAll("-", "").slice(0, 24)}`;
     const freshIdemId = `idle_idem_new_${randomUUID().replaceAll("-", "").slice(0, 24)}`;
     const principal = `agent:${randomUUID()}`;
@@ -11959,5 +12007,4 @@ test("idle-cost retention deletes old claim audits by kind and expired idempoten
     assert.ok(Number(afterFreshAudit[0]?.n) >= 1, "fresh claim audits remain");
     assert.ok(Number(afterAck[0]?.n) >= 1, "old ack audits are not in the claim purge");
     assert.deepEqual(afterIdem.map((row) => row.command_id).sort(), [freshIdemId]);
-  });
 });

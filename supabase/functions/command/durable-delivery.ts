@@ -13,14 +13,16 @@ export const CLAIM_AGENT_INBOX_KIND = "claim_agent_inbox";
 export const ACK_AGENT_DELIVERY_KIND = "ack_agent_delivery";
 
 /**
- * Empty claims (no leased row) write no audit_log row and no idempotency_keys
- * row. A claim that returns a row still writes both. The same predicate the
- * command edge uses; do not retype it at the call site.
+ * Idle polls write no audit_log row and no idempotency_keys row. A claim that
+ * leases a row, or that terminalizes a poisoned row, still writes both. Poison
+ * is state-changing even when delivery_refs is empty; a retry must replay, not
+ * re-execute. The same predicate the command edge uses; do not retype it.
  */
 export function claimAgentInboxPersistsLedger(
   ledger: DeliveryClaimLedgerResponse,
 ): boolean {
-  return ledger.delivery_refs.length > 0;
+  return ledger.delivery_refs.length > 0 ||
+    ledger.terminal_delivery_failure_count > 0;
 }
 
 /** Fixed first-release lease duration; callers cannot widen it. */

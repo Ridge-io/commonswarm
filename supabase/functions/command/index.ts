@@ -8363,12 +8363,13 @@ async function handleTransaction(
       if (ledger === null) {
         return { status: 403, body: { error: "delivery_unavailable" } };
       }
-      /* Empty polls are not state-changing for the ledger: no leased row, so
-       * no idempotency key and no audit row. A 0.1.56 listener that retries
-       * the same command id then re-executes, which can pick up a row that
-       * arrived during the retry. A claim that returns a row still writes both.
-       * The outcome column cannot tell empty from non-empty on historical
-       * rows (both were "accepted"); retention therefore deletes by kind. */
+      /* Idle polls are not state-changing for the ledger: no leased row and
+       * no poison terminalization, so no idempotency key and no audit row. A
+       * 0.1.56 listener that retries the same command id then re-executes,
+       * which can pick up a row that arrived during the retry. A claim that
+       * leases a row, or that terminalizes poison, still writes both. The
+       * outcome column cannot tell empty from non-empty on historical rows
+       * (both were "accepted"); retention therefore deletes by kind. */
       const persistLedger = claimAgentInboxPersistsLedger(ledger);
       if (persistLedger) {
         const inserted = await tx<{ command_id: string }[]>`

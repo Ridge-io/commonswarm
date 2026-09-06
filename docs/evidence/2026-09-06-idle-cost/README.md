@@ -19,7 +19,7 @@ A fleet that stays idle at the 60 s floor is 30 times quieter than the 2 s defau
 
 ## Rows no longer written
 
-Every empty poll used to INSERT one `swarm.audit_log` row and one `swarm.idempotency_keys` row. Production held 1.47 M of each (1.5 GB) against 1,716 signals. After the edge change, `claimAgentInboxPersistsLedger` is `delivery_refs.length > 0`: an empty claim returns 200 and writes neither row. A claim that leases a row still writes both. Idempotency for every other command is unchanged. A 0.1.56 listener that retries an empty command id re-executes (intended: it can pick up a row that arrived during the retry).
+Every empty poll used to INSERT one `swarm.audit_log` row and one `swarm.idempotency_keys` row. Production held 1.47 M of each (1.5 GB) against 1,716 signals. After the edge change, `claimAgentInboxPersistsLedger` is `delivery_refs.length > 0 || terminal_delivery_failure_count > 0`: an idle poll returns 200 and writes neither row. A claim that leases a row, or that terminalizes a poisoned row, still writes both. Idempotency for every other command is unchanged. A 0.1.56 listener that retries an idle command id re-executes (intended: it can pick up a row that arrived during the retry).
 
 Not skipped: `rate_buckets` still upserts on the claim path (one row per principal per window; `swarm-purge-rate-buckets` already drains it). Poison / hydration failure still write their audit and alert rows.
 

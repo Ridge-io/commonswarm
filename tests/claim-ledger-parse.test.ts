@@ -29,6 +29,20 @@ test("empty claims do not persist the ledger; a claimed row does", () => {
   });
   assert.ok(claimed);
   assert.equal(claimAgentInboxPersistsLedger(claimed), true);
+
+  const poison = parseClaimLedger({
+    ok: true,
+    event_ids: [],
+    delivery_refs: [],
+    pending_delivery_count: 0,
+    terminal_delivery_failure_count: 1,
+  });
+  assert.ok(poison);
+  assert.equal(
+    claimAgentInboxPersistsLedger(poison),
+    true,
+    "poison terminalization is state-changing even with no leased row",
+  );
 });
 
 test("production parseClaimLedger behavior", () => {
