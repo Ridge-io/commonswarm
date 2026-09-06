@@ -236,6 +236,7 @@ import {
   writeArrivalMonitorLine,
 } from "./cloud/arrival-watch.js";
 import {
+  IDLE_POLL_DEFAULT_MS,
   idlePollHelpSentence,
   idlePollStatusSentence,
   parseIdlePollIntervalMs,
@@ -302,6 +303,8 @@ import {
   LISTENER_DEFER_OVER_MIN,
   emptyListenerReadHealth,
   summarizeListenerReadHealth,
+  listenerWakeStatusSentence,
+  emptyListenerWakeStatus,
   LISTENER_DELIVERY_HOLD_RELEASE_CLAUSES,
   LISTENER_DELIVERY_HOLD_RELEASE_REMEDIES,
   type ListenerReadHealthSummary,
@@ -4849,6 +4852,8 @@ export function listenerStatusJson(
     idlePollSentence: status.idlePollMs === undefined || status.idlePollMs === null
       ? null
       : idlePollStatusSentence(status.idlePollMs),
+    wake: status.wake ?? emptyListenerWakeStatus(),
+    mode: (status.wake ?? emptyListenerWakeStatus()).mode,
     claimThroughputHours: readSummary.claimThroughputHours,
     listenerLapse: lapseNotices.length > 0,
     listenerLapseCodes: lapseNotices.map((notice) => notice.code),
@@ -5013,6 +5018,15 @@ export function renderListenerStatus(
     status.idlePollMs === undefined || status.idlePollMs === null
       ? "Current idle poll interval has not been reported yet."
       : idlePollStatusSentence(status.idlePollMs),
+    listenerWakeStatusSentence(
+      status.wake ?? emptyListenerWakeStatus(),
+      status.idlePollMs && status.idlePollMs > 0
+        ? status.idlePollMs
+        : IDLE_POLL_DEFAULT_MS,
+      status.wake?.lastWakeAt
+        ? relativeAge(status.wake.lastWakeAt, nowMs)
+        : null,
+    ),
   ];
   for (const notice of lapseNotices) {
     lines.push(`WARNING [${notice.code}]: ${notice.message}`);

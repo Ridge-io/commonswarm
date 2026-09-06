@@ -77,6 +77,13 @@ import {
   IDLE_POLL_MAX_MS,
   nextIdlePollMs,
 } from "../cloud/idle-poll.js";
+import type { WakeHint } from "../cloud/wake.js";
+import {
+  createWakeSubscriber,
+  LISTENER_RECONCILE_POLL_MS,
+  type ListenerWakeStatus,
+  type WakeHandle,
+} from "./wake.js";
 
 export const LISTENER_PAGE_LIMIT = 100;
 export const LISTENER_IDLE_POLL_MS = IDLE_POLL_DEFAULT_MS;
@@ -251,6 +258,11 @@ export type ListenerRuntimeEvent =
     droppedOldest: boolean;
     droppedCount: number;
     ts: string;
+  }
+  | {
+    type: "wake";
+    wake: ListenerWakeStatus;
+    ts: string;
   };
 
 export interface ListenerRuntimeOptions {
@@ -311,6 +323,12 @@ export interface ListenerRuntimeOptions {
    * release.
    */
   deliveryHoldBudgetMs?: number;
+  /**
+   * Injected wake subscriber for tests. Production constructs one on the first
+   * wake hint. Absent topic means the loop stays on the idle poll.
+   */
+  wake?: WakeHandle;
+  createWake?: (target: CloudTarget) => WakeHandle;
 }
 
 export type ListenerRuntimeStop =
@@ -1015,6 +1033,45 @@ export async function runListenerRuntime(
     abort.addEventListener("abort", onAbort);
   }
   let stop: ListenerRuntimeStop | undefined;
+  let wakeSubscriber: WakeHandle | null = options.wake ?? null;
+  let reconcileDueAt = now();
+
+  const ensureWake = (): WakeHandle => {
+    if (wakeSubscriber === null) {
+      wakeSubscriber = options.createWake
+        ? options.createWake(options.target)
+        : createWakeSubscriber({ target: options.target, now });
+    }
+    return wakeSubscriber;
+  };
+
+  const applyWakeHint = (hint: WakeHint | undefined): void => {
+    if (hint === undefined) return;
+    try {
+      ensureWake().setTopic(hint.topic);
+    } catch {
+      // Parsed hints are valid; a closed subscriber is ignored.
+    }
+  };
+
+  const emitWake = (): void => {
+    if (wakeSubscriber === null) return;
+    options.onEvent?.({
+      type: "wake",
+      wake: wakeSubscriber.snapshot(now()),
+      ts: eventTime(now),
+    });
+  };
+
+  const waitCapMs = (): number => {
+    if (
+      wakeSubscriber !== null &&
+      wakeSubscriber.snapshot(now()).mode === "push"
+    ) {
+      return LISTENER_RECONCILE_POLL_MS;
+    }
+    return nextIdlePollMs(pollMs, emptyIdleStreak, LISTENER_IDLE_POLL_MAX_MS);
+  };
 
   const sendPreparedAck = async (
     active: NonNullable<ListenerDeliveryJournalRecord["active"]>,
@@ -1093,8 +1150,46 @@ export async function runListenerRuntime(
         stop = { reason: "cancelled" };
         break;
       }
-      let page: AgentSignalPage;
-      try {
+      let skipRead = false;
+      if (
+        ready &&
+        deliveryMode === "durable_claim" &&
+        wakeSubscriber !== null &&
+        wakeSubscriber.hasTopic
+      ) {
+        const until = Math.min(reconcileDueAt, now() + waitCapMs());
+        const reason = await wakeSubscriber.next({
+          until,
+          ...(abort ? { signal: abort } : {}),
+        });
+        emitWake();
+        if (abort?.aborted) {
+          stop = { reason: "cancelled" };
+          break;
+        }
+        if (
+          reason === "wake" &&
+          !wakeSubscriber.snapshot(now()).rateLimited &&
+          !wakeSubscriber.overWakeBudget(now())
+        ) {
+          const coalesceMs = wakeSubscriber.coalescingRemainingMs(now());
+          if (coalesceMs > 0) await sleep(coalesceMs, abort);
+          if (abort?.aborted) {
+            stop = { reason: "cancelled" };
+            break;
+          }
+          if (
+            !wakeSubscriber.snapshot(now()).rateLimited &&
+            !wakeSubscriber.overWakeBudget(now())
+          ) {
+            skipRead = true;
+          }
+        }
+      }
+      let page: AgentSignalPage | null = null;
+      if (skipRead) {
+        /* Wake tick: claim without a read. */
+      } else try {
         const token = await options.credentialSession.bearer();
         /* Same idle wait as the claim: idleSleep is the only pause in this
          * loop, so the read POST and the claim POST share the back-off. */
@@ -1114,6 +1209,8 @@ export async function runListenerRuntime(
           },
         });
         requireCapabilities(page);
+        applyWakeHint(page.wake);
+        emitWake();
         if (ready && readEpisodeStartedAtMs !== null) {
           const recoveredAtMs = now();
           options.onEvent?.({
@@ -1268,7 +1365,7 @@ export async function runListenerRuntime(
           }
         }
         if (
-          page.capabilities.deliveryAck && now() < horizon &&
+          (page?.capabilities.deliveryAck === true || skipRead) && now() < horizon &&
           !preparedNeedsMainRoute
         ) {
           const ackStop = await sendPreparedAck(recovery);
@@ -1301,7 +1398,7 @@ export async function runListenerRuntime(
       }
 
       if (recovery?.phase === "leased") {
-        if (page.capabilities.deliveryAck) {
+        if (page?.capabilities.deliveryAck === true || skipRead) {
           let terminal: ListenerEffectRecord | null = null;
           if (recovery.signalId !== null) {
             try {
@@ -1426,6 +1523,13 @@ export async function runListenerRuntime(
               stop = { reason: "credential", error: asError(error) };
               break;
             }
+            if (
+              error instanceof DeliveryHttpError &&
+              error.code === "rate_limited"
+            ) {
+              wakeSubscriber?.markRateLimited(now());
+              emitWake();
+            }
             if (!isRetryableDeliveryError(error)) {
               stop = { reason: "fatal", error: asError(error) };
               break;
@@ -1444,6 +1548,14 @@ export async function runListenerRuntime(
           stop = { reason: "fatal", error: new Error("delivery claim did not settle") };
           break;
         }
+        applyWakeHint(result.wake);
+        if (!skipRead && wakeSubscriber !== null && wakeSubscriber.hasTopic) {
+          wakeSubscriber.noteReconcile(now());
+          reconcileDueAt = now() + LISTENER_RECONCILE_POLL_MS;
+        }
+        if (skipRead) wakeSubscriber?.noteWakeClaim(now());
+        else wakeSubscriber?.noteClaim(now());
+        emitWake();
         const claimed = result.deliveries[0] ?? null;
         options.onEvent?.({
           type: "delivery_claim",
@@ -1476,6 +1588,21 @@ export async function runListenerRuntime(
           } catch (error) {
             stop = { reason: "fatal", error: asError(error) };
             break;
+          }
+          if (wakeSubscriber !== null && wakeSubscriber.hasTopic) {
+            const snap = wakeSubscriber.snapshot(now());
+            const intervalMs = snap.mode === "push"
+              ? LISTENER_RECONCILE_POLL_MS
+              : nextIdlePollMs(pollMs, emptyIdleStreak, LISTENER_IDLE_POLL_MAX_MS);
+            if (snap.mode === "push") emptyIdleStreak = 0;
+            else emptyIdleStreak += 1;
+            options.onEvent?.({
+              type: "idle_poll",
+              intervalMs,
+              ts: eventTime(now),
+            });
+            emitWake();
+            continue;
           }
           await idleSleep(false);
           continue;
@@ -1717,6 +1844,8 @@ export async function runListenerRuntime(
         continue;
       }
 
+      if (page === null) continue;
+
       for (const signal of page.signals) {
         if (abort?.aborted) {
           stop = { reason: "cancelled" };
@@ -1811,6 +1940,11 @@ export async function runListenerRuntime(
   } finally {
     abort?.removeEventListener("abort", onAbort);
     options.model.cancel();
+    try {
+      await wakeSubscriber?.close();
+    } catch {
+      // A down socket must not hide the model close outcome.
+    }
     // Never swallow close failures — child_exit_timeout must reach supervisor.
     try {
       await options.model.close();

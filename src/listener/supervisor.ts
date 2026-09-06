@@ -28,7 +28,12 @@ import {
   recordListenerClaimCadence,
   recordListenerReadRecovery,
   recordListenerReadRetry,
+  recordListenerWakeModeChange,
 } from "./read-health.js";
+import {
+  emptyListenerWakeStatus,
+  LISTENER_RECONCILE_POLL_MS,
+} from "./wake.js";
 
 const UUID_RE =
   /^[0-9a-f]{8}-[0-9a-f]{4}-[1-8][0-9a-f]{3}-[89ab][0-9a-f]{3}-[0-9a-f]{12}$/i;
@@ -314,6 +319,7 @@ export async function runListenerSupervisor(
     activityPublishFailures: 0,
     activityLastErrorCode: null,
     idlePollMs: null,
+    wake: emptyListenerWakeStatus(),
     logPath: options.paths.logPath,
   };
   let writes = Promise.resolve();
@@ -419,6 +425,41 @@ export async function runListenerSupervisor(
   };
 
   const onEvent = (event: ListenerRuntimeEvent) => {
+    if (event.type === "wake") {
+      const previous = status.wake?.mode;
+      let readHealth = status.readHealth ?? emptyListenerReadHealth();
+      if (previous !== undefined && previous !== event.wake.mode) {
+        readHealth = recordListenerWakeModeChange(readHealth, event.ts);
+      }
+      const cadenceMs = event.wake.mode === "push"
+        ? LISTENER_RECONCILE_POLL_MS
+        : (status.idlePollMs && status.idlePollMs > 0
+          ? status.idlePollMs
+          : null);
+      if (cadenceMs !== null) {
+        readHealth = recordListenerClaimCadence(
+          readHealth,
+          cadenceMs,
+          event.ts,
+        );
+      }
+      status = {
+        ...status,
+        wake: event.wake,
+        readHealth,
+        updatedAt: event.ts,
+      };
+      persist();
+      log({
+        ts: event.ts,
+        event: "listener_wake",
+        wake_mode: event.wake.mode,
+        wake_error_code: event.wake.errorCode,
+        wake_reconnects: event.wake.reconnects,
+        rate_limited: event.wake.rateLimited,
+      });
+      return;
+    }
     if (event.type === "idle_poll") {
       status = {
         ...status,

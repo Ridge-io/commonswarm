@@ -16,3 +16,4 @@ export * from "./hook.js";
 export * from "./brain-digest.js";
 export * from "./attendance-canary.js";
 export * from "./activity.js";
+export * from "./wake.js";
