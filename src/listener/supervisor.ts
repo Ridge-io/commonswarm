@@ -33,6 +33,7 @@ import {
 import {
   emptyListenerWakeStatus,
   LISTENER_RECONCILE_POLL_MS,
+  listenerWakePersistWorthy,
 } from "./wake.js";
 
 const UUID_RE =
@@ -424,9 +425,11 @@ export async function runListenerSupervisor(
     return fitted.length > 0 ? fitted : null;
   };
 
+  let lastWakePersistMs = 0;
   const onEvent = (event: ListenerRuntimeEvent) => {
     if (event.type === "wake") {
-      const previous = status.wake?.mode;
+      const previousWake = status.wake;
+      const previous = previousWake?.mode;
       let readHealth = status.readHealth ?? emptyListenerReadHealth();
       if (previous !== undefined && previous !== event.wake.mode) {
         readHealth = recordListenerWakeModeChange(readHealth, event.ts);
@@ -449,15 +452,27 @@ export async function runListenerSupervisor(
         readHealth,
         updatedAt: event.ts,
       };
-      persist();
-      log({
-        ts: event.ts,
-        event: "listener_wake",
-        wake_mode: event.wake.mode,
-        wake_error_code: event.wake.errorCode,
-        wake_reconnects: event.wake.reconnects,
-        rate_limited: event.wake.rateLimited,
-      });
+      const eventMs = Date.parse(event.ts);
+      const nowMs = Number.isFinite(eventMs) ? eventMs : Date.now();
+      if (
+        listenerWakePersistWorthy(
+          previousWake,
+          event.wake,
+          lastWakePersistMs,
+          nowMs,
+        )
+      ) {
+        lastWakePersistMs = nowMs;
+        persist();
+        log({
+          ts: event.ts,
+          event: "listener_wake",
+          wake_mode: event.wake.mode,
+          wake_error_code: event.wake.errorCode,
+          wake_reconnects: event.wake.reconnects,
+          rate_limited: event.wake.rateLimited,
+        });
+      }
       return;
     }
     if (event.type === "idle_poll") {

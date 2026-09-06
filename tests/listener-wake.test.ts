@@ -35,7 +35,9 @@ import {
   LISTENER_WAKE_MODES,
   LISTENER_WAKE_MODE_SET,
   listenerPaths,
+  listenerWakePersistWorthy,
   listenerWakeStatusSentence,
+  WAKE_COALESCE_MS,
   parseListenerWake,
   readListenerStatus,
   recordListenerClaim,
@@ -700,6 +702,32 @@ test("status sentence never says push unless mode is push; lists come from const
   assert.match(pollLine, /channel_error/);
   assert.doesNotMatch(pushLine, /cswarm-wake:/);
   assert.doesNotMatch(pollLine, /cswarm-wake:/);
+});
+
+test("wake status persist skips lastWakeAt-only ticks inside the coalesce window", () => {
+  const first: ListenerWakeStatus = {
+    ...emptyListenerWakeStatus(),
+    mode: "push",
+    subscribedAt: "2026-07-30T00:00:00.000Z",
+    lastWakeAt: "2026-07-30T00:00:01.000Z",
+  };
+  const t0 = Date.parse("2026-07-30T00:00:01.000Z");
+  assert.equal(listenerWakePersistWorthy(undefined, first, 0, t0), true);
+  const sameWake: ListenerWakeStatus = {
+    ...first,
+    lastWakeAt: "2026-07-30T00:00:01.400Z",
+  };
+  assert.equal(
+    listenerWakePersistWorthy(first, sameWake, t0, t0 + 400),
+    false,
+  );
+  assert.equal(
+    listenerWakePersistWorthy(first, sameWake, t0, t0 + WAKE_COALESCE_MS),
+    true,
+  );
+  const modeFlip: ListenerWakeStatus = { ...sameWake, mode: "poll" };
+  assert.equal(listenerWakePersistWorthy(first, modeFlip, t0, t0 + 400), true);
+  assert.equal(WAKE_COALESCE_MS, 1_000);
 });
 
 test("parseListenerWake is closed and refuses topic keys", () => {

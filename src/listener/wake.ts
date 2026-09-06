@@ -172,6 +172,31 @@ export function emptyListenerWakeStatus(): ListenerWakeStatus {
   };
 }
 
+/** Persist status.json when the wake block changes, not on every lastWakeAt tick. */
+export function listenerWakePersistWorthy(
+  previous: ListenerWakeStatus | undefined,
+  next: ListenerWakeStatus,
+  lastPersistMs: number,
+  nowMs: number,
+): boolean {
+  if (previous === undefined) return true;
+  if (
+    previous.mode !== next.mode ||
+    previous.rateLimited !== next.rateLimited ||
+    previous.errorCode !== next.errorCode ||
+    previous.reconnects !== next.reconnects ||
+    previous.subscribedAt !== next.subscribedAt ||
+    previous.topicRotatedAt !== next.topicRotatedAt ||
+    previous.lastReconcileAt !== next.lastReconcileAt
+  ) {
+    return true;
+  }
+  if (previous.lastWakeAt !== next.lastWakeAt) {
+    return nowMs - lastPersistMs >= WAKE_COALESCE_MS;
+  }
+  return false;
+}
+
 export function listenerWakeStatusSentence(
   wake: ListenerWakeStatus,
   pollIntervalMs: number,
