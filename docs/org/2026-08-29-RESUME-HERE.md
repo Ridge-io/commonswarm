@@ -2277,3 +2277,24 @@ Open, recorded: two chips (flaky write-retry deadline test; `main()` runs on imp
 `src/cli.ts`); bounds in the chat build plan (post-enqueue revocation, self-wake in a group,
 `to`+`to_agent` on one delivery, `channelRows` budget); real-mode upload status writes after an
 await; the Codex seats stay down until Codex credits return 2026-09-06 21:38.
+
+## 2026-09-06 00:5x UTC — idle edge cost: the finding, and two assignments
+
+**Finding (production, read-only via `supabase db query --linked`):** 390,277 edge commands in the
+last 24 h, 100.0% `claim_agent_inbox` (16 listener seats over 3 accounts polling every ~3.6 s;
+`LISTENER_IDLE_POLL_MS = 2000`), 40 `post_signal`. Every empty poll persists an `audit_log` row
+and an `idempotency_keys` row: 1.47 M of each, 1.5 GB, against 1,716 signals. Daily commands went
+74k → 130k → 181k → 258k → 388k (Sep 1–5) as seats were added and restarted for the releases;
+the hourly rate is flat at ~16k. 21 `inbox --notify` watchers poll every 25 s (18 on one laptop,
+two of them 4 days old with no principal). `file_versions` has 2.8 M seq scans on one unique
+index. Growth: 9 users, 25 workspaces, 109 agents, 3 workspaces active in 7 days, 0 new users in
+4 days — not real usage, not a runaway process, the polling design as built. Cost: ~11.6 M
+calls/month against 2 M included; small in dollars, but it scales with seats forever.
+
+**Assignments (operator, 2026-09-06 00:4x UTC):** A — the quick cut (idle poll 15 s with back-off
+to 60 s, no persistence for empty polls, retention, the index, watcher dedupe) as a lane authored
+by Grok (`grok -m <model> --always-approve`, detached, worktree `lane-idle-cost`, branch
+`lane/idle-cost`), arms Gemini + Opus (Codex credits return 2026-09-06 21:38). B — the proper fix
+(push instead of poll) as a specification by CSwarmStrategist (ask `a4d1c836`), on branch
+`spec/push-delivery`, reviewed to full consensus by every available frontier family before
+handoff; the lead then splits it into parallel lanes run by non-Claude subagents.
