@@ -43,6 +43,25 @@ test("empty and missing owner ids render in a visible fallback group", async () 
   assert.deepEqual(rail.groups[0]?.agents, ["Empty owner", "Missing owner"]);
 });
 
+test("duplicate agent names stay distinct by UUID suffix in the rail", async () => {
+  const left = "11111111-1111-4111-8111-111111111111";
+  const right = "22222222-2222-4222-8222-222222222222";
+  const rail = await renderParticipantRailFixture(
+    [{ userId: "a-alex", name: "alex", role: "owner" }],
+    [
+      { principal_id: left, name: "Echo", owner_user_id: "a-alex" },
+      { principal_id: right, name: "Echo", owner_user_id: "a-alex" },
+    ],
+  );
+  const labels = rail.groups[0]?.agents ?? [];
+  assert.equal(labels.length, 2);
+  assert.match(labels[0] ?? "", /Echo/);
+  assert.match(labels[1] ?? "", /Echo/);
+  assert.match(labels[0] ?? "", /11111111/);
+  assert.match(labels[1] ?? "", /22222222/);
+  assert.notEqual(labels[0], labels[1]);
+});
+
 test("a member with zero agents has no empty nested list", async () => {
   const rail = await renderParticipantRailFixture(
     [{ userId: "mara", name: "Mara", role: "member" }],

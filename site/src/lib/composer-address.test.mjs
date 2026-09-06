@@ -30,6 +30,7 @@ import {
   removeComposerRecipient,
   toWireRecipients,
 } from "./composer-address.ts";
+import { resolveStoredIdentityRefs } from "./identity-label.ts";
 
 const wren = { kind: "agent", id: "agent-wren" };
 const orbit = { kind: "agent", id: "agent-orbit" };
@@ -696,4 +697,46 @@ test("a set arrival pruned is not a set the reader chose", () => {
   );
   /* And an unpruned set that matches is still not a choice. */
   assert.equal(composerAddressIsChosen([wren, orbit], [wren, orbit], () => true), false);
+});
+
+test("two same-name UUID drafts restore separately and a revoke does not retarget", () => {
+  const wrenA = { kind: "agent", id: "11111111-1111-4111-8111-111111111111" };
+  const wrenB = { kind: "agent", id: "22222222-2222-4222-8222-222222222222" };
+  const roster = {
+    agents: [
+      { id: wrenA.id, name: "Wren" },
+      { id: wrenB.id, name: "Wren" },
+    ],
+    members: [],
+  };
+  const restored = resolveStoredIdentityRefs(
+    [{ kind: "agent", id: wrenA.id }, { kind: "agent", id: wrenB.id }],
+    roster,
+  );
+  assert.deepEqual(restored.recipients, [wrenA, wrenB]);
+
+  const known = (entity) => entity.id === wrenA.id;
+  const state = derive({
+    live: { to: [wrenA, wrenB], applied: [] },
+    remembered: [wrenB],
+    known,
+  });
+  assert.deepEqual(state.recipients, [wrenA]);
+  assert.equal(
+    state.recipients.some((entity) => entity.id === wrenB.id),
+    false,
+    "revoking one Wren must not retarget the chip to the other Wren",
+  );
+
+  const renamed = resolveStoredIdentityRefs(
+    [{ kind: "agent", id: wrenA.id }],
+    {
+      agents: [
+        { id: wrenA.id, name: "Orbit" },
+        { id: wrenB.id, name: "Wren" },
+      ],
+      members: [],
+    },
+  );
+  assert.deepEqual(renamed.recipients, [wrenA]);
 });

@@ -134,6 +134,14 @@ const {
     </div>
 
     <p class="ac__form-error" data-slot="form-error" role="alert" hidden></p>
+    <button
+      class="ac__btn ac__btn--quiet"
+      type="button"
+      data-action="create-another"
+      hidden
+    >
+      Create another with this name
+    </button>
 
     <button class="ac__btn ac__btn--primary" type="submit" data-action="mint">
       Generate prompt
@@ -219,6 +227,7 @@ const {
     myAgents,
     type AgentIdentity,
   } from "../../lib/agent-connect";
+  import { identityDisplayLabel } from "../../lib/identity-label";
   import {
     NoDeployment,
     agentAccessStatuses,
@@ -251,6 +260,8 @@ const {
     #loadVersion = 0;
     #requestedPrincipalId = "";
     #retargetPending = false;
+    #pendingDuplicateName = "";
+    #createAnotherChosen = false;
     /* Attributes present in the markup fire attributeChangedCallback during upgrade, BEFORE
        connectedCallback — so without this the element would load twice on every page. */
     #ready = false;
@@ -313,7 +324,21 @@ const {
       });
       this.#q<HTMLSelectElement>('[data-field="identity"]')?.addEventListener("change", () => {
         this.#syncNameField();
+        this.#clearDuplicateChoice();
       });
+      this.#q<HTMLInputElement>('[data-field="name"]')?.addEventListener("input", () => {
+        const name = (this.#q<HTMLInputElement>('[data-field="name"]')?.value ?? "").trim();
+        if (name !== this.#pendingDuplicateName) this.#clearDuplicateChoice();
+      });
+      this.#q<HTMLButtonElement>('[data-action="create-another"]')?.addEventListener(
+        "click",
+        () => {
+          const name = (this.#q<HTMLInputElement>('[data-field="name"]')?.value ?? "").trim();
+          if (!name || name !== this.#pendingDuplicateName) return;
+          this.#createAnotherChosen = true;
+          void this.#mint();
+        },
+      );
       this.#q<HTMLButtonElement>('[data-action="retry"]')?.addEventListener("click", () => {
         void this.#load();
       });
@@ -468,15 +493,41 @@ const {
       const form = this.#q<HTMLElement>('[data-panel="form"]');
       if (!select || !form) return;
       while (select.options.length > 1) select.remove(1);
+      const roster = this.#agents.map((agent) => ({
+        id: agent.principalId,
+        name: agent.name,
+      }));
       for (const agent of this.#agents) {
         const option = document.createElement("option");
         option.value = agent.principalId;
-        option.textContent = `${agent.name} · ${agent.model ?? "Model not specified"}`;
+        const label = identityDisplayLabel(
+          { id: agent.principalId, name: agent.name },
+          roster,
+        );
+        option.textContent = `${label} · ${agent.model ?? "Model not specified"}`;
         select.append(option);
       }
       form.dataset.hasAgents = this.#agents.length > 0 ? "yes" : "no";
       select.value = "";
       this.#syncNameField();
+    }
+
+    #clearDuplicateChoice() {
+      this.#createAnotherChosen = false;
+      this.#showCreateAnother(null);
+    }
+
+    #showCreateAnother(name: string | null) {
+      const button = this.#q<HTMLButtonElement>('[data-action="create-another"]');
+      if (!button) return;
+      if (name === null || name.length === 0) {
+        button.hidden = true;
+        button.textContent = "Create another with this name";
+        return;
+      }
+      this.#pendingDuplicateName = name;
+      button.hidden = false;
+      button.textContent = `Create another called ${name}`;
     }
 
     /** The name field is only meaningful when a new identity is being created. */
@@ -493,6 +544,7 @@ const {
       if (!node) return;
       node.textContent = message ?? "";
       node.hidden = message === null;
+      if (message === null) this.#showCreateAnother(null);
     }
 
     #step(step: string, status: "doing" | "done" | "skipped") {
@@ -547,6 +599,10 @@ const {
       const nameField = this.#q<HTMLInputElement>('[data-field="name"]');
       const existingId = select?.value ?? "";
       const name = (nameField?.value ?? "").trim();
+      const allowDuplicateName = this.#createAnotherChosen &&
+        name.length > 0 &&
+        name === this.#pendingDuplicateName;
+      this.#createAnotherChosen = false;
       if (!existingId && name.length === 0) {
         this.#formError("Name the AI assistant first — collaborators will see this name.");
         nameField?.focus();
@@ -591,6 +647,8 @@ const {
             identityCommandId,
             this.#workspaceId,
             name,
+            undefined,
+            allowDuplicateName,
           );
           this.#step("create-identity", "done");
         }
@@ -675,8 +733,10 @@ const {
      */
     #explain(error: unknown): string {
       if (error instanceof AgentNameTaken) {
+        this.#showCreateAnother(error.agentName);
         return "That assistant name is already in use. Choose it from the list, or pick another name.";
       }
+      this.#showCreateAnother(null);
       if (error instanceof CredentialNotShown) {
         return "That key was created during an earlier attempt and cannot be shown again. Create a new key.";
       }

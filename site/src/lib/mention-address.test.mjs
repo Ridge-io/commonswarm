@@ -66,6 +66,35 @@ test("two roster entries sharing a name resolve to nobody, and say so", () => {
   assert.deepEqual(address.ambiguous, ["Echo"]);
 });
 
+test("two same-name agents stay separately selectable by UUID suffix", () => {
+  const left = "11111111-1111-4111-8111-111111111111";
+  const right = "22222222-2222-4222-8222-222222222222";
+  const twins = mentionTargets(
+    [agent(left, "Echo"), agent(right, "Echo")],
+    [],
+  );
+  assert.equal(twins.length, 2);
+  assert.notEqual(twins[0].label, twins[1].label);
+  assert.deepEqual(addressFromBody("@Echo which one?", twins).recipients, []);
+  assert.deepEqual(addressFromBody("@Echo which one?", twins).ambiguous, ["Echo"]);
+
+  const leftLabel = twins.find((target) => target.entity.id === left)?.label;
+  const rightLabel = twins.find((target) => target.entity.id === right)?.label;
+  assert.ok(leftLabel && rightLabel);
+  assert.deepEqual(
+    addressFromBody(`@${leftLabel} take this`, twins).recipients,
+    [{ kind: "agent", id: left }],
+  );
+  assert.deepEqual(
+    addressFromBody(`@${rightLabel} take that`, twins).recipients,
+    [{ kind: "agent", id: right }],
+  );
+  assert.deepEqual(
+    addressFromBody(`@${leftLabel} and @${rightLabel}`, twins).recipients,
+    [{ kind: "agent", id: left }, { kind: "agent", id: right }],
+  );
+});
+
 test("a name that folds to nothing or to whitespace can never be tagged", () => {
   /* Two shapes, and the first control has to use the form the PICKER would write. A lone
      combining mark folds to ""; the empty span after a dangling "@" matched it, and so did

@@ -1574,7 +1574,7 @@ test("a tag the parser gave up on is named, not dropped out of the message", () 
   );
   assert.match(
     dashboard,
-    /composerToNotice = composerAddressNotice\(state, parsed, composerRecipientName\);/,
+    /composerToNotice = composerAddressNotice\([\s\S]*parsed\.overflow[\s\S]*parsed\.ambiguous[\s\S]*composerRecipientName/,
     "the row's notice is built somewhere other than from the pass",
   );
 });
