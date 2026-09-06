@@ -2328,3 +2328,19 @@ work with a prose mutation table, stopped at Grok's FAIL (no dual-state fixture;
 "Use GitHub"), and left the signed-out panel swap uncommitted. Re-homed to an Opus PM to reach a
 real PASS/PASS. The streaming research findings and the other session's mobile arms were
 committed as evidence (`4b73f0c`).
+
+## 2026-09-06 03:0x UTC — standing instruction while the operator sleeps
+
+Google sign-in is enabled in production (settings read `google: true`; authorize redirects to
+Google with client `130762122221-…`); the site deploy waits on `lane/google-copy` (Opus PM, round
+3) so the pages say it right; then the operator does the one real sign-in. The Supabase org shows
+a quota banner (restriction from 05 Oct if over again); August ≈ 870k invocations on both edges,
+September ≈ 2.2M in five days; the lead recommended Pro plus lanes A and B; the plan is the
+operator's call.
+
+**Operator, signing off:** when CSwarmStrategist delivers spec B (push instead of poll) at full
+consensus, implement it: split into parallel lanes with non-Claude authors (Grok, Gemini; Codex
+after 21:38 UTC), our process, to production. Minimise the lead's and Strategist's token use this
+week. A haiku watcher wakes the lead when the spec note lands or lane A exits; lane A's round 2
+brief is `brief-idle-cost-ADDENDUM.md` in the session scratchpad (relaunch grok with the addendum
+in the same cwd when round 1 exits).
