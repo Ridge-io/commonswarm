@@ -1,0 +1,115 @@
+ARM: Opus (adversarial cross-family), lane L3, SHA 7c9a4589b7c62151d2bf087f0417d969fea516a4
+Merge-base 88d9f45. Worktree read-only; nothing edited or committed there.
+
+QUOTE-BACK (first diff --git line of DIFF.patch):
+diff --git a/supabase/functions/_shared/wake.ts b/supabase/functions/_shared/wake.ts
+
+REFUTATION ATTEMPTS
+
+1. Inbox wake placement and the SELECT list — NOT REFUTED.
+   read/index.ts:837 `...(body.inbox ? optionalWake(agent.wake_id) : {})` sits in the LAST
+   return json(200,…) of the agent branch (:829). The foreign-workspace branch returns at
+   :468/:471/:478/:481/:484/:486, all before grant-use, none carrying wake. Human returns
+   (:558,:605,:615,:637,:666) are in a separate role block. `inbox: false` takes the ternary's
+   empty object.
+   SELECT change is exactly one column: read/index.ts:450-451 adds `, wake_id` and nothing else.
+   Column eleven of the function is `wake_id text` (migration 20260906000010_wake_delivery.sql,
+   RETURNS TABLE list: token_id, principal_id, owner_user_id, principal_workspace_id, run_id,
+   device_id, first_use, membership_revoked_at, is_revoked, pending_delivery_count, wake_id).
+   `GRANT EXECUTE ON FUNCTION swarm.agent_delivery_read_context(bytea, uuid) TO swarm_read`
+   at 20260906000010:483; read/index.ts:419 does `SET LOCAL ROLE swarm_read`. Reachable.
+
+2. Revocation-site enumeration — NOT REFUTED; the report's four-line table is complete.
+   `grep -rn "revoked_at = " supabase/functions/` over ALL functions (command, read, capability,
+   activity) returns only command/index.ts. Lines: 3606 agent_tokens (discardStrandedSuccessor),
+   4003 invitations, 4031 (NULL, un-revoke), 4042 memberships, 4142 agent_principals, 4171
+   agent_tokens cascade, 4203/4212/4270 renewal_grants, 4240 agent_tokens (AgentTokenRevoked),
+   4461 grants, 4822 (NULL), 5829 capability_urls. No agent-credential writer outside the four.
+   Intent classification against spec §W6 (docs/design/2026-09-06-PUSH-DELIVERY.md:117-119):
+     3606 stranded successor on ordinary renewal -> NOT intent -> no rotation. Correct; spec
+       excludes ":3576" (this SHA's :3606) by name.
+     4142 principal revoke -> intent -> rotation at :4151 (rotateWakeId). Correct.
+     4171 token cascade of the same principal revoke, same transaction -> covered, no second
+       call. Spec: "whose token cascade … needs no second call, same transaction, same principal".
+     4240 token revoke -> intent -> rotation at :4255. Correct.
+   Non-intent paths carry NO rotation: verified by grep — `rotateWakeId(` appears exactly twice
+   in command/index.ts (:4151, :4255) plus its definition at :1408.
+   DB-side cascade `swarm.renewal_grants_revoke_cascade` (20260728000002:412-428) revokes
+   agent_tokens without rotating; spec W6 names grant cascade, device, run, membership and
+   archive as non-rotating. Consistent.
+
+3. Transaction and EXECUTE — NOT REFUTED.
+   `rotateWakeId(tx, …)` runs `SELECT swarm.rotate_wake_id($1::uuid)` on the SAME `tx` handle as
+   the UPDATE that set revoked_at, inside updateWorkspaceProjection. A failure of the rotation
+   therefore aborts the whole projection transaction; the revoke does not commit without the
+   rotation. (Report's wording "swarm_command" is about the ROLE, not a command kind — the call
+   is a plain SQL SELECT, which is what the spec specifies.)
+   EXECUTE: 20260906000010:129 `GRANT EXECUTE ON FUNCTION swarm.rotate_wake_id(uuid) TO
+   swarm_command`; owner postgres (:127); setTransaction does `SET LOCAL ROLE swarm_command`
+   (command/index.ts:1379) and both call sites are inside that transaction. Positive control:
+   the live rotation tests below pass, so the grant is reached, not merely declared.
+
+4. Topic leakage — NOT REFUTED.
+   `grep -n wake` in command/index.ts returns only the import (:32), the two helpers and their
+   comments (:1385-1409), the two unrelated pre-existing comments (:7155-7156), and the
+   mint/renew principal-id selection (:9195-9201). In read/index.ts: :23, :151, :451, :837.
+   No log/console call, no audit `detail`, no security_alerts detail, no activity broadcast
+   receives it. The idempotency ledger for claim stores the `ledger` object (command/index.ts
+   ~:8444 `tx.json(ledger …)`), which has no wake member; the replay paths recompute the topic
+   from the principal row instead of reading it back from the ledger.
+   `_shared/wake.ts` builds the topic only from a 43-char id: WAKE_ID_RE = /^[A-Za-z0-9_-]{43}$/
+   (:12); wakeWire returns undefined for a non-string or a non-matching value (:30), and
+   optionalWake then yields `{}`. Same prefix/event/length constants as the SQL policy; no typed
+   duplicate list (satisfies the "generated, not typed" rule).
+
+5. Tests reach the real handlers — NOT REFUTED; re-run by this arm.
+   Both files POST to `${API_URL}/functions/v1/command` and `/functions/v1/read` against a spawned
+   `supabase functions serve`; assertions read the DB directly with postgres.js. The inbox
+   assertion compares the response topic's id to the row: wake-topic-in-responses.test.ts:186
+   `assert.equal(id, wakeId)` where wakeId comes from wakeIdOf() (:163-170, SELECT wake_id FROM
+   swarm.agent_principals). The rotation test checks refusal AND admission through the real SQL
+   policy function: wake-rotation.test.ts:284-285
+   `assert.equal(await topicAuthorized(oldId), false); assert.equal(await topicAuthorized(newId), true)`
+   with a pre-state control at :272 (`topicAuthorized(oldId) === true` before the revoke).
+   Run by this arm on the existing local stack (NO db:reset was needed or performed, so L4's data
+   was not disturbed):
+     node --import tsx --test --test-concurrency=1 tests/p1-server/wake-topic-in-responses.test.ts \
+       tests/p1-server/wake-rotation.test.ts
+     -> tests 8, pass 8, fail 0, duration_ms 10678.
+   Both files are matched by the `test:p1-server` glob (package.json:29), so no gate edit is owed.
+
+6. Mint/renew replay — NOT REFUTED as a defect.
+   `wake` is added inside the `freshOnly` record (command/index.ts:9194-9202), the same object
+   that carries `agent_token` (:9194) and is spread only into the fresh result (:9216). A replay
+   therefore returns neither `agent_token` nor `wake`. The client cannot see "two different
+   answers" for a field it saw before, because on the fresh response the two travel together and
+   on a replay both are absent — the existing, already-shipped contract for agent_token. For L4
+   this is safe: a listener that replays a mint/renew must fall back to the inbox read (W3.1),
+   which is the spec's stated learning path anyway.
+   NIT (not a defect): claim replay (:7702) and the LedgerRace path (:9326) DO carry wake, and
+   recompute it fresh. After a rotation, replaying one claim command_id can return a topic
+   different from the one the original response carried. The newer value is the correct one, and
+   the rotation-on-revoke design requires exactly that, so this is preferable to echoing a stale
+   topic — but it is an inconsistency between the claim and mint/renew shapes that the report does
+   not name.
+
+7. D-053 and enumerations — NOT REFUTED.
+   No added line in DIFF.patch reads or branches on `error.message` (grep of added lines: zero
+   hits). No new user-facing enumeration is introduced; the prefix, event and id length are
+   exported constants in `_shared/wake.ts` shared with the SQL, and the file's header comment
+   states why a typed list was avoided.
+
+NOT ESTABLISHED
+- Hosted behaviour of `wake_topic_authorized`, `rotate_wake_id`, or either edge function. Local
+  stack (127.0.0.1:54321/54322) only; the hosted project was never contacted.
+- Deploy/apply state: `functions deploy`, `db push`, `--linked`, ref ukezjcnxjvkpkeezxaew — none run.
+- Merge to `main`. This SHA is not on `main`; I judged the branch only.
+- The full `npm run test:p1-server` (155), `npm test`, `test:p1-local`, `check:edge`, `check:tests`
+  suites. I re-ran only the two wake files; I did NOT independently reproduce the report's other
+  gate exit codes, and I did not run `npm run db:reset`.
+- A live listener/client consuming the topic. L4 owns that; no listener was started.
+- Realtime end-to-end (an actual `realtime.messages` row reaching a subscriber). L2 owns that.
+- Concurrency: I did not test two simultaneous revokes of the same principal, nor a claim in
+  flight across a rotation.
+
+VERDICT: PASS

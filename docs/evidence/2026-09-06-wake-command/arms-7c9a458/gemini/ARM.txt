@@ -1,0 +1,12 @@
+1. `diff --git a/supabase/functions/_shared/wake.ts b/supabase/functions/_shared/wake.ts`
+2. Yes. The own-workspace inbox return adds `...(body.inbox ? optionalWake(agent.wake_id) : {})` at `read/index.ts:837`. The foreign-workspace empty branch at `read/index.ts:466-491` returns early with only `signals`, `capabilities`, and `pending_delivery_count`, and no `wake`.
+3. Yes. `wake_id` is selected as the eleventh column in the `swarm.agent_delivery_read_context` select query at `read/index.ts:440-456`.
+4. Yes. `claim_agent_inbox` adds `optionalWakeForPrincipal` directly to the response body (`command/index.ts:7705`, `:8523`, `:9329`). For `mint_agent_token` and `renew_agent_token`, it assigns `optionalWakeForPrincipal` into the `freshOnly` object (`command/index.ts:9199-9201`), which is added after idempotency resolution, so it is not stored in the ledger. 
+5. Yes. The topic prefix (`WAKE_TOPIC_PREFIX`) and event name (`WAKE_EVENT`) are defined as constants in `_shared/wake.ts` and used to build the object via `wakeWire`.
+6. Yes. The four `revoked_at` updates on agent credentials are: `discardStrandedSuccessor` on `agent_tokens` (`:3606`), `AgentPrincipalRevoked` on `agent_principals` (`:4142`), principal-revoke cascade on `agent_tokens` (`:4171`), and `AgentTokenRevoked` on `agent_tokens` (`:4240`). `rotateWakeId` is called only for `AgentPrincipalRevoked` (`:4153`) and `AgentTokenRevoked` (`:4255`), missing the cascade and `discardStrandedSuccessor`.
+7. Yes. `wake-rotation.test.ts` asserts `revoke_agent_token` rotates, `revoke_agent_principal` rotates, stranded-successor discard does not rotate, and specifically asserts `topicAuthorized(oldId)` is false and `topicAuthorized(newId)` is true after `revoke_agent_token`.
+8. Yes. The edge checks `if (event.type === "AgentPrincipalRevoked")` and `if (event.type === "AgentTokenRevoked")` rather than matching on string errors.
+9. No. There are no client or site changes in the diff; all modifications are isolated to `supabase/functions/` and `tests/`.
+10. Yes. Both tests (`wake-rotation.test.ts` and `wake-topic-in-responses.test.ts`) import `WAKE_TOPIC_PREFIX`, `WAKE_EVENT`, and `isWakeId` from `../../supabase/functions/_shared/wake.js`.
+
+VERDICT: PASS
