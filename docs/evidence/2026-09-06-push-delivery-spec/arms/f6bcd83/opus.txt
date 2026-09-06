@@ -1,0 +1,444 @@
+D-036 REVIEW ARM — ADVERSARIAL SYSTEMS (Opus 5, operator-allowed), ROUND 2
+Document: docs/design/2026-09-06-PUSH-DELIVERY.md  (draft 2)
+SHA:      f6bcd83 on spec/push-delivery
+Round 1:  docs/evidence/2026-09-06-push-delivery-spec/arms/ff8a398/opus.txt (FAIL: 5 DEFECT, 4 GAP, 3 NIT)
+Date:     2026-09-05
+
+=========================== WHAT I CHECKED ===========================
+
+Every citation below I opened myself in this working tree. Where the tree could
+answer a question, I ran the query against the RUNNING local stack
+(supabase_db_cloud-swarm) with a positive control on the same invocation, and I
+dropped every probe object afterwards (verified 0 rows remaining in pg_proc).
+
+Code read: supabase/functions/command/index.ts :1435-1437 :3565-3589 :3660
+  :3973-4012 :4025-4036 :4111-4143 :4172-4237 :4360-4392 :4428 :4840-4934
+  :4999 :5778 :7527-7543 :8348-8451 :9020-9040; supabase/functions/command/
+  durable-delivery.ts :21-22 :60-80 :172-310 :411; supabase/functions/read/
+  index.ts :440-500 :820-834; supabase/functions/activity/index.ts :2 :135;
+  src/listener/runtime.ts :75-79 :610-632 :1073-1106 :1363-1370 :1453-1458;
+  src/listener/control.ts :215-300 :370-400 :540-560; src/listener/
+  read-health.ts :12 :40-47 :195-215 :246-285 :335 :394-425; src/host/
+  credential-redaction.ts :12-31; src/host/sanitize.ts :7-15; src/host/
+  stderr-tail.ts :3-43; src/cloud/arrival-watch.ts :325-440; src/cloud/
+  signals.ts :118-135 :290-315 :1205-1230; src/cli.ts :3993-4040 :4664 :4986;
+  package.json :22-30; tests/p1-cli/test-gate-coverage.test.ts :15-140;
+  tests/listener-control.test.ts :2330-2342; tests/listener-host-limits.test.ts
+  :225-238; node_modules/@supabase/realtime-js/dist/main/RealtimeClient.js
+  :10-18 :485-495.
+
+Migrations read: 20260723000001_p1_schema.sql :174-216 :380 :416-421 :588-590
+  :614 :790-820 :836-850; 20260901000001_standing_grants.sql :185-235 :245-281;
+  20260904000001_standing_grant_resume.sql :333-370; plus a grep of every
+  `SET search_path` clause in supabase/migrations/ (52 clauses: 28
+  `swarm, pg_catalog`, 24 `pg_catalog`, 1 `swarm, storage, pg_catalog`; NONE
+  names `extensions`).
+
+Evidence read: local-plans.out (all sections), realtime-anon-private-topic-
+  experiment.{mjs,out}, arms/ff8a398/opus.txt.
+
+Live measurements (local stack, each with a positive control):
+  M1  ALTER TABLE t ADD COLUMN wake_id text NOT NULL DEFAULT
+      translate(encode(gen_random_bytes(32),'base64'),'+/=','-_')
+      over 5 pre-existing rows  ->  5 DISTINCT ids, length 43 each;
+      a subsequent INSERT      ->  a 6th DISTINCT id.  W1 CONFIRMED.
+  M2  gen_random_bytes: provolatile='v', schema `extensions`; pgcrypto is
+      installed there (not by any migration in this tree); session search_path
+      for role postgres is `"$user", public, extensions`.
+  M3  plpgsql function with `SET search_path = swarm, pg_catalog` calling
+      gen_random_bytes(32)  ->  ERROR: function gen_random_bytes(integer) does
+      not exist.  POSITIVE CONTROL: the identical body with
+      `SET search_path = swarm, extensions, pg_catalog` returned
+      NWee8zp3M1_8-vooWJDwWKEmxU7Iu7XoLhDTGYZpqfc (43 chars).
+  M4  SELECT ... FROM pg_proc WHERE proname LIKE '%revoke%'  ->
+      swarm.capability_urls_revoke_only, swarm.renewal_grants_revoke_cascade,
+      swarm.renewal_grants_spend_or_revoke_only.  There is NO
+      swarm.revoke_agent_token.  POSITIVE CONTROL on the same query shape:
+      '%renewal_grant_use%' -> swarm.record_renewal_grant_use.
+
+================= PART 1 — DRAFT-1 FINDINGS: ARE THEY FIXED? =================
+
+D1 (setAuth is a no-op, so W6's revocation bound did not exist)  — FIXED.
+   RealtimeClient.js:12 HEARTBEAT_INTERVAL 25000, :16 RECONNECT_INTERVALS
+   [1000,2000,5000,10000], :489 `if (this.accessTokenValue != tokenToSend)` are
+   all exactly as cited. W6 no longer claims re-evaluation; it moves the topic.
+   The replacement argument is sound: a stale subscriber holds a topic nobody
+   sends to, and W5 refuses its join on the new id.
+
+D2 (watcher's `limit: 0` claim is rejected by the validator, so L5 had no way
+   to learn its topic)  — FIXED.  The watcher's readPage is an INBOX read with
+   an agent token: src/cli.ts:3998-4020, `inbox: true` at :4008. W3.1 puts the
+   `wake` object on exactly that response. The read-only invariant at
+   src/cloud/arrival-watch.ts:336-338 is preserved, not broken.
+
+D3 (the §3.1 gate was blind to lease-reset and TTL-expiry mutations) — FIXED
+   and buildable.  Step 2 (durable-delivery.ts:195-211) and step 3 (:212-231)
+   have no RETURNING today; step 4 (:233-254) does. The gate sits before the
+   idempotency INSERT (command/index.ts:8366) and the audit (:8424), and the
+   ledger is in hand at :8355-8362, so the ordering works. I looked for any
+   other mutation on the claim path: hydrateDeliveryRefs (durable-delivery.ts:
+   411+) has no UPDATE/INSERT/DELETE; the security_alerts insert (:8412) is
+   already gated on terminal_delivery_failure_count; checkDeliveryRateLimit is
+   the rate_buckets upsert the spec keeps on purpose. The four counters cover it.
+
+D4 (one wake key per principal is not what the schema allows) — FIXED, and I
+   measured the mechanism rather than trusting the prose (M1, M2). The sole
+   INSERT INTO swarm.agent_principals is command/index.ts:4025-4036 and it does
+   not name the column, so "no edge INSERT site changes" is true. The two sites
+   the tasking asked about, command/index.ts:3678-3694 and :4376-4392, are
+   INSERTs into swarm.agent_tokens, not agent_principals; they are untouched by
+   this column and there is nothing to fix there.
+
+D5 (the arithmetic) — FIXED and internally consistent. 24,000+24,000+5,760 =
+   53,760; 24,000+24,000+1,440 = 49,440 (rate buckets now per-minute, matching
+   command/index.ts:4881-4888); after = 576+1,440+24+100+50 = 2,190; 16 seats
+   = 37,424 and 16 x 48,000 = 768,000; 100/1,000/10,000 all follow; the 4.6 M
+   line derives as 463 x 10,000. §8's 374 / 344 / 14 / 37.4 / 1.4 all check.
+
+G1 (four files given to two lanes each) — FIXED for those four by sequencing.
+   command/index.ts: L1 :8348-8445 then L3 (the response object is really
+   :8433-8451) — sequenced. runtime.ts: L0 then L4 — sequenced. cli.ts: L4 then
+   L5. arrival-watch.ts: L0 then L5. A NEW collision replaced it: see DD.
+
+G2 (nobody owned the purge-floor migration) — FIXED. GREATEST(30, ...) is at
+   20260723000001_p1_schema.sql:801-805 inside the function at :793-816, cron
+   '17 3 * * *' at :839-843 and the rate-bucket cron at :845-848; L2b owns the
+   CREATE OR REPLACE. Residual collision on the config row: see DD.
+
+G3 (skipping the read starves classifyDeliveryMode) — FIXED, and the added
+   standing-grant argument is CORRECT, which I checked rather than assumed:
+   classifyDeliveryMode is runtime.ts:612-629, called at :1104 from the read at
+   :1075-1082; the read-health episode block is :1091-1103. The claim branch
+   RETURNS at command/index.ts:8433, i.e. before the step-13 stamp at
+   :9024-9036, so a claim never stamps grant use — the read is the only stamp.
+   288 reconcile reads/day against the 14-day floor at
+   20260901000001_standing_grants.sql:199-208 is ample by a factor of ~4,000.
+   (One correction to the spec's own citation trail, N4 below: the LIVE
+   record_renewal_grant_use is 20260904000001_standing_grant_resume.sql:333-364,
+   which supersedes 20260901000001:245.)
+
+G4 (the experiment measured a static LIKE, not the SECURITY DEFINER lookup) —
+   FIXED. W5 now states exactly what was measured and what was not, the
+   difference is L2's first test, §10 keeps the unknown, and the client moved to
+   createClient(...).realtime — @supabase/supabase-js is the only direct Supabase
+   dependency in package.json, so no second realtime-js copy. Matches the
+   transcript, including the refusal text.
+
+N1 (the latch), N2 (the column comment), N3 (:183-189) — all three FIXED.
+
+I re-report none of the above. Everything below is new to draft 2.
+
+============================== DEFECTS ==============================
+
+DA. §2.2 W6 and §6 L2 — `revoke_agent_token` is not a database function, so the
+    rotation has no buildable home, and the only build available to L2 breaks
+    W6's own renewal guarantee.
+
+    W6: "wake_id is rotated ... whenever any token of the principal is revoked
+    (revoke_agent_token)". §6 L2 puts that inside "new supabase/migrations/
+    ..._wake_delivery.sql: ... rotation inside revoke_agent_token / principal
+    revoke", and L2's file list contains that migration and the test gate only.
+
+    MEASURED (M4): there is no swarm.revoke_agent_token, and no match in
+    supabase/migrations/. `revoke_agent_token` is a COMMAND KIND (index.ts:179,
+    :872, :919) whose effect is TypeScript in the edge:
+      - token revoke:     command/index.ts:4207-4216 (UPDATE swarm.agent_tokens
+                          SET revoked_at WHERE token_id = ... )
+      - principal revoke: :4111-4117 and :4139-4143
+    So L2 must either edit supabase/functions/command/index.ts — a file §6 gives
+    exclusively to L1 (:8348-8445) and L3 (the response builders), and which L2's
+    row does not list — or write an AFTER UPDATE trigger the spec never specifies.
+
+    The trigger build is worse than merely unspecified: it is WRONG against W6's
+    own text. `discardStrandedSuccessor` (command/index.ts:3565-3587) sets
+    agent_tokens.revoked_at, and it is called from the ORDINARY RENEWAL path at
+    :3660. There are nine distinct statements in this one file that set a
+    revoked_at (:3576 :3973 :4012 :4112 :4140 :4172 :4181 :4208 :4237). An
+    `AFTER UPDATE OF revoked_at ON swarm.agent_tokens` trigger therefore rotates
+    the wake id during a normal renewal, contradicting W6 verbatim: "Ordinary
+    token renewal does not rotate the id, so a renewal never costs a resubscribe."
+
+    L2 is unbuildable as written. The spec must say which statements rotate
+    (naming them, not naming a function that does not exist), which lane owns
+    that code, and how the discard-on-renewal path is excluded.
+
+    On the tasking's second half — whether the trigger and the policy see the new
+    id in the same transaction — that part is fine in either build: the rotation
+    UPDATE, the token revoke and the tombstone commit together, the wake trigger
+    reads agent_principals by primary key inside the delivery insert's own
+    transaction, and the policy is evaluated at join, outside both. See N6 for the
+    one narrow window that survives.
+
+DB. §2.2 W1 / §6 L2 — the wake-id generator cannot run under this tree's own
+    search_path convention, and the spec never names the dependency.
+
+    MEASURED (M2, M3): pgcrypto is installed in schema `extensions` on the local
+    stack and is installed by NO migration in this tree; gen_random_bytes is
+    provolatile='v' and lives only there. Every `SET search_path` clause in
+    supabase/migrations/ is `pg_catalog`, `swarm, pg_catalog`, or
+    `swarm, storage, pg_catalog` — 52 clauses, none names `extensions`. A plpgsql
+    function declared the conventional way fails:
+        ERROR: function gen_random_bytes(integer) does not exist
+    and the identical body with `swarm, extensions, pg_catalog` succeeds
+    (positive control, 43 chars). The ADD COLUMN default itself is safe, because
+    DDL runs under the session search_path `"$user", public, extensions` and the
+    default is resolved to an OID once — which is exactly why the failure is not
+    visible at migration time and only appears the first time a revoke rotates.
+
+    W5's own function is specified `SET search_path = swarm, pg_catalog`, so the
+    spec is already writing the broken convention on the page. It must either
+    schema-qualify (`extensions.gen_random_bytes(32)`), pin
+    `SET search_path = swarm, extensions, pg_catalog` on every generator, or
+    `CREATE EXTENSION IF NOT EXISTS pgcrypto` explicitly — and §10 must carry the
+    hosted-project version of the question, since the extension's schema on
+    ukezjcnxjvkpkeezxaew is not in this repo any more than the realtime.send
+    grant is. Nothing in the document mentions pgcrypto, `extensions`, or
+    gen_random_bytes' schema.
+
+DC. §2.2 W1 — the redaction control W1 names does not match the string it is
+    supposed to redact.
+
+    W1: "our own status and error text pass cswarm-wake: topics through the
+    existing credential redactor (redactCredentialText, used at
+    activity/index.ts:134) ... the client redacts that string before it reaches a
+    log or `listen status`."
+
+    src/host/credential-redaction.ts:25-31 is the whole function. It strips ANSI,
+    strips control and separator characters, and replaces CREDENTIAL_PREFIX_RE,
+    which is `swm_(?:agt|inv|cap)_[^<sep>]*` (:19-21). `cswarm-wake:` followed by
+    43 base64url characters matches none of the three. The refusal text is
+    measured in this spec's own evidence
+    (realtime-anon-private-topic-experiment.out): "Unauthorized: You do not have
+    permissions to read from this Channel topic: cswarm-inbox-other:2121f81d" —
+    it would pass through redactCredentialText unchanged, into events.ndjson,
+    into lastErrorDetail, into the stderr tail (src/host/stderr-tail.ts:43) and
+    into any status rendering.
+
+    This is the failure class AGENTS.md records as measured four times in
+    v0.1.48-v0.1.50: a correct-looking sentence asserting an enforcement nobody
+    re-derived. It is worse here than a wrong label, because W1 declares the
+    topic name to be the credential and this is the only control it offers for it.
+
+    Ownership compounds it: no lane in §6 owns src/host/credential-redaction.ts.
+    That module is imported by supabase/functions/activity/index.ts:2 and is
+    inside `npm run check:edge`, so extending CREDENTIAL_PREFIX_RE is a change to
+    both the client and an edge function, with tests/host-stderr-tail.test.ts and
+    tests/listener-control.test.ts downstream. §6 schedules none of it.
+
+DD. §6 order — L2 and L2b are declared parallel and are not disjoint, on three
+    counts.
+
+    The order line: "L0, L1, L2, L2b now, in parallel (disjoint files)."
+    The ownership rule: "a file belongs to one lane at a time. Where two lanes
+    need the same file, they are sequenced, never concurrent."
+
+    (1) FILES. L2b's test is "tests/p1-local: purge removes a 3-day-old row and
+        keeps a 1-day-old one". A new file under tests/p1-local/ runs only when
+        package.json:26 names it — the literal eight-file list — and the pin at
+        tests/p1-cli/test-gate-coverage.test.ts:24 (localStackCommand) and
+        :25-34 (localStackTests) must move with it. §6 gives BOTH of those to L2,
+        "exclusively while it runs". The gate is real and will fail L2b:
+        test-gate-coverage.test.ts:85-95 asserts `unreachable` is empty over every
+        file under tests/, and :130-133 asserts the p1-local inventory equals
+        localStackTests exactly.
+    (2) THE DATABASE. AGENTS.md: test:p1-local "needs local Supabase and an
+        exclusive DB slot", and test-gate-coverage.test.ts:19-21 records why
+        (--test-concurrency=1, one local functions runtime). §5 additionally
+        requires L2b to redo the plans "on a reset with a synthetic 2 M-row load
+        before it lands". A db:reset under L2b destroys L2's wake-realtime-auth
+        run mid-flight. "Disjoint files" is not the right disjointness test for
+        two lanes that both need the one local stack.
+    (3) THE CONFIG ROW. L0's file list ends "config key
+        idempotency_retention_days"; L2b's policy line is "sets the key to 2".
+        Both run now, in parallel, on the same row, and draft 1's G2 is the
+        reason L2b exists — the ownership was split rather than moved.
+
+    Fix is small (sequence L2b after L2, and give the config row to exactly one
+    lane), but as written three lanes contend and §6's own rule forbids it.
+
+=============================== GAPS ===============================
+
+GA. §2.3 / §6 L4 — the status `wake` block is not specified tightly enough to
+    build, and the one field W1 forbids has no enforcement in either build.
+
+    §2.3 says only: "STATUS_ALLOWED_KEYS at control.ts:225-274 is a closed set
+    and L4 extends it", then specifies `wake` as a BLOCK of seven fields,
+    "never the topic itself".
+
+    STATUS_ALLOWED_KEYS (control.ts:225-274, the citation is exact) is a flat set
+    of TOP-LEVEL keys. It is consulted in exactly two places: control.ts:381,
+    inside `for (const key of Object.keys(row))`, and control.ts:550, as a
+    top-level Object.entries filter. Neither descends. The one existing nested
+    block, readHealth, needs a SECOND mechanism the spec does not mention: a
+    dedicated sub-parser, parseListenerReadHealth(row.readHealth,
+    rejectUnknownKeys) at control.ts:396-398, which carries its own closed list of
+    nine keys through hasExpectedKeys at read-health.ts:252-261.
+
+    Built literally to §2.3, a nested `wake` object is unvalidated: `wake.topic`
+    is admitted and round-trips into ~/.cswarm/.../status.json. STATUS_SENSITIVE_KEYS
+    (control.ts:284-299), whose comment at :282-283 states the guarantee "a status
+    file can never smuggle a lease capability, command ID, credential, or body",
+    is likewise checked top-level only, at :377-379, and does not contain `topic`.
+    So neither the allowlist nor the denylist can stop the field the spec forbids.
+
+    Two further ambiguities in the same paragraph: `wake.lastErrorCode` collides
+    by name with the top-level `lastErrorCode` already in the set, and `wake.mode`
+    is a third mode word beside `deliveryMode` and STATUS_DELIVERY_MODES
+    (control.ts:224). The spec must name the sub-parser and its closed key list,
+    add `topic` (and `wakeTopic`, `wake_topic`) to STATUS_SENSITIVE_KEYS, and say
+    what `mode` is called on the wire.
+
+GB. §2.3 / §6 L4 — a push-to-poll fallback manufactures a false host lapse, and
+    the spec's only sentence on it does not reach the mechanism.
+
+    §2.3: "claimCadenceMs / expectedClaims (read-health.ts:203-207, :403) become
+    the reconcile cadence in push mode; the tests that round-trip them ... are
+    updated in L4."
+
+    claimCadenceMs is ONE SCALAR (read-health.ts:40, set wholesale by
+    recordListenerClaimCadence at :202-207). expectedClaims is derived from that
+    single current value INSIDE a loop over every full hour back to
+    currentHour - HEALTH_WINDOW_MS (:398-413: `const expectedClaims = HOUR_MS /
+    health.claimCadenceMs` at :403, `ratio: claims / expectedClaims` at :411).
+    Hours are then filtered against LISTENER_THROUGHPUT_LAPSE_RATIO = 0.5 (:12,
+    :415) and rendered to the operator as "Claim throughput fell below 0.50 for
+    the full hour at <hour>: <claims>/<expected> expected" (src/cli.ts:4664).
+
+    So changing the cadence RETROACTIVELY rescores the whole window. Push -> poll,
+    which §2.4 lists as routine in five of its thirteen rows (socket half-open,
+    socket down, policy refused, rotation, proxy), rewrites expected from 12/hour
+    to 240/hour for every past hour; hours that were healthy at a 5-minute
+    reconcile score ratio ~0.05 and the CLI reports a lapse that did not happen.
+    The reverse direction is harmless but equally wrong.
+
+    The ask required the failure modes of the change. This one is created by the
+    change, is operator-visible, and is a false signal of exactly the kind the
+    document's own false-success rule is written against ("It never says push
+    unless state === subscribed right now"). L4 cannot be built without a ruling:
+    store expected per hour, or exclude hours whose mode changed.
+
+GC. §2.4 / §7 / §9 — no failure mode for the delivery claim rate limit, which
+    push mode is the first design able to saturate, and crossing it is not quiet.
+
+    DELIVERY_CLAIM_RATE_LIMIT_PER_MINUTE = 120 (durable-delivery.ts:21) was sized
+    against a fixed 2 s poll: 30 claims/minute, or 4/minute after lane A. §2.3's
+    250 ms coalescing window admits up to 240 wake-claims/minute from wakes
+    alone, plus reconciles, plus reconnect-driven reconciles on the library ladder
+    [1,2,5,10] s; and §9 deliberately keeps two machines on one credential, each
+    claiming on every wake.
+
+    Crossing the line is not a 429 and a retry. checkDeliveryRateLimit
+    (command/index.ts:4905-4934) writes an insertAudit with outcome "rate_limit"
+    and reason "delivery_claim_rate_limited", AND an
+    INSERT INTO swarm.security_alerts (kind 'delivery_claim_rate_limit',
+    subject 'agent'). That is an abuse alert raised by normal push behaviour, and
+    audit rows written on a path §3.1 exists to stop writing them on.
+
+    §2.4's thirteen rows contain no rate-limit row; §7 does not carry the limit
+    into any of the four seat counts; §9 does not list it as unsettled. The spec
+    must state the ceiling, whether the coalescing window is sized against it,
+    what the listener does on refusal, and whether 120/min still fits a design
+    where claims are event-driven rather than timed.
+
+GD. §6 L4 — "No package.json change" is not compatible with L4's own tests.
+
+    L4's tests: "fake-socket tests for every row of §2.4 incl. the latch" plus a
+    live control. `npm test` (package.json:25) is a literal file list, and
+    test-gate-coverage.test.ts:85-95 fails `npm run test:p1-cli` when any file
+    under tests/ is reachable from no execution script. A new
+    tests/listener-wake.test.ts therefore breaks the pure gate until
+    package.json:25 names it. §6 names this exact hazard for L2's p1-local file
+    and is silent for L4's root file, while L4's row asserts the opposite ("No
+    package.json change"). Either say the wake tests go into existing
+    tests/listener-*.test.ts files, or give L4 package.json:25 and sequence it
+    against L2's package.json:26.
+
+=============================== NITS ===============================
+
+N1. §0: "rows written per idle day fall from about 49,400 (48,000 of them kept
+    for 30 days)". 24,000 of those 48,000 are audit_log rows, which §1.3 itself
+    calls "kept forever" and which cannot be deleted at all —
+    audit_log_append_only at 20260723000001_p1_schema.sql:588-590 raises on
+    DELETE, and §3.2 says so. The headline paragraph understates permanence for
+    half the rows the spec exists to stop writing.
+
+N2. §7's message model is "1,716 signals x (1 sent + 1 received)", but §5's own
+    last row counts "one insert per delivery row into the day partition", and
+    fan-out gives up to 8 delivery rows per signal (recipient cap, 20260905000010).
+    W2 adds a second trigger sending once per signal, counted nowhere. The
+    published messages/day is low by the mean fan-out plus one. It does not change
+    which limit binds (connections), so it is a nit and not a gap.
+
+N3. Citation drift, three places: W3.2 gives the claim response builder as
+    command/index.ts:8429-8452 — the response object is :8433-8451 and :8429 is
+    inside insertAudit's `detail` argument; §2.3 gives
+    tests/listener-host-limits.test.ts:231 — the claimCadenceMs fixture is :229
+    under the test at :228; §2.3 gives read-health.ts:203-207 —
+    recordListenerClaimCadence starts at :202.
+
+N4. §10 lists as not established "Whether record_renewal_grant_use writes a row on
+    every read or only on a change". The tree answers it: the LIVE definition is
+    20260904000001_standing_grant_resume.sql:333-364 (which supersedes the
+    20260901000001:245 one), and it is a single UPDATE swarm.renewal_grants ...
+    FROM swarm.agent_tokens. It never inserts a row; it writes a new tuple version
+    of one existing row, 288 times a day after this spec instead of 24,000. §3.2's
+    retention table does not list renewal_grants, and with the answer in hand it
+    does not need to.
+
+N5. W3.1 cites read/index.ts:485 beside :828 without saying that :483-487 is the
+    FOREIGN-WORKSPACE empty branch, which returns before record_renewal_grant_use
+    at :490-496. A listener or watcher reading its own workspace never reaches it,
+    so the wake object there is dead weight, and a reader chasing the citation
+    lands on the branch that does not carry the argument.
+
+N6. W6: "Revocation of wake delivery is therefore complete at the moment of the
+    rotation." Under READ COMMITTED a signal_deliveries INSERT whose transaction
+    read agent_principals.wake_id before the rotation committed still sends to the
+    old topic, so a stale subscriber can receive one more payload — a signal_id
+    and a timestamp — after revocation. Bounded by one in-flight transaction and
+    content-free by design, but "complete at the moment" is a shade stronger than
+    the mechanism supports.
+
+==================== WHAT I ATTACKED AND FOUND SOUND ====================
+
+- The volatile DEFAULT. I did not argue it, I ran it (M1). PostgreSQL's fast-path
+  ADD COLUMN applies only to non-volatile defaults; gen_random_bytes is
+  provolatile='v', so the table is rewritten and the expression evaluated per row.
+  Five rows, five distinct 43-character base64url ids; a later INSERT got a sixth.
+  translate's shorter `to` string deletes the '=' padding, so 44 -> 43 as the spec
+  says, and 44 characters is under encode()'s 76-character newline wrap. The
+  claim in W1 is exactly right, and the additivity argument that rests on it holds.
+- The §3.1 gate against steps 2-4. Steps 2 and 3 really do mutate with no
+  RETURNING; step 4 really is the only reported one; the two new counters plus
+  delivery_refs cover every mutation on the path I could find, including the
+  security_alerts insert (already gated on a counter in the set) and
+  hydrateDeliveryRefs (no DML). The replay ruling is right: a claim that changed
+  nothing is indistinguishable from its own replay.
+- The reconcile read. Not decorative. Claims return at command/index.ts:8433,
+  before the only other grant-use stamp at :9024-9036, so without the read a
+  push-mode seat would stamp nothing and self-suspend at
+  20260901000001:199-208. 288/day against a 14-day floor is ~4,000x margin.
+  It also feeds classifyDeliveryMode (:1104 / :612-629), which is what makes the
+  §6 rollback story true rather than asserted.
+- W5's non-oracle claim and the experiment's honesty. The transcript matches the
+  prose clause for clause, including the refusal text the spec quotes, and W5 now
+  states its own limit rather than overselling it.
+- The wire's additivity for 0.1.56. Re-checked: command-client.ts:717-735,
+  signals.ts:1211-1218 and the four-bit capability parse at :294-310 all ignore
+  unknown fields; CLIENT_PROTOCOL_VERSION frozen at config.ts:3.
+- The lane sequencing that replaced draft 1's G1. command/index.ts, runtime.ts,
+  cli.ts and arrival-watch.ts are each genuinely single-owner-at-a-time now.
+
+DISPOSITION. The design's core survived a second pass: push is a hint, the row is
+the truth, and every wake ends in the same claim. Draft 2 fixed all five of my
+defects and all four of my gaps, and the arithmetic and the evidence discipline
+are now good. What it did not do is finish the parts it added. The rotation it
+built W6 on names a function that does not exist and lands in a lane that owns no
+code; the id generator it specifies cannot run under the search_path convention
+the same section writes; the redactor it names does not match the string it
+calls a credential; and the two lanes it created to fix G1 and G2 contend on the
+one gate file and the one local database. Four defects, four gaps.
+
+QUOTE-BACK: # Push delivery: wake listeners from Supabase Realtime instead of polling
+VERDICT: FAIL
+REASON: `revoke_agent_token` is not a database function so W6's rotation has no buildable home and the only trigger available to L2 rotates on ordinary renewals, the wake-id generator cannot resolve `gen_random_bytes` under this tree's `SET search_path = swarm, pg_catalog` convention (measured, with a positive control), `redactCredentialText` does not match `cswarm-wake:` so W1's only control over the topic-as-credential does not exist, and L2 and L2b are declared parallel while contending for `package.json:26`, the test-gate pin, the `idempotency_retention_days` row, and the exclusive local database.
