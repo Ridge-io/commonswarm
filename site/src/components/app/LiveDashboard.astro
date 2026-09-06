@@ -1287,6 +1287,13 @@ import "../../styles/tokens.css";
     mentionTargets,
   } from "../../lib/mention-address";
   import {
+    identityDisplayLabel,
+    parseStoredIdentityRef,
+    resolveStoredIdentityRefs,
+    type IdentityRecord,
+    type StoredIdentityRef,
+  } from "../../lib/identity-label";
+  import {
     BROADCAST_CHIP_LABEL,
     COMPOSER_TO_MAX,
     composerAddressIsChosen,
@@ -1352,7 +1359,7 @@ import "../../styles/tokens.css";
      * separately (`rememberComposerTo`) and is what the composer opens with when there is
      * no draft.
      */
-    to?: { kind: "agent" | "person"; id: string }[];
+    to?: StoredIdentityRef[];
     applied?: string[];
   }
 
@@ -2694,9 +2701,35 @@ import "../../styles/tokens.css";
       });
     }
 
-    const entityName = (entity: EntityRef): string => entity.kind === "agent"
-      ? agents.find((agent) => agent.principalId === entity.id)?.name ?? "Unknown agent"
-      : members.find((member) => member.userId === entity.id)?.name ?? "Workspace member";
+    const identityRoster = (): { agents: IdentityRecord[]; members: IdentityRecord[] } => ({
+      agents: agents.map((agent) => ({ id: agent.principalId, name: agent.name })),
+      members: members.map((member) => ({ id: member.userId, name: member.name })),
+    });
+
+    const combinedIdentityRoster = (): IdentityRecord[] => {
+      const roster = identityRoster();
+      return [...roster.agents, ...roster.members];
+    };
+
+    const entityName = (entity: EntityRef): string => {
+      if (entity.kind === "agent") {
+        const agent = agents.find((row) => row.principalId === entity.id);
+        if (!agent) return "Unknown agent";
+        return identityDisplayLabel(
+          { id: agent.principalId, name: agent.name },
+          combinedIdentityRoster(),
+        );
+      }
+      const member = members.find((row) => row.userId === entity.id);
+      if (!member) return "Workspace member";
+      return identityDisplayLabel(
+        { id: member.userId, name: member.name },
+        combinedIdentityRoster(),
+      );
+    };
+
+    const mentionOptionId = (entity: EntityRef): string =>
+      `dashboard-composer-mention-option-${entity.kind}-${entity.id}`;
 
     const composerAudienceKey = (audience: ComposerAudience): string =>
       audience.kind === "everyone" ? "everyone" : `${audience.kind}:${audience.id}`;
@@ -2787,7 +2820,7 @@ import "../../styles/tokens.css";
      * pass below decides what to do with it, which is the difference between this and the
      * four restores it replaces.
      */
-    const readRememberedComposerTo = (): ComposerRecipient[] => {
+    const readRememberedComposerTo = (): StoredIdentityRef[] => {
       const key = composerToStorageKey();
       if (!key) return [];
       try {
@@ -2795,13 +2828,10 @@ import "../../styles/tokens.css";
         if (!raw) return [];
         const value = JSON.parse(raw) as unknown;
         if (!Array.isArray(value)) return [];
-        const parsed: ComposerRecipient[] = [];
+        const parsed: StoredIdentityRef[] = [];
         for (const entry of value) {
-          if (entry === null || typeof entry !== "object") continue;
-          const candidate = entry as { kind?: unknown; id?: unknown };
-          if (typeof candidate.id !== "string") continue;
-          if (candidate.kind !== "agent" && candidate.kind !== "person") continue;
-          parsed.push({ kind: candidate.kind, id: candidate.id });
+          const stored = parseStoredIdentityRef(entry);
+          if (stored) parsed.push(stored);
         }
         return parsed;
       } catch {
@@ -2947,6 +2977,18 @@ import "../../styles/tokens.css";
       const parsed = rosterKnown && input !== null
         ? composerAddressFrom(input.value)
         : { recipients: [], overflow: [], ambiguous: [] };
+      const roster = identityRoster();
+      const rememberedResolved = resolveStoredIdentityRefs(
+        readRememberedComposerTo(),
+        roster,
+      );
+      const draftResolved = stored === null || stored.to === undefined
+        ? null
+        : resolveStoredIdentityRefs(stored.to, roster);
+      const draftAmbiguous = [
+        ...rememberedResolved.ambiguous,
+        ...(draftResolved?.ambiguous ?? []),
+      ];
       const state = deriveComposerAddress({
         rosterKnown,
         sending: composerSending,
@@ -2959,8 +3001,11 @@ import "../../styles/tokens.css";
         live,
         draft: stored === null
           ? null
-          : { to: stored.to ?? null, applied: stored.applied ?? [] },
-        remembered: readRememberedComposerTo(),
+          : {
+            to: stored.to === undefined ? null : draftResolved?.recipients ?? [],
+            applied: stored.applied ?? [],
+          },
+        remembered: rememberedResolved.recipients,
         tagged: parsed.recipients.map((entity) => ({ kind: entity.kind, id: entity.id })),
         /* A HAND EDIT ANSWERS THE PRUNE SENTENCE. The reader has looked at the row and acted
          * on it, so the notice about a set they were not looking at has done its work. */
@@ -2974,7 +3019,14 @@ import "../../styles/tokens.css";
       composerToApplied = state.applied;
       composerToPruned = state.announcedPrune;
       composerToLive = true;
-      composerToNotice = composerAddressNotice(state, parsed, composerRecipientName);
+      composerToNotice = composerAddressNotice(
+        state,
+        {
+          overflow: parsed.overflow,
+          ambiguous: [...parsed.ambiguous, ...draftAmbiguous],
+        },
+        composerRecipientName,
+      );
       /* AND THE SAME CALL WRITES IT DOWN, so an edit cannot be on screen and absent from
        * storage. A chip edit used to reach storage only on the next keystroke or at
        * `pagehide`, and a workspace switch cancelled the pending write without flushing, so an
@@ -3054,12 +3106,10 @@ import "../../styles/tokens.css";
           ...(value.hadAttachments === true ? { hadAttachments: true } : {}),
           ...(Array.isArray(value.to)
             ? {
-              to: value.to.filter((entry): entry is ComposerRecipient =>
-                entry !== null && typeof entry === "object" &&
-                typeof (entry as ComposerRecipient).id === "string" &&
-                ((entry as ComposerRecipient).kind === "agent" ||
-                  (entry as ComposerRecipient).kind === "person")
-              ),
+              to: value.to.flatMap((entry) => {
+                const stored = parseStoredIdentityRef(entry);
+                return stored ? [stored] : [];
+              }),
             }
             : {}),
           ...(Array.isArray(value.applied)
@@ -3603,7 +3653,7 @@ import "../../styles/tokens.css";
       candidates.forEach((candidate, index) => {
         const button = document.createElement("button");
         button.type = "button";
-        button.id = `dashboard-composer-mention-option-${index}`;
+        button.id = mentionOptionId(candidate);
         button.tabIndex = -1;
         button.setAttribute("role", "option");
         button.setAttribute("aria-selected", String(index === mentionPickerIndex));
@@ -3633,10 +3683,9 @@ import "../../styles/tokens.css";
       picker.hidden = false;
       const input = one<HTMLTextAreaElement>("[data-composer-input]");
       input?.setAttribute("aria-expanded", "true");
-      input?.setAttribute(
-        "aria-activedescendant",
-        `dashboard-composer-mention-option-${mentionPickerIndex}`,
-      );
+      const active = candidates[mentionPickerIndex];
+      if (active) input?.setAttribute("aria-activedescendant", mentionOptionId(active));
+      else input?.removeAttribute("aria-activedescendant");
     };
 
     /* The mention list is a search across every member and agent, and it rebuilt the whole
@@ -3995,8 +4044,16 @@ import "../../styles/tokens.css";
       }
       list.replaceChildren();
       const query = rosterFilter.trim().toLowerCase();
+      const agentIdentityRoster = identityRoster().agents;
       const visible = query
-        ? agents.filter((agent) => agent.name.toLowerCase().includes(query))
+        ? agents.filter((agent) => {
+          const label = identityDisplayLabel(
+            { id: agent.principalId, name: agent.name },
+            agentIdentityRoster,
+          );
+          return agent.name.toLowerCase().includes(query) ||
+            label.toLowerCase().includes(query);
+        })
         : agents;
       if (visible.length === 0) {
         const empty = document.createElement("li");
@@ -4024,7 +4081,10 @@ import "../../styles/tokens.css";
         const copy = document.createElement("span");
         copy.className = "dashboard__agent-copy";
         const name = document.createElement("strong");
-        name.textContent = agent.name;
+        name.textContent = identityDisplayLabel(
+          { id: agent.principalId, name: agent.name },
+          agentIdentityRoster,
+        );
         const state = document.createElement("span");
         state.textContent =
           `${agent.model ?? "Model not specified"} · owned by ${
@@ -5052,9 +5112,15 @@ import "../../styles/tokens.css";
         if (signalIsDirectToViewer(signal, viewerId)) {
           row.classList.add("dashboard__message--direct-to-viewer");
         }
-        const authorName = authorAgent?.name ??
-          people.get(signal.from) ??
-          (signal.fromKind === "user" ? "Team member" : "Unknown agent");
+        const authorEntity = authorAgent
+          ? { kind: "agent" as const, id: authorAgent.principalId }
+          : signal.fromKind === "user" && people.has(signal.from)
+          ? { kind: "person" as const, id: signal.from }
+          : null;
+        const authorName = authorEntity
+          ? entityName(authorEntity)
+          : people.get(signal.from) ??
+            (signal.fromKind === "user" ? "Team member" : "Unknown agent");
         const avatar = document.createElement("span");
         avatar.className = "dashboard__message-avatar";
         avatar.textContent = initials(authorName);
@@ -5066,11 +5132,6 @@ import "../../styles/tokens.css";
         const meta = document.createElement("header");
         meta.className = "dashboard__message-meta";
         const author = document.createElement("strong");
-        const authorEntity = authorAgent
-          ? { kind: "agent" as const, id: authorAgent.principalId }
-          : signal.fromKind === "user" && people.has(signal.from)
-          ? { kind: "person" as const, id: signal.from }
-          : null;
         if (authorEntity) {
           author.append(entityControl(
             authorName,
@@ -5088,13 +5149,13 @@ import "../../styles/tokens.css";
         target.append("→ ");
         if (signal.toAgent !== null && targetAgent) {
           target.append(entityControl(
-            targetAgent.name,
+            entityName({ kind: "agent", id: targetAgent.principalId }),
             { kind: "agent", id: targetAgent.principalId },
             "dashboard__message-entity",
           ));
         } else if (signal.to !== null && people.has(signal.to)) {
           target.append(entityControl(
-            people.get(signal.to)!,
+            entityName({ kind: "person", id: signal.to }),
             { kind: "person", id: signal.to },
             "dashboard__message-entity",
           ));

@@ -32,6 +32,9 @@
 
 import type { Session } from "@supabase/supabase-js";
 import { CLIENT_PROTOCOL_VERSION, NoDeployment, client, deployment, uuid } from "./commonswarm";
+import { createAgentPrincipalCommand } from "./identity-label";
+
+export { ALLOW_DUPLICATE_NAME_FIELD, createAgentPrincipalCommand } from "./identity-label";
 
 /**
  * Mirrors AGENT_TOKEN_DEFAULT_TTL_MS / AGENT_TOKEN_MAX_TTL_MS in
@@ -397,10 +400,9 @@ export async function createAgentIdentity(
   workspaceId: string,
   name: string,
   model?: string,
+  allowDuplicateName = false,
 ): Promise<AgentIdentity> {
-  const command = model === undefined
-    ? { kind: "create_agent_principal" as const, name }
-    : { kind: "create_agent_principal" as const, name, model };
+  const command = createAgentPrincipalCommand(name, model, allowDuplicateName);
   const outcome = await postCommand(
     session,
     commandId,

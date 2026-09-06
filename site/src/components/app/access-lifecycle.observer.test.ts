@@ -22,6 +22,10 @@ const agentConnect = await readFile(
   new URL("../../lib/agent-connect.ts", import.meta.url),
   "utf8",
 );
+const identityLabel = await readFile(
+  new URL("../../lib/identity-label.ts", import.meta.url),
+  "utf8",
+);
 
 test("Add an agent asks who controls it before minting", () => {
   assert.match(dashboard, /Who runs this agent\?/);
@@ -70,7 +74,12 @@ test("Add an agent asks only for a name and warns about the key when it exists",
   const result = connect.slice(connect.indexOf('<div class="ac__panel ac__result"'));
   assert.doesNotMatch(form, /ac__warn/);
   assert.match(result, /ac__warn[\s\S]*The key appears once, on this screen/);
-  assert.match(agentConnect, /model === undefined[\s\S]*create_agent_principal[\s\S]*model: model \?\? null/);
+  assert.match(agentConnect, /createAgentPrincipalCommand\(/);
+  assert.match(agentConnect, /model: model \?\? null/);
+  assert.match(
+    identityLabel,
+    /model === undefined[\s\S]*create_agent_principal[\s\S]*allowDuplicateName === true/,
+  );
 });
 
 test("Done, Back, and first use converge on a channel return", () => {

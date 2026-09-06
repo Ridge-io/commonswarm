@@ -14,6 +14,11 @@
  * two roster entries sharing a name, and more tags than one message may carry.
  */
 import { COMPOSER_TO_MAX } from "./composer-address.js";
+import {
+  foldIdentityName,
+  identityDisplayLabel,
+  type IdentityRecord,
+} from "./identity-label.js";
 
 export interface MentionEntity {
   id: string;
@@ -22,7 +27,10 @@ export interface MentionEntity {
 
 export interface MentionTarget {
   entity: MentionEntity;
+  /** Raw display name. A name-only tag uses this, and refuses when it is shared. */
   name: string;
+  /** Picker and tag label. Duplicate names include a short UUID suffix. */
+  label?: string;
 }
 
 export interface MentionAddress {
@@ -50,8 +58,7 @@ const CLOSES_TAG = /[\s.,;:!?)\]]/u;
  * "İ" folds to TWO code units, so "@ipek" never matched a roster name of "İpek". Stripping marks
  * makes a tag forgiving about accents, and the same fold decides ambiguity below, so two names
  * that differ only by an accent are treated as the same name rather than silently colliding. */
-const fold = (value: string): string =>
-  value.normalize("NFD").replace(/\p{M}/gu, "").toLowerCase();
+const fold = (value: string): string => foldIdentityName(value);
 
 /* A name has to survive folding as something a reader could type after an "@". Only combining
  * marks fold to "", and only whitespace folds to whitespace; both used to bind — the first on the
@@ -69,18 +76,32 @@ export function mentionTargets(
   agents: ReadonlyArray<{ name?: string | null; principalId: string }>,
   members: ReadonlyArray<{ name?: string | null; userId: string }>,
 ): MentionTarget[] {
+  const records: IdentityRecord[] = [
+    ...agents.map((agent) => ({ id: agent.principalId, name: agent.name ?? "" })),
+    ...members.map((member) => ({ id: member.userId, name: member.name ?? "" })),
+  ];
   return [
-    ...agents.map((agent) => ({
-      entity: { kind: "agent" as const, id: agent.principalId },
-      name: agent.name ?? "",
-    })),
-    ...members.map((member) => ({
-      entity: { kind: "person" as const, id: member.userId },
-      name: member.name ?? "",
-    })),
+    ...agents.map((agent) => {
+      const name = agent.name ?? "";
+      return {
+        entity: { kind: "agent" as const, id: agent.principalId },
+        name,
+        label: identityDisplayLabel({ id: agent.principalId, name }, records),
+      };
+    }),
+    ...members.map((member) => {
+      const name = member.name ?? "";
+      return {
+        entity: { kind: "person" as const, id: member.userId },
+        name,
+        label: identityDisplayLabel({ id: member.userId, name }, records),
+      };
+    }),
   ]
     .filter((target) => isTaggable(target.name))
-    .sort((left, right) => right.name.length - left.name.length);
+    .sort((left, right) =>
+      right.label.length - left.label.length || right.name.length - left.name.length
+    );
 }
 
 /** Names two or more roster entries share, folded. */
@@ -93,13 +114,34 @@ function ambiguousNames(targets: readonly MentionTarget[]): Set<string> {
   return new Set([...counts].filter(([, count]) => count > 1).map(([name]) => name));
 }
 
+function targetLabel(target: MentionTarget): string {
+  return target.label ?? target.name;
+}
+
+function tagMatch(
+  body: string,
+  at: number,
+  token: string,
+): number | null {
+  if (!isTaggable(token)) return null;
+  const span = body.slice(at + 1, at + 1 + token.length);
+  if (span.length !== token.length) return null;
+  if (fold(span) !== fold(token)) return null;
+  const after = body[at + 1 + token.length];
+  if (after !== undefined && !CLOSES_TAG.test(after)) return null;
+  return token.length;
+}
+
 export function addressFromBody(
   body: string,
   targets: readonly MentionTarget[],
 ): MentionAddress {
   const ordered = [...targets]
-    .filter((target) => isTaggable(target.name))
-    .sort((left, right) => right.name.length - left.name.length);
+    .filter((target) => isTaggable(target.name) || isTaggable(targetLabel(target)))
+    .sort((left, right) =>
+      targetLabel(right).length - targetLabel(left).length ||
+      right.name.length - left.name.length
+    );
   const ambiguousSet = ambiguousNames(ordered);
   const recipients: MentionEntity[] = [];
   const ambiguous: string[] = [];
@@ -108,32 +150,42 @@ export function addressFromBody(
   for (let at = body.indexOf("@"); at !== -1; at = body.indexOf("@", at + 1)) {
     const before = at === 0 ? "" : body[at - 1]!;
     if (before !== "" && !OPENS_TAG.test(before)) continue;
+    let matched: MentionTarget | undefined;
+    let consumed = 0;
+    let nameOnlyAmbiguous: string | undefined;
     for (const target of ordered) {
-      /* Slice by the ORIGINAL name length and fold both sides. Folding the whole body and
-       * indexing into it was wrong: lowercasing can change a string's LENGTH — measured with
-       * "@İpek" — which slid every later index and lost the tag. */
-      const span = body.slice(at + 1, at + 1 + target.name.length);
-      /* The slice must be the whole name. Near the end of the body it comes back short, and a
-       * short span that folds equal would bind a name the reader never finished typing. */
-      if (span.length !== target.name.length) continue;
-      if (fold(span) !== fold(target.name)) continue;
-      const after = body[at + 1 + target.name.length];
-      if (after !== undefined && !CLOSES_TAG.test(after)) continue;
-      if (ambiguousSet.has(fold(target.name))) {
-        /* Guessing between two identical names would silently address the wrong principal. */
-        if (!ambiguous.includes(target.name)) ambiguous.push(target.name);
-        at += target.name.length;
+      const labelLength = tagMatch(body, at, targetLabel(target));
+      if (labelLength !== null) {
+        matched = target;
+        consumed = labelLength;
+        nameOnlyAmbiguous = undefined;
         break;
       }
-      const key = `${target.entity.kind}:${target.entity.id}`;
-      if (!seen.has(key)) {
-        seen.add(key);
-        if (recipients.length < MENTION_MAX_RECIPIENTS) recipients.push({ ...target.entity });
-        else overflow.push(target.name);
+      const nameLength = tagMatch(body, at, target.name);
+      if (nameLength === null) continue;
+      if (ambiguousSet.has(fold(target.name))) {
+        nameOnlyAmbiguous = target.name;
+        consumed = nameLength;
+        continue;
       }
-      at += target.name.length;
+      matched = target;
+      consumed = nameLength;
+      nameOnlyAmbiguous = undefined;
       break;
     }
+    if (nameOnlyAmbiguous !== undefined && matched === undefined) {
+      if (!ambiguous.includes(nameOnlyAmbiguous)) ambiguous.push(nameOnlyAmbiguous);
+      at += consumed;
+      continue;
+    }
+    if (matched === undefined) continue;
+    const key = `${matched.entity.kind}:${matched.entity.id}`;
+    if (!seen.has(key)) {
+      seen.add(key);
+      if (recipients.length < MENTION_MAX_RECIPIENTS) recipients.push({ ...matched.entity });
+      else overflow.push(targetLabel(matched));
+    }
+    at += consumed;
   }
   return { ambiguous, overflow, recipients };
 }

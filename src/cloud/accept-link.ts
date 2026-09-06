@@ -92,6 +92,7 @@ export interface AcceptLinkRuntime {
     session: AcceptSession,
     workspaceId: string,
     name: string,
+    options?: { allowDuplicateName?: boolean },
   ): Promise<
     | { status: "accepted"; principalId: string }
     | { status: "name_taken" }
@@ -106,6 +107,11 @@ export interface AcceptLinkOptions {
   store: CredentialStore;
   runtime: AcceptLinkRuntime;
   explicitName?: string;
+  /**
+   * Caller-chosen duplicate create. Default collision handling stays in place
+   * unless this is exactly true. CLI has no flag yet; do not infer it.
+   */
+  allowDuplicateName?: boolean;
 }
 
 export interface AcceptLinkResult {
@@ -384,58 +390,84 @@ export async function acceptInviteLink(
   const baseName = sanitizePrincipalName(selectedBase, {
     truncate: explicitName === undefined,
   });
+  const allowDuplicateName = options.allowDuplicateName === true;
   let principal: PrincipalSummary | null = null;
   let chosenName = baseName;
 
-  for (let attempt = 1; attempt <= AUTO_NAME_ATTEMPTS; attempt += 1) {
-    chosenName = explicitName === undefined
-      ? suffixedName(baseName, attempt)
-      : baseName;
-    principal = await runtime.livePrincipalByName(
-      session,
-      workspaceId,
-      chosenName,
-    );
-    if (principal) {
-      runtime.emit({
-        step: "principal",
-        message: `This machine already has an agent identity: ${principal.name}.`,
-        data: { principal_id: principal.principalId, name: principal.name },
-      });
-      break;
-    }
+  if (allowDuplicateName) {
     const created = await runtime.createPrincipal(
       session,
       workspaceId,
       chosenName,
+      { allowDuplicateName: true },
     );
     if (created.status === "accepted") {
       principal = { principalId: created.principalId, name: chosenName };
       runtime.emit({
         step: "principal",
         message: `Registered this machine's agent identity: ${chosenName}.`,
-        data: { principal_id: created.principalId, name: chosenName },
+        data: {
+          principal_id: created.principalId,
+          name: chosenName,
+          allow_duplicate_name: true,
+        },
       });
-      break;
-    }
-    const raced = await runtime.livePrincipalByName(
-      session,
-      workspaceId,
-      chosenName,
-    );
-    if (raced) {
-      principal = raced;
-      runtime.emit({
-        step: "principal",
-        message: `This machine already has an agent identity: ${raced.name}.`,
-        data: { principal_id: raced.principalId, name: raced.name },
-      });
-      break;
-    }
-    if (explicitName !== undefined) {
+    } else {
       throw new Error(
         `The name "${chosenName}" is already taken in this workspace. Re-run with a different --name.`,
       );
+    }
+  } else {
+    for (let attempt = 1; attempt <= AUTO_NAME_ATTEMPTS; attempt += 1) {
+      chosenName = explicitName === undefined
+        ? suffixedName(baseName, attempt)
+        : baseName;
+      principal = await runtime.livePrincipalByName(
+        session,
+        workspaceId,
+        chosenName,
+      );
+      if (principal) {
+        runtime.emit({
+          step: "principal",
+          message: `This machine already has an agent identity: ${principal.name}.`,
+          data: { principal_id: principal.principalId, name: principal.name },
+        });
+        break;
+      }
+      const created = await runtime.createPrincipal(
+        session,
+        workspaceId,
+        chosenName,
+      );
+      if (created.status === "accepted") {
+        principal = { principalId: created.principalId, name: chosenName };
+        runtime.emit({
+          step: "principal",
+          message: `Registered this machine's agent identity: ${chosenName}.`,
+          data: { principal_id: created.principalId, name: chosenName },
+        });
+        break;
+      }
+      const raced = await runtime.livePrincipalByName(
+        session,
+        workspaceId,
+        chosenName,
+      );
+      if (raced) {
+        principal = raced;
+        runtime.emit({
+          step: "principal",
+          message: `This machine already has an agent identity: ${raced.name}.`,
+          data: { principal_id: raced.principalId, name: raced.name },
+        });
+        break;
+      }
+      if (explicitName !== undefined) {
+        throw new Error(
+          `The name "${chosenName}" is already taken in this workspace. Re-run with a different --name.`,
+        );
+      }
     }
   }
 
@@ -611,16 +643,17 @@ export function cloudAcceptOperations(
           owner_user_id: `eq.${session.userId}`,
           name: `eq.${name}`,
           revoked_at: "is.null",
-          limit: "1",
+          limit: "50",
         },
         fetcher,
       );
-      const principal = found[0];
-      return principal &&
-          typeof principal.principal_id === "string" &&
+      const principals = found.flatMap((principal) =>
+        typeof principal.principal_id === "string" &&
           typeof principal.name === "string"
-        ? { principalId: principal.principal_id, name: principal.name }
-        : null;
+          ? [{ principalId: principal.principal_id, name: principal.name }]
+          : []
+      );
+      return principals.length === 1 ? principals[0]! : null;
     },
     async acceptInvitation(session, _workspaceHint, token) {
       try {
@@ -643,12 +676,21 @@ export function cloudAcceptOperations(
         throw error;
       }
     },
-    async createPrincipal(session, workspaceId, name) {
+    async createPrincipal(session, workspaceId, name, options) {
+      /* Lane A owns the protocol type. The extra field is omitted unless the
+         caller asked for a duplicate, so default clients keep the old envelope. */
+      const command = {
+        kind: "create_agent_principal" as const,
+        name,
+        ...(options?.allowDuplicateName === true
+          ? { allow_duplicate_name: true as const }
+          : {}),
+      };
       const result = await sendConnectWithPending(
         client,
         { ...session, store },
         workspaceId,
-        { kind: "create_agent_principal", name },
+        command as { kind: "create_agent_principal"; name: string },
       );
       if (result.response.status === "accepted") {
         return {

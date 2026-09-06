@@ -1,4 +1,5 @@
 import { modelFamily, modelGlyphSvg } from './model-glyph.js';
+import { identityDisplayLabel } from './identity-label.js';
 
 export interface RailMember {
   userId: string;
@@ -86,6 +87,10 @@ export const renderSidebarParticipants = <
   const document = participantList.ownerDocument;
   participantList.replaceChildren();
 
+  const identityRoster = agents.map((agent) => ({
+    id: agent.principalId,
+    name: agent.name,
+  }));
   const buildAgentRow = (agent: TAgent, ownerName?: string): HTMLLIElement => {
     const row = document.createElement('li');
     row.className = 'dashboard__sidebar-agent';
@@ -98,8 +103,12 @@ export const renderSidebarParticipants = <
     const copy = document.createElement('span');
     copy.className = 'dashboard__sidebar-participant-copy';
     const name = document.createElement('strong');
-    name.textContent = agent.name;
-    name.title = agent.name;
+    const label = identityDisplayLabel(
+      { id: agent.principalId, name: agent.name },
+      identityRoster,
+    );
+    name.textContent = label;
+    name.title = label;
     copy.append(name);
     if (agent.model) {
       const model = document.createElement('span');
