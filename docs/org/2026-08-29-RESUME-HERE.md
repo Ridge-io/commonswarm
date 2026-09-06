@@ -2486,3 +2486,22 @@ check:edge, 861/861, p1-cli 483/483 (p1-server ran on the lane SHA: 155/155). De
 `wake.topic` starts with `cswarm-wake:` and its id is 43 characters (topic not recorded). The same read
 with `inbox: false` has no `wake`. Note for the next hand-made read: the body needs `include_stale`, or
 the edge answers `invalid_request`.
+
+## 2026-09-06 06:xx UTC — L8 LANDED (b17f608); L4 and L6 in round 2
+
+L8 `lane/wake-docs`: 9dd25ef drew the same FAIL from Gemini and Opus (the §2.2 lede said "Empty
+`claim_agent_inbox` persists nothing"; an empty claim against a live queue still takes the rate bucket,
+`command/index.ts:7584-7586`), fixed to "Idle" at 4e2d56a with the AGENTS.md layout line naming
+`activity`; Gemini PASS, Opus PASS on 4e2d56a. Evidence `docs/evidence/2026-09-06-wake-docs/`.
+
+L4 `lane/wake-client` 6c4e219 (1,649 lines; Grok): Gemini FAIL, Opus FAIL. Rulings: Gemini's check 3
+(topic in lastErrorDetail not rejected) refuted at `control.ts:510`; check 9 (busy loop in
+cursor_fallback) refuted, the claim branch sits inside the `durable_claim` guard at `runtime.ts:1486`;
+checks 5–6 are nits. Opus's DEFECT holds and was measured: the 50/min wake-claim budget is inert
+(`runtime.ts:1170-1188` only clears `skipRead`; `:1556` calls `noteClaim` not `noteWakeClaim`), 70 claims
+in one clock minute against the spec's 51. Round 2 (`brief-wake-client-ROUND2.md`): degrade to poll for
+the rest of the minute, `rateLimited: true`, a probe test, the topic-rotation test row, the `setTopic`
+race, `LISTENER_WAKE_MODES` for the mode literals, the unknown-key parser test.
+
+L6 `lane/wake-site` 4c04bae (Grok): report clean, but my brief said a 5-minute reconcile while the spec
+§4.3 says 30 s for the app; the spec wins; round 2 changes the constant. Arms run after round 2.
