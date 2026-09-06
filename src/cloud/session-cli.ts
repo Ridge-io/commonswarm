@@ -308,6 +308,32 @@ export async function runHumanSessionLifecycle(
   return { kind, principal_id: input.principalId, status: "accepted" };
 }
 
+export const SESSION_START_MODES = ["acquired", "foreground", "worker"] as const;
+export type SessionStartCopyMode = (typeof SESSION_START_MODES)[number];
+
+const SESSION_START_COPY = {
+  acquired:
+    "Interactive session acquired. This process did not start an ACP model and did not claim or surface asks. Run the same command with --foreground to claim and surface into the bound host conversation.",
+  foreground:
+    "Interactive session acquired. This process did not start an ACP model. It claims and surfaces into the bound host conversation only.",
+  worker: "Managed worker session acquired.",
+} as const satisfies Record<SessionStartCopyMode, string>;
+
+export function sessionStartCopy(input: {
+  mode: SessionMode;
+  runReceiver: boolean;
+  workerNext?: string;
+}): { mode: SessionStartCopyMode; message: string } {
+  if (input.mode === "worker") {
+    return {
+      mode: "worker",
+      message: input.workerNext ?? SESSION_START_COPY.worker,
+    };
+  }
+  const copyMode: SessionStartCopyMode = input.runReceiver ? "foreground" : "acquired";
+  return { mode: copyMode, message: SESSION_START_COPY[copyMode] };
+}
+
 export function boundAgentFetcher(
   fetcher: typeof fetch,
   context: SessionContextDocument,

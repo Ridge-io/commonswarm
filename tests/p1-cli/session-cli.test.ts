@@ -4,6 +4,7 @@ import { test } from "node:test";
 import {
   parseSessionMode,
   parseSessionProvider,
+  sessionStartCopy,
 } from "../../src/cloud/session-cli.js";
 
 async function cli(args: string[]): Promise<{ code: number; stdout: string; stderr: string }> {
@@ -46,7 +47,28 @@ test("usage advertises session verbs and does not claim status enables enforceme
   assert.match(text, /--allow-duplicate-name/);
   assert.match(text, /--session-context/);
   assert.match(text, /Interactive mode never starts an ACP model/);
+  assert.match(text, /cswarm session start.*--foreground/);
   assert.doesNotMatch(text, /session status enables/);
+});
+
+test("session start copy is generated from the mode that actually started", () => {
+  const acquired = sessionStartCopy({ mode: "interactive", runReceiver: false });
+  assert.equal(acquired.mode, "acquired");
+  assert.match(acquired.message, /did not claim or surface/);
+  assert.match(acquired.message, /--foreground/);
+  assert.doesNotMatch(acquired.message, /It claims and surfaces/);
+  const foreground = sessionStartCopy({ mode: "interactive", runReceiver: true });
+  assert.equal(foreground.mode, "foreground");
+  assert.match(foreground.message, /claims and surfaces/);
+  assert.doesNotMatch(foreground.message, /did not claim or surface/);
+  const worker = sessionStartCopy({
+    mode: "worker",
+    runReceiver: false,
+    workerNext: "Managed worker session acquired. Start the worker with: cswarm listen start",
+  });
+  assert.equal(worker.mode, "worker");
+  assert.match(worker.message, /Managed worker session acquired/);
+  assert.doesNotMatch(worker.message, /claims and surfaces/);
 });
 
 test("session parsers refuse unknown mode and provider", () => {

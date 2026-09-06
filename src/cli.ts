@@ -348,6 +348,7 @@ import {
   readSessionIdentity,
   revokeAgentToken,
   runHumanSessionLifecycle,
+  sessionStartCopy,
   startManagedSession,
   stopManagedSession,
 } from "./cloud/session-cli.js";
@@ -604,7 +605,7 @@ Usage:
   cswarm listen canary ${requiredAgentCredential} [--url <url> --anon-key <key>] --workspace-id <uuid> [--state-dir <path>] [--wait <seconds>] [--json]
   cswarm listen status ${agentCredential} [--url <url> --anon-key <key>] --workspace-id <uuid> [--principal-id <uuid>] [--json]
   cswarm listen stop ${agentCredential} [--url <url> --anon-key <key>] --workspace-id <uuid> [--principal-id <uuid>] [--json]
-  cswarm session start --mode interactive|worker --provider grok|opencode|claude|codex --host-session-id <id> ${requiredAgentCredential} [--url <url> --anon-key <key>] --workspace-id <uuid> [--session-context <absolute-path>] [--host-label <text>] [--json]
+  cswarm session start --mode interactive|worker --provider grok|opencode|claude|codex --host-session-id <id> ${requiredAgentCredential} [--url <url> --anon-key <key>] --workspace-id <uuid> [--session-context <absolute-path>] [--host-label <text>] [--foreground] [--json]
   cswarm session status --session-context <absolute-path> [--json]
   cswarm session stop --session-context <absolute-path> ${agentCredential} [--url <url> --anon-key <key>] [--json]
   cswarm session enable --principal-id <uuid> [--url <url> --anon-key <key>] [--workspace-id <uuid>] [--json]
@@ -728,7 +729,7 @@ that directory is affected. --repo keeps the repository-wide .claude/settings.js
 also requires an ignored file. Uninstall also
 requires --write and uses the same scope selection.
 
-session start acquires one execution session per agent. Interactive mode never starts an ACP model, factory, or child spawn; it only claims and surfaces into --host-session-id. Worker mode binds listen start through --session-context. --session-context must be an absolute owned 0600 file in an owned 0700 directory outside a repository. Shell commands that omit it are not bound. session stop returns progress until cswarm session status confirms teardown. principal create --allow-duplicate-name is off by default and is never sent as false.
+session start acquires one execution session per agent. Interactive mode never starts an ACP model, factory, or child spawn. The default path only acquires; --foreground claims and surfaces into --host-session-id. Worker mode binds listen start through --session-context. --session-context must be an absolute owned 0600 file in an owned 0700 directory outside a repository. Shell commands that omit it are not bound. session stop returns progress until cswarm session status confirms teardown. principal create --allow-duplicate-name is off by default and is never sent as false.
 
 Invite, legacy token accept, principal create/revoke, human token mint/revoke, link, new, and workspace close require a
 stored human login. Agent self-surrender of a token uses --agent-token-file or --agent-token-stdin and never takes the secret on argv. Invite-link accept signs in when needed, then accepts and
@@ -6714,6 +6715,7 @@ async function runSession(args: Arguments): Promise<void> {
       "session start needs --agent-token-file <absolute-path> so the context can reference the sole token file",
     );
   }
+  const runReceiver = mode === "interactive" && args.has("foreground");
   const result = await startManagedSession({
     target: cloud,
     workspaceId: selectedWorkspace,
@@ -6725,12 +6727,15 @@ async function runSession(args: Arguments): Promise<void> {
     hostSessionId,
     hostLabel: args.optional("host-label") ?? null,
     contextPath: args.optional("session-context"),
-    runReceiver: mode === "interactive" && args.has("foreground"),
+    runReceiver,
+  });
+  const copy = sessionStartCopy({
+    mode,
+    runReceiver,
+    ...(result.next === undefined ? {} : { workerNext: result.next }),
   });
   const output = {
-    message: mode === "interactive"
-      ? "Interactive session acquired. This process did not start an ACP model. It claims and surfaces into the bound host conversation only."
-      : result.next ?? "Managed worker session acquired.",
+    message: copy.message,
     session_id: result.context.session_id,
     generation: result.context.generation,
     mode: result.context.mode,
