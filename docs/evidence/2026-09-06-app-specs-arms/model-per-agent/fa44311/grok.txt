@@ -1,0 +1,118 @@
+I'll review the spec against this checkout: every cited file:line, every lane file list, every named test/gate, every number, and whether any two lanes own the same file.I'll pull the cited files, the evidence map, and git state, then check every line the spec names.HEAD is `998266b`, not `fa44311`. I'll diff the spec across those commits, then verify every cited line in the current tree.I'll read every cited region next, plus the protocol reducer, delivery context, and gate scripts.Citations on the host bridges look right. Next I’ll check LiveDashboard, the migration, the inbox read, and whether other specs’ lanes share these files.Checkout HEAD is `998266b` on `spec/app-backlog`, not `fa44311`. I reviewed the spec in this tree (the folded text a lane would build) against this tree’s code. `fa44311` is an ancestor; the code citations below are from HEAD.
+
+Within this spec, L1 / L2 / L3 do not share a file.
+
+---
+
+## DEFECT
+
+**§2.1 vs §5 — two backfill rules.**  
+§2.1 says the principal field makes every row attributable, and L1 prints two counts. §5 still says attribution was not established and “the backfill leaves the ambiguous ones with no assignment rather than guessing.” After the discriminator is named, no row is left “ambiguous.” A lane cannot follow both sentences.
+
+---
+
+## GAP
+
+**§4 L1 — `src/protocol/workspace-reducer.ts` is not listed.**  
+L1 owns `workspace-commands.ts`, `workspace-events.ts`, and `tests/protocol-workspace.test.ts`. The fold for `AgentModelDeclared` only writes `model` (`workspace-reducer.ts:322-343`). `WorkspacePrincipal` (`workspace-events.ts:80-87`) has one field. The split cannot land in protocol tests without this file.
+
+**§4 L2 — `src/cloud/command-client.ts` is not listed.**  
+`declareAgentModel` sends only `{ kind: "declare_agent_model", model }` (`command-client.ts:867`). `assignment_state` never leaves the process unless this file changes. L2 is told to put it on the `runtime.ts` payload.
+
+**§4 L2 — `src/cloud/signals.ts` is not listed.**  
+Spec: take `assigned_model` from the same `readAgentSignalPage` call. `AgentSignalPage` (`signals.ts:135-153`) has signals, capabilities, wake, pending count. The parser (`signals.ts:1232-1251`) copies `wake` and drops other keys. L1 can add the SQL column and the read JSON; L2 still cannot see it.
+
+**§4 L3 — the load path is not listed.**  
+Roster SELECT is `LiveDashboard.astro:2001`: `"principal_id,name,model,owner_user_id,revoked_at,workspace_id"`. Rows go through `rosterAgentsFromRows` (`site/src/lib/participant-rail.ts:66-74`), which copies only `model`. L3 names render lines `:4030-4032`, `:5113`, `:2625`, `:4109-4123` and the editor. Built as listed, `assigned_model` and `model_assignment_state` never reach the DOM. Same SELECT is in `site/src/lib/agent-connect.ts:331`.
+
+**§4 L1 — existing server test not owned.**  
+`tests/p1-server/agent-model-set.test.ts:247-260` reads `swarm.agent_principals.model` after `set_agent_model` and expects the new value. After the split that column must not change. The file is in the `test:p1-server` glob and is not in L1’s list.
+
+**§4 L1 — p1-local test file and pin are unnamed.**  
+`package.json:26` is `test:p1-local` (literal list). The pin is `tests/p1-cli/test-gate-coverage.test.ts:23-35` and `:125-129`. Spec says “named in `package.json:26` + pin” and does not name the pin file or the new test path.
+
+**§4 L2 — `tests/listener-*.test.ts` is not a gate glob.**  
+`npm test` (`package.json:23`) is a literal list. A new `tests/listener-….test.ts` does not run until that list names it. Spec does not say to edit `package.json:23`.
+
+**§2.3 L3 — `normalizedModel` is not on the site.**  
+The mark rule names `normalizedModel` (`workspace-commands.ts:499-514`). That function is not exported. The site package cannot import `src/protocol`. No site helper is named.
+
+**§2.1 — `create_agent_principal` both-keys rule is missing.**  
+Edge code (`command/index.ts:2214-2216`) refuses a body that has both `model` and another optional key. “Old key accepted for one release” does not say what happens when both keys are present, which key wins, or which release ends it.
+
+**§2.1 / §3 — overwritten rows.**  
+Backfill uses one newest event. The §1 case (person set, then listener declare) has newest = agent declare → `assigned_model` stays NULL. §3 bullet 1 can be read as “a row a person set keeps its value in `assigned_model`.” The spec does not say whether to recover the older person event.
+
+**§2.3 — omitted `assignment_state`.**  
+The field is optional. The handler’s action when an old listener omits it is not named (leave `pending`? leave unchanged?).
+
+---
+
+## NIT
+
+- `command/index.ts:3749` is a renewal comment. `appendEvents` starts at **3779** and inserts into `swarm.events`. Same at `fa44311`.
+- `tests/protocol-workspace.test.ts:1392-1394` covers only the human set (`actor_agent_principal === null`). Self-declaration is true via `env()` (`workspace-commands.ts:441-442`) and `agent()` (`protocol-workspace.test.ts:28-29`), but those lines do not assert it.
+- Storage table cites `:69` as `swarm_read.agent_principals.model`. Line 69 is `swarm_read.agent_access_status`. The principals view is `:30-35` (`SELECT p.*`); the positive control is `:118-127`.
+- `src/listener/grok-model.ts:41` is `cwd: string`. `model?: string` is **:42**.
+- `STATUS_ALLOWED_KEYS` is `control.ts:242-293`, not `:241-291`. Absence tolerance is still true (allow-list; wake keys at `:407-409` are required; `:596` fails the row).
+- `mayEditModel` starts at `:4105`, not `:4109`.
+- L2 new live-control files are unnamed; `npm test` would not see them.
+
+---
+
+## Citations
+
+| Citation | Result |
+|---|---|
+| `LiveDashboard.astro:4109-4123` mayEditModel / editor / `setAgentModel` | OK (`mayEditModel` `:4105-4112`; editor `:4121-4128`) |
+| `:4030-4032` roster text | OK |
+| `:5113` operator line | OK |
+| `:2625` entity panel Model | OK |
+| `runtime.ts:297` `declareModel` | OK |
+| `runtime.ts:1303-1330` fire-and-forget declare | OK |
+| `20260730000001:8-23` column + 1–120 bound | OK |
+| `:112-125` projection control | OK |
+| `:69` as `swarm_read.agent_principals.model` | **Wrong** — that line is `agent_access_status` |
+| `workspace-commands.ts:85-89`, `:96-101`, `:108-118` | OK |
+| `:492-511` `normalizedModel` | OK (fn `:499-514`; 120-char refuse `:507-509`) |
+| `:832-838` `AgentPrincipalCreated.model` | OK |
+| `:987` / `:1014` both emit `AgentModelDeclared` | OK |
+| `workspace-events.ts:181-185` discriminator comment | OK |
+| `:187` `AgentModelDeclared` | OK |
+| `command/index.ts:1959-1997` declare wire | OK |
+| `:1989` `MODEL_MAX` (120, `_shared/channels.ts:146`) | OK |
+| `:2591` agent `actor.user` = owner | OK |
+| `:3749` `appendEvents` | **Wrong** — function is `:3779` → `swarm.events` |
+| `command-client.ts:836-875` | OK (fn continues past 875) |
+| `cli.ts:4347-4363` `listenerModelLabel` | OK (labels match) |
+| `:4395-4399`, `:5588-5592` `--model` refuse claude/codex | OK |
+| `:5796` / `:5842` grok/opencode `model` option | OK |
+| `:5804-5822` Claude/Codex constructors ignore `model` | OK |
+| `:5782-5843` `newModel`; `:5929-5931` call; `:5933` runtime | OK |
+| `:5945` `declareModel: listenerModelLabel(...)` | OK |
+| `grok-model.ts:41` model ctor option | **Off by one** (`model?:` is `:42`) |
+| `host/claude.ts:416-418`, `:588-590` empty args + spawn | OK |
+| `host/codex.ts:277-279`, `:363-365` empty args + spawn | OK |
+| `control.ts:241-291` `STATUS_ALLOWED_KEYS` | **Range** is `:242-293`; claim (absence OK) is true |
+| `:407-409`, `:596` wake block requires keys | OK |
+| `protocol-workspace.test.ts:1392-1394` both sides | **Partial** — human set only |
+| `package.json:26` `test:p1-local` literal list | OK |
+| `agent_delivery_read_context` live body + 3 grants | OK (`20260906000010:278-483`: OWNER, REVOKE PUBLIC, GRANT `swarm_read`) |
+| Map `docs/evidence/2026-09-06-app-specs-arms/maps/markdown-colour-model.md` Spec E | OK (present; draft 1 bugs in the map are not in this spec) |
+| `scripts/agent-trailers.sh`, `docs/development/agent-trailers.md` | OK |
+| L1 `tests/protocol-workspace.test.ts` | exists |
+| L1 `tests/p1-server/agent-model-split.test.ts` | new; `test:p1-server` glob will see it |
+| L3 `site/src/lib/agent-model-editor.ts` | exists (`maxLength` 120) |
+| L3 `agent-model-editor.observer.test.ts` | exists; `site` `test` glob reaches it |
+| L2 `src/host/bounds.ts` | exists |
+| L1/L2/L3 file overlap | none |
+
+Could not verify: production row counts (none claimed as a number); claude/codex honouring a model (spec does not promise it).
+
+Numbers that hold: bound **120**; constraint **1–120**, no `[[:cntrl:]]`; `MODEL_MAX = 120`; three privilege statements; closed command states `honoured \| no_mapping \| cli_override`; column default `pending`.
+
+---
+
+QUOTE-BACK: # A model per agent: assigned by a person, honoured by the listener, declared by the agent
+VERDICT: FAIL
+REASON: §2.1 and §5 disagree on backfill completeness, and a lane still has to invent unlisted files (reducer, command-client, signals parser, roster load path, p1-local name/pin) to build the split.

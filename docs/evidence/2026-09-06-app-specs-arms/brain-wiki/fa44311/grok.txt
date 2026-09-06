@@ -1,0 +1,133 @@
+I'll review the brain-wiki spec against this checkout: every cited file, line, test, and number. Starting with the document and the code it names.HEAD is `8787bbd`, not `fa44311`. I'll pin the spec commit, then check every cited file and line against the code.The working copy is draft 2, after later folds. I'll diff it against `fa44311` and start checking every cited line in the code.I'll read every cited file and the lane-owned tests next, and check the numbers against the code.`file_download_url` did not match in `command/index.ts`. I'll search that branch and the other cited line ranges next.Line numbers look off for `command/index.ts` and `cli.ts`. I'll read those ranges and the other cited sites next.Draft 2 still has lane-file collisions and a few false code claims. I'll write the findings from the checkout, not the map.Reviewed the working-tree spec (draft 2 at `8787bbd` on `spec/app-backlog`). The file matches HEAD. `fa44311` is draft 1; this text is the fold of that Opus pass. A lane would build this draft, so this arm is against this file.
+
+Code was checked, not `maps/brain.md`.
+
+## DEFECTS
+
+**D1 — §4, L3 and L4 both own `brain-view.ts` at once.**  
+L3 after-column is L0, L1, L2. L4 after-column is **L2 only**. Both list `brain-view.ts`. The order sentence says L3 then L4, but the table lets L4 start when L2 lands, beside L3. Two writers on one file.
+
+**D2 — §2.4, “the sanitizer allows attributes on exactly three tags (`message-markdown.ts:73-78`).”**  
+That object has **four** keys: `a`, `th`, `td`, `li`. `sanitizeTag` (`:572-592`) has a branch for each. Headings still get no attributes (`:497`). The count is false.
+
+**D3 — §2.4, TOC is `##`/`###` only, and a click “calls `scrollIntoView` on the nth heading element of the rendered body.”**  
+The Brain panel renders with `headingOffset: 1` (`brain-view.ts:182`). `headingMatch` (`message-markdown.ts:346-349`) turns source `#` into `<h2>`, `##` into `<h3>`, `###` into `<h4>`, `####` into `<h5>`. The live fixture body has all four (`brain-view.fixture.ts:16-20`). Built as written, TOC item 0 (`## Working agreement`) scrolls to heading 0 (`# Architecture`).
+
+## GAPS
+
+**G1 — §2.1, unnamed shared test vector.**  
+`brainTree()` in `src/cloud/brain.ts` is mirrored in `site/src/lib/brain-view.ts`, “with one shared test vector file.” No path. No owner. L1 (Gemini) and L2 (Grok) run in parallel. Someone has to invent the file.
+
+**G2 — §2.1, two grouping rules can disagree.**  
+Split at the first dot only when the area has two topics (or `<area>._index`). Also: `a.b.c.d` → area `a`, sub `b`, topic `c.d`. A lone `a.b.c.d` cannot follow both. Sub-areas with one child are unspecified. `a.` and `a..b` are legal under `BRAIN_TOPIC_RE` (`brain.ts:21`) and have no tree rule. There is no per-segment grammar.
+
+**G3 — §2.2, sort key unnamed.**  
+“Inside an area, most recently updated first.” CLI ls uses `committed_at ?? created_at` (`cli.ts:7310`). `committed_at` is nullable on the read (`read/index.ts:658-660`). Site `WorkspaceFile` drops a row with an empty `committedAt` (`commonswarm.ts:1018-1028`). The tree needs the same fallback written down.
+
+**G4 — §4 L2 files column vs the wiring a tree needs.**  
+Files column: `LiveDashboard.astro:695-748` (markup only; verified). §2.3 tells L2 to name `:1268-1279` and `:4377-4388`. Panel open is `activateWorkspaceView("brain")` at `:6379-6390` (`renderBrain()` + `showChannelView("brain")`). Close is `showChannelView` at `:1746-1748`. A lane that follows the table only edits markup.
+
+**G5 — §2.3 / L3, prefetch “stops the moment the panel closes.”**  
+L3 does not own `LiveDashboard.astro`. Start/stop lives at `:6379-6390` and `:1746-1748`. L3 tests require the stop. No owner for that hook.
+
+**G6 — §2.2 index first line vs L3.**  
+Index rows show the first body line “when that topic’s body is cached (§2.3).” L3’s `brain-view.ts` work is “Links to / Linked from” only. Nobody is assigned to put the cached first line on the index.
+
+**G7 — §4 L2 tests, “empty area.”**  
+The grouping rule never makes an empty area. The test has no meaning unless the lane invents one.
+
+**G8 — §4 L0, “the `file_download_url` branch only.”**  
+The mint is the ternary at `command/index.ts:8305-8306`. The two inserts are the **shared** file success path at `:8368-8402` (create, commit, download, tombstone, restore). A literal branch-only edit cannot gate those inserts. “Every other command unchanged” names no control.
+
+**G9 — §3 / L5, “extend `brain-links.observer.test.ts:247` to the dot rule.”**  
+That test is “do not re-type `BRAIN_SLUG_SEPARATORS`” (`:247-267`). It forbids writing the characters. §2.1 wants AGENTS.md to say a **dot** means `area.topic`. No exported constant is named for that rule. L5’s files column omits the test file (L3 owns it).
+
+**G10 — §4 L4 tests have no file.**  
+“three-heading threshold; scroll by index; allowlist byte-identical.” Site `test` globs `src/lib/*.test.mjs` and `src/components/**/*.observer.test.ts` (`site/package.json:11`). A new `site/src/lib/message-markdown-toc.test.ts` would not run.
+
+**G11 — §4 L1, verb list typed in four places.**  
+Adding `tree` must touch `cli.ts:562-564` (usage), `:617` (`brain ls, brain get, brain put`), `:7442` (`cswarm brain takes ls, get, or put`), and `tests/p1-cli/brain-verbs.test.ts:334` (“all three brain verbs”). No shared constant.
+
+## NITS
+
+- §2.3 cites `command/index.ts:8248` for “mints a signed GET and changes no row.” Line 8248 is the **create** rate-limit comment. The handler is `file-artifacts.ts:869-960` (SELECT + `signDownload` only). Dispatch is `index.ts:8305-8306`. The insert cite `:8368-8402` is correct.
+- §2.1 “every segment obeys the existing per-segment grammar.” The regex is whole-name (`brain.ts:21`).
+- Site list is PostgREST `swarm_read.files` (`commonswarm.ts:998-1001`), not the read-edge path the spec cites. Both omit bodies; both carry `size_bytes`.
+- “43 topics” and “forty-three topics already use `-`” have no repo source. AGENTS.md names `releases` and `roadmap` (no hyphen). The “do not use `-` as separator” point still holds.
+- `sessionStorage` “keeps its contract” — no brain `sessionStorage` exists today (only `commonswarm.pending-member-selection` at `LiveDashboard.astro:2091`). Read as a new contract, not a shipped one.
+- Mirroring `brainTree` is extra: `brain-view.ts:1-3` already imports `../../../src/cloud/brain.js`.
+
+## Lane files, tests, overlap
+
+| lane | named files | exist? | gate |
+|---|---|---|---|
+| L1 | `src/cloud/brain.ts`, `src/cli.ts`, `tests/brain-namespace.test.ts`, `tests/p1-cli/brain-verbs.test.ts` | yes | `npm test` literal list; `test:p1-cli` glob |
+| L2 | `site/src/lib/brain-view.ts`, `LiveDashboard.astro` (path is `site/src/components/app/`), `site/src/components/app/brain-view.observer.test.ts` | yes | site observer glob |
+| L0 | `supabase/functions/command/index.ts`, new `tests/p1-server/download-url-persists-nothing.test.ts` | handler yes; test is new | `test:p1-server` glob **will** pick it up |
+| L3 | `brain-links.ts`, new `site/src/lib/brain-graph.ts`, `brain-view.ts`, `brain-links.observer.test.ts` | existing yes | observer glob |
+| L4 | `message-markdown.ts`, `brain-view.ts` | yes | **no named test file** |
+| L5 | `AGENTS.md`, `docs/design/2026-09-04-BRAIN-LINKS-IN-SIGNALS.md`, `brain-how-to` (brain put) | repo files yes; `brain-how-to` is not in git | observer test not in files column |
+
+Parallel L0 / L1 / L2 do not share a named file. L3 then L4 both list `brain-view.ts` while L4’s after-column is only L2 (**D1**). Shared vector file is unowned (**G1**).
+
+## Numbers checked
+
+| claim | code | result |
+|---|---|---|
+| 20 live versions | `brain-version-window.ts:14` `BRAIN_LIVE_VERSION_LIMIT = 20` | yes |
+| max 245 chars | `:12-13` → `255 - 7 - 3 = 245` | yes |
+| `BRAIN_TOPIC_RE` | `brain.ts:21` | yes; dot legal |
+| `/` refused | `file-artifacts.ts:67` `FILE_NAME_RE` | yes |
+| 25 MB | `files.ts:21`; `file-artifacts.ts:52` | yes |
+| 1 GB | `file-artifacts.ts:53` | yes |
+| 500 names | `:54` `FILE_WORKSPACE_MAX_NAMES` | yes |
+| tombstone 30 days | `:517-526`, SQL `interval '30 days'` at `:1017`, `:1054` | yes |
+| list has `size_bytes`, no body | `read/index.ts:658-665` | yes |
+| download writes 2 rows today | `index.ts:8368-8383` + `:8394-8402` | yes |
+| claim already gated | `claimAgentInboxPersistsLedger` at `:8431`; `durable-delivery.ts:21-26` | yes |
+| Push-delivery §3.1 sentence | `PUSH-DELIVERY.md:180` | yes, quoted |
+| H2 is search / transcript / retention, not this | `ROADMAP-DRAFT.md:107-112` | yes |
+| TOC threshold 3 | new | specified |
+| prefetch 256 KB / 60 / 4 MB / 4 in flight | new | specified |
+| sessionStorage 64 KB / 4 MB | new | specified |
+| 43 topics | — | not in repo |
+
+## Citations verified
+
+- `src/cloud/brain.ts:1-8`, `:21`, `:34-46`, `:116-124`
+- `src/protocol/brain-version-window.ts:14`, `:82-103` (245 is `:12-13`, not `:16`)
+- `tests/brain-namespace.test.ts:31` (`release_notes.v2`), `:37` (`brain/architecture.md` → null)
+- `20260818000001_file_artifacts.sql` (files + `file_versions`); `20260902000005_brain_version_window.sql` (retired + counts)
+- `supabase/functions/read/index.ts:652-672` / `:656-665` / `:658`
+- `src/cloud/files.ts:21`, `:156-172`
+- `src/cli.ts:7285-7443` (`ls`/`get`/`put`); usage `:562-564`
+- `site/src/lib/brain-view.ts:57-68`, `:75-278`, `:82-85`
+- `site/src/components/app/LiveDashboard.astro:695-748`, `:1268-1279`, `:4377-4388` (function continues to `:4406`), `:4413-4426` (cite said `:4413-4427`)
+- `site/src/lib/brain-links.ts:5-40`, `:92` (`PRE`/`A`/`BUTTON`), `:130-139` (`isLinkable`; `brainLinkSegments` is `:145`), `:205-211`, `:378-384`
+- `docs/design/2026-09-04-BRAIN-LINKS-IN-SIGNALS.md:24-30` (decision starts `:26`; (a)/(b) at `:30-32`)
+- `AGENTS.md:274-295`
+- `src/listener/brain-digest.ts:104-114`; `engine.ts:207-209`; `hook.ts:751-770`
+- `command/file-artifacts.ts:52-54`, `:517-526`, `:518-519`
+- `site/src/lib/commonswarm.ts:1198-1214`
+- `command/index.ts:8368-8402` (the two inserts)
+- `site/src/lib/message-markdown.ts:59-67`, `:73-78`, `:497`, `:625-635`
+- `site/src/components/app/brain-links.observer.test.ts:247`
+- `maps/brain.md` exists; lines were not used as evidence
+
+## Citations that do not resolve as cited
+
+- `command/index.ts:8248` — not `file_download_url`; create rate-limit comment
+- `command/index.ts` “file_download_url branch” as the insert site — inserts are `:8368-8402`
+- Live 43-topic count; “one” dotted live topic; hyphen count
+- brain topic `knowledgebase-design`; `brain-how-to` “first line is the question”
+- “CodexDesktop’s server pass” (no artifact here). `fileDownloadUrl` itself writes no domain row.
+
+## Not established
+
+- Runtime: no `npm test`, no local Supabase, no browser.
+- Production topic list and body sizes.
+- Whether L0 should skip inserts on refused downloads too (claim skips empty success; refusals still audit today at `:8328-8337`).
+
+QUOTE-BACK: # Brain wiki: hierarchy, index pages, backlinks, without new storage
+VERDICT: FAIL
+REASON: L3 and L4 can write `brain-view.ts` at once; the sanitizer allowlist is four tags not three; TOC scroll-by-index misses `#`/`####` headings the renderer already emits; and a lane still has to invent the shared tree vector, the sort key, panel-close wiring, and L4’s test file.
