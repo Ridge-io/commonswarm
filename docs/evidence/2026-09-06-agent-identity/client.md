@@ -5,13 +5,52 @@ Branch: `lane/identity-client`, rebased 2026-09-06 onto `lane/agent-identity` 53
 Builder of the original lane and its fix round: Grok (on the mini). Wire contract:
 `src/cloud/session-wire.ts` (not edited).
 
-Code SHA: `2534e38ca3e86d6ccb4bdaa374e2d44121fd8c87` (the worker removal, on top of the 13
-replayed lane commits). Final SHA: the docs-only commit that records this file; run
+Code SHA (round 2): `b0902f6869ff594bd9996acfe256214012a6612a` (acquire on the wire, hook and
+listener carry the live proof, manual claims nothing), on top of `2534e38c` (the worker removal)
+and the 13 replayed lane commits. Final SHA: the docs-only commit that records this file; run
 `git log -1 --format=%H -- docs/evidence/2026-09-06-agent-identity/client.md` on the branch.
 
 Earlier pins, kept for readers who meet them: `cb00d64` (never existed), `a90d395b` (the first
 implementation commit, pre-rebase), `619138d4` and `5e2bd0a3` (the pre-rebase fix round; that
 history is on the mini and in `lane/identity-client-pre-rebase` on the laptop, not on origin).
+
+## Round 2 (b0902f68): Grok exact FAIL on e8abf8ab, folded; live control on the local stack
+
+Grok exact on `e8abf8ab` (`laptop-arms/arm-grok-exact-e8abf8ab.md`, VERDICT: FAIL) found, in this
+lane's scope: (D1) `acquire` sent `key_hash` in the body and no proof headers, so a managed
+principal could never acquire; (D2) the hook's observe sent no proof headers and fabricated the
+host identity; (GAP) `--foreground` claimed without a way to ACK; (NIT) a no-op factory check and
+a comment that said names are unique. All four are fixed in `b0902f68` with tests
+(`session-identity`, `session-lifecycle`, `hook-routing`, `session-receiver`). Out of this lane's
+scope and handed to the strategist: bare queued-to-observed when managed, no durable
+pending-surface state, acquire retry not checking the host binding, `GRANT` exposing `key_hash`
+(all Lane A); detached `listen start` resolving an ACP binary it never starts, and the listener's
+lease-deadline check with no clock-skew allowance (both main's 0.1.61 listener).
+
+The live control (`laptop-live-control-b0902f68/`, script `run-control.sh`, log `control.log`,
+listener journal `listener-events.ndjson`) ran on the local Supabase stack at code SHA `b0902f68`
+with this seat's Claude session id as the host conversation. Measured, in order:
+
+| step | result |
+|---|---|
+| enable management (human owner, `enable_agent_management` via the client class) | ok |
+| `session start --mode interactive` on the managed principal | acquired: generation 2, `enforcement: enabled`, `has_private_proof: true`, `state: running`; before round 2 the same call was refused `session_proof_missing` |
+| `listen start --route main` with the hook installed for that principal | `ready`, `same_owner_delivery: interactive session; no ACP worker prompt`, no child process |
+| directed ask from the human owner | listener journal: `listener_delivery_claim` with the proof, `routed_main`, `listener_delivery_ack outcome=queued`, `pendingForMainCount: 1`; before the listener binding the first claim was refused HTTP 401 (`credential_stopped`) |
+| `hook check` with no host id on stdin | printed the ask text; nothing observed (fail closed to manual) |
+| `hook check` with Claude's stdin shape `{"session_id": <this session>}` | observed: server row `ack_outcome = observed`, `acked_at` set, `attempt_count 1`; `pendingForMainCount: 0` |
+| `session recover` (human) | ok |
+| `session stop` with the old context | refused: `the execution session has expired; stop dispatch and recover` (typed) |
+| model processes started by the listener | none |
+
+Host artefacts that shaped the control, not the lane: `supabase start` needs `-x vector,logflare`
+under colima; the worktree must live under `/Users`; the colima VM clock led the laptop by
+~0.1 s, which made the listener's lease-deadline check (`leased_until > now + 15 min`) fatal on
+the first claim until the VM clock was set to the laptop's (the check itself is main's, reported).
+
+Not established by the control: the hook's stale-context refusal after recover (the queue was
+already empty, so nothing could be observed either way; the unit test covers it); a second live
+context refusing `listen start` (unit-level only); production behaviour.
 
 ## Section 10 supersession (cswarm 0.1.61): what this lane no longer contains
 
@@ -55,6 +94,9 @@ Measured by CSLaptopLead on the laptop at code SHA `2534e38c` (logs in `laptop-r
 | `npm run check:tests` | 0 | `tsc -p tsconfig.tests.json` |
 | `NODE_NO_WARNINGS=1 npm test` | 0 | 920 pass / 0 fail |
 | `NODE_NO_WARNINGS=1 npm run test:p1-cli` | 0 | 540 pass / 0 fail |
+
+Round 2 at `b0902f68` (logs in `laptop-round2-b0902f68/`): build 0, check:tests 0, npm test 920/0,
+p1-cli 540/0.
 
 Pre-rebase, at `5e2bd0a3` on the same laptop: build 0, check:tests 0, npm test 893/0, p1-cli 542/0
 (the strategist's own build on that SHA also exited 0).
@@ -130,15 +172,15 @@ Each item below has a test that failed on the old behaviour and passes now, exce
 | Two simulated heterogeneous sessions: one winner, another principal unaffected | Met |
 | Interactive spies factory/subprocess ZERO calls, including failure | Not a spy test any more. Met as: receiver/session-cli sources have no ACP/model/child_process imports; listen adapters load only in `newModel`. |
 | Managed workers from every adapter get the shared binding; no inherited binding in review child | Superseded by section 10: no managed worker exists. |
-| Queue cache deletion + host loss recovered through durable server; obsolete hook cannot observe | Obsolete hook observe met locally. Durable re-claim after cache loss **not established** (no DB). |
-| No callback => manual; authenticated ready never equals same-chat injection proof | Met |
+| Queue cache deletion + host loss recovered through durable server; obsolete hook cannot observe | Obsolete hook observe met (unit test; live: hook without the bound host id observed nothing). Durable re-claim after cache loss **not established** (server has no pending-surface state; reported). |
+| No callback => manual; authenticated ready never equals same-chat injection proof | Met; manual now claims nothing (round 2). |
 | Idle receiver invokes zero models; duplicate wake/ask IDs do not duplicate reply commands | Met (no replies in interactive; duplicate asks ACK once) |
 | Push subscribed/drop/reconnect and current token renewal tests remain green | Met (`npm test` 893/893 includes wake/arrival/renewal files) |
 
 ## Not established
 
 - Live Supabase: acquire/renew/release/enable against `cloud-swarm-dev` or local DB.
-- Live detached listener on a managed principal (its claims carry no session proof; whether the server fences them is a Lane A/integration control).
+- Renewal over time on a live managed listener (the control ran under the 40 s renew offset).
 - End-to-end Codex (or any host) callback injection on a real host.
 - Foreign-uid context files.
 - Server-side retirement of an execution UUID (no DB in this lane).
