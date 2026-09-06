@@ -1,1 +1,179 @@
-I will review draft 4 against the code and evidence. First I will read the spec, the prior arm findings, and the cited source files.Checkout is `spec/push-delivery` at `22e2bea`. Next I will read the spec, prior arm outputs, and the cited evidence.Draft 3 findings are in the arm files. I will read those next and check the cited code against draft 4.There is already a `grok.txt` on this SHA. I will check for a concurrent writer, then verify the cited code.Draft-3 findings are loaded. Next I will check the cited code and run the privilege probes on the local stack.Local Postgres is up. I will run the privilege queries and open the cited function, grant, and revoke sites.Privilege numbers match W4. Next I will check function dependents, remaining citations, and the draft-4 additions.The `:4534` device-revoke citation looks wrong. I will find the real revoke site and check whether `DROP FUNCTION` of `agent_delivery_read_context` has dependents.
+# D-036 EXACT arm — docs/design/2026-09-06-PUSH-DELIVERY.md
+SHA: 22e2bea03fdeb3b48c35bab3ef643437dcedcefc
+Branch: spec/push-delivery (this working directory)
+Role: EXACT, FINAL round (draft 4)
+Checkout: this working directory.
+
+Method: read the spec; opened every cited source that exists in this tree; read evidence under docs/evidence/2026-09-06-push-delivery-spec/ (not sibling arm bodies as authority); confirmed the draft-3 Grok defect and four nits against code; re-measured W4 privileges, pgcrypto, and agent_delivery_read_context on the live local stack; recomputed §1.3, §2.3 102/min, §7, §8.
+
+PASS only if no DEFECT and no GAP. Findings below.
+
+## Draft-3 Grok items — all gone
+
+**D1 (revoked_at enumeration).** Fixed. W6 now names exactly four statements that write `agent_tokens.revoked_at` or `agent_principals.revoked_at`: `:3576` (`agent_tokens`, `discardStrandedSuccessor`), `:4112` (`agent_principals`), `:4140` (`agent_tokens` cascade), `:4208` (`agent_tokens`). I grepped every `SET revoked_at` in `command/index.ts`. The others write `invitations` (`:3973`), `memberships` (`:4012`), `renewal_grants` (`:4172`, `:4181`, `:4237`), `grants` Exact arm on `22e2bea` (draft 4). Claims checked against this tree, the local database, and `docs/evidence/2026-09-06-push-delivery-spec/`. Not against the spec’s own wording.
+
+**PASS.** No DEFECT. No GAP. Draft-3’s one defect and four nits are gone.
+
+## Draft-3 Grok items — all gone
+
+- **D1 revoked_at list:** W6 now names four writes: `:3576` `agent_tokens`, `:4112` `agent_principals`, `:4140` `agent_tokens`, `:4208` `agent_tokens`. I grepped every `SET revoked_at` in `command/index.ts`. The rest write invitations, memberships, renewal grants, grants, or capability URLs (`:5778`). `:3576` is still the renewal handover (`:3660` only). No `swarm.revoke_agent_token` in `pg_proc`.
+- **N1 gate lines:** `npm test` is `package.json:23`. `test:p1-server` is `:29`. L4 owns `:23`. Nothing pins the `test` string.
+- **N2 §8 probe:** revoke one of two live tokens. No `cswarm wake rotate`.
+- **N3 expectedClaims:** computed at `read-health.ts:403`, applied in `:404-413`.
+- **N4 seed INSERT:** W1 names `command/index.ts:4025-4036` and `src/cloud/seed.ts:157-164`.
+
+## Draft-4 additions — checked live
+
+**W4 privileges** (local stack, same session):
+
+| role | USAGE `realtime` | INSERT `realtime.messages` | EXECUTE `realtime.send` |
+|---|---|---|---|
+| swarm_admin | false | false | true |
+| swarm_command | false | false | true |
+| postgres | true | true | true |
+
+`realtime.send` is SECURITY INVOKER with EXECUTE to PUBLIC. The gate is schema USAGE plus table INSERT. Owner `postgres` can send. Owner `swarm_admin` cannot. Activity works because `RESET ROLE` (`activity/index.ts:143`) restores the connection role `postgres`.
+
+**`agent_delivery_read_context`:** ten OUT columns (20260820000002:108-118). GRANT EXECUTE TO `swarm_read` (20260731000001:487, 20260820000002:306). `swarm_read` has no SELECT on `agent_principals` (measured false). Read edge runs as `swarm_read` (`read/index.ts:417-418`) and selects those ten columns (`:437-451`). L2 DROP/CREATE plus re-GRANT is required. L3 then selects `wake_id`.
+
+**Lane order:** L2 after L1. L1 holds the local database first. Gate lines: `:23` / `:26` / `:29` as claimed.
+
+**102/min:** refusal is `count > 120` (`command/index.ts:4905`). Two listeners at budget 50 plus two reconciles = 102.
+
+## NITS (do not fail)
+
+1. §6 L3 cell still says “nine `revoked_at` statements”. W6 is four.
+2. W6 cites `command/index.ts:4534` as device revoke. That line updates a device label in `register_device`. The file never sets `devices.revoked_at`.
+3. W4 says postgres is already used as a function owner in this schema. All 37 `swarm` / `swarm_read` functions are `swarm_admin`.
+4. §10 still says “beside the `realtime.send` grant” after §9 was rewritten to USAGE + INSERT.
+5. L2b and L3 both start after L2 and both need the one local stack. The closing sentence says they run alone; the table does not sequence them on each other.
+6. L1 must also skip the `LedgerRace` check at `:8381-8389` when it skips the empty-claim insert.
+
+## Citations verified
+
+`runtime.ts:77,612-630,778,1075-1104,1248-1259,1365-1394,1455-1456`  
+`activity.ts:13,98-146` · `hook.ts:57,401-410,998-1022`  
+`read-health.ts:12,40,202-207,246-261,398-415`  
+`control.ts:224-274,282-297,377-381,396-398,550`  
+`arrival-watch.ts:25,336-338,357,387-391,431-437`  
+`signals.ts:125-132,156,294-310,1118,1140-1166,1211-1218,1501-1538`  
+`delivery.ts:518-587,821-847` · `command-client.ts:717-735` · `config.ts:3`  
+`renewal.ts:121-125,852-853` · `seed.ts:157-164`  
+`credential-redaction.ts:19-21,25-29` · `stderr-tail.ts:43`  
+`cli.ts:4664,5885-5918` · `LiveDashboard.astro:5774` · `commonswarm.ts:176-209`  
+`activity/index.ts:2,139-152`  
+`read/index.ts:139-150,417-418,437-451,483-487,490-496,826-832`  
+`command/index.ts:1377,1435-1511,3565-3587,3660,3973,4012,4025-4036,4111-4143,4172-4181,4207-4216,4237,4428,4534,4868-4934,5776-5782,7533,7609-7616,8348-8454,9024-9036`  
+`durable-delivery.ts:21,66-71,172,183-189,195-253,272-300`  
+`20260902000003:4-17` · `20260905000020:32-33,152-176,189-217` · `20260905000010:59`  
+`20260723000001:174-216,380,403-421,588-590,614-615,717-764,791-845`  
+`20260728000002:413-431,441-453` · `20260731000001:272-276,285-487`  
+`20260820000002:4-26,103-306` · `20260901000001:199-207` · `20260904000001:333-364`  
+`listener-control.test.ts:2336` · `listener-host-limits.test.ts:229-231`  
+`test-gate-coverage.test.ts:19-21,23-34,86-96,124-133`  
+`package.json:3,22-29,44` · `RealtimeClient.js:11-16,489`  
+evidence dir as listed; ledger `:2283-2292`  
+local stack: W4 privileges, pgcrypto, 43-char id, no `revoke_agent_token`, read_context grants, 0 dependents
+
+## Citations not verified
+
+Production 390,277 / 1.47 M / 2.8 M / 1,716 / dashboard 832,000 (ledger once; 832,000 is not on the cited resume lines). Hosted Realtime flags, hosted postgres USAGE/INSERT, hosted pgcrypto schema. Whether `pg_cron` is enabled on cloud-swarm-dev. Brain topics. Original CodexDesktop signals (markdown copies only). Phoenix half-open detect delay past 25 s. Anon JWT expiry on hosted Realtime. Current Supabase limits HTML. `RealtimeChannel.js` join window. Whether GRANT on parent `realtime.messages` would apply to new day partitions.
+
+Write-up: `docs/evidence/2026-09-06-push-delivery-spec/arms/22e2bea/grok.txt`.
+
+QUOTE-BACK: Push delivery: wake listeners from Supabase Realtime instead of polling
+VERDICT: PASS
+REASON: Draft-3's revoked_at defect and four nits are gone, draft-4's privilege/grant/lane/gate/102-per-minute claims match the code and the local stack, and no remaining defect or gap makes a lane unbuildable or loses a delivery.
+.
+
+**N2. §2.2 W6 device-revoke citation.** `command/index.ts:4534` is `UPDATE swarm.devices SET label = …, last_seen_at = …` inside `register_device`. The file has no `SET revoked_at` on `swarm.devices`. Grant-cascade / membership / archive still kill credentials without rotating, as the rest of the sentence says.
+
+**N3. §2.2 W4 "the one place in the schema where that owner is used".** Present-tense fact is false: every swarm/swarm_read function is `swarm_admin`. The design still introduces postgres ownership as the unique exception, with the reason written down.
+
+**N4. §10 "beside the realtime.send grant".** §9 was rewritten to USAGE + INSERT for owner `postgres`. §10 still names the EXECUTE grant.
+
+**N5. §6 starts-after graph vs L2b and L3.** Both start after L2. Both need the exclusive local stack. The closing sentence says they run alone; the table does not sequence them on each other.
+
+**N6. §3.1 L1 gate vs LedgerRace.** The spec gates `:8365` and `:8424` only. The `inserted.length === 0` throw at `:8381-8389` must be skipped on the empty path too, or an empty claim either fails to compile or throws `LedgerRace`. A builder who wraps the insert will see this.
+
+## Arithmetic (§1.3, §7, §8)
+
+Recomputes.
+
+- Today: 24,000 + 24,000 + 5,760 = 53,760. 16 × 53,760 ≈ 860,000. Rows 24k + 24k + 1,440 ≈ 49,400; 48,000 survive the day.
+- After: 288+288+1,440+24+100+50 = 2,190 ≈ 2,200. −96%. Activity 1,440/2,190 ≈ 66% (spec 65%). $0.0044/seat-day. Watcher 2,190+288+100 = 2,578 ≈ 2,580.
+- 16 seats with half watchers: 16×2,190 + 8×388 ≈ 38,100 ≈ 38,000.
+- 100 / 1,000 / 10,000: 150 / 1,500 / 15,000 connections; ~$10 / $140 / $1,440 edge; 4.6 M/day = 10,000 × (96+96+24+150+97).
+- §8: 600/3.6 ≈ 167; 167+167+40 = 374 → 2+2+10 = 14; 37.4 → 1.4. Rows 344 (334 kept) → 2 rate-bucket.
+- Two listeners at the client budget: 102 < 120.
+
+Grant-use is one UPDATE (20260904000001:344-363), so it does not add surviving rows.
+
+## Citations verified
+
+`runtime.ts:77,612-630,778,1075-1104,1248-1259,1365-1394,1455-1456`
+`activity.ts:13,98-146`
+`hook.ts:57,401-410,998-1022`
+`read-health.ts:12,40,202-207,246-261,398-415`
+`control.ts:224-274,282-297,377-381,396-398,550`
+`arrival-watch.ts:25,336-338,357,387-391,431-437`
+`signals.ts:125-132,156,294-310,1118,1140-1166,1211-1218,1501-1538`
+`delivery.ts:518-587,821-847`
+`command-client.ts:717-735`
+`config.ts:3`
+`renewal.ts:121-125,852-853`
+`seed.ts:157-164`
+`credential-redaction.ts:19-21,25-29`
+`stderr-tail.ts:43`
+`cli.ts:4664,5885-5918`
+`LiveDashboard.astro:5774`
+`commonswarm.ts:176-209`
+`activity/index.ts:2,139-152`
+`read/index.ts:139-150,417-418,437-451,483-487,490-496,826-832`
+`command/index.ts:1377,1435-1437,1498-1511,3565-3587,3660,3973,4012,4025-4036,4111-4143,4172-4181,4207-4216,4237,4428,4534,4868-4934,5776-5782,7533,7609-7616,8348-8454,9024-9036`
+`durable-delivery.ts:21,66-71,172,183-189,195-253,272-300`
+`20260902000003:4-17`
+`20260905000020:32-33,152-176,189-217`
+`20260905000010:59`
+`20260723000001:174-216,380,403-421,588-590,614-615,717-764,791-845`
+`20260728000002:413-431,441-453`
+`20260731000001:272-276,285-487`
+`20260820000002:4-26,103-306`
+`20260901000001:199-207`
+`20260904000001:333-364`
+`listener-control.test.ts:2336`
+`listener-host-limits.test.ts:229-231`
+`test-gate-coverage.test.ts:19-21,23-34,86-96,124-133`
+`package.json:3,22-29,44`
+`RealtimeClient.js:11-16,489`
+evidence: code-map, local-plans.out, local-plans.sql, experiment .{mjs,out}, CodexDesktop server pass, DevLead apply-order facts; ledger `:2283-2292`
+local stack: W4 privileges (table above), pgcrypto in `extensions` (volatile), unqualified `gen_random_bytes` fails under `SET search_path = swarm, pg_catalog`, qualified form length 43, `pg_cron` in `pg_catalog`, no `revoke_agent_token`, `agent_delivery_read_context` owner/grants, 0 pg_depend dependents, 37/37 swarm functions owned by `swarm_admin`
+
+## Citations not verified
+
+- Production counts 390,277 / 1.47 M / 2.8 M / 1,716 / dashboard 832,000 — ledger once; 832,000 is not on the cited resume lines; not re-queried.
+- Hosted Realtime “Allow public access”, hosted `postgres` USAGE/INSERT on `realtime` / `realtime.messages`, hosted pgcrypto schema (local schema measured; hosted remains §9 / §10).
+- Whether `pg_cron` jobs are enabled on cloud-swarm-dev.
+- Brain topics `edge-function-invocations-2026-09`, `operator-requests`, `false-success-signals` (not read).
+- Original CodexDesktop signals `c650a8c7`, `327e7bc3`, `935a3911`, `2cf19b81` — only the evidence markdown copies.
+- Exact Phoenix heartbeat-timeout to mark a half-open socket (interval 25 s verified; detect may be later).
+- Anon-key JWT expiry on hosted Realtime.
+- Current Supabase Realtime/pricing/limits HTML (not re-fetched this round).
+- `RealtimeChannel.js` subscribe/join-window (not re-opened this round).
+- Whether GRANT on parent `realtime.messages` would apply to future day partitions (the spec's reason for rejecting GRANT to `swarm_admin`); owner=`postgres` still matches the measured working path.
+
+## What the ask got
+
+(1) wire + failure table + 0.1.56 additive responses: present. Ignore path verified. Learn path has an owner (L4) and a topic source (L2 column on `agent_delivery_read_context`).
+(2) idle cost with arithmetic: present; invocation and row figures recompute.
+(3) persist + retention: present; empty-claim gate includes lease-reset and TTL-expiry; L2b owns the GREATEST(30) floor and the gate after L2.
+(4) watcher + app: present; watcher bootstrap is the inbox read (W3.1), not a claim.
+(5) indexes + plans: present; claim plan shape matches `local-plans.out` (0.068 ms, 2 buffers).
+(6) lanes + ownership + tests + D-036: present; L2 after L1; gate lines numbered correctly.
+(7) 100 / 1,000 / 10,000: present and arithmetically consistent with the 2,200/seat figure.
+
+Not established (agreed with §10): production re-measure; hosted Realtime flags and hosted pgcrypto / postgres realtime privileges; load timings; policy-raise behaviour; whether a `swarm`-schema policy function as `anon` works (L2's first test).
+
+QUOTE-BACK: Push delivery: wake listeners from Supabase Realtime instead of polling
+VERDICT: PASS
+REASON: Draft-3's revoked_at defect and four nits are gone, draft-4's privilege/grant/lane/gate/102-per-minute claims match the code and the local stack, and no remaining defect or gap makes a lane unbuildable or loses a delivery.
