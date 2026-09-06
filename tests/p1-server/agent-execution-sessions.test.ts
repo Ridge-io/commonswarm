@@ -688,3 +688,159 @@ test("duplicate name: default refused, allow_duplicate_name true creates a secon
   `;
   assert.equal(Number(concurrentRows[0]?.n), 1);
 });
+
+test("acquire on an unmanaged principal is session_not_managed", async () => {
+  const agent = await seedAgent("not-managed");
+  const result = await acquire(agent.token, randomUUID(), synthKey());
+  assert.equal(result.status, 403, JSON.stringify(result.body));
+  assert.equal(result.body.error, "session_not_managed");
+});
+
+test("enable twice is session_already_managed; live leases are session_leases_live", async () => {
+  const agent = await seedAgent("already-managed");
+  const first = await enable(agent.principalId);
+  assert.equal(first.status, 200, JSON.stringify(first.body));
+  const second = await runCmd(shared.ownerJwt, {
+    kind: "enable_agent_management",
+    principal_id: agent.principalId,
+  });
+  assert.equal(second.status, 409, JSON.stringify(second.body));
+  assert.equal(second.body.error, "session_already_managed");
+
+  const leased = await seedAgent("leases-live");
+  const posted = await runCmd(shared.ownerJwt, {
+    kind: "post_signal",
+    signal_kind: "ask",
+    body: `synth-lease-${randomUUID()}`,
+    to_user_id: null,
+    about: null,
+    to_agent_principal_id: leased.principalId,
+    in_reply_to: null,
+  });
+  assert.equal(posted.status, 200, JSON.stringify(posted.body));
+  const claimed = await runCmd(leased.token, {
+    kind: "claim_agent_inbox",
+    listener_instance_id: randomUUID(),
+  });
+  assert.equal(claimed.status, 200, JSON.stringify(claimed.body));
+  const deliveries = claimed.body.deliveries as unknown[];
+  assert.ok(Array.isArray(deliveries) && deliveries.length >= 1);
+  const refused = await runCmd(shared.ownerJwt, {
+    kind: "enable_agent_management",
+    principal_id: leased.principalId,
+  });
+  assert.equal(refused.status, 409, JSON.stringify(refused.body));
+  assert.equal(refused.body.error, "session_leases_live");
+});
+
+test("acquire retry with a changed host binding is session_conflict", async () => {
+  const agent = await seedAgent("bind-retry");
+  await enable(agent.principalId);
+  const sessionId = randomUUID();
+  const key = synthKey();
+  const first = await runCmd(
+    agent.token,
+    {
+      kind: "acquire_agent_session",
+      session_id: sessionId,
+      provider: "codex",
+      host_label: "host-a",
+      host_session_ref: "thread-1",
+    },
+    { headers: acquireHeaders(sessionId, key) },
+  );
+  assert.equal(first.status, 200, JSON.stringify(first.body));
+  const same = await runCmd(
+    agent.token,
+    {
+      kind: "acquire_agent_session",
+      session_id: sessionId,
+      provider: "codex",
+      host_label: "host-a",
+      host_session_ref: "thread-1",
+    },
+    { headers: acquireHeaders(sessionId, key) },
+  );
+  assert.equal(same.status, 200, JSON.stringify(same.body));
+  assert.equal(Number(same.body.generation), Number(first.body.generation));
+  const changed = await runCmd(
+    agent.token,
+    {
+      kind: "acquire_agent_session",
+      session_id: sessionId,
+      provider: "codex",
+      host_label: "host-b",
+      host_session_ref: "thread-1",
+    },
+    { headers: acquireHeaders(sessionId, key) },
+  );
+  assert.equal(changed.status, 409, JSON.stringify(changed.body));
+  assert.equal(changed.body.error, "session_conflict");
+});
+
+test("swarm_read cannot select key_hash", async () => {
+  const cols = await sql<{ column_name: string }[]>`
+    SELECT column_name
+    FROM information_schema.columns
+    WHERE table_schema = 'swarm_read'
+      AND table_name = 'agent_execution_sessions'
+  `;
+  const names = cols.map((row) => row.column_name);
+  assert.equal(names.includes("key_hash"), false);
+  assert.equal(names.includes("session_id"), true);
+  const [priv] = await sql<{ key_hash: boolean; session_id: boolean }[]>`
+    SELECT
+      has_column_privilege(
+        'swarm_read',
+        'swarm.agent_execution_sessions'::regclass,
+        'key_hash',
+        'SELECT'
+      ) AS key_hash,
+      has_column_privilege(
+        'swarm_read',
+        'swarm.agent_execution_sessions'::regclass,
+        'session_id',
+        'SELECT'
+      ) AS session_id
+  `;
+  assert.equal(priv?.key_hash, false);
+  assert.equal(priv?.session_id, true);
+  let denied = false;
+  try {
+    await sql.begin(async (tx) => {
+      await tx.unsafe("SET LOCAL ROLE swarm_read");
+      await tx`SELECT key_hash FROM swarm.agent_execution_sessions LIMIT 1`;
+    });
+  } catch (error) {
+    denied = (error as { code?: string }).code === "42501";
+  }
+  assert.equal(denied, true);
+  await sql.begin(async (tx) => {
+    await tx.unsafe("SET LOCAL ROLE swarm_read");
+    await tx`SELECT session_id FROM swarm.agent_execution_sessions LIMIT 1`;
+  });
+});
+
+test("re-enable writes and retires the placeholder session_id", async () => {
+  const agent = await seedAgent("reenable");
+  await enable(agent.principalId);
+  const disabled = await runCmd(shared.ownerJwt, {
+    kind: "disable_agent_management",
+    principal_id: agent.principalId,
+  });
+  assert.equal(disabled.status, 200, JSON.stringify(disabled.body));
+  await enable(agent.principalId);
+  const [row] = await sql<{ session_id: string }[]>`
+    SELECT session_id::text AS session_id
+    FROM swarm.agent_execution_sessions
+    WHERE principal_id = ${agent.principalId}::uuid
+  `;
+  assert.equal(typeof row?.session_id, "string");
+  const retired = await sql<{ n: string }[]>`
+    SELECT count(*)::text AS n
+    FROM swarm.retired_agent_sessions
+    WHERE session_id = ${row!.session_id}::uuid
+      AND principal_id = ${agent.principalId}::uuid
+  `;
+  assert.equal(Number(retired[0]?.n), 1);
+});

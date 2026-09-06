@@ -23,9 +23,15 @@ import {
   reduceWorkspaceStream,
 } from '../src/protocol/index.js';
 import {
+  ACK_AGENT_DELIVERY_SURFACED_FIELD,
+  AGENT_SESSION_BINDING_FIELDS,
   AGENT_SESSION_PROOF_EXEMPT_KINDS,
+  agentSessionErrorStatus,
+  DELIVERY_NOT_SURFACED_CODE,
   isAgentSessionProofExempt,
   parseAgentSessionProofHeaders,
+  sessionBindingsConflict,
+  sessionBindingsEqual,
 } from '../src/cloud/session-wire.js';
 
 const NOW = 10_000_000;
@@ -1727,6 +1733,52 @@ describe('agent session proof exemption', () => {
       /CREATE FUNCTION swarm\.agent_delivery_read_context/,
     );
     assert.match(migration, /managed_at timestamptz/);
+  });
+
+  it('pending-surface names are exported from session-wire for the client lane', () => {
+    assert.equal(ACK_AGENT_DELIVERY_SURFACED_FIELD, 'surfaced');
+    assert.equal(DELIVERY_NOT_SURFACED_CODE, 'delivery_not_surfaced');
+    assert.equal(agentSessionErrorStatus('delivery_not_surfaced'), 409);
+    assert.deepEqual([...AGENT_SESSION_BINDING_FIELDS], [
+      'provider',
+      'host_label',
+      'host_session_ref',
+    ]);
+    assert.equal(
+      sessionBindingsEqual(
+        { provider: 'codex', host_label: 'a', host_session_ref: 't1' },
+        { provider: 'codex', host_label: 'a', host_session_ref: 't1' },
+      ),
+      true,
+    );
+    assert.equal(
+      sessionBindingsConflict(
+        { provider: 'codex', host_label: 'a', host_session_ref: 't1' },
+        { provider: 'codex', host_label: 'b', host_session_ref: 't1' },
+      ),
+      true,
+    );
+  });
+
+  it('read projects sessions without key_hash and treats NULL expired_at as dead', () => {
+    const readSrc = readFileSync(
+      join(repoRoot, 'supabase/functions/read/index.ts'),
+      'utf8',
+    );
+    assert.match(readSrc, /swarm_read\.agent_execution_sessions/);
+    assert.equal(readSrc.includes('LEFT JOIN swarm.agent_execution_sessions'), false);
+    assert.match(
+      readSrc,
+      /expired_at IS NOT NULL AND s\.expired_at > statement_timestamp\(\)/,
+    );
+    const fenceSrc = readFileSync(
+      join(repoRoot, 'supabase/functions/_shared/agent-auth.ts'),
+      'utf8',
+    );
+    assert.match(
+      fenceSrc,
+      /expired_at IS NOT NULL AND expired_at > statement_timestamp\(\)/,
+    );
   });
 
   it('capability is not agent-authenticated and does not claim or ack', () => {
