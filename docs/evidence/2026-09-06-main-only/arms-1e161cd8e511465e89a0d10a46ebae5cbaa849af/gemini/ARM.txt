@@ -1,0 +1,89 @@
+**C1.** UPHELD. `LISTENER_ROUTE_MODES` is the single source, and the test explicitly checks that adding "worker" fails the refusal.
+`tests/listener-main-only.test.ts:339`
+```typescript
+test("adding worker to LISTENER_ROUTE_MODES fails this pin and the refusal test", async () => {
+```
+
+**C2.** REFUTED. There is no start path that bypasses `listenerRouteConfiguration`. It is the single parsing chokepoint for the route.
+`src/cli.ts:2634`
+```typescript
+export function listenerRouteConfiguration(
+  routeValue: string | undefined,
+  deferOverValue: string | undefined,
+): { routeMode: ListenerRouteMode; deferOverChars: number | null } {
+```
+
+**C3.** REFUTED. `runListenerRuntime` and `runListenerSupervisor` contain zero calls to `model.start()`. The ready path simply flips a boolean without delegating to a model.
+`src/listener/runtime.ts:1192`
+```typescript
+      if (!ready) {
+        ready = true;
+        options.onEvent?.({
+          type: "ready",
+```
+
+**C4.** REFUTED. While `activity.instrumentModel` does wrap `start()`, it is never invoked because the caller (`runListenerRuntime`) no longer calls `start()` at all.
+`src/listener/activity.ts:204`
+```typescript
+      start: async () => await model.start(),
+```
+
+**C5.** UPHELD / REFUTED.
+Does it name BOTH remedies? UPHELD.
+`src/listener/main-routing.ts:114`
+```typescript
+  return `listen_unattended_refused: listen start needs an attendance surface for agent ${principalId}. Next: ${listenerAttendanceRemediesSentence(principalId)}. ${LISTENER_ALLOW_UNATTENDED_CLAUSE}`;
+```
+Can a dead pid pass as a watcher / Does it pgrep? REFUTED. It explicitly uses `process.kill(pid, 0)` which throws ESRCH for a dead process.
+`src/cloud/arrival-watch.ts:206`
+```typescript
+    process.kill(pid, 0);
+```
+
+**C6.** UPHELD. The none sentence is actually rendered when empty, and the LEGACY sentence is pushed by `renderListenerStatus` itself.
+`src/cli.ts:4946`
+```typescript
+        ? (evidence.attendingSurfaces ?? []).length === 0
+          ? `no. ${LISTENER_NONE_ATTENDING_SENTENCE.replace(/\.$/, "")}`
+```
+`src/cli.ts:5200`
+```typescript
+  lines.push(listenerLegacyRouteSentence(routeMode));
+```
+
+**C7.** UPHELD. `ListenerAttendanceCanaryResult` hardcodes a union instead of using the constant, and `renderListenerAttendanceCanary` hardcodes a specific remedy string instead of calling `listenerAttendanceRemediesSentence`.
+`src/listener/attendance-canary.ts:29`
+```typescript
+  routeDecision: "main" | "worker" | null;
+```
+`src/listener/attendance-canary.ts:279`
+```typescript
+      "STALLED: surfaced. Next: " +
+        `cswarm hook install claude --principal-id ${principalId} --write, ` +
+```
+
+**C8.** REFUTED. The diff does not add a branch on `error.message`. It only interpolates it into a string for logging/tests.
+`tests/listener-runtime.test.ts:4439`
+```typescript
+    stop.reason === "fatal" ? `stopped fatally: ${stop.error.message}` : "",
+```
+
+**C9.** UPHELD. Multiple tests were gutted to assert nothing happens, but kept their original names claiming they test behavior that was removed.
+`tests/listener-runtime.test.ts:4027` (named "a delivery that spends its hold budget hands the seat to the next delivery")
+```typescript
+  assert.deepEqual(model.prompts, []);
+  assert.equal(model.starts, 0);
+```
+`tests/listener-cli-process.test.ts:1563` (named "detached CLI cursor fallback still receives and replies")
+```typescript
+    assert.equal(posts.length, 0);
+```
+
+**C10.** UPHELD. False claims remain in `listenerHostLimits` output, which is still returned for all live starts by `listen status --json`.
+`src/cli.ts:4418`
+```typescript
+    const cross_owner_context =
+      "All sender relations reach that same worker and project context; each prompt carries sender and operator provenance.";
+```
+
+VERDICT: FAIL

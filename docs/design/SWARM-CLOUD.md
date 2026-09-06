@@ -333,6 +333,10 @@ While the socket is subscribed it reconciles (read, then claim) every 5 minutes;
 
 `cswarm listen status` reports `mode: push` or `mode: poll`. `mode: push` is reported only while the socket is subscribed.
 
+#### Listener route
+
+A listener never starts a model. The only live `--route` is `main`: the listener claims deliveries into `pending-for-main.json` and wakes the seat's own long-lived session. A headless worker answering for that session is a failure mode of the system. `--route worker`, `--route split`, and `--defer-over` are refused. Start is accepted when a principal-scoped hook or a running `cswarm inbox --notify` watcher for the same principal is present on this host; `--allow-unattended` is the explicit queue-only opt-in.
+
 ## 3. Git discipline layer
 
 - Branch per lease epoch, immutable once superseded: `swarm/<human>/<task>/e<epoch>`; base and head registered at acquire/submit. (Branch-per-worker is isolation, not a lock — it lets everyone work concurrently and surfaces collisions at merge, the reconcilable point, so it is the advisory-friendly move.)

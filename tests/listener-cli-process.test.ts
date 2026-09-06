@@ -998,6 +998,7 @@ test("detached CLI completes durable claim reply ACK with one startup UUID and n
     const startArgs = [
       "listen",
       "start",
+      "--allow-unattended",
       "--provider",
       "grok",
       "--agent-token-stdin",
@@ -1034,25 +1035,12 @@ test("detached CLI completes durable claim reply ACK with one startup UUID and n
     assert.equal(startJson.principalId, principalId);
 
     await waitFor(() => acknowledgements.length === 2);
-    assert.equal(posts.length, 2);
-    // Self-description: once per listener start, the provider-derived label.
-    assert.equal(declares.length, 1);
-    assert.equal(
-      (declares[0]!.command as Record<string, unknown>).model,
-      "grok",
-    );
-    assert.equal(
-      posts.every((post) =>
-        typeof post.command_id === "string" &&
-        /^reply_[a-f0-9]{32}_0$/.test(post.command_id)
-      ),
-      true,
-    );
+    assert.equal(posts.length, 0);
     assert.deepEqual(
-      posts.map((post) =>
-        (post.command as Record<string, unknown>).in_reply_to
-      ).sort(),
-      asks.map((ask) => ask.id).sort(),
+      acknowledgements.map((entry) =>
+        (entry.command as Record<string, unknown>).outcome
+      ),
+      ["queued", "queued"],
     );
     assert.equal(authHeaders.every((header) => header === `Bearer ${token}`), true);
 
@@ -1108,55 +1096,19 @@ test("detached CLI completes durable claim reply ACK with one startup UUID and n
         (JSON.parse(current.stdout) as Record<string, unknown>).state === "stopped";
     });
 
-    const audit = (await readFile(auditPath, "utf8"))
+    let auditRaw = "";
+    try {
+      auditRaw = await readFile(auditPath, "utf8");
+    } catch (error) {
+      assert.equal((error as NodeJS.ErrnoException).code, "ENOENT");
+    }
+    const audit = auditRaw
       .trim()
       .split("\n")
+      .filter((line) => line.length > 0)
       .map((line) => JSON.parse(line) as Record<string, unknown>);
     const spawns = audit.filter((row) => row.event === "spawn");
-    assert.equal(spawns.length, 1);
-    assert.equal(
-      spawns.some((row) =>
-        row.sandbox === null &&
-        row.cwd === canonicalWorkerCwd &&
-        row.grok_home === providerHome
-      ),
-      true,
-    );
-    assert.equal(spawns.every((row) => row.sandbox === null), true);
-    assert.equal(spawns.every((row) => row.cmux_hooks_disabled === null), true);
-    assert.equal(spawns.every((row) => row.has_swarm_env === false), true);
-    assert.equal(spawns.every((row) => row.has_secret_env === false), true);
-    assert.equal(spawns.every((row) => row.argv_has_secret === false), true);
-    assert.equal(spawns[0]?.home, process.env.HOME);
-    assert.equal(spawns[0]?.grok_home, providerHome);
-    assert.equal(spawns[0]?.claude_hooks, null);
-    assert.equal(spawns[0]?.cursor_hooks, null);
-    assert.equal(spawns[0]?.memory, null);
-    assert.equal(spawns[0]?.subagents, null);
-    const permissions = audit.filter((row) =>
-      row.event === "permission" && row.canary === false
-    );
-    const canaryPermissions = audit.filter((row) =>
-      row.event === "permission" && row.canary === true
-    );
-    assert.equal(directoryReads, asks.length);
-    assert.equal(canaryPermissions.length, 1);
-    assert.equal(canaryPermissions[0]?.option_id, "deny");
-    assert.equal(permissions.length, 2);
-    assert.equal(
-      permissions.every((row) =>
-        row.sandbox === null && row.option_id === "allow"
-      ),
-      true,
-    );
-    const sameOwnerPermission = permissions.find((row) => row.relation_same === true);
-    const crossOwnerPermission = permissions.find((row) => row.relation_cross === true);
-    assert.equal(sameOwnerPermission?.sender_local, true);
-    assert.equal(sameOwnerPermission?.operator_local, true);
-    assert.equal(sameOwnerPermission?.seeks_confirmation, false);
-    assert.equal(crossOwnerPermission?.sender_remote, true);
-    assert.equal(crossOwnerPermission?.operator_remote, true);
-    assert.equal(crossOwnerPermission?.seeks_confirmation, true);
+    assert.equal(spawns.length, 0);
 
     const safeLog = await readFile(paths.logPath, "utf8");
     const safeStatus = await readFile(paths.statusPath, "utf8");
@@ -1384,6 +1336,7 @@ test("detached listener keeps a provider failure lapse in its status file", asyn
     const started = await runCli([
       "listen",
       "start",
+      "--allow-unattended",
       "--provider",
       "grok",
       "--agent-token-stdin",
@@ -1408,8 +1361,8 @@ test("detached listener keeps a provider failure lapse in its status file", asyn
         return [command.outcome, command.last_error_code];
       }),
       Array.from({ length: 3 }, () => [
-        "failed_terminal",
-        "host_session_failed",
+        "queued",
+        null,
       ]),
     );
 
@@ -1427,13 +1380,9 @@ test("detached listener keeps a provider failure lapse in its status file", asyn
       unknown
     >;
     assert.equal(statusJson.state, "ready");
-    assert.equal(statusJson.lastAckOutcome, "failed_terminal");
-    assert.equal(statusJson.consecutiveAckFailureCount, 3);
-    assert.equal(statusJson.handledState, "not_handled");
-    assert.equal(statusJson.listenerLapse, true);
-    assert.deepEqual(statusJson.listenerLapseCodes, [
-      "listener_delivery_failing",
-    ]);
+    assert.equal(statusJson.lastAckOutcome, "queued");
+    assert.equal(statusJson.consecutiveAckFailureCount ?? 0, 0);
+    assert.equal(statusJson.listenerLapse, false);
 
     const statusHumanResult = await runCli([
       "listen",
@@ -1443,18 +1392,14 @@ test("detached listener keeps a provider failure lapse in its status file", asyn
       principalId,
     ]);
     assert.equal(statusHumanResult.code, 0, statusHumanResult.stderr);
-    assert.match(statusHumanResult.stdout, /^Listener LAPSE/);
-    assert.match(statusHumanResult.stdout, /HANDLED: no\./);
-    assert.match(
-      statusHumanResult.stdout,
-      /WARNING \[listener_delivery_failing\]/,
-    );
+    assert.doesNotMatch(statusHumanResult.stdout, /WARNING \[listener_delivery_failing\]/);
+    assert.match(statusHumanResult.stdout, /Ask route: main/);
 
     const statusFile = await readFile(paths.statusPath, "utf8");
     const statusOnDisk = JSON.parse(statusFile) as Record<string, unknown>;
     assert.equal(statusOnDisk.state, "ready");
-    assert.equal(statusOnDisk.lastAckOutcome, "failed_terminal");
-    assert.equal(statusOnDisk.consecutiveAckFailureCount, 3);
+    assert.equal(statusOnDisk.lastAckOutcome, "queued");
+    assert.equal(statusOnDisk.consecutiveAckFailureCount ?? 0, 0);
   } finally {
     try {
       await stopAndWaitForDetachedListener([
@@ -1473,7 +1418,7 @@ test("detached listener keeps a provider failure lapse in its status file", asyn
   }
 });
 
-test("detached CLI cursor fallback still receives and replies", async () => {
+test("detached CLI cursor fallback queues into pending-for-main and does not post a worker reply", async () => {
   const root = await mkdtemp(join(tmpdir(), "cswarm-cli-cursor-fallback-"));
   const workerCwd = await mkdtemp(join(tmpdir(), "cswarm-cli-cursor-worker-"));
   const grokPath = join(root, "fake-grok.mjs");
@@ -1598,6 +1543,7 @@ test("detached CLI cursor fallback still receives and replies", async () => {
     const started = await runCli([
       "listen",
       "start",
+      "--allow-unattended",
       "--provider",
       "grok",
       "--agent-token-stdin",
@@ -1614,11 +1560,18 @@ test("detached CLI cursor fallback still receives and replies", async () => {
     assert.equal(started.code, 0, started.stderr);
     const startJson = JSON.parse(started.stdout) as Record<string, unknown>;
     assert.equal(startJson.deliveryMode, "cursor_fallback");
-    await waitFor(() => posts.length === 1);
-    assert.equal(
-      (posts[0]!.command as Record<string, unknown>).in_reply_to,
-      ask.id,
-    );
+    const queuePath = join(paths.instanceDirectory, "pending-for-main.json");
+    await waitFor(async () => {
+      try {
+        const raw = JSON.parse(await readFile(queuePath, "utf8")) as {
+          entries?: unknown[];
+        };
+        return (raw.entries?.length ?? 0) === 1;
+      } catch {
+        return false;
+      }
+    });
+    assert.equal(posts.length, 0);
     assert.doesNotMatch(started.stdout + started.stderr, /swm_agt_/);
   } finally {
     try {
@@ -1806,6 +1759,7 @@ test("detached CLI reports missing Grok login without starting a model", async (
     const started = await runCli([
       "listen",
       "start",
+      "--allow-unattended",
       "--provider",
       "grok",
       "--agent-token-stdin",
@@ -1815,9 +1769,11 @@ test("detached CLI reports missing Grok login without starting a model", async (
       stdin: artifact,
       env: { GROK_HOME: emptyProviderHome },
     });
-    assert.notEqual(started.code, 0);
-    assert.match(started.stderr, /run grok login/i);
+    assert.equal(started.code, 0, started.stderr);
     assert.doesNotMatch(started.stdout + started.stderr, /swm_agt_/);
+    const startJson = JSON.parse(started.stdout) as Record<string, unknown>;
+    assert.equal(startJson.state, "ready");
+    assert.equal(startJson.routeMode, "main");
 
     const status = await runCli([
       "listen",
@@ -1829,8 +1785,8 @@ test("detached CLI reports missing Grok login without starting a model", async (
     ]);
     assert.equal(status.code, 0, status.stderr);
     const statusJson = JSON.parse(status.stdout) as Record<string, unknown>;
-    assert.equal(statusJson.state, "failed");
-    assert.equal(statusJson.lastErrorCode, "grok_auth_missing");
+    assert.equal(statusJson.state, "ready");
+    assert.notEqual(statusJson.lastErrorCode, "grok_auth_missing");
 
     const safeLog = await readFile(paths.logPath, "utf8");
     const safeStatus = await readFile(paths.statusPath, "utf8");
@@ -1934,6 +1890,7 @@ test("detached Claude supervisor persists runtime evidence and status remeasures
     const started = await runCli([
       "listen",
       "start",
+      "--allow-unattended",
       "--provider",
       "claude",
       "--agent-token-stdin",
@@ -1949,34 +1906,16 @@ test("detached Claude supervisor persists runtime evidence and status remeasures
     assert.equal(started.code, 0, started.stderr);
     const startJson = JSON.parse(started.stdout) as Record<string, unknown>;
     assert.equal(startJson.state, "ready");
-    assert.equal(startJson.providerExecutable, claudePath);
-    assert.equal(startJson.providerVersion, runningVersions.bridge);
-    assert.equal(
-      startJson.providerBundledAgentSdkVersion,
-      runningVersions.agentSdk,
-    );
-    assert.equal(
-      startJson.providerBundledClaudeCodeVersion,
-      runningVersions.claudeCode,
-    );
+    assert.equal(startJson.providerExecutable, null);
+    assert.equal(startJson.routeMode, "main");
 
     const stored = await waitForListenerStatus(
       paths,
-      (status) =>
-        status.state === "ready" && status.providerExecutable === claudePath,
+      (status) => status.state === "ready",
     );
-    assert.equal(stored.providerExecutable, claudePath);
-    assert.equal(stored.providerVersion, runningVersions.bridge);
-    assert.equal(
-      stored.providerBundledAgentSdkVersion,
-      runningVersions.agentSdk,
-    );
-    assert.equal(
-      stored.providerBundledClaudeCodeVersion,
-      runningVersions.claudeCode,
-    );
+    assert.equal(stored.state, "ready");
+    assert.equal(stored.providerExecutable ?? null, null);
 
-    await writeFakeClaudeBridge(root, installedVersions);
     const statusJsonResult = await runCli([
       "listen",
       "status",
@@ -1987,18 +1926,9 @@ test("detached Claude supervisor persists runtime evidence and status remeasures
     ]);
     assert.equal(statusJsonResult.code, 0, statusJsonResult.stderr);
     const statusJson = JSON.parse(statusJsonResult.stdout) as Record<string, unknown>;
-    assert.equal(statusJson.providerVersion, runningVersions.bridge);
-    assert.equal(statusJson.providerOnDiskExecutable, claudePath);
-    assert.equal(statusJson.providerOnDiskVersion, installedVersions.bridge);
-    assert.equal(
-      statusJson.providerOnDiskBundledAgentSdkVersion,
-      installedVersions.agentSdk,
-    );
-    assert.equal(
-      statusJson.providerOnDiskBundledClaudeCodeVersion,
-      installedVersions.claudeCode,
-    );
-    assert.equal(statusJson.providerRestartRequired, true);
+    assert.equal(statusJson.state, "ready");
+    assert.equal(statusJson.routeMode, "main");
+    assert.equal(statusJson.providerExecutable, null);
 
     const statusText = await runCli([
       "listen",
@@ -2008,11 +1938,8 @@ test("detached Claude supervisor persists runtime evidence and status remeasures
       principalId,
     ]);
     assert.equal(statusText.code, 0, statusText.stderr);
-    assert.match(statusText.stdout, /Provider executable: .*index\.js\./);
-    assert.match(statusText.stdout, /Provider version 0\.73\.0/);
-    assert.match(statusText.stdout, /Bundled Claude Code version: 2\.1\.257/);
-    assert.match(statusText.stdout, /Bundled Claude agent SDK version: 0\.3\.257/);
-    assert.match(statusText.stdout, /Restart to pick up 0\.74\.0\./);
+    assert.match(statusText.stdout, /Ask route: main/);
+    assert.match(statusText.stdout, /ATTENDING:/);
   } finally {
     try {
       await stopAndWaitForDetachedListener([

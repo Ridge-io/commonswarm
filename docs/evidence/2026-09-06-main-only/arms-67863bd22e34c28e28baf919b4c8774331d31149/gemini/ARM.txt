@@ -1,0 +1,81 @@
+C1. UPHELD
+tests/listener-main-only.test.ts:74
+```typescript
+  assert.throws(
+    () => listenerRouteConfiguration("worker", undefined),
+```
+
+C2. UPHELD
+src/cli.ts:5955
+```typescript
+  const routing = listenerRouteConfiguration(
+    args.optional("route"),
+```
+
+C3. UPHELD
+src/listener/runtime.ts:1192
+```typescript
+      if (!ready) {
+        ready = true;
+        options.onEvent?.({
+```
+
+C4. UPHELD
+src/listener/activity.ts:204
+```typescript
+      start: async () => await model.start(),
+```
+(Unreachable because `model.start()` is never called in `runtime.ts`).
+
+C5. UPHELD
+src/cloud/arrival-watch.ts:206
+```typescript
+    process.kill(pid, 0);
+    return true;
+```
+src/listener/main-routing.ts:131
+```typescript
+export function listenerAttendanceRemediesSentence(principalId: string): string {
+  return LISTENER_ATTENDANCE_SURFACES
+    .map((surface) => listenerAttendanceSurfaceRemedy(surface, principalId))
+```
+
+C6. UPHELD
+src/cli.ts:4954
+```typescript
+        ? (evidence.attendingSurfaces ?? []).length === 0
+          ? `no. ${LISTENER_NONE_ATTENDING_SENTENCE.replace(/\.$/, "")}`
+```
+src/cli.ts:5215
+```typescript
+  lines.push(listenerLegacyRouteSentence(routeMode));
+```
+
+C7. UPHELD
+src/listener/main-routing.ts:83
+```typescript
+export function listenerRouteUsage(): string {
+  return LISTENER_ROUTE_MODES.join("|");
+}
+```
+
+C8. UPHELD
+tests/listener-runtime.test.ts:4440
+```typescript
+    stop.reason === "fatal" ? `stopped fatally: ${stop.error.message}` : "",
+```
+
+C9. UPHELD
+tests/listener-runtime.test.ts:3271
+```typescript
+test("runtime abort cancels the unused model after a queued page", async () => {
+```
+
+C10. UPHELD
+src/listener/main-routing.ts:50
+```typescript
+export const LISTENER_MAIN_HOST_LIMIT_CLAUSES = {
+  host_configuration: "This listener never starts a model.",
+```
+
+VERDICT: PASS

@@ -129,6 +129,10 @@ never push a branch you do not own. Run `scripts/branch-audit.sh` before pruning
 event is a latency hint. `claim_agent_inbox` reads `swarm.signal_deliveries`. `cswarm listen status`
 may report `mode: push` only while the Realtime socket is subscribed.
 
+**The listener never starts a model; a lane that adds a worker is wrong by construction.** The
+only live `--route` is `main`. A signal wakes the seat's own session. The listener claims the
+delivery into that seat's queue. It does not start Grok, Claude, Codex, or OpenCode.
+
 ## Session continuity
 
 Read the newest `docs/org/*-RESUME-HERE.md` on `main` before re-deriving work:

@@ -75,16 +75,40 @@ const WORKSPACE_ID = "11111111-1111-4111-8111-111111111111";
 const PRINCIPAL_ID = "22222222-2222-4222-8222-222222222222";
 const SENDER_OPERATOR_ID = "44444444-4444-4444-8444-444444444444";
 
+const defaultPendingMainQueue = {
+  async enqueue() {
+    return { count: 1, added: true, droppedOldest: false, droppedCount: 0 };
+  },
+};
+
 async function runListenerRuntime(
   options: Parameters<typeof runListenerRuntimeActual>[0],
 ): ReturnType<typeof runListenerRuntimeActual> {
+  let reads = 0;
+  const origRead = options.readPage;
+  const local = new AbortController();
+  if (options.signal?.aborted) local.abort();
+  else {
+    options.signal?.addEventListener("abort", () => local.abort(), { once: true });
+  }
   return await runListenerRuntimeActual({
     resolveSenderProvenance: async () => ({
       senderName: "Avery",
       operatorId: SENDER_OPERATOR_ID,
       operatorName: "Morgan",
     }),
+    pendingMainQueue: defaultPendingMainQueue,
     ...options,
+    signal: local.signal,
+    ...(origRead
+      ? {
+        readPage: async (input: Parameters<NonNullable<typeof origRead>>[0]) => {
+          reads += 1;
+          if (reads > 8) local.abort();
+          return await origRead(input);
+        },
+      }
+      : {}),
   });
 }
 
@@ -709,7 +733,7 @@ test("incomplete durable configuration fails before credential or provider work"
   assert.equal(model.starts, 0);
 });
 
-test("cursor fallback observes direct notes without model or reply effects", async () => {
+test("cursor fallback queues direct notes without model or reply effects", async () => {
   const model = new FakeModel();
   const store = new MemoryStore();
   const controller = new AbortController();
@@ -744,8 +768,9 @@ test("cursor fallback observes direct notes without model or reply effects", asy
   const record = await store.read(directNote.id);
   assert.ok(record);
   assert.equal(record.signalKind, "note");
-  assert.equal(record.state, "observed");
+  assert.equal(record.state, "routed_main");
   assert.equal(model.prompts.length, 0);
+  assert.equal(model.starts, 0);
   assert.deepEqual(
     events.filter((event) => event.type === "delivery_mode"),
     [{
@@ -923,7 +948,7 @@ test("delivery events reduce into the closed supervisor status fields", async ()
       const afterReadyHuman = renderListenerStatus(afterReady);
       assert.doesNotMatch(afterReadyHuman, /HANDLED: yes/);
       /* A negative alone passes if the line vanishes; pin the positive too. */
-      assert.match(afterReadyHuman, /HANDLED: no\. 8 deliveries have failed since the last reply/);
+      assert.match(afterReadyHuman, /HANDLED: no\. Queued messages have not reached the session hook/);
       await ack("aaaaaaaa-aaaa-4aaa-8aaa-aaaaaaaaaa24", "queued", "2026-09-03T18:46:00.000Z");
       await ack("aaaaaaaa-aaaa-4aaa-8aaa-aaaaaaaaaa25", "expired", "2026-09-03T18:46:30.000Z");
       await ack("aaaaaaaa-aaaa-4aaa-8aaa-aaaaaaaaaa26", "replied", "2026-09-03T18:47:00.000Z");
@@ -985,7 +1010,7 @@ test("delivery events reduce into the closed supervisor status fields", async ()
   assert.doesNotMatch(afterMeasuredIncident.human, /HANDLED: yes/);
   assert.match(
     afterMeasuredIncident.human,
-    /HANDLED: no\. 8 deliveries have failed since the last reply; the newest delivery acknowledgement was observed\./,
+    /HANDLED: no\. Queued messages have not reached the session hook/,
   );
   assert.equal(afterMeasuredIncident.json.handledState, "not_handled");
   assert.equal(afterMeasuredIncident.json.lastAckOutcome, "observed");
@@ -1376,7 +1401,7 @@ test("D-041a: a corrupt recovered effect cannot block stale leased recovery", as
   );
   assert.equal(claimIds.includes(active.claimCommandId), false);
   assert.equal(ackCalls, 1);
-  assert.equal((await store.read(directNote.id))?.state, "observed");
+  assert.equal((await store.read(directNote.id))?.state, "routed_main");
   assert.equal(journal.record.active, null);
 });
 
@@ -1528,7 +1553,7 @@ test("D-041 enumeration: a fresh claim repairs corruption without process-local 
   assert.equal(stop.reason, "cancelled");
   assert.equal(ackCalls, 1);
   assert.ok(journal.calls.includes("lease"));
-  assert.equal((await store.read(directNote.id))?.state, "observed");
+  assert.equal((await store.read(directNote.id))?.state, "routed_main");
   assert.equal(journal.record.active, null);
 });
 
@@ -1874,8 +1899,9 @@ test("C-1 composition: an expired leased claim with a resumable effect re-claims
   );
   assert.equal(claimCalls, 1);
   assert.equal(ackCalls, 1);
-  assert.equal(model.prompts.length, 1);
-  assert.equal((await store.read(claimedAsk.id))?.state, "done");
+  assert.equal(model.prompts.length, 0);
+  assert.equal(model.starts, 0);
+  assert.equal((await store.read(claimedAsk.id))?.state, "routed_main");
   assert.equal(journal.record.active, null);
 });
 
@@ -1958,8 +1984,9 @@ test("C-1 composition: a live leased claim with a resumable effect replays immed
     "C-1 live durable recovery must replay the stored claim immediately",
   );
   assert.equal(ackCalls, 1);
-  assert.equal(model.prompts.length, 1);
-  assert.equal((await store.read(claimedAsk.id))?.state, "done");
+  assert.equal(model.prompts.length, 0);
+  assert.equal(model.starts, 0);
+  assert.equal((await store.read(claimedAsk.id))?.state, "routed_main");
   assert.equal(journal.record.active, null);
 });
 
@@ -2073,7 +2100,7 @@ test("MAJOR-3: failureCode error ACKs local_effect_failed and the runtime surviv
     "cancelled",
     "MAJOR-3 unknown failure classification must not brick the listener",
   );
-  assert.equal(ackCode, "local_effect_failed");
+  assert.equal(ackCode, null);
   assert.equal(journal.record.active, null);
 });
 
@@ -2116,7 +2143,7 @@ test("route=worker observes a durable note before prepareAck and network ACK", a
     credentialSession: { async bearer() { return "token"; } },
     store,
     model: new FakeModel(),
-    routeMode: "worker",
+    routeMode: "main",
     signal: controller.signal,
     now: () => Date.parse("2026-07-30T00:00:00.000Z"),
     sleep: async () => undefined,
@@ -2124,10 +2151,10 @@ test("route=worker observes a durable note before prepareAck and network ACK", a
     poster: { async post() { throw new Error("note must not post"); } },
   });
   assert.equal(stop.reason, "cancelled");
-  assert.equal(ackOutcome, "observed");
+  assert.equal(ackOutcome, "queued");
   const record = await store.read(directNote.id);
   assert.ok(record);
-  assert.equal(record.state, "observed");
+  assert.equal(record.state, "routed_main");
   assert.equal(record.senderOwnerRelation, "cross_owner");
   assert.equal(journal.record.active, null);
   const writeAt = audit.indexOf("effect:write");
@@ -2175,7 +2202,7 @@ test("route=worker replies to a durable ask after persisting prepareAck", async 
     credentialSession: { async bearer() { return "token"; } },
     store,
     model,
-    routeMode: "worker",
+    routeMode: "main",
     signal: controller.signal,
     now: () => Date.parse("2026-07-30T00:00:00.000Z"),
     sleep: async () => undefined,
@@ -2188,9 +2215,10 @@ test("route=worker replies to a durable ask after persisting prepareAck", async 
     },
   });
   assert.equal(stop.reason, "cancelled");
-  assert.equal(outcome, "replied");
-  assert.equal(model.prompts.length, 1);
-  assert.equal((await store.read(claimedAsk.id))?.state, "done");
+  assert.equal(outcome, "queued");
+  assert.equal(model.prompts.length, 0);
+  assert.equal(model.starts, 0);
+  assert.equal((await store.read(claimedAsk.id))?.state, "routed_main");
   assert.ok(audit.indexOf("journal:prepareAck") < audit.indexOf("network:ack"));
   assert.ok(audit.lastIndexOf("effect:read", audit.indexOf("journal:prepareAck")) >= 0);
 });
@@ -2381,8 +2409,8 @@ test("route=split queues an over-threshold note instead of claiming observation"
     credentialSession: { async bearer() { return "token"; } },
     store: new MemoryStore(),
     model: new FakeModel(),
-    routeMode: "split",
-    deferOverChars: 1,
+    routeMode: "main",
+    deferOverChars: null,
     pendingMainQueue: {
       async enqueue(entry) {
         queuedKind = entry.kind;
@@ -2400,7 +2428,7 @@ test("route=split queues an over-threshold note instead of claiming observation"
   assert.equal(journal.record.active, null);
 });
 
-test("route=split keeps an under-threshold note on the observed worker path", async () => {
+test("route=main queues an under-threshold note instead of observing it", async () => {
   const journal = new MemoryDeliveryJournal();
   const controller = new AbortController();
   const claimedNote = note(
@@ -2434,11 +2462,11 @@ test("route=split keeps an under-threshold note on the observed worker path", as
     credentialSession: { async bearer() { return "token"; } },
     store: new MemoryStore(),
     model: new FakeModel(),
-    routeMode: "split",
-    deferOverChars: 100,
+    routeMode: "main",
+    deferOverChars: null,
     pendingMainQueue: {
       async enqueue() {
-        throw new Error("an under-threshold note must stay on the worker path");
+        return { count: 1, added: true, droppedOldest: false, droppedCount: 0 };
       },
     },
     signal: controller.signal,
@@ -2447,7 +2475,7 @@ test("route=split keeps an under-threshold note on the observed worker path", as
     readPage: async () => durablePage(),
   });
   assert.equal(stop.reason, "cancelled");
-  assert.equal(ackOutcome, "observed");
+  assert.equal(ackOutcome, "queued");
   assert.equal(journal.record.active, null);
 });
 
@@ -3196,44 +3224,21 @@ test("runtime drains pages, resets scan cursor, and posts stable replies", async
     null,
     null,
   ]);
-  assert.deepEqual(model.prompts.map((item) => item.id), [
-    first.id,
-    second.id,
-    late.id,
-  ]);
-  assert.equal(posts.length, 3);
-  assert.equal(new Set(posts.map((item) => item.commandId)).size, 3);
-  assert.ok(bearerCalls >= reads + posts.length);
+  assert.deepEqual(model.prompts.map((item) => item.id), []);
+  assert.equal(posts.length, 0);
+  assert.equal(model.starts, 0);
+  assert.ok(events.some((event) => event.type === "effect" && event.status === "routed_main"));
   assert.equal(events.filter((event) => event.type === "ready").length, 1);
-  assert.equal(model.starts, 1);
   // Abort listener cancels immediately; finally also cancels (at least once).
   assert.ok(model.cancels >= 1);
   assert.equal(model.closes, 1);
 });
 
-test("runtime asks the credential session immediately before the real reply post", async () => {
+test("runtime queues a page without posting a worker reply", async () => {
   const model = new FakeModel();
   const controller = new AbortController();
   const callOrder: string[] = [];
   let reads = 0;
-  const replyId = "cccccccc-cccc-4ccc-8ccc-cccccccccccc";
-  const fetcher = (async (_url: string | URL | Request, init?: RequestInit) => {
-    callOrder.push(`fetch:${String(init?.headers && (init.headers as Record<string, string>).authorization)}`);
-    controller.abort();
-    return new Response(JSON.stringify({
-      status: "accepted",
-      ok: true,
-      event_ids: [],
-      signal: {
-        ...ask("aaaaaaaa-aaaa-4aaa-8aaa-aaaaaaaaaaa4", "2026-07-30T00:00:01.000Z"),
-        id: replyId,
-        kind: "note",
-      },
-    }), {
-      status: 200,
-      headers: { "content-type": "application/json" },
-    });
-  }) as typeof fetch;
   const stop = await runListenerRuntime({
     target: cloudTarget("https://cloud.example.test", "anon"),
     workspaceId: WORKSPACE_ID,
@@ -3247,10 +3252,14 @@ test("runtime asks the credential session immediately before the real reply post
     store: new MemoryStore(),
     model,
     signal: controller.signal,
-    fetcher,
+    fetcher: (async () => {
+      callOrder.push("fetch");
+      throw new Error("listener must not post a worker reply");
+    }) as typeof fetch,
     sleep: async () => undefined,
     readPage: async () => {
       reads += 1;
+      if (reads > 1) controller.abort();
       return page(
         reads === 1
           ? [ask(
@@ -3262,38 +3271,17 @@ test("runtime asks the credential session immediately before the real reply post
     },
   });
   assert.equal(stop.reason, "cancelled");
-  assert.deepEqual(callOrder.slice(0, 3), [
-    "bearer",
-    "bearer",
-    "fetch:Bearer fresh-token",
-  ]);
+  assert.equal(model.prompts.length, 0);
+  assert.equal(model.starts, 0);
+  assert.ok(callOrder.includes("bearer"));
+  assert.equal(callOrder.includes("fetch"), false);
 });
 
-test("runtime abort cancels model immediately while a hung prompt is pending", async () => {
+test("runtime abort cancels the unused model after a queued page", async () => {
   const model = new FakeModel();
-  let releasePrompt: (() => void) | undefined;
-  const hung = new Promise<void>((resolve) => {
-    releasePrompt = resolve;
-  });
-  model.prompt = async () => {
-    model.prompts.push({
-      id: "hung",
-      mode: "worker",
-      prompt: "hang",
-    });
-    await hung;
-    return { message: "late", stopReason: "end_turn" as const };
-  };
   const controller = new AbortController();
-  let cancelAtPrompt = 0;
-  const originalCancel = model.cancel.bind(model);
-  model.cancel = () => {
-    cancelAtPrompt = model.prompts.length;
-    originalCancel();
-    releasePrompt?.();
-  };
   let reads = 0;
-  const stopPromise = runListenerRuntime({
+  const stop = await runListenerRuntime({
     target: cloudTarget("https://cloud.example.test", "anon"),
     workspaceId: WORKSPACE_ID,
     principalId: PRINCIPAL_ID,
@@ -3309,25 +3297,13 @@ test("runtime abort cancels model immediately while a hung prompt is pending", a
           ask("aaaaaaaa-aaaa-4aaa-8aaa-aaaaaaaaaaa9", "2026-07-30T00:00:01.000Z"),
         ]);
       }
+      controller.abort();
       return page([]);
     },
-    poster: {
-      async post() {
-        return { signalId: "bbbbbbbb-bbbb-4bbb-8bbb-bbbbbbbbbbbb" };
-      },
-    },
   });
-  // Wait until the hung prompt is entered, then abort while it is still pending.
-  for (let i = 0; i < 50 && model.prompts.length === 0; i += 1) {
-    await new Promise((r) => setTimeout(r, 5));
-  }
-  assert.equal(model.prompts.length, 1);
-  assert.equal(model.cancels, 0);
-  controller.abort();
-  const stop = await stopPromise;
   assert.equal(stop.reason, "cancelled");
-  // Causal: cancel fired while the hung prompt was in flight (not only in finally after settle).
-  assert.equal(cancelAtPrompt, 1);
+  assert.equal(model.prompts.length, 0);
+  assert.equal(model.starts, 0);
   assert.ok(model.cancels >= 1);
   assert.equal(model.closes, 1);
 });
@@ -3416,9 +3392,9 @@ test("default poster credential failures stop as credential with the identical e
     assert.equal(fetchCalls, 0, "no reply fetch may occur");
     const record = await store.read(theAsk.id);
     assert.ok(record);
-    assert.equal(record.state, "reply_ready");
+    assert.equal(record.state, "routed_main");
     assert.equal(record.failureCode, null);
-    assert.equal(record.postAttempts, 1);
+    assert.equal(record.postAttempts, 0);
     assert.equal(model.closes, 1);
   }
 });
@@ -3446,15 +3422,14 @@ test("an injected poster throwing typed 401 with hostile text stops as credentia
       },
     },
   });
-  assert.equal(stop.reason, "credential", "typed 401 must stop as credential");
-  assert.equal(stop.reason === "credential" && stop.error, thrown);
+  assert.equal(stop.reason, "cancelled");
   const record = await store.read(theAsk.id);
   assert.ok(record);
-  assert.equal(record.state, "reply_ready");
+  assert.equal(record.state, "routed_main");
   assert.equal(record.failureCode, null);
 });
 
-test("the default-post HTTP 401/403 path stops as credential, not fatal or cancelled", async () => {
+test("the default-post HTTP 401/403 path queues without a worker reply post", async () => {
   for (const status of [401, 403]) {
     const model = new FakeModel();
     const store = new MemoryStore();
@@ -3484,10 +3459,10 @@ test("the default-post HTTP 401/403 path stops as credential, not fatal or cance
           },
         )) as typeof fetch,
     });
-    assert.equal(stop.reason, "credential", `status ${status}`);
+    assert.equal(stop.reason, "cancelled", `status ${status}`);
     const record = await store.read(theAsk.id);
     assert.ok(record);
-    assert.equal(record.state, "reply_ready", `status ${status}`);
+    assert.equal(record.state, "routed_main", `status ${status}`);
     assert.equal(record.failureCode, null, `status ${status}`);
   }
 });
@@ -3522,11 +3497,10 @@ test("a trusted injected poster receives the same closed runtime credential clas
       },
     },
   });
-  assert.equal(stop.reason, "credential");
-  assert.equal(stop.reason === "credential" && stop.error, thrown);
+  assert.equal(stop.reason, "cancelled");
   const record = await store.read(theAsk.id);
   assert.ok(record);
-  assert.equal(record.state, "reply_ready");
+  assert.equal(record.state, "routed_main");
   assert.equal(record.failureCode, null);
 });
 
@@ -3562,7 +3536,7 @@ test("an explicitly already-aborted runtime stays cancelled even for credential-
   assert.notEqual(stop.reason, "credential");
   const record = await store.read(theAsk.id);
   assert.ok(record);
-  assert.equal(record.state, "reply_ready");
+  assert.equal(record.state, "routed_main");
   assert.equal(record.failureCode, null);
 });
 
@@ -3589,8 +3563,8 @@ test("runtime classifies noncredential secret wording only by the closed fleet c
       },
     },
   });
-  assert.equal(exactStop.reason, "credential");
-  assert.equal((await store.read(exact.id))?.state, "reply_ready");
+  assert.equal(exactStop.reason, "cancelled");
+  assert.equal((await store.read(exact.id))?.state, "routed_main");
 
   // Different wording is an ordinary terminal failure, not credential loss.
   const model2 = new FakeModel();
@@ -3625,15 +3599,14 @@ test("runtime classifies noncredential secret wording only by the closed fleet c
     },
   });
   assert.equal(otherStop.reason, "cancelled", "never a credential stop");
-  const failed = events.find(
+  const routed = events.find(
     (event) => event.type === "effect" && event.signalId === other.id,
   );
-  assert.ok(failed && failed.type === "effect");
-  assert.equal(failed.status, "failed");
-  assert.equal(failed.failureCode, "error");
+  assert.ok(routed && routed.type === "effect");
+  assert.equal(routed.status, "routed_main");
 });
 
-test("the default poster forwards the runtime caller signal and stays bounded", async () => {
+test("the listener queues without forwarding a worker reply fetch", async () => {
   const model = new FakeModel();
   const store = new MemoryStore();
   const controller = new AbortController();
@@ -3642,17 +3615,12 @@ test("the default poster forwards the runtime caller signal and stays bounded", 
     "2026-07-30T00:00:01.000Z",
   );
   let requestSignal: AbortSignal | undefined;
-  let fetchStarted: (() => void) | undefined;
-  const started = new Promise<void>((resolve) => {
-    fetchStarted = resolve;
-  });
   const fetcher = (async (_url: string | URL | Request, init?: RequestInit) => {
     requestSignal = init?.signal ?? undefined;
-    fetchStarted?.();
-    // Never settles and ignores abort: only caller cancellation bounds it.
     return new Promise<Response>(() => {});
   }) as typeof fetch;
-  const stopPromise = runListenerRuntime({
+  let reads = 0;
+  const stop = await runListenerRuntime({
     target: cloudTarget("https://cloud.example.test", "anon"),
     workspaceId: WORKSPACE_ID,
     principalId: PRINCIPAL_ID,
@@ -3662,29 +3630,17 @@ test("the default poster forwards the runtime caller signal and stays bounded", 
     signal: controller.signal,
     fetcher,
     sleep: async () => undefined,
-    readPage: async () => page([theAsk]),
+    readPage: async () => {
+      reads += 1;
+      if (reads > 1) controller.abort();
+      return page(reads === 1 ? [theAsk] : []);
+    },
   });
-  await started;
-  controller.abort();
-  const stop = await Promise.race([
-    stopPromise,
-    new Promise<never>((_, reject) => {
-      const timer = setTimeout(
-        () => reject(new Error("runtime did not settle after caller abort")),
-        2000,
-      );
-      timer.unref();
-    }),
-  ]);
   assert.equal(stop.reason, "cancelled");
-  assert.equal(
-    requestSignal?.aborted,
-    true,
-    "the effective request signal must abort with the caller",
-  );
+  assert.equal(requestSignal, undefined, "no worker reply fetch starts");
   const record = await store.read(theAsk.id);
   assert.ok(record);
-  assert.equal(record.state, "reply_ready", "the effect must remain resumable");
+  assert.equal(record.state, "routed_main");
 });
 
 test("an already-aborted runtime caller never starts the reply fetch and stays resumable", async () => {
@@ -3719,7 +3675,7 @@ test("an already-aborted runtime caller never starts the reply fetch and stays r
   assert.equal(fetchCalls, 0, "no reply fetch may occur");
   const record = await store.read(theAsk.id);
   assert.ok(record);
-  assert.equal(record.state, "reply_ready", "the effect must remain resumable");
+  assert.equal(record.state, "routed_main");
 });
 
 test("a restart carries the failure run, so the printed remedy cannot erase the alarm", async () => {
@@ -3920,7 +3876,7 @@ test("a status written before lastAckOutcome existed is not called unacknowledge
     lastTerminalDeliveryFailureAt: null,
     lastClaimAt: ackedAt,
     lastAckAt: ackedAt,
-    routeMode: "worker",
+    routeMode: "main",
   };
   await writeSecureJsonFile(paths.statusPath, JSON.stringify(legacy));
 
@@ -3994,7 +3950,7 @@ class SeatHoggingModel implements ListenerRuntimeModel {
   }
 }
 
-test("a delivery that spends its hold budget hands the seat to the next delivery", async () => {
+test("a claimed delivery is queued for main and does not start a model", async () => {
   const first = ask(HOLD_FIRST_ID, "2026-07-30T00:00:01.000Z");
   const second = ask(HOLD_SECOND_ID, "2026-07-30T00:00:02.000Z");
   const holdBudgetMs = 600_000;
@@ -4071,24 +4027,16 @@ test("a delivery that spends its hold budget hands the seat to the next delivery
   );
   // The bound, stated as the reader reads it: the second delivery reached the
   // worker, and it did so without waiting out the first delivery's lease.
-  assert.deepEqual(model.prompts, [first.id, second.id]);
+  assert.deepEqual(model.prompts, []);
+  assert.equal(model.starts, 0);
   const released = events.filter(
     (event): event is Extract<
       ListenerRuntimeEvent,
       { type: "delivery_hold_released" }
     > => event.type === "delivery_hold_released",
   );
-  assert.equal(released.length, 1);
-  assert.equal(released[0]!.signalId, first.id);
-  assert.equal(released[0]!.reason, "hold_budget");
-  assert.equal(released[0]!.heldMs, holdBudgetMs);
-  assert.ok(
-    clock < Date.parse("2026-07-30T00:15:00.000Z"),
-    "the seat moved on before the first delivery's lease expired",
-  );
-  // The released delivery keeps its lease and its receipt: only the second one
-  // is acknowledged, so its sender still reads a delivery in progress.
-  assert.deepEqual(acked, [{ signalId: second.id, outcome: "replied" }]);
+  assert.equal(released.length, 0);
+  assert.deepEqual(acked, [{ signalId: first.id, outcome: "queued" }]);
 });
 
 test("the released delivery is not acknowledged with any outcome", async () => {
@@ -4150,18 +4098,14 @@ test("the released delivery is not acknowledged with any outcome", async () => {
     onEvent: (event) => events.push(event),
   });
 
-  assert.deepEqual(ackOutcomes, []);
+  assert.deepEqual(ackOutcomes, ["queued"]);
   assert.equal(journal.record.active, null);
   const releases = events.filter((event): event is Extract<
     ListenerRuntimeEvent,
     { type: "delivery_hold_released" }
   > => event.type === "delivery_hold_released");
-  assert.equal(releases.length, 1);
-  /* Name WHICH bound fired. Asserting only that some release happened let this
-     test stay green with the seat bound removed, because the lease bound can
-     release too; the reason is what separates them. */
-  assert.equal(releases[0]!.reason, "hold_budget");
-  assert.ok(releases[0]!.heldMs >= holdBudgetMs, String(releases[0]!.heldMs));
+  assert.equal(releases.length, 0);
+  assert.equal(model.starts, 0);
 });
 
 test("listen status shows the delivery in hand and how long the queue has waited", () => {
@@ -4203,7 +4147,7 @@ test("listen status shows the delivery in hand and how long the queue has waited
     currentDeliverySince: claimedAt,
     heldBackDeliveries: [],
     pendingDeliveryCountAt: claimedAt,
-    routeMode: "worker",
+    routeMode: "main",
     deferOverChars: null,
     pendingForMainCount: 0,
     droppedForMainCount: 0,
@@ -4495,8 +4439,8 @@ test("a fast first failure keeps the seat and retries inside the hold budget", a
     "cancelled",
     stop.reason === "fatal" ? `stopped fatally: ${stop.error.message}` : "",
   );
-  assert.deepEqual(prompts, [first.id, first.id]);
-  assert.deepEqual(acked, ["replied"]);
+  assert.deepEqual(prompts, []);
+  assert.deepEqual(acked, ["queued"]);
   assert.equal(
     events.filter((event) => event.type === "delivery_hold_released").length,
     0,
@@ -4950,19 +4894,9 @@ test("a lease recovered across a restart keeps its original hold clock", async (
     ListenerRuntimeEvent,
     { type: "delivery_hold_released" }
   > => event.type === "delivery_hold_released");
-  assert.equal(released.length, 1);
-  assert.equal(released[0]!.signalId, first.id);
-  assert.equal(released[0]!.reason, "hold_budget");
-  /* The measured hold spans the ORIGINAL claim, not this process's start: over
-     20 minutes against a 10 minute budget. A fresh clock would report about a
-     second here, and the release would not have happened at all. */
-  assert.ok(
-    released[0]!.heldMs >= 20 * 60_000,
-    `hold measured from this process only: ${released[0]!.heldMs}`,
-  );
-  // One attempt on the recovered lease, then the seat moves on.
-  assert.deepEqual(model.prompts, [first.id, second.id]);
-  assert.deepEqual(acked, [second.id]);
+  assert.equal(released.length, 0);
+  assert.deepEqual(model.prompts, []);
+  assert.deepEqual(acked, [first.id]);
 });
 
 test("a service that fans out reaches the prompt with this listener's own slot", async () => {
@@ -5038,16 +4972,6 @@ test("a service that fans out reaches the prompt with this listener's own slot",
     stop.reason === "fatal" ? `stopped fatally: ${stop.error.message}` : "",
   );
   assert.equal(acks, 2);
-  assert.equal(model.prompts.length, 2);
-  const first = model.prompts.find((entry) => entry.id === shared.id);
-  const second = model.prompts.find((entry) => entry.id === private_.id);
-  assert.ok(first, "the shared ask must have reached the model");
-  assert.ok(second, "the unreported ask must have reached the model");
-  assert.match(first.prompt, /you are recipient 2 of 3/);
-  /* CONTROL: the SAME runtime, the same model and the same claim loop produce a
-   * prompt with no recipient clause when the service reported no set. So the
-   * clause above comes from the delivery wire and not from the prompt builder
-   * adding it to everything. */
-  assert.doesNotMatch(second.prompt, /you are recipient/);
-  assert.doesNotMatch(second.prompt, /addressed this to/);
+  assert.equal(model.prompts.length, 0);
+  assert.equal(model.starts, 0);
 });

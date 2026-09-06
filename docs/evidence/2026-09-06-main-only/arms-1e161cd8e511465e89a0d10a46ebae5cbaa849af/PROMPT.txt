@@ -1,0 +1,35 @@
+You are a REVIEW ARM under D-036. Review one diff on an exact SHA. Try to REFUTE it. Read-only: do not edit files, do not commit, do not run destructive commands.
+
+REPO (read-only): /private/tmp/claude-501/-Users-yulanbot-Developer-Ridge-io-cloud-swarm/a866e6cd-5d6d-477f-af6a-740cd30407ed/scratchpad/lane-main-only
+SHA under review: 1e161cd8e511465e89a0d10a46ebae5cbaa849af on branch lane/main-only.
+THE DIFF: /private/tmp/claude-501/-Users-yulanbot-Developer-Ridge-io-cloud-swarm/a866e6cd-5d6d-477f-af6a-740cd30407ed/scratchpad/lane-main-only/arms-1e161cd8e511465e89a0d10a46ebae5cbaa849af/DIFF.patch
+It is `git diff 4df2a5f822f68e4b0c69ac0194fa5512af2c4ec4..1e161cd8e511465e89a0d10a46ebae5cbaa849af`. Read the diff file first, then read the files it touches in the repo at that SHA. Quote back the exact lines you rely on (path:line plus the text).
+
+Operator ruling (2026-09-06, absolute): there should NEVER be headless agents answering on behalf of the main agent. A signal wakes the seat's live session. The listener claims the delivery into the seat's queue and must never start a model.
+
+WHAT THE LANE CLAIMS
+1. ListenerRouteMode is only "main", exported as LISTENER_ROUTE_MODES = ["main"] as const. Parser, usage, and every refusal sentence read that constant. --route worker, --route split, and --defer-over are refused with a sentence generated from the constant plus the ruling clause.
+2. Old status files with routeMode "worker"|"split" still PARSE (control.ts default missing → "worker") and listen status reports them as legacy that cannot be started again.
+3. No code path in src/listener/runtime.ts or src/listener/supervisor.ts starts a model. options.model.start() is gone. A fake model whose start() throws still reaches ready and queues into pending-for-main.json.
+4. listen start is accepted with a principal-scoped hook OR a running cswarm inbox --notify watcher lock for the same principal (arrivalWatchLockPath / arrivalWatchLockHeld; never pgrep). Neither: refusal names both remedies from LISTENER_ATTENDANCE_SURFACES. --allow-unattended stays; its sentence says a queue may not wake a session.
+5. listen status names the attending surface (hook / watcher / none). When none: "Signals queue and nothing wakes the session." Sentences from constants.
+6. Host ACP files remain in the tree on purpose (declared follow-up). Provider flags stay only to name attendance surface kind.
+
+ATTACK THESE. For each, answer UPHELD / REFUTED / INCONCLUSIVE with path:line and a quoted snippet.
+
+C1. LISTENER_ROUTE_MODES: is it the single source for parser, usage, and refusals? If someone adds "worker" back to the constant, does the refusal test fail? Read tests/listener-main-only.test.ts.
+C2. Is there any remaining start path for --route worker or --defer-over that bypasses listenerRouteConfiguration?
+C3. Does runListenerRuntime or runListenerSupervisor still call model.start() or spawn grok/claude/codex/opencode? Search; do not grep-and-guess. Quote the ready path.
+C4. Can a throwing start() still be invoked through activity.instrumentModel or any other wrapper on the listener start path?
+C5. Attendance: does neither-surface refusal name BOTH remedies from LISTENER_ATTENDANCE_SURFACES? Can a dead lock file with a dead pid pass as a watcher? Does it pgrep?
+C6. Status honesty: when attendingSurfaces is empty, is the none sentence actually rendered? When routeMode is worker, is the LEGACY cannot-start-again sentence rendered by renderListenerStatus (not only by a helper the CLI never calls)?
+C7. Generated enumerations: any user-facing list of routes, surfaces, or remedies that is typed instead of built from the constant? Check src/listener/control.ts event validation, src/cli.ts usage, attendance canary copy.
+C8. D-053: does this diff add a branch on error.message?
+C9. Tests: were any existing tests weakened (assertions deleted or swapped to weaker ones) to make main-only pass? Name any you find.
+C10. False claims: does usage or status still say a worker thinks, answers, or is prompted, in a way that is now false for every live start?
+
+A prose PASS with no attempted refutation is not a review. End with exactly one line:
+VERDICT: PASS
+or
+VERDICT: FAIL
+followed by nothing.

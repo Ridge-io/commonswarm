@@ -1786,27 +1786,19 @@ test("hook install accepts an explicit scope and refuses an ambiguous host", asy
   }
 });
 
-test("listen route flags parse before credential work and enforce split bounds", () => {
+test("listen route flags parse before credential work and refuse worker, split, and defer-over", () => {
   assert.deepEqual(listenerRouteConfiguration(undefined, undefined), {
-    routeMode: "worker",
+    routeMode: "main",
     deferOverChars: null,
   });
   assert.deepEqual(listenerRouteConfiguration("main", undefined), {
     routeMode: "main",
     deferOverChars: null,
   });
-  assert.deepEqual(listenerRouteConfiguration("split", "1"), {
-    routeMode: "split",
-    deferOverChars: 1,
-  });
-  assert.deepEqual(listenerRouteConfiguration("split", "10000"), {
-    routeMode: "split",
-    deferOverChars: 10_000,
-  });
-  assert.throws(() => listenerRouteConfiguration("split", "0"), /1 to 10000/);
-  assert.throws(() => listenerRouteConfiguration("split", "10001"), /1 to 10000/);
-  assert.throws(() => listenerRouteConfiguration("split", undefined), /requires --defer-over/);
-  assert.throws(() => listenerRouteConfiguration("main", "10"), /only valid.*split/);
+  assert.throws(() => listenerRouteConfiguration("worker", undefined), /accepted --route values are main/);
+  assert.throws(() => listenerRouteConfiguration("split", undefined), /accepted --route values are main/);
+  assert.throws(() => listenerRouteConfiguration("split", "240"), /--defer-over is refused/);
+  assert.throws(() => listenerRouteConfiguration("main", "10"), /--defer-over is refused/);
 
   const base = [
     "listen", "start", "--agent-token-stdin", "--provider", "grok",
@@ -1815,10 +1807,10 @@ test("listen route flags parse before credential work and enforce split bounds",
   ];
   const refused = runCli([...base, "--route", "split", "--defer-over", "0"]);
   assert.equal(refused.status, 1);
-  assert.match(refused.stderr, /--defer-over must be an integer from 1 to 10000/);
+  assert.match(refused.stderr, /--defer-over is refused/);
   assert.doesNotMatch(refused.stderr, /credential artifact/);
 
-  const valid = runCli([...base, "--route", "split", "--defer-over", "240"]);
+  const valid = runCli([...base, "--route", "main", "--allow-unattended"]);
   assert.equal(valid.status, 1);
   assert.doesNotMatch(valid.stderr, /--route|--defer-over/);
   assert.match(valid.stderr, /agent credential/);
@@ -1829,7 +1821,8 @@ test("listen route flags parse before credential work and enforce split bounds",
     help.stdout,
     /cswarm hook check \[--principal-id <uuid> \.\.\.\] \[--cooldown <seconds>\]/,
   );
-  assert.match(help.stdout, /--route worker\|main\|split/);
+  assert.match(help.stdout, /--route main/);
+  assert.doesNotMatch(help.stdout, /--route worker\|main\|split/);
   assert.match(
     help.stdout,
     /hook check\s+reads only the selected listener's owned 0600 credential state/,
@@ -2035,7 +2028,8 @@ test("listen status names the route and the next step for waiting main asks", ()
     droppedForMainCount: 3,
     logPath: "/tmp/events.ndjson",
   });
-  assert.match(rendered, /Ask route: split; bodies over 240 characters/);
+  assert.match(rendered, /LEGACY: this status file has routeMode split/);
+  assert.match(rendered, /That route cannot be started again/);
   assert.match(
     rendered,
     /WARNING \[listener_unattended_main_queue\]: 2 messages are unattended/,
@@ -2045,7 +2039,8 @@ test("listen status names the route and the next step for waiting main asks", ()
     new RegExp(`cswarm hook install claude --principal-id ${PRINCIPAL_ID} --write`),
   );
   assert.match(rendered, /then start a fresh session/);
-  assert.match(rendered, /--route worker/);
+  assert.match(rendered, /cswarm inbox --notify/);
+  assert.doesNotMatch(rendered, /--route worker/);
   assert.match(rendered, /Routed asks dropped from the overflow queue: 3/);
   assert.match(rendered, /signals remain in the inbox.*cswarm inbox/i);
 });

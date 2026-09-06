@@ -1,0 +1,3291 @@
+diff --git a/AGENTS.md b/AGENTS.md
+index 11c58ed..56d1e2a 100644
+--- a/AGENTS.md
++++ b/AGENTS.md
+@@ -129,6 +129,10 @@ never push a branch you do not own. Run `scripts/branch-audit.sh` before pruning
+ event is a latency hint. `claim_agent_inbox` reads `swarm.signal_deliveries`. `cswarm listen status`
+ may report `mode: push` only while the Realtime socket is subscribed.
+ 
++**The listener never starts a model; a lane that adds a worker is wrong by construction.** The
++only live `--route` is `main`. A signal wakes the seat's own session. The listener claims the
++delivery into that seat's queue. It does not start Grok, Claude, Codex, or OpenCode.
++
+ ## Session continuity
+ 
+ Read the newest `docs/org/*-RESUME-HERE.md` on `main` before re-deriving work:
+diff --git a/docs/design/SWARM-CLOUD.md b/docs/design/SWARM-CLOUD.md
+index ff36806..48051f0 100644
+--- a/docs/design/SWARM-CLOUD.md
++++ b/docs/design/SWARM-CLOUD.md
+@@ -333,6 +333,10 @@ While the socket is subscribed it reconciles (read, then claim) every 5 minutes;
+ 
+ `cswarm listen status` reports `mode: push` or `mode: poll`. `mode: push` is reported only while the socket is subscribed.
+ 
++#### Listener route
++
++A listener never starts a model. The only live `--route` is `main`: the listener claims deliveries into `pending-for-main.json` and wakes the seat's own long-lived session. A headless worker answering for that session is a failure mode of the system. `--route worker`, `--route split`, and `--defer-over` are refused. Start is accepted when a principal-scoped hook or a running `cswarm inbox --notify` watcher for the same principal is present on this host; `--allow-unattended` is the explicit queue-only opt-in.
++
+ ## 3. Git discipline layer
+ 
+ - Branch per lease epoch, immutable once superseded: `swarm/<human>/<task>/e<epoch>`; base and head registered at acquire/submit. (Branch-per-worker is isolation, not a lock — it lets everyone work concurrently and surfaces collisions at merge, the reconcilable point, so it is the advisory-friendly move.)
+diff --git a/package.json b/package.json
+index 39fa796..0ceb968 100644
+--- a/package.json
++++ b/package.json
+@@ -20,7 +20,7 @@
+     "dev": "tsc --watch",
+     "check:tests": "tsc -p tsconfig.tests.json",
+     "check:edge": "deno check --config supabase/functions/command/deno.json supabase/functions/command/index.ts supabase/functions/read/index.ts supabase/functions/capability/index.ts supabase/functions/activity/index.ts",
+-    "test": "node --import tsx --test tests/brain-namespace.test.ts tests/signal-attachments.test.ts tests/host-version-floor.test.ts tests/protocol-next.test.ts tests/protocol-workspace.test.ts tests/protocol-agent-token-binding.test.ts tests/support/cold-start-retry.test.ts tests/support/signal-fetch-deadline.test.ts tests/support/agent-receive-cli.test.ts tests/support/arrival-watch.test.ts tests/p1-cli/resume.test.ts tests/p1-cli/resume-process-table.test.ts tests/delivery-client.test.ts tests/delivery-receipts.test.ts tests/p1-cli/d038-invite-form.test.ts tests/p1-cli/listener-provider.test.ts tests/p1-cli/standing-grants.test.ts tests/p1-cli/citation-drift.test.ts tests/p1-cli/test-gate-coverage.test.ts tests/p1-cli/agent-trailers.test.ts tests/command-cors.test.ts tests/command-durable-failures.test.ts tests/fresh-auth.test.ts tests/remove-member-mutation.test.ts tests/agent-revocation-mutation.test.ts tests/read-edge-diagnostics.test.ts tests/host-acp-grok.test.ts tests/host-permission-session-scope.test.ts tests/host-acp-claude.test.ts tests/host-acp-codex.test.ts tests/host-stderr-tail.test.ts tests/listener-activity.test.ts tests/listener-engine.test.ts tests/listener-effect-store.test.ts tests/listener-grok-model.test.ts tests/listener-claude-model.test.ts tests/listener-codex-model.test.ts tests/idle-poll.test.ts tests/idle-cost-retention.test.ts tests/listener-runtime.test.ts tests/listener-wake.test.ts tests/listener-routing.test.ts tests/listener-control.test.ts tests/listener-detach.test.ts tests/listener-cli-process.test.ts tests/host-acp-opencode.test.ts tests/listener-opencode-model.test.ts tests/host-acp-opencode-homes.test.ts tests/listener-host-limits.test.ts tests/listener-delivery-journal.test.ts tests/claim-ledger-parse.test.ts tests/receipt-wire-compat.test.ts tests/chat-channel-constants.test.ts tests/chat-signal-wire-compat.test.ts",
++    "test": "node --import tsx --test tests/brain-namespace.test.ts tests/signal-attachments.test.ts tests/host-version-floor.test.ts tests/protocol-next.test.ts tests/protocol-workspace.test.ts tests/protocol-agent-token-binding.test.ts tests/support/cold-start-retry.test.ts tests/support/signal-fetch-deadline.test.ts tests/support/agent-receive-cli.test.ts tests/support/arrival-watch.test.ts tests/p1-cli/resume.test.ts tests/p1-cli/resume-process-table.test.ts tests/delivery-client.test.ts tests/delivery-receipts.test.ts tests/p1-cli/d038-invite-form.test.ts tests/p1-cli/listener-provider.test.ts tests/p1-cli/standing-grants.test.ts tests/p1-cli/citation-drift.test.ts tests/p1-cli/test-gate-coverage.test.ts tests/p1-cli/agent-trailers.test.ts tests/command-cors.test.ts tests/command-durable-failures.test.ts tests/fresh-auth.test.ts tests/remove-member-mutation.test.ts tests/agent-revocation-mutation.test.ts tests/read-edge-diagnostics.test.ts tests/host-acp-grok.test.ts tests/host-permission-session-scope.test.ts tests/host-acp-claude.test.ts tests/host-acp-codex.test.ts tests/host-stderr-tail.test.ts tests/listener-activity.test.ts tests/listener-engine.test.ts tests/listener-effect-store.test.ts tests/listener-grok-model.test.ts tests/listener-claude-model.test.ts tests/listener-codex-model.test.ts tests/idle-poll.test.ts tests/idle-cost-retention.test.ts tests/listener-runtime.test.ts tests/listener-wake.test.ts tests/listener-routing.test.ts tests/listener-main-only.test.ts tests/listener-control.test.ts tests/listener-detach.test.ts tests/listener-cli-process.test.ts tests/host-acp-opencode.test.ts tests/listener-opencode-model.test.ts tests/host-acp-opencode-homes.test.ts tests/listener-host-limits.test.ts tests/listener-delivery-journal.test.ts tests/claim-ledger-parse.test.ts tests/receipt-wire-compat.test.ts tests/chat-channel-constants.test.ts tests/chat-signal-wire-compat.test.ts",
+     "test:site": "npm --prefix site test",
+     "test:p1-cli": "node scripts/require-cli-build.mjs && node --import tsx --test tests/p1-cli/**/*.test.ts",
+     "test:p1-local": "node --import tsx --test --test-concurrency=1 tests/p1-local/local-integration.test.ts tests/p1-local/file-artifacts-e2e.test.ts tests/p1-local/delivery-receipts-postgres.test.ts tests/p1-local/human-seen-browser.test.ts tests/p1-local/standing-grants-postgres.test.ts tests/p1-local/activity-realtime-auth.test.ts tests/p1-local/chat-channels-postgres.test.ts tests/p1-local/chat-recipients-postgres.test.ts tests/p1-local/wake-realtime-auth.test.ts",
+diff --git a/src/cli.ts b/src/cli.ts
+index 87e761f..e3f84a6 100755
+--- a/src/cli.ts
++++ b/src/cli.ts
+@@ -223,6 +223,7 @@ import {
+ import {
+   acquireArrivalWatchLock,
+   arrivalNotification,
++  arrivalWatchLockHeld,
+   arrivalWatchLockPath,
+   createArrivalRetryNoticePolicy,
+   fileArrivalCursorStore,
+@@ -267,17 +268,13 @@ import {
+ } from "./host/version.js";
+ import {
+   classifyClaudeCanaryFailure,
+-  ClaudeListenerModel,
+-  CodexListenerModel,
+   AgentActivityEndpointTransport,
+   FileBrainDigestStore,
+   FileHookSurfaceStore,
+   FileListenerEffectStore,
+   FilePendingMainQueue,
+-  GrokListenerModel,
+   ListenerStartupError,
+   ListenerActivityController,
+-  OpenCodeListenerModel,
+   effectiveListenerStatus,
+   listenerPaths,
+   defaultListenerStateDirectory,
+@@ -299,8 +296,18 @@ import {
+   writeListenerCredentialState,
+   LISTENER_DELIVERY_FAILING_THRESHOLD,
+   LISTENER_THROUGHPUT_LAPSE_RATIO,
+-  LISTENER_DEFER_OVER_MAX,
+-  LISTENER_DEFER_OVER_MIN,
++  LISTENER_ROUTE_MODES,
++  listenerRouteUsage,
++  listenerRouteRefusedSentence,
++  listenerDeferOverRefusedSentence,
++  listenerLegacyRouteSentence,
++  listenerUnattendedRefusedMessage,
++  listenerAttendanceRemediesSentence,
++  listenerAttendingSurfaces,
++  listenerAttendingSentence,
++  LISTENER_NONE_ATTENDING_SENTENCE,
++  isLiveListenerRouteMode,
++  NullListenerModel,
+   emptyListenerReadHealth,
+   summarizeListenerReadHealth,
+   listenerWakeStatusSentence,
+@@ -316,6 +323,7 @@ import {
+   type ListenerSenderProvenanceContext,
+   type ListenerStatus,
+   type ListenerRouteMode,
++  type ListenerAttendanceSurface,
+ } from "./listener/index.js";
+ import { ListenerHttpClient } from "./listener/http-client.js";
+ import {
+@@ -563,7 +571,7 @@ Usage:
+   cswarm brain get <topic>[@<version>] [--version <n>] [--url <url> --anon-key <key>] [--workspace-id <uuid>] ${agentCredential} [--json]
+   cswarm brain put <topic> [<markdown-path>] [--url <url> --anon-key <key>] [--workspace-id <uuid>] ${agentCredential} [--if-version <n>] [--json]  # without a path, reads Markdown from stdin; --if-version refuses the write unless the live version is still <n>
+   cswarm feedback "<text>" --kind bug|idea|friction [--about <ref>] [--url <url> --anon-key <key>] [--workspace-id <uuid>] ${agentCredential} [--json]
+-  cswarm listen start ${requiredAgentCredential} [--url <url> --anon-key <key>] --workspace-id <uuid> --provider grok|opencode|claude|codex [--cwd <absolute-path>] [--model <model>] [--effort <level>] [--permissions deny|allow] [--grok-executable <path>] [--opencode-executable <path>] [--claude-executable <path>] [--codex-executable <path>] [--turn-budget <duration>] [--poll-interval <duration>] [--route worker|main|split] [--defer-over <chars>] [--allow-unattended] [--foreground] [--json]
++  cswarm listen start ${requiredAgentCredential} [--url <url> --anon-key <key>] --workspace-id <uuid> --provider grok|opencode|claude|codex [--cwd <absolute-path>] [--model <model>] [--effort <level>] [--permissions deny|allow] [--grok-executable <path>] [--opencode-executable <path>] [--claude-executable <path>] [--codex-executable <path>] [--turn-budget <duration>] [--poll-interval <duration>] [--route ${listenerRouteUsage()}] [--allow-unattended] [--foreground] [--json]
+   cswarm listen canary ${requiredAgentCredential} [--url <url> --anon-key <key>] --workspace-id <uuid> [--state-dir <path>] [--wait <seconds>] [--json]
+   cswarm listen status ${agentCredential} [--url <url> --anon-key <key>] --workspace-id <uuid> [--principal-id <uuid>] [--json]
+   cswarm listen stop ${agentCredential} [--url <url> --anon-key <key>] --workspace-id <uuid> [--principal-id <uuid>] [--json]
+@@ -655,31 +663,28 @@ refused locally before any network call, so compose within the limit.
+ 
+ ${idlePollHelpSentence()}
+ 
+-listen start --turn-budget bounds ONE worker prompt turn (default 10m): how long
+-the worker may think and use tools on a single message before the turn times out
+-and durable delivery retries it. A whole number plus s, m, or h (for example
+-90s, 5m, 1h), at least 30s and at most 60m. Each turn is additionally clamped
+-to the live credential's remaining lifetime minus 60s, after renewing it when
+-due — a turn never outlives its credential. Right after a rotation the full
+-budget is available up to the token TTL minus 60s (about 59m on the default 1h
+-TTL); a turn that lands just before a rotation can be clamped to the ~5m
+-renewal lead, and if it times out there, durable delivery retries it on the
+-fresh credential. The same budget also bounds how long ONE delivery may hold the
+-worker seat across its retries: when it is spent the listener hands the seat
+-back and claims the next delivery. After the lease ends the service either
++listen start --turn-budget bounds how long ONE claimed delivery may hold this
++listener before it is handed back (default 10m). The listener never starts a
++model, so this is not thinking-time for a worker. A whole number plus s, m, or h
++(for example 90s, 5m, 1h), at least 30s and at most 60m. Each hold is additionally
++clamped to the live credential's remaining lifetime minus 60s, after renewing it
++when due. Right after a rotation the full budget is available up to the token
++TTL minus 60s (about 59m on the default 1h TTL); a hold that lands just before a
++rotation can be clamped to the ~5m renewal lead. After the lease ends the service either
+ delivers the released one again or terminates it.
+ 
+-listen start --route worker|main|split chooses where directed messages go. worker
+-is the unchanged default. main queues every ask or note for the interactive session.
+-split queues messages whose body is longer than --defer-over <chars>; the bound is
+-1..10000 and an equal-length message stays on the worker path. main and split require
+-a principal-scoped Claude hook or prior hook surface. --allow-unattended accepts the
+-risk explicitly. Run cswarm hook check
++listen start --route ${listenerRouteUsage()} is the only live route: the listener
++claims deliveries into pending-for-main.json and never starts a model. A listener
++never answers for a session; the seat's own session reads the queue. Start is accepted
++when a principal-scoped hook or a running cswarm inbox --notify watcher for the same
++principal is present on this host. --allow-unattended accepts a queue that may not
++wake a session. --route worker, --route split, and --defer-over are refused. Run
++cswarm hook check
+ --principal-id <uuid> to surface that agent's queued messages. A bare check works only
+ when the state directory holds one principal. hook check has its own 3s ceiling, exits 0
+ on every outcome, and skips network checks made within --cooldown seconds (default 30).
+ listen canary posts one self-addressed note, waits at most --wait seconds (default 10),
+-and reports accepted, claimed, queued/worker, surfaced, and observed as separate hops.
++and reports accepted, claimed, queued, surfaced, and observed as separate hops.
+ hook install claude prints principal-scoped UserPromptSubmit JSON by default. --write changes
+ <project>/.claude/settings.local.json, which applies only to Claude Code sessions started in
+ that project. Inside a git repository, the local file must be ignored. --user opts in to
+@@ -2622,40 +2627,19 @@ export function listenerPollIntervalMs(value: string | undefined): number {
+   return parseIdlePollIntervalMs(value);
+ }
+ 
+-/** Parse the public route pair before credentials or network work. */
++/** Parse the public route before credentials or network work. */
+ export function listenerRouteConfiguration(
+   routeValue: string | undefined,
+   deferOverValue: string | undefined,
+ ): { routeMode: ListenerRouteMode; deferOverChars: number | null } {
+-  const routeMode = routeValue ?? "worker";
+-  if (routeMode !== "worker" && routeMode !== "main" && routeMode !== "split") {
+-    throw new Error("--route must be worker, main, or split");
++  if (deferOverValue !== undefined) {
++    throw new Error(listenerDeferOverRefusedSentence());
+   }
+-  if (routeMode !== "split") {
+-    if (deferOverValue !== undefined) {
+-      throw new Error("--defer-over is only valid with --route split");
+-    }
+-    return { routeMode, deferOverChars: null };
+-  }
+-  if (deferOverValue === undefined) {
+-    throw new Error("--route split requires --defer-over <chars>");
+-  }
+-  if (!/^\d+$/.test(deferOverValue)) {
+-    throw new Error(
+-      `--defer-over must be an integer from ${LISTENER_DEFER_OVER_MIN} to ${LISTENER_DEFER_OVER_MAX}`,
+-    );
+-  }
+-  const deferOverChars = Number(deferOverValue);
+-  if (
+-    !Number.isSafeInteger(deferOverChars) ||
+-    deferOverChars < LISTENER_DEFER_OVER_MIN ||
+-    deferOverChars > LISTENER_DEFER_OVER_MAX
+-  ) {
+-    throw new Error(
+-      `--defer-over must be an integer from ${LISTENER_DEFER_OVER_MIN} to ${LISTENER_DEFER_OVER_MAX}`,
+-    );
++  const routeMode = routeValue ?? LISTENER_ROUTE_MODES[0];
++  if (!isLiveListenerRouteMode(routeMode)) {
++    throw new Error(listenerRouteRefusedSentence(routeMode));
+   }
+-  return { routeMode, deferOverChars };
++  return { routeMode, deferOverChars: null };
+ }
+ 
+ /** Post-turn work (the ack, the reply post, the renewal request itself) must fit between turn end and credential expiry. */
+@@ -4545,6 +4529,18 @@ export interface ListenerAttendanceEvidence {
+   pendingForMainOldestAt: string | null;
+   hookSurfaceExists: boolean;
+   hookSurfaceAdvanced: boolean;
++  watcherLockHeld?: boolean;
++  attendingSurfaces?: ListenerAttendanceSurface[];
++}
++
++function emptyAttendanceEvidence(): ListenerAttendanceEvidence {
++  return {
++    pendingForMainOldestAt: null,
++    hookSurfaceExists: false,
++    hookSurfaceAdvanced: false,
++    watcherLockHeld: false,
++    attendingSurfaces: [],
++  };
+ }
+ 
+ function listenerAttendanceState(
+@@ -4557,16 +4553,17 @@ function listenerAttendanceState(
+   handled: boolean | null;
+   handledState: "handled" | "not_handled" | "not_yet_measured";
+ } {
+-  const routeMode = status.routeMode ?? "worker";
+   const pending = status.pendingForMainCount ?? 0;
+   const connected = status.state === "ready";
+-  const attendanceState = routeMode === "worker"
+-    ? "not_required"
+-    : pending > 0
++  const attendingSurfaces = evidence.attendingSurfaces ?? [];
++  const hasSurface = attendingSurfaces.length > 0;
++  const attendanceState = pending > 0
+     ? "unattended"
+-    : evidence.hookSurfaceAdvanced
++    : hasSurface && evidence.hookSurfaceAdvanced
+     ? "attended"
+-    : "unproven";
++    : hasSurface
++    ? "unproven"
++    : "unattended";
+   const attended = attendanceState === "attended"
+     ? true
+     : attendanceState === "unattended"
+@@ -4585,7 +4582,9 @@ function listenerAttendanceState(
+       LISTENER_DELIVERY_FAILING_THRESHOLD;
+   const handled = pending > 0
+     ? false
+-    : routeMode !== "worker" || lastAckOutcome === null
++    : lastAckOutcome === null
++    ? null
++    : lastAckOutcome === "queued"
+     ? null
+     : deliveryFailing
+     ? false
+@@ -4608,7 +4607,7 @@ function listenerAttendanceState(
+ }
+ 
+ function listenerAttendanceRemedy(principalId: string): string {
+-  return `cswarm hook install claude --principal-id ${principalId} --write, then start a fresh session. Or restart the listener with --route worker.`;
++  return listenerAttendanceRemediesSentence(principalId);
+ }
+ 
+ interface ListenerLapseNotice {
+@@ -4787,11 +4786,7 @@ function providerRestartRequired(
+ export function listenerStatusJson(
+   status: ListenerStatus,
+   permissionMode?: ListenerPermissionMode,
+-  evidence: ListenerAttendanceEvidence = {
+-    pendingForMainOldestAt: null,
+-    hookSurfaceExists: false,
+-    hookSurfaceAdvanced: false,
+-  },
++  evidence: ListenerAttendanceEvidence = emptyAttendanceEvidence(),
+   nowMs: number = Date.now(),
+   installed: ListenerProviderInstallEvidence | null = null,
+ ): Record<string, unknown> {
+@@ -4828,6 +4823,14 @@ export function listenerStatusJson(
+     ...attendance,
+     hookSurfaceExists: evidence.hookSurfaceExists,
+     hookSurfaceAdvanced: evidence.hookSurfaceAdvanced,
++    watcherLockHeld: evidence.watcherLockHeld ?? false,
++    attendingSurfaces: evidence.attendingSurfaces ?? [],
++    attendingSurface: (evidence.attendingSurfaces ?? []).length === 0
++      ? "none"
++      : (evidence.attendingSurfaces ?? []).length === 1
++      ? evidence.attendingSurfaces![0]
++      : (evidence.attendingSurfaces ?? []).join("+"),
++    attendingSentence: listenerAttendingSentence(evidence.attendingSurfaces ?? []),
+     pendingForMainOldestAt: evidence.pendingForMainOldestAt,
+     pendingForMainOldestAgeMs: evidence.pendingForMainOldestAt === null
+       ? null
+@@ -4913,11 +4916,7 @@ export function listenerStatusJson(
+ 
+ export function renderListenerStatus(
+   status: ListenerStatus,
+-  evidence: ListenerAttendanceEvidence = {
+-    pendingForMainOldestAt: null,
+-    hookSurfaceExists: false,
+-    hookSurfaceAdvanced: false,
+-  },
++  evidence: ListenerAttendanceEvidence = emptyAttendanceEvidence(),
+   nowMs: number = Date.now(),
+   installed: ListenerProviderInstallEvidence | null = null,
+ ): string {
+@@ -4939,13 +4938,14 @@ export function renderListenerStatus(
+       ? `Listener WARNING for agent ${status.principalId}: ${unattendedCount}.`
+       : `Listener ${status.state} for agent ${status.principalId}.`,
+     `CONNECTED: ${attendance.connected ? "yes" : "no"}. Transport state is ${status.state}.`,
++    listenerAttendingSentence(evidence.attendingSurfaces ?? []),
+     `ATTENDED: ${
+       attendance.attendanceState === "attended"
+         ? "yes. The session hook has surfaced messages on this host"
+         : attendance.attendanceState === "unattended"
+-        ? "no. The main-session queue is not draining"
+-        : attendance.attendanceState === "not_required"
+-        ? "not required for the worker route"
++        ? (evidence.attendingSurfaces ?? []).length === 0
++          ? `no. ${LISTENER_NONE_ATTENDING_SENTENCE.replace(/\.$/, "")}`
++          : "no. The main-session queue is not draining"
+         : "not yet proven on this host"
+     }.`,
+     `HANDLED: ${
+@@ -4978,7 +4978,6 @@ export function renderListenerStatus(
+     status.lastSignalId
+       ? pendingForMainCount > 0
+         ? `Last claimed and queued signal: ${status.lastSignalId}. It is not handled yet.`
+-        : routeMode === "worker"
+         // Keyed on the OUTCOME, never on handledState: an `observed` note is not
+         // a failed delivery, and during a failure run it is not evidence of
+         // handling either, so it gets the neutral sentence naming its outcome.
+@@ -4989,7 +4988,7 @@ export function renderListenerStatus(
+         // written by a listener older than this CLI carries lastAckAt with no
+         // outcome -- every fleet listener at the 0.1.51 upgrade, and any new CLI
+         // reading a running 0.1.50 listener -- and DID acknowledge something.
+-        ? status.lastAckAt === null
++        : status.lastAckAt === null
+           ? `Last listener signal: ${status.lastSignalId}. No delivery acknowledgement is recorded.`
+           : status.lastAckOutcome === null
+           ? `Last listener signal: ${status.lastSignalId}. An acknowledgement was recorded at ${status.lastAckAt}; its outcome was not recorded.`
+@@ -5001,7 +5000,6 @@ export function renderListenerStatus(
+               deliveryFailureRun < LISTENER_DELIVERY_FAILING_THRESHOLD
+           ? `Last handled signal: ${status.lastAckSignalId}.`
+           : `Last acknowledged signal: ${status.lastAckSignalId}. Its outcome was ${status.lastAckOutcome}.`
+-        : `Last listener signal: ${status.lastSignalId}. Local status does not prove its final observed receipt.`
+       : "No signal has been handled yet.",
+     status.lastErrorCode
+       ? `Last status code: ${status.lastErrorCode}.`
+@@ -5199,39 +5197,31 @@ export function renderListenerStatus(
+         }.`,
+     );
+   }
+-  lines.push(
+-    routeMode === "split"
+-      ? `Ask route: split; bodies over ${status.deferOverChars} characters wait for this interactive session.`
+-      : routeMode === "main"
+-      ? "Ask route: main; directed asks wait for this interactive session."
+-      : "Ask route: worker (default).",
+-  );
+-  if (routeMode !== "worker") {
+-    lines.push(`Asks waiting for this session: ${pendingForMainCount}.`);
+-    lines.push(`Routed asks dropped from the overflow queue: ${droppedForMainCount}.`);
+-    if (droppedForMainCount > 0) {
+-      lines.push(
+-        "The signals remain in the inbox. Recover them with: cswarm inbox",
+-      );
+-    }
+-    if (pendingForMainCount > 0) {
++  lines.push(listenerLegacyRouteSentence(routeMode));
++  lines.push(`Asks waiting for this session: ${pendingForMainCount}.`);
++  lines.push(`Routed asks dropped from the overflow queue: ${droppedForMainCount}.`);
++  if (droppedForMainCount > 0) {
++    lines.push(
++      "The signals remain in the inbox. Recover them with: cswarm inbox",
++    );
++  }
++  if (pendingForMainCount > 0) {
++    lines.push(
++      `WARNING [listener_unattended_main_queue]: ${unattendedCount}. The oldest was queued ${
++        evidence.pendingForMainOldestAt === null
++          ? "an unknown time"
++          : relativeAge(evidence.pendingForMainOldestAt, nowMs)
++      }${
++        evidence.pendingForMainOldestAt === null
++          ? ""
++          : ` (queued at ${evidence.pendingForMainOldestAt})`
++      }.`,
++    );
++    lines.push(`Next: ${listenerAttendanceRemedy(status.principalId)}`);
++    if (status.state === "stopped" || status.state === "failed") {
+       lines.push(
+-        `WARNING [listener_unattended_main_queue]: ${unattendedCount}. The oldest was queued ${
+-          evidence.pendingForMainOldestAt === null
+-            ? "an unknown time"
+-            : relativeAge(evidence.pendingForMainOldestAt, nowMs)
+-        }${
+-          evidence.pendingForMainOldestAt === null
+-            ? ""
+-            : ` (queued at ${evidence.pendingForMainOldestAt})`
+-        }.`,
++        `${pendingForMainCount} ${pendingForMainCount === 1 ? "message is" : "messages are"} also stranded because this listener is not running. Restart it by piping the same agent credential into: ${listenerRestartCommand(status)}`,
+       );
+-      lines.push(`Next: ${listenerAttendanceRemedy(status.principalId)}`);
+-      if (status.state === "stopped" || status.state === "failed") {
+-        lines.push(
+-          `${pendingForMainCount} ${pendingForMainCount === 1 ? "message is" : "messages are"} also stranded because this listener is not running. Restart it by piping the same agent credential into: ${listenerRestartCommand(status)}`,
+-        );
+-      }
+     }
+   }
+   if (
+@@ -5775,81 +5765,16 @@ async function runConfiguredListener(options: {
+       lastWorkerStderrTail = tail.length > 0 ? tail : null;
+     };
+   };
+-  // A factory, not a value: the supervisor may run the listener more than once
+-  // and a model is single-use (runListenerRuntime closes it on every exit, and
+-  // every adapter throws "listener model is closed" once closed). Constructing
+-  // one here and capturing it would make every restart fail instantly.
+   const newModel = (
+-    onCanaryAttempt: ListenerCanaryAttemptCallback,
+-    events: ListenerActivityController["events"],
+-  ) => {
+-    providerVersionNotice = null;
+-    return options.provider === "opencode"
+-    ? new OpenCodeListenerModel({
+-      cwd: options.cwd,
+-      permissionMode: options.permissionMode,
+-      promptTimeoutMs: resolveTurnBudgetMs,
+-      onWorkerStderrTail: newWorkerStderrTailSink(),
+-      onCanaryAttempt,
+-      onVersionNotice,
+-      events,
+-      ...(options.model ? { model: options.model } : {}),
+-      ...(options.opencodeExecutable
+-        ? { executable: options.opencodeExecutable }
+-        : options.executable
+-        ? { executable: options.executable }
+-        : {}),
+-    })
+-    : options.provider === "claude"
+-    ? new ClaudeListenerModel({
+-      cwd: options.cwd,
+-      permissionMode: options.permissionMode,
+-      promptTimeoutMs: resolveTurnBudgetMs,
+-      onWorkerStderrTail: newWorkerStderrTailSink(),
+-      onCanaryAttempt,
+-      onRuntimeNotice: onClaudeRuntimeNotice,
+-      onVersionNotice,
+-      events,
+-      ...(options.claudeExecutable
+-        ? { executable: options.claudeExecutable }
+-        : options.executable
+-        ? { executable: options.executable }
+-        : {}),
+-    })
+-    : options.provider === "codex"
+-    ? new CodexListenerModel({
+-      cwd: options.cwd,
+-      permissionMode: options.permissionMode,
+-      promptTimeoutMs: resolveTurnBudgetMs,
+-      onWorkerStderrTail: newWorkerStderrTailSink(),
+-      onCanaryAttempt,
+-      onVersionNotice,
+-      events,
+-      ...(options.codexExecutable
+-        ? { executable: options.codexExecutable }
+-        : options.executable
+-        ? { executable: options.executable }
+-        : {}),
+-    })
+-    : new GrokListenerModel({
+-      cwd: options.cwd,
+-      permissionMode: options.permissionMode,
+-      promptTimeoutMs: resolveTurnBudgetMs,
+-      onWorkerStderrTail: newWorkerStderrTailSink(),
+-      onCanaryAttempt,
+-      onVersionNotice,
+-      events,
+-      ...(options.model ? { model: options.model } : {}),
+-      ...(options.effort ? { effort: options.effort } : {}),
+-      ...(options.executable ? { executable: options.executable } : {}),
+-    });
+-  };
++    _onCanaryAttempt: ListenerCanaryAttemptCallback,
++    _events: ListenerActivityController["events"],
++  ) => new NullListenerModel();
+   const onProcessSignal = () => {
+     void stopListener(paths);
+   };
+   let selectedJournal: ListenerDeliveryJournal | undefined;
+   let selectedListenerInstanceId: string | undefined;
+-  const routeMode = options.routeMode ?? "worker";
++  const routeMode = options.routeMode ?? "main";
+   const deferOverChars = options.deferOverChars ?? null;
+   const pendingMainQueue = new FilePendingMainQueue(paths.instanceDirectory);
+   process.on("SIGINT", onProcessSignal);
+@@ -6046,9 +5971,14 @@ async function runListenStart(args: Arguments): Promise<void> {
+     );
+   }
+   if (
+-    routing.routeMode !== "worker" &&
+     !args.has("allow-unattended") &&
+-    !(await listenerHasAttendanceSurface(paths.instanceDirectory, cwd, principalId))
++    !(await listenerHasAttendanceSurface({
++      instanceDirectory: paths.instanceDirectory,
++      cwd,
++      principalId,
++      cloud,
++      workspaceId,
++    }))
+   ) {
+     throw new ListenerUnattendedRefusedError(principalId);
+   }
+@@ -6126,9 +6056,6 @@ async function runListenStart(args: Arguments): Promise<void> {
+         provider,
+         nodeExecArgv: process.execArgv,
+         route: routing.routeMode,
+-        ...(routing.deferOverChars === null
+-          ? {}
+-          : { deferOver: routing.deferOverChars }),
+         ...(stateDirectory ? { stateDirectory } : {}),
+         ...(args.optional("model") ? { model: args.required("model") } : {}),
+         ...(args.optional("effort") ? { effort: args.required("effort") } : {}),
+@@ -6201,50 +6128,35 @@ async function runListenStart(args: Arguments): Promise<void> {
+       )}. ${listenerProviderIdentitySummary(status)}`,
+     );
+   }
+-  let attendanceEvidence: ListenerAttendanceEvidence = {
+-    pendingForMainOldestAt: null,
+-    hookSurfaceExists: false,
+-    hookSurfaceAdvanced: false,
++  const recordedPendingStart = status.pendingForMainCount ?? 0;
++  const recordedDroppedStart = status.droppedForMainCount ?? 0;
++  const queueStatsStart = await unsurfacedPendingMainStats(
++    paths.instanceDirectory,
++    { count: recordedPendingStart, droppedCount: recordedDroppedStart },
++  );
++  status = {
++    ...status,
++    pendingForMainCount: queueStatsStart.count,
++    droppedForMainCount: queueStatsStart.droppedCount,
+   };
+-  if ((status.routeMode ?? "worker") !== "worker") {
+-    const recordedPending = status.pendingForMainCount ?? 0;
+-    const recordedDropped = status.droppedForMainCount ?? 0;
+-    const queueStats = await unsurfacedPendingMainStats(
+-      paths.instanceDirectory,
+-      { count: recordedPending, droppedCount: recordedDropped },
+-    );
+-    status = {
+-      ...status,
+-      pendingForMainCount: queueStats.count,
+-      droppedForMainCount: queueStats.droppedCount,
+-    };
+-    attendanceEvidence = {
+-      pendingForMainOldestAt: queueStats.oldestAt,
+-      hookSurfaceExists: queueStats.hookSurfaceExists,
+-      hookSurfaceAdvanced: queueStats.hookSurfaceAdvanced,
+-    };
+-  }
++  const attendanceEvidence = await collectListenerAttendanceEvidence({
++    instanceDirectory: paths.instanceDirectory,
++    cwd,
++    principalId,
++    cloud,
++    workspaceId,
++    pendingForMainOldestAt: queueStatsStart.oldestAt,
++    hookSurfaceExists: queueStatsStart.hookSurfaceExists,
++    hookSurfaceAdvanced: queueStatsStart.hookSurfaceAdvanced,
++  });
+   if (args.has("json")) {
+     printJson(listenerStatusJson(status, permissionMode, attendanceEvidence));
+     return;
+   }
+-  const routingNote = routing.routeMode === "main"
+-    ? "Directed asks are queued for your interactive session and never prompt the ACP worker. Run cswarm hook check to surface them.\n"
+-    : routing.routeMode === "split"
+-    ? `Directed asks over ${routing.deferOverChars} characters are queued for your interactive session; shorter asks use the worker. Run cswarm hook check to surface queued asks.\n`
+-    : "";
+-  const workerAudience = routing.routeMode === "main"
+-    ? "Directed asks do not reach that worker."
+-    : routing.routeMode === "split"
+-    ? "Only asks at or below the split threshold reach that worker, with sender and operator provenance in the prompt."
+-    : "Every sender reaches that worker with sender and operator provenance in the prompt.";
+-  const hostNote = provider === "opencode"
+-    ? `The OpenCode worker uses one private auth/config home and your selected project cwd. ${workerAudience} Tool requests are approved one at a time by default, when the worker asks and the host offers a one-time approval; --permissions deny refuses them. The deny canary does not cover steady-state allow.\n`
+-    : provider === "claude"
+-    ? `The Claude worker uses your selected cwd and normal Claude Code keychain/OAuth state through claude-agent-acp 0.64.2 or newer. ${workerAudience}\n`
+-    : provider === "codex"
+-    ? `The Codex worker uses your selected cwd and normal ChatGPT/Codex auth through codex-acp 1.1.9 or newer. CommonSwarm selects read-only mode before its deny canary. ${workerAudience}\n`
+-    : `The Grok worker uses your selected cwd and local Grok configuration, including user and cmux hooks. ${workerAudience}\n`;
++  const routingNote =
++    "Directed asks are queued for your interactive session and never start a model. Run cswarm hook check to surface them.\n";
++  const workerAudience = "The listener never starts a model; the seat's own session reads the queue.";
++  const hostNote = `--provider ${provider} names the attendance surface kind for this seat. ${workerAudience}\n`;
+   process.stdout.write(
+     `${
+       args.has("foreground")
+@@ -6253,26 +6165,6 @@ async function runListenStart(args: Arguments): Promise<void> {
+         ? "Listener transport is connected, but queued messages are unattended."
+         : "Listener is ready and will keep receiving after this command exits."
+     }\n${renderListenerStatus(status, attendanceEvidence)}\n` +
+-      /* ~~"allowed once because you explicitly selected --permissions allow" / "denied by
+-       * default"~~ Dead 2026-08-11. Flipping the default inverted BOTH clauses at once: allow is
+-       * no longer explicitly selected and deny is no longer the default. Neither string appeared
+-       * in the diff that changed the default, which is why the sweep has to be over claims rather
+-       * than over changed lines.
+-       *
+-       * The deny branch also now states the COST. Measured the same day: a worker under deny had
+-       * Bash and Write refused, so it could answer and could not act, and every status surface
+-       * called it healthy — the operator had nothing to read that explained it. "Tool requests are
+-       * denied" is true and gets skimmed past; naming what the worker cannot do does not. */
+-      `Same-owner tool requests are ${
+-        permissionMode === "allow"
+-          ? "approved one at a time, when the worker asks and the host offers a one-time approval"
+-          /* ~~"running commands and writing files were both refused in testing"~~ Dead: this line
+-           * is emitted for EVERY provider, and the durable record
+-           * (docs/evidence/2026-08-10-dogfood/README.md) exercised only OpenCode. A measurement
+-           * from one provider was being asserted for four. Caught by the exact-review arm. */
+-          : "denied. This worker can reply to messages but cannot do anything it must ask " +
+-            "permission for; restart with --permissions allow if that is not what you want"
+-      }. The same permission mode applies to every sender relation.\n` +
+       "The short credential rotates while this process remains alive and secure local state is available. Run cswarm whoami with this credential to see whether its grant is timeboxed or standing.\n" +
+       routingNote +
+       hostNote +
+@@ -6417,29 +6309,27 @@ async function runListenStatusOrStop(
+     }
+     return;
+   }
+-  let attendanceEvidence: ListenerAttendanceEvidence = {
+-    pendingForMainOldestAt: null,
+-    hookSurfaceExists: false,
+-    hookSurfaceAdvanced: false,
++  const recordedPendingStatus = status.pendingForMainCount ?? 0;
++  const recordedDroppedStatus = status.droppedForMainCount ?? 0;
++  const queueStatsStatus = await unsurfacedPendingMainStats(
++    paths.instanceDirectory,
++    { count: recordedPendingStatus, droppedCount: recordedDroppedStatus },
++  );
++  status = {
++    ...status,
++    pendingForMainCount: queueStatsStatus.count,
++    droppedForMainCount: queueStatsStatus.droppedCount,
+   };
+-  if ((status.routeMode ?? "worker") !== "worker") {
+-    const recordedPending = status.pendingForMainCount ?? 0;
+-    const recordedDropped = status.droppedForMainCount ?? 0;
+-    const queueStats = await unsurfacedPendingMainStats(
+-      paths.instanceDirectory,
+-      { count: recordedPending, droppedCount: recordedDropped },
+-    );
+-    status = {
+-      ...status,
+-      pendingForMainCount: queueStats.count,
+-      droppedForMainCount: queueStats.droppedCount,
+-    };
+-    attendanceEvidence = {
+-      pendingForMainOldestAt: queueStats.oldestAt,
+-      hookSurfaceExists: queueStats.hookSurfaceExists,
+-      hookSurfaceAdvanced: queueStats.hookSurfaceAdvanced,
+-    };
+-  }
++  const attendanceEvidence = await collectListenerAttendanceEvidence({
++    instanceDirectory: paths.instanceDirectory,
++    cwd: process.cwd(),
++    principalId,
++    cloud,
++    workspaceId,
++    pendingForMainOldestAt: queueStatsStatus.oldestAt,
++    hookSurfaceExists: queueStatsStatus.hookSurfaceExists,
++    hookSurfaceAdvanced: queueStatsStatus.hookSurfaceAdvanced,
++  });
+   const installed = command === "status"
+     ? await listenerProviderInstallEvidence(status)
+     : null;
+@@ -6558,11 +6448,7 @@ export class ListenerUnattendedRefusedError extends Error {
+   readonly code = "listen_unattended_refused";
+ 
+   constructor(principalId: string) {
+-    super(
+-      `listen_unattended_refused: --route main and --route split need an attendance surface for agent ${principalId}. ` +
+-      `Next: cswarm hook install claude --principal-id ${principalId} --write, then start a fresh session. ` +
+-      "Or use --route worker. Use --allow-unattended only when you accept a queue that may not wake a session.",
+-    );
++    super(listenerUnattendedRefusedMessage(principalId));
+     this.name = "ListenerUnattendedRefusedError";
+   }
+ }
+@@ -6588,7 +6474,7 @@ function settingsHaveScopedClaudeHook(
+   });
+ }
+ 
+-async function listenerHasAttendanceSurface(
++async function listenerHookSurfacePresent(
+   instanceDirectory: string,
+   cwd: string,
+   principalId: string,
+@@ -6609,6 +6495,66 @@ async function listenerHasAttendanceSurface(
+   return false;
+ }
+ 
++async function listenerWatcherSurfacePresent(
++  cloud: CloudTarget,
++  workspaceId: string,
++  principalId: string,
++): Promise<boolean> {
++  return await arrivalWatchLockHeld(
++    arrivalWatchLockPath(cloud, workspaceId, principalId),
++  );
++}
++
++async function listenerHasAttendanceSurface(options: {
++  instanceDirectory: string;
++  cwd: string;
++  principalId: string;
++  cloud: CloudTarget;
++  workspaceId: string;
++}): Promise<boolean> {
++  const hook = await listenerHookSurfacePresent(
++    options.instanceDirectory,
++    options.cwd,
++    options.principalId,
++  );
++  if (hook) return true;
++  return await listenerWatcherSurfacePresent(
++    options.cloud,
++    options.workspaceId,
++    options.principalId,
++  );
++}
++
++async function collectListenerAttendanceEvidence(options: {
++  instanceDirectory: string;
++  cwd: string;
++  principalId: string;
++  cloud: CloudTarget;
++  workspaceId: string;
++  pendingForMainOldestAt: string | null;
++  hookSurfaceExists: boolean;
++  hookSurfaceAdvanced: boolean;
++}): Promise<ListenerAttendanceEvidence> {
++  const hook = options.hookSurfaceExists ||
++    await listenerHookSurfacePresent(
++      options.instanceDirectory,
++      options.cwd,
++      options.principalId,
++    );
++  const watcher = await listenerWatcherSurfacePresent(
++    options.cloud,
++    options.workspaceId,
++    options.principalId,
++  );
++  return {
++    pendingForMainOldestAt: options.pendingForMainOldestAt,
++    hookSurfaceExists: hook,
++    hookSurfaceAdvanced: options.hookSurfaceAdvanced,
++    watcherLockHeld: watcher,
++    attendingSurfaces: listenerAttendingSurfaces(hook, watcher),
++  };
++}
++
+ /** Exact project-settings fragment printed by `cswarm hook install claude`. */
+ export function claudeUserPromptHookSnippet(principalId: string): Record<string, unknown> {
+   return {
+diff --git a/src/cloud/arrival-watch.ts b/src/cloud/arrival-watch.ts
+index 615483c..1db9bda 100644
+--- a/src/cloud/arrival-watch.ts
++++ b/src/cloud/arrival-watch.ts
+@@ -279,6 +279,19 @@ export async function releaseArrivalWatchLock(
+   }
+ }
+ 
++/** True when the lock file names a live pid. Never pgrep; the lock path is the evidence. */
++export async function arrivalWatchLockHeld(path: string): Promise<boolean> {
++  try {
++    const raw = await readFile(path, "utf8");
++    if (Buffer.byteLength(raw, "utf8") > WATCH_LOCK_MAX_BYTES) return false;
++    const existing = parseWatchLock(raw);
++    return existing !== null && pidIsAlive(existing.pid);
++  } catch (error) {
++    if ((error as NodeJS.ErrnoException).code === "ENOENT") return false;
++    throw error;
++  }
++}
++
+ function parseCursor(
+   raw: string,
+   workspaceId: string,
+diff --git a/src/listener/attendance-canary.ts b/src/listener/attendance-canary.ts
+index c91e379..ff5c68d 100644
+--- a/src/listener/attendance-canary.ts
++++ b/src/listener/attendance-canary.ts
+@@ -278,7 +278,7 @@ export function renderListenerAttendanceCanary(
+     lines.push(
+       "STALLED: surfaced. Next: " +
+         `cswarm hook install claude --principal-id ${principalId} --write, ` +
+-        "then start a fresh session. Or restart the listener with --route worker.",
++        "then start a fresh session.",
+     );
+   } else {
+     lines.push(`STALLED: ${result.stalledAt}. Next: ${statusCommand}`);
+diff --git a/src/listener/control.ts b/src/listener/control.ts
+index 1fc5780..5ae153e 100644
+--- a/src/listener/control.ts
++++ b/src/listener/control.ts
+@@ -52,7 +52,12 @@ import type {
+   ListenerDeliveryHoldReleaseReason,
+   ListenerPermissionMode,
+ } from "./types.js";
+-import type { ListenerRouteMode } from "./main-routing.js";
++import {
++  LISTENER_ROUTE_MODES,
++  LISTENER_STORED_ROUTE_MODES,
++  isStoredListenerRouteMode,
++  type StoredListenerRouteMode,
++} from "./main-routing.js";
+ import type { ActivityPublishErrorCode } from "./activity.js";
+ 
+ export type ListenerStatusState =
+@@ -160,7 +165,7 @@ export interface ListenerStatus {
+    * then be killed before its first claim.
+    */
+   pendingDeliveryCountAt?: string | null;
+-  routeMode?: ListenerRouteMode;
++  routeMode?: StoredListenerRouteMode;
+   deferOverChars?: number | null;
+   pendingForMainCount?: number;
+   droppedForMainCount?: number;
+@@ -581,7 +586,7 @@ function parseStatus(raw: string, rejectUnknownKeys = false): ListenerStatus {
+     !(row.pendingDeliveryCountAt === undefined ||
+       nullableTimestamp(row.pendingDeliveryCountAt)) ||
+     !(row.routeMode === undefined ||
+-      row.routeMode === "worker" || row.routeMode === "main" || row.routeMode === "split") ||
++      (typeof row.routeMode === "string" && isStoredListenerRouteMode(row.routeMode))) ||
+     !(row.deferOverChars === undefined || row.deferOverChars === null ||
+       (typeof row.deferOverChars === "number" &&
+         Number.isSafeInteger(row.deferOverChars) && row.deferOverChars >= 1 &&
+@@ -617,7 +622,7 @@ function parseStatus(raw: string, rejectUnknownKeys = false): ListenerStatus {
+   ) {
+     throw new Error("stored listener status is malformed");
+   }
+-  const routeMode = (row.routeMode ?? "worker") as ListenerRouteMode;
++  const routeMode = (row.routeMode ?? "worker") as StoredListenerRouteMode;
+   const deferOverChars = (row.deferOverChars ?? null) as number | null;
+   if (
+     (routeMode === "split" && deferOverChars === null) ||
+@@ -772,8 +777,8 @@ export async function appendListenerEvent(
+     "rate_limited",
+   ]);
+   const deliveryModes = new Set(["durable_claim", "cursor_fallback"]);
+-  const routeModes = new Set(["worker", "main", "split"]);
+-  const routeDecisions = new Set(["worker", "main"]);
++  const routeModes = new Set<string>(LISTENER_STORED_ROUTE_MODES);
++  const routeDecisions = new Set<string>(LISTENER_ROUTE_MODES);
+   for (const [key, value] of Object.entries(event)) {
+     if (!allowed.has(key)) {
+       throw new Error(`listener event field is not allowed: ${key}`);
+diff --git a/src/listener/detach.ts b/src/listener/detach.ts
+index 1c9130a..15376bb 100644
+--- a/src/listener/detach.ts
++++ b/src/listener/detach.ts
+@@ -31,7 +31,7 @@ export interface ListenerChildSpec {
+   turnBudget?: string;
+   /** Validated --poll-interval duration string, forwarded verbatim. */
+   pollInterval?: string;
+-  route?: "worker" | "main" | "split";
++  route?: "main";
+   deferOver?: number;
+   nodeExecArgv?: string[];
+ }
+@@ -149,8 +149,8 @@ export function buildListenerChildArgs(spec: ListenerChildSpec): string[] {
+     ...(provider === "grok" && spec.effort ? ["--effort", spec.effort] : []),
+     ...(spec.turnBudget ? ["--turn-budget", spec.turnBudget] : []),
+     ...(spec.pollInterval ? ["--poll-interval", spec.pollInterval] : []),
+-    ...(spec.route && spec.route !== "worker" ? ["--route", spec.route] : []),
+-    ...(spec.deferOver !== undefined ? ["--defer-over", String(spec.deferOver)] : []),
++    "--route",
++    spec.route ?? "main",
+   ];
+ }
+ 
+diff --git a/src/listener/hook.ts b/src/listener/hook.ts
+index b8bc2db..d02bc1c 100644
+--- a/src/listener/hook.ts
++++ b/src/listener/hook.ts
+@@ -733,18 +733,13 @@ export function renderHookSignals(
+ 
+ /** Give hook and status output one restart command that preserves recorded routing. */
+ export function listenerRestartCommand(status: ListenerStatus): string {
+-  const routeMode = status.routeMode ?? "worker";
+   return [
+     "cswarm listen start",
+     "--agent-token-stdin",
+     `--workspace-id ${status.workspaceId}`,
+     `--provider ${status.provider}`,
+     ...(status.permissionMode ? [`--permissions ${status.permissionMode}`] : []),
+-    `--route ${routeMode}`,
+-    ...(routeMode === "split" && status.deferOverChars !== null &&
+-        status.deferOverChars !== undefined
+-      ? [`--defer-over ${status.deferOverChars}`]
+-      : []),
++    "--route main",
+   ].join(" ");
+ }
+ 
+diff --git a/src/listener/main-routing.ts b/src/listener/main-routing.ts
+index cccbe2c..57a37a8 100644
+--- a/src/listener/main-routing.ts
++++ b/src/listener/main-routing.ts
+@@ -32,10 +32,107 @@ export const LISTENER_MAIN_QUEUE_MAX = 200;
+ export const LISTENER_DEFER_OVER_MIN = 1;
+ export const LISTENER_DEFER_OVER_MAX = 10_000;
+ 
+-export type ListenerRouteMode = "worker" | "main" | "split";
+-export type ListenerRouteDecision = "worker" | "main";
++/** The only route a listener may start. Parser, usage, and every refusal read this. */
++export const LISTENER_ROUTE_MODES = ["main"] as const;
++export type ListenerRouteMode = (typeof LISTENER_ROUTE_MODES)[number];
++export type ListenerRouteDecision = ListenerRouteMode;
+ 
+-/** Keep the default worker path exact while making the split boundary explicit. */
++/** Status files from older builds still parse; they cannot be started again. */
++export const LISTENER_STORED_ROUTE_MODES = ["worker", "main", "split"] as const;
++export type StoredListenerRouteMode = (typeof LISTENER_STORED_ROUTE_MODES)[number];
++
++export const LISTENER_ROUTE_RULING =
++  "a listener never answers for a session; the seat's own session reads the queue";
++
++export const LISTENER_ATTENDANCE_SURFACES = ["hook", "watcher"] as const;
++export type ListenerAttendanceSurface = (typeof LISTENER_ATTENDANCE_SURFACES)[number];
++
++export const LISTENER_ALLOW_UNATTENDED_CLAUSE =
++  "Use --allow-unattended only when you accept a queue that may not wake a session.";
++
++export const LISTENER_NONE_ATTENDING_SENTENCE =
++  "Signals queue and nothing wakes the session.";
++
++function orList(values: readonly string[]): string {
++  return values.length <= 1
++    ? values.join("")
++    : `${values.slice(0, -1).join(", ")}, or ${values[values.length - 1]}`;
++}
++
++export function listenerAcceptedRoutesSentence(): string {
++  return orList(LISTENER_ROUTE_MODES);
++}
++
++export function listenerRouteUsage(): string {
++  return LISTENER_ROUTE_MODES.join("|");
++}
++
++export function isLiveListenerRouteMode(value: string): value is ListenerRouteMode {
++  return (LISTENER_ROUTE_MODES as readonly string[]).includes(value);
++}
++
++export function isStoredListenerRouteMode(
++  value: string,
++): value is StoredListenerRouteMode {
++  return (LISTENER_STORED_ROUTE_MODES as readonly string[]).includes(value);
++}
++
++export function listenerRouteRefusedSentence(requested: string): string {
++  return `--route ${requested} is refused: accepted --route values are ${listenerAcceptedRoutesSentence()}; ${LISTENER_ROUTE_RULING}.`;
++}
++
++export function listenerDeferOverRefusedSentence(): string {
++  return `--defer-over is refused: it only applied to split, and accepted --route values are ${listenerAcceptedRoutesSentence()}; ${LISTENER_ROUTE_RULING}.`;
++}
++
++export function listenerLegacyRouteSentence(
++  routeMode: StoredListenerRouteMode,
++): string {
++  if (isLiveListenerRouteMode(routeMode)) {
++    return "Ask route: main; directed asks wait for this interactive session.";
++  }
++  return `LEGACY: this status file has routeMode ${routeMode}. That route cannot be started again; ${LISTENER_ROUTE_RULING}.`;
++}
++
++export function listenerAttendanceSurfaceRemedy(
++  surface: ListenerAttendanceSurface,
++  principalId: string,
++): string {
++  if (surface === "hook") {
++    return `cswarm hook install claude --principal-id ${principalId} --write, then start a fresh session`;
++  }
++  return `cswarm inbox --notify for agent ${principalId} on this host`;
++}
++
++export function listenerAttendanceRemediesSentence(principalId: string): string {
++  return LISTENER_ATTENDANCE_SURFACES
++    .map((surface) => listenerAttendanceSurfaceRemedy(surface, principalId))
++    .join("; or ");
++}
++
++export function listenerUnattendedRefusedMessage(principalId: string): string {
++  return `listen_unattended_refused: listen start needs an attendance surface for agent ${principalId}. Next: ${listenerAttendanceRemediesSentence(principalId)}. ${LISTENER_ALLOW_UNATTENDED_CLAUSE}`;
++}
++
++export function listenerAttendingSurfaces(
++  hook: boolean,
++  watcher: boolean,
++): ListenerAttendanceSurface[] {
++  return LISTENER_ATTENDANCE_SURFACES.filter((surface) =>
++    surface === "hook" ? hook : watcher
++  );
++}
++
++export function listenerAttendingSentence(
++  surfaces: readonly ListenerAttendanceSurface[],
++): string {
++  if (surfaces.length === 0) {
++    return `ATTENDING: none. ${LISTENER_NONE_ATTENDING_SENTENCE}`;
++  }
++  return `ATTENDING: ${orList(surfaces)}.`;
++}
++
++/** Main is the only live route; a split threshold is never valid. */
+ export function decideListenerRoute(
+   route: ListenerRouteMode,
+   threshold: number | null,
+@@ -44,30 +141,13 @@ export function decideListenerRoute(
+   if (!Number.isSafeInteger(bodyLength) || bodyLength < 0) {
+     throw new Error("listener route body length must be a non-negative integer");
+   }
+-  if (route === "worker") {
+-    if (threshold !== null) {
+-      throw new Error("worker route cannot have a split threshold");
+-    }
+-    return "worker";
+-  }
+-  if (route === "main") {
+-    if (threshold !== null) {
+-      throw new Error("main route cannot have a split threshold");
+-    }
+-    return "main";
+-  }
+-  if (route !== "split") {
++  if (!isLiveListenerRouteMode(route)) {
+     throw new Error("listener route mode is invalid");
+   }
+-  if (
+-    threshold === null ||
+-    !Number.isSafeInteger(threshold) ||
+-    threshold < LISTENER_DEFER_OVER_MIN ||
+-    threshold > LISTENER_DEFER_OVER_MAX
+-  ) {
+-    throw new Error("split route threshold is invalid");
++  if (threshold !== null) {
++    throw new Error("main route cannot have a split threshold");
+   }
+-  return bodyLength > threshold ? "main" : "worker";
++  return "main";
+ }
+ 
+ export interface PendingMainEntry {
+diff --git a/src/listener/runtime.ts b/src/listener/runtime.ts
+index d551080..9baeb9b 100644
+--- a/src/listener/runtime.ts
++++ b/src/listener/runtime.ts
+@@ -4,7 +4,6 @@ import {
+   CommandTransportError,
+   declareAgentModel,
+   SIGNAL_REQUEST_TIMEOUT_MS,
+-  ThinCommandClient,
+   type SignalRecord,
+ } from "../cloud/command-client.js";
+ import type { CloudTarget } from "../cloud/config.js";
+@@ -41,7 +40,7 @@ import type {
+   ListenerDeliveryJournal,
+   ListenerDeliveryJournalRecord,
+ } from "./delivery-journal.js";
+-import { ListenerEngine, newReceivedAskRecord } from "./engine.js";
++import { newReceivedAskRecord } from "./engine.js";
+ import {
+   newObservedNoteRecord,
+   newRoutedMainRecord,
+@@ -59,7 +58,6 @@ import {
+ } from "./types.js";
+ export { LISTENER_DELIVERY_MAX_LEASE_MS };
+ import type {
+-  ListenerDeliveryContext,
+   ListenerDeliveryHoldReleaseReason,
+ } from "./types.js";
+ import type {
+@@ -67,6 +65,8 @@ import type {
+   ListenerEffectStore,
+   ListenerModel,
+   ListenerProcessResult,
++  ListenerPromptMode,
++  ListenerPromptResult,
+   ListenerReplyPoster,
+   ListenerSenderProvenance,
+   ListenerSenderProvenanceContext,
+@@ -161,6 +161,23 @@ export interface ListenerRuntimeModel extends ListenerModel {
+   close(): Promise<void>;
+ }
+ 
++/** Stand-in so the listener never constructs a provider host. start() and prompt() throw. */
++export class NullListenerModel implements ListenerRuntimeModel {
++  async start(): Promise<void> {
++    throw new Error("listener never starts a model");
++  }
++  async prompt(
++    _signal: SignalRecord,
++    _mode: ListenerPromptMode,
++    _prompt: string,
++    _attempt: number,
++  ): Promise<ListenerPromptResult> {
++    throw new Error("listener never prompts a model");
++  }
++  cancel(): void {}
++  async close(): Promise<void> {}
++}
++
+ export type ListenerRuntimeEvent =
+   | {
+     type: "ready";
+@@ -488,22 +505,6 @@ function exactRecoveredLease(
+     active.leasedUntil === delivery.leasedUntil;
+ }
+ 
+-/**
+- * The recipient set this delivery belongs to, or nothing when the server did
+- * not report one. Absent stays absent all the way to the prompt: an edge from
+- * before the fan-out wakes only recipient 0 but still delivers signals that
+- * name several people, so a defaulted "1 of 1" would be a claim, not a default.
+- */
+-function deliveryContext(delivery: DeliveryRow): ListenerDeliveryContext | undefined {
+-  if (delivery.recipientPosition === null || delivery.recipientCount === null) {
+-    return undefined;
+-  }
+-  return {
+-    recipientPosition: delivery.recipientPosition,
+-    recipientCount: delivery.recipientCount,
+-  };
+-}
+-
+ function authoritativeSignal(delivery: DeliveryRow): SignalRecord {
+   return {
+     ...delivery.signal,
+@@ -566,25 +567,6 @@ function isAckableTerminalEffect(
+     (record.state === "failed" && record.signalKind === "ask");
+ }
+ 
+-function effectPhaseBudget(record: ListenerEffectRecord | null): number {
+-  if (record === null || record.state === "received" || record.state === "prompting") {
+-    return LISTENER_PROMPT_START_MINIMUM_MS;
+-  }
+-  if (record.state === "reply_ready" || record.state === "posting") {
+-    return LISTENER_REPLY_ONLY_MINIMUM_MS;
+-  }
+-  return LISTENER_ACK_ONLY_MINIMUM_MS;
+-}
+-
+-function observedNoteNeedsMainRoute(
+-  record: ListenerEffectRecord | null,
+-  routeMode: ListenerRouteMode,
+-  deferOverChars: number | null,
+-): boolean {
+-  return record?.state === "observed" && record.signalKind === "note" &&
+-    decideListenerRoute(routeMode, deferOverChars, record.askBody.length) === "main";
+-}
+-
+ function verifyPreparedAckEffect(
+   record: ListenerEffectRecord | null,
+   active: NonNullable<ListenerDeliveryJournalRecord["active"]>,
+@@ -711,37 +693,6 @@ function sameRecoveredEffect(
+     );
+ }
+ 
+-async function observeFallbackNote(
+-  store: ListenerEffectStore,
+-  signal: SignalRecord,
+-  now: () => number,
+-): Promise<ListenerEffectRecord> {
+-  const existing = await store.read(signal.id);
+-  if (existing !== null) {
+-    if (!sameEffectSignal(existing, signal) || existing.state !== "observed") {
+-      throw new Error("stored listener effect does not match the direct note");
+-    }
+-    return existing;
+-  }
+-  const observed = newObservedNoteRecord({
+-    signalId: signal.id,
+-    body: signal.body,
+-    until: signal.until,
+-    senderOwnerRelation: signal.sender_owner_relation ?? "unknown",
+-    updatedAt: eventTime(now),
+-  });
+-  await store.write(observed);
+-  const persisted = await store.read(signal.id);
+-  if (
+-    persisted === null ||
+-    !sameEffectSignal(persisted, signal) ||
+-    persisted.state !== "observed"
+-  ) {
+-    throw new Error("stored listener note effect could not be verified");
+-  }
+-  return persisted;
+-}
+-
+ async function readOrReplaceUnreadableEffect(
+   store: ListenerEffectStore,
+   signal: SignalRecord,
+@@ -807,7 +758,7 @@ export async function runListenerRuntime(
+   const pageLimit = options.pageLimit ?? LISTENER_PAGE_LIMIT;
+   const pollMs = options.pollMs ?? LISTENER_IDLE_POLL_MS;
+   let emptyIdleStreak = 0;
+-  const routeMode = options.routeMode ?? "worker";
++  const routeMode = options.routeMode ?? "main";
+   const deferOverChars = options.deferOverChars ?? null;
+   const deliveryHoldBudgetMs = options.deliveryHoldBudgetMs ??
+     LISTENER_DELIVERY_HOLD_BUDGET_MS;
+@@ -853,7 +804,7 @@ export async function runListenerRuntime(
+   }
+   try {
+     decideListenerRoute(routeMode, deferOverChars, 0);
+-    if (routeMode !== "worker" && options.pendingMainQueue === undefined) {
++    if (options.pendingMainQueue === undefined) {
+       throw new Error("main listener routing requires a pending queue");
+     }
+   } catch (error) {
+@@ -880,48 +831,6 @@ export async function runListenerRuntime(
+     : null;
+   let journalSnapshot = initialJournal;
+   const warnedClaimCommands = new Set<string>();
+-  const client = new ThinCommandClient(options.target, options.fetcher);
+-  const poster: ListenerReplyPoster = options.poster ?? {
+-    post: async ({ signal, body, commandId, abortSignal }) => {
+-      const credential = await options.credentialSession.bearer();
+-      const result = await client.sendSignal({
+-        workspaceId: options.workspaceId,
+-        credential,
+-        commandId,
+-        // The engine-provided caller signal becomes the transport's caller
+-        // signal; no second signal is constructed and the command envelope is
+-        // unchanged.
+-        ...(abortSignal === undefined ? {} : { signal: abortSignal }),
+-        command: {
+-          kind: "post_signal",
+-          signal_kind: "note",
+-          body,
+-          to_user_id: null,
+-          to_agent_principal_id: null,
+-          in_reply_to: signal.id,
+-          about: null,
+-        },
+-      });
+-      return { signalId: result.response.signal!.id };
+-    },
+-  };
+-  const engine = new ListenerEngine({
+-    store: options.store,
+-    model: options.model,
+-    poster,
+-    now,
+-    // The runtime caller signal is cancellation only; the closed credential
+-    // predicate is wired into the engine seam so credential loss during reply
+-    // posting stops as credential instead of terminalizing the effect.
+-    ...(options.signal === undefined ? {} : { signal: options.signal }),
+-    ...(options.resolveSenderProvenance === undefined
+-      ? {}
+-      : { resolveSenderProvenance: options.resolveSenderProvenance }),
+-    ...(options.onBroadcastsConsumed === undefined
+-      ? {}
+-      : { onBroadcastsConsumed: options.onBroadcastsConsumed }),
+-    isCredentialFailure: isCredentialLoss,
+-  });
+   const routeSignalToMain = async (
+     signal: SignalRecord,
+   ): Promise<ListenerEffectRecord> => {
+@@ -968,9 +877,6 @@ export async function runListenerRuntime(
+       if (existing.state === "routed_main") {
+         return existing;
+       }
+-      if (!(existing.signalKind === "note" && existing.state === "observed")) {
+-        throw new Error("stored listener effect does not match the main-routed message");
+-      }
+     }
+     await options.store.write(newRoutedMainRecord({
+       signalId: signal.id,
+@@ -1284,14 +1190,6 @@ export async function runListenerRuntime(
+       }
+ 
+       if (!ready) {
+-        if (routeMode !== "main") {
+-          try {
+-            await options.model.start();
+-          } catch (error) {
+-            stop = { reason: "fatal", error: asError(error) };
+-            break;
+-          }
+-        }
+         ready = true;
+         options.onEvent?.({
+           type: "ready",
+@@ -1348,22 +1246,8 @@ export async function runListenerRuntime(
+       if (recovery?.phase === "ack_pending") {
+         const horizon = Date.parse(recovery.leasedUntil!) +
+           LISTENER_DELIVERY_SAFETY_MARGIN_MS;
+-        let preparedNeedsMainRoute = false;
+-        if (recovery.signalId !== null) {
+-          try {
+-            preparedNeedsMainRoute = observedNoteNeedsMainRoute(
+-              await options.store.read(recovery.signalId),
+-              routeMode,
+-              deferOverChars,
+-            );
+-          } catch (error) {
+-            stop = { reason: "fatal", error: asError(error) };
+-            break;
+-          }
+-        }
+         if (
+-          (page?.capabilities.deliveryAck === true || skipRead) && now() < horizon &&
+-          !preparedNeedsMainRoute
++          (page?.capabilities.deliveryAck === true || skipRead) && now() < horizon
+         ) {
+           const ackStop = await sendPreparedAck(recovery);
+           if (ackStop !== null) {
+@@ -1409,7 +1293,6 @@ export async function runListenerRuntime(
+           if (
+             terminal !== null &&
+             sameRecoveredEffect(recovery, terminal) &&
+-            !observedNoteNeedsMainRoute(terminal, routeMode, deferOverChars) &&
+             isAckableTerminalEffect(terminal, now)
+           ) {
+             try {
+@@ -1645,26 +1528,6 @@ export async function runListenerRuntime(
+           stop = { reason: "cancelled" };
+           break;
+         }
+-        /* The hold clock starts when this delivery was CLAIMED, which the
+-           journal records as claimCreatedAt and keeps through recordLease. A
+-           lease recovered across a restart therefore keeps its original clock
+-           rather than getting a fresh budget.
+-
+-           An earlier comment here, and the design note beside it, said the
+-           original claim time was not in the journal. That was false, and a
+-           review arm found it: reserveClaim writes claimCreatedAt and the
+-           leased phase cannot parse without it. Reading it is what makes the
+-           bound hold across a restart.
+-
+-           Slightly conservative on purpose: claimCreatedAt precedes the lease
+-           grant by one claim round trip, so the measured hold is never shorter
+-           than the real one. A recovered lease still gets one engine.process
+-           before the bound can fire, because processAttempt is 0 again; that is
+-           the anti-starvation rule below, not an unmeasured clock. */
+-        const claimedAtMs = Date.parse(active.claimCreatedAt);
+-        const holdStartedAtMs = Number.isFinite(claimedAtMs)
+-          ? Math.min(claimedAtMs, now())
+-          : now();
+         const signal = authoritativeSignal(claimed);
+         let terminal: ListenerEffectRecord | null = null;
+         try {
+@@ -1693,107 +1556,29 @@ export async function runListenerRuntime(
+             bodyLength: signal.body.length,
+             ts: eventTime(now),
+           });
+-          if (decision === "main") {
+-            terminal = await routeSignalToMain(signal);
++          if (
++            existing !== null &&
++            (existing.state === "failed" ||
++              existing.state === "done" ||
++              existing.state === "expired")
++          ) {
++            terminal = existing;
+             options.onEvent?.({
+               type: "effect",
+               signalId: signal.id,
+-              status: "routed_main",
+-              failureCode: null,
++              status: existing.state,
++              failureCode: existing.failureCode,
+               ts: eventTime(now),
+             });
+-          } else if (signal.kind === "note") {
+-            if (existing === null) {
+-              await options.store.write(newObservedNoteRecord({
+-                signalId: signal.id,
+-                body: signal.body,
+-                until: signal.until,
+-                senderOwnerRelation: signal.sender_owner_relation ?? "unknown",
+-                updatedAt: eventTime(now),
+-              }));
+-            }
+-            terminal = await options.store.read(signal.id);
+-            if (
+-              terminal === null ||
+-              !sameEffectSignal(terminal, signal) ||
+-              terminal.state !== "observed"
+-            ) {
+-              throw new Error("persisted note effect does not match the authoritative delivery");
+-            }
++          } else {
++            terminal = await routeSignalToMain(signal);
+             options.onEvent?.({
+               type: "effect",
+               signalId: signal.id,
+-              status: "observed",
++              status: "routed_main",
+               failureCode: null,
+               ts: eventTime(now),
+             });
+-          } else {
+-            let processAttempt = 0;
+-            while (terminal === null) {
+-              const before = await options.store.read(signal.id);
+-              if (before !== null && !sameEffectSignal(before, signal)) {
+-                throw new Error("stored listener effect does not match the authoritative delivery");
+-              }
+-              const requiredBudget = effectPhaseBudget(before);
+-              /* ELAPSED, never projected. The lease question asks whether the
+-                 next phase still FITS (requiredBudget is a projection and
+-                 belongs there); the seat question asks how much of its share
+-                 this delivery has already USED. Measured on a live listener
+-                 with --turn-budget 30s: the projected form released after 74ms,
+-                 because one phase minimum (about 4 minutes) never fits inside a
+-                 30s budget, so a delivery whose first attempt failed fast lost
+-                 the seat instead of using its retry budget.
+-                 The first attempt on a lease also always runs, so a budget
+-                 shorter than one phase cannot starve a delivery. */
+-              const holdSpent = processAttempt > 0 &&
+-                now() - holdStartedAtMs >= deliveryHoldBudgetMs;
+-              const leaseSpent = leasedUntilMs <= now() + requiredBudget;
+-              if (holdSpent || leaseSpent) {
+-                /* Hand the seat back now. Waiting out the lease held an idle
+-                   worker for as much as five more minutes while later
+-                   deliveries queued; the row keeps its live lease either way,
+-                   so the server redelivers it on the same schedule and this
+-                   costs it no extra attempt. */
+-                await journal.clearActive(eventTime(now));
+-                after = null;
+-                options.onEvent?.({
+-                  type: "delivery_hold_released",
+-                  signalId: signal.id,
+-                  reason: holdSpent ? "hold_budget" : "lease_budget",
+-                  heldMs: Math.max(0, now() - holdStartedAtMs),
+-                  ts: eventTime(now),
+-                });
+-                break;
+-              }
+-              const processed = await engine.process(
+-                signal,
+-                deliveryContext(claimed),
+-              );
+-              const effect = "record" in processed ? processed.record : null;
+-              options.onEvent?.({
+-                type: "effect",
+-                signalId: signal.id,
+-                status: processed.status,
+-                failureCode: effect?.failureCode ?? null,
+-                ts: eventTime(now),
+-              });
+-              if (processed.status === "ignored") {
+-                throw new Error("claimed delivery was ignored by the listener engine");
+-              }
+-              if (processed.status === "retry_pending") {
+-                processAttempt += 1;
+-                await sleep(
+-                  deliveryRetryDelay(processAttempt, null, random),
+-                  abort,
+-                );
+-                if (abort?.aborted) {
+-                  stop = { reason: "cancelled" };
+-                  break;
+-                }
+-                continue;
+-              }
+-              terminal = processed.record;
+-            }
+           }
+         } catch (error) {
+           if (abort?.aborted) {
+@@ -1849,9 +1634,12 @@ export async function runListenerRuntime(
+           break;
+         }
+         if (signal.kind !== "ask" && signal.kind !== "note") continue;
+-        let result: ListenerProcessResult;
+         try {
+-          await readOrReplaceUnreadableEffect(options.store, signal, now);
++          const existing = await readOrReplaceUnreadableEffect(
++            options.store,
++            signal,
++            now,
++          );
+           const decision = decideListenerRoute(
+             routeMode,
+             deferOverChars,
+@@ -1866,29 +1654,29 @@ export async function runListenerRuntime(
+             bodyLength: signal.body.length,
+             ts: eventTime(now),
+           });
+-          if (decision === "main") {
+-            await routeSignalToMain(signal);
+-            options.onEvent?.({
+-              type: "effect",
+-              signalId: signal.id,
+-              status: "routed_main",
+-              failureCode: null,
+-              ts: eventTime(now),
+-            });
+-            continue;
+-          }
+-          if (signal.kind === "note") {
+-            const record = await observeFallbackNote(options.store, signal, now);
++          if (
++            existing !== null &&
++            (existing.state === "failed" ||
++              existing.state === "done" ||
++              existing.state === "expired")
++          ) {
+             options.onEvent?.({
+               type: "effect",
+               signalId: signal.id,
+-              status: "observed",
+-              failureCode: record.failureCode,
++              status: existing.state,
++              failureCode: existing.failureCode,
+               ts: eventTime(now),
+             });
+             continue;
+           }
+-          result = await engine.process(signal);
++          await routeSignalToMain(signal);
++          options.onEvent?.({
++            type: "effect",
++            signalId: signal.id,
++            status: "routed_main",
++            failureCode: null,
++            ts: eventTime(now),
++          });
+         } catch (error) {
+           if (abort?.aborted) {
+             stop = { reason: "cancelled" };
+@@ -1905,14 +1693,6 @@ export async function runListenerRuntime(
+           stop = { reason: "fatal", error: asError(error) };
+           break;
+         }
+-        const record = "record" in result ? result.record : null;
+-        options.onEvent?.({
+-          type: "effect",
+-          signalId: signal.id,
+-          status: result.status,
+-          failureCode: record?.failureCode ?? null,
+-          ts: eventTime(now),
+-        });
+       }
+       if (stop) break;
+ 
+diff --git a/src/listener/supervisor.ts b/src/listener/supervisor.ts
+index a8eb55d..6cde6d3 100644
+--- a/src/listener/supervisor.ts
++++ b/src/listener/supervisor.ts
+@@ -311,7 +311,7 @@ export async function runListenerSupervisor(
+     currentDeliverySignalId: null,
+     currentDeliverySince: null,
+     heldBackDeliveries: [],
+-    routeMode: options.routeMode ?? "worker",
++    routeMode: options.routeMode ?? "main",
+     deferOverChars: options.deferOverChars ?? null,
+     pendingForMainCount: 0,
+     droppedForMainCount: 0,
+diff --git a/src/resume.ts b/src/resume.ts
+index 3417d3d..e847e4e 100644
+--- a/src/resume.ts
++++ b/src/resume.ts
+@@ -413,17 +413,12 @@ function commonCommandArgs(report: ResumeInspection): string {
+ 
+ function restartCommand(report: ResumeInspection, status: ListenerStatus): string {
+   const common = commonCommandArgs(report);
+-  const route = status.routeMode ?? "worker";
+   const start = [
+     "cswarm listen start",
+     common,
+     `--provider ${status.provider}`,
+     `--permissions ${status.permissionMode ?? "allow"}`,
+-    `--route ${route}`,
+-    ...(route === "split" && status.deferOverChars !== null &&
+-        status.deferOverChars !== undefined
+-      ? [`--defer-over ${status.deferOverChars}`]
+-      : []),
++    "--route main",
+   ].join(" ");
+   return `cswarm listen stop ${common} && ${start}`;
+ }
+diff --git a/tests/listener-cli-process.test.ts b/tests/listener-cli-process.test.ts
+index 5b08c2f..e0850f8 100644
+--- a/tests/listener-cli-process.test.ts
++++ b/tests/listener-cli-process.test.ts
+@@ -998,6 +998,7 @@ test("detached CLI completes durable claim reply ACK with one startup UUID and n
+     const startArgs = [
+       "listen",
+       "start",
++      "--allow-unattended",
+       "--provider",
+       "grok",
+       "--agent-token-stdin",
+@@ -1034,25 +1035,12 @@ test("detached CLI completes durable claim reply ACK with one startup UUID and n
+     assert.equal(startJson.principalId, principalId);
+ 
+     await waitFor(() => acknowledgements.length === 2);
+-    assert.equal(posts.length, 2);
+-    // Self-description: once per listener start, the provider-derived label.
+-    assert.equal(declares.length, 1);
+-    assert.equal(
+-      (declares[0]!.command as Record<string, unknown>).model,
+-      "grok",
+-    );
+-    assert.equal(
+-      posts.every((post) =>
+-        typeof post.command_id === "string" &&
+-        /^reply_[a-f0-9]{32}_0$/.test(post.command_id)
+-      ),
+-      true,
+-    );
++    assert.equal(posts.length, 0);
+     assert.deepEqual(
+-      posts.map((post) =>
+-        (post.command as Record<string, unknown>).in_reply_to
+-      ).sort(),
+-      asks.map((ask) => ask.id).sort(),
++      acknowledgements.map((entry) =>
++        (entry.command as Record<string, unknown>).outcome
++      ),
++      ["queued", "queued"],
+     );
+     assert.equal(authHeaders.every((header) => header === `Bearer ${token}`), true);
+ 
+@@ -1108,55 +1096,19 @@ test("detached CLI completes durable claim reply ACK with one startup UUID and n
+         (JSON.parse(current.stdout) as Record<string, unknown>).state === "stopped";
+     });
+ 
+-    const audit = (await readFile(auditPath, "utf8"))
++    let auditRaw = "";
++    try {
++      auditRaw = await readFile(auditPath, "utf8");
++    } catch (error) {
++      assert.equal((error as NodeJS.ErrnoException).code, "ENOENT");
++    }
++    const audit = auditRaw
+       .trim()
+       .split("\n")
++      .filter((line) => line.length > 0)
+       .map((line) => JSON.parse(line) as Record<string, unknown>);
+     const spawns = audit.filter((row) => row.event === "spawn");
+-    assert.equal(spawns.length, 1);
+-    assert.equal(
+-      spawns.some((row) =>
+-        row.sandbox === null &&
+-        row.cwd === canonicalWorkerCwd &&
+-        row.grok_home === providerHome
+-      ),
+-      true,
+-    );
+-    assert.equal(spawns.every((row) => row.sandbox === null), true);
+-    assert.equal(spawns.every((row) => row.cmux_hooks_disabled === null), true);
+-    assert.equal(spawns.every((row) => row.has_swarm_env === false), true);
+-    assert.equal(spawns.every((row) => row.has_secret_env === false), true);
+-    assert.equal(spawns.every((row) => row.argv_has_secret === false), true);
+-    assert.equal(spawns[0]?.home, process.env.HOME);
+-    assert.equal(spawns[0]?.grok_home, providerHome);
+-    assert.equal(spawns[0]?.claude_hooks, null);
+-    assert.equal(spawns[0]?.cursor_hooks, null);
+-    assert.equal(spawns[0]?.memory, null);
+-    assert.equal(spawns[0]?.subagents, null);
+-    const permissions = audit.filter((row) =>
+-      row.event === "permission" && row.canary === false
+-    );
+-    const canaryPermissions = audit.filter((row) =>
+-      row.event === "permission" && row.canary === true
+-    );
+-    assert.equal(directoryReads, asks.length);
+-    assert.equal(canaryPermissions.length, 1);
+-    assert.equal(canaryPermissions[0]?.option_id, "deny");
+-    assert.equal(permissions.length, 2);
+-    assert.equal(
+-      permissions.every((row) =>
+-        row.sandbox === null && row.option_id === "allow"
+-      ),
+-      true,
+-    );
+-    const sameOwnerPermission = permissions.find((row) => row.relation_same === true);
+-    const crossOwnerPermission = permissions.find((row) => row.relation_cross === true);
+-    assert.equal(sameOwnerPermission?.sender_local, true);
+-    assert.equal(sameOwnerPermission?.operator_local, true);
+-    assert.equal(sameOwnerPermission?.seeks_confirmation, false);
+-    assert.equal(crossOwnerPermission?.sender_remote, true);
+-    assert.equal(crossOwnerPermission?.operator_remote, true);
+-    assert.equal(crossOwnerPermission?.seeks_confirmation, true);
++    assert.equal(spawns.length, 0);
+ 
+     const safeLog = await readFile(paths.logPath, "utf8");
+     const safeStatus = await readFile(paths.statusPath, "utf8");
+@@ -1384,6 +1336,7 @@ test("detached listener keeps a provider failure lapse in its status file", asyn
+     const started = await runCli([
+       "listen",
+       "start",
++      "--allow-unattended",
+       "--provider",
+       "grok",
+       "--agent-token-stdin",
+@@ -1408,8 +1361,8 @@ test("detached listener keeps a provider failure lapse in its status file", asyn
+         return [command.outcome, command.last_error_code];
+       }),
+       Array.from({ length: 3 }, () => [
+-        "failed_terminal",
+-        "host_session_failed",
++        "queued",
++        null,
+       ]),
+     );
+ 
+@@ -1427,13 +1380,9 @@ test("detached listener keeps a provider failure lapse in its status file", asyn
+       unknown
+     >;
+     assert.equal(statusJson.state, "ready");
+-    assert.equal(statusJson.lastAckOutcome, "failed_terminal");
+-    assert.equal(statusJson.consecutiveAckFailureCount, 3);
+-    assert.equal(statusJson.handledState, "not_handled");
+-    assert.equal(statusJson.listenerLapse, true);
+-    assert.deepEqual(statusJson.listenerLapseCodes, [
+-      "listener_delivery_failing",
+-    ]);
++    assert.equal(statusJson.lastAckOutcome, "queued");
++    assert.equal(statusJson.consecutiveAckFailureCount ?? 0, 0);
++    assert.equal(statusJson.listenerLapse, false);
+ 
+     const statusHumanResult = await runCli([
+       "listen",
+@@ -1443,18 +1392,14 @@ test("detached listener keeps a provider failure lapse in its status file", asyn
+       principalId,
+     ]);
+     assert.equal(statusHumanResult.code, 0, statusHumanResult.stderr);
+-    assert.match(statusHumanResult.stdout, /^Listener LAPSE/);
+-    assert.match(statusHumanResult.stdout, /HANDLED: no\./);
+-    assert.match(
+-      statusHumanResult.stdout,
+-      /WARNING \[listener_delivery_failing\]/,
+-    );
++    assert.doesNotMatch(statusHumanResult.stdout, /WARNING \[listener_delivery_failing\]/);
++    assert.match(statusHumanResult.stdout, /Ask route: main/);
+ 
+     const statusFile = await readFile(paths.statusPath, "utf8");
+     const statusOnDisk = JSON.parse(statusFile) as Record<string, unknown>;
+     assert.equal(statusOnDisk.state, "ready");
+-    assert.equal(statusOnDisk.lastAckOutcome, "failed_terminal");
+-    assert.equal(statusOnDisk.consecutiveAckFailureCount, 3);
++    assert.equal(statusOnDisk.lastAckOutcome, "queued");
++    assert.equal(statusOnDisk.consecutiveAckFailureCount ?? 0, 0);
+   } finally {
+     try {
+       await stopAndWaitForDetachedListener([
+@@ -1598,6 +1543,7 @@ test("detached CLI cursor fallback still receives and replies", async () => {
+     const started = await runCli([
+       "listen",
+       "start",
++      "--allow-unattended",
+       "--provider",
+       "grok",
+       "--agent-token-stdin",
+@@ -1614,11 +1560,18 @@ test("detached CLI cursor fallback still receives and replies", async () => {
+     assert.equal(started.code, 0, started.stderr);
+     const startJson = JSON.parse(started.stdout) as Record<string, unknown>;
+     assert.equal(startJson.deliveryMode, "cursor_fallback");
+-    await waitFor(() => posts.length === 1);
+-    assert.equal(
+-      (posts[0]!.command as Record<string, unknown>).in_reply_to,
+-      ask.id,
+-    );
++    const queuePath = join(paths.instanceDirectory, "pending-for-main.json");
++    await waitFor(async () => {
++      try {
++        const raw = JSON.parse(await readFile(queuePath, "utf8")) as {
++          entries?: unknown[];
++        };
++        return (raw.entries?.length ?? 0) === 1;
++      } catch {
++        return false;
++      }
++    });
++    assert.equal(posts.length, 0);
+     assert.doesNotMatch(started.stdout + started.stderr, /swm_agt_/);
+   } finally {
+     try {
+@@ -1806,6 +1759,7 @@ test("detached CLI reports missing Grok login without starting a model", async (
+     const started = await runCli([
+       "listen",
+       "start",
++      "--allow-unattended",
+       "--provider",
+       "grok",
+       "--agent-token-stdin",
+@@ -1815,9 +1769,11 @@ test("detached CLI reports missing Grok login without starting a model", async (
+       stdin: artifact,
+       env: { GROK_HOME: emptyProviderHome },
+     });
+-    assert.notEqual(started.code, 0);
+-    assert.match(started.stderr, /run grok login/i);
++    assert.equal(started.code, 0, started.stderr);
+     assert.doesNotMatch(started.stdout + started.stderr, /swm_agt_/);
++    const startJson = JSON.parse(started.stdout) as Record<string, unknown>;
++    assert.equal(startJson.state, "ready");
++    assert.equal(startJson.routeMode, "main");
+ 
+     const status = await runCli([
+       "listen",
+@@ -1829,8 +1785,8 @@ test("detached CLI reports missing Grok login without starting a model", async (
+     ]);
+     assert.equal(status.code, 0, status.stderr);
+     const statusJson = JSON.parse(status.stdout) as Record<string, unknown>;
+-    assert.equal(statusJson.state, "failed");
+-    assert.equal(statusJson.lastErrorCode, "grok_auth_missing");
++    assert.equal(statusJson.state, "ready");
++    assert.notEqual(statusJson.lastErrorCode, "grok_auth_missing");
+ 
+     const safeLog = await readFile(paths.logPath, "utf8");
+     const safeStatus = await readFile(paths.statusPath, "utf8");
+@@ -1934,6 +1890,7 @@ test("detached Claude supervisor persists runtime evidence and status remeasures
+     const started = await runCli([
+       "listen",
+       "start",
++      "--allow-unattended",
+       "--provider",
+       "claude",
+       "--agent-token-stdin",
+@@ -1949,34 +1906,16 @@ test("detached Claude supervisor persists runtime evidence and status remeasures
+     assert.equal(started.code, 0, started.stderr);
+     const startJson = JSON.parse(started.stdout) as Record<string, unknown>;
+     assert.equal(startJson.state, "ready");
+-    assert.equal(startJson.providerExecutable, claudePath);
+-    assert.equal(startJson.providerVersion, runningVersions.bridge);
+-    assert.equal(
+-      startJson.providerBundledAgentSdkVersion,
+-      runningVersions.agentSdk,
+-    );
+-    assert.equal(
+-      startJson.providerBundledClaudeCodeVersion,
+-      runningVersions.claudeCode,
+-    );
++    assert.equal(startJson.providerExecutable, null);
++    assert.equal(startJson.routeMode, "main");
+ 
+     const stored = await waitForListenerStatus(
+       paths,
+-      (status) =>
+-        status.state === "ready" && status.providerExecutable === claudePath,
+-    );
+-    assert.equal(stored.providerExecutable, claudePath);
+-    assert.equal(stored.providerVersion, runningVersions.bridge);
+-    assert.equal(
+-      stored.providerBundledAgentSdkVersion,
+-      runningVersions.agentSdk,
+-    );
+-    assert.equal(
+-      stored.providerBundledClaudeCodeVersion,
+-      runningVersions.claudeCode,
++      (status) => status.state === "ready",
+     );
++    assert.equal(stored.state, "ready");
++    assert.equal(stored.providerExecutable ?? null, null);
+ 
+-    await writeFakeClaudeBridge(root, installedVersions);
+     const statusJsonResult = await runCli([
+       "listen",
+       "status",
+@@ -1987,18 +1926,9 @@ test("detached Claude supervisor persists runtime evidence and status remeasures
+     ]);
+     assert.equal(statusJsonResult.code, 0, statusJsonResult.stderr);
+     const statusJson = JSON.parse(statusJsonResult.stdout) as Record<string, unknown>;
+-    assert.equal(statusJson.providerVersion, runningVersions.bridge);
+-    assert.equal(statusJson.providerOnDiskExecutable, claudePath);
+-    assert.equal(statusJson.providerOnDiskVersion, installedVersions.bridge);
+-    assert.equal(
+-      statusJson.providerOnDiskBundledAgentSdkVersion,
+-      installedVersions.agentSdk,
+-    );
+-    assert.equal(
+-      statusJson.providerOnDiskBundledClaudeCodeVersion,
+-      installedVersions.claudeCode,
+-    );
+-    assert.equal(statusJson.providerRestartRequired, true);
++    assert.equal(statusJson.state, "ready");
++    assert.equal(statusJson.routeMode, "main");
++    assert.equal(statusJson.providerExecutable, null);
+ 
+     const statusText = await runCli([
+       "listen",
+@@ -2008,11 +1938,8 @@ test("detached Claude supervisor persists runtime evidence and status remeasures
+       principalId,
+     ]);
+     assert.equal(statusText.code, 0, statusText.stderr);
+-    assert.match(statusText.stdout, /Provider executable: .*index\.js\./);
+-    assert.match(statusText.stdout, /Provider version 0\.73\.0/);
+-    assert.match(statusText.stdout, /Bundled Claude Code version: 2\.1\.257/);
+-    assert.match(statusText.stdout, /Bundled Claude agent SDK version: 0\.3\.257/);
+-    assert.match(statusText.stdout, /Restart to pick up 0\.74\.0\./);
++    assert.match(statusText.stdout, /Ask route: main/);
++    assert.match(statusText.stdout, /ATTENDING:/);
+   } finally {
+     try {
+       await stopAndWaitForDetachedListener([
+diff --git a/tests/listener-detach.test.ts b/tests/listener-detach.test.ts
+index 17eb637..61f0277 100644
+--- a/tests/listener-detach.test.ts
++++ b/tests/listener-detach.test.ts
+@@ -57,11 +57,13 @@ test("detached argv is public-only and strips ambient Node hooks", () => {
+   assert.equal(args.some((value) => value.startsWith("swm_agt_")), false);
+   assert.ok(args.includes("--provider"));
+   assert.equal(args[args.indexOf("--provider") + 1], "grok");
+-  assert.deepEqual(args.slice(-4), [
++  assert.deepEqual(args.slice(-6), [
+     "--model",
+     "grok-4.5",
+     "--effort",
+     "low",
++    "--route",
++    "main",
+   ]);
+ });
+ 
+diff --git a/tests/listener-main-only.test.ts b/tests/listener-main-only.test.ts
+new file mode 100644
+index 0000000..80bcc48
+--- /dev/null
++++ b/tests/listener-main-only.test.ts
+@@ -0,0 +1,353 @@
++/** Main-only listener route, generated enumerations, and no-model runtime. Named in `npm test`. */
++import assert from "node:assert/strict";
++import { mkdtemp, readFile, rm } from "node:fs/promises";
++import { tmpdir } from "node:os";
++import { dirname, join } from "node:path";
++import { fileURLToPath } from "node:url";
++import test from "node:test";
++import { cloudTarget } from "../src/cloud/config.js";
++import {
++  listenerRouteConfiguration,
++  renderListenerStatus,
++  usage,
++} from "../src/cli.js";
++import type { SignalRecord } from "../src/cloud/command-client.js";
++import {
++  FilePendingMainQueue,
++  LISTENER_ATTENDANCE_SURFACES,
++  LISTENER_ALLOW_UNATTENDED_CLAUSE,
++  LISTENER_NONE_ATTENDING_SENTENCE,
++  LISTENER_ROUTE_MODES,
++  LISTENER_ROUTE_RULING,
++  LISTENER_STORED_ROUTE_MODES,
++  NullListenerModel,
++  decideListenerRoute,
++  isLiveListenerRouteMode,
++  listenerAcceptedRoutesSentence,
++  listenerDeferOverRefusedSentence,
++  listenerAttendanceRemediesSentence,
++  listenerAttendanceSurfaceRemedy,
++  listenerAttendingSentence,
++  listenerAttendingSurfaces,
++  listenerLegacyRouteSentence,
++  listenerPaths,
++  listenerRouteRefusedSentence,
++  listenerRouteUsage,
++  listenerUnattendedRefusedMessage,
++  readListenerStatus,
++  runListenerRuntime,
++  writeListenerStatus,
++  type ListenerEffectRecord,
++  type ListenerPromptMode,
++  type ListenerPromptResult,
++  type ListenerRuntimeEvent,
++  type ListenerRuntimeModel,
++  type ListenerStatus,
++} from "../src/listener/index.js";
++
++const WORKSPACE_ID = "11111111-1111-4111-8111-111111111111";
++const PRINCIPAL_ID = "22222222-2222-4222-8222-222222222222";
++
++test("LISTENER_ROUTE_MODES is the single live route main", () => {
++  assert.deepEqual([...LISTENER_ROUTE_MODES], ["main"]);
++  assert.equal(listenerRouteUsage(), "main");
++  assert.equal(listenerAcceptedRoutesSentence(), "main");
++  assert.equal(isLiveListenerRouteMode("main"), true);
++  assert.equal(isLiveListenerRouteMode("worker"), false);
++  assert.equal(isLiveListenerRouteMode("split"), false);
++  assert.deepEqual([...LISTENER_STORED_ROUTE_MODES], ["worker", "main", "split"]);
++});
++
++test("route parser accepts main and refuses worker, split, and defer-over from the constant", () => {
++  assert.deepEqual(listenerRouteConfiguration(undefined, undefined), {
++    routeMode: "main",
++    deferOverChars: null,
++  });
++  assert.deepEqual(listenerRouteConfiguration("main", undefined), {
++    routeMode: "main",
++    deferOverChars: null,
++  });
++  assert.throws(
++    () => listenerRouteConfiguration("worker", undefined),
++    (error: unknown) => {
++      assert.equal((error as Error).message, listenerRouteRefusedSentence("worker"));
++      assert.match((error as Error).message, new RegExp(LISTENER_ROUTE_RULING));
++      assert.match((error as Error).message, new RegExp(listenerAcceptedRoutesSentence()));
++      return true;
++    },
++  );
++  assert.throws(
++    () => listenerRouteConfiguration("split", "200"),
++    (error: unknown) => {
++      assert.equal((error as Error).message, listenerDeferOverRefusedSentence());
++      return true;
++    },
++  );
++  assert.throws(
++    () => listenerRouteConfiguration("main", "200"),
++    (error: unknown) => {
++      assert.equal((error as Error).message, listenerDeferOverRefusedSentence());
++      return true;
++    },
++  );
++  assert.throws(
++    () => listenerRouteConfiguration("split", undefined),
++    (error: unknown) => {
++      assert.equal((error as Error).message, listenerRouteRefusedSentence("split"));
++      return true;
++    },
++  );
++});
++
++test("usage line is generated from LISTENER_ROUTE_MODES", () => {
++  const text = usage();
++  assert.match(text, new RegExp(`--route ${listenerRouteUsage()}`));
++  assert.doesNotMatch(text, /--route worker\|main\|split/);
++  assert.doesNotMatch(text, /--defer-over <chars>/);
++  assert.match(text, /never starts a model/);
++});
++
++test("attendance remedies and attending sentences are generated from LISTENER_ATTENDANCE_SURFACES", () => {
++  assert.deepEqual([...LISTENER_ATTENDANCE_SURFACES], ["hook", "watcher"]);
++  const remedies = listenerAttendanceRemediesSentence(PRINCIPAL_ID);
++  for (const surface of LISTENER_ATTENDANCE_SURFACES) {
++    assert.ok(remedies.includes(listenerAttendanceSurfaceRemedy(surface, PRINCIPAL_ID)));
++  }
++  const refused = listenerUnattendedRefusedMessage(PRINCIPAL_ID);
++  assert.match(refused, /listen_unattended_refused/);
++  assert.ok(refused.includes(remedies));
++  assert.ok(refused.includes(LISTENER_ALLOW_UNATTENDED_CLAUSE));
++  assert.doesNotMatch(refused, /--route worker/);
++  assert.deepEqual(listenerAttendingSurfaces(true, false), ["hook"]);
++  assert.deepEqual(listenerAttendingSurfaces(false, true), ["watcher"]);
++  assert.deepEqual(listenerAttendingSurfaces(true, true), ["hook", "watcher"]);
++  assert.deepEqual(listenerAttendingSurfaces(false, false), []);
++  assert.equal(
++    listenerAttendingSentence([]),
++    `ATTENDING: none. ${LISTENER_NONE_ATTENDING_SENTENCE}`,
++  );
++  assert.equal(listenerAttendingSentence(["hook"]), "ATTENDING: hook.");
++  assert.equal(listenerAttendingSentence(["watcher"]), "ATTENDING: watcher.");
++  assert.equal(listenerAttendingSentence(["hook", "watcher"]), "ATTENDING: hook, or watcher.");
++});
++
++test("legacy worker and split status files still parse and render the cannot-start-again sentence", async () => {
++  const root = await mkdtemp(join(tmpdir(), "cswarm-legacy-route-"));
++  try {
++    const paths = listenerPaths({
++      profileId: "legacy-route",
++      workspaceId: WORKSPACE_ID,
++      principalId: PRINCIPAL_ID,
++      stateDirectory: root,
++    });
++    const base = (routeMode: "worker" | "split" | "main"): ListenerStatus => ({
++      version: 1,
++      instanceId: "55555555-5555-4555-8555-555555555555",
++      provider: "claude",
++      profileId: "legacy-route",
++      workspaceId: WORKSPACE_ID,
++      principalId: PRINCIPAL_ID,
++      pid: 2_147_483_647,
++      state: "stopped",
++      startedAt: "2026-09-01T12:00:00.000Z",
++      readyAt: "2026-09-01T12:00:01.000Z",
++      updatedAt: "2026-09-01T12:00:02.000Z",
++      stoppedAt: "2026-09-01T12:00:02.000Z",
++      lastSignalId: null,
++      lastErrorCode: null,
++      lastErrorDetail: null,
++      providerVersion: null,
++      providerLastMeasuredVersion: null,
++      lastWorkerStderrTail: null,
++      deliveryMode: "durable_claim",
++      pendingDeliveryCount: 0,
++      lastTerminalDeliveryFailureCount: null,
++      lastTerminalDeliveryFailureAt: null,
++      lastClaimAt: null,
++      lastAckAt: null,
++      lastAckOutcome: null,
++      consecutiveAckFailureCount: null,
++      routeMode,
++      deferOverChars: routeMode === "split" ? 200 : null,
++      pendingForMainCount: 0,
++      droppedForMainCount: 0,
++      logPath: paths.logPath,
++    });
++    await writeListenerStatus(paths, base("worker"));
++    const worker = await readListenerStatus(paths);
++    assert.equal(worker?.routeMode, "worker");
++    await writeListenerStatus(paths, base("split"));
++    const split = await readListenerStatus(paths);
++    assert.equal(split?.routeMode, "split");
++    assert.equal(split?.deferOverChars, 200);
++    assert.equal(
++      listenerLegacyRouteSentence("worker"),
++      `LEGACY: this status file has routeMode worker. That route cannot be started again; ${LISTENER_ROUTE_RULING}.`,
++    );
++    assert.equal(
++      listenerLegacyRouteSentence("split"),
++      `LEGACY: this status file has routeMode split. That route cannot be started again; ${LISTENER_ROUTE_RULING}.`,
++    );
++    assert.equal(
++      listenerLegacyRouteSentence("main"),
++      "Ask route: main; directed asks wait for this interactive session.",
++    );
++    const emptyEvidence = {
++      pendingForMainOldestAt: null,
++      hookSurfaceExists: false,
++      hookSurfaceAdvanced: false,
++    };
++    assert.match(
++      renderListenerStatus(worker, emptyEvidence),
++      /LEGACY: this status file has routeMode worker\. That route cannot be started again/,
++    );
++    assert.match(
++      renderListenerStatus(split, emptyEvidence),
++      /LEGACY: this status file has routeMode split\. That route cannot be started again/,
++    );
++  } finally {
++    await rm(root, { recursive: true, force: true });
++  }
++});
++
++class ThrowingStartModel implements ListenerRuntimeModel {
++  starts = 0;
++  prompts = 0;
++  async start(): Promise<void> {
++    this.starts += 1;
++    throw new Error("fake model start must not be called");
++  }
++  async prompt(
++    _signal: SignalRecord,
++    _mode: ListenerPromptMode,
++    _prompt: string,
++    _attempt: number,
++  ): Promise<ListenerPromptResult> {
++    this.prompts += 1;
++    throw new Error("fake model prompt must not be called");
++  }
++  cancel(): void {}
++  async close(): Promise<void> {}
++}
++
++test("runtime reaches ready without calling model.start even when start throws", async () => {
++  const root = await mkdtemp(join(tmpdir(), "cswarm-main-only-ready-"));
++  const controller = new AbortController();
++  const model = new ThrowingStartModel();
++  const events: ListenerRuntimeEvent[] = [];
++  const effects = new Map<string, ListenerEffectRecord>();
++  const queue = new FilePendingMainQueue(root);
++  const note: SignalRecord = {
++    id: "aaaaaaaa-aaaa-4aaa-8aaa-aaaaaaaaaaaa",
++    workspace_id: WORKSPACE_ID,
++    from: PRINCIPAL_ID,
++    from_kind: "agent",
++    to: null,
++    to_agent: PRINCIPAL_ID,
++    in_reply_to: null,
++    about: null,
++    kind: "note",
++    body: "queue me",
++    until: "2036-01-01T00:00:00.000Z",
++    created_at: "2026-09-06T00:00:00.000Z",
++  };
++  let reads = 0;
++  try {
++    const stop = await runListenerRuntime({
++      target: cloudTarget("https://cloud.example.test", "anon"),
++      workspaceId: WORKSPACE_ID,
++      principalId: PRINCIPAL_ID,
++      credentialSession: { async bearer() { return "token"; } },
++      store: {
++        async read(id) { return effects.get(id) ?? null; },
++        async write(record) { effects.set(record.signalId, record); },
++      },
++      model,
++      pendingMainQueue: queue,
++      signal: controller.signal,
++      now: () => Date.parse("2026-09-06T00:00:00.000Z"),
++      sleep: async () => {
++        controller.abort();
++      },
++      onEvent: (event) => events.push(event),
++      readPage: async () => {
++        reads += 1;
++        if (reads > 1) controller.abort();
++        return {
++          signals: reads === 1 ? [note] : [],
++          capabilities: {
++            senderOwnerRelation: true,
++            cursorAfter: true,
++            deliveryClaim: false,
++            deliveryAck: false,
++          },
++          legacyCursorFallback: false,
++          rawCount: reads === 1 ? 1 : 0,
++          nextCursor: null,
++          malformedRows: 0,
++          pendingDeliveryCount: null,
++        };
++      },
++    });
++    assert.equal(stop.reason, "cancelled");
++    assert.ok(events.some((event) => event.type === "ready"));
++    assert.equal(model.starts, 0);
++    assert.equal(model.prompts, 0);
++    const queued = await queue.read();
++    assert.equal(queued.length, 1);
++    assert.equal(queued[0]?.signalId, note.id);
++    assert.equal(queued[0]?.body, "queue me");
++    const raw = await readFile(join(root, "pending-for-main.json"), "utf8");
++    assert.match(raw, /queue me/);
++  } finally {
++    await rm(root, { recursive: true, force: true });
++  }
++});
++
++test("NullListenerModel start throws so a missed call cannot look like success", async () => {
++  const model = new NullListenerModel();
++  await assert.rejects(model.start(), /listener never starts a model/);
++  await assert.rejects(
++    model.prompt(
++      {
++        id: "aaaaaaaa-aaaa-4aaa-8aaa-aaaaaaaaaaaa",
++        workspace_id: WORKSPACE_ID,
++        from: PRINCIPAL_ID,
++        from_kind: "agent",
++        to: null,
++        to_agent: PRINCIPAL_ID,
++        in_reply_to: null,
++        about: null,
++        kind: "ask",
++        body: "hi",
++        until: "2036-01-01T00:00:00.000Z",
++        created_at: "2026-09-06T00:00:00.000Z",
++      },
++      "worker",
++      "hi",
++      1,
++    ),
++    /listener never prompts a model/,
++  );
++});
++
++test("decideListenerRoute never returns worker", () => {
++  assert.equal(decideListenerRoute("main", null, 0), "main");
++  assert.equal(decideListenerRoute("main", null, 9999), "main");
++});
++
++test("adding worker to LISTENER_ROUTE_MODES fails this pin and the refusal test", async () => {
++  const src = await readFile(
++    join(dirname(fileURLToPath(import.meta.url)), "../src/listener/main-routing.ts"),
++    "utf8",
++  );
++  assert.match(src, /export const LISTENER_ROUTE_MODES = \["main"\] as const;/);
++  assert.equal((LISTENER_ROUTE_MODES as readonly string[]).includes("worker"), false);
++  assert.throws(
++    () => listenerRouteConfiguration("worker", undefined),
++    (error: unknown) => {
++      assert.equal((error as Error).message, listenerRouteRefusedSentence("worker"));
++      return true;
++    },
++  );
++});
+diff --git a/tests/listener-opencode-model.test.ts b/tests/listener-opencode-model.test.ts
+index e470a0e..f5c8df8 100644
+--- a/tests/listener-opencode-model.test.ts
++++ b/tests/listener-opencode-model.test.ts
+@@ -1282,6 +1282,11 @@ test("close child_exit_timeout retains worker home; runtime+supervisor fail", as
+       async read() { return null; },
+       async write() {},
+     },
++    pendingMainQueue: {
++      async enqueue() {
++        return { count: 0, added: false, droppedOldest: false, droppedCount: 0 };
++      },
++    },
+     model: new OpenCodeListenerModel({
+       cwd,
+       allowMissingAuth: true,
+@@ -1326,15 +1331,8 @@ test("close child_exit_timeout retains worker home; runtime+supervisor fail", as
+       pendingDeliveryCount: null,
+     }),
+   });
+-  assert.equal(stop.reason, "fatal");
+-  if (stop.reason === "fatal") {
+-    assert.equal(
+-      (stop.error as Error & { code?: string }).code,
+-      "child_exit_timeout",
+-    );
+-  }
+-  assert.equal(typeof homeFromRuntime, "string");
+-  await stat(homeFromRuntime!);
++  assert.equal(stop.reason, "cancelled");
++  assert.equal(homeFromRuntime, undefined);
+ 
+   // Supervisor records failed status with child_exit_timeout code.
+   const paths3 = listenerPaths({
+diff --git a/tests/listener-routing.test.ts b/tests/listener-routing.test.ts
+index 2136cf4..1b32511 100644
+--- a/tests/listener-routing.test.ts
++++ b/tests/listener-routing.test.ts
+@@ -15,14 +15,10 @@ import {
+ const WORKSPACE_ID = "11111111-1111-4111-8111-111111111111";
+ const PRINCIPAL_ID = "22222222-2222-4222-8222-222222222222";
+ 
+-test("the pure route decision keeps equal and smaller split asks on the worker", () => {
+-  assert.equal(decideListenerRoute("worker", null, 10_000), "worker");
++test("the pure route decision is main only", () => {
+   assert.equal(decideListenerRoute("main", null, 1), "main");
+-  assert.equal(decideListenerRoute("split", 240, 239), "worker");
+-  assert.equal(decideListenerRoute("split", 240, 240), "worker");
+-  assert.equal(decideListenerRoute("split", 240, 241), "main");
+-  assert.equal(decideListenerRoute("split", 1, 2), "main");
+-  assert.equal(decideListenerRoute("split", 10_000, 10_000), "worker");
++  assert.equal(decideListenerRoute("main", null, 10_000), "main");
++  assert.throws(() => decideListenerRoute("main", 240, 1), /main route cannot have a split threshold/);
+ });
+ 
+ function entry(index: number): PendingMainEntry {
+diff --git a/tests/listener-runtime.test.ts b/tests/listener-runtime.test.ts
+index 8c463ce..c026a71 100644
+--- a/tests/listener-runtime.test.ts
++++ b/tests/listener-runtime.test.ts
+@@ -75,16 +75,40 @@ const WORKSPACE_ID = "11111111-1111-4111-8111-111111111111";
+ const PRINCIPAL_ID = "22222222-2222-4222-8222-222222222222";
+ const SENDER_OPERATOR_ID = "44444444-4444-4444-8444-444444444444";
+ 
++const defaultPendingMainQueue = {
++  async enqueue() {
++    return { count: 1, added: true, droppedOldest: false, droppedCount: 0 };
++  },
++};
++
+ async function runListenerRuntime(
+   options: Parameters<typeof runListenerRuntimeActual>[0],
+ ): ReturnType<typeof runListenerRuntimeActual> {
++  let reads = 0;
++  const origRead = options.readPage;
++  const local = new AbortController();
++  if (options.signal?.aborted) local.abort();
++  else {
++    options.signal?.addEventListener("abort", () => local.abort(), { once: true });
++  }
+   return await runListenerRuntimeActual({
+     resolveSenderProvenance: async () => ({
+       senderName: "Avery",
+       operatorId: SENDER_OPERATOR_ID,
+       operatorName: "Morgan",
+     }),
++    pendingMainQueue: defaultPendingMainQueue,
+     ...options,
++    signal: local.signal,
++    ...(origRead
++      ? {
++        readPage: async (input: Parameters<NonNullable<typeof origRead>>[0]) => {
++          reads += 1;
++          if (reads > 8) local.abort();
++          return await origRead(input);
++        },
++      }
++      : {}),
+   });
+ }
+ 
+@@ -709,7 +733,7 @@ test("incomplete durable configuration fails before credential or provider work"
+   assert.equal(model.starts, 0);
+ });
+ 
+-test("cursor fallback observes direct notes without model or reply effects", async () => {
++test("cursor fallback queues direct notes without model or reply effects", async () => {
+   const model = new FakeModel();
+   const store = new MemoryStore();
+   const controller = new AbortController();
+@@ -744,8 +768,9 @@ test("cursor fallback observes direct notes without model or reply effects", asy
+   const record = await store.read(directNote.id);
+   assert.ok(record);
+   assert.equal(record.signalKind, "note");
+-  assert.equal(record.state, "observed");
++  assert.equal(record.state, "routed_main");
+   assert.equal(model.prompts.length, 0);
++  assert.equal(model.starts, 0);
+   assert.deepEqual(
+     events.filter((event) => event.type === "delivery_mode"),
+     [{
+@@ -923,7 +948,7 @@ test("delivery events reduce into the closed supervisor status fields", async ()
+       const afterReadyHuman = renderListenerStatus(afterReady);
+       assert.doesNotMatch(afterReadyHuman, /HANDLED: yes/);
+       /* A negative alone passes if the line vanishes; pin the positive too. */
+-      assert.match(afterReadyHuman, /HANDLED: no\. 8 deliveries have failed since the last reply/);
++      assert.match(afterReadyHuman, /HANDLED: no\. Queued messages have not reached the session hook/);
+       await ack("aaaaaaaa-aaaa-4aaa-8aaa-aaaaaaaaaa24", "queued", "2026-09-03T18:46:00.000Z");
+       await ack("aaaaaaaa-aaaa-4aaa-8aaa-aaaaaaaaaa25", "expired", "2026-09-03T18:46:30.000Z");
+       await ack("aaaaaaaa-aaaa-4aaa-8aaa-aaaaaaaaaa26", "replied", "2026-09-03T18:47:00.000Z");
+@@ -985,7 +1010,7 @@ test("delivery events reduce into the closed supervisor status fields", async ()
+   assert.doesNotMatch(afterMeasuredIncident.human, /HANDLED: yes/);
+   assert.match(
+     afterMeasuredIncident.human,
+-    /HANDLED: no\. 8 deliveries have failed since the last reply; the newest delivery acknowledgement was observed\./,
++    /HANDLED: no\. Queued messages have not reached the session hook/,
+   );
+   assert.equal(afterMeasuredIncident.json.handledState, "not_handled");
+   assert.equal(afterMeasuredIncident.json.lastAckOutcome, "observed");
+@@ -1376,7 +1401,7 @@ test("D-041a: a corrupt recovered effect cannot block stale leased recovery", as
+   );
+   assert.equal(claimIds.includes(active.claimCommandId), false);
+   assert.equal(ackCalls, 1);
+-  assert.equal((await store.read(directNote.id))?.state, "observed");
++  assert.equal((await store.read(directNote.id))?.state, "routed_main");
+   assert.equal(journal.record.active, null);
+ });
+ 
+@@ -1528,7 +1553,7 @@ test("D-041 enumeration: a fresh claim repairs corruption without process-local
+   assert.equal(stop.reason, "cancelled");
+   assert.equal(ackCalls, 1);
+   assert.ok(journal.calls.includes("lease"));
+-  assert.equal((await store.read(directNote.id))?.state, "observed");
++  assert.equal((await store.read(directNote.id))?.state, "routed_main");
+   assert.equal(journal.record.active, null);
+ });
+ 
+@@ -1874,8 +1899,9 @@ test("C-1 composition: an expired leased claim with a resumable effect re-claims
+   );
+   assert.equal(claimCalls, 1);
+   assert.equal(ackCalls, 1);
+-  assert.equal(model.prompts.length, 1);
+-  assert.equal((await store.read(claimedAsk.id))?.state, "done");
++  assert.equal(model.prompts.length, 0);
++  assert.equal(model.starts, 0);
++  assert.equal((await store.read(claimedAsk.id))?.state, "routed_main");
+   assert.equal(journal.record.active, null);
+ });
+ 
+@@ -1958,8 +1984,9 @@ test("C-1 composition: a live leased claim with a resumable effect replays immed
+     "C-1 live durable recovery must replay the stored claim immediately",
+   );
+   assert.equal(ackCalls, 1);
+-  assert.equal(model.prompts.length, 1);
+-  assert.equal((await store.read(claimedAsk.id))?.state, "done");
++  assert.equal(model.prompts.length, 0);
++  assert.equal(model.starts, 0);
++  assert.equal((await store.read(claimedAsk.id))?.state, "routed_main");
+   assert.equal(journal.record.active, null);
+ });
+ 
+@@ -2073,7 +2100,7 @@ test("MAJOR-3: failureCode error ACKs local_effect_failed and the runtime surviv
+     "cancelled",
+     "MAJOR-3 unknown failure classification must not brick the listener",
+   );
+-  assert.equal(ackCode, "local_effect_failed");
++  assert.equal(ackCode, null);
+   assert.equal(journal.record.active, null);
+ });
+ 
+@@ -2116,7 +2143,7 @@ test("route=worker observes a durable note before prepareAck and network ACK", a
+     credentialSession: { async bearer() { return "token"; } },
+     store,
+     model: new FakeModel(),
+-    routeMode: "worker",
++    routeMode: "main",
+     signal: controller.signal,
+     now: () => Date.parse("2026-07-30T00:00:00.000Z"),
+     sleep: async () => undefined,
+@@ -2124,10 +2151,10 @@ test("route=worker observes a durable note before prepareAck and network ACK", a
+     poster: { async post() { throw new Error("note must not post"); } },
+   });
+   assert.equal(stop.reason, "cancelled");
+-  assert.equal(ackOutcome, "observed");
++  assert.equal(ackOutcome, "queued");
+   const record = await store.read(directNote.id);
+   assert.ok(record);
+-  assert.equal(record.state, "observed");
++  assert.equal(record.state, "routed_main");
+   assert.equal(record.senderOwnerRelation, "cross_owner");
+   assert.equal(journal.record.active, null);
+   const writeAt = audit.indexOf("effect:write");
+@@ -2175,7 +2202,7 @@ test("route=worker replies to a durable ask after persisting prepareAck", async
+     credentialSession: { async bearer() { return "token"; } },
+     store,
+     model,
+-    routeMode: "worker",
++    routeMode: "main",
+     signal: controller.signal,
+     now: () => Date.parse("2026-07-30T00:00:00.000Z"),
+     sleep: async () => undefined,
+@@ -2188,9 +2215,10 @@ test("route=worker replies to a durable ask after persisting prepareAck", async
+     },
+   });
+   assert.equal(stop.reason, "cancelled");
+-  assert.equal(outcome, "replied");
+-  assert.equal(model.prompts.length, 1);
+-  assert.equal((await store.read(claimedAsk.id))?.state, "done");
++  assert.equal(outcome, "queued");
++  assert.equal(model.prompts.length, 0);
++  assert.equal(model.starts, 0);
++  assert.equal((await store.read(claimedAsk.id))?.state, "routed_main");
+   assert.ok(audit.indexOf("journal:prepareAck") < audit.indexOf("network:ack"));
+   assert.ok(audit.lastIndexOf("effect:read", audit.indexOf("journal:prepareAck")) >= 0);
+ });
+@@ -2381,8 +2409,8 @@ test("route=split queues an over-threshold note instead of claiming observation"
+     credentialSession: { async bearer() { return "token"; } },
+     store: new MemoryStore(),
+     model: new FakeModel(),
+-    routeMode: "split",
+-    deferOverChars: 1,
++    routeMode: "main",
++    deferOverChars: null,
+     pendingMainQueue: {
+       async enqueue(entry) {
+         queuedKind = entry.kind;
+@@ -2400,7 +2428,7 @@ test("route=split queues an over-threshold note instead of claiming observation"
+   assert.equal(journal.record.active, null);
+ });
+ 
+-test("route=split keeps an under-threshold note on the observed worker path", async () => {
++test("route=main queues an under-threshold note instead of observing it", async () => {
+   const journal = new MemoryDeliveryJournal();
+   const controller = new AbortController();
+   const claimedNote = note(
+@@ -2434,11 +2462,11 @@ test("route=split keeps an under-threshold note on the observed worker path", as
+     credentialSession: { async bearer() { return "token"; } },
+     store: new MemoryStore(),
+     model: new FakeModel(),
+-    routeMode: "split",
+-    deferOverChars: 100,
++    routeMode: "main",
++    deferOverChars: null,
+     pendingMainQueue: {
+       async enqueue() {
+-        throw new Error("an under-threshold note must stay on the worker path");
++        return { count: 1, added: true, droppedOldest: false, droppedCount: 0 };
+       },
+     },
+     signal: controller.signal,
+@@ -2447,7 +2475,7 @@ test("route=split keeps an under-threshold note on the observed worker path", as
+     readPage: async () => durablePage(),
+   });
+   assert.equal(stop.reason, "cancelled");
+-  assert.equal(ackOutcome, "observed");
++  assert.equal(ackOutcome, "queued");
+   assert.equal(journal.record.active, null);
+ });
+ 
+@@ -3196,44 +3224,21 @@ test("runtime drains pages, resets scan cursor, and posts stable replies", async
+     null,
+     null,
+   ]);
+-  assert.deepEqual(model.prompts.map((item) => item.id), [
+-    first.id,
+-    second.id,
+-    late.id,
+-  ]);
+-  assert.equal(posts.length, 3);
+-  assert.equal(new Set(posts.map((item) => item.commandId)).size, 3);
+-  assert.ok(bearerCalls >= reads + posts.length);
++  assert.deepEqual(model.prompts.map((item) => item.id), []);
++  assert.equal(posts.length, 0);
++  assert.equal(model.starts, 0);
++  assert.ok(events.some((event) => event.type === "effect" && event.status === "routed_main"));
+   assert.equal(events.filter((event) => event.type === "ready").length, 1);
+-  assert.equal(model.starts, 1);
+   // Abort listener cancels immediately; finally also cancels (at least once).
+   assert.ok(model.cancels >= 1);
+   assert.equal(model.closes, 1);
+ });
+ 
+-test("runtime asks the credential session immediately before the real reply post", async () => {
++test("runtime queues a page without posting a worker reply", async () => {
+   const model = new FakeModel();
+   const controller = new AbortController();
+   const callOrder: string[] = [];
+   let reads = 0;
+-  const replyId = "cccccccc-cccc-4ccc-8ccc-cccccccccccc";
+-  const fetcher = (async (_url: string | URL | Request, init?: RequestInit) => {
+-    callOrder.push(`fetch:${String(init?.headers && (init.headers as Record<string, string>).authorization)}`);
+-    controller.abort();
+-    return new Response(JSON.stringify({
+-      status: "accepted",
+-      ok: true,
+-      event_ids: [],
+-      signal: {
+-        ...ask("aaaaaaaa-aaaa-4aaa-8aaa-aaaaaaaaaaa4", "2026-07-30T00:00:01.000Z"),
+-        id: replyId,
+-        kind: "note",
+-      },
+-    }), {
+-      status: 200,
+-      headers: { "content-type": "application/json" },
+-    });
+-  }) as typeof fetch;
+   const stop = await runListenerRuntime({
+     target: cloudTarget("https://cloud.example.test", "anon"),
+     workspaceId: WORKSPACE_ID,
+@@ -3247,10 +3252,14 @@ test("runtime asks the credential session immediately before the real reply post
+     store: new MemoryStore(),
+     model,
+     signal: controller.signal,
+-    fetcher,
++    fetcher: (async () => {
++      callOrder.push("fetch");
++      throw new Error("listener must not post a worker reply");
++    }) as typeof fetch,
+     sleep: async () => undefined,
+     readPage: async () => {
+       reads += 1;
++      if (reads > 1) controller.abort();
+       return page(
+         reads === 1
+           ? [ask(
+@@ -3262,38 +3271,17 @@ test("runtime asks the credential session immediately before the real reply post
+     },
+   });
+   assert.equal(stop.reason, "cancelled");
+-  assert.deepEqual(callOrder.slice(0, 3), [
+-    "bearer",
+-    "bearer",
+-    "fetch:Bearer fresh-token",
+-  ]);
++  assert.equal(model.prompts.length, 0);
++  assert.equal(model.starts, 0);
++  assert.ok(callOrder.includes("bearer"));
++  assert.equal(callOrder.includes("fetch"), false);
+ });
+ 
+-test("runtime abort cancels model immediately while a hung prompt is pending", async () => {
++test("runtime abort cancels the unused model after a queued page", async () => {
+   const model = new FakeModel();
+-  let releasePrompt: (() => void) | undefined;
+-  const hung = new Promise<void>((resolve) => {
+-    releasePrompt = resolve;
+-  });
+-  model.prompt = async () => {
+-    model.prompts.push({
+-      id: "hung",
+-      mode: "worker",
+-      prompt: "hang",
+-    });
+-    await hung;
+-    return { message: "late", stopReason: "end_turn" as const };
+-  };
+   const controller = new AbortController();
+-  let cancelAtPrompt = 0;
+-  const originalCancel = model.cancel.bind(model);
+-  model.cancel = () => {
+-    cancelAtPrompt = model.prompts.length;
+-    originalCancel();
+-    releasePrompt?.();
+-  };
+   let reads = 0;
+-  const stopPromise = runListenerRuntime({
++  const stop = await runListenerRuntime({
+     target: cloudTarget("https://cloud.example.test", "anon"),
+     workspaceId: WORKSPACE_ID,
+     principalId: PRINCIPAL_ID,
+@@ -3309,25 +3297,13 @@ test("runtime abort cancels model immediately while a hung prompt is pending", a
+           ask("aaaaaaaa-aaaa-4aaa-8aaa-aaaaaaaaaaa9", "2026-07-30T00:00:01.000Z"),
+         ]);
+       }
++      controller.abort();
+       return page([]);
+     },
+-    poster: {
+-      async post() {
+-        return { signalId: "bbbbbbbb-bbbb-4bbb-8bbb-bbbbbbbbbbbb" };
+-      },
+-    },
+   });
+-  // Wait until the hung prompt is entered, then abort while it is still pending.
+-  for (let i = 0; i < 50 && model.prompts.length === 0; i += 1) {
+-    await new Promise((r) => setTimeout(r, 5));
+-  }
+-  assert.equal(model.prompts.length, 1);
+-  assert.equal(model.cancels, 0);
+-  controller.abort();
+-  const stop = await stopPromise;
+   assert.equal(stop.reason, "cancelled");
+-  // Causal: cancel fired while the hung prompt was in flight (not only in finally after settle).
+-  assert.equal(cancelAtPrompt, 1);
++  assert.equal(model.prompts.length, 0);
++  assert.equal(model.starts, 0);
+   assert.ok(model.cancels >= 1);
+   assert.equal(model.closes, 1);
+ });
+@@ -3416,9 +3392,9 @@ test("default poster credential failures stop as credential with the identical e
+     assert.equal(fetchCalls, 0, "no reply fetch may occur");
+     const record = await store.read(theAsk.id);
+     assert.ok(record);
+-    assert.equal(record.state, "reply_ready");
++    assert.equal(record.state, "routed_main");
+     assert.equal(record.failureCode, null);
+-    assert.equal(record.postAttempts, 1);
++    assert.equal(record.postAttempts, 0);
+     assert.equal(model.closes, 1);
+   }
+ });
+@@ -3446,15 +3422,14 @@ test("an injected poster throwing typed 401 with hostile text stops as credentia
+       },
+     },
+   });
+-  assert.equal(stop.reason, "credential", "typed 401 must stop as credential");
+-  assert.equal(stop.reason === "credential" && stop.error, thrown);
++  assert.equal(stop.reason, "cancelled");
+   const record = await store.read(theAsk.id);
+   assert.ok(record);
+-  assert.equal(record.state, "reply_ready");
++  assert.equal(record.state, "routed_main");
+   assert.equal(record.failureCode, null);
+ });
+ 
+-test("the default-post HTTP 401/403 path stops as credential, not fatal or cancelled", async () => {
++test("the default-post HTTP 401/403 path queues without a worker reply post", async () => {
+   for (const status of [401, 403]) {
+     const model = new FakeModel();
+     const store = new MemoryStore();
+@@ -3484,10 +3459,10 @@ test("the default-post HTTP 401/403 path stops as credential, not fatal or cance
+           },
+         )) as typeof fetch,
+     });
+-    assert.equal(stop.reason, "credential", `status ${status}`);
++    assert.equal(stop.reason, "cancelled", `status ${status}`);
+     const record = await store.read(theAsk.id);
+     assert.ok(record);
+-    assert.equal(record.state, "reply_ready", `status ${status}`);
++    assert.equal(record.state, "routed_main", `status ${status}`);
+     assert.equal(record.failureCode, null, `status ${status}`);
+   }
+ });
+@@ -3522,11 +3497,10 @@ test("a trusted injected poster receives the same closed runtime credential clas
+       },
+     },
+   });
+-  assert.equal(stop.reason, "credential");
+-  assert.equal(stop.reason === "credential" && stop.error, thrown);
++  assert.equal(stop.reason, "cancelled");
+   const record = await store.read(theAsk.id);
+   assert.ok(record);
+-  assert.equal(record.state, "reply_ready");
++  assert.equal(record.state, "routed_main");
+   assert.equal(record.failureCode, null);
+ });
+ 
+@@ -3562,7 +3536,7 @@ test("an explicitly already-aborted runtime stays cancelled even for credential-
+   assert.notEqual(stop.reason, "credential");
+   const record = await store.read(theAsk.id);
+   assert.ok(record);
+-  assert.equal(record.state, "reply_ready");
++  assert.equal(record.state, "routed_main");
+   assert.equal(record.failureCode, null);
+ });
+ 
+@@ -3589,8 +3563,8 @@ test("runtime classifies noncredential secret wording only by the closed fleet c
+       },
+     },
+   });
+-  assert.equal(exactStop.reason, "credential");
+-  assert.equal((await store.read(exact.id))?.state, "reply_ready");
++  assert.equal(exactStop.reason, "cancelled");
++  assert.equal((await store.read(exact.id))?.state, "routed_main");
+ 
+   // Different wording is an ordinary terminal failure, not credential loss.
+   const model2 = new FakeModel();
+@@ -3625,15 +3599,14 @@ test("runtime classifies noncredential secret wording only by the closed fleet c
+     },
+   });
+   assert.equal(otherStop.reason, "cancelled", "never a credential stop");
+-  const failed = events.find(
++  const routed = events.find(
+     (event) => event.type === "effect" && event.signalId === other.id,
+   );
+-  assert.ok(failed && failed.type === "effect");
+-  assert.equal(failed.status, "failed");
+-  assert.equal(failed.failureCode, "error");
++  assert.ok(routed && routed.type === "effect");
++  assert.equal(routed.status, "routed_main");
+ });
+ 
+-test("the default poster forwards the runtime caller signal and stays bounded", async () => {
++test("the listener queues without forwarding a worker reply fetch", async () => {
+   const model = new FakeModel();
+   const store = new MemoryStore();
+   const controller = new AbortController();
+@@ -3642,17 +3615,12 @@ test("the default poster forwards the runtime caller signal and stays bounded",
+     "2026-07-30T00:00:01.000Z",
+   );
+   let requestSignal: AbortSignal | undefined;
+-  let fetchStarted: (() => void) | undefined;
+-  const started = new Promise<void>((resolve) => {
+-    fetchStarted = resolve;
+-  });
+   const fetcher = (async (_url: string | URL | Request, init?: RequestInit) => {
+     requestSignal = init?.signal ?? undefined;
+-    fetchStarted?.();
+-    // Never settles and ignores abort: only caller cancellation bounds it.
+     return new Promise<Response>(() => {});
+   }) as typeof fetch;
+-  const stopPromise = runListenerRuntime({
++  let reads = 0;
++  const stop = await runListenerRuntime({
+     target: cloudTarget("https://cloud.example.test", "anon"),
+     workspaceId: WORKSPACE_ID,
+     principalId: PRINCIPAL_ID,
+@@ -3662,29 +3630,17 @@ test("the default poster forwards the runtime caller signal and stays bounded",
+     signal: controller.signal,
+     fetcher,
+     sleep: async () => undefined,
+-    readPage: async () => page([theAsk]),
++    readPage: async () => {
++      reads += 1;
++      if (reads > 1) controller.abort();
++      return page(reads === 1 ? [theAsk] : []);
++    },
+   });
+-  await started;
+-  controller.abort();
+-  const stop = await Promise.race([
+-    stopPromise,
+-    new Promise<never>((_, reject) => {
+-      const timer = setTimeout(
+-        () => reject(new Error("runtime did not settle after caller abort")),
+-        2000,
+-      );
+-      timer.unref();
+-    }),
+-  ]);
+   assert.equal(stop.reason, "cancelled");
+-  assert.equal(
+-    requestSignal?.aborted,
+-    true,
+-    "the effective request signal must abort with the caller",
+-  );
++  assert.equal(requestSignal, undefined, "no worker reply fetch starts");
+   const record = await store.read(theAsk.id);
+   assert.ok(record);
+-  assert.equal(record.state, "reply_ready", "the effect must remain resumable");
++  assert.equal(record.state, "routed_main");
+ });
+ 
+ test("an already-aborted runtime caller never starts the reply fetch and stays resumable", async () => {
+@@ -3719,7 +3675,7 @@ test("an already-aborted runtime caller never starts the reply fetch and stays r
+   assert.equal(fetchCalls, 0, "no reply fetch may occur");
+   const record = await store.read(theAsk.id);
+   assert.ok(record);
+-  assert.equal(record.state, "reply_ready", "the effect must remain resumable");
++  assert.equal(record.state, "routed_main");
+ });
+ 
+ test("a restart carries the failure run, so the printed remedy cannot erase the alarm", async () => {
+@@ -3920,7 +3876,7 @@ test("a status written before lastAckOutcome existed is not called unacknowledge
+     lastTerminalDeliveryFailureAt: null,
+     lastClaimAt: ackedAt,
+     lastAckAt: ackedAt,
+-    routeMode: "worker",
++    routeMode: "main",
+   };
+   await writeSecureJsonFile(paths.statusPath, JSON.stringify(legacy));
+ 
+@@ -4071,24 +4027,16 @@ test("a delivery that spends its hold budget hands the seat to the next delivery
+   );
+   // The bound, stated as the reader reads it: the second delivery reached the
+   // worker, and it did so without waiting out the first delivery's lease.
+-  assert.deepEqual(model.prompts, [first.id, second.id]);
++  assert.deepEqual(model.prompts, []);
++  assert.equal(model.starts, 0);
+   const released = events.filter(
+     (event): event is Extract<
+       ListenerRuntimeEvent,
+       { type: "delivery_hold_released" }
+     > => event.type === "delivery_hold_released",
+   );
+-  assert.equal(released.length, 1);
+-  assert.equal(released[0]!.signalId, first.id);
+-  assert.equal(released[0]!.reason, "hold_budget");
+-  assert.equal(released[0]!.heldMs, holdBudgetMs);
+-  assert.ok(
+-    clock < Date.parse("2026-07-30T00:15:00.000Z"),
+-    "the seat moved on before the first delivery's lease expired",
+-  );
+-  // The released delivery keeps its lease and its receipt: only the second one
+-  // is acknowledged, so its sender still reads a delivery in progress.
+-  assert.deepEqual(acked, [{ signalId: second.id, outcome: "replied" }]);
++  assert.equal(released.length, 0);
++  assert.deepEqual(acked, [{ signalId: first.id, outcome: "queued" }]);
+ });
+ 
+ test("the released delivery is not acknowledged with any outcome", async () => {
+@@ -4150,18 +4098,14 @@ test("the released delivery is not acknowledged with any outcome", async () => {
+     onEvent: (event) => events.push(event),
+   });
+ 
+-  assert.deepEqual(ackOutcomes, []);
++  assert.deepEqual(ackOutcomes, ["queued"]);
+   assert.equal(journal.record.active, null);
+   const releases = events.filter((event): event is Extract<
+     ListenerRuntimeEvent,
+     { type: "delivery_hold_released" }
+   > => event.type === "delivery_hold_released");
+-  assert.equal(releases.length, 1);
+-  /* Name WHICH bound fired. Asserting only that some release happened let this
+-     test stay green with the seat bound removed, because the lease bound can
+-     release too; the reason is what separates them. */
+-  assert.equal(releases[0]!.reason, "hold_budget");
+-  assert.ok(releases[0]!.heldMs >= holdBudgetMs, String(releases[0]!.heldMs));
++  assert.equal(releases.length, 0);
++  assert.equal(model.starts, 0);
+ });
+ 
+ test("listen status shows the delivery in hand and how long the queue has waited", () => {
+@@ -4203,7 +4147,7 @@ test("listen status shows the delivery in hand and how long the queue has waited
+     currentDeliverySince: claimedAt,
+     heldBackDeliveries: [],
+     pendingDeliveryCountAt: claimedAt,
+-    routeMode: "worker",
++    routeMode: "main",
+     deferOverChars: null,
+     pendingForMainCount: 0,
+     droppedForMainCount: 0,
+@@ -4495,8 +4439,8 @@ test("a fast first failure keeps the seat and retries inside the hold budget", a
+     "cancelled",
+     stop.reason === "fatal" ? `stopped fatally: ${stop.error.message}` : "",
+   );
+-  assert.deepEqual(prompts, [first.id, first.id]);
+-  assert.deepEqual(acked, ["replied"]);
++  assert.deepEqual(prompts, []);
++  assert.deepEqual(acked, ["queued"]);
+   assert.equal(
+     events.filter((event) => event.type === "delivery_hold_released").length,
+     0,
+@@ -4950,19 +4894,9 @@ test("a lease recovered across a restart keeps its original hold clock", async (
+     ListenerRuntimeEvent,
+     { type: "delivery_hold_released" }
+   > => event.type === "delivery_hold_released");
+-  assert.equal(released.length, 1);
+-  assert.equal(released[0]!.signalId, first.id);
+-  assert.equal(released[0]!.reason, "hold_budget");
+-  /* The measured hold spans the ORIGINAL claim, not this process's start: over
+-     20 minutes against a 10 minute budget. A fresh clock would report about a
+-     second here, and the release would not have happened at all. */
+-  assert.ok(
+-    released[0]!.heldMs >= 20 * 60_000,
+-    `hold measured from this process only: ${released[0]!.heldMs}`,
+-  );
+-  // One attempt on the recovered lease, then the seat moves on.
+-  assert.deepEqual(model.prompts, [first.id, second.id]);
+-  assert.deepEqual(acked, [second.id]);
++  assert.equal(released.length, 0);
++  assert.deepEqual(model.prompts, []);
++  assert.deepEqual(acked, [first.id]);
+ });
+ 
+ test("a service that fans out reaches the prompt with this listener's own slot", async () => {
+@@ -5038,16 +4972,6 @@ test("a service that fans out reaches the prompt with this listener's own slot",
+     stop.reason === "fatal" ? `stopped fatally: ${stop.error.message}` : "",
+   );
+   assert.equal(acks, 2);
+-  assert.equal(model.prompts.length, 2);
+-  const first = model.prompts.find((entry) => entry.id === shared.id);
+-  const second = model.prompts.find((entry) => entry.id === private_.id);
+-  assert.ok(first, "the shared ask must have reached the model");
+-  assert.ok(second, "the unreported ask must have reached the model");
+-  assert.match(first.prompt, /you are recipient 2 of 3/);
+-  /* CONTROL: the SAME runtime, the same model and the same claim loop produce a
+-   * prompt with no recipient clause when the service reported no set. So the
+-   * clause above comes from the delivery wire and not from the prompt builder
+-   * adding it to everything. */
+-  assert.doesNotMatch(second.prompt, /you are recipient/);
+-  assert.doesNotMatch(second.prompt, /addressed this to/);
++  assert.equal(model.prompts.length, 0);
++  assert.equal(model.starts, 0);
+ });
+diff --git a/tests/listener-wake.test.ts b/tests/listener-wake.test.ts
+index 4e96254..2b3f3bb 100644
+--- a/tests/listener-wake.test.ts
++++ b/tests/listener-wake.test.ts
+@@ -47,7 +47,7 @@ import {
+   recordListenerWakeModeChange,
+   LISTENER_MODE_CHANGE_SKIP_MAX,
+   REALTIME_SUBSCRIBE_STATUS,
+-  runListenerRuntime,
++  runListenerRuntime as runListenerRuntimeActual,
+   summarizeListenerReadHealth,
+   WAKE_CLAIMS_PER_MINUTE_BUDGET,
+   WAKE_ERROR_CODES,
+@@ -72,6 +72,19 @@ import {
+ 
+ const WORKSPACE_ID = "11111111-1111-4111-8111-111111111111";
+ const PRINCIPAL_ID = "22222222-2222-4222-8222-222222222222";
++
++async function runListenerRuntime(
++  options: Parameters<typeof runListenerRuntimeActual>[0],
++): ReturnType<typeof runListenerRuntimeActual> {
++  return await runListenerRuntimeActual({
++    pendingMainQueue: {
++      async enqueue() {
++        return { count: 1, added: true, droppedOldest: false, droppedCount: 0 };
++      },
++    },
++    ...options,
++  });
++}
+ const WAKE_TOPIC = `${WAKE_TOPIC_PREFIX}${"A".repeat(43)}`;
+ const WAKE_TOPIC_B = `${WAKE_TOPIC_PREFIX}${"B".repeat(43)}`;
+ 
+diff --git a/tests/p1-cli/hook-routing.test.ts b/tests/p1-cli/hook-routing.test.ts
+index 951c316..93f579f 100644
+--- a/tests/p1-cli/hook-routing.test.ts
++++ b/tests/p1-cli/hook-routing.test.ts
+@@ -1786,27 +1786,19 @@ test("hook install accepts an explicit scope and refuses an ambiguous host", asy
+   }
+ });
+ 
+-test("listen route flags parse before credential work and enforce split bounds", () => {
++test("listen route flags parse before credential work and refuse worker, split, and defer-over", () => {
+   assert.deepEqual(listenerRouteConfiguration(undefined, undefined), {
+-    routeMode: "worker",
++    routeMode: "main",
+     deferOverChars: null,
+   });
+   assert.deepEqual(listenerRouteConfiguration("main", undefined), {
+     routeMode: "main",
+     deferOverChars: null,
+   });
+-  assert.deepEqual(listenerRouteConfiguration("split", "1"), {
+-    routeMode: "split",
+-    deferOverChars: 1,
+-  });
+-  assert.deepEqual(listenerRouteConfiguration("split", "10000"), {
+-    routeMode: "split",
+-    deferOverChars: 10_000,
+-  });
+-  assert.throws(() => listenerRouteConfiguration("split", "0"), /1 to 10000/);
+-  assert.throws(() => listenerRouteConfiguration("split", "10001"), /1 to 10000/);
+-  assert.throws(() => listenerRouteConfiguration("split", undefined), /requires --defer-over/);
+-  assert.throws(() => listenerRouteConfiguration("main", "10"), /only valid.*split/);
++  assert.throws(() => listenerRouteConfiguration("worker", undefined), /accepted --route values are main/);
++  assert.throws(() => listenerRouteConfiguration("split", undefined), /accepted --route values are main/);
++  assert.throws(() => listenerRouteConfiguration("split", "240"), /--defer-over is refused/);
++  assert.throws(() => listenerRouteConfiguration("main", "10"), /--defer-over is refused/);
+ 
+   const base = [
+     "listen", "start", "--agent-token-stdin", "--provider", "grok",
+@@ -1815,10 +1807,10 @@ test("listen route flags parse before credential work and enforce split bounds",
+   ];
+   const refused = runCli([...base, "--route", "split", "--defer-over", "0"]);
+   assert.equal(refused.status, 1);
+-  assert.match(refused.stderr, /--defer-over must be an integer from 1 to 10000/);
++  assert.match(refused.stderr, /--defer-over is refused/);
+   assert.doesNotMatch(refused.stderr, /credential artifact/);
+ 
+-  const valid = runCli([...base, "--route", "split", "--defer-over", "240"]);
++  const valid = runCli([...base, "--route", "main", "--allow-unattended"]);
+   assert.equal(valid.status, 1);
+   assert.doesNotMatch(valid.stderr, /--route|--defer-over/);
+   assert.match(valid.stderr, /agent credential/);
+@@ -1829,7 +1821,8 @@ test("listen route flags parse before credential work and enforce split bounds",
+     help.stdout,
+     /cswarm hook check \[--principal-id <uuid> \.\.\.\] \[--cooldown <seconds>\]/,
+   );
+-  assert.match(help.stdout, /--route worker\|main\|split/);
++  assert.match(help.stdout, /--route main/);
++  assert.doesNotMatch(help.stdout, /--route worker\|main\|split/);
+   assert.match(
+     help.stdout,
+     /hook check\s+reads only the selected listener's owned 0600 credential state/,
+@@ -2035,7 +2028,8 @@ test("listen status names the route and the next step for waiting main asks", ()
+     droppedForMainCount: 3,
+     logPath: "/tmp/events.ndjson",
+   });
+-  assert.match(rendered, /Ask route: split; bodies over 240 characters/);
++  assert.match(rendered, /LEGACY: this status file has routeMode split/);
++  assert.match(rendered, /That route cannot be started again/);
+   assert.match(
+     rendered,
+     /WARNING \[listener_unattended_main_queue\]: 2 messages are unattended/,
+@@ -2045,7 +2039,8 @@ test("listen status names the route and the next step for waiting main asks", ()
+     new RegExp(`cswarm hook install claude --principal-id ${PRINCIPAL_ID} --write`),
+   );
+   assert.match(rendered, /then start a fresh session/);
+-  assert.match(rendered, /--route worker/);
++  assert.match(rendered, /cswarm inbox --notify/);
++  assert.doesNotMatch(rendered, /--route worker/);
+   assert.match(rendered, /Routed asks dropped from the overflow queue: 3/);
+   assert.match(rendered, /signals remain in the inbox.*cswarm inbox/i);
+ });
+diff --git a/tests/p1-cli/listen-attendance.test.ts b/tests/p1-cli/listen-attendance.test.ts
+index 202d8e8..80fbdbb 100644
+--- a/tests/p1-cli/listen-attendance.test.ts
++++ b/tests/p1-cli/listen-attendance.test.ts
+@@ -1,13 +1,19 @@
+ /** Attendance coverage. This file is reached by `npm run test:p1-cli`. */
+ import assert from "node:assert/strict";
+ import { spawn, spawnSync } from "node:child_process";
+-import { chmod, mkdtemp, rm, writeFile } from "node:fs/promises";
++import { chmod, mkdir, mkdtemp, rm, writeFile } from "node:fs/promises";
+ import { createServer } from "node:http";
+ import { tmpdir } from "node:os";
+ import { dirname, join, resolve } from "node:path";
+ import { fileURLToPath } from "node:url";
+ import test from "node:test";
++import {
++  acquireArrivalWatchLock,
++  arrivalWatchLockPath,
++  releaseArrivalWatchLock,
++} from "../../src/cloud/arrival-watch.js";
+ import { cloudTarget } from "../../src/cloud/config.js";
++import { claudeUserPromptHookSnippet } from "../../src/cli.js";
+ import type { DeliveryOutcome } from "../../src/cloud/delivery.js";
+ import {
+   appendListenerEvent,
+@@ -55,6 +61,7 @@ function runCli(
+       HOME: options.home,
+       CLAUDE_CONFIG_DIR: join(options.home, ".claude"),
+       XDG_CONFIG_HOME: join(options.home, ".config"),
++      XDG_STATE_HOME: join(options.home, "xdg-state"),
+       NODE_OPTIONS: "--max-old-space-size=4096",
+     },
+     input: options.input ?? "",
+@@ -73,6 +80,7 @@ async function runCliAsync(
+       HOME: options.home,
+       CLAUDE_CONFIG_DIR: join(options.home, ".claude"),
+       XDG_CONFIG_HOME: join(options.home, ".config"),
++      XDG_STATE_HOME: join(options.home, "xdg-state"),
+       NODE_OPTIONS: "--max-old-space-size=4096",
+     },
+     stdio: ["ignore", "pipe", "pipe"],
+@@ -239,7 +247,8 @@ test("listen status separates connected, attended, and handled across the fixtur
+       new RegExp(`cswarm hook install claude --principal-id ${PRINCIPAL_ID} --write`),
+     );
+     assert.match(readyQueued.stdout, /then start a fresh session/);
+-    assert.match(readyQueued.stdout, /--route worker/);
++    assert.match(readyQueued.stdout, /cswarm inbox --notify/);
++    assert.doesNotMatch(readyQueued.stdout, /--route worker/);
+ 
+     const json = await runCliAsync([...statusArgs(readyQueuedRoot), "--json"], {
+       cwd: root,
+@@ -449,14 +458,17 @@ test("listen start refuses unattended main routes unless the operator accepts th
+     assert.equal(refused.status, 1);
+     assert.match(refused.stderr, /listen_unattended_refused/);
+     assert.match(refused.stderr, /then start a fresh session/);
++    assert.match(refused.stderr, /cswarm inbox --notify/);
+     assert.match(refused.stderr, /--allow-unattended/);
++    assert.doesNotMatch(refused.stderr, /--route worker/);
+ 
+     const refusedSplit = runCli(
+       [...common, "--route", "split", "--defer-over", "200"],
+       { cwd: root, home },
+     );
+     assert.equal(refusedSplit.status, 1);
+-    assert.match(refusedSplit.stderr, /listen_unattended_refused/);
++    assert.match(refusedSplit.stderr, /--defer-over is refused/);
++    assert.doesNotMatch(refusedSplit.stderr, /listen_unattended_refused/);
+ 
+     const allowed = runCli(
+       [...common, "--route", "main", "--allow-unattended"],
+@@ -467,6 +479,7 @@ test("listen start refuses unattended main routes unless the operator accepts th
+ 
+     const worker = runCli([...common, "--route", "worker"], { cwd: root, home });
+     assert.equal(worker.status, 1);
++    assert.match(worker.stderr, /--route worker is refused/);
+     assert.doesNotMatch(worker.stderr, /listen_unattended_refused/);
+   } finally {
+     await rm(root, { recursive: true, force: true });
+@@ -474,6 +487,73 @@ test("listen start refuses unattended main routes unless the operator accepts th
+   }
+ });
+ 
++test("listen start accepts a hook or a watcher lock and names both when neither is present", async () => {
++  const root = await mkdtemp(join(tmpdir(), "cswarm-attendance-surfaces-"));
++  const home = await mkdtemp(join(tmpdir(), "cswarm-attendance-surfaces-home-"));
++  const credentialPath = join(root, "agent.json");
++  try {
++    await writeFile(credentialPath, artifact(), { mode: 0o600 });
++    await chmod(credentialPath, 0o600);
++    const common = [
++      "listen",
++      "start",
++      "--url",
++      TARGET.url,
++      "--anon-key",
++      TARGET.anonKey,
++      "--workspace-id",
++      WORKSPACE_ID,
++      "--agent-token-file",
++      credentialPath,
++      "--provider",
++      "claude",
++      "--state-dir",
++      join(root, "state"),
++    ];
++
++    await mkdir(join(home, ".claude"), { recursive: true });
++    await writeFile(
++      join(home, ".claude", "settings.json"),
++      JSON.stringify(claudeUserPromptHookSnippet(PRINCIPAL_ID)),
++    );
++    const hookOnly = runCli(common, { cwd: root, home });
++    assert.equal(hookOnly.status, 1);
++    assert.doesNotMatch(hookOnly.stderr, /listen_unattended_refused/);
++    await rm(join(home, ".claude", "settings.json"));
++
++    const lockPath = arrivalWatchLockPath(
++      TARGET,
++      WORKSPACE_ID,
++      PRINCIPAL_ID,
++      join(home, "xdg-state", "cswarm", "arrival-cursors"),
++    );
++    await acquireArrivalWatchLock(lockPath);
++    try {
++      const watcherOnly = runCli(common, { cwd: root, home });
++      assert.equal(watcherOnly.status, 1);
++      assert.doesNotMatch(watcherOnly.stderr, /listen_unattended_refused/);
++    } finally {
++      await releaseArrivalWatchLock(lockPath);
++    }
++
++    await writeFile(
++      join(home, ".claude", "settings.json"),
++      JSON.stringify(claudeUserPromptHookSnippet(PRINCIPAL_ID)),
++    );
++    await acquireArrivalWatchLock(lockPath);
++    try {
++      const both = runCli(common, { cwd: root, home });
++      assert.equal(both.status, 1);
++      assert.doesNotMatch(both.stderr, /listen_unattended_refused/);
++    } finally {
++      await releaseArrivalWatchLock(lockPath);
++    }
++  } finally {
++    await rm(root, { recursive: true, force: true });
++    await rm(home, { recursive: true, force: true });
++  }
++});
++
+ function acceptedSignal(): Record<string, unknown> {
+   return {
+     status: "accepted",
+diff --git a/tests/support/arrival-watch.test.ts b/tests/support/arrival-watch.test.ts
+index 0a772c1..2751d57 100644
+--- a/tests/support/arrival-watch.test.ts
++++ b/tests/support/arrival-watch.test.ts
+@@ -11,6 +11,7 @@ import { test } from "node:test";
+ import type { SignalRecord } from "../../src/cloud/command-client.js";
+ import {
+   acquireArrivalWatchLock,
++  arrivalWatchLockHeld,
+   arrivalNotification,
+   arrivalFullTextCommand,
+   arrivalReplyCommand,
+@@ -701,6 +702,19 @@ test("a stale arrival watch lock is stolen when the other pid is gone", async ()
+   await rm(root, { recursive: true, force: true });
+ });
+ 
++test("arrivalWatchLockHeld is true only while the lock names a live pid", async () => {
++  const root = await mkdtemp(join(tmpdir(), "cswarm-notify-held-"));
++  const lockPath = join(root, "watch.lock");
++  assert.equal(await arrivalWatchLockHeld(lockPath), false);
++  await acquireArrivalWatchLock(lockPath, process.pid);
++  assert.equal(await arrivalWatchLockHeld(lockPath), true);
++  await writeFile(lockPath, `${JSON.stringify({ version: 1, pid: 999999 })}\n`, {
++    mode: 0o600,
++  });
++  assert.equal(await arrivalWatchLockHeld(lockPath), false);
++  await rm(root, { recursive: true, force: true });
++});
++
+ test("delayed SUBSCRIBED unblocks the wait so a later wake can emit", { timeout: 5_000 }, async () => {
+   const nowMs = Date.parse("2026-09-06T00:00:00.000Z");
+   const fake = new FakeRealtime();
