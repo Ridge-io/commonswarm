@@ -1,0 +1,31 @@
+### Inversion Review: 4 Load-Bearing Design Choices
+
+#### 1. Piggybacking Idle Heartbeats on Reconcile Read vs. Dedicated Transport
+* **Inversion:** Keep activity reporting isolated from inbox reads using a dedicated activity endpoint or a client WebSocket ping.
+* **Predicted Failure/Regression:** A dedicated HTTP endpoint preserves 1,440–5,760 edge calls per seat-day (~90% of idle cost), defeating operator cost goals. A client WebSocket ping (draft 1) was measured and proven broken: anon clients cannot join private topics without broad SELECT policies that leak workspace frames, and un-acked sends mask join/publish failures.
+* **Did it beat the spec?** No. Piggybacking piggybacks on an already authenticated, already scheduled call, dropping extra idle edge calls to zero without expanding trust or policy surfaces.
+
+#### 2. 5-Minute Idle Resolution (300 s Reconcile, 330 s Stale) vs. High-Cadence Heartbeat (15 s/60 s)
+* **Inversion:** Preserve sub-minute (15–60 s) liveness resolution while idle to instantly detect crashed or disconnected listener processes.
+* **Predicted Failure/Regression:** Forces continuous timer loops and thousands of idle edge invocations daily for an agent performing zero work. Detecting an idle seat failure at 15 s versus 5 minutes provides negligible operational value while multiplying edge execution costs tenfold.
+* **Did it beat the spec?** No. An idle seat doing nothing does not warrant high-cadence polling; the UI copy (`idle · seen N min ago`) sets honest operator expectations while capturing the full cost savings.
+
+#### 3. Awaiting Server-Relayed `realtime.send` in Read Edge vs. Asynchronous Fire-and-Forget
+* **Inversion:** Relay frames asynchronously (fire-and-forget) or delegate publishing to client-side sockets to prevent adding latency to reconcile reads.
+* **Predicted Failure/Regression:** Fire-and-forget in serverless edge runtimes risks worker termination before dispatch completes, swallows delivery errors, and prevents returning `activity_rejected` status codes. Client-side publishing breaks topic access control and message integrity.
+* **Did it beat the spec?** No. Awaiting `realtime.send` uses the read's already-established DB connection, guarantees delivery, surfaces rejection codes cleanly to the listener, and is explicitly benchmarked in L1.
+
+#### 4. Runtime Capability Negotiation (`activity_carrier: "read"`) vs. Strict Deploy Ordering
+* **Inversion:** Mandate strict lockstep deployment order (Edge before CLI) or bump top-level schema versions rather than dynamic in-band capability discovery.
+* **Predicted Failure/Regression:** Because `parseBody` enforces `exactKeys`, rolling updates or edge rollbacks would reject signals reads with `400 invalid_request`, breaking critical inbox wake and claim delivery across the entire active fleet.
+* **Did it beat the spec?** No. The `activity_carrier` handshake with retry-without-field provides safe, zero-downtime rolling upgrades and rollbacks across versions.
+
+---
+
+### Lane Author Inventions
+* **Inventions required:** None. 
+* *Implementation note:* Inside `src/protocol/`, the lane author chooses whether to place `ACTIVITY_REJECT_CODES` in a new file (e.g., `src/protocol/activity.ts`) or export from `src/protocol/index.ts`; this is an ordinary TypeScript module placement fully bound by `npm run build:command-core`. All thresholds, rejection codes, status mappings, discriminators, test plans, and cross-spec lane serializations (`read/index.ts`, `LiveDashboard.astro`, runtime files) are fully specified.
+
+QUOTE-BACK: # Idle heartbeat: fold it into the reconcile read
+VERDICT: PASS
+REASON: All four load-bearing design choices withstand inversion without regression, leaving zero defects, unspecified thresholds, or cross-spec ordering conflicts.

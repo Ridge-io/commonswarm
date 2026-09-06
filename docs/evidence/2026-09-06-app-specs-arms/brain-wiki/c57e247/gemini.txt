@@ -1,0 +1,34 @@
+### Inversion Analysis of Load-Bearing Choices
+
+#### 1. Hierarchy: Dot-Notation Convention (`area.topic`) vs. Relational/Directory Storage
+- **Choice**: Hierarchy as a naming convention grouped dynamically by `brainTree()` in `src/cloud/brain.ts` without database schema changes.
+- **Inversion**: Store hierarchy explicitly in the database via folder records, a `parent_id` column, or slash-delimited paths in `swarm.files`.
+- **Failure / Regression**: Requires schema migrations, breaks `file-artifacts.ts:67` (which forbids `/`), violates the flat `brain--<topic>.md` storage model, and disrupts the 20-version retention window. Furthermore, moving topics would consume multiple slots against the 500-file cap.
+- **Beat the spec?**: No. The spec's zero-migration, storage-invariant naming convention preserves full backward compatibility with existing topics while introducing structured grouping.
+
+#### 2. Index Pages: Ephemeral Client Views vs. Stored Index Topics
+- **Choice**: Index pages are virtual views generated on the client from `read/index.ts` list metadata.
+- **Inversion**: Persist index topics (e.g. `_index.md` or Karpathy-style area indexes) directly in storage.
+- **Failure / Regression**: Creates an active write hotspot across collaborating agents, churning the 20-version window on every topic addition, provoking `--if-version` write conflicts, and consuming name allocations against the 500-file quota.
+- **Beat the spec?**: No. Virtual index synthesis avoids write contention, burns zero ledger/audit rows, and guarantees fresh topic listings.
+
+#### 3. Backlinks: Bounded Client Prefetch & DOM Extraction vs. Server-Side Link Indexing
+- **Choice**: Bounded client-side prefetch (≤60 topics, ≤256 KB, ≤4 MB) extracting links via a detached DOM fragment and the existing sanitizer.
+- **Inversion**: Extract and index backlinks server-side on topic commit, or perform an exhaustive client-side download of all topic bodies.
+- **Failure / Regression**: Full client downloads pull up to 1 GB into browser memory and generate hundreds of audit rows. Server-side extraction requires new database tables, background workers, and edge parsing logic that risks drifting from the exact UI linkification rules (skipping `PRE`/fenced blocks while linking bare words in code spans).
+- **Beat the spec?**: No. Bounded prefetch paired with the existing DOM sanitizer walk delivers exact linkification fidelity without new storage or backend drift.
+
+#### 4. Table of Contents: Index-Based DOM Scrolling vs. Heading ID / Hash Anchor Injection
+- **Choice**: Flat `<ol>` TOC where buttons invoke `scrollIntoView` on the nth element of `querySelectorAll("h2,h3,h4")`.
+- **Inversion**: Inject slugified `id` attributes into heading elements during markdown rendering and navigate via `<a href="#id">` anchors.
+- **Failure / Regression**: Breaches the strict tag/attribute allowlist in `message-markdown.ts:73-78`, expanding the sanitization boundary to member-authored strings and creating potential mXSS vulnerabilities.
+- **Beat the spec?**: No. Index-based positional matching provides robust in-page jumping without compromising sanitizer security.
+
+---
+
+### What a Lane Author Would Still Have to Invent
+- **None**: All thresholds (256 KB body limit, 60 topics, 4 MB total, 4 concurrent fetches, 60 s refresh, ≥3 headings for TOC), data contracts (`data-topic`, `setIndexFirstLine`, `BRAIN_STORAGE_PREFIX`, `sessionStorage` schemas), test ownership, and cross-spec lane serialization are explicitly specified.
+
+QUOTE-BACK: # Brain wiki: hierarchy, index pages, backlinks, without new storage
+VERDICT: PASS
+REASON: The design choices withstand inversion against storage, security, and contention constraints, leaving zero defects or gaps for lane authors to invent.

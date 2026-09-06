@@ -1,0 +1,33 @@
+### Load-Bearing Inversions
+
+**1. Choice: Pure CSS media query on feed root with zero JS resize/orientation listeners (C1)**
+- *Inversion:* Retain JS-driven threshold detection (via `matchMedia` or `ResizeObserver`) to coordinate clipping with DOM toggle insertion.
+- *Predicted failure/regression of inversion:* Reintroduces potential layout thrashing, extra event listeners, and hydration flash on initial paint.
+- *Did it beat the spec?* **YES.** The inversion beats the spec. Because toggle insertion and $N$ calculation occur only once in a post-render `requestAnimationFrame` (`LiveDashboard.astro:5251-5268`), pure CSS switching decouples DOM state from CSS clipping. On window resize or device rotation (e.g. rotating a tablet/phone between portrait and landscape), a message between 15 and 39 lines rendered on desktop has no toggle inserted; when resized to phone width ($<52\text{rem}$), CSS clips it to 14 lines with no toggle present, permanently hiding content with no way to expand.
+
+**2. Choice: Hard clip on line boundary rejecting bottom fade/gradient (Section 0, C2)**
+- *Inversion:* Restore the operator-requested bottom fade gradient mask over the final collapsed lines.
+- *Predicted failure/regression of inversion:* As proven in commit `6712776`, a gradient fade over non-scrolling text makes the bottom line low-contrast, unreadable, and fails accessibility contrast standards.
+- *Did it beat the spec?* **NO.** The spec's hard clip beats the inversion on legibility and contrast integrity; cut text is clearly indicated by the explicit toggle control rather than rendered illegibly.
+
+**3. Choice: Dynamic line count in toggle text: `Show more (about N lines)` (C2)**
+- *Inversion:* Keep static copy (`Show more` / `Show less`) without computing or displaying $N$.
+- *Predicted failure/regression of inversion:* Users have no advance indication whether expanding reveals 2 lines or 500 lines.
+- *Did it beat the spec?* **YES (partial/beat on robustness).** Calculating $N = \lceil(\text{scrollHeight} - \text{clientHeight}) / \text{lineHeightPx}\rceil$ assumes uniform line-height. In messages containing embedded images, tables, or fenced code blocks (`--t-sm`, padding), $N$ produces misleading approximations (e.g., a single 300px image reported as ~12 lines). Furthermore, without resize observers, $N$ becomes permanently stale upon device rotation.
+
+**4. Choice: Cross-session workspace `localStorage` cache surviving auth teardown (C4)**
+- *Inversion:* Keep expanded states in `sessionStorage` or clear `localStorage` on auth teardown (`resetWorkspaceSessionState`).
+- *Predicted failure/regression of inversion:* Reloads or new tabs within the same session would forget expanded messages, violating the core user requirement.
+- *Did it beat the spec?* **NO.** The spec beats the inversion. Expanding a message is a transient reading convenience, not sensitive PII; persisting across reloads and relogins improves UX without introducing measurable privacy regressions.
+
+---
+
+### What a Lane Author Would Still Have to Invent
+
+1. **GAP (Section 4 vs C1 — Export count):** Section 4 requires `site/src/lib/message-markdown.ts (the three exports)`, but C1 defines only two (`MESSAGE_COLLAPSE_LINES_PHONE` and `MESSAGE_COLLAPSE_LINES_DESKTOP`). The author must invent what the third export is (e.g. keeping `MESSAGE_COLLAPSE_LINES` as a backward-compatibility fallback and what value it takes).
+2. **GAP (C1/C2 — Resize/Rotation behavior):** How rows handle viewport resize/rotation across the $52\text{rem}$ breakpoint when toggle buttons were either never inserted (leaving messages $<40$ lines truncated without a toggle) or rendered with stale $N$ copy.
+3. **GAP (C4 — Storage mutation semantics):** Whether clicking "Show less" removes the signal ID from `localStorage`, and whether the 200-item eviction cap operates as FIFO or LRU.
+
+QUOTE-BACK: # Long messages: a readable collapse and "Show more" that remembers
+VERDICT: FAIL
+REASON: The spec leaves the third export in message-markdown.ts unspecified and fails to handle toggle presence and line-count staleness when viewport orientation changes across the CSS breakpoint.

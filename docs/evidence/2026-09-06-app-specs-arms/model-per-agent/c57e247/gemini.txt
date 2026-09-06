@@ -1,0 +1,34 @@
+### Inversion Analysis
+
+#### 1. Persisted Declaration & State Columns vs. Ephemeral In-Memory/Signal State
+- **Choice:** Adding `assigned_model` alongside a persisted `model` (declaration) and `model_assignment_state` on `swarm.agent_principals`.
+- **Inversion:** Keep only a single persisted configuration column (`assigned_model` / `model`); treat the agent's declaration and honour state as purely ephemeral runtime telemetry (conveyed only via wake sockets, heartbeats, or local status).
+- **Predicted Failure / Regression:** When an agent is stopped, crashed, or disconnected, the app roster and entity panel would lose all record of what model actually executed on that seat. Auditing fleet model compliance would require parsing historic raw event logs rather than querying `swarm_read.agent_principals`.
+- **Did it beat the spec?** No. Storing both facts in Postgres ensures the dashboard can display operational truth and offline `pending` states reliably.
+
+#### 2. Synchronous Pre-Bridge Inbox Read vs. Asynchronous Post-Connect Fetch / Fallback
+- **Choice:** `listen start` performs a synchronous `readAgentSignalPage` before initializing the model bridge, exiting fatal on read failure.
+- **Inversion:** Initialize the bridge with default/cached options immediately, connecting to the inbox asynchronously and swapping models dynamically if an assignment is found.
+- **Predicted Failure / Regression:** Bridges (like Grok and ACP hosts) take model configurations as immutable constructor or startup parameters. Booting before reading risks executing initial user turns with unintended provider defaults, emitting inaccurate declarations and incurring unintended costs.
+- **Did it beat the spec?** No. A listener unable to read its inbox cannot take tasks anyway; failing fast prevents unauthorized or mismatched execution.
+
+#### 3. Bare Model String Declaration vs. Qualified Compound Identifier
+- **Choice:** `declare_agent_model` sends the bare model string when passed to the bridge, rather than a compound string like `<model> via <bridge>`.
+- **Inversion:** Send a composite provider-bridge-model descriptor string in `model`.
+- **Predicted Failure / Regression:** Concatenation risks breaching the 120-character bounded column constraint (`agent_principals_model_bounded`) and breaks direct normalization equality (`normalizedModel(model) === normalizedModel(assigned_model)`), necessitating brittle client-side regexes.
+- **Did it beat the spec?** No. Bridge and provider metadata already reside in `listen status` and diagnostics; bare strings keep validation and equality matching deterministic.
+
+#### 4. Explicit Column Enumeration vs. `SELECT p.*` in `swarm_read.agent_principals`
+- **Choice:** Recreating `swarm_read.agent_principals` with an explicit, enumerated projection list.
+- **Inversion:** Use `SELECT p.*` for the read view to automatically inherit all principal columns.
+- **Predicted Failure / Regression:** `20260906000010_wake_delivery.sql` added `agent_principals.wake_id`. A wildcard view re-expansion would leak plaintext join credentials for `cswarm-wake:{wake_id}` to all workspace members via PostgREST.
+- **Did it beat the spec?** No. Explicit column enumeration is mandatory for security boundary isolation.
+
+---
+
+### Lane Author Inventions
+- **None:** Schema columns, constraints, backfill SQL heuristics, read context signatures, wire formats, precedence orders, probe fallback chains, shared fixtures, view column projections, and cross-spec rebase serializations are completely specified.
+
+QUOTE-BACK: # A model per agent: assigned by a person, honoured by the listener, declared by the agent
+VERDICT: PASS
+REASON: The design choices withstand inversion, and the spec leaves no unowned tests, unnamed files, or underspecified behaviors for lane authors to invent.

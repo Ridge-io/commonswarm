@@ -1,0 +1,34 @@
+### Inversion Analysis
+
+#### 1. Measurement-First QA Lane vs. Presumptive CSS Fixes
+- **Load-bearing choice:** Defer all CSS/renderer edits until a 32-cell test matrix records FAIL rows, rather than prescribing immediate style fixes.
+- **Inversion:** Commit targeted CSS fixes immediately (e.g., force `overflow-wrap: anywhere` on prose and set explicit heading/paragraph margins) without a pre-measurement matrix.
+- **Predicted failure:** Overriding prose wrapping in `global.css` or `.dashboard__message-markdown` blindly risks breaking table scroller isolation (`:13003-13037`), truncating legitimate tokens, or creating regression churn against phantom complaints ("light text at the bottom, no scroll") that may not even reproduce.
+- **Beat the spec?:** No. Because the backlog items were marked "landed but not verified", pre-measuring against shipped rules prevents speculative CSS overrides.
+
+#### 2. Static `file://` Harness vs. Live Dev Server
+- **Load-bearing choice:** Load static HTML fixture pages via `file://` URLs in headless Chrome with query parameters rather than running an Astro preview/dev server.
+- **Inversion:** Spin up a local Vite/Astro dev server to serve dynamic dashboard components during test runs.
+- **Predicted failure:** Live server harnesses introduce port collisions, process teardown leaks, and network startup latency into CI test suites.
+- **Beat the spec?:** No. Static fixtures isolate the renderer and CSS rules deterministically while mirroring the existing `message-blocks-layout.observer.test.ts` pattern.
+
+#### 3. Decoupled Dual-Launch (DOM Assertions vs. CLI Screenshots) vs. Single-Pass CDP
+- **Load-bearing choice:** Separate DOM bounding-box measurement from image generation via distinct Chrome processes (`findChrome` DOM dump vs. headless CLI `--screenshot`).
+- **Inversion:** Use a single interactive browser automation tool (CDP / Playwright) to measure layout and capture viewport buffers in one session.
+- **Predicted failure:** Introducing heavy browser automation drivers adds dependencies outside the existing zero-dependency `findChrome` architecture and risks protocol disconnects in headless CI runs.
+- **Beat the spec?:** No. Decoupling ensures that visual artifact generation does not block or flake the core DOM assertion suite.
+
+#### 4. Explicit Pixel Targets (±2 px) vs. Visual Regression Image Diffing
+- **Load-bearing choice:** Measure computed box heights/gaps in pixels with a ±2 px tolerance rather than bitmap diffing against golden screenshots.
+- **Inversion:** Adopt perceptual pixel diffing (e.g., pixelmatch against Notion or Figma reference screenshots).
+- **Predicted failure:** Cross-platform font rasterization, subpixel anti-aliasing differences (macOS vs. Linux CI), and line-height rounding trigger constant false-positive test breakages.
+- **Beat the spec?:** No. Explicit mathematical assertions with ±2 px tolerance enforce rhythm reliably across environments.
+
+---
+
+### Lane Author Inventions
+None. The corpus (fixtures 1–5 defined, fixture 6 graceful skip), geometries (390×844, 1440×900), target tolerances (±2 px), last-line inspection algorithm (Range client rects + ancestor opacity chain), output artifacts (`RESULTS.md`, 32 screenshots), mutation controls, and cross-spec lane ordering are completely specified.
+
+QUOTE-BACK: # Markdown spacing and wordwrap: measure on a phone, then fix what fails
+VERDICT: PASS
+REASON: The measurement-first approach, static file harness, dual-run architecture, and numeric pixel tolerances withstand inversion without leaving any design gaps for the lane author.

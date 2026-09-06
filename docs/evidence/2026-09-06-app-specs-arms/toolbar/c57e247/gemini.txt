@@ -1,0 +1,31 @@
+### Inversion Analysis
+
+#### Choice 1: Turn off the toolbar via Vercel platform setting (Dashboard / REST PATCH) rather than in-repo code/CSS suppression.
+- **Inversion:** Inject client-side CSS (`display: none !important`) or a script/service worker in `site/` targeting Vercel toolbar DOM elements (`#vercel-toolbar`, custom elements), or supply custom headers.
+- **Predicted Failure / Regression:** The Vercel toolbar injects dynamically from `vercel.live` inside a shadow DOM host. In-repo suppression causes perpetual DOM-selector drift across Vercel UI releases, risks CSP violations, adds dead payload bytes to production bundles, and fails to stop script evaluation or network requests from `vercel.live`.
+- **Did it beat the spec?** No. Disabling at the platform source eliminates bundle bloat, selector fragility, and runtime overhead entirely.
+
+#### Choice 2: Disable the toolbar strictly in Production while preserving it in Preview (`Production: Off`, `Preview: Default/On`).
+- **Inversion A:** Disable globally across all environments (team-wide / project-wide Off for both Preview and Production).
+- **Inversion B:** Leave Production enabled and instruct team members to log out or browse via incognito.
+- **Predicted Failure / Regression:** Inversion A regresses team QA and review workflows on pull requests where preview feedback comments are actively utilized. Inversion B guarantees repeated regressions: signed-in operators visiting production on mobile devices will constantly be obstructed by the overlay unless every session is manually sanitized.
+- **Did it beat the spec?** No. Scoping the disable exclusively to Production fixes mobile usability for authenticated team members while retaining collaboration tooling on Preview.
+
+#### Choice 3: Authenticated mobile verification requiring a positive control on a Preview deployment (§3).
+- **Inversion:** Verify via automated anonymous HTTP fetch (`curl`), or test solely in a desktop browser without a positive control.
+- **Predicted Failure / Regression:** As demonstrated in §1, anonymous visits receive zero toolbar markup; an unauthenticated or headless test produces a false pass. Omitting the positive preview check fails to detect expired credentials, invalid tokens, or stale sessions, rendering the "after" screenshot non-probative.
+- **Did it beat the spec?** No. Requiring a positive control on Preview proves authentication state and isolates the setting toggle as the causal factor.
+
+#### Choice 4: One-off operator action with a docs-only evidence lane (`lane/toolbar-evidence`) rather than an automated CI/CD pipeline task.
+- **Inversion:** Author an automated CI action in GitHub Actions using a Vercel API token secret to execute the PATCH endpoint during deployment.
+- **Predicted Failure / Regression:** Exposing high-privilege project/team admin credentials inside repository CI for an idempotent, one-time setting toggle introduces credential leakage vectors and pipeline complexity for zero recurring benefit.
+- **Did it beat the spec?** No. Operator execution coupled with a verifiable evidence lane maintains least-privilege security without over-engineering.
+
+---
+
+### Inventions Required by Lane Author
+- **None.** Target paths (`docs/evidence/2026-09-06-vercel-toolbar/before.png`, `after.png`, `control-preview.png`), exact ledger metadata requirements, project/team identifiers (`ridgedotio`, `coswarm-site`), and REST payloads are fully specified.
+
+QUOTE-BACK: # Vercel toolbar off in production
+VERDICT: PASS
+REASON: The platform-level configuration and authenticated positive control design withstands all inversions, leaving no defects or gaps for the lane author.

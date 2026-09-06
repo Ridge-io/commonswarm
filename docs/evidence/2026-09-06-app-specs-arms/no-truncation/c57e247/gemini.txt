@@ -1,0 +1,39 @@
+### Inversion Analysis: Load-Bearing Design Choices
+
+#### 1. Full Body in Notification Payload (`cswarm inbox --notify --json`)
+- **Inversion:** Keep `--json` payload lean (snippet and entity ID only); require consumers to query `cswarm read/inbox` for full text.
+- **Predicted Regression:** Notification daemons and shell integrations face latency spikes, race conditions against signal deletion/rotation, and N+1 query storms merely to display incoming context.
+- **Beat the Spec?** No. Event delivery boundaries that emit lossy data force unnecessary round-trips. Emitting the full body in `--json` keeps event-driven pipelines self-contained.
+
+#### 2. Dynamic Degrading Multi-Tier Preview Budget in Hook (1,000 → 240 → 0 bytes)
+- **Inversion:** Enforce a uniform static preview budget per signal (e.g., fixed 400 chars) or drop signals past the 128 KiB limit rather than degrading preview tiers.
+- **Predicted Regression:** A fixed cap either unnecessarily truncates 300–900 char operator messages or drops late-arriving signals entirely, losing sender ID and `cswarm reply` routing metadata. Conversely, dynamic tiering causes non-deterministic degradation where later items get starved of preview context while earlier ones consume the byte quota.
+- **Beat the Spec?** No. Preserving signal presence (id, sender, reply line) at tier 0 prevents silent drops, and 1,000 chars accommodates the measured operator distribution in the common case.
+
+#### 3. Test-Only App Verification (Zero Runtime Product Code Changes in Web App)
+- **Inversion:** Introduce explicit client-side defensive guards, truncation assertions, or UI warning banners in `LiveDashboard.astro` and `message-markdown.ts`.
+- **Predicted Regression:** Adds runtime overhead, component complexity, and bundle weight to defend against an issue that does not exist in production (the web UI collapses via CSS/DOM rather than truncating message text).
+- **Beat the Spec?** No. Pure observer test verification guards against regression without polluting client code.
+
+#### 4. Synthetic Deterministic Control vs. Live Production Corpus in CI
+- **Inversion:** Make CI pull real channel messages from Supabase or block test passage on the presence of `operator-corpus.md`.
+- **Predicted Regression:** Test suites become non-hermetic, flaky, dependent on network/secrets, and blocked by workspace membership credentials.
+- **Beat the Spec?** No. An in-repo synthetic fixture (`max-length.md`) provides deterministic CI verification while keeping human corpus capture optional.
+
+---
+
+### Inventions Remaining for Lane Authors (Findings)
+
+1. **GAP (Section 2, C2 — Tier 0 Output Format):**
+   - *Claim:* "if an item would exceed the cap even at 240, it and every later item render as id, sender, and the `cswarm reply` line with no preview (the third tier, `HOOK_BODY_PREVIEW_CHARS_NONE = 0`)" while "the test asserts the `N` in each item's copy equals `body.length − effectiveCap`".
+   - *Missing:* If tier 0 has "no preview", the spec does not specify whether the suffix `[… N more chars — cswarm inbox]` is appended on its own line, attached to the reply line, or omitted entirely. A lane author must invent the tier 0 string template and whether the suffix assertion applies when preview text is absent.
+
+2. **GAP (Section 4, Table 4 — L3 Scope vs. Fixture File):**
+   - *Claim:* Table 4 limits L3 files strictly to "new `site/src/components/app/message-body.observer.test.ts` only ... no product code".
+   - *Missing:* Section 2 mandates a new file `site/src/components/app/fixtures/no-truncation/max-length.md`. The lane author must invent whether `max-length.md` belongs in the lane files list or must be generated/inlined inside the test file.
+
+---
+
+QUOTE-BACK: # Stop truncating in the human UI
+VERDICT: FAIL
+REASON: A lane author must invent the exact rendered layout and suffix placement for tier-0 hook items and reconcile the fixture file location omitted from L3's file list.

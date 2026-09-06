@@ -1,0 +1,30 @@
+### Load-Bearing Design Inversions
+
+#### 1. Server-Side PostgREST Query Filtering (`?e=`) vs. Client-Side Feed Filtering
+- **Inversion:** Filter rows client-side in the browser feed component over already-loaded signals instead of issuing a PostgREST query refetch with URL parameter `?e=`.
+- **Predicted Regression:** In a paginated view with `SIGNAL_PAGE_SIZE = 25`, client-side filtering yields sparse or empty feeds whenever an entity's messages are older than the top 25 signals, breaking pagination unless complex multi-page fetching loops are added.
+- **Did it beat the spec?** No. Chat platform plan mandate P2 (`:634-636`) explicitly forbids repeating client-side toggle filtering. Server-side predicates guarantee a full 25-row page of the target entity. The spec wins.
+
+#### 2. Deterministic FNV-1a Modulo 12 Palette vs. Dynamic Stateful Assignment
+- **Inversion:** Assign colors dynamically per workspace to guarantee unique hues for the first $N$ entities rather than hashing IDs via FNV-1a modulo 12.
+- **Predicted Regression:** By the birthday paradox, modulo 12 produces collisions even in small rosters (e.g., ~50% collision probability at 5 entities), giving interacting entities identical colors.
+- **Did it beat the spec?** No. Stateful assignment requires schema migrations, server persistence, or cross-client synchronization, violating P2 ("site only, no migration"). The spec adheres to R8 by treating color as an auxiliary cue while names and badges remain primary. The spec wins.
+
+#### 3. Multi-Surface Tinting (Avatar, Underline, Message Edge, Rail) vs. Avatar-Only Tinting
+- **Inversion:** Retain tinting exclusively on avatars (status quo) instead of spreading color to message left borders and name underlines.
+- **Predicted Regression:** Left-border coloring conflicts with the fresh-row border animation (`border-inline-start`) and risks visual clutter or sub-3:1 contrast against varied backdrops.
+- **Did it beat the spec?** No. In long messages, avatars scroll out of view, losing author attribution. The spec resolves the animation collision by migrating fresh-row highlighting to inset `box-shadow`, keeps text neutral, and verifies 3:1 non-text contrast in real Chrome. The spec wins.
+
+#### 4. Split Click Affordance (Avatar Filters, Name Opens Panel) vs. Unified Click Affordance
+- **Inversion:** Make clicking the author name filter the feed (as originally phrased in the chat plan) or unify both targets to perform the same action.
+- **Predicted Regression:** Placing two distinct button actions immediately adjacent in an inline message header risks misclicks on touch screens and violates user expectations that avatar and name navigate to the same target.
+- **Did it beat the spec?** No. Name-click navigation to the entity panel is an established affordance for inspection. Overriding it would eliminate panel access from the feed. Assigning filter activation to the avatar with an explicit `aria-label` provides a dedicated, accessible control without modal nesting. The spec wins.
+
+---
+
+### Inventions Required by Lane Author
+- **None.** Tokens (OKLCH parameters, `:root`, both dark maps), golden vector snapshot UUIDs, contrast measurement criteria, element selectors, CSS properties, query predicates (`from` and `from_kind`), Realtime broadcast filtering, and test files are fully specified.
+
+QUOTE-BACK: # Colour-code agents and their responses
+VERDICT: PASS
+REASON: All load-bearing choices withstand architectural inversion, and the spec provides complete tokens, golden vectors, query predicates, and test contracts without requiring lane-author invention.
