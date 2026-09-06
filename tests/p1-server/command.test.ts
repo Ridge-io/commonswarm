@@ -6497,6 +6497,18 @@ test("durable-delivery: claim/ack happy path, idempotent replay, pending count",
     assert.equal(claim.body.status, "accepted");
     const deliveries = claim.body.deliveries as Array<Record<string, unknown>>;
     assert.equal(deliveries.length, 1);
+    const [nonEmptyIdem] = await sql<{ command_id: string }[]>`
+      SELECT command_id FROM swarm.idempotency_keys WHERE command_id = ${claimId}
+    `;
+    assert.equal(nonEmptyIdem?.command_id, claimId, "a claim that returns a row writes an idempotency key");
+    const nonEmptyAudits = await sql<{ audit_id: string }[]>`
+      SELECT audit_id FROM swarm.audit_log
+      WHERE workspace_id = ${f.workspaceA}::uuid
+        AND actor_agent_principal = ${receiver.principalId}::uuid
+        AND command_kind = 'claim_agent_inbox'
+        AND outcome = 'accepted'
+    `;
+    assert.ok(nonEmptyAudits.length >= 1, "a claim that returns a row writes an audit row");
     const d0 = deliveries[0]!;
     assert.equal((d0.signal as Record<string, unknown>).id, signalId);
     assert.equal((d0.signal as Record<string, unknown>).body, "dd-happy-body-secret");
@@ -6622,21 +6634,46 @@ test("durable-delivery: claim/ack happy path, idempotent replay, pending count",
     );
     assert.equal(readAfter.body.pending_delivery_count, 0);
 
+    const acceptedBeforeEmpty = await sql<{ n: string }[]>`
+      SELECT count(*)::text AS n FROM swarm.audit_log
+      WHERE workspace_id = ${f.workspaceA}::uuid
+        AND actor_agent_principal = ${receiver.principalId}::uuid
+        AND command_kind = 'claim_agent_inbox'
+        AND outcome = 'accepted'
+    `;
+
     /* NULL is the other end of the bound, and it is what makes the string
      * above a measurement: once the queue is empty the server says so with a
      * null rather than repeating the last time it saw. Both come from the same
      * min() over the same set, so they cannot disagree with the count. */
+    const emptyClaimId = commandId("claim_agent_inbox");
     const emptyClaim = await issueDelivery(f, receiver.token, {
       kind: "claim_agent_inbox",
       listener_instance_id: listener,
       limit: 10,
-    });
+    }, emptyClaimId);
     assert.equal(emptyClaim.status, 200, emptyClaim.text);
     assert.equal(emptyClaim.body.pending_delivery_count, 0);
     assert.equal(
       (emptyClaim.body.deliveries as unknown[]).length,
       0,
       "nothing is left to claim",
+    );
+    const [emptyIdem] = await sql<{ command_id: string }[]>`
+      SELECT command_id FROM swarm.idempotency_keys WHERE command_id = ${emptyClaimId}
+    `;
+    assert.equal(emptyIdem, undefined, "an empty claim writes no idempotency key");
+    const emptyAudits = await sql<{ audit_id: string }[]>`
+      SELECT audit_id FROM swarm.audit_log
+      WHERE workspace_id = ${f.workspaceA}::uuid
+        AND actor_agent_principal = ${receiver.principalId}::uuid
+        AND command_kind = 'claim_agent_inbox'
+        AND outcome = 'accepted'
+    `;
+    assert.equal(
+      emptyAudits.length,
+      Number(acceptedBeforeEmpty[0]?.n),
+      "an empty claim writes no audit row; the non-empty claim's row remains",
     );
     assert.equal(
       Object.hasOwn(emptyClaim.body as object, "oldest_pending_at"),

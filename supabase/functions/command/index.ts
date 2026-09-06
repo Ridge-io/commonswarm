@@ -51,6 +51,7 @@ import {
   ackAgentDelivery,
   CLAIM_AGENT_INBOX_KIND,
   claimAgentInbox,
+  claimAgentInboxPersistsLedger,
   DELIVERY_ACK_OUTCOMES,
   DELIVERY_ACK_RATE_LIMIT_PER_MINUTE,
   DELIVERY_CAPABILITIES,
@@ -8362,31 +8363,40 @@ async function handleTransaction(
       if (ledger === null) {
         return { status: 403, body: { error: "delivery_unavailable" } };
       }
-      const inserted = await tx<{ command_id: string }[]>`
-        INSERT INTO swarm.idempotency_keys (
-          principal_kind, principal_id, command_id,
-          workspace_id, stream_id, request_hash, response
-        ) VALUES (
-          ${auth.credentialKind},
-          ${canonicalPrincipal(auth.actor)},
-          ${commandId},
-          ${route.workspaceId}::uuid,
-          ${route.streamId}::uuid,
-          ${hash},
-          ${tx.json(ledger as unknown as postgres.JSONValue)}::jsonb
-        )
-        ON CONFLICT (principal_kind, principal_id, command_id) DO NOTHING
-        RETURNING command_id
-      `;
-      if (inserted.length === 0) {
-        throw new LedgerRace(
-          auth,
-          commandId,
-          kind,
-          route.workspaceId,
-          route.streamId,
-          hash,
-        );
+      /* Empty polls are not state-changing for the ledger: no leased row, so
+       * no idempotency key and no audit row. A 0.1.56 listener that retries
+       * the same command id then re-executes, which can pick up a row that
+       * arrived during the retry. A claim that returns a row still writes both.
+       * The outcome column cannot tell empty from non-empty on historical
+       * rows (both were "accepted"); retention therefore deletes by kind. */
+      const persistLedger = claimAgentInboxPersistsLedger(ledger);
+      if (persistLedger) {
+        const inserted = await tx<{ command_id: string }[]>`
+          INSERT INTO swarm.idempotency_keys (
+            principal_kind, principal_id, command_id,
+            workspace_id, stream_id, request_hash, response
+          ) VALUES (
+            ${auth.credentialKind},
+            ${canonicalPrincipal(auth.actor)},
+            ${commandId},
+            ${route.workspaceId}::uuid,
+            ${route.streamId}::uuid,
+            ${hash},
+            ${tx.json(ledger as unknown as postgres.JSONValue)}::jsonb
+          )
+          ON CONFLICT (principal_kind, principal_id, command_id) DO NOTHING
+          RETURNING command_id
+        `;
+        if (inserted.length === 0) {
+          throw new LedgerRace(
+            auth,
+            commandId,
+            kind,
+            route.workspaceId,
+            route.streamId,
+            hash,
+          );
+        }
       }
       const deliveries = await hydrateDeliveryRefs(tx, {
         workspaceId: route.workspaceId,
@@ -8421,15 +8431,17 @@ async function handleTransaction(
           )
         `;
       }
-      await insertAudit(tx, {
-        auth,
-        commandKind: kind,
-        workspaceId: route.workspaceId,
-        streamId: route.streamId,
-        outcome: "accepted",
-        detail: `terminal_delivery_failure_count=${ledger.terminal_delivery_failure_count}`,
-        hash,
-      });
+      if (persistLedger) {
+        await insertAudit(tx, {
+          auth,
+          commandKind: kind,
+          workspaceId: route.workspaceId,
+          streamId: route.streamId,
+          outcome: "accepted",
+          detail: `terminal_delivery_failure_count=${ledger.terminal_delivery_failure_count}`,
+          hash,
+        });
+      }
       return {
         status: 200,
         body: {

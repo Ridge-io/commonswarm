@@ -12,6 +12,17 @@ type Sql = postgres.TransactionSql<Record<string, unknown>>;
 export const CLAIM_AGENT_INBOX_KIND = "claim_agent_inbox";
 export const ACK_AGENT_DELIVERY_KIND = "ack_agent_delivery";
 
+/**
+ * Empty claims (no leased row) write no audit_log row and no idempotency_keys
+ * row. A claim that returns a row still writes both. The same predicate the
+ * command edge uses; do not retype it at the call site.
+ */
+export function claimAgentInboxPersistsLedger(
+  ledger: DeliveryClaimLedgerResponse,
+): boolean {
+  return ledger.delivery_refs.length > 0;
+}
+
 /** Fixed first-release lease duration; callers cannot widen it. */
 export const DELIVERY_LEASE_MS = 15 * 60 * 1000;
 /** Server-side poison ceiling; callers cannot raise it. */
