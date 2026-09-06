@@ -9,7 +9,8 @@ Author: CSLaptopLead listener worker (Claude), toms-m1-max-mbp, 2026-09-06.
 | gates on 727f4c44 | `npm test` 897/897; `npm run test:p1-cli` 483/483; `npm run check:tests` clean |
 | Grok exact arm | `arm-grok-exact-727f4c44.md`, `VERDICT: PASS`, grok 1.0.5 |
 | Gemini inversion arm | `arm-agy-inversion-727f4c44.md`, `VERDICT: PASS`, agy 1.1.27 |
-| Codex gpt-5.6-sol arm | not run on the laptop (no codex here by operator rule); asked of CSwarmStrategist with branch + SHA |
+| Codex gpt-5.6-sol arm (run by CSwarmStrategist on the mini, signal 8e5aace9) | `arm-codex-sol-727f4c44.md`, `VERDICT: FAIL` on spec wording: C1's raw-length trigger and "ends with" suffix. Spec owner's ruling: both are wording mismatches, the code's behaviour is the better one; C1 corrected on `spec/app-backlog` at c6f1df2 (draft 7). No code change. |
+| gate logs on the reviewed tree | `gate-npm-test.log`, `gate-test-p1-cli.log` (added after the Codex arm named their absence as a gap) |
 | write canary | `write-canary.md`, commit 0d4d0b63 |
 
 ## Deviations from C1 prose, both noted by the Grok arm
