@@ -60,3 +60,5 @@ against `supabase functions serve` (log: `serve.log`). After `ready` it waits
 
 
 To reproduce the published after column: `AFTER_BIN=docs/evidence/2026-09-06-push-delivery-measured/bin/v0.1.60/cswarm AFTER_LABEL=after-0.1.60-clean scripts/measure-idle-cost.sh`. The 0.1.57 honesty grep (before column) was run by hand over `state/before/` and is not in `honesty/probe.txt`, which the script writes for the after seat only.
+
+The binaries themselves are not committed (1.8 MB each); each `bin/<v>/cswarm.sha256` matches the GitHub release asset `https://github.com/Ridge-io/commonswarm/releases/download/<v>/cswarm`. Download the asset into `bin/<v>/` and check it against the sha256 before running the script.
