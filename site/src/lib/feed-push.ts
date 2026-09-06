@@ -1,6 +1,6 @@
 /*
  * Workspace feed wake: subscribe to the private cswarm-signals topic and
- * refresh the feed on events, with a 5-minute reconcile while SUBSCRIBED and
+ * refresh the feed on events, with a 30-second reconcile while SUBSCRIBED and
  * the existing 2-second poll when not. Push is a hint; the signal page is
  * still the truth.
  *
@@ -17,8 +17,8 @@ export const FEED_PUSH_SUBSCRIBED_STATUS = "SUBSCRIBED";
 
 /** Fallback poll while the workspace signal topic is not SUBSCRIBED. */
 export const FEED_POLL_MS = 2_000;
-/** Reconcile while the workspace signal topic is SUBSCRIBED. */
-export const FEED_RECONCILE_MS = 300_000;
+/** Reconcile while the workspace signal topic is SUBSCRIBED. Spec §4.3. */
+export const FEED_RECONCILE_MS = 30_000;
 /** Resubscribe delays after CHANNEL_ERROR / TIMED_OUT / CLOSED. */
 export const FEED_PUSH_BACKOFF_MS = [1_000, 2_000, 5_000, 10_000] as const;
 

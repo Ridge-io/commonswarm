@@ -67,7 +67,7 @@ test("fallback statuses are one generated set; CHANNEL_ERROR is in it", () => {
   assert.match(listed, /"CLOSED"/);
   assert.match(feedPush, /isFeedPushFallbackStatus\(status\)/);
   assert.match(feedPush, /export const FEED_POLL_MS = 2_000/);
-  assert.match(feedPush, /export const FEED_RECONCILE_MS = 300_000/);
+  assert.match(feedPush, /export const FEED_RECONCILE_MS = 30_000/);
   assert.match(feedPush, /feedRefreshIntervalMs\(this\.#subscribed\)/);
   assert.doesNotMatch(feedPush, /error\.message/);
 });

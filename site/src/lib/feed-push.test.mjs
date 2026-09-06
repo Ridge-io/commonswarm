@@ -159,7 +159,7 @@ test("fallback statuses are the named Realtime subscribe states, not error.messa
   assert.equal(feedRefreshIntervalMs(true), FEED_RECONCILE_MS);
   assert.equal(feedRefreshIntervalMs(false), FEED_POLL_MS);
   assert.equal(FEED_POLL_MS, 2_000);
-  assert.equal(FEED_RECONCILE_MS, 300_000);
+  assert.equal(FEED_RECONCILE_MS, 30_000);
 });
 
 test("fake client joins the private signal topic", async () => {
@@ -174,11 +174,11 @@ test("fake client joins the private signal topic", async () => {
   ]);
 });
 
-test("subscribed: no poll timer fires in 60 s of fake time", async () => {
+test("subscribed: no poll timer fires before the 30 s reconcile", async () => {
   const harness = createHarness();
   await subscribed(harness);
   assert.equal(harness.controller.subscribed, true);
-  await harness.timers.tick(60_000);
+  await harness.timers.tick(30_000 - 1);
   assert.equal(harness.refreshes.count, 0);
 });
 
@@ -221,7 +221,7 @@ test("three events in 100 ms coalesce to at most two refreshes", async () => {
 test("CHANNEL_ERROR resumes the two-second poll", async () => {
   const harness = createHarness();
   const channel = await subscribed(harness);
-  await harness.timers.tick(60_000);
+  await harness.timers.tick(30_000 - 1);
   assert.equal(harness.refreshes.count, 0);
   channel.statusHandler("CHANNEL_ERROR");
   assert.equal(harness.controller.subscribed, false);
@@ -256,7 +256,7 @@ test("re-SUBSCRIBED stops the poll", async () => {
   next.statusHandler("SUBSCRIBED");
   assert.equal(harness.controller.subscribed, true);
   const atPush = harness.refreshes.count;
-  await harness.timers.tick(60_000);
+  await harness.timers.tick(30_000 - 1);
   assert.equal(harness.refreshes.count, atPush);
 });
 
@@ -280,10 +280,10 @@ test("workspace switch removes the old channel before the new subscribe", async 
   );
 });
 
-test("reconcile fires once at five minutes while subscribed", async () => {
+test("reconcile fires once at 30 seconds while subscribed", async () => {
   const harness = createHarness();
   await subscribed(harness);
-  await harness.timers.tick(FEED_RECONCILE_MS - 1);
+  await harness.timers.tick(30_000 - 1);
   assert.equal(harness.refreshes.count, 0);
   await harness.timers.tick(1);
   assert.equal(harness.refreshes.count, 1);
