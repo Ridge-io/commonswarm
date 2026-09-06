@@ -253,6 +253,7 @@ class ScriptedWake implements WakeHandle {
   state: "disconnected" | "connecting" | "subscribed" | "errored" = "disconnected";
   hasTopic = false;
   queue: WakeWaitReason[] = [];
+  untils: number[] = [];
   waits = 0;
   wakeClaims = 0;
   claims = 0;
@@ -289,8 +290,9 @@ class ScriptedWake implements WakeHandle {
     };
   }
 
-  async next(): Promise<WakeWaitReason> {
+  async next(options: { until: number; signal?: AbortSignal }): Promise<WakeWaitReason> {
     this.waits += 1;
+    this.untils.push(options.until);
     return this.queue.shift() ?? "deadline";
   }
 
@@ -893,6 +895,51 @@ test("wake ticks while mode is poll still read; skipRead is push-only", async ()
 test("reconcile deadline while subscribed is 5 minutes", () => {
   assert.equal(LISTENER_RECONCILE_POLL_MS, 300_000);
   assert.equal(formatIdlePollDuration(LISTENER_RECONCILE_POLL_MS), "5m");
+});
+
+test("a lost wake is claimed when next() hits the reconcile deadline", async () => {
+  const nowMs = Date.parse("2026-07-30T00:00:00.000Z");
+  const journal = new MemoryJournal();
+  const controller = new AbortController();
+  const wake = new ScriptedWake();
+  wake.setPush();
+  let claims = 0;
+  let reads = 0;
+  const stop = await runListenerRuntime({
+    target: cloudTarget("https://cloud.example.test", "anon"),
+    workspaceId: WORKSPACE_ID,
+    principalId: PRINCIPAL_ID,
+    listenerInstanceId: journal.record.listenerInstanceId,
+    deliveryJournal: journal,
+    deliveryClient: {
+      async claimAgentInbox() {
+        claims += 1;
+        if (claims >= 2) controller.abort();
+        return claimResult([]);
+      },
+      async ackAgentDelivery() {
+        throw new Error("ack must not run");
+      },
+    },
+    credentialSession: { async bearer() { return "token"; } },
+    store: new MemoryStore(),
+    model: new FakeModel(),
+    signal: controller.signal,
+    pollMs: IDLE_POLL_DEFAULT_MS,
+    now: () => nowMs,
+    sleep: async () => {},
+    wake,
+    readPage: async () => {
+      reads += 1;
+      return durablePage();
+    },
+  });
+  assert.equal(stop.reason, "cancelled");
+  assert.equal(claims, 2);
+  assert.equal(reads, 2);
+  assert.equal(wake.wakeClaims, 0);
+  assert.ok(wake.untils.length >= 1);
+  assert.equal(wake.untils[0], nowMs + LISTENER_RECONCILE_POLL_MS);
 });
 
 test("claim throughput skips a mode-change hour and keeps the slowest cadence", () => {
