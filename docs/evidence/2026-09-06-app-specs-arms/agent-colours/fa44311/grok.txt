@@ -1,0 +1,97 @@
+I'll review the agent-colours spec against this checkout: every cited file:line, every lane file list, every named test/gate, and every number. Starting with the document and the code it claims to describe.HEAD is later than `fa44311`. I'll pin the spec at this checkout, then verify every cited line in the live code rather than the map.I'll verify every cited line in the live files next: LiveDashboard, signal-feed, the chat plan, and the read edge.Several call sites already disagree with the spec. Next I’ll read those LiveDashboard lines, the read-edge signals branch, and the related tests.The filter line is stale, and a later CSS block clears borders. I’ll check the read parser, inbox queries, site test gate, and that theme block next.I have the blocking mismatches. One more pass on optional-key parsing and the empty-feed branch, then I’ll write the verdict.Reviewed `docs/design/2026-09-06-AGENT-COLOURS.md` in this checkout (`85e01ad` on `spec/app-backlog`; `fa44311` is the parent). Claims were checked against the code, not the map.
+
+## DEFECT
+
+**§0 / §2.3 — `readWorkspaceSignals` and the read-edge path.** That function does not exist. The dashboard feed is `signalPage` in `LiveDashboard.astro:2272-2304`: PostgREST `swarm_read.signals`, same as `commonswarm.ts:2261-2278`. The read edge’s signals resource is agent-token only (`read/index.ts:401-403`); a human JWT is 401 unless `resource === "renewal_grants"`, and that arm returns grants (`:423-436`). L3 cannot pass a site filter through L2 as written.
+
+**§2.3 — “inbox already accepts sender-scoped queries”.** False. `inbox=true` keeps rows **addressed to this agent** (`read/index.ts:791-793`, `addressedToThisAgent` at `:743-748`). CLI humans use `to=eq.<userId>` (`src/cloud/signals.ts:1068`). Recipient, not sender.
+
+**§2.3 — SQL columns `s.author_agent_principal_id` / `s.author_user_id`.** Those columns do not exist. Table: `from_principal`, `from_kind` (`20260724000003_signals.sql:6-7`). View: `from_principal AS "from"`, `from_kind` (`:49-50`). The index names in the same paragraph inherit the false names. A lane that pastes the predicate will not parse.
+
+**§2.3 — 400 `malformed`.** Parse failure is `400 { error: "invalid_request" }` (`read/index.ts:380-398`). `malformed` is not the parser shape.
+
+**§2.3 — optional body fields vs `exactKeys`.** Signals bodies are an exact key set (`:185-193`, `:269-281`). Optional keys must be their own `Object.hasOwn` group (`channels.ts:11-15`, `chatReadKeys` at `:399-401`; agent POST at `signals.ts:1156-1160`). The spec does not say that. Putting the new keys on the required list 400s every current agent read.
+
+**§0 — “the only feed filter is the client-side toggle”.** False. Channel narrowing is already a server query: `signalPage` `.eq("channel_id", channelId)` (`LiveDashboard.astro:2286`) and the comment at `:2264-2270`. That is the pattern P2 said to copy.
+
+**§1 — `entityControl` “renders a `<strong>`”.** False. It returns `HTMLButtonElement` (`:2461-2474`). The feed wraps that button in a `<strong>` at `:5068-5079`.
+
+**§1 — filter applied at `LiveDashboard.astro:3625`.** Line 3625 is mention-picker copy. `filterSignals` runs at `:5003`. `SIGNAL_PAGE_SIZE = 25` is at `:1685` (the “~25” is true).
+
+**§5 — “signals branch is above” `read/index.ts:652-672`.** `:652-672` is files and it returns. The signals query is **below**, `:753-828`.
+
+**§1 / §4 L1 — `markAgentAvatar` call sites.** Listed: `:2596`, `:4023`, `:5061`. Live calls: `:2596`, `:3614` (mention picker), `:3969` (header stack), `:4023`, `:5062` (feed; `:5061` is `aria-hidden`). Spec says `markEntityColour` **replaces** `markAgentAvatar`. A lane that only edits the listed sites leaves `:3614` and `:3969` pointing at a removed name.
+
+**§2.2 item 4 / §4 L1 — “rail entry (roster row)”.** The rail is `renderSidebarParticipants` in `site/src/lib/participant-rail.ts` (called from `:3909`). People have `dashboard__sidebar-person-avatar` with no tint (`participant-rail.ts:128-136`). Agents have a model glyph, not an avatar (`:89-116`). `:4023` is the **dialog** roster. L1 does not own `participant-rail.ts`, so the rail colour requirement cannot be built from the file list.
+
+**§2.2 item 3 — 3 px message edge vs shipped fresh animation.** `.dashboard__message--fresh` sets `border-inline-start: 2px` and animates it to transparent with `fill-mode: both` (`:12805-12820`). L1’s CSS list is only `:10581-10585` and `:10786-10788`. New rows would lose the colour edge.
+
+**§0 vs §2.3 vs §4 — migration.** §0 and §4 say P2 / “No migration.” §2.3 says L2 may add `signals_workspace_author_agent` “in the same migration.” Those cannot both be followed.
+
+## GAP
+
+**§4 L1 — `tokens.css` unnamed.** Palette values are specified under `:root` and “the dark-theme block.” Those live in `site/src/styles/tokens.css` (`:root` at `:53`; parked `--d-*` at `:430`; **two** dark maps at `:507` and `:559`, 34 lines that must stay identical). L1 does not own that file.
+
+**§2.1 — `--entity-hue` / `--entity-colour` / names-only TS palette.** No mapping from index → `var(--entity-colour-N)`. Lane has to invent it.
+
+**§2.2 — `markEntityColour(node, entity)`.** `entity` is not typed. `EntityRef` is `{ kind: "agent"|"person"; id: string }` at `LiveDashboard.astro:1364-1366`.
+
+**§2.1 — contrast backdrop unnamed.** `.dashboard__message` background is `var(--message-row-background)` default `transparent` (`:12773-12787`). No token is named for the 3:1 test.
+
+**§2.3 — URL `?agent=` / `?person=` vs `syncChannelUrl`.** Address grammar today is `?w=` and `?c=` (`:6678-6690`, `replaceState`). Spec says “sets the URL to `?agent=<id>`” and does not name that writer or how the params compose.
+
+**§2.3 / §3 — empty copy vs `signals.length === 0`.** Server-empty hits `:4974-4984` (channel / waiting copy), not the client-filter empty at `:5008-5013`. Spec does not split that branch.
+
+**§4 L1 tests — pinned old names unowned.** These fail if `markAgentAvatar` / `--avatar-hue` go away and nobody edits them: `access-lifecycle.observer.test.ts:119-120`, `header-roster.observer.test.ts:100-101`, `composer.observer.test.ts:247`.
+
+**§4 L3 — observer test unnamed.** No file. `signal-feed.ts` “compose” is unspecified; channel filtering already refuses to live in that module (`signal-feed.ts:98-105`).
+
+**§2.3 — filter glyph.** No character, SVG, `aria-label`, or whether it is inside shared `entityControl` (also used at `:2618`, `:2667`, mentions `:5160`).
+
+**§2.3 — 50,000-row EXPLAIN fixture.** No script or table to load it.
+
+## NIT
+
+- `:5061` is off by one (`:5062`).
+- `signal-feed.ts:1-38` vs filter ending at `:41`.
+- R9’s panel “Show only …” is omitted; §5 owns the name-click choice.
+- L2’s “foreign workspace returns nothing” is already true at `read/index.ts:466-490` and does not prove the new predicate.
+
+L1 then L3 both touch `LiveDashboard.astro` (not at once). L2’s new `tests/p1-server/signals-author-filter.test.ts` is glob-reached (`package.json:29`). `site/src/lib/*.test.mjs` would reach `entity-colour.test.mjs` (`site/package.json:11`).
+
+## Citations
+
+| citation | result |
+|---|---|
+| `LiveDashboard.astro:2317-2326` FNV-1a, `% 360`, `--avatar-hue`, `dashboard__avatar--tinted` | verified |
+| call `:2596`, `:4023` | verified |
+| call `:5061` | **not** the call (call is `:5062`) |
+| calls `:3614`, `:3969` | **live, unlisted** |
+| `:10581-10585`, `:10786-10788` `color-mix` / `--avatar-hue` | verified |
+| `:2461-2474` `entityControl` | verified as a **button**, not `<strong>` |
+| uses `:5075`, `:5090`, `:5096`, `:5116`, `:5160` | verified; also `:2618`, `:2667` |
+| `signal-feed.ts:1-38` `SignalFilter` / `filterSignals` | verified (fn ends `:41`) |
+| `LiveDashboard.astro:3625` filter apply | **false**; apply is `:5003` |
+| plan R8 `:30`; P2 `:624-639`; `:634-636`; `ENTITY_COLOUR_PALETTE` `:836`; tests `:865-867` | verified |
+| `ENTITY_COLOUR_PALETTE` absent from `site/src/` | verified |
+| `agent-row-geometry.observer.test.ts` | exists (dialog-roster geometry, not colour) |
+| `SIGNAL_PAGE_SIZE = 25` `:1685` | verified |
+| `read/index.ts:652-672` files | verified; signals are **below** at `:753-828` |
+| `:4919-` `renderFeed` | verified |
+| map `markdown-colour-model.md` Spec D | exists; same incomplete call-site list |
+| `src/cloud/signals.ts` | exists; site does not call it for the feed |
+| `readWorkspaceSignals` | **missing** |
+| inbox sender filter | **missing** (recipient) |
+| `author_*` columns | **missing** (`from` / `from_kind`) |
+| 400 `malformed` | **false** (`invalid_request`) |
+| `tests/p1-server/**/*.test.ts` glob | verified |
+| `site/src/lib/*.test.mjs` gate | verified |
+| twelve hues `20 + 30n` | arithmetic verified |
+| people uncoloured | verified (panel person branch `:2647-2651`; rail; feed `if (authorAgent)`) |
+| avatar `aria-hidden` | verified (`:2573`, `:3613`, `:4022`, `:5061`) |
+
+Could not independently re-hash the six golden ids against a second FNV-1a (spec tells the lane to pin those, and does not type the indices).
+
+QUOTE-BACK: # Colour-code agents and their responses
+VERDICT: FAIL
+REASON: The site filter is specified on a nonexistent `readWorkspaceSignals` / read-edge author columns the schema does not have, while the dashboard already pages `swarm_read.signals` via PostgREST and the rail file that would have to take colour is not in any lane.
