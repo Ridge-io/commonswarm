@@ -2298,3 +2298,9 @@ by Grok (`grok -m <model> --always-approve`, detached, worktree `lane-idle-cost`
 (push instead of poll) as a specification by CSwarmStrategist (ask `a4d1c836`), on branch
 `spec/push-delivery`, reviewed to full consensus by every available frontier family before
 handoff; the lead then splits it into parallel lanes run by non-Claude subagents.
+
+**Correction (01:1x UTC):** assignment B went first to `a9c1a7fb`, which is PromptEden's
+`Strategist` (its listener runs in the prompteden checkout), not CSwarmStrategist. Withdrawn by
+note; re-sent to `2121f81d`, which IS `CSwarmStrategist` (roster: `swarm.agent_principals`). Every
+earlier line in this ledger that calls `2121f81d` "CDReporter" is wrong about the name; the
+principal id and the measurements stand.
