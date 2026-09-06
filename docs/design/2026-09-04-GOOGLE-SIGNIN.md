@@ -509,12 +509,17 @@ to schedule. So do steps 7 and 8 in one sitting, or not yet.
 
     | Page | Sentences |
     |---|---|
-    | `/app` (`components/app/LiveDashboard.astro`) | ONE sentence, and it is a hand-written BUTTON label: "Sign in with GitHub" on the signed-out panel, carrying `data-signin-github`. Do not rewrite it to name both providers: that button only does GitHub. Swap the component (`<ProviderButtons buttonClass=… listClass=… />` plus one `[data-signin-provider]` handler, replacing `[data-signin-github]`), which makes the label generated and the page honest at once. |
+    | `/app` (`components/app/LiveDashboard.astro`) | **DONE 2026-09-06.** The panel renders `<ProviderButtons>` with one `[data-signed-out-onramp] [data-signin-provider]` handler, so the label and the set are generated. **Was:** "ONE sentence, and it is a hand-written BUTTON label: 'Sign in with GitHub' on the signed-out panel, carrying `data-signin-github`. Do not rewrite it to name both providers: that button only does GitHub. Swap the component, which makes the label generated and the page honest at once." |
     | `/privacy` (`pages/privacy.astro`) | four, including "You sign in with GitHub, you join a workspace…", "Sign-in is GitHub OAuth.", and "We get your user id, email address, and name from GitHub when you sign in." |
     | `/terms` (`pages/terms.astro`) | two, including "You sign in with GitHub." and the sentence naming GitHub among services we do not control |
 
-    **Three more the sweep cannot reach.** It reads sentences that both mention signing in and
-    name a provider, out of the rendered HTML, so these stay green and are yours to fix by hand:
+    **Three more the sweep cannot reach. ALL THREE ARE DONE (2026-09-06)**, and each got a
+    control so it cannot come back. Read them as history, not as work: the rate-limit sentence is
+    built from the page's own rendered buttons and is covered by "no sign-in surface types a
+    provider name into its markup or its script"; the processor count reads "These, and only
+    these, are in the path" above ONE generated bullet naming every enabled provider; and
+    `acceptable-use.astro` says "additional sign-in provider accounts". **Was:** "so these stay
+    green and are yours to fix by hand". The original three:
 
     - `LiveDashboard.astro` — "Use GitHub, or try email again in a little while.", built in
       JavaScript rather than rendered into the page.
@@ -540,11 +545,12 @@ to schedule. So do steps 7 and 8 in one sitting, or not yet.
     those two pages have to say so. That is the slowest item on this checklist, which is why it
     is step 6 and not step 8.
 
-    `/app` (`LiveDashboard.astro`) still hand-writes its SIGNED-OUT button, so that panel will
-    offer GitHub only while `/invite` offers both. Swapping it is one import and one element;
-    it was left to the lane that owns that file. Its re-authentication buttons are a second,
-    separate control and were swapped on 2026-09-05: they render `ProviderButtons`, bind one
-    `[data-signin-provider]` handler, and need no copy work here.
+    **Corrected 2026-09-06.** Both of `/app`'s controls are now generated. The
+    re-authentication buttons were swapped on 2026-09-05 and the SIGNED-OUT panel on 2026-09-06;
+    both render `ProviderButtons` and bind one `[data-signin-provider]` handler, and neither
+    needs copy work here. **Was:** "`/app` (`LiveDashboard.astro`) still hand-writes its
+    SIGNED-OUT button, so that panel will offer GitHub only while `/invite` offers both.
+    Swapping it is one import and one element; it was left to the lane that owns that file."
 
     **What the failing test will and will not tell you.** The sweep in
     `components/auth/provider-buttons.observer.test.ts` catches:
@@ -565,11 +571,13 @@ to schedule. So do steps 7 and 8 in one sitting, or not yet.
     A branch that catches the value shape was written during review and reverted: it caught one
     more spelling and invited the next, which is what the bound settles.
 
-    There were two controls on that page, so there are two swaps, and one of them is done.
-    `UNGENERATED_SIGNIN_SURFACES` in `components/auth/provider-buttons.observer.test.ts`
-    counts the hand-written ones in that file and allows exactly one; a second control counts
-    them again on the BUILT `/app` page; a third counts the OAuth call sites, which is what a
-    button that types a provider into `signInWithProvider` would have to pass. A button that
+    There were two controls on that page, so there were two swaps, and **both are done
+    (2026-09-06)**. `UNGENERATED_SIGNIN_SURFACES` in
+    `components/auth/provider-buttons.observer.test.ts` is now EMPTY and allows none; a second
+    control counts them again on the BUILT `/app` page and requires zero; a third counts the
+    OAuth call sites, which is what a button that types a provider into `signInWithProvider`
+    would have to pass. **Was:** "one of them is done ... counts the hand-written ones in that
+    file and allows exactly one". A button that
     hides the provider in an attribute value and reads it back at runtime passes all three;
     that is the stated bound above.
 

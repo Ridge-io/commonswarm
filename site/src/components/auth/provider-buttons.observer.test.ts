@@ -61,11 +61,15 @@ const GOOGLE_SIGNIN_DOC = new URL(
 );
 
 /*
- * The sign-in buttons are generated. The SENTENCES around them, on the landing page, the
- * privacy policy, the terms, and /app, are hand-written and name GitHub. They are true while
- * GitHub is the only door and false the day a second one opens, which is the drift AGENTS.md
- * records four times. The control below reads them out of the BUILT site, so nobody has to
- * remember they exist.
+ * The sign-in buttons are generated, and as of 2026-09-06 so is every sentence around them that
+ * names a door: the privacy policy, the terms and /app all build those sentences from
+ * AUTH_PROVIDERS. The control below still reads them out of the BUILT site, in every provider
+ * state, because a generated sentence can still be wrong: it can name the wrong SET.
+ *
+ * RETIRED WORDING, kept because earlier copies of this file and the design doc carry it: "The
+ * SENTENCES around them, on the landing page, the privacy policy, the terms, and /app, are
+ * hand-written and name GitHub." They were, and that is the drift AGENTS.md records four times.
+ * They are not any more.
  */
 const SIGNIN_WORDS = /\bsign(?:ing|ed)?[ -]?(?:in|up)\b|\blog[ -]?in\b/i;
 
@@ -84,7 +88,9 @@ const UNIT_END = /<\/(?:p|li|h[1-6]|div|button|td|th|option|label|figcaption|blo
 /*
  * The copy a reader meets that is not in the page body: the meta description and the Open
  * Graph description, which are what a search result and a shared link show. privacy.astro's
- * says "Sign-in comes from GitHub" and lives in an attribute, so tag-stripping loses it.
+ * names the doors and lives in an attribute, so tag-stripping loses it. It reads "You sign in
+ * with GitHub or a link we email you" on today's build and follows the provider set; the
+ * retired wording was the typed "Sign-in comes from GitHub".
  */
 const META_COPY = /<meta[^>]*(?:name="description"|property="og:description"|name="twitter:description")[^>]*content="([^"]*)"/gi;
 
@@ -1290,9 +1296,13 @@ test("CONTROL: every OAuth call site is an id read at runtime", async () => {
    *                             is what a generated button gives, and a named value, which the
    *                             "signInWithOAuth is called once" control above already checks
    *                             against AUTH_PROVIDERS.
-   *   signInWithGitHub()        the one wrapper with a provider in its NAME. commonswarm.ts
-   *                             calls it "the one remaining named provider", left for /app's
-   *                             signed-out button. Exactly one call site.
+   *   signInWithGitHub()        a wrapper with a provider in its NAME. It existed for /app's
+   *                             hand-written signed-out button; that button became
+   *                             ProviderButtons on 2026-09-06 and the wrapper was deleted with
+   *                             it. ZERO call sites and no definition. The rule stays as a
+   *                             forbid: a new named per-provider wrapper goes red here.
+   *                             Retired wording: "the one remaining named provider, left for
+   *                             /app's signed-out button. Exactly one call site."
    *
    * WHAT THESE TWO BOUND, EXACTLY. An earlier version of this comment said a second
    * GitHub-only button goes red here "whatever it calls itself and however it spells its
