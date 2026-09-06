@@ -1,0 +1,37 @@
+### Load-Bearing Design Choices & Inversions
+
+#### 1. Empirical QA measurement lane before CSS changes (vs. Direct Token/CSS Refactor)
+- **Choice:** Measure current layout across 6 fixtures, 2 widths, and 2 themes before deciding or applying any CSS fixes.
+- **Inversion:** Directly apply Notion-like block margins (`12px`/`24px`) and `overflow-wrap: anywhere` to `.dashboard__message-markdown` without an empirical QA suite.
+- **Predicted Failure/Regression:** Direct CSS injection risks breaking delicate shell viewport constraints (`--dashboard-viewport-height`, autogrow cap, table scrolling) and cannot verify whether the elusive "light text at the bottom" defect is resolved or still present.
+- **Beat Spec?** No. The spec's empirical measurement guards against unverified claims and mobile layout regressions.
+
+#### 2. DOM Range and computed-style tree-walk for "light text" (vs. Visual Canvas Pixel Sampling)
+- **Choice:** Detect bottom-line fading via `Range.getClientRects()`, parent computed `color`/`opacity`, and ancestor `mask-image` inspection.
+- **Inversion:** Render to canvas or raster buffer and sample actual RGB values of the bottom 20px band against background luminance.
+- **Predicted Failure/Regression:** Pixel sampling suffers from font antialiasing variations, subpixel rendering differences, and OS font-rasterization noise, causing flaky CI failures.
+- **Beat Spec?** No. DOM inspection is deterministic and fast, though §6 correctly concedes its blind spot to GPU-composited overlay washes.
+
+#### 3. Dual-launch model: separate Chrome CLI process per screenshot (vs. In-Harness CDP Screenshots)
+- **Choice:** Run DOM layout assertions in the existing observer harness, then launch 24 separate, independent Chrome CLI processes (`--headless --screenshot`) for images.
+- **Inversion:** Capture screenshots in-process via Chrome DevTools Protocol (`Page.captureScreenshot`) within the active observer harness session.
+- **Predicted Failure/Regression:** Spawning 24 independent Chrome OS processes creates massive CI overhead and cannot access DOM mutations (such as runtime `data-theme` switching) performed in the test harness.
+- **Beat Spec?** Yes. In-harness CDP capture eliminates 24 cold browser boots and natively captures the exact DOM state (including dynamic `data-theme` attributes) without requiring secondary server routes.
+
+#### 4. Explicit table exemption from horizontal overflow assertions (vs. Strict Universal Containment)
+- **Choice:** Exclude `table` elements (`overflow-x: auto`) from `scrollWidth <= clientWidth` checks.
+- **Inversion:** Enforce `scrollWidth <= clientWidth` strictly across all elements, forcing table cells to wrap or truncate.
+- **Predicted Failure/Regression:** Table content becomes unreadable and mangled, violating the shipped design where tables scroll horizontally inside their container while keeping the outer page rigid.
+- **Beat Spec?** No. The spec's exemption correctly respects the intentional container boundary.
+
+---
+
+### Inventions Remaining for the Lane Author
+
+1. **GAP (§2.2 — CLI Screenshot Theme Delivery):** The spec states screenshots come from a second, independent Chrome CLI launch against "the same fixture page", while theme switching (`data-theme="dark"` / `"light"`) is executed via DOM property mutation on root in the test harness. A CLI `--screenshot` invocation cannot mutate the DOM; the author must invent a mechanism (e.g. query param `?theme=`, separate static wrappers, or an HTTP middleware) to pass the theme to the independent browser process.
+2. **GAP (§2.1, §2.3 — Heading Level for Target Spacing):** §2.3 sets targets for `heading → paragraph` (8px below, 24px above), and §2.1 specifies `headingOffset: 1`. The author must invent which heading level fixture 2 uses (`#` vs `##`) and whether the target spacing applies universally across `h1`–`h6` or solely to `h2`.
+3. **GAP (§2.1 — Fixture 6 Credentials Fallback):** Fixture 6 requires fetching via `cswarm feed --json --limit 100` using the author's own credentials. The spec provides no fallback fixture if the author runs in an unauthenticated or offline environment.
+
+QUOTE-BACK: # Markdown spacing and wordwrap: measure on a phone, then fix what fails
+VERDICT: FAIL
+REASON: A lane author must invent the theme delivery mechanism for standalone Chrome CLI screenshots, heading levels for fixture 2, and an offline fallback for fixture 6.

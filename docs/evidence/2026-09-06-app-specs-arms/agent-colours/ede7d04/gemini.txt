@@ -1,0 +1,33 @@
+### Load-Bearing Design Choices & Inversions
+
+#### 1. Server-side PostgREST filter vs. Client-side feed filtering
+- **Inversion:** Filter signals client-side in `signal-feed.ts` across the loaded 25-row window, matching the All/Broadcast/Direct toggle.
+- **Predicted Regression:** In channels where an entity posts infrequently, client filtering yields an empty feed despite active historical messages, requiring repeated client page fetches (re-introducing the P2 anti-pattern).
+- **Beat the spec?** No. The spec's server-side `.eq("from", …).eq("from_kind", …)` correctly retrieves 25 matching rows directly from Postgres in a single query.
+
+#### 2. Avatar click filters vs. Name click filters
+- **Inversion:** Retain the chat plan's original phrasing where author names filter on click, keeping avatars decorative.
+- **Predicted Regression:** Breaks existing app-wide behavior where `entityControl` on names opens the Entity Panel (7+ call sites), destroying inspection workflows and breaking existing tests.
+- **Beat the spec?** No. Turning the avatar into a dedicated `<button>` for filtering while keeping name buttons for panel inspection preserves established behavior without modal interference.
+
+#### 3. 3px left border + box-shadow fresh animation vs. Background row tinting
+- **Inversion:** Tint `.dashboard__message` background with entity colour and keep `border-inline-start` solely for the fresh-row animation.
+- **Predicted Regression:** Message background tinting ruins WCAG contrast in dark/light themes and creates severe visual clutter in multi-agent channels.
+- **Beat the spec?** No. Shifting the fresh animation to an inset `box-shadow` allows the persistent 3px border to maintain contrast-compliant identity anchoring.
+
+#### 4. Deterministic FNV-1a % 12 hashing vs. Dynamic session palette assignment
+- **Inversion:** Dynamically assign unique palette indices 0..11 to active room participants to avoid color collisions.
+- **Predicted Regression:** Participants recolor unpredictably across reloads, channels, and client devices (e.g. an agent appears cyan in one channel and rose in another).
+- **Beat the spec?** No. Cross-session determinism is essential; persistent badges and names ensure identity when collisions occur (R8).
+
+---
+
+### What a Lane Author Would Still Have to Invent
+
+1. **GAP (§4, L2 files/tests):** L2 specifies "a new observer case in an existing feed observer test" without naming the file, forcing the author to guess the target test file.
+2. **DEFECT / GAP (§2.3 vs §4):** §2.3 claims that "the check lives in the handler that appends a live row to the feed (L2 names the line...)", but §4 L2 never specifies the line number or function for the Realtime append check.
+3. **GAP (§2.3, Avatar button scope):** §2.3 states avatars become `<button>` elements labelled `Filter by <name>` citing call sites `:2573` (entity panel), `:3613` (mention picker), `:4022` (dialog roster), and `:5061` (feed row). The author must invent whether picker/roster avatars also trigger feed filtering or stay inert.
+
+QUOTE-BACK: # Colour-code agents and their responses
+VERDICT: FAIL
+REASON: L2 fails to name the target feed observer test file and omits the promised line reference for the Realtime live-row handler.

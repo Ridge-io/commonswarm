@@ -1,0 +1,26 @@
+### Inversion 1: Retain `model` as human assignment and add `declared_model` for runtime declarations
+- **Inversion:** Keep `model` as the human-assigned intent (matching `set_agent_model`) and add a new column for agent self-declarations.
+- **Failure predicted:** During rolling upgrades, un-upgraded CLI listeners still execute `declare_agent_model { model }`. If `model` represents the assignment, legacy seats will immediately overwrite human assignments on restart, reproducing the original defect.
+- **Beat spec?** No. Preserving `model` as the declaration destination isolates `assigned_model` from legacy wire writes.
+
+### Inversion 2: Lazy bridge initialization instead of a pre-bridge inbox read
+- **Inversion:** Start listener runtime first, fetch `assigned_model` during the initial signal poll, and lazily instantiate the bridge.
+- **Failure predicted:** ACP bridge hosts require stdio process spawning and initial handshakes at launch; deferring `newModel` converts hard binary/credential startup errors into asynchronous runtime failures and cannot support bridges lacking dynamic reconfiguration.
+- **Beat spec?** No. The single pre-bridge inbox read preserves fail-fast CLI startup semantics.
+
+### Inversion 3: Ephemeral client-side mismatch derivation instead of `model_assignment_state`
+- **Inversion:** Eliminate `model_assignment_state` in Postgres and compute mismatch status entirely in `LiveDashboard.astro`.
+- **Failure predicted:** The browser cannot distinguish a stopped seat waiting to apply a change (`pending`), a bridge lacking argument support (`no_mapping`), or a local operator override (`cli_override`), because listener status files are host-local and not exposed to PostgREST.
+- **Beat spec?** No. Durable server-side state is required for truthful dashboard reporting across distributed seats.
+
+### Inversion 4: Declare composed bridge strings (`"<model> via <bridge>"`)
+- **Inversion:** Have `declare_agent_model` report both the bridge runtime and underlying model in a single string.
+- **Failure predicted:** Concatenated strings risk exceeding the strict 120-character database constraint `agent_principals_model_bounded`, silently dropping fire-and-forget declarations, and breaking exact string equality matching on the frontend.
+- **Beat spec?** No. Declaring bare model strings guarantees boundary safety and clean normalization checks.
+
+### Lane Author Inventions
+- **None (GAP count: 0):** All schemas, migration backfill rules, constraints, edge functions, UI hooks, and test allocations are specified with exact line references. (NIT: exact display string for the rare `honoured` with normalization-inequality case, e.g. `not honoured (mismatch)`).
+
+QUOTE-BACK: # A model per agent: assigned by a person, honoured by the listener, declared by the agent
+VERDICT: PASS
+REASON: All load-bearing design choices withstand architectural inversion, and the specification leaves no unassigned files, thresholds, or unowned tests for lane authors to invent.

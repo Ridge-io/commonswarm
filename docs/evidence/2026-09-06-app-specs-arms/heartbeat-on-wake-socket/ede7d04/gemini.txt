@@ -1,0 +1,37 @@
+### Inversion Analysis
+
+#### 1. Inversion: Keep a dedicated heartbeat endpoint instead of piggybacking on `read`
+* **Argument:** Decouple read synchronization from presence telemetry to prevent side effects, latency inflation, and cross-subsystem blast radius on the critical inbox delivery path.
+* **Predicted Failure:** If `realtime.send` hangs or fails, reconcile reads could block or fail, stalling message delivery; conversely, if read calls fail or are throttled, heartbeat telemetry is lost.
+* **Beat the Spec?** **No.** The spec specifies that activity frame processing runs after inbox read work, errors are caught without failing the read, and edge calls drop from 1,440–5,760 to 0 additional invocations per seat-day. The dedicated endpoint burns ~90% of idle edge budget for redundant transport.
+
+#### 2. Inversion: Direct client-side Realtime publish instead of server-side relay
+* **Argument:** The listener already holds an open socket; publishing directly avoids edge function invocation overhead entirely.
+* **Predicted Failure:** Realtime private channel join requires an `anon` SELECT policy, exposing all workspace members' presence broadcasts to any bearer of a workspace ID. Client `send({ ack: false })` resolves before server verification, silently masking drops and allowing frame forgery without trusted server timestamping/redaction.
+* **Beat the Spec?** **No.** Measured and disproven in local stack controls (Draft 1 / Opus arm). Direct client publishing violates workspace tenant isolation and trust guarantees.
+
+#### 3. Inversion: Retain short heartbeat cadence (15s–60s) instead of 5-minute idle resolution
+* **Argument:** Sub-minute heartbeats provide prompt failure and crash detection for operator dashboards.
+* **Predicted Failure:** A 5-minute interval creates an up to 330s blind spot where a terminated listener still appears "idle · seen 2 min ago" on the dashboard.
+* **Beat the Spec?** **No.** An idle seat has no pending work; actual task delivery immediately wakes the seat via the wake socket. The dashboard states `seen N min ago` honestly, and the 5-minute cadence achieves the primary operator constraint: extreme cost efficiency ($0.0012/seat-day).
+
+#### 4. Inversion: Static route/version negotiation instead of in-band capability discovery
+* **Argument:** Use explicit endpoint versioning (e.g. `/read/v2` or request headers) rather than dynamic inspection of `activity_carrier` and retry-on-rollback.
+* **Predicted Failure:** Dynamic discovery adds stateful retry logic (`retry-once without field`) and response parsing complexity to the client.
+* **Beat the Spec?** **No.** Route versioning requires duplicate endpoints or strict lockstep deployment. In-band discovery with capability clearing and single-retry fallback makes deployment order fully commutative and rollback-safe across client and edge.
+
+---
+
+### Lane Author Inventions
+**None.** The specification completely defines:
+* Wire payload and exact top-level discriminators (`const carriesActivity = Object.hasOwn(body, "activity")`).
+* Shared module location, re-export paths (`_shared/activity.ts`), and 4,096-byte cap preservation.
+* Closed enum values (`ACTIVITY_REJECT_CODES = ["invalid_request", "forbidden", "workspace_mismatch", "not_idle"]`).
+* Staleness and grace thresholds (`AGENT_ACTIVITY_IDLE_STALE_MS = 330_000`, 330s grace).
+* Sequence monotonicity rules (`idleFrame()` calling `++this.sequence`).
+* Rollback/fallback state machine and single-retry behavior on `invalid_request`.
+* Branching, test cases, and lane merge serialization against sibling specs.
+
+QUOTE-BACK: # Idle heartbeat: fold it into the reconcile read
+VERDICT: PASS
+REASON: The load-bearing inversions fail against the spec's cost, security, and zero-downtime deployment proofs, and no implementation gaps or undefined parameters remain for lane authors.

@@ -1,0 +1,30 @@
+### Inversion Review: Vercel Toolbar Off in Production
+
+#### Choice 1: Platform-level setting/API flip instead of repo-level code suppression
+- **Inversion:** Suppress the toolbar inside `site/` via CSS (`vercel-live-feedback { display: none !important; }`), script blockers, or custom headers in `astro.config.mjs`.
+- **Predicted Regression / Failure:** Vercel injects the toolbar script server-side at the edge proxy. Client-side hiding still incurs asset download latency, leaks DOM mutation artifacts, risks timing glitches/flicker on mobile, and breaks whenever Vercel renames internal Web Components or host attributes.
+- **Beat Spec?** No. Disabling at the platform source eliminates payload delivery and layout risk cleanly.
+
+#### Choice 2: Asymmetric environment configuration (Off in Prod, On in Preview)
+- **Inversion:** Disable the toolbar globally across all environments (Production and Preview) at the team level.
+- **Predicted Regression / Failure:** Disabling preview toolbar kills design feedback, visual commenting, and PR review triage workflows for the development team in pre-production environments where overlay interference is an acceptable tradeoff.
+- **Beat Spec?** No. The operator's bug report specifically targeted layout occlusion in production; preserving preview functionality is optimal.
+
+#### Choice 3: Signed-in browser positive-control verification instead of automated CI test
+- **Inversion:** Write a headless browser or curl test in CI to assert the absence of `vercel.live` on production routes.
+- **Predicted Regression / Failure:** Anonymous CI test runs never receive toolbar injection to begin with (§1 control), yielding a permanent false pass. Injecting authenticated team session cookies into CI leaks privileged team tokens into test logs.
+- **Beat Spec?** No. Manual before/after/preview verification with a signed-in team session is the only sound verification mechanism.
+
+#### Choice 4: Operator out-of-band action with evidence-only lane (`lane/toolbar-evidence`) instead of IaC automation
+- **Inversion:** Enforce an automated Terraform/IaC or CLI pipeline lane to manage project settings in repo code.
+- **Predicted Regression / Failure:** CommonSwarm maintains no Vercel IaC stack. Requiring an automated IaC lane introduces disproportionate scaffolding overhead and forces high-privilege team management secrets into repo runners for a single boolean toggle.
+- **Beat Spec?** No. Delegating the toggle to an authorized operator and committing screenshot evidence adheres to the security model and minimal change principle.
+
+---
+
+### Inventions Remaining for Lane Author
+- **None.** The spec names exact endpoints, payloads, dashboard click paths, screenshot destinations (`docs/evidence/2026-09-06-vercel-toolbar/{before,after,control-preview}.png`), positive control steps, and ledger recording requirements. A lane author has no ambiguity or missing parameters.
+
+QUOTE-BACK: # Vercel toolbar off in production
+VERDICT: PASS
+REASON: All load-bearing design choices withstand inversion, and the evidence-only verification lane requires zero unguided invention.

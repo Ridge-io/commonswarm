@@ -1,0 +1,33 @@
+### 1. Load-Bearing Inversions
+
+**Choice 1: Heuristic Hierarchy Threshold (Requires ≥2 siblings or `_index` topic to materialize an area)**
+- *Inversion:* Unconditional dot-delimited hierarchy (every `a.b` creates area `a`) or explicit parent metadata.
+- *Failure / Regression predicted:* Non-monotonic hierarchy instability. If a lone topic `ops.runbook` exists, it sits at root. Creating a second topic `ops.deploy` suddenly relocates `ops.runbook` into folder `ops`, altering visual tree layout. Deleting or retiring `ops.deploy` collapses `ops.runbook` back to root.
+- *Did it beat the spec?* **No.** The spec's heuristic prevents legacy dotted topics like `release_notes.v2` from spawning single-child phantom areas without requiring schema migrations under the 500-name workspace cap.
+
+**Choice 2: Client-Side Bounded Prefetch & DOM Extraction for Backlinks**
+- *Inversion:* Server-side link extraction persisted into a relational edge table on file commit.
+- *Failure / Regression predicted:* Non-deterministic, incomplete backlinks. In workspaces exceeding 60 topics or 4 MB, backlinks to/from un-prefetched topics vanish until manually clicked, yielding inconsistent graphs across sessions. Detached DOM sanitization across 60 bodies on panel open also induces main-thread jank.
+- *Did it beat the spec?* **Yes on semantic correctness, No on mandate.** Persistent backlink indexing is required for a deterministic wiki, but it violates the spec's explicit zero-new-storage constraint.
+
+**Choice 3: Read-Intent Gate Bypassing Audit and Idempotency Logging on `file_download_url`**
+- *Inversion:* Retain audit logging on `file_download_url` or query via a dedicated read endpoint.
+- *Failure / Regression predicted:* Global compliance and security audit regression. `file_download_url` is a shared command across all workspace artifacts (`command/index.ts:8368-8402`). Suppressing audit rows to accommodate a client prefetch loop eliminates access audit trails for non-brain file downloads across the entire workspace.
+- *Did it beat the spec?* **Yes.** Mutating global command audit invariants to enable client-side scraping degrades platform security semantics.
+
+**Choice 4: TOC via DOM Index Scrolling (`querySelectorAll`) instead of Anchor IDs**
+- *Inversion:* Slug-based heading IDs with standard URL fragment hashing (`#heading-slug`).
+- *Failure / Regression predicted:* TOC items cannot be deep-linked, bookmarked, or navigated via browser back/forward history. Re-renders during active reads risk index drift.
+- *Did it beat the spec?* **No.** Retaining strict sanitizer allowlists (`message-markdown.ts:73-78`) without user-controlled attributes protects against DOM clobbering and XSS.
+
+---
+
+### 2. What a Lane Author Still Has to Invent
+
+1. **GAP (§2.3 — `sessionStorage` key mismatch and eviction policy):** §2.3 defines the key format as `cswarm.brain.<userId>.<workspaceId>.<topic>`, but two sentences later references `cswarm.brain.<workspaceId>`. Furthermore, L3 must invent how "newest-read first" eviction executes when 4 MB or storage quotas are reached (batch prune vs single drop).
+2. **GAP (§2.2, §4 — L2/L3 Index Page Slot Contract):** L2 creates an index page with a "first-line slot" that L3 populates from cache, but no DOM selector, interface method, or event contract in `brain-view.ts` is defined for L3 to locate and update the slot.
+3. **GAP (§2.3 — Live Invalidation of Prefetched Backlinks):** The spec specifies cache invalidation on local version bump, but does not define how background prefetch or graph cache detects remote topic updates while the Brain panel remains open.
+
+QUOTE-BACK: # Brain wiki: hierarchy, index pages, backlinks, without new storage
+VERDICT: FAIL
+REASON: The spec leaves gaps in sessionStorage keying/eviction and the L2/L3 index-slot interface, while silencing global file download audit logging across the entire workspace.

@@ -1,0 +1,33 @@
+### 1. Inversion of Load-Bearing Choices
+
+**Choice 1: Hard clip at line boundary without bottom fade (C1, C2, C3)**
+- *Inversion:* Restore the bottom fade (`mask-image: linear-gradient(...)`) over clipped content.
+- *Predicted Failure/Regression:* Illegibility regression. Because collapsed messages do not scroll, gradient masking renders the bottom visible line partially transparent and unreadable against varying themes, directly reintroducing the defect that commit `6712776` had to remove based on operator reports.
+- *Did it beat the spec?* No. Spec wins; hard clip preserves full legibility of all displayed lines.
+
+**Choice 2: Dynamic hidden line estimate `Show more (about N lines)` (C2)**
+- *Inversion:* Use static `Show more` / `Show less` labels without line count estimation.
+- *Predicted Failure/Regression:* Loss of information scent. Readers cannot distinguish between a 2-line overflow and a 400-line log before expanding. While non-text blocks (code blocks, tables) vary in height, C3 explicitly scopes N as equivalent body lines rather than source lines, providing clear spatial expectation without misleading.
+- *Did it beat the spec?* No. Spec wins; dynamic copy reuses existing `requestAnimationFrame` dimensions with zero additional reflows.
+
+**Choice 3: Viewport collapse threshold in CSS via feed-root media query (C1)**
+- *Inversion:* JavaScript runtime detection (`window.matchMedia` listener or `ResizeObserver`) applying per-row inline styles.
+- *Predicted Failure/Regression:* Hydration flash (FOUC), layout thrashing on resize/rotation, and memory leak risks if listeners are attached across rapid feed re-renders.
+- *Did it beat the spec?* No. Spec wins; pure CSS custom property inheritance on `.dashboard__feed` guarantees instantaneous, zero-JS orientation adaptation.
+
+**Choice 4: Client-side `localStorage` mirroring per workspace capped at 200 (C4)**
+- *Inversion:* In-memory-only retention (status quo) OR server-synced expansion state via database.
+- *Predicted Failure/Regression:* In-memory forgets expanded state on reload; server persistence introduces schema overhead, database writes, and network latency for an ephemeral, device-local reading preference.
+- *Did it beat the spec?* No. Spec wins; workspace-partitioned `localStorage` with `try/catch` and a 200-item FIFO cap delivers zero-latency persistence.
+
+### 2. Lane Author Inventions
+- **None**: All implementation requirements are concrete and uninvented:
+  - Breakpoint (`@media (max-width: 52rem)`) and line constants (14 phone / 40 desktop).
+  - Exact copy strings and calculation formula: `Math.ceil((scrollHeight - clientHeight) / lineHeightPx)`.
+  - Storage key format (`commonswarm:expanded:<workspaceId>`), 200-cap lifecycle, and read hook (`openWorkspace` before initial `renderFeed`).
+  - Accessibility attributes (`aria-controls="message-body-<signal.id>"` on `.dashboard__message-markdown`).
+  - Target files, test locations, and lane serialization dependencies.
+
+QUOTE-BACK: # Long messages: a readable collapse and "Show more" that remembers
+VERDICT: PASS
+REASON: The four design inversions fail to beat the spec's measured, regression-resistant choices, and no uninvented gaps or defects remain for the lane author.

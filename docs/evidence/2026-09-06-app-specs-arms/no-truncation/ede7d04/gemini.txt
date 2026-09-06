@@ -1,0 +1,35 @@
+### Inversion Analysis of Load-Bearing Choices
+
+1. **Choice 1: Emitting full 8,000-char `body` in `cswarm inbox --notify --json` alongside `snippet` (C1).**
+   - *Inversion*: Keep `--notify --json` metadata-only (emitting only `snippet` and signal ID) to maintain minimal IPC payload and require deliberate fetching via `cswarm read <id>`.
+   - *Predicted Regression*: N+1 query amplification and race conditions for notification daemons/listeners, adding round-trip latency and rate-limit overhead for every event.
+   - *Beat Spec?* No. 8 KB max payload is negligible over stdio/IPC; embedding `body` eliminates secondary query round-trips and guarantees no data loss in automation.
+
+2. **Choice 2: Greedy two-tier hook preview (1,000 chars decaying to 240 chars when surface nears 128 KiB) (C2).**
+   - *Inversion*: Enforce a uniform per-item budget (e.g., `MAX_HOOK_SURFACE_BYTES / count` or a fixed global cap like 500 chars) instead of greedy first-come decay.
+   - *Predicted Regression*: Under C2's greedy decay, early-rendered signals consume 1,000 chars while subsequent signals are abruptly penalized down to 240 chars purely based on arrival queue ordering, starving context for later signals.
+   - *Beat Spec?* **Yes.** A uniform or proportional allotment prevents order-dependent context starvation across signals within the 100-item page.
+
+3. **Choice 3: Dynamic path suffix in terminal text notifications (C1).**
+   - *Inversion*: Keep terminal notifications strictly single-line fixed snippets without dynamic length/path suffix arithmetic.
+   - *Predicted Regression*: Terminal notification readers cannot differentiate a truncated snippet from a complete 180-character message, violating the core preview invariant.
+   - *Beat Spec?* No. The dynamic suffix provides explicit affordance without turning single-line notifications into multi-line terminal spam.
+
+4. **Choice 4: Populating test corpus via live operator credentials (`operator-corpus.md`) vs synthetic fixtures (C3).**
+   - *Inversion*: Use purely deterministic synthetic markdown fixtures covering maximum lengths, Unicode, and edge cases, avoiding live feed queries during implementation.
+   - *Predicted Regression*: C3 requires the author to possess active member credentials and extract messages from a live workspace. A headless, non-Claude model or sandbox without live credentials cannot populate the file.
+   - *Beat Spec?* **Yes.** Synthetic fixtures provide reproducible, uncredentialed CI testing and avoid leaking private feed messages into committed test fixtures.
+
+---
+
+### Findings (What a Lane Author Must Still Invent)
+
+- **GAP (Section 2, C3): Unspecified Operator Identity and Credentials Prerequisite for Corpus Generation.**
+  The spec instructs the lane author to run `cswarm feed --json --limit 100`, find the operator's user ID from readable output names, and commit the 5 longest bodies. The spec never specifies the operator's handle/name to look for, nor how an automated lane author without pre-configured member credentials or existing operator messages in the local feed can execute this step.
+
+- **GAP (Section 2, C2 & Section 5): Undefined Hook Behavior When Surface Exceeds 128 KiB Even at Fallback Cap.**
+  The spec defines falling back from 1,000 chars to `HOOK_BODY_PREVIEW_CHARS_MIN = 240` when the next item would exceed `MAX_HOOK_SURFACE_BYTES`. However, if items at 240 chars still exceed 128 KiB (e.g., high item count, header overhead), the spec fails to specify whether to drop signals, truncate below 240, or omit the remaining page. Section 5 explicitly defers this ("L2 pins what `hook.ts` does today past the cap"), leaving the overflow handling logic for the lane author to invent.
+
+QUOTE-BACK: # Stop truncating in the human UI
+VERDICT: FAIL
+REASON: A lane author without operator credentials cannot generate the unspecified operator corpus fixture, and the hook rendering behavior when the surface exceeds 128 KiB under the fallback cap remains undefined.
