@@ -44,10 +44,16 @@ test("/start is only a query-and-fragment-preserving compatibility handoff", () 
 test("/app is email-first, truthful about the free tier, and owns consent", () => {
   const dashboard = read("src/components/app/LiveDashboard.astro");
   const emailAt = dashboard.indexOf('id="dashboard-email"');
-  const githubAt = dashboard.indexOf("data-signin-github");
+  // The OAuth control is generated from auth-providers.ts, so what is pinned is the component's
+  // position, not a provider name. "Email first" is the claim; which doors follow is the
+  // deployment's answer.
+  const providersAt = dashboard.indexOf("<ProviderButtons");
 
   assert.ok(emailAt >= 0);
-  assert.ok(githubAt > emailAt, "email must appear before GitHub in the signed-out gateway");
+  assert.ok(
+    providersAt > emailAt,
+    "email must appear before the generated provider buttons in the signed-out gateway",
+  );
   assert.match(dashboard, /data-auth-view="choices"/);
   assert.match(dashboard, /No password\./);
   assert.match(dashboard, /up to ten\s+workspaces, no card\./);

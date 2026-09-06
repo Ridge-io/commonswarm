@@ -1,0 +1,22 @@
+
+===== state "none"  buttons rendered: [] =====
+
+===== state "github"  buttons rendered: [GitHub] =====
+  ok  privacy/index.html: The sign-in page offers GitHub or a link we email you.
+  ok  privacy/index.html: The sign-in page offers GitHub or a link we email you.
+  ok  privacy/index.html: You sign in through GitHub, Inc., and your identifier, email address, and name come back to us from there.
+  ok  privacy/index.html: The sign-in page offers GitHub or a link we email you; content lives in our hosted database; this website has no cookies and no analytics.
+  ok  privacy/index.html: The sign-in page offers GitHub or a link we email you; content lives in our hosted database; this website has no cookies and no analytics.
+  ok  privacy/index.html: The sign-in page offers GitHub or a link we email you; content lives in our hosted database; this website has no cookies and no analytics.
+  ok  terms/index.html: The sign-in page offers GitHub or a link we email you, and the command-line client signs in through your browser.
+  ok  terms/index.html: Today the sign-in providers are GitHub, Inc., and your use of each one is governed by that company's own terms and privacy policy, not by these Terms.
+
+===== state "github+google"  buttons rendered: [GitHub, Google] =====
+  ok  privacy/index.html: The sign-in page offers GitHub, Google, or a link we email you.
+  ok  privacy/index.html: The sign-in page offers GitHub, Google, or a link we email you.
+  ok  privacy/index.html: You sign in through GitHub, Inc. and Google LLC, and your identifier, email address, and name come back to us from there.
+  ok  privacy/index.html: The sign-in page offers GitHub, Google, or a link we email you; content lives in our hosted database; this website has no cookies and no analytics.
+  ok  privacy/index.html: The sign-in page offers GitHub, Google, or a link we email you; content lives in our hosted database; this website has no cookies and no analytics.
+  ok  privacy/index.html: The sign-in page offers GitHub, Google, or a link we email you; content lives in our hosted database; this website has no cookies and no analytics.
+  ok  terms/index.html: The sign-in page offers GitHub, Google, or a link we email you, and the command-line client signs in through your browser.
+  ok  terms/index.html: Today the sign-in providers are GitHub, Inc. and Google LLC, and your use of each one is governed by that company's own terms and privacy policy, not by these Terms.

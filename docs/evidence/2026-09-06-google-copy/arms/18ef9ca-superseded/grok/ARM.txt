@@ -1,0 +1,133 @@
+I'll read REVIEW.md and the patch first, then follow the review instructions exactly.The review file already has a verdict. I'll list the arm directory and related docs so I can follow the real instructions.I'll look at how past review arms were set up and at the copy rules this change is supposed to follow.The brief is a D-036 attack review. I'll load a prior REVIEW.md template and the google-copy brief so I can attack each claim.The brief is a six-check attack review. I’ll quote the first `diff --git` line, then read the live source those checks name.SHA matches. Next I’ll read the legal pages, the copy sweep, and leftover GitHub strings.I’ll probe the built pages, the leftover GitHub copy, and whether the dual-provider sweep would actually go red.I confirmed the Google-on sweep failure: `Google LLC — sign-in.` names only Google, so check 1 does not hold. I’ll cite the lines and write the verdict.First `diff --git` line:
+
+`diff --git a/site/src/components/app/app-signed-out.observer.test.ts b/site/src/components/app/app-signed-out.observer.test.ts`
+
+SHA under review: `18ef9ca61dbde90b99556bafe59868e6408da359` (`lane/google-copy`).
+
+I tried to refute each of the six checks. Two of them fail. The author’s `VERDICT: ACCEPT` does not hold.
+
+---
+
+## 1. Tests passing with GitHub only and with GitHub+Google — REFUTED
+
+GitHub-only is green on the current `site/dist` (GoTrue `google: false`). The copy sweep in `provider-buttons.observer.test.ts:448` reads that one build. There is no fixture that rebuilds legal pages with `google: true`.
+
+I applied the same sweep (`SIGNIN_WORDS`, `UNIT_END`, provider-name match) to HTML in the Google-on shape the template would emit.
+
+Result: **one offender**.
+
+`privacy.astro:189` renders:
+
+`<li><strong>Google LLC</strong> — sign-in. …</li>`
+
+After tags are stripped, that unit is `Google LLC — sign-in.`
+
+- It matches `SIGNIN_WORDS` (`sign-in`).
+- It names only `Google`.
+- The rendered set is `GitHub,Google`.
+- The sweep requires those two lists to be equal (`observer.test.ts:509`).
+
+The GitHub bullet at `privacy.astro:188` does **not** trip. `GitHub, Inc.` contains a period, so `UNIT_END` plus `(?<=[.!?])\s+` splits `GitHub, Inc.` from `— sign-in.` The provider name and the sign-in words land in different units. `Google LLC` has no period, so the same pattern becomes a failing claim.
+
+So:
+
+- GitHub-only: pass (measured on `site/dist/privacy/index.html`; `Google LLC` count is 0).
+- GitHub+Google: the copy sweep goes red on `Google LLC — sign-in.`
+
+The suite does not drive both states. The dual-state claim is false. A sentence that names one provider in the enabled state **does** go red — and that means the tests do **not** pass in that state.
+
+---
+
+## 2. Static strings provider-agnostic if not generated — REFUTED
+
+`LiveDashboard.astro:1780` is still a typed GitHub-only string:
+
+`Email sign-in is busy right now. Use GitHub, or try email again in a little while.`
+
+That string is in the shipped bundle `site/dist/_astro/LiveDashboard.astro_astro_type_script_index_0_lang.8prMF1nk.js`.
+
+`docs/design/2026-09-04-GOOGLE-SIGNIN.md` names this as one of three sentences the sweep cannot see and that step 6 must fix by hand. `InviteOnramp.astro:292-297` already builds the same rate-limit line from rendered buttons. `/app` does not.
+
+When Google is on, `/app` still tells the reader to use GitHub.
+
+The processor bullets are also typed, not generated from `AUTH_PROVIDERS`:
+
+```188:189:site/src/pages/privacy.astro
+          ...(providers.some(p => p.id === "github") ? ["**GitHub, Inc.** — sign-in. …"] : []),
+          ...(providers.some(p => p.id === "google") ? ["**Google LLC** — sign-in. …"] : []),
+```
+
+A third id in `AUTH_PROVIDERS` would get a button and no processor line.
+
+`acceptable-use.astro:122` (`authentication provider accounts`) is static and provider-agnostic. That part holds.
+
+---
+
+## 3. Google LLC listed as a data processor — UPHELD, with a cost
+
+The Google bullet is emitted only when `providers` contains `id === "google"`. Current dist correctly omits it (`Google LLC` count 0; GitHub, Inc. is present).
+
+The same bullet is what makes check 1 fail in the enabled state. The listing is not generated from `AUTH_PROVIDERS`. Legal entity names are extra data, so some typing is needed — but `p.id === "google"` is a second list.
+
+---
+
+## 4. New em-dashes — REFUTED as stated, not a land block by itself
+
+The new Google bullet copies ` — sign-in.` That is a new em-dash in user-facing text (`privacy.astro:189`).
+
+The GitHub, Supabase, and Vercel bullets already use that list shape. I would not fail the lane on this alone.
+
+---
+
+## 5. Plain voice — mostly holds; dual-state grammar does not
+
+Interpolating `providerChoices()` into legal prose is readable for one provider (`You sign in with GitHub`).
+
+For two providers it is not:
+
+- `When you complete sign-in, ${choices} gives us` → `GitHub or Google gives us` (`privacy.astro:108`).
+- `Sign-in is ${choices} OAuth` → `Sign-in is GitHub or Google OAuth` (`privacy.astro:107`).
+- `Your use of ${choices} is governed by their own terms` (`terms.astro:224`) used to say `GitHub's`. GitHub-only now says `their`.
+
+Empty `providerChoices([])` is `""`, so a no-backend build would print `You sign in with , you join a workspace`. That build is documented as valid. I did not treat it as the land block.
+
+---
+
+## 6. Identity guard — UPHELD
+
+Commit `18ef9ca`: author and committer `yulanbot@gmail.com`.
+
+`scripts/check-commit-identity.sh origin/main..HEAD` → `commit identity OK: 2 address-fields checked`.
+
+---
+
+## Other defects in files this lane edited
+
+These are not the land block. They are false claims in a control this SHA changed.
+
+- `UNGENERATED_SIGNIN_SURFACES` is empty (`observer.test.ts:382`), but the comment above it still says `/app` hand-writes one `data-signin-github` button (`372-380`).
+- The test name at `994` still says `/app`'s built page hand-writes exactly one provider control. The assertion is now `0` (`1034-1036`).
+- The sweep comment at `462-466` still names `Three, and only three` and `additional GitHub accounts`. Both strings are gone.
+- `signInWithGitHub` is still imported in `LiveDashboard.astro:1156` and not called. The call-site control looks for `signInWithGitHub(`, so the dead import stays green.
+
+---
+
+## Claims I could not refute
+
+- Display-name fallback still matches `supabase/functions/command/index.ts:9364-9374` (`full_name`, `name`, `user_name`, email local-part, then `Coswarm User`).
+- `acceptable-use.astro` no longer says `additional GitHub accounts`.
+- The processor count line is no longer `Three, and only three`.
+- Invite on-ramp rate-limit copy is generated from rendered buttons.
+- `/app` signed-out and re-auth controls already render `<ProviderButtons>`.
+- No write to the production Supabase project in this diff.
+
+---
+
+## What blocks landing
+
+1. **GitHub+Google fails the copy sweep** on `Google LLC — sign-in.` (`privacy.astro:189`). Check 1 is false.
+2. **`/app` still says `Use GitHub`** on email rate-limit (`LiveDashboard.astro:1780`). Check 2 is false. The checklist named this sentence.
+
+Fix those two, then run the copy sweep against a `google: true` build, not only the current GitHub-only dist.
+
+VERDICT: FAIL

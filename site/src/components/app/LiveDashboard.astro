@@ -70,20 +70,20 @@ import "../../styles/tokens.css";
           </button>
         </div>
         <p class="dashboard__auth-note">No password. The link returns you to this page.</p>
-        <div class="dashboard__auth-divider" aria-hidden="true"><span>or</span></div>
-        <button
-          class="dashboard__button dashboard__button--secondary"
-          type="button"
-          data-signin-github
+        {/* The OAuth control here is GENERATED, not written, for the same reason the
+            re-authentication control below it is (2026-09-05): this used to be a hand-typed
+            "Sign in with GitHub" button carrying `data-signin-github`, which made /app free to
+            offer a different set of doors from /invite. Now the label and the set both come
+            from auth-providers.ts and the deployment's own /auth/v1/settings, so enabling
+            Google in the Supabase dashboard gives this panel a Google button with no change
+            here. The "or" divider goes in the `before` slot so a build with no OAuth provider
+            renders neither the divider nor the buttons, instead of an "or" above nothing. */}
+        <ProviderButtons
+          buttonClass="dashboard__button dashboard__button--secondary"
+          listClass="dashboard__providers"
         >
-          <svg viewBox="0 0 24 24" width="18" height="18" aria-hidden="true">
-            <path
-              fill="currentColor"
-              d="M12 2a10 10 0 0 0-3.16 19.49c.5.09.68-.22.68-.48v-1.87c-2.78.6-3.37-1.18-3.37-1.18-.45-1.16-1.11-1.47-1.11-1.47-.91-.62.07-.61.07-.61 1 .07 1.53 1.03 1.53 1.03.9 1.53 2.35 1.09 2.92.83.09-.65.35-1.09.64-1.34-2.22-.25-4.56-1.11-4.56-4.94 0-1.09.39-1.98 1.03-2.68-.1-.25-.45-1.27.1-2.64 0 0 .84-.27 2.75 1.02A9.6 9.6 0 0 1 12 6.82a9.6 9.6 0 0 1 2.5.34c1.91-1.29 2.75-1.02 2.75-1.02.55 1.37.2 2.39.1 2.64.64.7 1.03 1.59 1.03 2.68 0 3.84-2.34 4.68-4.57 4.93.36.31.68.92.68 1.85v2.77c0 .27.18.58.69.48A10 10 0 0 0 12 2Z"
-            ></path>
-          </svg>
-          Sign in with GitHub
-        </button>
+          <div slot="before" class="dashboard__auth-divider" aria-hidden="true"><span>or</span></div>
+        </ProviderButtons>
       </form>
 
       <div class="dashboard__auth dashboard__email-sent" data-auth-view="email-sent" hidden>
@@ -1161,7 +1161,6 @@ import "../../styles/tokens.css";
     revokeAgentToken,
     revokeWorkspaceInvitation,
     signInWithEmail,
-    signInWithGitHub,
     signInWithProvider,
     signOut,
     removeWorkspaceMember,
@@ -1192,6 +1191,7 @@ import "../../styles/tokens.css";
     type WorkspaceFile,
   } from "../../lib/commonswarm";
   import { memberInviteUrl } from "../../lib/member-invite";
+  import { authProvider, listSentence } from "../../lib/auth-providers";
   import { isInviteSubmitCurrent } from "../../lib/invite-submit";
   import { PendingRefreshGate } from "../../lib/pending-refresh";
   import { BootFocusGate } from "../../lib/boot-focus";
@@ -1783,9 +1783,37 @@ import "../../styles/tokens.css";
       return `${who}’s workspace`.slice(0, 80);
     };
 
+    /*
+     * The provider names for prose, read off the BUTTONS THAT ARE ON THIS PAGE.
+     *
+     * Same rule and the same shape as InviteOnramp.astro. AGENTS.md: a user-facing string that
+     * lists what the code enforces must come from the same constant the enforcement reads. The
+     * buttons are generated from AUTH_PROVIDERS, so a sentence derived from the buttons names
+     * exactly the doors this build offers, in every state, with no second list to drift. The
+     * measured failure this replaces: "Use GitHub, or try email again in a little while." was
+     * typed, so /app told a reader to use GitHub on a build that also rendered Google, and no
+     * control could see it because the sentence is built in JavaScript, not rendered into the
+     * page.
+     */
+    const renderedProviderNames = (): string[] =>
+      all<HTMLElement>("[data-signin-provider]")
+        .map((button) => button.dataset.signinProvider ?? "")
+        .filter((id, index, ids) => ids.indexOf(id) === index)
+        .map((id) => {
+          try {
+            return authProvider(id).name;
+          } catch {
+            return "";
+          }
+        })
+        .filter((name) => name.length > 0);
+
     const readableError = (error: unknown): string => {
       if (error instanceof EmailRateLimited) {
-        return "Email sign-in is busy right now. Use GitHub, or try email again in a little while.";
+        const choices = listSentence(renderedProviderNames());
+        return choices
+          ? `Email sign-in is busy right now. Sign in with ${choices}, or try email again in a little while.`
+          : "Email sign-in is busy right now. Try email again in a little while.";
       }
       if (error instanceof EmailAddressRejected) {
         return "That address could not receive a sign-in link. Check it and try again.";
@@ -7285,19 +7313,23 @@ import "../../styles/tokens.css";
       });
     };
 
-    one<HTMLButtonElement>("[data-signin-github]")?.addEventListener("click", async (event) => {
-      const button = event.currentTarget as HTMLButtonElement;
-      button.disabled = true;
-      button.setAttribute("aria-busy", "true");
-      authError(null);
-      try {
-        await signInWithGitHub(new URL("/app", window.location.origin).href);
-      } catch (error) {
-        authError(readableError(error));
-        button.disabled = false;
-        button.removeAttribute("aria-busy");
-      }
-    });
+    for (const button of all<HTMLButtonElement>("[data-signed-out-onramp] [data-signin-provider]")) {
+      button.addEventListener("click", async () => {
+        button.disabled = true;
+        button.setAttribute("aria-busy", "true");
+        authError(null);
+        try {
+          await signInWithProvider(
+            button.dataset.signinProvider ?? "",
+            new URL("/app", window.location.origin).href
+          );
+        } catch (error) {
+          authError(readableError(error));
+          button.disabled = false;
+          button.removeAttribute("aria-busy");
+        }
+      });
+    }
 
     /*
      * ONE handler for every provider ProviderButtons rendered here, and it names none of
@@ -9469,6 +9501,19 @@ import "../../styles/tokens.css";
     color: var(--text-muted);
     font-size: var(--t-sm);
     line-height: var(--lh-sm);
+  }
+
+  /* ProviderButtons renders its buttons inside ONE wrapper, so the wrapper is a single grid
+     item of .dashboard__email and has to carry the row gap itself. Without this rule a second
+     provider stacks flush against the first, which is invisible on the GitHub-only build the
+     site is deployed from today and wrong on the day Google is enabled. */
+  .dashboard__providers {
+    display: grid;
+    gap: var(--s-3);
+  }
+
+  .dashboard__providers > .dashboard__button {
+    inline-size: 100%;
   }
 
   .dashboard__auth-divider {

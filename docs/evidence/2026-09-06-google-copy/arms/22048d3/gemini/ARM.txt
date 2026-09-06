@@ -1,0 +1,43 @@
+`diff --git a/docs/design/2026-09-04-GOOGLE-SIGNIN.md b/docs/design/2026-09-04-GOOGLE-SIGNIN.md`
+
+## 1. The dual-state claim
+**Refutation failed.** `site/scripts/provider-fixtures.ts` launches a real HTTP server on `127.0.0.1` mimicking GoTrue, points `PUBLIC_SUPABASE_URL` to it, and runs `astro build --outDir`. It asserts that `AUTH_SETTINGS_PATH` was requested, verifying the code path was actually reached. The outputs land in `dist-providers/<state>`, which is exactly what `builtPages(dir)` reads. The positive control (throwing if the path wasn't requested) is strong enough to guarantee the build fetched the mock settings. The sweep reads the exact location where `astro build --outDir` wrote the files.
+
+## 2. The sweep in the enabled state
+**Refutation failed.** I generated the fixtures and dumped the copy using `dump-copy.mjs`. In the `none` state, the logic generating processor bullets gracefully omits the list and "You sign in with" text entirely, so no incomplete or false sentence is formed (i.e. the copy is true, not merely un-flagged). In the `github+google` state, sentences like `GitHub, Inc. and Google LLC` and `GitHub, Google, or a link we email you` are properly generated and caught by the sweep. There are no sentences on the built `github+google` pages that name only one provider while mentioning signing in. `/app`'s rate-limit text was also fixed to dynamically read the rendered buttons. 
+
+## 3. The abbreviation guard
+**Refutation failed.** The guard `(?<!\b(?:${SENTENCE_ABBREVIATIONS.join("|")})\.)` correctly removes the period for entities like "GitHub, Inc." in its lookbehind. Widening the unit boundary does merge the "GitHub, Inc" and "— sign-in" pieces into a single unit. This is necessary because splitting them previously hid the offender: the unit with the provider name had no sign-in words, and the unit with sign-in words had no provider name. The risk is paid for because it enforces the sweep on the correctly combined sentence.
+
+## 4. The source sweep's bound
+**Refutation failed.** The comment stripper `withoutComments` correctly replaces `{/* */}`, `/* */`, and `^[ \t]*\/\/.*$` without eating code. A trailing `//` comment wouldn't be stripped, which is a safe over-match rather than an under-match. If a page like `/app` built a sign-in string in JS and didn't import `ProviderButtons` or `auth-providers.ts`, it would be missed by the source sweep's surface derivation (`/ProviderButtons|auth-providers/`). 
+**Concrete sentence that could slip past:** `const msg = "Sign in with GitHub"; alert(msg);` on a page like `src/pages/about.astro` that does not import `ProviderButtons`. The HTML sweep misses it because it's never rendered in HTML, and the source sweep misses it because the file doesn't match the surface derivation. The stated bound openly documents this.
+
+## 5. The legal copy, as legal text
+**Refutation failed.** `privacy.astro` now groups all providers into one bullet: `You sign in through GitHub, Inc. and Google LLC, and your identifier, email address, and name come back to us from there. Nothing else does.` This is truthful and sufficient because the data received is identical across providers. `signInDoors` states: `The sign-in page offers GitHub, Google, or a link we email you.` It correctly adds that the CLI can offer fewer providers and has no emailed link, making the claim explicitly true on both surfaces without falsely stating what the CLI does.
+
+## 6. The signed-out panel swap
+**Refutation failed.** `LiveDashboard.astro` correctly imports and uses `<ProviderButtons>`. The `<svg>` icon was removed, which does not affect accessibility since it was `aria-hidden="true"`, and focus/disabled states belong to the `<button>` element which is preserved. `listClass="dashboard__providers"` is styled properly with a grid gap for multiple buttons and renders nothing when there are zero buttons. The `before` slot correctly contains the `or` divider, exactly like `InviteOnramp.astro`. The handler binds correctly to `all<HTMLButtonElement>("[data-signed-out-onramp] [data-signin-provider]")`.
+
+## 7. The mutations
+**Refutation failed.** I reviewed the mutations in `mutate.mjs` and executed the test suite. The mutations targeting the test file (`PB`) mutate the test's own infrastructure which the test itself asserts on (e.g., removing the period in `sentenceEnd()`). Mutating `sentenceEnd()` makes the boundary logic inert, proving the test correctly catches it (it turns red). These mutations test the tests, ensuring the controls aren't silently passing. Their redness is meaningful.
+
+## 8. Anything the lane broke in passing
+**Refutation failed.** The runbook corrections cleanly describe the real Google/Supabase console behavior while preserving the retired wording. No test names claim false assertions (`CONTROL: /app's built page hand-writes NO provider control`). The em-dash was removed from the new unified bullet in the privacy policy, so there are no new em-dashes in user-facing copy. 
+
+## 9. A defect this lane found by reading, not by testing
+**Refutation failed.** The `DOUBLED` pattern `/(?<!\.)\.\s*\.(?!\.)|,\s*,/` correctly prevents `..` and `,,` without falsely flagging `...` (thanks to the lookarounds). It won't catch `.,` or `,.` (e.g., `GitHub, Inc., and`), but that is standard English punctuation so it is not a defect it silences.
+
+## 10. Round two
+**Refutation failed.** Deleting `signInWithGitHub` and asserting `NAMED_WRAPPER_CALL_SITES` is empty means the control forbids the shape `signInWith<Provider>(` entirely. It acts as a forbid rule, preventing developers from adding per-provider wrappers in the future. The retired claims in the runbook are preserved cleanly.
+
+## 11. Round three, and the two findings that failed round two
+**Refutation failed.** The regex `(?<!function\s)signInWith<Name>(` safely excludes function definitions. Variants like `signIn_With_Google` bypass this shape, but the stated bound openly admits this and notes they still must call `signInWithProvider`, which is caught by the call-site control. If a provider's `name` has a space (e.g., "Google Cloud"), a mutation proves it fails the regex test at line 1269, demanding the name be a valid JS identifier.
+
+## 12. GOOGLE IS NOW ENABLED IN PRODUCTION
+**Refutation failed.** The claim in the runbook is true. Because the production backend reports `google: true`, the next site deploy will unconditionally render Google buttons. This copy PR MUST be deployed before or simultaneously, otherwise the site will offer a Google sign-in button without mentioning Google LLC in the privacy policy.
+
+## 13. Round four
+**Refutation failed.** The bound-length check is not a tautology. It compares `SWEEP_CATCHES.length` against a strictly hardcoded formula: `SIGNIN_MARKER.length + NAMED_PROVIDER_WRAPPERS.length + CALL_CLAIMS + LABEL_CLAIM`. This ensures no one slips manual, unverified strings into the `SWEEP_CATCHES` array. If an extra claim is typed, the array length increments but the formula does not, failing the test.
+
+VERDICT: PASS

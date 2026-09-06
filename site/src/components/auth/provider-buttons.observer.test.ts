@@ -34,14 +34,19 @@ import {
   AUTH_PROVIDERS,
   AUTH_SETTINGS_PATH,
   AuthSettingsUnreadable,
+  EMAIL_SIGNIN_DOOR,
   UnknownAuthProvider,
   authProvider,
   enabledProvidersForBuild,
   fetchEnabledProviders,
   listSentence,
   providerChoices,
+  providerEntities,
   providersFromSettings,
+  signInDoors,
+  type AuthProvider,
 } from "../../lib/auth-providers.js";
+import { providerFixtures, fixtureStateName } from "../../../scripts/provider-fixtures.js";
 
 const INVITE_HTML = new URL("../../../dist/invite/index.html", import.meta.url);
 const APP_HTML = new URL("../../../dist/app/index.html", import.meta.url);
@@ -56,11 +61,15 @@ const GOOGLE_SIGNIN_DOC = new URL(
 );
 
 /*
- * The sign-in buttons are generated. The SENTENCES around them, on the landing page, the
- * privacy policy, the terms, and /app, are hand-written and name GitHub. They are true while
- * GitHub is the only door and false the day a second one opens, which is the drift AGENTS.md
- * records four times. The control below reads them out of the BUILT site, so nobody has to
- * remember they exist.
+ * The sign-in buttons are generated, and as of 2026-09-06 so is every sentence around them that
+ * names a door: the privacy policy, the terms and /app all build those sentences from
+ * AUTH_PROVIDERS. The control below still reads them out of the BUILT site, in every provider
+ * state, because a generated sentence can still be wrong: it can name the wrong SET.
+ *
+ * RETIRED WORDING, kept because earlier copies of this file and the design doc carry it: "The
+ * SENTENCES around them, on the landing page, the privacy policy, the terms, and /app, are
+ * hand-written and name GitHub." They were, and that is the drift AGENTS.md records four times.
+ * They are not any more.
  */
 const SIGNIN_WORDS = /\bsign(?:ing|ed)?[ -]?(?:in|up)\b|\blog[ -]?in\b/i;
 
@@ -79,9 +88,54 @@ const UNIT_END = /<\/(?:p|li|h[1-6]|div|button|td|th|option|label|figcaption|blo
 /*
  * The copy a reader meets that is not in the page body: the meta description and the Open
  * Graph description, which are what a search result and a shared link show. privacy.astro's
- * says "Sign-in comes from GitHub" and lives in an attribute, so tag-stripping loses it.
+ * names the doors and lives in an attribute, so tag-stripping loses it. It reads "You sign in
+ * with GitHub or a link we email you" on today's build and follows the provider set; the
+ * retired wording was the typed "Sign-in comes from GitHub".
  */
 const META_COPY = /<meta[^>]*(?:name="description"|property="og:description"|name="twitter:description")[^>]*content="([^"]*)"/gi;
+
+/*
+ * The abbreviations in our own copy that end in a period and do NOT end a sentence.
+ *
+ * Generated from the legal entity names in AUTH_PROVIDERS, because that is where they come
+ * from: "GitHub, Inc." is the party the privacy policy has to name, and its period is not a
+ * full stop. A hand-typed list here would be a second list of the same thing.
+ *
+ * WHY THIS IS A CORRECTION AND NOT A CONVENIENCE. Splitting after "Inc." silently DISARMED the
+ * sweep on the exact sentence it was written for. The processor entry read
+ * "GitHub, Inc. — sign-in. You are redirected to GitHub…"; the split cut it so that the half
+ * carrying the provider name held no sign-in word and the half carrying "sign-in" held no
+ * provider name, so neither half was ever inspected. It read green for a reason that had
+ * nothing to do with the copy being right — and the sibling bullet added for Google, whose
+ * entity name has no period, went red at once. A boundary that depends on whether a company
+ * puts a period in its name is not a boundary.
+ */
+const SENTENCE_ABBREVIATIONS: readonly string[] = [
+  ...new Set(
+    AUTH_PROVIDERS.flatMap((provider) =>
+      [...provider.legalEntity.matchAll(/\b([A-Za-z]+)\./g)].map((match) => match[1] as string),
+    ),
+  ),
+];
+
+/**
+ * Where a sentence ends: punctuation followed by space, unless the word before it is one of
+ * those abbreviations. Falls back to bare punctuation when the list is empty, because
+ * `(?<!\b(?:))` is a lookbehind for the empty string and would stop the split from EVER firing
+ * — a green suite that read one unit per page.
+ */
+function sentenceEnd(): RegExp {
+  if (SENTENCE_ABBREVIATIONS.length === 0) return /(?<=[.!?])\s+/;
+  // The lookbehind sits AFTER the period, so it must include the period. Without the `\\.` it
+  // looks for "Inc" ending where "Inc." ends, never matches, and the guard silently does
+  // nothing — measured on the first run of this file.
+  return new RegExp(`(?<!\\b(?:${SENTENCE_ABBREVIATIONS.join("|")})\\.)(?<=[.!?])\\s+`);
+}
+
+/** One claim per sentence, with company abbreviations kept inside their sentence. */
+function splitSentences(text: string): string[] {
+  return text.split(sentenceEnd());
+}
 
 /** Every .html file the build produced, so the sweep cannot miss a page someone added. */
 async function builtPages(dir: URL = DIST): Promise<URL[]> {
@@ -128,7 +182,7 @@ function copyUnits(html: string): string[] {
       .replace(/<[^>]+>/g, " "),
   )
     .split("\u0000")
-    .flatMap((chunk) => chunk.split(/(?<=[.!?])\s+/))
+    .flatMap((chunk) => splitSentences(chunk))
     .concat(metaCopyUnits(html))
     .map((unit) => unit.replace(/\s+/g, " ").trim())
     .filter((unit) => unit.length > 0);
@@ -137,7 +191,7 @@ function copyUnits(html: string): string[] {
 /** The description attributes on their own, so the sweep can prove it read them. */
 function metaCopyUnits(html: string): string[] {
   return [...html.matchAll(META_COPY)]
-    .flatMap((match) => decode(match[1] ?? "").split(/(?<=[.!?])\s+/))
+    .flatMap((match) => splitSentences(decode(match[1] ?? "")))
     .map((unit) => unit.replace(/\s+/g, " ").trim())
     .filter((unit) => unit.length > 0);
 }
@@ -172,8 +226,8 @@ async function inviteHtml(): Promise<string> {
 }
 
 function renderedProviderIds(html: string): string[] {
-  return [...html.matchAll(/data-signin-provider="([^"]+)"/g)]
-    .map((match) => match[1] as string)
+  return [...new Set([...html.matchAll(/data-signin-provider="([^"]+)"/g)]
+    .map((match) => match[1] as string))]
     .sort();
 }
 
@@ -276,8 +330,22 @@ function literalPattern(text: string): string {
 
 /** The one general call that reaches Supabase, named once because assertions and prose share it. */
 const GENERAL_PROVIDER_CALL = "signInWithProvider(";
-/** The one wrapper with a provider in its name. commonswarm.ts calls it the named debt. */
-const NAMED_PROVIDER_WRAPPER = "signInWithGitHub(";
+/**
+ * A per-provider sign-in wrapper, one spelling per provider the array names.
+ *
+ * GENERATED, AND THAT IS A CORRECTION. This was the single literal `"signInWithGitHub("`,
+ * because that was the one wrapper that existed. A review arm pointed out what the sentence
+ * beside it then claimed and the pattern did not: a new `signInWithGoogle` would have passed
+ * every assertion in this file in silence, while the comment said "a new named per-provider
+ * wrapper goes red here". Building the list from AUTH_PROVIDERS makes the sentence true, and
+ * adds each future provider's spelling on the day the provider is added.
+ *
+ * `signInWithGitHub` itself was deleted from site/src/lib/commonswarm.ts on 2026-09-06 with the
+ * last button that called it. The rule outlives the function: it forbids the SHAPE.
+ */
+const NAMED_PROVIDER_WRAPPERS: readonly string[] = AUTH_PROVIDERS.map(
+  (provider) => `signInWith${provider.name}(`,
+);
 /** Supabase's own call. There must be exactly one site for it. */
 const OAUTH_CALL = ".signInWithOAuth(";
 
@@ -290,8 +358,8 @@ const OAUTH_CALL = ".signInWithOAuth(";
 /** The one module allowed to call Supabase's OAuth entry point. */
 const OAUTH_CALL_SITE = "lib/commonswarm.ts";
 /** The files allowed to call the named GitHub wrapper, and how many times each may. */
-const NAMED_WRAPPER_CALL_SITES: readonly string[] = ["components/app/LiveDashboard.astro"];
-const NAMED_WRAPPER_CALLS_ALLOWED = 1;
+const NAMED_WRAPPER_CALL_SITES: readonly string[] = [];
+const NAMED_WRAPPER_CALLS_ALLOWED = 0;
 
 /*
  * The assertions that FIND those three calls, built from the three constants above.
@@ -314,7 +382,10 @@ const providerCallWithName = (): RegExp =>
   );
 /** `signInWithGitHub(` at a call site, never at its own definition. */
 const namedWrapperCalls = (): RegExp =>
-  new RegExp(`(?<!function\\s)${literalPattern(NAMED_PROVIDER_WRAPPER)}`, "g");
+  new RegExp(
+    `(?<!function\\s)(?:${NAMED_PROVIDER_WRAPPERS.map(literalPattern).join("|")})`,
+    "g",
+  );
 
 /**
  * WHAT THIS SUITE CATCHES, AND WHAT IT DOES NOT — generated from the values the assertions
@@ -331,8 +402,7 @@ const SWEEP_CATCHES: readonly string[] = [
   ...SIGNIN_MARKER.map((entry) => entry.claim),
   `any ${OAUTH_CALL} outside ${OAUTH_CALL_SITE}`,
   `any string literal handed to ${GENERAL_PROVIDER_CALL}`,
-  `${NAMED_PROVIDER_WRAPPER} anywhere but ${NAMED_WRAPPER_CALL_SITES.join(", ")}, or more ` +
-    `than ${NAMED_WRAPPER_CALLS_ALLOWED} call(s) there`,
+  ...NAMED_PROVIDER_WRAPPERS.map((wrapper) => `any ${wrapper} anywhere`),
   `a rendered button whose label is not exactly one of: ` +
     AUTH_PROVIDERS.map((provider) => JSON.stringify(provider.label)).join(", "),
 ];
@@ -343,8 +413,11 @@ const SWEEP_CATCHES: readonly string[] = [
  * the control below, so the doc and this file cannot drift apart.
  */
 const SWEEP_DOES_NOT_CATCH =
-  "It does not catch a provider hidden in an attribute VALUE under an unrelated name, " +
-  "and that is a bound, not a gap this test closes.";
+  "It does not catch a provider hidden in an attribute VALUE under an unrelated name, and it " +
+  "recognises a per-provider wrapper only in the exact shape signInWith<Name>(, so a " +
+  "differently spelled one is not one. Both are bounds, not gaps this test closes: a wrapper " +
+  "under any name still has to hand a provider to signInWithProvider, which the call-site " +
+  "control reads.";
 
 /**
  * `data-*` attribute names that carry a provider id and are NOT sign-in controls.
@@ -374,13 +447,18 @@ const UNSCANNABLE_EXTENSIONS = ["css"];
  * Surfaces that write their own sign-in button instead of rendering ProviderButtons, and HOW
  * MANY they are allowed to write.
  *
- * This is known debt, written down so it cannot be mistaken for coverage. `/app` predates the
- * component and belongs to another lane, so it still hand-writes one `data-signin-github`
- * button. The count is the point: skipping the whole file would let a SECOND hand-written
- * control appear there and never trip the sweep. The control also asserts the file still
- * exists and still matches, so a rename or a cleanup cannot quietly retire the exception.
+ * EMPTY, AND THAT IS THE CURRENT STATE, NOT AN UNUSED FEATURE. It held one entry until
+ * 2026-09-05: `/app` hand-wrote a `data-signin-github` button on its signed-out panel and a
+ * `data-member-reauth-github` one beside its member list. Both render ProviderButtons now, so
+ * every sign-in control in site/src is generated and there is nothing left to except. The map
+ * stays because the debt it records is the kind that comes back, and a count is what stops a
+ * SECOND hand-written control appearing beside a first one that was allowed.
+ *
+ * The retired wording said `/app` "still hand-writes one `data-signin-github` button" and
+ * "belongs to another lane". Both are dead. Neither attribute exists in site/src any more, and
+ * the sweep below would go red if one returned.
  */
-const UNGENERATED_SIGNIN_SURFACES = new Map([["components/app/LiveDashboard.astro", 1]]);
+const UNGENERATED_SIGNIN_SURFACES = new Map<string, number>([]);
 
 async function sourceFiles(dir: URL): Promise<URL[]> {
   const found: URL[] = [];
@@ -446,7 +524,202 @@ test("CONTROL: every button label is the label the constant carries, character f
   }
 });
 
-test("CONTROL: sign-in copy names the providers this build renders, or none", async () => {
+/**
+ * Every state the sweep runs against: the three built fixtures, plus the real `site/dist`.
+ *
+ * The fixtures are what makes the dual-state claim measurable — nothing enabled, one provider,
+ * every provider — each a real `astro build` against a GoTrue that reports that state. The real
+ * dist is kept beside them because it is the artifact a deploy publishes, and it is the only
+ * one whose provider set is the LIVE deployment's answer rather than a fixture's.
+ */
+async function sweepStates(): Promise<
+  readonly { readonly state: string; readonly dir: URL; readonly rendered: string[] }[]
+> {
+  const fixtures = await providerFixtures();
+  const states = fixtures.map((fixture) => ({
+    state: fixture.state,
+    dir: fixture.dir,
+    rendered: AUTH_PROVIDERS.filter((provider) => fixture.enabled.includes(provider.id))
+      .map((provider) => provider.name)
+      .sort(),
+  }));
+  const live = renderedProviderIds(await inviteHtml());
+  return [
+    ...states,
+    {
+      state: `site/dist (${fixtureStateName(live)})`,
+      dir: DIST,
+      rendered: live.map((id) => authProvider(id).name).sort(),
+    },
+  ];
+}
+
+/**
+ * Comments removed: braced template comments, block comments, and whole-line `//` comments.
+ *
+ * Whole-line only for `//`, because a trailing one cannot be told from `https://` without a
+ * lexer, and every explanatory comment in these files is on its own line. The control below
+ * proves the stripper does what this says, in both directions, before trusting it.
+ */
+function withoutComments(text: string): string {
+  return text
+    .replace(/\{\/\*[\s\S]*?\*\/\}/g, " ")
+    .replace(/\/\*[\s\S]*?\*\//g, " ")
+    .replace(/^[ \t]*\/\/.*$/gm, " ");
+}
+
+/**
+ * The .astro surfaces that offer OAuth, DERIVED rather than listed: a page is one if it renders
+ * ProviderButtons or reads the provider array. A typed list here would be the second list this
+ * whole file exists to remove.
+ */
+async function signInSurfaces(): Promise<URL[]> {
+  const found: URL[] = [];
+  for (const file of await sourceFiles(SRC)) {
+    if (!file.pathname.endsWith(".astro")) continue;
+    if (/ProviderButtons|auth-providers/.test(await readFile(file, "utf8"))) found.push(file);
+  }
+  return found;
+}
+
+test("CONTROL: no sign-in surface types a provider name into its markup or its script", async () => {
+  /*
+   * THE CONTROL FOR COPY THE HTML SWEEP CANNOT SEE. The sweep above reads rendered pages, so a
+   * sentence assembled in JavaScript at runtime is invisible to it. The measured instance:
+   * /app's "Email sign-in is busy right now. Use GitHub, or try email again in a little while."
+   * survived a full lane and two review arms, because it is built inside an error handler and
+   * never rendered into any page. This reads the SOURCE of every sign-in surface instead and
+   * requires that no provider name is typed there at all — the names come from AUTH_PROVIDERS
+   * through providerChoices, listSentence, or the buttons themselves, so a literal is always a
+   * second list.
+   *
+   * ITS BOUND, and it is a bound rather than a gap. It reads `.astro` files: the pages and
+   * components where copy lives. It does NOT read `src/lib/*.ts`, because those modules name
+   * providers as CODE — `signInWithGitHub`, a `GITHUB` id constant — and a control that flagged
+   * an identifier would be failing for a reason it does not claim. A user-facing sentence built
+   * inside a lib module is therefore not caught here; the rendered-HTML sweep catches it if it
+   * reaches a page, and nothing catches it if it does not.
+   */
+  const providerName = AUTH_PROVIDERS[0]?.name ?? "";
+  assert.ok(providerName.length > 0, "AUTH_PROVIDERS is empty, so this control measures nothing");
+  // The stripper, both directions, before anything relies on it.
+  assert.ok(!withoutComments(`a /* ${providerName} */ b`).includes(providerName));
+  assert.ok(!withoutComments(`a {/* ${providerName} */} b`).includes(providerName));
+  assert.ok(!withoutComments(`  // ${providerName}\n`).includes(providerName));
+  assert.ok(withoutComments(`a ${providerName} b`).includes(providerName));
+
+  const surfaces = await signInSurfaces();
+  assert.ok(
+    surfaces.length >= 4,
+    `Only ${surfaces.length} sign-in surface(s) found. /app, /invite, /privacy and /terms all ` +
+      `render or read the provider list, so a smaller number means the derivation stopped ` +
+      `finding files and this control is reading almost nothing.`,
+  );
+  const offenders: string[] = [];
+  for (const file of surfaces) {
+    const text = withoutComments(await readFile(file, "utf8"));
+    for (const provider of AUTH_PROVIDERS) {
+      for (const match of text.matchAll(new RegExp(`\\b${provider.name}\\b`, "gi"))) {
+        const at = match.index ?? 0;
+        offenders.push(
+          `${file.pathname.slice(file.pathname.indexOf("/src/") + 1)}: "${provider.name}" in ` +
+            `${JSON.stringify(text.slice(Math.max(0, at - 60), at + 60).replace(/\s+/g, " "))}`,
+        );
+      }
+    }
+  }
+  assert.deepEqual(
+    offenders,
+    [],
+    `A sign-in surface types a provider name. Build the sentence from AUTH_PROVIDERS instead — ` +
+      `providerChoices() and signInDoors() for prose rendered at build time, the page's own ` +
+      `rendered [data-signin-provider] buttons for prose built in the browser:\n  ` +
+      `${offenders.join("\n  ")}`,
+  );
+});
+
+test("CONTROL: every sentence-list helper reads as a sentence in every provider state", () => {
+  /*
+   * `providerChoices([])` is the empty string, which is right for a list of providers and wrong
+   * for a sentence. It reached a published page: with no OAuth provider enabled, the privacy
+   * policy read "You sign in with , you join a workspace". A build with no OAuth provider is a
+   * documented, supported state (astro.config.mjs), so this is not a hypothetical.
+   *
+   * signInDoors is the helper prose must use, and it is never empty because the emailed link is
+   * always a door. This pins that, in every subset of AUTH_PROVIDERS rather than in one.
+   */
+  const subsets: (readonly AuthProvider[])[] = [
+    [],
+    AUTH_PROVIDERS.slice(0, 1),
+    [...AUTH_PROVIDERS],
+  ];
+  for (const subset of subsets) {
+    const doors = signInDoors(subset);
+    assert.ok(
+      doors.trim().length > 0,
+      `signInDoors returned nothing for ${subset.length} provider(s). Every sentence built ` +
+        `from it becomes "You sign in with ." in that state.`,
+    );
+    assert.doesNotMatch(
+      `You sign in with ${doors}.`,
+      /\s[,.]|,\s*\./,
+      `"You sign in with ${doors}." has a dangling separator.`,
+    );
+    for (const provider of subset) {
+      assert.ok(doors.includes(provider.name), `${provider.name} is a door and must be named`);
+    }
+    assert.ok(
+      doors.includes(EMAIL_SIGNIN_DOOR),
+      "the emailed link is a door in every build and must be named in every state",
+    );
+  }
+  // The entity list is for parties, not doors, so it MAY be empty — and the pages that use it
+  // drop the whole sentence when it is. Pinned so nobody "fixes" it into a fallback string.
+  assert.equal(providerEntities([]), "");
+  for (const provider of AUTH_PROVIDERS) {
+    assert.ok(
+      providerEntities([provider]).includes(provider.legalEntity),
+      `${provider.id} must appear as its legal entity, not its short name`,
+    );
+  }
+});
+
+test("CONTROL: a company abbreviation does not end a sentence, and a full stop still does", () => {
+  /*
+   * The control on the sweep's own boundary. The guard was written once WITHOUT the period in
+   * its lookbehind, so it looked for "Inc" ending where "Inc." ends, matched nothing, and did
+   * nothing at all — while reading exactly like a working guard. A guard that silently does
+   * nothing puts the sweep back in the state where a company's punctuation decides whether a
+   * false sentence is inspected.
+   *
+   * Both directions are asserted, from AUTH_PROVIDERS rather than from typed strings: the
+   * abbreviation must NOT cut, and a real full stop must still cut.
+   */
+  assert.ok(
+    SENTENCE_ABBREVIATIONS.length > 0,
+    `No legal entity in AUTH_PROVIDERS carries an abbreviation, so the guard is inert. If that ` +
+      `is now true, the guard can go — but say so here rather than leaving a dead branch.`,
+  );
+  const dotted = AUTH_PROVIDERS.filter((provider) => provider.legalEntity.includes("."));
+  assert.ok(dotted.length > 0, "the abbreviation list came from somewhere; find it");
+  for (const provider of dotted) {
+    const sentence = `You sign in through ${provider.legalEntity} and nobody else. Then this.`;
+    assert.deepEqual(
+      splitSentences(sentence),
+      [`You sign in through ${provider.legalEntity} and nobody else.`, "Then this."],
+      `"${provider.legalEntity}" must stay inside its sentence, and the real full stop after ` +
+        `it must still cut. Check the lookbehind in sentenceEnd().`,
+    );
+  }
+  // Negative control: with the guard in place, ordinary prose still splits on every full stop.
+  assert.deepEqual(splitSentences("One thing. Two things. Three."), [
+    "One thing.",
+    "Two things.",
+    "Three.",
+  ]);
+});
+
+test("CONTROL: sign-in copy names the providers this build renders, in every provider state", async () => {
   /*
    * The failure this catches, in order: an operator turns Google on in the Supabase dashboard,
    * some lane deploys the site for an unrelated reason, and the invite page grows a Google
@@ -454,89 +727,197 @@ test("CONTROL: sign-in copy names the providers this build renders, or none", as
    * would have noticed. This does, in both directions: a page that names a provider with no
    * button is caught by the same comparison.
    *
+   * IT RUNS IN EVERY PROVIDER STATE, WHICH IS THE POINT. It used to read `site/dist` alone,
+   * and `site/dist` is built against whatever api.commonswarm.com happened to report — on
+   * 2026-09-05 that is `github: true, google: false`. So "the copy is right in both states" was
+   * a claim with no control on it, and a review arm found a real offender hiding under it. Each
+   * state below is a REAL BUILD against a GoTrue fixture that reports it (see
+   * scripts/provider-fixtures.ts), so a sentence that is only wrong once Google is enabled goes
+   * red here today, months before the toggle is flipped.
+   *
    * IT READS SIGN-IN CLAIMS, NOT EVERY MENTION. An earlier version compared provider names
    * against the whole page. It would have gone red on the footer's "GitHub" repo link the day
    * GitHub was disabled, and on `apple-touch-icon` if Apple were ever added — controls failing
    * for a reason they do not claim, which is the defect this suite exists to prevent.
    *
-   * WHAT IT CANNOT SEE. A sentence that names no provider is invisible to it, so
-   * privacy.astro's "Three, and only three, are in the path:" processor count and
-   * acceptable-use.astro's "additional GitHub accounts" stay green; step 6 of
-   * docs/design/2026-09-04-GOOGLE-SIGNIN.md names them by hand. Meta descriptions ARE read
-   * (privacy's says "Sign-in comes from GitHub"), because that is what a search result shows. Copy built in JavaScript
-   * rather than rendered into the page is invisible too — LiveDashboard's "Use GitHub, or try
-   * email again in a little while." is the measured instance. And AUTH_PROVIDERS ships whole
-   * in the bundle the invite page downloads, because authProvider() is the enforcement and it
-   * runs in the browser; a provider with no button IS named in that JavaScript, by design.
+   * WHAT IT CANNOT SEE. A sentence that names no provider is invisible to it. That is not the
+   * gap it once was: the sentences named by hand in step 6 of
+   * docs/design/2026-09-04-GOOGLE-SIGNIN.md are now either generated from AUTH_PROVIDERS or
+   * written to be true in every state, and the ones that still name no provider ("Do not create
+   * additional sign-in provider accounts") are true in every state BECAUSE they name none.
+   * Meta descriptions ARE read, because that is what a search result shows. Copy built in
+   * JavaScript rather than rendered into the page is still invisible here — /app's email
+   * rate-limit line was the measured instance, and it is generated from the page's own rendered
+   * buttons now, which is the control that replaces this one for it.
    *
    * The generated buttons are removed first: each one names exactly one provider, which is
    * correct for a button and wrong for a sentence.
    */
-  const invite = await inviteHtml();
-  const rendered = renderedProviderIds(invite).map((id) => authProvider(id).name).sort();
+  const failures: string[] = [];
+  const measured: string[] = [];
+  for (const { state, dir, rendered } of await sweepStates()) {
+    const offenders: string[] = [];
+    let inspected = 0;
+    let named = 0;
+    let fromMeta = 0;
+    let splitByTags = 0;
+    for (const page of await builtPages(dir)) {
+      // Any element the component generates, not just <button>: if it ever renders an <a>, a
+      // strip that only knew about buttons would flag the generated label as hand-written copy.
+      const html = (await readFile(page, "utf8"))
+        .replace(/<([a-z]+)[^>]*data-signin-provider=[\s\S]*?<\/\1>/g, " ")
+        .replace(/<[a-z]+[^>]*data-signin-provider=[^>]*\/>/g, " ");
+      for (const unit of metaCopyUnits(html)) {
+        if (SIGNIN_WORDS.test(unit)) fromMeta += 1;
+      }
+      // Punctuation alone would leave a whole nav block as one "sentence", which is how the
+      // footer's three separate links once read as one claim about signing up with GitHub.
+      // More units than punctuation gives is the proof that UNIT_END is still cutting.
+      const byPunctuation = splitSentences(copyOf(html)).filter((unit) => unit.trim()).length;
+      // Body units only. Counting the meta units in here would hide a dead UNIT_END, because
+      // the concatenated descriptions alone push the total above the punctuation count.
+      const fromBody = copyUnits(html).length - metaCopyUnits(html).length;
+      if (fromBody > byPunctuation) splitByTags += 1;
+      for (const unit of copyUnits(html)) {
+        if (!SIGNIN_WORDS.test(unit)) continue;
+        inspected += 1;
+        const namedHere = AUTH_PROVIDERS.filter((provider) =>
+          new RegExp(`\\b${provider.name}\\b`, "i").test(unit),
+        )
+          .map((provider) => provider.name)
+          .sort();
+        if (namedHere.length === 0) continue;
+        named += 1;
+        if (namedHere.join(",") !== rendered.join(",")) {
+          const page_ = page.pathname.slice(page.pathname.lastIndexOf("/", page.pathname.lastIndexOf("/") - 1));
+          offenders.push(`${state}${page_}: names [${namedHere.join(", ")}] in "${unit}"`);
+        }
+      }
+    }
+    /*
+     * The pin on the sweep itself. Every assertion here is "no offenders", which a broken regex
+     * satisfies by reading nothing at all: if SIGNIN_WORDS, UNIT_END, splitSentences or the meta
+     * extractor ever stopped matching, this control would go quietly green and defend nothing.
+     * So each state also has to prove it read real sign-in copy.
+     *
+     * `named` is floored only where a provider is rendered. In the state with none enabled the
+     * right number of sentences naming a provider is ZERO, and the offender list is what proves
+     * it: with `rendered` empty, any sentence naming any provider is an offender.
+     */
+    const namedFloor = rendered.length > 0 ? 3 : 0;
+    measured.push(
+      `${state}: rendered=[${rendered.join(", ")}] inspected=${inspected} named=${named} ` +
+        `fromMeta=${fromMeta} splitByTags=${splitByTags} offenders=${offenders.length}`,
+    );
+    if (!(inspected >= 10 && named >= namedFloor && fromMeta >= 1 && splitByTags >= 3)) {
+      failures.push(
+        `${state}: the sweep read ${inspected} sign-in sentences, ${named} of which name a ` +
+          `provider (floor ${namedFloor}), ${fromMeta} out of a meta description, and ` +
+          `${splitByTags} pages were cut into more units by their tags than by punctuation ` +
+          `alone. Those numbers are too low to believe it is reading the site. Check ` +
+          `SIGNIN_WORDS, UNIT_END, META_COPY, splitSentences, and the button strip before ` +
+          `trusting an empty offender list.`,
+      );
+    }
+    failures.push(...offenders);
+  }
+  console.log(`sign-in copy sweep:\n  ${measured.join("\n  ")}`);
+  assert.deepEqual(
+    failures,
+    [],
+    `These sentences name a different set of providers from the one their build renders. Every ` +
+      `one has to be rewritten before the new provider is enabled, and the checklist in ` +
+      `docs/design/2026-09-04-GOOGLE-SIGNIN.md is where that step lives:\n  ` +
+      `${failures.join("\n  ")}`,
+  );
+});
+
+test("CONTROL: no built page doubles a full stop or a comma, in any provider state", async () => {
+  /*
+   * A GENERATED SENTENCE CAN CARRY ITS OWN PUNCTUATION. "GitHub, Inc." ends in a period, so
+   * `You sign in through ${entities}.` published "You sign in through GitHub, Inc.." to every
+   * reader of the privacy policy. Nothing else here could see it: the sweep reads WHICH
+   * providers a sentence names, not whether the sentence is well formed, and the state that
+   * shows it is the one nobody builds.
+   *
+   * Doubled punctuation only. Tag-stripping inserts a space before every `<strong>` and `<a>`,
+   * so a " ." pattern reads 59 false hits on today's build and would be a control that fails
+   * for a reason it does not claim. An ellipsis is excluded because the app uses one.
+   */
+  // `. .` as well as `..`: a review arm asked whether a space between the two periods slips
+  // through, and it did. Measured across all four builds after widening: zero false hits, and
+  // it still misses "…", "Wait... then retry." and "GitHub, Inc., and Google LLC".
+  const DOUBLED = /(?<!\.)\.\s*\.(?!\.)|,\s*,/;
   const offenders: string[] = [];
   let inspected = 0;
-  let named = 0;
-  let fromMeta = 0;
-  let splitByTags = 0;
-  for (const page of await builtPages()) {
-    // Any element the component generates, not just <button>: if it ever renders an <a>, a
-    // strip that only knew about buttons would flag the generated label as hand-written copy.
-    const html = (await readFile(page, "utf8"))
-      .replace(/<([a-z]+)[^>]*data-signin-provider=[\s\S]*?<\/\1>/g, " ")
-      .replace(/<[a-z]+[^>]*data-signin-provider=[^>]*\/>/g, " ");
-    for (const unit of metaCopyUnits(html)) {
-      if (SIGNIN_WORDS.test(unit)) fromMeta += 1;
-    }
-    // Punctuation alone would leave a whole nav block as one "sentence", which is how the
-    // footer's three separate links once read as one claim about signing up with GitHub.
-    // More units than punctuation gives is the proof that UNIT_END is still cutting.
-    const byPunctuation = copyOf(html).split(/(?<=[.!?])\s+/).filter((unit) => unit.trim()).length;
-    // Body units only. Counting the meta units in here would hide a dead UNIT_END, because
-    // the concatenated descriptions alone push the total above the punctuation count.
-    const fromBody = copyUnits(html).length - metaCopyUnits(html).length;
-    if (fromBody > byPunctuation) splitByTags += 1;
-    for (const unit of copyUnits(html)) {
-      if (!SIGNIN_WORDS.test(unit)) continue;
-      inspected += 1;
-      const namedHere = AUTH_PROVIDERS.filter((provider) =>
-        new RegExp(`\\b${provider.name}\\b`, "i").test(unit),
-      )
-        .map((provider) => provider.name)
-        .sort();
-      if (namedHere.length === 0) continue;
-      named += 1;
-      const namedList = namedHere;
-      if (namedList.join(",") !== rendered.join(",")) {
-        const page_ = page.pathname.slice(page.pathname.indexOf("/dist/") + 5);
-        offenders.push(`${page_}: names [${namedList.join(", ")}] in "${unit}"`);
+  for (const { state, dir } of await sweepStates()) {
+    for (const page of await builtPages(dir)) {
+      const html = await readFile(page, "utf8");
+      for (const unit of copyUnits(html)) {
+        inspected += 1;
+        const found = DOUBLED.exec(unit);
+        if (found) {
+          offenders.push(
+            `${state}${page.pathname.slice(page.pathname.lastIndexOf("/", page.pathname.lastIndexOf("/") - 1))}: ` +
+              `"${unit.slice(Math.max(0, found.index - 70), found.index + 30)}"`,
+          );
+        }
       }
     }
   }
-  /*
-   * The pin on the sweep itself. Every assertion above is "no offenders", which a broken
-   * regex satisfies by reading nothing at all: if SIGNIN_WORDS, UNIT_END, or the meta
-   * extractor ever stopped matching, this control would go quietly green and defend nothing.
-   * So it also has to prove it read real sign-in copy that names real providers.
-   */
   assert.ok(
-    inspected >= 10 && named >= 3 && fromMeta >= 1 && splitByTags >= 3,
-    `The sweep read ${inspected} sign-in sentences, ${named} of which name a provider, and ` +
-      `${fromMeta} of them out of a meta description, and ${splitByTags} pages were cut into ` +
-      `more units by their tags than by punctuation alone. Those numbers are too low to ` +
-      `believe it is reading the site: the built pages say "You sign in with GitHub" in the ` +
-      `body, privacy's description says "Sign-in comes from GitHub" in an attribute, and every ` +
-      `page has a nav that punctuation cannot cut. Check SIGNIN_WORDS, UNIT_END, META_COPY, ` +
-      `and the button strip before trusting the empty offender list below.`,
+    inspected > 1000,
+    `Only ${inspected} copy units were read across every state; this control is not reading the ` +
+      `built site.`,
   );
-
+  // The control on the control: the pattern must fire on the exact string that shipped.
+  assert.match("You sign in through GitHub, Inc..", DOUBLED);
+  assert.match("You sign in through GitHub, Inc. .", DOUBLED);
+  assert.doesNotMatch("GitHub, Inc., and Google LLC receive it.", DOUBLED);
+  assert.doesNotMatch("Opening CommonSwarm…", DOUBLED);
+  assert.doesNotMatch("Wait... then retry.", DOUBLED);
   assert.deepEqual(
     offenders,
     [],
-    `This build renders [${rendered.join(", ")}], but these hand-written sentences name a ` +
-      `different set. Every one of them has to be rewritten before the new provider is ` +
-      `enabled, and the checklist in docs/design/2026-09-04-GOOGLE-SIGNIN.md is where that ` +
-      `step lives:\n  ${offenders.join("\n  ")}`,
+    `A built sentence has doubled punctuation. A generated list that already ends in a period ` +
+      `must not also end the sentence:\n  ${offenders.join("\n  ")}`,
+  );
+});
+
+test("CONTROL: the provider fixtures are the states they claim to be", async () => {
+  /*
+   * The positive control for the control above. Its offender lists are empty either because the
+   * copy is right in every state, or because the three fixtures are the same build three times
+   * — which is exactly what happens if PUBLIC_SUPABASE_URL stops reaching the child build. So:
+   * each fixture's own invite page must render precisely the ids that fixture enabled, and the
+   * states must differ from each other.
+   */
+  const fixtures = await providerFixtures();
+  assert.ok(fixtures.length >= 2, "there must be more than one provider state to compare");
+  const seen: string[] = [];
+  for (const fixture of fixtures) {
+    const html = await readFile(new URL("invite/index.html", fixture.dir), "utf8");
+    assert.deepEqual(
+      renderedProviderIds(html),
+      [...fixture.enabled].sort(),
+      `the "${fixture.state}" fixture renders a different provider set from the one its GoTrue ` +
+        `reported. The build did not read this fixture's settings.`,
+    );
+    seen.push(renderedProviderIds(html).join(","));
+  }
+  assert.equal(
+    new Set(seen).size,
+    fixtures.length,
+    `the fixtures produced ${new Set(seen).size} distinct provider sets across ` +
+      `${fixtures.length} states, so at least two builds are the same build.`,
+  );
+  assert.ok(
+    fixtures.some((fixture) => fixture.enabled.length === AUTH_PROVIDERS.length),
+    "one fixture must enable every provider AUTH_PROVIDERS names, or the enabled state is untested",
+  );
+  assert.ok(
+    fixtures.some((fixture) => fixture.enabled.length === 0),
+    "one fixture must enable none, or the no-OAuth build documented in astro.config.mjs is untested",
   );
 });
 
@@ -868,10 +1249,43 @@ test("CONTROL: the sweep's stated bound is derived from its own assertions, and 
         `travels with: ${JSON.stringify(entry.claim)} for ${entry.pattern}`,
     );
   }
+  /*
+   * The bound is exactly: one claim per marker branch, one per named per-provider wrapper (one
+   * per provider, GENERATED), the two general call claims, and the label claim. Every term is
+   * derived, so adding a provider widens the expected count with the list rather than making
+   * this control red for the wrong reason. It was `SIGNIN_MARKER.length + 4` with the wrapper
+   * count typed into the 4, which broke the moment the wrapper list stopped being one item.
+   */
+  /*
+   * The generated wrapper names must be USABLE, not merely generated. `signInWith${name}(` is
+   * built from a provider's display name, and a name carrying a space or a hyphen would
+   * produce `signInWith Foo Bar(`, which no source file can contain: a dead branch that reads
+   * like a working ban. An arm raised exactly that shape.
+   */
+  for (const wrapper of NAMED_PROVIDER_WRAPPERS) {
+    assert.match(
+      wrapper,
+      /^signInWith[A-Za-z][A-Za-z0-9]*\($/,
+      `"${wrapper}" is not a JavaScript identifier followed by "(", so nothing can ever match ` +
+        `it and the ban it states is dead. A provider name with a space or punctuation in it ` +
+        `needs its own identifier field in auth-providers.ts.`,
+    );
+  }
+
+  /*
+   * WHAT THIS LENGTH CHECK DOES AND DOES NOT DO. The marker and wrapper terms are derived on
+   * both sides, so it cannot catch a mismatch inside those. What it catches is the thing its
+   * message names: a line TYPED into SWEEP_CATCHES beside the generated ones, which is how a
+   * stated bound starts claiming something no assertion enforces. CALL_CLAIMS and LABEL_CLAIM
+   * are the two terms that stay typed, and they are what makes it more than a spread operator.
+   */
+  const CALL_CLAIMS = 2;
+  const LABEL_CLAIM = 1;
   assert.equal(
     SWEEP_CATCHES.length,
-    SIGNIN_MARKER.length + 4,
-    `the stated bound must be the four branch claims plus the three call claims and the label ` +
+    SIGNIN_MARKER.length + NAMED_PROVIDER_WRAPPERS.length + CALL_CLAIMS + LABEL_CLAIM,
+    `the stated bound must be one claim per marker branch, one per named per-provider wrapper ` +
+      `(${NAMED_PROVIDER_WRAPPERS.length} of them), the two general call claims and the label ` +
       `claim, and nothing typed beside them`,
   );
   for (const id of AUTH_PROVIDERS.map((provider) => provider.id)) {
@@ -886,7 +1300,7 @@ test("CONTROL: the sweep's stated bound is derived from its own assertions, and 
       `the bound must quote every label the array holds; "${provider.label}" is missing`,
     );
   }
-  for (const call of [OAUTH_CALL, GENERAL_PROVIDER_CALL, NAMED_PROVIDER_WRAPPER]) {
+  for (const call of [OAUTH_CALL, GENERAL_PROVIDER_CALL, ...NAMED_PROVIDER_WRAPPERS]) {
     assert.ok(
       SWEEP_CATCHES.some((line) => line.includes(call)),
       `the bound must name ${call}, which the assertions below use`,
@@ -921,7 +1335,7 @@ test("CONTROL: the sweep's stated bound is derived from its own assertions, and 
   );
 });
 
-test("CONTROL: every OAuth call site is the named debt or an id read at runtime", async () => {
+test("CONTROL: every OAuth call site is an id read at runtime", async () => {
   /*
    * THE ATTRIBUTE SWEEPS CANNOT CLOSE THIS ON THEIR OWN, and two review arms proved it:
    * `<button data-login="github">` hides the provider in a VALUE, so no pattern over attribute
@@ -940,9 +1354,15 @@ test("CONTROL: every OAuth call site is the named debt or an id read at runtime"
    *                             is what a generated button gives, and a named value, which the
    *                             "signInWithOAuth is called once" control above already checks
    *                             against AUTH_PROVIDERS.
-   *   signInWithGitHub()        the one wrapper with a provider in its NAME. commonswarm.ts
-   *                             calls it "the one remaining named provider", left for /app's
-   *                             signed-out button. Exactly one call site.
+   *   signInWith<Name>()        a wrapper with a provider in its NAME, one spelling per
+   *                             provider in AUTH_PROVIDERS. `signInWithGitHub` existed for
+   *                             /app's hand-written signed-out button; that button became
+   *                             ProviderButtons on 2026-09-06 and the wrapper was deleted with
+   *                             it. ZERO call sites and no definition, for any provider. The
+   *                             rule outlives the function: it forbids the SHAPE, so
+   *                             `signInWithGoogle` is refused before anyone writes it.
+   *                             Retired wording: "the one remaining named provider, left for
+   *                             /app's signed-out button. Exactly one call site."
    *
    * WHAT THESE TWO BOUND, EXACTLY. An earlier version of this comment said a second
    * GitHub-only button goes red here "whatever it calls itself and however it spells its
@@ -978,7 +1398,8 @@ test("CONTROL: every OAuth call site is the named debt or an id read at runtime"
 
   const callers: string[] = [];
   for (const file of await sourceFiles(SRC)) {
-    // `export async function signInWithGitHub(` is the definition, not a call site.
+    // `export async function signInWith<Name>(` is a definition, not a call site. No such
+    // definition exists today; the lookbehind is what keeps the rule true if one returns.
     const calls = ((await readFile(file, "utf8")).match(namedWrapperCalls()) ?? []).length;
     if (calls > 0) {
       callers.push(`${file.pathname.slice(file.pathname.indexOf("/src/") + 5)} (${calls})`);
@@ -987,25 +1408,29 @@ test("CONTROL: every OAuth call site is the named debt or an id read at runtime"
   assert.deepEqual(
     callers,
     NAMED_WRAPPER_CALL_SITES.map((file) => `${file} (${NAMED_WRAPPER_CALLS_ALLOWED})`),
-    `signInWithGitHub is called from: ${callers.join(", ")}. Exactly one call site is allowed ` +
-      `— /app's signed-out button, the debt UNGENERATED_SIGNIN_SURFACES already names. A ` +
-      `second one is a second GitHub-only door, and it would offer GitHub on a deployment ` +
-      `that has Google on. Render ProviderButtons and call signInWithProvider instead.`,
+    `A named per-provider wrapper (${NAMED_PROVIDER_WRAPPERS.join(", ")}) is called from: ` +
+      `${callers.join(", ")}. No call site is allowed for any of them, because every sign-in ` +
+      `control must come from ProviderButtons and read its id off the element.`,
   );
 });
 
-test("CONTROL: /app's built page hand-writes exactly one provider control, and it is the signed-out one", async () => {
+test("CONTROL: /app's built page hand-writes NO provider control", async () => {
   /*
    * THE SOURCE SWEEP ABOVE IS NOT ENOUGH ON ITS OWN, which is the whole lesson of this file:
    * a template proves nothing about the artifact a reader receives. This reads the BUILT /app
-   * page, where the re-authentication buttons ProviderButtons generates and the one button
-   * /app still writes by hand sit side by side, and counts them apart.
+   * page and counts the hand-written provider controls on it. The number is ZERO.
    *
-   * The measured defect: /app carried `data-member-reauth-github` with a hand-typed
-   * "Sign in again with GitHub" label. It was a second door on a page whose exception said
-   * ONE, and the sweep read zero, because the provider name sat at the end of the attribute
-   * rather than straight after `data-`. The block now renders ProviderButtons, so the label
-   * and the set both come from AUTH_PROVIDERS. Write a third by hand and this goes red.
+   * The retired name of this test said "hand-writes exactly one provider control, and it is
+   * the signed-out one", and it was already false when it was read: the assertion below was
+   * `equal(handWritten.length, 0)` while the sentence promised one. Both of /app's hand-written
+   * controls are gone — `data-member-reauth-github` on 2026-09-05, `data-signin-github` on the
+   * signed-out panel in this lane — so the count and the sentence say zero together.
+   *
+   * The measured defect that built this control: /app carried `data-member-reauth-github` with
+   * a hand-typed "Sign in again with GitHub" label. The sweep read zero, because the provider
+   * name sat at the END of the attribute rather than straight after `data-`. Both blocks render
+   * ProviderButtons now, so the label and the set come from AUTH_PROVIDERS. Write one by hand
+   * and this goes red.
    */
   let app: string;
   try {
@@ -1036,17 +1461,9 @@ test("CONTROL: /app's built page hand-writes exactly one provider control, and i
     withoutAllowedAttributes(app).match(new RegExp(PROVIDER_IN_ATTRIBUTE_NAME, "gi")) ?? [];
   assert.equal(
     handWritten.length,
-    1,
+    0,
     `The built /app page names a provider inside ${handWritten.length} attribute name(s): ` +
-      `${handWritten.join(" | ")}. Exactly one is allowed — the signed-out ` +
-      `[data-signin-github] button, which UNGENERATED_SIGNIN_SURFACES names as debt. Every ` +
-      `other sign-in control on that page must come from ProviderButtons.`,
-  );
-  assert.match(
-    handWritten[0] as string,
-    /\bdata-signin-github\b/,
-    `The one hand-written provider control on /app must be the signed-out button. It is ` +
-      `now: ${handWritten[0]}`,
+      `${handWritten.join(" | ")}. Every sign-in control on that page must come from ProviderButtons.`,
   );
 
   /*

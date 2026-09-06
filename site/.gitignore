@@ -1,5 +1,8 @@
 # build output
 dist/
+# Per-provider-state builds from scripts/provider-fixtures.ts. Rebuilt by the test suite in
+# about two seconds each; never deployed.
+dist-providers/
 # generated types
 .astro/
 

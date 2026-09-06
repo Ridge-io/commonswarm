@@ -318,15 +318,40 @@ to schedule. So do steps 7 and 8 in one sitting, or not yet.
    — one Google Cloud project holds the OAuth client. Note its name; every link below is scoped
    to whichever project is selected in the console header.
 
+   **Measured 2026-09-06.** The project created for this was named `CommonSwarm`, project id
+   `commonswarm`, project number `130762122221`. The project id and project number are
+   identifiers, not secrets, so they are safe to keep written down here.
+
 2. **Configure the consent screen (branding).**
    <https://console.cloud.google.com/auth/branding>
-   - App name: `CommonSwarm`
-   - User support email: `tom@chartingalpha.com`
+
+   **Corrected 2026-09-06.** On a freshly created project this URL opens a combined "Project
+   configuration" wizard, not the Branding page described below. The wizard has four panes:
+   App Information, Audience, Contact Information, Finish. It sets the app name and the
+   support email. It does **not** have fields for the home page, privacy policy, terms, or
+   authorized domains. Those four live only on the Branding page, and that page is reachable
+   only after the wizard finishes. On a fresh project, work through the wizard first:
+
+   - **App Information pane:** App name `CommonSwarm`, user support email
+     `tom@chartingalpha.com`.
+   - **Audience pane:** this is the same choice as step 3 below. Making it here satisfies
+     step 3 as well; do not set it twice.
+   - **Contact Information pane:** developer contact email `tom@chartingalpha.com`.
+   - **Finish pane:** agree and continue.
+
+   Once the wizard finishes, the console returns to an ordinary Branding page, and only then do
+   these fields exist:
+
    - App home page: `https://commonswarm.com`
    - Privacy policy: `https://commonswarm.com/privacy`
    - Terms of service: `https://commonswarm.com/terms`
    - **Authorized domains:** add `commonswarm.com`. This one entry covers both the site and the
      API host, because `api.commonswarm.com` is a subdomain of it.
+
+   **Was:** the step described a single Branding page holding all seven fields (app name,
+   support email, home page, privacy, terms, authorized domains) at once. That is still what
+   the Branding page looks like on a project whose consent screen already exists; the wizard
+   above is what a project shows the FIRST time.
 
    **Google will not accept an authorized domain it cannot see you own.** The domain has to be
    verified in Google Search Console first, under the same Google account, at
@@ -334,7 +359,24 @@ to schedule. So do steps 7 and 8 in one sitting, or not yet.
    complete the DNS TXT record it asks for. Cloudflare holds the DNS for this domain. If step 2
    rejects the domain with no explanation, this is why.
 
+   **Corrected 2026-09-06.** Search Console offers two verification paths for this domain, not
+   one:
+
+   - **One-click verification.** Google detects the domain's DNS is hosted on Cloudflare and
+     offers to verify it in one click, through an OAuth grant to the Cloudflare account that
+     holds the DNS. No manual record.
+   - **Manual TXT record.** Switch the "Instructions for" selector on the verification page
+     from Cloudflare to **Any DNS provider**. Only then does Search Console show the DNS TXT
+     record to add by hand. This is the path described above, and it is the path this runbook
+     wants: it needs no OAuth grant to a third party, so it can be carried out without asking
+     for a permission that reaches outside this task.
+
 3. **Set the audience.** <https://console.cloud.google.com/auth/audience>
+
+   **Corrected 2026-09-06.** On a fresh project this is the Audience pane inside step 2's
+   wizard, set there rather than by a separate visit to this URL. On a project whose consent
+   screen already exists, this URL opens its own page with the same choice, as below.
+
    - User type: **External**.
    - Publishing status: **Publish app** (that is, "In production"). Publish it because this is
      a public product, not because *Testing* would block sign-in: with only the basic identity
@@ -402,8 +444,37 @@ to schedule. So do steps 7 and 8 in one sitting, or not yet.
      Redirect URLs, because that is the list `redirect_to` is checked against. That is a
      Supabase setting, not a Google one, and this checklist does not change it.
 
-   - Press **Create** and copy the **Client ID** and **Client secret** before closing the
-     dialog. The secret is shown once.
+   - Press **Create**. Google shows the **Client ID** and the **Client secret** once, inside
+     the creation dialog, and never again.
+
+     **Corrected 2026-09-06.** "Copy it before closing the dialog" assumes a human is at the
+     keyboard. It strands the secret when an AGENT runs this step: the agent has nowhere to
+     hand a value off to, and there is no page to go back and read the secret from afterward.
+     Split the step by who is running it:
+
+     - **A human is running this step:** copy both values out of the dialog while it is still
+       open, and paste the Client secret straight into Supabase in step 7, in the same
+       sitting. Do not write the secret into this file, into a chat message, or into any file
+       in this repo.
+     - **An agent is running this step:** stop right after pressing Create. Report "client
+       created" and hand off to a human for the secret, naming the client (`CommonSwarm web`)
+       and its Client ID so the human can find the right dialog, or use the recovery path
+       below if the dialog is already gone. Do not attempt to read or relay a secret you never
+       captured.
+
+     **Recovery, if the dialog was already closed with the secret unread.** The client's own
+     page (<https://console.cloud.google.com/auth/clients>, then the client name) cannot show
+     the original secret again: it says "Viewing and downloading client secrets is no longer
+     available." Press **+ Add secret** instead. This mints a REPLACEMENT secret, shown once,
+     the same way as the first. Paste the replacement into Supabase (step 7) and save, then,
+     on the same client page, disable the orphaned original secret so a lost or leaked copy of
+     it cannot still be used.
+
+     **Measured 2026-09-06.** Client name `CommonSwarm web`, Client ID
+     `130762122221-eedjhi9gfdo519pdam03var7nunbbb6e.apps.googleusercontent.com`. The Client ID
+     is an identifier, not a secret: safe to write down, paste into chat, or commit. The
+     Client secret is a credential and must never be written into this repo, in any file,
+     under any heading.
 
 ### The copy that says GitHub
 
@@ -438,12 +509,17 @@ to schedule. So do steps 7 and 8 in one sitting, or not yet.
 
     | Page | Sentences |
     |---|---|
-    | `/app` (`components/app/LiveDashboard.astro`) | ONE sentence, and it is a hand-written BUTTON label: "Sign in with GitHub" on the signed-out panel, carrying `data-signin-github`. Do not rewrite it to name both providers: that button only does GitHub. Swap the component (`<ProviderButtons buttonClass=… listClass=… />` plus one `[data-signin-provider]` handler, replacing `[data-signin-github]`), which makes the label generated and the page honest at once. |
+    | `/app` (`components/app/LiveDashboard.astro`) | **DONE 2026-09-06.** The panel renders `<ProviderButtons>` with one `[data-signed-out-onramp] [data-signin-provider]` handler, so the label and the set are generated. **Was:** "ONE sentence, and it is a hand-written BUTTON label: 'Sign in with GitHub' on the signed-out panel, carrying `data-signin-github`. Do not rewrite it to name both providers: that button only does GitHub. Swap the component, which makes the label generated and the page honest at once." |
     | `/privacy` (`pages/privacy.astro`) | four, including "You sign in with GitHub, you join a workspace…", "Sign-in is GitHub OAuth.", and "We get your user id, email address, and name from GitHub when you sign in." |
     | `/terms` (`pages/terms.astro`) | two, including "You sign in with GitHub." and the sentence naming GitHub among services we do not control |
 
-    **Three more the sweep cannot reach.** It reads sentences that both mention signing in and
-    name a provider, out of the rendered HTML, so these stay green and are yours to fix by hand:
+    **Three more the sweep cannot reach. ALL THREE ARE DONE (2026-09-06)**, and each got a
+    control so it cannot come back. Read them as history, not as work: the rate-limit sentence is
+    built from the page's own rendered buttons and is covered by "no sign-in surface types a
+    provider name into its markup or its script"; the processor count reads "These, and only
+    these, are in the path" above ONE generated bullet naming every enabled provider; and
+    `acceptable-use.astro` says "additional sign-in provider accounts". **Was:** "so these stay
+    green and are yours to fix by hand". The original three:
 
     - `LiveDashboard.astro` — "Use GitHub, or try email again in a little while.", built in
       JavaScript rather than rendered into the page.
@@ -469,11 +545,12 @@ to schedule. So do steps 7 and 8 in one sitting, or not yet.
     those two pages have to say so. That is the slowest item on this checklist, which is why it
     is step 6 and not step 8.
 
-    `/app` (`LiveDashboard.astro`) still hand-writes its SIGNED-OUT button, so that panel will
-    offer GitHub only while `/invite` offers both. Swapping it is one import and one element;
-    it was left to the lane that owns that file. Its re-authentication buttons are a second,
-    separate control and were swapped on 2026-09-05: they render `ProviderButtons`, bind one
-    `[data-signin-provider]` handler, and need no copy work here.
+    **Corrected 2026-09-06.** Both of `/app`'s controls are now generated. The
+    re-authentication buttons were swapped on 2026-09-05 and the SIGNED-OUT panel on 2026-09-06;
+    both render `ProviderButtons` and bind one `[data-signin-provider]` handler, and neither
+    needs copy work here. **Was:** "`/app` (`LiveDashboard.astro`) still hand-writes its
+    SIGNED-OUT button, so that panel will offer GitHub only while `/invite` offers both.
+    Swapping it is one import and one element; it was left to the lane that owns that file."
 
     **What the failing test will and will not tell you.** The sweep in
     `components/auth/provider-buttons.observer.test.ts` catches:
@@ -484,21 +561,24 @@ to schedule. So do steps 7 and 8 in one sitting, or not yet.
     - a data-signin* write through dataset
     - any .signInWithOAuth( outside lib/commonswarm.ts
     - any string literal handed to signInWithProvider(
-    - signInWithGitHub( anywhere but components/app/LiveDashboard.astro, or more than 1 call(s) there
+    - any signInWithGitHub( anywhere
+    - any signInWithGoogle( anywhere
     - a rendered button whose label is not exactly one of: "Sign in with GitHub", "Sign in with Google"
 
-    It does not catch a provider hidden in an attribute VALUE under an unrelated name, and that is a bound, not a gap this test closes.
+    It does not catch a provider hidden in an attribute VALUE under an unrelated name, and it recognises a per-provider wrapper only in the exact shape signInWith<Name>(, so a differently spelled one is not one. Both are bounds, not gaps this test closes: a wrapper under any name still has to hand a provider to signInWithProvider, which the call-site control reads.
 
     Every line above is generated in the test from the patterns and call names its own
     assertions run, and a control there requires this file to carry each one word for word.
     A branch that catches the value shape was written during review and reverted: it caught one
     more spelling and invited the next, which is what the bound settles.
 
-    There were two controls on that page, so there are two swaps, and one of them is done.
-    `UNGENERATED_SIGNIN_SURFACES` in `components/auth/provider-buttons.observer.test.ts`
-    counts the hand-written ones in that file and allows exactly one; a second control counts
-    them again on the BUILT `/app` page; a third counts the OAuth call sites, which is what a
-    button that types a provider into `signInWithProvider` would have to pass. A button that
+    There were two controls on that page, so there were two swaps, and **both are done
+    (2026-09-06)**. `UNGENERATED_SIGNIN_SURFACES` in
+    `components/auth/provider-buttons.observer.test.ts` is now EMPTY and allows none; a second
+    control counts them again on the BUILT `/app` page and requires zero; a third counts the
+    OAuth call sites, which is what a button that types a provider into `signInWithProvider`
+    would have to pass. **Was:** "one of them is done ... counts the hand-written ones in that
+    file and allows exactly one". A button that
     hides the provider in an attribute value and reads it back at runtime passes all three;
     that is the stated bound above.
 
@@ -506,9 +586,23 @@ to schedule. So do steps 7 and 8 in one sitting, or not yet.
 
 7. **Enable the provider.**
    <https://supabase.com/dashboard/project/ukezjcnxjvkpkeezxaew/auth/providers?provider=Google>
+
+   **Corrected 2026-09-06.** This step assumed the Google provider page would be blank. It is
+   not. **Measured:** the page already held a DEAD client from an abandoned project called
+   "gluco-tracker", with a Client Secret already set and the **Enable** toggle off. Before
+   pasting anything:
+
+   - Expect existing values in *Client IDs* and *Client Secret (for OAuth)*. Do not assume the
+     fields are empty.
+   - **Confirm before overwriting.** Supabase stores exactly ONE secret per provider. Pasting
+     the new Client ID and secret replaces the gluco-tracker ones outright; there is no way to
+     hold both at once. Confirm first that nothing still depends on the gluco-tracker client,
+     because overwriting it will break that.
+
    - Toggle **Enable Sign in with Google** on.
-   - Paste the **Client ID** into *Client IDs*.
-   - Paste the **Client secret** into *Client Secret (for OAuth)*.
+   - Paste the **Client ID** into *Client IDs*, replacing whatever is already there.
+   - Paste the **Client secret** into *Client Secret (for OAuth)*, replacing whatever is
+     already there.
    - Leave *Skip nonce check* **off**. It is only for native One Tap, which we do not use.
    - Save.
    - **Confirm it took, from outside the dashboard:**
@@ -519,7 +613,23 @@ to schedule. So do steps 7 and 8 in one sitting, or not yet.
      # want: "google":true      (it reads "google":false today)
      ```
 
-     Reading `"github":true` in the same output is the positive control that the probe works.
+     **MEASURED 2026-09-06, step 7 IS DONE.** `https://api.commonswarm.com/auth/v1/settings`
+     answers `{"github": true, "google": true, "email": true}`. The toggle is on in production.
+
+     **This arms step 8 and makes it urgent.** A site build now reads `google: true` and renders
+     a Google button on `/app` and `/invite`. The site deployed at the time of measurement is an
+     older build: it offers GitHub only and its privacy policy names only GitHub, so nothing is
+     inconsistent while it stands. The moment the site is rebuilt and deployed, the buttons
+     change. Deploy a build that carries the step 6 copy, or the published page offers a Google
+     button beside a privacy policy that does not name Google LLC as a processor. Any site
+     deploy for an unrelated reason does this too, which is why the copy work is a prerequisite
+     and not a follow-up.
+
+     **Corrected 2026-09-06, stated plainly.** Reading `"github":true` in the same output is
+     not a step to perform. GitHub is already configured and enabled on this project, so
+     `"github":true` coming back is a POSITIVE CONTROL: it shows the probe reached a real
+     settings answer, not a cached or empty one. `"google":true` is the actual result being
+     checked.
 
    ⚠️ `ukezjcnxjvkpkeezxaew` **is production.** There is no separate CommonSwarm production
    project. This step is live the moment it is saved: the Auth API accepts `?provider=google`

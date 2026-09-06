@@ -34,8 +34,18 @@
  * type: writing that union by hand would be a second list, and a second list drifts.
  */
 const PROVIDERS = [
-  { id: "github", label: "Sign in with GitHub", name: "GitHub" },
-  { id: "google", label: "Sign in with Google", name: "Google" },
+  {
+    id: "github",
+    label: "Sign in with GitHub",
+    name: "GitHub",
+    legalEntity: "GitHub, Inc.",
+  },
+  {
+    id: "google",
+    label: "Sign in with Google",
+    name: "Google",
+    legalEntity: "Google LLC",
+  },
 ] as const;
 
 /** The literal strings GoTrue accepts as `provider`, read off the array above. */
@@ -48,6 +58,16 @@ export interface AuthProvider {
   readonly label: string;
   /** The provider's name on its own, for sentences that list the choices. */
   readonly name: string;
+  /**
+   * The company the privacy policy has to name as a processor of the reader's identity.
+   *
+   * A SECOND FIELD, NOT A SECOND LIST. "GitHub" is the word a button and a sentence use;
+   * "GitHub, Inc." is the party a legal document names, and no rule turns one into the other
+   * ("Google" becomes "Google LLC", not "Google, Inc."). Carrying it here keeps the processor
+   * list generated from the same array the buttons come from, which is the whole point of this
+   * module: enabling a provider adds its button AND its processor entry, or neither.
+   */
+  readonly legalEntity: string;
 }
 
 /** Every provider this code can render. Add to PROVIDERS or the button cannot exist. */
@@ -254,4 +274,41 @@ export function listSentence(items: readonly string[]): string {
  */
 export function providerChoices(providers: readonly AuthProvider[]): string {
   return listSentence(providers.map((provider) => provider.name));
+}
+
+/**
+ * The one sign-in door that exists in every build, and comes from no OAuth provider.
+ *
+ * /app and /invite both offer "Email me a sign-in link" whatever the OAuth set is, so a
+ * sentence built only from AUTH_PROVIDERS is incomplete in every state and EMPTY in one: a
+ * build with no OAuth provider enabled is a documented, supported state (see
+ * enabledProvidersForBuild), and `providerChoices([])` is the empty string there. "You sign in
+ * with , you join a workspace" is what that produced on a legal page.
+ */
+export const EMAIL_SIGNIN_DOOR = "a link we email you";
+
+/**
+ * Every door a build offers, for a sentence that tells a reader how to get in.
+ *
+ * Use this, not providerChoices, wherever the sentence is about SIGNING IN. providerChoices is
+ * for sentences about the OAuth providers as third parties — who receives your identity, whose
+ * terms govern your use of them — where the emailed link is not one of the parties.
+ *
+ * Never empty: the emailed link is always the last item, so every state reads as a sentence.
+ */
+export function signInDoors(providers: readonly AuthProvider[]): string {
+  return listSentence([...providers.map((provider) => provider.name), EMAIL_SIGNIN_DOOR]);
+}
+
+/**
+ * The companies behind those providers, for the processor list in a privacy policy.
+ * "GitHub, Inc." / "GitHub, Inc. and Google LLC" — "and", not "or", because a list of parties
+ * in the path is a conjunction while a list of doors to choose from is a disjunction.
+ */
+export function providerEntities(providers: readonly AuthProvider[]): string {
+  const names = providers.map((provider) => provider.legalEntity);
+  if (names.length === 0) return "";
+  if (names.length === 1) return names[0] as string;
+  if (names.length === 2) return `${names[0]} and ${names[1]}`;
+  return `${names.slice(0, -1).join(", ")}, and ${names[names.length - 1]}`;
 }

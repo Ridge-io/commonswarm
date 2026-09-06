@@ -1,0 +1,33 @@
+diff --git a/docs/design/2026-09-04-GOOGLE-SIGNIN.md b/docs/design/2026-09-04-GOOGLE-SIGNIN.md
+
+### 1. The dual-state claim
+The positive controls are strong. If Astro ignored `--outDir` and wrote to `dist/`, `dist-providers/${state}` would be empty, causing the floor assertions (`inspected > 0`) to fail. If Astro cached the build and wrote identical HTML across states, `dist-providers/github+google` would exactly mirror `github`. The positive control at line 862 (`the provider fixtures are the states they claim to be`) requires `renderedProviderIds(html)` on each fixture's invite page to match its `enabled` array exactly. An identical build would fail this assertion. **CLAIM UPHELD**.
+
+### 2. The sweep in the enabled state
+I rebuilt the fixtures and dumped the copy. The defect is fixed. Every sentence in the `github+google` state correctly handles both names (e.g., "You sign in through GitHub, Inc. and Google LLC"). The `/app` rate-limit sentence was rewritten to be generated dynamically and correctly says "Sign in with GitHub, Google, or try email...". The `none` state correctly omits OAuth choices. **CLAIM UPHELD**.
+
+### 3. The abbreviation guard
+`sentenceEnd()` in `provider-buttons.observer.test.ts` uses the correct lookbehind `(?<!\b(?:Inc|LLC)\.)`, fixing the missing `\.` that made it inert. Widening the unit boundary merges two sentence fragments (e.g., "GitHub, Inc." and "— sign-in.") that were previously split by the period in "Inc." Since neither fragment contained *both* a provider name and a sign-in word, they previously bypassed the sweep. Merging them properly exposes the sentence to the sweep, uncovering defects like the missing Google abbreviation period. The risk is paid for. **CLAIM UPHELD**.
+
+### 4. The source sweep's bound
+The comment stripper only matches `//` at the line start (or after spaces) to safely avoid breaking URLs like `https://`. `/* */` uses a non-greedy match. The surface derivation `/ProviderButtons|auth-providers/` works well but has a gap: if a page dynamically builds an error message with a hardcoded provider name in JS and renders no sign-in buttons (thus bypassing the HTML sweep), and doesn't import these helpers, it will bypass both sweeps. The rate-limit sentence previously in `/app` is a concrete example of this gap. **GAP CONFIRMED**.
+
+### 5. The legal copy, as legal text
+The sentence "You sign in through GitHub, Inc. and Google LLC" is a truthful summary about processors in the path. However, `signInDoors` says: "You sign in with GitHub, Google, or a link we email you." This is **false** regarding the CLI. As verified in `src/cloud/auth.ts:226`, the CLI's `oauthUrl` function hardcodes `provider=github`. The CLI does not support Google or magic links, so a reader cannot sign in through the CLI with them. **DEFECT CONFIRMED**.
+
+### 6. The signed-out panel swap
+The swap in `LiveDashboard.astro` correctly implements `ProviderButtons` and updates the handler to `[data-signed-out-onramp] [data-signin-provider]`. The `before` slot correctly omits the "or" divider when zero providers are enabled. The GitHub SVG icon is gone, but the `<button>` semantics, focus, and disabled states remain fully accessible. **CLAIM UPHELD**.
+
+### 7. The mutations
+The mutation to `(?<!\b(?:Inc|LLC)\.)` alters the `sentenceEnd()` helper inside the test file `provider-buttons.observer.test.ts`. This is technically a mutation of the test file, but it mutates the exact logic that the control ("a company abbreviation does not end a sentence") exists to defend. The test correctly goes red, proving the control works as intended. **CLAIM UPHELD**.
+
+### 8. Anything the lane broke in passing
+The "Three, and only three" and "additional GitHub accounts" strings were properly removed. The four runbook corrections in `docs/design/2026-09-04-GOOGLE-SIGNIN.md` read plainly and appropriately retain the retired wording under "**Was:**". **CLAIM UPHELD**.
+
+### 9. A defect this lane found by reading
+The doubled punctuation pattern `/(?<!\.)\.\.(?!\.)|,\s*,/` checks for exactly two periods or two commas. It successfully silences ` .` to avoid false positives from tag stripping. However, it fails to catch `, .` or `.,` or dangling spaces. (Note that `.,` in "GitHub, Inc.," is grammatically correct and correctly ignored). **GAP CONFIRMED**.
+
+### 10. Round two
+The lane fixed most of Grok's findings. `UNGENERATED_SIGNIN_SURFACES` is empty and appropriately documented. The test names were updated accurately. However, the deletion of `signInWithGitHub` left a flawed control (`NAMED_PROVIDER_WRAPPER = "signInWithGitHub("`). The comment claims "a new named per-provider wrapper goes red here", but this is **false**. A new wrapper named `signInWithGoogle` would silently pass because the pattern explicitly only forbids the old GitHub wrapper. **DEFECT CONFIRMED**.
+
+VERDICT: FAIL

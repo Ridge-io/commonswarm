@@ -25,7 +25,7 @@
  */
 
 import { createClient, type SupabaseClient, type Session } from "@supabase/supabase-js";
-import { authProvider, type AuthProviderId } from "./auth-providers.js";
+import { authProvider } from "./auth-providers.js";
 import {
   scalarRecipient,
   scalarRecipientFields,
@@ -255,18 +255,16 @@ export async function signInWithProvider(
 }
 
 /*
- * The one remaining named provider, and it is typed rather than written.
+ * DELETED 2026-09-06: `signInWithGitHub`, and the `GITHUB` id constant beside it.
  *
- * `AuthProviderId` is the union AUTH_PROVIDERS declares, so removing GitHub from that array
- * makes this line a tsc error instead of a button that throws under a reader's finger. The
- * wrapper exists because /app (LiveDashboard.astro) calls it and belongs to another lane;
- * when that page renders ProviderButtons, this goes with it.
+ * Its own comment said what to do: "The wrapper exists because /app (LiveDashboard.astro) calls
+ * it and belongs to another lane; when that page renders ProviderButtons, this goes with it."
+ * That page renders ProviderButtons now, on both its signed-out panel and its re-authentication
+ * block, so nothing called the wrapper and nothing may: the sweep in
+ * components/auth/provider-buttons.observer.test.ts allows zero call sites for a named
+ * per-provider wrapper. `signInWithProvider` above is the one entry point, and it checks the id
+ * against AUTH_PROVIDERS before any request.
  */
-const GITHUB: AuthProviderId = "github";
-
-export async function signInWithGitHub(redirectTo: string): Promise<void> {
-  await signInWithProvider(GITHUB, redirectTo);
-}
 
 /**
  * Too many links asked for too quickly — the address is fine, the pace is not.

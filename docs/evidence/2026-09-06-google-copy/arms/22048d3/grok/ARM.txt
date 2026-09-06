@@ -1,0 +1,144 @@
+I'll read REVIEW.md and DIFF.patch first, then follow the review instructions exactly without changing the checkout.The first `diff --git` line of DIFF.patch is:
+
+`diff --git a/docs/design/2026-09-04-GOOGLE-SIGNIN.md b/docs/design/2026-09-04-GOOGLE-SIGNIN.md`
+
+I'll read the prior arm outputs and the claimed source, then try to refute each check.SHA matches. I'll load prior arm outputs and the source the checks name, without writing the checkout.I'll pull prior FAIL/PASS arms and the live source in parallel so each check can be attacked against the code, not the patch prose.I'll read the last commit, the sweep, the legal pages, and live production settings in parallel.Grep was scoped to the arm dir. I'll search the checkout itself and pull the observer, legal pages, and live settings.I'll fetch live settings, read the remaining sweep and legal copy, and start independent fixture/test work in a temp dir.Live API has Google on; the published site is still GitHub-only. Next I’ll inspect fixtures, the sweep, and the legal processor copy without writing the checkout.Fixtures look distinct. I'll re-derive the sweep, run the suites in a temp copy, and check leftover claims.The temp suite died before the builds finished. I'll read the log and find the leftover GitHub mention in the none-state pages.The temp copy was missing root `package.json` and `docs/`. I'll recopy those and rerun the observer tests.The last temp run missed `src/cloud`. I'll copy the rest of the repo layout and rerun the fixture-backed tests.Fixtures rebuilt as three distinct states. I'll copy `site/dist` into the temp tree and rerun so the fourth-state tests can run.First `diff --git` line of DIFF.patch:
+
+`diff --git a/docs/design/2026-09-04-GOOGLE-SIGNIN.md b/docs/design/2026-09-04-GOOGLE-SIGNIN.md`
+
+SHA under review: `22048d3245f50d5f39b195ceb4b87926991b68b1`. Checkout was not modified. `mutate.mjs` was not run.
+
+I tried to refute each of the thirteen checks. The two findings that failed `18ef9ca` are gone. The two DEFECTs that failed `c2f01f2` are gone. The two acted-on findings from `f11d445` are gone, and the tautology claim does not hold. I did not find a DEFECT that would publish a false statement, lose a control, or break a page.
+
+---
+
+## 1. Dual-state claim — not refuted
+
+`site/scripts/provider-fixtures.ts` starts a GoTrue stub on `127.0.0.1`, sets `PUBLIC_SUPABASE_URL` on the child, and runs `astro build --outDir` into `site/dist-providers/<state>/` (`:117-141`, `:153-178`). It throws if the build never requested `AUTH_SETTINGS_PATH` (`:168-173`).
+
+I rebuilt the three fixtures in a temp copy of the repo. Identity control passed. Invite buttons:
+
+| state | invite `data-signin-provider` |
+|---|---|
+| `none` | `[]` |
+| `github` | `['github']` |
+| `github+google` | `['github','google']` |
+
+`--outDir` wrote those directories. A stub that did not reach the build would make `none` and `github` render the live set; the identity test at `provider-buttons.observer.test.ts:887-921` would go red. The three states are not the same build three times.
+
+Positive control is strong enough for that failure. I did not find an `--outDir` path the sweep does not read: `sweepStates()` (`:535-554`) uses `fixture.dir`, which is the same URL passed to `--outDir`.
+
+Observer suites in the temp copy: 29 tests, 0 fail. Sweep log:
+
+```
+none: rendered=[] inspected=98 named=0 fromMeta=3 splitByTags=12 offenders=0
+github: rendered=[GitHub] inspected=101 named=8 fromMeta=3 splitByTags=12 offenders=0
+github+google: rendered=[GitHub, Google] inspected=101 named=8 fromMeta=3 splitByTags=12 offenders=0
+site/dist (github+google): rendered=[GitHub, Google] inspected=101 named=8 fromMeta=3 splitByTags=12 offenders=0
+```
+
+## 2. Sweep in the enabled state — not refuted
+
+I re-derived the offender list with the same `SIGNIN_WORDS`, `UNIT_END`, abbreviation lookbehind, and button strip, against `/privacy`, `/terms`, `/acceptable-use`, `/app`, `/invite`, and meta descriptions, in all four states. Offenders: 0. Doubled punctuation hits: 0.
+
+The old `Google LLC — sign-in.` bullet is gone. Enabled-state processor unit is: `You sign in through GitHub, Inc. and Google LLC, and your identifier, email address, and name come back to us from there.` (`privacy.astro:248`). It names both providers.
+
+`none` state: no sign-in sentence names GitHub or Google. Footer `GitHub` is the repo link, split off from `Log in`. Privacy says `The sign-in page offers a link we email you.` That is true for that build. App and invite in `none` have no OAuth buttons.
+
+## 3. Abbreviation guard — not refuted; merge risk is paid for
+
+`SENTENCE_ABBREVIATIONS` is built from `legalEntity` (`:113-119`). Today that is `Inc` only. `sentenceEnd()` includes the period in the lookbehind (`:127-132`). Control at `:687-720` asserts both directions from `AUTH_PROVIDERS`.
+
+Widening the unit can glue two claims across `Inc.`. That would hide a one-provider sign-in claim only if it sat in the same unit as the other provider's name. Current legal copy is one sentence that names the whole set. The old split after `Inc.` is what hid the GitHub bullet. The negative mutation (`Google, Inc.`) is meant to stay green; the table says it did.
+
+## 4. Source sweep bound — bound, not a lost control
+
+`withoutComments` (`:564-568`) strips `{/* */}`, `/* */`, and whole-line `//`. It does not eat `https://`. It does not strip a trailing `// GitHub` or `<!-- GitHub -->` (false positives, not missed names). It can swallow a provider name inside a `/* */` in a string; no current surface does that.
+
+`signInSurfaces()` (`:576-582`) keeps `.astro` files that mention `ProviderButtons` or `auth-providers`. A page that never imports those can ship a script sentence the HTML sweep also cannot see, because `copyOf` drops `<script>` bodies (`:166-172`). Concrete sentence that would pass both: a new page with `<script>alert("Use GitHub to sign in")</script>` and no `ProviderButtons` import. That is the bound the file states at `:596-601`. The measured `/app` rate-limit line is generated from the page's buttons (`LiveDashboard.astro:1798-1816`) and is in a surface the source sweep does read.
+
+## 5. Legal copy — true on the hosted app; CLI is named as a different surface
+
+One processor bullet (`privacy.astro:241-249`) names every enabled entity and says we get identifier, email, and name, and nothing else. It does not say what the provider keeps on its side; it points at that provider's own statement. That is still a true processor line.
+
+`signInDoors` is used for the sign-in **page** (`privacy.astro:139-143`, `terms.astro:128`). Hosted `/app` and `/invite` offer those doors (OAuth from the deployment plus email). `src/cloud/auth.ts:221-231` hard-codes `provider=github`. `login()` (`:433-470`) opens a browser or prints that URL. There is no email OTP on that path.
+
+The added CLI sentence (`privacy.astro:144`): `The cswarm command-line client signs in through your browser as well. It can offer fewer providers than the sign-in page does, and it has no emailed link.` All three clauses match `auth.ts` today. It does not type the CLI's provider list. `has no emailed link` will drift if `cswarm login` later grows email. GAP for a later CLI lane, not a false hosted-app sentence.
+
+## 6. Signed-out panel swap — matches the re-auth model
+
+Signed-out (`LiveDashboard.astro:81-86`, handler `:7316-7331`) renders `<ProviderButtons>` and binds `[data-signed-out-onramp] [data-signin-provider]`, reading `button.dataset.signinProvider`. Re-auth (`:1081-1086`, `:7340-7358`) is the same shape scoped to `[data-member-reauth]`. That is the `03960bc` / `a31c90c` model.
+
+The old GitHub SVG is gone. `ProviderButtons.astro:55-57` is a text label. The signed-out handler still sets `disabled` and `aria-busy`, same as `InviteOnramp.astro:313-322`. No focus or disabled behaviour is lost.
+
+Zero providers: the component omits the `before` slot and the list (`ProviderButtons.astro:50-61`). Two providers: `.dashboard__providers` is a grid with gap (`LiveDashboard.astro:9510-9513`). The `before` slot is the `or` divider, same use as `InviteOnramp.astro:40-45`.
+
+## 7. Mutations — read, not run; two new ones hold by hand
+
+I did not run `docs/evidence/2026-09-06-google-copy/mutate.mjs`. It writes source in place.
+
+Every `from` string I checked is present once in the target file. Table claims 14 mutations, 0 not discriminating.
+
+The abbreviation mutation edits the test helper. That helper is the thing the named control defends. The table also shows the copy sweep going red on that mutation, so the red is not only “the test file changed.”
+
+New mutation 1: a typed line beside the generated `SWEEP_CATCHES` spread. Length today is `4 + 2 + 2 + 1 = 9` (`:1282-1286`). One extra line makes 10. That is not a tautology of the spread.
+
+New mutation 2: `name: "Google Cloud"` builds `signInWithGoogle Cloud(`, which fails `/^signInWith[A-Za-z][A-Za-z0-9]*\($/` (`:1265-1272`). I ran that regex by hand. The identifier check is the named reason that control goes red.
+
+## 8. Broken in passing — GAPs, not a land block
+
+- `provider-buttons.observer.test.ts:91-93` still says today's meta reads `You sign in with GitHub or a link we email you`. Built meta is `The sign-in page offers ${doors}`. Control still reads the attribute. GAP.
+- Same file `:965-970` still says `signInWithGitHub does, for /app, which has not moved to ProviderButtons yet`. False. The assertion under it still forbids literals. GAP, not a dead forbid.
+- `GOOGLE-SIGNIN.md:513-514` still lists old privacy/terms sentences (`Sign-in is GitHub OAuth.`, `You sign in with GitHub.`). Those strings are gone. `/app` row is marked DONE. GAP.
+- Runbook curl at `:613` still says `(it reads "google":false today)` next to **MEASURED** `google: true` (`:616-617`). GAP.
+- Runbook Was: notes match the retired claims. Some are shortened; they do not reverse the old meaning.
+- No new user-facing em-dash in the processor bullet. No typed door list on the legal pages.
+
+I did not walk the Google Cloud console. I only read the runbook text.
+
+## 9. Doubled punctuation — `. .` is caught; remaining misses are named
+
+Pattern at `:850` is `/(?<!\.)\.\s*\.(?!\.)|,\s*,/`. It matches `GitHub, Inc..` and `GitHub, Inc. .`. It does not match `GitHub, Inc., and Google LLC`, `Opening CommonSwarm…`, or `Wait... then retry.` Those three are asserted (`:874-878`).
+
+It still misses an ellipsis, `Wait... then retry.`, and `GitHub, Inc., and Google LLC` — the file says so. It also misses mixed `.,` / `,.` that are not two periods or two commas. The generated defect this control exists for is a list that already ends in `.` plus a sentence period. Current interpolations keep a clause after `${entities}` (`privacy.astro:248`, `terms.astro:238`).
+
+Zero hits across the four builds I swept.
+
+## 10. Round two — retired claims are not restated as current work
+
+`UNGENERATED_SIGNIN_SURFACES` is empty (`:461`). Built `/app` requires zero hand-written controls (`:1417-1467`). `signInWithGitHub` is deleted; `commonswarm.ts:257-267` records that. The wrapper rule is now a generated forbid of the shape (`:346-348`, `:1399-1414`), not a description of a function that still exists.
+
+Was: notes I checked quote the retired `/app` button claim and the “allows exactly one” claim. They do not invent a different old text.
+
+## 11. Round three — both `c2f01f2` DEFECTs are fixed
+
+`NAMED_PROVIDER_WRAPPERS` is `AUTH_PROVIDERS.map(p => signInWith${name}()` (`:346-348`). `(?<!function\s)` still skips a `function signInWithGoogle(` definition (`:384-387`, `:1401-1402`). `signInWithGoogleOAuth(` and `signIn_With_Google` are not that shape. This SHA states that bound in `SWEEP_DOES_NOT_CATCH` (`:415-420`) and in the checklist (`GOOGLE-SIGNIN.md:568`). A wrapper under any name still has to call `signInWithProvider`, which the call-site control reads.
+
+Door copy names the page. CLI is a separate sentence. True on both surfaces today. See check 5.
+
+## 12. Google in production — runbook step 7 is true right now
+
+`curl` of `https://api.commonswarm.com/auth/v1/settings` with the site anon key: `github: true, google: true, email: true`.
+
+Live `https://commonswarm.com/app` and `/invite`: `data-signin-provider` is `github` only. Live `/privacy` names `GitHub, Inc.` and does not name `Google LLC`.
+
+Checkout `site/dist` is a two-provider build: `/app` and `/invite` have github and google buttons; `/privacy` names `GitHub, Inc. and Google LLC`.
+
+The runbook claim at `GOOGLE-SIGNIN.md:619-626` holds: the deployed site is still the older GitHub-only build; the next deploy must carry this copy, or the Google button ships beside a policy that does not name Google LLC.
+
+## 13. Round four — the two fixes hold; the tautology claim does not
+
+`SWEEP_DOES_NOT_CATCH` now names the wrapper shape. The checklist carries that sentence word for word (bound test passed). Every generated wrapper is asserted to be `signInWith` + identifier + `(`. `. .` is in the doubled-punctuation pattern; I matched `Inc. .` by hand; four builds had zero hits.
+
+Length check: marker and wrapper terms are derived on both sides, so it cannot catch a mismatch *inside* those spreads. `CALL_CLAIMS` and `LABEL_CLAIM` stay typed (`:1282-1286`). Adding one typed line to `SWEEP_CATCHES` changes 9 to 10. That is what a reader can rely on: an extra claim with no assertion. It is not a proof that every generated line is the right string; the `includes` checks beside it cover ids, labels, and call names (`:1291-1307`).
+
+---
+
+## Could not complete
+
+- Did not run `mutate.mjs` (it edits this checkout). Anchors and the two new mutations were checked by hand.
+- Did not run root `npm test`. Ran the two observer files this SHA's controls live in, in a temp copy: 29 pass, 0 fail.
+- Did not render `/app` in a browser with two buttons. CSS for `.dashboard__providers` was read, not seen.
+- Did not repeat the Google Cloud / Search Console walk. Runbook prose was read only.
+
+VERDICT: PASS

@@ -78,6 +78,23 @@
 
 import Base from "../layouts/Base.astro";
 import LegalDoc, { type Section } from "../components/legal/LegalDoc.astro";
+import {
+  enabledProvidersForBuild,
+  providerEntities,
+  signInDoors,
+} from "../lib/auth-providers";
+
+/*
+ * The sign-in doors, read from the deployment rather than typed. Same rule as privacy.astro:
+ * `signInDoors` for how a reader gets in (the emailed link is a door and belongs to no
+ * provider), `providerEntities` for the companies whose own terms govern the reader.
+ */
+const providers = await enabledProvidersForBuild({
+  url: import.meta.env.PUBLIC_SUPABASE_URL,
+  anonKey: import.meta.env.PUBLIC_SUPABASE_ANON_KEY,
+});
+const doors = signInDoors(providers);
+const entities = providerEntities(providers);
 
 const EFFECTIVE = "27 July 2026";
 const UPDATED = "29 July 2026";
@@ -108,7 +125,7 @@ const sections: Section[] = [
     title: "Eligibility and your account",
     blocks: [
       "You must be at least 18 years old and able to form a binding contract to use the Service. The Service is not directed to, and may not be used by, anyone under 18.",
-      "You sign in with GitHub. Your access to the Service depends on that GitHub account: if it is suspended, deleted, or you lose access to it, you may lose access to the Service and to everything in it. We are not responsible for that.",
+      `The sign-in page offers ${doors}, and the command-line client signs in through your browser. Your access to the Service depends on the account you sign in with: if it is suspended, deleted, or you lose access to it, you may lose access to the Service and to everything in it. We are not responsible for that.`,
       "You are responsible for everything that happens under your account and under any credential issued to you or to your agents, whether or not you authorised it. Keep credentials secret. Credentials issued for agents are stored on the machines you run them on; protecting those machines is your job, not ours.",
       "Tell us promptly at legal@commonswarm.com if you believe a credential has been exposed. We may revoke any credential at any time.",
     ],
@@ -213,8 +230,15 @@ const sections: Section[] = [
     id: "third-parties",
     title: "Third-party services",
     blocks: [
-      "The Service depends on services we do not control — including GitHub for sign-in and our hosting and database providers. Their availability, behaviour, terms, and pricing are theirs, not ours. We are not responsible for anything they do or fail to do, and an outage or a change on their side is not a breach of these Terms by us.",
-      "Your use of GitHub is governed by GitHub's own terms and privacy policy. The [Privacy Policy](/privacy) lists the providers that are actually in the path of your data.",
+      "The Service depends on services we do not control, including the providers we offer for sign-in and our hosting and database providers. Their availability, behaviour, terms, and pricing are theirs, not ours. We are not responsible for anything they do or fail to do, and an outage or a change on their side is not a breach of these Terms by us.",
+      ...(providers.length > 0
+        ? [
+            // The entity list never ends the sentence: "GitHub, Inc." carries its own period,
+            // and a sentence closing on it renders "GitHub, Inc..". Keep a clause after it.
+            `Today the sign-in providers are ${entities}, and your use of each one is governed by that company's own terms and privacy policy, not by these Terms.`,
+          ]
+        : []),
+      "The [Privacy Policy](/privacy) lists the providers that are actually in the path of your data.",
     ],
   },
   {
