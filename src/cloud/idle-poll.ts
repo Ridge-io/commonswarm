@@ -27,10 +27,27 @@ export const IDLE_POLL_MIN_LABEL = formatIdlePollDuration(IDLE_POLL_MIN_MS);
 export const IDLE_POLL_DEFAULT_LABEL = formatIdlePollDuration(IDLE_POLL_DEFAULT_MS);
 export const IDLE_POLL_MAX_LABEL = formatIdlePollDuration(IDLE_POLL_MAX_MS);
 
-export const IDLE_POLL_DURATION_EXAMPLES = ["15s", "30s", "1m"] as const;
+/**
+ * Examples in flag errors. Built from the same default, doubled default, and
+ * cap the parser enforces, so a bound change cannot leave a stale list.
+ */
+export function idlePollDurationExamples(): string[] {
+  const midMs = Math.min(IDLE_POLL_MAX_MS, IDLE_POLL_DEFAULT_MS * 2);
+  const labels: string[] = [];
+  const seen = new Set<string>();
+  for (const ms of [IDLE_POLL_DEFAULT_MS, midMs, IDLE_POLL_MAX_MS]) {
+    const label = formatIdlePollDuration(ms);
+    if (seen.has(label)) continue;
+    seen.add(label);
+    labels.push(label);
+  }
+  return labels;
+}
+
+export const IDLE_POLL_DURATION_EXAMPLES = idlePollDurationExamples();
 
 export function idlePollDurationHint(): string {
-  return IDLE_POLL_DURATION_EXAMPLES.join(", ");
+  return idlePollDurationExamples().join(", ");
 }
 
 export function idlePollBoundSentence(): string {

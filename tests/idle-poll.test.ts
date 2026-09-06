@@ -9,6 +9,7 @@ import {
   ARRIVAL_WATCH_POLL_MS,
   formatIdlePollDuration,
   idlePollBoundSentence,
+  idlePollDurationExamples,
   idlePollDurationHint,
   idlePollHelpSentence,
   idlePollStatusSentence,
@@ -84,7 +85,13 @@ test("--poll-interval parses the same duration shape the flag documents", () => 
 
 test("user-facing idle poll lists and bounds are generated from the constants that enforce them", () => {
   const hint = idlePollDurationHint();
-  assert.equal(hint, IDLE_POLL_DURATION_EXAMPLES.join(", "));
+  const expected = [
+    IDLE_POLL_DEFAULT_LABEL,
+    formatIdlePollDuration(Math.min(IDLE_POLL_MAX_MS, IDLE_POLL_DEFAULT_MS * 2)),
+    IDLE_POLL_MAX_LABEL,
+  ].filter((label, index, all) => all.indexOf(label) === index);
+  assert.deepEqual(idlePollDurationExamples(), expected);
+  assert.equal(hint, expected.join(", "));
   assert.match(hint, /15s/);
   assert.match(hint, /1m/);
   const bound = idlePollBoundSentence();
