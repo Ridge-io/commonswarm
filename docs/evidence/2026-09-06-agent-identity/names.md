@@ -114,4 +114,4 @@ Not run: `npm test` (root literal list), `test:p1-local`, `test:p1-server`, `db:
 
 ## HEAD
 
-Filled after commit.
+`c4b5f7d` on `lane/identity-names` (code + tests + this file).
