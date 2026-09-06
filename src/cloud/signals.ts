@@ -26,6 +26,7 @@ import {
   formatAttachmentSize,
   parseSignalAttachments,
 } from "./attachments.js";
+import { parseOptionalWakeHint, type WakeHint } from "./wake.js";
 
 const UUID_RE =
   /^[0-9a-f]{8}-[0-9a-f]{4}-[1-8][0-9a-f]{3}-[89ab][0-9a-f]{3}-[0-9a-f]{12}$/i;
@@ -147,6 +148,8 @@ export interface AgentSignalPage {
    * valid non-negative safe integer. No content is ever included.
    */
   pendingDeliveryCount: number | null;
+  /** Optional wake join hint. 0.1.57 servers omit it. */
+  wake?: WakeHint;
 }
 
 /** Bounded CLI wait window for inbox --wait / ask --wait (seconds). */
@@ -1226,6 +1229,12 @@ async function agentSignalPage(
   const rawRows = (body as Record<string, unknown>).signals as unknown[];
   const parsedRows = parseSignalRows(rawRows, parseOptions);
   const ascending = query.ascending === true || query.after !== undefined;
+  let wake: WakeHint | undefined;
+  try {
+    wake = parseOptionalWakeHint((body as Record<string, unknown>).wake);
+  } catch {
+    throw plainMalformedError("signal read returned a malformed wake hint");
+  }
   return {
     signals: sortSignals(
       rowsAfterCursor(parsedRows.signals, query.after),
@@ -1239,6 +1248,7 @@ async function agentSignalPage(
       : cursorFromUnknown(rawRows[rawRows.length - 1]),
     malformedRows: parsedRows.malformedRows,
     pendingDeliveryCount,
+    ...(wake === undefined ? {} : { wake }),
   };
 }
 

@@ -9,6 +9,7 @@ import {
   type CloudTarget,
 } from "./config.js";
 import { parseRetryAfterMs, parseSignalRecord } from "./signals.js";
+import { parseOptionalWakeHint, type WakeHint } from "./wake.js";
 
 const UUID_RE =
   /^[0-9a-f]{8}-[0-9a-f]{4}-[1-8][0-9a-f]{3}-[89ab][0-9a-f]{3}-[0-9a-f]{12}$/i;
@@ -167,6 +168,8 @@ export interface DeliveryClaimResult {
    * transaction. Safe metadata, never content.
    */
   terminalDeliveryFailureCount: number;
+  /** Optional wake join hint. 0.1.57 servers omit it. */
+  wake?: WakeHint;
 }
 
 export interface DeliveryAckResult {
@@ -524,6 +527,7 @@ function parseClaimSuccess(
   deliveries: DeliveryRow[];
   pendingDeliveryCount: number;
   terminalDeliveryFailureCount: number;
+  wake?: WakeHint;
 } {
   if (!body || typeof body !== "object" || Array.isArray(body)) {
     throw new DeliveryProtocolError("delivery claim response was not an object");
@@ -579,11 +583,18 @@ function parseClaimSuccess(
       "delivery claim response returned more deliveries than its pending count",
     );
   }
+  let wake: WakeHint | undefined;
+  try {
+    wake = parseOptionalWakeHint(row.wake);
+  } catch {
+    throw new DeliveryProtocolError("delivery claim response wake field is malformed");
+  }
   return {
     capabilities,
     deliveries,
     pendingDeliveryCount,
     terminalDeliveryFailureCount,
+    ...(wake === undefined ? {} : { wake }),
   };
 }
 
@@ -844,6 +855,7 @@ export class DeliveryCommandClient {
       deliveries: parsed.deliveries,
       pendingDeliveryCount: parsed.pendingDeliveryCount,
       terminalDeliveryFailureCount: parsed.terminalDeliveryFailureCount,
+      ...(parsed.wake === undefined ? {} : { wake: parsed.wake }),
     };
   }
 

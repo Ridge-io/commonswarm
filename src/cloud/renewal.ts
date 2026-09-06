@@ -59,6 +59,7 @@ import type {
   AgentCredentialRecord,
   AgentCredentialStore,
 } from "./agent-credential.js";
+import { parseOptionalWakeHint, type WakeHint } from "./wake.js";
 
 /* THE NUMBERS. Decided centrally so the CLI, the site and the server cannot drift.
  * TTL is deliberately absent from that list: renewal does not change it. */
@@ -228,6 +229,8 @@ export interface SuccessorCredential {
   expiresAt: number;
   horizonExpiresAt: number | null;
   successorsRemaining: number | null;
+  /** Optional wake join hint. 0.1.57 servers omit it. */
+  wake?: WakeHint;
 }
 
 /**
@@ -620,6 +623,16 @@ export async function requestSuccessor(options: {
       "The deployment issued a successor credential that lasts longer than eight hours. cswarm refused to store it. Agent credentials stay short on purpose; renewal is what makes that survivable.",
     );
   }
+  let wake: WakeHint | undefined;
+  try {
+    wake = parseOptionalWakeHint(body.wake);
+  } catch {
+    throw new RenewalRefused(
+      response.status,
+      "malformed_wake",
+      "The deployment returned a successor credential with a malformed wake hint. It was not stored.",
+    );
+  }
   return {
     token,
     tokenId: tokenId.toLowerCase(),
@@ -629,6 +642,7 @@ export async function requestSuccessor(options: {
     expiresAt,
     horizonExpiresAt: timestamp(body.horizon_expires_at),
     successorsRemaining: count(body.successors_remaining),
+    ...(wake === undefined ? {} : { wake }),
   };
 }
 
