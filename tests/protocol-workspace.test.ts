@@ -1,11 +1,15 @@
 import { describe, it } from 'node:test';
 import assert from 'node:assert/strict';
+import { readFileSync } from 'node:fs';
+import { dirname, join } from 'node:path';
+import { fileURLToPath } from 'node:url';
 
 import {
   Actor,
   AGENT_TOKEN_DEFAULT_TTL_MS,
   AGENT_TOKEN_MAX_TTL_MS,
   DecideWorkspaceCtx,
+  HUMAN_ONLY_COMMANDS,
   INVITATION_MAX_TTL_MS,
   StreamIntegrityError,
   WorkspaceCommand,
@@ -18,6 +22,11 @@ import {
   reduceWorkspace,
   reduceWorkspaceStream,
 } from '../src/protocol/index.js';
+import {
+  AGENT_SESSION_PROOF_EXEMPT_KINDS,
+  isAgentSessionProofExempt,
+  parseAgentSessionProofHeaders,
+} from '../src/cloud/session-wire.js';
 
 const NOW = 10_000_000;
 
@@ -771,6 +780,36 @@ describe('agent principals', () => {
     );
   });
 
+  it('allow_duplicate_name true creates a second principal; default still refuses', () => {
+    const world = makeWorld();
+    world.create();
+    world.join('bob');
+    world.createPrincipal('bob');
+    rejected(
+      world.apply(
+        {
+          kind: 'create_agent_principal',
+          principal_id: 'synth-dup-default',
+          name: 'agent-bob',
+        },
+        { actor: human('bob') },
+      ),
+      'principal_name_taken',
+    );
+    const allowed = world.apply(
+      {
+        kind: 'create_agent_principal',
+        principal_id: 'synth-dup-allowed',
+        name: 'agent-bob',
+        allow_duplicate_name: true,
+      },
+      { actor: human('bob') },
+    );
+    assert.equal(allowed.ok, true);
+    assert.equal(world.state()!.principals['synth-dup-allowed'].name, 'agent-bob');
+    assert.equal(world.state()!.principals['principal-bob'].name, 'agent-bob');
+  });
+
   it('create/revoke principal are human-only; a Member may revoke only their own', () => {
     const world = makeWorld();
     world.create();
@@ -1470,5 +1509,235 @@ describe('set_agent_model', () => {
     );
     assert.equal(decision.ok, false);
     if (!decision.ok) assert.equal(decision.reason, 'principal_not_found');
+  });
+});
+
+describe('agent session proof exemption', () => {
+  const repoRoot = join(dirname(fileURLToPath(import.meta.url)), '..');
+
+  function quotedStrings(block: string): string[] {
+    return [...block.matchAll(/"([a-z0-9_]+)"/g)].map((match) => match[1]);
+  }
+
+  function extractCommandEdgeKinds(): Set<string> {
+    const commandSrc = readFileSync(
+      join(repoRoot, 'supabase/functions/command/index.ts'),
+      'utf8',
+    );
+    const fileSrc = readFileSync(
+      join(repoRoot, 'supabase/functions/command/file-artifacts.ts'),
+      'utf8',
+    );
+    const deliverySrc = readFileSync(
+      join(repoRoot, 'supabase/functions/command/durable-delivery.ts'),
+      'utf8',
+    );
+    const receiptsSrc = readFileSync(
+      join(repoRoot, 'supabase/functions/command/human-receipts.ts'),
+      'utf8',
+    );
+    const kinds = new Set<string>();
+    const commandKinds = commandSrc.match(
+      /const COMMAND_KINDS = \[([\s\S]*?)\] as const/,
+    );
+    assert.ok(commandKinds, 'COMMAND_KINDS must exist so a new kind is visible');
+    for (const kind of quotedStrings(commandKinds[1])) kinds.add(kind);
+    const channelKinds = commandSrc.match(
+      /const CHANNEL_COMMAND_KINDS = \[([\s\S]*?)\] as const/,
+    );
+    assert.ok(channelKinds, 'CHANNEL_COMMAND_KINDS must exist');
+    for (const kind of quotedStrings(channelKinds[1])) kinds.add(kind);
+    for (const match of fileSrc.matchAll(
+      /export const FILE_[A-Z_]+_KIND = "([a-z_]+)"/g,
+    )) {
+      kinds.add(match[1]);
+    }
+    for (const match of deliverySrc.matchAll(
+      /export const (?:CLAIM_AGENT_INBOX_KIND|ACK_AGENT_DELIVERY_KIND) = "([a-z_]+)"/g,
+    )) {
+      kinds.add(match[1]);
+    }
+    const seenKind = receiptsSrc.match(
+      /export const SIGNALS_SEEN_KIND = "([a-z_]+)"/,
+    );
+    assert.ok(seenKind, 'SIGNALS_SEEN_KIND must exist');
+    kinds.add(seenKind[1]);
+    for (const match of commandSrc.matchAll(
+      /kind === "(enable_agent_management|disable_agent_management|recover_agent_session|acquire_agent_session|renew_agent_session|release_agent_session|register_device|create_workspace|mint_capability_url|revoke_capability_url|resume_renewal_grant)"/g,
+    )) {
+      kinds.add(match[1]);
+    }
+    return kinds;
+  }
+
+  it('the exemption set is exactly acquire_agent_session', () => {
+    assert.deepEqual([...AGENT_SESSION_PROOF_EXEMPT_KINDS], [
+      'acquire_agent_session',
+    ]);
+    assert.equal(isAgentSessionProofExempt('acquire_agent_session'), true);
+    assert.equal(isAgentSessionProofExempt('post_signal'), false);
+    assert.equal(isAgentSessionProofExempt('renew_agent_session'), false);
+    assert.equal(isAgentSessionProofExempt('claim_agent_inbox'), false);
+  });
+
+  it('the command fence is built from AGENT_SESSION_PROOF_EXEMPT_KINDS', () => {
+    const commandSrc = readFileSync(
+      join(repoRoot, 'supabase/functions/command/index.ts'),
+      'utf8',
+    );
+    assert.match(commandSrc, /isAgentSessionProofExempt\(\s*kind\s*\)/);
+    assert.match(commandSrc, /enforceAgentSessionProof\(/);
+    assert.equal(
+      commandSrc.includes('const isAcquire = kind === "acquire_agent_session"'),
+      false,
+    );
+  });
+
+  it('every agent-mutation kind the command edge dispatches is fenced or exempt', () => {
+    const humanPreRoute = new Set([
+      'register_device',
+      'create_workspace',
+      'mint_capability_url',
+      'revoke_capability_url',
+      'resume_renewal_grant',
+    ]);
+    const expectedAgentMutations = new Set([
+      'create',
+      'acquire',
+      'renew',
+      'handoff',
+      'takeover',
+      'submit',
+      'close',
+      'reopen',
+      'declare_agent_model',
+      'submit_feedback',
+      'revoke_agent_token',
+      'renew_agent_token',
+      'post_signal',
+      'channel_create',
+      'channel_rename',
+      'channel_archive',
+      'signals_seen',
+      'claim_agent_inbox',
+      'ack_agent_delivery',
+      'file_version_create',
+      'file_version_commit',
+      'file_download_url',
+      'file_tombstone',
+      'file_restore',
+      'acquire_agent_session',
+      'renew_agent_session',
+      'release_agent_session',
+    ]);
+    const dispatched = extractCommandEdgeKinds();
+    const agentMutations = new Set<string>();
+    for (const kind of dispatched) {
+      if (HUMAN_ONLY_COMMANDS.has(kind as WorkspaceCommand['kind'])) continue;
+      if (humanPreRoute.has(kind)) continue;
+      agentMutations.add(kind);
+    }
+    const missing = [...expectedAgentMutations].filter((kind) =>
+      !agentMutations.has(kind)
+    );
+    const extra = [...agentMutations].filter((kind) =>
+      !expectedAgentMutations.has(kind)
+    );
+    assert.deepEqual(
+      missing,
+      [],
+      'command edge lost an agent-mutation kind the inventory names',
+    );
+    assert.deepEqual(
+      extra,
+      [],
+      'command edge grew an agent-mutation kind; add it to the inventory as fenced, or to AGENT_SESSION_PROOF_EXEMPT_KINDS',
+    );
+    for (const kind of agentMutations) {
+      const exempt = isAgentSessionProofExempt(kind);
+      if (kind === 'acquire_agent_session') {
+        assert.equal(exempt, true);
+      } else {
+        assert.equal(
+          exempt,
+          false,
+          `${kind} is an agent mutation and must stay fenced`,
+        );
+      }
+    }
+  });
+
+  it('missing proof headers parse as session_proof_missing', () => {
+    const parsed = parseAgentSessionProofHeaders({ get: () => null });
+    assert.equal(parsed.ok, false);
+    if (!parsed.ok) assert.equal(parsed.error, 'session_proof_missing');
+  });
+
+  it('a half-present header set parses as session_proof_invalid', () => {
+    const parsed = parseAgentSessionProofHeaders({
+      get: (name) => name === 'x-cswarm-session-id'
+        ? '00000000-0000-4000-8000-000000000001'
+        : null,
+    });
+    assert.equal(parsed.ok, false);
+    if (!parsed.ok) assert.equal(parsed.error, 'session_proof_invalid');
+  });
+
+  it('activity is an agent mutation and uses the same session fence', () => {
+    const activitySrc = readFileSync(
+      join(repoRoot, 'supabase/functions/activity/index.ts'),
+      'utf8',
+    );
+    assert.match(activitySrc, /enforceAgentSessionProof\(/);
+    assert.match(activitySrc, /parseAgentSessionProofHeaders\(/);
+  });
+
+  it('read stays read-only: it never claims or acks', () => {
+    const readSrc = readFileSync(
+      join(repoRoot, 'supabase/functions/read/index.ts'),
+      'utf8',
+    );
+    assert.equal(readSrc.includes('claimAgentInbox('), false);
+    assert.equal(readSrc.includes('ackAgentDelivery('), false);
+    assert.equal(readSrc.includes('SET LOCAL ROLE swarm_command'), false);
+  });
+
+  it('the session migration does not project wake_id through swarm_read.agent_principals', () => {
+    const migration = readFileSync(
+      join(
+        repoRoot,
+        'supabase/migrations/20260906000020_agent_execution_sessions.sql',
+      ),
+      'utf8',
+    );
+    const viewBody = migration.match(
+      /CREATE VIEW swarm_read\.agent_principals[\s\S]*?;/,
+    );
+    assert.ok(viewBody, 'swarm_read.agent_principals view must be created');
+    assert.equal(viewBody[0].includes('p.*'), false);
+    assert.match(viewBody[0], /p\.managed_at/);
+    assert.equal(viewBody[0].includes('wake_id'), false);
+    assert.match(migration, /p\.managed_at/);
+    assert.match(
+      migration,
+      /swarm_read\.agent_principals must not project wake_id/,
+    );
+    assert.match(
+      migration,
+      /CREATE FUNCTION swarm\.agent_delivery_read_context/,
+    );
+    assert.match(migration, /managed_at timestamptz/);
+  });
+
+  it('capability is not agent-authenticated and does not claim or ack', () => {
+    const capabilitySrc = readFileSync(
+      join(repoRoot, 'supabase/functions/capability/index.ts'),
+      'utf8',
+    );
+    assert.equal(capabilitySrc.includes('loadAgentCredential('), false);
+    assert.equal(capabilitySrc.includes('claimAgentInbox('), false);
+    assert.equal(capabilitySrc.includes('ackAgentDelivery('), false);
+    assert.match(capabilitySrc, /swarm_capability/);
+    assert.match(capabilitySrc, /swm_cap_/);
   });
 });

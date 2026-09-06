@@ -87,6 +87,7 @@ export type WorkspaceCommand =
       name: string;
       /** Human-declared model identity; never an authorization input. */
       model?: string | null;
+      allow_duplicate_name?: boolean;
     }
   | { kind: 'revoke_agent_principal'; principal_id: string }
   | {
@@ -160,6 +161,26 @@ export type WorkspaceCommand =
       kind: 'renew_agent_token';
       successor_token_id: string;
       scopes: string[];
+    }
+  | { kind: 'enable_agent_management'; principal_id: string }
+  | { kind: 'disable_agent_management'; principal_id: string }
+  | { kind: 'recover_agent_session'; principal_id: string }
+  | {
+      kind: 'acquire_agent_session';
+      session_id: string;
+      provider?: string | null;
+      host_label?: string | null;
+      host_session_ref?: string | null;
+    }
+  | {
+      kind: 'renew_agent_session';
+      session_id: string;
+      generation: number;
+    }
+  | {
+      kind: 'release_agent_session';
+      session_id: string;
+      generation: number;
     };
 
 /** Bounded renewal grant created at human `join`/`spawn` (§2.3). */
@@ -353,7 +374,7 @@ export type WorkspaceDecision = WorkspaceDecisionAccepted | WorkspaceDecisionRej
  * agent may not issue is still listed here — adding renewal to the list, or
  * removing anything else from it, both break §2.3.
  */
-const HUMAN_ONLY_COMMANDS = new Set<WorkspaceCommand['kind']>([
+export const HUMAN_ONLY_COMMANDS = new Set<WorkspaceCommand['kind']>([
   'create_workspace',
   'archive_workspace',
   'invite_member',
@@ -365,6 +386,9 @@ const HUMAN_ONLY_COMMANDS = new Set<WorkspaceCommand['kind']>([
   'revoke_agent_principal',
   'set_agent_model',
   'mint_agent_token',
+  'enable_agent_management',
+  'disable_agent_management',
+  'recover_agent_session',
 ]);
 
 /**
@@ -628,12 +652,12 @@ export function decideWorkspace(
       return authz('identity_not_verified', 'verified identity is required');
     }
     const matches = Object.values(state.invitations).filter(
-      (invitation) => invitation.token_hash === cmd.token_hash,
+      (invitation: any) => invitation.token_hash === cmd.token_hash,
     );
     if (matches.length !== 1) {
       return authz('invitation_token_mismatch', 'invitation capability is invalid');
     }
-    const invitation = matches[0];
+    const invitation = matches[0] as any;
     if (
       invitation.consumed_at !== null
       || invitation.revoked_at !== null
@@ -710,7 +734,7 @@ export function decideWorkspace(
       if (
         state.invitations[cmd.invitation_id]
         || Object.values(state.invitations).some(
-          (invitation) => invitation.token_hash === cmd.token_hash,
+          (invitation: any) => invitation.token_hash === cmd.token_hash,
         )
       ) {
         return domain(ctx, cmd.kind, 'bad_state', 'invitation id or token hash already exists');
@@ -824,7 +848,7 @@ export function decideWorkspace(
     case 'create_agent_principal': {
       if (
         state.principals[cmd.principal_id]
-        || Object.values(state.principals).some((principal) => principal.name === cmd.name)
+        || (!cmd.allow_duplicate_name && Object.values(state.principals).some((principal: any) => principal.name === cmd.name))
       ) {
         return domain(ctx, cmd.kind, 'principal_name_taken', 'principal id or name already exists');
       }
@@ -1405,5 +1429,12 @@ export function decideWorkspace(
         env(ctx, 'AgentTokenRevoked', { token_id: cmd.token_id, revoked_at: ctx.now }),
       ]);
     }
+    case 'enable_agent_management':
+    case 'disable_agent_management':
+    case 'recover_agent_session':
+    case 'acquire_agent_session':
+    case 'renew_agent_session':
+    case 'release_agent_session':
+      throw new Error("Handled outside reducer");
   }
 }

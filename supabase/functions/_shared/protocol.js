@@ -762,7 +762,10 @@ var HUMAN_ONLY_COMMANDS = /* @__PURE__ */ new Set([
   "create_agent_principal",
   "revoke_agent_principal",
   "set_agent_model",
-  "mint_agent_token"
+  "mint_agent_token",
+  "enable_agent_management",
+  "disable_agent_management",
+  "recover_agent_session"
 ]);
 function isAgentScopeDenylisted(scope) {
   const words = scopeWords(scope);
@@ -1133,7 +1136,7 @@ function decideWorkspace(state, cmd, ctx) {
       ]);
     }
     case "create_agent_principal": {
-      if (state.principals[cmd.principal_id] || Object.values(state.principals).some((principal) => principal.name === cmd.name)) {
+      if (state.principals[cmd.principal_id] || !cmd.allow_duplicate_name && Object.values(state.principals).some((principal) => principal.name === cmd.name)) {
         return domain2(ctx, cmd.kind, "principal_name_taken", "principal id or name already exists");
       }
       return accept2([
@@ -1551,6 +1554,13 @@ function decideWorkspace(state, cmd, ctx) {
         env2(ctx, "AgentTokenRevoked", { token_id: cmd.token_id, revoked_at: ctx.now })
       ]);
     }
+    case "enable_agent_management":
+    case "disable_agent_management":
+    case "recover_agent_session":
+    case "acquire_agent_session":
+    case "renew_agent_session":
+    case "release_agent_session":
+      throw new Error("Handled outside reducer");
   }
 }
 
@@ -1601,6 +1611,7 @@ export {
   FEEDBACK_CATEGORIES,
   FEEDBACK_CONTEXT_MAX_BYTES,
   FILE_VERSION_PRECONDITION_FAILED,
+  HUMAN_ONLY_COMMANDS,
   INVITATION_MAX_TTL_MS,
   RENEWAL_HORIZON_DEFAULT_MS,
   RENEWAL_HORIZON_MAX_MS,
