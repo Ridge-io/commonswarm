@@ -2391,3 +2391,15 @@ events.ndjson, lastErrorDetail, stderr tail). Arms: Gemini PASS (six refutations
 Opus PASS (mutation reran in a throwaway copy; `{43}` proven from the spec's generator). Evidence:
 `docs/evidence/2026-09-06-wake-redaction/arms-3920d32/`. Client-only; ships in the next release.
 Worktree and branch removed. Not established: check:edge by the Opus arm (Grok's report: exit 0).
+
+## 2026-09-06 06:xx UTC — lane A round 5 b2b4e68: split, FAIL verified, round 6 running
+
+Gemini PASS (eight refutations attempted). Opus FAIL: `src/listener/read-health.ts:213` is last-writer-wins
+per hour, so an hour idled at 60 s with one late delivery is stamped 15 s and scores 61/240 (false lapse),
+measured on this SHA's dist with a positive control. The lane's own report listed a mixed hour as not
+established, so the FAIL holds. Ruling: score an hour by the slowest cadence recorded in it (never a false
+lapse; under-detection inside a mixed hour stated in the README). Round 6 (Grok, client TS only; no local
+database this round because L2 holds it) is in flight; the round-5 server gates stand for the migrations and
+the `command` edge, which round 6 does not touch. L2 (`lane/wake-migration`, Grok) started from aecd3b4 with
+`scratchpad/brief-wake-migration.md`. Foreign worktrees under `/private/tmp/cswarm-astra-identity-*`
+(`lane/agent-identity`) are not mine and were left alone.
