@@ -637,9 +637,9 @@ async function handle(
           s.started_at,
           s.renewed_at,
           s.expired_at,
-          (s.expired_at IS NULL OR s.expired_at > statement_timestamp()) AS is_live
+          (s.expired_at IS NOT NULL AND s.expired_at > statement_timestamp()) AS is_live
         FROM swarm_read.agent_principals AS p
-        LEFT JOIN swarm.agent_execution_sessions s ON s.principal_id = p.principal_id
+        LEFT JOIN swarm_read.agent_execution_sessions s ON s.principal_id = p.principal_id
         JOIN swarm_read.member_profiles AS owner
           ON owner.workspace_id = p.workspace_id
          AND owner.user_id = p.owner_user_id
