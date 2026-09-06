@@ -15,16 +15,24 @@ const CONTROL_AND_SEPARATOR_STRIP_RE = new RegExp(
   "g",
 );
 
-/** Credential prefixes shared by local diagnostics and outbound activity text. */
-export const CREDENTIAL_PREFIX_RE = new RegExp(
-  `swm_(?:agt|inv|cap)_[^${SEPARATOR_CLASS_SOURCE}]*`,
-  "gi",
+/**
+ * Token prefixes and wake-topic names that must not leave a host boundary.
+ * The wake topic `cswarm-wake:` plus 43 base64url characters is the credential
+ * (docs/design/2026-09-06-PUSH-DELIVERY.md §2.2 W1). Flags are `i` only: a
+ * shared `/g` regex leaves lastIndex set after a match, so the next .test()
+ * on another string can miss. Replace sites compile `gi` from this source.
+ */
+export const SECRET_SHAPE_RE = new RegExp(
+  `swm_(?:agt|inv|cap)_[^${SEPARATOR_CLASS_SOURCE}]*|cswarm-wake:[A-Za-z0-9_-]{43}`,
+  "i",
 );
+
+const SECRET_SHAPE_GLOBAL_RE = new RegExp(SECRET_SHAPE_RE.source, "gi");
 
 /** Remove terminal controls and redact CommonSwarm credentials before text leaves a host boundary. */
 export function redactCredentialText(value: string): string {
   return value
     .replace(ANSI_ESCAPE_GLOBAL_RE, "")
     .replace(CONTROL_AND_SEPARATOR_STRIP_RE, "")
-    .replace(CREDENTIAL_PREFIX_RE, "[redacted-credential]");
+    .replace(SECRET_SHAPE_GLOBAL_RE, "[redacted-credential]");
 }

@@ -26,6 +26,7 @@ import {
   DELIVERY_ACK_OUTCOMES,
   type DeliveryOutcome,
 } from "../cloud/delivery.js";
+import { SECRET_SHAPE_RE } from "../host/credential-redaction.js";
 
 const UUID_RE =
   /^[0-9a-f]{8}-[0-9a-f]{4}-[1-8][0-9a-f]{3}-[89ab][0-9a-f]{3}-[0-9a-f]{12}$/i;
@@ -433,7 +434,7 @@ function parseStatus(raw: string, rejectUnknownKeys = false): ListenerStatus {
       (typeof row.lastErrorDetail === "string" &&
         row.lastErrorDetail.length > 0 &&
         row.lastErrorDetail.length <= 2_048 &&
-        !/swm_(?:agt|inv|cap)_/i.test(row.lastErrorDetail))) ||
+        !SECRET_SHAPE_RE.test(row.lastErrorDetail))) ||
     !(row.lastErrorReasonCode === undefined ||
       row.lastErrorReasonCode === null ||
       (typeof row.lastErrorReasonCode === "string" &&
@@ -470,7 +471,7 @@ function parseStatus(raw: string, rejectUnknownKeys = false): ListenerStatus {
       (typeof row.lastWorkerStderrTail === "string" &&
         row.lastWorkerStderrTail.length > 0 &&
         row.lastWorkerStderrTail.length <= 2_048 &&
-        !/swm_(?:agt|inv|cap)_/i.test(row.lastWorkerStderrTail))) ||
+        !SECRET_SHAPE_RE.test(row.lastWorkerStderrTail))) ||
     typeof row.logPath !== "string" ||
     !isAbsolute(row.logPath) ||
     !(row.deliveryMode === undefined ||
@@ -826,7 +827,7 @@ export async function appendListenerEvent(
       // cap (its own bound is 2048, above); the secret scan still applies to
       // every string, the tail included.
       ((key !== "worker_stderr_tail" && value.length > 128) ||
-        /swm_(?:agt|inv|cap)_/i.test(value))
+        SECRET_SHAPE_RE.test(value))
     ) {
       throw new Error("listener event contains unsafe text");
     }

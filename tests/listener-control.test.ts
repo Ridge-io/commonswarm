@@ -2024,6 +2024,107 @@ test("status lastErrorDetail: round-trips and old files without it normalize to 
   await assert.rejects(readListenerStatus(target), /malformed/);
 });
 
+test("SECRET_SHAPE_RE: one case per control site per shape", async () => {
+  const shapes = [
+    { name: "agent-token", value: `swm_agt_${"A".repeat(43)}`, leak: /swm_agt_/i },
+    { name: "wake-topic", value: `cswarm-wake:${"B".repeat(43)}`, leak: /cswarm-wake:/i },
+  ] as const;
+  const failures: string[] = [];
+
+  for (const shape of shapes) {
+    const root = await mkdtemp(join(tmpdir(), "cswarm-secret-shape-"));
+    const target = paths(root);
+    const ts = "2026-08-19T00:00:00.000Z";
+
+    try {
+      await appendListenerEvent(target, {
+        ts,
+        event: "listener_failed",
+        worker_stderr_tail: `leaked ${shape.value}`,
+      });
+      failures.push(`${shape.name} events.ndjson (:829) accepted`);
+    } catch (error) {
+      if (!/unsafe text/.test(error instanceof Error ? error.message : "")) {
+        failures.push(`${shape.name} events.ndjson (:829) wrong error`);
+      }
+    }
+
+    const base = statusFor(target, "failed");
+    await writeListenerStatus(target, base);
+    const raw = JSON.parse(await readFile(target.statusPath, "utf8")) as {
+      lastErrorDetail?: unknown;
+      lastWorkerStderrTail?: unknown;
+    };
+
+    raw.lastErrorDetail = `token ${shape.value}`;
+    await writeSecureJsonFile(target.statusPath, JSON.stringify(raw));
+    try {
+      await readListenerStatus(target);
+      failures.push(`${shape.name} lastErrorDetail (:436) accepted`);
+    } catch (error) {
+      if (!/malformed/.test(error instanceof Error ? error.message : "")) {
+        failures.push(`${shape.name} lastErrorDetail (:436) wrong error`);
+      }
+    }
+
+    raw.lastErrorDetail = null;
+    raw.lastWorkerStderrTail = `token ${shape.value}`;
+    await writeSecureJsonFile(target.statusPath, JSON.stringify(raw));
+    try {
+      await readListenerStatus(target);
+      failures.push(`${shape.name} lastWorkerStderrTail (:473) accepted`);
+    } catch (error) {
+      if (!/malformed/.test(error instanceof Error ? error.message : "")) {
+        failures.push(`${shape.name} lastWorkerStderrTail (:473) wrong error`);
+      }
+    }
+
+    const supervisorRoot = await mkdtemp(
+      join(tmpdir(), "cswarm-secret-shape-sup-"),
+    );
+    const supervisorTarget = paths(supervisorRoot);
+    const final = await runListenerSupervisor({
+      paths: supervisorTarget,
+      profileId: "profile-secret-shape",
+      workspaceId: randomUUID(),
+      principalId: randomUUID(),
+      restart: { maxAttempts: 0 },
+      run: async () => ({
+        reason: "fatal" as const,
+        error: new Error(
+          `Unauthorized: You do not have permissions to read from this Channel topic: ${shape.value}`,
+        ),
+      }),
+    });
+    if (final.state !== "failed") {
+      failures.push(`${shape.name} localDiagnostic state=${final.state}`);
+    }
+    const detail = final.lastErrorDetail;
+    if (typeof detail !== "string") {
+      failures.push(`${shape.name} localDiagnostic: no detail`);
+    } else {
+      if (!/\[redacted\]/.test(detail)) {
+        failures.push(`${shape.name} localDiagnostic: marker missing`);
+      }
+      if (
+        !/Unauthorized: You do not have permissions to read from this Channel topic:/
+          .test(detail)
+      ) {
+        failures.push(`${shape.name} localDiagnostic: surrounding text lost`);
+      }
+      if (shape.leak.test(detail)) {
+        failures.push(`${shape.name} localDiagnostic: secret survived`);
+      }
+      const stored = await readListenerStatus(supervisorTarget);
+      if (stored?.lastErrorDetail !== detail) {
+        failures.push(`${shape.name} localDiagnostic: redacted detail did not persist`);
+      }
+    }
+  }
+
+  assert.deepEqual(failures, []);
+});
+
 test("a failing worker's stderr tail reaches the terminal failure event and status", async () => {
   const root = await mkdtemp(join(tmpdir(), "cswarm-control-test-"));
   const target = paths(root);

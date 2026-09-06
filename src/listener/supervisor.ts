@@ -1,5 +1,6 @@
 import { randomUUID } from "node:crypto";
 import { DELIVERY_PROVIDER_PROVEN_OUTCOMES } from "../cloud/delivery.js";
+import { SECRET_SHAPE_RE } from "../host/credential-redaction.js";
 import { AcpPermissionCanaryError } from "../host/types.js";
 import {
   appendListenerEvent,
@@ -169,7 +170,7 @@ function safeErrorCode(error: Error): string {
 /** Keep provider messages local, bounded, and free of credential-shaped text. */
 function localDiagnostic(message: string, maxChars: number): string | null {
   const redacted = message.replace(
-    /swm_(?:agt|inv|cap)_[^\s"'\\]*/gi,
+    new RegExp(SECRET_SHAPE_RE.source, "gi"),
     "[redacted]",
   ).trim();
   if (redacted.length === 0) return null;
