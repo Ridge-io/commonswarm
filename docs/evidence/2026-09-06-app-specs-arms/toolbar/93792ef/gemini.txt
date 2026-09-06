@@ -1,0 +1,32 @@
+### Inversion Review: Load-Bearing Design Choices
+
+#### 1. Dashboard setting toggle vs. in-repo code/CSS suppression
+- **Inversion:** Suppress the overlay in code (e.g., global CSS `#vercel-toolbar { display: none !important; }` or a restrictive CSP header blocking `vercel.live`).
+- **Predicted failure/regression:** Fragile coupling to Vercel's internal DOM structure and script naming, which can change without notice; pollutes application code with vendor workarounds; risks blocking preview commenting or adding runtime script evaluation overhead.
+- **Did inversion beat the spec?** No. Disabling at the platform level via project settings eliminates the toolbar cleanly with zero code footprint or maintenance debt.
+
+#### 2. Disabling Toolbar only in Production vs. globally across all environments
+- **Inversion:** Disable the toolbar globally across both Preview and Production (or leave it enabled everywhere).
+- **Predicted failure/regression:** Disabling globally breaks team PR review, commenting, and visual feedback workflows on preview deployments where the toolbar is valuable. Leaving it enabled preserves the mobile reading obstruction for team members in production.
+- **Did inversion beat the spec?** No. Scoping the change exclusively to Production addresses the mobile reading issue without regressing preview collaboration.
+
+#### 3. Human/operator execution vs. autonomous agent lane
+- **Inversion:** Require an autonomous coding lane to execute the change via Vercel CLI/API automation.
+- **Predicted failure/regression:** Vercel exposes no CLI command or public API for environment-level toolbar visibility. An autonomous lane would stall requiring privileged team dashboard credentials, violating security boundaries.
+- **Did inversion beat the spec?** No. Correctly classifying this as an operator/lead manual action with a docs-only evidence lane avoids stalled lanes and credential exposure.
+
+#### 4. Verification with a Preview positive control vs. single production check
+- **Inversion:** Verify solely by loading the production URL after the change, omitting the preview control and authentication check.
+- **Predicted failure/regression:** High risk of a false pass. Because anonymous requests never receive toolbar injection (§1), an expired session or unauthenticated load looks identical to a successful fix, even if the toolbar remains active for team sessions.
+- **Did inversion beat the spec?** No. The preview positive control is strictly necessary to guarantee session validity and verify causation.
+
+---
+
+### Lane Author Inventions
+- **None.** The spec explicitly scopes this as a human operator task with a docs-only evidence lane (`lane/toolbar-evidence`). Target paths (`docs/evidence/2026-09-06-vercel-toolbar/before.png`, `after.png`, `control-preview.png`), navigation steps, and control criteria are fully specified.
+
+---
+
+QUOTE-BACK: # Vercel toolbar off in production
+VERDICT: PASS
+REASON: The inverted choices fail against the spec's zero-code platform toggle and positive-control verification, and no lane author inventions remain.

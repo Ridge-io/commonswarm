@@ -1,0 +1,47 @@
+## D-036 EXACT arm — `docs/design/2026-09-06-BRAIN-WIKI.md`
+
+Reviewed the working-tree file (draft 3, HEAD `27b8fba`; the brief named `93792ef`, which is draft 2 — a lane would build this file, so this arm is against it). Every cited line was resolved in this checkout.
+
+### Measured — claims that hold
+
+| spec claim | measurement |
+|---|---|
+| `BRAIN_TOPIC_RE = /^[a-z0-9][a-z0-9._-]*$/`, max 245 | `src/cloud/brain.ts:21`; `brain-version-window.ts:14` → 255−7−3=245 ✔ |
+| `a.`, `a..b`, `a.b.c.d`, `release_notes.v2` all legal | ran the regex: all `true` ✔ |
+| `/` refused by the file layer | `command/file-artifacts.ts:67` ✔ |
+| 25 MB / 1 GB / 500 names, tombstones count 30 days | `file-artifacts.ts:52-54`, `:517-526` (comment "Tombstoned names COUNT" at `:518-519`) ✔ |
+| list returns no bodies; carries `size_bytes` | `read/index.ts:652-670`, `:658`; site select `commonswarm.ts:1001` ✔ |
+| site drops rows with empty `committedAt` | `commonswarm.ts:1023-1029` ✔ |
+| `file_download_url` mints only (SELECT + `signDownload`) | `file-artifacts.ts:869-960` — no INSERT/UPDATE/DELETE ✔ |
+| dispatch at `:8305-8306`; the two inserts are the **shared** file success path | `command/index.ts:8305-8306`, `:8372-8402` (idempotency then `insertAudit`) ✔ |
+| the `claim_agent_inbox` precedent exists | `claimAgentInboxPersistsLedger` `durable-delivery.ts:21`, used at `index.ts:8431` ✔ |
+| L0 cannot break the purge drain | drain is post-transaction at `index.ts:9474`, outside the gated block ✔; the p1-local nudges (`file-artifacts-e2e.test.ts:460,485,575,608,661`) all use the **refusal** path, which L0 does not touch ✔ |
+| sanitizer allows attributes on four tags; headings get none | `message-markdown.ts:73-78`, `sanitizeTag :572-592`, heading emit `:497` ✔ |
+| `headingOffset:1` → `#`..`####` = h2..h5; fixture has all four | `brain-view.ts:182`; `message-markdown.ts:344-350`; `src/components/app/brain-view.fixture.ts:16-20` ✔ |
+| every CLI/site anchor | `cli.ts:562-564`, `:617`, `:7285`, `:7310`, `:7442`; `brain-verbs.test.ts:334`; `LiveDashboard.astro:695-748`, `:1268-1279`, `:1746-1748`, `:2091` (the only `sessionStorage` use in that file), `:4377-4388`, `:4413-4427`, `:6379-6390` (`activateWorkspaceView` defined `:6350`) ✔ |
+| test gates are owned | `npm test` names `tests/brain-namespace.test.ts` (ran it: 8/8 pass, baseline green); `test:p1-cli` globs `brain-verbs.test.ts`; `test:p1-server` globs L0's new file; `site/package.json:11` globs `src/lib/*.test.mjs` and `src/components/**/*.observer.test.ts` ✔ |
+| the separator pin is a non-duplication test, unaffected by a prose convention | `brain-links.observer.test.ts:247-267` ✔ |
+| grouping rule is a deterministic pure function of the name set | walked all §3 cases by hand: `strategy.x`/`strategy.y`→area; lone `release_notes.v2`, lone `a.b.c.d`→root; `a.`/`a..b`→root; no order dependence ✔ |
+
+Earlier-round findings are folded: Opus D1–D7 and G1–G10, Grok D1–D3/G1–G8, and all three final-round Gemini gaps (`_index` rendering, `sessionStorage` layout, TOC indentation) are each answered in this draft. None is re-reported.
+
+### Findings
+
+**GAP 1 — §4, cross-spec: `supabase/functions/command/index.ts` and the database slot have no order.**
+L0 edits `supabase/functions/command/index.ts` and its after-column says "holds the local database". `docs/design/2026-09-06-MODEL-PER-AGENT.md:62` gives `lane/assigned-model` the same file ("`supabase/functions/command/index.ts` handlers") and the same slot. `assigned_model` appears in no migration in this checkout, so that lane is unlanded and the conflict is live. BRAIN-WIKI §4's "Shared files across specs" sentence names only `LiveDashboard.astro` and `message-markdown.ts`; MODEL-PER-AGENT §4 orders itself only against `read/index.ts` and HEARTBEAT. Both sibling specs order their shared **edge** file explicitly ("this spec's L1 lands first, then `lane/assigned-model` rebases"); this spec does not, for either the file or the exclusive database slot. An L0 author has nothing that says who rebases, and L0's own anchor `:8368-8402` moves if the other lane lands first. (`lane/claim-persistence` and `lane/wake-command` are *not* part of this: both are already in the code at `index.ts:8406-8459` and `durable-delivery.ts:21`.)
+
+**GAP 2 — §2.3, the `sessionStorage` mirror is keyed by workspace only, with no user in the key and no eviction on sign-out.**
+The spec writes `cswarm.brain.<workspaceId>.<topic>` and `cswarm.brain.<workspaceId>`. It gives bounds, an index key, and a `QuotaExceededError` rule, but never says what removes the mirror when the reader signs out or a second account signs in in the same tab. Measured: nothing in `site/src` clears `sessionStorage` on sign-out (only `localStorage.removeItem` calls at `LiveDashboard.astro:1902`, `:2777`, `:3087`, `:3153`), and the site's existing convention for browser-stored per-reader state **does** carry the principal — `createStorageKey = (userId) => \`commonswarm:app-create-intent:v1:${userId}\`` (`LiveDashboard.astro:1867-1868`). The spec applies this exact reasoning to reject the CLI cache in the §2.3 bullet ("needs a principal in the key, a TTL, and a revalidating read") and then adopts a browser mirror without it. L3 must invent the key's principal segment, the sign-out eviction, and whether to follow the `commonswarm:…:v1:` prefix convention or the new `cswarm.` one.
+
+**NIT — §4 L3, "expose the DOM pass for a fragment" understates the change.** `linkifyBrainTopics` already takes `root: HTMLElement` (`brain-links.ts:329-334`), so a detached element works today; what it does not do is report *which* topics it found — it returns `created: number` (`:389`). L3 needs a returned topic set beside the existing count. Derivable from §2.3's `{topic → mentions[]}`, but the files column names the wrong change.
+
+**NIT — §2.2 / §3, `cswarm brain tree` has no `--json`.** Every other brain verb carries `[--json]` (`cli.ts:562-564`) and `runBrainLs` branches on it (`cli.ts:7288`). The spec fully specifies the human line and is silent on JSON, so L1 invents whether it exists and its shape. No acceptance bullet depends on it.
+
+### Not established
+
+- The "43 flat topics" and "one topic uses a dot" counts in §0/§1/§2.1 are live-workspace facts; this arm has no production credential and did not measure them.
+- L0's zero-row claim is a design assertion about an unwritten branch; it was checked for reachability and for collateral damage (drain, existing tests), not executed — `npm run test:p1-server` needs the local Supabase slot, which this worktree does not hold.
+
+QUOTE-BACK: # Brain wiki: hierarchy, index pages, backlinks, without new storage
+VERDICT: FAIL
+REASON: Two gaps remain — the spec never orders L0 against `lane/assigned-model` on the `command/index.ts` edge file and the shared database slot, and the `sessionStorage` mirror's key carries no principal and no sign-out eviction, which is the same hazard the spec used to reject the CLI cache.

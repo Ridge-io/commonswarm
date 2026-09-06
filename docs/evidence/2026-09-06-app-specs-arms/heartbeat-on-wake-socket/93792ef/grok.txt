@@ -1,0 +1,38 @@
+I'll review the heartbeat-on-wake-socket spec against the code, earlier arm outputs, and sibling specs. Starting with the document and the cited evidence.Reading the spec, earlier arm outputs, and sibling specs next so I can check whether those findings are still present.Draft 2 dropped the socket path. I'll check the new read-edge claims against the code the spec cites.Checking remaining cited files, sibling-spec overlaps, and the activity-rejection path.The spec file changed while I was reading it. I'll re-read the current draft and re-check the SHA.Checking one last overlap: L2 vs the model-per-agent listener lane on the same client files.Exact arm on current checkout `27b8fba` (`spec/app-backlog`), draft 3. Prompt named `93792ef`; HEAD moved; this is the folded draft. fa44311 socket findings are gone. 93792ef D1/D2 and G1–G5 are folded (exactKeys, same parser with `workspace_id`, `carriesActivity`, `ACTIVITY_REJECT_CODES`, `idleFrame()` increments, L1-before-assigned-model, one counter).
+
+## GAP
+
+**G1 — §4 L3. `LiveDashboard.astro` is unsequenced against sibling lanes.**  
+L3 edits panel copy (`:2510` `view.ageLabel`). Sibling specs also edit that file (`lane/agent-model-rows`, `lane/long-messages`, `lane/markdown-wordwrap-qa`, `lane/brain-tree-site`, `lane/entity-colour`, `lane/entity-filter`) and tell CSwarmDevLead to serialise them. None of those lists names `lane/idle-staleness`, and this spec’s shared-file line names only `read/index.ts`. A Gemini author of L3 has no order.
+
+**G2 — §4 L2 vs `MODEL-PER-AGENT.md` L2. Four listener files have two owners and no order.**  
+This L2: `src/listener/runtime.ts`, `control.ts`, `src/cli.ts`, `src/cloud/signals.ts`. Model L2 (`lane/listener-assigned-model`) names the same four. §4 only sequences L1 vs `lane/assigned-model` on `read/index.ts`.
+
+**G3 — §2.3 / §4 L2. Capability detection cannot see `activity_carrier` as written.**  
+§2.3 attaches `activity` only after a previous read showed `activity_carrier: "read"`. `readAgentSignalPage` returns a constructed object (`signals.ts:1238-1252`) and does not copy unknown top-level keys (`AgentSignalPage` at `:135-153` has `wake?`, nothing else). L2 names `signals.ts` as “request field” only. The page parser and type must grow optional `activity_carrier` / `activity_rejected`, or the flag stays false and idle frames never leave the activity edge. Model L2 already owns “page parser” on the same type.
+
+**G4 — §4 L4. Evidence dir is unnamed.**  
+“evidence dir” is not a path. Push-delivery named `docs/evidence/2026-09-06-push-delivery-measured/`.
+
+## NIT
+
+- §1 still cites `agent-activity.ts:135-141`; `agentActivityFrameIsNewer` is `:133-140`.
+- §3’s 600 is 288+288+24; push-delivery’s ≈2,200 also had ~150 wake-driven calls, so 2,200 − heartbeat ≈ 760.
+- §1 “~90 %” is the 15 s figure (`RESUME-HERE.md:2619`); §7 after lane A is 65 %. “ledger 2026-09-06” is not a file under `docs/evidence/`.
+- `activityIdleCarrier` should be optional on old `status.json` (the `idlePollMs` pattern at `control.ts:177-180`). Top-level `STATUS_ALLOWED_KEYS` does not require new keys; say so.
+
+## Folded (do not re-open)
+
+Anon SELECT / `send()` ack / partial HMAC / unknown-key site drop (fa44311). exactKeys 400, `parseActivityRequest` minus `workspace_id`, optional-key mechanism, invented reasons, `idleFrame()` sequence, L1/L2 rollback, counter split (93792ef).
+
+## Checked, holds
+
+`ACTIVITY_*` at `activity.ts:12-13`, `:285-292`, `:337-341`; transport `:88-147`, `:119-128`; edge `:79-150`, `:135`, RESET ROLE `:141-150`; `parseActivityRequest` needs `workspace_id` (`core.ts:15-24`, `:50-51`); `exactKeys` `:184-192`, signals keys `:268-281`, 400 `:395-398`; `LISTENER_RECONCILE_POLL_MS = 300_000` `wake.ts:14`, used `runtime.ts:1551`; idle poll already 15 s (`idle-poll.ts:9`); site `FRAME_KEYS` unchanged `:19-29`; `wake-command` is on `main` (`b1471a6`); `package.json:29` is the `p1-server` glob; site test glob `site/package.json:11`; `entity-panel.observer.test.ts:97` pins `AGENT_ACTIVITY_INSTRUMENTATION_GRACE_MS`.
+
+## Not established here
+
+Awaited `realtime.send` latency (§6). Hosted Realtime. Whether `swarm_read` can run the activity membership SQL or must reuse `agent_delivery_read_context` (archive already fails the read).
+
+QUOTE-BACK: # Idle heartbeat: fold it into the reconcile read
+VERDICT: FAIL
+REASON: Draft 3 folded the 93792ef parser/deploy defects, but a lane still has to invent LiveDashboard and listener-file order against sibling specs, surface `activity_carrier` through `AgentSignalPage`, and pick an unnamed L4 evidence path.

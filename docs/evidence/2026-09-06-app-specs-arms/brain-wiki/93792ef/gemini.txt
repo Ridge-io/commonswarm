@@ -1,0 +1,38 @@
+### Load-Bearing Design Choices & Inversion Analysis
+
+#### 1. Hierarchy via naming convention (`area.topic` + heuristic grouping) vs. explicit storage hierarchy
+- **Inversion:** Model hierarchy explicitly via database parent-child metadata or folder fields on `swarm.files`.
+- **Failure/Regression Predicted:** Requires database schema migrations, updates to Postgres functions, rewrites of file artifact validation, and breaking changes to existing flat `brain--<topic>.md` storage and the 20-version rolling window.
+- **Did Inversion Beat Spec?** No. The naming convention completely avoids storage migrations, backend changes, and schema risk.
+
+#### 2. Client-side prefetch + L0 zero-row read-intent gate vs. server-side backlink index table
+- **Inversion:** Extract and store backlinks server-side on write (`file_commit` / `brain put`) in a relational `brain_links` table.
+- **Failure/Regression Predicted:** Adds write-path overhead, edge function timeouts when parsing large Markdown files during upload, and introduces new database tables and migrations.
+- **Did Inversion Beat Spec?** No on storage footprint, but client-side prefetch triggers a burst of up to 60 Edge Function calls (`file_download_url`) and 60 GET requests per viewer session, creating frontend connection pressure.
+
+#### 3. Extraction via detached sanitized DOM walk vs. raw Markdown regex / AST parsing
+- **Inversion:** Extract topic links using lexical regex or a Markdown AST parser directly on the body text.
+- **Failure/Regression Predicted:** Fast and headless, but drifts from browser linkification semantics: fails to reliably differentiate bare words in inline code spans vs. fenced code blocks or disallowed tags without duplicating the full HTML sanitizer ruleset.
+- **Did Inversion Beat Spec?** No. Rendering through `setSanitizedMessageMarkdown` guarantees 100% parity with live message linkification.
+
+#### 4. Anchorless TOC using querySelector index + `scrollIntoView` vs. heading `id` attributes
+- **Inversion:** Inject slugified `id` attributes onto headings and use native hash anchors (`<a href="#...">`).
+- **Failure/Regression Predicted:** Breaks the strict sanitizer tag attribute allowlist (`message-markdown.ts:73-78`), exposing an attribute injection / XSS surface for member-authored topic headings.
+- **Did Inversion Beat Spec?** No. Querying headings by index and calling `scrollIntoView` preserves the sanitizer boundary intact.
+
+---
+
+### What a Lane Author Would Still Have to Invent
+
+1. **`[GAP]` Presentation and lifecycle of `<area>._index` topics (§2.1, §2.2):**
+   §2.1 specifies that `<area>._index` declares an area containing a single topic, while §2.2 states index pages are generated client views that are "not stored". L2 must invent whether `<area>._index` is rendered as a normal child topic in the tree/index, hidden from the list, or displayed as header markdown for the generated index view.
+
+2. **`[GAP]` `sessionStorage` serialization schema and LRU eviction (§2.3):**
+   §2.3 specifies a 4 MB per-workspace mirror under key `cswarm.brain.<workspaceId>` evicting newest-read first on quota. L3 must invent the serialization layout (a monolithic JSON object vs. partitioned subkeys) and the LRU metadata tracking needed to evict topics without deserializing the entire 4 MB payload on each fetch.
+
+3. **`[GAP]` TOC visual hierarchy and nesting (§2.4):**
+   §2.4 defines button triggers for `h2`, `h3`, and `h4` tags (source `#` to `###`), but leaves the visual layout and indentation hierarchy (flat list vs. nested tree indentation matching heading depths) completely unspecified for L4.
+
+QUOTE-BACK: # Brain wiki: hierarchy, index pages, backlinks, without new storage
+VERDICT: FAIL
+REASON: Lane authors L2, L3, and L4 must invent the UI handling of `_index` marker topics, the `sessionStorage` serialization/LRU layout, and the TOC indentation structure.

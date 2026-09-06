@@ -1,0 +1,57 @@
+## EXACT arm — `docs/design/2026-09-06-MODEL-PER-AGENT.md` @ `93792ef`
+
+**Method.** Every `file:line` in §0–§4 was opened. Runtime claims were measured against the tree rather than read about: the status-file parser's tolerance, the read edge's claim behaviour, the events table's append-only guard, and the current definition of `swarm.agent_delivery_read_context`.
+
+### Citations that check out (spot list, all exact)
+
+`20260730000001:8-23` bound + `:30-35` `SELECT p.*` + `:112-127` projection control; `workspace-commands.ts:96-101`, `:108-118`, `:85-89`, `:499-514`, `:507-509`, `:832-838`, `:987`, `:1014`; `workspace-events.ts:80-87`, `:181-185`, `:187`; `command/index.ts:1959-1997`, `:1989`, `:2591` (`user: agent.owner_user_id` — actor carries the owner, exactly as claimed), `:3779`; `tests/protocol-workspace.test.ts:1392-1394` (asserts `actor_user='alice'`, `actor_agent_principal=null`); `cli.ts:4347-4363`, `:4395-4399`, `:5588-5592`, `:5782-5843`, `:5796`, `:5842`, `:5929-5931`, `:5945`; `host/claude.ts:416-418`, `:588-590`; `host/codex.ts:277-279`, `:363-365` (both spawn with `[]`); `grok-model.ts:42`; `runtime.ts:297`, `:1303-1330`; `command-client.ts:867`; `signals.ts:135-153`, `:1232-1251` (only `wake` is copied from the body); `LiveDashboard.astro:2001` (the **only** `agent_principals` SELECT in the file), `:2625`, `:4030-4032`, `:4105-4128`, `:5113`; `agent-connect.ts:331`; `participant-rail.ts:66-74`; `site/package.json:11` glob reaches `src/lib/*.test.mjs`; `package.json:23`/`:26`; gate pin `test-gate-coverage.test.ts:23-35` and `:125-129`.
+
+**Measured, not read:**
+- `control.ts` — `parseStatus` defaults `rejectUnknownKeys=false` (`:439`, `:454`) and `:631` filters unknown keys out. A top-level `modelAssignment` is safe in **both** rolling-upgrade directions. The wake block is not: `:407-409` requires every key and `:596` throws on `null`. §2.3's placement argument holds, and is stronger than the spec claims.
+- `read/index.ts` — no `claim_agent_inbox`, no lease. The pre-bridge inbox read of §2.2 cannot strand a delivery; "harmless" is correct.
+- `swarm.events` — `20260723000001:577` is a `BEFORE UPDATE OR DELETE` guard, so the backfill's source is append-only and durable. §2.1's rule is executable.
+- `swarm_read` — `20260723000001:786` grants `SELECT ON ALL TABLES IN SCHEMA swarm_read TO authenticated`, so the view is readable by every workspace member.
+
+Earlier-round items I re-checked as fixed: the two-command/one-event discriminator is now correct and matches the repo test; the backfill names `swarm.events` and the person-attributed rule; the `p1-local` literal list and its pin are owned by L1; the bare-model declaration removes the 120-char concatenation risk.
+
+---
+
+### DEFECT 1 — §2.1 / §4 L1: re-creating the view as `SELECT p.*` publishes the wake join credential
+
+§2.1: "`swarm_read.agent_principals` projects both." §1 cites the existing shape as `20260730000001:30-35` (`SELECT p.*`), and L1's file list says "view projection".
+
+The tree moved under this sentence. `20260906000010_wake_delivery.sql:22-30` added `swarm.agent_principals.wake_id` (plaintext, `NOT NULL`, unique) **and did not re-create the view** — `grep -n "VIEW" supabase/migrations/20260906000010_wake_delivery.sql` returns nothing. The last `CREATE OR REPLACE VIEW swarm_read.agent_principals` is still `20260730000001:30`, whose `p.*` was expanded before `wake_id` existed, so `wake_id` is **not** projected today.
+
+A lane that re-creates the view with the cited `SELECT p.*` to add `assigned_model` re-expands the star and appends `wake_id` too. `cswarm-wake:{wake_id}` is the join credential: `wake_topic_authorized` (`20260906000010:59-70`) admits any subscriber who presents a live id for a principal with a live token. Every authenticated member of the workspace could then read the other agents' wake topics from PostgREST and join them. That is a shipped boundary this spec silently removes.
+
+Fix: L1 enumerates the projected columns (or excludes `wake_id` explicitly), and its migration control asserts both `assigned_model`/`model_assignment_state` **are** projected and `wake_id` is **not** — the same shape as the existing control at `20260730000001:112-127`.
+
+### GAP 1 — §2.2 / §2.3: `assignment_state` has no value for "no assignment", and the stated site rule then marks a false mismatch
+
+The closed set is `honoured | no_mapping | cli_override`, default `pending`. Neither §2.2 nor §3 says what the listener sends when `assigned_model` is NULL — the state of every seat today.
+
+Two of the three reachable choices produce a wrong row under §2.3's own rule:
+- `--model X` on grok with **no** assignment (the ordinary way grok seats are started) → §2.2 step 1 sends `cli_override`; §2.3 marks on `cli_override` unconditionally, so the row reads `not honoured (cli override)` with nothing overridden. §3's acceptance line covers only "`--model X` with an assignment Y".
+- No `--model`, no assignment → if the listener sends `honoured`, §2.3's second clause compares `normalizedModel(model)` against `normalizedModel(null)`, they differ, and the mark shows on every unassigned seat.
+
+Only "omit the field" is correct, and the spec never says it. A lane author must invent the rule, and two of its three guesses are visibly wrong on the common row. Name it: the listener omits `assignment_state` when `assigned_model` is NULL, and §2.3's `cli_override` and `honoured` clauses both require a non-null `assigned_model`.
+
+### GAP 2 — §2.2 / §4 L1: the live body of `agent_delivery_read_context` is unnamed, and the sibling spec names a stale one
+
+L1 owes "`agent_delivery_read_context` output column from its live body with its three privilege statements — the push-delivery rule". Every other artifact in this spec is named to the line; this one is not.
+
+Push delivery has **landed** in this tree. The live body is `20260906000010_wake_delivery.sql:276-483` — a `DROP`/`CREATE` with **eleven** output columns (`wake_id` at `:293`, assigned at `:476`) and the three privilege statements at `:481-483`. The sibling `docs/design/2026-09-06-PUSH-DELIVERY.md:82` still names `20260820000002:103-299` as the live body, in bold, twice. A lane cross-reading that sentence re-creates the ten-column version, drops `wake_id` from the result, and breaks the wake hint that `read/index.ts:452-456` selects — with no test in this spec's gate to catch it. Name the file and line range, and state that `wake_id` stays in the output.
+
+### NIT — §2.1: the cited both-keys precedent does not exist
+
+"both keys present is refused as `invalid_request`, the shape the handler already uses for two optional keys at `command/index.ts:2214-2216`." `:2214-2216` handles **one** optional key (`const optionalKeys = Object.hasOwn(cmd, "model") ? ["model"] : []`), and that shape *accepts* the key when present; extended to two keys it accepts both. `exactKeys` (`:1455-1463`) is a set-equality check with no XOR. The requirement itself is unambiguous, but the citation points at code that does the opposite; drop the "already uses" clause or point at a real XOR site.
+
+### NIT — §4: no reciprocal shared-files note
+
+`AGENT-COLOURS.md:80`, `BRAIN-WIKI.md:87` and `LONG-MESSAGES.md:45` each name `lane/agent-model-rows` and say CSwarmDevLead serialises them on `LiveDashboard.astro`. This spec's order line ("L1 → L2 ∥ L3") mentions no sibling. The conflict is resolved elsewhere, so it is not a gap — but a lane author reading only this file will not know L3 is serialised.
+
+---
+
+QUOTE-BACK: # A model per agent: assigned by a person, honoured by the listener, declared by the agent
+VERDICT: FAIL
+REASON: Re-creating `swarm_read.agent_principals` with the cited `SELECT p.*` would publish the plaintext `wake_id` join credential to every workspace member, and two gaps remain — the `assignment_state` value for an unassigned seat is unspecified (making the stated site rule mark a false mismatch on ordinary rows) and the live body of `agent_delivery_read_context` is unnamed while a sibling spec still names a stale one.

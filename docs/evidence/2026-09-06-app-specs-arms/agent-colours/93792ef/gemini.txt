@@ -1,0 +1,33 @@
+### Inversion Analysis: Load-Bearing Design Choices
+
+**1. Deterministic FNV-1a Hash (`% 12`) vs. Dynamic Active-Roster Palette Assignment**
+* *Inversion:* Assign distinct colors dynamically to participants active in the current channel roster.
+* *Predicted Failure:* Color instability across channels, reloads, and sessions; Agent A shifts from cyan to orange when a peer leaves, breaking durable visual recognition.
+* *Did it beat spec?:* No. Spec wins. Determinism is required for stable identity across sessions, and 12-hue collisions are mitigated by non-color badges (R8).
+
+**2. Server-Side PostgREST Filter (`.eq("from", id)`) vs. Client-Side Signal Feed Filtering**
+* *Inversion:* Filter loaded rows purely in memory on the client (`signal-feed.ts`).
+* *Predicted Failure:* Sparse-history starvation. If an entity hasn't posted in the last 25 channel messages, a client filter yields an empty feed despite deep historical records.
+* *Did it beat spec?:* Spec wins on pagination depth, but the inversion exposes a gap: server-only page filtering does not account for incoming live/realtime signals.
+
+**3. Avatar Click Filters Feed vs. Avatar Opens Entity Panel**
+* *Inversion:* Avatar opens entity panel; name control applies the entity filter.
+* *Predicted Failure:* Breaking the established convention where clicking an entity name opens its inspection panel. However, turning a small avatar into a feed filter button creates an unexpected touch target split.
+* *Did it beat spec?:* Spec holds on preserving the panel trigger on the name, though mobile touch-target ergonomics are strained.
+
+**4. Left Edge Border + Name Underline vs. Full Row Background Tint**
+* *Inversion:* Tint message row backgrounds (`--message-row-background`).
+* *Predicted Failure:* Rainbow fatigue and WCAG AA contrast failures across light/dark themes against message body text and code blocks.
+* *Did it beat spec?:* No. Spec wins. Confining color to borders and underlines preserves text contrast.
+
+---
+
+### What a Lane Author Still Has to Invent
+
+* **GAP (§2.3 - Realtime Signal Filtering):** `signalPage` queries PostgREST with `.eq("from", id)`, but the spec never defines how incoming realtime signals in `LiveDashboard.astro` are handled when `?e=` is active. Lane authors must invent whether the live ingestion pipeline drops, buffers, or client-filters foreign signals.
+* **GAP (§2.3 - Entity Name Resolution on Cold Load):** When navigating directly to `?e=<kind>:<id>`, if the server returns zero signals (`No signals from <name> in this channel yet`), the spec never defines where `<name>` is resolved from to populate the chip and empty state copy.
+* **GAP (§2.3 - Query Disambiguation):** The URL uses `?e=<kind>:<id>`, but the query adds only `.eq("from", entity.id)`. The author must decide whether to filter `.eq("from_kind", entity.kind)` or assume `from` UUIDs never collide between agents and persons.
+
+QUOTE-BACK: # Colour-code agents and their responses
+VERDICT: FAIL
+REASON: The spec fails to specify how live realtime signals are filtered under an active entity filter and how entity names are resolved on empty cold loads.

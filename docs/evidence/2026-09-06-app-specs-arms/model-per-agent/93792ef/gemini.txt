@@ -1,0 +1,31 @@
+### Inversion Analysis of Load-Bearing Choices
+
+1. **Choice: Two-column split (`assigned_model` for person intent, `model` for agent declaration)**
+   - *Inversion:* Keep a single `model` column for assigned intent; declaration is ephemeral in status/telemetry only.
+   - *Regression/Failure:* The site loses truth about actual execution for remote or offline seats. If an unmapped bridge falls back or `--model` is used, the system silently lies about what executed. If the listener overwrites it, human configuration is erased on restart.
+   - *Beat spec?* No. Person intent and runtime execution are two asynchronous facts from different actors; collapsing them destroys either auditability or intent.
+
+2. **Choice: Pre-bridge inbox read at `listen start` to fetch `assigned_model`**
+   - *Inversion:* Launch the bridge immediately with provider defaults, fetch signals in runtime, and hot-swap models.
+   - *Regression/Failure:* Bridges like `claude-agent-acp` and `codex-acp` do not support dynamic ACP session model renegotiation over stdio. Swapping models requires terminating the bridge process, dropping connection state, and creating first-turn race conditions.
+   - *Beat spec?* No. Bridge constructors require immutable model configuration before ACP session initialization.
+
+3. **Choice: Persisting `model_assignment_state` (`honoured | no_mapping | cli_override | pending`) in Postgres**
+   - *Inversion:* Derive mismatch status client-side by comparing `model` vs `assigned_model` without a state column.
+   - *Regression/Failure:* The UI cannot distinguish between a seat awaiting restart (`pending`), an explicit CLI operator override (`cli_override`), or an unsupported bridge (`no_mapping`). Users receive generic mismatch marks without actionable reasons.
+   - *Beat spec?* No. Durable storage in Postgres is necessary because browsers cannot inspect local listener process CLI arguments or bridge host capabilities.
+
+4. **Choice: Declaring bare model strings rather than composed provider labels (`"<model> via <bridge>"`)**
+   - *Inversion:* Keep bridge/provider metadata embedded in the declared `model` string.
+   - *Regression/Failure:* String concatenation risks exceeding the 120-character database constraint (`agent_principals_model_bounded`) and breaks deterministic equality matching (`normalizedModel(model) === normalizedModel(assigned_model)`).
+   - *Beat spec?* No. Bare strings allow strict equality; host/bridge versions belong in `listen status`.
+
+### What a Lane Author Still Has to Invent (GAPs)
+
+1. **GAP: Failure policy for pre-bridge read in L2 (`src/cli.ts`).** If `readAgentSignalPage` fails (network offline, edge function 5xx), the spec does not specify whether `listen start` aborts, retries, or falls back to provider defaults.
+2. **GAP: Undefined ACP candidate probe parameters for L2.** The spec instructs L2 to test "candidate option or config" for `claude-agent-acp` and `codex-acp` under `--state-dir <temp>`, but specifies no concrete ACP schema keys, CLI flags, or probe timeouts for the lane author to test.
+3. **GAP: Cross-spec ordering for shared files.** `LiveDashboard.astro` and `supabase/functions/read/index.ts` are actively shared with sibling specs; §4 defines internal lane order (L1 → L2 ∥ L3) but specifies no cross-spec integration sequencing.
+
+QUOTE-BACK: # A model per agent: assigned by a person, honoured by the listener, declared by the agent
+VERDICT: FAIL
+REASON: A lane author must invent the pre-bridge network failure policy, the exact candidate parameters for the ACP bridge probe, and merge ordering against sibling specs editing shared files.

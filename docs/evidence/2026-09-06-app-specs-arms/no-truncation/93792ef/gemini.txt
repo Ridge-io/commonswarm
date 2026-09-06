@@ -1,0 +1,33 @@
+### Inversion Analysis of Load-Bearing Choices
+
+1. **Choice 1: JSON payload carries full body (`body`) while CLI readable notification remains a 180-char snippet ([C1](file:///docs/design/2026-09-06-NO-TRUNCATION.md#L45-L48)).**
+   - *Inversion*: Emit unclipped full 8,000-char bodies in the readable terminal notification line, or keep `--json` snippet-only.
+   - *Failure/Regression*: Full text in terminal notifications floods developer consoles and breaks single-line notification consumers; keeping JSON snippet-only forces automated tools/agents into redundant round-trips or silent truncation blindness.
+   - *Beat Spec?*: No. Decoupling machine payload completeness from human glanceability is correct.
+
+2. **Choice 2: Raise hook preview from 240 to 1,000 chars with dynamic cutoff suffix rather than unclipped bodies ([C2](file:///docs/design/2026-09-06-NO-TRUNCATION.md#L49-L53)).**
+   - *Inversion*: Inject unclipped 8,000-character bodies into prompt hook context unconditionally.
+   - *Failure/Regression*: 100 signals at 8,000 chars = 800 KB, exceeding `MAX_HOOK_SURFACE_BYTES` (128 KiB) by >6x and causing prompt context overflow or dropped hook output.
+   - *Beat Spec?*: No. 1,000 chars covers typical prompt lengths while respecting the surface budget.
+
+3. **Choice 3: Enforce app non-truncation via an observer test with no changes to app product code ([C3](file:///docs/design/2026-09-06-NO-TRUNCATION.md#L54-L61)).**
+   - *Inversion*: Modify Astro/Markdown rendering code in `site/` to remove message collapsing or add defensive non-truncation logic.
+   - *Failure/Regression*: Removing collapse destroys UI usability on long messages (conflicting with item 4); adding guards adds redundant dead code since the app already renders full markdown without slicing.
+   - *Beat Spec?*: No. A black-box observer test preserves the invariant with zero regression risk.
+
+4. **Choice 4: Defer hook surface overflow behavior and preview sizing to lane runtime measurement ([C2](file:///docs/design/2026-09-06-NO-TRUNCATION.md#L49-L53) / [Section 5](file:///docs/design/2026-09-06-NO-TRUNCATION.md#L90-L93)).**
+   - *Inversion*: Explicitly specify the overflow resolution mechanism (FIFO signal drop, head clip, or error) and fixed preview constant directly in the spec.
+   - *Failure/Regression*: A hardcoded constant could overflow if 100 signals arrive, but leaving it to L2 to "measure and follow" creates an unbuildable lane with an open-ended mandate.
+   - *Beat Spec?*: Yes. The inversion exposes that the spec defers core behavioral design to an autonomous lane author.
+
+---
+
+### What a Lane Author Still Has to Invent
+
+- **GAP (Section 2 C3 / Section 4 L3)**: The spec instructs L3 to populate `operator-corpus.md` by running `cswarm feed --json --limit 100` and matching the "operator's id" from human-readable names. The spec never identifies the operator's handle/name, and an offline lane build or CI runner cannot query a live production database. The corpus must be committed or deterministically generated.
+- **GAP (Section 2 C2 / Section 5)**: The spec admits hook behavior under `MAX_HOOK_SURFACE_BYTES` overflow is "NOT established" and asks L2 to measure and adapt. The lane author would have to invent the fallback sizing rule if 100 signals exceed the byte cap.
+- **GAP (Section 2 C1 / Section 4 L1)**: The spec mandates that `— full text: cswarm inbox` be "generated from the same constant... ARRIVAL_SNIPPET_MAX", but the copy contains no numerical value. The lane author must invent the generator function and test assertion tying the string to the constant.
+
+QUOTE-BACK: # Stop truncating in the human UI
+VERDICT: FAIL
+REASON: A lane author must invent live corpus query parameters without operator credentials, resolve unspecified hook surface overflow behavior, and define how a path phrase is generated from a numerical constant.

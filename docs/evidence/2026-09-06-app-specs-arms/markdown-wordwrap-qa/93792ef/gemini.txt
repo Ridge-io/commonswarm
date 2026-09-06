@@ -1,0 +1,33 @@
+### Load-Bearing Inversions
+
+1. **Pixel targets (±2 px at 16 px root) vs. relative typographic units (`rem`/`em`/`--s-3`)**
+   - *Inversion*: Define and assert gaps using font-relative units or line-height ratios.
+   - *Predicted Failure*: User zoom, OS accessibility font scaling, or root font size adjustments will violate hardcoded 12 px ±2 px thresholds or enforce rigid, unscalable layout.
+   - *Beat Spec?*: **No.** §2.3 correctly eliminates ratio ambiguity (a 0.75-line gap of 19.44 px vs shipped 12 px) to give an automated DOM test runner exact numerical assertions at a standard baseline.
+
+2. **Headless desktop Chrome (390×844) vs. real mobile engine (WebKit/iOS Safari)**
+   - *Inversion*: Run mobile wordwrap and scroll QA inside WebKit / mobile Safari emulation.
+   - *Predicted Failure*: "Light text at the bottom, no scroll" and composer clipping historically stem from iOS Safari engine quirks (`-webkit-overflow-scrolling`, dynamic toolbars, subpixel text autosizing). Desktop Chrome at 390 px will render cleanly, produce 24 passing screenshots, and falsely dismiss an active iOS defect as "not reproduced".
+   - *Beat Spec?*: **Yes.** Chrome at 390×844 cannot reproduce iOS-specific viewport clipping or bottom-band masking.
+
+3. **Measure-first deferred fixes vs. immediate upfront CSS fix**
+   - *Inversion*: Patch the known wrap conflict (`global.css:175-184` `overflow-wrap: break-word` on `p` overriding container `anywhere`) upfront before testing.
+   - *Predicted Failure*: Generating a 24-screenshot test harness to verify an already-isolated single-declaration bug adds unnecessary scaffolding and blocks serialized dependent lanes (`lane/long-messages`, `lane/brain-toc`).
+   - *Beat Spec?*: **No.** Deferring fixes until an observational failure is captured prevents speculative CSS thrashing and guarantees that fixes are backed by permanent regression assertions.
+
+4. **DOM Range computed-style traversal vs. rendered pixel color sampling**
+   - *Inversion*: Sample rendered image pixel colors at the bottom boundary of the message box.
+   - *Predicted Failure*: Inspecting `Range.getClientRects()` and parent computed `color`/`opacity` cannot detect visual washing caused by sticky overlays, parent backdrop-filters, gradient pseudoelements, or GPU clipping layers. A visually obscured line can report 100% solid opacity.
+   - *Beat Spec?*: **Yes.** Visual pixel sampling detects rendering-layer fades that DOM computed style trees completely miss.
+
+---
+
+### Inventions Required by Lane Author
+
+- **GAP (§2.1)**: Fixture 6 mandates copying "the operator's own longest channel message... found via `cswarm feed --json --limit 100`". In isolated CI or headless developer environments without access to live operator credentials or a populated feed, the fixture content is unspecified and the lane cannot run.
+- **GAP (§2.2, §4)**: Screenshot orchestration. §2.2 dictates launching Chrome with CLI flag `--screenshot` per fixture, but §4 requires the suite to run under `npm --prefix site test` in `message-blocks-layout.observer.test.ts`. Chrome CLI `--screenshot` exits immediately without running interactive Vitest DOM assertions; the lane author must invent how Vitest / CDP captures the 24 image artifacts.
+- **GAP (§2.2, §2.3)**: §2.3 specifies asserting 24 px above headings, but §2.2 omits pre-heading gap measurement from the test extraction list, and Fixture 2 places the heading as the first element, leaving no preceding sibling to measure the 24 px gap against.
+
+QUOTE-BACK: # Markdown spacing and wordwrap: measure on a phone, then fix what fails
+VERDICT: FAIL
+REASON: The spec lacks offline fixture fallback for fixture 6, specifies incompatible Chrome CLI `--screenshot` invocation inside the Vitest runner, and omits the pre-heading measurement mechanism.

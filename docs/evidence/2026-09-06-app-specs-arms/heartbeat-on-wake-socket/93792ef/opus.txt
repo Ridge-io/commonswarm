@@ -1,0 +1,126 @@
+# EXACT arm — `docs/design/2026-09-06-HEARTBEAT-ON-WAKE-SOCKET.md` @ `93792ef`
+
+Round-1 findings (all about draft 1's anon-socket publish) are gone with the mechanism; §2.4's retired "an old site build drops unknown keys" claim is now correct ("no new key"). The following are new to draft 2.
+
+## Measurements run
+
+```
+$ node --import tsx -e 'import("./supabase/functions/activity/core.ts")...'
+spec object (no workspace_id) -> null
+control WITH workspace_id     -> {"version":1,"workspaceId":"2222…","streamId":"1111…",
+                                  "sequence":41,"phase":"idle","signalId":null,
+                                  "toolTitle":null,"elapsedMs":0}
+```
+The positive control shows the parser works and returns a frame; the spec's own JSON returns `null`.
+
+Also read for effect: `supabase/functions/read/index.ts:184-192` (`exactKeys`) and `:268-281`
+(the signals branch key list), `src/cloud/signals.ts:1150-1169`, `src/listener/activity.ts:285-292`,
+`:337-341`, `site/src/lib/agent-activity.ts:133-140`.
+
+## DEFECT
+
+**D1 — §6 bullet 1 and §4 L2 "after" cell. "the read edge's request parser drops unknown top-level
+keys" is not merely unestablished; it is false, and it is measurable from the file the lane edits.**
+`parseBody` gates every branch on `exactKeys` (`read/index.ts:184-192`), which requires
+`actual.length === keys.length`. The signals branch (`:268-281`) lists exactly
+`resource, workspace_id, inbox, about, kind, since, [in_reply_to], [channel], [cursor pair], limit,
+include_stale`. An extra `activity` key returns `null` → `400 invalid_request` (`:396`) for the
+**whole reconcile read**, not just the frame. The repo already records this hazard in the file L2
+must edit: `src/cloud/signals.ts:1156-1160` — *"The read edge groups it with `chatReadKeys` and
+refuses a key it did not expect … folding `channel` in beside it would 400 every agent read that
+omits a channel."* Consequences the spec does not carry: (a) the L2 cell's premise ("a field the
+old edge ignores") is wrong — the failure is loss of inbox delivery, not a lost frame; (b) L1 is
+therefore a hard prerequisite, not a measured branch, and (c) **L1 can never be rolled back after
+L2 ships** — a revert of the read edge bricks reconcile for every upgraded listener. None of that
+is stated.
+
+**D2 — §2.2. The lane cannot be built as written: the "same `parseActivityRequest`" rejects the
+object the spec defines.** §2.2 fixes the nested keys as "the activity edge's request keys **minus
+`workspace_id`**" (example at :35-36) and then says the read edge "parses it with the **same**
+`parseActivityRequest`". That parser requires `typeof record.workspace_id === "string"` and a UUID
+(`activity/core.ts:50-51`) and closes the key set on `REQUEST_KEYS`, which contains `workspace_id`
+(`:15-24`). Measured above: the spec's object → `null`, always. The same sentence then says the edge
+checks `frame.workspaceId === agent.principal_workspace_id` — a field that cannot exist on a parse
+that never succeeds. The lane author must invent one of three incompatible resolutions (keep
+`workspace_id` in the object and check it; change the parser's signature to take an injected
+workspace id; fork a second parser — which the §2.2 "one parser, one 4,096-byte bound" goal forbids).
+The spec must pick one.
+
+## GAP
+
+**G1 — §2.2, "accepts an optional field". How the field is made optional inside an exact-keys parser
+is unspecified.** The three existing optional keys each use a different discriminator computed before
+the call: `modernShape` = `Object.hasOwn(body,"in_reply_to")` (`read/index.ts:259`), `chatReadKeys(body)`
+(`:260`), and the both-or-neither `cursorMode` pair (`:262-267`). L1 must add a fourth conditional
+spread; the spec names neither `exactKeys` nor the pattern. A lane that appends `"activity"`
+unconditionally 400s every read from every existing client — the exact failure `signals.ts:1156-1160`
+warns about — and no test in L1's list would catch it, because L1's tests all send an `activity`
+object.
+
+**G2 — §2.2, `activity_rejected: "<reason code>"`, "one of the existing closed reasons". There are no
+existing reason codes.** `parseActivityRequest` returns `ActivityRequest | null` (`activity/core.ts:44-84`);
+the activity edge answers `400 {"error":"invalid_request"}` / `403 {"error":"forbidden"}`
+(`activity/index.ts:87`, `:117`) and nothing enumerates *why*. `grep -rn reason supabase/functions/activity/`
+returns nothing. So L1 must invent the code set, its members, and its owner. Per AGENTS.md ("An
+enumeration inside a message must be generated, not typed") this set must be exported from the new
+`_shared/activity.ts` and built from the same constant the parser rejects on; the spec neither names
+the codes nor assigns that constraint.
+
+**G3 — §2.3. `idleFrame()`'s sequence rule is unspecified, and the wrong choice fails silently past
+every test the spec lists.** Today the sequence advances only inside `flush()` (`activity.ts:319`,
+`sequence: ++this.sequence`), which §2.3 removes from the idle path. The site keeps a frame only if
+`next.sequence > current.sequence` for the same `streamId` (`agent-activity.ts:133-140`) — the rule
+§1 cites at `:135-141`. If `idleFrame()` returns the current sequence rather than incrementing, the
+panel accepts the first idle frame and drops every later one for the life of the stream, ageing to
+"seen N min ago" forever. L2's tests as written ("no idle send; the read carries the frame; the
+into-idle frame fires once") and L3's ("idle frame 4 min old is not stale") all pass in that state;
+only a two-reconcile live control would catch it, and L2's live control is specified as one frame.
+State that `idleFrame()` increments, and add a two-frame assertion.
+
+**G4 — §4. Cross-spec ordering on `supabase/functions/read/index.ts` is unowned.** Three sibling
+specs at this SHA give a lane that edits this file: this spec's L1 (`lane/activity-on-read`),
+`MODEL-PER-AGENT.md:62` L1 (`lane/assigned-model`), and `PUSH-DELIVERY.md:251` L3 (`lane/wake-command`).
+Two of the three additionally claim the exclusive local-database slot ("holds the local database").
+§4's order line covers only L1–L5 of this spec. `parseBody`'s signals branch is the specific
+collision point: `wake-command` adds `wake` to the inbox **page response**, `assigned-model` adds
+columns to the same read, and L1 adds a key to the same `exactKeys` list. Name the order (this spec
+already says it succeeds push delivery; it does not say where it sits against `assigned-model`) and
+the serialisation for the database slot.
+
+**G5 — §2.5 row 2 contradicts §2.3 bullet 2 on counter semantics.** §2.3 says `activityPublishFailures`
+/ `activityLastErrorCode` "keep their meaning **for edge sends**"; §2.5 says a frame dropped at the
+**read** edge increments `activityPublishFailures`. Both cannot hold. L2 also owns
+`src/listener/control.ts` + `src/cli.ts` for `activityIdleCarrier`, so the status contract is L2's
+deliverable and the lane cannot pick without guessing. Decide one, and say whether the listener must
+read `activity_rejected` off the read response at all (the response top level is not key-closed —
+only recipient rows are, `signals.ts:395-400` — so adding it is safe for old clients; that is worth
+one line, since D1 makes the reader ask).
+
+## NIT
+
+- §1 row 3 cites `activity/index.ts:78-152`; `handle` begins at `:79` and the send ends `:150`.
+- §4 L1 cites `package.json:29` for the `p1-server` glob; it is line 29 as measured ✓.
+- §2.4's cited `entity-panel.observer.test.ts:97` is the `AGENT_ACTIVITY_INSTRUMENTATION_GRACE_MS`
+  assertion ✓; `site/src/lib/agent-activity.test.mjs` is gated by `site/package.json:11` ✓.
+
+## Verified correct
+
+`ACTIVITY_FRAME_INTERVAL_MS`/`ACTIVITY_HEARTBEAT_MS` (`activity.ts:12-13`), re-arm in `finally`
+(`:337-341`), `armHeartbeat` (`:285-292`), controller span `:165-343`; the edge's `RESET ROLE` →
+`realtime.send` order and server-stamped `principalId`/`emittedAt`/`redactCredentialText`
+(`activity/index.ts:123-150`); `AGENT_ACTIVITY_STALE_MS`/`_GRACE_MS` (`agent-activity.ts:6-7`);
+`LISTENER_RECONCILE_POLL_MS = 300_000` is **live today** (`src/listener/wake.ts:14`, used at
+`runtime.ts:1551`), so §0's "already makes one call every five minutes" holds and creates no hidden
+dependency on push delivery landing first; §3's 288 + 288 + 24 ≈ 600 arithmetic; §2.4's "no new key,
+so an old site build renders new frames as before".
+
+## Not established here
+
+Whether `realtime.send` inside the read transaction measurably lengthens the reconcile (§6 bullet 2)
+— I did not start the local stack. Whether L1's move of the parser into `_shared/` breaks
+`site/src/lib/agent-activity.ts:1-4`, which imports `../../../supabase/functions/activity/core.js`;
+if L1 empties `core.ts` the site build must move with it, and L1's file list does not name the site.
+
+QUOTE-BACK: # Idle heartbeat: fold it into the reconcile read
+VERDICT: FAIL
+REASON: The read edge's `exactKeys` parser rejects the whole request on an unknown top-level key, so §6's "not established" is a measurably false premise that also forbids rolling L1 back, and §2.2's `activity` object cannot be parsed by the "same `parseActivityRequest`" it names — measured `null` against a passing control — with five further gaps (optional-key mechanism, invented reason codes, `idleFrame()` sequencing, cross-spec ordering on `read/index.ts`, contradictory failure counters).

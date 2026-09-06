@@ -1,0 +1,25 @@
+I'll review the toolbar spec against the code, earlier arm notes, and sibling specs. First I need the document, the prior arm output, and the files it names.HEAD is `93792ef` on `spec/app-backlog`. Next I’ll read the earlier arm notes and check the files the spec cites.Round-1 findings look folded. I’ll check the cited files, live HTML, Vercel docs, and sibling-spec file ownership next.Docs and live HTML match so far. Next I’ll check whether a Vercel API actually exists (the spec says none) and whether the ledger path is named.Checked `93792ef` (`spec/app-backlog`), `docs/design/2026-09-06-VERCEL-TOOLBAR-OFF.md`. Round-1 at `e4d85c8` is folded (deploy claim; signed-in after-session; preview screenshot; operator-side vs lane). Sibling `2026-09-06-*.md` lanes do not share this spec’s files (`LiveDashboard.astro`, `message-markdown.ts`, `read/index.ts` untouched).
+
+**Holds**
+- §1 tree: `site/src/components/app/mobile-feed-layout.observer.test.ts:69` is `.dashboard__feed-toolbar`. `site/package.json:18-26` has no `@vercel/toolbar`. No `site/vercel.json`. `VERCEL_PREVIEW_FEEDBACK_ENABLED` only in this spec. Lockfile `@vercel/*` names are optional peers, not the toolbar package.
+- §1 live: GET 200 `/` 38974 B, `/app` 42534 B, `/start` 5866 B; each HTML has 0 `vercel.live`. `/app` “toolbar” is the feed class in `LiveDashboard.astro:653`.
+- §2 docs (https://vercel.com/docs/vercel-toolbar/managing-toolbar, `last_updated: 2026-08-11`): project Settings → General → Vercel Toolbar; Default / On / Off; Off = “Disable the toolbar for the environment.” Team fallback and “comments ride the toolbar” match the comments page. Team `ridgedotio` / project `coswarm-site` match `AGENTS.md:314-315`. Disable steps do not ask for a deploy.
+- §3 names `before.png`, `after.png`, `control-preview.png` under `docs/evidence/2026-09-06-vercel-toolbar/`. Signed-in session + preview control closes the e4d85c8 Gemini false-pass hole.
+- §5 evidence lane is docs-only; no test gate; no shared-file order with sibling lanes.
+
+**DEFECT — §4.** Claim: “Vercel exposes no API, CLI flag, or repo file for the toolbar visibility setting (the docs list only the dashboard, a per-session control, a preview-branch environment variable, and an automation header — none of which turns it off for production from code).” The parenthetical matches the toolbar page (`VERCEL_PREVIEW_FEEDBACK_ENABLED` is preview-branch; `x-vercel-skip-toolbar` is a preview request header). The “no API” clause is false. Official REST:
+
+- `PATCH /v9/projects/{idOrName}` body `enableProductionFeedback` — “Opt-in to production toolbar on the project level” (https://vercel.com/docs/rest-api/projects/update-an-existing-project).
+- `PATCH /v2/teams/{teamId}` body `enableProductionFeedback` — “Enable production toolbar: one of on, off or default” (https://vercel.com/docs/rest-api/reference/endpoints/teams/update-a-team). Team PATCH 403 is OWNER.
+
+`vercel api` can send those. That still needs a team token, so the operator-side *choice* can stand; the sentence that there is no API cannot. This line was added in the fold; it is new, not a re-report.
+
+**NIT — status line.** Still “draft 1” while the other seven `2026-09-06-*.md` specs on this SHA say draft 2.
+
+**NIT — §5.** “one line in the ledger” does not repeat the topic; §1 already named brain topic `app-backlog`.
+
+No GAP. Round-1 GAP/DEFECT on auth and “no lane” are not still present.
+
+QUOTE-BACK: # Vercel toolbar off in production
+VERDICT: FAIL
+REASON: Section 4’s “no API” claim is false: PATCH project and PATCH team both expose `enableProductionFeedback`.

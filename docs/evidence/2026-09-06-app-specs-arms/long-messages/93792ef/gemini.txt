@@ -1,0 +1,33 @@
+### Load-Bearing Design Choices & Inversions
+
+#### 1. Hard clip at line boundary instead of bottom fade (C2, Section 0)
+- **Inversion:** Implement the operator's requested bottom fade gradient (e.g. `mask-image` or gradient overlay).
+- **Predicted Regression:** Reintroduces the defect fixed in commit `6712776`: partially visible last lines become illegible without providing scroll capability, causing accessibility contrast failures and user frustration.
+- **Outcome:** **Did not beat spec.** Spec's hard clip preserves readability and respects regression history.
+
+#### 2. Runtime `matchMedia` JS event setting root CSS variable vs. Native CSS media query (C1)
+- **Inversion:** Declare `@media (max-width: 52rem) { .feed-root { --message-collapse-lines: 14; } }` purely in CSS.
+- **Predicted Regression / Failure:** Breakpoint defined in CSS cannot be directly imported as a TS string constant without build-time CSS extraction.
+- **Outcome:** **Beat spec.** A pure CSS media query removes window event listeners, eliminates layout thrashing during resize, avoids flash of unstyled collapse height prior to JS execution, and removes the need for a fragile source-text test pinning JS to line 13439.
+
+#### 3. Dynamic line estimation in toggle copy `(about N lines)` vs. Static label (C2)
+- **Inversion:** Keep static toggle copy (`Show more` / `Show less`).
+- **Predicted Regression / Failure:** User does not know if expansion reveals 2 lines or 200 lines.
+- **Outcome:** **Beat spec.** Dynamic estimation forces synchronous layout reflow (`getComputedStyle` + `scrollHeight`/`clientHeight`) per message row, miscounts non-text blocks (code blocks, blockquotes, tables) where line heights differ from `--lh-base`, and risks `Show more (about 0 lines)` on sub-pixel rendering. Static copy is resilient and zero-overhead.
+
+#### 4. Per-workspace `localStorage` mirror capped at 200 vs. Ephemeral in-memory state (C4)
+- **Inversion:** Retain purely in-memory `expandedSignalIds` without persistence.
+- **Predicted Regression / Failure:** Any browser reload immediately collapses expanded messages, frustrating users reviewing long message histories.
+- **Outcome:** **Did not beat spec.** Client-side `localStorage` mirroring across reloads solves the stated persistence defect without requiring server schema migrations.
+
+---
+
+### What a Lane Author Would Still Have to Invent
+
+1. **GAP (Section 2, C2 — N calculation edge cases):** When `scrollHeight > clientHeight + 1` triggers collapse due to sub-pixel margins or borders, `(scrollHeight - clientHeight) / lineHeightPx` can evaluate to `0 < x < 1` or round to 0 lines. The copy for `N = 0` is unspecified.
+2. **GAP (Section 2, C4 — Hydration & Initial Render Lifecycle):** Spec states `localStorage` is read in `openWorkspace`, but fails to specify how or when existing rendered rows in initial markup apply `expandedSignalIds` before initial paint to prevent visible collapse-pop layout shifts.
+3. **GAP (Section 5 vs C1 — Unresolved Breakpoint Token):** Section 5 explicitly notes that the exact phone breakpoint constant was not established, whereas C1 hardcodes `"(max-width: 52rem)"` and requires a source-text pin test against `:13439`. The lane author must invent how to extract or synchronize an internal CSS token without drift.
+
+QUOTE-BACK: # Long messages: a readable collapse and "Show more" that remembers
+VERDICT: FAIL
+REASON: Unspecified subpixel/zero-line edge cases and undefined initial render hydration timing leave gaps that require lane author invention.

@@ -1,0 +1,33 @@
+### Load-Bearing Design Choices Inverted
+
+1. **Piggyback idle telemetry onto the inbox reconcile read instead of a decoupled telemetry channel.**
+   - *Inversion:* Keep telemetry on an independent, dedicated transport (e.g., periodic background HTTP ping).
+   - *Predicted failure/regression:* Coupling telemetry to delivery creates fate-sharing: an inbox delivery failure or database timeout blinds the operator to agent liveness, misdiagnosing network/inbox outages as crashed agents.
+   - *Did it beat the spec?* **No.** An agent unable to reach its inbox is functionally dead for task execution. Coupling eliminates 100% of marginal idle edge calls (5,760 → 0/day), satisfying the operator cost mandate.
+
+2. **Server-side relay via Edge Function (`realtime.send`) instead of direct client-side socket publishing.**
+   - *Inversion:* Listener publishes heartbeat frames directly over its existing Realtime WebSocket connection.
+   - *Predicted failure/regression:* Server-side relay adds invocation compute overhead and makes HTTP read response latency vulnerable to Realtime broadcast availability.
+   - *Did it beat the spec?* **No.** As measured in draft 1 (`fa44311`), direct anon client publishing exposes private workspace topics, silently drops un-acked failures, and permits frame forgery. Server relay is required for tenant isolation.
+
+3. **Coarse 330 s idle staleness window (`AGENT_ACTIVITY_IDLE_STALE_MS`) instead of tight (<60 s) liveness detection.**
+   - *Inversion:* Enforce a strict <60 s staleness threshold via active probing or socket heartbeats.
+   - *Predicted failure/regression:* A 5.5-minute staleness window allows an ungracefully crashed or killed process to falsely display as "alive" for minutes, delaying incident detection.
+   - *Did it beat the spec?* **No.** Tight liveness requires frequent invocations that defeat the cost bar. Honest copy (`idle · seen N min ago`) accurately communicates data freshness without incurring polling cost.
+
+4. **Eager transition-into-idle edge frame instead of deferring to the next reconcile read.**
+   - *Inversion:* Drop the eager edge frame on phase transition and let the next reconcile carry the idle state.
+   - *Predicted failure/regression:* Agents completing work would remain rendered in an active tool-running phase for up to 300 s on the dashboard.
+   - *Did it beat the spec?* **No.** A single edge call per task completion preserves instant UI responsiveness within the 750 ms coalescing floor.
+
+---
+
+### What a Lane Author Would Still Have to Invent (Gaps)
+
+1. **Cross-Spec Lane Ordering (GAP):** Sibling specs modify `supabase/functions/read/index.ts` and `LiveDashboard.astro`. Spec §4 lists dependencies within this spec (L1 ∥ L3 → L2) but provides no integration order or conflict resolution baseline across sibling specs sharing these files.
+2. **`activity_rejected` Schema and Reason Codes (GAP):** §2.2 states the read response returns `activity_rejected: "<reason code>"`, but the read response schema, HTTP status code compatibility, and exact reason string union are unspecified.
+3. **`realtime.send` Execution Lifecycle in Read Edge (GAP):** §2.2 and §6 do not specify whether the read edge awaits `realtime.send` inline (coupling delivery latency to Realtime) or fires it asynchronously via `EdgeRuntime.waitUntil()`.
+
+QUOTE-BACK: # Idle heartbeat: fold it into the reconcile read
+VERDICT: FAIL
+REASON: Sibling spec ordering for shared files is absent, and the read edge's `activity_rejected` contract and Realtime dispatch lifecycle remain unspecified.
