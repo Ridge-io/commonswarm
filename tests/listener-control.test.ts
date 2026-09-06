@@ -1271,6 +1271,9 @@ test("status ignores unknown keys, renders old counters as unmeasured, and rejec
     "prompt",
     "reply",
     "owner",
+    "topic",
+    "wakeTopic",
+    "wake_topic",
   ]) {
     await writeRaw((row) => {
       row[key] = "forbidden";
