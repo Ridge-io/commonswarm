@@ -56,7 +56,28 @@ const HOOK_LOCK_TIMEOUT_MS = 250;
 export const HOOK_CHECK_TIMEOUT_MS = 3_000;
 export const HOOK_DEFAULT_COOLDOWN_SECONDS = 30;
 export const HOOK_SURFACED_IDS_MAX = 1_024;
-export const HOOK_BODY_PREVIEW_CHARS = 240;
+/* The hook injects previews into the model's context at prompt time. Operator
+ * messages on this channel are commonly 300-900 characters, so 1,000 carries
+ * nearly all of them whole. The full body stays on the queue item; a cut preview
+ * says how much is missing and where it is. The three tiers below keep one
+ * check's rendered signals under HOOK_RENDER_BUDGET_BYTES without dropping any. */
+export const HOOK_BODY_PREVIEW_CHARS = 1_000;
+/** Fallback preview cap once the render budget is near: the value shipped before 2026-09-06. */
+export const HOOK_BODY_PREVIEW_CHARS_MIN = 240;
+/** Last tier: header and reply line only, no preview. */
+export const HOOK_BODY_PREVIEW_CHARS_NONE = 0;
+/** Tiers in the order they apply; the renderer walks down and never back up. */
+export const HOOK_BODY_PREVIEW_TIERS = [
+  HOOK_BODY_PREVIEW_CHARS,
+  HOOK_BODY_PREVIEW_CHARS_MIN,
+  HOOK_BODY_PREVIEW_CHARS_NONE,
+] as const;
+/* UTF-8 bytes of rendered signal blocks per check. MAX_HOOK_SURFACE_BYTES above
+ * caps the hook-surface.json STATE FILE read, not stdout; before 2026-09-06 no
+ * bound applied to rendered text at all. Same value, separate meaning. */
+export const HOOK_RENDER_BUDGET_BYTES = 128 * 1024;
+/** Where the whole body is when a preview was cut. */
+export const HOOK_FULL_TEXT_COMMAND = "cswarm inbox";
 export const HOOK_MULTI_PRINCIPAL_GUIDANCE =
   "This host runs multiple agents. The CommonSwarm hook needs --principal-id. " +
   "Reinstall it for this agent: cswarm hook install claude --principal-id <uuid> --write";
@@ -615,16 +636,29 @@ function entryFromSignal(
   };
 }
 
-function preview(value: string): string {
-  let text = value.replaceAll("\r\n", "\n").replaceAll("\r", "\n");
-  if (text.length > HOOK_BODY_PREVIEW_CHARS) {
-    text = `${text.slice(0, HOOK_BODY_PREVIEW_CHARS - 1)}…`;
-  }
-  return JSON.stringify(text);
+export type HookPreviewCap = (typeof HOOK_BODY_PREVIEW_TIERS)[number];
+
+/* The preview shows the first `cap` characters (UTF-16 units, the unit of
+ * String.length) of the line-ending-normalised body, then an ellipsis, then a
+ * suffix whose N is the count NOT shown, so "first 1,000 plus N more" is exact.
+ * The suffix sits outside the JSON quotes: it is ours, not the sender's. */
+function preview(value: string, cap: HookPreviewCap): string {
+  const text = value.replaceAll("\r\n", "\n").replaceAll("\r", "\n");
+  if (text.length <= cap) return JSON.stringify(text);
+  const hidden = text.length - cap;
+  return `${JSON.stringify(`${text.slice(0, cap)}…`)} ${hookPreviewSuffix(hidden)}`;
+}
+
+/** The copy that names a cut; N is the run-time count of characters not shown. */
+export function hookPreviewSuffix(hiddenChars: number): string {
+  return `[… ${hiddenChars} more chars — ${HOOK_FULL_TEXT_COMMAND}]`;
 }
 
 /** Render untrusted teammate text only inside JSON quotes in a CommonSwarm block. */
-export function renderHookSignal(item: SurfaceItem): string {
+export function renderHookSignal(
+  item: SurfaceItem,
+  cap: HookPreviewCap = HOOK_BODY_PREVIEW_CHARS,
+): string {
   const sender = item.senderName === null ? item.fromId : item.senderName;
   const senderKind = item.fromKind === "user" ? "teammate" : "agent";
   const intent = item.kind === "ask"
@@ -633,14 +667,68 @@ export function renderHookSignal(item: SurfaceItem): string {
     ? "sent you a note:"
     : "sent you a message:";
   const replyLabel = item.kind === "note" ? "reply (optional):" : "reply:";
+  const replyLine = `${replyLabel} cswarm reply ${item.signalId} "<answer>" --workspace-id ${item.workspaceId}`;
+  const header = `[CommonSwarm] ${senderKind} ${JSON.stringify(sender)} ${intent}`;
+  if (cap === HOOK_BODY_PREVIEW_CHARS_NONE) return [header, replyLine].join("\n");
   return [
-    `[CommonSwarm] ${senderKind} ${JSON.stringify(sender)} ${intent}`,
-    preview(item.body),
+    header,
+    preview(item.body, cap),
     ...(item.attachmentCount === undefined
       ? []
       : [`Attachments: ${item.attachmentCount}. Run cswarm inbox to see names and exact retrieval commands.`]),
-    `${replyLabel} cswarm reply ${item.signalId} "<answer>" --workspace-id ${item.workspaceId}`,
+    replyLine,
   ].join("\n");
+}
+
+const HOOK_BLOCK_SEPARATOR = "\n\n";
+
+/* Render a page of signals in arrival order under one UTF-8 byte budget. Each
+ * item is tried at the current tier; when the surface so far, plus that block,
+ * plus the two-line floor of every LATER item would exceed the budget, the tier
+ * drops for it and for every later item. Reserving the floor is what makes the
+ * bound hold: without it the last items would still add their two lines after
+ * the budget was spent. Nothing is dropped. The bound is therefore exact
+ * whenever the floors alone fit (100 items are about 15 KB); if they do not,
+ * every item renders at the floor and the overflow is the floors' own size.
+ * Other blocks the hook emits (stranded queue, drop counts, credential
+ * warnings, the brain digest) are outside this budget. */
+export function renderHookSignals(
+  items: readonly SurfaceItem[],
+  budgetBytes: number = HOOK_RENDER_BUDGET_BYTES,
+): { blocks: string[]; caps: HookPreviewCap[] } {
+  const separator = HOOK_BLOCK_SEPARATOR.length;
+  const floors = items.map((item) =>
+    Buffer.byteLength(renderHookSignal(item, HOOK_BODY_PREVIEW_CHARS_NONE), "utf8") + separator
+  );
+  const reserveAfter: number[] = new Array(items.length).fill(0);
+  for (let index = items.length - 2; index >= 0; index -= 1) {
+    reserveAfter[index] = reserveAfter[index + 1]! + floors[index + 1]!;
+  }
+  const blocks: string[] = [];
+  const caps: HookPreviewCap[] = [];
+  let tier = 0;
+  let bytes = 0;
+  items.forEach((item, index) => {
+    const costAt = (cap: HookPreviewCap): { block: string; cost: number } => {
+      const block = renderHookSignal(item, cap);
+      return {
+        block,
+        cost: Buffer.byteLength(block, "utf8") + (index === 0 ? 0 : separator),
+      };
+    };
+    let candidate = costAt(HOOK_BODY_PREVIEW_TIERS[tier]!);
+    while (
+      bytes + candidate.cost + reserveAfter[index]! > budgetBytes &&
+      tier < HOOK_BODY_PREVIEW_TIERS.length - 1
+    ) {
+      tier += 1;
+      candidate = costAt(HOOK_BODY_PREVIEW_TIERS[tier]!);
+    }
+    blocks.push(candidate.block);
+    caps.push(HOOK_BODY_PREVIEW_TIERS[tier]!);
+    bytes += candidate.cost;
+  });
+  return { blocks, caps };
 }
 
 /** Give hook and status output one restart command that preserves recorded routing. */
@@ -896,7 +984,7 @@ export async function checkListenerHooks(
         [...check.pending, ...check.network],
         check.droppedCount,
       );
-      blocks.push(...staged.unseen.map(renderHookSignal));
+      blocks.push(...renderHookSignals(staged.unseen).blocks);
       const pendingSignalIds = new Set(check.pending.map((entry) => entry.signalId));
       const unseenPending = staged.unseen.filter((item) => pendingSignalIds.has(item.signalId));
       if (check.context.listenerLive === false && unseenPending.length > 0) {
