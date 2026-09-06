@@ -1167,6 +1167,7 @@ import "../../styles/tokens.css";
     revokeAgentPrincipal,
     setAgentModel,
     subscribeAgentActivity,
+    subscribeWorkspaceSignals,
     uuid,
     browserSignalFromRow,
     BROWSER_SIGNAL_COLUMNS,
@@ -1303,6 +1304,7 @@ import "../../styles/tokens.css";
   } from "../../lib/composer-address";
   import { SIGNAL_BODY_MAX } from "../../../../supabase/functions/_shared/signal-text";
   import { HumanSeenReporter } from "../../lib/human-seen-reporter";
+  import { FeedPushController } from "../../lib/feed-push";
 
   interface Workspace extends CloseableWorkspace {}
 
@@ -1503,8 +1505,8 @@ import "../../styles/tokens.css";
     let bootInFlight: Promise<void> | null = null;
     let bootAgain = false;
     let signalExpiryTimer: number | undefined;
-    let liveFeedTimer: number | undefined;
     let liveFeedInFlight = false;
+    let liveFeedQueued = false;
     let rosterRefreshInFlight = false;
     let rosterRefreshAttemptedAt = 0;
     /* Ownership of the pending-access refresh lives in the gate, not in flags:
@@ -1522,6 +1524,9 @@ import "../../styles/tokens.css";
     const unknownAgentCandidates = new Set<string>();
     const settledUnknownAgents = new Set<string>();
     let armLiveFeed = (): void => {};
+    let disarmLiveFeed = (): void => {};
+    let stopFeedPush = (): void => {};
+    let startFeedPush = (_workspaceId: string): void => {};
     let connectFocusObserver: MutationObserver | null = null;
     let previousSignalIds = new Set<string>();
     let feedWasEmpty = false;
@@ -1736,8 +1741,7 @@ import "../../styles/tokens.css";
         signalExpiryTimer = undefined;
       }
       if (name !== "feed" && name !== "feed-empty") {
-        window.clearInterval(liveFeedTimer);
-        liveFeedTimer = undefined;
+        disarmLiveFeed();
       }
       for (const section of all<HTMLElement>("[data-channel-view]")) {
         section.hidden = section.dataset.channelView !== name;
@@ -5491,12 +5495,15 @@ import "../../styles/tokens.css";
       const workspaceId = activeWorkspaceId;
       const version = requestVersion;
       if (
-        liveFeedInFlight ||
         sampleMode ||
         !workspaceId ||
         document.visibilityState !== "visible" ||
         !["feed", "feed-empty"].includes(app.dataset.channelView ?? "")
       ) return;
+      if (liveFeedInFlight) {
+        liveFeedQueued = true;
+        return;
+      }
       liveFeedInFlight = true;
       try {
         const channelId = activeChannelId;
@@ -5545,8 +5552,28 @@ import "../../styles/tokens.css";
         // next tick retries, and the explicit refresh control remains available.
       } finally {
         liveFeedInFlight = false;
+        if (liveFeedQueued) {
+          liveFeedQueued = false;
+          void refreshLatestSignals();
+        }
       }
     };
+
+    const feedPush = new FeedPushController({
+      subscribe: (workspaceId, onEvent, onStatus) =>
+        subscribeWorkspaceSignals(workspaceId, onEvent, onStatus),
+      refresh: () => refreshLatestSignals(),
+      timers: {
+        setInterval: (handler, ms) => window.setInterval(handler, ms),
+        clearInterval: (id) => {
+          if (id !== undefined) window.clearInterval(id);
+        },
+        setTimeout: (handler, ms) => window.setTimeout(handler, ms),
+        clearTimeout: (id) => {
+          if (id !== undefined) window.clearTimeout(id);
+        },
+      },
+    });
 
     /*
      * Pending access is where the inviter WAITS: a teammate invite or an agent key sits
@@ -5654,6 +5681,7 @@ import "../../styles/tokens.css";
 
     /** Clear every workspace-scoped value when auth identity or availability changes. */
     const resetWorkspaceSessionState = (): void => {
+      stopFeedPush();
       stopAgentActivity();
       closeEntityPanel(false);
       closeWorkspaceMenu();
@@ -5721,14 +5749,13 @@ import "../../styles/tokens.css";
       previousSignalIds = new Set();
       feedWasEmpty = false;
       liveFeedInFlight = false;
+      liveFeedQueued = false;
       rosterRefreshInFlight = false;
       rosterRefreshAttemptedAt = 0;
       expandedSignalIds.clear();
       resetComposer();
       window.clearTimeout(signalExpiryTimer);
       signalExpiryTimer = undefined;
-      window.clearInterval(liveFeedTimer);
-      liveFeedTimer = undefined;
       pendingRefreshGate.resetCooldown();
       syncPendingPoll();
 
@@ -5797,9 +5824,22 @@ import "../../styles/tokens.css";
         !activeWorkspaceId ||
         document.visibilityState !== "visible" ||
         !["feed", "feed-empty"].includes(app.dataset.channelView ?? "")
-      ) return;
-      if (liveFeedTimer !== undefined) return;
-      liveFeedTimer = window.setInterval(() => void refreshLatestSignals(), 2_000);
+      ) {
+        disarmLiveFeed();
+        return;
+      }
+      feedPush.arm();
+    };
+    disarmLiveFeed = (): void => {
+      feedPush.disarm();
+    };
+    stopFeedPush = (): void => {
+      feedPush.stop();
+    };
+    startFeedPush = (workspaceId: string): void => {
+      const workspaceForJoin = workspaceId;
+      if (sampleMode) return;
+      feedPush.start(workspaceForJoin);
     };
 
     /*
@@ -5860,8 +5900,7 @@ import "../../styles/tokens.css";
     document.addEventListener("visibilitychange", () => {
       humanSeenReporter.visibilityChange(document.visibilityState === "visible");
       if (document.visibilityState !== "visible") {
-        window.clearInterval(liveFeedTimer);
-        liveFeedTimer = undefined;
+        disarmLiveFeed();
         syncPendingPoll();
         return;
       }
@@ -6033,6 +6072,7 @@ import "../../styles/tokens.css";
       syncConnectWorkspace(selected);
       const version = ++requestVersion;
       startAgentActivity(selected.id, version);
+      startFeedPush(selected.id);
       agents = [];
       members = [];
       pendingInvites = [];
@@ -7131,6 +7171,7 @@ import "../../styles/tokens.css";
 
     const renderSample = (): void => {
       sampleMode = true;
+      stopFeedPush();
       stopAgentActivity();
       agentActivityConnection = "subscribed";
       signalHasMore = false;

@@ -43,6 +43,10 @@ import {
   channelRefusalMessage,
   type WorkspaceChannel,
 } from "./channels.js";
+import {
+  attachWorkspaceSignalsChannel,
+  type FeedPushSubscription,
+} from "./feed-push.js";
 
 export type { WorkspaceChannel };
 
@@ -209,6 +213,26 @@ export async function subscribeAgentActivity(
       await c.removeChannel(channel);
     },
   };
+}
+
+export type WorkspaceSignalsSubscription = FeedPushSubscription;
+
+/**
+ * Subscribe one signed-in member to the private workspace signal topic.
+ * Captures the workspace id before session and setAuth awaits.
+ */
+export async function subscribeWorkspaceSignals(
+  workspaceId: string,
+  onEvent: () => void,
+  onStatus: (status: string) => void,
+): Promise<WorkspaceSignalsSubscription> {
+  const c = client();
+  if (!c) throw new NoDeployment();
+  const workspaceForJoin = workspaceId;
+  const active = await currentSession();
+  if (!active) throw new SessionExpired();
+  await c.realtime.setAuth(active.access_token);
+  return attachWorkspaceSignalsChannel(c, workspaceForJoin, onEvent, onStatus);
 }
 
 /**

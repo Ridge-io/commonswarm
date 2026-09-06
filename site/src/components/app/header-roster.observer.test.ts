@@ -281,8 +281,8 @@ test("unknown agent-authored signals trigger a bounded roster refresh", () => {
   assert.match(dashboard, /void refreshRosterForUnknownAgents/);
   assert.match(
     dashboard,
-    /setInterval\(\(\) => void refreshLatestSignals\(\), 2_000\)/,
-    "the two-second signal polling cadence is preserved",
+    /feedPush\.arm\(\)/,
+    "the live feed still arms a timer; fallback cadence is FEED_POLL_MS",
   );
 });
 
