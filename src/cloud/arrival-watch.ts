@@ -22,6 +22,11 @@ import {
   IDLE_POLL_MAX_MS,
   nextIdlePollMs,
 } from "./idle-poll.js";
+import {
+  LISTENER_RECONCILE_POLL_MS,
+  LISTENER_WAKE_MODE_PUSH,
+  type WakeHandle,
+} from "../listener/wake.js";
 
 const UUID_RE =
   /^[0-9a-f]{8}-[0-9a-f]{4}-[1-8][0-9a-f]{3}-[89ab][0-9a-f]{3}-[0-9a-f]{12}$/i;
@@ -452,6 +457,11 @@ function assertCursorPage(page: AgentSignalPage): void {
  * Read-only arrival loop. It never imports or calls delivery claim/ack code.
  * The cursor is saved after each successfully emitted line, so a normal restart
  * resumes after that line while messages received during downtime remain newer.
+ *
+ * A `wake` hint on the inbox page it already reads is optional. With a topic it
+ * waits on the shared WakeSubscriber: a wake does one read; while subscribed
+ * the only timer is the 5-minute reconcile; CHANNEL_ERROR/CLOSED return the
+ * existing 60 s poll. A server without `wake` keeps today's poll unchanged.
  */
 export async function runArrivalWatch(options: {
   workspaceId: string;
@@ -467,13 +477,22 @@ export async function runArrivalWatch(options: {
   signal?: AbortSignal;
   pollMs?: number;
   random?: () => number;
+  now?: () => number;
+  /** Shared Realtime subscriber. Absent: poll only, as before this lane. */
+  wake?: WakeHandle;
+  reconcileMs?: number;
 }): Promise<ArrivalWatchStop> {
   const pollMs = options.pollMs ?? ARRIVAL_WATCH_POLL_MS;
   const random = options.random ?? Math.random;
+  const now = options.now ?? Date.now;
+  const reconcileMs = options.reconcileMs ?? LISTENER_RECONCILE_POLL_MS;
+  const wake = options.wake;
   let emptyIdleStreak = 0;
   let cursor = await options.store.read();
   let baseline = cursor === undefined;
   let attempt = 0;
+  let reconcileDueAt = now();
+  let pendingKind: "wake" | "other" = "other";
   const cancelled = () => options.signal?.aborted === true;
 
   const wait = async (ms: number): Promise<void> => {
@@ -504,6 +523,66 @@ export async function runArrivalWatch(options: {
     await wait(intervalMs);
   };
 
+  const pushMode = (): boolean =>
+    wake !== undefined &&
+    wake.hasTopic &&
+    wake.snapshot(now()).mode === LISTENER_WAKE_MODE_PUSH;
+
+  /** Poll cadence while not subscribed; 5-minute reconcile while push. */
+  const waitCapMs = (): number => {
+    if (pushMode()) return reconcileMs;
+    return nextIdlePollMs(pollMs, emptyIdleStreak, IDLE_POLL_MAX_MS);
+  };
+
+  const applyWakeHint = (page: AgentSignalPage): void => {
+    const topic = page.wake?.topic;
+    if (topic === undefined || wake === undefined) return;
+    try {
+      wake.setTopic(topic);
+    } catch {
+      // Parsed hints are valid; a closed subscriber is ignored.
+    }
+  };
+
+  const waitForTrigger = async (hadDelivery: boolean): Promise<void> => {
+    if (hadDelivery) emptyIdleStreak = 0;
+    if (wake === undefined || !wake.hasTopic) {
+      pendingKind = "other";
+      await idleWait(hadDelivery);
+      return;
+    }
+    const cap = waitCapMs();
+    const until = Math.min(reconcileDueAt, now() + cap);
+    const reason = await wake.next({
+      until,
+      ...(options.signal ? { signal: options.signal } : {}),
+    });
+    if (cancelled()) return;
+    if (reason === "wake" && pushMode()) {
+      const coalesceMs = wake.coalescingRemainingMs(now());
+      if (coalesceMs > 0) await wait(coalesceMs);
+      pendingKind = pushMode() ? "wake" : "other";
+      return;
+    }
+    pendingKind = "other";
+    if (
+      !hadDelivery &&
+      reason === "deadline" &&
+      !pushMode()
+    ) {
+      emptyIdleStreak += 1;
+    }
+  };
+
+  const noteCycle = (): void => {
+    if (pendingKind === "wake") {
+      wake?.noteClaim(now());
+      return;
+    }
+    reconcileDueAt = now() + reconcileMs;
+    wake?.noteReconcile(now());
+  };
+
   while (!cancelled()) {
     try {
       const page = await options.readPage({
@@ -512,6 +591,7 @@ export async function runArrivalWatch(options: {
         limit: baseline ? 1 : SIGNAL_FOLLOW_PAGE_LIMIT,
       });
       assertCursorPage(page);
+      applyWakeHint(page);
       /* THE RECIPIENT SET, not the scalar column.
        *
        * RETIRED 2026-09-05: this refused any row whose `to_agent` was not this
@@ -545,7 +625,8 @@ export async function runArrivalWatch(options: {
         await options.store.write(cursor);
         baseline = false;
         if (cancelled()) break;
-        await idleWait(false);
+        noteCycle();
+        await waitForTrigger(false);
         continue;
       }
 
@@ -563,8 +644,12 @@ export async function runArrivalWatch(options: {
       if (cancelled()) break;
 
       const fullPage = page.rawCount >= SIGNAL_FOLLOW_PAGE_LIMIT;
-      if (fullPage) await wait(0);
-      else await idleWait(emittedSignals.length > 0);
+      if (fullPage) {
+        await wait(0);
+        continue;
+      }
+      noteCycle();
+      await waitForTrigger(emittedSignals.length > 0);
     } catch (error) {
       if (cancelled()) break;
       const http = followHttpDetails(error);

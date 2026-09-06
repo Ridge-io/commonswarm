@@ -305,6 +305,7 @@ import {
   summarizeListenerReadHealth,
   listenerWakeStatusSentence,
   emptyListenerWakeStatus,
+  createWakeSubscriber,
   LISTENER_DELIVERY_HOLD_RELEASE_CLAUSES,
   LISTENER_DELIVERY_HOLD_RELEASE_REMEDIES,
   type ListenerReadHealthSummary,
@@ -4006,6 +4007,7 @@ async function runInboxNotifyCommand(args: Arguments): Promise<void> {
     principalId,
   );
   await acquireArrivalWatchLock(lockPath);
+  const wake = createWakeSubscriber({ target: cloud });
   try {
     const retryNotices = createArrivalRetryNoticePolicy();
     let renderedBearer = selected.bearer;
@@ -4019,6 +4021,7 @@ async function runInboxNotifyCommand(args: Arguments): Promise<void> {
       principalId,
       store: cursorStore,
       signal: controller.signal,
+      wake,
       readPage: async ({ after, baseline, limit }) => {
         const token = selected.session
           ? await selected.session.bearer()
@@ -4083,6 +4086,7 @@ async function runInboxNotifyCommand(args: Arguments): Promise<void> {
     process.off("SIGINT", stop);
     process.off("SIGTERM", stop);
     httpClient.close();
+    await wake.close();
     await releaseArrivalWatchLock(lockPath);
   }
 }
