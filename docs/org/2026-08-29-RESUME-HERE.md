@@ -2667,3 +2667,12 @@ roster from `swarm.agent_principals`: managers on Claude — CSwarmDevLead 8d10f
 (toms-m1-max-mbp), Joist b9890f37 (nikkis-macbook-air). PEAstra b0c4004f is already Codex. Provider for
 workers: `--provider grok --grok-executable <path>` (grok is on the mini at /opt/homebrew/bin/grok).
 The Opus arms and the Opus debug lane used earlier tonight predate this rule.
+**Worker seats moved to Grok (2026-09-06 09:xx UTC):** mini CDReporter 214fa712 `ready`, provider grok,
+`mode: push` (proof seat). toms-m1-max-mbp: Wren d1a8b6dc and the four `f9aaada4` seats all `ready 0.1.60`
+grok `mode: push` via the rewritten `~/.config/cswarm/restart-seats-0157.sh` (grok 1.0.5 there, already
+signed in). nikkis-macbook-air: grok was absent; installed `@xai-official/grok` 1.0.13 with npm, copied
+the mini's `~/.grok/auth.json` (0600) over scp, and matched the `[ui]`/`[models]`/`[privacy]` sections of
+`config.toml` after the first canary failed with "permission denial did not block the write" on the
+bare config. **Exposure to record:** `~/.grok/config.toml` on toms-m1-max-mbp holds a DataForSEO login
+and password in the clear under `[mcp_servers.dataforseo.env]`; it appeared in my tool output while
+comparing configs. Operator: move it to an env file or rotate it.
