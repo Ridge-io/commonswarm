@@ -12,10 +12,11 @@ import type { SignalRecord } from "../../src/cloud/command-client.js";
 import {
   acquireArrivalWatchLock,
   arrivalNotification,
+  arrivalFullTextCommand,
+  arrivalReplyCommand,
   arrivalSnippetSuffix,
   arrivalWatchAlreadyRunningSentence,
   ArrivalWatchAlreadyRunningError,
-  ARRIVAL_FULL_TEXT_COMMAND,
   ARRIVAL_RETRY_NOTICE_THRESHOLD_MS,
   ARRIVAL_SNIPPET_MAX,
   ARRIVAL_WATCH_POLL_MS,
@@ -262,8 +263,8 @@ test("the readable line names the cut and the path to the full text, from run-ti
     TARGET,
   );
   const output = formatArrivalNotification(notification);
-  const expected = ` (${notification.snippet.length.toLocaleString("en-US")} of ${body.length.toLocaleString("en-US")} chars; full text: ${ARRIVAL_FULL_TEXT_COMMAND})`;
-  assert.equal(expected, ` (${ARRIVAL_SNIPPET_MAX} of 1,234 chars; full text: cswarm inbox)`);
+  const expected = ` (${notification.snippet.length.toLocaleString("en-US")} of ${body.length.toLocaleString("en-US")} chars; full text: ${arrivalFullTextCommand(WORKSPACE)})`;
+  assert.equal(expected, ` (${ARRIVAL_SNIPPET_MAX} of 1,234 chars; full text: cswarm inbox --workspace-id ${WORKSPACE})`);
   assert.equal(output.includes(expected), true);
   assert.equal(output.split("\n").length, 1);
   assert.match(output, / — reply: cswarm reply /);
@@ -292,10 +293,35 @@ test("no path phrase at exactly ARRIVAL_SNIPPET_MAX chars; present at one more",
   const suffix = arrivalSnippetSuffix(overCap);
   assert.equal(
     suffix,
-    ` (${ARRIVAL_SNIPPET_MAX} of ${ARRIVAL_SNIPPET_MAX + 1} chars; full text: ${ARRIVAL_FULL_TEXT_COMMAND})`,
+    ` (${ARRIVAL_SNIPPET_MAX} of ${ARRIVAL_SNIPPET_MAX + 1} chars; full text: ${arrivalFullTextCommand(WORKSPACE)})`,
   );
   assert.equal(overCap.snippet.endsWith("…"), true);
   assert.equal(formatArrivalNotification(overCap).includes(suffix), true);
+});
+
+/* The Codex arm on 727f4c44 failed the lane on this: the phrase named a bare
+ * `cswarm inbox`, which cannot show the addressed reader anything. An agent
+ * identity comes only from its credential flags and then requires a workspace
+ * (`cswarm inbox --notify` itself refuses to run without --workspace-id, and the
+ * CLI's agent path throws "agent credentials require --workspace-id"). So the
+ * command must carry the same route the sibling reply command carries. */
+test("the full-text command names the workspace the way the reply command does", () => {
+  const notification = arrivalNotification(
+    row("bbbbbbbb-2222-4222-8222-222222222222", "q".repeat(ARRIVAL_SNIPPET_MAX + 1), "2026-09-06T10:05:00.000Z"),
+    WORKSPACE,
+    TARGET,
+  );
+  const command = arrivalFullTextCommand(WORKSPACE);
+  assert.equal(command, `cswarm inbox --workspace-id ${WORKSPACE}`);
+  /* Same route flag set as the reply command: every flag the reply names, the full-text
+     command names, so neither can drift to a form the reader cannot run. */
+  const flags = (text: string): string[] => [...text.matchAll(/--[a-z-]+/gu)].map((match) => match[0]);
+  assert.deepEqual(flags(command), flags(arrivalReplyCommand(notification.signal_id, WORKSPACE)));
+  assert.equal(flags(command).includes("--workspace-id"), true);
+  const rendered = formatArrivalNotification(notification);
+  assert.equal(rendered.includes(`full text: ${command}`), true);
+  /* Credentials and target stay out of the line, as the reply command's comment records. */
+  assert.doesNotMatch(rendered, /--agent-token|--url|--anon-key/u);
 });
 
 /* Whitespace collapses before the cap applies, so a body over the cap in raw

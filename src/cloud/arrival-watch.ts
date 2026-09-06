@@ -361,19 +361,27 @@ export function arrivalSnippetWasCut(body: string): boolean {
   return arrivalOneLine(body).length > ARRIVAL_SNIPPET_MAX;
 }
 
-/** The command that shows the whole body when the readable line could not. */
-export const ARRIVAL_FULL_TEXT_COMMAND = "cswarm inbox";
+/* The command that shows the whole body when the readable line could not. Built
+ * the way arrivalReplyCommand is: the reader is an agent, an agent identity comes
+ * only from its credential flags and then REQUIRES a workspace, so a bare
+ * `cswarm inbox` cannot show this reader anything (measured by CSwarmDevLead on
+ * 0.1.60: the bare form asks a person to log in; with only the credential it
+ * refuses to infer a target). The url and anon key are omitted for the reason
+ * recorded on arrivalReplyCommand. */
+export function arrivalFullTextCommand(workspaceId: string): string {
+  return `cswarm inbox --workspace-id ${workspaceId}`;
+}
 
 /* A snippet is a preview, and a preview must say where the whole text is. The
  * numbers are the run-time lengths, never typed copy, so the phrase cannot drift
  * from ARRIVAL_SNIPPET_MAX. Empty when nothing was cut. */
 export function arrivalSnippetSuffix(
-  notification: Pick<ArrivalNotification, "snippet" | "body">,
+  notification: Pick<ArrivalNotification, "snippet" | "body" | "workspace_id">,
 ): string {
   if (!arrivalSnippetWasCut(notification.body)) return "";
   const shown = notification.snippet.length.toLocaleString("en-US");
   const total = notification.body.length.toLocaleString("en-US");
-  return ` (${shown} of ${total} chars; full text: ${ARRIVAL_FULL_TEXT_COMMAND})`;
+  return ` (${shown} of ${total} chars; full text: ${arrivalFullTextCommand(notification.workspace_id)})`;
 }
 
 /** Collapse a message body to one bounded, terminal-safe notification snippet. */
