@@ -47,7 +47,7 @@ import {
   recordListenerWakeModeChange,
   LISTENER_MODE_CHANGE_SKIP_MAX,
   REALTIME_SUBSCRIBE_STATUS,
-  runListenerRuntime,
+  runListenerRuntime as runListenerRuntimeActual,
   summarizeListenerReadHealth,
   WAKE_CLAIMS_PER_MINUTE_BUDGET,
   WAKE_ERROR_CODES,
@@ -72,6 +72,19 @@ import {
 
 const WORKSPACE_ID = "11111111-1111-4111-8111-111111111111";
 const PRINCIPAL_ID = "22222222-2222-4222-8222-222222222222";
+
+async function runListenerRuntime(
+  options: Parameters<typeof runListenerRuntimeActual>[0],
+): ReturnType<typeof runListenerRuntimeActual> {
+  return await runListenerRuntimeActual({
+    pendingMainQueue: {
+      async enqueue() {
+        return { count: 1, added: true, droppedOldest: false, droppedCount: 0 };
+      },
+    },
+    ...options,
+  });
+}
 const WAKE_TOPIC = `${WAKE_TOPIC_PREFIX}${"A".repeat(43)}`;
 const WAKE_TOPIC_B = `${WAKE_TOPIC_PREFIX}${"B".repeat(43)}`;
 

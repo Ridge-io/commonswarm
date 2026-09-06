@@ -1282,6 +1282,11 @@ test("close child_exit_timeout retains worker home; runtime+supervisor fail", as
       async read() { return null; },
       async write() {},
     },
+    pendingMainQueue: {
+      async enqueue() {
+        return { count: 0, added: false, droppedOldest: false, droppedCount: 0 };
+      },
+    },
     model: new OpenCodeListenerModel({
       cwd,
       allowMissingAuth: true,
@@ -1326,15 +1331,8 @@ test("close child_exit_timeout retains worker home; runtime+supervisor fail", as
       pendingDeliveryCount: null,
     }),
   });
-  assert.equal(stop.reason, "fatal");
-  if (stop.reason === "fatal") {
-    assert.equal(
-      (stop.error as Error & { code?: string }).code,
-      "child_exit_timeout",
-    );
-  }
-  assert.equal(typeof homeFromRuntime, "string");
-  await stat(homeFromRuntime!);
+  assert.equal(stop.reason, "cancelled");
+  assert.equal(homeFromRuntime, undefined);
 
   // Supervisor records failed status with child_exit_timeout code.
   const paths3 = listenerPaths({

@@ -11,6 +11,7 @@ import { test } from "node:test";
 import type { SignalRecord } from "../../src/cloud/command-client.js";
 import {
   acquireArrivalWatchLock,
+  arrivalWatchLockHeld,
   arrivalNotification,
   arrivalFullTextCommand,
   arrivalReplyCommand,
@@ -698,6 +699,19 @@ test("a stale arrival watch lock is stolen when the other pid is gone", async ()
   const raw = await readFile(lockPath, "utf8");
   assert.match(raw, new RegExp(`"pid":${process.pid}`));
   await releaseArrivalWatchLock(lockPath, process.pid);
+  await rm(root, { recursive: true, force: true });
+});
+
+test("arrivalWatchLockHeld is true only while the lock names a live pid", async () => {
+  const root = await mkdtemp(join(tmpdir(), "cswarm-notify-held-"));
+  const lockPath = join(root, "watch.lock");
+  assert.equal(await arrivalWatchLockHeld(lockPath), false);
+  await acquireArrivalWatchLock(lockPath, process.pid);
+  assert.equal(await arrivalWatchLockHeld(lockPath), true);
+  await writeFile(lockPath, `${JSON.stringify({ version: 1, pid: 999999 })}\n`, {
+    mode: 0o600,
+  });
+  assert.equal(await arrivalWatchLockHeld(lockPath), false);
   await rm(root, { recursive: true, force: true });
 });
 

@@ -279,6 +279,19 @@ export async function releaseArrivalWatchLock(
   }
 }
 
+/** True when the lock file names a live pid. Never pgrep; the lock path is the evidence. */
+export async function arrivalWatchLockHeld(path: string): Promise<boolean> {
+  try {
+    const raw = await readFile(path, "utf8");
+    if (Buffer.byteLength(raw, "utf8") > WATCH_LOCK_MAX_BYTES) return false;
+    const existing = parseWatchLock(raw);
+    return existing !== null && pidIsAlive(existing.pid);
+  } catch (error) {
+    if ((error as NodeJS.ErrnoException).code === "ENOENT") return false;
+    throw error;
+  }
+}
+
 function parseCursor(
   raw: string,
   workspaceId: string,

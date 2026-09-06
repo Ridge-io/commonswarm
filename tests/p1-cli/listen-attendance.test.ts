@@ -1,13 +1,19 @@
 /** Attendance coverage. This file is reached by `npm run test:p1-cli`. */
 import assert from "node:assert/strict";
 import { spawn, spawnSync } from "node:child_process";
-import { chmod, mkdtemp, rm, writeFile } from "node:fs/promises";
+import { chmod, mkdir, mkdtemp, rm, writeFile } from "node:fs/promises";
 import { createServer } from "node:http";
 import { tmpdir } from "node:os";
 import { dirname, join, resolve } from "node:path";
 import { fileURLToPath } from "node:url";
 import test from "node:test";
+import {
+  acquireArrivalWatchLock,
+  arrivalWatchLockPath,
+  releaseArrivalWatchLock,
+} from "../../src/cloud/arrival-watch.js";
 import { cloudTarget } from "../../src/cloud/config.js";
+import { claudeUserPromptHookSnippet } from "../../src/cli.js";
 import type { DeliveryOutcome } from "../../src/cloud/delivery.js";
 import {
   appendListenerEvent,
@@ -55,6 +61,7 @@ function runCli(
       HOME: options.home,
       CLAUDE_CONFIG_DIR: join(options.home, ".claude"),
       XDG_CONFIG_HOME: join(options.home, ".config"),
+      XDG_STATE_HOME: join(options.home, "xdg-state"),
       NODE_OPTIONS: "--max-old-space-size=4096",
     },
     input: options.input ?? "",
@@ -73,6 +80,7 @@ async function runCliAsync(
       HOME: options.home,
       CLAUDE_CONFIG_DIR: join(options.home, ".claude"),
       XDG_CONFIG_HOME: join(options.home, ".config"),
+      XDG_STATE_HOME: join(options.home, "xdg-state"),
       NODE_OPTIONS: "--max-old-space-size=4096",
     },
     stdio: ["ignore", "pipe", "pipe"],
@@ -239,7 +247,8 @@ test("listen status separates connected, attended, and handled across the fixtur
       new RegExp(`cswarm hook install claude --principal-id ${PRINCIPAL_ID} --write`),
     );
     assert.match(readyQueued.stdout, /then start a fresh session/);
-    assert.match(readyQueued.stdout, /--route worker/);
+    assert.match(readyQueued.stdout, /cswarm inbox --notify/);
+    assert.doesNotMatch(readyQueued.stdout, /--route worker/);
 
     const json = await runCliAsync([...statusArgs(readyQueuedRoot), "--json"], {
       cwd: root,
@@ -449,14 +458,17 @@ test("listen start refuses unattended main routes unless the operator accepts th
     assert.equal(refused.status, 1);
     assert.match(refused.stderr, /listen_unattended_refused/);
     assert.match(refused.stderr, /then start a fresh session/);
+    assert.match(refused.stderr, /cswarm inbox --notify/);
     assert.match(refused.stderr, /--allow-unattended/);
+    assert.doesNotMatch(refused.stderr, /--route worker/);
 
     const refusedSplit = runCli(
       [...common, "--route", "split", "--defer-over", "200"],
       { cwd: root, home },
     );
     assert.equal(refusedSplit.status, 1);
-    assert.match(refusedSplit.stderr, /listen_unattended_refused/);
+    assert.match(refusedSplit.stderr, /--defer-over is refused/);
+    assert.doesNotMatch(refusedSplit.stderr, /listen_unattended_refused/);
 
     const allowed = runCli(
       [...common, "--route", "main", "--allow-unattended"],
@@ -467,7 +479,75 @@ test("listen start refuses unattended main routes unless the operator accepts th
 
     const worker = runCli([...common, "--route", "worker"], { cwd: root, home });
     assert.equal(worker.status, 1);
+    assert.match(worker.stderr, /--route worker is refused/);
     assert.doesNotMatch(worker.stderr, /listen_unattended_refused/);
+  } finally {
+    await rm(root, { recursive: true, force: true });
+    await rm(home, { recursive: true, force: true });
+  }
+});
+
+test("listen start accepts a hook or a watcher lock and names both when neither is present", async () => {
+  const root = await mkdtemp(join(tmpdir(), "cswarm-attendance-surfaces-"));
+  const home = await mkdtemp(join(tmpdir(), "cswarm-attendance-surfaces-home-"));
+  const credentialPath = join(root, "agent.json");
+  try {
+    await writeFile(credentialPath, artifact(), { mode: 0o600 });
+    await chmod(credentialPath, 0o600);
+    const common = [
+      "listen",
+      "start",
+      "--url",
+      TARGET.url,
+      "--anon-key",
+      TARGET.anonKey,
+      "--workspace-id",
+      WORKSPACE_ID,
+      "--agent-token-file",
+      credentialPath,
+      "--provider",
+      "claude",
+      "--state-dir",
+      join(root, "state"),
+    ];
+
+    await mkdir(join(home, ".claude"), { recursive: true });
+    await writeFile(
+      join(home, ".claude", "settings.json"),
+      JSON.stringify(claudeUserPromptHookSnippet(PRINCIPAL_ID)),
+    );
+    const hookOnly = runCli(common, { cwd: root, home });
+    assert.equal(hookOnly.status, 1);
+    assert.doesNotMatch(hookOnly.stderr, /listen_unattended_refused/);
+    await rm(join(home, ".claude", "settings.json"));
+
+    const lockPath = arrivalWatchLockPath(
+      TARGET,
+      WORKSPACE_ID,
+      PRINCIPAL_ID,
+      join(home, "xdg-state", "cswarm", "arrival-cursors"),
+    );
+    await acquireArrivalWatchLock(lockPath);
+    try {
+      const watcherOnly = runCli(common, { cwd: root, home });
+      assert.equal(watcherOnly.status, 1);
+      assert.doesNotMatch(watcherOnly.stderr, /listen_unattended_refused/);
+    } finally {
+      await releaseArrivalWatchLock(lockPath);
+    }
+
+    await writeFile(
+      join(home, ".claude", "settings.json"),
+      JSON.stringify(claudeUserPromptHookSnippet(PRINCIPAL_ID)),
+    );
+    await acquireArrivalWatchLock(lockPath);
+    try {
+      const both = runCli(common, { cwd: root, home });
+      assert.equal(both.status, 1);
+      assert.doesNotMatch(both.stderr, /listen_unattended_refused/);
+    } finally {
+      await releaseArrivalWatchLock(lockPath);
+    }
   } finally {
     await rm(root, { recursive: true, force: true });
     await rm(home, { recursive: true, force: true });

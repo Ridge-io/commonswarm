@@ -413,17 +413,12 @@ function commonCommandArgs(report: ResumeInspection): string {
 
 function restartCommand(report: ResumeInspection, status: ListenerStatus): string {
   const common = commonCommandArgs(report);
-  const route = status.routeMode ?? "worker";
   const start = [
     "cswarm listen start",
     common,
     `--provider ${status.provider}`,
     `--permissions ${status.permissionMode ?? "allow"}`,
-    `--route ${route}`,
-    ...(route === "split" && status.deferOverChars !== null &&
-        status.deferOverChars !== undefined
-      ? [`--defer-over ${status.deferOverChars}`]
-      : []),
+    "--route main",
   ].join(" ");
   return `cswarm listen stop ${common} && ${start}`;
 }
