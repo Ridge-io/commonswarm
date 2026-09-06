@@ -1,0 +1,19 @@
+{
+  "seeded_at": "2026-09-06T07:00:31.681Z",
+  "api_url": "http://127.0.0.1:54321",
+  "workspace_id": "52ac7c68-7317-4862-8121-80ab2743e2e0",
+  "owner_user_id": "29b15efd-00ad-421d-b01e-5c02415fad9f",
+  "listener_principal_id": "00384d33-f765-4cce-97b2-e58d41a48b43",
+  "listener_run_id": "88695835-f8a5-4fc7-aa49-0f042d61782c",
+  "listener_wake_id": "(redacted; 43-char wake id present on the principal row)",
+  "token1_id": "f982098f-28ac-44f0-be5f-359574eea4f7",
+  "token2_id": "90d31d66-8c5a-4352-9e98-8c251607d562",
+  "sender_principal_id": "6d1cf242-dda0-4d32-b7fc-9f1fe55f7827",
+  "sender_token_id": "c458a507-93a3-4b78-a2c2-c21c02c92c12",
+  "expires_at": "2026-09-06T19:00:31.658Z",
+  "creds_present": [
+    "listener-token1.json",
+    "listener-token2.json",
+    "sender.json"
+  ]
+}

@@ -1,0 +1,9 @@
+# Local-stack secrets from the L7 seed. Counts, status JSON, serve log, and
+# sha256 files are the committed evidence.
+creds/
+fixture.json
+**/listener-credential.json
+grok-home/
+cwd/
+*.pid
+**/effects/

@@ -1,0 +1,28 @@
+{
+  "label": "after",
+  "binary": "/private/tmp/claude-501/-Users-yulanbot-Developer-Ridge-io-cloud-swarm/a866e6cd-5d6d-477f-af6a-740cd30407ed/scratchpad/lane-wake-measure/docs/evidence/2026-09-06-push-delivery-measured/bin/v0.1.58/cswarm",
+  "window_start": "2026-09-06T07:15:28.084Z",
+  "window_end": "2026-09-06T07:25:28.242Z",
+  "window_sec": 600,
+  "serve_log": "/private/tmp/claude-501/-Users-yulanbot-Developer-Ridge-io-cloud-swarm/a866e6cd-5d6d-477f-af6a-740cd30407ed/scratchpad/lane-wake-measure/docs/evidence/2026-09-06-push-delivery-measured/serve.log",
+  "serve_log_lines": {
+    "from": 145,
+    "to": 215
+  },
+  "invocations": {
+    "read": 9,
+    "command": 6,
+    "activity": 40,
+    "total": 55
+  },
+  "rows": {
+    "audit_log": 0,
+    "idempotency_keys": 0,
+    "rate_buckets": 0
+  },
+  "method": {
+    "invocations": "grep -c 'serving the request with supabase/functions/<fn>' on /private/tmp/claude-501/-Users-yulanbot-Developer-Ridge-io-cloud-swarm/a866e6cd-5d6d-477f-af6a-740cd30407ed/scratchpad/lane-wake-measure/docs/evidence/2026-09-06-push-delivery-measured/serve.log lines 145-215",
+    "rows": "docker exec supabase_db_cloud-swarm psql counts of swarm.audit_log / idempotency_keys / rate_buckets in [2026-09-06T07:15:28.084Z, 2026-09-06T07:25:28.242Z) for principal 00384d33-f765-4cce-97b2-e58d41a48b43",
+    "cadence": "before = 0.1.57 default 15s poll with empty backoff to 60s (not the retired 2s poll); after = 0.1.58 push + 5min reconcile"
+  }
+}

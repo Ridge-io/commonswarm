@@ -1,0 +1,8 @@
+`diff --git a/docs/design/2026-09-06-PUSH-DELIVERY.md b/docs/design/2026-09-06-PUSH-DELIVERY.md`
+
+All checks passed:
+1. **§8 Realtime-down clause for 0.1.58**: The diff specifies `detectPollMs: null, detectWallMs: 535397`, which exactly matches the values in `realtime-down-0.1.58.json`.
+2. **README's 0.1.60 sha256 row**: The diff records `(a57ac093…)`, which correctly aligns with `cswarm.sha256` (`a57ac0935b01be5bb73a48a440f49a230489c959cbd8571d8e5abb18a8fd7958`).
+3. **Reproduce command**: The diff provides the command `AFTER_BIN=... AFTER_LABEL=after-0.1.60-clean scripts/measure-idle-cost.sh`, and `measure-idle-cost.sh` indeed reads both `AFTER_BIN` and `AFTER_LABEL`.
+
+VERDICT: PASS

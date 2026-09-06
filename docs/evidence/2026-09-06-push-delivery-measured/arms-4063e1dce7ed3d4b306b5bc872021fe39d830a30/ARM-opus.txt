@@ -1,0 +1,201 @@
+ARM: Opus (claude, adversarial exact review)
+LANE: L7 wake-measure
+SHA: 4063e1dce7ed3d4b306b5bc872021fe39d830a30 on lane/wake-measure
+
+QUOTE-BACK (first `diff --git` line of the frozen DIFF.patch):
+diff --git a/docs/design/2026-09-06-PUSH-DELIVERY.md b/docs/design/2026-09-06-PUSH-DELIVERY.md
+
+Evidence root E = docs/evidence/2026-09-06-push-delivery-measured
+Design doc = docs/design/2026-09-06-PUSH-DELIVERY.md (§8 table at :288-298)
+
+================================================================
+DEFECT (FAIL): §8 "0.1.58: mode stayed `push` for 80 s after stop"
+================================================================
+DOC:  2026-09-06-PUSH-DELIVERY.md:294 (Realtime-down row, after-measured cell):
+      "**0.1.58:** mode stayed `push` for 80 s after stop
+       (`probes/realtime-down-0.1.58.json`)."
+FILE: E/probes/realtime-down-0.1.58.json
+      :3  "detectPollMs": null
+      :4  "detectWallMs": 535397
+      :5-8 "detectWake": { "mode": "push", "reconnects": 0, ... }
+      :44 "backToPushMs": 100
+
+The string "80" does not occur anywhere in that file (verified:
+`grep -rn '\b80\b|80000|80s|80 s' E/probes/` returns nothing).
+`detectPollMs: null` means the probe NEVER observed a flip to `poll`;
+`detectWallMs` 535397 ms = 535.4 s of wall clock with `mode: "push"`,
+and `backWake` still reports the pre-stop `subscribedAt`
+2026-09-06T07:14:56.663Z with `reconnects: 0`.
+
+So the cited file supports "0.1.58 never left `push`, for at least 535 s",
+not "80 s". The written number has no file, is ~6.7x smaller than the
+measured wall time, and understates the 0.1.58 honesty failure that is the
+whole reason the after column moved to 0.1.60. Wrong number in §8 -> FAIL.
+
+FIX: replace with the file's own values, e.g. "0.1.58 never flipped: status
+stayed `mode: \"push\"` for the whole 535 s detect window (`detectPollMs`
+null, `detectWallMs` 535397, `reconnects` 0)."
+
+================================================================
+NUMBERS CHECKED AND CONFIRMED (file:line)
+================================================================
+1. Invocations before = read 16 + claim 14 + activity 40 = 70
+   E/state/before/counts.json:14-19 (read 16, command 14, activity 40,
+   total 70); serve-log lines 52-135 at :11-13. MATCHES.
+2. Invocations after = read 2 + claim 2 + activity 39 = 43
+   E/state/after-0.1.60-clean/counts.json:14-19; lines 515-571 at :11-13.
+   MATCHES (§8 prose "~40/10 min" is a rounding of 39, stated as ~).
+3. Seat-attributed empty claims before = 10.
+   Recounted `listener_delivery_claim` in
+   E/state/before/2e3566c9.../events.ndjson restricted to the counts.json
+   window [07:04:55.490Z, 07:14:55.636Z): 10 in-window (12 in the file
+   overall; the 2 extras are outside the window). MATCHES.
+4. Seat-attributed empty claims after = 2.
+   Same recount on E/state/after-0.1.60-clean/2e3566c9.../events.ndjson in
+   [08:01:04.444Z, 08:11:04.598Z): 2 in-window (35 in the file overall; the
+   rest are the post-window latency/dropped probes). MATCHES.
+5. Rows/10 min = 0/0/0 both sides. counts.json "rows" at :20-24 both files.
+   NOT an assumption: scripts/measure-idle-cost.sh:db_counts() runs
+   `docker exec supabase_db_cloud-swarm psql ... SELECT count(*)` over
+   swarm.audit_log / idempotency_keys / rate_buckets bounded by the window
+   timestamps and the listener principal, and counts.json:26-28 records that
+   query as the method. Query-derived. CONFIRMED.
+6. Wake latency 0.1.60: mean 525.7 ms, max 937 ms, min 150 ms, n=20.
+   E/probes/wake-latency-0.1.60.json "stats" block. Recomputed from the raw
+   `results` array independently: n=20, 0 timedOut, mean 525.7, max 937,
+   min 150. MATCHES exactly.
+   Anon control 20/20: "anonSubscribe":"SUBSCRIBED",
+   "anonControlFrames":20 (:4-5). MATCHES.
+7. Wake latency 0.1.58: 20/20 timed out; anon 19/19.
+   E/probes/wake-latency-0.1.58.json: recomputed 20 results, all
+   `timedOut: true`, stats n=0; "anonControlFrames": 19. MATCHES.
+   NOTE (nit): the "330 s" timeout figure quoted in the lane REPORT is not
+   in this file; §8 as written says only "20/20 timed out", so §8 is clean.
+8. Realtime down 0.1.60: poll in 65 ms; asks 14.5/15.7/10.1/1.0/1.1 s;
+   max 15.7 s. E/probes/realtime-down-0.1.60.json:3 "detectPollMs": 65;
+   downTrials 14476.0, 15726.0, 10148.0, 1016.0, 1072.0;
+   downStats max 15726.0. MATCHES.
+   Post-restart "mode push, reconnects 1, subscribedAt 08:27:19.866Z":
+   E/state/after-0.1.60-clean/2e3566c9.../status.json wake block. MATCHES.
+9. Wake dropped 0.1.60: 128.6 / 429.0 / 729.5 s.
+   E/probes/wake-dropped-0.1.60.json latencyMs 128629 / 429039 / 729461.
+   MATCHES. triggerOff "D" / triggerOn "O" at :3-4. MATCHES.
+10. Rotation: wake_id changed, old topic CHANNEL_ERROR, new SUBSCRIBED.
+    E/probes/rotation-0.1.58.json: "wakeIdChanged": true, "oldJoin":
+    "CHANNEL_ERROR", "newJoin": "SUBSCRIBED", "revokeStatus": 200.
+    MATCHES. §8 correctly states 0.1.60 resubscribe time was NOT re-run.
+11. Honesty after: wake.mode "push".
+    E/state/after-0.1.60-clean/status-window-end.json wake.mode = "push",
+    subscribedAt 08:00:32.995Z, reconnects 0, lastWakeAt null,
+    lastReconcileAt 08:10:34.797Z. MATCHES the REPORT paste.
+12. Honesty grep = 0 WITH a positive control on each of the three subjects.
+    E/honesty/probe.txt: status.json (control '"state"' -> 1 hit),
+    events.ndjson (control '"event"' -> 16 hits), serve.log (control
+    'serving the request with supabase/functions/read' -> 86 hits); each
+    followed by "subject grep -c cswarm-wake: 0" and
+    "CLEAN - subject produced nothing, and the probe was proven able to
+    produce something." Positive control PRESENT and non-trivial on all
+    three. The script (scripts/measure-idle-cost.sh, honesty()) uses
+    `grep -o` for the control, not `grep -c`, and says why in README:34-37.
+    CONFIRMED.
+13. Production 10 min: claim 1+2, ack 1+2, post_signal 1+1, six rows.
+    E/production-audit-10min.txt: query_at 2026-09-06T07:04:29.718199+00:00,
+    `supabase db query --linked (read-only audit_log last 10 minutes)`,
+    six rows exactly as written. MATCHES.
+14. Derived per-minute figures: before 7.0 (70/10), after 4.3 (43/10),
+    claims before 1.0/min (10/10), after 0.2/min (2/10). Arithmetic correct.
+15. Binary identity. package.json in each bin/ dir is only
+    {"type":"commonjs"} and carries NO version, so the sha256 files alone do
+    not name a version. I established it from the bundles themselves (the
+    build-time __COSWARM_VERSION__ substitution):
+      bin/v0.1.57/cswarm -> `if ("0.1.57".length > 0) { return "0.1.57";`
+      bin/v0.1.58/cswarm -> "0.1.58"
+      bin/v0.1.60/cswarm -> "0.1.60"
+    sha256 files re-verified against the bytes on disk, all three match:
+      57 48e3ce4d93395572797302cf4f0075b249cdf9b5367ad7daa8f32149c47ae5d8
+      58 154be3973cbf3059ce4be0115052318c933695d234752ab8a326415ddb0987b6
+      60 a57ac0935b01be5bb73a48a440f49a230489c959cbd8571d8e5abb18a8fd7958
+    counts.json:3 in each window names the exact binary path used.
+    before = 0.1.57 CONFIRMED; after = 0.1.60 CONFIRMED.
+16. ACTIVITY_HEARTBEAT_MS still 15 s: src/listener/activity.ts:13
+    `export const ACTIVITY_HEARTBEAT_MS = 15_000;`. §8's citation is exact.
+
+================================================================
+SECRET SCAN
+================================================================
+`cswarm-wake:` followed by 43 chars: ZERO hits across the whole evidence
+tree, tracked and untracked. PASS.
+`swm_agt_` token-shaped values (prefix + >=16 chars) in COMMITTED files:
+ZERO. The `swm_agt_` prefix appears only as a literal/format string in the
+three cswarm bundles and in harness/seed-local.mjs:46
+(`return \`swm_agt_${randomBytes(32).toString("base64url")}\`;`) - a
+generator, not a value. gate-npm-test.log / gate-p1-cli.log are UNTRACKED.
+creds/, fixture.json, grok-home/, cwd/, *.pid, **/effects/ are all covered
+by E/.gitignore and none are in `git ls-tree HEAD`. 87 files committed under
+E; no credential file among them. PASS.
+
+================================================================
+scripts/measure-idle-cost.sh
+================================================================
+`bash -n scripts/measure-idle-cost.sh` -> exit 0. PASS.
+Production write / `--linked`: NONE. grep for
+`linked|ukezjcnxjvkpkeezxaew|api.commonswarm|functions deploy|db push`
+returns nothing. All I/O is local: 127.0.0.1:54321 functions serve and
+`docker exec supabase_db_cloud-swarm psql` (read-only SELECT count(*)).
+Writes are confined to $EVIDENCE and the temp --state-dir. PASS.
+(The one production touch in the lane is production-audit-10min.txt, a
+read-only `db query`, taken outside this script.)
+
+================================================================
+PROSE vs TABLE
+================================================================
+The predicted "before" 374 assumes the retired 2 s poll while the measured
+before is 15 s/60 s. This IS stated where a reader meets it: twice inside
+the §8 table's own before-measured cell ("Cadence is L0 15 s poll, empty
+backoff to 60 s, not the retired 2 s poll"), again in the paragraph directly
+under the table ("15 s/60 s cadence, not 2 s"), again in E/README.md:20-26,
+and again in the script header comment. Adequate - no reader can take the
+374 as a like-for-like baseline. NOT a finding.
+The rest of the §8 prose (7.0 / 4.3 / 1.0 / 0.2 per minute, "2 reconciles +
+~40 activity heartbeats at 15 s") agrees with the table.
+
+================================================================
+NITS (not the FAIL)
+================================================================
+N1. §8's before honesty cell, "`cswarm-wake:` count 0 on the 0.1.57 state
+    dir", names no file. honesty/probe.txt is generated on the AFTER seat
+    only (measure-idle-cost.sh calls honesty "$EVIDENCE/state/$AFTER_LABEL").
+    I verified the claim myself - grep -rc over E/state/before/ is 0
+    everywhere - so it is TRUE but uncontrolled and unfiled.
+N2. The 65 ms cell cites "`remaining-probes` log 08:25:38.147Z". That run
+    log is NOT committed (only harness/remaining-probes.mjs is). The number
+    itself is in the committed probes/realtime-down-0.1.60.json:3, which the
+    same cell also cites, so the number is filed; the citation is not.
+N3. E/README.md is stale against the lane's own conclusion: its Binaries
+    table lists only v0.1.57 and v0.1.58 (no v0.1.60 row) and :27 still says
+    "\"After\" is 0.1.58 push + 5 min reconcile", while §8's after column is
+    0.1.60. Same drift inside both counts.json files, whose
+    `method.cadence` string says "after = 0.1.58" even in the
+    after-0.1.60-clean file. Harmless to the numbers, misleading to a cold
+    reader.
+N4. scripts/measure-idle-cost.sh defaults AFTER_BIN to bin/v0.1.58/cswarm
+    (:23), so re-running it as committed does NOT reproduce the published
+    after column; that needs AFTER_BIN/AFTER_LABEL overrides which are
+    written down nowhere in the repo.
+
+================================================================
+NOT ESTABLISHED BY THIS ARM
+================================================================
+- I did not run the measurement script, the local stack, or any probe; every
+  number above is recomputed from the committed artifacts only.
+- I cannot confirm the serve.log line ranges 52-135 and 515-571 isolate this
+  listener's traffic from L5's concurrent `inbox --notify` on the same
+  `functions serve`; §8 states the contamination for the before window but
+  the split is not itself evidenced.
+- The 0.1.58 -> 0.1.59 "finishWait" fix is asserted, not shown here.
+- npm test / test:p1-cli gates were run on an earlier SHA (the lane says so)
+  and their logs are untracked; I did not re-run them.
+- Whether the 39 vs predicted 40 activity calls is a boundary artefact or a
+  missed heartbeat.
+
+VERDICT: FAIL

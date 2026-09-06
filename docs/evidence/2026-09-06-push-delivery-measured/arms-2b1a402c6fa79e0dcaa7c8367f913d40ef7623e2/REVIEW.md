@@ -1,0 +1,1 @@
+# L7 re-freeze 2b1a402c6fa79e0dcaa7c8367f913d40ef7623e2 — delta on 4063e1d: §8 Realtime-down 0.1.58 clause corrected to the file's values (never flipped, 535 s); README names 0.1.60 as the after binary, adds its sha256 row and the reproduce command; bin/v0.1.60 added.

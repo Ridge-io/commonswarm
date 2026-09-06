@@ -1,0 +1,39 @@
+{
+  "method": "docker stop supabase_realtime_cloud-swarm; detect poll 65ms (remaining-probes log 2026-09-06T08:25:38.147Z); 5 asks while poll (python); docker start; wait push",
+  "detectPollMs": 65,
+  "downTrials": [
+    {
+      "n": 1,
+      "latencyMs": 14476.0,
+      "timedOut": false
+    },
+    {
+      "n": 2,
+      "latencyMs": 15726.0,
+      "timedOut": false
+    },
+    {
+      "n": 3,
+      "latencyMs": 10148.0,
+      "timedOut": false
+    },
+    {
+      "n": 4,
+      "latencyMs": 1016.0,
+      "timedOut": false
+    },
+    {
+      "n": 5,
+      "latencyMs": 1072.0,
+      "timedOut": false
+    }
+  ],
+  "downStats": {
+    "n": 5,
+    "mean": 8487.6,
+    "max": 15726.0,
+    "min": 1016.0
+  },
+  "backToPushMs": 60.749053955078125,
+  "backMode": "push"
+}

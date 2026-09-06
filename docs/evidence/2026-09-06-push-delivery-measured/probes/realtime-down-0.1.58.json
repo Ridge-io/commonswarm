@@ -1,0 +1,64 @@
+{
+  "method": "docker stop supabase_realtime_cloud-swarm; wait listen status wake.mode=poll; 5 asks; docker start; wait push",
+  "detectPollMs": null,
+  "detectWallMs": 535397,
+  "detectWake": {
+    "mode": "push",
+    "subscribedAt": "2026-09-06T07:14:56.663Z",
+    "reconnects": 0,
+    "lastWakeAt": null,
+    "lastReconcileAt": "2026-09-06T07:24:58.079Z",
+    "errorCode": null,
+    "topicRotatedAt": null,
+    "rateLimited": false
+  },
+  "downTrials": [
+    {
+      "signalId": "f071509f-65d4-49be-a3da-b667b4e97d31",
+      "acceptedAt": "2026-09-06T07:38:03.073Z",
+      "claimTs": null,
+      "latencyMs": null,
+      "timedOut": true
+    },
+    {
+      "signalId": "1f129ad4-18ac-4bcf-827f-6356dc5b991c",
+      "acceptedAt": "2026-09-06T07:39:33.521Z",
+      "claimTs": null,
+      "latencyMs": null,
+      "timedOut": true
+    },
+    {
+      "signalId": "c2748f88-fd61-4fdb-a85a-157b64ce0433",
+      "acceptedAt": "2026-09-06T07:41:03.717Z",
+      "claimTs": null,
+      "latencyMs": null,
+      "timedOut": true
+    },
+    {
+      "signalId": "7464b7a3-1460-49f3-9229-a46d51596c71",
+      "acceptedAt": "2026-09-06T07:42:33.925Z",
+      "claimTs": null,
+      "latencyMs": null,
+      "timedOut": true
+    },
+    {
+      "signalId": "f4be9af8-27fe-4b70-9edc-facec106f357",
+      "acceptedAt": "2026-09-06T07:44:04.461Z",
+      "claimTs": null,
+      "latencyMs": null,
+      "timedOut": true
+    }
+  ],
+  "backToPushMs": 100,
+  "backWallMs": 2445,
+  "backWake": {
+    "mode": "push",
+    "subscribedAt": "2026-09-06T07:14:56.663Z",
+    "reconnects": 0,
+    "lastWakeAt": null,
+    "lastReconcileAt": "2026-09-06T07:24:58.079Z",
+    "errorCode": null,
+    "topicRotatedAt": null,
+    "rateLimited": false
+  }
+}
