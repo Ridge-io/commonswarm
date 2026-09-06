@@ -9620,11 +9620,12 @@ async function enableAgentManagement(tx: Sql, body: RequestBody, auth: AuthConte
   const rows = await tx<{ role: string; owner_user_id: string }[]>`
     SELECT m.role, p.owner_user_id
     FROM swarm.agent_principals p
-    JOIN swarm.members m ON m.workspace_id = p.workspace_id AND m.user_id = ${auth.actor.user}::uuid
+    JOIN swarm.memberships m ON m.workspace_id = p.workspace_id AND m.user_id = ${auth.actor.user}::uuid AND m.revoked_at IS NULL
     WHERE p.principal_id = ${principalId}::uuid
   `;
-  if (rows.length === 0) return { status: 403, body: { error: "forbidden" } };
-  const { role, owner_user_id } = rows[0];
+  const member = rows[0];
+  if (!member) return { status: 403, body: { error: "forbidden" } };
+  const { role, owner_user_id } = member;
   if (role !== "owner" && role !== "admin" && owner_user_id !== auth.actor.user) {
     return { status: 403, body: { error: "forbidden" } };
   }
@@ -9648,11 +9649,12 @@ async function disableAgentManagement(tx: Sql, body: RequestBody, auth: AuthCont
   const rows = await tx<{ role: string; owner_user_id: string }[]>`
     SELECT m.role, p.owner_user_id
     FROM swarm.agent_principals p
-    JOIN swarm.members m ON m.workspace_id = p.workspace_id AND m.user_id = ${auth.actor.user}::uuid
+    JOIN swarm.memberships m ON m.workspace_id = p.workspace_id AND m.user_id = ${auth.actor.user}::uuid AND m.revoked_at IS NULL
     WHERE p.principal_id = ${principalId}::uuid
   `;
-  if (rows.length === 0) return { status: 403, body: { error: "forbidden" } };
-  const { role, owner_user_id } = rows[0];
+  const member = rows[0];
+  if (!member) return { status: 403, body: { error: "forbidden" } };
+  const { role, owner_user_id } = member;
   if (role !== "owner" && role !== "admin" && owner_user_id !== auth.actor.user) {
     return { status: 403, body: { error: "forbidden" } };
   }
@@ -9673,11 +9675,12 @@ async function recoverAgentSession(tx: Sql, body: RequestBody, auth: AuthContext
   const rows = await tx<{ role: string; owner_user_id: string }[]>`
     SELECT m.role, p.owner_user_id
     FROM swarm.agent_principals p
-    JOIN swarm.members m ON m.workspace_id = p.workspace_id AND m.user_id = ${auth.actor.user}::uuid
+    JOIN swarm.memberships m ON m.workspace_id = p.workspace_id AND m.user_id = ${auth.actor.user}::uuid AND m.revoked_at IS NULL
     WHERE p.principal_id = ${principalId}::uuid
   `;
-  if (rows.length === 0) return { status: 403, body: { error: "forbidden" } };
-  const { role, owner_user_id } = rows[0];
+  const member = rows[0];
+  if (!member) return { status: 403, body: { error: "forbidden" } };
+  const { role, owner_user_id } = member;
   if (role !== "owner" && role !== "admin" && owner_user_id !== auth.actor.user) {
     return { status: 403, body: { error: "forbidden" } };
   }
@@ -9686,10 +9689,11 @@ async function recoverAgentSession(tx: Sql, body: RequestBody, auth: AuthContext
   const oldSessions = await tx<{ session_id: string }[]>`
     SELECT session_id FROM swarm.agent_execution_sessions WHERE principal_id = ${principalId}::uuid FOR UPDATE
   `;
-  if (oldSessions.length > 0) {
+  const oldSession = oldSessions[0];
+  if (oldSession) {
     await tx`
       INSERT INTO swarm.retired_agent_sessions (session_id, principal_id)
-      VALUES (${oldSessions[0].session_id}::uuid, ${principalId}::uuid)
+      VALUES (${oldSession.session_id}::uuid, ${principalId}::uuid)
       ON CONFLICT DO NOTHING
     `;
   }
@@ -9733,11 +9737,11 @@ async function acquireAgentSession(tx: Sql, body: RequestBody, auth: AuthContext
     FOR UPDATE
   `;
   
-  if (sessions.length === 0 || sessions[0].lifecycle_state !== 'enabled') {
+  const s = sessions[0];
+  if (!s || s.lifecycle_state !== 'enabled') {
     return { status: 403, body: { error: "session_not_managed" } };
   }
   
-  const s = sessions[0];
   const now = new Date();
   
   // Is it expired or released? (expired_at is set on release/recovery/expiry)
@@ -9774,7 +9778,11 @@ async function acquireAgentSession(tx: Sql, body: RequestBody, auth: AuthContext
     `;
   }
   
-  return { status: 200, body: { ok: true, status: "accepted", generation: updated[0].generation } };
+  const updatedRow = updated[0];
+  if (!updatedRow) {
+    return { status: 500, body: { error: "internal_error" } };
+  }
+  return { status: 200, body: { ok: true, status: "accepted", generation: updatedRow.generation } };
 }
 
 async function renewAgentSession(tx: Sql, body: RequestBody, auth: AuthContext): Promise<HttpResult> {
