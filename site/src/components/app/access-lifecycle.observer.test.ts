@@ -482,7 +482,7 @@ test("idle discovery finds remote zero-to-one access on a bounded cadence", () =
 });
 
 test("visible channels poll for fresh signals and preserve readable state on failure", () => {
-  assert.match(dashboard, /setInterval\(\(\) => void refreshLatestSignals\(\), 2_000\)/);
+  assert.match(dashboard, /feedPush\.arm\(\)/);
   assert.match(dashboard, /document\.visibilityState !== "visible"/);
   assert.match(dashboard, /document\.addEventListener\("visibilitychange"/);
   assert.match(dashboard, /const next = \[\.\.\.page\.rows, \.\.\.signals\.filter/);
