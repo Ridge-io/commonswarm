@@ -434,7 +434,7 @@ interface RenewalFacts {
 interface WorkspaceDecideCtx {
   now: number;
   actor: Actor;
-  credential_kind: "user" | "agent";
+  credential_kind: "human" | "agent";
   presenting_token_id: string | null;
   command_id: string;
   workspace_id: string;
@@ -3276,7 +3276,7 @@ async function prepareWorkspaceCommand(
   const ctx: WorkspaceDecideCtx = {
     now,
     actor: auth.actor,
-    credential_kind: auth.credentialKind === "user" ? "user" : "agent",
+    credential_kind: auth.credentialKind === "user" ? "human" : "agent",
     presenting_token_id: auth.agent?.token_id ?? null,
     command_id: commandId,
     workspace_id: route.workspaceId,

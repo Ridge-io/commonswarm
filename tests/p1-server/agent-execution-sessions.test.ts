@@ -464,8 +464,8 @@ test("missing proof is refused; old-proof replay is refused; current holder retr
     commandId,
     headers: proofHeaders(sessionId, generation, key),
   });
-  assert.equal(staleReplay.status, 401);
-  assert.equal(staleReplay.body.error, "session_expired");
+  assert.equal(staleReplay.status, 409, JSON.stringify(staleReplay.body));
+  assert.equal(staleReplay.body.error, "session_conflict");
 
   const currentReplay = await runCmd(agent.token, command, {
     commandId,
