@@ -1,0 +1,127 @@
+D-036 adversarial arm — Opus 5 (family: Claude), lane L6, SHA 3be01a8ea2b68604c6d6c388882e8cb7082c7182, merge-base 88d9f45.
+
+QUOTE-BACK (first `diff --git` line of DIFF.patch):
+diff --git a/site/src/components/app/LiveDashboard.astro b/site/src/components/app/LiveDashboard.astro
+
+Method: read the real files in the lane worktree (not only DIFF.patch); built and ran the site
+suite in a throwaway detached worktree at this SHA; ran five mutations against feed-push.ts and
+restored each (final `git status --porcelain` empty, `git diff --stat` empty).
+
+Gates I ran myself at this SHA:
+  cd site && rm -rf dist && npm run build   exit 0
+  npm --prefix site test                    exit 0 — 512 tests, 511 pass, 1 skipped, 0 fail
+  scripts/check-commit-identity.sh 88d9f45..3be01a8   exit 0, "6 address-fields checked"
+  git log 88d9f45..3be01a8 — 3 commits, all author AND committer Yulan Bot <yulanbot@gmail.com>
+  git diff --stat 88d9f45..3be01a8 — 7 files, +799/-14; site only; no stray files.
+
+REFUTATION ATTEMPTS — all failed to find a defect.
+
+1. Poll/coalesce/reconcile — NOT REFUTED.
+   feed-push.ts:281-288 `#syncRefreshTimer` installs exactly one interval at
+   `feedRefreshIntervalMs(this.#subscribed)` (:55-57), so while SUBSCRIBED the only timer is
+   FEED_RECONCILE_MS = 30_000 (:21) and no 2 s timer exists; `#setSubscribed` (:276-279) clears
+   then re-installs, so no second timer survives a transition. One `signal` event →
+   `requestRefresh()` once (:120-123, :237). Coalescing is one-in-flight / one-queued at BOTH
+   layers and neither drops a refresh: controller `requestRefresh`/`#runRefresh`
+   (feed-push.ts:207-227) and the dashboard's own `liveFeedInFlight`/`liveFeedQueued`
+   (LiveDashboard.astro:5498-5501, :5554-5559). I checked the guard ORDER in the dashboard: the
+   sampleMode/workspace/visibility/view early-return runs BEFORE the in-flight check, so a
+   refresh is never queued while hidden and `liveFeedQueued` cannot be left latched.
+   Mutation control: removing the queue (`#refreshing` → bare `return`) fails
+   "three events in 100 ms coalesce to at most two refreshes" (actual 1, expected 2). Restored → pass.
+   Mutation control: FEED_RECONCILE_MS = 300_000 fails "reconcile fires once at 30 seconds while
+   subscribed" (0 !== 1). Restored → pass.
+
+2. Fallback and refused join — NOT REFUTED.
+   `FEED_PUSH_FALLBACK_STATUSES` (feed-push.ts:29-33) is one exported const; the classifier
+   `isFeedPushFallbackStatus` (:41-45) reads the set built from it (:37-39), and `#onStatus`
+   (:262-274) branches on the status NAME only — no `error.message` anywhere in the file (D-053
+   holds, and feed-push.observer.test.ts asserts `doesNotMatch(/error\.message/)`).
+   A fallback status calls `#setSubscribed(false)` → the 2 s poll is re-installed synchronously
+   in the same call, then `#scheduleResubscribe`. Backoff index is
+   `min(#backoffAttempt, len-1)` over [1,2,5,10] s (:302-318), reset to 0 on SUBSCRIBED (:265).
+   A refused join (0.1.57-era policy absent, or a non-member) throws inside the awaited
+   `subscribe` hook and lands in `#join`'s `catch` (:248-252): subscribed=false, poll continues,
+   nothing written to the DOM and nothing logged — feed-push.observer.test.ts asserts the
+   dashboard has no `console.*` and no `textContent` carrying `cswarm-signals`/`CHANNEL_ERROR`/
+   `TIMED_OUT`.
+   Mutation control: deleting "CHANNEL_ERROR" from FEED_PUSH_FALLBACK_STATUSES fails four named
+   tests — "fallback statuses are one generated set; CHANNEL_ERROR is in it",
+   "fallback statuses are the named Realtime subscribe states, not error.message",
+   "CHANNEL_ERROR resumes the two-second poll", "re-SUBSCRIBED stops the poll". Restored → pass.
+   This confirms the mutation row in the lane report.
+
+3. Workspace switch and the late-await race (the brain-links failure mode) — NOT REFUTED.
+   I looked for this hard. `start()` (feed-push.ts:168-179) bumps `#generation` and appends
+   `#join` to a single serialized `#chain`; `#join` (:229-231) does `await this.#teardown()`
+   FIRST and only then subscribes, so the old channel is removed before the new join.
+   Mutation control: deleting that `await this.#teardown()` fails
+   "workspace switch removes the old channel before the new subscribe". Restored → pass.
+   Late resolution cannot act for the wrong workspace on three independent grounds:
+   (a) the workspace id is a captured parameter, never a module-level mutable read — captured
+       before the awaits in `subscribeWorkspaceSignals` (commonswarm.ts, `const workspaceForJoin
+       = workspaceId;` above `await currentSession()` and `await c.realtime.setAuth(...)`), in
+       `attachWorkspaceSignalsChannel` (feed-push.ts:112), in `FeedPushController.start` (:169),
+       in `#scheduleResubscribe`'s timer (:313), and at the call site
+       `startFeedPush(workspaceId)` (LiveDashboard.astro:5839-5843), fed by
+       `startFeedPush(selected.id)` (:6075);
+   (b) every callback re-checks `generation !== this.#generation` (:231, :236, :243, :249, :263,
+       :303, :312), and a subscription that resolves for a stale generation is unsubscribed
+       rather than stored (:243-246) — so a late resolve leaks nothing either;
+   (c) the refresh itself reads the live `activeWorkspaceId` at entry (LiveDashboard.astro:5495),
+       so even a refresh that slipped through would fetch the CURRENT workspace, not the old one.
+
+4. Auth, privacy, quiet — NOT REFUTED.
+   `subscribeWorkspaceSignals` (commonswarm.ts) uses the same `client()` socket as
+   `subscribeAgentActivity` (commonswarm.ts:176-209), calls `currentSession()` then
+   `await c.realtime.setAuth(active.access_token)` — the human's access token, same order as the
+   activity channel — and joins with `config: { private: true, broadcast: { ack: false, self:
+   false } }` (feed-push.ts:114-119). Topic is built from the uuid by `workspaceSignalsTopic`
+   (:48-53), which rejects a non-uuid, so no caller text reaches the topic name. No console
+   output, no new user-visible copy in the diff.
+
+5. Sign-out / hide teardown — NOT REFUTED.
+   Sign-out calls `resetWorkspaceSessionState()` before `signOut()` (LiveDashboard.astro:7495-
+   7496), and that function's first statement is `stopFeedPush()` (:5683-5685); `renderSample()`
+   also stops it (:7174). `stop()` (feed-push.ts:181-192) bumps the generation, clears both
+   timers, clears `#armed`/`#queued`, and chains `#teardown()` → `removeChannel`; a join still in
+   flight is unsubscribed by the stale-generation branch (:243-246), so no subscription leaks.
+   Page hide calls `disarmLiveFeed()` (:5903) which clears the timer; the socket stays (as for
+   activity), and a push arriving while hidden reaches `refreshLatestSignals`, whose
+   `document.visibilityState !== "visible"` guard (:5499) returns before any fetch — so nothing
+   keeps refreshing a hidden or signed-out tab. The access-lifecycle observer test was updated
+   only where it pinned the literal old `setInterval(... 2_000)` text; the whole site suite passes.
+
+6. Tests reach the real module; identity — NOT REFUTED.
+   `site/src/lib/feed-push.test.mjs` imports `./feed-push.ts` directly (the production module,
+   not a mock of itself) and drives it through injected fake timers and a fake Realtime client;
+   the four mutations above prove those controls can fail, and fail for the claimed reason.
+   Identity gate exit 0; all three commits authored and committed as yulanbot@gmail.com.
+
+NITS (no change required)
+  N1 The controller and the dashboard each keep an independent one-queued latch. Both are
+     correct and neither drops a refresh, but two coalescers for one stream is a thing a future
+     reader can mis-edit; a comment naming the outer one as the view guard would help.
+  N2 A malformed workspace id makes `workspaceSignalsTopic` throw inside `#join`'s catch, which
+     then retries forever at the 10 s backoff ceiling. Unreachable today (the id is a uuid), and
+     the 2 s poll covers the feed regardless.
+  N3 `visibilitychange` runs `void refreshLatestSignals()` and then `armLiveFeed()`, which for a
+     SUBSCRIBED controller issues a second immediate refresh (`arm`, feed-push.ts:194-200). It
+     coalesces to one extra fetch, so it is a cosmetic duplicate, not a bug.
+
+NOT ESTABLISHED
+  - The backoff SEQUENCE has no control. Mutating FEED_PUSH_BACKOFF_MS from [1,2,5,10] s to
+    [1,1,1,1] s left the full suite green (251 pass, 0 fail). The code reads correct by
+    inspection (index `min(attempt, len-1)`, attempt incremented per schedule, reset on
+    SUBSCRIBED), but no test would notice if those numbers changed. This is a coverage gap, not
+    a verified defect, so it does not carry a FAIL.
+  - No live signed-in browser join to `cswarm-signals:{workspace_id}` on hosted Realtime. Every
+    result above comes from the real modules driven by a fake client and fake timers, plus static
+    reads of LiveDashboard.astro. Whether the server-side policy accepts the join, and whether a
+    real `SUBSCRIBED` follows, is untested by this arm (the lane report says the same).
+  - Whether the W2 trigger actually emits the `signal` event is outside this lane and untested here.
+  - Merge and deploy: this SHA is not on `main`; I touched no production, used no `--linked`,
+    and deployed nothing. The throwaway worktree was removed after the run.
+  - `npm test` at the repo root and `test:p1-cli` were not re-run by me; the diff is site-only.
+
+VERDICT: PASS

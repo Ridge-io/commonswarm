@@ -1,0 +1,49 @@
+```markdown
+# Push delivery: wake listeners from Supabase Realtime instead of polling
+```
+
+```
+diff --git a/site/src/components/app/LiveDashboard.astro b/site/src/components/app/LiveDashboard.astro
+```
+
+1. **No poll while subscribed.** 
+   - **Refutation attempted:** Check if `arm()` while subscribed wrongly installs the 2s `FEED_POLL_MS` timer instead of the 5-minute reconcile timer.
+   - **Why it failed:** At `site/src/lib/feed-push.ts:947` in `#syncRefreshTimer`, `feedRefreshIntervalMs(this.#subscribed)` correctly returns `FEED_RECONCILE_MS` (300_000 ms) because `this.#subscribed` is true. `this.#refreshTimer` is safely cleared and restarted with the correct interval.
+   - **Finding:** NIT - The timer is correctly updated to 5 minutes when subscribed.
+
+2. **Coalesce.**
+   - **Refutation attempted:** Check if `refreshLatestSignals`'s internal `liveFeedInFlight` state completely drops the queued request if one is currently in flight, rather than coalescing and executing it afterward.
+   - **Why it failed:** At `site/src/components/app/LiveDashboard.astro:5503`, if `liveFeedInFlight` is true, it sets `liveFeedQueued = true` and returns. Then in the `finally` block at `site/src/components/app/LiveDashboard.astro:5555`, it checks `liveFeedQueued` and runs `void refreshLatestSignals()` again. `FeedPushController` does the same at `site/src/lib/feed-push.ts:870`. The queue-one lock successfully coalesces multiple rapid requests into exactly one extra trailing refresh.
+   - **Finding:** NIT - Coalescing lock works correctly for both the controller and the explicit refresh.
+
+3. **CHANNEL_ERROR fallback.**
+   - **Refutation attempted:** Check if a self-`CLOSED` event from `removeChannel` during a workspace switch incorrectly triggers `#scheduleResubscribe` and restarts the poll on the workspace we just left.
+   - **Why it failed:** At `site/src/lib/feed-push.ts:843`, `stop()` increments `this.#generation`. When Realtime eventually emits the `CLOSED` status from teardown, the callback at `site/src/lib/feed-push.ts:924` checks `if (generation !== this.#generation) return;` and safely drops the stale status before it can trigger the fallback mechanism.
+   - **Finding:** NIT - Stale status callbacks are properly ignored during teardown.
+
+4. **Workspace switch.**
+   - **Refutation attempted:** Check if a slow join for workspace A could resolve after workspace B has started, improperly painting A's feed onto B.
+   - **Why it failed:** At `site/src/lib/feed-push.ts:837`, `start()` sequences `#join` calls on `#chain`. This ensures `#join(B)` awaits the teardown of `#join(A)`. Furthermore, inside `#join(A)` at `site/src/lib/feed-push.ts:892`, `if (generation !== this.#generation) return;` forces A's join to abort before subscribing, because `generation` was incremented by B's `start()`. Additionally, at `site/src/lib/commonswarm.ts:335`, `workspaceForJoin` is captured safely before the session await.
+   - **Finding:** NIT - Workspace switches are sequentially safe, and stale joins are aborted.
+
+5. **D-053.**
+   - **Refutation attempted:** Check if any classifier parses Realtime error strings (e.g., `error.message`) to decide between poll vs push.
+   - **Why it failed:** At `site/src/lib/feed-push.ts:691`, `FEED_PUSH_FALLBACK_STATUS_SET` consists exclusively of Realtime status enumerations (`CHANNEL_ERROR`, `TIMED_OUT`, `CLOSED`). At `site/src/lib/feed-push.ts:931`, `#onStatus` branches precisely on `isFeedPushFallbackStatus(status)`. There is no logic inspecting error prose or `.message`.
+   - **Finding:** NIT - Status routing relies entirely on robust enumerations.
+
+6. **Enumerations.**
+   - **Refutation attempted:** Check if `LiveDashboard.astro` has hardcoded typed lists for intervals, fallback names, or status enumerations instead of using the exported constants.
+   - **Why it failed:** Constants `FEED_POLL_MS`, `FEED_RECONCILE_MS`, and `FEED_PUSH_FALLBACK_STATUSES` are defined centrally in `site/src/lib/feed-push.ts:680`. The dashboard uses `FeedPushController` without ever needing to reference the string constants or magic numbers directly.
+   - **Finding:** NIT - Configuration and enumerations are correctly encapsulated.
+
+7. **UI honesty.**
+   - **Refutation attempted:** Check if Realtime topics, connection details, or `CHANNEL_ERROR` leak into `console.log` or DOM `textContent`.
+   - **Why it failed:** No `console.log` or DOM mutation code for the connection status exists in `site/src/components/app/LiveDashboard.astro:1505` or `site/src/lib/feed-push.ts`. The UI remains ignorant of the underlying mechanism, only calling `startFeedPush`, `stopFeedPush`, `arm`, and `disarm`. The tests confirm `textContent` is clean.
+   - **Finding:** NIT - The user interface and console remain untainted by push mechanisms.
+
+8. **0.1.57 silent server.**
+   - **Refutation attempted:** Check if the page relies completely on `signal` events arriving, meaning it would stop refreshing if the server accepts the subscribe but emits nothing.
+   - **Why it failed:** At `site/src/lib/feed-push.ts:891` and `#syncRefreshTimer`, the 5-minute `FEED_RECONCILE_MS` timer is always running even when successfully `SUBSCRIBED`. If the server is silent, the page will stubbornly poll every 5 minutes regardless.
+   - **Finding:** NIT - The page is fully independent of event arrival.
+
+VERDICT: PASS

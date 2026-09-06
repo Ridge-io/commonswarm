@@ -1,0 +1,981 @@
+diff --git a/site/src/components/app/LiveDashboard.astro b/site/src/components/app/LiveDashboard.astro
+index 7f8a733..ac78ae9 100644
+--- a/site/src/components/app/LiveDashboard.astro
++++ b/site/src/components/app/LiveDashboard.astro
+@@ -1167,6 +1167,7 @@ import "../../styles/tokens.css";
+     revokeAgentPrincipal,
+     setAgentModel,
+     subscribeAgentActivity,
++    subscribeWorkspaceSignals,
+     uuid,
+     browserSignalFromRow,
+     BROWSER_SIGNAL_COLUMNS,
+@@ -1303,6 +1304,7 @@ import "../../styles/tokens.css";
+   } from "../../lib/composer-address";
+   import { SIGNAL_BODY_MAX } from "../../../../supabase/functions/_shared/signal-text";
+   import { HumanSeenReporter } from "../../lib/human-seen-reporter";
++  import { FeedPushController } from "../../lib/feed-push";
+ 
+   interface Workspace extends CloseableWorkspace {}
+ 
+@@ -1503,8 +1505,8 @@ import "../../styles/tokens.css";
+     let bootInFlight: Promise<void> | null = null;
+     let bootAgain = false;
+     let signalExpiryTimer: number | undefined;
+-    let liveFeedTimer: number | undefined;
+     let liveFeedInFlight = false;
++    let liveFeedQueued = false;
+     let rosterRefreshInFlight = false;
+     let rosterRefreshAttemptedAt = 0;
+     /* Ownership of the pending-access refresh lives in the gate, not in flags:
+@@ -1522,6 +1524,9 @@ import "../../styles/tokens.css";
+     const unknownAgentCandidates = new Set<string>();
+     const settledUnknownAgents = new Set<string>();
+     let armLiveFeed = (): void => {};
++    let disarmLiveFeed = (): void => {};
++    let stopFeedPush = (): void => {};
++    let startFeedPush = (_workspaceId: string): void => {};
+     let connectFocusObserver: MutationObserver | null = null;
+     let previousSignalIds = new Set<string>();
+     let feedWasEmpty = false;
+@@ -1736,8 +1741,7 @@ import "../../styles/tokens.css";
+         signalExpiryTimer = undefined;
+       }
+       if (name !== "feed" && name !== "feed-empty") {
+-        window.clearInterval(liveFeedTimer);
+-        liveFeedTimer = undefined;
++        disarmLiveFeed();
+       }
+       for (const section of all<HTMLElement>("[data-channel-view]")) {
+         section.hidden = section.dataset.channelView !== name;
+@@ -5491,12 +5495,15 @@ import "../../styles/tokens.css";
+       const workspaceId = activeWorkspaceId;
+       const version = requestVersion;
+       if (
+-        liveFeedInFlight ||
+         sampleMode ||
+         !workspaceId ||
+         document.visibilityState !== "visible" ||
+         !["feed", "feed-empty"].includes(app.dataset.channelView ?? "")
+       ) return;
++      if (liveFeedInFlight) {
++        liveFeedQueued = true;
++        return;
++      }
+       liveFeedInFlight = true;
+       try {
+         const channelId = activeChannelId;
+@@ -5545,9 +5552,29 @@ import "../../styles/tokens.css";
+         // next tick retries, and the explicit refresh control remains available.
+       } finally {
+         liveFeedInFlight = false;
++        if (liveFeedQueued) {
++          liveFeedQueued = false;
++          void refreshLatestSignals();
++        }
+       }
+     };
+ 
++    const feedPush = new FeedPushController({
++      subscribe: (workspaceId, onEvent, onStatus) =>
++        subscribeWorkspaceSignals(workspaceId, onEvent, onStatus),
++      refresh: () => refreshLatestSignals(),
++      timers: {
++        setInterval: (handler, ms) => window.setInterval(handler, ms),
++        clearInterval: (id) => {
++          if (id !== undefined) window.clearInterval(id);
++        },
++        setTimeout: (handler, ms) => window.setTimeout(handler, ms),
++        clearTimeout: (id) => {
++          if (id !== undefined) window.clearTimeout(id);
++        },
++      },
++    });
++
+     /*
+      * Pending access is where the inviter WAITS: a teammate invite or an agent key sits
+      * there until it is consumed or cancelled. The dedicated workspace poll owns the
+@@ -5654,6 +5681,7 @@ import "../../styles/tokens.css";
+ 
+     /** Clear every workspace-scoped value when auth identity or availability changes. */
+     const resetWorkspaceSessionState = (): void => {
++      stopFeedPush();
+       stopAgentActivity();
+       closeEntityPanel(false);
+       closeWorkspaceMenu();
+@@ -5721,14 +5749,13 @@ import "../../styles/tokens.css";
+       previousSignalIds = new Set();
+       feedWasEmpty = false;
+       liveFeedInFlight = false;
++      liveFeedQueued = false;
+       rosterRefreshInFlight = false;
+       rosterRefreshAttemptedAt = 0;
+       expandedSignalIds.clear();
+       resetComposer();
+       window.clearTimeout(signalExpiryTimer);
+       signalExpiryTimer = undefined;
+-      window.clearInterval(liveFeedTimer);
+-      liveFeedTimer = undefined;
+       pendingRefreshGate.resetCooldown();
+       syncPendingPoll();
+ 
+@@ -5797,9 +5824,22 @@ import "../../styles/tokens.css";
+         !activeWorkspaceId ||
+         document.visibilityState !== "visible" ||
+         !["feed", "feed-empty"].includes(app.dataset.channelView ?? "")
+-      ) return;
+-      if (liveFeedTimer !== undefined) return;
+-      liveFeedTimer = window.setInterval(() => void refreshLatestSignals(), 2_000);
++      ) {
++        disarmLiveFeed();
++        return;
++      }
++      feedPush.arm();
++    };
++    disarmLiveFeed = (): void => {
++      feedPush.disarm();
++    };
++    stopFeedPush = (): void => {
++      feedPush.stop();
++    };
++    startFeedPush = (workspaceId: string): void => {
++      const workspaceForJoin = workspaceId;
++      if (sampleMode) return;
++      feedPush.start(workspaceForJoin);
+     };
+ 
+     /*
+@@ -5860,8 +5900,7 @@ import "../../styles/tokens.css";
+     document.addEventListener("visibilitychange", () => {
+       humanSeenReporter.visibilityChange(document.visibilityState === "visible");
+       if (document.visibilityState !== "visible") {
+-        window.clearInterval(liveFeedTimer);
+-        liveFeedTimer = undefined;
++        disarmLiveFeed();
+         syncPendingPoll();
+         return;
+       }
+@@ -6033,6 +6072,7 @@ import "../../styles/tokens.css";
+       syncConnectWorkspace(selected);
+       const version = ++requestVersion;
+       startAgentActivity(selected.id, version);
++      startFeedPush(selected.id);
+       agents = [];
+       members = [];
+       pendingInvites = [];
+@@ -7131,6 +7171,7 @@ import "../../styles/tokens.css";
+ 
+     const renderSample = (): void => {
+       sampleMode = true;
++      stopFeedPush();
+       stopAgentActivity();
+       agentActivityConnection = "subscribed";
+       signalHasMore = false;
+diff --git a/site/src/components/app/access-lifecycle.observer.test.ts b/site/src/components/app/access-lifecycle.observer.test.ts
+index 5a46539..3e3b3ee 100644
+--- a/site/src/components/app/access-lifecycle.observer.test.ts
++++ b/site/src/components/app/access-lifecycle.observer.test.ts
+@@ -482,7 +482,7 @@ test("idle discovery finds remote zero-to-one access on a bounded cadence", () =
+ });
+ 
+ test("visible channels poll for fresh signals and preserve readable state on failure", () => {
+-  assert.match(dashboard, /setInterval\(\(\) => void refreshLatestSignals\(\), 2_000\)/);
++  assert.match(dashboard, /feedPush\.arm\(\)/);
+   assert.match(dashboard, /document\.visibilityState !== "visible"/);
+   assert.match(dashboard, /document\.addEventListener\("visibilitychange"/);
+   assert.match(dashboard, /const next = \[\.\.\.page\.rows, \.\.\.signals\.filter/);
+diff --git a/site/src/components/app/feed-push.observer.test.ts b/site/src/components/app/feed-push.observer.test.ts
+new file mode 100644
+index 0000000..babf49d
+--- /dev/null
++++ b/site/src/components/app/feed-push.observer.test.ts
+@@ -0,0 +1,95 @@
++import assert from "node:assert/strict";
++import { readFile } from "node:fs/promises";
++import { test } from "node:test";
++
++const dashboard = await readFile(new URL("./LiveDashboard.astro", import.meta.url), "utf8");
++const client = await readFile(new URL("../../lib/commonswarm.ts", import.meta.url), "utf8");
++const feedPush = await readFile(new URL("../../lib/feed-push.ts", import.meta.url), "utf8");
++
++function between(source: string, start: string, end: string): string {
++  const startAt = source.indexOf(start);
++  const endAt = source.indexOf(end, startAt + start.length);
++  assert.notEqual(startAt, -1, `missing observer start anchor: ${start}`);
++  assert.notEqual(endAt, -1, `missing observer end anchor: ${end}`);
++  return source.slice(startAt, endAt);
++}
++
++test("the dashboard subscribes to workspace signals on open and tears them down on reset", () => {
++  const openWorkspace = between(dashboard, "const openWorkspace =", "const openAgentChoice =");
++  const reset = between(dashboard, "const resetWorkspaceSessionState =", "armLiveFeed =");
++  const sample = between(dashboard, "const renderSample =", "workspaces = [");
++  assert.match(openWorkspace, /startAgentActivity\(selected\.id, version\)/);
++  assert.match(openWorkspace, /startFeedPush\(selected\.id\)/);
++  assert.match(
++    dashboard,
++    /startFeedPush = \(workspaceId: string\): void => \{[\s\S]*const workspaceForJoin = workspaceId;/,
++  );
++  assert.match(reset, /stopFeedPush\(\)/);
++  assert.match(sample, /stopFeedPush\(\)/);
++  assert.match(dashboard, /subscribeWorkspaceSignals/);
++  assert.match(dashboard, /new FeedPushController/);
++});
++
++test("subscribe captures the workspace id before session and setAuth awaits", () => {
++  const subscribe = between(
++    client,
++    "export async function subscribeWorkspaceSignals",
++    "Start an OAuth sign-in",
++  );
++  assert.match(subscribe, /const workspaceForJoin = workspaceId;/);
++  assert.match(subscribe, /const workspaceForJoin = workspaceId;[\s\S]*await currentSession\(\)/);
++  assert.match(subscribe, /await c\.realtime\.setAuth\(active\.access_token\)/);
++  assert.match(
++    subscribe,
++    /attachWorkspaceSignalsChannel\(c, workspaceForJoin, onEvent, onStatus\)/,
++  );
++  assert.doesNotMatch(subscribe, /console\.(log|debug|info|warn|error)/);
++});
++
++test("the join is private:true on cswarm-signals and the event is the shared constant", () => {
++  assert.match(feedPush, /export const WORKSPACE_SIGNALS_TOPIC_PREFIX = "cswarm-signals:"/);
++  assert.match(feedPush, /export const WORKSPACE_SIGNALS_EVENT = "signal"/);
++  const attach = between(feedPush, "export function attachWorkspaceSignalsChannel", "export class FeedPushController");
++  assert.match(attach, /private: true/);
++  assert.match(attach, /event: WORKSPACE_SIGNALS_EVENT/);
++  assert.match(attach, /workspaceSignalsTopic\(workspaceForJoin\)/);
++  assert.match(attach, /if \(removed\) return;/);
++});
++
++test("fallback statuses are one generated set; CHANNEL_ERROR is in it", () => {
++  const listed = between(
++    feedPush,
++    "export const FEED_PUSH_FALLBACK_STATUSES = [",
++    "] as const;",
++  );
++  assert.match(listed, /"CHANNEL_ERROR"/);
++  assert.match(listed, /"TIMED_OUT"/);
++  assert.match(listed, /"CLOSED"/);
++  assert.match(feedPush, /isFeedPushFallbackStatus\(status\)/);
++  assert.match(feedPush, /export const FEED_POLL_MS = 2_000/);
++  assert.match(feedPush, /export const FEED_RECONCILE_MS = 30_000/);
++  assert.match(feedPush, /feedRefreshIntervalMs\(this\.#subscribed\)/);
++  assert.doesNotMatch(feedPush, /error\.message/);
++});
++
++test("nothing about the topic or a channel error is written into the UI", () => {
++  assert.doesNotMatch(
++    dashboard,
++    /textContent =[^;]*(cswarm-signals|CHANNEL_ERROR|TIMED_OUT)/,
++  );
++  assert.doesNotMatch(
++    dashboard,
++    /console\.(log|debug|info|warn|error)/,
++  );
++  const arm = between(
++    dashboard,
++    "armLiveFeed = (): void => {\n      if (",
++    "const refreshRosterForUnknownAgents",
++  );
++  assert.match(arm, /feedPush\.arm\(\)/);
++  assert.match(arm, /disarmLiveFeed = \(\): void => \{[\s\S]*feedPush\.disarm\(\)/);
++  assert.match(
++    dashboard,
++    /document\.addEventListener\("visibilitychange"[\s\S]*disarmLiveFeed\(\)/,
++  );
++});
+diff --git a/site/src/components/app/header-roster.observer.test.ts b/site/src/components/app/header-roster.observer.test.ts
+index 77c1f2f..a2fb5f7 100644
+--- a/site/src/components/app/header-roster.observer.test.ts
++++ b/site/src/components/app/header-roster.observer.test.ts
+@@ -281,8 +281,8 @@ test("unknown agent-authored signals trigger a bounded roster refresh", () => {
+   assert.match(dashboard, /void refreshRosterForUnknownAgents/);
+   assert.match(
+     dashboard,
+-    /setInterval\(\(\) => void refreshLatestSignals\(\), 2_000\)/,
+-    "the two-second signal polling cadence is preserved",
++    /feedPush\.arm\(\)/,
++    "the live feed still arms a timer; fallback cadence is FEED_POLL_MS",
+   );
+ });
+ 
+diff --git a/site/src/lib/commonswarm.ts b/site/src/lib/commonswarm.ts
+index 4c71e88..447fb88 100644
+--- a/site/src/lib/commonswarm.ts
++++ b/site/src/lib/commonswarm.ts
+@@ -43,6 +43,10 @@ import {
+   channelRefusalMessage,
+   type WorkspaceChannel,
+ } from "./channels.js";
++import {
++  attachWorkspaceSignalsChannel,
++  type FeedPushSubscription,
++} from "./feed-push.js";
+ 
+ export type { WorkspaceChannel };
+ 
+@@ -211,6 +215,26 @@ export async function subscribeAgentActivity(
+   };
+ }
+ 
++export type WorkspaceSignalsSubscription = FeedPushSubscription;
++
++/**
++ * Subscribe one signed-in member to the private workspace signal topic.
++ * Captures the workspace id before session and setAuth awaits.
++ */
++export async function subscribeWorkspaceSignals(
++  workspaceId: string,
++  onEvent: () => void,
++  onStatus: (status: string) => void,
++): Promise<WorkspaceSignalsSubscription> {
++  const c = client();
++  if (!c) throw new NoDeployment();
++  const workspaceForJoin = workspaceId;
++  const active = await currentSession();
++  if (!active) throw new SessionExpired();
++  await c.realtime.setAuth(active.access_token);
++  return attachWorkspaceSignalsChannel(c, workspaceForJoin, onEvent, onStatus);
++}
++
+ /**
+  * Start an OAuth sign-in. THE ONLY PLACE A PROVIDER STRING REACHES SUPABASE.
+  *
+diff --git a/site/src/lib/feed-push.test.mjs b/site/src/lib/feed-push.test.mjs
+new file mode 100644
+index 0000000..9bd8dd9
+--- /dev/null
++++ b/site/src/lib/feed-push.test.mjs
+@@ -0,0 +1,305 @@
++import assert from "node:assert/strict";
++import { test } from "node:test";
++import {
++  FEED_POLL_MS,
++  FEED_PUSH_FALLBACK_STATUSES,
++  FEED_RECONCILE_MS,
++  FeedPushController,
++  WORKSPACE_SIGNALS_EVENT,
++  WORKSPACE_SIGNALS_TOPIC_PREFIX,
++  attachWorkspaceSignalsChannel,
++  feedRefreshIntervalMs,
++  isFeedPushFallbackStatus,
++  workspaceSignalsTopic,
++} from "./feed-push.ts";
++
++const WS_A = "11111111-1111-4111-8111-111111111111";
++const WS_B = "22222222-2222-4222-8222-222222222222";
++
++function createFakeTimers() {
++  let now = 0;
++  let nextId = 1;
++  const intervals = new Map();
++  const timeouts = new Map();
++  return {
++    now: () => now,
++    setInterval(fn, ms) {
++      const id = nextId++;
++      intervals.set(id, { fn, ms, next: now + ms });
++      return id;
++    },
++    clearInterval(id) {
++      if (id !== undefined) intervals.delete(id);
++    },
++    setTimeout(fn, ms) {
++      const id = nextId++;
++      timeouts.set(id, { fn, due: now + ms });
++      return id;
++    },
++    clearTimeout(id) {
++      if (id !== undefined) timeouts.delete(id);
++    },
++    async tick(ms) {
++      const end = now + ms;
++      while (true) {
++        let soonest = null;
++        for (const [id, item] of timeouts) {
++          if (item.due <= end && (soonest === null || item.due < soonest.at)) {
++            soonest = {
++              at: item.due,
++              run: () => {
++                timeouts.delete(id);
++                item.fn();
++              },
++            };
++          }
++        }
++        for (const [, item] of intervals) {
++          if (item.next <= end && (soonest === null || item.next < soonest.at)) {
++            soonest = {
++              at: item.next,
++              run: () => {
++                item.fn();
++                item.next += item.ms;
++              },
++            };
++          }
++        }
++        if (soonest === null) {
++          now = end;
++          return;
++        }
++        now = soonest.at;
++        soonest.run();
++        await Promise.resolve();
++      }
++    },
++  };
++}
++
++function createFakeClient() {
++  const log = [];
++  const channels = [];
++  const client = {
++    channel(topic, opts) {
++      log.push({ op: "channel", topic, opts });
++      const ch = {
++        topic,
++        opts,
++        eventHandler: null,
++        statusHandler: null,
++        on(_type, filter, cb) {
++          log.push({ op: "on", event: filter.event, topic });
++          ch.eventHandler = cb;
++          return ch;
++        },
++        subscribe(cb) {
++          log.push({ op: "subscribe", topic });
++          ch.statusHandler = cb;
++          return ch;
++        },
++      };
++      channels.push(ch);
++      return ch;
++    },
++    async removeChannel(ch) {
++      log.push({ op: "removeChannel", topic: ch.topic });
++      const index = channels.indexOf(ch);
++      if (index >= 0) channels.splice(index, 1);
++    },
++  };
++  return { client, log, channels };
++}
++
++function createHarness(refresh) {
++  const timers = createFakeTimers();
++  const fake = createFakeClient();
++  const refreshes = { count: 0 };
++  const controller = new FeedPushController({
++    subscribe: async (workspaceId, onEvent, onStatus) =>
++      attachWorkspaceSignalsChannel(fake.client, workspaceId, onEvent, onStatus),
++    refresh: refresh ?? (async () => {
++      refreshes.count += 1;
++    }),
++    timers,
++  });
++  return { controller, timers, fake, refreshes };
++}
++
++async function subscribed(harness, workspaceId = WS_A) {
++  harness.controller.start(workspaceId);
++  harness.controller.arm();
++  await harness.controller.whenIdle();
++  const channel = harness.fake.channels.at(-1);
++  assert.ok(channel, "subscribe must create a channel");
++  channel.statusHandler("SUBSCRIBED");
++  return channel;
++}
++
++test("topic is the workspace prefix plus a lowercased uuid", () => {
++  assert.equal(workspaceSignalsTopic(WS_A), `${WORKSPACE_SIGNALS_TOPIC_PREFIX}${WS_A}`);
++  assert.equal(
++    workspaceSignalsTopic("AAAAAAAA-AAAA-4AAA-8AAA-AAAAAAAAAAAA"),
++    `${WORKSPACE_SIGNALS_TOPIC_PREFIX}aaaaaaaa-aaaa-4aaa-8aaa-aaaaaaaaaaaa`,
++  );
++  assert.throws(() => workspaceSignalsTopic("sample-design-studio"));
++});
++
++test("fallback statuses are the named Realtime subscribe states, not error.message", () => {
++  assert.deepEqual([...FEED_PUSH_FALLBACK_STATUSES], [
++    "CHANNEL_ERROR",
++    "TIMED_OUT",
++    "CLOSED",
++  ]);
++  assert.equal(isFeedPushFallbackStatus("CHANNEL_ERROR"), true);
++  assert.equal(isFeedPushFallbackStatus("TIMED_OUT"), true);
++  assert.equal(isFeedPushFallbackStatus("CLOSED"), true);
++  assert.equal(isFeedPushFallbackStatus("SUBSCRIBED"), false);
++  assert.equal(isFeedPushFallbackStatus("Unauthorized"), false);
++  assert.equal(feedRefreshIntervalMs(true), FEED_RECONCILE_MS);
++  assert.equal(feedRefreshIntervalMs(false), FEED_POLL_MS);
++  assert.equal(FEED_POLL_MS, 2_000);
++  assert.equal(FEED_RECONCILE_MS, 30_000);
++});
++
++test("fake client joins the private signal topic", async () => {
++  const { controller, fake } = createHarness();
++  controller.start(WS_A);
++  await controller.whenIdle();
++  assert.equal(fake.channels.length, 1);
++  assert.equal(fake.channels[0].topic, workspaceSignalsTopic(WS_A));
++  assert.equal(fake.channels[0].opts.config.private, true);
++  assert.deepEqual(fake.log.filter((row) => row.op === "on").map((row) => row.event), [
++    WORKSPACE_SIGNALS_EVENT,
++  ]);
++});
++
++test("subscribed: no poll timer fires before the 30 s reconcile", async () => {
++  const harness = createHarness();
++  await subscribed(harness);
++  assert.equal(harness.controller.subscribed, true);
++  await harness.timers.tick(30_000 - 1);
++  assert.equal(harness.refreshes.count, 0);
++});
++
++test("a signal event triggers one refresh", async () => {
++  const harness = createHarness();
++  const channel = await subscribed(harness);
++  channel.eventHandler({});
++  await Promise.resolve();
++  assert.equal(harness.refreshes.count, 1);
++});
++
++test("three events in 100 ms coalesce to at most two refreshes", async () => {
++  let release;
++  let started = 0;
++  let finished = 0;
++  const harness = createHarness(async () => {
++    started += 1;
++    if (started === 1) {
++      await new Promise((resolve) => {
++        release = resolve;
++      });
++    }
++    finished += 1;
++  });
++  const channel = await subscribed(harness);
++  channel.eventHandler({});
++  channel.eventHandler({});
++  channel.eventHandler({});
++  await Promise.resolve();
++  assert.equal(started, 1, "the first refresh is in flight");
++  release();
++  await Promise.resolve();
++  await Promise.resolve();
++  await Promise.resolve();
++  assert.equal(started, 2);
++  assert.equal(finished, 2);
++  assert.ok(started <= 2);
++});
++
++test("CHANNEL_ERROR resumes the two-second poll", async () => {
++  const harness = createHarness();
++  const channel = await subscribed(harness);
++  await harness.timers.tick(30_000 - 1);
++  assert.equal(harness.refreshes.count, 0);
++  channel.statusHandler("CHANNEL_ERROR");
++  assert.equal(harness.controller.subscribed, false);
++  await harness.timers.tick(FEED_POLL_MS);
++  assert.equal(harness.refreshes.count, 1);
++  await harness.timers.tick(FEED_POLL_MS);
++  assert.equal(harness.refreshes.count, 2);
++});
++
++test("TIMED_OUT and CLOSED also resume the poll", async () => {
++  for (const status of ["TIMED_OUT", "CLOSED"]) {
++    const harness = createHarness();
++    const channel = await subscribed(harness);
++    channel.statusHandler(status);
++    assert.equal(harness.controller.subscribed, false, status);
++    await harness.timers.tick(FEED_POLL_MS);
++    assert.equal(harness.refreshes.count, 1, status);
++  }
++});
++
++test("re-SUBSCRIBED stops the poll", async () => {
++  const harness = createHarness();
++  const first = await subscribed(harness);
++  first.statusHandler("CHANNEL_ERROR");
++  await harness.timers.tick(FEED_POLL_MS);
++  const afterPoll = harness.refreshes.count;
++  assert.ok(afterPoll >= 1);
++  await harness.controller.whenIdle();
++  const next = harness.fake.channels.at(-1);
++  assert.ok(next);
++  assert.notEqual(next, first);
++  next.statusHandler("SUBSCRIBED");
++  assert.equal(harness.controller.subscribed, true);
++  const atPush = harness.refreshes.count;
++  await harness.timers.tick(30_000 - 1);
++  assert.equal(harness.refreshes.count, atPush);
++});
++
++test("workspace switch removes the old channel before the new subscribe", async () => {
++  const harness = createHarness();
++  harness.controller.start(WS_A);
++  await harness.controller.whenIdle();
++  assert.equal(harness.fake.channels[0].topic, workspaceSignalsTopic(WS_A));
++  harness.controller.start(WS_B);
++  await harness.controller.whenIdle();
++  const ops = harness.fake.log
++    .filter((row) => row.op === "channel" || row.op === "removeChannel")
++    .map((row) => `${row.op}:${row.topic}`);
++  const removeA = ops.indexOf(`removeChannel:${workspaceSignalsTopic(WS_A)}`);
++  const channelB = ops.indexOf(`channel:${workspaceSignalsTopic(WS_B)}`);
++  assert.ok(removeA >= 0, `old channel was removed: ${ops.join(" ")}`);
++  assert.ok(channelB >= 0, `new channel was created: ${ops.join(" ")}`);
++  assert.ok(
++    removeA < channelB,
++    `old channel must go before the new subscribe: ${ops.join(" ")}`,
++  );
++});
++
++test("reconcile fires once at 30 seconds while subscribed", async () => {
++  const harness = createHarness();
++  await subscribed(harness);
++  await harness.timers.tick(30_000 - 1);
++  assert.equal(harness.refreshes.count, 0);
++  await harness.timers.tick(1);
++  assert.equal(harness.refreshes.count, 1);
++});
++
++test("a 0.1.57 silent topic still reconciles; poll covers a refused join", async () => {
++  const silent = createHarness();
++  await subscribed(silent);
++  await silent.timers.tick(FEED_RECONCILE_MS);
++  assert.equal(silent.refreshes.count, 1);
++
++  const refused = createHarness();
++  refused.controller.start(WS_A);
++  refused.controller.arm();
++  await refused.controller.whenIdle();
++  refused.fake.channels[0].statusHandler("CHANNEL_ERROR");
++  await refused.timers.tick(FEED_POLL_MS);
++  assert.equal(refused.refreshes.count, 1);
++});
+diff --git a/site/src/lib/feed-push.ts b/site/src/lib/feed-push.ts
+new file mode 100644
+index 0000000..a98a389
+--- /dev/null
++++ b/site/src/lib/feed-push.ts
+@@ -0,0 +1,320 @@
++/*
++ * Workspace feed wake: subscribe to the private cswarm-signals topic and
++ * refresh the feed on events, with a 30-second reconcile while SUBSCRIBED and
++ * the existing 2-second poll when not. Push is a hint; the signal page is
++ * still the truth.
++ *
++ * Status is classified by the Realtime subscribe callback names in
++ * FEED_PUSH_FALLBACK_STATUSES, never by a thrown Error's presentation text (D-053).
++ */
++
++const UUID_RE =
++  /^[0-9a-f]{8}-[0-9a-f]{4}-[1-8][0-9a-f]{3}-[89ab][0-9a-f]{3}-[0-9a-f]{12}$/i;
++
++export const WORKSPACE_SIGNALS_TOPIC_PREFIX = "cswarm-signals:";
++export const WORKSPACE_SIGNALS_EVENT = "signal";
++export const FEED_PUSH_SUBSCRIBED_STATUS = "SUBSCRIBED";
++
++/** Fallback poll while the workspace signal topic is not SUBSCRIBED. */
++export const FEED_POLL_MS = 2_000;
++/** Reconcile while the workspace signal topic is SUBSCRIBED. Spec §4.3. */
++export const FEED_RECONCILE_MS = 30_000;
++/** Resubscribe delays after CHANNEL_ERROR / TIMED_OUT / CLOSED. */
++export const FEED_PUSH_BACKOFF_MS = [1_000, 2_000, 5_000, 10_000] as const;
++
++/**
++ * Realtime subscribe statuses that drop push and restore the poll.
++ * The controller reads this set; tests emit the same names as literals.
++ */
++export const FEED_PUSH_FALLBACK_STATUSES = [
++  "CHANNEL_ERROR",
++  "TIMED_OUT",
++  "CLOSED",
++] as const;
++
++export type FeedPushFallbackStatus = (typeof FEED_PUSH_FALLBACK_STATUSES)[number];
++
++const FEED_PUSH_FALLBACK_STATUS_SET: ReadonlySet<string> = new Set(
++  FEED_PUSH_FALLBACK_STATUSES,
++);
++
++export function isFeedPushFallbackStatus(
++  status: string,
++): status is FeedPushFallbackStatus {
++  return FEED_PUSH_FALLBACK_STATUS_SET.has(status);
++}
++
++/** Topic name from the workspace id; never caller-entered text. */
++export function workspaceSignalsTopic(workspaceId: string): string {
++  if (!UUID_RE.test(workspaceId)) {
++    throw new Error("workspace signals workspace id is malformed");
++  }
++  return `${WORKSPACE_SIGNALS_TOPIC_PREFIX}${workspaceId.toLowerCase()}`;
++}
++
++export function feedRefreshIntervalMs(subscribed: boolean): number {
++  return subscribed ? FEED_RECONCILE_MS : FEED_POLL_MS;
++}
++
++export interface FeedPushSubscription {
++  unsubscribe(): Promise<void>;
++}
++
++export interface FeedPushRealtimeChannel {
++  on(
++    type: "broadcast",
++    filter: { event: string },
++    callback: (message: unknown) => void,
++  ): unknown;
++  subscribe(callback: (status: string) => void): unknown;
++}
++
++export interface FeedPushChannelClient {
++  channel(
++    name: string,
++    opts: {
++      config: {
++        private: boolean;
++        broadcast: { ack: boolean; self: boolean };
++      };
++    },
++  ): FeedPushRealtimeChannel;
++  removeChannel(channel: FeedPushRealtimeChannel): Promise<unknown> | unknown;
++}
++
++export interface FeedPushTimers {
++  setInterval(handler: () => void, ms: number): number;
++  clearInterval(id: number | undefined): void;
++  setTimeout(handler: () => void, ms: number): number;
++  clearTimeout(id: number | undefined): void;
++}
++
++export interface FeedPushHooks {
++  subscribe: (
++    workspaceId: string,
++    onEvent: () => void,
++    onStatus: (status: string) => void,
++  ) => Promise<FeedPushSubscription>;
++  refresh: () => Promise<void> | void;
++  timers: FeedPushTimers;
++}
++
++/**
++ * Bind one private workspace-signal channel. Callers that await (session,
++ * setAuth) must pass a workspace id captured before those awaits.
++ */
++export function attachWorkspaceSignalsChannel(
++  c: FeedPushChannelClient,
++  workspaceId: string,
++  onEvent: () => void,
++  onStatus: (status: string) => void,
++): FeedPushSubscription {
++  const workspaceForJoin = workspaceId;
++  let removed = false;
++  const channel = c.channel(workspaceSignalsTopic(workspaceForJoin), {
++    config: {
++      private: true,
++      broadcast: { ack: false, self: false },
++    },
++  });
++  channel.on("broadcast", { event: WORKSPACE_SIGNALS_EVENT }, () => {
++    if (removed) return;
++    onEvent();
++  });
++  channel.subscribe((status) => {
++    if (removed) return;
++    onStatus(status);
++  });
++  return {
++    async unsubscribe(): Promise<void> {
++      if (removed) return;
++      removed = true;
++      await c.removeChannel(channel);
++    },
++  };
++}
++
++export class FeedPushController {
++  readonly #hooks: FeedPushHooks;
++  #generation = 0;
++  #workspaceId = "";
++  #subscription: FeedPushSubscription | null = null;
++  #subscribed = false;
++  #armed = false;
++  #refreshTimer: number | undefined;
++  #backoffTimer: number | undefined;
++  #backoffAttempt = 0;
++  #refreshing = false;
++  #queued = false;
++  #chain: Promise<void> = Promise.resolve();
++
++  constructor(hooks: FeedPushHooks) {
++    this.#hooks = hooks;
++  }
++
++  get subscribed(): boolean {
++    return this.#subscribed;
++  }
++
++  get workspaceId(): string {
++    return this.#workspaceId;
++  }
++
++  /** Resolves when the current start/stop chain has no join in flight. */
++  whenIdle(): Promise<void> {
++    return this.#chain.catch(() => undefined);
++  }
++
++  start(workspaceId: string): void {
++    const workspaceForJoin = workspaceId;
++    const generation = ++this.#generation;
++    this.#workspaceId = workspaceForJoin;
++    this.#subscribed = false;
++    this.#backoffAttempt = 0;
++    this.#clearBackoff();
++    this.#syncRefreshTimer();
++    this.#chain = this.#chain
++      .catch(() => undefined)
++      .then(() => this.#join(generation, workspaceForJoin));
++  }
++
++  stop(): void {
++    this.#generation += 1;
++    this.#workspaceId = "";
++    this.#subscribed = false;
++    this.#armed = false;
++    this.#queued = false;
++    this.#clearBackoff();
++    this.#clearRefreshTimer();
++    this.#chain = this.#chain
++      .catch(() => undefined)
++      .then(() => this.#teardown());
++  }
++
++  arm(): void {
++    const wasArmed = this.#armed;
++    this.#armed = true;
++    if (this.#refreshTimer !== undefined) return;
++    this.#syncRefreshTimer();
++    if (!wasArmed && this.#subscribed) this.requestRefresh();
++  }
++
++  disarm(): void {
++    this.#armed = false;
++    this.#clearRefreshTimer();
++  }
++
++  requestRefresh(): void {
++    if (this.#refreshing) {
++      this.#queued = true;
++      return;
++    }
++    this.#refreshing = true;
++    void this.#runRefresh();
++  }
++
++  async #runRefresh(): Promise<void> {
++    try {
++      await this.#hooks.refresh();
++    } finally {
++      this.#refreshing = false;
++      if (this.#queued) {
++        this.#queued = false;
++        this.#refreshing = true;
++        await this.#runRefresh();
++      }
++    }
++  }
++
++  async #join(generation: number, workspaceId: string): Promise<void> {
++    await this.#teardown();
++    if (generation !== this.#generation) return;
++    try {
++      const subscription = await this.#hooks.subscribe(
++        workspaceId,
++        () => {
++          if (generation !== this.#generation) return;
++          this.requestRefresh();
++        },
++        (status) => {
++          this.#onStatus(generation, workspaceId, status);
++        },
++      );
++      if (generation !== this.#generation) {
++        await subscription.unsubscribe();
++        return;
++      }
++      this.#subscription = subscription;
++    } catch {
++      if (generation !== this.#generation) return;
++      this.#setSubscribed(false);
++      this.#scheduleResubscribe(generation, workspaceId);
++    }
++  }
++
++  async #teardown(): Promise<void> {
++    const subscription = this.#subscription;
++    this.#subscription = null;
++    if (!subscription) return;
++    await subscription.unsubscribe();
++  }
++
++  #onStatus(generation: number, workspaceId: string, status: string): void {
++    if (generation !== this.#generation) return;
++    if (status === FEED_PUSH_SUBSCRIBED_STATUS) {
++      this.#backoffAttempt = 0;
++      this.#clearBackoff();
++      this.#setSubscribed(true);
++      return;
++    }
++    if (isFeedPushFallbackStatus(status)) {
++      this.#setSubscribed(false);
++      this.#scheduleResubscribe(generation, workspaceId);
++    }
++  }
++
++  #setSubscribed(value: boolean): void {
++    this.#subscribed = value;
++    this.#syncRefreshTimer();
++  }
++
++  #syncRefreshTimer(): void {
++    this.#clearRefreshTimer();
++    if (!this.#armed) return;
++    this.#refreshTimer = this.#hooks.timers.setInterval(
++      () => this.requestRefresh(),
++      feedRefreshIntervalMs(this.#subscribed),
++    );
++  }
++
++  #clearRefreshTimer(): void {
++    if (this.#refreshTimer === undefined) return;
++    this.#hooks.timers.clearInterval(this.#refreshTimer);
++    this.#refreshTimer = undefined;
++  }
++
++  #clearBackoff(): void {
++    if (this.#backoffTimer === undefined) return;
++    this.#hooks.timers.clearTimeout(this.#backoffTimer);
++    this.#backoffTimer = undefined;
++  }
++
++  #scheduleResubscribe(generation: number, workspaceId: string): void {
++    if (generation !== this.#generation) return;
++    if (this.#backoffTimer !== undefined) return;
++    const delay =
++      FEED_PUSH_BACKOFF_MS[
++        Math.min(this.#backoffAttempt, FEED_PUSH_BACKOFF_MS.length - 1)
++      ]!;
++    this.#backoffAttempt += 1;
++    this.#backoffTimer = this.#hooks.timers.setTimeout(() => {
++      this.#backoffTimer = undefined;
++      if (generation !== this.#generation) return;
++      const workspaceForJoin = workspaceId;
++      const nextGeneration = ++this.#generation;
++      this.#chain = this.#chain
++        .catch(() => undefined)
++        .then(() => this.#join(nextGeneration, workspaceForJoin));
++    }, delay);
++  }
++}

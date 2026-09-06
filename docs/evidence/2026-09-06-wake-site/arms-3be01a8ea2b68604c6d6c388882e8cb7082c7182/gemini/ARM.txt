@@ -1,0 +1,21 @@
+# Push delivery: wake listeners from Supabase Realtime instead of polling
+
+diff --git a/site/src/components/app/LiveDashboard.astro b/site/src/components/app/LiveDashboard.astro
+
+1. **30 s reconcile.** Attempted refutation: Is `FEED_RECONCILE_MS` set to `300_000`, or does the timer fire early at 29_999 ms? No, `FEED_RECONCILE_MS = 30_000;` in `site/src/lib/feed-push.ts` (patch line 682). The test in `site/src/lib/feed-push.test.mjs` (patch line 633) ticks 29_999 ms and confirms 0 refreshes, then ticks 1 more millisecond and confirms 1 refresh. Refutation failed. PASS.
+
+2. **No 2 s poll while subscribed.** Attempted refutation: Does the 2s poll continue to fire between subscribe and 30s? No, the test in `site/src/lib/feed-push.test.mjs` (patch line 527) specifically asserts that after subscription and ticking for 29_999 ms, `harness.refreshes.count` remains 0. Refutation failed. PASS.
+
+3. **Coalesce.** Attempted refutation: Do 3 rapid `signal` events cause 3 separate refreshes while one is in flight? No, `site/src/components/app/LiveDashboard.astro` introduces a `liveFeedQueued` flag (patch line 62) to enqueue at most one trailing refresh when `liveFeedInFlight` is true. The test in `site/src/lib/feed-push.test.mjs` (patch line 543) verifies that 3 events result in exactly 2 refreshes. Refutation failed. PASS.
+
+4. **CHANNEL_ERROR fallback.** Attempted refutation: Do these specific statuses fail to resume the 2s poll? No, the tests in `site/src/lib/feed-push.test.mjs` (patch lines 571 and 584) inject `"CHANNEL_ERROR"`, `"TIMED_OUT"`, and `"CLOSED"`, explicitly asserting that the 2s poll resumes by advancing `FEED_POLL_MS`. Refutation failed. PASS.
+
+5. **Workspace switch.** Attempted refutation: Is the new channel opened before the old one is closed, or is the workspace id captured after yielding to await? No, the test in `site/src/lib/feed-push.test.mjs` (patch line 613) verifies that `removeChannel` occurs before `channel()` upon switching workspaces. Additionally, `workspaceForJoin` is captured synchronously before `await currentSession()` in `site/src/lib/commonswarm.ts` (patch line 335). Refutation failed. PASS.
+
+6. **D-053.** Attempted refutation: Does the code branch on `error.message` for connection states? No, the diff contains no such branches. The only mention of `error.message` is an explicit negative assertion in `site/src/components/app/feed-push.observer.test.ts` (patch line 264) to ensure it is not used. Refutation failed. PASS.
+
+7. **Enumerations.** Attempted refutation: Are magic numbers or strings used instead of the specified constants? No, status checks use `FEED_PUSH_FALLBACK_STATUS_SET` derived from the enumeration, and intervals are returned via `FEED_POLL_MS` and `FEED_RECONCILE_MS` in `site/src/lib/feed-push.ts` (patch lines 698 and 718). Refutation failed. PASS.
+
+8. **0.1.57 silent server.** Attempted refutation: Does a silent server fail to trigger the reconcile, or does a refused join fail to start the poll? No, the test in `site/src/lib/feed-push.test.mjs` (patch line 642) proves that a joined channel with no events still reconciles at 30s, and a refused join drops into the 2s poll. Refutation failed. PASS.
+
+VERDICT: PASS
