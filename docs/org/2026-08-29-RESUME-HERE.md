@@ -2467,3 +2467,17 @@ under the 30-day floor are real commands, a few hundred a day. Revisit only if `
 grows again. L4's only dependency on L2b was the `package.json` line; moot. L3 (`lane/wake-command`,
 Grok, holds the local database) and L4 (`lane/wake-client`, Grok, pure tests + a live control with
 `--state-dir`) run in parallel on disjoint files; L4 merges after L3.
+
+## 2026-09-06 05:3x UTC — L3 LANDED (merge 83affd9), `command` and `read` edges DEPLOYED
+
+`lane/wake-command` 7c9a458 (Grok): own-workspace agent inbox page (`inbox: true`) and the mint/renew/claim
+responses carry optional `wake: { topic, event }` built in `_shared/wake.ts` from the 43-char id;
+`rotate_wake_id` runs on the revoke transaction at the two intent sites (principal revoke
+`command/index.ts:4142→4153`, token revoke `:4240→4255`); the stranded-successor discard (`:3606`) and
+the principal cascade (`:4171`) do not rotate. Arms: Gemini PASS; Opus PASS (the four `revoked_at`
+writers verified as the complete set across all edge functions; both rotations under `SET LOCAL ROLE
+swarm_command` on the same `tx`; topic reaches no log/audit/ledger; nit: claim replay recomputes the
+topic while mint/renew replay omits it — not a defect, L4 must treat `wake` as optional on every
+response). Evidence `docs/evidence/2026-09-06-wake-command/arms-7c9a458/`. Gates on merged main:
+check:edge, 861/861, p1-cli 483/483 (p1-server ran on the lane SHA: 155/155). Deployed `command` then
+`read`. Live control below. The production idle-cost control at +25 min: 3 audit rows in 8 minutes.
