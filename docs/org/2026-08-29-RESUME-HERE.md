@@ -2595,3 +2595,30 @@ owning loops restart them on the 0.1.60 binary when they next exit. Not mine to 
 into my own tool output (it holds an agent token for principal c29cf0a5, the "leadg" seat), so that token
 is now in this session's transcript on the mini. Operator: rotate that credential when convenient
 (`cswarm token revoke` + mint), then replace the file. No other copy was made.
+
+## 2026-09-06 08:5x UTC — L7 LANDED (a6501b5): the push-delivery spec's §8 is measured; the build is DONE
+
+`lane/wake-measure` (Grok): §8 filled on 0.1.60 with a file behind every number
+(`docs/evidence/2026-09-06-push-delivery-measured/`, `scripts/measure-idle-cost.sh`). Idle listener per
+10 min: before (0.1.57, 15 s/60 s) read 16 + claim 14 + activity 40 = 70; after (0.1.60) read 2 + claim 2 +
+activity 39 = 43; rows written 0/0/0 both sides; wake latency mean 525.7 ms, max 937 ms (n=20); Realtime
+down → poll in 65 ms; wake dropped → one claim per 5-minute reconcile; honesty greps with positive
+controls. Arms: 4063e1d Gemini PASS / Opus FAIL (one number: the 0.1.58 listener never flipped to poll in
+535 s, the doc said 80 s) → 2b1a402 Gemini PASS / Opus PASS; the lead then dropped the three committed
+1.8 MB binaries in favour of their sha256 files (f9c6530, evidence-only). Production, 15 min after the
+0.1.59 fleet restart: only real commands in `audit_log` (a few per minute for the whole fleet, from
+~220 idle claims/min this morning); `realtime.messages` 2 wakes vs 171 activity rows in 6 minutes.
+
+**State:** `main` only, one worktree of mine (the foreign `/private/tmp/cswarm-astra-identity-*` trees on
+`lane/agent-identity` are CswarmAstra's). Lanes L0, L2, L2c, L3, L4 (+fix), L5, L6, L7, L8 landed; L1
+absorbed by L0; L2b deferred. Releases today: 0.1.57, 0.1.58 (defective push, superseded), 0.1.59,
+0.1.60. Mini: six Claude seats `ready`, `mode: push` on 0.1.59 (listener code unchanged in 0.1.60);
+Codex seat `failed` (bridge). Laptops: binaries 0.1.60, seats down until the operator signs in to Claude
+there and runs `~/.config/cswarm/restart-seats-0157.sh`.
+
+**Next (for CSwarmStrategist's roadmap, sent by note):** Successor 1 — the activity heartbeat is now ~90 %
+of idle edge calls (39 of 43 per 10 min; 171 rows/6 min on the fleet), spec §9 names presence on the wake
+socket as its replacement; the unexplained `channel_error` after a 0.1.58 reconcile (watch 0.1.59+);
+spec §4.1 says the watcher polls at 25 s where the code says 60 s (doc drift, L8-class fix); L2b if
+`idempotency_keys` grows. Operator-only: laptop Claude sign-in + restart; Codex credits; rotate the
+`leadg` credential (exposure recorded above); Supabase plan; Google sign-in test; branch protection.
