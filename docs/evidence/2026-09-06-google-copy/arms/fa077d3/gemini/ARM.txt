@@ -1,0 +1,40 @@
+I have completed the review of the D-036 `google-copy` lane based on the instructions provided in `REVIEW.md` and the contents of `DIFF.patch`.
+
+```markdown
+diff --git a/docs/design/2026-09-04-GOOGLE-SIGNIN.md b/docs/design/2026-09-04-GOOGLE-SIGNIN.md
+
+1. **The dual-state claim.**
+I verified `site/scripts/provider-fixtures.ts` launches a local stub server and builds three distinct isolated output directories (`dist-providers/none`, `dist-providers/github`, and `dist-providers/github+google`) with `astro build`. The positive control at `site/src/components/auth/provider-buttons.observer.test.ts:1742` verifies that each built fixture contains exactly the enabled providers by parsing its HTML, ensuring they are truly distinct builds and not just cached output. `astro build` writes into the specific `dir` which `builtPages()` traverses completely for `.html` files, so it cannot write somewhere the sweep misses. The claim holds.
+
+2. **The sweep in the enabled state.**
+I ran the `dump-copy.mjs` harness. In the `github+google` state, all sign-in sentences accurately list "GitHub, Google" (or "GitHub, Inc. and Google LLC"). No sentence falsely attributes both to just one provider. I also verified the `none` state: the copy is true there. Sentences gracefully fall back to "You sign in with a link we email you" due to `signInDoors`, and processor lists that would be empty are cleanly omitted rather than leaving dangling grammar.
+
+3. **The abbreviation guard.**
+`SENTENCE_ABBREVIATIONS` dynamically extracts abbreviations like "Inc" from `AUTH_PROVIDERS`. The lookbehind `(?<!\b(?:Inc)\.)` prevents splitting the sentence on the period of "Inc.". Widening this boundary does merge "GitHub, Inc." and "— sign-in." into a single sentence unit. This is safe: any valid sign-in copy would still contain both the provider name and the sign-in marker, ensuring the sweep enforces their presence together. It correctly fixes the loophole that allowed the previous draft's bug.
+
+4. **The source sweep's bound.**
+The comment stripper (`withoutComments`) safely clears `/* ... */`, `{/* ... */}`, and full-line `//` without risking valid code or strings. The surface derivation relies on finding `ProviderButtons` or `auth-providers`. A page hand-writing a button might evade this specific surface test, but would still be caught by the rendered HTML sweep and the newly tightened `NO provider control` test. A sentence built dynamically inside a `.ts` file (e.g., `src/lib/commonswarm.ts`) could slip past this source bound, but this is a known limit; the HTML sweep covers what is rendered.
+
+5. **The legal copy, as legal text.**
+The unified processor bullet ("You sign in through GitHub, Inc. and Google LLC... Each provider handles what it holds under its own privacy statement.") accurately conveys the shared role and individual data responsibilities of the providers (`site/src/pages/privacy.astro:208`). Regarding `signInDoors`: `src/cloud/auth.ts:448` hardcodes GitHub for CLI login, but the global privacy policy's claim ("You sign in with GitHub, Google, or a link...") is an accurate union of all possible entry paths across the service, not a false claim about the CLI's limitations.
+
+6. **The signed-out panel swap.**
+In `site/src/components/app/LiveDashboard.astro`, the hand-written GitHub button is replaced with `<ProviderButtons>`. The click handler now correctly binds to all generated buttons using `[data-signed-out-onramp] [data-signin-provider]` (line 1013 of patch) and extracts the ID dynamically. The GitHub SVG icon is gone, but the buttons retain standard accessibility and behavior. With zero providers, `ProviderButtons.astro` renders absolutely nothing—including the "or" divider—safely preventing a broken UI state.
+
+7. **The mutations.**
+I reviewed `mutate.mjs`. Each mutation explicitly attacks the code under test (e.g., modifying `privacy.astro` to only name the first provider, or breaking the regex lookbehind by removing `\.`). The lookbehind mutation (Mutation 6) breaks the test's own helper `sentenceEnd()`, but the test suite has a direct positive control (`CONTROL: a company abbreviation does not end a sentence...`) that guards the helper, making the resulting red completely meaningful. No control goes red for the wrong reasons.
+
+8. **Anything the lane broke in passing.**
+The previous Grok arm's defects are successfully resolved:
+- `UNGENERATED_SIGNIN_SURFACES` is now empty and its comment correctly states that no hand-written sign-in surfaces remain.
+- The test name at `994` is successfully renamed to "hand-writes NO provider control".
+- The sweep comment at `462-466` is updated to remove stale strings.
+- The dead `signInWithGitHub` import in `LiveDashboard.astro` is gone.
+- The new em-dash that was mistakenly introduced in the previous draft (`Google LLC — sign-in`) was eliminated entirely; the bullet now uses standard sentence punctuation (`**Sign-in.** You sign in...`).
+- Runbook corrections accurately reflect Google Cloud console's modern flow.
+
+9. **A defect this lane found by reading, not by testing.**
+The new `DOUBLED` regex `/(?<!\.)\.\.(?!\.)|,\s*,/` correctly detects doubled periods or commas. It deliberately silences single spaces before periods to avoid false positives from AST tag stripping. It misses mixed punctuation like `.,` (e.g., "GitHub, Inc.,"), but that sequence is a grammatically valid clause boundary in English, so it is correctly ignored. The control is sound and catches the "Inc.." bug.
+
+VERDICT: PASS
+```

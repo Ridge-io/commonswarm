@@ -1,0 +1,32 @@
+First diff line:
+`diff --git a/docs/design/2026-09-04-GOOGLE-SIGNIN.md b/docs/design/2026-09-04-GOOGLE-SIGNIN.md`
+
+### Check 3: The abbreviation guard
+The current `sentenceEnd()` correctly pulls all abbreviations ending in a period from `AUTH_PROVIDERS`. The regex `(?<!\b(?:Inc|LLC)\.)(?<=[.!?])\s+` successfully skips the space after `Inc.` or `LLC.`. Widening this boundary does merge two claims separated by an abbreviation into one unit. However, the sweep requires a unit naming any provider to exactly match the set of rendered providers. Therefore, merging sentences would only ever produce a false positive (failing when it shouldn't) if the text naturally split providers across valid abbreviation-ended sentences. It does not hide an offender. The risk is paid for because the old boundary caused false negatives by prematurely cutting sentences and separating sign-in verbs from the provider names.
+
+### Check 4: The source sweep's bound
+The comment stripper correctly ignores HTML comments (`<!-- ... -->`) and inline single-line JS comments, but this only leads to safe false positives. However, the surface derivation `signInSurfaces()` **can completely miss a page that offers sign-in**. If a new `.astro` page implements its own OAuth call (e.g., `<button onclick="supabase.auth.signInWithOAuth({provider: 'github'})">`) but never imports `ProviderButtons` or `auth-providers`, it will not be scanned by the source sweep. A concrete sentence that could ship past both sweeps is an error message inside a script tag on such an unscanned page: `<script>alert("Use GitHub to sign in");</script>`. The source sweep skips the file entirely, and the HTML sweep strips script bodies before checking.
+
+### Check 5: The legal copy, as legal text
+The privacy policy's generated processor bullet says: "You sign in through [entities], and your identifier, email address, and name come back to us from there." This is a truthful and sufficient statement about what data we receive, though it does not explicitly state what the *provider* receives from us.
+The `signInDoors` helper generates "The sign-in page offers GitHub or a link we email you." The added sentence about the CLI accurately states: "The cswarm command-line client signs in through your browser as well. It can offer fewer providers than the sign-in page does, and it has no emailed link." This is precisely what `src/cloud/auth.ts` does (it hardcodes `provider=github`), and the wording is safe against drift because it does not type a specific list of providers for the CLI.
+
+### Check 6: The signed-out panel swap
+The handler in `LiveDashboard.astro` is properly bound to `[data-signed-out-onramp] [data-signin-provider]`. `.dashboard__providers` renders correctly with two buttons (as a grid with gap 3), and with zero buttons it correctly omits both the list wrapper and the `before` slot (the "or" divider). The old GitHub icon SVG was purely decorative (`aria-hidden="true"`), so no accessibility, focus, or disabled state behavior was lost by its removal. The `before` slot is used exactly the same way it is in `InviteOnramp.astro`.
+
+### Check 7: The mutations
+The mutation targeting `PB` (`a company abbreviation does not end a sentence...`) mutates the regex in the test suite itself. When the test suite's regex is broken, the main HTML sweep control ("sign-in copy names the providers...") also goes red. This red is meaningless for proving the control defends the application, because it only proves that the test is sensitive to its own internal helpers, not that the application copy itself is defended.
+
+### Check 8: Anything the lane broke in passing
+The runbook corrections in `docs/design/2026-09-04-GOOGLE-SIGNIN.md` read plainly, accurately reflect real Google Cloud / Supabase console flows, and effectively preserve the retired wording using the "Was:" format to prevent future operator confusion. No user-facing copy broke with em-dashes or typed enumerations.
+
+### Check 9: A defect this lane found by reading
+The `DOUBLED` regex `(?<!\.)\.\.(?!\.)|,\s*,` correctly silences ellipses (`...`). It ignores a period followed by a comma (`.,`), which is grammatically correct for generated entities like "GitHub, Inc., and Google LLC". However, it fails to see a space between periods (e.g., `GitHub, Inc. .`), which is a generated-punctuation defect shape it misses.
+
+### Check 10: Round two
+The commit `c2f01f2` accurately updated the retired claims and preserved the old wording using "Was:" notes. However, deleting `signInWithGitHub` and leaving the `NAMED_PROVIDER_WRAPPER` constant as the literal `"signInWithGitHub("` left a control describing a dead function. This made the control meaningless, as it only forbade the deleted wrapper while quietly allowing any new wrapper (e.g., `signInWithGoogle`) to pass.
+
+### Check 11: Round three
+The generated regex `(?<!function\s)` still correctly excludes definitions starting with `function` (though it would flag arrow functions). The bound-length assertion now measures nothing: because `SWEEP_CATCHES` is populated by spreading `NAMED_PROVIDER_WRAPPERS.map(...)`, asserting its length against `NAMED_PROVIDER_WRAPPERS.length` is a tautology that merely verifies the JavaScript spread operator. Furthermore, the rigid generation `signInWith${provider.name}(` means alternate wrapper shapes like `signIn_With_Google` or `signInWithGoogleOAuth` will easily slip past, and a provider name with a space would generate an invalid identifier shape.
+
+VERDICT: FAIL
