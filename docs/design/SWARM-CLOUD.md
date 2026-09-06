@@ -113,7 +113,7 @@ Who may close: the frozen submission may be closed by (a) a human Owner/Admin, o
 
 Local mode: the CLI either adopts this table (same release) or marks local leases `semantics=v1-local`; the two are never conflated.
 
-**Empty `claim_agent_inbox` persists nothing (LIVE).** An idle claim — no unacked delivery for the principal — writes no `audit_log` row, no `idempotency_keys` row, and no `rate_buckets` row. A claim that leases a delivery, or that terminalizes a poisoned row, writes those rows as before.
+**Idle `claim_agent_inbox` persists nothing (LIVE).** An idle claim — no unacked delivery for the principal — writes no `audit_log` row, no `idempotency_keys` row, and no `rate_buckets` row. A claim that leases a delivery, or that terminalizes a poisoned row, writes those rows as before.
 
 ### 2.3 Identity and principals
 

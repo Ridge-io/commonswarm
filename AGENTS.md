@@ -94,7 +94,7 @@ The site is a separate project: `cd site && npm install && npm run build` (Astro
 src/protocol/   pure authority core — reducer, events, commands; no I/O
 src/cloud/      client side — auth, signals, workspaces, transport
 src/cli.ts      cswarm CLI surface
-supabase/       migrations + Deno edge functions: command, read, capability
+supabase/       migrations + Deno edge functions: command, read, capability, activity
 tests/          pure, CLI, local-Supabase, and server-Supabase suites
 scripts/        build and verification helpers
 site/           Astro site — hand-written CSS, no Tailwind
