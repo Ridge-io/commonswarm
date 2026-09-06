@@ -2,8 +2,10 @@ import postgres from "npm:postgres@3.4.9";
 import { redactCredentialText } from "../../../src/host/credential-redaction.ts";
 import {
   agentCredentialRevoked,
+  enforceAgentSessionProof,
   loadAgentCredential,
 } from "../_shared/agent-auth.ts";
+import { parseAgentSessionProofHeaders } from "../../../src/cloud/session-wire.ts";
 import {
   ACTIVITY_EVENT,
   ACTIVITY_REQUEST_MAX_BYTES,
@@ -120,6 +122,18 @@ async function handle(request: Request): Promise<Response> {
       )
     ) {
       return json(403, { error: "forbidden" });
+    }
+
+    /* Activity is an agent mutation: it broadcasts in the principal's name.
+     * When the principal is managed, the same session proof the command fence
+     * requires applies here. Reads stay on the read edge and never reach this. */
+    const sessionResult = await enforceAgentSessionProof(tx, {
+      principalId: agent.principal_id,
+      workspaceId: agent.principal_workspace_id,
+      proofParse: parseAgentSessionProofHeaders(request.headers),
+    });
+    if (!sessionResult.ok) {
+      return json(sessionResult.status, { error: sessionResult.error });
     }
 
     const payload = {

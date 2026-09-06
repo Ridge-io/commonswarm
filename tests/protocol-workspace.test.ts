@@ -1652,4 +1652,35 @@ describe('agent session proof exemption', () => {
     assert.equal(parsed.ok, false);
     if (!parsed.ok) assert.equal(parsed.error, 'session_proof_invalid');
   });
+
+  it('activity is an agent mutation and uses the same session fence', () => {
+    const activitySrc = readFileSync(
+      join(repoRoot, 'supabase/functions/activity/index.ts'),
+      'utf8',
+    );
+    assert.match(activitySrc, /enforceAgentSessionProof\(/);
+    assert.match(activitySrc, /parseAgentSessionProofHeaders\(/);
+  });
+
+  it('read stays read-only: it never claims or acks', () => {
+    const readSrc = readFileSync(
+      join(repoRoot, 'supabase/functions/read/index.ts'),
+      'utf8',
+    );
+    assert.equal(readSrc.includes('claimAgentInbox('), false);
+    assert.equal(readSrc.includes('ackAgentDelivery('), false);
+    assert.equal(readSrc.includes('SET LOCAL ROLE swarm_command'), false);
+  });
+
+  it('capability is not agent-authenticated and does not claim or ack', () => {
+    const capabilitySrc = readFileSync(
+      join(repoRoot, 'supabase/functions/capability/index.ts'),
+      'utf8',
+    );
+    assert.equal(capabilitySrc.includes('loadAgentCredential('), false);
+    assert.equal(capabilitySrc.includes('claimAgentInbox('), false);
+    assert.equal(capabilitySrc.includes('ackAgentDelivery('), false);
+    assert.match(capabilitySrc, /swarm_capability/);
+    assert.match(capabilitySrc, /swm_cap_/);
+  });
 });
