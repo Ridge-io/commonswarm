@@ -1,0 +1,11 @@
+# Measured 2026-09-06 ~01:45Z on local Supabase (supabase_realtime_cloud-swarm, supabase_db_cloud-swarm), node v26.7.0, @supabase/supabase-js 2.110.8.
+# Local-only policy applied before the run, dropped after:
+#   CREATE POLICY "local test anon inbox topic" ON realtime.messages FOR SELECT TO anon
+#   USING (realtime.messages.extension = 'broadcast' AND (SELECT realtime.topic()) LIKE 'cswarm-inbox-test:%');
+# Client: createClient(url, ANON_KEY); realtime.setAuth(ANON_KEY); channel(topic, {config:{private:true}}).
+# Server sends: SELECT realtime.send('{"delivery":"d1"}'::jsonb, 'wake', 'cswarm-inbox-test:2121f81d', true)  (psql, role postgres)
+{"a":{"topic":"cswarm-inbox-test:2121f81d","priv":true,"status":"SUBSCRIBED"},"b":{"topic":"cswarm-inbox-other:2121f81d","priv":true,"status":"CHANNEL_ERROR","err":"Unauthorized: You do not have permissions to read from this Channel topic: cswarm-inbox-other:2121f81d"}}
+SEND_NOW
+{"received":[{"topic":"cswarm-inbox-test:2121f81d","got":{"id":"95bf1736-bfdd-4bca-85b8-263b4683de88","delivery":"d1"}}],"waitedMs":4502}
+# Reading: an anon-key client (no user JWT) joins a PRIVATE topic when an RLS policy on realtime.messages grants SELECT TO anon for that topic;
+# it is refused on a topic the policy does not cover; a database-side realtime.send() reaches the subscriber (the 'd1' payload arrived within the 4.5 s window; second send landed after the script exited).
