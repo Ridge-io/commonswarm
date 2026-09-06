@@ -164,6 +164,11 @@ export interface ListenerStatus {
   activityPublishFailures?: number;
   /** Stable code for the newest activity publish failure; local status only. */
   activityLastErrorCode?: ActivityPublishErrorCode | null;
+  /**
+   * Idle poll interval in force right now, including backoff. Optional: a
+   * status file written by a listener older than this field omits it.
+   */
+  idlePollMs?: number | null;
   logPath: string;
 }
 
@@ -271,6 +276,7 @@ const STATUS_ALLOWED_KEYS = new Set([
   "connectionReuseRatio",
   "activityPublishFailures",
   "activityLastErrorCode",
+  "idlePollMs",
 ]);
 const STATUS_ACTIVITY_ERROR_CODES = new Set<ActivityPublishErrorCode>([
   "activity_credential_failed",
@@ -532,7 +538,11 @@ function parseStatus(raw: string, rejectUnknownKeys = false): ListenerStatus {
       (typeof row.activityLastErrorCode === "string" &&
         STATUS_ACTIVITY_ERROR_CODES.has(
           row.activityLastErrorCode as ActivityPublishErrorCode,
-        )))
+        ))) ||
+    !(row.idlePollMs === undefined ||
+      row.idlePollMs === null ||
+      (typeof row.idlePollMs === "number" &&
+        Number.isSafeInteger(row.idlePollMs) && row.idlePollMs >= 0))
   ) {
     throw new Error("stored listener status is malformed");
   }
@@ -593,6 +603,9 @@ function parseStatus(raw: string, rejectUnknownKeys = false): ListenerStatus {
     pendingForMainCount: (row.pendingForMainCount ?? 0) as number,
     droppedForMainCount: (row.droppedForMainCount ?? 0) as number,
     ...(readHealth === undefined ? {} : { readHealth }),
+    ...(row.idlePollMs === undefined
+      ? {}
+      : { idlePollMs: (row.idlePollMs ?? null) as number | null }),
   };
 }
 
@@ -680,6 +693,7 @@ export async function appendListenerEvent(
     // How long one delivery held the worker seat, and why it gave it back.
     "held_ms",
     "release_reason",
+    "idle_poll_ms",
   ]);
   const deliveryModes = new Set(["durable_claim", "cursor_fallback"]);
   const routeModes = new Set(["worker", "main", "split"]);
@@ -798,6 +812,12 @@ export async function appendListenerEvent(
       !(typeof value === "number" && Number.isSafeInteger(value) && value >= 0)
     ) {
       throw new Error("listener event hold duration is not allowed");
+    }
+    if (
+      key === "idle_poll_ms" &&
+      !(typeof value === "number" && Number.isSafeInteger(value) && value >= 0)
+    ) {
+      throw new Error("listener event idle poll interval is not allowed");
     }
     if (
       key === "release_reason" &&

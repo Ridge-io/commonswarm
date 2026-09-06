@@ -34,6 +34,15 @@ const SPEC: ListenerChildSpec = {
   ],
 };
 
+test("detached argv forwards a validated poll-interval verbatim", () => {
+  const args = buildListenerChildArgs({
+    ...SPEC,
+    pollInterval: "15s",
+  });
+  assert.ok(args.includes("--poll-interval"));
+  assert.equal(args[args.indexOf("--poll-interval") + 1], "15s");
+});
+
 test("detached argv is public-only and strips ambient Node hooks", () => {
   const args = buildListenerChildArgs(SPEC);
   assert.deepEqual(listenerNodeExecArgv(SPEC.nodeExecArgv ?? []), [
