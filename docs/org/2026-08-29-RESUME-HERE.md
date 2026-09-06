@@ -2458,3 +2458,12 @@ length, 113 distinct; owners as specified; a control note to CSwarmStrategist le
 `docs/evidence/2026-09-06-wake-migration/arms-e00ba93/`. Nothing reads the topic yet: no client is
 subscribed until L4 ships. Next: L2b (retention), then L3 (wake in read/command responses, rotation on
 revocation), then L4.
+
+## 2026-09-06 05:0x UTC — L2b DEFERRED; L3 and L4 started
+
+L2b (idempotency 1-day floor, `idempotency_retention_days` → 2) is deferred by the lead: lane A already
+purges claim-class keys after 2 days (`20260906000001`) and empty claims write none, so the keys left
+under the 30-day floor are real commands, a few hundred a day. Revisit only if `idempotency_keys`
+grows again. L4's only dependency on L2b was the `package.json` line; moot. L3 (`lane/wake-command`,
+Grok, holds the local database) and L4 (`lane/wake-client`, Grok, pure tests + a live control with
+`--state-dir`) run in parallel on disjoint files; L4 merges after L3.
