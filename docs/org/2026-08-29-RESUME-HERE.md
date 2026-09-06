@@ -2688,3 +2688,7 @@ grok installed and signed in (auth copied from the mini), the Codex bridge insta
 `~/.config/cswarm/restart-seats-0157.sh` with a `PROVIDER=codex PROVIDER_EXE=…` switch (the script header
 shows the exact line) for when Codex credits return. Claude is not an option for Joist under the
 operator's rule.
+**Correction (operator, 2026-09-06 ~10:xx UTC): Joist is a Claude agent.** It is an exception to the
+manager-only rule and goes back on Claude. `~/.config/cswarm/restart-seats-0157.sh` on nikkis-macbook-air
+now defaults to `--provider claude` with the ACP bridge (0.75.1); the only blocker there is the expired
+Claude session, so the operator signs in on that laptop (`claude auth login`) and runs the script.
