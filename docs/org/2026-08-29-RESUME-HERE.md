@@ -2576,3 +2576,15 @@ note 07:25:13.268 → `listener_wake` 07:25:13.391 → claim 07:25:14.330 → ac
 `~/.config/cswarm/restart-seats-0157.sh` (the script name says 0157; it starts whatever
 `~/.local/bin/cswarm` is, now 0.1.59). Running: L5 watcher (Grok), L7 measurement (Grok; its "after"
 column must be re-measured on 0.1.59 if it used 0.1.58), a 15-minute production rate check.
+
+## 2026-09-06 08:0x UTC — L5 LANDED (c3f39df), v0.1.60 RELEASED
+
+`lane/wake-watcher` 0910550 (Grok, based after the 0.1.59 fix): `inbox --notify` reads `wake` from the
+inbox page, joins through the shared `WakeSubscriber`, one read per wake, 5-minute reconcile while
+subscribed, the 60 s poll on CHANNEL_ERROR/CLOSED, no socket when the page has no `wake`; read-only
+invariant intact; local live control arrival 2,440 ms. Arms: Gemini PASS; Opus PASS (three mutations
+rerun; gaps recorded: the 1 s coalesce is untested with `sleep` stubbed; spec §4.1 says 25 s where the
+code says 60 s). Evidence `docs/evidence/2026-09-06-wake-watcher/`. Release 0.1.60: bump `ef11128`,
+tag on it, GitHub Latest (sha256 `a57ac093…`), npm shasum `07ca06c0…` = committed pack, site `/download`
+0.1.60, binaries 0.1.60 on the mini and both laptops. Listener code unchanged from 0.1.59, so the six
+seats keep running; watchers need a restart to gain push.
