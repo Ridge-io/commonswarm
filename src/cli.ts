@@ -341,10 +341,12 @@ import {
 } from "./cloud/session-context.js";
 import {
   boundAgentFetcher,
+  fetcherForSessionContext,
   parseSessionMode,
   parseSessionProvider,
   readManagedSessionStatus,
   readSessionIdentity,
+  revokeAgentToken,
   runHumanSessionLifecycle,
   startManagedSession,
   stopManagedSession,
@@ -2149,26 +2151,25 @@ async function runTokenRevoke(args: Arguments): Promise<void> {
       );
     }
     const tokenId = agent.tokenId;
-    const response = (
-      await new ThinCommandClient(cloud).sendConnect({
-        workspaceId: override,
-        credential: agent.token,
-        command: { kind: "revoke_agent_token", token_id: tokenId },
-      })
-    ).response;
-    if (response.status !== "accepted") {
-      throw new Error(
-        `Credential surrender was refused: ${
-          response.reason ?? "required condition not met"
-        }. The credential is unchanged.`,
-      );
-    }
+    const selected = args.optional("session-context") === undefined
+      ? null
+      : await commandWorkspaceAndCredential(args, cloud);
+    const revoked = await revokeAgentToken({
+      target: cloud,
+      credential: selected?.bearer ?? agent.token,
+      workspaceId: selected?.selectedWorkspace ?? override,
+      tokenId,
+      ...(selected === null ? {} : { fetcher: selected.fetcher }),
+      ...(selected?.sessionContext === undefined
+        ? {}
+        : { context: selected.sessionContext }),
+    });
     const output = {
       message:
         "This credential has been surrendered. It can no longer post or renew.",
-      status: response.status,
+      status: revoked.status,
       token_id: tokenId,
-      command_event_ids: response.event_ids,
+      command_event_ids: revoked.command_event_ids,
     };
     if (args.has("json")) {
       printJson(output);
@@ -5692,35 +5693,19 @@ async function runConfiguredListener(options: {
       : {}),
   });
   const httpClient = new ListenerHttpClient();
-  const sessionManager = options.sessionBinding === undefined
-    ? null
-    : new AgentSessionManager({
-      client: new AgentSessionClient({
-        target: options.cloud,
-        fetcher: httpClient.fetch,
-      }),
-      credential: async () => options.agent.token,
-      workspaceId: options.workspaceId,
-      contextPath: options.sessionBinding.contextPath,
-      context: options.sessionBinding.context,
-    });
-  sessionManager?.start();
-  if (options.sessionBinding !== undefined) {
-    await writeListenerSessionBinding(
-      paths.instanceDirectory,
-      options.sessionBinding,
-    );
-  }
+  const boundFetch = fetcherForSessionContext(
+    httpClient.fetch,
+    options.sessionBinding?.context,
+  );
   let liveCredentialSession: AgentCredentialSession;
   try {
     liveCredentialSession = await agentSession(
       options.cloud,
       options.workspaceId,
       options.agent,
-      httpClient.fetch,
+      boundFetch,
     );
   } catch (error) {
-    sessionManager?.stopTimers();
     httpClient.close();
     throw error;
   }
@@ -5745,6 +5730,25 @@ async function runConfiguredListener(options: {
       return stored.credential;
     },
   };
+  const sessionManager = options.sessionBinding === undefined
+    ? null
+    : new AgentSessionManager({
+      client: new AgentSessionClient({
+        target: options.cloud,
+        fetcher: boundFetch,
+      }),
+      credential: async () => credentialSession.bearer(),
+      workspaceId: options.workspaceId,
+      contextPath: options.sessionBinding.contextPath,
+      context: options.sessionBinding.context,
+    });
+  sessionManager?.start();
+  if (options.sessionBinding !== undefined) {
+    await writeListenerSessionBinding(
+      paths.instanceDirectory,
+      options.sessionBinding,
+    );
+  }
   const resolveSenderProvenance = async (
     signal: SignalRecord,
     context: ListenerSenderProvenanceContext,
@@ -5754,7 +5758,7 @@ async function runConfiguredListener(options: {
       options.cloud,
       credential,
       options.workspaceId,
-      { ...context, fetcher: httpClient.fetch },
+      { ...context, fetcher: boundFetch },
     );
     const provenance = listenerSenderProvenance(signal, senderDirectory);
     if (context.includeBrainDigest !== true) return provenance;
@@ -5767,7 +5771,7 @@ async function runConfiguredListener(options: {
         {
           ...(context.signal ? { signal: context.signal } : {}),
           deadlineMs: context.deadlineMs,
-          fetcher: httpClient.fetch,
+          fetcher: boundFetch,
         },
       );
       const brainDigest = await new FileBrainDigestStore(
@@ -5789,7 +5793,7 @@ async function runConfiguredListener(options: {
         {
           ...(context.signal ? { signal: context.signal } : {}),
           deadlineMs: context.deadlineMs,
-          fetcher: httpClient.fetch,
+          fetcher: boundFetch,
         },
       );
       const broadcasts = feed.filter((row) =>
@@ -5966,7 +5970,7 @@ async function runConfiguredListener(options: {
           transport: new AgentActivityEndpointTransport(
             options.cloud,
             credentialSession,
-            httpClient.fetch,
+            boundFetch,
           ),
           onPublishFailure: (code) => onEvent({
             type: "activity_publish_failure",
@@ -6001,7 +6005,7 @@ async function runConfiguredListener(options: {
                 credential,
                 options.workspaceId,
                 signalIds,
-                httpClient.fetch,
+                boundFetch,
               );
             },
             routeMode,
@@ -6011,9 +6015,7 @@ async function runConfiguredListener(options: {
             deliveryHoldBudgetMs: turnBudgetMs,
             ...(options.pollMs === undefined ? {} : { pollMs: options.pollMs }),
             pendingMainQueue,
-            fetcher: options.sessionBinding === undefined
-              ? httpClient.fetch
-              : boundAgentFetcher(httpClient.fetch, options.sessionBinding.context),
+            fetcher: boundFetch,
             ...(options.sessionBinding === undefined
               ? {}
               : { sessionBinding: options.sessionBinding }),

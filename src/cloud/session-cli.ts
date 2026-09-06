@@ -1,6 +1,6 @@
 import type { CloudTarget } from "./config.js";
 import { readAgentSignalDirectory } from "./signals.js";
-import { CommandTransportError } from "./command-client.js";
+import { CommandTransportError, ThinCommandClient } from "./command-client.js";
 import {
   SESSION_MODES,
   SESSION_PROVIDERS,
@@ -313,6 +313,46 @@ export function boundAgentFetcher(
   context: SessionContextDocument,
 ): typeof fetch {
   return bindSessionProof(fetcher, sessionProofOf(context));
+}
+
+/** Bind proof when a live session context is present; otherwise leave the fetcher unchanged. */
+export function fetcherForSessionContext(
+  fetcher: typeof fetch,
+  context: SessionContextDocument | null | undefined,
+): typeof fetch {
+  if (context === null || context === undefined) return fetcher;
+  return boundAgentFetcher(fetcher, context);
+}
+
+export async function revokeAgentToken(input: {
+  target: CloudTarget;
+  credential: string;
+  workspaceId: string;
+  tokenId: string;
+  fetcher?: typeof fetch;
+  context?: SessionContextDocument;
+}): Promise<{ status: string; token_id: string; command_event_ids?: unknown }> {
+  const client = new ThinCommandClient(
+    input.target,
+    fetcherForSessionContext(input.fetcher ?? fetch, input.context),
+  );
+  const result = await client.sendConnect({
+    workspaceId: input.workspaceId,
+    credential: input.credential,
+    command: { kind: "revoke_agent_token", token_id: input.tokenId },
+  });
+  if (result.response.status !== "accepted") {
+    throw new Error(
+      `Credential surrender was refused: ${
+        result.response.reason ?? "required condition not met"
+      }. The credential is unchanged.`,
+    );
+  }
+  return {
+    status: result.response.status,
+    token_id: input.tokenId,
+    command_event_ids: result.response.event_ids,
+  };
 }
 
 export { runInteractiveReceiveOnce };
