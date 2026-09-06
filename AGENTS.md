@@ -84,7 +84,7 @@ history was rewritten, so every SHA changed. `Ridge-io/cloud-swarm` was deleted 
 | `npm run check:tests` | Typechecks `tests/` as well as `src/`. |
 | `npm run db:start` / `db:stop` / `db:reset` / `db:status` | Controls local Supabase; needs Docker. |
 | `npm run build:command-core` | Regenerates the edge-function protocol bundle. |
-| `npm run check:edge` | Runs `deno check` on `command`, `read`, and `capability`; needs Deno. |
+| `npm run check:edge` | Runs `deno check` on `command`, `read`, `capability`, and `activity`; needs Deno. |
 
 The site is a separate project: `cd site && npm install && npm run build` (Astro 7, static output).
 
@@ -94,7 +94,7 @@ The site is a separate project: `cd site && npm install && npm run build` (Astro
 src/protocol/   pure authority core — reducer, events, commands; no I/O
 src/cloud/      client side — auth, signals, workspaces, transport
 src/cli.ts      cswarm CLI surface
-supabase/       migrations + Deno edge functions: command, read, capability
+supabase/       migrations + Deno edge functions: command, read, capability, activity
 tests/          pure, CLI, local-Supabase, and server-Supabase suites
 scripts/        build and verification helpers
 site/           Astro site — hand-written CSS, no Tailwind
@@ -109,8 +109,9 @@ docs/evidence/  committed artifacts backing completion claims
 `tests/support/` does not run unless the script names it. Check the gate and report it when adding a test.
 
 **Edge functions are outside `tsc`.** `tsconfig.json` includes only `src/**/*.ts`. Run
-`npm run check:edge`; it names the current three entrypoints and no other gate runs it. A fourth function
-would need adding, and a stale generated protocol bundle can still typecheck.
+`npm run check:edge`; it names the current four entrypoints (`command`, `read`, `capability`,
+`activity`) and no other gate runs it. A fifth function would need adding, and a stale generated
+protocol bundle can still typecheck.
 
 **`supabase functions serve` gives Deno only the values in `--env-file`.** Parent `env` values do not
 reach it. Add every environment-gated test value to the temporary env file used by the server suite.
@@ -123,6 +124,10 @@ reach it. Add every environment-gated test value to the temporary env file used 
 never push a branch you do not own. Run `scripts/branch-audit.sh` before pruning local branches.
 
 **`scratchpad/` is gitignored.** Put evidence that must survive in `docs/evidence/` or `docs/org/`.
+
+**Push is a hint; the row is the truth; a status that says push must be subscribed now.** A wake
+event is a latency hint. `claim_agent_inbox` reads `swarm.signal_deliveries`. `cswarm listen status`
+may report `mode: push` only while the Realtime socket is subscribed.
 
 ## Session continuity
 

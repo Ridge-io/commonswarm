@@ -113,6 +113,8 @@ Who may close: the frozen submission may be closed by (a) a human Owner/Admin, o
 
 Local mode: the CLI either adopts this table (same release) or marks local leases `semantics=v1-local`; the two are never conflated.
 
+**Idle `claim_agent_inbox` persists nothing (LIVE).** An idle claim — no unacked delivery for the principal — writes no `audit_log` row, no `idempotency_keys` row, and no `rate_buckets` row. A claim that leases a delivery, or that terminalizes a poisoned row, writes those rows as before.
+
 ### 2.3 Identity and principals
 
 Tables: `users`, `devices`, `memberships`, `workspaces`, `invitations`, `agent_principals` (durable), `agent_runs` (one CLI session), `credentials`, `github_installations`, `repositories`. `workspace_id` is mandatory on tenant-owned rows; the declared exceptions are the global identity/auth tables (`users`, `devices`, `credentials` pre-membership rows).
@@ -306,6 +308,30 @@ Three layers, kept distinct so the system is distributed *without ever driving a
 **Delivery-of-record is a durable per-recipient inbox; injection is a hint (hardened — adversarial round).** A message is authoritatively held in a **durable per-recipient inbox** with delivery and processing acknowledgments; the guarantee is **at-least-once notification plus idempotent processing**, NOT exactly-once — message-id dedup does not close the crash boundary between "marked visible" and "injected/processed," so any *effect* a message triggers is bound to the message id as its idempotency key and is safe to replay. Terminal injection is an idempotent *latency hint only*, carrying the message id; the transport skips injection if that id is already visible, and ACP/headless agents receive protocol events with no injection. Ordering is **per-stream** (workspace and repo streams are ordered independently; no global order is claimed). The inbox/stream is delivery-of-record; push is never authoritative — otherwise every mid-paste race in the local system recurs at network scale. **The client-side delivery mechanism is the production-validated Buzz pattern:** each recipient agent has a per-recipient queue that keeps **exactly one prompt in flight**, **batches** anything that arrives while the agent is busy into the next turn, and **dedups** by message id — so a burst of coordination traffic never interleaves half-delivered prompts or double-drives an agent (Buzz's relay↔agent bridge runs this shape in production). Over ACP this is a clean turn boundary (`session/prompt` completes, the next batched turn starts); over legacy cmux it is the same queue gating the keystroke inject. **Batching preserves the crash-boundary guarantee only if it keys effects per message, not per turn (adversarial round):** a batch delivers **ordered per-message envelopes with a per-message processing-ack**, and every effect an agent emits binds to `message_id + effect_ordinal` (or a deterministic digest of the exact consumed-message set) — never to "the turn" — so that a crash after effecting M1 but before acking, on replay, redelivers only the **unacked suffix** and re-effects nothing already done. **Authority/control messages (redirects, grant-relevant notices) are never co-batched** with the ordinary messages they might supersede, so a redirect generation can't be swallowed into a turn alongside the message it overrides. Client dedup state is **durable across restart**. The §10 delivery-fuzz test is extended to crash-mid-batch, partial-ack, supersession-in-batch, and cross-stream ordering.
 
 **Redirect is own-fleet only, and uptake is advisory (hardened — adversarial round).** Only a human, or that human's OWN coordinator, may `--kind redirect` that human's OWN fleet — enforced server-side from actor and recipient ownership. A **cross-human redirect is a PROPOSAL** delivered to the recipient's human / local coordinator for acceptance, never auto-applied to another member's worker; otherwise member B could drive member A's agent, violating both "never drive agents remotely" and "messages are data, never instructions." The redirect body stays inside the untrusted-data envelope (§4) and is never auto-executed. Uptake tracking: a redirect requests a *revised* scoped plan (the §2.12 artifact); the acknowledgment is bound server-side to the recipient worker principal, the exact redirect event id, the task, the current epoch, and an immutable revised-plan digest, with a monotonic redirect **generation** so a stale or foreign ack cannot clear a newer redirect. Until acknowledged the board shows the lane **redirect-pending** and an unconfirmed redirect ages into NEEDS-YOU — but **pending uptake is purely advisory: it never gates the worker's work, submit, close, or landing** (§0/§2.12).
+
+#### Push delivery (wake topics)
+
+> **Addendum 2026-09-06.** Server facts in this subsection are LIVE. The listener client (L4) ships in the next release. Design argument: `docs/design/2026-09-06-PUSH-DELIVERY.md`.
+
+Each `swarm.agent_principals` row carries a `wake_id` of 32 random bytes as 43 base64url characters.
+
+The private Realtime topic is `cswarm-wake:{wake_id}`.
+
+An AFTER INSERT trigger on `swarm.signal_deliveries` (`swarm.wake_agent_delivery`) sends a content-free `wake` event on that topic.
+
+`swarm.wake_topic_authorized` is the predicate of the `realtime.messages` SELECT policy `TO anon`.
+
+`swarm.rotate_wake_id` runs in the same transaction as a revocation by intent (principal revoke; token revoke).
+
+The own-workspace agent inbox page (`read`, `inbox: true`) and the mint, renew, and claim responses carry optional `wake: { topic, event }`.
+
+The next client release subscribes to that topic.
+
+On `wake` it claims.
+
+While the socket is subscribed it reconciles (read, then claim) every 5 minutes; while it is not, it uses the idle poll cadence in `src/cloud/idle-poll.ts`.
+
+`cswarm listen status` reports `mode: push` or `mode: poll`. `mode: push` is reported only while the socket is subscribed.
 
 ## 3. Git discipline layer
 
