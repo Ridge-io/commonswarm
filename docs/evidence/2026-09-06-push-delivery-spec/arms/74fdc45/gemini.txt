@@ -1,0 +1,82 @@
+### CommonSwarm D-036 Review: INVERSION Arm (Round 3)
+
+**Document Under Review:** `docs/design/2026-09-06-PUSH-DELIVERY.md` (Draft 3, commit `74fdc45`, branch `spec/push-delivery`)  
+**Scope Ruling & Baseline:** Scope ruling from CSwarmDevLead (ask `3e9049cf`), brain topic `edge-function-invocations-2026-09`, and evidence directory `docs/evidence/2026-09-06-push-delivery-spec/`.
+
+---
+
+### Citations Checked
+
+The following citations and contracts across the specification, migrations, edge functions, client runtime, and test harnesses were verified against the evidence and codebase map:
+- **Revocation & Renewal:** `supabase/functions/command/index.ts:3565-3587` (`discardStrandedSuccessor`), `:3660`, `:3576`, `:3973`, `:4012`, `:4111-4117`, `:4139-4143`, `:4172`, `:4181`, `:4207-4216`, `:4237`, `:4428`.
+- **Claim & Rate Limiting:** `supabase/functions/command/durable-delivery.ts:21` (`DELIVERY_CLAIM_RATE_LIMIT_PER_MINUTE = 120`), `:66-71`, `:172-253`; `supabase/functions/command/index.ts:4868`, `:4881-4888` (`date_trunc('minute')`), `:4905-4934` (`checkDeliveryRateLimit`, `security_alerts`), `:8348-8451`.
+- **Redaction & Logging:** `src/host/credential-redaction.ts:19-21` (`CREDENTIAL_PREFIX_RE`), `src/host/stderr-tail.ts:43`, `supabase/functions/activity/index.ts:2`.
+- **Status & Diagnostics:** `src/listener/control.ts:225-274` (`STATUS_ALLOWED_KEYS`), `:284-299` (`STATUS_SENSITIVE_KEYS`), `:377-381`, `:550`; `src/listener/read-health.ts:12`, `:40`, `:202-207`, `:252-261`, `:398-415` (`expectedClaims`, `LISTENER_THROUGHPUT_LAPSE_RATIO`).
+- **Gate Coverage & Lane Pointers:** `package.json:25-27`; `tests/p1-cli/test-gate-coverage.test.ts:19-34`, `:85-95`, `:125-133`; `20260723000001_p1_schema.sql:192-216`, `:793-816`, `:839-845`.
+- **Wire Contract & Signal Delivery Triggers:** `20260905000010` (recipient cap 8), `20260905000020:152-176`, `:191-217` (enqueue paths); `docs/evidence/2026-09-06-push-delivery-spec/realtime-anon-private-topic-experiment.{mjs,out}`.
+
+---
+
+### Inversion Analysis (Draft 3 Changes)
+
+#### (a) Inversion: Calling `rotate_wake_id` from TypeScript revocation sites (instead of a DB trigger) leaves a revocation path that does not rotate
+* **Argument:** Relying on application-level TypeScript calls in `command/index.ts` rather than an `AFTER UPDATE OF revoked_at` trigger risks missing a database-level revocation path or future update statement.
+* **Refutation:** A database trigger on `AFTER UPDATE OF revoked_at ON swarm.agent_tokens` is provably broken: as Opus identified in draft 2, `discardStrandedSuccessor` (`command/index.ts:3565-3587`, `:3576`) revokes an unacknowledged successor token during normal renewal handover (`:3660`). An unconditional trigger would rotate `wake_id` on ordinary renewals every ~54 minutes, breaking the core invariant that token renewals must not rotate the wake topic or force socket reconnection. In draft 3, all 9 statement sites updating `revoked_at` in `command/index.ts` plus `:4428` have been exhaustively enumerated and assigned to lane L3 to classify with one line of justification per site, explicitly excluding `:3576`. Furthermore, claim execution still requires authenticating with a valid token via `claim_agent_inbox`; an unrotated listener with a revoked token cannot claim work even if it observed a wake.
+* **Verdict on Inversion (a):** **DID NOT BEAT THE SPEC.**
+
+---
+
+#### (b) Inversion: 1-second coalescing plus a 50/min client budget still lets two listeners on one credential trip the 120/min server limit and raise a security alert under a realistic burst
+* **Argument:** If two listeners on the same credential experience a massive arrival burst, coalescing and client budgeting might desynchronize with the server's per-minute rate-limit window, crossing 120 claims/minute and triggering `swarm.security_alerts`.
+* **Refutation:** The server limit in `checkDeliveryRateLimit` (`command/index.ts:4868`, `:4881-4888`) enforces `DELIVERY_CLAIM_RATE_LIMIT_PER_MINUTE = 120` on a calendar minute window (`date_trunc('minute')`). In draft 3, each listener client strictly enforces `WAKE_CLAIMS_PER_MINUTE_BUDGET = 50`. In any 60-second window, one listener can make at most 50 wake-driven claims plus 1 reconcile claim (cadence = 300,000 ms = 5 min), totaling 51 claims. Two listeners on the same credential generate at most $51 + 51 = 102$ claims. Even if both listeners reconnect concurrently and fire join-reconciles, total claims peak at $102 + 2 = 104$ claims/minute. This leaves a minimum margin of 16 claims below the 120/min ceiling. Even under infinite wake bursts, neither listener can exceed 50 wake claims in that minute.
+* **Verdict on Inversion (b):** **DID NOT BEAT THE SPEC.**
+
+---
+
+#### (c) Inversion: Storing `expectedClaims` per hour and excluding mode-change hours hides a real throughput lapse
+* **Argument:** Freezing `expectedClaims` per closed hour and excluding hours where `wake.mode` changed creates a blind spot where stalls during mode transitions or flapping are hidden from `readHealth`.
+* **Refutation:** In draft 2, using a single global scalar `claimCadenceMs` caused retroactive re-evaluation of all historical hours upon fallback to polling (240 claims/hr), falsely scoring previous healthy push hours (12 claims/hr) as throughput lapses ($12 / 240 = 0.05 < 0.5$). Freezing `expectedClaims` per closed hour based on the majority cadence resolves this historical corruption. Excluding the specific transition hour where `wake.mode` changed is necessary because expected cadence is indeterminate during a mid-hour switch. Any sustained failure or claim stall persists into the subsequent hour (where mode is stable) and is immediately flagged. Furthermore, mode changes, disconnects, and errors are tracked live in `ListenerStatus` (`mode: "poll"`, `errorCode`, `reconnects`, `rateLimited`). Excluding the transition hour prevents false-positive paging while preserving true lapse detection.
+* **Verdict on Inversion (c):** **DID NOT BEAT THE SPEC.**
+
+---
+
+#### (d) Inversion: The closed wake sub-parser still lets the topic reach `status.json` or a log through some path the spec names
+* **Argument:** Despite `parseListenerWake`, the sensitive topic string could leak through nested status payloads, error strings, or logging pipelines.
+* **Refutation:** The spec closes all leakage vectors:
+  1. `status.json`: `parseListenerWake` enforces an explicit whitelist (`mode`, `subscribedAt`, `reconnects`, `lastWakeAt`, `lastReconcileAt`, `errorCode`, `topicRotatedAt`, `rateLimited`), rejecting unknown keys. `topic`, `wakeTopic`, and `wake_topic` are registered in `STATUS_SENSITIVE_KEYS` and enforced recursively inside the sub-parser.
+  2. Telemetry, Stderr & Logs: Realtime's refusal string quotes the topic (`Unauthorized: You do not have permissions to read from this Channel topic: <topic>`). Lane L2c extends `CREDENTIAL_PREFIX_RE` (`src/host/credential-redaction.ts:19-21`) with `cswarm-wake:[A-Za-z0-9_-]{43}` prior to client code landing. This redacts the topic into `[redacted-credential]` across `events.ndjson`, `lastErrorDetail`, and `src/host/stderr-tail.ts:43`.
+  3. UI rendering: `cswarm listen status` formats a sanitized human status line without the topic.
+* **Verdict on Inversion (d):** **DID NOT BEAT THE SPEC.**
+
+---
+
+#### (e) Inversion: The lane order ($L2 \rightarrow L2b \rightarrow L4$ for the gate lines; $L2c$ before $L4$) still lets two lanes touch one file or the one local database at once
+* **Argument:** The sequencing of lanes L2, L2b, L2c, and L4 may still permit file or database test contention.
+* **Refutation:** 
+  1. Gate line pinning: L2 owns `package.json:26` (`test:p1-local`) and `tests/p1-cli/test-gate-coverage.test.ts:23-34,125-133`. L2b is strictly sequenced after L2 merges (`starts after: L2`), acquiring ownership of the gate lines only after L2 is integrated. L4 owns `package.json:25` (`npm test`) and its gate pin, and starts strictly after L2b merges (`starts after: L0, L2b, L2c, L3`).
+  2. Local database contention: L2 runs `tests/p1-local/wake-realtime-auth.test.ts` against the local stack; L2b starts only after L2 merges; L4 starts after L2b. Database access is strictly serialized.
+  3. Redaction: L2c touches `src/host/credential-redaction.ts` and existing unit tests without modifying gate files or database state, merging before L4 starts.
+  All shared file ownership and local database usage are strictly disjoint in time.
+* **Verdict on Inversion (e):** **DID NOT BEAT THE SPEC.**
+
+---
+
+#### (f) Inversion: The messages/day figures in §7 are wrong (recompute with fan-out and subscribers)
+* **Argument:** The estimated Realtime messages/day at 16, 100, 1,000, and 10,000 seats fail to properly account for delivery fan-out and multiple subscribers (listeners, watchers, app tabs).
+* **Refutation:** Recomputing §7's figures against the specified model confirms their accuracy:
+  - **Baseline (16 seats):** 1,716 signals/day with current mean fan-out of 1 recipient = 1,716 delivery rows. Each delivery row sends 1 W1 broadcast to that principal's topic. Subscribers per principal topic = 1 listener + 0.5 watcher (half the fleet runs `inbox --notify`) = 1.5 subscribers on average. W1 messages delivered = $1,716 \times 1.5 = 2,574$. For W2 (workspace topic), 1,716 signals broadcast to open browser tabs; at ~2 active tabs per workspace, W2 messages = $1,716 \times 2 = 3,432$. Total messages = $2,574 + 3,432 = 6,006 \approx 6,000$ messages/day.
+  - **100 seats:** Generous baseline of 100 signals/seat-day yields 10,000 signals/day. At 400 messages per seat-day (150 W1 + 250 W2), total messages = $\approx 40,000$ messages/day.
+  - **1,000 seats:** $10 \times 40,000 = \approx 400,000$ messages/day.
+  - **10,000 seats:** $10 \times 400,000 = \approx 4,000,000$ (4 M) messages/day.
+  Billing checks out: $4\text{ M/day} \times 30 = 120\text{ M/month}$; subtracting 5 M included leaves 115 M billable at $\$2.50/\text{M} = \$287.50 \approx \$290/\text{month}$.
+* **Verdict on Inversion (f):** **DID NOT BEAT THE SPEC.**
+
+---
+
+### Conclusion
+
+All six inversions targeting the draft 3 revisions are refuted by the implementation and proofs in the specification. Verification of previous draft-1 and draft-2 findings confirms all defects and gaps have been resolved without regression. No DEFECT or GAP remains.
+
+QUOTE-BACK: # Push delivery: wake listeners from Supabase Realtime instead of polling
+VERDICT: PASS
+REASON: All six draft-3 inversions are refuted by verified wire contracts, rate-limit budgets, status schemas, serialized lane ownership, and message arithmetic, leaving zero defects or gaps.
