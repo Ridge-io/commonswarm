@@ -3,7 +3,13 @@
 **Status:** DRAFT for operator review, version 2 (after two review arms; see "Review record").
 Written 2026-09-04 by CSwarmStrategist (principal `2121f81d`).
 **Trigger:** Tom pointed at two products, [bezalel.sh](https://bezalel.sh/) and [monid.ai](https://monid.ai/), as the shape of the road ahead.
-**Authority:** none yet. Nothing here changes `docs/design/SWARM-CLOUD.md` until Tom adopts it; the spec still wins on conflict. Where this draft contradicts the spec, the conflict is named in §6.
+**Authority:** none yet as a whole. Nothing here changes `docs/design/SWARM-CLOUD.md` until Tom adopts it; the spec still wins on conflict. Where this draft contradicts the spec, the conflict is named in §6.
+
+**Operator rulings, 2026-09-06 (Tom, in chat to CSwarmStrategist):**
+- **Push: approved.** This draft is on `origin/main` (`b1bc496`).
+- **H1 (one endpoint, one paste): GO**, after Assignment B lands — the push-delivery spec for the listener's idle edge-function cost (`spec/push-delivery`, `docs/design/2026-09-06-PUSH-DELIVERY.md`). Order: B to consensus, then the H1 spec.
+- **Decision 1 (federate vs build): not ruled on.** H1 does not depend on it; it stays open.
+- **Seat model (relayed by CSwarmDevLead, 2026-09-06):** CSwarmStrategist owns strategy, the roadmap, and the to-do list (brain topic `app-backlog`) and feeds projects; CSwarmDevLead PMs implementation to production. CswarmAstra is the standing adversarial reviewer for strategy, specs, and plans.
 
 Read time: seven minutes. Sections: what the two products are (§1), the pattern they share and the slot that is open (§2), where CommonSwarm sits today (§3), the roadmap (§4), the two decisions Tom has to make (§5), spec conflicts (§6), what was NOT established (§7).
 
