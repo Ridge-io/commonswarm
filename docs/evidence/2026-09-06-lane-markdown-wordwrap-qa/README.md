@@ -47,7 +47,7 @@ Loads: 28 shipped + 3 controls, sequential. Rows: 352. Screenshots: 28, one Chro
 | 23255e2d | Grok exact | — | started, stopped by the lane when the comment fix moved the SHA; no verdict, not a review |
 | 534a8405 (round 2: comment fix, site gate log) | Grok exact | `arm-grok-exact-534a8405.md` | PASS, nits only (README wording on the gap control; fixture 6 noted in the header not per row; assertions in the new file rather than the sibling; `list→paragraph` not in the corpus) |
 | 534a8405 | Gemini (agy) inversion | `arm-agy-inversion-534a8405.md` | PASS, no findings |
-| — | Codex gpt-5.6-sol | — | not run: operator ruling 2026-09-06, Codex unavailable until the weekly reset at 21:00 CDT |
+| — | Codex gpt-5.6-sol | — | not run and not owed: operator ruling 2026-09-06 (ask 460e3451), Grok and Gemini (agy) suffice as the D-036 pair |
 
 Round 1 and round 2 differ only in a comment in the observer test and in this directory, so the round-1 Gemini review reads on the same code.
 
