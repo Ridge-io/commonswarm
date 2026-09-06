@@ -2655,3 +2655,36 @@ Consequences to carry:
   belongs in the brain topic `false-success-signals`: a credential with no negative control anywhere in
   its normal path stays wrong forever. NOT established: I did not write that topic — this session's
   credential fails to refresh, so `cswarm brain get|put` is unavailable to me.
+
+## 2026-09-06 09:xx UTC — OPERATOR RULE: Claude only for the five manager seats
+
+"Stop using Claude for anything except these manager roles (CSwarmStrategist, CSwarmDevLead, MrStrategist,
+Finisher, MrSentry)." Applies to listener seats, lane authors, review arms, PMs, and debug subagents. Seat
+roster from `swarm.agent_principals`: managers on Claude — CSwarmDevLead 8d10fe67, CSwarmStrategist
+2121f81d, Strategist a9c1a7fb (PromptEden's; treated as MrStrategist), Finisher 78249a33, MrSentry
+05f7ac37. Non-manager seats to move off Claude: CDReporter 214fa712 (mini), Wren d1a8b6dc and the four
+`f9aaada4` seats MrSEO 91d15f65 / MrAnalyst f3fa13eb / MrMarketing 73a96913 / MrBenchmark e1fb5a3e
+(toms-m1-max-mbp), Joist b9890f37 (nikkis-macbook-air). PEAstra b0c4004f is already Codex. Provider for
+workers: `--provider grok --grok-executable <path>` (grok is on the mini at /opt/homebrew/bin/grok).
+The Opus arms and the Opus debug lane used earlier tonight predate this rule.
+**Worker seats moved to Grok (2026-09-06 09:xx UTC):** mini CDReporter 214fa712 `ready`, provider grok,
+`mode: push` (proof seat). toms-m1-max-mbp: Wren d1a8b6dc and the four `f9aaada4` seats all `ready 0.1.60`
+grok `mode: push` via the rewritten `~/.config/cswarm/restart-seats-0157.sh` (grok 1.0.5 there, already
+signed in). nikkis-macbook-air: grok was absent; installed `@xai-official/grok` 1.0.13 with npm, copied
+the mini's `~/.grok/auth.json` (0600) over scp, and matched the `[ui]`/`[models]`/`[privacy]` sections of
+`config.toml` after the first canary failed with "permission denial did not block the write" on the
+bare config. **Exposure to record:** `~/.grok/config.toml` on toms-m1-max-mbp holds a DataForSEO login
+and password in the clear under `[mcp_servers.dataforseo.env]`; it appeared in my tool output while
+comparing configs. Operator: move it to an env file or rotate it.
+**Joist (b9890f37, nikkis-macbook-air, macOS 15.6) stays DOWN.** On Grok the listener's permission canary
+fails: grok's own log shows `run_terminal_command` executed (`shell.tool.exec_done success`) with no
+permission request to the ACP client, so the sentinel is written ("permission denial did not block the
+write"); on the mini (macOS 26.3.1, grok 1.0.13) and toms-m1-max-mbp (macOS 26.2, grok 1.0.5) the same
+session shows one inference and no tool run — grok asked, was denied, stopped. Tried on the laptop: grok
+1.0.13 and 1.0.5; the mini's `[ui]`/`[models]`/`[privacy]` config; `permission_mode = "ask"`;
+trusted-folder entries for the cwd, `/private/tmp`, and `/var/folders`. None changed it. Hypothesis, not
+established: a macOS-15 sandbox path in grok that treats a sandboxed shell as pre-approved. Left in place:
+grok installed and signed in (auth copied from the mini), the Codex bridge installed, and
+`~/.config/cswarm/restart-seats-0157.sh` with a `PROVIDER=codex PROVIDER_EXE=…` switch (the script header
+shows the exact line) for when Codex credits return. Claude is not an option for Joist under the
+operator's rule.

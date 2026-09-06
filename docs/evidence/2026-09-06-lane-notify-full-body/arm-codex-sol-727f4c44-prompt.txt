@@ -1,0 +1,303 @@
+You are the CODEX arm of a D-036 model-inversion review for the CommonSwarm repo.
+Your cwd is a detached git worktree checked out at the exact review SHA 727f4c4450fa0564132391b8fa6c69e034d8e534
+(branch lane/notify-full-body, repo Ridge-io/commonswarm). Read files freely. Do NOT modify any file,
+do NOT create commits, do NOT run git checkout/switch/reset. Running read-only commands and running the
+test suite are fine.
+
+Two other arms (Grok exact review, Gemini inversion) already returned PASS. Your job is the INDEPENDENT
+CROSS-FAMILY INVERSION: assume the change is wrong and try to prove it. A PASS that only agrees with the
+other arms is worth nothing. Look for what an "exact" reviewer would miss.
+
+## What changed
+
+Change C1 of the spec below. Diff (merge-base 4ab44ca..727f4c44), product + test:
+
+  src/cloud/arrival-watch.ts        (+38/-4)
+  tests/support/arrival-watch.test.ts (+80)
+
+The full diff is at the end of this prompt. The rest of the file is unchanged and readable in the worktree
+at src/cloud/arrival-watch.ts. src/cli.ts is NOT changed by this lane; its emit sites are cli.ts:4045-4058
+(runInboxNotifyCommand) and they JSON.stringify the notification object, so the new `body` field ships there.
+
+## The spec clause this must satisfy (verbatim, change C1)
+
+**C1 — `inbox --notify` carries the whole body in `--json`, and names the path in the readable line.**
+`arrivalNotification` gains `body` (the full text, up to 8,000) beside `snippet`; `--json` emits both. The
+readable line keeps the 180-char snippet (it is a terminal notification, one line by design) and, only when
+`body.length > ARRIVAL_SNIPPET_MAX`, ends with a suffix built by one function from the two lengths:
+`… (180 of 1,234 chars; full text: cswarm inbox)`, where both numbers are `snippet.length` and `body.length`
+at run time. Rule from `AGENTS.md`: the condition and the numbers come from the constant and the values,
+never from typed copy; the test asserts the suffix is absent at exactly `ARRIVAL_SNIPPET_MAX` characters and
+present at one more.
+
+Acceptance line from the spec:
+- `cswarm inbox --notify --json` -> a line whose `body` equals the posted body for an 8,000-char ask; the
+  readable line ends with the generated path phrase.
+- No new constant is typed into copy: `grep -rn "180\|240\|1000" src/cli.ts src/cloud/arrival-watch.ts
+  src/listener/hook.ts` finds only the constants and tests.
+
+The lane author declared two deviations from the C1 prose, both already named by the Grok arm:
+ (a) the cut condition is the WHITESPACE-COLLAPSED one-line length over ARRIVAL_SNIPPET_MAX, not raw
+     body.length (they agree at the spec's MAX / MAX+1 pair);
+ (b) the phrase sits after the snippet and BEFORE the attachments segment and the reply command, so the
+     line still ends with `cswarm reply ...` rather than with the phrase.
+Rule on whether each deviation is safe, not merely on whether it was disclosed.
+
+## Governing repo doctrine you must apply (from AGENTS.md)
+
+- "An enumeration inside a message must be generated, not typed": any user-facing string that lists what the
+  code enforces must come from the same constant the enforcement reads. This repo has shipped FOUR bugs of
+  exactly this shape in one release cycle, each AFTER two arms passed: a receipt label naming the wrong
+  delivery outcome (twice), a remedy naming a verb that does not exist (`claude login` vs `claude auth login`),
+  and a credential error whose field list contradicted its own parser. So: does the new sentence
+  `(N of M chars; full text: cswarm inbox)` state anything that is not true of what the code does?
+  In particular: is `cswarm inbox` a command that actually shows the full body of that signal, with the
+  arguments a reader would have in hand? Check src/cli.ts for what plain `cswarm inbox` prints and whether
+  it applies its own display cap (see src/cloud/signals.ts SIGNAL_BODY_DISPLAY_MAX and the inbox render path).
+  If plain `cswarm inbox` does NOT reliably show the whole body, the phrase is a false promise and this lane
+  fails.
+- "Claim controls prove stability, not truth": a green test can pin a false claim. Read each new assertion
+  and ask what it would still pass under if the claim were wrong.
+- "A negative result must reach the path it claims to test": for the boundary test, what would it return if
+  the feature were absent?
+- "Honesty is not sufficient" and "Writing for users": judge the copy as a user reads it.
+- D-053: never branch on `error.message`.
+
+## Specific questions you must answer explicitly
+
+1. UNIT MISMATCH. `arrivalSnippetWasCut` uses the COLLAPSED one-line length; the phrase's `M` is the RAW
+   `body.length`. Construct a body where these disagree and say what the user sees. Is the printed sentence
+   ever arithmetically misleading (e.g. a body whose visible one-line text is 300 chars but whose raw length
+   is 5,000, printing "180 of 5,000 chars")? Is that acceptable, and does any test pin it?
+2. OFF-BY-ONE IN `N`. `snippet.length` is 180 INCLUDING the appended `…`, so only 179 characters of body
+   text are actually shown when a cut happened. Does "180 of 1,234 chars" overstate what the reader got?
+   Does the spec's own wording (`snippet.length`) authorise it?
+3. THE INVERSE FAILURE. Find a body for which text IS lost from the readable line but NO phrase is printed
+   (or vice versa). Consider the control-character ranges U+0000-U+001F and U+007F-U+009F (replaced
+   by spaces before collapse), leading/trailing whitespace, a body that is entirely whitespace, and
+   the empty string.
+   Also consider a body of exactly ARRIVAL_SNIPPET_MAX collapsed chars that had control characters removed.
+4. UNICODE. `.length` is UTF-16 code units. What happens with astral characters (emoji, surrogate pairs) at
+   the boundary: can `slice(0, 179)` split a surrogate pair and emit a lone surrogate into a terminal line
+   and into JSON? Was that already true before this lane, and does the new phrase make it worse or newly
+   visible?
+5. SIZE. `body` is now duplicated into every notification object. `--json` is one line per arrival on stdout,
+   and the same object feeds any downstream reader. With an 8,000-char body, is there any bounded buffer,
+   line-length assumption, cursor file, or IPC/pipe path in arrival-watch.ts or cli.ts that this can now
+   overflow? Note CURSOR_MAX_BYTES = 4 * 1024 and WATCH_LOCK_MAX_BYTES = 512 in this file and establish
+   whether the notification body can ever reach either.
+6. LEAK / SURFACE. Does adding the whole body to the notification object put the body anywhere new that it
+   was not before: a log line, an error message, a state file, a hook surface, a phone/Monitor notification
+   line, or anything persisted? Enumerate the consumers of ArrivalNotification in the repo (grep) rather
+   than guessing.
+7. TYPE / API BREAK. `ArrivalNotification` gained a REQUIRED `body` field and `ARRIVAL_SNIPPET_MAX` became
+   exported. Does any other construction site of ArrivalNotification exist that now fails to typecheck, or
+   any structural consumer that breaks? Does anything else in the repo import from arrival-watch.ts and
+   depend on the old shape? Is the protocol/edge bundle affected?
+8. TEST GATE. tests/support/arrival-watch.test.ts must be in the literal `npm test` script list. Verify that
+   by reading package.json, and say whether the four new tests actually run.
+9. MUTATION. For at least TWO of the new tests, describe a concrete wrong implementation that would still
+   make them pass. If a test cannot fail for the reason it claims, say so.
+
+## Deliverable
+
+Write a review in Markdown. Cite file:line for every claim. Then end with EXACTLY ONE line, at the very end,
+of this form and nothing after it:
+
+VERDICT: PASS
+or
+VERDICT: FAIL
+
+PASS means: you tried to break it, you enumerated the consumers, and the change is safe to land as-is.
+FAIL means: at least one concrete defect. If you FAIL, the first line of your review must be a one-sentence
+statement of the defect. If you find only cosmetic nits and nothing that changes behaviour or misleads a
+reader, PASS and list the nits under a "NITS (non-blocking)" heading. Do not pad; an empty PASS is not a
+review.
+
+## The diff under review
+
+diff --git a/src/cloud/arrival-watch.ts b/src/cloud/arrival-watch.ts
+index a305c15..7ff1a37 100644
+--- a/src/cloud/arrival-watch.ts
++++ b/src/cloud/arrival-watch.ts
+@@ -31,7 +31,8 @@ import {
+ const UUID_RE =
+   /^[0-9a-f]{8}-[0-9a-f]{4}-[1-8][0-9a-f]{3}-[89ab][0-9a-f]{3}-[0-9a-f]{12}$/i;
+ const CURSOR_MAX_BYTES = 4 * 1024;
+-const ARRIVAL_SNIPPET_MAX = 180;
++/** Readable notification line: the body collapsed to one line, at most this long. */
++export const ARRIVAL_SNIPPET_MAX = 180;
+ const WATCH_LOCK_MAX_BYTES = 512;
+ 
+ /** A remote-friendly cadence for a long-lived, human-visible arrival monitor. */
+@@ -145,7 +146,10 @@ export interface ArrivalNotification {
+   sender: string;
+   sender_kind: SignalRecord["from_kind"];
+   kind: SignalRecord["kind"];
++  /** The one-line preview the readable line shows; never the only copy. */
+   snippet: string;
++  /** The whole body as posted, so `--json` readers need no second command. */
++  body: string;
+   attachment_count: number;
+   reply_command: string;
+ }
+@@ -352,14 +356,39 @@ export function fileArrivalCursorStore(options: {
+   };
+ }
+ 
++/** True when the snippet dropped text, i.e. the one-line body exceeded the cap. */
++export function arrivalSnippetWasCut(body: string): boolean {
++  return arrivalOneLine(body).length > ARRIVAL_SNIPPET_MAX;
++}
++
++/** The command that shows the whole body when the readable line could not. */
++export const ARRIVAL_FULL_TEXT_COMMAND = "cswarm inbox";
++
++/* A snippet is a preview, and a preview must say where the whole text is. The
++ * numbers are the run-time lengths, never typed copy, so the phrase cannot drift
++ * from ARRIVAL_SNIPPET_MAX. Empty when nothing was cut. */
++export function arrivalSnippetSuffix(
++  notification: Pick<ArrivalNotification, "snippet" | "body">,
++): string {
++  if (!arrivalSnippetWasCut(notification.body)) return "";
++  const shown = notification.snippet.length.toLocaleString("en-US");
++  const total = notification.body.length.toLocaleString("en-US");
++  return ` (${shown} of ${total} chars; full text: ${ARRIVAL_FULL_TEXT_COMMAND})`;
++}
++
+ /** Collapse a message body to one bounded, terminal-safe notification snippet. */
+ export function arrivalSnippet(body: string): string {
++  const oneLine = arrivalOneLine(body);
++  if (oneLine.length <= ARRIVAL_SNIPPET_MAX) return oneLine;
++  return `${oneLine.slice(0, ARRIVAL_SNIPPET_MAX - 1).trimEnd()}…`;
++}
++
++function arrivalOneLine(body: string): string {
+   const oneLine = body
+     .replace(/[\u0000-\u001f\u007f-\u009f]/g, " ")
+     .replace(/\s+/g, " ")
+     .trim();
+-  if (oneLine.length <= ARRIVAL_SNIPPET_MAX) return oneLine;
+-  return `${oneLine.slice(0, ARRIVAL_SNIPPET_MAX - 1).trimEnd()}…`;
++  return oneLine;
+ }
+ 
+ /** The exact CLI shape needed to answer the signal named by a notification. */
+@@ -389,6 +418,7 @@ export function arrivalNotification(
+     sender_kind: signal.from_kind,
+     kind: signal.kind,
+     snippet: arrivalSnippet(signal.body),
++    body: signal.body,
+     attachment_count: signal.attachments?.length ?? 0,
+     reply_command: arrivalReplyCommand(signal.id, workspaceId),
+   };
+@@ -401,7 +431,7 @@ export function formatArrivalNotification(
+   const attachmentCopy = notification.attachment_count === 0
+     ? ""
+     : ` — ${notification.attachment_count} attachment${notification.attachment_count === 1 ? "" : "s"}`;
+-  return `CommonSwarm from ${notification.sender_kind} ${notification.sender}: ${notification.snippet}${attachmentCopy} — reply: ${notification.reply_command}`;
++  return `CommonSwarm from ${notification.sender_kind} ${notification.sender}: ${notification.snippet}${arrivalSnippetSuffix(notification)}${attachmentCopy} — reply: ${notification.reply_command}`;
+ }
+ 
+ function notifyWriteError(error: Error): Error {
+diff --git a/tests/support/arrival-watch.test.ts b/tests/support/arrival-watch.test.ts
+index 8227647..b3147fc 100644
+--- a/tests/support/arrival-watch.test.ts
++++ b/tests/support/arrival-watch.test.ts
+@@ -12,9 +12,12 @@ import type { SignalRecord } from "../../src/cloud/command-client.js";
+ import {
+   acquireArrivalWatchLock,
+   arrivalNotification,
++  arrivalSnippetSuffix,
+   arrivalWatchAlreadyRunningSentence,
+   ArrivalWatchAlreadyRunningError,
++  ARRIVAL_FULL_TEXT_COMMAND,
+   ARRIVAL_RETRY_NOTICE_THRESHOLD_MS,
++  ARRIVAL_SNIPPET_MAX,
+   ARRIVAL_WATCH_POLL_MS,
+   createArrivalRetryNoticePolicy,
+   formatArrivalNotification,
+@@ -233,6 +236,83 @@ test("a multiline body still produces exactly one notification line", () => {
+   assert.match(output, /First line - second line third line/);
+ });
+ 
++/* The notify line is a preview by design (one terminal line), but its --json form
++ * was the only copy an automated reader got, and it carried only the snippet. A
++ * surface that is a reader's only copy carries the whole body; a surface that
++ * shortens one names where the rest is. */
++test("--json carries the whole 8,000-char body beside the snippet", () => {
++  const body = "x".repeat(8_000);
++  const notification = arrivalNotification(
++    row("66666666-6666-4666-8666-666666666666", body, "2026-09-06T10:00:00.000Z"),
++    WORKSPACE,
++    TARGET,
++  );
++  const parsed = JSON.parse(JSON.stringify(notification)) as { body: string; snippet: string };
++  assert.equal(parsed.body, body);
++  assert.equal(parsed.body.length, 8_000);
++  assert.equal(parsed.snippet.length, ARRIVAL_SNIPPET_MAX);
++  assert.notEqual(parsed.snippet, parsed.body);
++});
++
++test("the readable line names the cut and the path to the full text, from run-time lengths", () => {
++  const body = "y".repeat(1_234);
++  const notification = arrivalNotification(
++    row("77777777-7777-4777-8777-777777777777", body, "2026-09-06T10:01:00.000Z"),
++    WORKSPACE,
++    TARGET,
++  );
++  const output = formatArrivalNotification(notification);
++  const expected = ` (${notification.snippet.length.toLocaleString("en-US")} of ${body.length.toLocaleString("en-US")} chars; full text: ${ARRIVAL_FULL_TEXT_COMMAND})`;
++  assert.equal(expected, ` (${ARRIVAL_SNIPPET_MAX} of 1,234 chars; full text: cswarm inbox)`);
++  assert.equal(output.includes(expected), true);
++  assert.equal(output.split("\n").length, 1);
++  assert.match(output, / — reply: cswarm reply /);
++  assert.equal(output.indexOf(expected) < output.indexOf(" — reply: "), true);
++});
++
++/* The boundary is the constant, not a typed number: at exactly ARRIVAL_SNIPPET_MAX
++ * nothing is cut and no phrase appears; one more character and both the ellipsis
++ * and the phrase appear. If the phrase were built from a typed 180 this pair
++ * would fail as soon as the constant moved. */
++test("no path phrase at exactly ARRIVAL_SNIPPET_MAX chars; present at one more", () => {
++  const atCap = arrivalNotification(
++    row("88888888-8888-4888-8888-888888888888", "z".repeat(ARRIVAL_SNIPPET_MAX), "2026-09-06T10:02:00.000Z"),
++    WORKSPACE,
++    TARGET,
++  );
++  assert.equal(arrivalSnippetSuffix(atCap), "");
++  assert.equal(atCap.snippet, atCap.body);
++  assert.equal(formatArrivalNotification(atCap).includes("full text:"), false);
++
++  const overCap = arrivalNotification(
++    row("99999999-9999-4999-8999-999999999999", "z".repeat(ARRIVAL_SNIPPET_MAX + 1), "2026-09-06T10:03:00.000Z"),
++    WORKSPACE,
++    TARGET,
++  );
++  const suffix = arrivalSnippetSuffix(overCap);
++  assert.equal(
++    suffix,
++    ` (${ARRIVAL_SNIPPET_MAX} of ${ARRIVAL_SNIPPET_MAX + 1} chars; full text: ${ARRIVAL_FULL_TEXT_COMMAND})`,
++  );
++  assert.equal(overCap.snippet.endsWith("…"), true);
++  assert.equal(formatArrivalNotification(overCap).includes(suffix), true);
++});
++
++/* Whitespace collapses before the cap applies, so a body over the cap in raw
++ * characters that fits on one line after collapse is not a cut and gets no phrase.
++ * The phrase reports a cut, not a raw length. */
++test("a body that fits after whitespace collapse is not reported as cut", () => {
++  const body = `${"w".repeat(100)}${" ".repeat(200)}${"w".repeat(50)}`;
++  assert.equal(body.length > ARRIVAL_SNIPPET_MAX, true);
++  const notification = arrivalNotification(
++    row("aaaaaaaa-1111-4111-8111-111111111111", body, "2026-09-06T10:04:00.000Z"),
++    WORKSPACE,
++    TARGET,
++  );
++  assert.equal(arrivalSnippetSuffix(notification), "");
++  assert.equal(notification.body, body);
++});
++
+ test("restart neither replays an emitted row nor skips a row received while down", async () => {
+   const old = row(
+     "33333333-3333-4333-8333-333333333333",
