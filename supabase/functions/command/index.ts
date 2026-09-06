@@ -29,6 +29,7 @@ import {
   unknownChannelMessage,
   uuidFieldRuleText,
 } from "../_shared/channels.ts";
+import { optionalWake } from "../_shared/wake.ts";
 import {
   commandAllowedOrigins,
   commandPreflight,
@@ -1378,6 +1379,34 @@ async function setTransaction(tx: Sql): Promise<void> {
   await tx.unsafe("SET LOCAL ROLE swarm_command");
   await tx.unsafe("SET LOCAL search_path = swarm, pg_catalog");
   await tx.unsafe("SET LOCAL lock_timeout = '5s'");
+}
+
+/**
+ * Current wake topic for a principal, for mint/renew/claim responses (W3).
+ * The topic is a credential: this helper must not log the row.
+ */
+async function optionalWakeForPrincipal(
+  tx: Sql,
+  principalId: string,
+): Promise<ReturnType<typeof optionalWake>> {
+  const rows = await tx<{ wake_id: string }[]>`
+    SELECT wake_id
+    FROM swarm.agent_principals
+    WHERE principal_id = ${principalId}::uuid
+  `;
+  return optionalWake(rows[0]?.wake_id);
+}
+
+/**
+ * Rotate the wake id. Called only at revocation-by-intent sites (W6).
+ * The four agent-credential `revoked_at` writers in this file:
+ *   discardStrandedSuccessor  — agent_tokens; NOT rotate
+ *   AgentPrincipalRevoked     — agent_principals; rotate once
+ *   AgentPrincipalRevoked     — agent_tokens cascade; no second call
+ *   AgentTokenRevoked         — agent_tokens; rotate
+ */
+async function rotateWakeId(tx: Sql, principalId: string): Promise<void> {
+  await tx`SELECT swarm.rotate_wake_id(${principalId}::uuid)`;
 }
 
 async function insertAudit(tx: Sql, audit: Audit): Promise<void> {
@@ -4121,6 +4150,7 @@ async function updateWorkspaceProjection(
           "AgentPrincipalRevoked projection did not revoke exactly one principal",
         );
       }
+      await rotateWakeId(tx, principalId);
       await tx`
         INSERT INTO swarm.revocation_tombstones (kind, target_id, created_by)
         VALUES (
@@ -4204,6 +4234,7 @@ async function updateWorkspaceProjection(
         token_id: string;
         lineage_id: string;
         renewal_grant_id: string | null;
+        principal_id: string;
       }[]>`
         UPDATE swarm.agent_tokens
         SET revoked_at = ${revokedAt}
@@ -4214,13 +4245,14 @@ async function updateWorkspaceProjection(
             FROM swarm.agent_principals
             WHERE workspace_id = ${route.workspaceId}::uuid
           )
-        RETURNING token_id, lineage_id, renewal_grant_id
+        RETURNING token_id, lineage_id, renewal_grant_id, principal_id
       `;
       if (revoked.length !== 1) {
         throw new Error(
           "AgentTokenRevoked projection did not revoke exactly one token",
         );
       }
+      await rotateWakeId(tx, revoked[0]!.principal_id);
       const lineageId = revoked[0]!.lineage_id;
       const renewalGrantId = revoked[0]!.renewal_grant_id;
       await tx`
@@ -7670,6 +7702,7 @@ async function handleTransaction(
               event_ids: [],
               events: [],
               min_client_version: minClientVersion,
+              ...(await optionalWakeForPrincipal(tx, auth.agent.principal_id)),
             },
           };
         }
@@ -8487,6 +8520,7 @@ async function handleTransaction(
           event_ids: [],
           events: [],
           min_client_version: minClientVersion,
+          ...(await optionalWakeForPrincipal(tx, agent.principal_id)),
         },
       };
     }
@@ -9158,6 +9192,15 @@ async function handleTransaction(
       prepared?.command.kind === RENEW_AGENT_TOKEN_KIND
     ) {
       freshOnly.agent_token = prepared.agentToken;
+      const wakePrincipalId = prepared.command.kind === "mint_agent_token"
+        ? prepared.command.principal_id
+        : auth.agent?.principal_id;
+      if (typeof wakePrincipalId === "string") {
+        Object.assign(
+          freshOnly,
+          await optionalWakeForPrincipal(tx, wakePrincipalId),
+        );
+      }
     }
     const result: HttpResult =
       prepared?.command.kind === "accept_invitation" && !outcome.decision.ok
@@ -9283,6 +9326,7 @@ async function resolveLedgerRace(error: LedgerRace): Promise<HttpResult> {
           event_ids: [],
           events: [],
           min_client_version: minClientVersion,
+          ...(await optionalWakeForPrincipal(tx, error.auth.agent.principal_id)),
         },
       };
     }
