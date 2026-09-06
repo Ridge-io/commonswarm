@@ -37,7 +37,63 @@ export type AgentSessionErrorCode =
   | "session_conflict"
   | "session_not_managed"
   | "session_already_managed"
-  | "session_leases_live";
+  | "session_leases_live"
+  | "delivery_not_surfaced";
+
+/** ACK body field. Closed boolean. Required for managed principals. */
+export const ACK_AGENT_DELIVERY_SURFACED_FIELD = "surfaced" as const;
+
+/** Typed refusal when a managed principal promotes queued → observed without a surface. */
+export const DELIVERY_NOT_SURFACED_CODE = "delivery_not_surfaced" as const;
+
+/**
+ * Immutable host binding on acquire. A live retry with the same session
+ * UUID+key must present the same values; a change is session_conflict.
+ */
+export const AGENT_SESSION_BINDING_FIELDS = [
+  "provider",
+  "host_label",
+  "host_session_ref",
+] as const;
+
+export type AgentSessionBindingField =
+  (typeof AGENT_SESSION_BINDING_FIELDS)[number];
+
+export interface AgentSessionBinding {
+  provider: string | null;
+  host_label: string | null;
+  host_session_ref: string | null;
+}
+
+export function normalizeSessionBindingValue(
+  value: string | null | undefined,
+): string | null {
+  if (value == null) return null;
+  const trimmed = value.trim();
+  return trimmed.length === 0 ? null : trimmed;
+}
+
+export function sessionBindingsEqual(
+  left: AgentSessionBinding,
+  right: AgentSessionBinding,
+): boolean {
+  for (const field of AGENT_SESSION_BINDING_FIELDS) {
+    if (
+      normalizeSessionBindingValue(left[field]) !==
+        normalizeSessionBindingValue(right[field])
+    ) {
+      return false;
+    }
+  }
+  return true;
+}
+
+export function sessionBindingsConflict(
+  stored: AgentSessionBinding,
+  presented: AgentSessionBinding,
+): boolean {
+  return !sessionBindingsEqual(stored, presented);
+}
 
 /**
  * The sole agent-mutation exemption from the session-proof fence.
@@ -69,6 +125,7 @@ export function agentSessionErrorStatus(code: AgentSessionErrorCode): number {
     case "session_conflict":
     case "session_already_managed":
     case "session_leases_live":
+    case "delivery_not_surfaced":
       return 409;
     case "session_retired":
     case "session_not_managed":
