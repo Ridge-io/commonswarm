@@ -1,6 +1,7 @@
 import { randomUUID } from "node:crypto";
 import { DELIVERY_PROVIDER_PROVEN_OUTCOMES } from "../cloud/delivery.js";
 import { SECRET_SHAPE_RE } from "../host/credential-redaction.js";
+import { redactSessionText } from "../cloud/session-proof.js";
 import { AcpPermissionCanaryError } from "../host/types.js";
 import {
   appendListenerEvent,
@@ -184,8 +185,12 @@ function localDiagnostic(message: string, maxChars: number): string | null {
   return redacted.slice(0, maxChars);
 }
 
+export function listenerSafeErrorDetail(error: Error): string | null {
+  return localDiagnostic(redactSessionText(error.message), 2_048);
+}
+
 function safeErrorDetail(error: Error): string | null {
-  return localDiagnostic(error.message, 2_048);
+  return listenerSafeErrorDetail(error);
 }
 
 function providerStatusFields(

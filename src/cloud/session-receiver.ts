@@ -40,6 +40,19 @@ export interface HostInjectionCallback {
   inject(ask: SurfacedAsk): Promise<{ ok: true } | { ok: false; code: string }>;
 }
 
+let registeredHostInjection: HostInjectionCallback | null = null;
+
+/** Hosts register a callback; the CLI never manufactures one. */
+export function registerHostInjection(
+  callback: HostInjectionCallback | null,
+): void {
+  registeredHostInjection = callback;
+}
+
+export function currentHostInjection(): HostInjectionCallback | null {
+  return registeredHostInjection;
+}
+
 export interface InteractiveClaimClient {
   claim(): Promise<DeliveryRow[]>;
   ack(row: DeliveryRow, managedAck: ManagedAckInput): Promise<void>;
@@ -59,12 +72,6 @@ export interface InteractiveReceiverOptions {
   now?: () => number;
   sleep?: (ms: number, signal?: AbortSignal) => Promise<void>;
   signal?: AbortSignal;
-  /**
-   * Test spies. Interactive production code must never call these, including
-   * on failure paths.
-   */
-  providerFactory?: (...args: unknown[]) => unknown;
-  spawn?: (...args: unknown[]) => unknown;
 }
 
 export interface InteractiveReceiverStatus {
@@ -203,9 +210,6 @@ export async function runInteractiveReceiveOnce(
 export async function runInteractiveReceiver(
   options: InteractiveReceiverOptions,
 ): Promise<InteractiveReceiverStatus> {
-  // The spies exist so tests can prove they stay at zero, including failures.
-  void options.providerFactory;
-  void options.spawn;
   const seen = new Set<string>();
   let surfaced = 0;
   let acked = 0;

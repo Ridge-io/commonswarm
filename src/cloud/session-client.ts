@@ -17,7 +17,7 @@ import {
   AgentSessionError,
   agentSessionErrorFromBody,
 } from "./session-errors.js";
-import { proofHeaders, sessionKeyHash } from "./session-proof.js";
+import { proofHeaders, redactSessionHeaders, sessionKeyHash } from "./session-proof.js";
 import type { SessionContextDocument } from "./session-context.js";
 
 export interface SessionCommandClientOptions {
@@ -61,16 +61,17 @@ async function postSessionCommand(
     () => controller.abort(),
     options.timeoutMs ?? 30_000,
   );
+  const headers: Record<string, string> = {
+    authorization: `Bearer ${input.credential}`,
+    apikey: options.target.anonKey,
+    "content-type": "application/json",
+    ...(input.proof ? proofHeaders(input.proof) : {}),
+  };
   let response: Response;
   try {
     response = await fetcher(commandEndpoint(options.target), {
       method: "POST",
-      headers: {
-        authorization: `Bearer ${input.credential}`,
-        apikey: options.target.anonKey,
-        "content-type": "application/json",
-        ...(input.proof ? proofHeaders(input.proof) : {}),
-      },
+      headers,
       body: JSON.stringify({
         command_id: input.commandId,
         client_version: CLIENT_PROTOCOL_VERSION,
@@ -81,10 +82,15 @@ async function postSessionCommand(
       signal: controller.signal,
     });
   } catch (error) {
+    const safeHeaders = JSON.stringify(redactSessionHeaders(headers));
     if ((error as Error).name === "AbortError") {
-      throw new CommandTransportError("session command timed out");
+      throw new CommandTransportError(
+        `session command timed out ${safeHeaders}`,
+      );
     }
-    throw new CommandTransportError("session command failed before a response");
+    throw new CommandTransportError(
+      `session command failed before a response ${safeHeaders}`,
+    );
   } finally {
     clearTimeout(timer);
   }

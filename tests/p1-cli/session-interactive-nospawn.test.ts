@@ -1,5 +1,4 @@
 import assert from "node:assert/strict";
-import { spawn } from "node:child_process";
 import { readFileSync } from "node:fs";
 import { chmod, mkdir, mkdtemp, rm, writeFile } from "node:fs/promises";
 import { tmpdir } from "node:os";
@@ -35,19 +34,22 @@ const FORBIDDEN_IMPORTS = [
 ];
 
 test("interactive receiver source has no ACP or model import path", () => {
-  const path = fileURLToPath(
-    new URL("../../src/cloud/session-receiver.ts", import.meta.url),
-  );
-  const imports = readFileSync(path, "utf8")
-    .split("\n")
-    .filter((line) => /^\s*import\s/.test(line))
-    .join("\n");
-  for (const token of FORBIDDEN_IMPORTS) {
-    assert.doesNotMatch(
-      imports,
-      new RegExp(token.replace("/", "\\/"), "i"),
-      `interactive receiver must not import ${token}`,
-    );
+  for (const rel of [
+    "../../src/cloud/session-receiver.ts",
+    "../../src/cloud/session-cli.ts",
+  ]) {
+    const path = fileURLToPath(new URL(rel, import.meta.url));
+    const imports = readFileSync(path, "utf8")
+      .split("\n")
+      .filter((line) => /^\s*import\s/.test(line))
+      .join("\n");
+    for (const token of FORBIDDEN_IMPORTS) {
+      assert.doesNotMatch(
+        imports,
+        new RegExp(token.replace("/", "\\/"), "i"),
+        `${rel} must not import ${token}`,
+      );
+    }
   }
 });
 
@@ -102,19 +104,9 @@ function row(): DeliveryRow {
   };
 }
 
-test("interactive success and failure paths never call provider factory or spawn", async () => {
+test("interactive success and failure paths never construct an ACP model", async () => {
   const { root, context, contextPath } = await harness();
   try {
-    let factoryCalls = 0;
-    let spawnCalls = 0;
-    const providerFactory = (..._args: unknown[]) => {
-      factoryCalls += 1;
-      throw new Error("provider factory must be unreachable");
-    };
-    const spawnSpy = (..._args: unknown[]) => {
-      spawnCalls += 1;
-      return spawn("true");
-    };
     const client = new AgentSessionClient({
       target: cloudTarget("http://127.0.0.1:9", "synthetic-anon-key"),
       fetcher: (async () => new Response(JSON.stringify({
@@ -150,12 +142,8 @@ test("interactive success and failure paths never call provider factory or spawn
         },
         async ack() {},
       },
-      providerFactory,
-      spawn: spawnSpy,
     }, seen);
     assert.equal(pass.acked, 1);
-    assert.equal(factoryCalls, 0);
-    assert.equal(spawnCalls, 0);
 
     await assert.rejects(
       () => runInteractiveReceiveOnce({
@@ -179,13 +167,9 @@ test("interactive success and failure paths never call provider factory or spawn
             throw new Error("ack must not run after injection failure");
           },
         },
-        providerFactory,
-        spawn: spawnSpy,
       }, new Set()),
       /host injection failed/,
     );
-    assert.equal(factoryCalls, 0);
-    assert.equal(spawnCalls, 0);
 
     const controller = new AbortController();
     controller.abort();
@@ -198,8 +182,6 @@ test("interactive success and failure paths never call provider factory or spawn
       hostInjection: null,
       signal: controller.signal,
       sleep: async () => {},
-      providerFactory,
-      spawn: spawnSpy,
       claimClient: {
         async claim() {
           return [];
@@ -208,8 +190,7 @@ test("interactive success and failure paths never call provider factory or spawn
       },
     });
     assert.equal(status.mode, "interactive");
-    assert.equal(factoryCalls, 0);
-    assert.equal(spawnCalls, 0);
+    assert.equal(status.receive_verification, "manual");
   } finally {
     await rm(root, { recursive: true, force: true });
   }

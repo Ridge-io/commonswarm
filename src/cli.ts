@@ -355,6 +355,7 @@ import {
 import { AgentSessionManager } from "./cloud/session-manager.js";
 import { AgentSessionClient } from "./cloud/session-client.js";
 import {
+  boundAdapterEnv,
   writeListenerSessionBinding,
   type ManagedSessionBinding,
 } from "./listener/session-binding.js";
@@ -5984,7 +5985,7 @@ async function runConfiguredListener(options: {
           }),
         });
         const instrumentedModel = activity.instrumentModel(
-          newModel(onCanaryAttempt, activity.events),
+          await newModel(onCanaryAttempt, activity.events),
         );
         try {
           return await runListenerRuntime({

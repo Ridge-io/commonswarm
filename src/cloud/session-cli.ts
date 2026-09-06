@@ -11,6 +11,8 @@ import { AgentSessionError } from "./session-errors.js";
 import { AgentSessionClient } from "./session-client.js";
 import { AgentSessionManager } from "./session-manager.js";
 import {
+  currentHostInjection,
+  registerHostInjection,
   runInteractiveReceiveOnce,
   runInteractiveReceiver,
   type HostInjectionCallback,
@@ -210,7 +212,7 @@ export async function startManagedSession(
     contextPath,
     context,
     manager,
-    hostInjection: options.hostInjection ?? null,
+    hostInjection: options.hostInjection ?? currentHostInjection(),
     hostIdentityTrusted: options.hostIdentityTrusted === true,
     fetcher,
     signal: options.signal,
@@ -381,4 +383,4 @@ export async function revokeAgentToken(input: {
   };
 }
 
-export { runInteractiveReceiveOnce };
+export { currentHostInjection, registerHostInjection, runInteractiveReceiveOnce };

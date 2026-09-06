@@ -4,8 +4,15 @@ import { test } from "node:test";
 import {
   parseSessionMode,
   parseSessionProvider,
+  runHumanSessionLifecycle,
   sessionStartCopy,
 } from "../../src/cloud/session-cli.js";
+import {
+  ENABLE_AGENT_MANAGEMENT_KIND,
+  DISABLE_AGENT_MANAGEMENT_KIND,
+  RECOVER_AGENT_SESSION_KIND,
+} from "../../src/cloud/session-contract.js";
+import { cloudTarget } from "../../src/cloud/config.js";
 
 async function cli(args: string[]): Promise<{ code: number; stdout: string; stderr: string }> {
   const child = spawn(process.execPath, ["--import", "tsx", "src/cli.ts", ...args], {
@@ -86,6 +93,35 @@ test("session start without mode is a usage error, not a network write", async (
     `${result.stdout}${result.stderr}`,
     /session start needs --agent-token-file|--mode is required|too few|session requires start/i,
   );
+});
+
+test("enable disable and recover post the matching lifecycle commands", async () => {
+  const kinds: string[] = [];
+  const fetcher = (async (_input: URL | RequestInfo, init?: RequestInit) => {
+    const body = JSON.parse(String(init?.body ?? "{}")) as {
+      command: { kind: string; principal_id: string };
+    };
+    kinds.push(body.command.kind);
+    assert.equal(body.command.principal_id, "bbbbbbbb-bbbb-4bbb-8bbb-bbbbbbbbbbbb");
+    return new Response(JSON.stringify({ ok: true, status: "accepted" }), {
+      status: 200,
+    });
+  }) as typeof fetch;
+  const input = {
+    target: cloudTarget("http://127.0.0.1:9", "synthetic-anon-key"),
+    credential: "human-access",
+    workspaceId: "aaaaaaaa-aaaa-4aaa-8aaa-aaaaaaaaaaaa",
+    principalId: "bbbbbbbb-bbbb-4bbb-8bbb-bbbbbbbbbbbb",
+    fetcher,
+  };
+  assert.equal((await runHumanSessionLifecycle("enable", input)).kind, "enable");
+  assert.equal((await runHumanSessionLifecycle("disable", input)).kind, "disable");
+  assert.equal((await runHumanSessionLifecycle("recover", input)).kind, "recover");
+  assert.deepEqual(kinds, [
+    ENABLE_AGENT_MANAGEMENT_KIND,
+    DISABLE_AGENT_MANAGEMENT_KIND,
+    RECOVER_AGENT_SESSION_KIND,
+  ]);
 });
 
 test("session status without a context path fails closed", async () => {

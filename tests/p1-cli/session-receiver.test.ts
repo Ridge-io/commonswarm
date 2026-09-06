@@ -4,7 +4,11 @@ import { tmpdir } from "node:os";
 import { join } from "node:path";
 import { test } from "node:test";
 import { cloudTarget } from "../../src/cloud/config.js";
-import { runInteractiveReceiveOnce } from "../../src/cloud/session-cli.js";
+import {
+  currentHostInjection,
+  registerHostInjection,
+  runInteractiveReceiveOnce,
+} from "../../src/cloud/session-cli.js";
 import { AgentSessionClient } from "../../src/cloud/session-client.js";
 import { AgentSessionManager } from "../../src/cloud/session-manager.js";
 import {
@@ -106,6 +110,63 @@ test("no callback stays manual and does not ACK", async () => {
     assert.equal(pass.buffered, 1);
     assert.equal(acks, 0);
   } finally {
+    await rm(root, { recursive: true, force: true });
+  }
+});
+
+test("a registered host callback is used; absent callback stays manual", async () => {
+  const { root, context, contextPath, manager } = await setup();
+  try {
+    let injected = 0;
+    registerHostInjection({
+      async inject() {
+        injected += 1;
+        return { ok: true as const };
+      },
+    });
+    const callback = currentHostInjection();
+    assert.equal(callback !== null, true);
+    const pass = await runInteractiveReceiveOnce({
+      target: cloudTarget("http://127.0.0.1:9", "synthetic-anon-key"),
+      credential: TOKEN,
+      contextPath,
+      context,
+      manager,
+      hostInjection: callback,
+      hostIdentityTrusted: true,
+      observedHostSessionId: "thread-1",
+      claimClient: {
+        async claim() {
+          return [row()];
+        },
+        async ack() {},
+      },
+    }, new Set());
+    assert.equal(pass.receive, "callback");
+    assert.equal(pass.acked, 1);
+    assert.equal(injected, 1);
+
+    registerHostInjection(null);
+    const manual = await runInteractiveReceiveOnce({
+      target: cloudTarget("http://127.0.0.1:9", "synthetic-anon-key"),
+      credential: TOKEN,
+      contextPath,
+      context,
+      manager,
+      hostInjection: currentHostInjection(),
+      claimClient: {
+        async claim() {
+          return [row()];
+        },
+        async ack() {
+          throw new Error("manual must not ACK");
+        },
+      },
+    }, new Set());
+    assert.equal(manual.receive, "manual");
+    assert.equal(manual.acked, 0);
+  } finally {
+    registerHostInjection(null);
     await rm(root, { recursive: true, force: true });
   }
 });

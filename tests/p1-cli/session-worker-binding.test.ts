@@ -11,12 +11,16 @@ import {
 } from "../../src/cloud/session-context.js";
 import { buildListenerPrompt } from "../../src/listener/engine.js";
 import {
+  boundAdapterEnv,
   envHasSessionBinding,
   listenerSessionIdentity,
   reviewChildEnv,
   workerToolEnv,
   type ManagedSessionBinding,
 } from "../../src/listener/session-binding.js";
+import { SESSION_PROVIDERS } from "../../src/cloud/session-contract.js";
+import { readFileSync } from "node:fs";
+import { fileURLToPath } from "node:url";
 import { sanitizeChildEnv } from "../../src/host/env.js";
 
 const WORKSPACE = "aaaaaaaa-aaaa-4aaa-8aaa-aaaaaaaaaaaa";
@@ -106,10 +110,36 @@ test("review children do not inherit the session binding", async () => {
   }
 });
 
-test("all four adapters share the same binding helper", () => {
-  const providers = ["grok", "opencode", "claude", "codex"] as const;
-  for (const provider of providers) {
-    assert.equal(typeof listenerSessionIdentity, "function");
-    assert.ok(providers.includes(provider));
+test("all four adapters share the same binding helper", async () => {
+  const { root, binding: bound } = await binding();
+  try {
+    const cliSource = readFileSync(
+      fileURLToPath(new URL("../../src/cli.ts", import.meta.url)),
+      "utf8",
+    );
+    assert.equal(SESSION_PROVIDERS.length, 4);
+    assert.equal((cliSource.match(/\.\.\.adapterEnv/g) ?? []).length, 4);
+    for (const file of [
+      "grok-model.js",
+      "opencode-model.js",
+      "claude-model.js",
+      "codex-model.js",
+    ]) {
+      assert.match(
+        cliSource,
+        new RegExp(`await import\\("./listener/${file.replace(".", "\\.")}"\\)`),
+      );
+    }
+    const env = boundAdapterEnv(process.env, bound);
+    assert.equal(env.env?.[SESSION_CONTEXT_ENV], bound.contextPath);
+    assert.equal("CSWARM_SESSION_KEY" in (env.env ?? {}), false);
+    assert.doesNotMatch(JSON.stringify(env), new RegExp(bound.context.session_key));
+    const review = reviewChildEnv({
+      ...process.env,
+      [SESSION_CONTEXT_ENV]: bound.contextPath,
+    });
+    assert.equal(review[SESSION_CONTEXT_ENV], undefined);
+  } finally {
+    await rm(root, { recursive: true, force: true });
   }
 });

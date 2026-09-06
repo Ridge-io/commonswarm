@@ -6,7 +6,11 @@ import { test } from "node:test";
 import { cloudTarget } from "../../src/cloud/config.js";
 import { commandEndpoint } from "../../src/cloud/config.js";
 import { startManagedSession } from "../../src/cloud/session-cli.js";
-import { SessionContextError } from "../../src/cloud/session-context.js";
+import {
+  SessionContextError,
+  readSessionContext,
+  writeSessionContext,
+} from "../../src/cloud/session-context.js";
 import { AgentSessionError } from "../../src/cloud/session-errors.js";
 import {
   AGENT_SESSION_ID_HEADER,
@@ -139,19 +143,39 @@ test("same identity acquire writes one command and retries with the same proof",
     const commandId = first.context.acquire_command_id;
     const sessionId = first.context.session_id;
     const key = first.context.session_key;
-    await rm(join(root, "session.json"));
-    // Recreate as generation 0 to simulate lost response retry at the same path
-    // after a crash before generation was stored. The second start uses a new
-    // path below; retry is covered by session-lifecycle.
-    void commandEndpoint;
-    void commandId;
-    void sessionId;
-    void key;
-    void AGENT_SESSION_ID_HEADER;
-    void AGENT_SESSION_KEY_HEADER;
-    assert.equal(bodies.length, 1);
+    const stored = await readSessionContext(join(root, "session.json"));
+    await writeSessionContext(join(root, "session.json"), {
+      ...stored,
+      generation: 0,
+    });
+    const second = await startManagedSession({
+      target: cloudTarget("http://127.0.0.1:9", "synthetic-anon-key"),
+      workspaceId: WORKSPACE,
+      credential: TOKEN,
+      tokenFile,
+      tokenPrincipalId: PRINCIPAL,
+      mode: "interactive",
+      provider: "codex",
+      hostSessionId: "thread-1",
+      contextPath: join(root, "session.json"),
+      fetcher,
+      readIdentity: async () => ({
+        principal_id: PRINCIPAL,
+        workspace_id: WORKSPACE,
+      }),
+      runReceiver: false,
+    });
+    assert.equal(second.retried, true);
+    assert.equal(second.context.session_id, sessionId);
+    assert.equal(second.context.session_key, key);
+    assert.equal(second.context.acquire_command_id, commandId);
+    assert.equal(bodies.length, 2);
+    assert.equal(bodies[0], bodies[1]);
     assert.match(bodies[0]!, new RegExp(ACQUIRE_AGENT_SESSION_KIND));
     assert.doesNotMatch(bodies[0]!, /session_key/);
+    void commandEndpoint;
+    void AGENT_SESSION_ID_HEADER;
+    void AGENT_SESSION_KEY_HEADER;
   } finally {
     await rm(root, { recursive: true, force: true });
   }

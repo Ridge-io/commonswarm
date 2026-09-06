@@ -20,6 +20,10 @@ import {
   redactSessionText,
   sessionKeyHash,
 } from "../../src/cloud/session-proof.js";
+import { AgentSessionClient } from "../../src/cloud/session-client.js";
+import { CommandTransportError } from "../../src/cloud/command-client.js";
+import { listenerSafeErrorDetail } from "../../src/listener/supervisor.js";
+import { cloudTarget } from "../../src/cloud/config.js";
 
 test("proof headers match the wire names and are redacted in logs", () => {
   const proof = {
@@ -82,6 +86,32 @@ test("session errors classify on the code field, never error.message", () => {
   const typed = new AgentSessionError(409, "session_conflict");
   assert.equal(typed.code, "session_conflict");
   assert.notEqual(typed.message, "session_conflict");
+});
+
+test("session transport errors and listener details redact proof headers", async () => {
+  const key = generateSessionKey();
+  const proof = {
+    session_id: "aaaaaaaa-aaaa-4aaa-8aaa-aaaaaaaaaaaa",
+    generation: 2,
+    key,
+  };
+  const client = new AgentSessionClient({
+    target: cloudTarget("http://127.0.0.1:9", "synthetic-anon-key"),
+    fetcher: (async () => {
+      throw new TypeError("fetch failed");
+    }) as typeof fetch,
+  });
+  await assert.rejects(
+    () => client.renew(`swm_agt_${"S".repeat(43)}`, "aaaaaaaa-aaaa-4aaa-8aaa-aaaaaaaaaaaa", proof),
+    (error: unknown) => {
+      assert.ok(error instanceof CommandTransportError);
+      assert.doesNotMatch(error.message, new RegExp(key));
+      assert.match(error.message, /redacted-session-proof/);
+      const detail = listenerSafeErrorDetail(error);
+      assert.equal(detail === null || !detail.includes(key), true);
+      return true;
+    },
+  );
 });
 
 test("key hash is sha256 hex of the key string", () => {

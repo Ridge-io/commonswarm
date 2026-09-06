@@ -63,6 +63,15 @@ export function workerToolEnv(
   return { ...base, [SESSION_CONTEXT_ENV]: contextPath };
 }
 
+/** Spread into every listener adapter constructor. Path only, never the key. */
+export function boundAdapterEnv(
+  parent: NodeJS.ProcessEnv,
+  binding: ManagedSessionBinding | undefined,
+): { env: Record<string, string> } | Record<string, never> {
+  if (binding === undefined) return {};
+  return { env: workerToolEnv(parent, binding.contextPath) };
+}
+
 /** Review / sibling agents get no session binding. */
 export function reviewChildEnv(
   parent: NodeJS.ProcessEnv,
