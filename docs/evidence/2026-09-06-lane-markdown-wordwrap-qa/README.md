@@ -70,12 +70,17 @@ table gaps; fixed for headings and list items). **3b "wordwrap / light text / no
 
 ## Gates
 
-`npm --prefix site test` (whole site suite, after `npm --prefix site run build`; log `/tmp/mdqa-site-test-3.log`
-on the build host, 2026-09-06 14:33 local):
+`npm --prefix site test` (whole site suite, after `npm --prefix site run build`) with `site/.env` present
+(`PUBLIC_SUPABASE_URL=https://api.commonswarm.com` and the anon key, supplied by the lane lead after the build agent
+reported the env-less run below; log `gate-site-test.log` in this directory, 2026-09-06 14:35 local):
 
 | tests | pass | fail | skipped |
 |---|---|---|---|
-| 523 | 515 | 7 | 1 |
+| 523 | 522 | 0 | 1 |
+
+The build agent's earlier run WITHOUT `site/.env` (log `/tmp/mdqa-site-test-3.log` on the build host, 14:33 local)
+read 523 / 515 pass / 7 fail / 1 skipped; the paragraph below records that run and its attribution, which the
+env-supplied run confirms: all 7 clear once the target metadata is present.
 
 The new file contributes 11 of the passes (8 assertions + 3 controls). The sibling
 `message-blocks-layout.observer.test.ts` is unchanged and green under the new CSS.

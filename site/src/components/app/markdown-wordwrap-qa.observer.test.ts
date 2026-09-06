@@ -20,9 +20,11 @@
  * one declaration says. (`margin-block-start` alone would have read 12px on a heading whose UA
  * bottom margin was 24px.)
  *
- * Every family has a mutation control: a separate load of the shipped page with one override
- * `<style>` that breaks exactly that family, so a green row is evidence about the rule and not
- * about a fixture that happened to fit.
+ * Three of the four families (gap, wrap, light) have a mutation control: a separate load of the
+ * shipped page with one override `<style>` that breaks exactly that family, so a green row is
+ * evidence about the rule and not about a fixture that happened to fit. The scroll family has no
+ * control: its assertion reads computed `overflow-y` and `scrollHeight` against `clientHeight` on
+ * the container, and no single override breaks it without also changing the box being measured.
  */
 import assert from "node:assert/strict";
 import { execFile } from "node:child_process";
