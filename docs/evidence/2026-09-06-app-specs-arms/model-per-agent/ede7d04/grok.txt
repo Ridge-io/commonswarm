@@ -1,1 +1,40 @@
-I'll review the spec against the code and the earlier arm outputs, then check sibling specs for shared-file conflicts.I'll read the spec, prior arm outputs, and sibling docs next so I can check claimed fixes against the current draft.HEAD is later than `ede7d04`. I'll pin the spec's commit, then check every cited file:line and the sibling specs that share files.I'll open every cited region and the shared-file siblings so line numbers and lane order can be checked, not assumed.
+I'll review the spec against the code and the earlier arm outputs, then check sibling specs for shared-file conflicts.I'll read the spec, prior arm outputs, and sibling docs next so I can check claimed fixes against the current draft.HEAD is later than `ede7d04`. I'll pin the spec's commit, then check every cited file:line and the sibling specs that share files.I'll open every cited region and the shared-file siblings so line numbers and lane order can be checked, not assumed.Reviewed spec bytes at `ede7d04` (same as `7e0520e` draft 4; HEAD is later and does not change this file). Checked every `file:line` in the tree.
+
+**Folded (not re-raised):** `AgentModelSet` / `actor_user`; person-attributed backfill + `AgentPrincipalCreated`; `SELECT p.*` vs `wake_id`; omit `assignment_state` when `assigned_model` is NULL; live `agent_delivery_read_context` body; pre-bridge read failure; p1-local pin; load path; `command-client` / `signals`; both-keys XOR; durable `model_assignment_state`; bare declaration; `STATUS_ALLOWED_KEYS` `:242-293`; HEARTBEAT L1 on `read/index.ts`; LiveDashboard sibling lanes.
+
+## GAP
+
+**§4 L2 — enable path is unnamed.**  
+§2.2 says a measured Claude/Codex mapping “gets enabled”. L2 lists `cli.ts` and `bounds.ts` only. Today:
+
+- `session/new` is `src/host/session.ts:554-562` (`cwd`, `mcpServers`, `_meta`; no `model`).
+- `ClaudeListenerModelOptions` / Codex options have no `model` (`src/listener/claude-model.ts:39-43`; same for Codex).
+- Probe (b) `ANTHROPIC_MODEL` is not in `src/` and is not in `ALLOWED_EXACT` (`src/host/env.ts:9-34`); `sanitizeChildEnv` would drop it.
+- Probe (c) writes “state dir HOME”, but the child keeps the operator `HOME` (`src/host/codex.ts:6-8`, `:281-286`; `env.ts:11`).
+
+A lane that measures a mapping still has to invent `session.ts`, `env.ts`, `claude.ts` / `codex.ts`, and the two listener-model files.
+
+**§4 shared files — two sibling orders are missing here.**  
+`2026-09-06-HEARTBEAT-ON-WAKE-SOCKET.md` L2 also edits `cli.ts`, `runtime.ts`, `control.ts`, `signals.ts` and says it lands first, then this L2 rebases. `2026-09-06-BRAIN-WIKI.md` L0 edits `command/index.ts` and says it lands first, then this L1 rebases. This spec names only HEARTBEAT L1 on `read/index.ts` and the LiveDashboard lanes. A lane author of this file is not told to wait.
+
+**§4 L1 — creation fold is outside the listed range.**  
+§2.1: creation writes `assignedModel`. L1 lists `workspace-reducer.ts:322-343` (the `AgentModelDeclared` case). Creation is `:285-306` and still sets `model: p.model ?? null`. SQL insert `command/index.ts:4055-4066` still writes `model` only; that file is listed, the reducer range is not.
+
+## NIT
+
+- `read/index.ts:452-456` is the `FROM` call; `wake_id` is selected at `:451`.
+- “assigned at `:476`” is `wake_id := v_wake_id`, not an `assigned_model` column.
+- `LiveDashboard.astro:1311` `Agent` and `site/src/lib/entity-panel.ts:31-38` are unlisted; L3 can still write both facts at `:2625` from `agent`.
+- Mark copy for `honoured` + normalised inequality is unnamed.
+- Codex pins disagree (`bounds.ts:29` `1.1.9` vs `:31` `1.8.0`); probe says “the version pinned”.
+- Pre-bridge read in `cli.ts` plus runtime `:994` is two invocations, not one.
+
+## Citations that hold
+
+`20260730000001:8-23`, `:30-35`, `:112-127`; `20260906000010:22-30`, `:59-70`, `:276-483`, `:293`, `:481-483`; `workspace-commands.ts:85-89`, `:96-101`, `:108-118`, `:499-514`, `:832-838`, `:987`, `:1014`; `workspace-events.ts:80-87`, `:181-187`; `command/index.ts:1455-1463`, `:1959-1997`, `:1989` (`MODEL_MAX=120`), `:2214-2216`, `:2591`, `:3779`; `cli.ts:4347-4363`, `:4395-4399`, `:5588-5592`, `:5782-5843`, `:5929-5945`; `grok-model.ts:42`; `host/claude.ts:416-418`, `:588-590`; `host/codex.ts:277-279`, `:363-365`; `runtime.ts:297`, `:1305-1330`; `command-client.ts:867`; `signals.ts:135-153`, `:1232-1251`; `LiveDashboard.astro:2001`, `:2625`, `:4030-4032`, `:4105-4128`, `:5113`; `participant-rail.ts:66-74`; `agent-connect.ts:331`; `control.ts:242-293`, `:407-409`, `:596`; `package.json:23`, `:26`; `test-gate-coverage.test.ts:23-35`, `:125-129`; `agent-model-set.test.ts:247-260`; site glob `src/lib/*.test.mjs`.
+
+**Not established:** live migration; live Claude/Codex probe; production row counts.
+
+QUOTE-BACK: # A model per agent: assigned by a person, honoured by the listener, declared by the agent
+VERDICT: FAIL
+REASON: L2 cannot enable a measured Claude/Codex mapping from the files it is given, L1’s reducer line range omits the creation fold, and this spec still does not order its L1/L2 files against HEARTBEAT L2 and BRAIN-WIKI L0.
