@@ -1,5 +1,5 @@
 import type { AgentSessionProof } from "./session-contract.js";
-import type { SessionContextDocument } from "./session-context.js";
+import { sessionProofOf, type SessionContextDocument } from "./session-context.js";
 
 export type ManagedAckRefusalCode =
   | "ack_proof_missing"
@@ -74,4 +74,21 @@ export function assertManagedAckAllowed(
 ): void {
   const decision = canAckManagedDelivery(input);
   if (!decision.ok) throw new ManagedAckRefusedError(decision.code);
+}
+
+/** Build the ACK gate input from a live context plus the real injection result. */
+export function managedAckInput(input: {
+  context: SessionContextDocument;
+  proof?: AgentSessionProof | null;
+  injectionSucceeded: boolean;
+  observedHostSessionId: string | null;
+  hostIdentityTrusted: boolean;
+}): ManagedAckInput {
+  return {
+    context: input.context,
+    proof: input.proof !== undefined ? input.proof : sessionProofOf(input.context),
+    injectionSucceeded: input.injectionSucceeded,
+    observedHostSessionId: input.observedHostSessionId,
+    hostIdentityTrusted: input.hostIdentityTrusted,
+  };
 }

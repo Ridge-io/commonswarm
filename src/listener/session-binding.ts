@@ -10,6 +10,11 @@ import type { ListenerSessionIdentity } from "./types.js";
 export interface ManagedSessionBinding {
   contextPath: string;
   context: SessionContextDocument;
+  /**
+   * Proof presented on this process's writes. Defaults to sessionProofOf(context).
+   * A captured older generation is stale against the current context and cannot ACK.
+   */
+  proof?: AgentSessionProof | null;
 }
 
 export function listenerSessionIdentity(
@@ -27,7 +32,7 @@ export function listenerSessionIdentity(
 export function bindingProof(
   binding: ManagedSessionBinding,
 ): AgentSessionProof | null {
-  return sessionProofOf(binding.context);
+  return binding.proof !== undefined ? binding.proof : sessionProofOf(binding.context);
 }
 
 /**

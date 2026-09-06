@@ -19,6 +19,8 @@ import { AgentSessionManager } from "./session-manager.js";
 import {
   assertManagedAckAllowed,
   canAckManagedDelivery,
+  managedAckInput,
+  type ManagedAckInput,
 } from "./session-ack.js";
 import {
   sessionProofOf,
@@ -40,7 +42,7 @@ export interface HostInjectionCallback {
 
 export interface InteractiveClaimClient {
   claim(): Promise<DeliveryRow[]>;
-  ack(row: DeliveryRow): Promise<void>;
+  ack(row: DeliveryRow, managedAck: ManagedAckInput): Promise<void>;
 }
 
 export interface InteractiveReceiverOptions {
@@ -118,7 +120,7 @@ function defaultClaimClient(
       });
       return result.deliveries;
     },
-    async ack(row: DeliveryRow): Promise<void> {
+    async ack(row: DeliveryRow, managedAck: ManagedAckInput): Promise<void> {
       await client.ackAgentDelivery({
         workspaceId: options.context.workspace_id,
         credential: options.credential,
@@ -128,6 +130,7 @@ function defaultClaimClient(
         listenerInstanceId: options.context.session_id,
         outcome: "observed",
         lastErrorCode: null,
+        managedAck,
       });
     },
   };
@@ -180,22 +183,17 @@ export async function runInteractiveReceiveOnce(
     if (injected) surfaced += 1;
     else buffered += 1;
     const proof = options.manager.currentProof();
-    const decision = canAckManagedDelivery({
+    const ackGate = managedAckInput({
       context: options.context,
       proof,
       injectionSucceeded: injected,
       observedHostSessionId: observedHost,
       hostIdentityTrusted: trusted && injection !== null,
     });
+    const decision = canAckManagedDelivery(ackGate);
     if (!decision.ok) continue;
-    assertManagedAckAllowed({
-      context: options.context,
-      proof,
-      injectionSucceeded: injected,
-      observedHostSessionId: observedHost,
-      hostIdentityTrusted: true,
-    });
-    await claims.ack(row);
+    assertManagedAckAllowed(ackGate);
+    await claims.ack(row, ackGate);
     seen.add(row.signal.id);
     acked += 1;
   }
