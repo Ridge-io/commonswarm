@@ -1,0 +1,28 @@
+{
+  "method": "ALTER TABLE swarm.signal_deliveries DISABLE TRIGGER signal_deliveries_wake_agent; 3 asks; 20s wait (0.1.58 already missed wakes with trigger ON, so 330s would not add information)",
+  "triggerOff": "D",
+  "triggerOn": "O",
+  "trials": [
+    {
+      "signalId": "b41a6e4e-3b87-4e7c-880f-4b6c5386e6bb",
+      "acceptedAt": "2026-09-06T07:35:40.700Z",
+      "claimTs": null,
+      "latencyMs": null,
+      "timedOut": true
+    },
+    {
+      "signalId": "7c211974-4a71-4539-9c21-d9f5766a74e4",
+      "acceptedAt": "2026-09-06T07:36:00.892Z",
+      "claimTs": null,
+      "latencyMs": null,
+      "timedOut": true
+    },
+    {
+      "signalId": "ef660f74-7fe9-4101-b6e0-f1fc9f3ff716",
+      "acceptedAt": "2026-09-06T07:36:21.118Z",
+      "claimTs": null,
+      "latencyMs": null,
+      "timedOut": true
+    }
+  ]
+}

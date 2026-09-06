@@ -1,0 +1,16 @@
+{
+  "method": "two 0.1.58 listeners, different --state-dir, same principal; owner revoke_agent_token on token1; time token2 wake.mode; anon join old vs new topic",
+  "oldWakeIdLength": 43,
+  "newWakeIdLength": 43,
+  "wakeIdChanged": true,
+  "revokeStatus": 200,
+  "revokeBodyStatus": "accepted",
+  "token1PushMs": 53,
+  "token2PushMs": 310,
+  "token2AfterRevokeMode": "poll",
+  "token2AfterRevokeError": null,
+  "resubWaitMs": 54,
+  "resubWallMs": 5419,
+  "oldJoin": "CHANNEL_ERROR",
+  "newJoin": "SUBSCRIBED"
+}

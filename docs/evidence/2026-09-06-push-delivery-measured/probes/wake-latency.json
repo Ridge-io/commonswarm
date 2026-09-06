@@ -1,0 +1,203 @@
+{
+  "method": "post_signal acceptedAt (Date.now after HTTP 200 JSON) to events.ndjson listener_delivery_claim.ts. Trial 1 reused the 07:26:47 smoke ask. Anon supabase-js client on the same wake topic is the positive control that the trigger sent.",
+  "anonSubscribe": "SUBSCRIBED",
+  "anonControlFrames": 19,
+  "listenerLastWakeAtBeforeWait": {
+    "mode": "push",
+    "subscribedAt": "2026-09-06T07:14:56.663Z",
+    "reconnects": 0,
+    "lastWakeAt": null,
+    "lastReconcileAt": "2026-09-06T07:24:58.079Z",
+    "errorCode": null,
+    "topicRotatedAt": null,
+    "rateLimited": false
+  },
+  "results": [
+    {
+      "n": 1,
+      "signalId": "98060541-ad2c-4f85-9cee-c7e5ce37e9c3",
+      "createdAt": "2026-09-06T07:26:47.087Z",
+      "acceptedAt": "2026-09-06T07:26:47.136Z",
+      "claimTs": null,
+      "latencyMs": null,
+      "timedOut": true
+    },
+    {
+      "n": 2,
+      "signalId": "8982fa25-2ea2-45ee-993b-0548790e3501",
+      "createdAt": "2026-09-06T07:28:41.898Z",
+      "acceptedAt": "2026-09-06T07:28:41.934Z",
+      "claimTs": null,
+      "latencyMs": null,
+      "timedOut": true
+    },
+    {
+      "n": 3,
+      "signalId": "41da2147-2906-490d-a116-d0903f4274c9",
+      "createdAt": "2026-09-06T07:28:42.007Z",
+      "acceptedAt": "2026-09-06T07:28:42.035Z",
+      "claimTs": null,
+      "latencyMs": null,
+      "timedOut": true
+    },
+    {
+      "n": 4,
+      "signalId": "3d871930-b7d1-4f34-a637-b0f750c3d44b",
+      "createdAt": "2026-09-06T07:28:42.118Z",
+      "acceptedAt": "2026-09-06T07:28:42.149Z",
+      "claimTs": null,
+      "latencyMs": null,
+      "timedOut": true
+    },
+    {
+      "n": 5,
+      "signalId": "9487455b-6a9b-4cf7-819c-9a244e49b53b",
+      "createdAt": "2026-09-06T07:28:42.230Z",
+      "acceptedAt": "2026-09-06T07:28:42.264Z",
+      "claimTs": null,
+      "latencyMs": null,
+      "timedOut": true
+    },
+    {
+      "n": 6,
+      "signalId": "f5528d67-2d8e-4557-8638-96ba436e2a10",
+      "createdAt": "2026-09-06T07:28:42.348Z",
+      "acceptedAt": "2026-09-06T07:28:42.392Z",
+      "claimTs": null,
+      "latencyMs": null,
+      "timedOut": true
+    },
+    {
+      "n": 7,
+      "signalId": "3661cc4f-c7bc-44cf-877f-8fc2200b2307",
+      "createdAt": "2026-09-06T07:28:42.465Z",
+      "acceptedAt": "2026-09-06T07:28:42.494Z",
+      "claimTs": null,
+      "latencyMs": null,
+      "timedOut": true
+    },
+    {
+      "n": 8,
+      "signalId": "0c1b56cd-022a-4bcd-a123-a7cfa7255459",
+      "createdAt": "2026-09-06T07:28:42.583Z",
+      "acceptedAt": "2026-09-06T07:28:42.621Z",
+      "claimTs": null,
+      "latencyMs": null,
+      "timedOut": true
+    },
+    {
+      "n": 9,
+      "signalId": "6c2b62e4-fc9a-48e3-94f2-92c7844bfafc",
+      "createdAt": "2026-09-06T07:28:42.690Z",
+      "acceptedAt": "2026-09-06T07:28:42.713Z",
+      "claimTs": null,
+      "latencyMs": null,
+      "timedOut": true
+    },
+    {
+      "n": 10,
+      "signalId": "736b1e61-2225-40ec-85cf-b8c5f492d6e3",
+      "createdAt": "2026-09-06T07:28:42.784Z",
+      "acceptedAt": "2026-09-06T07:28:42.810Z",
+      "claimTs": null,
+      "latencyMs": null,
+      "timedOut": true
+    },
+    {
+      "n": 11,
+      "signalId": "b975d28f-54e8-41d7-88a6-8a13147794f4",
+      "createdAt": "2026-09-06T07:28:42.886Z",
+      "acceptedAt": "2026-09-06T07:28:42.915Z",
+      "claimTs": null,
+      "latencyMs": null,
+      "timedOut": true
+    },
+    {
+      "n": 12,
+      "signalId": "c206867a-f3ae-44ab-abf7-1e8a3fa23f6a",
+      "createdAt": "2026-09-06T07:28:42.994Z",
+      "acceptedAt": "2026-09-06T07:28:43.025Z",
+      "claimTs": null,
+      "latencyMs": null,
+      "timedOut": true
+    },
+    {
+      "n": 13,
+      "signalId": "382534db-ec08-4ef0-8c1f-2d8cbdc90d5a",
+      "createdAt": "2026-09-06T07:28:43.109Z",
+      "acceptedAt": "2026-09-06T07:28:43.139Z",
+      "claimTs": null,
+      "latencyMs": null,
+      "timedOut": true
+    },
+    {
+      "n": 14,
+      "signalId": "40739ea0-9b4c-4b6a-8a94-8a398ece355a",
+      "createdAt": "2026-09-06T07:28:43.220Z",
+      "acceptedAt": "2026-09-06T07:28:43.260Z",
+      "claimTs": null,
+      "latencyMs": null,
+      "timedOut": true
+    },
+    {
+      "n": 15,
+      "signalId": "8d663810-476b-4eae-bd78-1a1384ee9e33",
+      "createdAt": "2026-09-06T07:28:43.341Z",
+      "acceptedAt": "2026-09-06T07:28:43.369Z",
+      "claimTs": null,
+      "latencyMs": null,
+      "timedOut": true
+    },
+    {
+      "n": 16,
+      "signalId": "975356f9-5ed4-434d-b817-578ed3dd178f",
+      "createdAt": "2026-09-06T07:28:43.445Z",
+      "acceptedAt": "2026-09-06T07:28:43.483Z",
+      "claimTs": null,
+      "latencyMs": null,
+      "timedOut": true
+    },
+    {
+      "n": 17,
+      "signalId": "00f5b1fb-0cf5-4ba3-bee0-a71a493730e8",
+      "createdAt": "2026-09-06T07:28:43.568Z",
+      "acceptedAt": "2026-09-06T07:28:43.598Z",
+      "claimTs": null,
+      "latencyMs": null,
+      "timedOut": true
+    },
+    {
+      "n": 18,
+      "signalId": "c7c2b04d-4e2a-4cf5-b263-89a8a0658d0a",
+      "createdAt": "2026-09-06T07:28:43.677Z",
+      "acceptedAt": "2026-09-06T07:28:43.706Z",
+      "claimTs": null,
+      "latencyMs": null,
+      "timedOut": true
+    },
+    {
+      "n": 19,
+      "signalId": "5209a676-e67a-462a-9770-3ca98c665d30",
+      "createdAt": "2026-09-06T07:28:43.794Z",
+      "acceptedAt": "2026-09-06T07:28:43.827Z",
+      "claimTs": null,
+      "latencyMs": null,
+      "timedOut": true
+    },
+    {
+      "n": 20,
+      "signalId": "b1a919e3-eb9a-449a-8fa1-232a7d006efe",
+      "createdAt": "2026-09-06T07:28:43.902Z",
+      "acceptedAt": "2026-09-06T07:28:43.944Z",
+      "claimTs": null,
+      "latencyMs": null,
+      "timedOut": true
+    }
+  ],
+  "stats": {
+    "n": 0,
+    "mean": null,
+    "max": null,
+    "min": null
+  }
+}

@@ -1,0 +1,31 @@
+{
+  "status": 200,
+  "body": {
+    "status": "accepted",
+    "ok": true,
+    "event_ids": [
+      "8f762687-d601-4b4f-95e6-284951cf4787"
+    ],
+    "workspace_id": "52ac7c68-7317-4862-8121-80ab2743e2e0",
+    "events": [
+      {
+        "workspace_id": "52ac7c68-7317-4862-8121-80ab2743e2e0",
+        "stream_id": "19a12061-9c57-46cb-8276-b9193ddbfe2e",
+        "seq": 2,
+        "event_id": "8f762687-d601-4b4f-95e6-284951cf4787",
+        "command_id": "e080b133-ce67-4062-bb3d-2a306ecf5f13",
+        "type": "AgentTokenRevoked",
+        "schema_version": 1,
+        "actor_user": "29b15efd-00ad-421d-b01e-5c02415fad9f",
+        "actor_agent_principal": null,
+        "actor_run": null,
+        "occurred_at_server": 1788680740481,
+        "payload": {
+          "token_id": "f982098f-28ac-44f0-be5f-359574eea4f7",
+          "revoked_at": 1788680740481
+        }
+      }
+    ],
+    "min_client_version": "0.1.0"
+  }
+}
