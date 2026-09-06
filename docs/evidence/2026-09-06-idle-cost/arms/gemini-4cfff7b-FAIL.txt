@@ -1,0 +1,59 @@
+diff --git a/docs/evidence/2026-09-06-idle-cost/README.md b/docs/evidence/2026-09-06-idle-cost/README.md
+
+### Check 1: One constant set, generated copy
+*   **Attempted refutation:** Searched for hardcoded lists, checked for string matching on `error.message`, and searched for em-dashes in user-facing text.
+*   **Finding (DEFECT):** `src/cloud/idle-poll.ts:31` defines `export const IDLE_POLL_DURATION_EXAMPLES = ["15s", "30s", "1m"] as const;`. This is a hardcoded typed list that is not generated from the actual `MIN_MS`/`MAX_MS` bounds and will drift if those constants change.
+*   **Finding (NIT):** No `error.message` classifier was found in the modified code. Error handling successfully leverages `.code` per D-053 (e.g., `(error as NodeJS.ErrnoException).code !== "ESRCH"` at `src/cloud/arrival-watch.ts:348`).
+*   **Finding (NIT):** No em-dash was found in any newly added user-facing text (e.g., `idlePollHelpSentence`). Em-dashes only appear in comments (e.g., `tests/p1-cli/citation-drift.test.ts:1503`).
+
+### Check 2: Back-off and reset
+*   **Attempted refutation:** Checked if reset is limited only to durable rows, whether 1ms is clamped, if the streak overflows, or if `2m` slips past validation.
+*   **Finding (PASS):** A delivery resets on ANY emitted signal/arrival, not just claimed durable rows. Shown in `src/cloud/arrival-watch.ts:564` (`await idleWait(emittedSignals.length > 0)`) and `src/listener/runtime.ts:1804` (`await idleSleep(page.signals.length > 0)`).
+*   **Finding (PASS):** A 1 ms test injection does NOT get clamped to 1 s. `nextIdlePollMs` at `src/cloud/idle-poll.ts:558` intentionally multiplies the base without clamping to a minimum, allowing fast test execution.
+*   **Finding (PASS):** The empty streak does not overflow. `src/cloud/idle-poll.ts:557` safely bounds it with `Math.min(emptyStreak, 16)`.
+*   **Finding (PASS):** `--poll-interval 2m` does not slip through. `parseIdlePollIntervalMs` at `src/cloud/idle-poll.ts:530` explicitly checks `milliseconds > IDLE_POLL_MAX_MS` and throws an error for values above 60s.
+
+### Check 3: Idle persist skip
+*   **Attempted refutation:** Examined edge cases where the ledger might be skipped inappropriately, and verified `rate_buckets` visibility and 409 handling.
+*   **Finding (PASS):** A hydration failure does NOT skip the ledger. If `hydrateDeliveryRefs` fails (`supabase/functions/command/index.ts:8408`), the `idempotency_keys` row was already written at `supabase/functions/command/index.ts:8378` (because `persistLedger` is true), and an `outcome: "domain"` audit row is safely written before returning 403.
+*   **Finding (PASS):** A 403 or rate-limit DOES skip the ledger (returns early), but this is correct for requests that are refused execution entirely.
+*   **Finding (PASS):** A poison terminalization does NOT skip the ledger. `claimAgentInboxPersistsLedger` at `supabase/functions/command/durable-delivery.ts:806` explicitly returns `true` when `terminal_delivery_failure_count > 0`.
+*   **Finding (PASS):** An idle poll DOES still write `rate_buckets`. It is explicitly named and upserted in `checkDeliveryRateLimit` at `supabase/functions/command/index.ts:4882`, which runs for every command request.
+*   **Finding (PASS):** A non-empty claim still 409s on command-id reuse. Verified by the p1-server control test at `tests/p1-server/command.test.ts:8103` (`"a non-empty claim is the control that still writes the ledger"`), where `mismatchInst` successfully hits a 409 `command_id_conflict` (line 8110).
+
+### Check 4: Old 0.1.56 clients
+*   **Attempted refutation:** Looked for race conditions where the skipped idempotency key breaks a retry.
+*   **Finding (PASS):** Skipping the idempotency key for an idle poll does not break a live listener. If a client retries an idle command ID, it safely re-executes. If the queue is still empty, it returns empty again. If a row arrived between the first empty claim and the retry, the retry safely leases it, writes the idempotency key for the first time, and returns the row.
+
+### Check 5: Retention predicate
+*   **Attempted refutation:** Verified `outcome` tracking and tested trigger constraints.
+*   **Finding (PASS):** The migration comment is correct: historical `audit_log` cannot distinguish empty vs leased rows. Both are stored as `outcome = 'accepted'`, as verified in `tests/p1-server/command.test.ts:6502` and `tests/p1-server/command.test.ts:6634`.
+*   **Finding (PASS):** The append-only trigger change (`BEFORE UPDATE ON swarm.audit_log` at `supabase/migrations/20260906000001_idle_cost_retention.sql:16`) correctly blocks UPDATEs. `swarm_command` only has INSERT grants, so it cannot DELETE.
+*   **Finding (PASS):** A non-definer cannot arbitrarily DELETE. `purge_idle_claim_audit` is `SECURITY DEFINER` executing a strictly filtered DELETE (`command_kind = 'claim_agent_inbox'`).
+*   **Finding (PASS):** `GREATEST(7, ...)` at `supabase/migrations/20260906000001_idle_cost_retention.sql:40` effectively enforces a floor of 7. It cannot drop below 7.
+*   **Finding (PASS):** The zero-arg `purge_expired_idempotency_keys()` at `supabase/migrations/20260906000001_idle_cost_retention.sql:100` still only drains keys. `purge_idle_cost_tables()` safely loops both (line 50).
+
+### Check 6: Quota index honesty
+*   **Attempted refutation:** Checked for false claims regarding query planner usage.
+*   **Finding (PASS):** The lane makes no false claims. `docs/evidence/2026-09-06-idle-cost/README.md:59` explicitly notes "Index Scan on production was not observed" and the "planner still Seq Scan".
+*   **Finding (PASS):** The hot query matches the index columns `(workspace_id, state, created_at)`.
+*   **Finding (NIT):** The cheaper index the query actually wants is an Index-Only Scan that includes the sum target: `(workspace_id, state, created_at) INCLUDE (size_bytes)`.
+
+### Check 7: Notify lock
+*   **Attempted refutation:** Verified locking constraints, PID liveness checks, and principal specificity.
+*   **Finding (PASS):** Same principal two watchers correctly throws `ArrivalWatchAlreadyRunningError` (tested at `tests/listener-runtime.test.ts:1886`).
+*   **Finding (PASS):** Stale PIDs are correctly stolen. `pidIsAlive` handles `EPERM` by correctly treating the PID as alive (`error.code !== "ESRCH"` at `src/cloud/arrival-watch.ts:348`).
+*   **Finding (PASS):** Different principals are allowed. `arrivalWatchLockPath` includes the `principalId` in the filename (`src/cloud/arrival-watch.ts:318`).
+*   **Finding (PASS):** The path is safely under the state dir via `ensureSecureStateDirectory(dirname(path))` at `src/cloud/arrival-watch.ts:374`.
+*   **Finding (PASS):** The error sentence is dynamically generated from the active PID at `src/cloud/arrival-watch.ts:328`.
+*   **Finding (PASS):** There is no branching on `error.message`. Lock exceptions correctly check `code !== "EEXIST"` and `code !== "ENOENT"`.
+
+### Check 8: Arithmetic
+*   **Attempted refutation:** Recalculated the calls and unwritten rows.
+*   **Finding (PASS):** 86400 / 2 = 43,200. * 16 seats = 691,200/day = 20,736,000/month.
+*   **Finding (PASS):** 86400 / 15 = 5,760. * 16 seats = 92,160/day = 2,764,800/month.
+*   **Finding (PASS):** 86400 / 60 = 1,440. * 16 seats = 23,040/day = 691,200/month.
+*   **Finding (PASS):** Rows no longer written at 24,000 polls/seat/day (2 rows per poll) is 48,000 rows/seat/day. For 16 seats: 768,000/day, or 23,040,000 (23.0 M) per month.
+*   **Finding (PASS):** The README table perfectly aligns with all manual recalculations. The 3.6 s median is correctly cited as a measurement and not a code default.
+
+VERDICT: FAIL
