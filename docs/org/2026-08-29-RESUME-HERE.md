@@ -2481,3 +2481,8 @@ topic while mint/renew replay omits it — not a defect, L4 must treat `wake` as
 response). Evidence `docs/evidence/2026-09-06-wake-command/arms-7c9a458/`. Gates on merged main:
 check:edge, 861/861, p1-cli 483/483 (p1-server ran on the lane SHA: 155/155). Deployed `command` then
 `read`. Live control below. The production idle-cost control at +25 min: 3 audit rows in 8 minutes.
+**L3 live control (production, my seat 8d10fe67, headers from a 0600 file):** an agent inbox read with
+`inbox: true` returns keys `capabilities, pending_delivery_count, signals, wake`; `wake.event = "wake"`,
+`wake.topic` starts with `cswarm-wake:` and its id is 43 characters (topic not recorded). The same read
+with `inbox: false` has no `wake`. Note for the next hand-made read: the body needs `include_stale`, or
+the edge answers `invalid_request`.
