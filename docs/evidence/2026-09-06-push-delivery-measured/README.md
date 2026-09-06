@@ -9,6 +9,7 @@ read-only `--linked` query named in the L7 brief.
 |---|---|---|
 | `bin/v0.1.57/cswarm` | 0.1.57 | `bin/v0.1.57/cswarm.sha256` (48e3ce4d…) |
 | `bin/v0.1.58/cswarm` | 0.1.58 | `bin/v0.1.58/cswarm.sha256` (154be397…) |
+| `bin/v0.1.60/cswarm` | 0.1.60 | `bin/v0.1.60/cswarm.sha256` (a57ac093…) |
 
 v0.1.57 is the GitHub release asset. v0.1.58 is a copy of `~/.local/bin/cswarm`
 as installed when the lane started. Each dir has `package.json` `{"type":"commonjs"}`
@@ -21,7 +22,7 @@ empty backoff to 60 s, and empty claims persist nothing (no audit, no
 idempotency, no rate_buckets). Predicted §8 "before" 167/167/344 is the old 2 s
 world; measured before is the 15 s/60 s world.
 
-"After" is 0.1.58 push + 5 min reconcile. Production live control of 0.1.58
+"After" in §8 is 0.1.60 (the 0.1.59 wake fix plus the watcher); the 0.1.58 runs stay under `state/after/` and `probes/*-0.1.58.json` as the record of the hang. Production live control of 0.1.58
 failed (ledger `6ea3863`): status could say `push` while the listener did not
 receive the wake. This lane measures the **local** stack. If wakes do not
 arrive here either, the after idle numbers are still the reconcile+activity
@@ -56,3 +57,6 @@ against `supabase functions serve` (log: `serve.log`). After `ready` it waits
 | `gate-*.log` | `npm test` and `test:p1-cli` |
 
 `creds/` and `fixture.json` hold local-stack tokens and are gitignored.
+
+
+To reproduce the published after column: `AFTER_BIN=docs/evidence/2026-09-06-push-delivery-measured/bin/v0.1.60/cswarm AFTER_LABEL=after-0.1.60-clean scripts/measure-idle-cost.sh`. The 0.1.57 honesty grep (before column) was run by hand over `state/before/` and is not in `honesty/probe.txt`, which the script writes for the after seat only.
