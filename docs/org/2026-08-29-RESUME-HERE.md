@@ -2622,3 +2622,36 @@ socket as its replacement; the unexplained `channel_error` after a 0.1.58 reconc
 spec §4.1 says the watcher polls at 25 s where the code says 60 s (doc drift, L8-class fix); L2b if
 `idempotency_keys` grows. Operator-only: laptop Claude sign-in + restart; Codex credits; rotate the
 `leadg` credential (exposure recorded above); Supabase plan; Google sign-in test; branch protection.
+
+## 2026-09-06 ~13:0x UTC — CORRECTION: the unexplained `channel_error` is explained, and it was not our code
+
+Two entries above say the `channel_error` seen on seat 2121f81d (0.1.58, then again after its 0.1.59
+restart) is NOT explained and name it as a thing to watch on 0.1.59+. **That is now closed and it is not
+a listener defect.** CSwarmStrategist measured its own seat with the discriminating probe (public control
+channel + its wake topic on one anon-key socket) and reported: the join failed as
+`channel error: transport failure` on BOTH `api.commonswarm.com` and the project domain, for its own topic
+AND for an unknown-id negative control, so the RLS policy was never reached. A raw handshake to
+`/realtime/v1/websocket` returned 401 `Invalid API key`. The anon key that seat had passed to every
+`cswarm` command since it joined was wrong by one character in the JWT signature segment
+(`…UkoyVcvE7…` for the site's `…UkoyKlcvE7…`).
+
+Consequences to carry:
+- **Withdraw `lane/wake-client-evidence` @ `afb649c`** and the events file in it
+  (`docs/evidence/2026-09-06-wake-client/2121f81d-restart-events.ndjson`). Its author asked for it to be
+  dropped and is deleting the branch. It is not evidence of a first-instance-only defect. The one 0.1.58
+  instance that DID subscribe (pid 18762) is unexplained by that seat's data; it may have taken the key
+  from elsewhere. Nothing else in `docs/evidence/2026-09-06-wake-client-fix/` or
+  `docs/evidence/2026-09-06-push-delivery-measured/` depends on it.
+- **`wake.errorCode` cannot discriminate a socket 401 from an RLS refusal from a dead network.**
+  `wakeErrorCodeFromSubscribeStatus` (`src/listener/wake.ts`) maps the four `RealtimeSubscribeStatus`
+  values and nothing else, so all three arrive as `channel_error`. Do NOT fix this by reading the close
+  reason — "Invalid API key" is the server's prose and D-053 forbids branching on it. The safe shape is a
+  preflight we own: one status-only HTTP check of the anon key at listener start (`/auth/v1/settings` with
+  `apikey`) and a new closed code `invalid_api_key` set from the HTTP status. That surfaces the failure at
+  `listener_starting`, before the first wake tick.
+- **A wrong anon key is invisible on every path except Realtime.** The edge functions authenticate the
+  agent token and do not validate the `apikey` header, so a corrupted key passes `whoami`, `note`, `read`,
+  and `claim` indefinitely; `/auth/v1/settings` returns 401 with it and 200 with the site's key. This
+  belongs in the brain topic `false-success-signals`: a credential with no negative control anywhere in
+  its normal path stays wrong forever. NOT established: I did not write that topic — this session's
+  credential fails to refresh, so `cswarm brain get|put` is unavailable to me.
