@@ -2439,3 +2439,22 @@ Not established: whether those five laptop seats were healthy before the restart
 said `ready` from an old start; the mini's seats had failed the same way yesterday). Next: L2
 (`lane/wake-migration`, Grok pid 66472, holds the local database) → arms → §9 privilege check →
 production; then L2b, L3, L4.
+
+## 2026-09-06 04:5x UTC — L2 wake migration LANDED (merge d541e9b) and LIVE in production
+
+`lane/wake-migration` e00ba93 (Grok author): `20260906000010_wake_delivery.sql` (wake_id + unique index,
+`wake_topic_authorized` anon-executable, `rotate_wake_id` and both trigger functions owned by postgres,
+two `realtime.messages` policies, `agent_delivery_read_context` re-created from the 20260820 live body
+with `wake_id` as column eleven plus its three privilege statements) and `tests/p1-local/wake-realtime-auth.test.ts`
+(8 tests, gated). Arms: Gemini PASS; Opus PASS measured on the local stack (function ACLs, nine false
+cases with a positive control, one wake row per delivery and none on the ON CONFLICT duplicate, two
+OID-preserving mutations). §9 probes on production before push: pgcrypto in `extensions`, postgres
+USAGE on `realtime`, INSERT on `realtime.messages`, `rolbypassrls` all true; the one existing policy is
+the SELECT from `20260902000003`. Merged into main after lane A with no conflict; gates on the merged
+tree: 861/861, p1-cli 483/483, check:edge, p1-local 48/48 after db:reset. Pushed with `db push --linked`
+(dry-run listed exactly this file). **Live controls:** 113 principals, 0 with a wake_id of the wrong
+length, 113 distinct; owners as specified; a control note to CSwarmStrategist left exactly one
+`realtime.messages` row on a `cswarm-wake:` topic (event `wake`). Evidence:
+`docs/evidence/2026-09-06-wake-migration/arms-e00ba93/`. Nothing reads the topic yet: no client is
+subscribed until L4 ships. Next: L2b (retention), then L3 (wake in read/command responses, rotation on
+revocation), then L4.
