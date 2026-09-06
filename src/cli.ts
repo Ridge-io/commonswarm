@@ -619,8 +619,8 @@ Usage:
   cswarm invite revoke [--url <url> --anon-key <key>] [--workspace-id <uuid>] --invitation-id <uuid> [--json]
   cswarm member remove <full-user-id|exact-name> --confirm <same-selector> [--url <url> --anon-key <key>] [--workspace-id <uuid>] [--json]
   cswarm workspace close <full-id|exact-name> --confirm <same-selector> [--url <url> --anon-key <key>] [--json]
-  cswarm accept --link-stdin [--name <name>] [--no-browser] [--json]
-  cswarm accept <https://...#invite=...|cswarm://accept/...> [--name <name>] [--no-browser] [--json]  # unsafe: shell history/process list
+  cswarm accept --link-stdin [--name <name>] [--allow-duplicate-name] [--no-browser] [--json]
+  cswarm accept <https://...#invite=...|cswarm://accept/...> [--name <name>] [--allow-duplicate-name] [--no-browser] [--json]  # unsafe: shell history/process list
   cswarm accept --invitation-token-stdin [--url <url> --anon-key <key>]
   cswarm accept <invitation-token> [--url <url> --anon-key <key>]  # unsafe: shell history/process list
   cswarm principal create [--url <url> --anon-key <key>] [--workspace-id <uuid>] --name <name> [--allow-duplicate-name]
@@ -1783,6 +1783,7 @@ async function runLinkAccept(
     ...(args.optional("name") === undefined
       ? {}
       : { explicitName: args.required("name") }),
+    ...(args.has("allow-duplicate-name") ? { allowDuplicateName: true as const } : {}),
   });
   await writeCurrentTarget(cloud);
   if (json) {
@@ -1801,7 +1802,7 @@ async function runLinkAccept(
 async function runAccept(args: Arguments): Promise<void> {
   if (args.has("link-stdin")) {
     args.assertShape(
-      [...TARGET_FLAGS, "link-stdin", "no-browser", "json", "name"],
+      [...TARGET_FLAGS, "link-stdin", "no-browser", "json", "name", "allow-duplicate-name"],
       1,
     );
     const payload = decodeInviteLink(await stdinInviteLink());
@@ -1823,7 +1824,7 @@ async function runAccept(args: Arguments): Promise<void> {
     return;
   }
   args.assertShape(
-    [...TARGET_FLAGS, "no-browser", "json", "name"],
+    [...TARGET_FLAGS, "no-browser", "json", "name", "allow-duplicate-name"],
     2,
   );
   process.stderr.write(
