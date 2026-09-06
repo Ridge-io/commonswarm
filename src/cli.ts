@@ -5995,7 +5995,6 @@ async function runConfiguredListener(options: {
             credentialSession,
             store: effectStore,
             model: instrumentedModel,
-            signal,
             onEvent: (event) => {
               activity.onRuntimeEvent(event);
               onEvent(event);

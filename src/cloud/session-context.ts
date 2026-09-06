@@ -318,10 +318,11 @@ export function parseSessionContext(raw: string): SessionContextDocument {
   const receive = asStringSet(row.receive_verification, SESSION_RECEIVE_STATES) ??
     "manual";
   const releasedAt = parseReleasedAt(row.released_at);
-  const keyOk = typeof row.session_key === "string" &&
+  const sessionKey = typeof row.session_key === "string" ? row.session_key : null;
+  const keyOk = sessionKey !== null &&
     (releasedAt !== null
-      ? row.session_key === "" || isSessionKey(row.session_key)
-      : isSessionKey(row.session_key));
+      ? sessionKey === "" || isSessionKey(sessionKey)
+      : isSessionKey(sessionKey));
   if (
     row.version !== SESSION_CONTEXT_VERSION ||
     typeof row.url !== "string" ||
@@ -337,6 +338,7 @@ export function parseSessionContext(raw: string): SessionContextDocument {
     typeof row.generation !== "number" ||
     !Number.isSafeInteger(row.generation) ||
     row.generation < 0 ||
+    sessionKey === null ||
     !keyOk ||
     provider === null ||
     mode === null ||
@@ -366,7 +368,7 @@ export function parseSessionContext(raw: string): SessionContextDocument {
     principal_id: row.principal_id.toLowerCase(),
     session_id: row.session_id.toLowerCase(),
     generation: row.generation,
-    session_key: row.session_key,
+    session_key: sessionKey,
     provider,
     mode,
     host_session_id: row.host_session_id,
