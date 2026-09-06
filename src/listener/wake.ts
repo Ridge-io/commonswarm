@@ -452,6 +452,7 @@ export class WakeSubscriber implements WakeHandle {
     } catch {
       // Same: the socket may already be gone.
     }
+    if (this.channel !== null) return;
     if (this.connectionState === "subscribed") {
       this.connectionState = "disconnected";
       this.subscribedAt = null;

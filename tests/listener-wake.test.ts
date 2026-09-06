@@ -66,6 +66,7 @@ import {
 const WORKSPACE_ID = "11111111-1111-4111-8111-111111111111";
 const PRINCIPAL_ID = "22222222-2222-4222-8222-222222222222";
 const WAKE_TOPIC = `${WAKE_TOPIC_PREFIX}${"A".repeat(43)}`;
+const WAKE_TOPIC_B = `${WAKE_TOPIC_PREFIX}${"B".repeat(43)}`;
 
 class FakeChannel implements WakeRealtimeChannel {
   statusCb: ((status: string, err?: Error) => void) | null = null;
@@ -442,6 +443,31 @@ test("CHANNEL_ERROR flips snapshot to poll without reading error.message", async
   assert.equal(snap.mode, "poll");
   assert.equal(snap.errorCode, "channel_error");
   assert.equal(JSON.stringify(snap).includes("cswarm-wake:"), false);
+  await wake.close();
+});
+
+test("setTopic does not clobber a live subscribe when the old unsubscribe settles late", async () => {
+  const fake = new FakeRealtime();
+  const wake = createWakeSubscriber({
+    target: cloudTarget("https://cloud.example.test", "anon"),
+    createRealtime: () => fake,
+  });
+  wake.setTopic(WAKE_TOPIC);
+  const channelA = fake.channels[0]!;
+  channelA.holdUnsubscribe = true;
+  channelA.emitStatus(REALTIME_SUBSCRIBE_STATUS.SUBSCRIBED);
+  assert.equal(wake.snapshot().mode, "push");
+  wake.setTopic(WAKE_TOPIC_B);
+  const channelB = fake.channels[1]!;
+  channelB.emitStatus(REALTIME_SUBSCRIBE_STATUS.SUBSCRIBED);
+  assert.equal(wake.state, "subscribed");
+  assert.equal(wake.snapshot().mode, "push");
+  channelA.releaseUnsubscribe();
+  await Promise.resolve();
+  await Promise.resolve();
+  assert.equal(wake.state, "subscribed");
+  assert.equal(wake.snapshot().mode, "push");
+  assert.ok(wake.snapshot().topicRotatedAt);
   await wake.close();
 });
 
