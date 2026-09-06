@@ -2705,3 +2705,16 @@ and the keychain item reads 0 bytes from a non-GUI session. The operator minted 
 `SECRET_SHAPE_RE` widened for `sk-ant-oat01-`, tests per redaction site; ships as 0.1.61. Until then Joist
 is down. Operator: keep the token in a 0600 file outside every repo (for example
 `~/.config/cswarm/claude-oauth-token.txt`); never paste it into chat.
+
+## 2026-09-06 10:xx UTC — OPERATOR RULING: signals wake the existing session; no headless stand-in
+
+"This breaks the whole point of CommonSwarm. The point is to interact with the existing sessions because
+we want their context window benefits... that's why we had the monitor system whose primary purpose was
+to wake the agent and ask it to read the message." Consequences applied now: every Claude manager seat on
+the mini and Joist on the Air run `--route main` (the listener starts no model, needs no Claude
+sign-in or canary, and queues each signal in `pending-for-main.json` for the TUI hook to surface).
+Lane `claude-token-file` cancelled (worktree and branch removed) — it solved a worker-route problem the
+ruling makes moot. Open for CSwarmStrategist: the Grok worker seats (CDReporter on the mini; the four
+`f9aaada4` seats on toms-m1-max-mbp) still answer headlessly; whether each has a live session to wake
+(and how a Grok TUI is woken: the `swarm-awareness` hook) is a roadmap decision, not mine. Memory file
+`signals-wake-existing-sessions` records the rule.
