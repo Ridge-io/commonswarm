@@ -1,0 +1,13 @@
+ℹ [two-starter race] winner inside initialize, holding starting.lock
+ℹ [two-starter race] releasing the winner initialize gate
+ℹ [two-starter race] winner reached listen and released starting.lock
+ℹ [two-starter race] journal generation unchanged and winner socket live
+ℹ [two-starter race] all starters settled and closed
+ℹ tests 898
+ℹ suites 25
+ℹ pass 898
+ℹ fail 0
+ℹ cancelled 0
+ℹ skipped 0
+ℹ todo 0
+ℹ duration_ms 12888.463417
