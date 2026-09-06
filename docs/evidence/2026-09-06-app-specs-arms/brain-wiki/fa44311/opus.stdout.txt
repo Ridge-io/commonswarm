@@ -1,0 +1,27 @@
+Report written to `docs/evidence/2026-09-06-app-specs-arms/brain-wiki/fa44311/opus.txt`. Printed below.
+
+---
+
+**D-036 ADVERSARIAL SYSTEMS ARM — `docs/design/2026-09-06-BRAIN-WIKI.md` @ fa44311**
+
+**SHA note.** Worktree HEAD is `85e01ad` (the Gemini fold), which rewrites three paragraphs. I reviewed the fa44311 text as instructed, then re-read the delta against every finding: two gaps are already closed at HEAD (marked), everything else survives.
+
+**Trust-boundary scope.** No Realtime policy, no RLS, no migration, no column split here — the brief's INSERT-policy and backfill attacks have no target. The three boundaries this spec *does* move: a client that downloads every topic body, the first on-disk cache of workspace content the CLI has ever kept, and an `id` attribute through the XSS sanitizer. All three broke.
+
+**Measured probe (with positive control).** Ran `brainLinkSegments` over a raw Markdown body: `shared-host` linked **twice** — once from prose, once from **inside a ```sh fence** — and the bare word in an inline code span linked **not at all**. Controls: with a `codeSpan` the bare word links; without one it does not. So the probe discriminates.
+
+**Seven defects**
+
+1. **§1 "no topic-count cap" is false.** `FILE_WORKSPACE_MAX_NAMES = 500` (`file-artifacts.ts:54`, enforced `:517`), shared with every file artifact, and tombstoned names keep counting for 30 days. The spec cites `:52-53` — one line short. This kills §2.3's "at 500 topics" scaling, and prices §2.1's rename-by-copy at 86 of 500 names.
+2. **§2.3's extraction cannot be "the same rule".** The message rule is the pure gate *plus* a DOM walk that skips `PRE/A/BUTTON` and feeds `codeSpan` from `CODE` (`brain-links.ts:92,:378-384`). A cached body has none of those. Measured above; contradicts `AGENTS.md:285-286` and a shipped test.
+3. **The background fill has no size guard.** One member's legal 25 MB topic is pulled into every viewer's tab unasked; worst case is the 1 GB quota, which the source map stated and the spec dropped. `size_bytes` is already in the list (`read/index.ts:658`) — the guard was free.
+4. **Each body is a command, not a read.** `file_download_url` writes one `swarm.idempotency_keys` row *and* one `swarm.audit_log` row (`command/index.ts:8368-8402`). The fill is 2N durable rows per viewer per session — more writes than the "shared write hotspot" §2.5 rejects.
+5. **§2.4's anchors are not buildable.** The sanitizer allows attributes on three tags only; no `id` anywhere (`message-markdown.ts:73-78`), and its own comment calls a second attribute path the thing it exists to avoid. Author-controlled ids clobber `dashboard-brain-*`.
+6. **The CLI cache has no principal and no revocation check.** Keyed by workspace only; `brain links` served from cache never asks the server, so a removed member keeps reading bodies (revocation is tested in `npm test`). Today no body ever touches disk.
+7. **"First slice of roadmap H2" is false.** H2's three slices are `brain_search`, transcript banking, retention quota — and §2.5 defers the first one.
+
+**Ten gaps** (grouping rule and index re-render already closed at HEAD; the rest live): workspace-switch abandonment in the seam that already produced two measured defects; L2's file list points at markup and drops the wiring the map recorded; three typed brain-verb lists with no shared constant, across two lanes; §3's non-duplication test extension that contradicts what §2.1 asks AGENTS.md to say; L4 names no test file and the site gate globs `src/lib/*.test.mjs` not `.ts`; no env override for the cache dir; heading levels ambiguous under `headingOffset: 1`; sort field unnamed.
+
+**QUOTE-BACK: # Brain wiki: hierarchy, index pages, backlinks, without new storage**
+**VERDICT: FAIL**
+**REASON:** Seven defects — a false "no topic-count cap" against the enforced 500-name limit, a backlink rule that measurably cannot be "the same rule" over raw bodies, an unbounded background fill, N ledger-and-audit writes per viewer sold as ordinary reads, TOC anchors that require opening the sanitizer's allowlist, an on-disk cache with no principal or revocation check, and a false roadmap-H2 claim — plus ten gaps a lane author would have to invent.

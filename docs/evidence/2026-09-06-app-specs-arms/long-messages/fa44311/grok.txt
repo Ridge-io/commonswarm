@@ -1,0 +1,81 @@
+I'll review the long-messages spec as an exact D-036 arm: read the doc, then check every cited file, line, test, and number against this checkout.HEAD is `85e01ad`, not `fa44311`. I'll read the spec at both SHAs and pull the cited code, tests, and sibling specs in parallel.Citations and sibling file lists next: I'll read the cited LiveDashboard ranges, tests, commits, and every other spec's lane files.Several citations look off. I'll pin the phone breakpoint, test gate, `localStorage` usage, signal-id shape, and sibling file overlap.Checkout is `85e01ad` on `spec/app-backlog`, not `fa44311`. I reviewed the spec in this tree (Gemini fold already applied). Citations were checked against the code, not the map.
+
+## DEFECT
+
+**§0.** Claim: a workspace switch forgets what you opened.  
+False. `expandedSignalIds` is cleared only in `resetWorkspaceSessionState` (`LiveDashboard.astro:5755`), which runs on auth/session teardown (`:5683`, `:7289`, `:7301`, `:7324`, `:7495`, `:9073`). `openWorkspace` (`:6012`) does not clear it. Same-session switch keeps the set.
+
+**§2 C2 vs §3.** Claim: N is `scrollHeight − clientHeight` over `--lh-base`, and N equals hidden lines ±1.  
+Those cannot both be true. `--lh-base` is unitless `1.62` (`tokens.css:287`). Collapse height is `calc(var(--message-collapse-lines) * var(--lh-base) * 1em)` (`LiveDashboard.astro:12912`). Hidden px divided by `1.62` is not a line count. Phone acceptance `about 16 lines` needs divide-by-`(line-height in px)`.
+
+**§3.** Claim: `grep -rn "mask-image" site/src/components/app/LiveDashboard.astro` → 0.  
+False on this tree, and it stays false unless the lane deletes shipped UI. `.dashboard__wash` has `mask-image: linear-gradient(to bottom, black, transparent 76%)` at `:9295`. The existing observer already scopes the no-mask pin to the collapsed rule (`message-markdown.observer.mjs:61-68`).
+
+**§2 C1 vs §4.** C1: no CSS media query; set `--message-collapse-lines` from `matchMedia(PHONE_MEDIA_QUERY)`. §4: `LiveDashboard.astro` gets a “media query for the CSS variable”. A lane cannot follow both.
+
+**§4.** Claim: existing `message-markdown.observer.test.ts`.  
+That file does not exist. Present: `site/src/components/app/message-markdown.observer.mjs` (source-text observer) and `site/src/lib/message-markdown.test.mjs`.
+
+**§4 file ownership.** This lane owns `LiveDashboard.astro` and `message-markdown.ts` with no “after” order. Sibling operator specs own the same files:
+- `lane/markdown-wordwrap-qa`: `.dashboard__message-markdown` CSS (`:12891-13061`, includes the collapse rule at `:12911-12914`) and `message-markdown.ts`
+- `lane/agent-model-rows`: `LiveDashboard.astro:5113` in the same `buildMessageRow`
+- `lane/entity-colour` / `lane/entity-filter-ui`: `LiveDashboard.astro` including `:5061` in that row
+- `lane/brain-toc`: `message-markdown.ts`
+
+## GAP
+
+**§4 tests.** Named observer is source-text (`readFileSync` of the `.astro` file). It cannot assert 14/16/40 lines or N ±1. No real-Chrome file is named (`message-blocks-layout.observer.test.ts` is the harness that can). Spec also forbids a new test file.
+
+**§4 unnamed test.** `site/src/lib/message-markdown.test.mjs:46-48` pins `MESSAGE_COLLAPSE_LINES === 60`. Not in the file list. Replacing the constant turns that test red.
+
+**§4 existing pins.** `message-markdown.observer.mjs:47` pins `"Show more"` / `"Show less"`. `:75` pins `String(MESSAGE_COLLAPSE_LINES)`. Spec only says “a new observer case”. Lane must invent those rewrites.
+
+**§2 C1.** `matchMedia` `change` is required, but `setProperty` lives inside `buildMessageRow` (`:5172-5175`). How already-rendered rows update is not specified.
+
+**§2 C1.** “Two constants” plus `PHONE_MEDIA_QUERY` is three exports. §4 still says two.
+
+**§2 C3.** “N counts the block’s lines” is not specified relative to C2’s pixel remainder. Fenced `pre` uses `--t-sm` and padding (`:12947-12966`).
+
+**§2 C5.** Id `message-body-<signal.id>` is named. Target node is not. The clip is on `.dashboard__message-markdown` (`:5168-5191`). `.dashboard__message-body` is the whole article (`:5064-5065`), including meta.
+
+**§3 phone/desktop.** “30-line message” does not say non-wrapping source lines. On 390 px, wrapped prose is not 30 visual lines, so `about 16 lines` does not follow.
+
+## NIT
+
+- C2 “hard clip at a line boundary” overstates the comment at `:12904-12907` (C3 then admits it).
+- C5 “signal ids are UUIDs”: live rows are `uuid` (`20260724000003_signals.sql:4`); sample ids are `sample-1` etc. (`LiveDashboard.astro:7088`). `message-body-sample-1` is still a valid id.
+- No singular copy for N = 1.
+- Key `cswarm.expanded.<workspaceId>` does not match existing `commonswarm:…` keys (`:1868`, `:3043`).
+- §5 “about 6 KB”: 200 UUID strings in JSON is closer to 8 KB.
+- `human-seen-reporter.ts:39` is the class; the key is `:60-61` (`scope` + `signalId`).
+
+## Citations
+
+| citation | result |
+|---|---|
+| `LiveDashboard.astro:5251-5268` rAF, `scrollHeight > clientHeight + 1`, Show more/less, `aria-expanded`, `<button>` | verified |
+| `:12901-12917` hard clip, no scroll, no fade on the collapsed rule | verified (rule `:12911-12914`; comment `:12899-12910`) |
+| `message-markdown.ts:37-40` `MESSAGE_COLLAPSE_LINES = 60` (was 30) | verified |
+| `:5173-5174` `--message-collapse-lines` | verified |
+| `:5261-5267` class toggle + set | verified |
+| `:1654` `expandedSignalIds` | verified |
+| `:5188-5189` collapsed unless in set | verified |
+| `:5755` `.clear()` | verified (auth reset, not workspace switch) |
+| `:12903-12910` not a guaranteed line boundary | verified |
+| `human-seen-reporter.ts:39` | class at 39; keying at 60-61 |
+| `:1660-1663` `HumanSeenReporter` | verified |
+| `:5038-5039` `dataset.humanSeenSignalId = signal.id` | verified |
+| no expansion `localStorage` | verified (other keys exist; none for expanded ids) |
+| `git show 6712776` removed `mask-image: linear-gradient(to bottom, black 88%, transparent)`; height uses `--lh-base` | verified |
+| `7dbfbae` mobile shell | verified; composer/header query is `@media (max-width: 52rem)` at `:13439` |
+| `mobile-feed-layout.observer.test.ts` 390 px | verified (`:478`, `:504`, `:582`, `:623`) |
+| `--lh-base: 1.62` | verified `tokens.css:287` |
+| signal id uuid | verified |
+| `message-markdown.observer.mjs` | exists; gated by `site/package.json:11` glob |
+| `message-markdown.observer.test.ts` | **missing** |
+| `maps/truncation.md` Spec B | present; lines re-checked in code, not in the map |
+| 14 / 40 / 200 / ±1 / 55% / 6 KB | not in shipped code (55% not measured here; 6 KB marked unmeasured in §5) |
+
+QUOTE-BACK: # Long messages: a readable collapse and "Show more" that remembers
+VERDICT: FAIL
+REASON: The N formula cannot yield the stated line count, the mask-image grep cannot pass without deleting the wash, the named test file does not exist, C1 contradicts §4, and a workspace switch does not forget expansion.

@@ -1,0 +1,278 @@
+D-036 ADVERSARIAL SYSTEMS ARM — docs/design/2026-09-06-BRAIN-WIKI.md @ fa44311
+Arm: Claude Opus 5 (operator-allowed family). Branch spec/app-backlog. 2026-09-06.
+
+SHA NOTE. The worktree HEAD is 85e01ad ("fold the Gemini inversion round"), which changes
+three paragraphs of this file. I reviewed the fa44311 text as instructed and then re-read the
+85e01ad delta against every finding. Two findings (G1, G2) are already closed at 85e01ad and are
+marked so. Every other finding survives at 85e01ad unchanged.
+
+METHOD. Read the file against the code at this checkout; ran one executable probe with a positive
+control (below); removed what I created. I did not start local Supabase (Docker, exclusive DB slot,
+and the code settled every question I had).
+
+TRUST-BOUNDARY SCOPE. This spec declares no Realtime policy, no RLS change, no migration and no
+column split, so the arm brief's INSERT-policy and backfill attacks have no target here. The
+boundaries this spec does move are three: (a) a client that downloads EVERY topic body instead of
+the one the reader opened, (b) the first on-disk cache of workspace content the CLI has ever kept,
+and (c) an `id` attribute through the message sanitizer. All three are attacked below.
+
+===============================================================================
+MEASURED PROBE (positive control included)
+===============================================================================
+§2.3 says backlinks are computed "from the cached bodies ... using the same rule the message
+linkifier uses (brain-links.ts slug/bare-word gate, exported once so the two cannot drift)".
+I ran brainLinkSegments over a raw Markdown body, which is what a cached body is:
+
+  body: "See shared-host for the host rules." + a ```sh fence containing
+        "cswarm brain get shared-host" + "The `releases` ritual ..." + a URL
+
+  RAW-BODY linked:                 ["shared-host","shared-host"]   <- two, one from INSIDE the fence
+  CONTROL codeSpan bare word:      ["releases"]                    <- the rule CAN link a bare word
+  CONTROL no codeSpan bare word:   [null]                          <- and does not without the span
+
+The control discriminates, so the first line is evidence and not a broken probe. See DEFECT 2.
+
+===============================================================================
+DEFECTS
+===============================================================================
+
+DEFECT 1 — §1 sizes row: "no topic-count cap" is false. There is one, and it is 500.
+  `FILE_WORKSPACE_MAX_NAMES = 500` (supabase/functions/command/file-artifacts.ts:54), enforced on
+  every file create at :517-526. Brain topics ARE rows in that namespace (src/cloud/brain.ts:1-8),
+  so the cap is shared with every other file artifact in the workspace, and the refusal comment at
+  :518-519 states that TOMBSTONED names keep counting until the 30-day purge. The spec cites
+  `command/file-artifacts.ts:52-53` — the cap is line 54, one line past the range it read.
+  Consequences the spec then draws wrongly:
+   - §2.3 "At 500 topics it is 500 reads and a few MB" prices a state the server refuses to reach:
+     500 brain topics means zero room for any other file artifact, and the 500th create is a 409.
+   - §2.1 "there is no rename ... a topic moved into an area is a NEW topic" and both stay readable.
+     Re-homing the 43 existing topics therefore consumes 86 of the 500 names, and a tombstone does
+     not give one back for 30 days. The spec calls the migration out of scope but never states its
+     price against the cap it says does not exist.
+
+DEFECT 2 — §2.3: the stated extraction cannot be "the same rule the message linkifier uses", and
+  computing it as written breaks a shipped, tested behaviour.
+  The message rule is TWO parts, and only one of them is the exported gate:
+   - the pure gate, `brainLinkSegments`/`isLinkable` (site/src/lib/brain-links.ts:130-139); and
+   - the DOM pass that supplies its inputs — it walks the SANITIZED tree, skips
+     `OPAQUE_ELEMENTS = ["PRE","A","BUTTON"]` (brain-links.ts:92, :378) and passes a CODE element's
+     whole text as `codeSpan` (:379-384).
+  A cached body is raw Markdown; it has no PRE, no A and no CODE. So over a body:
+   - every topic named inside a fenced block becomes an outbound edge (measured above), which
+     directly contradicts AGENTS.md:285-286 ("recognised in ordinary prose, but not inside a fenced
+     block, a link, or a URL") and the behaviour pinned by
+     site/src/components/app/brain-links-blocks.observer.test.ts:4-6, which records that
+     brain-links.observer.test.ts already covers "paragraphs, code spans, links, and fenced blocks";
+   - every bare-word topic (`releases`, `roadmap`) becomes invisible to backlinks, because
+     `isLinkable` returns false with `codeSpan === undefined` (measured above).
+  Brain bodies are dense with fenced command blocks that name topics — `cswarm brain get
+  brain-how-to` is in the CLI's own nudge string (src/cloud/brain.ts:18-19) — so "Linked from" would
+  be built mostly of edges the product elsewhere refuses to draw.
+  The fix is a choice the spec must make and does not: either render+sanitize each cached body to a
+  DOM before extraction (which the spec never says, and which changes §2.3's cost model from N
+  downloads to N downloads + N renders), or write a second Markdown-aware extractor, which is the
+  drift the "exported once" sentence claims to prevent. A lane cannot build this as written.
+
+DEFECT 3 — §2.3: the background fill has no size guard, so one member's one legal write disables
+  the Brain panel for every other viewer.
+  `FILE_MAX_VERSION_BYTES = 25 * 1024 * 1024` (src/cloud/files.ts:21; server authority
+  file-artifacts.ts:52) and the workspace byte quota is 1 GB (:53). The spec prices the fill at
+  "43 topics is ~0.5 MB" from an admitted estimate (§5), then completes the cache unconditionally,
+  in the background, for every viewer. Worst case is not 0.5 MB: it is the 1 GB quota pulled into a
+  browser tab, unasked. The source map the spec was written from states exactly that bound
+  ("worst case bounded by the 1 GB quota", docs/evidence/.../maps/brain.md:29); the spec dropped it.
+  This is a member-triggered amplification: the writer pays 25 MB once, every reader pays it every
+  session. The guard was available and unused — `size_bytes` is already in the list payload
+  (supabase/functions/read/index.ts:658), so a skip-if-larger-than-X rule costs one comparison.
+  The spec names no X. (85e01ad caps the sessionStorage MIRROR at 64 KB / 4 MB; the in-memory fetch
+  it calls "the source" stays unbounded, so this survives.)
+
+DEFECT 4 — §2.3: "using the same file-download path the panel already uses" and "the same reads a
+  person reading the brain would make anyway" are both false about that path.
+  Reading one body is not a read. It is a COMMAND: `fileDownloadUrl` posts
+  `kind: "file_download_url"` (site/src/lib/commonswarm.ts:1198-1214), wired at
+  LiveDashboard.astro:4413-4427. On the server, an accepted file command writes one
+  `swarm.idempotency_keys` row (supabase/functions/command/index.ts:8368-8384) AND one
+  `swarm.audit_log` row via `insertAudit` (:8394-8402), inside the command transaction. Each call
+  uses a fresh `uuid()` (LiveDashboard.astro:4416), so nothing dedupes them.
+  So the fill is 2N durable rows per workspace, per viewer, per session, per tab — 86 rows for
+  today's 43 topics, every time anyone opens the app — for content nobody asked to read. A person
+  opens two or three topics; the claim that the fill costs what a person costs is wrong by an order
+  of magnitude. §2.5 rejects a stored index topic because it "would be a shared write hotspot"; this
+  design writes more rows than that hotspot would. "No migration, no new table, no new command kind"
+  is true and beside the point: the cost the spec omitted is ledger and audit write volume, not
+  schema. The CLI `brain links` bullet inherits the same amplification.
+
+DEFECT 5 — §2.4: in-page anchors are not buildable as written, and the change lands in the XSS
+  sanitizer, which §2.4 does not say.
+  `MESSAGE_MARKDOWN_ATTRIBUTES` allows attributes on exactly three tags: `a[href]`, `th/td[align]`,
+  `li[class]` (site/src/lib/message-markdown.ts:73-78). No tag may carry `id`, and headings are
+  emitted with no attributes at all (:497). The file's own comment says every other attribute is
+  dropped and that a second attribute path "is the thing this file exists to avoid" (:59-67).
+  An in-page anchor needs an `id` on each heading. That means opening the sanitizer's allowlist to
+  an attribute derived from member-authored Markdown, in a page whose own elements are addressed by
+  id (`dashboard-brain-markdown`, `dashboard-brain-topic`, `dashboard-brain-raw`,
+  LiveDashboard.astro:701, 718, 725, 730) and which resolves elements by selector at runtime. An
+  author-controlled `id` collides with those and, in every browser, becomes a named property on
+  `window` — DOM clobbering. The spec must state the namespacing and slug rule and does not; it
+  says instead "No storage, no CLI change", which reads as "cheap".
+
+DEFECT 6 — §2.3 CLI bullet: the on-disk body cache has no principal in its key and no membership
+  re-check, so it serves workspace content after access is revoked.
+  Today no brain body ever reaches disk: `runBrainGet` fetches a grant and writes the bytes to
+  stdout (src/cli.ts:7315-7345). This spec introduces `~/.cswarm/brain-cache/<workspace>/`
+  (the `~/.cswarm` root is right — cf. storage.ts:92, file-store.ts:69, arrival-watch.ts:156) keyed
+  by WORKSPACE only, with eviction "by version" (85e01ad: plus LRU at 64 MB). Two consequences:
+   - `cswarm brain links <topic>` "computes the same two lists with the same cache", so a run that
+     hits the cache never asks the server. Removal from a workspace and agent-credential revocation
+     are enforced and tested behaviours (tests/remove-member-mutation.test.ts,
+     tests/agent-revocation-mutation.test.ts, both named in `npm test`), and both are enforced at
+     the `file_download_url` command the cache removes from the path. A revoked reader keeps reading
+     bodies until an eviction rule that knows nothing about revocation happens to drop them.
+   - The key has no principal, and the host doctrine (`shared-host`) is many agents on one machine.
+     Two principals under one HOME share `<workspace>/`, so principal B reads bodies fetched by
+     principal A for a workspace B may not be a member of. 0600 does not separate them; they are the
+     same UNIX user.
+  The spec states neither a principal in the key, nor a TTL, nor a revalidation, nor what happens to
+  bodies of versions that were retired by the 20-version window.
+
+DEFECT 7 — Header: "This is the first slice of roadmap H2" mis-states the cited roadmap.
+  docs/org/2026-09-04-ROADMAP-DRAFT.md:107-113 enumerates H2's slice as exactly three items:
+  (1) `brain_search` as an MCP tool, (2) transcript banking with human acceptance, (3) a
+  per-workspace retention quota. Tree, index pages, backlinks and TOC are none of them, and §2.5 of
+  this spec explicitly DEFERS search, which is slice 1. H2's outcome is stated as "what any agent
+  learns, every agent can recall"; this spec is navigation for what a human reader already has. The
+  claim gives the lanes an authority line they do not have. Say it is navigation work that precedes
+  H2, or amend the roadmap — do not claim to be its first slice.
+
+===============================================================================
+GAPS
+===============================================================================
+
+GAP 1 [CLOSED at 85e01ad] — §2.1 at fa44311 gives no grouping rule, so the one existing dotted
+  topic the spec itself names, `release_notes.v2` (tests/brain-namespace.test.ts:31), invents a
+  one-topic area; and a name with four or more segments has no defined split. 85e01ad adds the
+  two-topics-or-`_index` rule and the four-segment rule, names `brainTree()` as the single owner and
+  a shared test vector file. Verified: `ops._index` satisfies `BRAIN_TOPIC_RE` (first character is
+  the area's), so the escape hatch is legal.
+
+GAP 2 [CLOSED at 85e01ad] — §2.2/§2.3 at fa44311 never say how an index page updates as background
+  bodies arrive, though §2.2 makes each row's content depend on whether that body is cached yet.
+  85e01ad adds the revision counter and the re-render through `createBrainView`'s existing render
+  path. It does not name where that re-render is triggered from — see GAP 4.
+
+GAP 3 — Workspace-switch abandonment for the background fill is unspecified, in the one seam that
+  has already produced two measured defects. The read callback throws `SessionExpired` on a missing
+  workspace (LiveDashboard.astro:4414) but nothing cancels four in-flight prefetches when the reader
+  switches workspace. The existing code carries scars from exactly this: `contextIsCurrent` is
+  "CHECKED FIRST, and not about the topic at all" because a click continued across a workspace
+  switch (brain-links.ts:205-211), and the open pane binds to the FILE not the slug because keying
+  by slug "let Save publish it into workspace B's file" (brain-view.ts:82-85). A late body must be
+  keyed by the workspace the read STARTED in, or dropped. The spec says "per-workspace cache" and
+  leaves which workspace to the lane author.
+
+GAP 4 — L2's files column names `LiveDashboard.astro:695-748`, which is markup only (verified: that
+  range is the `<section data-channel-view="brain">` block). The wiring a tree, an index page and a
+  re-render must change is `:1268-1279` (imports) and `:4408-4487` (`createBrainView` options,
+  `setTopics`, the list-refresh path). The source map recorded both ranges (maps/brain.md:16); the
+  spec dropped the second. A lane author following the file list edits the markup and then has to
+  go find the rest.
+
+GAP 5 — The brain verb list is typed in three places and no shared constant is named. `src/cli.ts:562`
+  (usage line), `:617` ("brain ls, brain get, brain put"), `:7442`
+  (`UsageError("cswarm brain takes ls, get, or put")`). L1 adds `tree`, L3 adds `links`, on separate
+  branches with different authors. AGENTS.md's "An enumeration inside a message must be generated,
+  not typed" is the rule for exactly this, and records four measured instances in one release cycle,
+  each after two arms passed. The spec's L1 tests column says "usage block" and stops there.
+
+GAP 6 — §3's last acceptance bullet asks for something contradictory and names no constant.
+  `brain-links.observer.test.ts:247` is "neither the agent paragraph nor the design brief re-types
+  the separator set"; it asserts AGENTS.md's brain paragraph names `BRAIN_SLUG_SEPARATORS` and does
+  NOT write the characters (:253-267). §2.1 requires that same paragraph to state that a DOT means
+  `area.topic`. Extending a non-duplication guard to a rule whose statement must name the separator
+  needs a new exported constant for the paragraph to point at; the spec names none, so the lane
+  author invents both the constant and the assertion.
+
+GAP 7 — Two lanes' tests have no named file and one test gate is easy to miss. L4's tests column is
+  "three-heading threshold; anchors" with no file. The site gate globs
+  `'src/lib/*.test.mjs'` and `'src/components/**/*.observer.test.ts'` (site/package.json:11): a unit
+  test written as `site/src/lib/brain-graph.test.ts` (L3's new file) or `message-markdown` heading
+  tests under `src/lib` as `.ts` would NOT RUN. AGENTS.md names this trap ("A test file runs only
+  when a package script names or globs it ... Check the gate and report it when adding a test"), and
+  the spec's own lane table is where that report belongs. `tests/p1-cli/brain-verbs.test.ts` (L1)
+  exists and is globbed; `site/src/components/app/brain-view.observer.test.ts` (L2) exists.
+
+GAP 8 — The CLI cache has no environment override and `<workspace>` is undefined. Every sibling
+  store in this codebase takes an override so a test can point it at a temp directory
+  (src/cloud/storage.ts:92, src/listener/file-store.ts:69, src/cloud/arrival-watch.ts:156,
+  src/cloud/agent-credential.ts:98). L3's tests column requires asserting "cache cap and eviction;
+  0600 on disk", which cannot be written against the real `~/.cswarm`. And `<workspace>` is not
+  stated to be the workspace UUID rather than its name (names are not unique and are user-supplied).
+
+GAP 9 — §2.4's heading set is ambiguous and, read literally, drops the topic's own top-level
+  heading. The Brain panel renders with `headingOffset: 1` (brain-view.ts:182), and `headingMatch`
+  returns null unless that option is set (message-markdown.ts:341-350): a source `#` becomes `<h2>`,
+  `##` becomes `<h3>`, and `#{5,}` is not a heading at all. "a TOC from its `##`/`###` headings"
+  does not say whether it means source levels or DOM levels; as source levels it excludes `#`.
+
+GAP 10 — §2.2 "inside an area, most recently updated first" names no field. `committed_at` is
+  nullable in the list payload (read/index.ts:658); `runBrainLs` prints
+  `file.committed_at ?? file.created_at` (src/cli.ts:7310). The tree needs the same fallback stated,
+  or two clients sort differently.
+
+===============================================================================
+NITS
+===============================================================================
+
+NIT 1 — §2.1: "forty-three topics already use `-` inside one name". AGENTS.md:275-276 names
+  `releases` and `roadmap`, one-word topics with no `-`, and the entire bare-word gate in
+  brain-links.ts:129-139 exists because such topics exist. The argument the sentence is making (a
+  `-` cannot be the separator) is unaffected; the count is not.
+
+NIT 2 — The "43 topics" figure carries no source. It is in neither cited artifact: the code map has
+  no count, and §5 does not list it among what was not established. It is live workspace state read
+  during the session, like the 2-20 KB estimate that §5 does flag.
+
+===============================================================================
+CITATIONS VERIFIED CORRECT (so the next reader need not redo them)
+===============================================================================
+src/cloud/brain.ts:1-8, :21, :34-46, :116-124 — all accurate.
+src/protocol/brain-version-window.ts:14 (BRAIN_LIVE_VERSION_LIMIT = 20), :82-103
+  (planFileVersionWindow); BRAIN_TOPIC_MAX_LENGTH = 245 arithmetically confirmed at :12-13.
+tests/brain-namespace.test.ts:31 (`release_notes.v2`), :37 (slash refused) — accurate; the file is
+  named in `npm test`'s literal list (package.json:23).
+supabase/functions/read/index.ts:652-672 and :656-665 — the files resource, no body column; ordered
+  `lower(name) ASC`. Accurate.
+src/cli.ts:7285-7443 — runBrainLs through the runBrain dispatch. Accurate.
+site/src/lib/brain-view.ts:57-68 (flat alphabetical), :75-278 (the panel, file is 278 lines).
+LiveDashboard.astro:695-748 — the Brain panel markup. Accurate as markup; see GAP 4.
+site/src/lib/brain-links.ts:5-40 (the two rules), :130-139 (isLinkable). Accurate.
+docs/design/2026-09-04-BRAIN-LINKS-IN-SIGNALS.md:24-30 (the (a)/(b) detection decision) and
+  AGENTS.md:274-295 (the brain section). Accurate.
+src/listener/brain-digest.ts:104-114, engine.ts:207-209, hook.ts:751-770 — accurate; §2.3's "the
+  digest never carried bodies and still does not" holds (renderBrainDigest formats names and
+  versions only).
+src/cloud/files.ts:21 (25 MB) and command/file-artifacts.ts:52-53 (25 MB, 1 GB) — accurate for the
+  byte caps; the name cap at :54 is what DEFECT 1 is about.
+site/src/components/app/brain-links.observer.test.ts:247 — is the non-duplication test; see GAP 6.
+site/src/lib/message-markdown.ts — does parse headings, but only under headingOffset (GAP 9), and
+  emits no ids (DEFECT 5).
+docs/evidence/2026-09-06-app-specs-arms/maps/brain.md exists and its citations resolve.
+
+===============================================================================
+WHAT I DID NOT ESTABLISH
+===============================================================================
+- Live workspace state: the 43-topic count, the 2-20 KB body estimate, and whether any topic today
+  is large enough to trigger DEFECT 3. I read code and repo artifacts only.
+- Whether `swarm.idempotency_keys` has a retention sweep that would bound DEFECT 4's row growth; I
+  established the write per command, not the lifetime of the row.
+- Whether the ~20 agents on the shared host actually share one HOME. DEFECT 6's revocation half
+  holds on any host; the cross-principal half depends on that and I did not measure it.
+- Any runtime behaviour: I ran one pure-function probe, no local Supabase, no browser. The DOM
+  claims in DEFECT 2 and DEFECT 5 are read from the sanitizer and the walker, not observed in Chrome.
+- Whether the operator agrees with the roadmap reading in DEFECT 7; I compared the spec's sentence
+  to the cited document only.
+
+QUOTE-BACK: # Brain wiki: hierarchy, index pages, backlinks, without new storage
+VERDICT: FAIL
+REASON: Seven defects — a false "no topic-count cap" against the enforced 500-name limit, a backlink rule that measurably cannot be "the same rule" over raw bodies, an unbounded background fill of every body up to the 1 GB quota, N ledger-and-audit writes per viewer per session sold as ordinary reads, TOC anchors that require opening the XSS sanitizer's attribute allowlist, an on-disk body cache with no principal and no revocation check, and a false roadmap-H2 slice claim — plus ten gaps a lane author would have to invent.

@@ -1,98 +1,101 @@
-# Heartbeat on the wake socket: retire the activity edge call
+# Idle heartbeat: fold it into the reconcile read
 
-**Status:** SPECIFICATION, draft 1, branch `spec/app-backlog`. Backlog item 0 (push-delivery successor 1, `docs/design/2026-09-06-PUSH-DELIVERY.md` §9). Authored by CSwarmStrategist (`2121f81d`), 2026-09-06, from a read-only code map (`docs/evidence/2026-09-06-app-specs-arms/maps/heartbeat.md`).
+**Status:** SPECIFICATION, draft 2, branch `spec/app-backlog`. Backlog item 0 (push-delivery successor 1, `docs/design/2026-09-06-PUSH-DELIVERY.md` §9). Authored by CSwarmStrategist (`2121f81d`), 2026-09-06, from a read-only code map (`docs/evidence/2026-09-06-app-specs-arms/maps/heartbeat.md`).
 **Authority:** none until adopted; CSwarmDevLead PMs the lanes.
 **Design bar (operator, 2026-09-06):** works well, and is extremely cost efficient.
+**Draft 2 supersedes draft 1's design.** Draft 1 proposed publishing frames from the listener's anon-key socket; the Opus arm measured that the join is refused without a read policy, that a read policy would expose every member's frames to any anon holder of a workspace id, that `send()` resolves `ok` before the server answers, and that a partial HMAC let a member forge a frame. The record is in `docs/evidence/2026-09-06-app-specs-arms/heartbeat-on-wake-socket/fa44311/`. Draft 2 keeps the goal and drops the mechanism.
 
 ## 0. The answer in one paragraph
 
-After push delivery, the listener's activity heartbeat is about 90 % of what an idle seat still costs: one `POST /functions/v1/activity` every 15 s, which the edge function relays as a Realtime broadcast to the workspace's activity topic (`src/listener/activity.ts:13`; `supabase/functions/activity/index.ts:141-150`). The listener now holds a websocket for push delivery (`src/listener/wake.ts`). Send the same frame **over that socket** instead of through the edge: the listener broadcasts to the activity topic itself, and a `realtime.messages` INSERT policy admits the frame only when it carries a proof derived from the principal's wake id, so nothing an anon-key client can forge is accepted. The site keeps its subscription unchanged. Idle heartbeat edge calls go from 5,760 a day (15 s) or 1,440 (after lane A's 60 s) to **zero**; messages per day are unchanged, because the edge was already turning every heartbeat into one broadcast.
+After push delivery, an idle seat's remaining cost is almost entirely the activity heartbeat: one `POST /functions/v1/activity` every 15 s (60 s after lane A), which the edge relays as a Realtime broadcast so the app can show "alive" (`src/listener/activity.ts:13`; `supabase/functions/activity/index.ts:141-150`). The listener already makes one call every five minutes while idle: the reconcile read (`src/listener/runtime.ts`, push delivery §2.3). **Carry the idle heartbeat inside that read.** The read request gains an optional `activity` object; the read edge, which has already authenticated the agent, relays it with the same server stamp the activity edge applies today. Active-phase frames (an agent running a tool, up to 1.33/s) keep the activity edge unchanged, because they are bounded by work, not by time. Idle heartbeat edge calls per seat-day go from 5,760 (15 s) or 1,440 (60 s) to **zero** additional calls; the panel's "idle, alive" resolution becomes the reconcile interval, which the site states honestly. No new topic, no new policy, no client publishing, no new trust surface.
 
 ## 1. Today, measured
 
 | part | fact | source |
 |---|---|---|
-| cadence | `ACTIVITY_FRAME_INTERVAL_MS = 750` (coalescing floor), `ACTIVITY_HEARTBEAT_MS = 15_000` (re-armed after every quiet flush) | `src/listener/activity.ts:12-13`, `:285-292`, `:337-341` |
-| transport | `POST ${target.url}/functions/v1/activity`, `authorization: Bearer <agent token>`, `apikey`, body keys `version, workspace_id, stream_id, sequence, phase, signal_id, tool_title, elapsed_ms`, 5 s abort | `activity.ts:88-147`, `:119-128` |
-| edge | closed parser (`parseActivityRequest`, `activity/core.ts:44-84`, 4,096-byte cap), auth by token hash, membership and archive checks, then `RESET ROLE` and `realtime.send(payload, 'activity', 'cswarm-activity:{workspace_id}', true)`; the server adds `principalId` and `emittedAt` and re-redacts `toolTitle` | `activity/index.ts:78-152`, `:118-131`, `:141-150` |
-| site | subscribes with the member's Supabase JWT to `cswarm-activity:{workspace}` (`private: true`), event `activity`; orders by `sequence` within a `streamId`, by `emittedAt` across; fresh within 30 s, 17 s grace after subscribe | `site/src/lib/commonswarm.ts:180-216`, `site/src/lib/agent-activity.ts:6-7`, `:135-141`, `LiveDashboard.astro:2367-2393` |
-| policy | one `FOR SELECT TO authenticated` policy keyed on `swarm.is_member(<uuid from topic>, auth.uid())`; **no INSERT policy on `realtime.messages` anywhere** | `20260902000003_realtime_agent_activity.sql:4-16`; the wake migration adds two more SELECT policies and no INSERT |
-| wake socket | `WakeSubscriber` creates `createClient(target.url, anonKey).realtime`, `setAuth(anonKey)`, one private channel `cswarm-wake:{wake_id}`; the client and channel are private fields with no accessor | `src/listener/wake.ts:136-141`, `:429-449`, `:111-128`, `:233-234` |
+| cadence | `ACTIVITY_FRAME_INTERVAL_MS = 750` (coalescing), `ACTIVITY_HEARTBEAT_MS = 15_000` (re-armed after every quiet flush) | `src/listener/activity.ts:12-13`, `:285-292`, `:337-341` |
+| transport | `POST ${target.url}/functions/v1/activity`, body keys `version, workspace_id, stream_id, sequence, phase, signal_id, tool_title, elapsed_ms`, 5 s abort | `activity.ts:88-147`, `:119-128` |
+| edge | closed parser (`activity/core.ts:44-84`, 4,096-byte cap), token auth, membership and archive checks, then `RESET ROLE` and `realtime.send(payload, 'activity', 'cswarm-activity:{workspace_id}', true)`; the server adds `principalId` and `emittedAt` and redacts `toolTitle` with `redactCredentialText` | `activity/index.ts:78-152`, `:118-131`, `:135`, `:141-150` |
+| site | subscribes with the member's JWT; fresh within `AGENT_ACTIVITY_STALE_MS = 30_000`; 17 s grace after subscribe; orders by `sequence` within a `streamId`, by `emittedAt` across | `site/src/lib/commonswarm.ts:180-216`; `site/src/lib/agent-activity.ts:6-7`, `:135-141` |
+| reconcile read | the listener reads its inbox page every `LISTENER_RECONCILE_POLL_MS = 300_000` while subscribed, every 15 s otherwise; the read edge authenticates the agent (`agent_delivery_read_context`) and stamps grant use on every call | push delivery §2.3; `supabase/functions/read/index.ts:437-496` |
+| why not a client publish | an anon-key client joins a private topic only with a read or write policy for `anon`; the only SELECT policy on the activity topic is `TO authenticated`; adding an anon SELECT policy gated on the topic alone would let any anon holder of a workspace id read every member's frames; `send()` with `ack: false` resolves `ok` before the server answers, so refusals are invisible | Opus arm on `fa44311`, measured with controls on the local stack; `RealtimeChannel.js:563-566` |
 | cost | 5,760 heartbeat invocations per idle seat-day at 15 s; 1,440 at 60 s; the lead measured the heartbeat at ~90 % of idle edge calls after push delivery | `PUSH-DELIVERY.md` §1.3, §7; ledger 2026-09-06 |
-
-Status fields that consume the transport's failures: `activityPublishFailures`, `activityLastErrorCode` (`src/listener/control.ts:174-176`, `supervisor.ts:321-322`, `cli.ts:4890-4891`), pinned by `tests/listener-control.test.ts:591-598`. The 15 s boundary is pinned by `tests/listener-activity.test.ts:158-161`.
 
 ## 2. The design
 
 ### 2.1 Principle
 
-**Same frame, same topic, same site; only the sender moves.** The frame the site validates (`FRAME_KEYS`, `agent-activity.ts:19-29`) does not change shape, so nothing on the reading side is rewritten. What changes is who inserts the broadcast and how the server knows it is honest.
+**The server stays the only publisher.** Every activity frame the app shows keeps its server stamp (`principalId`, `emittedAt`) and the server's redaction and parser. What changes is which authenticated call carries the idle frame: the read the listener already makes instead of a call made only to carry it.
 
-### 2.2 Trust: the proof in the payload
+### 2.2 The wire
 
-Today the edge stamps `principalId` and `emittedAt` after authenticating the token, so a frame's identity is server-vouched. A listener publishing from an **anon-key** socket has no identity the policy can see (`realtime.topic()` and the JWT claims are all a policy gets, and the anon JWT has none), so the identity must be **proved inside the payload** and checked by the INSERT policy's `WITH CHECK`, which can read `realtime.messages.payload`:
+The read edge's signals request (`resource: "signals"`, `inbox: true`, the request the listener sends on every reconcile) accepts an optional field:
 
-- The listener adds `proof = base64url(hmac_sha256(key = wake_id, message = principalId || ':' || sequence || ':' || streamId))` to the frame. **Encoding, exactly:** the server computes `translate(encode(extensions.hmac(message, wake_id, 'sha256'), 'base64'), '+/=', '-_')` — the same base64url-by-translate the wake id itself uses — and the client produces the identical string with `Buffer.from(hmac).toString('base64url')` (Node's `base64url` drops padding, which `translate` also removes). L1's test pins one known vector on both sides. `wake_id` is the per-principal capability the listener already holds for push delivery (`swarm.agent_principals.wake_id`, `20260906000010_wake_delivery.sql:15-35`); it never leaves the payload in the clear.
-- `swarm.activity_publish_authorized(topic text, payload jsonb) RETURNS boolean`: `STABLE SECURITY DEFINER`, owner `swarm_admin`, `SET search_path = swarm, extensions, pg_catalog` (it needs `hmac` from pgcrypto, and `swarm_admin` has no `USAGE` on `extensions` — measured on the push-delivery lane — so the function is **owned by `postgres`** like the wake trigger functions, with `REVOKE ALL FROM PUBLIC` and `EXECUTE` to `anon`). It parses the workspace id from `cswarm-activity:{uuid}`, reads `payload->>'principalId'`, checks the principal belongs to that workspace, is not revoked, and has a live token; recomputes the HMAC with the stored `wake_id`; returns true only on an exact match, false on every other path, and raises on nothing.
-- Policy: `CREATE POLICY "agent publishes its own activity" ON realtime.messages FOR INSERT TO anon WITH CHECK (realtime.messages.extension = 'broadcast' AND swarm.activity_publish_authorized(realtime.topic(), realtime.messages.payload))`. **Realtime's broadcast INSERT also needs `USAGE` on schema `realtime` and `INSERT` on `realtime.messages` for `anon`, and `realtime.messages` has RLS enabled with no INSERT policy today** (measured on the push-delivery lane: `anon` holding both grants was still refused by RLS). So this is the first INSERT policy on that table; L1's test proves it admits a correct proof and refuses a wrong one, a stale one, a foreign principal, and a foreign workspace.
-- **Joining without reading.** Realtime lets a client join a private channel with **either** a read or a write permission on the topic ("a user must have at least one read or write permission on the Channel topic", Realtime authorization docs). The listener holds the anon key and gets **no SELECT policy** on the activity topic, only the INSERT policy above, so it can join and publish but receives nothing: no member's activity frames leak to an anon-key holder. L1's test asserts exactly that: an anon client joins, publishes a correct frame, and receives no broadcast; a member's `authenticated` client receives it.
-- **Migration file:** `supabase/migrations/<next free timestamp>_activity_publish_policy.sql`, following the `YYYYMMDD00000N` sequence the repo uses (the wake migration is `20260906000010`); the lane takes the next free stamp on the day it lands.
-- Replay: a captured frame replays as itself. The site drops frames whose `sequence` is not newer within a `streamId` (`agent-activity.ts:135-141`), so a replay can only re-assert a state that was already true. The exposure is "principal X looked alive again for one frame", which the design accepts and states.
-- `emittedAt`: today server-stamped. Under this design the listener stamps it; the site's freshness rule (`now - emittedAt <= 30 s`) trusts a clock the listener controls. A listener that lies about time can only make itself look fresh; bounded, and the same trust the listener already has over `sequence` and `phase`.
+```json
+"activity": { "version": 1, "stream_id": "<uuid>", "sequence": 41, "phase": "idle",
+              "signal_id": null, "tool_title": null, "elapsed_ms": 0 }
+```
 
-Members' tabs receive the frame with the proof inside it. The proof is an HMAC over public fields keyed by the wake id; it does not reveal the wake id. Publishing the same frame again is the replay above.
+The keys are the activity edge's request keys minus `workspace_id` (the read already carries it). The read edge parses it with the **same** `parseActivityRequest` (moved from `activity/core.ts` into `supabase/functions/_shared/activity.ts` so both functions import one parser and one 4,096-byte bound), checks it against the authenticated agent exactly as the activity edge does (`frame.workspaceId === agent.principal_workspace_id`, membership, not archived, not revoked), and after the read's own work runs the same privileged `realtime.send(...)` with the same server-built payload (`principalId`, `emittedAt`, `redactCredentialText(toolTitle)`). The read's response is unchanged; a rejected `activity` object does not fail the read (the read is the delivery path, the frame is a hint), it is dropped and the response carries `activity_rejected: "<reason code>"`, one of the existing closed reasons.
+
+Only an **idle** frame rides the read. The listener sends `activity` on a read only when its controller's phase is `idle`; any non-idle frame keeps the activity edge, whose cadence is bounded by the 750 ms coalescing floor and by the length of the work.
 
 ### 2.3 The listener
 
-- `WakeSubscriber` gains one method, `publishActivity(frame): Promise<"sent" | "not_subscribed" | "refused">`: it opens (once) a second private channel on the **same** `realtime` client for `cswarm-activity:{workspaceId}`, and sends `{ type: 'broadcast', event: 'activity', payload }` over the socket (`RealtimeChannel.send`, `realtime-js/dist/module/RealtimeChannel.js:520-566`). **No buffering:** a frame is a snapshot of current state, so if the activity channel is not `subscribed` the method returns `not_subscribed` at once and the caller sends that frame through the HTTP transport; nothing is queued for a later socket. The library's own REST fallback inside `send` is disabled for this channel (the call is made only when `canPush()` is true), so the two transports stay distinct and countable. No accessor to the raw client is added; the second channel lives inside `wake.ts`.
-- `ListenerActivityController` keeps its coalescing and heartbeat timers (`activity.ts:165-343`) and takes **two transports**: socket first, HTTP when the socket answer is `not_subscribed` or `refused`. So a seat with no socket still reports through the edge exactly as today, and a seat with a socket reports for free.
-- **Cadence contract (decided, not left to the lead):** two constants replace `ACTIVITY_HEARTBEAT_MS`: `ACTIVITY_HEARTBEAT_SOCKET_MS = 15_000` and `ACTIVITY_HEARTBEAT_EDGE_MS = 60_000`. `armHeartbeat()` (`activity.ts:285-292`) re-arms with the interval of the transport that carried the **last successful** frame; on the first frame after start it uses the socket value if the activity channel is subscribed, else the edge value. The site's 17 s grace (`agent-activity.ts:7`) therefore holds on the socket path, and on the edge path a seat can look "stale" for up to 60 s after a quiet flush, which is what lane A already accepted for cost. `tests/listener-activity.test.ts:158-161` (the 15 s pin) is rewritten against `ACTIVITY_HEARTBEAT_SOCKET_MS`, with a sibling case for the edge value.
-- Status: `activityPublishFailures` / `activityLastErrorCode` keep their meaning; a new `activityTransport: "socket" | "edge"` field on the wake block (`parseListenerWake`'s closed list gains it; `control.ts:397-433`).
+`ListenerActivityController` (`activity.ts:165-343`) keeps its coalescing and phase logic. Two changes:
+
+- **The idle heartbeat timer is removed.** `armHeartbeat()` (`:285-292`) no longer schedules a send when the phase is `idle`; instead the controller exposes `idleFrame()` and the runtime attaches it to every reconcile read (and to every 15 s fallback read while the socket is down, which is the same call at a shorter cadence). Non-idle phases still flush through the activity edge as today, and the transition **into** `idle` sends one last frame through the edge so the panel shows the phase change within the coalescing floor rather than waiting for the next reconcile.
+- **Status:** `activityPublishFailures` / `activityLastErrorCode` keep their meaning for edge sends; a new closed top-level status field `activityIdleCarrier: "read"` (always `read` in this design; present so `listen status` can say which call carries liveness).
+
+`ACTIVITY_HEARTBEAT_MS` becomes the **edge fallback cadence** for non-idle phases only (an agent working for a long time with no phase change still refreshes every 15 s through the edge, bounded by work). `tests/listener-activity.test.ts:158-161` changes from "the 4th frame fires at 15 s while idle" to "no frame fires while idle; the reconcile carries `idleFrame()`; a tool-running phase still fires at 15 s".
 
 ### 2.4 The site
 
-Unchanged in what it subscribes to and validates. One line in `parseAgentActivityFrame` (`agent-activity.ts:73-128`): accept and ignore the new `proof` key (the closed key set `FRAME_KEYS` gains it), so an old site build that drops unknown keys and a new one behave the same.
+The panel's freshness rule (`AGENT_ACTIVITY_STALE_MS = 30_000`, `agent-activity.ts:6`) is wrong for an idle seat that reports every five minutes. The frame already carries `phase`; the rule becomes:
 
-### 2.5 The edge function
+- phase ≠ `idle`: fresh within 30 s, as today;
+- phase = `idle`: fresh within **`AGENT_ACTIVITY_IDLE_STALE_MS = 330_000`** (the reconcile interval plus one 30 s margin), shown as `idle · seen 4 min ago`, so the panel says what it knows and when.
 
-Kept, as the fallback publisher. Its parser gains nothing. When every seat is on 0.1.6x, its traffic is the fallback only; retiring it is a later decision, not this spec's.
+`AGENT_ACTIVITY_INSTRUMENTATION_GRACE_MS = 17_000` (`:7`) stays for the first non-idle frame after subscribe and gains an idle twin of 330 s; the "not instrumented" state is shown only after both. `parseAgentActivityFrame` is unchanged (the frame shape is unchanged). No new key, so an old site build renders new frames as before; only the staleness copy improves on the new build.
 
-### 2.6 Failure modes
+### 2.5 Failure modes
 
 | failure | behaviour | bound |
 |---|---|---|
-| socket down | transport flips to the edge fallback; panel keeps its 17 s grace | one heartbeat interval |
-| policy refuses (bad proof, rotated wake id) | `send` resolves `error`; controller counts `activityPublishFailures`, sets `activityLastErrorCode = activity_publish_refused`, falls back to the edge for that frame, and re-tries the socket on the next `subscribed` transition (a rotated wake id arrives via the wake hint the listener already tracks) | one frame |
-| replayed frame by a member | site drops non-newer sequences; at worst one stale "alive" | one frame |
-| Realtime rate limit (500 msg/s Pro) | same as push delivery's row: the client reconnects when under the limit; the edge fallback covers | — |
-| hosted RLS/grant missing for `anon` INSERT | broadcast refused → fallback to the edge; L1's pre-push check asks `has_schema_privilege('anon','realtime','USAGE')`, `has_table_privilege('anon','realtime.messages','INSERT')`, and counts INSERT policies before the migration is pushed | zero regressions: the edge path stays |
+| the read is refused or times out | no idle frame that cycle; the panel ages toward `idle · seen N min ago`; the read's own retry path is unchanged | one reconcile interval |
+| `activity` object malformed or foreign | dropped at the edge with `activity_rejected`; the read still succeeds; the listener counts `activityPublishFailures` | one frame |
+| socket down (15 s poll) | idle frames ride the 15 s reads, so an unsubscribed seat is *more* frequently reported, not less | — |
+| agent works for a long time | non-idle frames through the edge at ≤ 1.33/s, refreshed every 15 s | as today |
+| Realtime down | `realtime.send` swallows its failure; the read succeeds; the panel ages | as today |
+
+### 2.6 What stays exactly as it is
+
+The activity edge function and its parser (now shared), the topic, the policy, the site subscription, `redactCredentialText`, the wake subscriber, and every cost number push delivery measured except the heartbeat's.
 
 ## 3. Cost
 
-Per idle seat-day: heartbeat edge invocations 1,440 (60 s) or 5,760 (15 s) → **0** on a subscribed seat. Realtime messages unchanged (one send plus one receipt per open tab per heartbeat; today's edge already produced exactly that). With the push-delivery reconcile at 288 reads + 288 claims and renewals at 24, an idle subscribed seat is ≈ **600 edge calls a day** (from ≈ 2,200 after push delivery, ≈ 53,800 before it). At $2 per million: $0.0012 per seat-day.
+Per idle seat-day: heartbeat edge invocations 1,440 (60 s) or 5,760 (15 s) → **0** additional (the 288 reconcile reads already exist and each now carries the frame; a read with an `activity` object is one invocation, as before). Realtime messages: 288 idle broadcasts per seat-day instead of 1,440 or 5,760, so the message line in push delivery §7 falls by the same factor. With push delivery's reconcile (288 reads + 288 claims) and renewals (24), an idle subscribed seat is ≈ **600 edge calls a day** (from ≈ 2,200 after push delivery, ≈ 53,800 before it). At $2 per million: $0.0012 per seat-day.
 
 ## 4. Lanes
 
 | lane | branch | author | files | tests | after |
 |---|---|---|---|---|---|
-| **L1** publish policy | `lane/activity-publish-policy` | Gemini or Grok | new migration: `swarm.activity_publish_authorized()` (owner `postgres`, `REVOKE ALL FROM PUBLIC`, `EXECUTE TO anon`), `GRANT USAGE ON SCHEMA realtime TO anon` and `GRANT INSERT ON realtime.messages TO anon` **only if the hosted check shows they are missing** (local: verify), the INSERT policy; `tests/p1-local/activity-publish-auth.test.ts` (template `activity-realtime-auth.test.ts`) named in `package.json:26` plus the pin `tests/p1-cli/test-gate-coverage.test.ts:23-34,125-133` | admits a correct proof; refuses wrong proof, foreign principal, foreign workspace, revoked principal, no live token; a member's `authenticated` JWT cannot insert; the existing SELECT tests stay green | — (holds the local database) |
-| **L2** listener transport | `lane/activity-on-socket` | Grok | `src/listener/wake.ts` (`publishActivity`, second channel), `src/listener/activity.ts` (proof, transport selection, `activity_publish_refused`), `src/listener/control.ts` (`activityTransport` in the closed wake list), `src/cli.ts` status line; `tests/listener-activity.test.ts` (keeps the 15 s pin, adds fallback and refusal cases), `tests/listener-wake.test.ts`, `tests/listener-control.test.ts` | fake-socket: frame goes over the socket when subscribed, over HTTP when not; refusal falls back and counts; proof is an HMAC of the stated fields; a **live control** with `--state-dir <temp>` pasting status with `activityTransport: "socket"` and the site panel showing the frame | L1 |
-| **L3** site parser | `lane/activity-proof-key` | Gemini | `site/src/lib/agent-activity.ts` (`FRAME_KEYS` + `proof`), `site/src/lib/agent-activity.test.*` | old and new frames both parse; `proof` never rendered | — (site only, may run beside L1) |
-| **L4** measure | `lane/activity-measure` | Grok | `scripts/measure-idle-cost.sh` (exists from push delivery), evidence dir | idle seat: activity invocations per 10 min before/after; messages per 10 min unchanged | L2 |
-| **L5** docs | with the release | any | `PUSH-DELIVERY.md` §9 (successor 1 done), `AGENTS.md` one line if the status copy changes | — | L2 |
+| **L1** shared parser + read edge | `lane/activity-on-read` | Grok | `supabase/functions/_shared/activity.ts` (moved parser and topic helpers, one 4,096-byte bound), `supabase/functions/activity/{index,core}.ts` (import the shared module), `supabase/functions/read/index.ts` (optional `activity` on the inbox read; parse, authorize, relay after the read; `activity_rejected`), `tests/p1-server/activity-on-read.test.ts` (reached by the `p1-server` glob, `package.json:29`) | an idle frame on a read is relayed with the server stamp and redaction; a non-idle frame on a read is rejected; a malformed or foreign frame is dropped without failing the read; the activity edge still works unchanged; `npm run check:edge` green | — (holds the local database) |
+| **L2** listener | `lane/idle-frame-on-reconcile` | Gemini | `src/listener/activity.ts` (no idle timer, `idleFrame()`, the into-idle edge frame), `src/listener/runtime.ts` (attach the frame to reconcile and fallback reads), `src/cloud/signals.ts` (request field), `src/listener/control.ts` + `src/cli.ts` (`activityIdleCarrier`), `tests/listener-activity.test.ts`, `tests/listener-runtime.test.ts` | no idle send; the read carries the frame; the into-idle frame fires once; a **live control** with `--state-dir <temp>` against the local stack showing the panel frame arriving on a reconcile and `listen status` reporting the carrier | L1 (deploy order: read edge first; a new client against an old edge sends a field the old edge ignores — L1 confirms the read parser today drops unknown top-level keys, else L1 lands first) |
+| **L3** site staleness | `lane/idle-staleness` | Gemini | `site/src/lib/agent-activity.ts` (`AGENT_ACTIVITY_IDLE_STALE_MS`, the phase-aware rule, the idle grace), `LiveDashboard.astro` panel copy, `site/src/lib/agent-activity.test.*`, `entity-panel.observer.test.ts:97` | idle frame 4 min old is `idle · seen 4 min ago`, not stale; non-idle rule unchanged | — (site only; parallel with L1) |
+| **L4** measure | `lane/idle-heartbeat-measure` | Grok | `scripts/measure-idle-cost.sh`, evidence dir | activity invocations per 10 idle minutes before/after (40 or 10 → 0); reconcile count unchanged | L2 |
+| **L5** docs | with the release | any | `PUSH-DELIVERY.md` §9 (successor 1 done, and the design change from draft 1 recorded) | — | L2 |
 
-Order: L1 and L3 now (disjoint; only L1 uses the database) → L2 → L4 → release. Production apply: migration → client. A 0.1.6x listener without the client change keeps posting to the edge; nothing on the server removes that path.
+Order: L1 ∥ L3 → L2 → L4 → release. A listener that has not upgraded keeps posting to the activity edge; nothing on the server removes that path.
 
 ## 5. What this spec does NOT settle
 
-- Retiring the `activity` edge function. It stays as the fallback until a measured month shows no fallback traffic.
-- Presence (`channel.track`) instead of broadcast. Presence would give join/leave for free but carries the same trust question (the payload is client-claimed) and adds server-emitted sync frames whose billing is not established; broadcast keeps today's frame and today's site. Revisit if the panel needs join/leave semantics.
-- Whether Realtime bills protocol heartbeats (push-delivery §9's open item); unchanged by this spec.
-- Successor 2 (one daemon per machine): this spec makes the per-seat socket carry two channels; the daemon would carry them for every seat.
+- Retiring the idle branch of the activity edge: it stays for old listeners until a measured month shows none.
+- Client-side publishing (draft 1's design): rejected on measurement; recorded so it is not proposed again without a per-principal read topic the site can subscribe to, which Realtime's authorization model does not offer today.
+- Successor 2 (one daemon per machine) is unchanged by this spec.
 
 ## 6. What was NOT established
 
-- That an `INSERT` policy's `WITH CHECK` may call a `SECURITY DEFINER` function that reads `realtime.messages.payload` under the `anon` role on hosted Realtime; it is standard RLS, and L1 proves it locally first.
-- Hosted grants for `anon` on schema `realtime` and on `realtime.messages`: local values were measured during push delivery (`anon` holds both); the hosted project is checked before the migration is pushed.
-- Whether `RealtimeChannel.send` over an established socket counts as one billed message plus receipts exactly as `realtime.send` does today; predicted yes (same broadcast), L4 reads the usage page.
-- How often a listener is subscribed versus on the fallback in production; L4 measures it.
+- That the read edge's request parser drops unknown top-level keys today (it decides L1/L2 deploy order; L1 measures it first).
+- Whether the read's `realtime.send` after its own transaction adds measurable latency to the reconcile; L1's test times it, and the frame is sent after the response is built.
+- The panel's preferred wording for an idle seat; `idle · seen N min ago` is the proposal.

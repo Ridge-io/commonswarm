@@ -1,0 +1,44 @@
+Report written to `docs/evidence/2026-09-06-app-specs-arms/model-per-agent/fa44311/opus.txt` (273 lines). Printed below.
+
+---
+
+**D-036 ADVERSARIAL SYSTEMS ARM — `docs/design/2026-09-06-MODEL-PER-AGENT.md` @ fa44311**
+
+**Read the right bytes.** Checkout HEAD is 85e01ad, which rewrites §2.1, §2.2 item 2 and §2.3 of this document (28-line diff). I reviewed `git show fa44311:…`, not the working tree. Code cites are checked against the tree, unchanged for `src/`, `supabase/`, `site/` between the two SHAs.
+
+**Positive control (run, then deleted).** A throwaway script drove the shipped reducer through the exact sequence §2.1's backfill claims to tell apart:
+
+```
+AgentPrincipalCreated event type present: WorkspaceCreated, AgentPrincipalCreated,
+                                          AgentModelDeclared, AgentModelDeclared
+declare_agent_model  -> [{"type":"AgentModelDeclared","actor_user":"alice","actor_agent_principal":"p-1"}]
+set_agent_model      -> [{"type":"AgentModelDeclared","actor_user":"alice","actor_agent_principal":null}]
+null actor.user      -> {"rejected":"bad_state"}
+```
+
+The last line separates "the probe found nothing" from "the thing cannot exist". Script deleted; the reducer is pure, so no database was touched.
+
+## DEFECTS
+
+**D1 §2.1 — `AgentModelSet` is not an event type.** The vocabulary is closed (`workspace-events.ts:24`, `:41`); the only model event is `AgentModelDeclared` (`:187`), emitted by *both* commands (`workspace-commands.ts:987`, `:1014`) with an identical payload. The backfill matches zero rows, every `assigned_model` stays NULL, and §3 bullet 1 fails on the whole fleet.
+
+**D2 §2.1 — `actor_user` cannot discriminate.** `authenticateAgent` sets `actor.user = agent.owner_user_id` (`command/index.ts:2591`), `owner_user_id` is NOT NULL (`p1_schema.sql:177`), and a null one is refused outright (`workspace-commands.ts:588-590`). Corrected to the right event name, the rule copies every listener label into the person's column — then §2.2 hands it to a bridge as a model name. The working field is `actor_agent_principal`, documented at `workspace-events.ts:181-185` and asserted at `tests/protocol-workspace.test.ts:1392-1394`.
+
+**D3 §2.1/§3 — creation-set models are invisible.** `create_agent_principal` emits a third type, `AgentPrincipalCreated` with `model` (`workspace-commands.ts:832-838`). Those rows get NULL.
+
+**D4 §2.2 item 2 — two mappings asserted as fact, about the wrong process, contradicting §5.** The listener spawns the ACP *bridge* with **no arguments** and speaks ACP over stdio (`host/claude.ts:416-418`, `:588-590`; `host/codex.ts:277-279`, `:363-365`). It calls no SDK and never launches `codex`. §5 says this was NOT established.
+
+**D5 §2.3 — the reason has no durable home, so L3 cannot be built.** (a) The listener status is a local file the browser cannot read. (b) The activity frame is `realtime.send` broadcast only, no INSERT (`activity/index.ts:139-150`) — nothing for an offline agent's row. (c) The `assignment_state` fallback has no column, no projection, and no line in L1's file list. The spec also picks neither (b) nor (c).
+
+**D6 §2.2 item 3 — the composed declaration overflows 120 chars silently.** `" via codex (codex-acp 1.1.9)"` is 28 chars; `assigned_model` is bounded 1–120. Over ~92 chars the reducer refuses (`workspace-commands.ts:507-509`) and declare is fire-and-forget (`runtime.ts:1303-1330`), so the row keeps the stale label while the bridge runs the new model.
+
+## GAPS
+
+**G1** §2.3 gives no comparison rule; equality never holds, and a bare `startsWith` reads `claude-haiku-4-5` vs `claude-haiku-4-5-20251001` as honoured. **G2** the closed set has no value for "no listener has declared since". **G3** `modelAssignment`'s level is ambiguous; the wake-block reading breaks every older status file (`control.ts:407-409`, `:596`). **G4** the bridge is constructed at `cli.ts:5929-5931`, before the runtime reads anything; no late-binding named. **G5** the roster query's column list (`LiveDashboard.astro:2001`) and `participant-rail.ts:66` are not in L3's files. **G6** "the version pinned in `bounds.ts`" is two constants that disagree for codex (1.1.9 vs 1.8.0). **G7** no both-keys precedence for the wire rename (`command/index.ts:2214-2216`).
+
+Five nits (L2's `tests/listener-*.test.ts` is a literal list, not a glob; site path and ~4-line drift on three cites).
+
+## Sound
+The authority boundary holds — `HUMAN_ONLY_COMMANDS` (`:356-368`, refused at `:592-594`) and the agent-only, target-less declare (`:966-970`, `:100-102`, edge fence `:1952-1966`) make §2.1's ownership claim enforceable. No leak widening, no anon or Realtime write path touched, deploy order safe (both `agent_delivery_read_context` callers name their columns), no event pruning, no client size limit.
+
+**VERDICT: FAIL** — six defects, seven gaps.

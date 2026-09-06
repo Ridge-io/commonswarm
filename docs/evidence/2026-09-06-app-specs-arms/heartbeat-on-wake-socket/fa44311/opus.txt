@@ -1,0 +1,313 @@
+D-036 ARM — ADVERSARIAL SYSTEMS (Opus 5)
+Under review: docs/design/2026-09-06-HEARTBEAT-ON-WAKE-SOCKET.md
+Commit: fa44311, branch spec/app-backlog. Date: 2026-09-06.
+Method: every file:line citation opened; trust boundary attacked first; two
+questions settled by read-only probe against the running local stack
+(supabase_*_cloud-swarm containers, API http://127.0.0.1:54321), each with a
+positive control on the same invocation. Probe scripts were deleted; nothing in
+the database or the working tree was modified (git status clean after).
+
+====================================================================
+LIVE PROBE TRANSCRIPT (the evidence D1 and D2 rest on)
+====================================================================
+Read-only DB reads (postgres, local stack):
+  policies on realtime.messages:
+     SELECT {anon}          "agent receives its own wake"
+     SELECT {authenticated} "workspace members receive agent activity"
+     SELECT {authenticated} "workspace members receive signals"
+  anon: { USAGE on realtime: true, INSERT on realtime.messages: true,
+          SELECT on realtime.messages: true }
+  hmac: extensions.hmac
+(This confirms three spec claims: exactly one SELECT policy on the activity
+topic, the wake migration adds two more SELECTs and no INSERT, no INSERT policy
+on realtime.messages anywhere, and anon already holds both grants while RLS
+still refuses — as PUSH-DELIVERY.md:312 recorded.)
+
+anon Realtime joins, one invocation, private:true, ack:false, self:false:
+  CONTROL cswarm-wake:{live wake_id}      -> SUBSCRIBED
+  TEST    cswarm-activity:{workspace_id}  -> CHANNEL_ERROR
+          "Unauthorized: You do not have permissions to read from this
+           Channel topic: cswarm-activity:52ac7c68-...-80ab2743e2e0"
+  SEND on the JOINED control channel, RLS having NO INSERT policy at all
+                                          -> resolves: "ok"
+  SEND on the UNJOINED activity channel (realtime-js REST fallback, with its
+   own console.warn)                      -> resolves: "ok"
+
+The control proves the probe reaches the gate it claims to test: the same anon
+client, same call, same options, joins a private topic that HAS an anon SELECT
+policy and is refused on the one that does not.
+
+====================================================================
+DEFECTS
+====================================================================
+
+D1 — DEFECT. §2.3 (and §0, §4 lane L1, §2.6 row 1). The listener cannot join
+the activity topic at all, so the socket path the whole spec is built on never
+opens.
+
+Claim: "§2.3: `WakeSubscriber` gains one method, `publishActivity(frame)`: it
+opens (once) a second private channel on the same `realtime` client for
+`cswarm-activity:{workspaceId}`, and sends ... over the socket."
+
+The wake client authenticates as `anon` (`src/listener/wake.ts:136-140`,
+`:433` `setAuth(this.target.anonKey)`). Realtime evaluates the SELECT (read)
+policy at JOIN time on a private channel and refuses the join when it fails.
+The only SELECT policy on `cswarm-activity:{uuid}` is `TO authenticated`
+(`20260902000003_realtime_agent_activity.sql:4-17`). The spec adds an INSERT
+policy `TO anon` and no SELECT policy, so the join is refused — measured above,
+verbatim: "You do not have permissions to read from this Channel topic".
+
+This is not a novel inference: the repo already pins the behaviour.
+`tests/p1-local/wake-realtime-auth.test.ts:219-231` asserts SUBSCRIBED when the
+anon SELECT policy admits the topic and `:232-268` asserts CHANNEL_ERROR for
+every topic the same policy refuses. The wake lane needed a `TO anon` SELECT
+policy to let its own listener join its own private topic; this spec omits the
+equivalent.
+
+Consequence, and why it is silent rather than loud: with the channel unjoined,
+`canPush()` is false, so `send()` takes realtime-js's REST fallback
+(`node_modules/@supabase/realtime-js/dist/module/RealtimeChannel.js:522-560`,
+verified at the cited 2.110.8) — one HTTPS POST to /realtime/v1/api/broadcast
+per heartbeat, plus a `console.warn` per frame. §0's "Idle heartbeat edge calls
+go from 5,760 ... to zero" and §3's "≈ 600 edge calls a day" survive only on a
+technicality (they are not *edge function* calls); the design bar the spec
+quotes — "extremely cost efficient" — is not met, because the per-heartbeat HTTP
+request is exactly what the spec set out to remove. §2.3 itself names this
+fallback as a rare degradation ("when the socket cannot push"); measured, it is
+the only path.
+
+Nothing in the lane set detects this. L1's five tests all exercise the INSERT
+policy in SQL and never make a client join. L2's live control asserts
+`activityTransport: "socket"`, but §2.3 derives that field from
+`wake.state !== subscribed` — the WAKE channel's state, not the activity
+channel's — so it reads "socket" while every frame goes over HTTP. §6 lists
+three lesser unknowns and does not list this one, although the read-only map the
+spec was authored from flagged it ("Unknowns: Safety of an INSERT/presence
+policy for an anon-keyed listener ... no design evaluated it",
+docs/evidence/2026-09-06-app-specs-arms/maps/heartbeat.md).
+
+What the spec must settle before a lane can build it: add a SELECT policy
+admitting `anon` on `cswarm-activity:{uuid}` (gated the way
+`swarm.wake_topic_authorized` gates the wake topic), and then state the
+consequence it creates — an anon-key listener granted read on that topic
+receives every other agent's frames in its workspace, including their
+`toolTitle`. Today no anon role can read that topic. That is a new leak and
+needs a stated ruling, not a silent grant. L1 must own a client-join test, not
+only an INSERT test.
+
+--------------------------------------------------------------------
+D2 — DEFECT. §2.6 row 2 (and §2.3, §4 lane L2). `send()` resolves "ok" when the
+policy refuses, so the refusal counter and the edge fallback have no signal.
+
+Claim: "§2.6: policy refuses (bad proof, rotated wake id) | `send` resolves
+`error`; controller counts `activityPublishFailures`, sets
+`activityLastErrorCode = activity_publish_refused`, falls back to the edge for
+that frame".
+
+The code the spec cites for `send` contradicts it. At
+`RealtimeChannel.js:563-566` (inside the cited :520-566):
+
+    const push = this.channelAdapter.push(args.type, args, ...);
+    if (args.type === 'broadcast' && !this.params?.config?.broadcast?.ack) {
+        resolve('ok');
+    }
+
+With `ack: false` — the default (`:94`) and the option every channel in this
+tree passes (`site/src/lib/commonswarm.ts:191-196`,
+`tests/p1-local/wake-realtime-auth.test.ts:193`) — `send()` resolves "ok"
+before the server has answered. Measured above: a send on a JOINED private
+channel, on a table with no INSERT policy at all, resolved "ok". The REST
+fallback resolved "ok" too, so neither path carries a refusal.
+
+Consequence: `activityPublishFailures` stays 0 and `activityLastErrorCode` stays
+null while every frame is dropped by RLS; the "falls back to the edge for that
+frame" behaviour never fires; the panel goes dark and `cswarm listen status`
+truthfully reports zero failures. This is the same shape as the failure
+PUSH-DELIVERY.md:312 warned about ("no wake would ever be sent while
+`listen status` truthfully said `push`"), and it is the failure class AGENTS.md
+records under "A claim about a running listener needs a live control" and
+"A negative result must reach the path it claims to test".
+
+The spec must specify `broadcast: { ack: true }` on the activity channel and
+establish (not predict) that Realtime returns a push error on RLS refusal —
+neither is stated, and §6 does not list it. Note that `ack: true` adds a reply
+message per frame, which bears on §3's "Realtime messages unchanged".
+
+--------------------------------------------------------------------
+D3 — DEFECT. §2.2 and §0. The proof covers three of the frame's ten fields, so a
+member can forge the other seven for another principal. §0's "nothing an
+anon-key client can forge is accepted" is false, and §2.2's stated exposure
+bound is too narrow.
+
+Claim: "§2.2: `proof = base64url(hmac_sha256(key = wake_id, message =
+principalId || ':' || sequence || ':' || streamId))`" and "Replay: a captured
+frame replays as itself ... The exposure is 'principal X looked alive again for
+one frame', which the design accepts and states."
+
+The published payload has ten keys (`site/src/lib/agent-activity.ts:19-29`:
+version, workspaceId, principalId, streamId, sequence, phase, signalId,
+toolTitle, elapsedMs, emittedAt). The proof binds three. `phase`, `signalId`,
+`toolTitle`, `elapsedMs`, `workspaceId` and `emittedAt` are unauthenticated.
+
+The attacker is an ordinary workspace member, and needs nothing they do not
+already have:
+  1. Every member may SELECT the activity topic (`20260902000003:4-17`) and so
+     reads a real frame from principal X, including its `proof`.
+  2. The anon key is public — it ships in the site bundle and in the live page's
+     meta tag (AGENTS.md, "Deploying the marketing site").
+  3. The member re-inserts the SAME principalId, streamId and sequence — so the
+     captured proof still verifies under §2.2's recompute — with arbitrary
+     `phase`, `signalId`, `toolTitle`, `elapsedMs` and a `emittedAt` of their
+     choosing. The INSERT policy admits it.
+
+It reaches the panel by two routes the spec's replay argument misses:
+  - `agent-activity.ts:137`: `if (!current) return true`. A tab that has just
+    loaded holds no frame for X, so the forged frame is accepted outright and
+    rendered ("Now: <attacker text>", `LiveDashboard.astro:2532`).
+  - `agent-activity.ts:139`: across streamIds the comparison is
+    `Date.parse(next.emittedAt) >= Date.parse(current.emittedAt)`. Once the
+    listener restarts and takes a new streamId, a captured old-stream frame with
+    a forged future `emittedAt` wins every comparison, permanently.
+Neither is "one frame". The exposure is: any member can put arbitrary text and
+an arbitrary phase on another agent's live panel and keep it there. Today that
+is impossible — the edge stamps `principalId` only after authenticating the
+agent token (`supabase/functions/activity/index.ts:83-131`), so frame content is
+server-vouched.
+
+Fix is small and belongs in the spec: HMAC over a canonical serialisation of the
+whole payload, not three fields.
+
+--------------------------------------------------------------------
+D4 — DEFECT. §2.1 and §2.5. The socket path drops the edge's credential
+redaction and its bounded parser, while the spec states nothing changes.
+
+§1 records the behaviour correctly — "the server adds `principalId` and
+`emittedAt` and re-redacts `toolTitle`" — and §2.1 then asserts "the frame ...
+does not change shape, so nothing on the reading side is rewritten" and §2.5
+"Its parser gains nothing." Neither section says the listener must take over the
+work the edge was doing.
+
+On the socket path these three defences disappear and nothing replaces them:
+  - `redactCredentialText(frame.toolTitle).slice(0,160) || "Tool"`
+    (`activity/index.ts:135`). The listener applies only
+    `sanitizeText(update.title).slice(0, ACTIVITY_TOOL_TITLE_MAX)`
+    (`src/listener/activity.ts:249`) — a different function that does not redact
+    credentials.
+  - `parseActivityRequest`, the closed parser with cross-field invariants
+    (`activity/core.ts:44-84`).
+  - `ACTIVITY_REQUEST_MAX_BYTES = 4_096` (`activity/core.ts:3`), enforced by
+    `boundedJson` (`index.ts:52-75`). The INSERT policy in §2.2 checks a
+    signature and a principal; it bounds no size and no shape.
+
+The sharp consequence: `src/host/credential-redaction.ts:20-26` defines
+`cswarm-wake:[A-Za-z0-9_-]{43}` as a credential shape precisely because the wake
+topic IS a bearer capability. That is the same `wake_id` this spec makes the
+HMAC key. A tool title containing the wake topic is redacted today by the edge;
+on the socket path it is broadcast in clear text to every member tab — leaking
+the secret the whole proof scheme is keyed on, and (per D3) letting any reader
+mint proofs for that principal from then on.
+
+The spec must state that the listener applies `redactCredentialText` before
+publishing, and what bounds the socket payload.
+
+--------------------------------------------------------------------
+D5 — DEFECT. §2.4. "An old site build that drops unknown keys" is a false
+statement about the code, and the deploy order in §4 does not cover it.
+
+Claim: "§2.4: accept and ignore the new `proof` key (the closed key set
+`FRAME_KEYS` gains it), so an old site build that drops unknown keys and a new
+one behave the same."
+
+`site/src/lib/agent-activity.ts:78`:
+    if (Object.keys(record).some((key) => !FRAME_KEYS.has(key))) return null;
+An old build does not drop the unknown key. It rejects the entire frame. Old and
+new behave oppositely: on a deployed site without L3, every socket frame is
+discarded and the activity panel shows "no frames" for every seat that upgraded.
+
+§4's lane order (L3 before L2) helps only if the site is actually DEPLOYED
+before listeners upgrade. The spec's production line says "Production apply:
+migration → client" and never names the site deploy, and the site is a separate
+Vercel deploy (AGENTS.md). The order must read: migration → site deploy →
+client.
+
+====================================================================
+GAPS
+====================================================================
+
+G1 — GAP. §2.3, the `activityTransport` field. "`parseListenerWake`'s closed
+list gains it" is ambiguous in a way that decides whether status breaks.
+`WAKE_STATUS_KEY_SET` (the allowed set, `src/listener/control.ts:388`) and the
+required-key loop (`:407-409`) BOTH read the same `LISTENER_WAKE_STATUS_KEYS`.
+So adding the key to "the closed list" makes it MANDATORY: any wake block
+without it — a status file written by the previous build, or an older daemon
+answering a newer CLI — returns null and the whole wake block vanishes from
+`cswarm listen status`. That is the v0.1.46 null-status failure AGENTS.md
+records. The spec must say whether the key is required or optional and what a
+missing key means; a lane author cannot read it off the sentence.
+
+G2 — GAP. §2.2, the HMAC's exact bytes. Two lanes must agree byte-for-byte —
+L1 in SQL (`extensions.hmac`, confirmed present) and L2 in TypeScript — and the
+spec gives neither a canonical string nor a test vector. Unspecified: whether
+the key is the wake_id as text or as decoded bytes; whether `principalId` and
+`streamId` in the message are the payload's text or the stored
+`principal_id::text` (Postgres renders uuid lowercase; the listener's casing is
+not pinned, and `parseAgentActivityFrame` lowercases only after validating, so
+either can arrive); and how `sequence` is rendered. Pick one, write the exact
+concatenation, and give one worked vector. (base64url in SQL is fine and needs
+no spec text — `20260906000010_wake_delivery.sql:21-27` is the in-tree
+precedent.)
+
+====================================================================
+NITS
+====================================================================
+N1 — §2.2 states the function's owner twice and differently in one bullet:
+"owner `swarm_admin`" in the normative clause, then "so the function is **owned
+by `postgres`**" in the parenthetical. The parenthetical is right and gives its
+reason; delete the first.
+N2 — Two citation offsets, immaterial: `parseAgentActivityFrame` begins at
+`agent-activity.ts:72`, not :73; `defaultRealtime` is `wake.ts:135-140`, not
+:136-141.
+
+====================================================================
+WHAT I VERIFIED AND FOUND CORRECT
+====================================================================
+Every remaining citation in §1 and §4 checks out: activity.ts:12-13 / :88-147 /
+:119-128 / :165-343 / :285-292 / :337-341; activity/index.ts:78-152, :118-131,
+:141-150; core.ts:44-84 and the 4,096-byte cap; agent-activity.ts:6-7, :19-29,
+:135-141; commonswarm.ts:180-216; LiveDashboard.astro:2367-2393;
+20260902000003:4-16 and "no INSERT policy anywhere" (enumerated in the
+migrations AND in pg_policies on the live stack); the wake migration's two extra
+SELECT policies; wake.ts:111-128, :233-234 (private fields, no accessor),
+:429-449; wake_id at 20260906000010:15-35; control.ts:174-176 and :397-433;
+supervisor.ts:321-322; cli.ts:4890-4891; listener-control.test.ts:591-598;
+listener-activity.test.ts:158-161; package.json:26 is exactly the test:p1-local
+script; the gate pin in test-gate-coverage.test.ts; the L1 template
+tests/p1-local/activity-realtime-auth.test.ts, the L3 target
+site/src/lib/agent-activity.test.mjs (globbed by site/package.json:11), and
+scripts/measure-idle-cost.sh all exist. The §0/§1 90% figure is consistent with
+§3's arithmetic at the current 15 s cadence (65% is the post-lane-A 60 s figure);
+the "anon holds both grants and is still refused by RLS" claim is backed by
+PUSH-DELIVERY.md:312 and reproduced above. §5's rejection of presence in favour
+of broadcast is reasoned and I raise no objection to it.
+
+====================================================================
+WHAT I DID NOT ESTABLISH
+====================================================================
+- Hosted (production) behaviour. Every probe above ran on the local stack. D1
+  and D2 are properties of Realtime and of realtime-js 2.110.8, so I expect them
+  to hold on the hosted project, but I did not touch it.
+- Whether Realtime returns a push error on an RLS-refused broadcast when
+  `ack: true` is set. I measured only the `ack: false` default, which resolves
+  "ok" unconditionally. D2 stands on that measurement; the `ack: true` behaviour
+  is the thing the spec would then have to establish.
+- Whether the REST fallback endpoint's 2xx on a refused insert is Realtime's
+  documented contract or an artefact of the local build.
+- Whether `appendEntityField` escapes; I read only the call site
+  (`LiveDashboard.astro:2532`), so D3 is stated as content spoofing, not as
+  script injection.
+- L4's cost measurement and the Realtime usage-page billing question in §6;
+  unchanged by this review.
+
+QUOTE-BACK: # Heartbeat on the wake socket: retire the activity edge call
+VERDICT: FAIL
+REASON: The socket the design depends on cannot be opened — an anon listener's join of cswarm-activity:{ws} is refused because the spec adds an INSERT policy but no anon SELECT policy (measured, with a positive control) — and four further defects stand: send() resolves "ok" on refusal so the fallback has no signal, the proof authenticates three of ten fields so any member can forge another agent's phase and tool title, the socket path silently drops the edge's credential redaction and byte cap, and §2.4's "an old site build drops unknown keys" is false where the code rejects the whole frame.

@@ -1,0 +1,127 @@
+D-036 exact arm — docs/design/2026-09-06-NO-TRUNCATION.md
+Requested SHA: fa44311. This checkout HEAD is 85e01ad (folded Gemini findings). Spec text reviewed is the working tree, which is fa44311 plus the C3 harness/fixture paragraph added at 85e01ad. Code claims checked against this tree, not against docs/evidence/2026-09-06-app-specs-arms/maps/truncation.md.
+
+## DEFECT
+
+1. §2 C3 / L3 corpus command. Claim: fill `operator-corpus.md` by running `cswarm feed --json --limit 200`. Wrong: `--limit` is an integer in 1..100. `src/cli.ts:3892-3894` (`integer(..., { minimum: 1, maximum: 100 })`);Requested SHA was `fa44311`. This tree is `85e01ad`. The spec text here is `fa44311` plus the C3 harness paragraph from `85e01ad`. Claims were checked against the code, not the map.
+
+## DEFECT
+
+**§2 C3 / L3.** Claim: fill `operator-corpus.md` with `cswarm feed --json --limit 200`. That command is refused. `--limit` must be 1..100 (`src/cli.ts:3892-3894`, `src/cloud/signals.ts:840-841`). A lane cannot collect the corpus as written.
+
+## GAP
+
+**§4 L2 files.** Claim: existing tests are `tests/listener-hook*.test.ts`. That glob matches nothing. Hook tests are `tests/p1-cli/hook-routing.test.ts` and `tests/p1-cli/signal-attachments.test.ts`, reached by `npm run test:p1-cli`, not by the literal `npm test` list. A new file matching the glob is not in `npm test`; D-030 then fails unless the author also edits `package.json`, which L2 does not own.
+
+**§2 C2 / §4 L2 / §5.** Claim: 40 signals × 1,000 stay under the hook budget; name that constant in the test. No such constant exists. Nearby: `MAX_HOOK_SURFACE_BYTES = 128 KiB` (`hook.ts:46`, file cap), `HOOK_SURFACED_IDS_MAX = 1_024` (`:58`), inbox `limit: 100` (`:692`), `HOOK_CHECK_TIMEOUT_MS = 3_000` (`:56`). `40` is not in the code.
+
+**§4 L1.** Claim: update the existing 180 pin in `tests/support/arrival-watch.test.ts`. That file never names `180` or `ARRIVAL_SNIPPET_MAX`. No test in the repo names those constants.
+
+**§2 C3 corpus.** Claim: from that JSON, take the five longest bodies from member Ridgeio. `cswarm feed --json` is `{ workspace_id, view, signals, message }` (`signals.ts:1671-1696`). Each row has `from` as a UUID (`:491`), not a display name. Names are added only on the human-readable path (`cli.ts:3940-3946`). Feed is broadcasts only (`signals.ts:1824-1825`).
+
+**§2 C3 `max-length.md`.** Claim: 8,000 characters from a seed. The seed is not named.
+
+**§2 C3 / §3.** Claim: DOM text equals source (modulo Markdown) at 390 px and 1440 px. “Modulo Markdown” is not defined. The sibling observer measures geometry at 320×568 and never checks text equality.
+
+## NIT
+
+- `:636` is `replyLabel`. `renderHookSignal` is `:627`. `preview()` is used at `:638`.
+- `cswarm inbox` is only on the attachments line (`hook.ts:639-641`). Every render ends with `cswarm reply` (`:642`).
+- Notify JSON also has `type`, `workspace_id`, `signal_id`, `sender`, `sender_kind`, `kind`, `attachment_count` (`arrival-watch.ts:141-151`).
+- `_shared/signal-text.ts` is `supabase/functions/_shared/signal-text.ts`.
+- `safeParagraph` is `cli.ts:8166-8170`. The 300-char error slice is `signals.ts:1788`. Collapse `60` is `message-markdown.ts:40`.
+
+## Lanes
+
+L1, L2, L3 do not share files. L3 owns no product code.
+
+| lane | named path | exists |
+|---|---|---|
+| L1 | `src/cloud/arrival-watch.ts` | yes |
+| L1 | `src/cli.ts:4045-4054` | yes (emit; `runInboxNotifyCommand` starts at `:3982`) |
+| L1 | `tests/support/arrival-watch.test.ts` | yes; in `npm test` |
+| L2 | `src/listener/hook.ts:59`, `:619-636` | yes |
+| L2 | `tests/listener-hook*.test.ts` | **no** |
+| L3 | new `message-body.observer.test.ts` | new; site `test` glob would reach it |
+| L3 | sibling `message-blocks-layout.observer.test.ts` | yes |
+| L3 | `findChrome` in `participant-rail.fixture.ts:49` | yes |
+
+## Numbers
+
+240, 180, 8,000 (display + server + send), 500, 60, 2,000,000 / 50,000, 16,000 (`SIGNAL_BODY_MAX * 2`), entity id 8+…+4: all match. Proposed hook cap 1,000 is the change. **40** is not in the code. **`--limit 200`** is invalid.
+
+## Citations verified
+
+`hook.ts:59`, `:619-623`, `:592-614` (`body` at `:609`), `:627-643`; `arrival-watch.ts:34`, `:355-363`, `:379-393`; `cli.ts:3982` / `:4048-4058`; `signals.ts:34`, `:1881-1885`, `:1902-1905`, `:35`, `:1852-1857`, `:1906-1909`, `:1780-1782`; `supabase/functions/_shared/signal-text.ts:2`; `supabase/migrations/20260827000001_expand_signal_body.sql:6`; `LiveDashboard.astro:816`, `:3029`, `:3053`, `:3113`, `:3313-3332`, `:12911-12914`; `message-markdown.ts:21-23`, `:40`, `:137-155`; `cli.ts:8125-8130`, `:8166-8170`, `:5305-5308`; `entity-panel.ts:59-60`; UserPromptSubmit install in `cli.ts`; `tests/support/arrival-watch.test.ts` in `npm test`; sibling observer + `findChrome`.
+
+## Citations not verified
+
+`tests/listener-hook*.test.ts` (no files); existing 180 pin (none); hook budget constant (none); 40-signal backlog (none); `cswarm feed --json --limit 200` (refused); Ridgeio on feed JSON (no name field); max-length seed (unnamed).
+
+Not established: live notify against production; visual CSS clip (item 4); whether 40 × 1,000 fits Claude context.
+
+QUOTE-BACK: # Stop truncating in the human UI
+VERDICT: FAIL
+REASON: L3's corpus command uses `--limit 200` which the CLI rejects, and a lane still has to invent L2's test files/gate, the hook budget constant, the missing 180 pin, and how to select Ridgeio bodies from nameless feed JSON.
+MAX = 180` `arrival-watch.ts:34`; cut `:361-362` | yes |
+| body display 8,000 | `SIGNAL_BODY_DISPLAY_MAX = 8_000` `signals.ts:34` | yes |
+| server body cap 8,000 | `SIGNAL_BODY_MAX = 8_000` `signal-text.ts:2`; SQL `CHECK (char_length(body) BETWEEN 1 AND 8000)` `20260827000001_expand_signal_body.sql:6` | yes |
+| about display 500 | `SIGNAL_ABOUT_DISPLAY_MAX = 500` `signals.ts:35` | yes |
+| collapse 60 lines | `MESSAGE_COLLAPSE_LINES = 60` `message-markdown.ts:40` | yes |
+| markdown 2,000,000 / 50,000 | `MESSAGE_MARKDOWN_LIMITS` `:22-23` | yes |
+| draft 16,000 | `COMPOSER_DRAFT_STORAGE_MAX = SIGNAL_BODY_MAX * 2` `LiveDashboard.astro:3029` | yes |
+| send 8,000 | `maxlength={SIGNAL_BODY_MAX}` `:816`; counter/disable `:3313-3332` | yes |
+| entity id 8+…+4 | `truncateEntityId` `entity-panel.ts:59-60` | yes |
+| diagnostics 240 / 1000 / 2000 / 600 | `signals.ts:1781` 240; `:1788` 300; `cli.ts:8130` 1000; `:8170` 2000; `:5306-5307` 600 | 300 is extra; rest yes |
+| proposed hook cap 1,000 | not in code (change) | n/a |
+| 40-signal backlog | not in code | **no** |
+| `--limit 200` | max 100 | **no** |
+| 390 / 1440 | acceptance only; sibling observer uses 320×568 | specified, not in product code |
+
+`--json` notify today has `snippet` and no `body` (`arrival-watch.ts:384-394`). Readable line has no "full text" path (`formatArrivalNotification` `:398-405`).
+
+## Citations verified
+
+- `src/listener/hook.ts:59` HOOK_BODY_PREVIEW_CHARS = 240
+- `src/listener/hook.ts:619-623` preview()
+- `src/listener/hook.ts:627-643` renderHookSignal (cited as :636)
+- `src/listener/hook.ts:592-614` entryFromSignal keeps `body: signal.body` at :609
+- `src/cloud/arrival-watch.ts:34` ARRIVAL_SNIPPET_MAX = 180
+- `src/cloud/arrival-watch.ts:355-363` arrivalSnippet
+- `src/cloud/arrival-watch.ts:379-393` arrivalNotification (snippet, no body)
+- `src/cli.ts:3982` runInboxNotifyCommand; `:4048-4058` emit
+- `src/cloud/signals.ts:34` SIGNAL_BODY_DISPLAY_MAX = 8_000
+- `src/cloud/signals.ts:1881-1885` body clip
+- `src/cloud/signals.ts:1902-1905` body warning names `--json`
+- `supabase/functions/_shared/signal-text.ts:2` SIGNAL_BODY_MAX = 8_000
+- `supabase/migrations/20260827000001_expand_signal_body.sql:6` CHECK 1 AND 8000
+- `src/cloud/signals.ts:35` SIGNAL_ABOUT_DISPLAY_MAX = 500
+- `src/cloud/signals.ts:1852-1857` about clip
+- `src/cloud/signals.ts:1906-1909` about warning names `--json`
+- `site/src/components/app/LiveDashboard.astro:12911-12914` collapsed CSS (cited 12901-12917)
+- `site/src/lib/message-markdown.ts:40` MESSAGE_COLLAPSE_LINES = 60 (cited 37-40)
+- `site/src/lib/message-markdown.ts:21-23` 2_000_000 / 50_000 (cited 20-35)
+- `site/src/lib/message-markdown.ts:137-155` boundedLines; marker at :150
+- `LiveDashboard.astro:3029`, `:3053`, `:3113` draft 16,000
+- `LiveDashboard.astro:816`, `:3313-3332` send 8,000
+- `src/cloud/signals.ts:1780-1782` error slice 240
+- `src/cli.ts:8125-8130` safeError 1000
+- `src/cli.ts:8166-8170` safeParagraph 2000 (cited 8165-8170)
+- `src/cli.ts:5305-5308` listener detail 600
+- `site/src/lib/entity-panel.ts:59-60` truncateEntityId
+- UserPromptSubmit hook install: `src/cli.ts:6577+`
+- `tests/support/arrival-watch.test.ts` exists and is in `npm test`
+- sibling observer + `findChrome` exist; site test glob would include a new `*.observer.test.ts`
+
+## Citations that could not be verified (missing or false)
+
+- `tests/listener-hook*.test.ts` — no files
+- "existing 180 pin" — no test names 180 or ARRIVAL_SNIPPET_MAX
+- hook context-budget constant — none
+- 40-signal backlog — none
+- `cswarm feed --json --limit 200` — rejected by the CLI
+- member display name "Ridgeio" on feed JSON — not a field
+- max-length.md seed — not named
+- `site/src/components/app/fixtures/no-truncation/` — not present (new, expected)
+
+Not established by this arm: live `inbox --notify` against production; visual CSS clip vs DOM text (item 4 owns collapse); whether 40 × 1,000 fits Claude context (no constant here).

@@ -1,0 +1,118 @@
+Exact arm on `docs/design/2026-09-06-MARKDOWN-WORDWRAP-QA.md` at `fa44311`.
+Code checked in this tree (`spec/app-backlog`, HEAD `85e01ad`). Spec text taken from `fa44311` (HEAD later folded three Gemini gaps; the defects below are still in HEAD). Map `docs/evidence/2026-09-06-app-specs-arms/maps/markdown-colour-model.md` Spec C was not treated as evidence.
+
+## DEFECT
+
+**§2.3 paragraph → paragraph.** Claim: target is `0.75 × line-height (≈ --s-3)` and “today’s `--s-3` is the intended value; the test pins it.”
+False, and the two numbers are not the same. `--t-base` is `1rem`, `--lh-base` is unitless `1.62`, `--s-3` is `0.75rem` (`site/src/styles/tokens.css:266-267,287,321`). Message CSS uses those tokens (`LiveDashboard.astro:12894-128Reviewed `docs/design/2026-09-06-MARKDOWN-WORDWRAP-QA.md` at **fa44311** against this tree’s code, not the map. HEAD is `85e01ad` (Gemini fold). Spec text used is fa44311. Code files named in the spec did not move after the map.
+
+## DEFECT
+
+**§2.3 paragraph → paragraph.** Claim: target is `0.75 × line-height (≈ --s-3)`, and “today’s `--s-3` is the intended value; the test pins it.”
+
+Those are two different numbers. `--t-base` is `1rem`, `--lh-base` is `1.62`, `--s-3` is `0.75rem` (`tokens.css:266-267,287,321`). Message CSS uses them (`LiveDashboard.astro:12894-12895,12922`). At a 16px root, line-height is `25.92px`. `0.75 ×` that is `19.44px`. `--s-3` is `12px`. Pin the ratio and every shipped sibling gap changes (`:12920-12923`). Pin `--s-3` and the target column is ignored. §6 says Notion’s values were not copied, so nothing external breaks the tie.
+
+**§2.2 vs §2.3 horizontal overflow.** §2.2: any element with `scrollWidth > clientWidth` is the wrap defect. §2.3: a table may scroll inside its own box.
+
+Both cannot be the rule. The shipped table is a scroller (`:13003-13011`) with cells `overflow-wrap: normal` (`:13026-13031`). The existing harness already asserts `table.scrollWidth > table.clientWidth` at 320px (`message-blocks-layout.observer.test.ts:325-328`) while the message box and the page do not overflow (`:331-340`). Fixture 3 is a 6×4 table with a 60-character cell at 390px. Follow §2.2 as written and that row FAILs, then a “fix” undoes the shipped table-scroll rule.
+
+**§2.3 long token (fixture 5).** Claim: wrap at 390px means container `overflow-wrap: anywhere` (`:12896`) is doing its job.
+
+False for a paragraph. `global.css:175-184` sets `overflow-wrap: break-word` on `p, li, h1–h6`. That type rule beats the inherited container value. Fixture 5 is “a 300-character paragraph”. A wrap “fix” on the container would not change prose wrap.
+
+## GAP
+
+**§2.1 fixture 6.** “The operator’s own longest recent channel message, copied verbatim.” No body, id, member, command, or file. The lane has to invent that row. (HEAD later named `cswarm feed --json --limit 200` / Ridgeio. That text is not in fa44311.)
+
+**§2.2 last visible line.** Colour and opacity of “the last visible line” with no selector, Range, or ancestor walk. CSS has no last-line selector. (HEAD later specified Range / `getClientRects` / opacity product / mask FAIL.)
+
+**§2.3 gap targets.** Ratios only. No pixel tolerance at fa44311. (HEAD later set ±2px, which still does not reconcile `19.44px` with `12px`.)
+
+**§2.2 both themes.** Does not name how. Shipped switch is `data-theme="dark"|"light"` on the root (`tokens.css:15-18`). The existing layout harness sets neither (`message-blocks-layout.observer.test.ts:143-159`).
+
+**§2.4 screenshots.** One screenshot per fixture and width is required. The existing harness dumps DOM (`:282`). No Chrome flag, path, or file names.
+
+**§2.2 message self-scroll.** “Has a vertical scrollbar of its own” is not a named computed check. Collapsed messages use `overflow: hidden` (`LiveDashboard.astro:12911-12914`), which is a clip, not a scrollbar.
+
+**§2.1 brain topic vs §3 fix surface.** Fixtures (1) and (2) must also render as a brain topic. That node has both classes (`:725`). Heading size and sibling spacing for brain live under `.dashboard__brain-markdown` (`:11976-11999`). §3 only allows `.dashboard__message-markdown` or `message-markdown.ts`. Heading targets (0.5× below, 1.5× above) cannot be applied to the brain measurement without an unnamed CSS block. Feed headings are not in the message sibling list (`:12916-12923`) and take global `h2` size (`global.css:236-239`).
+
+**§5 file overlap.** This lane’s fix surface is `LiveDashboard.astro` `.dashboard__message-markdown` (`:12891-13061`, includes collapse at `:12911-12914`) and `message-markdown.ts`. Same SHA set also gives those files to `lane/long-messages` and `message-markdown.ts` to `lane/brain-toc`. No order. Inside this spec there is only one lane.
+
+**§2.1 headingOffset.** Headings parse only when `headingOffset === 1` (`message-markdown.ts:341-345`). Fixture 2 has a heading. The spec does not say to pass that option. The existing harness does (`message-blocks-layout.observer.test.ts:162-164`).
+
+## NIT
+
+- `message-markdown.ts:1-636`: file is 635 lines. `:625-635` and `:42-46` are correct.
+- Wrap-row test `message-markdown.observer.mjs:29-` guards the **pre** rule (`:32-42`), not the container.
+- Composer autogrow is `min(40% of --dashboard-viewport-height, 20rem)` (`:12427`). Spec omitted the 20rem cap.
+- Fixture 5 “no spaces except three” vs “a URL, a SHA, a path” (three tokens → two spaces).
+- Phrase “light text at the bottom, no scroll” is absent from tests and from the mobile-fix README, as claimed. After fa44311 it exists in this spec and the map.
+
+## Lane files and gates
+
+| path | at fa44311 |
+|---|---|
+| `site/src/components/app/message-blocks-layout.observer.test.ts` | exists; `site/package.json:11` glob |
+| `site/src/components/app/mobile-feed-layout.observer.test.ts` | exists; same gate |
+| `site/src/components/app/composer-sprint-browser.observer.test.ts` | exists; same gate |
+| `site/src/components/app/message-markdown.observer.mjs` | exists under `components/app/`, not `lib/` |
+| `site/src/lib/message-markdown.ts` | exists (635 lines) |
+| `site/src/components/app/LiveDashboard.astro` | exists |
+| `site/src/components/app/fixtures/markdown-qa/` | absent (lane creates it) |
+| `docs/evidence/2026-09-06-markdown-qa/RESULTS.md` | absent (lane creates it) |
+| `npm --prefix site test` | `site/package.json:11` |
+
+No two lanes **inside this spec** own one file. Across the eight operator specs, `LiveDashboard.astro` and `message-markdown.ts` are shared (see GAP).
+
+## Citations
+
+| citation | result |
+|---|---|
+| `message-markdown.ts:1-636` escape-first subset | verified in substance (`boundedLines` `:155`); range is 1–635 |
+| `:625-635` `setSanitizedMessageMarkdown` | verified |
+| `:42-46` `MESSAGE_MARKDOWN_TAGS` | verified |
+| `LiveDashboard.astro:12891-13061` markdown CSS | verified through `li.md-task` `:13058-13061` |
+| `:12916-12923` sibling `--s-3`; first block 0 | verified |
+| `:12925-12966` list `--s-6`; quote border; inline code; `pre` wrap; `pre code` `--t-sm` | verified |
+| `:13003-13037` table scroll + `overflow-wrap: normal` | verified |
+| `:12896` container `anywhere` | verified |
+| no `word-break` in `LiveDashboard.astro` | verified (grep empty) |
+| no `white-space` on the container | verified |
+| `message-markdown.observer.mjs:29-` forbids `white-space: pre` | verified on the **pre** rule |
+| `git diff d77b0b0 7dbfbae -- LiveDashboard.astro` viewport, 40%, 25%/5rem, caret | verified; merge `7dbfbae`, first parent `d77b0b0`; current lines `:3458`, `:3510-3514`, `:12427`, `:14031` |
+| phrase absent from tests / mobile-fix README | verified |
+| mobile-fix README §3 caret reset | verified |
+| §6 40px double clearance | verified |
+| §7 12px band mismatch | verified |
+| `message-blocks-layout.observer.test.ts` 320px, two mutation controls | verified (`:40`, `:130-141`, `:343-369`) |
+| `mobile-feed-layout.observer.test.ts` 390×844 | verified |
+| `composer-sprint-browser.observer.test.ts` composer/caret | verified |
+| `6712776` hard clip, no fade | verified (`mask-image` gradient removed) |
+| `--s-3` / `--s-6` / `--t-sm` / `--lh-base` | verified `tokens.css` |
+| `pre` padding `--s-3` | verified `:12949` |
+| map Spec C | present; lines re-checked in code |
+| author `2121f81d` | principal id, not a git SHA |
+| backlog item 3 / 3a / 3b | **not in git** (brain topic `app-backlog`) |
+| 390×844, 1440×900, six fixtures, ratios, 140 / 6×4 / 60 / 300 | specified here; 390×844 and 1440×900 already used by `mobile-feed-layout.observer.test.ts` |
+
+Could not verify: backlog “landed but not verified” (not in this checkout); fixture 6 body (not in fa44311); Notion’s 0.75-line gap (spec §6 already says not established).
+
+QUOTE-BACK: # Markdown spacing and wordwrap: measure on a phone, then fix what fails
+VERDICT: FAIL
+REASON: The paragraph-gap target equates 0.75 × line-height with --s-3 (19.44px vs 12px), and §2.2 treats any element overflow as a wrap defect while §2.3 and the shipped table harness require the table to overflow inside itself.
+nd mismatch | verified (`:163-169`) |
+| `message-blocks-layout.observer.test.ts` tables at 320px, two mutation controls | verified (`VIEWPORT_WIDTH = 320` `:40`; controls `table` and `wrap` `:130-141`, `:343-369`) |
+| `mobile-feed-layout.observer.test.ts` 390×844 | verified (`:478`, `:504`, `:582`, `:623`) |
+| `composer-sprint-browser.observer.test.ts` composer/caret | verified (composer geometry + draft/caret paths) |
+| `6712776` hard clip, no fade | verified (`mask-image: linear-gradient(to bottom, black 88%, transparent)` removed; commit message matches §2.3 “6712776’s rule”) |
+| `--s-3` 0.75rem, `--s-6` 1.5rem, `--t-sm` 0.875rem, `--lh-base` 1.62 | verified `tokens.css:266,287,321,324` |
+| `pre` inner padding `--s-3` | verified `:12949` |
+| map Spec C | present; lines re-checked in code |
+| author `2121f81d` | principal id (roadmap), not a git SHA |
+| backlog item 3 / 3a / 3b “landed but not verified” | **not in git**; brain topic `app-backlog` is not in this checkout |
+| 390×844, 1440×900, six fixtures, 0.75/0.25/0.5/1.5 ratios, 140-char command, 6×4 table, 60-char cell, 300-char token | specified here; not shipped numbers except 390×844 / 1440×900 already used by `mobile-feed-layout.observer.test.ts` |
+| `cswarm feed --json --limit 200` | **not in `fa44311` spec**; CLI usage exists at `src/cli.ts:549` (checked only because HEAD later cites it) |
+
+QUOTE-BACK: # Markdown spacing and wordwrap: measure on a phone, then fix what fails
+VERDICT: FAIL
+REASON: The paragraph-gap target equates 0.75 × line-height with --s-3 (19.44px vs 12px), and §2.2 treats any element overflow as a wrap defect while §2.3 and the shipped table harness require the table to overflow inside itself.

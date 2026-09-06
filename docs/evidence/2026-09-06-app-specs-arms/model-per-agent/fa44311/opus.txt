@@ -1,0 +1,273 @@
+D-036 ADVERSARIAL SYSTEMS ARM — docs/design/2026-09-06-MODEL-PER-AGENT.md @ fa44311
+Arm: Claude Opus 5 (operator-allowed family). Branch spec/app-backlog.
+
+READ THE RIGHT BYTES. The checkout HEAD is 85e01ad, whose commit message says it folds a Gemini
+round into all eight specs; that commit REWRITES §2.1, §2.2 item 2 and §2.3 of this document
+(`git diff fa44311 85e01ad -- docs/design/2026-09-06-MODEL-PER-AGENT.md` is 28 lines). This review
+is of `git show fa44311:docs/design/2026-09-06-MODEL-PER-AGENT.md`, 70 lines, NOT the working tree.
+Code citations are checked against the tree, which for src/, supabase/ and site/ is unchanged
+between the two SHAs.
+
+Method: schema and trust boundary first, then every file:line citation, then a runnable control
+through the shipped reducer.
+
+================================================================================
+POSITIVE CONTROL (run, then deleted)
+================================================================================
+A throwaway script drove the SHIPPED reducer (src/protocol/workspace-commands.ts) through the exact
+sequence §2.1's backfill claims to tell apart. Verbatim output:
+
+  AgentPrincipalCreated event type present: WorkspaceCreated, AgentPrincipalCreated,
+                                            AgentModelDeclared, AgentModelDeclared
+  declare_agent_model  -> [{"type":"AgentModelDeclared","actor_user":"alice","actor_agent_principal":"p-1"}]
+  set_agent_model      -> [{"type":"AgentModelDeclared","actor_user":"alice","actor_agent_principal":null}]
+  null actor.user      -> {"rejected":"bad_state"}
+
+Three facts in one run: no `AgentModelSet` type is ever emitted; `actor_user` is non-null on BOTH
+paths; and a null `actor.user` is not rare but REFUSED, so no accepted event can carry one. The last
+line is the control that separates "the probe found nothing" from "the thing cannot exist". The
+script was deleted; the reducer is pure, so no database was touched and nothing was created to drop.
+
+================================================================================
+DEFECTS
+================================================================================
+
+D1 — §2.1: `AgentModelSet` is not an event type in this system. The backfill selects on a kind that
+     can never match, so it copies nothing and acceptance bullet 1 fails on EVERY row.
+
+  Claim: "the event log's `actor_user` on the last `AgentModelSet` event says which".
+
+  The workspace event vocabulary is closed and enumerated at src/protocol/workspace-events.ts:24 and
+  :41; the only model event is `AgentModelDeclared`, defined at :187. It is emitted by BOTH commands
+  — src/protocol/workspace-commands.ts:987 (`declare_agent_model`) and :1014 (`set_agent_model`) —
+  with a byte-identical payload shape `{ principal_id, model, declared_at }`. The generated edge
+  bundle agrees (supabase/functions/_shared/protocol.js:359, :1276, :1299), and the projection
+  branches on `event.type` alone (supabase/functions/command/index.ts:4067). The control above shows
+  the emitted types.
+
+  Applied literally, L1's backfill matches zero rows, every `assigned_model` stays NULL, and every
+  row "shows only the declaration" — which is the state §1 calls the defect. §3 bullet 1 ("an
+  existing row set by a person keeps its value in `assigned_model`") is false for the whole fleet.
+
+D2 — §2.1: even after the event name is corrected, `actor_user` does not say which. It is non-null
+     for both writers, so the rule copies every listener label into the person's column.
+
+  - supabase/functions/command/index.ts:2591 — `authenticateAgent` sets `actor.user =
+    agent.owner_user_id` for an AGENT token.
+  - supabase/migrations/20260723000001_p1_schema.sql:177 — `owner_user_id uuid NOT NULL`.
+  - src/protocol/workspace-commands.ts:588-590 — `if (!user_id) return authz('bad_state', ...)`.
+  - Control output: both events carry `actor_user: "alice"`.
+
+  So the corrected backfill would set `assigned_model = "codex (codex-acp 1.1.9)"` on every seat that
+  has ever run a listener — and §2.2 then hands that string to a bridge as a model name. Silent
+  misattribution: nothing in the migration would look wrong.
+
+  The discriminator that works is documented three lines above the event definition,
+  src/protocol/workspace-events.ts:181-185 — "a self-declaration carries the agent principal, a human
+  set carries the user and a NULL principal" — and is asserted in the repo's own test,
+  tests/protocol-workspace.test.ts:1392-1394. The spec inherited the wrong wording from its own map
+  (docs/evidence/2026-09-06-app-specs-arms/maps/markdown-colour-model.md:28) and from a stale comment
+  at src/protocol/workspace-commands.ts:110-112. Because BOTH the event name and the field are wrong,
+  §5's "how many existing rows can be attributed" is not the open question the spec thinks it is: the
+  answer with the right field is "all of them, exactly".
+
+D3 — §2.1 and §3 bullet 1: a model set at principal creation is invisible to the backfill.
+
+  `create_agent_principal` carries `model` (src/protocol/workspace-commands.ts:84-90) and emits a
+  third type, `AgentPrincipalCreated` with a `model` field (:832-838) — visible in the control
+  output. It is neither of the two the backfill reads. A principal created with a model and never
+  re-set gets `assigned_model = NULL` while a person's value sits in `model`, waiting to be
+  overwritten by the next listener start: precisely the defect §1 says this spec removes.
+
+D4 — §2.2 item 2: both bridge mappings are asserted as fact, they are wrong about which process runs,
+     and they contradict §5 of the same document.
+
+  Claim: "for codex-acp the bridge is launched as a subprocess and Codex reads `model` from its
+  config or `-m`; for claude-agent-acp the SDK takes a `model` option."
+
+  The listener spawns the ACP BRIDGE with NO command-line arguments and speaks ACP over stdio. It
+  calls no SDK, and it never launches `codex` itself:
+    - src/host/claude.ts:416-418 — "The bridge enters ACP mode with no command-line arguments";
+      `buildClaudeAcpArgs()` returns `[]`. Spawned at :588-590.
+    - src/host/codex.ts:277-279 — `buildCodexAcpArgs()` returns `[]`. Spawned at :363-365.
+  So whether `codex` has a `-m` flag is not the question; whether `codex-acp` FORWARDS a model over
+  ACP is, and nothing here measures it. "the SDK takes a `model` option" names a code path the
+  listener does not have.
+
+  §5 says: "Whether claude-agent-acp and codex-acp accept a model at launch and honour it" was NOT
+  established. §2.2 states both as known. §1 refuses `--model` for exactly these two providers on the
+  grounds of "no measured bridge mapping" (src/cli.ts:4394-4399, :5588-5592). A lane reading §2.2
+  would enable a mapping the spec's own §5 declines to promise.
+
+D5 — §2.3: the reason has nowhere durable to live and the site cannot read where the spec puts it, so
+     L3 cannot be built as written.
+
+  Claim: "a small mark reads `not honoured` with the reason from the listener's status (`wake`-style
+  closed field `modelAssignment` ... on the listener status, surfaced through the existing agent
+  activity frame as one more key, or, until that lands, through `declare_agent_model`'s payload
+  gaining `assignment_state`)."
+
+  Three problems, any one of which stops L3:
+  (a) The listener status is a LOCAL file on the host running the listener
+      (src/listener/control.ts, written under `paths.instanceDirectory`). The browser has no path to
+      it. "the reason from the listener's status" is not a data path that exists.
+  (b) The agent activity frame is a Realtime BROADCAST with no row written: the activity edge's one
+      privileged statement is `realtime.send(...)` (supabase/functions/activity/index.ts:139-150),
+      and there is no INSERT anywhere in that function. It is ephemeral, so a roster row for an agent
+      that is offline — or a page loaded a second after the frame passed — has no reason to show.
+      This is the case AGENTS.md "Durable by default" names: operator-read state belongs in Postgres.
+  (c) The fallback, `declare_agent_model`'s payload gaining `assignment_state`, has no storage. §2.1
+      adds one column, `assigned_model`. L1's file list (§4) is the migration for `assigned_model`,
+      its constraint, the view projection, the read-context output column, the two commands, the
+      handlers and the read edge — no column, no projection, and no handler line for a state value.
+      L3 is told to render "the mismatch mark" from a field no lane creates.
+
+  The spec also does not choose between (b) and (c): "or, until that lands" leaves the lane author to
+  pick, and the two need different work in different lanes.
+
+D6 — §2.2 item 3: the composed declaration can exceed the 120-character bound, and the failure is
+     silent.
+
+  The new text is `"<model> via <provider> (<bridge> <version>)"`. The suffix
+  `" via codex (codex-acp 1.1.9)"` is 28 characters (measured). `assigned_model` is itself bounded
+  1..120 (§2.1 duplicates `agent_principals_model_bounded`, migration
+  20260730000001_workspace_access_lifecycle.sql:16-26). Any assignment over ~92 characters yields a
+  declaration the reducer refuses at src/protocol/workspace-commands.ts:507-509 ("model must be at
+  most 120 characters"), re-enforced at the edge (supabase/functions/command/index.ts:1989).
+  `declare_agent_model` is FIRE-AND-FORGET — src/listener/runtime.ts:1303-1330, "a failed declaration
+  is an event line, never a listener failure" — so the row silently keeps the PREVIOUS start's stale
+  label while the listener runs the new model. That is the "row says one thing, bridge ran another"
+  failure §1 exists to remove, reintroduced at the top of the range. No truncation, no shortened
+  form, and no tighter bound on `assigned_model` is specified.
+
+================================================================================
+GAPS
+================================================================================
+
+G1 — §2.3: there is no rule for "when the two disagree", and the obvious one is wrong in every case.
+  The declaration is `"<model> via <provider> (<bridge> <version>)"` and the assignment is a bare
+  model, so `assigned_model === model` is never true — a naive comparison marks every correctly
+  honoured row "not honoured". The lane must invent the comparison and its delimiter. (For the
+  record, a bare `startsWith` is also wrong: assigned `claude-haiku-4-5` against a running
+  `claude-haiku-4-5-20251001 via claude (...)` would read as honoured. The comparison needs the text
+  up to the ` via ` separator, compared for equality.)
+
+G2 — §2.3: the closed set `honoured | no_mapping | cli_override` has no value for "no listener has
+  declared since this assignment" — a seat that has never started, or is stopped, after a person set
+  a model. What the roster row shows then, and what the field's default is, are unspecified.
+
+G3 — §4 L2 vs §2.3: where `modelAssignment` goes in src/listener/control.ts is ambiguous, and one
+  reading is a rolling-upgrade break. §2.3 says "`wake`-style closed field ... on the listener
+  status"; L2's file list says "`modelAssignment` in the closed status list". Top level is tolerant:
+  STATUS_ALLOWED_KEYS (control.ts:241-291) is an allow-list and each field parses as
+  `row.X === undefined || ...`. The WAKE block is not: control.ts:407-409 requires EVERY key of
+  LISTENER_WAKE_STATUS_KEYS (src/listener/wake.ts:59-68) to be present, and control.ts:596
+  (`wake === null ||`) fails the WHOLE status row when it is not. Built the second way, an upgraded
+  CLI reading a still-running older listener's status file reports a live listener as unreadable —
+  on a host carrying ~20 seats, during exactly the upgrade window. The spec must name the level.
+
+G4 — §2.2: the assignment is read inside the runtime, but the bridge object is already built. No
+  late-binding mechanism is named. src/cli.ts:5782-5843 defines `newModel`; :5929-5931 CALLS it
+  (`activity.instrumentModel(newModel(...))`) immediately before `runListenerRuntime` at :5933. The
+  bridge's model is a constructor option (src/listener/grok-model.ts:41). The first inbox read and
+  `options.model.start()` happen later, inside the runtime (src/listener/runtime.ts:1289). A
+  resolver, a mutable field, or deferred construction is needed; the spec names none, and L2's file
+  list does not name the construction site.
+
+G5 — §4 L3: the two files that make the new fields REACH the site are not listed.
+  site/src/components/app/LiveDashboard.astro:2001 selects an explicit column list —
+  `"principal_id,name,model,owner_user_id,revoked_at,workspace_id"` — so the new columns are never
+  fetched, and the rows are mapped by `rosterAgentsFromRows` in site/src/lib/participant-rail.ts:66,
+  whose `RosterAgentRow`/`RosterAgent` types must gain the fields. L3 lists only the four render
+  sites and the editor. Built as listed, every row renders the assignment as undefined.
+
+G6 — §2.2: "the version pinned in `src/host/bounds.ts`" is two constants per provider that DISAGREE
+  for codex: `CODEX_ACP_MIN_VERSION = "1.1.9"` (src/host/bounds.ts:29) and
+  `CODEX_ACP_LAST_MEASURED_VERSION = "1.8.0"` (:31). The shipped label hard-codes the minimum
+  (src/cli.ts:4358). L2's tests column requires the declaration be "generated from the same
+  constants" without saying which; picking the last-measured one silently changes what every codex
+  seat declares from 1.1.9 to 1.8.0.
+
+G7 — §2.1: the `model` → `assigned_model` wire rename has no both-keys rule and no end.
+  supabase/functions/command/index.ts:2214-2216 —
+  `const optionalKeys = Object.hasOwn(cmd, "model") ? ["model"] : []; return exactKeys(cmd, ["kind",
+  "name", ...optionalKeys]) && ...` — so a body carrying BOTH keys is refused today as an extra key.
+  L1 must decide: refuse, prefer the new, or prefer the old. "accepted for one release" names no
+  release, no owner for its removal, and no precedence.
+
+================================================================================
+NITS
+================================================================================
+
+N1 — §4 L2 lists `tests/listener-*.test.ts` as if it globs. It does not: `npm test` is a LITERAL file
+     list (package.json:23) and a NEW listener test file does not run until that list names it —
+     AGENTS.md's "a test file runs only when a package script names or globs it". L1's row correctly
+     says "+ pin" for the p1-local addition (the pin is real: tests/p1-cli/test-gate-coverage.test.ts
+     :23-34); L2's row says nothing.
+N2 — Citation drift on the site file. The path is site/src/components/app/LiveDashboard.astro; the
+     spec never gives the directory in §1, §2.3 or §4. `mayEditModel` is :4105-4112 (cited
+     :4109-4114); `buildAgentModelEditor` is :4119 (cited :4123); the `--model` refusal begins at
+     src/cli.ts:4394 (cited :4395). Everything else checked clean: cli.ts:4347-4363, :5588-5592,
+     :5796, :5804-5822, :5842, :5945; runtime.ts:297, :1305-1330; command-client.ts:836-875;
+     workspace-commands.ts:84-90, :101, :113-118, :499-514; command/index.ts:1959-1997;
+     LiveDashboard :4030-4032, :5113, :2625; migration 20260730000001:8-26, :69, :112-125;
+     package.json:26.
+N3 — §2.2 says the first inbox read "already returns the principal's own row" through
+     `agent_delivery_read_context`. It returns identity and delivery fields only — token_id,
+     principal_id, owner_user_id, principal_workspace_id, run_id, device_id, first_use,
+     membership_revoked_at, is_revoked, pending_delivery_count, wake_id
+     (supabase/migrations/20260906000010_wake_delivery.sql:282-293). No model column. The sentence
+     after it ("L1 adds `assigned_model` to that function's output the way push delivery added
+     `wake_id`") is correct and is what carries the work; the preceding clause overstates.
+N4 — swarm_read.agent_access_status (20260730000001:60-89) names `p.model` explicitly and will not
+     gain the new column from a `p.*` re-creation. Nothing reads it for the roster (the site queries
+     swarm_read.agent_principals at LiveDashboard.astro:2000-2001), so this is information, not a
+     required change.
+N5 — `assignment_state` would be written by the agent about itself, so "honoured" is an unverifiable
+     self-report. That is inherent to a declaration and I am not asking for a change, but §2.3
+     presents the mark as the operator's signal without saying so.
+
+================================================================================
+WHAT I CHECKED AND FOUND SOUND
+================================================================================
+- The authority split holds; no member and no agent can forge across it. `set_agent_model` and
+  `create_agent_principal` are in HUMAN_ONLY_COMMANDS (src/protocol/workspace-commands.ts:356-368),
+  refused for any agent credential at :592-594. `declare_agent_model` requires
+  `credential_kind === 'agent'` (:966-970), has no target field (:100-102), and the edge fences a
+  body naming a principal (supabase/functions/command/index.ts:1952-1966). So "assigned_model written
+  only by a person, model written only by the agent" is enforceable exactly as §2.1 claims — the
+  defects above are in the migration and the plumbing, not in the boundary.
+- No leak widening. swarm_read.agent_principals is `SELECT p.*` gated by `swarm.is_member`
+  (20260730000001:29-35); anon is revoked on the lifecycle views (:99-102). A column added by ALTER
+  TABLE lands at the end of the list, the only position CREATE OR REPLACE VIEW permits. Nothing in
+  this spec touches an anon-key write path, a Realtime INSERT policy, or an RLS predicate.
+- Deploy order is safe. §4 puts the migration before the edges, and both callers of
+  `agent_delivery_read_context` name their columns (supabase/functions/read/index.ts:440-455;
+  supabase/migrations/20260828000002_fix_signal_delivery_receipts_auth.sql:45-57), so appending an
+  OUT parameter does not break the deployed edge in the window between the two steps. The "three
+  privilege statements" rule L1 cites is real (20260906000010_wake_delivery.sql:270-274, :481-483).
+- No retention or pruning of swarm.events exists in supabase/migrations/, so the backfill can see
+  full history; D1/D2/D3 are about what it reads, not about missing rows.
+- No size at which the client computation stops working: the roster pages at 200 rows
+  (LiveDashboard.astro:1996-2010) and the mark is O(1) per row.
+- §3 bullets 2-5 and §5 bullet 3 are buildable and correctly scoped. §5 bullet 1 is honest; §2.2
+  contradicts it (D4).
+
+================================================================================
+WHAT I DID NOT ESTABLISH
+================================================================================
+- I did not start a local Supabase stack and did not run a migration. D1/D2/D3 are established from
+  the closed event vocabulary, the reducer, the auth context and the schema, plus the live reducer
+  control — not from an applied SQL backfill. I did not count how many production rows would be
+  affected.
+- I did not start a live listener, so G3's upgrade break is established from the parser
+  (control.ts:407-409, :596) and the key list (wake.ts:59-68), not from a mixed-version
+  `cswarm listen status` run.
+- I did not probe claude-agent-acp or codex-acp for a model argument. D4 is about the spec asserting
+  a mapping it did not measure and naming the wrong process, not a claim that no mapping exists.
+- Scope is this document only; I did not review the other seven specs in the round, and I did not
+  review the 85e01ad rewrite except to confirm which bytes are under review.
+
+QUOTE-BACK: # A model per agent: assigned by a person, honoured by the listener, declared by the agent
+VERDICT: FAIL
+REASON: The backfill names an event type that does not exist (`AgentModelSet`) and a field that cannot discriminate (`actor_user` is non-null for both writers, and a null one is refused outright), so §3's first acceptance bullet fails on every row; §2.2 asserts two unmeasured bridge mappings against the wrong process and contradicts §5, and §2.3 gives the site's mismatch reason no durable home that any lane creates.

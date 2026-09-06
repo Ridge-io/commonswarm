@@ -1,1 +1,114 @@
-I'll review the heartbeat-on-wake spec against this checkout: every cited file:line, every named test/gate, and every number. First I load the spec, the code map, and the files it names.I'll pull the cited files, the code map, sibling specs' file lists, and the evidence the spec names.Next I’ll check every cited line in the edge function, wake path, site parser, migrations, and tests.
+I'll review the heartbeat-on-wake spec against this checkout: every cited file:line, every named test/gate, and every number. First I load the spec, the code map, and the files it names.I'll pull the cited files, the code map, sibling specs' file lists, and the evidence the spec names.Next I’ll check every cited line in the edge function, wake path, site parser, migrations, and tests.Exact arm on `fa44311` (`spec/app-backlog`). Checked the spec against the code, not the map.
+
+## DEFECT
+
+**§2.3 / §2.2 / L1 — anon cannot join the activity channel.**  
+`publishActivity` opens a second **private** channel `cswarm-activity:{workspaceId}`. `RealtimeChannel.send` only uses the socket when `canPush()` is true, and `canPush()` is `socket connected && channel joined` (`node_modules/@supabase/realtime-js/dist/module/phoenix/channelAdapter.js:63-65`). Join of a private channel uses **SELECT** RLS. The only SELECT policy on that topic is `TO authenticated` (`supabase/migrations/20260902000003_realtime_agent_activity.sql:4-16`). Anon already has SELECT only for `cswarm-wake:{wake_id}` (`20260906000010_wake_delivery.sql:242-249`). L1 adds INSERT only. Measured: a client without SELECT gets `CHANNEL_ERROR` (`tests/p1-local/activity-realtime-auth.test.ts:215-218`). A SELECT policy `TO anon` on the workspace activity topic would let anyone with the public anon key and a workspace UUID receive every frame. The spec does not name this, and L1 does not add a join policy that does not leak. The “over that socket” path is not reachable as written.
+
+**§2.6 — policy refusal does not surface.**  
+The spec says a refused proof makes `send` resolve `error`, then the controller counts `activity_publish_refused` and falls back. The cited `send` (`RealtimeChannel.js:520-566`) resolves `'ok'` at once when `broadcast.ack` is false (`:566-567`). That is the library default. `WakeSubscriber.connect` sets only `{ config: { private: true } }` (`src/listener/wake.ts:438-440`). L2 is not told to set `ack: true` on the activity channel. A refused INSERT is silent. No fallback.
+
+**§2.4 — old site does not drop unknown keys.**  
+Claim: “an old site build that drops unknown keys and a new one behave the same.”  
+`parseAgentActivityFrame` rejects the whole frame if any key is outside `FRAME_KEYS` (`site/src/lib/agent-activity.ts:19-29, 78`). An old build that sees `proof` returns `null`. The panel goes blank. L3 before L2 limits the blast, but the claim about the old parser is false.
+
+**§2.2 vs L1 — “stale” vs replay.**  
+§2.2 accepts a captured replay (site drops non-newer `sequence`). The same section and L1 say the test “refuses … a stale one.” Stale is not defined. The HMAC message is `principalId || ':' || sequence || ':' || streamId` — no `emittedAt`, no nonce. The policy cannot refuse a replay without a new store the design rejected.
+
+## GAP
+
+**L2 wiring is unowned.**  
+`ListenerActivityController` is built in `src/cli.ts:5916-5928` with only `AgentActivityEndpointTransport`. `WakeSubscriber` is created later in `src/listener/runtime.ts:1040-1046`. L2 names `cli.ts` as “status line” (`:4890-4891`, `:4970-4975`) and does not own `runtime.ts`. `publishActivity` has no path from the controller to the subscriber unless the author invents it.
+
+**Socket frame shape vs HTTP body.**  
+HTTP body is snake_case and has no `principalId` / `emittedAt` (`activity.ts:47-57, 119-128`). The site frame is camelCase `FRAME_KEYS` and requires `principalId` and `emittedAt` (`agent-activity.ts:19-29, 84-106`). The edge stamps both (`activity/index.ts:125-137`). Spec says the listener adds `proof` and stamps `emittedAt`. It never says to add `principalId`, where it is read (`cli.ts` has `options.principalId`; the controller does not), or that the socket payload is the site frame, not the HTTP body.
+
+**HMAC bytes are not a shared constant.**  
+L1 SQL and L2 Node must match on: UUID case, `sequence` as decimal text, UTF-8, and base64url with `=` stripped. Postgres `encode(..., 'base64')` is not base64url. The repo already uses `translate(encode(...), '+/=', '-_')` (`20260906000010_wake_delivery.sql:23-27`). The spec does not point at it.
+
+**`realtime.messages.payload` shape for client INSERT is not specified.**  
+The function reads `payload->>'principalId'`. Client `send({ type:'broadcast', event, payload })` may wrap that object. L1’s template inserts via SQL `realtime.send` and reads `message.payload` on subscribe (`activity-realtime-auth.test.ts:221-226, 264-267`). A SQL INSERT control can pass while L2 `channel.send` is refused.
+
+**L2 `activityTransport` on the closed wake list.**  
+`parseListenerWake` requires every `LISTENER_WAKE_STATUS_KEYS` entry (`wake.ts:59-67`, `control.ts:407-409`). `wake === null` makes the whole status malformed (`control.ts:596`). Adding `activityTransport` as required breaks current `status.json` wake blocks. Spec does not say the new key is optional.
+
+**L4 evidence dir is unnamed.** Push-delivery named `docs/evidence/2026-09-06-push-delivery-measured/`. This spec says “evidence dir.”
+
+**L1 “stale one”** (see defect): a lane would have to invent the meaning.
+
+## NIT
+
+- §2.2 names owner `swarm_admin`, then says owner `postgres`. L1 table says `postgres`. That is the one to use (`rotate_wake_id` comment at `20260906000010:102-105`).
+- 4,096-byte cap is `activity/core.ts:3`, not `:44-84`.
+- Dual cadence is a lead decision. L2 keeps the 15 s pin. Default is one interval.
+- Migration file timestamp is unnamed; the tree’s pattern is enough.
+- §3’s 600 vs PUSH-DELIVERY’s ~2,200: 600 is 288+288+24 with no signals. The 2,200 line included ~150 wake-driven calls.
+- Across the eight specs, this L2 also claims `src/cli.ts`, `src/listener/control.ts`, and `tests/listener-*.test.ts` with MODEL-PER-AGENT L2; this L1 and MODEL L1 both hold `package.json:26` and the local database. Inside **this** spec, lanes do not share a file.
+
+## File lists (this spec)
+
+| Lane | Named paths | Status |
+|---|---|---|
+| L1 | new migration; `tests/p1-local/activity-publish-auth.test.ts` (new); template `tests/p1-local/activity-realtime-auth.test.ts`; `package.json:26`; `tests/p1-cli/test-gate-coverage.test.ts:23-34,125-133` | Template, gate line, and pin exist. New files are new. |
+| L2 | `src/listener/wake.ts`, `activity.ts`, `control.ts`; `src/cli.ts` status line; `tests/listener-activity.test.ts`, `listener-wake.test.ts`, `listener-control.test.ts` | All exist. Already on `package.json:23` (`npm test`). Construction at `cli.ts:5916` and `runtime.ts` not named. |
+| L3 | `site/src/lib/agent-activity.ts`; `site/src/lib/agent-activity.test.mjs` (glob `agent-activity.test.*`) | Both exist. Site `test` already globs `src/lib/*.test.mjs`. |
+| L4 | `scripts/measure-idle-cost.sh` | Exists. Evidence dir unnamed. |
+| L5 | `docs/design/2026-09-06-PUSH-DELIVERY.md` §9; `AGENTS.md` | Both exist. |
+
+No two lanes in this spec own one file. L1 and L3 in parallel is correct (DB vs site).
+
+## Numbers
+
+| Claim | Check |
+|---|---|
+| `ACTIVITY_FRAME_INTERVAL_MS = 750` | `activity.ts:12` |
+| `ACTIVITY_HEARTBEAT_MS = 15_000` | `:13` |
+| 5 s abort | `:15`, `:95`, `:107` |
+| 4,096-byte cap | `core.ts:3` |
+| 30 s fresh / 17 s grace | `agent-activity.ts:6-7` |
+| 5,760 / day at 15 s | 86400/15 |
+| 1,440 / day at 60 s | 86400/60 |
+| 288+288+24 = 600 | arithmetic; 288 = 86400/300 |
+| $0.0012 / seat-day | 600/1e6 × $2 |
+| ~90 % of idle after push | 39/43 per 10 min (`PUSH-DELIVERY.md` §8; `docs/org/2026-08-29-RESUME-HERE.md:2619-2620`) |
+| ~2,200 / ~53,800 | `PUSH-DELIVERY.md` §0, §7 |
+| 500 msg/s Pro | not re-fetched; copied from push-delivery |
+
+## Citations verified
+
+All of these match this checkout:
+
+- `src/listener/activity.ts:12-13, 15, 17-22, 47-57, 88-147, 119-128, 165-343, 247-249, 285-292, 337-341`
+- `supabase/functions/activity/core.ts:3, 12-21, 44-84`
+- `supabase/functions/activity/index.ts:78-152, 118-137, 141-150`
+- `src/listener/wake.ts:16-17, 30-36, 59-67, 111-128, 136-141, 168-178, 233-234, 265-287, 326-339, 429-449`
+- `src/cloud/wake.ts:7-10`
+- `src/listener/control.ts:174-176, 289-290, 294-300, 397-433, 475-477, 596, 603-611`
+- `src/listener/supervisor.ts:321-322, 633-637`
+- `src/cli.ts:4859, 4890-4891, 4970-4975, 5916-5928`
+- `src/listener/runtime.ts:1040-1046`
+- `site/src/lib/agent-activity.ts:6-7, 19-29, 73-128, 135-141`
+- `site/src/lib/commonswarm.ts:180-216`
+- `site/src/components/app/LiveDashboard.astro:2367-2393`
+- `site/src/lib/agent-activity.test.mjs` (exists; closed-key test at `:84-97`)
+- `supabase/migrations/20260902000003_realtime_agent_activity.sql:4-16`
+- `supabase/migrations/20260906000010_wake_delivery.sql:15-35, 23-27, 102-105, 242-264`
+- `tests/listener-activity.test.ts:158-161`
+- `tests/listener-control.test.ts:591-598`
+- `tests/p1-local/activity-realtime-auth.test.ts` (template; join control `:201-218`)
+- `tests/p1-cli/test-gate-coverage.test.ts:23-35, 125-133`
+- `package.json:23` (`npm test` literal list), `:26` (`test:p1-local` literal list)
+- `scripts/measure-idle-cost.sh`
+- `docs/design/2026-09-06-PUSH-DELIVERY.md` §1.3, §7, §8, §9
+- `RealtimeChannel.js:520-566` (REST fallback and `ack: false` early `'ok'`)
+
+## Citations not established here
+
+- A file named “ledger 2026-09-06”: the 90 % figure is in `RESUME-HERE.md:2619-2620` and `PUSH-DELIVERY.md` §8, not a ledger file by that name.
+- Hosted `anon` grants on `realtime` (spec §6 already says not established).
+- Stored jsonb shape of a **client** INSERT into `realtime.messages.payload`.
+- Pro 500 msg/s: not re-read from the vendor page.
+
+QUOTE-BACK: # Heartbeat on the wake socket: retire the activity edge call
+VERDICT: FAIL
+REASON: Anon cannot join the private activity channel so socket send is unreachable, send() with default ack:false hides INSERT refusal, and L2 is not given the frame shape, HMAC bytes, or the cli.ts/runtime.ts wiring a lane would need to build it.
