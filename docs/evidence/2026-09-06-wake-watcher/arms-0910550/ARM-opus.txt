@@ -1,0 +1,148 @@
+# ARM-opus — D-036 inversion arm, lane L5 (inbox --notify wake watcher)
+SHA: 09105507cc0c299d517436762c98d641daec31f4  (merge-base d844aff)
+Family: anthropic (Opus 5). Author family: Grok. Read-only; no db:reset, no production, no --linked.
+
+## Quote-back
+DIFF.patch first line:
+    diff --git a/src/cli.ts b/src/cli.ts
+Three files: src/cli.ts, src/cloud/arrival-watch.ts, tests/support/arrival-watch.test.ts
+(+495 / -4). src/listener/wake.ts is NOT in the diff — confirmed with `git diff --stat d844aff..HEAD`.
+
+## Where I ran
+Throwaway detached worktree at the exact SHA, node_modules symlinked from the main checkout:
+  .../scratchpad/arm-opus-wt   (removed after; `git status --porcelain` empty before removal)
+Gates I ran myself:
+  npx tsc --noEmit -p tsconfig.json          -> TSC_OK
+  npm test                                    -> pass 893, fail 0
+  node --import tsx --test tests/support/arrival-watch.test.ts -> 18/18
+
+## 1. Read-only invariant (claim/ack unreachable from the wake path)
+- Wake path is arrival-watch.ts:526-576 (`pushMode`, `waitCapMs`, `applyWakeHint`,
+  `waitForTrigger`) + :578-586 (`noteCycle`). Every symbol it touches is on WakeHandle
+  (src/listener/wake.ts:113-127): snapshot/next/setTopic/noteReconcile/noteClaim/
+  coalescingRemainingMs. `noteClaim` is a local timestamp for coalescing (wake.ts:294-296);
+  it issues no RPC.
+- cli.ts:4010 creates the subscriber, :4024 passes it, :4089 closes it. No new call site.
+- The read side (cli.ts:4025-4048) is still `readAgentSignalPage`; emit (:4051-4060) still
+  only writes a monitor line. Nothing in the diff imports delivery.js.
+- Discrimination MEASURED: appended `// claim_agent_inbox` to arrival-watch.ts ->
+  test "arrival-watch source never imports claim or ack" FAILS (17 pass / 1 fail). Restored.
+  NOT refuted.
+
+## 2. Wake -> one read -> notification + cursor; bursts; timers
+- One read per wake: `waitForTrigger` returns, the loop head does exactly one `readPage`
+  (:588-593), then the unchanged emit + `store.write` per row (:632-639). Test
+  "wake drives one read, one notification, and cursor advance" asserts reads===3 and the
+  cursor equals the arrived row.
+- No 60 s poll while subscribed: `waitCapMs` (:533-536) returns `reconcileMs` when
+  `pushMode()`; test "no poll timer while subscribed" asserts `sleeps` contains neither
+  ARRIVAL_WATCH_POLL_MS nor 60_000, and mode is push at the end.
+- Reconcile at 5 min: `reconcileDueAt = now()+reconcileMs` in `noteCycle` (:583) and
+  `until = Math.min(reconcileDueAt, now()+cap)` (:558). LISTENER_RECONCILE_POLL_MS=300_000
+  (wake.ts:14); the CHANNEL_ERROR test asserts `untils` includes now+300_000.
+- CHANNEL_ERROR/CLOSED -> 60 s poll with back-off: `pushMode()` reads
+  `snapshot().mode`, which is push only while connectionState==="subscribed"
+  (wake.ts:265-280); onSubscribeStatus sets errored/disconnected and, if it was
+  subscribed, `emitPending("state")` (wake.ts:465-473) so the 5-minute wait settles at
+  once instead of stalling. Back-off is `nextIdlePollMs(pollMs, emptyIdleStreak, ...)`,
+  and emptyIdleStreak only grows on a deadline while NOT push (:567-574), so a reconcile
+  tick cannot inflate the fallback.
+- Server page without `wake`: `applyWakeHint` early-returns (:539-541); test
+  "a server response without wake keeps today's poll and never joins" asserts
+  hasTopic===false, `fake.channels.length===0` (NO socket opened), sleeps===[60000],
+  reads===1.
+- Bursts coalesce: three `emitPending("wake")` collapse into one latched `pending`
+  (wake.ts:400-408); the burst test bounds wakeReads<=2.
+  GAP I MEASURED: deleting `if (coalesceMs > 0) await wait(coalesceMs);` (:562) leaves all
+  18 tests green, because the burst test stubs `sleep`. The 1 s WAKE_COALESCE_MS delay is
+  therefore correct-by-reading but has NO discriminating control. Not a defect (the
+  bound is enforced by the latch); it is an untested line.
+  NOT refuted.
+
+## 3. Topic containment
+- The topic exists only inside WakeSubscriber. arrival-watch reads `page.wake?.topic`
+  and hands it straight to `setTopic` (:539-547); it is never stored, formatted, or
+  passed to `emit`, `onRetry`, or `afterEmitBatch`.
+- Realtime's refusal text quotes the topic, and wake.ts:449-451 drops the `err`
+  argument entirely (`channel.subscribe((status) => this.onSubscribeStatus(status))`),
+  so the refusal string has no path to stderr. cli.ts `onRetry`/`onRecovery`
+  (:4069-4081) print only `formatArrivalRetryNotice(...)`, never the error text.
+- `cswarm resume` reads the process table; the topic is not in argv and `inbox --notify`
+  writes no status file.
+- Existing control: the notify test asserts neither the rendered line nor the JSON
+  payload contains the topic or `cswarm-wake:`, with a positive control
+  (`refused.message.includes(WAKE_TOPIC) === true`) on the same invocation.
+  WEAKNESS I NAME: that control cannot fail on this SHA, because the topic never reaches
+  the notification builder in the first place. There is NO test that would catch a future
+  stderr leak from the watcher. Spec §W5 assigns the redactor (`SECRET_SHAPE_RE`) to lane
+  L2c, which is not this lane, so this is a correctly-deferred gap, not a defect here.
+  NOT refuted.
+
+## 4. Lane A lock and dedupe intact; the named mutation fails the named test
+- Lock: cli.ts:4001-4009 still `arrivalWatchLockPath` + `acquireArrivalWatchLock`, and
+  :4090 still releases it in `finally` (now after `wake.close()`, which cannot throw:
+  wake.ts:373-386 swallows unsubscribe/disconnect failures). Tests "a second arrival
+  watcher for the same agent names the other pid" and "a stale arrival watch lock is
+  stolen when the other pid is gone" both pass.
+- Broadcast dedupe: `afterEmitBatch` -> `reportRenderedBroadcasts` (cli.ts:4061-4068) is
+  still called on every non-empty batch (:640-642), including on a wake-driven page; the
+  new `continue` on a full page (:646-649) is behaviour-identical to main's
+  `if (fullPage) await wait(0);` (verified against `git show d844aff:...`).
+- MUTATION RUN (row 1 of REVIEW.md): `waitCapMs` guard `if (pushMode())` ->
+  `if (wake !== undefined && wake.hasTopic)`. Test
+  "CHANNEL_ERROR resumes the 60s poll and SUBSCRIBED stops it" FAILS:
+    AssertionError: CHANNEL_ERROR must wait 60000ms, untils=1788653100000,1788653100000,1788653100000
+  17 pass / 1 fail. Restored; tree clean. NOT refuted.
+
+## 5. Shared subscriber; no parked wait re-introduced
+- `src/listener/wake.ts` is byte-identical to d844aff on this SHA (not in the diff).
+- The only entry the watcher uses is `next({until, signal})` (wake.ts:341-372). It cannot
+  install two waiters (it throws on a second), and the watcher has exactly one caller
+  (:559). `finishWait` (wake.ts:388-397) is the single teardown and holds the RAW
+  `resolve`, which is the 0.1.59 fix f5c7c31.
+- MUTATION RUN (row 2): replaced wake.ts with `git show f5c7c31^:src/listener/wake.ts`
+  (the pre-fix `finish` closure that guarded on `this.waiter`). Test
+  "delayed SUBSCRIBED unblocks the wait so a later wake can emit" TIMES OUT at 5003 ms.
+  Restored. So the lane's new test does hold the settle in place. NOT refuted.
+- Bounded-staleness check I did myself: after an error inside a wake cycle `pendingKind`
+  can still read "wake", so `reconcileDueAt` is not advanced and the next `until` is in
+  the past. `next()` then returns "deadline" immediately, which sets pendingKind="other"
+  and the following `noteCycle` advances the deadline. Worst case is ONE extra immediate
+  read, self-correcting — not a busy loop. NOT refuted.
+
+## 6. D-053, enumerations, identity, gate list
+- D-053: no `error.message` branching is added. The classifier is
+  `wakeErrorCodeFromSubscribeStatus(status)` on the Realtime status constant, and the
+  retry classifier is the pre-existing `isRetryableFollowError` / HTTP status
+  (:655-659). The only new `catch` (:542-545) is bare and swallows.
+- Enumerations: the diff adds no user-facing list. Every number is imported —
+  LISTENER_RECONCILE_POLL_MS, ARRIVAL_WATCH_POLL_MS, IDLE_POLL_MAX_MS,
+  LISTENER_WAKE_MODE_PUSH — and the tests assert against those same constants
+  (plus `assert.equal(ARRIVAL_WATCH_POLL_MS, 60_000)` as a drift pin).
+- Identity: single commit 0910550 authored `Yulan Bot <yulanbot@gmail.com>`; REVIEW.md
+  records `scripts/check-commit-identity.sh origin/main..HEAD` exit 0.
+- Gate list: NO new test file. `tests/support/arrival-watch.test.ts` is already named in
+  the literal `test` script (package.json:23), so `npm test` runs the new cases —
+  confirmed: 893 pass, up from the pre-lane count, with the 6 new case names present.
+  No package.json / test-gate-coverage edit is owed. CONFIRMED.
+
+## Spec drift I record (not a defect in this lane)
+Spec §4.1 says the watcher "poll drops from 25 s ... and stays 25 s while not
+[subscribed]". The code and tests use ARRIVAL_WATCH_POLL_MS = IDLE_POLL_MAX_MS = 60_000
+(src/cloud/idle-poll.ts:10-12), which is main's value after lane A. The lane matches the
+code, not the spec sentence; the spec's "25 s" is stale and should be corrected in the
+document.
+
+## NOT established by this arm
+- No live listener, no local Supabase, no production, no `--linked`. I did not reproduce
+  REVIEW.md's 2440 ms local round trip; I take it as the author's claim, not mine.
+- `test:p1-local` / `test:p1-server` / `check:edge` were not run (no stack, not this
+  lane's gates). `npm run check:tests` was not run separately; `tsc --noEmit` was.
+- Real-clock behaviour: every new test freezes `now` and stubs `sleep`, so the 1 s
+  coalesce delay, the 300 s reconcile timer, and Phoenix heartbeat timing are unmeasured
+  in-suite (see the §2 gap).
+- Topic redaction across the five host redactors (spec lane L2c) — out of scope here and
+  still owed before "the topic never appears in logs" is code-enforced.
+- `cswarm resume` against a live notify process carrying a topic.
+
+VERDICT: PASS

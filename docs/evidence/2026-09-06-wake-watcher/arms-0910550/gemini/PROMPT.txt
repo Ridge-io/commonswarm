@@ -1,0 +1,42 @@
+You are an inversion review arm for CommonSwarm lane L5 (inbox --notify wake watcher). Author family is Grok. You are Gemini. Read-only. Do not edit files. Do not merge.
+
+SHA (bind the verdict to this exact commit, not the branch name):
+09105507cc0c299d517436762c98d641daec31f4
+
+Worktree:
+/private/tmp/claude-501/-Users-yulanbot-Developer-Ridge-io-cloud-swarm/a866e6cd-5d6d-477f-af6a-740cd30407ed/scratchpad/lane-wake-watcher
+
+Diff:
+/private/tmp/claude-501/-Users-yulanbot-Developer-Ridge-io-cloud-swarm/a866e6cd-5d6d-477f-af6a-740cd30407ed/scratchpad/lane-wake-watcher-arms/09105507cc0c299d517436762c98d641daec31f4/DIFF.patch
+
+Review:
+/private/tmp/claude-501/-Users-yulanbot-Developer-Ridge-io-cloud-swarm/a866e6cd-5d6d-477f-af6a-740cd30407ed/scratchpad/lane-wake-watcher-arms/09105507cc0c299d517436762c98d641daec31f4/REVIEW.md
+
+Owned files on this SHA: src/cloud/arrival-watch.ts, src/cli.ts (notify only), tests/support/arrival-watch.test.ts.
+src/listener/wake.ts is NOT changed on this SHA (hang fix is already on main as f5c7c31).
+
+Failure-by-default. Each item needs file:line plus a concrete counterexample, or "cannot determine". An empty PASS is not a review.
+
+1. After CHANNEL_ERROR, is the wait cap the 60s ARRIVAL_WATCH_POLL_MS poll, and after SUBSCRIBED is it LISTENER_RECONCILE_POLL_MS? Quote waitCapMs. What happens if someone removes the pushMode() guard?
+
+2. If the inbox page has no wake field, does the watcher never call setTopic, never open a Realtime channel, and still idleWait at 60s?
+
+3. D-053: does this lane branch on error.message for Realtime or read failures? CHANNEL_ERROR is a status code. Quote the classifier.
+
+4. Can the wake topic appear in formatArrivalNotification, the JSON notify payload, retry stderr, or argv that resume would see?
+
+5. Does arrival-watch.ts import or call claim_agent_inbox / ack_agent_delivery?
+
+6. Three wakes in one burst: what bounds reads at two (latch in WakeSubscriber.pending, not a typed list)?
+
+7. The delayed-SUBSCRIBED test: if finishWait again nulls this.waiter before resolve, does that test time out? That hang is on main already; this SHA must not reintroduce it.
+
+8. User-facing enumerations: any typed list of modes or poll intervals that is not built from LISTENER_WAKE_MODE_PUSH / ARRIVAL_WATCH_POLL_MS / LISTENER_RECONCILE_POLL_MS?
+
+9. Live control claimed 2440ms arrival and grep -c cswarm-wake: = 0 with a positive control of 1. What would that grep return if the topic were in the notify line? Did the author measure the log file, not a name?
+
+End with exactly one line:
+VERDICT: PASS
+or
+VERDICT: FAIL
+followed by the defect list. Absence of VERDICT is not a review.

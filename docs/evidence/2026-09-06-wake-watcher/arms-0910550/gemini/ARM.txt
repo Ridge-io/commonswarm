@@ -1,0 +1,67 @@
+Here is the inversion review for the L5 wake watcher arm on SHA `09105507cc0c299d517436762c98d641daec31f4`.
+
+1. **After CHANNEL_ERROR, is the wait cap the 60s ARRIVAL_WATCH_POLL_MS poll, and after SUBSCRIBED is it LISTENER_RECONCILE_POLL_MS? Quote waitCapMs. What happens if someone removes the pushMode() guard?**
+   Yes. After `CHANNEL_ERROR`, `pushMode()` returns false, routing the wait back to the 60s default poll (`nextIdlePollMs`). After `SUBSCRIBED`, it stays in push mode, correctly returning the 5-minute reconcile poll.
+   ```typescript
+     const waitCapMs = (): number => {
+       if (pushMode()) return reconcileMs;
+       return nextIdlePollMs(pollMs, emptyIdleStreak, IDLE_POLL_MAX_MS);
+     };
+   ```
+   If the `pushMode()` guard were removed (e.g., just checking `wake.hasTopic`), a `CHANNEL_ERROR` would cause the watcher to permanently poll at 5-minute intervals (since it still has a topic attached), breaking the 60s recovery fallback.
+
+2. **If the inbox page has no wake field, does the watcher never call setTopic, never open a Realtime channel, and still idleWait at 60s?**
+   Yes. In `src/cloud/arrival-watch.ts`:
+   ```typescript
+     const applyWakeHint = (page: AgentSignalPage): void => {
+       const topic = page.wake?.topic;
+       if (topic === undefined || wake === undefined) return;
+       try {
+         wake.setTopic(topic);
+       } catch {
+         // Parsed hints are valid; a closed subscriber is ignored.
+       }
+     };
+   ```
+   Without a topic, `applyWakeHint` early-returns, never calls `setTopic`, and never dials out to Realtime. The `waitCapMs` logic will safely default back to 60s (`nextIdlePollMs`).
+
+3. **D-053: does this lane branch on error.message for Realtime or read failures? CHANNEL_ERROR is a status code. Quote the classifier.**
+   No. Realtime failures do not branch on `error.message`. They specifically branch on the status code `REALTIME_SUBSCRIBE_STATUS.CHANNEL_ERROR`. 
+   From `src/listener/wake.ts`:
+   ```typescript
+   export function wakeErrorCodeFromSubscribeStatus(
+     status: string,
+   ): WakeErrorCode | null {
+     switch (status) {
+       case REALTIME_SUBSCRIBE_STATUS.CHANNEL_ERROR:
+         return "channel_error";
+       case REALTIME_SUBSCRIBE_STATUS.CLOSED:
+         return "closed";
+       case REALTIME_SUBSCRIBE_STATUS.TIMED_OUT:
+         return "timed_out";
+       default:
+         return null;
+     }
+   }
+   ```
+   Likewise, read failures in `arrival-watch.ts` strictly use `followHttpDetails(error)` rather than manually branching on text.
+
+4. **Can the wake topic appear in formatArrivalNotification, the JSON notify payload, retry stderr, or argv that resume would see?**
+   No. The `wake` field exists on the root `AgentSignalPage`, not the individual `SignalRecord` entries processed by the watcher. `formatArrivalNotification` and the JSON output map directly off the `SignalRecord`, so the wake topic string is never passed to them. The test suite strictly validates this (`assert.equal(line.includes(WAKE_TOPIC), false);`).
+
+5. **Does arrival-watch.ts import or call claim_agent_inbox / ack_agent_delivery?**
+   No. The `"arrival-watch source never imports claim or ack"` test actively crawls the file source to ensure `claim_agent_inbox`, `ack_agent_delivery`, and `./delivery.js` are never included.
+
+6. **Three wakes in one burst: what bounds reads at two (latch in WakeSubscriber.pending, not a typed list)?**
+   In `src/listener/wake.ts`, `pending` is a simple latch scalar (`private pending: WakeWaitReason | null = null;`), not an array. Multiple rapid wakes continuously overwrite `this.pending = "wake"`. This coalesces multiple pending events, bounding reads to at most two (the ongoing read, plus one latched cycle).
+
+7. **The delayed-SUBSCRIBED test: if finishWait again nulls this.waiter before resolve, does that test time out? That hang is on main already; this SHA must not reintroduce it.**
+   Yes, nullifying `this.waiter` before `resolve` would swallow the fulfillment and permanently hang the `await wake.next()` cycle, timing the test out. Because `src/listener/wake.ts` is untouched by this SHA, the structural fix already placed on `main` is perfectly preserved.
+
+8. **User-facing enumerations: any typed list of modes or poll intervals that is not built from LISTENER_WAKE_MODE_PUSH / ARRIVAL_WATCH_POLL_MS / LISTENER_RECONCILE_POLL_MS?**
+   No. The interval/cap generation relies completely on the imported `ARRIVAL_WATCH_POLL_MS` and `LISTENER_RECONCILE_POLL_MS` variables. No new hardcoded literal strings or arrays for polling have been introduced here.
+
+9. **Live control claimed 2440ms arrival and grep -c cswarm-wake: = 0 with a positive control of 1. What would that grep return if the topic were in the notify line? Did the author measure the log file, not a name?**
+   If the topic string reached the log payload, `grep -c cswarm-wake: notify.log` would have printed `1` or greater. By measuring exactly `0` on the actual `.log` and `.err` files, while proving that the grep pipeline itself would catch `cswarm-wake:`, the author confirms they measured the actual file contents (not just verifying a name definition).
+
+VERDICT: PASS
