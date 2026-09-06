@@ -28,7 +28,7 @@ Going forward at the measured 24,000 idle polls/seat/day: 3 × 24,000 = 72,000 r
 
 `audit_log` is never purged. No migration in this lane names that table: no trigger change, no index, no DELETE, no config key. Historical idle-poll audit rows (662 MB) stay as a one-time cost. Going forward idle polls write none.
 
-`idempotency_keys` already had `swarm-purge-idempotency-keys`. No second job. The table has no command-kind column. One migration (`20260906000001`) sets `claim_idempotency_retention_days = 2` (floor 2) for ids that match `claimCommandId()`: `command_id ~ '^claim_[0-9a-f]{32}_[0-9a-z]+$'` (32 lowercase hex, then `_`, then a base-36 ordinal). Other keys keep `GREATEST(30, idempotency_retention_days)`. The predicate `LIKE 'claim_agent_inbox_%'` never matches live client ids, so it is not used. At the measured 24,000 idle polls/seat/day, a 30-day claim-key window would hold 11.52 M rows for 16 seats; a 2-day window holds 768,000. Going forward idle polls write no key, so the 2-day window only bounds persisted (non-empty) claims.
+`idempotency_keys` already had `swarm-purge-idempotency-keys`. No second job. The table has no command-kind column. One migration (`20260906000001`) sets `claim_idempotency_retention_days = 2` (floor 2) for ids that match `claimCommandId()`: `command_id ~ '^claim_[0-9a-f]{32}_[0-9a-z]+$'` (32 lowercase hex, then `_`, then a base-36 ordinal). Other keys keep `GREATEST(30, idempotency_retention_days)`. The predicate `LIKE 'claim_agent_inbox_%'` never matches live client ids, so it is not used. At the measured 24,000 idle polls/seat/day, a 30-day claim-key window would hold 11.52 M rows for 16 seats; a 2-day window holds 768,000. Going forward idle polls write no key, so the 2-day window only bounds persisted (non-empty) claims. The zero-arg purge loops at most 200 batches of 5000 = 1 M rows per nightly run. Production holds ~1.47 M keys, so the first apply drains over two nights.
 
 ## file_versions quota query
 
@@ -61,3 +61,4 @@ EXPLAIN ANALYZE, large local seed (4,084 rows in one workspace): Seq Scan, 0.986
 - Age mix of the production 1.47 M idempotency keys (2-day eligible count is a rate projection).
 - A live 0.1.56 listener pointed at this worktree's edge.
 - `test:p1-local` human-seen-browser (Chrome POST count flake, not this lane).
+- Empty-queue `claim_agent_inbox` skips `checkDeliveryRateLimit` (`mustLimit` is false). An agent token with an empty queue has no server-side claim ceiling; each request still runs the claim function's three UPDATEs. Ruled acceptable for now. The next lane (`push`) is where that ceiling returns.
