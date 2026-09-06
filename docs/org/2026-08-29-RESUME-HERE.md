@@ -2351,3 +2351,20 @@ proof-first per seat; any seat that cannot be moved is left for the operator in 
 Lane A round 1 ended at 4cfff7b (8 commits; its Gemini arm FAILed on it) and round 2 runs with
 the addendum in the same grok session (`--continue`); round 1's "purge idle claim audits" commit
 is retracted by the addendum (audit_log stays append-only).
+
+## 2026-09-06 05:0x UTC — spec B on main (e245bcd); the push-delivery build starts
+
+CSwarmStrategist delivered `docs/design/2026-09-06-PUSH-DELIVERY.md` at consensus-with-bounds
+(Opus PASS 93254bc, Grok PASS 82bbe7b, Gemini PASS a793eaf; Codex FAIL on 22e2bea folded, then
+cut off by its limit). Design: Postgres trigger → content-free wake on a private per-principal
+Realtime topic `cswarm-wake:{wake_id}` (anon key + RLS policy) → listener claims; reconcile every
+5 min subscribed / 15 s not; empty claims persist nothing; idle seat ≈53,800 → ≈2,200 edge calls
+a day. Merged to `main` as `e245bcd` (docs and evidence only).
+
+Lanes per §6, authors Grok/Gemini/Opus (Codex when its limit lifts, 02:32 local): L0 = lane A
+(Grok, round 4 at d5cc936 → fixing the retention predicate; round 5 brief ready for the Opus
+arm's read-health finding); L1 (empty-claim persistence) is COVERED by lane A's own work, so L2
+(wake migration) starts when lane A lands and frees the local database; L2c (topic redaction,
+client-only) started now under Grok in `lane-wake-redaction`; then L2b, L3, L4 (the client, Opus
+review on every SHA), L5, L6 (Gemini, site), L7, L8. One local database at a time; §9's four-item
+hosted-privilege check runs before L2's migration reaches production.
