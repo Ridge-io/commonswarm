@@ -2519,3 +2519,14 @@ array is uncovered; the workspace id is captured and generation-guarded at every
 carries the subscription (1 match live, 1 local). Not established: a live signed-in browser join on
 hosted Realtime (the tests used a fake client); the operator's next visit to `/app` is that control —
 the feed should update without the 2 s poll (Network tab shows no 2 s `read` calls while connected).
+
+## 2026-09-06 07:xx UTC — L4 round 2 (9986f19): Gemini PASS, Opus FAIL verified; round 3 running
+
+Round 2 fixed the inert budget (Opus's own probe: 70 claims/20 reads → 51 claims/1 read) and every nit
+with a discriminating test. Opus FAIL on a defect the fix introduced: a subscribed listener paused by its
+own 50/min budget prints "poll every 15s. Realtime not connected (rate_limited)", both clauses false,
+the server-429 code reused for the client pause (`src/listener/wake.ts:212`, `:259-266`;
+`tests/listener-wake.test.ts:625` pins the wrong code). Round 3 (`brief-wake-client-ROUND3.md`): a
+distinct `wake_budget` code in the code enumeration, a third sentence branch that says what is true
+and what happens next, the pinned test fixed to fail on the old code. Both arms rerun on the new SHA.
+L5 brief (`brief-wake-watcher.md`) and L7 brief (`brief-wake-measure.md`) are written and wait for L4.
