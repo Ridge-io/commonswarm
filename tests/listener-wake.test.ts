@@ -379,6 +379,17 @@ test("wake hint parser accepts the closed object and omits 0.1.57 silence", () =
   assert.throws(() => parseOptionalWakeHint("cswarm-wake:x"));
 });
 
+test("parseOptionalWakeHint accepts unknown keys and drops them", () => {
+  const parsed = parseOptionalWakeHint({
+    topic: WAKE_TOPIC,
+    event: WAKE_EVENT,
+    extra: 1,
+    nested: { keep: false },
+  });
+  assert.deepEqual(parsed, { topic: WAKE_TOPIC, event: WAKE_EVENT });
+  assert.equal(parsed !== undefined && "extra" in parsed, false);
+});
+
 test("Realtime subscribe statuses map by code, never by error.message", () => {
   assert.equal(
     wakeErrorCodeFromSubscribeStatus(REALTIME_SUBSCRIBE_STATUS.CHANNEL_ERROR),
