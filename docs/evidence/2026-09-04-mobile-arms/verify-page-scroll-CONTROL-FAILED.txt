@@ -1,0 +1,21 @@
+===== 390x844
+{
+ "state": "signed-out",
+ "hasVV": true,
+ "rootOverflow": "visible",
+ "scrollableHeight": 2844,
+ "controlA_immediate": 0,
+ "controlA_docEl": 0,
+ "controlA_afterDocElSet": 0,
+ "bodyScrollTop": 0,
+ "docElClientH": 844,
+ "docElScrollH": 2844,
+ "bodyOverflow": "clip visible",
+ "htmlOverflow": "visible",
+ "controlA_afterScrollNoEvent": 0,
+ "beforeEvent": 0,
+ "afterVisualViewportResize": 0,
+ "afterVisualViewportScroll": 0,
+ "channel_rootOverflow": "hidden",
+ "channel_afterScroll": 0
+}

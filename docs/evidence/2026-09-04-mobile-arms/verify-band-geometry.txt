@@ -1,0 +1,139 @@
+===== 390x844
+{
+ "rootFontSize": "16px",
+ "bodyFontSize": "16px",
+ "appBar": {
+  "top": 0,
+  "bottom": 73,
+  "left": 0,
+  "right": 390,
+  "h": 73,
+  "w": 390
+ },
+ "channel": {
+  "top": 73,
+  "bottom": 844,
+  "left": 0,
+  "right": 390,
+  "h": 771,
+  "w": 390
+ },
+ "channelHead": {
+  "top": 73,
+  "bottom": 125,
+  "left": 195.5,
+  "right": 390,
+  "h": 52,
+  "w": 194.5
+ },
+ "rosterPill": {
+  "top": 77,
+  "bottom": 121,
+  "left": 243.5,
+  "right": 374,
+  "h": 44,
+  "w": 130.5
+ },
+ "toolbar": {
+  "top": 73,
+  "bottom": 113,
+  "left": 0,
+  "right": 390,
+  "h": 40,
+  "w": 390
+ },
+ "filters": {
+  "top": 73,
+  "bottom": 113,
+  "left": 16,
+  "right": 210.2,
+  "h": 40,
+  "w": 194.2
+ },
+ "feedList": {
+  "top": 73,
+  "bottom": 4653.4,
+  "left": 0,
+  "right": 390,
+  "h": 4580.4,
+  "w": 390
+ },
+ "firstMessage": {
+  "top": 113,
+  "bottom": 225.2,
+  "left": 0,
+  "right": 390,
+  "h": 112.2,
+  "w": 390
+ },
+ "firstMessageBody": {
+  "top": 129,
+  "bottom": 209.2,
+  "left": 60,
+  "right": 374,
+  "h": 80.2,
+  "w": 314
+ },
+ "feedPaddingTop": "40px",
+ "messagePaddingTop": "16px",
+ "withLoadOlder": {
+  "more": {
+   "top": 73,
+   "bottom": 197,
+   "left": 0,
+   "right": 390,
+   "h": 124,
+   "w": 390
+  },
+  "feedList": {
+   "top": 197,
+   "bottom": 4777.4,
+   "left": 0,
+   "right": 390,
+   "h": 4580.4,
+   "w": 390
+  },
+  "firstMessage": {
+   "top": 237,
+   "bottom": 349.2,
+   "left": 0,
+   "right": 390,
+   "h": 112.2,
+   "w": 390
+  }
+ },
+ "scrolled": {
+  "scrollTop": 200,
+  "head": {
+   "top": 73,
+   "bottom": 125,
+   "left": 195.5,
+   "right": 390,
+   "h": 52,
+   "w": 194.5
+  },
+  "toolbar": {
+   "top": 73,
+   "bottom": 113,
+   "left": 0,
+   "right": 390,
+   "h": 40,
+   "w": 390
+  }
+ },
+ "atBottom": {
+  "scrollTop": 3996,
+  "lastMessage": {
+   "top": 656.1,
+   "bottom": 769.4
+  },
+  "head": {
+   "top": 73,
+   "bottom": 125,
+   "left": 195.5,
+   "right": 390,
+   "h": 52,
+   "w": 194.5
+  }
+ }
+}

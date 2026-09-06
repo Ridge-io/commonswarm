@@ -1,0 +1,138 @@
+I'll start by reading the full review prompt and the component plus tests, then check each claimed behavior against the code.The prompt is truncated. I'll pull the rest of the diff and the current component so I can check the claims against the actual code.I have the full diff. Next I’ll read the live CSS and script around the overlay, draft flush, and viewport sync.**BLOCKER — `window.scrollTo(0, 0)` is not limited to the channel shell.**
+
+`syncDashboardViewport` resets the layout viewport on every visual-viewport frame if `scrollX`/`scrollY` are not 0:
+
+```2633:2651:site/src/components/app/LiveDashboard.astro
+    const syncDashboardViewport = (): void => {
+      viewportSyncFrame = 0;
+      if (window.scrollX !== 0 || window.scrollY !== 0) window.scrollTo(0, 0);
+      const viewport = window.visualViewport;
+      if (!viewport) return;
+      // ...
+    };
+    window.addEventListener("resize", requestDashboardViewportSync);
+    window.visualViewport?.addEventListener("resize", requestDashboardViewportSync);
+    window.visualViewport?.addEventListener("scroll", requestDashboardViewportSync);
+```
+
+Gate: only `scrollX/scrollY !== 0`. No `data-state === "channel"`. No `visualViewport.scale === 1`. No keyboard check.
+
+`overflow: hidden` and the fixed shell height apply only in channel state:
+
+```6349:6354:site/src/components/app/LiveDashboard.astro
+  .dashboard[data-state="channel"],
+  .dashboard[data-state="channel"] .dashboard__root {
+    block-size: var(--dashboard-viewport-height, 100dvh);
+    min-block-size: 0;
+    overflow: hidden;
+  }
+```
+
+Sign-in and create still live in this same script (`LiveDashboard.astro:34-60`, `LiveDashboard.astro:105-132`). `.dashboard__gateway` is `min-block-size: 100svh` (`LiveDashboard.astro:6409-6416`). Those pages scroll. iOS scrolls the layout viewport to keep a focused field on screen — the same movement this handler undoes. Focusing the email or workspace-name field with the keyboard open then jumps the page to `0,0` and can leave the field behind the keyboard.
+
+Pinch-zoom pan that moves the layout viewport hits the same path.
+
+---
+
+**SHOULD-FIX — overlay padding does not cover the floating roster (Q1).**
+
+Filter clearance is `2.5rem` on the list and on “load older”:
+
+```10204:10243:site/src/components/app/LiveDashboard.astro
+    .dashboard__feed-toolbar {
+      min-block-size: 2.5rem;
+      margin-block-end: -2.5rem;
+      ...
+    }
+    .dashboard__feed {
+      padding-block-start: 2.5rem;
+    }
+    .dashboard__feed-more {
+      padding-block-start: 2.5rem;
+    }
+```
+
+The roster button is `min-block-size: 2.75rem` (`LiveDashboard.astro:8066-8067`). The head adds `padding: var(--s-1) var(--s-4)` and `--s-1` is `0.25rem` (`LiveDashboard.astro:10159`, `tokens.css:319`). Head height is about `3.25rem`. At rest, the top-right of the first message sits under the pill. The file itself says the roster reads on top of a message body (`LiveDashboard.astro:10165-10167`).
+
+No `scroll-padding` on `.dashboard__feed-view`. `scrollToNewest` sets `scrollTop = scrollHeight` (`LiveDashboard.astro:3660-3662`), so a long feed’s newest row is at the bottom and not under the band. A short feed is top-aligned; that one row is the newest and sits under the band.
+
+Files use `padding: clamp(var(--s-5), 4vw, var(--s-8))` (`LiveDashboard.astro:8593-8598`) — `--s-5` is `1.25rem`. Brain index uses `padding: var(--s-4)` (`LiveDashboard.astro:8711-8713`). The absolute head still paints over those views (`LiveDashboard.astro:10145-10154`). No extra top gap.
+
+Safe-area: the band is below the app bar, not under the notch. Overlay padding does not need `env(safe-area-inset-top)`.
+
+---
+
+**SHOULD-FIX — a pending draft can be dropped (Q2).**
+
+Flush exists on `pagehide`, `visibilitychange` → `hidden`, and textarea `blur` (`LiveDashboard.astro:5707-5715`). `persistComposerDraft` / `clearComposerDraft` cancel the timer (`LiveDashboard.astro:2291-2293`, `2302-2303`).
+
+| Path | Flush? |
+|---|---|
+| Reload / close / in-page nav | `pagehide` yes |
+| Tab background, iOS swipe-away | `visibilitychange` yes (kill with no event: lost) |
+| Leave the field | `blur` yes |
+| bfcache | `pagehide` yes |
+| Crash / no lifecycle event | lost (300ms window) |
+| Form submit / Enter send | `preventDefault`; send path |
+| Channel view Signals/Files/Brain | same textarea, timer kept |
+| Workspace switch (click/menu) | opening the menu focuses an item (`LiveDashboard.astro:2835`) → `blur` flushes first |
+| `resetComposer` then new `activeWorkspaceId` | **no persist, no `cancelComposerDraftTimer`** (`LiveDashboard.astro:2781-2804`, `4627-4649`) |
+| Send | textarea cleared at `LiveDashboard.astro:5920` **before** `clearComposerDraft` at `6005`. Hide/kill then `flushComposerDraft` writes `""` and `removeItem` (`2311-2313`) |
+
+Send used to leave the last persisted body in storage until success. Hide-during-post now stores empty.
+
+---
+
+**Q3 — no. Every CSS read has a fallback.**
+
+No `visualViewport`: JS returns at `LiveDashboard.astro:2637` and does not set the property. Readers use `var(--dashboard-viewport-height, 100dvh)` at `6309`, `6346`, `6351`, `6695`, `6744`, `9281`, `10250`, `10262`, `10270`, `10492`.
+
+---
+
+**Q5 — no unbounded growth.**
+
+Short-viewport cap is `min(calc(var(--dashboard-viewport-height, 100dvh) * 0.25), 5rem)` (`LiveDashboard.astro:10491-10492`). `390x508` is under `max-height: 36rem`. Bound is `min(127px, 5rem)`. `5rem` wins (~68–80px). The comment’s 64px need fits. JS still writes `scrollHeight`; CSS `max-block-size` plus `overflow-y: auto` (`LiveDashboard.astro:9282-9283`) clips it.
+
+---
+
+**SHOULD-FIX — weaker tests (Q6).**
+
+`assertDensity` for 390px used to cap the head:
+
+```
+measurement.header.height <= measurement.shell.channel.top
+```
+
+and `transcriptMin: 500` with `headerMax: 125`.
+
+Now it returns through `assertPhoneHeaderRule` (`mobile-feed-layout.observer.test.ts:387-389`):
+
+```
+measurement.header.height > 0 && measurement.header.top >= appBar - 0.5
+```
+
+(`mobile-feed-layout.observer.test.ts:372-376`). Floor, not ceiling. `channelBody.top <= appBar` (`365-368`) is true for any out-of-flow head, including one that covers half the transcript.
+
+Same swap in `the smallest phone keeps the whole header inside the app bar row` (`mobile-feed-layout.observer.test.ts:492-494`). Test name still says the head fits in the app bar row. The assertion no longer checks height.
+
+`composer-sprint-browser.observer.test.ts`: draft used to be read right after `inputEvent`. Now it only writes after `view.dispatchEvent(new view.Event("pagehide"))` (`365`). A path that flushes on `pagehide` and not on `visibilitychange`/`blur` still passes.
+
+Other observer edits retarget the new mechanism (grid-column `2`→`3`, `applyComposerResize`, measured viewport cap). Those keep their claim.
+
+---
+
+**Q7**
+
+`aria-current` is updated with `all("[data-workspace-view]")` (`LiveDashboard.astro:4892-4894`, `4550-4552`). Both button sets stay in step. Desktop hides the phone nav (`LiveDashboard.astro:8934-8941`); phone hides the rail lists (`LiveDashboard.astro:10059-10063`). No desync on the visible set.
+
+Titleblock uses clip, not `display: none` (`LiveDashboard.astro:10177-10188`). That `aria-labelledby` path is intact.
+
+`<p class="dashboard__user-menu-account">` is a child of `role="menu"` (`LiveDashboard.astro:360-372`). A menu’s children must be menuitems. Screen readers can skip that line. Phone account name is then only visual.
+
+`resetComposer` does not cancel `composerResizeFrame` / `composerResizeTimer`. Listeners are process-lifetime; this page does not unmount the script.
+
+---
+
+Q4 is the ship-stopper: ungated `scrollTo(0,0)` on every visual-viewport event.
+
+VERDICT: FAIL

@@ -1,0 +1,120 @@
+===== 1440x900
+{
+ "viewport": {
+  "w": 1440,
+  "h": 900
+ },
+ "settingsDisplay": "none",
+ "settingsHiddenAttr": false,
+ "settingsClientRects": 0,
+ "enumeratedItems": [
+  {
+   "label": "BUTTON|{\"newWorkspace\":\"\"}|+ New workspace",
+   "display": "grid",
+   "rects": 0
+  },
+  {
+   "label": "BUTTON|{\"workspaceSettingsItem\":\"\"}|⚙ Workspace settings",
+   "display": "none",
+   "rects": 0
+  }
+ ],
+ "railOverflow": {
+  "scrollWidth": 295,
+  "clientWidth": 295,
+  "right": 296,
+  "viewportWidth": 1440
+ },
+ "mobileViewDisplay": "none",
+ "railTabsDisplay": "none",
+ "afterFocusFirst": "BUTTON|{\"newWorkspace\":\"\"}|+ New workspace",
+ "afterEnd": "BUTTON|{\"newWorkspace\":\"\"}|+ New workspace",
+ "beforeArrowDown": "BUTTON|{\"newWorkspace\":\"\"}|+ New workspace",
+ "afterArrowDown1": "BUTTON|{\"newWorkspace\":\"\"}|+ New workspace",
+ "afterArrowDown2": "BUTTON|{\"newWorkspace\":\"\"}|+ New workspace",
+ "beforeTriggerArrowUp": "BUTTON|{\"workspaceMenuTrigger\":\"\"}|Sample",
+ "menuHiddenAfterTriggerArrowUp": false,
+ "afterTriggerArrowUp": "BUTTON|{\"workspaceMenuTrigger\":\"\"}|Sample",
+ "afterSecondTriggerArrowUp": "BUTTON|{\"workspaceMenuTrigger\":\"\"}|Sample",
+ "control_afterTriggerArrowDown": "BUTTON|{\"workspaceMenuTrigger\":\"\"}|Sample"
+}
+===== 390x844
+{
+ "viewport": {
+  "w": 390,
+  "h": 844
+ },
+ "settingsDisplay": "flex",
+ "settingsHiddenAttr": false,
+ "settingsClientRects": 0,
+ "enumeratedItems": [
+  {
+   "label": "BUTTON|{\"newWorkspace\":\"\"}|+ New workspace",
+   "display": "grid",
+   "rects": 0
+  },
+  {
+   "label": "BUTTON|{\"workspaceSettingsItem\":\"\"}|⚙ Workspace settings",
+   "display": "flex",
+   "rects": 0
+  }
+ ],
+ "railOverflow": {
+  "scrollWidth": 390,
+  "clientWidth": 390,
+  "right": 390,
+  "viewportWidth": 390
+ },
+ "mobileViewDisplay": "flex",
+ "railTabsDisplay": "flex",
+ "afterFocusFirst": "BUTTON|{\"newWorkspace\":\"\"}|+ New workspace",
+ "afterEnd": "BUTTON|{\"workspaceSettingsItem\":\"\"}|⚙ Workspace settings",
+ "beforeArrowDown": "BUTTON|{\"workspaceSettingsItem\":\"\"}|⚙ Workspace settings",
+ "afterArrowDown1": "BUTTON|{\"newWorkspace\":\"\"}|+ New workspace",
+ "afterArrowDown2": "BUTTON|{\"workspaceSettingsItem\":\"\"}|⚙ Workspace settings",
+ "beforeTriggerArrowUp": "BUTTON|{\"workspaceMenuTrigger\":\"\"}|Sample",
+ "menuHiddenAfterTriggerArrowUp": false,
+ "afterTriggerArrowUp": "BUTTON|{\"workspaceMenuTrigger\":\"\"}|Sample",
+ "afterSecondTriggerArrowUp": "BUTTON|{\"workspaceMenuTrigger\":\"\"}|Sample",
+ "control_afterTriggerArrowDown": "BUTTON|{\"workspaceMenuTrigger\":\"\"}|Sample"
+}
+===== 320x568
+{
+ "viewport": {
+  "w": 320,
+  "h": 568
+ },
+ "settingsDisplay": "flex",
+ "settingsHiddenAttr": false,
+ "settingsClientRects": 0,
+ "enumeratedItems": [
+  {
+   "label": "BUTTON|{\"newWorkspace\":\"\"}|+ New workspace",
+   "display": "grid",
+   "rects": 0
+  },
+  {
+   "label": "BUTTON|{\"workspaceSettingsItem\":\"\"}|⚙ Workspace settings",
+   "display": "flex",
+   "rects": 0
+  }
+ ],
+ "railOverflow": {
+  "scrollWidth": 320,
+  "clientWidth": 320,
+  "right": 320,
+  "viewportWidth": 320
+ },
+ "mobileViewDisplay": "flex",
+ "railTabsDisplay": "flex",
+ "afterFocusFirst": "BUTTON|{\"newWorkspace\":\"\"}|+ New workspace",
+ "afterEnd": "BUTTON|{\"workspaceSettingsItem\":\"\"}|⚙ Workspace settings",
+ "beforeArrowDown": "BUTTON|{\"workspaceSettingsItem\":\"\"}|⚙ Workspace settings",
+ "afterArrowDown1": "BUTTON|{\"newWorkspace\":\"\"}|+ New workspace",
+ "afterArrowDown2": "BUTTON|{\"workspaceSettingsItem\":\"\"}|⚙ Workspace settings",
+ "beforeTriggerArrowUp": "BUTTON|{\"workspaceMenuTrigger\":\"\"}|Sample",
+ "menuHiddenAfterTriggerArrowUp": false,
+ "afterTriggerArrowUp": "BUTTON|{\"workspaceMenuTrigger\":\"\"}|Sample",
+ "afterSecondTriggerArrowUp": "BUTTON|{\"workspaceMenuTrigger\":\"\"}|Sample",
+ "control_afterTriggerArrowDown": "BUTTON|{\"workspaceMenuTrigger\":\"\"}|Sample"
+}

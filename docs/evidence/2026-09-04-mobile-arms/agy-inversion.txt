@@ -1,0 +1,168 @@
+### Claim Falsifications & Attack Findings
+
+---
+
+### ATTACK A: Floating Band & Clearance Geometry
+**Verdict: BROKEN**
+- **Geometry Deficit:** In `site/src/components/app/LiveDashboard.astro:10161`, `.dashboard__channel-head` has `padding: var(--s-1) var(--s-4)` (`var(--s-1)` is `0.25rem` in `site/src/styles/tokens.css:319`, so vertical padding is `0.5rem`). Inside it, `.dashboard__roster-button` has `min-block-size: 2.75rem` (`LiveDashboard.astro:8066`). The total block height of `.dashboard__channel-head` is `0.5rem + 2.75rem = 3.25rem` (52px at 16px/rem). However, the clearance on `.dashboard__feed` is only `padding-block-start: 2.5rem` (`LiveDashboard.astro:10238`) (40px). The numbers do not add up: the floating roster cluster extends `0.75rem` (12px) past the clearance, directly overlapping the top right of the first message at rest.
+- **Double Clearance on "Load Older Updates":** `.dashboard__feed-more` carries `padding-block-start: 2.5rem` (`LiveDashboard.astro:10242`), and `.dashboard__feed` directly below it also carries `padding-block-start: 2.5rem` (`LiveDashboard.astro:10238`). When older updates are present (`data-feed-more` visible), the transcript list adds an extra 2.5rem of blank clearance between the button and the first message.
+- **Scroll-to-Bottom:** The composer sits in grid row 2 of `.dashboard__channel-body` (`LiveDashboard.astro:8301`), outside the scroller, so the bottom of the transcript is not covered by the composer. However, scrolling upward passes text and timestamps directly behind the floating chips and the transparent gaps between them.
+
+---
+
+### ATTACK B: 300ms Draft Debounce & Cross-Workspace Data Corruption
+**Verdict: BROKEN**
+- **Encountered Pathways:**
+  1. **Reload:** Flushed via `window.pagehide` (`LiveDashboard.astro:5707`).
+  2. **Tab Close:** Flushed via `visibilitychange` (`LiveDashboard.astro:5708`).
+  3. **bfcache:** Flushed via `window.pagehide` (`LiveDashboard.astro:5707`).
+  4. **iOS Swipe-Away:** Flushed via `visibilitychange` (`LiveDashboard.astro:5708`).
+  5. **Blur:** Flushed via `blur` handler (`LiveDashboard.astro:5711`).
+  6. **Send via Button Click:** Flushed (button click blurs textarea prior to submit).
+  7. **Send Failure:** Flushed via synchronous `persistComposerDraft()` in catch block (`LiveDashboard.astro:6043`).
+  8. **Sign-Out:** Dropped or flushed depending on whether blur fires; when `activeWorkspaceId = ""` in `resetWorkspaceSessionState` (`LiveDashboard.astro:4306`), any subsequent timer firing no-ops because `composerDraftKey()` returns `null`.
+  9. **Workspace Revocation:** Dropped (`resetWorkspaceSessionState` clears `activeWorkspaceId`).
+  10. **Browser Crash:** Dropped.
+  11. **Send via Enter Key (Data Loss):** In `LiveDashboard.astro:5781-5816`, pressing `Enter` submits via `requestSubmit()` while retaining focus on the textarea (`LiveDashboard.astro:5927`); `blur` never fires. Line `5920` clears `input.value = ""` while the network call `postBrowserSignal` is in flight. If the user begins typing a second message within that window, `scheduleComposerDraft()` sets a new timer. When the first message completes at line `6005`, `clearComposerDraft()` calls `cancelComposerDraftTimer()` (`LiveDashboard.astro:2292`) and deletes the draft key. **This cancels the debounce timer and deletes the draft for the message currently being typed.**
+  12. **SPA Workspace Switch (Cross-Workspace Draft Deletion):** In WebKit/macOS Safari, clicking a `<button>` does not blur a focused textarea. When switching workspaces via `openWorkspace(nextId)` (`LiveDashboard.astro:4590`):
+      - Line `4628` calls `resetComposer()`, which clears `input.value = ""` (`LiveDashboard.astro:2792`), but **fails to cancel `composerDraftTimer`**.
+      - Line `4649` sets `activeWorkspaceId = selected.id` to the new workspace.
+      - When the pending 300ms timer fires, `composerDraftKey()` (`LiveDashboard.astro:2270`) generates the key for the **new workspace**. Because `input.value` is `""`, `persistComposerDraft()` (`LiveDashboard.astro:2312`) runs `localStorage.removeItem(key)`. **The pending timer from Workspace A silently deletes the saved draft belonging to Workspace B.**
+
+---
+
+### ATTACK C: CSS Viewport Height Fallbacks
+**Verdict: HOLDS**
+- Every CSS site reading `--dashboard-viewport-height` provides `, 100dvh` as fallback:
+  - `LiveDashboard.astro:6309` (`.dashboard`)
+  - `LiveDashboard.astro:6346` (`.dashboard__root`)
+  - `LiveDashboard.astro:6351` (`.dashboard[data-state="channel"]`)
+  - `LiveDashboard.astro:6695` (`.dashboard__product`)
+  - `LiveDashboard.astro:6744` (`.dashboard__rail`)
+  - `LiveDashboard.astro:9281` (`.dashboard__composer textarea`)
+  - `LiveDashboard.astro:10250` (`.dashboard__roster-dialog`)
+  - `LiveDashboard.astro:10262` (`.dashboard__workspace-details-dialog`)
+  - `LiveDashboard.astro:10270` (`.dashboard__roster-dialog-list`)
+  - `LiveDashboard.astro:10492` (`.dashboard__composer textarea`)
+  `100dvh` is fully supported across modern browser engines.
+
+---
+
+### ATTACK D: `scrollTo(0, 0)` On VisualViewport & Window Resize
+**Verdict: BROKEN**
+- **Desktop Window Resize:** In `LiveDashboard.astro:2649`, `window.addEventListener("resize", requestDashboardViewportSync)` registers `syncDashboardViewport` globally. When a user resizes their desktop browser window at 1440x900, `syncDashboardViewport` runs line `2635`: `if (window.scrollX !== 0 || window.scrollY !== 0) window.scrollTo(0, 0)`.
+- **Fighting User on Scrollable Pages:** While `.dashboard[data-state="channel"]` has `overflow: hidden`, non-channel views (signed-out, auth choices, connect agent flow, create workspace) have `min-block-size: 100dvh` (`LiveDashboard.astro:6309`) and allow document scrolling. If a user scrolls down on any of these views and focuses a field or triggers a viewport change (or pinch-zooms on mobile), `syncDashboardViewport()` runs and forces `window.scrollTo(0, 0)`, immediately scrolling the user's active input off-screen.
+
+---
+
+### ATTACK E: Composer Bounds on Short Viewport (390x508)
+**Verdict: HOLDS**
+- Under `@media (max-width: 52rem) and (max-height: 36rem)` (`LiveDashboard.astro:10457`), `.dashboard__composer textarea` is styled with:
+  `max-block-size: min(calc(var(--dashboard-viewport-height, 100dvh) * 0.25), 5rem);` (`LiveDashboard.astro:10492`).
+- At 390x508:
+  - `508px * 0.25 = 127px`.
+  - `5rem = 80px` (at 16px root font size).
+  - `min(127px, 80px) = 80px`.
+- The composer is bounded by **`5rem` (80px)** at rest. If the software keyboard opens and reduces `--dashboard-viewport-height` below 320px, the `25%` rule engages.
+
+---
+
+### ATTACK F: New DOM in Old Machinery (Desktop Menu Keyboard Trap)
+**Verdict: BROKEN**
+- In `LiveDashboard.astro:240`, the diff adds:
+  `<button class="dashboard__workspace-create-button dashboard__workspace-settings-item" type="button" role="menuitem" data-workspace-settings-item>`
+- Above 52rem (desktop), CSS hides this button via `.dashboard__workspace-settings-item { display: none; }` (`LiveDashboard.astro:8944`).
+- In `LiveDashboard.astro:2809-2811`:
+  ```ts
+  const workspaceMenuItems = (): HTMLButtonElement[] =>
+    all<HTMLButtonElement>("[data-workspace-menu] [role='menuitemradio'], [data-workspace-menu] [role='menuitem']")
+      .filter((item) => !item.hidden);
+  ```
+  In DOM specifications, `item.hidden` reflects the HTML `hidden` attribute, **not** CSS `display: none`. Because the button lacks the `hidden` attribute, `workspaceMenuItems()` includes it on desktop.
+- **Keyboard Navigation Failure on Desktop:**
+  - **`ArrowUp` on Trigger:** `openWorkspaceMenu("last")` (`LiveDashboard.astro:5510`) selects `items.at(-1)` (`LiveDashboard.astro:2831`), which is the `display: none` button. Calling `.focus()` on a `display: none` element is a no-op in HTML. Focus fails to enter the menu.
+  - **`End` inside Menu:** Keydown handler (`LiveDashboard.astro:5521`) sets `nextIndex = items.length - 1` and calls `.focus()` on the `display: none` item. Focus is lost.
+  - **`ArrowDown` from Last Visible Item:** From `New workspace` (`items.length - 2`), `ArrowDown` (`LiveDashboard.astro:5524`) selects index `items.length - 1`. Focus call no-ops, stranding focus on `New workspace` and preventing wrap-around to the first workspace.
+
+---
+
+### ATTACK G: 150ms Mention Picker Debounce & Accidental Broadcasts
+**Verdict: BROKEN**
+- In `LiveDashboard.astro:2767-2779`, `scheduleMentionPicker()` debounces picker rendering by 150ms (`COMPOSER_MENTION_DEBOUNCE_MS`).
+- During that 150ms window, `picker.hidden` remains `true`.
+- In `LiveDashboard.astro:5784-5816`, if the user types `@Riv` and presses `Enter`:
+  - `if (picker && !picker.hidden)` evaluates to `false`.
+  - Autocomplete selection (`selectMention`) is bypassed entirely.
+  - Line `5812` evaluates `if (confirmKey)` and immediately invokes `one<HTMLFormElement>("[data-composer]")?.requestSubmit()`.
+- During submission, `composerAddressFrom("@Riv")` (`LiveDashboard.astro:5845`) checks for exact name matches on word boundaries (`LiveDashboard.astro:2215-2221`). Because `@Riv` is incomplete, `address.recipients` is empty.
+- Line `5858` falls back: `const recipients = address.recipients.length === 0 ? [{ kind: "everyone" }] : address.recipients`.
+- **Result:** The composer immediately posts `@Riv` as a **public broadcast to everyone** in the workspace instead of autocompleting the mention.
+
+---
+
+### ATTACK H: Caret Restoration on Restored Drafts
+**Verdict: BROKEN**
+- `composerCaret` initializes to `{ end: 0, start: 0 }` (`LiveDashboard.astro:2568`).
+- `restoreComposerDraft()` (`LiveDashboard.astro:2536`) sets `input.value = draft.body`, but does not update `composerCaret`.
+- On desktop, `focusComposerOnEntry` (`LiveDashboard.astro:2553`) programmatically calls `input.focus({ preventScroll: true })` whenever a workspace is opened. On any device, pressing `Tab` also brings focus without a pointer.
+- Because no pointer event occurred within 500ms, the `focus` listener (`LiveDashboard.astro:5719`) triggers `restoreComposerCaret()`:
+  ```ts
+  input.setSelectionRange(
+    Math.min(composerCaret.start, length),
+    Math.min(composerCaret.end, length),
+  );
+  ```
+- Because `composerCaret` is `{0, 0}`, `input.setSelectionRange(0, 0)` executes and `scrollComposerCaretIntoView()` scrolls to line 0.
+- **Result:** On every workspace entry or keyboard navigation into a restored draft, the caret is slammed to the start of the draft (`index 0`), causing new keystrokes to be prepended rather than appended.
+
+---
+
+### ATTACK I: Weakened Test Assertions
+**Verdict: BROKEN**
+1. **`mobile-feed-layout.observer.test.ts:383-407`:**
+   - *Before:*
+     ```ts
+     const limits = width === 1440
+       ? { headerMax: 125, headerMin: 110, ratioMin: 5, transcriptMin: 600 }
+       : { headerMax: 125, headerMin: 85, ratioMin: 4, transcriptMin: 500 };
+     assert.ok(measurement.combinedHeaderHeight >= limits.headerMin && measurement.combinedHeaderHeight <= limits.headerMax);
+     assert.ok(measurement.transcriptToHeaderRatio >= limits.ratioMin);
+     assert.ok(measurement.header.height <= measurement.shell.channel.top);
+     ```
+   - *After:*
+     Replaced with `assertPhoneHeaderRule`: bounds on `combinedHeaderHeight` and `transcriptToHeaderRatio` were completely deleted for mobile.
+2. **`mobile-feed-layout.observer.test.ts:488` (320x568 small phone test):**
+   - *Before:*
+     ```ts
+     assert.ok(measurement.header.height <= measurement.shell.channel.top);
+     ```
+   - *After:*
+     ```ts
+     assert.ok(measurement.header.height > 0 && measurement.header.top >= appBar - 0.5);
+     ```
+     The strict ceiling (`header.height <= app bar`) was replaced with `header.height > 0`, which provides zero upper-bound constraint.
+3. **`header-roster.observer.test.ts:218-261`:**
+   - Four structural grid assertions verifying column floors (`minmax(2rem, 1fr) auto minmax(2.75rem, auto)`), roster grid placement (`grid-column: 3; grid-row: 1`), action controls placement (`grid-column: 2; grid-row: 1`), and title text truncation (`text-overflow: ellipsis`) were deleted.
+4. **`composer-sprint-browser.observer.test.ts:365`:**
+   - Injected artificial `view.dispatchEvent(new view.Event("pagehide"))` prior to checking localStorage; previously, synchronous persistence on keystroke was verified without synthetic lifecycle simulation.
+
+---
+
+### Finding Rankings
+
+#### BLOCKER
+1. **Desktop Workspace Menu Keyboard Trap (`LiveDashboard.astro:2809-2811`):** `workspaceMenuItems()` includes CSS-hidden `<button data-workspace-settings-item>` because `!item.hidden` does not check CSS `display: none`. Breaks `ArrowUp` on trigger, `End` in menu, and `ArrowDown` wrap-around on desktop.
+2. **Data Loss & Cross-Workspace Draft Deletion (`LiveDashboard.astro:2781`, `4649`, `6005`):** `resetComposer()` fails to cancel pending draft timer on workspace switch, causing `persistComposerDraft()` to delete Workspace B's draft under Workspace B's key. Sending via Enter clears input while leaving a timer that deletes new draft text upon network completion.
+3. **Accidental Public Broadcast on Mention Autocomplete (`LiveDashboard.astro:5784-5816`):** Pressing Enter within 150ms of typing `@word` bypasses autocomplete due to debounce and submits a broadcast message to `{ kind: "everyone" }`.
+
+#### SHOULD-FIX
+4. **Caret Reset to Index 0 on Restored Drafts (`LiveDashboard.astro:2568`, `5717`):** Uninitialized `composerCaret` causes `restoreComposerCaret()` to reset selection to position 0 on desktop workspace entry and Tab navigation.
+5. **Clearance Deficit & Content Overlap (`LiveDashboard.astro:10161`, `10238`):** `3.25rem` floating channel head exceeds `2.5rem` transcript clearance padding by 12px, overlapping the first message at rest.
+6. **Unconstrained `window.scrollTo(0, 0)` Execution (`LiveDashboard.astro:2635`, `2649`):** Fires globally on desktop resize and forces scroll jumps on scrollable non-channel views.
+7. **Weakened Test Suite Assertions (`mobile-feed-layout.observer.test.ts`, `header-roster.observer.test.ts`):** Removed upper bounds on header heights, eliminated ratio floors, deleted grid placement checks, and added synthetic lifecycle dispatches.
+
+#### NIT
+8. **Consistent CSS Fallbacks (`LiveDashboard.astro:6309`):** All 10 `--dashboard-viewport-height` CSS usages have `100dvh` fallbacks.
+9. **Composer Short-Viewport Bounding (`LiveDashboard.astro:10492`):** Correctly bounded by `5rem` (80px) at 390x508.
+
+VERDICT: FAIL

@@ -1,0 +1,4 @@
+===== 1440x900
+{"found":true,"case1_caretAfterValueSet":[11,11],"case1_caretAfterKeyboardFocus":[0,0],"control_caretAfterPointerFocus":[0,0],"case2_caretRestored":[5,5]}
+===== 390x844
+{"found":true,"case1_caretAfterValueSet":[11,11],"case1_caretAfterKeyboardFocus":[0,0],"control_caretAfterPointerFocus":[0,0],"case2_caretRestored":[5,5]}
