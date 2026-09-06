@@ -12,9 +12,12 @@ import type { SignalRecord } from "../../src/cloud/command-client.js";
 import {
   acquireArrivalWatchLock,
   arrivalNotification,
+  arrivalSnippetSuffix,
   arrivalWatchAlreadyRunningSentence,
   ArrivalWatchAlreadyRunningError,
+  ARRIVAL_FULL_TEXT_COMMAND,
   ARRIVAL_RETRY_NOTICE_THRESHOLD_MS,
+  ARRIVAL_SNIPPET_MAX,
   ARRIVAL_WATCH_POLL_MS,
   createArrivalRetryNoticePolicy,
   formatArrivalNotification,
@@ -231,6 +234,83 @@ test("a multiline body still produces exactly one notification line", () => {
   const output = formatArrivalNotification(arrivalNotification(signal, WORKSPACE, TARGET));
   assert.equal(output.split("\n").length, 1);
   assert.match(output, /First line - second line third line/);
+});
+
+/* The notify line is a preview by design (one terminal line), but its --json form
+ * was the only copy an automated reader got, and it carried only the snippet. A
+ * surface that is a reader's only copy carries the whole body; a surface that
+ * shortens one names where the rest is. */
+test("--json carries the whole 8,000-char body beside the snippet", () => {
+  const body = "x".repeat(8_000);
+  const notification = arrivalNotification(
+    row("66666666-6666-4666-8666-666666666666", body, "2026-09-06T10:00:00.000Z"),
+    WORKSPACE,
+    TARGET,
+  );
+  const parsed = JSON.parse(JSON.stringify(notification)) as { body: string; snippet: string };
+  assert.equal(parsed.body, body);
+  assert.equal(parsed.body.length, 8_000);
+  assert.equal(parsed.snippet.length, ARRIVAL_SNIPPET_MAX);
+  assert.notEqual(parsed.snippet, parsed.body);
+});
+
+test("the readable line names the cut and the path to the full text, from run-time lengths", () => {
+  const body = "y".repeat(1_234);
+  const notification = arrivalNotification(
+    row("77777777-7777-4777-8777-777777777777", body, "2026-09-06T10:01:00.000Z"),
+    WORKSPACE,
+    TARGET,
+  );
+  const output = formatArrivalNotification(notification);
+  const expected = ` (${notification.snippet.length.toLocaleString("en-US")} of ${body.length.toLocaleString("en-US")} chars; full text: ${ARRIVAL_FULL_TEXT_COMMAND})`;
+  assert.equal(expected, ` (${ARRIVAL_SNIPPET_MAX} of 1,234 chars; full text: cswarm inbox)`);
+  assert.equal(output.includes(expected), true);
+  assert.equal(output.split("\n").length, 1);
+  assert.match(output, / — reply: cswarm reply /);
+  assert.equal(output.indexOf(expected) < output.indexOf(" — reply: "), true);
+});
+
+/* The boundary is the constant, not a typed number: at exactly ARRIVAL_SNIPPET_MAX
+ * nothing is cut and no phrase appears; one more character and both the ellipsis
+ * and the phrase appear. If the phrase were built from a typed 180 this pair
+ * would fail as soon as the constant moved. */
+test("no path phrase at exactly ARRIVAL_SNIPPET_MAX chars; present at one more", () => {
+  const atCap = arrivalNotification(
+    row("88888888-8888-4888-8888-888888888888", "z".repeat(ARRIVAL_SNIPPET_MAX), "2026-09-06T10:02:00.000Z"),
+    WORKSPACE,
+    TARGET,
+  );
+  assert.equal(arrivalSnippetSuffix(atCap), "");
+  assert.equal(atCap.snippet, atCap.body);
+  assert.equal(formatArrivalNotification(atCap).includes("full text:"), false);
+
+  const overCap = arrivalNotification(
+    row("99999999-9999-4999-8999-999999999999", "z".repeat(ARRIVAL_SNIPPET_MAX + 1), "2026-09-06T10:03:00.000Z"),
+    WORKSPACE,
+    TARGET,
+  );
+  const suffix = arrivalSnippetSuffix(overCap);
+  assert.equal(
+    suffix,
+    ` (${ARRIVAL_SNIPPET_MAX} of ${ARRIVAL_SNIPPET_MAX + 1} chars; full text: ${ARRIVAL_FULL_TEXT_COMMAND})`,
+  );
+  assert.equal(overCap.snippet.endsWith("…"), true);
+  assert.equal(formatArrivalNotification(overCap).includes(suffix), true);
+});
+
+/* Whitespace collapses before the cap applies, so a body over the cap in raw
+ * characters that fits on one line after collapse is not a cut and gets no phrase.
+ * The phrase reports a cut, not a raw length. */
+test("a body that fits after whitespace collapse is not reported as cut", () => {
+  const body = `${"w".repeat(100)}${" ".repeat(200)}${"w".repeat(50)}`;
+  assert.equal(body.length > ARRIVAL_SNIPPET_MAX, true);
+  const notification = arrivalNotification(
+    row("aaaaaaaa-1111-4111-8111-111111111111", body, "2026-09-06T10:04:00.000Z"),
+    WORKSPACE,
+    TARGET,
+  );
+  assert.equal(arrivalSnippetSuffix(notification), "");
+  assert.equal(notification.body, body);
 });
 
 test("restart neither replays an emitted row nor skips a row received while down", async () => {
