@@ -1,0 +1,42 @@
+You are a REVIEW ARM under D-036. Review one diff on an exact SHA. Try to REFUTE it. Read-only: do not edit files, do not commit, do not run destructive commands.
+
+REPO (read-only): /private/tmp/claude-501/-Users-yulanbot-Developer-Ridge-io-cloud-swarm/a866e6cd-5d6d-477f-af6a-740cd30407ed/scratchpad/lane-main-only
+SHA under review: 67863bd22e34c28e28baf919b4c8774331d31149 on branch lane/main-only.
+THE DIFF: /private/tmp/claude-501/-Users-yulanbot-Developer-Ridge-io-cloud-swarm/a866e6cd-5d6d-477f-af6a-740cd30407ed/scratchpad/lane-main-only/arms-67863bd22e34c28e28baf919b4c8774331d31149/DIFF.patch
+It is `git diff 4df2a5f822f68e4b0c69ac0194fa5512af2c4ec4..67863bd22e34c28e28baf919b4c8774331d31149`. Read the diff file first, then read the files it touches in the repo at that SHA. Quote back the exact lines you rely on (path:line plus the text).
+
+Operator ruling (2026-09-06, absolute): there should NEVER be headless agents answering on behalf of the main agent. A signal wakes the seat's live session. The listener claims the delivery into the seat's queue and must never start a model.
+
+Round-1 Gemini on 1e161cd FAIL findings the author says are now fixed. Re-check them; if they still hold, FAIL again:
+- C7: canary stalled-surfaced copy was typed; routeDecision was a typed "main"|"worker" union.
+- C9: tests kept old names while asserting no model.
+- C10: listen status JSON host_limits still named a worker on live route main.
+
+WHAT THE LANE CLAIMS NOW
+1. ListenerRouteMode is only "main", exported as LISTENER_ROUTE_MODES = ["main"] as const. Parser, usage, and every refusal sentence read that constant.
+2. Old status files with routeMode "worker"|"split" still PARSE and listen status reports them as legacy.
+3. No code path in runtime.ts or supervisor.ts starts a model. A fake model whose start() throws still reaches ready and queues pending-for-main.json.
+4. listen start accepted with hook OR inbox --notify lock (arrivalWatchLockHeld; never pgrep). Neither names both remedies from LISTENER_ATTENDANCE_SURFACES.
+5. Status names attending surface. None: "Signals queue and nothing wakes the session."
+6. Live-route host_limits comes from LISTENER_MAIN_HOST_LIMIT_CLAUSES, not worker copy.
+7. Canary stalled-surfaced Next line is listenerAttendanceSurfaceRemedy("hook", principalId).
+8. Host ACP files remain in the tree (declared follow-up).
+
+ATTACK THESE. For each, answer UPHELD / REFUTED / INCONCLUSIVE with path:line and a quoted snippet.
+
+C1. LISTENER_ROUTE_MODES is the single source. Adding "worker" fails the refusal test.
+C2. No start path bypasses listenerRouteConfiguration.
+C3. runtime/supervisor never call model.start(); quote the ready path.
+C4. instrumentModel.start cannot be reached from listen start.
+C5. Dead pid cannot pass as watcher; no pgrep; both remedies named from the constant.
+C6. Empty attendingSurfaces renders the none sentence; worker status renders LEGACY via renderListenerStatus.
+C7. No typed user-facing list of routes, surfaces, or remedies. Re-read attendance-canary.ts and host_limits.
+C8. This diff does not add a branch on error.message.
+C9. Tests that used to claim worker replies now have names matching the assertion.
+C10. Live route main status JSON host_limits does not claim a worker thinks or is prompted.
+
+A prose PASS with no attempted refutation is not a review. End with exactly one line:
+VERDICT: PASS
+or
+VERDICT: FAIL
+followed by nothing.

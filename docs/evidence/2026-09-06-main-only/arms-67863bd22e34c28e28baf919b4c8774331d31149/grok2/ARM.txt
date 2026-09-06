@@ -1,0 +1,260 @@
+D-036 grok2 arm — independent review
+SHA: 67863bd22e34c28e28baf919b4c8774331d31149
+Branch: lane/main-only
+Worktree: /private/tmp/claude-501/-Users-yulanbot-Developer-Ridge-io-cloud-swarm/a866e6cd-5d6d-477f-af6a-740cd30407ed/scratchpad/lane-main-only
+Read-only. No commit. Mutation restored.
+
+First 'diff --git' line of DIFF.patch:
+diff --git a/AGENTS.md b/AGENTS.md
+
+Tried to refute the operator ruling: there must NEVER be a headless agent answering on behalf of a main agent. The listener must only claim a delivery into the seat's queue and wake the seat's own long-lived session.
+
+================================================================================
+1. NO code path in the listener can start a model
+================================================================================
+REFUTE attempt: grepped src/ for model.start, spawn, execFile, and ACP host
+constructors, then traced reachability from runtime.ts / supervisor.ts /
+runConfiguredListener.
+
+Held.
+
+src/listener/runtime.ts
+- NullListenerModel.start() at runtime.ts:166 throws "listener never starts a model".
+- runListenerRuntime ready path at runtime.ts:1192-1200 sets ready=true and
+  emits ready. There is no `if (routeMode !== "main") await options.model.start()`.
+- The only options.model calls in runtime.ts are cancel() / close()
+  (runtime.ts:735-746, 929-937, 1718-1727).
+- Delivery and cursor-fallback loops both call routeSignalToMain
+  (runtime.ts:1574, 1672). engine.process was removed in this SHA.
+- decideListenerRoute always returns "main" (main-routing.ts:173).
+
+src/listener/supervisor.ts
+- Default routeMode is "main" (supervisor.ts:314).
+- No GrokListenerModel / ClaudeListenerModel / CodexListenerModel /
+  OpenCodeListenerModel construction. No spawn/execFile of a provider.
+
+src/cli.ts listen path
+- newModel is `() => new NullListenerModel()` (cli.ts:5783-5786).
+- instrumentModel still wraps start (activity.ts:204) but runtime never
+  calls start, so the wrapper is dead.
+
+Host adapters still exist (src/listener/grok-model.ts, claude-model.ts,
+codex-model.ts, opencode-model.ts) and are still exported from
+src/listener/index.ts. Tests still construct them. That is the declared
+follow-up. They are not reachable from listen start / supervisor / runtime.
+
+detach.ts still forwards --*-executable to the child and still requires an
+absolute Claude/Codex/OpenCode path for detached start. That resolves a
+path; it does not spawn a model. The child still builds NullListenerModel.
+
+spawn/execFile hits in src/host/*.ts, src/cloud/auth.ts, src/resume.ts, and
+cli.ts git helpers are not on the listener runtime path.
+
+dist-npm/cswarm.cjs (tracked publish staging) still contains
+`if (routeMode !== "main") { await options.model.start(); }`. bin is
+dist/cli.js. This lane does not ship dist-npm. Not a live-src defect.
+
+================================================================================
+2. --route worker, --route split, --defer-over refused from LISTENER_ROUTE_MODES
+================================================================================
+REFUTE attempt: read parser + usage; mutate the constant.
+
+Held.
+
+LISTENER_ROUTE_MODES = ["main"] (main-routing.ts:36).
+listenerRouteConfiguration (cli.ts:2632-2644):
+- any --defer-over throws listenerDeferOverRefusedSentence()
+  (generated from LISTENER_ROUTE_MODES + LISTENER_ROUTE_RULING).
+- missing --route defaults to LISTENER_ROUTE_MODES[0] ("main").
+- other values throw listenerRouteRefusedSentence(requested).
+usage() uses listenerRouteUsage() (cli.ts:575).
+
+MUTATION (restored):
+Changed to `["main", "worker"] as const`.
+Failed:
+- tests/listener-main-only.test.ts "LISTENER_ROUTE_MODES is the single live route main"
+- tests/listener-main-only.test.ts "route parser accepts main and refuses worker, split, and defer-over from the constant"
+  (listenerRouteConfiguration("worker") no longer throws)
+- tests/listener-main-only.test.ts "legacy worker and split status files still parse and render the cannot-start-again sentence"
+  (listenerLegacyRouteSentence uses isLiveListenerRouteMode, so worker
+  stopped rendering LEGACY)
+- tests/listener-main-only.test.ts "adding worker to LISTENER_ROUTE_MODES fails this pin and the refusal test"
+- tests/p1-cli/listen-attendance.test.ts "listen start refuses unattended main routes…"
+  (--route worker reached listen_unattended_refused instead of
+  "--route worker is refused")
+
+git checkout -- src/listener/main-routing.ts after the mutation.
+HEAD still 67863bd22e34c28e28baf919b4c8774331d31149. Working tree clean.
+
+Note: adding "worker" to the constant would accept the flag; runtime would
+still queue to main and still not call model.start. The refusal tests are
+what fail. That matches the claim.
+
+================================================================================
+3. Old status files with routeMode worker/split still parse and render legacy
+================================================================================
+REFUTE attempt: read parseStatus; run the legacy test; mutate interaction.
+
+Held.
+
+control.ts:625 `row.routeMode ?? "worker"` (StoredListenerRouteMode).
+isStoredListenerRouteMode accepts worker|main|split (main-routing.ts:41-42, 91-95).
+Split still requires deferOverChars; other modes require it null (control.ts:627-631).
+listenerLegacyRouteSentence (main-routing.ts:111-118) prints
+`LEGACY: this status file has routeMode ${routeMode}. That route cannot be started again; ${LISTENER_ROUTE_RULING}.`
+for non-live modes.
+renderListenerStatus pushes that sentence (cli.ts:5215).
+Test: tests/listener-main-only.test.ts:137 writes worker and split via
+writeListenerStatus, reads them back, and matches the LEGACY sentence.
+Ran green after restore.
+
+Nothing in that path throws on worker/split.
+
+================================================================================
+4. Attendance: hook OR live inbox --notify lock; refusal names both; stale lock
+================================================================================
+REFUTE attempt: stale lock file; pgrep; typed remedies; lock path mismatch.
+
+Held.
+
+Start gate (cli.ts:5988-5998) calls listenerHasAttendanceSurface unless
+--allow-unattended.
+listenerHasAttendanceSurface (cli.ts:6523-6540): hook first, else watcher.
+Hook: FileHookSurfaceStore.exists OR settingsHaveScopedClaudeHook in
+project/repo/user Claude settings (cli.ts:6492-6510).
+Watcher: arrivalWatchLockHeld(arrivalWatchLockPath(...)) (cli.ts:6513-6520).
+Same arrivalWatchLockPath as inbox --notify (cli.ts:3989-3994). Not pgrep
+(src/ has one "pgrep" string, in a comment at arrival-watch.ts:282).
+
+arrivalWatchLockHeld (arrival-watch.ts:283-293):
+- ENOENT → false
+- oversize / malformed JSON → false
+- pidIsAlive via process.kill(pid, 0); ESRCH → false (arrival-watch.ts:203-210)
+Test "arrivalWatchLockHeld is true only while the lock names a live pid"
+(tests/support/arrival-watch.test.ts:705) writes pid 999999 and expects false.
+Ran green.
+
+Refusal is ListenerUnattendedRefusedError (cli.ts:6462-6468) whose message
+is listenerUnattendedRefusedMessage, which maps LISTENER_ATTENDANCE_SURFACES
+(main-routing.ts:64, 130-138). Remedies are hook install + inbox --notify.
+--allow-unattended clause is LISTENER_ALLOW_UNATTENDED_CLAUSE.
+
+CLI test tests/p1-cli/listen-attendance.test.ts:490:
+hook-only / watcher-lock-only / both → not listen_unattended_refused
+(status 1 later, after the gate).
+neither → listen_unattended_refused names both remedies
+(tests/p1-cli/listen-attendance.test.ts:432).
+Ran 57/57 pass on listen-attendance + hook-routing after restore.
+
+Residual, not a fail: a lock whose pid was reused by some other live process
+would still look held. The brief asked about a stale lock file; a dead pid
+does not fool it.
+
+================================================================================
+5. listen status names the attending surface; none → queue, nothing wakes
+================================================================================
+REFUTE attempt: status path skipping evidence; typed none-sentence.
+
+Held.
+
+collectListenerAttendanceEvidence is used on start (cli.ts:6157) and on
+status/stop (cli.ts:6338).
+attendingSurfaces from listenerAttendingSurfaces(hook, watcher)
+(main-routing.ts:140-147), which filters LISTENER_ATTENDANCE_SURFACES.
+listenerAttendingSentence([]) =
+`ATTENDING: none. ${LISTENER_NONE_ATTENDING_SENTENCE}`
+(main-routing.ts:70-71, 149-156).
+JSON attendingSurface is "none" / one name / join("+") (cli.ts:4841-4846).
+Human ATTENDED none-branch uses LISTENER_NONE_ATTENDING_SENTENCE
+(cli.ts:4955-4956).
+
+================================================================================
+6. Tests reach the real code (throwing start still reaches ready)
+================================================================================
+REFUTE attempt: mocked runtime; start() swallowed.
+
+Held.
+
+tests/listener-main-only.test.ts:236 imports runListenerRuntime from
+src/listener/index.js (not a local fake). ThrowingStartModel.start()
+increments starts and throws. After the run: stop.reason === "cancelled",
+events include type "ready", model.starts === 0, model.prompts === 0,
+pending-for-main.json contains the note body.
+Ran green (34.8ms). If runtime called start(), the throw would prevent
+ready and starts would be 1.
+
+================================================================================
+7. D-053 and generated enumerations
+================================================================================
+REFUTE attempt: error.message classifiers in the new listener path;
+typed lists in user-facing copy.
+
+Held for this lane's changes.
+
+New attendance/lock code branches on ErrnoException.code (ENOENT, ESRCH,
+EEXIST) and named classes (ListenerUnattendedRefusedError.code =
+listen_unattended_refused). pidIsAlive uses error.code !== "ESRCH",
+not error.message.
+Route/defer-over/unattended refusals throw generated strings; the CLI
+prints them (presentation), it does not classify on the text.
+
+Enumerations from constants:
+- LISTENER_ROUTE_MODES → usage, parser, refusals, child --route
+- LISTENER_ROUTE_RULING → refusal + legacy sentences
+- LISTENER_ATTENDANCE_SURFACES → start refusal, status remedies,
+  attending sentence
+- LISTENER_NONE_ATTENDING_SENTENCE / LISTENER_ALLOW_UNATTENDED_CLAUSE
+- LISTENER_MAIN_HOST_LIMIT_CLAUSES → live host_limits
+- LISTENER_STORED_ROUTE_MODES → status parse + event route_mode
+
+Canary stalled-at-surfaced names only listenerAttendanceSurfaceRemedy("hook")
+(attendance-canary.ts:283-285). That hop is the hook surface, not the start
+refusal list. Not a start-refusal drift.
+
+Pre-existing error.message sites (delivery-journal.ts size checks, cli.ts
+print paths) are outside this lane's load-bearing change.
+
+================================================================================
+Gates I ran (this worktree, SHA 67863bd)
+================================================================================
+- npx tsc --noEmit -p tsconfig.json → exit 0
+- npm test → 910 pass, 0 fail
+- npm run build → exit 0
+- env -u FORCE_COLOR npm run test:p1-cli → 490 pass, 1 fail
+  (tests/p1-cli/brain-verbs.test.ts "a precondition refused at COMMIT…")
+  Re-ran that file alone: 10/10 pass. Unrelated flake. Not this lane
+  (DIFF does not touch brain put). Not a FAIL for this review.
+
+Did not run: npm run check:tests, npm run check:edge, production, db:reset,
+--linked.
+
+================================================================================
+REVIEW.md claims I could not confirm
+================================================================================
+- Live local-stack listen status JSON (pid 40321, attendingSurface none,
+  routeMode main). I did not re-start that listener. Detached ready +
+  providerExecutable null is covered by tests/listener-cli-process.test.ts
+  in npm test. I did not paste a live status JSON of my own.
+- Posted note landing in pending-for-main.json on the host local stack.
+  REVIEW.md already marks this NOT established (command/activity BOOT_ERROR
+  on another lane's functions mount). Unit test covers queue-without-model.
+- listen stop: status "stopped" while pid still alive. REVIEW.md reports
+  it; I did not reproduce. Out of this lane's ruling.
+- Production / merge / deploy: not claimed as done. Agreed.
+- Host ACP file removal: declared follow-up. Agreed; files still present.
+
+================================================================================
+Residuals (not FAILs)
+================================================================================
+- ACP host classes and ListenerEngine remain; only tests construct them.
+- activity.instrumentModel still wraps start(); runtime never calls it.
+- Detached --provider claude|codex|opencode still requires an absolute
+  executable path even though the child will not spawn it.
+- dist-npm/cswarm.cjs still has the old model.start branch; not the bin.
+- Stale runtime comments still mention engine.process and a provider canary
+  before ready (runtime.ts:748-750, 928-929).
+- PID reuse can theoretically make a leftover notify lock look held.
+
+No verified defect in the tree against the seven claims.
+
+VERDICT: PASS

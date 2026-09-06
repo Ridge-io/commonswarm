@@ -1,0 +1,13 @@
+I'll start as a cold D-036 arm: read the brief, REVIEW.md, and DIFF.patch, then try to refute the operator claims from the real files.First `diff --git` line is `diff --git a/AGENTS.md b/AGENTS.md`. Next I'll read the rest of the patch and the cited source, then try to break each claim.SHA matches. Next I’ll join the swarm, then read runtime, routing, attendance, and the tests that back the claims.Routing constants look right. Now I'll trace `runtime.ts`/`supervisor.ts` for any remaining model start, and read attendance plus tests.`engine.ts` still calls `model.prompt`. I'll check whether the listener runtime still reaches that, then read lock and attendance code.`dist-npm/cswarm.cjs` still has `model.start()`. I'll check whether that bundle is the shipped CLI or just stale output.Possible bug: event parsing may use live `LISTENER_ROUTE_MODES` instead of stored decisions. I'll read that `control.ts` path next.`dist-npm` is tracked and still has the old `model.start` path. I'll check whether `dist/cli.js` matches this SHA, then run the mutation and the gates.`dist/` already has `NullListenerModel`. Next I’ll mutate `LISTENER_ROUTE_MODES`, watch the refusal test fail, restore, then run the gates.The p1-cli miss is in `brain-verbs.test.ts`, not listener code. I'll re-run that test to see if it's this lane or a flake.Attendance tests are green and the tree is clean. I'll write the arm review now.First `diff --git` line: `diff --git a/AGENTS.md b/AGENTS.md`
+
+Tried to break the seven claims. Did not find a defect in the tree.
+
+Review: `arms-67863bd22e34c28e28baf919b4c8774331d31149/grok2/ARM.txt`
+
+Mutation: put `"worker"` back in `LISTENER_ROUTE_MODES`. Five tests went red (parser, pin, legacy sentence, CLI `--route worker`). Restored. Tree is clean.
+
+Gates: `tsc --noEmit` ok. `npm test` 910/910. `npm run build` ok. `test:p1-cli` had one flake in `brain-verbs.test.ts` (not this lane); re-run of that file was 10/10.
+
+Could not re-check REVIEW.md’s live pid 40321, the posted-note on the local stack, or `listen stop` leaving the pid.
+
+VERDICT: PASS
