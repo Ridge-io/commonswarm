@@ -3,10 +3,14 @@ import postgres from "npm:postgres@3.4.9";
 import {
   agentCredentialRevoked,
   loadAgentCredential,
-  authenticateAgentSession,
-  type AgentSessionProof,
+  enforceAgentSessionProof,
   type AgentAuthRow,
 } from "../_shared/agent-auth.ts";
+import {
+  isAgentSessionProofExempt,
+  parseAgentSessionProofHeaders,
+  type AgentSessionProofParse,
+} from "../../../src/cloud/session-wire.ts";
 import {
   ANSI_ESCAPE_GLOBAL_RE,
   sanitizeSignalText,
@@ -7251,7 +7255,7 @@ async function handleTransaction(
   body: RequestBody,
   verifiedHuman: VerifiedHuman | null,
   agentTokenHash: Uint8Array | null,
-  agentSessionProof: any | null,
+  sessionProofParse: AgentSessionProofParse,
 ): Promise<HttpResult> {
   const kind = commandKind(body);
   const commandId = String(body.command_id);
@@ -7275,27 +7279,32 @@ async function handleTransaction(
       );
       return { status: 401, body: { error: "unauthenticated" } };
     }
-    
-    if (auth.credentialKind === "agent") {
-      const isAcquire = kind === "acquire_agent_session";
-      const sessionResult = await authenticateAgentSession(
-        tx,
-        auth.actor.agent_principal!,
-        auth.agent!.principal_workspace_id,
-        agentSessionProof,
-        isAcquire
-      );
+
+    if (
+      auth.credentialKind === "agent" &&
+      !isAgentSessionProofExempt(kind)
+    ) {
+      const principalId = auth.actor.agent_principal;
+      const agent = auth.agent;
+      if (principalId === null || agent === undefined || agent === null) {
+        return { status: 401, body: { error: "unauthenticated" } };
+      }
+      const sessionResult = await enforceAgentSessionProof(tx, {
+        principalId,
+        workspaceId: agent.principal_workspace_id,
+        proofParse: sessionProofParse,
+      });
       if (!sessionResult.ok) {
         logCommandFailure(
           "command_pre_auth_failure",
           kind,
           "authn",
-          sessionResult.error
+          sessionResult.error,
         );
-        // The tests likely expect 401 unauthenticated for invalid session proof, but wait...
-        // The protocol specifies `x-cswarm-session-id`. Let's return 401 for session proof failures.
-        // We will refine if tests fail.
-        return { status: 401, body: { error: sessionResult.error } };
+        return {
+          status: sessionResult.status,
+          body: { error: sessionResult.error },
+        };
       }
     }
 
@@ -9434,24 +9443,7 @@ async function handlePostRequest(request: Request): Promise<Response> {
     return json(400, { error: "invalid_request" });
   }
 
-  const sessionId = request.headers.get("x-cswarm-session-id");
-  const sessionGeneration = request.headers.get("x-cswarm-session-generation");
-  const sessionKey = request.headers.get("x-cswarm-session-key");
-  let agentSessionProof = null;
-  if (sessionId && sessionGeneration && sessionKey) {
-    const generationNum = parseInt(sessionGeneration, 10);
-    if (
-      /^[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}$/i.test(sessionId) &&
-      !isNaN(generationNum) && generationNum > 0 &&
-      /^[a-zA-Z0-9\-_]{43}$/.test(sessionKey) // base64url of 32 bytes is 43 chars
-    ) {
-      agentSessionProof = {
-        sessionId,
-        generation: generationNum,
-        key: sessionKey
-      };
-    }
-  }
+  const sessionProofParse = parseAgentSessionProofHeaders(request.headers);
 
   const credential = bearer(request);
   if (!credential) {
@@ -9523,7 +9515,7 @@ async function handlePostRequest(request: Request): Promise<Response> {
       body,
       verifiedHuman,
       agentTokenHash,
-      agentSessionProof,
+      sessionProofParse,
     );
     /* S4: opportunistic purge-queue drain, AFTER the command's transaction and
      * in its own — a storage outage must never fail the command that happened

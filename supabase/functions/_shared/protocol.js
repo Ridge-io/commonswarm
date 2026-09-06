@@ -767,9 +767,6 @@ var HUMAN_ONLY_COMMANDS = /* @__PURE__ */ new Set([
   "disable_agent_management",
   "recover_agent_session"
 ]);
-var AGENT_SESSION_EXEMPT_COMMANDS = /* @__PURE__ */ new Set([
-  "acquire_agent_session"
-]);
 function isAgentScopeDenylisted(scope) {
   const words = scopeWords(scope);
   const has = (...values) => values.some((value) => words.has(value));
@@ -1602,7 +1599,6 @@ function planFileVersionWindow(name, liveCount, inFlightCount) {
   };
 }
 export {
-  AGENT_SESSION_EXEMPT_COMMANDS,
   AGENT_TOKEN_DEFAULT_TTL_MS,
   AGENT_TOKEN_MAX_TTL_MS,
   BRAIN_FILE_PREFIX,
@@ -1615,6 +1611,7 @@ export {
   FEEDBACK_CATEGORIES,
   FEEDBACK_CONTEXT_MAX_BYTES,
   FILE_VERSION_PRECONDITION_FAILED,
+  HUMAN_ONLY_COMMANDS,
   INVITATION_MAX_TTL_MS,
   RENEWAL_HORIZON_DEFAULT_MS,
   RENEWAL_HORIZON_MAX_MS,

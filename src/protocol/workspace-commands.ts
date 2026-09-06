@@ -375,7 +375,7 @@ export type WorkspaceDecision = WorkspaceDecisionAccepted | WorkspaceDecisionRej
  * agent may not issue is still listed here — adding renewal to the list, or
  * removing anything else from it, both break §2.3.
  */
-const HUMAN_ONLY_COMMANDS = new Set<WorkspaceCommand['kind']>([
+export const HUMAN_ONLY_COMMANDS = new Set<WorkspaceCommand['kind']>([
   'create_workspace',
   'archive_workspace',
   'invite_member',
@@ -390,10 +390,6 @@ const HUMAN_ONLY_COMMANDS = new Set<WorkspaceCommand['kind']>([
   'enable_agent_management',
   'disable_agent_management',
   'recover_agent_session',
-]);
-
-export const AGENT_SESSION_EXEMPT_COMMANDS = new Set<WorkspaceCommand['kind']>([
-  'acquire_agent_session'
 ]);
 
 /**

@@ -161,60 +161,132 @@ export async function agentCredentialRevoked(
   return rows.some((row) => expected.has(`${row.kind}:${row.target_id}`));
 }
 
-export interface AgentSessionProof {
-  sessionId: string;
-  generation: number;
-  key: string;
+import {
+  agentSessionErrorStatus,
+  type AgentSessionErrorCode,
+  type AgentSessionProof,
+  type AgentSessionProofParse,
+} from "../../../src/cloud/session-wire.ts";
+
+export type { AgentSessionProof };
+
+export async function hashSessionKey(key: string): Promise<Uint8Array> {
+  return new Uint8Array(
+    await crypto.subtle.digest("SHA-256", new TextEncoder().encode(key)),
+  );
 }
 
+function bytesEqual(left: Uint8Array, right: Uint8Array): boolean {
+  if (left.length !== right.length) return false;
+  let diff = 0;
+  for (let i = 0; i < left.length; i += 1) {
+    diff |= left[i]! ^ right[i]!;
+  }
+  return diff === 0;
+}
+
+function asBytes(value: Uint8Array | ArrayBuffer | string): Uint8Array | null {
+  if (value instanceof Uint8Array) return value;
+  if (value instanceof ArrayBuffer) return new Uint8Array(value);
+  return null;
+}
+
+export type AgentSessionFenceResult =
+  | { ok: true }
+  | { ok: false; error: AgentSessionErrorCode; status: number };
+
+function refuse(error: AgentSessionErrorCode): AgentSessionFenceResult {
+  return { ok: false, error, status: agentSessionErrorStatus(error) };
+}
+
+/**
+ * Session-proof fence for an agent-authenticated mutation.
+ *
+ * Callers skip this for kinds in AGENT_SESSION_PROOF_EXEMPT_KINDS.
+ * When managedAt is null the session tables are not consulted (unmanaged
+ * principals must not pay that query). When managedAt is undefined the
+ * session row is still the source of "is managed" (legacy path).
+ */
+export async function enforceAgentSessionProof(
+  tx: Sql,
+  args: {
+    principalId: string;
+    workspaceId: string;
+    proofParse: AgentSessionProofParse;
+    managedAt?: Date | string | null;
+  },
+): Promise<AgentSessionFenceResult> {
+  if (args.managedAt === null) {
+    return { ok: true };
+  }
+
+  const rows = await tx<{
+    session_id: string;
+    generation: string | number | bigint;
+    key_hash: Uint8Array | ArrayBuffer | string | null;
+    live: boolean;
+    lifecycle_state: string;
+  }[]>`
+    SELECT
+      session_id,
+      generation,
+      key_hash,
+      (expired_at IS NOT NULL AND expired_at > statement_timestamp()) AS live,
+      lifecycle_state
+    FROM swarm.agent_execution_sessions
+    WHERE principal_id = ${args.principalId}::uuid
+      AND workspace_id = ${args.workspaceId}::uuid
+  `;
+  const session = rows[0];
+  const managed = args.managedAt !== undefined
+    ? args.managedAt !== null
+    : session !== undefined && session.lifecycle_state === "enabled";
+  if (!managed) {
+    return { ok: true };
+  }
+  if (!args.proofParse.ok) {
+    return refuse(args.proofParse.error);
+  }
+  if (session === undefined) {
+    return refuse("session_proof_invalid");
+  }
+  if (!session.live) {
+    return refuse("session_expired");
+  }
+  const proof = args.proofParse.proof;
+  if (proof.session_id !== session.session_id) {
+    return refuse("session_conflict");
+  }
+  if (Number(session.generation) !== proof.generation) {
+    return refuse("session_conflict");
+  }
+  const stored = asBytes(session.key_hash ?? new Uint8Array());
+  if (stored === null || stored.length === 0) {
+    return refuse("session_proof_invalid");
+  }
+  const presented = await hashSessionKey(proof.key);
+  if (!bytesEqual(stored, presented)) {
+    return refuse("session_proof_invalid");
+  }
+  return { ok: true };
+}
+
+/** @deprecated use enforceAgentSessionProof; kept for the item-4 seam. */
 export async function authenticateAgentSession(
   tx: Sql,
   principalId: string,
   workspaceId: string,
   proof: AgentSessionProof | null,
-  isAcquire: boolean,
+  _isAcquire: boolean,
 ): Promise<{ ok: true } | { ok: false; error: string }> {
-  // Check if principal is managed
-  const rows = await tx<{ lifecycle_state: string; session_id: string; generation: number; key_hash: string }[]>`
-    SELECT lifecycle_state, session_id, generation, key_hash
-    FROM swarm.agent_execution_sessions
-    WHERE principal_id = ${principalId}::uuid
-      AND workspace_id = ${workspaceId}::uuid
-  `;
-  const session = rows[0];
-  
-  if (!session || session.lifecycle_state !== 'enabled') {
-    // Unmanaged principal requires no proof for regular commands
-    if (proof) return { ok: false, error: 'session_conflict' };
-    return { ok: true };
-  }
-  
-  if (isAcquire) {
-    // acquire_agent_session performs its own row-locked check
-    return { ok: true };
-  }
-  
-  if (!proof) {
-    return { ok: false, error: 'session_proof_missing' };
-  }
-  
-  if (proof.sessionId !== session.session_id) {
-    return { ok: false, error: 'session_conflict' };
-  }
-  
-  if (proof.generation !== session.generation) {
-    return { ok: false, error: 'session_conflict' };
-  }
-  
-  // Hash the proof key
-  const keyBuffer = new TextEncoder().encode(proof.key);
-  const hashBuffer = await crypto.subtle.digest('SHA-256', keyBuffer);
-  const hashArray = Array.from(new Uint8Array(hashBuffer));
-  const keyHash = hashArray.map(b => b.toString(16).padStart(2, '0')).join('');
-  
-  if (keyHash !== session.key_hash) {
-    return { ok: false, error: 'session_proof_invalid' };
-  }
-  
-  return { ok: true };
+  const proofParse: AgentSessionProofParse = proof === null
+    ? { ok: false, error: "session_proof_missing" }
+    : { ok: true, proof };
+  const result = await enforceAgentSessionProof(tx, {
+    principalId,
+    workspaceId,
+    proofParse,
+  });
+  if (result.ok) return { ok: true };
+  return { ok: false, error: result.error };
 }
