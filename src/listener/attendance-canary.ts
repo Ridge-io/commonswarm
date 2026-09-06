@@ -13,6 +13,11 @@ import {
 import { SignalReadTimeoutError } from "../cloud/signals.js";
 import type { ListenerPaths } from "./control.js";
 import { FileHookSurfaceStore } from "./hook.js";
+import {
+  isStoredListenerRouteDecision,
+  listenerAttendanceSurfaceRemedy,
+  type StoredListenerRouteDecision,
+} from "./main-routing.js";
 
 const LOG_TAIL_BYTES = 256 * 1024;
 
@@ -26,7 +31,7 @@ export interface ListenerAttendanceCanaryResult {
   signalId: string;
   acceptedAt: string;
   claimedAt: string | null;
-  routeDecision: "main" | "worker" | null;
+  routeDecision: StoredListenerRouteDecision | null;
   routedAt: string | null;
   pendingForMainCount: number | null;
   surfacedAt: string | null;
@@ -50,7 +55,7 @@ export interface ListenerAttendanceCanaryOptions {
 
 interface CanaryLogEvidence {
   claimedAt: string | null;
-  routeDecision: "main" | "worker" | null;
+  routeDecision: StoredListenerRouteDecision | null;
   routedAt: string | null;
 }
 
@@ -98,7 +103,7 @@ async function logEvidence(
   signalId: string,
 ): Promise<CanaryLogEvidence> {
   let claimedAt: string | null = null;
-  let routeDecision: "main" | "worker" | null = null;
+  let routeDecision: StoredListenerRouteDecision | null = null;
   let routedAt: string | null = null;
   for (const line of (await readLogTail(path)).split("\n")) {
     if (line.length === 0) continue;
@@ -114,7 +119,8 @@ async function logEvidence(
     if (row.event === "listener_delivery_claim") claimedAt = row.ts;
     if (
       row.event === "listener_routing_decision" &&
-      (row.route_decision === "main" || row.route_decision === "worker")
+      typeof row.route_decision === "string" &&
+      isStoredListenerRouteDecision(row.route_decision)
     ) {
       routeDecision = row.route_decision;
       routedAt = row.ts;
@@ -152,7 +158,7 @@ export async function runListenerAttendanceCanary(
   const signalId = posted.response.signal!.id;
 
   let claimedAt: string | null = null;
-  let routeDecision: "main" | "worker" | null = null;
+  let routeDecision: StoredListenerRouteDecision | null = null;
   let routedAt: string | null = null;
   let pendingForMainCount: number | null = null;
   let surfacedAt: string | null = null;
@@ -253,16 +259,16 @@ export function renderListenerAttendanceCanary(
         : ` (${result.pendingForMainCount} in queue)`
     }`
     : result.routeDecision === "worker"
-    ? "sent to the worker"
+    ? "legacy worker route in this log (cannot be started again)"
     : "not measured";
   const lines = [
     `Canary note: ${result.signalId}.`,
     `ACCEPTED: yes at ${result.acceptedAt}.`,
     `CLAIMED: ${result.claimedAt === null ? "no" : `yes at ${result.claimedAt}`}.`,
-    `QUEUED/WORKER: ${route}.`,
+    `QUEUED: ${route}.`,
     `SURFACED: ${
       result.routeDecision === "worker"
-        ? "not required for the worker route"
+        ? "not required for a legacy worker log"
         : result.surfacedAt === null
         ? "no"
         : `yes at ${result.surfacedAt}`
@@ -276,9 +282,7 @@ export function renderListenerAttendanceCanary(
     lines.push("Canary passed: every required hop was measured.");
   } else if (result.stalledAt === "surfaced") {
     lines.push(
-      "STALLED: surfaced. Next: " +
-        `cswarm hook install claude --principal-id ${principalId} --write, ` +
-        "then start a fresh session.",
+      `STALLED: surfaced. Next: ${listenerAttendanceSurfaceRemedy("hook", principalId)}.`,
     );
   } else {
     lines.push(`STALLED: ${result.stalledAt}. Next: ${statusCommand}`);

@@ -306,6 +306,7 @@ import {
   listenerAttendingSurfaces,
   listenerAttendingSentence,
   LISTENER_NONE_ATTENDING_SENTENCE,
+  LISTENER_MAIN_HOST_LIMIT_CLAUSES,
   isLiveListenerRouteMode,
   NullListenerModel,
   emptyListenerReadHealth,
@@ -4405,6 +4406,18 @@ export type ListenerHostLimits = {
   toString(): string;
 };
 
+export function listenerMainHostLimits(): ListenerHostLimits {
+  const clauses = LISTENER_MAIN_HOST_LIMIT_CLAUSES;
+  const human_copy = Object.values(clauses).join(" ");
+  return {
+    ...clauses,
+    human_copy,
+    toString() {
+      return human_copy;
+    },
+  };
+}
+
 export function listenerHostLimits(
   provider: ListenerStatus["provider"],
 ): ListenerHostLimits {
@@ -4910,7 +4923,9 @@ export function listenerStatusJson(
           : "same worker session with sender provenance; tool requests denied",
       }
       : {}),
-    host_limits: listenerHostLimits(status.provider),
+    host_limits: isLiveListenerRouteMode(status.routeMode ?? "worker")
+      ? listenerMainHostLimits()
+      : listenerHostLimits(status.provider),
   };
 }
 

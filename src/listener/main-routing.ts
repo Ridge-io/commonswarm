@@ -41,6 +41,23 @@ export type ListenerRouteDecision = ListenerRouteMode;
 export const LISTENER_STORED_ROUTE_MODES = ["worker", "main", "split"] as const;
 export type StoredListenerRouteMode = (typeof LISTENER_STORED_ROUTE_MODES)[number];
 
+/** Event logs from older builds still parse; live listeners only write main. */
+export const LISTENER_STORED_ROUTE_DECISIONS = ["worker", "main"] as const;
+export type StoredListenerRouteDecision =
+  (typeof LISTENER_STORED_ROUTE_DECISIONS)[number];
+
+/** Status JSON host_limits clauses for the only live route. */
+export const LISTENER_MAIN_HOST_LIMIT_CLAUSES = {
+  host_configuration: "This listener never starts a model.",
+  deny_canary_scope: "No provider worker is started, so no deny canary runs.",
+  steady_allow_unproven:
+    "Provider permission flags name the attendance surface kind only.",
+  cross_owner_context:
+    "Directed messages wait in pending-for-main.json for the seat's own session.",
+  local_state_lifecycle:
+    "No provider home is created or removed by this listener.",
+} as const;
+
 export const LISTENER_ROUTE_RULING =
   "a listener never answers for a session; the seat's own session reads the queue";
 
@@ -75,6 +92,12 @@ export function isStoredListenerRouteMode(
   value: string,
 ): value is StoredListenerRouteMode {
   return (LISTENER_STORED_ROUTE_MODES as readonly string[]).includes(value);
+}
+
+export function isStoredListenerRouteDecision(
+  value: string,
+): value is StoredListenerRouteDecision {
+  return (LISTENER_STORED_ROUTE_DECISIONS as readonly string[]).includes(value);
 }
 
 export function listenerRouteRefusedSentence(requested: string): string {

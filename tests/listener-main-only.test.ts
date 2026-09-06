@@ -8,6 +8,7 @@ import test from "node:test";
 import { cloudTarget } from "../src/cloud/config.js";
 import {
   listenerRouteConfiguration,
+  listenerStatusJson,
   renderListenerStatus,
   usage,
 } from "../src/cli.js";
@@ -15,6 +16,7 @@ import type { SignalRecord } from "../src/cloud/command-client.js";
 import {
   FilePendingMainQueue,
   LISTENER_ATTENDANCE_SURFACES,
+  LISTENER_MAIN_HOST_LIMIT_CLAUSES,
   LISTENER_ALLOW_UNATTENDED_CLAUSE,
   LISTENER_NONE_ATTENDING_SENTENCE,
   LISTENER_ROUTE_MODES,
@@ -34,6 +36,7 @@ import {
   listenerRouteRefusedSentence,
   listenerRouteUsage,
   listenerUnattendedRefusedMessage,
+  renderListenerAttendanceCanary,
   readListenerStatus,
   runListenerRuntime,
   writeListenerStatus,
@@ -334,6 +337,70 @@ test("NullListenerModel start throws so a missed call cannot look like success",
 test("decideListenerRoute never returns worker", () => {
   assert.equal(decideListenerRoute("main", null, 0), "main");
   assert.equal(decideListenerRoute("main", null, 9999), "main");
+});
+
+test("main-route status JSON host_limits is generated and does not name a worker", () => {
+  const status: ListenerStatus = {
+    version: 1,
+    instanceId: "55555555-5555-4555-8555-555555555555",
+    provider: "grok",
+    profileId: "main-host-limits",
+    workspaceId: WORKSPACE_ID,
+    principalId: PRINCIPAL_ID,
+    pid: 2_147_483_647,
+    state: "ready",
+    startedAt: "2026-09-06T12:00:00.000Z",
+    readyAt: "2026-09-06T12:00:01.000Z",
+    updatedAt: "2026-09-06T12:00:02.000Z",
+    stoppedAt: null,
+    lastSignalId: null,
+    lastErrorCode: null,
+    lastErrorDetail: null,
+    providerVersion: null,
+    providerLastMeasuredVersion: null,
+    lastWorkerStderrTail: null,
+    deliveryMode: "durable_claim",
+    pendingDeliveryCount: 0,
+    lastTerminalDeliveryFailureCount: null,
+    lastTerminalDeliveryFailureAt: null,
+    lastClaimAt: null,
+    lastAckAt: null,
+    lastAckOutcome: null,
+    consecutiveAckFailureCount: null,
+    routeMode: "main",
+    deferOverChars: null,
+    pendingForMainCount: 0,
+    droppedForMainCount: 0,
+    logPath: "/tmp/log",
+  };
+  const json = listenerStatusJson(status, "allow");
+  const limits = json.host_limits as Record<string, string>;
+  for (const [key, clause] of Object.entries(LISTENER_MAIN_HOST_LIMIT_CLAUSES)) {
+    assert.equal(limits[key], clause);
+    assert.ok(String(limits.human_copy).includes(clause));
+  }
+  assert.doesNotMatch(
+    JSON.stringify(json.host_limits),
+    /same worker|Grok worker|OpenCode worker/,
+  );
+});
+
+test("canary stalled-surfaced remedy is generated from LISTENER_ATTENDANCE_SURFACES", () => {
+  const rendered = renderListenerAttendanceCanary({
+    signalId: "aaaaaaaa-aaaa-4aaa-8aaa-aaaaaaaaaaaa",
+    acceptedAt: "2026-09-06T00:00:00.000Z",
+    claimedAt: "2026-09-06T00:00:01.000Z",
+    routeDecision: "main",
+    routedAt: "2026-09-06T00:00:01.000Z",
+    pendingForMainCount: 1,
+    surfacedAt: null,
+    observedAt: null,
+    receiptReadErrorCode: null,
+    stalledAt: "surfaced",
+  }, WORKSPACE_ID, PRINCIPAL_ID);
+  assert.match(rendered, /QUEUED:/);
+  assert.doesNotMatch(rendered, /QUEUED\/WORKER/);
+  assert.ok(rendered.includes(listenerAttendanceSurfaceRemedy("hook", PRINCIPAL_ID)));
 });
 
 test("adding worker to LISTENER_ROUTE_MODES fails this pin and the refusal test", async () => {

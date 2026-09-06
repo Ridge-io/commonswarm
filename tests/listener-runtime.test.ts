@@ -3950,7 +3950,7 @@ class SeatHoggingModel implements ListenerRuntimeModel {
   }
 }
 
-test("a delivery that spends its hold budget hands the seat to the next delivery", async () => {
+test("a claimed delivery is queued for main and does not start a model", async () => {
   const first = ask(HOLD_FIRST_ID, "2026-07-30T00:00:01.000Z");
   const second = ask(HOLD_SECOND_ID, "2026-07-30T00:00:02.000Z");
   const holdBudgetMs = 600_000;

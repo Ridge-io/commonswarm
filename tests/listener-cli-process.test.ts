@@ -1418,7 +1418,7 @@ test("detached listener keeps a provider failure lapse in its status file", asyn
   }
 });
 
-test("detached CLI cursor fallback still receives and replies", async () => {
+test("detached CLI cursor fallback queues into pending-for-main and does not post a worker reply", async () => {
   const root = await mkdtemp(join(tmpdir(), "cswarm-cli-cursor-fallback-"));
   const workerCwd = await mkdtemp(join(tmpdir(), "cswarm-cli-cursor-worker-"));
   const grokPath = join(root, "fake-grok.mjs");
