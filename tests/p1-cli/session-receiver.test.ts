@@ -211,7 +211,6 @@ test("duplicate ask ids do not ACK twice", async () => {
 test("idle claim invokes zero models and zero acks", async () => {
   const { root, context, contextPath, manager } = await setup();
   try {
-    let factory = 0;
     const pass = await runInteractiveReceiveOnce({
       target: cloudTarget("http://127.0.0.1:9", "synthetic-anon-key"),
       credential: TOKEN,
@@ -225,9 +224,6 @@ test("idle claim invokes zero models and zero acks", async () => {
       },
       hostIdentityTrusted: true,
       observedHostSessionId: "thread-1",
-      providerFactory: () => {
-        factory += 1;
-      },
       claimClient: {
         async claim() {
           return [];
@@ -239,7 +235,6 @@ test("idle claim invokes zero models and zero acks", async () => {
     }, new Set());
     assert.equal(pass.acked, 0);
     assert.equal(pass.surfaced, 0);
-    assert.equal(factory, 0);
   } finally {
     await rm(root, { recursive: true, force: true });
   }

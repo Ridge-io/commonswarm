@@ -20,7 +20,10 @@ import { AgentSessionClient } from "../../src/cloud/session-client.js";
 import { AgentSessionManager } from "../../src/cloud/session-manager.js";
 import { runInteractiveReceiveOnce } from "../../src/cloud/session-receiver.js";
 import type { DeliveryAckRequest, DeliveryRow } from "../../src/cloud/delivery.js";
-import { ackCommandId } from "../../src/listener/delivery-journal.js";
+import {
+  ackCommandId,
+  type ListenerDeliveryJournalRecord,
+} from "../../src/listener/delivery-journal.js";
 import { newObservedNoteRecord } from "../../src/listener/file-store.js";
 import {
   runListenerRuntime,
@@ -305,7 +308,7 @@ test("stale generation cannot ACK through the runtime path", async () => {
         nextClaimOrdinal: 1,
         active,
         updatedAt: "2026-09-06T00:00:02.000Z",
-      },
+      } as ListenerDeliveryJournalRecord,
       async read() {
         return structuredClone(this.record);
       },
@@ -411,7 +414,7 @@ test("runtime ACK carries managedAck built from the real injection result", asyn
         nextClaimOrdinal: 1,
         active,
         updatedAt: "2026-09-06T00:00:02.000Z",
-      },
+      } as ListenerDeliveryJournalRecord,
       async read() {
         return structuredClone(this.record);
       },
