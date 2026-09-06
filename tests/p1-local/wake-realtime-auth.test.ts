@@ -83,6 +83,23 @@ async function seedPrincipal(label: string, opts?: {
     .update(`swm_agt_${randomBytes(32).toString("base64url")}`)
     .digest();
   await sql`
+    INSERT INTO auth.users (
+      id, aud, role, email, encrypted_password, email_confirmed_at,
+      raw_app_meta_data, raw_user_meta_data, created_at, updated_at
+    ) VALUES (
+      ${userId}::uuid,
+      'authenticated',
+      'authenticated',
+      ${`wake-${userId}@example.test`},
+      '',
+      statement_timestamp(),
+      '{}'::jsonb,
+      '{}'::jsonb,
+      statement_timestamp(),
+      statement_timestamp()
+    )
+  `;
+  await sql`
     INSERT INTO swarm.users (user_id, display_name)
     VALUES (${userId}::uuid, ${`wake ${label}`})
   `;
@@ -360,21 +377,14 @@ test("the wake trigger swallows a send failure and the delivery insert still com
     workspaceId: principal.workspaceId,
     fromPrincipal: principal.userId,
   });
-  const sendFns = await sql<{ sig: string }[]>`
-    SELECT p.oid::pg_catalog.regprocedure::text AS sig
-    FROM pg_catalog.pg_proc p
-    JOIN pg_catalog.pg_namespace n ON n.oid = p.pronamespace
-    WHERE n.nspname = 'realtime' AND p.proname = 'send'
-  `;
-  assert.ok(sendFns.length > 0, "realtime.send must exist so the rename reaches it");
   let kept = 0;
   await assert.rejects(
     sql.begin(async (tx) => {
-      for (const [index, fn] of sendFns.entries()) {
-        await tx.unsafe(
-          `ALTER FUNCTION ${fn.sig} RENAME TO send_saved_wake_test_${index}`,
-        );
-      }
+      // W4 measured this failure: owner swarm_admin has no USAGE on schema
+      // realtime, so realtime.send raises, and the trigger must swallow it.
+      await tx.unsafe(
+        "ALTER FUNCTION swarm.wake_agent_delivery() OWNER TO swarm_admin",
+      );
       await tx.unsafe("SET LOCAL ROLE swarm_command");
       await tx`
         INSERT INTO swarm.signal_deliveries (
