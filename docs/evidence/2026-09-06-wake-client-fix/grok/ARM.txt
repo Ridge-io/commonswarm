@@ -1,0 +1,86 @@
+D-036 exact review — lane/wake-client-fix
+SHA: f5c7c31b5f39fd6837ab9b1b8a4070d71577c0e3
+Branch: lane/wake-client-fix
+Worktree: /private/tmp/claude-501/-Users-yulanbot-Developer-Ridge-io-cloud-swarm/a866e6cd-5d6d-477f-af6a-740cd30407ed/scratchpad/lane-wake-client-fix
+First DIFF.patch line: diff --git a/src/listener/wake.ts b/src/listener/wake.ts
+
+Tried to refute the claimed two-guard hang. Did not refute it.
+
+(1) next() / finishWait() order-of-operations
+
+origin/main next() (git show origin/main:src/listener/wake.ts) builds a `finish` closure whose first statement is `if (this.waiter === null) return;`, then stores `resolve: finish` on the waiter. finishWait() at src/listener/wake.ts:418-427 (HEAD numbering; body unchanged vs origin/main) does:
+
+  const waiter = this.waiter;
+  if (waiter === null) return;
+  this.waiter = null;
+  clearTimeout(waiter.timer);
+  remove abort listener;
+  waiter.resolve(reason);
+
+On origin/main, waiter.resolve IS finish. finishWait has already nulled this.waiter, so finish returns before the Promise resolve. The deadline timer is cleared as a side effect of the failed teardown, so the wait never settles.
+
+HEAD next() at src/listener/wake.ts:362-377 stores the raw Promise `resolve` and routes the timer and abort listener through finishWait:
+
+  setTimeout(() => this.finishWait("deadline"), delay)
+  onAbort = () => this.finishWait("deadline")
+  this.waiter = { resolve, timer, onAbort, signal }
+
+One guard. finishWait nulls waiter, clears the timer, removes the abort listener, then calls resolve once. A second finishWait sees waiter === null and returns. Confirmed by reading both versions, not by the comment.
+
+(2) New test drives the real WakeSubscriber and fails on the old code
+
+tests/listener-wake.test.ts "next() settles on a wake and on a state change that arrive while it waits" uses createWakeSubscriber + FakeRealtime (the real class, fake socket). It drains the SUBSCRIBED latch with next({ until: Date.now() }) so the following next() actually installs a waiter, then emitWake() / CHANNEL_ERROR while that waiter is live, racing each settle against 1s.
+
+The file is in the literal npm test list (package.json "test" names tests/listener-wake.test.ts).
+
+Mutation, same test, worktree temporarily restored to origin/main src/listener/wake.ts (hash af3e8519 = origin/main; HEAD is f55599b3):
+
+  ✖ next() settles on a wake and on a state change that arrive while it waits (1008ms)
+    AssertionError: 'hung' !== 'wake'
+
+Restored HEAD, same test: ✔ (1.65ms).
+
+npm run build && npm test at f5c7c31: exit 0, ℹ tests 886 / pass 886 / fail 0. The new test is in that run: ✔ next() settles… (0.266ms).
+
+Sibling "CHANNEL_ERROR flips snapshot to poll…" still calls next() with pending "state" from SUBSCRIBED, so it never installs a waiter. It stays green on the broken code. The drain in the new test is the control that makes the waiter path reachable.
+
+(3) Other settle paths during a wait
+
+No second guard remains. Every teardown goes through finishWait:
+
+  close()            -> finishWait("deadline")   src/listener/wake.ts:383
+  abort listener     -> finishWait("deadline")   :369
+  deadline timer     -> finishWait("deadline")   :368
+  emitPending        -> finishWait(reason)       :410
+    (wake, SUBSCRIBED/CHANNEL_ERROR/CLOSED/TIMED_OUT via onSubscribeStatus, markRateLimited)
+
+setTopic() does not finishWait. Same-topic is a no-op. Rotation detaches and connect()s; the waiter stays until the new SUBSCRIBED emitPending("state") or the deadline. That is not a dropped settle.
+
+detachChannel()'s `if (this.channel !== null) return` is a subscribe-race guard, not a waiter guard.
+
+Probes on HEAD (not committed): abort-while-wait -> "deadline"; close-while-wait -> "deadline"; setTopic-rotation-while-wait -> "state"; second wake while waiting latches pending for the next next(). All settled; none hung.
+
+http-client.ts idleTimer null-guard is not a Promise settle. No other `this.waiter` in the tree.
+
+(4) Diff size / behaviour
+
+origin/main...HEAD is only:
+
+  src/listener/wake.ts        | 20 +++++++-------------
+  tests/listener-wake.test.ts | 45 +++++++++++++++++++++++++++++++++++++++++++++
+  2 files changed, 52 insertions(+), 13 deletions(-)
+
+next() executor body is the only production change. defaultRealtime, setTopic, detachChannel, until arithmetic, emitPending, finishWait itself are untouched. Deadline and abort used to call finish() directly (and worked); they now call finishWait (and work). close() / wake / state already called finishWait and were the hang. Intended behaviour change is that those paths now settle.
+
+Runtime park site is src/listener/runtime.ts:1162 `await wakeSubscriber.next(...)`. A dropped settle parks that loop for the life of the process, which matches the 0.1.58 symptom.
+
+Not established (this arm)
+
+- Live production listener / the REVIEW.md seat traces. Not re-run.
+- npm run test:p1-local and test:p1-server. Not run.
+- Fact 3 channel_error on seat 2121f81d. Out of scope; the patch does not claim it.
+- close/abort/setTopic during wait are not in the new unit test. Logic and probes cover them; the committed test covers wake + CHANNEL_ERROR after a drain.
+
+Worktree note: on arrival, src/listener/wake.ts was staged back to origin/main (mutation leftover). Restored to HEAD before the green gate. Tree clean at f5c7c31 after that.
+
+VERDICT: PASS

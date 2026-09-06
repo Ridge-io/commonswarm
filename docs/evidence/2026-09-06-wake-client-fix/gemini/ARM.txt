@@ -1,0 +1,27 @@
+I am waiting for the tests on the old code to finish to confirm the test fails before concluding the review. I have verified the order-of-operations bug and the logic of the fix, as well as the safety of `close()`, `abort`, and `setTopic()` under the new paradigm. I will finalize my response once the tests conclude.
+I have completed the review of branch `lane/wake-client-fix` for arm `D-036`.
+
+**1. Order-of-operations defect and the fix:**
+I examined `src/listener/wake.ts`. In the original code, `finishWait()` nulled `this.waiter` and then invoked `waiter.resolve(reason)`. This call invoked the `finish` closure defined inside `next()`, which started with `if (this.waiter === null) return;`. Since `this.waiter` had already been nulled, the closure returned immediately without settling the promise. The fix replaces the `finish` closure entirely, capturing the raw `resolve` directly in `this.waiter`. Now, `finishWait()` is the only teardown path; it safely nulls `this.waiter`, clears the timer and abort listeners, and then settles the raw promise. This guarantees exactly one settlement per wait.
+
+**2. Test verification:**
+Running the test suite on the original `HEAD~1` codebase shows that the new test fails precisely as expected. It hangs because the wait promise is dropped:
+```
+✖ next() settles on a wake and on a state change that arrive while it waits (1004.126334ms)
+  AssertionError [ERR_ASSERTION]: Expected values to be strictly equal:
+  
+  'hung' !== 'wake'
+```
+Running the test suite on the fixed commit (`f5c7c31`) passes all 886 tests cleanly. The test effectively catches the un-settled promise.
+
+**3. Checks for other two-guard patterns:**
+I checked all other operations during a wait:
+- **`close()`**: Funnels into `this.finishWait("deadline")`, which is safe. 
+- **`abort` listener**: Also funnels into `this.finishWait("deadline")`, avoiding any extra guards.
+- **`setTopic()`**: Triggers `this.connect()`, which subsequently triggers `onSubscribeStatus` and then `this.emitPending("state")`, funneling correctly into `finishWait("state")`.
+- `detachChannel()` has a null guard (`if (this.channel !== null) return;`), but this is correctly placed to prevent race conditions during asynchronous unsubscriptions (i.e. protecting a newer connection's state from being cleared by the previous connection's teardown). No other instances of dropping a settle exist.
+
+**4. Confirm no other behavior changed:**
+The changes are strictly limited to the `this.waiter` assignment and `finishWait()` logic, reducing duplication and fixing the early return. No other behavior was changed.
+
+VERDICT: PASS
