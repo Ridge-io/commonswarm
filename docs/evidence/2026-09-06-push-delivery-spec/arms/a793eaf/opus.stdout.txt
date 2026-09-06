@@ -1,0 +1,142 @@
+Report written to `docs/evidence/2026-09-06-push-delivery-spec/arms/a793eaf/opus.txt`. Full text:
+
+---
+
+# D-036 ARM — ADVERSARIAL SYSTEMS (Opus), FINAL ROUND
+
+**Document:** `docs/design/2026-09-06-PUSH-DELIVERY.md` at `a793eaf` (draft 6), branch `spec/push-delivery`. Prior report by this arm: `arms/22e2bea/opus.txt`. Local stack live: `supabase_db_cloud-swarm`, 41 migrations, latest `20260906000003`. Every probe object I created was dropped; the cleanup control is at the end.
+
+## PART 0 — What I checked
+
+**Citations read in the tree** (all confirmed unless a NIT says otherwise): `credential-redaction.ts:19-30`, `stderr-tail.ts:43`, `sanitize.ts:15`, `supervisor.ts:170-181`, `control.ts:436,:473,:795-832`, `read-health.ts:12,:40,:202-207,:403-415`, `runtime.ts:77,:612,:778,:1104`, `cli.ts:2565-2581`, `command/index.ts:574-579,:1435-1437,:1838-1847,:4900-4936,:7985-8020` + every `revoked_at = ` statement, `durable-delivery.ts:18-23,:64-74,:182-192,:205-258,:268-300`, `read/index.ts:410-455,:478-500,:818-834`, `activity/index.ts:2,:130-155`, `20260723000001:192-216`, `20260731000001:285,:482-489`, `20260820000002:1-30,:103,:301-306`, `20260901000001:195-210`, `20260905000020:124-127,:150-156,:188-192,:219-222`, `test-gate-coverage.test.ts:19-34,:84-98,:122-134`, `command.test.ts:3240-3270,:3350-3375,:3577-3582,:9254-9301`, `package.json:22,:23,:25,:26,:29`, `commonswarm.ts:174-212`, `LiveDashboard.astro:5768-5780`, `RealtimeClient.js:12,:16,:489`, `RealtimeChannel.js:703-707`, `phoenix/socket.js:455-500,:663-716`.
+
+**Evidence read:** `local-plans.sql` (whole), `local-plans.out:1-45`, `arms/22e2bea/opus.txt`.
+
+**Live read-only probes** (docker exec psql, rolled back or dropped): privilege matrix; the volatile default at scale; rotation under `SET LOCAL ROLE swarm_command` with two owners and controls; `realtime.send` from a definer under `swarm_command` with two owners and controls.
+
+## PART 1 — Are the draft-4 findings fixed as §11 claims?
+
+**D1 (rotate_wake_id owner) — FIXED, re-measured with both controls.**
+
+```
+-- owner swarm_admin, inside SET LOCAL ROLE swarm_command
+ERROR:  permission denied for schema extensions
+CONTEXT:  PL/pgSQL function swarm.probe_rot_admin(uuid) line 3 at SQL statement
+-- owner postgres, same call, same role      -> pg_owned_len   = 43
+-- positive control, same function as postgres -> control_pg_len = 43
+-- negative control: swarm_command calling extensions.gen_random_bytes directly
+ERROR:  permission denied for schema extensions
+```
+
+The negative control matters — it shows the probe reached the gate the finding names. `has_schema_privilege('swarm_admin','extensions','USAGE')` = false, `('postgres',…)` = true.
+
+**W1's volatile default, re-measured at size** (draft 2 measured 5 rows):
+
+```
+ rows_ | distinct_ids | minlen | maxlen
+   178 |          178 |     43 |     43
+```
+
+**D2 (read_context privilege triple) — enumeration fixed and correct; the SOURCE the spec points at is wrong. See DEFECT 2.** The live object's three statements are `20260731000001:482,:483,:487`, repeated at `20260820000002:301,:302,:306`. `command.test.ts:9267-9271` asserts exactly what W3.1 says. I also checked blast radius the spec omits: five other in-database callers (`20260828000001:50`, `20260828000002:53`, `20260829000001:54`, `20260901000020:122`, `20260902000001:123`) all name their columns, so an eleventh OUT column does not reach them and the DROP is not blocked. The read edge selects ten named columns, so the migration-before-deploy window is sound.
+
+**D3 (lane order) — FIXED.** §6 now reads "L3 after L2b"; L3's cell agrees.
+
+**D4 (five redaction sites) — FIXED, re-enumerated.** `grep -rn "swm_(?:agt|inv|cap)_" src/ supabase/` returns exactly five: `supervisor.ts:172`, `control.ts:436`, `:473`, `:829`, `credential-redaction.ts:20`. Its three call sites (`stderr-tail.ts:43`, `sanitize.ts:15`, `activity/index.ts:135`) read as W1 describes. `activity/index.ts:2` imports the module, so L2c is inside `check:edge`.
+
+**D5 (RLS third gate) — FIXED, and §9's four items are the right four.**
+
+```
+ admin_rt_usage | admin_rt_ins | pg_rt_usage | pg_rt_ins
+ f              | f            | t           | t
+ pg_bypassrls | ins_policies | rls_on | rt_owner                 | pgcrypto_schema
+ t            |            0 | t      | supabase_realtime_admin  | extensions
+```
+
+Then the whole mechanism end to end — the thing L2's test must assert:
+
+```
+-- postgres-owned SECURITY DEFINER calling realtime.send, under swarm_command:
+ realtime_rows = 1
+-- same function owned by swarm_admin:
+ERROR:  permission denied for schema realtime
+```
+
+**N1–N6 — fixed.** `count > limit` at `:4905` with the audit + `security_alerts` pair written once at `count === limit + 1`, so "the 121st claim" is exact. W6's four-statement set re-derived: `grep -n "revoked_at = "` returns 13 lines; four write agent credentials (3576, 4112, 4140, 4208), exactly as W6 says; 4001 and 4789 are `= NULL` membership un-revokes. The new device citation checks out (`agent-auth.ts:115,:136-138`; no writer in `command/index.ts`). N6 partly incomplete — NIT 5.
+
+## PART 2 — New since draft 4, attacked
+
+**§2.3 wait contract** — sound, one inconsistency (NIT 1, NIT 7). Grant-use premise verified: `read/index.ts:491-497` stamps on every own-workspace read; `20260901000001:199-207` suspends after 14 days.
+
+**§2.4's 50 s detection — measured in the library, exact.** `phoenix/socket.js:712` schedules the next heartbeat 25 s after the *reply*; `:683` sets the timeout 25 s after the *send*. So a silent failure just after a reply is detected after up to 50 s, not 25. realtime-js supplies 25000 (`RealtimeClient.js:12`).
+
+**§2.4 "Reconnect" row** — `RealtimeChannel.js:703-707`, `_notThisChannelEvent` gates only on `[close, error, leave, join]`. A broadcast between join acceptance and `SUBSCRIBED` is dispatched. Correct.
+
+**§7 fan-out** — premises in the code (`activity/index.ts:146-153`, `commonswarm.ts:176-212`); arithmetic recomputed at every size and it lands where §7 puts it (16 seats 38,240≈38,000; 100 seats $8.50≈$9 and $10.4≈$10; 1,000 seats $198≈$200; 10,000 seats $2,088≈$2,100 with $1,800 heartbeat; presence variant 4.63 M/day → $278≈$280; heartbeat share 1,440/2,200 = 65.5%).
+
+**§5** — `local-plans.sql` uses the *real* claim query, join and `s.until` included. The plan matches §5's row.
+
+## PART 3 — Findings
+
+### DEFECT 1 — §2.1 / §0 / §2.4: the signal TTL is never mentioned, and on the two wake-loss rows the delivery is LOST, not late
+
+§2.1 says "a lost wake … never a delivery". §2.4's **Missed wake** and **Trigger cannot send** rows both answer "why no delivery is lost" with "the reconcile".
+
+The ledger row existing is not sufficient:
+
+- `durable-delivery.ts:283` — the candidate CTE carries `AND s.until > statement_timestamp()`. An expired signal's delivery is not a candidate.
+- `durable-delivery.ts:212-231` — step 3 of the *same call* terminalizes every unleased, unacked delivery whose `s.until <= statement_timestamp()` to `ack_outcome = 'expired'`.
+
+And that TTL can be shorter than the reconcile interval, from supported surfaces:
+
+- `command/index.ts:1844` accepts `until_ms` at `integer(cmd.until_ms, 1)` — a **1 ms floor**.
+- `src/cli.ts:2565-2581` accepts `--until 1m` (regex `/^([1-9]\d*)(m|h|d)$/`).
+- `command/index.ts:8004` clamps a thread reply to the root's remaining TTL — seconds, without anyone typing one.
+
+So `cswarm ask --until 1m …`: row commits, wake dropped (or the trigger's `EXCEPTION WHEN OTHERS` swallowed it — both rows §2.4 concedes), nothing claims for 300 s, and at the reconcile step 3 marks it `expired` and the candidate select excludes it. Today's 2 s poll and lane A's 15 s poll both deliver it. The 150× widening of the only fallback is what turns latency into loss.
+
+The document never mentions `signals.until`, `until_ms`, `SIGNAL_DEFAULT_UNTIL_MS`, or `ack_outcome = 'expired'` — I grepped it. No earlier arm raised it.
+
+Fix options, none a redesign: (a) bound the next deadline by `min(reconcileDueAt, nearestUntil − margin)` using the read the reconcile already runs; (b) put a floor on `until_ms` above the reconcile interval and say so; (c) state plainly in §2.1 and both §2.4 rows that a signal whose TTL is shorter than the reconcile interval can be lost. What cannot stand is a 300 s fallback paired with "never a delivery".
+
+### DEFECT 2 — §2.2 W3.1 / §6 L2: the DROP/CREATE is pointed at the superseded body
+
+W3.1 cites the function as `20260731000001:487, re-granted 20260820000002:306`. But `20260820000002:103` is a full `CREATE OR REPLACE` that **changed the body**. Diffing `20260731000001:285-489` against `20260820000002:103-306` gives exactly one functional difference:
+
+```
+-   ELSIF v_membership_revoked_at IS NOT NULL
++   ELSIF NOT swarm.is_member(v_principal_workspace_id, v_owner_user_id)
++      OR v_membership_revoked_at IS NOT NULL
+```
+
+That is the `archive_revokes_access` boundary — `swarm.is_member` gained `w.archived_at IS NULL` in the same file (`:4-21`). Archiving does not revoke memberships (`command.test.ts:3604` says so), so without the predicate an archived workspace keeps serving agent reads. A DROP/CREATE built from the line the spec names reverts a security boundary in the function that authenticates every agent read.
+
+Honest mitigation: `command.test.ts:3580-3582` archives and asserts 403, and W3.1 already names `command.test.ts` as must-stay-green. So it costs a red test, not a shipped hole — *provided* L2 runs `p1-server`, which §6's L2 row does not list.
+
+Fix: one clause naming `20260820000002:103-301` as the live definition, and `:3580` alongside `:9267-9271` in what L2 keeps green.
+
+### GAPS: none
+
+All seven ask items are answered.
+
+### NITS
+
+1. §0 says "one **claim** every 15 seconds while it is not [subscribed]"; §2.3's not-subscribed tick is read+claim. A claim-only tick drops `record_renewal_grant_use` — Grok's draft-1 D2 reopened. §2.3 is right.
+2. W3.1's privilege citations don't resolve: `20260731000001` is 489 lines (statements at `:482,:483,:487`, not `:495-500`); `20260820000002:304-306` omits the OWNER and REVOKE lines — the two the finding is about.
+3. W4 says "37 today"; measured 35 functions in `swarm`+`swarm_read`, all owned by `swarm_admin`.
+4. L2c's test cell says an `events.ndjson` topic "is rendered `[redacted-credential]`". `control.ts:829` **throws**; `:436`/`:473` **reject**. Only the `credential-redaction.ts` path renders.
+5. §6 L8 says "one correction"; AGENTS.md states the three-entrypoint claim twice (`:87` and `:112`).
+6. Off-by-one: column comment is `20260723000001:210-211` (cited `:211-212`); grant-use stamp `read/index.ts:491-497` (cited `:490-496`); empty branch `:484-488` (cited `:483-487`); inbox response `:826-833` (cited `:826-832`).
+7. §2.3 describes `next()` twice with two signatures; the bullet is narrower than the wait-contract paragraph.
+8. §7's 4.6 M derivation uses 97 watcher reads for all seats while the assumption is half. Over-counts, so safe.
+
+## PART 4 — What I did not establish
+
+The anon-policy-calling-a-swarm-function test (§10, L2's first test) — unrun. Anything about the hosted project; every number here is the local stack. How often short-TTL signals are actually posted — I established the code paths and the `--until 1m` floor, not the frequency. Load timings. Draft-1/2 findings §11 records as fixed, except where PART 1 names them. The 355 KB Codex file and the Gemini/Grok draft-4 reports.
+
+**Cleanup control:** `leftover_probe_funcs = 0, leftover_col = 0, leftover_rt = 0`.
+
+---
+
+QUOTE-BACK: # Push delivery: wake listeners from Supabase Realtime instead of polling
+VERDICT: FAIL
+REASON: The spec's own guarantee that a lost wake never loses a delivery is false where a signal's `until` expires inside the 300 s reconcile window — the claim path filters and terminalizes those rows (`durable-delivery.ts:212-231`, `:283`), `until_ms` is accepted from 1 ms up (`command/index.ts:1844`) and `--until 1m` from the CLI — and W3.1 sends L2's DROP/CREATE to the superseded body of `agent_delivery_read_context`, calling the live definition at `20260820000002:103` a re-grant.

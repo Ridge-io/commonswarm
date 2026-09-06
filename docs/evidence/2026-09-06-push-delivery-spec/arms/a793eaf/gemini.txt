@@ -1,0 +1,104 @@
+# D-036 Inversion Review: Push Delivery Specification (Draft 6, Commit `a793eaf`)
+
+**Review Arm:** INVERSION arm, FINAL round (Gemini / `agy`)  
+**Document Under Review:** `docs/design/2026-09-06-PUSH-DELIVERY.md` (Draft 6, final-round candidate)  
+**Authority & Scope:** Branch `spec/push-delivery`; covers Option 3 of brain topic `edge-function-invocations-2026-09` (Supabase Realtime wake with fallback poll). Excludes Lane A items (polling constant change, read+claim merge, watcher dedupe, `file_versions` scan) and cross-machine listener guard per operator ruling.
+
+---
+
+## 1. Inversion Analysis (Drafts 5 and 6 Changes)
+
+As the inversion arm for the final round, I evaluated whether the core architectural additions introduced in Drafts 5 and 6 can be broken by adversarial counterarguments. Below is the assessment of the five targeted inversions:
+
+### (a) Inversion: The absolute-deadline wait contract can still starve the reconcile or sleep through a disconnect.
+* **The Argument:** Racing wake arrivals against timers could allow an aggressive stream of wake notifications to continually satisfy the listener loop without ever triggering a full reconcile (which is required to refresh delivery mode capabilities and update the standing grant use stamp). Conversely, while sleeping up to 5 minutes waiting for a reconcile, a dropped websocket could leave the listener unaware of incoming deliveries for the remainder of that interval.
+* **Analysis & Citations Checked:**
+  * In §2.3, the wait contract establishes `reconcileDueAt = now + LISTENER_RECONCILE_POLL_MS` as an **absolute timestamp** computed only upon reconcile completion; it is explicitly invariant across wake events.
+  * The loop evaluates `await wake.next({ until: min(reconcileDueAt, now + pollMsFor(wake.state)) })`. When `now >= reconcileDueAt`, `until` is non-positive, forcing `next()` to expire immediately and dispatching the reconcile tick (read + claim).
+  * Client-side pacing (`WAKE_COALESCE_MS = 1_000` and `WAKE_CLAIMS_PER_MINUTE_BUDGET = 50`) prevents runaway wake ticks from monopolizing runtime CPU.
+  * Reconcile read preservation ensures `record_renewal_grant_use` (`read/index.ts:490-496`) executes at least 288 times/day, comfortably satisfying the 14-day suspension threshold (`20260901000001_standing_grants.sql:199-207`).
+  * On disconnect, `@supabase/phoenix` (`socket.js`) dispatches channel state transitions out of `subscribed`. The specification defines `next()` to resolve on any state transition into or out of `subscribed`, unblocking the loop immediately and dropping the wait ceiling to `LISTENER_IDLE_POLL_MS` (15 s) within one tick. Silent half-open connections are caught by heartbeat timeout detection at ~50 s (§2.4).
+* **Did it beat the spec?** **No (Refuted).** The absolute monotonic deadline strictly prevents reconcile starvation, and the transition-driven wake mechanism prevents sleeping through socket drops.
+
+---
+
+### (b) Inversion: Owning `rotate_wake_id` and the two triggers as `postgres` is a privilege widening a serious reviewer rejects.
+* **The Argument:** Assigning object ownership of application-level functions (`swarm.rotate_wake_id`, `swarm.wake_agent_delivery`, `swarm.wake_workspace_signal`) to the database superuser `postgres` violates the principle of least privilege, bypassing schema ownership conventions established by `swarm_admin`.
+* **Analysis & Citations Checked:**
+  * Investigated schema permissions on `realtime.messages` and `extensions`:
+    1. `realtime.send()` performs an insert into `realtime.messages`. Table `realtime.messages` has Row-Level Security enabled with **zero** `INSERT` policies; only a role possessing `rolbypassrls` (or the table owner `supabase_realtime_admin`) can insert into it. `swarm_admin` lacks `rolbypassrls`, meaning an insert by `swarm_admin` is unconditionally rejected by Postgres RLS (`new row violates row-level security policy`).
+    2. `realtime.messages` is partitioned daily by the Supabase Realtime service. Static grants to `swarm_admin` would not reliably inherit to newly generated date partitions.
+    3. `rotate_wake_id` invokes `extensions.gen_random_bytes(32)`. At runtime, PL/pgSQL checks `USAGE` on schema `extensions` under the function owner; `swarm_admin` lacks `USAGE` on `extensions` in this stack.
+  * Privilege containment:
+    * The functions are sealed with `SET search_path = pg_catalog` and explicit schema qualifications (`20260905000020:125-126, 220-221`), eliminating search-path injection vulnerabilities.
+    * Public execution is revoked: `REVOKE ALL ON FUNCTION ... FROM PUBLIC`.
+    * For `rotate_wake_id`, `EXECUTE` is granted exclusively to `swarm_command`. It accepts only a single UUID argument and executes a fixed parameterized update: `UPDATE swarm.agent_principals SET wake_id = ... WHERE principal_id = $1`.
+    * Precedent: The existing activity edge (`activity/index.ts:139-145`) already performs `RESET ROLE` back to `postgres` to call `realtime.send()`. Encapsulating this inside discrete, parameter-checked database functions is strictly safer than application-level role resets.
+* **Did it beat the spec?** **No (Refuted).** Superuser ownership is an architectural necessity dictated by Supabase Realtime RLS bypass and schema partitions, and its execution surface is tightly constrained.
+
+---
+
+### (c) Inversion: The three-statement re-create of `agent_delivery_read_context` can still leave a window where an agent read fails.
+* **The Argument:** Replacing `agent_delivery_read_context` via `DROP FUNCTION` followed by `CREATE FUNCTION`, `ALTER OWNER`, `REVOKE ALL`, and `GRANT EXECUTE` risks a race window during deployment where incoming agent reads encounter a missing function or execute in a state where `PUBLIC` has execution rights.
+* **Analysis & Citations Checked:**
+  * Checked `20260731000001:487, 495-500`, `20260820000002:304-306`, and `tests/p1-server/command.test.ts:9267-9271`.
+  * Postgres DDL commands in migration scripts execute within an atomic transaction block (`BEGIN ... COMMIT`).
+  * Catalog modifications take exclusive metadata locks; any concurrent read transaction attempting to execute `agent_delivery_read_context` waits on transaction commit and never observes an intermediate unprivileged or dropped state.
+  * In `read/index.ts:437-451`, the read edge issues an explicit column selection list (`SELECT principal_id, token_id, ... FROM swarm.agent_delivery_read_context(...)`) rather than `SELECT *`. Adding `wake_id` as the 11th OUT parameter in L2 does not disrupt existing 10-column queries in production before L3 deploys.
+* **Did it beat the spec?** **No (Refuted).** Transactional DDL semantics guarantee atomic replacement without transient failures or privilege leakage.
+
+---
+
+### (d) Inversion: A topic can still reach a log or status file through a path the five-site redaction misses.
+* **The Argument:** Unifying the five known redaction sites with `SECRET_SHAPE_RE` may still leave unmonitored egress paths (such as structured status serialization, supervisor diagnostics, or socket connection errors) where the wake topic leaks into files or operator-visible output.
+* **Analysis & Citations Checked:**
+  * Audited the five sites unified in Lane L2c:
+    1. `src/host/credential-redaction.ts:19-22` (`CREDENTIAL_PREFIX_RE` expanded to `SECRET_SHAPE_RE`, covering `src/host/stderr-tail.ts:43`, `src/host/sanitize.ts:15`, and `activity/index.ts:135`).
+    2. `src/listener/supervisor.ts:172` (`localDiagnostic` -> `safeErrorDetail`).
+    3. `src/listener/control.ts:436` (rejects `lastErrorDetail` containing credential shapes).
+    4. `src/listener/control.ts:473` (rejects stderr tail containing credential shapes).
+    5. `src/listener/control.ts:829` (secret scanner filtering every line written to `events.ndjson`).
+  * In `src/listener/control.ts:225-299`, status file schema enforcement is airtight:
+    * `STATUS_ALLOWED_KEYS` permits only `wake`.
+    * `parseListenerWake` enforces a closed schema with no topic key (`mode`, `subscribedAt`, `reconnects`, `lastWakeAt`, `lastReconcileAt`, `errorCode`, `topicRotatedAt`, `rateLimited`).
+    * `STATUS_SENSITIVE_KEYS` explicitly bans `topic`, `wakeTopic`, and `wake_topic` at root and nested levels.
+    * Human-facing formatting (§2.3) interpolates only state and timestamps (`push (Realtime), last wake 12 s ago, reconcile every 5 min`), never raw channel names.
+  * Realtime join refusal strings (`Unauthorized: You do not have permissions to read from this Channel topic: <topic>`) match `SECRET_SHAPE_RE` on `cswarm-wake:[A-Za-z0-9_-]{43}` and are sanitized before logging.
+  * Lane L4 enforces this with a live integration test gate verifying that a temporary `--state-dir` status output contains zero occurrences of the topic string.
+* **Did it beat the spec?** **No (Refuted).** Output paths and serialization schemas are completely closed and validated against credential leakages.
+
+---
+
+### (e) Inversion: The four-item pre-push check can pass on a hosted project where the trigger still cannot insert.
+* **The Argument:** Checking permissions and RLS configuration statically via a linked query does not guarantee runtime insertion success into `realtime.messages` when an agent delivery trigger fires.
+* **Analysis & Citations Checked:**
+  * Checked §9 pre-push gates:
+    1. `has_schema_privilege('postgres','realtime','USAGE')`
+    2. `has_table_privilege('postgres','realtime.messages','INSERT')`
+    3. `rolbypassrls` on `postgres` (or table ownership)
+    4. Count of `INSERT`/`ALL` policies on `realtime.messages`
+  * In Postgres, a role possessing `rolbypassrls = true` completely bypasses RLS checks. Combined with schema `USAGE` and table `INSERT`, static authorization cannot be denied.
+  * The trigger function executes as `SECURITY DEFINER` with fixed `search_path = pg_catalog`, ensuring consistent role and path binding at runtime.
+  * Even under unexpected infrastructure anomalies (e.g. Realtime service partition desynchronization), the trigger's `BEGIN ... EXCEPTION WHEN OTHERS THEN RETURN NULL; END` block guarantees delivery creation is never blocked (§2.2 W4), while §2.4 gracefully covers missed wakes via reconcile polling.
+  * Finally, the deployment gate does not rely solely on the static check: Lane L7 explicitly requires 20 empirical trials of end-to-end wake latency on the live hosted environment before the change is marked released (§8).
+* **Did it beat the spec?** **No (Refuted).** The four-item query covers all prerequisite static gates, fail-safe exception guards preserve transactional safety, and Lane L7 provides empirical runtime verification.
+
+---
+
+## 2. Requirements & Verification Checklist
+
+1. **Wire Contract & Transport (§2.1–§2.5):** Complete. W1 through W6 provide exact topic naming, payloads, sender triggers, anon RLS policies, and rotation semantics. Failure modes table (§2.4) covers all 14 standard and edge conditions. Compatibility for 0.1.56 clients is preserved additively.
+2. **Idle Seat Cost Arithmetic (§0, §1.3, §7):** Verified. Edge invocations drop from ~53,800/day to ~2,200/day (~2,580 with watcher). Idle row writes drop from ~49,400 to ~400 short-lived `rate_buckets` rows (0 rows surviving 2 hours).
+3. **Persistence & Retention Policy (§3.1, §3.2):** Verified. `DeliveryClaimLedgerResponse` counters properly classify empty read-intent claims to suppress `audit_log` and `idempotency_keys` inserts. Retention floor for idempotency keys reduced to 1 day (retention 2 days) in Lane L2b.
+4. **Watcher & Web Dashboard Alignment (§4.1, §4.3):** Verified. `inbox --notify` subscribes to W1 without claim permissions; the web dashboard subscribes to W2 (`cswarm-signals:{workspace_id}`) and drops the 2 s polling loop.
+5. **Indexes & Query Plans (§5):** Verified. Confirmed index usage on `signal_deliveries_unacked_oldest`, `agent_principals` PK, unique index on `agent_principals_wake_id`, and `idem_purge`.
+6. **Apply Order & Concurrency Lanes (§6):** Verified. Lanes L0 through L8 have mutually disjoint file ownership, correctly sequence access to the shared local Postgres test container, and pin exact lines in `package.json` and `test-gate-coverage.test.ts`.
+7. **Capacity Projections (§7):** Verified. Scalability analyzed across 100, 1,000, and 10,000 seats, properly isolating activity heartbeat Realtime broadcast fan-out from W1/W2 wake delivery.
+
+No DEFECT, GAP, or unresolved NIT was found.
+
+---
+
+QUOTE-BACK: # Push delivery: wake listeners from Supabase Realtime instead of polling
+VERDICT: PASS
+REASON: All five inversion challenges were thoroughly refuted by the spec's robust wait contract, hardened privilege design, atomic transactional migrations, strict redaction boundaries, and end-to-end verification gates.
