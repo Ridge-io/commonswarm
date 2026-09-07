@@ -163,11 +163,11 @@ function __metadata(metadataKey, metadataValue) {
 }
 function __awaiter(thisArg, _arguments, P, generator) {
   function adopt(value) {
-    return value instanceof P ? value : new P(function(resolve3) {
-      resolve3(value);
+    return value instanceof P ? value : new P(function(resolve4) {
+      resolve4(value);
     });
   }
-  return new (P || (P = Promise))(function(resolve3, reject) {
+  return new (P || (P = Promise))(function(resolve4, reject) {
     function fulfilled(value) {
       try {
         step(generator.next(value));
@@ -183,7 +183,7 @@ function __awaiter(thisArg, _arguments, P, generator) {
       }
     }
     function step(result) {
-      result.done ? resolve3(result.value) : adopt(result.value).then(fulfilled, rejected);
+      result.done ? resolve4(result.value) : adopt(result.value).then(fulfilled, rejected);
     }
     step((generator = generator.apply(thisArg, _arguments || [])).next());
   });
@@ -374,14 +374,14 @@ function __asyncValues(o) {
   }, i);
   function verb(n) {
     i[n] = o[n] && function(v) {
-      return new Promise(function(resolve3, reject) {
-        v = o[n](v), settle(resolve3, reject, v.done, v.value);
+      return new Promise(function(resolve4, reject) {
+        v = o[n](v), settle(resolve4, reject, v.done, v.value);
       });
     };
   }
-  function settle(resolve3, reject, d, v) {
+  function settle(resolve4, reject, d, v) {
     Promise.resolve(v).then(function(v2) {
-      resolve3({ value: v2, done: d });
+      resolve4({ value: v2, done: d });
     }, reject);
   }
 }
@@ -4262,15 +4262,15 @@ var require_RealtimeChannel = __commonJS({
             }
           }
         } else {
-          return new Promise((resolve3) => {
+          return new Promise((resolve4) => {
             var _a2, _b2, _c;
             const push = this.channelAdapter.push(args.type, args, opts.timeout || this.timeout);
             if (args.type === "broadcast" && !((_c = (_b2 = (_a2 = this.params) === null || _a2 === void 0 ? void 0 : _a2.config) === null || _b2 === void 0 ? void 0 : _b2.broadcast) === null || _c === void 0 ? void 0 : _c.ack)) {
-              resolve3("ok");
+              resolve4("ok");
             }
-            push.receive("ok", () => resolve3("ok"));
-            push.receive("error", () => resolve3("error"));
-            push.receive("timeout", () => resolve3("timed out"));
+            push.receive("ok", () => resolve4("ok"));
+            push.receive("error", () => resolve4("error"));
+            push.receive("timeout", () => resolve4("timed out"));
           });
         }
       }
@@ -4295,8 +4295,8 @@ var require_RealtimeChannel = __commonJS({
        * @category Realtime
        */
       async unsubscribe(timeout = this.timeout) {
-        return new Promise((resolve3) => {
-          this.channelAdapter.unsubscribe(timeout).receive("ok", () => resolve3("ok")).receive("timeout", () => resolve3("timed out")).receive("error", () => resolve3("error"));
+        return new Promise((resolve4) => {
+          this.channelAdapter.unsubscribe(timeout).receive("ok", () => resolve4("ok")).receive("timeout", () => resolve4("timed out")).receive("error", () => resolve4("error"));
         });
       }
       /**
@@ -4381,8 +4381,8 @@ var require_RealtimeChannel = __commonJS({
       }
       /** @internal */
       _notThisChannelEvent(event, ref) {
-        const { close, error, leave, join: join15 } = constants_1.CHANNEL_EVENTS;
-        const events = [close, error, leave, join15];
+        const { close, error, leave, join: join13 } = constants_1.CHANNEL_EVENTS;
+        const events = [close, error, leave, join13];
         return ref && events.includes(event) && ref !== this.joinPush.ref;
       }
       /** @internal */
@@ -4504,11 +4504,11 @@ var require_socketAdapter = __commonJS({
         this.socket.connect();
       }
       disconnect(callback, code, reason, timeout = 1e4) {
-        return new Promise((resolve3) => {
-          setTimeout(() => resolve3("timeout"), timeout);
+        return new Promise((resolve4) => {
+          setTimeout(() => resolve4("timeout"), timeout);
           this.socket.disconnect(() => {
             callback();
-            resolve3("ok");
+            resolve4("ok");
           }, code, reason);
         });
       }
@@ -13527,13 +13527,14 @@ __export(cli_exports, {
   usage: () => usage
 });
 module.exports = __toCommonJS(cli_exports);
-var import_node_crypto17 = require("node:crypto");
-var import_node_child_process6 = require("node:child_process");
-var import_node_fs5 = require("node:fs");
-var import_promises8 = require("node:fs/promises");
-var import_node_os6 = require("node:os");
-var import_node_path15 = require("node:path");
-var import_promises9 = require("node:readline/promises");
+var import_node_crypto19 = require("node:crypto");
+var import_node_module = require("node:module");
+var import_node_child_process5 = require("node:child_process");
+var import_node_fs2 = require("node:fs");
+var import_promises9 = require("node:fs/promises");
+var import_node_os7 = require("node:os");
+var import_node_path13 = require("node:path");
+var import_promises10 = require("node:readline/promises");
 
 // src/protocol/events.ts
 var SCHEMA_VERSION = 1;
@@ -13778,18 +13779,18 @@ var PostgrestError = class extends Error {
   }
 };
 function sleep(ms, signal) {
-  return new Promise((resolve3) => {
+  return new Promise((resolve4) => {
     if (signal === null || signal === void 0 ? void 0 : signal.aborted) {
-      resolve3();
+      resolve4();
       return;
     }
     const id = setTimeout(() => {
       signal === null || signal === void 0 || signal.removeEventListener("abort", onAbort);
-      resolve3();
+      resolve4();
     }, ms);
     function onAbort() {
       clearTimeout(id);
-      resolve3();
+      resolve4();
     }
     signal === null || signal === void 0 || signal.addEventListener("abort", onAbort);
   });
@@ -18227,7 +18228,7 @@ var _getRequestParams = (method, options, parameters, body) => {
   return _objectSpread22(_objectSpread22({}, params), parameters);
 };
 async function _handleRequest(fetcher, method, url, options, parameters, body, namespace) {
-  return new Promise((resolve3, reject) => {
+  return new Promise((resolve4, reject) => {
     fetcher(url, _getRequestParams(method, options, parameters, body)).then((result) => {
       if (!result.ok) throw result;
       if (options === null || options === void 0 ? void 0 : options.noResolveJson) return result;
@@ -18237,7 +18238,7 @@ async function _handleRequest(fetcher, method, url, options, parameters, body, n
         if (!contentType || !contentType.includes("application/json")) return {};
       }
       return result.json();
-    }).then((data) => resolve3(data)).catch((error) => handleError(error, reject, options, namespace));
+    }).then((data) => resolve4(data)).catch((error) => handleError(error, reject, options, namespace));
   });
 }
 function createFetchApi(namespace = "storage") {
@@ -20880,11 +20881,11 @@ var DEFAULT_TRACE_PROPAGATION_OPTIONS = {
 };
 function __awaiter2(thisArg, _arguments, P, generator) {
   function adopt(value) {
-    return value instanceof P ? value : new P(function(resolve3) {
-      resolve3(value);
+    return value instanceof P ? value : new P(function(resolve4) {
+      resolve4(value);
     });
   }
-  return new (P || (P = Promise))(function(resolve3, reject) {
+  return new (P || (P = Promise))(function(resolve4, reject) {
     function fulfilled(value) {
       try {
         step(generator.next(value));
@@ -20900,7 +20901,7 @@ function __awaiter2(thisArg, _arguments, P, generator) {
       }
     }
     function step(result) {
-      result.done ? resolve3(result.value) : adopt(result.value).then(fulfilled, rejected);
+      result.done ? resolve4(result.value) : adopt(result.value).then(fulfilled, rejected);
     }
     step((generator = generator.apply(thisArg, _arguments || [])).next());
   });
@@ -21696,14 +21697,14 @@ function validateCallbackUrl(raw, expectedOrigin, expectedState) {
   return code;
 }
 function listen(server, port) {
-  return new Promise((resolve3, reject) => {
+  return new Promise((resolve4, reject) => {
     const onError = (error) => {
       server.off("listening", onListening);
       reject(error);
     };
     const onListening = () => {
       server.off("error", onError);
-      resolve3();
+      resolve4();
     };
     server.once("error", onError);
     server.once("listening", onListening);
@@ -21712,8 +21713,8 @@ function listen(server, port) {
 }
 function closeServer(server) {
   if (!server.listening) return Promise.resolve();
-  const closed = new Promise((resolve3, reject) => {
-    server.close((error) => error ? reject(error) : resolve3());
+  const closed = new Promise((resolve4, reject) => {
+    server.close((error) => error ? reject(error) : resolve4());
   });
   server.closeAllConnections();
   return closed;
@@ -21721,8 +21722,8 @@ function closeServer(server) {
 async function callbackReceiver(expectedState) {
   let resolveCode;
   let rejectCode;
-  const result = new Promise((resolve3, reject) => {
-    resolveCode = resolve3;
+  const result = new Promise((resolve4, reject) => {
+    resolveCode = resolve4;
     rejectCode = reject;
   });
   let origin = "";
@@ -21807,23 +21808,23 @@ function authClient(target2, storage) {
 async function openExternalBrowser(url) {
   const command2 = process.platform === "darwin" ? { executable: "open", args: [url] } : process.platform === "linux" ? { executable: "xdg-open", args: [url] } : null;
   if (!command2) return false;
-  return await new Promise((resolve3) => {
+  return await new Promise((resolve4) => {
     const child = (0, import_node_child_process.spawn)(command2.executable, command2.args, {
       detached: true,
       stdio: "ignore"
     });
-    child.once("error", () => resolve3(false));
+    child.once("error", () => resolve4(false));
     child.once("spawn", () => {
       child.unref();
-      resolve3(true);
+      resolve4(true);
     });
   });
 }
 function pastedCallback(input, output, origin, state) {
   if (!input) return null;
   let resolveCode;
-  const promise = new Promise((resolve3) => {
-    resolveCode = resolve3;
+  const promise = new Promise((resolve4) => {
+    resolveCode = resolve4;
   });
   let pending = "";
   const onData = (chunk) => {
@@ -21854,14 +21855,14 @@ function pastedCallback(input, output, origin, state) {
 async function waitForCode(receiver, state, input, output, timeoutMs, pasteFallbackDelayMs) {
   const activePastes = [];
   let pasteTimer = null;
-  const paste = input ? new Promise((resolve3) => {
+  const paste = input ? new Promise((resolve4) => {
     pasteTimer = setTimeout(() => {
       output.write(
         "If the browser cannot reach the loopback callback, paste the complete callback URL here:\n"
       );
       const pasted = pastedCallback(input, output, receiver.origin, state);
       if (pasted) activePastes.push(pasted);
-      pasted?.promise.then(resolve3);
+      pasted?.promise.then(resolve4);
     }, pasteFallbackDelayMs);
   }) : null;
   let timer2 = null;
@@ -22380,6 +22381,9 @@ var INVITATION_TOKEN_RE = /^swm_inv_[A-Za-z0-9_-]{43}$/;
 var CAPABILITY_TOKEN_RE = /^swm_cap_[A-Za-z0-9_-]{43}$/;
 var CONTROL_RE = /[\u0000-\u001f\u007f-\u009f\u202a-\u202e\u2066-\u2069]/;
 var WORKSPACE_NAME_MAX_LENGTH = 80;
+function createAgentPrincipalCommand(name, allowDuplicateName = false) {
+  return allowDuplicateName ? { kind: "create_agent_principal", name, allow_duplicate_name: true } : { kind: "create_agent_principal", name };
+}
 var ChannelCommandError = class extends Error {
   constructor(status, code, message) {
     super(message);
@@ -22442,12 +22446,14 @@ var CommandTransportError = class extends Error {
   }
 };
 var CommandHttpError = class extends Error {
-  constructor(status, message = `command failed (HTTP ${status})`) {
+  constructor(status, message = `command failed (HTTP ${status})`, code) {
     super(message);
     this.status = status;
+    this.code = code;
     this.name = "CommandHttpError";
   }
   status;
+  code;
 };
 var ReauthenticationRequired = class extends CommandHttpError {
   constructor() {
@@ -22698,8 +22704,8 @@ function signalRetryDelayMs(retry, baseMs, random) {
 async function waitForSignalRetry(delayMs, deadline, callerAbort) {
   if (delayMs === 0) return "elapsed";
   let timer2;
-  const elapsed = new Promise((resolve3) => {
-    timer2 = setTimeout(() => resolve3("elapsed"), delayMs);
+  const elapsed = new Promise((resolve4) => {
+    timer2 = setTimeout(() => resolve4("elapsed"), delayMs);
   });
   try {
     const outcome = await raceSignalDeadline(elapsed, deadline, callerAbort);
@@ -22790,7 +22796,7 @@ var ThinCommandClient = class {
       clearTimeout(timer2);
     }
     if (response.status === 403) {
-      throw new CommandHttpError(403);
+      throw new CommandHttpError(403, `command failed (HTTP 403)`, "forbidden");
     }
     const raw = await parsedJson(response);
     if (!response.ok) {
@@ -22798,9 +22804,11 @@ var ThinCommandClient = class {
       if (response.status === 401 && error === "fresh_auth_required") {
         throw new ReauthenticationRequired();
       }
+      const slug = typeof error === "string" ? error : void 0;
       throw new CommandHttpError(
         response.status,
-        `command failed (HTTP ${response.status}): ${typeof error === "string" ? error : "unknown_error"}`
+        `command failed (HTTP ${response.status}): ${slug ?? "unknown_error"}`,
+        slug
       );
     }
     const body = responseBody(raw);
@@ -22890,7 +22898,7 @@ var ThinCommandClient = class {
       throw createWorkspaceError(response.status, body2);
     }
     if (response.status === 403) {
-      throw new CommandHttpError(403);
+      throw new CommandHttpError(403, `command failed (HTTP 403)`, "forbidden");
     }
     const raw = await parsedJson(response);
     if (!response.ok) {
@@ -22898,9 +22906,11 @@ var ThinCommandClient = class {
       if (response.status === 401 && error === "fresh_auth_required") {
         throw new ReauthenticationRequired();
       }
+      const slug = typeof error === "string" ? error : void 0;
       throw new CommandHttpError(
         response.status,
-        `command failed (HTTP ${response.status}): ${typeof error === "string" ? error : "unknown_error"}`
+        `command failed (HTTP ${response.status}): ${slug ?? "unknown_error"}`,
+        slug
       );
     }
     const body = responseBody(raw);
@@ -23092,12 +23102,12 @@ var ThinCommandClient = class {
     }
     const controller = new AbortController();
     let releaseDeadline;
-    const deadline = new Promise((resolve3) => {
-      releaseDeadline = resolve3;
+    const deadline = new Promise((resolve4) => {
+      releaseDeadline = resolve4;
     });
     let releaseCallerAbort;
-    const callerAbort = new Promise((resolve3) => {
-      releaseCallerAbort = resolve3;
+    const callerAbort = new Promise((resolve4) => {
+      releaseCallerAbort = resolve4;
     });
     let deadlineReached = false;
     const timer2 = setTimeout(() => {
@@ -23181,9 +23191,11 @@ var ThinCommandClient = class {
           const raw = bodyOutcome.value;
           if (!response.ok) {
             const error = raw && typeof raw === "object" && !Array.isArray(raw) ? raw : {};
+            const slug = typeof error.error === "string" ? error.error : void 0;
             throw new CommandHttpError(
               response.status,
-              typeof error.message === "string" ? error.message : `signal failed (HTTP ${response.status}): ${typeof error.error === "string" ? error.error : "unknown_error"}`
+              typeof error.message === "string" ? error.message : `signal failed (HTTP ${response.status}): ${slug ?? "unknown_error"}`,
+              slug
             );
           }
           const body = responseBody(raw);
@@ -23998,7 +24010,7 @@ async function deleteSecureJsonFile(path) {
   }
 }
 async function run(executable, args, input, detached = false) {
-  return await new Promise((resolve3, reject) => {
+  return await new Promise((resolve4, reject) => {
     const child = (0, import_node_child_process2.spawn)(executable, args, {
       stdio: ["pipe", "pipe", "pipe"],
       env: process.env,
@@ -24015,7 +24027,7 @@ async function run(executable, args, input, detached = false) {
       stderr += chunk;
     });
     child.on("error", reject);
-    child.on("close", (code) => resolve3({ code: code ?? 1, stdout, stderr }));
+    child.on("close", (code) => resolve4({ code: code ?? 1, stdout, stderr }));
     if (input !== void 0) child.stdin.end(`${input}
 `);
     else child.stdin.end();
@@ -24444,9 +24456,9 @@ var originError = /* @__PURE__ */ Symbol("OriginError");
 var CLOSE = {};
 var Query = class extends Promise {
   constructor(strings, args, handler, canceller, options = {}) {
-    let resolve3, reject;
+    let resolve4, reject;
     super((a, b2) => {
-      resolve3 = a;
+      resolve4 = a;
       reject = b2;
     });
     this.tagged = Array.isArray(strings.raw);
@@ -24457,7 +24469,7 @@ var Query = class extends Promise {
     this.options = options;
     this.state = null;
     this.statement = null;
-    this.resolve = (x) => (this.active = false, resolve3(x));
+    this.resolve = (x) => (this.active = false, resolve4(x));
     this.reject = (x) => (this.active = false, reject(x));
     this.active = false;
     this.cancelled = null;
@@ -24505,12 +24517,12 @@ var Query = class extends Promise {
           if (this.executed && !this.active)
             return { done: true };
           prev && prev();
-          const promise = new Promise((resolve3, reject) => {
+          const promise = new Promise((resolve4, reject) => {
             this.cursorFn = (value) => {
-              resolve3({ value, done: false });
+              resolve4({ value, done: false });
               return new Promise((r) => prev = r);
             };
-            this.resolve = () => (this.active = false, resolve3({ done: true }));
+            this.resolve = () => (this.active = false, resolve4({ done: true }));
             this.reject = (x) => (this.active = false, reject(x));
           });
           this.execute();
@@ -24815,9 +24827,9 @@ var arraySerializer = function arraySerializer2(xs, serializer, options, typarra
   if (!xs.length)
     return "{}";
   const first = xs[0];
-  const delimiter3 = typarray === 1020 ? ";" : ",";
+  const delimiter = typarray === 1020 ? ";" : ",";
   if (Array.isArray(first) && !first.type)
-    return "{" + xs.map((x) => arraySerializer2(x, serializer, options, typarray)).join(delimiter3) + "}";
+    return "{" + xs.map((x) => arraySerializer2(x, serializer, options, typarray)).join(delimiter) + "}";
   return "{" + xs.map((x) => {
     if (x === void 0) {
       x = options.transform.undefined;
@@ -24825,7 +24837,7 @@ var arraySerializer = function arraySerializer2(xs, serializer, options, typarra
         throw Errors.generic("UNDEFINED_VALUE", "Undefined values are not allowed");
     }
     return x === null ? "null" : '"' + arrayEscape(serializer ? serializer(x.type ? x.value : x) : "" + x) + '"';
-  }).join(delimiter3) + "}";
+  }).join(delimiter) + "}";
 };
 var arrayParserState = {
   i: 0,
@@ -24840,7 +24852,7 @@ var arrayParser = function arrayParser2(x, parser, typarray) {
 };
 function arrayParserLoop(s, x, parser, typarray) {
   const xs = [];
-  const delimiter3 = typarray === 1020 ? ";" : ",";
+  const delimiter = typarray === 1020 ? ";" : ",";
   for (; s.i < x.length; s.i++) {
     s.char = x[s.i];
     if (s.quoted) {
@@ -24864,7 +24876,7 @@ function arrayParserLoop(s, x, parser, typarray) {
       s.last < s.i && xs.push(parser ? parser(x.slice(s.last, s.i)) : x.slice(s.last, s.i));
       s.last = s.i + 1;
       break;
-    } else if (s.char === delimiter3 && s.p !== "}" && s.p !== '"') {
+    } else if (s.char === delimiter && s.p !== "}" && s.p !== '"') {
       xs.push(parser ? parser(x.slice(s.last, s.i)) : x.slice(s.last, s.i));
       s.last = s.i + 1;
     }
@@ -25137,12 +25149,12 @@ function Connection(options, queues = {}, { onopen = noop, onend = noop, onclose
     x.on("drain", drain);
     return x;
   }
-  async function cancel({ pid, secret }, resolve3, reject) {
+  async function cancel({ pid, secret }, resolve4, reject) {
     try {
       cancelMessage = bytes_default().i32(16).i32(80877102).i32(pid).i32(secret).end(16);
       await connect();
       socket.once("error", reject);
-      socket.once("close", resolve3);
+      socket.once("close", resolve4);
     } catch (error2) {
       reject(error2);
     }
@@ -26089,7 +26101,7 @@ function parseEvent(x) {
 // ../../../../../../../Users/yulanbot/Developer/Ridge.io/cloud-swarm/node_modules/postgres/src/large.js
 var import_stream2 = __toESM(require("stream"), 1);
 function largeObject(sql, oid, mode3 = 131072 | 262144) {
-  return new Promise(async (resolve3, reject) => {
+  return new Promise(async (resolve4, reject) => {
     await sql.begin(async (sql2) => {
       let finish;
       !oid && ([{ oid }] = await sql2`select lo_creat(-1) as oid`);
@@ -26115,7 +26127,7 @@ function largeObject(sql, oid, mode3 = 131072 | 262144) {
           ) seek
         `
       };
-      resolve3(lo);
+      resolve4(lo);
       return new Promise(async (r) => finish = r);
       async function readable({
         highWaterMark = 2048 * 8,
@@ -26176,7 +26188,7 @@ var src_default = Postgres;
 function Postgres(a, b2) {
   const options = parseOptions(a, b2), subscribe = options.no_subscribe || Subscribe(Postgres, { ...options });
   let ending = false;
-  const queries = queue_default(), connecting = queue_default(), reserved = queue_default(), closed = queue_default(), ended = queue_default(), open7 = queue_default(), busy = queue_default(), full = queue_default(), queues = { connecting, reserved, closed, ended, open: open7, busy, full };
+  const queries = queue_default(), connecting = queue_default(), reserved = queue_default(), closed = queue_default(), ended = queue_default(), open8 = queue_default(), busy = queue_default(), full = queue_default(), queues = { connecting, reserved, closed, ended, open: open8, busy, full };
   const connections = [...Array(options.max)].map(() => connection_default(options, queues, { onopen, onend, onclose }));
   const sql = Sql(handler);
   Object.assign(sql, {
@@ -26289,8 +26301,8 @@ function Postgres(a, b2) {
   }
   async function reserve() {
     const queue = queue_default();
-    const c = open7.length ? open7.shift() : await new Promise((resolve3, reject) => {
-      const query = { reserve: resolve3, reject };
+    const c = open8.length ? open8.shift() : await new Promise((resolve4, reject) => {
+      const query = { reserve: resolve4, reject };
       queries.push(query);
       closed.length && connect(closed.shift(), query);
     });
@@ -26327,9 +26339,9 @@ function Postgres(a, b2) {
       let uncaughtError, result;
       name && await sql2`savepoint ${sql2(name)}`;
       try {
-        result = await new Promise((resolve3, reject) => {
+        result = await new Promise((resolve4, reject) => {
           const x = fn2(sql2);
-          Promise.resolve(Array.isArray(x) ? Promise.all(x) : x).then(resolve3, reject);
+          Promise.resolve(Array.isArray(x) ? Promise.all(x) : x).then(resolve4, reject);
         });
         if (uncaughtError)
           throw uncaughtError;
@@ -26362,7 +26374,7 @@ function Postgres(a, b2) {
     c.queue.remove(c);
     queue.push(c);
     c.queue = queue;
-    queue === open7 ? c.idleTimer.start() : c.idleTimer.cancel();
+    queue === open8 ? c.idleTimer.start() : c.idleTimer.cancel();
     return c;
   }
   function json(x) {
@@ -26376,8 +26388,8 @@ function Postgres(a, b2) {
   function handler(query) {
     if (ending)
       return query.reject(Errors.connection("CONNECTION_ENDED", options, options));
-    if (open7.length)
-      return go(open7.shift(), query);
+    if (open8.length)
+      return go(open8.shift(), query);
     if (closed.length)
       return connect(closed.shift(), query);
     busy.length ? go(busy.shift(), query) : queries.push(query);
@@ -26386,8 +26398,8 @@ function Postgres(a, b2) {
     return c.execute(query) ? move(c, busy) : move(c, full);
   }
   function cancel(query) {
-    return new Promise((resolve3, reject) => {
-      query.state ? query.active ? connection_default(options).cancel(query.state, resolve3, reject) : query.cancelled = { resolve: resolve3, reject } : (queries.remove(query), query.cancelled = true, query.reject(Errors.generic("57014", "canceling statement due to user request")), resolve3());
+    return new Promise((resolve4, reject) => {
+      query.state ? query.active ? connection_default(options).cancel(query.state, resolve4, reject) : query.cancelled = { resolve: resolve4, reject } : (queries.remove(query), query.cancelled = true, query.reject(Errors.generic("57014", "canceling statement due to user request")), resolve4());
     });
   }
   async function end({ timeout = null } = {}) {
@@ -26406,11 +26418,11 @@ function Postgres(a, b2) {
   async function close() {
     await Promise.all(connections.map((c) => c.end()));
   }
-  async function destroy(resolve3) {
+  async function destroy(resolve4) {
     await Promise.all(connections.map((c) => c.terminate()));
     while (queries.length)
       queries.shift().reject(Errors.connection("CONNECTION_DESTROYED", options));
-    resolve3();
+    resolve4();
   }
   function connect(c, query) {
     move(c, connecting);
@@ -26422,7 +26434,7 @@ function Postgres(a, b2) {
   }
   function onopen(c) {
     if (queries.length === 0)
-      return move(c, open7);
+      return move(c, open8);
     let max = Math.ceil(queries.length / (connecting.length + 1)), ready = true;
     while (ready && queries.length && max-- > 0) {
       const query = queries.shift();
@@ -28367,55 +28379,81 @@ async function acceptInviteLink(options) {
   const baseName = sanitizePrincipalName(selectedBase, {
     truncate: explicitName === void 0
   });
+  const allowDuplicateName = options.allowDuplicateName === true;
   let principal = null;
   let chosenName = baseName;
-  for (let attempt = 1; attempt <= AUTO_NAME_ATTEMPTS; attempt += 1) {
-    chosenName = explicitName === void 0 ? suffixedName(baseName, attempt) : baseName;
-    principal = await runtime.livePrincipalByName(
-      session,
-      workspaceId2,
-      chosenName
-    );
-    if (principal) {
-      runtime.emit({
-        step: "principal",
-        message: `This machine already has an agent identity: ${principal.name}.`,
-        data: { principal_id: principal.principalId, name: principal.name }
-      });
-      break;
-    }
+  if (allowDuplicateName) {
     const created = await runtime.createPrincipal(
       session,
       workspaceId2,
-      chosenName
+      chosenName,
+      { allowDuplicateName: true }
     );
     if (created.status === "accepted") {
       principal = { principalId: created.principalId, name: chosenName };
       runtime.emit({
         step: "principal",
         message: `Registered this machine's agent identity: ${chosenName}.`,
-        data: { principal_id: created.principalId, name: chosenName }
+        data: {
+          principal_id: created.principalId,
+          name: chosenName,
+          allow_duplicate_name: true
+        }
       });
-      break;
-    }
-    const raced = await runtime.livePrincipalByName(
-      session,
-      workspaceId2,
-      chosenName
-    );
-    if (raced) {
-      principal = raced;
-      runtime.emit({
-        step: "principal",
-        message: `This machine already has an agent identity: ${raced.name}.`,
-        data: { principal_id: raced.principalId, name: raced.name }
-      });
-      break;
-    }
-    if (explicitName !== void 0) {
+    } else {
       throw new Error(
         `The name "${chosenName}" is already taken in this workspace. Re-run with a different --name.`
       );
+    }
+  } else {
+    for (let attempt = 1; attempt <= AUTO_NAME_ATTEMPTS; attempt += 1) {
+      chosenName = explicitName === void 0 ? suffixedName(baseName, attempt) : baseName;
+      principal = await runtime.livePrincipalByName(
+        session,
+        workspaceId2,
+        chosenName
+      );
+      if (principal) {
+        runtime.emit({
+          step: "principal",
+          message: `This machine already has an agent identity: ${principal.name}.`,
+          data: { principal_id: principal.principalId, name: principal.name }
+        });
+        break;
+      }
+      const created = await runtime.createPrincipal(
+        session,
+        workspaceId2,
+        chosenName
+      );
+      if (created.status === "accepted") {
+        principal = { principalId: created.principalId, name: chosenName };
+        runtime.emit({
+          step: "principal",
+          message: `Registered this machine's agent identity: ${chosenName}.`,
+          data: { principal_id: created.principalId, name: chosenName }
+        });
+        break;
+      }
+      const raced = await runtime.livePrincipalByName(
+        session,
+        workspaceId2,
+        chosenName
+      );
+      if (raced) {
+        principal = raced;
+        runtime.emit({
+          step: "principal",
+          message: `This machine already has an agent identity: ${raced.name}.`,
+          data: { principal_id: raced.principalId, name: raced.name }
+        });
+        break;
+      }
+      if (explicitName !== void 0) {
+        throw new Error(
+          `The name "${chosenName}" is already taken in this workspace. Re-run with a different --name.`
+        );
+      }
     }
   }
   if (!principal) {
@@ -28539,12 +28577,14 @@ function cloudAcceptOperations(target2, store2, fetcher = fetch) {
           owner_user_id: `eq.${session.userId}`,
           name: `eq.${name}`,
           revoked_at: "is.null",
-          limit: "1"
+          limit: "50"
         },
         fetcher
       );
-      const principal = found[0];
-      return principal && typeof principal.principal_id === "string" && typeof principal.name === "string" ? { principalId: principal.principal_id, name: principal.name } : null;
+      const principals = found.flatMap(
+        (principal) => typeof principal.principal_id === "string" && typeof principal.name === "string" ? [{ principalId: principal.principal_id, name: principal.name }] : []
+      );
+      return principals.length === 1 ? principals[0] : null;
     },
     async acceptInvitation(session, _workspaceHint, token) {
       try {
@@ -28567,12 +28607,17 @@ function cloudAcceptOperations(target2, store2, fetcher = fetch) {
         throw error;
       }
     },
-    async createPrincipal(session, workspaceId2, name) {
+    async createPrincipal(session, workspaceId2, name, options) {
+      const command2 = {
+        kind: "create_agent_principal",
+        name,
+        ...options?.allowDuplicateName === true ? { allow_duplicate_name: true } : {}
+      };
       const result = await sendConnectWithPending(
         client,
         { ...session, store: store2 },
         workspaceId2,
-        { kind: "create_agent_principal", name }
+        command2
       );
       if (result.response.status === "accepted") {
         return {
@@ -29824,8 +29869,8 @@ async function fetchSignalRead(fetcher, input, init, timeoutMs = SIGNAL_READ_TIM
   const signal = init.signal ? AbortSignal.any([init.signal, deadlineController.signal]) : deadlineController.signal;
   let onAbort = () => {
   };
-  const aborted = new Promise((resolve3) => {
-    onAbort = () => resolve3("timeout");
+  const aborted = new Promise((resolve4) => {
+    onAbort = () => resolve4("timeout");
     if (signal.aborted) {
       onAbort();
     } else {
@@ -29882,7 +29927,7 @@ async function fetchSignalRead(fetcher, input, init, timeoutMs = SIGNAL_READ_TIM
 }
 var READ_RETRY_ATTEMPTS = 2;
 var READ_RETRY_BASE_MS = 250;
-async function fetchSignalReadRetrying(fetcher, input, init, timeoutMs = SIGNAL_READ_TIMEOUT_MS, sleep2 = (ms) => new Promise((resolve3) => setTimeout(resolve3, ms))) {
+async function fetchSignalReadRetrying(fetcher, input, init, timeoutMs = SIGNAL_READ_TIMEOUT_MS, sleep2 = (ms) => new Promise((resolve4) => setTimeout(resolve4, ms))) {
   let result = await fetchSignalRead(fetcher, input, init, timeoutMs);
   for (let attempt = 1; attempt <= READ_RETRY_ATTEMPTS; attempt += 1) {
     if (result === null || result.response.ok) return result;
@@ -30222,7 +30267,7 @@ function nextWaitSleepMs(nowMs, deadlineMs, pollMs = SIGNAL_WAIT_POLL_MS) {
 }
 async function pollForSignals(options) {
   const now = options.now ?? Date.now;
-  const sleep2 = options.sleep ?? ((ms) => new Promise((resolve3) => setTimeout(resolve3, ms)));
+  const sleep2 = options.sleep ?? ((ms) => new Promise((resolve4) => setTimeout(resolve4, ms)));
   const pollMs = options.pollMs ?? SIGNAL_WAIT_POLL_MS;
   const probe = async () => {
     try {
@@ -30239,8 +30284,8 @@ async function pollForSignals(options) {
   const first = await probe();
   if (first !== "empty") return first;
   while (now() < options.deadlineMs) {
-    const sleepMs = nextWaitSleepMs(now(), options.deadlineMs, pollMs);
-    if (sleepMs > 0) await sleep2(sleepMs);
+    const sleepMs2 = nextWaitSleepMs(now(), options.deadlineMs, pollMs);
+    if (sleepMs2 > 0) await sleep2(sleepMs2);
     const next = await probe();
     if (next !== "empty") return next;
   }
@@ -30600,14 +30645,14 @@ async function runInboxFollow(options) {
     let timer2;
     let onAbort;
     try {
-      await new Promise((resolve3) => {
+      await new Promise((resolve4) => {
         let settled = false;
         const finish = () => {
           if (settled) return;
           settled = true;
           if (timer2 !== void 0) clearTimeout(timer2);
           if (onAbort && abort) abort.removeEventListener("abort", onAbort);
-          resolve3();
+          resolve4();
         };
         if (abort) {
           if (abort.aborted) {
@@ -31049,13 +31094,13 @@ var WakeSubscriber = class {
     if (nowMs >= options.until) {
       return Promise.resolve("deadline");
     }
-    return new Promise((resolve3) => {
+    return new Promise((resolve4) => {
       const delay2 = Math.max(0, options.until - this.now());
       const timer2 = setTimeout(() => this.finishWait("deadline"), delay2);
       const onAbort = () => this.finishWait("deadline");
       options.signal?.addEventListener("abort", onAbort, { once: true });
       this.waiter = {
-        resolve: resolve3,
+        resolve: resolve4,
         timer: timer2,
         onAbort,
         signal: options.signal
@@ -31425,7 +31470,7 @@ function notifyWriteError(error) {
   return error.code === "EPIPE" ? new NotifyStdoutClosedError() : error;
 }
 async function writeArrivalMonitorLine(line, stream2 = process.stdout) {
-  await new Promise((resolve3, reject) => {
+  await new Promise((resolve4, reject) => {
     let settled = false;
     const finish = (error) => {
       if (settled) return;
@@ -31435,7 +31480,7 @@ async function writeArrivalMonitorLine(line, stream2 = process.stdout) {
         reject(notifyWriteError(error));
       } else {
         stream2.off("error", onError);
-        resolve3();
+        resolve4();
       }
     };
     const onError = (error) => finish(error);
@@ -31476,15 +31521,15 @@ async function runArrivalWatch(options) {
       await options.sleep(ms);
       return;
     }
-    await new Promise((resolve3) => {
+    await new Promise((resolve4) => {
       let timer2;
       const finish = () => {
         if (timer2 !== void 0) clearTimeout(timer2);
         options.signal?.removeEventListener("abort", finish);
-        resolve3();
+        resolve4();
       };
       if (cancelled() || ms <= 0) {
-        resolve3();
+        resolve4();
         return;
       }
       options.signal?.addEventListener("abort", finish, { once: true });
@@ -32193,8 +32238,788 @@ function signalReceiptJsonPayload(report, nowMs = Date.now()) {
   };
 }
 
-// src/cloud/delivery.ts
+// src/cloud/session-context.ts
+var import_node_crypto13 = require("node:crypto");
+var import_promises5 = require("node:fs/promises");
+var import_node_os5 = require("node:os");
+var import_node_path5 = require("node:path");
+
+// src/cloud/session-wire.ts
+var AGENT_SESSION_ID_HEADER = "x-cswarm-session-id";
+var AGENT_SESSION_GENERATION_HEADER = "x-cswarm-session-generation";
+var AGENT_SESSION_KEY_HEADER = "x-cswarm-session-key";
+var ACK_AGENT_DELIVERY_SURFACED_FIELD = "surfaced";
+var AGENT_SESSION_PROOF_EXEMPT_KINDS = [
+  "acquire_agent_session"
+];
+var EXEMPT_KIND_SET = new Set(
+  AGENT_SESSION_PROOF_EXEMPT_KINDS
+);
+
+// src/cloud/session-contract.ts
+var AGENT_SESSION_TTL_MS = 12e4;
+var AGENT_SESSION_RENEW_AFTER_MS = 4e4;
+var SESSION_CONTEXT_VERSION = 1;
+var SESSION_MODES = ["interactive"];
+var SESSION_PROVIDERS = ["grok", "opencode", "claude", "codex"];
+var SESSION_ENFORCEMENT_STATES = [
+  "unknown",
+  "unmanaged",
+  "enabled"
+];
+var SESSION_RECEIVE_STATES = [
+  "manual",
+  "unverified",
+  "callback"
+];
+var AGENT_SESSION_ERROR_CODE_LIST = [
+  "session_proof_missing",
+  "session_proof_invalid",
+  "session_expired",
+  "session_retired",
+  "session_conflict",
+  "session_not_managed",
+  "session_already_managed",
+  "session_leases_live",
+  "delivery_not_surfaced"
+];
+var AGENT_SESSION_ERROR_CODE_SET = new Set(
+  AGENT_SESSION_ERROR_CODE_LIST
+);
+function isAgentSessionErrorCode(value) {
+  return AGENT_SESSION_ERROR_CODE_SET.has(value);
+}
+var AGENT_SESSION_PROOF_HEADERS = [
+  AGENT_SESSION_ID_HEADER,
+  AGENT_SESSION_GENERATION_HEADER,
+  AGENT_SESSION_KEY_HEADER
+];
+var ACQUIRE_AGENT_SESSION_KIND = "acquire_agent_session";
+var RENEW_AGENT_SESSION_KIND = "renew_agent_session";
+var RELEASE_AGENT_SESSION_KIND = "release_agent_session";
+var ENABLE_AGENT_MANAGEMENT_KIND = "enable_agent_management";
+var DISABLE_AGENT_MANAGEMENT_KIND = "disable_agent_management";
+var RECOVER_AGENT_SESSION_KIND = "recover_agent_session";
+
+// src/cloud/session-proof.ts
+var import_node_crypto12 = require("node:crypto");
 var UUID_RE13 = /^[0-9a-f]{8}-[0-9a-f]{4}-[1-8][0-9a-f]{3}-[89ab][0-9a-f]{3}-[0-9a-f]{12}$/i;
+var SESSION_KEY_RE = /^[A-Za-z0-9_-]{43}$/;
+function generateSessionKey() {
+  return (0, import_node_crypto12.randomBytes)(32).toString("base64url");
+}
+function isSessionKey(value) {
+  return SESSION_KEY_RE.test(value);
+}
+function isSessionUuid(value) {
+  return UUID_RE13.test(value);
+}
+function proofHeaders(proof) {
+  return {
+    [AGENT_SESSION_ID_HEADER]: proof.session_id,
+    [AGENT_SESSION_GENERATION_HEADER]: String(proof.generation),
+    [AGENT_SESSION_KEY_HEADER]: proof.key
+  };
+}
+var REDACTED_PROOF = "[redacted-session-proof]";
+var REDACTED_TOKEN = "[redacted-credential]";
+function isProofHeaderName(name) {
+  const lower = name.toLowerCase();
+  return AGENT_SESSION_PROOF_HEADERS.includes(lower);
+}
+function redactSessionHeaders(headers) {
+  const out = {};
+  if (headers === void 0) return out;
+  const parsed = new Headers(headers);
+  parsed.forEach((value, key2) => {
+    const lower = key2.toLowerCase();
+    if (isProofHeaderName(lower)) {
+      out[key2] = REDACTED_PROOF;
+      return;
+    }
+    if (lower === "authorization" || /swm_agt_/.test(value)) {
+      out[key2] = REDACTED_TOKEN;
+      return;
+    }
+    out[key2] = value;
+  });
+  return out;
+}
+function redactSessionText(value) {
+  let text = value;
+  for (const header of AGENT_SESSION_PROOF_HEADERS) {
+    text = text.replace(
+      new RegExp(`${header}\\s*[:=]\\s*[^\\s,;}]+`, "gi"),
+      `${header}=${REDACTED_PROOF}`
+    );
+  }
+  text = text.replace(/swm_agt_[A-Za-z0-9_-]+/g, REDACTED_TOKEN);
+  text = text.replace(
+    /"session_key"\s*:\s*"[^"]*"/g,
+    `"session_key":"${REDACTED_PROOF}"`
+  );
+  return text;
+}
+function bindSessionProof(fetcher, proof) {
+  if (proof === null || proof === void 0) return fetcher;
+  const headersToAdd = proofHeaders(proof);
+  return (async (input, init) => {
+    const headers = new Headers(init?.headers);
+    for (const [name, value] of Object.entries(headersToAdd)) {
+      headers.set(name, value);
+    }
+    return await fetcher(input, { ...init, headers });
+  });
+}
+
+// src/cloud/session-context.ts
+var UUID_RE14 = /^[0-9a-f]{8}-[0-9a-f]{4}-[1-8][0-9a-f]{3}-[89ab][0-9a-f]{3}-[0-9a-f]{12}$/i;
+var MAX_CONTEXT_BYTES = 16 * 1024;
+var URL_RE = /^https?:\/\/[^/\s]+$/i;
+var SessionContextError = class extends Error {
+  constructor(code, message) {
+    super(`[${code}] ${message}`);
+    this.code = code;
+  }
+  code;
+  name = "SessionContextError";
+};
+function modeOf(statMode) {
+  return statMode & 511;
+}
+function assertCurrentOwner(uid2) {
+  if (typeof process.getuid === "function" && uid2 !== process.getuid()) {
+    throw new SessionContextError(
+      "session_context_not_owned",
+      "session context path is not owned by the current user"
+    );
+  }
+}
+async function lstatPath(path) {
+  try {
+    return await (0, import_promises5.lstat)(path);
+  } catch (error) {
+    if (error.code === "ENOENT") {
+      throw error;
+    }
+    throw new SessionContextError(
+      "session_context_unsafe_parent",
+      "session context path could not be inspected"
+    );
+  }
+}
+async function assertNotInsideRepository(absolute) {
+  let current = (0, import_node_path5.dirname)(absolute);
+  const root = (0, import_node_path5.parse)(current).root || "/";
+  while (true) {
+    try {
+      const info = await (0, import_promises5.lstat)((0, import_node_path5.join)(current, ".git"));
+      if (info.isDirectory() || info.isFile() || info.isSymbolicLink()) {
+        throw new SessionContextError(
+          "session_context_inside_repository",
+          "session context must live outside a git repository"
+        );
+      }
+    } catch (error) {
+      if (error instanceof SessionContextError) throw error;
+    }
+    if (current === root) return;
+    const parent = (0, import_node_path5.dirname)(current);
+    if (parent === current) return;
+    current = parent;
+  }
+}
+async function assertSafeAncestors(absolute) {
+  const parent = (0, import_node_path5.dirname)((0, import_node_path5.resolve)(absolute));
+  let info;
+  try {
+    info = await lstatPath(parent);
+  } catch (error) {
+    if (error.code === "ENOENT") return;
+    throw error;
+  }
+  if (info.isSymbolicLink()) {
+    throw new SessionContextError(
+      "session_context_symlink",
+      `session context parent is a symlink: ${parent}`
+    );
+  }
+  if (!info.isDirectory()) {
+    throw new SessionContextError(
+      "session_context_unsafe_parent",
+      `session context parent is not a directory: ${parent}`
+    );
+  }
+  if ((info.mode & 2) !== 0) {
+    throw new SessionContextError(
+      "session_context_unsafe_parent",
+      `session context parent is world-writable: ${parent}`
+    );
+  }
+  assertCurrentOwner(info.uid);
+}
+async function assertOwnedDirectory(path, expectedMode) {
+  const info = await lstatPath(path);
+  if (info.isSymbolicLink()) {
+    throw new SessionContextError(
+      "session_context_symlink",
+      `session directory is a symlink: ${path}`
+    );
+  }
+  if (!info.isDirectory()) {
+    throw new SessionContextError(
+      "session_context_unsafe_parent",
+      `session directory is not a directory: ${path}`
+    );
+  }
+  assertCurrentOwner(info.uid);
+  if (modeOf(info.mode) !== expectedMode) {
+    throw new SessionContextError(
+      "session_context_insecure_mode",
+      `session directory must be mode ${expectedMode.toString(8)} (found ${modeOf(info.mode).toString(8)})`
+    );
+  }
+}
+async function ensureOwnedDirectory(path) {
+  try {
+    await assertOwnedDirectory(path, 448);
+    return;
+  } catch (error) {
+    if (error.code !== "ENOENT") throw error;
+  }
+  await (0, import_promises5.mkdir)(path, { recursive: true, mode: 448 });
+  await (0, import_promises5.chmod)(path, 448);
+  await assertOwnedDirectory(path, 448);
+}
+async function assertSafeContextPath(path) {
+  if (!(0, import_node_path5.isAbsolute)(path)) {
+    throw new SessionContextError(
+      "session_context_path_not_absolute",
+      "session context path must be absolute"
+    );
+  }
+  const absolute = (0, import_node_path5.resolve)(path);
+  await assertSafeAncestors(absolute);
+  await assertNotInsideRepository(absolute);
+  return absolute;
+}
+async function assertSafeTokenFilePath(path) {
+  if (!(0, import_node_path5.isAbsolute)(path)) {
+    throw new SessionContextError(
+      "session_context_token_file_invalid",
+      "token file path must be absolute"
+    );
+  }
+  const absolute = (0, import_node_path5.resolve)(path);
+  let info;
+  try {
+    info = await (0, import_promises5.lstat)(absolute);
+  } catch {
+    throw new SessionContextError(
+      "session_context_token_file_invalid",
+      "token file does not exist"
+    );
+  }
+  if (info.isSymbolicLink()) {
+    throw new SessionContextError(
+      "session_context_token_file_invalid",
+      "token file must not be a symlink"
+    );
+  }
+  if (!info.isFile()) {
+    throw new SessionContextError(
+      "session_context_token_file_invalid",
+      "token file must be a regular file"
+    );
+  }
+  assertCurrentOwner(info.uid);
+  if (modeOf(info.mode) !== 384) {
+    throw new SessionContextError(
+      "session_context_token_file_invalid",
+      `token file must be mode 0600 (found ${modeOf(info.mode).toString(8)})`
+    );
+  }
+  const parent = (0, import_node_path5.dirname)(absolute);
+  const parentInfo = await (0, import_promises5.lstat)(parent);
+  if (parentInfo.isSymbolicLink() || !parentInfo.isDirectory()) {
+    throw new SessionContextError(
+      "session_context_token_file_invalid",
+      "token file parent must be a real directory"
+    );
+  }
+  assertCurrentOwner(parentInfo.uid);
+  if (modeOf(parentInfo.mode) !== 448) {
+    throw new SessionContextError(
+      "session_context_token_file_invalid",
+      "token file parent must be mode 0700"
+    );
+  }
+  return absolute;
+}
+function defaultSessionRootDirectory() {
+  const xdg = process.env.XDG_CONFIG_HOME;
+  if (xdg && (0, import_node_path5.isAbsolute)(xdg)) return (0, import_node_path5.join)(xdg, "cswarm", "sessions");
+  return (0, import_node_path5.join)((0, import_node_os5.homedir)(), ".config", "cswarm", "sessions");
+}
+function defaultSessionContextPath(workspaceId2, principalId, sessionId) {
+  return (0, import_node_path5.join)(
+    defaultSessionRootDirectory(),
+    workspaceId2.toLowerCase(),
+    principalId.toLowerCase(),
+    `${sessionId.toLowerCase()}.json`
+  );
+}
+function asStringSet(value, allowed) {
+  if (typeof value !== "string") return null;
+  return allowed.includes(value) ? value : null;
+}
+function parseSessionContext(raw) {
+  let value;
+  try {
+    value = JSON.parse(raw);
+  } catch {
+    throw new SessionContextError(
+      "session_context_corrupt",
+      "session context is not JSON"
+    );
+  }
+  if (value === null || typeof value !== "object" || Array.isArray(value)) {
+    throw new SessionContextError(
+      "session_context_corrupt",
+      "session context is not an object"
+    );
+  }
+  const row = value;
+  const mode3 = asStringSet(row.mode, SESSION_MODES);
+  const provider = asStringSet(row.provider, SESSION_PROVIDERS);
+  const enforcement = asStringSet(row.enforcement, SESSION_ENFORCEMENT_STATES) ?? "unknown";
+  const receive = asStringSet(row.receive_verification, SESSION_RECEIVE_STATES) ?? "manual";
+  const releasedAt = parseReleasedAt(row.released_at);
+  const sessionKey = typeof row.session_key === "string" ? row.session_key : null;
+  const keyOk = sessionKey !== null && (releasedAt !== null ? sessionKey === "" || isSessionKey(sessionKey) : isSessionKey(sessionKey));
+  if (row.version !== SESSION_CONTEXT_VERSION || typeof row.url !== "string" || !URL_RE.test(row.url) || typeof row.profile_id !== "string" || !/^[0-9a-f]{24}$/.test(row.profile_id) || typeof row.workspace_id !== "string" || !UUID_RE14.test(row.workspace_id) || typeof row.principal_id !== "string" || !UUID_RE14.test(row.principal_id) || typeof row.session_id !== "string" || !isSessionUuid(row.session_id) || typeof row.generation !== "number" || !Number.isSafeInteger(row.generation) || row.generation < 0 || sessionKey === null || !keyOk || provider === null || mode3 === null || typeof row.host_session_id !== "string" || row.host_session_id.length < 1 || row.host_session_id.length > 200 || typeof row.token_file !== "string" || !(0, import_node_path5.isAbsolute)(row.token_file) || typeof row.acquire_command_id !== "string" || !/^[A-Za-z0-9_-]{8,72}$/.test(row.acquire_command_id) || !(row.host_label === null || typeof row.host_label === "string" && row.host_label.length <= 120) || releasedAt === void 0) {
+    throw new SessionContextError(
+      "session_context_corrupt",
+      "session context fields are malformed"
+    );
+  }
+  return {
+    version: SESSION_CONTEXT_VERSION,
+    url: row.url,
+    profile_id: row.profile_id,
+    workspace_id: row.workspace_id.toLowerCase(),
+    principal_id: row.principal_id.toLowerCase(),
+    session_id: row.session_id.toLowerCase(),
+    generation: row.generation,
+    session_key: sessionKey,
+    provider,
+    mode: mode3,
+    host_session_id: row.host_session_id,
+    token_file: row.token_file,
+    acquire_command_id: row.acquire_command_id,
+    host_label: row.host_label === null ? null : row.host_label,
+    enforcement,
+    receive_verification: receive,
+    released_at: releasedAt
+  };
+}
+function parseReleasedAt(value) {
+  if (value === void 0 || value === null) return null;
+  if (typeof value !== "string" || !Number.isFinite(Date.parse(value))) {
+    return void 0;
+  }
+  return value;
+}
+function isReleasedSession(context) {
+  return context.released_at !== null;
+}
+function markSessionReleased(context, releasedAt = (/* @__PURE__ */ new Date()).toISOString()) {
+  return {
+    ...context,
+    session_key: "",
+    released_at: releasedAt
+  };
+}
+function sessionProofOf(context) {
+  if (isReleasedSession(context)) return null;
+  if (context.generation < 1) return null;
+  if (!isSessionKey(context.session_key)) return null;
+  return {
+    session_id: context.session_id,
+    generation: context.generation,
+    key: context.session_key
+  };
+}
+function sessionLifecycleState(context) {
+  if (isReleasedSession(context) || sessionProofOf(context) === null && context.generation >= 1) {
+    return "stopped";
+  }
+  if (sessionProofOf(context) === null) return "unacquired";
+  return "running";
+}
+function publicSessionStatus(context, extras = {}) {
+  return {
+    version: context.version,
+    url: context.url,
+    profile_id: context.profile_id,
+    workspace_id: context.workspace_id,
+    principal_id: context.principal_id,
+    session_id: context.session_id,
+    generation: context.generation,
+    provider: context.provider,
+    mode: context.mode,
+    host_session_id: context.host_session_id,
+    host_label: context.host_label,
+    token_file: context.token_file,
+    enforcement: context.enforcement,
+    receive_verification: context.receive_verification,
+    released_at: context.released_at,
+    state: sessionLifecycleState(context),
+    has_private_proof: sessionProofOf(context) !== null,
+    ...extras
+  };
+}
+function newSessionBinding(input) {
+  return {
+    version: SESSION_CONTEXT_VERSION,
+    url: input.target.url,
+    profile_id: input.target.profileId,
+    workspace_id: input.workspaceId.toLowerCase(),
+    principal_id: input.principalId.toLowerCase(),
+    session_id: (input.sessionId ?? (0, import_node_crypto13.randomUUID)()).toLowerCase(),
+    generation: 0,
+    session_key: input.sessionKey ?? generateSessionKey(),
+    provider: input.provider,
+    mode: input.mode,
+    host_session_id: input.hostSessionId,
+    token_file: input.tokenFile,
+    acquire_command_id: input.acquireCommandId ?? newCommandId(),
+    host_label: input.hostLabel ?? null,
+    enforcement: "unknown",
+    receive_verification: input.mode === "interactive" ? "manual" : "unverified",
+    released_at: null
+  };
+}
+async function writeSessionContext(path, document2) {
+  const absolute = await assertSafeContextPath(path);
+  await ensureOwnedDirectory((0, import_node_path5.dirname)(absolute));
+  await assertSafeTokenFilePath(document2.token_file);
+  const serialized = `${JSON.stringify(document2, null, 2)}
+`;
+  await writeSecureJsonFile(absolute, serialized);
+  return document2;
+}
+async function readSessionContext(path) {
+  const absolute = await assertSafeContextPath(path);
+  let info;
+  try {
+    info = await (0, import_promises5.lstat)(absolute);
+  } catch (error) {
+    if (error.code === "ENOENT") {
+      throw new SessionContextError(
+        "session_context_missing",
+        "session context file does not exist"
+      );
+    }
+    throw error;
+  }
+  if (info.isSymbolicLink()) {
+    throw new SessionContextError(
+      "session_context_symlink",
+      "session context file is a symlink"
+    );
+  }
+  if (!info.isFile()) {
+    throw new SessionContextError(
+      "session_context_not_regular_file",
+      "session context is not a regular file"
+    );
+  }
+  assertCurrentOwner(info.uid);
+  if (modeOf(info.mode) !== 384) {
+    throw new SessionContextError(
+      "session_context_insecure_mode",
+      `session context must be mode 0600 (found ${modeOf(info.mode).toString(8)})`
+    );
+  }
+  const raw = await readSecureJsonFile(absolute, MAX_CONTEXT_BYTES);
+  if (raw === null) {
+    throw new SessionContextError(
+      "session_context_missing",
+      "session context file does not exist"
+    );
+  }
+  const parsed = parseSessionContext(raw);
+  await assertSafeTokenFilePath(parsed.token_file);
+  return parsed;
+}
+async function readSessionContextIfPresent(path) {
+  try {
+    return await readSessionContext(path);
+  } catch (error) {
+    if (error instanceof SessionContextError && error.code === "session_context_missing") {
+      return null;
+    }
+    throw error;
+  }
+}
+async function listSessionContexts(workspaceId2, principalId) {
+  const directory = (0, import_node_path5.join)(
+    defaultSessionRootDirectory(),
+    workspaceId2.toLowerCase(),
+    principalId.toLowerCase()
+  );
+  let names;
+  try {
+    names = await (0, import_promises5.readdir)(directory);
+  } catch {
+    return [];
+  }
+  const contexts = [];
+  for (const name of names.sort()) {
+    if (!name.endsWith(".json")) continue;
+    try {
+      const context = await readSessionContextIfPresent((0, import_node_path5.join)(directory, name));
+      if (context !== null) contexts.push(context);
+    } catch {
+      continue;
+    }
+  }
+  return contexts;
+}
+function assertLocalSessionBinding(context, input) {
+  if (input.target.url !== context.url || input.target.profileId !== context.profile_id) {
+    throw new SessionContextError(
+      "session_identity_mismatch",
+      "Cloud target does not match the session context"
+    );
+  }
+  if (input.tokenPrincipalId !== void 0 && input.tokenPrincipalId !== null && input.tokenPrincipalId.toLowerCase() !== context.principal_id) {
+    throw new SessionContextError(
+      "session_identity_mismatch",
+      "token artifact principal does not match the session context"
+    );
+  }
+  if (input.flagWorkspaceId !== void 0 && input.flagWorkspaceId.toLowerCase() !== context.workspace_id) {
+    throw new SessionContextError(
+      "session_identity_mismatch",
+      "--workspace-id does not match the session context"
+    );
+  }
+  if (input.flagUrl !== void 0 && input.flagUrl !== context.url) {
+    throw new SessionContextError(
+      "session_identity_mismatch",
+      "--url does not match the session context"
+    );
+  }
+  if (input.tokenFile !== void 0 && input.tokenFile !== null && (0, import_node_path5.resolve)(input.tokenFile) !== (0, import_node_path5.resolve)(context.token_file)) {
+    throw new SessionContextError(
+      "session_identity_mismatch",
+      "--agent-token-file does not match the session context token file"
+    );
+  }
+  if (input.hostSessionId !== void 0 && input.hostSessionId !== context.host_session_id) {
+    throw new SessionContextError(
+      "session_identity_mismatch",
+      "host session id does not match the session context"
+    );
+  }
+}
+function assertSameIdentity(context, input) {
+  assertLocalSessionBinding(context, input);
+  if (input.identity.principal_id.toLowerCase() !== context.principal_id) {
+    throw new SessionContextError(
+      "session_identity_mismatch",
+      "authenticated principal does not match the session context"
+    );
+  }
+  if (input.identity.workspace_id.toLowerCase() !== context.workspace_id) {
+    throw new SessionContextError(
+      "session_identity_mismatch",
+      "authenticated workspace does not match the session context"
+    );
+  }
+}
+var SESSION_ACQUIRE_BINDING_FIELDS = [
+  "provider",
+  "mode",
+  "host_label",
+  "host_session_id",
+  "token_file"
+];
+function assertAcquireBindingMatches(existing, requested) {
+  const changed = SESSION_ACQUIRE_BINDING_FIELDS.filter(
+    (field) => existing[field] !== requested[field]
+  );
+  if (changed.length === 0) return;
+  throw new SessionContextError(
+    "session_binding_mismatch",
+    `acquire retry cannot change ${SESSION_ACQUIRE_BINDING_FIELDS.join(", ")}`
+  );
+}
+var SESSION_RECEIVER_KINDS = ["foreground", "listen"];
+var RECEIVER_LOCK_MAX_BYTES = 512;
+function sessionReceiverLockPath(contextPath) {
+  const name = (0, import_node_path5.basename)(contextPath);
+  const stem = name.endsWith(".json") ? name.slice(0, -".json".length) : name;
+  return (0, import_node_path5.join)((0, import_node_path5.dirname)(contextPath), `${stem}.receiver.lock`);
+}
+function pidIsAlive2(pid) {
+  if (!Number.isSafeInteger(pid) || pid <= 0) return false;
+  try {
+    process.kill(pid, 0);
+    return true;
+  } catch (error) {
+    return error.code !== "ESRCH";
+  }
+}
+function parseReceiverLock(raw) {
+  let value;
+  try {
+    value = JSON.parse(raw);
+  } catch {
+    return null;
+  }
+  if (value === null || typeof value !== "object" || Array.isArray(value)) {
+    return null;
+  }
+  const row = value;
+  if (row.version !== 1 || typeof row.kind !== "string" || !SESSION_RECEIVER_KINDS.includes(row.kind) || !Number.isSafeInteger(row.pid) || row.pid <= 0) {
+    return null;
+  }
+  return {
+    version: 1,
+    kind: row.kind,
+    pid: row.pid
+  };
+}
+async function readReceiverLock(path) {
+  let raw;
+  try {
+    raw = await (0, import_promises5.readFile)(path, "utf8");
+  } catch (error) {
+    if (error.code === "ENOENT") return null;
+    throw error;
+  }
+  if (Buffer.byteLength(raw, "utf8") > RECEIVER_LOCK_MAX_BYTES) return null;
+  return parseReceiverLock(raw);
+}
+async function writeReceiverLock(path, lock) {
+  const payload = `${JSON.stringify(lock)}
+`;
+  const handle = await (0, import_promises5.open)(path, "wx", 384);
+  try {
+    await handle.writeFile(payload, "utf8");
+  } finally {
+    await handle.close();
+  }
+  await (0, import_promises5.chmod)(path, 384);
+}
+async function holdSessionReceiverLock(contextPath, kind, pid = process.pid) {
+  if (!SESSION_RECEIVER_KINDS.includes(kind)) {
+    throw new SessionContextError(
+      "session_receiver_busy",
+      `receiver kind must be ${SESSION_RECEIVER_KINDS.join(" or ")}`
+    );
+  }
+  if (!Number.isSafeInteger(pid) || pid <= 0) {
+    throw new SessionContextError(
+      "session_receiver_busy",
+      "receiver lock pid must be a positive integer"
+    );
+  }
+  const absolute = await assertSafeContextPath(contextPath);
+  await ensureOwnedDirectory((0, import_node_path5.dirname)(absolute));
+  const lockPath = sessionReceiverLockPath(absolute);
+  const wanted = { version: 1, kind, pid };
+  for (let attempt = 0; attempt < 2; attempt += 1) {
+    try {
+      await writeReceiverLock(lockPath, wanted);
+      return wanted;
+    } catch (error) {
+      if (error.code !== "EEXIST") throw error;
+    }
+    const existing = await readReceiverLock(lockPath);
+    if (existing !== null && pidIsAlive2(existing.pid)) {
+      if (existing.pid === pid && existing.kind === kind) return existing;
+      throw new SessionContextError(
+        "session_receiver_busy",
+        `a ${existing.kind} receiver is already running as pid ${existing.pid}`
+      );
+    }
+    await (0, import_promises5.unlink)(lockPath).catch(() => void 0);
+  }
+  throw new SessionContextError(
+    "session_receiver_busy",
+    "receiver lock could not be acquired"
+  );
+}
+async function releaseSessionReceiverLock(contextPath) {
+  const absolute = await assertSafeContextPath(contextPath);
+  const lockPath = sessionReceiverLockPath(absolute);
+  await (0, import_promises5.unlink)(lockPath).catch((error) => {
+    if (error.code !== "ENOENT") throw error;
+  });
+}
+async function releaseSessionReceiverLockIfHeld(contextPath, pid = process.pid) {
+  const absolute = await assertSafeContextPath(contextPath);
+  const lockPath = sessionReceiverLockPath(absolute);
+  const existing = await readReceiverLock(lockPath);
+  if (existing === null || existing.pid !== pid) return;
+  await (0, import_promises5.unlink)(lockPath).catch(() => void 0);
+}
+
+// src/cloud/session-ack.ts
+var ManagedAckRefusedError = class extends Error {
+  constructor(code) {
+    super(managedAckMessage(code));
+    this.code = code;
+  }
+  code;
+  name = "ManagedAckRefusedError";
+};
+var MANAGED_ACK_MESSAGES = {
+  ack_proof_missing: "cannot mark an ask received without a current session proof",
+  ack_proof_stale: "cannot mark an ask received with a stale session proof",
+  ack_injection_unproven: "cannot mark an ask received until it is injected into the bound host conversation",
+  ack_host_session_mismatch: "cannot mark an ask received: the host conversation is not the bound session",
+  ack_host_session_untrusted: "cannot mark an ask received: the host did not prove the current conversation"
+};
+function managedAckMessage(code) {
+  return MANAGED_ACK_MESSAGES[code];
+}
+function canAckManagedDelivery(input) {
+  if (input.proof === null) return { ok: false, code: "ack_proof_missing" };
+  if (input.proof.session_id !== input.context.session_id || input.proof.generation !== input.context.generation || input.proof.key !== input.context.session_key || input.context.generation < 1) {
+    return { ok: false, code: "ack_proof_stale" };
+  }
+  if (!input.injectionSucceeded) {
+    return { ok: false, code: "ack_injection_unproven" };
+  }
+  if (!input.hostIdentityTrusted || input.observedHostSessionId === null) {
+    return { ok: false, code: "ack_host_session_untrusted" };
+  }
+  if (input.observedHostSessionId !== input.context.host_session_id) {
+    return { ok: false, code: "ack_host_session_mismatch" };
+  }
+  return { ok: true };
+}
+function assertManagedAckAllowed(input) {
+  const decision = canAckManagedDelivery(input);
+  if (!decision.ok) throw new ManagedAckRefusedError(decision.code);
+}
+function managedAckInput(input) {
+  return {
+    context: input.context,
+    proof: input.proof !== void 0 ? input.proof : sessionProofOf(input.context),
+    injectionSucceeded: input.injectionSucceeded,
+    observedHostSessionId: input.observedHostSessionId,
+    hostIdentityTrusted: input.hostIdentityTrusted
+  };
+}
+
+// src/cloud/delivery.ts
+var UUID_RE15 = /^[0-9a-f]{8}-[0-9a-f]{4}-[1-8][0-9a-f]{3}-[89ab][0-9a-f]{3}-[0-9a-f]{12}$/i;
 var RFC3339_TIMESTAMP_RE = /^(\d{4})-(\d{2})-(\d{2})T(\d{2}):(\d{2}):(\d{2})(?:\.\d+)?(?:Z|([+-]\d{2}):(\d{2}))$/i;
 var DELIVERY_KINDS = /* @__PURE__ */ new Set(["ask", "note"]);
 var SENDER_OWNER_RELATIONS2 = /* @__PURE__ */ new Set([
@@ -32292,7 +33117,7 @@ var DeliveryProtocolError = class extends Error {
   }
 };
 function checkedUuid3(value, field) {
-  if (typeof value !== "string" || !UUID_RE13.test(value)) {
+  if (typeof value !== "string" || !UUID_RE15.test(value)) {
     throw new DeliveryProtocolError(
       `delivery response returned a malformed ${field}`
     );
@@ -32403,7 +33228,7 @@ function checkedClaimCapabilities(value) {
 }
 function checkedOptionalUuidArray(value, field) {
   if (value === void 0) return;
-  if (!Array.isArray(value) || value.some((item) => typeof item !== "string" || !UUID_RE13.test(item))) {
+  if (!Array.isArray(value) || value.some((item) => typeof item !== "string" || !UUID_RE15.test(item))) {
     throw new DeliveryProtocolError(
       `delivery response returned a malformed ${field}`
     );
@@ -32586,7 +33411,7 @@ function checkedCommandId(value) {
   return value;
 }
 function checkedUuidRequest(value, field) {
-  if (!UUID_RE13.test(value)) {
+  if (!UUID_RE15.test(value)) {
     throw new Error(`${field} must be a UUID for an agent delivery command`);
   }
 }
@@ -32671,8 +33496,8 @@ var DeliveryCommandClient = class {
     const signal = deadlineController.signal;
     let onAbort = () => {
     };
-    const aborted = new Promise((resolve3) => {
-      onAbort = () => resolve3("timeout");
+    const aborted = new Promise((resolve4) => {
+      onAbort = () => resolve4("timeout");
       if (signal.aborted) {
         onAbort();
       } else {
@@ -32769,6 +33594,9 @@ var DeliveryCommandClient = class {
   }
   /** Acknowledge one leased delivery with an exact terminal outcome. */
   async ackAgentDelivery(request) {
+    if (request.managedAck !== void 0) {
+      assertManagedAckAllowed(request.managedAck);
+    }
     assertAckRequest(request);
     const { response, text } = await this.post(request, {
       kind: "ack_agent_delivery",
@@ -32776,7 +33604,8 @@ var DeliveryCommandClient = class {
       lease_id: request.leaseId.toLowerCase(),
       listener_instance_id: request.listenerInstanceId.toLowerCase(),
       outcome: request.outcome,
-      last_error_code: request.lastErrorCode
+      last_error_code: request.lastErrorCode,
+      ...request.surfaced === void 0 ? {} : { [ACK_AGENT_DELIVERY_SURFACED_FIELD]: request.surfaced }
     }, "delivery acknowledgement");
     if (!response.ok) throw refusal(response, text);
     parseAckSuccess(
@@ -32794,6 +33623,9 @@ var DeliveryCommandClient = class {
   }
   /** Mark a queued delivery observed only after the interactive hook surfaced it. */
   async observeQueuedAgentDelivery(request) {
+    if (request.managedAck !== void 0) {
+      assertManagedAckAllowed(request.managedAck);
+    }
     checkedCommandId(request.commandId);
     assertAgentToken(request.credential);
     checkedUuidRequest(request.workspaceId, "workspaceId");
@@ -32804,7 +33636,8 @@ var DeliveryCommandClient = class {
       lease_id: null,
       listener_instance_id: null,
       outcome: "observed",
-      last_error_code: null
+      last_error_code: null,
+      ...request.surfaced === void 0 ? {} : { [ACK_AGENT_DELIVERY_SURFACED_FIELD]: request.surfaced }
     }, "delivery observation");
     if (!response.ok) throw refusal(response, text);
     parseAckSuccess(
@@ -32919,86 +33752,6 @@ async function reportRenderedBroadcasts(target2, token, workspaceId2, signalIds,
   return { attempted: new Set(signalIds).size, reported, failures };
 }
 
-// src/host/credential-redaction.ts
-var EXOTIC_SEPARATORS = "\\u00a0\\u1680\\u2000-\\u200d\\u2028\\u2029\\u202a-\\u202e\\u2060\\u2066-\\u2069\\u202f\\u205f\\u3000\\ufeff";
-var SEPARATOR_CLASS_SOURCE = "\\t\\n\\x0b\\f\\r " + EXOTIC_SEPARATORS;
-var ANSI_ESCAPE_GLOBAL_RE2 = new RegExp("\\u001b\\[[0-?]*[ -\\/]*[@-~]", "g");
-var CONTROL_AND_SEPARATOR_STRIP_RE = new RegExp(
-  "[\\u0000-\\u0008\\u000b-\\u001f\\u007f-\\u009f" + EXOTIC_SEPARATORS + "]",
-  "g"
-);
-var SECRET_SHAPE_RE = new RegExp(
-  `swm_(?:agt|inv|cap)_[^${SEPARATOR_CLASS_SOURCE}]*|cswarm-wake:[A-Za-z0-9_-]{43}`,
-  "i"
-);
-var SECRET_SHAPE_GLOBAL_RE = new RegExp(SECRET_SHAPE_RE.source, "gi");
-function redactCredentialText(value) {
-  return value.replace(ANSI_ESCAPE_GLOBAL_RE2, "").replace(CONTROL_AND_SEPARATOR_STRIP_RE, "").replace(SECRET_SHAPE_GLOBAL_RE, "[redacted-credential]");
-}
-
-// src/host/stderr-tail.ts
-var STDERR_EXIT_GRACE_MS = 100;
-var STDERR_READABLE_END_GRACE_MS = STDERR_EXIT_GRACE_MS + 50;
-
-// src/host/opencode.ts
-var import_node_fs2 = require("node:fs");
-var import_node_path5 = require("node:path");
-
-// src/host/bounds.ts
-var ACP_DEFAULT_REQUEST_TIMEOUT_MS = 12e4;
-var ACP_VERSION_CHECK_TIMEOUT_MS = 5e3;
-var CLAUDE_ACP_LAST_MEASURED_VERSION = "0.64.2";
-
-// src/host/env.ts
-var ALLOWED_EXACT = /* @__PURE__ */ new Set([
-  "PATH",
-  "HOME",
-  "USER",
-  "LOGNAME",
-  "SHELL",
-  "TMPDIR",
-  "TMP",
-  "TEMP",
-  "LANG",
-  "LC_ALL",
-  "LC_CTYPE",
-  "LC_MESSAGES",
-  "LC_COLLATE",
-  "LC_TIME",
-  "TERM",
-  "COLORTERM",
-  "NO_COLOR",
-  "FORCE_COLOR",
-  "XDG_CONFIG_HOME",
-  "XDG_DATA_HOME",
-  "XDG_CACHE_HOME",
-  "XDG_RUNTIME_DIR",
-  "XDG_STATE_HOME",
-  "GROK_HOME"
-]);
-var DENY_NAME_RE = /(?:^|_)(?:SWARM|SECRET|TOKEN|PASSWORD|PASSWD|CREDENTIAL|PRIVATE_KEY|API_KEY|AUTH|COOKIE)(?:_|$)/i;
-function sanitizeChildEnv(parent = process.env) {
-  const out = {};
-  for (const [key2, value] of Object.entries(parent)) {
-    if (value === void 0) continue;
-    if (!ALLOWED_EXACT.has(key2)) continue;
-    if (DENY_NAME_RE.test(key2)) continue;
-    if (key2.startsWith("SWARM_")) continue;
-    out[key2] = value;
-  }
-  return out;
-}
-
-// src/host/sanitize.ts
-var SECRET_VALUE_RE = /(?:(?:api[_-]?key|token|secret|password|authorization|bearer)\s*[:=]\s*)(["']?)([^\s"'\\]{8,})\1/gi;
-var JWT_RE = /\beyJ[A-Za-z0-9_-]{10,}\.[A-Za-z0-9_-]{10,}\.[A-Za-z0-9_-]{10,}\b/g;
-function redactString(value) {
-  return redactCredentialText(value).replace(SECRET_VALUE_RE, (_m, q) => `redacted=${q}***${q}`).replace(JWT_RE, "[redacted-jwt]");
-}
-function sanitizeText(text) {
-  return redactString(text);
-}
-
 // src/host/types.ts
 var TRANSIENT_ACP_CODES = /* @__PURE__ */ new Set([
   "timeout",
@@ -33090,319 +33843,6 @@ function compareSemVer(left, right) {
   }
   return 0;
 }
-function parseProviderVersionOutput(stdout, productPattern, allowBare = true) {
-  const lines = stdout.split(/\r?\n/);
-  for (const line of lines) {
-    const pattern = new RegExp(productPattern.source, productPattern.flags.replace("g", ""));
-    const product = pattern.exec(line);
-    if (!product) continue;
-    const after = line.slice(product.index + product[0].length);
-    const afterMatch = new RegExp(
-      `^\\s+(${SEMVER_SOURCE})(?=$|\\s|\\()`
-    ).exec(after);
-    if (afterMatch?.[1]) return afterMatch[1];
-    const before = line.slice(0, product.index);
-    const beforeMatch = new RegExp(`(${SEMVER_SOURCE})\\s*\\($`).exec(before);
-    if (beforeMatch?.[1]) return beforeMatch[1];
-  }
-  if (!allowBare) return null;
-  for (const line of lines) {
-    const trimmed = line.trim();
-    const match = new RegExp(`^(${SEMVER_SOURCE})$`).exec(trimmed);
-    if (match?.[1]) return match[1];
-  }
-  return null;
-}
-
-// src/host/opencode.ts
-var MAX_OPENCODE_AUTH_BYTES = 256 * 1024;
-var STALE_HOME_MAX_AGE_MS = 60 * 60 * 1e3;
-function resolveOpenCodeExecutable(executable = "opencode", pathEnv) {
-  if ((0, import_node_path5.isAbsolute)(executable) || executable.includes("/")) {
-    const abs = (0, import_node_path5.resolve)(executable);
-    try {
-      (0, import_node_fs2.accessSync)(abs, import_node_fs2.constants.X_OK);
-    } catch {
-      throw new AcpHostError("executable_missing", `not executable: ${abs}`);
-    }
-    try {
-      return (0, import_node_fs2.realpathSync)(abs);
-    } catch {
-      throw new AcpHostError(
-        "executable_missing",
-        `could not realpath opencode executable: ${abs}`
-      );
-    }
-  }
-  const pathValue = pathEnv ?? process.env.PATH ?? "";
-  for (const dir of pathValue.split(":")) {
-    if (!dir) continue;
-    const candidate = (0, import_node_path5.join)(dir, executable);
-    try {
-      (0, import_node_fs2.accessSync)(candidate, import_node_fs2.constants.X_OK);
-      try {
-        return (0, import_node_fs2.realpathSync)(candidate);
-      } catch {
-        throw new AcpHostError(
-          "executable_missing",
-          `could not realpath opencode executable: ${candidate}`
-        );
-      }
-    } catch (err) {
-      if (err instanceof AcpHostError) throw err;
-    }
-  }
-  throw new AcpHostError(
-    "executable_missing",
-    `opencode executable not found on PATH: ${executable}`
-  );
-}
-
-// src/host/claude.ts
-var import_node_child_process3 = require("node:child_process");
-var import_node_module = require("node:module");
-var import_node_fs3 = require("node:fs");
-var import_node_path6 = require("node:path");
-var WINDOWS_NPM_SHIM_MAX_BYTES = 64 * 1024;
-var WINDOWS_NPM_ENTRYPOINT = [
-  "node_modules",
-  "@agentclientprotocol",
-  "claude-agent-acp",
-  "dist",
-  "index.js"
-];
-function resolveWindowsNpmShim(shim) {
-  let source;
-  try {
-    source = (0, import_node_fs3.readFileSync)(shim, "utf8");
-  } catch {
-    throw new AcpHostError(
-      "executable_missing",
-      `could not read claude-agent-acp npm shim: ${shim}`
-    );
-  }
-  if (Buffer.byteLength(source, "utf8") > WINDOWS_NPM_SHIM_MAX_BYTES || !source.includes(
-    String.raw`"%dp0%\node_modules\@agentclientprotocol\claude-agent-acp\dist\index.js"`
-  )) {
-    throw new AcpHostError(
-      "executable_missing",
-      `unrecognized claude-agent-acp npm shim: ${shim}`
-    );
-  }
-  const target2 = (0, import_node_path6.join)((0, import_node_path6.dirname)(shim), ...WINDOWS_NPM_ENTRYPOINT);
-  try {
-    (0, import_node_fs3.accessSync)(target2, import_node_fs3.constants.R_OK);
-    return (0, import_node_fs3.realpathSync)(target2);
-  } catch {
-    throw new AcpHostError(
-      "executable_missing",
-      `claude-agent-acp package entrypoint is missing beside npm shim: ${shim}`
-    );
-  }
-}
-function resolvedClaudeCandidate(candidate, platform) {
-  (0, import_node_fs3.accessSync)(candidate, import_node_fs3.constants.X_OK);
-  const real = (0, import_node_fs3.realpathSync)(candidate);
-  return platform === "win32" && (0, import_node_path6.extname)(real).toLowerCase() === ".cmd" ? resolveWindowsNpmShim(real) : real;
-}
-function resolveClaudeExecutable(executable = "claude-agent-acp", pathEnv, platform = process.platform) {
-  if ((0, import_node_path6.isAbsolute)(executable) || executable.includes("/") || executable.includes("\\")) {
-    const abs = (0, import_node_path6.resolve)(executable);
-    const candidates = platform === "win32" && (0, import_node_path6.extname)(abs) === "" ? [`${abs}.cmd`] : [abs];
-    for (const candidate of candidates) {
-      try {
-        return resolvedClaudeCandidate(candidate, platform);
-      } catch (error) {
-        if (error instanceof AcpHostError) throw error;
-      }
-    }
-    throw new AcpHostError("executable_missing", `not executable: ${abs}`);
-  }
-  const pathValue = pathEnv ?? process.env.PATH ?? "";
-  const names = platform === "win32" && (0, import_node_path6.extname)(executable) === "" ? [`${executable}.cmd`] : [executable];
-  for (const dir of pathValue.split(import_node_path6.delimiter)) {
-    if (!dir) continue;
-    for (const name of names) {
-      const candidate = (0, import_node_path6.join)(dir, name);
-      try {
-        return resolvedClaudeCandidate(candidate, platform);
-      } catch (error) {
-        if (error instanceof AcpHostError) throw error;
-      }
-    }
-  }
-  throw new AcpHostError(
-    "executable_missing",
-    `claude-agent-acp executable not found on PATH: ${executable}`
-  );
-}
-function buildClaudeLaunch(executable, args, platform = process.platform) {
-  return platform === "win32" && (0, import_node_path6.extname)(executable).toLowerCase() === ".js" ? { command: process.execPath, args: [executable, ...args] } : { command: executable, args: [...args] };
-}
-function parseClaudeVersionOutput(stdout) {
-  return parseProviderVersionOutput(stdout, /\bclaude-agent-acp\b/i);
-}
-function semanticVersion(value) {
-  if (typeof value !== "string") return null;
-  return parseProviderVersionOutput(`${value}
-`, /\bnever-a-product-name\b/i);
-}
-function readPackageAtOrAbove(entrypoint, expectedName) {
-  let directory = (0, import_node_path6.dirname)(entrypoint);
-  for (let depth = 0; depth < 5; depth += 1) {
-    const path = (0, import_node_path6.join)(directory, "package.json");
-    try {
-      const row = JSON.parse((0, import_node_fs3.readFileSync)(path, "utf8"));
-      if (row && typeof row === "object" && !Array.isArray(row) && row.name === expectedName) {
-        return { path, row };
-      }
-    } catch {
-    }
-    const parent = (0, import_node_path6.dirname)(directory);
-    if (parent === directory) break;
-    directory = parent;
-  }
-  return null;
-}
-function measureClaudeBundleVersions(executable) {
-  const adapter = readPackageAtOrAbove(
-    executable,
-    "@agentclientprotocol/claude-agent-acp"
-  );
-  if (!adapter) return { agentSdkVersion: null, claudeCodeVersion: null };
-  try {
-    const sdkEntrypoint = (0, import_node_module.createRequire)(adapter.path).resolve(
-      "@anthropic-ai/claude-agent-sdk"
-    );
-    const sdk = readPackageAtOrAbove(
-      sdkEntrypoint,
-      "@anthropic-ai/claude-agent-sdk"
-    );
-    if (!sdk) return { agentSdkVersion: null, claudeCodeVersion: null };
-    return {
-      agentSdkVersion: semanticVersion(sdk.row.version),
-      claudeCodeVersion: semanticVersion(sdk.row.claudeCodeVersion)
-    };
-  } catch {
-    return { agentSdkVersion: null, claudeCodeVersion: null };
-  }
-}
-async function readClaudeVersionOutput(executable, options) {
-  const timeoutMs = options?.timeoutMs ?? ACP_VERSION_CHECK_TIMEOUT_MS;
-  const env = options?.env ?? sanitizeChildEnv(process.env);
-  const launch = buildClaudeLaunch(executable, ["--version"], options?.platform);
-  return await new Promise((resolve3, reject) => {
-    (0, import_node_child_process3.execFile)(
-      launch.command,
-      launch.args,
-      { timeout: timeoutMs, encoding: "utf8", env },
-      (error, out, stderr) => {
-        if (error) {
-          reject(
-            new AcpVersionError(
-              `failed to run ${executable} --version: ${error.message}${stderr ? ` (${stderr.trim()})` : ""}`
-            )
-          );
-          return;
-        }
-        resolve3(out);
-      }
-    );
-  });
-}
-async function inspectClaudeBridgeExecutable(executable = "claude-agent-acp", options) {
-  const resolved = resolveClaudeExecutable(
-    executable,
-    options?.pathEnv,
-    options?.platform
-  );
-  const output = await readClaudeVersionOutput(resolved, options);
-  const bundle = measureClaudeBundleVersions(resolved);
-  return {
-    executable: resolved,
-    providerVersion: parseClaudeVersionOutput(output),
-    lastMeasuredVersion: CLAUDE_ACP_LAST_MEASURED_VERSION,
-    bundledAgentSdkVersion: bundle.agentSdkVersion,
-    bundledClaudeCodeVersion: bundle.claudeCodeVersion
-  };
-}
-
-// src/host/codex.ts
-var import_node_fs4 = require("node:fs");
-var import_node_path7 = require("node:path");
-var WINDOWS_NPM_SHIM_MAX_BYTES2 = 64 * 1024;
-var WINDOWS_NPM_ENTRYPOINT2 = [
-  "node_modules",
-  "@agentclientprotocol",
-  "codex-acp",
-  "dist",
-  "index.js"
-];
-function resolveWindowsNpmShim2(shim) {
-  let source;
-  try {
-    source = (0, import_node_fs4.readFileSync)(shim, "utf8");
-  } catch {
-    throw new AcpHostError(
-      "executable_missing",
-      `could not read codex-acp npm shim: ${shim}`
-    );
-  }
-  if (Buffer.byteLength(source, "utf8") > WINDOWS_NPM_SHIM_MAX_BYTES2 || !source.includes(
-    String.raw`"%dp0%\node_modules\@agentclientprotocol\codex-acp\dist\index.js"`
-  )) {
-    throw new AcpHostError(
-      "executable_missing",
-      `unrecognized codex-acp npm shim: ${shim}`
-    );
-  }
-  const target2 = (0, import_node_path7.join)((0, import_node_path7.dirname)(shim), ...WINDOWS_NPM_ENTRYPOINT2);
-  try {
-    (0, import_node_fs4.accessSync)(target2, import_node_fs4.constants.R_OK);
-    return (0, import_node_fs4.realpathSync)(target2);
-  } catch {
-    throw new AcpHostError(
-      "executable_missing",
-      `codex-acp package entrypoint is missing beside npm shim: ${shim}`
-    );
-  }
-}
-function resolvedCodexCandidate(candidate, platform) {
-  (0, import_node_fs4.accessSync)(candidate, import_node_fs4.constants.X_OK);
-  const real = (0, import_node_fs4.realpathSync)(candidate);
-  return platform === "win32" && (0, import_node_path7.extname)(real).toLowerCase() === ".cmd" ? resolveWindowsNpmShim2(real) : real;
-}
-function resolveCodexExecutable(executable = "codex-acp", pathEnv, platform = process.platform) {
-  if ((0, import_node_path7.isAbsolute)(executable) || executable.includes("/") || executable.includes("\\")) {
-    const abs = (0, import_node_path7.resolve)(executable);
-    const candidates = platform === "win32" && (0, import_node_path7.extname)(abs) === "" ? [`${abs}.cmd`] : [abs];
-    for (const candidate of candidates) {
-      try {
-        return resolvedCodexCandidate(candidate, platform);
-      } catch (error) {
-        if (error instanceof AcpHostError) throw error;
-      }
-    }
-    throw new AcpHostError("executable_missing", `not executable: ${abs}`);
-  }
-  const pathValue = pathEnv ?? process.env.PATH ?? "";
-  const names = platform === "win32" && (0, import_node_path7.extname)(executable) === "" ? [`${executable}.cmd`] : [executable];
-  for (const dir of pathValue.split(import_node_path7.delimiter)) {
-    if (!dir) continue;
-    for (const name of names) {
-      const candidate = (0, import_node_path7.join)(dir, name);
-      try {
-        return resolvedCodexCandidate(candidate, platform);
-      } catch (error) {
-        if (error instanceof AcpHostError) throw error;
-      }
-    }
-  }
-  throw new AcpHostError(
-    "executable_missing",
-    `codex-acp executable not found on PATH: ${executable}`
-  );
-}
 
 // src/listener/types.ts
 var LISTENER_PROMPT_TIMEOUT_MS = 6e5;
@@ -33413,6 +33853,7 @@ var ListenerRenewalUnavailableError = class extends Error {
   }
 };
 var LISTENER_DELIVERY_MAX_LEASE_MS = 9e5;
+var LISTENER_LEASE_CLOCK_SKEW_ALLOWANCE_MS = 6e4;
 var LISTENER_DELIVERY_HOLD_RELEASE_REASONS = [
   "hold_budget",
   "lease_budget"
@@ -33433,9 +33874,9 @@ var LISTENER_DELIVERY_HOLD_RELEASE_REMEDIES = {
 };
 
 // src/listener/engine.ts
-var UUID_RE14 = /^[0-9a-f]{8}-[0-9a-f]{4}-[1-8][0-9a-f]{3}-[89ab][0-9a-f]{3}-[0-9a-f]{12}$/i;
+var UUID_RE16 = /^[0-9a-f]{8}-[0-9a-f]{4}-[1-8][0-9a-f]{3}-[89ab][0-9a-f]{3}-[0-9a-f]{12}$/i;
 function listenerReplyCommandId(signalId, effectOrdinal = 0) {
-  if (!UUID_RE14.test(signalId)) {
+  if (!UUID_RE16.test(signalId)) {
     throw new Error("listener signal id must be a UUID");
   }
   if (!Number.isSafeInteger(effectOrdinal) || effectOrdinal < 0) {
@@ -33491,11 +33932,11 @@ function newReceivedAskRecord(signal, now) {
 }
 
 // src/listener/file-store.ts
-var import_node_crypto12 = require("node:crypto");
-var import_node_os5 = require("node:os");
-var import_node_path8 = require("node:path");
+var import_node_crypto14 = require("node:crypto");
+var import_node_os6 = require("node:os");
+var import_node_path6 = require("node:path");
 var import_node_util = require("node:util");
-var UUID_RE15 = /^[0-9a-f]{8}-[0-9a-f]{4}-[1-8][0-9a-f]{3}-[89ab][0-9a-f]{3}-[0-9a-f]{12}$/i;
+var UUID_RE17 = /^[0-9a-f]{8}-[0-9a-f]{4}-[1-8][0-9a-f]{3}-[89ab][0-9a-f]{3}-[0-9a-f]{12}$/i;
 var COMMAND_ID_RE2 = /^[A-Za-z0-9_-]{8,72}$/;
 var MAX_EFFECT_BYTES = 1024 * 1024;
 var STATES = /* @__PURE__ */ new Set([
@@ -33542,16 +33983,16 @@ var EFFECT_SENSITIVE_KEYS = /* @__PURE__ */ new Set([
   "claim_command_id"
 ]);
 function defaultListenerStateDirectory() {
-  return process.env.XDG_STATE_HOME ? (0, import_node_path8.join)(process.env.XDG_STATE_HOME, "cswarm", "listeners") : (0, import_node_path8.join)((0, import_node_os5.homedir)(), ".cswarm", "listeners");
+  return process.env.XDG_STATE_HOME ? (0, import_node_path6.join)(process.env.XDG_STATE_HOME, "cswarm", "listeners") : (0, import_node_path6.join)((0, import_node_os6.homedir)(), ".cswarm", "listeners");
 }
 function listenerInstanceKey(input) {
-  if (!UUID_RE15.test(input.workspaceId) || !UUID_RE15.test(input.principalId)) {
+  if (!UUID_RE17.test(input.workspaceId) || !UUID_RE17.test(input.principalId)) {
     throw new Error("listener workspace and principal ids must be UUIDs");
   }
   if (!input.profileId || input.profileId.includes("\0")) {
     throw new Error("listener profile id is invalid");
   }
-  return (0, import_node_crypto12.createHash)("sha256").update(input.profileId).update("\0").update(input.workspaceId.toLowerCase()).update("\0").update(input.principalId.toLowerCase()).digest("hex");
+  return (0, import_node_crypto14.createHash)("sha256").update(input.profileId).update("\0").update(input.workspaceId.toLowerCase()).update("\0").update(input.principalId.toLowerCase()).digest("hex");
 }
 function integer(value) {
   return Number.isSafeInteger(value) && value >= 0;
@@ -33578,7 +34019,7 @@ function parseListenerEffectRecord(raw, expectedId) {
   }
   const row = value;
   rejectSensitiveKeys(row);
-  if (typeof row.version !== "number" || row.version !== 1 && row.version !== 2 || typeof row.signalId !== "string" || row.signalId.toLowerCase() !== expectedId || !UUID_RE15.test(row.signalId)) {
+  if (typeof row.version !== "number" || row.version !== 1 && row.version !== 2 || typeof row.signalId !== "string" || row.signalId.toLowerCase() !== expectedId || !UUID_RE17.test(row.signalId)) {
     throw new Error("stored listener effect is malformed");
   }
   if (row.version === 1) {
@@ -33593,7 +34034,7 @@ function upcastV1Ask(row) {
   if (row.effectOrdinal !== 0 || typeof row.commandId !== "string" || !COMMAND_ID_RE2.test(row.commandId) || typeof row.askBody !== "string" || row.askBody.length < 1 || typeof row.askUntil !== "string" || !Number.isFinite(Date.parse(row.askUntil)) || typeof row.senderOwnerRelation !== "string" || !RELATIONS.has(row.senderOwnerRelation) || typeof row.state !== "string" || !STATES.has(row.state) || !integer(row.promptAttempts) || !integer(row.postAttempts) || !nullableString2(row.replyBody, 2e3) || typeof row.replyTruncated !== "boolean" || !nullableString2(row.replySignalId, 64) || !nullableString2(row.failureCode, 96) || typeof row.updatedAt !== "string" || !Number.isFinite(Date.parse(row.updatedAt))) {
     throw new Error("stored listener effect is malformed");
   }
-  if (row.replySignalId !== null && !UUID_RE15.test(row.replySignalId)) {
+  if (row.replySignalId !== null && !UUID_RE17.test(row.replySignalId)) {
     throw new Error("stored listener effect is malformed");
   }
   return {
@@ -33632,7 +34073,7 @@ function parseV2Record(row) {
     if (typeof row.commandId !== "string" || !COMMAND_ID_RE2.test(row.commandId) || row.state === "observed") {
       throw new Error("stored listener effect is malformed");
     }
-    if (row.replySignalId !== null && !UUID_RE15.test(row.replySignalId)) {
+    if (row.replySignalId !== null && !UUID_RE17.test(row.replySignalId)) {
       throw new Error("stored listener effect is malformed");
     }
   }
@@ -33656,7 +34097,7 @@ function parseV2Record(row) {
   };
 }
 function newObservedNoteRecord(input) {
-  if (!UUID_RE15.test(input.signalId)) {
+  if (!UUID_RE17.test(input.signalId)) {
     throw new Error("listener note signal id must be a UUID");
   }
   if (input.body.length < 1) {
@@ -33763,16 +34204,16 @@ var FileListenerEffectStore = class {
   effectsDirectory;
   constructor(options) {
     const root = options.stateDirectory ?? defaultListenerStateDirectory();
-    if (!(0, import_node_path8.isAbsolute)(root)) {
+    if (!(0, import_node_path6.isAbsolute)(root)) {
       throw new Error("listener state directory must be absolute");
     }
-    this.instanceDirectory = (0, import_node_path8.join)(root, listenerInstanceKey(options));
-    this.effectsDirectory = (0, import_node_path8.join)(this.instanceDirectory, "effects");
+    this.instanceDirectory = (0, import_node_path6.join)(root, listenerInstanceKey(options));
+    this.effectsDirectory = (0, import_node_path6.join)(this.instanceDirectory, "effects");
   }
   async read(signalId) {
     const id = this.checkedId(signalId);
     const raw = await readSecureJsonFile(
-      (0, import_node_path8.join)(this.effectsDirectory, `${id}.json`),
+      (0, import_node_path6.join)(this.effectsDirectory, `${id}.json`),
       MAX_EFFECT_BYTES
     );
     return raw === null ? null : parseListenerEffectRecord(raw, id);
@@ -33785,60 +34226,27 @@ var FileListenerEffectStore = class {
       throw new Error("listener effect is too large");
     }
     await writeSecureJsonFile(
-      (0, import_node_path8.join)(this.effectsDirectory, `${id}.json`),
+      (0, import_node_path6.join)(this.effectsDirectory, `${id}.json`),
       serialized
     );
   }
   checkedId(signalId) {
-    if (!UUID_RE15.test(signalId)) {
+    if (!UUID_RE17.test(signalId)) {
       throw new Error("listener signal id must be a UUID");
     }
     return signalId.toLowerCase();
   }
 };
 
-// src/listener/grok-model.ts
-var MAX_GROK_AUTH_BYTES = 256 * 1024;
-
-// src/listener/claude-model.ts
-var CLAUDE_CODE_VERSION_REQUIRED_RE = /\bClaude Code (\d+\.\d+\.\d+) does not support this model; version (\d+\.\d+\.\d+) or newer is required\b/;
-var CLAUDE_AUTH_FAILURE_RE = /\b(?:authentication failed|failed to authenticate|authentication required|not authenticated|OAuth (?:sign-in|login|token)|OAuth session (?:expired|could not be refreshed)|keychain\/OAuth|please (?:log|sign) in)\b/i;
-var CLAUDE_CANARY_TIMEOUT_RE = /^ACP request timed out: session\/prompt(?: \(failed \d+ attempts\))?$/;
-function classifyClaudeCanaryFailure(detail, typedReasonCode, peerError) {
-  const recorded = detail?.trim() ?? "";
-  const peerData = peerError?.data;
-  const peerErrorKind = peerData && typeof peerData === "object" && !Array.isArray(peerData) ? peerData.errorKind : void 0;
-  if (typedReasonCode === "claude_canary_auth_failed" || (typedReasonCode === "rpc_error" || typedReasonCode === null || typedReasonCode === void 0) && (peerError?.code === -32e3 || peerErrorKind === "authentication_failed")) {
-    return { code: "claude_canary_auth_failed", minimumRequiredVersion: null };
-  }
-  const demanded = CLAUDE_CODE_VERSION_REQUIRED_RE.exec(recorded);
-  if (demanded?.[2]) {
-    return {
-      code: "claude_bridge_version_required",
-      minimumRequiredVersion: demanded[2]
-    };
-  }
-  if (typedReasonCode === "claude_canary_timeout" || typedReasonCode === "timeout" || (typedReasonCode === null || typedReasonCode === void 0) && CLAUDE_CANARY_TIMEOUT_RE.test(recorded)) {
-    return { code: "claude_canary_timeout", minimumRequiredVersion: null };
-  }
-  if (typedReasonCode === "claude_bridge_version_required") {
-    return {
-      code: "claude_bridge_version_required",
-      minimumRequiredVersion: demanded?.[2] ?? null
-    };
-  }
-  if ((typedReasonCode === "rpc_error" || typedReasonCode === null || typedReasonCode === void 0) && CLAUDE_AUTH_FAILURE_RE.test(recorded)) {
-    return { code: "claude_canary_auth_failed", minimumRequiredVersion: null };
-  }
-  return { code: "claude_canary_unknown", minimumRequiredVersion: null };
-}
-
 // src/listener/runtime.ts
-var import_node_crypto13 = require("node:crypto");
+var import_node_crypto15 = require("node:crypto");
+
+// src/host/bounds.ts
+var ACP_DEFAULT_REQUEST_TIMEOUT_MS = 12e4;
 
 // src/listener/main-routing.ts
-var import_node_path9 = require("node:path");
-var UUID_RE16 = /^[0-9a-f]{8}-[0-9a-f]{4}-[1-8][0-9a-f]{3}-[89ab][0-9a-f]{3}-[0-9a-f]{12}$/i;
+var import_node_path7 = require("node:path");
+var UUID_RE18 = /^[0-9a-f]{8}-[0-9a-f]{4}-[1-8][0-9a-f]{3}-[89ab][0-9a-f]{3}-[0-9a-f]{12}$/i;
 var MAX_QUEUE_BYTES = 1024 * 1024;
 var QUEUE_FILE = "pending-for-main.json";
 var QUEUE_LOCK = "pending-for-main";
@@ -33948,7 +34356,7 @@ function parseEntry(value, rejectUnknownKeys) {
   if (rejectUnknownKeys && Object.keys(row).some((key2) => !ENTRY_KEYS.has(key2))) {
     throw new Error("stored pending-for-main entry is malformed");
   }
-  if (typeof row.signalId !== "string" || !UUID_RE16.test(row.signalId) || typeof row.workspaceId !== "string" || !UUID_RE16.test(row.workspaceId) || typeof row.principalId !== "string" || !UUID_RE16.test(row.principalId) || typeof row.fromId !== "string" || !UUID_RE16.test(row.fromId) || row.fromKind !== "user" && row.fromKind !== "agent" || !(row.kind === void 0 || row.kind === "ask" || row.kind === "note") || !(row.senderName === null || typeof row.senderName === "string" && row.senderName.length <= 200) || typeof row.body !== "string" || row.body.length < 1 || !(row.attachmentCount === void 0 || typeof row.attachmentCount === "number" && Number.isSafeInteger(row.attachmentCount) && row.attachmentCount >= 1 && row.attachmentCount <= 8) || !checkedTimestamp2(row.createdAt) || !checkedTimestamp2(row.queuedAt) || !(row.observationPending === void 0 || row.observationPending === true)) {
+  if (typeof row.signalId !== "string" || !UUID_RE18.test(row.signalId) || typeof row.workspaceId !== "string" || !UUID_RE18.test(row.workspaceId) || typeof row.principalId !== "string" || !UUID_RE18.test(row.principalId) || typeof row.fromId !== "string" || !UUID_RE18.test(row.fromId) || row.fromKind !== "user" && row.fromKind !== "agent" || !(row.kind === void 0 || row.kind === "ask" || row.kind === "note") || !(row.senderName === null || typeof row.senderName === "string" && row.senderName.length <= 200) || typeof row.body !== "string" || row.body.length < 1 || !(row.attachmentCount === void 0 || typeof row.attachmentCount === "number" && Number.isSafeInteger(row.attachmentCount) && row.attachmentCount >= 1 && row.attachmentCount <= 8) || !checkedTimestamp2(row.createdAt) || !checkedTimestamp2(row.queuedAt) || !(row.observationPending === void 0 || row.observationPending === true)) {
     throw new Error("stored pending-for-main entry is malformed");
   }
   return {
@@ -33990,11 +34398,11 @@ var FilePendingMainQueue = class {
   path;
   directory;
   constructor(instanceDirectory) {
-    if (!(0, import_node_path9.isAbsolute)(instanceDirectory)) {
+    if (!(0, import_node_path7.isAbsolute)(instanceDirectory)) {
       throw new Error("pending-for-main directory must be absolute");
     }
     this.directory = instanceDirectory;
-    this.path = (0, import_node_path9.join)(instanceDirectory, QUEUE_FILE);
+    this.path = (0, import_node_path7.join)(instanceDirectory, QUEUE_FILE);
   }
   async readUnlocked() {
     const raw = await readSecureJsonFile(this.path, MAX_QUEUE_BYTES);
@@ -34089,7 +34497,7 @@ var LISTENER_DELIVERY_HOLD_BUDGET_MS = LISTENER_PROMPT_TIMEOUT_MS;
 var LISTENER_DELIVERY_RETRY_INITIAL_MS = 500;
 var LISTENER_DELIVERY_RETRY_MAX_MS = 3e4;
 var LISTENER_HOST_PORTS_PROBE_MS = 6e4;
-var UUID_RE17 = /^[0-9a-f]{8}-[0-9a-f]{4}-[1-8][0-9a-f]{3}-[89ab][0-9a-f]{3}-[0-9a-f]{12}$/i;
+var UUID_RE19 = /^[0-9a-f]{8}-[0-9a-f]{4}-[1-8][0-9a-f]{3}-[89ab][0-9a-f]{3}-[0-9a-f]{12}$/i;
 var ListenerCapabilityError = class extends Error {
   code;
   constructor(code, message) {
@@ -34221,12 +34629,12 @@ function eventTime(now) {
 }
 async function defaultSleep(ms, signal) {
   if (signal?.aborted) return;
-  await new Promise((resolve3) => {
+  await new Promise((resolve4) => {
     let timer2;
     const finish = () => {
       if (timer2 !== void 0) clearTimeout(timer2);
       signal?.removeEventListener("abort", finish);
-      resolve3();
+      resolve4();
     };
     signal?.addEventListener("abort", finish, { once: true });
     timer2 = setTimeout(finish, ms);
@@ -34266,7 +34674,7 @@ function sameEffectSignal(record, signal) {
   return record.signalId === signal.id.toLowerCase() && record.signalKind === signal.kind && record.askBody === signal.body && record.askUntil === signal.until && record.senderOwnerRelation === (signal.sender_owner_relation ?? "unknown");
 }
 function immutableSignalFingerprint(signalId, signalKind2, body, until, senderOwnerRelation) {
-  return (0, import_node_crypto13.createHash)("sha256").update(JSON.stringify([
+  return (0, import_node_crypto15.createHash)("sha256").update(JSON.stringify([
     signalId,
     signalKind2,
     body,
@@ -34358,7 +34766,7 @@ async function runListenerRuntime(options) {
       new Error("listener instance id and delivery journal must be configured together")
     );
   }
-  if (hasInstanceId && !UUID_RE17.test(options.listenerInstanceId)) {
+  if (hasInstanceId && !UUID_RE19.test(options.listenerInstanceId)) {
     return await closeBeforeStart(
       options.model,
       new Error("listener instance id must be a UUID")
@@ -34964,7 +35372,7 @@ async function runListenerRuntime(options) {
           ts: eventTime(now)
         });
         const leasedUntilMs = Date.parse(claimed.leasedUntil);
-        if (!Number.isFinite(leasedUntilMs) || leasedUntilMs > now() + LISTENER_DELIVERY_MAX_LEASE_MS) {
+        if (!Number.isFinite(leasedUntilMs) || leasedUntilMs > now() + LISTENER_DELIVERY_MAX_LEASE_MS + LISTENER_LEASE_CLOCK_SKEW_ALLOWANCE_MS) {
           stop = { reason: "fatal", error: new Error("delivery lease deadline is invalid") };
           break;
         }
@@ -35510,11 +35918,30 @@ function summarizeListenerReadHealth(health, readyAt, nowMs) {
 }
 
 // src/listener/control.ts
-var import_node_crypto14 = require("node:crypto");
+var import_node_crypto16 = require("node:crypto");
 var import_node_net = require("node:net");
-var import_promises5 = require("node:fs/promises");
-var import_node_path10 = require("node:path");
-var UUID_RE18 = /^[0-9a-f]{8}-[0-9a-f]{4}-[1-8][0-9a-f]{3}-[89ab][0-9a-f]{3}-[0-9a-f]{12}$/i;
+var import_promises6 = require("node:fs/promises");
+var import_node_path8 = require("node:path");
+
+// src/host/credential-redaction.ts
+var EXOTIC_SEPARATORS = "\\u00a0\\u1680\\u2000-\\u200d\\u2028\\u2029\\u202a-\\u202e\\u2060\\u2066-\\u2069\\u202f\\u205f\\u3000\\ufeff";
+var SEPARATOR_CLASS_SOURCE = "\\t\\n\\x0b\\f\\r " + EXOTIC_SEPARATORS;
+var ANSI_ESCAPE_GLOBAL_RE2 = new RegExp("\\u001b\\[[0-?]*[ -\\/]*[@-~]", "g");
+var CONTROL_AND_SEPARATOR_STRIP_RE = new RegExp(
+  "[\\u0000-\\u0008\\u000b-\\u001f\\u007f-\\u009f" + EXOTIC_SEPARATORS + "]",
+  "g"
+);
+var SECRET_SHAPE_RE = new RegExp(
+  `swm_(?:agt|inv|cap)_[^${SEPARATOR_CLASS_SOURCE}]*|cswarm-wake:[A-Za-z0-9_-]{43}`,
+  "i"
+);
+var SECRET_SHAPE_GLOBAL_RE = new RegExp(SECRET_SHAPE_RE.source, "gi");
+function redactCredentialText(value) {
+  return value.replace(ANSI_ESCAPE_GLOBAL_RE2, "").replace(CONTROL_AND_SEPARATOR_STRIP_RE, "").replace(SECRET_SHAPE_GLOBAL_RE, "[redacted-credential]");
+}
+
+// src/listener/control.ts
+var UUID_RE20 = /^[0-9a-f]{8}-[0-9a-f]{4}-[1-8][0-9a-f]{3}-[89ab][0-9a-f]{3}-[0-9a-f]{12}$/i;
 var SEMVER_RE2 = /^(?:0|[1-9]\d*)\.(?:0|[1-9]\d*)\.(?:0|[1-9]\d*)(?:-(?:0|[1-9]\d*|[A-Za-z-][0-9A-Za-z-]*)(?:\.(?:0|[1-9]\d*|[A-Za-z-][0-9A-Za-z-]*))*)?(?:\+[0-9A-Za-z-]+(?:\.[0-9A-Za-z-]+)*)?$/;
 var MAX_STATUS_BYTES = 32 * 1024;
 var MAX_CONTROL_BYTES = 8 * 1024;
@@ -35531,22 +35958,22 @@ var ListenerAlreadyRunningError = class extends Error {
 function listenerPaths(options) {
   const defaultRoot = defaultListenerStateDirectory();
   const root = options.stateDirectory ?? defaultRoot;
-  if (!(0, import_node_path10.isAbsolute)(root)) {
+  if (!(0, import_node_path8.isAbsolute)(root)) {
     throw new Error("listener state directory must be absolute");
   }
   const key2 = listenerInstanceKey(options);
-  const instanceDirectory = (0, import_node_path10.join)(root, key2);
+  const instanceDirectory = (0, import_node_path8.join)(root, key2);
   const uid2 = typeof process.getuid === "function" ? process.getuid() : process.pid;
-  const stateNamespace = (0, import_node_path10.resolve)(root) === (0, import_node_path10.resolve)(defaultRoot) ? "" : `-${(0, import_node_crypto14.createHash)("sha256").update((0, import_node_path10.resolve)(root)).digest("hex").slice(0, 16)}`;
+  const stateNamespace = (0, import_node_path8.resolve)(root) === (0, import_node_path8.resolve)(defaultRoot) ? "" : `-${(0, import_node_crypto16.createHash)("sha256").update((0, import_node_path8.resolve)(root)).digest("hex").slice(0, 16)}`;
   const platform = options.platform ?? process.platform;
   const socketKey = stateNamespace.length === 0 ? platform === "win32" ? key2 : key2.slice(0, 32) : `${key2.slice(0, 32)}${stateNamespace}`;
-  const controlDirectory = platform === "win32" ? "" : (0, import_node_path10.join)("/tmp", `cswarm-control-${uid2}`);
-  const socketPath = platform === "win32" ? `\\\\.\\pipe\\cswarm-${socketKey}` : (0, import_node_path10.join)(controlDirectory, `${socketKey}.sock`);
+  const controlDirectory = platform === "win32" ? "" : (0, import_node_path8.join)("/tmp", `cswarm-control-${uid2}`);
+  const socketPath = platform === "win32" ? `\\\\.\\pipe\\cswarm-${socketKey}` : (0, import_node_path8.join)(controlDirectory, `${socketKey}.sock`);
   return {
     key: key2,
     instanceDirectory,
-    statusPath: (0, import_node_path10.join)(instanceDirectory, "status.json"),
-    logPath: (0, import_node_path10.join)(instanceDirectory, "events.ndjson"),
+    statusPath: (0, import_node_path8.join)(instanceDirectory, "status.json"),
+    logPath: (0, import_node_path8.join)(instanceDirectory, "events.ndjson"),
     socketPath
   };
 }
@@ -35650,7 +36077,7 @@ function parseHeldBackDeliveries(value) {
     for (const key2 of Object.keys(entry)) {
       if (key2 !== "signalId" && key2 !== "at" && key2 !== "reason") return null;
     }
-    if (typeof entry.signalId !== "string" || !UUID_RE18.test(entry.signalId) || typeof entry.at !== "string" || !Number.isFinite(Date.parse(entry.at)) || typeof entry.reason !== "string" || !LISTENER_DELIVERY_HOLD_RELEASE_REASONS.includes(
+    if (typeof entry.signalId !== "string" || !UUID_RE20.test(entry.signalId) || typeof entry.at !== "string" || !Number.isFinite(Date.parse(entry.at)) || typeof entry.reason !== "string" || !LISTENER_DELIVERY_HOLD_RELEASE_REASONS.includes(
       entry.reason
     )) {
       return null;
@@ -35714,13 +36141,13 @@ function parseStatus(raw, rejectUnknownKeys = false) {
       throw new Error("stored listener status is malformed");
     }
   }
-  const nullableUuid3 = (candidate) => candidate === null || typeof candidate === "string" && UUID_RE18.test(candidate);
+  const nullableUuid3 = (candidate) => candidate === null || typeof candidate === "string" && UUID_RE20.test(candidate);
   const nullableCount = (candidate) => candidate === null || typeof candidate === "number" && Number.isSafeInteger(candidate) && candidate >= 0;
   const nullableTimestamp3 = (candidate) => candidate === null || typeof candidate === "string" && Number.isFinite(Date.parse(candidate));
   const readHealth = row.readHealth === void 0 ? void 0 : parseListenerReadHealth(row.readHealth, rejectUnknownKeys);
   const heldBackDeliveries = row.heldBackDeliveries === void 0 ? void 0 : parseHeldBackDeliveries(row.heldBackDeliveries);
   const wake = row.wake === void 0 ? void 0 : parseListenerWake(row.wake, rejectUnknownKeys);
-  if (row.version !== 1 || typeof row.instanceId !== "string" || !UUID_RE18.test(row.instanceId) || row.provider !== "grok" && row.provider !== "opencode" && row.provider !== "claude" && row.provider !== "codex" || typeof row.profileId !== "string" || typeof row.workspaceId !== "string" || !UUID_RE18.test(row.workspaceId) || typeof row.principalId !== "string" || !UUID_RE18.test(row.principalId) || !Number.isSafeInteger(row.pid) || row.pid < 1 || typeof row.state !== "string" || !["starting", "ready", "stopping", "stopped", "failed"].includes(row.state) || typeof row.startedAt !== "string" || !Number.isFinite(Date.parse(row.startedAt)) || !(row.readyAt === null || typeof row.readyAt === "string" && Number.isFinite(Date.parse(row.readyAt))) || typeof row.updatedAt !== "string" || !Number.isFinite(Date.parse(row.updatedAt)) || !(row.stoppedAt === null || typeof row.stoppedAt === "string" && Number.isFinite(Date.parse(row.stoppedAt))) || !nullableUuid3(row.lastSignalId) || !(row.lastErrorCode === null || typeof row.lastErrorCode === "string" && /^[a-z0-9_-]{1,96}$/.test(row.lastErrorCode)) || !(row.lastErrorDetail === void 0 || row.lastErrorDetail === null || typeof row.lastErrorDetail === "string" && row.lastErrorDetail.length > 0 && row.lastErrorDetail.length <= 2048 && !SECRET_SHAPE_RE.test(row.lastErrorDetail)) || !(row.lastErrorReasonCode === void 0 || row.lastErrorReasonCode === null || typeof row.lastErrorReasonCode === "string" && /^[a-z0-9_-]{1,96}$/.test(row.lastErrorReasonCode)) || !(row.providerExecutable === void 0 || row.providerExecutable === null || typeof row.providerExecutable === "string" && (0, import_node_path10.isAbsolute)(row.providerExecutable)) || !(row.providerVersion === void 0 || row.providerVersion === null || typeof row.providerVersion === "string" && SEMVER_RE2.test(row.providerVersion)) || !(row.providerLastMeasuredVersion === void 0 || row.providerLastMeasuredVersion === null || typeof row.providerLastMeasuredVersion === "string" && SEMVER_RE2.test(row.providerLastMeasuredVersion)) || !(row.providerBundledAgentSdkVersion === void 0 || row.providerBundledAgentSdkVersion === null || typeof row.providerBundledAgentSdkVersion === "string" && SEMVER_RE2.test(row.providerBundledAgentSdkVersion)) || !(row.providerBundledClaudeCodeVersion === void 0 || row.providerBundledClaudeCodeVersion === null || typeof row.providerBundledClaudeCodeVersion === "string" && SEMVER_RE2.test(row.providerBundledClaudeCodeVersion)) || !(row.providerMinimumRequiredVersion === void 0 || row.providerMinimumRequiredVersion === null || typeof row.providerMinimumRequiredVersion === "string" && SEMVER_RE2.test(row.providerMinimumRequiredVersion)) || !(row.cswarmVersion === void 0 || row.cswarmVersion === null || typeof row.cswarmVersion === "string" && SEMVER_RE2.test(row.cswarmVersion)) || (row.providerVersion === null || row.providerVersion === void 0) !== (row.providerLastMeasuredVersion === null || row.providerLastMeasuredVersion === void 0) || !(row.lastWorkerStderrTail === void 0 || row.lastWorkerStderrTail === null || typeof row.lastWorkerStderrTail === "string" && row.lastWorkerStderrTail.length > 0 && row.lastWorkerStderrTail.length <= 2048 && !SECRET_SHAPE_RE.test(row.lastWorkerStderrTail)) || typeof row.logPath !== "string" || !(0, import_node_path10.isAbsolute)(row.logPath) || !(row.deliveryMode === void 0 || row.deliveryMode === null || typeof row.deliveryMode === "string" && STATUS_DELIVERY_MODES.has(row.deliveryMode)) || !(row.pendingDeliveryCount === void 0 || nullableCount(row.pendingDeliveryCount)) || !(row.lastTerminalDeliveryFailureCount === void 0 || nullableCount(row.lastTerminalDeliveryFailureCount)) || !(row.lastTerminalDeliveryFailureAt === void 0 || nullableTimestamp3(row.lastTerminalDeliveryFailureAt)) || !(row.lastClaimAt === void 0 || nullableTimestamp3(row.lastClaimAt)) || !(row.lastAckAt === void 0 || nullableTimestamp3(row.lastAckAt)) || !(row.lastAckOutcome === void 0 || row.lastAckOutcome === null || typeof row.lastAckOutcome === "string" && deliveryOutcomes.has(row.lastAckOutcome)) || !(row.consecutiveAckFailureCount === void 0 || nullableCount(row.consecutiveAckFailureCount)) || !(row.lastAckSignalId === void 0 || row.lastAckSignalId === null || typeof row.lastAckSignalId === "string" && UUID_RE18.test(row.lastAckSignalId)) || !(row.currentDeliverySignalId === void 0 || row.currentDeliverySignalId === null || typeof row.currentDeliverySignalId === "string" && UUID_RE18.test(row.currentDeliverySignalId)) || !(row.currentDeliverySince === void 0 || nullableTimestamp3(row.currentDeliverySince)) || heldBackDeliveries === null || !(row.pendingDeliveryCountAt === void 0 || nullableTimestamp3(row.pendingDeliveryCountAt)) || !(row.routeMode === void 0 || typeof row.routeMode === "string" && isStoredListenerRouteMode(row.routeMode)) || !(row.deferOverChars === void 0 || row.deferOverChars === null || typeof row.deferOverChars === "number" && Number.isSafeInteger(row.deferOverChars) && row.deferOverChars >= 1 && row.deferOverChars <= 1e4) || !(row.pendingForMainCount === void 0 || typeof row.pendingForMainCount === "number" && Number.isSafeInteger(row.pendingForMainCount) && row.pendingForMainCount >= 0) || !(row.droppedForMainCount === void 0 || typeof row.droppedForMainCount === "number" && Number.isSafeInteger(row.droppedForMainCount) && row.droppedForMainCount >= 0) || readHealth === null || wake === null || !(row.connectionsOpened === void 0 || typeof row.connectionsOpened === "number" && Number.isSafeInteger(row.connectionsOpened) && row.connectionsOpened >= 0) || !(row.connectionReuseRatio === void 0 || typeof row.connectionReuseRatio === "number" && Number.isFinite(row.connectionReuseRatio) && row.connectionReuseRatio >= 0) || !(row.activityPublishFailures === void 0 || typeof row.activityPublishFailures === "number" && Number.isSafeInteger(row.activityPublishFailures) && row.activityPublishFailures >= 0) || !(row.activityLastErrorCode === void 0 || row.activityLastErrorCode === null || typeof row.activityLastErrorCode === "string" && STATUS_ACTIVITY_ERROR_CODES.has(
+  if (row.version !== 1 || typeof row.instanceId !== "string" || !UUID_RE20.test(row.instanceId) || row.provider !== "grok" && row.provider !== "opencode" && row.provider !== "claude" && row.provider !== "codex" || typeof row.profileId !== "string" || typeof row.workspaceId !== "string" || !UUID_RE20.test(row.workspaceId) || typeof row.principalId !== "string" || !UUID_RE20.test(row.principalId) || !Number.isSafeInteger(row.pid) || row.pid < 1 || typeof row.state !== "string" || !["starting", "ready", "stopping", "stopped", "failed"].includes(row.state) || typeof row.startedAt !== "string" || !Number.isFinite(Date.parse(row.startedAt)) || !(row.readyAt === null || typeof row.readyAt === "string" && Number.isFinite(Date.parse(row.readyAt))) || typeof row.updatedAt !== "string" || !Number.isFinite(Date.parse(row.updatedAt)) || !(row.stoppedAt === null || typeof row.stoppedAt === "string" && Number.isFinite(Date.parse(row.stoppedAt))) || !nullableUuid3(row.lastSignalId) || !(row.lastErrorCode === null || typeof row.lastErrorCode === "string" && /^[a-z0-9_-]{1,96}$/.test(row.lastErrorCode)) || !(row.lastErrorDetail === void 0 || row.lastErrorDetail === null || typeof row.lastErrorDetail === "string" && row.lastErrorDetail.length > 0 && row.lastErrorDetail.length <= 2048 && !SECRET_SHAPE_RE.test(row.lastErrorDetail)) || !(row.lastErrorReasonCode === void 0 || row.lastErrorReasonCode === null || typeof row.lastErrorReasonCode === "string" && /^[a-z0-9_-]{1,96}$/.test(row.lastErrorReasonCode)) || !(row.providerExecutable === void 0 || row.providerExecutable === null || typeof row.providerExecutable === "string" && (0, import_node_path8.isAbsolute)(row.providerExecutable)) || !(row.providerVersion === void 0 || row.providerVersion === null || typeof row.providerVersion === "string" && SEMVER_RE2.test(row.providerVersion)) || !(row.providerLastMeasuredVersion === void 0 || row.providerLastMeasuredVersion === null || typeof row.providerLastMeasuredVersion === "string" && SEMVER_RE2.test(row.providerLastMeasuredVersion)) || !(row.providerBundledAgentSdkVersion === void 0 || row.providerBundledAgentSdkVersion === null || typeof row.providerBundledAgentSdkVersion === "string" && SEMVER_RE2.test(row.providerBundledAgentSdkVersion)) || !(row.providerBundledClaudeCodeVersion === void 0 || row.providerBundledClaudeCodeVersion === null || typeof row.providerBundledClaudeCodeVersion === "string" && SEMVER_RE2.test(row.providerBundledClaudeCodeVersion)) || !(row.providerMinimumRequiredVersion === void 0 || row.providerMinimumRequiredVersion === null || typeof row.providerMinimumRequiredVersion === "string" && SEMVER_RE2.test(row.providerMinimumRequiredVersion)) || !(row.cswarmVersion === void 0 || row.cswarmVersion === null || typeof row.cswarmVersion === "string" && SEMVER_RE2.test(row.cswarmVersion)) || (row.providerVersion === null || row.providerVersion === void 0) !== (row.providerLastMeasuredVersion === null || row.providerLastMeasuredVersion === void 0) || !(row.lastWorkerStderrTail === void 0 || row.lastWorkerStderrTail === null || typeof row.lastWorkerStderrTail === "string" && row.lastWorkerStderrTail.length > 0 && row.lastWorkerStderrTail.length <= 2048 && !SECRET_SHAPE_RE.test(row.lastWorkerStderrTail)) || typeof row.logPath !== "string" || !(0, import_node_path8.isAbsolute)(row.logPath) || !(row.deliveryMode === void 0 || row.deliveryMode === null || typeof row.deliveryMode === "string" && STATUS_DELIVERY_MODES.has(row.deliveryMode)) || !(row.pendingDeliveryCount === void 0 || nullableCount(row.pendingDeliveryCount)) || !(row.lastTerminalDeliveryFailureCount === void 0 || nullableCount(row.lastTerminalDeliveryFailureCount)) || !(row.lastTerminalDeliveryFailureAt === void 0 || nullableTimestamp3(row.lastTerminalDeliveryFailureAt)) || !(row.lastClaimAt === void 0 || nullableTimestamp3(row.lastClaimAt)) || !(row.lastAckAt === void 0 || nullableTimestamp3(row.lastAckAt)) || !(row.lastAckOutcome === void 0 || row.lastAckOutcome === null || typeof row.lastAckOutcome === "string" && deliveryOutcomes.has(row.lastAckOutcome)) || !(row.consecutiveAckFailureCount === void 0 || nullableCount(row.consecutiveAckFailureCount)) || !(row.lastAckSignalId === void 0 || row.lastAckSignalId === null || typeof row.lastAckSignalId === "string" && UUID_RE20.test(row.lastAckSignalId)) || !(row.currentDeliverySignalId === void 0 || row.currentDeliverySignalId === null || typeof row.currentDeliverySignalId === "string" && UUID_RE20.test(row.currentDeliverySignalId)) || !(row.currentDeliverySince === void 0 || nullableTimestamp3(row.currentDeliverySince)) || heldBackDeliveries === null || !(row.pendingDeliveryCountAt === void 0 || nullableTimestamp3(row.pendingDeliveryCountAt)) || !(row.routeMode === void 0 || typeof row.routeMode === "string" && isStoredListenerRouteMode(row.routeMode)) || !(row.deferOverChars === void 0 || row.deferOverChars === null || typeof row.deferOverChars === "number" && Number.isSafeInteger(row.deferOverChars) && row.deferOverChars >= 1 && row.deferOverChars <= 1e4) || !(row.pendingForMainCount === void 0 || typeof row.pendingForMainCount === "number" && Number.isSafeInteger(row.pendingForMainCount) && row.pendingForMainCount >= 0) || !(row.droppedForMainCount === void 0 || typeof row.droppedForMainCount === "number" && Number.isSafeInteger(row.droppedForMainCount) && row.droppedForMainCount >= 0) || readHealth === null || wake === null || !(row.connectionsOpened === void 0 || typeof row.connectionsOpened === "number" && Number.isSafeInteger(row.connectionsOpened) && row.connectionsOpened >= 0) || !(row.connectionReuseRatio === void 0 || typeof row.connectionReuseRatio === "number" && Number.isFinite(row.connectionReuseRatio) && row.connectionReuseRatio >= 0) || !(row.activityPublishFailures === void 0 || typeof row.activityPublishFailures === "number" && Number.isSafeInteger(row.activityPublishFailures) && row.activityPublishFailures >= 0) || !(row.activityLastErrorCode === void 0 || row.activityLastErrorCode === null || typeof row.activityLastErrorCode === "string" && STATUS_ACTIVITY_ERROR_CODES.has(
     row.activityLastErrorCode
   )) || !(row.idlePollMs === void 0 || row.idlePollMs === null || typeof row.idlePollMs === "number" && Number.isSafeInteger(row.idlePollMs) && row.idlePollMs >= 0)) {
     throw new Error("stored listener status is malformed");
@@ -35956,7 +36383,7 @@ async function appendListenerEvent(paths, event) {
     throw new Error("listener event is too large");
   }
   try {
-    const info = await (0, import_promises5.lstat)(paths.logPath);
+    const info = await (0, import_promises6.lstat)(paths.logPath);
     if (!info.isFile() || info.isSymbolicLink() || (info.mode & 511) !== 384) {
       throw new Error("listener event log is not a secure regular file");
     }
@@ -35966,14 +36393,14 @@ async function appendListenerEvent(paths, event) {
   } catch (error) {
     if (error.code !== "ENOENT") throw error;
   }
-  const handle = await (0, import_promises5.open)(paths.logPath, "a", 384);
+  const handle = await (0, import_promises6.open)(paths.logPath, "a", 384);
   try {
     await handle.writeFile(serialized, "utf8");
     await handle.sync();
   } finally {
     await handle.close();
   }
-  await (0, import_promises5.chmod)(paths.logPath, 384);
+  await (0, import_promises6.chmod)(paths.logPath, 384);
 }
 function parseControlRequest(raw) {
   let value;
@@ -36003,12 +36430,12 @@ function writeResponse(socket, response) {
 }
 async function startupLock(paths) {
   await ensureSecureStateDirectory(paths.instanceDirectory);
-  const lockPath = (0, import_node_path10.join)(paths.instanceDirectory, "starting.lock");
+  const lockPath = (0, import_node_path8.join)(paths.instanceDirectory, "starting.lock");
   const deadline = Date.now() + START_LOCK_WAIT_MS;
   while (Date.now() < deadline) {
     let handle;
     try {
-      handle = await (0, import_promises5.open)(lockPath, "wx", 384);
+      handle = await (0, import_promises6.open)(lockPath, "wx", 384);
     } catch (error) {
       if (error.code !== "EEXIST") throw error;
       try {
@@ -36017,12 +36444,12 @@ async function startupLock(paths) {
       } catch (queryError) {
         if (queryError instanceof ListenerAlreadyRunningError) throw queryError;
       }
-      const info = await (0, import_promises5.lstat)(lockPath).catch(() => null);
+      const info = await (0, import_promises6.lstat)(lockPath).catch(() => null);
       if (info && Date.now() - info.mtimeMs >= START_LOCK_STALE_MS) {
-        await (0, import_promises5.unlink)(lockPath).catch(() => void 0);
+        await (0, import_promises6.unlink)(lockPath).catch(() => void 0);
         continue;
       }
-      await new Promise((resolve3) => setTimeout(resolve3, 25));
+      await new Promise((resolve4) => setTimeout(resolve4, 25));
       continue;
     }
     try {
@@ -36031,12 +36458,12 @@ async function startupLock(paths) {
       await handle.sync();
     } catch (error) {
       await handle.close().catch(() => void 0);
-      await (0, import_promises5.unlink)(lockPath).catch(() => void 0);
+      await (0, import_promises6.unlink)(lockPath).catch(() => void 0);
       throw error;
     }
     return async () => {
       await handle.close().catch(() => void 0);
-      await (0, import_promises5.unlink)(lockPath).catch(() => void 0);
+      await (0, import_promises6.unlink)(lockPath).catch(() => void 0);
     };
   }
   throw new ListenerAlreadyRunningError();
@@ -36044,7 +36471,7 @@ async function startupLock(paths) {
 async function prepareSocket(paths) {
   if (process.platform !== "win32") {
     const uid2 = typeof process.getuid === "function" ? process.getuid() : process.pid;
-    const directory = (0, import_node_path10.join)("/tmp", `cswarm-control-${uid2}`);
+    const directory = (0, import_node_path8.join)("/tmp", `cswarm-control-${uid2}`);
     await ensureSecureStateDirectory(directory);
   }
   try {
@@ -36053,7 +36480,7 @@ async function prepareSocket(paths) {
   } catch (error) {
     if (error instanceof ListenerAlreadyRunningError) throw error;
     if (process.platform !== "win32") {
-      await (0, import_promises5.unlink)(paths.socketPath).catch((unlinkError) => {
+      await (0, import_promises6.unlink)(paths.socketPath).catch((unlinkError) => {
         if (unlinkError.code !== "ENOENT") {
           throw unlinkError;
         }
@@ -36096,27 +36523,27 @@ async function startListenerControlServer(options) {
     if (options.initialize) {
       await options.initialize();
     }
-    await new Promise((resolve3, reject) => {
+    await new Promise((resolve4, reject) => {
       const onError = (error) => {
         server.off("listening", onListening);
         reject(error);
       };
       const onListening = () => {
         server.off("error", onError);
-        resolve3();
+        resolve4();
       };
       server.once("error", onError);
       server.once("listening", onListening);
       server.listen(options.paths.socketPath);
     });
     if (process.platform !== "win32") {
-      await (0, import_promises5.chmod)(options.paths.socketPath, 384);
+      await (0, import_promises6.chmod)(options.paths.socketPath, 384);
     }
   } catch (error) {
     if (server.listening) {
-      await new Promise((resolve3) => server.close(() => resolve3()));
+      await new Promise((resolve4) => server.close(() => resolve4()));
       if (process.platform !== "win32") {
-        await (0, import_promises5.unlink)(options.paths.socketPath).catch(() => void 0);
+        await (0, import_promises6.unlink)(options.paths.socketPath).catch(() => void 0);
       }
     }
     throw error;
@@ -36125,15 +36552,15 @@ async function startListenerControlServer(options) {
   }
   return {
     close: async () => {
-      await new Promise((resolve3) => server.close(() => resolve3()));
+      await new Promise((resolve4) => server.close(() => resolve4()));
       if (process.platform !== "win32") {
-        await (0, import_promises5.unlink)(options.paths.socketPath).catch(() => void 0);
+        await (0, import_promises6.unlink)(options.paths.socketPath).catch(() => void 0);
       }
     }
   };
 }
 async function queryListenerControl(paths, command2, timeoutMs = CONTROL_TIMEOUT_MS) {
-  return await new Promise((resolve3, reject) => {
+  return await new Promise((resolve4, reject) => {
     const socket = (0, import_node_net.createConnection)(paths.socketPath);
     let input = "";
     let settled = false;
@@ -36147,7 +36574,7 @@ async function queryListenerControl(paths, command2, timeoutMs = CONTROL_TIMEOUT
       clearTimeout(timer2);
       socket.destroy();
       if (error) reject(error);
-      else resolve3(status);
+      else resolve4(status);
     };
     socket.setEncoding("utf8");
     socket.once("error", (error) => finish(error));
@@ -36178,8 +36605,8 @@ async function queryListenerControl(paths, command2, timeoutMs = CONTROL_TIMEOUT
 }
 
 // src/listener/supervisor.ts
-var import_node_crypto15 = require("node:crypto");
-var UUID_RE19 = /^[0-9a-f]{8}-[0-9a-f]{4}-[1-8][0-9a-f]{3}-[89ab][0-9a-f]{3}-[0-9a-f]{12}$/i;
+var import_node_crypto17 = require("node:crypto");
+var UUID_RE21 = /^[0-9a-f]{8}-[0-9a-f]{4}-[1-8][0-9a-f]{3}-[89ab][0-9a-f]{3}-[0-9a-f]{12}$/i;
 var LISTENER_RESTART_MAX_ATTEMPTS = 5;
 var LISTENER_RESTART_INITIAL_MS = 1e3;
 var LISTENER_RESTART_MAX_MS = 6e4;
@@ -36192,11 +36619,11 @@ function nextListenerRestartMs(attempt, policy = {}, random = Math.random) {
 }
 async function defaultRestartSleep(ms, signal) {
   if (ms <= 0 || signal.aborted) return;
-  await new Promise((resolve3) => {
+  await new Promise((resolve4) => {
     const finish = () => {
       clearTimeout(timer2);
       signal.removeEventListener("abort", finish);
-      resolve3();
+      resolve4();
     };
     const timer2 = setTimeout(finish, ms);
     signal.addEventListener("abort", finish, { once: true });
@@ -36230,8 +36657,13 @@ function localDiagnostic(message, maxChars) {
   if (redacted.length === 0) return null;
   return redacted.slice(0, maxChars);
 }
+function listenerSafeErrorDetail(error) {
+  const first = localDiagnostic(error.message, 2048);
+  if (first === null) return null;
+  return redactSessionText(first);
+}
 function safeErrorDetail(error) {
-  return localDiagnostic(error.message, 2048);
+  return listenerSafeErrorDetail(error);
 }
 function providerStatusFields(notice) {
   if (!notice) return {};
@@ -36276,7 +36708,7 @@ async function runListenerSupervisor(options) {
   const now = options.now ?? Date.now;
   const startedAt = iso2(now);
   const controller = new AbortController();
-  const proposedInstanceId = (0, import_node_crypto15.randomUUID)();
+  const proposedInstanceId = (0, import_node_crypto17.randomUUID)();
   const carried = await readListenerStatus(options.paths).catch(() => null);
   let status = {
     version: 1,
@@ -36385,7 +36817,7 @@ async function runListenerSupervisor(options) {
     // before the socket can answer, before any status/event persistence.
     initialize: prepare ? async () => {
       const selected = await prepare(proposedInstanceId);
-      if (!selected || typeof selected !== "object" || typeof selected.instanceId !== "string" || !UUID_RE19.test(selected.instanceId)) {
+      if (!selected || typeof selected !== "object" || typeof selected.instanceId !== "string" || !UUID_RE21.test(selected.instanceId)) {
         throw new Error("listener prepare returned an invalid instance id");
       }
       status = { ...status, instanceId: selected.instanceId };
@@ -36917,7 +37349,7 @@ async function waitForListenerReady(paths, options = {}) {
   const timeoutMs = options.timeoutMs ?? 12e4;
   const pollMs = options.pollMs ?? 100;
   const now = options.now ?? Date.now;
-  const sleep2 = options.sleep ?? ((ms) => new Promise((resolve3) => setTimeout(resolve3, ms)));
+  const sleep2 = options.sleep ?? ((ms) => new Promise((resolve4) => setTimeout(resolve4, ms)));
   const deadline = now() + timeoutMs;
   let last = null;
   let processExitObservedAt = null;
@@ -36957,9 +37389,9 @@ async function waitForListenerReady(paths, options = {}) {
 }
 
 // src/listener/delivery-journal.ts
-var import_node_path11 = require("node:path");
+var import_node_path9 = require("node:path");
 var import_node_util2 = require("node:util");
-var UUID_RE20 = /^[0-9a-f]{8}-[0-9a-f]{4}-[1-8][0-9a-f]{3}-[89ab][0-9a-f]{3}-[0-9a-f]{12}$/;
+var UUID_RE22 = /^[0-9a-f]{8}-[0-9a-f]{4}-[1-8][0-9a-f]{3}-[89ab][0-9a-f]{3}-[0-9a-f]{12}$/;
 var COMMAND_ID_RE3 = /^[A-Za-z0-9_-]{8,72}$/;
 var SIGNAL_FINGERPRINT_RE = /^[0-9a-f]{64}$/;
 var MAX_JOURNAL_BYTES = 8192;
@@ -37054,7 +37486,7 @@ var ALLOWED_ERROR_CODES = /* @__PURE__ */ new Set([
   "credential_unavailable"
 ]);
 function claimCommandId(listenerInstanceId, claimOrdinal) {
-  if (!UUID_RE20.test(listenerInstanceId)) {
+  if (!UUID_RE22.test(listenerInstanceId)) {
     throw new Error("stored delivery journal is malformed");
   }
   if (!Number.isSafeInteger(claimOrdinal) || claimOrdinal < 0) {
@@ -37069,7 +37501,7 @@ function claimCommandId(listenerInstanceId, claimOrdinal) {
   return id;
 }
 function ackCommandId(leaseId) {
-  if (!UUID_RE20.test(leaseId)) {
+  if (!UUID_RE22.test(leaseId)) {
     throw new Error("stored delivery journal is malformed");
   }
   const cleanLease = leaseId.toLowerCase().replace(/-/g, "");
@@ -37152,19 +37584,19 @@ function parseJournalRecord(raw, expectedWorkspaceId, expectedPrincipalId, rejec
   if (row.version !== 1) {
     throw new Error("stored delivery journal is malformed");
   }
-  if (typeof row.workspaceId !== "string" || !UUID_RE20.test(row.workspaceId) || row.workspaceId !== row.workspaceId.toLowerCase()) {
+  if (typeof row.workspaceId !== "string" || !UUID_RE22.test(row.workspaceId) || row.workspaceId !== row.workspaceId.toLowerCase()) {
     throw new Error("stored delivery journal is malformed");
   }
   if (expectedWorkspaceId && row.workspaceId !== expectedWorkspaceId.toLowerCase()) {
     throw new Error("stored delivery journal is malformed");
   }
-  if (typeof row.principalId !== "string" || !UUID_RE20.test(row.principalId) || row.principalId !== row.principalId.toLowerCase()) {
+  if (typeof row.principalId !== "string" || !UUID_RE22.test(row.principalId) || row.principalId !== row.principalId.toLowerCase()) {
     throw new Error("stored delivery journal is malformed");
   }
   if (expectedPrincipalId && row.principalId !== expectedPrincipalId.toLowerCase()) {
     throw new Error("stored delivery journal is malformed");
   }
-  if (typeof row.listenerInstanceId !== "string" || !UUID_RE20.test(row.listenerInstanceId) || row.listenerInstanceId !== row.listenerInstanceId.toLowerCase()) {
+  if (typeof row.listenerInstanceId !== "string" || !UUID_RE22.test(row.listenerInstanceId) || row.listenerInstanceId !== row.listenerInstanceId.toLowerCase()) {
     throw new Error("stored delivery journal is malformed");
   }
   if (!Number.isSafeInteger(row.nextClaimOrdinal) || row.nextClaimOrdinal < 0) {
@@ -37238,10 +37670,10 @@ function parseJournalRecord(raw, expectedWorkspaceId, expectedPrincipalId, rejec
     if (active.claimLastAttemptAt === null) {
       throw new Error("stored delivery journal is malformed");
     }
-    if (typeof active.signalId !== "string" || !UUID_RE20.test(active.signalId) || active.signalId !== active.signalId.toLowerCase()) {
+    if (typeof active.signalId !== "string" || !UUID_RE22.test(active.signalId) || active.signalId !== active.signalId.toLowerCase()) {
       throw new Error("stored delivery journal is malformed");
     }
-    if (typeof active.leaseId !== "string" || !UUID_RE20.test(active.leaseId) || active.leaseId !== active.leaseId.toLowerCase()) {
+    if (typeof active.leaseId !== "string" || !UUID_RE22.test(active.leaseId) || active.leaseId !== active.leaseId.toLowerCase()) {
       throw new Error("stored delivery journal is malformed");
     }
     if (!isValidIsoTimestamp(active.leasedUntil) || Date.parse(active.leasedUntil) <= Date.parse(active.claimCreatedAt)) {
@@ -37333,7 +37765,7 @@ var FileListenerDeliveryJournal = class {
       ["profileId", "workspaceId", "principalId"],
       "delivery journal configuration rejected"
     );
-    if (typeof options.profileId !== "string" || !options.profileId || options.profileId.includes("\0") || typeof options.workspaceId !== "string" || !UUID_RE20.test(options.workspaceId) || typeof options.principalId !== "string" || !UUID_RE20.test(options.principalId)) {
+    if (typeof options.profileId !== "string" || !options.profileId || options.profileId.includes("\0") || typeof options.workspaceId !== "string" || !UUID_RE22.test(options.workspaceId) || typeof options.principalId !== "string" || !UUID_RE22.test(options.principalId)) {
       throw new Error("delivery journal configuration rejected");
     }
     if (options.stateDirectory !== void 0) {
@@ -37348,11 +37780,11 @@ var FileListenerDeliveryJournal = class {
       stateDirectory: options.stateDirectory
     });
     const root = this.options.stateDirectory ?? defaultListenerStateDirectory();
-    if (!(0, import_node_path11.isAbsolute)(root)) {
+    if (!(0, import_node_path9.isAbsolute)(root)) {
       throw new Error("delivery journal configuration rejected");
     }
-    this.instanceDirectory = (0, import_node_path11.join)(root, listenerInstanceKey(this.options));
-    this.journalPath = (0, import_node_path11.join)(this.instanceDirectory, "delivery-journal.json");
+    this.instanceDirectory = (0, import_node_path9.join)(root, listenerInstanceKey(this.options));
+    this.journalPath = (0, import_node_path9.join)(this.instanceDirectory, "delivery-journal.json");
   }
   async readRecordUnlocked() {
     let raw;
@@ -37455,7 +37887,7 @@ var FileListenerDeliveryJournal = class {
       ["signalId", "leaseId", "leasedUntil"],
       "delivery journal mutation rejected"
     );
-    if (typeof input.signalId !== "string" || !UUID_RE20.test(input.signalId) || typeof input.leaseId !== "string" || !UUID_RE20.test(input.leaseId) || !isValidIsoTimestamp(input.leasedUntil) || input.signalFingerprint !== void 0 && (typeof input.signalFingerprint !== "string" || !SIGNAL_FINGERPRINT_RE.test(input.signalFingerprint))) {
+    if (typeof input.signalId !== "string" || !UUID_RE22.test(input.signalId) || typeof input.leaseId !== "string" || !UUID_RE22.test(input.leaseId) || !isValidIsoTimestamp(input.leasedUntil) || input.signalFingerprint !== void 0 && (typeof input.signalFingerprint !== "string" || !SIGNAL_FINGERPRINT_RE.test(input.signalFingerprint))) {
       throw new Error("delivery journal mutation rejected");
     }
     const canonicalSignalId = input.signalId.toLowerCase();
@@ -37587,7 +38019,7 @@ async function openListenerDeliveryJournal(options) {
     ["profileId", "workspaceId", "principalId", "proposedListenerInstanceId"],
     "delivery journal configuration rejected"
   );
-  if (typeof options.profileId !== "string" || !options.profileId || options.profileId.includes("\0") || typeof options.workspaceId !== "string" || !UUID_RE20.test(options.workspaceId) || typeof options.principalId !== "string" || !UUID_RE20.test(options.principalId) || typeof options.proposedListenerInstanceId !== "string" || !UUID_RE20.test(options.proposedListenerInstanceId)) {
+  if (typeof options.profileId !== "string" || !options.profileId || options.profileId.includes("\0") || typeof options.workspaceId !== "string" || !UUID_RE22.test(options.workspaceId) || typeof options.principalId !== "string" || !UUID_RE22.test(options.principalId) || typeof options.proposedListenerInstanceId !== "string" || !UUID_RE22.test(options.proposedListenerInstanceId)) {
     throw new Error("delivery journal configuration rejected");
   }
   if (options.stateDirectory !== void 0) {
@@ -37683,10 +38115,52 @@ async function openListenerDeliveryJournal(options) {
 }
 
 // src/listener/detach.ts
-var import_node_child_process4 = require("node:child_process");
-var import_node_path12 = require("node:path");
+var import_node_child_process3 = require("node:child_process");
+var import_node_path10 = require("node:path");
+
+// src/host/env.ts
+var ALLOWED_EXACT = /* @__PURE__ */ new Set([
+  "PATH",
+  "HOME",
+  "USER",
+  "LOGNAME",
+  "SHELL",
+  "TMPDIR",
+  "TMP",
+  "TEMP",
+  "LANG",
+  "LC_ALL",
+  "LC_CTYPE",
+  "LC_MESSAGES",
+  "LC_COLLATE",
+  "LC_TIME",
+  "TERM",
+  "COLORTERM",
+  "NO_COLOR",
+  "FORCE_COLOR",
+  "XDG_CONFIG_HOME",
+  "XDG_DATA_HOME",
+  "XDG_CACHE_HOME",
+  "XDG_RUNTIME_DIR",
+  "XDG_STATE_HOME",
+  "GROK_HOME"
+]);
+var DENY_NAME_RE = /(?:^|_)(?:SWARM|SECRET|TOKEN|PASSWORD|PASSWD|CREDENTIAL|PRIVATE_KEY|API_KEY|AUTH|COOKIE)(?:_|$)/i;
+function sanitizeChildEnv(parent = process.env) {
+  const out = {};
+  for (const [key2, value] of Object.entries(parent)) {
+    if (value === void 0) continue;
+    if (!ALLOWED_EXACT.has(key2)) continue;
+    if (DENY_NAME_RE.test(key2)) continue;
+    if (key2.startsWith("SWARM_")) continue;
+    out[key2] = value;
+  }
+  return out;
+}
+
+// src/listener/detach.ts
 function isNativeAbsolutePath(value, platform = process.platform) {
-  return platform === "win32" ? import_node_path12.win32.isAbsolute(value) : import_node_path12.posix.isAbsolute(value);
+  return platform === "win32" ? import_node_path10.win32.isAbsolute(value) : import_node_path10.posix.isAbsolute(value);
 }
 function listenerNodeExecArgv(values2) {
   const safe = [];
@@ -37720,25 +38194,13 @@ function buildListenerChildArgs(spec) {
   const opencodeExe = spec.opencodeExecutable ?? (provider === "opencode" ? spec.executable : void 0);
   const claudeExe = spec.claudeExecutable ?? (provider === "claude" ? spec.executable : void 0);
   const codexExe = spec.codexExecutable ?? (provider === "codex" ? spec.executable : void 0);
-  if (provider === "opencode") {
-    if (!opencodeExe || !opencodeExe.startsWith("/")) {
-      throw new Error(
-        "detached --provider opencode requires an absolute --opencode-executable path"
-      );
-    }
-  }
-  if (provider === "claude") {
-    if (!claudeExe || !isNativeAbsolutePath(claudeExe)) {
-      throw new Error(
-        "detached --provider claude requires an absolute --claude-executable path"
-      );
-    }
-  }
-  if (provider === "codex") {
-    if (!codexExe || !isNativeAbsolutePath(codexExe)) {
-      throw new Error(
-        "detached --provider codex requires an absolute --codex-executable path"
-      );
+  for (const [flag, value] of [
+    ["--opencode-executable", opencodeExe],
+    ["--claude-executable", claudeExe],
+    ["--codex-executable", codexExe]
+  ]) {
+    if (value !== void 0 && !isNativeAbsolutePath(value)) {
+      throw new Error(`an absolute ${flag} path is required when it is given; the listener starts no model`);
     }
   }
   return [
@@ -37776,7 +38238,7 @@ async function spawnDetachedListener(options) {
   if (options.credentialArtifact.length < 1 || options.credentialArtifact.length > 4096) {
     throw new Error("listener credential artifact is outside the stdin bound");
   }
-  const spawnImpl = options.spawnImpl ?? import_node_child_process4.spawn;
+  const spawnImpl = options.spawnImpl ?? import_node_child_process3.spawn;
   const child = spawnImpl(
     process.execPath,
     buildListenerChildArgs(options.spec),
@@ -37790,12 +38252,12 @@ async function spawnDetachedListener(options) {
     child.kill();
     throw new Error("detached listener child has no credential pipe");
   }
-  await new Promise((resolve3, reject) => {
+  await new Promise((resolve4, reject) => {
     const onError = (error) => reject(error);
     child.once("error", onError);
     child.stdin.end(options.credentialArtifact, "utf8", () => {
       child.off("error", onError);
-      resolve3();
+      resolve4();
     });
   });
   child.unref();
@@ -37803,12 +38265,12 @@ async function spawnDetachedListener(options) {
 }
 
 // src/listener/hook.ts
-var import_promises6 = require("node:fs/promises");
-var import_node_path14 = require("node:path");
+var import_promises7 = require("node:fs/promises");
+var import_node_path12 = require("node:path");
 
 // src/listener/brain-digest.ts
-var import_node_path13 = require("node:path");
-var UUID_RE21 = /^[0-9a-f]{8}-[0-9a-f]{4}-[1-8][0-9a-f]{3}-[89ab][0-9a-f]{3}-[0-9a-f]{12}$/i;
+var import_node_path11 = require("node:path");
+var UUID_RE23 = /^[0-9a-f]{8}-[0-9a-f]{4}-[1-8][0-9a-f]{3}-[89ab][0-9a-f]{3}-[0-9a-f]{12}$/i;
 var TOPIC_RE = /^[a-z0-9][a-z0-9._-]*$/;
 var BRAIN_DIGEST_FILE = "brain-digest.json";
 var BRAIN_DIGEST_LOCK = "brain-digest";
@@ -37828,7 +38290,7 @@ function parseState(raw) {
   }
   const row = value;
   const topicVersions = row.topicVersions;
-  if (row.version !== 1 || typeof row.principalId !== "string" || !UUID_RE21.test(row.principalId) || !topicVersions || typeof topicVersions !== "object" || Array.isArray(topicVersions) || Object.keys(topicVersions).length > MAX_BRAIN_DIGEST_TOPICS) {
+  if (row.version !== 1 || typeof row.principalId !== "string" || !UUID_RE23.test(row.principalId) || !topicVersions || typeof topicVersions !== "object" || Array.isArray(topicVersions) || Object.keys(topicVersions).length > MAX_BRAIN_DIGEST_TOPICS) {
     throw new Error("stored brain digest state is malformed");
   }
   for (const [topic, version3] of Object.entries(topicVersions)) {
@@ -37871,11 +38333,11 @@ function renderBrainDigest(topicCount, topics) {
 var FileBrainDigestStore = class {
   constructor(instanceDirectory, principalId) {
     this.instanceDirectory = instanceDirectory;
-    if (!(0, import_node_path13.isAbsolute)(instanceDirectory) || !UUID_RE21.test(principalId)) {
+    if (!(0, import_node_path11.isAbsolute)(instanceDirectory) || !UUID_RE23.test(principalId)) {
       throw new Error("brain digest state needs an absolute listener directory and principal UUID");
     }
     this.principalId = principalId.toLowerCase();
-    this.location = (0, import_node_path13.join)(instanceDirectory, BRAIN_DIGEST_FILE);
+    this.location = (0, import_node_path11.join)(instanceDirectory, BRAIN_DIGEST_FILE);
   }
   instanceDirectory;
   location;
@@ -37918,7 +38380,7 @@ var FileBrainDigestStore = class {
 };
 
 // src/listener/hook.ts
-var UUID_RE22 = /^[0-9a-f]{8}-[0-9a-f]{4}-[1-8][0-9a-f]{3}-[89ab][0-9a-f]{3}-[0-9a-f]{12}$/i;
+var UUID_RE24 = /^[0-9a-f]{8}-[0-9a-f]{4}-[1-8][0-9a-f]{3}-[89ab][0-9a-f]{3}-[0-9a-f]{12}$/i;
 var TOKEN_RE = /^swm_agt_[A-Za-z0-9_-]{43}$/;
 var INSTANCE_KEY_RE = /^[0-9a-f]{64}$/;
 var MAX_HOOK_CREDENTIAL_BYTES = 8 * 1024;
@@ -37979,7 +38441,7 @@ function parseListenerCredential(raw, rejectUnknownKeys = false) {
     throw new Error("stored listener hook credential is malformed");
   }
   const row = value;
-  if (!(rejectUnknownKeys ? exactKeys2(row, LISTENER_CREDENTIAL_KEYS) : hasRequiredKeys(row, LISTENER_CREDENTIAL_KEYS)) || row.version !== 1 || typeof row.profileId !== "string" || !/^[0-9a-f]{24}$/.test(row.profileId) || typeof row.targetUrl !== "string" || typeof row.anonKey !== "string" || row.anonKey.length < 1 || row.anonKey.length > 4096 || typeof row.workspaceId !== "string" || !UUID_RE22.test(row.workspaceId) || typeof row.principalId !== "string" || !UUID_RE22.test(row.principalId) || typeof row.credential !== "string" || !TOKEN_RE.test(row.credential) || typeof row.updatedAt !== "string" || !Number.isFinite(Date.parse(row.updatedAt))) {
+  if (!(rejectUnknownKeys ? exactKeys2(row, LISTENER_CREDENTIAL_KEYS) : hasRequiredKeys(row, LISTENER_CREDENTIAL_KEYS)) || row.version !== 1 || typeof row.profileId !== "string" || !/^[0-9a-f]{24}$/.test(row.profileId) || typeof row.targetUrl !== "string" || typeof row.anonKey !== "string" || row.anonKey.length < 1 || row.anonKey.length > 4096 || typeof row.workspaceId !== "string" || !UUID_RE24.test(row.workspaceId) || typeof row.principalId !== "string" || !UUID_RE24.test(row.principalId) || typeof row.credential !== "string" || !TOKEN_RE.test(row.credential) || typeof row.updatedAt !== "string" || !Number.isFinite(Date.parse(row.updatedAt))) {
     throw new Error("stored listener hook credential is malformed");
   }
   const target2 = cloudTarget(row.targetUrl, row.anonKey);
@@ -37998,7 +38460,7 @@ function parseListenerCredential(raw, rejectUnknownKeys = false) {
   };
 }
 async function writeListenerCredentialState(instanceDirectory, input) {
-  if (!(0, import_node_path14.isAbsolute)(instanceDirectory)) {
+  if (!(0, import_node_path12.isAbsolute)(instanceDirectory)) {
     throw new Error("listener hook state directory must be absolute");
   }
   const record = parseListenerCredential(JSON.stringify({
@@ -38012,16 +38474,16 @@ async function writeListenerCredentialState(instanceDirectory, input) {
     updatedAt: new Date(input.now ?? Date.now()).toISOString()
   }), true);
   await writeSecureJsonFile(
-    (0, import_node_path14.join)(instanceDirectory, LISTENER_CREDENTIAL_FILE),
+    (0, import_node_path12.join)(instanceDirectory, LISTENER_CREDENTIAL_FILE),
     JSON.stringify(record)
   );
   await deleteSecureJsonFile(
-    (0, import_node_path14.join)(instanceDirectory, RETIRED_HOOK_CREDENTIAL_FILE)
+    (0, import_node_path12.join)(instanceDirectory, RETIRED_HOOK_CREDENTIAL_FILE)
   ).catch(() => void 0);
 }
 async function readListenerCredentialState(instanceDirectory) {
   const raw = await readSecureJsonFile(
-    (0, import_node_path14.join)(instanceDirectory, LISTENER_CREDENTIAL_FILE),
+    (0, import_node_path12.join)(instanceDirectory, LISTENER_CREDENTIAL_FILE),
     MAX_HOOK_CREDENTIAL_BYTES
   );
   return raw === null ? null : parseListenerCredential(raw);
@@ -38037,7 +38499,7 @@ function parseSurface(raw, rejectUnknownKeys = false) {
     throw new Error("stored listener hook surface state is malformed");
   }
   const row = value;
-  if (rejectUnknownKeys && Object.keys(row).some((key2) => !HOOK_SURFACE_KEYS.has(key2)) || row.version !== 1 || !Array.isArray(row.surfacedSignalIds) || row.surfacedSignalIds.length > HOOK_SURFACED_IDS_MAX || row.surfacedSignalIds.some((id) => typeof id !== "string" || !UUID_RE22.test(id)) || !(row.reportedDroppedCount === void 0 || typeof row.reportedDroppedCount === "number" && Number.isSafeInteger(row.reportedDroppedCount) && row.reportedDroppedCount >= 0) || !(row.credentialFailureReported === void 0 || typeof row.credentialFailureReported === "boolean")) {
+  if (rejectUnknownKeys && Object.keys(row).some((key2) => !HOOK_SURFACE_KEYS.has(key2)) || row.version !== 1 || !Array.isArray(row.surfacedSignalIds) || row.surfacedSignalIds.length > HOOK_SURFACED_IDS_MAX || row.surfacedSignalIds.some((id) => typeof id !== "string" || !UUID_RE24.test(id)) || !(row.reportedDroppedCount === void 0 || typeof row.reportedDroppedCount === "number" && Number.isSafeInteger(row.reportedDroppedCount) && row.reportedDroppedCount >= 0) || !(row.credentialFailureReported === void 0 || typeof row.credentialFailureReported === "boolean")) {
     throw new Error("stored listener hook surface state is malformed");
   }
   const ids = row.surfacedSignalIds.map((id) => String(id).toLowerCase());
@@ -38054,10 +38516,10 @@ function parseSurface(raw, rejectUnknownKeys = false) {
 var FileHookSurfaceStore = class {
   constructor(instanceDirectory) {
     this.instanceDirectory = instanceDirectory;
-    if (!(0, import_node_path14.isAbsolute)(instanceDirectory)) {
+    if (!(0, import_node_path12.isAbsolute)(instanceDirectory)) {
       throw new Error("listener hook surface directory must be absolute");
     }
-    this.path = (0, import_node_path14.join)(instanceDirectory, HOOK_SURFACE_FILE);
+    this.path = (0, import_node_path12.join)(instanceDirectory, HOOK_SURFACE_FILE);
   }
   instanceDirectory;
   path;
@@ -38068,7 +38530,7 @@ var FileHookSurfaceStore = class {
     const unseen = [];
     for (const item of items) {
       const signalId = item.signalId.toLowerCase();
-      if (!UUID_RE22.test(signalId) || seen.has(signalId)) continue;
+      if (!UUID_RE24.test(signalId) || seen.has(signalId)) continue;
       seen.add(signalId);
       unseen.push(item);
     }
@@ -38099,7 +38561,7 @@ var FileHookSurfaceStore = class {
       const unseen = [];
       for (const item of items) {
         const signalId = item.signalId.toLowerCase();
-        if (!UUID_RE22.test(signalId) || seen.has(signalId)) continue;
+        if (!UUID_RE24.test(signalId) || seen.has(signalId)) continue;
         seen.add(signalId);
         unseen.push(item);
       }
@@ -38122,7 +38584,7 @@ var FileHookSurfaceStore = class {
       const seen = new Set(state.surfacedSignalIds);
       for (const signalId of options.signalIds ?? []) {
         const checked = signalId.toLowerCase();
-        if (UUID_RE22.test(checked)) seen.add(checked);
+        if (UUID_RE24.test(checked)) seen.add(checked);
       }
       await writeSecureJsonFile(
         this.path,
@@ -38161,7 +38623,7 @@ function parseGlobalState(raw) {
 }
 async function reserveCheck(stateDirectory2, cooldownMs, now) {
   return await withFileLock(stateDirectory2, GLOBAL_STATE_LOCK, async () => {
-    const path = (0, import_node_path14.join)(stateDirectory2, GLOBAL_STATE_FILE);
+    const path = (0, import_node_path12.join)(stateDirectory2, GLOBAL_STATE_FILE);
     const raw = await readSecureJsonFile(path, MAX_GLOBAL_STATE_BYTES);
     const previous = raw === null ? null : parseGlobalState(raw);
     if (previous !== null && now - previous.lastCheckAt < cooldownMs) return false;
@@ -38181,8 +38643,8 @@ async function statusContext(stateDirectory2, key2, instanceDirectory) {
   const provisional = {
     key: key2,
     instanceDirectory,
-    statusPath: (0, import_node_path14.join)(instanceDirectory, "status.json"),
-    logPath: (0, import_node_path14.join)(instanceDirectory, "events.ndjson"),
+    statusPath: (0, import_node_path12.join)(instanceDirectory, "status.json"),
+    logPath: (0, import_node_path12.join)(instanceDirectory, "events.ndjson"),
     socketPath: ""
   };
   const status = await readListenerStatus(provisional).catch(() => null);
@@ -38210,7 +38672,7 @@ async function listenerIsLive(context) {
 async function discoverStoredStatusContexts(stateDirectory2) {
   let entries;
   try {
-    entries = await (0, import_promises6.readdir)(stateDirectory2, { withFileTypes: true });
+    entries = await (0, import_promises7.readdir)(stateDirectory2, { withFileTypes: true });
   } catch (error) {
     if (error.code === "ENOENT") return [];
     throw error;
@@ -38218,7 +38680,7 @@ async function discoverStoredStatusContexts(stateDirectory2) {
   const contexts = [];
   for (const entry of entries) {
     if (!entry.isDirectory() || !INSTANCE_KEY_RE.test(entry.name)) continue;
-    const instanceDirectory = (0, import_node_path14.join)(stateDirectory2, entry.name);
+    const instanceDirectory = (0, import_node_path12.join)(stateDirectory2, entry.name);
     const storedStatus = await statusContext(
       stateDirectory2,
       entry.name,
@@ -38235,7 +38697,7 @@ async function discoverStoredStatusContexts(stateDirectory2) {
   return contexts;
 }
 async function discoverListenerHookPrincipalIds(stateDirectory2 = defaultListenerStateDirectory()) {
-  if (!(0, import_node_path14.isAbsolute)(stateDirectory2)) return [];
+  if (!(0, import_node_path12.isAbsolute)(stateDirectory2)) return [];
   const stored = await discoverStoredStatusContexts(stateDirectory2);
   return [...new Set(stored.map((context) => context.status.principalId))].sort();
 }
@@ -38251,7 +38713,7 @@ async function discoverContexts(stateDirectory2, principalIds, isListenerLive = 
     }
     selectedPrincipals = availablePrincipals;
   } else {
-    if (principalIds.some((principalId) => !UUID_RE22.test(principalId))) {
+    if (principalIds.some((principalId) => !UUID_RE24.test(principalId))) {
       return { contexts: [], requiresPrincipalScope: false };
     }
     selectedPrincipals = new Set(principalIds.map((principalId) => principalId.toLowerCase()));
@@ -38272,7 +38734,7 @@ async function discoverContexts(stateDirectory2, principalIds, isListenerLive = 
       continue;
     }
     await deleteSecureJsonFile(
-      (0, import_node_path14.join)(storedStatus.instanceDirectory, RETIRED_HOOK_CREDENTIAL_FILE)
+      (0, import_node_path12.join)(storedStatus.instanceDirectory, RETIRED_HOOK_CREDENTIAL_FILE)
     ).catch(() => void 0);
     try {
       const credential = await readListenerCredentialState(storedStatus.instanceDirectory);
@@ -38456,15 +38918,41 @@ async function brainDigestForCheck(check, options, now) {
     return null;
   }
 }
+async function managedHookGate(stored, hostSessionId) {
+  const contexts = await listSessionContexts(stored.workspaceId, stored.principalId);
+  if (contexts.length === 0) return { mode: "legacy" };
+  const live = contexts.filter((context2) => sessionProofOf(context2) !== null);
+  if (live.length === 0) return { mode: "refuse", reason: "no_live_context" };
+  if (live.length > 1) return { mode: "refuse", reason: "ambiguous" };
+  const context = live[0];
+  if (hostSessionId === void 0) return { mode: "refuse", reason: "host_unproven" };
+  if (hostSessionId !== context.host_session_id) return { mode: "refuse", reason: "host_mismatch" };
+  return { mode: "managed", context, proof: sessionProofOf(context) };
+}
 async function recordQueuedObservations(check, signalIds, options, now) {
   const stored = check.context.credential;
   const remainingMs = options.deadlineMs - now();
   if (signalIds.length === 0 || stored === null || options.signal.aborted || remainingMs <= 0) {
     return /* @__PURE__ */ new Set();
   }
+  const gate = await managedHookGate(stored, options.hostSessionId);
+  if (gate.mode === "refuse") return /* @__PURE__ */ new Set();
+  let managedAck;
+  let fetcher = options.fetcher ?? fetch;
+  if (gate.mode === "managed") {
+    managedAck = managedAckInput({
+      context: gate.context,
+      proof: gate.proof,
+      injectionSucceeded: true,
+      observedHostSessionId: options.hostSessionId ?? null,
+      hostIdentityTrusted: true
+    });
+    if (!canAckManagedDelivery(managedAck).ok) return /* @__PURE__ */ new Set();
+    fetcher = bindSessionProof(fetcher, gate.proof);
+  }
   const client = new DeliveryCommandClient(
     cloudTarget(stored.targetUrl, stored.anonKey),
-    options.fetcher ?? fetch,
+    fetcher,
     { deadlineMs: remainingMs, now }
   );
   const results = await Promise.all(signalIds.map(async (signalId) => {
@@ -38473,7 +38961,8 @@ async function recordQueuedObservations(check, signalIds, options, now) {
         workspaceId: stored.workspaceId,
         credential: stored.credential,
         commandId: observationCommandId(signalId),
-        signalId
+        signalId,
+        ...managedAck === void 0 ? {} : { managedAck, surfaced: true }
       });
       return signalId;
     } catch {
@@ -38485,7 +38974,7 @@ async function recordQueuedObservations(check, signalIds, options, now) {
 async function checkListenerHooks(options) {
   try {
     const stateDirectory2 = options.stateDirectory ?? defaultListenerStateDirectory();
-    if (!(0, import_node_path14.isAbsolute)(stateDirectory2)) return "";
+    if (!(0, import_node_path12.isAbsolute)(stateDirectory2)) return "";
     const now = options.now ?? Date.now;
     const cooldownSeconds = options.cooldownSeconds ?? HOOK_DEFAULT_COOLDOWN_SECONDS;
     if (!Number.isSafeInteger(cooldownSeconds) || cooldownSeconds < 0 || cooldownSeconds > 86400) {
@@ -38542,6 +39031,10 @@ async function checkListenerHooks(options) {
     const blocks = [];
     const emittedCredentialWarnings = /* @__PURE__ */ new Set();
     for (const check of checks) {
+      if (check.context.credential !== null) {
+        const gate = await managedHookGate(check.context.credential, options.hostSessionId);
+        if (gate.mode === "refuse") continue;
+      }
       const store2 = new FileHookSurfaceStore(check.context.instanceDirectory);
       const staged = await store2.stage(
         [...check.pending, ...check.network],
@@ -38631,10 +39124,10 @@ async function runListenerHookCheck(options = {}) {
       signal: controller.signal,
       deadlineMs
     });
-    const timedOut = new Promise((resolve3) => {
+    const timedOut = new Promise((resolve4) => {
       timer2 = setTimeout(() => {
         controller.abort();
-        resolve3("");
+        resolve4("");
       }, HOOK_CHECK_TIMEOUT_MS);
     });
     return await Promise.race([checking, timedOut]);
@@ -38646,7 +39139,7 @@ async function runListenerHookCheck(options = {}) {
 }
 
 // src/listener/attendance-canary.ts
-var import_promises7 = require("node:fs/promises");
+var import_promises8 = require("node:fs/promises");
 var LOG_TAIL_BYTES = 256 * 1024;
 function agentReceipt(receipts, principalId) {
   for (const receipt of receipts) {
@@ -38659,7 +39152,7 @@ function agentReceipt(receipts, principalId) {
 async function readLogTail(path) {
   let handle;
   try {
-    handle = await (0, import_promises7.open)(path, "r");
+    handle = await (0, import_promises8.open)(path, "r");
   } catch (error) {
     if (error.code === "ENOENT") return "";
     throw error;
@@ -38704,7 +39197,7 @@ async function logEvidence(path, signalId) {
 }
 async function runListenerAttendanceCanary(options) {
   const now = options.now ?? Date.now;
-  const sleep2 = options.sleep ?? ((milliseconds) => new Promise((resolve3) => setTimeout(resolve3, milliseconds)));
+  const sleep2 = options.sleep ?? ((milliseconds) => new Promise((resolve4) => setTimeout(resolve4, milliseconds)));
   const startedAt = now();
   const deadlineMs = startedAt + options.waitMs;
   const client = new ThinCommandClient(options.target, options.fetcher, {
@@ -38818,7 +39311,19 @@ function renderListenerAttendanceCanary(result, workspaceId2, principalId) {
 }
 
 // src/listener/activity.ts
-var import_node_crypto16 = require("node:crypto");
+var import_node_crypto18 = require("node:crypto");
+
+// src/host/sanitize.ts
+var SECRET_VALUE_RE = /(?:(?:api[_-]?key|token|secret|password|authorization|bearer)\s*[:=]\s*)(["']?)([^\s"'\\]{8,})\1/gi;
+var JWT_RE = /\beyJ[A-Za-z0-9_-]{10,}\.[A-Za-z0-9_-]{10,}\.[A-Za-z0-9_-]{10,}\b/g;
+function redactString(value) {
+  return redactCredentialText(value).replace(SECRET_VALUE_RE, (_m, q) => `redacted=${q}***${q}`).replace(JWT_RE, "[redacted-jwt]");
+}
+function sanitizeText(text) {
+  return redactString(text);
+}
+
+// src/listener/activity.ts
 var ACTIVITY_FRAME_INTERVAL_MS = 750;
 var ACTIVITY_HEARTBEAT_MS = 15e3;
 var ACTIVITY_TOOL_TITLE_MAX = 160;
@@ -38905,7 +39410,7 @@ var ListenerActivityController = class {
   constructor(options) {
     this.options = options;
     this.clock = options.clock ?? SYSTEM_CLOCK;
-    this.streamId = options.streamId ?? (0, import_node_crypto16.randomUUID)();
+    this.streamId = options.streamId ?? (0, import_node_crypto18.randomUUID)();
     this.events = { update: (update) => this.onSessionUpdate(update) };
   }
   options;
@@ -39234,7 +39739,7 @@ var ListenerHttpClient = class {
       finished = true;
       this.finishRequest();
     };
-    return await new Promise((resolve3, reject) => {
+    return await new Promise((resolve4, reject) => {
       const send = options.url.protocol === "https:" ? import_node_https.request : import_node_http2.request;
       const agent = options.url.protocol === "https:" ? this.httpsAgent : this.httpAgent;
       let request;
@@ -39289,7 +39794,7 @@ var ListenerHttpClient = class {
               redirected: { value: options.redirected },
               url: { value: options.url.href }
             });
-            resolve3(response);
+            resolve4(response);
           } catch (error) {
             reject(error);
           }
@@ -39310,7 +39815,7 @@ var ListenerHttpClient = class {
 };
 
 // src/resume.ts
-var import_node_child_process5 = require("node:child_process");
+var import_node_child_process4 = require("node:child_process");
 var DEFAULT_PROCESS_TABLE_COMMAND = {
   file: "ps",
   args: ["-axo", "pid=,command="]
@@ -39329,13 +39834,13 @@ var ProcessTableError = class extends Error {
   code = "process_table_unavailable";
 };
 function execFileText(file, args) {
-  return new Promise((resolve3, reject) => {
-    (0, import_node_child_process5.execFile)(file, [...args], {
+  return new Promise((resolve4, reject) => {
+    (0, import_node_child_process4.execFile)(file, [...args], {
       encoding: "utf8",
       maxBuffer: 4 * 1024 * 1024
     }, (error, stdout) => {
       if (error) reject(error);
-      else resolve3(stdout);
+      else resolve4(stdout);
     });
   });
 }
@@ -39352,8 +39857,8 @@ function systemProcessTable(options = {}) {
   const retain = options.retain ?? (() => true);
   return {
     list() {
-      return new Promise((resolve3, reject) => {
-        const child = (0, import_node_child_process5.spawn)(command2.file, [...command2.args], {
+      return new Promise((resolve4, reject) => {
+        const child = (0, import_node_child_process4.spawn)(command2.file, [...command2.args], {
           stdio: ["ignore", "pipe", "pipe"]
         });
         const rows3 = [];
@@ -39407,7 +39912,7 @@ function systemProcessTable(options = {}) {
             return;
           }
           settled = true;
-          resolve3(rows3);
+          resolve4(rows3);
         });
       });
     }
@@ -39696,8 +40201,903 @@ function resumeJson(report) {
   };
 }
 
+// src/cloud/session-errors.ts
+var SESSION_ERROR_MESSAGES = {
+  session_proof_missing: "this agent is managed; a session proof is required before a write",
+  session_proof_invalid: "the session proof was rejected",
+  session_expired: "the execution session has expired; stop dispatch and recover",
+  session_retired: "this execution UUID is retired and cannot be used again",
+  session_conflict: "another live execution session already holds this agent",
+  session_not_managed: "managed sessions are not enabled for this agent; an owner or admin must enable them first",
+  session_already_managed: "managed sessions are already enabled for this agent",
+  session_leases_live: "legacy delivery leases are still live for this agent; stop the old receiver and wait for them to expire before enabling",
+  delivery_not_surfaced: "cannot mark an ask observed on a managed agent until it was surfaced into the bound host conversation"
+};
+var AgentSessionError = class extends Error {
+  constructor(status, code) {
+    super(SESSION_ERROR_MESSAGES[code]);
+    this.status = status;
+    this.code = code;
+  }
+  status;
+  code;
+  name = "AgentSessionError";
+};
+function agentSessionErrorFromBody(status, body) {
+  if (body === null || typeof body !== "object" || Array.isArray(body)) {
+    return null;
+  }
+  const error = body.error;
+  if (typeof error !== "string" || !isAgentSessionErrorCode(error)) return null;
+  return new AgentSessionError(status, error);
+}
+var SESSION_CLIENT_ERROR_MESSAGES = {
+  session_generation_invalid: "the session command returned a missing or invalid generation"
+};
+var AgentSessionClientError = class extends Error {
+  constructor(code) {
+    super(SESSION_CLIENT_ERROR_MESSAGES[code]);
+    this.code = code;
+  }
+  code;
+  name = "AgentSessionClientError";
+};
+
+// src/cloud/session-client.ts
+async function postSessionCommand(options, input) {
+  const fetcher = options.fetcher ?? fetch;
+  const controller = new AbortController();
+  const timer2 = setTimeout(
+    () => controller.abort(),
+    options.timeoutMs ?? 3e4
+  );
+  const headers = {
+    authorization: `Bearer ${input.credential}`,
+    apikey: options.target.anonKey,
+    "content-type": "application/json",
+    ...input.proof ? proofHeaders(input.proof) : {},
+    ...input.acquireProof ? {
+      [AGENT_SESSION_ID_HEADER]: input.acquireProof.session_id,
+      [AGENT_SESSION_KEY_HEADER]: input.acquireProof.key
+    } : {}
+  };
+  let response;
+  try {
+    response = await fetcher(commandEndpoint(options.target), {
+      method: "POST",
+      headers,
+      body: JSON.stringify({
+        command_id: input.commandId,
+        client_version: CLIENT_PROTOCOL_VERSION,
+        workspace_id: input.workspaceId,
+        stream: { kind: "workspace" },
+        command: input.command
+      }),
+      signal: controller.signal
+    });
+  } catch (error) {
+    const safeHeaders = JSON.stringify(redactSessionHeaders(headers));
+    if (error.name === "AbortError") {
+      throw new CommandTransportError(
+        `session command timed out ${safeHeaders}`
+      );
+    }
+    throw new CommandTransportError(
+      `session command failed before a response ${safeHeaders}`
+    );
+  } finally {
+    clearTimeout(timer2);
+  }
+  let body = null;
+  try {
+    body = JSON.parse(await response.text());
+  } catch {
+    body = null;
+  }
+  if (!response.ok) {
+    const sessionError = agentSessionErrorFromBody(response.status, body);
+    if (sessionError) throw sessionError;
+    throw new CommandTransportError(
+      `session command failed (HTTP ${response.status})`
+    );
+  }
+  return { status: response.status, body };
+}
+function acceptedGeneration(body) {
+  if (body === null || typeof body !== "object" || Array.isArray(body)) {
+    throw new CommandTransportError("session command returned a malformed body");
+  }
+  const row = body;
+  if (typeof row.generation === "number" && Number.isSafeInteger(row.generation) && row.generation >= 1) {
+    return row.generation;
+  }
+  throw new AgentSessionClientError("session_generation_invalid");
+}
+var AgentSessionClient = class {
+  constructor(options) {
+    this.options = options;
+  }
+  options;
+  async acquire(request) {
+    const commandId = request.commandId ?? request.context.acquire_command_id;
+    const { body } = await postSessionCommand(this.options, {
+      credential: request.credential,
+      workspaceId: request.workspaceId,
+      commandId,
+      /* The server (session-wire.ts parseAgentSessionAcquireHeaders) reads the
+         session id and the private key from the proof headers and stores only
+         the key's digest; the body carries no key material and no digest. The
+         generation header is omitted: nothing has been acquired yet. */
+      acquireProof: {
+        session_id: request.context.session_id,
+        key: request.context.session_key
+      },
+      command: {
+        kind: ACQUIRE_AGENT_SESSION_KIND,
+        session_id: request.context.session_id,
+        provider: request.context.provider,
+        host_label: request.context.host_label,
+        host_session_ref: request.context.host_session_id
+      }
+    });
+    return { generation: acceptedGeneration(body), commandId };
+  }
+  async renew(credential, workspaceId2, proof, commandId) {
+    await postSessionCommand(this.options, {
+      credential,
+      workspaceId: workspaceId2,
+      commandId: commandId ?? newCommandId(),
+      proof,
+      command: {
+        kind: RENEW_AGENT_SESSION_KIND,
+        session_id: proof.session_id,
+        generation: proof.generation
+      }
+    });
+  }
+  async release(credential, workspaceId2, proof, commandId) {
+    await postSessionCommand(this.options, {
+      credential,
+      workspaceId: workspaceId2,
+      commandId: commandId ?? newCommandId(),
+      proof,
+      command: {
+        kind: RELEASE_AGENT_SESSION_KIND,
+        session_id: proof.session_id,
+        generation: proof.generation
+      }
+    });
+  }
+  async enable(request) {
+    await postSessionCommand(this.options, {
+      credential: request.credential,
+      workspaceId: request.workspaceId,
+      commandId: request.commandId ?? newCommandId(),
+      command: {
+        kind: ENABLE_AGENT_MANAGEMENT_KIND,
+        principal_id: request.principalId
+      }
+    });
+  }
+  async disable(request) {
+    await postSessionCommand(this.options, {
+      credential: request.credential,
+      workspaceId: request.workspaceId,
+      commandId: request.commandId ?? newCommandId(),
+      command: {
+        kind: DISABLE_AGENT_MANAGEMENT_KIND,
+        principal_id: request.principalId
+      }
+    });
+  }
+  async recover(request) {
+    await postSessionCommand(this.options, {
+      credential: request.credential,
+      workspaceId: request.workspaceId,
+      commandId: request.commandId ?? newCommandId(),
+      command: {
+        kind: RECOVER_AGENT_SESSION_KIND,
+        principal_id: request.principalId
+      }
+    });
+  }
+  /** Read-only members resource: server session fields for this principal. */
+  async readStatus(input) {
+    const fetcher = this.options.fetcher ?? fetch;
+    const controller = new AbortController();
+    const timer2 = setTimeout(
+      () => controller.abort(),
+      this.options.timeoutMs ?? 3e4
+    );
+    const headers = {
+      authorization: `Bearer ${input.credential}`,
+      apikey: this.options.target.anonKey,
+      "content-type": "application/json"
+    };
+    let response;
+    try {
+      response = await fetcher(readEndpoint(this.options.target), {
+        method: "POST",
+        headers,
+        body: JSON.stringify({
+          resource: "members",
+          workspace_id: input.workspaceId
+        }),
+        signal: controller.signal
+      });
+    } catch (error) {
+      if (error.name === "AbortError") {
+        throw new CommandTransportError("session status read timed out");
+      }
+      throw new CommandTransportError(
+        "session status read failed before a response"
+      );
+    } finally {
+      clearTimeout(timer2);
+    }
+    let body = null;
+    try {
+      body = JSON.parse(await response.text());
+    } catch {
+      body = null;
+    }
+    if (!response.ok) {
+      throw new CommandTransportError(
+        `session status read failed (HTTP ${response.status})`
+      );
+    }
+    return parseServerSessionStatus(body, input.principalId);
+  }
+};
+function optionalString(value) {
+  return typeof value === "string" && value.length > 0 ? value : null;
+}
+function optionalGeneration(value) {
+  if (typeof value === "number" && Number.isSafeInteger(value) && value >= 1) {
+    return value;
+  }
+  if (typeof value === "string" && /^[1-9][0-9]*$/.test(value)) {
+    const generation = Number(value);
+    return Number.isSafeInteger(generation) ? generation : null;
+  }
+  return null;
+}
+function parseServerSessionStatus(body, principalId) {
+  if (body === null || typeof body !== "object" || Array.isArray(body)) {
+    throw new CommandTransportError("session status read returned a malformed body");
+  }
+  const row = body;
+  const identity = row.identity !== null && typeof row.identity === "object" && !Array.isArray(row.identity) ? row.identity : null;
+  const agents = Array.isArray(row.agents) ? row.agents : [];
+  const wanted = principalId.toLowerCase();
+  const match = agents.find((agent) => {
+    if (agent === null || typeof agent !== "object" || Array.isArray(agent)) {
+      return false;
+    }
+    const id = agent.principal_id;
+    return typeof id === "string" && id.toLowerCase() === wanted;
+  });
+  const managedAt = optionalString(match?.managed_at) ?? optionalString(identity?.managed_at);
+  const lifecycle = match?.lifecycle_state === "enabled" || match?.lifecycle_state === "disabled" ? match.lifecycle_state : null;
+  return {
+    principal_id: wanted,
+    session_id: optionalString(match?.session_id)?.toLowerCase() ?? null,
+    generation: optionalGeneration(match?.generation),
+    lifecycle_state: lifecycle,
+    is_live: match?.is_live === true,
+    provider: optionalString(match?.provider),
+    host_label: optionalString(match?.host_label),
+    host_session_ref: optionalString(match?.host_session_ref),
+    started_at: optionalString(match?.started_at),
+    renewed_at: optionalString(match?.renewed_at),
+    expired_at: optionalString(match?.expired_at),
+    managed_at: managedAt
+  };
+}
+
+// src/cloud/session-manager.ts
+var AgentSessionManager = class {
+  constructor(options) {
+    this.options = options;
+    this.context = options.context;
+    this.now = options.now ?? Date.now;
+    this.setTimer = options.setTimer ?? ((callback, ms) => setTimeout(callback, ms));
+    this.clearTimer = options.clearTimer ?? ((timer2) => clearTimeout(timer2));
+    this.lastProofAt = this.now();
+  }
+  options;
+  context;
+  dispatch = "running";
+  started = false;
+  timer = null;
+  renewing = false;
+  lastProofAt;
+  lastStopReason = null;
+  now;
+  setTimer;
+  clearTimer;
+  currentContext() {
+    return this.context;
+  }
+  currentProof() {
+    return sessionProofOf(this.context);
+  }
+  dispatchState() {
+    return this.dispatch;
+  }
+  stopReason() {
+    return this.lastStopReason;
+  }
+  boundFetcher(fetcher) {
+    return bindSessionProof(fetcher, this.currentProof());
+  }
+  /**
+   * Claims and other writes do not extend the server lease (120 s).
+   * Only a successful renew_agent_session re-arms lastProofAt.
+   */
+  noteSuccessfulWrite() {
+    return;
+  }
+  start() {
+    if (this.dispatch !== "running") return;
+    this.started = true;
+    this.armTimer();
+  }
+  stopTimers() {
+    this.started = false;
+    if (this.timer !== null) {
+      this.clearTimer(this.timer);
+      this.timer = null;
+    }
+  }
+  async release() {
+    this.stopTimers();
+    const proof = this.currentProof();
+    this.dispatch = "stopped";
+    if (proof === null) return;
+    const credential = await this.options.credential();
+    await this.options.client.release(
+      credential,
+      this.options.workspaceId,
+      proof
+    );
+  }
+  async applyGeneration(generation) {
+    this.context = { ...this.context, generation, enforcement: "enabled" };
+    await writeSessionContext(this.options.contextPath, this.context);
+    this.lastProofAt = this.now();
+    return this.context;
+  }
+  armTimer() {
+    if (this.timer !== null) {
+      this.clearTimer(this.timer);
+      this.timer = null;
+    }
+    if (!this.started || this.dispatch !== "running") return;
+    const due = this.lastProofAt + AGENT_SESSION_RENEW_AFTER_MS;
+    const wait = Math.max(0, due - this.now());
+    this.timer = this.setTimer(() => {
+      void this.renewIfDue();
+    }, wait);
+  }
+  async renewIfDue() {
+    if (this.dispatch !== "running" || this.renewing) return;
+    const proof = this.currentProof();
+    if (proof === null) {
+      this.stopDispatch(new Error("session proof is not yet acquired"));
+      return;
+    }
+    const age = this.now() - this.lastProofAt;
+    if (age >= AGENT_SESSION_TTL_MS) {
+      this.stopDispatch(new AgentSessionError(403, "session_expired"));
+      return;
+    }
+    this.renewing = true;
+    try {
+      const credential = await this.options.credential();
+      await this.options.client.renew(
+        credential,
+        this.options.workspaceId,
+        proof
+      );
+      this.lastProofAt = this.now();
+      this.armTimer();
+    } catch (error) {
+      this.stopDispatch(error instanceof Error ? error : new Error("renew failed"));
+    } finally {
+      this.renewing = false;
+    }
+  }
+  stopDispatch(reason) {
+    this.dispatch = "stopped";
+    this.lastStopReason = reason;
+    this.stopTimers();
+    this.options.onDispatchStop?.(reason);
+  }
+};
+
+// src/cloud/session-receiver.ts
+var registeredHostInjection = null;
+function currentHostInjection() {
+  return registeredHostInjection;
+}
+function sleepMs(ms, signal) {
+  return new Promise((resolve4, reject) => {
+    if (signal?.aborted) {
+      const error = new Error("interactive receiver aborted");
+      error.name = "AbortError";
+      reject(error);
+      return;
+    }
+    const timer2 = setTimeout(resolve4, ms);
+    const onAbort = () => {
+      clearTimeout(timer2);
+      const error = new Error("interactive receiver aborted");
+      error.name = "AbortError";
+      reject(error);
+    };
+    signal?.addEventListener("abort", onAbort, { once: true });
+  });
+}
+function defaultClaimClient(options) {
+  const proof = sessionProofOf(options.context);
+  const fetcher = bindSessionProof(options.fetcher ?? fetch, proof);
+  const client = new DeliveryCommandClient(options.target, fetcher);
+  return {
+    async claim() {
+      const result = await client.claimAgentInbox({
+        workspaceId: options.context.workspace_id,
+        credential: options.credential,
+        commandId: newCommandId(),
+        listenerInstanceId: options.context.session_id,
+        expectedPrincipalId: options.context.principal_id
+      });
+      return result.deliveries;
+    },
+    async ack(row, managedAck) {
+      await client.ackAgentDelivery({
+        workspaceId: options.context.workspace_id,
+        credential: options.credential,
+        commandId: newCommandId(),
+        signalId: row.signal.id,
+        leaseId: row.leaseId,
+        listenerInstanceId: options.context.session_id,
+        outcome: "observed",
+        lastErrorCode: null,
+        managedAck,
+        /* The gate only passes after a real injection, so this is the truth
+           the server records as surfaced_at; manual mode never reaches here. */
+        surfaced: managedAck.injectionSucceeded
+      });
+    }
+  };
+}
+async function runInteractiveReceiveOnce(options, seen) {
+  if (options.manager.dispatchState() !== "running") {
+    return { surfaced: 0, acked: 0, buffered: 0, receive: "manual" };
+  }
+  const injection = options.hostInjection ?? null;
+  const trusted = options.hostIdentityTrusted === true;
+  const observedHost = options.observedHostSessionId ?? (trusted ? options.context.host_session_id : null);
+  const receive = injection === null ? "manual" : trusted ? "callback" : "unverified";
+  if (injection === null || !trusted) {
+    return { surfaced: 0, acked: 0, buffered: 0, receive };
+  }
+  const claims = options.claimClient ?? defaultClaimClient(options);
+  const deliveries = await claims.claim();
+  options.manager.noteSuccessfulWrite();
+  let surfaced = 0;
+  let acked = 0;
+  let buffered = 0;
+  for (const row of deliveries) {
+    if (seen.has(row.signal.id)) continue;
+    const ask = {
+      signalId: row.signal.id,
+      kind: row.signal.kind,
+      body: row.signal.body,
+      hostSessionId: options.context.host_session_id
+    };
+    let injected = false;
+    if (injection !== null && trusted) {
+      const result = await injection.inject(ask);
+      injected = result.ok === true;
+    }
+    if (injected) surfaced += 1;
+    else buffered += 1;
+    const proof = options.manager.currentProof();
+    const ackGate = managedAckInput({
+      context: options.context,
+      proof,
+      injectionSucceeded: injected,
+      observedHostSessionId: observedHost,
+      hostIdentityTrusted: trusted && injection !== null
+    });
+    const decision = canAckManagedDelivery(ackGate);
+    if (!decision.ok) continue;
+    assertManagedAckAllowed(ackGate);
+    await claims.ack(row, ackGate);
+    seen.add(row.signal.id);
+    acked += 1;
+  }
+  return { surfaced, acked, buffered, receive };
+}
+async function runInteractiveReceiver(options) {
+  const seen = /* @__PURE__ */ new Set();
+  let surfaced = 0;
+  let acked = 0;
+  let buffered = 0;
+  let receive = options.context.receive_verification;
+  const sleep2 = options.sleep ?? sleepMs;
+  try {
+    options.manager.start();
+    while (options.manager.dispatchState() === "running") {
+      if (options.signal?.aborted) break;
+      const pass = await runInteractiveReceiveOnce(options, seen);
+      surfaced += pass.surfaced;
+      acked += pass.acked;
+      buffered += pass.buffered;
+      receive = pass.receive;
+      if (options.context.receive_verification !== receive) {
+        options.context = {
+          ...options.context,
+          receive_verification: receive
+        };
+        await writeSessionContext(options.contextPath, options.context);
+      }
+      await sleep2(AGENT_SESSION_RENEW_AFTER_MS, options.signal);
+    }
+  } catch (error) {
+    if (error.name !== "AbortError") throw error;
+  } finally {
+    options.manager.stopTimers();
+  }
+  return {
+    mode: "interactive",
+    session_id: options.context.session_id,
+    generation: options.context.generation,
+    provider: options.context.provider,
+    host_session_id: options.context.host_session_id,
+    enforcement: options.context.enforcement,
+    receive_verification: receive,
+    dispatch: options.manager.dispatchState(),
+    surfaced,
+    acked,
+    buffered
+  };
+}
+
+// src/cloud/session-cli.ts
+function parseSessionMode(value) {
+  if (value === void 0 || !SESSION_MODES.includes(value)) {
+    throw new Error(`--mode must be ${SESSION_MODES.join(" or ")}`);
+  }
+  return value;
+}
+function parseSessionProvider(value) {
+  if (value === void 0 || !SESSION_PROVIDERS.includes(value)) {
+    throw new Error(`--provider must be ${SESSION_PROVIDERS.join("|")}`);
+  }
+  return value;
+}
+async function readSessionIdentity(target2, credential, workspaceId2, fetcher = fetch) {
+  const directory = await readAgentSignalDirectory(
+    target2,
+    credential,
+    workspaceId2,
+    { fetcher }
+  );
+  if (directory.identity === void 0) {
+    throw new Error(
+      "this deployment authenticated the credential but did not return its identity; update the read service before starting a managed session"
+    );
+  }
+  return {
+    principal_id: directory.identity.principal_id,
+    workspace_id: directory.identity.workspace_id
+  };
+}
+async function openBoundAgentCredential(input) {
+  const local = {
+    target: input.target,
+    tokenPrincipalId: input.tokenPrincipalId,
+    flagWorkspaceId: input.workspaceId,
+    flagUrl: input.target.url,
+    tokenFile: input.tokenFile
+  };
+  assertLocalSessionBinding(input.context, local);
+  const bound = boundAgentFetcher(input.fetcher, input.context);
+  const session = await input.openSession(bound);
+  const bearer = await session.bearer();
+  const readIdentity = input.readIdentity ?? readSessionIdentity;
+  const identity = await readIdentity(
+    input.target,
+    bearer,
+    input.workspaceId,
+    bound
+  );
+  assertSameIdentity(input.context, { ...local, identity });
+  return { bearer, fetcher: bound, session };
+}
+async function startManagedSession(options) {
+  const fetcher = options.fetcher ?? fetch;
+  const readIdentity = options.readIdentity ?? readSessionIdentity;
+  const identity = await readIdentity(
+    options.target,
+    options.credential,
+    options.workspaceId,
+    fetcher
+  );
+  const principalId = identity.principal_id;
+  if (options.workspaceId.toLowerCase() !== identity.workspace_id.toLowerCase()) {
+    throw new Error("authenticated workspace does not match --workspace-id");
+  }
+  if (options.tokenPrincipalId !== void 0 && options.tokenPrincipalId !== null && options.tokenPrincipalId.toLowerCase() !== principalId.toLowerCase()) {
+    throw new Error(
+      "token artifact principal does not match the authenticated identity"
+    );
+  }
+  const draft = newSessionBinding({
+    target: options.target,
+    workspaceId: identity.workspace_id,
+    principalId,
+    provider: options.provider,
+    mode: options.mode,
+    hostSessionId: options.hostSessionId,
+    tokenFile: options.tokenFile,
+    hostLabel: options.hostLabel
+  });
+  const contextPath = options.contextPath ?? defaultSessionContextPath(draft.workspace_id, draft.principal_id, draft.session_id);
+  const existing = await readSessionContextIfPresent(contextPath);
+  let context = draft;
+  let retried = false;
+  if (existing !== null && !isReleasedSession(existing)) {
+    if (existing.generation >= 1) {
+      throw new SessionContextError(
+        "session_context_conflict",
+        "a live session context already exists at this path; run cswarm session stop first"
+      );
+    }
+    assertAcquireBindingMatches(existing, draft);
+    context = existing;
+    retried = true;
+  }
+  assertSameIdentity(context, {
+    identity,
+    target: options.target,
+    tokenPrincipalId: options.tokenPrincipalId,
+    flagWorkspaceId: options.workspaceId,
+    flagUrl: options.target.url,
+    hostSessionId: options.hostSessionId
+  });
+  await writeSessionContext(contextPath, context);
+  const client = new AgentSessionClient({
+    target: options.target,
+    fetcher
+  });
+  let generation;
+  try {
+    const acquired = await client.acquire({
+      credential: options.credential,
+      workspaceId: context.workspace_id,
+      context,
+      commandId: context.acquire_command_id
+    });
+    generation = acquired.generation;
+  } catch (error) {
+    if (error instanceof AgentSessionError && error.code === "session_not_managed") {
+      context = { ...context, enforcement: "unmanaged" };
+      await writeSessionContext(contextPath, context);
+    }
+    throw error;
+  }
+  context = {
+    ...context,
+    generation,
+    enforcement: "enabled"
+  };
+  await writeSessionContext(contextPath, context);
+  if (options.runReceiver === false) {
+    return { context, contextPath, retried };
+  }
+  await holdSessionReceiverLock(contextPath, "foreground");
+  try {
+    const manager = new AgentSessionManager({
+      client,
+      credential: async () => options.credential,
+      workspaceId: context.workspace_id,
+      contextPath,
+      context
+    });
+    await manager.applyGeneration(generation);
+    const interactive = await runInteractiveReceiver({
+      target: options.target,
+      credential: options.credential,
+      contextPath,
+      context,
+      manager,
+      hostInjection: options.hostInjection ?? currentHostInjection(),
+      hostIdentityTrusted: options.hostIdentityTrusted === true,
+      fetcher,
+      signal: options.signal
+    });
+    return { context, contextPath, retried, interactive };
+  } finally {
+    await releaseSessionReceiverLockIfHeld(contextPath);
+  }
+}
+function reconcileSessionView(context, server) {
+  const localState = sessionLifecycleState(context);
+  const sameSession = server.session_id !== null && server.session_id === context.session_id;
+  const live = server.is_live === true && sameSession && sessionProofOf(context) !== null;
+  const state = localState === "stopped" ? "stopped" : localState === "unacquired" ? "unacquired" : live ? "running" : "expired";
+  const enforcement = server.lifecycle_state === "disabled" || server.managed_at === null ? "unmanaged" : server.lifecycle_state === "enabled" || server.managed_at !== null ? "enabled" : "unknown";
+  return { state, enforcement };
+}
+async function readManagedSessionStatus(input) {
+  const context = await readSessionContext(input.contextPath);
+  const local = publicSessionStatus(context, {
+    session_key: void 0,
+    credential: void 0
+  });
+  const client = new AgentSessionClient({
+    target: input.target,
+    fetcher: input.fetcher
+  });
+  const server = await client.readStatus({
+    credential: input.credential,
+    workspaceId: context.workspace_id,
+    principalId: context.principal_id
+  });
+  const reconciled = reconcileSessionView(context, server);
+  return {
+    context,
+    status: {
+      ...local,
+      state: reconciled.state,
+      enforcement: reconciled.enforcement,
+      local: {
+        state: local.state,
+        enforcement: context.enforcement,
+        session_id: context.session_id,
+        generation: context.generation,
+        has_private_proof: local.has_private_proof
+      },
+      server: {
+        session_id: server.session_id,
+        generation: server.generation,
+        lifecycle_state: server.lifecycle_state,
+        is_live: server.is_live,
+        expired_at: server.expired_at,
+        managed_at: server.managed_at,
+        provider: server.provider,
+        host_label: server.host_label,
+        host_session_ref: server.host_session_ref
+      }
+    }
+  };
+}
+async function stopManagedSession(input) {
+  const context = await readSessionContext(input.contextPath);
+  const proof = sessionProofOf(context);
+  if (proof === null) {
+    return {
+      state: "stopped",
+      next: `Confirm with: cswarm session status --session-context ${input.contextPath}`,
+      status: publicSessionStatus(context, { state: "stopped" })
+    };
+  }
+  const client = new AgentSessionClient({
+    target: input.target,
+    fetcher: input.fetcher
+  });
+  const manager = new AgentSessionManager({
+    client,
+    credential: async () => input.credential,
+    workspaceId: context.workspace_id,
+    contextPath: input.contextPath,
+    context
+  });
+  let serverRefusal = null;
+  try {
+    await manager.release();
+  } catch (error) {
+    if (error instanceof CommandTransportError) {
+      return {
+        state: "stopping",
+        next: `This is still in progress. Confirm with: cswarm session status --session-context ${input.contextPath}`,
+        status: publicSessionStatus(context, { state: "stopping" })
+      };
+    }
+    if (error instanceof AgentSessionError && DEAD_PROOF_ON_STOP.includes(error.code)) {
+      serverRefusal = error.code;
+    } else {
+      throw error;
+    }
+  }
+  const released = markSessionReleased(context);
+  await writeSessionContext(input.contextPath, released);
+  await releaseSessionReceiverLock(input.contextPath);
+  return {
+    state: "stopped",
+    next: `Confirm with: cswarm session status --session-context ${input.contextPath}`,
+    status: publicSessionStatus(
+      released,
+      serverRefusal === null ? {} : { server_refusal: serverRefusal }
+    )
+  };
+}
+var DEAD_PROOF_ON_STOP = [
+  "session_expired",
+  "session_retired",
+  "session_proof_invalid"
+];
+async function runHumanSessionLifecycle(kind, input) {
+  const client = new AgentSessionClient({
+    target: input.target,
+    fetcher: input.fetcher
+  });
+  const request = {
+    credential: input.credential,
+    workspaceId: input.workspaceId,
+    principalId: input.principalId
+  };
+  if (kind === "enable") await client.enable(request);
+  else if (kind === "disable") await client.disable(request);
+  else await client.recover(request);
+  return { kind, principal_id: input.principalId, status: "accepted" };
+}
+var SESSION_START_COPY = {
+  acquired: "Interactive session acquired. This process did not start an ACP model and did not claim or surface asks. Run the same command with --foreground to claim and surface into the bound host conversation.",
+  foreground: "Interactive session acquired. This process did not start an ACP model. It claims and surfaces into the bound host conversation only when the host registered an injection callback; without one it stays manual and claims nothing."
+};
+function sessionStartCopy(input) {
+  const copyMode = input.runReceiver ? "foreground" : "acquired";
+  return { mode: copyMode, message: SESSION_START_COPY[copyMode] };
+}
+function boundAgentFetcher(fetcher, context) {
+  return bindSessionProof(fetcher, sessionProofOf(context));
+}
+function fetcherForSessionContext(fetcher, context) {
+  if (context === null || context === void 0) return fetcher;
+  return boundAgentFetcher(fetcher, context);
+}
+async function revokeAgentToken(input) {
+  const client = new ThinCommandClient(
+    input.target,
+    fetcherForSessionContext(input.fetcher ?? fetch, input.context)
+  );
+  const result = await client.sendConnect({
+    workspaceId: input.workspaceId,
+    credential: input.credential,
+    command: { kind: "revoke_agent_token", token_id: input.tokenId }
+  });
+  if (result.response.status !== "accepted") {
+    throw new Error(
+      `Credential surrender was refused: ${result.response.reason ?? "required condition not met"}. The credential is unchanged.`
+    );
+  }
+  return {
+    status: result.response.status,
+    token_id: input.tokenId,
+    command_event_ids: result.response.event_ids
+  };
+}
+
 // src/cli.ts
 var import_meta = {};
+var requireFromCli = (0, import_node_module.createRequire)(import_meta.url);
+function loadHostClaude() {
+  return requireFromCli("./host/claude.js");
+}
+function loadHostCodex() {
+  return requireFromCli("./host/codex.js");
+}
+function loadHostOpenCode() {
+  return requireFromCli("./host/opencode.js");
+}
+function loadClaudeListenerModel() {
+  return requireFromCli("./listener/claude-model.js");
+}
 var KNOWN_FLAGS = /* @__PURE__ */ new Set([
   "about",
   "agent-token-file",
@@ -39776,7 +41176,12 @@ var KNOWN_FLAGS = /* @__PURE__ */ new Set([
   "version",
   "wait",
   "workspace-id",
-  "write"
+  "write",
+  "session-context",
+  "host-session-id",
+  "host-label",
+  "allow-duplicate-name",
+  "mode"
 ]);
 var BOOLEAN_FLAGS = /* @__PURE__ */ new Set([
   "agent-token-stdin",
@@ -39804,16 +41209,17 @@ var BOOLEAN_FLAGS = /* @__PURE__ */ new Set([
   "standing",
   "thread",
   "user",
-  "write"
+  "write",
+  "allow-duplicate-name"
 ]);
-var UUID_RE23 = /^[0-9a-f]{8}-[0-9a-f]{4}-[1-8][0-9a-f]{3}-[89ab][0-9a-f]{3}-[0-9a-f]{12}$/i;
+var UUID_RE25 = /^[0-9a-f]{8}-[0-9a-f]{4}-[1-8][0-9a-f]{3}-[89ab][0-9a-f]{3}-[0-9a-f]{12}$/i;
 function packageVersion() {
-  if ("0.1.61".length > 0) {
-    return "0.1.61";
+  if ("0.1.62".length > 0) {
+    return "0.1.62";
   }
   try {
     const value = JSON.parse(
-      (0, import_node_fs5.readFileSync)(new URL("../package.json", import_meta.url), "utf8")
+      (0, import_node_fs2.readFileSync)(new URL("../package.json", import_meta.url), "utf8")
     );
     const version3 = value.version;
     if (typeof version3 !== "string") return "unknown";
@@ -39899,6 +41305,7 @@ var Arguments = class {
 var TARGET_FLAGS = ["url", "anon-key", "force-file-store"];
 var ROUTE_FLAGS = ["workspace-id", "repo-mapping-id"];
 var CREDENTIAL_FLAGS = ["agent-token-file", "agent-token-stdin"];
+var SESSION_CONTEXT_FLAGS = ["session-context"];
 var TASK_FLAGS = [
   "task-id",
   "slug",
@@ -39954,6 +41361,12 @@ Usage:
   cswarm listen canary ${requiredAgentCredential} [--url <url> --anon-key <key>] --workspace-id <uuid> [--state-dir <path>] [--wait <seconds>] [--json]
   cswarm listen status ${agentCredential2} [--url <url> --anon-key <key>] --workspace-id <uuid> [--principal-id <uuid>] [--json]
   cswarm listen stop ${agentCredential2} [--url <url> --anon-key <key>] --workspace-id <uuid> [--principal-id <uuid>] [--json]
+  cswarm session start --mode ${SESSION_MODES.join("|")} --provider grok|opencode|claude|codex --host-session-id <id> ${requiredAgentCredential} [--url <url> --anon-key <key>] --workspace-id <uuid> [--session-context <absolute-path>] [--host-label <text>] [--foreground] [--json]
+  cswarm session status --session-context <absolute-path> ${agentCredential2} [--url <url> --anon-key <key>] [--json]
+  cswarm session stop --session-context <absolute-path> ${agentCredential2} [--url <url> --anon-key <key>] [--json]
+  cswarm session enable --principal-id <uuid> [--url <url> --anon-key <key>] [--workspace-id <uuid>] [--json]
+  cswarm session disable --principal-id <uuid> [--url <url> --anon-key <key>] [--workspace-id <uuid>] [--json]
+  cswarm session recover --principal-id <uuid> [--url <url> --anon-key <key>] [--workspace-id <uuid>] [--json]
   cswarm hook check [--principal-id <uuid> ...] [--cooldown <seconds>]
   cswarm hook install claude [--principal-id <uuid>] [--write] [--user | --repo]
   cswarm hook uninstall claude --write [--user | --repo]
@@ -39965,11 +41378,11 @@ Usage:
   cswarm invite revoke [--url <url> --anon-key <key>] [--workspace-id <uuid>] --invitation-id <uuid> [--json]
   cswarm member remove <full-user-id|exact-name> --confirm <same-selector> [--url <url> --anon-key <key>] [--workspace-id <uuid>] [--json]
   cswarm workspace close <full-id|exact-name> --confirm <same-selector> [--url <url> --anon-key <key>] [--json]
-  cswarm accept --link-stdin [--name <name>] [--no-browser] [--json]
-  cswarm accept <https://...#invite=...|cswarm://accept/...> [--name <name>] [--no-browser] [--json]  # unsafe: shell history/process list
+  cswarm accept --link-stdin [--name <name>] [--allow-duplicate-name] [--no-browser] [--json]
+  cswarm accept <https://...#invite=...|cswarm://accept/...> [--name <name>] [--allow-duplicate-name] [--no-browser] [--json]  # unsafe: shell history/process list
   cswarm accept --invitation-token-stdin [--url <url> --anon-key <key>]
   cswarm accept <invitation-token> [--url <url> --anon-key <key>]  # unsafe: shell history/process list
-  cswarm principal create [--url <url> --anon-key <key>] [--workspace-id <uuid>] --name <name>
+  cswarm principal create [--url <url> --anon-key <key>] [--workspace-id <uuid>] --name <name> [--allow-duplicate-name]
   cswarm principal revoke [--url <url> --anon-key <key>] [--workspace-id <uuid>] --principal-id <uuid>
   cswarm token mint [--url <url> --anon-key <key>] [--workspace-id <uuid>] --principal-id <uuid> --run-id <uuid> --task-id <uuid> --epoch <n> [--ttl-ms <ms>] [--renewal-horizon-days <1..90> | --standing --confirm-standing]
   cswarm token revoke [--url <url> --anon-key <key>] [--workspace-id <uuid>] --token-id <uuid>
@@ -40071,6 +41484,8 @@ that project. Inside a git repository, the local file must be ignored. --user op
 that directory is affected. --repo keeps the repository-wide .claude/settings.json scope and
 also requires an ignored file. Uninstall also
 requires --write and uses the same scope selection.
+
+session start acquires one execution session per agent. Interactive mode never starts an ACP model, factory, or child spawn. The default path only acquires; --foreground claims and surfaces into --host-session-id. There is no worker mode: the listener never starts a model (cswarm 0.1.61), so listen start takes no --session-context. --session-context must be an absolute owned 0600 file in an owned 0700 directory outside a repository. Shell commands that omit it are not bound. session stop returns progress until cswarm session status confirms teardown. principal create --allow-duplicate-name is off by default and is never sent as false.
 
 Invite, legacy token accept, principal create/revoke, human token mint/revoke, link, new, and workspace close require a
 stored human login. Agent self-surrender of a token uses --agent-token-file or --agent-token-stdin and never takes the secret on argv. Invite-link accept signs in when needed, then accepts and
@@ -40277,7 +41692,7 @@ async function stdinInviteLink() {
   return link;
 }
 async function confirmationLine(prompt) {
-  const reader = (0, import_promises9.createInterface)({
+  const reader = (0, import_promises10.createInterface)({
     input: process.stdin,
     output: process.stderr,
     terminal: Boolean(process.stdin.isTTY)
@@ -40414,7 +41829,7 @@ async function runNew(args) {
   assertWorkspaceName(name);
   const cloud = await target(args);
   const human = await humanCredential(args, cloud);
-  const proposedId = (0, import_node_crypto17.randomUUID)();
+  const proposedId = (0, import_node_crypto19.randomUUID)();
   let result;
   try {
     result = await new ThinCommandClient(cloud).sendConnect({
@@ -40446,7 +41861,7 @@ async function runNew(args) {
       project: {
         workspace_id: created,
         name,
-        stream_id: typeof response.stream_id === "string" && UUID_RE23.test(response.stream_id) ? response.stream_id : null
+        stream_id: typeof response.stream_id === "string" && UUID_RE25.test(response.stream_id) ? response.stream_id : null
       }
     });
     return;
@@ -40918,7 +42333,8 @@ async function runLinkAccept(args, payload) {
     target: cloud,
     store: credentials,
     runtime,
-    ...args.optional("name") === void 0 ? {} : { explicitName: args.required("name") }
+    ...args.optional("name") === void 0 ? {} : { explicitName: args.required("name") },
+    ...args.has("allow-duplicate-name") ? { allowDuplicateName: true } : {}
   });
   await writeCurrentTarget(cloud);
   if (json) {
@@ -40937,7 +42353,7 @@ async function runLinkAccept(args, payload) {
 async function runAccept(args) {
   if (args.has("link-stdin")) {
     args.assertShape(
-      [...TARGET_FLAGS, "link-stdin", "no-browser", "json", "name"],
+      [...TARGET_FLAGS, "link-stdin", "no-browser", "json", "name", "allow-duplicate-name"],
       1
     );
     const payload = decodeInviteLink(await stdinInviteLink());
@@ -40959,7 +42375,7 @@ async function runAccept(args) {
     return;
   }
   args.assertShape(
-    [...TARGET_FLAGS, "no-browser", "json", "name"],
+    [...TARGET_FLAGS, "no-browser", "json", "name", "allow-duplicate-name"],
     2
   );
   process.stderr.write(
@@ -40970,7 +42386,13 @@ async function runAccept(args) {
 async function runPrincipal(args) {
   const action = args.positionals[1];
   if (action === "create") {
-    args.assertShape([...TARGET_FLAGS, "workspace-id", "name", "json"], 2);
+    args.assertShape([
+      ...TARGET_FLAGS,
+      "workspace-id",
+      "name",
+      "json",
+      "allow-duplicate-name"
+    ], 2);
     const cloud = await target(args);
     const human = await humanCredential(args, cloud);
     const workspace = await workspaceId(args, cloud, human);
@@ -40980,10 +42402,10 @@ async function runPrincipal(args) {
         new ThinCommandClient(cloud),
         human,
         workspace,
-        {
-          kind: "create_agent_principal",
-          name: args.required("name")
-        }
+        createAgentPrincipalCommand(
+          args.required("name"),
+          args.has("allow-duplicate-name")
+        )
       )
     );
     printJson({
@@ -41170,7 +42592,7 @@ Confirm with: cswarm whoami --agent-token-file <path>
 async function runTokenRevoke(args) {
   if (hasAgentCredential(args)) {
     args.assertShape(
-      [...TARGET_FLAGS, "workspace-id", "token-id", ...CREDENTIAL_FLAGS, "json"],
+      [...TARGET_FLAGS, "workspace-id", "token-id", ...CREDENTIAL_FLAGS, "json", ...SESSION_CONTEXT_FLAGS],
       2
     );
     const cloud2 = await target(args);
@@ -41196,21 +42618,20 @@ async function runTokenRevoke(args) {
       );
     }
     const tokenId2 = agent.tokenId;
-    const response2 = (await new ThinCommandClient(cloud2).sendConnect({
-      workspaceId: override,
-      credential: agent.token,
-      command: { kind: "revoke_agent_token", token_id: tokenId2 }
-    })).response;
-    if (response2.status !== "accepted") {
-      throw new Error(
-        `Credential surrender was refused: ${response2.reason ?? "required condition not met"}. The credential is unchanged.`
-      );
-    }
+    const selected = args.optional("session-context") === void 0 ? null : await commandWorkspaceAndCredential(args, cloud2);
+    const revoked = await revokeAgentToken({
+      target: cloud2,
+      credential: selected?.bearer ?? agent.token,
+      workspaceId: selected?.selectedWorkspace ?? override,
+      tokenId: tokenId2,
+      ...selected === null ? {} : { fetcher: selected.fetcher },
+      ...selected?.sessionContext === void 0 ? {} : { context: selected.sessionContext }
+    });
     const output2 = {
       message: "This credential has been surrendered. It can no longer post or renew.",
-      status: response2.status,
+      status: revoked.status,
       token_id: tokenId2,
-      command_event_ids: response2.event_ids
+      command_event_ids: revoked.command_event_ids
     };
     if (args.has("json")) {
       printJson(output2);
@@ -41292,7 +42713,7 @@ async function runLinkNew(args) {
     2
   );
   const taskId = args.required("task-id");
-  if (!UUID_RE23.test(taskId)) {
+  if (!UUID_RE25.test(taskId)) {
     throw new Error("--task-id must be the work item's UUID");
   }
   const site = capabilitySiteOrigin(
@@ -41352,7 +42773,7 @@ async function runLinkRevoke(args) {
     2
   );
   const capabilityId = args.required("capability-id");
-  if (!UUID_RE23.test(capabilityId)) {
+  if (!UUID_RE25.test(capabilityId)) {
     throw new Error(
       "--capability-id must be the id printed when the link was created"
     );
@@ -41509,6 +42930,7 @@ async function commandWorkspaceAndCredential(args, cloud, options = {}) {
     args.optional("workspace-id"),
     process.env.SWARM_CLOUD_WORKSPACE_ID
   );
+  const contextPath = args.optional("session-context");
   if (hasAgentCredential(args)) {
     if (override === null) {
       throw new Error(
@@ -41516,16 +42938,42 @@ async function commandWorkspaceAndCredential(args, cloud, options = {}) {
       );
     }
     const agent = await agentCredential(args);
+    const boundContext = contextPath === void 0 ? null : await readSessionContext(contextPath);
+    if (boundContext !== null) {
+      const opened = await openBoundAgentCredential({
+        context: boundContext,
+        target: cloud,
+        workspaceId: override,
+        tokenPrincipalId: agent.principalId,
+        tokenFile: args.optional("agent-token-file"),
+        fetcher: fetch,
+        openSession: (bound) => agentSession(cloud, override, agent, bound)
+      });
+      return {
+        selectedWorkspace: override,
+        bearer: opened.bearer,
+        kind: "agent",
+        agent,
+        session: opened.session,
+        fetcher: opened.fetcher,
+        sessionContext: boundContext
+      };
+    }
     const session = await agentSession(cloud, override, agent);
+    const bearer = await session.bearer();
     return {
       selectedWorkspace: override,
-      bearer: await session.bearer(),
+      bearer,
       kind: "agent",
       agent,
-      session
+      session,
+      fetcher: fetch
     };
   }
   const human = await dualAuthHumanCredential(args, cloud);
+  if (contextPath !== void 0) {
+    throw new Error("--session-context binds an agent execution session and cannot be used with a human login");
+  }
   return {
     selectedWorkspace: await workspaceId(args, cloud, human, {
       validateOverride: options.validateHumanWorkspace ?? false
@@ -41533,7 +42981,8 @@ async function commandWorkspaceAndCredential(args, cloud, options = {}) {
     bearer: human.accessToken,
     credentials: human.store,
     kind: "human",
-    human
+    human,
+    fetcher: fetch
   };
 }
 function signalKind(value) {
@@ -41694,7 +43143,7 @@ async function signalAuthorLabels(cloud, selectedWorkspace, credential) {
   return signalAuthorLabelsFromStatus(status, human.userId);
 }
 async function postSignalCommand(cloud, credential, command2) {
-  const client = new ThinCommandClient(cloud);
+  const client = new ThinCommandClient(cloud, credential.fetcher);
   if (credential.kind === "human") {
     return await sendSignalWithPending(
       client,
@@ -41756,13 +43205,13 @@ function prepareSignalAttachments(localPaths) {
   return localPaths.map((localPath) => {
     let bytes;
     try {
-      bytes = (0, import_node_fs5.readFileSync)(localPath);
+      bytes = (0, import_node_fs2.readFileSync)(localPath);
     } catch {
       throw new Error(
         `could not read ${localPath}; check the path and permissions; no upload was started`
       );
     }
-    const name = (0, import_node_path15.basename)(localPath);
+    const name = (0, import_node_path13.basename)(localPath);
     if (bytes.byteLength < 1) {
       throw new Error(`${localPath} is empty; no upload was started`);
     }
@@ -41782,8 +43231,8 @@ function prepareSignalAttachments(localPaths) {
       name,
       bytes,
       contentType,
-      fileId: (0, import_node_crypto17.randomUUID)(),
-      versionId: (0, import_node_crypto17.randomUUID)(),
+      fileId: (0, import_node_crypto19.randomUUID)(),
+      versionId: (0, import_node_crypto19.randomUUID)(),
       createCommandId: newCommandId(),
       commitCommandId: newCommandId()
     };
@@ -41846,7 +43295,8 @@ async function runPostSignal(args, kind) {
     "until",
     ...allowWait ? ["wait"] : [],
     ...allowTo ? ["attach"] : [],
-    "json"
+    "json",
+    ...SESSION_CONTEXT_FLAGS
   ], 2);
   const channel = channelOption(args);
   const preparedAttachments = allowTo ? prepareSignalAttachments(args.all("attach")) : [];
@@ -42039,7 +43489,8 @@ async function runReply(args) {
     "broadcast-to-channel",
     "thread",
     "until",
-    "json"
+    "json",
+    ...SESSION_CONTEXT_FLAGS
   ], 3);
   const inThread = args.has("thread");
   const broadcastToChannel = args.has("broadcast-to-channel");
@@ -42049,7 +43500,7 @@ async function runReply(args) {
     );
   }
   const signalId = args.positionals[1];
-  if (signalId === void 0 || !UUID_RE23.test(signalId)) {
+  if (signalId === void 0 || !UUID_RE25.test(signalId)) {
     throw new Error("reply requires the signal UUID being answered");
   }
   const body = args.positionals[2];
@@ -42159,7 +43610,8 @@ async function runMembers(args) {
     ...TARGET_FLAGS,
     "workspace-id",
     ...CREDENTIAL_FLAGS,
-    "json"
+    "json",
+    ...SESSION_CONTEXT_FLAGS
   ], 1);
   const cloud = await target(args);
   const selected = await commandWorkspaceAndCredential(args, cloud, {
@@ -42208,7 +43660,8 @@ async function runWhoami(args) {
     ...TARGET_FLAGS,
     "workspace-id",
     ...CREDENTIAL_FLAGS,
-    "json"
+    "json",
+    ...SESSION_CONTEXT_FLAGS
   ], 1);
   if (!hasAgentCredential(args)) {
     throw new UsageError(
@@ -42301,7 +43754,7 @@ async function runResume(args) {
   if (/[\u0000-\u001f\u007f-\u009f]/.test(suppliedCredentialPath)) {
     throw new Error("--agent-token-file must not contain control characters");
   }
-  const credentialFile = (0, import_node_path15.resolve)(suppliedCredentialPath);
+  const credentialFile = (0, import_node_path13.resolve)(suppliedCredentialPath);
   const cloud = await target(args);
   const workspaceId2 = listenerUuid(
     args.optional("workspace-id") ?? process.env.SWARM_CLOUD_WORKSPACE_ID,
@@ -42387,7 +43840,8 @@ async function runSignalRead(args, inbox) {
     "workspace-id",
     ...CREDENTIAL_FLAGS,
     "notify",
-    "json"
+    "json",
+    ...SESSION_CONTEXT_FLAGS
   ] : [
     ...TARGET_FLAGS,
     "workspace-id",
@@ -42399,7 +43853,8 @@ async function runSignalRead(args, inbox) {
     "since",
     "limit",
     "include-stale",
-    "json"
+    "json",
+    ...SESSION_CONTEXT_FLAGS
   ], 1);
   if (notify) {
     await runInboxNotifyCommand(args);
@@ -42637,10 +44092,11 @@ async function runReceipt(args) {
     ...TARGET_FLAGS,
     "workspace-id",
     ...CREDENTIAL_FLAGS,
-    "json"
+    "json",
+    ...SESSION_CONTEXT_FLAGS
   ], 2);
   const signalId = args.positionals[1];
-  if (!UUID_RE23.test(signalId)) {
+  if (!UUID_RE25.test(signalId)) {
     throw new Error("signal-id must be a UUID");
   }
   if (!hasAgentCredential(args)) {
@@ -42800,7 +44256,7 @@ async function runInboxFollowCommand(args) {
   }
 }
 function listenerUuid(value, flag) {
-  if (!value || !UUID_RE23.test(value)) {
+  if (!value || !UUID_RE25.test(value)) {
     throw new Error(`--${flag} must be a UUID`);
   }
   return value.toLowerCase();
@@ -42813,7 +44269,7 @@ function listenerPermissionMode(value) {
 function listenerStateDirectory(args) {
   const value = args.optional("state-dir");
   if (value === void 0) return void 0;
-  if (!(0, import_node_path15.isAbsolute)(value)) {
+  if (!(0, import_node_path13.isAbsolute)(value)) {
     throw new Error("--state-dir must be an absolute path");
   }
   return value;
@@ -43070,7 +44526,7 @@ function listenerLapseNotices(status, summary) {
 async function listenerProviderInstallEvidence(status) {
   if (status.provider !== "claude") return null;
   try {
-    const notice = await inspectClaudeBridgeExecutable(
+    const notice = await loadHostClaude().inspectClaudeBridgeExecutable(
       status.providerExecutable ?? "claude-agent-acp",
       { pathEnv: process.env.PATH, env: process.env }
     );
@@ -43173,7 +44629,7 @@ function listenerStatusJson(status, permissionMode, evidence = emptyAttendanceEv
     pendingDeliveryCountAt: status.pendingDeliveryCountAt ?? null,
     heldBackDeliveries: status.heldBackDeliveries ?? [],
     heldBackDeliveryCount: (status.heldBackDeliveries ?? []).length,
-    routeMode: status.routeMode ?? "worker",
+    routeMode: status.routeMode ?? "main",
     deferOverChars: status.deferOverChars ?? null,
     pendingForMainCount: status.pendingForMainCount ?? 0,
     droppedForMainCount: status.droppedForMainCount ?? 0,
@@ -43189,11 +44645,11 @@ function listenerStatusJson(status, permissionMode, evidence = emptyAttendanceEv
       same_owner_delivery: status.routeMode === "main" ? "interactive session; no ACP worker prompt" : mode3 === "allow" ? "worker session; tool requests allowed once each when the host offers allow_once, otherwise denied" : "worker session; tool requests denied",
       cross_owner_delivery: status.routeMode === "main" ? "interactive session; no ACP worker prompt" : mode3 === "allow" ? "same worker session with sender provenance; tool requests allowed once each when the host offers allow_once, otherwise denied" : "same worker session with sender provenance; tool requests denied"
     } : {},
-    host_limits: isLiveListenerRouteMode(status.routeMode ?? "worker") ? listenerMainHostLimits() : listenerHostLimits(status.provider)
+    host_limits: isLiveListenerRouteMode(status.routeMode ?? "main") ? listenerMainHostLimits() : listenerHostLimits(status.provider)
   };
 }
 function renderListenerStatus(status, evidence = emptyAttendanceEvidence(), nowMs = Date.now(), installed = null) {
-  const routeMode = status.routeMode ?? "worker";
+  const routeMode = status.routeMode ?? "main";
   const deliveryFailureRun = status.consecutiveAckFailureCount ?? 0;
   const pendingForMainCount = status.pendingForMainCount ?? 0;
   const droppedForMainCount = status.droppedForMainCount ?? 0;
@@ -43458,7 +44914,7 @@ function listenerFailureMessage(code, provider, detail, reasonCode, minimumRequi
   }
   if (code === "permission_canary_failed") {
     if (provider === "claude") {
-      const shape = classifyClaudeCanaryFailure(detail, reasonCode);
+      const shape = loadClaudeListenerModel().classifyClaudeCanaryFailure(detail, reasonCode);
       const ran = "the Claude ACP permission canary ran, but no workspace signal prompt was delivered";
       const response = `bridge response [${shape.code}]: ${quotedListenerFailureDetail(detail)}`;
       if (shape.code === "claude_bridge_version_required") {
@@ -43493,11 +44949,11 @@ function listenerFailureMessage(code, provider, detail, reasonCode, minimumRequi
 }
 function resolveDetachedClaudeExecutable(executable = "claude-agent-acp", pathEnv = process.env.PATH) {
   try {
-    return resolveClaudeExecutable(executable, pathEnv);
+    return loadHostClaude().resolveClaudeExecutable(executable, pathEnv);
   } catch (error) {
     const code = error.code;
     if (typeof code === "string") {
-      if ((0, import_node_path15.isAbsolute)(executable) || executable.includes("/") || executable.includes("\\")) {
+      if ((0, import_node_path13.isAbsolute)(executable) || executable.includes("/") || executable.includes("\\")) {
         const detail = error instanceof Error ? error.message : code;
         throw new Error(
           `could not use --claude-executable: ${detail}; install the current bridge with npm install -g @agentclientprotocol/claude-agent-acp@latest if this path should be replaced`
@@ -43510,11 +44966,11 @@ function resolveDetachedClaudeExecutable(executable = "claude-agent-acp", pathEn
 }
 function resolveDetachedCodexExecutable(executable = "codex-acp", pathEnv = process.env.PATH) {
   try {
-    return resolveCodexExecutable(executable, pathEnv);
+    return loadHostCodex().resolveCodexExecutable(executable, pathEnv);
   } catch (error) {
     const code = error.code;
     if (typeof code === "string") {
-      if ((0, import_node_path15.isAbsolute)(executable) || executable.includes("/") || executable.includes("\\")) {
+      if ((0, import_node_path13.isAbsolute)(executable) || executable.includes("/") || executable.includes("\\")) {
         const detail = error instanceof Error ? error.message : code;
         throw new Error(
           `could not use --codex-executable: ${detail}; install the current bridge with npm install -g @agentclientprotocol/codex-acp@latest if this path should be replaced`
@@ -43560,15 +45016,62 @@ async function runConfiguredListener(options) {
     ...options.stateDirectory ? { stateDirectory: options.stateDirectory } : {}
   });
   const httpClient = new ListenerHttpClient();
+  const managedContexts = (await listSessionContexts(options.workspaceId, options.principalId)).filter((context) => sessionProofOf(context) !== null);
+  if (managedContexts.length > 1) {
+    httpClient.close();
+    throw new Error(
+      `listen start found ${managedContexts.length} live session contexts for this agent; stop the stale ones with cswarm session stop --session-context <path> first`
+    );
+  }
+  const managedContext = managedContexts[0] ?? null;
+  const managedContextPath = managedContext === null ? null : defaultSessionContextPath(
+    options.workspaceId,
+    options.principalId,
+    managedContext.session_id
+  );
+  if (managedContextPath !== null) {
+    try {
+      await holdSessionReceiverLock(managedContextPath, "listen");
+    } catch (error) {
+      httpClient.close();
+      throw error;
+    }
+  }
+  const leaseAbort = new AbortController();
+  let credentialBearer = null;
+  const sessionManager = managedContext === null ? null : new AgentSessionManager({
+    client: new AgentSessionClient({
+      target: options.cloud,
+      fetcher: httpClient.fetch
+    }),
+    credential: async () => {
+      if (credentialBearer === null) throw new Error("listener credential session not ready");
+      return await credentialBearer();
+    },
+    workspaceId: options.workspaceId,
+    contextPath: defaultSessionContextPath(
+      options.workspaceId,
+      options.principalId,
+      managedContext.session_id
+    ),
+    context: managedContext,
+    onDispatchStop: () => {
+      if (!leaseAbort.signal.aborted) leaseAbort.abort();
+    }
+  });
+  const boundFetch = sessionManager === null ? httpClient.fetch : ((input, init) => sessionManager.boundFetcher(httpClient.fetch)(input, init));
   let liveCredentialSession;
   try {
     liveCredentialSession = await agentSession(
       options.cloud,
       options.workspaceId,
       options.agent,
-      httpClient.fetch
+      boundFetch
     );
   } catch (error) {
+    if (managedContextPath !== null) {
+      await releaseSessionReceiverLockIfHeld(managedContextPath);
+    }
     httpClient.close();
     throw error;
   }
@@ -43593,13 +45096,15 @@ async function runConfiguredListener(options) {
       return stored.credential;
     }
   };
+  credentialBearer = () => credentialSession.bearer();
+  sessionManager?.start();
   const resolveSenderProvenance = async (signal, context) => {
     const credential = await credentialSession.bearer();
     const senderDirectory = await readAgentSignalDirectory(
       options.cloud,
       credential,
       options.workspaceId,
-      { ...context, fetcher: httpClient.fetch }
+      { ...context, fetcher: boundFetch }
     );
     const provenance = listenerSenderProvenance(signal, senderDirectory);
     if (context.includeBrainDigest !== true) return provenance;
@@ -43612,7 +45117,7 @@ async function runConfiguredListener(options) {
         {
           ...context.signal ? { signal: context.signal } : {},
           deadlineMs: context.deadlineMs,
-          fetcher: httpClient.fetch
+          fetcher: boundFetch
         }
       );
       const brainDigest = await new FileBrainDigestStore(
@@ -43635,7 +45140,7 @@ async function runConfiguredListener(options) {
         {
           ...context.signal ? { signal: context.signal } : {},
           deadlineMs: context.deadlineMs,
-          fetcher: httpClient.fetch
+          fetcher: boundFetch
         }
       );
       const broadcasts = feed.filter(
@@ -43771,7 +45276,7 @@ async function runConfiguredListener(options) {
           transport: new AgentActivityEndpointTransport(
             options.cloud,
             credentialSession,
-            httpClient.fetch
+            boundFetch
           ),
           onPublishFailure: (code) => onEvent({
             type: "activity_publish_failure",
@@ -43780,7 +45285,7 @@ async function runConfiguredListener(options) {
           })
         });
         const instrumentedModel = activity.instrumentModel(
-          newModel(onCanaryAttempt, activity.events)
+          await newModel(onCanaryAttempt, activity.events)
         );
         try {
           return await runListenerRuntime({
@@ -43790,7 +45295,6 @@ async function runConfiguredListener(options) {
             credentialSession,
             store: effectStore,
             model: instrumentedModel,
-            signal,
             onEvent: (event) => {
               activity.onRuntimeEvent(event);
               onEvent(event);
@@ -43806,7 +45310,7 @@ async function runConfiguredListener(options) {
                 credential,
                 options.workspaceId,
                 signalIds,
-                httpClient.fetch
+                boundFetch
               );
             },
             routeMode,
@@ -43816,7 +45320,8 @@ async function runConfiguredListener(options) {
             deliveryHoldBudgetMs: turnBudgetMs,
             ...options.pollMs === void 0 ? {} : { pollMs: options.pollMs },
             pendingMainQueue,
-            fetcher: httpClient.fetch
+            fetcher: boundFetch,
+            signal: sessionManager === null ? signal : AbortSignal.any([signal, leaseAbort.signal])
           });
         } finally {
           activity.close();
@@ -43826,8 +45331,21 @@ async function runConfiguredListener(options) {
   } finally {
     process.off("SIGINT", onProcessSignal);
     process.off("SIGTERM", onProcessSignal);
+    sessionManager?.stopTimers();
+    if (managedContextPath !== null) {
+      await releaseSessionReceiverLockIfHeld(managedContextPath);
+    }
     httpClient.close();
   }
+}
+async function liveManagedContextPath(workspaceId2, principalId) {
+  const live = (await listSessionContexts(workspaceId2, principalId)).filter((context) => sessionProofOf(context) !== null);
+  if (live.length !== 1) return null;
+  return defaultSessionContextPath(
+    workspaceId2,
+    principalId,
+    live[0].session_id
+  );
 }
 async function runListenStart(args) {
   args.assertShape([
@@ -43874,7 +45392,7 @@ async function runListenStart(args) {
   assertDurableListenerCredential(agent);
   const principalId = agent.principalId;
   const cwd = args.optional("cwd") ?? process.cwd();
-  if (!(0, import_node_path15.isAbsolute)(cwd)) throw new Error("--cwd must be an absolute path");
+  if (!(0, import_node_path13.isAbsolute)(cwd)) throw new Error("--cwd must be an absolute path");
   const permissionMode = listenerPermissionMode(args.optional("permissions"));
   const stateDirectory2 = listenerStateDirectory(args);
   const paths = listenerPaths({
@@ -43921,7 +45439,7 @@ async function runListenStart(args) {
     });
   } else {
     const entrypoint = process.argv[1];
-    if (!entrypoint || !(0, import_node_path15.isAbsolute)(entrypoint)) {
+    if (!entrypoint || !(0, import_node_path13.isAbsolute)(entrypoint)) {
       throw new Error("cannot locate the cswarm executable for detached start");
     }
     const artifact = JSON.stringify(agentCredentialArtifact({
@@ -43931,20 +45449,14 @@ async function runListenStart(args) {
       token: agent.token,
       expiresAt: agent.expiresAt
     }));
-    const opencodeExecutable = provider === "opencode" ? resolveOpenCodeExecutable(
-      args.optional("opencode-executable") ?? "opencode"
-    ) : void 0;
+    const opencodeExecutable = provider === "opencode" && args.optional("opencode-executable") !== void 0 ? loadHostOpenCode().resolveOpenCodeExecutable(args.required("opencode-executable")) : void 0;
     let claudeExecutable;
-    if (provider === "claude") {
-      claudeExecutable = resolveDetachedClaudeExecutable(
-        args.optional("claude-executable") ?? "claude-agent-acp"
-      );
+    if (provider === "claude" && args.optional("claude-executable") !== void 0) {
+      claudeExecutable = resolveDetachedClaudeExecutable(args.required("claude-executable"));
     }
     let codexExecutable;
-    if (provider === "codex") {
-      codexExecutable = resolveDetachedCodexExecutable(
-        args.optional("codex-executable") ?? "codex-acp"
-      );
+    if (provider === "codex" && args.optional("codex-executable") !== void 0) {
+      codexExecutable = resolveDetachedCodexExecutable(args.required("codex-executable"));
     }
     const startedAtFloorMs = Date.now();
     const child = await spawnDetachedListener({
@@ -43975,6 +45487,13 @@ async function runListenStart(args) {
       child.kill();
       throw new Error("detached listener did not receive a process id");
     }
+    const detachedContextPath = await liveManagedContextPath(
+      workspaceId2,
+      principalId
+    );
+    if (detachedContextPath !== null) {
+      await holdSessionReceiverLock(detachedContextPath, "listen", child.pid);
+    }
     try {
       status = await waitForListenerReady(paths, {
         expectedPid: child.pid,
@@ -43982,6 +45501,9 @@ async function runListenStart(args) {
         isProcessAlive: () => child.exitCode === null && child.signalCode === null
       });
     } catch (error) {
+      if (detachedContextPath !== null) {
+        await releaseSessionReceiverLock(detachedContextPath);
+      }
       if (error instanceof ListenerStartupError) {
         const failedStatus = await effectiveListenerStatus(paths).catch(() => null);
         const detail = failedStatus?.lastErrorCode === error.code ? failedStatus.lastErrorDetail : null;
@@ -44067,7 +45589,8 @@ async function runListenSupervisor(args) {
     "turn-budget",
     "poll-interval",
     "route",
-    "defer-over"
+    "defer-over",
+    ...SESSION_CONTEXT_FLAGS
   ], 1);
   const provider = listenerProvider(args);
   validateListenerProviderFlags(args, provider);
@@ -44083,7 +45606,7 @@ async function runListenSupervisor(args) {
   const agent = await agentCredential(args, { implicitStdin: true });
   assertDurableListenerCredential(agent, principalId);
   const cwd = args.required("cwd");
-  if (!(0, import_node_path15.isAbsolute)(cwd)) throw new Error("--cwd must be an absolute path");
+  if (!(0, import_node_path13.isAbsolute)(cwd)) throw new Error("--cwd must be an absolute path");
   const status = await runConfiguredListener({
     cloud,
     workspaceId: workspaceId2,
@@ -44116,7 +45639,8 @@ async function runListenStatusOrStop(args, command2) {
     "workspace-id",
     "principal-id",
     "state-dir",
-    "json"
+    "json",
+    ...SESSION_CONTEXT_FLAGS
   ], 2);
   const cloud = await target(args);
   const workspaceId2 = listenerUuid(args.optional("workspace-id"), "workspace-id");
@@ -44145,6 +45669,12 @@ async function runListenStatusOrStop(args, command2) {
     principalId,
     ...stateDirectory2 ? { stateDirectory: stateDirectory2 } : {}
   });
+  if (command2 === "stop") {
+    const stopContextPath = await liveManagedContextPath(workspaceId2, principalId);
+    if (stopContextPath !== null) {
+      await releaseSessionReceiverLock(stopContextPath);
+    }
+  }
   let status = command2 === "stop" ? await stopListener(paths) : await effectiveListenerStatus(paths);
   if (status === null) {
     if (args.has("json")) {
@@ -44266,6 +45796,189 @@ async function runListenCanary(args) {
 `
   );
 }
+async function runSession(args) {
+  const action = args.positionals[1];
+  if (action === "enable" || action === "disable" || action === "recover") {
+    args.assertShape([
+      ...TARGET_FLAGS,
+      "workspace-id",
+      "principal-id",
+      "json"
+    ], 2);
+    const cloud2 = await target(args);
+    const human = await humanCredential(args, cloud2);
+    const workspace = await workspaceId(args, cloud2, human);
+    const principalId = args.required("principal-id");
+    if (!UUID_RE25.test(principalId)) {
+      throw new Error("--principal-id must be a UUID");
+    }
+    const result2 = await runHumanSessionLifecycle(action, {
+      target: cloud2,
+      credential: human.accessToken,
+      workspaceId: workspace,
+      principalId
+    });
+    const messages2 = {
+      enable: "Managed sessions are enabled for this agent. Older clients lose mutation access until they present a session proof. Stop any legacy listener first.",
+      disable: "Managed sessions are disabled. Legacy writes resume. Existing execution sessions were revoked.",
+      recover: "The current execution session was revoked. Enforcement stays enabled. The previous execution UUID cannot be reused."
+    };
+    const output2 = {
+      message: messages2[action],
+      ...result2
+    };
+    if (args.has("json")) printJson(output2);
+    else process.stdout.write(`${output2.message}
+`);
+    return;
+  }
+  if (action === "status") {
+    args.assertShape([
+      ...TARGET_FLAGS,
+      ...CREDENTIAL_FLAGS,
+      "session-context",
+      "json"
+    ], 2);
+    if (!hasAgentCredential(args)) {
+      throw new UsageError(
+        "cswarm session status needs --agent-token-file or --agent-token-stdin"
+      );
+    }
+    const cloud2 = await target(args);
+    const agent2 = await agentCredential(args);
+    const contextPath = args.required("session-context");
+    const { status } = await readManagedSessionStatus({
+      contextPath,
+      target: cloud2,
+      credential: agent2.token
+    });
+    if (args.has("json")) printJson(status);
+    else {
+      const local = status.local;
+      const server = status.server;
+      process.stdout.write(
+        `execution ${status.session_id} generation ${status.generation} state ${status.state}
+mode ${status.mode} provider ${status.provider} host-session ${status.host_session_id}
+enforcement ${status.enforcement} receive ${status.receive_verification}
+local ${local.state} server-live ${server.is_live} server-session ${server.session_id}
+`
+      );
+    }
+    return;
+  }
+  if (action === "stop") {
+    args.assertShape([
+      ...TARGET_FLAGS,
+      ...CREDENTIAL_FLAGS,
+      "session-context",
+      "json"
+    ], 2);
+    if (!hasAgentCredential(args)) {
+      throw new UsageError(
+        "cswarm session stop needs --agent-token-file or --agent-token-stdin"
+      );
+    }
+    const cloud2 = await target(args);
+    const agent2 = await agentCredential(args);
+    const contextPath = args.required("session-context");
+    const result2 = await stopManagedSession({
+      target: cloud2,
+      credential: agent2.token,
+      contextPath
+    });
+    if (args.has("json")) printJson({ ...result2.status, state: result2.state, next: result2.next });
+    else process.stdout.write(`${result2.state}. ${result2.next}
+`);
+    return;
+  }
+  if (action !== "start") {
+    throw new UsageError(
+      "session requires start, status, stop, enable, disable, or recover"
+    );
+  }
+  args.assertShape([
+    ...TARGET_FLAGS,
+    "workspace-id",
+    ...CREDENTIAL_FLAGS,
+    "mode",
+    "provider",
+    "host-session-id",
+    "host-label",
+    "session-context",
+    "json",
+    "foreground"
+  ], 2);
+  if (!hasAgentCredential(args)) {
+    throw new UsageError(
+      "cswarm session start needs --agent-token-file or --agent-token-stdin"
+    );
+  }
+  const mode3 = parseSessionMode(args.required("mode"));
+  const provider = parseSessionProvider(args.required("provider"));
+  const hostSessionId = args.required("host-session-id");
+  const customContextPath = args.optional("session-context");
+  if (customContextPath !== void 0) {
+    const root = defaultSessionRootDirectory();
+    if (!(0, import_node_path13.resolve)(customContextPath).startsWith(`${root}${import_node_path13.sep}`)) {
+      throw new SessionContextError(
+        "session_context_outside_default_tree",
+        `--session-context must lie under ${root} so listen start and hook check can find it; omit the flag to use the default path`
+      );
+    }
+  }
+  const cloud = await target(args);
+  const selectedWorkspace = listenerUuid(
+    args.optional("workspace-id") ?? process.env.SWARM_CLOUD_WORKSPACE_ID,
+    "workspace-id"
+  );
+  const agent = await agentCredential(args);
+  const tokenFile = args.optional("agent-token-file");
+  if (tokenFile === void 0 || !(0, import_node_path13.isAbsolute)(tokenFile)) {
+    throw new Error(
+      "session start needs --agent-token-file <absolute-path> so the context can reference the sole token file"
+    );
+  }
+  const runReceiver = mode3 === "interactive" && args.has("foreground");
+  const result = await startManagedSession({
+    target: cloud,
+    workspaceId: selectedWorkspace,
+    credential: agent.token,
+    tokenFile: (0, import_node_path13.resolve)(tokenFile),
+    tokenPrincipalId: agent.principalId,
+    mode: mode3,
+    provider,
+    hostSessionId,
+    hostLabel: args.optional("host-label") ?? null,
+    contextPath: args.optional("session-context"),
+    runReceiver
+  });
+  const copy = sessionStartCopy({
+    mode: mode3,
+    runReceiver,
+    ...result.next === void 0 ? {} : { workerNext: result.next }
+  });
+  const output = {
+    message: copy.message,
+    session_id: result.context.session_id,
+    generation: result.context.generation,
+    mode: result.context.mode,
+    provider: result.context.provider,
+    host_session_id: result.context.host_session_id,
+    enforcement: result.context.enforcement,
+    receive_verification: result.context.receive_verification,
+    session_context: result.contextPath,
+    retried: result.retried
+  };
+  if (args.has("json")) printJson(output);
+  else {
+    process.stdout.write(
+      `${output.message}
+execution ${output.session_id} generation ${output.generation}
+context ${output.session_context}
+`
+    );
+  }
+}
 async function runListen(args) {
   const command2 = args.positionals[1];
   if (command2 === "start") {
@@ -44316,8 +46029,8 @@ async function listenerHookSurfacePresent(instanceDirectory, cwd, principalId) {
   if (surface.exists) return true;
   const repositoryRoot = gitRepositoryRoot(cwd) ?? cwd;
   const settingsPaths = /* @__PURE__ */ new Set([
-    (0, import_node_path15.join)(repositoryRoot, CLAUDE_PROJECT_SETTINGS_IGNORE_LINE),
-    (0, import_node_path15.join)(repositoryRoot, CLAUDE_REPO_SETTINGS_IGNORE_LINE),
+    (0, import_node_path13.join)(repositoryRoot, CLAUDE_PROJECT_SETTINGS_IGNORE_LINE),
+    (0, import_node_path13.join)(repositoryRoot, CLAUDE_REPO_SETTINGS_IGNORE_LINE),
     userClaudeSettingsTarget().path
   ]);
   for (const path of settingsPaths) {
@@ -44383,19 +46096,19 @@ function claudeUserPromptHookSnippet(principalId) {
 var CLAUDE_PROJECT_SETTINGS_IGNORE_LINE = ".claude/settings.local.json";
 var CLAUDE_REPO_SETTINGS_IGNORE_LINE = ".claude/settings.json";
 function claudeUserScopeWarning(settingsPath) {
-  return `Warning: --user scope writes settings to ${(0, import_node_path15.dirname)(settingsPath)} and applies to every Claude Code session that reads that directory.`;
+  return `Warning: --user scope writes settings to ${(0, import_node_path13.dirname)(settingsPath)} and applies to every Claude Code session that reads that directory.`;
 }
 function userClaudeSettingsTarget() {
   const configured = process.env.CLAUDE_CONFIG_DIR;
-  const directory = configured && configured.length > 0 ? (0, import_node_path15.resolve)(configured) : (0, import_node_path15.join)((0, import_node_os6.homedir)(), ".claude");
+  const directory = configured && configured.length > 0 ? (0, import_node_path13.resolve)(configured) : (0, import_node_path13.join)((0, import_node_os7.homedir)(), ".claude");
   return {
-    path: (0, import_node_path15.join)(directory, "settings.json"),
+    path: (0, import_node_path13.join)(directory, "settings.json"),
     scope: "user",
     projectRoot: null
   };
 }
 function gitRepositoryRoot(cwd) {
-  const result = (0, import_node_child_process6.spawnSync)(
+  const result = (0, import_node_child_process5.spawnSync)(
     "git",
     ["-C", cwd, "rev-parse", "--show-toplevel"],
     { encoding: "utf8", stdio: ["ignore", "pipe", "ignore"] }
@@ -44405,7 +46118,7 @@ function gitRepositoryRoot(cwd) {
   }
   if (result.status !== 0) return null;
   const root = result.stdout.trim();
-  if (!(0, import_node_path15.isAbsolute)(root)) {
+  if (!(0, import_node_path13.isAbsolute)(root)) {
     throw new Error("hook could not resolve an absolute repository root");
   }
   return root;
@@ -44413,14 +46126,14 @@ function gitRepositoryRoot(cwd) {
 function projectClaudeSettingsTarget(scope, ignoreLine) {
   const root = gitRepositoryRoot(process.cwd());
   const base = root ?? process.cwd();
-  const path = (0, import_node_path15.join)(base, ignoreLine);
+  const path = (0, import_node_path13.join)(base, ignoreLine);
   if (root === null) return { path, scope, projectRoot: base };
-  const tracked = (0, import_node_child_process6.spawnSync)(
+  const tracked = (0, import_node_child_process5.spawnSync)(
     "git",
     ["-C", root, "ls-files", "--error-unmatch", "--", ignoreLine],
     { encoding: "utf8", stdio: ["ignore", "ignore", "ignore"] }
   );
-  const ignored = (0, import_node_child_process6.spawnSync)(
+  const ignored = (0, import_node_child_process5.spawnSync)(
     "git",
     ["-C", root, "check-ignore", "--quiet", "--", ignoreLine],
     { encoding: "utf8", stdio: ["ignore", "ignore", "ignore"] }
@@ -44430,7 +46143,7 @@ function projectClaudeSettingsTarget(scope, ignoreLine) {
   }
   if (tracked.status === 0 || ignored.status !== 0) {
     throw new Error(
-      `Refusing to write ${path}: repository Claude settings could be staged and shared with every checkout. ` + (tracked.status === 0 ? "It is already tracked; remove it from Git tracking first. " : "") + `Add this exact line to ${(0, import_node_path15.join)(root, ".gitignore")}: ${ignoreLine}`
+      `Refusing to write ${path}: repository Claude settings could be staged and shared with every checkout. ` + (tracked.status === 0 ? "It is already tracked; remove it from Git tracking first. " : "") + `Add this exact line to ${(0, import_node_path13.join)(root, ".gitignore")}: ${ignoreLine}`
     );
   }
   return { path, scope, projectRoot: root };
@@ -44445,7 +46158,7 @@ function claudeSettingsTarget(args) {
 function readClaudeSettings(path) {
   let raw;
   try {
-    raw = (0, import_node_fs5.readFileSync)(path, "utf8");
+    raw = (0, import_node_fs2.readFileSync)(path, "utf8");
   } catch (error) {
     if (error.code === "ENOENT") return {};
     throw error;
@@ -44537,12 +46250,44 @@ async function hookInstallPrincipalId(args) {
     "hook install claude could not find a listener principal. Name this agent explicitly: cswarm hook install claude --principal-id <uuid> [--write]"
   );
 }
+async function hookHostSessionIdFromStdin() {
+  if (process.stdin.isTTY) return null;
+  const raw = await new Promise((resolve4) => {
+    let text = "";
+    const done = () => resolve4(text);
+    const timer2 = setTimeout(done, 250);
+    process.stdin.setEncoding("utf8");
+    process.stdin.on("data", (chunk) => {
+      text += chunk;
+      if (text.length > 64 * 1024) {
+        clearTimeout(timer2);
+        done();
+      }
+    });
+    process.stdin.on("end", () => {
+      clearTimeout(timer2);
+      done();
+    });
+    process.stdin.on("error", () => {
+      clearTimeout(timer2);
+      done();
+    });
+  });
+  try {
+    const value = JSON.parse(raw);
+    if (value === null || typeof value !== "object" || Array.isArray(value)) return null;
+    const id = value.session_id;
+    return typeof id === "string" && id.length > 0 && id.length <= 200 ? id : null;
+  } catch {
+    return null;
+  }
+}
 async function runHook(args) {
   const command2 = args.positionals[1];
   if (command2 === "check") {
     args.assertShape(["cooldown", "principal-id"], 2);
     const rawPrincipalIds = args.all("principal-id");
-    if (rawPrincipalIds.some((principalId2) => !UUID_RE23.test(principalId2))) return;
+    if (rawPrincipalIds.some((principalId2) => !UUID_RE25.test(principalId2))) return;
     const principalIds = rawPrincipalIds.map((principalId2) => principalId2.toLowerCase());
     const rawCooldown = args.optional("cooldown");
     const cooldownSeconds = rawCooldown === void 0 ? void 0 : Number(rawCooldown);
@@ -44554,17 +46299,19 @@ async function runHook(args) {
     }, 3e3);
     hardExit.unref();
     const httpClient = new ListenerHttpClient();
+    const hostSessionId = await hookHostSessionIdFromStdin();
     try {
       await runListenerHookCheck({
         ...cooldownSeconds === void 0 ? {} : { cooldownSeconds },
         ...principalIds.length === 0 ? {} : { principalIds },
+        ...hostSessionId === null ? {} : { hostSessionId },
         fetcher: httpClient.fetch,
         write: async (output) => {
-          await new Promise((resolve3, reject) => {
+          await new Promise((resolve4, reject) => {
             process.stdout.write(`${output}
 `, (error) => {
               if (error) reject(error);
-              else resolve3();
+              else resolve4();
             });
           });
         }
@@ -44611,8 +46358,8 @@ async function runHook(args) {
     process.stdout.write(`${claudeUserScopeWarning(path)}
 `);
   }
-  (0, import_node_fs5.mkdirSync)((0, import_node_path15.dirname)(path), { recursive: true });
-  (0, import_node_fs5.writeFileSync)(path, `${JSON.stringify(updated, null, 2)}
+  (0, import_node_fs2.mkdirSync)((0, import_node_path13.dirname)(path), { recursive: true });
+  (0, import_node_fs2.writeFileSync)(path, `${JSON.stringify(updated, null, 2)}
 `, {
     encoding: "utf8",
     mode: 384
@@ -44633,7 +46380,7 @@ function formatFileSize(value) {
 }
 async function fileContext(args, extraFlags, positionalCount) {
   args.assertShape(
-    [...TARGET_FLAGS, "workspace-id", ...CREDENTIAL_FLAGS, "json", ...extraFlags],
+    [...TARGET_FLAGS, "workspace-id", ...CREDENTIAL_FLAGS, "json", ...SESSION_CONTEXT_FLAGS, ...extraFlags],
     positionalCount
   );
   const cloud = await target(args);
@@ -44668,7 +46415,7 @@ async function fileRows(context) {
   );
 }
 async function resolveFileSelector(context, selector) {
-  if (UUID_RE23.test(selector)) return selector.toLowerCase();
+  if (UUID_RE25.test(selector)) return selector.toLowerCase();
   const rows3 = await fileRows(context);
   const match = rows3.find(
     (row) => row.name.toLowerCase() === selector.toLowerCase()
@@ -44695,10 +46442,11 @@ async function uploadNamedFile(context, name, bytes, options = {}) {
   const send = {
     target: context.cloud,
     workspaceId: context.selected.selectedWorkspace,
-    credential: context.selected.bearer
+    credential: context.selected.bearer,
+    fetcher: context.selected.fetcher
   };
-  const fileId = (0, import_node_crypto17.randomUUID)();
-  const versionId = (0, import_node_crypto17.randomUUID)();
+  const fileId = (0, import_node_crypto19.randomUUID)();
+  const versionId = (0, import_node_crypto19.randomUUID)();
   const createCommandId = newCommandId();
   const commitCommandId = newCommandId();
   const created = await onceRetried(
@@ -44728,11 +46476,11 @@ async function runFilePut(args) {
   const context = await fileContext(args, ["name"], 3);
   let bytes;
   try {
-    bytes = (0, import_node_fs5.readFileSync)(localPath);
+    bytes = (0, import_node_fs2.readFileSync)(localPath);
   } catch {
     throw new Error(`could not read ${localPath}; check the path and permissions`);
   }
-  const name = args.optional("name") ?? (0, import_node_path15.basename)(localPath);
+  const name = args.optional("name") ?? (0, import_node_path13.basename)(localPath);
   const committed = await uploadNamedFile(context, name, bytes);
   if (args.has("json")) {
     process.stdout.write(`${JSON.stringify(committed, null, 2)}
@@ -44793,15 +46541,16 @@ async function runFileGet(args) {
   const send = {
     target: context.cloud,
     workspaceId: context.selected.selectedWorkspace,
-    credential: context.selected.bearer
+    credential: context.selected.bearer,
+    fetcher: context.selected.fetcher
   };
   const grant = await fileDownloadUrl(send, { fileId, versionN });
-  const destination = args.optional("out") ?? (0, import_node_path15.basename)(grant.name);
+  const destination = args.optional("out") ?? (0, import_node_path13.basename)(grant.name);
   const bytes = await onceRetried(
     (attempt) => getObject(context.cloud, grant.download_path, fetch, attempt),
     {}
   );
-  writeDestination(destination, bytes, args.has("force"), import_node_fs5.writeFileSync);
+  writeDestination(destination, bytes, args.has("force"), import_node_fs2.writeFileSync);
   if (args.has("json")) {
     process.stdout.write(
       `${JSON.stringify(
@@ -44953,7 +46702,8 @@ async function runBrainGet(args) {
   const grant = await fileDownloadUrl({
     target: context.cloud,
     workspaceId: context.selected.selectedWorkspace,
-    credential: context.selected.bearer
+    credential: context.selected.bearer,
+    fetcher: context.selected.fetcher
   }, { fileId: row.file.file_id, versionN });
   const content = decodeBrainMarkdown(
     await onceRetried(
@@ -45007,7 +46757,7 @@ async function runBrainPut(args) {
   let bytes;
   if (localPath) {
     try {
-      bytes = (0, import_node_fs5.readFileSync)(localPath);
+      bytes = (0, import_node_fs2.readFileSync)(localPath);
     } catch {
       throw new Error(`could not read ${localPath}; check the path and permissions`);
     }
@@ -45073,7 +46823,8 @@ async function runFeedback(args) {
   const submitted = await submitFeedback({
     target: context.cloud,
     workspaceId: context.selected.selectedWorkspace,
-    credential: context.selected.bearer
+    credential: context.selected.bearer,
+    fetcher: context.selected.fetcher
   }, {
     category: kind,
     body,
@@ -45117,7 +46868,7 @@ async function channelRows(context) {
   }
 }
 function channelSelectorKind(selector) {
-  if (UUID_RE23.test(selector)) return "id";
+  if (UUID_RE25.test(selector)) return "id";
   const problem = channelSelectorProblem(selector);
   if (problem !== null) throw new Error(problem);
   return "name";
@@ -45130,7 +46881,7 @@ async function resolveChannelSelector(context, selector, kind) {
   return match.channel_id;
 }
 async function sendChannelCommand(context, command2) {
-  const client = new ThinCommandClient(context.cloud);
+  const client = new ThinCommandClient(context.cloud, context.selected.fetcher);
   const result = await client.sendChannel({
     workspaceId: context.selected.selectedWorkspace,
     command: command2,
@@ -45142,7 +46893,8 @@ var CHANNEL_FLAGS = [
   ...TARGET_FLAGS,
   "workspace-id",
   ...CREDENTIAL_FLAGS,
-  "json"
+  "json",
+  ...SESSION_CONTEXT_FLAGS
 ];
 async function runChannelCreate(args) {
   const name = args.positionals[2];
@@ -45278,14 +47030,14 @@ async function runFile(args) {
 }
 async function runTaskCommand(args) {
   args.assertShape(
-    [...TARGET_FLAGS, ...ROUTE_FLAGS, ...CREDENTIAL_FLAGS, ...TASK_FLAGS],
+    [...TARGET_FLAGS, ...ROUTE_FLAGS, ...CREDENTIAL_FLAGS, ...TASK_FLAGS, ...SESSION_CONTEXT_FLAGS],
     2
   );
   const kind = args.positionals[1];
   if (!kind) throw new Error("command kind is required");
   const cloud = await target(args);
-  const { selectedWorkspace, bearer } = await commandWorkspaceAndCredential(args, cloud);
-  const client = new ThinCommandClient(cloud);
+  const { selectedWorkspace, bearer, fetcher } = await commandWorkspaceAndCredential(args, cloud);
+  const client = new ThinCommandClient(cloud, fetcher);
   const result = await client.send({
     workspaceId: selectedWorkspace,
     stream: stream(args),
@@ -45313,7 +47065,7 @@ async function runDogfood(args) {
   const { selectedWorkspace, bearer } = await commandWorkspaceAndCredential(args, cloud);
   const client = new ThinCommandClient(cloud);
   const route = stream(args);
-  const taskId = args.optional("task-id") ?? (0, import_node_crypto17.randomUUID)();
+  const taskId = args.optional("task-id") ?? (0, import_node_crypto19.randomUUID)();
   const ttl = Number(args.optional("ttl-ms") ?? "3600000");
   if (!Number.isSafeInteger(ttl) || ttl <= 0 || ttl > 144e5) {
     throw new Error("--ttl-ms must be an integer in 1..14400000");
@@ -45376,10 +47128,10 @@ async function runSeed(args) {
     throw new Error("DATABASE_URL is required for the fixture bridge");
   }
   const tokenOut = process.env.SEED_TOKEN_OUT;
-  if (!tokenOut || !(0, import_node_path15.isAbsolute)(tokenOut)) {
+  if (!tokenOut || !(0, import_node_path13.isAbsolute)(tokenOut)) {
     throw new Error("SEED_TOKEN_OUT must be an absolute path");
   }
-  const tokenFile = await (0, import_promises8.open)(tokenOut, "wx", 384).catch((error) => {
+  const tokenFile = await (0, import_promises9.open)(tokenOut, "wx", 384).catch((error) => {
     if (error.code === "EEXIST") {
       throw new Error("SEED_TOKEN_OUT already exists; refusing to overwrite it");
     }
@@ -45418,7 +47170,7 @@ async function runSeed(args) {
       tokenWritten = true;
     }
     await tokenFile.close();
-    if (!tokenWritten) await (0, import_promises8.unlink)(tokenOut);
+    if (!tokenWritten) await (0, import_promises9.unlink)(tokenOut);
     process.stdout.write(`${JSON.stringify({
       userId: result.userId,
       membershipRole: result.membershipRole,
@@ -45431,7 +47183,7 @@ async function runSeed(args) {
 `);
   } catch (error) {
     await tokenFile.close().catch(() => void 0);
-    if (!tokenWritten) await (0, import_promises8.unlink)(tokenOut).catch(() => void 0);
+    if (!tokenWritten) await (0, import_promises9.unlink)(tokenOut).catch(() => void 0);
     throw error;
   }
 }
@@ -45462,6 +47214,10 @@ async function main() {
   }
   if (verb === "listen") {
     await runListen(args);
+    return;
+  }
+  if (verb === "session") {
+    await runSession(args);
     return;
   }
   if (verb === "login") {
