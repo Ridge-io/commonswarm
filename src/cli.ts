@@ -337,8 +337,11 @@ import {
   SessionContextError,
   defaultSessionContextPath,
   defaultSessionRootDirectory,
+  holdSessionReceiverLock,
   listSessionContexts,
   readSessionContext,
+  releaseSessionReceiverLock,
+  releaseSessionReceiverLockIfHeld,
   sessionProofOf,
   type SessionContextDocument,
 } from "./cloud/session-context.js";
@@ -5701,6 +5704,21 @@ async function runConfiguredListener(options: {
     );
   }
   const managedContext = managedContexts[0] ?? null;
+  const managedContextPath = managedContext === null
+    ? null
+    : defaultSessionContextPath(
+      options.workspaceId,
+      options.principalId,
+      managedContext.session_id,
+    );
+  if (managedContextPath !== null) {
+    try {
+      await holdSessionReceiverLock(managedContextPath, "listen");
+    } catch (error) {
+      httpClient.close();
+      throw error;
+    }
+  }
   const leaseAbort = new AbortController();
   let credentialBearer: (() => Promise<string>) | null = null;
   const sessionManager = managedContext === null
@@ -5738,6 +5756,9 @@ async function runConfiguredListener(options: {
       boundFetch,
     );
   } catch (error) {
+    if (managedContextPath !== null) {
+      await releaseSessionReceiverLockIfHeld(managedContextPath);
+    }
     httpClient.close();
     throw error;
   }
@@ -6041,8 +6062,25 @@ async function runConfiguredListener(options: {
     process.off("SIGINT", onProcessSignal);
     process.off("SIGTERM", onProcessSignal);
     sessionManager?.stopTimers();
+    if (managedContextPath !== null) {
+      await releaseSessionReceiverLockIfHeld(managedContextPath);
+    }
     httpClient.close();
   }
+}
+
+async function liveManagedContextPath(
+  workspaceId: string,
+  principalId: string,
+): Promise<string | null> {
+  const live = (await listSessionContexts(workspaceId, principalId))
+    .filter((context) => sessionProofOf(context) !== null);
+  if (live.length !== 1) return null;
+  return defaultSessionContextPath(
+    workspaceId,
+    principalId,
+    live[0]!.session_id,
+  );
 }
 
 async function runListenStart(args: Arguments): Promise<void> {
@@ -6226,6 +6264,13 @@ async function runListenStart(args: Arguments): Promise<void> {
       child.kill();
       throw new Error("detached listener did not receive a process id");
     }
+    const detachedContextPath = await liveManagedContextPath(
+      workspaceId,
+      principalId,
+    );
+    if (detachedContextPath !== null) {
+      await holdSessionReceiverLock(detachedContextPath, "listen", child.pid);
+    }
     try {
       status = await waitForListenerReady(paths, {
         expectedPid: child.pid,
@@ -6234,6 +6279,9 @@ async function runListenStart(args: Arguments): Promise<void> {
           child.exitCode === null && child.signalCode === null,
       });
     } catch (error) {
+      if (detachedContextPath !== null) {
+        await releaseSessionReceiverLock(detachedContextPath);
+      }
       if (error instanceof ListenerStartupError) {
         const failedStatus = await effectiveListenerStatus(paths).catch(() => null);
         const detail = failedStatus?.lastErrorCode === error.code
@@ -6434,6 +6482,12 @@ async function runListenStatusOrStop(
     principalId,
     ...(stateDirectory ? { stateDirectory } : {}),
   });
+  if (command === "stop") {
+    const stopContextPath = await liveManagedContextPath(workspaceId, principalId);
+    if (stopContextPath !== null) {
+      await releaseSessionReceiverLock(stopContextPath);
+    }
+  }
   let status = command === "stop"
     ? await stopListener(paths)
     : await effectiveListenerStatus(paths);

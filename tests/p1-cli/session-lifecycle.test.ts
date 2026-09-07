@@ -6,10 +6,15 @@ import { test } from "node:test";
 import { cloudTarget } from "../../src/cloud/config.js";
 import { AgentSessionClient } from "../../src/cloud/session-client.js";
 import { AgentSessionManager } from "../../src/cloud/session-manager.js";
+import { access } from "node:fs/promises";
 import {
+  SessionContextError,
+  holdSessionReceiverLock,
   newSessionBinding,
   parseSessionContext,
   readSessionContext,
+  sessionProofOf,
+  sessionReceiverLockPath,
   writeSessionContext,
 } from "../../src/cloud/session-context.js";
 import {
@@ -31,8 +36,6 @@ import {
   startManagedSession,
   stopManagedSession,
 } from "../../src/cloud/session-cli.js";
-import { sessionProofOf } from "../../src/cloud/session-context.js";
-
 const WORKSPACE = "aaaaaaaa-aaaa-4aaa-8aaa-aaaaaaaaaaaa";
 const PRINCIPAL = "bbbbbbbb-bbbb-4bbb-8bbb-bbbbbbbbbbbb";
 const OTHER = "ffffffff-ffff-4fff-8fff-ffffffffffff";
@@ -47,6 +50,55 @@ async function tokenFile(root: string): Promise<string> {
   await chmod(path, 0o600);
   return path;
 }
+
+test("session start --foreground refuses a live listen lock and stop releases it", async () => {
+  const root = await mkdtemp(join(tmpdir(), "cswarm-receiver-lock-"));
+  await chmod(root, 0o700);
+  try {
+    const tokenPath = await tokenFile(root);
+    const contextPath = join(root, "session.json");
+    const fetcher = (async () =>
+      new Response(JSON.stringify({
+        ok: true,
+        status: "accepted",
+        generation: 2,
+      }), { status: 200 })) as typeof fetch;
+    await holdSessionReceiverLock(contextPath, "listen");
+    await assert.rejects(
+      () => startManagedSession({
+        target: cloudTarget("http://127.0.0.1:9", "synthetic-anon-key"),
+        workspaceId: WORKSPACE,
+        credential: TOKEN,
+        tokenFile: tokenPath,
+        tokenPrincipalId: PRINCIPAL,
+        mode: "interactive",
+        provider: "codex",
+        hostSessionId: "thread-1",
+        contextPath,
+        fetcher,
+        readIdentity: async () => ({
+          principal_id: PRINCIPAL,
+          workspace_id: WORKSPACE,
+        }),
+        runReceiver: true,
+        signal: AbortSignal.abort(),
+      }),
+      (error: unknown) =>
+        error instanceof SessionContextError &&
+        error.code === "session_receiver_busy",
+    );
+    await holdSessionReceiverLock(contextPath, "listen");
+    await stopManagedSession({
+      target: cloudTarget("http://127.0.0.1:9", "synthetic-anon-key"),
+      credential: TOKEN,
+      contextPath,
+      fetcher,
+    });
+    await assert.rejects(() => access(sessionReceiverLockPath(contextPath)));
+  } finally {
+    await rm(root, { recursive: true, force: true });
+  }
+});
 
 test("malformed acquire generation is rejected and does not write generation 1", async () => {
   const root = await mkdtemp(join(tmpdir(), "cswarm-bad-gen-"));

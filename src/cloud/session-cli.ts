@@ -28,12 +28,15 @@ import {
   assertSameIdentity,
   defaultSessionContextPath,
   SessionContextError,
+  holdSessionReceiverLock,
   isReleasedSession,
   markSessionReleased,
   newSessionBinding,
   publicSessionStatus,
   readSessionContext,
   readSessionContextIfPresent,
+  releaseSessionReceiverLock,
+  releaseSessionReceiverLockIfHeld,
   sessionLifecycleState,
   sessionProofOf,
   writeSessionContext,
@@ -236,26 +239,31 @@ export async function startManagedSession(
   if (options.runReceiver === false) {
     return { context, contextPath, retried };
   }
-  const manager = new AgentSessionManager({
-    client,
-    credential: async () => options.credential,
-    workspaceId: context.workspace_id,
-    contextPath,
-    context,
-  });
-  await manager.applyGeneration(generation);
-  const interactive = await runInteractiveReceiver({
-    target: options.target,
-    credential: options.credential,
-    contextPath,
-    context,
-    manager,
-    hostInjection: options.hostInjection ?? currentHostInjection(),
-    hostIdentityTrusted: options.hostIdentityTrusted === true,
-    fetcher,
-    signal: options.signal,
-  });
-  return { context, contextPath, retried, interactive };
+  await holdSessionReceiverLock(contextPath, "foreground");
+  try {
+    const manager = new AgentSessionManager({
+      client,
+      credential: async () => options.credential,
+      workspaceId: context.workspace_id,
+      contextPath,
+      context,
+    });
+    await manager.applyGeneration(generation);
+    const interactive = await runInteractiveReceiver({
+      target: options.target,
+      credential: options.credential,
+      contextPath,
+      context,
+      manager,
+      hostInjection: options.hostInjection ?? currentHostInjection(),
+      hostIdentityTrusted: options.hostIdentityTrusted === true,
+      fetcher,
+      signal: options.signal,
+    });
+    return { context, contextPath, retried, interactive };
+  } finally {
+    await releaseSessionReceiverLockIfHeld(contextPath);
+  }
 }
 
 function reconcileSessionView(
@@ -394,6 +402,7 @@ export async function stopManagedSession(input: {
   }
   const released = markSessionReleased(context);
   await writeSessionContext(input.contextPath, released);
+  await releaseSessionReceiverLock(input.contextPath);
   return {
     state: "stopped",
     next: `Confirm with: cswarm session status --session-context ${input.contextPath}`,
