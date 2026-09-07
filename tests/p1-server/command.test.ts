@@ -12027,7 +12027,9 @@ test("idle-cost purge honours 2-day claim-class keys and does not delete audit r
   `;
   assert.deepEqual(
     remaining.map((row) => row.command_id).sort(),
-    [freshClaimId, midOtherId].sort(),
-    "3-day claim keys go; 3-day non-claim keys stay; 40-day other keys go",
+    [freshClaimId].sort(),
+    // L2b (20260906000050) lowered non-claim retention from 30 days to 2, so the
+    // 3-day non-claim key is now purged too. Before L2b this row asserted it stayed.
+    "3-day claim keys go; 3-day non-claim keys go under the 2-day floor; 40-day other keys go",
   );
 });
