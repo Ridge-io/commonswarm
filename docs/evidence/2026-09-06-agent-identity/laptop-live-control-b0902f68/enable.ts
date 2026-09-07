@@ -1,6 +1,7 @@
+// Lives at docs/evidence/2026-09-06-agent-identity/laptop-live-control-b0902f68/enable.ts; imports resolve from here to the repo root. Run from the worktree root: node --import tsx <this file> enable|recover <api> <anon> <jwt> <workspace> <principal>
 // Human enable/recover via the same client class the CLI uses; JWT from the local auth stack.
-import { cloudTarget } from "/Users/tom/Developer/Ridge.io/commonswarm/scratchpad/wt-identity-server/src/cloud/config.js";
-import { AgentSessionClient } from "/Users/tom/Developer/Ridge.io/commonswarm/scratchpad/wt-identity-server/src/cloud/session-client.js";
+import { cloudTarget } from "../../../../src/cloud/config.js";
+import { AgentSessionClient } from "../../../../src/cloud/session-client.js";
 async function main() {
 const [action, api, anon, jwt, ws, principal] = process.argv.slice(2);
 const client = new AgentSessionClient({ target: cloudTarget(api!, anon!) });

@@ -18,6 +18,25 @@ Earlier pins, kept for readers who meet them: `cb00d64` (never existed), `a90d39
 implementation commit, pre-rebase), `619138d4` and `5e2bd0a3` (the pre-rebase fix round; that
 history is on the mini and in `lane/identity-client-pre-rebase` on the laptop, not on origin).
 
+## Integration arms (CSLaptopLead)
+
+- `1895889b` (= 33d52c34 + Lane C 9c6011bd): Gemini inversion PASS twice (`arm-agy-inversion-1895889b.SUMMARY-ONLY-run1.md`
+  was a four-bullet summary and was rerun with per-item evidence, `arm-agy-inversion-1895889b.md`);
+  Grok exact was killed by the host for memory before its VERDICT line
+  (`arm-grok-exact-1895889b.KILLED-NO-VERDICT.md`); its partial text had found the hook high-water
+  gap fixed in 1023f70f. Superseded by the next head.
+- `b7fcd581` (= 7a06d78d Lane A round 3 + Lane C 1023f70f): Grok exact VERDICT: FAIL on one server
+  DEFECT, `swarm_read.agent_execution_sessions` granted to `authenticated` with no membership
+  predicate (the same finding as Codex on 7a06d78; Lane A owns the fix); no GAP; NITs recorded.
+  Gemini inversion VERDICT: PASS with per-item file:line evidence; it read that view and passed it,
+  so it missed the DEFECT. Gates on b7fcd581 (laptop): build 0, check:tests 0, npm test 924/0,
+  p1-cli 542/0, site 547/0 (one skipped).
+- Codex on 7a06d78 (strategist): FAIL, nine findings; eight client items go to a Grok lane on the
+  mini cut from b7fcd581 (`lane/identity-client-r6`), reviewed by this seat.
+- The live control for the final head runs on the mini with
+  `laptop-live-control-b0902f68/run-control.sh <worktree> <host-session-id>` (self-locating helpers
+  `env.py` and `enable.ts` beside it; expected outcomes in its header; `README.md` there).
+
 ## Round 4 arms on 27769ea4: Grok exact PASS, Gemini inversion PASS
 
 Both arms ran on the final SHA `27769ea4` (`laptop-arms/arm-grok-exact-27769ea4.md`,
