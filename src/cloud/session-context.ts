@@ -45,7 +45,8 @@ export type SessionContextErrorCode =
   | "session_context_missing"
   | "session_context_token_file_invalid"
   | "session_context_conflict"
-  | "session_identity_mismatch";
+  | "session_identity_mismatch"
+  | "session_binding_mismatch";
 
 export class SessionContextError extends Error {
   readonly name = "SessionContextError";
@@ -693,6 +694,32 @@ export function assertSameIdentity(
       "authenticated workspace does not match the session context",
     );
   }
+}
+
+/** Immutable acquire binding. Retry must present the same values. */
+export const SESSION_ACQUIRE_BINDING_FIELDS = [
+  "provider",
+  "mode",
+  "host_label",
+  "host_session_id",
+  "token_file",
+] as const;
+
+export type SessionAcquireBindingField =
+  (typeof SESSION_ACQUIRE_BINDING_FIELDS)[number];
+
+export function assertAcquireBindingMatches(
+  existing: SessionContextDocument,
+  requested: SessionContextDocument,
+): void {
+  const changed = SESSION_ACQUIRE_BINDING_FIELDS.filter(
+    (field) => existing[field] !== requested[field],
+  );
+  if (changed.length === 0) return;
+  throw new SessionContextError(
+    "session_binding_mismatch",
+    `acquire retry cannot change ${SESSION_ACQUIRE_BINDING_FIELDS.join(", ")}`,
+  );
 }
 
 export function assertUnacquiredOrSameBinding(

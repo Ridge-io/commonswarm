@@ -20,6 +20,7 @@ import {
   type InteractiveReceiverStatus,
 } from "./session-receiver.js";
 import {
+  assertAcquireBindingMatches,
   assertLocalSessionBinding,
   assertSameIdentity,
   defaultSessionContextPath,
@@ -189,6 +190,7 @@ export async function startManagedSession(
         "a live session context already exists at this path; run cswarm session stop first",
       );
     }
+    assertAcquireBindingMatches(existing, draft);
     context = existing;
     retried = true;
   }
