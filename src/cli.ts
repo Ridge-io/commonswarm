@@ -1,6 +1,7 @@
 #!/usr/bin/env node
 
 import { randomUUID } from "node:crypto";
+import { createRequire } from "node:module";
 import { spawnSync } from "node:child_process";
 import { mkdirSync, readFileSync, writeFileSync } from "node:fs";
 import { open, unlink } from "node:fs/promises";
@@ -256,19 +257,11 @@ import {
   renderedBroadcastIds,
   reportRenderedBroadcasts,
 } from "./cloud/agent-signal-receipts.js";
-import { resolveOpenCodeExecutable } from "./host/opencode.js";
-import {
-  inspectClaudeBridgeExecutable,
-  resolveClaudeExecutable,
-  type ClaudeBridgeRuntimeNotice,
-} from "./host/claude.js";
-import { resolveCodexExecutable } from "./host/codex.js";
 import {
   compareSemVer,
   type ProviderVersionNotice,
 } from "./host/version.js";
 import {
-  classifyClaudeCanaryFailure,
   AgentActivityEndpointTransport,
   FileBrainDigestStore,
   FileHookSurfaceStore,
@@ -359,6 +352,24 @@ import {
 import { SESSION_MODES } from "./cloud/session-contract.js";
 import { AgentSessionManager } from "./cloud/session-manager.js";
 import { AgentSessionClient } from "./cloud/session-client.js";
+
+const requireFromCli = createRequire(import.meta.url);
+
+function loadHostClaude(): typeof import("./host/claude.js") {
+  return requireFromCli("./host/claude.js");
+}
+
+function loadHostCodex(): typeof import("./host/codex.js") {
+  return requireFromCli("./host/codex.js");
+}
+
+function loadHostOpenCode(): typeof import("./host/opencode.js") {
+  return requireFromCli("./host/opencode.js");
+}
+
+function loadClaudeListenerModel(): typeof import("./listener/claude-model.js") {
+  return requireFromCli("./listener/claude-model.js");
+}
 
 /**
  * Every flag this build accepts, for ERROR WORDING ONLY — never for acceptance. See the throw in
@@ -4832,7 +4843,7 @@ export async function listenerProviderInstallEvidence(
 ): Promise<ListenerProviderInstallEvidence | null> {
   if (status.provider !== "claude") return null;
   try {
-    const notice = await inspectClaudeBridgeExecutable(
+    const notice = await loadHostClaude().inspectClaudeBridgeExecutable(
       status.providerExecutable ?? "claude-agent-acp",
       { pathEnv: process.env.PATH, env: process.env },
     );
@@ -5496,7 +5507,7 @@ export function listenerFailureMessage(
   }
   if (code === "permission_canary_failed") {
     if (provider === "claude") {
-      const shape = classifyClaudeCanaryFailure(detail, reasonCode);
+      const shape = loadClaudeListenerModel().classifyClaudeCanaryFailure(detail, reasonCode);
       const ran =
         "the Claude ACP permission canary ran, but no workspace signal prompt was delivered";
       const response = `bridge response [${shape.code}]: ${quotedListenerFailureDetail(detail)}`;
@@ -5562,7 +5573,7 @@ export function resolveDetachedClaudeExecutable(
   pathEnv = process.env.PATH,
 ): string {
   try {
-    return resolveClaudeExecutable(executable, pathEnv);
+    return loadHostClaude().resolveClaudeExecutable(executable, pathEnv);
   } catch (error) {
     const code = (error as { code?: unknown }).code;
     if (typeof code === "string") {
@@ -5588,7 +5599,7 @@ export function resolveDetachedCodexExecutable(
   pathEnv = process.env.PATH,
 ): string {
   try {
-    return resolveCodexExecutable(executable, pathEnv);
+    return loadHostCodex().resolveCodexExecutable(executable, pathEnv);
   } catch (error) {
     const code = (error as { code?: unknown }).code;
     if (typeof code === "string") {
@@ -5905,7 +5916,13 @@ async function runConfiguredListener(options: {
       lastMeasuredVersion: notice.lastMeasuredVersion,
     };
   };
-  const onClaudeRuntimeNotice = (notice: ClaudeBridgeRuntimeNotice) => {
+  const onClaudeRuntimeNotice = (notice: {
+    providerVersion: string | null;
+    lastMeasuredVersion: string;
+    executable: string | null;
+    bundledAgentSdkVersion: string | null;
+    bundledClaudeCodeVersion: string | null;
+  }) => {
     providerVersionNotice = {
       runningVersion: notice.providerVersion,
       lastMeasuredVersion: notice.lastMeasuredVersion,
@@ -6210,7 +6227,7 @@ async function runListenStart(args: Arguments): Promise<void> {
        an absent one is simply absent. */
     const opencodeExecutable = provider === "opencode" &&
         args.optional("opencode-executable") !== undefined
-      ? resolveOpenCodeExecutable(args.required("opencode-executable"))
+      ? loadHostOpenCode().resolveOpenCodeExecutable(args.required("opencode-executable"))
       : undefined;
     let claudeExecutable: string | undefined;
     if (provider === "claude" && args.optional("claude-executable") !== undefined) {

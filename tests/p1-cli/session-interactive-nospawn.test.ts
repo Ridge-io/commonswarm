@@ -2,7 +2,7 @@ import assert from "node:assert/strict";
 import { readFileSync } from "node:fs";
 import { chmod, mkdir, mkdtemp, rm, writeFile } from "node:fs/promises";
 import { tmpdir } from "node:os";
-import { join } from "node:path";
+import { join, resolve } from "node:path";
 import { test } from "node:test";
 import { fileURLToPath } from "node:url";
 import { cloudTarget } from "../../src/cloud/config.js";
@@ -32,6 +32,68 @@ const FORBIDDEN_IMPORTS = [
   "node:child_process",
   "../host/",
 ];
+
+const FORBIDDEN_GRAPH = [
+  "/host/claude.",
+  "/host/codex.",
+  "/host/opencode.",
+  "/host/grok.",
+  "/listener/grok-model.",
+  "/listener/claude-model.",
+  "/listener/codex-model.",
+  "/listener/opencode-model.",
+];
+
+function staticSpecifiers(source: string): string[] {
+  const specs: string[] = [];
+  const re =
+    /(?:^|\n)\s*(import(?:\s+type)?\s+[\s\S]*?\sfrom\s+|export\s+\*\s+from\s+|export\s+\{[\s\S]*?\}\s+from\s+)["']([^"']+)["']/g;
+  let match: RegExpExecArray | null;
+  while ((match = re.exec(source)) !== null) {
+    if (match[1]!.startsWith("import type")) continue;
+    specs.push(match[2]!);
+  }
+  return specs;
+}
+
+function walkStaticGraph(entryRel: string): string[] {
+  const rootDir = fileURLToPath(new URL("../../", import.meta.url));
+  const seen = new Set<string>();
+  const queue = [resolve(rootDir, entryRel)];
+  while (queue.length > 0) {
+    const file = queue.pop()!;
+    if (seen.has(file)) continue;
+    seen.add(file);
+    if (!file.endsWith(".ts") && !file.endsWith(".js")) continue;
+    let source: string;
+    try {
+      source = readFileSync(file, "utf8");
+    } catch {
+      continue;
+    }
+    for (const spec of staticSpecifiers(source)) {
+      if (!spec.startsWith(".")) continue;
+      const resolved = resolve(file, "..", spec);
+      const withTs = resolved.endsWith(".ts") || resolved.endsWith(".js")
+        ? resolved
+        : `${resolved}.ts`;
+      queue.push(withTs);
+    }
+  }
+  return [...seen];
+}
+
+test("session command module graph excludes ACP host and model modules", () => {
+  const files = [
+    ...walkStaticGraph("src/cli.ts"),
+    ...walkStaticGraph("src/cloud/session-cli.ts"),
+    ...walkStaticGraph("src/cloud/session-receiver.ts"),
+  ];
+  const hits = files.filter((file) =>
+    FORBIDDEN_GRAPH.some((token) => file.includes(token)),
+  );
+  assert.deepEqual(hits, []);
+});
 
 test("interactive receiver source has no ACP or model import path", () => {
   for (const rel of [
