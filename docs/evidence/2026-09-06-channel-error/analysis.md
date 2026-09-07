@@ -330,3 +330,20 @@ In `src/listener/wake.ts`:
 The 2026-09-06 incident on seat `2121f81d` was caused by a corrupted anon key in the client configuration (a 1-character typo in the JWT signature). The listener appeared to function normally during HTTP operations because edge functions authenticated using agent bearer tokens and bypassed anon key validation. However, Supabase Realtime enforced anon key validation during WebSocket handshake, rejecting the connection with HTTP 401.
 
 Because `wake.ts` mapped all `CHANNEL_ERROR` statuses to `"channel_error"` and discarded the error argument, the root cause remained obscured until discriminating socket and HTTP probes were run. Implementing an anon key HTTP preflight check and structured wake error reporting will ensure that invalid credentials and transport failures are surfaced immediately and distinctly in `events.ndjson`.
+
+---
+
+## Lead correction, 2026-09-06: Rank 1 is refuted for this fleet
+
+The analysis ranks a corrupted `apikey` first and gives Probe 1 as `GET /auth/v1/settings` with that key.
+The lead ran exactly that probe against production with the anon key the fleet uses, plus a positive
+control (the same key with one character appended):
+
+    curl -s -o /dev/null -w '%{http_code}' -H "apikey: $ANON" https://api.commonswarm.com/auth/v1/settings   ->  200
+    curl -s -o /dev/null -w '%{http_code}' -H "apikey: ${ANON}x" https://api.commonswarm.com/auth/v1/settings ->  401
+
+The key in use is valid, and the probe can discriminate. That, together with the analysis's own
+observation that pid 18762 reached `SUBSCRIBED` before the failure, rules out a corrupted key as the cause
+of this incident. The ranking below is left as written, because the reasoning about how a bad key would
+present is still correct and a later reader may meet the same symptom; treat Rank 1 as eliminated here and
+start from the next ranked cause. The incident itself remains **not explained**.
