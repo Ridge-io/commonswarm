@@ -5,7 +5,9 @@ import { browserSignalCommand } from "./commonswarm.ts";
 import {
   ALLOW_DUPLICATE_NAME_FIELD,
   createAgentPrincipalCommand,
+  foldIdentityName,
   identityDisplayLabel,
+  identityDisplayLabels,
   identityUuidSuffix,
   lookupByDisplayName,
   parseStoredIdentityRef,
@@ -42,6 +44,68 @@ test("unique names stay bare and duplicate names get a short UUID suffix", () =>
   assert.notEqual(
     identityDisplayLabel({ id: WREN_A, name: "Wren" }, agents),
     identityDisplayLabel({ id: WREN_B, name: "Wren" }, agents),
+  );
+});
+
+test("a generated label does not collide with another record's raw name", () => {
+  /* Codex arm: two distinct records both rendered as `Echo · 11111111` because
+   * one raw name was literally that string and the other Echo only disambiguated
+   * among duplicate raw names. */
+  const literalName = `Echo · ${WREN_A.slice(0, 8)}`;
+  const roster = [
+    { id: WREN_A, name: "Echo" },
+    { id: WREN_B, name: "Echo" },
+    { id: ORBIT, name: literalName },
+  ];
+  const labels = identityDisplayLabels(roster);
+  assert.equal(new Set(labels.map(foldIdentityName)).size, roster.length);
+  assert.equal(identityDisplayLabel({ id: ORBIT, name: literalName }, roster), literalName);
+  const generated = identityDisplayLabel({ id: WREN_A, name: "Echo" }, roster);
+  assert.notEqual(generated, literalName);
+  assert.equal(generated, `Echo · ${WREN_A.slice(0, 9)}`);
+  assert.equal(
+    identityDisplayLabel({ id: WREN_B, name: "Echo" }, roster),
+    `Echo · ${identityUuidSuffix(WREN_B, roster)}`,
+  );
+});
+
+test("three-way label collisions grow the UUID prefix until the label is unique", () => {
+  const take8 = `Echo · ${WREN_A.slice(0, 8)}`;
+  const take9 = `Echo · ${WREN_A.slice(0, 9)}`;
+  const roster = [
+    { id: WREN_A, name: "Echo" },
+    { id: WREN_B, name: "Echo" },
+    { id: ORBIT, name: take8 },
+    { id: DANA, name: take9 },
+  ];
+  const labels = identityDisplayLabels(roster);
+  assert.equal(new Set(labels.map(foldIdentityName)).size, roster.length);
+  assert.equal(identityDisplayLabel({ id: ORBIT, name: take8 }, roster), take8);
+  assert.equal(identityDisplayLabel({ id: DANA, name: take9 }, roster), take9);
+  assert.equal(
+    identityDisplayLabel({ id: WREN_A, name: "Echo" }, roster),
+    `Echo · ${WREN_A.slice(0, 10)}`,
+  );
+});
+
+test("when every shorter prefix is taken the generated label uses the full UUID", () => {
+  const taken = [];
+  for (let size = 8; size < WREN_A.length; size += 1) {
+    taken.push({
+      id: `taken-${size}`,
+      name: `Echo · ${WREN_A.slice(0, size)}`,
+    });
+  }
+  const roster = [
+    { id: WREN_A, name: "Echo" },
+    { id: WREN_B, name: "Echo" },
+    ...taken,
+  ];
+  const labels = identityDisplayLabels(roster);
+  assert.equal(new Set(labels.map(foldIdentityName)).size, roster.length);
+  assert.equal(
+    identityDisplayLabel({ id: WREN_A, name: "Echo" }, roster),
+    `Echo · ${WREN_A}`,
   );
 });
 

@@ -16,7 +16,7 @@
 import { COMPOSER_TO_MAX } from "./composer-address.js";
 import {
   foldIdentityName,
-  identityDisplayLabel,
+  identityDisplayLabels,
   type IdentityRecord,
 } from "./identity-label.js";
 
@@ -80,21 +80,22 @@ export function mentionTargets(
     ...agents.map((agent) => ({ id: agent.principalId, name: agent.name ?? "" })),
     ...members.map((member) => ({ id: member.userId, name: member.name ?? "" })),
   ];
+  const labels = identityDisplayLabels(records);
   return [
-    ...agents.map((agent) => {
+    ...agents.map((agent, index) => {
       const name = agent.name ?? "";
       return {
         entity: { kind: "agent" as const, id: agent.principalId },
         name,
-        label: identityDisplayLabel({ id: agent.principalId, name }, records),
+        label: labels[index]!,
       };
     }),
-    ...members.map((member) => {
+    ...members.map((member, index) => {
       const name = member.name ?? "";
       return {
         entity: { kind: "person" as const, id: member.userId },
         name,
-        label: identityDisplayLabel({ id: member.userId, name }, records),
+        label: labels[agents.length + index]!,
       };
     }),
   ]
@@ -118,6 +119,10 @@ function targetLabel(target: MentionTarget): string {
   return target.label ?? target.name;
 }
 
+function entityKey(target: MentionTarget): string {
+  return `${target.entity.kind}:${target.entity.id}`;
+}
+
 function tagMatch(
   body: string,
   at: number,
@@ -130,6 +135,31 @@ function tagMatch(
   const after = body[at + 1 + token.length];
   if (after !== undefined && !CLOSES_TAG.test(after)) return null;
   return token.length;
+}
+
+type MentionHit = {
+  target: MentionTarget;
+  consumed: number;
+  via: "label" | "name";
+};
+
+function mentionHitsAt(
+  body: string,
+  at: number,
+  targets: readonly MentionTarget[],
+): MentionHit[] {
+  const hits: MentionHit[] = [];
+  for (const target of targets) {
+    const labelLength = tagMatch(body, at, targetLabel(target));
+    if (labelLength !== null) {
+      hits.push({ target, consumed: labelLength, via: "label" });
+    }
+    const nameLength = tagMatch(body, at, target.name);
+    if (nameLength !== null) {
+      hits.push({ target, consumed: nameLength, via: "name" });
+    }
+  }
+  return hits;
 }
 
 export function addressFromBody(
@@ -150,34 +180,24 @@ export function addressFromBody(
   for (let at = body.indexOf("@"); at !== -1; at = body.indexOf("@", at + 1)) {
     const before = at === 0 ? "" : body[at - 1]!;
     if (before !== "" && !OPENS_TAG.test(before)) continue;
-    let matched: MentionTarget | undefined;
-    let consumed = 0;
-    let nameOnlyAmbiguous: string | undefined;
-    for (const target of ordered) {
-      const labelLength = tagMatch(body, at, targetLabel(target));
-      if (labelLength !== null) {
-        matched = target;
-        consumed = labelLength;
-        nameOnlyAmbiguous = undefined;
-        break;
-      }
-      const nameLength = tagMatch(body, at, target.name);
-      if (nameLength === null) continue;
-      if (ambiguousSet.has(fold(target.name))) {
-        nameOnlyAmbiguous = target.name;
-        consumed = nameLength;
-        continue;
-      }
-      matched = target;
-      consumed = nameLength;
-      nameOnlyAmbiguous = undefined;
-      break;
-    }
-    if (nameOnlyAmbiguous !== undefined && matched === undefined) {
-      if (!ambiguous.includes(nameOnlyAmbiguous)) ambiguous.push(nameOnlyAmbiguous);
+    const hits = mentionHitsAt(body, at, ordered);
+    if (hits.length === 0) continue;
+    const consumed = Math.max(...hits.map((hit) => hit.consumed));
+    const top = hits.filter((hit) => hit.consumed === consumed);
+    const matchedIds = new Set(top.map((hit) => entityKey(hit.target)));
+    const sharedNameHit = top.find(
+      (hit) => hit.via === "name" && ambiguousSet.has(fold(hit.target.name)),
+    );
+    const labelHit = top.some((hit) => hit.via === "label");
+    if (matchedIds.size > 1 || (sharedNameHit !== undefined && !labelHit)) {
+      const token = sharedNameHit !== undefined && !labelHit
+        ? sharedNameHit.target.name
+        : body.slice(at + 1, at + 1 + consumed);
+      if (!ambiguous.includes(token)) ambiguous.push(token);
       at += consumed;
       continue;
     }
+    const matched = top[0]?.target;
     if (matched === undefined) continue;
     const key = `${matched.entity.kind}:${matched.entity.id}`;
     if (!seen.has(key)) {

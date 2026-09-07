@@ -1,7 +1,9 @@
 /**
  * Display names are labels. Principal and member UUIDs are the identity.
  *
- * Duplicate names stay selectable through a short UUID suffix. A name-only lookup
+ * Duplicate names stay selectable through a short UUID suffix. A generated
+ * suffix must be unique across every raw name and every other generated label.
+ * On collision the prefix grows, then the full UUID. A name-only lookup
  * resolves only when it is unique. It never takes the first match.
  */
 
@@ -55,14 +57,62 @@ export function identityUuidSuffix(
   return normalized;
 }
 
+function shownIdentityName(record: IdentityRecord): string {
+  const trimmed = record.name.trim();
+  return trimmed.length > 0 ? trimmed : record.id;
+}
+
+function suffixedIdentityLabel(
+  shown: string,
+  id: string,
+  roster: readonly IdentityRecord[],
+  taken: ReadonlySet<string>,
+): string {
+  const normalized = id.toLowerCase();
+  const others = roster
+    .map((row) => row.id.toLowerCase())
+    .filter((other) => other !== normalized);
+  for (let size = IDENTITY_UUID_SUFFIX_MIN; size <= normalized.length; size += 1) {
+    const suffix = normalized.slice(0, size);
+    if (others.some((other) => other.slice(0, size) === suffix)) continue;
+    const candidate = `${shown}${IDENTITY_LABEL_SEPARATOR}${suffix}`;
+    if (taken.has(foldIdentityName(candidate))) continue;
+    return candidate;
+  }
+  return `${shown}${IDENTITY_LABEL_SEPARATOR}${normalized}`;
+}
+
+/**
+ * One label per roster row, in roster order. Unique raw names stay bare.
+ * Shared names get a UUID suffix that does not collide with any raw name
+ * or any earlier generated label.
+ */
+export function identityDisplayLabels(
+  roster: readonly IdentityRecord[],
+): string[] {
+  const shown = roster.map(shownIdentityName);
+  const taken = new Set(shown.map((label) => foldIdentityName(label)));
+  const labels = shown.slice();
+  for (let index = 0; index < roster.length; index += 1) {
+    const record = roster[index]!;
+    if (!identityNameIsShared(record.name, roster)) continue;
+    const chosen = suffixedIdentityLabel(shown[index]!, record.id, roster, taken);
+    labels[index] = chosen;
+    taken.add(foldIdentityName(chosen));
+  }
+  return labels;
+}
+
 export function identityDisplayLabel(
   record: IdentityRecord,
   roster: readonly IdentityRecord[],
 ): string {
-  const trimmed = record.name.trim();
-  const shown = trimmed.length > 0 ? trimmed : record.id;
-  if (!identityNameIsShared(record.name, roster)) return shown;
-  return `${shown}${IDENTITY_LABEL_SEPARATOR}${identityUuidSuffix(record.id, roster)}`;
+  const rows = roster.some((row) => row.id === record.id)
+    ? roster
+    : [...roster, record];
+  const labels = identityDisplayLabels(rows);
+  const index = rows.findIndex((row) => row.id === record.id);
+  return index >= 0 ? labels[index]! : shownIdentityName(record);
 }
 
 export type NameLookup =

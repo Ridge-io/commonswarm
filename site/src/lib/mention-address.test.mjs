@@ -95,6 +95,80 @@ test("two same-name agents stay separately selectable by UUID suffix", () => {
   );
 });
 
+test("a raw name equal to another record's generated label stays separately selectable", () => {
+  const left = "11111111-1111-4111-8111-111111111111";
+  const right = "22222222-2222-4222-8222-222222222222";
+  const literal = "33333333-3333-4333-8333-333333333333";
+  const twins = mentionTargets(
+    [agent(left, "Echo"), agent(right, "Echo"), agent(literal, "Echo · 11111111")],
+    [],
+  );
+  assert.equal(new Set(twins.map((target) => target.label)).size, 3);
+  const leftLabel = twins.find((target) => target.entity.id === left)?.label;
+  const literalRow = twins.find((target) => target.entity.id === literal);
+  assert.ok(leftLabel);
+  assert.equal(literalRow?.label, "Echo · 11111111");
+  assert.notEqual(leftLabel, literalRow?.label);
+  assert.deepEqual(
+    addressFromBody(`@${leftLabel} take this`, twins).recipients,
+    [{ kind: "agent", id: left }],
+  );
+  assert.deepEqual(
+    addressFromBody("@Echo · 11111111 take that", twins).recipients,
+    [{ kind: "agent", id: literal }],
+  );
+  assert.deepEqual(addressFromBody("@Echo which one?", twins).recipients, []);
+  assert.deepEqual(addressFromBody("@Echo which one?", twins).ambiguous, ["Echo"]);
+});
+
+test("three-way label collisions keep each tag on one record", () => {
+  const left = "11111111-1111-4111-8111-111111111111";
+  const right = "22222222-2222-4222-8222-222222222222";
+  const take8 = "33333333-3333-4333-8333-333333333333";
+  const take9 = "44444444-4444-4444-8444-444444444444";
+  const twins = mentionTargets(
+    [
+      agent(left, "Echo"),
+      agent(right, "Echo"),
+      agent(take8, `Echo · ${left.slice(0, 8)}`),
+      agent(take9, `Echo · ${left.slice(0, 9)}`),
+    ],
+    [],
+  );
+  assert.equal(new Set(twins.map((target) => target.label)).size, 4);
+  const leftLabel = twins.find((target) => target.entity.id === left)?.label;
+  assert.equal(leftLabel, `Echo · ${left.slice(0, 10)}`);
+  assert.deepEqual(
+    addressFromBody(`@${leftLabel} go`, twins).recipients,
+    [{ kind: "agent", id: left }],
+  );
+  assert.deepEqual(
+    addressFromBody(`@Echo · ${left.slice(0, 8)} go`, twins).recipients,
+    [{ kind: "agent", id: take8 }],
+  );
+  assert.deepEqual(
+    addressFromBody(`@Echo · ${left.slice(0, 9)} go`, twins).recipients,
+    [{ kind: "agent", id: take9 }],
+  );
+});
+
+test("a label that still matches two records is refused", () => {
+  const left = "11111111-1111-4111-8111-111111111111";
+  const literal = "33333333-3333-4333-8333-333333333333";
+  const colliding = [
+    { entity: { kind: "agent", id: left }, name: "Echo", label: "Echo · 11111111" },
+    {
+      entity: { kind: "agent", id: literal },
+      name: "Echo · 11111111",
+      label: "Echo · 11111111",
+    },
+  ];
+  const address = addressFromBody("@Echo · 11111111 take this", colliding);
+  assert.deepEqual(address.recipients, []);
+  assert.ok(address.ambiguous.length > 0);
+  assert.notEqual(address.ambiguous[0], undefined);
+});
+
 test("a name that folds to nothing or to whitespace can never be tagged", () => {
   /* Two shapes, and the first control has to use the form the PICKER would write. A lone
      combining mark folds to ""; the empty span after a dangling "@" matched it, and so did

@@ -36,6 +36,28 @@ test("the mention pick writes the disambiguated label and keeps the UUID action"
   );
 });
 
+test("the picker option id is the UUID of the record clicked", () => {
+  assert.match(
+    dashboard,
+    /const mentionOptionId = \(entity: EntityRef\): string =>\s*`dashboard-composer-mention-option-\$\{entity\.kind\}-\$\{entity\.id\}`/,
+  );
+  assert.match(dashboard, /button\.id = mentionOptionId\(candidate\);/);
+  assert.match(
+    dashboard,
+    /button\.addEventListener\("click", \(\) => selectMention\(candidate\)\);/,
+  );
+  const pickStart = dashboard.indexOf("const selectMention");
+  const pickEnd = dashboard.indexOf("const renderMentionPicker");
+  assert.ok(pickStart >= 0 && pickEnd > pickStart);
+  const pick = dashboard.slice(pickStart, pickEnd);
+  assert.match(pick, /entityName\(mention\)/);
+  assert.doesNotMatch(pick, /lookupByDisplayName/);
+  assert.match(
+    dashboard,
+    /mentionCandidates[\s\S]*kind: "agent" as const, id: agent\.principalId/,
+  );
+});
+
 test("create-another is an explicit action and default creates omit the flag", () => {
   assert.match(connect, /data-action="create-another"/);
   assert.match(connect, /Create another called \$\{name\}/);
