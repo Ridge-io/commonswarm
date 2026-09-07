@@ -133,7 +133,8 @@ test("persistent 500s stop after three total attempts and keep the final typed e
   assert.equal(calls, SIGNAL_WRITE_MAX_ATTEMPTS);
 });
 
-test("caller abort during backoff settles immediately and prevents another attempt", async () => {
+test("caller abort during backoff settles immediately and prevents another attempt", async (t) => {
+  t.mock.timers.enable({ apis: ["setTimeout"] });
   let calls = 0;
   const caller = new AbortController();
   const client = new ThinCommandClient(TARGET, (async () => {
@@ -144,14 +145,13 @@ test("caller abort during backoff settles immediately and prevents another attem
   while (calls === 0) await Promise.resolve();
   await new Promise<void>((resolve) => setImmediate(resolve));
 
-  const started = Date.now();
   caller.abort();
   await assert.rejects(pending, { name: "AbortError" });
-  assert.ok(Date.now() - started < 250, "abort waited for the backoff timer");
   assert.equal(calls, 1, "no write may start after the caller signal fires");
 });
 
-test("retry backoff shares the overall deadline instead of opening a new window", async () => {
+test("retry backoff shares the overall deadline instead of opening a new window", async (t) => {
+  t.mock.timers.enable({ apis: ["setTimeout"] });
   let calls = 0;
   const client = new ThinCommandClient(TARGET, (async () => {
     calls += 1;
@@ -161,13 +161,24 @@ test("retry backoff shares the overall deadline instead of opening a new window"
     signalRetryRandom: () => 0.5,
     signalRequestTimeoutMs: 40,
   });
-  const started = Date.now();
 
-  await assert.rejects(client.sendSignal(request()), {
+  const pending = client.sendSignal(request());
+
+  while (calls < 1) await Promise.resolve();
+  await new Promise<void>((resolve) => setImmediate(resolve));
+  assert.equal(calls, 1);
+
+  t.mock.timers.tick(30);
+
+  while (calls < 2) await Promise.resolve();
+  await new Promise<void>((resolve) => setImmediate(resolve));
+  assert.equal(calls, 2);
+
+  t.mock.timers.tick(10);
+
+  await assert.rejects(pending, {
     name: "CommandTransportError",
     message: "signal request timed out",
   });
-  const elapsed = Date.now() - started;
   assert.equal(calls, 2, "the deadline must prevent a third attempt");
-  assert.ok(elapsed < 200, `overall 40ms deadline took ${elapsed}ms`);
 });
