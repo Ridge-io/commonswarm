@@ -136,7 +136,13 @@ test("listenerStatusJson emits host_limits as a structured object, not a string"
   assert.equal(typeof limits.host_configuration, "string");
   assert.equal(typeof limits.local_state_lifecycle, "string");
   assert.equal(typeof limits.human_copy, "string");
-  assert.match(String(limits.local_state_lifecycle), /retained on shutdown failure/);
+  /* A status with no routeMode is read as route main (0.1.61: the only live
+     route), so the copy is the no-model one, not the worker's. */
+  assert.match(String(limits.local_state_lifecycle), /No provider home is created or removed/);
+  assert.doesNotMatch(String(limits.local_state_lifecycle), /retained on shutdown failure/);
+  const legacy = listenerStatusJson({ ...status, routeMode: "worker" }, "deny");
+  const legacyLimits = legacy.host_limits as Record<string, unknown>;
+  assert.match(String(legacyLimits.local_state_lifecycle), /retained on shutdown failure/);
 });
 
 function readHealthStatus(readHealth: ListenerStatus["readHealth"]): ListenerStatus {
