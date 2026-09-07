@@ -16388,6 +16388,7 @@ __export(cli_exports, {
   clampTurnBudgetToCredential: () => clampTurnBudgetToCredential,
   claudeUserPromptHookSnippet: () => claudeUserPromptHookSnippet,
   describeAudience: () => describeAudience,
+  isCliMain: () => isCliMain,
   listenerFailureMessage: () => listenerFailureMessage,
   listenerHostLimits: () => listenerHostLimits,
   listenerMainHostLimits: () => listenerMainHostLimits,
@@ -43838,6 +43839,7 @@ function classifyClaudeCanaryFailure(detail, typedReasonCode, peerError) {
 }
 
 // src/cli.ts
+var import_node_url = require("node:url");
 var import_meta = {};
 function loadHostClaude() {
   return Promise.resolve().then(() => (init_claude(), claude_exports));
@@ -43964,8 +43966,8 @@ var BOOLEAN_FLAGS = /* @__PURE__ */ new Set([
 ]);
 var UUID_RE25 = /^[0-9a-f]{8}-[0-9a-f]{4}-[1-8][0-9a-f]{3}-[89ab][0-9a-f]{3}-[0-9a-f]{12}$/i;
 function packageVersion() {
-  if ("0.1.63".length > 0) {
-    return "0.1.63";
+  if ("0.1.64".length > 0) {
+    return "0.1.64";
   }
   try {
     const value = JSON.parse(
@@ -50141,54 +50143,69 @@ function exitCodeFor(error) {
 function safeParagraph(message) {
   return message.replace(/\u001b\[[0-?]*[ -/]*[@-~]/g, "").replace(/[\u0000-\u0009\u000b-\u001f\u007f-\u009f\u202a-\u202e\u2066-\u2069]/g, " ").slice(0, 2e3);
 }
-main().catch((error) => {
-  if (process.argv[2] === "hook" && process.argv[3] === "check") {
-    process.exitCode = 0;
-    return;
+function isCliMain() {
+  if (typeof require !== "undefined" && typeof module !== "undefined" && require.main === module) {
+    return true;
   }
-  if (error instanceof RenewalReauthorisationRequired || error instanceof RenewalRevoked || error instanceof RenewalSuspended) {
-    process.stderr.write(`${safeParagraph(error.message)}
-`);
-    process.exitCode = 1;
-    return;
+  if (!process.argv[1]) return false;
+  try {
+    const script = (0, import_node_fs6.realpathSync)(process.argv[1]);
+    const modulePath = (0, import_node_fs6.realpathSync)((0, import_node_url.fileURLToPath)(import_meta.url));
+    return script === modulePath;
+  } catch {
+    return false;
   }
-  if (error instanceof WorkspaceCliError) {
-    const structured = error.structured();
-    const verb = process.argv[2];
-    const json = process.argv.includes("--json") && (verb === "status" || verb === "workspaces" || verb === "use" || verb === "working-on" || verb === "note" || verb === "ask" || verb === "reply" || verb === "receipt" || verb === "feed" || verb === "inbox" || verb === "file" || verb === "brain");
-    if (json) {
-      process.stdout.write(`${JSON.stringify(structured, null, 2)}
+}
+if (isCliMain()) {
+  main().catch((error) => {
+    if (process.argv[2] === "hook" && process.argv[3] === "check") {
+      process.exitCode = 0;
+      return;
+    }
+    if (error instanceof RenewalReauthorisationRequired || error instanceof RenewalRevoked || error instanceof RenewalSuspended) {
+      process.stderr.write(`${safeParagraph(error.message)}
 `);
-    } else {
-      process.stderr.write(`cswarm: ${error.message}
+      process.exitCode = 1;
+      return;
+    }
+    if (error instanceof WorkspaceCliError) {
+      const structured = error.structured();
+      const verb = process.argv[2];
+      const json = process.argv.includes("--json") && (verb === "status" || verb === "workspaces" || verb === "use" || verb === "working-on" || verb === "note" || verb === "ask" || verb === "reply" || verb === "receipt" || verb === "feed" || verb === "inbox" || verb === "file" || verb === "brain");
+      if (json) {
+        process.stdout.write(`${JSON.stringify(structured, null, 2)}
 `);
-      const projects = structured.projects;
-      if (Array.isArray(projects) && projects.length > 0) {
-        process.stderr.write("Available workspaces:\n");
-        for (const project of projects) {
-          if (!project || typeof project !== "object") continue;
-          const row = project;
-          process.stderr.write(
-            `- ${String(row.name)} (${String(row.workspace_id)}) \u2014 ${String(row.role)}
+      } else {
+        process.stderr.write(`cswarm: ${error.message}
+`);
+        const projects = structured.projects;
+        if (Array.isArray(projects) && projects.length > 0) {
+          process.stderr.write("Available workspaces:\n");
+          for (const project of projects) {
+            if (!project || typeof project !== "object") continue;
+            const row = project;
+            process.stderr.write(
+              `- ${String(row.name)} (${String(row.workspace_id)}) \u2014 ${String(row.role)}
 `
-          );
+            );
+          }
         }
       }
+      process.exitCode = 1;
+      return;
     }
-    process.exitCode = 1;
-    return;
-  }
-  if (error instanceof UsageError) {
-    process.stderr.write(`cswarm: ${safeError(error)}
+    if (error instanceof UsageError) {
+      process.stderr.write(`cswarm: ${safeError(error)}
 ${usage()}
 `);
-    process.exitCode = 1;
-    return;
-  }
-  process.stderr.write(`cswarm: ${safeError(error)}
+      process.exitCode = 1;
+      return;
+    }
+    process.stderr.write(`cswarm: ${safeError(error)}
 `);
-  process.exitCode = exitCodeFor(error);
-});
+    process.exitCode = exitCodeFor(error);
+  });
+}
 // Annotate the CommonJS export names for ESM import in node:
 0 && (module.exports = {
   CHANNEL_SUBCOMMAND_NAMES,
@@ -50198,6 +50215,7 @@ ${usage()}
   clampTurnBudgetToCredential,
   claudeUserPromptHookSnippet,
   describeAudience,
+  isCliMain,
   listenerFailureMessage,
   listenerHostLimits,
   listenerMainHostLimits,
