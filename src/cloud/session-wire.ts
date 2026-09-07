@@ -56,6 +56,32 @@ export const AGENT_SESSION_BINDING_FIELDS = [
   "host_session_ref",
 ] as const;
 
+/**
+ * Columns projected by swarm_read.agent_execution_sessions.
+ * key_hash is not in this list. Server tests compare this array to the live view.
+ */
+export const AGENT_EXECUTION_SESSION_READ_COLUMNS = [
+  "principal_id",
+  "workspace_id",
+  "session_id",
+  "generation",
+  "lifecycle_state",
+  "host_label",
+  "provider",
+  "host_session_ref",
+  "started_at",
+  "renewed_at",
+  "expired_at",
+  "created_at",
+  "updated_at",
+] as const;
+
+/**
+ * JWT claim the read edge installs so swarm_read.agent_execution_sessions
+ * admits only the calling agent's principal. Human PostgREST callers omit it.
+ */
+export const AGENT_SESSION_READ_PRINCIPAL_CLAIM = "agent_principal_id" as const;
+
 export type AgentSessionBindingField =
   (typeof AGENT_SESSION_BINDING_FIELDS)[number];
 

@@ -1,11 +1,12 @@
-# Lane A — server execution sessions (round 2)
+# Lane A — server execution sessions (round 4)
 
 Builder: Grok on `lane/identity-server-r2`, cut from `lane/agent-identity`
 `5380a01`. Round 1 established the fence, opt-in, and typed session codes.
-The Grok exact arm on `5380a01` FAILed because pending-surface and
-session-bound deliveries were not on the wire. This round ships that
-contract. Import every name from `src/cloud/session-wire.ts`; do not invent
-a parallel client protocol.
+Round 2 shipped pending-surface. Round 3 locked the fence `FOR SHARE` against
+recover. Round 4 closes the Codex gpt-5.6-sol finding on `7a06d78`: the
+`swarm_read.agent_execution_sessions` view had no membership filter.
+Import every name from `src/cloud/session-wire.ts`; do not invent a parallel
+client protocol.
 
 The named arm path `docs/evidence/2026-09-06-agent-identity/arms-5380a01/grok.txt`
 was missing in this worktree. The same report is at
@@ -63,14 +64,23 @@ pasted in the round-2 brief.
   NULL `expired_at` as dead. Re-enable `ON CONFLICT` writes the placeholder
   `session_id` it then retires. Server tests name `session_not_managed`,
   `session_already_managed`, and `session_leases_live`.
+- Round 4 (`20260906000040`): `swarm_read.agent_execution_sessions` keeps the
+  same 13 columns and still omits `key_hash`. The view now filters with
+  `swarm.is_member(workspace_id, auth.uid())`, the same predicate as sibling
+  `swarm_read` views. Role `authenticated` (human PostgREST) sees every
+  session row in a workspace the caller belongs to. Role `swarm_read` (the
+  agent read edge) sees only the calling principal: the edge installs JWT
+  claim `agent_principal_id`, and a missing claim admits no row. `GRANT
+  SELECT` to `authenticated` and `swarm_read` is unchanged. `REVOKE ALL FROM
+  anon` is unchanged. 20260906000030 is not edited.
 
 ## Not established
 
 - Live listener / CLI session context (Lane C, not this worktree).
 - Site UUID pickers (Lane B).
 - Interactive ACP/model factory (client lane, not this worktree).
-- Production deploy, `db:push`, apply of `20260906000030`, or any call to
-  `cloud-swarm-dev`.
+- Production deploy, `db:push`, apply of `20260906000030` or
+  `20260906000040`, or any call to `cloud-swarm-dev`.
 - Exact host-conversation binding and capability handshake (client lane).
 - Automatic sweeping of unrelated principals: not implemented, by design.
 
@@ -254,8 +264,11 @@ retries 200 with the same generation.
 ### key_hash
 
 `swarm_read` has no column privilege on `swarm.agent_execution_sessions.key_hash`.
-`swarm_read.agent_execution_sessions` does not project it. `read/index.ts`
-joins the view. NULL `expired_at` is dead (`is_live` matches the fence).
+`swarm_read.agent_execution_sessions` does not project it. Column list is
+`AGENT_EXECUTION_SESSION_READ_COLUMNS` in `src/cloud/session-wire.ts`.
+`read/index.ts` joins the view. NULL `expired_at` is dead (`is_live` matches
+the fence). A member of workspace A cannot read workspace B's session row.
+An agent through `swarm_read` cannot read a sibling principal's session row.
 
 ## Synthetic request/response examples
 
@@ -388,8 +401,8 @@ query.
 | `npm run build` | pass (tsc) |
 | `npm run check:tests` | pass |
 | `npm run check:edge` | 0 Deno errors (command, read, capability, activity) |
-| `npm test` | 922 pass / 0 fail / 26 suites |
-| `npm run test:p1-server` | full serial glob after `db:reset`: 177 pass / 0 fail (264.9s). Includes `managed-delivery.test.ts` and the new typed-code tests in `agent-execution-sessions.test.ts`. |
-| `npm run test:p1-local` | 48 pass / 0 fail (107.8s). |
+| `npm test` | 923 pass / 0 fail / 26 suites |
+| `npm run test:p1-server` | full serial glob after `migration up` of `20260906000040`: 182 pass / 0 fail (234.1s). First glob in this round was 181/1: `command.test.ts` "pre-principal failures never write audit rows…" died with `UND_ERR_SOCKET` / `other side closed` against local functions serve. Unrelated to the view. Re-run 182/0. |
+| `npm run test:p1-local` | 48 pass / 0 fail (97.4s). |
 
-A previous builder's "Gaps: None" is retired. Round-1 `test:p1-server` flake note (10 fails in `command.test.ts` when globbed) was not reproduced on this SHA.
+A previous builder's "Gaps: None" is retired. Round-1 `test:p1-server` flake note (10 fails in `command.test.ts` when globbed) was not reproduced on the green SHA. The one `UND_ERR_SOCKET` above is the same family: the command function closed a socket, not a view-predicate miss.
