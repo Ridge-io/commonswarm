@@ -1,0 +1,1 @@
+I'll review the exact merge SHA in this worktree only: read the design docs, walk the merge tree against candidate `63acfdb`, and trace identity producers and consumers for concrete defects.HEAD is the requested merge SHA. Next I’ll map the merge tree against `63acfdb` and inventory the product, test, and evidence files.
