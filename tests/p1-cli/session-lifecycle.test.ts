@@ -18,6 +18,7 @@ import {
   AGENT_SESSION_GENERATION_HEADER,
   AGENT_SESSION_ID_HEADER,
   AGENT_SESSION_KEY_HEADER,
+  AGENT_SESSION_RENEW_AFTER_MS,
   RELEASE_AGENT_SESSION_KIND,
   RENEW_AGENT_SESSION_KIND,
 } from "../../src/cloud/session-contract.js";
@@ -432,6 +433,103 @@ test("manager stops dispatch on typed expiry and does not overlap renewals", asy
     now = 120_000;
     await timers[0]!();
     assert.equal(manager.dispatchState(), "stopped");
+    manager.stopTimers();
+  } finally {
+    await rm(root, { recursive: true, force: true });
+  }
+});
+
+test("claims every 10s for 130s still produce a renew by 40s", async () => {
+  const root = await mkdtemp(join(tmpdir(), "cswarm-claim-rearm-"));
+  await chmod(root, 0o700);
+  try {
+    const tokenPath = await tokenFile(root);
+    const context = {
+      ...newSessionBinding({
+        target: cloudTarget("http://127.0.0.1:9", "synthetic-anon-key"),
+        workspaceId: WORKSPACE,
+        principalId: PRINCIPAL,
+        provider: "codex",
+        mode: "interactive",
+        hostSessionId: "thread-1",
+        tokenFile: tokenPath,
+      }),
+      generation: 1,
+    };
+    const contextPath = join(root, "session.json");
+    await writeSessionContext(contextPath, context);
+    let now = 0;
+    let nextTimerId = 1;
+    const timers = new Map<number, { due: number; callback: () => void }>();
+    const kinds: string[] = [];
+    const client = new AgentSessionClient({
+      target: cloudTarget("http://127.0.0.1:9", "synthetic-anon-key"),
+      fetcher: (async (_input: URL | RequestInfo, init?: RequestInit) => {
+        const body = JSON.parse(String(init?.body ?? "{}")) as {
+          command: { kind: string };
+        };
+        kinds.push(body.command.kind);
+        return new Response(JSON.stringify({ ok: true, status: "accepted" }), {
+          status: 200,
+        });
+      }) as typeof fetch,
+    });
+    const manager = new AgentSessionManager({
+      client,
+      credential: async () => TOKEN,
+      workspaceId: WORKSPACE,
+      contextPath,
+      context,
+      now: () => now,
+      setTimer: (callback, ms) => {
+        const id = nextTimerId;
+        nextTimerId += 1;
+        timers.set(id, { due: now + ms, callback });
+        return id as unknown as ReturnType<typeof setTimeout>;
+      },
+      clearTimer: (timer) => {
+        timers.delete(timer as unknown as number);
+      },
+    });
+    manager.start();
+
+    const flush = async (): Promise<void> => {
+      for (let i = 0; i < 8; i += 1) await Promise.resolve();
+    };
+    const advanceTo = async (target: number): Promise<void> => {
+      while (true) {
+        let next: { id: number; due: number; callback: () => void } | null = null;
+        for (const [id, timer] of timers) {
+          if (timer.due <= target && (next === null || timer.due < next.due)) {
+            next = { id, due: timer.due, callback: timer.callback };
+          }
+        }
+        if (next === null) {
+          now = target;
+          return;
+        }
+        now = next.due;
+        timers.delete(next.id);
+        next.callback();
+        await flush();
+      }
+    };
+
+    for (let t = 10_000; t <= 130_000; t += 10_000) {
+      await advanceTo(t);
+      manager.noteSuccessfulWrite();
+    }
+
+    const renews = kinds.filter((kind) => kind === RENEW_AGENT_SESSION_KIND);
+    assert.ok(
+      renews.length >= 1,
+      `expected a renew by 40s; kinds=${JSON.stringify(kinds)}`,
+    );
+    assert.ok(
+      renews.length >= Math.floor(130_000 / AGENT_SESSION_RENEW_AFTER_MS),
+      `expected renews on the 40s cadence; got ${renews.length}`,
+    );
+    assert.equal(manager.dispatchState(), "running");
     manager.stopTimers();
   } finally {
     await rm(root, { recursive: true, force: true });
