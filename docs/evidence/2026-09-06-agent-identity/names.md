@@ -1,7 +1,7 @@
 # Lane B — UUID UI and creation affordance
 
-Worktree: `/private/tmp/cswarm-astra-identity-20260906-01a07471/names`
-Branch: `lane/identity-names`
+Worktree: `/private/tmp/cswarm-astra-identity-20260906-01a07471/names-r2`
+Branch: `lane/identity-names-r2`
 Lane file: this document.
 
 This lane is not the whole identity feature. Session status UI is deferred. Server
@@ -13,7 +13,7 @@ protocol support for `allow_duplicate_name` is Lane A.
 
 | Surface | Path | Before | After |
 |---|---|---|---|
-| Mention parser | `site/src/lib/mention-address.ts` | Name match; shared names refused | Same refusal; duplicate names selectable via `Name · <uuid-prefix>` label |
+| Mention parser | `site/src/lib/mention-address.ts` | Name match; shared names refused | Same refusal; duplicate names selectable via `Name · <uuid-prefix>` label. Generated labels are unique across every raw name and every other generated label. A tag that still matches two records is refused. |
 | Mention picker | `LiveDashboard.astro` `renderMentionPicker` / `selectMention` | Option id was list index; insert used display name | Option id is `kind`+principal/user UUID; insert uses `identityDisplayLabel` |
 | To: chips | `LiveDashboard.astro` `renderComposerTo` | `data-composer-to-chip` = `kind:id` already | Label is disambiguated; key still UUID |
 | Draft | `commonswarm:composer-draft:<user>:<workspace>:all-signals` | `{ body, to:[{kind,id}], applied }` | Same UUID `to`; old `{name}` or name-in-`id` resolves only if unique |
@@ -79,22 +79,44 @@ Do not infer duplicate create. `cswarm accept` and `cswarm principal create` hav
 caller choice today. A later CLI flag should pass `allowDuplicateName: true` into
 `acceptInviteLink` / the create command. This lane does not add that flag.
 
-## Tests run
+## Round 2 — generated labels vs raw names
+
+Codex gpt-5.6-sol DEFECT: `identityDisplayLabel` suffixed only among duplicate raw
+names. It never checked a generated label against every other record's raw name.
+Measured: two distinct records both rendered as `Echo · 11111111` (one raw name was
+literally that string). A UUID-backed picker choice could then route to the other
+principal through `selectMention` and the mention parser.
+
+Fix in `site/src/lib/identity-label.ts`: assign labels for the whole roster. Unique
+raw names stay bare. Shared names get a UUID suffix that is unique across **all raw
+names and all generated labels**. On collision the prefix grows by one character,
+then the full UUID.
+
+Fix in `site/src/lib/mention-address.ts`: collect every longest match at a tag
+(label and raw name). Refuse when more than one record matches, or when a name-only
+tag is a shared name (existing rule).
+
+Tests:
+
+- Arm case: raw name equal to another record's generated `Echo · 11111111`
+- Three-way collisions (8-char and 9-char forms taken; generated uses 10 chars)
+- Full UUID when every shorter prefix is taken
+- Parser refuses a hand-built colliding label
+- Observer control: picker option id is `kind`+UUID of the record clicked
+
+## Tests run (round 2)
 
 | Command | Exit | Result |
 |---|---|---|
-| `npx tsc --noEmit -p tsconfig.json` | 0 | accept-link types check |
 | `cd site && npm run build` | 0 | 12 pages |
-| `cd site && node --import tsx --test 'src/lib/*.test.mjs' <identity observers>` | 0 | 245 pass / 0 fail |
-| `node --import tsx --test tests/p1-cli/accept-link.test.ts` | 0 | 24 pass / 0 fail |
-| `cd site && node --import tsx --test src/components/app/composer-addressing.observer.test.ts src/components/app/dashboard-runtime.observer.test.ts` | 0 | 11 pass / 0 fail |
+| `cd site && npm test` | 0 | 548 tests / 547 pass / 0 fail / 1 skip (`baseline audit prints common rendered geometry`) |
 
-Full `cd site && npm test` was run once. Extra failures were provider-button and mobile
-header checks that need `site/.env` / a deployment with OAuth. This worktree has no
-`site/.env`. Those tests were not re-run as a gate. They are not identity tests.
+Real Chrome ran (`Slack-shaped composer geometry stays aligned in real Chrome`,
+`real Chrome keeps composer mechanics and their four required controls`).
+`site/.env` is present.
 
-Not run: `npm test` (root literal list), `test:p1-local`, `test:p1-server`, `db:*`,
-`check:edge`. No Supabase slot.
+Not run: root `npm test`, `test:p1-local`, `test:p1-server`, `db:*`, `check:edge`.
+No `cswarm` command. No network. No push.
 
 ## Integration
 
@@ -114,4 +136,5 @@ Not run: `npm test` (root literal list), `test:p1-local`, `test:p1-server`, `db:
 
 ## HEAD
 
-`c4b5f7d` on `lane/identity-names` (code + tests + this file).
+Round 1: `c4b5f7d` on `lane/identity-names`.
+Round 2: this commit on `lane/identity-names-r2` (site labels + mention parser + tests + this file), parent `d141c1e`.
