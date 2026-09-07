@@ -821,6 +821,133 @@ test("swarm_read cannot select key_hash", async () => {
   });
 });
 
+async function waitForLockBlockedBy(
+  observer: postgres.Sql,
+  blockerPid: number,
+  timeoutMs: number,
+): Promise<boolean> {
+  const deadline = Date.now() + timeoutMs;
+  while (Date.now() < deadline) {
+    const rows = await observer<{ pid: number }[]>`
+      SELECT a.pid::int AS pid
+      FROM pg_stat_activity AS a
+      WHERE a.datname = current_database()
+        AND a.pid <> pg_backend_pid()
+        AND a.state = 'active'
+        AND a.wait_event_type = 'Lock'
+        AND ${blockerPid} = ANY (pg_blocking_pids(a.pid))
+    `;
+    if (rows.length >= 1) return true;
+    await delay(25);
+  }
+  return false;
+}
+
+test("stale proof cannot write after recovery commits to N+1", { timeout: 30_000 }, async () => {
+  const agent = await seedAgent("fence-share");
+  await enable(agent.principalId);
+  const sessionId = randomUUID();
+  const key = synthKey();
+  const held = await acquire(agent.token, sessionId, key);
+  assert.equal(held.status, 200, JSON.stringify(held.body));
+  const generation = Number(held.body.generation);
+  assert.ok(Number.isSafeInteger(generation) && generation >= 1);
+
+  const recoverConn = postgres(local.DB_URL, {
+    prepare: false,
+    max: 1,
+    connection: { application_name: "r3-1-recover" },
+  });
+  const observeConn = postgres(local.DB_URL, {
+    prepare: false,
+    max: 1,
+    connection: { application_name: "r3-1-observe" },
+  });
+  let releaseHold = (): void => {};
+  const hold = new Promise<void>((resolve) => {
+    releaseHold = resolve;
+  });
+  let recoverPid = 0;
+  let locked = (): void => {};
+  const hasLock = new Promise<void>((resolve) => {
+    locked = resolve;
+  });
+  const recovery = recoverConn.begin(async (tx) => {
+    const pidRows = await tx<{ pid: string | number }[]>`
+      SELECT pg_backend_pid() AS pid
+    `;
+    recoverPid = Number(pidRows[0]?.pid);
+    const sessions = await tx<{ session_id: string }[]>`
+      SELECT session_id
+      FROM swarm.agent_execution_sessions
+      WHERE principal_id = ${agent.principalId}::uuid
+      FOR UPDATE
+    `;
+    locked();
+    const current = sessions[0];
+    assert.ok(current, "recovery must lock the live session row");
+    await hold;
+    await tx`
+      INSERT INTO swarm.retired_agent_sessions (session_id, principal_id)
+      VALUES (${current.session_id}::uuid, ${agent.principalId}::uuid)
+      ON CONFLICT DO NOTHING
+    `;
+    await tx`
+      UPDATE swarm.agent_execution_sessions
+      SET
+        generation = generation + 1,
+        session_id = gen_random_uuid(),
+        key_hash = NULL,
+        expired_at = statement_timestamp(),
+        updated_at = statement_timestamp()
+      WHERE principal_id = ${agent.principalId}::uuid
+    `;
+  });
+  try {
+    await hasLock;
+    assert.ok(recoverPid > 0, "recovery connection must report a backend pid");
+
+    const staleWrite = runCmd(agent.token, noteBody(), {
+      headers: proofHeaders(sessionId, generation, key),
+    });
+    await waitForLockBlockedBy(observeConn, recoverPid, 3_000);
+    releaseHold();
+    await recovery;
+    const refused = await staleWrite;
+    assert.notEqual(
+      refused.status,
+      200,
+      `stale generation-${generation} write landed after recovery: ${JSON.stringify(refused.body)}`,
+    );
+    assert.ok(
+      refused.body.error === "session_expired" ||
+        refused.body.error === "session_conflict",
+      JSON.stringify(refused.body),
+    );
+    assert.ok(
+      refused.status === 401 || refused.status === 409,
+      JSON.stringify(refused),
+    );
+
+    const nextSession = randomUUID();
+    const nextKey = synthKey();
+    const nextHold = await acquire(agent.token, nextSession, nextKey);
+    assert.equal(nextHold.status, 200, JSON.stringify(nextHold.body));
+    const nextGeneration = Number(nextHold.body.generation);
+    assert.ok(nextGeneration > generation);
+    const fresh = await runCmd(agent.token, noteBody(), {
+      headers: proofHeaders(nextSession, nextGeneration, nextKey),
+    });
+    assert.equal(fresh.status, 200, JSON.stringify(fresh.body));
+    assert.equal(fresh.body.status, "accepted");
+  } finally {
+    releaseHold();
+    await Promise.allSettled([recovery]);
+    await recoverConn.end({ timeout: 5 });
+    await observeConn.end({ timeout: 5 });
+  }
+});
+
 test("re-enable writes and retires the placeholder session_id", async () => {
   const agent = await seedAgent("reenable");
   await enable(agent.principalId);
