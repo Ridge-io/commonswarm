@@ -205,9 +205,11 @@ function refuse(error: AgentSessionErrorCode): AgentSessionFenceResult {
  * Session-proof fence for an agent-authenticated mutation.
  *
  * Callers skip this for kinds in AGENT_SESSION_PROOF_EXEMPT_KINDS.
- * When managedAt is null the session tables are not consulted (unmanaged
- * principals must not pay that query). When managedAt is undefined the
- * session row is still the source of "is managed" (legacy path).
+ * managed_at and the session row are read FOR SHARE in this transaction so
+ * recover/enable/disable/acquire (FOR UPDATE on those rows) cannot commit
+ * between the check and the write. Callers may still pass managedAt; it is
+ * not used to skip the lock. PostgreSQL refuses FOR SHARE on the nullable
+ * side of a LEFT JOIN, so the two reads are separate statements.
  */
 export async function enforceAgentSessionProof(
   tx: Sql,
@@ -218,7 +220,17 @@ export async function enforceAgentSessionProof(
     managedAt?: Date | string | null;
   },
 ): Promise<AgentSessionFenceResult> {
-  if (args.managedAt === null) {
+  const principals = await tx<{ managed_at: Date | string | null }[]>`
+    SELECT managed_at
+    FROM swarm.agent_principals
+    WHERE principal_id = ${args.principalId}::uuid
+    FOR SHARE
+  `;
+  const principal = principals[0];
+  if (principal === undefined) {
+    return refuse("session_proof_invalid");
+  }
+  if (principal.managed_at === null) {
     return { ok: true };
   }
 
@@ -227,25 +239,18 @@ export async function enforceAgentSessionProof(
     generation: string | number | bigint;
     key_hash: Uint8Array | ArrayBuffer | string | null;
     live: boolean;
-    lifecycle_state: string;
   }[]>`
     SELECT
       session_id,
       generation,
       key_hash,
-      (expired_at IS NOT NULL AND expired_at > statement_timestamp()) AS live,
-      lifecycle_state
+      (expired_at IS NOT NULL AND expired_at > statement_timestamp()) AS live
     FROM swarm.agent_execution_sessions
     WHERE principal_id = ${args.principalId}::uuid
       AND workspace_id = ${args.workspaceId}::uuid
+    FOR SHARE
   `;
   const session = rows[0];
-  const managed = args.managedAt !== undefined
-    ? args.managedAt !== null
-    : session !== undefined && session.lifecycle_state === "enabled";
-  if (!managed) {
-    return { ok: true };
-  }
   if (!args.proofParse.ok) {
     return refuse(args.proofParse.error);
   }

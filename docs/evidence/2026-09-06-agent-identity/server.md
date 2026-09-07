@@ -20,7 +20,12 @@ pasted in the round-2 brief.
 - `swarm.agent_principals.managed_at timestamptz NULL` is set by
   `enable_agent_management` and cleared by `disable_agent_management` (human
   owner/admin, row-locked). The command and activity fences consult session
-  tables only when `managed_at` is not null.
+  tables only when `managed_at` is not null. Both reads take `FOR SHARE` in
+  the command transaction (`agent_principals.managed_at`, then the session
+  row). recover/enable/disable/acquire take `FOR UPDATE` on those rows, so a
+  stale request cannot pass the fence and still write after a lifecycle
+  change commits. The unmanaged skip is the locked `managed_at` value, not
+  the caller's pre-lock `managedAt`.
 - `swarm.agent_delivery_read_context` was dropped and recreated from the live
   20260906000010 body plus `managed_at`, with the same three privilege
   statements (OWNER swarm_admin, REVOKE ALL FROM PUBLIC, GRANT EXECUTE TO
@@ -31,9 +36,13 @@ pasted in the round-2 brief.
   server test refuse a `wake_id` column on that view.
 - Sole agent-mutation exemption: `AGENT_SESSION_PROOF_EXEMPT_KINDS` in
   `src/cloud/session-wire.ts` is exactly `acquire_agent_session`. The command
-  fence is `!isAgentSessionProofExempt(kind)`. A pure test enumerates every
-  agent-mutation kind the command edge dispatches and fails closed on a new
-  kind.
+  fence is `!isAgentSessionProofExempt(kind)`. A pure test derives every
+  dispatched kind from the command edge (`COMMAND_KINDS`, exported `KIND`
+  constants, and `handleTransaction` `kind ===` labels — not a fixed name
+  list) and from the protocol `Command` / `WorkspaceCommand` unions. Every
+  agent-issuable kind is fenced by `enforceAgentSessionProof` or listed in
+  `AGENT_SESSION_PROOF_EXEMPT_KINDS`. A mutation that inserts a new direct
+  handler fails the inventory.
 - Activity (`supabase/functions/activity/index.ts`) is an agent mutation
   (broadcast in the principal's name) and uses the same fence when
   `managed_at` is not null.
@@ -69,9 +78,10 @@ pasted in the round-2 brief.
 
 ### Command kinds — fenced when the principal is managed
 
-Every agent-authenticated mutation except acquire. Inventory frozen in
-`tests/protocol-workspace.test.ts` ("every agent-mutation kind the command
-edge dispatches is fenced or exempt"):
+Every agent-authenticated mutation except acquire. Inventory derived in
+`tests/protocol-workspace.test.ts` from the dispatcher and from
+`src/protocol` command unions, not a handwritten kind list ("every
+agent-mutation kind the command edge dispatches is fenced or exempt"):
 
 - task: `create`, `acquire`, `renew`, `handoff`, `takeover`, `submit`,
   `close`, `reopen`
@@ -86,7 +96,9 @@ edge dispatches is fenced or exempt"):
 
 A newly added kind in that dispatcher is fenced unless it is added to
 `AGENT_SESSION_PROOF_EXEMPT_KINDS`, and adding it there fails the exact-
-membership test.
+membership test. A mutation control inserts `synth_unfenced_kind` as a
+direct `handleTransaction` handler and shows the inventory extra-set
+fails; the retired fixed-name regex does not see that kind.
 
 ### Command kinds — exempt
 

@@ -10045,10 +10045,10 @@ test("durable-delivery: Phase B revocation wins in exact queue order", { timeout
       }, claimCId);
       claimC = claimCPromise;
 
-      // 6. Prove C reached the production principal SELECT ... FOR UPDATE after
-      //    authentication and its initial idempotency lookup (both precede
-      //    claimAgentInbox step 1 in the handler), and is queued behind B. C
-      //    must remain pending until observed blocked.
+      // 6. Prove C reached the session-proof fence's principal SELECT ... FOR
+      //    SHARE after authentication (that fence precedes the idempotency
+      //    lookup and claimAgentInbox step 1), and is queued behind B. C must
+      //    remain pending until observed blocked.
       const cBlocked = await waitForBlockedBackends({
         queryPattern: /FROM swarm\.agent_principals/,
         blockerPids: [bPid],
@@ -10058,8 +10058,8 @@ test("durable-delivery: Phase B revocation wins in exact queue order", { timeout
       });
       assert.match(
         cBlocked[0]?.query ?? "",
-        /FOR UPDATE/,
-        "C is blocked on the production principal FOR UPDATE lock query",
+        /FOR SHARE/,
+        "C is blocked on the session-proof fence principal FOR SHARE query",
       );
       assert.equal(
         cBlocked[0]?.blockingPids.includes(bPid),
@@ -11481,7 +11481,11 @@ async function runPhaseCRechargeRace(
   try {
     ledgerHolder = await retainPhaseCLedgerTableLock();
     ackRowHolder = await retainPhaseCAckRowLock(f.workspaceA, agent.principalId, signalAId);
-    principalHolder = await retainPrincipalRowLock(agent.principalId, f.workspaceA, "FOR UPDATE");
+    // SHARE, not UPDATE: the session-proof fence takes FOR SHARE on this row
+    // before the idempotency lookup. UPDATE would park both requests at the
+    // fence and they would never reach L. SHARE lets the fence through and
+    // still parks claimAgentInbox's later FOR UPDATE.
+    principalHolder = await retainPrincipalRowLock(agent.principalId, f.workspaceA, "FOR SHARE");
 
     ackPromise = issueDelivery(f, agent.token, ackCommand, sharedCommandId);
     claimPromise = issueDelivery(f, agent.token, claimCommand, sharedCommandId);
