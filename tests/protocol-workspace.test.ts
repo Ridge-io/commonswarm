@@ -1520,60 +1520,166 @@ describe('set_agent_model', () => {
 
 describe('agent session proof exemption', () => {
   const repoRoot = join(dirname(fileURLToPath(import.meta.url)), '..');
+  const commandPath = join(repoRoot, 'supabase/functions/command/index.ts');
+  const protocolCommandsPath = join(repoRoot, 'src/protocol/commands.ts');
+  const protocolWorkspacePath = join(
+    repoRoot,
+    'src/protocol/workspace-commands.ts',
+  );
+  const fileArtifactsPath = join(
+    repoRoot,
+    'supabase/functions/command/file-artifacts.ts',
+  );
+  const deliveryPath = join(
+    repoRoot,
+    'supabase/functions/command/durable-delivery.ts',
+  );
+  const receiptsPath = join(
+    repoRoot,
+    'supabase/functions/command/human-receipts.ts',
+  );
 
   function quotedStrings(block: string): string[] {
     return [...block.matchAll(/"([a-z0-9_]+)"/g)].map((match) => match[1]);
   }
 
-  function extractCommandEdgeKinds(): Set<string> {
-    const commandSrc = readFileSync(
-      join(repoRoot, 'supabase/functions/command/index.ts'),
-      'utf8',
+  function sliceExportBlock(src: string, startNeedle: string): string {
+    const start = src.indexOf(startNeedle);
+    assert.ok(start >= 0, `${startNeedle} must be exported`);
+    const rest = src.slice(start + startNeedle.length);
+    const next = rest.search(/\nexport /);
+    assert.ok(next > 0, `${startNeedle} must be followed by another export`);
+    return rest.slice(0, next);
+  }
+
+  function kindLiteralsIn(block: string): string[] {
+    return [...block.matchAll(/kind: '([a-z0-9_]+)'/g)].map((match) => match[1]);
+  }
+
+  function exportedKindConstants(src: string): string[] {
+    return [...src.matchAll(/(?:export )?const [A-Z][A-Z0-9_]*_KIND = "([a-z0-9_]+)"/g)]
+      .map((match) => match[1]);
+  }
+
+  function resolveKindConstant(name: string, sources: string[]): string {
+    const pattern = new RegExp(`(?:export )?const ${name} = "([a-z0-9_]+)"`);
+    for (const src of sources) {
+      const match = src.match(pattern);
+      if (match) return match[1];
+    }
+    assert.fail(`${name} must resolve to a quoted command kind`);
+  }
+
+  function handleTransactionBody(commandSrc: string): string {
+    const start = commandSrc.indexOf('async function handleTransaction(');
+    assert.ok(start >= 0, 'handleTransaction must exist');
+    const from = commandSrc.slice(start);
+    const endRel = from.search(/\nasync function /);
+    assert.ok(endRel > 0, 'handleTransaction must be followed by another function');
+    return from.slice(0, endRel);
+  }
+
+  function arrayBlock(src: string, name: string): string {
+    const match = src.match(
+      new RegExp(`const ${name} = \\[([\\s\\S]*?)\\] as const`),
     );
-    const fileSrc = readFileSync(
-      join(repoRoot, 'supabase/functions/command/file-artifacts.ts'),
-      'utf8',
-    );
-    const deliverySrc = readFileSync(
-      join(repoRoot, 'supabase/functions/command/durable-delivery.ts'),
-      'utf8',
-    );
-    const receiptsSrc = readFileSync(
-      join(repoRoot, 'supabase/functions/command/human-receipts.ts'),
-      'utf8',
-    );
+    assert.ok(match, `${name} must exist so a new kind is visible`);
+    return match[1];
+  }
+
+  function declaredDispatchKinds(sources: {
+    commandSrc: string;
+    fileSrc: string;
+    deliverySrc: string;
+    receiptsSrc: string;
+    protocolCommandsSrc: string;
+    protocolWorkspaceSrc: string;
+  }): Set<string> {
     const kinds = new Set<string>();
-    const commandKinds = commandSrc.match(
-      /const COMMAND_KINDS = \[([\s\S]*?)\] as const/,
-    );
-    assert.ok(commandKinds, 'COMMAND_KINDS must exist so a new kind is visible');
-    for (const kind of quotedStrings(commandKinds[1])) kinds.add(kind);
-    const channelKinds = commandSrc.match(
-      /const CHANNEL_COMMAND_KINDS = \[([\s\S]*?)\] as const/,
-    );
-    assert.ok(channelKinds, 'CHANNEL_COMMAND_KINDS must exist');
-    for (const kind of quotedStrings(channelKinds[1])) kinds.add(kind);
-    for (const match of fileSrc.matchAll(
-      /export const FILE_[A-Z_]+_KIND = "([a-z_]+)"/g,
-    )) {
-      kinds.add(match[1]);
+    for (const kind of quotedStrings(arrayBlock(sources.commandSrc, 'COMMAND_KINDS'))) {
+      kinds.add(kind);
     }
-    for (const match of deliverySrc.matchAll(
-      /export const (?:CLAIM_AGENT_INBOX_KIND|ACK_AGENT_DELIVERY_KIND) = "([a-z_]+)"/g,
-    )) {
-      kinds.add(match[1]);
+    for (const kind of quotedStrings(arrayBlock(sources.commandSrc, 'CHANNEL_COMMAND_KINDS'))) {
+      kinds.add(kind);
     }
-    const seenKind = receiptsSrc.match(
-      /export const SIGNALS_SEEN_KIND = "([a-z_]+)"/,
-    );
-    assert.ok(seenKind, 'SIGNALS_SEEN_KIND must exist');
-    kinds.add(seenKind[1]);
-    for (const match of commandSrc.matchAll(
-      /kind === "(enable_agent_management|disable_agent_management|recover_agent_session|acquire_agent_session|renew_agent_session|release_agent_session|register_device|create_workspace|mint_capability_url|revoke_capability_url|resume_renewal_grant)"/g,
-    )) {
-      kinds.add(match[1]);
+    for (const kind of exportedKindConstants(sources.fileSrc)) kinds.add(kind);
+    for (const kind of exportedKindConstants(sources.deliverySrc)) kinds.add(kind);
+    for (const kind of exportedKindConstants(sources.receiptsSrc)) kinds.add(kind);
+    for (const kind of kindLiteralsIn(sliceExportBlock(sources.protocolCommandsSrc, 'export type Command ='))) {
+      kinds.add(kind);
+    }
+    for (const kind of kindLiteralsIn(sliceExportBlock(sources.protocolWorkspaceSrc, 'export type WorkspaceCommand ='))) {
+      kinds.add(kind);
     }
     return kinds;
+  }
+
+  function dispatchedKinds(sources: {
+    commandSrc: string;
+    fileSrc: string;
+    deliverySrc: string;
+    receiptsSrc: string;
+    protocolCommandsSrc: string;
+    protocolWorkspaceSrc: string;
+  }): Set<string> {
+    const kinds = declaredDispatchKinds(sources);
+    const handleSrc = handleTransactionBody(sources.commandSrc);
+    for (const match of handleSrc.matchAll(/(?<![A-Za-z0-9_.])kind === "([a-z0-9_]+)"/g)) {
+      kinds.add(match[1]);
+    }
+    const constSources = [
+      sources.commandSrc,
+      sources.fileSrc,
+      sources.deliverySrc,
+      sources.receiptsSrc,
+    ];
+    for (const match of handleSrc.matchAll(/(?<![A-Za-z0-9_.])kind === ([A-Z][A-Z0-9_]*)/g)) {
+      kinds.add(resolveKindConstant(match[1], constSources));
+    }
+    return kinds;
+  }
+
+  function humanPreRouteKinds(commandSrc: string): Set<string> {
+    const names = [
+      'REGISTER_DEVICE_KIND',
+      'CREATE_WORKSPACE_KIND',
+      'MINT_CAPABILITY_KIND',
+      'REVOKE_CAPABILITY_KIND',
+      'RESUME_RENEWAL_GRANT_KIND',
+    ];
+    return new Set(names.map((name) => resolveKindConstant(name, [commandSrc])));
+  }
+
+  function inventorySources(commandSrc?: string) {
+    return {
+      commandSrc: commandSrc ?? readFileSync(commandPath, 'utf8'),
+      fileSrc: readFileSync(fileArtifactsPath, 'utf8'),
+      deliverySrc: readFileSync(deliveryPath, 'utf8'),
+      receiptsSrc: readFileSync(receiptsPath, 'utf8'),
+      protocolCommandsSrc: readFileSync(protocolCommandsPath, 'utf8'),
+      protocolWorkspaceSrc: readFileSync(protocolWorkspacePath, 'utf8'),
+    };
+  }
+
+  function agentMutationInventory(commandSrc?: string): {
+    agentMutations: Set<string>;
+    extra: string[];
+    missing: string[];
+  } {
+    const sources = inventorySources(commandSrc);
+    const humanPreRoute = humanPreRouteKinds(sources.commandSrc);
+    const drop = (kind: string): boolean =>
+      HUMAN_ONLY_COMMANDS.has(kind as WorkspaceCommand['kind']) ||
+      humanPreRoute.has(kind);
+    const agentMutations = new Set(
+      [...dispatchedKinds(sources)].filter((kind) => !drop(kind)),
+    );
+    const declaredAgent = new Set(
+      [...declaredDispatchKinds(sources)].filter((kind) => !drop(kind)),
+    );
+    const missing = [...declaredAgent].filter((kind) => !agentMutations.has(kind)).sort();
+    const extra = [...agentMutations].filter((kind) => !declaredAgent.has(kind)).sort();
+    return { agentMutations, extra, missing };
   }
 
   it('the exemption set is exactly acquire_agent_session', () => {
@@ -1600,69 +1706,22 @@ describe('agent session proof exemption', () => {
   });
 
   it('every agent-mutation kind the command edge dispatches is fenced or exempt', () => {
-    const humanPreRoute = new Set([
-      'register_device',
-      'create_workspace',
-      'mint_capability_url',
-      'revoke_capability_url',
-      'resume_renewal_grant',
-    ]);
-    const expectedAgentMutations = new Set([
-      'create',
-      'acquire',
-      'renew',
-      'handoff',
-      'takeover',
-      'submit',
-      'close',
-      'reopen',
-      'declare_agent_model',
-      'submit_feedback',
-      'revoke_agent_token',
-      'renew_agent_token',
-      'post_signal',
-      'channel_create',
-      'channel_rename',
-      'channel_archive',
-      'signals_seen',
-      'claim_agent_inbox',
-      'ack_agent_delivery',
-      'file_version_create',
-      'file_version_commit',
-      'file_download_url',
-      'file_tombstone',
-      'file_restore',
-      'acquire_agent_session',
-      'renew_agent_session',
-      'release_agent_session',
-    ]);
-    const dispatched = extractCommandEdgeKinds();
-    const agentMutations = new Set<string>();
-    for (const kind of dispatched) {
-      if (HUMAN_ONLY_COMMANDS.has(kind as WorkspaceCommand['kind'])) continue;
-      if (humanPreRoute.has(kind)) continue;
-      agentMutations.add(kind);
-    }
-    const missing = [...expectedAgentMutations].filter((kind) =>
-      !agentMutations.has(kind)
-    );
-    const extra = [...agentMutations].filter((kind) =>
-      !expectedAgentMutations.has(kind)
-    );
+    const { agentMutations, extra, missing } = agentMutationInventory();
     assert.deepEqual(
       missing,
       [],
-      'command edge lost an agent-mutation kind the inventory names',
+      'dispatcher lost an agent-mutation kind protocol/exports still name',
     );
     assert.deepEqual(
       extra,
       [],
-      'command edge grew an agent-mutation kind; add it to the inventory as fenced, or to AGENT_SESSION_PROOF_EXEMPT_KINDS',
+      'dispatcher grew an agent-mutation kind; fence it or add it to AGENT_SESSION_PROOF_EXEMPT_KINDS and to the protocol/export source of truth',
     );
+    assert.ok(agentMutations.size > 0, 'inventory must not be empty');
     for (const kind of agentMutations) {
       const exempt = isAgentSessionProofExempt(kind);
-      if (kind === 'acquire_agent_session') {
-        assert.equal(exempt, true);
+      if (exempt) {
+        assert.equal(kind, 'acquire_agent_session');
       } else {
         assert.equal(
           exempt,
@@ -1671,6 +1730,29 @@ describe('agent session proof exemption', () => {
         );
       }
     }
+  });
+
+  it('mutation control: a new direct handler kind fails the closed inventory', () => {
+    const commandSrc = readFileSync(commandPath, 'utf8');
+    assert.match(commandSrc, /if \(kind === "release_agent_session"\)/);
+    const mutated = commandSrc.replace(
+      'if (kind === "release_agent_session")',
+      'if (kind === "synth_unfenced_kind") { return await synthUnfenced(); }\n    if (kind === "release_agent_session")',
+    );
+    const { extra, agentMutations } = agentMutationInventory(mutated);
+    assert.equal(agentMutations.has('synth_unfenced_kind'), true);
+    assert.deepEqual(extra, ['synth_unfenced_kind']);
+    assert.equal(isAgentSessionProofExempt('synth_unfenced_kind'), false);
+    const oldWhitelist = [
+      ...mutated.matchAll(
+        /kind === "(enable_agent_management|disable_agent_management|recover_agent_session|acquire_agent_session|renew_agent_session|release_agent_session|register_device|create_workspace|mint_capability_url|revoke_capability_url|resume_renewal_grant)"/g,
+      ),
+    ].map((match) => match[1]);
+    assert.equal(
+      oldWhitelist.includes('synth_unfenced_kind'),
+      false,
+      'the retired fixed-name list must not see a new direct handler',
+    );
   });
 
   it('missing proof headers parse as session_proof_missing', () => {
@@ -1779,6 +1861,15 @@ describe('agent session proof exemption', () => {
       fenceSrc,
       /expired_at IS NOT NULL AND expired_at > statement_timestamp\(\)/,
     );
+    assert.match(
+      fenceSrc,
+      /SELECT\s+managed_at\s+FROM swarm\.agent_principals[\s\S]*?FOR SHARE/,
+    );
+    assert.match(
+      fenceSrc,
+      /FROM swarm\.agent_execution_sessions[\s\S]*?FOR SHARE/,
+    );
+    assert.equal(fenceSrc.includes('if (args.managedAt === null)'), false);
   });
 
   it('capability is not agent-authenticated and does not claim or ack', () => {

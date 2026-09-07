@@ -98,8 +98,10 @@ export function sessionBindingsConflict(
 /**
  * The sole agent-mutation exemption from the session-proof fence.
  * acquire_agent_session performs its own row-locked acquisition check.
- * A newly added agent-mutation kind is fenced unless it is added here;
- * the membership test in tests/protocol-workspace.test.ts fails closed.
+ * A newly added agent-mutation kind is fenced unless it is added here.
+ * tests/protocol-workspace.test.ts derives the dispatcher inventory from
+ * protocol command unions, exported KIND constants, and handleTransaction
+ * `kind ===` labels — not a fixed name list — and fails closed on a new kind.
  */
 export const AGENT_SESSION_PROOF_EXEMPT_KINDS = [
   "acquire_agent_session",
