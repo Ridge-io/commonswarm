@@ -130,11 +130,10 @@ No `cswarm` command. No network. No push.
 
 - Server does not yet accept the flag in this worktree.
 - CLI has no duplicate-name choice.
-- Full `npm --prefix site test` depends on `site/.env`.
 - No session status UI (out of scope).
 - Same-OS-user token theft is out of the claimed protection.
 
 ## HEAD
 
 Round 1: `c4b5f7d` on `lane/identity-names`.
-Round 2: this commit on `lane/identity-names-r2` (site labels + mention parser + tests + this file), parent `d141c1e`.
+Round 2 fix: `c5d6cdd368b7a51a606edd9ac237a482a68d5efe` on `lane/identity-names-r2` (site labels + mention parser + tests), parent `d141c1e`. This file's HEAD line lives on the same branch.
