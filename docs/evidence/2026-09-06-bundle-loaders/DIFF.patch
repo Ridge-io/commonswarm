@@ -1,0 +1,581 @@
+diff --git a/AGENTS.md b/AGENTS.md
+index 56d1e2a..0c271c3 100644
+--- a/AGENTS.md
++++ b/AGENTS.md
+@@ -133,6 +133,11 @@ may report `mode: push` only while the Realtime socket is subscribed.
+ only live `--route` is `main`. A signal wakes the seat's own session. The listener claims the
+ delivery into that seat's queue. It does not start Grok, Claude, Codex, or OpenCode.
+ 
++**The source suites never load the shipped bundle.** `npm test` and `test:p1-cli` run TypeScript
++through tsx. A lane that changes module loading must run `scripts/build-release.sh` and check its
++EXIT CODE (it runs the artifact and fails on a bad build). `cmd | grep` hides the exit code —
++that is how 0.1.62 shipped.
++
+ ## Session continuity
+ 
+ Read the newest `docs/org/*-RESUME-HERE.md` on `main` before re-deriving work:
+diff --git a/package.json b/package.json
+index 13e72cf..2857e47 100644
+--- a/package.json
++++ b/package.json
+@@ -20,7 +20,7 @@
+     "dev": "tsc --watch",
+     "check:tests": "tsc -p tsconfig.tests.json",
+     "check:edge": "deno check --config supabase/functions/command/deno.json supabase/functions/command/index.ts supabase/functions/read/index.ts supabase/functions/capability/index.ts supabase/functions/activity/index.ts",
+-    "test": "node --import tsx --test tests/brain-namespace.test.ts tests/signal-attachments.test.ts tests/host-version-floor.test.ts tests/protocol-next.test.ts tests/protocol-workspace.test.ts tests/protocol-agent-token-binding.test.ts tests/support/cold-start-retry.test.ts tests/support/signal-fetch-deadline.test.ts tests/support/agent-receive-cli.test.ts tests/support/arrival-watch.test.ts tests/p1-cli/resume.test.ts tests/p1-cli/resume-process-table.test.ts tests/delivery-client.test.ts tests/delivery-receipts.test.ts tests/p1-cli/d038-invite-form.test.ts tests/p1-cli/listener-provider.test.ts tests/p1-cli/standing-grants.test.ts tests/p1-cli/citation-drift.test.ts tests/p1-cli/test-gate-coverage.test.ts tests/p1-cli/agent-trailers.test.ts tests/command-cors.test.ts tests/command-durable-failures.test.ts tests/fresh-auth.test.ts tests/remove-member-mutation.test.ts tests/agent-revocation-mutation.test.ts tests/read-edge-diagnostics.test.ts tests/host-acp-grok.test.ts tests/host-permission-session-scope.test.ts tests/host-acp-claude.test.ts tests/host-acp-codex.test.ts tests/host-stderr-tail.test.ts tests/listener-activity.test.ts tests/listener-engine.test.ts tests/listener-effect-store.test.ts tests/listener-grok-model.test.ts tests/listener-claude-model.test.ts tests/listener-codex-model.test.ts tests/idle-poll.test.ts tests/idle-cost-retention.test.ts tests/listener-runtime.test.ts tests/listener-wake.test.ts tests/listener-routing.test.ts tests/listener-main-only.test.ts tests/listener-control.test.ts tests/listener-detach.test.ts tests/listener-cli-process.test.ts tests/host-acp-opencode.test.ts tests/listener-opencode-model.test.ts tests/host-acp-opencode-homes.test.ts tests/listener-host-limits.test.ts tests/listener-delivery-journal.test.ts tests/claim-ledger-parse.test.ts tests/receipt-wire-compat.test.ts tests/chat-channel-constants.test.ts tests/chat-signal-wire-compat.test.ts",
++    "test": "node --import tsx --test tests/brain-namespace.test.ts tests/signal-attachments.test.ts tests/host-version-floor.test.ts tests/protocol-next.test.ts tests/protocol-workspace.test.ts tests/protocol-agent-token-binding.test.ts tests/support/cold-start-retry.test.ts tests/support/signal-fetch-deadline.test.ts tests/support/agent-receive-cli.test.ts tests/support/arrival-watch.test.ts tests/p1-cli/resume.test.ts tests/p1-cli/resume-process-table.test.ts tests/delivery-client.test.ts tests/delivery-receipts.test.ts tests/p1-cli/d038-invite-form.test.ts tests/p1-cli/listener-provider.test.ts tests/p1-cli/standing-grants.test.ts tests/p1-cli/citation-drift.test.ts tests/p1-cli/release-bundle.test.ts tests/p1-cli/test-gate-coverage.test.ts tests/p1-cli/agent-trailers.test.ts tests/command-cors.test.ts tests/command-durable-failures.test.ts tests/fresh-auth.test.ts tests/remove-member-mutation.test.ts tests/agent-revocation-mutation.test.ts tests/read-edge-diagnostics.test.ts tests/host-acp-grok.test.ts tests/host-permission-session-scope.test.ts tests/host-acp-claude.test.ts tests/host-acp-codex.test.ts tests/host-stderr-tail.test.ts tests/listener-activity.test.ts tests/listener-engine.test.ts tests/listener-effect-store.test.ts tests/listener-grok-model.test.ts tests/listener-claude-model.test.ts tests/listener-codex-model.test.ts tests/idle-poll.test.ts tests/idle-cost-retention.test.ts tests/listener-runtime.test.ts tests/listener-wake.test.ts tests/listener-routing.test.ts tests/listener-main-only.test.ts tests/listener-control.test.ts tests/listener-detach.test.ts tests/listener-cli-process.test.ts tests/host-acp-opencode.test.ts tests/listener-opencode-model.test.ts tests/host-acp-opencode-homes.test.ts tests/listener-host-limits.test.ts tests/listener-delivery-journal.test.ts tests/claim-ledger-parse.test.ts tests/receipt-wire-compat.test.ts tests/chat-channel-constants.test.ts tests/chat-signal-wire-compat.test.ts",
+     "test:site": "npm --prefix site test",
+     "test:p1-cli": "node scripts/require-cli-build.mjs && node --import tsx --test tests/p1-cli/**/*.test.ts",
+     "test:p1-local": "node --import tsx --test --test-concurrency=1 tests/p1-local/local-integration.test.ts tests/p1-local/file-artifacts-e2e.test.ts tests/p1-local/delivery-receipts-postgres.test.ts tests/p1-local/human-seen-browser.test.ts tests/p1-local/standing-grants-postgres.test.ts tests/p1-local/activity-realtime-auth.test.ts tests/p1-local/chat-channels-postgres.test.ts tests/p1-local/chat-recipients-postgres.test.ts tests/p1-local/wake-realtime-auth.test.ts",
+diff --git a/src/cli.ts b/src/cli.ts
+index 3bf6619..edba558 100755
+--- a/src/cli.ts
++++ b/src/cli.ts
+@@ -1,7 +1,6 @@
+ #!/usr/bin/env node
+ 
+ import { randomUUID } from "node:crypto";
+-import { createRequire } from "node:module";
+ import { spawnSync } from "node:child_process";
+ import { mkdirSync, readFileSync, writeFileSync } from "node:fs";
+ import { open, unlink } from "node:fs/promises";
+@@ -352,23 +351,23 @@ import {
+ import { SESSION_MODES } from "./cloud/session-contract.js";
+ import { AgentSessionManager } from "./cloud/session-manager.js";
+ import { AgentSessionClient } from "./cloud/session-client.js";
++import { classifyClaudeCanaryFailure } from "./listener/claude-canary-classify.js";
+ 
+-const requireFromCli = createRequire(import.meta.url);
+-
+-function loadHostClaude(): typeof import("./host/claude.js") {
+-  return requireFromCli("./host/claude.js");
+-}
+-
+-function loadHostCodex(): typeof import("./host/codex.js") {
+-  return requireFromCli("./host/codex.js");
++/* Literal `import("./…")` so esbuild inlines the module into the CJS artifact.
++ * `createRequire(import.meta.url)` is empty under `--format=cjs` and crashed
++ * 0.1.62 at load. A runtime require of a relative path is also missing from
++ * the single-file bundle. The session graph walker only follows
++ * `import … from`, so ACP hosts stay off that graph. */
++function loadHostClaude(): Promise<typeof import("./host/claude.js")> {
++  return import("./host/claude.js");
+ }
+ 
+-function loadHostOpenCode(): typeof import("./host/opencode.js") {
+-  return requireFromCli("./host/opencode.js");
++function loadHostCodex(): Promise<typeof import("./host/codex.js")> {
++  return import("./host/codex.js");
+ }
+ 
+-function loadClaudeListenerModel(): typeof import("./listener/claude-model.js") {
+-  return requireFromCli("./listener/claude-model.js");
++function loadHostOpenCode(): Promise<typeof import("./host/opencode.js")> {
++  return import("./host/opencode.js");
+ }
+ 
+ /**
+@@ -4843,7 +4842,7 @@ export async function listenerProviderInstallEvidence(
+ ): Promise<ListenerProviderInstallEvidence | null> {
+   if (status.provider !== "claude") return null;
+   try {
+-    const notice = await loadHostClaude().inspectClaudeBridgeExecutable(
++    const notice = await (await loadHostClaude()).inspectClaudeBridgeExecutable(
+       status.providerExecutable ?? "claude-agent-acp",
+       { pathEnv: process.env.PATH, env: process.env },
+     );
+@@ -5507,7 +5506,7 @@ export function listenerFailureMessage(
+   }
+   if (code === "permission_canary_failed") {
+     if (provider === "claude") {
+-      const shape = loadClaudeListenerModel().classifyClaudeCanaryFailure(detail, reasonCode);
++      const shape = classifyClaudeCanaryFailure(detail, reasonCode);
+       const ran =
+         "the Claude ACP permission canary ran, but no workspace signal prompt was delivered";
+       const response = `bridge response [${shape.code}]: ${quotedListenerFailureDetail(detail)}`;
+@@ -5568,12 +5567,12 @@ export function listenerFailureMessage(
+ }
+ 
+ /** Resolve the detached Claude bridge while preserving its install remedy. */
+-export function resolveDetachedClaudeExecutable(
++export async function resolveDetachedClaudeExecutable(
+   executable = "claude-agent-acp",
+   pathEnv = process.env.PATH,
+-): string {
++): Promise<string> {
+   try {
+-    return loadHostClaude().resolveClaudeExecutable(executable, pathEnv);
++    return (await loadHostClaude()).resolveClaudeExecutable(executable, pathEnv);
+   } catch (error) {
+     const code = (error as { code?: unknown }).code;
+     if (typeof code === "string") {
+@@ -5594,12 +5593,12 @@ export function resolveDetachedClaudeExecutable(
+ }
+ 
+ /** Resolve the detached Codex bridge while preserving its install remedy. */
+-export function resolveDetachedCodexExecutable(
++export async function resolveDetachedCodexExecutable(
+   executable = "codex-acp",
+   pathEnv = process.env.PATH,
+-): string {
++): Promise<string> {
+   try {
+-    return loadHostCodex().resolveCodexExecutable(executable, pathEnv);
++    return (await loadHostCodex()).resolveCodexExecutable(executable, pathEnv);
+   } catch (error) {
+     const code = (error as { code?: unknown }).code;
+     if (typeof code === "string") {
+@@ -6227,15 +6226,15 @@ async function runListenStart(args: Arguments): Promise<void> {
+        an absent one is simply absent. */
+     const opencodeExecutable = provider === "opencode" &&
+         args.optional("opencode-executable") !== undefined
+-      ? loadHostOpenCode().resolveOpenCodeExecutable(args.required("opencode-executable"))
++      ? (await loadHostOpenCode()).resolveOpenCodeExecutable(args.required("opencode-executable"))
+       : undefined;
+     let claudeExecutable: string | undefined;
+     if (provider === "claude" && args.optional("claude-executable") !== undefined) {
+-      claudeExecutable = resolveDetachedClaudeExecutable(args.required("claude-executable"));
++      claudeExecutable = await resolveDetachedClaudeExecutable(args.required("claude-executable"));
+     }
+     let codexExecutable: string | undefined;
+     if (provider === "codex" && args.optional("codex-executable") !== undefined) {
+-      codexExecutable = resolveDetachedCodexExecutable(args.required("codex-executable"));
++      codexExecutable = await resolveDetachedCodexExecutable(args.required("codex-executable"));
+     }
+     /* D-080. Captured BEFORE the spawn on purpose: any status file older than this belongs to
+      * an earlier run in this config-hash-keyed directory, whatever pid it carries. Taking it
+diff --git a/src/listener/claude-canary-classify.ts b/src/listener/claude-canary-classify.ts
+new file mode 100644
+index 0000000..66375dc
+--- /dev/null
++++ b/src/listener/claude-canary-classify.ts
+@@ -0,0 +1,76 @@
++import type { AcpPeerError } from "../host/types.js";
++
++export type ClaudeCanaryFailureCode =
++  | "claude_bridge_version_required"
++  | "claude_canary_timeout"
++  | "claude_canary_auth_failed"
++  | "claude_canary_unknown";
++
++export type ClaudeCanaryFailureShape = {
++  code: ClaudeCanaryFailureCode;
++  minimumRequiredVersion: string | null;
++};
++
++const CLAUDE_CODE_VERSION_REQUIRED_RE =
++  /\bClaude Code (\d+\.\d+\.\d+) does not support this model; version (\d+\.\d+\.\d+) or newer is required\b/;
++const CLAUDE_AUTH_FAILURE_RE =
++  /\b(?:authentication failed|failed to authenticate|authentication required|not authenticated|OAuth (?:sign-in|login|token)|OAuth session (?:expired|could not be refreshed)|keychain\/OAuth|please (?:log|sign) in)\b/i;
++const CLAUDE_CANARY_TIMEOUT_RE =
++  /^ACP request timed out: session\/prompt(?: \(failed \d+ attempts\))?$/;
++
++/** Assign a stable local reason at the Claude provider boundary. */
++export function classifyClaudeCanaryFailure(
++  detail: string | null | undefined,
++  typedReasonCode?: string | null,
++  peerError?: AcpPeerError | null,
++): ClaudeCanaryFailureShape {
++  const recorded = detail?.trim() ?? "";
++  const peerData = peerError?.data;
++  const peerErrorKind = peerData && typeof peerData === "object" &&
++      !Array.isArray(peerData)
++    ? (peerData as Record<string, unknown>).errorKind
++    : undefined;
++  if (
++    typedReasonCode === "claude_canary_auth_failed" ||
++    ((typedReasonCode === "rpc_error" || typedReasonCode === null ||
++      typedReasonCode === undefined) &&
++      (peerError?.code === -32000 || peerErrorKind === "authentication_failed"))
++  ) {
++    return { code: "claude_canary_auth_failed", minimumRequiredVersion: null };
++  }
++  const demanded = CLAUDE_CODE_VERSION_REQUIRED_RE.exec(recorded);
++  if (demanded?.[2]) {
++    return {
++      code: "claude_bridge_version_required",
++      minimumRequiredVersion: demanded[2],
++    };
++  }
++  if (
++    typedReasonCode === "claude_canary_timeout" ||
++    typedReasonCode === "timeout" ||
++    ((typedReasonCode === null || typedReasonCode === undefined) &&
++      CLAUDE_CANARY_TIMEOUT_RE.test(recorded))
++  ) {
++    return { code: "claude_canary_timeout", minimumRequiredVersion: null };
++  }
++  if (typedReasonCode === "claude_bridge_version_required") {
++    return {
++      code: "claude_bridge_version_required",
++      minimumRequiredVersion: demanded?.[2] ?? null,
++    };
++  }
++  /* claude-agent-acp 0.73.0 supplies `error.data.errorKind` for SDK failures,
++   * and that typed field is preferred above. Older bridges or paths can omit
++   * it. The new fallbacks for the measured family are "Failed to authenticate",
++   * "OAuth session expired", and "could not be refreshed" only when attached
++   * to "OAuth session"; the existing direct auth phrases remain. No retry or
++   * state decision branches on this presentation text (D-053). */
++  if (
++    (typedReasonCode === "rpc_error" || typedReasonCode === null ||
++      typedReasonCode === undefined) &&
++    CLAUDE_AUTH_FAILURE_RE.test(recorded)
++  ) {
++    return { code: "claude_canary_auth_failed", minimumRequiredVersion: null };
++  }
++  return { code: "claude_canary_unknown", minimumRequiredVersion: null };
++}
+diff --git a/src/listener/claude-model.ts b/src/listener/claude-model.ts
+index 2d267f5..a43a898 100644
+--- a/src/listener/claude-model.ts
++++ b/src/listener/claude-model.ts
+@@ -13,13 +13,13 @@ import { allowOnceOrDeny, defaultPermissionCallback } from "../host/permission.j
+ import {
+   AcpChildExitError,
+   AcpPermissionCanaryError,
+-  type AcpPeerError,
+   type HostSessionEvents,
+   type PermissionCallback,
+   type PermissionDecision,
+   type PermissionRequest,
+ } from "../host/types.js";
+ import type { SignalRecord } from "../cloud/command-client.js";
++import { classifyClaudeCanaryFailure } from "./claude-canary-classify.js";
+ import {
+   LISTENER_PROMPT_TIMEOUT_MS,
+   resolveBudgetAndPrompt,
+@@ -32,6 +32,12 @@ import type {
+   ListenerPromptResult,
+ } from "./types.js";
+ 
++export {
++  classifyClaudeCanaryFailure,
++  type ClaudeCanaryFailureCode,
++  type ClaudeCanaryFailureShape,
++} from "./claude-canary-classify.js";
++
+ export type OpenClaudeSession = (
+   options: ClaudeAcpOpenOptions,
+ ) => Promise<ClaudeAcpHandle>;
+@@ -60,81 +66,6 @@ export interface ClaudeListenerModelOptions {
+   events?: HostSessionEvents;
+ }
+ 
+-export type ClaudeCanaryFailureCode =
+-  | "claude_bridge_version_required"
+-  | "claude_canary_timeout"
+-  | "claude_canary_auth_failed"
+-  | "claude_canary_unknown";
+-
+-export type ClaudeCanaryFailureShape = {
+-  code: ClaudeCanaryFailureCode;
+-  minimumRequiredVersion: string | null;
+-};
+-
+-const CLAUDE_CODE_VERSION_REQUIRED_RE =
+-  /\bClaude Code (\d+\.\d+\.\d+) does not support this model; version (\d+\.\d+\.\d+) or newer is required\b/;
+-const CLAUDE_AUTH_FAILURE_RE =
+-  /\b(?:authentication failed|failed to authenticate|authentication required|not authenticated|OAuth (?:sign-in|login|token)|OAuth session (?:expired|could not be refreshed)|keychain\/OAuth|please (?:log|sign) in)\b/i;
+-const CLAUDE_CANARY_TIMEOUT_RE =
+-  /^ACP request timed out: session\/prompt(?: \(failed \d+ attempts\))?$/;
+-
+-/** Assign a stable local reason at the Claude provider boundary. */
+-export function classifyClaudeCanaryFailure(
+-  detail: string | null | undefined,
+-  typedReasonCode?: string | null,
+-  peerError?: AcpPeerError | null,
+-): ClaudeCanaryFailureShape {
+-  const recorded = detail?.trim() ?? "";
+-  const peerData = peerError?.data;
+-  const peerErrorKind = peerData && typeof peerData === "object" &&
+-      !Array.isArray(peerData)
+-    ? (peerData as Record<string, unknown>).errorKind
+-    : undefined;
+-  if (
+-    typedReasonCode === "claude_canary_auth_failed" ||
+-    ((typedReasonCode === "rpc_error" || typedReasonCode === null ||
+-      typedReasonCode === undefined) &&
+-      (peerError?.code === -32000 || peerErrorKind === "authentication_failed"))
+-  ) {
+-    return { code: "claude_canary_auth_failed", minimumRequiredVersion: null };
+-  }
+-  const demanded = CLAUDE_CODE_VERSION_REQUIRED_RE.exec(recorded);
+-  if (demanded?.[2]) {
+-    return {
+-      code: "claude_bridge_version_required",
+-      minimumRequiredVersion: demanded[2],
+-    };
+-  }
+-  if (
+-    typedReasonCode === "claude_canary_timeout" ||
+-    typedReasonCode === "timeout" ||
+-    ((typedReasonCode === null || typedReasonCode === undefined) &&
+-      CLAUDE_CANARY_TIMEOUT_RE.test(recorded))
+-  ) {
+-    return { code: "claude_canary_timeout", minimumRequiredVersion: null };
+-  }
+-  if (typedReasonCode === "claude_bridge_version_required") {
+-    return {
+-      code: "claude_bridge_version_required",
+-      minimumRequiredVersion: demanded?.[2] ?? null,
+-    };
+-  }
+-  /* claude-agent-acp 0.73.0 supplies `error.data.errorKind` for SDK failures,
+-   * and that typed field is preferred above. Older bridges or paths can omit
+-   * it. The new fallbacks for the measured family are "Failed to authenticate",
+-   * "OAuth session expired", and "could not be refreshed" only when attached
+-   * to "OAuth session"; the existing direct auth phrases remain. No retry or
+-   * state decision branches on this presentation text (D-053). */
+-  if (
+-    (typedReasonCode === "rpc_error" || typedReasonCode === null ||
+-      typedReasonCode === undefined) &&
+-    CLAUDE_AUTH_FAILURE_RE.test(recorded)
+-  ) {
+-    return { code: "claude_canary_auth_failed", minimumRequiredVersion: null };
+-  }
+-  return { code: "claude_canary_unknown", minimumRequiredVersion: null };
+-}
+-
+ class ClaudeListenerClosedDuringOpen extends Error {
+   constructor() {
+     super("listener model closed while the Claude worker was opening");
+diff --git a/tests/p1-cli/citation-drift.test.ts b/tests/p1-cli/citation-drift.test.ts
+index 1cfed31..8fb16a0 100644
+--- a/tests/p1-cli/citation-drift.test.ts
++++ b/tests/p1-cli/citation-drift.test.ts
+@@ -37,48 +37,48 @@ interface Citation {
+ }
+ 
+ const CITATIONS: Citation[] = [
+-  // src/cli.ts — C9 lazy ACP host/model loads (no static import on the session path)
++  // src/cli.ts — C9 lazy ACP host loads (no static import on the session path)
+   {
+     citedBy: "identity client r6 C9 (lazy host/claude load)",
+     file: "src/cli.ts",
+-    lines: [358, 359],
+-    contains: "requireFromCli(\"./host/claude.js\")",
++    lines: [361, 362],
++    contains: "import(\"./host/claude.js\")",
+   },
+   {
+     citedBy: "identity client r6 C9 (lazy host/codex load)",
+     file: "src/cli.ts",
+-    lines: [362, 363],
+-    contains: "requireFromCli(\"./host/codex.js\")",
++    lines: [365, 366],
++    contains: "import(\"./host/codex.js\")",
+   },
+   {
+     citedBy: "identity client r6 C9 (lazy host/opencode load)",
+     file: "src/cli.ts",
+-    lines: [366, 367],
+-    contains: "requireFromCli(\"./host/opencode.js\")",
++    lines: [369, 370],
++    contains: "import(\"./host/opencode.js\")",
+   },
+   {
+-    citedBy: "identity client r6 C9 (lazy claude-model classifier load)",
++    citedBy: "identity client r6 C9 (claude canary classifier, host-free)",
+     file: "src/cli.ts",
+-    lines: [370, 371],
+-    contains: "requireFromCli(\"./listener/claude-model.js\")",
++    lines: [354, 354],
++    contains: "classifyClaudeCanaryFailure",
+   },
+   {
+     citedBy: "identity client r6 C9 (explicit Claude executable path)",
+     file: "src/cli.ts",
+-    lines: [5576, 5576],
+-    contains: "loadHostClaude().resolveClaudeExecutable",
++    lines: [5575, 5575],
++    contains: "(await loadHostClaude()).resolveClaudeExecutable",
+   },
+   {
+     citedBy: "identity client r6 C9 (explicit Codex executable path)",
+     file: "src/cli.ts",
+-    lines: [5602, 5602],
+-    contains: "loadHostCodex().resolveCodexExecutable",
++    lines: [5601, 5601],
++    contains: "(await loadHostCodex()).resolveCodexExecutable",
+   },
+   {
+     citedBy: "identity client r6 C9 (explicit OpenCode executable path)",
+     file: "src/cli.ts",
+-    lines: [6230, 6230],
+-    contains: "loadHostOpenCode().resolveOpenCodeExecutable",
++    lines: [6229, 6229],
++    contains: "(await loadHostOpenCode()).resolveOpenCodeExecutable",
+   },
+   // site/src/lib/agent-connect.ts — mintedHorizon and the retired-constant note
+   {
+diff --git a/tests/p1-cli/listener-provider.test.ts b/tests/p1-cli/listener-provider.test.ts
+index d918c4a..180c3f4 100644
+--- a/tests/p1-cli/listener-provider.test.ts
++++ b/tests/p1-cli/listener-provider.test.ts
+@@ -147,8 +147,8 @@ test("Codex startup failures give install and bounded diagnostic remedies", () =
+   );
+ });
+ 
+-test("detached Codex resolution preserves the current install remedy", () => {
+-  assert.throws(
++test("detached Codex resolution preserves the current install remedy", async () => {
++  await assert.rejects(
+     () =>
+       resolveDetachedCodexExecutable(
+         "definitely-missing-codex-acp",
+@@ -201,8 +201,8 @@ test("Claude startup failures give install and bounded diagnostic remedies", ()
+   );
+ });
+ 
+-test("detached Claude resolution preserves the current install remedy", () => {
+-  assert.throws(
++test("detached Claude resolution preserves the current install remedy", async () => {
++  await assert.rejects(
+     () =>
+       resolveDetachedClaudeExecutable(
+         "definitely-missing-claude-agent-acp",
+@@ -217,7 +217,7 @@ test("explicit unusable Claude path keeps its diagnostic and reinstall option",
+   const executable = join(root, "claude-agent-acp");
+   try {
+     await writeFile(executable, "not executable", { mode: 0o600 });
+-    assert.throws(
++    await assert.rejects(
+       () => resolveDetachedClaudeExecutable(executable, "/unused"),
+       (error: unknown) => {
+         const message = error instanceof Error ? error.message : "";
+diff --git a/tests/p1-cli/release-bundle.test.ts b/tests/p1-cli/release-bundle.test.ts
+new file mode 100644
+index 0000000..f3e8e43
+--- /dev/null
++++ b/tests/p1-cli/release-bundle.test.ts
+@@ -0,0 +1,129 @@
++/**
++ * The source suites never load the shipped CJS bundle. 0.1.62 crashed at
++ * createRequire(import.meta.url) while every tsx gate stayed green.
++ *
++ * Reached by `npm test` (named in the literal list) and by `npm run test:p1-cli` (glob).
++ */
++import assert from "node:assert/strict";
++import { spawnSync } from "node:child_process";
++import { chmod, copyFile, mkdtemp, readFile, rm } from "node:fs/promises";
++import { tmpdir } from "node:os";
++import { dirname, join, resolve } from "node:path";
++import { test } from "node:test";
++import { fileURLToPath } from "node:url";
++import { AGENT_CREDENTIAL_MESSAGE_D088 } from "../../src/cloud/agent-credential-input.js";
++
++const repoRoot = resolve(dirname(fileURLToPath(import.meta.url)), "../..");
++const buildRelease = join(repoRoot, "scripts", "build-release.sh");
++const bundlePath = join(repoRoot, "dist-release", "cswarm");
++const WORKSPACE_ID = "11111111-1111-4111-8111-111111111111";
++const PRINCIPAL_ID = "22222222-2222-4222-8222-222222222222";
++const MISSING_BRIDGE = "missing-claude-agent-acp";
++
++async function packageVersion(): Promise<string> {
++  const manifest = JSON.parse(
++    await readFile(join(repoRoot, "package.json"), "utf8"),
++  ) as { version: unknown };
++  assert.equal(typeof manifest.version, "string");
++  assert.ok((manifest.version as string).length > 0);
++  return manifest.version as string;
++}
++
++function runIsolated(
++  bin: string,
++  args: string[],
++  options: { cwd: string; home: string; input?: string },
++) {
++  return spawnSync(bin, args, {
++    cwd: options.cwd,
++    encoding: "utf8",
++    env: {
++      PATH: process.env.PATH,
++      HOME: options.home,
++    },
++    input: options.input ?? "",
++    timeout: 20_000,
++  });
++}
++
++test("the shipped CJS artifact starts and can load a host module", { timeout: 120_000 }, async () => {
++  const version = await packageVersion();
++  const build = spawnSync("bash", [buildRelease], {
++    cwd: repoRoot,
++    encoding: "utf8",
++    timeout: 60_000,
++  });
++  assert.equal(
++    build.status,
++    0,
++    `scripts/build-release.sh exit ${build.status}\nstdout:\n${build.stdout}\nstderr:\n${build.stderr}`,
++  );
++
++  const isolated = await mkdtemp(join(tmpdir(), "cswarm-bundle-"));
++  const home = await mkdtemp(join(tmpdir(), "cswarm-bundle-home-"));
++  const bin = join(isolated, "cswarm");
++  const missing = join(isolated, MISSING_BRIDGE);
++  try {
++    await copyFile(bundlePath, bin);
++    await chmod(bin, 0o755);
++
++    const versionRun = runIsolated(bin, ["--version"], { cwd: isolated, home });
++    assert.equal(versionRun.status, 0, versionRun.stderr + versionRun.stdout);
++    assert.match(versionRun.stdout, new RegExp(`^cswarm ${version.replace(/[.*+?^${}()|[\]\\]/g, "\\$&")} \\(`));
++    assert.doesNotMatch(
++      `${versionRun.stdout}${versionRun.stderr}`,
++      /ERR_INVALID_ARG_VALUE|import\.meta/,
++    );
++
++    const helpRun = runIsolated(bin, ["--help"], { cwd: isolated, home });
++    assert.equal(helpRun.status, 0, helpRun.stderr + helpRun.stdout);
++    assert.match(helpRun.stdout, /^cswarm /);
++    assert.match(helpRun.stdout, /^Usage:/m);
++    assert.match(helpRun.stdout, /cswarm listen start/);
++
++    const credential = JSON.stringify({
++      message: AGENT_CREDENTIAL_MESSAGE_D088,
++      status: "accepted",
++      principal_id: PRINCIPAL_ID,
++      token_id: "33333333-3333-4333-8333-333333333333",
++      run_id: "44444444-4444-4444-8444-444444444444",
++      agent_token: `swm_agt_${"A".repeat(43)}`,
++      expires_at: "2030-01-01T00:00:00.000Z",
++    });
++    const loaderRun = runIsolated(
++      bin,
++      [
++        "listen",
++        "start",
++        "--url",
++        "http://127.0.0.1:9",
++        "--anon-key",
++        "synthetic-anon-key",
++        "--workspace-id",
++        WORKSPACE_ID,
++        "--provider",
++        "claude",
++        "--cwd",
++        isolated,
++        "--state-dir",
++        join(isolated, "state"),
++        "--allow-unattended",
++        "--agent-token-stdin",
++        "--claude-executable",
++        missing,
++      ],
++      { cwd: isolated, home, input: credential },
++    );
++    const loaderOut = `${loaderRun.stdout}${loaderRun.stderr}`;
++    assert.notEqual(loaderRun.status, 0, loaderOut);
++    assert.match(loaderOut, /could not use --claude-executable/);
++    assert.match(loaderOut, /not executable/);
++    assert.doesNotMatch(
++      loaderOut,
++      /ERR_INVALID_ARG_VALUE|Cannot find module|ERR_MODULE_NOT_FOUND/,
++    );
++  } finally {
++    await rm(isolated, { recursive: true, force: true });
++    await rm(home, { recursive: true, force: true });
++  }
++});

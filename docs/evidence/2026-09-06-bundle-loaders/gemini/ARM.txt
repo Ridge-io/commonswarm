@@ -1,0 +1,51 @@
+diff --git a/AGENTS.md b/AGENTS.md
+
+**C1. `src/cli.ts` has no module-scope `createRequire(import.meta.url)`.**
+UPHELD. The module-scope definition is deleted and I veI have launched `npm run test:p1-cli` in the background to verify the full P1 CLI test suite (553 tests). I will wait for it to finish.
+The `npm run test:p1-cli` suite is currently executing. I am waiting for it to complete.
+I am waiting for the `npm run test:p1-cli` background task to finish.
+I have set a timer condition on the running `test:p1-cli` task and will wait for it to complete.
+### First `diff --git` Line in `DIFF.patch`
+
+```diff
+diff --git a/AGENTS.md b/AGENTS.md
+```
+
+---
+
+### Independent Review and Claim Refutation Analysis
+
+#### (1) No `createRequire` or runtime require of a relative path remains on any path the bundled CLI can execute
+* **Status**: **CONFIRMED** (Refutation failed).
+* **Details**:
+  * In [src/cli.ts](file:///private/tmp/claude-501/-Users-yulanbot-Developer-Ridge-io-cloud-swarm/a866e6cd-5d6d-477f-af6a-740cd30407ed/scratchpad/lane-bundle-loaders/src/cli.ts#L351-L375), `import { createRequire } from "node:module"` and `const requireFromCli = createRequire(import.meta.url)` were removed.
+  * A grep across `src/` for `\brequire\s*\(` found 0 runtime `require` calls of relative paths.
+  * The only remaining `createRequire` call in `src/` is in [src/host/claude.ts:307](file:///private/tmp/claude-501/-Users-yulanbot-Developer-Ridge-io-cloud-swarm/a866e6cd-5d6d-477f-af6a-740cd30407ed/scratchpad/lane-bundle-loaders/src/host/claude.ts#L307), which calls `createRequire(adapter.path).resolve("@anthropic-ai/claude-agent-sdk")` using an absolute path to the installed bridge package to resolve an npm package name, not a relative module path.
+
+#### (2) The loaders are literal `import()` calls esbuild can inline, and every call site correctly awaits the returned promise
+* **Status**: **CONFIRMED** (Refutation failed).
+* **Details**:
+  * In [src/cli.ts](file:///private/tmp/claude-501/-Users-yulanbot-Developer-Ridge-io-cloud-swarm/a866e6cd-5d6d-477f-af6a-740cd30407ed/scratchpad/lane-bundle-loaders/src/cli.ts#L360-L372):
+    * `loadHostClaude()`: returns `import("./host/claude.js")`
+    * `loadHostCodex()`: returns `import("./host/codex.js")`
+    * `loadHostOpenCode()`: returns `import("./host/opencode.js")`
+  * In the generated bundle [dist-release/cswarm](file:///private/tmp/claude-501/-Users-yulanbot-Developer-Ridge-io-cloud-swarm/a866e6cd-5d6d-477f-af6a-740cd30407ed/scratchpad/lane-bundle-loaders/dist-release/cswarm#L43842-L43850), esbuild inlines all three into bundle-internal initializers (`Promise.resolve().then(() => (init_claude(), claude_exports))`, etc.).
+  * All call sites correctly await the returned promises:
+    * `listenerProviderInstallEvidence` ([src/cli.ts:4845](file:///private/tmp/claude-501/-Users-yulanbot-Developer-Ridge-io-cloud-swarm/a866e6cd-5d6d-477f-af6a-740cd30407ed/scratchpad/lane-bundle-loaders/src/cli.ts#L4845)): `await (await loadHostClaude()).inspectClaudeBridgeExecutable(...)`
+    * `resolveDetachedClaudeExecutable` ([src/cli.ts:5575](file:///private/tmp/claude-501/-Users-yulanbot-Developer-Ridge-io-cloud-swarm/a866e6cd-5d6d-477f-af6a-740cd30407ed/scratchpad/lane-bundle-loaders/src/cli.ts#L5575)): `return (await loadHostClaude()).resolveClaudeExecutable(...)` (function returns `Promise<string>` and is awaited at caller [src/cli.ts:6233](file:///private/tmp/claude-501/-Users-yulanbot-Developer-Ridge-io-cloud-swarm/a866e6cd-5d6d-477f-af6a-740cd30407ed/scratchpad/lane-bundle-loaders/src/cli.ts#L6233) and in [tests/p1-cli/listener-provider.test.ts](file:///private/tmp/claude-501/-Users-yulanbot-Developer-Ridge-io-cloud-swarm/a866e6cd-5d6d-477f-af6a-740cd30407ed/scratchpad/lane-bundle-loaders/tests/p1-cli/listener-provider.test.ts#L207))
+    * `resolveDetachedCodexExecutable` ([src/cli.ts:5601](file:///private/tmp/claude-501/-Users-yulanbot-Developer-Ridge-io-cloud-swarm/a866e6cd-5d6d-477f-af6a-740cd30407ed/scratchpad/lane-bundle-loaders/src/cli.ts#L5601)): `return (await loadHostCodex()).resolveCodexExecutable(...)` (function returns `Promise<string>` and is awaited at caller [src/cli.ts:6237](file:///private/tmp/claude-501/-Users-yulanbot-Developer-Ridge-io-cloud-swarm/a866e6cd-5d6d-477f-af6a-740cd30407ed/scratchpad/lane-bundle-loaders/src/cli.ts#L6237) and in [tests/p1-cli/listener-provider.test.ts](file:///private/tmp/claude-501/-Users-yulanbot-Developer-Ridge-io-cloud-swarm/a866e6cd-5d6d-477f-af6a-740cd30407ed/scratchpad/lane-bundle-loaders/tests/p1-cli/listener-provider.test.ts#L153))
+    * `loadHostOpenCode` ([src/cli.ts:6229](file:///private/tmp/claude-501/-Users-yulanbot-Developer-Ridge-io-cloud-swarm/a866e6cd-5d6d-477f-af6a-740cd30407ed/scratchpad/lane-bundle-loaders/src/cli.ts#L6229)): `(await loadHostOpenCode()).resolveOpenCodeExecutable(...)`
+    * The legacy `loadClaudeListenerModel()` was removed entirely because `classifyClaudeCanaryFailure` was extracted into [src/listener/claude-canary-classify.ts](file:///private/tmp/claude-501/-Users-yulanbot-Developer-Ridge-io-cloud-swarm/a866e6cd-5d6d-477f-af6a-740cd30407ed/scratchpad/lane-bundle-loaders/src/listener/claude-canary-classify.ts) and is imported directly without any host dependencies.
+
+#### (3) The new `src/listener/claude-canary-classify.ts` keeps ACP host modules off the session import graph
+* **Status**: **CONFIRMED** (Refutation failed).
+* **Details**:
+  * Pinned by test: [tests/p1-cli/session-interactive-nospawn.test.ts](file:///private/tmp/claude-501/-Users-yulanbot-Developer-Ridge-io-cloud-swarm/a866e6cd-5d6d-477f-af6a-740cd30407ed/scratchpad/lane-bundle-loaders/tests/p1-cli/session-interactive-nospawn.test.ts#L86-L96) (`"session command module graph excludes ACP host and model modules"`).
+  * [src/listener/claude-canary-classify.ts](file:///private/tmp/claude-501/-Users-yulanbot-Developer-Ridge-io-cloud-swarm/a866e6cd-5d6d-477f-af6a-740cd30407ed/scratchpad/lane-bundle-loaders/src/listener/claude-canary-classify.ts) imports only `type { AcpPeerError }` from `../host/types.js` (no runtime imports, no host executable imports, no model imports).
+  * Ran `tests/p1-cli/session-interactive-nospawn.test.ts`: all 3 tests pass (0 failures).
+
+#### (4) `tests/p1-cli/release-bundle.test.ts` genuinely builds and runs the artifact rather than asserting on source, and would fail if `createRequire` returned
+* **Status**: **CONFIRMED** (Refutation failed).
+* **Details**:
+  * [tests/p1-cli/release-bundle.test.ts](file:///private/tmp/claude-501/-Users-yulanbot-Developer-Ridge-io-cloud-swarm/a866e6cd-5d6d-477f-af6a-740cd30407ed/scratchpad/lane-bundle-loaders/tests/p1-cli/release-bundle.test.ts#L501-L581) invokes `scripts/build-release.sh`, asserts exit status 0, copies the output bundle to an isolated temporary directory with a isolated `HOME`, and executes `bin --version`, `bin --help`, and `bin listen start ... --claude-executable <missing>`.
+  * If `createRequire(import.meta.url)` were present in `src/cli.ts`, esbuild compiles it under `--format=cjs` to `createRequire(import_meta.url)` where `import_meta` is `{}`, triggering `ERR_INVALID_ARG_VALU

@@ -1,0 +1,20 @@
+You are a REVIEW ARM under D-036. Review one diff on an exact SHA. Try to REFUTE it. Read-only: do not edit files, do not commit, do not run destructive commands.
+
+Read this REVIEW.md first. It is the only REVIEW.md you may use:
+/private/tmp/claude-501/-Users-yulanbot-Developer-Ridge-io-cloud-swarm/a866e6cd-5d6d-477f-af6a-740cd30407ed/scratchpad/lane-bundle-loaders/arms-47b51d607cef00609e9f164afe97d7d0092861c7/REVIEW.md
+
+THE DIFF (absolute path):
+/private/tmp/claude-501/-Users-yulanbot-Developer-Ridge-io-cloud-swarm/a866e6cd-5d6d-477f-af6a-740cd30407ed/scratchpad/lane-bundle-loaders/arms-47b51d607cef00609e9f164afe97d7d0092861c7/DIFF.patch
+
+REPO (read-only):
+/private/tmp/claude-501/-Users-yulanbot-Developer-Ridge-io-cloud-swarm/a866e6cd-5d6d-477f-af6a-740cd30407ed/scratchpad/lane-bundle-loaders
+
+SHA under review: 47b51d607cef00609e9f164afe97d7d0092861c7 on branch lane/bundle-loaders.
+
+Before any finding, quote back the first `diff --git` line of DIFF.patch verbatim. If you cannot, stop and FAIL.
+
+Follow REVIEW.md exactly. End with exactly one line:
+VERDICT: PASS
+or
+VERDICT: FAIL
+followed by nothing.
