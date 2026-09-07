@@ -83,6 +83,11 @@ history is on the mini and in `lane/identity-client-pre-rebase` on the laptop, n
   p1-cli 542/0, site 547/0 (one skipped).
 - Codex on 7a06d78 (strategist): FAIL, nine findings; eight client items go to a Grok lane on the
   mini cut from b7fcd581 (`lane/identity-client-r6`), reviewed by this seat.
+- `63acfdb3` (= b7fcd581 + Codex record + Lane A round 4 + client round 6): round 6 reviewed commit by
+  commit against the Codex list by this seat, all seven hold. Grok exact on 63acfdb was killed by the
+  laptop for memory as the only heavy job running (`arm-grok-exact-63acfdb.KILLED-NO-VERDICT.md`);
+  both arms on this head are handed to the mini. `session status` now needs the credential flags;
+  step 7 of the control script passes them.
 - The live control for the final head runs on the mini with
   `laptop-live-control-b0902f68/run-control.sh <worktree> <host-session-id>` (self-locating helpers
   `env.py` and `enable.ts` beside it; expected outcomes in its header; `README.md` there).

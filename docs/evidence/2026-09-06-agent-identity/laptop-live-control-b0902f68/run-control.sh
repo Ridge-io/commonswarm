@@ -9,7 +9,7 @@ set -u
 # EXPECTED (measured on b0902f68 with an a556ab1b server; on a d141c1e+ server step 11b must
 # also show surfaced=true landing and step 14c must be refused with delivery_not_surfaced):
 #  step5  enable ok
-#  step6b acquire: generation >= 1, enforcement enabled, has_private_proof true (step7)
+#  step6b acquire: generation >= 1, enforcement enabled; step7 status shows local state running AND server is_live true, same session_id
 #  step8  listen start: state ready, routeMode main, same_owner_delivery 'interactive session; no ACP worker prompt'
 #  step10 after the ask: listener_delivery_claim, routed_main, ack outcome queued, pendingForMainCount 1
 #  step11a hook WITHOUT stdin host id: prints NOTHING (host gate), observes nothing, queue keeps 1
@@ -52,7 +52,7 @@ echo "step5 enable: $(cd $WT && node --import tsx $HERE/enable.ts enable $API $A
 # acquire refused before enable? (order swapped on purpose below: acquire AFTER enable; the not-managed control is agent2)
 echo "step6b acquire on managed agent1:"; START=$(XDG_CONFIG_HOME=$T/cfg $CLI session start --mode interactive --provider claude --host-session-id $HOST_SESSION $AG1 --json 2>&1); echo "$START"
 CTX=$(ls $T/cfg/cswarm/sessions/$WS/$P1/*.json 2>/dev/null | head -1); echo "context: $CTX"
-echo "step7 session status:"; XDG_CONFIG_HOME=$T/cfg $CLI session status --session-context $CTX --json
+echo "step7 session status (round 6: needs the credential; reports local and server):"; XDG_CONFIG_HOME=$T/cfg $CLI session status --session-context $CTX --agent-token-file $T/agent1.json --url $API --anon-key $ANON --json
 # hook for agent1 in the control cwd, listener route main
 (cd $T/cwd && git init -q . && $CLI hook install claude --principal-id $P1 --write | tail -1)
 echo "step8 listen start (route main, XDG_STATE_HOME=$T/state):"
