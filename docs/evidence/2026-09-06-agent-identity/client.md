@@ -5,14 +5,46 @@ Branch: `lane/identity-client`, rebased 2026-09-06 onto `lane/agent-identity` 53
 Builder of the original lane and its fix round: Grok (on the mini). Wire contract:
 `src/cloud/session-wire.ts` (not edited).
 
-Code SHA (round 2): `b0902f6869ff594bd9996acfe256214012a6612a` (acquire on the wire, hook and
-listener carry the live proof, manual claims nothing), on top of `2534e38c` (the worker removal)
-and the 13 replayed lane commits. Final SHA: the docs-only commit that records this file; run
+Code SHA (round 4): `53371e8f` (ACK carries `surfaced` per the pending-surface contract), on top
+of the round-3 commit (skew allowance, detached start resolves no bridge, renewal bound on
+`--session-context`, dead proof retired on stop), the round-2 commit (acquire on the wire, hook
+and listener carry the live proof, manual claims nothing), the worker removal, and the 13 replayed
+lane commits; all rebased onto `lane/agent-identity` d141c1e6 (main e6e49929 + Lane A round 2 +
+Lane B). Earlier code SHAs `2534e38c`, `b0902f68`, `c895ba49` were rewritten by that rebase and
+survive only in this file and in the arm records that name them. Final SHA: the docs-only commit that records this file; run
 `git log -1 --format=%H -- docs/evidence/2026-09-06-agent-identity/client.md` on the branch.
 
 Earlier pins, kept for readers who meet them: `cb00d64` (never existed), `a90d395b` (the first
 implementation commit, pre-rebase), `619138d4` and `5e2bd0a3` (the pre-rebase fix round; that
 history is on the mini and in `lane/identity-client-pre-rebase` on the laptop, not on origin).
+
+## Rounds 3 and 4 (53371e8f): Grok exact FAIL on 0e3b6dfb folded; Gemini timed out; base moved to d141c1e
+
+Arms on `0e3b6dfb` (`laptop-arms/`): Grok exact VERDICT: FAIL with no DEFECT; GAP 1 was the
+server's missing pending-surface state (Lane A, shipped by the strategist in d141c1e6), GAP 2 was
+this lane's `--session-context` not binding the silent token renewal on ordinary commands (fixed).
+Gemini inversion: NO VERDICT, the 30-minute print timeout expired after the run wandered off the
+checkout (`arm-agy-inversion-0e3b6dfb.TIMEOUT-NO-VERDICT.md` keeps its last lines); that arm is
+owed again on the final SHA and is run with the worktree passed explicitly.
+
+Strategist ruling (signal 34f6f031): the route-main listener binding is RIGHT and stays; spec
+section 10 now says so. Two main-0.1.61 items became this lane's: the lease-deadline check gained
+`LISTENER_LEASE_CLOCK_SKEW_ALLOWANCE_MS` (60 s; the control had shown a VM clock 0.1 s ahead making
+the first claim fatal; test added), and detached `listen start` no longer resolves or requires an
+ACP bridge it never starts (explicit paths are still validated as absolute; the detach tests were
+updated). Also folded from Grok's NITs: `session stop` that meets `session_expired`,
+`session_retired`, or `session_proof_invalid` retires the local context and reports
+`status.server_refusal` (test added); the roster comment no longer claims unique names.
+
+Item 9 against the shipped contract (`ACK_AGENT_DELIVERY_SURFACED_FIELD`): the receiver ACKs
+observed with `surfaced` = the real injection result; the hook's observe sends `surfaced: true`
+only on the path that already required the host's own stdin session id and the live proof; legacy
+principals omit the field; `delivery_not_surfaced` is in the client's typed codes. The hook test
+asserts the field on the positive observe. Not established: a live observe against d141c1e's
+server (the local stack was stopped for memory before this round; the round-2 control ran against
+a556ab1b's server, which had no `surfaced` field).
+
+Gates at `53371e8f` (`laptop-round4-53371e8f/`): build 0, check:tests 0, npm test 923/0, p1-cli 541/0.
 
 ## Round 2 (b0902f68): Grok exact FAIL on e8abf8ab, folded; live control on the local stack
 
