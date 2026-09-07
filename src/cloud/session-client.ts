@@ -17,6 +17,7 @@ import {
   type AgentSessionProof,
 } from "./session-contract.js";
 import {
+  AgentSessionClientError,
   AgentSessionError,
   agentSessionErrorFromBody,
 } from "./session-errors.js";
@@ -140,10 +141,14 @@ function acceptedGeneration(body: unknown): number {
     throw new CommandTransportError("session command returned a malformed body");
   }
   const row = body as Record<string, unknown>;
-  if (typeof row.generation === "number" && Number.isSafeInteger(row.generation)) {
+  if (
+    typeof row.generation === "number" &&
+    Number.isSafeInteger(row.generation) &&
+    row.generation >= 1
+  ) {
     return row.generation;
   }
-  return 1;
+  throw new AgentSessionClientError("session_generation_invalid");
 }
 
 export class AgentSessionClient {
@@ -360,4 +365,4 @@ function parseServerSessionStatus(
   };
 }
 
-export { AgentSessionError };
+export { AgentSessionClientError, AgentSessionError };

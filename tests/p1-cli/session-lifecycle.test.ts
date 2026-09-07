@@ -12,7 +12,10 @@ import {
   readSessionContext,
   writeSessionContext,
 } from "../../src/cloud/session-context.js";
-import { AgentSessionError } from "../../src/cloud/session-errors.js";
+import {
+  AgentSessionClientError,
+  AgentSessionError,
+} from "../../src/cloud/session-errors.js";
 import {
   ACQUIRE_AGENT_SESSION_KIND,
   AGENT_SESSION_GENERATION_HEADER,
@@ -44,6 +47,46 @@ async function tokenFile(root: string): Promise<string> {
   await chmod(path, 0o600);
   return path;
 }
+
+test("malformed acquire generation is rejected and does not write generation 1", async () => {
+  const root = await mkdtemp(join(tmpdir(), "cswarm-bad-gen-"));
+  await chmod(root, 0o700);
+  try {
+    const tokenPath = await tokenFile(root);
+    const contextPath = join(root, "session.json");
+    const fetcher = (async () =>
+      new Response(JSON.stringify({ ok: true, status: "accepted" }), {
+        status: 200,
+      })) as typeof fetch;
+    await assert.rejects(
+      () => startManagedSession({
+        target: cloudTarget("http://127.0.0.1:9", "synthetic-anon-key"),
+        workspaceId: WORKSPACE,
+        credential: TOKEN,
+        tokenFile: tokenPath,
+        tokenPrincipalId: PRINCIPAL,
+        mode: "interactive",
+        provider: "codex",
+        hostSessionId: "thread-1",
+        contextPath,
+        fetcher,
+        readIdentity: async () => ({
+          principal_id: PRINCIPAL,
+          workspace_id: WORKSPACE,
+        }),
+        runReceiver: false,
+      }),
+      (error: unknown) =>
+        error instanceof AgentSessionClientError &&
+        error.code === "session_generation_invalid",
+    );
+    const stored = await readSessionContext(contextPath);
+    assert.equal(stored.generation, 0);
+    assert.equal(sessionProofOf(stored), null);
+  } finally {
+    await rm(root, { recursive: true, force: true });
+  }
+});
 
 test("acquire retry reuses the same UUID, private key header, and command id", async () => {
   const root = await mkdtemp(join(tmpdir(), "cswarm-life-"));

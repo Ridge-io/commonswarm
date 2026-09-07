@@ -58,6 +58,27 @@ export function agentSessionErrorFromBody(
 }
 
 /** Classify a command-layer failure without reading error.message. */
+export const AGENT_SESSION_CLIENT_ERROR_CODES = [
+  "session_generation_invalid",
+] as const;
+
+export type AgentSessionClientErrorCode =
+  (typeof AGENT_SESSION_CLIENT_ERROR_CODES)[number];
+
+const SESSION_CLIENT_ERROR_MESSAGES = {
+  session_generation_invalid:
+    "the session command returned a missing or invalid generation",
+} as const satisfies Record<AgentSessionClientErrorCode, string>;
+
+/** Client-side protocol failure. Not a wire session_ error. */
+export class AgentSessionClientError extends Error {
+  readonly name = "AgentSessionClientError";
+
+  constructor(readonly code: AgentSessionClientErrorCode) {
+    super(SESSION_CLIENT_ERROR_MESSAGES[code]);
+  }
+}
+
 export function agentSessionErrorFromUnknown(
   error: unknown,
 ): AgentSessionError | null {
