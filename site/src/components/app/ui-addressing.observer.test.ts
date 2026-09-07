@@ -96,7 +96,7 @@ test("built feed gives every row a literal identity badge and explicit readable 
   }
   assert.match(
     renderFeed,
-    /target\.append\("→ "\)[\s\S]*signal\.toAgent !== null && targetAgent[\s\S]*targetAgent\.name[\s\S]*signal\.to !== null && people\.has\(signal\.to\)[\s\S]*people\.get\(signal\.to\)![\s\S]*"an agent"[\s\S]*"a workspace member"[\s\S]*"everyone"/,
+    /target\.append\("→ "\)[\s\S]*signal\.toAgent !== null && targetAgent[\s\S]*entityName\(\{ kind: "agent", id: targetAgent\.principalId \}\)[\s\S]*signal\.to !== null && people\.has\(signal\.to\)[\s\S]*entityName\(\{ kind: "person", id: signal\.to \}\)[\s\S]*"an agent"[\s\S]*"a workspace member"[\s\S]*"everyone"/,
   );
 });
 

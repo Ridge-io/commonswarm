@@ -35,6 +35,12 @@ import {
   type ListenerStatus,
   type PendingMainEntry,
 } from "../../src/listener/index.js";
+import {
+  defaultSessionContextPath,
+  markSessionReleased,
+  newSessionBinding,
+  writeSessionContext,
+} from "../../src/cloud/session-context.js";
 
 const repoRoot = resolve(dirname(fileURLToPath(import.meta.url)), "../..");
 const cliPath = join(repoRoot, "src", "cli.ts");
@@ -561,6 +567,168 @@ test("hook marks a queued delivery observed only after stdout and retries silent
     assert.equal(observationAttempts, 2);
     assert.equal(await queue.count(), 0, "only a successful observed write-back drains the queue");
     assert.equal((await readListenerStatus(paths))?.pendingForMainCount, 0);
+  } finally {
+    await rm(root, { recursive: true, force: true });
+  }
+});
+
+async function writeManagedHookSession(
+  root: string,
+  options: { generation?: number; released?: boolean; sessionId?: string } = {},
+) {
+  /* The hook reads contexts from the default session root, which follows
+     XDG_CONFIG_HOME; the test points that at its own temp root. */
+  const credDir = join(root, "session-cred");
+  await mkdir(credDir, { recursive: true, mode: 0o700 });
+  await chmod(credDir, 0o700);
+  const tokenFile = join(credDir, "token.json");
+  await writeFile(tokenFile, "{}\n", { mode: 0o600 });
+  await chmod(tokenFile, 0o600);
+  const context = {
+    ...newSessionBinding({
+      target: cloudTarget("https://cloud.example.test", "anon"),
+      workspaceId: WORKSPACE_ID,
+      principalId: PRINCIPAL_ID,
+      provider: "claude",
+      mode: "interactive",
+      hostSessionId: "thread-hook",
+      tokenFile,
+    }),
+    generation: options.generation ?? 2,
+  };
+  const stored = options.released ? markSessionReleased(context) : context;
+  const contextPath = defaultSessionContextPath(
+    WORKSPACE_ID,
+    PRINCIPAL_ID,
+    options.sessionId ?? context.session_id,
+  );
+  await writeSessionContext(contextPath, stored);
+  return { contextPath, context };
+}
+
+test("a managed hook observes only with one live context, the bound host conversation, and proof headers", async () => {
+  const root = await mkdtemp(join(tmpdir(), "cswarm-hook-managed-stale-"));
+  const previousXdg = process.env.XDG_CONFIG_HOME;
+  process.env.XDG_CONFIG_HOME = join(root, "xdg");
+  try {
+    const paths = await installCredential(root);
+    await writeStatus(paths, PRINCIPAL_ID, { pendingForMainCount: 1 });
+    const queue = new FilePendingMainQueue(paths.instanceDirectory);
+    await queue.enqueue({
+      ...pending(SIGNAL_ID, "managed stale must not observe", "note"),
+      observationPending: true,
+    });
+    let observations = 0;
+    let proofHeaderSeen = 0;
+    let surfacedSeen = 0;
+    const fetcher: typeof fetch = async (_input, init) => {
+      const body = JSON.parse(String(init?.body)) as Record<string, any>;
+      if (body.command?.kind === "ack_agent_delivery") {
+        observations += 1;
+        if (new Headers(init?.headers).get("x-cswarm-session-key") !== null) proofHeaderSeen += 1;
+        if (body.command.surfaced === true) surfacedSeen += 1;
+        return new Response(JSON.stringify({
+          status: "accepted",
+          ok: true,
+          signal_id: SIGNAL_ID,
+          outcome: "observed",
+          event_ids: [],
+          events: [],
+        }), { status: 200 });
+      }
+      return new Response(JSON.stringify({
+        signals: [],
+        capabilities: { sender_owner_relation: 1, cursor_after: 1 },
+      }), { status: 200 });
+    };
+    const invoke = async (hostSessionId?: string) => checkListenerHooks({
+      stateDirectory: root,
+      cooldownSeconds: 0,
+      fetcher,
+      isListenerLive: testListenerIsLive,
+      signal: new AbortController().signal,
+      deadlineMs: Date.now() + 3_000,
+      ...(hostSessionId === undefined ? {} : { hostSessionId }),
+    });
+
+    // Only a released (stopped) context on disk: no live proof, so no observe.
+    const released = await writeManagedHookSession(root, { generation: 2, released: true });
+    await invoke("thread-hook");
+    assert.equal(observations, 0, "released session context must not observe");
+    assert.equal(await queue.count(), 1);
+
+    // Two live contexts: ambiguous, refused before any write (never first match).
+    const first = await writeManagedHookSession(root, { generation: 3 });
+    await writeManagedHookSession(root, { generation: 4 });
+    await invoke("thread-hook");
+    assert.equal(observations, 0, "two live contexts must not observe");
+    assert.equal(await queue.count(), 1);
+
+    // One live context but the host did not report its conversation: fail closed to manual,
+    // and the ask is not even printed, so the bound chat can still receive it.
+    await rm(released.contextPath, { force: true });
+    await rm(defaultSessionContextPath(WORKSPACE_ID, PRINCIPAL_ID, first.context.session_id), { force: true });
+    const silent = await invoke();
+    assert.equal(observations, 0, "no host session id must not observe");
+    assert.doesNotMatch(silent, /managed stale must not observe/, "a host-less hook prints nothing for a managed ask");
+    const wrongHost = await invoke("some-other-thread");
+    assert.equal(observations, 0, "a different host conversation must not observe");
+    assert.doesNotMatch(wrongHost, /managed stale must not observe/, "a wrong-host hook prints nothing for a managed ask");
+    assert.equal(await queue.count(), 1);
+
+    // Exactly one live context and the bound host conversation: printed, then observed with the proof headers.
+    const printed = await invoke("thread-hook");
+    assert.match(printed, /managed stale must not observe/, "the bound chat gets the ask text");
+    assert.equal(observations, 1, "one live context plus the bound host is the positive control");
+    assert.equal(proofHeaderSeen, 1, "the observe carries the session proof headers");
+    assert.equal(surfacedSeen, 1, "the observe says surfaced: true, the pending-surface contract");
+    assert.equal(await queue.count(), 0);
+  } finally {
+    if (previousXdg === undefined) delete process.env.XDG_CONFIG_HOME;
+    else process.env.XDG_CONFIG_HOME = previousXdg;
+    await rm(root, { recursive: true, force: true });
+  }
+});
+
+test("an unmanaged hook can still mark a queued ask observed", async () => {
+  const root = await mkdtemp(join(tmpdir(), "cswarm-hook-unmanaged-observe-"));
+  try {
+    const paths = await installCredential(root);
+    await writeStatus(paths, PRINCIPAL_ID, { pendingForMainCount: 1 });
+    const queue = new FilePendingMainQueue(paths.instanceDirectory);
+    await queue.enqueue({
+      ...pending(SIGNAL_ID, "unmanaged may observe", "note"),
+      observationPending: true,
+    });
+    let observations = 0;
+    const fetcher: typeof fetch = async (_input, init) => {
+      const body = JSON.parse(String(init?.body)) as Record<string, any>;
+      if (body.command?.kind === "ack_agent_delivery") {
+        observations += 1;
+        return new Response(JSON.stringify({
+          status: "accepted",
+          ok: true,
+          signal_id: SIGNAL_ID,
+          outcome: "observed",
+          event_ids: [],
+          events: [],
+        }), { status: 200 });
+      }
+      return new Response(JSON.stringify({
+        signals: [],
+        capabilities: { sender_owner_relation: 1, cursor_after: 1 },
+      }), { status: 200 });
+    };
+    await checkListenerHooks({
+      stateDirectory: root,
+      cooldownSeconds: 0,
+      fetcher,
+      isListenerLive: testListenerIsLive,
+      signal: new AbortController().signal,
+      deadlineMs: Date.now() + 3_000,
+    });
+    assert.equal(observations, 1, "unmanaged principal is the positive control");
+    assert.equal(await queue.count(), 0);
   } finally {
     await rm(root, { recursive: true, force: true });
   }

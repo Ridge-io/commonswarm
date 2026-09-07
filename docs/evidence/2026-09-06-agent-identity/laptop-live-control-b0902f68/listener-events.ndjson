@@ -1,0 +1,13 @@
+{"ts":"2026-09-06T22:50:37.933Z","event":"listener_starting","instance_id":"935ddd7a-650c-48f0-b269-18283dce1f6f","pid":26439}
+{"ts":"2026-09-06T22:50:38.078Z","event":"listener_delivery_mode","delivery_mode":"durable_claim","pending_delivery_count":0}
+{"ts":"2026-09-06T22:50:38.078Z","event":"listener_ready"}
+{"ts":"2026-09-06T22:50:38.745Z","event":"listener_wake","wake_mode":"push","wake_error_code":null,"wake_reconnects":0,"rate_limited":false}
+{"ts":"2026-09-06T22:50:38.745Z","event":"listener_delivery_claim","signal_id":"27f80e40-52b3-4cc2-85c3-3c74a02bdc1b","pending_delivery_count":1,"terminal_delivery_failure_count":0}
+{"ts":"2026-09-06T22:50:38.745Z","event":"listener_idle_poll","idle_poll_ms":15000}
+{"ts":"2026-09-06T22:50:38.767Z","event":"listener_routing_decision","signal_id":"27f80e40-52b3-4cc2-85c3-3c74a02bdc1b","route_mode":"main","route_decision":"main","defer_over_chars":null,"body_length":38}
+{"ts":"2026-09-06T22:50:38.857Z","event":"listener_main_queue","signal_id":"27f80e40-52b3-4cc2-85c3-3c74a02bdc1b","pending_main_count":1,"dropped_count":0}
+{"ts":"2026-09-06T22:50:38.874Z","event":"listener_effect","signal_id":"27f80e40-52b3-4cc2-85c3-3c74a02bdc1b","status":"routed_main","failure_code":null}
+{"ts":"2026-09-06T22:50:39.037Z","event":"listener_delivery_ack","signal_id":"27f80e40-52b3-4cc2-85c3-3c74a02bdc1b","outcome":"queued"}
+{"ts":"2026-09-06T22:50:39.917Z","event":"listener_delivery_claim","signal_id":null,"pending_delivery_count":0,"terminal_delivery_failure_count":0}
+{"ts":"2026-09-06T22:50:39.949Z","event":"listener_idle_poll","idle_poll_ms":300000}
+{"ts":"2026-09-06T22:50:55.963Z","event":"listener_stopped"}

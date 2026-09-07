@@ -93,6 +93,7 @@ class FakeRuntime implements AcceptLinkRuntime {
   readonly memberships = new Set<string>();
   readonly principals = new Map<string, PrincipalSummary>();
   readonly takenNames = new Set<string>();
+  readonly createOptions: Array<{ name: string; allowDuplicateName?: boolean }> = [];
   session: AcceptSession | null = {
     accessToken: "access",
     userId: USER_ID,
@@ -153,8 +154,15 @@ class FakeRuntime implements AcceptLinkRuntime {
     name: string,
   ): Promise<PrincipalSummary | null> {
     this.calls.liveByName += 1;
-    const found = this.principals.get(`${workspaceId}:name:${name}`);
-    return found ? structuredClone(found) : null;
+    const matches = new Map<string, PrincipalSummary>();
+    for (const [key, principal] of this.principals) {
+      if (!key.startsWith(`${workspaceId}:`)) continue;
+      if (principal.name !== name) continue;
+      matches.set(principal.principalId, principal);
+    }
+    return matches.size === 1
+      ? structuredClone([...matches.values()][0]!)
+      : null;
   }
   async acceptInvitation(
     _session: AcceptSession,
@@ -172,15 +180,28 @@ class FakeRuntime implements AcceptLinkRuntime {
     _session: AcceptSession,
     workspaceId: string,
     name: string,
+    options?: { allowDuplicateName?: boolean },
   ): Promise<
     { status: "accepted"; principalId: string } | { status: "name_taken" }
   > {
     this.calls.create += 1;
-    if (this.takenNames.has(`${workspaceId}:${name}`)) {
+    this.createOptions.push({
+      name,
+      ...(options?.allowDuplicateName === true
+        ? { allowDuplicateName: true }
+        : {}),
+    });
+    const nameHeld = [...this.principals.entries()].some(([key, principal]) =>
+      key.startsWith(`${workspaceId}:`) && principal.name === name
+    );
+    if (
+      options?.allowDuplicateName !== true &&
+      (this.takenNames.has(`${workspaceId}:${name}`) || nameHeld)
+    ) {
       return { status: "name_taken" };
     }
     const principal = { principalId: randomUUID(), name };
-    this.principals.set(`${workspaceId}:name:${name}`, principal);
+    this.principals.set(`${workspaceId}:name:${name}:${principal.principalId}`, principal);
     this.principals.set(
       `${workspaceId}:id:${principal.principalId}`,
       principal,
@@ -203,6 +224,7 @@ async function run(
     email: "invitee@example.test",
   }),
   explicitName?: string,
+  allowDuplicateName?: boolean,
 ) {
   const result = await acceptInviteLink({
     payload: linkPayload,
@@ -210,6 +232,7 @@ async function run(
     store,
     runtime,
     ...(explicitName === undefined ? {} : { explicitName }),
+    ...(allowDuplicateName === true ? { allowDuplicateName: true } : {}),
   });
   return { result, runtime, store };
 }
@@ -683,6 +706,90 @@ test("JSON progress is machine-readable on stdout with human narration on stderr
   assert.equal(machine.step, "ready");
   assert.match(stderr, /Connected/);
   assert.doesNotMatch(stdout + stderr, /swm_inv_|cswarm:\/\/accept\//);
+});
+
+test("default accept never sends allow_duplicate_name and still suffixes a taken auto name", async () => {
+  const workspaceId = randomUUID();
+  const runtime = new FakeRuntime();
+  await run(payload({ workspace_id: workspaceId }), runtime);
+  assert.equal(runtime.createOptions.length, 1);
+  assert.equal(runtime.createOptions[0]?.allowDuplicateName, undefined);
+  assert.doesNotMatch(
+    JSON.stringify(runtime.createOptions[0]),
+    /allowDuplicateName/,
+  );
+
+  const suffixRuntime = new FakeRuntime();
+  suffixRuntime.takenNames.add(`${workspaceId}:invitee@machine-22222222`);
+  const suffixed = await run(
+    payload({ workspace_id: workspaceId }),
+    suffixRuntime,
+  );
+  assert.equal(suffixed.result.principalName, "invitee@machine-22222222-2");
+  assert.deepEqual(
+    suffixRuntime.createOptions.map((entry) => entry.allowDuplicateName),
+    [undefined, undefined],
+  );
+});
+
+test("two same-name principals are not reused by first match", async () => {
+  const workspaceId = randomUUID();
+  const first = { principalId: randomUUID(), name: "echo" };
+  const second = { principalId: randomUUID(), name: "echo" };
+  const runtime = new FakeRuntime();
+  runtime.principals.set(`${workspaceId}:id:${first.principalId}`, first);
+  runtime.principals.set(`${workspaceId}:id:${second.principalId}`, second);
+  await assert.rejects(
+    run(
+      payload({ workspace_id: workspaceId }),
+      runtime,
+      undefined,
+      "echo",
+    ),
+    /already taken/,
+  );
+  assert.equal(runtime.calls.create, 1);
+  assert.notEqual(
+    runtime.createOptions[0]?.allowDuplicateName,
+    true,
+    "ambiguity must not mint a duplicate unless the caller asked",
+  );
+});
+
+test("explicit duplicate-name request sends the flag once and does not suffix", async () => {
+  const workspaceId = randomUUID();
+  const existing = { principalId: randomUUID(), name: "echo" };
+  const runtime = new FakeRuntime();
+  runtime.principals.set(`${workspaceId}:id:${existing.principalId}`, existing);
+  runtime.takenNames.add(`${workspaceId}:echo`);
+  const { result } = await run(
+    payload({ workspace_id: workspaceId }),
+    runtime,
+    undefined,
+    "echo",
+    true,
+  );
+  assert.notEqual(result.principalId, existing.principalId);
+  assert.equal(result.principalName, "echo");
+  assert.equal(runtime.calls.create, 1);
+  assert.equal(runtime.createOptions[0]?.allowDuplicateName, true);
+  assert.equal(runtime.createOptions[0]?.name, "echo");
+});
+
+test("duplicate-name create keeps the same name across an idempotent retry", async () => {
+  const workspaceId = randomUUID();
+  const runtime = new FakeRuntime();
+  const store = new MemoryStore({
+    userId: USER_ID,
+    email: "invitee@example.test",
+  });
+  const linkPayload = payload({ workspace_id: workspaceId });
+  const first = await run(linkPayload, runtime, store, "echo", true);
+  const second = await run(linkPayload, runtime, store, "echo", true);
+  assert.equal(first.result.principalId, second.result.principalId);
+  assert.equal(runtime.calls.create, 1);
+  assert.equal(second.result.checkpointShortCircuit, true);
+  assert.equal(runtime.createOptions[0]?.allowDuplicateName, true);
 });
 
 async function cli(

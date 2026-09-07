@@ -149,6 +149,7 @@ interface ReadAgentContext {
   is_revoked: boolean;
   pending_delivery_count: number;
   wake_id: string;
+  managed_at: Date | string | null;
 }
 
 function json(status: number, body: Record<string, unknown>): Response {
@@ -448,7 +449,8 @@ async function handle(
         membership_revoked_at,
         is_revoked,
         pending_delivery_count,
-        wake_id
+        wake_id,
+        managed_at
       FROM swarm.agent_delivery_read_context(
         ${tokenHash!},
         ${body.workspace_id}::uuid
@@ -569,6 +571,9 @@ async function handle(
         ${JSON.stringify({
           sub: agent.owner_user_id,
           role: "authenticated",
+          /* swarm_read.agent_execution_sessions admits a row for this role
+           * only when this claim matches principal_id. */
+          agent_principal_id: agent.principal_id,
         })},
         true
       )
@@ -625,8 +630,19 @@ async function handle(
         SELECT
           p.principal_id,
           p.name,
-          p.owner_user_id
+          p.owner_user_id,
+          p.managed_at,
+          s.lifecycle_state,
+          s.provider,
+          s.host_label,
+          s.host_session_ref,
+          s.session_id,
+          s.started_at,
+          s.renewed_at,
+          s.expired_at,
+          (s.expired_at IS NOT NULL AND s.expired_at > statement_timestamp()) AS is_live
         FROM swarm_read.agent_principals AS p
+        LEFT JOIN swarm_read.agent_execution_sessions s ON s.principal_id = p.principal_id
         JOIN swarm_read.member_profiles AS owner
           ON owner.workspace_id = p.workspace_id
          AND owner.user_id = p.owner_user_id
@@ -646,6 +662,7 @@ async function handle(
           principal_id: agent.principal_id,
           owner_user_id: agent.owner_user_id,
           workspace_id: agent.principal_workspace_id,
+          managed_at: agent.managed_at,
         },
       });
     }

@@ -17,6 +17,7 @@ export interface AgentAuthRow {
   run_ended_at: Date | null;
   device_revoked_at: Date | null;
   unexpired: boolean;
+  managed_at: Date | null;
 }
 
 /**
@@ -113,7 +114,8 @@ export async function loadAgentCredential(
       p.revoked_at AS principal_revoked_at,
       r.ended_at AS run_ended_at,
       d.revoked_at AS device_revoked_at,
-      t.expires_at > statement_timestamp() AS unexpired
+      t.expires_at > statement_timestamp() AS unexpired,
+      p.managed_at AS managed_at
     FROM swarm.agent_tokens AS t
     JOIN swarm.agent_principals AS p ON p.principal_id = t.principal_id
     JOIN swarm.agent_runs AS r
@@ -159,4 +161,139 @@ export async function agentCredentialRevoked(
   `;
   const expected = new Set(targets.map(([kind, id]) => `${kind}:${id}`));
   return rows.some((row) => expected.has(`${row.kind}:${row.target_id}`));
+}
+
+import {
+  agentSessionErrorStatus,
+  type AgentSessionErrorCode,
+  type AgentSessionProof,
+  type AgentSessionProofParse,
+} from "../../../src/cloud/session-wire.ts";
+
+export type { AgentSessionProof };
+
+export async function hashSessionKey(key: string): Promise<Uint8Array> {
+  return new Uint8Array(
+    await crypto.subtle.digest("SHA-256", new TextEncoder().encode(key)),
+  );
+}
+
+function bytesEqual(left: Uint8Array, right: Uint8Array): boolean {
+  if (left.length !== right.length) return false;
+  let diff = 0;
+  for (let i = 0; i < left.length; i += 1) {
+    diff |= left[i]! ^ right[i]!;
+  }
+  return diff === 0;
+}
+
+function asBytes(value: Uint8Array | ArrayBuffer | string): Uint8Array | null {
+  if (value instanceof Uint8Array) return value;
+  if (value instanceof ArrayBuffer) return new Uint8Array(value);
+  return null;
+}
+
+export type AgentSessionFenceResult =
+  | { ok: true }
+  | { ok: false; error: AgentSessionErrorCode; status: number };
+
+function refuse(error: AgentSessionErrorCode): AgentSessionFenceResult {
+  return { ok: false, error, status: agentSessionErrorStatus(error) };
+}
+
+/**
+ * Session-proof fence for an agent-authenticated mutation.
+ *
+ * Callers skip this for kinds in AGENT_SESSION_PROOF_EXEMPT_KINDS.
+ * managed_at and the session row are read FOR SHARE in this transaction so
+ * recover/enable/disable/acquire (FOR UPDATE on those rows) cannot commit
+ * between the check and the write. Callers may still pass managedAt; it is
+ * not used to skip the lock. PostgreSQL refuses FOR SHARE on the nullable
+ * side of a LEFT JOIN, so the two reads are separate statements.
+ */
+export async function enforceAgentSessionProof(
+  tx: Sql,
+  args: {
+    principalId: string;
+    workspaceId: string;
+    proofParse: AgentSessionProofParse;
+    managedAt?: Date | string | null;
+  },
+): Promise<AgentSessionFenceResult> {
+  const principals = await tx<{ managed_at: Date | string | null }[]>`
+    SELECT managed_at
+    FROM swarm.agent_principals
+    WHERE principal_id = ${args.principalId}::uuid
+    FOR SHARE
+  `;
+  const principal = principals[0];
+  if (principal === undefined) {
+    return refuse("session_proof_invalid");
+  }
+  if (principal.managed_at === null) {
+    return { ok: true };
+  }
+
+  const rows = await tx<{
+    session_id: string;
+    generation: string | number | bigint;
+    key_hash: Uint8Array | ArrayBuffer | string | null;
+    live: boolean;
+  }[]>`
+    SELECT
+      session_id,
+      generation,
+      key_hash,
+      (expired_at IS NOT NULL AND expired_at > statement_timestamp()) AS live
+    FROM swarm.agent_execution_sessions
+    WHERE principal_id = ${args.principalId}::uuid
+      AND workspace_id = ${args.workspaceId}::uuid
+    FOR SHARE
+  `;
+  const session = rows[0];
+  if (!args.proofParse.ok) {
+    return refuse(args.proofParse.error);
+  }
+  if (session === undefined) {
+    return refuse("session_proof_invalid");
+  }
+  if (!session.live) {
+    return refuse("session_expired");
+  }
+  const proof = args.proofParse.proof;
+  if (proof.session_id !== session.session_id) {
+    return refuse("session_conflict");
+  }
+  if (Number(session.generation) !== proof.generation) {
+    return refuse("session_conflict");
+  }
+  const stored = asBytes(session.key_hash ?? new Uint8Array());
+  if (stored === null || stored.length === 0) {
+    return refuse("session_proof_invalid");
+  }
+  const presented = await hashSessionKey(proof.key);
+  if (!bytesEqual(stored, presented)) {
+    return refuse("session_proof_invalid");
+  }
+  return { ok: true };
+}
+
+/** @deprecated use enforceAgentSessionProof; kept for the item-4 seam. */
+export async function authenticateAgentSession(
+  tx: Sql,
+  principalId: string,
+  workspaceId: string,
+  proof: AgentSessionProof | null,
+  _isAcquire: boolean,
+): Promise<{ ok: true } | { ok: false; error: string }> {
+  const proofParse: AgentSessionProofParse = proof === null
+    ? { ok: false, error: "session_proof_missing" }
+    : { ok: true, proof };
+  const result = await enforceAgentSessionProof(tx, {
+    principalId,
+    workspaceId,
+    proofParse,
+  });
+  if (result.ok) return { ok: true };
+  return { ok: false, error: result.error };
 }

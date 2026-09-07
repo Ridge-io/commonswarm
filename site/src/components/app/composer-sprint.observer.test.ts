@@ -627,8 +627,10 @@ const assertComposerSprint = (value: ComposerArtifact): void => {
   assert.match(markup, /aria-autocomplete="list"/, "combobox: autocomplete mode must be a list");
   assert.match(markup, /aria-controls="dashboard-composer-mention-picker"/,
     "combobox: textarea must control the listbox");
-  assert.match(picker, /button\.id = `dashboard-composer-mention-option-\$\{index\}`;/,
+  assert.match(picker, /button\.id = mentionOptionId\(candidate\);/,
     "combobox: every option needs a stable active-descendant id");
+  assert.match(picker, /mentionOptionId\(active\)/,
+    "combobox: the announced option must be the UUID-backed option id");
   assert.match(picker, /button\.setAttribute\("aria-selected", String\(index === mentionPickerIndex\)\)/,
     "combobox: visible active row must match keyboard state");
   assert.match(picker, /input\?\.setAttribute\("aria-expanded", "true"\);/,

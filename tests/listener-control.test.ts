@@ -9,10 +9,10 @@ import { tmpdir } from "node:os";
 import { join, resolve } from "node:path";
 import { createConnection } from "node:net";
 import test from "node:test";
+import { GrokListenerModel } from "../src/listener/grok-model.js";
 import {
   ListenerAlreadyRunningError,
   LISTENER_RESTART_MAX_MS,
-  GrokListenerModel,
   ackCommandId,
   appendListenerEvent,
   claimCommandId,

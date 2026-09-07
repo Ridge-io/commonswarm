@@ -1,11 +1,15 @@
 import { describe, it } from 'node:test';
 import assert from 'node:assert/strict';
+import { readFileSync } from 'node:fs';
+import { dirname, join } from 'node:path';
+import { fileURLToPath } from 'node:url';
 
 import {
   Actor,
   AGENT_TOKEN_DEFAULT_TTL_MS,
   AGENT_TOKEN_MAX_TTL_MS,
   DecideWorkspaceCtx,
+  HUMAN_ONLY_COMMANDS,
   INVITATION_MAX_TTL_MS,
   StreamIntegrityError,
   WorkspaceCommand,
@@ -18,6 +22,17 @@ import {
   reduceWorkspace,
   reduceWorkspaceStream,
 } from '../src/protocol/index.js';
+import {
+  ACK_AGENT_DELIVERY_SURFACED_FIELD,
+  AGENT_SESSION_BINDING_FIELDS,
+  AGENT_SESSION_PROOF_EXEMPT_KINDS,
+  agentSessionErrorStatus,
+  DELIVERY_NOT_SURFACED_CODE,
+  isAgentSessionProofExempt,
+  parseAgentSessionProofHeaders,
+  sessionBindingsConflict,
+  sessionBindingsEqual,
+} from '../src/cloud/session-wire.js';
 
 const NOW = 10_000_000;
 
@@ -771,6 +786,36 @@ describe('agent principals', () => {
     );
   });
 
+  it('allow_duplicate_name true creates a second principal; default still refuses', () => {
+    const world = makeWorld();
+    world.create();
+    world.join('bob');
+    world.createPrincipal('bob');
+    rejected(
+      world.apply(
+        {
+          kind: 'create_agent_principal',
+          principal_id: 'synth-dup-default',
+          name: 'agent-bob',
+        },
+        { actor: human('bob') },
+      ),
+      'principal_name_taken',
+    );
+    const allowed = world.apply(
+      {
+        kind: 'create_agent_principal',
+        principal_id: 'synth-dup-allowed',
+        name: 'agent-bob',
+        allow_duplicate_name: true,
+      },
+      { actor: human('bob') },
+    );
+    assert.equal(allowed.ok, true);
+    assert.equal(world.state()!.principals['synth-dup-allowed'].name, 'agent-bob');
+    assert.equal(world.state()!.principals['principal-bob'].name, 'agent-bob');
+  });
+
   it('create/revoke principal are human-only; a Member may revoke only their own', () => {
     const world = makeWorld();
     world.create();
@@ -1470,5 +1515,372 @@ describe('set_agent_model', () => {
     );
     assert.equal(decision.ok, false);
     if (!decision.ok) assert.equal(decision.reason, 'principal_not_found');
+  });
+});
+
+describe('agent session proof exemption', () => {
+  const repoRoot = join(dirname(fileURLToPath(import.meta.url)), '..');
+  const commandPath = join(repoRoot, 'supabase/functions/command/index.ts');
+  const protocolCommandsPath = join(repoRoot, 'src/protocol/commands.ts');
+  const protocolWorkspacePath = join(
+    repoRoot,
+    'src/protocol/workspace-commands.ts',
+  );
+  const fileArtifactsPath = join(
+    repoRoot,
+    'supabase/functions/command/file-artifacts.ts',
+  );
+  const deliveryPath = join(
+    repoRoot,
+    'supabase/functions/command/durable-delivery.ts',
+  );
+  const receiptsPath = join(
+    repoRoot,
+    'supabase/functions/command/human-receipts.ts',
+  );
+
+  function quotedStrings(block: string): string[] {
+    return [...block.matchAll(/"([a-z0-9_]+)"/g)].map((match) => match[1]);
+  }
+
+  function sliceExportBlock(src: string, startNeedle: string): string {
+    const start = src.indexOf(startNeedle);
+    assert.ok(start >= 0, `${startNeedle} must be exported`);
+    const rest = src.slice(start + startNeedle.length);
+    const next = rest.search(/\nexport /);
+    assert.ok(next > 0, `${startNeedle} must be followed by another export`);
+    return rest.slice(0, next);
+  }
+
+  function kindLiteralsIn(block: string): string[] {
+    return [...block.matchAll(/kind: '([a-z0-9_]+)'/g)].map((match) => match[1]);
+  }
+
+  function exportedKindConstants(src: string): string[] {
+    return [...src.matchAll(/(?:export )?const [A-Z][A-Z0-9_]*_KIND = "([a-z0-9_]+)"/g)]
+      .map((match) => match[1]);
+  }
+
+  function resolveKindConstant(name: string, sources: string[]): string {
+    const pattern = new RegExp(`(?:export )?const ${name} = "([a-z0-9_]+)"`);
+    for (const src of sources) {
+      const match = src.match(pattern);
+      if (match) return match[1];
+    }
+    assert.fail(`${name} must resolve to a quoted command kind`);
+  }
+
+  function handleTransactionBody(commandSrc: string): string {
+    const start = commandSrc.indexOf('async function handleTransaction(');
+    assert.ok(start >= 0, 'handleTransaction must exist');
+    const from = commandSrc.slice(start);
+    const endRel = from.search(/\nasync function /);
+    assert.ok(endRel > 0, 'handleTransaction must be followed by another function');
+    return from.slice(0, endRel);
+  }
+
+  function arrayBlock(src: string, name: string): string {
+    const match = src.match(
+      new RegExp(`const ${name} = \\[([\\s\\S]*?)\\] as const`),
+    );
+    assert.ok(match, `${name} must exist so a new kind is visible`);
+    return match[1];
+  }
+
+  function declaredDispatchKinds(sources: {
+    commandSrc: string;
+    fileSrc: string;
+    deliverySrc: string;
+    receiptsSrc: string;
+    protocolCommandsSrc: string;
+    protocolWorkspaceSrc: string;
+  }): Set<string> {
+    const kinds = new Set<string>();
+    for (const kind of quotedStrings(arrayBlock(sources.commandSrc, 'COMMAND_KINDS'))) {
+      kinds.add(kind);
+    }
+    for (const kind of quotedStrings(arrayBlock(sources.commandSrc, 'CHANNEL_COMMAND_KINDS'))) {
+      kinds.add(kind);
+    }
+    for (const kind of exportedKindConstants(sources.fileSrc)) kinds.add(kind);
+    for (const kind of exportedKindConstants(sources.deliverySrc)) kinds.add(kind);
+    for (const kind of exportedKindConstants(sources.receiptsSrc)) kinds.add(kind);
+    for (const kind of kindLiteralsIn(sliceExportBlock(sources.protocolCommandsSrc, 'export type Command ='))) {
+      kinds.add(kind);
+    }
+    for (const kind of kindLiteralsIn(sliceExportBlock(sources.protocolWorkspaceSrc, 'export type WorkspaceCommand ='))) {
+      kinds.add(kind);
+    }
+    return kinds;
+  }
+
+  function dispatchedKinds(sources: {
+    commandSrc: string;
+    fileSrc: string;
+    deliverySrc: string;
+    receiptsSrc: string;
+    protocolCommandsSrc: string;
+    protocolWorkspaceSrc: string;
+  }): Set<string> {
+    const kinds = declaredDispatchKinds(sources);
+    const handleSrc = handleTransactionBody(sources.commandSrc);
+    for (const match of handleSrc.matchAll(/(?<![A-Za-z0-9_.])kind === "([a-z0-9_]+)"/g)) {
+      kinds.add(match[1]);
+    }
+    const constSources = [
+      sources.commandSrc,
+      sources.fileSrc,
+      sources.deliverySrc,
+      sources.receiptsSrc,
+    ];
+    for (const match of handleSrc.matchAll(/(?<![A-Za-z0-9_.])kind === ([A-Z][A-Z0-9_]*)/g)) {
+      kinds.add(resolveKindConstant(match[1], constSources));
+    }
+    return kinds;
+  }
+
+  function humanPreRouteKinds(commandSrc: string): Set<string> {
+    const names = [
+      'REGISTER_DEVICE_KIND',
+      'CREATE_WORKSPACE_KIND',
+      'MINT_CAPABILITY_KIND',
+      'REVOKE_CAPABILITY_KIND',
+      'RESUME_RENEWAL_GRANT_KIND',
+    ];
+    return new Set(names.map((name) => resolveKindConstant(name, [commandSrc])));
+  }
+
+  function inventorySources(commandSrc?: string) {
+    return {
+      commandSrc: commandSrc ?? readFileSync(commandPath, 'utf8'),
+      fileSrc: readFileSync(fileArtifactsPath, 'utf8'),
+      deliverySrc: readFileSync(deliveryPath, 'utf8'),
+      receiptsSrc: readFileSync(receiptsPath, 'utf8'),
+      protocolCommandsSrc: readFileSync(protocolCommandsPath, 'utf8'),
+      protocolWorkspaceSrc: readFileSync(protocolWorkspacePath, 'utf8'),
+    };
+  }
+
+  function agentMutationInventory(commandSrc?: string): {
+    agentMutations: Set<string>;
+    extra: string[];
+    missing: string[];
+  } {
+    const sources = inventorySources(commandSrc);
+    const humanPreRoute = humanPreRouteKinds(sources.commandSrc);
+    const drop = (kind: string): boolean =>
+      HUMAN_ONLY_COMMANDS.has(kind as WorkspaceCommand['kind']) ||
+      humanPreRoute.has(kind);
+    const agentMutations = new Set(
+      [...dispatchedKinds(sources)].filter((kind) => !drop(kind)),
+    );
+    const declaredAgent = new Set(
+      [...declaredDispatchKinds(sources)].filter((kind) => !drop(kind)),
+    );
+    const missing = [...declaredAgent].filter((kind) => !agentMutations.has(kind)).sort();
+    const extra = [...agentMutations].filter((kind) => !declaredAgent.has(kind)).sort();
+    return { agentMutations, extra, missing };
+  }
+
+  it('the exemption set is exactly acquire_agent_session', () => {
+    assert.deepEqual([...AGENT_SESSION_PROOF_EXEMPT_KINDS], [
+      'acquire_agent_session',
+    ]);
+    assert.equal(isAgentSessionProofExempt('acquire_agent_session'), true);
+    assert.equal(isAgentSessionProofExempt('post_signal'), false);
+    assert.equal(isAgentSessionProofExempt('renew_agent_session'), false);
+    assert.equal(isAgentSessionProofExempt('claim_agent_inbox'), false);
+  });
+
+  it('the command fence is built from AGENT_SESSION_PROOF_EXEMPT_KINDS', () => {
+    const commandSrc = readFileSync(
+      join(repoRoot, 'supabase/functions/command/index.ts'),
+      'utf8',
+    );
+    assert.match(commandSrc, /isAgentSessionProofExempt\(\s*kind\s*\)/);
+    assert.match(commandSrc, /enforceAgentSessionProof\(/);
+    assert.equal(
+      commandSrc.includes('const isAcquire = kind === "acquire_agent_session"'),
+      false,
+    );
+  });
+
+  it('every agent-mutation kind the command edge dispatches is fenced or exempt', () => {
+    const { agentMutations, extra, missing } = agentMutationInventory();
+    assert.deepEqual(
+      missing,
+      [],
+      'dispatcher lost an agent-mutation kind protocol/exports still name',
+    );
+    assert.deepEqual(
+      extra,
+      [],
+      'dispatcher grew an agent-mutation kind; fence it or add it to AGENT_SESSION_PROOF_EXEMPT_KINDS and to the protocol/export source of truth',
+    );
+    assert.ok(agentMutations.size > 0, 'inventory must not be empty');
+    for (const kind of agentMutations) {
+      const exempt = isAgentSessionProofExempt(kind);
+      if (exempt) {
+        assert.equal(kind, 'acquire_agent_session');
+      } else {
+        assert.equal(
+          exempt,
+          false,
+          `${kind} is an agent mutation and must stay fenced`,
+        );
+      }
+    }
+  });
+
+  it('mutation control: a new direct handler kind fails the closed inventory', () => {
+    const commandSrc = readFileSync(commandPath, 'utf8');
+    assert.match(commandSrc, /if \(kind === "release_agent_session"\)/);
+    const mutated = commandSrc.replace(
+      'if (kind === "release_agent_session")',
+      'if (kind === "synth_unfenced_kind") { return await synthUnfenced(); }\n    if (kind === "release_agent_session")',
+    );
+    const { extra, agentMutations } = agentMutationInventory(mutated);
+    assert.equal(agentMutations.has('synth_unfenced_kind'), true);
+    assert.deepEqual(extra, ['synth_unfenced_kind']);
+    assert.equal(isAgentSessionProofExempt('synth_unfenced_kind'), false);
+    const oldWhitelist = [
+      ...mutated.matchAll(
+        /kind === "(enable_agent_management|disable_agent_management|recover_agent_session|acquire_agent_session|renew_agent_session|release_agent_session|register_device|create_workspace|mint_capability_url|revoke_capability_url|resume_renewal_grant)"/g,
+      ),
+    ].map((match) => match[1]);
+    assert.equal(
+      oldWhitelist.includes('synth_unfenced_kind'),
+      false,
+      'the retired fixed-name list must not see a new direct handler',
+    );
+  });
+
+  it('missing proof headers parse as session_proof_missing', () => {
+    const parsed = parseAgentSessionProofHeaders({ get: () => null });
+    assert.equal(parsed.ok, false);
+    if (!parsed.ok) assert.equal(parsed.error, 'session_proof_missing');
+  });
+
+  it('a half-present header set parses as session_proof_invalid', () => {
+    const parsed = parseAgentSessionProofHeaders({
+      get: (name) => name === 'x-cswarm-session-id'
+        ? '00000000-0000-4000-8000-000000000001'
+        : null,
+    });
+    assert.equal(parsed.ok, false);
+    if (!parsed.ok) assert.equal(parsed.error, 'session_proof_invalid');
+  });
+
+  it('activity is an agent mutation and uses the same session fence', () => {
+    const activitySrc = readFileSync(
+      join(repoRoot, 'supabase/functions/activity/index.ts'),
+      'utf8',
+    );
+    assert.match(activitySrc, /enforceAgentSessionProof\(/);
+    assert.match(activitySrc, /parseAgentSessionProofHeaders\(/);
+  });
+
+  it('read stays read-only: it never claims or acks', () => {
+    const readSrc = readFileSync(
+      join(repoRoot, 'supabase/functions/read/index.ts'),
+      'utf8',
+    );
+    assert.equal(readSrc.includes('claimAgentInbox('), false);
+    assert.equal(readSrc.includes('ackAgentDelivery('), false);
+    assert.equal(readSrc.includes('SET LOCAL ROLE swarm_command'), false);
+  });
+
+  it('the session migration does not project wake_id through swarm_read.agent_principals', () => {
+    const migration = readFileSync(
+      join(
+        repoRoot,
+        'supabase/migrations/20260906000020_agent_execution_sessions.sql',
+      ),
+      'utf8',
+    );
+    const viewBody = migration.match(
+      /CREATE VIEW swarm_read\.agent_principals[\s\S]*?;/,
+    );
+    assert.ok(viewBody, 'swarm_read.agent_principals view must be created');
+    assert.equal(viewBody[0].includes('p.*'), false);
+    assert.match(viewBody[0], /p\.managed_at/);
+    assert.equal(viewBody[0].includes('wake_id'), false);
+    assert.match(migration, /p\.managed_at/);
+    assert.match(
+      migration,
+      /swarm_read\.agent_principals must not project wake_id/,
+    );
+    assert.match(
+      migration,
+      /CREATE FUNCTION swarm\.agent_delivery_read_context/,
+    );
+    assert.match(migration, /managed_at timestamptz/);
+  });
+
+  it('pending-surface names are exported from session-wire for the client lane', () => {
+    assert.equal(ACK_AGENT_DELIVERY_SURFACED_FIELD, 'surfaced');
+    assert.equal(DELIVERY_NOT_SURFACED_CODE, 'delivery_not_surfaced');
+    assert.equal(agentSessionErrorStatus('delivery_not_surfaced'), 409);
+    assert.deepEqual([...AGENT_SESSION_BINDING_FIELDS], [
+      'provider',
+      'host_label',
+      'host_session_ref',
+    ]);
+    assert.equal(
+      sessionBindingsEqual(
+        { provider: 'codex', host_label: 'a', host_session_ref: 't1' },
+        { provider: 'codex', host_label: 'a', host_session_ref: 't1' },
+      ),
+      true,
+    );
+    assert.equal(
+      sessionBindingsConflict(
+        { provider: 'codex', host_label: 'a', host_session_ref: 't1' },
+        { provider: 'codex', host_label: 'b', host_session_ref: 't1' },
+      ),
+      true,
+    );
+  });
+
+  it('read projects sessions without key_hash and treats NULL expired_at as dead', () => {
+    const readSrc = readFileSync(
+      join(repoRoot, 'supabase/functions/read/index.ts'),
+      'utf8',
+    );
+    assert.match(readSrc, /swarm_read\.agent_execution_sessions/);
+    assert.equal(readSrc.includes('LEFT JOIN swarm.agent_execution_sessions'), false);
+    assert.match(
+      readSrc,
+      /expired_at IS NOT NULL AND s\.expired_at > statement_timestamp\(\)/,
+    );
+    const fenceSrc = readFileSync(
+      join(repoRoot, 'supabase/functions/_shared/agent-auth.ts'),
+      'utf8',
+    );
+    assert.match(
+      fenceSrc,
+      /expired_at IS NOT NULL AND expired_at > statement_timestamp\(\)/,
+    );
+    assert.match(
+      fenceSrc,
+      /SELECT\s+managed_at\s+FROM swarm\.agent_principals[\s\S]*?FOR SHARE/,
+    );
+    assert.match(
+      fenceSrc,
+      /FROM swarm\.agent_execution_sessions[\s\S]*?FOR SHARE/,
+    );
+    assert.equal(fenceSrc.includes('if (args.managedAt === null)'), false);
+  });
+
+  it('capability is not agent-authenticated and does not claim or ack', () => {
+    const capabilitySrc = readFileSync(
+      join(repoRoot, 'supabase/functions/capability/index.ts'),
+      'utf8',
+    );
+    assert.equal(capabilitySrc.includes('loadAgentCredential('), false);
+    assert.equal(capabilitySrc.includes('claimAgentInbox('), false);
+    assert.equal(capabilitySrc.includes('ackAgentDelivery('), false);
+    assert.match(capabilitySrc, /swarm_capability/);
+    assert.match(capabilitySrc, /swm_cap_/);
   });
 });

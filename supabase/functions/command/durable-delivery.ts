@@ -67,6 +67,8 @@ export interface AckAgentDeliveryCommand {
   listener_instance_id: string | null;
   outcome: DeliveryAckOutcome;
   last_error_code: string | null;
+  /** Closed boolean. Required for managed principals; ignored for unmanaged. */
+  surfaced?: boolean;
 }
 
 export interface DeliveryLedgerRef {
@@ -190,8 +192,15 @@ export async function claimAgentInbox(
     receiverOwnerUserId: string;
     listenerInstanceId: string;
     limit: number;
+    /** When true, bind the verified proof and treat queued-unsurfaced as pending. */
+    managed?: boolean;
+    /** Verified proof. Set at claim time; never read from the command body. */
+    session?: { session_id: string; generation: number } | null;
   },
 ): Promise<DeliveryClaimLedgerResponse | null> {
+  const managed = args.managed === true;
+  const sessionId = args.session?.session_id ?? null;
+  const sessionGeneration = args.session?.generation ?? null;
   // 1. Hold a row lock on the exact recipient agent principal row FOR UPDATE
   const principalRows = await tx<{ principal_id: string; revoked_at: Date | null }[]>`
     SELECT principal_id, revoked_at
@@ -223,6 +232,7 @@ export async function claimAgentInbox(
   `;
 
   // 3. Terminalize unleased rows whose immutable signal TTL elapsed as expired.
+  // Managed queued-unsurfaced rows stay pending until surfaced_at, but TTL still wins.
   await tx`
     UPDATE swarm.signal_deliveries AS d
     SET
@@ -232,15 +242,24 @@ export async function claimAgentInbox(
       lease_id = NULL,
       leased_by = NULL,
       leased_until = NULL,
+      session_id = NULL,
+      session_generation = NULL,
       updated_at = statement_timestamp()
     FROM swarm.signals AS s
     WHERE s.id = d.signal_id
       AND s.workspace_id = d.workspace_id
       AND d.workspace_id = ${args.workspaceId}::uuid
       AND d.recipient_agent_principal_id = ${args.recipientPrincipalId}::uuid
-      AND d.acked_at IS NULL
       AND d.lease_id IS NULL
       AND s.until <= statement_timestamp()
+      AND (
+        d.acked_at IS NULL
+        OR (
+          ${managed}
+          AND d.ack_outcome = 'queued'
+          AND d.surfaced_at IS NULL
+        )
+      )
   `;
 
   // 4. Terminalize remaining unleased, signal-live rows at the ten-attempt ceiling.
@@ -260,10 +279,17 @@ export async function claimAgentInbox(
       AND s.workspace_id = d.workspace_id
       AND d.workspace_id = ${args.workspaceId}::uuid
       AND d.recipient_agent_principal_id = ${args.recipientPrincipalId}::uuid
-      AND d.acked_at IS NULL
       AND d.lease_id IS NULL
       AND d.attempt_count >= ${DELIVERY_MAX_ATTEMPTS}
       AND s.until > statement_timestamp()
+      AND (
+        d.acked_at IS NULL
+        OR (
+          ${managed}
+          AND d.ack_outcome = 'queued'
+          AND d.surfaced_at IS NULL
+        )
+      )
     RETURNING d.signal_id
   `;
   const terminalDeliveryFailureCount = poisonRows.length;
@@ -301,6 +327,14 @@ export async function claimAgentInbox(
         AND d.lease_id IS NULL
         AND d.attempt_count < ${DELIVERY_MAX_ATTEMPTS}
         AND s.until > statement_timestamp()
+        AND (
+          d.session_id IS NULL
+          OR (
+            ${sessionId}::uuid IS NOT NULL
+            AND d.session_id = ${sessionId}::uuid
+            AND d.session_generation = ${sessionGeneration}
+          )
+        )
       ORDER BY d.enqueued_at ASC, d.signal_id ASC
       LIMIT ${effectiveLimit}
       FOR UPDATE OF d SKIP LOCKED
@@ -312,7 +346,16 @@ export async function claimAgentInbox(
         leased_by = ${args.listenerInstanceId}::uuid,
         leased_until = statement_timestamp()
           + (${DELIVERY_LEASE_MS} * interval '1 millisecond'),
-        attempt_count = d.attempt_count + 1,
+        attempt_count = CASE
+          WHEN ${managed}
+            AND d.session_id IS NULL
+            AND d.attempt_count > 0
+            AND d.surfaced_at IS NULL
+          THEN d.attempt_count
+          ELSE d.attempt_count + 1
+        END,
+        session_id = ${sessionId}::uuid,
+        session_generation = ${sessionGeneration},
         delivered_at = COALESCE(d.delivered_at, statement_timestamp()),
         updated_at = statement_timestamp()
       FROM candidates AS c
@@ -376,8 +419,15 @@ export async function claimAgentInbox(
      AND s.workspace_id = d.workspace_id
     WHERE d.workspace_id = ${args.workspaceId}::uuid
       AND d.recipient_agent_principal_id = ${args.recipientPrincipalId}::uuid
-      AND d.acked_at IS NULL
       AND s.until > statement_timestamp()
+      AND (
+        d.acked_at IS NULL
+        OR (
+          ${managed}
+          AND d.ack_outcome = 'queued'
+          AND d.surfaced_at IS NULL
+        )
+      )
   `;
   const pending = Number(countRows[0]?.pending ?? 0);
   const oldestPending = countRows[0]?.oldest ?? null;
@@ -598,7 +648,10 @@ export type AckResult =
   | { status: "accepted"; response: DeliveryAckLedgerResponse }
   | { status: "idempotent"; response: DeliveryAckLedgerResponse }
   | { status: "conflict" }
-  | { status: "unavailable" };
+  | { status: "unavailable" }
+  | { status: "not_surfaced" }
+  | { status: "session_conflict" }
+  | { status: "session_expired" };
 
 /**
  * Acknowledge a live lease, or promote a queued receipt after hook surfacing.
@@ -613,8 +666,12 @@ export async function ackAgentDelivery(
     listenerInstanceId: string | null;
     outcome: DeliveryAckOutcome;
     lastErrorCode: string | null;
+    surfaced?: boolean;
+    managed?: boolean;
+    proof?: { session_id: string; generation: number } | null;
   },
 ): Promise<AckResult> {
+  const managed = args.managed === true;
   // Already acked with same outcome AND same lease/listener identity → idempotent.
   // Lock row FOR UPDATE so concurrent identical ack calls serialize cleanly.
   const existing = await tx<{
@@ -622,8 +679,13 @@ export async function ackAgentDelivery(
     acked_at: Date | null;
     last_lease_id: string | null;
     last_leased_by: string | null;
+    session_id: string | null;
+    session_generation: string | number | null;
+    surfaced_at: Date | null;
   }[]>`
-    SELECT ack_outcome, acked_at, last_lease_id, last_leased_by
+    SELECT
+      ack_outcome, acked_at, last_lease_id, last_leased_by,
+      session_id, session_generation, surfaced_at
     FROM swarm.signal_deliveries
     WHERE workspace_id = ${args.workspaceId}::uuid
       AND signal_id = ${args.signalId}::uuid
@@ -633,6 +695,10 @@ export async function ackAgentDelivery(
   `;
   const row = existing[0];
   if (!row) return { status: "unavailable" };
+
+  if (managed && args.outcome === "observed" && args.surfaced !== true) {
+    return { status: "not_surfaced" };
+  }
 
   const queuedObservation =
     args.outcome === "observed" &&
@@ -653,11 +719,24 @@ export async function ackAgentDelivery(
       };
     }
     if (row.ack_outcome !== "queued") return { status: "conflict" };
+    if (managed) {
+      if (
+        args.proof == null ||
+        row.session_id !== args.proof.session_id ||
+        Number(row.session_generation) !== args.proof.generation
+      ) {
+        return { status: "session_conflict" };
+      }
+    }
     await tx`
       UPDATE swarm.signal_deliveries
       SET
         acked_at = statement_timestamp(),
         ack_outcome = 'observed',
+        surfaced_at = CASE
+          WHEN ${managed} THEN COALESCE(surfaced_at, statement_timestamp())
+          ELSE surfaced_at
+        END,
         updated_at = statement_timestamp()
       WHERE workspace_id = ${args.workspaceId}::uuid
         AND signal_id = ${args.signalId}::uuid
@@ -676,6 +755,15 @@ export async function ackAgentDelivery(
   }
   if (args.leaseId === null || args.listenerInstanceId === null) {
     return { status: "unavailable" };
+  }
+  if (managed) {
+    if (
+      args.proof == null ||
+      row.session_id !== args.proof.session_id ||
+      Number(row.session_generation) !== args.proof.generation
+    ) {
+      return { status: "session_conflict" };
+    }
   }
   if (row.acked_at !== null) {
     const identityMatches =
@@ -740,6 +828,11 @@ export async function ackAgentDelivery(
       lease_id = NULL,
       leased_by = NULL,
       leased_until = NULL,
+      surfaced_at = CASE
+        WHEN ${managed} AND ${args.outcome} <> 'queued'
+        THEN COALESCE(surfaced_at, statement_timestamp())
+        ELSE surfaced_at
+      END,
       updated_at = statement_timestamp()
     WHERE workspace_id = ${args.workspaceId}::uuid
       AND signal_id = ${args.signalId}::uuid

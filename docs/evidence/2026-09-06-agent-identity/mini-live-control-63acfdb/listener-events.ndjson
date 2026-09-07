@@ -1,0 +1,13 @@
+{"ts":"2026-09-07T01:31:35.433Z","event":"listener_starting","instance_id":"462b0aef-c461-4b0b-8433-51b934791a1f","pid":94590}
+{"ts":"2026-09-07T01:31:35.525Z","event":"listener_delivery_mode","delivery_mode":"durable_claim","pending_delivery_count":0}
+{"ts":"2026-09-07T01:31:35.525Z","event":"listener_ready"}
+{"ts":"2026-09-07T01:31:36.023Z","event":"listener_wake","wake_mode":"push","wake_error_code":null,"wake_reconnects":0,"rate_limited":false}
+{"ts":"2026-09-07T01:31:36.023Z","event":"listener_delivery_claim","signal_id":"77f21981-1eb9-4a08-8622-9936c085f3dc","pending_delivery_count":1,"terminal_delivery_failure_count":0}
+{"ts":"2026-09-07T01:31:36.023Z","event":"listener_idle_poll","idle_poll_ms":15000}
+{"ts":"2026-09-07T01:31:36.042Z","event":"listener_routing_decision","signal_id":"77f21981-1eb9-4a08-8622-9936c085f3dc","route_mode":"main","route_decision":"main","defer_over_chars":null,"body_length":38}
+{"ts":"2026-09-07T01:31:36.117Z","event":"listener_main_queue","signal_id":"77f21981-1eb9-4a08-8622-9936c085f3dc","pending_main_count":1,"dropped_count":0}
+{"ts":"2026-09-07T01:31:36.127Z","event":"listener_effect","signal_id":"77f21981-1eb9-4a08-8622-9936c085f3dc","status":"routed_main","failure_code":null}
+{"ts":"2026-09-07T01:31:36.276Z","event":"listener_delivery_ack","signal_id":"77f21981-1eb9-4a08-8622-9936c085f3dc","outcome":"queued"}
+{"ts":"2026-09-07T01:31:37.216Z","event":"listener_delivery_claim","signal_id":null,"pending_delivery_count":1,"terminal_delivery_failure_count":0}
+{"ts":"2026-09-07T01:31:37.248Z","event":"listener_idle_poll","idle_poll_ms":300000}
+{"ts":"2026-09-07T01:31:50.008Z","event":"listener_stopped"}

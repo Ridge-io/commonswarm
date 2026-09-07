@@ -28,9 +28,9 @@ import {
 } from "../src/host/types.js";
 import {
   CodexListenerModel,
-  ListenerEngine,
   type OpenCodexSession,
-} from "../src/listener/index.js";
+} from "../src/listener/codex-model.js";
+import { ListenerEngine } from "../src/listener/index.js";
 import type {
   ListenerEffectRecord,
   ListenerEffectStore,

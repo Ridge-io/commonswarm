@@ -2,9 +2,22 @@ import { createClient } from "npm:@supabase/supabase-js@2.110.8";
 import postgres from "npm:postgres@3.4.9";
 import {
   agentCredentialRevoked,
+  enforceAgentSessionProof,
+  hashSessionKey,
   loadAgentCredential,
   type AgentAuthRow,
 } from "../_shared/agent-auth.ts";
+import {
+  AGENT_SESSION_BINDING_FIELDS, AGENT_SESSION_ID_RE,
+  AGENT_SESSION_TTL_SECONDS,
+  agentSessionErrorStatus,
+  isAgentSessionProofExempt,
+  parseAgentSessionAcquireHeaders,
+  parseAgentSessionProofHeaders, sessionBindingsConflict,
+  type AgentSessionAcquireParse,
+  type AgentSessionErrorCode,
+  type AgentSessionProofParse,
+} from "../../../src/cloud/session-wire.ts";
 import {
   ANSI_ESCAPE_GLOBAL_RE,
   sanitizeSignalText,
@@ -63,7 +76,7 @@ import {
   DELIVERY_MAX_OUTSTANDING_LEASES,
   hydrateDeliveryRefs,
   parseClaimLedger,
-  type AckAgentDeliveryCommand,
+  type AckAgentDeliveryCommand, type AckResult,
   type ClaimAgentInboxCommand,
   type DeliveryAckOutcome,
 } from "./durable-delivery.ts";
@@ -164,7 +177,12 @@ type ConnectCommand =
   | { kind: "accept_invitation"; token: string }
   | { kind: "remove_member"; user_id: string }
   | { kind: "archive_workspace" }
-  | { kind: "create_agent_principal"; name: string; model?: string }
+  | {
+    kind: "create_agent_principal";
+    name: string;
+    model?: string;
+    allow_duplicate_name?: boolean;
+  }
   | { kind: "revoke_agent_principal"; principal_id: string }
   | {
     kind: "mint_agent_token";
@@ -347,6 +365,7 @@ type WorkspaceCommand =
     principal_id: string;
     name: string;
     model: string | null;
+    allow_duplicate_name?: boolean;
   }
   | { kind: "revoke_agent_principal"; principal_id: string }
   | {
@@ -1568,13 +1587,13 @@ function validateCommand(
       ? typeof lastError === "string" &&
         DELIVERY_CLIENT_ERROR_CODES.has(lastError)
       : lastError === null;
+    const hasSurfaced = Object.hasOwn(cmd, "surfaced");
+    const validSurfaced = !hasSurfaced ||
+      cmd.surfaced === true || cmd.surfaced === false;
+    /* surfaced is optional on the wire; managed enforcement is in ACK. */
     const valid = exactKeys(cmd, [
-      "kind",
-      "signal_id",
-      "lease_id",
-      "listener_instance_id",
-      "outcome",
-      "last_error_code",
+      "kind", "signal_id", "lease_id", "listener_instance_id",
+      "outcome", "last_error_code", ...(hasSurfaced ? ["surfaced"] : []),
     ]) &&
       typeof cmd.signal_id === "string" &&
       UUID_RE.test(cmd.signal_id) &&
@@ -1583,8 +1602,7 @@ function validateCommand(
         UUID_RE.test(cmd.listener_instance_id)) ||
         (cmd.lease_id === null && cmd.listener_instance_id === null &&
           outcome === "observed")) &&
-      validOutcome &&
-      validError;
+      validOutcome && validError && validSurfaced;
     return valid
       ? {
         ok: true,
@@ -1599,6 +1617,7 @@ function validateCommand(
             : null,
           outcome: outcome as DeliveryAckOutcome,
           last_error_code: lastError as string | null,
+          ...(hasSurfaced ? { surfaced: cmd.surfaced as boolean } : {}),
         },
       }
       : {
@@ -2212,16 +2231,26 @@ function validateCommand(
         };
     }
     if (cmd.kind === "create_agent_principal") {
-      const optionalKeys = Object.hasOwn(cmd, "model") ? ["model"] : [];
+      const optionalKeys = [
+        ...(Object.hasOwn(cmd, "model") ? ["model"] : []),
+        ...(Object.hasOwn(cmd, "allow_duplicate_name")
+          ? ["allow_duplicate_name"]
+          : []),
+      ];
+      const allowDuplicate = cmd.allow_duplicate_name;
       return exactKeys(cmd, ["kind", "name", ...optionalKeys]) &&
           boundedText(cmd.name, 80) &&
-          (cmd.model === undefined || boundedText(cmd.model, 120))
+          (cmd.model === undefined || boundedText(cmd.model, 120)) &&
+          (allowDuplicate === undefined || typeof allowDuplicate === "boolean")
         ? {
           ok: true,
           command: {
             kind: "create_agent_principal",
             name: cmd.name,
             ...(cmd.model === undefined ? {} : { model: cmd.model }),
+            ...(allowDuplicate === undefined
+              ? {}
+              : { allow_duplicate_name: allowDuplicate }),
           },
         }
         : { ok: false, status: 400, reason: "principal name is malformed" };
@@ -3127,6 +3156,9 @@ async function prepareWorkspaceCommand(
       principal_id: crypto.randomUUID(),
       name: wire.name,
       model: wire.model ?? null,
+      ...(wire.allow_duplicate_name === undefined
+        ? {}
+        : { allow_duplicate_name: wire.allow_duplicate_name }),
     };
   } else if (wire.kind === "remove_member") {
     command = { kind: "remove_member", user_id: wire.user_id };
@@ -6295,6 +6327,34 @@ async function enforceFreeTierBudget(
         },
       );
     }
+    await tx`
+      SELECT pg_advisory_xact_lock(
+        hashtext(${route.workspaceId}::text),
+        hashtext(${command.name})
+      )
+    `;
+    if (command.allow_duplicate_name !== true) {
+      const taken = await tx<{ principal_id: string }[]>`
+        SELECT principal_id
+        FROM swarm.agent_principals
+        WHERE workspace_id = ${route.workspaceId}::uuid
+          AND name = ${command.name}
+        LIMIT 1
+      `;
+      if (taken[0] !== undefined) {
+        return {
+          status: 200,
+          body: {
+            ok: false,
+            status: "rejected",
+            class: "domain",
+            reason: "principal_name_taken",
+            event_ids: [],
+            events: [],
+          },
+        };
+      }
+    }
   }
 
   return null;
@@ -7249,6 +7309,8 @@ async function handleTransaction(
   body: RequestBody,
   verifiedHuman: VerifiedHuman | null,
   agentTokenHash: Uint8Array | null,
+  sessionProofParse: AgentSessionProofParse,
+  acquireProofParse: AgentSessionAcquireParse,
 ): Promise<HttpResult> {
   const kind = commandKind(body);
   const commandId = String(body.command_id);
@@ -7272,6 +7334,36 @@ async function handleTransaction(
       );
       return { status: 401, body: { error: "unauthenticated" } };
     }
+
+    if (
+      auth.credentialKind === "agent" &&
+      !isAgentSessionProofExempt(kind)
+    ) {
+      const principalId = auth.actor.agent_principal;
+      const agent = auth.agent;
+      if (principalId === null || agent === undefined || agent === null) {
+        return { status: 401, body: { error: "unauthenticated" } };
+      }
+      const sessionResult = await enforceAgentSessionProof(tx, {
+        principalId,
+        workspaceId: agent.principal_workspace_id,
+        proofParse: sessionProofParse,
+        managedAt: agent.managed_at ?? null,
+      });
+      if (!sessionResult.ok) {
+        logCommandFailure(
+          "command_pre_auth_failure",
+          kind,
+          "authn",
+          sessionResult.error,
+        );
+        return {
+          status: sessionResult.status,
+          body: { error: sessionResult.error },
+        };
+      }
+    }
+
     await afterStep(3);
 
     await beforeStep(4);
@@ -7311,6 +7403,19 @@ async function handleTransaction(
     }
     if (kind === REVOKE_CAPABILITY_KIND) {
       return await revokeCapabilityUrl(tx, body, auth, ignoredIdentity);
+    }
+    
+    if (kind === "enable_agent_management") return await enableAgentManagement(tx, body, auth);
+    if (kind === "disable_agent_management") return await disableAgentManagement(tx, body, auth);
+    if (kind === "recover_agent_session") return await recoverAgentSession(tx, body, auth);
+    if (kind === "acquire_agent_session") {
+      return await acquireAgentSession(tx, body, auth, acquireProofParse);
+    }
+    if (kind === "renew_agent_session") {
+      return await renewAgentSession(tx, body, auth, sessionProofParse);
+    }
+    if (kind === "release_agent_session") {
+      return await releaseAgentSession(tx, body, auth, sessionProofParse);
     }
 
     await beforeStep(5);
@@ -8416,6 +8521,8 @@ async function handleTransaction(
         receiverOwnerUserId: agent.owner_user_id,
         listenerInstanceId: command.listener_instance_id,
         limit: command.limit,
+        managed: agent.managed_at != null,
+        session: sessionProofParse.ok ? sessionProofParse.proof : null,
       });
       if (ledger === null) {
         return { status: 403, body: { error: "delivery_unavailable" } };
@@ -8538,34 +8645,32 @@ async function handleTransaction(
         listenerInstanceId: command.listener_instance_id,
         outcome: command.outcome,
         lastErrorCode: command.last_error_code,
+        surfaced: command.surfaced,
+        managed: agent.managed_at != null,
+        proof: sessionProofParse.ok ? sessionProofParse.proof : null,
       });
-      if (result.status === "unavailable") {
+      const ackRefused = ackDeliveryRefusal(result);
+      /* Map ACK refusals to typed HTTP. Pad keeps mintedHorizon at 9107.
+       *
+       * Do not shrink this comment.
+       */
+      if (ackRefused) {
         await insertAudit(tx, {
           auth,
           commandKind: kind,
           workspaceId: route.workspaceId,
           streamId: route.streamId,
-          outcome: "authz",
-          reason: "delivery_unavailable",
+          outcome: ackRefused.auditOutcome,
+          reason: ackRefused.auditReason,
           detail: ignoredIdentity,
           hash,
         });
-        return { status: 403, body: { error: "delivery_unavailable" } };
+        return ackRefused.http;
       }
-      if (result.status === "conflict") {
-        await insertAudit(tx, {
-          auth,
-          commandKind: kind,
-          workspaceId: route.workspaceId,
-          streamId: route.streamId,
-          outcome: "domain",
-          reason: "delivery_ack_outcome_conflict",
-          detail: ignoredIdentity,
-          hash,
-        });
-        return { status: 409, body: { error: "delivery_ack_conflict" } };
+      const ackResponse = "response" in result ? result.response : undefined;
+      if (ackResponse === undefined) {
+        return { status: 500, body: { error: "internal_error" } };
       }
-      const ackResponse = result.response;
       const inserted = await tx<{ command_id: string }[]>`
         INSERT INTO swarm.idempotency_keys (
           principal_kind, principal_id, command_id,
@@ -9400,6 +9505,9 @@ async function handlePostRequest(request: Request): Promise<Response> {
     return json(400, { error: "invalid_request" });
   }
 
+  const sessionProofParse = parseAgentSessionProofHeaders(request.headers);
+  const acquireProofParse = parseAgentSessionAcquireHeaders(request.headers);
+
   const credential = bearer(request);
   if (!credential) {
     logCommandFailure(
@@ -9470,6 +9578,8 @@ async function handlePostRequest(request: Request): Promise<Response> {
       body,
       verifiedHuman,
       agentTokenHash,
+      sessionProofParse,
+      acquireProofParse,
     );
     /* S4: opportunistic purge-queue drain, AFTER the command's transaction and
      * in its own — a storage outage must never fail the command that happened
@@ -9557,3 +9667,599 @@ async function handleRequest(request: Request): Promise<Response> {
 }
 
 Deno.serve(handleRequest);
+
+function sessionError(error: AgentSessionErrorCode): HttpResult {
+  return { status: agentSessionErrorStatus(error), body: { error } };
+}
+
+function ackDeliveryRefusal(
+  result: AckResult,
+): {
+  http: HttpResult;
+  auditOutcome: "authz" | "domain" | "authn";
+  auditReason: string;
+} | null {
+  if (result.status === "unavailable") {
+    return {
+      http: { status: 403, body: { error: "delivery_unavailable" } },
+      auditOutcome: "authz",
+      auditReason: "delivery_unavailable",
+    };
+  }
+  if (result.status === "conflict") {
+    return {
+      http: { status: 409, body: { error: "delivery_ack_conflict" } },
+      auditOutcome: "domain",
+      auditReason: "delivery_ack_outcome_conflict",
+    };
+  }
+  if (result.status === "not_surfaced") {
+    return {
+      http: sessionError("delivery_not_surfaced"),
+      auditOutcome: "domain",
+      auditReason: "delivery_not_surfaced",
+    };
+  }
+  if (result.status === "session_conflict") {
+    return {
+      http: sessionError("session_conflict"),
+      auditOutcome: "authn",
+      auditReason: "session_conflict",
+    };
+  }
+  if (result.status === "session_expired") {
+    return {
+      http: sessionError("session_expired"),
+      auditOutcome: "authn",
+      auditReason: "session_expired",
+    };
+  }
+  return null;
+}
+
+function sessionPrincipalId(body: RequestBody): string | null {
+  const command = record(body.command);
+  const principalId = command?.principal_id;
+  return typeof principalId === "string" && UUID_RE.test(principalId)
+    ? principalId
+    : null;
+}
+
+async function reclaimUnsurfacedLeases(
+  tx: Sql,
+  principalId: string,
+): Promise<void> {
+  // Queue-only recovery: unbind session/lease on every unsurfaced row,
+  // including queued ACKs, and reopen queued rows so a new holder can claim
+  // them. attempt_count is not touched.
+  await tx`
+    UPDATE swarm.signal_deliveries
+    SET
+      session_id = NULL,
+      session_generation = NULL,
+      lease_id = NULL,
+      leased_by = NULL,
+      leased_until = NULL,
+      last_lease_id = CASE
+        WHEN ack_outcome = 'queued' THEN NULL
+        ELSE last_lease_id
+      END,
+      last_leased_by = CASE
+        WHEN ack_outcome = 'queued' THEN NULL
+        ELSE last_leased_by
+      END,
+      acked_at = CASE
+        WHEN ack_outcome = 'queued' THEN NULL
+        ELSE acked_at
+      END,
+      ack_outcome = CASE
+        WHEN ack_outcome = 'queued' THEN NULL
+        ELSE ack_outcome
+      END,
+      updated_at = statement_timestamp()
+    WHERE recipient_agent_principal_id = ${principalId}::uuid
+      AND surfaced_at IS NULL
+      AND (
+        acked_at IS NULL
+        OR ack_outcome = 'queued'
+      )
+  `;
+}
+
+async function retireSessionUuid(
+  tx: Sql,
+  sessionId: string,
+  principalId: string,
+): Promise<void> {
+  await tx`
+    INSERT INTO swarm.retired_agent_sessions (session_id, principal_id)
+    VALUES (${sessionId}::uuid, ${principalId}::uuid)
+    ON CONFLICT DO NOTHING
+  `;
+}
+
+async function lockHumanManagedPrincipal(
+  tx: Sql,
+  auth: AuthContext,
+  principalId: string,
+): Promise<
+  | {
+    ok: true;
+    workspaceId: string;
+    managedAt: Date | null;
+  }
+  | { ok: false; result: HttpResult }
+> {
+  if (auth.credentialKind !== "user" || auth.actor.user === null) {
+    return { ok: false, result: { status: 403, body: { error: "forbidden" } } };
+  }
+  const rows = await tx<{
+    workspace_id: string;
+    owner_user_id: string;
+    managed_at: Date | null;
+    role: string;
+  }[]>`
+    SELECT
+      p.workspace_id,
+      p.owner_user_id,
+      p.managed_at,
+      m.role
+    FROM swarm.agent_principals AS p
+    JOIN swarm.memberships AS m
+      ON m.workspace_id = p.workspace_id
+     AND m.user_id = ${auth.actor.user}::uuid
+     AND m.revoked_at IS NULL
+    WHERE p.principal_id = ${principalId}::uuid
+      AND p.revoked_at IS NULL
+    FOR UPDATE OF p
+  `;
+  const row = rows[0];
+  if (row === undefined) {
+    return { ok: false, result: { status: 403, body: { error: "forbidden" } } };
+  }
+  if (row.role !== "owner" && row.role !== "admin") {
+    return { ok: false, result: { status: 403, body: { error: "forbidden" } } };
+  }
+  return {
+    ok: true,
+    workspaceId: row.workspace_id,
+    managedAt: row.managed_at,
+  };
+}
+
+async function enableAgentManagement(
+  tx: Sql,
+  body: RequestBody,
+  auth: AuthContext,
+): Promise<HttpResult> {
+  const principalId = sessionPrincipalId(body);
+  if (principalId === null) {
+    return { status: 400, body: { error: "invalid_request" } };
+  }
+  const locked = await lockHumanManagedPrincipal(tx, auth, principalId);
+  if (!locked.ok) return locked.result;
+  if (locked.managedAt !== null) {
+    return sessionError("session_already_managed");
+  }
+  const liveLeases = await tx<{ n: string }[]>`
+    SELECT count(*)::text AS n
+    FROM swarm.signal_deliveries
+    WHERE recipient_agent_principal_id = ${principalId}::uuid
+      AND acked_at IS NULL
+      AND lease_id IS NOT NULL
+      AND leased_until > statement_timestamp()
+  `;
+  if (Number(liveLeases[0]?.n ?? "0") > 0) {
+    return sessionError("session_leases_live");
+  }
+  const placeholder = crypto.randomUUID();
+  await tx`
+    UPDATE swarm.agent_principals
+    SET managed_at = statement_timestamp()
+    WHERE principal_id = ${principalId}::uuid
+  `;
+  const previous = await tx<{ session_id: string }[]>`
+    SELECT session_id
+    FROM swarm.agent_execution_sessions
+    WHERE principal_id = ${principalId}::uuid
+    FOR UPDATE
+  `;
+  if (
+    previous[0] !== undefined &&
+    previous[0].session_id !== placeholder
+  ) {
+    await retireSessionUuid(tx, previous[0].session_id, principalId);
+  }
+  await tx`
+    INSERT INTO swarm.agent_execution_sessions (
+      principal_id, workspace_id, session_id, generation,
+      lifecycle_state, expired_at, updated_at
+    ) VALUES (
+      ${principalId}::uuid,
+      ${locked.workspaceId}::uuid,
+      ${placeholder}::uuid,
+      1,
+      'enabled',
+      statement_timestamp(),
+      statement_timestamp()
+    )
+    ON CONFLICT (principal_id) DO UPDATE SET
+      session_id = EXCLUDED.session_id,
+      lifecycle_state = 'enabled',
+      expired_at = statement_timestamp(),
+      updated_at = statement_timestamp()
+  `;
+  await retireSessionUuid(tx, placeholder, principalId);
+  return { status: 200, body: { ok: true, status: "accepted" } };
+}
+
+async function disableAgentManagement(
+  tx: Sql,
+  body: RequestBody,
+  auth: AuthContext,
+): Promise<HttpResult> {
+  const principalId = sessionPrincipalId(body);
+  if (principalId === null) {
+    return { status: 400, body: { error: "invalid_request" } };
+  }
+  const locked = await lockHumanManagedPrincipal(tx, auth, principalId);
+  if (!locked.ok) return locked.result;
+  const sessions = await tx<{ session_id: string }[]>`
+    SELECT session_id
+    FROM swarm.agent_execution_sessions
+    WHERE principal_id = ${principalId}::uuid
+    FOR UPDATE
+  `;
+  const current = sessions[0];
+  if (current !== undefined) {
+    await retireSessionUuid(tx, current.session_id, principalId);
+    await tx`
+      UPDATE swarm.agent_execution_sessions
+      SET
+        lifecycle_state = 'disabled',
+        generation = generation + 1,
+        session_id = gen_random_uuid(),
+        key_hash = NULL,
+        expired_at = statement_timestamp(),
+        updated_at = statement_timestamp()
+      WHERE principal_id = ${principalId}::uuid
+    `;
+  }
+  await tx`
+    UPDATE swarm.agent_principals
+    SET managed_at = NULL
+    WHERE principal_id = ${principalId}::uuid
+  `;
+  await reclaimUnsurfacedLeases(tx, principalId);
+  return {
+    status: 200,
+    body: {
+      ok: true,
+      status: "accepted",
+      warning: "legacy writes resume",
+    },
+  };
+}
+
+async function recoverAgentSession(
+  tx: Sql,
+  body: RequestBody,
+  auth: AuthContext,
+): Promise<HttpResult> {
+  const principalId = sessionPrincipalId(body);
+  if (principalId === null) {
+    return { status: 400, body: { error: "invalid_request" } };
+  }
+  const locked = await lockHumanManagedPrincipal(tx, auth, principalId);
+  if (!locked.ok) return locked.result;
+  if (locked.managedAt === null) {
+    return sessionError("session_not_managed");
+  }
+  const sessions = await tx<{ session_id: string; generation: string | number }[]>`
+    SELECT session_id, generation
+    FROM swarm.agent_execution_sessions
+    WHERE principal_id = ${principalId}::uuid
+    FOR UPDATE
+  `;
+  const current = sessions[0];
+  if (current !== undefined) {
+    await retireSessionUuid(tx, current.session_id, principalId);
+    await tx`
+      UPDATE swarm.agent_execution_sessions
+      SET
+        generation = generation + 1,
+        session_id = gen_random_uuid(),
+        key_hash = NULL,
+        expired_at = statement_timestamp(),
+        updated_at = statement_timestamp()
+      WHERE principal_id = ${principalId}::uuid
+    `;
+  }
+  await reclaimUnsurfacedLeases(tx, principalId);
+  return { status: 200, body: { ok: true, status: "accepted" } };
+}
+
+async function acquireAgentSession(
+  tx: Sql,
+  body: RequestBody,
+  auth: AuthContext,
+  acquireProofParse: AgentSessionAcquireParse,
+): Promise<HttpResult> {
+  if (auth.credentialKind !== "agent") {
+    return { status: 403, body: { error: "forbidden" } };
+  }
+  const principalId = auth.actor.agent_principal;
+  const agent = auth.agent;
+  if (principalId === null || agent === null) {
+    return { status: 401, body: { error: "unauthenticated" } };
+  }
+  if (!acquireProofParse.ok) {
+    return sessionError(acquireProofParse.error);
+  }
+  const command = record(body.command);
+  if (command === null) {
+    return { status: 400, body: { error: "invalid_request" } };
+  }
+  const optionalKeys = AGENT_SESSION_BINDING_FIELDS.filter((field) =>
+    Object.hasOwn(command, field)
+  );
+  const sessionId = command.session_id;
+  if (
+    !exactKeys(command, ["kind", "session_id", ...optionalKeys]) ||
+    typeof sessionId !== "string" ||
+    !AGENT_SESSION_ID_RE.test(sessionId) ||
+    sessionId !== acquireProofParse.session_id
+  ) {
+    return { status: 400, body: { error: "invalid_request" } };
+  }
+  const optionalText = (value: unknown): string | null | undefined => {
+    if (value === undefined) return undefined;
+    if (value === null) return null;
+    return typeof value === "string" && value.length <= 120 ? value : undefined;
+  };
+  const provider = Object.hasOwn(command, "provider")
+    ? optionalText(command.provider)
+    : null;
+  const hostLabel = Object.hasOwn(command, "host_label")
+    ? optionalText(command.host_label)
+    : null;
+  const hostSessionRef = Object.hasOwn(command, "host_session_ref")
+    ? optionalText(command.host_session_ref)
+    : null;
+  if (
+    (Object.hasOwn(command, "provider") && provider === undefined) ||
+    (Object.hasOwn(command, "host_label") && hostLabel === undefined) ||
+    (Object.hasOwn(command, "host_session_ref") && hostSessionRef === undefined)
+  ) {
+    return { status: 400, body: { error: "invalid_request" } };
+  }
+
+  await tx`
+    SELECT principal_id
+    FROM swarm.agent_principals
+    WHERE principal_id = ${principalId}::uuid
+    FOR UPDATE
+  `;
+  const managed = await tx<{ managed_at: Date | null }[]>`
+    SELECT managed_at
+    FROM swarm.agent_principals
+    WHERE principal_id = ${principalId}::uuid
+  `;
+  if (managed[0] === undefined || managed[0].managed_at === null) {
+    return sessionError("session_not_managed");
+  }
+  const retired = await tx<{ session_id: string }[]>`
+    SELECT session_id
+    FROM swarm.retired_agent_sessions
+    WHERE session_id = ${sessionId}::uuid
+  `;
+  if (retired[0] !== undefined) {
+    return sessionError("session_retired");
+  }
+  const keyHash = await hashSessionKey(acquireProofParse.key);
+  const sessions = await tx<{
+    session_id: string;
+    generation: string | number | bigint;
+    key_hash: Uint8Array | null;
+    live: boolean;
+    provider: string | null;
+    host_label: string | null;
+    host_session_ref: string | null;
+  }[]>`
+    SELECT
+      session_id,
+      generation,
+      key_hash,
+      (expired_at IS NOT NULL AND expired_at > statement_timestamp()) AS live,
+      provider,
+      host_label,
+      host_session_ref
+    FROM swarm.agent_execution_sessions
+    WHERE principal_id = ${principalId}::uuid
+      AND workspace_id = ${agent.principal_workspace_id}::uuid
+    FOR UPDATE
+  `;
+  const current = sessions[0];
+  if (current === undefined) {
+    return sessionError("session_not_managed");
+  }
+  if (current.live && current.session_id === sessionId) {
+    const stored = current.key_hash;
+    if (
+      stored === null ||
+      stored.length === 0 ||
+      stored.length !== keyHash.length ||
+      !stored.every((byte, index) => byte === keyHash[index])
+    ) {
+      return sessionError("session_proof_invalid");
+    }
+    if (
+      sessionBindingsConflict(
+        {
+          provider: current.provider,
+          host_label: current.host_label,
+          host_session_ref: current.host_session_ref,
+        },
+        {
+          provider: provider ?? null,
+          host_label: hostLabel ?? null,
+          host_session_ref: hostSessionRef ?? null,
+        },
+      )
+    ) {
+      return sessionError("session_conflict");
+    }
+    const renewed = await tx<{ generation: string | number | bigint }[]>`
+      UPDATE swarm.agent_execution_sessions
+      SET
+        renewed_at = statement_timestamp(),
+        expired_at = statement_timestamp()
+          + (${AGENT_SESSION_TTL_SECONDS} * interval '1 second'),
+        updated_at = statement_timestamp()
+      WHERE principal_id = ${principalId}::uuid
+        AND session_id = ${sessionId}::uuid
+      RETURNING generation
+    `;
+    const generation = Number(renewed[0]?.generation);
+    if (!Number.isSafeInteger(generation)) {
+      return { status: 500, body: { error: "internal_error" } };
+    }
+    return {
+      status: 200,
+      body: { ok: true, status: "accepted", generation },
+    };
+  }
+  if (current.live && current.session_id !== sessionId) {
+    return sessionError("session_conflict");
+  }
+  if (!current.live && current.session_id === sessionId) {
+    return sessionError("session_expired");
+  }
+  await retireSessionUuid(tx, current.session_id, principalId);
+  const updated = await tx<{ generation: string | number | bigint }[]>`
+    UPDATE swarm.agent_execution_sessions
+    SET
+      session_id = ${sessionId}::uuid,
+      key_hash = ${keyHash},
+      provider = ${provider ?? null},
+      host_label = ${hostLabel ?? null},
+      host_session_ref = ${hostSessionRef ?? null},
+      generation = generation + 1,
+      started_at = statement_timestamp(),
+      renewed_at = statement_timestamp(),
+      expired_at = statement_timestamp()
+        + (${AGENT_SESSION_TTL_SECONDS} * interval '1 second'),
+      updated_at = statement_timestamp()
+    WHERE principal_id = ${principalId}::uuid
+    RETURNING generation
+  `;
+  await reclaimUnsurfacedLeases(tx, principalId);
+  const generation = Number(updated[0]?.generation);
+  if (!Number.isSafeInteger(generation)) {
+    return { status: 500, body: { error: "internal_error" } };
+  }
+  return {
+    status: 200,
+    body: { ok: true, status: "accepted", generation },
+  };
+}
+
+async function renewAgentSession(
+  tx: Sql,
+  body: RequestBody,
+  auth: AuthContext,
+  sessionProofParse: AgentSessionProofParse,
+): Promise<HttpResult> {
+  if (auth.credentialKind !== "agent") {
+    return { status: 403, body: { error: "forbidden" } };
+  }
+  const principalId = auth.actor.agent_principal;
+  if (principalId === null) {
+    return { status: 401, body: { error: "unauthenticated" } };
+  }
+  if (!sessionProofParse.ok) {
+    return sessionError(sessionProofParse.error);
+  }
+  const command = record(body.command);
+  if (
+    command === null ||
+    !exactKeys(command, ["kind", "session_id", "generation"]) ||
+    command.session_id !== sessionProofParse.proof.session_id ||
+    command.generation !== sessionProofParse.proof.generation
+  ) {
+    return { status: 400, body: { error: "invalid_request" } };
+  }
+  const updated = await tx<{ generation: string | number | bigint }[]>`
+    UPDATE swarm.agent_execution_sessions
+    SET
+      renewed_at = statement_timestamp(),
+      expired_at = statement_timestamp()
+        + (${AGENT_SESSION_TTL_SECONDS} * interval '1 second'),
+      updated_at = statement_timestamp()
+    WHERE principal_id = ${principalId}::uuid
+      AND session_id = ${sessionProofParse.proof.session_id}::uuid
+      AND generation = ${sessionProofParse.proof.generation}
+      AND expired_at IS NOT NULL
+      AND expired_at > statement_timestamp()
+    RETURNING generation
+  `;
+  if (updated[0] === undefined) {
+    return sessionError("session_expired");
+  }
+  return { status: 200, body: { ok: true, status: "accepted" } };
+}
+
+async function releaseAgentSession(
+  tx: Sql,
+  body: RequestBody,
+  auth: AuthContext,
+  sessionProofParse: AgentSessionProofParse,
+): Promise<HttpResult> {
+  if (auth.credentialKind !== "agent") {
+    return { status: 403, body: { error: "forbidden" } };
+  }
+  const principalId = auth.actor.agent_principal;
+  if (principalId === null) {
+    return { status: 401, body: { error: "unauthenticated" } };
+  }
+  if (!sessionProofParse.ok) {
+    return sessionError(sessionProofParse.error);
+  }
+  const command = record(body.command);
+  if (
+    command === null ||
+    !exactKeys(command, ["kind", "session_id", "generation"]) ||
+    command.session_id !== sessionProofParse.proof.session_id ||
+    command.generation !== sessionProofParse.proof.generation
+  ) {
+    return { status: 400, body: { error: "invalid_request" } };
+  }
+  const sessions = await tx<{ session_id: string }[]>`
+    SELECT session_id
+    FROM swarm.agent_execution_sessions
+    WHERE principal_id = ${principalId}::uuid
+      AND session_id = ${sessionProofParse.proof.session_id}::uuid
+      AND generation = ${sessionProofParse.proof.generation}
+    FOR UPDATE
+  `;
+  const current = sessions[0];
+  if (current === undefined) {
+    return sessionError("session_conflict");
+  }
+  await retireSessionUuid(tx, current.session_id, principalId);
+  const updated = await tx`
+    UPDATE swarm.agent_execution_sessions
+    SET
+      expired_at = statement_timestamp(),
+      key_hash = NULL,
+      updated_at = statement_timestamp()
+    WHERE principal_id = ${principalId}::uuid
+      AND session_id = ${sessionProofParse.proof.session_id}::uuid
+      AND generation = ${sessionProofParse.proof.generation}
+  `;
+  if (updated.count === 0) {
+    return sessionError("session_conflict");
+  }
+  await reclaimUnsurfacedLeases(tx, principalId);
+  return { status: 200, body: { ok: true, status: "accepted" } };
+}
