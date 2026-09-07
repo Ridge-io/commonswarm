@@ -4,6 +4,15 @@ Written for a cold successor of the CSLaptopLead seat (principal 9e38443b) on To
 This file lands on `main` through the lead's merge of `lane/agent-identity`; a laptop seat never
 pushes `main`.
 
+## Outcome (updated 2026-09-07 ~01:30 UTC)
+
+Final candidate head 63acfdb3 (+ docs to 13e6f46): Grok exact PASS and Gemini inversion PASS on the
+mini; live control on the mini passed every step
+(`docs/evidence/2026-09-06-agent-identity/mini-live-control-63acfdb/`); release handoff sent to
+CSwarmDevLead. This seat's arms on 63acfdb could not run: the laptop killed them for memory (46
+stale `agy` jobs from another project, not this seat's to kill). Next work for this seat, once memory
+is freed and identity lands on `main`: the seven app-backlog site lanes in spec order.
+
 ## Refs, by hash
 
 | ref | hash | what |
