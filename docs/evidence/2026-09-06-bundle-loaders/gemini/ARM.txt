@@ -48,4 +48,25 @@ diff --git a/AGENTS.md b/AGENTS.md
 * **Status**: **CONFIRMED** (Refutation failed).
 * **Details**:
   * [tests/p1-cli/release-bundle.test.ts](file:///private/tmp/claude-501/-Users-yulanbot-Developer-Ridge-io-cloud-swarm/a866e6cd-5d6d-477f-af6a-740cd30407ed/scratchpad/lane-bundle-loaders/tests/p1-cli/release-bundle.test.ts#L501-L581) invokes `scripts/build-release.sh`, asserts exit status 0, copies the output bundle to an isolated temporary directory with a isolated `HOME`, and executes `bin --version`, `bin --help`, and `bin listen start ... --claude-executable <missing>`.
-  * If `createRequire(import.meta.url)` were present in `src/cli.ts`, esbuild compiles it under `--format=cjs` to `createRequire(import_meta.url)` where `import_meta` is `{}`, triggering `ERR_INVALID_ARG_VALU
+  * If `createRequire(import.meta.url)` were present in `src/cli.ts`, esbuild compiles it under `--format=cjs` to `createRequire(import_meta.url)` where `import_meta` is `{}`, triggering `ERR_INVALID_ARG_VALUE` immediately on startup, failing both `build-release.sh` and `release-bundle.test.ts`.
+  * Ran `tests/p1-cli/release-bundle.test.ts`: passed (0 failures, 880ms).
+
+#### (5) Nothing else changed behaviour; edits to `claude-model.ts`, `citation-drift.test.ts`, and `listener-provider.test.ts` are consistent refactors
+* **Status**: **CONFIRMED** (Refutation failed).
+* **Details**:
+  * [src/listener/claude-model.ts](file:///private/tmp/claude-501/-Users-yulanbot-Developer-Ridge-io-cloud-swarm/a866e6cd-5d6d-477f-af6a-740cd30407ed/scratchpad/lane-bundle-loaders/src/listener/claude-model.ts#L252-L256): re-exports `classifyClaudeCanaryFailure` and types from `claude-canary-classify.js`; implementation was moved verbatim without logic changes. [tests/listener-claude-model.test.ts](file:///private/tmp/claude-501/-Users-yulanbot-Developer-Ridge-io-cloud-swarm/a866e6cd-5d6d-477f-af6a-740cd30407ed/scratchpad/lane-bundle-loaders/tests/listener-claude-model.test.ts) passes (16/16).
+  * [tests/p1-cli/citation-drift.test.ts](file:///private/tmp/claude-501/-Users-yulanbot-Developer-Ridge-io-cloud-swarm/a866e6cd-5d6d-477f-af6a-740cd30407ed/scratchpad/lane-bundle-loaders/tests/p1-cli/citation-drift.test.ts#L350-L409): updated line numbers and strings to match the new dynamic `import` loaders and `classifyClaudeCanaryFailure` line. No assertions were relaxed. Passes (1/1).
+  * [tests/p1-cli/listener-provider.test.ts](file:///private/tmp/claude-501/-Users-yulanbot-Developer-Ridge-io-cloud-swarm/a866e6cd-5d6d-477f-af6a-740cd30407ed/scratchpad/lane-bundle-loaders/tests/p1-cli/listener-provider.test.ts#L147-L225): updated `assert.throws` to `await assert.rejects` to match the `async` signature of `resolveDetachedClaudeExecutable` and `resolveDetachedCodexExecutable`. The rejected errors and remedy messages checked are identical. Passes (13/13).
+  * All required repository gates verified:
+    * `npm run build`: 0
+    * `npm run check:tests`: 0
+    * `npm run check:edge`: 0
+    * `bash scripts/build-release.sh`: 0 (sha256 `313b8907d0c076897de7fcff9a7dad89a15e1974a05c2531d5b913f96d08dfb5`)
+    * `bash scripts/build-npm.sh`: 0
+    * `npm test`: 925/925 passing (0 failures)
+    * `npm run test:p1-cli`: 553/553 passing (0 failures)
+    * `bash scripts/check-commit-identity.sh origin/main..HEAD`: 0
+
+---
+
+VERDICT: PASS
