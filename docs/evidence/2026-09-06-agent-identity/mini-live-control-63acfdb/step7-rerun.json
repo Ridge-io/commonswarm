@@ -1,0 +1,37 @@
+{
+  "version": 1,
+  "url": "http://127.0.0.1:54321",
+  "profile_id": "a43416c82b48dcd84545dfdc",
+  "workspace_id": "eb1e69cb-8e09-59a8-bf5f-fd4c98ddd7ce",
+  "principal_id": "bbbd292f-3ad6-5176-992c-e73c4038653b",
+  "session_id": "3af9805d-0aa9-4c6d-9411-d53cf62e5e4a",
+  "generation": 2,
+  "provider": "claude",
+  "mode": "interactive",
+  "host_session_id": "f253a9b2-7b8b-4442-809f-85ce012460e1",
+  "host_label": null,
+  "token_file": "/var/folders/bb/7n7qfbls651d80fs4r9wdyk40000gn/T/cswarm-live-control-203131/agent1.json",
+  "enforcement": "enabled",
+  "receive_verification": "manual",
+  "released_at": "2026-09-07T01:31:49.692Z",
+  "state": "stopped",
+  "has_private_proof": false,
+  "local": {
+    "state": "stopped",
+    "enforcement": "enabled",
+    "session_id": "3af9805d-0aa9-4c6d-9411-d53cf62e5e4a",
+    "generation": 2,
+    "has_private_proof": false
+  },
+  "server": {
+    "session_id": "dabb377e-c801-4485-a70f-34b34b9f9aac",
+    "generation": null,
+    "lifecycle_state": "enabled",
+    "is_live": false,
+    "expired_at": "2026-09-07T01:31:49.520Z",
+    "managed_at": "2026-09-07T01:31:34.743Z",
+    "provider": "claude",
+    "host_label": null,
+    "host_session_ref": "f253a9b2-7b8b-4442-809f-85ce012460e1"
+  }
+}

@@ -1,0 +1,2 @@
+delivery|observed|true|2|true
+session|enabled|true|3|n/a
