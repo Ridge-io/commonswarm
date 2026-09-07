@@ -17,6 +17,8 @@ const SESSION_ERROR_MESSAGES = {
   session_already_managed: "managed sessions are already enabled for this agent",
   session_leases_live:
     "legacy delivery leases are still live for this agent; stop the old receiver and wait for them to expire before enabling",
+  delivery_not_surfaced:
+    "cannot mark an ask observed on a managed agent until it was surfaced into the bound host conversation",
 } as const satisfies Record<AgentSessionErrorCode, string>;
 
 /**

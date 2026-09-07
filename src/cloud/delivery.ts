@@ -14,6 +14,7 @@ import {
   assertManagedAckAllowed,
   type ManagedAckInput,
 } from "./session-ack.js";
+import { ACK_AGENT_DELIVERY_SURFACED_FIELD } from "./session-wire.js";
 
 const UUID_RE =
   /^[0-9a-f]{8}-[0-9a-f]{4}-[1-8][0-9a-f]{3}-[89ab][0-9a-f]{3}-[0-9a-f]{12}$/i;
@@ -210,6 +211,12 @@ export interface DeliveryAckRequest {
   lastErrorCode: string | null;
   /** When set, ACK is refused locally unless current proof and injection pass. */
   managedAck?: ManagedAckInput;
+  /**
+   * Pending-surface contract (session-wire.ts ACK_AGENT_DELIVERY_SURFACED_FIELD):
+   * a managed principal may mark observed only with surfaced true, which the
+   * server records as surfaced_at. Omitted on legacy principals.
+   */
+  surfaced?: boolean;
 }
 
 export interface DeliveryObservationRequest {
@@ -219,6 +226,8 @@ export interface DeliveryObservationRequest {
   signalId: string;
   /** When set, observation is refused locally unless current proof and injection pass. */
   managedAck?: ManagedAckInput;
+  /** See DeliveryAckRequest.surfaced. */
+  surfaced?: boolean;
 }
 
 export interface DeliveryClientOptions {
@@ -880,6 +889,7 @@ export class DeliveryCommandClient {
       listener_instance_id: request.listenerInstanceId.toLowerCase(),
       outcome: request.outcome,
       last_error_code: request.lastErrorCode,
+      ...(request.surfaced === undefined ? {} : { [ACK_AGENT_DELIVERY_SURFACED_FIELD]: request.surfaced }),
     }, "delivery acknowledgement");
     if (!response.ok) throw refusal(response, text);
     parseAckSuccess(
@@ -914,6 +924,7 @@ export class DeliveryCommandClient {
       listener_instance_id: null,
       outcome: "observed",
       last_error_code: null,
+      ...(request.surfaced === undefined ? {} : { [ACK_AGENT_DELIVERY_SURFACED_FIELD]: request.surfaced }),
     }, "delivery observation");
     if (!response.ok) throw refusal(response, text);
     parseAckSuccess(

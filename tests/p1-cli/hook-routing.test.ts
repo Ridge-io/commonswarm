@@ -620,11 +620,13 @@ test("a managed hook observes only with one live context, the bound host convers
     });
     let observations = 0;
     let proofHeaderSeen = 0;
+    let surfacedSeen = 0;
     const fetcher: typeof fetch = async (_input, init) => {
       const body = JSON.parse(String(init?.body)) as Record<string, any>;
       if (body.command?.kind === "ack_agent_delivery") {
         observations += 1;
         if (new Headers(init?.headers).get("x-cswarm-session-key") !== null) proofHeaderSeen += 1;
+        if (body.command.surfaced === true) surfacedSeen += 1;
         return new Response(JSON.stringify({
           status: "accepted",
           ok: true,
@@ -675,6 +677,7 @@ test("a managed hook observes only with one live context, the bound host convers
     await invoke("thread-hook");
     assert.equal(observations, 1, "one live context plus the bound host is the positive control");
     assert.equal(proofHeaderSeen, 1, "the observe carries the session proof headers");
+    assert.equal(surfacedSeen, 1, "the observe says surfaced: true, the pending-surface contract");
     assert.equal(await queue.count(), 0);
   } finally {
     if (previousXdg === undefined) delete process.env.XDG_CONFIG_HOME;

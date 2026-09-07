@@ -931,7 +931,7 @@ async function recordQueuedObservations(
         credential: stored.credential,
         commandId: observationCommandId(signalId),
         signalId,
-        ...(managedAck === undefined ? {} : { managedAck }),
+        ...(managedAck === undefined ? {} : { managedAck, surfaced: true }),
       });
       return signalId;
     } catch {

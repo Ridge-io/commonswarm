@@ -138,6 +138,9 @@ function defaultClaimClient(
         outcome: "observed",
         lastErrorCode: null,
         managedAck,
+        /* The gate only passes after a real injection, so this is the truth
+           the server records as surfaced_at; manual mode never reaches here. */
+        surfaced: managedAck.injectionSucceeded,
       });
     },
   };

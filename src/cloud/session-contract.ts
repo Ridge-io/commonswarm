@@ -55,6 +55,7 @@ export const AGENT_SESSION_ERROR_CODE_LIST = [
   "session_not_managed",
   "session_already_managed",
   "session_leases_live",
+  "delivery_not_surfaced",
 ] as const satisfies readonly AgentSessionErrorCode[];
 
 export const AGENT_SESSION_ERROR_CODE_SET: ReadonlySet<string> = new Set(
