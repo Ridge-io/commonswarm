@@ -9,7 +9,10 @@ import {
   type AgentSessionErrorCode,
 } from "./session-contract.js";
 import { AgentSessionError } from "./session-errors.js";
-import { AgentSessionClient } from "./session-client.js";
+import {
+  AgentSessionClient,
+  type ServerSessionStatus,
+} from "./session-client.js";
 import { AgentSessionManager } from "./session-manager.js";
 import {
   currentHostInjection,
@@ -31,6 +34,7 @@ import {
   publicSessionStatus,
   readSessionContext,
   readSessionContextIfPresent,
+  sessionLifecycleState,
   sessionProofOf,
   writeSessionContext,
   type LocalSessionBinding,
@@ -254,17 +258,84 @@ export async function startManagedSession(
   return { context, contextPath, retried, interactive };
 }
 
-export async function readManagedSessionStatus(contextPath: string): Promise<{
+function reconcileSessionView(
+  context: SessionContextDocument,
+  server: ServerSessionStatus,
+): {
+  state: "running" | "stopped" | "unacquired" | "expired";
+  enforcement: SessionContextDocument["enforcement"];
+} {
+  const localState = sessionLifecycleState(context);
+  const sameSession = server.session_id !== null &&
+    server.session_id === context.session_id;
+  const live = server.is_live === true &&
+    sameSession &&
+    sessionProofOf(context) !== null;
+  const state = localState === "stopped"
+    ? "stopped"
+    : localState === "unacquired"
+    ? "unacquired"
+    : live
+    ? "running"
+    : "expired";
+  const enforcement = server.lifecycle_state === "disabled" ||
+      server.managed_at === null
+    ? "unmanaged"
+    : server.lifecycle_state === "enabled" || server.managed_at !== null
+    ? "enabled"
+    : "unknown";
+  return { state, enforcement };
+}
+
+export async function readManagedSessionStatus(input: {
+  contextPath: string;
+  target: CloudTarget;
+  credential: string;
+  fetcher?: typeof fetch;
+}): Promise<{
   context: SessionContextDocument;
   status: Record<string, unknown>;
 }> {
-  const context = await readSessionContext(contextPath);
+  const context = await readSessionContext(input.contextPath);
+  const local = publicSessionStatus(context, {
+    session_key: undefined,
+    credential: undefined,
+  });
+  const client = new AgentSessionClient({
+    target: input.target,
+    fetcher: input.fetcher,
+  });
+  const server = await client.readStatus({
+    credential: input.credential,
+    workspaceId: context.workspace_id,
+    principalId: context.principal_id,
+  });
+  const reconciled = reconcileSessionView(context, server);
   return {
     context,
-    status: publicSessionStatus(context, {
-      session_key: undefined,
-      credential: undefined,
-    }),
+    status: {
+      ...local,
+      state: reconciled.state,
+      enforcement: reconciled.enforcement,
+      local: {
+        state: local.state,
+        enforcement: context.enforcement,
+        session_id: context.session_id,
+        generation: context.generation,
+        has_private_proof: local.has_private_proof,
+      },
+      server: {
+        session_id: server.session_id,
+        generation: server.generation,
+        lifecycle_state: server.lifecycle_state,
+        is_live: server.is_live,
+        expired_at: server.expired_at,
+        managed_at: server.managed_at,
+        provider: server.provider,
+        host_label: server.host_label,
+        host_session_ref: server.host_session_ref,
+      },
+    },
   };
 }
 

@@ -604,7 +604,7 @@ Usage:
   cswarm listen status ${agentCredential} [--url <url> --anon-key <key>] --workspace-id <uuid> [--principal-id <uuid>] [--json]
   cswarm listen stop ${agentCredential} [--url <url> --anon-key <key>] --workspace-id <uuid> [--principal-id <uuid>] [--json]
   cswarm session start --mode ${SESSION_MODES.join("|")} --provider grok|opencode|claude|codex --host-session-id <id> ${requiredAgentCredential} [--url <url> --anon-key <key>] --workspace-id <uuid> [--session-context <absolute-path>] [--host-label <text>] [--foreground] [--json]
-  cswarm session status --session-context <absolute-path> [--json]
+  cswarm session status --session-context <absolute-path> ${agentCredential} [--url <url> --anon-key <key>] [--json]
   cswarm session stop --session-context <absolute-path> ${agentCredential} [--url <url> --anon-key <key>] [--json]
   cswarm session enable --principal-id <uuid> [--url <url> --anon-key <key>] [--workspace-id <uuid>] [--json]
   cswarm session disable --principal-id <uuid> [--url <url> --anon-key <key>] [--workspace-id <uuid>] [--json]
@@ -6599,15 +6599,34 @@ async function runSession(args: Arguments): Promise<void> {
     return;
   }
   if (action === "status") {
-    args.assertShape(["session-context", "json"], 2);
+    args.assertShape([
+      ...TARGET_FLAGS,
+      ...CREDENTIAL_FLAGS,
+      "session-context",
+      "json",
+    ], 2);
+    if (!hasAgentCredential(args)) {
+      throw new UsageError(
+        "cswarm session status needs --agent-token-file or --agent-token-stdin",
+      );
+    }
+    const cloud = await target(args);
+    const agent = await agentCredential(args);
     const contextPath = args.required("session-context");
-    const { status } = await readManagedSessionStatus(contextPath);
+    const { status } = await readManagedSessionStatus({
+      contextPath,
+      target: cloud,
+      credential: agent.token,
+    });
     if (args.has("json")) printJson(status);
     else {
+      const local = status.local as { state: unknown };
+      const server = status.server as { is_live: unknown; session_id: unknown };
       process.stdout.write(
         `execution ${status.session_id} generation ${status.generation} state ${status.state}\n` +
           `mode ${status.mode} provider ${status.provider} host-session ${status.host_session_id}\n` +
-          `enforcement ${status.enforcement} receive ${status.receive_verification}\n`,
+          `enforcement ${status.enforcement} receive ${status.receive_verification}\n` +
+          `local ${local.state} server-live ${server.is_live} server-session ${server.session_id}\n`,
       );
     }
     return;
