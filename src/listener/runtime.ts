@@ -54,6 +54,7 @@ import {
 } from "./main-routing.js";
 import {
   LISTENER_DELIVERY_MAX_LEASE_MS,
+  LISTENER_LEASE_CLOCK_SKEW_ALLOWANCE_MS,
   LISTENER_PROMPT_TIMEOUT_MS,
 } from "./types.js";
 export { LISTENER_DELIVERY_MAX_LEASE_MS };
@@ -1497,7 +1498,8 @@ export async function runListenerRuntime(
         const leasedUntilMs = Date.parse(claimed.leasedUntil);
         if (
           !Number.isFinite(leasedUntilMs) ||
-          leasedUntilMs > now() + LISTENER_DELIVERY_MAX_LEASE_MS
+          leasedUntilMs >
+            now() + LISTENER_DELIVERY_MAX_LEASE_MS + LISTENER_LEASE_CLOCK_SKEW_ALLOWANCE_MS
         ) {
           stop = { reason: "fatal", error: new Error("delivery lease deadline is invalid") };
           break;

@@ -61,6 +61,7 @@ import {
   LISTENER_DELIVERY_HOLD_RELEASE_CLAUSES,
   LISTENER_DELIVERY_HOLD_RELEASE_REMEDIES,
   LISTENER_DELIVERY_MAX_LEASE_MS,
+  LISTENER_LEASE_CLOCK_SKEW_ALLOWANCE_MS,
   type ListenerActiveClaim,
   type ListenerDeliveryJournalRecord,
   type ListenerEffectRecord,
@@ -2980,7 +2981,7 @@ test("a lease beyond the fixed server maximum fails before effect work", async (
         return claimResult([{
           signal: claimedAsk,
           leaseId: "55555555-5555-4555-8555-555555555559",
-          leasedUntil: "2026-07-30T00:15:00.001Z",
+          leasedUntil: "2026-07-30T00:16:00.001Z",
           senderOwnerRelation: "same_owner",
           recipientPosition: null,
           recipientCount: null,
@@ -4974,4 +4975,67 @@ test("a service that fans out reaches the prompt with this listener's own slot",
   assert.equal(acks, 2);
   assert.equal(model.prompts.length, 0);
   assert.equal(model.starts, 0);
+});
+
+test("a lease that ends a little past the maximum is tolerated as clock skew; well past is refused", async () => {
+  const fixedNow = Date.parse("2026-07-30T00:00:00.000Z");
+  const claimedNote = note(
+    "aaaaaaaa-aaaa-4aaa-8aaa-aaaaaaaaaa81",
+    "2026-07-30T00:00:01.000Z",
+  );
+  const run = async (leasedUntilMs: number) => {
+    const journal = new MemoryDeliveryJournal();
+    const controller = new AbortController();
+    let claims = 0;
+    const lease: DeliveryRow = {
+      signal: claimedNote,
+      leaseId: "55555555-5555-4555-8555-555555555556",
+      leasedUntil: new Date(leasedUntilMs).toISOString(),
+      senderOwnerRelation: "same_owner",
+      recipientPosition: null,
+      recipientCount: null,
+    };
+    return await runListenerRuntime({
+      target: cloudTarget("https://cloud.example.test", "anon"),
+      workspaceId: WORKSPACE_ID,
+      principalId: PRINCIPAL_ID,
+      listenerInstanceId: journal.record.listenerInstanceId,
+      deliveryJournal: journal,
+      deliveryClient: {
+        async claimAgentInbox() {
+          claims += 1;
+          if (claims === 1) return claimResult([lease], 1);
+          controller.abort();
+          return claimResult([], 0);
+        },
+        async ackAgentDelivery() {
+          return { httpStatus: 200, signalId: claimedNote.id, outcome: "observed" as const };
+        },
+      },
+      credentialSession: { async bearer() { return "token"; } },
+      store: new MemoryStore(),
+      model: new FakeModel(),
+      now: () => fixedNow,
+      sleep: async () => {},
+      signal: controller.signal,
+      readPage: async () => ({
+        signals: [],
+        capabilities: { senderOwnerRelation: true, cursorAfter: true, deliveryClaim: true, deliveryAck: true },
+        legacyCursorFallback: false,
+        rawCount: 0,
+        nextCursor: null,
+        malformedRows: 0,
+        pendingDeliveryCount: 0,
+      }),
+    });
+  };
+  // The server's clock 100 ms ahead of ours on an exactly-maximum lease: not fatal.
+  const tolerated = await run(fixedNow + LISTENER_DELIVERY_MAX_LEASE_MS + 100);
+  assert.notEqual(tolerated.reason, "fatal", JSON.stringify(tolerated));
+  // Past the allowance the lease really is too long: fatal, same message as before.
+  const refused = await run(
+    fixedNow + LISTENER_DELIVERY_MAX_LEASE_MS + LISTENER_LEASE_CLOCK_SKEW_ALLOWANCE_MS + 1,
+  );
+  assert.equal(refused.reason, "fatal");
+  assert.match(String((refused as { error?: Error }).error?.message), /lease deadline is invalid/);
 });

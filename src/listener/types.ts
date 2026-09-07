@@ -131,6 +131,16 @@ export async function resolveBudgetAndPrompt<T>(
 export const LISTENER_DELIVERY_MAX_LEASE_MS = 900_000;
 
 /**
+ * Clock-skew allowance on the lease deadline check. The server leases for
+ * exactly LISTENER_DELIVERY_MAX_LEASE_MS from ITS clock; a server clock even
+ * 0.1 s ahead of this host would otherwise make every first claim fatal
+ * (measured 2026-09-06 against a colima VM). One minute is well under the
+ * safety margin the runtime keeps before the lease end, so a lease that is
+ * really too long is still refused.
+ */
+export const LISTENER_LEASE_CLOCK_SKEW_ALLOWANCE_MS = 60_000;
+
+/**
  * Why a delivery gave the worker seat back before it reached a terminal effect.
  * `hold_budget`: the per-delivery seat bound is spent. `lease_budget`: what is
  * left of the server lease no longer covers the next phase.

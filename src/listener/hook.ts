@@ -10,6 +10,15 @@ import {
   observationCommandId,
 } from "../cloud/delivery.js";
 import {
+  canAckManagedDelivery,
+  managedAckInput,
+} from "../cloud/session-ack.js";
+import {
+  listSessionContexts,
+  sessionProofOf,
+} from "../cloud/session-context.js";
+import { bindSessionProof } from "../cloud/session-proof.js";
+import {
   followHttpDetails,
   readAgentSignalDirectory,
   readAgentSignalPage,
@@ -116,6 +125,13 @@ export interface HookCheckOptions {
     paths: ListenerPaths;
     status: ListenerStatus;
   }) => boolean | Promise<boolean>;
+  /**
+   * The host conversation this hook process runs inside, as the host itself
+   * reported it (Claude Code passes `session_id` on the hook's stdin). Absent
+   * means the host did not prove the conversation: a managed principal then
+   * fails closed to manual and marks nothing observed.
+   */
+  hostSessionId?: string;
 }
 
 function exactKeys(row: Record<string, unknown>, keys: readonly string[]): boolean {
@@ -878,9 +894,34 @@ async function recordQueuedObservations(
   ) {
     return new Set();
   }
+  /* Managed gate (spec section 8): observe only with the current proof AND
+     the host's own conversation id. The hook has no listener-written binding
+     (0.1.61 removed the worker), so it reads the session contexts saved for
+     this workspace/principal. No context means the legacy path; the server
+     fences a managed principal itself. Anything but exactly one live context,
+     or a host that did not report its conversation, refuses before any write.
+     When the gate passes, the observe carries the proof headers. */
+  const contexts = await listSessionContexts(stored.workspaceId, stored.principalId);
+  let managedAck: ReturnType<typeof managedAckInput> | undefined;
+  let fetcher: typeof fetch = options.fetcher ?? fetch;
+  if (contexts.length > 0) {
+    const live = contexts.filter((context) => sessionProofOf(context) !== null);
+    if (live.length !== 1) return new Set();
+    const context = live[0]!;
+    const proof = sessionProofOf(context)!;
+    managedAck = managedAckInput({
+      context,
+      proof,
+      injectionSucceeded: true,
+      observedHostSessionId: options.hostSessionId ?? null,
+      hostIdentityTrusted: options.hostSessionId !== undefined,
+    });
+    if (!canAckManagedDelivery(managedAck).ok) return new Set();
+    fetcher = bindSessionProof(fetcher, proof) as typeof fetch;
+  }
   const client = new DeliveryCommandClient(
     cloudTarget(stored.targetUrl, stored.anonKey),
-    options.fetcher ?? fetch,
+    fetcher,
     { deadlineMs: remainingMs, now },
   );
   const results = await Promise.all(signalIds.map(async (signalId) => {
@@ -890,6 +931,7 @@ async function recordQueuedObservations(
         credential: stored.credential,
         commandId: observationCommandId(signalId),
         signalId,
+        ...(managedAck === undefined ? {} : { managedAck, surfaced: true }),
       });
       return signalId;
     } catch {

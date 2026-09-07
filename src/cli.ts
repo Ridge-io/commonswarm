@@ -29,6 +29,7 @@ import {
   CommandTransportError,
   newCommandId,
   ThinCommandClient,
+  createAgentPrincipalCommand,
   type CommandResult,
   type ConnectCommandResult,
   type ChannelCommand,
@@ -332,6 +333,31 @@ import {
   renderResume,
   resumeJson,
 } from "./resume.js";
+import {
+  SessionContextError,
+  assertSameIdentity,
+  defaultSessionContextPath,
+  listSessionContexts,
+  readSessionContext,
+  sessionProofOf,
+  type SessionContextDocument,
+} from "./cloud/session-context.js";
+import {
+  boundAgentFetcher,
+  fetcherForSessionContext,
+  parseSessionMode,
+  parseSessionProvider,
+  readManagedSessionStatus,
+  readSessionIdentity,
+  revokeAgentToken,
+  runHumanSessionLifecycle,
+  sessionStartCopy,
+  startManagedSession,
+  stopManagedSession,
+} from "./cloud/session-cli.js";
+import { SESSION_MODES } from "./cloud/session-contract.js";
+import { AgentSessionManager } from "./cloud/session-manager.js";
+import { AgentSessionClient } from "./cloud/session-client.js";
 
 /**
  * Every flag this build accepts, for ERROR WORDING ONLY — never for acceptance. See the throw in
@@ -348,6 +374,7 @@ const KNOWN_FLAGS = new Set([
   "permissions", "principal-id", "provider", "purpose", "renewal-grant-id", "repo", "reveal-anon-key", "route", "run-id", "since", "site", "slug", "state-dir",
   "thread",
   "poll-interval", "renewal-horizon-days", "standing", "task-id", "to", "token-id", "ttl-ms", "turn-budget", "uid", "until", "url", "user", "version", "wait", "workspace-id", "write",
+  "session-context", "host-session-id", "host-label", "allow-duplicate-name", "mode",
 ]);
 
 const BOOLEAN_FLAGS = new Set([
@@ -377,6 +404,7 @@ const BOOLEAN_FLAGS = new Set([
   "thread",
   "user",
   "write",
+  "allow-duplicate-name",
 ]);
 
 const UUID_RE =
@@ -511,6 +539,7 @@ class Arguments {
 const TARGET_FLAGS = ["url", "anon-key", "force-file-store"] as const;
 const ROUTE_FLAGS = ["workspace-id", "repo-mapping-id"] as const;
 const CREDENTIAL_FLAGS = ["agent-token-file", "agent-token-stdin"] as const;
+const SESSION_CONTEXT_FLAGS = ["session-context"] as const;
 const TASK_FLAGS = [
   "task-id",
   "slug",
@@ -576,6 +605,12 @@ Usage:
   cswarm listen canary ${requiredAgentCredential} [--url <url> --anon-key <key>] --workspace-id <uuid> [--state-dir <path>] [--wait <seconds>] [--json]
   cswarm listen status ${agentCredential} [--url <url> --anon-key <key>] --workspace-id <uuid> [--principal-id <uuid>] [--json]
   cswarm listen stop ${agentCredential} [--url <url> --anon-key <key>] --workspace-id <uuid> [--principal-id <uuid>] [--json]
+  cswarm session start --mode ${SESSION_MODES.join("|")} --provider grok|opencode|claude|codex --host-session-id <id> ${requiredAgentCredential} [--url <url> --anon-key <key>] --workspace-id <uuid> [--session-context <absolute-path>] [--host-label <text>] [--foreground] [--json]
+  cswarm session status --session-context <absolute-path> [--json]
+  cswarm session stop --session-context <absolute-path> ${agentCredential} [--url <url> --anon-key <key>] [--json]
+  cswarm session enable --principal-id <uuid> [--url <url> --anon-key <key>] [--workspace-id <uuid>] [--json]
+  cswarm session disable --principal-id <uuid> [--url <url> --anon-key <key>] [--workspace-id <uuid>] [--json]
+  cswarm session recover --principal-id <uuid> [--url <url> --anon-key <key>] [--workspace-id <uuid>] [--json]
   cswarm hook check [--principal-id <uuid> ...] [--cooldown <seconds>]
   cswarm hook install claude [--principal-id <uuid>] [--write] [--user | --repo]
   cswarm hook uninstall claude --write [--user | --repo]
@@ -587,11 +622,11 @@ Usage:
   cswarm invite revoke [--url <url> --anon-key <key>] [--workspace-id <uuid>] --invitation-id <uuid> [--json]
   cswarm member remove <full-user-id|exact-name> --confirm <same-selector> [--url <url> --anon-key <key>] [--workspace-id <uuid>] [--json]
   cswarm workspace close <full-id|exact-name> --confirm <same-selector> [--url <url> --anon-key <key>] [--json]
-  cswarm accept --link-stdin [--name <name>] [--no-browser] [--json]
-  cswarm accept <https://...#invite=...|cswarm://accept/...> [--name <name>] [--no-browser] [--json]  # unsafe: shell history/process list
+  cswarm accept --link-stdin [--name <name>] [--allow-duplicate-name] [--no-browser] [--json]
+  cswarm accept <https://...#invite=...|cswarm://accept/...> [--name <name>] [--allow-duplicate-name] [--no-browser] [--json]  # unsafe: shell history/process list
   cswarm accept --invitation-token-stdin [--url <url> --anon-key <key>]
   cswarm accept <invitation-token> [--url <url> --anon-key <key>]  # unsafe: shell history/process list
-  cswarm principal create [--url <url> --anon-key <key>] [--workspace-id <uuid>] --name <name>
+  cswarm principal create [--url <url> --anon-key <key>] [--workspace-id <uuid>] --name <name> [--allow-duplicate-name]
   cswarm principal revoke [--url <url> --anon-key <key>] [--workspace-id <uuid>] --principal-id <uuid>
   cswarm token mint [--url <url> --anon-key <key>] [--workspace-id <uuid>] --principal-id <uuid> --run-id <uuid> --task-id <uuid> --epoch <n> [--ttl-ms <ms>] [--renewal-horizon-days <1..90> | --standing --confirm-standing]
   cswarm token revoke [--url <url> --anon-key <key>] [--workspace-id <uuid>] --token-id <uuid>
@@ -693,6 +728,8 @@ that project. Inside a git repository, the local file must be ignored. --user op
 that directory is affected. --repo keeps the repository-wide .claude/settings.json scope and
 also requires an ignored file. Uninstall also
 requires --write and uses the same scope selection.
+
+session start acquires one execution session per agent. Interactive mode never starts an ACP model, factory, or child spawn. The default path only acquires; --foreground claims and surfaces into --host-session-id. There is no worker mode: the listener never starts a model (cswarm 0.1.61), so listen start takes no --session-context. --session-context must be an absolute owned 0600 file in an owned 0700 directory outside a repository. Shell commands that omit it are not bound. session stop returns progress until cswarm session status confirms teardown. principal create --allow-duplicate-name is off by default and is never sent as false.
 
 Invite, legacy token accept, principal create/revoke, human token mint/revoke, link, new, and workspace close require a
 stored human login. Agent self-surrender of a token uses --agent-token-file or --agent-token-stdin and never takes the secret on argv. Invite-link accept signs in when needed, then accepts and
@@ -1749,6 +1786,7 @@ async function runLinkAccept(
     ...(args.optional("name") === undefined
       ? {}
       : { explicitName: args.required("name") }),
+    ...(args.has("allow-duplicate-name") ? { allowDuplicateName: true as const } : {}),
   });
   await writeCurrentTarget(cloud);
   if (json) {
@@ -1767,7 +1805,7 @@ async function runLinkAccept(
 async function runAccept(args: Arguments): Promise<void> {
   if (args.has("link-stdin")) {
     args.assertShape(
-      [...TARGET_FLAGS, "link-stdin", "no-browser", "json", "name"],
+      [...TARGET_FLAGS, "link-stdin", "no-browser", "json", "name", "allow-duplicate-name"],
       1,
     );
     const payload = decodeInviteLink(await stdinInviteLink());
@@ -1789,7 +1827,7 @@ async function runAccept(args: Arguments): Promise<void> {
     return;
   }
   args.assertShape(
-    [...TARGET_FLAGS, "no-browser", "json", "name"],
+    [...TARGET_FLAGS, "no-browser", "json", "name", "allow-duplicate-name"],
     2,
   );
   process.stderr.write(
@@ -1802,7 +1840,13 @@ async function runPrincipal(args: Arguments): Promise<void> {
   const action = args.positionals[1];
   if (action === "create") {
     /* `--json` accepted, no effect — see the note on `runInvite`. D-064. */
-    args.assertShape([...TARGET_FLAGS, "workspace-id", "name", "json"], 2);
+    args.assertShape([
+      ...TARGET_FLAGS,
+      "workspace-id",
+      "name",
+      "json",
+      "allow-duplicate-name",
+    ], 2);
     const cloud = await target(args);
     const human = await humanCredential(args, cloud);
     const workspace = await workspaceId(args, cloud, human);
@@ -1812,10 +1856,10 @@ async function runPrincipal(args: Arguments): Promise<void> {
         new ThinCommandClient(cloud),
         human,
         workspace,
-        {
-          kind: "create_agent_principal",
-          name: args.required("name"),
-        },
+        createAgentPrincipalCommand(
+          args.required("name"),
+          args.has("allow-duplicate-name"),
+        ),
       ),
     );
     printJson({
@@ -2082,7 +2126,7 @@ async function runTokenRevoke(args: Arguments): Promise<void> {
   // Agent self-surrender accepts both --agent-token-file and the existing --agent-token-stdin.
   if (hasAgentCredential(args)) {
     args.assertShape(
-      [...TARGET_FLAGS, "workspace-id", "token-id", ...CREDENTIAL_FLAGS, "json"],
+      [...TARGET_FLAGS, "workspace-id", "token-id", ...CREDENTIAL_FLAGS, "json", ...SESSION_CONTEXT_FLAGS],
       2,
     );
     const cloud = await target(args);
@@ -2108,26 +2152,25 @@ async function runTokenRevoke(args: Arguments): Promise<void> {
       );
     }
     const tokenId = agent.tokenId;
-    const response = (
-      await new ThinCommandClient(cloud).sendConnect({
-        workspaceId: override,
-        credential: agent.token,
-        command: { kind: "revoke_agent_token", token_id: tokenId },
-      })
-    ).response;
-    if (response.status !== "accepted") {
-      throw new Error(
-        `Credential surrender was refused: ${
-          response.reason ?? "required condition not met"
-        }. The credential is unchanged.`,
-      );
-    }
+    const selected = args.optional("session-context") === undefined
+      ? null
+      : await commandWorkspaceAndCredential(args, cloud);
+    const revoked = await revokeAgentToken({
+      target: cloud,
+      credential: selected?.bearer ?? agent.token,
+      workspaceId: selected?.selectedWorkspace ?? override,
+      tokenId,
+      ...(selected === null ? {} : { fetcher: selected.fetcher }),
+      ...(selected?.sessionContext === undefined
+        ? {}
+        : { context: selected.sessionContext }),
+    });
     const output = {
       message:
         "This credential has been surrendered. It can no longer post or renew.",
-      status: response.status,
+      status: revoked.status,
       token_id: tokenId,
-      command_event_ids: response.event_ids,
+      command_event_ids: revoked.command_event_ids,
     };
     if (args.has("json")) {
       printJson(output);
@@ -2502,11 +2545,14 @@ async function commandWorkspaceAndCredential(
   human?: HumanSession;
   agent?: AgentCredentialInput;
   session?: AgentCredentialSession;
+  fetcher: typeof fetch;
+  sessionContext?: SessionContextDocument;
 }> {
   const override = workspaceOverride(
     args.optional("workspace-id"),
     process.env.SWARM_CLOUD_WORKSPACE_ID,
   );
+  const contextPath = args.optional("session-context");
   if (hasAgentCredential(args)) {
     if (override === null) {
       throw new Error(
@@ -2514,20 +2560,65 @@ async function commandWorkspaceAndCredential(
       );
     }
     const agent = await agentCredential(args);
+    /* With --session-context the silent token renewal below is an agent write
+       too (spec section 8: renewal is fenced), so the context is read first and
+       the session is built on the bound fetcher. Identity is checked after the
+       bearer exists, as before. */
+    const boundContext = contextPath === undefined ? null : await readSessionContext(contextPath);
     // Renewal is resolved HERE, before the first request rather than after a 401, so a
     // credential that is about to expire is replaced without the person watching ever
     // seeing a failure. Every caller below reads `bearer` as a plain string; the session
     // is what decided which string that is.
-    const session = await agentSession(cloud, override, agent);
+    const session = await agentSession(
+      cloud,
+      override,
+      agent,
+      boundContext === null ? undefined : boundAgentFetcher(fetch, boundContext),
+    );
+    const bearer = await session.bearer();
+    if (contextPath === undefined) {
+      return {
+        selectedWorkspace: override,
+        bearer,
+        kind: "agent",
+        agent,
+        session,
+        fetcher: fetch,
+      };
+    }
+    const sessionContext = boundContext!;
+    const identity = await readSessionIdentity(cloud, bearer, override);
+    assertSameIdentity(sessionContext, {
+      identity,
+      target: cloud,
+      tokenPrincipalId: agent.principalId,
+      flagWorkspaceId: override,
+      flagUrl: cloud.url,
+    });
+    const tokenFile = args.optional("agent-token-file");
+    if (
+      tokenFile !== undefined &&
+      resolve(tokenFile) !== resolve(sessionContext.token_file)
+    ) {
+      throw new SessionContextError(
+        "session_identity_mismatch",
+        "--agent-token-file does not match the session context token file",
+      );
+    }
     return {
       selectedWorkspace: override,
-      bearer: await session.bearer(),
+      bearer,
       kind: "agent",
       agent,
       session,
+      fetcher: boundAgentFetcher(fetch, sessionContext),
+      sessionContext,
     };
   }
   const human = await dualAuthHumanCredential(args, cloud);
+  if (contextPath !== undefined) {
+    throw new Error("--session-context binds an agent execution session and cannot be used with a human login");
+  }
   return {
     selectedWorkspace: await workspaceId(args, cloud, human, {
       validateOverride: options.validateHumanWorkspace ?? false,
@@ -2536,6 +2627,7 @@ async function commandWorkspaceAndCredential(
     credentials: human.store,
     kind: "human",
     human,
+    fetcher: fetch,
   };
 }
 
@@ -2812,7 +2904,7 @@ async function postSignalCommand(
   credential: Awaited<ReturnType<typeof commandWorkspaceAndCredential>>,
   command: PostSignalCommand,
 ): Promise<PostSignalResult> {
-  const client = new ThinCommandClient(cloud);
+  const client = new ThinCommandClient(cloud, credential.fetcher);
   if (credential.kind === "human") {
     return await sendSignalWithPending(
       client,
@@ -3002,6 +3094,7 @@ async function runPostSignal(
     ...(allowWait ? ["wait"] : []),
     ...(allowTo ? ["attach"] : []),
     "json",
+    ...SESSION_CONTEXT_FLAGS,
   ], 2);
   /* Checked before the target, the credential, or any upload: a name that
    * cannot be a channel name costs nothing to refuse here, and the sentence is
@@ -3282,6 +3375,7 @@ async function runReply(args: Arguments): Promise<void> {
     "thread",
     "until",
     "json",
+    ...SESSION_CONTEXT_FLAGS,
   ], 3);
   const inThread = args.has("thread");
   const broadcastToChannel = args.has("broadcast-to-channel");
@@ -3424,8 +3518,8 @@ async function runReply(args: Arguments): Promise<void> {
  * exactly what was asked. Enumerating (`cswarm members`) is the other half.
  *
  * The id is printed even when the name is known, because the id is the addressable identity:
- * names are unique per workspace, but a name you did not create can belong to someone you did
- * not mean. When the directory does not know the recipient the bare id is printed rather than a
+ * names are not unique per workspace (duplicate names are allowed by explicit choice), and a
+ * name you did not create can belong to someone you did not mean. When the directory does not know the recipient the bare id is printed rather than a
  * guessed label — a wrong name here would be worse than no name, which is the defect itself.
  */
 export function describeAudience(
@@ -3511,9 +3605,9 @@ export function renderRoster(
     );
   }
   lines.push("");
-  /* The UUID is the addressable identity and the name is not: names are unique per workspace,
-   * but a name you did not create can belong to someone you did not mean. Saying so here is
-   * the cheap half of D-062. */
+  /* The UUID is the addressable identity and the name is not: names are not unique per
+   * workspace (a duplicate is allowed by explicit choice), and a name you did not create can
+   * belong to someone you did not mean. Saying so here is the cheap half of D-062. */
   lines.push("Address an agent by the id in brackets: cswarm ask \"…\" --to <id>");
   return `${lines.join("\n")}\n`;
 }
@@ -3524,6 +3618,7 @@ async function runMembers(args: Arguments): Promise<void> {
     "workspace-id",
     ...CREDENTIAL_FLAGS,
     "json",
+    ...SESSION_CONTEXT_FLAGS,
   ], 1);
 
   const cloud = await target(args);
@@ -3582,6 +3677,7 @@ async function runWhoami(args: Arguments): Promise<void> {
     "workspace-id",
     ...CREDENTIAL_FLAGS,
     "json",
+    ...SESSION_CONTEXT_FLAGS,
   ], 1);
   if (!hasAgentCredential(args)) {
     throw new UsageError(
@@ -3784,6 +3880,7 @@ async function runSignalRead(
       ...CREDENTIAL_FLAGS,
       "notify",
       "json",
+      ...SESSION_CONTEXT_FLAGS,
     ]
     : [
       ...TARGET_FLAGS,
@@ -3797,6 +3894,7 @@ async function runSignalRead(
       "limit",
       "include-stale",
       "json",
+      ...SESSION_CONTEXT_FLAGS,
     ], 1);
 
   if (notify) {
@@ -4082,6 +4180,7 @@ async function runReceipt(args: Arguments): Promise<void> {
     "workspace-id",
     ...CREDENTIAL_FLAGS,
     "json",
+    ...SESSION_CONTEXT_FLAGS,
   ], 2);
   const signalId = args.positionals[1]!;
   if (!UUID_RE.test(signalId)) {
@@ -5604,13 +5703,56 @@ async function runConfiguredListener(options: {
       : {}),
   });
   const httpClient = new ListenerHttpClient();
+  /* Managed principal (spec section 8, section 10): the route-main listener is
+     the seat's own claim loop, so its writes carry the live session proof and
+     it owns the deterministic renewal (a timer, never a model). The context
+     is the one `cswarm session start` saved for this workspace/principal.
+     None: legacy path, the server fences a managed principal. More than one
+     live: refuse rather than pick a first match. */
+  const managedContexts = (await listSessionContexts(options.workspaceId, options.principalId))
+    .filter((context) => sessionProofOf(context) !== null);
+  if (managedContexts.length > 1) {
+    httpClient.close();
+    throw new Error(
+      `listen start found ${managedContexts.length} live session contexts for this agent; stop the stale ones with cswarm session stop --session-context <path> first`,
+    );
+  }
+  const managedContext = managedContexts[0] ?? null;
+  const leaseAbort = new AbortController();
+  let credentialBearer: (() => Promise<string>) | null = null;
+  const sessionManager = managedContext === null
+    ? null
+    : new AgentSessionManager({
+      client: new AgentSessionClient({
+        target: options.cloud,
+        fetcher: httpClient.fetch,
+      }),
+      credential: async () => {
+        if (credentialBearer === null) throw new Error("listener credential session not ready");
+        return await credentialBearer();
+      },
+      workspaceId: options.workspaceId,
+      contextPath: defaultSessionContextPath(
+        options.workspaceId,
+        options.principalId,
+        managedContext.session_id,
+      ),
+      context: managedContext,
+      onDispatchStop: () => {
+        if (!leaseAbort.signal.aborted) leaseAbort.abort();
+      },
+    });
+  const boundFetch: typeof fetch = sessionManager === null
+    ? httpClient.fetch
+    : ((input: URL | RequestInfo, init?: RequestInit) =>
+      sessionManager.boundFetcher(httpClient.fetch)(input, init)) as typeof fetch;
   let liveCredentialSession: AgentCredentialSession;
   try {
     liveCredentialSession = await agentSession(
       options.cloud,
       options.workspaceId,
       options.agent,
-      httpClient.fetch,
+      boundFetch,
     );
   } catch (error) {
     httpClient.close();
@@ -5637,6 +5779,8 @@ async function runConfiguredListener(options: {
       return stored.credential;
     },
   };
+  credentialBearer = () => credentialSession.bearer();
+  sessionManager?.start();
   const resolveSenderProvenance = async (
     signal: SignalRecord,
     context: ListenerSenderProvenanceContext,
@@ -5646,7 +5790,7 @@ async function runConfiguredListener(options: {
       options.cloud,
       credential,
       options.workspaceId,
-      { ...context, fetcher: httpClient.fetch },
+      { ...context, fetcher: boundFetch },
     );
     const provenance = listenerSenderProvenance(signal, senderDirectory);
     if (context.includeBrainDigest !== true) return provenance;
@@ -5659,7 +5803,7 @@ async function runConfiguredListener(options: {
         {
           ...(context.signal ? { signal: context.signal } : {}),
           deadlineMs: context.deadlineMs,
-          fetcher: httpClient.fetch,
+          fetcher: boundFetch,
         },
       );
       const brainDigest = await new FileBrainDigestStore(
@@ -5681,7 +5825,7 @@ async function runConfiguredListener(options: {
         {
           ...(context.signal ? { signal: context.signal } : {}),
           deadlineMs: context.deadlineMs,
-          fetcher: httpClient.fetch,
+          fetcher: boundFetch,
         },
       );
       const broadcasts = feed.filter((row) =>
@@ -5858,7 +6002,7 @@ async function runConfiguredListener(options: {
           transport: new AgentActivityEndpointTransport(
             options.cloud,
             credentialSession,
-            httpClient.fetch,
+            boundFetch,
           ),
           onPublishFailure: (code) => onEvent({
             type: "activity_publish_failure",
@@ -5867,7 +6011,7 @@ async function runConfiguredListener(options: {
           }),
         });
         const instrumentedModel = activity.instrumentModel(
-          newModel(onCanaryAttempt, activity.events),
+          await newModel(onCanaryAttempt, activity.events),
         );
         try {
           return await runListenerRuntime({
@@ -5877,7 +6021,6 @@ async function runConfiguredListener(options: {
             credentialSession,
             store: effectStore,
             model: instrumentedModel,
-            signal,
             onEvent: (event) => {
               activity.onRuntimeEvent(event);
               onEvent(event);
@@ -5893,7 +6036,7 @@ async function runConfiguredListener(options: {
                 credential,
                 options.workspaceId,
                 signalIds,
-                httpClient.fetch,
+                boundFetch,
               );
             },
             routeMode,
@@ -5903,7 +6046,8 @@ async function runConfiguredListener(options: {
             deliveryHoldBudgetMs: turnBudgetMs,
             ...(options.pollMs === undefined ? {} : { pollMs: options.pollMs }),
             pendingMainQueue,
-            fetcher: httpClient.fetch,
+            fetcher: boundFetch,
+            signal: sessionManager === null ? signal : AbortSignal.any([signal, leaseAbort.signal]),
           });
         } finally {
           activity.close();
@@ -5913,6 +6057,7 @@ async function runConfiguredListener(options: {
   } finally {
     process.off("SIGINT", onProcessSignal);
     process.off("SIGTERM", onProcessSignal);
+    sessionManager?.stopTimers();
     httpClient.close();
   }
 }
@@ -6038,22 +6183,21 @@ async function runListenStart(args: Arguments): Promise<void> {
       token: agent.token,
       expiresAt: agent.expiresAt,
     }));
-    const opencodeExecutable = provider === "opencode"
-      ? resolveOpenCodeExecutable(
-        args.optional("opencode-executable") ?? "opencode",
-      )
+    /* cswarm 0.1.61: the listener never starts a model, so a detached start
+       does not resolve or require a bridge binary. An explicitly given
+       --*-executable is validated and forwarded for status reporting only;
+       an absent one is simply absent. */
+    const opencodeExecutable = provider === "opencode" &&
+        args.optional("opencode-executable") !== undefined
+      ? resolveOpenCodeExecutable(args.required("opencode-executable"))
       : undefined;
     let claudeExecutable: string | undefined;
-    if (provider === "claude") {
-      claudeExecutable = resolveDetachedClaudeExecutable(
-        args.optional("claude-executable") ?? "claude-agent-acp",
-      );
+    if (provider === "claude" && args.optional("claude-executable") !== undefined) {
+      claudeExecutable = resolveDetachedClaudeExecutable(args.required("claude-executable"));
     }
     let codexExecutable: string | undefined;
-    if (provider === "codex") {
-      codexExecutable = resolveDetachedCodexExecutable(
-        args.optional("codex-executable") ?? "codex-acp",
-      );
+    if (provider === "codex" && args.optional("codex-executable") !== undefined) {
+      codexExecutable = resolveDetachedCodexExecutable(args.required("codex-executable"));
     }
     /* D-080. Captured BEFORE the spawn on purpose: any status file older than this belongs to
      * an earlier run in this config-hash-keyed directory, whatever pid it carries. Taking it
@@ -6207,6 +6351,7 @@ async function runListenSupervisor(args: Arguments): Promise<void> {
     "poll-interval",
     "route",
     "defer-over",
+    ...SESSION_CONTEXT_FLAGS,
   ], 1);
   const provider = listenerProvider(args);
   validateListenerProviderFlags(args, provider);
@@ -6274,6 +6419,7 @@ async function runListenStatusOrStop(
     "principal-id",
     "state-dir",
     "json",
+    ...SESSION_CONTEXT_FLAGS,
   ], 2);
   const cloud = await target(args);
   const workspaceId = listenerUuid(args.optional("workspace-id"), "workspace-id");
@@ -6427,6 +6573,162 @@ async function runListenCanary(args: Arguments): Promise<void> {
   process.stdout.write(
     `${renderListenerAttendanceCanary(result, workspaceId, principalId)}\n`,
   );
+}
+
+async function runSession(args: Arguments): Promise<void> {
+  const action = args.positionals[1];
+  if (
+    action === "enable" || action === "disable" || action === "recover"
+  ) {
+    args.assertShape([
+      ...TARGET_FLAGS,
+      "workspace-id",
+      "principal-id",
+      "json",
+    ], 2);
+    const cloud = await target(args);
+    const human = await humanCredential(args, cloud);
+    const workspace = await workspaceId(args, cloud, human);
+    const principalId = args.required("principal-id");
+    if (!UUID_RE.test(principalId)) {
+      throw new Error("--principal-id must be a UUID");
+    }
+    const result = await runHumanSessionLifecycle(action, {
+      target: cloud,
+      credential: human.accessToken,
+      workspaceId: workspace,
+      principalId,
+    });
+    const messages = {
+      enable:
+        "Managed sessions are enabled for this agent. Older clients lose mutation access until they present a session proof. Stop any legacy listener first.",
+      disable:
+        "Managed sessions are disabled. Legacy writes resume. Existing execution sessions were revoked.",
+      recover:
+        "The current execution session was revoked. Enforcement stays enabled. The previous execution UUID cannot be reused.",
+    } as const;
+    const output = {
+      message: messages[action],
+      ...result,
+    };
+    if (args.has("json")) printJson(output);
+    else process.stdout.write(`${output.message}\n`);
+    return;
+  }
+  if (action === "status") {
+    args.assertShape(["session-context", "json"], 2);
+    const contextPath = args.required("session-context");
+    const { status } = await readManagedSessionStatus(contextPath);
+    if (args.has("json")) printJson(status);
+    else {
+      process.stdout.write(
+        `execution ${status.session_id} generation ${status.generation} state ${status.state}\n` +
+          `mode ${status.mode} provider ${status.provider} host-session ${status.host_session_id}\n` +
+          `enforcement ${status.enforcement} receive ${status.receive_verification}\n`,
+      );
+    }
+    return;
+  }
+  if (action === "stop") {
+    args.assertShape([
+      ...TARGET_FLAGS,
+      ...CREDENTIAL_FLAGS,
+      "session-context",
+      "json",
+    ], 2);
+    if (!hasAgentCredential(args)) {
+      throw new UsageError(
+        "cswarm session stop needs --agent-token-file or --agent-token-stdin",
+      );
+    }
+    const cloud = await target(args);
+    const agent = await agentCredential(args);
+    const contextPath = args.required("session-context");
+    const result = await stopManagedSession({
+      target: cloud,
+      credential: agent.token,
+      contextPath,
+    });
+    if (args.has("json")) printJson({ ...result.status, state: result.state, next: result.next });
+    else process.stdout.write(`${result.state}. ${result.next}\n`);
+    return;
+  }
+  if (action !== "start") {
+    throw new UsageError(
+      "session requires start, status, stop, enable, disable, or recover",
+    );
+  }
+  args.assertShape([
+    ...TARGET_FLAGS,
+    "workspace-id",
+    ...CREDENTIAL_FLAGS,
+    "mode",
+    "provider",
+    "host-session-id",
+    "host-label",
+    "session-context",
+    "json",
+    "foreground",
+  ], 2);
+  if (!hasAgentCredential(args)) {
+    throw new UsageError(
+      "cswarm session start needs --agent-token-file or --agent-token-stdin",
+    );
+  }
+  const mode = parseSessionMode(args.required("mode"));
+  const provider = parseSessionProvider(args.required("provider"));
+  const hostSessionId = args.required("host-session-id");
+  const cloud = await target(args);
+  const selectedWorkspace = listenerUuid(
+    args.optional("workspace-id") ?? process.env.SWARM_CLOUD_WORKSPACE_ID,
+    "workspace-id",
+  );
+  const agent = await agentCredential(args);
+  const tokenFile = args.optional("agent-token-file");
+  if (tokenFile === undefined || !isAbsolute(tokenFile)) {
+    throw new Error(
+      "session start needs --agent-token-file <absolute-path> so the context can reference the sole token file",
+    );
+  }
+  const runReceiver = mode === "interactive" && args.has("foreground");
+  const result = await startManagedSession({
+    target: cloud,
+    workspaceId: selectedWorkspace,
+    credential: agent.token,
+    tokenFile: resolve(tokenFile),
+    tokenPrincipalId: agent.principalId,
+    mode,
+    provider,
+    hostSessionId,
+    hostLabel: args.optional("host-label") ?? null,
+    contextPath: args.optional("session-context"),
+    runReceiver,
+  });
+  const copy = sessionStartCopy({
+    mode,
+    runReceiver,
+    ...(result.next === undefined ? {} : { workerNext: result.next }),
+  });
+  const output = {
+    message: copy.message,
+    session_id: result.context.session_id,
+    generation: result.context.generation,
+    mode: result.context.mode,
+    provider: result.context.provider,
+    host_session_id: result.context.host_session_id,
+    enforcement: result.context.enforcement,
+    receive_verification: result.context.receive_verification,
+    session_context: result.contextPath,
+    retried: result.retried,
+  };
+  if (args.has("json")) printJson(output);
+  else {
+    process.stdout.write(
+      `${output.message}\n` +
+        `execution ${output.session_id} generation ${output.generation}\n` +
+        `context ${output.session_context}\n`,
+    );
+  }
 }
 
 async function runListen(args: Arguments): Promise<void> {
@@ -6792,6 +7094,45 @@ async function hookInstallPrincipalId(args: Arguments): Promise<string> {
   );
 }
 
+/**
+ * Claude Code writes one JSON object to a hook's stdin; its `session_id` is the
+ * durable conversation this hook runs inside. That is the only host identity
+ * a managed observe may trust (spec section 8). No stdin, a TTY, malformed
+ * JSON, or a missing field all read as "not proven": null, never a guess.
+ */
+async function hookHostSessionIdFromStdin(): Promise<string | null> {
+  if (process.stdin.isTTY) return null;
+  const raw = await new Promise<string>((resolve) => {
+    let text = "";
+    const done = () => resolve(text);
+    const timer = setTimeout(done, 250);
+    process.stdin.setEncoding("utf8");
+    process.stdin.on("data", (chunk: string) => {
+      text += chunk;
+      if (text.length > 64 * 1024) {
+        clearTimeout(timer);
+        done();
+      }
+    });
+    process.stdin.on("end", () => {
+      clearTimeout(timer);
+      done();
+    });
+    process.stdin.on("error", () => {
+      clearTimeout(timer);
+      done();
+    });
+  });
+  try {
+    const value = JSON.parse(raw) as unknown;
+    if (value === null || typeof value !== "object" || Array.isArray(value)) return null;
+    const id = (value as Record<string, unknown>).session_id;
+    return typeof id === "string" && id.length > 0 && id.length <= 200 ? id : null;
+  } catch {
+    return null;
+  }
+}
+
 async function runHook(args: Arguments): Promise<void> {
   const command = args.positionals[1];
   if (command === "check") {
@@ -6816,10 +7157,12 @@ async function runHook(args: Arguments): Promise<void> {
     }, 3_000);
     hardExit.unref();
     const httpClient = new ListenerHttpClient();
+    const hostSessionId = await hookHostSessionIdFromStdin();
     try {
       await runListenerHookCheck({
         ...(cooldownSeconds === undefined ? {} : { cooldownSeconds }),
         ...(principalIds.length === 0 ? {} : { principalIds }),
+        ...(hostSessionId === null ? {} : { hostSessionId }),
         fetcher: httpClient.fetch,
         write: async (output) => {
           await new Promise<void>((resolve, reject) => {
@@ -6915,7 +7258,7 @@ async function fileContext(
   positionalCount: number,
 ): Promise<FileCliContext> {
   args.assertShape(
-    [...TARGET_FLAGS, "workspace-id", ...CREDENTIAL_FLAGS, "json", ...extraFlags],
+    [...TARGET_FLAGS, "workspace-id", ...CREDENTIAL_FLAGS, "json", ...SESSION_CONTEXT_FLAGS, ...extraFlags],
     positionalCount,
   );
   const cloud = await target(args);
@@ -7004,6 +7347,7 @@ async function uploadNamedFile(
     target: context.cloud,
     workspaceId: context.selected.selectedWorkspace,
     credential: context.selected.bearer,
+    fetcher: context.selected.fetcher,
   };
   /* Every id is minted ONCE per invocation and reused on the internal retry a
    * no-response failure gets, so the server's command-id replay resolves an
@@ -7124,6 +7468,7 @@ async function runFileGet(args: Arguments): Promise<void> {
     target: context.cloud,
     workspaceId: context.selected.selectedWorkspace,
     credential: context.selected.bearer,
+    fetcher: context.selected.fetcher,
   };
   const grant = await fileDownloadUrl(send, { fileId, versionN });
   const destination = args.optional("out") ?? basename(grant.name);
@@ -7295,6 +7640,7 @@ async function runBrainGet(args: Arguments): Promise<void> {
     target: context.cloud,
     workspaceId: context.selected.selectedWorkspace,
     credential: context.selected.bearer,
+    fetcher: context.selected.fetcher,
   }, { fileId: row.file.file_id, versionN });
   const content = decodeBrainMarkdown(
     await onceRetried(
@@ -7422,6 +7768,7 @@ async function runFeedback(args: Arguments): Promise<void> {
     target: context.cloud,
     workspaceId: context.selected.selectedWorkspace,
     credential: context.selected.bearer,
+    fetcher: context.selected.fetcher,
   }, {
     category: kind,
     body,
@@ -7530,7 +7877,7 @@ async function sendChannelCommand(
   context: FileCliContext,
   command: ChannelCommand,
 ): Promise<ChannelRow> {
-  const client = new ThinCommandClient(context.cloud);
+  const client = new ThinCommandClient(context.cloud, context.selected.fetcher);
   const result = await client.sendChannel({
     workspaceId: context.selected.selectedWorkspace,
     command,
@@ -7555,6 +7902,7 @@ const CHANNEL_FLAGS = [
   "workspace-id",
   ...CREDENTIAL_FLAGS,
   "json",
+  ...SESSION_CONTEXT_FLAGS,
 ] as const;
 
 async function runChannelCreate(args: Arguments): Promise<void> {
@@ -7722,15 +8070,15 @@ async function runFile(args: Arguments): Promise<void> {
 
 async function runTaskCommand(args: Arguments): Promise<void> {
   args.assertShape(
-    [...TARGET_FLAGS, ...ROUTE_FLAGS, ...CREDENTIAL_FLAGS, ...TASK_FLAGS],
+    [...TARGET_FLAGS, ...ROUTE_FLAGS, ...CREDENTIAL_FLAGS, ...TASK_FLAGS, ...SESSION_CONTEXT_FLAGS],
     2,
   );
   const kind = args.positionals[1];
   if (!kind) throw new Error("command kind is required");
   const cloud = await target(args);
-  const { selectedWorkspace, bearer } =
+  const { selectedWorkspace, bearer, fetcher } =
     await commandWorkspaceAndCredential(args, cloud);
-  const client = new ThinCommandClient(cloud);
+  const client = new ThinCommandClient(cloud, fetcher);
   const result = await client.send({
     workspaceId: selectedWorkspace,
     stream: stream(args),
@@ -7923,6 +8271,10 @@ async function main(): Promise<void> {
   }
   if (verb === "listen") {
     await runListen(args);
+    return;
+  }
+  if (verb === "session") {
+    await runSession(args);
     return;
   }
   if (verb === "login") {
