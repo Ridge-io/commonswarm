@@ -2,7 +2,7 @@
 
 import { randomUUID } from "node:crypto";
 import { spawnSync } from "node:child_process";
-import { mkdirSync, readFileSync, writeFileSync } from "node:fs";
+import { mkdirSync, readFileSync, realpathSync, writeFileSync } from "node:fs";
 import { open, unlink } from "node:fs/promises";
 import { homedir } from "node:os";
 import { basename, dirname, isAbsolute, join, resolve, sep } from "node:path";
@@ -8569,74 +8569,96 @@ function safeParagraph(message: string): string {
     .slice(0, 2000);
 }
 
-main().catch((error) => {
-  if (process.argv[2] === "hook" && process.argv[3] === "check") {
-    process.exitCode = 0;
-    return;
-  }
-  // The renewal horizon is not a malfunction; it is the periodic human checkpoint §2.3
-  // asks for, arriving on time. Printing it as `cswarm: <flattened 403>` would tell a
-  // person their agent broke. It says instead what happened and what to run.
+import { fileURLToPath } from "node:url";
+
+export function isCliMain(): boolean {
   if (
-    error instanceof RenewalReauthorisationRequired ||
-    error instanceof RenewalRevoked ||
-    error instanceof RenewalSuspended
+    typeof require !== "undefined" &&
+    typeof module !== "undefined" &&
+    require.main === module
   ) {
-    process.stderr.write(`${safeParagraph(error.message)}\n`);
-    process.exitCode = 1;
-    return;
+    return true;
   }
-  if (error instanceof WorkspaceCliError) {
-    const structured = error.structured();
-    const verb = process.argv[2];
-    const json = process.argv.includes("--json") &&
-      (
-        verb === "status" ||
-        verb === "workspaces" ||
-        verb === "use" ||
-        verb === "working-on" ||
-        verb === "note" ||
-        verb === "ask" ||
-        verb === "reply" ||
-        verb === "receipt" ||
-        verb === "feed" ||
-        verb === "inbox" ||
-        verb === "file" ||
-        verb === "brain"
-      );
-    if (json) {
-      process.stdout.write(`${JSON.stringify(structured, null, 2)}\n`);
-    } else {
-      process.stderr.write(`cswarm: ${error.message}\n`);
-      const projects = structured.projects;
-      if (Array.isArray(projects) && projects.length > 0) {
-        process.stderr.write("Available workspaces:\n");
-        for (const project of projects) {
-          if (!project || typeof project !== "object") continue;
-          const row = project as Record<string, unknown>;
-          process.stderr.write(
-            `- ${String(row.name)} (${String(row.workspace_id)}) — ${String(row.role)}\n`,
-          );
-        }
-      }
-      /* D-073. This branch is the one a PERSON reads — the `--json` branch above already
-       * writes the machine form, to stdout. A trailing `JSON.stringify(structured)` here made
-       * every server-returned error appear twice: once as the sentence, then again wrapped in
-       * braces, with no `--json` requested. Client-side errors were unaffected, so the
-       * doubling followed the error CLASS rather than the verb, which is why it went unnoticed
-       * for so long — it never appeared in the failure modes anyone was testing.
-       *
-       * Removed rather than reformatted: nothing pinned it, the originating commit gives no
-       * rationale for it, and a caller wanting the object has `--json`. */
+  if (!process.argv[1]) return false;
+  try {
+    const script = realpathSync(process.argv[1]);
+    const modulePath = realpathSync(fileURLToPath(import.meta.url));
+    return script === modulePath;
+  } catch {
+    return false;
+  }
+}
+
+if (isCliMain()) {
+  main().catch((error) => {
+    if (process.argv[2] === "hook" && process.argv[3] === "check") {
+      process.exitCode = 0;
+      return;
     }
-    process.exitCode = 1;
-    return;
-  }
-  if (error instanceof UsageError) {
-    process.stderr.write(`cswarm: ${safeError(error)}\n${usage()}\n`);
-    process.exitCode = 1;
-    return;
-  }
-  process.stderr.write(`cswarm: ${safeError(error)}\n`);
-  process.exitCode = exitCodeFor(error);
-});
+    // The renewal horizon is not a malfunction; it is the periodic human checkpoint §2.3
+    // asks for, arriving on time. Printing it as `cswarm: <flattened 403>` would tell a
+    // person their agent broke. It says instead what happened and what to run.
+    if (
+      error instanceof RenewalReauthorisationRequired ||
+      error instanceof RenewalRevoked ||
+      error instanceof RenewalSuspended
+    ) {
+      process.stderr.write(`${safeParagraph(error.message)}\n`);
+      process.exitCode = 1;
+      return;
+    }
+    if (error instanceof WorkspaceCliError) {
+      const structured = error.structured();
+      const verb = process.argv[2];
+      const json = process.argv.includes("--json") &&
+        (
+          verb === "status" ||
+          verb === "workspaces" ||
+          verb === "use" ||
+          verb === "working-on" ||
+          verb === "note" ||
+          verb === "ask" ||
+          verb === "reply" ||
+          verb === "receipt" ||
+          verb === "feed" ||
+          verb === "inbox" ||
+          verb === "file" ||
+          verb === "brain"
+        );
+      if (json) {
+        process.stdout.write(`${JSON.stringify(structured, null, 2)}\n`);
+      } else {
+        process.stderr.write(`cswarm: ${error.message}\n`);
+        const projects = structured.projects;
+        if (Array.isArray(projects) && projects.length > 0) {
+          process.stderr.write("Available workspaces:\n");
+          for (const project of projects) {
+            if (!project || typeof project !== "object") continue;
+            const row = project as Record<string, unknown>;
+            process.stderr.write(
+              `- ${String(row.name)} (${String(row.workspace_id)}) — ${String(row.role)}\n`,
+            );
+          }
+        }
+        /* D-073. This branch is the one a PERSON reads — the `--json` branch above already
+         * writes the machine form, to stdout. A trailing `JSON.stringify(structured)` here made
+         * every server-returned error appear twice: once as the sentence, then again wrapped in
+         * braces, with no `--json` requested. Client-side errors were unaffected, so the
+         * doubling followed the error CLASS rather than the verb, which is why it went unnoticed
+         * for so long — it never appeared in the failure modes anyone was testing.
+         *
+         * Removed rather than reformatted: nothing pinned it, the originating commit gives no
+         * rationale for it, and a caller wanting the object has `--json`. */
+      }
+      process.exitCode = 1;
+      return;
+    }
+    if (error instanceof UsageError) {
+      process.stderr.write(`cswarm: ${safeError(error)}\n${usage()}\n`);
+      process.exitCode = 1;
+      return;
+    }
+    process.stderr.write(`cswarm: ${safeError(error)}\n`);
+    process.exitCode = exitCodeFor(error);
+  });
+}
