@@ -6,18 +6,27 @@ import { test } from "node:test";
 import { cloudTarget } from "../../src/cloud/config.js";
 import { AgentSessionClient } from "../../src/cloud/session-client.js";
 import { AgentSessionManager } from "../../src/cloud/session-manager.js";
+import { access } from "node:fs/promises";
 import {
+  SessionContextError,
+  holdSessionReceiverLock,
   newSessionBinding,
   parseSessionContext,
   readSessionContext,
+  sessionProofOf,
+  sessionReceiverLockPath,
   writeSessionContext,
 } from "../../src/cloud/session-context.js";
-import { AgentSessionError } from "../../src/cloud/session-errors.js";
+import {
+  AgentSessionClientError,
+  AgentSessionError,
+} from "../../src/cloud/session-errors.js";
 import {
   ACQUIRE_AGENT_SESSION_KIND,
   AGENT_SESSION_GENERATION_HEADER,
   AGENT_SESSION_ID_HEADER,
   AGENT_SESSION_KEY_HEADER,
+  AGENT_SESSION_RENEW_AFTER_MS,
   RELEASE_AGENT_SESSION_KIND,
   RENEW_AGENT_SESSION_KIND,
 } from "../../src/cloud/session-contract.js";
@@ -27,8 +36,6 @@ import {
   startManagedSession,
   stopManagedSession,
 } from "../../src/cloud/session-cli.js";
-import { sessionProofOf } from "../../src/cloud/session-context.js";
-
 const WORKSPACE = "aaaaaaaa-aaaa-4aaa-8aaa-aaaaaaaaaaaa";
 const PRINCIPAL = "bbbbbbbb-bbbb-4bbb-8bbb-bbbbbbbbbbbb";
 const OTHER = "ffffffff-ffff-4fff-8fff-ffffffffffff";
@@ -43,6 +50,95 @@ async function tokenFile(root: string): Promise<string> {
   await chmod(path, 0o600);
   return path;
 }
+
+test("session start --foreground refuses a live listen lock and stop releases it", async () => {
+  const root = await mkdtemp(join(tmpdir(), "cswarm-receiver-lock-"));
+  await chmod(root, 0o700);
+  try {
+    const tokenPath = await tokenFile(root);
+    const contextPath = join(root, "session.json");
+    const fetcher = (async () =>
+      new Response(JSON.stringify({
+        ok: true,
+        status: "accepted",
+        generation: 2,
+      }), { status: 200 })) as typeof fetch;
+    await holdSessionReceiverLock(contextPath, "listen");
+    await assert.rejects(
+      () => startManagedSession({
+        target: cloudTarget("http://127.0.0.1:9", "synthetic-anon-key"),
+        workspaceId: WORKSPACE,
+        credential: TOKEN,
+        tokenFile: tokenPath,
+        tokenPrincipalId: PRINCIPAL,
+        mode: "interactive",
+        provider: "codex",
+        hostSessionId: "thread-1",
+        contextPath,
+        fetcher,
+        readIdentity: async () => ({
+          principal_id: PRINCIPAL,
+          workspace_id: WORKSPACE,
+        }),
+        runReceiver: true,
+        signal: AbortSignal.abort(),
+      }),
+      (error: unknown) =>
+        error instanceof SessionContextError &&
+        error.code === "session_receiver_busy",
+    );
+    await holdSessionReceiverLock(contextPath, "listen");
+    await stopManagedSession({
+      target: cloudTarget("http://127.0.0.1:9", "synthetic-anon-key"),
+      credential: TOKEN,
+      contextPath,
+      fetcher,
+    });
+    await assert.rejects(() => access(sessionReceiverLockPath(contextPath)));
+  } finally {
+    await rm(root, { recursive: true, force: true });
+  }
+});
+
+test("malformed acquire generation is rejected and does not write generation 1", async () => {
+  const root = await mkdtemp(join(tmpdir(), "cswarm-bad-gen-"));
+  await chmod(root, 0o700);
+  try {
+    const tokenPath = await tokenFile(root);
+    const contextPath = join(root, "session.json");
+    const fetcher = (async () =>
+      new Response(JSON.stringify({ ok: true, status: "accepted" }), {
+        status: 200,
+      })) as typeof fetch;
+    await assert.rejects(
+      () => startManagedSession({
+        target: cloudTarget("http://127.0.0.1:9", "synthetic-anon-key"),
+        workspaceId: WORKSPACE,
+        credential: TOKEN,
+        tokenFile: tokenPath,
+        tokenPrincipalId: PRINCIPAL,
+        mode: "interactive",
+        provider: "codex",
+        hostSessionId: "thread-1",
+        contextPath,
+        fetcher,
+        readIdentity: async () => ({
+          principal_id: PRINCIPAL,
+          workspace_id: WORKSPACE,
+        }),
+        runReceiver: false,
+      }),
+      (error: unknown) =>
+        error instanceof AgentSessionClientError &&
+        error.code === "session_generation_invalid",
+    );
+    const stored = await readSessionContext(contextPath);
+    assert.equal(stored.generation, 0);
+    assert.equal(sessionProofOf(stored), null);
+  } finally {
+    await rm(root, { recursive: true, force: true });
+  }
+});
 
 test("acquire retry reuses the same UUID, private key header, and command id", async () => {
   const root = await mkdtemp(join(tmpdir(), "cswarm-life-"));
@@ -344,7 +440,30 @@ test("stop marks the context released so status is stopped and start acquires a 
       fetcher,
     });
     assert.equal(stopped.state, "stopped");
-    const afterStop = await readManagedSessionStatus(contextPath);
+    const afterStop = await readManagedSessionStatus({
+      contextPath,
+      target,
+      credential: TOKEN,
+      fetcher: (async () =>
+        new Response(JSON.stringify({
+          members: [],
+          agents: [{
+            principal_id: PRINCIPAL,
+            name: "agent",
+            lifecycle_state: "enabled",
+            is_live: false,
+            session_id: firstId,
+            managed_at: "2026-09-06T00:00:00.000Z",
+          }],
+          identity: {
+            credential_valid: true,
+            principal_id: PRINCIPAL,
+            owner_user_id: "11111111-1111-4111-8111-111111111111",
+            workspace_id: WORKSPACE,
+            managed_at: "2026-09-06T00:00:00.000Z",
+          },
+        }), { status: 200 })) as typeof fetch,
+    });
     assert.equal(afterStop.status.state, "stopped");
     assert.equal(afterStop.status.has_private_proof, false);
     assert.equal(sessionProofOf(afterStop.context), null);
@@ -433,6 +552,273 @@ test("manager stops dispatch on typed expiry and does not overlap renewals", asy
     await timers[0]!();
     assert.equal(manager.dispatchState(), "stopped");
     manager.stopTimers();
+  } finally {
+    await rm(root, { recursive: true, force: true });
+  }
+});
+
+test("claims every 10s for 130s still produce a renew by 40s", async () => {
+  const root = await mkdtemp(join(tmpdir(), "cswarm-claim-rearm-"));
+  await chmod(root, 0o700);
+  try {
+    const tokenPath = await tokenFile(root);
+    const context = {
+      ...newSessionBinding({
+        target: cloudTarget("http://127.0.0.1:9", "synthetic-anon-key"),
+        workspaceId: WORKSPACE,
+        principalId: PRINCIPAL,
+        provider: "codex",
+        mode: "interactive",
+        hostSessionId: "thread-1",
+        tokenFile: tokenPath,
+      }),
+      generation: 1,
+    };
+    const contextPath = join(root, "session.json");
+    await writeSessionContext(contextPath, context);
+    let now = 0;
+    let nextTimerId = 1;
+    const timers = new Map<number, { due: number; callback: () => void }>();
+    const kinds: string[] = [];
+    const client = new AgentSessionClient({
+      target: cloudTarget("http://127.0.0.1:9", "synthetic-anon-key"),
+      fetcher: (async (_input: URL | RequestInfo, init?: RequestInit) => {
+        const body = JSON.parse(String(init?.body ?? "{}")) as {
+          command: { kind: string };
+        };
+        kinds.push(body.command.kind);
+        return new Response(JSON.stringify({ ok: true, status: "accepted" }), {
+          status: 200,
+        });
+      }) as typeof fetch,
+    });
+    const manager = new AgentSessionManager({
+      client,
+      credential: async () => TOKEN,
+      workspaceId: WORKSPACE,
+      contextPath,
+      context,
+      now: () => now,
+      setTimer: (callback, ms) => {
+        const id = nextTimerId;
+        nextTimerId += 1;
+        timers.set(id, { due: now + ms, callback });
+        return id as unknown as ReturnType<typeof setTimeout>;
+      },
+      clearTimer: (timer) => {
+        timers.delete(timer as unknown as number);
+      },
+    });
+    manager.start();
+
+    const flush = async (): Promise<void> => {
+      for (let i = 0; i < 8; i += 1) await Promise.resolve();
+    };
+    const advanceTo = async (target: number): Promise<void> => {
+      while (true) {
+        let next: { id: number; due: number; callback: () => void } | null = null;
+        for (const [id, timer] of timers) {
+          if (timer.due <= target && (next === null || timer.due < next.due)) {
+            next = { id, due: timer.due, callback: timer.callback };
+          }
+        }
+        if (next === null) {
+          now = target;
+          return;
+        }
+        now = next.due;
+        timers.delete(next.id);
+        next.callback();
+        await flush();
+      }
+    };
+
+    for (let t = 10_000; t <= 130_000; t += 10_000) {
+      await advanceTo(t);
+      manager.noteSuccessfulWrite();
+    }
+
+    const renews = kinds.filter((kind) => kind === RENEW_AGENT_SESSION_KIND);
+    assert.ok(
+      renews.length >= 1,
+      `expected a renew by 40s; kinds=${JSON.stringify(kinds)}`,
+    );
+    assert.ok(
+      renews.length >= Math.floor(130_000 / AGENT_SESSION_RENEW_AFTER_MS),
+      `expected renews on the 40s cadence; got ${renews.length}`,
+    );
+    assert.equal(manager.dispatchState(), "running");
+    manager.stopTimers();
+  } finally {
+    await rm(root, { recursive: true, force: true });
+  }
+});
+
+test("session status after expiry does not say running from the local file", async () => {
+  const root = await mkdtemp(join(tmpdir(), "cswarm-status-expiry-"));
+  await chmod(root, 0o700);
+  try {
+    const tokenPath = await tokenFile(root);
+    const context = {
+      ...newSessionBinding({
+        target: cloudTarget("http://127.0.0.1:9", "synthetic-anon-key"),
+        workspaceId: WORKSPACE,
+        principalId: PRINCIPAL,
+        provider: "codex",
+        mode: "interactive",
+        hostSessionId: "thread-1",
+        tokenFile: tokenPath,
+      }),
+      generation: 4,
+      enforcement: "enabled" as const,
+    };
+    const contextPath = join(root, "session.json");
+    await writeSessionContext(contextPath, context);
+    const { status } = await readManagedSessionStatus({
+      contextPath,
+      target: cloudTarget("http://127.0.0.1:9", "synthetic-anon-key"),
+      credential: TOKEN,
+      fetcher: (async () =>
+        new Response(JSON.stringify({
+          members: [],
+          agents: [{
+            principal_id: PRINCIPAL,
+            name: "agent",
+            lifecycle_state: "enabled",
+            is_live: false,
+            session_id: context.session_id,
+            generation: 4,
+            expired_at: "2026-09-06T00:02:00.000Z",
+            managed_at: "2026-09-06T00:00:00.000Z",
+          }],
+          identity: {
+            credential_valid: true,
+            principal_id: PRINCIPAL,
+            owner_user_id: "11111111-1111-4111-8111-111111111111",
+            workspace_id: WORKSPACE,
+            managed_at: "2026-09-06T00:00:00.000Z",
+          },
+        }), { status: 200 })) as typeof fetch,
+    });
+    const local = status.local as { state: string; enforcement: string };
+    const server = status.server as { is_live: boolean; session_id: string };
+    assert.equal(local.state, "running");
+    assert.equal(local.enforcement, "enabled");
+    assert.equal(server.is_live, false);
+    assert.equal(status.state, "expired");
+    assert.notEqual(status.state, "running");
+  } finally {
+    await rm(root, { recursive: true, force: true });
+  }
+});
+
+test("session status after human recover does not say running from the local file", async () => {
+  const root = await mkdtemp(join(tmpdir(), "cswarm-status-recover-"));
+  await chmod(root, 0o700);
+  try {
+    const tokenPath = await tokenFile(root);
+    const context = {
+      ...newSessionBinding({
+        target: cloudTarget("http://127.0.0.1:9", "synthetic-anon-key"),
+        workspaceId: WORKSPACE,
+        principalId: PRINCIPAL,
+        provider: "codex",
+        mode: "interactive",
+        hostSessionId: "thread-1",
+        tokenFile: tokenPath,
+      }),
+      generation: 2,
+      enforcement: "enabled" as const,
+    };
+    const contextPath = join(root, "session.json");
+    await writeSessionContext(contextPath, context);
+    const recoveredId = "99999999-9999-4999-8999-999999999999";
+    const { status } = await readManagedSessionStatus({
+      contextPath,
+      target: cloudTarget("http://127.0.0.1:9", "synthetic-anon-key"),
+      credential: TOKEN,
+      fetcher: (async () =>
+        new Response(JSON.stringify({
+          members: [],
+          agents: [{
+            principal_id: PRINCIPAL,
+            name: "agent",
+            lifecycle_state: "enabled",
+            is_live: false,
+            session_id: recoveredId,
+            generation: 3,
+            expired_at: "2026-09-06T00:01:00.000Z",
+            managed_at: "2026-09-06T00:00:00.000Z",
+          }],
+          identity: {
+            credential_valid: true,
+            principal_id: PRINCIPAL,
+            owner_user_id: "11111111-1111-4111-8111-111111111111",
+            workspace_id: WORKSPACE,
+            managed_at: "2026-09-06T00:00:00.000Z",
+          },
+        }), { status: 200 })) as typeof fetch,
+    });
+    assert.equal((status.local as { state: string }).state, "running");
+    assert.equal(status.state, "expired");
+    assert.notEqual(status.state, "running");
+    assert.equal(
+      (status.server as { session_id: string }).session_id,
+      recoveredId,
+    );
+  } finally {
+    await rm(root, { recursive: true, force: true });
+  }
+});
+
+test("session status after disable does not say enabled from the local file", async () => {
+  const root = await mkdtemp(join(tmpdir(), "cswarm-status-disable-"));
+  await chmod(root, 0o700);
+  try {
+    const tokenPath = await tokenFile(root);
+    const context = {
+      ...newSessionBinding({
+        target: cloudTarget("http://127.0.0.1:9", "synthetic-anon-key"),
+        workspaceId: WORKSPACE,
+        principalId: PRINCIPAL,
+        provider: "codex",
+        mode: "interactive",
+        hostSessionId: "thread-1",
+        tokenFile: tokenPath,
+      }),
+      generation: 2,
+      enforcement: "enabled" as const,
+    };
+    const contextPath = join(root, "session.json");
+    await writeSessionContext(contextPath, context);
+    const { status } = await readManagedSessionStatus({
+      contextPath,
+      target: cloudTarget("http://127.0.0.1:9", "synthetic-anon-key"),
+      credential: TOKEN,
+      fetcher: (async () =>
+        new Response(JSON.stringify({
+          members: [],
+          agents: [{
+            principal_id: PRINCIPAL,
+            name: "agent",
+            lifecycle_state: "disabled",
+            is_live: false,
+            session_id: context.session_id,
+            managed_at: null,
+          }],
+          identity: {
+            credential_valid: true,
+            principal_id: PRINCIPAL,
+            owner_user_id: "11111111-1111-4111-8111-111111111111",
+            workspace_id: WORKSPACE,
+            managed_at: null,
+          },
+        }), { status: 200 })) as typeof fetch,
+    });
+    assert.equal((status.local as { enforcement: string }).enforcement, "enabled");
+    assert.equal(status.enforcement, "unmanaged");
+    assert.notEqual(status.enforcement, "enabled");
+    assert.notEqual(status.state, "running");
   } finally {
     await rm(root, { recursive: true, force: true });
   }

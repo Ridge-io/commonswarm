@@ -21,9 +21,11 @@ import {
 import {
   classifyClaudeCanaryFailure,
   ClaudeListenerModel,
+  type OpenClaudeSession,
+} from "../src/listener/claude-model.js";
+import {
   ListenerEngine,
   ListenerRenewalUnavailableError,
-  type OpenClaudeSession,
 } from "../src/listener/index.js";
 import type {
   ListenerEffectRecord,

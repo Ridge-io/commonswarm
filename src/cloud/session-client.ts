@@ -1,6 +1,7 @@
 import {
   CLIENT_PROTOCOL_VERSION,
   commandEndpoint,
+  readEndpoint,
   type CloudTarget,
 } from "./config.js";
 import { CommandTransportError, newCommandId } from "./command-client.js";
@@ -16,6 +17,7 @@ import {
   type AgentSessionProof,
 } from "./session-contract.js";
 import {
+  AgentSessionClientError,
   AgentSessionError,
   agentSessionErrorFromBody,
 } from "./session-errors.js";
@@ -38,6 +40,21 @@ export interface AcquireSessionRequest {
 export interface AcquireSessionResult {
   generation: number;
   commandId: string;
+}
+
+export interface ServerSessionStatus {
+  principal_id: string;
+  session_id: string | null;
+  generation: number | null;
+  lifecycle_state: "enabled" | "disabled" | null;
+  is_live: boolean;
+  provider: string | null;
+  host_label: string | null;
+  host_session_ref: string | null;
+  started_at: string | null;
+  renewed_at: string | null;
+  expired_at: string | null;
+  managed_at: string | null;
 }
 
 export interface HumanSessionLifecycleRequest {
@@ -124,10 +141,14 @@ function acceptedGeneration(body: unknown): number {
     throw new CommandTransportError("session command returned a malformed body");
   }
   const row = body as Record<string, unknown>;
-  if (typeof row.generation === "number" && Number.isSafeInteger(row.generation)) {
+  if (
+    typeof row.generation === "number" &&
+    Number.isSafeInteger(row.generation) &&
+    row.generation >= 1
+  ) {
     return row.generation;
   }
-  return 1;
+  throw new AgentSessionClientError("session_generation_invalid");
 }
 
 export class AgentSessionClient {
@@ -231,6 +252,117 @@ export class AgentSessionClient {
       },
     });
   }
+
+  /** Read-only members resource: server session fields for this principal. */
+  async readStatus(input: {
+    credential: string;
+    workspaceId: string;
+    principalId: string;
+  }): Promise<ServerSessionStatus> {
+    const fetcher = this.options.fetcher ?? fetch;
+    const controller = new AbortController();
+    const timer = setTimeout(
+      () => controller.abort(),
+      this.options.timeoutMs ?? 30_000,
+    );
+    const headers = {
+      authorization: `Bearer ${input.credential}`,
+      apikey: this.options.target.anonKey,
+      "content-type": "application/json",
+    };
+    let response: Response;
+    try {
+      response = await fetcher(readEndpoint(this.options.target), {
+        method: "POST",
+        headers,
+        body: JSON.stringify({
+          resource: "members",
+          workspace_id: input.workspaceId,
+        }),
+        signal: controller.signal,
+      });
+    } catch (error) {
+      if ((error as Error).name === "AbortError") {
+        throw new CommandTransportError("session status read timed out");
+      }
+      throw new CommandTransportError(
+        "session status read failed before a response",
+      );
+    } finally {
+      clearTimeout(timer);
+    }
+    let body: unknown = null;
+    try {
+      body = JSON.parse(await response.text());
+    } catch {
+      body = null;
+    }
+    if (!response.ok) {
+      throw new CommandTransportError(
+        `session status read failed (HTTP ${response.status})`,
+      );
+    }
+    return parseServerSessionStatus(body, input.principalId);
+  }
 }
 
-export { AgentSessionError };
+function optionalString(value: unknown): string | null {
+  return typeof value === "string" && value.length > 0 ? value : null;
+}
+
+function optionalGeneration(value: unknown): number | null {
+  if (typeof value === "number" && Number.isSafeInteger(value) && value >= 1) {
+    return value;
+  }
+  if (typeof value === "string" && /^[1-9][0-9]*$/.test(value)) {
+    const generation = Number(value);
+    return Number.isSafeInteger(generation) ? generation : null;
+  }
+  return null;
+}
+
+function parseServerSessionStatus(
+  body: unknown,
+  principalId: string,
+): ServerSessionStatus {
+  if (body === null || typeof body !== "object" || Array.isArray(body)) {
+    throw new CommandTransportError("session status read returned a malformed body");
+  }
+  const row = body as Record<string, unknown>;
+  const identity = row.identity !== null &&
+      typeof row.identity === "object" &&
+      !Array.isArray(row.identity)
+    ? row.identity as Record<string, unknown>
+    : null;
+  const agents = Array.isArray(row.agents) ? row.agents : [];
+  const wanted = principalId.toLowerCase();
+  const match = agents.find((agent) => {
+    if (agent === null || typeof agent !== "object" || Array.isArray(agent)) {
+      return false;
+    }
+    const id = (agent as Record<string, unknown>).principal_id;
+    return typeof id === "string" && id.toLowerCase() === wanted;
+  }) as Record<string, unknown> | undefined;
+  const managedAt = optionalString(match?.managed_at) ??
+    optionalString(identity?.managed_at);
+  const lifecycle = match?.lifecycle_state === "enabled" ||
+      match?.lifecycle_state === "disabled"
+    ? match.lifecycle_state
+    : null;
+  return {
+    principal_id: wanted,
+    session_id: optionalString(match?.session_id)?.toLowerCase() ?? null,
+    generation: optionalGeneration(match?.generation),
+    lifecycle_state: lifecycle,
+    is_live: match?.is_live === true,
+    provider: optionalString(match?.provider),
+    host_label: optionalString(match?.host_label),
+    host_session_ref: optionalString(match?.host_session_ref),
+    started_at: optionalString(match?.started_at),
+    renewed_at: optionalString(match?.renewed_at),
+    expired_at: optionalString(match?.expired_at),
+    managed_at: managedAt,
+  };
+}
+
+export { AgentSessionClientError, AgentSessionError };

@@ -37,6 +37,49 @@ interface Citation {
 }
 
 const CITATIONS: Citation[] = [
+  // src/cli.ts — C9 lazy ACP host/model loads (no static import on the session path)
+  {
+    citedBy: "identity client r6 C9 (lazy host/claude load)",
+    file: "src/cli.ts",
+    lines: [358, 359],
+    contains: "requireFromCli(\"./host/claude.js\")",
+  },
+  {
+    citedBy: "identity client r6 C9 (lazy host/codex load)",
+    file: "src/cli.ts",
+    lines: [362, 363],
+    contains: "requireFromCli(\"./host/codex.js\")",
+  },
+  {
+    citedBy: "identity client r6 C9 (lazy host/opencode load)",
+    file: "src/cli.ts",
+    lines: [366, 367],
+    contains: "requireFromCli(\"./host/opencode.js\")",
+  },
+  {
+    citedBy: "identity client r6 C9 (lazy claude-model classifier load)",
+    file: "src/cli.ts",
+    lines: [370, 371],
+    contains: "requireFromCli(\"./listener/claude-model.js\")",
+  },
+  {
+    citedBy: "identity client r6 C9 (explicit Claude executable path)",
+    file: "src/cli.ts",
+    lines: [5576, 5576],
+    contains: "loadHostClaude().resolveClaudeExecutable",
+  },
+  {
+    citedBy: "identity client r6 C9 (explicit Codex executable path)",
+    file: "src/cli.ts",
+    lines: [5602, 5602],
+    contains: "loadHostCodex().resolveCodexExecutable",
+  },
+  {
+    citedBy: "identity client r6 C9 (explicit OpenCode executable path)",
+    file: "src/cli.ts",
+    lines: [6230, 6230],
+    contains: "loadHostOpenCode().resolveOpenCodeExecutable",
+  },
   // site/src/lib/agent-connect.ts — mintedHorizon and the retired-constant note
   {
     citedBy: "site/src/lib/agent-connect.ts (mintedHorizon)",

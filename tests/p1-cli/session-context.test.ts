@@ -5,13 +5,17 @@ import { tmpdir } from "node:os";
 import { join } from "node:path";
 import { test } from "node:test";
 import { cloudTarget } from "../../src/cloud/config.js";
+import { access } from "node:fs/promises";
 import {
   SessionContextError,
   defaultSessionRootDirectory,
+  holdSessionReceiverLock,
   newSessionBinding,
   parseSessionContext,
   publicSessionStatus,
   readSessionContext,
+  releaseSessionReceiverLock,
+  sessionReceiverLockPath,
   writeSessionContext,
 } from "../../src/cloud/session-context.js";
 import { generateSessionKey } from "../../src/cloud/session-proof.js";
@@ -66,6 +70,39 @@ test("successful write uses 0600 file in 0700 directory and never copies the tok
     const status = publicSessionStatus(written);
     assert.equal("session_key" in status, false);
     assert.doesNotMatch(JSON.stringify(status), new RegExp(written.session_key));
+  } finally {
+    await rm(root, { recursive: true, force: true });
+  }
+});
+
+test("a second receiver lock is refused and a dead pid is reclaimable", async () => {
+  const root = await tempRoot();
+  try {
+    const tokenPath = await tokenFile(root);
+    const contextPath = join(root, "session.json");
+    await writeSessionContext(contextPath, document(root, tokenPath));
+    const first = await holdSessionReceiverLock(contextPath, "foreground");
+    assert.equal(first.kind, "foreground");
+    assert.equal(first.pid, process.pid);
+    await assert.rejects(
+      () => holdSessionReceiverLock(contextPath, "listen"),
+      (error: unknown) =>
+        error instanceof SessionContextError &&
+        error.code === "session_receiver_busy",
+    );
+    await releaseSessionReceiverLock(contextPath);
+    const deadPath = sessionReceiverLockPath(contextPath);
+    await writeFile(
+      deadPath,
+      `${JSON.stringify({ version: 1, kind: "listen", pid: 999_999_999 })}\n`,
+      { mode: 0o600 },
+    );
+    await chmod(deadPath, 0o600);
+    const reclaimed = await holdSessionReceiverLock(contextPath, "foreground");
+    assert.equal(reclaimed.kind, "foreground");
+    assert.equal(reclaimed.pid, process.pid);
+    await releaseSessionReceiverLock(contextPath);
+    await assert.rejects(() => access(deadPath));
   } finally {
     await rm(root, { recursive: true, force: true });
   }

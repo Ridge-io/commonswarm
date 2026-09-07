@@ -1,7 +1,7 @@
 import { randomUUID } from "node:crypto";
-import { lstat, mkdir, chmod, readdir } from "node:fs/promises";
+import { lstat, mkdir, chmod, readdir, open, readFile, unlink } from "node:fs/promises";
 import { homedir } from "node:os";
-import { dirname, isAbsolute, join, parse as parsePath, resolve } from "node:path";
+import { basename, dirname, isAbsolute, join, parse as parsePath, resolve } from "node:path";
 import {
   readSecureJsonFile,
   writeSecureJsonFile,
@@ -45,7 +45,9 @@ export type SessionContextErrorCode =
   | "session_context_missing"
   | "session_context_token_file_invalid"
   | "session_context_conflict"
-  | "session_identity_mismatch";
+  | "session_identity_mismatch"
+  | "session_binding_mismatch"
+  | "session_receiver_busy";
 
 export class SessionContextError extends Error {
   readonly name = "SessionContextError";
@@ -607,29 +609,23 @@ export async function deleteSessionContext(path: string): Promise<void> {
   await deleteSecureJsonFile(absolute);
 }
 
-export function assertSameIdentity(
+export interface LocalSessionBinding {
+  target: CloudTarget;
+  tokenPrincipalId?: string | null;
+  flagWorkspaceId?: string;
+  flagUrl?: string;
+  tokenFile?: string | null;
+  hostSessionId?: string;
+}
+
+/**
+ * Flag, token-file, target, and host checks that need no network.
+ * Call this before opening a credential session (which can renew).
+ */
+export function assertLocalSessionBinding(
   context: SessionContextDocument,
-  input: {
-    identity: SessionIdentity;
-    target: CloudTarget;
-    tokenPrincipalId?: string | null;
-    flagWorkspaceId?: string;
-    flagUrl?: string;
-    hostSessionId?: string;
-  },
+  input: LocalSessionBinding,
 ): void {
-  if (input.identity.principal_id.toLowerCase() !== context.principal_id) {
-    throw new SessionContextError(
-      "session_identity_mismatch",
-      "authenticated principal does not match the session context",
-    );
-  }
-  if (input.identity.workspace_id.toLowerCase() !== context.workspace_id) {
-    throw new SessionContextError(
-      "session_identity_mismatch",
-      "authenticated workspace does not match the session context",
-    );
-  }
   if (input.target.url !== context.url || input.target.profileId !== context.profile_id) {
     throw new SessionContextError(
       "session_identity_mismatch",
@@ -662,6 +658,16 @@ export function assertSameIdentity(
     );
   }
   if (
+    input.tokenFile !== undefined &&
+    input.tokenFile !== null &&
+    resolve(input.tokenFile) !== resolve(context.token_file)
+  ) {
+    throw new SessionContextError(
+      "session_identity_mismatch",
+      "--agent-token-file does not match the session context token file",
+    );
+  }
+  if (
     input.hostSessionId !== undefined &&
     input.hostSessionId !== context.host_session_id
   ) {
@@ -670,6 +676,198 @@ export function assertSameIdentity(
       "host session id does not match the session context",
     );
   }
+}
+
+export function assertSameIdentity(
+  context: SessionContextDocument,
+  input: LocalSessionBinding & { identity: SessionIdentity },
+): void {
+  assertLocalSessionBinding(context, input);
+  if (input.identity.principal_id.toLowerCase() !== context.principal_id) {
+    throw new SessionContextError(
+      "session_identity_mismatch",
+      "authenticated principal does not match the session context",
+    );
+  }
+  if (input.identity.workspace_id.toLowerCase() !== context.workspace_id) {
+    throw new SessionContextError(
+      "session_identity_mismatch",
+      "authenticated workspace does not match the session context",
+    );
+  }
+}
+
+/** Immutable acquire binding. Retry must present the same values. */
+export const SESSION_ACQUIRE_BINDING_FIELDS = [
+  "provider",
+  "mode",
+  "host_label",
+  "host_session_id",
+  "token_file",
+] as const;
+
+export type SessionAcquireBindingField =
+  (typeof SESSION_ACQUIRE_BINDING_FIELDS)[number];
+
+export function assertAcquireBindingMatches(
+  existing: SessionContextDocument,
+  requested: SessionContextDocument,
+): void {
+  const changed = SESSION_ACQUIRE_BINDING_FIELDS.filter(
+    (field) => existing[field] !== requested[field],
+  );
+  if (changed.length === 0) return;
+  throw new SessionContextError(
+    "session_binding_mismatch",
+    `acquire retry cannot change ${SESSION_ACQUIRE_BINDING_FIELDS.join(", ")}`,
+  );
+}
+
+export const SESSION_RECEIVER_KINDS = ["foreground", "listen"] as const;
+export type SessionReceiverKind = (typeof SESSION_RECEIVER_KINDS)[number];
+
+const RECEIVER_LOCK_MAX_BYTES = 512;
+
+export function sessionReceiverLockPath(contextPath: string): string {
+  const name = basename(contextPath);
+  const stem = name.endsWith(".json") ? name.slice(0, -".json".length) : name;
+  return join(dirname(contextPath), `${stem}.receiver.lock`);
+}
+
+export interface SessionReceiverLock {
+  version: 1;
+  kind: SessionReceiverKind;
+  pid: number;
+}
+
+function pidIsAlive(pid: number): boolean {
+  if (!Number.isSafeInteger(pid) || pid <= 0) return false;
+  try {
+    process.kill(pid, 0);
+    return true;
+  } catch (error) {
+    return (error as NodeJS.ErrnoException).code !== "ESRCH";
+  }
+}
+
+function parseReceiverLock(raw: string): SessionReceiverLock | null {
+  let value: unknown;
+  try {
+    value = JSON.parse(raw);
+  } catch {
+    return null;
+  }
+  if (value === null || typeof value !== "object" || Array.isArray(value)) {
+    return null;
+  }
+  const row = value as Record<string, unknown>;
+  if (
+    row.version !== 1 ||
+    typeof row.kind !== "string" ||
+    !(SESSION_RECEIVER_KINDS as readonly string[]).includes(row.kind) ||
+    !Number.isSafeInteger(row.pid) ||
+    (row.pid as number) <= 0
+  ) {
+    return null;
+  }
+  return {
+    version: 1,
+    kind: row.kind as SessionReceiverKind,
+    pid: row.pid as number,
+  };
+}
+
+async function readReceiverLock(
+  path: string,
+): Promise<SessionReceiverLock | null> {
+  let raw: string;
+  try {
+    raw = await readFile(path, "utf8");
+  } catch (error) {
+    if ((error as NodeJS.ErrnoException).code === "ENOENT") return null;
+    throw error;
+  }
+  if (Buffer.byteLength(raw, "utf8") > RECEIVER_LOCK_MAX_BYTES) return null;
+  return parseReceiverLock(raw);
+}
+
+async function writeReceiverLock(
+  path: string,
+  lock: SessionReceiverLock,
+): Promise<void> {
+  const payload = `${JSON.stringify(lock)}\n`;
+  const handle = await open(path, "wx", 0o600);
+  try {
+    await handle.writeFile(payload, "utf8");
+  } finally {
+    await handle.close();
+  }
+  await chmod(path, 0o600);
+}
+
+export async function holdSessionReceiverLock(
+  contextPath: string,
+  kind: SessionReceiverKind,
+  pid: number = process.pid,
+): Promise<SessionReceiverLock> {
+  if (!(SESSION_RECEIVER_KINDS as readonly string[]).includes(kind)) {
+    throw new SessionContextError(
+      "session_receiver_busy",
+      `receiver kind must be ${SESSION_RECEIVER_KINDS.join(" or ")}`,
+    );
+  }
+  if (!Number.isSafeInteger(pid) || pid <= 0) {
+    throw new SessionContextError(
+      "session_receiver_busy",
+      "receiver lock pid must be a positive integer",
+    );
+  }
+  const absolute = await assertSafeContextPath(contextPath);
+  await ensureOwnedDirectory(dirname(absolute));
+  const lockPath = sessionReceiverLockPath(absolute);
+  const wanted: SessionReceiverLock = { version: 1, kind, pid };
+  for (let attempt = 0; attempt < 2; attempt += 1) {
+    try {
+      await writeReceiverLock(lockPath, wanted);
+      return wanted;
+    } catch (error) {
+      if ((error as NodeJS.ErrnoException).code !== "EEXIST") throw error;
+    }
+    const existing = await readReceiverLock(lockPath);
+    if (existing !== null && pidIsAlive(existing.pid)) {
+      if (existing.pid === pid && existing.kind === kind) return existing;
+      throw new SessionContextError(
+        "session_receiver_busy",
+        `a ${existing.kind} receiver is already running as pid ${existing.pid}`,
+      );
+    }
+    await unlink(lockPath).catch(() => undefined);
+  }
+  throw new SessionContextError(
+    "session_receiver_busy",
+    "receiver lock could not be acquired",
+  );
+}
+
+export async function releaseSessionReceiverLock(
+  contextPath: string,
+): Promise<void> {
+  const absolute = await assertSafeContextPath(contextPath);
+  const lockPath = sessionReceiverLockPath(absolute);
+  await unlink(lockPath).catch((error: NodeJS.ErrnoException) => {
+    if (error.code !== "ENOENT") throw error;
+  });
+}
+
+export async function releaseSessionReceiverLockIfHeld(
+  contextPath: string,
+  pid: number = process.pid,
+): Promise<void> {
+  const absolute = await assertSafeContextPath(contextPath);
+  const lockPath = sessionReceiverLockPath(absolute);
+  const existing = await readReceiverLock(lockPath);
+  if (existing === null || existing.pid !== pid) return;
+  await unlink(lockPath).catch(() => undefined);
 }
 
 export function assertUnacquiredOrSameBinding(

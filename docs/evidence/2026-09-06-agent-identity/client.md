@@ -1,5 +1,55 @@
 # Lane C: managed client (identity)
 
+Branch: `lane/identity-client-r6`, cut 2026-09-06 from the identity integration head
+`cb3ebff3` (main 0.1.61 + all identity lanes + Codex arm on 7a06d78). Builder of
+round 6: Grok. Wire contract: `src/cloud/session-wire.ts` (not edited).
+
+## Round 6 (Codex 7a06d78 findings 1,3,4,5,7,8,9)
+
+Code SHA: `4ea5aa1eb8c6a28685a2fbb17744baf034db4a69`. Finding 2 is the server's
+(`swarm_read.agent_execution_sessions` grant). Finding 6 (custom `--session-context`
+outside the default sessions tree) was already refused at this head
+(`cli.ts` session start, test in `session-cli.test.ts`); confirmed, not redone.
+
+ITEM lines:
+
+- ITEM 1 DONE `b2b4bb9a7950a2cfbc17d2fe3120100f6fed79b2`
+- ITEM 3 DONE `d9c78556e83738857d6dcd07a6009093427525b2`
+- ITEM 4 DONE `e688a977c170d5043e4a5778d9f1a2c19d5ca4fe`
+- ITEM 5 DONE `8afeabd08952a1579fe2846e26a37a625bd36b39`
+- ITEM 7 DONE `bb81560260825eaa28efd296c114b1564b3ce4af`
+- ITEM 8 DONE `5d29f7b3dbb17b5b2ac9cd9fa34b3c57a34892e4`
+- ITEM 9 DONE `4ea5aa1eb8c6a28685a2fbb17744baf034db4a69`
+
+Each item has a test that failed on the old behaviour and passed after.
+
+| ID | Result |
+|---|---|
+| C1 busy receivers lose the session | Met. `noteSuccessfulWrite` no longer re-arms `lastProofAt`. Claims every 10 s for 130 s still renew by 40 s. `tests/p1-cli/session-lifecycle.test.ts` |
+| C3 identity checks after mutation | Met. Local binding is checked before `agentSession` (which can renew). Mismatch: zero fetches. `tests/p1-cli/session-identity.test.ts` |
+| C4 acquire retry ignores binding | Met. Retry compares `provider`, `mode`, `host_label`, `host_session_id`, `token_file` from `SESSION_ACQUIRE_BINDING_FIELDS` and throws `session_binding_mismatch`. `tests/p1-cli/session-identity.test.ts` |
+| C5 status is local belief | Met. `session status` reads the members session row and reports `local` and `server`. After expiry, recover, or disable, top-level `state`/`enforcement` are not taken from the file. `tests/p1-cli/session-lifecycle.test.ts` |
+| C6 custom context invisible | Already at this head. `session start --session-context` outside the default tree is refused before network. Not redone. |
+| C7 malformed generation becomes 1 | Met. Missing/invalid generation throws `session_generation_invalid`; the unacquired generation-0 file is not written as 1. `tests/p1-cli/session-lifecycle.test.ts` |
+| C8 one receiver not enforced | Met. A 0600 lock beside the context names kind (`foreground`/`listen`) and pid. Second starter: `session_receiver_busy`. `session stop` and `listen stop` release it. Dead pid is reclaimable. `tests/p1-cli/session-context.test.ts`, `session-lifecycle.test.ts` |
+| C9 no-ACP-import contract | Met. Host/model modules are lazy-loaded at explicit provider paths. `listener/index.ts` no longer re-exports the four model modules. Graph test walks session command static imports. `tests/p1-cli/session-interactive-nospawn.test.ts`. `citation-drift.test.ts` pins the new `cli.ts` load sites. |
+
+Gates on `4ea5aa1e` (this worktree):
+
+| Command | Exit | Counts |
+|---|---|---|
+| `npm run build` | 0 | `tsc` + `chmod 755 dist/cli.js` |
+| `npm run check:tests` | 0 | `tsc -p tsconfig.tests.json` |
+| `NODE_NO_WARNINGS=1 npm test` | 0 | 924 pass / 0 fail |
+| `NODE_NO_WARNINGS=1 npm run test:p1-cli` | 0 | 552 pass / 0 fail |
+
+Not run: `test:p1-local`, `test:p1-server`, `db:*`, `check:edge`, live listener, live Codex wake. No Supabase slot here. No `cswarm` command, no credentials, no network, no push.
+
+Final SHA: the docs-only commit that records this file; run
+`git log -1 --format=%H -- docs/evidence/2026-09-06-agent-identity/client.md` on the branch.
+
+---
+
 Branch: `lane/identity-client`, rebased 2026-09-06 onto `lane/agent-identity` 5380a015
 (= main e6e49929, cswarm 0.1.61, + Lane A + Lane B). Owner after the rebase: CSLaptopLead.
 Builder of the original lane and its fix round: Grok (on the mini). Wire contract:

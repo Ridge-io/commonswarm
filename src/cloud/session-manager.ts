@@ -73,11 +73,12 @@ export class AgentSessionManager {
     return bindSessionProof(fetcher, this.currentProof());
   }
 
-  /** Piggyback: a successful agent write proves the lease is still live. */
+  /**
+   * Claims and other writes do not extend the server lease (120 s).
+   * Only a successful renew_agent_session re-arms lastProofAt.
+   */
   noteSuccessfulWrite(): void {
-    if (!this.started || this.dispatch !== "running") return;
-    this.lastProofAt = this.now();
-    this.armTimer();
+    return;
   }
 
   start(): void {

@@ -1,6 +1,7 @@
 #!/usr/bin/env node
 
 import { randomUUID } from "node:crypto";
+import { createRequire } from "node:module";
 import { spawnSync } from "node:child_process";
 import { mkdirSync, readFileSync, writeFileSync } from "node:fs";
 import { open, unlink } from "node:fs/promises";
@@ -256,19 +257,11 @@ import {
   renderedBroadcastIds,
   reportRenderedBroadcasts,
 } from "./cloud/agent-signal-receipts.js";
-import { resolveOpenCodeExecutable } from "./host/opencode.js";
-import {
-  inspectClaudeBridgeExecutable,
-  resolveClaudeExecutable,
-  type ClaudeBridgeRuntimeNotice,
-} from "./host/claude.js";
-import { resolveCodexExecutable } from "./host/codex.js";
 import {
   compareSemVer,
   type ProviderVersionNotice,
 } from "./host/version.js";
 import {
-  classifyClaudeCanaryFailure,
   AgentActivityEndpointTransport,
   FileBrainDigestStore,
   FileHookSurfaceStore,
@@ -335,21 +328,21 @@ import {
 } from "./resume.js";
 import {
   SessionContextError,
-  assertSameIdentity,
   defaultSessionContextPath,
   defaultSessionRootDirectory,
+  holdSessionReceiverLock,
   listSessionContexts,
   readSessionContext,
+  releaseSessionReceiverLock,
+  releaseSessionReceiverLockIfHeld,
   sessionProofOf,
   type SessionContextDocument,
 } from "./cloud/session-context.js";
 import {
-  boundAgentFetcher,
-  fetcherForSessionContext,
+  openBoundAgentCredential,
   parseSessionMode,
   parseSessionProvider,
   readManagedSessionStatus,
-  readSessionIdentity,
   revokeAgentToken,
   runHumanSessionLifecycle,
   sessionStartCopy,
@@ -359,6 +352,24 @@ import {
 import { SESSION_MODES } from "./cloud/session-contract.js";
 import { AgentSessionManager } from "./cloud/session-manager.js";
 import { AgentSessionClient } from "./cloud/session-client.js";
+
+const requireFromCli = createRequire(import.meta.url);
+
+function loadHostClaude(): typeof import("./host/claude.js") {
+  return requireFromCli("./host/claude.js");
+}
+
+function loadHostCodex(): typeof import("./host/codex.js") {
+  return requireFromCli("./host/codex.js");
+}
+
+function loadHostOpenCode(): typeof import("./host/opencode.js") {
+  return requireFromCli("./host/opencode.js");
+}
+
+function loadClaudeListenerModel(): typeof import("./listener/claude-model.js") {
+  return requireFromCli("./listener/claude-model.js");
+}
 
 /**
  * Every flag this build accepts, for ERROR WORDING ONLY — never for acceptance. See the throw in
@@ -607,7 +618,7 @@ Usage:
   cswarm listen status ${agentCredential} [--url <url> --anon-key <key>] --workspace-id <uuid> [--principal-id <uuid>] [--json]
   cswarm listen stop ${agentCredential} [--url <url> --anon-key <key>] --workspace-id <uuid> [--principal-id <uuid>] [--json]
   cswarm session start --mode ${SESSION_MODES.join("|")} --provider grok|opencode|claude|codex --host-session-id <id> ${requiredAgentCredential} [--url <url> --anon-key <key>] --workspace-id <uuid> [--session-context <absolute-path>] [--host-label <text>] [--foreground] [--json]
-  cswarm session status --session-context <absolute-path> [--json]
+  cswarm session status --session-context <absolute-path> ${agentCredential} [--url <url> --anon-key <key>] [--json]
   cswarm session stop --session-context <absolute-path> ${agentCredential} [--url <url> --anon-key <key>] [--json]
   cswarm session enable --principal-id <uuid> [--url <url> --anon-key <key>] [--workspace-id <uuid>] [--json]
   cswarm session disable --principal-id <uuid> [--url <url> --anon-key <key>] [--workspace-id <uuid>] [--json]
@@ -2563,57 +2574,42 @@ async function commandWorkspaceAndCredential(
     const agent = await agentCredential(args);
     /* With --session-context the silent token renewal below is an agent write
        too (spec section 8: renewal is fenced), so the context is read first and
-       the session is built on the bound fetcher. Identity is checked after the
-       bearer exists, as before. */
+       local identity is checked BEFORE the session is opened. Opening can
+       renew the token. */
     const boundContext = contextPath === undefined ? null : await readSessionContext(contextPath);
+    if (boundContext !== null) {
+      const opened = await openBoundAgentCredential({
+        context: boundContext,
+        target: cloud,
+        workspaceId: override,
+        tokenPrincipalId: agent.principalId,
+        tokenFile: args.optional("agent-token-file"),
+        fetcher: fetch,
+        openSession: (bound) => agentSession(cloud, override, agent, bound),
+      });
+      return {
+        selectedWorkspace: override,
+        bearer: opened.bearer,
+        kind: "agent",
+        agent,
+        session: opened.session,
+        fetcher: opened.fetcher,
+        sessionContext: boundContext,
+      };
+    }
     // Renewal is resolved HERE, before the first request rather than after a 401, so a
     // credential that is about to expire is replaced without the person watching ever
     // seeing a failure. Every caller below reads `bearer` as a plain string; the session
     // is what decided which string that is.
-    const session = await agentSession(
-      cloud,
-      override,
-      agent,
-      boundContext === null ? undefined : boundAgentFetcher(fetch, boundContext),
-    );
+    const session = await agentSession(cloud, override, agent);
     const bearer = await session.bearer();
-    if (contextPath === undefined) {
-      return {
-        selectedWorkspace: override,
-        bearer,
-        kind: "agent",
-        agent,
-        session,
-        fetcher: fetch,
-      };
-    }
-    const sessionContext = boundContext!;
-    const identity = await readSessionIdentity(cloud, bearer, override);
-    assertSameIdentity(sessionContext, {
-      identity,
-      target: cloud,
-      tokenPrincipalId: agent.principalId,
-      flagWorkspaceId: override,
-      flagUrl: cloud.url,
-    });
-    const tokenFile = args.optional("agent-token-file");
-    if (
-      tokenFile !== undefined &&
-      resolve(tokenFile) !== resolve(sessionContext.token_file)
-    ) {
-      throw new SessionContextError(
-        "session_identity_mismatch",
-        "--agent-token-file does not match the session context token file",
-      );
-    }
     return {
       selectedWorkspace: override,
       bearer,
       kind: "agent",
       agent,
       session,
-      fetcher: boundAgentFetcher(fetch, sessionContext),
-      sessionContext,
+      fetcher: fetch,
     };
   }
   const human = await dualAuthHumanCredential(args, cloud);
@@ -4847,7 +4843,7 @@ export async function listenerProviderInstallEvidence(
 ): Promise<ListenerProviderInstallEvidence | null> {
   if (status.provider !== "claude") return null;
   try {
-    const notice = await inspectClaudeBridgeExecutable(
+    const notice = await loadHostClaude().inspectClaudeBridgeExecutable(
       status.providerExecutable ?? "claude-agent-acp",
       { pathEnv: process.env.PATH, env: process.env },
     );
@@ -5511,7 +5507,7 @@ export function listenerFailureMessage(
   }
   if (code === "permission_canary_failed") {
     if (provider === "claude") {
-      const shape = classifyClaudeCanaryFailure(detail, reasonCode);
+      const shape = loadClaudeListenerModel().classifyClaudeCanaryFailure(detail, reasonCode);
       const ran =
         "the Claude ACP permission canary ran, but no workspace signal prompt was delivered";
       const response = `bridge response [${shape.code}]: ${quotedListenerFailureDetail(detail)}`;
@@ -5577,7 +5573,7 @@ export function resolveDetachedClaudeExecutable(
   pathEnv = process.env.PATH,
 ): string {
   try {
-    return resolveClaudeExecutable(executable, pathEnv);
+    return loadHostClaude().resolveClaudeExecutable(executable, pathEnv);
   } catch (error) {
     const code = (error as { code?: unknown }).code;
     if (typeof code === "string") {
@@ -5603,7 +5599,7 @@ export function resolveDetachedCodexExecutable(
   pathEnv = process.env.PATH,
 ): string {
   try {
-    return resolveCodexExecutable(executable, pathEnv);
+    return loadHostCodex().resolveCodexExecutable(executable, pathEnv);
   } catch (error) {
     const code = (error as { code?: unknown }).code;
     if (typeof code === "string") {
@@ -5719,6 +5715,21 @@ async function runConfiguredListener(options: {
     );
   }
   const managedContext = managedContexts[0] ?? null;
+  const managedContextPath = managedContext === null
+    ? null
+    : defaultSessionContextPath(
+      options.workspaceId,
+      options.principalId,
+      managedContext.session_id,
+    );
+  if (managedContextPath !== null) {
+    try {
+      await holdSessionReceiverLock(managedContextPath, "listen");
+    } catch (error) {
+      httpClient.close();
+      throw error;
+    }
+  }
   const leaseAbort = new AbortController();
   let credentialBearer: (() => Promise<string>) | null = null;
   const sessionManager = managedContext === null
@@ -5756,6 +5767,9 @@ async function runConfiguredListener(options: {
       boundFetch,
     );
   } catch (error) {
+    if (managedContextPath !== null) {
+      await releaseSessionReceiverLockIfHeld(managedContextPath);
+    }
     httpClient.close();
     throw error;
   }
@@ -5902,7 +5916,13 @@ async function runConfiguredListener(options: {
       lastMeasuredVersion: notice.lastMeasuredVersion,
     };
   };
-  const onClaudeRuntimeNotice = (notice: ClaudeBridgeRuntimeNotice) => {
+  const onClaudeRuntimeNotice = (notice: {
+    providerVersion: string | null;
+    lastMeasuredVersion: string;
+    executable: string | null;
+    bundledAgentSdkVersion: string | null;
+    bundledClaudeCodeVersion: string | null;
+  }) => {
     providerVersionNotice = {
       runningVersion: notice.providerVersion,
       lastMeasuredVersion: notice.lastMeasuredVersion,
@@ -6059,8 +6079,25 @@ async function runConfiguredListener(options: {
     process.off("SIGINT", onProcessSignal);
     process.off("SIGTERM", onProcessSignal);
     sessionManager?.stopTimers();
+    if (managedContextPath !== null) {
+      await releaseSessionReceiverLockIfHeld(managedContextPath);
+    }
     httpClient.close();
   }
+}
+
+async function liveManagedContextPath(
+  workspaceId: string,
+  principalId: string,
+): Promise<string | null> {
+  const live = (await listSessionContexts(workspaceId, principalId))
+    .filter((context) => sessionProofOf(context) !== null);
+  if (live.length !== 1) return null;
+  return defaultSessionContextPath(
+    workspaceId,
+    principalId,
+    live[0]!.session_id,
+  );
 }
 
 async function runListenStart(args: Arguments): Promise<void> {
@@ -6190,7 +6227,7 @@ async function runListenStart(args: Arguments): Promise<void> {
        an absent one is simply absent. */
     const opencodeExecutable = provider === "opencode" &&
         args.optional("opencode-executable") !== undefined
-      ? resolveOpenCodeExecutable(args.required("opencode-executable"))
+      ? loadHostOpenCode().resolveOpenCodeExecutable(args.required("opencode-executable"))
       : undefined;
     let claudeExecutable: string | undefined;
     if (provider === "claude" && args.optional("claude-executable") !== undefined) {
@@ -6244,6 +6281,13 @@ async function runListenStart(args: Arguments): Promise<void> {
       child.kill();
       throw new Error("detached listener did not receive a process id");
     }
+    const detachedContextPath = await liveManagedContextPath(
+      workspaceId,
+      principalId,
+    );
+    if (detachedContextPath !== null) {
+      await holdSessionReceiverLock(detachedContextPath, "listen", child.pid);
+    }
     try {
       status = await waitForListenerReady(paths, {
         expectedPid: child.pid,
@@ -6252,6 +6296,9 @@ async function runListenStart(args: Arguments): Promise<void> {
           child.exitCode === null && child.signalCode === null,
       });
     } catch (error) {
+      if (detachedContextPath !== null) {
+        await releaseSessionReceiverLock(detachedContextPath);
+      }
       if (error instanceof ListenerStartupError) {
         const failedStatus = await effectiveListenerStatus(paths).catch(() => null);
         const detail = failedStatus?.lastErrorCode === error.code
@@ -6452,6 +6499,12 @@ async function runListenStatusOrStop(
     principalId,
     ...(stateDirectory ? { stateDirectory } : {}),
   });
+  if (command === "stop") {
+    const stopContextPath = await liveManagedContextPath(workspaceId, principalId);
+    if (stopContextPath !== null) {
+      await releaseSessionReceiverLock(stopContextPath);
+    }
+  }
   let status = command === "stop"
     ? await stopListener(paths)
     : await effectiveListenerStatus(paths);
@@ -6617,15 +6670,34 @@ async function runSession(args: Arguments): Promise<void> {
     return;
   }
   if (action === "status") {
-    args.assertShape(["session-context", "json"], 2);
+    args.assertShape([
+      ...TARGET_FLAGS,
+      ...CREDENTIAL_FLAGS,
+      "session-context",
+      "json",
+    ], 2);
+    if (!hasAgentCredential(args)) {
+      throw new UsageError(
+        "cswarm session status needs --agent-token-file or --agent-token-stdin",
+      );
+    }
+    const cloud = await target(args);
+    const agent = await agentCredential(args);
     const contextPath = args.required("session-context");
-    const { status } = await readManagedSessionStatus(contextPath);
+    const { status } = await readManagedSessionStatus({
+      contextPath,
+      target: cloud,
+      credential: agent.token,
+    });
     if (args.has("json")) printJson(status);
     else {
+      const local = status.local as { state: unknown };
+      const server = status.server as { is_live: unknown; session_id: unknown };
       process.stdout.write(
         `execution ${status.session_id} generation ${status.generation} state ${status.state}\n` +
           `mode ${status.mode} provider ${status.provider} host-session ${status.host_session_id}\n` +
-          `enforcement ${status.enforcement} receive ${status.receive_verification}\n`,
+          `enforcement ${status.enforcement} receive ${status.receive_verification}\n` +
+          `local ${local.state} server-live ${server.is_live} server-session ${server.session_id}\n`,
       );
     }
     return;

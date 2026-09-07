@@ -21,7 +21,7 @@ import {
 import {
   GrokListenerModel,
   type OpenGrokSession,
-} from "../src/listener/index.js";
+} from "../src/listener/grok-model.js";
 
 const REQUEST: PermissionRequest = {
   sessionId: "session",

@@ -5,9 +5,14 @@ import { join } from "node:path";
 import { test } from "node:test";
 import { cloudTarget } from "../../src/cloud/config.js";
 import { commandEndpoint } from "../../src/cloud/config.js";
-import { startManagedSession } from "../../src/cloud/session-cli.js";
 import {
+  openBoundAgentCredential,
+  startManagedSession,
+} from "../../src/cloud/session-cli.js";
+import {
+  SESSION_ACQUIRE_BINDING_FIELDS,
   SessionContextError,
+  newSessionBinding,
   readSessionContext,
   writeSessionContext,
 } from "../../src/cloud/session-context.js";
@@ -230,4 +235,131 @@ test("SessionContextError stays a named class, not message matching", () => {
   );
   assert.equal(error.code, "session_identity_mismatch");
   assert.equal(error.name, "SessionContextError");
+});
+
+test("acquire retry refuses a changed provider binding before acquire", async () => {
+  const { root, tokenFile } = await tokenPath();
+  try {
+    const contextPath = join(root, "session.json");
+    let acquire = 0;
+    const fetcher = (async (_input: URL | RequestInfo, init?: RequestInit) => {
+      const body = String(init?.body ?? "");
+      if (body.includes(ACQUIRE_AGENT_SESSION_KIND)) acquire += 1;
+      return new Response(JSON.stringify({
+        ok: true,
+        status: "accepted",
+        generation: 1,
+      }), { status: 200 });
+    }) as typeof fetch;
+    const first = await startManagedSession({
+      target: cloudTarget("http://127.0.0.1:9", "synthetic-anon-key"),
+      workspaceId: WORKSPACE,
+      credential: TOKEN,
+      tokenFile,
+      tokenPrincipalId: PRINCIPAL,
+      mode: "interactive",
+      provider: "grok",
+      hostSessionId: "thread-1",
+      hostLabel: "desk",
+      contextPath,
+      fetcher,
+      readIdentity: async () => ({
+        principal_id: PRINCIPAL,
+        workspace_id: WORKSPACE,
+      }),
+      runReceiver: false,
+    });
+    const stored = await readSessionContext(contextPath);
+    await writeSessionContext(contextPath, { ...stored, generation: 0 });
+    const acquireBeforeRetry = acquire;
+    await assert.rejects(
+      () => startManagedSession({
+        target: cloudTarget("http://127.0.0.1:9", "synthetic-anon-key"),
+        workspaceId: WORKSPACE,
+        credential: TOKEN,
+        tokenFile,
+        tokenPrincipalId: PRINCIPAL,
+        mode: "interactive",
+        provider: "codex",
+        hostSessionId: "thread-1",
+        hostLabel: "desk",
+        contextPath,
+        fetcher,
+        readIdentity: async () => ({
+          principal_id: PRINCIPAL,
+          workspace_id: WORKSPACE,
+        }),
+        runReceiver: false,
+      }),
+      (error: unknown) => {
+        if (
+          !(error instanceof SessionContextError) ||
+          error.code !== "session_binding_mismatch"
+        ) {
+          return false;
+        }
+        for (const field of SESSION_ACQUIRE_BINDING_FIELDS) {
+          assert.match(error.message, new RegExp(field));
+        }
+        return true;
+      },
+    );
+    assert.equal(acquire, acquireBeforeRetry);
+    assert.equal(first.retried, false);
+  } finally {
+    await rm(root, { recursive: true, force: true });
+  }
+});
+
+test("bound command mismatch refuses before any fetch", async () => {
+  const { root, tokenFile } = await tokenPath();
+  try {
+    const otherDir = join(root, "other");
+    await mkdir(otherDir, { mode: 0o700 });
+    await chmod(otherDir, 0o700);
+    const otherToken = join(otherDir, "token.json");
+    await writeFile(otherToken, "{}\n", { mode: 0o600 });
+    await chmod(otherToken, 0o600);
+    const context = {
+      ...newSessionBinding({
+        target: cloudTarget("http://127.0.0.1:9", "synthetic-anon-key"),
+        workspaceId: WORKSPACE,
+        principalId: PRINCIPAL,
+        provider: "codex",
+        mode: "interactive",
+        hostSessionId: "thread-1",
+        tokenFile,
+      }),
+      generation: 1,
+    };
+    await writeSessionContext(join(root, "session.json"), context);
+    let fetches = 0;
+    let opened = 0;
+    const fetcher = (async () => {
+      fetches += 1;
+      return new Response("{}", { status: 200 });
+    }) as typeof fetch;
+    await assert.rejects(
+      () => openBoundAgentCredential({
+        context,
+        target: cloudTarget("http://127.0.0.1:9", "synthetic-anon-key"),
+        workspaceId: WORKSPACE,
+        tokenPrincipalId: PRINCIPAL,
+        tokenFile: otherToken,
+        fetcher,
+        openSession: async () => {
+          opened += 1;
+          fetches += 1;
+          return { bearer: async () => TOKEN };
+        },
+      }),
+      (error: unknown) =>
+        error instanceof SessionContextError &&
+        error.code === "session_identity_mismatch",
+    );
+    assert.equal(fetches, 0);
+    assert.equal(opened, 0);
+  } finally {
+    await rm(root, { recursive: true, force: true });
+  }
 });

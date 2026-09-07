@@ -18,7 +18,7 @@ import {
 import {
   OpenCodeListenerModel,
   type OpenOpenCodeSession,
-} from "../src/listener/index.js";
+} from "../src/listener/opencode-model.js";
 import {
   listenerPaths,
   runListenerSupervisor,
