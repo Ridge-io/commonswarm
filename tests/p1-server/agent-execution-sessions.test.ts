@@ -14,9 +14,11 @@ import { setTimeout as delay } from "node:timers/promises";
 import { createClient, type SupabaseClient } from "@supabase/supabase-js";
 import postgres from "postgres";
 import {
+  AGENT_EXECUTION_SESSION_READ_COLUMNS,
   AGENT_SESSION_GENERATION_HEADER,
   AGENT_SESSION_ID_HEADER,
   AGENT_SESSION_KEY_HEADER,
+  AGENT_SESSION_READ_PRINCIPAL_CLAIM,
 } from "../../src/cloud/session-wire.js";
 import { awaitFunctionRunning } from "../support/edge-readiness.js";
 
@@ -138,7 +140,11 @@ interface SeededAgent {
   token: string;
 }
 
-async function seedAgent(label: string): Promise<SeededAgent> {
+async function seedAgent(
+  label: string,
+  scope?: { workspace: string; ownerId: string; device: string },
+): Promise<SeededAgent> {
+  const ctx = scope ?? shared;
   const principalId = randomUUID();
   const token = synthToken();
   const run = randomUUID();
@@ -148,14 +154,14 @@ async function seedAgent(label: string): Promise<SeededAgent> {
         principal_id, workspace_id, owner_user_id, name
       ) VALUES (
         ${principalId}::uuid,
-        ${shared.workspace}::uuid,
-        ${shared.ownerId}::uuid,
+        ${ctx.workspace}::uuid,
+        ${ctx.ownerId}::uuid,
         ${`synth-${label}-${principalId.slice(0, 8)}`}
       )
     `;
     await tx`
       INSERT INTO swarm.agent_runs (run_id, principal_id, device_id)
-      VALUES (${run}::uuid, ${principalId}::uuid, ${shared.device}::uuid)
+      VALUES (${run}::uuid, ${principalId}::uuid, ${ctx.device}::uuid)
     `;
     await tx`
       INSERT INTO swarm.agent_tokens (
@@ -199,6 +205,115 @@ function noteBody(): Record<string, unknown> {
     to_agent_principal_id: null,
     in_reply_to: null,
   };
+}
+
+async function seedOwnedWorkspace(label: string): Promise<{
+  workspace: string;
+  ownerId: string;
+  ownerJwt: string;
+  device: string;
+}> {
+  const owner = await createUser(label);
+  const workspace = randomUUID();
+  const device = randomUUID();
+  await sql.begin(async (tx) => {
+    await tx`
+      INSERT INTO swarm.users (user_id, display_name)
+      VALUES (${owner.id}::uuid, ${`Synth${label}`})
+    `;
+    await tx`
+      INSERT INTO swarm.devices (device_id, user_id, label)
+      VALUES (${device}::uuid, ${owner.id}::uuid, ${`synth-${label}-device`})
+    `;
+    await tx`
+      INSERT INTO swarm.workspaces (workspace_id, name, created_by)
+      VALUES (${workspace}::uuid, ${`Synth${label}WS`}, ${owner.id}::uuid)
+    `;
+    await tx`
+      INSERT INTO swarm.memberships (workspace_id, user_id, role)
+      VALUES (${workspace}::uuid, ${owner.id}::uuid, 'owner')
+    `;
+  });
+  return {
+    workspace,
+    ownerId: owner.id,
+    ownerJwt: owner.jwt,
+    device,
+  };
+}
+
+async function insertSession(args: {
+  principalId: string;
+  workspace: string;
+  sessionId: string;
+}): Promise<void> {
+  await sql`
+    INSERT INTO swarm.agent_execution_sessions (
+      principal_id, workspace_id, session_id, generation, lifecycle_state,
+      host_label, provider, host_session_ref, started_at, expired_at
+    ) VALUES (
+      ${args.principalId}::uuid,
+      ${args.workspace}::uuid,
+      ${args.sessionId}::uuid,
+      1,
+      'enabled',
+      'host-a',
+      'codex',
+      'thread-1',
+      statement_timestamp(),
+      statement_timestamp() + interval '120 seconds'
+    )
+  `;
+}
+
+async function selectSessionViewAs(
+  role: "authenticated" | "swarm_read",
+  claims: Record<string, string>,
+): Promise<{ principal_id: string; session_id: string; workspace_id: string }[]> {
+  return await sql.begin(async (tx) => {
+    await tx`
+      SELECT set_config(
+        'request.jwt.claims',
+        ${JSON.stringify(claims)},
+        true
+      )
+    `;
+    if (role === "authenticated") {
+      await tx.unsafe("SET LOCAL ROLE authenticated");
+    } else {
+      await tx.unsafe("SET LOCAL ROLE swarm_read");
+    }
+    await tx.unsafe("SET LOCAL search_path = swarm_read, auth, pg_catalog");
+    const rows = await tx<{
+      principal_id: string;
+      session_id: string;
+      workspace_id: string;
+    }[]>`
+      SELECT principal_id::text, session_id::text, workspace_id::text
+      FROM swarm_read.agent_execution_sessions
+    `;
+    await tx.unsafe("RESET ROLE");
+    return rows;
+  });
+}
+
+async function readMembers(
+  token: string,
+  workspaceId: string,
+): Promise<{ status: number; body: Record<string, unknown> }> {
+  const response = await fetch(`${local.API_URL}/functions/v1/read`, {
+    method: "POST",
+    headers: {
+      authorization: `Bearer ${token}`,
+      "content-type": "application/json",
+    },
+    body: JSON.stringify({
+      resource: "members",
+      workspace_id: workspaceId,
+    }),
+  });
+  const body = await response.json() as Record<string, unknown>;
+  return { status: response.status, body };
 }
 
 before(async () => {
@@ -784,10 +899,12 @@ test("swarm_read cannot select key_hash", async () => {
     FROM information_schema.columns
     WHERE table_schema = 'swarm_read'
       AND table_name = 'agent_execution_sessions'
+    ORDER BY ordinal_position
   `;
   const names = cols.map((row) => row.column_name);
   assert.equal(names.includes("key_hash"), false);
   assert.equal(names.includes("session_id"), true);
+  assert.deepEqual(names, [...AGENT_EXECUTION_SESSION_READ_COLUMNS]);
   const [priv] = await sql<{ key_hash: boolean; session_id: boolean }[]>`
     SELECT
       has_column_privilege(
@@ -970,4 +1087,127 @@ test("re-enable writes and retires the placeholder session_id", async () => {
       AND principal_id = ${agent.principalId}::uuid
   `;
   assert.equal(Number(retired[0]?.n), 1);
+});
+
+test("session view columns stay the projected set and still omit key_hash", async () => {
+  const cols = await sql<{ column_name: string }[]>`
+    SELECT column_name
+    FROM information_schema.columns
+    WHERE table_schema = 'swarm_read'
+      AND table_name = 'agent_execution_sessions'
+    ORDER BY ordinal_position
+  `;
+  const names = cols.map((row) => row.column_name);
+  assert.equal(names.includes("key_hash"), false);
+  assert.deepEqual(names, [...AGENT_EXECUTION_SESSION_READ_COLUMNS]);
+  const [def] = await sql<{ definition: string }[]>`
+    SELECT pg_get_viewdef('swarm_read.agent_execution_sessions'::regclass, true)
+      AS definition
+  `;
+  assert.match(def?.definition ?? "", /swarm\.is_member\(/);
+  assert.match(def?.definition ?? "", /agent_principal_id/);
+  let anonDenied = false;
+  try {
+    await sql.begin(async (tx) => {
+      await tx.unsafe("SET LOCAL ROLE anon");
+      await tx`SELECT session_id FROM swarm_read.agent_execution_sessions LIMIT 1`;
+    });
+  } catch (error) {
+    anonDenied = (error as { code?: string }).code === "42501";
+  }
+  assert.equal(anonDenied, true);
+});
+
+test("a member of workspace A cannot see workspace B's session row", async () => {
+  const agentA = await seedAgent("view-iso-a");
+  const sessionA = randomUUID();
+  await insertSession({
+    principalId: agentA.principalId,
+    workspace: shared.workspace,
+    sessionId: sessionA,
+  });
+  const other = await seedOwnedWorkspace("view-iso-b");
+  const agentB = await seedAgent("view-iso-b", other);
+  const sessionB = randomUUID();
+  await insertSession({
+    principalId: agentB.principalId,
+    workspace: other.workspace,
+    sessionId: sessionB,
+  });
+
+  const asMemberA = await selectSessionViewAs("authenticated", {
+    sub: shared.ownerId,
+    role: "authenticated",
+  });
+  const idsA = new Set(asMemberA.map((row) => row.session_id));
+  assert.equal(idsA.has(sessionA), true, "member A must see workspace A");
+  assert.equal(idsA.has(sessionB), false, "member A must not see workspace B");
+
+  const asMemberB = await selectSessionViewAs("authenticated", {
+    sub: other.ownerId,
+    role: "authenticated",
+  });
+  const idsB = new Set(asMemberB.map((row) => row.session_id));
+  assert.equal(idsB.has(sessionB), true, "member B must see workspace B");
+  assert.equal(idsB.has(sessionA), false, "member B must not see workspace A");
+});
+
+test("an agent through swarm_read sees only its own principal's session row", async () => {
+  const agentA = await seedAgent("view-own-a");
+  const agentB = await seedAgent("view-own-b");
+  const sessionA = randomUUID();
+  const sessionB = randomUUID();
+  await insertSession({
+    principalId: agentA.principalId,
+    workspace: shared.workspace,
+    sessionId: sessionA,
+  });
+  await insertSession({
+    principalId: agentB.principalId,
+    workspace: shared.workspace,
+    sessionId: sessionB,
+  });
+
+  const asAgentA = await selectSessionViewAs("swarm_read", {
+    sub: shared.ownerId,
+    role: "authenticated",
+    [AGENT_SESSION_READ_PRINCIPAL_CLAIM]: agentA.principalId,
+  });
+  const idsA = new Set(asAgentA.map((row) => row.session_id));
+  assert.equal(idsA.has(sessionA), true, "agent A must see its own row");
+  assert.equal(idsA.has(sessionB), false, "agent A must not see a sibling row");
+
+  const withoutClaim = await selectSessionViewAs("swarm_read", {
+    sub: shared.ownerId,
+    role: "authenticated",
+  });
+  const idsBare = new Set(withoutClaim.map((row) => row.session_id));
+  assert.equal(idsBare.has(sessionA), false);
+  assert.equal(idsBare.has(sessionB), false);
+});
+
+test("read edge session status still works for the calling agent", async () => {
+  const self = await seedAgent("read-status-self");
+  const sibling = await seedAgent("read-status-sib");
+  await enable(self.principalId);
+  await enable(sibling.principalId);
+  const selfSession = randomUUID();
+  const siblingSession = randomUUID();
+  const heldSelf = await acquire(self.token, selfSession, synthKey());
+  assert.equal(heldSelf.status, 200, JSON.stringify(heldSelf.body));
+  const heldSibling = await acquire(sibling.token, siblingSession, synthKey());
+  assert.equal(heldSibling.status, 200, JSON.stringify(heldSibling.body));
+
+  const listed = await readMembers(self.token, shared.workspace);
+  assert.equal(listed.status, 200, JSON.stringify(listed.body));
+  const agents = listed.body.agents as Array<Record<string, unknown>>;
+  assert.ok(Array.isArray(agents), JSON.stringify(listed.body));
+  const selfRow = agents.find((row) => row.principal_id === self.principalId);
+  const siblingRow = agents.find((row) => row.principal_id === sibling.principalId);
+  assert.ok(selfRow, "calling agent must appear in the members directory");
+  assert.ok(siblingRow, "sibling principal must still appear");
+  assert.equal(selfRow.session_id, selfSession);
+  assert.equal(selfRow.is_live, true);
+  assert.equal(siblingRow.session_id, null);
+  assert.equal(siblingRow.is_live, false);
 });

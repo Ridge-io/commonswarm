@@ -571,6 +571,9 @@ async function handle(
         ${JSON.stringify({
           sub: agent.owner_user_id,
           role: "authenticated",
+          /* swarm_read.agent_execution_sessions admits a row for this role
+           * only when this claim matches principal_id. */
+          agent_principal_id: agent.principal_id,
         })},
         true
       )
