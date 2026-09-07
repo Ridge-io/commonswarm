@@ -18,6 +18,13 @@ Earlier pins, kept for readers who meet them: `cb00d64` (never existed), `a90d39
 implementation commit, pre-rebase), `619138d4` and `5e2bd0a3` (the pre-rebase fix round; that
 history is on the mini and in `lane/identity-client-pre-rebase` on the laptop, not on origin).
 
+## Round 4 arms on 27769ea4: Grok exact PASS, Gemini inversion PASS
+
+Both arms ran on the final SHA `27769ea4` (`laptop-arms/arm-grok-exact-27769ea4.md`,
+`laptop-arms/arm-agy-inversion-27769ea4.md`), each with a VERDICT line and file:line reasoning;
+Gemini was pinned to the worktree with `--add-dir` after its round-3 timeout. This docs-only commit
+files them; the code SHA stays `53371e8f`.
+
 ## Rounds 3 and 4 (53371e8f): Grok exact FAIL on 0e3b6dfb folded; Gemini timed out; base moved to d141c1e
 
 Arms on `0e3b6dfb` (`laptop-arms/`): Grok exact VERDICT: FAIL with no DEFECT; GAP 1 was the
