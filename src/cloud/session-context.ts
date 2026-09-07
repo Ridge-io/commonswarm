@@ -33,6 +33,7 @@ const MAX_CONTEXT_BYTES = 16 * 1024;
 const URL_RE = /^https?:\/\/[^/\s]+$/i;
 
 export type SessionContextErrorCode =
+  | "session_context_outside_default_tree"
   | "session_context_path_not_absolute"
   | "session_context_symlink"
   | "session_context_not_owned"

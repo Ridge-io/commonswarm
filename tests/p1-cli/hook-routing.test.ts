@@ -664,17 +664,21 @@ test("a managed hook observes only with one live context, the bound host convers
     assert.equal(observations, 0, "two live contexts must not observe");
     assert.equal(await queue.count(), 1);
 
-    // One live context but the host did not report its conversation: fail closed to manual.
+    // One live context but the host did not report its conversation: fail closed to manual,
+    // and the ask is not even printed, so the bound chat can still receive it.
     await rm(released.contextPath, { force: true });
     await rm(defaultSessionContextPath(WORKSPACE_ID, PRINCIPAL_ID, first.context.session_id), { force: true });
-    await invoke();
+    const silent = await invoke();
     assert.equal(observations, 0, "no host session id must not observe");
-    await invoke("some-other-thread");
+    assert.doesNotMatch(silent, /managed stale must not observe/, "a host-less hook prints nothing for a managed ask");
+    const wrongHost = await invoke("some-other-thread");
     assert.equal(observations, 0, "a different host conversation must not observe");
+    assert.doesNotMatch(wrongHost, /managed stale must not observe/, "a wrong-host hook prints nothing for a managed ask");
     assert.equal(await queue.count(), 1);
 
-    // Exactly one live context and the bound host conversation: the observe proceeds with the proof headers.
-    await invoke("thread-hook");
+    // Exactly one live context and the bound host conversation: printed, then observed with the proof headers.
+    const printed = await invoke("thread-hook");
+    assert.match(printed, /managed stale must not observe/, "the bound chat gets the ask text");
     assert.equal(observations, 1, "one live context plus the bound host is the positive control");
     assert.equal(proofHeaderSeen, 1, "the observe carries the session proof headers");
     assert.equal(surfacedSeen, 1, "the observe says surfaced: true, the pending-surface contract");

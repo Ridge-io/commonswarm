@@ -16,7 +16,9 @@ import {
 import {
   listSessionContexts,
   sessionProofOf,
+  type SessionContextDocument,
 } from "../cloud/session-context.js";
+import type { AgentSessionProof } from "../cloud/session-contract.js";
 import { bindSessionProof } from "../cloud/session-proof.js";
 import {
   followHttpDetails,
@@ -880,6 +882,34 @@ async function brainDigestForCheck(
   }
 }
 
+type ManagedHookGate =
+  | { mode: "legacy" }
+  | { mode: "managed"; context: SessionContextDocument; proof: AgentSessionProof }
+  | { mode: "refuse"; reason: "no_live_context" | "ambiguous" | "host_unproven" | "host_mismatch" };
+
+/**
+ * Spec section 8, applied to the hook: a managed principal's ask is surfaced
+ * and observed only in the bound host conversation. No context on disk is the
+ * legacy path. Otherwise exactly one live context must exist and the host
+ * must have reported the same conversation on stdin; anything else refuses
+ * BEFORE printing, so a wrong-host or host-less hook cannot consume the ask
+ * and hide it from the chat that owns it.
+ */
+async function managedHookGate(
+  stored: ListenerCredentialState,
+  hostSessionId: string | undefined,
+): Promise<ManagedHookGate> {
+  const contexts = await listSessionContexts(stored.workspaceId, stored.principalId);
+  if (contexts.length === 0) return { mode: "legacy" };
+  const live = contexts.filter((context) => sessionProofOf(context) !== null);
+  if (live.length === 0) return { mode: "refuse", reason: "no_live_context" };
+  if (live.length > 1) return { mode: "refuse", reason: "ambiguous" };
+  const context = live[0]!;
+  if (hostSessionId === undefined) return { mode: "refuse", reason: "host_unproven" };
+  if (hostSessionId !== context.host_session_id) return { mode: "refuse", reason: "host_mismatch" };
+  return { mode: "managed", context, proof: sessionProofOf(context)! };
+}
+
 async function recordQueuedObservations(
   check: ContextCheck,
   signalIds: readonly string[],
@@ -901,23 +931,20 @@ async function recordQueuedObservations(
      fences a managed principal itself. Anything but exactly one live context,
      or a host that did not report its conversation, refuses before any write.
      When the gate passes, the observe carries the proof headers. */
-  const contexts = await listSessionContexts(stored.workspaceId, stored.principalId);
+  const gate = await managedHookGate(stored, options.hostSessionId);
+  if (gate.mode === "refuse") return new Set();
   let managedAck: ReturnType<typeof managedAckInput> | undefined;
   let fetcher: typeof fetch = options.fetcher ?? fetch;
-  if (contexts.length > 0) {
-    const live = contexts.filter((context) => sessionProofOf(context) !== null);
-    if (live.length !== 1) return new Set();
-    const context = live[0]!;
-    const proof = sessionProofOf(context)!;
+  if (gate.mode === "managed") {
     managedAck = managedAckInput({
-      context,
-      proof,
+      context: gate.context,
+      proof: gate.proof,
       injectionSucceeded: true,
       observedHostSessionId: options.hostSessionId ?? null,
-      hostIdentityTrusted: options.hostSessionId !== undefined,
+      hostIdentityTrusted: true,
     });
     if (!canAckManagedDelivery(managedAck).ok) return new Set();
-    fetcher = bindSessionProof(fetcher, proof) as typeof fetch;
+    fetcher = bindSessionProof(fetcher, gate.proof) as typeof fetch;
   }
   const client = new DeliveryCommandClient(
     cloudTarget(stored.targetUrl, stored.anonKey),
@@ -1016,6 +1043,12 @@ export async function checkListenerHooks(
     const blocks: string[] = [];
     const emittedCredentialWarnings = new Set<string>();
     for (const check of checks) {
+      if (check.context.credential !== null) {
+        const gate = await managedHookGate(check.context.credential, options.hostSessionId);
+        /* Refused: print nothing, advance nothing. The queue entry and the
+           high-water stay for the hook that runs inside the bound chat. */
+        if (gate.mode === "refuse") continue;
+      }
       const store = new FileHookSurfaceStore(check.context.instanceDirectory);
       const staged = await store.stage(
         [...check.pending, ...check.network],
