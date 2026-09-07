@@ -607,29 +607,23 @@ export async function deleteSessionContext(path: string): Promise<void> {
   await deleteSecureJsonFile(absolute);
 }
 
-export function assertSameIdentity(
+export interface LocalSessionBinding {
+  target: CloudTarget;
+  tokenPrincipalId?: string | null;
+  flagWorkspaceId?: string;
+  flagUrl?: string;
+  tokenFile?: string | null;
+  hostSessionId?: string;
+}
+
+/**
+ * Flag, token-file, target, and host checks that need no network.
+ * Call this before opening a credential session (which can renew).
+ */
+export function assertLocalSessionBinding(
   context: SessionContextDocument,
-  input: {
-    identity: SessionIdentity;
-    target: CloudTarget;
-    tokenPrincipalId?: string | null;
-    flagWorkspaceId?: string;
-    flagUrl?: string;
-    hostSessionId?: string;
-  },
+  input: LocalSessionBinding,
 ): void {
-  if (input.identity.principal_id.toLowerCase() !== context.principal_id) {
-    throw new SessionContextError(
-      "session_identity_mismatch",
-      "authenticated principal does not match the session context",
-    );
-  }
-  if (input.identity.workspace_id.toLowerCase() !== context.workspace_id) {
-    throw new SessionContextError(
-      "session_identity_mismatch",
-      "authenticated workspace does not match the session context",
-    );
-  }
   if (input.target.url !== context.url || input.target.profileId !== context.profile_id) {
     throw new SessionContextError(
       "session_identity_mismatch",
@@ -662,12 +656,41 @@ export function assertSameIdentity(
     );
   }
   if (
+    input.tokenFile !== undefined &&
+    input.tokenFile !== null &&
+    resolve(input.tokenFile) !== resolve(context.token_file)
+  ) {
+    throw new SessionContextError(
+      "session_identity_mismatch",
+      "--agent-token-file does not match the session context token file",
+    );
+  }
+  if (
     input.hostSessionId !== undefined &&
     input.hostSessionId !== context.host_session_id
   ) {
     throw new SessionContextError(
       "session_identity_mismatch",
       "host session id does not match the session context",
+    );
+  }
+}
+
+export function assertSameIdentity(
+  context: SessionContextDocument,
+  input: LocalSessionBinding & { identity: SessionIdentity },
+): void {
+  assertLocalSessionBinding(context, input);
+  if (input.identity.principal_id.toLowerCase() !== context.principal_id) {
+    throw new SessionContextError(
+      "session_identity_mismatch",
+      "authenticated principal does not match the session context",
+    );
+  }
+  if (input.identity.workspace_id.toLowerCase() !== context.workspace_id) {
+    throw new SessionContextError(
+      "session_identity_mismatch",
+      "authenticated workspace does not match the session context",
     );
   }
 }

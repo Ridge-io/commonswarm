@@ -20,6 +20,7 @@ import {
   type InteractiveReceiverStatus,
 } from "./session-receiver.js";
 import {
+  assertLocalSessionBinding,
   assertSameIdentity,
   defaultSessionContextPath,
   SessionContextError,
@@ -31,6 +32,7 @@ import {
   readSessionContextIfPresent,
   sessionProofOf,
   writeSessionContext,
+  type LocalSessionBinding,
   type SessionContextDocument,
   type SessionIdentity,
 } from "./session-context.js";
@@ -101,6 +103,44 @@ export interface SessionStartResult {
   retried: boolean;
   interactive?: InteractiveReceiverStatus;
   next?: string;
+}
+
+/**
+ * Local binding checks first (no fetch). Opening a credential session can
+ * renew the token, so a mismatch must refuse before that.
+ */
+export async function openBoundAgentCredential<
+  T extends { bearer(): Promise<string> },
+>(input: {
+  context: SessionContextDocument;
+  target: CloudTarget;
+  workspaceId: string;
+  tokenPrincipalId?: string | null;
+  tokenFile?: string | null;
+  fetcher: typeof fetch;
+  openSession: (boundFetcher: typeof fetch) => Promise<T>;
+  readIdentity?: typeof readSessionIdentity;
+}): Promise<{ bearer: string; fetcher: typeof fetch; session: T }> {
+  const local: LocalSessionBinding = {
+    target: input.target,
+    tokenPrincipalId: input.tokenPrincipalId,
+    flagWorkspaceId: input.workspaceId,
+    flagUrl: input.target.url,
+    tokenFile: input.tokenFile,
+  };
+  assertLocalSessionBinding(input.context, local);
+  const bound = boundAgentFetcher(input.fetcher, input.context);
+  const session = await input.openSession(bound);
+  const bearer = await session.bearer();
+  const readIdentity = input.readIdentity ?? readSessionIdentity;
+  const identity = await readIdentity(
+    input.target,
+    bearer,
+    input.workspaceId,
+    bound,
+  );
+  assertSameIdentity(input.context, { ...local, identity });
+  return { bearer, fetcher: bound, session };
 }
 
 export async function startManagedSession(

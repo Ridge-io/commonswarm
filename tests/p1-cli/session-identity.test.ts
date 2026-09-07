@@ -5,9 +5,13 @@ import { join } from "node:path";
 import { test } from "node:test";
 import { cloudTarget } from "../../src/cloud/config.js";
 import { commandEndpoint } from "../../src/cloud/config.js";
-import { startManagedSession } from "../../src/cloud/session-cli.js";
+import {
+  openBoundAgentCredential,
+  startManagedSession,
+} from "../../src/cloud/session-cli.js";
 import {
   SessionContextError,
+  newSessionBinding,
   readSessionContext,
   writeSessionContext,
 } from "../../src/cloud/session-context.js";
@@ -230,4 +234,57 @@ test("SessionContextError stays a named class, not message matching", () => {
   );
   assert.equal(error.code, "session_identity_mismatch");
   assert.equal(error.name, "SessionContextError");
+});
+
+test("bound command mismatch refuses before any fetch", async () => {
+  const { root, tokenFile } = await tokenPath();
+  try {
+    const otherDir = join(root, "other");
+    await mkdir(otherDir, { mode: 0o700 });
+    await chmod(otherDir, 0o700);
+    const otherToken = join(otherDir, "token.json");
+    await writeFile(otherToken, "{}\n", { mode: 0o600 });
+    await chmod(otherToken, 0o600);
+    const context = {
+      ...newSessionBinding({
+        target: cloudTarget("http://127.0.0.1:9", "synthetic-anon-key"),
+        workspaceId: WORKSPACE,
+        principalId: PRINCIPAL,
+        provider: "codex",
+        mode: "interactive",
+        hostSessionId: "thread-1",
+        tokenFile,
+      }),
+      generation: 1,
+    };
+    await writeSessionContext(join(root, "session.json"), context);
+    let fetches = 0;
+    let opened = 0;
+    const fetcher = (async () => {
+      fetches += 1;
+      return new Response("{}", { status: 200 });
+    }) as typeof fetch;
+    await assert.rejects(
+      () => openBoundAgentCredential({
+        context,
+        target: cloudTarget("http://127.0.0.1:9", "synthetic-anon-key"),
+        workspaceId: WORKSPACE,
+        tokenPrincipalId: PRINCIPAL,
+        tokenFile: otherToken,
+        fetcher,
+        openSession: async () => {
+          opened += 1;
+          fetches += 1;
+          return { bearer: async () => TOKEN };
+        },
+      }),
+      (error: unknown) =>
+        error instanceof SessionContextError &&
+        error.code === "session_identity_mismatch",
+    );
+    assert.equal(fetches, 0);
+    assert.equal(opened, 0);
+  } finally {
+    await rm(root, { recursive: true, force: true });
+  }
 });

@@ -335,7 +335,6 @@ import {
 } from "./resume.js";
 import {
   SessionContextError,
-  assertSameIdentity,
   defaultSessionContextPath,
   defaultSessionRootDirectory,
   listSessionContexts,
@@ -344,12 +343,10 @@ import {
   type SessionContextDocument,
 } from "./cloud/session-context.js";
 import {
-  boundAgentFetcher,
-  fetcherForSessionContext,
+  openBoundAgentCredential,
   parseSessionMode,
   parseSessionProvider,
   readManagedSessionStatus,
-  readSessionIdentity,
   revokeAgentToken,
   runHumanSessionLifecycle,
   sessionStartCopy,
@@ -2563,57 +2560,42 @@ async function commandWorkspaceAndCredential(
     const agent = await agentCredential(args);
     /* With --session-context the silent token renewal below is an agent write
        too (spec section 8: renewal is fenced), so the context is read first and
-       the session is built on the bound fetcher. Identity is checked after the
-       bearer exists, as before. */
+       local identity is checked BEFORE the session is opened. Opening can
+       renew the token. */
     const boundContext = contextPath === undefined ? null : await readSessionContext(contextPath);
+    if (boundContext !== null) {
+      const opened = await openBoundAgentCredential({
+        context: boundContext,
+        target: cloud,
+        workspaceId: override,
+        tokenPrincipalId: agent.principalId,
+        tokenFile: args.optional("agent-token-file"),
+        fetcher: fetch,
+        openSession: (bound) => agentSession(cloud, override, agent, bound),
+      });
+      return {
+        selectedWorkspace: override,
+        bearer: opened.bearer,
+        kind: "agent",
+        agent,
+        session: opened.session,
+        fetcher: opened.fetcher,
+        sessionContext: boundContext,
+      };
+    }
     // Renewal is resolved HERE, before the first request rather than after a 401, so a
     // credential that is about to expire is replaced without the person watching ever
     // seeing a failure. Every caller below reads `bearer` as a plain string; the session
     // is what decided which string that is.
-    const session = await agentSession(
-      cloud,
-      override,
-      agent,
-      boundContext === null ? undefined : boundAgentFetcher(fetch, boundContext),
-    );
+    const session = await agentSession(cloud, override, agent);
     const bearer = await session.bearer();
-    if (contextPath === undefined) {
-      return {
-        selectedWorkspace: override,
-        bearer,
-        kind: "agent",
-        agent,
-        session,
-        fetcher: fetch,
-      };
-    }
-    const sessionContext = boundContext!;
-    const identity = await readSessionIdentity(cloud, bearer, override);
-    assertSameIdentity(sessionContext, {
-      identity,
-      target: cloud,
-      tokenPrincipalId: agent.principalId,
-      flagWorkspaceId: override,
-      flagUrl: cloud.url,
-    });
-    const tokenFile = args.optional("agent-token-file");
-    if (
-      tokenFile !== undefined &&
-      resolve(tokenFile) !== resolve(sessionContext.token_file)
-    ) {
-      throw new SessionContextError(
-        "session_identity_mismatch",
-        "--agent-token-file does not match the session context token file",
-      );
-    }
     return {
       selectedWorkspace: override,
       bearer,
       kind: "agent",
       agent,
       session,
-      fetcher: boundAgentFetcher(fetch, sessionContext),
-      sessionContext,
+      fetcher: fetch,
     };
   }
   const human = await dualAuthHumanCredential(args, cloud);
