@@ -32,7 +32,7 @@ Every interval, numeric constant, line citation, and failure-mode claim in Secti
 ### Row 2: Socket down, listener does not know yet (half-open)
 - **Claim**: 25 s Phoenix heartbeat, 50 s timeout detection, 15 s base poll, max poll 60 s, worst case ≈ 65 s.
 - **Code Check**:
-  - Phoenix heartbeat default: 25 s (`RealtimeClient.js:12`, `src/listener/wake.ts:127`).
+  - Phoenix heartbeat default: 25 s (`@supabase/phoenix socket.js`, cited in `docs/design/2026-09-06-PUSH-DELIVERY.md:127`).
   - Timeout detection: 2 × 25 s = 50 s (`@supabase/phoenix socket.js`).
   - Base idle poll: `src/cloud/idle-poll.ts:9` (`IDLE_POLL_DEFAULT_MS = 15_000`).
   - Max idle poll: `src/cloud/idle-poll.ts:10` (`IDLE_POLL_MAX_MS = 60_000`).
@@ -67,9 +67,9 @@ Every interval, numeric constant, line citation, and failure-mode claim in Secti
 - **Verdict**: Verified & cited `src/listener/wake.ts:461`.
 
 ### Row 5: Duplicate wake
-- **Claim**: Each subscriber claims; `FOR UPDATE SKIP LOCKED` (`durable-delivery.ts:293`) gives the row to one; leases are exclusive.
+- **Claim**: Each subscriber claims; `FOR UPDATE SKIP LOCKED` (`durable-delivery.ts:311,340`, was `:293`) gives the row to one; leases are exclusive.
 - **Code Check**:
-  - PostgreSQL transaction locks candidate row via `FOR UPDATE SKIP LOCKED`.
+  - PostgreSQL transaction locks candidate row via `FOR UPDATE SKIP LOCKED` (`supabase/functions/command/durable-delivery.ts:311,340`).
 - **Verdict**: Verified.
 
 ### Row 6: Wake id rotated
@@ -115,7 +115,7 @@ Every interval, numeric constant, line citation, and failure-mode claim in Secti
 - **Claim**: One empty claim.
 - **Code Check**:
   - Candidate query returns 0 rows.
-- **Verdict**: Verified.
+  - **Verdict**: Verified.
 
 ### Row 11: Realtime message rate exceeded
 - **Claim**: 500/s Pro limit; client reconnects when under limit; poll covers.
@@ -126,12 +126,12 @@ Every interval, numeric constant, line citation, and failure-mode claim in Secti
 ### Row 12: Claim rate limit reached
 - **Claim**: 120/min limit, 1 s coalesce, 50 wake-claims/min budget, 60 s rate limit poll, 15 s base poll.
 - **Code Check**:
-  - Rate limit per minute: `durable-delivery.ts:21` (`DELIVERY_CLAIM_RATE_LIMIT_PER_MINUTE = 120`).
+  - Rate limit per minute: `supabase/functions/command/durable-delivery.ts:34` (`DELIVERY_CLAIM_RATE_LIMIT_PER_MINUTE = 120`, was `:21`).
   - Coalesce window: `src/listener/wake.ts:15` (`WAKE_COALESCE_MS = 1_000`).
   - Budget: `src/listener/wake.ts:16` (`WAKE_CLAIMS_PER_MINUTE_BUDGET = 50`).
   - Rate limit poll interval: `src/listener/wake.ts:17` (`WAKE_RATE_LIMIT_POLL_MS = 60_000`).
   - Base idle poll: `src/cloud/idle-poll.ts:9` (`IDLE_POLL_DEFAULT_MS = 15_000`).
-- **Verdict**: Verified & cited `src/listener/wake.ts:15,16,17` and `src/cloud/idle-poll.ts:9`.
+- **Verdict**: Verified & cited `src/listener/wake.ts:15,16,17`, `src/cloud/idle-poll.ts:9`, and `supabase/functions/command/durable-delivery.ts:34`.
 
 ### Row 13: Trigger cannot send
 - **Claim**: Exception swallowed; row inserted; wake lost; 5 min reconcile latency.

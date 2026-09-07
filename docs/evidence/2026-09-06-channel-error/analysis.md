@@ -10,10 +10,12 @@
 ## 1. Summary of the Incident & Observed State
 
 ### 1.1 The Incident Sequence
-On 2026-09-06 during the roll-out of push-delivery (`cswarm` v0.1.58), seat `2121f81d` (CSwarmStrategist) reached its 5-minute reconcile interval. While sibling seat `8d10fe67` (CSwarmDevLead) was wedged due to the `WakeSubscriber.finishWait` closure teardown bug (`src/listener/wake.ts:424-433`, fixed in v0.1.59 via `lane/wake-client-fix`), seat `2121f81d` had not received any push wake event prior to its deadline. Consequently, its `setTimeout` deadline timer fired as scheduled, successfully waking `next()` with `"deadline"`.
+On 2026-09-06 during the roll-out of push-delivery (`cswarm` v0.1.58), seat `2121f81d` (CSwarmStrategist) reached its 5-minute reconcile interval. While sibling seat `8d10fe67` (CSwarmDevLead) was wedged due to the `WakeSubscriber.finishWait` closure teardown bug (`src/listener/wake.ts:424-433` in pre-fix 0.1.58 / commit `f5c7c31`, fixed in v0.1.59 via `lane/wake-client-fix`), seat `2121f81d` (running as process pid 18762) had successfully established a Realtime connection on startup and entered `SUBSCRIBED`. Because it was subscribed, `waitCapMs` (`src/listener/runtime.ts:975-982`) selected `LISTENER_RECONCILE_POLL_MS` (5 minutes = 300,000 ms).
+
+Seat `2121f81d` had not received any push wake event prior to its deadline. Consequently, its `setTimeout` deadline timer fired as scheduled, successfully waking `next()` with `"deadline"`.
 
 The runtime loop proceeded to reconcile:
-1. It issued an HTTP read/claim request via `claim_agent_inbox` (`src/listener/runtime.ts:1400-1435`).
+1. It issued an HTTP read/claim request via `claim_agent_inbox` (`src/listener/runtime.ts:1390`).
 2. The claim succeeded over HTTP and successfully claimed an enqueued note.
 3. Upon receiving the claim response, `applyWakeHint(result.wake)` was invoked (`src/listener/runtime.ts:1432`), passing the wake hint to `WakeSubscriber.setTopic()`.
 4. Immediately following this reconcile and claim flow, the listener's reported state flipped to:
@@ -90,7 +92,7 @@ Key observations:
 ## 2. Ranked List of Causes with File:Line Citations
 
 ### Rank 1: Corrupted / Invalid `apikey` (anon key) in Client Configuration
-* **Likelihood / Verification:** **CONFIRMED ROOT CAUSE FOR SEAT 2121f81d**  
+* **Likelihood / Verification:** **EMPIRICALLY MEASURED CONFIGURATION DEFECT ON SEAT 2121f81d (WITH TIMING CAVEAT)**  
 * **Citations:**
   - `src/listener/wake.ts:136-140` (`defaultRealtime`):
     ```typescript
@@ -109,22 +111,25 @@ Key observations:
     }
     ```
   - `docs/org/2026-08-29-RESUME-HERE.md:2626-2658` (Measured evidence by CSwarmStrategist on seat `2121f81d`).
-* **Mechanism:**
+* **Mechanism & Critical Timing Nuance:**
   - The client interacts with two distinct Supabase server surfaces:
-    1. **HTTP Edge Functions** (`/functions/v1/read`, `/functions/v1/command`): These functions authenticate requests using the agent bearer token (`Authorization: Bearer swm_agt_...`). The Supabase gateway does not strictly validate the `apikey` header for edge function calls if the authorization bearer token is present and handled by the function's internal auth logic. As a result, operations like `whoami`, `claimAgentInbox`, and `readPage` succeeded normally.
+    1. **HTTP Edge Functions** (`/functions/v1/read`, `/functions/v1/command`): These functions authenticate requests using the agent bearer token (`Authorization: Bearer swm_agt_...`). The Supabase gateway does not strictly validate the `apikey` header for edge function calls if the authorization bearer token is present and handled by the function's internal auth logic. As a result, operations like `whoami`, `claimAgentInbox`, and `readPage` succeed normally even with a bad anon key.
     2. **Supabase Realtime Service** (`/realtime/v1/websocket`): The Realtime WebSocket server validates the `apikey` query parameter / header during the initial WebSocket HTTP upgrade handshake and during channel joins.
   - On seat `2121f81d`, the configured anon key contained a 1-character typo in its JWT signature segment (`…UkoyVcvE7…` instead of `…UkoyKlcvE7…`).
-  - When the listener initialized its `WakeSubscriber` and connected to the WebSocket, the server rejected the connection handshake with `HTTP 401 Unauthorized: Invalid API key`.
-  - The underlying Phoenix channel implementation mapped this transport refusal to `CHANNEL_ERROR: transport failure`.
-  - In `src/listener/wake.ts:464-470`, `onSubscribeStatus` mapped `CHANNEL_ERROR` to `this.lastErrorCode = "channel_error"`, set `connectionState = "errored"`, cleared `subscribedAt = null`, leaving `reconnects = 0`.
-  - The reconcile HTTP claim succeeded because it used the agent token, but the wake socket immediately failed because of the invalid `apikey`.
+  - When raw WebSocket probes and standalone client instances were tested on seat `2121f81d`, the server rejected the connection handshake with `HTTP 401 Unauthorized: Invalid API key`. The Phoenix client mapped this transport refusal to `CHANNEL_ERROR: transport failure`.
+  - **The Timing Anomaly Identified by Adversarial Review:** In `src/listener/runtime.ts:975-982`, `waitCapMs` returns `LISTENER_RECONCILE_POLL_MS` (5 minutes) strictly when `mode === "push"`, which requires `connectionState === "subscribed"`. If the listener process (pid 18762) had used this corrupted key from its very first connect attempt at launch, the WebSocket handshake would have failed immediately at start, causing the listener to enter `mode: poll` with a 15 s poll from t=0—it would *never* have waited 5 minutes.
+  - As explicitly recognized in `docs/org/2026-08-29-RESUME-HERE.md:2641-2643`:
+    *"The one 0.1.58 instance that DID subscribe (pid 18762) is unexplained by that seat's data; it may have taken the key from elsewhere."*
+  - Therefore, the fact that seat `2121f81d` completed a 5-minute wait, claimed a note, and *then* flipped to `channel_error` indicates that:
+    (a) Process pid 18762 initially connected with a valid anon key (e.g. from environment or another credential file), but when the channel dropped or attempted reconnection after the claim, it read the corrupted key from the target file, failing with 401; OR
+    (b) The runtime flip during the 0.1.58 run was caused by Rank 2 (RLS refusal) or Rank 3 (transport drop), after which subsequent restarts and investigative probes encountered the persistent bad anon key in seat `2121f81d`'s saved configuration, masking the original trigger.
 
 ---
 
 ### Rank 2: RLS Policy Refusal on `realtime.messages`
-* **Likelihood:** High in environments with rotated wake topics or revoked principals.
+* **Likelihood:** High for a subscribed listener whose credentials change or whose topic is refused at join/re-evaluation time.
 * **Citations:**
-  - `supabase/migrations/20260906000010_wake_delivery.sql:242-249` (and migration design draft `supabase/migrations/20260905000030_wake_delivery.sql:24-32`):
+  - `supabase/migrations/20260906000010_wake_delivery.sql:242-249`:
     ```sql
     CREATE POLICY "agent receives its own wake"
     ON realtime.messages
