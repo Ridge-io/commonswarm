@@ -5,7 +5,7 @@ import { spawnSync } from "node:child_process";
 import { mkdirSync, readFileSync, writeFileSync } from "node:fs";
 import { open, unlink } from "node:fs/promises";
 import { homedir } from "node:os";
-import { basename, dirname, isAbsolute, join, resolve } from "node:path";
+import { basename, dirname, isAbsolute, join, resolve, sep } from "node:path";
 import { createInterface } from "node:readline/promises";
 import type { Command } from "./protocol/index.js";
 import { FILE_VERSION_PRECONDITION_FAILED } from "./protocol/index.js";
@@ -337,6 +337,7 @@ import {
   SessionContextError,
   assertSameIdentity,
   defaultSessionContextPath,
+  defaultSessionRootDirectory,
   listSessionContexts,
   readSessionContext,
   sessionProofOf,
@@ -4996,7 +4997,7 @@ export function listenerStatusJson(
     pendingDeliveryCountAt: status.pendingDeliveryCountAt ?? null,
     heldBackDeliveries: status.heldBackDeliveries ?? [],
     heldBackDeliveryCount: (status.heldBackDeliveries ?? []).length,
-    routeMode: status.routeMode ?? "worker",
+    routeMode: status.routeMode ?? "main",
     deferOverChars: status.deferOverChars ?? null,
     pendingForMainCount: status.pendingForMainCount ?? 0,
     droppedForMainCount: status.droppedForMainCount ?? 0,
@@ -5022,7 +5023,7 @@ export function listenerStatusJson(
           : "same worker session with sender provenance; tool requests denied",
       }
       : {}),
-    host_limits: isLiveListenerRouteMode(status.routeMode ?? "worker")
+    host_limits: isLiveListenerRouteMode(status.routeMode ?? "main")
       ? listenerMainHostLimits()
       : listenerHostLimits(status.provider),
   };
@@ -5034,7 +5035,7 @@ export function renderListenerStatus(
   nowMs: number = Date.now(),
   installed: ListenerProviderInstallEvidence | null = null,
 ): string {
-  const routeMode = status.routeMode ?? "worker";
+  const routeMode = status.routeMode ?? "main";
   const deliveryFailureRun = status.consecutiveAckFailureCount ?? 0;
   const pendingForMainCount = status.pendingForMainCount ?? 0;
   const droppedForMainCount = status.droppedForMainCount ?? 0;
@@ -6678,6 +6679,20 @@ async function runSession(args: Arguments): Promise<void> {
   const mode = parseSessionMode(args.required("mode"));
   const provider = parseSessionProvider(args.required("provider"));
   const hostSessionId = args.required("host-session-id");
+  const customContextPath = args.optional("session-context");
+  if (customContextPath !== undefined) {
+    /* listen start and hook check discover the live context only under the
+       default sessions tree (listSessionContexts). A context saved elsewhere
+       would acquire fine and then fail closed on every managed write with no
+       local explanation, so it is refused here, loudly, before any network. */
+    const root = defaultSessionRootDirectory();
+    if (!resolve(customContextPath).startsWith(`${root}${sep}`)) {
+      throw new SessionContextError(
+        "session_context_outside_default_tree",
+        `--session-context must lie under ${root} so listen start and hook check can find it; omit the flag to use the default path`,
+      );
+    }
+  }
   const cloud = await target(args);
   const selectedWorkspace = listenerUuid(
     args.optional("workspace-id") ?? process.env.SWARM_CLOUD_WORKSPACE_ID,

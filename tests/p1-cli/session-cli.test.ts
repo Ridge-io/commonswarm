@@ -120,3 +120,20 @@ test("session status without a context path fails closed", async () => {
   assert.notEqual(result.code, 0);
   assert.match(`${result.stdout}${result.stderr}`, /session-context|--session-context is required|too few/);
 });
+
+test("session start refuses a --session-context outside the default sessions tree before any network write", async () => {
+  const result = await cli([
+    "session", "start",
+    "--mode", "interactive",
+    "--provider", "claude",
+    "--host-session-id", "thread-x",
+    "--agent-token-file", "/nonexistent/agent.json",
+    "--url", "http://127.0.0.1:9",
+    "--anon-key", "synthetic-anon-key",
+    "--workspace-id", "aaaaaaaa-aaaa-4aaa-8aaa-aaaaaaaaaaaa",
+    "--session-context", "/tmp/elsewhere/session.json",
+  ]);
+  assert.notEqual(result.code, 0);
+  assert.match(`${result.stdout}${result.stderr}`, /session-context must lie under/);
+  assert.doesNotMatch(`${result.stdout}${result.stderr}`, /agent_token_file/);
+});
