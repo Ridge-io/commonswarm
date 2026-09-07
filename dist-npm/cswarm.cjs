@@ -4381,8 +4381,8 @@ var require_RealtimeChannel = __commonJS({
       }
       /** @internal */
       _notThisChannelEvent(event, ref) {
-        const { close, error, leave, join: join13 } = constants_1.CHANNEL_EVENTS;
-        const events = [close, error, leave, join13];
+        const { close, error, leave, join: join16 } = constants_1.CHANNEL_EVENTS;
+        const events = [close, error, leave, join16];
         return ref && events.includes(event) && ref !== this.joinPush.ref;
       }
       /** @internal */
@@ -13499,6 +13499,2885 @@ var require_main3 = __commonJS({
   }
 });
 
+// src/host/types.ts
+var TRANSIENT_ACP_CODES, AcpHostError, AcpProtocolError, AcpTimeoutError, AcpChildExitError, AcpTransportError, AcpVersionError, AcpVersionParseError, AcpVersionBelowFloorError, AcpPermissionCanaryError, AcpPromptsBlockedError;
+var init_types = __esm({
+  "src/host/types.ts"() {
+    "use strict";
+    TRANSIENT_ACP_CODES = /* @__PURE__ */ new Set([
+      "timeout",
+      "child_exit",
+      "transport"
+    ]);
+    AcpHostError = class extends Error {
+      code;
+      constructor(code, message) {
+        super(message);
+        this.name = "AcpHostError";
+        this.code = code;
+      }
+    };
+    AcpProtocolError = class extends AcpHostError {
+      constructor(message, code = "protocol_error", peerError = null) {
+        super(code, message);
+        this.peerError = peerError;
+        this.name = "AcpProtocolError";
+      }
+      peerError;
+    };
+    AcpTimeoutError = class extends AcpHostError {
+      constructor(message) {
+        super("timeout", message);
+        this.name = "AcpTimeoutError";
+      }
+    };
+    AcpChildExitError = class extends AcpHostError {
+      exitCode;
+      signal;
+      constructor(exitCode, signal) {
+        super(
+          "child_exit",
+          `ACP child exited (code=${exitCode ?? "null"}, signal=${signal ?? "null"})`
+        );
+        this.name = "AcpChildExitError";
+        this.exitCode = exitCode;
+        this.signal = signal;
+      }
+    };
+    AcpTransportError = class extends AcpHostError {
+      constructor(cause) {
+        super("transport", `ACP transport failed: ${cause.message}`);
+        this.cause = cause;
+        this.name = "AcpTransportError";
+      }
+      cause;
+    };
+    AcpVersionError = class extends AcpHostError {
+      constructor(message, code = "version_refused") {
+        super(code, message);
+        this.name = "AcpVersionError";
+      }
+    };
+    AcpVersionParseError = class extends AcpVersionError {
+      constructor(message) {
+        super(message, "version_unparseable");
+        this.name = "AcpVersionParseError";
+      }
+    };
+    AcpVersionBelowFloorError = class extends AcpVersionError {
+      constructor(provider, minimum, actual) {
+        super(
+          `refusing ${provider} ${actual}; CommonSwarm requires ${minimum} or newer`,
+          "version_below_floor"
+        );
+        this.provider = provider;
+        this.minimum = minimum;
+        this.actual = actual;
+        this.name = "AcpVersionBelowFloorError";
+      }
+      provider;
+      minimum;
+      actual;
+    };
+    AcpPermissionCanaryError = class extends AcpHostError {
+      constructor(message, reasonCode = null, minimumRequiredVersion = null, peerError = null) {
+        super("permission_canary_failed", message);
+        this.reasonCode = reasonCode;
+        this.minimumRequiredVersion = minimumRequiredVersion;
+        this.peerError = peerError;
+        this.name = "AcpPermissionCanaryError";
+      }
+      reasonCode;
+      minimumRequiredVersion;
+      peerError;
+    };
+    AcpPromptsBlockedError = class extends AcpHostError {
+      constructor() {
+        super(
+          "prompts_blocked",
+          "Real prompts are blocked until the permission-boundary canary passes"
+        );
+        this.name = "AcpPromptsBlockedError";
+      }
+    };
+  }
+});
+
+// src/host/version.ts
+function parseSemVer(value) {
+  if (!SEMVER_RE.test(value)) return null;
+  const withoutBuild = value.split("+", 1)[0];
+  const dash = withoutBuild.indexOf("-");
+  const coreText = dash === -1 ? withoutBuild : withoutBuild.slice(0, dash);
+  const prereleaseText = dash === -1 ? null : withoutBuild.slice(dash + 1);
+  const coreParts = coreText.split(".");
+  if (coreParts.length !== 3) return null;
+  return {
+    core: [BigInt(coreParts[0]), BigInt(coreParts[1]), BigInt(coreParts[2])],
+    prerelease: prereleaseText === null ? null : prereleaseText.split(".")
+  };
+}
+function compareSemVer(left, right) {
+  const a = parseSemVer(left);
+  const b2 = parseSemVer(right);
+  if (!a || !b2) {
+    throw new AcpVersionParseError(
+      `cannot compare invalid semantic versions: ${JSON.stringify(left)} and ${JSON.stringify(right)}`
+    );
+  }
+  for (let index = 0; index < 3; index += 1) {
+    if (a.core[index] < b2.core[index]) return -1;
+    if (a.core[index] > b2.core[index]) return 1;
+  }
+  if (a.prerelease === null && b2.prerelease === null) return 0;
+  if (a.prerelease === null) return 1;
+  if (b2.prerelease === null) return -1;
+  const length = Math.max(a.prerelease.length, b2.prerelease.length);
+  for (let index = 0; index < length; index += 1) {
+    const leftPart = a.prerelease[index];
+    const rightPart = b2.prerelease[index];
+    if (leftPart === void 0) return -1;
+    if (rightPart === void 0) return 1;
+    if (leftPart === rightPart) continue;
+    const leftNumeric = /^\d+$/.test(leftPart);
+    const rightNumeric = /^\d+$/.test(rightPart);
+    if (leftNumeric && rightNumeric) {
+      return BigInt(leftPart) < BigInt(rightPart) ? -1 : 1;
+    }
+    if (leftNumeric) return -1;
+    if (rightNumeric) return 1;
+    return leftPart < rightPart ? -1 : 1;
+  }
+  return 0;
+}
+function parseProviderVersionOutput(stdout, productPattern, allowBare = true) {
+  const lines = stdout.split(/\r?\n/);
+  for (const line of lines) {
+    const pattern = new RegExp(productPattern.source, productPattern.flags.replace("g", ""));
+    const product = pattern.exec(line);
+    if (!product) continue;
+    const after = line.slice(product.index + product[0].length);
+    const afterMatch = new RegExp(
+      `^\\s+(${SEMVER_SOURCE})(?=$|\\s|\\()`
+    ).exec(after);
+    if (afterMatch?.[1]) return afterMatch[1];
+    const before = line.slice(0, product.index);
+    const beforeMatch = new RegExp(`(${SEMVER_SOURCE})\\s*\\($`).exec(before);
+    if (beforeMatch?.[1]) return beforeMatch[1];
+  }
+  if (!allowBare) return null;
+  for (const line of lines) {
+    const trimmed = line.trim();
+    const match = new RegExp(`^(${SEMVER_SOURCE})$`).exec(trimmed);
+    if (match?.[1]) return match[1];
+  }
+  return null;
+}
+function assertProviderVersionFloor(options) {
+  if (compareSemVer(options.version, options.minimumVersion) < 0) {
+    throw new AcpVersionBelowFloorError(
+      options.provider,
+      options.minimumVersion,
+      options.version
+    );
+  }
+  if (compareSemVer(options.version, options.lastMeasuredVersion) > 0) {
+    options.onNewerVersion?.({
+      provider: options.provider,
+      runningVersion: options.version,
+      lastMeasuredVersion: options.lastMeasuredVersion
+    });
+  }
+}
+var CORE_IDENTIFIER, PRERELEASE_IDENTIFIER, BUILD_IDENTIFIER, SEMVER_SOURCE, SEMVER_RE;
+var init_version = __esm({
+  "src/host/version.ts"() {
+    "use strict";
+    init_types();
+    CORE_IDENTIFIER = "(?:0|[1-9]\\d*)";
+    PRERELEASE_IDENTIFIER = "(?:0|[1-9]\\d*|[A-Za-z-][0-9A-Za-z-]*)";
+    BUILD_IDENTIFIER = "[0-9A-Za-z-]+";
+    SEMVER_SOURCE = `${CORE_IDENTIFIER}\\.${CORE_IDENTIFIER}\\.${CORE_IDENTIFIER}(?:-${PRERELEASE_IDENTIFIER}(?:\\.${PRERELEASE_IDENTIFIER})*)?(?:\\+${BUILD_IDENTIFIER}(?:\\.${BUILD_IDENTIFIER})*)?`;
+    SEMVER_RE = new RegExp(`^${SEMVER_SOURCE}$`);
+  }
+});
+
+// src/host/bounds.ts
+var ACP_MAX_LINE_BYTES, ACP_MAX_FRAME_BYTES, ACP_MAX_PENDING_REQUESTS, ACP_MAX_ACCUMULATED_TEXT_CHARS, ACP_DEFAULT_REQUEST_TIMEOUT_MS, ACP_VERSION_CHECK_TIMEOUT_MS, OPENCODE_MIN_VERSION, OPENCODE_LAST_MEASURED_VERSION, CLAUDE_ACP_MIN_VERSION, CLAUDE_ACP_LAST_MEASURED_VERSION, CLAUDE_PERMISSION_MODE_ID, CODEX_ACP_MIN_VERSION, CODEX_ACP_LAST_MEASURED_VERSION, CODEX_PERMISSION_MODE_ID, ACP_PROTOCOL_VERSION, OPENCODE_FORCED_PERMISSION_TOOLS;
+var init_bounds = __esm({
+  "src/host/bounds.ts"() {
+    "use strict";
+    ACP_MAX_LINE_BYTES = 1048576;
+    ACP_MAX_FRAME_BYTES = ACP_MAX_LINE_BYTES;
+    ACP_MAX_PENDING_REQUESTS = 32;
+    ACP_MAX_ACCUMULATED_TEXT_CHARS = 4194304;
+    ACP_DEFAULT_REQUEST_TIMEOUT_MS = 12e4;
+    ACP_VERSION_CHECK_TIMEOUT_MS = 5e3;
+    OPENCODE_MIN_VERSION = "1.18.10";
+    OPENCODE_LAST_MEASURED_VERSION = "1.18.10";
+    CLAUDE_ACP_MIN_VERSION = "0.64.2";
+    CLAUDE_ACP_LAST_MEASURED_VERSION = "0.64.2";
+    CLAUDE_PERMISSION_MODE_ID = "default";
+    CODEX_ACP_MIN_VERSION = "1.1.9";
+    CODEX_ACP_LAST_MEASURED_VERSION = "1.8.0";
+    CODEX_PERMISSION_MODE_ID = "read-only";
+    ACP_PROTOCOL_VERSION = 1;
+    OPENCODE_FORCED_PERMISSION_TOOLS = [
+      "bash",
+      "glob",
+      "read",
+      "grep",
+      "webfetch",
+      "websearch",
+      "write",
+      "edit",
+      "task",
+      "apply_patch",
+      "todowrite",
+      "question",
+      "skill",
+      "execute",
+      "external_directory",
+      "*"
+    ];
+  }
+});
+
+// src/host/credential-redaction.ts
+function redactCredentialText(value) {
+  return value.replace(ANSI_ESCAPE_GLOBAL_RE2, "").replace(CONTROL_AND_SEPARATOR_STRIP_RE, "").replace(SECRET_SHAPE_GLOBAL_RE, "[redacted-credential]");
+}
+var EXOTIC_SEPARATORS, SEPARATOR_CLASS_SOURCE, ANSI_ESCAPE_GLOBAL_RE2, CONTROL_AND_SEPARATOR_STRIP_RE, SECRET_SHAPE_RE, SECRET_SHAPE_GLOBAL_RE;
+var init_credential_redaction = __esm({
+  "src/host/credential-redaction.ts"() {
+    "use strict";
+    EXOTIC_SEPARATORS = "\\u00a0\\u1680\\u2000-\\u200d\\u2028\\u2029\\u202a-\\u202e\\u2060\\u2066-\\u2069\\u202f\\u205f\\u3000\\ufeff";
+    SEPARATOR_CLASS_SOURCE = "\\t\\n\\x0b\\f\\r " + EXOTIC_SEPARATORS;
+    ANSI_ESCAPE_GLOBAL_RE2 = new RegExp("\\u001b\\[[0-?]*[ -\\/]*[@-~]", "g");
+    CONTROL_AND_SEPARATOR_STRIP_RE = new RegExp(
+      "[\\u0000-\\u0008\\u000b-\\u001f\\u007f-\\u009f" + EXOTIC_SEPARATORS + "]",
+      "g"
+    );
+    SECRET_SHAPE_RE = new RegExp(
+      `swm_(?:agt|inv|cap)_[^${SEPARATOR_CLASS_SOURCE}]*|cswarm-wake:[A-Za-z0-9_-]{43}`,
+      "i"
+    );
+    SECRET_SHAPE_GLOBAL_RE = new RegExp(SECRET_SHAPE_RE.source, "gi");
+  }
+});
+
+// src/host/env.ts
+function sanitizeChildEnv(parent = process.env) {
+  const out = {};
+  for (const [key2, value] of Object.entries(parent)) {
+    if (value === void 0) continue;
+    if (!ALLOWED_EXACT.has(key2)) continue;
+    if (DENY_NAME_RE.test(key2)) continue;
+    if (key2.startsWith("SWARM_")) continue;
+    out[key2] = value;
+  }
+  return out;
+}
+var ALLOWED_EXACT, DENY_NAME_RE;
+var init_env = __esm({
+  "src/host/env.ts"() {
+    "use strict";
+    ALLOWED_EXACT = /* @__PURE__ */ new Set([
+      "PATH",
+      "HOME",
+      "USER",
+      "LOGNAME",
+      "SHELL",
+      "TMPDIR",
+      "TMP",
+      "TEMP",
+      "LANG",
+      "LC_ALL",
+      "LC_CTYPE",
+      "LC_MESSAGES",
+      "LC_COLLATE",
+      "LC_TIME",
+      "TERM",
+      "COLORTERM",
+      "NO_COLOR",
+      "FORCE_COLOR",
+      "XDG_CONFIG_HOME",
+      "XDG_DATA_HOME",
+      "XDG_CACHE_HOME",
+      "XDG_RUNTIME_DIR",
+      "XDG_STATE_HOME",
+      "GROK_HOME"
+    ]);
+    DENY_NAME_RE = /(?:^|_)(?:SWARM|SECRET|TOKEN|PASSWORD|PASSWD|CREDENTIAL|PRIVATE_KEY|API_KEY|AUTH|COOKIE)(?:_|$)/i;
+  }
+});
+
+// src/host/sanitize.ts
+function redactString(value) {
+  return redactCredentialText(value).replace(SECRET_VALUE_RE, (_m, q) => `redacted=${q}***${q}`).replace(JWT_RE, "[redacted-jwt]");
+}
+function redactUnknown(value, depth = 0) {
+  if (depth > 6) return "[truncated]";
+  if (typeof value === "string") {
+    if (value.length > 4096) {
+      return redactString(value.slice(0, 4096)) + "\u2026";
+    }
+    return redactString(value);
+  }
+  if (Array.isArray(value)) {
+    return value.slice(0, 32).map((item) => redactUnknown(item, depth + 1));
+  }
+  if (value && typeof value === "object") {
+    const out = {};
+    for (const [k, v] of Object.entries(value)) {
+      if (/secret|token|password|authorization|api[_-]?key|credential/i.test(k)) {
+        out[k] = "[redacted]";
+        continue;
+      }
+      if (k === "rawInput" || k === "rawOutput" || k === "env") {
+        out[k] = "[redacted]";
+        continue;
+      }
+      out[k] = redactUnknown(v, depth + 1);
+    }
+    return out;
+  }
+  return value;
+}
+function sanitizeUpdateDetail(detail) {
+  if (!detail) return void 0;
+  return redactUnknown(detail);
+}
+function sanitizeText(text) {
+  return redactString(text);
+}
+var SECRET_VALUE_RE, JWT_RE;
+var init_sanitize = __esm({
+  "src/host/sanitize.ts"() {
+    "use strict";
+    init_credential_redaction();
+    SECRET_VALUE_RE = /(?:(?:api[_-]?key|token|secret|password|authorization|bearer)\s*[:=]\s*)(["']?)([^\s"'\\]{8,})\1/gi;
+    JWT_RE = /\beyJ[A-Za-z0-9_-]{10,}\.[A-Za-z0-9_-]{10,}\.[A-Za-z0-9_-]{10,}\b/g;
+  }
+});
+
+// src/host/stderr-tail.ts
+function sanitizeStderrTail(raw) {
+  return redactCredentialText(raw).slice(-TAIL_MAX_CHARS).trim();
+}
+function attachStderrTailRing(stderr) {
+  const chunks = [];
+  let total = 0;
+  let evicted = false;
+  stderr.on("data", (chunk) => {
+    const buffer2 = typeof chunk === "string" ? Buffer.from(chunk) : chunk;
+    chunks.push(buffer2);
+    total += buffer2.length;
+    while (total > RING_CAPACITY_BYTES && chunks.length > 0) {
+      evicted = true;
+      const head2 = chunks[0];
+      const excess = total - RING_CAPACITY_BYTES;
+      if (head2.length <= excess) {
+        chunks.shift();
+        total -= head2.length;
+      } else {
+        chunks[0] = head2.subarray(excess);
+        total -= excess;
+      }
+    }
+  });
+  stderr.resume();
+  return {
+    read() {
+      let text = Buffer.concat(chunks).toString("utf8");
+      if (evicted) {
+        const newline = text.indexOf("\n");
+        text = newline === -1 ? "" : text.slice(newline + 1);
+      }
+      return sanitizeStderrTail(text);
+    }
+  };
+}
+function attachStderrTailExitObserver(child, onStderrTail) {
+  const stderrTail = attachStderrTailRing(child.stderr);
+  return (handler) => {
+    const observeExit = (code, signal) => {
+      let completed = false;
+      let timer2 = null;
+      const complete = () => {
+        if (completed) return;
+        completed = true;
+        if (timer2) clearTimeout(timer2);
+        child.removeListener("close", complete);
+        try {
+          onStderrTail?.(stderrTail.read());
+        } finally {
+          handler(code, signal);
+        }
+      };
+      child.once("close", complete);
+      timer2 = setTimeout(complete, STDERR_EXIT_GRACE_MS);
+      timer2.unref();
+    };
+    if (child.exitCode !== null || child.signalCode !== null) {
+      observeExit(child.exitCode, child.signalCode);
+    } else {
+      child.once("exit", observeExit);
+    }
+  };
+}
+var RING_CAPACITY_BYTES, TAIL_MAX_CHARS, STDERR_EXIT_GRACE_MS, STDERR_READABLE_END_GRACE_MS;
+var init_stderr_tail = __esm({
+  "src/host/stderr-tail.ts"() {
+    "use strict";
+    init_credential_redaction();
+    RING_CAPACITY_BYTES = 4096;
+    TAIL_MAX_CHARS = 2048;
+    STDERR_EXIT_GRACE_MS = 100;
+    STDERR_READABLE_END_GRACE_MS = STDERR_EXIT_GRACE_MS + 50;
+  }
+});
+
+// src/host/permission.ts
+function defaultPermissionCallback(request) {
+  const rejectOnce = request.options.find((opt) => opt.kind === "reject_once");
+  if (rejectOnce) {
+    return { outcome: "selected", optionId: rejectOnce.optionId };
+  }
+  const rejectAlways = request.options.find((opt) => opt.kind === "reject_always");
+  if (rejectAlways) {
+    return { outcome: "selected", optionId: rejectAlways.optionId };
+  }
+  return { outcome: "cancelled" };
+}
+function resolvePermissionCallback(callback) {
+  return callback ?? defaultPermissionCallback;
+}
+function parsePermissionOptions(raw) {
+  if (!Array.isArray(raw)) return [];
+  const seen = /* @__PURE__ */ new Map();
+  for (const item of raw) {
+    if (!item || typeof item !== "object") continue;
+    const id = item.optionId;
+    if (typeof id === "string" && id) seen.set(id, (seen.get(id) ?? 0) + 1);
+  }
+  const options = [];
+  for (const item of raw) {
+    if (!item || typeof item !== "object") continue;
+    const rec = item;
+    const optionId = rec.optionId;
+    const name = rec.name;
+    const kind = rec.kind;
+    if (typeof optionId !== "string" || !optionId) continue;
+    if ((seen.get(optionId) ?? 0) > 1) continue;
+    if (typeof name !== "string") continue;
+    if (kind !== "allow_once" && kind !== "allow_always" && kind !== "reject_once" && kind !== "reject_always") {
+      continue;
+    }
+    options.push({ optionId, name, kind });
+  }
+  return options;
+}
+function permissionDecisionToResult(decision) {
+  if (decision.outcome === "cancelled") {
+    return { outcome: { outcome: "cancelled" } };
+  }
+  return {
+    outcome: {
+      outcome: "selected",
+      optionId: decision.optionId
+    }
+  };
+}
+var init_permission = __esm({
+  "src/host/permission.ts"() {
+    "use strict";
+  }
+});
+
+// src/host/transport.ts
+function asAcpHostError(error) {
+  if (error instanceof AcpHostError) return error;
+  return new AcpTransportError(
+    error instanceof Error ? error : new Error(String(error))
+  );
+}
+var import_node_events, AcpTransport;
+var init_transport = __esm({
+  "src/host/transport.ts"() {
+    "use strict";
+    import_node_events = require("node:events");
+    init_bounds();
+    init_types();
+    AcpTransport = class extends import_node_events.EventEmitter {
+      writable;
+      handlers;
+      requestTimeoutMs;
+      pending = /* @__PURE__ */ new Map();
+      nextId = 1;
+      closed = false;
+      buffer = Buffer.alloc(0);
+      childExit = null;
+      constructor(options) {
+        super();
+        this.writable = options.writable;
+        this.handlers = options.handlers ?? {};
+        this.requestTimeoutMs = options.requestTimeoutMs ?? ACP_DEFAULT_REQUEST_TIMEOUT_MS;
+        const readableEndGraceMs = Math.max(0, options.readableEndGraceMs ?? 0);
+        let readableEndTimer = null;
+        options.readable.on("data", (chunk) => {
+          this.onData(typeof chunk === "string" ? Buffer.from(chunk) : chunk);
+        });
+        options.readable.on("end", () => {
+          const fail = () => {
+            readableEndTimer = null;
+            this.failAll(
+              new AcpChildExitError(
+                this.childExit?.code ?? null,
+                this.childExit?.signal ?? null
+              )
+            );
+          };
+          if (readableEndGraceMs > 0 && options.onChildExit) {
+            readableEndTimer = setTimeout(fail, readableEndGraceMs);
+          } else {
+            fail();
+          }
+        });
+        options.readable.on("error", (err) => {
+          this.failAll(asAcpHostError(err));
+        });
+        options.writable.on("error", (err) => {
+          this.failAll(asAcpHostError(err));
+        });
+        options.onChildExit?.((code, signal) => {
+          if (readableEndTimer) {
+            clearTimeout(readableEndTimer);
+            readableEndTimer = null;
+          }
+          this.childExit = { code, signal };
+          this.failAll(new AcpChildExitError(code, signal));
+        });
+      }
+      get pendingCount() {
+        return this.pending.size;
+      }
+      get isClosed() {
+        return this.closed;
+      }
+      request(method, params, timeoutMs) {
+        if (this.closed) {
+          return Promise.reject(new AcpProtocolError("transport closed", "closed"));
+        }
+        if (this.childExit) {
+          return Promise.reject(
+            new AcpChildExitError(this.childExit.code, this.childExit.signal)
+          );
+        }
+        if (this.pending.size >= ACP_MAX_PENDING_REQUESTS) {
+          return Promise.reject(
+            new AcpProtocolError(
+              `pending request limit ${ACP_MAX_PENDING_REQUESTS} exceeded`,
+              "pending_limit"
+            )
+          );
+        }
+        const id = this.nextId++;
+        const key2 = String(id);
+        const frame = {
+          jsonrpc: "2.0",
+          id,
+          method,
+          ...params !== void 0 ? { params } : {}
+        };
+        return new Promise((resolve4, reject) => {
+          const timer2 = setTimeout(() => {
+            this.pending.delete(key2);
+            reject(new AcpTimeoutError(`ACP request timed out: ${method}`));
+          }, timeoutMs ?? this.requestTimeoutMs);
+          this.pending.set(key2, { resolve: resolve4, reject, timer: timer2, method });
+          try {
+            this.writeFrame(frame);
+          } catch (err) {
+            clearTimeout(timer2);
+            this.pending.delete(key2);
+            reject(asAcpHostError(err));
+          }
+        });
+      }
+      /** Notification — no id field (ACP session/cancel). */
+      notify(method, params) {
+        if (this.closed) {
+          throw new AcpProtocolError("transport closed", "closed");
+        }
+        const frame = {
+          jsonrpc: "2.0",
+          method
+        };
+        if (params !== void 0) frame.params = params;
+        this.writeFrame(frame);
+      }
+      respond(id, result) {
+        this.writeFrame({ jsonrpc: "2.0", id, result });
+      }
+      respondError(id, code, message) {
+        this.writeFrame({
+          jsonrpc: "2.0",
+          id,
+          error: { code, message }
+        });
+      }
+      close() {
+        if (this.closed) return;
+        this.closed = true;
+        this.failAll(new AcpProtocolError("transport closed", "closed"));
+        try {
+          this.writable.end();
+        } catch {
+        }
+      }
+      writeFrame(frame) {
+        const line = JSON.stringify(frame);
+        const bytes = Buffer.byteLength(line, "utf8");
+        if (bytes > ACP_MAX_FRAME_BYTES) {
+          throw new AcpProtocolError(
+            `outbound frame exceeds ${ACP_MAX_FRAME_BYTES} bytes`,
+            "frame_too_large"
+          );
+        }
+        this.writable.write(line + "\n");
+      }
+      onData(chunk) {
+        if (this.closed) return;
+        if (this.buffer.length + chunk.length > ACP_MAX_LINE_BYTES * 2) {
+          this.buffer = Buffer.alloc(0);
+          const err = new AcpProtocolError(
+            "inbound buffer exceeded safe limit",
+            "buffer_overflow"
+          );
+          this.handlers.onProtocolError?.(err);
+          this.emit("protocolError", err);
+          return;
+        }
+        this.buffer = Buffer.concat([this.buffer, chunk]);
+        while (true) {
+          const nl = this.buffer.indexOf(10);
+          if (nl === -1) {
+            if (this.buffer.length > ACP_MAX_LINE_BYTES) {
+              this.buffer = Buffer.alloc(0);
+              const err = new AcpProtocolError(
+                `inbound line exceeds ${ACP_MAX_LINE_BYTES} bytes`,
+                "line_too_large"
+              );
+              this.handlers.onProtocolError?.(err);
+              this.emit("protocolError", err);
+            }
+            break;
+          }
+          const lineBuf = this.buffer.subarray(0, nl);
+          this.buffer = this.buffer.subarray(nl + 1);
+          const end = lineBuf.length > 0 && lineBuf[lineBuf.length - 1] === 13 ? lineBuf.length - 1 : lineBuf.length;
+          if (end === 0) continue;
+          if (end > ACP_MAX_LINE_BYTES) {
+            const err = new AcpProtocolError(
+              `inbound line exceeds ${ACP_MAX_LINE_BYTES} bytes`,
+              "line_too_large"
+            );
+            this.handlers.onProtocolError?.(err);
+            this.emit("protocolError", err);
+            continue;
+          }
+          const line = lineBuf.subarray(0, end).toString("utf8");
+          this.handleLine(line);
+        }
+      }
+      handleLine(line) {
+        let msg;
+        try {
+          msg = JSON.parse(line);
+        } catch {
+          const err2 = new AcpProtocolError("malformed JSON line", "malformed_json");
+          this.handlers.onProtocolError?.(err2);
+          this.emit("protocolError", err2);
+          return;
+        }
+        if (!msg || typeof msg !== "object") {
+          const err2 = new AcpProtocolError("non-object JSON-RPC frame", "malformed_frame");
+          this.handlers.onProtocolError?.(err2);
+          this.emit("protocolError", err2);
+          return;
+        }
+        const rec = msg;
+        if (rec.jsonrpc !== "2.0") {
+          const err2 = new AcpProtocolError("missing jsonrpc 2.0", "malformed_frame");
+          this.handlers.onProtocolError?.(err2);
+          this.emit("protocolError", err2);
+          return;
+        }
+        if ("id" in rec && rec.id !== null && rec.id !== void 0 && !("method" in rec)) {
+          const hasResult = "result" in rec;
+          const hasError = "error" in rec;
+          if (hasResult === hasError) {
+            const err2 = new AcpProtocolError(
+              "response must carry exactly one of result or error",
+              "malformed_frame"
+            );
+            this.handlers.onProtocolError?.(err2);
+            this.emit("protocolError", err2);
+            return;
+          }
+          this.handleResponse(rec);
+          return;
+        }
+        if (typeof rec.method === "string" && "id" in rec && rec.id !== null && rec.id !== void 0) {
+          const id = rec.id;
+          if (typeof id !== "string" && typeof id !== "number") {
+            const err2 = new AcpProtocolError("invalid request id", "malformed_frame");
+            this.handlers.onProtocolError?.(err2);
+            return;
+          }
+          void Promise.resolve(this.handlers.onRequest?.(id, rec.method, rec.params)).catch(
+            (err2) => {
+              const message = err2 instanceof Error ? err2.message : String(err2);
+              try {
+                this.respondError(id, -32e3, message);
+              } catch {
+              }
+            }
+          );
+          return;
+        }
+        if (typeof rec.method === "string") {
+          try {
+            this.handlers.onNotification?.(rec.method, rec.params);
+          } catch (err2) {
+            this.emit("handlerError", err2);
+          }
+          return;
+        }
+        const err = new AcpProtocolError("unrecognized JSON-RPC frame", "malformed_frame");
+        this.handlers.onProtocolError?.(err);
+        this.emit("protocolError", err);
+      }
+      handleResponse(rec) {
+        const key2 = String(rec.id);
+        const pending = this.pending.get(key2);
+        if (!pending) {
+          return;
+        }
+        clearTimeout(pending.timer);
+        this.pending.delete(key2);
+        if ("error" in rec && rec.error !== void 0) {
+          const errObj = rec.error;
+          const message = errObj && typeof errObj.message === "string" ? errObj.message : `RPC error for ${pending.method}`;
+          const peerError = errObj && typeof errObj.code === "number" && Number.isInteger(errObj.code) ? {
+            code: errObj.code,
+            ...Object.prototype.hasOwnProperty.call(errObj, "data") ? { data: errObj.data } : {}
+          } : null;
+          pending.reject(new AcpProtocolError(message, "rpc_error", peerError));
+          return;
+        }
+        pending.resolve(rec.result);
+      }
+      failAll(error) {
+        if (this.closed && this.pending.size === 0) return;
+        for (const [key2, pending] of this.pending) {
+          clearTimeout(pending.timer);
+          pending.reject(error);
+          this.pending.delete(key2);
+        }
+      }
+    };
+  }
+});
+
+// src/host/session.ts
+function assertAbsoluteExistingCwd(cwd) {
+  if (!cwd || typeof cwd !== "string") {
+    throw new AcpProtocolError("cwd is required", "invalid_cwd");
+  }
+  if (!(0, import_node_path13.isAbsolute)(cwd)) {
+    throw new AcpProtocolError("cwd must be an absolute path", "invalid_cwd");
+  }
+  let st;
+  try {
+    st = (0, import_node_fs2.statSync)(cwd);
+  } catch {
+    throw new AcpProtocolError(`cwd does not exist: ${cwd}`, "invalid_cwd");
+  }
+  if (!st.isDirectory()) {
+    throw new AcpProtocolError(`cwd is not a directory: ${cwd}`, "invalid_cwd");
+  }
+  return cwd;
+}
+function isRecord(value) {
+  return !!value && typeof value === "object" && !Array.isArray(value);
+}
+function asStopReason(value) {
+  if (value === "end_turn" || value === "max_tokens" || value === "max_turn_requests" || value === "refusal" || value === "cancelled") {
+    return value;
+  }
+  throw new AcpProtocolError(
+    `invalid stopReason: ${String(value)}`,
+    "invalid_response"
+  );
+}
+function isHostRejectDecision(decision, options) {
+  if (decision.outcome === "cancelled") return true;
+  if (decision.outcome !== "selected") return false;
+  const chosen = options.find((opt) => opt.optionId === decision.optionId);
+  return chosen?.kind === "reject_once" || chosen?.kind === "reject_always";
+}
+function updateKind(raw) {
+  switch (raw) {
+    case "agent_message_chunk":
+    case "agent_thought_chunk":
+    case "tool_call":
+    case "tool_call_update":
+    case "plan":
+    case "available_commands_update":
+      return raw;
+    default:
+      return "unknown";
+  }
+}
+function createBoundTransport(options) {
+  return new AcpTransport({
+    readable: options.readable,
+    writable: options.writable,
+    requestTimeoutMs: options.requestTimeoutMs,
+    onChildExit: options.onChildExit,
+    readableEndGraceMs: options.readableEndGraceMs,
+    handlers: {
+      onNotification: (method, params) => {
+        options.getSession()?.handleAgentNotification(method, params);
+      },
+      onRequest: async (id, method, params) => {
+        const session = options.getSession();
+        if (!session) {
+          return;
+        }
+        await session.handleAgentRequest(id, method, params);
+      }
+    }
+  });
+}
+var import_node_fs2, import_node_path13, CANARY_TERMINAL_DENY_STATUSES, AcpHostSession;
+var init_session = __esm({
+  "src/host/session.ts"() {
+    "use strict";
+    import_node_fs2 = require("node:fs");
+    import_node_path13 = require("node:path");
+    init_bounds();
+    init_permission();
+    init_sanitize();
+    init_transport();
+    init_types();
+    CANARY_TERMINAL_DENY_STATUSES = /* @__PURE__ */ new Set([
+      "rejected",
+      "denied",
+      "cancelled",
+      "canceled",
+      "failed",
+      "error"
+    ]);
+    AcpHostSession = class _AcpHostSession {
+      transport;
+      cwd;
+      permissionCallback;
+      requiredModeId;
+      events;
+      requestTimeoutMs;
+      sessionId = null;
+      agentVersion;
+      promptsEnabled;
+      promptInFlight = false;
+      closed = false;
+      /**
+       * Canary denial is host-authored only: we record toolCallIds we ourselves
+       * rejected, then accept a bounded structured terminal status on that same id.
+       * Provider free-text / error-body regex never unlocks prompts.
+       */
+      canaryState = {
+        sawPermissionRequest: false,
+        sawDeniedToolResult: false,
+        rejectedToolKeys: /* @__PURE__ */ new Set()
+      };
+      constructor(options) {
+        this.transport = options.transport;
+        this.cwd = assertAbsoluteExistingCwd(options.cwd);
+        this.requiredModeId = options.requiredModeId;
+        this.permissionCallback = resolvePermissionCallback(options.permissionCallback);
+        this.events = options.events ?? {};
+        this.requestTimeoutMs = options.requestTimeoutMs ?? ACP_DEFAULT_REQUEST_TIMEOUT_MS;
+        this.promptsEnabled = options.promptsEnabled === true;
+      }
+      /**
+       * Wire an existing transport, run initialize + session/new, return a ready session.
+       * Real prompts stay blocked until {@link enablePromptsAfterCanary} (or test opt-in).
+       */
+      static async connect(options) {
+        const session = new _AcpHostSession(options);
+        session.attachHandlers();
+        await session.initialize(options.clientName, options.clientVersion);
+        await session.newSession();
+        return session;
+      }
+      /**
+       * Build a session around a transport that is already initialized (tests).
+       */
+      static attachInitialized(options) {
+        const session = new _AcpHostSession(options);
+        session.attachHandlers();
+        session.sessionId = options.sessionId;
+        session.agentVersion = options.agentVersion;
+        return session;
+      }
+      get info() {
+        if (!this.sessionId) {
+          throw new AcpProtocolError("session not opened", "no_session");
+        }
+        return {
+          sessionId: this.sessionId,
+          cwd: this.cwd,
+          protocolVersion: ACP_PROTOCOL_VERSION,
+          agentVersion: this.agentVersion
+        };
+      }
+      get arePromptsEnabled() {
+        return this.promptsEnabled;
+      }
+      get canaryObservation() {
+        return { ...this.canaryState };
+      }
+      /**
+       * Permission-boundary canary. Drives a side-effect-free probe that must
+       * produce (1) a session/request_permission we answer with reject and
+       * (2) a structured tool_call(_update) for that same toolCallId with a
+       * bounded terminal deny status — never provider free-text matching.
+       *
+       * Ambient provider hooks remain outside this boundary — see permission.ts.
+       * Steady-state `--permissions allow` is not proven by a deny-only canary;
+       * allow_once is only selected after this gate, by the listener model.
+       */
+      /**
+       * D-081. ONE BOUNDED RETRY, because the canary's pass condition depends on a REMOTE MODEL
+       * CHOOSING to attempt a tool call, and re-prompting re-samples that choice.
+       *
+       * `runPermissionBoundaryCanary` resets its own observation state and sends a fresh prompt, so a
+       * second call is a genuine second sample rather than a re-read of the first verdict — that is
+       * what makes a retry meaningful here and it was checked before this was written.
+       *
+       * MITIGATION, NOT A DIAGNOSIS, and deliberately so: seven mechanisms for D-081 were proposed
+       * and refuted in a single afternoon, and the cause is still not established. The precedent is
+       * D-076, shipped in 0.1.11 as a bounded one-shot retry with its root cause open and documented.
+       *
+       * The cost is real and is recorded rather than hidden: a genuinely dead host now takes up to
+       * two canary timeouts before failing. Measured first-attempt failures on this machine were 24s,
+       * 25s and 9s against a 30s timeout, so a doubled worst case is a minute-scale wait. That is the
+       * price of not reporting a healthy listener as failed, which is the defect being mitigated.
+       *
+       * It must NOT be able to hide a deterministic failure: every attempt is reported through
+       * `onAttempt`, and the thrown error names how many were made and why the last one failed, so
+       * "flaky, retried, ready" and "failed twice" are distinguishable in the log rather than
+       * collapsing into one line.
+       */
+      async enablePromptsAfterCanary(options) {
+        if (this.promptsEnabled) return;
+        const total = Math.max(1, options?.attempts ?? 2);
+        let last = null;
+        for (let attempt = 1; attempt <= total; attempt += 1) {
+          const result = await this.runPermissionBoundaryCanary(options);
+          last = result;
+          options?.onAttempt?.(attempt, total, result);
+          if (result.passed) {
+            this.promptsEnabled = true;
+            return;
+          }
+        }
+        const detail = last?.reason ?? "permission-boundary canary failed: need host reject + correlated terminal tool status";
+        throw new AcpPermissionCanaryError(
+          total === 1 ? detail : `${detail} (failed ${total} attempts)`,
+          last?.reasonCode ?? null,
+          null,
+          last?.peerError ?? null
+        );
+      }
+      /** Test/helper: force-enable prompts without canary (never used by production open path). */
+      forceEnablePromptsForTests() {
+        this.promptsEnabled = true;
+      }
+      /** Reset the canary gate (used after session/load fallback to session/new). */
+      resetPromptGate() {
+        this.promptsEnabled = false;
+        this.canaryState = {
+          sawPermissionRequest: false,
+          sawDeniedToolResult: false,
+          rejectedToolKeys: /* @__PURE__ */ new Set()
+        };
+      }
+      /** Injective (sessionId, toolCallId) key — a delimiter alone is not, and NUL is not special. */
+      canaryRejectKey(sessionId, toolCallId) {
+        return JSON.stringify([sessionId, toolCallId]);
+      }
+      async runPermissionBoundaryCanary(options) {
+        this.canaryState = {
+          sawPermissionRequest: false,
+          sawDeniedToolResult: false,
+          rejectedToolKeys: /* @__PURE__ */ new Set()
+        };
+        const probe = options?.probeText ?? "cswarm-permission-boundary-canary-v2: if your policy requires a tool permission request, issue one for a no-op check only; do not create, edit, delete, or read any project files; stop after the permission path. Sentinel=CSWARM_CANARY_NOOP";
+        try {
+          const promptResult = await this.promptInternal(probe, {
+            timeoutMs: options?.timeoutMs,
+            bypassCanaryGate: true
+          });
+          const passed = this.canaryState.sawPermissionRequest && this.canaryState.sawDeniedToolResult;
+          return {
+            passed,
+            sawPermissionRequest: this.canaryState.sawPermissionRequest,
+            sawDeniedToolResult: this.canaryState.sawDeniedToolResult,
+            stopReason: promptResult.stopReason,
+            reason: passed ? void 0 : `canary incomplete: permission=${this.canaryState.sawPermissionRequest} deniedTool=${this.canaryState.sawDeniedToolResult}`
+          };
+        } catch (err) {
+          return {
+            passed: false,
+            sawPermissionRequest: this.canaryState.sawPermissionRequest,
+            sawDeniedToolResult: this.canaryState.sawDeniedToolResult,
+            reason: err instanceof Error ? err.message : String(err),
+            ...err instanceof AcpHostError ? { reasonCode: err.code } : {},
+            ...err instanceof AcpProtocolError && err.peerError ? { peerError: err.peerError } : {}
+          };
+        }
+      }
+      /**
+       * After a successful canary on a throwaway cwd, open a new ACP session on the
+       * real work cwd without re-probing tools in that tree. Same child/host
+       * permission path remains in force.
+       */
+      async openWorkCwd(cwd) {
+        this.assertOpen();
+        if (!this.promptsEnabled) {
+          throw new AcpPromptsBlockedError();
+        }
+        this.cwd = assertAbsoluteExistingCwd(cwd);
+        await this.newSession();
+      }
+      async prompt(text, options) {
+        if (!this.promptsEnabled) {
+          throw new AcpPromptsBlockedError();
+        }
+        return this.promptInternal(text, { ...options, bypassCanaryGate: false });
+      }
+      /**
+       * session/cancel as a notification — no JSON-RPC id.
+       */
+      cancel() {
+        if (!this.sessionId) {
+          throw new AcpProtocolError("session not opened", "no_session");
+        }
+        this.transport.notify("session/cancel", { sessionId: this.sessionId });
+      }
+      /**
+       * session/load with fixed cwd and empty mcpServers.
+       * On failure, falls back to session/new and returns the new session id.
+       */
+      async load(sessionId) {
+        this.assertOpen();
+        try {
+          const result = await this.transport.request(
+            "session/load",
+            {
+              sessionId,
+              cwd: this.cwd,
+              mcpServers: []
+            },
+            this.requestTimeoutMs
+          );
+          const resultIsEmptySuccess = result === null || result === void 0;
+          const resultRecord = isRecord(result) ? result : null;
+          if (!resultIsEmptySuccess && resultRecord === null) {
+            throw new AcpProtocolError(
+              "session/load returned an unrecognised result shape",
+              "session_load_malformed"
+            );
+          }
+          const sessionIdAbsent = resultRecord === null || !("sessionId" in resultRecord) || resultRecord.sessionId === void 0;
+          if (sessionIdAbsent) {
+            this.sessionId = sessionId;
+            await this.applyRequiredMode();
+            return { sessionId, loaded: true };
+          }
+          if (typeof resultRecord.sessionId !== "string") {
+            throw new AcpProtocolError(
+              "session/load returned a non-string session id",
+              "session_id_malformed"
+            );
+          }
+          if (resultRecord.sessionId !== sessionId) {
+            throw new AcpProtocolError(
+              "session/load returned a different session id",
+              "session_id_mismatch"
+            );
+          }
+          this.sessionId = resultRecord.sessionId;
+          await this.applyRequiredMode();
+          return { sessionId: resultRecord.sessionId, loaded: true };
+        } catch {
+          this.resetPromptGate();
+          await this.newSession();
+          return { sessionId: this.sessionId, loaded: false };
+        }
+      }
+      async close() {
+        if (this.closed) return;
+        this.closed = true;
+        this.transport.close();
+      }
+      attachHandlers() {
+      }
+      /**
+       * Install request/notification handlers on a transport for this session.
+       * Called by factories after construction.
+       */
+      bindTransportHandlers() {
+      }
+      /** Handle agent→client request. Public for transport wiring. */
+      async handleAgentRequest(id, method, params) {
+        if (method === "session/request_permission") {
+          await this.handlePermissionRequest(id, params);
+          return;
+        }
+        this.transport.respondError(id, -32601, `Method not supported by host: ${method}`);
+      }
+      /** Handle agent notification. Public for transport wiring. */
+      handleAgentNotification(method, params) {
+        if (method === "session/update") {
+          this.handleSessionUpdate(params);
+          return;
+        }
+        this.events.notification?.(method, params);
+      }
+      async initialize(clientName, clientVersion) {
+        const result = await this.transport.request(
+          "initialize",
+          {
+            protocolVersion: ACP_PROTOCOL_VERSION,
+            clientCapabilities: {
+              fs: { readTextFile: false, writeTextFile: false },
+              terminal: false
+            },
+            clientInfo: {
+              name: clientName ?? "cswarm-host",
+              /* "0.0.0" and not a real release number: this fallback only fires when a caller
+               * passes no version, and a hardcoded one here silently rots (it read "0.1.4"
+               * thirteen releases later). Callers that know the build version pass it. */
+              version: clientVersion ?? "0.0.0"
+            }
+          },
+          this.requestTimeoutMs
+        );
+        if (!isRecord(result)) {
+          throw new AcpProtocolError("initialize returned non-object", "invalid_response");
+        }
+        if (result.protocolVersion !== ACP_PROTOCOL_VERSION) {
+          throw new AcpProtocolError(
+            `unsupported protocolVersion ${String(result.protocolVersion)}`,
+            "protocol_version"
+          );
+        }
+        const meta = isRecord(result._meta) ? result._meta : void 0;
+        if (meta && typeof meta.agentVersion === "string") {
+          this.agentVersion = meta.agentVersion;
+        }
+      }
+      async newSession() {
+        const result = await this.transport.request(
+          "session/new",
+          {
+            cwd: this.cwd,
+            mcpServers: [],
+            _meta: { yoloMode: false }
+          },
+          this.requestTimeoutMs
+        );
+        if (!isRecord(result) || typeof result.sessionId !== "string" || !result.sessionId) {
+          throw new AcpProtocolError("session/new missing sessionId", "invalid_response");
+        }
+        this.sessionId = result.sessionId;
+        await this.applyRequiredMode(result);
+      }
+      /** Select the provider-measured permission mode and fail closed if absent. */
+      async applyRequiredMode(newSessionResult) {
+        const requiredModeId = this.requiredModeId;
+        if (!requiredModeId) return;
+        if (!this.sessionId) {
+          throw new AcpProtocolError("session mode requires an open session", "no_session");
+        }
+        if (newSessionResult) {
+          const modes = isRecord(newSessionResult.modes) ? newSessionResult.modes : null;
+          const availableModes = modes && Array.isArray(modes.availableModes) ? modes.availableModes : [];
+          const available = availableModes.some(
+            (mode3) => isRecord(mode3) && mode3.id === requiredModeId
+          );
+          if (!available) {
+            throw new AcpProtocolError(
+              `required session mode is unavailable: ${requiredModeId}`,
+              "permission_mode_unavailable"
+            );
+          }
+        }
+        try {
+          await this.transport.request(
+            "session/set_mode",
+            { sessionId: this.sessionId, modeId: requiredModeId },
+            this.requestTimeoutMs
+          );
+        } catch {
+          throw new AcpProtocolError(
+            `required session mode could not be selected: ${requiredModeId}`,
+            "permission_mode_unavailable"
+          );
+        }
+      }
+      async promptInternal(text, options) {
+        this.assertOpen();
+        if (!options.bypassCanaryGate && !this.promptsEnabled) {
+          throw new AcpPromptsBlockedError();
+        }
+        if (this.promptInFlight) {
+          throw new AcpProtocolError("prompt already in flight (sequential only)", "busy");
+        }
+        if (typeof text !== "string") {
+          throw new AcpProtocolError("prompt text must be a string", "invalid_prompt");
+        }
+        this.promptInFlight = true;
+        const updates = [];
+        let message = "";
+        const prev = this.events.update;
+        this.events.update = (u) => {
+          updates.push(u);
+          const fromOurSession = this.sessionId === null || u.sessionId === this.sessionId;
+          if (u.kind === "agent_message_chunk" && u.text && fromOurSession) {
+            if (message.length + u.text.length > ACP_MAX_ACCUMULATED_TEXT_CHARS) {
+              throw new AcpProtocolError(
+                "accumulated agent message exceeds bound",
+                "message_too_large"
+              );
+            }
+            message += u.text;
+          }
+          prev?.(u);
+        };
+        try {
+          const result = await this.transport.request(
+            "session/prompt",
+            {
+              sessionId: this.sessionId,
+              prompt: [{ type: "text", text }]
+            },
+            options.timeoutMs ?? this.requestTimeoutMs
+          );
+          if (!isRecord(result) || !("stopReason" in result)) {
+            throw new AcpProtocolError("session/prompt missing stopReason", "invalid_response");
+          }
+          const stopReason = asStopReason(result.stopReason);
+          return { stopReason, message, updates };
+        } finally {
+          this.events.update = prev;
+          this.promptInFlight = false;
+        }
+      }
+      handleSessionUpdate(params) {
+        if (!isRecord(params)) return;
+        const claimedSessionId = typeof params.sessionId === "string" ? params.sessionId : null;
+        const sessionId = claimedSessionId ?? "";
+        const update = params.update;
+        if (!isRecord(update)) return;
+        const kind = updateKind(update.sessionUpdate);
+        if (kind === "unknown") {
+          this.events.notification?.("session/update", params);
+          return;
+        }
+        let text;
+        if (kind === "agent_message_chunk" || kind === "agent_thought_chunk") {
+          const content = update.content;
+          if (isRecord(content) && content.type === "text" && typeof content.text === "string") {
+            text = sanitizeText(content.text);
+          }
+        }
+        const toolCallId = typeof update.toolCallId === "string" ? update.toolCallId : void 0;
+        const title = typeof update.title === "string" ? sanitizeText(update.title) : void 0;
+        const status = typeof update.status === "string" ? update.status : void 0;
+        const toolKind = typeof update.kind === "string" ? update.kind : void 0;
+        if ((kind === "tool_call_update" || kind === "tool_call") && toolCallId && status && this.sessionId !== null && claimedSessionId !== null && claimedSessionId === this.sessionId && this.canaryState.rejectedToolKeys.has(
+          this.canaryRejectKey(sessionId, toolCallId)
+        ) && CANARY_TERMINAL_DENY_STATUSES.has(status.toLowerCase())) {
+          this.canaryState.sawDeniedToolResult = true;
+        }
+        const detail = sanitizeUpdateDetail({
+          ...toolKind ? { kind: toolKind } : {},
+          ...status ? { status } : {},
+          ...title ? { title } : {}
+        });
+        const sanitized = {
+          kind,
+          sessionId,
+          text,
+          toolCallId,
+          title,
+          status,
+          toolKind,
+          detail
+        };
+        this.events.update?.(sanitized);
+      }
+      async handlePermissionRequest(id, params) {
+        const rec = isRecord(params) ? params : {};
+        const claimedSessionId = typeof rec.sessionId === "string" ? rec.sessionId : null;
+        const sessionId = claimedSessionId ?? "";
+        const options = parsePermissionOptions(rec.options);
+        const toolCall = isRecord(rec.toolCall) ? rec.toolCall : {};
+        const toolCallId = typeof toolCall.toolCallId === "string" ? toolCall.toolCallId : void 0;
+        const title = typeof toolCall.title === "string" ? toolCall.title : void 0;
+        const kind = typeof toolCall.kind === "string" ? toolCall.kind : void 0;
+        const sessionMatches = this.sessionId !== null && claimedSessionId !== null && claimedSessionId === this.sessionId;
+        if (sessionMatches) {
+          this.canaryState.sawPermissionRequest = true;
+        }
+        if (!sessionMatches) {
+          this.transport.respond(
+            id,
+            permissionDecisionToResult(defaultPermissionCallback({
+              sessionId,
+              toolCallId,
+              title,
+              kind,
+              options,
+              summary: sanitizeText(
+                [kind, title, toolCallId].filter(Boolean).join(" ") || "permission request"
+              )
+            }))
+          );
+          return;
+        }
+        const summary = sanitizeText(
+          [kind, title, toolCallId].filter(Boolean).join(" ") || "permission request"
+        );
+        let decision;
+        try {
+          decision = await this.permissionCallback({
+            sessionId,
+            toolCallId,
+            title,
+            kind,
+            options,
+            summary
+          });
+        } catch {
+          decision = defaultPermissionCallback({
+            sessionId,
+            toolCallId,
+            title,
+            kind,
+            options,
+            summary
+          });
+        }
+        if (!decision || decision.outcome !== "cancelled" && decision.outcome !== "selected") {
+          decision = defaultPermissionCallback({
+            sessionId,
+            toolCallId,
+            title,
+            kind,
+            options,
+            summary
+          });
+        }
+        if (sessionMatches && toolCallId && isHostRejectDecision(decision, options)) {
+          this.canaryState.rejectedToolKeys.add(
+            this.canaryRejectKey(sessionId, toolCallId)
+          );
+        }
+        const result = permissionDecisionToResult(decision);
+        this.transport.respond(id, result);
+      }
+      assertOpen() {
+        if (this.closed) {
+          throw new AcpProtocolError("session closed", "closed");
+        }
+        if (!this.sessionId) {
+          throw new AcpProtocolError("session not opened", "no_session");
+        }
+      }
+    };
+  }
+});
+
+// src/host/claude.ts
+var claude_exports = {};
+__export(claude_exports, {
+  CLAUDE_ACP_LAST_MEASURED_VERSION: () => CLAUDE_ACP_LAST_MEASURED_VERSION,
+  CLAUDE_ACP_MIN_VERSION: () => CLAUDE_ACP_MIN_VERSION,
+  CLAUDE_PERMISSION_MODE_ID: () => CLAUDE_PERMISSION_MODE_ID,
+  assertClaudeVersionFloor: () => assertClaudeVersionFloor,
+  buildClaudeAcpArgs: () => buildClaudeAcpArgs,
+  buildClaudeChildEnv: () => buildClaudeChildEnv,
+  buildClaudeLaunch: () => buildClaudeLaunch,
+  inspectClaudeBridgeExecutable: () => inspectClaudeBridgeExecutable,
+  measureClaudeBundleVersions: () => measureClaudeBundleVersions,
+  openClaudeAcpSession: () => openClaudeAcpSession,
+  parseClaudeCodeVersionOutput: () => parseClaudeCodeVersionOutput,
+  parseClaudeVersionOutput: () => parseClaudeVersionOutput,
+  resolveClaudeExecutable: () => resolveClaudeExecutable,
+  resolvePackagedClaudeBridge: () => resolvePackagedClaudeBridge,
+  terminateClaudeChild: () => terminateClaudeChild
+});
+function isPackagedClaudeBridge(executable) {
+  const normalized = executable.replaceAll("\\", "/");
+  return normalized.endsWith(
+    "/node_modules/@agentclientprotocol/claude-agent-acp/dist/index.js"
+  );
+}
+function resolvePackagedClaudeBridge(pathEnv, platform = process.platform) {
+  const pathValue = pathEnv ?? process.env.PATH ?? "";
+  const names = platform === "win32" ? ["claude-agent-acp.cmd"] : ["claude-agent-acp"];
+  for (const dir of pathValue.split(import_node_path14.delimiter)) {
+    if (!dir) continue;
+    for (const name of names) {
+      try {
+        const candidate = resolvedClaudeCandidate((0, import_node_path14.join)(dir, name), platform);
+        if (isPackagedClaudeBridge(candidate)) return candidate;
+      } catch {
+      }
+    }
+  }
+  throw new AcpHostError(
+    "executable_missing",
+    "packaged claude-agent-acp executable not found; install @agentclientprotocol/claude-agent-acp@latest (minimum 0.64.2)"
+  );
+}
+function resolveWindowsNpmShim(shim) {
+  let source;
+  try {
+    source = (0, import_node_fs3.readFileSync)(shim, "utf8");
+  } catch {
+    throw new AcpHostError(
+      "executable_missing",
+      `could not read claude-agent-acp npm shim: ${shim}`
+    );
+  }
+  if (Buffer.byteLength(source, "utf8") > WINDOWS_NPM_SHIM_MAX_BYTES || !source.includes(
+    String.raw`"%dp0%\node_modules\@agentclientprotocol\claude-agent-acp\dist\index.js"`
+  )) {
+    throw new AcpHostError(
+      "executable_missing",
+      `unrecognized claude-agent-acp npm shim: ${shim}`
+    );
+  }
+  const target2 = (0, import_node_path14.join)((0, import_node_path14.dirname)(shim), ...WINDOWS_NPM_ENTRYPOINT);
+  try {
+    (0, import_node_fs3.accessSync)(target2, import_node_fs3.constants.R_OK);
+    return (0, import_node_fs3.realpathSync)(target2);
+  } catch {
+    throw new AcpHostError(
+      "executable_missing",
+      `claude-agent-acp package entrypoint is missing beside npm shim: ${shim}`
+    );
+  }
+}
+function resolvedClaudeCandidate(candidate, platform) {
+  (0, import_node_fs3.accessSync)(candidate, import_node_fs3.constants.X_OK);
+  const real = (0, import_node_fs3.realpathSync)(candidate);
+  return platform === "win32" && (0, import_node_path14.extname)(real).toLowerCase() === ".cmd" ? resolveWindowsNpmShim(real) : real;
+}
+function resolveClaudeExecutable(executable = "claude-agent-acp", pathEnv, platform = process.platform) {
+  if ((0, import_node_path14.isAbsolute)(executable) || executable.includes("/") || executable.includes("\\")) {
+    const abs = (0, import_node_path14.resolve)(executable);
+    const candidates = platform === "win32" && (0, import_node_path14.extname)(abs) === "" ? [`${abs}.cmd`] : [abs];
+    for (const candidate of candidates) {
+      try {
+        return resolvedClaudeCandidate(candidate, platform);
+      } catch (error) {
+        if (error instanceof AcpHostError) throw error;
+      }
+    }
+    throw new AcpHostError("executable_missing", `not executable: ${abs}`);
+  }
+  const pathValue = pathEnv ?? process.env.PATH ?? "";
+  const names = platform === "win32" && (0, import_node_path14.extname)(executable) === "" ? [`${executable}.cmd`] : [executable];
+  for (const dir of pathValue.split(import_node_path14.delimiter)) {
+    if (!dir) continue;
+    for (const name of names) {
+      const candidate = (0, import_node_path14.join)(dir, name);
+      try {
+        return resolvedClaudeCandidate(candidate, platform);
+      } catch (error) {
+        if (error instanceof AcpHostError) throw error;
+      }
+    }
+  }
+  throw new AcpHostError(
+    "executable_missing",
+    `claude-agent-acp executable not found on PATH: ${executable}`
+  );
+}
+function buildClaudeLaunch(executable, args, platform = process.platform) {
+  return platform === "win32" && (0, import_node_path14.extname)(executable).toLowerCase() === ".js" ? { command: process.execPath, args: [executable, ...args] } : { command: executable, args: [...args] };
+}
+function parseClaudeVersionOutput(stdout) {
+  return parseProviderVersionOutput(stdout, /\bclaude-agent-acp\b/i);
+}
+function parseClaudeCodeVersionOutput(stdout) {
+  return parseProviderVersionOutput(stdout, /\bClaude Code\b/i, false);
+}
+function semanticVersion(value) {
+  if (typeof value !== "string") return null;
+  return parseProviderVersionOutput(`${value}
+`, /\bnever-a-product-name\b/i);
+}
+function readPackageAtOrAbove(entrypoint, expectedName) {
+  let directory = (0, import_node_path14.dirname)(entrypoint);
+  for (let depth = 0; depth < 5; depth += 1) {
+    const path = (0, import_node_path14.join)(directory, "package.json");
+    try {
+      const row = JSON.parse((0, import_node_fs3.readFileSync)(path, "utf8"));
+      if (row && typeof row === "object" && !Array.isArray(row) && row.name === expectedName) {
+        return { path, row };
+      }
+    } catch {
+    }
+    const parent = (0, import_node_path14.dirname)(directory);
+    if (parent === directory) break;
+    directory = parent;
+  }
+  return null;
+}
+function measureClaudeBundleVersions(executable) {
+  const adapter = readPackageAtOrAbove(
+    executable,
+    "@agentclientprotocol/claude-agent-acp"
+  );
+  if (!adapter) return { agentSdkVersion: null, claudeCodeVersion: null };
+  try {
+    const sdkEntrypoint = (0, import_node_module.createRequire)(adapter.path).resolve(
+      "@anthropic-ai/claude-agent-sdk"
+    );
+    const sdk = readPackageAtOrAbove(
+      sdkEntrypoint,
+      "@anthropic-ai/claude-agent-sdk"
+    );
+    if (!sdk) return { agentSdkVersion: null, claudeCodeVersion: null };
+    return {
+      agentSdkVersion: semanticVersion(sdk.row.version),
+      claudeCodeVersion: semanticVersion(sdk.row.claudeCodeVersion)
+    };
+  } catch {
+    return { agentSdkVersion: null, claudeCodeVersion: null };
+  }
+}
+async function readClaudeVersionOutput(executable, options) {
+  const timeoutMs = options?.timeoutMs ?? ACP_VERSION_CHECK_TIMEOUT_MS;
+  const env = options?.env ?? sanitizeChildEnv(process.env);
+  const launch = buildClaudeLaunch(executable, ["--version"], options?.platform);
+  return await new Promise((resolve4, reject) => {
+    (0, import_node_child_process5.execFile)(
+      launch.command,
+      launch.args,
+      { timeout: timeoutMs, encoding: "utf8", env },
+      (error, out, stderr) => {
+        if (error) {
+          reject(
+            new AcpVersionError(
+              `failed to run ${executable} --version: ${error.message}${stderr ? ` (${stderr.trim()})` : ""}`
+            )
+          );
+          return;
+        }
+        resolve4(out);
+      }
+    );
+  });
+}
+async function inspectClaudeBridgeExecutable(executable = "claude-agent-acp", options) {
+  const resolved = resolveClaudeExecutable(
+    executable,
+    options?.pathEnv,
+    options?.platform
+  );
+  const output = await readClaudeVersionOutput(resolved, options);
+  const bundle = measureClaudeBundleVersions(resolved);
+  return {
+    executable: resolved,
+    providerVersion: parseClaudeVersionOutput(output),
+    lastMeasuredVersion: CLAUDE_ACP_LAST_MEASURED_VERSION,
+    bundledAgentSdkVersion: bundle.agentSdkVersion,
+    bundledClaudeCodeVersion: bundle.claudeCodeVersion
+  };
+}
+async function assertClaudeVersionFloor(executable, options) {
+  const minimumVersion = options?.minimumVersion ?? CLAUDE_ACP_MIN_VERSION;
+  const lastMeasuredVersion = options?.lastMeasuredVersion ?? CLAUDE_ACP_LAST_MEASURED_VERSION;
+  const stdout = await readClaudeVersionOutput(executable, options);
+  const version3 = parseClaudeVersionOutput(stdout);
+  if (!version3) {
+    throw new AcpVersionParseError(
+      `could not parse claude-agent-acp version from: ${stdout.trim().slice(0, 200)}`
+    );
+  }
+  assertProviderVersionFloor({
+    provider: "claude-agent-acp",
+    version: version3,
+    minimumVersion,
+    lastMeasuredVersion,
+    ...options?.onNewerVersion ? { onNewerVersion: options.onNewerVersion } : {}
+  });
+  return version3;
+}
+function buildClaudeAcpArgs() {
+  return [];
+}
+function buildClaudeChildEnv(parent, claudeCodeExecutable) {
+  const env = sanitizeChildEnv(parent);
+  if (claudeCodeExecutable) {
+    env.CLAUDE_CODE_EXECUTABLE = claudeCodeExecutable;
+  }
+  return env;
+}
+function waitForChildExit(child, timeoutMs) {
+  if (child.exitCode !== null || child.signalCode !== null) {
+    return Promise.resolve();
+  }
+  return new Promise((resolve4) => {
+    const timer2 = setTimeout(resolve4, timeoutMs);
+    child.once("exit", () => {
+      clearTimeout(timer2);
+      resolve4();
+    });
+  });
+}
+async function terminateClaudeChild(child) {
+  if (child.exitCode !== null || child.signalCode !== null) return;
+  try {
+    child.kill("SIGTERM");
+  } catch {
+  }
+  await waitForChildExit(child, CHILD_EXIT_WAIT_MS);
+  if (child.exitCode !== null || child.signalCode !== null) return;
+  try {
+    child.kill("SIGKILL");
+  } catch {
+  }
+  await waitForChildExit(child, CHILD_KILL_WAIT_MS);
+  if (child.exitCode === null && child.signalCode === null) {
+    throw new AcpHostError(
+      "child_exit_timeout",
+      "Claude ACP bridge did not exit after SIGTERM and SIGKILL"
+    );
+  }
+}
+async function openClaudeAcpSession(options) {
+  const parentEnv = options.env ?? process.env;
+  if (options.signal?.aborted) {
+    throw new AcpHostError(
+      "cancelled",
+      "Claude ACP bridge opening was cancelled"
+    );
+  }
+  const pathEnv = parentEnv.PATH;
+  const resolvedPathEnv = typeof pathEnv === "string" ? pathEnv : void 0;
+  if (options.skipVersionCheck && options.executable) {
+    throw new AcpHostError(
+      "version_check_required",
+      "skipVersionCheck cannot classify an explicit Claude executable"
+    );
+  }
+  const requestedExecutable = options.executable ? resolveClaudeExecutable(options.executable, resolvedPathEnv) : null;
+  const baseEnv = buildClaudeChildEnv(parentEnv);
+  let executable;
+  let env = baseEnv;
+  let claudeCodeExecutable;
+  let providerVersion;
+  let bundleVersions = {
+    agentSdkVersion: null,
+    claudeCodeVersion: null
+  };
+  const reportRuntime = (resolved, version3) => {
+    bundleVersions = measureClaudeBundleVersions(resolved);
+    options.onRuntimeNotice?.({
+      executable: resolved,
+      providerVersion: version3,
+      lastMeasuredVersion: CLAUDE_ACP_LAST_MEASURED_VERSION,
+      bundledAgentSdkVersion: bundleVersions.agentSdkVersion,
+      bundledClaudeCodeVersion: bundleVersions.claudeCodeVersion
+    });
+  };
+  const admitBridgeVersion = (resolved, version3) => {
+    providerVersion = version3;
+    reportRuntime(resolved, version3);
+    assertProviderVersionFloor({
+      provider: "claude-agent-acp",
+      version: version3,
+      minimumVersion: CLAUDE_ACP_MIN_VERSION,
+      lastMeasuredVersion: CLAUDE_ACP_LAST_MEASURED_VERSION,
+      ...options.onVersionNotice ? { onNewerVersion: options.onVersionNotice } : {}
+    });
+  };
+  if (requestedExecutable) {
+    const output = await readClaudeVersionOutput(requestedExecutable, {
+      env: baseEnv
+    });
+    const bridgeVersion = parseClaudeVersionOutput(output);
+    if (bridgeVersion) {
+      executable = requestedExecutable;
+      admitBridgeVersion(executable, bridgeVersion);
+    } else if (parseClaudeCodeVersionOutput(output)) {
+      claudeCodeExecutable = requestedExecutable;
+      executable = resolvePackagedClaudeBridge(resolvedPathEnv);
+      env = buildClaudeChildEnv(parentEnv, claudeCodeExecutable);
+      const bridgeOutput = await readClaudeVersionOutput(executable, {
+        env
+      });
+      const packagedVersion = parseClaudeVersionOutput(bridgeOutput);
+      if (!packagedVersion) {
+        reportRuntime(executable, null);
+        throw new AcpVersionParseError(
+          `could not parse claude-agent-acp version from: ${bridgeOutput.trim().slice(0, 200)}`
+        );
+      }
+      admitBridgeVersion(executable, packagedVersion);
+    } else {
+      reportRuntime(requestedExecutable, null);
+      throw new AcpVersionError(
+        `could not identify Claude executable from: ${output.trim().slice(0, 200)}`
+      );
+    }
+  } else {
+    executable = requestedExecutable ?? resolveClaudeExecutable(
+      "claude-agent-acp",
+      resolvedPathEnv
+    );
+    if (!options.skipVersionCheck) {
+      const output = await readClaudeVersionOutput(executable, {
+        env: baseEnv
+      });
+      const version3 = parseClaudeVersionOutput(output);
+      if (!version3) {
+        reportRuntime(executable, null);
+        throw new AcpVersionParseError(
+          `could not parse claude-agent-acp version from: ${output.trim().slice(0, 200)}`
+        );
+      }
+      admitBridgeVersion(executable, version3);
+    } else {
+      reportRuntime(executable, null);
+    }
+  }
+  if (options.signal?.aborted) {
+    throw new AcpHostError(
+      "cancelled",
+      "Claude ACP bridge opening was cancelled"
+    );
+  }
+  const args = buildClaudeAcpArgs();
+  const launch = buildClaudeLaunch(executable, args);
+  const child = (0, import_node_child_process5.spawn)(launch.command, launch.args, {
+    stdio: ["pipe", "pipe", "pipe"],
+    env,
+    cwd: options.cwd
+  });
+  const spawnError = new Promise((_resolve, reject) => {
+    child.once("error", () => {
+      reject(
+        new AcpHostError(
+          "spawn_failed",
+          "failed to spawn the Claude ACP bridge"
+        )
+      );
+    });
+  });
+  let removeAbortListener = () => void 0;
+  const abortError = new Promise((_resolve, reject) => {
+    const signal = options.signal;
+    if (!signal) return;
+    const onAbort = () => {
+      reject(
+        new AcpHostError(
+          "cancelled",
+          "Claude ACP bridge opening was cancelled"
+        )
+      );
+    };
+    if (signal.aborted) {
+      onAbort();
+      return;
+    }
+    signal.addEventListener("abort", onAbort, { once: true });
+    removeAbortListener = () => signal.removeEventListener("abort", onAbort);
+  });
+  if (!child.stdin || !child.stdout) {
+    await terminateClaudeChild(child);
+    throw new AcpHostError("spawn_failed", "child missing stdio pipes");
+  }
+  const observeStderrTailOnExit = attachStderrTailExitObserver(
+    child,
+    options.onStderrTail
+  );
+  let sessionRef = null;
+  const transport = createBoundTransport({
+    readable: child.stdout,
+    writable: child.stdin,
+    requestTimeoutMs: options.requestTimeoutMs ?? ACP_DEFAULT_REQUEST_TIMEOUT_MS,
+    readableEndGraceMs: STDERR_READABLE_END_GRACE_MS,
+    getSession: () => sessionRef,
+    onChildExit: observeStderrTailOnExit
+  });
+  try {
+    const session = await Promise.race([
+      AcpHostSession.connect({
+        transport,
+        cwd: options.cwd,
+        requiredModeId: CLAUDE_PERMISSION_MODE_ID,
+        permissionCallback: options.permissionCallback,
+        events: options.events,
+        requestTimeoutMs: options.requestTimeoutMs,
+        clientName: options.clientName,
+        clientVersion: options.clientVersion,
+        promptsEnabled: options.promptsEnabled
+      }),
+      spawnError,
+      abortError
+    ]);
+    removeAbortListener();
+    sessionRef = session;
+    let closePromise = null;
+    const close = async () => {
+      if (closePromise) return closePromise;
+      closePromise = (async () => {
+        try {
+          await session.close();
+        } finally {
+          await terminateClaudeChild(child);
+        }
+      })();
+      return closePromise;
+    };
+    return {
+      session,
+      child,
+      executable,
+      args,
+      env,
+      ...providerVersion ? { providerVersion } : {},
+      ...bundleVersions.agentSdkVersion ? { bundledAgentSdkVersion: bundleVersions.agentSdkVersion } : {},
+      ...bundleVersions.claudeCodeVersion ? { bundledClaudeCodeVersion: bundleVersions.claudeCodeVersion } : {},
+      close
+    };
+  } catch (error) {
+    removeAbortListener();
+    transport.close();
+    await terminateClaudeChild(child);
+    throw error;
+  }
+}
+var import_node_child_process5, import_node_module, import_node_fs3, import_node_path14, CHILD_EXIT_WAIT_MS, CHILD_KILL_WAIT_MS, WINDOWS_NPM_SHIM_MAX_BYTES, WINDOWS_NPM_ENTRYPOINT;
+var init_claude = __esm({
+  "src/host/claude.ts"() {
+    "use strict";
+    init_stderr_tail();
+    import_node_child_process5 = require("node:child_process");
+    import_node_module = require("node:module");
+    import_node_fs3 = require("node:fs");
+    import_node_path14 = require("node:path");
+    init_bounds();
+    init_env();
+    init_session();
+    init_types();
+    init_version();
+    CHILD_EXIT_WAIT_MS = 3e3;
+    CHILD_KILL_WAIT_MS = 1e3;
+    WINDOWS_NPM_SHIM_MAX_BYTES = 64 * 1024;
+    WINDOWS_NPM_ENTRYPOINT = [
+      "node_modules",
+      "@agentclientprotocol",
+      "claude-agent-acp",
+      "dist",
+      "index.js"
+    ];
+  }
+});
+
+// src/host/codex.ts
+var codex_exports = {};
+__export(codex_exports, {
+  CODEX_ACP_LAST_MEASURED_VERSION: () => CODEX_ACP_LAST_MEASURED_VERSION,
+  CODEX_ACP_MIN_VERSION: () => CODEX_ACP_MIN_VERSION,
+  CODEX_PERMISSION_MODE_ID: () => CODEX_PERMISSION_MODE_ID,
+  assertCodexVersionFloor: () => assertCodexVersionFloor,
+  buildCodexAcpArgs: () => buildCodexAcpArgs,
+  buildCodexChildEnv: () => buildCodexChildEnv,
+  buildCodexLaunch: () => buildCodexLaunch,
+  openCodexAcpSession: () => openCodexAcpSession,
+  parseCodexVersionOutput: () => parseCodexVersionOutput,
+  resolveCodexExecutable: () => resolveCodexExecutable,
+  terminateCodexChild: () => terminateCodexChild
+});
+function resolveWindowsNpmShim2(shim) {
+  let source;
+  try {
+    source = (0, import_node_fs4.readFileSync)(shim, "utf8");
+  } catch {
+    throw new AcpHostError(
+      "executable_missing",
+      `could not read codex-acp npm shim: ${shim}`
+    );
+  }
+  if (Buffer.byteLength(source, "utf8") > WINDOWS_NPM_SHIM_MAX_BYTES2 || !source.includes(
+    String.raw`"%dp0%\node_modules\@agentclientprotocol\codex-acp\dist\index.js"`
+  )) {
+    throw new AcpHostError(
+      "executable_missing",
+      `unrecognized codex-acp npm shim: ${shim}`
+    );
+  }
+  const target2 = (0, import_node_path15.join)((0, import_node_path15.dirname)(shim), ...WINDOWS_NPM_ENTRYPOINT2);
+  try {
+    (0, import_node_fs4.accessSync)(target2, import_node_fs4.constants.R_OK);
+    return (0, import_node_fs4.realpathSync)(target2);
+  } catch {
+    throw new AcpHostError(
+      "executable_missing",
+      `codex-acp package entrypoint is missing beside npm shim: ${shim}`
+    );
+  }
+}
+function resolvedCodexCandidate(candidate, platform) {
+  (0, import_node_fs4.accessSync)(candidate, import_node_fs4.constants.X_OK);
+  const real = (0, import_node_fs4.realpathSync)(candidate);
+  return platform === "win32" && (0, import_node_path15.extname)(real).toLowerCase() === ".cmd" ? resolveWindowsNpmShim2(real) : real;
+}
+function resolveCodexExecutable(executable = "codex-acp", pathEnv, platform = process.platform) {
+  if ((0, import_node_path15.isAbsolute)(executable) || executable.includes("/") || executable.includes("\\")) {
+    const abs = (0, import_node_path15.resolve)(executable);
+    const candidates = platform === "win32" && (0, import_node_path15.extname)(abs) === "" ? [`${abs}.cmd`] : [abs];
+    for (const candidate of candidates) {
+      try {
+        return resolvedCodexCandidate(candidate, platform);
+      } catch (error) {
+        if (error instanceof AcpHostError) throw error;
+      }
+    }
+    throw new AcpHostError("executable_missing", `not executable: ${abs}`);
+  }
+  const pathValue = pathEnv ?? process.env.PATH ?? "";
+  const names = platform === "win32" && (0, import_node_path15.extname)(executable) === "" ? [`${executable}.cmd`] : [executable];
+  for (const dir of pathValue.split(import_node_path15.delimiter)) {
+    if (!dir) continue;
+    for (const name of names) {
+      const candidate = (0, import_node_path15.join)(dir, name);
+      try {
+        return resolvedCodexCandidate(candidate, platform);
+      } catch (error) {
+        if (error instanceof AcpHostError) throw error;
+      }
+    }
+  }
+  throw new AcpHostError(
+    "executable_missing",
+    `codex-acp executable not found on PATH: ${executable}`
+  );
+}
+function buildCodexLaunch(executable, args, platform = process.platform) {
+  return platform === "win32" && (0, import_node_path15.extname)(executable).toLowerCase() === ".js" ? { command: process.execPath, args: [executable, ...args] } : { command: executable, args: [...args] };
+}
+function parseCodexVersionOutput(stdout) {
+  return parseProviderVersionOutput(stdout, /@agentclientprotocol\/codex-acp\b/i);
+}
+async function assertCodexVersionFloor(executable, options) {
+  const minimumVersion = options?.minimumVersion ?? CODEX_ACP_MIN_VERSION;
+  const lastMeasuredVersion = options?.lastMeasuredVersion ?? CODEX_ACP_LAST_MEASURED_VERSION;
+  const timeoutMs = options?.timeoutMs ?? ACP_VERSION_CHECK_TIMEOUT_MS;
+  const env = options?.env ?? sanitizeChildEnv(process.env);
+  const launch = buildCodexLaunch(executable, ["--version"], options?.platform);
+  const stdout = await new Promise((resolve4, reject) => {
+    (0, import_node_child_process6.execFile)(
+      launch.command,
+      launch.args,
+      { timeout: timeoutMs, encoding: "utf8", env },
+      (error, out, stderr) => {
+        if (error) {
+          reject(
+            new AcpVersionError(
+              `failed to run ${executable} --version: ${error.message}${stderr ? ` (${stderr.trim()})` : ""}`
+            )
+          );
+          return;
+        }
+        resolve4(out);
+      }
+    );
+  });
+  const version3 = parseCodexVersionOutput(stdout);
+  if (!version3) {
+    const codexCliVersion = parseProviderVersionOutput(
+      stdout,
+      /\bcodex-cli\b/i,
+      false
+    );
+    if (codexCliVersion) {
+      throw new AcpVersionError(
+        "this is the Codex CLI; --codex-executable takes the codex-acp bridge (npm i -g @agentclientprotocol/codex-acp)",
+        "executable_not_bridge"
+      );
+    }
+    throw new AcpVersionParseError(
+      `could not parse codex-acp version from: ${stdout.trim().slice(0, 200)}`
+    );
+  }
+  assertProviderVersionFloor({
+    provider: "codex-acp",
+    version: version3,
+    minimumVersion,
+    lastMeasuredVersion,
+    ...options?.onNewerVersion ? { onNewerVersion: options.onNewerVersion } : {}
+  });
+  return version3;
+}
+function buildCodexAcpArgs() {
+  return [];
+}
+function buildCodexChildEnv(parent) {
+  return sanitizeChildEnv(parent);
+}
+function waitForChildExit2(child, timeoutMs) {
+  if (child.exitCode !== null || child.signalCode !== null) {
+    return Promise.resolve();
+  }
+  return new Promise((resolve4) => {
+    const timer2 = setTimeout(resolve4, timeoutMs);
+    child.once("exit", () => {
+      clearTimeout(timer2);
+      resolve4();
+    });
+  });
+}
+async function terminateCodexChild(child) {
+  if (child.exitCode !== null || child.signalCode !== null) return;
+  try {
+    child.kill("SIGTERM");
+  } catch {
+  }
+  await waitForChildExit2(child, CHILD_EXIT_WAIT_MS2);
+  if (child.exitCode !== null || child.signalCode !== null) return;
+  try {
+    child.kill("SIGKILL");
+  } catch {
+  }
+  await waitForChildExit2(child, CHILD_KILL_WAIT_MS2);
+  if (child.exitCode === null && child.signalCode === null) {
+    throw new AcpHostError(
+      "child_exit_timeout",
+      "Codex ACP bridge did not exit after SIGTERM and SIGKILL"
+    );
+  }
+}
+async function openCodexAcpSession(options) {
+  const parentEnv = options.env ?? process.env;
+  if (options.signal?.aborted) {
+    throw new AcpHostError(
+      "cancelled",
+      "Codex ACP bridge opening was cancelled"
+    );
+  }
+  const pathEnv = parentEnv.PATH;
+  const executable = resolveCodexExecutable(
+    options.executable ?? "codex-acp",
+    typeof pathEnv === "string" ? pathEnv : void 0
+  );
+  const env = buildCodexChildEnv(parentEnv);
+  let providerVersion;
+  if (!options.skipVersionCheck) {
+    providerVersion = await assertCodexVersionFloor(executable, { env });
+    options.onVersionNotice?.({
+      provider: "codex-acp",
+      runningVersion: providerVersion,
+      lastMeasuredVersion: CODEX_ACP_LAST_MEASURED_VERSION
+    });
+  }
+  if (options.signal?.aborted) {
+    throw new AcpHostError(
+      "cancelled",
+      "Codex ACP bridge opening was cancelled"
+    );
+  }
+  const args = buildCodexAcpArgs();
+  const launch = buildCodexLaunch(executable, args);
+  const child = (0, import_node_child_process6.spawn)(launch.command, launch.args, {
+    stdio: ["pipe", "pipe", "pipe"],
+    env,
+    cwd: options.cwd
+  });
+  const spawnError = new Promise((_resolve, reject) => {
+    child.once("error", () => {
+      reject(
+        new AcpHostError(
+          "spawn_failed",
+          "failed to spawn the Codex ACP bridge"
+        )
+      );
+    });
+  });
+  let removeAbortListener = () => void 0;
+  const abortError = new Promise((_resolve, reject) => {
+    const signal = options.signal;
+    if (!signal) return;
+    const onAbort = () => {
+      reject(
+        new AcpHostError(
+          "cancelled",
+          "Codex ACP bridge opening was cancelled"
+        )
+      );
+    };
+    if (signal.aborted) {
+      onAbort();
+      return;
+    }
+    signal.addEventListener("abort", onAbort, { once: true });
+    removeAbortListener = () => signal.removeEventListener("abort", onAbort);
+  });
+  if (!child.stdin || !child.stdout) {
+    await terminateCodexChild(child);
+    throw new AcpHostError("spawn_failed", "child missing stdio pipes");
+  }
+  const observeStderrTailOnExit = attachStderrTailExitObserver(
+    child,
+    options.onStderrTail
+  );
+  let sessionRef = null;
+  const transport = createBoundTransport({
+    readable: child.stdout,
+    writable: child.stdin,
+    requestTimeoutMs: options.requestTimeoutMs ?? ACP_DEFAULT_REQUEST_TIMEOUT_MS,
+    readableEndGraceMs: STDERR_READABLE_END_GRACE_MS,
+    getSession: () => sessionRef,
+    onChildExit: observeStderrTailOnExit
+  });
+  try {
+    const session = await Promise.race([
+      AcpHostSession.connect({
+        transport,
+        cwd: options.cwd,
+        requiredModeId: CODEX_PERMISSION_MODE_ID,
+        permissionCallback: options.permissionCallback,
+        events: options.events,
+        requestTimeoutMs: options.requestTimeoutMs,
+        clientName: options.clientName,
+        clientVersion: options.clientVersion,
+        promptsEnabled: options.promptsEnabled
+      }),
+      spawnError,
+      abortError
+    ]);
+    removeAbortListener();
+    sessionRef = session;
+    let closePromise = null;
+    const close = async () => {
+      if (closePromise) return closePromise;
+      closePromise = (async () => {
+        try {
+          await session.close();
+        } finally {
+          await terminateCodexChild(child);
+        }
+      })();
+      return closePromise;
+    };
+    return {
+      session,
+      child,
+      executable,
+      args,
+      env,
+      ...providerVersion ? { providerVersion } : {},
+      close
+    };
+  } catch (error) {
+    removeAbortListener();
+    transport.close();
+    await terminateCodexChild(child);
+    throw error;
+  }
+}
+var import_node_child_process6, import_node_fs4, import_node_path15, CHILD_EXIT_WAIT_MS2, CHILD_KILL_WAIT_MS2, WINDOWS_NPM_SHIM_MAX_BYTES2, WINDOWS_NPM_ENTRYPOINT2;
+var init_codex = __esm({
+  "src/host/codex.ts"() {
+    "use strict";
+    init_stderr_tail();
+    import_node_child_process6 = require("node:child_process");
+    import_node_fs4 = require("node:fs");
+    import_node_path15 = require("node:path");
+    init_bounds();
+    init_env();
+    init_session();
+    init_types();
+    init_version();
+    CHILD_EXIT_WAIT_MS2 = 3e3;
+    CHILD_KILL_WAIT_MS2 = 1e3;
+    WINDOWS_NPM_SHIM_MAX_BYTES2 = 64 * 1024;
+    WINDOWS_NPM_ENTRYPOINT2 = [
+      "node_modules",
+      "@agentclientprotocol",
+      "codex-acp",
+      "dist",
+      "index.js"
+    ];
+  }
+});
+
+// src/host/opencode.ts
+var opencode_exports = {};
+__export(opencode_exports, {
+  OPENCODE_FORCED_PERMISSION_TOOLS: () => OPENCODE_FORCED_PERMISSION_TOOLS,
+  OPENCODE_HOME_OWNER_FILE: () => OPENCODE_HOME_OWNER_FILE,
+  OPENCODE_HOME_PREFIX: () => OPENCODE_HOME_PREFIX,
+  OPENCODE_LAST_MEASURED_VERSION: () => OPENCODE_LAST_MEASURED_VERSION,
+  OPENCODE_MIN_VERSION: () => OPENCODE_MIN_VERSION,
+  assertForcedAskPermissionMap: () => assertForcedAskPermissionMap,
+  assertOpenCodeEffectiveConfig: () => assertOpenCodeEffectiveConfig,
+  assertOpenCodeVersionFloor: () => assertOpenCodeVersionFloor,
+  buildOpenCodeAcpArgs: () => buildOpenCodeAcpArgs,
+  buildOpenCodeChildEnv: () => buildOpenCodeChildEnv,
+  buildOpenCodeForcedPermissionConfig: () => buildOpenCodeForcedPermissionConfig,
+  buildOpenCodeHomeOwner: () => buildOpenCodeHomeOwner,
+  buildOpenCodeSafeConfigJson: () => buildOpenCodeSafeConfigJson,
+  isProcessAlive: () => isProcessAlive,
+  openOpenCodeAcpSession: () => openOpenCodeAcpSession,
+  parseOpenCodeVersionOutput: () => parseOpenCodeVersionOutput,
+  prepareOpenCodeIsolatedHome: () => prepareOpenCodeIsolatedHome,
+  readOpenCodeHomeOwner: () => readOpenCodeHomeOwner,
+  readValidatedOpenCodeAuth: () => readValidatedOpenCodeAuth,
+  releaseOpenCodeHome: () => releaseOpenCodeHome,
+  resolveOpenCodeAuthSourcePath: () => resolveOpenCodeAuthSourcePath,
+  resolveOpenCodeExecutable: () => resolveOpenCodeExecutable,
+  sweepStaleOpenCodeHomes: () => sweepStaleOpenCodeHomes,
+  terminateOpenCodeChild: () => terminateOpenCodeChild,
+  writeOpenCodeHomeOwner: () => writeOpenCodeHomeOwner
+});
+function isProcessAlive(pid) {
+  if (!Number.isSafeInteger(pid) || pid <= 0) return false;
+  try {
+    process.kill(pid, 0);
+    return true;
+  } catch {
+    return false;
+  }
+}
+function resolveOpenCodeExecutable(executable = "opencode", pathEnv) {
+  if ((0, import_node_path16.isAbsolute)(executable) || executable.includes("/")) {
+    const abs = (0, import_node_path16.resolve)(executable);
+    try {
+      (0, import_node_fs5.accessSync)(abs, import_node_fs5.constants.X_OK);
+    } catch {
+      throw new AcpHostError("executable_missing", `not executable: ${abs}`);
+    }
+    try {
+      return (0, import_node_fs5.realpathSync)(abs);
+    } catch {
+      throw new AcpHostError(
+        "executable_missing",
+        `could not realpath opencode executable: ${abs}`
+      );
+    }
+  }
+  const pathValue = pathEnv ?? process.env.PATH ?? "";
+  for (const dir of pathValue.split(":")) {
+    if (!dir) continue;
+    const candidate = (0, import_node_path16.join)(dir, executable);
+    try {
+      (0, import_node_fs5.accessSync)(candidate, import_node_fs5.constants.X_OK);
+      try {
+        return (0, import_node_fs5.realpathSync)(candidate);
+      } catch {
+        throw new AcpHostError(
+          "executable_missing",
+          `could not realpath opencode executable: ${candidate}`
+        );
+      }
+    } catch (err) {
+      if (err instanceof AcpHostError) throw err;
+    }
+  }
+  throw new AcpHostError(
+    "executable_missing",
+    `opencode executable not found on PATH: ${executable}`
+  );
+}
+function buildOpenCodeHomeOwner(options) {
+  const uid2 = typeof process.getuid === "function" ? process.getuid() : 0;
+  return {
+    version: 1,
+    pid: options.pid ?? process.pid,
+    uid: uid2,
+    instanceId: options.instanceId ?? (0, import_node_crypto19.randomUUID)(),
+    role: options.role,
+    createdAt: new Date((options.now ?? Date.now)()).toISOString()
+  };
+}
+async function writeOpenCodeHomeOwner(home, owner) {
+  const path = (0, import_node_path16.join)(home, OPENCODE_HOME_OWNER_FILE);
+  await (0, import_promises9.writeFile)(path, `${JSON.stringify(owner)}
+`, {
+    flag: "wx",
+    mode: 384
+  });
+  await (0, import_promises9.chmod)(path, 384);
+}
+async function readOpenCodeHomeOwner(home) {
+  const path = (0, import_node_path16.join)(home, OPENCODE_HOME_OWNER_FILE);
+  let raw;
+  try {
+    raw = await (0, import_promises9.readFile)(path, "utf8");
+  } catch {
+    return null;
+  }
+  try {
+    const value = JSON.parse(raw);
+    if (value.version !== 1 || !Number.isSafeInteger(value.pid) || !Number.isSafeInteger(value.uid) || typeof value.instanceId !== "string" || !value.instanceId || value.role !== "worker" && value.role !== "isolated" && value.role !== "ephemeral" || typeof value.createdAt !== "string") {
+      return null;
+    }
+    return value;
+  } catch {
+    return null;
+  }
+}
+async function releaseOpenCodeHome(home, instanceId) {
+  if (!(0, import_node_path16.isAbsolute)(home)) return;
+  const owner = await readOpenCodeHomeOwner(home);
+  if (owner && owner.instanceId !== instanceId) {
+    return;
+  }
+  try {
+    await (0, import_promises9.rm)(home, { recursive: true, force: true });
+  } catch {
+    await (0, import_promises9.chmod)(home, 448);
+    await (0, import_promises9.rm)(home, { recursive: true, force: true });
+  }
+}
+function parseOpenCodeVersionOutput(stdout) {
+  return parseProviderVersionOutput(stdout, /\bopencode\b/i);
+}
+async function assertOpenCodeVersionFloor(executable, options) {
+  const minimumVersion = options?.minimumVersion ?? OPENCODE_MIN_VERSION;
+  const lastMeasuredVersion = options?.lastMeasuredVersion ?? OPENCODE_LAST_MEASURED_VERSION;
+  const timeoutMs = options?.timeoutMs ?? ACP_VERSION_CHECK_TIMEOUT_MS;
+  const env = sanitizeChildEnv(options?.env ?? process.env);
+  const stdout = await new Promise((resolve4, reject) => {
+    (0, import_node_child_process7.execFile)(
+      executable,
+      ["--version"],
+      { timeout: timeoutMs, encoding: "utf8", env },
+      (err, out, stderr) => {
+        if (err) {
+          reject(
+            new AcpVersionError(
+              `failed to run ${executable} --version: ${err.message}${stderr ? ` (${stderr.trim()})` : ""}`
+            )
+          );
+          return;
+        }
+        resolve4(out);
+      }
+    );
+  });
+  const version3 = parseOpenCodeVersionOutput(stdout);
+  if (!version3) {
+    throw new AcpVersionParseError(
+      `could not parse opencode version from: ${stdout.trim().slice(0, 200)}`
+    );
+  }
+  assertProviderVersionFloor({
+    provider: "opencode",
+    version: version3,
+    minimumVersion,
+    lastMeasuredVersion,
+    ...options?.onNewerVersion ? { onNewerVersion: options.onNewerVersion } : {}
+  });
+  return version3;
+}
+function buildOpenCodeAcpArgs() {
+  return ["acp", "--pure"];
+}
+function buildOpenCodeForcedPermissionConfig() {
+  const permission = {};
+  for (const tool of OPENCODE_FORCED_PERMISSION_TOOLS) {
+    permission[tool] = "ask";
+  }
+  return permission;
+}
+function buildOpenCodeSafeConfigJson(options) {
+  const body = {
+    $schema: "https://opencode.ai/config.json",
+    permission: buildOpenCodeForcedPermissionConfig()
+  };
+  if (options?.model) {
+    body.model = options.model;
+  }
+  return `${JSON.stringify(body, null, 2)}
+`;
+}
+async function readValidatedOpenCodeAuth(sourceAuthPath, options) {
+  let info;
+  try {
+    info = await (0, import_promises9.lstat)(sourceAuthPath);
+  } catch (error) {
+    if (error.code === "ENOENT") {
+      if (options?.allowMissing) return null;
+      throw new AcpHostError(
+        "opencode_auth_missing",
+        "OpenCode is not signed in; run opencode auth before starting the listener"
+      );
+    }
+    throw error;
+  }
+  if (!info.isFile() || info.isSymbolicLink()) {
+    throw new AcpHostError(
+      "opencode_auth_insecure",
+      "OpenCode auth must be a secure regular file"
+    );
+  }
+  if (typeof process.getuid === "function" && (Number(info.uid) !== process.getuid() || (Number(info.mode) & 511) !== 384)) {
+    throw new AcpHostError(
+      "opencode_auth_insecure",
+      "OpenCode auth must be owned by this user with mode 0600"
+    );
+  }
+  if (Number(info.size) > MAX_OPENCODE_AUTH_BYTES) {
+    throw new AcpHostError(
+      "opencode_auth_too_large",
+      "OpenCode auth file exceeds the listener safety bound"
+    );
+  }
+  const raw = await (0, import_promises9.readFile)(sourceAuthPath);
+  if (raw.byteLength > MAX_OPENCODE_AUTH_BYTES) {
+    throw new AcpHostError(
+      "opencode_auth_too_large",
+      "OpenCode auth file exceeds the listener safety bound"
+    );
+  }
+  try {
+    JSON.parse(raw.toString("utf8"));
+  } catch {
+    throw new AcpHostError(
+      "opencode_auth_malformed",
+      "OpenCode auth file is malformed; run opencode auth again"
+    );
+  }
+  return raw;
+}
+function resolveOpenCodeAuthSourcePath(parent = process.env) {
+  const xdgData = parent.XDG_DATA_HOME;
+  if (typeof xdgData === "string" && (0, import_node_path16.isAbsolute)(xdgData)) {
+    return (0, import_node_path16.join)(xdgData, "opencode", "auth.json");
+  }
+  const home = parent.HOME ?? (0, import_node_os7.homedir)();
+  return (0, import_node_path16.join)(home, ".local", "share", "opencode", "auth.json");
+}
+async function prepareOpenCodeIsolatedHome(options) {
+  const home = options.home ?? await (0, import_promises9.mkdtemp)((0, import_node_path16.join)((0, import_node_os7.tmpdir)(), OPENCODE_HOME_PREFIX));
+  if (!(0, import_node_path16.isAbsolute)(home)) {
+    throw new AcpHostError(
+      "isolated_home_invalid",
+      "isolated OpenCode home must be absolute"
+    );
+  }
+  await (0, import_promises9.chmod)(home, 448);
+  try {
+    const xdgConfig = (0, import_node_path16.join)(home, "xdg-config");
+    const xdgData = (0, import_node_path16.join)(home, "xdg-data");
+    const xdgCache = (0, import_node_path16.join)(home, "xdg-cache");
+    const xdgState = (0, import_node_path16.join)(home, "xdg-state");
+    for (const dir of [xdgConfig, xdgData, xdgCache, xdgState]) {
+      await (0, import_promises9.mkdir)(dir, { recursive: true, mode: 448 });
+      await (0, import_promises9.chmod)(dir, 448);
+    }
+    const configDir = (0, import_node_path16.join)(xdgConfig, "opencode");
+    const dataDir = (0, import_node_path16.join)(xdgData, "opencode");
+    await (0, import_promises9.mkdir)(configDir, { recursive: true, mode: 448 });
+    await (0, import_promises9.mkdir)(dataDir, { recursive: true, mode: 448 });
+    await (0, import_promises9.chmod)(configDir, 448);
+    await (0, import_promises9.chmod)(dataDir, 448);
+    const configPath = (0, import_node_path16.join)(configDir, "opencode.json");
+    await (0, import_promises9.writeFile)(
+      configPath,
+      buildOpenCodeSafeConfigJson(
+        options.model ? { model: options.model } : void 0
+      ),
+      { flag: "wx", mode: 384 }
+    );
+    await (0, import_promises9.chmod)(configPath, 384);
+    const sourceAuth = resolveOpenCodeAuthSourcePath(options.env ?? process.env);
+    const authBytes = await readValidatedOpenCodeAuth(sourceAuth, {
+      allowMissing: options.allowMissingAuth === true
+    });
+    if (authBytes) {
+      const destAuth = (0, import_node_path16.join)(dataDir, "auth.json");
+      await (0, import_promises9.writeFile)(destAuth, authBytes, { flag: "wx", mode: 384 });
+      await (0, import_promises9.chmod)(destAuth, 384);
+    }
+    const owner = options.owner ?? buildOpenCodeHomeOwner({ role: "ephemeral" });
+    await writeOpenCodeHomeOwner(home, owner);
+    return home;
+  } catch (error) {
+    if (!options.home) {
+      await (0, import_promises9.rm)(home, { recursive: true, force: true }).catch(() => void 0);
+    }
+    throw error;
+  }
+}
+function buildOpenCodeChildEnv(parent, home) {
+  if (!(0, import_node_path16.isAbsolute)(home)) {
+    throw new AcpHostError(
+      "isolated_home_invalid",
+      "isolated OpenCode home must be absolute"
+    );
+  }
+  const base = sanitizeChildEnv(parent);
+  return {
+    ...base,
+    HOME: home,
+    XDG_CONFIG_HOME: (0, import_node_path16.join)(home, "xdg-config"),
+    XDG_DATA_HOME: (0, import_node_path16.join)(home, "xdg-data"),
+    XDG_CACHE_HOME: (0, import_node_path16.join)(home, "xdg-cache"),
+    XDG_STATE_HOME: (0, import_node_path16.join)(home, "xdg-state"),
+    // Measured 1.18.10: private home alone still merges project opencode.json.
+    OPENCODE_DISABLE_PROJECT_CONFIG: "1"
+  };
+}
+async function assertOpenCodeEffectiveConfig(options) {
+  const hostile = await (0, import_promises9.mkdtemp)((0, import_node_path16.join)((0, import_node_os7.tmpdir)(), "cswarm-opencode-hostile-"));
+  try {
+    await (0, import_promises9.chmod)(hostile, 448);
+    await (0, import_promises9.writeFile)(
+      (0, import_node_path16.join)(hostile, "opencode.json"),
+      `${JSON.stringify({
+        permission: {
+          bash: "allow",
+          edit: "allow",
+          write: "allow",
+          "*": "allow"
+        }
+      }, null, 2)}
+`,
+      { mode: 384 }
+    );
+    const stdout = await new Promise((resolve4, reject) => {
+      (0, import_node_child_process7.execFile)(
+        options.executable,
+        ["debug", "config", "--pure"],
+        {
+          timeout: options.timeoutMs ?? ACP_VERSION_CHECK_TIMEOUT_MS,
+          encoding: "utf8",
+          env: options.env,
+          cwd: hostile
+        },
+        (err, out, stderr) => {
+          if (err) {
+            reject(
+              new AcpHostError(
+                "opencode_config_probe_failed",
+                `debug config --pure failed: ${err.message}${stderr ? ` (${stderr.trim().slice(0, 200)})` : ""}`
+              )
+            );
+            return;
+          }
+          resolve4(out);
+        }
+      );
+    });
+    let parsed;
+    try {
+      parsed = JSON.parse(stdout);
+    } catch {
+      throw new AcpHostError(
+        "opencode_config_probe_failed",
+        "debug config --pure returned non-JSON"
+      );
+    }
+    if (!parsed || typeof parsed !== "object" || Array.isArray(parsed)) {
+      throw new AcpHostError(
+        "opencode_config_probe_failed",
+        "debug config --pure returned a non-object"
+      );
+    }
+    const permission = parsed.permission;
+    if (!permission || typeof permission !== "object" || Array.isArray(permission)) {
+      throw new AcpHostError(
+        "opencode_config_probe_failed",
+        "debug config --pure missing permission map"
+      );
+    }
+    const map = permission;
+    assertForcedAskPermissionMap(map);
+    return { permission: map };
+  } finally {
+    await (0, import_promises9.rm)(hostile, { recursive: true, force: true }).catch(() => void 0);
+  }
+}
+function assertForcedAskPermissionMap(map) {
+  for (const tool of OPENCODE_FORCED_PERMISSION_TOOLS) {
+    const value = map[tool];
+    if (value === "allow") {
+      throw new AcpHostError(
+        "opencode_project_config_active",
+        `effective OpenCode config still allows tool ${tool}; OPENCODE_DISABLE_PROJECT_CONFIG failed`
+      );
+    }
+    if (tool === "*") {
+      if (value !== "ask") {
+        throw new AcpHostError(
+          "opencode_config_probe_failed",
+          "effective OpenCode config missing forced-ask wildcard"
+        );
+      }
+      continue;
+    }
+    const star = map["*"];
+    const effective = value === void 0 || value === null ? star : value;
+    if (effective !== "ask") {
+      throw new AcpHostError(
+        "opencode_config_probe_failed",
+        `effective OpenCode config lacks forced-ask for tool ${tool}`
+      );
+    }
+  }
+  for (const critical of ["bash", "write", "edit", "execute", "*"]) {
+    const value = map[critical];
+    const star = map["*"];
+    const effective = critical === "*" ? value : value === void 0 || value === null ? star : value;
+    if (effective !== "ask") {
+      throw new AcpHostError(
+        "opencode_config_probe_failed",
+        `critical tool ${critical} is not forced-ask`
+      );
+    }
+  }
+}
+async function sweepStaleOpenCodeHomes(options) {
+  const maxAgeMs = options?.maxAgeMs ?? STALE_HOME_MAX_AGE_MS;
+  const now = options?.now ?? Date.now();
+  const alive = options?.isAlive ?? isProcessAlive;
+  const root = options?.root ?? (0, import_node_os7.tmpdir)();
+  const selfUid = typeof process.getuid === "function" ? process.getuid() : null;
+  let removed = 0;
+  let entries;
+  try {
+    entries = await (0, import_promises9.readdir)(root);
+  } catch {
+    return 0;
+  }
+  for (const name of entries) {
+    if (!name.startsWith(OPENCODE_HOME_PREFIX)) continue;
+    const full = (0, import_node_path16.join)(root, name);
+    try {
+      const st = await (0, import_promises9.lstat)(full);
+      if (!st.isDirectory() || st.isSymbolicLink()) continue;
+      if (selfUid !== null && typeof st.uid === "number" && st.uid !== selfUid) {
+        continue;
+      }
+      if ((Number(st.mode) & 511) !== 448) {
+        continue;
+      }
+      const owner = await readOpenCodeHomeOwner(full);
+      if (owner) {
+        if (selfUid !== null && owner.uid !== selfUid) continue;
+        if (alive(owner.pid)) {
+          continue;
+        }
+        await (0, import_promises9.rm)(full, { recursive: true, force: true });
+        removed += 1;
+        continue;
+      }
+      if (now - st.mtimeMs < maxAgeMs) continue;
+      await (0, import_promises9.rm)(full, { recursive: true, force: true });
+      removed += 1;
+    } catch {
+    }
+  }
+  return removed;
+}
+function waitForChildExit3(child, timeoutMs) {
+  if (child.exitCode !== null || child.signalCode !== null) {
+    return Promise.resolve();
+  }
+  return new Promise((resolve4) => {
+    const timer2 = setTimeout(() => resolve4(), timeoutMs);
+    child.once("exit", () => {
+      clearTimeout(timer2);
+      resolve4();
+    });
+  });
+}
+async function terminateOpenCodeChild(child) {
+  if (child.exitCode !== null || child.signalCode !== null) return;
+  try {
+    child.kill("SIGTERM");
+  } catch {
+  }
+  await waitForChildExit3(child, CHILD_EXIT_WAIT_MS3);
+  if (child.exitCode !== null || child.signalCode !== null) return;
+  try {
+    child.kill("SIGKILL");
+  } catch {
+  }
+  await waitForChildExit3(child, CHILD_KILL_WAIT_MS3);
+  if (child.exitCode === null && child.signalCode === null) {
+    throw new AcpHostError(
+      "child_exit_timeout",
+      "OpenCode child did not exit after SIGTERM and SIGKILL"
+    );
+  }
+}
+async function openOpenCodeAcpSession(options) {
+  await sweepStaleOpenCodeHomes().catch(() => 0);
+  const pathEnv = (options.env ?? process.env).PATH;
+  const executable = resolveOpenCodeExecutable(
+    options.executable ?? "opencode",
+    typeof pathEnv === "string" ? pathEnv : void 0
+  );
+  let home = options.isolatedHome;
+  let createdHome = false;
+  if (!home) {
+    home = await prepareOpenCodeIsolatedHome({
+      env: options.env ?? process.env,
+      ...options.model ? { model: options.model } : {},
+      ...options.allowMissingAuth === true ? { allowMissingAuth: true } : {}
+    });
+    createdHome = true;
+  }
+  const env = buildOpenCodeChildEnv(options.env ?? process.env, home);
+  let childStarted = false;
+  const disposeHome = async () => {
+    if (createdHome) {
+      try {
+        await (0, import_promises9.rm)(home, { recursive: true, force: true });
+      } catch {
+        await (0, import_promises9.chmod)(home, 448);
+        await (0, import_promises9.rm)(home, { recursive: true, force: true });
+      }
+    }
+  };
+  try {
+    if (!options.skipVersionCheck) {
+      await assertOpenCodeVersionFloor(executable, {
+        env,
+        ...options.onVersionNotice ? { onNewerVersion: options.onVersionNotice } : {}
+      });
+    }
+    if (!options.skipConfigProbe) {
+      await assertOpenCodeEffectiveConfig({
+        executable,
+        env
+      });
+    }
+    const args = buildOpenCodeAcpArgs();
+    const child = (0, import_node_child_process7.spawn)(executable, args, {
+      stdio: ["pipe", "pipe", "pipe"],
+      env,
+      cwd: options.cwd
+    });
+    childStarted = true;
+    if (!child.stdin || !child.stdout) {
+      await terminateOpenCodeChild(child);
+      await disposeHome();
+      throw new AcpHostError("spawn_failed", "child missing stdio pipes");
+    }
+    const observeStderrTailOnExit = attachStderrTailExitObserver(
+      child,
+      options.onStderrTail
+    );
+    let sessionRef = null;
+    const transport = createBoundTransport({
+      readable: child.stdout,
+      writable: child.stdin,
+      requestTimeoutMs: options.requestTimeoutMs ?? ACP_DEFAULT_REQUEST_TIMEOUT_MS,
+      readableEndGraceMs: STDERR_READABLE_END_GRACE_MS,
+      getSession: () => sessionRef,
+      onChildExit: observeStderrTailOnExit
+    });
+    try {
+      const session = await AcpHostSession.connect({
+        transport,
+        cwd: options.cwd,
+        permissionCallback: options.permissionCallback,
+        events: options.events,
+        requestTimeoutMs: options.requestTimeoutMs,
+        clientName: options.clientName,
+        clientVersion: options.clientVersion,
+        promptsEnabled: options.promptsEnabled
+      });
+      sessionRef = session;
+      let closePromise = null;
+      const close = async () => {
+        if (closePromise) return closePromise;
+        closePromise = (async () => {
+          try {
+            await session.close();
+          } finally {
+            await terminateOpenCodeChild(child);
+            await disposeHome();
+          }
+        })();
+        return closePromise;
+      };
+      return { session, child, executable, args, env, home, close };
+    } catch (err) {
+      transport.close();
+      let termErr = null;
+      try {
+        await terminateOpenCodeChild(child);
+      } catch (e) {
+        termErr = e;
+      }
+      if (termErr) {
+        throw termErr;
+      }
+      await disposeHome();
+      throw err;
+    }
+  } catch (err) {
+    if (!childStarted) {
+      await disposeHome();
+    }
+    throw err;
+  }
+}
+var import_node_child_process7, import_node_crypto19, import_node_fs5, import_promises9, import_node_os7, import_node_path16, OPENCODE_HOME_OWNER_FILE, MAX_OPENCODE_AUTH_BYTES, OPENCODE_HOME_PREFIX, CHILD_EXIT_WAIT_MS3, CHILD_KILL_WAIT_MS3, STALE_HOME_MAX_AGE_MS;
+var init_opencode = __esm({
+  "src/host/opencode.ts"() {
+    "use strict";
+    import_node_child_process7 = require("node:child_process");
+    import_node_crypto19 = require("node:crypto");
+    init_stderr_tail();
+    import_node_fs5 = require("node:fs");
+    import_promises9 = require("node:fs/promises");
+    import_node_os7 = require("node:os");
+    import_node_path16 = require("node:path");
+    init_bounds();
+    init_env();
+    init_session();
+    init_types();
+    init_version();
+    OPENCODE_HOME_OWNER_FILE = ".cswarm-opencode-owner.json";
+    MAX_OPENCODE_AUTH_BYTES = 256 * 1024;
+    OPENCODE_HOME_PREFIX = "cswarm-opencode-home-";
+    CHILD_EXIT_WAIT_MS3 = 3e3;
+    CHILD_KILL_WAIT_MS3 = 1e3;
+    STALE_HOME_MAX_AGE_MS = 60 * 60 * 1e3;
+  }
+});
+
 // src/cli.ts
 var cli_exports = {};
 __export(cli_exports, {
@@ -13527,14 +16406,13 @@ __export(cli_exports, {
   usage: () => usage
 });
 module.exports = __toCommonJS(cli_exports);
-var import_node_crypto19 = require("node:crypto");
-var import_node_module = require("node:module");
-var import_node_child_process5 = require("node:child_process");
-var import_node_fs2 = require("node:fs");
-var import_promises9 = require("node:fs/promises");
-var import_node_os7 = require("node:os");
-var import_node_path13 = require("node:path");
-var import_promises10 = require("node:readline/promises");
+var import_node_crypto20 = require("node:crypto");
+var import_node_child_process8 = require("node:child_process");
+var import_node_fs6 = require("node:fs");
+var import_promises10 = require("node:fs/promises");
+var import_node_os8 = require("node:os");
+var import_node_path17 = require("node:path");
+var import_promises11 = require("node:readline/promises");
 
 // src/protocol/events.ts
 var SCHEMA_VERSION = 1;
@@ -24827,9 +27705,9 @@ var arraySerializer = function arraySerializer2(xs, serializer, options, typarra
   if (!xs.length)
     return "{}";
   const first = xs[0];
-  const delimiter = typarray === 1020 ? ";" : ",";
+  const delimiter3 = typarray === 1020 ? ";" : ",";
   if (Array.isArray(first) && !first.type)
-    return "{" + xs.map((x) => arraySerializer2(x, serializer, options, typarray)).join(delimiter) + "}";
+    return "{" + xs.map((x) => arraySerializer2(x, serializer, options, typarray)).join(delimiter3) + "}";
   return "{" + xs.map((x) => {
     if (x === void 0) {
       x = options.transform.undefined;
@@ -24837,7 +27715,7 @@ var arraySerializer = function arraySerializer2(xs, serializer, options, typarra
         throw Errors.generic("UNDEFINED_VALUE", "Undefined values are not allowed");
     }
     return x === null ? "null" : '"' + arrayEscape(serializer ? serializer(x.type ? x.value : x) : "" + x) + '"';
-  }).join(delimiter) + "}";
+  }).join(delimiter3) + "}";
 };
 var arrayParserState = {
   i: 0,
@@ -24852,7 +27730,7 @@ var arrayParser = function arrayParser2(x, parser, typarray) {
 };
 function arrayParserLoop(s, x, parser, typarray) {
   const xs = [];
-  const delimiter = typarray === 1020 ? ";" : ",";
+  const delimiter3 = typarray === 1020 ? ";" : ",";
   for (; s.i < x.length; s.i++) {
     s.char = x[s.i];
     if (s.quoted) {
@@ -24876,7 +27754,7 @@ function arrayParserLoop(s, x, parser, typarray) {
       s.last < s.i && xs.push(parser ? parser(x.slice(s.last, s.i)) : x.slice(s.last, s.i));
       s.last = s.i + 1;
       break;
-    } else if (s.char === delimiter && s.p !== "}" && s.p !== '"') {
+    } else if (s.char === delimiter3 && s.p !== "}" && s.p !== '"') {
       xs.push(parser ? parser(x.slice(s.last, s.i)) : x.slice(s.last, s.i));
       s.last = s.i + 1;
     }
@@ -33752,97 +36630,8 @@ async function reportRenderedBroadcasts(target2, token, workspaceId2, signalIds,
   return { attempted: new Set(signalIds).size, reported, failures };
 }
 
-// src/host/types.ts
-var TRANSIENT_ACP_CODES = /* @__PURE__ */ new Set([
-  "timeout",
-  "child_exit",
-  "transport"
-]);
-var AcpHostError = class extends Error {
-  code;
-  constructor(code, message) {
-    super(message);
-    this.name = "AcpHostError";
-    this.code = code;
-  }
-};
-var AcpVersionError = class extends AcpHostError {
-  constructor(message, code = "version_refused") {
-    super(code, message);
-    this.name = "AcpVersionError";
-  }
-};
-var AcpVersionParseError = class extends AcpVersionError {
-  constructor(message) {
-    super(message, "version_unparseable");
-    this.name = "AcpVersionParseError";
-  }
-};
-var AcpPermissionCanaryError = class extends AcpHostError {
-  constructor(message, reasonCode = null, minimumRequiredVersion = null, peerError = null) {
-    super("permission_canary_failed", message);
-    this.reasonCode = reasonCode;
-    this.minimumRequiredVersion = minimumRequiredVersion;
-    this.peerError = peerError;
-    this.name = "AcpPermissionCanaryError";
-  }
-  reasonCode;
-  minimumRequiredVersion;
-  peerError;
-};
-
-// src/host/version.ts
-var CORE_IDENTIFIER = "(?:0|[1-9]\\d*)";
-var PRERELEASE_IDENTIFIER = "(?:0|[1-9]\\d*|[A-Za-z-][0-9A-Za-z-]*)";
-var BUILD_IDENTIFIER = "[0-9A-Za-z-]+";
-var SEMVER_SOURCE = `${CORE_IDENTIFIER}\\.${CORE_IDENTIFIER}\\.${CORE_IDENTIFIER}(?:-${PRERELEASE_IDENTIFIER}(?:\\.${PRERELEASE_IDENTIFIER})*)?(?:\\+${BUILD_IDENTIFIER}(?:\\.${BUILD_IDENTIFIER})*)?`;
-var SEMVER_RE = new RegExp(`^${SEMVER_SOURCE}$`);
-function parseSemVer(value) {
-  if (!SEMVER_RE.test(value)) return null;
-  const withoutBuild = value.split("+", 1)[0];
-  const dash = withoutBuild.indexOf("-");
-  const coreText = dash === -1 ? withoutBuild : withoutBuild.slice(0, dash);
-  const prereleaseText = dash === -1 ? null : withoutBuild.slice(dash + 1);
-  const coreParts = coreText.split(".");
-  if (coreParts.length !== 3) return null;
-  return {
-    core: [BigInt(coreParts[0]), BigInt(coreParts[1]), BigInt(coreParts[2])],
-    prerelease: prereleaseText === null ? null : prereleaseText.split(".")
-  };
-}
-function compareSemVer(left, right) {
-  const a = parseSemVer(left);
-  const b2 = parseSemVer(right);
-  if (!a || !b2) {
-    throw new AcpVersionParseError(
-      `cannot compare invalid semantic versions: ${JSON.stringify(left)} and ${JSON.stringify(right)}`
-    );
-  }
-  for (let index = 0; index < 3; index += 1) {
-    if (a.core[index] < b2.core[index]) return -1;
-    if (a.core[index] > b2.core[index]) return 1;
-  }
-  if (a.prerelease === null && b2.prerelease === null) return 0;
-  if (a.prerelease === null) return 1;
-  if (b2.prerelease === null) return -1;
-  const length = Math.max(a.prerelease.length, b2.prerelease.length);
-  for (let index = 0; index < length; index += 1) {
-    const leftPart = a.prerelease[index];
-    const rightPart = b2.prerelease[index];
-    if (leftPart === void 0) return -1;
-    if (rightPart === void 0) return 1;
-    if (leftPart === rightPart) continue;
-    const leftNumeric = /^\d+$/.test(leftPart);
-    const rightNumeric = /^\d+$/.test(rightPart);
-    if (leftNumeric && rightNumeric) {
-      return BigInt(leftPart) < BigInt(rightPart) ? -1 : 1;
-    }
-    if (leftNumeric) return -1;
-    if (rightNumeric) return 1;
-    return leftPart < rightPart ? -1 : 1;
-  }
-  return 0;
-}
+// src/cli.ts
+init_version();
 
 // src/listener/types.ts
 var LISTENER_PROMPT_TIMEOUT_MS = 6e5;
@@ -33874,6 +36663,7 @@ var LISTENER_DELIVERY_HOLD_RELEASE_REMEDIES = {
 };
 
 // src/listener/engine.ts
+init_types();
 var UUID_RE16 = /^[0-9a-f]{8}-[0-9a-f]{4}-[1-8][0-9a-f]{3}-[89ab][0-9a-f]{3}-[0-9a-f]{12}$/i;
 function listenerReplyCommandId(signalId, effectOrdinal = 0) {
   if (!UUID_RE16.test(signalId)) {
@@ -34240,9 +37030,8 @@ var FileListenerEffectStore = class {
 
 // src/listener/runtime.ts
 var import_node_crypto15 = require("node:crypto");
-
-// src/host/bounds.ts
-var ACP_DEFAULT_REQUEST_TIMEOUT_MS = 12e4;
+init_bounds();
+init_types();
 
 // src/listener/main-routing.ts
 var import_node_path7 = require("node:path");
@@ -35922,25 +38711,7 @@ var import_node_crypto16 = require("node:crypto");
 var import_node_net = require("node:net");
 var import_promises6 = require("node:fs/promises");
 var import_node_path8 = require("node:path");
-
-// src/host/credential-redaction.ts
-var EXOTIC_SEPARATORS = "\\u00a0\\u1680\\u2000-\\u200d\\u2028\\u2029\\u202a-\\u202e\\u2060\\u2066-\\u2069\\u202f\\u205f\\u3000\\ufeff";
-var SEPARATOR_CLASS_SOURCE = "\\t\\n\\x0b\\f\\r " + EXOTIC_SEPARATORS;
-var ANSI_ESCAPE_GLOBAL_RE2 = new RegExp("\\u001b\\[[0-?]*[ -\\/]*[@-~]", "g");
-var CONTROL_AND_SEPARATOR_STRIP_RE = new RegExp(
-  "[\\u0000-\\u0008\\u000b-\\u001f\\u007f-\\u009f" + EXOTIC_SEPARATORS + "]",
-  "g"
-);
-var SECRET_SHAPE_RE = new RegExp(
-  `swm_(?:agt|inv|cap)_[^${SEPARATOR_CLASS_SOURCE}]*|cswarm-wake:[A-Za-z0-9_-]{43}`,
-  "i"
-);
-var SECRET_SHAPE_GLOBAL_RE = new RegExp(SECRET_SHAPE_RE.source, "gi");
-function redactCredentialText(value) {
-  return value.replace(ANSI_ESCAPE_GLOBAL_RE2, "").replace(CONTROL_AND_SEPARATOR_STRIP_RE, "").replace(SECRET_SHAPE_GLOBAL_RE, "[redacted-credential]");
-}
-
-// src/listener/control.ts
+init_credential_redaction();
 var UUID_RE20 = /^[0-9a-f]{8}-[0-9a-f]{4}-[1-8][0-9a-f]{3}-[89ab][0-9a-f]{3}-[0-9a-f]{12}$/i;
 var SEMVER_RE2 = /^(?:0|[1-9]\d*)\.(?:0|[1-9]\d*)\.(?:0|[1-9]\d*)(?:-(?:0|[1-9]\d*|[A-Za-z-][0-9A-Za-z-]*)(?:\.(?:0|[1-9]\d*|[A-Za-z-][0-9A-Za-z-]*))*)?(?:\+[0-9A-Za-z-]+(?:\.[0-9A-Za-z-]+)*)?$/;
 var MAX_STATUS_BYTES = 32 * 1024;
@@ -36606,6 +39377,8 @@ async function queryListenerControl(paths, command2, timeoutMs = CONTROL_TIMEOUT
 
 // src/listener/supervisor.ts
 var import_node_crypto17 = require("node:crypto");
+init_credential_redaction();
+init_types();
 var UUID_RE21 = /^[0-9a-f]{8}-[0-9a-f]{4}-[1-8][0-9a-f]{3}-[89ab][0-9a-f]{3}-[0-9a-f]{12}$/i;
 var LISTENER_RESTART_MAX_ATTEMPTS = 5;
 var LISTENER_RESTART_INITIAL_MS = 1e3;
@@ -38117,48 +40890,7 @@ async function openListenerDeliveryJournal(options) {
 // src/listener/detach.ts
 var import_node_child_process3 = require("node:child_process");
 var import_node_path10 = require("node:path");
-
-// src/host/env.ts
-var ALLOWED_EXACT = /* @__PURE__ */ new Set([
-  "PATH",
-  "HOME",
-  "USER",
-  "LOGNAME",
-  "SHELL",
-  "TMPDIR",
-  "TMP",
-  "TEMP",
-  "LANG",
-  "LC_ALL",
-  "LC_CTYPE",
-  "LC_MESSAGES",
-  "LC_COLLATE",
-  "LC_TIME",
-  "TERM",
-  "COLORTERM",
-  "NO_COLOR",
-  "FORCE_COLOR",
-  "XDG_CONFIG_HOME",
-  "XDG_DATA_HOME",
-  "XDG_CACHE_HOME",
-  "XDG_RUNTIME_DIR",
-  "XDG_STATE_HOME",
-  "GROK_HOME"
-]);
-var DENY_NAME_RE = /(?:^|_)(?:SWARM|SECRET|TOKEN|PASSWORD|PASSWD|CREDENTIAL|PRIVATE_KEY|API_KEY|AUTH|COOKIE)(?:_|$)/i;
-function sanitizeChildEnv(parent = process.env) {
-  const out = {};
-  for (const [key2, value] of Object.entries(parent)) {
-    if (value === void 0) continue;
-    if (!ALLOWED_EXACT.has(key2)) continue;
-    if (DENY_NAME_RE.test(key2)) continue;
-    if (key2.startsWith("SWARM_")) continue;
-    out[key2] = value;
-  }
-  return out;
-}
-
-// src/listener/detach.ts
+init_env();
 function isNativeAbsolutePath(value, platform = process.platform) {
   return platform === "win32" ? import_node_path10.win32.isAbsolute(value) : import_node_path10.posix.isAbsolute(value);
 }
@@ -39312,18 +42044,7 @@ function renderListenerAttendanceCanary(result, workspaceId2, principalId) {
 
 // src/listener/activity.ts
 var import_node_crypto18 = require("node:crypto");
-
-// src/host/sanitize.ts
-var SECRET_VALUE_RE = /(?:(?:api[_-]?key|token|secret|password|authorization|bearer)\s*[:=]\s*)(["']?)([^\s"'\\]{8,})\1/gi;
-var JWT_RE = /\beyJ[A-Za-z0-9_-]{10,}\.[A-Za-z0-9_-]{10,}\.[A-Za-z0-9_-]{10,}\b/g;
-function redactString(value) {
-  return redactCredentialText(value).replace(SECRET_VALUE_RE, (_m, q) => `redacted=${q}***${q}`).replace(JWT_RE, "[redacted-jwt]");
-}
-function sanitizeText(text) {
-  return redactString(text);
-}
-
-// src/listener/activity.ts
+init_sanitize();
 var ACTIVITY_FRAME_INTERVAL_MS = 750;
 var ACTIVITY_HEARTBEAT_MS = 15e3;
 var ACTIVITY_TOOL_TITLE_MAX = 160;
@@ -41083,20 +43804,49 @@ async function revokeAgentToken(input) {
   };
 }
 
+// src/listener/claude-canary-classify.ts
+var CLAUDE_CODE_VERSION_REQUIRED_RE = /\bClaude Code (\d+\.\d+\.\d+) does not support this model; version (\d+\.\d+\.\d+) or newer is required\b/;
+var CLAUDE_AUTH_FAILURE_RE = /\b(?:authentication failed|failed to authenticate|authentication required|not authenticated|OAuth (?:sign-in|login|token)|OAuth session (?:expired|could not be refreshed)|keychain\/OAuth|please (?:log|sign) in)\b/i;
+var CLAUDE_CANARY_TIMEOUT_RE = /^ACP request timed out: session\/prompt(?: \(failed \d+ attempts\))?$/;
+function classifyClaudeCanaryFailure(detail, typedReasonCode, peerError) {
+  const recorded = detail?.trim() ?? "";
+  const peerData = peerError?.data;
+  const peerErrorKind = peerData && typeof peerData === "object" && !Array.isArray(peerData) ? peerData.errorKind : void 0;
+  if (typedReasonCode === "claude_canary_auth_failed" || (typedReasonCode === "rpc_error" || typedReasonCode === null || typedReasonCode === void 0) && (peerError?.code === -32e3 || peerErrorKind === "authentication_failed")) {
+    return { code: "claude_canary_auth_failed", minimumRequiredVersion: null };
+  }
+  const demanded = CLAUDE_CODE_VERSION_REQUIRED_RE.exec(recorded);
+  if (demanded?.[2]) {
+    return {
+      code: "claude_bridge_version_required",
+      minimumRequiredVersion: demanded[2]
+    };
+  }
+  if (typedReasonCode === "claude_canary_timeout" || typedReasonCode === "timeout" || (typedReasonCode === null || typedReasonCode === void 0) && CLAUDE_CANARY_TIMEOUT_RE.test(recorded)) {
+    return { code: "claude_canary_timeout", minimumRequiredVersion: null };
+  }
+  if (typedReasonCode === "claude_bridge_version_required") {
+    return {
+      code: "claude_bridge_version_required",
+      minimumRequiredVersion: demanded?.[2] ?? null
+    };
+  }
+  if ((typedReasonCode === "rpc_error" || typedReasonCode === null || typedReasonCode === void 0) && CLAUDE_AUTH_FAILURE_RE.test(recorded)) {
+    return { code: "claude_canary_auth_failed", minimumRequiredVersion: null };
+  }
+  return { code: "claude_canary_unknown", minimumRequiredVersion: null };
+}
+
 // src/cli.ts
 var import_meta = {};
-var requireFromCli = (0, import_node_module.createRequire)(import_meta.url);
 function loadHostClaude() {
-  return requireFromCli("./host/claude.js");
+  return Promise.resolve().then(() => (init_claude(), claude_exports));
 }
 function loadHostCodex() {
-  return requireFromCli("./host/codex.js");
+  return Promise.resolve().then(() => (init_codex(), codex_exports));
 }
 function loadHostOpenCode() {
-  return requireFromCli("./host/opencode.js");
-}
-function loadClaudeListenerModel() {
-  return requireFromCli("./listener/claude-model.js");
+  return Promise.resolve().then(() => (init_opencode(), opencode_exports));
 }
 var KNOWN_FLAGS = /* @__PURE__ */ new Set([
   "about",
@@ -41214,12 +43964,12 @@ var BOOLEAN_FLAGS = /* @__PURE__ */ new Set([
 ]);
 var UUID_RE25 = /^[0-9a-f]{8}-[0-9a-f]{4}-[1-8][0-9a-f]{3}-[89ab][0-9a-f]{3}-[0-9a-f]{12}$/i;
 function packageVersion() {
-  if ("0.1.62".length > 0) {
-    return "0.1.62";
+  if ("0.1.63".length > 0) {
+    return "0.1.63";
   }
   try {
     const value = JSON.parse(
-      (0, import_node_fs2.readFileSync)(new URL("../package.json", import_meta.url), "utf8")
+      (0, import_node_fs6.readFileSync)(new URL("../package.json", import_meta.url), "utf8")
     );
     const version3 = value.version;
     if (typeof version3 !== "string") return "unknown";
@@ -41692,7 +44442,7 @@ async function stdinInviteLink() {
   return link;
 }
 async function confirmationLine(prompt) {
-  const reader = (0, import_promises10.createInterface)({
+  const reader = (0, import_promises11.createInterface)({
     input: process.stdin,
     output: process.stderr,
     terminal: Boolean(process.stdin.isTTY)
@@ -41829,7 +44579,7 @@ async function runNew(args) {
   assertWorkspaceName(name);
   const cloud = await target(args);
   const human = await humanCredential(args, cloud);
-  const proposedId = (0, import_node_crypto19.randomUUID)();
+  const proposedId = (0, import_node_crypto20.randomUUID)();
   let result;
   try {
     result = await new ThinCommandClient(cloud).sendConnect({
@@ -43205,13 +45955,13 @@ function prepareSignalAttachments(localPaths) {
   return localPaths.map((localPath) => {
     let bytes;
     try {
-      bytes = (0, import_node_fs2.readFileSync)(localPath);
+      bytes = (0, import_node_fs6.readFileSync)(localPath);
     } catch {
       throw new Error(
         `could not read ${localPath}; check the path and permissions; no upload was started`
       );
     }
-    const name = (0, import_node_path13.basename)(localPath);
+    const name = (0, import_node_path17.basename)(localPath);
     if (bytes.byteLength < 1) {
       throw new Error(`${localPath} is empty; no upload was started`);
     }
@@ -43231,8 +45981,8 @@ function prepareSignalAttachments(localPaths) {
       name,
       bytes,
       contentType,
-      fileId: (0, import_node_crypto19.randomUUID)(),
-      versionId: (0, import_node_crypto19.randomUUID)(),
+      fileId: (0, import_node_crypto20.randomUUID)(),
+      versionId: (0, import_node_crypto20.randomUUID)(),
       createCommandId: newCommandId(),
       commitCommandId: newCommandId()
     };
@@ -43754,7 +46504,7 @@ async function runResume(args) {
   if (/[\u0000-\u001f\u007f-\u009f]/.test(suppliedCredentialPath)) {
     throw new Error("--agent-token-file must not contain control characters");
   }
-  const credentialFile = (0, import_node_path13.resolve)(suppliedCredentialPath);
+  const credentialFile = (0, import_node_path17.resolve)(suppliedCredentialPath);
   const cloud = await target(args);
   const workspaceId2 = listenerUuid(
     args.optional("workspace-id") ?? process.env.SWARM_CLOUD_WORKSPACE_ID,
@@ -44269,7 +47019,7 @@ function listenerPermissionMode(value) {
 function listenerStateDirectory(args) {
   const value = args.optional("state-dir");
   if (value === void 0) return void 0;
-  if (!(0, import_node_path13.isAbsolute)(value)) {
+  if (!(0, import_node_path17.isAbsolute)(value)) {
     throw new Error("--state-dir must be an absolute path");
   }
   return value;
@@ -44526,7 +47276,7 @@ function listenerLapseNotices(status, summary) {
 async function listenerProviderInstallEvidence(status) {
   if (status.provider !== "claude") return null;
   try {
-    const notice = await loadHostClaude().inspectClaudeBridgeExecutable(
+    const notice = await (await loadHostClaude()).inspectClaudeBridgeExecutable(
       status.providerExecutable ?? "claude-agent-acp",
       { pathEnv: process.env.PATH, env: process.env }
     );
@@ -44914,7 +47664,7 @@ function listenerFailureMessage(code, provider, detail, reasonCode, minimumRequi
   }
   if (code === "permission_canary_failed") {
     if (provider === "claude") {
-      const shape = loadClaudeListenerModel().classifyClaudeCanaryFailure(detail, reasonCode);
+      const shape = classifyClaudeCanaryFailure(detail, reasonCode);
       const ran = "the Claude ACP permission canary ran, but no workspace signal prompt was delivered";
       const response = `bridge response [${shape.code}]: ${quotedListenerFailureDetail(detail)}`;
       if (shape.code === "claude_bridge_version_required") {
@@ -44947,13 +47697,13 @@ function listenerFailureMessage(code, provider, detail, reasonCode, minimumRequi
   }
   return `listener failed (${code}); check cswarm listen status before starting another`;
 }
-function resolveDetachedClaudeExecutable(executable = "claude-agent-acp", pathEnv = process.env.PATH) {
+async function resolveDetachedClaudeExecutable(executable = "claude-agent-acp", pathEnv = process.env.PATH) {
   try {
-    return loadHostClaude().resolveClaudeExecutable(executable, pathEnv);
+    return (await loadHostClaude()).resolveClaudeExecutable(executable, pathEnv);
   } catch (error) {
     const code = error.code;
     if (typeof code === "string") {
-      if ((0, import_node_path13.isAbsolute)(executable) || executable.includes("/") || executable.includes("\\")) {
+      if ((0, import_node_path17.isAbsolute)(executable) || executable.includes("/") || executable.includes("\\")) {
         const detail = error instanceof Error ? error.message : code;
         throw new Error(
           `could not use --claude-executable: ${detail}; install the current bridge with npm install -g @agentclientprotocol/claude-agent-acp@latest if this path should be replaced`
@@ -44964,13 +47714,13 @@ function resolveDetachedClaudeExecutable(executable = "claude-agent-acp", pathEn
     throw error;
   }
 }
-function resolveDetachedCodexExecutable(executable = "codex-acp", pathEnv = process.env.PATH) {
+async function resolveDetachedCodexExecutable(executable = "codex-acp", pathEnv = process.env.PATH) {
   try {
-    return loadHostCodex().resolveCodexExecutable(executable, pathEnv);
+    return (await loadHostCodex()).resolveCodexExecutable(executable, pathEnv);
   } catch (error) {
     const code = error.code;
     if (typeof code === "string") {
-      if ((0, import_node_path13.isAbsolute)(executable) || executable.includes("/") || executable.includes("\\")) {
+      if ((0, import_node_path17.isAbsolute)(executable) || executable.includes("/") || executable.includes("\\")) {
         const detail = error instanceof Error ? error.message : code;
         throw new Error(
           `could not use --codex-executable: ${detail}; install the current bridge with npm install -g @agentclientprotocol/codex-acp@latest if this path should be replaced`
@@ -45392,7 +48142,7 @@ async function runListenStart(args) {
   assertDurableListenerCredential(agent);
   const principalId = agent.principalId;
   const cwd = args.optional("cwd") ?? process.cwd();
-  if (!(0, import_node_path13.isAbsolute)(cwd)) throw new Error("--cwd must be an absolute path");
+  if (!(0, import_node_path17.isAbsolute)(cwd)) throw new Error("--cwd must be an absolute path");
   const permissionMode = listenerPermissionMode(args.optional("permissions"));
   const stateDirectory2 = listenerStateDirectory(args);
   const paths = listenerPaths({
@@ -45439,7 +48189,7 @@ async function runListenStart(args) {
     });
   } else {
     const entrypoint = process.argv[1];
-    if (!entrypoint || !(0, import_node_path13.isAbsolute)(entrypoint)) {
+    if (!entrypoint || !(0, import_node_path17.isAbsolute)(entrypoint)) {
       throw new Error("cannot locate the cswarm executable for detached start");
     }
     const artifact = JSON.stringify(agentCredentialArtifact({
@@ -45449,14 +48199,14 @@ async function runListenStart(args) {
       token: agent.token,
       expiresAt: agent.expiresAt
     }));
-    const opencodeExecutable = provider === "opencode" && args.optional("opencode-executable") !== void 0 ? loadHostOpenCode().resolveOpenCodeExecutable(args.required("opencode-executable")) : void 0;
+    const opencodeExecutable = provider === "opencode" && args.optional("opencode-executable") !== void 0 ? (await loadHostOpenCode()).resolveOpenCodeExecutable(args.required("opencode-executable")) : void 0;
     let claudeExecutable;
     if (provider === "claude" && args.optional("claude-executable") !== void 0) {
-      claudeExecutable = resolveDetachedClaudeExecutable(args.required("claude-executable"));
+      claudeExecutable = await resolveDetachedClaudeExecutable(args.required("claude-executable"));
     }
     let codexExecutable;
     if (provider === "codex" && args.optional("codex-executable") !== void 0) {
-      codexExecutable = resolveDetachedCodexExecutable(args.required("codex-executable"));
+      codexExecutable = await resolveDetachedCodexExecutable(args.required("codex-executable"));
     }
     const startedAtFloorMs = Date.now();
     const child = await spawnDetachedListener({
@@ -45606,7 +48356,7 @@ async function runListenSupervisor(args) {
   const agent = await agentCredential(args, { implicitStdin: true });
   assertDurableListenerCredential(agent, principalId);
   const cwd = args.required("cwd");
-  if (!(0, import_node_path13.isAbsolute)(cwd)) throw new Error("--cwd must be an absolute path");
+  if (!(0, import_node_path17.isAbsolute)(cwd)) throw new Error("--cwd must be an absolute path");
   const status = await runConfiguredListener({
     cloud,
     workspaceId: workspaceId2,
@@ -45919,7 +48669,7 @@ local ${local.state} server-live ${server.is_live} server-session ${server.sessi
   const customContextPath = args.optional("session-context");
   if (customContextPath !== void 0) {
     const root = defaultSessionRootDirectory();
-    if (!(0, import_node_path13.resolve)(customContextPath).startsWith(`${root}${import_node_path13.sep}`)) {
+    if (!(0, import_node_path17.resolve)(customContextPath).startsWith(`${root}${import_node_path17.sep}`)) {
       throw new SessionContextError(
         "session_context_outside_default_tree",
         `--session-context must lie under ${root} so listen start and hook check can find it; omit the flag to use the default path`
@@ -45933,7 +48683,7 @@ local ${local.state} server-live ${server.is_live} server-session ${server.sessi
   );
   const agent = await agentCredential(args);
   const tokenFile = args.optional("agent-token-file");
-  if (tokenFile === void 0 || !(0, import_node_path13.isAbsolute)(tokenFile)) {
+  if (tokenFile === void 0 || !(0, import_node_path17.isAbsolute)(tokenFile)) {
     throw new Error(
       "session start needs --agent-token-file <absolute-path> so the context can reference the sole token file"
     );
@@ -45943,7 +48693,7 @@ local ${local.state} server-live ${server.is_live} server-session ${server.sessi
     target: cloud,
     workspaceId: selectedWorkspace,
     credential: agent.token,
-    tokenFile: (0, import_node_path13.resolve)(tokenFile),
+    tokenFile: (0, import_node_path17.resolve)(tokenFile),
     tokenPrincipalId: agent.principalId,
     mode: mode3,
     provider,
@@ -46029,8 +48779,8 @@ async function listenerHookSurfacePresent(instanceDirectory, cwd, principalId) {
   if (surface.exists) return true;
   const repositoryRoot = gitRepositoryRoot(cwd) ?? cwd;
   const settingsPaths = /* @__PURE__ */ new Set([
-    (0, import_node_path13.join)(repositoryRoot, CLAUDE_PROJECT_SETTINGS_IGNORE_LINE),
-    (0, import_node_path13.join)(repositoryRoot, CLAUDE_REPO_SETTINGS_IGNORE_LINE),
+    (0, import_node_path17.join)(repositoryRoot, CLAUDE_PROJECT_SETTINGS_IGNORE_LINE),
+    (0, import_node_path17.join)(repositoryRoot, CLAUDE_REPO_SETTINGS_IGNORE_LINE),
     userClaudeSettingsTarget().path
   ]);
   for (const path of settingsPaths) {
@@ -46096,19 +48846,19 @@ function claudeUserPromptHookSnippet(principalId) {
 var CLAUDE_PROJECT_SETTINGS_IGNORE_LINE = ".claude/settings.local.json";
 var CLAUDE_REPO_SETTINGS_IGNORE_LINE = ".claude/settings.json";
 function claudeUserScopeWarning(settingsPath) {
-  return `Warning: --user scope writes settings to ${(0, import_node_path13.dirname)(settingsPath)} and applies to every Claude Code session that reads that directory.`;
+  return `Warning: --user scope writes settings to ${(0, import_node_path17.dirname)(settingsPath)} and applies to every Claude Code session that reads that directory.`;
 }
 function userClaudeSettingsTarget() {
   const configured = process.env.CLAUDE_CONFIG_DIR;
-  const directory = configured && configured.length > 0 ? (0, import_node_path13.resolve)(configured) : (0, import_node_path13.join)((0, import_node_os7.homedir)(), ".claude");
+  const directory = configured && configured.length > 0 ? (0, import_node_path17.resolve)(configured) : (0, import_node_path17.join)((0, import_node_os8.homedir)(), ".claude");
   return {
-    path: (0, import_node_path13.join)(directory, "settings.json"),
+    path: (0, import_node_path17.join)(directory, "settings.json"),
     scope: "user",
     projectRoot: null
   };
 }
 function gitRepositoryRoot(cwd) {
-  const result = (0, import_node_child_process5.spawnSync)(
+  const result = (0, import_node_child_process8.spawnSync)(
     "git",
     ["-C", cwd, "rev-parse", "--show-toplevel"],
     { encoding: "utf8", stdio: ["ignore", "pipe", "ignore"] }
@@ -46118,7 +48868,7 @@ function gitRepositoryRoot(cwd) {
   }
   if (result.status !== 0) return null;
   const root = result.stdout.trim();
-  if (!(0, import_node_path13.isAbsolute)(root)) {
+  if (!(0, import_node_path17.isAbsolute)(root)) {
     throw new Error("hook could not resolve an absolute repository root");
   }
   return root;
@@ -46126,14 +48876,14 @@ function gitRepositoryRoot(cwd) {
 function projectClaudeSettingsTarget(scope, ignoreLine) {
   const root = gitRepositoryRoot(process.cwd());
   const base = root ?? process.cwd();
-  const path = (0, import_node_path13.join)(base, ignoreLine);
+  const path = (0, import_node_path17.join)(base, ignoreLine);
   if (root === null) return { path, scope, projectRoot: base };
-  const tracked = (0, import_node_child_process5.spawnSync)(
+  const tracked = (0, import_node_child_process8.spawnSync)(
     "git",
     ["-C", root, "ls-files", "--error-unmatch", "--", ignoreLine],
     { encoding: "utf8", stdio: ["ignore", "ignore", "ignore"] }
   );
-  const ignored = (0, import_node_child_process5.spawnSync)(
+  const ignored = (0, import_node_child_process8.spawnSync)(
     "git",
     ["-C", root, "check-ignore", "--quiet", "--", ignoreLine],
     { encoding: "utf8", stdio: ["ignore", "ignore", "ignore"] }
@@ -46143,7 +48893,7 @@ function projectClaudeSettingsTarget(scope, ignoreLine) {
   }
   if (tracked.status === 0 || ignored.status !== 0) {
     throw new Error(
-      `Refusing to write ${path}: repository Claude settings could be staged and shared with every checkout. ` + (tracked.status === 0 ? "It is already tracked; remove it from Git tracking first. " : "") + `Add this exact line to ${(0, import_node_path13.join)(root, ".gitignore")}: ${ignoreLine}`
+      `Refusing to write ${path}: repository Claude settings could be staged and shared with every checkout. ` + (tracked.status === 0 ? "It is already tracked; remove it from Git tracking first. " : "") + `Add this exact line to ${(0, import_node_path17.join)(root, ".gitignore")}: ${ignoreLine}`
     );
   }
   return { path, scope, projectRoot: root };
@@ -46158,7 +48908,7 @@ function claudeSettingsTarget(args) {
 function readClaudeSettings(path) {
   let raw;
   try {
-    raw = (0, import_node_fs2.readFileSync)(path, "utf8");
+    raw = (0, import_node_fs6.readFileSync)(path, "utf8");
   } catch (error) {
     if (error.code === "ENOENT") return {};
     throw error;
@@ -46358,8 +49108,8 @@ async function runHook(args) {
     process.stdout.write(`${claudeUserScopeWarning(path)}
 `);
   }
-  (0, import_node_fs2.mkdirSync)((0, import_node_path13.dirname)(path), { recursive: true });
-  (0, import_node_fs2.writeFileSync)(path, `${JSON.stringify(updated, null, 2)}
+  (0, import_node_fs6.mkdirSync)((0, import_node_path17.dirname)(path), { recursive: true });
+  (0, import_node_fs6.writeFileSync)(path, `${JSON.stringify(updated, null, 2)}
 `, {
     encoding: "utf8",
     mode: 384
@@ -46445,8 +49195,8 @@ async function uploadNamedFile(context, name, bytes, options = {}) {
     credential: context.selected.bearer,
     fetcher: context.selected.fetcher
   };
-  const fileId = (0, import_node_crypto19.randomUUID)();
-  const versionId = (0, import_node_crypto19.randomUUID)();
+  const fileId = (0, import_node_crypto20.randomUUID)();
+  const versionId = (0, import_node_crypto20.randomUUID)();
   const createCommandId = newCommandId();
   const commitCommandId = newCommandId();
   const created = await onceRetried(
@@ -46476,11 +49226,11 @@ async function runFilePut(args) {
   const context = await fileContext(args, ["name"], 3);
   let bytes;
   try {
-    bytes = (0, import_node_fs2.readFileSync)(localPath);
+    bytes = (0, import_node_fs6.readFileSync)(localPath);
   } catch {
     throw new Error(`could not read ${localPath}; check the path and permissions`);
   }
-  const name = args.optional("name") ?? (0, import_node_path13.basename)(localPath);
+  const name = args.optional("name") ?? (0, import_node_path17.basename)(localPath);
   const committed = await uploadNamedFile(context, name, bytes);
   if (args.has("json")) {
     process.stdout.write(`${JSON.stringify(committed, null, 2)}
@@ -46545,12 +49295,12 @@ async function runFileGet(args) {
     fetcher: context.selected.fetcher
   };
   const grant = await fileDownloadUrl(send, { fileId, versionN });
-  const destination = args.optional("out") ?? (0, import_node_path13.basename)(grant.name);
+  const destination = args.optional("out") ?? (0, import_node_path17.basename)(grant.name);
   const bytes = await onceRetried(
     (attempt) => getObject(context.cloud, grant.download_path, fetch, attempt),
     {}
   );
-  writeDestination(destination, bytes, args.has("force"), import_node_fs2.writeFileSync);
+  writeDestination(destination, bytes, args.has("force"), import_node_fs6.writeFileSync);
   if (args.has("json")) {
     process.stdout.write(
       `${JSON.stringify(
@@ -46757,7 +49507,7 @@ async function runBrainPut(args) {
   let bytes;
   if (localPath) {
     try {
-      bytes = (0, import_node_fs2.readFileSync)(localPath);
+      bytes = (0, import_node_fs6.readFileSync)(localPath);
     } catch {
       throw new Error(`could not read ${localPath}; check the path and permissions`);
     }
@@ -47065,7 +49815,7 @@ async function runDogfood(args) {
   const { selectedWorkspace, bearer } = await commandWorkspaceAndCredential(args, cloud);
   const client = new ThinCommandClient(cloud);
   const route = stream(args);
-  const taskId = args.optional("task-id") ?? (0, import_node_crypto19.randomUUID)();
+  const taskId = args.optional("task-id") ?? (0, import_node_crypto20.randomUUID)();
   const ttl = Number(args.optional("ttl-ms") ?? "3600000");
   if (!Number.isSafeInteger(ttl) || ttl <= 0 || ttl > 144e5) {
     throw new Error("--ttl-ms must be an integer in 1..14400000");
@@ -47128,10 +49878,10 @@ async function runSeed(args) {
     throw new Error("DATABASE_URL is required for the fixture bridge");
   }
   const tokenOut = process.env.SEED_TOKEN_OUT;
-  if (!tokenOut || !(0, import_node_path13.isAbsolute)(tokenOut)) {
+  if (!tokenOut || !(0, import_node_path17.isAbsolute)(tokenOut)) {
     throw new Error("SEED_TOKEN_OUT must be an absolute path");
   }
-  const tokenFile = await (0, import_promises9.open)(tokenOut, "wx", 384).catch((error) => {
+  const tokenFile = await (0, import_promises10.open)(tokenOut, "wx", 384).catch((error) => {
     if (error.code === "EEXIST") {
       throw new Error("SEED_TOKEN_OUT already exists; refusing to overwrite it");
     }
@@ -47170,7 +49920,7 @@ async function runSeed(args) {
       tokenWritten = true;
     }
     await tokenFile.close();
-    if (!tokenWritten) await (0, import_promises9.unlink)(tokenOut);
+    if (!tokenWritten) await (0, import_promises10.unlink)(tokenOut);
     process.stdout.write(`${JSON.stringify({
       userId: result.userId,
       membershipRole: result.membershipRole,
@@ -47183,7 +49933,7 @@ async function runSeed(args) {
 `);
   } catch (error) {
     await tokenFile.close().catch(() => void 0);
-    if (!tokenWritten) await (0, import_promises9.unlink)(tokenOut).catch(() => void 0);
+    if (!tokenWritten) await (0, import_promises10.unlink)(tokenOut).catch(() => void 0);
     throw error;
   }
 }
