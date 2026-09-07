@@ -147,8 +147,8 @@ test("Codex startup failures give install and bounded diagnostic remedies", () =
   );
 });
 
-test("detached Codex resolution preserves the current install remedy", () => {
-  assert.throws(
+test("detached Codex resolution preserves the current install remedy", async () => {
+  await assert.rejects(
     () =>
       resolveDetachedCodexExecutable(
         "definitely-missing-codex-acp",
@@ -201,8 +201,8 @@ test("Claude startup failures give install and bounded diagnostic remedies", () 
   );
 });
 
-test("detached Claude resolution preserves the current install remedy", () => {
-  assert.throws(
+test("detached Claude resolution preserves the current install remedy", async () => {
+  await assert.rejects(
     () =>
       resolveDetachedClaudeExecutable(
         "definitely-missing-claude-agent-acp",
@@ -217,7 +217,7 @@ test("explicit unusable Claude path keeps its diagnostic and reinstall option", 
   const executable = join(root, "claude-agent-acp");
   try {
     await writeFile(executable, "not executable", { mode: 0o600 });
-    assert.throws(
+    await assert.rejects(
       () => resolveDetachedClaudeExecutable(executable, "/unused"),
       (error: unknown) => {
         const message = error instanceof Error ? error.message : "";

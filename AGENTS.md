@@ -133,6 +133,11 @@ may report `mode: push` only while the Realtime socket is subscribed.
 only live `--route` is `main`. A signal wakes the seat's own session. The listener claims the
 delivery into that seat's queue. It does not start Grok, Claude, Codex, or OpenCode.
 
+**The source suites never load the shipped bundle.** `npm test` and `test:p1-cli` run TypeScript
+through tsx. A lane that changes module loading must run `scripts/build-release.sh` and check its
+EXIT CODE (it runs the artifact and fails on a bad build). `cmd | grep` hides the exit code —
+that is how 0.1.62 shipped.
+
 ## Session continuity
 
 Read the newest `docs/org/*-RESUME-HERE.md` on `main` before re-deriving work:

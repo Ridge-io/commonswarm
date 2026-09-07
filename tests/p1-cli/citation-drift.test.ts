@@ -37,48 +37,48 @@ interface Citation {
 }
 
 const CITATIONS: Citation[] = [
-  // src/cli.ts — C9 lazy ACP host/model loads (no static import on the session path)
+  // src/cli.ts — C9 lazy ACP host loads (no static import on the session path)
   {
     citedBy: "identity client r6 C9 (lazy host/claude load)",
     file: "src/cli.ts",
-    lines: [358, 359],
-    contains: "requireFromCli(\"./host/claude.js\")",
+    lines: [361, 362],
+    contains: "import(\"./host/claude.js\")",
   },
   {
     citedBy: "identity client r6 C9 (lazy host/codex load)",
     file: "src/cli.ts",
-    lines: [362, 363],
-    contains: "requireFromCli(\"./host/codex.js\")",
+    lines: [365, 366],
+    contains: "import(\"./host/codex.js\")",
   },
   {
     citedBy: "identity client r6 C9 (lazy host/opencode load)",
     file: "src/cli.ts",
-    lines: [366, 367],
-    contains: "requireFromCli(\"./host/opencode.js\")",
+    lines: [369, 370],
+    contains: "import(\"./host/opencode.js\")",
   },
   {
-    citedBy: "identity client r6 C9 (lazy claude-model classifier load)",
+    citedBy: "identity client r6 C9 (claude canary classifier, host-free)",
     file: "src/cli.ts",
-    lines: [370, 371],
-    contains: "requireFromCli(\"./listener/claude-model.js\")",
+    lines: [354, 354],
+    contains: "classifyClaudeCanaryFailure",
   },
   {
     citedBy: "identity client r6 C9 (explicit Claude executable path)",
     file: "src/cli.ts",
-    lines: [5576, 5576],
-    contains: "loadHostClaude().resolveClaudeExecutable",
+    lines: [5575, 5575],
+    contains: "(await loadHostClaude()).resolveClaudeExecutable",
   },
   {
     citedBy: "identity client r6 C9 (explicit Codex executable path)",
     file: "src/cli.ts",
-    lines: [5602, 5602],
-    contains: "loadHostCodex().resolveCodexExecutable",
+    lines: [5601, 5601],
+    contains: "(await loadHostCodex()).resolveCodexExecutable",
   },
   {
     citedBy: "identity client r6 C9 (explicit OpenCode executable path)",
     file: "src/cli.ts",
-    lines: [6230, 6230],
-    contains: "loadHostOpenCode().resolveOpenCodeExecutable",
+    lines: [6229, 6229],
+    contains: "(await loadHostOpenCode()).resolveOpenCodeExecutable",
   },
   // site/src/lib/agent-connect.ts — mintedHorizon and the retired-constant note
   {

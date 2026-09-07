@@ -1,7 +1,6 @@
 #!/usr/bin/env node
 
 import { randomUUID } from "node:crypto";
-import { createRequire } from "node:module";
 import { spawnSync } from "node:child_process";
 import { mkdirSync, readFileSync, writeFileSync } from "node:fs";
 import { open, unlink } from "node:fs/promises";
@@ -352,23 +351,23 @@ import {
 import { SESSION_MODES } from "./cloud/session-contract.js";
 import { AgentSessionManager } from "./cloud/session-manager.js";
 import { AgentSessionClient } from "./cloud/session-client.js";
+import { classifyClaudeCanaryFailure } from "./listener/claude-canary-classify.js";
 
-const requireFromCli = createRequire(import.meta.url);
-
-function loadHostClaude(): typeof import("./host/claude.js") {
-  return requireFromCli("./host/claude.js");
+/* Literal `import("./…")` so esbuild inlines the module into the CJS artifact.
+ * `createRequire(import.meta.url)` is empty under `--format=cjs` and crashed
+ * 0.1.62 at load. A runtime require of a relative path is also missing from
+ * the single-file bundle. The session graph walker only follows
+ * `import … from`, so ACP hosts stay off that graph. */
+function loadHostClaude(): Promise<typeof import("./host/claude.js")> {
+  return import("./host/claude.js");
 }
 
-function loadHostCodex(): typeof import("./host/codex.js") {
-  return requireFromCli("./host/codex.js");
+function loadHostCodex(): Promise<typeof import("./host/codex.js")> {
+  return import("./host/codex.js");
 }
 
-function loadHostOpenCode(): typeof import("./host/opencode.js") {
-  return requireFromCli("./host/opencode.js");
-}
-
-function loadClaudeListenerModel(): typeof import("./listener/claude-model.js") {
-  return requireFromCli("./listener/claude-model.js");
+function loadHostOpenCode(): Promise<typeof import("./host/opencode.js")> {
+  return import("./host/opencode.js");
 }
 
 /**
@@ -4843,7 +4842,7 @@ export async function listenerProviderInstallEvidence(
 ): Promise<ListenerProviderInstallEvidence | null> {
   if (status.provider !== "claude") return null;
   try {
-    const notice = await loadHostClaude().inspectClaudeBridgeExecutable(
+    const notice = await (await loadHostClaude()).inspectClaudeBridgeExecutable(
       status.providerExecutable ?? "claude-agent-acp",
       { pathEnv: process.env.PATH, env: process.env },
     );
@@ -5507,7 +5506,7 @@ export function listenerFailureMessage(
   }
   if (code === "permission_canary_failed") {
     if (provider === "claude") {
-      const shape = loadClaudeListenerModel().classifyClaudeCanaryFailure(detail, reasonCode);
+      const shape = classifyClaudeCanaryFailure(detail, reasonCode);
       const ran =
         "the Claude ACP permission canary ran, but no workspace signal prompt was delivered";
       const response = `bridge response [${shape.code}]: ${quotedListenerFailureDetail(detail)}`;
@@ -5568,12 +5567,12 @@ export function listenerFailureMessage(
 }
 
 /** Resolve the detached Claude bridge while preserving its install remedy. */
-export function resolveDetachedClaudeExecutable(
+export async function resolveDetachedClaudeExecutable(
   executable = "claude-agent-acp",
   pathEnv = process.env.PATH,
-): string {
+): Promise<string> {
   try {
-    return loadHostClaude().resolveClaudeExecutable(executable, pathEnv);
+    return (await loadHostClaude()).resolveClaudeExecutable(executable, pathEnv);
   } catch (error) {
     const code = (error as { code?: unknown }).code;
     if (typeof code === "string") {
@@ -5594,12 +5593,12 @@ export function resolveDetachedClaudeExecutable(
 }
 
 /** Resolve the detached Codex bridge while preserving its install remedy. */
-export function resolveDetachedCodexExecutable(
+export async function resolveDetachedCodexExecutable(
   executable = "codex-acp",
   pathEnv = process.env.PATH,
-): string {
+): Promise<string> {
   try {
-    return loadHostCodex().resolveCodexExecutable(executable, pathEnv);
+    return (await loadHostCodex()).resolveCodexExecutable(executable, pathEnv);
   } catch (error) {
     const code = (error as { code?: unknown }).code;
     if (typeof code === "string") {
@@ -6227,15 +6226,15 @@ async function runListenStart(args: Arguments): Promise<void> {
        an absent one is simply absent. */
     const opencodeExecutable = provider === "opencode" &&
         args.optional("opencode-executable") !== undefined
-      ? loadHostOpenCode().resolveOpenCodeExecutable(args.required("opencode-executable"))
+      ? (await loadHostOpenCode()).resolveOpenCodeExecutable(args.required("opencode-executable"))
       : undefined;
     let claudeExecutable: string | undefined;
     if (provider === "claude" && args.optional("claude-executable") !== undefined) {
-      claudeExecutable = resolveDetachedClaudeExecutable(args.required("claude-executable"));
+      claudeExecutable = await resolveDetachedClaudeExecutable(args.required("claude-executable"));
     }
     let codexExecutable: string | undefined;
     if (provider === "codex" && args.optional("codex-executable") !== undefined) {
-      codexExecutable = resolveDetachedCodexExecutable(args.required("codex-executable"));
+      codexExecutable = await resolveDetachedCodexExecutable(args.required("codex-executable"));
     }
     /* D-080. Captured BEFORE the spawn on purpose: any status file older than this belongs to
      * an earlier run in this config-hash-keyed directory, whatever pid it carries. Taking it
