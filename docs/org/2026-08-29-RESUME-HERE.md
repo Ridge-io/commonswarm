@@ -2783,3 +2783,34 @@ and 0.1.61 refused the start, which is the check working), Finisher(hook), MrSen
 toms-m1-max-mbp — Wren(claude) plus MrSEO/MrAnalyst/MrMarketing/MrBenchmark(grok), all ready;
 nikkis-macbook-air — Joist(hook). PEAstra stays down on the Codex bridge.
 Filed for later: the lane measured `listen stop` returning `stopped` while the pid was still alive.
+
+## 2026-09-06 21:xx UTC — IDENTITY LANDED (0483eb9), migrations + edges LIVE; 0.1.62 npm build was BROKEN and is rolled back
+
+CSwarmStrategist's handoff (signal ceae272f) merged as `0483eb9`. Code candidate 63acfdb verified: every
+non-docs file in my merged tree is byte-identical to it. Gates on the merged tree: 924/0, p1-cli 552/0,
+check:tests, check:edge, site 547/0/1, p1-local 48/0, p1-server 182/0 — the last two only after restarting
+the local stack (`supabase start --ignore-health-check`; a stale auth container against a freshly reset
+database gave `column "email_confirmed_at" does not exist` and 0/48 + 0/182, which is an environment
+failure, not 230 defects).
+
+Production, in the handoff's order: migrations `20260906000020/30/40` applied; verified `swarm_read`
+projects `managed_at` and NOT `wake_id`, `swarm_read` cannot select `key_hash`, and the session table
+carries its three policies. `command`, `read` and `activity` deployed together after `check:edge` on the
+exact SHA. Control: an unmanaged principal on the 0.1.61 CLI still posts (`accepted`) and reads. Site
+deployed with the identity UI.
+
+**Incident: npm `commonswarm@0.1.62` crashes on startup and I published it.** `src/cli.ts:356`
+`createRequire(import.meta.url)` (from 4ea5aa1) is empty in esbuild's CJS bundle, so the artifact throws
+`ERR_INVALID_ARG_VALUE` at load. `scripts/build-release.sh` caught it (exit 1 from its run-the-artifact
+check) and my release chain piped it into `grep`, which hid the exit code — the same class as the
+`cmd && echo` trap in AGENTS.md. `build-npm.sh` failed the same way, invisibly. The GitHub release step
+then failed on a missing `.sha256` (zsh nomatch), which is the only reason `curl | sh` was never affected:
+GitHub's latest release is still v0.1.61. Remedy, verified at `registry.npmjs.org` rather than a cached
+`npm view`: 0.1.62 deprecated, `latest` moved back to 0.1.61. The site was rebuilt advertising 0.1.61
+(a temporary version pin, not committed) because `/download` had begun naming a version with no asset.
+Second, latent defect in the same code: those loaders cannot resolve inside the single-file bundle at all.
+Lane `lane/bundle-loaders` (Grok, `brief-bundle-loaders.md`) fixes both and adds a gate that RUNS the built
+artifact; it ships as 0.1.63 and the site is redeployed from it. Memory: `never-grep-a-gate`.
+
+**Not done tonight:** the per-seat cutover to managed sessions (handoff step 5) — everything is additive
+until a seat opts in, and the operator asked for quiet after this lands.
