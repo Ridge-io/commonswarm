@@ -1,6 +1,9 @@
 #!/usr/bin/env node
 
 import { randomUUID } from "node:crypto";
+import { AGENT_PROFILE_COMMANDS } from "./cloud/agent-onboarding-contract.js";
+import { AgentSetupError, readAgentProfile, readProfileCredential, profileSessionContext } from "./cloud/agent-profile.js";
+import { ONBOARDING_BOOLEAN_FLAGS, ONBOARDING_VALUE_FLAGS, onboardingUsage, runOnboardingCommand } from "./onboarding-cli.js";
 import { spawnSync } from "node:child_process";
 import { mkdirSync, readFileSync, realpathSync, writeFileSync } from "node:fs";
 import { open, unlink } from "node:fs/promises";
@@ -375,7 +378,8 @@ function loadHostOpenCode(): Promise<typeof import("./host/opencode.js")> {
  * the parser for why that distinction is load-bearing. Kept honest by a gate that reads the
  * usage text and requires every flag printed there to appear here.
  */
-const KNOWN_FLAGS = new Set([
+export const KNOWN_FLAGS = new Set([
+  ...ONBOARDING_BOOLEAN_FLAGS, ...ONBOARDING_VALUE_FLAGS,
   "about", "agent-token-file", "agent-token-stdin", "all-devices", "allow-unattended", "anon-key", "attach", "branch", "capability-id",
   "claude-executable", "codex-executable", "confirm", "confirm-standing", "cooldown", "cwd", "defer-over", "device-id", "effort", "email",
   "epoch", "evidence", "follow", "force", "force-file-store", "foreground", "grok-executable", "head-sha",
@@ -389,6 +393,7 @@ const KNOWN_FLAGS = new Set([
 ]);
 
 const BOOLEAN_FLAGS = new Set([
+  ...ONBOARDING_BOOLEAN_FLAGS,
   "agent-token-stdin",
   "all-devices",
   "allow-unattended",
@@ -524,6 +529,29 @@ class Arguments {
 
   all(name: string): string[] {
     return [...(this.flags.get(name) ?? [])];
+  }
+
+  async expandAgentProfile(): Promise<void> {
+    const path = this.optional("profile");
+    if (path === undefined) return;
+    if (!(AGENT_PROFILE_COMMANDS as readonly string[]).includes(this.positionals[0] ?? "")) {
+      throw new AgentSetupError("profile_command_invalid", `--profile is supported by: ${AGENT_PROFILE_COMMANDS.join(", ")}.`);
+    }
+    const conflicts = ["agent-token-file", "agent-token-stdin", "url", "anon-key", "workspace-id"].filter(flag => this.has(flag));
+    if (conflicts.length > 0) throw new AgentSetupError("profile_flags_conflict", `Do not combine --profile with ${conflicts.map(flag => `--${flag}`).join(", ")}.`);
+    const profile = await readAgentProfile(path);
+    await readProfileCredential(profile);
+    if (this.has("host-session-id") && !["session", "listen"].includes(this.positionals[0]!)) {
+      const selected = await profileSessionContext(profile, this.required("host-session-id"));
+      if (selected) {
+        const explicit = this.optional("session-context");
+        if (explicit !== undefined && resolve(explicit) !== resolve(selected.path)) throw new AgentSetupError("profile_session_conflict", "The supplied session context does not belong to this profile's host session.");
+        if (explicit === undefined) this.push("session-context", selected.path);
+      }
+      this.flags.delete("host-session-id");
+    }
+    this.flags.delete("profile");
+    for (const [flag, value] of [["agent-token-file", profile.credential_file], ["url", profile.url], ["anon-key", profile.anon_key], ["workspace-id", profile.workspace_id]]) this.push(flag!, value!);
   }
 
   assertShape(
@@ -8344,9 +8372,11 @@ async function main(): Promise<void> {
   const verb = args.positionals[0];
   if (!verb || verb === "help" || args.has("help")) {
     if (verb === "help") args.assertShape([], 1);
-    process.stdout.write(`${usage()}\n`);
+    process.stdout.write(`${usage()}\n${onboardingUsage()}\n`);
     return;
   }
+  if (await runOnboardingCommand(args)) return;
+  await args.expandAgentProfile();
   if (verb === "__listen-supervisor") {
     await runListenSupervisor(args);
     return;
@@ -8591,6 +8621,13 @@ export function isCliMain(): boolean {
 
 if (isCliMain()) {
   main().catch((error) => {
+    if (["setup", "check", "receive"].includes(process.argv[2] ?? "") && process.argv.includes("--json")) {
+      process.stdout.write(`${JSON.stringify({ ok: false, error: {
+        code: error instanceof AgentSetupError ? error.code : "onboarding_failed", message: safeError(error),
+      } })}\n`);
+      process.exitCode = 1;
+      return;
+    }
     if (process.argv[2] === "hook" && process.argv[3] === "check") {
       process.exitCode = 0;
       return;

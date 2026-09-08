@@ -154,7 +154,7 @@ test("Get prompt is own-agent only and reuses the existing prompt copy path", ()
   assert.match(connect, /this\.#agents\.find\(\(agent\) => agent\.principalId === principalId\)/);
   assert.match(connect, /select\.value = identity\.principalId/);
   assert.match(mint, /mintAgentCredential\([\s\S]*identity/);
-  assert.match(mint, /this\.#prompt = dashboardAgentPrompt\(\{[\s\S]*credential/);
+  assert.match(mint, /const promptInput = \{[\s\S]*credential[\s\S]*this\.#prompt = dashboardAgentPrompt\(promptInput\)/);
   assert.match(copy, /navigator\.clipboard\.writeText\(this\.#prompt\)/);
 });
 

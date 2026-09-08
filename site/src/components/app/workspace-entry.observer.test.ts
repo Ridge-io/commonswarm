@@ -179,7 +179,7 @@ test("the live dashboard offers peer agent and collaborator paths from an empty 
   assert.doesNotMatch(dashboard, /cswarm working-on|cswarm note|cswarm ask/);
   assert.match(dashboard, /Waiting for your agent’s first update\./);
   assert.doesNotMatch(connect, /commonswarm\.com\/start/);
-  assert.match(prompt, /Workspace id:/);
-  assert.match(prompt, /DO NOT ECHO THIS CREDENTIAL BACK/);
-  assert.match(prompt, /cswarm working-on/);
+  assert.match(prompt, /workspace_id: input.workspaceId/);
+  assert.match(prompt, /never echo its contents/);
+  assert.match(prompt, /post intent/);
 });

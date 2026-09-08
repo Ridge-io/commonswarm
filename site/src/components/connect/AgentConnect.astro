@@ -105,6 +105,8 @@ const {
       </p>
     </div>
 
+    <details class="ac__advanced">
+      <summary>Key settings</summary>
     <div class="ac__field" data-field-wrap="ttl">
       <label class="ac__label" for="ac-ttl">Key lifetime</label>
       {/* Three values, not a free field (operator direction 2026-08-19, API-key mental
@@ -132,6 +134,8 @@ const {
         to lapse sooner.
       </p>
     </div>
+
+    </details>
 
     <p class="ac__form-error" data-slot="form-error" role="alert" hidden></p>
     <button
@@ -170,8 +174,8 @@ const {
       <p class="ac__eyebrow">Ready to hand off</p>
       <h2 class="ac__result-title">Your agent prompt is ready.</h2>
       <p class="ac__result-lead">
-        Paste it into your assistant as one message. This page will close the prompt when
-        the agent first connects.
+        Paste the prompt into your assistant. It will ask how you want to receive messages.
+        This page closes the prompt when the agent first connects.
       </p>
     </div>
 
@@ -186,8 +190,8 @@ const {
           stroke-linejoin="round"></path>
       </svg>
       <span>
-        The key appears once, on this screen. It is not stored here and cannot be shown again
-        — copy it before you leave. If you lose it, create another.
+        Keep the prompt or setup file private. Copy it before you leave this screen.
+        If you lose it, create another.
       </span>
     </p>
 
@@ -201,6 +205,8 @@ const {
     <button class="ac__btn ac__btn--primary ac__btn--copy" type="button" data-action="copy">
       <span data-slot="copy-label">Copy prompt</span>
     </button>
+
+    <button class="ac__btn ac__btn--quiet" type="button" data-action="download-connection">Use a setup file</button>
 
     <p class="ac__status" role="status" aria-live="polite" data-slot="copy-status"></p>
 
@@ -236,7 +242,7 @@ const {
     myWorkspaces,
     uuid,
   } from "../../lib/commonswarm";
-  import { dashboardAgentPrompt } from "./agent-prompt";
+  import { dashboardAgentPrompt, dashboardAgentConnection, dashboardAgentFilePrompt } from "./agent-prompt";
 
   /*
    * A custom element rather than a page script, so the host page can drop <AgentConnect /> in
@@ -249,6 +255,9 @@ const {
 
     /** Held only between the mint returning and the reader clearing the screen. */
     #prompt: string | null = null;
+    #connection: string | null = null;
+    #filePrompt: string | null = null;
+    #connectionName = "cswarm-connection.json";
     #tokenId: string | null = null;
     #workspaceId = "";
     #workspaceName = "";
@@ -318,6 +327,7 @@ const {
     }
 
     #wire() {
+      this.#q<HTMLButtonElement>('[data-action="download-connection"]')?.addEventListener("click", () => this.#downloadConnection());
       this.#q<HTMLFormElement>('[data-panel="form"]')?.addEventListener("submit", (event) => {
         event.preventDefault();
         void this.#mint();
@@ -393,8 +403,24 @@ const {
      * was ever written, so emptying that node and dropping the reference is the whole of it —
      * there is no cache, no localStorage entry, and no history entry to clean up.
      */
+    #downloadConnection() {
+      if (this.#connection === null || this.#filePrompt === null) return;
+      const url = URL.createObjectURL(new Blob([this.#connection], { type: "application/json" }));
+      const link = document.createElement("a");
+      link.href = url;
+      link.download = this.#connectionName;
+      link.click();
+      window.setTimeout(() => URL.revokeObjectURL(url), 1000);
+      this.#prompt = this.#filePrompt;
+      this.#text("prompt", this.#prompt);
+      this.#resetCopyLabel();
+      this.#text("copy-status", "Attach the downloaded setup file and paste this shorter prompt into your assistant.");
+    }
+
     #forget() {
       this.#prompt = null;
+      this.#connection = null;
+      this.#filePrompt = null;
       this.#tokenId = null;
       window.clearInterval(this.#pollTimer);
       this.#pollTimer = undefined;
@@ -675,13 +701,17 @@ const {
         const target = deployment();
         if (!target) throw new NoDeployment();
 
-        this.#prompt = dashboardAgentPrompt({
+        const promptInput = {
           credential,
           workspaceId: this.#workspaceId,
           workspaceName: this.#workspaceName,
           deploymentUrl: target.url,
           anonKey: target.anonKey,
-        });
+        };
+        this.#prompt = dashboardAgentPrompt(promptInput);
+        this.#connection = dashboardAgentConnection(promptInput);
+        this.#filePrompt = dashboardAgentFilePrompt(promptInput);
+        this.#connectionName = `cswarm-connection-${credential.principalId}.json`;
         this.#text("prompt", this.#prompt);
         this.#tokenId = credential.tokenId;
         this.#text("copy-status", "");
@@ -913,6 +943,15 @@ const {
     font-size: var(--t-sm);
     line-height: var(--lh-sm);
     color: var(--text-muted);
+  }
+
+  .ac__advanced > summary {
+    cursor: pointer;
+    padding-block: 0.5rem;
+  }
+
+  .ac__advanced[open] > summary {
+    margin-bottom: 0.75rem;
   }
 
   .ac__field {
@@ -1158,7 +1197,8 @@ const {
     font-size: var(--t-xs);
     line-height: 1.7;
     color: var(--text);
-    white-space: pre;
+    white-space: pre-wrap;
+    overflow-wrap: anywhere;
     tab-size: 2;
   }
 

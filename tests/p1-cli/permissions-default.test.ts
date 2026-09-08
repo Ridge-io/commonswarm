@@ -2,8 +2,14 @@ import assert from "node:assert/strict";
 import { readFileSync } from "node:fs";
 import { test } from "node:test";
 import { listenerPermissionMode } from "../../src/cli.js";
+import { AGENT_QUICK_GUIDE, RECEIVE_PROVIDERS } from "../../src/cloud/agent-onboarding-contract.js";
+import { onboardingUsage } from "../../src/onboarding-cli.js";
 
-/* The default permission mode for a listener, pinned.
+/* Historical ACP permission defaults, retained for compatibility. Since 0.1.61
+ * the listener routes to the main session and starts no model. The incident below
+ * describes the retired worker path.
+ *
+ * The default permission mode for a listener, pinned.
  *
  * WHY THIS FILE EXISTS AT ALL: the default was flipped from deny to allow and **747 tests passed
  * unchanged** — `npm test` 499/499 and `test:p1-cli` 248/248. Nothing exercised the omitted-flag
@@ -52,78 +58,26 @@ test("an unrecognised value is still rejected rather than defaulted", () => {
   assert.throws(() => listenerPermissionMode(""), /must be deny or allow/);
 });
 
-test("the deny escape hatch is documented where an operator will meet it", () => {
-  /* Pins the CLAIM, not just the behaviour. A default that trades an enforced boundary for
-   * friction is only defensible if the operator can find the boundary again; if the onboarding
-   * prompt stops naming deny, the trade becomes invisible and this whole change is a downgrade.
-   *
-   * Read from the prompt SOURCE because that is the authority for what a new operator is told —
-   * checking cli.ts against cli.ts would only prove our own files agree with each other. */
-  const prompt = readFileSync(
-    new URL("../../site/src/components/connect/agent-prompt.ts", import.meta.url),
-    "utf8",
-  );
-  /* Comment-stripped: this same file explains the change in a block comment that contains every
-   * string below, so an unstripped read would pass on the explanation alone. That mistake has
-   * been made four times in this repo. */
-  const emitted = prompt.replace(/\/\*[\s\S]*?\*\//g, "").replace(/^\s*\/\/.*$/gm, "");
-
-  assert.match(emitted, /--permissions allow/, "the prompt no longer starts listeners with allow");
-  assert.match(
-    emitted,
-    /--permissions deny/,
-    "the prompt stopped naming the mode that protects a cross-owner listener",
-  );
-  assert.match(
-    emitted,
-    /outside your account/,
-    "the prompt names deny without saying when an operator should reach for it",
-  );
+// Retired in 0.1.61: onboarding no longer launches ACP workers or chooses their
+// permissions. The earlier tests required --permissions allow and every bridge;
+// those assertions defended a setup path the listener no longer executes.
+test("onboarding does not ask agents to grant worker permissions", () => {
+  const prompt = readFileSync(new URL("../../site/src/components/connect/agent-prompt.ts", import.meta.url), "utf8")
+    .replace(/\/\*[\s\S]*?\*\//g, "");
+  assert.doesNotMatch(prompt, /--permissions|claude-agent-acp|codex-acp/);
+  assert.match(prompt, /cswarm setup --connection-file/);
 });
 
-test("every provider the CLI accepts is offered a detached adapter in the onboarding prompt", () => {
-  /* Codex was missing from the prompt's adapter list while `cswarm listen start` accepted it, so a
-   * Codex user was routed to the foreground fallback — which does not wake a model. One of four
-   * supported providers silently lost the feature, and the site suite stayed green because nothing
-   * compared the two lists.
-   *
-   * Read the CLI usage line as the AUTHORITY for what is supported, and the prompt source for what
-   * is offered. Comparing the prompt against another copy of the prompt would only prove our own
-   * files agree — which is exactly how this survived. */
-  const cliUsage = readFileSync(
-    new URL("../../src/cli.ts", import.meta.url),
-    "utf8",
-  );
-  const usageLine = cliUsage
-    .split("\n")
-    .find((line) => line.includes("cswarm listen start") && line.includes("--provider"));
-  assert.ok(usageLine, "the listen start usage line moved; this control cannot find the authority");
-
-  const supported = (/--provider ([a-z|]+)/.exec(usageLine!)?.[1] ?? "").split("|").filter(Boolean);
-  assert.ok(supported.length >= 4, `expected 4+ providers in the usage line, saw ${supported.join(",")}`);
-
-  const prompt = readFileSync(
-    new URL("../../site/src/components/connect/agent-prompt.ts", import.meta.url),
-    "utf8",
-  ).replace(/\/\*[\s\S]*?\*\//g, "");
-
-  for (const provider of supported) {
-    assert.ok(
-      prompt.includes(`--provider ${provider}`),
-      `the CLI supports --provider ${provider} but the onboarding prompt never offers it`,
-    );
-  }
+test("receive help names the available turn integrations and the limited wake path", () => {
+  const help = onboardingUsage();
+  assert.ok(help.includes(`--provider ${RECEIVE_PROVIDERS.join("|")}`));
+  assert.match(help, /Wake uses a Claude Code preview channel in this same session/);
+  assert.match(help, /unverified until an idle canary is received/);
 });
 
-test("the onboarding brain section carries the end-of-task checkpoint verbatim", () => {
-  const prompt = readFileSync(
-    new URL("../../site/src/components/connect/agent-prompt.ts", import.meta.url),
-    "utf8",
-  ).replace(/\/\*[\s\S]*?\*\//g, "").replace(/^\s*\/\/.*$/gm, "");
-  assert.match(
-    prompt,
-    /before every status update ask: did I derive anything the next agent would re-derive\?/,
-  );
+test("the bundled operating guide retains lasting brain notes without a long entry checkpoint", () => {
+  assert.match(AGENT_QUICK_GUIDE, /brain put/);
+  assert.match(AGENT_QUICK_GUIDE, /only when needed/);
 });
 
 test("D-088: the CLI accepts both credential-message spellings, so the site can change one later", () => {

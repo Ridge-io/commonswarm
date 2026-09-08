@@ -80,24 +80,41 @@ fi
 TMP="$(mktemp -d)"
 trap 'rm -rf "$TMP"' EXIT INT TERM
 
-printf 'Downloading cswarm (%s)...\n' "$VERSION"
-curl -fsSL "$BASE/cswarm"        -o "$TMP/cswarm" \
-  || die "could not download $BASE/cswarm
-If this is a private release you will need access; ask whoever invited you."
+printf 'Checking cswarm (%s)...\n' "$VERSION"
 curl -fsSL "$BASE/cswarm.sha256" -o "$TMP/cswarm.sha256" \
-  || die "downloaded the binary but not its checksum from $BASE — refusing to install unverified."
+  || die "could not download the release checksum from $BASE — refusing to install unverified."
 
 # --- Verify before installing. -----------------------------------------------
 # A curl|sh installer that does not check its own download is the thing people are
 # right to be afraid of. This is not optional and there is no flag to skip it.
 EXPECTED="$(cut -d' ' -f1 < "$TMP/cswarm.sha256")"
-if command -v shasum >/dev/null 2>&1; then
-  ACTUAL="$(shasum -a 256 "$TMP/cswarm" | cut -d' ' -f1)"
-elif command -v sha256sum >/dev/null 2>&1; then
-  ACTUAL="$(sha256sum "$TMP/cswarm" | cut -d' ' -f1)"
-else
-  die "no shasum or sha256sum available to verify the download — refusing to install."
+case "$EXPECTED" in *[!0-9a-f]*|'') die "the release checksum is malformed — nothing was installed." ;; esac
+[ "${#EXPECTED}" = 64 ] || die "the release checksum is malformed — nothing was installed."
+cswarm_file_hash() {
+  if command -v shasum >/dev/null 2>&1; then
+    shasum -a 256 "$1" | cut -d' ' -f1
+  elif command -v sha256sum >/dev/null 2>&1; then
+    sha256sum "$1" | cut -d' ' -f1
+  else
+    die "no shasum or sha256sum available to verify the download — refusing to install."
+  fi
+}
+# The published checksum is the release manifest. Compare the bytes, never just
+# a version label; this also repairs a damaged or locally replaced install.
+LOCAL_HASH=""
+if [ -f "$INSTALL_DIR/cswarm" ] && [ ! -L "$INSTALL_DIR/cswarm" ]; then
+  LOCAL_HASH="$(cswarm_file_hash "$INSTALL_DIR/cswarm")"
 fi
+if [ "$LOCAL_HASH" = "$EXPECTED" ]; then
+  cp -- "$INSTALL_DIR/cswarm" "$TMP/cswarm" || die "could not reuse the verified install."
+  printf 'Using the installed build; its checksum matches this release.\n'
+else
+  printf 'Downloading cswarm (%s)...\n' "$VERSION"
+  curl -fsSL "$BASE/cswarm" -o "$TMP/cswarm" \
+    || die "could not download $BASE/cswarm
+If this is a private release you will need access; ask whoever invited you."
+fi
+ACTUAL="$(cswarm_file_hash "$TMP/cswarm")"
 [ "$EXPECTED" = "$ACTUAL" ] || die \
 "checksum mismatch — the download does not match its published checksum.
   expected $EXPECTED

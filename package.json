@@ -2,7 +2,7 @@
   "name": "cloud-swarm",
   "version": "0.1.64",
   "private": true,
-  "description": "SWARM-CLOUD — multi-human, multi-agent coordination cloud service (authority core). Forked from swarm (local CLI) to keep the in-use local tool stable.",
+  "description": "SWARM-CLOUD \u2014 multi-human, multi-agent coordination cloud service (authority core). Forked from swarm (local CLI) to keep the in-use local tool stable.",
   "type": "module",
   "bin": {
     "cswarm": "dist/cli.js"
@@ -34,13 +34,15 @@
     "db:reset": "supabase db reset --local",
     "db:status": "supabase status",
     "db:diff": "supabase db diff --local",
-    "db:migrate": "supabase migration up --local"
+    "db:migrate": "supabase migration up --local",
+    "benchmark:onboarding": "node --import tsx scripts/benchmark-onboarding.mjs"
   },
   "engines": {
     "node": ">=22"
   },
   "license": "MIT",
   "dependencies": {
+    "@modelcontextprotocol/sdk": "^1.30.0",
     "@supabase/supabase-js": "^2.110.8",
     "@types/node": "^25.5.0",
     "postgres": "^3.4.9",
