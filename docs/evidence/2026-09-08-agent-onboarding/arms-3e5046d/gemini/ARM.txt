@@ -1,0 +1,234 @@
+# Independent D-036 Review Arm — CommonSwarm
+Branch: `lane/agent-onboarding`
+Commit SHA: `3e5046dba0cb008c94010244c1ea070158110ffc`
+Base: `042afa6` (v0.1.64)
+
+diff --git a/docs/evidence/2026-09-08-agent-onboarding/RESULTS.md b/docs/evidence/2026-09-08-agent-onboarding/RESULTS.md
+
+---
+
+## 1. The Listener/Product Invariant: Model Starting Trace
+
+Claim: *NOTHING in this change can start a model. The operator's absolute rule is that a headless agent must never answer on behalf of a main agent; the Claude preview channel must only wake the existing session.*
+
+Attempted refutation trace across `src/cloud/agent-channel.ts`, `src/cloud/agent-host.ts`, and hook wiring:
+
+1. `src/cloud/agent-channel.ts`:
+   - Line 1: Explicit module invariant: `/** Claude channel transport. The host owns this stdio process; it never starts a model. */`.
+   - Imports: No `node:child_process` (no `exec`, `spawn`, `fork`). No LLM provider SDKs (OpenAI, Anthropic, Gemini, Grok, ACP).
+   - Lines 130-140: Uses `@modelcontextprotocol/sdk/server/index.js` `Server` exposing experimental `"claude/channel"` capability and a single tool `cswarm_received` (`CHANNEL_RECEIPT_TOOL`).
+   - Line 185: Connects to `StdioServerTransport`. The parent host (Claude Code) initiates and owns this stdio connection.
+   - Lines 233-240: Inbound signals from `claimAgentInbox` are emitted exclusively as notifications to the host session over MCP: `server.notification({ method: "notifications/claude/channel", params: { content: pending.row.signal.body, meta: { ... } } })`.
+   - Lines 141-164: The channel only accepts `cswarm_received` confirmations from the host session. It never synthesizes responses, initiates model inference, or delegates to an agent worker.
+2. `src/cloud/agent-host.ts`:
+   - Lines 9-16: `parentProcess` calls `exec("ps", ["-p", String(pid), "-o", "ppid=,comm="], { timeout: 250, maxBuffer: 4096 })`. This only reads process executable names (`claude`, `codex`, etc.) up to 6 hops (line 22). It spawns no models or provider processes.
+3. Hook wiring (`src/cloud/agent-receive.ts` and `src/onboarding-cli.ts`):
+   - Lines 166-189 (`installReceiveHooks`): Installs `.claude/settings.local.json` or `.codex/hooks.json` containing command: `cswarm check --profile <profile> --hook --host-session-id <host>`.
+   - Lines 224-231 (`configureAgentReceive` wake mode): Writes an MCP config `claude-channel-<host>.json` pointing to `cswarm receive serve --profile <profile> --host-session-id <host>`, and outputs start instruction: `claude --resume '<host>' --mcp-config '<config>' --dangerously-load-development-channels server:cswarm`. This resumes the *existing* Claude interactive session; it launches no separate worker.
+   - `src/onboarding-cli.ts:80-105` (`runTurnHook`): Invoked by the host hook on `UserPromptSubmit`, `SessionStart`, or `Stop`. It reads JSON event from stdin (`hookInput()`), records idle status or calls `checkAgentMessages`, and prints untrusted teammate messages to stdout for the existing session.
+   - Tests in `tests/p1-cli/permissions-default.test.ts:63-71`: Confirms ACP bridges (`claude-agent-acp`, `codex-acp`) and `--permissions` have been retired from onboarding.
+
+Refutation result: REFUTED. No path in this change can spawn a provider or start a model.
+
+---
+
+## 2. Credential and Privacy Safety
+
+Claim: *The connection envelope, the saved profile, and the channel journal must never write a token, anon key, or wake topic anywhere it can leak (git-tracked files, logs, stderr, events, the web roster).*
+
+Trace and verification:
+
+1. Site Prompt & Downloaded File:
+   - `site/src/components/connect/agent-prompt.ts:16-26` (`dashboardAgentConnection`): The connection envelope contains `{ version: 1, url, anon_key, workspace_id, principal_id, credential }`.
+   - `site/src/components/connect/agent-prompt.ts:41-43` (`dashboardAgentFilePrompt`): The file prompt contains *zero* secrets or keys. It only instructs the agent to save the attached file to a 0700 dir with mode 0600 and run `cswarm setup --connection-file <private-file> --json`.
+   - `site/src/components/connect/agent-prompt.ts:46-49` (`dashboardAgentPrompt`): The inline prompt includes instructions to save the JSON to `~/.cswarm/connect-<principalId>/connection.json` with mode 0600.
+   - Both prompts explicitly enforce: *"Keep the connection file private; never echo its contents or put them in shell commands, logs, URLs, or environment variables."*
+2. Profile & Storage Location (`src/cloud/agent-profile.ts`):
+   - Lines 42-70 (`assertPrivateLocation`): Walks directory ancestors and asserts no `.git` directory exists (`AgentSetupError("profile_inside_repository", ...)`), and forbids symlinks.
+   - Saved profiles: `saveAgentProfile` (lines 148-167) writes `credential.json` (the credential payload) and `profile.json` (metadata pointing to `credential_file`).
+   - Mode safety: Uses `writeSecureJsonFile` (`src/cloud/storage.ts:16-36`) which sets file mode `0o600` and directory mode `0o700`.
+   - Git exclusion for hooks: `ignoreLocalHook` (`src/cloud/agent-receive.ts:147-164`) verifies host settings files (`settings.local.json`, `hooks.json`) are not git-tracked (`git ls-files`), and adds untracked files to `.git/info/exclude` (local exclude, not committed).
+3. Channel Journal (`src/cloud/agent-channel.ts:48, 93-128`):
+   - Journal contains `{ version: 1, listener_instance_id, pending: { row, receipt, ack_command_id, confirmed } }`.
+   - It does NOT store bearer tokens, anon keys, or wake topics.
+4. Wake Topic:
+   - In `agent-channel.ts:269`: `wake.setTopic(claimed.wake.topic)`. `wake` is an in-memory `WakeHandle` (`src/listener/wake.ts:3`: *"The topic is held in memory and never rendered, logged, or written to status."*).
+5. Redaction and Output:
+   - Stderr: In `agent-channel.ts:283`, channel error output writes only `code` (`CommonSwarm channel: ${code}. Receipt is not confirmed; check cswarm receive status.`), never tokens or error message bodies.
+   - CLI error handling (`src/cli.ts:8625-8627`): writes structured JSON `{ ok: false, error: { code, message: safeError(error) } }`. `safeError()` strips terminal escape sequences and control characters.
+   - Web Roster: `site/src/components/connect/AgentConnect.astro:720-731` emits `commonswarm:agent-prompt-ready` containing only UUIDs (`principalId`, `tokenId`, `workspaceId`) and `name`, without the secret bearer token. Receive proof is kept in local `receive-<hash>.json` and is never sent to the server or published to the roster.
+
+Refutation result: REFUTED. No leak paths exist; file permissions, repo exclusions, and redactions are strictly enforced.
+
+---
+
+## 3. Host-Session Binding
+
+Claim: *The exact pending nonce and same-session receipt are required. Verify a receipt from a DIFFERENT session or a stale nonce is refused, and that host IDs never borrow another session's proof.*
+
+Verification:
+
+1. Exact Nonce & Same-Session Receipt:
+   - `ChannelReceiptGate.confirm` (`src/cloud/agent-channel.ts:36-46`):
+     ```ts
+     const pending = this.pending;
+     if (!pending || hostSessionId !== this.hostSessionId || signalId !== pending.row.signal.id || receipt !== pending.receipt) {
+       throw new AgentSetupError("channel_receipt_mismatch", "This receipt does not belong to the pending message in this session.");
+     }
+     ```
+     Enforces:
+     - Exact `signal_id` matching pending row.
+     - Exact `receipt` matching pending challenge nonce.
+     - Exact `host_session_id` matching gate's session.
+     - If lease expired (`Date.parse(pending.row.leasedUntil) <= Date.now()`), refuses with `channel_receipt_expired` (`agent-channel.ts:150`).
+   - Pinned in unit tests:
+     - `tests/p1-cli/agent-onboarding.test.ts:222-229`:
+       Rejection of different session (`session-two`), rejection of wrong receipt challenge (`wrong`), and acceptance only on exact match.
+     - `tests/p1-cli/agent-channel.test.ts:95-98`:
+       MCP tool call with `host_session_id: "other-session"` fails with `isError: true` and ACK is not sent (`assert.equal(acks.length, 0)`).
+2. Canary Nonce & Session Proofs:
+   - `isOwnCanary` (`agent-channel.ts:54-57`): Verifies `binding.canary.nonce` matches the message body format `CommonSwarm wake test ${nonce}. Confirm receipt in this session...`.
+   - `agent-channel.ts:216-221`: `wake_verified_at` is only updated if `b.canary?.nonce === binding.canary?.nonce` and `b.canary?.emitted_while_idle`. On restart or mode switch, `wake_verified_at` is cleared (`agent-channel.ts:175, 301; agent-receive.ts:217`).
+3. Host IDs Never Borrow Another Session's Proof:
+   - `profileSessionContext` (`src/cloud/agent-profile.ts:178-190`):
+     Filters contexts by `c.host_session_id === hostSessionId`.
+     Throws `AgentSetupError("profile_session_conflict", ...)` if there is no unique match.
+   - Pinned by `tests/p1-cli/agent-onboarding.test.ts:284`:
+     `await assert.rejects(profileSessionContext(profile, "another-session"), { code: "profile_session_conflict" })`.
+   - `src/cli.ts:543-551` (`expandAgentProfile`): Validates session context matching `host-session-id`, rejecting conflicts.
+
+Refutation result: REFUTED. Exact pending nonce and same-session receipt are strictly required; session proof borrowing is rejected.
+
+---
+
+## 4. Cursor Integrity Across Hook/Manual/Resume
+
+Claim: *Equal timestamps use a cursor with an ID; output failure does not consume messages; a failed check is not reported as an empty inbox.*
+
+Verification:
+
+1. Keyset Cursor with ID for Equal Timestamps:
+   - `src/cloud/signals.ts:588-597` (`compareSignalCursor`):
+     ```ts
+     const byTime = Date.parse(a.created_at) - Date.parse(b.created_at);
+     if (byTime !== 0) return byTime;
+     if (a.id < b.id) return -1;
+     if (a.id > b.id) return 1;
+     return 0;
+     ```
+   - In `src/cloud/agent-check.ts:155-158`: Every message check compares cursor using `compareSignalCursor(next, cursor)`. Out of order signals trigger `check_page_order_invalid`.
+   - Pinned by `tests/p1-cli/agent-onboarding.test.ts:149-165`: A sequence of 45 messages with identical timestamps is fully drained across multiple pages without dropping or looping messages.
+2. Output Failure Does Not Consume Messages:
+   - `src/cloud/agent-check.ts:183-190`:
+     Before calling `await options.present(result)`, `cached` state is saved *without* advancing the cursor.
+     Only after `options.present(result)` resolves without error is `cursor` saved to `check.json` (line 189).
+   - Pinned by `tests/p1-cli/agent-onboarding.test.ts:167-177`:
+     Tests `present` throwing `new Error("closed output")`. The cursor is not advanced, and subsequent check re-reads the unconsumed messages.
+3. Failed Check Is Not Reported as Empty Inbox:
+   - `src/cloud/agent-check.ts:57-61, 74`: Timeout aborts and rejects with `AgentSetupError("check_timeout", "The message check timed out. Try cswarm check again; the inbox was not proved empty.")`.
+   - `src/onboarding-cli.ts:95-104` (`runTurnHook`): When a check throws, it writes diagnostic:
+     `CommonSwarm check failed (${code}); the inbox was not proved empty. Run cswarm check --profile ... to see the error.`.
+   - Quiet success returns empty string `""` (`renderAgentCheck`, `agent-check.ts:211`). A failure is never silently suppressed as an empty result.
+   - Pinned by `tests/p1-cli/agent-onboarding.test.ts:178-185, 187-191`.
+
+Refutation result: REFUTED. The cursor mechanisms behave exactly as claimed and are pinned by discriminating tests.
+
+---
+
+## 5. Installer Checksum-First Verification
+
+Claim: *The checksum-first path fails closed on a malformed checksum and replaces damaged or changed bytes. A wrong reuse would ship a stale binary.*
+
+Verification in `install.sh`:
+
+1. Checksum Fetch & Validation (`install.sh:84-92`):
+   - Downloads `$BASE/cswarm.sha256` first. Fails with `die` if download fails.
+   - Parses `EXPECTED="$(cut -d' ' -f1 < "$TMP/cswarm.sha256")"`.
+   - `case "$EXPECTED" in *[!0-9a-f]*|'') die "the release checksum is malformed — nothing was installed." ;; esac`
+   - `[ "${#EXPECTED}" = 64 ] || die "the release checksum is malformed — nothing was installed."`
+   Fails closed immediately if checksum is not exactly 64 hexadecimal characters.
+2. Byte Comparison & Replacement (`install.sh:104-122`):
+   - Compares SHA-256 of existing `$INSTALL_DIR/cswarm` against `EXPECTED`.
+   - If equal, copies local binary to `$TMP/cswarm` ("Using the installed build; its checksum matches this release.").
+   - If unequal, damaged, or modified, downloads fresh binary from `$BASE/cswarm`.
+   - Always computes `ACTUAL="$(cswarm_file_hash "$TMP/cswarm")"` and verifies `[ "$EXPECTED" = "$ACTUAL" ] || die ...`.
+   - Atomic replacement via `mv -- "$TMP/cswarm" "$INSTALL_DIR/cswarm"`.
+3. Pinned in Unit Test:
+   - `tests/p1-cli/onboarding-installer.test.ts:10-53`:
+     - Initial download succeeds.
+     - Repeat run reuses local file (0 new downloads, 2 manifest checks).
+     - Local file modified with extra bytes: installer detects mismatch, downloads fresh binary, repairs local installation.
+     - Malformed checksum (`"bad"`): installer exits with code 1, refuses to install, keeps original binary intact.
+
+Refutation result: REFUTED. Installer fails closed on malformed checksums and replaces altered binaries.
+
+---
+
+## 6. Constant-Driven Enumerations & D-053 Adherence
+
+Claim: *Every user-facing enumeration (required fields, accepted commands, providers, modes) is generated from the constant the code enforces, not typed (AGENTS.md rule). D-053: no branching on error.message.*
+
+Verification:
+
+1. Constant Definitions (`src/cloud/agent-onboarding-contract.ts`):
+   - `RECEIVE_MODES = ["wake", "turn"] as const`
+   - `RECEIVE_PROVIDERS = ["claude", "codex", "instructions"] as const`
+   - `RECEIVE_WAKE_PROVIDER = "claude" as const`
+   - `AGENT_PROFILE_COMMANDS = ["whoami", "resume", "working-on", "note", "ask", "reply", "receipt", "feed", "inbox", "brain", "file", "members", "feedback", "listen", "session", "channel"] as const`
+   - `AGENT_CONNECTION_FIELDS = ["version", "url", "anon_key", "workspace_id", "principal_id", "credential"] as const`
+   - `CHANNEL_RECEIPT_FIELDS = ["signal_id", "receipt", "host_session_id"] as const` (`src/cloud/agent-channel.ts:24`)
+   - `RECEIVE_HOOK_EVENTS = ["UserPromptSubmit", "SessionStart", "Stop"] as const` (`src/cloud/agent-receive.ts:17`)
+2. Usage in Error Messages & Help:
+   - `src/cloud/agent-receive.ts:196`: `throw new AgentSetupError("receive_mode_invalid", \`--mode must be \${RECEIVE_MODES.join(" or ")}.\`);`
+   - `src/cloud/agent-receive.ts:198`: `throw new AgentSetupError("receive_provider_invalid", \`--provider must be \${RECEIVE_PROVIDERS.join(" or ")}.\`);`
+   - `src/cloud/agent-receive.ts:201`: `throw new AgentSetupError("wake_host_unsupported", \`Wake supports --provider \${RECEIVE_WAKE_PROVIDER} only. Use --mode turn on this host.\`);`
+   - `src/onboarding-cli.ts:32`: `--mode ${RECEIVE_MODES.join("|")} [--provider ${RECEIVE_PROVIDERS.join("|")}]`
+   - `src/cli.ts:537`: `throw new AgentSetupError("profile_command_invalid", \`--profile is supported by: \${AGENT_PROFILE_COMMANDS.join(", ")}.\`);`
+   - `src/cloud/agent-profile.ts:85`: `Expected connection version ${AGENT_CONNECTION_VERSION} with fields: ${AGENT_CONNECTION_FIELDS.join(", ")}.`
+   - `src/cloud/agent-channel.ts:148`: `Confirm a delivered notification with: ${CHANNEL_RECEIPT_FIELDS.join(", ")}.`
+   All enumerations are programmatically formatted from the enforced constants.
+3. D-053 Compliance (No Branching on `error.message`):
+   - Codebase grep across `src/cloud/agent-*.ts`, `src/onboarding-cli.ts`, and `src/cli.ts`:
+     All error handling branches on `error instanceof <Class>` and inspections of `error.code` or `error.status`.
+     `error.message` is only passed through to user display/logs (e.g. `agent-channel.ts:157`, `src/cli.ts:8555` in `safeError()`). There is no control flow branching on `error.message`.
+
+Refutation result: REFUTED. Constant-driven enumeration rule and D-053 are strictly satisfied.
+
+---
+
+## 7. Results.md Claims and Evidence Consistency
+
+Claim: *The claims in RESULTS.md match what the code does; flag any claim stronger than its evidence.*
+
+Verification of Gates:
+- `npm run build`: Exited code 0.
+- `npx tsc --noEmit -p tsconfig.json`: Exited code 0.
+- `npm run check:tests`: Exited code 0.
+- `npm test`: 869 passed, 0 failed (matches table entry "869 passed").
+- `env -u FORCE_COLOR npm run test:p1-cli`: 572 passed, 0 failed (matches table entry "572 passed").
+- `bash scripts/build-release.sh`: Exited code 0; produces verified artifact `dist-release/cswarm` (2.6MB, sha256 `bde8ed9cbec55e581b16b76df296799ed08481493ceb910697ecf3789747337c`).
+- 18 onboarding/channel/installer tests in `tests/p1-cli/`: 16 in `agent-onboarding.test.ts`, 1 in `agent-channel.test.ts`, 1 in `onboarding-installer.test.ts` — all 18 passed against built artifact.
+
+Check for overclaims:
+- The author explicitly delineates what was NOT established (RESULTS.md lines 50-57):
+  - No live Claude or Codex session was started; no live model tested.
+  - Stdio test uses an MCP client fixture; does not prove a live model sees an idle event.
+  - Claude wake is documented as preview-only and unverified in real host sessions.
+  - Codex idle wake is marked unavailable.
+  - No 10x end-to-end speed/token claim is made; token reduction is measured strictly on prompt tokens.
+  - Quiet empty checks perform network I/O; measured quiet CLI check is ~0.11s, missing the 100ms proposal goal.
+  - Production credentials and production mutations were not used.
+
+Refutation result: REFUTED. Claims in `RESULTS.md` accurately reflect implementation and evidence, and the document explicitly bounds its claims.
+
+---
+
+## Items Not Established by this Review Arm
+
+1. Live model behavior in a live Claude Code or Codex interactive session (tests use an MCP client fixture, consistent with the author's own recorded scope).
+2. Production deployment and database migrations (forbidden by operator rule).
+3. Browser rendered geometry test in `site/` suite (requires headless Chrome environment and built static assets).
+
+---
+
+VERDICT: PASS

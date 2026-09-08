@@ -1,0 +1,199 @@
+# Independent D-036 Review Arm — CommonSwarm
+Branch: `lane/agent-onboarding`  
+Commit SHA: `3e5046dba0cb008c94010244c1ea070158110ffc`  
+Base: `042afa6` (v0.1.64)  
+Review Written To: `/private/tmp/claude-501/-Users-yulanbot-Developer-Ridge-io-cloud-swarm/348bdb35-59a1-416f-9db8-84f388f5c3e0/scratchpad/arms-3e5046dba0cb008c94010244c1ea070158110ffc/gemini/ARM.txt`
+
+```patch
+diff --git a/docs/evidence/2026-09-08-agent-onboarding/RESULTS.md b/docs/evidence/2026-09-08-agent-onboarding/RESULTS.md
+```
+
+---
+
+## 1. Listener/Product Invariant: Model Starting Trace
+
+**Claim:** *NOTHING in this change can start a model. The operator's absolute rule is that a headless agent must never answer on behalf of a main agent; the Claude preview channel must only wake the existing session.*
+
+**Refutation Analysis & Trace:**
+1. [`src/cloud/agent-channel.ts`](file:///Users/yulanbot/Developer/Ridge.io/cloud-swarm/src/cloud/agent-channel.ts):
+   - [Line 1](file:///Users/yulanbot/Developer/Ridge.io/cloud-swarm/src/cloud/agent-channel.ts#L1): Explicit module design rule: `/** Claude channel transport. The host owns this stdio process; it never starts a model. */`.
+   - Imports: No `node:child_process` (`exec`, `spawn`, `fork`). No LLM provider SDKs (OpenAI, Anthropic, Gemini, Grok, ACP).
+   - [Lines 130–140](file:///Users/yulanbot/Developer/Ridge.io/cloud-swarm/src/cloud/agent-channel.ts#L130-L140): Instantiates `@modelcontextprotocol/sdk/server/index.js` `Server` with experimental capability `"claude/channel"` and exposes a single tool `cswarm_received` (`CHANNEL_RECEIPT_TOOL`).
+   - [Line 185](file:///Users/yulanbot/Developer/Ridge.io/cloud-swarm/src/cloud/agent-channel.ts#L185): Connects to `StdioServerTransport`. The parent host (Claude Code) initiates and owns this stdio transport.
+   - [Lines 233–240](file:///Users/yulanbot/Developer/Ridge.io/cloud-swarm/src/cloud/agent-channel.ts#L233-L240): Signals from `claimAgentInbox` are dispatched strictly as notifications over the MCP stdio pipe to the active host session (`server.notification({ method: "notifications/claude/channel", params: { content: pending.row.signal.body, meta: { ... } } })`).
+   - [Lines 141–164](file:///Users/yulanbot/Developer/Ridge.io/cloud-swarm/src/cloud/agent-channel.ts#L141-L164): Accepts only confirmation receipts (`cswarm_received`) from the host session. It never synthesizes responses, generates completions, or executes agent workers.
+2. [`src/cloud/agent-host.ts`](file:///Users/yulanbot/Developer/Ridge.io/cloud-swarm/src/cloud/agent-host.ts):
+   - [Lines 9–16](file:///Users/yulanbot/Developer/Ridge.io/cloud-swarm/src/cloud/agent-host.ts#L9-L16): `parentProcess` invokes `exec("ps", ["-p", String(pid), "-o", "ppid=,comm="])`. This strictly reads process executable names (`claude`, `codex`, etc.) up to 6 parent hops ([Line 22](file:///Users/yulanbot/Developer/Ridge.io/cloud-swarm/src/cloud/agent-host.ts#L22)). It spawns no models or provider processes.
+3. Hook wiring ([`src/cloud/agent-receive.ts`](file:///Users/yulanbot/Developer/Ridge.io/cloud-swarm/src/cloud/agent-receive.ts) and [`src/onboarding-cli.ts`](file:///Users/yulanbot/Developer/Ridge.io/cloud-swarm/src/onboarding-cli.ts)):
+   - [Lines 166–189](file:///Users/yulanbot/Developer/Ridge.io/cloud-swarm/src/cloud/agent-receive.ts#L166-L189): `installReceiveHooks` installs a hook command in `.claude/settings.local.json` or `.codex/hooks.json`: `cswarm check --profile <profile> --hook --host-session-id <host>`.
+   - [Lines 224–231](file:///Users/yulanbot/Developer/Ridge.io/cloud-swarm/src/cloud/agent-receive.ts#L224-L231): `configureAgentReceive` (mode `wake`) writes MCP configuration `claude-channel-<host>.json` pointing to `cswarm receive serve --profile <profile> --host-session-id <host>`, outputting start instruction: `claude --resume '<host>' --mcp-config '<config>' --dangerously-load-development-channels server:cswarm`. This resumes the *existing* Claude interactive session; it launches no detached worker.
+   - [`src/onboarding-cli.ts:80-105`](file:///Users/yulanbot/Developer/Ridge.io/cloud-swarm/src/onboarding-cli.ts#L80-L105): `runTurnHook` reads hook event data from stdin via `receiveHookEvent`, calls `checkAgentMessages`, and outputs check messages directly to stdout. It starts no model.
+   - Pinned by [`tests/p1-cli/permissions-default.test.ts:63-71`](file:///Users/yulanbot/Developer/Ridge.io/cloud-swarm/tests/p1-cli/permissions-default.test.ts#L63-L71): Confirms ACP workers (`claude-agent-acp`, `codex-acp`) and `--permissions` have been retired from onboarding.
+
+**Refutation result:** REFUTED. No execution path can spawn a provider or start a model.
+
+---
+
+## 2. Credential and Privacy Safety
+
+**Claim:** *The connection envelope, the saved profile, and the channel journal must never write a token, anon key, or wake topic anywhere it can leak (git-tracked files, logs, stderr, events, the web roster).*
+
+**Refutation Analysis & Trace:**
+1. Site Prompt & Downloaded File:
+   - [`site/src/components/connect/agent-prompt.ts:16-26`](file:///Users/yulanbot/Developer/Ridge.io/cloud-swarm/site/src/components/connect/agent-prompt.ts#L16-L26): The connection envelope contains `{ version: 1, url, anon_key, workspace_id, principal_id, credential }`.
+   - [`site/src/components/connect/agent-prompt.ts:41-43`](file:///Users/yulanbot/Developer/Ridge.io/cloud-swarm/site/src/components/connect/agent-prompt.ts#L41-L43) (`dashboardAgentFilePrompt`): Contains *zero* secrets or keys; it instructs the agent to save the attached file to a 0700 dir with mode 0600 and run `cswarm setup --connection-file <private-file> --json`.
+   - [`site/src/components/connect/agent-prompt.ts:46-49`](file:///Users/yulanbot/Developer/Ridge.io/cloud-swarm/site/src/components/connect/agent-prompt.ts#L46-L49) (`dashboardAgentPrompt`): Inline prompt tells the agent to save the JSON directly to `~/.cswarm/connect-<principalId>/connection.json` with mode 0600.
+   - Both prompts instruct: *"Keep the connection file private; never echo its contents or put them in shell commands, logs, URLs, or environment variables."*
+2. Profile & Storage Location ([`src/cloud/agent-profile.ts`](file:///Users/yulanbot/Developer/Ridge.io/cloud-swarm/src/cloud/agent-profile.ts)):
+   - [Lines 42–70](file:///Users/yulanbot/Developer/Ridge.io/cloud-swarm/src/cloud/agent-profile.ts#L42-L70) (`assertPrivateLocation`): Walks directory ancestors and asserts no `.git` directory exists (`AgentSetupError("profile_inside_repository", ...)`), and rejects symlinks.
+   - `saveAgentProfile` ([Lines 148–167](file:///Users/yulanbot/Developer/Ridge.io/cloud-swarm/src/cloud/agent-profile.ts#L148-L167)): Writes `credential.json` and `profile.json` (pointing to `credential_file`).
+   - File modes: Uses `writeSecureJsonFile` ([`src/cloud/storage.ts:16-36`](file:///Users/yulanbot/Developer/Ridge.io/cloud-swarm/src/cloud/storage.ts#L16-L36)) setting file mode `0o600` and parent dir `0o700`.
+   - Git exclusion: `ignoreLocalHook` ([`src/cloud/agent-receive.ts:147-164`](file:///Users/yulanbot/Developer/Ridge.io/cloud-swarm/src/cloud/agent-receive.ts#L147-L164)) checks `git ls-files` to ensure host settings files are not tracked, and adds them to `.git/info/exclude` (local git exclude, never committed).
+3. Channel Journal ([`src/cloud/agent-channel.ts:48, 93-128`](file:///Users/yulanbot/Developer/Ridge.io/cloud-swarm/src/cloud/agent-channel.ts#L48)):
+   - Contains `{ version: 1, listener_instance_id, pending: { row, receipt, ack_command_id, confirmed } }`.
+   - Does NOT store bearer tokens, anon keys, or wake topics.
+4. Wake Topic:
+   - In [`src/cloud/agent-channel.ts:269`](file:///Users/yulanbot/Developer/Ridge.io/cloud-swarm/src/cloud/agent-channel.ts#L269): `wake.setTopic(claimed.wake.topic)`. Held strictly in memory via `WakeHandle` ([`src/listener/wake.ts:3`](file:///Users/yulanbot/Developer/Ridge.io/cloud-swarm/src/listener/wake.ts#L3): *"The topic is held in memory and never rendered, logged, or written to status."*).
+5. Output & Web Roster:
+   - Channel stderr ([`src/cloud/agent-channel.ts:283`](file:///Users/yulanbot/Developer/Ridge.io/cloud-swarm/src/cloud/agent-channel.ts#L283)) writes only the error `code`, never tokens or error bodies. Pinned by [`tests/p1-cli/agent-channel.test.ts:119`](file:///Users/yulanbot/Developer/Ridge.io/cloud-swarm/tests/p1-cli/agent-channel.test.ts#L119) (`assert.equal(stderr.includes(TOKEN), false)`).
+   - CLI JSON error handling ([`src/cli.ts:8625-8627`](file:///Users/yulanbot/Developer/Ridge.io/cloud-swarm/src/cli.ts#L8625-L8627)): outputs structured error code and `safeError(error)`. Pinned by [`tests/p1-cli/agent-onboarding.test.ts:118, 252`](file:///Users/yulanbot/Developer/Ridge.io/cloud-swarm/tests/p1-cli/agent-onboarding.test.ts#L118).
+   - Web roster ([`site/src/components/connect/AgentConnect.astro:720-731`](file:///Users/yulanbot/Developer/Ridge.io/cloud-swarm/site/src/components/connect/AgentConnect.astro#L720-L731)): emits `commonswarm:agent-prompt-ready` with principal/token/workspace UUIDs and agent name, never the token. Per-session receive proof is stored in local `receive-<hash>.json` and is never sent to the server or published to the roster.
+
+**Refutation result:** REFUTED. No leak vectors exist; file permissions, repo exclusions, and redactions are strictly enforced.
+
+---
+
+## 3. Host-Session Binding
+
+**Claim:** *The exact pending nonce and same-session receipt are required. Verify a receipt from a DIFFERENT session or a stale nonce is refused, and that host IDs never borrow another session's proof.*
+
+**Refutation Analysis & Trace:**
+1. Exact Nonce & Same-Session Receipt:
+   - [`ChannelReceiptGate.confirm`](file:///Users/yulanbot/Developer/Ridge.io/cloud-swarm/src/cloud/agent-channel.ts#L36-L46) ([`src/cloud/agent-channel.ts:36-46`](file:///Users/yulanbot/Developer/Ridge.io/cloud-swarm/src/cloud/agent-channel.ts#L36-L46)):
+     Requires `pending !== null`, `hostSessionId === this.hostSessionId`, `signalId === pending.row.signal.id`, and `receipt === pending.receipt`. Throws `AgentSetupError("channel_receipt_mismatch", ...)` upon any discrepancy.
+   - Lease expiry check ([`agent-channel.ts:150`](file:///Users/yulanbot/Developer/Ridge.io/cloud-swarm/src/cloud/agent-channel.ts#L150)): Throws `AgentSetupError("channel_receipt_expired", ...)` if `Date.parse(pending.row.leasedUntil) <= Date.now()`.
+   - Pinned in unit tests:
+     - [`tests/p1-cli/agent-onboarding.test.ts:222-229`](file:///Users/yulanbot/Developer/Ridge.io/cloud-swarm/tests/p1-cli/agent-onboarding.test.ts#L222-L229): Different session (`session-two`) throws `channel_receipt_mismatch`; mismatched receipt challenge (`wrong`) throws `channel_receipt_mismatch`.
+     - [`tests/p1-cli/agent-channel.test.ts:95-98`](file:///Users/yulanbot/Developer/Ridge.io/cloud-swarm/tests/p1-cli/agent-channel.test.ts#L95-L98): Tool call with `other-session` returns `isError: true` and no server ACK is issued (`assert.equal(acks.length, 0)`).
+2. Canary Nonce & Session Proofs:
+   - [`agent-channel.ts:54-57, 215-220`](file:///Users/yulanbot/Developer/Ridge.io/cloud-swarm/src/cloud/agent-channel.ts#L54-L57): `isOwnCanary` validates the canary nonce in the signal body. `updateReceiveBinding` marks `wake_verified_at` only when `b.canary?.nonce === binding.canary?.nonce` and `b.canary?.emitted_while_idle`.
+   - On restart or mode switch, `wake_verified_at` is unconditionally cleared ([`agent-channel.ts:175, 301`](file:///Users/yulanbot/Developer/Ridge.io/cloud-swarm/src/cloud/agent-channel.ts#L175); [`agent-receive.ts:217`](file:///Users/yulanbot/Developer/Ridge.io/cloud-swarm/src/cloud/agent-receive.ts#L217)).
+3. Host IDs Never Borrow Another Session's Proof:
+   - [`profileSessionContext`](file:///Users/yulanbot/Developer/Ridge.io/cloud-swarm/src/cloud/agent-profile.ts#L178-L190) ([`src/cloud/agent-profile.ts:178-190`](file:///Users/yulanbot/Developer/Ridge.io/cloud-swarm/src/cloud/agent-profile.ts#L178-L190)): Filters session contexts matching `c.host_session_id === hostSessionId`. If not exactly 1 match, throws `AgentSetupError("profile_session_conflict", ...)`.
+   - [`src/cli.ts:543-551`](file:///Users/yulanbot/Developer/Ridge.io/cloud-swarm/src/cli.ts#L543-L551): Resolves session context by `host-session-id`; if explicit `--session-context` does not match, throws `profile_session_conflict`.
+   - Pinned by [`tests/p1-cli/agent-onboarding.test.ts:284`](file:///Users/yulanbot/Developer/Ridge.io/cloud-swarm/tests/p1-cli/agent-onboarding.test.ts#L284): `profileSessionContext(profile, "another-session")` is rejected with `profile_session_conflict`.
+
+**Refutation result:** REFUTED. Host-session proofs and nonces are bound and strictly checked against borrowing.
+
+---
+
+## 4. Cursor Integrity Across Hook/Manual/Resume
+
+**Claim:** *Equal timestamps use a cursor with an ID; output failure does not consume messages; a failed check is not reported as an empty inbox.*
+
+**Refutation Analysis & Trace:**
+1. Keyset Cursor with ID for Equal Timestamps:
+   - [`src/cloud/signals.ts:588-597`](file:///Users/yulanbot/Developer/Ridge.io/cloud-swarm/src/cloud/signals.ts#L588-L597) (`compareSignalCursor`): Compares `created_at` timestamp. If `byTime === 0`, falls back to ID comparison: `a.id < b.id ? -1 : a.id > b.id ? 1 : 0`.
+   - [`src/cloud/agent-check.ts:155-158`](file:///Users/yulanbot/Developer/Ridge.io/cloud-swarm/src/cloud/agent-check.ts#L155-L158): Verifies monotonic progress using `compareSignalCursor(next, cursor)`.
+   - Pinned by [`tests/p1-cli/agent-onboarding.test.ts:149-165`](file:///Users/yulanbot/Developer/Ridge.io/cloud-swarm/tests/p1-cli/agent-onboarding.test.ts#L149-L165): Drains 45 messages with identical timestamps across paginated requests without message loss or re-reads.
+2. Output Failure Does Not Consume Messages:
+   - [`src/cloud/agent-check.ts:183-190`](file:///Users/yulanbot/Developer/Ridge.io/cloud-swarm/src/cloud/agent-check.ts#L183-L190): `cached` message bodies are persisted prior to calling `options.present(result)`. The cursor is only advanced and written to `check.json` on line 189 *after* `await options.present(result)` succeeds.
+   - Pinned by [`tests/p1-cli/agent-onboarding.test.ts:167-177`](file:///Users/yulanbot/Developer/Ridge.io/cloud-swarm/tests/p1-cli/agent-onboarding.test.ts#L167-L177): Throws `new Error("closed output")` in `present()`; subsequent check re-reads the message.
+3. Failed Check Is Not Reported as Empty Inbox:
+   - [`src/cloud/agent-check.ts:57-61`](file:///Users/yulanbot/Developer/Ridge.io/cloud-swarm/src/cloud/agent-check.ts#L57-L61): Timeout throws `AgentSetupError("check_timeout", "The message check timed out. Try cswarm check again; the inbox was not proved empty.")`.
+   - [`src/onboarding-cli.ts:95-104`](file:///Users/yulanbot/Developer/Ridge.io/cloud-swarm/src/onboarding-cli.ts#L95-L104) (`runTurnHook`): Check failure outputs diagnostic: `CommonSwarm check failed (${code}); the inbox was not proved empty. Run cswarm check --profile ... to see the error.`.
+   - Quiet success returns empty string `""` ([`agent-check.ts:211`](file:///Users/yulanbot/Developer/Ridge.io/cloud-swarm/src/cloud/agent-check.ts#L211)), distinguishing an empty inbox from a failure.
+   - Pinned by [`tests/p1-cli/agent-onboarding.test.ts:178-185, 187-191`](file:///Users/yulanbot/Developer/Ridge.io/cloud-swarm/tests/p1-cli/agent-onboarding.test.ts#L178-L185).
+
+**Refutation result:** REFUTED. Keyset cursor order, atomic commit after presentation, and distinct failure diagnostics hold.
+
+---
+
+## 5. Installer Checksum-First Verification
+
+**Claim:** *The checksum-first path fails closed on a malformed checksum and replaces damaged or changed bytes. A wrong reuse would ship a stale binary.*
+
+**Refutation Analysis & Trace:**
+1. Checksum Fetch & Validation ([`install.sh:84-92`](file:///Users/yulanbot/Developer/Ridge.io/cloud-swarm/install.sh#L84-L92)):
+   - Fetches `$BASE/cswarm.sha256` first.
+   - Extracts `EXPECTED="$(cut -d' ' -f1 < "$TMP/cswarm.sha256")"`.
+   - Fails closed immediately if empty or non-hex (`case "$EXPECTED" in *[!0-9a-f]*|'') die ...`), or if string length is not 64 characters (`[ "${#EXPECTED}" = 64 ] || die ...`).
+2. Byte Comparison & Safe Replacement ([`install.sh:104-122`](file:///Users/yulanbot/Developer/Ridge.io/cloud-swarm/install.sh#L104-L122)):
+   - Checks SHA-256 of `$INSTALL_DIR/cswarm`. If matching `EXPECTED`, reuses local binary.
+   - If missing, damaged, or changed, downloads `$BASE/cswarm`.
+   - Computes `ACTUAL="$(cswarm_file_hash "$TMP/cswarm")"` and asserts `[ "$EXPECTED" = "$ACTUAL" ] || die ...`.
+3. Pinned in Unit Test ([`tests/p1-cli/onboarding-installer.test.ts:10-53`](file:///Users/yulanbot/Developer/Ridge.io/cloud-swarm/tests/p1-cli/onboarding-installer.test.ts#L10-L53)):
+   - Verifies repeat install reuses binary (manifest fetched, binary download skipped).
+   - Verifies changed bytes in local installation trigger re-download and replacement.
+   - Verifies malformed checksum (`"bad"`) exits code 1, refuses to install, and preserves the local binary.
+
+**Refutation result:** REFUTED. Checksum-first fails closed and replaces altered binaries without stale reuse.
+
+---
+
+## 6. Constant-Driven Enumerations & D-053 Adherence
+
+**Claim:** *Every user-facing enumeration (required fields, accepted commands, providers, modes) is generated from the constant the code enforces, not typed (AGENTS.md rule). D-053: no branching on error.message.*
+
+**Refutation Analysis & Trace:**
+1. Enforced Constants ([`src/cloud/agent-onboarding-contract.ts`](file:///Users/yulanbot/Developer/Ridge.io/cloud-swarm/src/cloud/agent-onboarding-contract.ts)):
+   - `RECEIVE_MODES = ["wake", "turn"] as const`
+   - `RECEIVE_PROVIDERS = ["claude", "codex", "instructions"] as const`
+   - `RECEIVE_WAKE_PROVIDER = "claude" as const`
+   - `AGENT_PROFILE_COMMANDS = ["whoami", "resume", "working-on", "note", "ask", "reply", "receipt", "feed", "inbox", "brain", "file", "members", "feedback", "listen", "session", "channel"] as const`
+   - `AGENT_CONNECTION_FIELDS = ["version", "url", "anon_key", "workspace_id", "principal_id", "credential"] as const`
+   - `CHANNEL_RECEIPT_FIELDS = ["signal_id", "receipt", "host_session_id"] as const` ([`src/cloud/agent-channel.ts:24`](file:///Users/yulanbot/Developer/Ridge.io/cloud-swarm/src/cloud/agent-channel.ts#L24))
+   - `RECEIVE_HOOK_EVENTS = ["UserPromptSubmit", "SessionStart", "Stop"] as const` ([`src/cloud/agent-receive.ts:17`](file:///Users/yulanbot/Developer/Ridge.io/cloud-swarm/src/cloud/agent-receive.ts#L17))
+2. User-Facing Formatting:
+   - Interpolated via `.join(" or ")`, `.join("|")`, or `.join(", ")`:
+     - [`agent-receive.ts:196, 198, 201`](file:///Users/yulanbot/Developer/Ridge.io/cloud-swarm/src/cloud/agent-receive.ts#L196)
+     - [`onboarding-cli.ts:32`](file:///Users/yulanbot/Developer/Ridge.io/cloud-swarm/src/onboarding-cli.ts#L32)
+     - [`cli.ts:537`](file:///Users/yulanbot/Developer/Ridge.io/cloud-swarm/src/cli.ts#L537)
+     - [`agent-profile.ts:85`](file:///Users/yulanbot/Developer/Ridge.io/cloud-swarm/src/cloud/agent-profile.ts#L85)
+     - [`agent-channel.ts:148`](file:///Users/yulanbot/Developer/Ridge.io/cloud-swarm/src/cloud/agent-channel.ts#L148)
+   - Zero hardcoded duplicate lists in error messages or help documentation.
+3. D-053 Compliance (No Branching on `error.message`):
+   - Grep verification across `src/cloud/agent-*.ts`, `src/onboarding-cli.ts`, and `src/cli.ts`:
+     All error routing checks `error instanceof <Class>`, `error.code`, or `error.status`.
+     `error.message` is used solely as output payload for presentation (e.g. [`agent-channel.ts:157`](file:///Users/yulanbot/Developer/Ridge.io/cloud-swarm/src/cloud/agent-channel.ts#L157), [`src/cli.ts:8555`](file:///Users/yulanbot/Developer/Ridge.io/cloud-swarm/src/cli.ts#L8555)). There is no conditional logic or branching on `error.message`.
+
+**Refutation result:** REFUTED. Enumerations are derived from constants; D-053 is respected.
+
+---
+
+## 7. Results.md Claims and Evidence Consistency
+
+**Claim:** *The claims in RESULTS.md match what the code does; flag any claim stronger than its evidence.*
+
+**Execution of Gates in Throwaway Detached Worktree:**
+- `npm run build`: Exited code 0.
+- `npx tsc --noEmit -p tsconfig.json`: Exited code 0.
+- `npm run check:tests`: Exited code 0.
+- `npm test`: Exited code 0 (869 passed, 0 failed — matches table entry "869 passed").
+- `env -u FORCE_COLOR npm run test:p1-cli`: Exited code 0 (572 passed, 0 failed — matches table entry "572 passed").
+- `bash scripts/build-release.sh`: Exited code 0; produces verified artifact `dist-release/cswarm` (2.6MB, sha256 `bde8ed9cbec55e581b16b76df296799ed08481493ceb910697ecf3789747337c`).
+- 18 onboarding/channel/installer tests in `tests/p1-cli/`: All 18 tests passed against the compiled artifact.
+
+**Assessment of Disclaimers and Limitations:**
+- `RESULTS.md` ([Lines 50–57](file:///Users/yulanbot/Developer/Ridge.io/cloud-swarm/docs/evidence/2026-09-08-agent-onboarding/RESULTS.md#L50-L57)) explicitly bounds its evidence:
+  - No live Claude or Codex session was started; no live model was tested.
+  - Stdio test uses an MCP client fixture and does not prove a live model sees an idle event.
+  - Claude wake is documented as preview-only and unverified in real host sessions.
+  - Codex idle wake is unavailable.
+  - No overall 10x end-to-end claim is made (prompt tokens only).
+  - Quiet empty checks perform network I/O; measured quiet CLI check is ~0.11s, exceeding the 100ms proposal target.
+  - No production credentials or mutations were used.
+
+**Refutation result:** REFUTED. Claims in `RESULTS.md` match the code and tests; limitations are properly bounded without overclaiming.
+
+---
+
+## Items Not Established by this Review Arm
+
+1. Live model behavior in a live interactive Claude Code or Codex session (tests use an MCP client fixture, matching the author's recorded scope).
+2. Production deployment and database migrations (forbidden by operator rule).
+3. Browser rendered geometry test in `site/` suite (requires headless Chrome environment and built static assets).
+
+---
+
+VERDICT: PASS
