@@ -1,0 +1,162 @@
+diff --git a/site/src/components/connect/AgentConnect.astro b/site/src/components/connect/AgentConnect.astro
+
+# D-036 Independent Review Arm (Gemini)
+Worktree: /Users/yulanbot/Developer/Ridge.io/cloud-swarm
+Branch: lane/copy-flavour
+Target SHA: 1f460eb2a977d0c33c4534471ae73df6191b4cf5
+Base: main
+
+---
+
+## 1. Pure Gate & Build Verification
+
+Executed in an isolated detached throwaway worktree at SHA `1f460eb2a977d0c33c4534471ae73df6191b4cf5` with symlinked `node_modules` and copied `site/.env`:
+- `npm --prefix site run build`: Exit 0 (12 static pages built cleanly).
+- `npm --prefix site test`: Exit 0 (546 passed, 1 pre-existing skip, 0 failed).
+- **Mutation Control:** Injected `.replace(/_/g, "\\_")` into `promptCopyPayload` return value in `site/src/components/connect/agent-prompt.ts`; ran observer test suite. Test `"the payload is returned byte for byte: no underscore escaping, no link rewriting"` failed with assertion error (strict equality mismatch on escaped underscores: `9 passed, 1 failed`). Reverted mutation; suite returned to passing state (`10 passed, 0 failed`).
+- **Asset Inspection:** Verified that `text/plain` and the copy event listener logic are compiled and present in the production bundle under `site/dist/`.
+- Throwaway detached worktree removed completely afterwards.
+
+---
+
+## 2. Refutation Analysis of Specific Claims
+
+### (1) After `preventDefault()` plus `setData('text/plain', …)`, can ANY code path still put `text/html` on the clipboard from this block?
+**Refutation Attempt:**
+We examine the handler in `site/src/components/connect/AgentConnect.astro`:
+```typescript
+this.#q<HTMLElement>('[data-slot="prompt"]')?.addEventListener("copy", (event) => {
+  const clipboard = (event as ClipboardEvent).clipboardData;
+  if (!clipboard || !this.#prompt) return;
+  clipboard.setData("text/plain", promptCopyPayload(window.getSelection()?.toString() ?? "", this.#prompt));
+  event.preventDefault();
+});
+```
+**ClipboardEvent Specification & Execution Analysis:**
+1. Under the W3C Clipboard API and Events specification (Section 4: Event-driven clipboard operations):
+   - When a copy event fires, the browser constructs a `ClipboardEvent` with an associated `DataTransfer` object (`clipboardData`) in read/write mode.
+   - If the event is canceled via `event.preventDefault()`, the browser's default action—which serializes the DOM selection into multiple MIME types including `text/plain` and `text/html`—is completely suppressed.
+   - When default action is canceled, the operating system clipboard is populated *exclusively* with the MIME types explicitly registered on `event.clipboardData` via `setData(format, data)` during the dispatch.
+2. In the handler:
+   - `clipboard.setData("text/plain", ...)` registers only the `text/plain` MIME type.
+   - `event.preventDefault()` suppresses the default action.
+   - No call to `clipboard.setData("text/html", ...)` exists anywhere in the handler, the custom element, or the site codebase.
+3. Bubbling & ancestor handlers:
+   - Grep verification across `site/` confirms no other `copy` listeners exist on parent or ancestor DOM elements.
+   - Even if an ancestor listener existed, `event.preventDefault()` marks `defaultPrevented === true`, preventing browser-synthesized HTML insertion.
+4. Edge conditions:
+   - If `!clipboard`: Early return occurs, skipping `preventDefault()`. In legacy/unsupported environments where `clipboardData` is null on the event, standard default copy behavior runs. However, in any standard modern browser supporting `ClipboardEvent`, `clipboardData` is non-null.
+   - If `!this.#prompt`: Early return occurs only when no prompt is rendered or prompt state is cleared.
+   - Neither `window.getSelection()?.toString()` nor `promptCopyPayload` can throw exceptions during execution.
+**Conclusion on (1):** No code path can place `text/html` on the clipboard from this block when a prompt is present in a standard modern browser. The claim cannot be refuted.
+
+---
+
+### (2) `promptCopyPayload` returns its input byte for byte — no escaping, no trimming of the returned value — and the empty/whitespace fallback cannot swallow a legitimate one-character selection.
+**Refutation Attempt:**
+We inspect `promptCopyPayload` in `site/src/components/connect/agent-prompt.ts`:
+```typescript
+export function promptCopyPayload(selectionText: string, fullPrompt: string): string {
+  return selectionText.trim().length > 0 ? selectionText : fullPrompt;
+}
+```
+**Byte-for-byte fidelity:**
+- When `selectionText.trim().length > 0`, the ternary returns `selectionText` directly.
+- The returned string is NOT trimmed: `trim()` is only called to evaluate the boolean condition `.length > 0`. Any leading or trailing spaces, tabs, newlines, code fences, markdown symbols, or special characters in `selectionText` are preserved without modification.
+- There are no string replacements, regex transformations, or character escapes applied to the returned value.
+- When `selectionText.trim().length === 0`, `fullPrompt` is returned verbatim.
+
+**One-character selection analysis:**
+- A legitimate character selected from the prompt block (e.g. `{`, `"`, `_`, `$`, `c`, `1`, `\`, `/`, etc.) is a non-whitespace character.
+- For any non-whitespace character `ch`, `ch.trim().length` is `1`.
+- Because `1 > 0` is `true`, `promptCopyPayload(ch, fullPrompt)` evaluates to `ch`, returning the single selected character byte-for-byte.
+- The only single-character selections that evaluate to `trim().length === 0` are pure whitespace characters (`" "`, `"\t"`, `"\n"`, `"\r"`). A user copying a single whitespace character from the prompt would fall back to `fullPrompt`. However, in practice, prompt copying involves commands, tokens, or configuration strings, not isolated whitespace glyphs. Empty selections produced by keyboard focus or accidental clicks with zero non-whitespace characters correctly fall back to `fullPrompt`.
+**Conclusion on (2):** `promptCopyPayload` returns its input byte-for-byte without trimming or escaping, and cannot swallow any legitimate non-whitespace one-character selection. The claim cannot be refuted.
+
+---
+
+### (3) The handler cannot break the existing Copy button or the download path.
+**Refutation Attempt:**
+We analyze the interactions with `#copy()` and `#downloadConnection()` in `AgentConnect.astro`:
+1. **Copy Button (`[data-action="copy"]`):**
+   - Wired separately: `this.#q<HTMLButtonElement>('[data-action="copy"]')?.addEventListener("click", () => void this.#copy());`.
+   - In `#copy()`, execution calls `await navigator.clipboard.writeText(this.#prompt)`.
+   - `navigator.clipboard.writeText` writes plain text directly to the system clipboard via the asynchronous Clipboard API and does NOT dispatch a DOM `copy` event on `[data-slot="prompt"]`.
+   - In the failure catch block of `#copy()` (when clipboard permissions are denied or in non-secure origins), the method selects the contents of `[data-slot="prompt"]` and instructs the user to press ⌘C / Ctrl+C. In that fallback scenario, the user's manual keyboard copy triggers the new `copy` event listener, which safely handles the copy and writes plain text.
+   - The Copy button and its visual feedback states (`data-copied`, `#copyTimer`) remain completely independent and unbroken.
+2. **Download Path (`[data-action="download-connection"]`):**
+   - Wired separately: `this.#q<HTMLButtonElement>('[data-action="download-connection"]')?.addEventListener("click", () => this.#downloadConnection());`.
+   - `#downloadConnection()` generates a JSON Blob, clicks a temporary download anchor, updates `this.#prompt = this.#filePrompt`, and updates the UI text.
+   - The `copy` event listener on `[data-slot="prompt"]` references `this.#prompt` dynamically via closure. After download, any subsequent manual copy out of `[data-slot="prompt"]` dynamically picks up the updated `this.#filePrompt`.
+   - The download trigger and file generation logic are untouched.
+**Conclusion on (3):** Neither the Copy button nor the download path is broken by the handler. The claim cannot be refuted.
+
+---
+
+### (4) It cannot throw when `clipboardData` is null or when `#prompt` is empty, and it does not swallow copies from OTHER elements on the page.
+**Refutation Attempt:**
+1. **Null/empty checks:**
+   - `const clipboard = (event as ClipboardEvent).clipboardData;`
+   - `if (!clipboard || !this.#prompt) return;`
+   - If `clipboard` is `null` or `undefined`, the guard immediately short-circuits and returns. No member accesses occur on `clipboard`.
+   - If `this.#prompt` is `null` or `""`, the guard short-circuits and returns.
+   - No exceptions are thrown.
+2. **Scoping and non-interference with other elements:**
+   - The event listener is attached exclusively to the specific DOM element matching `[data-slot="prompt"]`:
+     `this.#q<HTMLElement>('[data-slot="prompt"]')?.addEventListener("copy", ...)`
+   - The element is the `<pre class="ac__pre" data-slot="prompt">` container.
+   - DOM `copy` events bubble up from the focused/selected target to the document root.
+   - When a user copies text from other form elements (e.g. `[data-field="name"]`, `[data-field="identity"]`, buttons, navigation links, or other page components), the event targets those elements and bubbles through their respective ancestor trees.
+   - Because `[data-slot="prompt"]` is a sibling or separate branch in the DOM tree, copy events originating outside `[data-slot="prompt"]` never dispatch to or bubble through `[data-slot="prompt"]`.
+   - Therefore, copies from other elements on the page are never intercepted or swallowed.
+**Conclusion on (4):** The handler is null-safe, empty-safe, and strictly scoped to its own DOM node. The claim cannot be refuted.
+
+---
+
+### (5) The new tests discriminate: say what a wrong implementation would have to do to still pass.
+**Analysis of Test Discrimination & Blind Spots:**
+The three tests in `site/src/components/connect/agent-prompt.observer.test.ts` assert:
+1. `promptCopyPayload("", "WHOLE PROMPT") === "WHOLE PROMPT"` and `promptCopyPayload("   \n\t ", "WHOLE PROMPT") === "WHOLE PROMPT"`.
+2. `promptCopyPayload("cswarm setup", "WHOLE PROMPT") === "cswarm setup"`.
+3. `promptCopyPayload(hostile, "WHOLE") === hostile`, with checks against `\_` and `](`.
+
+**What a wrong implementation would have to do to still pass:**
+1. **Trimming the selection:**
+   - If an implementation incorrectly returned `selectionText.trim()` rather than the raw `selectionText`:
+     ```typescript
+     export function promptCopyPayload(selectionText: string, fullPrompt: string): string {
+       return selectionText.trim().length > 0 ? selectionText.trim() : fullPrompt;
+     }
+     ```
+   - Because neither `"cswarm setup"` in test 2 nor `hostile` in test 3 has leading or trailing whitespace, this flawed implementation would **STILL PASS** all existing tests. The suite does not include a test case with a selection containing deliberate leading/trailing whitespace (e.g. `"  cswarm setup  "`).
+2. **DOM component handler omissions:**
+   - The unit tests execute in a Node environment and test `promptCopyPayload` in isolation. They do not test the DOM wiring in `AgentConnect.astro`.
+   - A wrong implementation could fail to bind the event listener, use an invalid selector, omit `event.preventDefault()`, or fail to invoke `setData`, and the test suite would **STILL PASS**.
+3. **Passing discrimination:**
+   - The test suite successfully discriminates against:
+     - Failure to fall back on whitespace-only input (`"   \n\t "` returning whitespace instead of `fullPrompt`).
+     - Any implementation that mutates, escapes, or transforms markdown characters (such as underscore escaping `\_` or link rewriting `](`), as verified by our mutation control.
+
+---
+
+### (6) AGENTS.md: enumerations generated not typed; D-053 no branching on `error.message`.
+**Audit of Diff:**
+1. **Enumerations generated not typed:**
+   - The diff modifies only `site/src/components/connect/AgentConnect.astro`, `site/src/components/connect/agent-prompt.ts`, and `site/src/components/connect/agent-prompt.observer.test.ts`.
+   - No user-facing strings enumerating system options, command flags, required fields, or provider lists were added or modified.
+2. **D-053 (no branching on `error.message`):**
+   - Zero occurrences of `error.message` exist in the diff.
+   - No catch blocks or error inspections were added.
+**Conclusion on (6):** Full compliance with AGENTS.md requirements.
+
+---
+
+## 3. What Could NOT Be Established
+
+1. **Live Browser Clipboard Integration:** While the handler correctly adheres to the W3C ClipboardEvent specification, the behavior was not verified inside a real running WebKit (Safari), Blink (Chrome), or Gecko (Firefox) browser with physical OS pasteboard inspection.
+2. **Downstream Client Conversion Logic:** The specific third-party paste conversion mechanism (e.g., Slack, Notion, VS Code, Discord, or Claude Desktop) that originally converted `text/html` into escaped markdown in the 0.1.66 incident could not be directly tested or identified.
+3. **OS-level Clipboard Intermediaries:** Whether third-party OS clipboard managers (such as Paste, Maccy, or Alfred) or accessibility tools intercept DOM copy events and synthesize secondary formats cannot be established in headless testing.
+
+---
+
+VERDICT: PASS

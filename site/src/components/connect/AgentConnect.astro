@@ -242,7 +242,7 @@ const {
     myWorkspaces,
     uuid,
   } from "../../lib/commonswarm";
-  import { dashboardAgentPrompt, dashboardAgentConnection, dashboardAgentFilePrompt } from "./agent-prompt";
+  import { dashboardAgentPrompt, dashboardAgentConnection, dashboardAgentFilePrompt, promptCopyPayload } from "./agent-prompt";
 
   /*
    * A custom element rather than a page script, so the host page can drop <AgentConnect /> in
@@ -327,6 +327,16 @@ const {
     }
 
     #wire() {
+      /* Pin the clipboard flavour for a MANUAL copy out of the block. Without this the browser
+       * also writes text/html, and a Markdown client converts that instead of the plain text:
+       * underscores return as \_ and a bare URL returns as a Markdown link. The Copy button was
+       * never the problem — writeText() is plain text — but selecting the block by hand was. */
+      this.#q<HTMLElement>('[data-slot="prompt"]')?.addEventListener("copy", (event) => {
+        const clipboard = (event as ClipboardEvent).clipboardData;
+        if (!clipboard || !this.#prompt) return;
+        clipboard.setData("text/plain", promptCopyPayload(window.getSelection()?.toString() ?? "", this.#prompt));
+        event.preventDefault();
+      });
       this.#q<HTMLButtonElement>('[data-action="download-connection"]')?.addEventListener("click", () => this.#downloadConnection());
       this.#q<HTMLFormElement>('[data-panel="form"]')?.addEventListener("submit", (event) => {
         event.preventDefault();

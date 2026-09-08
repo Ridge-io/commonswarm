@@ -55,3 +55,18 @@ function codeBlock(language: string, text: string): string {
   const fence = "`".repeat(Math.max(3, ...Array.from(text.matchAll(/`+/g), match => match[0].length + 1)));
   return `${fence}${language}\n${text}\n${fence}`;
 }
+
+/**
+ * What a copy out of the prompt block must place on the clipboard.
+ *
+ * A manual selection copy hands the target application BOTH `text/plain` and `text/html`. A
+ * Markdown-aware client converts that HTML rather than taking the plain text, and the conversion
+ * escapes every underscore as `\_` and rewrites a bare URL as a Markdown link — which is exactly
+ * the damage the code fences exist to prevent, arriving by a route the fences cannot reach
+ * (measured on a real hand-off, 2026-09-08). The block therefore writes plain text itself and
+ * suppresses the HTML flavour. A partial selection stays a partial selection; an empty one, which
+ * is what a keyboard copy with no range produces, falls back to the whole prompt.
+ */
+export function promptCopyPayload(selectionText: string, fullPrompt: string): string {
+  return selectionText.trim().length > 0 ? selectionText : fullPrompt;
+}

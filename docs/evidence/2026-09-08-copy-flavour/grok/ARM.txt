@@ -1,0 +1,140 @@
+diff --git a/site/src/components/connect/AgentConnect.astro b/site/src/components/connect/AgentConnect.astro
+
+# D-036 independent review arm (Grok)
+SHA: 1f460eb2a977d0c33c4534471ae73df6191b4cf5
+Branch: lane/copy-flavour (base main)
+Read-only on the lane tree. Throwaway detached worktree used for site test/build/mutations, then removed.
+
+First `diff --git` line of DIFF.patch (quoted):
+`diff --git a/site/src/components/connect/AgentConnect.astro b/site/src/components/connect/AgentConnect.astro`
+
+Controls on this SHA (throwaway worktree, node_modules symlinked, site/.env copied):
+- `npm --prefix site test`: 546 passed, 1 skipped, 0 failed.
+- `npm --prefix site run build`: exit 0, 12 pages.
+- Built chunk `site/dist/_astro/AgentConnect.astro_astro_type_script_index_0_lang.CAeVJxjg.js` contains one `setData(\`text/plain\`,…)`, one `clipboardData`, zero `text/html`, and `preventDefault` on the same `copy` listener. `promptCopyPayload` is minified to `V`.
+- Mutation in throwaway only; restored; worktree removed. Lane HEAD still `1f460eb`.
+
+---
+
+## (1) After preventDefault() + setData('text/plain'), can any path from this block still put text/html on the clipboard?
+
+Handler, `site/src/components/connect/AgentConnect.astro` `#wire()`:
+
+```
+this.#q<HTMLElement>('[data-slot="prompt"]')?.addEventListener("copy", (event) => {
+  const clipboard = (event as ClipboardEvent).clipboardData;
+  if (!clipboard || !this.#prompt) return;
+  clipboard.setData("text/plain", promptCopyPayload(window.getSelection()?.toString() ?? "", this.#prompt));
+  event.preventDefault();
+});
+```
+
+Clipboard API contract (W3C WD, §6.1 override copy, §8.1 copy action, “fire a clipboard event”, “write content to the clipboard”):
+
+- For copy/cut the event’s DataTransfer is created with an empty items list (read/write).
+- If the event is not canceled, the UA copies the selection and *should* create both text/html and text/plain.
+- If it *is* canceled, the UA writes only the items on that DataTransfer. text/plain is placed as plain text; text/html is placed only if that type is in the list.
+
+This handler never calls `setData("text/html", …)`. Grep of `site/` found no other `addEventListener("copy"` / `oncopy`. After the successful branch (setData text/plain then preventDefault), the spec write algorithm therefore has no HTML item to put on the OS clipboard.
+
+Replica of that branch (node, fake DataTransfer): successful copies store only `{ "text/plain": … }` and set `prevented: true`.
+
+Paths that do **not** reach preventDefault (so they are outside the “after preventDefault + setData” clause):
+
+- `clipboardData` null, or `#prompt` null/empty: early return. Default UA copy can still write HTML. Replica: no throw, `prevented: false`.
+- The copy event never targets the `<pre>`. The `<pre>` is not an editable context. Spec target for non-editable copy is the *focused node*, or body. A selection inside the pre while focus is elsewhere fires on the focused node, not on the pre, so this listener never runs. The pre has `tabindex="0"`, so a click-to-select typically focuses it; that is the intended path, not a proof for every UA.
+- `cut` and `dragstart` are not handled. Spec cut on a non-editable context does not copy if not canceled. Drag of a DOM selection still puts text/html on the drag store. Out of the copy-event claim.
+
+Could not refute the spec contract for the branch that actually calls preventDefault + setData('text/plain'). Could not establish that a live UA does not also synthesise `public.html`.
+
+---
+
+## (2) promptCopyPayload is byte-for-byte; empty/whitespace fallback cannot swallow a one-character selection
+
+```
+export function promptCopyPayload(selectionText: string, fullPrompt: string): string {
+  return selectionText.trim().length > 0 ? selectionText : fullPrompt;
+}
+```
+
+`trim()` is only the condition. The returned value is whichever argument the ternary picks, with no replace, encode, or trim of that value.
+
+Node probe of the shipped function:
+
+- `"_"` / `"a"` → same one character (not the fallback).
+- `"  x  "` → `"  x  "` (padding kept).
+- `""` and `"   \n\t "` → full prompt.
+- `"\u00a0"` (NBSP) → full prompt, because JS `trim` strips Unicode whitespace. That is the whitespace fallback, not a one-character token from the prompt JSON.
+- Hostile JSON with `_` and a URL returned identical.
+
+Cannot refute (2) for a non-whitespace one-character selection. The tests do not pin that fact (see (5)).
+
+---
+
+## (3) Handler cannot break the Copy button or the download path
+
+Copy button: separate click listener → `#copy()` → `navigator.clipboard.writeText(this.#prompt)`. writeText does not dispatch a DOM `copy` on the pre. Existing observer test still executes the `#copy()` source slice and asserts writeText got the source string.
+
+writeText failure path selects the pre and tells the reader to press ⌘C. That *does* hit the new listener: non-empty selection of the pre becomes text/plain via preventDefault. That is the bug this lane is fixing, on the fallback path, not a break.
+
+Download: separate click listener → Blob download, then `#prompt = #filePrompt` and `#text("prompt", …)`. No clipboard. Later manual copy reads the updated `#prompt` through the closure.
+
+The copy listener is on the pre. The two buttons are siblings, not descendants. Cannot refute (3).
+
+---
+
+## (4) Null clipboard / empty prompt cannot throw; other elements are not swallowed
+
+Guard is `if (!clipboard || !this.#prompt) return;` before any `setData`. Replica: null clipboard, `""` prompt, and `null` prompt all return without throw and without preventDefault.
+
+`window.getSelection()?.toString() ?? ""` covers a null Selection.
+
+Listener is only on `[data-slot="prompt"]` (the result `<pre>`). Copy bubbles from the event target upward. Other controls (name field, Copy button, download, dashboard composer) are not inside that pre, so their copy events do not pass through it. No document-level copy listener was added.
+
+Cannot refute (4) from the source. Not established: a copy event that *is* targeted at the focused pre while `getSelection()` still holds a range from another node (spec says the action then uses the modified selection). Unusual after focusing the pre.
+
+---
+
+## (5) Do the new tests discriminate? What still passes if the implementation is wrong?
+
+New tests only call `promptCopyPayload`. They do not dispatch a ClipboardEvent, do not read `clipboardData.types`, and do not source-scan AgentConnect.astro for `addEventListener("copy"`, `setData("text/plain"`, or `preventDefault`. The same file already source-scans that astro for `writeText` and download.
+
+Measured in the throwaway observer file (10 tests):
+
+| Wrong implementation | observer result |
+|---|---|
+| `.replace(/_/g, "\\_")` on the return | FAIL 9/1 — equality on the hostile JSON |
+| `selectionText.trim()` as the returned value | PASS 10/0 — no padded selection in the suite |
+| `trim().length > 1` (swallows `"_"` / `"a"`) | PASS 10/0 — shortest non-empty case is `"cswarm setup"` |
+| Delete the entire copy listener in AgentConnect.astro | PASS 10/0 — product fix can be removed |
+
+The `includes("\\_")` / `includes("](")` checks are weaker than the strict equality on the same string. Equality is the control that caught the underscore mutation.
+
+The tests discriminate payload identity for the strings they pass (empty, whitespace, one multi-word partial, one hostile JSON). They do **not** discriminate the clipboard flavour, handler wiring, preventDefault, 1-character keep, or “no trim of the returned value.” A comment that says they pin “WHAT it writes” overclaims: they pin the helper, not the clipboard.
+
+That is a gap, not a false implementation. The helper is a passthrough; the original bug is the UA HTML flavour, which these tests never reach.
+
+---
+
+## (6) AGENTS.md enumerations generated-not-typed; D-053 no branch on error.message
+
+Diff is three files: the handler, `promptCopyPayload`, and observer tests. No new user-facing list of required fields, commands, options, or providers. MIME types appear only in comments.
+
+No `error.message`. No new catch. Handler has no try/catch. `#explain` still uses `instanceof` and was not touched.
+
+Cannot refute (6).
+
+---
+
+## NOT established
+
+- Live browser pasteboard: no WebKit/Blink/Gecko run that inspected `text/html` vs `text/plain` after a real selection copy from the pre.
+- Whether a UA still writes `public.html` after preventDefault + only text/plain (spec says no; not measured).
+- Whether a copy of a pre selection fires on the pre when the pre is not focused (spec: focused node for non-editable).
+- The exact 2026-09-08 paste target that converted HTML to `\_` and Markdown links.
+- `cut` / drag from the pre.
+- OS clipboard managers synthesising a second flavour.
+
+---
+
+VERDICT: PASS
