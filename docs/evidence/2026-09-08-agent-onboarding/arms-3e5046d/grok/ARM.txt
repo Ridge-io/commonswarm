@@ -1,0 +1,112 @@
+D-036 independent review (Grok) — SHA 3e5046dba0cb008c94010244c1ea070158110ffc
+base 042afa6, branch lane/agent-onboarding
+First DIFF.patch line: diff --git a/docs/evidence/2026-09-08-agent-onboarding/RESULTS.md b/docs/evidence/2026-09-08-agent-onboarding/RESULTS.md
+
+Method: read REVIEW.md, DIFF.patch, RESULTS.md, then the cited sources. Tried to refute each claim at file:line. Ran in a throwaway detached worktree at that SHA: `npx tsc --noEmit -p tsconfig.json` (0), `npm run build` (0), and 25 focused tests (agent-onboarding, agent-channel, onboarding-installer, permissions-default) plus 5 site agent-prompt observer tests (all pass). Did not mutate the tree. Did not start a listener. Did not touch production.
+
+---
+
+1. Listener / product invariant — nothing starts a model
+
+Could not refute.
+
+- `src/cloud/agent-channel.ts:1,59-305` is an MCP stdio server (`StdioServerTransport` at 185). It claims deliveries, notifies `notifications/claude/channel`, and accepts `cswarm_received`. It never `spawn`s / `exec`s a provider. `manager?.start()` at 187 is `AgentSessionManager.start` (`src/cloud/session-manager.ts:84-88`), which only arms a renew timer.
+- `src/cloud/agent-host.ts:9-16` runs `ps -p … -o ppid=,comm=` only. Detection stops at grok/opencode/gemini (`:31`) and never launches them.
+- Hook wiring (`src/cloud/agent-receive.ts:218-221`) installs `node … check --profile … --hook --host-session-id …`. Wake MCP config (`:226-228`) is `{command: process.execPath, args: […, "receive", "serve", …]}` — another cswarm process, not a model.
+- `startCommand` at `agent-receive.ts:230` (`claude --resume … --dangerously-load-development-channels`) is returned in JSON (`:236`) and is not executed by this tree. `src/onboarding-cli.ts:157-160` loads `serveAgentChannel` only for `receive serve`.
+- Canary post (`agent-channel.ts:247-253`) is `post_signal` to this principal, not a worker.
+
+Residual: a host or agent that runs the printed `start_command` would invoke Claude. This code does not.
+
+---
+
+2. Credential and privacy safety
+
+Could not refute for the named leak surfaces (git-tracked files, logs, stderr, events, web roster).
+
+Site prompt vs downloaded file (`site/src/components/connect/agent-prompt.ts`):
+- File prompt (`:41-43`) contains neither token nor anon key (observer test pins `includes(TOKEN)===false` and `includes(anonKey)===false`).
+- Downloaded envelope (`dashboardAgentConnection`, `:16-25`) is the secret: `anon_key` + `credential.agent_token`. That is the handoff file, written by `#downloadConnection` as a Blob (`AgentConnect.astro:406-418`), not into localStorage (observer test).
+- Inline prompt (`:46-48`) embeds that JSON once; observer test pins exactly one copy of token and anon key.
+
+Saved profile (`src/cloud/agent-profile.ts:148-166`): `profile.json` holds `anon_key`; `credential.json` holds the artifact. `assertPrivateLocation` refuses a `.git` ancestor (`:41-69`). `writeSecureJsonFile` is 0600. Setup JSON does not include the token (`agent-onboarding.test.ts` `JSON.stringify(result).includes(TOKEN)===false`; CLI fixture same for stdout+stderr).
+
+Channel journal (`agent-channel.ts:48,93-128,271`): `{version, listener_instance_id, pending}`. Pending is a `DeliveryRow` (signal + lease), not a token, anon key, or wake topic. `claimed.wake.topic` goes only to `wake.setTopic` (`:269`). `src/listener/wake.ts:3,71-74,326-338` keeps the topic in memory; snapshot has no topic field. Stderr writes the error code only (`agent-channel.ts:283`). Stdio test asserts `stderr.includes(TOKEN)===false`.
+
+MCP events (`:233-239`) carry signal body + receipt meta, not credentials or topic.
+
+Web roster: no `wake_verified` / receive-status fields under `site/src`. `commonswarm:agent-prompt-ready` (`AgentConnect.astro:721-728`) sends principalId/name/model/tokenId/workspaceId, not the bearer or anon key.
+
+Redaction is structural omission plus the existing wake sensitive-key list, not a new sanitizer in this patch.
+
+---
+
+3. Host-session binding
+
+Could not refute.
+
+- `ChannelReceiptGate.confirm` (`agent-channel.ts:38-45`) requires `hostSessionId === this.hostSessionId` and `receipt === pending.receipt`. Unit test `channel receipt requires the pending challenge and the same session` throws `channel_receipt_mismatch` for `session-two` and for receipt `"wrong"`, then accepts the matching pair. Stdio test: tool call with `host_session_id: "other-session"` is `isError` and does not ACK; same-session receipt ACKs.
+- Unconfirmed restart reissues the receipt (`agent-channel.ts:109-111`), so a delayed nonce from the old stdio connection cannot pass. Not live-tested on an unconfirmed restart (stdio test ACKs, then restarts).
+- `profileSessionContext` (`agent-profile.ts:177-189`) filters `host_session_id === hostSessionId` and throws `profile_session_conflict` unless exactly one match; `assertLocalSessionBinding` is called on that context. Test `managed profile checks use only the named host's proof` rejects `another-session` and asserts the session header is the named context's id.
+- Hook (`agent-receive.ts:250-252`): `event.session_id !== binding.host_session_id` or cwd mismatch or `agent_id` present → no check. Test: `session-two` does not set `turn_verified_at`.
+
+---
+
+4. Cursor integrity (hook / manual / resume)
+
+Could not refute the implementation. Tests that discriminate:
+
+- Equal timestamps use id: `compareSignalCursor` (`src/cloud/signals.ts:588-596`) breaks ties on `id`. Check applies it before consume (`agent-check.ts:156-157`). Test `standalone checks drain tied timestamps` uses 45 rows with the same `created_at` and distinct ids; a time-only cursor would throw `check_page_order_invalid` on page 2. Shared `check.json` (`agent-check.ts:91-95`) is pinned by `resume shares the profile cursor`.
+- Output failure does not consume: cursor is written only after `present` (`agent-check.ts:186-189`). Test `output failure does not advance the cursor` throws from `present`, then a later check shows the same message (`shown === 1`), then a new row appears (`shown === 2`).
+- Quiet empty vs failure: `renderAgentCheck` returns `""` for no messages (`agent-check.ts:210-212`). Timeout throws `check_timeout` with “inbox was not proved empty” (`:60`). Hook failures write that sentence to stdout (`onboarding-cli.ts:102`). No test file asserts the “proved empty” sentence or CLI exit/stdout shape for a failed check versus quiet success (grep of `tests/**` is empty for those phrases). Discrimination for that clause is from code, not from a pinning test.
+
+Residual: `hookInput` (`onboarding-cli.ts:71-76`) throws `hook_input_too_large` then the same `catch` returns `null`, so oversized stdin is a silent skip (exit 0, no output), same as unmatched hook JSON. Check never runs; cursor is unchanged. Design of the hook is to not block the host turn.
+
+---
+
+5. Installer checksum-first
+
+Could not refute.
+
+`install.sh:84-122`: fetch `cswarm.sha256` first; malformed (`*[!0-9a-f]*` or length ≠ 64) dies before reuse or binary download; local regular file is reused only when its hash equals EXPECTED, then TMP is hashed again; mismatch dies and installs nothing. Test `installer fetches a checksum on repeat, downloads changed bytes, and rejects a bad checksum` (passed here): second run downloads==1; damaged bytes re-download and restore; checksum `"bad"` exits 1, leaves binary unchanged, downloads stay 2; Node 20 is refused with manifests still 4 (checksum not fetched).
+
+---
+
+6. Generated enumerations and D-053
+
+Mostly holds. No `error.message` classifier in the new onboarding/channel/profile/check/receive files. Receipt errors use `instanceof AgentSetupError` (`agent-channel.ts:157`). Hook/CLI JSON errors use `error.code` (`onboarding-cli.ts:96`, `cli.ts:8626`). Credential parser states it classifies from structure (`agent-credential-input.ts:97-98`).
+
+Generated from the enforcing constant:
+- `AGENT_CONNECTION_FIELDS` in parse error (`agent-profile.ts:79-85`)
+- `RECEIVE_MODES` / `RECEIVE_PROVIDERS` in configure errors and help (`agent-receive.ts:196-198`, `onboarding-cli.ts:32`)
+- `CHANNEL_RECEIPT_FIELDS` in tool schema and invalid-receipt text (`agent-channel.ts:24,139,147-148`)
+- `AGENT_PROFILE_COMMANDS` in `--profile` refusal (`cli.ts:537-538`)
+
+Drift hazards (currently match, not a wrong list today):
+- Site prompt types `setup_version 1` (`agent-prompt.ts:32`) instead of interpolating imported `AGENT_CONNECTION_VERSION`.
+- Mode choice prose is retyped, not `RECEIVE_CHOICE`.
+- `permissions-default.test.ts` D-088 control still reads `site/src/lib/agent-connect.ts` (`credentialArtifact` old `message`). The emitted envelope overwrites `message` with `AGENT_CREDENTIAL_MESSAGE_D088` (`agent-prompt.ts:23`). This SHA’s CLI accepts both, and old CLIs lack `cswarm setup` anyway; the control does not measure the emit path. RESULTS already requires publishing the CLI before the site prompt.
+
+---
+
+7. RESULTS.md vs code
+
+Code matches the behavioral claims that I traced (no model spawn, private profile, shared cursor, receipt gate, checksum-first, no new server schema/edge/worker in this 32-file diff).
+
+Claims stronger than evidence, or stale:
+- RESULTS “Not committed” is false for this SHA: `3e5046d feat(onboarding): …` exists on `lane/agent-onboarding`.
+- Gate table (869 / 572 / 541, `build-release.sh` exit 0, 18 standalone-artifact tests) was not re-run here. I established tsc, `npm run build`, 18 tests in the three new p1-cli files + 7 in permissions-default + 5 site observer tests.
+- Token 269 / 93.4% matches `benchmark.json` (4059→269). Character cut is 91.6% (`file_prompt_reduction_percent`). RESULTS separates those; good.
+- No 10× end-to-end claim; idle Claude wake is disclosed as fixture-only. Matches REVIEW.md.
+
+---
+
+Not established
+- Live Claude/Codex session, host hook trust UI, idle canary seen by a model (stdio client is a fixture; RESULTS already says this).
+- Unconfirmed journal restart refusing the old receipt (code at agent-channel.ts:111; no test).
+- CLI stdout/exit discrimination of failed `cswarm check` vs quiet empty (no test).
+- Full `npm test`, full `env -u FORCE_COLOR npm run test:p1-cli`, `scripts/build-release.sh`.
+- Mutation of guards (read-only).
+- Production deploy, roster live page, brain topics.
+
+VERDICT: PASS

@@ -1,0 +1,11 @@
+I'll do a read-only D-036 review of this SHA. First I load the review brief, the patch, and RESULTS.md, then I'll try to refute each claim from the real files.Quoted first patch line: `diff --git a/docs/evidence/2026-09-08-agent-onboarding/RESULTS.md b/docs/evidence/2026-09-08-agent-onboarding/RESULTS.md`. Next I’ll join the swarm and read the channel/host files against each claim.Joining the swarm, then I'll trace hook wiring, credentials, and the installer in the source.Swarm join landed. Next I’ll read the site prompt, tests, and redaction path, and I’ll look for spawn or leak holes.I’ve got the source paths. Next I’ll pull the installer and CLI diffs, then run the pure gates in a throwaway worktree.Creating a throwaway worktree and running the pure gates against this SHA.Focused tests passed. Writing the arm review, then removing the throwaway worktree.First DIFF.patch line: `diff --git a/docs/evidence/2026-09-08-agent-onboarding/RESULTS.md b/docs/evidence/2026-09-08-agent-onboarding/RESULTS.md`
+
+Wrote the arm to `scratchpad/arms-3e5046dba0cb008c94010244c1ea070158110ffc/grok/ARM.txt`. Throwaway worktree is gone.
+
+Tried to break the seven claims. They hold. tsc, build, and the 25 focused onboarding tests plus 5 site prompt tests passed.
+
+Residuals, not blockers: site prompt types `setup_version 1`; D-088 test reads the wrong file; oversized hook stdin is a quiet skip; RESULTS still says “not committed.”
+
+Did not run full `npm test`, full `test:p1-cli`, or `build-release.sh`. Did not run a live Claude session.
+
+VERDICT: PASS

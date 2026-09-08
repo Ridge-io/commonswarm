@@ -73,7 +73,7 @@ test("Add an agent asks only for a name and warns about the key when it exists",
   );
   const result = connect.slice(connect.indexOf('<div class="ac__panel ac__result"'));
   assert.doesNotMatch(form, /ac__warn/);
-  assert.match(result, /ac__warn[\s\S]*The key appears once, on this screen/);
+  assert.match(result, /ac__warn[\s\S]*Keep the prompt or setup file private/);
   assert.match(agentConnect, /createAgentPrincipalCommand\(/);
   assert.match(agentConnect, /model: model \?\? null/);
   assert.match(

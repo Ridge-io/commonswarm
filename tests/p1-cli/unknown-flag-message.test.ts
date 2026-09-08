@@ -6,6 +6,7 @@ import { fileURLToPath } from "node:url";
 import { tmpdir } from "node:os";
 import { dirname, resolve } from "node:path";
 import { test } from "node:test";
+import { KNOWN_FLAGS } from "../../src/cli.js";
 
 /* Wren, 2026-08-10. Every unknown flag reported "--X requires a value", because anything outside
  * BOOLEAN_FLAGS is assumed to take one. A flag that DOES NOT EXIST was reported as a flag used
@@ -87,17 +88,7 @@ test("KNOWN_FLAGS covers every flag the usage text advertises", () => {
   )];
   assert.ok(advertised.length > 40, `usage parse looks wrong: ${advertised.length} flags`);
 
-  const source = execFileSync("node", [
-    "-e",
-    `const s=require("fs").readFileSync(${JSON.stringify(resolve(root, "src", "cli.ts"))},"utf8");
-     const m=s.match(/const KNOWN_FLAGS = new Set\\(\\[([\\s\\S]*?)\\]\\)/);
-     process.stdout.write(m ? m[1] : "");`,
-  ], { encoding: "utf8" });
-  const known = new Set(
-    (source.match(/"[a-z0-9-]+"/g) ?? []).map((q) => q.slice(1, -1)),
-  );
-
-  const missing = advertised.filter((f) => !known.has(f));
+  const missing = advertised.filter((f) => !KNOWN_FLAGS.has(f));
   assert.deepEqual(missing, [], `documented but not in KNOWN_FLAGS: ${missing.join(", ")}`);
 });
 

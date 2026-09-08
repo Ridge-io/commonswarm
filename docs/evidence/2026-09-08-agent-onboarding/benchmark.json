@@ -1,0 +1,127 @@
+{
+  "measured_at": "2026-09-08T15:07:45.608Z",
+  "baseline_sha": "042afa63b965f43637561277090c02a921c3a1a7",
+  "scope": "10 loopback HTTP trials; compiled CLI; installed Node and CLI; no model, human wait, production server, or host wake timing",
+  "node": "v26.7.0",
+  "prompts": {
+    "baseline": {
+      "characters": 14917,
+      "words": 1952,
+      "lines": 227,
+      "tokens": 4059
+    },
+    "inline": {
+      "characters": 2085,
+      "words": 211,
+      "lines": 17,
+      "tokens": 598
+    },
+    "file": {
+      "characters": 1259,
+      "words": 194,
+      "lines": 15,
+      "tokens": 269
+    }
+  },
+  "tokenizer": {
+    "version": "0.14.0",
+    "encoding": "o200k_base"
+  },
+  "timings": {
+    "setup_ms": {
+      "p50": 112.5,
+      "p95": 157.5
+    },
+    "configure_ms": {
+      "p50": 88.8,
+      "p95": 97.4
+    },
+    "quiet_check_ms": {
+      "p50": 109.4,
+      "p95": 115.9
+    },
+    "resume_ms": {
+      "p50": 80.4,
+      "p95": 94
+    },
+    "warm_turn_setup_ms": {
+      "p50": 311.5,
+      "p95": 366.1
+    }
+  },
+  "trials": 10,
+  "network_requests": 40,
+  "file_prompt_reduction_percent": 91.6,
+  "samples": [
+    {
+      "setup_ms": 132.86058300000002,
+      "configure_ms": 90.21008299999994,
+      "quiet_check_ms": 109.14758299999994,
+      "resume_ms": 81.66233399999999,
+      "warm_turn_setup_ms": 332.295792
+    },
+    {
+      "setup_ms": 157.54154200000005,
+      "configure_ms": 92.55337499999996,
+      "quiet_check_ms": 115.94666699999993,
+      "resume_ms": 82.40016700000001,
+      "warm_turn_setup_ms": 366.075917
+    },
+    {
+      "setup_ms": 115.82454099999995,
+      "configure_ms": 93.38391700000011,
+      "quiet_check_ms": 109.36200000000008,
+      "resume_ms": 80.43441600000006,
+      "warm_turn_setup_ms": 318.61016700000005
+    },
+    {
+      "setup_ms": 123.08362499999998,
+      "configure_ms": 88.80250000000001,
+      "quiet_check_ms": 113.4780830000002,
+      "resume_ms": 81.37679100000014,
+      "warm_turn_setup_ms": 325.4164169999999
+    },
+    {
+      "setup_ms": 116.34120900000016,
+      "configure_ms": 97.4347499999999,
+      "quiet_check_ms": 108.73500000000013,
+      "resume_ms": 80.11266700000033,
+      "warm_turn_setup_ms": 322.55425000000014
+    },
+    {
+      "setup_ms": 112.23762500000021,
+      "configure_ms": 89.53395899999987,
+      "quiet_check_ms": 109.6242500000003,
+      "resume_ms": 80.36258300000009,
+      "warm_turn_setup_ms": 311.4545830000002
+    },
+    {
+      "setup_ms": 111.87566700000025,
+      "configure_ms": 85.66283399999975,
+      "quiet_check_ms": 109.68766700000015,
+      "resume_ms": 80.7018750000002,
+      "warm_turn_setup_ms": 307.2648330000002
+    },
+    {
+      "setup_ms": 112.54262500000004,
+      "configure_ms": 84.58920800000033,
+      "quiet_check_ms": 110.68212500000027,
+      "resume_ms": 79.27925000000005,
+      "warm_turn_setup_ms": 307.8558330000001
+    },
+    {
+      "setup_ms": 111.94950000000017,
+      "configure_ms": 86.77174999999988,
+      "quiet_check_ms": 109.28383299999996,
+      "resume_ms": 78.68970899999977,
+      "warm_turn_setup_ms": 308.0750830000002
+    },
+    {
+      "setup_ms": 111.5263329999998,
+      "configure_ms": 86.23687500000051,
+      "quiet_check_ms": 108.0200420000001,
+      "resume_ms": 93.9819580000003,
+      "warm_turn_setup_ms": 305.82429200000024
+    }
+  ]
+}
