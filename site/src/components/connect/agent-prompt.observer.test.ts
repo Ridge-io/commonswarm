@@ -2,7 +2,7 @@ import assert from "node:assert/strict";
 import { readFileSync } from "node:fs";
 import { test } from "node:test";
 import ts from "typescript";
-import { dashboardAgentConnection, dashboardAgentFilePrompt, dashboardAgentPrompt } from "./agent-prompt";
+import { dashboardAgentConnection, dashboardAgentFilePrompt, dashboardAgentPrompt, promptCopyPayload} from "./agent-prompt";
 import { parseAgentConnection } from "../../../../src/cloud/agent-profile";
 import { AGENT_CONNECTION_FIELDS } from "../../../../src/cloud/agent-onboarding-contract";
 
@@ -108,4 +108,29 @@ test("the component copy method sends the source string even when displayed text
   await new Component(prompt).copy();
   assert.equal(copied, prompt);
   assert.deepEqual(JSON.parse(copied.match(/```json\n([^]*?)\n```/)![1]!), JSON.parse(dashboardAgentConnection(INPUT)));
+});
+
+
+/* The clipboard flavour, measured against a real damaged hand-off on 2026-09-08.
+ *
+ * A manual selection copy writes text/plain AND text/html. A Markdown client converts the HTML,
+ * which escapes underscores as \_ and rewrites a bare URL as a Markdown link — the exact damage
+ * reported from a live connection attempt, arriving by a route the code fences cannot reach. The
+ * block now writes plain text itself; this pins WHAT it writes. */
+test("an empty selection copies the whole prompt, because a keyboard copy has no range", () => {
+  assert.equal(promptCopyPayload("", "WHOLE PROMPT"), "WHOLE PROMPT");
+  assert.equal(promptCopyPayload("   \n\t ", "WHOLE PROMPT"), "WHOLE PROMPT");
+});
+
+test("a partial selection stays exactly that selection", () => {
+  assert.equal(promptCopyPayload("cswarm setup", "WHOLE PROMPT"), "cswarm setup");
+});
+
+test("the payload is returned byte for byte: no underscore escaping, no link rewriting", () => {
+  const hostile = '{"anon_key":"a_b-c","url":"https://api.commonswarm.com"}';
+  assert.equal(promptCopyPayload(hostile, "WHOLE"), hostile);
+  assert.ok(!promptCopyPayload(hostile, "WHOLE").includes("\\_"), "an underscore must not be escaped");
+  assert.ok(!promptCopyPayload(hostile, "WHOLE").includes("]("), "a URL must not become a Markdown link");
+  const whole = 'save {"anon_key":"a_b"} to https://api.commonswarm.com';
+  assert.equal(promptCopyPayload("", whole), whole);
 });
