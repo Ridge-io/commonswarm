@@ -32,3 +32,24 @@ Not established: the original paste's conversion layer, live authentication, act
 ## Delivery and cleanup
 
 A site deployment is needed for users to get the fenced prompt; a new CLI release is needed for the fixed errors. Neither is authorized here. No version bump or commit was made, so exact-SHA landing review remains for the release owner. The local patch was transferred to the main workspace without creating a commit. Only this task's worktree and branch were removed after branch-audit; the three pre-existing lanes were retained.
+
+## Lead review, 2026-09-08
+
+D-036 satisfied on the exact SHA `b36922c`: **Grok exact PASS** and **Gemini inversion PASS**, both with
+attempted refutations at file:line and honest not-established lists. Files: `arms-b36922c/`.
+
+The lead re-ran every gate as a bare statement and read its exit code: build 0, `tsc --noEmit` 0,
+`check:tests` 0, `npm test` 869/869, `test:p1-cli` 573/573, `build-release.sh` 0 (it verifies by running the
+artifact), site build 0 and site tests 543 passed with the suite's one existing skip, identity 0.
+
+The lead also probed the fence rule independently (`fence-probe.mjs`, committed beside this report) against
+eight adversarial payloads: no backticks, one, exactly three, four, ten, a run at the start, a run at the
+end, and mixed runs. In every case the fence is strictly longer than the longest run inside, and no inner
+line can close the block early. Gemini reached the same result from the CommonMark closing-fence rule.
+
+One thing worth recording about the Markdown detection: `\_` is not a valid JSON escape, so a file
+containing it cannot parse as JSON. The detection therefore sits on the parse-failure path only and cannot
+fire on a valid envelope.
+
+Still not established, and unchanged by this review: the exact step that damaged the original paste. The
+site copies its source string unchanged, so the damage happened somewhere between the copy and the file.

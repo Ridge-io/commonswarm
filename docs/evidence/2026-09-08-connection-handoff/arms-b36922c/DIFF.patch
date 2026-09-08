@@ -1,0 +1,251 @@
+diff --git a/docs/evidence/2026-09-08-connection-handoff/REPORT.md b/docs/evidence/2026-09-08-connection-handoff/REPORT.md
+new file mode 100644
+index 0000000..0a85104
+--- /dev/null
++++ b/docs/evidence/2026-09-08-connection-handoff/REPORT.md
+@@ -0,0 +1,34 @@
++# Connection handoff repair — 2026-09-08
++
++Base: f4eb01803054ac9a70610fafa6891215cf8ce491 (v0.1.65). Local, uncommitted patch. No deployment, release, real connection, model, or receive configuration was started.
++
++## Cause and limits
++
++Trace: AgentConnect's mint result and deployment metadata feed dashboardAgentPrompt and dashboardAgentConnection. The latter serializes the versioned envelope with JSON.stringify; credentialArtifact also uses JSON.stringify. AgentConnect displays the source through textContent, writes its private #prompt string through navigator.clipboard.writeText, and downloads its #connection string as an application/json Blob. The fallback selects the pre element's text. None of these source paths escapes underscores or turns URLs into links.
++
++The inline prompt introduced in 3e5046d placed JSON and the installer command in Markdown prose without code fences. This exposes machine input to later rich-text/Markdown conversion. The exact converter that damaged the reported paste is NOT established. No real payload was read and no claim is made that the old CLI leaked it. A synthetic fixture reproduces the reported invalid backslash-underscore escapes and Markdown-wrapped URL.
++
++## Change
++
++The prompt fences the install command and JSON separately. JSON.stringify remains the serializer; credential bytes are not edited. The fence grows if input contains backticks. The copy method remains a plain-text copy of the source string. Instructions say to save only the JSON block contents, without fences, and use the existing “Use a setup file” download if the paste is damaged. That download avoids text conversion.
++
++Setup detects malformed JSON before any authentication. Invalid underscore escapes or pasted fences get a fixed Markdown-damage message. A Markdown-wrapped URL gets a fixed URL-damage message before authentication. Errors show no raw parser excerpt, JSON, or credential value. Existing error codes and JSON envelope are unchanged; setup --check-version still returns {"setup_version":1}.
++
++No importer repair was added: deleting backslashes can change credentials. The rejected file remains unchanged. Valid existing files remain accepted. The former instruction “save the JSON below unchanged” is replaced with block-only extraction and file-download recovery. Wake wording now names Claude Code preview channels and Codex turn checks; no wake feature changed.
++
++## Evidence
++
++- npm run build and npm run check:tests: passed.
++- npm test: 869 passed.
++- npm run test:p1-cli: 573 passed. The changed agent-onboarding.test.ts is reached by this glob, not the core literal list.
++- Site build: passed. npm --prefix site test: 543 passed, one pre-existing skip. First run had one unrelated Chrome layout-test timeout; full rerun passed after other suites stopped.
++- scripts/build-release.sh: exit 0. Standalone artifact copied outside the repository and run as CommonJS: 24 focused onboarding/prompt tests passed. Running the extensionless CommonJS bundle via node inside this ESM repository is not the shipped invocation and failed; the external artifact invocation passed.
++- Negative control: restoring the two production files from the base makes both the fenced-copy test and Markdown-error test fail. Restoring the patch makes them pass.
++- The component's actual copy method runs with an inert DOM/clipboard harness: it copies source text even when display text differs. Extracted copied JSON equals the synthetic source envelope; underscore-bearing token and key bytes are unchanged; the shell block equals `curl -fsSL https://commonswarm.com/install.sh | sh`.
++- Local HTTP fixture: generated prompt → JSON extraction → private file → compiled CLI setup → saved profile → feed, with test credentials. Invalid cases use a counting fetcher and prove zero authentication calls. Plain and JSON CLI output omit synthetic secret markers. Rejected files stay byte-identical.
++
++Not established: the original paste's conversion layer, live authentication, actual desktop clipboard/paste behavior, or live host wake. Code fences reduce Markdown damage but cannot force an external editor to preserve text. No browser tabs were opened for manual work; the existing site suite ran its own browser fixtures.
++
++## Delivery and cleanup
++
++A site deployment is needed for users to get the fenced prompt; a new CLI release is needed for the fixed errors. Neither is authorized here. No version bump or commit was made, so exact-SHA landing review remains for the release owner. The local patch was transferred to the main workspace without creating a commit. Only this task's worktree and branch were removed after branch-audit; the three pre-existing lanes were retained.
+diff --git a/site/src/components/connect/agent-prompt.observer.test.ts b/site/src/components/connect/agent-prompt.observer.test.ts
+index bf0bf08..198d509 100644
+--- a/site/src/components/connect/agent-prompt.observer.test.ts
++++ b/site/src/components/connect/agent-prompt.observer.test.ts
+@@ -1,11 +1,12 @@
+ import assert from "node:assert/strict";
+ import { readFileSync } from "node:fs";
+ import { test } from "node:test";
++import ts from "typescript";
+ import { dashboardAgentConnection, dashboardAgentFilePrompt, dashboardAgentPrompt } from "./agent-prompt";
+ import { parseAgentConnection } from "../../../../src/cloud/agent-profile";
+ import { AGENT_CONNECTION_FIELDS } from "../../../../src/cloud/agent-onboarding-contract";
+ 
+-const TOKEN = `swm_agt_${"A".repeat(43)}`;
++const TOKEN = `swm_agt_${"A_".repeat(21) + "A"}`;
+ const INPUT = {
+   credential: {
+     principalId: "11111111-1111-4111-8111-111111111111", principalName: "Observer",
+@@ -14,7 +15,7 @@ const INPUT = {
+     horizonExpiresAt: null, grantKind: "standing" as const,
+   },
+   workspaceId: "44444444-4444-4444-8444-444444444444", workspaceName: "Observer room",
+-  deploymentUrl: "https://example.supabase.co", anonKey: "public-anon-observer",
++  deploymentUrl: "https://example.supabase.co", anonKey: "TEST_ONLY_PUBLIC_KEY",
+ };
+ 
+ test("the generated connection is accepted by the CLI without changing the credential schema", () => {
+@@ -37,12 +38,12 @@ test("one-paste setup includes a single connection and full agent ID, with priva
+   assert.match(prompt, /0600/);
+   assert.match(prompt, /cswarm setup --connection-file/);
+   assert.match(prompt, /cswarm setup --check-version/);
+-  assert.ok(prompt.length < 2400, `inline prompt grew to ${prompt.length} characters`);
++  assert.ok(prompt.length < 2900, `inline prompt grew to ${prompt.length} characters`);
+ });
+ 
+-test("file handoff reduces the baseline prompt by at least 90 percent without hiding a manual fetch", () => {
++test("file handoff stays short without hiding a manual fetch", () => {
+   const prompt = dashboardAgentFilePrompt(INPUT);
+-  assert.ok(prompt.length <= 13426 * 0.1, `file prompt has ${prompt.length} characters`);
++  assert.ok(prompt.length <= 1600, `file prompt has ${prompt.length} characters`);
+   assert.equal(prompt.includes(TOKEN), false);
+   assert.equal(prompt.includes(INPUT.anonKey), false);
+   assert.match(prompt, /attached connection JSON/);
+@@ -68,3 +69,43 @@ test("file download stays in memory, can be cleared, and key lifetime is under s
+   assert.match(source, /#forget\(\) \{[\s\S]*this.#connection = null;[\s\S]*this.#filePrompt = null;/);
+   assert.doesNotMatch(source, /localStorage.setItem/);
+ });
++
++
++test("copy source has lossless fenced JSON and a plain executable install command", () => {
++  const prompt = dashboardAgentPrompt(INPUT);
++  const raw = prompt.match(/```json\n([^]*?)\n```/)?.[1];
++  assert.ok(raw);
++  assert.deepEqual(JSON.parse(raw), JSON.parse(dashboardAgentConnection(INPUT)));
++  assert.equal(parseAgentConnection(raw).credential.agent_token, TOKEN);
++  assert.equal(prompt.match(/```sh\n([^]*?)\n```/)?.[1], "curl -fsSL https://commonswarm.com/install.sh | sh");
++  assert.doesNotMatch(raw, /\\_/);
++  assert.match(prompt, /Use a setup file/);
++  assert.match(prompt, /Codex supports turn checks/);
++  const source = readFileSync(new URL("./AgentConnect.astro", import.meta.url), "utf8");
++  assert.match(source, /navigator.clipboard.writeText\(this.#prompt\)/);
++  assert.match(source, /node.textContent = value/);
++});
++
++
++test("the component copy method sends the source string even when displayed text differs", async () => {
++  const source = readFileSync(new URL("./AgentConnect.astro", import.meta.url), "utf8");
++  const method = source.slice(source.indexOf("    async #copy()"), source.indexOf("\n  }\n", source.indexOf("    async #copy()")));
++  // Execute the shipped method with inert DOM/timer dependencies; no browser or credentials.
++  const harness = `return class {
++    #prompt; #copyTimer; constructor(prompt) { this.#prompt = prompt; }
++    #q() { return { textContent: "altered display", setAttribute() {} }; }
++    #text() {} #resetCopyLabel() {}
++    async copy() { await this.#copy(); }
++    ${method}
++  }`;
++  const js = ts.transpile(harness, { target: ts.ScriptTarget.ES2022 });
++  let copied = "";
++  const Component = new Function("navigator", "window", js)(
++    { clipboard: { async writeText(value: string) { copied = value; } } },
++    { clearTimeout() {}, setTimeout() { return 1; } },
++  );
++  const prompt = dashboardAgentPrompt(INPUT);
++  await new Component(prompt).copy();
++  assert.equal(copied, prompt);
++  assert.deepEqual(JSON.parse(copied.match(/```json\n([^]*?)\n```/)![1]!), JSON.parse(dashboardAgentConnection(INPUT)));
++});
+diff --git a/site/src/components/connect/agent-prompt.ts b/site/src/components/connect/agent-prompt.ts
+index 681564a..4e48d86 100644
+--- a/site/src/components/connect/agent-prompt.ts
++++ b/site/src/components/connect/agent-prompt.ts
+@@ -28,12 +28,14 @@ export function dashboardAgentConnection(input: DashboardPromptInput): string {
+ function setupPrompt(source: string): string {
+   return [
+     "Connect this agent to CommonSwarm. Keep the connection file private; never echo its contents or put them in shell commands, logs, URLs, or environment variables.",
+-    `Use Node.js 22+ and run: ${INSTALL_CMD}`,
++    `Use Node.js 22+ and run:
++
++${codeBlock("sh", INSTALL_CMD)}`,
+     "The installer reuses a matching build. If its host is blocked, use npm install -g commonswarm. Confirm cswarm setup --check-version returns setup_version 1; otherwise report that the release needs updating.",
+     source,
+     `Use Markdown for messages (up to ${SIGNAL_BODY_MAX} characters).`,
+     "Run cswarm setup --connection-file <private-file> --json. Use the returned --profile with later commands.",
+-    "Ask once: enable wakeups in this same session, or check at each turn's start and whenever asked? Explain host support and any approval or restart needed. Use cswarm receive configure with the user's choice; reuse a saved choice. Never start another model to answer here.",
++    "Ask once: enable wakeups in this same session, or check at each turn's start and whenever asked? Wake requires Claude Code preview channels; Codex supports turn checks. Explain any approval or restart needed. Use cswarm receive configure with the user's choice; reuse a saved choice. Never start another model to answer here.",
+     "Run cswarm check before work. Read only relevant brain topics; post intent and reply to requests. Use cswarm setup guide only when needed. Report the connection, receive mode, and next step; do not claim wake works until its idle test passes.",
+   ].join("\n\n");
+ }
+@@ -45,5 +47,11 @@ export function dashboardAgentFilePrompt(_input: DashboardPromptInput): string {
+ /** One-paste fallback: one credential and one copy of the public connection data. */
+ export function dashboardAgentPrompt(input: DashboardPromptInput): string {
+   const path = `~/.cswarm/connect-${input.credential.principalId}/connection.json`;
+-  return `${setupPrompt(`Use your file-writing tool to save the JSON below unchanged to ${path}. Set its directory to 0700 and the file to 0600.`)}\n\n${dashboardAgentConnection(input)}`;
++  return `${setupPrompt(`Save only the JSON code block contents with your file-writing tool to ${path}. Keep all characters unchanged. Set its directory to 0700 and the file to 0600. If damaged, use “Use a setup file” in CommonSwarm; do not repair credentials or paste them into chat.`)}\n\n${codeBlock("json", dashboardAgentConnection(input))}`;
++}
++
++/** Keep machine input out of Markdown prose, including embedded fence characters. */
++function codeBlock(language: string, text: string): string {
++  const fence = "`".repeat(Math.max(3, ...Array.from(text.matchAll(/`+/g), match => match[0].length + 1)));
++  return `${fence}${language}\n${text}\n${fence}`;
+ }
+diff --git a/src/cloud/agent-profile.ts b/src/cloud/agent-profile.ts
+index 4ccaa60..386b1c3 100644
+--- a/src/cloud/agent-profile.ts
++++ b/src/cloud/agent-profile.ts
+@@ -72,7 +72,9 @@ export async function assertPrivateLocation(path: string): Promise<string> {
+ export function parseAgentConnection(raw: string): AgentConnectionEnvelope {
+   let value: Record<string, unknown>;
+   try { value = JSON.parse(raw); } catch {
+-    throw new AgentSetupError("connection_invalid", "The connection file is not valid JSON. Save the supplied file unchanged.");
++    throw new AgentSetupError("connection_invalid", raw.includes("\\_") || /^\s*```/.test(raw)
++      ? "The connection file appears to contain Markdown formatting. Use ‘Use a setup file’ in CommonSwarm and run setup with that file. Do not edit credentials or paste them into chat."
++      : "The connection file is not valid JSON. Use ‘Use a setup file’ in CommonSwarm and run setup with that file. Do not paste its contents into chat.");
+   }
+   if (!value || Array.isArray(value) || typeof value !== "object" ||
+       value.version !== AGENT_CONNECTION_VERSION ||
+@@ -84,6 +86,9 @@ export function parseAgentConnection(raw: string): AgentConnectionEnvelope {
+       !value.credential || typeof value.credential !== "object" || Array.isArray(value.credential)) {
+     throw new AgentSetupError("connection_invalid", `Expected connection version ${AGENT_CONNECTION_VERSION} with fields: ${AGENT_CONNECTION_FIELDS.join(", ")}. Save the supplied file unchanged.`);
+   }
++  if (/^\s*\[[\s\S]*\]\(/.test(value.url)) {
++    throw new AgentSetupError("connection_target_invalid", "The connection URL appears to be a Markdown link. Use ‘Use a setup file’ in CommonSwarm and run setup with that file. Do not edit credentials or paste them into chat.");
++  }
+   const target = checkedTarget(value.url, value.anon_key);
+   const agent = parseAgentCredentialInput(JSON.stringify(value.credential), { kind: "stdin" });
+   if (!agent.durable || agent.principalId !== value.principal_id.toLowerCase()) {
+diff --git a/tests/p1-cli/agent-onboarding.test.ts b/tests/p1-cli/agent-onboarding.test.ts
+index e8967d6..9b87af0 100644
+--- a/tests/p1-cli/agent-onboarding.test.ts
++++ b/tests/p1-cli/agent-onboarding.test.ts
+@@ -241,7 +241,18 @@ test("CLI setup and profile feed work against an HTTP fixture without exposing s
+   await new Promise<void>(done => server.listen(0, "127.0.0.1", done));
+   try {
+     const url = `http://127.0.0.1:${(server.address() as { port: number }).port}`;
+-    const input = await saveInput(connection(url));
++    const browserPromptModule = "../../site/src/components/connect/agent-prompt.js";
++    const { dashboardAgentPrompt } = await import(browserPromptModule);
++    const prompt = dashboardAgentPrompt({
++      credential: { principalId: AGENT, principalName: "Test agent", tokenId: artifact().token_id,
++        runId: artifact().run_id, token: TOKEN, expiresAt: Date.parse(artifact().expires_at),
++        renews: true, horizonExpiresAt: null, grantKind: "standing" },
++      workspaceId: WS, workspaceName: "Fixture", deploymentUrl: url, anonKey: "public_fixture",
++    });
++    const raw = prompt.match(/```json\n([^]*?)\n```/)?.[1];
++    assert.ok(raw);
++    const input = await saveInput();
++    await writeFile(input, raw);
+     const profile = join(dirname(input), "saved", "profile.json");
+     const run = await cli(["setup", "--connection-file", input, "--profile", profile, "--json"]);
+     assert.equal(run.code, 0, run.stderr || run.stdout);
+@@ -324,3 +335,40 @@ test("Codex hooks preserve host settings and configure waits for the receive-sta
+   await config;
+   assert.equal((await readReceiveBinding(profilePath, "codex-one"))!.turn_verified_at, timestamp);
+ });
++
++
++test("damaged handoffs fail before authentication and keep CLI errors secret-free", async () => {
++  const marker = "SYNTHETIC_PRIVATE_MARKER";
++  const original = { ...connection(), anon_key: marker };
++  const cases = [
++    { raw: JSON.stringify(original).replaceAll("_", "\\_"), code: "connection_invalid", markdown: true },
++    { raw: JSON.stringify({ ...original, url: "[https://fixture.example](https://fixture.example)" }), code: "connection_target_invalid", markdown: true },
++    { raw: `{\"${marker}\":`, code: "connection_invalid", markdown: false },
++    { raw: JSON.stringify({ ...original, workspace_id: undefined }), code: "connection_invalid", markdown: false },
++    { raw: JSON.stringify({ ...original, credential: { ...artifact(), agent_token: marker } }), code: "agent_credential_invalid_agent_token", markdown: false },
++  ];
++  for (const item of cases) {
++    const input = await saveInput(original);
++    await writeFile(input, item.raw);
++    let calls = 0;
++    await assert.rejects(setupAgent({ connectionFile: input, fetcher: (async () => { calls++; throw new Error("network reached"); }) as typeof fetch }), { code: item.code });
++    assert.equal(calls, 0);
++    for (const flags of [[], ["--json"]]) {
++      const result = await cli(["setup", "--connection-file", input, ...flags]);
++      assert.equal(result.code, 1);
++      const output = result.stdout + result.stderr;
++      assert.equal(output.includes(marker), false);
++      assert.equal(output.includes(TOKEN), false);
++      if (item.markdown) assert.match(output, /Markdown/);
++      if (flags.length) {
++        const error = JSON.parse(result.stdout);
++        assert.equal(error.ok, false);
++        assert.equal(result.stderr, "");
++      }
++    }
++    assert.equal(await readFile(input, "utf8"), item.raw, "rejected input is never repaired");
++  }
++  const version = await cli(["setup", "--check-version"]);
++  assert.equal(version.code, 0);
++  assert.deepEqual(JSON.parse(version.stdout), { setup_version: 1 });
++});

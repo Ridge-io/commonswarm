@@ -1,0 +1,86 @@
+Running `npm test` in the background...
+I am waiting for `npm test` to finish.
+Running `env -u FORCE_COLOR npm run test:p1-cli` in the background...
+Running `npm --prefix site test` in the background...
+Running `npm --prefix site test` in the background...
+```diff
+diff --git a/docs/evidence/2026-09-08-connection-handoff/REPORT.md b/docs/evidence/2026-09-08-connection-handoff/REPORT.md
+```
+
+### 1. Pure Gate Verification
+Executed in an isolated detached throwaway worktree at SHA `b36922c9663c6435fdcf43f1c6ee42e40609a786` (base `f4eb018`) with symlinked `node_modules` and copied `site/.env`:
+- `npm run build`: Exit 0 (`dist/` cleaned, `tsc` built, `dist/cli.js` chmod 755).
+- `npx tsc --noEmit -p tsconfig.json`: Exit 0.
+- `npm test`: Exit 0 (869 passed, 26 suites, 0 failed).
+- `env -u FORCE_COLOR npm run test:p1-cli`: Exit 0 (573 passed, 0 failed).
+- `npm --prefix site test`: Exit 0 (543 passed, 1 pre-existing skip, 0 failed; prerequisite `npm --prefix site run build` executed to populate `site/dist/` assets for observer tests).
+- `bash scripts/build-release.sh`: Exit 0 (built `dist-release/cswarm` 2.6MB, verified artifact v0.1.65).
+The throwaway worktree was detached, verified, and removed.
+
+---
+
+### 2. Analysis of Claims
+
+#### Claim 1: The fence is always longer than any backtick run inside the payload
+- **Analysis:** In [`site/src/components/connect/agent-prompt.ts`](file:///Users/yulanbot/Developer/Ridge.io/cloud-swarm/site/src/components/connect/agent-prompt.ts#L54-L57):
+  ```ts
+  function codeBlock(language: string, text: string): string {
+    const fence = "`".repeat(Math.max(3, ...Array.from(text.matchAll(/`+/g), match => match[0].length + 1)));
+    return `${fence}${language}\n${text}\n${fence}`;
+  }
+  ```
+  - **No backticks:** `matchAll(/`+/g)` returns empty; `Math.max(3, ...[])` evaluates to 3 (` ``` `). Length 3 > 0.
+  - **Exactly 3 backticks:** Match length is 3; `match[0].length + 1` is 4. `Math.max(3, 4)` is 4 (` ```` `). Length 4 > 3.
+  - **Longer run of $k$ backticks:** Match length is $k$; mapped to $k + 1$. `Math.max(3, ..., k + 1) >= k + 1 > k`.
+  - **Run at start or end:** `/`+/g` matches unanchored at any index.
+  - **Enclosure:** Under CommonMark 0.31.2 (§4.5), a closing code fence requires a line with at least as many backticks as the opening fence $L$. Every backtick run inside `text` has length $\le L - 1 < L$, and `${text}\n${fence}` places a newline before the closing fence. Thus, no line in `text` can close the block early.
+- **Worst-case test:** No finite string can produce a fence $\le$ an internal backtick run. The claim holds.
+
+#### Claim 2: `setup` rejects Markdown-damaged input BEFORE authenticating
+- **Analysis:** In [`src/cloud/agent-setup.ts`](file:///Users/yulanbot/Developer/Ridge.io/cloud-swarm/src/cloud/agent-setup.ts#L25-L40), `parseAgentConnection(raw)` is called synchronously at line 28, well before `withAgentDeadline` (lines 36–55), which initiates network calls (`AgentCredentialSession.open`, `readAgentSignalDirectory`, `readAgentSignalPage`).
+- **Detection False Positives:**
+  1. `raw.includes("\\_") || /^\s*```/.test(raw)` in [`src/cloud/agent-profile.ts`](file:///Users/yulanbot/Developer/Ridge.io/cloud-swarm/src/cloud/agent-profile.ts#L74-L78) runs only in the `catch` block after `JSON.parse(raw)` throws `SyntaxError`. In valid JSON, `\_` is an illegal escape (RFC 8259 §7); an intentional backslash-underscore in string content must be serialized as `\\_`, which `JSON.parse` parses successfully without entering `catch`. Base64url JWTs use `[A-Za-z0-9_-]` and never contain backslashes. Valid JSON envelopes start with `{`, never with backticks ` ``` `.
+  2. `/^\s*\[[\s\S]*\]\(/.test(value.url)` checks for Markdown link syntax `[...](...`. Valid URLs (RFC 3986) start with an alphanumeric scheme followed by `:`, never `[` (even IPv6 literal brackets follow `http://` or `https://`).
+- **Verdict:** Rejection is guaranteed prior to authentication or network access without false-positives on legitimate envelopes.
+
+#### Claim 3: No message asks to repair credentials by hand or paste into chat; no credential leaked
+- **Analysis:** All new and modified strings in [`site/src/components/connect/agent-prompt.ts`](file:///Users/yulanbot/Developer/Ridge.io/cloud-swarm/site/src/components/connect/agent-prompt.ts#L50) and [`src/cloud/agent-profile.ts`](file:///Users/yulanbot/Developer/Ridge.io/cloud-swarm/src/cloud/agent-profile.ts#L75-L91) explicitly instruct:
+  - `"do not repair credentials or paste them into chat."`
+  - `"Do not edit credentials or paste them into chat."`
+  - `"Do not paste its contents into chat."`
+- Neither raw payloads nor credentials are interpolated into error messages. Verified in [`tests/p1-cli/agent-onboarding.test.ts`](file:///Users/yulanbot/Developer/Ridge.io/cloud-swarm/tests/p1-cli/agent-onboarding.test.ts#L237-L238) that CLI stdout and stderr omit both tokens and private test markers.
+
+#### Claim 4: Backward compatibility: `setup_version` stays 1 and previous envelopes still import
+- **Analysis:** `AGENT_CONNECTION_VERSION` remains `1` in [`src/cloud/agent-onboarding-contract.ts`](file:///Users/yulanbot/Developer/Ridge.io/cloud-swarm/src/cloud/agent-onboarding-contract.ts#L2). `dashboardAgentConnection` continues to emit the same 6-field envelope structure. `parseAgentConnection` accepts raw JSON envelopes without requiring code fences or Markdown markers; an envelope saved by the previous page version parses unchanged.
+
+#### Claim 5: The tests discriminate and regression controls fail against old code
+- **Negative Control:** Restoring `agent-prompt.ts` and `agent-profile.ts` to base `f4eb018`:
+  - [`site/src/components/connect/agent-prompt.observer.test.ts`](file:///Users/yulanbot/Developer/Ridge.io/cloud-swarm/site/src/components/connect/agent-prompt.observer.test.ts#L92): Fails on `assert.ok(raw)` because base prompt lacked code fences.
+  - [`tests/p1-cli/agent-onboarding.test.ts`](file:///Users/yulanbot/Developer/Ridge.io/cloud-swarm/tests/p1-cli/agent-onboarding.test.ts#L239): Fails on `assert.match(output, /Markdown/)` because base code output generic non-Markdown error message.
+- **Discrimination Limits / Gaps:**
+  1. No test in `agent-prompt.observer.test.ts` passes input with backticks to `codeBlock()`. A trivially flawed implementation with a fixed 3-backtick fence (`const fence = "```";`) would pass all existing tests.
+  2. No test case in `agent-onboarding.test.ts` passes an input where `raw` begins with a code fence (`^\s*``` `). If `/^\s*```/.test(raw)` were omitted from line 75 of `agent-profile.ts`, all existing tests would still pass.
+
+#### Claim 6: AGENTS.md rules: user-facing enumerations generated from constants; D-053 (no branching on error.message)
+- **Enumerations:** Field lists in `agent-profile.ts` continue to be built dynamically via `${AGENT_CONNECTION_FIELDS.join(", ")}`. The new error strings contain no enumerations. In `agent-prompt.ts`, `"Wake requires Claude Code preview channels; Codex supports turn checks"` is conversational guidance for the receiving agent, not a user-facing command-option list.
+- **D-053:** No branching on `error.message`. In `agent-profile.ts` line 75, the error classification inspects input text `raw` directly (`raw.includes("\\_") || /^\s*```/.test(raw)`), not the `SyntaxError` message.
+
+#### Claim 7: Wake and Codex capabilities match code enforcement
+- **Analysis:** In [`src/cloud/agent-onboarding-contract.ts`](file:///Users/yulanbot/Developer/Ridge.io/cloud-swarm/src/cloud/agent-onboarding-contract.ts#L5-L7) and [`src/cloud/agent-receive.ts`](file:///Users/yulanbot/Developer/Ridge.io/cloud-swarm/src/cloud/agent-receive.ts#L201-L202):
+  - `RECEIVE_WAKE_PROVIDER` is `"claude"` (Claude Code). Passing any other provider for wake throws `wake_host_unsupported`. Wake also explicitly requires `--preview-channel`.
+  - Codex is in `RECEIVE_PROVIDERS` for turn checks (`installReceiveHooks` installs `.codex/hooks.json`).
+  - `setupAgent` returns `receive_capabilities: { turn: RECEIVE_PROVIDERS, wake: { provider: RECEIVE_WAKE_PROVIDER, preview: true, requires_idle_test: true } }`.
+  - The statement matches what the code enforces.
+
+---
+
+### 3. What Could NOT Be Established
+1. Live network authentication against the production Supabase deployment (production access prohibited).
+2. Live OS desktop clipboard integration and behavior across third-party markdown editors or chat clients that may perform rich-text paste conversions.
+3. The exact external conversion layer that originally introduced the `\_` escapes into user input.
+4. Live host wake and custom channel reception in a live Claude Code preview environment.
+
+The complete review has been written to:
+`/private/tmp/claude-501/-Users-yulanbot-Developer-Ridge-io-cloud-swarm/348bdb35-59a1-416f-9db8-84f388f5c3e0/scratchpad/arms-b36922c9663c6435fdcf43f1c6ee42e40609a786/gemini/ARM.txt`
+
+VERDICT: PASS

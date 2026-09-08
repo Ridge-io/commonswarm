@@ -1,0 +1,165 @@
+D-036 independent review arm (Grok)
+SHA b36922c9663c6435fdcf43f1c6ee42e40609a786  base f4eb018  branch lane/connection-handoff
+Read-only. No production touch. Throwaway worktree used for gates, then removed.
+
+First line of DIFF.patch:
+diff --git a/docs/evidence/2026-09-08-connection-handoff/REPORT.md b/docs/evidence/2026-09-08-connection-handoff/REPORT.md
+
+================================================================
+1. Fence always longer than any inner backtick run
+================================================================
+
+codeBlock() at site/src/components/connect/agent-prompt.ts:54-57:
+
+  const fence = "`".repeat(Math.max(3, ...Array.from(text.matchAll(/`+/g), match => match[0].length + 1)));
+  return `${fence}${language}\n${text}\n${fence}`;
+
+I re-ran that exact function against constructed cases (empty; no ticks; a run of exactly three; a run of seven; a run as the whole text; a run at the start; a run at the end; a closer-looking line of ticks; 3-space indent + 5 ticks; trailing spaces after ticks; CRLF; tab indent; many one-tick spans; INSTALL_CMD).
+
+CommonMark closer rule used as the oracle: a content line of 0-3 spaces + N-or-more backticks closes an opening fence of length N. Because fence length is max(3, longest_run + 1), no content line can hold a run long enough to close. Empty matchAll spreads to Math.max(3) === 3, not NaN.
+
+Worst case I built: first and last lines are ```, plus an inner run of 7, plus an indented run of 5. Opening/closing fence was 8. No premature closer. Inner text equalled the input.
+
+I could not construct an input whose fence fails to enclose its content. Production payloads (JSON.stringify envelope; INSTALL_CMD) contain no backticks under current field alphabets (token /^swm_agt_[A-Za-z0-9_-]{43}$/, UUID, https origin, JWT base64url, credential message constants), so the live fence is ```. Growing-fence is still correct for a future payload that does contain ticks.
+
+Did not pipe the output through markdown-it / GitHub's renderer. Spec-level closer scan only.
+
+================================================================
+2. Setup rejects Markdown-damaged input BEFORE authenticating
+================================================================
+
+setupAgent (src/cloud/agent-setup.ts:25-28) does assertPrivateLocation, readSecureJsonFileIfPresent (raw bytes, no JSON.parse, no network), then parseAgentConnection. The first fetch is later, inside withAgentDeadline (line 36). detectAgentHost is also after parse. Markdown throws never reach either.
+
+parseAgentConnection (src/cloud/agent-profile.ts:72-102):
+- JSON.parse failure: classify with raw.includes("\\_") || /^\s*```/.test(raw). Does not read JSON.parse's error.message (D-053).
+- After a successful parse and field check: /^\s*\[[\s\S]*\]\(/ on value.url, then checkedTarget, then parseAgentCredentialInput.
+
+Probes on this SHA:
+
+  old-shape envelope + real JWT anon_key (underscores, no backslash-underscore) → accepted
+  token with embedded _ (swm_agt_ + A_×21 + A) → accepted
+  JSON.stringify(envelope).replaceAll("_","\\_") → connection_invalid, Markdown message, no fetch
+  leading ```json fence (and leading spaces + fence) → same
+  url "[https://fixture.example](https://fixture.example)" → connection_target_invalid, Markdown-link message
+  https://api.commonswarm.com → accepted
+  http://[::1] and https://[::1] → accepted (local HTTP rule); markdown-link regex does NOT match (no "](" after the "]")
+  JWT used as url → connection_target_invalid generic (not the Markdown-link message)
+  truncated JSON → generic invalid-JSON message (no Markdown)
+
+False-positive question: can a valid base64url JWT or a real URL look like the detectors?
+
+  JWT alphabet is A-Za-z0-9-_. No backslash, no backtick, no "[" / "](" . A JWT as anon_key inside valid JSON never hits the parse-failure detectors. A JWT as url fails checkedTarget with the generic target message, not the Markdown-link message.
+  Real origins start with https:// or http://. The link regex requires the string to START with optional space then "[". http://[::1] starts with "http", not "[". Bare "[::1]" does not match because there is no "](".
+  new URL("[https://fixture.example](https://fixture.example)") already throws. So the new url check only specialises the message for a shape checkedTarget already rejected. It cannot refuse an envelope the previous parser accepted.
+
+Damaged-handoff test uses a counting fetcher; I ran it: calls stay 0. Confirmed on this SHA.
+
+================================================================
+3. No repair-by-hand / paste-into-chat invite; no credential leak
+================================================================
+
+New or changed user-facing strings (complete set from the patch):
+
+  Prompt: "Save only the JSON code block contents … If damaged, use “Use a setup file” in CommonSwarm; do not repair credentials or paste them into chat."
+  Prompt: "Wake requires Claude Code preview channels; Codex supports turn checks."
+  Error: "The connection file appears to contain Markdown formatting. Use ‘Use a setup file’ … Do not edit credentials or paste them into chat."
+  Error: "The connection file is not valid JSON. Use ‘Use a setup file’ … Do not paste its contents into chat."
+  Error: "The connection URL appears to be a Markdown link. Use ‘Use a setup file’ … Do not edit credentials or paste them into chat."
+
+None ask the reader to repair a credential or to paste one into chat. They name the existing download button (AgentConnect.astro:209, label "Use a setup file") and forbid edit/paste.
+
+Fixed strings. No raw, no parser excerpt, no credential bytes. Damaged-handoff CLI run (plain and --json) asserts output contains neither SYNTHETIC_PRIVATE_MARKER nor TOKEN; rejected files stay byte-identical. I ran that test: pass.
+
+Pre-existing, not in this patch: credential-input nextStep still says "copy the minted JSON line again and send that line to stdin" for AgentCredentialInputError. Case e in the new test can still surface that older sentence. It is not a new invite, and it does not include the invalid token value.
+
+================================================================
+4. Backward compatibility: setup_version stays 1; old envelope still imports
+================================================================
+
+AGENT_CONNECTION_VERSION is still 1 (src/cloud/agent-onboarding-contract.ts:2). git diff vs f4eb018 on that file, agent-receive.ts, agent-setup.ts, onboarding-cli.ts: empty. Parser adds no new required fields. It still wants raw JSON, not a fenced prompt.
+
+setup --check-version still emits { setup_version: 1 } from AGENT_CONNECTION_VERSION (onboarding-cli.ts:112). The new test pins that object.
+
+dashboardAgentConnection is still JSON.stringify of the same envelope shape as f4eb018. An unfenced file saved from the previous page is exactly that JSON. Probe: parseAgentConnection(JSON.stringify(old-shape envelope)) succeeds, including a JWT anon_key.
+
+The only new reject on parseable JSON is the Markdown-link url check, and that url already failed checkedTarget. Old valid files remain accepted.
+
+================================================================
+5. Tests discriminate; what they pin; what a wrong impl could still pass
+================================================================
+
+Negative control I ran in the throwaway (restore the two production files from f4eb018, rebuild dist, keep the new tests):
+
+  "copy source has lossless fenced JSON…" → FAIL, assert.ok(raw)  (no ```json fence)
+  "damaged handoffs…" → FAIL, CLI output 'Save the supplied file unchanged.' does not match /Markdown/
+
+Restoring the SHA files and rebuilding, both pass. Report's negative-control claim holds.
+
+What each new assertion actually pins:
+
+  Observer fenced-copy: 3-backtick ```json extract equals dashboardAgentConnection; token round-trips including embedded _; no \_ in that JSON; sh block equals the install command; prompt contains "Use a setup file" and "Codex supports turn checks"; AgentConnect copies this.#prompt and assigns via textContent.
+  Copy-method harness: #copy() writes this.#prompt, not the altered display textContent. (Clipboard-failure fallback that selects the <pre> is not executed. Display is set from the same #prompt string.)
+  Damaged handoffs: five cases, counting fetcher stays 0, CLI omits marker/TOKEN, markdown cases match /Markdown/, --json is {ok:false} with empty stderr, file bytes unchanged, setup_version 1.
+  CLI setup path now extracts JSON from the generated prompt and imports it against an HTTP fixture.
+
+Gaps (not product defects):
+
+  Growing fence is untested: fixtures have no backticks, so a codeBlock that always emits ``` would still pass.
+  Observer extract /```json\n([^]*?)\n```/ assumes a 3-tick fence. A 4-tick fence from a backtick-bearing payload would confuse the test, not the generator.
+  Non-markdown invalid JSON is not asserted to omit the word Markdown. Labelling every parse failure as Markdown would still pass those rows.
+  setupAgent() asserts error codes only; the Markdown word is asserted on dist/cli.js output. A stale dist could hide a source-only message change.
+
+================================================================
+6. AGENTS.md enumerations; D-053
+================================================================
+
+Unchanged schema error still builds its field list from AGENT_CONNECTION_FIELDS.join (agent-profile.ts:87). New errors do not type a field/command/provider list.
+
+New catch classifies on parse failure plus raw.includes / leading-fence regex. It does not branch on error.message. checkedTarget's catch was already class-based.
+
+The new wake sentence is typed, not interpolated from RECEIVE_WAKE_PROVIDER / RECEIVE_PROVIDERS. That is the AGENTS.md "generated, not typed" pattern. Today the facts match those constants (see 7). I do not treat a currently-correct summary as a defect: it does not list the enforced --provider set, and onboardingUsage already types "Claude Code preview channel" on f4eb018. Residual drift risk, not a wrong list.
+
+================================================================
+7. Wake / Codex wording vs receive constants
+================================================================
+
+Constants (unchanged in this SHA):
+  RECEIVE_PROVIDERS = ["claude", "codex", "instructions"]
+  RECEIVE_WAKE_PROVIDER = "claude"
+  setupAgent receive_capabilities: { turn: RECEIVE_PROVIDERS, wake: { provider: RECEIVE_WAKE_PROVIDER, preview: true, requires_idle_test: true } }
+
+Enforcement (agent-receive.ts:201-202):
+  wake + provider !== "claude" → wake_host_unsupported
+  wake + !previewChannel → wake_preview_consent_required ("Claude custom channels are a research preview… add --preview-channel")
+
+Pre-existing test still passing on this SHA: "wake requires explicit preview choice and cannot claim support on Codex" (agent-onboarding.test.ts:214-219).
+
+Prompt: "Wake requires Claude Code preview channels; Codex supports turn checks."
+Matches: wake is claude + preview; Codex is a turn provider and cannot wake. Does not claim Codex is the only turn host (claude and instructions also turn). Product name "Claude Code" matches existing usage copy.
+
+================================================================
+Gates I ran (throwaway worktree, then removed)
+================================================================
+
+  npm run build                                        exit 0
+  npx tsc --noEmit -p tsconfig.json                    exit 0
+  site observer file (7 tests)                         7 pass
+  focused onboarding tests (prompt extract + damaged)  2 pass
+  env -u FORCE_COLOR npm run test:p1-cli               573 pass, 0 fail
+  negative control as above                            both new tests fail on old production files
+
+Did not re-run: npm test (869), full npm --prefix site test (543), scripts/build-release.sh. Lead recorded those on this SHA; I did not independently repeat them.
+
+================================================================
+NOT established
+================================================================
+
+- The converter that damaged the original paste.
+- A live Markdown renderer (GitHub/markdown-it) applied to a real clipboard payload.
+- Live authentication, live host wake, real desktop clipboard/paste.
+- Full npm test, full site test, build-release.sh on this arm.
+- Clipboard-failure fallback path of #copy() (selects the <pre>; display is source textContent).
+
+No defect verified in the tree.
+
+VERDICT: PASS
