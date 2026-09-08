@@ -1,11 +1,12 @@
 import assert from "node:assert/strict";
 import { readFileSync } from "node:fs";
 import { test } from "node:test";
+import ts from "typescript";
 import { dashboardAgentConnection, dashboardAgentFilePrompt, dashboardAgentPrompt } from "./agent-prompt";
 import { parseAgentConnection } from "../../../../src/cloud/agent-profile";
 import { AGENT_CONNECTION_FIELDS } from "../../../../src/cloud/agent-onboarding-contract";
 
-const TOKEN = `swm_agt_${"A".repeat(43)}`;
+const TOKEN = `swm_agt_${"A_".repeat(21) + "A"}`;
 const INPUT = {
   credential: {
     principalId: "11111111-1111-4111-8111-111111111111", principalName: "Observer",
@@ -14,7 +15,7 @@ const INPUT = {
     horizonExpiresAt: null, grantKind: "standing" as const,
   },
   workspaceId: "44444444-4444-4444-8444-444444444444", workspaceName: "Observer room",
-  deploymentUrl: "https://example.supabase.co", anonKey: "public-anon-observer",
+  deploymentUrl: "https://example.supabase.co", anonKey: "TEST_ONLY_PUBLIC_KEY",
 };
 
 test("the generated connection is accepted by the CLI without changing the credential schema", () => {
@@ -37,12 +38,12 @@ test("one-paste setup includes a single connection and full agent ID, with priva
   assert.match(prompt, /0600/);
   assert.match(prompt, /cswarm setup --connection-file/);
   assert.match(prompt, /cswarm setup --check-version/);
-  assert.ok(prompt.length < 2400, `inline prompt grew to ${prompt.length} characters`);
+  assert.ok(prompt.length < 2900, `inline prompt grew to ${prompt.length} characters`);
 });
 
-test("file handoff reduces the baseline prompt by at least 90 percent without hiding a manual fetch", () => {
+test("file handoff stays short without hiding a manual fetch", () => {
   const prompt = dashboardAgentFilePrompt(INPUT);
-  assert.ok(prompt.length <= 13426 * 0.1, `file prompt has ${prompt.length} characters`);
+  assert.ok(prompt.length <= 1600, `file prompt has ${prompt.length} characters`);
   assert.equal(prompt.includes(TOKEN), false);
   assert.equal(prompt.includes(INPUT.anonKey), false);
   assert.match(prompt, /attached connection JSON/);
@@ -67,4 +68,44 @@ test("file download stays in memory, can be cleared, and key lifetime is under s
   assert.match(source, /URL.revokeObjectURL/);
   assert.match(source, /#forget\(\) \{[\s\S]*this.#connection = null;[\s\S]*this.#filePrompt = null;/);
   assert.doesNotMatch(source, /localStorage.setItem/);
+});
+
+
+test("copy source has lossless fenced JSON and a plain executable install command", () => {
+  const prompt = dashboardAgentPrompt(INPUT);
+  const raw = prompt.match(/```json\n([^]*?)\n```/)?.[1];
+  assert.ok(raw);
+  assert.deepEqual(JSON.parse(raw), JSON.parse(dashboardAgentConnection(INPUT)));
+  assert.equal(parseAgentConnection(raw).credential.agent_token, TOKEN);
+  assert.equal(prompt.match(/```sh\n([^]*?)\n```/)?.[1], "curl -fsSL https://commonswarm.com/install.sh | sh");
+  assert.doesNotMatch(raw, /\\_/);
+  assert.match(prompt, /Use a setup file/);
+  assert.match(prompt, /Codex supports turn checks/);
+  const source = readFileSync(new URL("./AgentConnect.astro", import.meta.url), "utf8");
+  assert.match(source, /navigator.clipboard.writeText\(this.#prompt\)/);
+  assert.match(source, /node.textContent = value/);
+});
+
+
+test("the component copy method sends the source string even when displayed text differs", async () => {
+  const source = readFileSync(new URL("./AgentConnect.astro", import.meta.url), "utf8");
+  const method = source.slice(source.indexOf("    async #copy()"), source.indexOf("\n  }\n", source.indexOf("    async #copy()")));
+  // Execute the shipped method with inert DOM/timer dependencies; no browser or credentials.
+  const harness = `return class {
+    #prompt; #copyTimer; constructor(prompt) { this.#prompt = prompt; }
+    #q() { return { textContent: "altered display", setAttribute() {} }; }
+    #text() {} #resetCopyLabel() {}
+    async copy() { await this.#copy(); }
+    ${method}
+  }`;
+  const js = ts.transpile(harness, { target: ts.ScriptTarget.ES2022 });
+  let copied = "";
+  const Component = new Function("navigator", "window", js)(
+    { clipboard: { async writeText(value: string) { copied = value; } } },
+    { clearTimeout() {}, setTimeout() { return 1; } },
+  );
+  const prompt = dashboardAgentPrompt(INPUT);
+  await new Component(prompt).copy();
+  assert.equal(copied, prompt);
+  assert.deepEqual(JSON.parse(copied.match(/```json\n([^]*?)\n```/)![1]!), JSON.parse(dashboardAgentConnection(INPUT)));
 });

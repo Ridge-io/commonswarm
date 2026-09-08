@@ -1,0 +1,144 @@
+diff --git a/docs/evidence/2026-09-08-connection-handoff/REPORT.md b/docs/evidence/2026-09-08-connection-handoff/REPORT.md
+
+# D-036 Independent Review Arm (Gemini)
+Worktree: /Users/yulanbot/Developer/Ridge.io/cloud-swarm
+Branch: lane/connection-handoff
+Target SHA: b36922c9663c6435fdcf43f1c6ee42e40609a786
+Base SHA: f4eb01803054ac9a70610fafa6891215cf8ce491
+
+---
+
+## 1. Pure Gate Verification
+Executed in an isolated detached throwaway worktree at SHA b36922c9663c6435fdcf43f1c6ee42e40609a786 with symlinked node_modules and copied site/.env:
+- `npm run build`: Exit 0 (prebuild clean, tsc, postbuild chmod).
+- `npx tsc --noEmit -p tsconfig.json`: Exit 0.
+- `npm test`: Exit 0 (869 passed, 26 suites, 0 failed).
+- `env -u FORCE_COLOR npm run test:p1-cli`: Exit 0 (573 passed, 0 failed).
+- `npm --prefix site test`: Exit 0 (543 passed, 1 pre-existing skip, 0 failed; required `npm --prefix site run build` prerequisite to populate built HTML assets for observer comparisons).
+- `bash scripts/build-release.sh`: Exit 0 (built dist-release/cswarm 2.6MB, verified artifact v0.1.65).
+Worktree was detached, verified, and cleanly removed.
+
+---
+
+## 2. Refutation Analysis of Specific Claims
+
+### Claim 1: The fence is always longer than any backtick run inside the payload
+**Source examined:** `site/src/components/connect/agent-prompt.ts` (`codeBlock` at line 54):
+```ts
+function codeBlock(language: string, text: string): string {
+  const fence = "`".repeat(Math.max(3, ...Array.from(text.matchAll(/`+/g), match => match[0].length + 1)));
+  return `${fence}${language}\n${text}\n${fence}`;
+}
+```
+**Reasoning & edge cases:**
+- **Text with no backticks:** `matchAll(/`+/g)` produces 0 matches. `Array.from` yields `[]`. `Math.max(3, ...[])` evaluates to `3`. The fence is `` ` `` x 3 (` ``` `), length 3 > 0.
+- **Text with exactly 3 backticks (` ``` `):** Match length is 3. `match[0].length + 1` is 4. `Math.max(3, 4)` is 4. Fence length is 4 (` ```` `), which strictly exceeds 3.
+- **Text with longer run of $k$ backticks:** Match length is $k$. `match[0].length + 1` is $k + 1$. `Math.max(3, ..., k + 1) >= k + 1 > k`. Fence length is strictly greater than any backtick run in `text`.
+- **Run at start or end:** `/`+/g` has no anchors (`^` or `$`) and matches contiguous backtick sequences at any character offset, including index 0 and index `text.length - k`.
+- **Enclosure:** Under CommonMark 0.31.2 (Section 4.5), an opening code fence of length $L \ge 3$ backticks can only be closed by a line containing at least $L$ backticks. Because `fence` has length $\ge \max(3, k+1)$ where $k$ is the maximum run length in `text`, every run of backticks in `text` has length $\le L - 1 < L$. Furthermore, `${text}\n${fence}` places a mandatory newline before the closing fence. Thus, backticks at the end of `text` reside on the preceding line and cannot merge into or form a closing fence.
+- **Worst-case construction:** No input string can produce a fence of length $\le$ any backtick run in `text`. The claim stands.
+
+---
+
+### Claim 2: setup rejects Markdown-damaged input BEFORE authenticating
+**Sources examined:** `src/cloud/agent-profile.ts` (`parseAgentConnection` lines 72-102) and `src/cloud/agent-setup.ts` (`setupAgent` lines 25-55):
+- In `setupAgent`:
+  ```ts
+  const raw = await readSecureJsonFileIfPresent(connectionPath, ONBOARDING_MAX_FILE_BYTES);
+  ...
+  const connection = parseAgentConnection(raw);
+  ...
+  const identity = await withAgentDeadline(..., async (fetcher, signal) => {
+    // network calls and credential use start here
+  });
+  ```
+  `parseAgentConnection(raw)` executes completely synchronously before `withAgentDeadline` or any credential / network operations (`AgentCredentialSession.open`, `readAgentSignalDirectory`, `readAgentSignalPage`).
+- **Detection checks in `parseAgentConnection`:**
+  1. `raw.includes("\\_") || /^\s*```/.test(raw)`:
+     - Runs strictly inside the `catch` block after `JSON.parse(raw)` has failed.
+     - Valid JSON cannot contain an unescaped `\_` escape (RFC 8259 §7 only permits `\"`, `\\`, `\/`, `\b`, `\f`, `\n`, `\r`, `\t`, `\uXXXX`). An unescaped `\_` causes `JSON.parse` to throw `SyntaxError`.
+     - If a JSON string legitimately had a literal backslash followed by an underscore, valid JSON serialization escapes it as `\\_`. `JSON.parse` parses `\\_` successfully without throwing, so the catch block is never reached.
+     - Base64url JWTs use `[A-Za-z0-9_-]` and contain no backslashes.
+     - Valid JSON envelopes start with `{` (or whitespace then `{`), never with backticks ` ``` `.
+  2. `/^\s*\[[\s\S]*\]\(/.test(value.url)`:
+     - Checks if `value.url` starts with Markdown link markup `[...](...`.
+     - Under RFC 3986, valid URLs start with an alphanumeric scheme followed by `:` (e.g. `https://` or `http://`). IPv6 host brackets appear after the scheme (`http://[::1]/`), never at index 0.
+     - No valid URL starts with `[`.
+- Therefore, the rejection occurs prior to any credential session or network call, and none of the detection shapes can false-positive on a valid envelope, base64url token, or URL.
+
+---
+
+### Claim 3: No message asks to repair credentials by hand or paste into chat; no credential leaked
+**Strings examined across diff:**
+- `site/src/components/connect/agent-prompt.ts`:
+  - `If damaged, use “Use a setup file” in CommonSwarm; do not repair credentials or paste them into chat.`
+- `src/cloud/agent-profile.ts`:
+  - `The connection file appears to contain Markdown formatting. Use ‘Use a setup file’ in CommonSwarm and run setup with that file. Do not edit credentials or paste them into chat.`
+  - `The connection file is not valid JSON. Use ‘Use a setup file’ in CommonSwarm and run setup with that file. Do not paste its contents into chat.`
+  - `The connection URL appears to be a Markdown link. Use ‘Use a setup file’ in CommonSwarm and run setup with that file. Do not edit credentials or paste them into chat.`
+**Finding:**
+All new and modified strings explicitly advise against manual credential editing ("do not repair credentials", "Do not edit credentials") and forbid pasting credentials into chat ("or paste them into chat", "Do not paste its contents into chat"). Neither raw inputs nor credential tokens are interpolated into error strings. Verified that CLI stderr/stdout in `tests/p1-cli/agent-onboarding.test.ts` omits both synthetic tokens and secret markers.
+
+---
+
+### Claim 4: Backward compatibility: setup_version stays 1 and an envelope saved by the previous page still imports
+**Source examined:** `src/cloud/agent-onboarding-contract.ts` and `src/cloud/agent-profile.ts`:
+- `AGENT_CONNECTION_VERSION` remains `1`.
+- `dashboardAgentConnection` serializes the identical envelope object (`version: 1`, `url`, `anon_key`, `workspace_id`, `principal_id`, `credential`).
+- `parseAgentConnection` checks:
+  `value.version !== AGENT_CONNECTION_VERSION || Object.keys(value).length !== AGENT_CONNECTION_FIELDS.length || ...`
+  None of these checks require code blocks or markdown fences in the input file; `parseAgentConnection` continues to parse raw JSON envelopes as produced by the file download or direct extraction.
+- An envelope generated by the previous implementation imports without modification.
+
+---
+
+### Claim 5: The tests discriminate and regression controls fail against old code
+**Empirical regression verification:**
+- Restoring `site/src/components/connect/agent-prompt.ts` and `src/cloud/agent-profile.ts` to base SHA `f4eb018` in the test runner:
+  - `site/src/components/connect/agent-prompt.observer.test.ts`: 2 of 7 tests fail (`assert.ok(raw)` fails because base prompt lacked code fences; `#copy()` test fails on null match).
+  - `tests/p1-cli/agent-onboarding.test.ts`: 2 of 17 tests fail (fixture setup test fails because `raw` code block is not found; `damaged handoffs` test fails because base code threw `"The connection file is not valid JSON. Save the supplied file unchanged."` instead of matching `/Markdown/`).
+- **Discrimination limits & gaps observed:**
+  1. No test in `site/src/components/connect/agent-prompt.observer.test.ts` passes input containing backticks to `codeBlock()`. A trivially flawed implementation using a hardcoded 3-backtick fence (`const fence = "```";`) would pass all existing tests.
+  2. No test in `tests/p1-cli/agent-onboarding.test.ts` includes a test case where `raw` starts with a code fence (`^\s*``` `). If `/^\s*```/.test(raw)` were omitted from line 75 of `src/cloud/agent-profile.ts`, all existing onboarding tests would still pass (the 5 test cases only test `replaceAll("_", "\\_")`, a Markdown URL `[https://...]`, truncated JSON, missing field, and invalid token).
+  The tests discriminate against the base code, but have these two blind spots against partial regressions.
+
+---
+
+### Claim 6: AGENTS.md rules: user-facing enumerations generated from constants; D-053 (no branching on error.message)
+- **Enumerations:**
+  - `src/cloud/agent-profile.ts` line 87 (preserved): `${AGENT_CONNECTION_FIELDS.join(", ")}` is generated directly from `AGENT_CONNECTION_FIELDS`.
+  - The new error messages in `agent-profile.ts` are fixed strings with no enumerations.
+  - In `site/src/components/connect/agent-prompt.ts`: `"Wake requires Claude Code preview channels; Codex supports turn checks"` is conversational guidance for the agent responding to the prompt, not a user-facing enumeration of command options.
+- **D-053 (no branching on error.message):**
+  - In `src/cloud/agent-profile.ts` line 74: `try { value = JSON.parse(raw); } catch { ... }` branches on `raw.includes("\\_") || /^\s*```/.test(raw)`. It tests the raw input string, NOT `error.message`.
+  - No `error.message` inspections exist in any changed file.
+
+---
+
+### Claim 7: Wake and Codex capabilities match what code enforces
+**Source examined:** `src/cloud/agent-onboarding-contract.ts`, `src/cloud/agent-setup.ts`, `src/cloud/agent-receive.ts`:
+- `RECEIVE_WAKE_PROVIDER` is `"claude"`.
+- In `configureAgentReceive` (`src/cloud/agent-receive.ts` lines 201-202):
+  ```ts
+  if (options.mode === "wake" && provider !== RECEIVE_WAKE_PROVIDER)
+    throw new AgentSetupError("wake_host_unsupported", `Wake supports --provider ${RECEIVE_WAKE_PROVIDER} only. Use --mode turn on this host.`);
+  if (options.mode === "wake" && !options.previewChannel)
+    throw new AgentSetupError("wake_preview_consent_required", "Claude custom channels are a research preview and need a host approval step...");
+  ```
+  Wake mode is restricted exclusively to Claude Code (`RECEIVE_WAKE_PROVIDER`) and requires `--preview-channel`.
+- For Codex: `RECEIVE_PROVIDERS` is `["claude", "codex", "instructions"]`. Codex supports `--mode turn` via `installReceiveHooks` creating `.codex/hooks.json`. Attempting `--mode wake --provider codex` throws `wake_host_unsupported`.
+- `setupAgent` exposes:
+  `receive_capabilities: { turn: RECEIVE_PROVIDERS, wake: { provider: RECEIVE_WAKE_PROVIDER, preview: true, requires_idle_test: true } }`
+- Thus, the statement "Wake requires Claude Code preview channels; Codex supports turn checks" matches the code enforcement.
+
+---
+
+## 3. What Could NOT Be Established
+1. Live network authentication against the hosted production Supabase deployment (production access prohibited).
+2. Live OS desktop clipboard integration and behavior across third-party markdown editors or chat clients that may perform rich-text paste conversions.
+3. The exact external conversion layer that originally introduced the `\_` escapes into user input.
+4. Live host wake and custom channel reception in a live Claude Code preview environment.
+
+---
+
+VERDICT: PASS

@@ -72,7 +72,9 @@ export async function assertPrivateLocation(path: string): Promise<string> {
 export function parseAgentConnection(raw: string): AgentConnectionEnvelope {
   let value: Record<string, unknown>;
   try { value = JSON.parse(raw); } catch {
-    throw new AgentSetupError("connection_invalid", "The connection file is not valid JSON. Save the supplied file unchanged.");
+    throw new AgentSetupError("connection_invalid", raw.includes("\\_") || /^\s*```/.test(raw)
+      ? "The connection file appears to contain Markdown formatting. Use ‘Use a setup file’ in CommonSwarm and run setup with that file. Do not edit credentials or paste them into chat."
+      : "The connection file is not valid JSON. Use ‘Use a setup file’ in CommonSwarm and run setup with that file. Do not paste its contents into chat.");
   }
   if (!value || Array.isArray(value) || typeof value !== "object" ||
       value.version !== AGENT_CONNECTION_VERSION ||
@@ -83,6 +85,9 @@ export function parseAgentConnection(raw: string): AgentConnectionEnvelope {
       typeof value.principal_id !== "string" || !ONBOARDING_UUID.test(value.principal_id) ||
       !value.credential || typeof value.credential !== "object" || Array.isArray(value.credential)) {
     throw new AgentSetupError("connection_invalid", `Expected connection version ${AGENT_CONNECTION_VERSION} with fields: ${AGENT_CONNECTION_FIELDS.join(", ")}. Save the supplied file unchanged.`);
+  }
+  if (/^\s*\[[\s\S]*\]\(/.test(value.url)) {
+    throw new AgentSetupError("connection_target_invalid", "The connection URL appears to be a Markdown link. Use ‘Use a setup file’ in CommonSwarm and run setup with that file. Do not edit credentials or paste them into chat.");
   }
   const target = checkedTarget(value.url, value.anon_key);
   const agent = parseAgentCredentialInput(JSON.stringify(value.credential), { kind: "stdin" });

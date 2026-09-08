@@ -1,0 +1,66 @@
+I'll review this as a D-036 arm: read the brief, the patch, and the report first, then try to refute each claim against the real files.The first `diff --git` line is `diff --git a/docs/evidence/2026-09-08-connection-handoff/REPORT.md b/docs/evidence/2026-09-08-connection-handoff/REPORT.md`. Next I’ll read the cited files and the rest of the patch.I'll pull setup flow, receive-capability constants, and every changed user-facing string next so I can try to break the claims.I'll probe `codeBlock`, the parser, and a throwaway worktree next so the claims can actually be falsified.Throwaway worktree is ready. Next I’ll build it and run the new tests, then the negative control.I have enough to write the arm. Next I’ll put the review on disk and print it.First `diff --git` line:
+
+`diff --git a/docs/evidence/2026-09-08-connection-handoff/REPORT.md b/docs/evidence/2026-09-08-connection-handoff/REPORT.md`
+
+I tried to break the seven claims against the files. I could not. Review is also at `scratchpad/arms-b36922c9663c6435fdcf43f1c6ee42e40609a786/grok/ARM.txt`.
+
+---
+
+D-036 independent review arm (Grok)
+SHA `b36922c9663c6435fdcf43f1c6ee42e40609a786`  base `f4eb018`  branch `lane/connection-handoff`
+Read-only. No production touch. Throwaway worktree used for gates, then removed.
+
+**1. Fence always longer than any inner backtick run**
+
+`codeBlock()` at `site/src/components/connect/agent-prompt.ts:54-57` sets fence length to `max(3, longest_run + 1)`. Empty `matchAll` is `Math.max(3) === 3`, not `NaN`.
+
+I ran the exact function on: empty text; no ticks; a run of 3; a run of 7; ticks as the whole text; ticks at start; ticks at end; a closer-looking line; 3-space indent + 5 ticks; trailing spaces; CRLF; tab indent; many one-tick spans; `INSTALL_CMD`.
+
+CommonMark closer rule: a content line of 0–3 spaces + N-or-more backticks closes a fence of length N. Because the fence is strictly longer than any run, no content line can close it. Worst case I built (first and last lines ` ``` `, inner run of 7, indented run of 5) opened and closed at 8. Inner text matched the input.
+
+I could not build an input whose fence fails to enclose its content. Live payloads have no backticks under current alphabets, so the live fence is ` ``` `. Growing-fence is still correct if a later field allows ticks.
+
+**2. Setup rejects Markdown-damaged input before authenticating**
+
+`setupAgent` reads the file as raw bytes, then calls `parseAgentConnection`. The first fetch is later. Markdown throws never reach the network.
+
+On parse failure it classifies with `raw.includes("\\_")` or a leading fence. It does not read `JSON.parse`'s `error.message`. After a successful parse it checks `value.url` for a Markdown link, then `checkedTarget`, then the credential parser.
+
+Probes on this SHA: old-shape envelope + JWT anon key (underscores, no `\_`) accepted; token with embedded `_` accepted; `\_` damage and leading fences → `connection_invalid` Markdown message; Markdown-wrapped URL → `connection_target_invalid` Markdown-link message; `https://api.commonswarm.com` accepted; `http://[::1]` / `https://[::1]` accepted and do **not** match the link regex; JWT-as-url gets the generic target error, not the Markdown-link error.
+
+A valid JWT cannot contain `\`, backticks, or `[...](...)`. A real origin starts with `https://` or `http://`, not `[`. `new URL("[https://…](https://…)")` already throws, so the new URL check only changes the message for a shape the old parser already refused. The counting fetcher in the damaged-handoff test stays at 0. I ran that test.
+
+**3. No repair-by-hand / paste-into-chat invite; no credential leak**
+
+Every new string names “Use a setup file” (the existing download button) and says not to edit credentials or paste them into chat. Errors are fixed sentences: no raw, no excerpt, no credential bytes. The damaged-handoff CLI run omits the synthetic marker and the token; rejected files stay byte-identical.
+
+**4. Backward compatibility**
+
+`setup_version` stays 1. The parser still wants raw JSON, not a fenced prompt. No new required fields. An unfenced file from the previous page is the same `JSON.stringify` envelope and still imports. The Markdown-link check cannot refuse a URL the old `checkedTarget` accepted.
+
+**5. Tests discriminate**
+
+Negative control I ran: restore the two production files from `f4eb018`, rebuild, keep the new tests.
+
+- fenced-copy test fails (`assert.ok(raw)` — no ` ```json ` fence)
+- damaged-handoff test fails (old CLI says “Save the supplied file unchanged.”, no `/Markdown/`)
+
+Restore the SHA files and both pass.
+
+Gaps, not product bugs: growing-fence is untested (fixtures have no backticks); the extract regex assumes a 3-tick fence; non-markdown invalid JSON is not asserted to omit the word “Markdown”.
+
+**6. AGENTS.md / D-053**
+
+The schema error still builds its field list from `AGENT_CONNECTION_FIELDS`. New catch does not branch on `error.message`. The wake sentence is typed, not interpolated from `RECEIVE_*`. Today the facts match those constants. Residual drift risk, not a wrong list.
+
+**7. Wake / Codex vs receive constants**
+
+Unchanged: `RECEIVE_WAKE_PROVIDER = "claude"`, `RECEIVE_PROVIDERS = ["claude","codex","instructions"]`, wake requires `--preview-channel`. Codex wake is `wake_host_unsupported`. Pre-existing test “wake requires explicit preview choice and cannot claim support on Codex” still passes. Prompt wording matches that enforcement.
+
+**Gates I ran (throwaway, then removed):** `npm run build` 0; `tsc --noEmit` 0; observer file 7 pass; `test:p1-cli` 573 pass.
+
+**Not established:** the original converter; a live GitHub/markdown-it render of a clipboard paste; live auth / wake / desktop clipboard; `npm test`, full site test, and `scripts/build-release.sh` on this arm (lead recorded those; I did not repeat them).
+
+No defect verified in the tree.
+
+VERDICT: PASS

@@ -241,7 +241,18 @@ test("CLI setup and profile feed work against an HTTP fixture without exposing s
   await new Promise<void>(done => server.listen(0, "127.0.0.1", done));
   try {
     const url = `http://127.0.0.1:${(server.address() as { port: number }).port}`;
-    const input = await saveInput(connection(url));
+    const browserPromptModule = "../../site/src/components/connect/agent-prompt.js";
+    const { dashboardAgentPrompt } = await import(browserPromptModule);
+    const prompt = dashboardAgentPrompt({
+      credential: { principalId: AGENT, principalName: "Test agent", tokenId: artifact().token_id,
+        runId: artifact().run_id, token: TOKEN, expiresAt: Date.parse(artifact().expires_at),
+        renews: true, horizonExpiresAt: null, grantKind: "standing" },
+      workspaceId: WS, workspaceName: "Fixture", deploymentUrl: url, anonKey: "public_fixture",
+    });
+    const raw = prompt.match(/```json\n([^]*?)\n```/)?.[1];
+    assert.ok(raw);
+    const input = await saveInput();
+    await writeFile(input, raw);
     const profile = join(dirname(input), "saved", "profile.json");
     const run = await cli(["setup", "--connection-file", input, "--profile", profile, "--json"]);
     assert.equal(run.code, 0, run.stderr || run.stdout);
@@ -323,4 +334,41 @@ test("Codex hooks preserve host settings and configure waits for the receive-sta
   finally { release(); await writer; }
   await config;
   assert.equal((await readReceiveBinding(profilePath, "codex-one"))!.turn_verified_at, timestamp);
+});
+
+
+test("damaged handoffs fail before authentication and keep CLI errors secret-free", async () => {
+  const marker = "SYNTHETIC_PRIVATE_MARKER";
+  const original = { ...connection(), anon_key: marker };
+  const cases = [
+    { raw: JSON.stringify(original).replaceAll("_", "\\_"), code: "connection_invalid", markdown: true },
+    { raw: JSON.stringify({ ...original, url: "[https://fixture.example](https://fixture.example)" }), code: "connection_target_invalid", markdown: true },
+    { raw: `{\"${marker}\":`, code: "connection_invalid", markdown: false },
+    { raw: JSON.stringify({ ...original, workspace_id: undefined }), code: "connection_invalid", markdown: false },
+    { raw: JSON.stringify({ ...original, credential: { ...artifact(), agent_token: marker } }), code: "agent_credential_invalid_agent_token", markdown: false },
+  ];
+  for (const item of cases) {
+    const input = await saveInput(original);
+    await writeFile(input, item.raw);
+    let calls = 0;
+    await assert.rejects(setupAgent({ connectionFile: input, fetcher: (async () => { calls++; throw new Error("network reached"); }) as typeof fetch }), { code: item.code });
+    assert.equal(calls, 0);
+    for (const flags of [[], ["--json"]]) {
+      const result = await cli(["setup", "--connection-file", input, ...flags]);
+      assert.equal(result.code, 1);
+      const output = result.stdout + result.stderr;
+      assert.equal(output.includes(marker), false);
+      assert.equal(output.includes(TOKEN), false);
+      if (item.markdown) assert.match(output, /Markdown/);
+      if (flags.length) {
+        const error = JSON.parse(result.stdout);
+        assert.equal(error.ok, false);
+        assert.equal(result.stderr, "");
+      }
+    }
+    assert.equal(await readFile(input, "utf8"), item.raw, "rejected input is never repaired");
+  }
+  const version = await cli(["setup", "--check-version"]);
+  assert.equal(version.code, 0);
+  assert.deepEqual(JSON.parse(version.stdout), { setup_version: 1 });
 });
