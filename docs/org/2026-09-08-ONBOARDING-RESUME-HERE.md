@@ -111,3 +111,47 @@ therefore sits on the parse-failure path only and cannot fire on a valid envelop
 The exact step that damaged the original paste is still unknown; the site copies its source string
 unchanged, so the damage happens somewhere between the copy and the saved file. The fleet was not
 restarted: this release changes no listener behaviour.
+
+---
+
+# The hand-off damage was the clipboard's HTML flavour, not the fences (2026-09-08, later still)
+
+## What was reported
+On 0.1.66 a real hand-off still arrived broken: underscores escaped as `\_`, the API URL rewritten as a
+Markdown link, fences malformed. The agent obeyed the new instruction and refused to repair credentials,
+so it did not connect. **0.1.66 did not fix the reported case.**
+
+## Cause, measured
+`#copy()` calls `navigator.clipboard.writeText()`, which writes `text/plain` only — the Copy button was
+never the cause. But **a manual selection copy** (and the clipboard-refused fallback, which selects the
+`<pre>` and asks the reader to press ⌘C) makes the browser write `text/html` as well, and a Markdown-aware
+target converts THAT. Markdown conversion escapes underscores and linkifies bare URLs, which is exactly the
+reported signature. Code fences live inside the payload and cannot reach damage that happens on a different
+clipboard flavour, which is why 0.1.66 did not help.
+
+Nothing pinned the flavour: `grep -nE "addEventListener\('copy'|clipboardData|setData|text/html"` over
+`site/src/components/connect/AgentConnect.astro` returned nothing before this change.
+
+## Fix, LIVE
+`site/src/components/connect/AgentConnect.astro` now handles `copy` on the prompt block: it sets
+`text/plain` from `promptCopyPayload()` and calls `preventDefault()`, so no HTML flavour is produced by any
+copy out of that block. A partial selection is preserved; only whitespace falls back to the whole prompt.
+Site only — **no CLI release**; the CLI stays at 0.1.66.
+
+Merged `638e41b`. Arms on `1f460eb`: **Grok PASS, Gemini PASS**
+(`docs/evidence/2026-09-08-copy-flavour/`). Grok noted the one-character selection was unpinned; a
+test-only commit pinned it afterwards (no behaviour change from the reviewed SHA). Mutation control:
+injecting `.replace(/_/g, "\\_")` into `promptCopyPayload` fails the suite 545/1; restoring passes 547/0.
+
+Deployed and verified: the served chunk
+`/_astro/AgentConnect.astro_astro_type_script_index_0_lang.CAeVJxjg.js` carries `text/plain` and the
+0.1.66 wording, the retired "save the JSON below unchanged" is absent, and `/app` references that chunk.
+
+## Still NOT established
+Whether a live browser emits `text/html` after `preventDefault()` — the clipboard event contract says it
+does not, but no headless control here exercises a real UA. Grok also could not rule out a UA that
+synthesises its own `public.html` flavour. The **download** path was always immune (a raw Blob), so
+"Use a setup file" remains the recommended route and is what an affected user should use now.
+
+## Operator note
+Astra1 (`282a2587`) has the PR #1864 request queued as ask `a341a357`; the operator tells it to check.
