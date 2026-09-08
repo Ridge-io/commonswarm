@@ -1,0 +1,95 @@
+diff --git a/site/src/components/connect/AgentConnect.astro b/site/src/components/connect/AgentConnect.astro
+index 39a7f11..ede9e8a 100644
+--- a/site/src/components/connect/AgentConnect.astro
++++ b/site/src/components/connect/AgentConnect.astro
+@@ -242,7 +242,7 @@ const {
+     myWorkspaces,
+     uuid,
+   } from "../../lib/commonswarm";
+-  import { dashboardAgentPrompt, dashboardAgentConnection, dashboardAgentFilePrompt } from "./agent-prompt";
++  import { dashboardAgentPrompt, dashboardAgentConnection, dashboardAgentFilePrompt, promptCopyPayload } from "./agent-prompt";
+ 
+   /*
+    * A custom element rather than a page script, so the host page can drop <AgentConnect /> in
+@@ -327,6 +327,16 @@ const {
+     }
+ 
+     #wire() {
++      /* Pin the clipboard flavour for a MANUAL copy out of the block. Without this the browser
++       * also writes text/html, and a Markdown client converts that instead of the plain text:
++       * underscores return as \_ and a bare URL returns as a Markdown link. The Copy button was
++       * never the problem — writeText() is plain text — but selecting the block by hand was. */
++      this.#q<HTMLElement>('[data-slot="prompt"]')?.addEventListener("copy", (event) => {
++        const clipboard = (event as ClipboardEvent).clipboardData;
++        if (!clipboard || !this.#prompt) return;
++        clipboard.setData("text/plain", promptCopyPayload(window.getSelection()?.toString() ?? "", this.#prompt));
++        event.preventDefault();
++      });
+       this.#q<HTMLButtonElement>('[data-action="download-connection"]')?.addEventListener("click", () => this.#downloadConnection());
+       this.#q<HTMLFormElement>('[data-panel="form"]')?.addEventListener("submit", (event) => {
+         event.preventDefault();
+diff --git a/site/src/components/connect/agent-prompt.observer.test.ts b/site/src/components/connect/agent-prompt.observer.test.ts
+index 198d509..2a108e4 100644
+--- a/site/src/components/connect/agent-prompt.observer.test.ts
++++ b/site/src/components/connect/agent-prompt.observer.test.ts
+@@ -2,7 +2,7 @@ import assert from "node:assert/strict";
+ import { readFileSync } from "node:fs";
+ import { test } from "node:test";
+ import ts from "typescript";
+-import { dashboardAgentConnection, dashboardAgentFilePrompt, dashboardAgentPrompt } from "./agent-prompt";
++import { dashboardAgentConnection, dashboardAgentFilePrompt, dashboardAgentPrompt, promptCopyPayload} from "./agent-prompt";
+ import { parseAgentConnection } from "../../../../src/cloud/agent-profile";
+ import { AGENT_CONNECTION_FIELDS } from "../../../../src/cloud/agent-onboarding-contract";
+ 
+@@ -109,3 +109,28 @@ test("the component copy method sends the source string even when displayed text
+   assert.equal(copied, prompt);
+   assert.deepEqual(JSON.parse(copied.match(/```json\n([^]*?)\n```/)![1]!), JSON.parse(dashboardAgentConnection(INPUT)));
+ });
++
++
++/* The clipboard flavour, measured against a real damaged hand-off on 2026-09-08.
++ *
++ * A manual selection copy writes text/plain AND text/html. A Markdown client converts the HTML,
++ * which escapes underscores as \_ and rewrites a bare URL as a Markdown link — the exact damage
++ * reported from a live connection attempt, arriving by a route the code fences cannot reach. The
++ * block now writes plain text itself; this pins WHAT it writes. */
++test("an empty selection copies the whole prompt, because a keyboard copy has no range", () => {
++  assert.equal(promptCopyPayload("", "WHOLE PROMPT"), "WHOLE PROMPT");
++  assert.equal(promptCopyPayload("   \n\t ", "WHOLE PROMPT"), "WHOLE PROMPT");
++});
++
++test("a partial selection stays exactly that selection", () => {
++  assert.equal(promptCopyPayload("cswarm setup", "WHOLE PROMPT"), "cswarm setup");
++});
++
++test("the payload is returned byte for byte: no underscore escaping, no link rewriting", () => {
++  const hostile = '{"anon_key":"a_b-c","url":"https://api.commonswarm.com"}';
++  assert.equal(promptCopyPayload(hostile, "WHOLE"), hostile);
++  assert.ok(!promptCopyPayload(hostile, "WHOLE").includes("\\_"), "an underscore must not be escaped");
++  assert.ok(!promptCopyPayload(hostile, "WHOLE").includes("]("), "a URL must not become a Markdown link");
++  const whole = 'save {"anon_key":"a_b"} to https://api.commonswarm.com';
++  assert.equal(promptCopyPayload("", whole), whole);
++});
+diff --git a/site/src/components/connect/agent-prompt.ts b/site/src/components/connect/agent-prompt.ts
+index 4e48d86..c015161 100644
+--- a/site/src/components/connect/agent-prompt.ts
++++ b/site/src/components/connect/agent-prompt.ts
+@@ -55,3 +55,18 @@ function codeBlock(language: string, text: string): string {
+   const fence = "`".repeat(Math.max(3, ...Array.from(text.matchAll(/`+/g), match => match[0].length + 1)));
+   return `${fence}${language}\n${text}\n${fence}`;
+ }
++
++/**
++ * What a copy out of the prompt block must place on the clipboard.
++ *
++ * A manual selection copy hands the target application BOTH `text/plain` and `text/html`. A
++ * Markdown-aware client converts that HTML rather than taking the plain text, and the conversion
++ * escapes every underscore as `\_` and rewrites a bare URL as a Markdown link — which is exactly
++ * the damage the code fences exist to prevent, arriving by a route the fences cannot reach
++ * (measured on a real hand-off, 2026-09-08). The block therefore writes plain text itself and
++ * suppresses the HTML flavour. A partial selection stays a partial selection; an empty one, which
++ * is what a keyboard copy with no range produces, falls back to the whole prompt.
++ */
++export function promptCopyPayload(selectionText: string, fullPrompt: string): string {
++  return selectionText.trim().length > 0 ? selectionText : fullPrompt;
++}
