@@ -126,6 +126,14 @@ test("a partial selection stays exactly that selection", () => {
   assert.equal(promptCopyPayload("cswarm setup", "WHOLE PROMPT"), "cswarm setup");
 });
 
+/* The Grok arm on 1f460eb noted this case was unpinned: a ONE-CHARACTER selection is legitimate and
+ * must not fall through to the whole prompt. Only whitespace may. */
+test("a one-character selection is kept, and only whitespace falls back", () => {
+  assert.equal(promptCopyPayload("_", "WHOLE PROMPT"), "_");
+  assert.equal(promptCopyPayload("`", "WHOLE PROMPT"), "`");
+  assert.equal(promptCopyPayload(" ", "WHOLE PROMPT"), "WHOLE PROMPT");
+});
+
 test("the payload is returned byte for byte: no underscore escaping, no link rewriting", () => {
   const hostile = '{"anon_key":"a_b-c","url":"https://api.commonswarm.com"}';
   assert.equal(promptCopyPayload(hostile, "WHOLE"), hostile);
