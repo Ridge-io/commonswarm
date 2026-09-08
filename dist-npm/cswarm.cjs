@@ -3771,10 +3771,13 @@ function parseAgentConnection(raw) {
   try {
     value = JSON.parse(raw);
   } catch {
-    throw new AgentSetupError("connection_invalid", "The connection file is not valid JSON. Save the supplied file unchanged.");
+    throw new AgentSetupError("connection_invalid", raw.includes("\\_") || /^\s*```/.test(raw) ? "The connection file appears to contain Markdown formatting. Use \u2018Use a setup file\u2019 in CommonSwarm and run setup with that file. Do not edit credentials or paste them into chat." : "The connection file is not valid JSON. Use \u2018Use a setup file\u2019 in CommonSwarm and run setup with that file. Do not paste its contents into chat.");
   }
   if (!value || Array.isArray(value) || typeof value !== "object" || value.version !== AGENT_CONNECTION_VERSION || Object.keys(value).length !== AGENT_CONNECTION_FIELDS.length || AGENT_CONNECTION_FIELDS.some((key2) => !Object.hasOwn(value, key2)) || typeof value.url !== "string" || typeof value.anon_key !== "string" || typeof value.workspace_id !== "string" || !ONBOARDING_UUID.test(value.workspace_id) || typeof value.principal_id !== "string" || !ONBOARDING_UUID.test(value.principal_id) || !value.credential || typeof value.credential !== "object" || Array.isArray(value.credential)) {
     throw new AgentSetupError("connection_invalid", `Expected connection version ${AGENT_CONNECTION_VERSION} with fields: ${AGENT_CONNECTION_FIELDS.join(", ")}. Save the supplied file unchanged.`);
+  }
+  if (/^\s*\[[\s\S]*\]\(/.test(value.url)) {
+    throw new AgentSetupError("connection_target_invalid", "The connection URL appears to be a Markdown link. Use \u2018Use a setup file\u2019 in CommonSwarm and run setup with that file. Do not edit credentials or paste them into chat.");
   }
   const target2 = checkedTarget(value.url, value.anon_key);
   const agent = parseAgentCredentialInput(JSON.stringify(value.credential), { kind: "stdin" });
@@ -63066,8 +63069,8 @@ var BOOLEAN_FLAGS = /* @__PURE__ */ new Set([
 ]);
 var UUID_RE25 = /^[0-9a-f]{8}-[0-9a-f]{4}-[1-8][0-9a-f]{3}-[89ab][0-9a-f]{3}-[0-9a-f]{12}$/i;
 function packageVersion() {
-  if ("0.1.65".length > 0) {
-    return "0.1.65";
+  if ("0.1.66".length > 0) {
+    return "0.1.66";
   }
   try {
     const value = JSON.parse(
