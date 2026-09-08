@@ -61,3 +61,53 @@ scratchpad. No `receive serve` process remains.
 The fleet was not restarted. 0.1.65 adds commands and changes no listener behaviour, and the seats run
 0.1.64 correctly; a restart is the step that broke the fleet on 0.1.58, so it buys nothing here. Seats pick
 0.1.65 up at their next scheduled restart.
+
+---
+
+# v0.1.66 — the connection hand-off survives a Markdown client (2026-09-08, later)
+
+## LIVE
+`main` at the release commits; tag `v0.1.66` on bump `3d47c13`. npm `commonswarm@0.1.66` (registry shasum
+`efb11881…`, `latest`), GitHub latest release `v0.1.66` with asset sha256 `8e2c5036…`, and the installed
+binary's sha256 equals that asset exactly. Site deployed; `/download` reads 0.1.66. CLI published and
+confirmed on the registry BEFORE the site went out.
+
+## What changed
+The dashboard hands the connection JSON and the install command over inside fenced code blocks. The fence
+is computed as one longer than the longest backtick run in the payload, so a run inside can never close the
+block. `cswarm setup` recognises a Markdown-damaged file and refuses BEFORE it authenticates, naming the
+recovery path rather than asking anyone to repair a credential by hand. The prompt now says wake needs
+Claude Code preview channels and Codex uses turn checks. Credentials unchanged; `setup_version` stays 1.
+
+## D-036
+Both arms on the exact SHA `b36922c`, author family excluded: **Grok exact PASS**, **Gemini inversion
+PASS**. Gemini derived the fence property from the CommonMark closing-fence rule; Grok worked file:line.
+Evidence: `docs/evidence/2026-09-08-connection-handoff/arms-b36922c/`.
+
+## Lead verification
+Gates re-run as bare statements with their exit codes read: build 0, tsc 0, check:tests 0, npm test
+869/869, p1-cli 573/573, build-release 0 (verifies by running the artifact), site build 0, site tests 543
+with the suite's one existing skip, identity 0.
+
+An independent probe of the fence rule (`docs/evidence/2026-09-08-connection-handoff/fence-probe.mjs`)
+passed eight adversarial payloads: none, one, exactly three, four, ten, a run at the start, a run at the
+end, and mixed runs.
+
+The deployed chunk `/_astro/AgentConnect.astro_astro_type_script_index_0_lang.BZgbpl-w.js` is served from
+production carrying "Save only the JSON code block contents" and "Wake requires Claude Code preview
+channels", with the retired "save the JSON below unchanged" gone (count 0), and `/app` references that
+exact chunk.
+
+With the RELEASED binary against production: a clean envelope still imports (`connected: true`,
+`setup_version: 1`, correct identity), a file whose underscores were escaped as `\_` is refused with the
+Markdown message and exit 1, and a fenced paste is refused the same way. Both refusals happen before any
+authentication.
+
+## Note on the detection
+`\_` is not a valid JSON escape, so a file containing it cannot parse as JSON. The Markdown detection
+therefore sits on the parse-failure path only and cannot fire on a valid envelope.
+
+## NOT established
+The exact step that damaged the original paste is still unknown; the site copies its source string
+unchanged, so the damage happens somewhere between the copy and the saved file. The fleet was not
+restarted: this release changes no listener behaviour.
