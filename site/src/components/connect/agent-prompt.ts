@@ -4,6 +4,7 @@ import { SIGNAL_BODY_MAX } from "../../../../supabase/functions/_shared/signal-t
 import { INSTALL_CMD } from "../../lib/install";
 import { AGENT_CONNECTION_VERSION, type AgentConnectionEnvelope } from "../../../../src/cloud/agent-onboarding-contract";
 import { AGENT_CREDENTIAL_MESSAGE_D088 } from "../../../../src/cloud/agent-credential-input";
+import { encodeAgentConnectionToken } from "../../../../src/cloud/agent-connection-token";
 
 export interface DashboardPromptInput {
   credential: AgentCredential;
@@ -47,7 +48,8 @@ export function dashboardAgentFilePrompt(_input: DashboardPromptInput): string {
 /** One-paste fallback: one credential and one copy of the public connection data. */
 export function dashboardAgentPrompt(input: DashboardPromptInput): string {
   const path = `~/.cswarm/connect-${input.credential.principalId}/connection.json`;
-  return `${setupPrompt(`Save only the JSON code block contents with your file-writing tool to ${path}. Keep all characters unchanged. Set its directory to 0700 and the file to 0600. If damaged, use “Use a setup file” in CommonSwarm; do not repair credentials or paste them into chat.`)}\n\n${codeBlock("json", dashboardAgentConnection(input))}`;
+  const token = encodeAgentConnectionToken(dashboardAgentConnection(input));
+  return `${setupPrompt(`Save this connection token with your file-writing tool to ${path}. Keep all characters unchanged. Set its directory to 0700 and the file to 0600. If damaged, use “Use a setup file” in CommonSwarm; do not repair credentials or paste them into chat.`)}\n\n${token}`;
 }
 
 /** Keep machine input out of Markdown prose, including embedded fence characters. */
