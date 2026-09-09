@@ -6,83 +6,37 @@ import {
   AgentSetupError,
   ONBOARDING_UUID,
 } from "./agent-onboarding-contract.js";
+import {
+  BASE32_ALPHABET,
+  TOKEN_VERSION,
+  TOKEN_PREFIX,
+  TOKEN_MARKER,
+  base32Encode,
+  base32Decode,
+  crc32,
+  crc32Bytes,
+  encodeAgentConnectionToken,
+  normalizeTokenCandidate,
+  isAgentConnectionToken,
+} from "./agent-connection-codec.js";
 import { cloudTarget, type CloudTarget } from "./config.js";
 
-const BASE32_ALPHABET = "ABCDEFGHIJKLMNOPQRSTUVWXYZ234567";
-
-export const TOKEN_VERSION = "A";
-export const TOKEN_PREFIX = `CSWARM${TOKEN_VERSION}`;
-export const TOKEN_MARKER = `${TOKEN_PREFIX}.`;
+export {
+  BASE32_ALPHABET,
+  TOKEN_VERSION,
+  TOKEN_PREFIX,
+  TOKEN_MARKER,
+  base32Encode,
+  base32Decode,
+  crc32,
+  crc32Bytes,
+  encodeAgentConnectionToken,
+  normalizeTokenCandidate,
+  isAgentConnectionToken,
+};
 
 const REPAIR_USE_SETUP_FILE =
   "Use ‘Use a setup file’ in CommonSwarm and run setup with that file. Do not edit credentials or paste them into chat.";
-
-export function base32Encode(bytes: Uint8Array): string {
-  let bits = 0;
-  let value = 0;
-  let out = "";
-  for (const b of bytes) {
-    value = (value << 8) | b;
-    bits += 8;
-    while (bits >= 5) {
-      out += BASE32_ALPHABET[(value >>> (bits - 5)) & 31];
-      bits -= 5;
-    }
-  }
-  if (bits > 0) {
-    out += BASE32_ALPHABET[(value << (5 - bits)) & 31];
-  }
-  return out;
-}
-
-export function base32Decode(s: string): Uint8Array {
-  let bits = 0;
-  let value = 0;
-  const out: number[] = [];
-  for (const c of s) {
-    const i = BASE32_ALPHABET.indexOf(c);
-    if (i < 0) continue;
-    value = (value << 5) | i;
-    bits += 5;
-    if (bits >= 8) {
-      out.push((value >>> (bits - 8)) & 255);
-      bits -= 8;
-    }
-  }
-  return Uint8Array.from(out);
-}
-
-export function crc32(bytes: Uint8Array): number {
-  let c = ~0;
-  for (const x of bytes) {
-    c ^= x;
-    for (let k = 0; k < 8; k++) {
-      c = (c >>> 1) ^ (0xEDB88320 & -(c & 1));
-    }
-  }
-  return (~c) >>> 0;
-}
-
-function crc32Bytes(crc: number): Uint8Array {
-  return Uint8Array.from([24, 16, 8, 0].map((shift) => (crc >>> shift) & 255));
-}
-
-export function isAgentConnectionToken(raw: string): boolean {
-  if (typeof raw !== "string") return false;
-  const trimmed = raw.trim();
-  if (trimmed.startsWith("{")) return false;
-  return trimmed.toUpperCase().includes(TOKEN_MARKER);
-}
-
-export function encodeAgentConnectionToken(
-  envelope: AgentConnectionEnvelope | Record<string, unknown> | string,
-): string {
-  const json = typeof envelope === "string" ? envelope : JSON.stringify(envelope);
-  const bytes = new TextEncoder().encode(json);
-  const crc = crc32(bytes);
-  const crcB = crc32Bytes(crc);
-  return `${TOKEN_MARKER}${base32Encode(bytes)}.${base32Encode(crcB)}`;
-}
 
 function checkedTarget(url: string, anonKey: string): CloudTarget {
   try {
@@ -152,17 +106,93 @@ export function validateAgentConnectionEnvelope(
 }
 
 export function decodeAgentConnectionToken(raw: string): AgentConnectionEnvelope {
-  const cleaned = raw.toUpperCase().replace(/[^A-Z2-7.]/g, "");
-  const at = cleaned.indexOf(TOKEN_MARKER);
-  if (at < 0) {
+  if (typeof raw !== "string") {
     throw new AgentSetupError(
       "token_marker_missing",
       `The connection token is missing its marker. ${REPAIR_USE_SETUP_FILE}`,
     );
   }
-  const parts = cleaned.slice(at).split(".").filter(Boolean);
+
+  const markerRegex =
+    /C[\s\*\_\\\`]*S[\s\*\_\\\`]*W[\s\*\_\\\`]*A[\s\*\_\\\`]*R[\s\*\_\\\`]*M[\s\*\_\\\`]*A[\s\*\_\\\`]*\./i;
+  const match = raw.match(markerRegex);
+  if (!match || match.index === undefined) {
+    throw new AgentSetupError(
+      "token_marker_missing",
+      `The connection token is missing its marker. ${REPAIR_USE_SETUP_FILE}`,
+    );
+  }
+
+  const markerStart = match.index;
+  const afterMarker = raw.slice(markerStart + match[0].length);
+
+  let bodyChars = "";
+  let crcChars = "";
+  let inCrc = false;
+  let crcBase32Count = 0;
+  let tokenEnd = -1;
+  const extraParts: string[] = [];
+
+  for (let i = 0; i < afterMarker.length; i++) {
+    const ch = afterMarker[i]!;
+    if (ch === ".") {
+      if (!inCrc) {
+        inCrc = true;
+        continue;
+      } else {
+        extraParts.push("");
+        continue;
+      }
+    }
+
+    const upper = ch.toUpperCase();
+    const isBase32 = BASE32_ALPHABET.includes(upper);
+
+    if (extraParts.length > 0) {
+      if (isBase32) {
+        extraParts[extraParts.length - 1] += upper;
+      }
+      continue;
+    }
+
+    if (!inCrc) {
+      if (isBase32) {
+        bodyChars += upper;
+      }
+    } else {
+      if (isBase32) {
+        crcChars += upper;
+        crcBase32Count++;
+        if (crcBase32Count === 7) {
+          let nextNonFormat: string | null = null;
+          for (let j = i + 1; j < afterMarker.length; j++) {
+            const cj = afterMarker[j]!;
+            if (/[\*\_\\\`]/.test(cj)) continue;
+            nextNonFormat = cj;
+            break;
+          }
+          if (nextNonFormat === null || /[\s\)\]\>\'\"\`]/.test(nextNonFormat)) {
+            tokenEnd = markerStart + match[0].length + i + 1;
+            break;
+          }
+        }
+      }
+    }
+  }
+
+  let parts: string[];
+  if (tokenEnd !== -1 && extraParts.length === 0) {
+    parts = [TOKEN_PREFIX, bodyChars, crcChars];
+  } else {
+    if (extraParts.length > 0) {
+      parts = [TOKEN_PREFIX, bodyChars, crcChars, ...extraParts];
+    } else {
+      parts = [TOKEN_PREFIX, bodyChars, crcChars];
+    }
+  }
+
   if (
-    parts.length < 3 ||
+    parts.length !== 3 ||
     parts[0] !== TOKEN_PREFIX ||
     parts[1].length === 0 ||
     parts[2].length === 0
@@ -172,23 +202,41 @@ export function decodeAgentConnectionToken(raw: string): AgentConnectionEnvelope
       `The connection token format is invalid. ${REPAIR_USE_SETUP_FILE}`,
     );
   }
-  const body = base32Decode(parts[1]);
-  const want = base32Decode(parts[2]);
-  if (want.length < 4) {
+
+  if (parts[2].length !== 7) {
     throw new AgentSetupError(
       "token_checksum_invalid",
       `The connection token checksum did not match. ${REPAIR_USE_SETUP_FILE}`,
     );
   }
+
+  const body = base32Decode(parts[1]);
+  const want = base32Decode(parts[2]);
+
+  if (want.length !== 4) {
+    throw new AgentSetupError(
+      "token_checksum_invalid",
+      `The connection token checksum did not match. ${REPAIR_USE_SETUP_FILE}`,
+    );
+  }
+
+  if (base32Encode(want) !== parts[2] || base32Encode(body) !== parts[1]) {
+    throw new AgentSetupError(
+      "token_checksum_invalid",
+      `The connection token checksum did not match. ${REPAIR_USE_SETUP_FILE}`,
+    );
+  }
+
   const got = crc32(body);
   const wantN =
-    ((want[0] << 24) | (want[1] << 16) | (want[2] << 8) | want[3]) >>> 0;
+    ((want[0]! << 24) | (want[1]! << 16) | (want[2]! << 8) | want[3]!) >>> 0;
   if (got !== wantN) {
     throw new AgentSetupError(
       "token_checksum_invalid",
       `The connection token checksum did not match. ${REPAIR_USE_SETUP_FILE}`,
     );
   }
+
   let jsonString: string;
   try {
     jsonString = new TextDecoder("utf-8", { fatal: true }).decode(body);

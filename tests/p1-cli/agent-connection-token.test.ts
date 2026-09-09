@@ -16,7 +16,10 @@ import {
   parseAgentConnection,
 } from "../../src/cloud/agent-profile.js";
 import { setupAgent } from "../../src/cloud/agent-setup.js";
-import { AGENT_CREDENTIAL_MESSAGE_D088 } from "../../src/cloud/agent-credential-input.js";
+import {
+  AGENT_CREDENTIAL_MESSAGE_D088,
+  AgentCredentialInputError,
+} from "../../src/cloud/agent-credential-input.js";
 import {
   AGENT_CONNECTION_VERSION,
   type AgentConnectionEnvelope,
@@ -233,40 +236,54 @@ test("a truncated token (must fail on the checksum, not on JSON)", () => {
   // the CRC32 checksum would fail with a JSON SyntaxError (e.g. "Unexpected end of JSON input")
   // or a UTF-8 decoding error when given a truncated token, rather than detecting the corruption
   // through the checksum. To pass, the implementation must verify the CRC32 checksum FIRST
-  // before attempting UTF-8 decoding or JSON parsing, throwing \`token_checksum_invalid\`.
+  // before attempting UTF-8 decoding or JSON parsing, throwing `token_checksum_invalid`.
   const env = connection();
   const token = encodeAgentConnectionToken(env);
 
-  // 1. Cut 1 to 5 characters from the end of the token
-  for (let cut = 1; cut <= 5; cut++) {
-    const truncated = token.slice(0, -cut);
-    assert.throws(
-      () => decodeAgentConnectionToken(truncated),
-      (err: unknown) => {
-        assert.ok(err instanceof AgentSetupError, `expected AgentSetupError but got ${err}`);
-        assert.equal((err as AgentSetupError).code, "token_checksum_invalid");
-        assert.ok(!(err instanceof SyntaxError), "must not throw a JSON SyntaxError");
-        return true;
-      },
-    );
-  }
+  const originalJsonParse = JSON.parse;
+  let jsonParseCalls = 0;
+  JSON.parse = (...args: Parameters<typeof originalJsonParse>) => {
+    jsonParseCalls++;
+    return originalJsonParse(...args);
+  };
 
-  // 2. Cut characters from the body while keeping the checksum portion
-  const lastDot = token.lastIndexOf(".");
-  const prefixAndBody = token.slice(0, lastDot);
-  const checksumPart = token.slice(lastDot + 1);
+  try {
+    // 1. Cut 1 to 5 characters from the end of the token
+    for (let cut = 1; cut <= 5; cut++) {
+      const truncated = token.slice(0, -cut);
+      assert.throws(
+        () => decodeAgentConnectionToken(truncated),
+        (err: unknown) => {
+          assert.ok(err instanceof AgentSetupError, `expected AgentSetupError but got ${err}`);
+          assert.equal((err as AgentSetupError).code, "token_checksum_invalid");
+          assert.ok(!(err instanceof SyntaxError), "must not throw a JSON SyntaxError");
+          return true;
+        },
+      );
+    }
 
-  for (let cut = 1; cut <= 5; cut++) {
-    const truncatedBody = `${prefixAndBody.slice(0, -cut)}.${checksumPart}`;
-    assert.throws(
-      () => decodeAgentConnectionToken(truncatedBody),
-      (err: unknown) => {
-        assert.ok(err instanceof AgentSetupError, `expected AgentSetupError but got ${err}`);
-        assert.equal((err as AgentSetupError).code, "token_checksum_invalid");
-        assert.ok(!(err instanceof SyntaxError), "must not throw a JSON SyntaxError");
-        return true;
-      },
-    );
+    // 2. Cut characters from the body while keeping the checksum portion
+    const lastDot = token.lastIndexOf(".");
+    const prefixAndBody = token.slice(0, lastDot);
+    const checksumPart = token.slice(lastDot + 1);
+
+    for (let cut = 1; cut <= 5; cut++) {
+      const truncatedBody = `${prefixAndBody.slice(0, -cut)}.${checksumPart}`;
+      assert.throws(
+        () => decodeAgentConnectionToken(truncatedBody),
+        (err: unknown) => {
+          assert.ok(err instanceof AgentSetupError, `expected AgentSetupError but got ${err}`);
+          assert.equal((err as AgentSetupError).code, "token_checksum_invalid");
+          assert.ok(!(err instanceof SyntaxError), "must not throw a JSON SyntaxError");
+          return true;
+        },
+      );
+    }
+
+    // Prove checksum failure happened BEFORE JSON.parse or envelope validation was reached
+    assert.equal(jsonParseCalls, 0, "JSON.parse must never be reached for truncated tokens failing checksum");
+  } finally {
+    JSON.parse = originalJsonParse;
   }
 });
 
@@ -275,52 +292,96 @@ test("one flipped character (must fail on the checksum)", () => {
   // A wrong implementation that lacks CRC32 checksum verification or ignores checksum
   // mismatches would decode corrupted payload data and fail only later during JSON parsing
   // or semantic validation. To pass, an implementation must compute the CRC32 over the
-  // decoded body and reject any mismatch with \`token_checksum_invalid\`.
+  // decoded body and reject any mismatch with `token_checksum_invalid`.
   const env = connection();
   const token = encodeAgentConnectionToken(env);
 
-  // Flip a character in the token body
-  const bodyStart = token.indexOf(".") + 1;
-  const bodyEnd = token.lastIndexOf(".");
-  const bodyMid = Math.floor((bodyStart + bodyEnd) / 2);
-  const flippedBodyChar = token[bodyMid] === "A" ? "B" : "A";
-  const flippedBodyToken =
-    token.slice(0, bodyMid) + flippedBodyChar + token.slice(bodyMid + 1);
+  const originalJsonParse = JSON.parse;
+  let jsonParseCalls = 0;
+  JSON.parse = (...args: Parameters<typeof originalJsonParse>) => {
+    jsonParseCalls++;
+    return originalJsonParse(...args);
+  };
 
-  assert.throws(
-    () => decodeAgentConnectionToken(flippedBodyToken),
-    (err: unknown) => {
-      assert.ok(err instanceof AgentSetupError, `expected AgentSetupError but got ${err}`);
-      assert.equal((err as AgentSetupError).code, "token_checksum_invalid");
-      return true;
-    },
-  );
+  try {
+    // Flip a character in the token body
+    const bodyStart = token.indexOf(".") + 1;
+    const bodyEnd = token.lastIndexOf(".");
+    const bodyMid = Math.floor((bodyStart + bodyEnd) / 2);
+    const flippedBodyChar = token[bodyMid] === "A" ? "B" : "A";
+    const flippedBodyToken =
+      token.slice(0, bodyMid) + flippedBodyChar + token.slice(bodyMid + 1);
 
-  // Flip a character in the checksum portion
-  const crcStart = bodyEnd + 1;
-  const crcIdx = crcStart + 2;
-  const flippedCrcChar = token[crcIdx] === "A" ? "B" : "A";
-  const flippedCrcToken =
-    token.slice(0, crcIdx) + flippedCrcChar + token.slice(crcIdx + 1);
+    assert.throws(
+      () => decodeAgentConnectionToken(flippedBodyToken),
+      (err: unknown) => {
+        assert.ok(err instanceof AgentSetupError, `expected AgentSetupError but got ${err}`);
+        assert.equal((err as AgentSetupError).code, "token_checksum_invalid");
+        return true;
+      },
+    );
 
-  assert.throws(
-    () => decodeAgentConnectionToken(flippedCrcToken),
-    (err: unknown) => {
-      assert.ok(err instanceof AgentSetupError, `expected AgentSetupError but got ${err}`);
-      assert.equal((err as AgentSetupError).code, "token_checksum_invalid");
-      return true;
-    },
-  );
+    // Flip a character in the checksum portion
+    const crcStart = bodyEnd + 1;
+    const crcIdx = crcStart + 2;
+    const flippedCrcChar = token[crcIdx] === "A" ? "B" : "A";
+    const flippedCrcToken =
+      token.slice(0, crcIdx) + flippedCrcChar + token.slice(crcIdx + 1);
+
+    assert.throws(
+      () => decodeAgentConnectionToken(flippedCrcToken),
+      (err: unknown) => {
+        assert.ok(err instanceof AgentSetupError, `expected AgentSetupError but got ${err}`);
+        assert.equal((err as AgentSetupError).code, "token_checksum_invalid");
+        return true;
+      },
+    );
+
+    // Flip the final body symbol (must fail canonical base32 check, not reach JSON)
+    const finalBodyIdx = bodyEnd - 1;
+    const flippedFinalBodyChar = token[finalBodyIdx] === "U" ? "V" : "U";
+    const flippedFinalBodyToken =
+      token.slice(0, finalBodyIdx) + flippedFinalBodyChar + token.slice(bodyEnd);
+
+    assert.throws(
+      () => decodeAgentConnectionToken(flippedFinalBodyToken),
+      (err: unknown) => {
+        assert.ok(err instanceof AgentSetupError, `expected AgentSetupError but got ${err}`);
+        assert.equal((err as AgentSetupError).code, "token_checksum_invalid");
+        return true;
+      },
+    );
+
+    // Flip the final checksum symbol (must fail canonical base32 check, not reach JSON)
+    const finalCrcIdx = token.length - 1;
+    const flippedFinalCrcChar = token[finalCrcIdx] === "Q" ? "R" : "Q";
+    const flippedFinalCrcToken =
+      token.slice(0, finalCrcIdx) + flippedFinalCrcChar;
+
+    assert.throws(
+      () => decodeAgentConnectionToken(flippedFinalCrcToken),
+      (err: unknown) => {
+        assert.ok(err instanceof AgentSetupError, `expected AgentSetupError but got ${err}`);
+        assert.equal((err as AgentSetupError).code, "token_checksum_invalid");
+        return true;
+      },
+    );
+
+    // Prove all checksum failures happened BEFORE JSON.parse or envelope validation was reached
+    assert.equal(jsonParseCalls, 0, "JSON.parse must never be reached for flipped characters failing checksum");
+  } finally {
+    JSON.parse = originalJsonParse;
+  }
 });
 
 test("an envelope whose credential is invalid (must fail in the existing validator, not the decoder)", () => {
   // Wrong implementation rationale:
   // A wrong implementation that conflates token decoding with credential schema validation
-  // might throw a token decoder error (like \`token_payload_invalid\`) instead of delegating
+  // might throw a token decoder error (like `token_payload_invalid`) instead of delegating
   // to the existing envelope and credential validators. Conversely, a wrong implementation
   // that fails to execute the existing validator would accept malformed credentials.
   // To pass, the token decoder must successfully decode the valid base32 envelope and pass
-  // it to \`validateAgentConnectionEnvelope\`, which preserves existing validator error codes.
+  // it to `validateAgentConnectionEnvelope`, which preserves existing validator error codes.
   const env = connection();
 
   // Case 1: Principal mismatch between envelope principal_id and credential principal_id
@@ -352,9 +413,8 @@ test("an envelope whose credential is invalid (must fail in the existing validat
   assert.throws(
     () => decodeAgentConnectionToken(tokenBadCred),
     (err: unknown) => {
-      assert.ok(err instanceof Error);
-      assert.match((err as Error & { code?: string }).code ?? err.message, /agent_credential_missing_agent_token|connection_invalid/);
-      assert.notEqual((err as Error & { code?: string }).code, "token_payload_invalid");
+      assert.ok(err instanceof AgentCredentialInputError, `expected AgentCredentialInputError but got ${err}`);
+      assert.equal(err.code, "agent_credential_missing_agent_token");
       return true;
     },
   );
@@ -535,3 +595,89 @@ test("JSON envelope containing 'cswarm' or 'cswarma' substrings must NOT be dete
     assert.equal(parsed.url, env.url);
   }
 });
+
+test("token structure fails closed on extra parts throwing token_shape_invalid", () => {
+  const env = connection();
+  const token = encodeAgentConnectionToken(env);
+
+  const extraPartVariants = [
+    `${token}.EXTRA`,
+    `${token}.foo.bar`,
+    `${token}.`,
+    `${token}..`,
+  ];
+
+  for (const variant of extraPartVariants) {
+    assert.throws(
+      () => decodeAgentConnectionToken(variant),
+      (err: unknown) => {
+        assert.ok(err instanceof AgentSetupError, `expected AgentSetupError but got ${err}`);
+        assert.equal((err as AgentSetupError).code, "token_shape_invalid");
+        return true;
+      },
+    );
+
+    assert.throws(
+      () => parseAgentConnection(variant),
+      (err: unknown) => {
+        assert.ok(err instanceof AgentSetupError, `expected AgentSetupError but got ${err}`);
+        assert.equal((err as AgentSetupError).code, "token_shape_invalid");
+        return true;
+      },
+    );
+  }
+});
+
+test("token structure fails closed on extra checksum characters throwing token_checksum_invalid", () => {
+  const env = connection();
+  const token = encodeAgentConnectionToken(env);
+
+  const extraChecksumCharVariants = [
+    `${token}A`,
+    `${token}EXTRA`,
+    `${token}7`,
+  ];
+
+  for (const variant of extraChecksumCharVariants) {
+    assert.throws(
+      () => decodeAgentConnectionToken(variant),
+      (err: unknown) => {
+        assert.ok(err instanceof AgentSetupError, `expected AgentSetupError but got ${err}`);
+        assert.equal((err as AgentSetupError).code, "token_checksum_invalid");
+        return true;
+      },
+    );
+
+    assert.throws(
+      () => parseAgentConnection(variant),
+      (err: unknown) => {
+        assert.ok(err instanceof AgentSetupError, `expected AgentSetupError but got ${err}`);
+        assert.equal((err as AgentSetupError).code, "token_checksum_invalid");
+        return true;
+      },
+    );
+  }
+});
+
+test("detection and decoding use the same normalization for formatting inside marker", () => {
+  const env = connection();
+  const token = encodeAgentConnectionToken(env);
+  const parts = token.split(".");
+
+  const markerVariants = [
+    `CSWA**RMA.${parts[1]}.${parts[2]}`,
+    `CSWA\nRMA.${parts[1]}.${parts[2]}`,
+    `CSWA\tRMA.${parts[1]}.${parts[2]}`,
+    `CSWARM A.${parts[1]}.${parts[2]}`,
+    `cswar**ma.${parts[1]}.${parts[2]}`,
+  ];
+
+  for (const variant of markerVariants) {
+    assert.equal(isAgentConnectionToken(variant), true, `expected isAgentConnectionToken to be true for ${variant}`);
+    const decoded = decodeAgentConnectionToken(variant);
+    assert.deepEqual(decoded, env);
+    const parsed = parseAgentConnection(variant);
+    assert.deepEqual(parsed, env);
+  }
+});
+

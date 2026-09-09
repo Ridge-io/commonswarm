@@ -4,7 +4,7 @@ import { SIGNAL_BODY_MAX } from "../../../../supabase/functions/_shared/signal-t
 import { INSTALL_CMD } from "../../lib/install";
 import { AGENT_CONNECTION_VERSION, type AgentConnectionEnvelope } from "../../../../src/cloud/agent-onboarding-contract";
 import { AGENT_CREDENTIAL_MESSAGE_D088 } from "../../../../src/cloud/agent-credential-input";
-import { encodeAgentConnectionToken } from "../../../../src/cloud/agent-connection-token";
+import { encodeAgentConnectionToken } from "../../../../src/cloud/agent-connection-codec";
 
 export interface DashboardPromptInput {
   credential: AgentCredential;
