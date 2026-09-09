@@ -11,15 +11,19 @@ import { readSecureJsonFileIfPresent, writeSecureJsonFile, withFileLock } from "
 import {
   AGENT_CONNECTION_FIELDS, AGENT_CONNECTION_VERSION,
   type AgentConnectionEnvelope,
+  AgentSetupError,
+  ONBOARDING_UUID,
 } from "./agent-onboarding-contract.js";
+import {
+  isAgentConnectionToken,
+  decodeAgentConnectionToken,
+  encodeAgentConnectionToken,
+} from "./agent-connection-token.js";
 
-export const ONBOARDING_UUID = /^[0-9a-f]{8}-[0-9a-f]{4}-[1-8][0-9a-f]{3}-[89ab][0-9a-f]{3}-[0-9a-f]{12}$/i;
+
 export const ONBOARDING_MAX_FILE_BYTES = 16 * 1024;
 
-export class AgentSetupError extends Error {
-  readonly name = "AgentSetupError";
-  constructor(readonly code: string, message: string) { super(message); }
-}
+export { AgentSetupError, ONBOARDING_UUID };
 
 export interface AgentProfile {
   version: 1;
@@ -69,7 +73,12 @@ export async function assertPrivateLocation(path: string): Promise<string> {
   return absolute;
 }
 
+export { isAgentConnectionToken, decodeAgentConnectionToken, encodeAgentConnectionToken };
+
 export function parseAgentConnection(raw: string): AgentConnectionEnvelope {
+  if (isAgentConnectionToken(raw)) {
+    return decodeAgentConnectionToken(raw);
+  }
   let value: Record<string, unknown>;
   try { value = JSON.parse(raw); } catch {
     throw new AgentSetupError("connection_invalid", raw.includes("\\_") || /^\s*```/.test(raw)

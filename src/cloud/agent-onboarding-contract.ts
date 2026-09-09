@@ -18,6 +18,13 @@ export const AGENT_CONNECTION_FIELDS = [
   "version", "url", "anon_key", "workspace_id", "principal_id", "credential",
 ] as const;
 
+export const ONBOARDING_UUID = /^[0-9a-f]{8}-[0-9a-f]{4}-[1-8][0-9a-f]{3}-[89ab][0-9a-f]{3}-[0-9a-f]{12}$/i;
+
+export class AgentSetupError extends Error {
+  readonly name = "AgentSetupError";
+  constructor(readonly code: string, message: string) { super(message); }
+}
+
 export interface AgentConnectionEnvelope {
   version: typeof AGENT_CONNECTION_VERSION;
   url: string;

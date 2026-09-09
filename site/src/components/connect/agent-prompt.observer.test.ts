@@ -5,6 +5,7 @@ import ts from "typescript";
 import { dashboardAgentConnection, dashboardAgentFilePrompt, dashboardAgentPrompt, promptCopyPayload} from "./agent-prompt";
 import { parseAgentConnection } from "../../../../src/cloud/agent-profile";
 import { AGENT_CONNECTION_FIELDS } from "../../../../src/cloud/agent-onboarding-contract";
+import { decodeAgentConnectionToken } from "../../../../src/cloud/agent-connection-token";
 
 const TOKEN = `swm_agt_${"A_".repeat(21) + "A"}`;
 const INPUT = {
@@ -28,10 +29,17 @@ test("the generated connection is accepted by the CLI without changing the crede
   assert.equal(raw.split(TOKEN).length - 1, 1);
 });
 
-test("one-paste setup includes a single connection and full agent ID, with private file instructions", () => {
+test("one-paste setup includes a single connection token and full agent ID, with private file instructions", () => {
   const prompt = dashboardAgentPrompt(INPUT);
-  assert.equal(prompt.split(TOKEN).length - 1, 1);
-  assert.equal(prompt.split(INPUT.anonKey).length - 1, 1);
+  const tokenMatch = prompt.match(/\bCSWARMA\.[A-Z2-7]+\.[A-Z2-7]+\b/);
+  assert.ok(tokenMatch, "prompt must include a CSWARMA token");
+  const token = tokenMatch[0];
+  assert.match(token, /^CSWARMA\./);
+  assert.doesNotMatch(token, /_/);
+  assert.doesNotMatch(token, /:\/\//);
+  const decoded = decodeAgentConnectionToken(token);
+  assert.deepEqual(decoded, JSON.parse(dashboardAgentConnection(INPUT)));
+  assert.equal(decoded.principal_id, INPUT.credential.principalId);
   assert.match(prompt, new RegExp(`connect-${INPUT.credential.principalId}/connection.json`));
   assert.match(prompt, /file-writing tool/);
   assert.match(prompt, /0700/);
@@ -71,14 +79,18 @@ test("file download stays in memory, can be cleared, and key lifetime is under s
 });
 
 
-test("copy source has lossless fenced JSON and a plain executable install command", () => {
+test("copy source has lossless connection token and a plain executable install command", () => {
   const prompt = dashboardAgentPrompt(INPUT);
-  const raw = prompt.match(/```json\n([^]*?)\n```/)?.[1];
-  assert.ok(raw);
-  assert.deepEqual(JSON.parse(raw), JSON.parse(dashboardAgentConnection(INPUT)));
-  assert.equal(parseAgentConnection(raw).credential.agent_token, TOKEN);
+  const token = prompt.match(/\bCSWARMA\.[A-Z2-7]+\.[A-Z2-7]+\b/)?.[0];
+  assert.ok(token);
+  assert.match(token, /^CSWARMA\./);
+  assert.doesNotMatch(token, /_/);
+  assert.doesNotMatch(token, /:\/\//);
+  const decoded = decodeAgentConnectionToken(token);
+  assert.deepEqual(decoded, JSON.parse(dashboardAgentConnection(INPUT)));
+  assert.equal(decoded.credential.agent_token, TOKEN);
+  assert.equal(decoded.principal_id, INPUT.credential.principalId);
   assert.equal(prompt.match(/```sh\n([^]*?)\n```/)?.[1], "curl -fsSL https://commonswarm.com/install.sh | sh");
-  assert.doesNotMatch(raw, /\\_/);
   assert.match(prompt, /Use a setup file/);
   assert.match(prompt, /Codex supports turn checks/);
   const source = readFileSync(new URL("./AgentConnect.astro", import.meta.url), "utf8");
@@ -107,7 +119,9 @@ test("the component copy method sends the source string even when displayed text
   const prompt = dashboardAgentPrompt(INPUT);
   await new Component(prompt).copy();
   assert.equal(copied, prompt);
-  assert.deepEqual(JSON.parse(copied.match(/```json\n([^]*?)\n```/)![1]!), JSON.parse(dashboardAgentConnection(INPUT)));
+  const token = copied.match(/\bCSWARMA\.[A-Z2-7]+\.[A-Z2-7]+\b/)?.[0];
+  assert.ok(token);
+  assert.deepEqual(decodeAgentConnectionToken(token), JSON.parse(dashboardAgentConnection(INPUT)));
 });
 
 
