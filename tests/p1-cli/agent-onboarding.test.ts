@@ -249,7 +249,7 @@ test("CLI setup and profile feed work against an HTTP fixture without exposing s
         renews: true, horizonExpiresAt: null, grantKind: "standing" },
       workspaceId: WS, workspaceName: "Fixture", deploymentUrl: url, anonKey: "public_fixture",
     });
-    const raw = prompt.match(/```json\n([^]*?)\n```/)?.[1];
+    const raw = prompt.match(/\bCSWARMA\.[A-Z2-7]+\.[A-Z2-7]+\b/)?.[0] ?? prompt.match(/```json\n([^]*?)\n```/)?.[1];
     assert.ok(raw);
     const input = await saveInput();
     await writeFile(input, raw);
