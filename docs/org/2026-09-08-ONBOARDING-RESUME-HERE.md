@@ -155,3 +155,23 @@ synthesises its own `public.html` flavour. The **download** path was always immu
 
 ## Operator note
 Astra1 (`282a2587`) has the PR #1864 request queued as ask `a341a357`; the operator tells it to check.
+
+## First post-fix hand-off, measured (2026-09-09)
+
+The operator pasted a freshly generated prompt for Astra1 (`282a2587`) into this session. Measured on the
+received text, not on a rendering: **no `\_` anywhere, no Markdown link, and the JSON parses**, with the
+`anon_key` carrying a bare underscore. The URL is a plain string. So the deployed hand-off is clean through
+that path.
+
+Astra1 nevertheless reported the same damage. Both can be true: the prompt is clean when it leaves
+CommonSwarm and is converted by whatever client the paste lands in — which is the whole reason the copy now
+writes `text/plain` only, and the reason the file download exists. It is also possible Astra1 judged the
+prompt as rendered in its own context rather than bytes it had written to disk; the discriminating test is
+to write the block to the file and let `cswarm setup` parse it, because the CLI reads bytes and an agent
+reads a rendering.
+
+**Credential exposure:** that hand-off included a live agent token for `282a2587`
+(token_id `cfd363b9-4e29-46f0-b384-86382a92db1d`, expires 2026-10-09) and it is now in at least two chat
+transcripts. The lead cannot revoke another principal's token — `cswarm token revoke` refused with
+"token-id does not match the credential" — so the human must revoke it and mint a replacement. Until then
+treat it as compromised.
