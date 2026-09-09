@@ -518,3 +518,20 @@ test("token_payload_invalid: valid checksum but malformed JSON throws token_payl
     },
   );
 });
+
+test("JSON envelope containing 'cswarm' or 'cswarma' substrings must NOT be detected as token", () => {
+  const cswarmCases = [
+    connection("https://cswarm.example.com"),
+    connection("https://cswarma.example.com"),
+    connection("https://fixture.example"),
+    { ...connection(), anon_key: "cswarm-public-key" },
+  ];
+
+  for (const env of cswarmCases) {
+    const raw = JSON.stringify(env);
+    assert.equal(isAgentConnectionToken(raw), false, `expected JSON with url ${env.url} to not be detected as token`);
+    const parsed = parseAgentConnection(raw);
+    assert.equal(parsed.principal_id, AGENT);
+    assert.equal(parsed.url, env.url);
+  }
+});

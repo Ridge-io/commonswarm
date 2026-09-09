@@ -1,9 +1,10 @@
-import { AgentSetupError, ONBOARDING_UUID } from "./agent-profile.js";
 import { parseAgentCredentialInput } from "./agent-credential-input.js";
 import {
   AGENT_CONNECTION_FIELDS,
   AGENT_CONNECTION_VERSION,
   type AgentConnectionEnvelope,
+  AgentSetupError,
+  ONBOARDING_UUID,
 } from "./agent-onboarding-contract.js";
 import { cloudTarget, type CloudTarget } from "./config.js";
 
@@ -67,8 +68,10 @@ function crc32Bytes(crc: number): Uint8Array {
 }
 
 export function isAgentConnectionToken(raw: string): boolean {
-  const cleaned = raw.toUpperCase().replace(/[^A-Z2-7.]/g, "");
-  return cleaned.includes("CSWARM");
+  if (typeof raw !== "string") return false;
+  const trimmed = raw.trim();
+  if (trimmed.startsWith("{")) return false;
+  return trimmed.toUpperCase().includes(TOKEN_MARKER);
 }
 
 export function encodeAgentConnectionToken(

@@ -11,6 +11,8 @@ import { readSecureJsonFileIfPresent, writeSecureJsonFile, withFileLock } from "
 import {
   AGENT_CONNECTION_FIELDS, AGENT_CONNECTION_VERSION,
   type AgentConnectionEnvelope,
+  AgentSetupError,
+  ONBOARDING_UUID,
 } from "./agent-onboarding-contract.js";
 import {
   isAgentConnectionToken,
@@ -19,13 +21,9 @@ import {
 } from "./agent-connection-token.js";
 
 
-export const ONBOARDING_UUID = /^[0-9a-f]{8}-[0-9a-f]{4}-[1-8][0-9a-f]{3}-[89ab][0-9a-f]{3}-[0-9a-f]{12}$/i;
 export const ONBOARDING_MAX_FILE_BYTES = 16 * 1024;
 
-export class AgentSetupError extends Error {
-  readonly name = "AgentSetupError";
-  constructor(readonly code: string, message: string) { super(message); }
-}
+export { AgentSetupError, ONBOARDING_UUID };
 
 export interface AgentProfile {
   version: 1;
