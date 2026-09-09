@@ -175,3 +175,63 @@ reads a rendering.
 transcripts. The lead cannot revoke another principal's token — `cswarm token revoke` refused with
 "token-id does not match the credential" — so the human must revoke it and mint a replacement. Until then
 treat it as compromised.
+
+---
+
+# v0.1.67 — the connection hand-off is a Markdown-proof token (2026-09-09)
+
+## LIVE
+Tag `v0.1.67` on bump `9c057c1`; npm `latest` 0.1.67; GitHub latest release v0.1.67; site deployed,
+`/download` reads 0.1.67; the deployed chunk
+`/_astro/AgentConnect.astro_astro_type_script_index_0_lang.DxDRxo_X.js` carries the `CSWARMA` marker and
+**no** `node:crypto`, and `/app` references it. CLI published before the site advertised it.
+
+## What it is
+The envelope now travels as one opaque line: `CSWARMA.<base32 body>.<base32 CRC-32>`, alphabet `A-Z` and
+`2-7` with `.` as the only separator. Nothing in that set is Markdown-sensitive and there is no `://`, so
+underscore-escaping and link conversion have nothing to act on. `cswarm setup --connection-file` accepts
+either the token or the old JSON envelope, so **Use a setup file** is unchanged.
+
+## End-to-end, with the RELEASED binary against production
+1. installer 0, installed sha256 equals the release asset; `cswarm --version` 0.1.67.
+2. `setup --check-version` prints `setup_version: 1`.
+3. Token built from a real credential: 1,288 characters, matches `^[A-Z2-7.]+$`.
+4. The operator's exact transformation applied (escape every `_`, linkify every bare URL), then wrapped in
+   a BROKEN code fence and broken across 40-character lines, saved to a `0600` file in a `0700` directory.
+   The mangled token is **identical** to the clean one.
+5. `setup` through that damaged file: `connected: true`, real identity, `inbox_pending: true`.
+6. `receive configure --mode turn --provider instructions`: `turn_check: instruction`, `wake_verified: false`.
+7. `check` against production: 4 real messages, `has_more: true`.
+8. `receive status`: the saved turn choice is remembered.
+9. The legacy JSON setup-file path still connects.
+
+## D-036
+Author family Gemini. `99fc790`: Grok PASS, **Codex FAIL** with four findings. All four fixed. `77fe6df`:
+Grok PASS, Codex PASS on re-review of its own findings. Evidence and the lead's hostile suite are in
+`docs/evidence/2026-09-09-token-handoff/`.
+
+## Correction the lead owes
+The lead first reported Codex's headline finding as "not reproduced" after sweeping twelve payload lengths.
+**That sweep was wrong**: it mutated the final symbol with `String.replace(lastChar, c)`, which replaces the
+FIRST occurrence, so it corrupted an early byte the CRC always caught. Codex was right — base32 leaves spare
+bits unless the payload length is a multiple of five, and 59 of 372 non-canonical spellings were accepted on
+the old code. Re-measured correctly on `77fe6df` with `slice(0,-1)+c` across body and checksum: **0 accepted
+of 744**.
+
+## A red push, and why main is green
+The merge was pushed while `test:p1-cli` reported 1 failure: `a hung observation write-back stays inside the
+hook ceiling` at 3050 ms, with a sibling four-second-ceiling test at 3260 ms. The host was running review
+arms at the time. This merge touches no hook or listener file, and the file passes 3/3 in isolation on a
+quiet host; the full suites then read 590/0, 869/0 and site 547/0/1. It is host contention, not a defect —
+but it is a wall-clock timing test of the class the `test-health` lane already made deterministic elsewhere.
+
+## Filed, not fixed
+- The credential validator's remedy says "send that line to stdin" even when the input came from a file.
+- `cswarm setup --check-version --json` is refused with "unknown option: --json" while the bare form prints
+  JSON. Every other command takes `--json`.
+- `tests/p1-cli/hook-routing.test.ts` has wall-clock ceilings that fail under host load.
+
+## NOT established
+No live Codex session has connected through the new prompt yet; that is the operator's next test. The
+component performing the Markdown conversion in that environment is still unidentified and was never
+modified.
